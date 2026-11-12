@@ -88,7 +88,7 @@ like($stack, qr/windowTiledPress\(clicked\)/, 'a press in a tiled body brings it
 like($windows, qr/windowTiledPendingApp\[window_app\]/, 'a bespoke opener claims the latest press for its app');
 like($windows, qr/isJson\(jws\).*pre_dimensioned'\) == 1/, 'a saved view places only a pinned window');
 like($windows, qr/function windowTiledPreview\(win, at, home, from, group\)/, 'a drag draws the slot it would join');
-like($windows, qr/windowTiledArea\(win, home, from, group\)/, 'the pile ground uses the box the window left, not where it is');
+like($windows, qr/windowTiledOverArea\(win, home, from, group, at\)/, 'the pile ground is each window it covers, with the box the drag left');
 like($fit, qr/windowTiledPreview\(win, mouse_position\(\), dragFromTile, dragFromStack, dragGroup\)/, 'the drag shows the preview from where it was picked up');
 like($fit, qr/windowTiledJoinOrLeave\(win, \{ x: d\.x, y: d\.y \}, dragFromTile, dragFromStack, dragGroup\)/, 'a drag joins or leaves the pile where it is dropped');
 like($css, qr/#window_tile_preview/, 'the preview slot has a look');
@@ -107,6 +107,8 @@ like($windows, qr/var windowTiledDefaultStack = '0';/, 'the desk has a default p
 like($windows, qr/function windowTiledStackId\(win\)/, 'a window names its pile');
 like($windows, qr/function windowTiledAnchor\(stack\)/, 'a pile stands on an anchor');
 like($windows, qr/function windowTiledDropTarget\(at, skip, home, from, group\)/, 'a drop finds the pile or the window under it');
+like($windows, qr/var over = \(id === from\)/, 'the carried block is measured against its own pile only');
+like($windows, qr/: windowTiledOverArea\(null, null, id, null, at\);/, 'another pile is measured by its own windows');
 like($windows, qr/function windowTiledWindowAt\(at, skip, group\)/, 'a drop can land on a window that is not in a pile');
 like($windows, qr/function windowTiledStackStart\(win, head, group\)/, 'dropping on such a window starts a pile there');
 like($windows, qr/if \(els\.indexOf\(head\[0\]\) >= 0\) \{ return; \}/, 'a carried window is never mistaken for the pile head');
@@ -131,6 +133,8 @@ like($windows, qr/function windowTiledPreview\(win, at, home, from, group\)/, 't
 like($windows, qr/function windowTiledBlockEls\(win, group\)/, 'the drag names the block it carries');
 like($windows, qr/function windowTiledBlockLeave\(win, group\)/, 'the block leaves together');
 like($fit, qr/dragGroup\.push\(\{ el: this, left:/, 'the drag picks up the windows below the held one');
+like($fit, qr/if \(\(parseFloat\(\$\(this\)\.css\('top'\)\) \|\| 0\) <= startTop\) \{ return; \}/, 'the block is the cascade below the held window on the y axis');
+like($fit, qr/dragGroup\.sort\(function\(a, b\) \{ return a\.top - b\.top; \}\);/, 'and is carried in y order');
 like($fit, qr/\$\(g\.el\)\.css\(\{ 'left': g\.left \+ dx, 'top': g\.top \+ dy \}\)/, 'and moves them by the held window\'s own delta');
 like($fit, qr/if \(edge && !dragGroup\.length\)/, 'a pile move is not the half snap');
 
@@ -922,6 +926,45 @@ ctx.windowTiledDragLeave('#window_a', { x: 1400, y: 800 }, { left: 0, top: 0, wi
 eq(block_leave[0].attr('tile'), undefined, 'the held window leaves the pile');
 eq(block_leave[1].attr('tile'), undefined, 'the windows below it leave with it');
 eq(block_leave[2].attr('free'), '1', 'and the block floats together');
+
+// The pile's ground is the windows themselves, not their bounding box: the empty
+// corner a stagger leaves is the desk, and a drop there does not join.
+let corner = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 }
+]);
+let passing = new El('window_c', { pre_dimensioned: '0' });
+passing.attr('free', '1');
+passing.style.left = '900px';
+passing.style.top = '900px';
+dom.push(passing);
+ctx.windowTiledJoinOrLeave('#window_c', { x: 430, y: 20 }, { left: 900, top: 900, width: 400, height: 300 });
+eq(passing.attr('tile'), undefined, 'a drop in the empty corner of a pile does not join it');
+eq(passing.attr('free'), '1', 'and the window stays free');
+eq(corner[0].attr('tile'), '0', 'the pile is left as it was');
+
+// The boxes a dragged block left behind belong to the pile it came from. A pile
+// that is in front must not catch the drag by borrowing them, so grabbing a
+// right-hand pile and putting it down over itself stays in that pile.
+let leak = desk([{ id: 'window_a', top: 0, left: 0 }]);
+leak[0].style['z-index'] = 900;
+let right_head = new El('window_x', { pre_dimensioned: '0' });
+right_head.style.left = '1200px';
+right_head.style.top = '600px';
+right_head.style['z-index'] = 100;
+right_head.attr('tile', '0').attr('stack', 's9').attr('stack_at', '1200,600');
+let right_foot = new El('window_y', { pre_dimensioned: '0' });
+right_foot.style.left = '1250px';
+right_foot.style.top = '640px';
+right_foot.style['z-index'] = 101;
+right_foot.attr('tile', '1').attr('stack', 's9').attr('stack_at', '1200,600');
+dom.push(right_head, right_foot);
+let leak_group = [{ el: right_foot, left: 1250, top: 640, width: 400, height: 300 }];
+ctx.windowTiledJoinOrLeave('#window_x', { x: 1300, y: 700 }, { left: 1200, top: 600, width: 400, height: 300 }, 's9', leak_group);
+eq(right_head.attr('stack'), 's9', 'a right-hand pile put down over itself stays in that pile');
+eq(right_foot.attr('stack'), 's9', 'with the windows it carries');
+eq(leak[0].attr('tile'), '0', 'the pile in front is not the drop target');
+eq(leak[0].style.top, '0px', 'nor moved');
 
 // The saved pile map is replayed after the restore burst: every window comes
 // back to its own pile and slot, and the piles keep the depth order they had.

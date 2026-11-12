@@ -216,14 +216,17 @@ function windowDraggable(win) {
 				dragFromStack = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null;
 				dragGroup = [];
 				var startSlot = windowTiledSlot(win);
+				var startTop = parseFloat(win.css('top')) || 0;
 				if (startSlot >= 0) {
 					$('.wind').each(function() {
 						if (this === win[0]) { return; }
 						if (windowTiledStackId(this) !== dragFromStack) { return; }
-						if (windowTiledSlot(this) <= startSlot) { return; }
+						// the cascade below the held window is the block, read down the y
+						// axis: grabbing the top-most window takes the whole pile with it
+						if ((parseFloat($(this).css('top')) || 0) <= startTop) { return; }
 						dragGroup.push({ el: this, left: parseFloat($(this).css('left')) || 0, top: parseFloat($(this).css('top')) || 0, width: parseFloat($(this).css('width')) || 0, height: parseFloat($(this).css('height')) || 0 });
 					});
-					dragGroup.sort(function(a, b) { return windowTiledSlot(a.el) - windowTiledSlot(b.el); });
+					dragGroup.sort(function(a, b) { return a.top - b.top; });
 				}
 				windows[p.target.id] = Date.now();
 				if (win.attr('view') == 'max' && win.attr('free_dimensions')) {

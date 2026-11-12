@@ -919,18 +919,19 @@ function windowTiledBox(r) {
 	};
 }
 
-// The ground one pile covers: its members' boxes taken together (all piles when
-// no stack is named). A window being dragged - the held one and every window the
-// drag carries with it - leaves its present box out of the sum and puts the box
-// it was picked up from there instead (home), so carrying a whole block away
-// leaves the pile behind while a drag back over its old place finds it.
-function windowTiledArea(homeEl, homeRect, stack, group) {
-	var area = null;
+// Is the pointer right over one of this pile's windows? Each window's own box,
+// not the pile's bounding box: the empty corner a stagger leaves is the desk, and
+// a drop there is not a drop on the stack. A window the drag carries stands on the
+// box it was picked up from (home), so carrying a block away leaves its pile
+// behind while a drag back over its old place finds it.
+function windowTiledOverArea(homeEl, homeRect, stack, group, at) {
+	if (!at) { return false; }
 	var homes = [];
 	if (homeEl) { homes.push({ el: $(homeEl)[0], rect: windowTiledBox(homeRect) }); }
 	$.each(group || [], function(i, g) {
 		homes.push({ el: (g && g.el) ? g.el : g, rect: windowTiledHomeRect(g) });
 	});
+	var over = false;
 	$('.wind').each(function() {
 		if (stack !== undefined && windowTiledStackId(this) !== stack) { return; }
 		var home = null;
@@ -946,20 +947,9 @@ function windowTiledArea(homeEl, homeRect, stack, group) {
 			r = windowTiledRect(this);
 		}
 		else { return; }
-		if (!area) { area = { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }
-		else {
-			area.left = Math.min(area.left, r.left);
-			area.top = Math.min(area.top, r.top);
-			area.right = Math.max(area.right, r.right);
-			area.bottom = Math.max(area.bottom, r.bottom);
-		}
+		if (at.x >= r.left && at.x <= r.right && at.y >= r.top && at.y <= r.bottom) { over = true; }
 	});
-	return area;
-}
-
-function windowTiledOverStack(area, at) {
-	if (!area || !at) { return false; }
-	return at.x >= area.left && at.x <= area.right && at.y >= area.top && at.y <= area.bottom;
+	return over;
 }
 
 function windowTiledBarMiddle(win) {
@@ -1264,8 +1254,13 @@ function windowTiledDropTarget(at, skip, home, from, group) {
 	var best_z = -Infinity;
 	var ids = windowTiledStackIds();
 	$.each(ids, function(i, id) {
-		var area = windowTiledArea(skipEl, (id === from) ? home : null, id, group);
-		if (!area || !windowTiledOverStack(area, at)) { return; }
+		// the carried block is measured where it was picked up, and only against the
+		// pile it came from: its home boxes belong to no other pile, and lending
+		// them to one would make a pile reach across the desk to catch the drag
+		var over = (id === from)
+			? windowTiledOverArea(skipEl, home, id, group, at)
+			: windowTiledOverArea(null, null, id, null, at);
+		if (!over) { return; }
 		var z = windowTiledStackTopZ(id);
 		if (z >= best_z) { best_z = z; best = { stack: id }; }
 	});
@@ -1316,7 +1311,7 @@ function windowTiledDragLeave(win, at, home, from, group) {
 	win = $(win);
 	if (from === undefined) { from = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null; }
 	if (!at || windowTiledSlot(win) < 0) { return; }
-	if (windowTiledOverStack(windowTiledArea(win, home, from, group), at)) { return; }
+	if (windowTiledOverArea(win, home, from, group, at)) { return; }
 	windowTiledBlockLeave(win, group);
 }
 
