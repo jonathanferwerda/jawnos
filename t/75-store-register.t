@@ -170,4 +170,31 @@ is( &subs::store_register_order_open()->{'customer'}->{'app'}, 'Customer', 'an o
 
 &subs::store_register_order_reset();
 
+# ------------------------------------------- /manager/store is a desk opener
+# store_maker's window_maker branch returns the window's contents; its other
+# branch renders the Store page itself. The action used to render again after
+# that, and the unfinished response hung until the watchdog restarted the tree.
+require 'JawnOS/Controller/manager_store.pm';
+{
+	package StoreActionProbe;
+	sub new { bless { p => { window_maker => $_[1], user_agent => 'probe' }, redirect => undef, rendered => undef }, $_[0] }
+	sub param { my ($s,$k)=@_; return $s->{p}->{$k} }
+	sub redirect_to { my ($s,$u)=@_; $s->{redirect}=$u; return $s }
+	sub render { my ($s,%o)=@_; $s->{rendered}=$o{'text'}; return $s }
+	package main;
+}
+my $direct = StoreActionProbe->new('');
+Manager::action_5518($direct);
+is($direct->{'redirect'}, '/store', 'a direct /manager/store goes to the store page');
+is($direct->{'rendered'}, undef, 'and is not rendered a second time');
+{
+	no warnings 'redefine';
+	local *Manager::store_maker = sub { 'CONTENTS' };
+	local *Manager::window_maker = sub { 'WINDOW' };
+	my $desk = StoreActionProbe->new('yes');
+	Manager::action_5518($desk);
+	is($desk->{'redirect'}, undef, 'the desk opener is not redirected');
+	is($desk->{'rendered'}, 'WINDOW', 'the desk opener gets the window wrapper');
+}
+
 done_testing();

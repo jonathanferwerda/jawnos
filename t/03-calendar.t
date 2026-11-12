@@ -7,6 +7,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use Mojo::IOLoop;
 use JawnOSTest;
 
 # Calendar arithmetic. The suite pins TZ=UTC in JawnOSTest, so every assertion
@@ -65,5 +66,24 @@ is(&subs::day_key(ts(2024, 1, 15)), '2024-01-15', 'a moment has a civil day key'
 is(&subs::day_key(ts(2024, 1, 15, 23, 59)), '2024-01-15', 'the late evening still belongs to its day');
 is(&subs::day_key(ts(2024, 1, 16, 0, 0)), '2024-01-16', 'midnight starts the next day');
 is(&subs::day_key(undef), '', 'no moment has no day key');
+
+# --------------------------------------------------- subprocessor, no fork
+# On a box without fork a named subprocessor body that is not a registered job
+# runs inline in the caller. Its leading Mojo::IOLoop->reset must not reach the
+# caller's loop: on Windows that reset closed the request worker's listeners and
+# the reply in flight, and the worker exited (the web port went silent until the
+# master restarted the tree). The writer asks for the centre view this way.
+{
+	local $ENV{JAWNOS_PORTABLE} = '1';
+	local $ENV{JAWNOS_NO_FORK}  = '1';
+	local $ENV{JAWNOS_JOB_ARGS} = '';
+	subs::preload('subprocessor');
+	my $fired = 0;
+	my $id = Mojo::IOLoop->timer(0 => sub { $fired = 1 });
+	&subs::subprocessor(sub { Mojo::IOLoop->reset }, { name => 'inline reset probe' });
+	Mojo::IOLoop->one_tick;
+	ok($fired, 'an inline subprocessor body cannot clear the caller loop');
+	Mojo::IOLoop->remove($id) if defined $id;
+}
 
 done_testing();

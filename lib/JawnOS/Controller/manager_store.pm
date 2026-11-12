@@ -66,6 +66,13 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 sub action_5518 {
 	my $c = shift;
 
+	# The desk's opener sends window_maker=yes and store_maker returns the
+	# window's contents. A browser opening this URL directly wants the Store
+	# page, which /store already serves; without the flag store_maker renders
+	# the page itself, and rendering again below left the response unfinished
+	# (the request hung until the watchdog restarted the tree).
+	return $c->redirect_to('/store') unless ($c->param('window_maker') || '') eq 'yes';
+
 	my $timestamp = $c->param('timestamp');
 
 	my $contents = &store_maker($c);

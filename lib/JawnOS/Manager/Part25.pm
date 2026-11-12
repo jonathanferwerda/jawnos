@@ -362,6 +362,7 @@ sub mail_checker($c) {
 		mail_phone => $phone,
 		mail_email => $email,
 		config => &subs::config_reader(),
+		device => $device,
 		settings => $settings,
 		scope => $scope,
 		scope_sections => [@scope_sections],
