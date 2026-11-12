@@ -2566,6 +2566,22 @@ async function musicInit(method) {
 	musicVideoLoad();
 	musicVideoMachinesLoad();
 }
+// The file the player element is actually playing, read back out of its src.
+// The cache used to save tree.songs[0] - the first row of the CURRENT list - and
+// a search re-renders that list under a track that keeps playing, so after one
+// the first row was a stranger while the element still held the old file. The
+// next open then restored that stranger at the old track's position (3:12 of a
+// song the person never chose). mediaMaker is the only writer of the src, so the
+// track it set is the one to write down.
+function playerCacheTrackFromSrc(src) {
+	var hit = String(src || '').match(/[?&]track=([^&]*)/);
+	if (!hit) { return ''; }
+	try { return decodeURIComponent(hit[1]); } catch (e) { return hit[1]; }
+}
+function playerCacheFile() {
+	var playing = playerCacheTrackFromSrc(tree.sound ? tree.sound.src : '');
+	return playing || (tree.songs[0] ? tree.songs[0].file : '');
+}
 function playerCacheSaver(type, force) {
 	var timestamp = Date.now();
 	var jpd;
@@ -2591,7 +2607,7 @@ function playerCacheSaver(type, force) {
 		var playerData = { 
 			key: tree.current_track, 
 			'currentTime': at, 
-			file: (tree.songs[0] ? tree.songs[0].file : ''), 
+			file: playerCacheFile(), 
 			volume: master_volume, 
 			muted: music_muted, 
 			state: tree.sound.state, 
