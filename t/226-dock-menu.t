@@ -1,13 +1,14 @@
 # tests-for: public/js/manager/keyboard.js public/js/manager/taskbar.js public/js/manager/taskbar_edit.js public/css/manager.css perl/help/topics_features.pl
 # covers:    The dock's right-click menu and its drag-to-reorder mode. The dock
-#            background opens the taskbar's own menu (same builder, same rows)
-#            with Edit dock, Dock position, Show/Hide icons and Add items laid
-#            above it; a face offers the same menu plus Remove from dock.
-#            Add items lists the start menu's apps, the taskbar's widgets and
-#            the removed pseudonym faces. The dock's app and widget faces are
-#            the taskbar's own pins (taskbar_order), so pinning or removing one
-#            on either bar changes both; only the pseudonym order is per browser
-#            (dock_order).
+#            background opens the dock's own menu - Edit dock, Dock position,
+#            Show/Hide icons, Transparent and Add items - and nothing from the
+#            taskbar, whose menu stays on the bar. Add items is a flyout beside
+#            the menu (right, or left when that edge is short), so a dock along
+#            the bottom never pushes the list off the screen. The menu animates
+#            in and puts itself away after an idle spell. The dock's app and
+#            widget faces are the taskbar's own pins (taskbar_order), so pinning
+#            or removing one on either bar changes both; only the pseudonym
+#            order is per browser (dock_order).
 
 use strict;
 use warnings;
@@ -23,13 +24,13 @@ my $root = repo_root();
 my $dock = js_source('public/js/manager/keyboard.js');
 my $css  = read_file("$root/public/css/manager.css");
 
-# --- the menu reuses the taskbar's builder -----------------------------------
+# --- the menu is the dock's own ---------------------------------------------
 like($dock, qr/function jawnosDockContextBuild\(\)/,
 	'the dock has a context-menu builder');
-like($dock, qr/var base = jawnosTaskbarContextBuild\(\);/,
-	'it builds on jawnosTaskbarContextBuild');
-like($dock, qr/context\.append\(base\.children\(\)\);/,
-	'the taskbar rows ride in the dock menu rather than a second copy');
+unlike($dock, qr/jawnosTaskbarContextBuild\(\)/,
+	'the dock menu does not build on the taskbar menu');
+unlike($dock, qr/dock\.taskbar/,
+	'and carries no taskbar heading');
 
 # --- a background right-click opens it --------------------------------------
 like($dock, qr/\$\(document\)\.on\('contextmenu', '#pseudonym_home', function\(e\) \{/,
@@ -50,6 +51,39 @@ like($dock, qr/jawnosDockText\('dock\.show_icons', 'Show icons'\)/,
 	'a hidden row offers Show icons');
 like($dock, qr/jawnosDockText\('dock\.hide_icons', 'Hide icons'\)/,
 	'a shown row offers Hide icons');
+like($dock, qr/act="dock_transparent"/, 'Transparent is offered');
+like($dock, qr/jawnosDockText\('dock\.transparent', 'Transparent'\)/,
+	'and named on screen');
+like($dock, qr/function jawnosDockTransparentSet\(state\)/,
+	'the dock backing has one setter');
+like($dock, qr/jawnosBars\.transparent = state/, 'it moves the live setting');
+like($dock, qr/jawnosTaskbarSave\('dock_transparent', state\)/,
+	'and writes the dock_transparent setting');
+
+# --- Add items is a flyout beside the menu ----------------------------------
+like($dock, qr/function jawnosDockFlyoutToggle\(row, menu\)/,
+	'Add items opens a flyout beside its menu');
+like($dock, qr/context\.data\('dock_add_panel', add\)/,
+	'the menu keeps its flyout for the row');
+like($dock, qr/right_edge \+ w <= vw - 4/, 'it opens to the right when that edge has room');
+like($dock, qr/left_edge >= 4/, 'and to the left otherwise');
+like($dock, qr/dock_add_flyout/, 'the flyout has its own class');
+unlike($dock, qr/taskbar_context_sub\[sub="dock_add"\]/, 'the old inline submenu is gone');
+like($dock, qr/'max-height': \(vh - top - 4\) \+ 'px'/, 'the flyout is clamped on screen');
+
+# --- the menu animates in and has an idle timeout ---------------------------
+like($dock, qr/var jawnosDockMenuWait = 8000;/, 'the dock menu has an idle wait');
+like($dock, qr/function jawnosDockMenuArm\(\)/, 'opening the menu arms the timeout');
+like($dock, qr/function jawnosDockMenuFade\(\)/, 'an expired menu fades away');
+like($dock, qr/jawnosDockMenuArm\(\);/, 'a press or a move starts the wait again');
+like($css, qr/\.taskbar_context\s*\{[^}]*animation: jawnos_context_in/s,
+	'the menu animates in');
+like($css, qr/\.taskbar_context\.taskbar_context_closing/,
+	'and carries a closing state');
+like($css, qr/#pseudonym_home\.dock_transparent\s*\{[^}]*background-color: transparent/s,
+	'Transparent steps the dock backing aside');
+like($css, qr/\.dock_add_flyout/, 'the flyout is styled');
+like($css, qr/prefers-reduced-motion/, 'reduced motion skips the animation');
 
 # --- the dock's apps and widgets are the taskbar's pins ----------------------
 like($dock, qr/function jawnosDockApps\(\)/, 'the dock has one reader for its app and widget faces');
@@ -157,6 +191,9 @@ my $body = join(' ', @{ $topic->{body} || [] });
 like($body, qr/Right-click.*background.*menu/s, 'the topic names the background menu');
 like($body, qr/Edit dock/, 'the topic names Edit dock');
 like($body, qr/Add items/, 'the topic names Add items');
+like($body, qr/Transparent/, 'the topic names Transparent');
+like($body, qr/opens a list beside the menu/, 'the topic says Add items is a flyout');
+unlike($body, qr/the taskbar's own rows underneath/, 'the dock topic no longer lends the menu taskbar rows');
 like($body, qr/Dock position/, 'the topic names Dock position');
 like($body, qr/drag.*reorder|reorder/s, 'the topic explains drag-to-reorder');
 like($body, qr/faces are the same pinned apps and widgets/, 'the topic says the dock faces are the taskbar\'s pins');
@@ -166,6 +203,7 @@ like($body, qr/widget face is disabled on both bars/, 'and a widget too');
 like($body, qr/Remove from dock/, 'the topic still explains removing a face');
 my $steps = join(' ', @{ $topic->{steps} || [] });
 like($steps, qr/Right-click the dock background/, 'a step opens the background menu');
+like($steps, qr/Transparent/, 'a step names Transparent');
 like($steps, qr/Edit dock and drag/, 'a step reorders the row');
 
 done_testing();

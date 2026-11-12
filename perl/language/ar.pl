@@ -283,6 +283,7 @@ $catalog{'ar'} = {
 		'common.go' => 'اذهب',
 		'dock.add' => 'أضف إلى الرصيف',
 		'dock.remove' => 'أزل من الرصيف',
+		'dock.transparent' => 'شفاف',
 		'common.any' => 'أي',
 		'common.all' => 'الكل',
 		'common.specs' => 'المواصفات',

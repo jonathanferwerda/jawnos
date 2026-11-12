@@ -285,11 +285,18 @@ function jawnosDockMenuPlace(menu, x, y) {
 	$('.taskbar_context').remove();
 	if (!menu || !menu.length) { return; }
 	$('body').append(menu);
+	menu.addClass('dock_context_menu');
+	var vw = $(window).width();
+	var vh = $(window).height();
 	var w = menu.outerWidth();
 	var h = menu.outerHeight();
-	var left = Math.max(4, Math.min(x, $(window).width() - w - 4));
-	var top = Math.max(4, Math.min(y, $(window).height() - h - 4));
-	menu.css({ left: left + 'px', top: top + 'px' });
+	var left = Math.max(4, Math.min(x, vw - w - 4));
+	var top = Math.max(4, Math.min(y, vh - h - 4));
+	// a menu taller than the room below its top scrolls inside that room, so a
+	// menu opened at the foot of the screen never runs off it
+	menu.css({ left: left + 'px', top: top + 'px', 'max-height': (vh - top - 4) + 'px' });
+	// the dock's menus also put themselves away after a spell without a press
+	jawnosDockMenuArm();
 }
 function jawnosDockMenuOpen(x, y, rows, label) {
 	if (!rows || !rows.length) { return; }
@@ -546,12 +553,21 @@ function jawnosDockIconsSet(state) {
 	if (typeof jawnosBarsApply == 'function') { jawnosBarsApply(); }
 	else if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
 }
+// A see-through dock: the faces and the search keep their own backing, the
+// pill's slab steps aside. The class is applied to the live dock at once and
+// the value is written away, so a reload comes back the same.
+function jawnosDockTransparentSet(state) {
+	state = state == 'on' ? 'on' : 'off';
+	if (typeof jawnosBars != 'undefined') { jawnosBars.transparent = state; }
+	var home = $('#pseudonym_home');
+	if (home.length) { home.toggleClass('dock_transparent', state == 'on'); }
+	if (typeof jawnosTaskbarSave == 'function') { jawnosTaskbarSave('dock_transparent', state); }
+}
 
-// The dock's menu. It reuses the taskbar's builder for the bar's own furniture
-// (so Edit mode, Position, Clock and Add items never drift apart from the
-// taskbar's copy) and lays the dock's rows above it: Edit dock, Dock position,
-// Show/Hide icons and an Add items list of the start menu's apps and the faces
-// this browser has removed.
+// The dock's menu. It holds only the dock's own rows - Edit dock, Dock
+// position, Show/Hide icons, Transparent and an Add items flyout of the start
+// menu's apps and the faces this browser has removed. The taskbar's menu is its
+// own and stays on the bar.
 function jawnosDockContextBuild() {
 	var selected = function (on) { return on ? '✓' : ''; };
 	var context = $('<div class="taskbar_context"></div>');
@@ -573,9 +589,17 @@ function jawnosDockContextBuild() {
 		+ (icons_hidden ? jawnosDockText('dock.show_icons', 'Show icons') : jawnosDockText('dock.hide_icons', 'Hide icons'))
 		+ '<span class="taskbar_context_check">' + selected(!icons_hidden) + '</span></div>');
 
+	var transparent = (typeof jawnosBars != 'undefined') && jawnosBars.transparent == 'on';
+	context.append('<div class="taskbar_context_selection" act="dock_transparent">'
+		+ jawnosDockText('dock.transparent', 'Transparent')
+		+ '<span class="taskbar_context_check">' + selected(transparent) + '</span></div>');
+
+	// Add items is a flyout, not an inline submenu: the menu would otherwise
+	// grow off the bottom of a bottom-edge dock. The list is built with the menu
+	// (so its rows are ready) but stays detached until the row is pressed.
 	context.append('<div class="taskbar_context_selection" act="dock_add">'
 		+ jawnosDockText('dock.add_items', 'Add items') + '<span class="taskbar_context_check">▸</span></div>');
-	var add = $('<div class="taskbar_context_sub" sub="dock_add" style="display:none;"></div>');
+	var add = $('<div class="taskbar_context dock_context_menu dock_add_flyout"></div>');
 	var list = $('<div class="taskbar_context_apps"></div>').appendTo(add);
 	var add_label = function (text) { list.append($('<div class="taskbar_context_label"></div>').text(text)); };
 	var add_face = function (app, hint, src, toggle) {
@@ -657,14 +681,67 @@ function jawnosDockContextBuild() {
 		});
 	}
 	fill_widgets();
-	context.append(add);
-
-	if (typeof jawnosTaskbarContextBuild == 'function') {
-		var base = jawnosTaskbarContextBuild();
-		context.append($('<div class="taskbar_context_label"></div>').text(jawnosDockText('dock.taskbar', 'Taskbar')));
-		context.append(base.children());
-	}
+	// the flyout travels with its menu: the close path removes every
+	// .taskbar_context, and the menu keeps the panel to open beside its row
+	context.data('dock_add_panel', add);
 	return context;
+}
+
+// ---- the Add items flyout and the menu's idle timeout ---------------------
+// The flyout is its own menu beside the dock's, so a bottom-edge dock never has
+// to scroll the parent to reach it. It opens to the right when that edge has
+// room, to the left otherwise, and is clamped on screen like its parent.
+var jawnosDockMenuTimer = null;
+var jawnosDockMenuWait = 8000;
+
+function jawnosDockMenuArm() {
+	clearTimeout(jawnosDockMenuTimer);
+	jawnosDockMenuTimer = setTimeout(function() { jawnosDockMenuFade(); }, jawnosDockMenuWait);
+}
+function jawnosDockMenuDisarm() {
+	clearTimeout(jawnosDockMenuTimer);
+	jawnosDockMenuTimer = null;
+}
+// The idle timeout closes the dock's menus the way the open animation came in:
+// a short fade, then the nodes go. A menu already gone is simply done.
+function jawnosDockMenuFade() {
+	jawnosDockMenuDisarm();
+	var menu = $('.dock_context_menu');
+	if (!menu.length) { return; }
+	menu.addClass('taskbar_context_closing');
+	setTimeout(function() { menu.remove(); }, 140);
+}
+function jawnosDockFlyoutToggle(row, menu) {
+	var panel = menu.data('dock_add_panel');
+	if (!panel || !panel.length) { return; }
+	$('.dock_add_flyout').not(panel).remove();
+	if (panel.parent().length) {
+		panel.remove();
+		row.find('.taskbar_context_check').text('▸');
+		return;
+	}
+	$('body').append(panel);
+	var w = panel.outerWidth();
+	var h = panel.outerHeight();
+	var vw = $(window).width();
+	var vh = $(window).height();
+	var m = menu[0].getBoundingClientRect();
+	var r = row[0].getBoundingClientRect();
+	var gap = 4;
+	var right_edge = m.right + gap;
+	var left_edge = m.left - w - gap;
+	var place_left;
+	if (right_edge + w <= vw - 4) { place_left = right_edge; }
+	else if (left_edge >= 4) { place_left = left_edge; }
+	// neither side holds the whole list: take the roomier side and let the
+	// panel's own scroller (and its max-height) do the rest
+	else { place_left = ((vw - m.right) >= m.left) ? Math.max(4, vw - w - 4) : 4; }
+	var top = Math.max(4, Math.min(r.top, vh - h - 4));
+	if (h > vh - 8) { top = 4; }
+	panel.css({ left: place_left + 'px', top: top + 'px', 'max-height': (vh - top - 4) + 'px' });
+	// the arrow leans the way the panel opened
+	row.find('.taskbar_context_check').text(place_left < m.left ? '◂' : '▸');
+	jawnosDockMenuArm();
 }
 
 $(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
@@ -679,9 +756,11 @@ $(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
 	else if (act == 'dock_icons') {
 		jawnosDockIconsSet((typeof jawnosBars != 'undefined' && jawnosBars.icons == 'hidden') ? 'shown' : 'hidden');
 	}
+	else if (act == 'dock_transparent') {
+		jawnosDockTransparentSet((typeof jawnosBars != 'undefined' && jawnosBars.transparent == 'on') ? 'off' : 'on');
+	}
 	else if (act == 'dock_add') {
-		$('.taskbar_context_sub[sub="dock_add"]').toggle();
-		$('.taskbar_context_sub[sub="add"], .taskbar_context_sub[sub="clock"]').hide();
+		jawnosDockFlyoutToggle(row, row.closest('.taskbar_context'));
 		return;
 	}
 	else if (act == 'dock_add_app') {
@@ -727,6 +806,13 @@ $(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
 	}
 	if (typeof jawnosTaskbarContextClose == 'function') { jawnosTaskbarContextClose(); }
 	else { $('.taskbar_context').remove(); }
+	jawnosDockMenuDisarm();
+});
+
+// A pointer or a key inside a dock menu counts as use: the idle timeout starts
+// again rather than closing a menu that is being read.
+$(document).on('mousemove keydown click', '.dock_context_menu', function() {
+	if (jawnosDockMenuTimer) { jawnosDockMenuArm(); }
 });
 
 // A right-click on a dock face opens the same menu with a Remove row for that

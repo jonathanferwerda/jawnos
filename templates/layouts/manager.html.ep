@@ -94,6 +94,7 @@
 				search_placement: '<%= &subs::misc_setting('search_placement') || 'dock' %>',
 				start_button_side: '<%= &subs::misc_setting('start_button_side') || 'right' %>',
 				dock_icons: '<%= &subs::misc_setting('dock_icons') || 'shown' %>',
+				dock_transparent: '<%= &subs::misc_setting('dock_transparent') || 'off' %>',
 				taskbar_height: '<%= &subs::misc_setting('taskbar_height') || 44 %>',
 				navbar_height: '<%= &subs::misc_setting('navbar_height') || 36 %>',
 				// a border width whose 0 is meaningful: seed it empty when unset so the

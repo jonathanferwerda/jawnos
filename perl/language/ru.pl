@@ -283,6 +283,7 @@ $catalog{'ru'} = {
 		'common.go' => 'Перейти',
 		'dock.add' => 'Добавить на док',
 		'dock.remove' => 'Убрать с дока',
+		'dock.transparent' => 'Прозрачный',
 		'common.any' => 'Любой',
 		'common.all' => 'Все',
 		'common.specs' => 'Характеристики',

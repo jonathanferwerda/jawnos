@@ -283,6 +283,7 @@ $catalog{'en'} = {
 		'common.go' => 'Go',
 		'dock.add' => 'Add to dock',
 		'dock.remove' => 'Remove from dock',
+		'dock.transparent' => 'Transparent',
 		'common.any' => 'Any',
 		'common.all' => 'All',
 		'common.specs' => 'Specs',

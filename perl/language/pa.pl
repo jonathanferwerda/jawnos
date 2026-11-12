@@ -283,6 +283,7 @@ $catalog{'pa'} = {
 		'common.go' => 'ਜਾਓ',
 		'dock.add' => 'ਡੌਕ ਵਿੱਚ ਸ਼ਾਮਲ ਕਰੋ',
 		'dock.remove' => 'ਡੌਕ ਤੋਂ ਹਟਾਓ',
+		'dock.transparent' => 'ਪਾਰਦਰਸ਼ੀ',
 		'common.any' => 'ਕੋਈ ਵੀ',
 		'common.all' => 'ਸਾਰੇ',
 		'common.specs' => 'ਵਿਸ਼ੇਸ਼ਤਾਵਾਂ',

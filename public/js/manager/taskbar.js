@@ -27,6 +27,8 @@ var jawnosBars = {
 	search: jawnos_bar_settings['search_placement'] || 'dock',
 	start_side: jawnos_bar_settings['start_button_side'] || 'right',
 	icons: jawnos_bar_settings['dock_icons'] || 'shown',
+	// the dock's backing, stepped aside by the dock menu's Transparent row
+	transparent: jawnos_bar_settings['dock_transparent'] || 'off',
 	height: parseInt(jawnos_bar_settings['taskbar_height']) || 44,
 	// the window title bar's own thickness, and the frame every window wears
 	navbar: parseInt(jawnos_bar_settings['navbar_height']) || 36,
@@ -427,6 +429,7 @@ function jawnosBarsApply() {
 
 	bar.attr('position', jawnosBars.taskbar);
 	bar.attr('autohide', jawnosBars.autohide);
+	dock.toggleClass('dock_transparent', jawnosBars.transparent == 'on');
 	if (dock.attr('position') != jawnosBars.dock) {
 		// a move between edges drops the tuck the old edge left behind
 		dock.attr('position', jawnosBars.dock).css({ top: '', bottom: '', left: '', right: '' });

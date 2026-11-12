@@ -283,6 +283,7 @@ $catalog{'zh'} = {
 		'common.go' => '前往',
 		'dock.add' => '添加到停靠栏',
 		'dock.remove' => '从停靠栏移除',
+		'dock.transparent' => '透明',
 		'common.any' => '任意',
 		'common.all' => '全部',
 		'common.specs' => '规格',

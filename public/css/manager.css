@@ -89,6 +89,15 @@ html, body {
 	/* the dock sizes this box in JS; counting the padding in keeps its maths
 	   and the centring honest */
 	box-sizing: border-box;
+	/* the Transparent row in the dock's menu fades the backing away rather than
+	   snapping it, and brings it back the same way */
+	transition: background-color .25s ease, border-color .25s ease, box-shadow .25s ease;
+}
+/* a see-through dock: the faces keep their own backing, the pill's slab goes */
+#pseudonym_home.dock_transparent {
+	background-color: transparent !important;
+	border-color: transparent;
+	box-shadow: none;
 }
 /* where the dock lives: the misc setting names the edge, and the custom
    properties keep it clear of the taskbar the layout may have put there. The
@@ -115,7 +124,7 @@ html, body {
    button at the foot of the stack, and the search panel waiting beside it. The
    panel slides out of its edge when the button calls it, and the cancel beside
    the input sends it away again. */
-#pseudonym_home[position=left], #pseudonym_home[position=right] { padding: 11px; transition: left .22s ease, right .22s ease; }
+#pseudonym_home[position=left], #pseudonym_home[position=right] { padding: 11px; transition: left .22s ease, right .22s ease, background-color .25s ease, border-color .25s ease, box-shadow .25s ease; }
 /* everything riding the pill travels with it on the same left edge */
 #pseudonym_home[position=left] .pseudonym,
 #pseudonym_home[position=right] .pseudonym,
@@ -846,6 +855,23 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	max-height: calc(100vh - 12px);
 	overflow-y: auto;
 	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+	animation: jawnos_context_in .13s ease-out;
+}
+/* a menu arrives with a short fade and rise; the dock's idle timeout leaves by
+   the same door through .taskbar_context_closing */
+@keyframes jawnos_context_in {
+	from { opacity: 0; transform: translateY(-4px) scale(.985); }
+	to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.taskbar_context.taskbar_context_closing {
+	opacity: 0;
+	transform: translateY(-4px) scale(.985);
+	transition: opacity .13s ease, transform .13s ease;
+	pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+	.taskbar_context { animation: none; }
+	.taskbar_context.taskbar_context_closing { transition: none; }
 }
 .taskbar_context_selection {
 	display: flex;
@@ -865,6 +891,8 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 }
 .taskbar_context_check { margin-left: auto; }
 .taskbar_context_sub { display: flex; flex-direction: column; gap: 5px; padding: 4px 10px 8px 16px; }
+/* the Add items flyout stands beside its menu, above it, with its own edge */
+.dock_add_flyout { z-index: 60001; min-width: 230px; }
 .taskbar_context_sub select { font-size: 15px; max-width: 240px; }
 /* the add-items list: a fixed height so a long list is scrolled, not run off the
    screen, and its own scroll does not drag the page along */

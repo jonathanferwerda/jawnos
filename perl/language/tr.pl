@@ -283,6 +283,7 @@ $catalog{'tr'} = {
 		'common.go' => 'Git',
 		'dock.add' => "Dock'a ekle",
 		'dock.remove' => "Dock'tan kaldır",
+		'dock.transparent' => 'Saydam',
 		'common.any' => 'Herhangi',
 		'common.all' => 'Tümü',
 		'common.specs' => 'Özellikler',

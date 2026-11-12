@@ -283,6 +283,7 @@ $catalog{'hi'} = {
 		'common.go' => 'जाएँ',
 		'dock.add' => 'डॉक में जोड़ें',
 		'dock.remove' => 'डॉक से हटाएँ',
+		'dock.transparent' => 'पारदर्शी',
 		'common.any' => 'कोई भी',
 		'common.all' => 'सभी',
 		'common.specs' => 'विशेषताएं',

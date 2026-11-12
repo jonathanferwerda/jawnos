@@ -283,6 +283,7 @@ $catalog{'bn'} = {
 		'common.go' => 'যান',
 		'dock.add' => 'ডকে যোগ করুন',
 		'dock.remove' => 'ডক থেকে সরান',
+		'dock.transparent' => 'স্বচ্ছ',
 		'common.any' => 'যেকোনো',
 		'common.all' => 'সব',
 		'common.specs' => 'বিশেষ উল্লেখ',

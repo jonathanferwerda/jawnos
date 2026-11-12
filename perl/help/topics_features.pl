@@ -153,7 +153,7 @@ $topic{'start_menu'} = {
 		body => [
 			'The dock is a second bar you can place on any edge. Its faces are the same pinned apps and widgets as the taskbar. It can also host the search box; a side dock tucks itself away and slides back when you call for it. A row dock (top or bottom) keeps the search\'s strip on screen when it tucks: press that strip to call the row back, and a press on the background where the row would have been stays a press on the background.',
 			'A face opens its own panel: the keyboard and calculator faces open the JawnOS keyboard (the calculator straight to its page), and the others open their keyboard panel above the dock. A pinned app opens its window and a pinned widget opens the app that widget stands for. Press the same face again to put its panel away. A panel is moved by its top bar, resized by its edge or corner, and both its place and its size are remembered on this device.',
-			'Right-click (or long-press) the dock\'s background for its menu. Edit dock turns the row into a reorderable list; Dock position moves the dock to the bottom, top, left or right edge, or hides it; Show icons and Hide icons switch the icon row on and off while the dock keeps whatever else it carries; and Add items lists the start menu\'s apps, the widgets, and the faces this browser has removed, so a face can be put back, an app can be pinned, and a widget can be put on or taken off both bars. The same menu carries the taskbar\'s own rows underneath, heading Taskbar.',
+			'Right-click (or long-press) the dock\'s background for its menu. Edit dock turns the row into a reorderable list; Dock position moves the dock to the bottom, top, left or right edge, or hides it; Show icons and Hide icons switch the icon row on and off while the dock keeps whatever else it carries; Transparent fades the dock\'s own backing away and brings it back; and Add items opens a list beside the menu of the start menu\'s apps, the widgets, and the faces this browser has removed, so a face can be put back, an app can be pinned, and a widget can be put on or taken off both bars. The list opens to the right of the menu, or to the left when that edge is short, so a dock along the bottom does not push it off the screen. The menu is the dock\'s alone; the taskbar keeps its own menu on the bar.',
 			'Right-click (or long-press) a face for that same menu with Remove from dock at its head. An app face unpins the app from the taskbar and the dock together; a widget face is disabled on both bars. Either can come back from Add items, and choosing an app or widget row again takes it off.',
 			'Edit dock is the drag-to-reorder mode: the taskbar\'s pinned apps and widgets keep the order the taskbar gives them, so reordering them is done on the taskbar. Outside Edit dock a face still drags freely, a side dock still slides away and back, and a press on a face still opens its panel.',
 			'The dock\'s pinned apps and widgets are the house\'s: they are the same list the taskbar keeps, so pinning or unpinning on either bar changes both.',
@@ -161,9 +161,9 @@ $topic{'start_menu'} = {
 		],
 		steps => [
 			'Press a face to open its panel, and press it again to close it.',
-			'Right-click the dock background for Edit dock, Dock position, Show or hide icons and Add items.',
+			'Right-click the dock background for Edit dock, Dock position, Show or hide icons, Transparent and Add items.',
 			'Turn on Edit dock and drag a face to reorder the row; this browser remembers the order.',
-			'Right-click a face to remove it, and use Add items to put it back, pin an app, or enable a widget; the app and widget choices also change the taskbar.',
+			'Right-click a face to remove it, and use Add items to put it back, pin an app, or enable a widget; the app and widget choices also change the taskbar. The list opens beside the menu and puts itself away after a spell without use.',
 		],
 		related => [ 'taskbar', 'search' ]
 	};

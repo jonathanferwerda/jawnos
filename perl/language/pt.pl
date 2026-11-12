@@ -283,6 +283,7 @@ $catalog{'pt'} = {
 		'common.go' => 'Ir',
 		'dock.add' => 'Adicionar à dock',
 		'dock.remove' => 'Remover da dock',
+		'dock.transparent' => 'Transparente',
 		'common.any' => 'Qualquer',
 		'common.all' => 'Todos',
 		'common.specs' => 'Especificações',

@@ -283,6 +283,7 @@ $catalog{'ja'} = {
 		'common.go' => '移動',
 		'dock.add' => 'ドックに追加',
 		'dock.remove' => 'ドックから削除',
+		'dock.transparent' => '透明',
 		'common.any' => 'すべて',
 		'common.all' => 'すべて',
 		'common.specs' => '仕様',
