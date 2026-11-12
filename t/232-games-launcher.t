@@ -1,4 +1,4 @@
-# tests-for: templates/apps/games.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js perl/help/topics_people.pl public/css/manager.css
+# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js perl/help/topics_people.pl public/css/manager.css
 # covers:    The second launcher behind the Controller's Games tile, Twirl's
 #            clockwise and counter-clockwise turns, and the strip a full-screen
 #            app used to keep where its title bar had been.
@@ -80,6 +80,14 @@ like($page, qr/id="games_controls"[^>]*href="\/manager\/games\/mapping"/,
 	'Controls points at the mapping page');
 like($page, qr/encodeURIComponent\(system\)/, 'the chosen system follows the Controls link into its query');
 unlike($page, qr/cursor:(?!var\()/, 'every cursor uses the house pointer token');
+
+
+# --- the shelf wears the theme it was given -----------------------------------
+like($page, qr/include 'controller\/standalone'/, 'the shelf includes the standalone theme and Home rule');
+like($page, qr/icon_for\('\/images\/decipherable\/cards\.png'\)/, 'Cards wears the active icon set');
+like($page, qr/icon_for\('\/images\/decipherable\/tetris\.png'\)/, 'Twirl wears the active icon set');
+like($page, qr/icon_for\('\/images\/decipherable\/diskette\.png'\)/, 'Emulated games wears the active icon set');
+like($page, qr/decoding="async"/, 'a cover decodes off the page\'s drawing thread');
 
 # --- the desk and the Controller know it -------------------------------------
 my $back = read_file("$root/public/js/manager/manager/09_app_back.js");

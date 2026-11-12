@@ -4,6 +4,7 @@
     away from the surface it names. Leave is a panel of its own: the action asks
     subs::power_actions() what this machine can do, so the tile draws only the
     buttons that can succeed and never promises a press that does nothing. %>
+<%= include 'controller/standalone' %>
 <style>
 	/* Four across, two down: the panel is 854x480, and a 2x4 grid was 606px
 	   tall - the fourth row sat below the glass. */
@@ -16,6 +17,8 @@
 		min-width:0; overflow:hidden; padding:10px; border:1px solid var(--line); border-radius:12px;
 		background:var(--panel); color:var(--ink); text-decoration:none; }
 	.controller_tile:hover { border-color:var(--accent, #4a90d9); }
+	.controller_tile:focus, .controller_tile.is_selected {
+		outline:3px solid var(--accent, #4a90d9); outline-offset:-3px; }
 	.controller_tile_label { font-size:15px; font-weight:600; line-height:1.1; }
 	.controller_tile_note { font-size:10px; line-height:1.25; opacity:.72; }
 	/* The window frame's own icon is drawn at its natural size inside this page
@@ -187,42 +190,42 @@
 	</div>
 	<div id="controller_home">
 		<a class="controller_tile" href="/manager?open=music&amp;full=1">
-			<img class="controller_tile_icon" src="/images/decipherable/headphones.png" alt="">
+			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/headphones.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Music') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Play the house music') %></span>
 		</a>
 		<a class="controller_tile" href="/manager?open=gallery&amp;full=1">
-			<img class="controller_tile_icon" src="/images/decipherable/gallery.png" alt="">
+			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Gallery') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Photos and videos') %></span>
 		</a>
 		<a class="controller_tile" href="/manager?open=notifications&amp;full=1">
-			<img class="controller_tile_icon" src="/images/decipherable/bell.png" alt="">
+			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/bell.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Notifications') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('What the house has told you') %></span>
 		</a>
 		<a class="controller_tile" href="/manager/games">
-			<img class="controller_tile_icon" src="/images/decipherable/tetris.png" alt="">
+			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/tetris.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Games') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Cards, Twirl and emulated games') %></span>
 		</a>
 		<a class="controller_tile" href="/manager/controller/config">
-			<img class="controller_tile_icon" src="/images/decipherable/gear.png" alt="">
+			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Configuration') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Wi-Fi, power, time, sound and RetroArch') %></span>
 		</a>
 		<a class="controller_tile" href="/manager?open=phone&amp;full=1">
-			<img class="controller_tile_icon" src="/images/decipherable/phone.png" alt="">
+			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/phone.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('IVR') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('The phone call menu and greeting') %></span>
 		</a>
 		<a class="controller_tile" href="/manager?open=embedded&amp;full=1">
-			<img class="controller_tile_icon" src="/images/decipherable/on.png" alt="">
+			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/on.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Automation') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Toggles for the house devices') %></span>
 		</a>
-		<div class="controller_tile controller_tile_leave">
-			<img class="controller_tile_icon" src="/images/decipherable/exit.png" alt="">
+		<div class="controller_tile controller_tile_leave" tabindex="0">
+			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/exit.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Leave') %></span>
 % if (@power_available) {
 			<div class="controller_leave_actions">
@@ -604,6 +607,83 @@ function closeControllerPanels(except) {
 	}
 	paint();
 	setInterval(paint, 15000);
+})();
+
+/* The D-pad sends the keyboard arrows, so the launcher can be walked without
+   moving the pointer. An arrow selects the next tile and outlines it; Enter or
+   a click after an arrow opens the selected tile. A click after the pointer
+   moved is an ordinary click on whatever it hit. */
+(function () {
+	var grid = document.getElementById('controller_home');
+	if (!grid) { return; }
+	var tiles = Array.prototype.slice.call(grid.querySelectorAll('.controller_tile'));
+	if (!tiles.length) { return; }
+	var selected = -1;
+	var keyboardMode = false;
+	function paint() {
+		for (var i = 0; i < tiles.length; i++) {
+			tiles[i].classList.toggle('is_selected', i === selected);
+		}
+	}
+	function select(index) {
+		selected = ((index % tiles.length) + tiles.length) % tiles.length;
+		paint();
+		try { tiles[selected].focus({ preventScroll: true }); }
+		catch (e) { tiles[selected].focus(); }
+	}
+	function activate() {
+		var tile = tiles[selected];
+		if (!tile) { return; }
+		if (tile.tagName === 'A' && tile.getAttribute('href')) {
+			location.href = tile.getAttribute('href');
+			return;
+		}
+		var first = tile.querySelector('button, a[href]');
+		if (first) { first.focus(); }
+	}
+	document.addEventListener('keydown', function (e) {
+		var key = e.key;
+		if (key !== 'ArrowUp' && key !== 'ArrowDown' && key !== 'ArrowLeft'
+			&& key !== 'ArrowRight' && key !== 'Enter' && key !== ' ') { return; }
+		var target = e.target;
+		if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) { return; }
+		if (key === 'Enter' || key === ' ') {
+			if (selected < 0) { return; }
+			e.preventDefault();
+			activate();
+			return;
+		}
+		e.preventDefault();
+		keyboardMode = true;
+		if (selected < 0) {
+			select((key === 'ArrowUp' || key === 'ArrowLeft') ? tiles.length - 1 : 0);
+			return;
+		}
+		var delta = key === 'ArrowRight' ? 1 : key === 'ArrowLeft' ? -1 : key === 'ArrowDown' ? 4 : -4;
+		select(selected + delta);
+	});
+	/* The left stick is the pointer. Any real movement hands the click back to
+	   it; the D-pad never generates a mousemove. */
+	document.addEventListener('mousemove', function (e) {
+		if (e.movementX || e.movementY) { keyboardMode = false; }
+	});
+	/* A is a left click at wherever the pointer was parked. After an arrow that
+	   click means the selected tile, not that old spot. The bar and the Leave
+	   buttons keep their own clicks. */
+	document.addEventListener('click', function (e) {
+		if (!keyboardMode) { return; }
+		if (e.target.closest('#controller_bar button, #controller_bar a, .controller_leave_actions button, .controller_leave_actions a')) { return; }
+		e.preventDefault();
+		e.stopPropagation();
+		keyboardMode = false;
+		activate();
+	}, true);
+	tiles.forEach(function (tile, i) {
+		tile.addEventListener('mouseenter', function () {
+			keyboardMode = false;
+			if (selected !== i) { selected = i; paint(); }
+		});
+	});
 })();
 
 </script>

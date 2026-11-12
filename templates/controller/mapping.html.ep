@@ -1,4 +1,5 @@
 <% use Mojo::JSON qw(encode_json); %>
+<%= include 'controller/standalone' %>
 <%# The per-console control map. The Gou is drawn above and the console
     it is standing in for below. Arm a button on the Gou, then press the
     console button it should work as; Save stores the pairing in the Games app

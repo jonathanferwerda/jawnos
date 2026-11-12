@@ -179,6 +179,16 @@ like($page, qr|/manager/games/art\?id=|, 'the card asks for its art');
 like($page, qr/data-game="<%= \$game->\{'id'\} %>"/, 'the card carries its id');
 like($page, qr/No games yet/, 'an empty shelf says so');
 
+# The art route used to set the content asset and return without finishing the
+# response, so every cover request stayed open until the browser gave up (five
+# minutes), pinned the page's connections, and the shelf never drew. reply->file
+# finishes the response and serves the same file.
+like($controller, qr/\$c->reply->file\(\$path\)/, 'the art route finishes the response with the cover file');
+unlike($controller, qr/\$c->res->content->asset\(Mojo::Asset::File->new\(path => \$path\)\)/,
+	'and no longer leaves the request open by only setting the asset');
+like($page, qr/decoding="async"/, 'a cover decodes asynchronously');
+
+
 my $help = read_file("$root/perl/help/topics_people.pl");
 like($help, qr/Install emulators fetches RetroArch/, 'the Guide describes the shelf');
 like($help, qr/cover is kept beside the ROM/, 'and says a fetched cover is kept, not fetched again');

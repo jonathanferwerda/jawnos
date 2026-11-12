@@ -1,0 +1,38 @@
+<%# The theme a launcher page wears by itself.
+    The Controller, Games and their subpages are served as window fragments,
+    not inside the desk's layout, so they do not inherit the body's cursor set
+    or the desk's Home-key handler. This partial supplies both: the pointer
+    from the active theme, and the one-page-back rule the Home button sends.
+    A page already inside the desk keeps the desk's cursor (the guard checks
+    the attribute before setting it). %>
+<style id="jawnos_cursor_css"><%== &subs::cursor_css() %></style>
+<style>:root{--accent:<%= &subs::active_theme_bundle()->{'accent'} || '#4a90d9' %>;}</style>
+<script>
+(function () {
+	var cursor = '<%= &subs::cursor_set() %>';
+	if (document.body && cursor && !document.body.getAttribute('data-cursor-set')) {
+		document.body.setAttribute('data-cursor-set', cursor);
+	}
+	if (document.body && !document.body.getAttribute('data-icon-set')) {
+		document.body.setAttribute('data-icon-set', '<%= &subs::icon_set() %>');
+	}
+	if (typeof jawnosHomeBack === 'function' || window.jawnosStandaloneHome) { return; }
+	window.jawnosStandaloneHome = true;
+	document.addEventListener('keydown', function (e) {
+		if (e.key !== 'Home') { return; }
+		e.preventDefault();
+		var path = location.pathname.replace(/\/+$/, '') || '/';
+		var back = '/manager/controller';
+		if (path === '/manager/games') {
+			var view = '';
+			try { view = new URLSearchParams(location.search).get('view') || ''; } catch (err) { view = ''; }
+			back = view === 'emulated' ? '/manager/games' : '/manager/controller';
+		}
+		else if (path === '/manager/games/mapping') { back = '/manager/games?view=emulated'; }
+		else if (path === '/manager/controller/time' || path === '/manager/controller/retroarch') { back = '/manager/controller/config'; }
+		else if (path === '/manager/controller/config') { back = '/manager/controller'; }
+		if (back === path + location.search) { back = '/manager/controller'; }
+		location.href = back;
+	});
+})();
+</script>

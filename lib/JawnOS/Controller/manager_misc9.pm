@@ -17,7 +17,6 @@ use warnings ;#'uninitialized';
 use Mojo::Promise;
 use Mojo::UserAgent;
 use Mojo::JSON ();
-use Mojo::Asset::File;
 use Cwd ();
 use POSIX ();
 use Time::Local;
@@ -870,7 +869,10 @@ sub action_44006 {
 	# A cover changes only when it is fetched again, so a revisit draws it from
 	# the browser's own cache instead of asking this route for every card.
 	$c->res->headers->cache_control('private, max-age=300');
-	$c->res->content->asset(Mojo::Asset::File->new(path => $path));
+	# reply->file finishes the response. Setting the content asset alone left
+	# the request open, so every card waited five minutes for a cover that had
+	# already been found.
+	$c->reply->file($path);
 }
 
 # A game outlives the request that starts it: the kiosk has to stop, the

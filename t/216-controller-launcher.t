@@ -1,4 +1,4 @@
-# tests-for: templates/apps/controller.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_misc4.pm public/js/manager/manager/09_app_back.js public/css/manager.css lib/JawnOS/Domain/Misc.pm perl/help/topics_people.pl
+# tests-for: templates/apps/controller.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_misc4.pm public/js/manager/manager/09_app_back.js public/css/manager.css lib/JawnOS/Domain/Misc.pm perl/help/topics_people.pl
 # covers:    The controller's home is a launcher, not a desk: a handheld panel
 #            opens on eight tiles, a Manager button, and the Leave tile draws a
 #            working button per power choice this machine can offer.
@@ -44,7 +44,7 @@ for my $label (qw(Music Gallery Notifications Games Configuration IVR Automation
 # Leave is a panel, not a link: one button per action, drawn from the list
 # the action handed the template, and an inline script that posts the chosen
 # word to the power route without navigating away.
-like($template, qr/<div class="controller_tile controller_tile_leave">/,
+like($template, qr/<div class="controller_tile controller_tile_leave"[^>]*>/,
 	'Leave is a panel, not a link');
 like($template, qr/\(grep \{ \$power_has\{\$\_\} \} \@power_order\)/,
 	'the buttons are filtered from the actions this machine offers');
@@ -141,5 +141,41 @@ like(read_file("$root/public/css/manager.css"), qr/body\.full_app_mode #taskbar/
 	'the full-screen mode hides the taskbar');
 like(read_file("$root/lib/JawnOS/Domain/Misc.pm"), qr/jawnos_screen\.pl/,
 	'screen off uses the handheld helper');
+
+# --- the arrow buttons walk the tiles ----------------------------------------
+# The D-pad is delivered as the keyboard arrows. The launcher keeps a selection
+# so a person can walk the eight tiles without touching the pointer; Enter or a
+# click after an arrow opens the selected tile.
+like($page, qr/querySelectorAll\('\.controller_tile'\)/, 'the launcher collects its tiles for keyboard walking');
+like($page, qr/ArrowRight/, 'the right arrow selects the next tile');
+like($page, qr/ArrowLeft/, 'the left arrow selects the previous tile');
+like($page, qr/ArrowDown/, 'the down arrow moves a row');
+like($page, qr/ArrowUp/, 'and the up arrow moves back');
+like($page, qr/is_selected/, 'the selected tile is marked for the outline');
+like($page, qr/preventScroll: true/, 'focusing a tile does not scroll the panel');
+like($page, qr/keyboardMode/, 'a click after a keyboard move belongs to the selection');
+like($page, qr/movementX \|\| e\.movementY/, 'moving the stick hands the click back to the pointer');
+like($page, qr/controller_tile_leave" tabindex="0"/, 'the Leave tile can take the keyboard selection');
+
+# --- the launcher wears the theme it was given --------------------------------
+# These pages are window fragments, not the desk, so they carry the theme's
+# cursor and Home rule themselves.
+like($page, qr/include 'controller\/standalone'/, 'the launcher includes the standalone theme and Home rule');
+my $standalone = read_file("$root/templates/controller/standalone.html.ep");
+like($standalone, qr/cursor_css/, 'the standalone page gets the cursor-set stylesheet');
+like($standalone, qr/data-cursor-set/, 'and marks the body with the theme cursor');
+like($standalone, qr/jawnosStandaloneHome/, 'and sends Home back one launcher page');
+like($standalone, qr/\/manager\/games\/mapping'\) \{ back = '\/manager\/games\?view=emulated'/, 'the controls page returns to the shelf');
+like($standalone, qr/\/manager\/controller\/config'\) \{ back = '\/manager\/controller'/, 'Configuration returns to the launcher');
+
+my %tile_icon = (
+	Music => 'headphones', Gallery => 'gallery', Notifications => 'bell', Games => 'tetris',
+	Configuration => 'gear', IVR => 'phone', Automation => 'on', Leave => 'exit',
+);
+for my $name (sort keys %tile_icon) {
+	like($page, qr/icon_for\('\/images\/decipherable\/\Q$tile_icon{$name}\E\.png'\)/,
+		"the $name tile asks the active icon set, not the hand-drawn path");
+}
+
 
 done_testing();

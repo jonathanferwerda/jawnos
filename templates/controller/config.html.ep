@@ -2,6 +2,7 @@
     of settings, so this page collects the four machine surfaces and the
     emulator's own knobs into one row of large tiles. Everything here is one
     press from the Controller and one press back. %>
+<%= include 'controller/standalone' %>
 <style>
 	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
 	.wind[app="controller"] .top_navbar { display:none !important; }
@@ -37,7 +38,7 @@
 			<span class="controller_config_note"><%= &subs::ui('Join a network and turn the radio on') %></span>
 		</a>
 		<a class="controller_config_tile" href="/manager?open=power&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig">
-			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/power.svg') %>" alt="">
+			<img class="controller_config_icon" src="<%= &subs::icon_path('logo2', '/icons/power.svg') %>" alt="">
 			<span class="controller_config_label"><%= &subs::ui('Power') %></span>
 			<span class="controller_config_note"><%= &subs::ui('Battery, CPU speed and the power plan') %></span>
 		</a>
@@ -47,12 +48,12 @@
 			<span class="controller_config_note"><%= &subs::ui('The launcher clock and the machine time zone') %></span>
 		</a>
 		<a class="controller_config_tile" href="/manager?open=sound&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig">
-			<img class="controller_config_icon" src="<%= &subs::icon_for('/icons/sound.svg') %>" alt="">
+			<img class="controller_config_icon" src="<%= &subs::icon_path('speaker', '/icons/sound.svg') %>" alt="">
 			<span class="controller_config_label"><%= &subs::ui('Sound') %></span>
 			<span class="controller_config_note"><%= &subs::ui('Output, volume and the source channels') %></span>
 		</a>
 		<a class="controller_config_tile" href="/manager/controller/retroarch">
-			<img class="controller_config_icon" src="/images/decipherable/tetris.png" alt="">
+			<img class="controller_config_icon" src="<%= &subs::icon_for('/images/decipherable/tetris.png') %>" alt="">
 			<span class="controller_config_label"><%= &subs::ui('RetroArch') %></span>
 			<span class="controller_config_note"><%= &subs::ui('Audio, video and the PlayStation and Nintendo 64 cores') %></span>
 		</a>

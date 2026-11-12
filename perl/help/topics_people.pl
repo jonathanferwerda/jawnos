@@ -198,11 +198,12 @@ $topic{'twirl'} = {
 	};
 $topic{'controller'} = {
 		title => 'Controller', category => 'apps', app => 'controller',
-		verified => '2026-11-08',
+		verified => '2026-11-12',
 		templates => [ 'templates/apps/controller.html.ep', 'templates/controller/config.html.ep', 'templates/controller/time.html.ep', 'templates/controller/retroarch.html.ep', 'templates/controller/mapping.html.ep' ],
 		summary => 'The handheld\'s home: eight tiles, Network, Sound, battery/CPU, Manager and a clock, and a Leave panel that puts the panel into a dark idle.',
 		body => [
 			'Controller is the home screen of the handheld. It has no desk of windows: it shows eight tiles, each one press away from the surface it names, with Network, Sound, the battery reading, a Manager button and the time at the top right. The time follows the house\'s clock time zone, which is Eastern unless Time settings says otherwise. Press the battery reading for the pack\'s state and the CPU profile (Auto, Power saver, Balanced, Performance).',
+			'Push the arrow buttons to walk the eight tiles: the selected tile is outlined, and A (the plain click) or Enter opens it, so the pointer can stay where it is. The launcher and its Configuration, Time, RetroArch and Games pages wear the theme\'s icon set and pointer, even though they are pages of their own rather than windows on the desk.',
 			'Network shows whether Wi-Fi and Bluetooth are on and lets you switch either one; the Wi-Fi row names the network it is joined to. Sound is a master level and three channels: Music, Phone and Alarm. Master is the machine\'s own mixer, so it is the level that leaves the speaker or the headphones; a controller whose boot tree has no sound card says so and leaves the master row disabled. Each channel keeps its own level, so one source can be turned down without silencing another; a player applies its channel as it is brought onto the mix.',
 			'Music opens the house music, Gallery the photos and videos, Notifications what the house has told you, and Games a second launcher for Cards and Twirl. Configuration opens the handheld\'s own sublauncher: Wi-Fi, Power, Time, Sound and RetroArch. Time chooses the zone the launcher and the taskbar show and reports the machine\'s own zone and whether network time is synchronized. RetroArch changes the emulator\'s audio and video settings and the PlayStation and Nintendo 64 core options, and offers two presets - audio compatibility and smoother emulation. IVR opens the Phone app, where the call menu and recorded greeting live. Automation opens the embedded device toggles.',
 			'Games also carries the Controller map: the Gou and a console are drawn one above the other, and a person arms a button on the handheld and then presses the console button it should work as. Save keeps that pairing for the console and writes the emulator remap, and Reset to default restores the GoldenEye layout for the Nintendo 64.',
@@ -214,7 +215,7 @@ $topic{'controller'} = {
 	};
 $topic{'games'} = {
 	title => 'Games', category => 'apps', app => 'games',
-	verified => '2026-11-10',
+	verified => '2026-11-12',
 	templates => [ 'templates/apps/games.html.ep', 'public/js/manager/twirl.js' ],
 	summary => 'The games launcher: Cards and Twirl, and an emulated shelf that installs its emulators, reads the ROMs under ~/roms, filters them by system, fetches their covers and runs one outside the house view.',
 	body => [
@@ -222,6 +223,7 @@ $topic{'games'} = {
 		'On the handheld the A button turns the piece clockwise and B turns it counter-clockwise. A is the plain click the launcher and the Manager already use, so a press on the well turns the piece; B is delivered as a key that no other app uses.',
 		'Emulated games opens on the shelf. Install emulators fetches RetroArch and the emulator cores the shelf knows; Install ROMs copies ROMs from the emmc or a USB stick into the person\'s own roms folder, without overwriting one already there. The games found there are drawn as a grid of cards, each with its cover picture when the ROM folder carries one beside it, and its system under the title.',
 		'Above the cards, the filter bar shows All and then one button for each system that holds a game, with the number beside it. Press a system to see only its cards and press All to bring every one back; the bar scrolls sideways when there are more systems than fit. Controls opens the controls page for the system the filter shows, so its buttons can be mapped before a game starts. Fetch covers looks up a cover picture for every game that has none: while it runs the bar shows how many it has done of the total, and when it finishes the shelf is redrawn with the new pictures. A cover is kept beside the ROM, so the next visit draws it without fetching it again, and looking covers up never holds the shelf while one downloads.',
+		'The launcher and the shelf wear the theme\'s icon set and pointer, so their tiles and cards match the desk even though these pages are not desk windows.',
 		'The Systems list below the filter chooses the emulator each system runs on. Pick one and the choice is saved for that system; a small note says whether it was saved. A system with no emulator to choose from is left out of the list rather than shown as an empty control.',
 		'Press a card to run the game. It leaves the JawnOS view and runs in its own programme, with the handheld\'s controls handed to it as a gamepad; the Home button above the arrow keys ends it and brings the shelf back. A machine with no emulator for a system says so instead of starting nothing, and an emulator that stops at once says what it printed and keeps its log. A game\'s play time follows the controls: a quiet stretch over half a minute is a pause and is not counted, a touch within five minutes resumes the same play appointment, and a session left open by a dead battery closes at the last control it saw.'
 	],

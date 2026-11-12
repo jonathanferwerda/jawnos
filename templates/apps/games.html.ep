@@ -4,6 +4,7 @@
     found under ~/roms, a card each, with the two install buttons above them,
     a filter by system, the emulator each system runs on, a cover fetch and a
     way to the controls page. %>
+<%= include 'controller/standalone' %>
 <%
 	my $mode = (defined $view && $view eq 'emulated') ? 'emulated' : 'launcher';
 	my $games = (ref $library eq 'HASH' && ref $library->{'games'} eq 'ARRAY') ? $library->{'games'} : [];
@@ -92,17 +93,17 @@
 	<div id="games_bar"><a id="games_home" href="/manager/controller"><%= &subs::ui('Home') %></a></div>
 	<div id="games_grid">
 		<a class="games_tile" href="/manager?open=cards&amp;full=1&amp;back=%2Fmanager%2Fgames">
-			<img class="games_tile_icon" src="/images/decipherable/cards.png" alt="">
+			<img class="games_tile_icon" src="<%= &subs::icon_for('/images/decipherable/cards.png') %>" alt="">
 			<span class="games_tile_label"><%= &subs::ui('Cards') %></span>
 			<span class="games_tile_note"><%= &subs::ui('The card room, solitaire and blackjack') %></span>
 		</a>
 		<a class="games_tile" href="/manager?open=twirl&amp;full=1&amp;back=%2Fmanager%2Fgames">
-			<img class="games_tile_icon" src="/images/decipherable/tetris.png" alt="">
+			<img class="games_tile_icon" src="<%= &subs::icon_for('/images/decipherable/tetris.png') %>" alt="">
 			<span class="games_tile_label"><%= &subs::ui('Twirl') %></span>
 			<span class="games_tile_note"><%= &subs::ui('The falling-block puzzle: A turns one way and B the other') %></span>
 		</a>
 		<a class="games_tile" href="/manager/games?view=emulated">
-			<img class="games_tile_icon" src="/images/decipherable/diskette.png" alt="">
+			<img class="games_tile_icon" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" alt="">
 			<span class="games_tile_label"><%= &subs::ui('Emulated games') %></span>
 			<span class="games_tile_note"><%= $count ? ($count . ' ' . &subs::ui('games ready')) : &subs::ui('None installed yet') %></span>
 		</a>
@@ -152,7 +153,7 @@
 		<button type="button" class="game_card" data-game="<%= $game->{'id'} %>" data-system="<%= defined $game->{'system'} ? $game->{'system'} : '' %>">
 			<span class="game_art">
 % if ($game->{'art'}) {
-				<img src="/manager/games/art?id=<%= $game->{'id'} %>" alt="" loading="lazy">
+				<img src="/manager/games/art?id=<%= $game->{'id'} %>" alt="" loading="lazy" decoding="async">
 % } else {
 				<span class="game_art_blank"><%= $game->{'system_label'} %></span>
 % }

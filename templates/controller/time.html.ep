@@ -1,4 +1,5 @@
 <% use Mojo::JSON qw(encode_json); %>
+<%= include 'controller/standalone' %>
 <%# Time settings. The launcher and the taskbar read one house setting,
     `clock_timezone`; the machine itself stays on UTC and keeps perfect time
     through NTP. The page says both so a person can see why the box and the
