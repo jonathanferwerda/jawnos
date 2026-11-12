@@ -549,15 +549,34 @@ sub url_escape_utf8 {
 	return url_escape($name);
 }
 
+# Encode template data to JSON characters. The versions are arguments so a test
+# can exercise the Windows runtime's path without being on Windows.
+#
+# Mojo::JSON hands encode_json to Cpanel::JSON::XS when it is installed, and
+# 4.43 on perl 5.42 (the Windows bundle's runtime) never returns from a hash
+# whose keys include UTF8-flagged strings. The soft keyboard's currency symbols
+# are exactly that shape: /manager was still encoding when the watchdog called
+# the web port dead. Mojo::JSON's own pure-Perl encoder is what it uses when XS
+# is absent; it is correct and writes the same bytes, so take that path on that
+# build.
+sub json_encode_for_template {
+	my ($data, $perl, $xs) = @_;
+	my $xs_loops = defined $xs && $xs =~ /^\d+(?:\.\d+)?$/ && $xs <= 4.43
+		&& defined $perl && $perl >= 5.042;
+	my $json = $xs_loops
+		? Mojo::Util::encode('UTF-8', Mojo::JSON::_encode_value($data))
+		: encode_json($data);
+	utf8::decode($json) unless utf8::is_utf8($json);
+	return $json;
+}
+
 # encode_json returns UTF-8 bytes, but a Mojolicious template is a character
 # string: interpolating those bytes upgrades them as Latin-1 and mangles every
 # non-ASCII value in the data (an "Ænima" tag renders as "Ãnima"). Decode back to
 # characters for the template, the same reason process_file decodes the names it
 # hands the window.
 sub json_chars {
-	my $json = encode_json shift;
-	utf8::decode($json) unless utf8::is_utf8($json);
-	return $json;
+	return &json_encode_for_template(shift, "$]", $Cpanel::JSON::XS::VERSION);
 }
 
 sub html_name {

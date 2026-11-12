@@ -8,6 +8,7 @@ use utf8;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use Mojo::JSON qw(from_json);
 use JawnOSTest;
 
 binmode Test::More->builder->output,         ':encoding(UTF-8)';
@@ -110,5 +111,29 @@ is(&subs::time_abbrev_translator('1m', $jan2024),                60000,       'a
 is(&subs::time_abbrev_translator('next week', $jan2024),         0,           'a unit with no number is not a length');
 is(&subs::time_abbrev_translator('Infinity'),    '1',       'a non-finite timing is one millisecond');
 ok(!defined &subs::time_abbrev_translator(''),             'an empty timing has no value');
+
+# ---------------------------------------------------------------- json_chars
+# A template's JSON comes back as characters, but the encoder matters on the
+# Windows runtime: Mojo::JSON uses Cpanel::JSON::XS 4.43 there, and on perl
+# 5.42 it never returns from a hash whose keys are UTF8-flagged. The soft
+# keyboard's currency symbols are that shape, so /manager hung until the
+# watchdog restarted the tree. json_encode_for_template takes the pure-Perl
+# encoder on that build; its versions are arguments so this test runs the same
+# path here, where the XS build is absent or safe.
+my %symbol_units = (
+	"\x{A3}" => 'GBP',  "\x{A5}" => 'JPY',  "\x{D0}" => 'DOGE',
+	"\x{141}" => 'LTC', "\x{39E}" => 'ETH', "\x{20A9}" => 'KRW',
+	"\x{20AC}" => 'EUR', "\x{20B3}" => 'ADA', "\x{20B9}" => 'INR',
+	"\x{20BA}" => 'TRY', "\x{20BD}" => 'RUB', "\x{20BF}" => 'BTC',
+	"\x{25CE}" => 'SOL',
+);
+my $win_json = &subs::json_encode_for_template({ units => \%symbol_units }, '5.042003', '4.43');
+ok(utf8::is_utf8($win_json), 'the Windows encoder path returns characters, not bytes');
+my $win_units = from_json($win_json)->{'units'};
+is(scalar keys %{$win_units}, scalar keys %symbol_units, 'every wide-keyed symbol is encoded');
+is($win_units->{"\x{20AC}"}, 'EUR', 'the euro symbol keeps its code');
+my $safe_json = &subs::json_encode_for_template({ units => \%symbol_units }, '5.040001', undef);
+is(from_json($safe_json)->{'units'}->{"\x{141}"}, 'LTC', 'the ordinary encoder path also keeps wide keys');
+is(&subs::json_chars({ k => "\x{20AC}" }), '{"k":"€"}', 'json_chars still hands the template characters');
 
 done_testing();
