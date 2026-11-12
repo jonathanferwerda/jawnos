@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part22.pm public/css/manager.css public/js/manager/windows.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js
+# tests-for: lib/JawnOS/Manager/Part22.pm public/css/manager.css public/js/manager/windows.js public/js/manager/windows/01_storage.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js
 # covers:    A window's place used to be saved automatically and invisibly, so a desk full of windows became a memory of wh...
 
 use strict;
@@ -21,6 +21,7 @@ my $root = repo_root();
 my $maker = read_file("$root/lib/JawnOS/Manager/Part22.pm");
 my $fit = read_file("$root/public/js/manager/windows/02_fit.js");
 my $stack = read_file("$root/public/js/manager/windows/03_stack.js");
+my $storage = read_file("$root/public/js/manager/windows/01_storage.js");
 my $windows = read_file("$root/public/js/manager/windows.js");
 my $css = read_file("$root/public/css/manager.css");
 
@@ -63,14 +64,21 @@ like($fit, qr/var scale = Math\.min\(now_w \/ saved_w, now_h \/ saved_h\);/, 'th
 like($fit, qr/win\.attr\('place_restoring', '1'\)/, 'restoring does not ratchet the saved place down');
 like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path restores a pinned place');
 
-# --- closing a window closes its step in the cascade -----------------------
-# A closed tiled window leaves no hole: the windows that opened after it step
-# back up into its slot, the way a phone's pile re-parks. Pinned windows own
-# their place, so they neither make nor close a step.
+# --- the tile is an ordered stack, not a page order -------------------------
+# The tile steps a window out of its slot when one closes, and a reload restores
+# the windows in whatever order their responses arrive: a slot kept on the window
+# is what lets the stack act on the right windows either way.
 like($stack, qr/windowTiledGapClose\(win\)/, 'closing a window steps the tiled windows below it up');
 like($windows, qr/function windowTiledGapClose\(win\) \{\n\tif \(windowPhoneChecker\(\)\) \{ return; \}/,
 	'the gap closer leaves a phone to its own pile');
 like($windows, qr/tileCount \* windowTileAcrossStep/, 'a window is placed with the tile across step');
+like($windows, qr/function windowTiledLeave\(win, float\)/, 'a window can leave the tile');
+like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');
+like($fit, qr/windowTiledLeave\(win, true\)/, 'a drag takes the window out of the tile');
+like($fit, qr/windowTiledLeave\(win, false\)/, 'pinning takes it out of the tile without making it free');
+like($storage, qr/tile: \$\(v\)\.attr\('tile'\)/, 'the tile slot is saved with the window');
+like($storage, qr/free: \$\(v\)\.attr\('free'\)/, 'a dragged-out window is saved as free');
+like($storage, qr/if \(v\.tile !== undefined \|\| v\.free == 1\)/, 'a restore hands its slot to the window that opens');
 
 # --- the tile does not count an anchored window ----------------------------
 # The live tiler is exercised in a bare context: windows.js needs jQuery for
@@ -112,6 +120,10 @@ El.prototype.attr = function (k, v) {
 	this.attrs[k] = v;
 	return this;
 };
+El.prototype.removeAttr = function (k) {
+	delete this.attrs[k];
+	return this;
+};
 El.prototype.css = function (k, v) {
 	if (typeof k === 'object') { Object.assign(this.style, k); return this; }
 	if (v === undefined) { return this.style[k] === undefined ? '' : String(this.style[k]); }
@@ -128,13 +140,14 @@ El.prototype.show = function () { return this; };
 
 function J(els) {
 	els = els || [];
-	const j = { length: els.length };
+	const j = { length: els.length, __jq: 1 };
 	els.forEach(function (el, i) { j[i] = el; });
 	j.each = function (fn) { els.forEach(function (el, i) { fn.call(el, i, el); }); return j; };
 	j.on = function () { return j; };
 	j.width = function () { return els[0] === windowStub ? windowStub.width : (els[0] && els[0].width ? els[0].width() : 0); };
 	j.height = function () { return els[0] === windowStub ? windowStub.height : 0; };
 	j.attr = function (k, v) { return els[0] ? els[0].attr(k, v) : undefined; };
+	j.removeAttr = function (k) { els.forEach(function (el) { if (el.removeAttr) { el.removeAttr(k); } }); return j; };
 	j.css = function (k, v) { return els[0] ? els[0].css(k, v) : j; };
 	j.find = function (sel) { return els[0] ? J([els[0].find(sel)]) : J([]); };
 	j.outerHeight = function () { return 0; };
@@ -146,6 +159,7 @@ function J(els) {
 const documentStub = { getElementById: function () { return null; } };
 
 function $(arg) {
+	if (arg && arg.__jq) { return arg; }
 	if (arg === windowStub) { return J([windowStub]); }
 	if (arg === documentStub) { return J([documentStub]); }
 	if (typeof arg === 'string') {
@@ -193,8 +207,12 @@ function eq(actual, want, label) {
 }
 
 function open(windows, id) {
+	ctx.windowTiledRestore = {};
+	var next = 0;
 	dom = windows.map(function (w) {
-		return new El(w.id, { pre_dimensioned: w.pinned ? '1' : '0' });
+		var el = new El(w.id, { pre_dimensioned: w.pinned ? '1' : '0' });
+		if (!w.pinned) { el.attr('tile', String(next)); next++; }
+		return el;
 	});
 	const fresh = new El(id, { pre_dimensioned: '0' });
 	dom.push(fresh);
@@ -219,19 +237,34 @@ let three_with = open([{ id: 'window_a', pinned: true }, { id: 'window_b', pinne
 eq(three_with.fresh.style.left, 100, 'the third tiled window still steps twice');
 eq(three_with.fresh.style.top, 80, 'down two bars');
 
-// closing a tiled window closes the step it leaves: what opened after it steps
-// back up into its slot, one bar and one across-step, and everything above the
-// closed window stays where it was.
+// A desk built by hand: tiled windows get their slot the way the app gives it,
+// a pinned or dragged-out window has none.
 function desk(specs) {
+	ctx.windowTiledRestore = {};
+	var next = 0;
 	dom = specs.map(function (w) {
 		var el = new El(w.id, { pre_dimensioned: w.pinned ? '1' : '0' });
 		el.style.left = (w.left === undefined ? 0 : w.left) + 'px';
 		el.style.top = (w.top === undefined ? 0 : w.top) + 'px';
+		if (w.pinned) {
+			// a pinned window has a place of its own, not a slot
+		}
+		else if (w.free) {
+			el.attr('free', '1');
+		}
+		else {
+			var slot = (w.tile === undefined) ? next : w.tile;
+			el.attr('tile', String(slot));
+			next = slot + 1;
+		}
 		return el;
 	});
 	return dom;
 }
 
+// closing a tiled window closes the step it leaves: the windows below it in the
+// stack step back up into its slot, one bar and one across-step, and everything
+// above the closed window stays where it was.
 let closed = desk([
 	{ id: 'window_a', top: 0, left: 0 },
 	{ id: 'window_b', top: 40, left: 50 },
@@ -243,6 +276,7 @@ eq(closed[0].style.top, '0px', 'a window above the closed one stays put');
 eq(closed[1].style.left, '50px', 'and keeps its step across');
 eq(closed[3].style.top, 80, 'the window below steps up one bar');
 eq(closed[3].style.left, 100, 'and across one step');
+eq(closed[3].attr('tile'), '2', 'and its slot comes down with it');
 
 let pinned_closed = desk([
 	{ id: 'window_a', pinned: true, top: 20, left: 20 },
@@ -261,6 +295,51 @@ let pinned_below = desk([
 ctx.windowTiledGapClose('#window_a');
 eq(pinned_below[1].style.top, '30px', 'a pinned window below the closed one keeps its place');
 eq(pinned_below[2].style.top, 40, 'an unpinned window after it steps up');
+
+// a window dragged out of the stack is free: the tile steps it neither way
+let dragged_out = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 30, left: 300, free: true },
+	{ id: 'window_c', top: 40, left: 50 }
+]);
+ctx.windowTiledGapClose('#window_a');
+eq(dragged_out[1].style.top, '30px', 'a dragged-out window is not stepped by a close');
+eq(dragged_out[2].style.top, 0, 'the tiled window after it closes the slot');
+
+let free_closed = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 30, left: 300, free: true },
+	{ id: 'window_c', top: 40, left: 50 }
+]);
+ctx.windowTiledGapClose('#window_b');
+eq(free_closed[2].style.top, '40px', 'closing a dragged-out window leaves the tile alone');
+
+// a drag takes the window out of the tile and the ones below close the slot
+let dragged = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+ctx.windowTiledLeave('#window_b', true);
+eq(dragged[1].attr('tile'), undefined, 'a dragged window leaves the tile');
+eq(dragged[1].attr('free'), '1', 'and floats as a free window');
+eq(dragged[0].style.top, '0px', 'the window above it stays put');
+eq(dragged[2].style.top, 40, 'the window below closes the slot it held');
+eq(dragged[2].attr('tile'), '1', 'and its slot comes down');
+
+// a restore brings the slot it held before the reload, so the stack keeps its
+// order even when the windows arrive in another order
+let arriving = desk([
+	{ id: 'window_a', tile: 0, top: 0, left: 0 },
+	{ id: 'window_d', tile: 2, top: 80, left: 100 }
+]);
+let late = new El('window_c', { pre_dimensioned: '0' });
+dom.push(late);
+ctx.windowTiledRestore = { window_c: { tile: '1' } };
+ctx.windowReorganizer('window_c');
+eq(late.attr('tile'), '1', 'a restored window keeps the slot it held before the reload');
+eq(late.style.top, 40, 'and lands in that step of the cascade');
+eq(arriving[1].attr('tile'), '2', 'the window restored after it keeps its own slot');
 
 process.exit(failures ? 1 : 0);
 JS

@@ -194,10 +194,15 @@ function jawnosWindowMoveModeOff(app) {
 function windowDraggable(win) {
 	if (!win.hasClass('ui-draggable')) {
 
+		// where the pointer went down: a click on the title bar also starts and
+		// stops a drag, and only a real move takes the window out of the tile
+		var dragFrom = null;
+
 		win.draggable({
 			cancel: 'input,textarea,button,select,option,.save_appointment,.app_act,.edit_app,.delete_app,.delete_location,.minimize_button,.restore_button,.maximize_button,.close_button',
 			handle: '.top_navbar',
 			start: function(p,ui) {
+				dragFrom = { x: p.pageX, y: p.pageY };
 				windows[p.target.id] = Date.now();
 				if (win.attr('view') == 'max' && win.attr('free_dimensions')) {
 					var d = JSON.parse(win.attr('free_dimensions'));
@@ -247,10 +252,19 @@ function windowDraggable(win) {
 				}
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'stop'); }
 				windowDimensionSetter($('#' + p.target.id));
+				// A window dragged by hand has left the stack: the tile closes the slot it
+				// held, and the window floats where it was put. A click on the title bar
+				// also starts and stops a drag without moving the pointer, and that keeps
+				// the window in the tile.
+				var moved = dragFrom && (Math.abs(p.pageX - dragFrom.x) > 4 || Math.abs(p.pageY - dragFrom.y) > 4);
+				if (!windowPhoneChecker() && moved && typeof windowTiledLeave === 'function') {
+					windowTiledLeave(win, true);
+				}
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of
 				// the pile - the moment the drag ends
 				if (windowPhoneChecker()) { windowStacker(win.attr('app'), true); }
+				dragFrom = null;
 			}
 		});
 		// a phone keeps its windows the width of the screen: vertical only
@@ -333,6 +347,9 @@ $(document).on('click', '.place_button', function(e) {
 		win.attr('pre_dimensioned', 1);
 		windowDimensionSetter(win);
 		settingSetter({ 'app': app, 'setting': 'place', 'value': 'lock' });
+		// a pinned window has a place of its own, so it leaves the tile: the
+		// windows below it close the slot it held
+		if (typeof windowTiledLeave === 'function') { windowTiledLeave(win, false); }
 	}
 });
 

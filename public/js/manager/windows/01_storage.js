@@ -66,6 +66,12 @@ function windowSaver(skip_act) {
 			locked: locked,
 			zindex: zindex,
 			timestamp: timestamp,
+			// the tile slot this window holds (none for a pinned or dragged-out one)
+			// and whether it had been dragged out of the stack, so a reload puts the
+			// tile back together in the same order and leaves the free ones where
+			// they were
+			tile: $(v).attr('tile'),
+			free: $(v).attr('free'),
 			terminal_id: $(v).attr('data-terminal-id') || '',
 			browser_tab_id: bti,
 			data: data,
@@ -178,6 +184,10 @@ function appWindowOpenerNow(i,timestamp,v) {
 	}
 	v = v || {};
 	timestamp = timestamp || jawnosWindowTimestamp();
+	// a restore carries the window's place in the tile (or the fact that it had
+	// been dragged out of it); hand it to windowReorganizer, which runs while the
+	// rendered window is being appended. A fresh open carries neither.
+	if (v.tile !== undefined || v.free == 1) { windowTiledRestore[i] = v; }
 	// Every window the guide opens is one it may want to look over: if the app's
 	// name does not match its part of speech, the guide sets the right one. The
 	// server marks what it has seen, so this is a no-op after the first time and
@@ -346,13 +356,14 @@ function appWindowOpenerNow(i,timestamp,v) {
 					if (v.visible != 'yes') {
 						window.hide();
 					}
-					if (v.top > 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
+					if (v.top >= 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
 						window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
 						if (numeral(v.zindex).value() > top_level_now) {
 							top_level_now = numeral(v.zindex).value();
 						}
 					}
 					windowFit(window);
+					delete windowTiledRestore[i];
 
 				},
 				error: function(e) { console.log(e); }
@@ -370,10 +381,11 @@ function appWindowOpenerNow(i,timestamp,v) {
 				var window = $('#' + id);
 				if (window.length == 0) { window = $('.wind[app="' + i + '"]'); }
 
-				if (v.top > 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
+				if (v.top >= 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
 					window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
 				}
 				windowFit(window);
+				delete windowTiledRestore[i];
 
 				if (refresh_jopen) {
 					windowjOpener(window, { jopen: refresh_jopen, scrollTop: v.scrollTop });

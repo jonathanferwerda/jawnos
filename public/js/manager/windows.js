@@ -623,15 +623,26 @@ function windowBottomClearance() {
 	return bar;
 }
 
-// The tile counts only the windows with no place of their own. An anchored
-// window keeps the place it was pinned at, so it must not take a slot: the
-// next unpinned window steps where it would have without the pin beside it.
-function windowTiledCount() {
-	var count = 0;
+// The tile is an ordered stack, and each window in it wears its slot as a
+// `tile` attribute. The slot, not the order the windows sit on the page, is what
+// the tile acts on: a reload restores the windows in whatever order their
+// responses arrive, so the page order no longer matches the stack, but the slot
+// travels with the window. A pinned window and one dragged out of the stack (a
+// free window) carry no slot: they keep their own place and do not step.
+function windowTiledSlot(win) {
+	var slot = parseInt($(win).attr('tile'), 10);
+	return isNaN(slot) ? -1 : slot;
+}
+
+// The next free slot at the end of the stack. A window that opens joins there;
+// a pinned or free window has no slot and so does not push it along.
+function windowNextTileSlot() {
+	var next = 0;
 	$('.wind').each(function() {
-		if ($(this).attr('pre_dimensioned') != 1) { count++; }
+		var slot = windowTiledSlot(this);
+		if (slot >= next) { next = slot + 1; }
 	});
-	return count;
+	return next;
 }
 
 // The step a tiled window takes across, per slot. The same 50 windowReorganizer
@@ -639,22 +650,20 @@ function windowTiledCount() {
 // window was placed with.
 var windowTileAcrossStep = 50;
 
-// Closing an unpinned window on the desk closes the gap it leaves. The tile
-// cascade is the open order: each unpinned window sits one bar lower and one
-// across-step further than the one opened before it. So the windows that came
-// after the closed one step back up into its slot - up by their own title bar
-// (the step they were placed with) and across by the tile's step. A pinned
-// window owns its place: it neither takes a slot nor steps, and closing one
-// leaves no gap at all. A phone re-parks its whole pile in windowStacker, so it
-// takes none of this.
-function windowTiledGapClose(win) {
-	if (windowPhoneChecker()) { return; }
-	win = $(win);
-	if (!win.length || win.attr('pre_dimensioned') == 1) { return; }
-	var below = false;
+// A window being restored after a reload carries the tile slot (or the fact that
+// it had been dragged out of the tile) it held in the last session.
+// appWindowOpenerNow hands it over just before the window is rendered, and
+// windowReorganizer consumes it.
+var windowTiledRestore = {};
+
+// Close the slot a window leaves: every tiled window below it in the stack (a
+// higher slot) steps up by one bar and one across-step, and its own slot number
+// comes down with it. Slots are what the stack acts on, so this lands on the
+// right windows even when the page order was scrambled by a reload.
+function windowTiledStepUp(slot) {
 	$('.wind').each(function() {
-		if (this === win[0]) { below = true; return; }
-		if (!below || $(this).attr('pre_dimensioned') == 1) { return; }
+		var s = windowTiledSlot(this);
+		if (s <= slot) { return; }
 		var bar = $(this).find('.top_navbar');
 		var vAdvance = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
 		$(this).css({
@@ -662,7 +671,34 @@ function windowTiledGapClose(win) {
 			'left': Math.max(0, (parseFloat($(this).css('left')) || 0) - windowTileAcrossStep),
 			'top': Math.max(windowTopLimit(), (parseFloat($(this).css('top')) || 0) - vAdvance)
 		});
+		$(this).attr('tile', String(s - 1));
 	});
+}
+
+// Closing a tiled window closes the slot it held. A pinned or free window has
+// no slot, so closing it leaves the stack alone; a phone re-parks its whole pile
+// in windowStacker and takes none of this.
+function windowTiledGapClose(win) {
+	if (windowPhoneChecker()) { return; }
+	var slot = windowTiledSlot(win);
+	if (slot < 0) { return; }
+	windowTiledStepUp(slot);
+}
+
+// A window dragged out of the stack leaves the tile: it floats where it was put,
+// and the windows below it close the slot it held. `float` marks it free (a drag
+// does; pinning takes it out of the tile without making it free), so a reload
+// knows to leave it where it is instead of stepping it back into line.
+function windowTiledLeave(win, float) {
+	if (windowPhoneChecker()) { return; }
+	win = $(win);
+	var slot = windowTiledSlot(win);
+	if (slot < 0) { return; }
+	win.removeAttr('tile');
+	if (float) { win.attr('free', '1'); }
+	else { win.removeAttr('free'); }
+	windowTiledStepUp(slot);
+	if (typeof windowSaver === 'function') { windowSaver(); }
 }
 
 function windowReorganizer(window_id) {
@@ -686,8 +722,10 @@ function windowReorganizer(window_id) {
 	//	if (!windowPhoneChecker()) {
 			winCount = winCount - 1;
 	//	}
-		// the tile's slot, among the windows with no pinned place
-		var tileCount = windowTiledCount() - 1;
+		// if this window is being restored, it brings the slot it held before the
+		// reload (or the fact that it had been dragged out of the tile)
+		var restored = windowTiledRestore[window_app];
+		delete windowTiledRestore[window_app];
 		topLevelNow(win);
 		var thisWinLeft = Number(numeral(win.css('left')).format()) + Number(numeral(win.css('width')).format());
 		var thisWinTop = Number(numeral(win.css('top')).format());
@@ -708,7 +746,21 @@ function windowReorganizer(window_id) {
 			// window down by the bar less its border, so the two frames land on one
 			// another as a single line.
 			var vAdvance = vStep - (parseFloat(win.find('.top_navbar').css('border-top-width')) || 0);
-			if (!windowPhoneChecker() && $('#' + window_id).attr('pre_dimensioned') != 1) {
+			if (!windowPhoneChecker() && restored && restored.free == 1) {
+				// it had been dragged out of the stack: it floats where it was left,
+				// and the opener puts its saved geometry back on it
+				win.attr('free', '1');
+				win.show();
+			}
+			else if (!windowPhoneChecker() && win.attr('pre_dimensioned') != 1) {
+				// its saved slot keeps the stack in the same order after a reload,
+				// whatever order the windows arrive in; a new window joins at the end
+				var tileCount = windowTiledSlot(win);
+				if (tileCount < 0 && restored && restored.tile !== undefined && restored.tile !== null && restored.tile !== '') {
+					tileCount = parseInt(restored.tile, 10);
+				}
+				if (isNaN(tileCount) || tileCount < 0) { tileCount = windowNextTileSlot(); }
+				win.attr('tile', String(tileCount));
 				win.css({ 'left': tileCount * windowTileAcrossStep, 'top': tileCount * vAdvance + startingV });
 				win.show();
 
