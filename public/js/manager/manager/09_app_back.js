@@ -712,10 +712,11 @@ $(function () {
 	};
 	var url = urls[open];
 	if (!url) { return; }
-	// The launcher shows one app. A window restored from the last session (or
-	// left behind before Home closed it) goes before the new one is dealt, so a
-	// Gallery cannot sit on top of the Music just opened.
-	var launcher_apps = { gallery: 1, music: 1, phone: 1, cards: 1, twirl: 1 };
+	// The launcher shows one app. Every app it can deal is already named in
+	// `urls`; derive the set from it so Notifications, Automation and any app
+	// added later get the same rule without a second list to keep in step.
+	var launcher_apps = {};
+	Object.keys(urls).forEach(function (app) { launcher_apps[app] = 1; });
 	function dealLauncherApp() {
 		$.ajax({
 			url: url,

@@ -117,6 +117,11 @@ my $stack_js = read_file("$root/public/js/manager/windows/03_stack.js");
 like($stack_js, qr/function closeWindow\(timestamp, done\)/, 'closeWindow accepts a completion callback');
 like($stack_js, qr/if \(typeof done === 'function'\) \{ done\(\); \}/, 'and calls it when the server answers');
 like($desk_js, qr/launcher_apps\[a\] && a !== open/, 'the launcher clears the other launcher app first');
+like($desk_js, qr/Object\.keys\(urls\)\.forEach\(function \(app\) \{ launcher_apps\[app\] = 1; \}\)/,
+	'every app the launcher can deal is a launcher app');
+like($desk_js, qr/notifications: '\/manager\/notifications'/, 'Notifications is a launcher app');
+like($desk_js, qr/embedded: '\/manager\/embedded'/, 'Automation is a launcher app');
+like($desk_js, qr/configure: '\/manager\/configure'/, 'Configure is a launcher app');
 like($desk_js, qr/delete saved\[a\]/, 'the launcher drops the other launcher apps from the saved list');
 like($desk_js, qr/sessionStorage\.setItem\('window_storage', JSON\.stringify\(saved\)\)/, 'so the next page does not restore them');
 like($desk_js, qr/\}, 500\);\n/, 'a window restored a moment later is swept too');
