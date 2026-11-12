@@ -670,7 +670,7 @@ function windowTiledReserve(timestamp, app) {
 		if ($(this).attr('app') === app) { open = true; return false; }
 	});
 	if (open) { return; }
-	windowTiledPending[timestamp] = { slot: windowNextTileSlot(), at: Date.now() };
+	windowTiledPending[timestamp] = { slot: windowNextTileSlot(), at: Date.now(), app: app };
 }
 
 function windowTiledRelease(timestamp) {
@@ -969,6 +969,18 @@ function windowReorganizer(window_id) {
 		var restored = windowTiledRestore[window_app];
 		delete windowTiledRestore[window_app];
 		var pending = windowTiledPending[window_stamp];
+		if (!pending) {
+			// some bespoke openers render with a timestamp of their own, not the one
+			// the press carried; the reservation still names the app
+			for (var pending_stamp in windowTiledPending) {
+				var candidate = windowTiledPending[pending_stamp];
+				if (candidate && candidate.app === window_app) {
+					pending = candidate;
+					delete windowTiledPending[pending_stamp];
+					break;
+				}
+			}
+		}
 		if (pending) { delete windowTiledPending[window_stamp]; }
 		topLevelNow(win);
 		var thisWinTop = Number(numeral(win.css('top')).format());

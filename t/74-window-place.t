@@ -95,6 +95,7 @@ like($storage, qr/if \(v\.tile !== undefined \|\| v\.free == 1\)/, 'a restore ha
 # presses were made in.
 like($windows, qr/function windowTiledReserve\(timestamp, app\)/, 'a press reserves its slot');
 like($windows, qr/windowTiledPending\[window_stamp\]/, 'the window claims the slot reserved for its stamp');
+like($windows, qr/candidate\.app === window_app/, 'a bespoke opener that changes its stamp still claims the press');
 like($windows, qr/if \(taken\) \{/, 'a filled slot steps its occupant down');
 like($storage, qr/windowTiledReserve\(timestamp, i\)/, 'the app opener reserves the press slot');
 like($back, qr/windowTiledReserve\(timestamp, app\)/, 'the clothesline grabber reserves the press slot');
@@ -290,6 +291,17 @@ eq(second.attr('tile'), '1', 'and does not push the second down a place');
 eq(first.style.top, 0, 'the first press sits at the head of the cascade');
 eq(second.style.top, 40, 'and the second one step below it');
 eq(Object.keys(ctx.windowTiledPending).length, 0, 'both reservations are claimed');
+
+// a bespoke opener (Help) renders a window with a timestamp of its own; the
+// reservation still names the app, so the window claims it by app
+ctx.windowTiledPending = {};
+dom = [];
+ctx.windowTiledReserve('201', 'help');
+const help_win = new El('window_999', { pre_dimensioned: '0', app: 'help' });
+dom.push(help_win);
+ctx.windowReorganizer('window_999');
+eq(help_win.attr('tile'), '0', 'a bespoke opener claims the press by app when the stamp differs');
+eq(Object.keys(ctx.windowTiledPending).length, 0, 'the press is spent after the bespoke window lands');
 
 // A desk built by hand: tiled windows get their slot the way the app gives it,
 // a pinned or dragged-out window has none.
