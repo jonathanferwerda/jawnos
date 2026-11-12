@@ -685,12 +685,13 @@ $(document).on('click','.edit_app',function() {
 
 
 /* A handheld's launcher asks the desk to deal an app: /manager?open=twirl. The
-   app's own page is a window fragment - its JavaScript comes from this bundle -
-   so a link straight at /manager/twirl renders a frame with nothing driving it
-   (a canvas, and no game). The desk opens the same window the start menu does,
-   then drops the parameter so a reload does not deal a second one. Some apps
-   answer with a window envelope (gallery's window, embedded's html) because
-   their route carries more than the markup; both are unwrapped first. */
+   app's own page is a window fragment - its JavaScript is an app chunk, like
+   the start menu's - so a link straight at /manager/twirl renders a frame with
+   nothing driving it (a canvas, and no game). Load the chunk first, then open
+   the same window the start menu does, then drop the parameter so a reload does
+   not deal a second one. Some apps answer with a window envelope (gallery's
+   window, embedded's html) because their route carries more than the markup;
+   both are unwrapped first. */
 $(function () {
 	var open = '';
 	var full = '';
@@ -711,25 +712,58 @@ $(function () {
 	};
 	var url = urls[open];
 	if (!url) { return; }
-	$.ajax({
-		url: url,
-		type: 'GET',
-		data: { window_maker: 'yes', app: open, timestamp: Date.now() },
-		success: function (response) {
-			var html = response;
-			if (response && typeof response === 'object') { html = response.html || response.window || ''; }
-			var id = null;
-			if (typeof windowMaker === 'function' && html) { id = windowMaker(html); }
-			/* A launcher press is the whole screen: no desk, no taskbar, no
-			   title bar. The Manager desk is reached from its own button. */
-			if (full && id) {
-				document.body.classList.add('full_app_mode');
-				var el = document.getElementById(id);
-				if (el) { el.classList.add('full_app_window'); }
-			}
-		},
-		error: function () { }
-	});
+	// The launcher shows one app. A window restored from the last session (or
+	// left behind before Home closed it) goes before the new one is dealt, so a
+	// Gallery cannot sit on top of the Music just opened.
+	var launcher_apps = { gallery: 1, music: 1, phone: 1, cards: 1, twirl: 1 };
+	function dealLauncherApp() {
+		$.ajax({
+			url: url,
+			type: 'GET',
+			data: { window_maker: 'yes', app: open, timestamp: Date.now() },
+			success: function (response) {
+				var html = response;
+				if (response && typeof response === 'object') { html = response.html || response.window || ''; }
+				var id = null;
+				if (typeof windowMaker === 'function' && html) { id = windowMaker(html); }
+				/* A launcher press is the whole screen: no desk, no taskbar, no
+				   title bar. The Manager desk is reached from its own button. */
+				if (full && id) {
+					document.body.classList.add('full_app_mode');
+					var el = document.getElementById(id);
+					if (el) { el.classList.add('full_app_window'); }
+					if (typeof windowSaver === 'function') { windowSaver(); }
+				}
+				// An app opened from a launcher remembers its own subview (the
+				// Phone app's tab, for one). The chunk is loaded by now, so the
+				// app's restore function is the one that knows the panel.
+				if (open === 'phone' && typeof jawnPhonePaneRestore === 'function') { jawnPhonePaneRestore(); }
+			},
+			error: function () { }
+		});
+	}
+	function openLauncherApp() {
+		var existing = $('.wind').filter(function () {
+			var a = $(this).attr('app');
+			return a && launcher_apps[a] && a !== open;
+		});
+		if (existing.length && typeof closeWindow === 'function') {
+			var pending = existing.length;
+			var go = function () { if (--pending <= 0) { dealLauncherApp(); } };
+			existing.each(function () {
+				var ts = $(this).attr('timestamp');
+				if (ts) { closeWindow(ts, go); }
+				else { go(); }
+			});
+			return;
+		}
+		dealLauncherApp();
+	}
+	// An app's scripts are a lazy chunk now. Wait for it before the frame is
+	// drawn, or the window renders with no handlers (the Phone app's tabs were
+	// dead when the launcher dealt it this way).
+	if (typeof jawnosLoadApp === 'function') { jawnosLoadApp(open, openLauncherApp); }
+	else { openLauncherApp(); }
 	try {
 		var u = new URL(location.href);
 		u.searchParams.delete('open');
@@ -767,6 +801,21 @@ function jawnosHomeBack() {
 		}
 	}
 	if (!back || back === path + location.search) { back = '/manager/controller'; }
+	// A launcher app is a whole-screen window. Leaving it open made the next
+	// launcher press restore the old app over the new one, so close the window
+	// before the page goes. closeWindow() drops it from the saved window list
+	// first; wait for the server so that list is what the next page reads.
+	var full = $('.wind.full_app_window');
+	if (full.length && typeof closeWindow === 'function') {
+		var pending = full.length;
+		var leave = function () { if (--pending <= 0) { location.href = back; } };
+		full.each(function () {
+			var timestamp = $(this).attr('timestamp');
+			if (timestamp) { closeWindow(timestamp, leave); }
+			else { leave(); }
+		});
+		return;
+	}
 	location.href = back;
 }
 $(document).on('keydown', function (e) {

@@ -50,6 +50,9 @@ function windowSaver(skip_act) {
 		storage[app] = {
 			type: 'window',
 			visible: visible,
+			// a launcher app that filled the glass: a restore must put it back in
+			// that mode, and Home must know to close it
+			full: $(v).hasClass('full_app_window') ? 1 : 0,
 			app: app,
 			top: top,
 			left: left,
@@ -409,6 +412,14 @@ function appWindowOpenerNow(i,timestamp,v) {
 					}
 					else if (i == 'relational') {
 						relationalInit(response);
+					}
+					else if (i == 'phone') {
+						if (typeof jawnPhonePaneRestore === 'function') { jawnPhonePaneRestore(); }
+					}
+					if (v.full && window && window.length) {
+						window.addClass('full_app_window');
+						document.body.classList.add('full_app_mode');
+						if (typeof windowSaver === 'function') { windowSaver(); }
 					}
 					if (refresh_jopen) {
 						windowjOpener(window, { jopen: refresh_jopen, scrollTop: v.scrollTop });

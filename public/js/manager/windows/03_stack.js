@@ -82,7 +82,7 @@ function windowRefresher(app) {
 	}
 }
 
-function closeWindow(timestamp) {
+function closeWindow(timestamp, done) {
 
 	var win = $('#window_' + timestamp);
 	win.find('.window_script').remove();
@@ -97,8 +97,12 @@ function closeWindow(timestamp) {
 	}
 	// the tiled windows below close the step this one leaves, the way a phone's
 	// pile does; a pinned window has no step to close
+	var was_full = win.hasClass('full_app_window');
 	if (typeof windowTiledGapClose === 'function') { windowTiledGapClose(win); }
 	$('#window_' + timestamp ).remove();
+	// closing the last launcher app hands the desk back; without this the body
+	// stayed in full-app mode with no window and the taskbar stayed hidden
+	if (was_full && !$('.wind.full_app_window').length) { document.body.classList.remove('full_app_mode'); }
 	// the pile's front follows its slots, and the closed window no longer has one
 	if (typeof windowTiledFront === 'function') { windowTiledFront(); }
 	$('#window_icon_' + timestamp).remove();
@@ -122,6 +126,13 @@ function closeWindow(timestamp) {
 		data: { timestamp: timestamp, app: app, browser_tab_id: sessionStorage.getItem('browser_tab_id') || (typeof bti !== 'undefined' ? bti : ''), device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '' },
 		success: function(response) {
 			websocketStop(app);
+			if (typeof done === 'function') { done(); }
+		},
+		error: function() {
+			// The window is already gone from this page. The saved list is the
+			// part that matters for the next open, and windowSaver() wrote it
+			// above; leave the page even if the server call failed.
+			if (typeof done === 'function') { done(); }
 		}
 	});
 	windowSaver();

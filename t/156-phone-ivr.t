@@ -890,6 +890,13 @@ like $js, qr{/manager/sco/recording\?name=}, 'Play asks the gateway for the reco
 like $js, qr{phone_app_ivr_vm_link}, 'the IVR line opens the messages';
 like $js, qr/jawnPhoneGatewayPoll\(polling\)/, 'the open pane polls the gateway';
 like $js, qr/var polling = \(pane === 'ivr' \|\| pane === 'voicemail'\)/, 'both the IVR and Voicemail panes poll while open';
+like $js, qr/localStorage\.setItem\('phone_pane', pane\)/, 'choosing a tab remembers it';
+like $js, qr/function jawnPhonePaneRestore/, 'the app can restore the remembered tab';
+like $js, qr/localStorage\.getItem\('phone_pane'\)/, 'it reads the remembered tab';
+like $js, qr/jawnPhonePanes\[pane\]/, 'only a tab this app draws is restored';
+like $js, qr/jawnPhoneAppRender\(\); jawnPhoneAppArm\(\); jawnPhonePaneRestore\(\)/, 'the first open restores the tab';
+my $storage = js_source('public/js/manager/windows/01_storage.js');
+like $storage, qr/else if \(i == 'phone'\)/, 'a start-menu open restores the tab too';
 like $js, qr{jawnPhoneCallerChoices}, 'the pane reads the caller choices';
 like $js, qr{hint="Add caller"}, 'a person, vendor or corporation can be added as a caller';
 like $js, qr{hint="Add number"}, 'a number can be added as a caller';

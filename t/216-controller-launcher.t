@@ -109,6 +109,18 @@ like($desk_js, qr/if \(!back \|\| back === path \+ location\.search\) \{ back = 
 	'and anywhere else still comes home to the launcher');
 like($desk_js, qr/typeof response === 'object'/, 'a JSON reply is recognised before the window is made');
 like($desk_js, qr/response\.html \|\| response\.window/, 'both window envelope shapes are unwrapped');
+like($desk_js, qr/typeof jawnosLoadApp === 'function'/, 'a launcher app loads its lazy chunk before the window');
+like($desk_js, qr/jawnosLoadApp\(open, openLauncherApp\)/, 'and waits for the chunk before dealing the app');
+like($desk_js, qr/\.wind\.full_app_window/, 'Home finds the whole-screen launcher app');
+like($desk_js, qr/closeWindow\(timestamp, leave\)/, 'and closes it before it leaves the page');
+my $stack_js = read_file("$root/public/js/manager/windows/03_stack.js");
+like($stack_js, qr/function closeWindow\(timestamp, done\)/, 'closeWindow accepts a completion callback');
+like($stack_js, qr/if \(typeof done === 'function'\) \{ done\(\); \}/, 'and calls it when the server answers');
+like($desk_js, qr/launcher_apps\[a\] && a !== open/, 'the launcher clears the other launcher app first');
+my $storage_js = read_file("$root/public/js/manager/windows/01_storage.js");
+like($storage_js, qr/full: \$\(v\)\.hasClass\('full_app_window'\)/, 'a saved window remembers the whole-screen mode');
+like($storage_js, qr/if \(v\.full && window && window\.length\)/, 'a restore puts the whole-screen mode back');
+like($stack_js, qr/document\.body\.classList\.remove\('full_app_mode'\)/, 'closing the last app gives the desk back');
 like($desk_js, qr/full_app_mode/, 'a launcher press marks a full-screen app');
 like($page, qr/id="controller_battery"/, 'the launcher has a battery button');
 like($page, qr/id="controller_clock"/, 'the launcher has a clock to the right of Manager');

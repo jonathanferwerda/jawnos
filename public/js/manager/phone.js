@@ -42,6 +42,20 @@ function jawnPhoneAppRender() {
 	});
 }
 
+// The tab the person was last reading. A launcher press closes the Phone window
+// on Home, so the window's own saved state is gone; this one small preference
+// is what makes the next press land on the same pane (IVR, for one) instead of
+// always starting at Known.
+var jawnPhonePanes = { known: 1, recent: 1, voicemail: 1, blocked: 1, ivr: 1, all: 1, dial: 1 };
+function jawnPhonePaneRestore() {
+	if (!$('#phone_app').length) { return; }
+	var pane = '';
+	try { pane = localStorage.getItem('phone_pane') || ''; } catch (e) { pane = ''; }
+	if (!jawnPhonePanes[pane]) { return; }
+	var tab = $('#phone_app .phone_app_tab[pane="' + pane + '"]');
+	if (tab.length && !tab.hasClass('on')) { tab.trigger('click'); }
+}
+
 // ---- live calls -----------------------------------------------------------
 // The appointment itself is written from the app's own record of the call (see
 // jawnPhoneAppFileCalls below): a call arrives whether or not a page is up, and
@@ -125,6 +139,7 @@ function jawnPhoneAppReload(pane) {
 			jawnPhoneAppRender();
 			jawnPhoneAppArm();
 			if (pane) { $('#phone_app .phone_app_tab[pane="' + pane + '"]').trigger('click'); }
+			else { jawnPhonePaneRestore(); }
 		}
 	});
 }
@@ -140,6 +155,7 @@ $(document).on('click', '#phone_app .phone_app_tab', function () {
 	var pane = $(this).attr('pane');
 	$('#phone_app .phone_app_pane').removeClass('on');
 	$('#phone_app .phone_app_pane[pane="' + pane + '"]').addClass('on');
+	try { localStorage.setItem('phone_pane', pane); } catch (e) { }
 });
 
 // The phone icon on a recent opens the device's default dialer with the number
@@ -1330,7 +1346,7 @@ function jawnPhoneAppNativeContacts() {
 }
 
 $(document).ready(function () {
-	if ($('#phone_app').length) { jawnPhoneAppRender(); jawnPhoneAppArm(); }
+	if ($('#phone_app').length) { jawnPhoneAppRender(); jawnPhoneAppArm(); jawnPhonePaneRestore(); }
 	// a call that ended while the app was away is still waiting to be filed
 	jawnPhoneAppFileCalls();
 });
