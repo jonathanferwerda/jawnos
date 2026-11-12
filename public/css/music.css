@@ -1130,7 +1130,13 @@ body.dark_theme .music_cfg_drawer {
 	background-color: lightgreen;
 }
 
-#video_subtitle_toggle[status=showing] {
+/* An on-switch in the player reads as a lit seat, the same for subtitles,
+   shuffle and repeat. The player bar resets every icon to a transparent
+   background so an idle one stays bare; these are ID-qualified to win it, and
+   the shuffle/repeat attributes are the ones music.js already turns on/off. */
+#video_subtitle_toggle[status=showing],
+#music_shuffle[enabled=on],
+#music_repeat[enabled=on] {
 	background-color: lightgreen;
 }
 
