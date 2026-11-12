@@ -2782,6 +2782,27 @@ function musicNativeVideoElement() {
 	return fresh;
 }
 
+// The browser paints a text track's active cue itself, at the media element's
+// foot. The track element keeps its cues and its mode across a re-render, so a
+// film that ended with a line on screen kept that line: a music_search shows
+// the stopped picture again in the theatre, and a reload restores it at the
+// end position, and either one put the last thing watched back on screen.
+// Hiding is a mode switch; a new track also drops the old source so no stale
+// cue survives the load of the next film.
+function musicSubtitleHide() {
+	var track = document.getElementById('video_subtitles');
+	if (track && track.track) {
+		try { track.track.mode = 'hidden'; } catch (e) {}
+	}
+}
+
+function musicSubtitleReset() {
+	var track = document.getElementById('video_subtitles');
+	if (!track) { return; }
+	musicSubtitleHide();
+	track.removeAttribute('src');
+}
+
 var interval;
 function mediaMaker(data) {
 	if (typeof data != 'object') { data = {}; }
@@ -2875,11 +2896,18 @@ function mediaMaker(data) {
 				tree.sound.src = url
 				musicVideoStop();
 				if (method != 'benign') { musicBaselineReset(); musicBaselineStart(); }
-				var st_url = url + '&subtitle=yes';
-				document.getElementById('video_subtitles').src = st_url;
-				document.getElementById('video_subtitles').addEventListener('error', function() {
-					this.removeAttribute('src');
-				});
+				// The previous film's track still holds its cues and its showing mode,
+				// and the browser keeps drawing the last one over whatever is put on
+				// screen next - the theatre a search re-shows, or a reload that
+				// restores the stopped picture, put the last line of the last thing
+				// watched back. A new film starts from a bare track; only a film is
+				// asked for subtitles, so a song never leaves one pending or painted.
+				musicSubtitleReset();
+				if (tree.songs[0] && tree.songs[0].type == 'video') {
+					var subtitle_track = document.getElementById('video_subtitles');
+					subtitle_track.src = url + '&subtitle=yes';
+					subtitle_track.onerror = function() { this.removeAttribute('src'); };
+				}
 				tree.sound.video = true;
 				tree.sound.html5 = true;
 				tree.sound.playbackRate = 1;
@@ -2906,6 +2934,9 @@ function mediaMaker(data) {
 					// the element can answer for its position now, so a paused restore
 					// is written for real instead of the zero saved while loading
 					if (tree.sound.state == 0) { playerCacheSaver(undefined, true); }
+					// a restore can land at the end of a film; the final cue is still
+					// "active" there, and the browser would paint it again
+					if (tree.sound.ended) { musicSubtitleHide(); }
 				};
 				// A seek empties the element's buffered sound; the Me delay line still
 				// holds the pre-seek moment and would replay it. Drop it and measure the
@@ -3028,21 +3059,26 @@ function mediaMaker(data) {
 					}
 					clearInterval(interval);
 					interval = setInterval(function(){
-						// subtitles are there when the track has a usable source, not when its
-						// cues happen to be parsed: after a search re-render the cues arrive a
-						// beat later, and the button used to be hidden in that beat and the
-						// mode forced off
+						// The button follows the track's source, so it appears while the
+						// cues are still being fetched - after a search re-render they
+						// arrive a beat later, and hiding it in that beat was the old
+						// bug. The overlay, though, is only switched on once the cues
+						// have actually parsed: a showing track that has not received
+						// its own cue yet keeps drawing the previous film's last one.
+						// A film that has ended has no line to show, whichever picture
+						// a re-render puts back on screen.
 						var subtitle_track = document.getElementById('video_subtitles');
 						var subtitle_text = tree.sound.textTracks && tree.sound.textTracks[0];
 						var subtitle_cues = subtitle_text && subtitle_text.cues;
-						var subtitle_ready = !!(subtitle_track && subtitle_track.getAttribute('src') && (subtitle_track.readyState < 2 || (subtitle_cues && subtitle_cues.length)));
-						if (subtitle_ready && subtitle_text) {
+						var subtitle_loaded = !!(subtitle_text && subtitle_text.readyState == 2 && subtitle_cues && subtitle_cues.length);
+						var subtitle_loading = !!(subtitle_track && subtitle_track.getAttribute('src') && subtitle_track.readyState < 2);
+						if ((subtitle_loading || subtitle_loaded) && !tree.sound.ended) {
 							$('#video_subtitle_toggle').show();
-							subtitle_text.mode = $('#video_subtitle_toggle').attr('status') == 'showing' ? 'showing' : 'hidden';
+							subtitle_text.mode = (subtitle_loaded && $('#video_subtitle_toggle').attr('status') == 'showing') ? 'showing' : 'hidden';
 						}
 						else {
 							$('#video_subtitle_toggle').hide();
-							if (subtitle_text) { subtitle_text.mode = 'hidden'; }
+							musicSubtitleHide();
 						}
 						// A seek is where the media clock and the wall clock disagree: the
 						// interval can be late without the track having jumped, and the
@@ -3117,6 +3153,7 @@ function mediaMaker(data) {
 				tree.sound.onended = function() {
 					clearInterval(interval);
 					musicVideoStop();
+					musicSubtitleHide();
 					musicStreamStop();
 					$('#progress_bar').attr('value', 0).attr('max', 0);
 					$('#total_progress').text(0);
