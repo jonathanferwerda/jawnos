@@ -129,7 +129,8 @@ unlike($conf5_qr, qr/`qrencode -o - \$pos`/, 'no raw position reaches qrencode')
 
 my $misc5 = source('lib/JawnOS/Controller/manager_misc5.pm');
 like($misc5, qr/&subs::path_name\(\$upload->\{'filename'\}\)/, 'an uploaded name is one filesystem component');
-like($misc5, qr/system\('mkdir', '-p', \$location\)/, 'the upload folder is made in list form');
+like($misc5, qr/make_path\(\$location\)/, 'the upload folder is made in process, not through a shell');
+like($misc5, qr/make_path\(\$thumb\)/, 'the thumbnail folder is made in process too');
 like($misc5, qr/'file ' \. &subs::shell_quote\(\$filename\)/, 'the file probe quotes its path');
 like($misc5, qr/system\('shred', '-u', \$old_filename\)/, 'shred runs in list form');
 unlike($misc5, qr/`file \$filename`/, 'no raw upload path reaches the shell');

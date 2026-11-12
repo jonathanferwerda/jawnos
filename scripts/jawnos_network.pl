@@ -27,6 +27,8 @@
 
 use strict;
 use warnings;
+use FindBin qw($RealBin);
+use lib "$RealBin/../lib";
 use JSON::PP ();
 use Encode qw(decode_utf8);
 use IPC::Open3 qw(open3);
@@ -221,6 +223,7 @@ sub run_write {
 }
 
 sub interface_report {
+	return windows_interface_report() if $^O eq 'MSWin32';
 	my ($stdout, $stderr, $status) = run_read('ip', '-j', 'address', 'show');
 	my $list = eval { $JSON->decode($stdout) };
 	$list = [] unless ref $list eq 'ARRAY';
@@ -273,6 +276,40 @@ sub interface_report {
 		};
 	}
 	return \@interfaces;
+}
+
+# The Network app's status lists the same fields on Windows, filled from the
+# IP Helper backend in JawnOS::Platform::Net. The Linux reader above stays the
+# only one that runs on Linux.
+sub windows_interface_report {
+	require JawnOS::Platform::Net;
+	my $map = JawnOS::Platform::Net::interfaces();
+	my @interfaces;
+	foreach my $nic ( sort { nic_order($a) <=> nic_order($b) || $a cmp $b } keys %{$map} ) {
+		my $entry = $map->{$nic};
+		my @ip = @{ $entry->{'ips'} || [] };
+		my @v4 = map { { address => $_->{'address'} || '', prefix => $_->{'prefix'} } } grep { ($_->{'family'} || 4) == 4 } @ip;
+		my @v6 = map { { address => $_->{'address'} || '', prefix => $_->{'prefix'} } } grep { ($_->{'family'} || 6) == 6 } @ip;
+		@v4 = ({ address => $entry->{'ip'}, prefix => $entry->{'prefix'} }) if !@v4 && length($entry->{'ip'} || '');
+		@v6 = ({ address => $entry->{'ip6'}, prefix => '' }) if !@v6 && length($entry->{'ip6'} || '');
+		push @interfaces, {
+			name     => $entry->{'name'} || $entry->{'description'} || $nic,
+			state    => $entry->{'up'} ? 'up' : 'down',
+			mac      => $entry->{'mac'} || '',
+			ipv4     => \@v4,
+			ipv6     => \@v6,
+			method   => $entry->{'method'} || 'unknown',
+			wireless => $entry->{'wireless'} ? 1 : 0,
+			rx       => $entry->{'rx'} || 0,
+			tx       => $entry->{'tx'} || 0,
+		};
+	}
+	return \@interfaces;
+}
+
+sub nic_order {
+	my ($nic) = @_;
+	return (defined $nic && $nic =~ /^\d+$/) ? $nic + 0 : 1_000_000;
 }
 
 sub first_wireless {

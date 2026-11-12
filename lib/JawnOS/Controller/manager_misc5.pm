@@ -36,6 +36,7 @@ use File::Find;
 use File::Slurp;
 use File::Type;
 use File::Copy;
+use File::Path qw(make_path);
 use POSIX ();
 use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
 use Number::Format qw/:subs/;
@@ -147,7 +148,9 @@ sub action_14764 {
 	my $c = shift;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my @uploads = @{$c->req->uploads};
-	my $timestamp = $c->param('timestamp') - 1;
+	# A caller that names no moment (a direct upload, a test) still writes a
+	# current row; undef - 1 used to put the upload at 1970.
+	my $timestamp = ($c->param('timestamp') || &subs::rightNow()) - 1;
 	my $duration = $c->param('duration');
 	my $app = $c->param('app');
 	my $uuid = $c->param('uuid') || &subs::random_string_creator(22);
@@ -232,7 +235,7 @@ sub action_14764 {
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'download_location', device => $device } );
 			$location = &subs::home($folder) . '/' . $app_path;
 		}
-		system('mkdir', '-p', $location) unless -e $location;
+		make_path($location) unless -e $location;
 		my $upload_name = &subs::path_name($upload->{'filename'});
 		my $filename = $location . '/' . $upload_name;
 		my $new_uuid = &subs::random_string_creator(13);
@@ -272,7 +275,7 @@ sub action_14764 {
 		my $u_data = { server_time => &subs::rightNow(), ocr => $ocr, f => $filename, uuid => $new_uuid, type => $upload_type };
 
 		if ($thumb) {
-			system('mkdir', '-p', $thumb) unless -e $thumb;
+			make_path($thumb) unless -e $thumb;
 
 			$u_data->{'thumb'} = $thumb . '/' . $upload_name;
 			$u_data = &thumbnail_creator($u_data);
