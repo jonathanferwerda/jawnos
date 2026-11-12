@@ -52,6 +52,8 @@ like($events, qr/act == 'shell_add_bar'/, 'the press adds the bar kind it names'
 like($events, qr/jawnosShellBarAdd\(\$\(this\)\.attr\('kind'\) \|\| 'taskbar'\)/, 'through the shell');
 like($shell, qr/function jawnosShellBarAdd\(kind\)/, 'the shell adds a bar');
 like($shell, qr/function jawnosShellFreeEdge\(workspace, kind\)/, 'on the next free edge');
+like($shell, qr/var edges = kind == 'taskbar' \? \['bottom', 'top'\] : jawnosShellEdges;/,
+	'a taskbar looks for a horizontal edge only');
 like($shell, qr/function jawnosShellBarRemove\(id\)/, 'and removes an added one');
 
 # --- the drag handle, on the left side, in edit mode only -------------------
@@ -60,14 +62,32 @@ like($shell, qr/class="jawnos_bar_handle"/, 'the grip is a handle');
 like($shell, qr/function jawnosShellDragStart\(x, y, handle\)/, 'the grip starts a drag');
 like($shell, qr/function jawnosShellDragMove\(x, y\)/, 'follows the pointer');
 like($shell, qr/function jawnosShellDragEnd\(\)/, 'and settles on release');
-like($shell, qr/function jawnosShellSnapEdge\(x, y\)/, 'the pointer can snap to an edge');
-like($shell, qr/function jawnosShellSnapShow\(edge\)/, 'the edge is previewed');
+like($shell, qr/function jawnosShellSnapEdge\(x, y, kind, el\)/, 'the pointer can snap to an edge');
+like($shell, qr/jawnosBars\.taskbar = 'floating';/, 'a legacy side-pinned taskbar is rescued to a float');
+like($shell, qr/jawnosTaskbarSave\('taskbar_position', 'floating'\)/, 'and the legacy setting is corrected');
+like($shell, qr/if \(kind != 'taskbar'\) \{.*?near\.left = x;/s,
+	'a taskbar only takes a top or bottom edge');
+like($shell, qr/near\.bottom = h - rect\.bottom;/, 'a dock is judged by its own box');
+like($shell, qr/function jawnosShellSnapFor\(kind, x, y, el\)/, 'a drag asks where it would land');
+like($shell, qr/align = 'left'/, 'a dock near the left of its edge snaps left');
+like($shell, qr/align = 'right'/, 'near the right it snaps right');
+like($shell, qr/align = 'center'/, 'near the centre it snaps centre');
+like($shell, qr/else \{ edge = null; \}/, 'between the anchors the dock stays free');
+like($shell, qr/function jawnosShellSnapShow\(edge, align\)/, 'the edge and its anchor are previewed');
 like($shell, qr/if \(drag\.edge\) \{/, 'a drop near an edge locks the bar there');
 like($shell, qr/desc\.mode = 'floating';/, 'an open drop floats it');
 like($css, qr/\.jawnos_bar_handle\s*\{[^}]*position: absolute/s, 'the grip sits on the bar');
 like($css, qr/left: 3px;/, 'on its left side');
 like($css, qr/\.jawnos_taskbar\.taskbar_edit > \.jawnos_bar_handle,/, 'a taskbar grip shows in edit mode');
 like($css, qr/\.jawnos_dock\.dock_edit > \.jawnos_bar_handle/, 'and a dock grip in Edit dock');
+like($css, qr/\.jawnos_dock:not\(#pseudonym_home\)\[position="bottom"\]\[align="left"\]/,
+	'an added dock can sit at the left of its edge');
+like($css, qr/\.jawnos_dock:not\(#pseudonym_home\)\[position="bottom"\]\[align="right"\]/,
+	'or at its right');
+like($shell, qr/desc\.align = \(drag\.edge == 'top' \|\| drag\.edge == 'bottom'\)/,
+	'a dock keeps the anchor the drop chose');
+like($shell, qr/found\.bar\.align = found\.bar\.align \|\| 'center'/, 'a dock position defaults its anchor to centre');
+unlike($edit, qr/\['top', 'bottom', 'left', 'right', 'hidden'\]/, 'a taskbar menu offers no side edge');
 like($css, qr/\.jawnos_snap_preview\.on\s*\{\s*display: block/, 'the snap preview is drawn');
 
 # --- an edge bar and a floating bar are placed differently ------------------
@@ -115,10 +135,13 @@ my $body = join(' ', @{ $topic->{body} || [] });
 like($body, qr/Add taskbar/, 'the topic names Add taskbar');
 like($body, qr/workspaces/, 'and the workspaces');
 like($body, qr/grip on its left side/, 'and the grip');
+like($body, qr/It can lock to the top or bottom edge/, 'the taskbar only takes a horizontal edge');
+like($body, qr/taskbar stays horizontal/, 'and stays horizontal when it floats');
 like($body, qr/floating/, 'and the floating state');
 my $dock_topic = $help::topic{'dock'};
 my $dock_body = join(' ', @{ $dock_topic->{body} || [] });
 like($dock_body, qr/Add dock/, 'the dock topic names Add dock');
+like($dock_body, qr/snaps to that edge\'s left, centre or right/, 'and the dock\'s edge anchors');
 like($dock_body, qr/floating box/, 'and its floating box');
 
 done_testing();

@@ -634,8 +634,8 @@ function jawnosTaskbarContextBuild(bar) {
 	}
 
 	context.append('<div class="taskbar_context_label">Position</div>');
-	['top', 'bottom', 'left', 'right', 'hidden'].forEach(function (edge) {
-		var labels = { top: 'Top', bottom: 'Bottom', left: 'Left', right: 'Right', hidden: 'Hidden' };
+	['top', 'bottom', 'hidden'].forEach(function (edge) {
+		var labels = { top: 'Top', bottom: 'Bottom', hidden: 'Hidden' };
 		context.append('<div class="taskbar_context_selection" act="pos" val="' + edge + '">' + jawnosT(labels[edge]) + '<span class="taskbar_context_check">' + selected(current_edge == edge) + '</span></div>');
 	});
 

@@ -4177,3 +4177,10 @@ body.dark_theme .jawnos_taskbar:not(#taskbar) { background-image: linear-gradien
 .jawnos_dock:not(#pseudonym_home)[position="left"] .pseudonym_bar,
 .jawnos_dock:not(#pseudonym_home)[position="right"] .pseudonym_bar { flex-direction: column; overflow-y: auto; }
 #pseudonym_home[position="floating"], .jawnos_dock[position="floating"] { border: 1px solid var(--line); border-radius: var(--jawnos-corner, 16px); box-shadow: 0 10px 28px rgba(0,0,0,.24); }
+
+/* A dock on the top or bottom edge sits at its left, its centre or its right.
+   The shell writes align; the centre is the default the rules above draw. */
+.jawnos_dock:not(#pseudonym_home)[position="bottom"][align="left"],
+.jawnos_dock:not(#pseudonym_home)[position="top"][align="left"] { left: 8px; right: auto; transform: none; }
+.jawnos_dock:not(#pseudonym_home)[position="bottom"][align="right"],
+.jawnos_dock:not(#pseudonym_home)[position="top"][align="right"] { left: auto; right: 8px; transform: none; }

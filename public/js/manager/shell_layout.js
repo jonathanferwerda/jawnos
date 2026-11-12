@@ -16,7 +16,10 @@
 var jawnosShell = {
 	layout: null,
 	syncing: false,
-	drag: null
+	drag: null,
+	// a left/right taskbar from the first version is rescued to a floating one
+	// once, so the legacy setting stops asking for a vertical bar
+	taskbar_rescue_saved: false
 };
 
 var jawnosShellEdges = ['bottom', 'top', 'left', 'right'];
@@ -98,6 +101,20 @@ function jawnosShellNormalize(layout) {
 		$.each(ws.bars, function (j, bar) {
 			if (bar.mode != 'floating') { bar.mode = 'edge'; }
 			if (!bar.edge || $.inArray(bar.edge, ['bottom', 'top', 'left', 'right', 'hidden']) < 0) { bar.edge = 'bottom'; }
+			if (bar.kind == 'dock') {
+				if ($.inArray(bar.align, ['left', 'center', 'right']) < 0) { bar.align = 'center'; }
+			}
+			else if (bar.mode == 'edge' && (bar.edge == 'left' || bar.edge == 'right')) {
+				// a taskbar stays horizontal: an edge it cannot take becomes a float
+				var vw = window.innerWidth || 1024;
+				var vh = window.innerHeight || 768;
+				bar.mode = 'floating';
+				bar.edge = 'bottom';
+				if (typeof bar.w != 'number') { bar.w = 560; }
+				if (typeof bar.h != 'number') { bar.h = 44; }
+				if (typeof bar.x != 'number') { bar.x = Math.max(8, Math.round((vw - bar.w) / 2)); }
+				if (typeof bar.y != 'number') { bar.y = Math.max(8, Math.round((vh - bar.h) / 2)); }
+			}
 		});
 	});
 	var found = { taskbar: null, dock: null };
@@ -235,13 +252,23 @@ function jawnosShellBarBuild(desc, workspace) {
 function jawnosShellPlace(el, desc) {
 	var mode = desc.mode == 'floating' ? 'floating' : 'edge';
 	var edge = desc.edge || 'bottom';
+	var align = desc.kind == 'dock' ? (desc.align || 'center') : '';
 	el.attr('data-bar-mode', mode);
 	el.attr('data-edge', mode == 'floating' ? 'floating' : edge);
+	if (align) { el.attr('align', align); }
+	else { el.removeAttr('align'); }
 	// the first pair keeps its own placement: the legacy CSS (taskbar) and the
 	// dock's free-space maths own their edge, and clearing it here would undo
 	// the left the dock's finder just wrote
 	if (desc.primary && mode == 'edge') {
 		el.attr('position', edge);
+		// a row dock can sit at the left, centre or right of its edge: the finder
+		// has just centred it, so only the two off-centre cases need moving
+		if (desc.kind == 'dock' && (edge == 'top' || edge == 'bottom')) {
+			if (align == 'left') { el.css({ left: '8px', right: 'auto' }); }
+			else if (align == 'right') { el.css({ left: 'auto', right: '8px' }); }
+			else { el.css({ right: 'auto' }); }
+		}
 		return;
 	}
 	el.css({ left: '', right: '', top: '', bottom: '', width: '', height: '', transform: '' });
@@ -276,6 +303,17 @@ function jawnosShellPrimarySync() {
 		var desc = jawnosShellBarGet(jawnosShellPrimaryId(pair[0]));
 		if (!desc) { return; }
 		var edge = pair[1] || 'bottom';
+		// a taskbar is horizontal: a legacy left/right setting becomes a float
+		if (pair[0] == 'taskbar' && (edge == 'left' || edge == 'right')) {
+			edge = 'floating';
+			if (jawnosBars.taskbar != 'floating') {
+				jawnosBars.taskbar = 'floating';
+				if (!jawnosShell.taskbar_rescue_saved) {
+					jawnosShell.taskbar_rescue_saved = true;
+					if (typeof jawnosTaskbarSave == 'function') { jawnosTaskbarSave('taskbar_position', 'floating'); }
+				}
+			}
+		}
 		if (edge == 'floating') {
 			if (desc.mode != 'floating') { desc.mode = 'floating'; changed = true; }
 		}
@@ -428,11 +466,13 @@ function jawnosShellWorkspaceAdd() {
 // ---- adding, moving and removing a bar ------------------------------------
 function jawnosShellFreeEdge(workspace, kind) {
 	var used = {};
+	// a taskbar only has two edges it can take; a dock can use all four
+	var edges = kind == 'taskbar' ? ['bottom', 'top'] : jawnosShellEdges;
 	$.each(workspace.bars, function (i, bar) {
 		if (bar.kind == kind && bar.mode != 'floating') { used[bar.edge] = 1; }
 	});
-	for (var i = 0; i < jawnosShellEdges.length; i++) {
-		if (!used[jawnosShellEdges[i]]) { return jawnosShellEdges[i]; }
+	for (var i = 0; i < edges.length; i++) {
+		if (!used[edges[i]]) { return edges[i]; }
 	}
 	return null;
 }
@@ -441,6 +481,7 @@ function jawnosShellBarAdd(kind) {
 	kind = kind == 'dock' ? 'dock' : 'taskbar';
 	var workspace = jawnosShellActiveWorkspace();
 	var desc = { id: jawnosShellNewId(kind), kind: kind, mode: 'edge', edge: jawnosShellFreeEdge(workspace, kind) };
+	if (kind == 'dock') { desc.align = 'center'; }
 	if (!desc.edge) {
 		desc.mode = 'floating';
 		desc.edge = 'bottom';
@@ -470,6 +511,8 @@ function jawnosShellBarRemove(id) {
 function jawnosShellBarEdgeSet(id, edge) {
 	var found = jawnosShellBarFound(id);
 	if (!found) { return; }
+	// a taskbar stays horizontal: left and right are not edges it can take
+	if (found.bar.kind == 'taskbar' && (edge == 'left' || edge == 'right')) { edge = 'floating'; }
 	if (edge == 'floating') {
 		found.bar.mode = 'floating';
 		found.bar.w = found.bar.w || (found.bar.kind == 'taskbar' ? 560 : 360);
@@ -480,6 +523,7 @@ function jawnosShellBarEdgeSet(id, edge) {
 	else {
 		found.bar.mode = 'edge';
 		found.bar.edge = edge;
+		if (found.bar.kind == 'dock') { found.bar.align = found.bar.align || 'center'; }
 	}
 	if (found.bar.primary) {
 		var key = found.bar.kind == 'taskbar' ? 'taskbar' : 'dock';
@@ -493,15 +537,33 @@ function jawnosShellBarEdgeSet(id, edge) {
 }
 
 // ---- the drag handle ------------------------------------------------------
-function jawnosShellSnapEdge(x, y) {
+// A taskbar is horizontal, so only the top and bottom edges can take it: a
+// pointer beside the left or right edge must leave it floating, not turn it into
+// a vertical bar. A dock can take any edge.
+function jawnosShellSnapEdge(x, y, kind, el) {
 	var w = $(window).width();
 	var h = $(window).height();
+	// a taskbar is judged by the pointer's height: its full-width box is always
+	// beside the left and right edges, which it must never take
 	var near = {
 		top: y,
-		bottom: h - y,
-		left: x,
-		right: w - x
+		bottom: h - y
 	};
+	if (kind != 'taskbar') {
+		// a dock is judged by its own box, so a tall row grabbed by its middle
+		// still reads as sitting on the bottom edge
+		if (el && el.length) {
+			var rect = el[0].getBoundingClientRect();
+			near.top = rect.top;
+			near.bottom = h - rect.bottom;
+			near.left = rect.left;
+			near.right = w - rect.right;
+		}
+		else {
+			near.left = x;
+			near.right = w - x;
+		}
+	}
 	var edge = null;
 	var distance = jawnosShellSnapDistance + 1;
 	$.each(near, function (name, value) {
@@ -510,13 +572,37 @@ function jawnosShellSnapEdge(x, y) {
 	return edge;
 }
 
-function jawnosShellSnapShow(edge) {
+// Where a dragged bar would land. A dock already near the bottom or top edge
+// also answers how it would sit along that edge: at its left, its centre or its
+// right. A dock that is near the edge but at none of those anchors is left free
+// to float; that is what makes a dropped box stay where the person put it.
+function jawnosShellSnapFor(kind, x, y, el) {
+	var edge = jawnosShellSnapEdge(x, y, kind, el);
+	var align = '';
+	if (kind == 'dock' && (edge == 'top' || edge == 'bottom') && el && el.length) {
+		var rect = el[0].getBoundingClientRect();
+		var vw = $(window).width();
+		var centre = rect.left + (rect.width / 2);
+		if (rect.left <= jawnosShellSnapDistance) { align = 'left'; }
+		else if (rect.right >= vw - jawnosShellSnapDistance) { align = 'right'; }
+		else if (Math.abs(centre - (vw / 2)) <= jawnosShellSnapDistance) { align = 'center'; }
+		else { edge = null; }
+	}
+	return { edge: edge, align: align };
+}
+
+function jawnosShellSnapShow(edge, align) {
 	var preview = $('#jawnos_snap_preview');
 	if (!preview.length) {
 		preview = $('<div id="jawnos_snap_preview" class="jawnos_snap_preview"></div>').appendTo('body');
 	}
-	if (!edge) { preview.removeClass('on').removeAttr('edge'); return; }
-	preview.attr('edge', edge).addClass('on');
+	if (!edge) { preview.removeClass('on').removeAttr('edge').removeAttr('align').css({ left: '', right: '', width: '' }); return; }
+	preview.attr('edge', edge).addClass('on').removeAttr('align').css({ left: '', right: '', width: '' });
+	// a dock's anchor is drawn as a shorter strip at the part of the edge it
+	// would take; a taskbar or a side dock keeps the full edge strip
+	if (align == 'left') { preview.attr('align', align).css({ left: '0px', right: 'auto', width: '30%' }); }
+	else if (align == 'right') { preview.attr('align', align).css({ left: 'auto', right: '0px', width: '30%' }); }
+	else if (align == 'center') { preview.attr('align', align).css({ left: '35%', right: 'auto', width: '30%' }); }
 }
 
 function jawnosShellDragStart(x, y, handle) {
@@ -527,11 +613,13 @@ function jawnosShellDragStart(x, y, handle) {
 	jawnosShell.drag = {
 		el: el,
 		id: desc.id,
+		kind: desc.kind,
 		x0: x,
 		y0: y,
 		rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
 		moved: false,
-		edge: null
+		edge: null,
+		align: ''
 	};
 	$('body').addClass('jawnos_bar_dragging');
 }
@@ -559,8 +647,10 @@ function jawnosShellDragMove(x, y) {
 		height: h + 'px',
 		transform: ''
 	});
-	drag.edge = jawnosShellSnapEdge(x, y);
-	jawnosShellSnapShow(drag.edge);
+	var snap = jawnosShellSnapFor(drag.kind, x, y, drag.el);
+	drag.edge = snap.edge;
+	drag.align = snap.align;
+	jawnosShellSnapShow(drag.edge, drag.align);
 }
 
 function jawnosShellDragEnd() {
@@ -578,6 +668,11 @@ function jawnosShellDragEnd() {
 		// dropped near an edge: the bar locks there, so the edge owns it again
 		desc.mode = 'edge';
 		desc.edge = drag.edge;
+		// a dock on the top or bottom edge keeps the anchor the drop chose; any
+		// other lock is centred along the edge's own axis
+		if (desc.kind == 'dock') {
+			desc.align = (drag.edge == 'top' || drag.edge == 'bottom') ? (drag.align || 'center') : 'center';
+		}
 		desc.x = desc.y = desc.w = desc.h = undefined;
 		// the drag left a floating box inline; an edge bar takes the CSS again
 		drag.el.css({ left: '', right: '', top: '', bottom: '', width: '', height: '', transform: '' });
@@ -585,6 +680,7 @@ function jawnosShellDragEnd() {
 	else {
 		// dropped in the open: the bar keeps the box it was dragged into
 		desc.mode = 'floating';
+		if (desc.kind == 'dock') { desc.align = 'center'; }
 		desc.x = parseInt(drag.el.css('left'), 10) || 0;
 		desc.y = parseInt(drag.el.css('top'), 10) || 0;
 		desc.w = parseInt(drag.el.css('width'), 10) || drag.rect.width;
