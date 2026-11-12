@@ -252,13 +252,21 @@ function windowDraggable(win) {
 				}
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'stop'); }
 				windowDimensionSetter($('#' + p.target.id));
-				// A window dragged by hand has left the stack: the tile closes the slot it
-				// held, and the window floats where it was put. A click on the title bar
-				// also starts and stops a drag without moving the pointer, and that keeps
-				// the window in the tile.
+				// A window dragged by hand lands either in the stack or outside it: over the
+				// stack it joins (or moves within it) at the slot the held title bar is
+				// over, and outside it floats free. A click on the title bar also starts
+				// and stops a drag without moving the pointer, and that keeps the window
+				// in the tile where it is. A drag to either edge is the half snap, which
+				// owns the window's place and takes it out of the tile.
+				var edge = d.x < ($(window).width() / 10) || d.x > ($(window).width() - ($(window).width() / 10));
 				var moved = dragFrom && (Math.abs(p.pageX - dragFrom.x) > 4 || Math.abs(p.pageY - dragFrom.y) > 4);
-				if (!windowPhoneChecker() && moved && typeof windowTiledLeave === 'function') {
-					windowTiledLeave(win, true);
+				if (!windowPhoneChecker() && moved) {
+					if (edge) {
+						if (typeof windowTiledLeave === 'function') { windowTiledLeave(win, true); }
+					}
+					else if (typeof windowTiledJoinOrLeave === 'function') {
+						windowTiledJoinOrLeave(win, { x: d.x, y: d.y });
+					}
 				}
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of

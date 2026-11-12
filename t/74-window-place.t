@@ -74,7 +74,10 @@ like($windows, qr/function windowTiledGapClose\(win\) \{\n\tif \(windowPhoneChec
 like($windows, qr/tileCount \* windowTileAcrossStep/, 'a window is placed with the tile across step');
 like($windows, qr/function windowTiledLeave\(win, float\)/, 'a window can leave the tile');
 like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');
-like($fit, qr/windowTiledLeave\(win, true\)/, 'a drag takes the window out of the tile');
+like($windows, qr/function windowTiledJoinOrLeave\(win, at\)/, 'a drop either joins the stack or leaves it');
+like($windows, qr/function windowTiledInsertSlot\(at\)/, 'the held title bar names the slot');
+like($fit, qr/windowTiledJoinOrLeave\(win, \{ x: d\.x, y: d\.y \}\)/, 'a drag joins or leaves the stack where it is dropped');
+like($fit, qr/windowTiledLeave\(win, true\)/, 'a drag to an edge leaves the tile to the half snap');
 like($fit, qr/windowTiledLeave\(win, false\)/, 'pinning takes it out of the tile without making it free');
 like($storage, qr/tile: \$\(v\)\.attr\('tile'\)/, 'the tile slot is saved with the window');
 like($storage, qr/free: \$\(v\)\.attr\('free'\)/, 'a dragged-out window is saved as free');
@@ -340,6 +343,65 @@ ctx.windowReorganizer('window_c');
 eq(late.attr('tile'), '1', 'a restored window keeps the slot it held before the reload');
 eq(late.style.top, 40, 'and lands in that step of the cascade');
 eq(arriving[1].attr('tile'), '2', 'the window restored after it keeps its own slot');
+
+// a drag dropped off the stack leaves the tile, and the stack closes behind it
+let dropped_out = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 }
+]);
+ctx.windowTiledJoinOrLeave('#window_b', { x: 1000, y: 900 });
+eq(dropped_out[1].attr('tile'), undefined, 'a window dropped off the stack leaves the tile');
+eq(dropped_out[1].attr('free'), '1', 'and floats free');
+eq(dropped_out[0].attr('tile'), '0', 'the window above stays in its slot');
+
+// a free window dropped on the stack joins where the held bar is
+let joined = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 }
+]);
+let floater = new El('window_c', { pre_dimensioned: '0' });
+floater.attr('free', '1');
+floater.style.left = '300px';
+floater.style.top = '300px';
+dom.push(floater);
+ctx.windowTiledJoinOrLeave('#window_c', { x: 100, y: 45 });
+eq(floater.attr('tile'), '1', 'a free window dropped on the stack joins at the held slot');
+eq(floater.attr('free'), undefined, 'and is no longer free');
+eq(floater.style.top, 40, 'and sits in that step of the cascade');
+eq(joined[1].attr('tile'), '2', 'the window below it steps down a slot');
+eq(joined[1].style.top, 80, 'and down a step');
+
+// a window already in the stack can be dragged to another place in it
+let dropped_low = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 },
+	{ id: 'window_d', top: 120, left: 150 }
+]);
+ctx.windowTiledJoinOrLeave('#window_b', { x: 100, y: 130 });
+eq(dropped_low[1].attr('tile'), '3', 'a stacked window dropped at the foot takes the last slot');
+eq(dropped_low[1].style.top, 120, 'and the foot of the cascade');
+eq(dropped_low[2].attr('tile'), '1', 'the window it passed steps up a slot');
+eq(dropped_low[2].style.top, 40, 'and up a step');
+eq(dropped_low[3].attr('tile'), '2', 'the next one too');
+
+let dropped_high = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 },
+	{ id: 'window_d', top: 120, left: 150 }
+]);
+ctx.windowTiledJoinOrLeave('#window_d', { x: 100, y: 0 });
+eq(dropped_high[3].attr('tile'), '0', 'a stacked window dropped at the head takes the first slot');
+eq(dropped_high[3].style.top, 0, 'and the head of the cascade');
+eq(dropped_high[0].attr('tile'), '1', 'the first window steps down a slot');
+eq(dropped_high[0].style.top, 40, 'and down a step');
+
+// a lone tiled window put back down over its own place keeps its slot
+let lone = desk([{ id: 'window_a', top: 0, left: 0 }]);
+ctx.windowTiledJoinOrLeave('#window_a', { x: 100, y: 100 });
+eq(lone[0].attr('tile'), '0', 'a lone tiled window dropped on itself stays in the tile');
+eq(lone[0].attr('free'), undefined, 'and is not made free');
 
 process.exit(failures ? 1 : 0);
 JS

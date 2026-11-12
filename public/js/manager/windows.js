@@ -701,6 +701,105 @@ function windowTiledLeave(win, float) {
 	if (typeof windowSaver === 'function') { windowSaver(); }
 }
 
+// A window's box as its own style has it, so the ground the stack covers can be
+// measured without laying anything out.
+function windowTiledRect(win) {
+	var left = parseFloat($(win).css('left')) || 0;
+	var top = parseFloat($(win).css('top')) || 0;
+	return {
+		left: left,
+		top: top,
+		right: left + (parseFloat($(win).css('width')) || 0),
+		bottom: top + (parseFloat($(win).css('height')) || 0)
+	};
+}
+
+// The ground the tile covers: every tiled window's box taken together. The
+// window being dragged is still one of them when it was in the stack, so a
+// window picked up and put back down over its own place still finds the stack.
+function windowTiledArea() {
+	var area = null;
+	$('.wind').each(function() {
+		if (windowTiledSlot(this) < 0) { return; }
+		var r = windowTiledRect(this);
+		if (!area) { area = { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }
+		else {
+			area.left = Math.min(area.left, r.left);
+			area.top = Math.min(area.top, r.top);
+			area.right = Math.max(area.right, r.right);
+			area.bottom = Math.max(area.bottom, r.bottom);
+		}
+	});
+	return area;
+}
+
+function windowTiledOverStack(area, at) {
+	if (!area || !at) { return false; }
+	return at.x >= area.left && at.x <= area.right && at.y >= area.top && at.y <= area.bottom;
+}
+
+// Where the title bar was held among the stack's bars: the number of tiled bars
+// whose middle sits above the pointer. That is the slot the window takes.
+function windowTiledInsertSlot(at) {
+	var want = (at && at.y) || 0;
+	var slot = 0;
+	$('.wind').each(function() {
+		if (windowTiledSlot(this) < 0) { return; }
+		var bar = $(this).find('.top_navbar');
+		var middle = (parseFloat($(this).css('top')) || 0) + ((bar.outerHeight() || 40) / 2);
+		if (middle < want) { slot++; }
+	});
+	return slot;
+}
+
+// Put a tiled window in the step of the cascade its slot names.
+function windowTiledPlace(win, slot) {
+	var bar = $(win).find('.top_navbar');
+	var vAdvance = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
+	$(win).css({
+		'left': slot * windowTileAcrossStep,
+		'top': slot * vAdvance + windowTopLimit()
+	});
+}
+
+function windowTiledRelayout() {
+	$('.wind').each(function() {
+		var slot = windowTiledSlot(this);
+		if (slot >= 0) { windowTiledPlace(this, slot); }
+	});
+}
+
+// A drag ends either in the stack or outside it. Picked up, the window leaves
+// its slot and the stack closes up behind it; dropped with the pointer over the
+// stack's ground, it takes the slot the held title bar is over - the windows
+// from there down step one place - so reordering the stack is the same press.
+// Dropped outside, it floats free, as good as closed to the tile.
+function windowTiledJoinOrLeave(win, at) {
+	if (windowPhoneChecker()) { return; }
+	win = $(win);
+	if (win.attr('pre_dimensioned') == 1) { return; }
+	var area = windowTiledArea();
+	var slot = windowTiledSlot(win);
+	if (slot >= 0) {
+		win.removeAttr('tile');
+		windowTiledStepUp(slot);
+	}
+	if (!windowTiledOverStack(area, at)) {
+		win.attr('free', '1');
+		if (typeof windowSaver === 'function') { windowSaver(); }
+		return;
+	}
+	var to = windowTiledInsertSlot(at);
+	$('.wind').each(function() {
+		var s = windowTiledSlot(this);
+		if (s >= to) { $(this).attr('tile', String(s + 1)); }
+	});
+	win.removeAttr('free').attr('tile', String(to));
+	windowTiledRelayout();
+	if (typeof windowDimensionSetter === 'function') { windowDimensionSetter(win); }
+	if (typeof windowSaver === 'function') { windowSaver(); }
+}
+
 function windowReorganizer(window_id) {
 	var windows = [];
 	var startingV = windowTopLimit();
