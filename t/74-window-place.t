@@ -111,6 +111,7 @@ like($windows, qr/var over = \(id === from\)/, 'the carried block is measured ag
 like($windows, qr/: windowTiledOverArea\(null, null, id, null, at\);/, 'another pile is measured by its own windows');
 like($windows, qr/function windowTiledWindowAt\(at, skip, group\)/, 'a drop can land on a window that is not in a pile');
 like($windows, qr/function windowTiledStackStart\(win, head, group\)/, 'dropping on such a window starts a pile there');
+like($windows, qr/function windowTiledBlockStart\(win, group\)/, 'a block put down on open desk stays a pile');
 like($windows, qr/if \(els\.indexOf\(head\[0\]\) >= 0\) \{ return; \}/, 'a carried window is never mistaken for the pile head');
 like($windows, qr/carried\.indexOf\(this\) >= 0/, 'and the hit test skips every window the drag carries');
 like($windows, qr/function windowTiledStackJoin\(win, stack, at, group\)/, 'a drop joins the pile at the slot its bar is over');
@@ -926,6 +927,33 @@ ctx.windowTiledDragLeave('#window_a', { x: 1400, y: 800 }, { left: 0, top: 0, wi
 eq(block_leave[0].attr('tile'), undefined, 'the held window leaves the pile');
 eq(block_leave[1].attr('tile'), undefined, 'the windows below it leave with it');
 eq(block_leave[2].attr('free'), '1', 'and the block floats together');
+
+// A block put down on open desk stays a pile there, so grabbing its top next
+// time takes it whole again.
+let block_open = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+let open_group = [
+	{ el: block_open[1], left: 50, top: 40, width: 400, height: 300 },
+	{ el: block_open[2], left: 100, top: 80, width: 400, height: 300 }
+];
+block_open[0].style.left = '800px';
+block_open[0].style.top = '400px';
+block_open[1].style.left = '850px';
+block_open[1].style.top = '440px';
+block_open[2].style.left = '900px';
+block_open[2].style.top = '480px';
+ctx.windowTiledJoinOrLeave('#window_a', { x: 830, y: 430 }, { left: 0, top: 0, width: 400, height: 300 }, '0', open_group);
+eq(typeof block_open[0].attr('stack'), 'string', 'a block dropped on open desk stays a pile');
+eq(block_open[0].attr('tile'), '0', 'with the held window as its head');
+eq(block_open[1].attr('tile'), '1', 'and the carried windows below it');
+eq(block_open[2].attr('tile'), '2', 'in order');
+eq(block_open[0].style.left, 800, 'standing where it was dropped');
+eq(block_open[1].style.left, 850, 'laid out from the head');
+eq(block_open[0].attr('free'), undefined, 'none of it is left free');
+eq(block_open[0].attr('stack'), block_open[2].attr('stack'), 'all of it in one pile');
 
 // The pile's ground is the windows themselves, not their bounding box: the empty
 // corner a stagger leaves is the desk, and a drop there does not join.

@@ -1394,12 +1394,33 @@ function windowTiledStackStart(win, head, group) {
 	if (typeof windowSaver === 'function') { windowSaver(); }
 }
 
+// A block put down on open desk stays a pile: the held window becomes its head
+// where it was dropped, and the windows it carries fall in below it. A moved
+// stack is still a stack, and the next grab of its top takes it whole again.
+function windowTiledBlockStart(win, group) {
+	win = $(win);
+	var els = windowTiledBlockEls(win, group);
+	var stack = windowTiledNewStack();
+	var at = windowTiledRect(win);
+	var anchor = at.left + ',' + at.top;
+	$.each(els, function(i, el) {
+		var w = $(el);
+		w.removeAttr('free').removeAttr('tile').attr('stack', stack).attr('tile', String(i)).attr('stack_at', anchor);
+		if (typeof windowAnchorRelease === 'function') { windowAnchorRelease(w); }
+		windowTiledSizeReset(w);
+	});
+	windowTiledRelayout(stack);
+	windowTiledStackRaise(stack);
+	if (typeof windowDimensionSetter === 'function') { $.each(els, function(i, el) { windowDimensionSetter($(el)); }); }
+	if (typeof windowSaver === 'function') { windowSaver(); }
+}
+
 // A drag ends either in a pile or outside every pile. The pile under the pointer
 // is joined at the slot the held title bar is over, so reordering is the same
 // gesture; a window that is not in a pile starts one with the window under the
-// drop; and a drop on open desk floats free. `home` is the box the window was
-// picked up from, `from` the pile it came from, and `group` the windows the drag
-// carried with it.
+// drop; and off every pile a single window floats free while a block stays a
+// pile where it was put. `home` is the box the window was picked up from, `from`
+// the pile it came from, and `group` the windows the drag carried with it.
 function windowTiledJoinOrLeave(win, at, home, from, group) {
 	if (windowPhoneChecker()) { return; }
 	win = $(win);
@@ -1411,6 +1432,11 @@ function windowTiledJoinOrLeave(win, at, home, from, group) {
 		if (win.attr('pre_dimensioned') == 1) {
 			// an anchored window put down on open desk keeps its anchor
 			win.removeAttr('free');
+		}
+		else if (group && group.length) {
+			// a pile move stays a pile: the block stands as its own pile here
+			windowTiledBlockStart(win, group);
+			return;
 		}
 		else { windowTiledBlockLeave(win, group); }
 		if (typeof windowSaver === 'function') { windowSaver(); }
