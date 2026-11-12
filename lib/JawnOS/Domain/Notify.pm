@@ -43,11 +43,13 @@ sub notification_sender($m,$db) {
 	# nothing to remove and the row could not be cleared
 	$m->{'uuid'} ||= &subs::random_string_creator(20);
 	my $sound = $m->{'sound'} || 'ding.mp3';
+	# A silenced house keeps the notice on the screen but plays nothing.
+	my $silenced = eval { &subs::silence_active() } || 0;
 	my $sound_file = $m->{'settings'}->{$m->{'type'} . '_notification_sound'} || './public/sounds/notifications/' . $sound;
 	my $words = $m->{'words'} || $m->{'message'} || $m->{'settings'}->{$m->{'type'} ? $m->{'type'} . '_notification_text' : 'notification_text'};
-	if ($m->{'silent'}) {
-		# the caller already sounds this (the phone's alarm channel); the
-		# notification must not play a second sound over it
+	if ($silenced || $m->{'silent'}) {
+		# silence, or the caller already sounds this (the phone's alarm channel);
+		# the notification must not play a second sound over it
 	}
 	elsif ($m->{'synth'}) {
 		&subs::subprocessor(sub {

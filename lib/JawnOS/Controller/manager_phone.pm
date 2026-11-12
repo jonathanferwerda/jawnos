@@ -437,13 +437,23 @@ sub action_24755 {
 	# names, never the house's settings rows, so each entry's lines are resolved
 	# here: number -> { flow, kind, label }. The flow keys ride the defs beside it.
 	$ivr->{'flow_callers'} = &subs::phone_ivr_caller_index($ivr->{'flow_defs'});
+	# Silence is the one rule above the phone's own: every caller hears the
+	# receptionist and no number's saved route is offered to the app.
+	my $silenced = &subs::silence_active() ? 1 : 0;
+	if ($silenced) {
+		$ivr->{'silence'} = 1;
+		$ivr->{'enabled'} = 'yes';
+		$ivr->{'flows'} = { map { $_ => 'ivr' } qw(unknown blacklisted self friend stranger enemy) };
+		$ivr->{'flow_callers'} = {};
+	}
 	$c->render(json => {
 		blocked => &ticket_blacklist_numbers(),
 		names => \%names,
 		relationships => &phone_relationships(),
-		routes => &phone_routes_read(),
+		routes => $silenced ? {} : &phone_routes_read(),
 		avatars => \%avatars,
 		ivr => $ivr,
+		silence => $silenced,
 	});
 }
 

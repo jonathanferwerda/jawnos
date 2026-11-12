@@ -137,6 +137,9 @@ var jawnosConsoleCommands = {
 	jawnosClockAlarmRing: function (a) {
 		if (typeof jawnosClockAlarmRing === 'function') { jawnosClockAlarmRing(a[0] || {}); }
 	},
+	jawnosSilence: function (a) {
+		if (typeof jawnosSilenceApply === 'function') { jawnosSilenceApply(a[0] || {}); }
+	},
 	jawnosClockTimerDone: function (a) {
 		if (typeof jawnosClockTimerDone === 'function') { jawnosClockTimerDone(a[0] || {}); }
 	},

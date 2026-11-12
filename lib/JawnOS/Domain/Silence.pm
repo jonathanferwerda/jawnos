@@ -1,0 +1,388 @@
+package subs;
+
+# Silence: one switch for every sound a machine makes.
+#
+# An appointment carrying the Silence box takes the whole house quiet when it
+# starts and gives it back when it stops. The state is one house-wide setting
+# (app __president, setting silence_state, device all), so every machine reads
+# the same answer. The
+# physical mute is applied here at once and relayed to the peers on the signed
+# rail; the settings sync is the slower second copy, not the only one.
+#
+# What to put back is a fact about this machine's mixer, never a house one, so
+# the snapshot lives in ~/.president/silence_local.json. The two sinks the
+# receptionist's virtual handset owns (jawn_call_in, jawn_prompt) and the
+# Bluetooth sink that carries the call are deliberately left alone: a silenced
+# house still has to let the IVR speak to its caller.
+#
+# Loaded on demand by lib/JawnOS/Domain/Loader.pm.
+use strict;
+use warnings;
+use utf8;
+
+use Mojo::JSON qw(decode_json encode_json);
+use Mojo::IOLoop;
+use JawnOS::Platform::Paths ();
+
+our $SILENCE_SETTING_APP = '__president';
+our $SILENCE_SETTING = 'silence_state';
+our $SILENCE_APP_BOX = 'silence';
+our $SILENCE_LOCAL_FILE;
+
+# ---- the state ---------------------------------------------------------------
+# One JSON row for the whole house. A malformed or missing row is an inactive
+# house, never a crash: every reader of this file is a sound path that must keep
+# working on a fresh machine or a pre-migration database.
+sub silence_state {
+	my $raw = eval {
+		&subs::setting_grabber({
+			app => $SILENCE_SETTING_APP,
+			setting => $SILENCE_SETTING,
+			device => 'all',
+			benign => 1,
+		});
+	};
+	my $state = (defined $raw && length $raw) ? eval { decode_json($raw) } : undef;
+	$state = {} unless ref $state eq 'HASH';
+	$state->{'active'} = $state->{'active'} ? 1 : 0;
+	$state->{'owners'} = [] unless ref $state->{'owners'} eq 'ARRAY';
+	$state->{'apps'} = {} unless ref $state->{'apps'} eq 'HASH';
+	return $state;
+}
+
+sub silence_active {
+	return &silence_state()->{'active'} ? 1 : 0;
+}
+
+sub silence_state_write {
+	my ($state) = @_;
+	$state = {} unless ref $state eq 'HASH';
+	my $saved = eval {
+		&subs::setting_setter({
+			app => $SILENCE_SETTING_APP,
+			setting => $SILENCE_SETTING,
+			value => encode_json($state),
+			device => 'all',
+			timestamp => &subs::rightNow(),
+		});
+		1;
+	};
+	return $saved ? 1 : 0;
+}
+
+# The appointment's own box. It is stored on the house-wide row so a phone and a
+# laptop agree about what that appointment does.
+sub silence_app_setting {
+	my ($app) = @_;
+	return '' unless defined $app && length $app;
+	my $value = eval {
+		&subs::setting_grabber({
+			app => $app,
+			setting => $SILENCE_APP_BOX,
+			device => 'all',
+			benign => 1,
+		});
+	};
+	if (!defined $value || !length $value) {
+		$value = eval { &subs::setting_grabber({ app => $app, setting => $SILENCE_APP_BOX, benign => 1 }) };
+	}
+	return defined $value ? $value : '';
+}
+
+sub silence_app_setting_on {
+	my ($app) = @_;
+	my $value = &silence_app_setting($app);
+	return ($value =~ /^(?:checked|on|1|yes|true)$/i) ? 1 : 0;
+}
+
+# ---- the local snapshot ------------------------------------------------------
+sub silence_local_file {
+	return $SILENCE_LOCAL_FILE if defined $SILENCE_LOCAL_FILE && length $SILENCE_LOCAL_FILE;
+	my $env = $ENV{'JAWNOS_SILENCE_LOCAL_FILE'};
+	return $env if defined $env && length $env;
+	my $dir = eval { &subs::home('~/.president') } || '';
+	if (!length $dir || !-d $dir) {
+		$dir = JawnOS::Platform::Paths::tmp_dir();
+	}
+	eval { require File::Path; File::Path::make_path($dir); } unless -d $dir;
+	return $dir . '/silence_local.json';
+}
+
+sub silence_local_read {
+	my $file = &silence_local_file();
+	return undef unless -e $file;
+	my $raw = eval {
+		open(my $fh, '<', $file) or die "open: $!";
+		local $/;
+		my $bytes = <$fh>;
+		close $fh;
+		$bytes;
+	};
+	return undef unless defined $raw && length $raw;
+	my $snap = eval { decode_json($raw) };
+	return ref $snap eq 'HASH' ? $snap : undef;
+}
+
+sub silence_local_write {
+	my ($snap) = @_;
+	my $file = &silence_local_file();
+	return 0 unless ref $snap eq 'HASH';
+	my $ok = eval {
+		open(my $fh, '>', $file) or die "open: $!";
+		print {$fh} encode_json($snap);
+		close $fh;
+		1;
+	};
+	return $ok ? 1 : 0;
+}
+
+sub silence_local_clear {
+	my $file = &silence_local_file();
+	eval { unlink $file; };
+	return 1;
+}
+
+# The receptionist's virtual handset owns these sinks. Muting one would mute the
+# caller's own greeting, which is the one sound silence must not take away.
+sub silence_local_keep_sink {
+	my ($id, $name) = @_;
+	my $text = lc(($id // '') . ' ' . ($name // ''));
+	return 1 if $text =~ /\bjawn_(?:call_in|prompt|ivr_mic)\b/;
+	return 1 if $text =~ /(?:bluez|handsfree|hfp)/;
+	return 0;
+}
+
+# On a phone the call stream is the Hands-Free link to the gateway. Its ring,
+# alarm, notification and media streams are muted; the call itself is not, or
+# the IVR would be talking into a closed microphone.
+sub silence_android_keep_stream {
+	my ($stream) = @_;
+	my $id = lc($stream // '');
+	return 1 if $id =~ /^(?:call|voice_call|in_call)$/;
+	return 0;
+}
+
+sub silence_local_apply_on {
+	my $devices = eval { &subs::sound_devices() } || {};
+	my $outputs = ref $devices->{'outputs'} eq 'ARRAY' ? $devices->{'outputs'} : [];
+	my @saved;
+	foreach my $device ( @{$outputs} ) {
+		next unless ref $device eq 'HASH';
+		my $id = $device->{'id'};
+		next unless defined $id && length $id;
+		next if &silence_local_keep_sink($id, $device->{'name'});
+		push @saved, {
+			id => $id,
+			volume => $device->{'volume'},
+			muted => ($device->{'muted'} ? 1 : 0),
+		};
+		eval { &subs::sound_mute('output', $id, 1) };
+	}
+	my $channels = eval { &subs::sound_channels() } || {};
+	my %channel_saved;
+	foreach my $name ( sort keys %{$channels} ) {
+		my $row = $channels->{$name};
+		next unless ref $row eq 'HASH';
+		$channel_saved{$name} = {
+			volume => $row->{'volume'},
+			muted => ($row->{'muted'} ? 1 : 0),
+		};
+		eval { &subs::sound_channel_set($name, $row->{'volume'}, 1) };
+	}
+	my @streams;
+	if (($devices->{'backend'} || '') eq 'android') {
+		my $list = eval { &subs::sound_android_streams() } || [];
+		foreach my $stream ( @{$list} ) {
+			next unless ref $stream eq 'HASH';
+			my $id = $stream->{'stream'};
+			next unless defined $id && length $id;
+			next if &silence_android_keep_stream($id);
+			push @streams, { stream => $id, volume => ($stream->{'volume'} || 0) };
+			eval { &subs::device_call('audio.volume', { stream => $id, volume => 0 }) };
+		}
+	}
+	&silence_local_write({
+		applied => 1,
+		at => &subs::rightNow(),
+		outputs => \@saved,
+		channels => \%channel_saved,
+		streams => \@streams,
+	});
+	return 1;
+}
+
+sub silence_local_apply_off {
+	my $snap = &silence_local_read();
+	return 0 unless ref $snap eq 'HASH';
+	foreach my $device ( @{ $snap->{'outputs'} || [] } ) {
+		next unless ref $device eq 'HASH';
+		my $id = $device->{'id'};
+		next unless defined $id && length $id;
+		eval { &subs::sound_mute('output', $id, $device->{'muted'} ? 1 : 0) };
+		eval { &subs::sound_set('output', $id, $device->{'volume'}) }
+			if defined $device->{'volume'};
+	}
+	foreach my $name ( sort keys %{ $snap->{'channels'} || {} } ) {
+		my $row = $snap->{'channels'}->{$name};
+		next unless ref $row eq 'HASH';
+		eval { &subs::sound_channel_set($name, $row->{'volume'}, $row->{'muted'}) };
+	}
+	foreach my $stream ( @{ $snap->{'streams'} || [] } ) {
+		next unless ref $stream eq 'HASH';
+		my $id = $stream->{'stream'};
+		next unless defined $id && length $id;
+		eval {
+			&subs::device_call('audio.volume', {
+				stream => $id,
+				volume => int($stream->{'volume'} || 0),
+			});
+		};
+	}
+	&silence_local_clear();
+	return 1;
+}
+
+sub silence_local_apply {
+	my ($on) = @_;
+	if ($on) {
+		return 0 if &silence_local_read();
+		return &silence_local_apply_on();
+	}
+	return &silence_local_apply_off();
+}
+
+# ---- the two moves -----------------------------------------------------------
+sub silence_engage {
+	my ($owner, $app, $c) = @_;
+	$owner = '__manual' unless defined $owner && length $owner;
+	my $state = &silence_state();
+	my %seen = map { $_ => 1 } @{ $state->{'owners'} || [] };
+	my $changed = (!$seen{$owner} || !$state->{'active'}) ? 1 : 0;
+	push @{ $state->{'owners'} }, $owner unless $seen{$owner};
+	$state->{'apps'}->{$owner} = $app if defined $app && length $app;
+	$state->{'active'} = 1;
+	$state->{'since'} ||= &subs::rightNow();
+	$state->{'by'} ||= (eval { &subs::signatorial_designer() } || '');
+	&silence_state_write($state) if $changed;
+	&silence_local_apply(1);
+	if ($changed) {
+		&silence_push($state);
+		&silence_broadcast($c, $state);
+	}
+	return $state;
+}
+
+sub silence_release {
+	my ($owner, $app, $c) = @_;
+	my $state = &silence_state();
+	my $had = scalar @{ $state->{'owners'} || [] };
+	my $was_active = $state->{'active'} ? 1 : 0;
+	my @keep;
+	foreach my $held ( @{ $state->{'owners'} || [] } ) {
+		if (defined $owner && length $owner) {
+			next if $held eq $owner;
+		}
+		elsif (defined $app && length $app) {
+			next if ($state->{'apps'}->{$held} // '') eq $app;
+		}
+		push @keep, $held;
+	}
+	return $state if $had == scalar @keep && !$state->{'active'};
+	$state->{'owners'} = \@keep;
+	delete $state->{'apps'}->{$owner} if defined $owner && length $owner;
+	unless (@keep) {
+		$state->{'active'} = 0;
+		$state->{'since'} = 0;
+	}
+	my $changed = ($had != scalar @keep || ($was_active && !$state->{'active'})) ? 1 : 0;
+	return $state unless $changed;
+	&silence_state_write($state);
+	&silence_local_apply(0) unless $state->{'active'};
+	&silence_push($state);
+	&silence_broadcast($c, $state);
+	return $state;
+}
+
+# What an appointment write does. A stop always releases the owner it names,
+# even when the app's box was unticked before the stop arrived; only a start
+# consults the box.
+sub silence_appointment_write {
+	my ($app, $type, $owner, $c) = @_;
+	return 0 unless defined $app && length $app;
+	my $movement = defined $type ? lc($type) : '';
+	return 0 unless $movement eq 'start' || $movement eq 'stop';
+	if ($movement eq 'stop') {
+		&silence_release($owner, $app, $c);
+		return 1;
+	}
+	return 0 unless &silence_app_setting_on($app);
+	&silence_engage($owner, $app, $c);
+	return 1;
+}
+
+# ---- the phone ---------------------------------------------------------------
+# Silence answers every call with the receptionist. The flow is returned in the
+# same shape a caller match uses, so the phone and the gateway read one answer.
+sub silence_phone_flow {
+	my ($defs) = @_;
+	return undef unless &silence_active();
+	$defs = eval { &subs::phone_ivr_flow_defs() } unless ref $defs eq 'HASH';
+	return undef unless ref $defs eq 'HASH' && %{$defs};
+	my $key = 'receptionist';
+	$key = (sort keys %{$defs})[0] unless ref $defs->{'receptionist'} eq 'HASH';
+	return undef unless defined $key && ref $defs->{$key} eq 'HASH';
+	my %flow = %{ $defs->{$key} };
+	$flow{'key'} = $key;
+	return \%flow;
+}
+
+# ---- telling the screens and the peers --------------------------------------
+sub silence_push {
+	my ($state) = @_;
+	$state = &silence_state() unless ref $state eq 'HASH';
+	eval {
+		&Websocket::send('tab', {
+			console => &Websocket::console_command('jawnosSilence', {
+				active => ($state->{'active'} ? 1 : 0),
+				since => ($state->{'since'} || 0),
+				by => ($state->{'by'} || ''),
+				owners => $state->{'owners'},
+				apps => $state->{'apps'},
+			}),
+		});
+	};
+	return 1;
+}
+
+# The peers get the same message at once over the signed rail; the shared
+# setting is what a machine that was asleep finds when it wakes.
+sub silence_broadcast {
+	my ($c, $state) = @_;
+	return 0 unless $c && ref $state eq 'HASH';
+	return 0 unless eval { defined $c->req };
+	return 0 if ($c->param('remoted') || '') eq 'yes';
+	my $self = eval { &subs::signatorial_designer() } || '';
+	my $relay_id = eval { &subs::random_string_creator(30) } || '';
+	eval { &subs::relay_fresh($relay_id) } if length $relay_id;
+	my $queued = eval { &subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&subs::remote_relay_request($c, {
+			override => 'manual',
+			url => '/manager/silence/peer',
+			type => 'post',
+			dissemination => 'yes',
+			params => {
+				signatorial => $self,
+				active => ($state->{'active'} ? 1 : 0),
+				state => encode_json($state),
+				dissemination => 'yes',
+				source_signatorial => $self,
+				relay_from => $self,
+				relay_id => $relay_id,
+			},
+		});
+	}, { name => 'silence relay' }); };
+	return $queued ? 1 : 0;
+}
+
+1;

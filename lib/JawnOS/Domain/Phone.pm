@@ -543,6 +543,9 @@ sub phone_ivr_flow_clean {
 # no longer exists answers the way the bucket would with nothing saved for it.
 sub phone_ivr_flow_for_bucket {
 	my ($bucket) = @_;
+	# Silence answers every caller with the receptionist, whatever the bucket.
+	my $forced = &subs::silence_phone_flow();
+	return $forced if ref $forced eq 'HASH';
 	return '' unless defined $bucket && $bucket =~ /^(?:unknown|blacklisted|self|friend|stranger|enemy)$/;
 	my $settings = &subs::phone_ivr_settings();
 	my $defs = $settings->{'flow_defs'};
@@ -614,6 +617,9 @@ sub phone_ivr_caller_match {
 sub phone_ivr_flow_for_number {
 	my ($number, $bucket, $defs) = @_;
 	$defs = &subs::phone_ivr_flow_defs() unless ref $defs eq 'HASH';
+	# Silence answers every caller with the receptionist, whoever is calling.
+	my $forced = &subs::silence_phone_flow($defs);
+	return $forced if ref $forced eq 'HASH';
 	my $match = &subs::phone_ivr_caller_match($number, $defs);
 	if ($match && ref $defs->{$match->{'flow'}} eq 'HASH') {
 		my %flow = %{ $defs->{$match->{'flow'}} };
@@ -630,6 +636,9 @@ sub phone_ivr_flow_for_number {
 # keeps the number it named.
 sub phone_ivr_caller_index {
 	my ($defs) = @_;
+	# Silence hides every caller's own flow: the phone falls through to the
+	# forced receptionist flow instead of a cached number rule.
+	return {} if &subs::silence_active();
 	$defs = &subs::phone_ivr_flow_defs() unless ref $defs eq 'HASH';
 	my $bodies = &subs::phone_ivr_caller_bodies();
 	my %index;

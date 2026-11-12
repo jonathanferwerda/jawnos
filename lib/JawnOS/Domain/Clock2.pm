@@ -63,13 +63,14 @@ sub clock_alarm_cmd {
 sub clock_alarm_ring {
 	my ($alarm, $fire_at, $now) = @_;
 	$now = &rightNow() unless defined $now;
+	my $silenced = eval { &subs::silence_active() } || 0;
 	# The ring begins here and is repeated by the firing loop until Dismiss or
 	# Snooze clears it (or the five-minute guard runs out).
 	$alarm->{'ringing'} = 1;
 	$alarm->{'ring_started'} = $now;
 	$alarm->{'ring_last'} = $now;
 	&clock_alarm_cmd($alarm, $fire_at, $now);
-	&clock_device_ring($alarm, $fire_at);
+	&clock_device_ring($alarm, $fire_at) unless $silenced;
 	# The ring is local to the machines that carry the alarm, but the answer is
 	# not. Tell every peer now, so a Manager window open anywhere can draw the
 	# ring card and dismiss the sound everywhere. The push above only reaches
@@ -89,8 +90,8 @@ sub clock_alarm_ring {
 	# would talk over it on the media stream. On a computer the sink is moved to
 	# the alarm's Volume for the ring and put back when it ends.
 	my $mobile = (&device_setter() eq 'mobile') ? 1 : 0;
-	my $system_volume = $mobile ? 0 : &clock_alarm_volume_raise($alarm);
-	my $play = $mobile ? '' : &clock_alarm_play_command($alarm, 0, $system_volume);
+	my $system_volume = ($mobile || $silenced) ? 0 : &clock_alarm_volume_raise($alarm);
+	my $play = ($mobile || $silenced) ? '' : &clock_alarm_play_command($alarm, 0, $system_volume);
 
 	# The alarm turns its linked appointment on. A session already running is the
 	# same activity and is left alone, so a late tick cannot open a second one.
@@ -119,7 +120,7 @@ sub clock_alarm_ring {
 			image => '/icons/alarm.svg',
 			words => ' ',
 		);
-		if ($mobile) { $note{'silent'} = 1; }
+		if ($mobile || $silenced) { $note{'silent'} = 1; }
 		else { $note{'sound'} = $sound; $note{'synth'} = $play; }
 		&subs::notification_sender(\%note, undef);
 	};
@@ -129,6 +130,7 @@ sub clock_alarm_ring {
 sub clock_timer_finish {
 	my ($timer, $now) = @_;
 	$now = &rightNow() unless defined $now;
+	my $silenced = eval { &subs::silence_active() } || 0;
 	my $label = $timer->{'label'} || 'Timer';
 	my $app = $timer->{'app'} || '';
 	# The countdown's own end is when the activity ended, even when the alarm
@@ -165,7 +167,7 @@ sub clock_timer_finish {
 	my $play = join ' ', JawnOS::Platform::Audio::player_argv($file, $timer_volume);
 	# A phone sounds the timer on the alarm channel through the app.
 	my $mobile = (&device_setter() eq 'mobile') ? 1 : 0;
-	&clock_device_timer($timer) if $mobile;
+	&clock_device_timer($timer) if $mobile && !$silenced;
 	eval {
 		my %note = (
 			app => 'clock',
@@ -176,7 +178,7 @@ sub clock_timer_finish {
 			image => '/icons/timer.svg',
 			words => ' ',
 		);
-		if ($mobile) { $note{'silent'} = 1; }
+		if ($mobile || $silenced) { $note{'silent'} = 1; }
 		else { $note{'sound'} = $sound; $note{'synth'} = $play; }
 		&subs::notification_sender(\%note, undef);
 	};

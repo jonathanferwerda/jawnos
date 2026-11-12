@@ -270,17 +270,21 @@ Manager::app->routes->get('/play' => sub($c) {
 	# the ahead tap re-requests /play for the same file; it must not start the
 	# server-side player a second time
 	if ($mao->{'srv'} eq 'on' && $c->param('ahead') ne '1' && $c->param('clone') ne '1') {
-		&subs::subprocessor(sub {
+		# A silenced house still answers the page and the bytes; it just does not
+		# start the machine's own player.
+		unless (eval { &subs::silence_active() }) {
+			&subs::subprocessor(sub {
 
-			# List form: the track name is request data, and terminal_name
-			# escapes for a terminal, not for a shell (no ; | $ ` or newline).
-			if ($music_device eq 'computer') {
-				system('vlc', $track_name);
-			}
-			elsif ($music_device eq 'mobile') {
-				system('play', $track_name);
-			}
-		}, { name => 'music play' });
+				# List form: the track name is request data, and terminal_name
+				# escapes for a terminal, not for a shell (no ; | $ ` or newline).
+				if ($music_device eq 'computer') {
+					system('vlc', $track_name);
+				}
+				elsif ($music_device eq 'mobile') {
+					system('play', $track_name);
+				}
+			}, { name => 'music play' });
+		}
 		$c->render(text => 'play');
 	}
 

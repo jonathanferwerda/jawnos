@@ -175,6 +175,7 @@ our @manager_bundle_files = qw(
 	/js/manager/monitor.js
 	/js/manager/power.js
 	/js/manager/sound.js
+	/js/manager/silence.js
 	/js/manager/folders.js
 	/js/manager/desk.js
 	/js/manager/notes.js

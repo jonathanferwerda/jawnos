@@ -336,6 +336,9 @@ Manager::app->hook(before_dispatch => sub {
 		# the same signed rail carries "send the unlock page" to the other
 		# machines in the house, where it is broadcast to their screens
 		$path eq '/manager/security/padlock_key_show_peer' ||
+		# the silence relay: a machine that started or stopped the house's
+		# silence hands the same state to its peers, signed and verified here
+		$path eq '/manager/silence/peer' ||
 		# a machine with no session and no key asks a linked machine for the house
 		# key; the route authenticates by peer signature and pinned key itself
 		$path eq '/manager/vault_share' ||

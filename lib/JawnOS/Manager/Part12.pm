@@ -511,6 +511,8 @@ sub phone_route_set {
 sub phone_route_for {
 	my ($number) = @_;
 	my $key = &ticket_contact_clean('phone', $number);
+	# Silence sits above every rule: no number rings, no caller keeps a flow.
+	return { flow => 'ivr', source => 'silence', number => $key } if &subs::silence_active();
 	my $routes = &phone_routes_read();
 	if ($key && $routes->{$key}) {
 		return { flow => $routes->{$key}, source => 'number', number => $key };

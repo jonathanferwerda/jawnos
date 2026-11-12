@@ -393,6 +393,13 @@ sub log_reader {
 			}
 		}
 		push @{$settings}, @app_settings;
+		# The Silence box is one answer for the whole house, so its row lives on
+		# device 'all'. The per-device query above cannot see it; read it here so
+		# the App panel shows the same tick on every machine.
+		if (($data->{'view'} || '') eq 'appointment_display') {
+			my $house = &subs::db_raw('select * from settings where setting = ? and device = ?', 'silence', 'all');
+			push @{$settings}, @{$house || []};
+		}
 	}
 
 	my ($settings_server_first, $settings_server_last) = (0, 0);

@@ -356,6 +356,8 @@ sub app_public_path {
 	# to ask another device for a print even when its app window has lapsed, and
 	# every one of these routes checks its own device key or pairing.
 	return 1 if $path =~ m{^/manager/security/(?:padlock_|fingerprint_unlock|biometric_)};
+	# The silence relay authenticates itself by peer signature, like the padlock.
+	return 1 if $path eq '/manager/silence/peer';
 	return 1 if $path =~ m{^/manager/device(?:/|$)};
 	return 1 if $path =~ m{^/manager/app_release(?:/|$)};
 	return 1 if $path =~ m{^/manager/app_download(?:/|$)};

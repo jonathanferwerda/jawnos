@@ -111,6 +111,7 @@ sub clock_write_device_alarm {
 sub clock_device_ring {
 	my ($alarm, $fire_at) = @_;
 	return 0 unless $alarm;
+	return 0 if eval { &subs::silence_active() };
 	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
 	# The phone plays this itself, on the alarm channel: a chime repeats until
 	# Dismiss, and a long track plays once at the alarm's own volume.
@@ -137,6 +138,7 @@ sub clock_device_ring {
 sub clock_device_timer {
 	my $timer = shift;
 	return 0 unless $timer;
+	return 0 if eval { &subs::silence_active() };
 	my $sound = &clock_valid_timer_sound($timer->{'sound'});
 	&clock_device_broadcast(&app_action('JAWN_CLOCK_TIMER'),
 		uuid => ($timer->{'uuid'} || ''),

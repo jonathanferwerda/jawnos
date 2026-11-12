@@ -108,6 +108,10 @@
 										<% if ($appts->{$a}->{'setting'}->{$check_set} eq "checked") { %> checked="checked" <% } %> setting="<%= $check_set %>" id="configure_visibility_<%= $a %>_<%= $check_set %>"> <%= &subs::format_name($check_set) %>
 								</span>
 							<% } %>
+							<span hint="<%= &subs::ui('A Silence appointment takes every machine quiet while it runs: no alarm, notification, ring or media sound, and every call goes to the receptionist. Stop it to give the house its sound back.') %>">
+								<input app="<%= $a %>" class="configure_checkbox" value="checked" type="checkbox" 
+									<% if (($appts->{$a}->{'setting'}->{'silence'} || '') eq "checked") { %> checked="checked" <% } %> setting="silence" id="configure_silence_<%= $a %>"> <%= &subs::ui('Silence') %>
+							</span>
 						</span>
 					</div>
 
