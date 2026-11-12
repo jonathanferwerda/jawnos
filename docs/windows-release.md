@@ -364,6 +364,35 @@ identity, and the app is a Perl tree that writes its config and database beside
 itself under `%LOCALAPPDATA%`. Store distribution would add a Partner Center
 identity and re-signing for no benefit, so it is not pursued.
 
+## Acceptance on a clean Windows install
+
+Run on a clean Windows 11 x64 VM with the bundled runtime, from `Setup.exe` through
+uninstall, before this build was called releasable. Each line is the answer the
+packaged house gave, not a unit test:
+
+| Check | Result |
+|---|---|
+| Silent install to a custom `-DIR` | tree, `config.json`, 512 KB database and `unlock-code.txt` written; no wizard |
+| `GET /manager/health` | 200 in ~45 ms |
+| `GET /manager` | 200, ~86 KB, ~175 ms |
+| Ticket login (`scripts/app_ticket.pl desktop`) | approved; `president` session issued |
+| Note written through `/manager/note_save` | row in `notes` |
+| Appointment through `/manager/appointment/writer` | row in `appointments` |
+| File upload through `/manager/upload_file` | `type=upload` row, sealed file on disk |
+| `GET /manager/network/status` | the adapter, its address/prefix, the gateway and the ARP neighbours |
+| Every app page | 43 of 48 app names answer; the rest are sub-routes, not pages |
+| `scripts/restart.pl --reason …` | exit 0, verdict recorded, port answering ~24 s later |
+| Inno uninstall | house stopped, `app\` and `runtime\` removed |
+
+Camera and microphone capture cannot be verified on a VM with neither device and
+no interactive session; they need a real machine before they are claimed.
+
+**Do not install as SYSTEM without `-DIR`.** Inno is a 32-bit process, so under
+the SYSTEM account `{localappdata}` resolves into `SysWOW64\…\AppData\Local`
+while its `[Run]` line still names the `system32` path; the post-install seed then
+cannot find itself. A real person's install is not redirected, so this only
+affects automated smoke runs — pass an explicit `-DIR` there.
+
 ## Troubleshooting
 
 **The first boot looks stuck.** The first run builds and seeds the database and
