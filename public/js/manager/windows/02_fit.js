@@ -197,9 +197,12 @@ function windowDraggable(win) {
 		// where the pointer went down and the box the window left: a click on the
 		// title bar also starts and stops a drag, and only a real move takes the
 		// window out of the tile. The box is the stack ground while the window is
-		// outside its own place, so dragging back over it can still join.
+		// outside its own place, so dragging back over it can still join. The pile
+		// it was picked up from is named here too; the preview and the drop both
+		// need it to tell a homecoming from a window that arrived free.
 		var dragFrom = null;
 		var dragFromTile = null;
+		var dragFromStack = null;
 
 		win.draggable({
 			cancel: 'input,textarea,button,select,option,.save_appointment,.app_act,.edit_app,.delete_app,.delete_location,.minimize_button,.restore_button,.maximize_button,.close_button',
@@ -207,6 +210,7 @@ function windowDraggable(win) {
 			start: function(p,ui) {
 				dragFrom = { x: p.pageX, y: p.pageY };
 				windowTiledDragging = true;
+				dragFromStack = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null;
 				windows[p.target.id] = Date.now();
 				if (win.attr('view') == 'max' && win.attr('free_dimensions')) {
 					var d = JSON.parse(win.attr('free_dimensions'));
@@ -232,9 +236,10 @@ function windowDraggable(win) {
 			// the exception stopped the window being moved at all.
 			drag: function(p,ui) {
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'drag'); }
-				// show the slot the window would join while it is still in the hand
+				// show the slot the window would join while it is still in the hand,
+				// and close the pile it is leaving at once rather than at the drop
 				if (!windowPhoneChecker() && typeof windowTiledPreview === 'function') {
-					windowTiledPreview(win, mouse_position(), dragFromTile);
+					windowTiledPreview(win, mouse_position(), dragFromTile, dragFromStack);
 				}
 			},
 			stop: function(p,ui) {
@@ -266,12 +271,13 @@ function windowDraggable(win) {
 				}
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'stop'); }
 				windowDimensionSetter($('#' + p.target.id));
-				// A window dragged by hand lands either in the stack or outside it: over the
-				// stack it joins (or moves within it) at the slot the held title bar is
-				// over, and outside it floats free. A click on the title bar also starts
-				// and stops a drag without moving the pointer, and that keeps the window
-				// in the tile where it is. A drag to either edge is the half snap, which
-				// owns the window's place and takes it out of the tile.
+				// A window dragged by hand lands in the pile under the pointer (or
+				// starts one on a window that is not in a pile), at the slot the held
+				// title bar is over; off every pile it floats free. A click on the
+				// title bar also starts and stops a drag without moving the pointer,
+				// and that keeps the window in the tile where it is. A drag to either
+				// edge is the half snap, which owns the window's place and takes it out
+				// of the tile.
 				var edge = d.x < ($(window).width() / 10) || d.x > ($(window).width() - ($(window).width() / 10));
 				var moved = dragFrom && (Math.abs(p.pageX - dragFrom.x) > 4 || Math.abs(p.pageY - dragFrom.y) > 4);
 				if (!windowPhoneChecker() && moved) {
@@ -279,16 +285,17 @@ function windowDraggable(win) {
 						if (typeof windowTiledLeave === 'function') { windowTiledLeave(win, true); }
 					}
 					else if (typeof windowTiledJoinOrLeave === 'function') {
-						windowTiledJoinOrLeave(win, { x: d.x, y: d.y }, dragFromTile);
+						windowTiledJoinOrLeave(win, { x: d.x, y: d.y }, dragFromTile, dragFromStack);
 					}
 				}
-				if (typeof windowTiledPreview === 'function') { windowTiledPreview(win, null, null); }
+				if (typeof windowTiledPreview === 'function') { windowTiledPreview(win, null, null, dragFromStack); }
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of
 				// the pile - the moment the drag ends
 				if (windowPhoneChecker()) { windowStacker(win.attr('app'), true); }
 				dragFrom = null;
 				dragFromTile = null;
+				dragFromStack = null;
 				windowTiledDragging = false;
 			}
 		});
@@ -352,6 +359,21 @@ function windowPlaceRestore(win) {
 	setTimeout(function() { win.removeAttr('place_restoring'); }, 900);
 }
 
+// The pin's other half: a window that joins a pile is anchored no longer. The
+// place it kept is dropped the same way the pin button drops it, so the window
+// tiles like any other and a reload brings it back into its pile. Shared by the
+// button and by a drop, which is the second way a window stops being anchored.
+function windowAnchorRelease(win) {
+	win = $(win);
+	if (win.attr('pre_dimensioned') != 1) { return; }
+	win.attr('pre_dimensioned', 0);
+	win.find('.place_button').attr('status', 'off');
+	var app = win.attr('app');
+	if (!app) { return; }
+	if (typeof settingDeleter === 'function') { settingDeleter({ 'app': app, 'setting': 'dimensions' }); }
+	if (typeof settingSetter === 'function') { settingSetter({ 'app': app, 'setting': 'place', 'value': 'tile' }); }
+}
+
 $(document).on('click', '.place_button', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
@@ -361,10 +383,7 @@ $(document).on('click', '.place_button', function(e) {
 	if (!win.length || !app) { return; }
 	if (button.attr('status') == 'on') {
 		// let it tile again: no place of its own, and the next open cascades it
-		button.attr('status', 'off');
-		win.attr('pre_dimensioned', 0);
-		settingDeleter({ 'app': app, 'setting': 'dimensions' });
-		settingSetter({ 'app': app, 'setting': 'place', 'value': 'tile' });
+		windowAnchorRelease(win);
 	}
 	else {
 		// keep it as it sits, on the screen it sits on

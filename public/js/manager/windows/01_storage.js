@@ -66,11 +66,13 @@ function windowSaver(skip_act) {
 			locked: locked,
 			zindex: zindex,
 			timestamp: timestamp,
-			// the tile slot this window holds (none for a pinned or dragged-out one)
-			// and whether it had been dragged out of the stack, so a reload puts the
-			// tile back together in the same order and leaves the free ones where
-			// they were
+			// the pile this window sits in and its slot there (none for a pinned or
+			// dragged-out one), the pile's anchor, and whether it had been dragged out of
+			// the stack, so a reload puts every pile back together in the same order,
+			// where it stood, and leaves the free ones where they were
 			tile: $(v).attr('tile'),
+			stack: $(v).attr('stack'),
+			stack_at: $(v).attr('stack_at'),
 			free: $(v).attr('free'),
 			terminal_id: $(v).attr('data-terminal-id') || '',
 			browser_tab_id: bti,
@@ -202,10 +204,11 @@ function appWindowOpenerNow(i,timestamp,v) {
 	}
 	v = v || {};
 	timestamp = timestamp || jawnosWindowTimestamp();
-	// a restore carries the window's place in the tile (or the fact that it had
-	// been dragged out of it); hand it to windowReorganizer, which runs while the
-	// rendered window is being appended. A fresh open carries neither.
-	if (v.tile !== undefined || v.free == 1) { windowTiledRestore[i] = v; }
+	// a restore carries the pile and slot (or the fact that it had been dragged
+	// out of the tile) it held in the last session; hand it to windowReorganizer,
+	// which runs while the rendered window is being appended. A fresh open carries
+	// neither and joins the default pile.
+	if (v.tile !== undefined || v.stack !== undefined || v.free == 1) { windowTiledRestore[i] = v; }
 	else { delete windowTiledRestore[i]; }
 	// Every window the guide opens is one it may want to look over: if the app's
 	// name does not match its part of speech, the guide sets the right one. The

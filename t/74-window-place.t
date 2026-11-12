@@ -75,10 +75,10 @@ like($windows, qr/function windowTiledGapClose\(win\) \{\n\tif \(windowPhoneChec
 like($windows, qr/slot \* windowTileAcrossStep/, 'a window is placed with the tile across step');
 like($windows, qr/function windowTiledLeave\(win, float\)/, 'a window can leave the tile');
 like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');
-like($windows, qr/function windowTiledJoinOrLeave\(win, at, home\)/, 'a drop either joins the stack or leaves it');
-like($windows, qr/function windowTiledInsertSlot\(at, skip\)/, 'the dragged title bar names the slot');
-like($windows, qr/function windowTiledInsertAt\(win, to\)/, 'a restored window inserts at its saved slot');
-like($windows, qr/function windowTiledFront\(\)/, 'the pile front follows the slots');
+like($windows, qr/function windowTiledJoinOrLeave\(win, at, home, from\)/, 'a drop either joins a pile, starts one, or leaves');
+like($windows, qr/function windowTiledInsertSlot\(at, skip, stack\)/, 'the dragged title bar names the slot in the pile under it');
+like($windows, qr/function windowTiledInsertAt\(win, to, stack\)/, 'a restored window inserts at its saved slot');
+like($windows, qr/function windowTiledFront\(touch_stack\)/, 'the pile front follows the slots');
 like($windows, qr/jawnosWindowFocusApply/, 'the front title-bar cue follows the pile');
 like($windows, qr/function windowTiledBump\(win\)/, 'a title-bar press walks a tiled window to the foot');
 like($windows, qr/function windowTiledPress\(win\)/, 'a press is tiled-aware');
@@ -86,16 +86,41 @@ like($back, qr/pressWindow\(/, 'the title-bar handler presses through the tile')
 like($stack, qr/windowTiledPress\(clicked\)/, 'a press in a tiled body brings it forward through the pile');
 like($windows, qr/windowTiledPendingApp\[window_app\]/, 'a bespoke opener claims the latest press for its app');
 like($windows, qr/isJson\(jws\).*pre_dimensioned'\) == 1/, 'a saved view places only a pinned window');
-like($windows, qr/function windowTiledPreview\(win, at, home\)/, 'a drag draws the slot it would join');
-like($windows, qr/windowTiledArea\(win, slot >= 0 \? home : null\)/, 'the stack ground uses the box the window left, not where it is');
-like($fit, qr/windowTiledPreview\(win, mouse_position\(\), dragFromTile\)/, 'the drag shows the preview from where it was picked up');
-like($fit, qr/windowTiledJoinOrLeave\(win, \{ x: d\.x, y: d\.y \}, dragFromTile\)/, 'a drag joins or leaves the stack where it is dropped');
+like($windows, qr/function windowTiledPreview\(win, at, home, from\)/, 'a drag draws the slot it would join');
+like($windows, qr/windowTiledArea\(win, home, from\)/, 'the pile ground uses the box the window left, not where it is');
+like($fit, qr/windowTiledPreview\(win, mouse_position\(\), dragFromTile, dragFromStack\)/, 'the drag shows the preview from where it was picked up');
+like($fit, qr/windowTiledJoinOrLeave\(win, \{ x: d\.x, y: d\.y \}, dragFromTile, dragFromStack\)/, 'a drag joins or leaves the pile where it is dropped');
 like($css, qr/#window_tile_preview/, 'the preview slot has a look');
 like($fit, qr/windowTiledLeave\(win, true\)/, 'a drag to an edge leaves the tile to the half snap');
 like($fit, qr/windowTiledLeave\(win, false\)/, 'pinning takes it out of the tile without making it free');
 like($storage, qr/tile: \$\(v\)\.attr\('tile'\)/, 'the tile slot is saved with the window');
+like($storage, qr/stack: \$\(v\)\.attr\('stack'\)/, 'the pile id is saved with the window');
+like($storage, qr/stack_at: \$\(v\)\.attr\('stack_at'\)/, 'and the pile anchor, so a pile away from the corner comes back');
 like($storage, qr/free: \$\(v\)\.attr\('free'\)/, 'a dragged-out window is saved as free');
-like($storage, qr/if \(v\.tile !== undefined \|\| v\.free == 1\)/, 'a restore hands its slot to the window that opens');
+like($storage, qr/if \(v\.tile !== undefined \|\| v\.stack !== undefined \|\| v\.free == 1\)/, 'a restore hands its pile and slot to the window that opens');
+
+# --- a desk can hold more than one pile ---------------------------------
+# A drop lands in the pile whose ground is under the pointer (the front one when
+# two overlap), starts a pile on a window that is not in one, or floats free.
+like($windows, qr/var windowTiledDefaultStack = '0';/, 'the desk has a default pile');
+like($windows, qr/function windowTiledStackId\(win\)/, 'a window names its pile');
+like($windows, qr/function windowTiledAnchor\(stack\)/, 'a pile stands on an anchor');
+like($windows, qr/function windowTiledDropTarget\(at, skip, home, from\)/, 'a drop finds the pile or the window under it');
+like($windows, qr/function windowTiledWindowAt\(at, skip\)/, 'a drop can land on a window that is not in a pile');
+like($windows, qr/function windowTiledStackStart\(win, head\)/, 'dropping on such a window starts a pile there');
+like($windows, qr/function windowTiledStackJoin\(win, stack, at\)/, 'a drop joins the pile at the slot its bar is over');
+like($windows, qr/windowTiledStackJoin\(win, target\.stack, at\)/, 'the drop target is the pile it found');
+like($windows, qr/if \(typeof windowAnchorRelease === 'function'\)/, 'the tile releases a pin through the one helper');
+like($fit, qr/function windowAnchorRelease\(win\) \{/, 'the pin release is one helper');
+like($fit, qr/if \(button\.attr\('status'\) == 'on'\) \{\n\t\t\/\/ let it tile again.*\n\t\twindowAnchorRelease\(win\);/, 'the pin button uses the same release');
+
+# --- a drag leaves the pile in the hand ---------------------------------
+# The pile steps up as soon as the pointer is off its ground; the drop only
+# decides where the window lands.
+like($windows, qr/function windowTiledDragLeave\(win, at, home, from\)/, 'a drag leaves the pile as soon as it is away');
+like($windows, qr/windowTiledDragLeave\(win, at, home, from\);\n\tvar target = windowTiledDropTarget/, 'the drop takes that leave before it chooses a target');
+like($windows, qr/\/\/ the drag takes the window out of its pile as soon as it is away from it\n\twindowTiledDragLeave/, 'so does the preview');
+like($windows, qr/function windowTiledPreview\(win, at, home, from\)/, 'the preview shows the pile or the new pile it would join');
 
 # --- a press holds its slot before the window arrives ---------------------
 # Clicking down the clothesline fires several opens; their responses can land in
@@ -187,7 +212,16 @@ function J(els) {
 	return j;
 }
 
-const documentStub = { getElementById: function () { return null; } };
+	// Pinned place released: the real helper lives in windows/02_fit.js; the
+	// harness plays its effect so the tile's half of the agreement is tested.
+	function anchorReleaseStub(w) {
+		if (w.attr('pre_dimensioned') == 1) {
+			w.attr('pre_dimensioned', 0);
+			w.attr('place_released', 1);
+		}
+	}
+
+	const documentStub = { getElementById: function () { return null; } };
 
 function $(arg) {
 	if (arg && arg.__jq) { return arg; }
@@ -225,6 +259,7 @@ const ctx = {
 	topLevelNow: function () {},
 	taskbarDisplayer: function () {},
 	jawnosAppFieldGet: function () { return ''; },
+	windowAnchorRelease: anchorReleaseStub,
 	setTimeout: function () {},
 	clearTimeout: function () {},
 	setInterval: function () { return 0; },
@@ -639,6 +674,118 @@ ctx.windowReorganizer('window_b');
 eq(pinned_saved.attr('tile'), undefined, 'a pinned window takes no slot');
 eq(pinned_saved.style.top, 700, 'and keeps the place the saved view holds');
 ctx.jws = undefined;
+
+// Carrying a tiled window off its pile takes it out at once: the pile closes the
+// gap while the pointer is still down, so letting go is not what resets it.
+let carried = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+ctx.windowTiledDragLeave('#window_b', { x: 1400, y: 800 }, { left: 50, top: 40, width: 400, height: 300 });
+eq(carried[1].attr('tile'), undefined, 'a drag off the pile takes the window out at once');
+eq(carried[1].attr('free'), '1', 'and floats it free');
+eq(carried[0].style.top, '0px', 'the window above keeps its place');
+eq(carried[2].attr('tile'), '1', 'the window below closes the gap while the pointer is down');
+eq(carried[2].style.top, 40, 'and steps up in the hand');
+
+// a drag that stays over the pile keeps the slot it holds
+let steady = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 }
+]);
+ctx.windowTiledDragLeave('#window_b', { x: 100, y: 60 }, { left: 50, top: 40, width: 400, height: 300 });
+eq(steady[1].attr('tile'), '1', 'a drag still over its pile keeps the slot');
+
+// An anchored window dropped over a pile joins it at the bar's place, and is
+// anchored no longer.
+let anchor_desk = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 }
+]);
+let anchored = new El('window_c', { pre_dimensioned: '1' });
+anchored.style.left = '60px';
+anchored.style.top = '0px';
+dom.push(anchored);
+ctx.windowTiledJoinOrLeave('#window_c', { x: 100, y: 0 }, { left: 60, top: 0, width: 400, height: 300 });
+eq(anchored.attr('tile'), '0', 'an anchored window dropped over a pile joins at the bar slot');
+eq(anchored.attr('pre_dimensioned'), 0, 'and is anchored no longer');
+eq(anchored.attr('place_released'), 1, 'its pin is released the way the button releases it');
+eq(anchor_desk[0].attr('tile'), '1', 'the window it landed above steps down');
+
+// Dropping a window over one that is not in a pile starts a pile there: the
+// window under stays the head where it stood, so a desk can hold several piles.
+let lone_head = desk([{ id: 'window_a', free: true, top: 300, left: 1100 }]);
+let starter = new El('window_b', { pre_dimensioned: '0' });
+starter.attr('free', '1');
+starter.style.left = '1150px';
+starter.style.top = '330px';
+dom.push(starter);
+ctx.windowTiledJoinOrLeave('#window_b', { x: 1200, y: 330 }, { left: 1150, top: 330, width: 400, height: 300 });
+let new_pile = lone_head[0].attr('stack');
+eq(typeof new_pile, 'string', 'a drop on a lone window starts a pile with an id');
+eq(starter.attr('stack'), new_pile, 'and the dropped window joins it');
+eq(lone_head[0].attr('tile'), '0', 'the window that was there is the pile head');
+eq(lone_head[0].style.left, 1100, 'the head stays where it stood');
+eq(starter.attr('tile'), '1', 'the dropped window joins at the foot');
+eq(starter.style.left, 1150, 'and steps across from that pile');
+eq(starter.style.top, 340, 'and down one bar from it');
+
+// a later drop joins the pile that is already there, at its own foot
+let third = new El('window_c', { pre_dimensioned: '0' });
+third.attr('free', '1');
+third.style.left = '1200px';
+third.style.top = '380px';
+dom.push(third);
+ctx.windowTiledJoinOrLeave('#window_c', { x: 1250, y: 380 }, { left: 1200, top: 380, width: 400, height: 300 });
+eq(third.attr('stack'), new_pile, 'a later drop joins the pile that is there');
+eq(third.attr('tile'), '2', 'at its foot');
+eq(third.style.left, 1200, 'laid out from the pile anchor');
+eq(third.style.top, 380, 'not from the desk corner');
+
+// each pile closes only its own gap
+let two_piles = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 }
+]);
+let far_head = new El('window_x', { pre_dimensioned: '0' });
+far_head.attr('free', '1');
+far_head.style.left = '1200px';
+far_head.style.top = '500px';
+dom.push(far_head);
+let far_foot = new El('window_y', { pre_dimensioned: '0' });
+far_foot.attr('free', '1');
+far_foot.style.left = '1250px';
+far_foot.style.top = '540px';
+dom.push(far_foot);
+ctx.windowTiledJoinOrLeave('#window_y', { x: 1300, y: 540 }, { left: 1250, top: 540, width: 400, height: 300 });
+eq(far_foot.attr('tile'), '1', 'a second pile is formed beside the first');
+ctx.windowTiledGapClose('#window_x');
+eq(far_foot.attr('tile'), '0', 'a close closes only that pile');
+eq(far_foot.style.top, 500, 'stepping its own foot up');
+eq(two_piles[0].style.top, '0px', 'and leaves the other pile alone');
+eq(two_piles[1].style.top, '40px', 'both of its windows');
+
+// A pile away from the corner comes back where it stood: each member carries the
+// pile's anchor as well as its slot.
+ctx.windowTiledRestore = {};
+ctx.windowTiledPending = {};
+ctx.windowTiledPendingApp = {};
+ctx.jws = undefined;
+dom = [];
+let pile_head = new El('window_a', { pre_dimensioned: '0' });
+pile_head.style.left = '1100px';
+pile_head.style.top = '300px';
+pile_head.attr('tile', '0').attr('stack', 's7').attr('stack_at', '1100,300');
+dom.push(pile_head);
+let restored_foot = new El('window_b', { pre_dimensioned: '0' });
+dom.push(restored_foot);
+ctx.windowTiledRestore = { window_b: { tile: '1', stack: 's7', stack_at: '1100,300' } };
+ctx.windowReorganizer('window_b');
+eq(restored_foot.attr('stack'), 's7', 'a restored window rejoins its own pile');
+eq(restored_foot.style.left, 1150, 'at the anchor it saved');
+eq(restored_foot.style.top, 340, 'and the slot it saved');
+eq(pile_head.style.left, 1100, 'the head it rejoined is not moved');
 
 process.exit(failures ? 1 : 0);
 JS
