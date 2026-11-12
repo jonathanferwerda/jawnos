@@ -90,6 +90,35 @@ function windowSaver(skip_act) {
 		}
 	});
 
+	// The piles as the desk has them, in depth order and with their members in
+	// slot order. A reload replays this map, so every pile comes back whole - even
+	// a window whose own restore record was lost - and in the same depth order.
+	var piles = {};
+	$('.wind').each(function() {
+		var slot = windowTiledSlot(this);
+		if (slot < 0) { return; }
+		var id = windowTiledStackId(this);
+		if (!piles[id]) {
+			piles[id] = { id: id, at: $(this).attr('stack_at') || '', z: -Infinity, members: [] };
+		}
+		var z = parseInt($(this).css('z-index'), 10);
+		if (!isNaN(z) && z > piles[id].z) { piles[id].z = z; }
+		piles[id].members.push({ slot: slot, key: windowTiledIdentity(this) });
+	});
+	var pile_list = [];
+	$.each(Object.keys(piles), function(i, id) {
+		piles[id].members.sort(function(a, b) { return a.slot - b.slot; });
+		pile_list.push(piles[id]);
+	});
+	pile_list.sort(function(a, b) { return a.z - b.z; });
+	var pile_map = [];
+	$.each(pile_list, function(i, p) {
+		var keys = [];
+		$.each(p.members, function(k, m) { keys.push(m.key); });
+		pile_map.push({ id: p.id, at: p.at, members: keys });
+	});
+	storage['window_stacks'] = { piles: pile_map };
+
 	storage['musicData'] = tree['musicData'];
 	var json_storage = JSON.stringify(storage);
 	sessionStorage.setItem('window_storage',json_storage);
@@ -124,15 +153,20 @@ function windowRetriever() {
 	var window_h = $(window).height();
 	ticketWindowRetriever()
 
-	// Open the saved windows in the order they held in the stack: a restore
+	// Open the saved windows in the order they held in their piles: a restore
 	// inserts each at its saved slot, so arriving in that order leaves no gaps to
-	// close while the slower responses are still coming in. A window with no slot
-	// (pinned, or saved by a build before slots) keeps its stored order.
+	// close while the slower responses are still coming in. Piles are sorted by id
+	// first so one pile's windows arrive together, its head before its foot; a
+	// window with no slot (pinned, or saved by a build before slots) keeps its
+	// stored order.
 	var restoring = [];
 	$.each(storage, function(i,v) {
 		if (v.type == 'window') { restoring.push({ app: i, v: v }); }
 	});
 	restoring.sort(function(a, b) {
+		var sa = String(a.v.stack || '0');
+		var sb = String(b.v.stack || '0');
+		if (sa !== sb) { return (sa < sb) ? -1 : 1; }
 		var ta = parseInt(a.v.tile, 10);
 		var tb = parseInt(b.v.tile, 10);
 		if (isNaN(ta) && isNaN(tb)) { return 0; }
@@ -143,6 +177,10 @@ function windowRetriever() {
 	$.each(restoring, function(k, r) {
 		appWindowLoader(r.app, r.v);
 	});
+	// The per-window records above place the windows that bring one; the pile map
+	// is the authority once the burst is in, and repairs the ones whose own record
+	// was missed (a bespoke opener, two windows of one app) and the depth order.
+	if (!windowPhoneChecker() && typeof windowStacksRestoreSoon === 'function') { windowStacksRestoreSoon(); }
 
 	// A phone shows its windows as a cascade, and a restore renders them all at
 	// once - so their z-order and sizes drift as the renders settle. Once, after

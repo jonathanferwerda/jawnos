@@ -203,6 +203,9 @@ function windowDraggable(win) {
 		var dragFrom = null;
 		var dragFromTile = null;
 		var dragFromStack = null;
+		// the windows below it in the same pile: they travel with it, so a pile
+		// cannot be cut in half by moving its head
+		var dragGroup = [];
 
 		win.draggable({
 			cancel: 'input,textarea,button,select,option,.save_appointment,.app_act,.edit_app,.delete_app,.delete_location,.minimize_button,.restore_button,.maximize_button,.close_button',
@@ -211,6 +214,17 @@ function windowDraggable(win) {
 				dragFrom = { x: p.pageX, y: p.pageY };
 				windowTiledDragging = true;
 				dragFromStack = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null;
+				dragGroup = [];
+				var startSlot = windowTiledSlot(win);
+				if (startSlot >= 0) {
+					$('.wind').each(function() {
+						if (this === win[0]) { return; }
+						if (windowTiledStackId(this) !== dragFromStack) { return; }
+						if (windowTiledSlot(this) <= startSlot) { return; }
+						dragGroup.push({ el: this, left: parseFloat($(this).css('left')) || 0, top: parseFloat($(this).css('top')) || 0 });
+					});
+					dragGroup.sort(function(a, b) { return windowTiledSlot(a.el) - windowTiledSlot(b.el); });
+				}
 				windows[p.target.id] = Date.now();
 				if (win.attr('view') == 'max' && win.attr('free_dimensions')) {
 					var d = JSON.parse(win.attr('free_dimensions'));
@@ -236,10 +250,19 @@ function windowDraggable(win) {
 			// the exception stopped the window being moved at all.
 			drag: function(p,ui) {
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'drag'); }
+				// the windows below the held one in its pile move with it, keeping the
+				// cascade's own spacing, so the pile travels whole
+				if (dragGroup.length && dragFromTile) {
+					var dx = (parseFloat(win.css('left')) || 0) - dragFromTile.left;
+					var dy = (parseFloat(win.css('top')) || 0) - dragFromTile.top;
+					$.each(dragGroup, function(i, g) {
+						$(g.el).css({ 'left': g.left + dx, 'top': g.top + dy });
+					});
+				}
 				// show the slot the window would join while it is still in the hand,
 				// and close the pile it is leaving at once rather than at the drop
 				if (!windowPhoneChecker() && typeof windowTiledPreview === 'function') {
-					windowTiledPreview(win, mouse_position(), dragFromTile, dragFromStack);
+					windowTiledPreview(win, mouse_position(), dragFromTile, dragFromStack, dragGroup);
 				}
 			},
 			stop: function(p,ui) {
@@ -277,18 +300,19 @@ function windowDraggable(win) {
 				// title bar also starts and stops a drag without moving the pointer,
 				// and that keeps the window in the tile where it is. A drag to either
 				// edge is the half snap, which owns the window's place and takes it out
-				// of the tile.
+				// of the tile; a drag carrying the windows below it is a pile move, so
+				// the edge keeps its hands off it.
 				var edge = d.x < ($(window).width() / 10) || d.x > ($(window).width() - ($(window).width() / 10));
 				var moved = dragFrom && (Math.abs(p.pageX - dragFrom.x) > 4 || Math.abs(p.pageY - dragFrom.y) > 4);
 				if (!windowPhoneChecker() && moved) {
-					if (edge) {
+					if (edge && !dragGroup.length) {
 						if (typeof windowTiledLeave === 'function') { windowTiledLeave(win, true); }
 					}
 					else if (typeof windowTiledJoinOrLeave === 'function') {
-						windowTiledJoinOrLeave(win, { x: d.x, y: d.y }, dragFromTile, dragFromStack);
+						windowTiledJoinOrLeave(win, { x: d.x, y: d.y }, dragFromTile, dragFromStack, dragGroup);
 					}
 				}
-				if (typeof windowTiledPreview === 'function') { windowTiledPreview(win, null, null, dragFromStack); }
+				if (typeof windowTiledPreview === 'function') { windowTiledPreview(win, null, null, dragFromStack, dragGroup); }
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of
 				// the pile - the moment the drag ends
@@ -296,6 +320,7 @@ function windowDraggable(win) {
 				dragFrom = null;
 				dragFromTile = null;
 				dragFromStack = null;
+				dragGroup = [];
 				windowTiledDragging = false;
 			}
 		});

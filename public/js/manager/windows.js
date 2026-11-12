@@ -709,6 +709,39 @@ function windowTiledStackTopZ(stack) {
 	return z;
 }
 
+// Work in a pile brings that pile to the front. Laying a pile out (a restore, a
+// close) does not: a reload must not reorder the piles by whichever response
+// happened to arrive last.
+function windowTiledStackRaise(stack) {
+	windowTiledStackTouch[stack] = Date.now();
+	windowTiledFront();
+}
+
+// A window's own identity, so a reload can find it again after the server has
+// minted a new timestamp: one window per app, but Terminal sessions and Folders
+// windows are several of one app and are told apart by their instance id.
+function windowTiledIdentity(el) {
+	var app = $(el).attr('app') || '';
+	var instance = $(el).attr('data-terminal-id') || $(el).attr('data-window-id') || '';
+	return app + '|' + instance;
+}
+
+// A window that joins a pile takes the size a fresh window opens at. The two
+// numbers are Part22.pm's $default_width/$default_height; t/74 keeps them in
+// step. A window the person sized for themselves shrinks back to the standard
+// when it joins, so a pile reads as one stack instead of a row of odd shapes.
+var windowTileDefaultWidth = 480;
+var windowTileDefaultHeight = 640;
+
+function windowTiledSizeReset(win) {
+	win = $(win);
+	win.css({ 'width': windowTileDefaultWidth + 'px', 'height': windowTileDefaultHeight + 'px' });
+	win.removeAttr('free_dimensions').removeAttr('fit_height').removeAttr('fit_shrunk');
+	win.attr('view', '');
+	win.find('.maximize_button').show();
+	win.find('.restore_button').hide();
+}
+
 // The next free slot at the end of one pile: the tiled windows already in it and
 // the presses still waiting for their windows (a press always opens into the
 // default pile, so only that one counts reservations). A pinned or free window
@@ -797,6 +830,9 @@ var windowTiledPending = {};
 var windowTiledPendingApp = {};
 var windowTiledDragging = false;
 var windowTiledSettleTimer = null;
+// a saved pile map waiting to be replayed, once the restore burst has settled
+var windowTiledStacksPending = false;
+var windowTiledStacksTries = 0;
 
 // Close the slot a window leaves: every tiled window below it in this pile (a
 // higher slot) steps up by one bar and one across-step, and its own slot number
@@ -818,7 +854,7 @@ function windowTiledStepUp(slot, stack) {
 		});
 		$(this).attr('tile', String(s - 1));
 	});
-	windowTiledFront(stack);
+	windowTiledFront();
 }
 
 // Closing a tiled window closes the slot it held in its own pile. A pinned or
@@ -953,14 +989,15 @@ function windowTiledRelayout(stack) {
 		if (stack !== undefined && windowTiledStackId(this) !== stack) { return; }
 		windowTiledPlace(this, slot, windowTiledStackId(this));
 	});
-	windowTiledFront(stack);
+	windowTiledFront();
 }
 
 // Each pile is a layer of its own: the pile worked in most recently is the front
 // one, and inside it the window at the foot is the front window. Its depth is
 // the slot order, so the bottom step wears the highest z, and a window dragged
-// or pressed into the middle is behind the ones below it.
-function windowTiledFront(touch_stack) {
+// or pressed into the middle is behind the ones below it. A restore leaves the
+// order alone; windowTiledStackRaise is the one that names the pile worked in.
+function windowTiledFront() {
 	if (windowPhoneChecker()) { return; }
 	var stacks = {};
 	var any = false;
@@ -973,7 +1010,6 @@ function windowTiledFront(touch_stack) {
 		any = true;
 	});
 	if (!any) { return; }
-	if (touch_stack !== undefined) { windowTiledStackTouch[touch_stack] = Date.now(); }
 	var ids = Object.keys(stacks);
 	$.each(ids, function(i, id) {
 		if (windowTiledStackTouch[id] === undefined) {
@@ -1030,10 +1066,11 @@ function windowTiledBump(win) {
 		if (windowTiledStackId(this) !== stack) { return; }
 		if (windowTiledSlot(this) > slot) { last = false; return false; }
 	});
-	if (last) { windowTiledFront(stack); return true; }
+	if (last) { windowTiledStackRaise(stack); return true; }
 	win.removeAttr('tile');
 	windowTiledStepUp(slot, stack);
 	windowTiledInsertAt(win, windowNextTileSlot(stack), stack);
+	windowTiledStackRaise(stack);
 	if (typeof windowDimensionSetter === 'function') { windowDimensionSetter(win); }
 	if (typeof windowSaver === 'function') { windowSaver(); }
 	return true;
@@ -1050,6 +1087,7 @@ function windowTiledPress(win) {
 function windowTiledSettle() {
 	if (windowTiledDragging && $('.wind.ui-draggable-dragging').length) { windowTiledSettleSoon(); return; }
 	windowTiledDragging = false;
+	if (windowTiledStacksPending) { windowTiledStacksPending = false; windowStacksApply(); }
 	var now = Date.now();
 	for (var stamp in windowTiledPending) {
 		var p = windowTiledPending[stamp];
@@ -1075,6 +1113,62 @@ function windowTiledSettle() {
 function windowTiledSettleSoon() {
 	clearTimeout(windowTiledSettleTimer);
 	windowTiledSettleTimer = setTimeout(windowTiledSettle, 1200);
+}
+
+// The window wearing this identity: one window per app, or the session or
+// instance that tells two windows of one app apart.
+function windowTiledByKey(key) {
+	var found = null;
+	$('.wind').each(function() {
+		if (found) { return; }
+		if (windowTiledIdentity(this) === key) { found = this; }
+	});
+	return found ? $(found) : $();
+}
+
+// windowSaver wrote the piles down in depth order, each pile's members in slot
+// order. Replaying that map after the open burst puts every window back in its
+// own pile at its own slot - even a window whose own restore record was missed -
+// and restores the depth order of the piles, which the arrival order alone would
+// shuffle. It keeps asking while a member is still on its way, and then leaves
+// the desk to the person.
+function windowStacksApply() {
+	var json_storage = sessionStorage.getItem('window_storage');
+	var storage = JSON.parse(json_storage) || {};
+	var map = storage['window_stacks'];
+	if (!map || !map.piles) { return; }
+	var raised = 0;
+	var missing = 0;
+	$.each(map.piles, function(i, pile) {
+		var stack = String(pile.id || windowTiledDefaultStack);
+		var found = 0;
+		$.each(pile.members || [], function(slot, key) {
+			var win = windowTiledByKey(key);
+			if (!win.length) { missing++; return; }
+			win.attr('tile', String(slot));
+			if (stack === windowTiledDefaultStack) { win.removeAttr('stack').removeAttr('stack_at'); }
+			else { win.attr('stack', stack).attr('stack_at', pile.at || ''); }
+			found++;
+		});
+		if (!found) { return; }
+		// the map runs back to front, so a later pile is the front one
+		raised++;
+		windowTiledStackTouch[stack] = raised;
+	});
+	// a slow opener (or a window that was closed after the save) can leave a
+	// member out; try again a few times, then let the desk stand
+	if (missing && windowTiledStacksTries < 6) {
+		windowTiledStacksTries++;
+		windowTiledStacksPending = true;
+		setTimeout(windowTiledSettle, 800);
+	}
+}
+
+// Ask for the map once the restore burst is in; windowTiledSettle applies it.
+function windowStacksRestoreSoon() {
+	windowTiledStacksPending = true;
+	windowTiledStacksTries = 0;
+	setTimeout(windowTiledSettle, 1500);
 }
 
 // A restored window takes the slot it held before the reload, and a window
@@ -1149,53 +1243,104 @@ function windowTiledDropTarget(at, skip, home, from) {
 	return under ? { window: under } : null;
 }
 
+// The block a drag carries: the held window and every window below it in its
+// pile (a higher slot). They move together and leave together, so the pile never
+// ends up with its tail stranded where the head was.
+function windowTiledBlockEls(win, group) {
+	var els = [];
+	var lead = $(win)[0];
+	if (lead) { els.push(lead); }
+	$.each(group || [], function(i, g) {
+		var el = (g && g.el) ? g.el : g;
+		if (el && el !== lead) { els.push(el); }
+	});
+	return els;
+}
+
+// Take the whole block out of the tile: each floats free where the drag has it.
+// The windows below the held one that the block does not carry step up into its
+// place, so a pile is never left with a hole (a block normally carries them all).
+function windowTiledBlockLeave(win, group) {
+	var winEl = $(win);
+	var slot = windowTiledSlot(winEl);
+	var stack = slot >= 0 ? windowTiledStackId(winEl) : null;
+	var left = false;
+	$.each(windowTiledBlockEls(win, group), function(i, el) {
+		var w = $(el);
+		if (windowTiledSlot(w) < 0) { return; }
+		w.removeAttr('tile').removeAttr('stack').removeAttr('stack_at').attr('free', '1');
+		left = true;
+	});
+	if (!left) { return; }
+	if (slot >= 0) { windowTiledStepUp(slot, stack); }
+	else { windowTiledFront(); }
+	if (typeof windowSaver === 'function') { windowSaver(); }
+}
+
 // Carrying a window off its pile is what takes it out, not letting go: the pile
 // closes the gap the moment the pointer leaves its ground, and a drag carried
-// back over any pile joins it again when the window is dropped.
-function windowTiledDragLeave(win, at, home, from) {
+// back over any pile joins it again when the window is dropped. The windows
+// below the held one come with it, so the pile is never split.
+function windowTiledDragLeave(win, at, home, from, group) {
 	win = $(win);
 	if (from === undefined) { from = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null; }
 	if (!at || windowTiledSlot(win) < 0) { return; }
 	if (windowTiledOverStack(windowTiledArea(win, home, from), at)) { return; }
-	windowTiledLeave(win, true);
+	windowTiledBlockLeave(win, group);
 }
 
-// Put a window into a pile at the slot its held title bar is over: the windows
-// from there down step one place, and the pile is laid out again. An anchored
-// window that joins is anchored no longer - the pile has its place now.
-function windowTiledStackJoin(win, stack, at) {
+// Put a block into a pile at the slot its held title bar is over: the block
+// takes that slot and the windows from there down step the block's length, then
+// the pile is laid out again. An anchored window that joins is anchored no
+// longer - the pile has its place now - and every window that joins takes the
+// standard window size, so a pile reads as one stack rather than a row of odd
+// shapes.
+function windowTiledStackJoin(win, stack, at, group) {
 	win = $(win);
+	var els = windowTiledBlockEls(win, group);
 	var slot = windowTiledSlot(win);
 	var from = slot >= 0 ? windowTiledStackId(win) : null;
 	var anchor = windowTiledAnchor(stack);
+	// a window already in this pile is reordering, not joining: it keeps the size
+	// the person gave it, and only the windows arriving from outside are resized
+	var joining = [];
+	$.each(els, function(i, el) {
+		var w = $(el);
+		joining.push(!(windowTiledSlot(w) >= 0 && windowTiledStackId(w) === stack));
+	});
+	// the block leaves the pile it is still in before the slot is read, so the
+	// insertion point is measured with its place in the old pile already closed
+	$.each(els, function(i, el) { $(el).removeAttr('tile').removeAttr('stack').removeAttr('stack_at'); });
+	if (slot >= 0) { windowTiledStepUp(slot, from); }
 	var to = windowTiledInsertSlot(at, win, stack);
-	// a window already in a pile leaves the slot it held, whichever pile it was
-	// in, so the slot it joins is measured with the gap closed
-	if (slot >= 0) {
-		win.removeAttr('tile').removeAttr('stack').removeAttr('stack_at');
-		windowTiledStepUp(slot, from);
-	}
 	$('.wind').each(function() {
 		if (windowTiledStackId(this) !== stack) { return; }
 		var s = windowTiledSlot(this);
-		if (s >= to) { $(this).attr('tile', String(s + 1)); }
+		if (s >= to) { $(this).attr('tile', String(s + els.length)); }
 	});
-	win.removeAttr('free').attr('tile', String(to));
-	if (stack === windowTiledDefaultStack) { win.removeAttr('stack').removeAttr('stack_at'); }
-	else { win.attr('stack', stack).attr('stack_at', anchor.left + ',' + anchor.top); }
-	if (typeof windowAnchorRelease === 'function') { windowAnchorRelease(win); }
+	$.each(els, function(i, el) {
+		var w = $(el);
+		w.removeAttr('free').attr('tile', String(to + i));
+		if (stack === windowTiledDefaultStack) { w.removeAttr('stack').removeAttr('stack_at'); }
+		else { w.attr('stack', stack).attr('stack_at', anchor.left + ',' + anchor.top); }
+		if (typeof windowAnchorRelease === 'function') { windowAnchorRelease(w); }
+		if (joining[i]) { windowTiledSizeReset(w); }
+	});
 	windowTiledRelayout(stack);
-	if (typeof windowDimensionSetter === 'function') { windowDimensionSetter(win); }
+	windowTiledStackRaise(stack);
+	if (typeof windowDimensionSetter === 'function') { $.each(els, function(i, el) { windowDimensionSetter($(el)); }); }
 	if (typeof windowSaver === 'function') { windowSaver(); }
 }
 
 // Dropping a window over one that is not in a pile starts a pile there: the
 // window under stays its head, where it already stood, and the dropped window
-// joins at its foot. An anchored window under the drop is anchored no longer.
-function windowTiledStackStart(win, head) {
+// (and the windows below it that came with it) join at its foot. An anchored
+// window under the drop is anchored no longer.
+function windowTiledStackStart(win, head, group) {
 	win = $(win);
 	head = $(head);
 	if (!head.length || head[0] === win[0]) { return; }
+	var els = windowTiledBlockEls(win, group);
 	var stack = windowTiledNewStack();
 	var at = windowTiledRect(head);
 	var anchor = at.left + ',' + at.top;
@@ -1204,9 +1349,19 @@ function windowTiledStackStart(win, head) {
 		windowAnchorRelease(head);
 	}
 	head.removeAttr('free').attr('stack', stack).attr('tile', '0').attr('stack_at', anchor);
-	win.removeAttr('free').attr('stack', stack).attr('tile', '1').attr('stack_at', anchor);
+	windowTiledSizeReset(head);
+	$.each(els, function(i, el) {
+		var w = $(el);
+		w.removeAttr('free').attr('stack', stack).attr('tile', String(i + 1)).attr('stack_at', anchor);
+		if (typeof windowAnchorRelease === 'function') { windowAnchorRelease(w); }
+		windowTiledSizeReset(w);
+	});
 	windowTiledRelayout(stack);
-	if (typeof windowDimensionSetter === 'function') { windowDimensionSetter(win); }
+	windowTiledStackRaise(stack);
+	if (typeof windowDimensionSetter === 'function') {
+		windowDimensionSetter(head);
+		$.each(els, function(i, el) { windowDimensionSetter($(el)); });
+	}
 	if (typeof windowSaver === 'function') { windowSaver(); }
 }
 
@@ -1214,39 +1369,40 @@ function windowTiledStackStart(win, head) {
 // is joined at the slot the held title bar is over, so reordering is the same
 // gesture; a window that is not in a pile starts one with the window under the
 // drop; and a drop on open desk floats free. `home` is the box the window was
-// picked up from, and `from` the pile it came from.
-function windowTiledJoinOrLeave(win, at, home, from) {
+// picked up from, `from` the pile it came from, and `group` the windows the drag
+// carried with it.
+function windowTiledJoinOrLeave(win, at, home, from, group) {
 	if (windowPhoneChecker()) { return; }
 	win = $(win);
 	if (from === undefined) { from = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null; }
 	// leaving happened in the hand; the drop only decides where it lands
-	windowTiledDragLeave(win, at, home, from);
+	windowTiledDragLeave(win, at, home, from, group);
 	var target = windowTiledDropTarget(at, win, home, from);
 	if (!target) {
 		if (win.attr('pre_dimensioned') == 1) {
 			// an anchored window put down on open desk keeps its anchor
 			win.removeAttr('free');
 		}
-		else { win.attr('free', '1'); }
+		else { windowTiledBlockLeave(win, group); }
 		if (typeof windowSaver === 'function') { windowSaver(); }
 		return;
 	}
-	if (target.stack) { windowTiledStackJoin(win, target.stack, at); return; }
-	windowTiledStackStart(win, target.window);
+	if (target.stack) { windowTiledStackJoin(win, target.stack, at, group); return; }
+	windowTiledStackStart(win, target.window, group);
 }
 
 // The slot a dragged window would join, drawn while it is still in the hand.
 // The same rule as the drop - the pile under the pointer, or the new pile the
-// drop would start - so what the outline shows is where it lands; at an edge
-// that owns the half snap it is hidden.
-function windowTiledPreview(win, at, home, from) {
+// drop would start - so what the outline shows is where the block's head lands;
+// at an edge that owns the half snap it is hidden.
+function windowTiledPreview(win, at, home, from, group) {
 	var box = $('#window_tile_preview');
 	if (!box.length) { box = $('<div id="window_tile_preview"></div>').appendTo('body'); }
 	win = $(win);
 	if (windowPhoneChecker() || !at) { box.hide(); return; }
 	if (from === undefined) { from = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null; }
 	// the drag takes the window out of its pile as soon as it is away from it
-	windowTiledDragLeave(win, at, home, from);
+	windowTiledDragLeave(win, at, home, from, group);
 	var ww = $(window).width();
 	if (at.x < (ww / 10) || at.x > (ww - (ww / 10))) { box.hide(); return; }
 	var target = windowTiledDropTarget(at, win, home, from);

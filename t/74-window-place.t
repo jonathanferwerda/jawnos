@@ -75,10 +75,11 @@ like($windows, qr/function windowTiledGapClose\(win\) \{\n\tif \(windowPhoneChec
 like($windows, qr/slot \* windowTileAcrossStep/, 'a window is placed with the tile across step');
 like($windows, qr/function windowTiledLeave\(win, float\)/, 'a window can leave the tile');
 like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');
-like($windows, qr/function windowTiledJoinOrLeave\(win, at, home, from\)/, 'a drop either joins a pile, starts one, or leaves');
+like($windows, qr/function windowTiledJoinOrLeave\(win, at, home, from, group\)/, 'a drop either joins a pile, starts one, or leaves');
 like($windows, qr/function windowTiledInsertSlot\(at, skip, stack\)/, 'the dragged title bar names the slot in the pile under it');
 like($windows, qr/function windowTiledInsertAt\(win, to, stack\)/, 'a restored window inserts at its saved slot');
-like($windows, qr/function windowTiledFront\(touch_stack\)/, 'the pile front follows the slots');
+like($windows, qr/function windowTiledFront\(\)/, 'the pile front follows the slots');
+like($windows, qr/function windowTiledStackRaise\(stack\)/, 'working in a pile raises it, and a restore does not');
 like($windows, qr/jawnosWindowFocusApply/, 'the front title-bar cue follows the pile');
 like($windows, qr/function windowTiledBump\(win\)/, 'a title-bar press walks a tiled window to the foot');
 like($windows, qr/function windowTiledPress\(win\)/, 'a press is tiled-aware');
@@ -86,10 +87,10 @@ like($back, qr/pressWindow\(/, 'the title-bar handler presses through the tile')
 like($stack, qr/windowTiledPress\(clicked\)/, 'a press in a tiled body brings it forward through the pile');
 like($windows, qr/windowTiledPendingApp\[window_app\]/, 'a bespoke opener claims the latest press for its app');
 like($windows, qr/isJson\(jws\).*pre_dimensioned'\) == 1/, 'a saved view places only a pinned window');
-like($windows, qr/function windowTiledPreview\(win, at, home, from\)/, 'a drag draws the slot it would join');
+like($windows, qr/function windowTiledPreview\(win, at, home, from, group\)/, 'a drag draws the slot it would join');
 like($windows, qr/windowTiledArea\(win, home, from\)/, 'the pile ground uses the box the window left, not where it is');
-like($fit, qr/windowTiledPreview\(win, mouse_position\(\), dragFromTile, dragFromStack\)/, 'the drag shows the preview from where it was picked up');
-like($fit, qr/windowTiledJoinOrLeave\(win, \{ x: d\.x, y: d\.y \}, dragFromTile, dragFromStack\)/, 'a drag joins or leaves the pile where it is dropped');
+like($fit, qr/windowTiledPreview\(win, mouse_position\(\), dragFromTile, dragFromStack, dragGroup\)/, 'the drag shows the preview from where it was picked up');
+like($fit, qr/windowTiledJoinOrLeave\(win, \{ x: d\.x, y: d\.y \}, dragFromTile, dragFromStack, dragGroup\)/, 'a drag joins or leaves the pile where it is dropped');
 like($css, qr/#window_tile_preview/, 'the preview slot has a look');
 like($fit, qr/windowTiledLeave\(win, true\)/, 'a drag to an edge leaves the tile to the half snap');
 like($fit, qr/windowTiledLeave\(win, false\)/, 'pinning takes it out of the tile without making it free');
@@ -107,9 +108,9 @@ like($windows, qr/function windowTiledStackId\(win\)/, 'a window names its pile'
 like($windows, qr/function windowTiledAnchor\(stack\)/, 'a pile stands on an anchor');
 like($windows, qr/function windowTiledDropTarget\(at, skip, home, from\)/, 'a drop finds the pile or the window under it');
 like($windows, qr/function windowTiledWindowAt\(at, skip\)/, 'a drop can land on a window that is not in a pile');
-like($windows, qr/function windowTiledStackStart\(win, head\)/, 'dropping on such a window starts a pile there');
-like($windows, qr/function windowTiledStackJoin\(win, stack, at\)/, 'a drop joins the pile at the slot its bar is over');
-like($windows, qr/windowTiledStackJoin\(win, target\.stack, at\)/, 'the drop target is the pile it found');
+like($windows, qr/function windowTiledStackStart\(win, head, group\)/, 'dropping on such a window starts a pile there');
+like($windows, qr/function windowTiledStackJoin\(win, stack, at, group\)/, 'a drop joins the pile at the slot its bar is over');
+like($windows, qr/windowTiledStackJoin\(win, target\.stack, at, group\)/, 'the drop target is the pile it found');
 like($windows, qr/if \(typeof windowAnchorRelease === 'function'\)/, 'the tile releases a pin through the one helper');
 like($fit, qr/function windowAnchorRelease\(win\) \{/, 'the pin release is one helper');
 like($fit, qr/if \(button\.attr\('status'\) == 'on'\) \{\n\t\t\/\/ let it tile again.*\n\t\twindowAnchorRelease\(win\);/, 'the pin button uses the same release');
@@ -117,10 +118,36 @@ like($fit, qr/if \(button\.attr\('status'\) == 'on'\) \{\n\t\t\/\/ let it tile a
 # --- a drag leaves the pile in the hand ---------------------------------
 # The pile steps up as soon as the pointer is off its ground; the drop only
 # decides where the window lands.
-like($windows, qr/function windowTiledDragLeave\(win, at, home, from\)/, 'a drag leaves the pile as soon as it is away');
-like($windows, qr/windowTiledDragLeave\(win, at, home, from\);\n\tvar target = windowTiledDropTarget/, 'the drop takes that leave before it chooses a target');
+like($windows, qr/function windowTiledDragLeave\(win, at, home, from, group\)/, 'a drag leaves the pile as soon as it is away');
+like($windows, qr/windowTiledDragLeave\(win, at, home, from, group\);\n\tvar target = windowTiledDropTarget/, 'the drop takes that leave before it chooses a target');
 like($windows, qr/\/\/ the drag takes the window out of its pile as soon as it is away from it\n\twindowTiledDragLeave/, 'so does the preview');
-like($windows, qr/function windowTiledPreview\(win, at, home, from\)/, 'the preview shows the pile or the new pile it would join');
+like($windows, qr/function windowTiledPreview\(win, at, home, from, group\)/, 'the preview shows the pile or the new pile it would join');
+
+# --- a drag carries the windows below it ---------------------------------
+# The windows under the held one in the same pile travel with it, so a pile is
+# moved whole instead of being cut in half.
+like($windows, qr/function windowTiledBlockEls\(win, group\)/, 'the drag names the block it carries');
+like($windows, qr/function windowTiledBlockLeave\(win, group\)/, 'the block leaves together');
+like($fit, qr/dragGroup\.push\(\{ el: this, left:/, 'the drag picks up the windows below the held one');
+like($fit, qr/\$\(g\.el\)\.css\(\{ 'left': g\.left \+ dx, 'top': g\.top \+ dy \}\)/, 'and moves them by the held window\'s own delta');
+like($fit, qr/if \(edge && !dragGroup\.length\)/, 'a pile move is not the half snap');
+
+# --- joining a pile is the standard size, and the piles come back ----------
+# A window that joins shrinks to the size a fresh window opens at; the saved
+# pile map is replayed after the restore burst so every pile comes back whole,
+# in slot order, with the piles in the depth order they had.
+like($windows, qr/var windowTileDefaultWidth = (\d+);\nvar windowTileDefaultHeight = (\d+);/, 'the joiner takes the standard window size');
+my ($tile_w, $tile_h) = $windows =~ /var windowTileDefaultWidth = (\d+);\s*\n\s*var windowTileDefaultHeight = (\d+);/;
+my ($server_w, $server_h) = $maker =~ /my \$default_width = (\d+);\s*\n\s*my \$default_height = (\d+);/;
+is($tile_w, $server_w, 'the tile default width is the window maker default width');
+is($tile_h, $server_h, 'and the height');
+like($windows, qr/function windowTiledSizeReset\(win\)/, 'and the reset is one helper');
+like($windows, qr/windowTiledSizeReset\(w\);/, 'every window in the joined block is resized');
+like($windows, qr/function windowTiledIdentity\(el\)/, 'a window is found again by app and instance');
+like($storage, qr/storage\['window_stacks'\] = \{ piles: pile_map \};/, 'the pile map is saved with the windows');
+like($windows, qr/function windowStacksApply\(\)/, 'and replayed after a reload');
+like($windows, qr/if \(windowTiledStacksPending\) \{ windowTiledStacksPending = false; windowStacksApply\(\); \}/, 'the settle applies it once');
+like($storage, qr/windowStacksRestoreSoon\(\)/, 'the retriever asks for the replay');
 
 # --- a press holds its slot before the window arrives ---------------------
 # Clicking down the clothesline fires several opens; their responses can land in
@@ -190,7 +217,7 @@ El.prototype.find = function (sel) {
 	if (sel === '.top_navbar') {
 		return { outerHeight: function () { return 40; }, css: function () { return '0px'; } };
 	}
-	return { val: function () { return this; }, css: function () { return '0px'; }, outerHeight: function () { return 0; } };
+	return { val: function () { return this; }, css: function () { return '0px'; }, outerHeight: function () { return 0; }, attr: function () { return this; }, show: function () { return this; }, hide: function () { return this; } };
 };
 El.prototype.show = function () { return this; };
 
@@ -208,6 +235,7 @@ function J(els) {
 	j.find = function (sel) { return els[0] ? J([els[0].find(sel)]) : J([]); };
 	j.outerHeight = function () { return 0; };
 	j.show = function () { return j; };
+	j.hide = function () { return j; };
 	j.val = function () { return j; };
 	return j;
 }
@@ -222,6 +250,14 @@ function J(els) {
 	}
 
 	const documentStub = { getElementById: function () { return null; } };
+
+	// the storage windowSaver writes and windowStacksApply reads
+	const sessionStore = {};
+	const sessionStub = {
+		getItem: function (k) { return (sessionStore[k] === undefined) ? null : sessionStore[k]; },
+		setItem: function (k, v) { sessionStore[k] = String(v); },
+		removeItem: function (k) { delete sessionStore[k]; }
+	};
 
 function $(arg) {
 	if (arg && arg.__jq) { return arg; }
@@ -260,6 +296,7 @@ const ctx = {
 	taskbarDisplayer: function () {},
 	jawnosAppFieldGet: function () { return ''; },
 	windowAnchorRelease: anchorReleaseStub,
+	sessionStorage: sessionStub,
 	setTimeout: function () {},
 	clearTimeout: function () {},
 	setInterval: function () { return 0; },
@@ -712,6 +749,8 @@ eq(anchored.attr('tile'), '0', 'an anchored window dropped over a pile joins at 
 eq(anchored.attr('pre_dimensioned'), 0, 'and is anchored no longer');
 eq(anchored.attr('place_released'), 1, 'its pin is released the way the button releases it');
 eq(anchor_desk[0].attr('tile'), '1', 'the window it landed above steps down');
+eq(anchored.style.width, '480px', 'a window that joins takes the standard width');
+eq(anchored.style.height, '640px', 'and the standard height');
 
 // Dropping a window over one that is not in a pile starts a pile there: the
 // window under stays the head where it stood, so a desk can hold several piles.
@@ -786,6 +825,93 @@ eq(restored_foot.attr('stack'), 's7', 'a restored window rejoins its own pile');
 eq(restored_foot.style.left, 1150, 'at the anchor it saved');
 eq(restored_foot.style.top, 340, 'and the slot it saved');
 eq(pile_head.style.left, 1100, 'the head it rejoined is not moved');
+
+// A drag carries the windows below the held one: the block leaves together and
+// joins the next pile whole, in its own cascade order.
+let block_desk = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+let far = new El('window_x', { pre_dimensioned: '0' });
+far.attr('free', '1');
+far.style.left = '1200px';
+far.style.top = '500px';
+dom.push(far);
+let far2 = new El('window_y', { pre_dimensioned: '0' });
+far2.attr('free', '1');
+far2.style.left = '1250px';
+far2.style.top = '540px';
+dom.push(far2);
+ctx.windowTiledJoinOrLeave('#window_y', { x: 1300, y: 540 }, { left: 1250, top: 540, width: 400, height: 300 });
+let far_pile = far.attr('stack');
+let drag_group = [{ el: block_desk[1] }, { el: block_desk[2] }];
+block_desk[0].style.left = '1300px';
+block_desk[0].style.top = '560px';
+ctx.windowTiledJoinOrLeave('#window_a', { x: 1350, y: 560 }, { left: 0, top: 0, width: 400, height: 300 }, '0', drag_group);
+eq(block_desk[0].attr('stack'), far_pile, 'the held window joins the pile under it');
+eq(block_desk[1].attr('stack'), far_pile, 'and the windows below it come with it');
+eq(block_desk[2].attr('stack'), far_pile, 'all of them');
+eq(block_desk[1].attr('tile'), '3', 'in their own order after the pile head');
+eq(block_desk[2].attr('tile'), '4', 'keeping the cascade');
+eq(block_desk[1].attr('free'), undefined, 'and none is left free');
+eq(block_desk[1].style.top, 620, 'laid out from the new pile anchor');
+
+// A block reorders within its own pile as a block: dropped at the head it keeps
+// its order, and the window it passed steps below the whole block.
+let reorder = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 },
+	{ id: 'window_d', top: 120, left: 150 }
+]);
+let reorder_group = [{ el: reorder[2] }, { el: reorder[3] }];
+reorder[1].style.left = '200px';
+reorder[1].style.top = '0px';
+ctx.windowTiledJoinOrLeave('#window_b', { x: 250, y: 0 }, { left: 50, top: 40, width: 400, height: 300 }, '0', reorder_group);
+eq(reorder[1].attr('tile'), '0', 'a block dropped at the head takes the first slot');
+eq(reorder[2].attr('tile'), '1', 'keeping its own order');
+eq(reorder[3].attr('tile'), '2', 'and both its windows');
+eq(reorder[0].attr('tile'), '3', 'the window it passed steps below the block');
+eq(reorder[0].style.top, 120, 'and down the cascade');
+
+// A drag carrying the block leaves the whole block when the pointer is off the
+// pile, so no tail is stranded behind.
+let block_leave = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+let leave_group = [{ el: block_leave[1] }, { el: block_leave[2] }];
+ctx.windowTiledDragLeave('#window_a', { x: 1400, y: 800 }, { left: 0, top: 0, width: 400, height: 300 }, '0', leave_group);
+eq(block_leave[0].attr('tile'), undefined, 'the held window leaves the pile');
+eq(block_leave[1].attr('tile'), undefined, 'the windows below it leave with it');
+eq(block_leave[2].attr('free'), '1', 'and the block floats together');
+
+// The saved pile map is replayed after the restore burst: every window comes
+// back to its own pile and slot, and the piles keep the depth order they had.
+ctx.windowTiledRestore = {};
+ctx.windowTiledPending = {};
+ctx.windowTiledPendingApp = {};
+dom = [];
+let map_a = new El('window_a', { pre_dimensioned: '0' });
+let map_b = new El('window_b', { pre_dimensioned: '0' });
+let map_x = new El('window_x', { pre_dimensioned: '0' });
+let map_y = new El('window_y', { pre_dimensioned: '0' });
+dom.push(map_a, map_b, map_x, map_y);
+sessionStore['window_storage'] = JSON.stringify({ window_stacks: { piles: [
+	{ id: '0', at: '', members: ['window_a|', 'window_b|'] },
+	{ id: 's1', at: '1200,500', members: ['window_x|', 'window_y|'] }
+] } });
+ctx.windowTiledStacksPending = true;
+ctx.windowTiledSettle();
+eq(map_a.attr('tile'), '0', 'the map puts the head back on its slot');
+eq(map_b.attr('tile'), '1', 'and the second window on its own');
+eq(map_x.attr('stack'), 's1', 'a pile away from the corner comes back as its own pile');
+eq(map_y.attr('stack'), 's1', 'with its members');
+eq(map_y.style.left, 1250, 'laid out from the pile anchor');
+eq(map_y.style.top, 540, 'and its saved slot');
+eq(Number(map_x.style['z-index']) > Number(map_a.style['z-index']), true, 'the pile that was in front is in front again');
 
 process.exit(failures ? 1 : 0);
 JS
