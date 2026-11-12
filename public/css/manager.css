@@ -1084,6 +1084,20 @@ img.window_icon { height:22px !important; width:auto !important; max-width:none 
    Web/Browse tabs sit under it. */
 
 .wind { border-radius: var(--window_radius, var(--jawnos-corner, 12px)); background-color: var(--window, var(--panel)); box-shadow: 0 20px 50px rgba(0,0,0,.24), 0 2px 8px rgba(0,0,0,.12); }
+/* The slot a dragged window would join, drawn under the hand. Dashed so it reads
+   as a hint rather than another window, and faint enough to see the stack
+   through it. Its z sits above the windows but below the frame ring. */
+#window_tile_preview {
+	position: fixed;
+	pointer-events: none;
+	z-index: 2147482900;
+	display: none;
+	box-sizing: border-box;
+	border: 2px dashed var(--accent-line, var(--accent));
+	border-radius: var(--window_radius, var(--jawnos-corner, 12px));
+	background: var(--accent-soft, rgba(59,125,221,.18));
+	opacity: .55;
+}
 body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35); }
 /* Inside a window every surface that asked for the panel surface gets the
    window's own colour instead, so an app or an appointment does not dissolve

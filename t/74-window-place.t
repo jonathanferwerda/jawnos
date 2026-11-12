@@ -71,12 +71,17 @@ like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path 
 like($stack, qr/windowTiledGapClose\(win\)/, 'closing a window steps the tiled windows below it up');
 like($windows, qr/function windowTiledGapClose\(win\) \{\n\tif \(windowPhoneChecker\(\)\) \{ return; \}/,
 	'the gap closer leaves a phone to its own pile');
-like($windows, qr/tileCount \* windowTileAcrossStep/, 'a window is placed with the tile across step');
+like($windows, qr/slot \* windowTileAcrossStep/, 'a window is placed with the tile across step');
 like($windows, qr/function windowTiledLeave\(win, float\)/, 'a window can leave the tile');
 like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');
-like($windows, qr/function windowTiledJoinOrLeave\(win, at\)/, 'a drop either joins the stack or leaves it');
-like($windows, qr/function windowTiledInsertSlot\(at\)/, 'the held title bar names the slot');
-like($fit, qr/windowTiledJoinOrLeave\(win, \{ x: d\.x, y: d\.y \}\)/, 'a drag joins or leaves the stack where it is dropped');
+like($windows, qr/function windowTiledJoinOrLeave\(win, at, home\)/, 'a drop either joins the stack or leaves it');
+like($windows, qr/function windowTiledInsertSlot\(at, skip\)/, 'the dragged title bar names the slot');
+like($windows, qr/function windowTiledInsertAt\(win, to\)/, 'a restored window inserts at its saved slot');
+like($windows, qr/function windowTiledPreview\(win, at, home\)/, 'a drag draws the slot it would join');
+like($windows, qr/windowTiledArea\(win, slot >= 0 \? home : null\)/, 'the stack ground uses the box the window left, not where it is');
+like($fit, qr/windowTiledPreview\(win, mouse_position\(\), dragFromTile\)/, 'the drag shows the preview from where it was picked up');
+like($fit, qr/windowTiledJoinOrLeave\(win, \{ x: d\.x, y: d\.y \}, dragFromTile\)/, 'a drag joins or leaves the stack where it is dropped');
+like($css, qr/#window_tile_preview/, 'the preview slot has a look');
 like($fit, qr/windowTiledLeave\(win, true\)/, 'a drag to an edge leaves the tile to the half snap');
 like($fit, qr/windowTiledLeave\(win, false\)/, 'pinning takes it out of the tile without making it free');
 like($storage, qr/tile: \$\(v\)\.attr\('tile'\)/, 'the tile slot is saved with the window');
@@ -342,30 +347,37 @@ ctx.windowTiledRestore = { window_c: { tile: '1' } };
 ctx.windowReorganizer('window_c');
 eq(late.attr('tile'), '1', 'a restored window keeps the slot it held before the reload');
 eq(late.style.top, 40, 'and lands in that step of the cascade');
-eq(arriving[1].attr('tile'), '2', 'the window restored after it keeps its own slot');
+eq(arriving[1].attr('tile'), '3', 'the window already below it steps down a slot');
+ctx.windowTiledSettle();
+eq(arriving[1].attr('tile'), '2', 'and the settle takes the hole out of the numbers');
+eq(arriving[1].style.top, 80, 'with the window back on its own step');
 
-// a drag dropped off the stack leaves the tile, and the stack closes behind it
+// A drag dropped off the stack leaves the tile, and the stack closes behind it.
+// The window's present box is not the stack ground: dragging away is measured
+// against the other windows and the box this one left, not where it is now.
 let dropped_out = desk([
 	{ id: 'window_a', top: 0, left: 0 },
 	{ id: 'window_b', top: 40, left: 50 }
 ]);
-ctx.windowTiledJoinOrLeave('#window_b', { x: 1000, y: 900 });
+dropped_out[1].style.left = '900px';
+dropped_out[1].style.top = '900px';
+ctx.windowTiledJoinOrLeave('#window_b', { x: 1000, y: 900 }, { left: 50, top: 40, width: 400, height: 300 });
 eq(dropped_out[1].attr('tile'), undefined, 'a window dropped off the stack leaves the tile');
 eq(dropped_out[1].attr('free'), '1', 'and floats free');
 eq(dropped_out[0].attr('tile'), '0', 'the window above stays in its slot');
 
-// a free window dropped on the stack joins where the held bar is
+// a free window dropped on the stack joins at the bar's place
 let joined = desk([
 	{ id: 'window_a', top: 0, left: 0 },
 	{ id: 'window_b', top: 40, left: 50 }
 ]);
 let floater = new El('window_c', { pre_dimensioned: '0' });
 floater.attr('free', '1');
-floater.style.left = '300px';
-floater.style.top = '300px';
+floater.style.left = '100px';
+floater.style.top = '27px';
 dom.push(floater);
-ctx.windowTiledJoinOrLeave('#window_c', { x: 100, y: 45 });
-eq(floater.attr('tile'), '1', 'a free window dropped on the stack joins at the held slot');
+ctx.windowTiledJoinOrLeave('#window_c', { x: 100, y: 45 }, null);
+eq(floater.attr('tile'), '1', 'a free window dropped on the stack joins at the bar slot');
 eq(floater.attr('free'), undefined, 'and is no longer free');
 eq(floater.style.top, 40, 'and sits in that step of the cascade');
 eq(joined[1].attr('tile'), '2', 'the window below it steps down a slot');
@@ -378,7 +390,9 @@ let dropped_low = desk([
 	{ id: 'window_c', top: 80, left: 100 },
 	{ id: 'window_d', top: 120, left: 150 }
 ]);
-ctx.windowTiledJoinOrLeave('#window_b', { x: 100, y: 130 });
+dropped_low[1].style.left = '200px';
+dropped_low[1].style.top = '130px';
+ctx.windowTiledJoinOrLeave('#window_b', { x: 250, y: 130 }, { left: 50, top: 40, width: 400, height: 300 });
 eq(dropped_low[1].attr('tile'), '3', 'a stacked window dropped at the foot takes the last slot');
 eq(dropped_low[1].style.top, 120, 'and the foot of the cascade');
 eq(dropped_low[2].attr('tile'), '1', 'the window it passed steps up a slot');
@@ -391,17 +405,53 @@ let dropped_high = desk([
 	{ id: 'window_c', top: 80, left: 100 },
 	{ id: 'window_d', top: 120, left: 150 }
 ]);
-ctx.windowTiledJoinOrLeave('#window_d', { x: 100, y: 0 });
+dropped_high[3].style.left = '150px';
+dropped_high[3].style.top = '0px';
+ctx.windowTiledJoinOrLeave('#window_d', { x: 200, y: 0 }, { left: 150, top: 120, width: 400, height: 300 });
 eq(dropped_high[3].attr('tile'), '0', 'a stacked window dropped at the head takes the first slot');
 eq(dropped_high[3].style.top, 0, 'and the head of the cascade');
 eq(dropped_high[0].attr('tile'), '1', 'the first window steps down a slot');
 eq(dropped_high[0].style.top, 40, 'and down a step');
 
+// the title bar's place, not the finger on it, decides the slot: a grip 30px
+// down the bar still joins at the head when the bar itself is at the head
+let grip = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 }
+]);
+grip[2].style.left = '200px';
+grip[2].style.top = '0px';
+ctx.windowTiledJoinOrLeave('#window_c', { x: 250, y: 30 }, { left: 100, top: 80, width: 400, height: 300 });
+eq(grip[2].attr('tile'), '0', 'the bar, not the finger on it, picks the slot');
+eq(grip[0].attr('tile'), '1', 'and the window it passed steps down');
+
 // a lone tiled window put back down over its own place keeps its slot
-let lone = desk([{ id: 'window_a', top: 0, left: 0 }]);
-ctx.windowTiledJoinOrLeave('#window_a', { x: 100, y: 100 });
+let lone = desk([{ id: 'window_a', top: 100, left: 100 }]);
+ctx.windowTiledJoinOrLeave('#window_a', { x: 200, y: 150 }, { left: 0, top: 0, width: 400, height: 300 });
 eq(lone[0].attr('tile'), '0', 'a lone tiled window dropped on itself stays in the tile');
 eq(lone[0].attr('free'), undefined, 'and is not made free');
+
+// a restored window inserts at its saved slot, and a window already there steps
+// down - so an in-flight restore never leaves two windows in one slot
+let restore_race = desk([
+	{ id: 'window_a', tile: 0, top: 0, left: 0 },
+	{ id: 'window_b', tile: 1, top: 40, left: 50 }
+]);
+let came_late = new El('window_c', { pre_dimensioned: '0' });
+dom.push(came_late);
+ctx.windowTiledRestore = { window_c: { tile: '1' } };
+ctx.windowReorganizer('window_c');
+eq(came_late.attr('tile'), '1', 'a restored window takes the slot it saved');
+eq(came_late.style.top, 40, 'and lands in that step of the cascade');
+eq(restore_race[1].attr('tile'), '2', 'the window already in that slot steps down');
+eq(restore_race[1].style.top, 80, 'and down a step');
+
+// and once the restore settles, the slots have no holes left in them
+ctx.windowTiledSettle();
+eq(restore_race[0].attr('tile'), '0', 'the settle leaves the head alone');
+eq(came_late.attr('tile'), '1', 'and the restored window on its slot');
+eq(restore_race[1].attr('tile'), '2', 'and the stepped window where it landed');
 
 process.exit(failures ? 1 : 0);
 JS

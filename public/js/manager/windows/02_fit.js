@@ -194,15 +194,19 @@ function jawnosWindowMoveModeOff(app) {
 function windowDraggable(win) {
 	if (!win.hasClass('ui-draggable')) {
 
-		// where the pointer went down: a click on the title bar also starts and
-		// stops a drag, and only a real move takes the window out of the tile
+		// where the pointer went down and the box the window left: a click on the
+		// title bar also starts and stops a drag, and only a real move takes the
+		// window out of the tile. The box is the stack ground while the window is
+		// outside its own place, so dragging back over it can still join.
 		var dragFrom = null;
+		var dragFromTile = null;
 
 		win.draggable({
 			cancel: 'input,textarea,button,select,option,.save_appointment,.app_act,.edit_app,.delete_app,.delete_location,.minimize_button,.restore_button,.maximize_button,.close_button',
 			handle: '.top_navbar',
 			start: function(p,ui) {
 				dragFrom = { x: p.pageX, y: p.pageY };
+				windowTiledDragging = true;
 				windows[p.target.id] = Date.now();
 				if (win.attr('view') == 'max' && win.attr('free_dimensions')) {
 					var d = JSON.parse(win.attr('free_dimensions'));
@@ -215,6 +219,12 @@ function windowDraggable(win) {
 					win.find('.restore_button').hide();
 					windowDimensionSetter(win);
 				}
+				dragFromTile = {
+					left: parseFloat(win.css('left')) || 0,
+					top: parseFloat(win.css('top')) || 0,
+					width: parseFloat(win.css('width')) || 0,
+					height: parseFloat(win.css('height')) || 0
+				};
 			},
 			// Marker's own drawing of a window's place is in its app chunk, which may
 			// not have been loaded: with no Marker window open there is no marker to
@@ -222,6 +232,10 @@ function windowDraggable(win) {
 			// the exception stopped the window being moved at all.
 			drag: function(p,ui) {
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'drag'); }
+				// show the slot the window would join while it is still in the hand
+				if (!windowPhoneChecker() && typeof windowTiledPreview === 'function') {
+					windowTiledPreview(win, mouse_position(), dragFromTile);
+				}
 			},
 			stop: function(p,ui) {
 				var d = mouse_position();
@@ -265,14 +279,17 @@ function windowDraggable(win) {
 						if (typeof windowTiledLeave === 'function') { windowTiledLeave(win, true); }
 					}
 					else if (typeof windowTiledJoinOrLeave === 'function') {
-						windowTiledJoinOrLeave(win, { x: d.x, y: d.y });
+						windowTiledJoinOrLeave(win, { x: d.x, y: d.y }, dragFromTile);
 					}
 				}
+				if (typeof windowTiledPreview === 'function') { windowTiledPreview(win, null, null); }
 				// a phone's pile is a cascade; a drag would leave the window over the
 				// others' bars and swallow their taps, so restack it - to the top of
 				// the pile - the moment the drag ends
 				if (windowPhoneChecker()) { windowStacker(win.attr('app'), true); }
 				dragFrom = null;
+				dragFromTile = null;
+				windowTiledDragging = false;
 			}
 		});
 		// a phone keeps its windows the width of the screen: vertical only

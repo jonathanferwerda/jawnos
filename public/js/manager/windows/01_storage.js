@@ -122,11 +122,24 @@ function windowRetriever() {
 	var window_h = $(window).height();
 	ticketWindowRetriever()
 
+	// Open the saved windows in the order they held in the stack: a restore
+	// inserts each at its saved slot, so arriving in that order leaves no gaps to
+	// close while the slower responses are still coming in. A window with no slot
+	// (pinned, or saved by a build before slots) keeps its stored order.
+	var restoring = [];
 	$.each(storage, function(i,v) {
-		if (v.type == 'window') {
-			var app = JSON.stringify({ name: i });
-			appWindowLoader(i,v);
-		}
+		if (v.type == 'window') { restoring.push({ app: i, v: v }); }
+	});
+	restoring.sort(function(a, b) {
+		var ta = parseInt(a.v.tile, 10);
+		var tb = parseInt(b.v.tile, 10);
+		if (isNaN(ta) && isNaN(tb)) { return 0; }
+		if (isNaN(ta)) { return 1; }
+		if (isNaN(tb)) { return -1; }
+		return ta - tb;
+	});
+	$.each(restoring, function(k, r) {
+		appWindowLoader(r.app, r.v);
 	});
 
 	// A phone shows its windows as a cascade, and a restore renders them all at
@@ -188,6 +201,7 @@ function appWindowOpenerNow(i,timestamp,v) {
 	// been dragged out of it); hand it to windowReorganizer, which runs while the
 	// rendered window is being appended. A fresh open carries neither.
 	if (v.tile !== undefined || v.free == 1) { windowTiledRestore[i] = v; }
+	else { delete windowTiledRestore[i]; }
 	// Every window the guide opens is one it may want to look over: if the app's
 	// name does not match its part of speech, the guide sets the right one. The
 	// server marks what it has seen, so this is a no-op after the first time and
@@ -357,7 +371,15 @@ function appWindowOpenerNow(i,timestamp,v) {
 						window.hide();
 					}
 					if (v.top >= 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
-						window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
+						// a tiled window's place belongs to its slot: the saved pixels are last
+						// session's step, and the bar's height may have moved since. A free or
+						// pinned window keeps the place it was left at.
+						if (window.attr('pre_dimensioned') == 1 || v.free == 1) {
+							window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
+						}
+						else {
+							window.css({ 'height': v.height, 'width': v.width, 'z-index': v.zindex });
+						}
 						if (numeral(v.zindex).value() > top_level_now) {
 							top_level_now = numeral(v.zindex).value();
 						}
@@ -382,7 +404,12 @@ function appWindowOpenerNow(i,timestamp,v) {
 				if (window.length == 0) { window = $('.wind[app="' + i + '"]'); }
 
 				if (v.top >= 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
-					window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
+					if (window.attr('pre_dimensioned') == 1 || v.free == 1) {
+						window.css({ 'top': v.top, 'left': v.left, 'height': v.height, 'width': v.width, 'z-index': v.zindex });
+					}
+					else {
+						window.css({ 'height': v.height, 'width': v.width, 'z-index': v.zindex });
+					}
 				}
 				windowFit(window);
 				delete windowTiledRestore[i];

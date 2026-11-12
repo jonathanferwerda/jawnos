@@ -655,6 +655,8 @@ var windowTileAcrossStep = 50;
 // appWindowOpenerNow hands it over just before the window is rendered, and
 // windowReorganizer consumes it.
 var windowTiledRestore = {};
+var windowTiledDragging = false;
+var windowTiledSettleTimer = null;
 
 // Close the slot a window leaves: every tiled window below it in the stack (a
 // higher slot) steps up by one bar and one across-step, and its own slot number
@@ -714,14 +716,28 @@ function windowTiledRect(win) {
 	};
 }
 
-// The ground the tile covers: every tiled window's box taken together. The
-// window being dragged is still one of them when it was in the stack, so a
-// window picked up and put back down over its own place still finds the stack.
-function windowTiledArea() {
+// The ground the tile covers: every tiled window's box taken together. A window
+// being dragged leaves its present box out of the sum and puts the box it was
+// picked up from there instead (home), so dragging back over its old place finds
+// the stack while carrying it away does not.
+function windowTiledArea(homeEl, homeRect) {
 	var area = null;
+	var skip = homeEl ? $(homeEl)[0] : null;
 	$('.wind').each(function() {
-		if (windowTiledSlot(this) < 0) { return; }
-		var r = windowTiledRect(this);
+		var r;
+		if (skip && this === skip) {
+			if (!homeRect) { return; }
+			r = {
+				left: homeRect.left,
+				top: homeRect.top,
+				right: (homeRect.right !== undefined) ? homeRect.right : homeRect.left + homeRect.width,
+				bottom: (homeRect.bottom !== undefined) ? homeRect.bottom : homeRect.top + homeRect.height
+			};
+		}
+		else if (windowTiledSlot(this) >= 0) {
+			r = windowTiledRect(this);
+		}
+		else { return; }
 		if (!area) { area = { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }
 		else {
 			area.left = Math.min(area.left, r.left);
@@ -738,15 +754,29 @@ function windowTiledOverStack(area, at) {
 	return at.x >= area.left && at.x <= area.right && at.y >= area.top && at.y <= area.bottom;
 }
 
-// Where the title bar was held among the stack's bars: the number of tiled bars
-// whose middle sits above the pointer. That is the slot the window takes.
-function windowTiledInsertSlot(at) {
-	var want = (at && at.y) || 0;
+function windowTiledBarMiddle(win) {
+	var bar = $(win).find('.top_navbar');
+	return (parseFloat($(win).css('top')) || 0) + ((bar.outerHeight() || 40) / 2);
+}
+
+// Where the dragged title bar sits among the stack's bars: the number of tiled
+// bars whose middle is above it, counting the stack as if the gap the window
+// leaves were already closed. That is the slot it takes; the bar's own place, not
+// the finger on it, is what decides, so grabbing high or low on the bar does not
+// move the drop a place.
+function windowTiledInsertSlot(at, skip) {
+	var dragged = skip ? $(skip) : null;
+	var want = (dragged && dragged.length) ? windowTiledBarMiddle(dragged[0]) : ((at && at.y) || 0);
+	var skipSlot = dragged ? windowTiledSlot(dragged) : -1;
 	var slot = 0;
 	$('.wind').each(function() {
-		if (windowTiledSlot(this) < 0) { return; }
+		if (dragged && this === dragged[0]) { return; }
+		var s = windowTiledSlot(this);
+		if (s < 0) { return; }
+		if (skipSlot >= 0 && s > skipSlot) { s = s - 1; }
 		var bar = $(this).find('.top_navbar');
-		var middle = (parseFloat($(this).css('top')) || 0) + ((bar.outerHeight() || 40) / 2);
+		var step = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
+		var middle = windowTopLimit() + s * step + ((bar.outerHeight() || 40) / 2);
 		if (middle < want) { slot++; }
 	});
 	return slot;
@@ -769,17 +799,55 @@ function windowTiledRelayout() {
 	});
 }
 
+// A restore inserts windows at the slots they saved, which can leave gaps while
+// slower responses are still coming in. Once they have settled, number the stack
+// straight again: the order is already right, only the numbers have holes.
+function windowTiledSettle() {
+	if (windowTiledDragging && $('.wind.ui-draggable-dragging').length) { windowTiledSettleSoon(); return; }
+	windowTiledDragging = false;
+	var order = [];
+	$('.wind').each(function() {
+		var slot = windowTiledSlot(this);
+		if (slot >= 0) { order.push({ el: this, slot: slot }); }
+	});
+	order.sort(function(a, b) { return a.slot - b.slot; });
+	for (var i = 0; i < order.length; i++) { $(order[i].el).attr('tile', String(i)); }
+	windowTiledRelayout();
+}
+
+function windowTiledSettleSoon() {
+	clearTimeout(windowTiledSettleTimer);
+	windowTiledSettleTimer = setTimeout(windowTiledSettle, 1200);
+}
+
+// A restored window takes the slot it held before the reload, and a window
+// already in that slot steps down to make room. That keeps the saved order when
+// the responses arrive in another order, and keeps two windows out of one slot
+// when a fresh one opened while the restore was still coming in.
+function windowTiledInsertAt(win, to) {
+	win = $(win);
+	$('.wind').each(function() {
+		if (this === win[0]) { return; }
+		var s = windowTiledSlot(this);
+		if (s >= to) { $(this).attr('tile', String(s + 1)); }
+	});
+	win.attr('tile', String(to));
+	windowTiledRelayout();
+}
+
 // A drag ends either in the stack or outside it. Picked up, the window leaves
-// its slot and the stack closes up behind it; dropped with the pointer over the
-// stack's ground, it takes the slot the held title bar is over - the windows
-// from there down step one place - so reordering the stack is the same press.
-// Dropped outside, it floats free, as good as closed to the tile.
-function windowTiledJoinOrLeave(win, at) {
+// its slot and the stack closes up behind it; dropped over the stack's ground,
+// it takes the slot its title bar is over - the windows from there down step one
+// place - so reordering the stack is the same press. Dropped outside, it floats
+// free, as good as closed to the tile. `home` is the box the window was picked
+// up from; it stands in for the window's own box while the drag is outside it.
+function windowTiledJoinOrLeave(win, at, home) {
 	if (windowPhoneChecker()) { return; }
 	win = $(win);
 	if (win.attr('pre_dimensioned') == 1) { return; }
-	var area = windowTiledArea();
 	var slot = windowTiledSlot(win);
+	var area = windowTiledArea(win, slot >= 0 ? home : null);
+	var to = windowTiledInsertSlot(at, win);
 	if (slot >= 0) {
 		win.removeAttr('tile');
 		windowTiledStepUp(slot);
@@ -789,7 +857,6 @@ function windowTiledJoinOrLeave(win, at) {
 		if (typeof windowSaver === 'function') { windowSaver(); }
 		return;
 	}
-	var to = windowTiledInsertSlot(at);
 	$('.wind').each(function() {
 		var s = windowTiledSlot(this);
 		if (s >= to) { $(this).attr('tile', String(s + 1)); }
@@ -798,6 +865,30 @@ function windowTiledJoinOrLeave(win, at) {
 	windowTiledRelayout();
 	if (typeof windowDimensionSetter === 'function') { windowDimensionSetter(win); }
 	if (typeof windowSaver === 'function') { windowSaver(); }
+}
+
+// The slot a dragged window would join, drawn while it is still in the hand.
+// The same insertion rule as the drop, so what the outline shows is where it
+// lands; off the stack, or at an edge that owns the half snap, it is hidden.
+function windowTiledPreview(win, at, home) {
+	var box = $('#window_tile_preview');
+	if (!box.length) { box = $('<div id="window_tile_preview"></div>').appendTo('body'); }
+	win = $(win);
+	if (windowPhoneChecker() || !at || win.attr('pre_dimensioned') == 1) { box.hide(); return; }
+	var ww = $(window).width();
+	if (at.x < (ww / 10) || at.x > (ww - (ww / 10))) { box.hide(); return; }
+	var slot = windowTiledSlot(win);
+	var area = windowTiledArea(win, slot >= 0 ? home : null);
+	if (!windowTiledOverStack(area, at)) { box.hide(); return; }
+	var to = windowTiledInsertSlot(at, win);
+	var bar = win.find('.top_navbar');
+	var vAdvance = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
+	box.css({
+		'left': to * windowTileAcrossStep,
+		'top': to * vAdvance + windowTopLimit(),
+		'width': win.css('width'),
+		'height': win.css('height')
+	}).show();
 }
 
 function windowReorganizer(window_id) {
@@ -826,7 +917,6 @@ function windowReorganizer(window_id) {
 		var restored = windowTiledRestore[window_app];
 		delete windowTiledRestore[window_app];
 		topLevelNow(win);
-		var thisWinLeft = Number(numeral(win.css('left')).format()) + Number(numeral(win.css('width')).format());
 		var thisWinTop = Number(numeral(win.css('top')).format());
 		if (jws != undefined && isJson(jws) && !windowPhoneChecker()) {
 			var view = JSON.parse(jws);
@@ -853,25 +943,21 @@ function windowReorganizer(window_id) {
 			}
 			else if (!windowPhoneChecker() && win.attr('pre_dimensioned') != 1) {
 				// its saved slot keeps the stack in the same order after a reload,
-				// whatever order the windows arrive in; a new window joins at the end
+				// whatever order the windows arrive in; a new window joins at the end.
+				// Inserting at a taken slot moves that window down, so a fresh window
+				// opened while a restore is still arriving is never covered.
 				var tileCount = windowTiledSlot(win);
-				if (tileCount < 0 && restored && restored.tile !== undefined && restored.tile !== null && restored.tile !== '') {
-					tileCount = parseInt(restored.tile, 10);
+				if (tileCount < 0) {
+					if (restored && restored.tile !== undefined && restored.tile !== null && restored.tile !== '') {
+						tileCount = parseInt(restored.tile, 10);
+					}
+					if (isNaN(tileCount) || tileCount < 0) { tileCount = windowNextTileSlot(); }
+					windowTiledInsertAt(win, tileCount);
 				}
-				if (isNaN(tileCount) || tileCount < 0) { tileCount = windowNextTileSlot(); }
-				win.attr('tile', String(tileCount));
-				win.css({ 'left': tileCount * windowTileAcrossStep, 'top': tileCount * vAdvance + startingV });
+				else {
+					windowTiledRelayout();
+				}
 				win.show();
-
-
-				if (thisWinLeft > $(window).width()) {
-					winLine = winLine + 1;
-					win.css({ 'top': thisWinTop + ( vAdvance * winLine + startingV) });
-					fullXCount = tileCount
-				}
-				if (fullXCount * (winLine ) > tileCount) {
-					win.css({'left': thisWinLeft - (vStep * tileCount) + startingV});
-				}
 			}
 			else {
 				var temp_placement = ( vAdvance * winCount ) + startingV;
@@ -885,6 +971,8 @@ function windowReorganizer(window_id) {
 
 			}
 		}
+		// a restore can leave a gap until every saved window has arrived
+		if (restored) { windowTiledSettleSoon(); }
 		// Keep a window on the screen (and phones it is the width of the screen,
 		// pinned left), with its contents scrolling rather than spilling.
 		windowFit(win);
