@@ -744,6 +744,22 @@ sub email_sender {
 	return $returner;
 }
 
+# The direction a phone's own message store recorded, read from the appointment
+# the sms import wrote beside it: sms_list_check prefixed the note with the
+# store's type (Sent, Inbox, Draft), which is the one record that survives when
+# a mailbox row's status was later rewritten. Returns 'sent', 'inbox', 'draft'
+# or undef when the note does not name a direction.
+sub mail_direction_from_note {
+	my ($plain) = @_;
+	return undef unless defined $plain && length $plain;
+	my ($type) = $plain =~ /^\s*(Sent|Inbox|Draft|Received|Recieved)\s*:/i;
+	return undef unless defined $type;
+	$type = lc $type;
+	return 'sent' if $type eq 'sent';
+	return 'draft' if $type eq 'draft';
+	return 'inbox';
+}
+
 # Whether a filed message came in or went out. The stored status is the
 # authority where it is unambiguous: 'sent' is the house's own word, and
 # 'inbox'/'received' is a letter the house accepted. An sms row is what the

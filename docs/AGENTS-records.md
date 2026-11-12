@@ -16,6 +16,16 @@ Read this before repairing appointments or restoring a database.
   source's stale rows, and review `tickets`, `backups` and `tunnels` for the source's paths. The
   missing-self-row scan bug is fixed in v0.1.1006; the identity repair is still manual.
 
+## SMS direction in the mailbox
+
+- **A phone row's status is its direction.** `scripts/mail_direction_repair.pl` reads the type the
+  phone's own message store wrote into each sms appointment note and restores the mailbox row: dry run
+  by default, `--apply` writes. `--duplicates` also runs the records audit's mailbox half, tombstoning
+  the bad-date import copies and repairing the two dates; `--seal-plain` seals a legacy public body so
+  the thread and its recent preview can read it. Never touches a row a person marked `ignored`. Run it
+  from a worktree with `JAWNOS_STORE_DIR=<live tree>` so the tool uses the live database, or with
+  `JAWNOS_ROOT=<live tree>` to load that tree's code.
+
 ## Appointments that do not match what the person remembers
 
 - **Appointments that do not match what the person remembers** (still open from hours ago, far longer
