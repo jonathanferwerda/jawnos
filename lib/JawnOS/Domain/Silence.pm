@@ -438,16 +438,20 @@ sub silence_tick {
 	}
 	my $since = $state->{'since'} || 0;
 	if ($state->{'active'} || scalar @{ $state->{'owners'} || [] }) {
-		# A peer can receive the state on the signed rail before its own copy of
-		# the appointment (the ordinary sync pass runs about every ten minutes).
-		# Hold a young state long enough for that row to arrive, so a relayed
-		# silence is not dropped before the machine can see what owns it.
-		return 0 if $since && ($now - $since) < 900000;
-		# Relay the release only when this machine watched one of these owners
-		# run: that is the appointment closing here, not a missing row.
+		# Owners this machine watched open are closing here: that is a real stop,
+		# so release at once. Relay it too - it is the appointment ending, not a
+		# missing row.
 		my $informed = 0;
 		foreach my $owner ( @{ $state->{'owners'} || [] } ) {
 			$informed = 1 if delete $silence_owners_seen{$owner};
+		}
+		# A peer can receive the state on the signed rail before its own copy of
+		# the appointment (the ordinary sync pass runs about every ten minutes).
+		# Hold a young state it never saw owned long enough for that row to
+		# arrive, so a relayed silence is not dropped before it can see what
+		# owns it.
+		if (!$informed && $since && ($now - $since) < 900000) {
+			return 0;
 		}
 		return 1 if &silence_release_all($informed);
 	}

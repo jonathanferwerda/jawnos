@@ -246,7 +246,33 @@ is(state_hash(), undef, 'a start in the future owns nothing yet');
 $subs::silence_tick_at = 0;
 subs::silence_tick();
 is_deeply(state_hash()->{owners}, ['u-later'], 'the same row starts owning silence when it is due');
+
+# A machine that watched that session run stops it at once when its own row
+# closes, and relays the stop - no sync window to wait out.
+reset_all();
+@QUERY_SETTINGS = ({ app => 'mirror' });
+$DEVICE = 'mobile';
+@QUERY_APPOINTMENTS = ({ uuid => 'u-own', app => 'mirror' });
+subs::silence_tick();
+is(state_hash()->{active}, 1, 'the machine engages its own session');
 @QUERY_APPOINTMENTS = ();
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is(state_hash()->{active}, 0, 'its own session closing releases at once');
+my $own_off = grep { ($_->{'extra'}->{'url'} // '') eq '/manager/silence/peer'
+	&& !$_->{'extra'}->{'params'}->{'active'} } @RELAY;
+ok($own_off, 'and relays the stop to the peers');
+
+# Now behave as a peer that received the state but not the appointment: it did
+# not watch any of these owners, so a young state is held for the sync window.
+reset_all();
+@QUERY_SETTINGS = ({ app => 'mirror' });
+$DEVICE = 'mobile';
+@QUERY_APPOINTMENTS = ({ uuid => 'u-later', app => 'mirror', timestamp => subs::rightNow() - 1000 });
+subs::silence_tick();
+@QUERY_APPOINTMENTS = ();
+$subs::silence_tick_at = 0;
+%subs::silence_owners_seen = ();
 my $recent = state_hash();
 $recent->{'since'} = subs::rightNow() - 1000;
 $STORE{'__president|silence_state|all'} = encode_json($recent);
@@ -274,9 +300,9 @@ subs::silence_tick();
 is(state_hash()->{active}, 0, 'the alarm pass clears silence when the appointment is gone');
 my $off_pushed = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 0 } @NATIVE;
 ok($off_pushed, 'and tells the phone app off');
-my $stop_relay = grep { ($_->{'extra'}->{'url'} // '') eq '/manager/silence/peer'
+my $peer_stop_relay = grep { ($_->{'extra'}->{'url'} // '') eq '/manager/silence/peer'
 	&& !$_->{'extra'}->{'params'}->{'active'} } @RELAY;
-ok($stop_relay, 'and relays the release it watched the session close');
+ok(!$peer_stop_relay, 'but a peer never relays a release it did not witness');
 
 # A peer that never saw the owner must not tell the house the session ended:
 # it only clears its own machine and leaves the relay to the machine that ran it.
