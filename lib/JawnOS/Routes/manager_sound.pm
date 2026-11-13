@@ -10,6 +10,8 @@ sub routes {
 		[53022, 'post', '/manager/sound/volume',  'action_53022'],
 		[53023, 'post', '/manager/sound/mute',    'action_53023'],
 		[53024, 'post', '/manager/sound/default', 'action_53024'],
+		[53025, 'post', '/manager/sound/level',   'action_53025'],
+		[53026, 'post', '/manager/sound/profile', 'action_53026'],
 	);
 }
 

@@ -458,13 +458,19 @@ write_file($log, '');
 	like($routes, qr{/manager/sound/volume}, 'the volume route exists');
 	like($routes, qr{/manager/sound/mute}, 'the mute route exists');
 	like($routes, qr{/manager/sound/default}, 'the default route exists');
+	like($routes, qr{/manager/sound/level}, 'the house-level route exists');
+	like($routes, qr{/manager/sound/profile}, 'the per-app profile route exists');
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_sound.pm");
 	like($controller, qr/^sub action_53020\b/m, 'the window action exists');
 	like($controller, qr/^sub action_53021\b/m, 'the status action exists');
+	like($controller, qr/^sub action_53025\b/m, 'the level action exists');
+	like($controller, qr/^sub action_53026\b/m, 'the profile action exists');
 	like($controller, qr/&subs::sound_set\(/, 'the volume action calls the domain');
 	like($controller, qr/&subs::sound_mute\(/, 'the mute action calls the domain');
 	like($controller, qr/&subs::sound_default\(/, 'the default action calls the domain');
+	like($controller, qr/&subs::sound_house_level_write\(/, 'the level action calls the domain');
+	like($controller, qr/&subs::sound_app_level_write\(/, 'the profile action calls the domain');
 	like($controller, qr/template => 'apps\/sound'/, 'the window renders the Sound template');
 
 	my $names = read_file("$root/lib/JawnOS/Routes.pm");
@@ -522,6 +528,7 @@ write_file($log, '');
 	like($widget, qr/setInterval\(jawnosSoundTaskbarLoad, 45000\)/, 'it polls every 45 seconds');
 	like($widget, qr/appWindowOpener\('sound'/, 'a press opens Sound');
 	like($widget, qr/jawnosTaskbarEditing/, 'a press in edit mode does not open the app');
+	like($widget, qr/data-sound-level/, 'the panel carries the house level');
 
 	my $css = read_file("$root/public/css/manager.css");
 	like($css, qr/\.taskbar_sound_glyph/, 'the speaker glyph has a style');
@@ -535,10 +542,14 @@ write_file($log, '');
 	like($template, qr/id="sound_output_volume"/, 'it has an output volume slider');
 	like($template, qr/id="sound_output_mute"/, 'it has an output mute');
 	like($template, qr/class="sound_default"/, 'device rows carry Set default');
+	like($template, qr/id="sound_level"/, 'it has the house level');
+	like($template, qr/id="sound_profiles_list"/, 'and the per-app profiles');
 
 	no warnings 'redefine';
 	*subs::lang = sub { $_ [0] };
 	*subs::ui = sub { $_ [0] };
+	@subs::SOUND_LEVELS = qw( passive sound quiet mute silence );
+	*subs::sound_level_label = sub { my ($level) = @_; return ucfirst($level) };
 	# The app renderer supplies include(); the bare render below does not parse it.
 	my $sound_tpl = read_file("$root/templates/apps/sound.html.ep");
 	$sound_tpl =~ s/^[^\n]*include 'apps\/sound\/media'[^\n]*\n//m;
@@ -558,6 +569,8 @@ write_file($log, '');
 	like($html, qr/id="sound_output_list"/, 'the template renders its output list');
 	like($html, qr/id="sound_input_list"/, 'the template renders its input list');
 	like($html, qr/value="40"/, 'the output volume fills the slider');
+	like($html, qr/id="sound_level"/, 'the house level renders');
+	like($html, qr/id="sound_profiles_list"/, 'the profiles list renders');
 	unlike($html, qr/<script>/, 'a device name is escaped');
 }
 
@@ -567,7 +580,7 @@ write_file($log, '');
 {
 	require "$root/perl/language.pl";
 	for my $lang (@language::languages) {
-		for my $key (qw(sound sound_output sound_muted sound_profile sound_passive sound_quiet sound_silence)) {
+		for my $key (qw(sound sound_output sound_muted sound_profile sound_passive sound_quiet sound_silence sound_level sound_profiles sound_running sound_add_profile)) {
 			isnt(language::translate($lang->{code}, $key), $key,
 				$lang->{code} . " translates $key");
 		}
@@ -581,6 +594,7 @@ write_file($log, '');
 	like($topic->{summary}, qr/volume/i, 'the summary names the volume');
 	like(join(' ', @{ $topic->{body} }), qr/walkboy/i,
 		'the topic says walkboy is still the media picker');
+	like(join(' ', @{ $topic->{body} }), qr/house level/, 'the topic explains the house level');
 
 	my $taskbar = $help::topic{'taskbar'};
 	like(join(' ', @{ $taskbar->{body} }), qr/Sound shows/, 'the taskbar topic lists Sound');

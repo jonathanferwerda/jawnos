@@ -173,7 +173,10 @@ sub sound_house_setting_level {
 # The level the house is actually at. An app's own non-Passive profile takes
 # over while one of its appointments is running, and the most recently started
 # one wins when several do; otherwise the house setting answers.
-sub sound_house_level {
+# Every app with a running appointment, and the level its profile asks for.
+# One query, so the house level and the profiles list never disagree about
+# which sessions are running.
+sub sound_running_levels {
 	my $now = eval { &subs::rightNow() } || (time * 1000);
 	my $open = eval {
 		&subs::db_query(
@@ -183,16 +186,108 @@ sub sound_house_level {
 			$now
 		)->hashes;
 	} || [];
-	my %level;
+	my (%level, @order);
 	foreach my $row ( @{$open} ) {
 		next unless ref $row eq 'HASH';
 		my $app = $row->{'app'} // '';
 		next unless length $app;
-		$level{$app} = &sound_app_level($app) unless exists $level{$app};
-		next if $level{$app} eq 'passive';
-		return $level{$app};
+		next if exists $level{$app};
+		$level{$app} = &sound_app_level($app);
+		push @order, $app;
+	}
+	return { levels => \%level, order => \@order };
+}
+
+sub sound_house_level {
+	my $running = &sound_running_levels();
+	foreach my $app ( @{ $running->{'order'} } ) {
+		my $level = $running->{'levels'}->{$app};
+		return $level unless $level eq 'passive';
 	}
 	return &sound_house_setting_level();
+}
+
+# The Sound app's profiles list: every app that carries a profile, plus any app
+# running right now, so the panel shows exactly what can be tuned.
+sub sound_profiles_list {
+	my $rows = eval {
+		&subs::db_query(
+			"select app, setting, value from settings where device = ? "
+			. "and setting in ('sound_profile','silence') "
+			. "and substr(app,1,2) <> '__'",
+			'all'
+		)->hashes;
+	} || [];
+	my (%profile, %legacy);
+	foreach my $row ( @{$rows} ) {
+		next unless ref $row eq 'HASH';
+		my $app = $row->{'app'} // '';
+		next unless length $app;
+		next if $app =~ /^__/;
+		my $setting = $row->{'setting'} // '';
+		if ($setting eq 'sound_profile') { $profile{$app} = $row->{'value'}; }
+		elsif ($setting eq 'silence') { $legacy{$app} = $row->{'value'}; }
+	}
+	my $running = &sound_running_levels();
+	my %apps = ( %profile, %legacy, %{ $running->{'levels'} } );
+	my @list;
+	foreach my $app ( sort { lc($a) cmp lc($b) } keys %apps ) {
+		my $level = defined $profile{$app}
+			? &sound_profile_level($profile{$app})
+			: &sound_profile_level($legacy{$app});
+		my $is_running = exists $running->{'levels'}->{$app} ? 1 : 0;
+		next if $level eq 'passive' && !$is_running;
+		push @list, { app => $app, level => $level, running => $is_running };
+	}
+	return \@list;
+}
+
+# The apps an override may be added for. The house's own rows are not apps.
+sub sound_app_choices {
+	my $rows = eval {
+		&subs::db_query(
+			"select distinct app from settings "
+			. "where substr(app,1,2) <> '__' order by app"
+		)->hashes;
+	} || [];
+	return [ map { $_->{'app'} }
+		grep { ref $_ eq 'HASH' && defined $_->{'app'} && length $_->{'app'} && $_->{'app'} !~ /^__/ } @{$rows} ];
+}
+
+# The house level is a setting; Passive is not one, so an unset or Passive
+# answer is written as ordinary sound.
+sub sound_house_level_write {
+	my ($level) = @_;
+	$level = &sound_profile_level($level);
+	$level = 'sound' if $level eq 'passive';
+	my $saved = eval {
+		&subs::setting_setter({
+			app => $SILENCE_SETTING_APP,
+			setting => $SOUND_HOUSE_SETTING,
+			value => $level,
+			device => 'all',
+			timestamp => &subs::rightNow(),
+		});
+		1;
+	};
+	return $saved ? $level : undef;
+}
+
+sub sound_app_level_write {
+	my ($app, $level) = @_;
+	return 0 unless defined $app && length $app;
+	$level = &sound_profile_level($level);
+	my $saved = eval {
+		&subs::setting_setter({
+			app => $app,
+			setting => $SOUND_PROFILE_SETTING,
+			value => $level,
+			device => 'all',
+			timestamp => &subs::rightNow(),
+		});
+		1;
+	};
+	return $saved ? 1 : 0;
 }
 
 sub silence_app_setting_on {

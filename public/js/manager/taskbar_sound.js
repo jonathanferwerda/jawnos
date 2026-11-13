@@ -207,6 +207,31 @@ function jawnosSoundTaskbarDeviceList(kind, devices) {
 	return count ? scroll : null;
 }
 
+// The house level rides at the top of the panel, above the device lists: it is
+// the base every app at Passive inherits, and the widget is where it is
+// quickest to change.
+function jawnosSoundTaskbarLevelLabel(level) {
+	var keys = { passive: 'sound_passive', sound: 'sound', quiet: 'sound_quiet', mute: 'sound_mute', silence: 'sound_silence' };
+	return jawnosT(keys[level] || 'sound');
+}
+
+function jawnosSoundTaskbarLevelSection(status) {
+	var section = $('<div class="taskbar_panel_section"></div>').attr('data-sound-section', 'level');
+	section.append($('<h4></h4>').text(jawnosT('sound_level')));
+	var row = $('<div class="taskbar_panel_row"></div>');
+	var select = $('<select data-sound-level></select>').attr('aria-label', jawnosT('sound_level'));
+	$.each(['sound', 'quiet', 'mute', 'silence'], function(i, level) {
+		select.append($('<option></option>').attr('value', level).text(jawnosSoundTaskbarLevelLabel(level)));
+	});
+	select.val((status && status.level) || 'sound');
+	row.append(select);
+	if (status && status.house_level && status.house_level != status.level) {
+		row.append($('<span class="taskbar_panel_value"></span>').text(jawnosSoundTaskbarLevelLabel(status.house_level)));
+	}
+	section.append(row);
+	return section;
+}
+
 function jawnosSoundTaskbarPanelFooter() {
 	var footer = $('<div class="taskbar_panel_footer"></div>');
 	footer.append($('<button type="button" class="taskbar_panel_open"></button>')
@@ -220,6 +245,7 @@ function jawnosSoundTaskbarPanelBuild(panel) {
 	var status = jawnosSoundTaskbarData;
 	var footer = jawnosSoundTaskbarPanelFooter();
 	var note = $('<p class="taskbar_panel_note"></p>').attr('data-sound-note', '1');
+	panel.append(jawnosSoundTaskbarLevelSection(status));
 	if (!status || !status.ok) {
 		// Mark the panel so the next poll rebuilds it in place.
 		jawnosSoundTaskbarPanelStale = true;
@@ -376,6 +402,24 @@ $(document).on('click', '#taskbar_sound_panel .taskbar_panel_device', function()
 	var id = $(this).attr('data-id');
 	if (!id || $(this).attr('data-default') == '1') { return; }
 	jawnosSoundTaskbarSetDefault(kind, id);
+});
+
+$(document).on('change', '#taskbar_sound_panel [data-sound-level]', function() {
+	var level = $(this).val();
+	jawnosSoundTaskbarNote('');
+	$.ajax({
+		url: '/manager/sound/level',
+		type: 'POST',
+		data: { level: level },
+		success: function(status) {
+			jawnosSoundTaskbarRender(status);
+			jawnosSoundTaskbarPanelRefresh();
+		},
+		error: function() {
+			jawnosSoundTaskbarFail(jawnosT('Could not change the level.'));
+			jawnosSoundTaskbarLoad();
+		}
+	});
 });
 
 $(function() {

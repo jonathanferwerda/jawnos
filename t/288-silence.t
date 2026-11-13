@@ -142,6 +142,38 @@ $main::SCRATCH = $scratch;
 };
 *subs::sound_channel_set = sub { my ($name, $volume, $muted) = @_; push @CHANNEL, "$name|" . (defined $volume ? $volume : '') . '|' . (defined $muted ? $muted : ''); return { ok => 1 } };
 
+# ---- the profiles list and its writes ---------------------------------------
+reset_all();
+@QUERY_SETTINGS = (
+	{ app => 'mirror', setting => 'sound_profile', value => 'mute' },
+	{ app => 'lens', setting => 'sound_profile', value => 'passive' },
+	{ app => 'old', setting => 'silence', value => 'checked' },
+	{ app => '__president', setting => 'sound_profile', value => 'silence' },
+);
+@QUERY_APPOINTMENTS = ( { uuid => 'a', app => 'lens', timestamp => subs::rightNow() - 1000 } );
+my $profiles = subs::sound_profiles_list();
+is_deeply([ map { $_->{'app'} } @{$profiles} ], [ 'lens', 'mirror', 'old' ],
+	'the list names every app with a profile, plus a running one');
+is($profiles->[0]->{'level'}, 'passive', 'a running Passive app is listed');
+is($profiles->[0]->{'running'}, 1, 'and marked running');
+is($profiles->[1]->{'level'}, 'mute', 'an app profile is read');
+is($profiles->[2]->{'level'}, 'silence', 'the legacy box reads as Silence');
+
+@QUERY_SETTINGS = ( { app => 'mirror' }, { app => '__president' }, { app => 'lens' } );
+is_deeply(subs::sound_app_choices(), [ 'mirror', 'lens' ], 'the choices drop the house rows');
+
+reset_all();
+is(subs::sound_house_level_write('quiet'), 'quiet', 'the house level is written as given');
+is($STORE{'__president|sound_level|all'}, 'quiet', 'on the house-wide row');
+is(subs::sound_house_level_write('passive'), 'sound', 'Passive is written as ordinary sound');
+is(subs::sound_house_level_write('nonsense'), 'sound', 'an unknown level is ordinary sound');
+
+reset_all();
+ok(subs::sound_app_level_write('mirror', 'silence'), 'an app profile is written');
+is($STORE{'mirror|sound_profile|all'}, 'silence', 'on the house-wide row');
+is(subs::sound_app_level('mirror'), 'silence', 'and reads back');
+ok(!subs::sound_app_level_write('', 'mute'), 'an app is required');
+
 # ============================================================================
 # the state and the appointment hook
 # ============================================================================

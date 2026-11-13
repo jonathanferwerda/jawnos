@@ -27,9 +27,49 @@
 #sound .sound_control label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 1 1 220px; }
 #sound .sound_control input[type=range] { flex: 1 1 120px; min-width: 0; }
 #sound .sound_control button[disabled], #sound .sound_control input[disabled] { opacity: .45; }
+#sound .sound_level_row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+#sound .sound_level_now { opacity: .78; }
+#sound .sound_level_hint { margin: 8px 0 0; font-size: 14px; opacity: .72; }
+#sound .sound_profile_row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+#sound .sound_profile_app { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+#sound .sound_profile_add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
 </style>
 <div id="sound" app="sound">
 	<div class="sound_note" id="sound_note"></div>
+% my $level = (ref($status) eq 'HASH' && $status->{'level'}) ? $status->{'level'} : 'sound';
+% my $house_level = (ref($status) eq 'HASH' && $status->{'house_level'}) ? $status->{'house_level'} : $level;
+% my $app_choices = (ref($status) eq 'HASH' && ref($status->{'apps'}) eq 'ARRAY') ? $status->{'apps'} : [];
+	<section class="sound_section sound_level_section">
+		<h3><%= &subs::lang('sound_level') %></h3>
+		<div class="sound_level_row">
+			<select id="sound_level">
+% foreach my $opt ( grep { $_ ne 'passive' } @subs::SOUND_LEVELS ) {
+				<option value="<%= $opt %>"<% if ($level eq $opt) { %> selected="selected"<% } %>><%= &subs::sound_level_label($opt) %></option>
+% }
+			</select>
+			<span class="sound_level_now"><%= &subs::ui('The house is at') %> <b id="sound_house_level"><%= &subs::sound_level_label($house_level) %></b></span>
+		</div>
+		<p class="sound_level_hint"><%= &subs::ui('Sound is normal. Quiet softens the non-essential sounds. Mute silences media, speech and notifications but leaves alarms and a ringing call. Silence takes everything, alarms included, and sends every call to the receptionist.') %></p>
+	</section>
+	<section class="sound_section sound_profiles_section">
+		<h3><%= &subs::lang('sound_profiles') %></h3>
+		<p class="sound_level_hint"><%= &subs::ui('An app\'s own profile wins for its sounds while one of its appointments runs. Passive inherits the house level, and the most recently started running app with a profile takes the house.') %></p>
+		<div id="sound_profiles_list"></div>
+		<div class="sound_profile_add">
+			<input type="text" id="sound_profile_app" list="sound_profile_apps" placeholder="<%= &subs::lang('sound_add_profile') %>">
+			<datalist id="sound_profile_apps">
+% foreach my $name ( @{$app_choices} ) {
+				<option value="<%= $name %>"></option>
+% }
+			</datalist>
+			<select id="sound_profile_new_level">
+% foreach my $opt ( @subs::SOUND_LEVELS ) {
+				<option value="<%= $opt %>"><%= &subs::sound_level_label($opt) %></option>
+% }
+			</select>
+			<button type="button" id="sound_profile_add"><%= &subs::ui('Save') %></button>
+		</div>
+	</section>
 	<div class="sound_columns">
 		<section class="sound_section" data-kind="output">
 			<h3><%= &subs::lang('sound_output') %></h3>

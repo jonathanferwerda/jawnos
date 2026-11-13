@@ -9,6 +9,7 @@
 var soundTimer = null;
 var soundStatusData = null;
 var soundBrowserLabels = { output: '', input: '' };
+var soundProfilesSignature = null;
 
 $(document).on('click', '#sound_toggle, .sound_toggle', function() {
 	soundOpener();
@@ -157,6 +158,48 @@ function soundRender(status) {
 	in_mute.prop('disabled', !in_ok || !(status && status.input_mute));
 	in_mute.text(input && input.muted ? jawnosT('sound_muted') : jawnosT('sound_mute'));
 	$('section[data-kind="input"]').attr('data-unsupported', input_supported ? '0' : '1');
+	soundLevelRender(status);
+	var profile_signature = JSON.stringify((status && status.profiles) || []);
+	if (profile_signature !== soundProfilesSignature) {
+		soundProfilesSignature = profile_signature;
+		soundProfilesRender(status);
+	}
+}
+
+// The house level and the per-app profiles. The labels are the same core
+// labels the dropdowns use, so a translated interface names all four.
+function jawnosSoundLevelLabel(level) {
+	var keys = { passive: 'sound_passive', sound: 'sound', quiet: 'sound_quiet', mute: 'sound_mute', silence: 'sound_silence' };
+	return jawnosT(keys[level] || 'sound');
+}
+
+function soundLevelRender(status) {
+	var level = (status && status.level) || 'sound';
+	var house = (status && status.house_level) || level;
+	var select = $('#sound_level');
+	if (select.length && !select.is(':focus')) { select.val(level); }
+	$('#sound_house_level').text(jawnosSoundLevelLabel(house));
+}
+
+function soundProfilesRender(status) {
+	var box = $('#sound_profiles_list');
+	if (!box.length) { return; }
+	box.empty();
+	$.each((status && status.profiles) || [], function(i, profile) {
+		profile = profile || {};
+		var row = $('<div class="sound_profile_row"></div>').attr('data-app', profile.app || '');
+		row.append($('<span class="sound_profile_app"></span>').text(profile.app || ''));
+		if (profile.running) {
+			row.append($('<span class="sound_badge"></span>').text(jawnosT('sound_running')));
+		}
+		var select = $('<select class="sound_profile_level"></select>');
+		$.each(['passive', 'sound', 'quiet', 'mute', 'silence'], function(j, level) {
+			select.append($('<option></option>').attr('value', level).text(jawnosSoundLevelLabel(level)));
+		});
+		select.val(profile.level || 'passive');
+		row.append(select);
+		box.append(row);
+	});
 }
 
 function soundLoad() {
@@ -201,6 +244,25 @@ function soundSetDefault(kind, id) {
 	});
 }
 
+function soundSetLevel(level) {
+	$.ajax({
+		url: '/manager/sound/level',
+		type: 'POST',
+		data: { level: level },
+		success: soundRender
+	});
+}
+
+function soundSetProfile(app, level) {
+	if (!app) { return; }
+	$.ajax({
+		url: '/manager/sound/profile',
+		type: 'POST',
+		data: { app: app, level: level },
+		success: soundRender
+	});
+}
+
 function soundBind() {
 	var window_box = $('.wind[app="sound"]');
 	if (!window_box.length || window_box.data('sound_bound')) { return; }
@@ -225,6 +287,19 @@ function soundBind() {
 	});
 	window_box.on('click', '.sound_default', function() {
 		soundSetDefault($(this).attr('data-kind'), $(this).attr('data-id'));
+	});
+	window_box.on('change', '#sound_level', function() {
+		soundSetLevel($(this).val());
+	});
+	window_box.on('change', '#sound_profiles_list .sound_profile_level', function() {
+		var row = $(this).closest('.sound_profile_row');
+		soundSetProfile(row.attr('data-app'), $(this).val());
+	});
+	window_box.on('click', '#sound_profile_add', function() {
+		var app = ($('#sound_profile_app').val() || '').replace(/^\s+|\s+$/g, '');
+		if (!app) { return; }
+		soundSetProfile(app, $('#sound_profile_new_level').val());
+		$('#sound_profile_app').val('');
 	});
 	if (soundTimer) { clearInterval(soundTimer); }
 	soundTimer = setInterval(function() {
