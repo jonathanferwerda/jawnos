@@ -25,6 +25,11 @@ with `ssh cloud` as `debian` with passwordless sudo. The service runs as `jg`.
 | Public name | `thejunderground.com` A `148.113.181.210`; `www` redirects |
 | TURN | `coturn` 4.6.1-2, `/etc/turnserver.conf`, `3478/udp` and `3478/tcp`, relay `49160–49260/udp` |
 | TURN secret | `/etc/junderground/turn.env` (`0600 root:root`), loaded only by the `turn.conf` drop-in |
+| SFU | `livekit-server` 1.13.11 at `/usr/local/bin`, `/etc/livekit.yaml`, `livekit.service` |
+| SFU env | `/etc/junderground/sfu.env` (`0600 root:root`), loaded by the `sfu.conf` drop-in |
+| SFU drop-in | `junderground.service.d/sfu.conf` (`EnvironmentFile` + `JG_SFU_*`) |
+| SFU path | Caddy `handle_path /sfu/*` → `127.0.0.1:7880`; public base `wss://thejunderground.com/sfu` |
+| SFU ports | `7881/tcp` and `50000–60000/udp` public; `7880/tcp` only behind Caddy |
 
 The unit is `Type=simple`, `User=jg`, `Group=jg`,
 `WorkingDirectory=/opt/junderground`, and starts the release in the foreground:
@@ -111,6 +116,61 @@ socket's `hello` (`lib/junderground/signaling/socket.ex:40`).
 Firewall: UFW allows `3478/udp`, `3478/tcp` and `49160:49260/udp`. If the OVH
 network firewall is enabled it must allow the same; UFW alone is not enough
 behind it.
+
+### Media (SFU)
+
+LiveKit 1.13.11 is the switch's SFU, added after the adapter landed in
+`junderground` v0.1.15 (`c6199b9`, implementing `docs/SFU.md` §6). The binary is
+`/usr/local/bin/livekit-server`, installed from the release tarball whose
+published `sha256` was checked; it runs as the system user `livekit` under
+`livekit.service` from `/etc/livekit.yaml` (`root:livekit`, `0640`). The config
+uses `port: 7880`, `rtc.tcp_port: 7881`, `50000–60000/udp` and
+`use_external_ip: true`; STUN found `148.113.181.210` and `2607:5300:229:171::1`,
+so no `node_ip` is set. `7880/tcp` is not exposed: UFW allows `7881/tcp` and
+`50000:60000/udp`, and Caddy is the only door to 7880.
+
+There is no `sfu.` hostname. Caddy proxies the apex path instead, before the
+static root:
+
+```
+handle_path /sfu/* {
+    reverse_proxy 127.0.0.1:7880
+}
+```
+
+`handle_path` strips `/sfu`, so the switch's base `wss://thejunderground.com/sfu`
+becomes LiveKit's `/rtc` and `/twirp/*`; the health probe and the Twirp client
+append to that base rather than assuming a host. A plain `GET /sfu/rtc` answers
+404 from LiveKit (it expects a WebSocket upgrade); `GET /sfu/` answers 200. The
+switch's unit has `IPAddressDeny=any`, so the `sfu.conf` drop-in also allows
+the public address it probes (`IPAddressAllow=148.113.181.210/32` and the IPv6
+counterpart, beside the loopback allows).
+
+The env file sets `JG_SFU_URL=wss://thejunderground.com/sfu`, `JG_SFU_KEY`,
+`JG_SFU_SECRET` (32 bytes), `JG_SFU_THRESHOLD=5` and `JG_SFU_TOKEN_TTL=300`.
+`/v1/meta` then carries:
+
+```json
+"sfu": {"adapter": "livekit", "available": true, "threshold": 5,
+        "token_ttl": 300, "url": "wss://thejunderground.com/sfu"}
+```
+
+and `"sfu"` in `features` only while the health probe is up. The adapter stores
+the minted grants and the opaque room map in `data/sfu.dets`; `POST
+/v1/rooms/:handle/:room/sfu/token` mints the HS256 JWT, and
+`.../sfu/revoke` (owner only) revokes the grant and best-effort removes the
+participant. The health and reconciler processes were initially crashing on
+every timer tick (a `handle_info` return bug); v0.1.15 fixes it, and the live
+proof is that stopping LiveKit for 100 s flips `available` to false and drops
+`"sfu"` from `features`, then flips back within ~35 s of a restart.
+
+Smoke test of the keys and path (no room is left behind): mint an HS256 admin
+JWT with `iss` = the API key, `video.roomAdmin` and `video.roomList`, and
+`POST https://thejunderground.com/sfu/twirp/livekit.RoomService/ListRooms` with
+`Authorization: Bearer`. `roomAdmin` alone gets 401 for `ListRooms` (it needs
+`roomList`); `ListParticipants` and `RemoveParticipant` accept the switch's
+`roomAdmin` token. The SFU terminates SRTP, so an SFU call is chat-room class and
+not end-to-end encrypted.
 
 ### Data
 
@@ -547,22 +607,16 @@ and TCP.
 
 ## 7. Known gaps and cautions
 
-- **TURN is live; the SFU is still design-only.** coturn 4.6.1-2 relays on
+- **Media is live: coturn plus LiveKit.** coturn 4.6.1-2 relays on
   `3478/udp` and `3478/tcp` with relay ports `49160–49260/udp`, and
   `/v1/meta.turn.urls` lists both URLs (see §1). A real relay was proved with
-  `turnutils_uclient`: 16/16 messages both UDP and TCP, 0 lost.
-  The SFU has no implementation: `docs/SFU.md:3` says "Status: design", there
-  are no `/sfu/*` routes in `lib/junderground/router.ex`, and no
-  `lib/junderground/sfu*` module exists. `JG_SFU_URL`, `JG_SFU_KEY` and
-  `JG_SFU_SECRET` are read at `config/runtime.exs:21-23` but nothing uses them,
-  so installing LiveKit now would expose a public service nothing can mint
-  tokens for. Implementing it means the adapter modules in `docs/SFU.md` §6
-  (`sfu.ex`, `sfu/token.ex`, `sfu/health.ex`, `sfu/client.ex`,
-  `sfu/reconciler.ex`), the control-plane endpoints
-  (`POST /v1/rooms/:handle/:room/sfu/token` and `.../revoke`), the HS256 JWT
-  minter/validator, and the `Sfu.Reconciler` that re-verifies participants;
-  then ports `7880/7881/tcp` and `50000–60000/udp` and a `wss://sfu.` proxy
-  route. Until then media is mesh + TURN.
+  `turnutils_uclient`: 16/16 messages both UDP and TCP, 0 lost. LiveKit 1.13.11
+  serves the SFU side (see §1 and the Media (SFU) section): `/v1/meta.sfu` is
+  available, the health-down/up transition was proved, and the Twirp smoke
+  passed. The mesh path still does not enforce a room's `max` (only the SFU
+  route does); that is an upstream follow-up, not a deployment gap. Bandit
+  1.14.0 in the switch's `mix deps` carries EEF-CVE-2026-116078 (HTTP/2 DATA
+  amplification); bump it on the next upstream change.
 - **The off-box copy is one laptop.** See §4. The VPS keeps 14 days of
   tarballs and `vivotop` pulls them nightly, but that laptop is the only copy
   off the host: there is no second site or object store. The pull is an
@@ -622,7 +676,8 @@ roadmap, not this page's facts.
 Upstream (`https://github.com/jonathanferwerda/junderground`, `master`):
 `README.md` for the environment table and the "what works" list, `docs/API.md`
 §5 for signed requests and §6b for the admin endpoints, `docs/CHAT-ADMIN.md` for
-the administrator's screen contract, and `docs/SFU.md` for the media design. The
+the administrator's screen contract, and `docs/SFU.md` for the media design
+(implemented in v0.1.15). The
 signing message itself is `lib/junderground/auth.ex` (`Auth.message/4`), and the
 admin verifier is `lib/junderground/admin.ex`.
 
@@ -645,3 +700,11 @@ coturn 4.6.1-2 was installed and verified the same day: `3478/udp` and
 `3478/tcp` listening, relay `49160–49260/udp`, `/v1/meta.turn.urls` populated,
 and `turnutils_uclient` relayed 16/16 messages on both transports with 0 lost
 from the dev box.
+
+LiveKit 1.13.11 and the SFU adapter (junderground v0.1.15) were verified the
+same day: `/v1/meta.sfu` available with `"sfu"` in `features`; `livekit` and
+`junderground` active with no `Sfu.Health`/`Reconciler` termination lines;
+LiveKit stopped for 100 s → `available: false` and the feature gone, restarted
+→ back within ~35 s; the Twirp `ListRooms`/`ListParticipants` smoke passed with
+no rooms left; `7880` times out externally while `7881` and the UDP range are
+open; `mix test` upstream at 116 tests, 0 failures.

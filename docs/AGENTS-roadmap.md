@@ -27,7 +27,7 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   ESP32s), so firmware is **compiled on the KS-5 and staged/uploaded on the laptop** (USB flashing
   may also happen from the table); and the wildcard renewal (`tls_issue.pl`) must move before
   **2027-01-01**. The VPS's mail stack is not a mail server — IMAP/SMTP go straight to Gmail;
-  rspamd and valkey are unreferenced. The switch's coturn relay and nightly off-box backups are
-  live; its SFU adapter and rate limiting remain. Its runbook is `docs/junderground-vps.md`.
+  rspamd and valkey are unreferenced. The switch's coturn relay, LiveKit SFU and nightly off-box
+  backups are live; rate limiting remains. Its runbook is `docs/junderground-vps.md`.
   Phases, measured baseline and open
   questions: `docs/infrastructure-roadmap.md`.

@@ -4,8 +4,8 @@
 > is off the current season's critical path. Read it when that move is the task.
 
 **Status:** in progress — the hub move is live on ks5, and the VPS stays: it hosts the junderground
-switch and owns the `thejunderground.com` apex (P7). The switch's coturn relay and nightly off-box
-backups are live; what remains is the SFU adapter and rate limiting. The VPS was re-verified
+switch and owns the `thejunderground.com` apex (P7). The switch's coturn relay, LiveKit SFU and
+nightly off-box backups are live; what remains is rate limiting. The VPS was re-verified
 2026-11-13.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02; the VPS re-checked 2026-11-13.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
@@ -585,16 +585,16 @@ longer the control URL; it serves the switch. The items below record the 2026-11
       longer auto-approves its own registration.
 - [x] **TURN:** coturn 4.6.1 is installed and wired (`/v1/meta` carries UDP and TCP TURN URLs);
       a UDP and TCP relay was proven with `turnutils_uclient`. TURN/TLS on 5349 is not set up.
-- [ ] **SFU:** LiveKit and the `/sfu/*` control-plane adapter are still design-only
-      (`docs/SFU.md`, "Status: design"); the mesh works over TURN.
+- [x] **SFU:** LiveKit 1.13.11 runs under `livekit.service`, and junderground v0.1.15 implements
+      the adapter (`docs/SFU.md` §6): `/v1/meta.sfu` is available, the `/sfu` path is proxied by
+      Caddy, and the health-down/up transition was proved live. The mesh still works over TURN.
 - [x] **Backups:** `junderground-backup.timer` stages a tarball of `/var/lib/junderground`
       (six DETS tables plus `server.key`) at 03:20 UTC with 14-day retention; the laptop pulls it
       at 04:20. The off-box copy is that one laptop, so it is not yet two independent copies.
 - [ ] **Rate limiting:** the public `/v1/*` endpoint has none, and the service logs every request at
       debug level (`Plug.Logger, log: :debug`).
-- **Exit:** the switch serves the apex, the mesh relays over TURN, the data is backed up and the
-      endpoint is rate limited; the SFU adapter is separate work. Deploy, data and backup detail:
-      `docs/junderground-vps.md`.
+- **Exit:** the switch serves the apex, media runs over TURN or the SFU, the data is backed up and
+      the endpoint is rate limited. Deploy, data and backup detail: `docs/junderground-vps.md`.
 
 ### Non-goals
 
