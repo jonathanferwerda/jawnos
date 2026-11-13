@@ -515,18 +515,6 @@ sub action_41801 {
 
 }
 
-# POST /manager/clothesline
-sub action_41867 {
-	my $c = shift;
-	my $app = $c->param('app');
-	my $setting = $c->param('setting');
-	my $value = $c->param('value');
-	my $timestamp = $c->param('timestamp');
-	my $cl = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'clothesline' })} || {};
-
-	$c->render(json => $cl);
-}
-
 # POST /manager/calculate
 sub action_41877 {
 	my $c = shift;

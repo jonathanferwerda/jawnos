@@ -904,12 +904,12 @@ peer-verified at the far end); it installs only what is missing, and a dry run
 - **`dumpsys gfxinfo reset` is issued while the app is force-stopped**, so the
   readback cannot confirm zero and the three jank figures may be cumulative;
   they are recorded separately and flagged.
-- `POST /manager/clothesline` and `POST /manager/mail/email/server/delete` are
-  each registered twice (`manager_misc12:41744`/`:41867`,
-  `manager_mail:31319`/`:31328`); first-match-wins means the later handler can
-  never run. Pinned as a `TODO` in `t/58-route-contract.t`.
+- The duplicate registrations from the 2026-11-01 split are gone: the template
+  delete has its own `POST /manager/mail/email/template/delete` path
+  (`manager_mail:31328`), and the shadowed clothesline POST
+  (`manager_misc12:41867`) is retired. `t/58-route-contract.t` pins both.
 - `Root_misc:47831` registers `manager/ws/remote_control` without a leading
-  slash. Same TODO.
+  slash. Pinned as a `TODO` in `t/58-route-contract.t`.
 - **Nightly on table (2026-11-01):** `jawnos-qa.timer` is enabled and the
   service now passes (0 failures, 1 GB peak, live tree 200). The first two runs
   failed only on environment/WIP: `Archive::Zip` was missing, and `t/55`

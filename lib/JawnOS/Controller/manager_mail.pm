@@ -238,7 +238,7 @@ sub action_31319 {
 	$c->render(json => $email_servers);
 }
 
-# POST /manager/mail/email/server/delete
+# POST /manager/mail/email/template/delete
 sub action_31328 {
 	my $c = shift;
 	my $uuid = $c->param('uuid');

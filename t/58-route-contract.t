@@ -122,12 +122,24 @@ for my $r (@$routes) {
 	my $key = lc($r->{'method'}) . ' ' . $r->{'path'};
 	push @dupes, $key if $seen{$key}++;
 }
-TODO: {
-	local $TODO = 'duplicate registrations found 2026-11-01: manager_misc12:41744 vs :41867 '
-		. '(POST /manager/clothesline), manager_mail:31319 vs :31328 '
-		. '(POST /manager/mail/email/server/delete) - the later handler can never run';
-	is(scalar(@dupes), 0, 'no route is registered twice') or diag("@dupes");
-}
+is(scalar(@dupes), 0, 'no route is registered twice') or diag("@dupes");
+
+# The two duplicates the split left behind. The mail template delete was filed
+# on the server-delete path, so its handler could never run while
+# public/js/mailbox.js asked for /manager/mail/email/template/delete. A second
+# clothesline POST shadowed nothing the timeline sends. Pin the corrected wiring
+# so neither can drift back.
+my %route_at = map { lc($_->{'method'}) . ' ' . $_->{'path'} => $_->{'action'} } @$routes;
+is($route_at{'post /manager/mail/email/server/delete'}, 'action_31319',
+	'the server-delete path answers the server handler');
+is($route_at{'post /manager/mail/email/template/delete'}, 'action_31328',
+	'and the template delete has its own path');
+is($route_at{'post /manager/clothesline'}, 'action_41744',
+	'the clothesline POST answers its setter');
+my $misc12 = read_file("$repo/lib/JawnOS/Controller/manager_misc12.pm");
+unlike($misc12, qr/sub action_41867\b/, 'the shadowed clothesline reader is retired');
+like(read_file("$repo/public/js/mailbox.js"), qr#/manager/mail/email/template/delete#,
+	'the mailbox script asks the template path');
 
 # --- every path is absolute ----------------------------------------------------
 my @relative = grep { ($_->{'path'} // '') !~ m{^/} } @$routes;

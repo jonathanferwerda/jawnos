@@ -16,7 +16,7 @@ sub routes {
 	[31274, 'post', '/manager/mail/email/configure', 'action_31274'],
 	[31306, 'post', '/manager/mail/email/server/add', 'action_31306'],
 	[31319, 'post', '/manager/mail/email/server/delete', 'action_31319'],
-	[31328, 'post', '/manager/mail/email/server/delete', 'action_31328'],
+	[31328, 'post', '/manager/mail/email/template/delete', 'action_31328'],
 	[31344, 'get', '/manager/mail/email/compose', 'action_31344'],
 	[31463, 'post', '/manager/mail/email/draft', 'action_31463'],
 	[31513, 'get', '/manager/mail/email/read', 'action_31513'],
