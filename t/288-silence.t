@@ -427,6 +427,8 @@ my $js = source('public/js/manager/silence.js');
 like($js, qr/HTMLMediaElement\.prototype\.play/, 'the browser silences media at play');
 like($js, qr/MutationObserver/, 'and media that arrives later');
 like($js, qr{/manager/silence}, 'and follows the house state');
+unlike($js, qr/\blocation\s*\.\s*(?:reload|assign|replace)\b/,
+	'switching silence never reloads or navigates the page');
 like(source('lib/JawnOS/Manager/Core1_tables_hooks.pm'), qr{/js/manager/silence\.js}, 'the guard rides the manager bundle');
 like(source('perl/help/topics_configure.pl'), qr/Silence, beside Unique and Permanent/, 'the Configure help explains the box');
 my $phone_js = source('public/js/manager/manager/02_web_nfc.js');
