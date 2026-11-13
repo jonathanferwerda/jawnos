@@ -3,15 +3,16 @@
 > **Entry point:** `docs/roadmap.md`. This is the live record of the hub/dev-box/tailnet move; it
 > is off the current season's critical path. Read it when that move is the task.
 
-**Status:** in progress — the hub move is live on ks5. The 2026-11-03 re-pointing is rolling to
-every device; what remains is the outside verification and cancelling the VPS at its renewal.
-**Started:** 2026-11-02 · **Baseline measured** 2026-11-02 by logging into all four hosts.
+**Status:** in progress — the hub move is live on ks5, and the VPS stays: it hosts the junderground
+switch and owns the `thejunderground.com` apex (P7). What remains is the switch's media plane,
+off-box backups and rate limiting. The VPS was re-verified 2026-11-13.
+**Started:** 2026-11-02 · **Baseline measured** 2026-11-02; the VPS re-checked 2026-11-13.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
 `docs/AGENTS-restart.md`, `docs/AGENTS-firmware.md`, `t/README.md` (what the suite touches)
 
 The plan for taking the programming and test load off the laptop and onto a dedicated server, with
-the tailnet control plane moving to that server too, and the VPS left as a quiet host for the
-Elixir app. Compare `docs/migration-roadmap.md`, which is about the stack, not the metal.
+the tailnet control plane moving to that server too, and the VPS kept as the public host for the
+junderground switch. Compare `docs/migration-roadmap.md`, which is about the stack, not the metal.
 
 ---
 
@@ -24,14 +25,16 @@ What this buys, in order:
 
 1. **A test suite that does not make the laptop unusable.** Eight forked Perl children pin two
    P-cores and spill eight threads of work onto E-cores; the editor is scheduled around them.
-2. **A cloud server that is not at 90% of two cores.** Today it runs the tailnet control plane,
-   the house's always-on JawnOS server, the public hub, DNS and a mail stack on 2 vCPU.
+2. **A cloud server with one job.** It used to run the tailnet control plane, the house's always-on
+   JawnOS server, the public hub, DNS and a mail stack on 2 vCPU; those moved, and the switch is
+   what remains.
 3. **One place to run builds** (Gradle, PlatformIO, the suite) with 64 GB and NVMe.
-4. **The VPS retired** — one host instead of two, and one less thing to patch.
+4. **The VPS narrowed, not retired** — it hosts the junderground switch and owns the apex, rather
+   than running the control plane, the house server and the hub.
 
 ---
 
-## 2. Verified baseline — 2026-11-02
+## 2. Verified baseline — 2026-11-02 (VPS re-verified 2026-11-13)
 
 Measured, not assumed. Re-measure before acting; this section goes stale.
 
@@ -41,7 +44,7 @@ Measured, not assumed. Re-measure before acting; this section goes stale.
 |---|---|---|
 | **laptop** | ASUS Vivobook X1504ZA, i5-1235U (2P+8E), 15.6 GB, Manjaro | the editor, the agents, its own JawnOS, **the LAN manager the devices talk to** |
 | **table** | Manjaro, 4 cores, 7.6 GB, 239 GB root (74% used) | its own JawnOS, GTK desktop |
-| **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | DNS and mail; **its Headscale and JawnOS server are stopped** (state kept for rollback) |
+| **cloud** | OVH VPS, Debian 13, **2 vCPU, 3.7 GB, 40 GB** | the **junderground switch** and the public apex; its Headscale and its own JawnOS server are stopped (state kept for rollback) |
 | **ks5** | Kimsufi, Proxmox VE 9.2.25, **4c/8t, 64 GB, 2×450 GB NVMe** | the host + `tailscaled`; `dev` (100), `house` (101, the JawnOS server + hub) and `headscale` (102) on `vmbr1` |
 | **tablet** | Android | tailnet client only |
 | **phone** | Android | tailnet client — registered 2026-11-02, `100.64.0.9` |
@@ -136,32 +139,46 @@ The hub at `hub.jonathanferwerda.com` is the public manager face: `app_access=en
 
 ### The cloud server (`cloud`, `vps-7c120a57`)
 
-- **Headscale moved to ks5 (P5); the VPS instance is stopped with its state intact for
-  rollback.** `server_url: https://thejunderground.com`, `listen_addr: 0.0.0.0:443`, embedded DERP
-  with `stun_listen_addr: 0.0.0.0:3478`, `automatically_add_embedded_derp_region: true`,
-  `magic_dns: true`, `base_domain: jonathanferwerda.com`, prefixes `100.64.0.0/10` and
-  `fd7a:115c:a1e0::/48`. The apex is the control plane and nothing else: `/manager` is **404**
-  there, `/windows` is Headscale's own page. State is small and portable: `db.sqlite` (~86 KB)
-  plus `noise_private.key`, `derp_server_private.key`, and the TLS pair.
-- **TLS**: Let's Encrypt, `notAfter 2026-12-07`. The cert files are the source of truth
-  (`tls_cert_path`/`tls_key_path` are set); the config also declares `HTTP-01` on `:http`.
-  **Served from ks5 since P5; its renewal must move there too, or the name goes dark in
-  December.**
-- **The always-on JawnOS house server** (`jawnos.service`, `User=jawn`,
-  `WorkingDirectory=/home/jawn/jawnos`, 1.1 GB) on **3000** (manager, ticket) and
-  **45545 / 45546 / 45550** (the public hub and its websocket). `:45545` is what other houses dial
-  (`Lan.pm`, `tunnel_hub_url`).
-- **The exit node moved to ks5 (P4).** `cloud` no longer advertises one; the laptop is not
-  pinned to any exit node by default.
-- **dnsmasq on `:53`**, whose whole config is `addn-hosts` for `jawnferroda.com` — a local name
-  resolver, **not** the public DNS. Public DNS is Cloudflare, so a move touches one A record.
-- **A mail stack that is not a mail server.** See §5.3.
-- SSH on 8022.
-- **Load 1.83 / 0.88 / 0.66 on 2 vCPU.** PSI CPU `some avg10≈9.5`; sys time up to 48% and
-  context switches in the thousands — **CPU/context-switch bound, not IO bound**. The top
-  consumers are the JawnOS Perl processes, then `tailscaled` relaying exit-node traffic.
+Re-verified 2026-11-13. The VPS is **not retired** (D12): it is the public host for the switch and
+owns the `thejunderground.com` apex. Deploy, data and backup detail: `docs/junderground-vps.md`.
 
-**Elixir is not running anywhere.** No `beam.smp`, no `elixir` process on any host.
+- **The switch** runs as **`junderground.service`**, active (running) and last restarted
+  **2026-11-13 16:02 UTC** when the admin drop-in was installed; its data was first written
+  **2026-11-11 04:44 UTC**. Code is `/opt/junderground` at **master `c68a4b2`, v0.1.13**, with the
+  prod release in `_build/prod/rel`. It listens on `127.0.0.1:4100`.
+- **Data** is `/var/lib/junderground` (owner `jg`): the six DETS tables — `admission`, `houses`,
+  `lexicon`, `peers`, `rentals`, `rooms` — plus `server.key` (`0600`). **These are not backed up**
+  (P7).
+- **Admin access** was wired 2026-11-13 through
+  `/etc/systemd/system/junderground.service.d/admin.conf` (`JG_ADMIN_KEYS` set to the house crest
+  public key; the key itself is not recorded here). An admin key's own house auto-approves on
+  registration (`lib/junderground/admission.ex`).
+- **Public state** from `/v1/meta`: version `0.1.13`, `houses: 1`, `admins: 1`,
+  `requires_approval: true`, and `turn.urls: []` (no media plane). The house **"Jawn's Homebase"**
+  (`jawn_s_homebase`) is registered and approved.
+- **Caddy** terminates `:443`: `path /v1/*` proxies to `127.0.0.1:4100`, everything else serves the
+  static placeholder from `/var/www/thejunderground`; `www.thejunderground.com` redirects to the
+  apex. The Let's Encrypt certificate is Caddy-managed, issued **2026-11-11 04:18 UTC** and
+  expiring **2027-02-09 04:18 UTC**.
+- **DNS**: `thejunderground.com` → **148.113.181.210** (Cloudflare, DNS-only). The apex is no longer
+  the tailnet control URL.
+- **Headscale moved to ks5 (P5); the VPS instance is stopped with its state intact for rollback.**
+  The live control URL is **`https://headscale.jonferwerda.com`** (note the spelling), served from
+  ks5 at `54.39.157.133` with its own certificate. The old apex config was
+  `server_url: https://thejunderground.com` with `base_domain: jonathanferwerda.com`; the state
+  (`db.sqlite`, noise and DERP keys, TLS pair) remains on the VPS for rollback only.
+- **The always-on JawnOS house server** (`jawnos.service`) is **stopped** on the VPS; the house
+  server and public hub run on ks5 (P6). `:45545` is what other houses dial.
+- **The exit node moved to ks5 (P4).** `cloud` no longer advertises one.
+- **dnsmasq on `:53`** is a local `addn-hosts` resolver for `jawnferroda.com`, **not** public DNS.
+  Public DNS is Cloudflare. **A mail stack that is not a mail server** (§6) is still present; SSH is
+  on 8022.
+- **Load** is no longer the 2-vCPU saturation measured in the 2026-11-02 baseline: the Perl house
+  server is stopped and the switch is small (about 116 MB resident, 21 tasks). Re-measure before
+  sizing anything.
+
+**Elixir is running here.** The switch is the Elixir app: `beam.smp` under `junderground.service`,
+version `0.1.13`.
 
 ---
 
@@ -183,8 +200,10 @@ The hub at `hub.jonathanferwerda.com` is the public manager face: `app_access=en
 | | the same wildcard. | |
 | D10 | **64 GB of RAM, because it is the only configuration offered in Beauharnois.** 32 GB was the | decided |
 | | preference on the measurements; the forced 64 GB buys page cache and headroom, not waste. | |
-| D11 | **The VPS is retired** once the migration proves out. It is paid to the next renewal, which | decided |
-| | is the migration window; off-box, rehearsed backups replace it as the insurance. | |
+| D11 | **The VPS is retired** once the migration proves out; off-box, rehearsed backups replace it | superseded 2026-11-13 |
+| | as the insurance. Superseded by D12. | |
+| D12 | **The VPS stays.** It hosts the junderground switch and owns the `thejunderground.com` apex. | decided 2026-11-13 |
+| | The switch needs a public host, and the apex is its public URL; the rest of the load moved. | |
 
 **The cost of D5, stated plainly:** the tailnet's control plane now lives on the box that gets
 snapshotted, rebuilt and rebooting. Mitigations, all in P5:
@@ -211,30 +230,29 @@ is mounted; guest snapshots live on `local-zfs` (`data`).
 
 - **KS-5** — cores, RAM and bandwidth, and the tailnet's names:
   - the **host** — `tailscaled`, the exit node, Proxmox;
-  - **Headscale** — own container (or host service) at `headscale.jonathanferwerda.com`,
-    `:443` and DERP on `3478/udp`;
+  - **Headscale** — own container at `headscale.jonferwerda.com`, `:443` and DERP on `3478/udp`;
   - **`house`** — the always-on JawnOS server and public hub at `hub.jonathanferwerda.com`
     (`3000`, `45545`–`45550`);
   - **`dev`** — Zed remote, the suite, PlatformIO and Gradle builds.
-- **VPS (`cloud`)** — retired after the migration (D11). Elixir becomes a container on the KS-5
-  when it exists (P7); `thejunderground.com` then either points at the KS-5 or lapses.
+- **VPS (`cloud`)** — stays (D12): the **junderground switch** on `thejunderground.com`, Caddy on
+  `:443` proxying `/v1/*` to `127.0.0.1:4100`, and the apex DNS. No JawnOS house server, no
+  Headscale, no exit node. Deploy, data and backup detail: `docs/junderground-vps.md`.
 - **laptop / table / tablet** — clients, *and* the **LAN manager for the embedded devices**
   (§5). This does not move.
 
 ### Names and certificates
 
-Two certificates already exist, and they already split along this line:
+Three certificates now exist:
 
 | Cert | Covers | Renewed by | Expires |
 |---|---|---|---|
 | `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | **`jawnos-tls.timer` on the `house` container** (`scripts/tls_issue.pl --renew`) | 2027-02-01 |
-| `thejunderground.com` | apex + `www` | **certbot on ks5** (standalone `:80`, deploy hook into headscale) | 2027-02-01 |
+| `thejunderground.com` | apex + `www` (the switch) | **Caddy on the VPS** (ACME HTTP-01; Caddy-managed pair) | 2027-02-09 |
+| `headscale.jonferwerda.com` | the tailnet control plane | **`headscale-tls-renew.timer` on ks5** (certbot lineage `headscale-cutover`) | 2027-02-09 |
 
-So the tailnet does **not** need the apex, and it does **not** need a certificate of its own: point
-Headscale's `tls_cert_path`/`tls_key_path` at copies of `server/fullchain.pem` and
-`server/privkey.pem` from the `house` tree, and `headscale.jonathanferwerda.com` validates against
-the wildcard. `thejunderground.com` is then free for the Elixir app, which moves to the KS-5 with
-it (D11); the apex certificate retires with the VPS.
+So the tailnet does **not** need the apex. Headscale's control URL is
+`https://headscale.jonferwerda.com`, served from ks5 and renewed there by its own certbot lineage;
+the apex belongs to the switch, served by Caddy on the VPS (P7).
 
 **Where the wildcard is renewed (answered 2026-11-02).** On the **laptop**, not on either server.
 `certbot-renew.timer` with `authenticator = dns-godaddy` renews `*.jonathanferwerda.com` into
@@ -259,16 +277,16 @@ deleted and `certbot-renew.timer` disabled. `dev` renews its **own** host certif
 a **house-CA leaf** (valid to 2029) instead of a copied public certificate. The wildcard private key
 therefore exists on the `house` container only.
 
-**D9 was not implementable (found during P5, 2026-11-02).** Headscale v0.29.5 refuses a
+**D9 was not implementable as written (found during P5, 2026-11-02).** Headscale v0.29.5 refuses a
 `server_url` that sits inside `base_domain` while MagicDNS is on — MagicDNS could shadow the
 control plane. `base_domain` must stay `jonathanferwerda.com` because the house names
 (`phone.`, `laptop.`, `table.jonathanferwerda.com`) are resolved by MagicDNS, so
-`headscale.jonathanferwerda.com` cannot be the control URL. The cutover therefore **keeps
-`https://thejunderground.com`**, which also means **no node is re-pointed**: the apex A record
-moves to ks5 and the apex certificate moves with it. Consequences: the apex stays in use for the
-control plane (Elixir takes a `thejunderground.com` subdomain at P7), the apex certificate is
-renewed on ks5 (certbot standalone on :80, deploy hook installed), and the
-`headscale.jonathanferwerda.com` A record (created, unused) can be removed.
+`headscale.jonathanferwerda.com` cannot be the control URL. The name used instead is
+**`headscale.jonferwerda.com`** — a separate apex, so it is outside `base_domain` — served from ks5
+with its own certificate (issued 2026-11-11, expires 2027-02-09) and renewed by
+`headscale-tls-renew.timer`. As of 2026-11-13 `tailscale debug prefs` reports that URL. The apex
+therefore belongs to the switch, not the control plane; the earlier "keep
+`https://thejunderground.com`" plan no longer holds.
 
 ### Why not the IP, and why not a nameserver
 
@@ -284,15 +302,15 @@ wildcard. So:
 - The public zones are split: **`jonathanferwerda.com` is GoDaddy** (the wildcard's DNS-01
   credential) and **`thejunderground.com` is Cloudflare** (the apex record). Nothing is delegated
   to the KS-5.
-- One A record per name (`headscale`, `hub`) → the KS-5's single IP.
+- One A record per name (`headscale.jonferwerda.com`, `hub.jonathanferwerda.com`) → the KS-5's
+  single IP; the apex stays on the VPS for the switch.
 - No inbound 80; only **443/tcp**, **3478/udp** and **41641/udp**.
 - No failover IPs and no virtual MACs: one name on one address.
 
-**The cost, stated plainly: changing the control URL touches every node.** Each client must run
-`tailscale up --login-server https://headscale.jonathanferwerda.com` and may need re-registering.
-Four devices, and the phone is off-tailnet today — do it while every device is in reach. The
-alternative that avoids all of it is keeping `thejunderground.com` as the control URL and giving
-Elixir a subdomain instead: cheaper now, uglier later.
+**The cost, stated plainly: changing the control URL touches every node.** Each client runs
+`tailscale up --login-server https://headscale.jonferwerda.com` and may need re-registering; that is
+the move that was made. Keeping the apex would have avoided it, but the apex now belongs to the
+switch.
 
 ---
 
@@ -487,6 +505,10 @@ certificate. **The control URL stays `https://thejunderground.com`** (§4: D9's 
 headscale while MagicDNS owns `jonathanferwerda.com`), so **no node was re-pointed** — the apex A
 record moved instead.
 
+**Corrected 2026-11-13.** The control plane later moved to **`https://headscale.jonferwerda.com`**
+(a separate apex, outside `base_domain`) and every node was re-pointed. `thejunderground.com` is no
+longer the control URL; it serves the switch. The items below record the 2026-11-02 cutover.
+
 - [x] Headscale **v0.29.5** in an unprivileged container, onboot, using the copied
       `/var/lib/headscale/` (db.sqlite, noise and DERP keys, TLS) and the VPS config.
 - [x] DNAT on ks5: **443/tcp** and **3478/udp** → `10.20.0.30`, persisted by
@@ -500,11 +522,12 @@ record moved instead.
 - [x] **Apex certificate reissued on ks5** the same day: certbot standalone on `:80`, with
       `/usr/local/sbin/headscale-deploy-cert.sh` as the renewal hook. Served cert now expires
       **2027-02-01**; `certbot.timer` renews and the hook pushes the pair into the container.
-- [x] Rollback: move the A record back and start the VPS instance; its `server_url` is unchanged.
-- **Exit:** every node returns on the same URL, the apex answers from ks5, the VPS instance is
-      disabled.
+- [x] Rollback (2026-11-02): move the A record back and start the VPS instance; its `server_url` was
+      unchanged. It no longer applies — the control URL is `headscale.jonferwerda.com`.
+- **Exit:** every node returned on the same URL (at the time), the apex answered from ks5, and the
+      VPS instance was disabled. Superseded by the 2026-11-13 control-URL move above.
 
-### P6 — Move the house server off the VPS, then retire it — IN PROGRESS 2026-11-02
+### P6 — Move the house server off the VPS — IN PROGRESS 2026-11-02 (VPS retained 2026-11-13)
 
 - [x] The always-on app moved to **`house`** (CT 101, 4 GB): the VPS's Perl/library set, config,
       `server/` state and a checkpointed `jawnos.db` (306 MB) were copied. The VPS `jawnos.service`
@@ -524,7 +547,7 @@ record moved instead.
       restarted.
 - [x] **Corrected 2026-11-03 — the config alone did not form a tunnel.** The house's `config.json`
       still named itself `cloud` (`name`, `public_host`), so every client that re-enrolled learned
-      the retired name; each client's `sync_hub` still pointed at the cloud signatorial, and
+      the old name; each client's `sync_hub` still pointed at the cloud signatorial, and
       `tunnels` / `remote_machine_sync` were switched **off** in its utility row. The laptop's
       `tunnel=yes` on the hub was a stale row, not a live data plane. Fixed: the house names itself
       `house` at `hub.jonathanferwerda.com`; a client re-enrolls the house, drops the cloud row,
@@ -545,20 +568,27 @@ record moved instead.
       listeners, and the hub lists every one as `tunnel=yes` with a loopback manager. The phone also
       gained `tunnel_hub`; it was never set there. The tablet is a tailnet client only and reconnects
       when it wakes.
-- [ ] Verify from outside the house (phone on cellular) and cancel the VPS at renewal. The VPS
-      node stays online in the tailnet until then: it is the rollback, and `cloud.jonathanferwerda.com`
-      is MagicDNS's name for it (the JawnOS service there is stopped).
-- **Exit:** the hub and the tailnet answer from ks5, the VPS is cancelled, and the restore has been
-      rehearsed once.
+- [ ] Verify from outside the house (phone on cellular). The VPS is **not** cancelled: it stays as
+      the switch host and apex owner (D12). `cloud.jonathanferwerda.com` is MagicDNS's name for it
+      (the JawnOS service there is stopped).
+- **Exit:** the hub and the tailnet answer from ks5, the restore has been rehearsed once, and the
+      VPS runs only the switch.
 
-### P7 — Elixir, when it exists
+### P7 — Elixir runs on the VPS, not a KS-5 container — RUNNING 2026-11-11
 
-- [ ] Elixir has no home once the VPS goes: it becomes an `elixir` container on the KS-5, on its
-      own name under the wildcard (e.g. `app.jonathanferwerda.com`), once P6 is stable. It must
-      not share the `dev` container.
-- [ ] If it later needs isolation, its own public IP, or more cores than the KS-5 can spare, that
-      is the moment to buy a small VPS again — not before.
-- **Exit:** Elixir serving its subdomain, the tailnet and the house untouched.
+- [x] The Elixir app is **junderground v0.1.13**, running on the VPS as `junderground.service`
+      (code `c68a4b2`, prod release `_build/prod/rel`) and public at `https://thejunderground.com`.
+      `/v1/meta` reports one house, one admin and `requires_approval: true`.
+- [x] Admin access is wired 2026-11-13 through the systemd drop-in; an admin key's own house
+      auto-approves on registration.
+- [ ] **Media plane:** coturn/SFU is not deployed (`/v1/meta` reports `turn.urls: []`), so calls
+      and rooms have no TURN service.
+- [ ] **Backups:** `/var/lib/junderground` (six DETS tables plus `server.key`) has no scheduled
+      off-box copy. The ks5 backup in §11 does not cover it.
+- [ ] **Rate limiting:** the public `/v1/*` endpoint has none, and the service logs every request at
+      debug level (`Plug.Logger, log: :debug`).
+- **Exit:** the switch serves the apex, media works, the data is backed up and the endpoint is rate
+      limited. Deploy, data and backup detail: `docs/junderground-vps.md`.
 
 ### Non-goals
 
@@ -576,15 +606,16 @@ record moved instead.
 1. **Which machine fetches IMAP today** — the laptop or the VPS's JawnOS? This places clamd (§6).
 2. **Does the hub's public URL live in a setting on each house** (`tunnel_hub`), or is it learned
    from the handshake? This decides whether moving the hub is one change or one per house.
-3. **Where is the Elixir app's load ceiling?** BEAM wants cores, and after D11 the KS-5 is its
-   only home. If it outgrows the box, it gets its own VPS then — not a bigger box now.
+3. **Where is the switch's load ceiling?** BEAM wants cores, and it runs on the VPS now (P7). If
+   it outgrows 2 vCPU, resize that host then — not before; there is no KS-5 container to move to.
 
 ---
 
 ## 9. Risk and rollback
 
-- **Today's single point of failure** is `cloud`: control plane, house server and egress on one
-  over-subscribed VPS. P4–P6 split those three apart, but D5 recombines two of them on the KS-5.
+- **`cloud` is now the switch host and apex owner** (D12), not the single point of failure it was:
+  the control plane, house server and hub run on ks5. What remains there is one small public
+  service with no off-box backup (P7).
 - **The one irreversible act** is a Headscale move done without a clean copy of
   `/var/lib/headscale/`. With it, a rollback is a DNS change and a service start; without it,
   every node re-registers.
@@ -592,8 +623,9 @@ record moved instead.
   Snapshot first, keep the old SSH session open, and confirm the ports before repointing DNS.
 - **The one dated risk** is the wildcard: it expires **2027-02-01**. The `house` container renews it
   itself through `jawnos-tls.timer` (in place since 2026-11-03); no other machine holds the key.
-  **The apex pair was reissued on ks5 on 2026-11-02 and expires 2027-02-01**, renewed by
-  `certbot.timer` there with the deploy hook; the VPS's HTTP-01 renewal is no longer used.
+  **The apex pair is Caddy-managed on the VPS and expires 2027-02-09**; the older ks5 certbot
+  lineage is not what the public apex serves. The control certificate
+  (`headscale.jonferwerda.com`, expires 2027-02-09) renews on ks5 by `headscale-tls-renew.timer`.
 - **The open certificate risk** was the house's wildcard renewal: the moved GoDaddy credential
   returned `401` and the laptop's credential used a different house key. **Closed 2026-11-02** by
   re-sealing the working key under the house's key; the timer is enabled and the pair now expires
@@ -610,7 +642,8 @@ record moved instead.
 ## 10. Cost
 
 Chosen configuration: **KS-5 at 64 GB** (mandatory in this region) — **$38.58/month + $26.69
-setup**, so year one is about **$490** plus one or two VPS months, ≈ **$508**.
+setup**, so year one is about **$490**. The VPS bill continues (D12); the figures here cover the
+KS-5 only.
 
 Rejected: the SYS-1 — at equal memory it is the dearer machine, and the extra cores buy seconds on
 a 20-second test run rather than availability. Numbers in §11.
@@ -660,18 +693,20 @@ leave more headroom than the laptop has in total — but **Beauharnois only sell
 decision is made for you: the forced 64 GB becomes page cache and headroom, not waste. It is not a
 reason to look elsewhere; every alternative costs more at equal memory (§13).
 
-### What replaces the VPS
+### What happens to the VPS
 
-The VPS is paid to its next renewal — that is the migration window, so use it and cancel (D11).
-It was never much insurance once the control plane, the house server and the hub all move off it.
-The real insurance is a **restore that has been rehearsed**.
+It stays (D12): it hosts the junderground switch and owns the apex. The control plane, the house
+server and the hub moved to ks5; the switch is the one workload that belongs on a public host. Its
+data still needs an off-box backup (P7), and the ks5 backup below does not cover it. The real
+insurance for the house remains a **restore that has been rehearsed**.
 
 ### The backup as built (2026-11-02)
 
 - **ks5 stages** `/var/backups/jawnos/` nightly at 03:30 (`jawnos-backup.timer` +
   `jawnos-backup.sh`): headscale `db.sqlite` (SQLite `.backup`, no service stop), its
   `config.yaml`, the noise/DERP/TLS keys; the house `jawnos.db`, `config.json` and `server/`; and
-  the apex pair from `/etc/letsencrypt/live/thejunderground.com/`.
+  the old apex pair from `/etc/letsencrypt/live/thejunderground.com/` (no longer the served pair;
+  the switch's Caddy certificate and `/var/lib/junderground` are not in this backup).
 - **The laptop pulls** it at 04:15 into `~/jawnos-backups/ks5/` (`jawnos-backup-pull.timer`, a user
   unit). **The table pulls** it at 04:15 by cron into the same path.
 - **Drill, run the same day:** both databases pass `pragma integrity_check`; the house certificate
@@ -682,8 +717,9 @@ The real insurance is a **restore that has been rehearsed**.
 - **Restore:** stop the service. Headscale: copy `db.sqlite`, `keys.tgz` (noise, DERP, `tls/`) and
   `config.yaml` into `/var/lib/headscale`, chown `headscale`, start. House: copy `jawnos.db` into
   `database/`, extract `state.tgz` (`config.json` + `server/`) into the tree, chown `jawn`,
-  start. Apex pair: replace `/etc/letsencrypt/live/thejunderground.com/` and let the deploy hook
-  restart headscale. Verify with `curl https://thejunderground.com/health`,
+  start. Apex pair: the served pair is Caddy-managed on the VPS and is not part of this backup;
+  reissue it or copy it from Caddy's storage. The switch's `/var/lib/junderground` is also not
+  covered (P7). Verify with `curl https://thejunderground.com/health`,
   `headscale nodes list`, the house manager, and `tailscale status`.
 
 ---
