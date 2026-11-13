@@ -28,6 +28,8 @@ our $SILENCE_SETTING_APP = '__president';
 our $SILENCE_SETTING = 'silence_state';
 our $SILENCE_APP_BOX = 'silence';
 our $SILENCE_LOCAL_FILE;
+our $silence_tick_at = 0;
+our $silence_native_off_at = 0;
 
 # ---- the state ---------------------------------------------------------------
 # One JSON row for the whole house. A malformed or missing row is an inactive
@@ -265,6 +267,7 @@ sub silence_engage {
 	$state->{'by'} ||= (eval { &subs::signatorial_designer() } || '');
 	&silence_state_write($state) if $changed;
 	&silence_local_apply(1);
+	&silence_native_push(1);
 	if ($changed) {
 		&silence_push($state);
 		&silence_broadcast($c, $state);
@@ -297,11 +300,136 @@ sub silence_release {
 	my $changed = ($had != scalar @keep || ($was_active && !$state->{'active'})) ? 1 : 0;
 	return $state unless $changed;
 	&silence_state_write($state);
-	&silence_local_apply(0) unless $state->{'active'};
+	unless ($state->{'active'}) {
+		&silence_local_apply(0);
+		&silence_native_push(0);
+	}
 	&silence_push($state);
 	&silence_broadcast($c, $state);
 	return $state;
 }
+
+# A second hold, from the alarm pass, that keeps the existing snapshot and
+# only makes the mixer match it again. It never re-snapshots a raised stream.
+sub silence_local_hold {
+	my $snap = &silence_local_read();
+	return &silence_local_apply_on() unless ref $snap eq 'HASH';
+	foreach my $device ( @{ $snap->{'outputs'} || [] } ) {
+		next unless ref $device eq 'HASH' && defined $device->{'id'};
+		eval { &subs::sound_mute('output', $device->{'id'}, 1) };
+	}
+	my $channels = eval { &subs::sound_channels() } || {};
+	foreach my $name ( sort keys %{ $snap->{'channels'} || {} } ) {
+		my $row = $snap->{'channels'}->{$name};
+		next unless ref $row eq 'HASH';
+		my $now = $channels->{$name};
+		next if ref $now eq 'HASH' && $now->{'muted'};
+		eval { &subs::sound_channel_set($name, $row->{'volume'}, 1) };
+	}
+	foreach my $stream ( @{ $snap->{'streams'} || [] } ) {
+		next unless ref $stream eq 'HASH' && defined $stream->{'stream'};
+		eval { &subs::device_call('audio.volume', { stream => $stream->{'stream'}, volume => 0 }) };
+	}
+	return 1;
+}
+
+# Tell the phone's own app, through its bridge, with no page open. A
+# desktop has no native half here, so this is a no-op there.
+sub silence_native_push {
+	my ($on) = @_;
+	my $mobile = eval { (&subs::device_setter() || '') eq 'mobile' } ? 1 : 0;
+	return 0 unless $mobile;
+	my $answer = eval { &subs::device_call('silence.set', { on => $on ? 1 : 0 }) };
+	return ref $answer eq 'HASH' ? 1 : 0;
+}
+
+# The house is no longer quiet: drop every owner, put this machine back,
+# and tell this phone's app. Peers reconcile on their own alarm pass.
+sub silence_release_all {
+	my $state = &silence_state();
+	return $state unless $state->{'active'} || scalar @{ $state->{'owners'} || [] };
+	$state->{'active'} = 0;
+	$state->{'owners'} = [];
+	$state->{'apps'} = {};
+	$state->{'since'} = 0;
+	&silence_state_write($state);
+	&silence_local_apply(0);
+	&silence_native_push(0);
+	&silence_push($state);
+	return $state;
+}
+
+# The alarm worker's reconciliation. The open silent appointment is the
+# authority: while one is open, silence is on and its uuid is the owner;
+# when none is open, silence comes off. A peer whose database has not yet
+# received a just-started session keeps the state for two minutes so it
+# cannot clear another machine's fresh start.
+sub silence_tick {
+	my $now = eval { &subs::rightNow() } || (time * 1000);
+	return 0 if $silence_tick_at && $now - $silence_tick_at < 2000;
+	$silence_tick_at = $now;
+	my $quiet_apps = eval {
+		&subs::db_query(
+			"select app from settings where setting = ? and device = ? "
+			. "and lower(value) in ('checked','on','1','yes','true')",
+			'silence', 'all'
+		)->hashes;
+	} || [];
+	my %quiet;
+	foreach my $row ( @{$quiet_apps} ) {
+		next unless ref $row eq 'HASH' && defined $row->{'app'} && length $row->{'app'};
+		$quiet{$row->{'app'}} = 1;
+	}
+	my $open = eval {
+		&subs::db_query(
+			"select uuid, app from appointments where stop_seen is null "
+			. "and type in ('start','record')"
+		)->hashes;
+	} || [];
+	my (@owners, %apps, %seen);
+	foreach my $row ( @{$open} ) {
+		next unless ref $row eq 'HASH';
+		next unless $quiet{ $row->{'app'} // '' };
+		my $uuid = $row->{'uuid'};
+		next unless defined $uuid && length $uuid && !$seen{$uuid}++;
+		push @owners, $uuid;
+		$apps{$uuid} = $row->{'app'};
+	}
+	my $state = &silence_state();
+	if (@owners) {
+		my %current = map { $_ => 1 } @{ $state->{'owners'} || [] };
+		my $same = $state->{'active'} ? 1 : 0;
+		$same = 0 unless scalar(@{ $state->{'owners'} || [] }) == scalar(@owners);
+		foreach my $owner ( @owners ) { $same = 0 unless $current{$owner}; }
+		unless ($same) {
+			$state->{'active'} = 1;
+			$state->{'owners'} = \@owners;
+			$state->{'apps'} = \%apps;
+			$state->{'since'} ||= $now;
+			$state->{'by'} ||= (eval { &subs::signatorial_designer() } || '');
+			&silence_state_write($state);
+			&silence_push($state);
+		}
+		&silence_local_hold();
+		&silence_native_push(1);
+		return 1;
+	}
+	my $since = $state->{'since'} || 0;
+	if ($state->{'active'} || scalar @{ $state->{'owners'} || [] }) {
+		return 0 if $since && ($now - $since) < 120000;
+		return 1 if &silence_release_all();
+	}
+	# Nothing owns the house. Put this machine back even when the state changed
+	# while this manager was down, and tell the phone's native half off: it keeps
+	# its own copy of the switch, so a push that was missed must not leave the
+	# phone silent forever. Both are no-ops on a machine that was never quiet.
+	&silence_local_apply(0);
+	if (!$silence_native_off_at || $now - $silence_native_off_at >= 60000) {
+		$silence_native_off_at = $now;
+		&silence_native_push(0);
+	}
+	return 0;
+	}
 
 # What an appointment write does. A stop always releases the owner it names,
 # even when the app's box was unticked before the stop arrived; only a start

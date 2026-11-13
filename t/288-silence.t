@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Silence.pm lib/JawnOS/Controller/manager_silence.pm lib/JawnOS/Routes/manager_silence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_configure4.pm perl/hooks.pl perl/Music.pl perl/help/topics_configure.pl templates/configure/appointment_list.html.ep public/js/manager/silence.js public/js/manager/websocket/00_console_router.js perl/Reception.pl public/js/manager/manager/02_web_nfc.js
+# tests-for: lib/JawnOS/Domain/Silence.pm lib/JawnOS/Controller/manager_silence.pm lib/JawnOS/Routes/manager_silence.pm lib/JawnOS/Routes.pm lib/JawnOS/Domain/Phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Controller/manager_configure4.pm perl/hooks.pl perl/Music.pl perl/help/topics_configure.pl templates/configure/appointment_list.html.ep public/js/manager/silence.js public/js/manager/websocket/00_console_router.js perl/Reception.pl public/js/manager/manager/02_web_nfc.js perl/Alarm.pl
 # covers:    Silence: the house-wide state, the local mixer snapshot (with the IVR
 #            sinks kept audible), the appointment start/stop hook, the phone's
 #            forced receptionist route, the audio gates, and the browser guard.
@@ -26,7 +26,14 @@ require "$root/lib/JawnOS/Domain/Silence.pm";
 
 no warnings 'redefine';
 our (%STORE, @MUTE, @SET, @CHANNEL, @RELAY);
+our (@QUERY_SETTINGS, @QUERY_APPOINTMENTS, @NATIVE);
 our $NOW = 1000;
+our $DEVICE = 'computer';
+
+{ package FakeRows;
+  sub new { my ($class, $rows) = @_; return bless { rows => $rows || [] }, $class; }
+  sub hashes { return $_[0]->{'rows'}; }
+}
 
 sub key_of {
 	my ($s) = @_;
@@ -38,6 +45,12 @@ sub reset_all {
 	@SET = ();
 	@CHANNEL = ();
 	@RELAY = ();
+	@QUERY_SETTINGS = ();
+	@QUERY_APPOINTMENTS = ();
+	@NATIVE = ();
+	$DEVICE = 'computer';
+	$subs::silence_tick_at = 0;
+	$subs::silence_native_off_at = 0;
 	$NOW = 1000;
 	$subs::SILENCE_LOCAL_FILE = $main::SCRATCH . '/silence_local.json';
 	unlink $subs::SILENCE_LOCAL_FILE;
@@ -60,8 +73,18 @@ $main::SCRATCH = $scratch;
 *subs::remote_relay_request = sub { push @RELAY, { @_ }; return 1 };
 *subs::relay_fresh = sub { return 1 };
 *subs::random_string_creator = sub { return 'relayid' };
-*subs::device_setter = sub { return 'computer' };
-*subs::device_call = sub { return { ok => 1 } };
+*subs::device_setter = sub { return $DEVICE };
+*subs::device_call = sub {
+	my ($method, $args) = @_;
+	push @NATIVE, { method => $method, args => $args || {} };
+	return { ok => 1 };
+};
+*subs::db_query = sub {
+	my ($sql) = @_;
+	return FakeRows->new(\@QUERY_SETTINGS) if defined $sql && $sql =~ /from settings/;
+	return FakeRows->new(\@QUERY_APPOINTMENTS) if defined $sql && $sql =~ /from appointments/;
+	return FakeRows->new([]);
+};
 *subs::sound_android_streams = sub { return [] };
 *subs::sound_devices = sub {
 	return {
@@ -142,6 +165,67 @@ is(state_hash(), undef, 'an unticked appointment never writes a silence row');
 is(scalar @MUTE, 0, 'and never touches the mixer');
 
 # ============================================================================
+# the alarm pass: start and stop without a Manager page
+# ============================================================================
+reset_all();
+@QUERY_SETTINGS = ({ app => 'mirror' });
+@QUERY_APPOINTMENTS = ({ uuid => 'u-open', app => 'mirror' });
+$DEVICE = 'mobile';
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+my $tick_state = state_hash();
+is($tick_state->{active}, 1, 'the alarm pass starts silence');
+is_deeply($tick_state->{owners}, ['u-open'], 'and owns the open silent session');
+my $on_pushed = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 1 } @NATIVE;
+ok($on_pushed, 'and tells the phone app directly');
+@QUERY_APPOINTMENTS = ({ uuid => 'u2-open', app => 'mirror' });
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is_deeply(state_hash()->{owners}, ['u2-open'], 'the owners follow the open session');
+@QUERY_APPOINTMENTS = ();
+my $recent = state_hash();
+$recent->{'since'} = subs::rightNow() - 1000;
+$STORE{'__president|silence_state|all'} = encode_json($recent);
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is(state_hash()->{active}, 1, 'a fresh state is kept while a peer syncs');
+$recent = state_hash();
+$recent->{'since'} = subs::rightNow() - 200000;
+$STORE{'__president|silence_state|all'} = encode_json($recent);
+@NATIVE = ();
+@SET = ();
+@CHANNEL = ();
+@MUTE = ();
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is(state_hash()->{active}, 0, 'the alarm pass clears silence when the appointment is gone');
+my $off_pushed = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 0 } @NATIVE;
+ok($off_pushed, 'and tells the phone app off');
+
+# A machine whose manager missed the stop still has the mixer snapshot on
+# disk. The next pass with no owner must put the mixer back even though the
+# house row already reads inactive.
+reset_all();
+$STORE{'__president|silence_state|all'} = encode_json({ active => 0, owners => [], apps => {}, since => 0 });
+subs::silence_local_write({ outputs => [ { id => 'alsa_output', volume => 55, muted => 0 } ], channels => {}, streams => [] });
+subs::silence_tick();
+ok(!-e $subs::SILENCE_LOCAL_FILE, 'an inactive house clears a stale local snapshot');
+is_deeply(\@SET, ['output|alsa_output|55'], 'and restores the saved volume');
+
+# The phone keeps its own copy of the switch. Even with no transition, a
+# pass tells it off so a missed push or a cold start cannot leave it silent.
+reset_all();
+$DEVICE = 'mobile';
+$STORE{'__president|silence_state|all'} = encode_json({ active => 0, owners => [], apps => {}, since => 0 });
+subs::silence_tick();
+my $heal_off = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 0 } @NATIVE;
+ok($heal_off, 'every quiet-free pass can tell the phone app off');
+@NATIVE = ();
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is(scalar @NATIVE, 0, 'but the off push is throttled, not one per pass');
+
+# ============================================================================
 # the phone
 # ============================================================================
 reset_all();
@@ -206,5 +290,7 @@ like($phone_js, qr/setSilence/, 'and hand it to the native bridge');
 like($js, qr/JawnPhone\.setSilence/, 'the browser pushes silence to the native half');
 like($js, qr/jawnPhoneSync/, 'and refreshes the phone facts on a change');
 like(source('perl/Reception.pl'), qr/silence_active.*enabled/s, 'the reception worker arms during silence');
+like(source('perl/Alarm.pl'), qr/silence_tick/, 'the alarm loop starts and stops silence');
+like(source('lib/JawnOS/Domain/Loader.pm'), qr/silence_tick/, 'the reconcile helper is mapped');
 
 done_testing();

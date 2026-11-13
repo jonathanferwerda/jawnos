@@ -46,6 +46,10 @@ sub alarm_clock() {
 	my ($dber,$dot,$sql) = &subs::database_grabber('new');
 	my ($alarm_count,$current_alarm);
 	if ( $dber ) {
+		# The open silent appointment is the authority for the whole house.
+		# This pass starts or stops silence even with no Manager page open.
+		eval { &subs::silence_tick(); };
+		$log->error('silence tick: ' . $@) if $@;
 		my $timestamp = &subs::rightNow();
 		$last_moment = &subs::rightNow();
 		# set when this pass starts or stops something: a running start/record can
@@ -589,6 +593,8 @@ if ($ENV{PURPOSE} eq "alarm") {
 	$alarm_server = &alarm_server();
 	$log->info($alarm_server);
 	Mojo::IOLoop->recurring(5 => sub {
+		eval { &subs::silence_tick(); };
+		$log->error('silence tick: ' . $@) if $@;
     my $is_running = defined Mojo::IOLoop->acceptor($alarm_server) ? 1 : 0;
 		if (!$is_running) {
 			$alarm_server = &alarm_server();
