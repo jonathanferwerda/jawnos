@@ -13,6 +13,7 @@ var weatherAccuracyData = null;
 var weatherHistoryLoaded = false;
 var weatherAccuracyLoaded = false;
 var weatherLoading = false;
+var weatherAlertOpen = {};
 
 $(document).on('click', '.weather_tab', function() {
 	weatherShowTab($(this).attr('data-tab'));
@@ -28,6 +29,11 @@ $(document).on('change', '#weather_accuracy_source, #weather_accuracy_range', fu
 });
 $(document).on('change', '#weather_accuracy_lead', function() {
 	if (weatherAccuracyData) { weatherAccuracyDetailRender(weatherAccuracyData); }
+});
+// The statement body is an accordion: the title toggles it, and its open
+// state survives a refresh of the same alert.
+$(document).on('click', '.weather_alert_toggle', function() {
+	weatherAlertToggle(this);
 });
 
 function weatherMaker(timestamp) {
@@ -54,6 +60,7 @@ function weatherBind() {
 		$w.find('#weather_lat').val('');
 		$w.find('#weather_lon').val('');
 		$w.find('#weather_source').val('');
+		weatherAlertOpen = {};
 		weatherHistoryLoaded = false;
 		weatherAccuracyLoaded = false;
 		weatherDeleteState();
@@ -415,15 +422,39 @@ function weatherAlerts(alerts) {
 		if (a.region && !(a.areas && a.areas.length)) { meta.push(weatherEsc(a.region)); }
 		if (a.issued_at) { meta.push(jawnosT('Issued') + ' ' + weatherTime(a.issued_at)); }
 		if (a.expires_at) { meta.push(jawnosT('Ends') + ' ' + weatherTime(a.expires_at)); }
-		html += '<div class="weather_alert">'
-			+ '<b>' + weatherEsc(a.title || jawnosT('Weather alert')) + '</b>'
+		var body = ''
 			+ (a.text ? '<div class="weather_alert_text">' + weatherEsc(a.text) + '</div>' : '')
 			+ (a.areas && a.areas.length ? '<div class="weather_alert_areas"><b>' + jawnosT('In effect for') + ':</b> ' + weatherEsc(a.areas.join(', ')) + '</div>' : '')
 			+ (meta.length ? '<div class="weather_alert_meta">' + meta.join(' · ') + '</div>' : '')
-			+ (a.url ? '<a class="weather_alert_more" href="' + weatherEsc(a.url) + '" target="_blank" rel="noopener">' + jawnosT('See the full report') + '</a>' : '')
-			+ '</div>';
+			+ (a.url ? '<a class="weather_alert_more" href="' + weatherEsc(a.url) + '" target="_blank" rel="noopener">' + jawnosT('See the full report') + '</a>' : '');
+		var hasBody = !!(a.text || (a.areas && a.areas.length) || meta.length);
+		var title = weatherEsc(a.title || jawnosT('Weather alert'));
+		if (hasBody) {
+			var id = 'weather_alert_body_' + Date.now() + '_' + i;
+			var open = !!weatherAlertOpen[i];
+			html += '<div class="weather_alert">'
+				+ '<button type="button" class="weather_alert_toggle" data-alert-index="' + i + '" aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="' + id + '">'
+				+ '<span class="weather_alert_title">' + title + '</span>'
+				+ '<span class="weather_alert_chevron" aria-hidden="true">▸</span>'
+				+ '</button>'
+				+ '<div class="weather_alert_body' + (open ? ' open' : '') + '" id="' + id + '">' + body + '</div>'
+				+ '</div>';
+		}
+		else {
+			html += '<div class="weather_alert"><b>' + title + '</b>' + body + '</div>';
+		}
 	}
 	$w.find('#weather_alerts').html(html).toggle(!!html);
+}
+
+function weatherAlertToggle(button) {
+	var $b = $(button);
+	var open = $b.attr('aria-expanded') !== 'true';
+	var id = $b.attr('aria-controls') || '';
+	var index = $b.attr('data-alert-index') || '';
+	$b.attr('aria-expanded', open ? 'true' : 'false');
+	$('#' + id).toggleClass('open', open);
+	if (index !== '') { weatherAlertOpen[index] = open; }
 }
 
 function weatherHours(hours) {

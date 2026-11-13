@@ -1984,10 +1984,13 @@ like($weather_js, qr/weatherPlaceText/, 'the place line uses the local station n
 like($weather_js, qr/See the full report/, 'the alert links to its report');
 like($weather_js, qr/weather_alert_meta/, 'and shows the issue and expiry');
 like($weather_js, qr/weather_alert_areas/, 'the alert shows where the statement is in effect');
+like($weather_js, qr/weather_alert_toggle/, 'the statement body is an accordion');
+like($weather_js, qr/weatherAlertToggle/, 'and the title toggles it');
 like($weather_js, qr/weatherDayName/, 'and a weekday name');
 like($weather_js, qr/weatherLoading/, 'the app asks once at a time');
 like($weather_style, qr/overscroll-behavior-x/, 'the hourly strip scrolls sideways');
 like($weather_style, qr/white-space: pre-wrap/, 'the statement body keeps its line breaks');
+like($weather_style, qr/\.weather_alert_body\.open/, 'the statement body opens from the accordion');
 my $windows_storage = read_file("$root/public/js/manager/windows/01_storage.js");
 like($windows_storage, qr/i == 'weather'/, 'a restored Weather window uses its opener');
 my $windows_js = read_file("$root/public/js/manager/windows.js");
