@@ -171,8 +171,9 @@ sub _attr {
 	return _trim(_slurp("/sys/block/$name/$attr"));
 }
 
-# The fingerprint the manager must see before it writes: removable, the USB
-# mass-storage gadget's model string, and exactly the eMMC's sector count.
+# The fingerprint the manager must see before it writes: the USB mass-storage
+# gadget's model string and exactly the eMMC's sector count. The kernel marks
+# the gadget removable=0 (it is a fixed LUN), so that flag cannot be the test.
 sub _fingerprint {
 	my ($dev) = @_;
 	unless (defined $dev && $dev =~ m{^/dev/([A-Za-z0-9._-]+)$}) {
@@ -180,8 +181,6 @@ sub _fingerprint {
 	}
 	my $name = $1;
 	return { ok => 0, error => "$dev is not a whole block device" } unless -d "/sys/block/$name";
-	my $removable = _attr($name, 'removable');
-	return { ok => 0, error => "$dev is not removable" } unless $removable eq '1';
 	my $model = _attr($name, 'device/model');
 	return { ok => 0, error => "$dev is not a File-Stor Gadget: " . ($model || 'no model') }
 		unless $model =~ /File-Stor\s+Gadget/i;
@@ -203,7 +202,6 @@ sub _candidates {
 	my @devices;
 	for my $name (_block_names()) {
 		next if $name =~ /^(?:loop|ram|dm-|md|zd|sr|nbd)/;
-		next unless _attr($name, 'removable') eq '1';
 		my $model = _attr($name, 'device/model');
 		my $size = _attr($name, 'size');
 		next unless $model =~ /File-Stor\s+Gadget/i || (defined $size && $size eq $EMMC_SIZE);
@@ -211,7 +209,7 @@ sub _candidates {
 			dev => "/dev/$name",
 			size_sectors => ($size =~ /^\d+$/ ? $size + 0 : undef),
 			model => $model,
-			removable => 1,
+			removable => (_attr($name, 'removable') eq '1' ? 1 : 0),
 		};
 	}
 	return @devices;
