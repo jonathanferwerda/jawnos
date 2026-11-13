@@ -60,6 +60,7 @@ sub silence_state {
 	$state->{'active'} = $state->{'active'} ? 1 : 0;
 	$state->{'owners'} = [] unless ref $state->{'owners'} eq 'ARRAY';
 	$state->{'apps'} = {} unless ref $state->{'apps'} eq 'HASH';
+	$state->{'house'} = $state->{'house'} ? 1 : 0;
 	return $state;
 }
 
@@ -270,6 +271,13 @@ sub sound_house_level_write {
 		});
 		1;
 	};
+	if ($saved) {
+		# A level picked while a release note still covers the house is a
+		# fresh choice: lift the note, then let the pass engage at once.
+		&silence_release_clear(['__house__']) if $level eq 'silence';
+		$silence_tick_at = 0;
+		eval { &silence_tick() };
+	}
 	return $saved ? $level : undef;
 }
 
@@ -287,6 +295,10 @@ sub sound_app_level_write {
 		});
 		1;
 	};
+	if ($saved) {
+		$silence_tick_at = 0;
+		eval { &silence_tick() };
+	}
 	return $saved ? 1 : 0;
 }
 
@@ -658,9 +670,11 @@ sub silence_release_all {
 	my $state = &silence_state();
 	return $state unless $state->{'active'} || scalar @{ $state->{'owners'} || [] };
 	my @released = @{ $state->{'owners'} || [] };
+	push @released, '__house__' if $state->{'house'};
 	$state->{'active'} = 0;
 	$state->{'owners'} = [];
 	$state->{'apps'} = {};
+	$state->{'house'} = 0;
 	$state->{'since'} = 0;
 	&silence_state_write($state);
 	&silence_local_apply(0);
@@ -712,22 +726,30 @@ sub silence_tick {
 		# row that is still open with a live note stays suppressed.
 		my $changed = 0;
 		foreach my $uuid ( keys %{$released_notes} ) {
+			next if $uuid eq '__house__' && ($released_notes->{$uuid} // 0) > $now;
 			next if $open_all{$uuid} && ($released_notes->{$uuid} // 0) > $now;
 			delete $released_notes->{$uuid};
 			$changed = 1;
 		}
 		&silence_released_write($released_notes) if $changed;
 	}
+	# The house level is the base every app at Passive inherits, so a house
+	# set to Silence is quiet with no appointment owning it. A verified peer
+	# release covers the level until this machine's own setting catches up.
+	my $house_silence = (&sound_house_setting_level() eq 'silence') ? 1 : 0;
+	$house_silence = 0 if ($released_notes->{'__house__'} // 0) > $now;
 	my $state = &silence_state();
-	if (@owners) {
+	if (@owners || $house_silence) {
 		my %current = map { $_ => 1 } @{ $state->{'owners'} || [] };
 		my $same = $state->{'active'} ? 1 : 0;
+		$same = 0 unless ($state->{'house'} ? 1 : 0) == $house_silence;
 		$same = 0 unless scalar(@{ $state->{'owners'} || [] }) == scalar(@owners);
 		foreach my $owner ( @owners ) { $same = 0 unless $current{$owner}; }
 		unless ($same) {
 			$state->{'active'} = 1;
 			$state->{'owners'} = \@owners;
 			$state->{'apps'} = \%apps;
+			$state->{'house'} = $house_silence;
 			$state->{'since'} ||= $now;
 			$state->{'by'} ||= (eval { &subs::signatorial_designer() } || '');
 			&silence_state_write($state);
@@ -737,6 +759,7 @@ sub silence_tick {
 			&silence_broadcast(undef, $state);
 		}
 		$silence_owners_seen{$_} = 1 for @owners;
+		$silence_owners_seen{'__house__'} = 1 if $house_silence;
 		&silence_local_hold();
 		&silence_native_push(1);
 		return 1;
@@ -747,6 +770,7 @@ sub silence_tick {
 		# so release at once. Relay it too - it is the appointment ending, not a
 		# missing row.
 		my $informed = 0;
+		$informed = 1 if delete $silence_owners_seen{'__house__'};
 		foreach my $owner ( @{ $state->{'owners'} || [] } ) {
 			$informed = 1 if delete $silence_owners_seen{$owner};
 		}
@@ -823,6 +847,7 @@ sub silence_push {
 				by => ($state->{'by'} || ''),
 				owners => $state->{'owners'},
 				apps => $state->{'apps'},
+				house => ($state->{'house'} ? 1 : 0),
 			}),
 		});
 	};

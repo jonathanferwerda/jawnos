@@ -344,6 +344,67 @@ subs::silence_appointment_write('mirror', 'start', 'u12', undef, subs::rightNow(
 is(state_hash()->{active}, 1, 'a start due now engages silence');
 
 # ============================================================================
+# the house level is an owner too
+# ============================================================================
+reset_all();
+$DEVICE = 'mobile';
+$STORE{'__president|sound_level|all'} = 'silence';
+@QUERY_APPOINTMENTS = ();
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+my $house_state = state_hash();
+is($house_state->{active}, 1, 'a house level of Silence engages with no appointment');
+is($house_state->{house}, 1, 'and the state says the house owns it');
+is_deeply($house_state->{owners}, [], 'with no appointment owner');
+my $muted = grep { /\|1$/ } @MUTE;
+ok($muted, 'the mixer is muted');
+my $native_on = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 1 } @NATIVE;
+ok($native_on, 'and the phone is told on');
+
+# Writing the level engages and releases at once, which is what the widget's
+# dropdown does.
+reset_all();
+is(subs::sound_house_level_write('silence'), 'silence', 'the level write takes');
+is(subs::silence_active(), 1, 'and engages the house at once');
+is(subs::sound_house_level_write('sound'), 'sound', 'writing Sound back');
+is(subs::silence_active(), 0, 'releases at once');
+
+# Switching the level away releases and names the house marker for a peer
+# whose own copy of the setting still reads Silence.
+reset_all();
+$STORE{'__president|sound_level|all'} = 'silence';
+@QUERY_APPOINTMENTS = ();
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+$STORE{'__president|sound_level|all'} = 'sound';
+@NATIVE = ();
+@MUTE = ();
+@SET = ();
+@CHANNEL = ();
+@RELAY = ();
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+$house_state = state_hash();
+is($house_state->{active}, 0, 'a house level of Sound releases');
+is($house_state->{house}, 0, 'and clears the house flag');
+my $restored = grep { /^output\|alsa_output\|/ } @SET;
+ok($restored, 'the saved volume is put back');
+my ($house_relay) = grep { ($_->{'extra'}->{'url'} // '') eq '/manager/silence/peer'
+	&& !$_->{'extra'}->{'params'}->{'active'} } @RELAY;
+ok($house_relay, 'and the stop is relayed');
+my $house_released = $house_relay ? decode_json($house_relay->{'extra'}->{'params'}->{'state'}) : {};
+is_deeply($house_released->{'released'}, ['__house__'],
+	'naming the house marker for a lagging peer');
+
+# A relayed release covers the level until this machine's own setting syncs.
+reset_all();
+$STORE{'__president|sound_level|all'} = 'silence';
+subs::silence_release_note(['__house__']);
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+ok(!subs::silence_active(), 'a verified house release is not undone by a stale level');
+
+# ============================================================================
 # the alarm pass: start and stop without a Manager page
 # ============================================================================
 reset_all();
