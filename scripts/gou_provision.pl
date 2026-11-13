@@ -11,6 +11,7 @@
 #   --device PATH                name the block device instead of finding one
 #   --image PATH                 default /home/jawn/gou/gou-emmc-0.1.2807.img.zst
 #   --wifi-ssid S --wifi-psk P   write a NetworkManager profile
+#   --wifi-psk-stdin             read the password from stdin instead of argv
 #   --hostname NAME              default 'gou'
 #   --join-token FILE            JSON copied to
 #                                /home/jawn/jawnos/.controller-join.json
@@ -50,6 +51,7 @@ Getopt::Long::GetOptions(
 	'image=s'         => \$opt{'image'},
 	'wifi-ssid=s'     => \$opt{'wifi_ssid'},
 	'wifi-psk=s'      => \$opt{'wifi_psk'},
+	'wifi-psk-stdin'  => \$opt{'wifi_psk_stdin'},
 	'hostname=s'      => \$opt{'hostname'},
 	'join-token=s'    => \$opt{'join_token'},
 	'no-autopopulate' => \$opt{'no_autopopulate'},
@@ -61,7 +63,7 @@ Getopt::Long::GetOptions(
 if ($opt{'help'}) {
 	print <<'USAGE';
 gou_provision.pl --scan | --flash [--device /dev/sdX]
-  [--image FILE] [--wifi-ssid S --wifi-psk P] [--hostname NAME]
+  [--image FILE] [--wifi-ssid S --wifi-psk P | --wifi-psk-stdin] [--hostname NAME]
   [--join-token FILE] [--no-autopopulate] [--dry-run] [--backup PATH]
 USAGE
 	exit 0;
@@ -535,6 +537,40 @@ sub _autopopulate {
 # --flash
 
 sub _flash {
+	# A person's own fields are checked first: a name, a password or a hostname
+	# that cannot be written is answered before the device is looked for, and
+	# never leaves the person watching a scan for a board that would be refused.
+	my $hostname = defined $opt{'hostname'} && length $opt{'hostname'} ? $opt{'hostname'} : $DEFAULT_HOSTNAME;
+	unless ($hostname =~ /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/) {
+		_fail(4, 'invalid hostname');
+	}
+	my ($ssid, $psk) = ($opt{'wifi_ssid'}, $opt{'wifi_psk'});
+	# The manager hands the password over on stdin (--wifi-psk-stdin) so a secret
+	# is not visible in `ps` while the write runs; a person flashing by hand may
+	# still name it on the command line.
+	if ($opt{'wifi_psk_stdin'}) {
+		_fail(4, 'give one of --wifi-psk and --wifi-psk-stdin') if defined $psk;
+		my $piped = <STDIN>;
+		$piped = '' unless defined $piped;
+		$piped =~ s/\r?\n\z//;
+		$psk = $piped;
+	}
+	if (defined $ssid || defined $psk) {
+		_fail(4, 'give both the WiFi name and its password') unless defined $ssid && defined $psk;
+		_fail(4, 'invalid WiFi SSID') unless length $ssid && length($ssid) <= 32;
+		_fail(4, 'invalid WiFi password') unless length($psk) >= 8 && length($psk) <= 63;
+		_fail(4, 'invalid WiFi value') if $ssid =~ /[\r\n]/ || $psk =~ /[\r\n]/;
+	}
+	my $join = $opt{'join_token'};
+	if (defined $join && length $join) {
+		_fail(4, "join token not found: $join") unless -f $join;
+		my $parsed = eval { JSON::PP->new->decode(_slurp($join)) };
+		_fail(4, 'the join token is not JSON') unless defined $parsed;
+	}
+	else {
+		$join = undef;
+	}
+
 	my $image = defined $opt{'image'} && length $opt{'image'} ? $opt{'image'} : $DEFAULT_IMAGE;
 	unless (-f $image) {
 		_fail(4, "image not found: $image");
@@ -561,26 +597,6 @@ sub _flash {
 	_fail(3, "refusing a mounted device $dev") if _device_mounted($dev);
 	_fail(5, 'this helper must run as root to flash') if $< != 0 && !$opt{'dry_run'};
 
-	my $hostname = defined $opt{'hostname'} && length $opt{'hostname'} ? $opt{'hostname'} : $DEFAULT_HOSTNAME;
-	unless ($hostname =~ /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/) {
-		_fail(4, 'invalid hostname');
-	}
-	my ($ssid, $psk) = ($opt{'wifi_ssid'}, $opt{'wifi_psk'});
-	if (defined $ssid || defined $psk) {
-		_fail(4, 'give both --wifi-ssid and --wifi-psk') unless defined $ssid && defined $psk;
-		_fail(4, 'invalid WiFi SSID') unless length $ssid && length($ssid) <= 32;
-		_fail(4, 'invalid WiFi password') unless length($psk) >= 8 && length($psk) <= 63;
-		_fail(4, 'invalid WiFi value') if $ssid =~ /[\r\n]/ || $psk =~ /[\r\n]/;
-	}
-	my $join = $opt{'join_token'};
-	if (defined $join && length $join) {
-		_fail(4, "join token not found: $join") unless -f $join;
-		my $parsed = eval { JSON::PP->new->decode(_slurp($join)) };
-		_fail(4, 'the join token is not JSON') unless defined $parsed;
-	}
-	else {
-		$join = undef;
-	}
 	my $backup = $opt{'backup'};
 	if (defined $backup && length $backup) {
 		if ($opt{'dry_run'}) {

@@ -203,10 +203,17 @@ $(document).on('click', '#controllers_refresh_button', function() {
 	controllerRomsLoad();
 });
 
+// The last storage answer, so the walkthrough can redraw from it when it is
+// opened or toggled; null means no controller is selected.
+var controllerStorageAnswer = null;
+var controllerWalkthroughOpen = false;
+
 function controllerStoragePrompt() {
 	var box = $('#controllers_storage');
 	if (!box.length) { return; }
 	box.empty().append($('<div class="controller_empty"></div>').text(controllerT('Select a controller above to set its storage.')));
+	controllerStorageAnswer = null;
+	controllerWalkthroughDraw(null);
 }
 
 function controllerStorageLoad(notice) {
@@ -246,6 +253,7 @@ function controllerStorageError(text) {
 }
 
 function controllerStorageDraw(data) {
+	controllerStorageAnswer = data;
 	var box = $('#controllers_storage').empty();
 
 	var field = $('<div class="controller_field"></div>');
@@ -286,6 +294,98 @@ function controllerStorageDraw(data) {
 		grid.append(item);
 	}
 	box.append(grid);
+	controllerWalkthroughDraw(data);
+}
+
+// ---- setting up the card ---------------------------------------------------
+// A walkthrough over the Storage card rather than a second form: every step is
+// read from the same answer Save produces, and its button presses the control
+// the step names, so the two cannot drift. Open or closed is page-local state,
+// like the controller selection.
+$(document).on('click', '#controllers_walkthrough_button', function() {
+	controllerWalkthroughOpen = !controllerWalkthroughOpen;
+	controllerWalkthroughDraw(controllerStorageAnswer);
+});
+
+$(document).on('click', '.controller_walkthrough_act', function() {
+	var act = $(this).attr('data-act') || '';
+	if (act === 'folder') { $('#controllers_archive_dir').focus(); }
+	else if (act === 'save') { controllerStorageSave(); }
+	else if (act === 'roms') {
+		var roms = $('#controllers_roms');
+		if (roms.length) { roms[0].scrollIntoView({ block: 'start' }); }
+	}
+});
+
+// The steps in the order the person does them. A folder the route could not stat
+// (a peer's card, or no folder named yet) is unknown, and unknown is not done.
+function controllerWalkthroughSteps(data) {
+	var dir = (data && data.archive_dir) || '';
+	var card = !!(data && controllerBool(data.present));
+	var made = 0;
+	var games = false;
+	var given = (data && data.folders) || [];
+	for (var i = 0; i < given.length; i++) {
+		var row = given[i] || {};
+		if (controllerFolderPresent(row.name, row, data) === true) {
+			made++;
+			if (row.name === 'Games') { games = true; }
+		}
+	}
+	return [
+		{
+			text: controllerT('Put the controller\'s card in this computer and mount it. The house can only read the card while it is mounted.'),
+			done: card
+		},
+		{
+			text: controllerT('Type the folder the card is mounted at.'),
+			done: dir.length > 0,
+			act: 'folder',
+			action: controllerT('Type the folder')
+		},
+		{
+			text: controllerT('Press Save. The house makes the eight folders on the card.'),
+			done: made >= controllerFolderNames.length,
+			act: 'save',
+			action: controllerT('Save')
+		},
+		{
+			text: controllerT('Games go in Games. The ROMs section below copies them between the two cards.'),
+			done: games,
+			act: 'roms',
+			action: controllerT('Show the ROMs')
+		}
+	];
+}
+
+function controllerWalkthroughDraw(data) {
+	var box = $('#controllers_walkthrough');
+	if (!box.length) { return; }
+	$('#controllers_walkthrough_button').attr('aria-expanded', controllerWalkthroughOpen ? 'true' : 'false');
+	if (!controllerWalkthroughOpen) { box.empty().prop('hidden', true); return; }
+	box.empty().prop('hidden', false);
+	if (!controllerSelection || !controllerSelection.uuid) {
+		box.append($('<div class="controller_empty"></div>').text(controllerT('Select a controller above first.')));
+		return;
+	}
+	var steps = controllerWalkthroughSteps(data);
+	var list = $('<ol class="controller_walkthrough"></ol>');
+	var next = true;
+	for (var i = 0; i < steps.length; i++) {
+		var step = steps[i];
+		var item = $('<li class="controller_walkthrough_step"></li>');
+		if (step.done) { item.addClass('is-done'); }
+		else if (next) { item.addClass('is-next'); next = false; }
+		else { item.addClass('is-todo'); }
+		item.append($('<span class="controller_walkthrough_text"></span>').text(step.text));
+		if (step.act && !step.done) {
+			item.append($('<button type="button" class="controller_walkthrough_act"></button>')
+				.attr('data-act', step.act).text(step.action));
+		}
+		list.append(item);
+	}
+	box.append(list);
+	box.append($('<p class="controller_note"></p>').text(controllerT('A blank folder merges nothing: the card has to be mounted for merging to work.')));
 }
 
 $(document).on('click', '#controllers_storage_save', function() {
@@ -600,6 +700,7 @@ function controllerNewReset() {
 	$('#controllers_new_panel').empty().prop('hidden', true);
 	controllerStatus('controllers_new_status', '', false);
 	$('#controllers_new_button').prop('disabled', false);
+	controllerNewNetworkLocked(false);
 }
 
 // The panel is the state: each answer empties it and draws exactly one state.
@@ -694,11 +795,47 @@ function controllerNewFailure(text) {
 	panel.append($('<div class="controller_new_actions"></div>').append(controllerNewScanButton()));
 }
 
+// The board's network, read once for a flash. The provisioner refuses the same
+// shapes; saying it here keeps a typo off a 900-second press.
+function controllerNewNetwork() {
+	var ssid = ($('#controllers_wifi_ssid').val() || '').replace(/^\s+|\s+$/g, '');
+	var psk = $('#controllers_wifi_psk').val() || '';
+	if (!ssid && !psk) { return { ssid: '', psk: '' }; }
+	if (!ssid) {
+		return { error: controllerT('Type the network name, or clear the password to leave the board off the network.'), focus: '#controllers_wifi_ssid' };
+	}
+	if (!psk) {
+		return { error: controllerT('Type the network password, or clear the network name to leave the board off the network.'), focus: '#controllers_wifi_psk' };
+	}
+	if (ssid.length > 32) {
+		return { error: controllerT('A network name is at most 32 characters.'), focus: '#controllers_wifi_ssid' };
+	}
+	if (psk.length < 8 || psk.length > 63) {
+		return { error: controllerT('A Wi-Fi password is 8 to 63 characters.'), focus: '#controllers_wifi_psk' };
+	}
+	return { ssid: ssid, psk: psk };
+}
+
+// The fields are the flash's input, so they are held still while it runs and
+// handed back when it answers.
+function controllerNewNetworkLocked(locked) {
+	$('#controllers_wifi_ssid, #controllers_wifi_psk').prop('disabled', !!locked);
+}
+
 function controllerNewFlash() {
 	if (!controllerComputer) { return; }
+	// The board's network is written into the flashed rootfs, so it is read
+	// before the press starts and refused here, not by the provisioner.
+	var network = controllerNewNetwork();
+	if (network.error) {
+		controllerStatus('controllers_new_status', network.error, true);
+		$(network.focus || '#controllers_wifi_ssid').focus();
+		return;
+	}
 	var panel = $('#controllers_new_panel');
 	var button = $('#controllers_new_button').prop('disabled', true);
 	panel.find('button').prop('disabled', true);
+	controllerNewNetworkLocked(true);
 	controllerStatus('controllers_new_status', controllerT('Flashing...'), false);
 	// One blocking write on the other side, so a plain state rather than a
 	// progress bar that would have to invent a percentage.
@@ -706,14 +843,22 @@ function controllerNewFlash() {
 	$.ajax({
 		url: '/manager/controllers/new/flash',
 		type: 'POST',
-		data: { timestamp: Date.now() },
+		data: {
+			timestamp: Date.now(),
+			'wifi-ssid': network.ssid,
+			'wifi-psk': network.psk
+		},
 		dataType: 'json',
 		success: function(response) {
 			button.prop('disabled', false);
+			controllerNewNetworkLocked(false);
 			if (!response || !response.ok) {
 				controllerNewFailure((response && response.error) ? String(response.error) : controllerT('The board was not flashed.'));
 				return;
 			}
+			// The password has served its purpose; a secret is not left sitting in
+			// the page for the next person at the desk.
+			$('#controllers_wifi_psk').val('');
 			controllerNewDone(response);
 			controllerStatus('controllers_new_status', controllerT('Flashed.'), false);
 			// The flashed board may already be in the roster, and its card is new:
@@ -724,6 +869,7 @@ function controllerNewFlash() {
 		},
 		error: function() {
 			button.prop('disabled', false);
+			controllerNewNetworkLocked(false);
 			controllerNewFailure(controllerT('The board was not flashed.'));
 		}
 	});
@@ -757,8 +903,13 @@ function controllerNewDone(data) {
 // `autopopulated` names the fields the flash filled in, as bare names or as rows
 // carrying one. Only the name is painted: a value could be the Wi-Fi password,
 // and the screen must not show it.
+var controllerNewFields = { wifi: 'Wi-Fi network', hostname: 'Name', 'join-token': 'House token' };
+
 function controllerNewFieldName(item) {
 	if (item === undefined || item === null) { return ''; }
-	if (typeof item === 'string' || typeof item === 'number') { return String(item); }
-	return String(item.name || item.field || item.key || item.label || '');
+	if (typeof item === 'string' || typeof item === 'number') {
+		return controllerNewFields[String(item)] ? controllerT(controllerNewFields[String(item)]) : String(item);
+	}
+	var name = String(item.name || item.field || item.key || item.label || '');
+	return controllerNewFields[name] ? controllerT(controllerNewFields[name]) : name;
 }

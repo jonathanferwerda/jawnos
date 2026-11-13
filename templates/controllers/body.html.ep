@@ -15,6 +15,18 @@
 	<div class="controller_section" id="controllers_new_section" hidden>
 		<h2><%= &subs::ui('New controller') %></h2>
 		<p class="controller_note"><%= &subs::ui('Flash the house image to a blank board over USB from this computer.') %></p>
+		<%# The network the board joins on its first start. The provisioner writes a
+		    NetworkManager profile into the flashed rootfs while the board is still in
+		    recovery; blank here means the board comes up with no network at all. %>
+		<div class="controller_new_network" id="controllers_new_network">
+			<p class="controller_note"><%= &subs::ui('The board joins this network the first time it starts. Leave both blank to keep it off the network.') %></p>
+			<div class="controller_field">
+				<label class="controller_field_label" for="controllers_wifi_ssid"><%= &subs::ui('Wi-Fi network') %></label>
+				<input type="text" id="controllers_wifi_ssid" autocomplete="off" spellcheck="false" placeholder="<%= &subs::ui('Network name') %>">
+				<label class="controller_field_label" for="controllers_wifi_psk"><%= &subs::ui('Wi-Fi password') %></label>
+				<input type="password" id="controllers_wifi_psk" autocomplete="new-password" placeholder="<%= &subs::ui('At least 8 characters') %>">
+			</div>
+		</div>
 		<div class="controller_toolbar">
 			<button type="button" id="controllers_new_button"><%= &subs::ui('New controller') %></button>
 			<div id="controllers_new_status" class="controller_status" aria-live="polite"></div>
@@ -54,6 +66,13 @@
 		<div id="controllers_storage" class="controller_card">
 			<div class="controller_empty"><%= &subs::ui('Select a controller above to set its storage.') %></div>
 		</div>
+		<%# A walkthrough over the same card, not a second form: every step reads the
+		    storage answer and its button presses the control the step names, so it
+		    cannot drift from what Save does. %>
+		<div class="controller_toolbar">
+			<button type="button" id="controllers_walkthrough_button" aria-expanded="false" aria-controls="controllers_walkthrough"><%= &subs::ui('Walk me through it') %></button>
+		</div>
+		<div id="controllers_walkthrough" class="controller_card" hidden></div>
 	</div>
 
 	<div class="controller_section">

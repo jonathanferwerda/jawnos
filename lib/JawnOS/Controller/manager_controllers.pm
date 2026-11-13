@@ -166,9 +166,11 @@ sub _controller_is_computer {
 # only reads sysfs and runs as the manager; --flash writes a raw device and
 # mounts its second partition, so it goes through sudo -n. The helper prints
 # its answer as JSON on stdout and its progress on stderr, which stays in the
-# worker log. 900s is the ceiling the flash warranty allows.
+# worker log. 900s is the ceiling the flash warranty allows. $stdin is the
+# WiFi password: a secret goes over the pipe, never onto the argv that `ps`
+# shows to every user on the box.
 sub _controller_gou_run {
-	my ($as_root, @args) = @_;
+	my ($as_root, $stdin, @args) = @_;
 	my $script = Cwd::abs_path('scripts/gou_provision.pl');
 	unless (defined $script && length $script && -f $script) {
 		return { ok => 0, error => 'the Controller provisioner is missing' };
@@ -176,13 +178,15 @@ sub _controller_gou_run {
 	my @command = $as_root
 		? ('sudo', '-n', $^X, $script, @args)
 		: ($^X, $script, @args);
+	my %params = (
+		name => 'gou provision',
+		stdout => 'capture',
+		stderr => 'inherit',
+		warranty => '900s',
+	);
+	$params{'stdin'} = $stdin if defined $stdin;
 	my $run = eval {
-		&subs::subprocessor_command(\@command, {
-			name => 'gou provision',
-			stdout => 'capture',
-			stderr => 'inherit',
-			warranty => '900s',
-		});
+		&subs::subprocessor_command(\@command, \%params);
 	};
 	unless (ref $run eq 'HASH' && $run->{'pid'}) {
 		return { ok => 0, error => 'the provisioner could not start' };
@@ -274,7 +278,16 @@ sub action_54005 {
 	}
 	my $dir = &_controller_archive_dir($machine->{'archive_dir'});
 	my $is_this = &_controller_is_this($uuid, $device, $machine);
-	my $folders = [ map { { name => $_, path => $dir . '/' . $_ } } &_controller_folders() ];
+	# A folder says whether it is there when this machine holds the drive: the
+	# walkthrough steps on that answer, and a grid that called every folder present
+	# because the card was mounted was telling the person nothing. A peer's mount is
+	# not ours to stat, so its folders carry no answer at all.
+	my $readable = ($is_this && length $dir) ? 1 : 0;
+	my $folders = [ map { {
+		name => $_,
+		path => $dir . '/' . $_,
+		($readable ? (present => (-d ($dir . '/' . $_)) ? 1 : 0) : ()),
+	} } &_controller_folders() ];
 	$c->render(json => {
 		ok => 1,
 		uuid => $uuid,
@@ -476,7 +489,7 @@ sub action_54009 {
 	unless (&_controller_is_computer()) {
 		return $c->render(json => { ok => 0, error => 'not a computer' });
 	}
-	$c->render(json => &_controller_gou_run(0, '--scan'));
+	$c->render(json => &_controller_gou_run(0, undef, '--scan'));
 }
 
 # POST /manager/controllers/new/flash
@@ -495,10 +508,17 @@ sub action_54010 {
 	my $ssid = defined $c->param('wifi-ssid') ? $c->param('wifi-ssid') : $c->param('wifi_ssid');
 	my $psk = defined $c->param('wifi-psk') ? $c->param('wifi-psk') : $c->param('wifi_psk');
 	push @args, ('--wifi-ssid', substr($ssid, 0, 64)) if defined $ssid && length $ssid;
-	push @args, ('--wifi-psk', substr($psk, 0, 128)) if defined $psk && length $psk;
+	# The password is handed over on the child's stdin: sudo keeps the argv
+	# visible in `ps` to every user on the machine, and a secret does not belong
+	# there.
+	my $psk_stdin;
+	if (defined $psk && length $psk) {
+		push @args, '--wifi-psk-stdin';
+		$psk_stdin = substr($psk, 0, 128);
+	}
 	my $hostname = $c->param('hostname');
 	push @args, ('--hostname', substr($hostname, 0, 63)) if defined $hostname && length $hostname;
-	$c->render(json => &_controller_gou_run(1, @args));
+	$c->render(json => &_controller_gou_run(1, $psk_stdin, @args));
 }
 
 1;

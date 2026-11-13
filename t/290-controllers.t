@@ -13,6 +13,8 @@ use utf8;
 use FindBin qw($Bin);
 use Test::More;
 use File::Slurp qw(read_file);
+use IPC::Open2 qw(open2);
+use JSON::PP ();
 
 my $root = "$Bin/..";
 
@@ -61,6 +63,76 @@ my $provision = slurp('scripts/gou_provision.pl');
 like($provision, qr/--scan/, 'the provisioning script can scan');
 like($provision, qr/--flash/, 'the provisioning script can flash');
 like($provision, qr/30_?535_?680/, 'the script knows the eMMC sector count');
+
+# The board's network is typed on the page before New, and the password travels
+# on the child's stdin: sudo keeps argv readable in `ps` to every user.
+my $body = slurp('templates/controllers/body.html.ep');
+like($body, qr/id="controllers_wifi_ssid"/, 'the New section asks for the network name');
+like($body, qr/id="controllers_wifi_psk"[^>]*type="password"|type="password"[^>]*id="controllers_wifi_psk"/,
+	'and the password in a password field');
+like($body, qr/for="controllers_wifi_ssid"/, 'the network name has a label');
+like($body, qr/for="controllers_wifi_psk"/, 'the password has a label');
+
+like($controller, qr/'--wifi-ssid', substr\(\$ssid, 0, 64\)/, 'the flash passes the network name');
+like($controller, qr/push \@args, '--wifi-psk-stdin'/, 'the password is named on stdin, not argv');
+unlike($controller, qr/'--wifi-psk',/, 'the password never reaches the argv');
+like($controller, qr/&_controller_gou_run\(1, \$psk_stdin, \@args\)/, 'the password is handed to the runner');
+like($controller, qr/\$params\{'stdin'\} = \$stdin if defined \$stdin/, 'and written to the child stdin');
+
+like($provision, qr/'wifi-psk-stdin'\s*=>\s*\\\$opt\{'wifi_psk_stdin'\}/, 'the provisioner accepts the password on stdin');
+like($provision, qr/my \$piped = <STDIN>;/, 'and reads it');
+like($provision, qr/give both the WiFi name and its password/, 'a half-given network is refused');
+
+# The password arrives on the pipe, and the same shapes the page refuses are
+# refused here before a board is looked for, so a typo is answered at once.
+sub run_provision {
+	my ($stdin, @args) = @_;
+	my $pid = open2(my $out, my $in, $^X, "$root/scripts/gou_provision.pl", @args);
+	print {$in} $stdin if defined $stdin;
+	close $in;
+	my $said = do { local $/; <$out> };
+	close $out;
+	waitpid($pid, 0);
+	my $answer = eval { JSON::PP::decode_json($said) };
+	return (($answer || {}), $? >> 8);
+}
+
+{
+	my ($answer, $code) = run_provision("short\n", '--flash', '--wifi-ssid', 'cafe', '--wifi-psk-stdin');
+	is($answer->{'error'}, 'invalid WiFi password', 'a short password on stdin is refused');
+	is($code, 4, 'with the option exit code');
+}
+{
+	my ($answer, $code) = run_provision(undef, '--flash', '--wifi-ssid', 'cafe');
+	is($answer->{'error'}, 'give both the WiFi name and its password', 'a name without a password is refused');
+	is($code, 4, 'with the option exit code');
+}
+{
+	my ($answer) = run_provision("longenough\n", '--flash', '--wifi-ssid', 'cafe', '--wifi-psk', 'longenough', '--wifi-psk-stdin');
+	is($answer->{'error'}, 'give one of --wifi-psk and --wifi-psk-stdin', 'the two ways of naming the password are not mixed');
+}
+
+my $controllers_js = slurp('public/js/manager/controllers.js');
+like($controllers_js, qr/'wifi-ssid': network\.ssid/, 'the flash sends the network name');
+like($controllers_js, qr/'wifi-psk': network\.psk/, 'the flash sends the password');
+like($controllers_js, qr/function controllerNewNetwork\(\)/, 'the page reads the two fields itself');
+like($controllers_js, qr/if \(!ssid && !psk\) \{ return \{ ssid: '', psk: '' \}; \}/, 'blank keeps the board off the network');
+like($controllers_js, qr/if \(!ssid\) \{/, 'a name without a password is refused');
+like($controllers_js, qr/if \(!psk\) \{/, 'a password without a name is refused');
+like($controllers_js, qr/\$\('#controllers_wifi_psk'\)\.val\(''\)/, 'the password is cleared once the board is flashed');
+like($controllers_js, qr/var controllerNewFields = \{ wifi: 'Wi-Fi network'/, 'the filled-in list names the network in words');
+
+# The storage walkthrough steps over the same answer Save produces, and the
+# route now says which of the eight folders are actually on the card.
+like($controller, qr/present => \(-d \(\$dir \. '\/' \. \$_\)\) \? 1 : 0/, 'the storage answer says which folders are on the card');
+like($body, qr/id="controllers_walkthrough_button"/, 'the Storage section offers the walkthrough');
+like($body, qr/id="controllers_walkthrough"/, 'and a panel for its steps');
+like($controllers_js, qr/function controllerWalkthroughSteps\(data\)/, 'the walkthrough has its steps');
+like($controllers_js, qr/done: made >= controllerFolderNames\.length/, 'it knows when the eight folders are made');
+like($controllers_js, qr/done: dir\.length > 0/, 'and when the folder has been typed');
+like($controllers_js, qr/act: 'save'/, 'a step presses Save');
+like($controllers_js, qr/\.attr\('data-act', step\.act\)/, 'each step button names what it presses');
+like($controllers_js, qr/controllerWalkthroughDraw\(data\);/, 'a storage answer redraws the walkthrough');
 
 my $names = slurp('lib/JawnOS/Routes.pm');
 like($names, qr/\bmanager_controllers\b/, 'the module is registered in @NAMES');

@@ -9,7 +9,8 @@
 	#controllers_app .controller_note { margin: 0 0 10px; opacity: .78; font-size: 13px; line-height: 1.4; }
 	#controllers_app .controller_card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 10px; margin: 0 0 16px; }
 	#controllers_app .controller_section { max-width: 720px; }
-	#controllers_app input[type="text"] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; min-width: 12em; }
+	#controllers_app input[type="text"], #controllers_app input[type="password"] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; min-width: 12em; }
+	#controllers_app .controller_new_network { margin: 0 0 10px; }
 	#controllers_app button { font: inherit; color: var(--ink); padding: 4px 12px; margin: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
 	#controllers_app button:hover { filter: brightness(1.08); }
 	#controllers_app button[disabled] { opacity: .55; }
@@ -34,6 +35,12 @@
 	#controllers_app .controller_check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 	#controllers_app .controller_check input { margin: 0; }
 	#controllers_app .controller_group_title { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; margin: 10px 0 2px; }
+	#controllers_app .controller_walkthrough { margin: 0 0 8px; padding-left: 22px; font-size: 13px; line-height: 1.45; }
+	#controllers_app .controller_walkthrough_step { padding: 3px 0; }
+	#controllers_app .controller_walkthrough_step.is-done { opacity: .5; }
+	#controllers_app .controller_walkthrough_step.is-next { font-weight: 600; }
+	#controllers_app .controller_walkthrough_act { margin-left: 8px; font-weight: 400; }
+	#controllers_app .controller_walkthrough .controller_note { margin: 8px 0 0; }
 	#controllers_app .controller_folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 16px; }
 	#controllers_app .controller_folder { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 3px 0; border-bottom: 1px solid var(--line); }
 	#controllers_app .controller_folder_state { opacity: .7; white-space: nowrap; }
