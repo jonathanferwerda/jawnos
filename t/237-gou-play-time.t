@@ -9,7 +9,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
-use Mojo::JSON qw(encode_json);
+use Mojo::JSON qw(encode_json decode_json);
 use JawnOSTest;
 
 # Force the lazy domain modules the tick reaches before overriding their subs.
@@ -133,6 +133,14 @@ sub sessions {
 	is( $browsed->[0]->{'project'}, 'Solitaire', 'named for its game' );
 	is( $browsed->[0]->{'source'}, 'browser_game', 'and marked as the browser’s' );
 	my $browser_uuid = $browsed->[0]->{'uuid'};
+
+	my $browser_row = &subs::db_query('select * from appointments where uuid = ?', $browser_uuid)->hash;
+	my $browser_options = eval { decode_json($browser_row->{'options'}) } || [];
+	is( scalar @{$browser_options}, 1, 'the game is an option of the appointment' );
+	is( $browser_options->[0]->{'name'}, 'Solitaire', 'named Solitaire' );
+	my $browser_catalog = &subs::db_select('option', undef, { app => 'games', name => 'Solitaire' })->hashes->[0];
+	ok( $browser_catalog->{'uuid'}, 'with a row in the model/option table' );
+	is( $browser_catalog->{'def'}, 'off', 'and it is not a default option' );
 
 	# a quiet game pauses at the last touch
 	$NOW = $b1 + 50_000;

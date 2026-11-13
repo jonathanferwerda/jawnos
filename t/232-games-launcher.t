@@ -1,4 +1,4 @@
-# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js perl/help/topics_people.pl public/css/manager.css
+# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js templates/apps/transaction/options.html.ep perl/help/topics_people.pl public/css/manager.css
 # covers:    The second launcher behind the Controller's Games tile, Twirl's
 #            clockwise and counter-clockwise turns, and the strip a full-screen
 #            app used to keep where its title bar had been.
@@ -52,6 +52,9 @@ like($cards_js, qr/jawnosGameSessionStart\('Blackjack'/, 'and Blackjack');
 my $twirl_js = read_file("$root/public/js/manager/twirl/01_twirl_game.js");
 like($twirl_js, qr/jawnosGameSessionStart\('Twirl'/, 'Twirl starts one too');
 like($twirl_js, qr/jawnosGameSessionPause\(\)/, 'and Escape pauses the play appointment too');
+
+my $options_template = read_file("$root/templates/apps/transaction/options.html.ep");
+like($options_template, qr/\$l->\{'app'\} eq 'games'/, 'a game option opens the Cards app');
 
 # --- the shelf ----------------------------------------------------------------
 my $page = read_file("$root/templates/apps/games.html.ep");

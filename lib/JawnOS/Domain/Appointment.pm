@@ -606,6 +606,47 @@ sub game_play_appointment_tick {
 # session is the Gou's shape: one Games row on this device, named by its game;
 # quiet for half a minute closes it at the last touch, a touch within five
 # minutes reopens the same row, and a longer gap starts a new one.
+# The game is an option of the Games appointment, not a second session: the
+# catalog row is what the details view lists, and the parent's options JSON is
+# what marks it selected. The row is made on first play and is never a default,
+# so a new Games appointment does not collect every game it could have been.
+sub browser_game_option {
+	my ($game, $now) = @_;
+	my $row = &db_select('option', undef, { app => 'games', name => $game })->hashes->[0];
+	return $row if $row && ($row->{'uuid'} // '') ne '';
+	$now ||= &rightNow();
+	$row = {
+		app => 'games',
+		name => $game,
+		uuid => &random_string_creator(40),
+		timestamp => $now,
+		server_time => $now,
+		def => 'off',
+		quantity => 1,
+		unit => 'games',
+		save_app => '',
+		description => $game,
+	};
+	&db_insert('option', $row);
+	return $row;
+}
+
+sub browser_game_option_attach {
+	my ($uuid, $game, $at, $now) = @_;
+	return unless ($uuid // '') ne '';
+	my $option = &browser_game_option($game, $now);
+	return unless $option && ($option->{'uuid'} // '') ne '';
+	&source_model_option_add($uuid, 'option', {
+		uuid => $option->{'uuid'},
+		name => $game,
+		timestamp => $at,
+		quantity => 1,
+		unit => 'games',
+		delay_start => $option->{'delay_start'},
+		delay_stop => $option->{'delay_stop'},
+	});
+}
+
 sub browser_game_play {
 	my ($opts) = @_;
 	$opts ||= {};
@@ -674,6 +715,7 @@ sub browser_game_play {
 					}, { uuid => $row->{'uuid'}, app => 'games' });
 					&subs::cache_delete($marker_key);
 					&intelligent_automation_toggle({ appt_uuid => $row->{'uuid'}, app => 'games', 'state' => 'on', timestamp => $now });
+					&browser_game_option_attach($row->{'uuid'}, $game, $at, $now);
 					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', 'games', $row->{'uuid'})});
 					return { ok => 1, state => 'resumed' };
 				}
@@ -697,6 +739,7 @@ sub browser_game_play {
 		pos => $settings->{'pos'},
 	};
 	&db_insert('appointments', $row);
+	&browser_game_option_attach($uuid, $game, $new_start, $now);
 	&intelligent_automation_toggle({ appt_uuid => $uuid, app => 'games', 'state' => 'on', timestamp => $new_start });
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', 'games', $uuid)});
 	return { ok => 1, state => 'started' };
