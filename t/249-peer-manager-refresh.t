@@ -18,7 +18,7 @@ use JawnOSTest;
 # The domain layer is lazy: load the real definitions before any local stub.
 subs::preload(qw(network_interface_reporter peer_literal_addresses peer_probe_candidates
 	peer_literal_manager peer_live_manager peer_manager_host peer_manager_url
-	peer_presence_probe peer_manager_remember peer_on_our_lan db_update));
+	peer_presence_probe peer_manager_remember peer_on_our_lan remote_relay_routes db_update));
 
 # Run one assertion inside a known local network. This is the only input that
 # decides whether a peer's LAN literal is a route or a leftover.
@@ -74,6 +74,15 @@ my $stored_lan = { %{$laptop}, manager => 'https://192.168.1.123:45545' };
 });
 is($live, 'https://100.64.0.3:45545',
 	'a stored LAN literal is replaced by the tailnet on another network');
+
+# The relay keeps the chosen route first and the other addresses as fallbacks,
+# so a stored route that is now a blackhole does not make the peer unreachable.
+&as_machine_at('10.20.0.10', sub {
+	my @routes = subs::remote_relay_routes($stored_lan);
+	is($routes[0], 'https://192.168.1.123:45545', 'the stored route is tried first');
+	ok(scalar(grep { $_ eq 'https://100.64.0.3:45545' } @routes),
+		'and the tailnet is a fallback when it does not answer');
+});
 
 # A tunnel row's loopback belongs to the hub and is kept exactly as stored.
 is(subs::peer_live_manager({ %{$laptop}, tunnel => 'yes' }),

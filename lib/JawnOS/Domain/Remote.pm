@@ -82,19 +82,32 @@ sub remote_relay_request($c, $extra_params = {}) {
 						$params->{'remoted'} = 'yes';
 
 					}
-					if ($extra_params->{'type'} eq 'post') {
-						my $url = $rm->{'manager'} . $extra_params->{'url'};
-						my $res = $rm->{'ua'}->post($url => form => $params)->result;
-					} else {
-						my $params = Mojo::Parameters->new(%{$params});
-						$params = $params->to_string;
-						my $url = $rm->{'manager'} . $extra_params->{'url'} . '?' . $params;
-						$res = $rm->{'ua'}->get($url);# => { Accept => '*/*' } => 'Content!');
+					# The stored route can be an address this machine cannot reach (a
+					# peer's LAN after a move, an old container's ip). A dead first
+					# address is a blackhole, not a verdict on the peer: try its other
+					# known addresses and remember the route that answered.
+					my @routes = &remote_relay_routes($rm);
+					my ($answered, $attempt) = ('', 0);
+					my $connect = eval { $rm->{'ua'}->connect_timeout };
+					foreach my $route ( @routes ) {
+						$attempt++;
+						eval { $rm->{'ua'}->connect_timeout(4) } if $attempt > 1;
+						if (($extra_params->{'type'} || '') eq 'post') {
+							my $url = $route . $extra_params->{'url'};
+							$res = eval { $rm->{'ua'}->post($url => form => $params)->result };
+						} else {
+							my $query = Mojo::Parameters->new(%{$params})->to_string;
+							my $url = $route . $extra_params->{'url'} . '?' . $query;
+							$res = eval { $rm->{'ua'}->get($url)->result };
+						}
+						next unless $res && eval { $res->is_success };
+						$answered = $route;
+						last;
 					}
-
-
-
-
+					eval { $rm->{'ua'}->connect_timeout($connect) } if defined $connect;
+					if (length $answered && $answered ne ($rm->{'manager'} || '')) {
+						eval { &subs::peer_manager_remember($rm, $answered) };
+					}
 				}
 				elsif ($method eq 'post') {
 					my $params = $c->req->body_params->to_hash;
@@ -444,6 +457,26 @@ sub peer_secure_url {
 		$secure =~ s{^(?:https?|wss?)://(\[[^\]]+\]|[^/:]+)(?::\d+)?}{$base . '://' . $1 . ':' . $peer}e;
 	}
 	return ($secure, $verified_port ? 1 : 0);
+}
+
+# The routes one peer may be reached on for a manual relay: the manager the
+# resolver chose, then every other address the peer has advertised. A stored
+# route outlives the network it was learned on, so the first address can be a
+# blackhole; trying the tailnet, the LAN or the name after it is what makes a
+# relay survive a move (or a rebuilt machine with a new container ip).
+sub remote_relay_routes {
+	my ($rm) = @_;
+	return () unless ref $rm eq 'HASH';
+	my @routes = ($rm->{'manager'});
+	my %seen = map { (defined $_ ? $_ : '') => 1 } @routes;
+	my $candidates = eval { &subs::peer_probe_candidates($rm) } || [];
+	foreach my $candidate ( @{$candidates} ) {
+		next unless ref $candidate eq 'HASH';
+		my $url = eval { &subs::peer_manager_url($rm, $candidate->{'host'}, $candidate->{'port'}) };
+		next unless defined $url && length $url && !$seen{$url}++;
+		push @routes, $url;
+	}
+	return @routes;
 }
 
 sub remote_useragent_maker($data) {
