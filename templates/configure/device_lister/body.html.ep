@@ -134,6 +134,7 @@
 			data-ask="<%= &subs::ui('Ask each time') %>"
 			data-system-default="<%= &subs::ui('system default') %>"
 			data-queues="<%= &subs::ui('CUPS queues') %>"
+			data-network="<%= &subs::ui('on the network') %>"
 			data-none="<%= &subs::ui('No CUPS printers yet. Press Find printers while the printer is on the network.') %>"
 			data-unavailable="<%= &subs::ui('Printers unavailable.') %>">
 			<div class="device_head">

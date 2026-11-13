@@ -128,6 +128,9 @@ var jawnosConsoleCommands = {
 	marketScanArrived: function () {
 		if (typeof marketScanArrived === 'function') { marketScanArrived(); }
 	},
+	marketReceiptAdf: function (a) {
+		if (typeof marketReceiptAdf === 'function') { marketReceiptAdf(a[0] || {}); }
+	},
 	jawnosThemeBundleApply: function (a) {
 		if (typeof jawnosThemeBundleApply === 'function') { jawnosThemeBundleApply(a[0], a[1]); }
 	},

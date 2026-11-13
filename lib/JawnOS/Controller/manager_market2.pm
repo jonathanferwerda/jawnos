@@ -311,5 +311,37 @@ sub action_4913 {
 	$c->res->headers->cache_control('private, max-age=60');
 	$c->render(data => $data);
 }
+# One printer notice, one scan. Every open Market window hears the loaded edge;
+# the first to claim this scan id runs it and the rest stand down, so two
+# windows do not pull the same paper twice. A claim is a file created O_EXCL
+# under the house's temp dir, so two workers cannot both claim one edge.
+# POST /manager/market/receipt/adf/claim
+sub action_52310 {
+	my $c = shift;
+	my $scan_id = $c->param('scan_id') || '';
+	$scan_id =~ s/[^A-Za-z0-9]//g;
+	$scan_id = substr($scan_id, 0, 64);
+	return $c->render(json => { go => 0 }) unless length $scan_id;
+	require JawnOS::Platform::Paths;
+	my $dir = JawnOS::Platform::Paths::tmp_dir() . '/jawn_market_adf';
+	eval { mkdir $dir unless -d $dir; 1 };
+	my $file = $dir . '/' . $scan_id . '.claim';
+	my $go = 0;
+	my $fh;
+	if (sysopen($fh, $file, O_CREAT | O_EXCL | O_WRONLY, 0600)) {
+		print $fh $$;
+		close $fh;
+		$go = 1;
+		if (opendir(my $dh, $dir)) {
+			foreach my $f (grep { /\.claim\z/ } readdir($dh)) {
+				my $p = $dir . '/' . $f;
+				my $age = -M $p;
+				unlink $p if defined $age && $age > 1;
+			}
+			closedir($dh);
+		}
+	}
+	$c->render(json => { go => $go });
+}
 
 1;

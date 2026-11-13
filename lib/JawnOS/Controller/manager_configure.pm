@@ -301,12 +301,20 @@ sub action_52020 {
 		printers => $printers,
 		default => $default,
 		discovered => $queues_only ? [] : &subs::cups_discovered_printers(),
+		# The printers the house can already see on a network, read from the
+		# stored device listing: the select offers them before a queue exists,
+		# and choosing one adds it (printer_default_network). This is a table
+		# read, not a scan, so the card still draws at once.
+		network_printers => &subs::printer_network_printers(),
 	});
 }
 
 # POST /manager/configure/printer_default
 sub action_52021 {
 	my $c = shift;
+	my $ip = $c->param('printer_ip') || '';
+	return $c->render(json => &subs::printer_default_network($ip, $c->param('printer_name')))
+		if length $ip;
 	$c->render(json => &subs::printer_default_set($c->param('printer')));
 }
 

@@ -1,6 +1,7 @@
-# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/store.js public/js/store/register.js public/css/store.css
+# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Platform/Mdns.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm lib/JawnOS/Routes/manager_market2.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/websocket/00_console_router.js public/js/store.js public/js/store/register.js public/css/store.css perl/jobs.pl perl/President.pl
 # covers:    CUPS queue discovery (lpstat), network printer discovery (ippfind),
-#            adding a queue (lpadmin), the print/PDF path, and the Dev/Store wiring.
+#            the ADF status read, adding a queue (lpadmin), the print/PDF path,
+#            the Default printer's network choices, and the Dev/Market wiring.
 
 use strict;
 use warnings;
@@ -13,6 +14,15 @@ use Test::More;
 use File::Slurp qw(read_file);
 use File::Temp qw(tempdir);
 use RepoSource;
+use Mojo::JSON qw(encode_json);
+
+# db_select returns a Mojo::Collection in the app, and the printer listing only
+# asks it for ->hashes.
+{
+	package FakeRows;
+	sub new    { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
+	sub hashes { return $_[0]->{'rows'} }
+}
 
 my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Printer2.pm";
@@ -185,6 +195,119 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 		'this machine and the incomplete row are not probed');
 }
 
+# --- the Default printer select ---------------------------------------------
+# A printer the house can already see is choosable before CUPS has a queue for
+# it. The listing comes from the stored device rows, one per address; choosing
+# it adds the queue and stores it as the default.
+{
+	no warnings 'redefine';
+	local *subs::db_select = sub {
+		return FakeRows->new([
+			{ address => encode_json({ wlo1 => {
+				ip => '192.168.1.123',
+				neigh => [
+					{ ip => '192.168.1.50', purpose => 'printer', name => 'HP OfficeJet 3830' },
+					{ ip => '192.168.1.50', purpose => 'printer', name => 'HP OfficeJet 3830' },
+					{ ip => '192.168.1.60', purpose => 'printer', model => 'Laser' },
+					{ ip => '192.168.1.70', purpose => 'hmmm',    name => 'not a printer' },
+				],
+			} }) },
+		]);
+	};
+	my $nets = subs::printer_network_printers();
+	is_deeply([ map { [ $_->{'ip'}, $_->{'name'} ] } @{$nets} ],
+		[ [ '192.168.1.50', 'HP OfficeJet 3830' ], [ '192.168.1.60', 'Laser' ] ],
+		'the stored printer rows are offered once per address');
+}
+{
+	no warnings 'redefine';
+	local $subs::cups_printers_memo = undef;
+	local *subs::cups_printers = sub { return [ { name => 'PDF', uri => 'ipp://127.0.0.1/ipp/print' } ] };
+	local *JawnOS::Platform::Print::tool = sub { return '/usr/bin/lpadmin' if $_[0] eq 'lpadmin'; return '' };
+	my @added;
+	local *JawnOS::Platform::Print::add_queue = sub { push @added, [ @_ ]; return 0 };
+	my @stored;
+	local *subs::setting_setter = sub { push @stored, $_[0]; return 1 };
+	local *subs::signatorial_designer = sub { return 'sig' };
+	local *subs::rightNow = sub { return 1234567890000 };
+	my $done = subs::printer_default_network('192.168.1.50', 'HP OfficeJet 3830');
+	ok($done->{'ok'}, 'a network printer is added and chosen');
+	is($done->{'default'}, 'hp-officejet-3830', 'the queue is named after the printer');
+	is_deeply($added[0], [ 'hp-officejet-3830', 'ipp://192.168.1.50:631/ipp/print' ],
+		'the queue add uses the printer address');
+	is($stored[-1]{'value'}, 'hp-officejet-3830', 'and the default is stored');
+}
+{
+	no warnings 'redefine';
+	local $subs::cups_printers_memo = undef;
+	local *subs::cups_printers = sub {
+		return [ { name => 'Officejet', uri => 'ipp://192.168.1.50:631/ipp/print' } ];
+	};
+	local *JawnOS::Platform::Print::add_queue = sub { die 'an existing queue must be reused' };
+	local *subs::setting_setter = sub { return 1 };
+	local *subs::signatorial_designer = sub { return 'sig' };
+	local *subs::rightNow = sub { return 1234567890000 };
+	my $reuse = subs::printer_default_network('192.168.1.50', 'HP');
+	is($reuse->{'default'}, 'Officejet', 'an existing queue for the address is reused');
+}
+
+# --- the document feeder ----------------------------------------------------
+# The machine with the scanner watches its printer's feeder. A loaded edge is
+# one notice and one Market command; paper left in the tray is announced once,
+# and removing it then loading the next is a new edge. A machine with no ADF
+# feed, and a server, stay quiet.
+{
+	no warnings 'redefine';
+	my $state = 'empty';
+	my $last = '';
+	my @notes;
+	my @frames;
+	local *subs::device_setter = sub { return 'computer' };
+	local *subs::config_reader = sub {
+		return { scanners => [ {
+			address => 'hpaio:/net/officejet_3830_series?ip=192.168.1.50',
+			feeds => [ 'adf', 'flatbed' ],
+		} ] };
+	};
+	local *subs::device_lister = sub {
+		return { ip => '192.168.1.50', name => 'HP OfficeJet 3830' };
+	};
+	local *JawnOS::Platform::Print::adf_state = sub { return $state };
+	local *subs::cache_get = sub { return $last };
+	local *subs::cache_set = sub { $last = $_[1]; return 1 };
+	local *subs::random_string_creator = sub { return 'uuid' };
+	local *subs::rightNow = sub { return 1234567890000 };
+	local *subs::log_writer = sub { return 1 };
+	local *subs::notification_sender = sub { push @notes, $_[0]; return 1 };
+	local *Websocket::send = sub { push @frames, $_[1]; return 1 };
+	local *Websocket::console_command = sub { return { cmd => $_[0], args => [ @_[1..$#_] ] } };
+
+	is(subs::adf_receipt_watch(), 0, 'an empty feeder has nothing to announce');
+	is($last, 'empty', 'and the state is remembered');
+	$state = 'loaded';
+	is(subs::adf_receipt_watch(), 1, 'a loaded feeder is the edge');
+	is(scalar @notes, 1, 'one notice is sent');
+	is($notes[0]{'app'}, 'market', 'for the Market app');
+	is(scalar @frames, 1, 'and one command to the Market windows');
+	is($frames[0]{'console'}{'cmd'}, 'marketReceiptAdf', 'asking a window to take the paper');
+	is(subs::adf_receipt_watch(), 0, 'the same paper is not announced twice');
+	is(scalar @notes, 1, 'with no second notice');
+	$state = 'empty';
+	is(subs::adf_receipt_watch(), 0, 'removing the paper is not an edge');
+	$state = 'loaded';
+	is(subs::adf_receipt_watch(), 1, 'loading the next one is');
+	is(scalar @notes, 2, 'with a fresh notice');
+
+	local *subs::device_setter = sub { return 'server' };
+	is(subs::adf_receipt_watch(), 0, 'a server with no scanner stays quiet');
+
+	local *subs::device_setter = sub { return 'computer' };
+	local *subs::config_reader = sub {
+		return { scanners => [ { address => 'hpaio:/net/x?ip=192.168.1.50', feeds => [ 'flatbed' ] } ] };
+	};
+	is(subs::adf_receipt_watch(), 0, 'a scanner with no ADF feed stays quiet');
+}
+
 # A CUPS server that does not answer must not hold the Dev panel open: lpstat
 # talks to cupsd and waits out its own connect timeout when it cannot. The read
 # is bounded, so the panel draws with no queues instead of stalling.
@@ -272,6 +395,7 @@ like($configure_routes, qr{/manager/configure/printer_default}, 'the default-pri
 my $configure = read_file("$root/lib/JawnOS/Controller/manager_configure.pm");
 like($configure, qr/sub action_52022\b/, 'the sync action exists');
 like($configure, qr/printer_default_get/, 'the listing reads the default');
+like($configure, qr/printer_default_network/, 'a network choice adds its queue');
 my ($dev_action) = $configure =~ /(sub action_7789\b.*?\n\})/s;
 ok($dev_action, 'the Dev action is found');
 unlike($dev_action, qr/cups_printers|printer_default_get\b/,
@@ -282,19 +406,44 @@ my ($list_action) = $configure =~ /(sub action_52020\b.*?\n\})/s;
 ok($list_action, 'the printer-list action is found');
 like($list_action, qr/queues_only/,
 	'the card filler can skip the network sweep');
+like($list_action, qr/network_printers/,
+	'and lists the printers the house can already see');
 my $dev = read_file("$root/templates/configure/device_lister/body.html.ep");
 like($dev, qr/id="default_printer_select"/, 'the Dev panel has the default printer select');
 like($dev, qr/id="printer_queues_line"/, 'and a line the queue list fills');
 like($dev, qr/data-none="/, 'the empty message is carried for the filler');
+like($dev, qr/data-network="/, 'and the label for a printer on the network');
 like($dev, qr/class="printer_sync"/, 'and a Find printers button');
 my $dev_js = read_file("$root/public/js/manager/configure/01_update_controls.js");
 like($dev_js, qr/function printerQueuesLoad\(scope\)/,
 	'the printer card fills itself');
 like($dev_js, qr/queues_only: 1/, 'without the network sweep');
+like($dev_js, qr/network_printers/, 'the fill offers the printers the house can see');
+like($dev_js, qr/net:/, 'as a net: address the change can add');
 like($dev_js, qr/printerQueuesLoad\(\$\('#device_list'\)\)/,
 	'the Dev draw starts the fill');
 like($dev_js, qr/panel\.scrollTop \+= grew/,
 	'growth above the reader is given back to the scroll');
+my $dev_devices_js = read_file("$root/public/js/manager/configure/02_remote_devices.js");
+like($dev_devices_js, qr/printer_ip/, 'choosing a network printer posts its address');
+like($dev_devices_js, qr/printerQueuesLoad\(\$\('#device_list'\)\)/,
+	'and redraws the queue list after adding it');
+
+# The ADF watch runs on the machine with the scanner and tells an open Market
+# window; one claim per edge keeps two windows from pulling the same paper.
+like(read_file("$root/perl/jobs.pl"), qr/sub job_adf_receipt_watch\b/,
+	'the feeder watch has a resident job');
+like(read_file("$root/perl/President.pl"), qr/job_adf_receipt_watch/,
+	'and the master starts it');
+my $market2_routes = read_file("$root/lib/JawnOS/Routes/manager_market2.pm");
+like($market2_routes, qr{/manager/market/receipt/adf/claim}, 'the ADF claim route exists');
+my $market2 = read_file("$root/lib/JawnOS/Controller/manager_market2.pm");
+like($market2, qr/sub action_52310\b/, 'with its action');
+my $receipt_js = read_file("$root/public/js/manager/market/01_tabs_and_receipts.js");
+like($receipt_js, qr/window\.marketReceiptAdf\s*=/, 'the Market window takes a feeder notice');
+like($receipt_js, qr{/manager/market/receipt/adf/claim}, 'through the one-claim route');
+like(read_file("$root/public/js/manager/websocket/00_console_router.js"), qr/marketReceiptAdf/,
+	'the console router dispatches it');
 
 my $store_routes = read_file("$root/lib/JawnOS/Routes/store_misc.pm");
 like($store_routes, qr{/store/print/printers}, 'the Store printer list route exists');

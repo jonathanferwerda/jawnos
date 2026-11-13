@@ -501,16 +501,30 @@ $(document).on('click', '.neighbour_filepicker', function() {
 // ---- printers --------------------------------------------------------------
 // The Dev panel lists this machine's CUPS queues. Finding printers is explicit:
 // the button runs ippfind and adds the missing queues, so a printer that is off
-// never slows the rest of the panel. The Store reads the same default.
+// never slows the rest of the panel. The Store reads the same default. A printer
+// the house already sees on a network is offered too; choosing it adds its queue
+// first, so the person never has to know the address or press Find printers.
 $(document).on('change', '.default_printer_select', function() {
-	var printer = $(this).val();
+	var select = $(this);
+	var printer = select.val() || '';
+	var network = printer.indexOf('net:') === 0;
+	var data = { timestamp: Date.now() };
+	if (network) {
+		data.printer_ip = printer.slice(4);
+		data.printer_name = select.find('option:selected').attr('data-name') || '';
+	}
+	else { data.printer = printer; }
 	$.ajax({
 		url: '/manager/configure/printer_default',
 		type: 'POST',
-		data: { printer: printer, timestamp: Date.now() },
+		data: data,
 		dataType: 'json',
 		success: function(response) {
-			$('#printer_status').text(response && response.ok ? 'Saved.' : ((response && response.error) || 'Could not save.'));
+			var ok = !!(response && response.ok);
+			$('#printer_status').text(ok ? 'Saved.' : ((response && response.error) || 'Could not save.'));
+			// Adding a queue changes the list: redraw it so the queue appears and
+			// the select lands on the saved default.
+			if (ok && network) { printerQueuesLoad($('#device_list')); }
 		},
 		error: function() { $('#printer_status').text('Could not save.'); }
 	});

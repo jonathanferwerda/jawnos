@@ -537,6 +537,14 @@ sub manager_starter() {
 	# appears with its purpose and abilities without anyone pressing Scan.
 	&subs::subprocessor(\&jobs::job_device_mdns_sync, { name => 'device mdns sync' });
 
+	# A receipt dropped in the printer's feeder is the printer telling the house
+	# it has paper; the watcher reads the eSCL state and hands the edge to an open
+	# Market window. Only the machine with the scanner can pull the paper, so a
+	# server never runs this loop.
+	if ($device eq 'computer') {
+		&subs::subprocessor(\&jobs::job_adf_receipt_watch, { name => 'adf receipt watch' });
+	}
+
 	# Advertise this House machine on the LAN. An embedded device browses
 	# _jawnos-house._tcp when the homebase it was handed stops answering, so it
 	# can move to another computer/mobile/server that is actually up instead of

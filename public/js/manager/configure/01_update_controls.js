@@ -798,12 +798,14 @@ function printerQueuesLoad(scope) {
 	$.getJSON('/manager/configure/printer_list', { queues_only: 1 })
 		.done(function(r) {
 			var printers = (r && r.printers) || [];
+			var nets = (r && r.network_printers) || [];
 			// A person may have picked a queue while this was in flight: keep their
 			// choice, otherwise take the validated saved default.
 			var current = sel.val();
 			var keep = (current !== initial) ? current : ((r && typeof r.default === 'string') ? r.default : '');
 			var ask = card.attr('data-ask') || 'Ask each time';
 			var sysdef = card.attr('data-system-default') || 'system default';
+			var netlabel = card.attr('data-network') || 'on the network';
 			var found = false;
 			sel.empty().append($('<option value=""></option>').text(ask));
 			$.each(printers, function(i, p) {
@@ -812,12 +814,28 @@ function printerQueuesLoad(scope) {
 				sel.append($('<option></option>').attr('value', p.name).text(label));
 				if (keep && p.name === keep) { found = true; }
 			});
+			// A printer the house already sees is choosable before CUPS has a
+			// queue for it; choosing it adds the queue first.
+			$.each(nets, function(i, p) {
+				if (!p || !p.ip) { return; }
+				sel.append($('<option></option>')
+					.attr('value', 'net:' + p.ip)
+					.attr('data-name', p.name || '')
+					.text((p.name || p.ip) + ' \u00b7 ' + p.ip + ' (' + netlabel + ')'));
+			});
 			sel.val(found ? keep : '');
-			if (!printers.length) {
+			if (!printers.length && !nets.length) {
 				line.text(card.attr('data-none') || 'No CUPS printers yet.');
 			}
 			else {
-				line.text((card.attr('data-queues') || 'CUPS queues') + ': ' + $.map(printers, function(p) { return p.name; }).join(', '));
+				var bits = [];
+				if (printers.length) {
+					bits.push((card.attr('data-queues') || 'CUPS queues') + ': ' + $.map(printers, function(p) { return p.name; }).join(', '));
+				}
+				if (nets.length) {
+					bits.push(netlabel + ': ' + $.map(nets, function(p) { return p.name || p.ip; }).join(', '));
+				}
+				line.text(bits.join(' \u00b7 '));
 			}
 			printerQueuesSettle(card);
 		})

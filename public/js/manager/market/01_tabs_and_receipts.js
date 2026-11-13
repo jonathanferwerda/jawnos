@@ -34,10 +34,8 @@ $(document).on('click', '#market_receipt', function() { marketReceiptChooser(); 
 
 var marketScanCancelling = '';
 
-$(document).on('click', '.market_receipt_go', function() {
-	var feed = $(this).attr('feed');
-	if (!feed) { $('#market_receipt_file').trigger('click'); return; }
-	var scan_id = String(Date.now()) + String(Math.floor(Math.random() * 1000000));
+function marketReceiptScanFeed(feed, scan_id) {
+	scan_id = String(scan_id || (Date.now() + String(Math.floor(Math.random() * 1000000))));
 	marketScanCancelling = '';
 	marketReceiptPanel('<div style="padding:10px;font-size:20px;">Scanning... '
 		+ '<button id="market_scan_cancel" scan_id="' + scan_id + '">Cancel</button>'
@@ -51,7 +49,27 @@ $(document).on('click', '.market_receipt_go', function() {
 		if (marketScanCancelling === scan_id) { marketScanCancelling = ''; return; }
 		marketReceiptShow({ error: 'the scan could not be read' });
 	});
+}
+
+$(document).on('click', '.market_receipt_go', function() {
+	var feed = $(this).attr('feed');
+	if (!feed) { $('#market_receipt_file').trigger('click'); return; }
+	marketReceiptScanFeed(feed);
 });
+
+// The printer saw a receipt in its ADF. Any open Market window hears this; the
+// first to claim the scan id runs it and the rest stand down, so two windows do
+// not pull the same paper twice. The notice (notification_sender) is what opens
+// Market when it is not already up.
+window.marketReceiptAdf = function(opts) {
+	opts = opts || {};
+	if (!$('#market_body').length) { return; }
+	var scan_id = String(opts.scan_id || (Date.now() + String(Math.floor(Math.random() * 1000000))));
+	$.post('/manager/market/receipt/adf/claim', { scan_id: scan_id, timestamp: Date.now() }, function(r) {
+		if (!r || !r.go) { return; }
+		marketReceiptScanFeed('adf', scan_id);
+	}, 'json');
+};
 
 $(document).on('click', '#market_scan_cancel', function() {
 	var id = $(this).attr('scan_id') || '';

@@ -177,6 +177,20 @@ sub job_device_mdns_sync {
 	}
 }
 
+# The printer's document feeder, watched on the machine that owns the scanner.
+# A receipt dropped in is a loaded edge: the house gets one notice and an open
+# Market window claims the scan. The state is stored, so paper left in the tray
+# warns once; removing it and loading the next is a new edge.
+sub job_adf_receipt_watch {
+	my ($args) = @_;
+	sleep 25;
+	while (1) {
+		&subs::subprocessor_heartbeat();
+		eval { &subs::adf_receipt_watch(); };
+		sleep 15;
+	}
+}
+
 # Advertise this House machine on the LAN. An embedded device browses
 # _jawnos-house._tcp when the homebase it was handed stops answering, so it
 # can move to another computer/mobile/server that is actually up.
@@ -498,6 +512,7 @@ sub job_utility_functions {
 	'utility functions' => \&job_utility_functions,
 	'house levels' => \&job_house_levels,
 	'device mdns sync' => \&job_device_mdns_sync,
+	'adf receipt watch' => \&job_adf_receipt_watch,
 	'house advertise' => \&job_house_advertise,
 	'sshd watcher' => \&job_sshd_watcher,
 	'lan presence beacon' => \&job_lan_presence_beacon,

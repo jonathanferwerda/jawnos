@@ -12,6 +12,7 @@ sub routes {
 	[4883, 'get', '/manager/market/receipt/image', 'action_4883'],
 	[4898, 'post', '/manager/market/receipt/cancel', 'action_4898'],
 	[4913, 'get', '/manager/market/receipt_page', 'action_4913'],
+	[52310, 'post', '/manager/market/receipt/adf/claim', 'action_52310'],
 	);
 }
 

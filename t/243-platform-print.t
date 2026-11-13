@@ -17,7 +17,7 @@ use File::Temp qw(tempdir);
 
 use JawnOS::Platform::Print qw(
 	available unsupported printers discover probe add_queue send pdf_from_html ink
-	scan_argv parse_lpstat
+	adf_state scan_argv parse_lpstat
 );
 
 my $root = "$FindBin::Bin/..";
@@ -187,6 +187,47 @@ SH
 	close $closer;
 	is(probe('127.0.0.1', $closed_port), 0, 'a closed port is not');
 	is(probe('not-an-address'), 0, 'a non-address is refused');
+}
+
+# --- the ADF status ---------------------------------------------------------
+# A receipt waiting in the feeder is what the Market watcher looks for. eSCL
+# reports it at /eSCL/ScannerStatus; the status word is read without caring
+# which XML namespace the printer used, and a jam or an off printer stays
+# unknown so the watcher does not announce paper it cannot pull.
+my $adf_log = "$dir/adf.log";
+my $adf_loaded = fake_script('curl_loaded', <<"SH");
+printf '%s\\n' "\$@" >> '$adf_log'
+cat <<'XML'
+<?xml version="1.0"?><scan:ScannerStatus><pwg:AdfState>ScannerAdfLoaded</pwg:AdfState></scan:ScannerStatus>
+XML
+SH
+my $adf_empty = fake_script('curl_empty', <<'SH');
+cat <<'XML'
+<?xml version="1.0"?><pwg:ScannerStatus><pwg:AdfState>ScannerAdfEmpty</pwg:AdfState></pwg:ScannerStatus>
+XML
+SH
+my $adf_jam = fake_script('curl_jam', <<'SH');
+cat <<'XML'
+<?xml version="1.0"?><pwg:ScannerStatus><pwg:AdfState>ScannerAdfJam</pwg:AdfState></pwg:ScannerStatus>
+XML
+SH
+{
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::tool = sub { return $_[0] eq 'curl' ? $adf_loaded : ''; };
+	is(adf_state('192.168.1.50'), 'loaded', 'a page waiting in the ADF is loaded');
+	is_deeply(recorded($adf_log), [ '-s', '--max-time', '3', 'http://192.168.1.50/eSCL/ScannerStatus' ],
+		'the eSCL status endpoint is asked with a three-second bound');
+}
+{
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::tool = sub { return $_[0] eq 'curl' ? $adf_empty : ''; };
+	is(adf_state('192.168.1.50'), 'empty', 'an empty feeder is empty');
+}
+{
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::tool = sub { return $_[0] eq 'curl' ? $adf_jam : ''; };
+	is(adf_state('192.168.1.50'), 'unknown', 'a jam is not announced as paper');
+	is(adf_state('not-an-address'), 'unknown', 'a non-address has no feeder');
 }
 
 # --- lpadmin ----------------------------------------------------------------

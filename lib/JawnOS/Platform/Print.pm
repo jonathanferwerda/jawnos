@@ -22,6 +22,7 @@ use Exporter 'import';
 our @EXPORT_OK = qw(
 	available unsupported tool
 	printers discover probe add_queue send pdf_from_html ink scan_argv
+	adf_state
 	parse_lpstat
 );
 
@@ -213,6 +214,28 @@ sub probe {
 	return 0 unless $sock;
 	close $sock;
 	return 1;
+}
+
+# What the printer's document feeder says right now. eSCL (the AirScan status
+# endpoint every modern printer answers) reports ScannerAdfLoaded for a page
+# waiting and ScannerAdfEmpty when the tray is clear; the older /Scan/Status
+# path is tried when the eSCL one is silent. `unknown` covers a printer that is
+# off, asleep, or raw-only, so a caller can stay quiet instead of guessing.
+sub adf_state {
+	my ($ip) = @_;
+	return 'unknown' unless defined $ip && $ip =~ /^(?:\d{1,3}\.){3}\d{1,3}$/;
+	my $curl = tool('curl');
+	return 'unknown' unless defined $curl && length $curl;
+	foreach my $path ('/eSCL/ScannerStatus', '/Scan/Status') {
+		my ($out) = _run(_bounded(3, $curl, '-s', '--max-time', '3', 'http://' . $ip . $path));
+		next unless defined $out && length $out;
+		my ($state) = $out =~ m{<[^>]*AdfState[^>]*>\s*([^<\s]+)}s;
+		next unless defined $state && length $state;
+		return 'loaded' if $state eq 'ScannerAdfLoaded';
+		return 'empty'  if $state eq 'ScannerAdfEmpty' || $state eq 'ScannerAdfNoDocument';
+		return 'unknown';
+	}
+	return 'unknown';
 }
 
 # Add one queue with `lpadmin -m everywhere`, retried through `sudo -n` when

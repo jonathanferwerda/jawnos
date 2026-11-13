@@ -21,6 +21,7 @@ no warnings 'experimental::args_array_with_signatures';
 
 use File::Spec;
 use File::Temp ();
+use Mojo::JSON qw(decode_json);
 use JawnOS::Platform::Print ();
 
 our $device;
@@ -240,12 +241,8 @@ sub printer_default_get {
 	return $value;
 }
 
-sub printer_default_set($name) {
+sub printer_default_store($name) {
 	$name = '' unless defined $name;
-	if (length $name) {
-		my @known = map { $_->{'name'} } @{ &cups_printers() };
-		return { ok => 0, error => 'that printer is not a CUPS queue' } unless grep { $_ eq $name } @known;
-	}
 	&setting_setter({
 		app => 'misc',
 		setting => 'default_printer',
@@ -254,6 +251,150 @@ sub printer_default_set($name) {
 		timestamp => &rightNow(),
 	});
 	return { ok => 1, default => $name };
+}
+
+sub printer_default_set($name) {
+	$name = '' unless defined $name;
+	if (length $name) {
+		my @known = map { $_->{'name'} } @{ &cups_printers() };
+		return { ok => 0, error => 'that printer is not a CUPS queue' } unless grep { $_ eq $name } @known;
+	}
+	return &printer_default_store($name);
+}
+
+# A printer the house can see but CUPS does not queue yet: add it on the press
+# that chooses it, then make it the default. The queue name comes from the
+# printer's own name; an existing queue for that address is reused, so the list
+# can offer the same printer twice without making a second queue.
+sub printer_default_network($ip, $name) {
+	$ip = '' unless defined $ip;
+	return { ok => 0, error => 'no printer address' }
+		unless $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	my $known = &cups_printers();
+	foreach my $p (@{$known}) {
+		my ($host) = ($p->{'uri'} || '') =~ m{^ipps?://(\[[^\]]+\]|[^/:]+)}i;
+		next unless defined $host && lc($host) eq lc($ip);
+		return &printer_default_store($p->{'name'});
+	}
+	my $lpadmin = JawnOS::Platform::Print::tool('lpadmin');
+	return { ok => 0, error => 'lpadmin is not installed' }
+		unless defined $lpadmin && length $lpadmin;
+	my $queue = &printer_queue_clean($name || ('printer-' . $ip));
+	my %taken = map { $_->{'name'} => 1 } @{$known};
+	my $base = $queue;
+	my $n = 2;
+	while ($taken{$queue}) { $queue = $base . '-' . $n++; }
+	my ($used, $rc);
+	foreach my $uri ('ipp://' . $ip . ':631/ipp/print', 'ipps://' . $ip . ':631/ipp/print') {
+		$rc = JawnOS::Platform::Print::add_queue($queue, $uri);
+		if (defined $rc && $rc == 0) { $used = $uri; last; }
+	}
+	return { ok => 0, error => 'the printer did not accept a queue' } unless $used;
+	$cups_printers_memo = undef;
+	return &printer_default_store($queue);
+}
+
+# Printers the house can already see on a network, from the stored device
+# listing. The Default printer select offers these beside the CUPS queues, so a
+# printer found by Scan (or advertised by mDNS) is choosable before a queue
+# exists; choosing it adds one. A read of `devices`, never a scan.
+sub printer_network_printers {
+	my $devices = &db_select('devices')->hashes;
+	my (%seen, @out);
+	foreach my $d (@{ $devices || [] }) {
+		my $address = eval { decode_json($d->{'address'} || '{}') } || {};
+		next unless ref $address eq 'HASH';
+		foreach my $nic (keys %{$address}) {
+			foreach my $n (@{ $address->{$nic}->{'neigh'} || [] }) {
+				next unless ref $n eq 'HASH';
+				next unless ($n->{'purpose'} || '') eq 'printer';
+				my $ip = $n->{'ip'} || $n->{'ip_address'} || '';
+				next unless $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+				next if $seen{$ip}++;
+				push @out, {
+					ip => $ip,
+					name => $n->{'name'} || $n->{'model'} || ('Printer ' . $ip),
+				};
+			}
+		}
+	}
+	return [ sort { lc($a->{'name'}) cmp lc($b->{'name'}) || $a->{'ip'} cmp $b->{'ip'} } @out ];
+}
+
+# ---- the document feeder ---------------------------------------------------
+# The scanner this machine owns, when it advertises an ADF. Watching the feeder
+# is only useful on the machine that can actually pull the paper; a server or a
+# machine with no scanner stays quiet.
+sub adf_scanner {
+	my $config = &config_reader() || {};
+	my $scanners = $config->{'scanners'};
+	my $scanner = ref $scanners eq 'ARRAY' ? $scanners->[0] : undef;
+	return {} unless $scanner && ref $scanner eq 'HASH';
+	return {} unless grep { lc($_) eq 'adf' } @{ $scanner->{'feeds'} || [] };
+	return $scanner;
+}
+
+# The printer behind the scanner. The hpaio address carries its IP; a scanner
+# configured another way falls back to the printer the device listing knows.
+sub adf_printer_ip {
+	my $scanner = &adf_scanner();
+	my $address = $scanner->{'address'} || '';
+	my ($ip) = $address =~ /(?:^|[^0-9])(\d{1,3}(?:\.\d{1,3}){3})(?:[^0-9]|$)/;
+	return $ip if $ip;
+	my $printer = &device_lister(&rightNow(), 'printer');
+	$ip = ref $printer eq 'HASH' ? ($printer->{'ip'} || '') : '';
+	return $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/ ? $ip : '';
+}
+
+# One pass over the feeder. A receipt dropped in is a loaded edge: the house
+# gets one notice (pressing it opens Market) and any open Market window is told
+# to take the paper. The state is kept, so paper left in the tray warns once;
+# removing it and loading the next is a new edge.
+sub adf_receipt_watch {
+	return 0 unless &device_setter() eq 'computer';
+	my $scanner = &adf_scanner();
+	return 0 unless %{$scanner};
+	my $ip = &adf_printer_ip();
+	return 0 unless $ip;
+	my $state = JawnOS::Platform::Print::adf_state($ip);
+	return 0 if $state eq 'unknown';
+	# The cache, not a setting: the feeder toggles as paper comes and goes, and
+	# that churn carries no state the other machines need to sync.
+	my $last = eval { &cache_get({ app => 'misc', context => 'adf_state' }) } || '';
+	&cache_set({ app => 'misc', context => 'adf_state', warranty => '-10d' }, $state)
+		if $state ne $last;
+	return 0 unless $state eq 'loaded' && $last ne 'loaded';
+	my $printer = &device_lister(&rightNow(), 'printer') || {};
+	my $name = ref $printer eq 'HASH' ? ($printer->{'name'} || $printer->{'model'} || '') : '';
+	my $scan_id = &rightNow() . int(rand(1000000));
+	my $message = $name ne ''
+		? $name . ' has paper in the feeder.'
+		: 'The printer has paper in the feeder.';
+	eval {
+		&notification_sender({
+			app => 'market',
+			role => 'all',
+			title => 'Receipt in the ADF',
+			message => $message,
+			uuid => &random_string_creator(20),
+			timestamp => &rightNow(),
+		}, undef);
+		1;
+	};
+	eval {
+		&Websocket::send('server', {
+			console => &Websocket::console_command('marketReceiptAdf', {
+				scan_id => $scan_id,
+				printer => $ip,
+				name => $name,
+				timestamp => &rightNow(),
+			}),
+			timestamp => &rightNow(),
+		});
+		1;
+	};
+	&log_writer('adf receipt waiting on ' . $ip);
+	return 1;
 }
 
 # ---- paper ----------------------------------------------------------------
