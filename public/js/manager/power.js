@@ -361,6 +361,8 @@ function powerManagerNote(status, applied) {
 	}
 	else if (applied && applied.ok && applied.source == source && applied.plan) {
 		text = jawnosT('Power is managed by JawnOS') + ': ' + powerPlanLabel(applied.plan);
+		var took = (status.takeover || []).map(function(record) { return record.unit; }).filter(Boolean);
+		if (took.length) { text += ' — ' + jawnosT('took over from') + ' ' + took.join(', '); }
 	}
 	else {
 		text = jawnosT('Power is managed by') + ' ' + jawnosT('the kernel');

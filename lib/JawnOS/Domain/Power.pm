@@ -554,6 +554,40 @@ sub power_last_applied_save {
 	return $state;
 }
 
+# The daemons JawnOS stopped when it took the machine, and whether each was
+# enabled before. The ledger outlives the process: an uncheck, a quit or the
+# next start after a crash reads it to put the previous manager back.
+sub power_takeover_state {
+	my $file = $ENV{'JAWNOS_POWER_TAKEOVER_FILE'};
+	if (defined $file && length $file) {
+		my $text = eval { read_file($file) };
+		my $stored = $text ? eval { decode_json($text) } : undef;
+		return ref $stored eq 'ARRAY' ? $stored : [];
+	}
+	my $stored = eval { &subs::cache_get({ app => 'power', context => 'takeover' }) };
+	return ref $stored eq 'ARRAY' ? $stored : [];
+}
+
+sub power_takeover_state_save {
+	my ($records) = @_;
+	my @clean;
+	my %seen;
+	for my $record (ref $records eq 'ARRAY' ? @{$records} : ()) {
+		next unless ref $record eq 'HASH';
+		my $unit = $record->{'unit'} // '';
+		next unless $unit =~ /^[A-Za-z0-9@._-]+$/ && !$seen{$unit};
+		$seen{$unit} = 1;
+		push @clean, { unit => $unit, enabled => $record->{'enabled'} ? 1 : 0 };
+	}
+	my $file = $ENV{'JAWNOS_POWER_TAKEOVER_FILE'};
+	if (defined $file && length $file) {
+		eval { write_file($file, encode_json(\@clean)) };
+		return \@clean;
+	}
+	&subs::cache_set({ app => 'power', context => 'takeover', warranty => '-1y' }, \@clean);
+	return \@clean;
+}
+
 # Whether a lid switch exists. /proc/acpi/button/lid/<device>/state is the
 # kernel's own answer; a machine without one has no lid and no row to show.
 sub power_lid_present {
@@ -720,16 +754,22 @@ sub power_auto_set {
 
 # The checkbox beside the management line: JawnOS writes the power knobs, or
 # the system keeps them. Turning it on applies the saved plan now; turning it
-# off stops every automatic write, including the boot restore, without guessing
-# a previous kernel or daemon state to put back.
+# off stops every automatic write, including the boot restore, and puts back the
+# daemons the takeover recorded.
 sub power_manage_set {
 	my ($on) = @_;
 	my $config = &power_config();
 	$config->{'manage'} = $on ? 1 : 0;
 	$config = &power_config_save($config);
 	my $applied;
-	$applied = &power_apply_current() if $config->{'manage'};
-	return { ok => 1, config => $config, applied => $applied };
+	my $release;
+	if ($config->{'manage'}) {
+		$applied = &power_apply_current();
+	}
+	else {
+		$release = &power_release_takeover();
+	}
+	return { ok => 1, config => $config, applied => $applied, release => $release };
 }
 
 sub power_apply_current {
@@ -901,9 +941,40 @@ sub power_charge_set {
 # Once JawnOS writes the CPU and the sleep rules, a second daemon re-applying
 # its own profile is two writers racing, so a real plan stops
 # power-profiles-daemon, tlp and auto-cpufreq. Plan auto leaves them alone:
-# auto means they stay in charge.
+# auto means they stay in charge. Each daemon that was stopped is written to a
+# ledger with the enabled state it had, so releasing or restarting can put it
+# back exactly as it was.
 sub power_takeover {
-	return &power_helper('takeover');
+	my $answer = &power_helper('takeover');
+	my $records = ref $answer eq 'HASH' && ref $answer->{'records'} eq 'ARRAY' ? $answer->{'records'} : [];
+	if (@{$records}) {
+		my $ledger = &power_takeover_state();
+		my %seen = map { ($_->{'unit'} // '') => 1 } grep { ref $_ eq 'HASH' } @{$ledger};
+		for my $record (@{$records}) {
+			next unless ref $record eq 'HASH';
+			my $unit = $record->{'unit'} // '';
+			next unless length $unit && !$seen{$unit};
+			push @{$ledger}, { unit => $unit, enabled => $record->{'enabled'} ? 1 : 0 };
+			$seen{$unit} = 1;
+		}
+		&power_takeover_state_save($ledger);
+	}
+	return $answer;
+}
+
+# Put back the daemons a takeover recorded. The ledger is cleared only when the
+# helper says they are running again; a failed restore stays for the next
+# uncheck, quit or start.
+sub power_release_takeover {
+	my $ledger = &power_takeover_state();
+	return { ok => 1, released => 0, units => [], restored => [] } unless @{$ledger};
+	my $answer = &power_helper('restore', encode_json($ledger));
+	&power_takeover_state_save([]) if ref $answer eq 'HASH' && $answer->{'ok'};
+	return {
+		%{ ref $answer eq 'HASH' ? $answer : { ok => 0, error => 'the power daemons could not be restored' } },
+		released => scalar @{$ledger},
+		units => [ map { $_->{'unit'} } @{$ledger} ],
+	};
 }
 
 # Who is writing the CPU and sleep knobs. JawnOS applies a plan for the current
@@ -932,6 +1003,7 @@ sub power_status {
 		applied => &power_last_applied(),
 		sleep => &power_sleep_capabilities(),
 		manager => &power_manager(),
+		takeover => &power_takeover_state(),
 		sleep_plan => &power_plan_valid($config->{$source}{'plan'}) ? $config->{$source}{'plan'} : 'balanced',
 		charge => &power_charge_read(),
 	};

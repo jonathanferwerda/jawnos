@@ -179,6 +179,8 @@ function jawnosPowerTaskbarPanelProfile(panel) {
 	}
 	else {
 		manager_text = jawnosT('Power is managed by JawnOS');
+		var took = ((status && status.takeover) || []).map(function(record) { return record.unit; }).filter(Boolean);
+		if (took.length) { manager_text += ' — ' + jawnosT('took over from') + ' ' + took.join(', '); }
 	}
 	section.append($('<div class="taskbar_panel_note"></div>').text(manager_text));
 	var plans = [

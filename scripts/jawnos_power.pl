@@ -14,6 +14,7 @@
 #   sleep <type>               type is suspend|hibernate|hybrid_sleep|suspend_then_hibernate
 #   charge <end>               end is the battery's charge limit, 50..100
 #   takeover                   stop a competing power daemon and disable it
+#   restore <json>             put back the daemons a takeover recorded
 #   manager                    name the power daemon still running, if any
 #
 # settings writes one logind drop-in (HandleLidSwitch*, IdleAction*) and sets the
@@ -426,12 +427,19 @@ sub takeover {
 		dry_run => 1,
 		command => [ map { [$systemctl, 'disable', '--now', $_] } @TAKEOVER_UNITS ],
 	}) if $DRY;
-	my (@stopped, @failed);
+	my (@stopped, @failed, @records);
 	for my $unit (@TAKEOVER_UNITS) {
 		my $active = run_command($systemctl, 'is-active', '--quiet', $unit);
 		next unless $active->{'ok'};
+		# Record what the daemon was before it is stopped: an enabled unit is
+		# enabled and started again, a disabled one is only started. The note
+		# outlives this run so a crash can still be undone.
+		my $enabled = run_command($systemctl, 'is-enabled', '--quiet', $unit)->{'ok'} ? 1 : 0;
 		my $run = run_command($systemctl, 'disable', '--now', $unit);
-		if ($run->{'ok'}) { push @stopped, $unit; }
+		if ($run->{'ok'}) {
+			push @stopped, $unit;
+			push @records, { unit => $unit, enabled => $enabled };
+		}
 		else { push @failed, $unit; }
 	}
 	# Disabling a unit is a root operation. Ask for the helper's own sudo retry
@@ -443,8 +451,57 @@ sub takeover {
 		needs_sudo => 1,
 		stopped => \@stopped,
 		failed => \@failed,
+		records => \@records,
 	}) if @failed;
-	return emit({ ok => 1, stopped => \@stopped, failed => [] });
+	return emit({ ok => 1, stopped => \@stopped, failed => [], records => \@records });
+}
+
+# Put back the daemons a takeover recorded. The list is JSON from the manager
+# and every unit name is checked again here; an argument list never reaches a
+# shell. A unit that is no longer installed is reported as missing, not as a
+# failure, so a removed package cannot keep the ledger alive forever.
+sub restore {
+	my ($text) = @_;
+	my $records = eval { JSON::PP::decode_json($text // '') };
+	return failure('unreadable restore list') unless ref $records eq 'ARRAY';
+	my @clean = grep {
+		ref $_ eq 'HASH' && defined $_->{'unit'} && $_->{'unit'} =~ /^[A-Za-z0-9@._-]+$/
+	} @{$records};
+	return emit({ ok => 1, restored => [], failed => [], missing => [] }) unless @clean;
+	my $systemctl = command_path('systemctl');
+	return emit({ ok => 1, supported => 0, reason => 'no systemctl' }) unless $systemctl;
+	if ($DRY) {
+		return emit({
+			ok => 1,
+			dry_run => 1,
+			command => [ map {
+				$_->{'enabled'}
+					? [$systemctl, 'enable', '--now', $_->{'unit'}]
+					: [$systemctl, 'start', $_->{'unit'}]
+			} @clean ],
+		});
+	}
+	my (@restored, @failed, @missing);
+	for my $record (@clean) {
+		my $unit = $record->{'unit'};
+		my $exists = run_command($systemctl, 'cat', '--no-pager', $unit);
+		if (!$exists->{'ok'}) { push @missing, $unit; next; }
+		my @args = $record->{'enabled'}
+			? ($systemctl, 'enable', '--now', $unit)
+			: ($systemctl, 'start', $unit);
+		my $run = run_command(@args);
+		if ($run->{'ok'}) { push @restored, $unit; }
+		else { push @failed, $unit; }
+	}
+	return emit({
+		ok => 0,
+		error => 'permission',
+		needs_sudo => 1,
+		restored => \@restored,
+		failed => \@failed,
+		missing => \@missing,
+	}) if @failed;
+	return emit({ ok => 1, restored => \@restored, failed => [], missing => \@missing });
 }
 
 # Which of the competing daemons is still running. The Power app names the
@@ -617,6 +674,9 @@ elsif ($command eq 'charge') {
 }
 elsif ($command eq 'takeover') {
 	takeover();
+}
+elsif ($command eq 'restore') {
+	restore(shift @ARGV);
 }
 elsif ($command eq 'manager') {
 	manager();

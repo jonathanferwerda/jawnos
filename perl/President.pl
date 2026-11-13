@@ -99,6 +99,14 @@ sub tree_stop {
 	$why = 'asked over the tree control socket' unless defined $why && length $why;
 	print "President stopping ($why); cleaning up...\n";
 	$log->info("President stopping: $why") if $log;
+	# Put back the power daemons this tree stopped before it goes away. A
+	# restart or a clean quit must not leave the machine without a manager.
+	eval {
+		require "$FindBin::Bin/../lib/JawnOS/Domain/Power.pm";
+		&subs::power_release_takeover();
+	};
+	my $power_error = $@;
+	$log->warn('power: the takeover could not be restored on stop: ' . ($power_error =~ s/\s+/ /gr)) if $power_error;
 	exit 0;
 }
 
@@ -169,6 +177,18 @@ if ($archive_root->{'enabled'}) {
 	my @made = @{$archive_root->{'created'}};
 	$log->info('archive root ' . $archive_root->{'dir'} . (@made ? ' created: ' . join(', ', @made) : ' already in place'));
 }
+
+# A crash (or a SIGKILL) leaves the power takeover ledger behind. If this tree
+# is not managing power - the person unchecked it, or turned it off before the
+# crash - put the daemons back now. If it is managing, they are meant to stay
+# stopped, and the first slow tick re-takes them after a boot.
+eval {
+	require "$FindBin::Bin/../lib/JawnOS/Domain/Power.pm";
+	my $power_config = &subs::power_config();
+	&subs::power_release_takeover() unless $power_config->{'manage'};
+};
+my $stale_power_error = $@;
+$log->warn('power: the previous takeover could not be restored: ' . ($stale_power_error =~ s/\s+/ /gr)) if $stale_power_error;
 
 $SIG{INT} = sub {
 	# Do not print "President Died" here: ./jawn reads that phrase as a crash and
@@ -394,6 +414,14 @@ sub server_process {
 # On Windows the master cannot kill President's children when it stops
 # President, so take each one down as this process leaves.
 END { foreach my $c (@server_processes) { eval { $c->{'runner'}->stop } if $c } }
+# A fatal exit is an exit too: put back the power daemons this tree took over.
+# A SIGKILL never runs here; the next start's stale-ledger restore covers that.
+END {
+	eval {
+		require "$FindBin::Bin/../lib/JawnOS/Domain/Power.pm";
+		&subs::power_release_takeover();
+	};
+}
 
 sub manager_starter() {
 	my $ws_tty_port = $port + JawnOS::Platform::Ports::offset('coms');

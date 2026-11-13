@@ -14,7 +14,7 @@ use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use IPC::Open3 qw(open3);
-use Mojo::JSON qw(decode_json);
+use Mojo::JSON qw(decode_json encode_json);
 use Symbol qw(gensym);
 use RepoSource;
 
@@ -56,6 +56,7 @@ local $ENV{'JAWNOS_POWER_STATE_FILE'} = "$scratch/state.json";
 local $ENV{'JAWNOS_POWER_DRY_RUN'} = 1;
 local $ENV{'JAWNOS_POWER_RK818_DISABLE'} = 1;
 local $ENV{'JAWNOS_POWER_BOOT_ID'} = 'boot-one';
+local $ENV{'JAWNOS_POWER_TAKEOVER_FILE'} = "$scratch/takeover.json";
 
 require "$root/lib/JawnOS/Domain/Power.pm";
 
@@ -86,6 +87,7 @@ no warnings 'redefine';
 	is($status->{'charge'}{'supported'}, 1, 'the pack reports a charge ceiling');
 	is($status->{'charge'}{'end'}, 100, 'at the percentage it currently stops at');
 	ok(exists $status->{'manager'}, 'the status names who manages power');
+	ok(exists $status->{'takeover'}, 'the status carries the takeover ledger');
 }
 
 write_file("$sys/class/power_supply/AC/online", "1\n");
@@ -160,6 +162,56 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	ok($on->{'applied'}{'dry_run'}, 'turning it on applies the saved plan at once');
 	ok($on->{'config'}{'manage'}, 'the setting is on again');
 	is(subs::power_plan_tick()->{'skipped'}, 'already applied', 'the tick is idempotent again');
+}
+
+# --- the takeover ledger ----------------------------------------------------
+{
+	unlink "$scratch/takeover.json" if -e "$scratch/takeover.json";
+	my $real = \&subs::power_helper;
+	*subs::power_helper = sub {
+		my ($command) = @_;
+		return { ok => 1, records => [ { unit => 'power-profiles-daemon', enabled => 1 } ] }
+			if $command eq 'takeover';
+		return { ok => 1 };
+	};
+	subs::power_apply_plan('battery', 'performance', 85);
+	my $ledger = subs::power_takeover_state();
+	is(scalar @{$ledger}, 1, 'a takeover is recorded');
+	is($ledger->[0]{'unit'}, 'power-profiles-daemon', 'with the daemon it stopped');
+	is($ledger->[0]{'enabled'}, 1, 'and its enabled state');
+
+	# A later takeover must not overwrite the original state of a daemon that
+	# is already in the ledger, and adds any new one.
+	*subs::power_helper = sub {
+		my ($command) = @_;
+		return { ok => 1, records => [
+			{ unit => 'power-profiles-daemon', enabled => 0 },
+			{ unit => 'tlp', enabled => 0 },
+		] } if $command eq 'takeover';
+		return { ok => 1 };
+	};
+	subs::power_apply_plan('battery', 'performance', 85);
+	$ledger = subs::power_takeover_state();
+	is(scalar @{$ledger}, 2, 'a later takeover adds only the new daemon');
+	my ($ppd) = grep { $_->{'unit'} eq 'power-profiles-daemon' } @{$ledger};
+	is($ppd->{'enabled'}, 1, 'and keeps the state it had before JawnOS touched it');
+
+	# Unchecking asks for the restore and clears the ledger.
+	*subs::power_helper = $real;
+	subs::power_takeover_state_save([ { unit => 'power-profiles-daemon', enabled => 1 } ]);
+	my $off = subs::power_manage_set(0);
+	ok($off->{'release'}{'dry_run'}, 'unchecking asks the helper to restore the daemons');
+	is(scalar @{subs::power_takeover_state()}, 0, 'and clears the ledger');
+
+	# A failed restore keeps the ledger for the next quit or start.
+	subs::power_takeover_state_save([ { unit => 'tlp', enabled => 0 } ]);
+	*subs::power_helper = sub { return { ok => 0, error => 'permission' }; };
+	my $failed = subs::power_manage_set(0);
+	is($failed->{'release'}{'ok'}, 0, 'a failed restore is reported');
+	is(scalar @{subs::power_takeover_state()}, 1, 'and the ledger is kept');
+	*subs::power_helper = $real;
+	subs::power_manage_set(1);
+	subs::power_takeover_state_save([]);
 }
 
 # --- the fixed writer -------------------------------------------------------
@@ -241,6 +293,45 @@ sub helper {
 	is_deeply($manager->{'units'}, ['auto-cpufreq'], 'only the running daemon is named');
 }
 
+# --- the takeover ledger and the systemctl restore --------------------------
+# Two daemons are running: one enabled and one disabled. The ledger keeps both
+# answers, and restore enables the first while only starting the second.
+{
+	my $bin = "$scratch/bin-power-systemctl";
+	make_path($bin);
+	my $log = "$scratch/systemctl.log";
+	write_file("$bin/systemctl", <<"SH");
+#!/bin/sh
+echo "\$*" >> "$log"
+case "\$*" in
+	"is-active --quiet power-profiles-daemon") exit 0 ;;
+	"is-active --quiet tlp") exit 0 ;;
+	"is-active --quiet auto-cpufreq") exit 3 ;;
+	"is-enabled --quiet power-profiles-daemon") exit 0 ;;
+	"is-enabled --quiet tlp") exit 1 ;;
+	"is-enabled --quiet auto-cpufreq") exit 3 ;;
+	"cat --no-pager power-profiles-daemon") exit 0 ;;
+	"cat --no-pager tlp") exit 0 ;;
+	"cat --no-pager auto-cpufreq") exit 1 ;;
+	*) exit 0 ;;
+esac
+SH
+	chmod 0755, "$bin/systemctl";
+	local $ENV{PATH} = "$bin:/bin";
+	my $taken = helper('takeover');
+	ok($taken->{'ok'}, 'takeover runs against systemctl');
+	is_deeply($taken->{'records'}, [
+		{ unit => 'power-profiles-daemon', enabled => 1 },
+		{ unit => 'tlp', enabled => 0 },
+	], 'the ledger records each stopped daemon and its enabled state');
+	my $restored = helper('restore', encode_json($taken->{'records'}));
+	ok($restored->{'ok'}, 'restore runs against systemctl');
+	is_deeply($restored->{'restored'}, [ 'power-profiles-daemon', 'tlp' ], 'both daemons come back');
+	my $calls = read_file($log);
+	like($calls, qr/^enable --now power-profiles-daemon$/m, 'an enabled daemon is enabled and started');
+	like($calls, qr/^start tlp$/m, 'a disabled daemon is only started');
+}
+
 # --- the route, the controller and the tier ---------------------------------
 {
 	my $routes = read_file("$root/lib/JawnOS/Routes/manager_power.pm");
@@ -277,6 +368,14 @@ sub helper {
 		'the manager reading is in the domain loader');
 	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_manage_set\b/,
 		'the master switch is in the domain loader');
+	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_release_takeover\b/,
+		'the takeover release is in the domain loader');
+	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_takeover_state\b/,
+		'the takeover ledger is in the domain loader');
+
+	my $president = read_file("$root/perl/President.pl");
+	my @restores = ($president =~ /&subs::power_release_takeover\(\)/g);
+	cmp_ok(scalar @restores, '>=', 3, 'the start, stop and fatal-exit hooks restore the takeover');
 
 	my $tiers = read_file("$root/perl/subroutines.pl");
 	like($tiers, qr{/manager/\(\?:configure\|security\|magazine/publish\|power\)},
@@ -324,6 +423,8 @@ sub helper {
 	like($power_js, qr/function powerManage\(/, 'the master switch has its handler');
 	my $taskbar_js = read_file("$root/public/js/manager/taskbar_power.js");
 	like($taskbar_js, qr/Power is managed by the system/, 'the taskbar panel says when the system manages');
+	like($power_js, qr/took over from/, 'the app names the daemon JawnOS took over from');
+	like($taskbar_js, qr/took over from/, 'the taskbar panel names it too');
 }
 
 # --- a gauge that has not learned its counter -------------------------------
