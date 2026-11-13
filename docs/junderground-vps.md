@@ -18,6 +18,8 @@ with `ssh cloud` as `debian` with passwordless sudo. The service runs as `jg`.
 | Unit | `/etc/systemd/system/junderground.service` |
 | Drop-in | `/etc/systemd/system/junderground.service.d/admin.conf` |
 | Data | `/var/lib/junderground`, mode `700`, `jg:jg` |
+| Backup | `/usr/local/sbin/junderground-backup.sh`; `junderground-backup.{service,timer}`, 03:20 UTC |
+| Off-box copy | `vivotop` pulls nightly to `~/jawnos-backups/junderground`, 04:20 local |
 | Front door | `/etc/caddy/Caddyfile`, Caddy 2.6.2, ports 80/443 |
 | Public name | `thejunderground.com` A `148.113.181.210`; `www` redirects |
 
@@ -320,86 +322,87 @@ half off the VPS. The lost private half is not needed for recovery.
 
 ## 4. Backup
 
-There is **no backup timer** for this switch. `systemctl list-timers --all` has
-no junderground unit, `crontab -l` is empty for root and `jg`, and nothing else
-copies `/var/lib/junderground`. The live directory is the only copy on the host,
-including `server.key`: losing it changes the switch's public identity and
-breaks every client that pinned `/v1/meta.pubkey`.
+The switch is backed up nightly on the host and pulled to the laptop. Both
+halves are installed and enabled — a timer that only writes to the same disk is
+not yet a backup.
 
-Stop the service for the copy so DETS closes cleanly (each table closes on
-termination; `auto_save` is 2 s), then tar the directory:
+| Piece | Where |
+| --- | --- |
+| Backup script | `/usr/local/sbin/junderground-backup.sh`, root, mode `0700` |
+| Backup unit | `/etc/systemd/system/junderground-backup.service` (`Type=oneshot`) |
+| Backup timer | `/etc/systemd/system/junderground-backup.timer`, `OnCalendar=*-*-* 03:20:00 UTC`, `Persistent=true`, `RandomizedDelaySec=5m` |
+| Local stage | `/var/backups/junderground/`, `root:debian`, mode `0750` |
+| Archive | `junderground-<YYYYMMDDTHHMMSSZ>.tar.gz`, `root:debian`, mode `0640` |
+| Sidecar | the same name plus `.sha256`, `root:debian`, mode `0640` |
+| Retention | tarballs and sidecars older than 14 days are deleted each run |
+| Laptop pull | `~/.config/systemd/user/junderground-backup-pull.{service,timer}` on `vivotop` |
+| Laptop copy | `/home/jawn/jawnos-backups/junderground/`, mode `0700` |
+
+The script runs as root (it stops the unit and writes `/var/backups`) with
+`umask 027`. Each run:
+
+1. takes a UTC timestamp from `date -u +%Y%m%dT%H%M%SZ`, naming
+   `/var/backups/junderground/junderground-<ts>.tar.gz`;
+2. installs `trap 'systemctl start junderground || true' EXIT` first, so the
+   switch comes back even if `tar` fails;
+3. stops `junderground` and waits for `systemctl is-active` to report
+   `inactive`, so DETS closes cleanly (each table closes on termination;
+   `auto_save` is 2 s);
+4. runs `tar -C /var/lib -czf` over the directory, `server.key` included;
+5. writes the `.sha256` sidecar over the tarball's basename, so `sha256sum -c`
+   works on the laptop and not only here;
+6. starts the unit again, waits for `active`, then fails loudly unless
+   `curl -fsS http://127.0.0.1:4100/v1/meta` answers;
+7. deletes tarballs and sidecars older than 14 days.
+
+Nothing prints the key: the journal holds the unit's start/finish lines and the
+archive path, not the archive contents. The directory stays `0750` and the files
+`0640` because the tarball carries `server.key`; membership in the `debian`
+group is what lets the laptop read them over SSH.
+
+The outage is the stop/start of that one run — about two seconds at 03:20 UTC,
+not a nightly window. Run a backup by hand with:
 
 ```
-sudo install -d -m 0700 /var/backups/junderground
-f=/var/backups/junderground/junderground-$(date +%F-%H%M).tgz
-sudo systemctl stop junderground
-sudo tar -C /var/lib -czf "$f" junderground
-sudo chmod 0600 "$f"
-sudo systemctl start junderground
+sudo systemctl start junderground-backup.service
+sudo journalctl -u junderground-backup.service -n 20 --no-pager
 ```
 
-If `tar` fails, start the service again before investigating. A copy of an open
-DETS file is not a consistent restore.
-
-Check the archive (this lists names; it does not print the key):
+The laptop pulls the directory at **04:20** local
+(`OnCalendar=*-*-* 04:20:00`, `Persistent=true`, `RandomizedDelaySec=10m`):
 
 ```
-sudo tar -tzf "$f"
+/usr/bin/rsync -a --delete -e "ssh -p 8022 -o BatchMode=yes -o ConnectTimeout=10" \
+  debian@148.113.181.210:/var/backups/junderground/ \
+  /home/jawn/jawnos-backups/junderground/
 ```
 
-Expect `junderground/`, the six `*.dets`, and `server.key`. The archive is `0600`
-because of `server.key`; copy it off the host — a file on the same disk is not a
-backup of the disk.
+It logs in as `debian`, so that account needs both the laptop's SSH key
+authorized and the host key trusted. The stale `[148.113.181.210]:8022` line in
+`~/.ssh/known_hosts` (left from before the VPS reinstall) was replaced on
+**2026-11-13**. The presented key was verified three ways before the swap —
+`ssh-keyscan -p 8022` from the laptop and from the dev box, and
+`/etc/ssh/ssh_host_ed25519_key.pub` read on the VPS — all
+`SHA256:oIywYbMQvGavI/X4BLpC6GMJuFdmugMaEc6xpUdx7k4`. Strict host checking is
+never disabled; the previous file is `~/.ssh/known_hosts.bak-20261113`.
 
-### Suggested timer shape — not installed
+Verify the pulled copy on the laptop:
 
-Decide the off-box destination and retention first. A local stage plus a nightly
-stop is short, but it is still an outage, so do not enable this blindly.
-
-`/usr/local/sbin/junderground-backup.sh`:
-
-```sh
-#!/bin/sh
-set -eu
-dir=/var/backups/junderground
-mkdir -p "$dir"
-out="$dir/junderground-$(date +%F).tgz"
-systemctl stop junderground
-trap 'systemctl start junderground' EXIT
-tar -C /var/lib -czf "$out" junderground
-chmod 0600 "$out"
-find "$dir" -name 'junderground-*.tgz' -mtime +14 -delete
+```
+cd /home/jawn/jawnos-backups/junderground
+ls -l
+sha256sum -c junderground-<ts>.tar.gz.sha256
 ```
 
-`/etc/systemd/system/junderground-backup.service`:
+### Restore drill
 
-```ini
-[Unit]
-Description=junderground data backup
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/junderground-backup.sh
-```
-
-`/etc/systemd/system/junderground-backup.timer`:
-
-```ini
-[Unit]
-Description=Nightly junderground data backup
-
-[Timer]
-OnCalendar=*-*-* 03:20:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-The service runs as root because it stops the unit and writes `/var/backups`.
-The script stages the archive locally; a pull from another machine (`rsync`,
-`scp`) is what makes it a backup, and that step is not installed either.
+The archive is restore-tested without touching the live directory: extract the
+newest tarball into `/tmp/jg-restore-test` while the service keeps running,
+confirm `junderground/` holds the six `*.dets` and `server.key` (89 bytes, mode
+`0600`), then remove the temporary directory. The 2026-11-13 drill did exactly
+that against `junderground-20261113T165612Z.tar.gz` and passed. That proves the
+archive is complete and readable; it is not a restore — a real one still stops
+the service (§5).
 
 ## 5. Restore
 
@@ -409,7 +412,7 @@ old directory until the new one verifies:
 ```
 sudo systemctl stop junderground
 sudo mv /var/lib/junderground /var/lib/junderground.before-restore-$(date +%F-%H%M)
-sudo tar -C /var/lib -xzf /var/backups/junderground/<archive>.tgz
+sudo tar -C /var/lib -xzf /var/backups/junderground/<archive>.tar.gz
 sudo chown -R jg:jg /var/lib/junderground
 sudo chmod 700 /var/lib/junderground
 sudo chmod 600 /var/lib/junderground/server.key
@@ -455,6 +458,11 @@ switch identity and the admission/audit tables are this switch's.
 | Front door | `curl -sSI https://thejunderground.com/` | `200`, `server: Caddy`, HSTS |
 | Caddy | `systemctl is-active caddy`; `sudo caddy validate --config /etc/caddy/Caddyfile` | `active`; `Valid configuration` |
 | Private bind | `curl -m 5 http://148.113.181.210:4100/v1/meta` from outside the VPS | must time out |
+| Backup timer | `systemctl list-timers junderground-backup.timer --no-pager` | next run about 03:20 UTC daily |
+| Last backup | `sudo systemctl show junderground-backup.service -p Result` | `Result=success` |
+| Archives | `sudo ls -l /var/backups/junderground/` | tarball + `.sha256`, `root:debian`, `0640` |
+| Pull timer (laptop) | `systemctl --user list-timers junderground-backup-pull.timer` | next run about 04:20 local |
+| Pulled copy (laptop) | `cd ~/jawnos-backups/junderground && sha256sum -c *.sha256` | `OK` |
 
 Certificate expiry and renewal are two commands of their own:
 
@@ -482,8 +490,14 @@ The journal is at debug level, so every successful request appears
   NAT without TURN, and a mesh above a handful of houses needs an SFU. Adding one
   means new ports (3478, 5349, 7880/7881, 50000–60000/udp) and firewall work, not
   a unit tweak.
-- **No backups.** See §4. There is no timer and the live directory is the only
-  copy on the host.
+- **The off-box copy is one laptop.** See §4. The VPS keeps 14 days of
+  tarballs and `vivotop` pulls them nightly, but that laptop is the only copy
+  off the host: there is no second site or object store. The pull is an
+  `rsync --delete`, so it mirrors the VPS's retention — once an archive ages out
+  on the VPS, the next pull removes the laptop's copy too, and a restore needs a
+  tarball younger than 14 days. `Persistent=true` catches a missed 04:20 on the
+  next boot, but a laptop lost or offline past the window is a real gap. Add a
+  second destination before treating the data as durable.
 - **No rate limiting.** The upstream README says "TLS, rate limiting, metrics —
   not yet (run behind a proxy)". Caddy terminates TLS and routes, but this
   Caddyfile has no rate limit; signatures and nonces stop forgery and replay, not
@@ -548,3 +562,8 @@ are `app=junderground` with `url` and `handle`; Chat → Rooms is the screen.
 Verified 2026-11-13 on `cloud`: `systemctl cat junderground`, `ss -lntp`,
 `/v1/meta`, `/v1/houses/jawn_s_homebase`, `ls -l /var/lib/junderground`,
 `/etc/caddy/Caddyfile`, `openssl x509`, `caddy validate`, `mix help release`.
+The backup install was verified the same day: `junderground-backup.service`
+(`Result=success`), `junderground-backup.timer` enabled, a
+1,607-byte `junderground-20261113T165612Z.tar.gz` whose sidecar passed
+`sha256sum -c` on both hosts, and a `/tmp/jg-restore-test` drill that found all
+six DETS tables and the 89-byte `server.key`.
