@@ -17,11 +17,14 @@ with `ssh cloud` as `debian` with passwordless sudo. The service runs as `jg`.
 | Release | `/opt/junderground/_build/prod/rel/junderground` (27 MB under `_build`; `deps` is 1.9 MB more) |
 | Unit | `/etc/systemd/system/junderground.service` |
 | Drop-in | `/etc/systemd/system/junderground.service.d/admin.conf` |
+| Drop-in (media) | `/etc/systemd/system/junderground.service.d/turn.conf` (`EnvironmentFile` + `JG_TURN_URLS`) |
 | Data | `/var/lib/junderground`, mode `700`, `jg:jg` |
 | Backup | `/usr/local/sbin/junderground-backup.sh`; `junderground-backup.{service,timer}`, 03:20 UTC |
 | Off-box copy | `vivotop` pulls nightly to `~/jawnos-backups/junderground`, 04:20 local |
 | Front door | `/etc/caddy/Caddyfile`, Caddy 2.6.2, ports 80/443 |
 | Public name | `thejunderground.com` A `148.113.181.210`; `www` redirects |
+| TURN | `coturn` 4.6.1-2, `/etc/turnserver.conf`, `3478/udp` and `3478/tcp`, relay `49160–49260/udp` |
+| TURN secret | `/etc/junderground/turn.env` (`0600 root:root`), loaded only by the `turn.conf` drop-in |
 
 The unit is `Type=simple`, `User=jg`, `Group=jg`,
 `WorkingDirectory=/opt/junderground`, and starts the release in the foreground:
@@ -34,6 +37,10 @@ Environment from the unit: `PORT=4100`, `JG_DATA_DIR=/var/lib/junderground`,
 `JG_PUBLIC_URL=https://thejunderground.com`, `JG_ADMIN_KEYS=` (empty; the
 drop-in overrides it), `JG_AUTO_APPROVE=0`, `HOME=/var/lib/junderground`,
 `LANG=C.UTF-8`, `RELEASE_DISTRIBUTION=none`.
+
+The media drop-in `turn.conf` adds `EnvironmentFile=/etc/junderground/turn.env`
+and `JG_TURN_URLS`. The secret lives only in that `0600` file, never in the
+unit: `systemctl show` exposes `Environment=`, not `EnvironmentFile=`.
 
 Hardening: `Restart=always`, `RestartSec=5`, `UMask=0077`,
 `NoNewPrivileges=true`, `ProtectSystem=strict`, `ProtectHome=true`,
@@ -75,6 +82,36 @@ so the same proxy rule carries it. Caddy holds a Let's Encrypt certificate for
 the apex (issued 2026-11-11, expires **2027-02-09**) and renews it itself; there
 is no certbot on this host.
 
+### Media (TURN)
+
+coturn 4.6.1-2 is the switch's TURN relay. It listens on `3478/udp` and
+`3478/tcp`, relays from `49160–49260/udp`, and advertises the public address
+`148.113.181.210` (`external-ip`). Its configuration is
+`/etc/turnserver.conf` (`root:turnserver`, `0640`) with `use-auth-secret`,
+`realm=thejunderground.com`, `fingerprint`, `stale-nonce=600`, `user-quota=12`,
+`total-quota=1200`, and `denied-peer-ip` ranges that keep the relay out of
+loopback, link-local and private networks (this build takes hyphen ranges, not
+CIDR). The service runs as `turnserver` and is enabled.
+
+The shared secret is a 32-byte value (`openssl rand -hex 32`) held in two
+root-only places: `static-auth-secret` in `/etc/turnserver.conf` and
+`JG_TURN_SECRET` in `/etc/junderground/turn.env` (`0600 root:root`). The
+`turn.conf` drop-in loads the env file and sets:
+
+```
+JG_TURN_URLS=turn:thejunderground.com:3478?transport=udp,turn:thejunderground.com:3478?transport=tcp
+```
+
+`/v1/meta.turn.urls` now returns both URLs. The switch mints coturn's
+`use-auth-secret` credentials in `lib/junderground/turn.ex`: username
+`<expiry>:<subject>`, credential `base64(HMAC-SHA1(secret, username))`. They
+ride on a room token (`lib/junderground/rooms.ex:234`) and the signaling
+socket's `hello` (`lib/junderground/signaling/socket.ex:40`).
+
+Firewall: UFW allows `3478/udp`, `3478/tcp` and `49160:49260/udp`. If the OVH
+network firewall is enabled it must allow the same; UFW alone is not enough
+behind it.
+
 ### Data
 
 `/var/lib/junderground` is the whole state:
@@ -110,8 +147,9 @@ four were still 5,464. Do not use byte size as a health check. `server.key` is
 not the app version. Compare the git tag and `/v1/meta.version`.
 
 At verification `/v1/meta` reported `houses: 1`, `peers: 0`,
-`admission.admins: 1`, `requires_approval: true`, `public_url:
-https://thejunderground.com`, and an empty `turn.urls`. The one house is
+`admission.admins: 1`, `requires_approval: true`, and `public_url:
+https://thejunderground.com`. `turn.urls` was empty then; since the coturn
+install it lists the UDP and TCP TURN URLs (see §1). The one house is
 `jawn_s_homebase` ("Jawn's Homebase"), `admission.status: approved`.
 
 `JG_PUBLIC_URL` is the `iss` written into room grants. Do not change it casually;
@@ -458,6 +496,9 @@ switch identity and the admission/audit tables are this switch's.
 | Front door | `curl -sSI https://thejunderground.com/` | `200`, `server: Caddy`, HSTS |
 | Caddy | `systemctl is-active caddy`; `sudo caddy validate --config /etc/caddy/Caddyfile` | `active`; `Valid configuration` |
 | Private bind | `curl -m 5 http://148.113.181.210:4100/v1/meta` from outside the VPS | must time out |
+| coturn | `systemctl is-active coturn` | `active` |
+| TURN listeners | `sudo ss -lunp \| grep 3478`; `sudo ss -ltnp \| grep 3478` | `turnserver` on `3478/udp` and `3478/tcp` |
+| TURN advertised | `curl -sS https://thejunderground.com/v1/meta` | `turn.urls` has the `transport=udp` and `transport=tcp` URLs |
 | Backup timer | `systemctl list-timers junderground-backup.timer --no-pager` | next run about 03:20 UTC daily |
 | Last backup | `sudo systemctl show junderground-backup.service -p Result` | `Result=success` |
 | Archives | `sudo ls -l /var/backups/junderground/` | tarball + `.sha256`, `root:debian`, `0640` |
@@ -481,15 +522,47 @@ second shows the renewal lines when Caddy runs them.
 The journal is at debug level, so every successful request appears
 (`GET /v1/...`, `Sent 200`). That is expected; it is not a fault.
 
+### TURN relay check
+
+Mint a probe credential exactly as `Turn.credentials/1` does, then relay a few
+packets with coturn's client. The secret is read from the `0600` env file and
+never printed:
+
+```
+ssh cloud 'sudo cat /etc/junderground/turn.env' | python3 -c '
+import sys,time,hmac,hashlib,base64,subprocess
+secret=sys.stdin.readline().strip().split("=",1)[1]
+u=str(int(time.time())+600)+":probe"
+w=base64.b64encode(hmac.new(secret.encode(),u.encode(),hashlib.sha1).digest()).decode()
+for flags in ([],["-t"]):
+    print(subprocess.run(["turnutils_uclient","-y","-m","2","-n","4",
+      "-u",u,"-w",w,"-p","3478"]+flags+["thejunderground.com"],
+      capture_output=True,text=True).stdout)
+'
+```
+
+Expected: exit 0, `tot_send_msgs=16`, `tot_recv_msgs=16`, and `Total lost
+packets 0`. Verified 2026-11-13 from the dev box, outside the VPS, for both UDP
+and TCP.
+
 ## 7. Known gaps and cautions
 
-- **No media plane.** `/v1/meta.turn.urls` is `[]`, no coturn or SFU is installed
-  or listening, and the `JG_SFU_*` environment is read but has no implementation.
-  The upstream README marks signaling/SFU/coturn as "designed, not built"; the
-  design is `docs/SFU.md`. Signaling metadata is relayed, but media cannot cross
-  NAT without TURN, and a mesh above a handful of houses needs an SFU. Adding one
-  means new ports (3478, 5349, 7880/7881, 50000–60000/udp) and firewall work, not
-  a unit tweak.
+- **TURN is live; the SFU is still design-only.** coturn 4.6.1-2 relays on
+  `3478/udp` and `3478/tcp` with relay ports `49160–49260/udp`, and
+  `/v1/meta.turn.urls` lists both URLs (see §1). A real relay was proved with
+  `turnutils_uclient`: 16/16 messages both UDP and TCP, 0 lost.
+  The SFU has no implementation: `docs/SFU.md:3` says "Status: design", there
+  are no `/sfu/*` routes in `lib/junderground/router.ex`, and no
+  `lib/junderground/sfu*` module exists. `JG_SFU_URL`, `JG_SFU_KEY` and
+  `JG_SFU_SECRET` are read at `config/runtime.exs:21-23` but nothing uses them,
+  so installing LiveKit now would expose a public service nothing can mint
+  tokens for. Implementing it means the adapter modules in `docs/SFU.md` §6
+  (`sfu.ex`, `sfu/token.ex`, `sfu/health.ex`, `sfu/client.ex`,
+  `sfu/reconciler.ex`), the control-plane endpoints
+  (`POST /v1/rooms/:handle/:room/sfu/token` and `.../revoke`), the HS256 JWT
+  minter/validator, and the `Sfu.Reconciler` that re-verifies participants;
+  then ports `7880/7881/tcp` and `50000–60000/udp` and a `wss://sfu.` proxy
+  route. Until then media is mesh + TURN.
 - **The off-box copy is one laptop.** See §4. The VPS keeps 14 days of
   tarballs and `vivotop` pulls them nightly, but that laptop is the only copy
   off the host: there is no second site or object store. The pull is an
@@ -567,3 +640,8 @@ The backup install was verified the same day: `junderground-backup.service`
 1,607-byte `junderground-20261113T165612Z.tar.gz` whose sidecar passed
 `sha256sum -c` on both hosts, and a `/tmp/jg-restore-test` drill that found all
 six DETS tables and the 89-byte `server.key`.
+
+coturn 4.6.1-2 was installed and verified the same day: `3478/udp` and
+`3478/tcp` listening, relay `49160–49260/udp`, `/v1/meta.turn.urls` populated,
+and `turnutils_uclient` relayed 16/16 messages on both transports with 0 lost
+from the dev box.
