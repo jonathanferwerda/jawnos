@@ -110,14 +110,17 @@ sub house_manager_address {
 	my $config = eval { &config_reader() } || {};
 	my $port = $ENV{'PORT_AHOY'} || $config->{'working_port'} || $config->{'port'} || '';
 	my $lan = '';
-	my $report = eval { &network_interface_reporter() } || {};
-	foreach my $nic (sort keys %{$report}) {
-		next if $nic eq 'public_address';
-		my $ip = (ref $report->{$nic} eq 'HASH') ? ($report->{$nic}->{'ip'} // '') : '';
-		next unless $ip =~ /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/;
-		$lan = $ip;
-		last;
-	}
+	# The address of the interface that routes off this machine, asked of the
+	# kernel with a UDP socket that sends nothing: no DNS, no packets, and no
+	# dependence on the server's own environment (the interface reporter wants the
+	# manager's ports, which a CLI caller does not have).
+	eval {
+		require IO::Socket::INET;
+		my $probe = IO::Socket::INET->new(PeerAddr => '192.0.2.1', PeerPort => 9, Proto => 'udp', Timeout => 1);
+		my $ip = $probe ? ($probe->sockhost || '') : '';
+		close $probe if $probe;
+		$lan = $ip if $ip =~ /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)\d+\.\d+$/;
+	};
 	my $name = length $lan ? $lan : &public_origin_host();
 	$name = $config->{'domain'} || '' unless length $name;
 	$name = '127.0.0.1' unless length $name;

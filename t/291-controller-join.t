@@ -6,6 +6,7 @@
 use strict;
 use warnings;
 use utf8;
+no warnings 'once';	# $Manager::log is set once, for the app's logger
 
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
@@ -51,6 +52,10 @@ like($provision, qr#ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/gou_first_
 # The image is a copy of another card, identity included; a flashed board takes
 # its own before it introduces itself.
 like($provision, qr/\.jawnos_signatorial_id/, 'the provisioner clears the copied machine identity');
+# The image is a copy of another card, so its tree may not carry the script the
+# unit calls; the provisioner copies this tree's own alongside the unit.
+like($provision, qr{could not copy the first-boot script}, 'the first-boot script is copied into the image, not assumed there');
+like($provision, qr{/gou_first_boot\.pl}, 'from this tree\'s own scripts directory');
 my $first_boot = slurp('scripts/gou_first_boot.pl');
 like($first_boot, qr/sub _identity_ensure/, 'the first boot mints an identity when none is there');
 like($first_boot, qr/\$report->\{'identity'\} = &_identity_ensure\(\);\s*\n\s*my \$joined = &_join\(\$token\)/, 'and only then introduces itself');

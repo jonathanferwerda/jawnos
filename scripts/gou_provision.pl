@@ -558,6 +558,25 @@ sub _autopopulate {
 	# starts. The unit is enabled by its wants symlink rather than by running
 	# systemctl against the image, so nothing here needs the board booted.
 	if (!length $error) {
+		# The script comes from this tree, not from the image: the image is a copy
+		# of another card, whose tree may predate it (or not be a tree at all),
+		# and a unit that calls a missing script would fail silently on the boot
+		# that matters.
+		my $source = File::Basename::dirname(Cwd::abs_path($0)) . '/gou_first_boot.pl';
+		my $script = -f $source ? _slurp($source) : '';
+		my $dir = "$mount/home/jawn/jawnos/scripts";
+		File::Path::make_path($dir) unless -d $dir;
+		my $path = "$dir/gou_first_boot.pl";
+		if (length $script
+			&& _write_file($path, $script)
+			&& chmod(0755, $path) && chown(1001, 1001, $path)) {
+			push @done, 'first-boot-script';
+		}
+		else {
+			$error = 'could not copy the first-boot script';
+		}
+	}
+	if (!length $error) {
 		my $units = "$etc/systemd/system";
 		File::Path::make_path($units) unless -d $units;
 		my $unit = "$units/jawnos-first-boot.service";
