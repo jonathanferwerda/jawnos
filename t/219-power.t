@@ -55,6 +55,7 @@ local $ENV{'JAWNOS_POWER_CONFIG_FILE'} = "$scratch/config.json";
 local $ENV{'JAWNOS_POWER_STATE_FILE'} = "$scratch/state.json";
 local $ENV{'JAWNOS_POWER_DRY_RUN'} = 1;
 local $ENV{'JAWNOS_POWER_RK818_DISABLE'} = 1;
+local $ENV{'JAWNOS_POWER_BOOT_ID'} = 'boot-one';
 
 require "$root/lib/JawnOS/Domain/Power.pm";
 
@@ -104,6 +105,7 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	my $state = decode_json(read_file("$scratch/state.json"));
 	is($state->{'plan'}, 'performance', 'the applied state records the plan');
 	is($state->{'limit'}, 85, 'the applied state records the limit');
+	is($state->{'boot'}, 'boot-one', 'the applied state records the boot');
 }
 
 # --- the source switch is idempotent ---------------------------------------
@@ -120,6 +122,27 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	is($third->{'source'}, 'ac', 'and it is the mains source');
 	is($third->{'plan'}, 'balanced', 'with the saved mains plan');
 	write_file("$sys/class/power_supply/AC/online", "0\n");
+
+	# A reboot resets the kernel's governor even though the applied row lives
+	# in the database; a new boot id must take the saved plan back.
+	$ENV{'JAWNOS_POWER_BOOT_ID'} = 'boot-two';
+	my $reborn = subs::power_plan_tick();
+	ok($reborn->{'dry_run'}, 'a new boot applies the saved plan again');
+	is($reborn->{'plan'}, 'performance', 'with the saved battery plan');
+	is(decode_json(read_file("$scratch/state.json"))->{'boot'}, 'boot-two', 'and records the new boot');
+	my $settled = subs::power_plan_tick();
+	is($settled->{'skipped'}, 'already applied', 'the same boot is a no-op again');
+
+	# Automatic switching is about the cable, not the kernel's memory: turning
+	# it off must not leave the machine in the firmware default after a boot.
+	subs::power_auto_set(0);
+	$ENV{'JAWNOS_POWER_BOOT_ID'} = 'boot-three';
+	my $restored = subs::power_plan_tick();
+	ok($restored->{'dry_run'}, 'a boot still takes the plan back with automatic switching off');
+	is($restored->{'plan'}, 'performance', 'and it is the saved plan');
+	my $quiet = subs::power_plan_tick();
+	is($quiet->{'skipped'}, 'auto is off', 'while the cable watch stays off');
+	subs::power_auto_set(1);
 }
 
 # --- the fixed writer -------------------------------------------------------

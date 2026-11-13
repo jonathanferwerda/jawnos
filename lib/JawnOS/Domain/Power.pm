@@ -98,6 +98,15 @@ sub power_read {
 	return $value;
 }
 
+# The kernel's per-boot identity. The CPU and sleep settings live in sysfs,
+# which the firmware resets at boot, while the "last applied" row lives in the
+# database and survives it. Comparing the two tells a stale row - one written
+# for a kernel that is gone - from a plan this boot already holds.
+sub power_boot_id {
+	return $ENV{'JAWNOS_POWER_BOOT_ID'} if defined $ENV{'JAWNOS_POWER_BOOT_ID'};
+	return &power_read('/proc/sys/kernel/random/boot_id');
+}
+
 sub power_number {
 	my ($path) = @_;
 	my $value = &power_read($path);
@@ -661,6 +670,7 @@ sub power_apply_plan {
 		source => $source,
 		plan => $plan,
 		limit => $limit,
+		boot => &power_boot_id(),
 		ok => $answer->{'ok'} ? 1 : 0,
 		error => $answer->{'error'} || '',
 		supported => exists $answer->{'supported'} ? ($answer->{'supported'} ? 1 : 0) : 1,
@@ -818,14 +828,23 @@ sub power_sleep_now {
 # is applied once. The saved "last applied" row is what makes this idempotent -
 # every poll after the first is a no-op, so a 30-second tick cannot rewrite sysfs
 # forever.
+#
+# That row survives a reboot, but the kernel's own governor does not, so a row
+# from an earlier boot is not evidence that the machine still holds the plan.
+# When the boot id changes, take the saved plan back once even with automatic
+# switching off: a reboot is not a plan switch. The same-boot dedupe below still
+# keeps the minute tick from rewriting sysfs.
 sub power_plan_tick {
 	my $config = &power_config();
-	return { ok => 1, skipped => 'auto is off' } unless $config->{'auto'};
 	my $battery = &power_battery_read();
 	return { ok => 1, skipped => 'no battery' } unless $battery->{'present'};
 	my $source = $battery->{'ac'} ? 'ac' : 'battery';
 	my $wanted = &power_plans_for_source($config, $source);
 	my $last = &power_last_applied();
+	my $boot = &power_boot_id();
+	return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'})
+		if length $boot && (($last->{'boot'} // '') ne $boot);
+	return { ok => 1, skipped => 'auto is off' } unless $config->{'auto'};
 	return { ok => 1, skipped => 'already applied' }
 		if $last->{'ok'} && ($last->{'source'} || '') eq $source
 			&& ($last->{'plan'} || '') eq $wanted->{'plan'}
