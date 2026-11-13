@@ -484,10 +484,12 @@ sub appointment_writer($c,$app) {
 	# An appointment that carries the Silence box takes the whole house quiet
 	# when it starts and gives it back when it stops. The movement is the one
 	# the writer was handed: a stop may rewrite its own type for a recording.
+	# The timestamp goes along so a start written for later engages when it is
+	# due, not when it is saved.
 	if ((($theme_movement // '') eq 'start' || ($theme_movement // '') eq 'stop')
 		&& ($app->{'app'} || '') ne '') {
 		my $silence_owner_id = ($theme_movement eq 'start') ? $app->{'uuid'} : $silence_owner;
-		eval { &subs::silence_appointment_write($app->{'app'}, $theme_movement, $silence_owner_id, $c); };
+		eval { &subs::silence_appointment_write($app->{'app'}, $theme_movement, $silence_owner_id, $c, $app->{'timestamp'}); };
 	}
 
 	return $app;

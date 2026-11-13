@@ -80,9 +80,21 @@ $main::SCRATCH = $scratch;
 	return { ok => 1 };
 };
 *subs::db_query = sub {
-	my ($sql) = @_;
-	return FakeRows->new(\@QUERY_SETTINGS) if defined $sql && $sql =~ /from settings/;
-	return FakeRows->new(\@QUERY_APPOINTMENTS) if defined $sql && $sql =~ /from appointments/;
+	my ($sql, @args) = @_;
+	if (defined $sql && $sql =~ /from settings/) {
+		return FakeRows->new(\@QUERY_SETTINGS);
+	}
+	if (defined $sql && $sql =~ /from appointments/) {
+		# The reconciler asks only for sessions whose own timestamp is due;
+		# honour that so a scheduled row is not counted before its time.
+		if ($sql =~ /timestamp <= \?/) {
+			my $now = $args[-1];
+			return FakeRows->new([ grep {
+				ref $_ eq 'HASH' && (!defined $_->{'timestamp'} || $_->{'timestamp'} <= $now)
+			} @QUERY_APPOINTMENTS ]);
+		}
+		return FakeRows->new(\@QUERY_APPOINTMENTS);
+	}
 	return FakeRows->new([]);
 };
 *subs::sound_android_streams = sub { return [] };
@@ -164,6 +176,16 @@ subs::silence_appointment_write('mirror', 'start', 'u10');
 is(state_hash(), undef, 'an unticked appointment never writes a silence row');
 is(scalar @MUTE, 0, 'and never touches the mixer');
 
+# A start saved for later is not running yet: an appointment scheduled a few
+# minutes ahead must not quiet the house the moment it is written.
+reset_all();
+$STORE{'mirror|silence|all'} = 'checked';
+subs::silence_appointment_write('mirror', 'start', 'u11', undef, subs::rightNow() + 300000);
+is(state_hash(), undef, 'a start written for later does not engage silence early');
+is(scalar @MUTE, 0, 'and leaves the mixer alone');
+subs::silence_appointment_write('mirror', 'start', 'u12', undef, subs::rightNow());
+is(state_hash()->{active}, 1, 'a start due now engages silence');
+
 # ============================================================================
 # the alarm pass: start and stop without a Manager page
 # ============================================================================
@@ -182,6 +204,19 @@ ok($on_pushed, 'and tells the phone app directly');
 $subs::silence_tick_at = 0;
 subs::silence_tick();
 is_deeply(state_hash()->{owners}, ['u2-open'], 'the owners follow the open session');
+
+# The same holds for a row written ahead of its time: it owns the house only
+# once its timestamp is due, which is what makes a scheduled appointment work.
+reset_all();
+@QUERY_SETTINGS = ({ app => 'mirror' });
+$DEVICE = 'mobile';
+@QUERY_APPOINTMENTS = ({ uuid => 'u-later', app => 'mirror', timestamp => subs::rightNow() + 300000 });
+subs::silence_tick();
+is(state_hash(), undef, 'a start in the future owns nothing yet');
+@QUERY_APPOINTMENTS = ({ uuid => 'u-later', app => 'mirror', timestamp => subs::rightNow() - 1000 });
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is_deeply(state_hash()->{owners}, ['u-later'], 'the same row starts owning silence when it is due');
 @QUERY_APPOINTMENTS = ();
 my $recent = state_hash();
 $recent->{'since'} = subs::rightNow() - 1000;
@@ -290,6 +325,10 @@ like($phone_js, qr/setSilence/, 'and hand it to the native bridge');
 like($js, qr/JawnPhone\.setSilence/, 'the browser pushes silence to the native half');
 like($js, qr/jawnPhoneSync/, 'and refreshes the phone facts on a change');
 like(source('perl/Reception.pl'), qr/silence_active.*enabled/s, 'the reception worker arms during silence');
+like(source('lib/JawnOS/Domain/Silence.pm'), qr/type in \('start','record'\) and timestamp <= \?/,
+	'the owner query counts only sessions whose start time is due');
+like(source('lib/JawnOS/Manager/Part05.pm'), qr/silence_appointment_write\([^)]*\$app->\{'timestamp'\}/,
+	'and the writer hands the start time to the hook');
 like(source('perl/Alarm.pl'), qr/silence_tick/, 'the alarm loop starts and stops silence');
 like(source('lib/JawnOS/Domain/Loader.pm'), qr/silence_tick/, 'the reconcile helper is mapped');
 

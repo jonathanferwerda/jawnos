@@ -383,7 +383,8 @@ sub silence_tick {
 	my $open = eval {
 		&subs::db_query(
 			"select uuid, app from appointments where stop_seen is null "
-			. "and type in ('start','record')"
+			. "and type in ('start','record') and timestamp <= ?",
+			$now
 		)->hashes;
 	} || [];
 	my (@owners, %apps, %seen);
@@ -435,7 +436,7 @@ sub silence_tick {
 # even when the app's box was unticked before the stop arrived; only a start
 # consults the box.
 sub silence_appointment_write {
-	my ($app, $type, $owner, $c) = @_;
+	my ($app, $type, $owner, $c, $when) = @_;
 	return 0 unless defined $app && length $app;
 	my $movement = defined $type ? lc($type) : '';
 	return 0 unless $movement eq 'start' || $movement eq 'stop';
@@ -444,6 +445,12 @@ sub silence_appointment_write {
 		return 1;
 	}
 	return 0 unless &silence_app_setting_on($app);
+	# A start written ahead of its time is not running yet: an appointment
+	# scheduled for later must not quiet the house the moment it is saved. The
+	# alarm pass engages it when its timestamp comes due (silence_tick).
+	if (defined $when && $when =~ /^\s*\d+(?:\.\d+)?\s*$/ && $when + 0 > (&subs::rightNow() + 2000)) {
+		return 0;
+	}
 	&silence_engage($owner, $app, $c);
 	return 1;
 }
