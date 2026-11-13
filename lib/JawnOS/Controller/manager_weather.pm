@@ -127,6 +127,7 @@ sub action_52321 {
 	}
 	$log->info("weather data: no hourly for $location_key from " . ($weather->{'provider'} // ''))
 		if $log && !@{ $weather->{'hourly'} || [] };
+	eval { &subs::weather_alert_enrich($weather) };
 	$weather->{'source'} = $label;
 	$weather->{'source_at'} = $seen_at;
 	$weather->{'source_device'} = $device;

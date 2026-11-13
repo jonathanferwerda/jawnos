@@ -18,6 +18,8 @@ no warnings 'experimental::args_array_with_signatures';
 use Math::Trig qw(deg2rad);
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::UserAgent;
+use Mojo::DOM;
+use Mojo::Util qw(md5_sum);
 use Time::Local qw(timegm);
 use Time::Piece;
 
@@ -662,6 +664,83 @@ sub weather_reverse_geocode($lat, $lon) {
 		return $value if length $value && $value ne 'null';
 	}
 	return '';
+}
+
+sub weather_alert_report_parse($html, $url = '') {
+	return undef unless defined $html && length $html;
+	my $dom = Mojo::DOM->new($html);
+	my ($frag) = ($url // '') =~ /#([A-Za-z0-9_-]+)\s*$/;
+	my $root;
+	if (defined $frag && length $frag) {
+		$root = $dom->at('div[id="' . $frag . '"]');
+	}
+	unless ($root) {
+		# A report without a fragment: the first alert block that carries a
+		# pre-wrapped statement body is the one to read.
+		($root) = grep { $_->at('p.pre-wrap') } @{ $dom->find('div[id]')->to_array };
+	}
+	return undef unless $root;
+	my $body_node = $root->at('p.pre-wrap');
+	return undef unless $body_node;
+	my $body = $body_node->text;
+	$body =~ s/\r\n?/\n/g;
+	$body =~ s/[ \t]+\n/\n/g;
+	$body =~ s/^\s+|\s+$//g;
+	my @areas;
+	my $list = $root->at('ul');
+	if ($list) {
+		foreach my $li (@{ $list->find('li')->to_array }) {
+			my $area = $li->text;
+			$area =~ s/^\s+|\s+$//g;
+			push @areas, $area if length $area;
+		}
+	}
+	return { body => $body, areas => \@areas };
+}
+
+# The alert payload names the statement but does not carry its body; the report
+# page does. The URL's fragment is the id of the alert's block, so read that
+# block rather than the whole page (a region can have several). Keep it for half
+# an hour; the report is public and changes only when the alert does.
+sub weather_alert_report($url) {
+	return undef unless defined $url && $url =~ m{^https?://};
+	my $key = substr(md5_sum($url), 0, 24);
+	my $cached = eval { &cache_get({ app => 'weather', context => 'alert_report', subcontext => $key }) };
+	return $cached if ref $cached eq 'HASH' && ($cached->{'at'} || 0) > &rightNow() - 30 * 60 * 1000;
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 6, request_timeout => 8, max_redirects => 4);
+	my ($html, $error) = &weather_http_get_text($url, $ua);
+	my $parsed = $html ? &weather_alert_report_parse($html, $url) : undef;
+	my $out = $parsed
+		? { at => &rightNow(), %{$parsed} }
+		: { at => &rightNow(), error => $error || 'no report body' };
+	eval { &cache_set({ app => 'weather', context => 'alert_report', subcontext => $key, warranty => ($parsed ? '-30m' : '-10m') }, $out) };
+	return $out;
+}
+
+sub weather_alert_enrich($weather) {
+	return $weather unless ref $weather eq 'HASH' && ref $weather->{'alerts'} eq 'ARRAY';
+	foreach my $alert (@{ $weather->{'alerts'} }) {
+		next unless ref $alert eq 'HASH' && length($alert->{'url'} // '');
+		my $report = eval { &weather_alert_report($alert->{'url'}) };
+		next unless ref $report eq 'HASH' && !$report->{'error'};
+		$alert->{'text'} = $report->{'body'} if length($report->{'body'} // '');
+		$alert->{'areas'} = $report->{'areas'}
+			if ref $report->{'areas'} eq 'ARRAY' && @{ $report->{'areas'} };
+	}
+	return $weather;
+}
+
+sub weather_http_get_text($url, $ua) {
+	return (undef, 'no address') unless defined $url && length $url;
+	my $res = eval {
+		$ua->get($url => {
+			'User-Agent' => 'JawnOS Weather (weather@jawnos.local)',
+			'Accept' => 'text/html,application/xhtml+xml',
+		})->result;
+	};
+	return (undef, 'request failed') unless $res;
+	return (undef, 'HTTP ' . $res->code) unless $res->is_success;
+	return ($res->body, undef);
 }
 
 sub weather_http_get($url, $ua) {

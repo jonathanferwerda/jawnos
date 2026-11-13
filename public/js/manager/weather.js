@@ -412,14 +412,15 @@ function weatherAlerts(alerts) {
 	for (var i = 0; i < alerts.length; i++) {
 		var a = alerts[i] || {};
 		var meta = [];
-		if (a.region) { meta.push(weatherEsc(a.region)); }
+		if (a.region && !(a.areas && a.areas.length)) { meta.push(weatherEsc(a.region)); }
 		if (a.issued_at) { meta.push(jawnosT('Issued') + ' ' + weatherTime(a.issued_at)); }
 		if (a.expires_at) { meta.push(jawnosT('Ends') + ' ' + weatherTime(a.expires_at)); }
 		html += '<div class="weather_alert">'
 			+ '<b>' + weatherEsc(a.title || jawnosT('Weather alert')) + '</b>'
 			+ (a.text ? '<div class="weather_alert_text">' + weatherEsc(a.text) + '</div>' : '')
+			+ (a.areas && a.areas.length ? '<div class="weather_alert_areas"><b>' + jawnosT('In effect for') + ':</b> ' + weatherEsc(a.areas.join(', ')) + '</div>' : '')
 			+ (meta.length ? '<div class="weather_alert_meta">' + meta.join(' · ') + '</div>' : '')
-			+ (a.url ? '<a class="weather_alert_more" href="' + weatherEsc(a.url) + '" target="_blank" rel="noopener">' + jawnosT('More details') + '</a>' : '')
+			+ (a.url ? '<a class="weather_alert_more" href="' + weatherEsc(a.url) + '" target="_blank" rel="noopener">' + jawnosT('See the full report') + '</a>' : '')
 			+ '</div>';
 	}
 	$w.find('#weather_alerts').html(html).toggle(!!html);

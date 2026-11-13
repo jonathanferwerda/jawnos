@@ -121,6 +121,31 @@ is($out->{'daily'}[0]{'wind_direction'}, 'W', 'EC turns the forecast bearing int
 	is($got->{'alerts'}[0]{'expires_at'}, 1794641573000, 'the expiry time is kept');
 }
 
+# --- the report page carries the body and the areas ---------------------------
+{
+	my $html = '<div id="abc"><p><strong>Special Weather Statement</strong></p><p class="pre-wrap">Winter weather travel statement in effect.
+
+What:
+Localized snowfall.</p><p><strong>In effect for:</strong></p><ul><li>Watford - Pinery Park - Eastern Lambton County</li></ul></div>';
+	my $report = subs::weather_alert_report_parse($html, 'https://weather.gc.ca/warnings/report_e.html?onrm47#abc');
+	is($report->{'body'}, "Winter weather travel statement in effect.\n\nWhat:\nLocalized snowfall.", 'the report body is read from the linked page');
+	is_deeply($report->{'areas'}, ['Watford - Pinery Park - Eastern Lambton County'], 'and the areas it is in effect for');
+	my $no_frag = subs::weather_alert_report_parse($html, 'https://weather.gc.ca/warnings/report_e.html?onrm47');
+	is($no_frag->{'body'}, $report->{'body'}, 'without a fragment the first report block is used');
+	is(subs::weather_alert_report_parse('<div id="x"></div>', 'https://x/#x'), undef, 'a block with no body is not a report');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::weather_alert_report = sub {
+		return { body => "Line one\nLine two", areas => ['Warwick'] };
+	};
+	my $w = { alerts => [ { title => 'Special Weather Statement', url => 'https://example.test/report' } ] };
+	subs::weather_alert_enrich($w);
+	is($w->{'alerts'}[0]{'text'}, "Line one\nLine two", 'the report body fills the alert');
+	is_deeply($w->{'alerts'}[0]{'areas'}, ['Warwick'], 'and the areas');
+}
+
 # --- Open-Meteo: plain numbers and parallel arrays ---------------------------
 my $om = {
 	timezone => 'America/Toronto',
@@ -1956,11 +1981,13 @@ like($loader_auto, qr/weather_location_for_fix/, 'the domain loader maps the fix
 like($loader_auto, qr/weather_location_anchor/, 'and the anchor writer');
 like($weather_js, qr/weatherDateStamp/, 'the day rows carry a month/day/year stamp');
 like($weather_js, qr/weatherPlaceText/, 'the place line uses the local station name');
-like($weather_js, qr/More details/, 'the alert links to its report');
+like($weather_js, qr/See the full report/, 'the alert links to its report');
 like($weather_js, qr/weather_alert_meta/, 'and shows the issue and expiry');
+like($weather_js, qr/weather_alert_areas/, 'the alert shows where the statement is in effect');
 like($weather_js, qr/weatherDayName/, 'and a weekday name');
 like($weather_js, qr/weatherLoading/, 'the app asks once at a time');
 like($weather_style, qr/overscroll-behavior-x/, 'the hourly strip scrolls sideways');
+like($weather_style, qr/white-space: pre-wrap/, 'the statement body keeps its line breaks');
 my $windows_storage = read_file("$root/public/js/manager/windows/01_storage.js");
 like($windows_storage, qr/i == 'weather'/, 'a restored Weather window uses its opener');
 my $windows_js = read_file("$root/public/js/manager/windows.js");
@@ -2141,7 +2168,9 @@ like($sources_js, qr/weather_sources_back/, 'and the Back button closes the dial
 like($routes_auto, qr{/manager/weather/sources\b}, 'the sources route exists');
 like($controller_auto, qr/sub action_52325\b/, 'and its GET action');
 like($controller_auto, qr/sub action_52023\b/, 'and its POST action');
+like($controller_auto, qr/weather_alert_enrich/, 'the data route fills the alert body');
 like($loader, qr/weather_pws_pick/, 'the domain loader maps the station picker');
+like($loader, qr/weather_alert_report_parse/, 'and the alert report parser');
 like($loader_auto, qr/weather_sources_save/, 'and the source writer');
 
 done_testing();
