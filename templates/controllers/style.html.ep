@@ -31,6 +31,9 @@
 	#controllers_app .controller_toolbar .controller_status { flex: 1 1 auto; }
 	#controllers_app .controller_field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; }
 	#controllers_app .controller_field_label { font-size: 13px; opacity: .78; }
+	#controllers_app select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; }
+	#controllers_app .controller_wifi_picks { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+	#controllers_app .controller_wifi_pick { font-size: 13px; }
 	#controllers_app input[type="text"]#controllers_archive_dir { flex: 1 1 16em; min-width: 16em; }
 	#controllers_app .controller_check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 	#controllers_app .controller_check input { margin: 0; }

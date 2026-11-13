@@ -25,8 +25,24 @@
 				<input type="text" id="controllers_hostname" value="gou" autocomplete="off" spellcheck="false" placeholder="gou">
 				<label class="controller_field_label" for="controllers_wifi_ssid"><%= &subs::ui('Wi-Fi network') %></label>
 				<input type="text" id="controllers_wifi_ssid" autocomplete="off" spellcheck="false" placeholder="<%= &subs::ui('Network name') %>">
+				<button type="button" id="controllers_wifi_scan"><%= &subs::ui('Scan') %></button>
 				<label class="controller_field_label" for="controllers_wifi_psk"><%= &subs::ui('Wi-Fi password') %></label>
 				<input type="password" id="controllers_wifi_psk" autocomplete="new-password" placeholder="<%= &subs::ui('At least 8 characters') %>">
+			</div>
+			<%# The scan answers with the networks this computer can see, which is the
+			    network the board will join; a picked name fills the field, so a space
+			    in a network name is not lost to typing. %>
+			<div id="controllers_wifi_picks" class="controller_wifi_picks"></div>
+			<div id="controllers_wifi_scan_status" class="controller_status" aria-live="polite"></div>
+			<%# What the board should do with the card it finds on its first start.
+			    The card is in the board, not in this computer, so the answer travels
+			    in the house token and is applied on that first boot. %>
+			<div class="controller_field">
+				<label class="controller_field_label" for="controllers_card_choice"><%= &subs::ui('The card in the controller') %></label>
+				<select id="controllers_card_choice">
+					<option value="adopt"><%= &subs::ui('Keep what is on it') %></option>
+					<option value="format"><%= &subs::ui('Format it when the board starts') %></option>
+				</select>
 			</div>
 		</div>
 		<div class="controller_toolbar">

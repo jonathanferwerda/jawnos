@@ -552,7 +552,7 @@ sub action_54008 {
 # flashed rootfs; the boot script deletes it once it has been redeemed. A token
 # costs one citizen press to mint, is single use, and expires in a day.
 sub _controller_join_token {
-	my ($c, $name, $hostname) = @_;
+	my ($c, $name, $hostname, $card) = @_;
 	my $secret = &subs::random_string_creator(40);
 	my $now = &subs::rightNow();
 	my $manager = &subs::house_manager_address(eval { $c->req->url->to_abs->to_string } || '');
@@ -562,6 +562,9 @@ sub _controller_join_token {
 		secret => $secret,
 		name => $name,
 		hostname => $hostname,
+		# What the person chose for the card before the flash: the card is in the
+		# board, so the answer travels here and the first boot applies it.
+		card => ($card =~ /^(adopt|format)$/ ? $card : ''),
 		house => {
 			manager => $manager,
 			signatorial => &subs::signatorial_designer() || '',
@@ -645,8 +648,12 @@ sub action_54010 {
 	my $hostname = $c->param('hostname');
 	push @args, ('--hostname', substr($hostname, 0, 63)) if defined $hostname && length $hostname;
 	# The token is the board's way into the house on its first boot; the
-	# provisioner copies it into the flashed rootfs beside the WiFi profile.
-	my $token = &_controller_join_token($c, (defined $hostname && length $hostname ? $hostname : 'Controller'), (defined $hostname && length $hostname ? $hostname : 'gou'));
+	# provisioner copies it into the flashed rootfs beside the WiFi profile. It
+	# also carries what to do with the card, which is in the board and cannot be
+	# looked at from here.
+	my $card = $c->param('card') // '';
+	$card = '' unless $card eq 'adopt' || $card eq 'format';
+	my $token = &_controller_join_token($c, (defined $hostname && length $hostname ? $hostname : 'Controller'), (defined $hostname && length $hostname ? $hostname : 'gou'), $card);
 	push @args, ('--join-token', $token->{'path'}) if $token->{'path'};
 	my $answer = &_controller_gou_run(1, $psk_stdin, @args);
 	unlink $token->{'path'} if $token->{'path'};

@@ -131,6 +131,17 @@ like($controllers_js, qr/jawnosConfirm\(controllerT\('Format the card in this co
 like($controller, qr/sub _controller_card_finding/, 'the page reads what the board reported');
 like($controller, qr/that card already holds the archive/, 'the card holding the archive is never formatted from the page');
 
+# Before a flash: the network can be scanned for (the manager's own radio, the
+# same scan Embedded and the Networks app use), and the card's fate is chosen
+# here because the card is in the board and this computer cannot see it.
+like($body, qr/id="controllers_wifi_scan"/, 'the New section can scan for networks');
+like($body, qr/id="controllers_wifi_picks"/, 'and shows what it found');
+like($body, qr/id="controllers_card_choice"/, 'and asks what to do with the card');
+like($controllers_js, qr{url: '/manager/network/wifi_scan'}, 'the scan reuses the Networks app route');
+like($controllers_js, qr/\.controller_wifi_pick/, 'a found network can be picked');
+like($controllers_js, qr/card: \(\$\('#controllers_card_choice'\)/, 'the card answer travels with the flash');
+like($controller, qr/card => \(\$card =~ \/\^\(adopt\|format\)\$\//, 'the token carries it to the board');
+
 # The storage walkthrough steps over the same answer Save produces, and the
 # route now says which of the eight folders are actually on the card.
 like($controller, qr/present => \(-d \(\$dir \. '\/' \. \$_\)\) \? 1 : 0/, 'the storage answer says which folders are on the card');

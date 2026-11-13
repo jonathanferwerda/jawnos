@@ -275,6 +275,25 @@ sub run_first_boot {
 	return $JSON->decode($said || '{}');
 }
 
+# The card answer chosen before the flash travels in the house token, because the
+# card sits in the board and this computer cannot see it. A dry run reports the
+# plan that answer produces.
+sub run_first_boot_with_token {
+	my ($lsblk, $card) = @_;
+	my $token = "$dry/token.json";
+	open(my $fh, '>', $token) or die "$token: $!";
+	print {$fh} $JSON->encode({
+		kind => 'jawnos-controller-join', v => 1,
+		secret => 'testtoken000000000000000000000001',
+		name => 'gou', hostname => 'gou', card => $card,
+		house => { manager => 'https://192.0.2.10:45545/manager', signatorial => 'aa', pubkey => 'bb', name => 'house' },
+		expires => time() * 1000 + 3600000,
+	});
+	close $fh;
+	my $said = &run_first_boot($lsblk, '--token', $token);
+	return $said;
+}
+
 my $emmc = '{"name":"mmcblk1","type":"disk","size":15634268160,"rm":false,"fstype":null,"children":[{"name":"mmcblk1p2","type":"part","size":15459762176,"fstype":"ext4","mountpoint":"/"}]}';
 my $sd_ext4 = '{"name":"mmcblk0","type":"disk","size":63864569856,"rm":true,"fstype":null,"children":[{"name":"mmcblk0p1","type":"part","size":63864553472,"fstype":"ext4","mountpoint":null}]}';
 my $sd_exfat = '{"name":"mmcblk0","type":"disk","size":63864569856,"rm":true,"fstype":null,"children":[{"name":"mmcblk0p1","type":"part","size":63864553472,"fstype":"exfat","mountpoint":"/media/jawn/CARD"}]}';
@@ -308,6 +327,21 @@ my $sd_blank = '{"name":"mmcblk0","type":"disk","size":63864569856,"rm":true,"fs
 	my $said = &run_first_boot($emmc);
 	is($said->{'card'}->{'state'}, 'none', 'no card in the slot is reported, not invented');
 	is($said->{'token'}, 'none', 'and no token means the boot is a no-op');
+}
+
+# The card answer chosen before the flash, carried in the token.
+{
+	my $said = &run_first_boot_with_token($emmc . ',' . $sd_exfat, 'format');
+	is($said->{'card'}->{'choice'}, 'format', 'the token\'s answer is the first boot\'s choice');
+	is($said->{'card'}->{'action'}, 'format', 'so a foreign card is formatted on that first start');
+}
+{
+	my $said = &run_first_boot_with_token($emmc . ',' . $sd_exfat, 'adopt');
+	is($said->{'card'}->{'action'}, 'adopt', 'and keep-what-is-on-it adopts it instead');
+}
+{
+	my $said = &run_first_boot_with_token($emmc . ',' . $sd_ext4, 'format');
+	is($said->{'card'}->{'action'}, 'adopt', 'the card holding the archive is still never formatted');
 }
 
 # The manager page asks for the name that goes on the board.

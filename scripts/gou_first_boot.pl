@@ -549,7 +549,14 @@ unless ($opt{'no_card'}) {
 		last;
 	}
 	if ($chosen) {
-		my $choice = $opt{'dry_run'} ? '' : &_card_choice_read();
+		# The person's answer can arrive two ways: in the token, chosen before the
+		# flash (the card is in the board, so this is the only chance to say), or a
+		# setting they answered later on the Controllers page. The setting is the
+		# later word and wins; a dry run reports the token's answer, which needs no
+		# database.
+		my $token_card = ($token->{'token'} || {})->{'card'} // '';
+		$token_card = '' unless $token_card =~ /^(adopt|format)$/;
+		my $choice = $opt{'dry_run'} ? $token_card : (&_card_choice_read() || $token_card);
 		my $plan = &_card_plan($chosen, { format => $opt{'format'}, choice => $choice });
 		$report->{'card'} = $plan;
 		my $prepared = undef;
@@ -564,8 +571,9 @@ unless ($opt{'no_card'}) {
 			$report->{'card'}->{'done'} = $prepared->{'done'};
 			$report->{'card'}->{'archive_dir'} = $prepared->{'archive_dir'};
 			$report->{'card'}->{'fstab_error'} = $prepared->{'fstab_error'} if $prepared->{'fstab_error'};
-			# The answer has been applied; a later boot must not apply it again.
-			&_card_setting_clear('card_choice') if length $choice;
+			# A setting has been applied; a later boot must not apply it again. The
+			# token's own answer needs no clearing, since the token is spent below.
+			&_card_setting_clear('card_choice');
 		}
 		if (!$opt{'dry_run'}) {
 			$report->{'card'}->{'reported'} = &_card_report($plan, $prepared);
