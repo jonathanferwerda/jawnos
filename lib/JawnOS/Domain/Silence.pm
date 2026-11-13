@@ -417,7 +417,11 @@ sub silence_tick {
 	}
 	my $since = $state->{'since'} || 0;
 	if ($state->{'active'} || scalar @{ $state->{'owners'} || [] }) {
-		return 0 if $since && ($now - $since) < 120000;
+		# A peer can receive the state on the signed rail before its own copy of
+		# the appointment (the ordinary sync pass runs about every ten minutes).
+		# Hold a young state long enough for that row to arrive, so a relayed
+		# silence is not dropped before the machine can see what owns it.
+		return 0 if $since && ($now - $since) < 900000;
 		return 1 if &silence_release_all();
 	}
 	# Nothing owns the house. Put this machine back even when the state changed

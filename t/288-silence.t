@@ -224,8 +224,17 @@ $STORE{'__president|silence_state|all'} = encode_json($recent);
 $subs::silence_tick_at = 0;
 subs::silence_tick();
 is(state_hash()->{active}, 1, 'a fresh state is kept while a peer syncs');
+# The ordinary sync pass runs about every ten minutes, so a relayed peer may
+# not hold the appointment yet well after two minutes. It must still hold the
+# state rather than drop it.
 $recent = state_hash();
-$recent->{'since'} = subs::rightNow() - 200000;
+$recent->{'since'} = subs::rightNow() - 300000;
+$STORE{'__president|silence_state|all'} = encode_json($recent);
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is(state_hash()->{active}, 1, 'a relayed state is held long enough for the appointment row to sync');
+$recent = state_hash();
+$recent->{'since'} = subs::rightNow() - 1000000;
 $STORE{'__president|silence_state|all'} = encode_json($recent);
 @NATIVE = ();
 @SET = ();
