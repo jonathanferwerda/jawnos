@@ -280,7 +280,7 @@ like($loader, qr/JawnOS::Domain::WeatherHistory' for qw\([^)]*weather_history_bu
 like($loader, qr/weather_history_source_label/, 'the source naming is mapped');
 like($loader, qr/JawnOS::Domain::Weather' for qw\([^)]*weather_daily_merge/, 'the daily merge is mapped');
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_weather.pm");
-like($controller, qr/sub action_52012\b/, 'the history route action exists');
+like($controller, qr/sub action_52322\b/, 'the history route action exists');
 like($controller, qr/sub action_52013\b/, 'the backfill route action exists');
 like($controller, qr/sub action_52014\b/, 'the accuracy route action exists');
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_weather.pm");

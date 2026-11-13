@@ -45,17 +45,36 @@ is(scalar(keys %missing), 0, 'every route action exists in its controller')
 # correct: an action that exists in a controller but that no row reaches is dead
 # surface, and an agent that greps the name will believe it is a live entry point.
 my %routed = map { $_->{'action'} => 1 } @$routes;
-my (%action, %action_in);
+my (%action, %action_in, %action_seen);
 for my $file (glob "$repo/lib/JawnOS/Controller/*.pm") {
 	my ($module) = $file =~ m{Controller/([^/]+)\.pm$};
 	next unless $module;
 	my $src = read_file($file);
 	while ($src =~ /^\s*sub\s+(action_\d+)\b/mg) {
-		$action{$1}    = 1;
-		$action_in{$1} = $module;
+		my $name = $1;
+		$action_seen{$name}++ if $action{$name};
+		$action{$name}    = 1;
+		$action_in{$name} = $module;
 	}
 }
 cmp_ok(scalar(keys %action), '>=', 700, 'the controllers define their actions');
+
+# Every controller is package Manager, so two files that declare the same
+# action_<n> are one sub with two bodies: the later load silently wins and a
+# route calls the wrong handler. That is how the Weather page's action once
+# answered the printer's Find printers with a Weather place error.
+my @redefined = grep { $action_seen{$_} } sort keys %action_seen;
+is(scalar @redefined, 0, 'no controller action is defined twice')
+	or diag('redefined: '
+		. join(', ', map { "$_ ($action_in{$_}.pm)" } @redefined[0 .. ($#redefined > 4 ? 4 : $#redefined)]));
+
+my (%id_seen, @id_dupes);
+for my $r (@$routes) {
+	my $id = $r->{'line'};
+	push @id_dupes, "$r->{'module'}:$id ($r->{'method'} $r->{'path'})" if $id_seen{$id}++;
+}
+is(scalar @id_dupes, 0, 'no route index is used twice')
+	or diag('reused: ' . join(', ', @id_dupes[0 .. ($#id_dupes > 4 ? 4 : $#id_dupes)]));
 
 my @unrouted = grep { !$routed{$_} } sort keys %action;
 is(scalar @unrouted, 0, 'every controller action has a route row')

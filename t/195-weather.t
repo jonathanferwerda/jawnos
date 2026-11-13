@@ -253,8 +253,8 @@ my $routes = read_file("$root/lib/JawnOS/Routes/manager_weather.pm");
 like($routes, qr{/manager/weather\b}, 'the page route exists');
 like($routes, qr{/manager/weather/data\b}, 'the data route exists');
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_weather.pm");
-like($controller, qr/sub action_52010\b/, 'the page action exists');
-like($controller, qr/sub action_52011\b/, 'the data action exists');
+like($controller, qr/sub action_52320\b/, 'the page action exists');
+like($controller, qr/sub action_52321\b/, 'the data action exists');
 
 my $known = read_file("$root/perl/gb/02_labels_and_collectives.pl");
 like($known, qr/weather\s*=>\s*\{\s*icon/, 'the app has an icon entry');
@@ -1823,7 +1823,7 @@ like($routes_auto, qr{/manager/weather/measure_rule\b}, 'the measurement-rule ro
 like($controller_auto, qr/sub action_52018\b/, 'the saved-location action exists');
 like($controller_auto, qr/sub action_52019\b/, 'the measurement-rule action exists');
 like($routes_auto, qr{/manager/weather/location/anchor\b}, 'the anchor route exists');
-like($controller_auto, qr/sub action_52021\b/, 'and its action');
+like($controller_auto, qr/sub action_52324\b/, 'and its action');
 like($controller_auto, qr/weather_location_save/, 'the page saves a location through the domain');
 like($page, qr/id="weather_location_add"/, 'the location dropdown has an Add button');
 my ($sticky_bar) = $page =~ m{(<div id="weather_toolbar">.*?</div>)}s;
@@ -1913,7 +1913,7 @@ like($weather_style, qr/\.weather_day_chart_wet/, 'with a soft band behind the l
 
 # --- saving, restoring and the strip ----------------------------------------
 like($routes_auto, qr{/manager/weather/location/delete\b}, 'the delete route exists');
-like($controller_auto, qr/sub action_52020\b/, 'and its action');
+like($controller_auto, qr/sub action_52323\b/, 'and its action');
 like($auto_partial, qr/class="weather_location_delete"/, 'the rule forms offer Delete beside At');
 like($page, qr/id="weather_location_delete"/, 'the toolbar offers Delete too');
 like($weather_js, qr/weatherLocationDelete/, 'the script deletes a saved place');
@@ -2105,7 +2105,7 @@ like($sources_js, qr/weatherSourcesOpen/, 'the Sources script opens the dialog')
 like($sources_js, qr#/manager/weather/sources#, 'and asks the sources route');
 like($sources_js, qr/weather_sources_back/, 'and the Back button closes the dialog');
 like($routes_auto, qr{/manager/weather/sources\b}, 'the sources route exists');
-like($controller_auto, qr/sub action_52022\b/, 'and its GET action');
+like($controller_auto, qr/sub action_52325\b/, 'and its GET action');
 like($controller_auto, qr/sub action_52023\b/, 'and its POST action');
 like($loader, qr/weather_pws_pick/, 'the domain loader maps the station picker');
 like($loader_auto, qr/weather_sources_save/, 'and the source writer');

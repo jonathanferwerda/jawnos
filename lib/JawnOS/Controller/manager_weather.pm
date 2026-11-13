@@ -27,7 +27,7 @@ my $automation_scope = sub {
 };
 
 # GET /manager/weather
-sub action_52010 {
+sub action_52320 {
 	my $c = shift;
 	# A place saved from the map with no name stored a coordinate. Name it now,
 	# before the picker is built; the lookup is one request and then cached.
@@ -61,7 +61,7 @@ sub action_52010 {
 }
 
 # GET /manager/weather/data
-sub action_52011 {
+sub action_52321 {
 	my $c = shift;
 	my $device = $c->param('device') || 'me';
 	my $lat = $c->param('lat');
@@ -143,7 +143,7 @@ sub action_52011 {
 }
 
 # GET /manager/weather/history
-sub action_52012 {
+sub action_52322 {
 	my $c = shift;
 	my $result = eval { &subs::weather_history_read({
 		source => $c->param('source') || '',
@@ -279,14 +279,14 @@ sub action_52019 {
 }
 
 # POST /manager/weather/location/delete
-sub action_52020 {
+sub action_52323 {
 	my $c = shift;
 	my $deleted = eval { &subs::weather_location_delete($c->param('uuid') // '') };
 	$c->render(json => $deleted || { error => &subs::ui('That saved location is gone.') });
 }
 
 # POST /manager/weather/location/anchor
-sub action_52021 {
+sub action_52324 {
 	my $c = shift;
 	my $result = eval {
 		&subs::weather_location_anchor($c->param('uuid') // '', $c->param('anchor') ? 1 : 0);
@@ -296,7 +296,7 @@ sub action_52021 {
 
 
 # GET /manager/weather/sources
-sub action_52022 {
+sub action_52325 {
 	my $c = shift;
 	my $result = eval {
 		&subs::weather_sources_state({
