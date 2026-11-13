@@ -22,6 +22,17 @@ sub source { my $text = read_file("$root/$_[0]"); return defined $text ? $text :
 	sub console_command { return { cmd => $_[0], args => [ @_[1 .. $#_] ] }; }
 }
 
+# A controller with no request is what a navigation plate and the alarm pass
+# hand the writer. The relay must still be able to send from one.
+{ package FakeCtl;
+	sub new { return bless { req => undef }, shift }
+	sub req { my $self = shift; $self->{'req'} = shift if @_; return $self->{'req'} }
+	sub param { return undef }
+}
+{ package FakeApp;
+	sub build_controller { return FakeCtl->new }
+}
+
 require "$root/lib/JawnOS/Domain/Silence.pm";
 
 no warnings 'redefine';
@@ -51,6 +62,7 @@ sub reset_all {
 	$DEVICE = 'computer';
 	$subs::silence_tick_at = 0;
 	$subs::silence_native_off_at = 0;
+	%subs::silence_owners_seen = ();
 	$NOW = 1000;
 	$subs::SILENCE_LOCAL_FILE = $main::SCRATCH . '/silence_local.json';
 	unlink $subs::SILENCE_LOCAL_FILE;
@@ -69,8 +81,9 @@ $main::SCRATCH = $scratch;
 	$STORE{ key_of($s) } = $s->{'value'};
 	return { ok => 1, %{$s} };
 };
-*subs::subprocessor = sub { return 1 };
-*subs::remote_relay_request = sub { push @RELAY, { @_ }; return 1 };
+*subs::app = sub { return bless {}, 'FakeApp' };
+*subs::subprocessor = sub { my ($body) = @_; eval { $body->() }; return 1 };
+*subs::remote_relay_request = sub { my ($c, $extra) = @_; push @RELAY, { c => $c, extra => $extra }; return 1 };
 *subs::relay_fresh = sub { return 1 };
 *subs::random_string_creator = sub { return 'relayid' };
 *subs::device_setter = sub { return $DEVICE };
@@ -200,6 +213,9 @@ is($tick_state->{active}, 1, 'the alarm pass starts silence');
 is_deeply($tick_state->{owners}, ['u-open'], 'and owns the open silent session');
 my $on_pushed = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 1 } @NATIVE;
 ok($on_pushed, 'and tells the phone app directly');
+my $start_relay = grep { ($_->{'extra'}->{'url'} // '') eq '/manager/silence/peer'
+	&& $_->{'extra'}->{'params'}->{'active'} } @RELAY;
+ok($start_relay, 'and hands the start to the peers with no request in hand');
 @QUERY_APPOINTMENTS = ({ uuid => 'u2-open', app => 'mirror' });
 $subs::silence_tick_at = 0;
 subs::silence_tick();
@@ -245,6 +261,23 @@ subs::silence_tick();
 is(state_hash()->{active}, 0, 'the alarm pass clears silence when the appointment is gone');
 my $off_pushed = grep { $_->{'method'} eq 'silence.set' && $_->{'args'}->{'on'} == 0 } @NATIVE;
 ok($off_pushed, 'and tells the phone app off');
+my $stop_relay = grep { ($_->{'extra'}->{'url'} // '') eq '/manager/silence/peer'
+	&& !$_->{'extra'}->{'params'}->{'active'} } @RELAY;
+ok($stop_relay, 'and relays the release it watched the session close');
+
+# A peer that never saw the owner must not tell the house the session ended:
+# it only clears its own machine and leaves the relay to the machine that ran it.
+reset_all();
+@QUERY_SETTINGS = ({ app => 'mirror' });
+$STORE{'__president|silence_state|all'} = encode_json({
+	active => 1, owners => ['ghost'], apps => { ghost => 'mirror' },
+	since => subs::rightNow() - 1000000,
+});
+@QUERY_APPOINTMENTS = ();
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is(state_hash()->{active}, 0, 'a peer with an expired state still clears its own machine');
+is(scalar @RELAY, 0, 'but never relays a release it did not witness');
 
 # A machine whose manager missed the stop still has the mixer snapshot on
 # disk. The next pass with no owner must put the mixer back even though the

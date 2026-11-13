@@ -30,6 +30,10 @@ our $SILENCE_APP_BOX = 'silence';
 our $SILENCE_LOCAL_FILE;
 our $silence_tick_at = 0;
 our $silence_native_off_at = 0;
+# Owners this process itself saw open. A release inferred from an owner in this
+# set is this machine's own appointment closing, so it may be relayed; a peer
+# that merely missed the appointment must not tell the house it is over.
+our %silence_owners_seen;
 
 # ---- the state ---------------------------------------------------------------
 # One JSON row for the whole house. A malformed or missing row is an inactive
@@ -344,8 +348,11 @@ sub silence_native_push {
 }
 
 # The house is no longer quiet: drop every owner, put this machine back,
-# and tell this phone's app. Peers reconcile on their own alarm pass.
+# and tell this phone's app. Peers hear about it only when the caller says the
+# transition is informed (a machine that saw the session open), never when a
+# peer is only guessing from an appointment it has not received yet.
 sub silence_release_all {
+	my ($broadcast) = @_;
 	my $state = &silence_state();
 	return $state unless $state->{'active'} || scalar @{ $state->{'owners'} || [] };
 	$state->{'active'} = 0;
@@ -356,14 +363,15 @@ sub silence_release_all {
 	&silence_local_apply(0);
 	&silence_native_push(0);
 	&silence_push($state);
+	&silence_broadcast(undef, $state) if $broadcast;
 	return $state;
 }
 
 # The alarm worker's reconciliation. The open silent appointment is the
 # authority: while one is open, silence is on and its uuid is the owner;
 # when none is open, silence comes off. A peer whose database has not yet
-# received a just-started session keeps the state for two minutes so it
-# cannot clear another machine's fresh start.
+# received a just-started session keeps a young state for fifteen minutes
+# (longer than a sync pass) so it cannot clear another machine's fresh start.
 sub silence_tick {
 	my $now = eval { &subs::rightNow() } || (time * 1000);
 	return 0 if $silence_tick_at && $now - $silence_tick_at < 2000;
@@ -410,7 +418,11 @@ sub silence_tick {
 			$state->{'by'} ||= (eval { &subs::signatorial_designer() } || '');
 			&silence_state_write($state);
 			&silence_push($state);
+			# No page has to be open: the alarm pass itself hands the start to
+			# the peers, exactly as the appointment route does.
+			&silence_broadcast(undef, $state);
 		}
+		$silence_owners_seen{$_} = 1 for @owners;
 		&silence_local_hold();
 		&silence_native_push(1);
 		return 1;
@@ -422,7 +434,13 @@ sub silence_tick {
 		# Hold a young state long enough for that row to arrive, so a relayed
 		# silence is not dropped before the machine can see what owns it.
 		return 0 if $since && ($now - $since) < 900000;
-		return 1 if &silence_release_all();
+		# Relay the release only when this machine watched one of these owners
+		# run: that is the appointment closing here, not a missing row.
+		my $informed = 0;
+		foreach my $owner ( @{ $state->{'owners'} || [] } ) {
+			$informed = 1 if delete $silence_owners_seen{$owner};
+		}
+		return 1 if &silence_release_all($informed);
 	}
 	# Nothing owns the house. Put this machine back even when the state changed
 	# while this manager was down, and tell the phone's native half off: it keeps
@@ -497,8 +515,23 @@ sub silence_push {
 # setting is what a machine that was asleep finds when it wakes.
 sub silence_broadcast {
 	my ($c, $state) = @_;
-	return 0 unless $c && ref $state eq 'HASH';
-	return 0 unless eval { defined $c->req };
+	return 0 unless ref $state eq 'HASH';
+	# A write with no request in hand - a navigation plate, the alarm pass -
+	# still has to reach the peers. The relay reads only the shape of the rail
+	# off the request, so hand it the one this message always uses.
+	unless (eval { $c && defined $c->req }) {
+		$c = eval { app()->build_controller } unless $c;
+		if ($c) {
+			eval {
+				require Mojo::Message::Request;
+				my $req = Mojo::Message::Request->new;
+				$req->method('POST');
+				$req->url->path('/manager/silence/peer');
+				$c->req($req);
+			};
+		}
+	}
+	return 0 unless eval { $c && defined $c->req };
 	return 0 if ($c->param('remoted') || '') eq 'yes';
 	my $self = eval { &subs::signatorial_designer() } || '';
 	my $relay_id = eval { &subs::random_string_creator(30) } || '';
