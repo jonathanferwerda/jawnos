@@ -567,7 +567,7 @@ write_file($log, '');
 {
 	require "$root/perl/language.pl";
 	for my $lang (@language::languages) {
-		for my $key (qw(sound sound_output sound_muted)) {
+		for my $key (qw(sound sound_output sound_muted sound_profile sound_passive sound_quiet sound_silence)) {
 			isnt(language::translate($lang->{code}, $key), $key,
 				$lang->{code} . " translates $key");
 		}

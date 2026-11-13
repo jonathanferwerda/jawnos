@@ -78,6 +78,7 @@ my $scratch = tempdir(CLEANUP => 1);
 $main::SCRATCH = $scratch;
 
 *subs::rightNow = sub { $NOW += 10; return $NOW };
+*subs::lang = sub { my ($key) = @_; return $key };
 *subs::signatorial_designer = sub { return 'me' };
 *subs::setting_grabber = sub { my ($s) = @_; return $STORE{ key_of($s) } };
 *subs::setting_setter = sub {
@@ -104,13 +105,17 @@ $main::SCRATCH = $scratch;
 	if (defined $sql && $sql =~ /from appointments/) {
 		# The reconciler asks only for sessions whose own timestamp is due;
 		# honour that so a scheduled row is not counted before its time.
+		my @rows = @QUERY_APPOINTMENTS;
 		if ($sql =~ /timestamp <= \?/) {
 			my $now = $args[-1];
-			return FakeRows->new([ grep {
+			@rows = grep {
 				ref $_ eq 'HASH' && (!defined $_->{'timestamp'} || $_->{'timestamp'} <= $now)
-			} @QUERY_APPOINTMENTS ]);
+			} @rows;
 		}
-		return FakeRows->new(\@QUERY_APPOINTMENTS);
+		if ($sql =~ /order by timestamp desc/i) {
+			@rows = sort { ($b->{'timestamp'} // 0) <=> ($a->{'timestamp'} // 0) } @rows;
+		}
+		return FakeRows->new(\@rows);
 	}
 	return FakeRows->new([]);
 };
@@ -147,6 +152,71 @@ is(subs::silence_app_setting('mirror'), 'checked', 'the app box is read from the
 ok(subs::silence_app_setting_on('mirror'), 'checked turns the box on');
 $STORE{'mirror|silence|all'} = 'unchecked';
 ok(!subs::silence_app_setting_on('mirror'), 'unchecked leaves it off');
+
+# ============================================================================
+# the four levels
+# ============================================================================
+reset_all();
+is(subs::sound_profile_level('passive'), 'passive', 'Passive is the inherit level');
+is(subs::sound_profile_level('Mute'), 'mute', 'a level is read without regard to case');
+is(subs::sound_profile_level('checked'), 'silence', 'the old Silence box reads as Silence');
+is(subs::sound_profile_level('unchecked'), 'passive', 'an unticked box inherits');
+is(subs::sound_profile_level('nonsense'), 'passive', 'an unknown value inherits');
+is(subs::sound_profile_level(undef), 'passive', 'a missing value inherits');
+is(subs::sound_level_label('passive'), 'sound_passive', 'Passive has its own label key');
+is(subs::sound_level_label('checked'), 'sound_silence', 'Silence keeps its label under the old box too');
+
+$STORE{'mirror|sound_profile|all'} = 'quiet';
+is(subs::sound_app_level('mirror'), 'quiet', 'an app profile is read from the house-wide row');
+$STORE{'mirror|sound_profile|'} = 'mute';
+delete $STORE{'mirror|sound_profile|all'};
+is(subs::sound_app_level('mirror'), 'mute', 'a per-device row is the fallback');
+delete $STORE{'mirror|sound_profile|'};
+$STORE{'mirror|silence|all'} = 'checked';
+is(subs::sound_app_level('mirror'), 'silence', 'the legacy box answers when no profile row exists');
+
+is(subs::sound_house_setting_level(), 'sound', 'an unset house level is ordinary sound');
+$STORE{'__president|sound_level|all'} = 'passive';
+is(subs::sound_house_setting_level(), 'sound', 'and a Passive house row still means sound');
+$STORE{'__president|sound_level|all'} = 'mute';
+is(subs::sound_house_setting_level(), 'mute', 'the house level is read house-wide');
+
+reset_all();
+@QUERY_APPOINTMENTS = ();
+is(subs::sound_house_level(), 'sound', 'no running profile leaves the house at Sound');
+$STORE{'__president|sound_level|all'} = 'quiet';
+is(subs::sound_house_level(), 'quiet', 'otherwise the house setting answers');
+$STORE{'mirror|sound_profile|all'} = 'mute';
+$STORE{'lens|sound_profile|all'} = 'silence';
+@QUERY_APPOINTMENTS = (
+	{ uuid => 'old', app => 'mirror', timestamp => subs::rightNow() - 2000 },
+	{ uuid => 'new', app => 'lens', timestamp => subs::rightNow() - 1000 },
+);
+is(subs::sound_house_level(), 'silence', 'the most recently started profile wins');
+@QUERY_APPOINTMENTS = (
+	{ uuid => 'old', app => 'lens', timestamp => subs::rightNow() - 2000 },
+	{ uuid => 'new', app => 'mirror', timestamp => subs::rightNow() - 1000 },
+);
+is(subs::sound_house_level(), 'mute', 'and the answer follows the start time');
+$STORE{'lens|sound_profile|all'} = 'passive';
+@QUERY_APPOINTMENTS = (
+	{ uuid => 'new', app => 'lens', timestamp => subs::rightNow() - 1000 },
+	{ uuid => 'old', app => 'mirror', timestamp => subs::rightNow() - 2000 },
+);
+is(subs::sound_house_level(), 'mute', 'a Passive app does not take the house');
+@QUERY_APPOINTMENTS = ( { uuid => 'later', app => 'mirror', timestamp => subs::rightNow() + 300000 } );
+is(subs::sound_house_level(), 'quiet', 'a start in the future does not count yet');
+@QUERY_APPOINTMENTS = ( { uuid => 'now', app => 'mirror', timestamp => subs::rightNow() - 1000 } );
+is(subs::sound_house_level(), 'mute', 'and counts once it is due');
+
+reset_all();
+$STORE{'mirror|sound_profile|all'} = 'silence';
+subs::silence_appointment_write('mirror', 'start', 'p1');
+is(state_hash()->{active}, 1, 'a Silence profile engages like the old box');
+reset_all();
+$STORE{'mirror|sound_profile|all'} = 'mute';
+subs::silence_appointment_write('mirror', 'start', 'p2');
+is(state_hash(), undef, 'Mute is not absolute silence');
 
 reset_all();
 $STORE{'mirror|silence|all'} = 'checked';
@@ -187,7 +257,7 @@ is_deeply($stop_state->{'released'}, ['u2'],
 # A peer that received that stop must not read its own lagging row as a fresh
 # start: the note suppresses the owner until the row closes or the window ends.
 reset_all();
-@QUERY_SETTINGS = ({ app => 'mirror' });
+$STORE{'mirror|silence|all'} = 'checked';
 @QUERY_APPOINTMENTS = ({ uuid => 'u-lag', app => 'mirror', timestamp => subs::rightNow() - 1000 });
 subs::silence_release_note(['u-lag']);
 $subs::silence_tick_at = 0;
@@ -245,7 +315,7 @@ is(state_hash()->{active}, 1, 'a start due now engages silence');
 # the alarm pass: start and stop without a Manager page
 # ============================================================================
 reset_all();
-@QUERY_SETTINGS = ({ app => 'mirror' });
+$STORE{'mirror|silence|all'} = 'checked';
 @QUERY_APPOINTMENTS = ({ uuid => 'u-open', app => 'mirror' });
 $DEVICE = 'mobile';
 $subs::silence_tick_at = 0;
@@ -266,7 +336,7 @@ is_deeply(state_hash()->{owners}, ['u2-open'], 'the owners follow the open sessi
 # The same holds for a row written ahead of its time: it owns the house only
 # once its timestamp is due, which is what makes a scheduled appointment work.
 reset_all();
-@QUERY_SETTINGS = ({ app => 'mirror' });
+$STORE{'mirror|silence|all'} = 'checked';
 $DEVICE = 'mobile';
 @QUERY_APPOINTMENTS = ({ uuid => 'u-later', app => 'mirror', timestamp => subs::rightNow() + 300000 });
 subs::silence_tick();
@@ -279,7 +349,7 @@ is_deeply(state_hash()->{owners}, ['u-later'], 'the same row starts owning silen
 # A machine that watched that session run stops it at once when its own row
 # closes, and relays the stop - no sync window to wait out.
 reset_all();
-@QUERY_SETTINGS = ({ app => 'mirror' });
+$STORE{'mirror|silence|all'} = 'checked';
 $DEVICE = 'mobile';
 @QUERY_APPOINTMENTS = ({ uuid => 'u-own', app => 'mirror' });
 subs::silence_tick();
@@ -295,7 +365,7 @@ ok($own_off, 'and relays the stop to the peers');
 # Now behave as a peer that received the state but not the appointment: it did
 # not watch any of these owners, so a young state is held for the sync window.
 reset_all();
-@QUERY_SETTINGS = ({ app => 'mirror' });
+$STORE{'mirror|silence|all'} = 'checked';
 $DEVICE = 'mobile';
 @QUERY_APPOINTMENTS = ({ uuid => 'u-later', app => 'mirror', timestamp => subs::rightNow() - 1000 });
 subs::silence_tick();
@@ -336,7 +406,7 @@ ok(!$peer_stop_relay, 'but a peer never relays a release it did not witness');
 # A peer that never saw the owner must not tell the house the session ended:
 # it only clears its own machine and leaves the relay to the machine that ran it.
 reset_all();
-@QUERY_SETTINGS = ({ app => 'mirror' });
+$STORE{'mirror|silence|all'} = 'checked';
 $STORE{'__president|silence_state|all'} = encode_json({
 	active => 1, owners => ['ghost'], apps => { ghost => 'mirror' },
 	since => subs::rightNow() - 1000000,
@@ -403,14 +473,18 @@ like(source('lib/JawnOS/Domain/Loader.pm'), qr/JawnOS::Domain::Silence.*silence_
 	'the domain helpers are mapped');
 like(source('lib/JawnOS/Manager/Part05.pm'), qr/silence_appointment_write/,
 	'the appointment writer calls the silence hook');
-like(source('lib/JawnOS/Controller/manager_configure4.pm'), qr/\$setting eq 'silence'/,
-	'the Silence box is saved house-wide');
-like(source('lib/JawnOS/Domain/Log.pm'), qr/setting = \? and device = \?.*'silence', 'all'/s,
-	'the App panel reads the house-wide Silence row');
-like(source('templates/configure/appointment_list.html.ep'), qr/setting="silence"/,
-	'the App panel offers the Silence checkbox');
-like(source('templates/configure/appointment_list.html.ep'), qr/class="configure_checkbox"/,
-	'and it saves through the existing checkbox handler');
+like(source('lib/JawnOS/Controller/manager_configure4.pm'), qr/\$setting eq 'silence' \|\| \$setting eq 'sound_profile'/,
+	'the sound profile and the legacy box are saved house-wide');
+like(source('lib/JawnOS/Domain/Log.pm'), qr/'silence', 'sound_profile', 'all'/,
+	'the App panel reads the house-wide profile rows');
+like(source('templates/configure/appointment_list.html.ep'), qr/setting="sound_profile"/,
+	'the App panel offers the four-level sound profile');
+like(source('templates/configure/appointment_list.html.ep'), qr/class="configure_silence_level"/,
+	'and it saves through the dropdown handler');
+like(source('templates/configure/appointment_list.html.ep'), qr/\@subs::SOUND_LEVELS/,
+	'whose options are the model\'s own levels');
+like(source('public/js/manager/configure.js'), qr/\.configure_silence_level[\s\S]*?display\.html/s,
+	'the dropdown handler redraws the card, never reloading the page');
 like(source('lib/JawnOS/Domain/Phone.pm'), qr/silence_phone_flow/, 'the phone resolution asks silence first');
 like(source('lib/JawnOS/Manager/Part12.pm'), qr/source => 'silence'/, 'the route sheet knows the silence answer');
 like(source('lib/JawnOS/Controller/manager_phone.pm'), qr/silence => \$silenced/, 'the phone sync reports silence');
@@ -430,7 +504,7 @@ like($js, qr{/manager/silence}, 'and follows the house state');
 unlike($js, qr/\blocation\s*\.\s*(?:reload|assign|replace)\b/,
 	'switching silence never reloads or navigates the page');
 like(source('lib/JawnOS/Manager/Core1_tables_hooks.pm'), qr{/js/manager/silence\.js}, 'the guard rides the manager bundle');
-like(source('perl/help/topics_configure.pl'), qr/Silence, beside Unique and Permanent/, 'the Configure help explains the box');
+like(source('perl/help/topics_configure.pl'), qr/Sound profile is what an app asks the house for/, 'the Configure help explains the levels');
 my $phone_js = source('public/js/manager/manager/02_web_nfc.js');
 like($phone_js, qr/silence: \(response && response\.silence\)/, 'the phone facts carry the silence state');
 like($phone_js, qr/setSilence/, 'and hand it to the native bridge');

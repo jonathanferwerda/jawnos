@@ -473,7 +473,10 @@ $(document).on('change', '.configure_checkbox', function(e) {
 		}
 	});
 });
-$(document).on('change', '.configure_visibility, .configure_relationship', function(e) {
+$(document).on('change', '.configure_visibility, .configure_relationship, .configure_silence_level', function(e) {
+	// A dropdown that saves one setting and redraws the card. The sound profile is
+	// here rather than with the checkbox because a level (Passive, Sound, Quiet,
+	// Mute, Silence) is written as it is read, not as a tick.
 	var s = $(this);
 	var parent = s.closest('.appointment_configuration_cell');
 	var display = parent.find('.appointment_display');

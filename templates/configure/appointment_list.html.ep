@@ -108,9 +108,18 @@
 										<% if ($appts->{$a}->{'setting'}->{$check_set} eq "checked") { %> checked="checked" <% } %> setting="<%= $check_set %>" id="configure_visibility_<%= $a %>_<%= $check_set %>"> <%= &subs::format_name($check_set) %>
 								</span>
 							<% } %>
-							<span hint="<%= &subs::ui('A Silence appointment takes every machine quiet while it runs: no alarm, notification, ring or media sound, and every call goes to the receptionist. Stop it to give the house its sound back.') %>">
-								<input app="<%= $a %>" class="configure_checkbox" value="checked" type="checkbox" 
-									<% if (($appts->{$a}->{'setting'}->{'silence'} || '') eq "checked") { %> checked="checked" <% } %> setting="silence" id="configure_silence_<%= $a %>"> <%= &subs::ui('Silence') %>
+							<span class="app_sound_profile_field" hint="<%= &subs::ui('The sound profile is what this app asks the house for while one of its appointments runs. Sound is normal. Quiet softens the non-essential sounds. Mute silences media, speech and notifications but leaves alarms and a ringing call. Silence takes everything, alarms included, and sends every call to the receptionist. Passive, the default, inherits the house level set by the Sound widget and the Sound app. When several profiles are running, the most recently started app wins.') %>">
+								<label><%= &subs::lang('sound_profile') %></label>
+								<%
+									my $profile = $appts->{$a}->{'setting'}->{'sound_profile'};
+									if (!defined $profile || !length $profile) { $profile = $appts->{$a}->{'setting'}->{'silence'}; }
+									my $level = &subs::sound_profile_level($profile);
+								%>
+								<select app="<%= $a %>" class="configure_silence_level" setting="sound_profile" id="configure_silence_<%= $a %>">
+									<% foreach my $opt ( @subs::SOUND_LEVELS ) { %>
+										<option value="<%= $opt %>" <% if ($level eq $opt) { %>selected="selected"<% } %>><%= &subs::sound_level_label($opt) %></option>
+									<% } %>
+								</select>
 							</span>
 						</span>
 					</div>

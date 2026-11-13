@@ -393,11 +393,12 @@ sub log_reader {
 			}
 		}
 		push @{$settings}, @app_settings;
-		# The Silence box is one answer for the whole house, so its row lives on
-		# device 'all'. The per-device query above cannot see it; read it here so
-		# the App panel shows the same tick on every machine.
+		# The sound profile and the old Silence box are one answer for the whole
+		# house, so their rows live on device 'all'. The per-device query above
+		# cannot see them; read them here so the App panel shows the same level on
+		# every machine.
 		if (($data->{'view'} || '') eq 'appointment_display') {
-			my $house = &subs::db_raw('select * from settings where setting = ? and device = ?', 'silence', 'all');
+			my $house = &subs::db_raw('select * from settings where setting in (?, ?) and device = ?', 'silence', 'sound_profile', 'all');
 			push @{$settings}, @{$house || []};
 		}
 	}

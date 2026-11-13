@@ -27,6 +27,12 @@ use JawnOS::Platform::Paths ();
 our $SILENCE_SETTING_APP = '__president';
 our $SILENCE_SETTING = 'silence_state';
 our $SILENCE_APP_BOX = 'silence';
+# The four levels that replaced the Silence box. A profile is the answer one app
+# gives; the house level is the base the Sound widget and the Sound app set. An
+# app left at Passive inherits the house level.
+our $SOUND_PROFILE_SETTING = 'sound_profile';
+our $SOUND_HOUSE_SETTING = 'sound_level';
+our @SOUND_LEVELS = qw( passive sound quiet mute silence );
 our $SILENCE_LOCAL_FILE;
 our $SILENCE_RELEASED_FILE;
 our $silence_tick_at = 0;
@@ -96,10 +102,102 @@ sub silence_app_setting {
 	return defined $value ? $value : '';
 }
 
+# ---- the four sound levels ---------------------------------------------------
+# Passive inherits whatever the house is at; Sound is normal; Quiet softens the
+# non-essential sounds; Mute keeps the alarms and a ringing call but silences the
+# rest; Silence takes everything, alarms included, and sends every call to the
+# receptionist. The old Silence box is a yes/no row, so a value written before
+# the levels still reads: checked/on is Silence, anything else is Passive.
+sub sound_profile_level {
+	my ($value) = @_;
+	return 'passive' unless defined $value;
+	my $level = lc($value);
+	$level =~ s/^\s+|\s+$//g;
+	return 'silence' if $level =~ /^(?:checked|on|1|yes|true)$/;
+	return 'passive' if $level =~ /^(?:unchecked|off|0|no|false|)$/;
+	return $level if grep { $_ eq $level } @SOUND_LEVELS;
+	return 'passive';
+}
+
+sub sound_level_label {
+	my ($level) = @_;
+	$level = &sound_profile_level($level);
+	my %key = (
+		passive => 'sound_passive',
+		sound   => 'sound',
+		quiet   => 'sound_quiet',
+		mute    => 'sound_mute',
+		silence => 'sound_silence',
+	);
+	return &subs::lang($key{$level});
+}
+
+# What one app asks for. The house-wide row is the shared answer (a phone and a
+# laptop agree); the old Silence box is the fallback for a row written before
+# the levels existed.
+sub sound_app_level {
+	my ($app) = @_;
+	return 'passive' unless defined $app && length $app;
+	my $value = eval {
+		&subs::setting_grabber({
+			app => $app,
+			setting => $SOUND_PROFILE_SETTING,
+			device => 'all',
+			benign => 1,
+		});
+	};
+	if (!defined $value || !length $value) {
+		$value = eval { &subs::setting_grabber({ app => $app, setting => $SOUND_PROFILE_SETTING, benign => 1 }) };
+	}
+	if (!defined $value || !length $value) {
+		$value = &silence_app_setting($app);
+	}
+	return &sound_profile_level($value);
+}
+
+# The base level the Sound widget and the Sound app set. Passive is not a house
+# level - an unset or Passive row is simply ordinary sound.
+sub sound_house_setting_level {
+	my $value = eval {
+		&subs::setting_grabber({
+			app => $SILENCE_SETTING_APP,
+			setting => $SOUND_HOUSE_SETTING,
+			device => 'all',
+			benign => 1,
+		});
+	};
+	my $level = &sound_profile_level($value);
+	return $level eq 'passive' ? 'sound' : $level;
+}
+
+# The level the house is actually at. An app's own non-Passive profile takes
+# over while one of its appointments is running, and the most recently started
+# one wins when several do; otherwise the house setting answers.
+sub sound_house_level {
+	my $now = eval { &subs::rightNow() } || (time * 1000);
+	my $open = eval {
+		&subs::db_query(
+			"select app, timestamp from appointments where stop_seen is null "
+			. "and type in ('start','record') and timestamp <= ? "
+			. "order by timestamp desc",
+			$now
+		)->hashes;
+	} || [];
+	my %level;
+	foreach my $row ( @{$open} ) {
+		next unless ref $row eq 'HASH';
+		my $app = $row->{'app'} // '';
+		next unless length $app;
+		$level{$app} = &sound_app_level($app) unless exists $level{$app};
+		next if $level{$app} eq 'passive';
+		return $level{$app};
+	}
+	return &sound_house_setting_level();
+}
+
 sub silence_app_setting_on {
 	my ($app) = @_;
-	my $value = &silence_app_setting($app);
-	return ($value =~ /^(?:checked|on|1|yes|true)$/i) ? 1 : 0;
+	return (&sound_app_level($app) eq 'silence') ? 1 : 0;
 }
 
 # ---- the local snapshot ------------------------------------------------------
@@ -487,18 +585,6 @@ sub silence_tick {
 	my $now = eval { &subs::rightNow() } || (time * 1000);
 	return 0 if $silence_tick_at && $now - $silence_tick_at < 2000;
 	$silence_tick_at = $now;
-	my $quiet_apps = eval {
-		&subs::db_query(
-			"select app from settings where setting = ? and device = ? "
-			. "and lower(value) in ('checked','on','1','yes','true')",
-			'silence', 'all'
-		)->hashes;
-	} || [];
-	my %quiet;
-	foreach my $row ( @{$quiet_apps} ) {
-		next unless ref $row eq 'HASH' && defined $row->{'app'} && length $row->{'app'};
-		$quiet{$row->{'app'}} = 1;
-	}
 	my $open = eval {
 		&subs::db_query(
 			"select uuid, app from appointments where stop_seen is null "
@@ -506,7 +592,7 @@ sub silence_tick {
 			$now
 		)->hashes;
 	} || [];
-	my (@owners, %apps, %seen);
+	my (@owners, %apps, %seen, %level);
 	my $released_notes = &silence_released_read();
 	my %open_all;
 	foreach my $row ( @{$open} ) {
@@ -518,9 +604,13 @@ sub silence_tick {
 		# A verified peer has already stopped this owner: the row here is the
 		# lagging copy, so it must not read as a fresh start.
 		next if ($released_notes->{$uuid} // 0) > $now;
-		next unless $quiet{ $row->{'app'} // '' };
+		# Only Silence owns the house here. Mute and Quiet are applied by the
+		# sound paths themselves, and a legacy Silence box reads as Silence.
+		my $app = $row->{'app'} // '';
+		$level{$app} = &sound_app_level($app) unless exists $level{$app};
+		next unless $level{$app} eq 'silence';
 		push @owners, $uuid;
-		$apps{$uuid} = $row->{'app'};
+		$apps{$uuid} = $app;
 	}
 	if (%{$released_notes}) {
 		# Drop a note once the row is closed or the sync window has passed; a

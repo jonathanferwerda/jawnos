@@ -375,7 +375,7 @@ sub action_19033 {
 	# an appointment type's theme and its warranty are properties of the type, not
 	# of the machine that happened to set them, and the Silence box is one answer
 	# for the whole house: keep each on the house-wide row
-	$setting_data->{'device'} = 'all' if $setting eq 'theme' || $setting eq 'warranty' || $setting eq 'relationship' || $setting eq 'silence';
+	$setting_data->{'device'} = 'all' if $setting eq 'theme' || $setting eq 'warranty' || $setting eq 'relationship' || $setting eq 'silence' || $setting eq 'sound_profile';
 	$setting_data->{'value'} = &subs::relationship_normalize($setting_data->{'value'}) if $setting eq 'relationship';
 	&subs::setting_setter($setting_data);
 	if (($source || '') eq 'people') {
