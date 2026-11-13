@@ -30,6 +30,14 @@ is( &subs::mail_direction_from_note(undef), undef, 'a missing note has no direct
 my $script = read_file("$root/scripts/mail_direction_repair.pl");
 like( $script, qr/--duplicates/, 'the repair can clear the duplicate imports' );
 like( $script, qr/--seal-plain/, 'and seal a legacy plain sms body' );
+like( $script, qr/--thread-duplicates/, 'and collapse a chat-send / import duplicate' );
+like( $script, qr/--same-window/, 'with a window that keeps separate sends apart' );
+like( $script, qr/\$norm_phone/, 'the appointment join normalizes a leading country code' );
+like( $script, qr/\$wanted_phones\{ \$norm_phone->/, 'and matches the mailbox number the same way' );
+like( $script, qr/my \@exact = grep/, 'an appointment prefers the row at its own timestamp' );
+like( $script, qr/my \@exact = grep/, 'an appointment prefers the row at its own timestamp' );
+like( $script, qr/my \$own = \$note_type\{/, 'a window cannot borrow a row whose own note disagrees' );
+like( $script, qr/\^call from:/, 'a screened call transcript is read as incoming' );
 like( $script, qr/same-event duplicates/, 'the same message filed in both directions is collapsed' );
 like( $script, qr/records_mailbox_tombstone\(\$dup\)/, 'the spare copy is tombstoned' );
 like( $script, qr/records_mailbox_tombstone\(\$r\)/, 'the duplicate pass uses the records tombstone' );

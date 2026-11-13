@@ -757,7 +757,9 @@ sub phone_call_transcript_note {
 		server_time => &subs::rightNow(),
 		body => $sealed,
 		manager_file => '',
-		status => 'sent',
+		# The call came in, so the transcript sits on the caller's side of the
+		# thread rather than wearing the house's name.
+		status => 'inbox',
 		contact => $app,
 		phone => $digits,
 		email => undef,

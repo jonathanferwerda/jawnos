@@ -22,9 +22,14 @@ Read this before repairing appointments or restoring a database.
   phone's own message store wrote into each sms appointment note and restores the mailbox row: dry run
   by default, `--apply` writes. `--duplicates` also runs the records audit's mailbox half, tombstoning
   the bad-date import copies and repairing the two dates; `--seal-plain` seals a legacy public body so
-  the thread and its recent preview can read it. Never touches a row a person marked `ignored`. Run it
-  from a worktree with `JAWNOS_STORE_DIR=<live tree>` so the tool uses the live database, or with
-  `JAWNOS_ROOT=<live tree>` to load that tree's code.
+  the thread and its recent preview can read it; `--thread-duplicates` collapses a message the chat
+  send and the phone import both filed, keeping one row per direction within `--same-window` (default
+  5s). A number kept with a leading country code is normalized against the bare mailbox number, and an
+  appointment window (`--window MS`) only borrows a row whose own note does not name the other
+  direction. A screened call transcript, filed with no author and a `Call from:` header, is incoming.
+  Never touches a row a person marked `ignored`. Run it from a worktree with
+  `JAWNOS_STORE_DIR=<live tree>` so the tool uses the live database, or with `JAWNOS_ROOT=<live tree>`
+  to load that tree's code.
 
 ## Appointments that do not match what the person remembers
 

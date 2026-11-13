@@ -150,6 +150,7 @@ rename "$tr/one.jsonl", "$tr/one.jsonl.filed";
 	like($msgs[0]->{'body'}, qr/\ACall from: John Smith\n\nmay i ask whose calling/,
 		'the header names the caller and the words follow');
 	is($msgs[0]->{'contact'}, 'john_smith', 'and the message still reaches their thread');
+	is($msgs[0]->{'status'}, 'inbox', 'the transcript is filed as an incoming call');
 	ok(-e "$tr/known.jsonl.filed", 'the local transcript is spent');
 	ok(!-e "$tr/known.jsonl", 'so it cannot be filed twice');
 

@@ -26,19 +26,24 @@ my $root = $ENV{'JAWNOS_ROOT'} || "$FindBin::Bin/..";
 chdir $root or die "cannot find the jawnos root at $root: $!";
 require './perl/subroutines.pl';
 
-my ($apply, $verbose, $json, $window, $duplicates, $seal_plain) = (0, 0, 0, 0, 0, 0);
+my ($apply, $verbose, $json, $window, $duplicates, $seal_plain, $thread_dupes, $same_window) = (0, 0, 0, 0, 0, 0, 0, 5000);
 for (my $i = 0; $i < @ARGV; $i++) {
 	$apply = 1 if $ARGV[$i] eq '--apply';
 	$verbose = 1 if $ARGV[$i] eq '--verbose';
 	$json = 1 if $ARGV[$i] eq '--json';
 	$duplicates = 1 if $ARGV[$i] eq '--duplicates';
 	$seal_plain = 1 if $ARGV[$i] eq '--seal-plain';
+	$thread_dupes = 1 if $ARGV[$i] eq '--thread-duplicates';
+	if ($ARGV[$i] eq '--same-window' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^[0-9]+$/) {
+		$same_window = 0 + $ARGV[$i + 1];
+		$i++;
+	}
 	if ($ARGV[$i] eq '--window' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^[0-9]+$/) {
 		$window = 0 + $ARGV[$i + 1];
 		$i++;
 	}
 }
-die "usage: $0 [--apply] [--verbose] [--json] [--window MS] [--duplicates] [--seal-plain]\n" if @ARGV && $ARGV[0] =~ /^-h/;
+die "usage: $0 [--apply] [--verbose] [--json] [--window MS] [--same-window MS] [--duplicates] [--seal-plain] [--thread-duplicates]\n" if @ARGV && $ARGV[0] =~ /^-h/;
 
 my $suds = subs::suds_grabber();
 
@@ -121,6 +126,17 @@ my $row_direction = sub {
 	return undef;
 };
 
+# The mailbox stores a number bare (digits, no leading country code); a contact
+# setting may keep the leading 1 or formatting. Both sides are normalized so a
+# person's leading-1 line still joins their bare mailbox rows.
+my $norm_phone = sub {
+	my ($p) = @_;
+	$p //= '';
+	$p =~ s/\D+//g;
+	$p =~ s/^1//;
+	return $p;
+};
+
 # The phone line(s) a person's appointment app can be reached on. An appointment
 # names the person, the mailbox row names the number, so this is the join.
 my $lines = subs::contact_lines('phone');
@@ -128,7 +144,7 @@ my %phones_by_app;
 foreach my $app ( keys %{$lines} ) {
 	my %seen;
 	my @values = grep { defined $_ && length $_ && !$seen{$_}++ }
-		map { $_->{'value'} } @{ $lines->{$app} || [] };
+		map { $norm_phone->( $_->{'value'} ) } @{ $lines->{$app} || [] };
 	$phones_by_app{$app} = \@values if @values;
 }
 
@@ -153,12 +169,102 @@ my @appointments = @{ subs::db_query(
 	'sms'
 )->hashes };
 
+# The appointment note's direction, keyed by normalized number and timestamp.
+my %note_type;
+foreach my $a ( @appointments ) {
+	my $plain = subs::note_decrypter($suds, $a->{'notes'}, $a->{'ost'}) // '';
+	my $type = $direction_from_note->($plain);
+	next unless defined $type && $type ne 'draft';
+	foreach my $ph ( @{ $phones_by_app{ $a->{'app'} } || [] } ) {
+		$note_type{"$ph|$a->{'timestamp'}"} = $type;
+	}
+}
+
 my %wanted;
 my %stats = (
 	appointments => scalar @appointments,
 	no_phone => 0, no_type => 0, no_mailbox => 0, ambiguous => 0,
 	ignored => 0, already => 0, conflict => 0, would_change => 0,
 );
+
+# A message sent from Chat is filed twice: once live, then again when the
+# phone's own store is read back. The rows carry the same words and number and
+# land within a few seconds. Cluster on that and keep one row per direction, so
+# a sent/received pair that happens to say the same words is not collapsed. The
+# appointment note names the direction of the copy that has one.
+my @thread_actions;
+my %thread_stats = (clusters => 0, extras => 0, fixes => 0);
+if ($thread_dupes) {
+	my $rows = subs::db_query(
+		"select uuid,timestamp,status,phone,manager_file,body,ost from mailbox
+		 where phone is not null and phone != '' and coalesce(status,'') != 'ignored'
+		 order by timestamp asc"
+	)->hashes;
+	my %groups;
+	foreach my $r ( @{$rows} ) {
+		my $ph = $norm_phone->( $r->{'phone'} );
+		next unless length $ph;
+		my $body = lc( $plain_body->($r->{'body'}, $r->{'ost'}) );
+		next unless length $body;
+		$r->{'ph'} = $ph;
+		$r->{'note'} = $note_type{"$ph|$r->{'timestamp'}"};
+		# A screened call's transcript is filed with no author and the
+		# caller's header; it came in, so it belongs on the caller's side.
+		$r->{'note'} = 'inbox' if !defined $r->{'note'} && ($r->{'manager_file'} // '') eq '' && $body =~ /^call from:/;
+		push @{ $groups{"$ph|$body"} }, $r;
+	}
+	my $flush = sub {
+		my (@cluster) = @_;
+		return unless @cluster > 1;
+		$thread_stats{'clusters'}++;
+		my %by_dir;
+		foreach my $r ( @cluster ) {
+			my $dir = $r->{'note'} // $row_direction->($r) // 'unknown';
+			push @{ $by_dir{$dir} }, $r;
+		}
+		foreach my $dir ( keys %by_dir ) {
+			my @grp = sort { (0 + $a->{'timestamp'}) <=> (0 + $b->{'timestamp'}) } @{ $by_dir{$dir} };
+			next unless @grp > 1;
+			my @noted = grep { defined $_->{'note'} && $_->{'note'} eq $dir } @grp;
+			my $keep = @noted ? $noted[0] : $grp[0];
+			my $cur = $row_direction->($keep);
+			if ( $dir ne 'unknown' && (!defined $cur || $cur ne $dir) ) {
+				$thread_stats{'fixes'}++;
+				push @thread_actions, { action => 'fix', row => $keep, from => ($keep->{'status'} // ''), to => $dir };
+				subs::db_query('update mailbox set status = ?, server_time = ? where uuid = ?', $dir, subs::rightNow(), $keep->{'uuid'}) if $apply;
+				$keep->{'status'} = $dir;
+			}
+			foreach my $drop ( grep { $_->{'uuid'} ne $keep->{'uuid'} } @grp ) {
+				$thread_stats{'extras'}++;
+				push @thread_actions, { action => 'tombstone', row => $drop, kept => $keep->{'uuid'} };
+				subs::records_mailbox_tombstone($drop) if $apply;
+			}
+		}
+	};
+	foreach my $key ( keys %groups ) {
+		my @g = sort { (0 + $a->{'timestamp'}) <=> (0 + $b->{'timestamp'}) } @{ $groups{$key} };
+		my @cluster;
+		foreach my $r ( @g ) {
+			if ( @cluster && (0 + $r->{'timestamp'}) - (0 + $cluster[-1]->{'timestamp'}) > $same_window ) {
+				$flush->(@cluster);
+				@cluster = ();
+			}
+			push @cluster, $r;
+		}
+		$flush->(@cluster) if @cluster;
+	}
+	# A row with a known direction takes it even when it has no twin to
+	# cluster with (a screened call transcript is one row, for example).
+	foreach my $r ( @{$rows} ) {
+		next unless defined $r->{'note'};
+		my $cur = $row_direction->($r);
+		next if defined $cur && $cur eq $r->{'note'};
+		$thread_stats{'fixes'}++;
+		push @thread_actions, { action => 'fix', row => $r, from => ($r->{'status'} // ''), to => $r->{'note'} };
+		subs::db_query('update mailbox set status = ?, server_time = ? where uuid = ?', $r->{'note'}, subs::rightNow(), $r->{'uuid'}) if $apply;
+		$r->{'status'} = $r->{'note'};
+	}
+}
 
 foreach my $a ( @appointments ) {
 	my $phones = $phones_by_app{ $a->{'app'} } || [];
@@ -182,16 +288,34 @@ foreach my $a ( @appointments ) {
 		$lo, $hi
 	)->hashes;
 	my %wanted_phones = map { $_ => 1 } @{$phones};
-	my @rows = grep { defined $_->{'phone'} && $wanted_phones{ $_->{'phone'} } } @{$candidates};
+	my @rows = grep { defined $_->{'phone'} && $wanted_phones{ $norm_phone->($_->{'phone'}) } } @{$candidates};
 	if ( !@rows ) { $stats{'no_mailbox'}++; next; }
+
+	# The row at the appointment's own timestamp is the record; a window is only
+	# for a copy whose stored time is slightly off. A window must never borrow a
+	# row whose own appointment names the other direction (the echo test files a
+	# sent and an inbox appointment a second apart over one stored message).
+	my @exact = grep { (0 + $_->{'timestamp'}) == (0 + $a->{'timestamp'}) } @rows;
+	my @pool = @exact ? @exact : @rows;
+	if ( $window && !@exact ) {
+		@pool = grep {
+			my $own = $note_type{ $norm_phone->($_->{'phone'}) . '|' . $_->{'timestamp'} };
+			!defined $own || $own eq $want;
+		} @pool;
+		if ( !@pool ) { $stats{'ambiguous'}++; next; }
+	}
 
 	my $pick;
 	my @dup_extra;
-	if ( @rows == 1 ) {
-		$pick = $rows[0];
+	if ( @pool == 1 ) {
+		$pick = $pool[0];
+		if ( $window && !@exact && $note_body ne '' && $plain_body->($pick->{'body'}, $pick->{'ost'}) ne $note_body ) {
+			$stats{'ambiguous'}++;
+			next;
+		}
 	}
 	else {
-		my @body_match = grep { $note_body ne '' && $plain_body->($_->{'body'}, $_->{'ost'}) eq $note_body } @rows;
+		my @body_match = grep { $note_body ne '' && $plain_body->($_->{'body'}, $_->{'ost'}) eq $note_body } @pool;
 		if ( @body_match == 1 ) { $pick = $body_match[0]; }
 		elsif ( @body_match > 1 ) {
 			# The same event can be filed twice, one copy sent and one inbox,
@@ -262,6 +386,7 @@ if ($json) {
 		duplicates => ($duplicates ? { stats => \%dupe_stats, actions => [ map { { action => $_->{'action'}, uuid => $_->{'row'}->{'uuid'}, phone => $_->{'row'}->{'phone'}, why => $_->{'why'} } } @dupe_actions ] } : undef),
 		sealed => [ map { { uuid => $_->{'row'}->{'uuid'}, phone => $_->{'row'}->{'phone'}, status => $_->{'row'}->{'status'} } } @sealed ],
 		same_event => [ @same_event ],
+		thread_duplicates => ($thread_dupes ? { stats => \%thread_stats, actions => [ map { { action => $_->{'action'}, uuid => $_->{'row'}->{'uuid'}, phone => $_->{'row'}->{'phone'}, to => $_->{'to'}, kept => $_->{'kept'} } } @thread_actions ] } : undef),
 		changes => [ map {
 			{
 				uuid => $_->{'row'}->{'uuid'},
@@ -297,6 +422,21 @@ if (@same_event) {
 	if ($verbose) {
 		printf "  %-14s %s (kept %s)\n", ($_->{'phone'} // ''), $_->{'uuid'}, $_->{'kept'}
 			for @same_event;
+	}
+}
+if ($thread_dupes) {
+	printf "thread duplicates - %d cluster(s), %s %d extra row(s), %d direction fix(es)\n",
+		$thread_stats{'clusters'}, ($apply ? 'tombstoned' : 'would tombstone'),
+		$thread_stats{'extras'}, $thread_stats{'fixes'};
+	if ($verbose) {
+		foreach my $a ( @thread_actions ) {
+			if ($a->{'action'} eq 'fix') {
+				printf "  fix %-14s %s -> %s\n", ($a->{'row'}->{'phone'} // ''), ($a->{'from'} // '?'), $a->{'to'};
+			}
+			else {
+				printf "  tombstone %-14s %s (kept %s)\n", ($a->{'row'}->{'phone'} // ''), $a->{'row'}->{'uuid'}, $a->{'kept'};
+			}
+		}
 	}
 }
 printf "already right %d | would change %d | ignored %d | ambiguous %d | no mailbox row %d | no phone %d | no type %d | conflict %d\n",
