@@ -193,6 +193,7 @@ our @manager_bundle_files = qw(
 	/js/manager/coding.js
 	/js/manager/agents.js
 	/js/manager/camera.js
+	/js/manager/scan.js
 	/js/manager/internet.js
 	/js/manager/search.js
 	/js/manager/screening.js
@@ -220,6 +221,7 @@ our %manager_app_scripts = (
 	budget          => [qw(/js/manager/budget.js)],
 	process_monitor => [qw(/js/manager/monitor.js)],
 	camera          => [qw(/js/manager/camera.js)],
+	scan            => [qw(/js/manager/scan.js)],
 	network         => [qw(/js/manager/network.js)],
 	phone           => [qw(/js/manager/phone.js)],
 	people          => [qw(/js/manager/people.js)],
@@ -259,6 +261,7 @@ our %manager_app_entry = (
 	weather         => [qw(weatherMaker)],
 	power           => [qw(powerOpener)],
 	sound            => [qw(soundOpener)],
+	scan            => [qw(scanOpener)],
 );
 
 # The start-menu icons are drawn by the server, but each app used to register
@@ -270,7 +273,7 @@ our %manager_toggle_apps = (
 	synth_toggle => 'synth', studio_toggle => 'studio', marker_toggle => 'marker',
 	terminal_toggle => 'terminal', travel_toggle => 'travel', twirl_toggle => 'twirl',
 	editor_toggle => 'editor', relational_toggle => 'relational', people_toggle => 'people',
-	notes_toggle => 'notes', notifications_toggle => 'notifications', search_app_toggle => 'search', camera_toggle => 'camera',
+	notes_toggle => 'notes', notifications_toggle => 'notifications', search_app_toggle => 'search', camera_toggle => 'camera', scan_toggle => 'scan',
 	network_toggle => 'network', phone_toggle => 'phone', ide_toggle => 'ide',
 	budget => 'budget', warehouse_toggle => 'warehouse', measures_toggle => 'measures',
 	market_toggle => 'market', process_monitor_toggle => 'process_monitor',

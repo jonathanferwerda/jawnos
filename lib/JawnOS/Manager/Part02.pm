@@ -356,6 +356,23 @@ sub scan($c,$scandata) {
 			&subs::db_update('appointments' , { server_time => &subs::rightNow(), duration => $duration, file => $filenames, encryption_standard => undef }, { app => $app, uuid => $uuid });
 
 			&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
+			# Paper in the Scan app's pool is news for the whole house: every
+			# device sees the notice and every device sees the unclaimed page.
+			if ($app eq 'scan' && $source eq 'unclaimed') {
+				my $pages = scalar @{$fnames};
+				eval {
+					&notification_sender({
+						app => 'scan',
+						role => 'all',
+						title => 'Scan ready',
+						message => $pages == 1 ? 'A page is waiting in Scan.' : $pages . ' pages are waiting in Scan.',
+						uuid => &subs::random_string_creator(20),
+						timestamp => &subs::rightNow(),
+					}, undef);
+					1;
+				};
+				&log_writer('scan ready in the Scan app: ' . $pages . ' page(s)');
+			}
 		}
 		elsif ( scalar @filenames == 0 && $source ne 'existing' ) {
 			&subs::db_delete('appointments', { uuid => $uuid });

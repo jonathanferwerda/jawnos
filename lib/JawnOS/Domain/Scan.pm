@@ -197,4 +197,22 @@ sub scan_job_finish($scan_id) {
 	return &scan_job_state($scan_id, 'ran');
 }
 
+# What a scan looks like from the text read off it. The printer cannot say what
+# is on the paper, so the Scan app reads the OCR and offers a label; the person
+# can still file it anywhere. A receipt is the one kind the house already files
+# by itself (Market reads those from the feeder), so a kind is a suggestion, not
+# a destination - nothing moves because of it.
+sub scan_doc_kind {
+	my ($text) = @_;
+	$text = '' unless defined $text;
+	my $t = lc $text;
+	return 'blank' unless $t =~ /\S/;
+	my $money = () = $t =~ /(?:\$|€|£|¥)\s?\d|\b\d+[.,]\d{2}\b/g;
+	return 'invoice' if $t =~ /\b(?:invoice|due date|bill to|purchase order|order number)\b/;
+	return 'receipt' if $money >= 2 && $t =~ /\b(?:total|subtotal|amount|balance|tax|change|tendered|card|cash)\b/;
+	return 'letter'  if $t =~ /\b(?:dear|sincerely|regards|yours truly|to whom it may concern)\b/;
+	return 'form'    if $t =~ /\b(?:please print|signature|date of birth)\b/;
+	return 'document';
+}
+
 1;

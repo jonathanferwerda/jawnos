@@ -565,6 +565,43 @@ sub market_receipt_scan {
 	return (undef, \@jpgs);
 }
 
+# The Scan app's holding pool: every file row held by a source=unclaimed scan
+# appointment, newest first, with the text read off it and a guessed kind. The
+# rows have the same shape the Camera pool's do, so /file_open and
+# /manager/unclaimed/claim already know them. The OCR is sealed like a note, so
+# it is opened here with the session's key and only the first page's text is
+# offered: it is a label, not a transcript.
+sub scan_pool_items($c) {
+	my $held = &subs::db_select('appointments', undef, { app => 'scan', source => 'unclaimed' })->hashes || [];
+	my @items;
+	foreach my $h ( @{$held} ) {
+		my $files = eval { decode_json $h->{'file'} } || [];
+		next unless ref $files eq 'ARRAY' && scalar @{$files};
+		my $text = '';
+		foreach my $f ( @{$files} ) {
+			next unless ref $f eq 'HASH' && $f->{'uuid'};
+			my $ocr = '';
+			if (($f->{'ocr'} || '') ne '') {
+				$ocr = eval { &subs::note_decrypter(&subs::session_suds($c), $f->{'ocr'}) } || '';
+			}
+			$text = $ocr if $text eq '';
+			(my $name = $f->{'f'} || '') =~ s{.*/}{};
+			push @items, {
+				file_uuid   => $f->{'uuid'},
+				appt_uuid   => $h->{'uuid'},
+				app         => 'scan',
+				name        => $name,
+				file_type   => (&subs::media_file_type($f->{'f'} || '') || 'file'),
+				kind        => &subs::scan_doc_kind($ocr),
+				text        => (length $ocr > 300 ? substr($ocr, 0, 300) : $ocr),
+				server_time => $f->{'server_time'} || $h->{'server_time'} || 0,
+				warranty    => $h->{'warranty'} || 0,
+			};
+		}
+	}
+	return [ sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) } @items ];
+}
+
 # The printer's own eSCL scan, converted to the JPEG pages the receipt reader
 # wants. Answers {} when the printer does not offer eSCL for that feed, so the
 # caller falls back to the local SANE command; { error } when eSCL tried and

@@ -34,7 +34,8 @@ $topic{'scanning'} = {
 		title => 'Scanning a document', category => 'functions',
 		summary => 'Turn a paper page into a searchable record.',
 		body => [
-			'A scan is born in Notes: it captures a page, can read the text off it, and can read a barcode or QR code. The result is an appointment carrying the scan as an attachment, so it can be found from whatever it belongs to.'
+			'A scan is born in Notes: it captures a page, can read the text off it, and can read a barcode or QR code. The result is an appointment carrying the scan as an attachment, so it can be found from whatever it belongs to.',
+			'Paper you have not decided about goes to the Scan app instead: it holds the page for a week, guesses what it is from its text, and files it onto an appointment when you say where. A receipt left in the feeder is picked up by Market by itself.'
 		],
 		steps => [
 			'Open Notes and start a new note.',
@@ -45,7 +46,7 @@ $topic{'scanning'} = {
 			'Save the note; the scan and any recognised text stay with it.'
 		],
 		prompt => 'The reader is new and wants to scan a document. Give a numbered, click-by-click walkthrough, in order, using plain language. If OCR or barcode modes are the wrong fit for what they described, say so and redirect them. Do not assume any personal data.',
-		related => [ 'notes', 'sealing_files', 'folders' ]
+		related => [ 'notes', 'scan', 'sealing_files', 'folders' ]
 	};
 $topic{'sealing_files'} = {
 		title => 'Sealing files', category => 'functions',

@@ -1,0 +1,59 @@
+<%# The Scan app: the paper that came off the scanner and has not been filed
+    anywhere yet. A page waits here for a week, the way a capture waits in the
+    Camera app, and is filed onto an appointment when the person knows where it
+    belongs. The buttons take a page; the pool below is every device's, because
+    the rows sync. Each card carries the kind guessed from its own text (a
+    label, never a destination - a receipt still goes to Market by itself). %>
+<style>
+	.scan_app { padding: 14px; text-align: left; }
+	.scan_app_feeds { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+	.scan_feed { min-height: 34px; padding: 4px 14px; border: 1px solid var(--line);
+	             border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); }
+	.scan_feed:hover { background: var(--line); }
+	.scan_where { font-size: 12px; opacity: .7; }
+	.scan_app_status { min-height: 20px; margin: 6px 0 10px; color: #8e8e8e; font-size: 13px; }
+	.scan_pool_head { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
+	.scan_pool { display: flex; flex-wrap: wrap; gap: 8px; max-height: 300px; overflow: auto; margin-top: 8px; }
+	.scan_item { position: relative; width: 112px; border: 1px solid var(--line); border-radius: 8px;
+	             overflow: hidden; cursor: var(--jawnos-cursor-pointer, pointer); background: var(--panel); }
+	.scan_item.selected { outline: 3px solid var(--accent, #4a90d9); }
+	.scan_thumb { width: 100%; height: 78px; object-fit: cover; display: block; background: #000; }
+	.scan_icon { object-fit: contain; padding: 16px; }
+	.scan_meta { font-size: 11px; padding: 3px 5px; line-height: 1.2; }
+	.scan_kind { text-transform: capitalize; font-weight: bold; }
+	.scan_time { display: block; color: #8e8e8e; }
+	.scan_check { position: absolute; top: 4px; left: 4px; transform: scale(1.2); }
+	.scan_drop { position: absolute; top: 4px; right: 4px; border: 0; background: rgba(0,0,0,.55);
+	             color: #fff; border-radius: 50%; width: 20px; height: 20px; line-height: 18px;
+	             cursor: var(--jawnos-cursor-pointer, pointer); padding: 0; font-size: 13px; }
+	.scan_claim { display: none; margin-top: 10px; position: relative; }
+	.scan_claim_results { position: absolute; z-index: 50; background: var(--panel); max-height: 160px;
+	                      overflow: auto; border: 1px solid var(--line); border-radius: 6px; width: 68%; }
+	.scan_claim_result { padding: 6px 8px; cursor: var(--jawnos-cursor-pointer, pointer); }
+	.scan_claim_result:hover { background: var(--line); }
+</style>
+
+<div id="scan_app" class="scan_app">
+	<div class="scan_app_feeds">
+		<button class="scan_feed" feed="adf" hint="Scan from the feeder"><%= &subs::ui('Feeder') %></button>
+		<button class="scan_feed" feed="flatbed" hint="Scan from the flatbed"><%= &subs::ui('Flatbed') %></button>
+		<span class="scan_where"></span>
+	</div>
+	<div class="scan_app_status"></div>
+
+	<div class="scan_pool_head">
+		<b><%= &subs::ui('Unclaimed scans') %></b>
+		<span class="scan_pool_count" style="opacity:.7;"></span>
+		<label class="scan_select_all_wrap" style="margin-left:auto;display:none;">
+			<input type="checkbox" class="scan_select_all" hint="Select all"> <%= &subs::ui('Select all') %>
+		</label>
+	</div>
+	<div class="scan_pool"></div>
+
+	<div class="scan_claim">
+		<div class="scan_claim_target" style="margin-bottom:6px;"></div>
+		<input type="text" class="scan_claim_search" placeholder="<%= &subs::ui('Type an appointment name…') %>" style="width:68%;">
+		<button class="scan_claim_file" hint="File these pages onto the appointment" style="display:none;margin-left:6px;"><%= &subs::ui('File') %></button>
+		<div class="scan_claim_results" style="display:none;"></div>
+	</div>
+</div>

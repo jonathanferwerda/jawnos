@@ -119,6 +119,27 @@ $topic{'camera'} = {
 		],
 		related => [ 'gallery' ]
 	};
+$topic{'scan'} = {
+		title => 'Scan', category => 'apps', app => 'scan',
+		'templates' => [ 'templates/apps/scan.html.ep', 'public/js/manager/scan.js' ],
+		controls => [ 'Scan from the feeder', 'Scan from the flatbed', 'Select all', 'File these pages onto the appointment' ],
+		verified => '2026-11-13',
+		summary => 'Paper off the scanner, held until you say where it goes.',
+		body => [
+			'The Scan app takes a page and keeps it until you file it. Feeder takes every page loaded in the printer\'s document feeder; Flatbed takes one page from the glass. The page is read for its text when the machine has an OCR engine, and its card guesses what it is - a receipt, an invoice, a letter, a form - from that text. The guess is only a label: nothing moves because of it.',
+			'A page waits in Unclaimed scans for a week. Tick the pages you want (or Select all), then type an appointment name and press File; the pages attach to that appointment and leave the pool. The × on a card throws that page away.',
+			'Every device in the House sees the same pool and hears the notice when a scan lands, because the rows sync. The machine named beside the buttons is the House\'s scanner for now: a computer is preferred, the Table before another computer, and a phone only when no computer can scan. A press on a machine that cannot scan is handed to one that can.',
+			'Receipts do not need this app: paper left in the feeder is picked up by Market, which reads it and asks you to approve the lines. Scan is for everything else - a letter, a form, a photograph of a page.'
+		],
+		steps => [
+			'Open Scan from the start menu.',
+			'Put the paper in the feeder or on the glass, then press Feeder or Flatbed.',
+			'Wait for the page to appear in Unclaimed scans - every device sees it.',
+			'Tick the pages, type the appointment name, and press File.',
+			'If the paper is not worth keeping, press the × on its card.'
+		],
+		related => [ 'scanning', 'camera', 'market', 'folders' ]
+	};
 $topic{'phone'} = {
 		title => 'Phone', category => 'apps', app => 'phone',
 		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js', 'public/js/manager/screening.js' ],

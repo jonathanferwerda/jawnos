@@ -106,13 +106,17 @@ sub action_832 {
 }
 
 # Claim unclaimed media onto an appointment: each named file row moves from its
-# Camera-app holder onto the chosen appointment, and a holder emptied by the move
-# is deleted. The media itself stays where it was sealed; only the row moves.
+# holder onto the chosen appointment, and a holder emptied by the move is
+# deleted. The media itself stays where it was sealed; only the row moves.
+# `holder` names which app's pool the rows come from - the Camera app by
+# default, or the Scan app's unclaimed scans.
 # POST /manager/unclaimed/claim
 sub action_875 {
 	my $c = shift;
 	my $app = &subs::unformat_name($c->param('app') || '');
 	my $uuid = $c->param('uuid') || '';
+	my $holder_app = &subs::unformat_name($c->param('holder') || 'camera') || 'camera';
+	$holder_app = 'camera' unless $holder_app =~ /^(?:camera|scan)$/;
 	my @file_uuids = grep { $_ } split /,/, ($c->param('file_uuids') || '');
 	unless ($app && @file_uuids) { $c->render(json => { ok => 0, error => 'need app and file_uuids' }); return; }
 	# the claim box hands over an app name; when no specific appointment was chosen,
@@ -125,7 +129,7 @@ sub action_875 {
 	my $target = &subs::db_select('appointments', undef, { app => $app, uuid => $uuid })->hashes->[0];
 	unless ($target) { $c->render(json => { ok => 0, error => 'no such appointment to claim onto' }); return; }
 
-	my $holders = &subs::db_select('appointments', undef, { app => 'camera', source => 'unclaimed' })->hashes || [];
+	my $holders = &subs::db_select('appointments', undef, { app => $holder_app, source => 'unclaimed' })->hashes || [];
 	my %taken = map { $_ => 1 } @file_uuids;
 	my %owner;   # file_uuid -> 1 when it is really unclaimed here
 	foreach my $h ( @{$holders} ) {
@@ -149,12 +153,11 @@ sub action_875 {
 		}
 		my @left = grep { !$taken{ $_->{'uuid'} } } @orig;
 		if (@move) {
-			if (@left) {
-				&subs::db_update('appointments', { file => encode_json(\@left), server_time => &subs::rightNow() }, { app => 'camera', uuid => $h->{'uuid'} });
-			}
-			else {
-				&delete_app('camera', $h->{'uuid'}, $h->{'server_time'}, 'claimed');
-			}
+			# The holder's row must stop listing the pages before it is deleted:
+			# delete_app unlinks every file its row names, so removing the holder
+			# first would erase the very media the claim just moved.
+			&subs::db_update('appointments', { file => encode_json(\@left), server_time => &subs::rightNow() }, { app => $holder_app, uuid => $h->{'uuid'} });
+			&delete_app($holder_app, $h->{'uuid'}, $h->{'server_time'}, 'claimed') unless @left;
 		}
 	}
 
@@ -164,7 +167,7 @@ sub action_875 {
 	# rightNow() is second-precision, so the second must not repeat the first.
 	my $win_stamp = &subs::rightNow();
 	&centre_view_grabber({ c => $c, app => $app, timestamp => $win_stamp, cached => 'no' });
-	&centre_view_grabber({ c => $c, app => 'camera', timestamp => $win_stamp + 1, cached => 'no' });
+	&centre_view_grabber({ c => $c, app => $holder_app, timestamp => $win_stamp + 1, cached => 'no' });
 	$c->render(json => { ok => 1, claimed => $claimed });
 }
 

@@ -509,6 +509,7 @@ our %SUB = (
 	'rock_and_roll'                          => 'JawnOS/Manager/Part04.pm',
 	'run_thumb_command'                      => 'JawnOS/Manager/Part03.pm',
 	'scan'                                   => 'JawnOS/Manager/Part02.pm',
+	'scan_pool_items'                        => 'JawnOS/Manager/Part06.pm',
 	'scanner_log_reason'                     => 'JawnOS/Manager/Part06.pm',
 	'scanner_log_tail'                       => 'JawnOS/Manager/Part06.pm',
 	'scanner_page_list'                      => 'JawnOS/Manager/Part02.pm',

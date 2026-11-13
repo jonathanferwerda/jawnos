@@ -110,6 +110,7 @@ sub scanner_log_reason;
 sub market_receipt_store;
 sub market_receipt_file;
 sub market_scan_feeds;
+sub scan_pool_items;
 sub market_receipts;
 sub market_receipts_prepared;
 sub warehouse_grabber;
