@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Platform/Mdns.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm lib/JawnOS/Routes/manager_market2.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/websocket/00_console_router.js public/js/store.js public/js/store/register.js public/css/store.css perl/jobs.pl perl/President.pl
+# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Platform/Mdns.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm lib/JawnOS/Routes/manager_market2.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/websocket/00_console_router.js public/js/store.js public/js/store/register.js public/css/store.css perl/jobs.pl perl/President.pl
 # covers:    CUPS queue discovery (lpstat), network printer discovery (ippfind),
 #            the ADF status read, adding a queue (lpadmin), the print/PDF path,
 #            the Default printer's network choices, and the Dev/Market wiring.
@@ -254,12 +254,13 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 # --- the document feeder ----------------------------------------------------
 # The machine with the scanner watches its printer's feeder. A loaded edge is
 # one notice and one Market command; paper left in the tray is announced once,
-# and removing it then loading the next is a new edge. A machine with no ADF
-# feed, and a server, stay quiet.
+# and removing it then loading the next is a new edge. A phone can watch an eSCL
+# printer, and a machine with neither an eSCL ADF nor a local one stays quiet.
 {
 	no warnings 'redefine';
 	my $state = 'empty';
 	my $last = '';
+	my $escl_adf = 1;
 	my @notes;
 	my @frames;
 	local *subs::device_setter = sub { return 'computer' };
@@ -272,9 +273,13 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 	local *subs::device_lister = sub {
 		return { ip => '192.168.1.50', name => 'HP OfficeJet 3830' };
 	};
+	local *JawnOS::Platform::Print::scan_capabilities = sub {
+		return $escl_adf ? { adf => { width => 2550, height => 4200 }, platen => { width => 2550, height => 3508 } } : {};
+	};
 	local *JawnOS::Platform::Print::adf_state = sub { return $state };
-	local *subs::cache_get = sub { return $last };
-	local *subs::cache_set = sub { $last = $_[1]; return 1 };
+	local *subs::cache_get = sub { return ($_[0]{'context'} || '') eq 'adf_state' ? $last : '' };
+	local *subs::cache_set = sub { $last = $_[1] if ($_[0]{'context'} || '') eq 'adf_state'; return 1 };
+	local *subs::printer_subnet_candidates = sub { return [] };
 	local *subs::random_string_creator = sub { return 'uuid' };
 	local *subs::rightNow = sub { return 1234567890000 };
 	local *subs::log_writer = sub { return 1 };
@@ -298,14 +303,58 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 	is(subs::adf_receipt_watch(), 1, 'loading the next one is');
 	is(scalar @notes, 2, 'with a fresh notice');
 
+	local *subs::device_setter = sub { return 'mobile' };
+	$state = 'empty';
+	subs::adf_receipt_watch();
+	$state = 'loaded';
+	is(subs::adf_receipt_watch(), 1, 'a phone beside an eSCL printer can watch the feeder');
+
 	local *subs::device_setter = sub { return 'server' };
 	is(subs::adf_receipt_watch(), 0, 'a server with no scanner stays quiet');
 
 	local *subs::device_setter = sub { return 'computer' };
+	$escl_adf = 0;
 	local *subs::config_reader = sub {
 		return { scanners => [ { address => 'hpaio:/net/x?ip=192.168.1.50', feeds => [ 'flatbed' ] } ] };
 	};
-	is(subs::adf_receipt_watch(), 0, 'a scanner with no ADF feed stays quiet');
+	$state = 'empty';
+	subs::adf_receipt_watch();
+	$state = 'loaded';
+	is(subs::adf_receipt_watch(), 0, 'a machine with no ADF feed anywhere stays quiet');
+}
+
+# The printer address is the live one: the hotspot's printer is on a different
+# IP than the scanner config remembers, so the device row and mDNS come first.
+{
+	no warnings 'redefine';
+	local *subs::rightNow = sub { return 1234567890000 };
+	local *subs::device_lister = sub { return { ip => '192.168.1.50' } };
+	local *subs::mdns_printers = sub { die 'the device row should answer first' };
+	local *subs::cache_get = sub { return '' };
+	is(subs::printer_live_ip(), '192.168.1.50', 'the live device row is the printer address');
+	local *subs::device_lister = sub { return undef };
+	local *subs::mdns_printers = sub { return { by_ip => { '192.168.1.109' => { ip => '192.168.1.109' } } } };
+	is(subs::printer_live_ip(), '192.168.1.109', 'mDNS names the printer when the row is not there');
+	local *subs::mdns_printers = sub { return { by_ip => {} } };
+	local *subs::config_reader = sub {
+		return { scanners => [ { address => 'hpaio:/net/x?ip=192.168.1.77', feeds => [ 'adf' ] } ] };
+	};
+	is(subs::printer_live_ip(), '192.168.1.77', 'the scanner config is the last fallback');
+	local *subs::cache_get = sub { return '192.168.1.88' };
+	is(subs::printer_live_ip(), '192.168.1.88', 'a discovered address is remembered before the config');
+}
+{
+	no warnings 'redefine';
+	local *subs::printer_subnet_candidates = sub {
+		return [ 'ipp://192.168.1.109:631/ipp/print', 'ipp://192.168.1.110:631/ipp/print' ];
+	};
+	local *JawnOS::Platform::Print::scan_capabilities = sub {
+		return $_[0] eq '192.168.1.109' ? { adf => { width => 2550 } } : {};
+	};
+	my $stored;
+	local *subs::cache_set = sub { $stored = $_[1]; return 1 };
+	is(subs::printer_discover_escl(), '192.168.1.109', 'the sweep finds the printer that answers eSCL');
+	is($stored, '192.168.1.109', 'and remembers it for the watcher');
 }
 
 # A CUPS server that does not answer must not hold the Dev panel open: lpstat
@@ -444,6 +493,14 @@ like($receipt_js, qr/window\.marketReceiptAdf\s*=/, 'the Market window takes a f
 like($receipt_js, qr{/manager/market/receipt/adf/claim}, 'through the one-claim route');
 like(read_file("$root/public/js/manager/websocket/00_console_router.js"), qr/marketReceiptAdf/,
 	'the console router dispatches it');
+
+# The receipt scan goes to the printer's own eSCL service when it offers one,
+# so a phone on a hotspot needs no SANE device; the local command is the
+# fallback. The eSCL PDF is turned into the JPEG pages Market reads.
+my $part06 = read_file("$root/lib/JawnOS/Manager/Part06.pm");
+like($part06, qr/sub market_receipt_scan_escl\b/, 'the receipt scan has an eSCL path');
+like($part06, qr/JawnOS::Platform::Print::scan_escl/, 'and asks the printer for the pages');
+like($part06, qr/pdftoppm/, 'converting the printer PDF to the pages Market reads');
 
 my $store_routes = read_file("$root/lib/JawnOS/Routes/store_misc.pm");
 like($store_routes, qr{/store/print/printers}, 'the Store printer list route exists');

@@ -17,7 +17,7 @@ use File::Temp qw(tempdir);
 
 use JawnOS::Platform::Print qw(
 	available unsupported printers discover probe add_queue send pdf_from_html ink
-	adf_state scan_argv parse_lpstat
+	adf_state scan_capabilities scan_escl parse_scan_capabilities scan_argv parse_lpstat
 );
 
 my $root = "$FindBin::Bin/..";
@@ -228,6 +228,90 @@ SH
 	local *JawnOS::Platform::Print::tool = sub { return $_[0] eq 'curl' ? $adf_jam : ''; };
 	is(adf_state('192.168.1.50'), 'unknown', 'a jam is not announced as paper');
 	is(adf_state('not-an-address'), 'unknown', 'a non-address has no feeder');
+}
+
+# --- eSCL capabilities and scan jobs ---------------------------------------
+my $caps_xml = <<'XML';
+<scan:ScannerCapabilities xmlns:scan="http://schemas.hp.com/imaging/escl/2011/05/03" xmlns:pwg="http://www.pwg.org/schemas/2010/12/sm">
+<scan:Platen><scan:PlatenInputCaps><scan:MaxWidth>2550</scan:MaxWidth><scan:MaxHeight>3508</scan:MaxHeight>
+<scan:DocumentFormats><scan:DocumentFormatExt>image/jpeg</scan:DocumentFormatExt><scan:DocumentFormatExt>application/pdf</scan:DocumentFormatExt></scan:DocumentFormats>
+</scan:PlatenInputCaps></scan:Platen>
+<scan:Adf><scan:AdfSimplexInputCaps><scan:MaxWidth>2550</scan:MaxWidth><scan:MaxHeight>4200</scan:MaxHeight>
+<scan:DocumentFormats><scan:DocumentFormatExt>image/jpeg</scan:DocumentFormatExt><scan:DocumentFormatExt>application/pdf</scan:DocumentFormatExt></scan:DocumentFormats>
+</scan:AdfSimplexInputCaps><scan:AdfOptions><scan:AdfOption>DetectPaperLoaded</scan:AdfOption></scan:AdfOptions></scan:Adf>
+</scan:ScannerCapabilities>
+XML
+{
+	my $caps = parse_scan_capabilities($caps_xml);
+	is($caps->{'adf'}{'height'}, 4200, 'the ADF max height is read');
+	is($caps->{'platen'}{'height'}, 3508, 'the platen max height is read');
+	is_deeply($caps->{'adf'}{'formats'}, [ 'image/jpeg', 'application/pdf' ],
+		'and the formats the printer offers');
+	is_deeply(parse_scan_capabilities(''), {}, 'no capabilities is an empty answer');
+}
+{
+	package FakeEsclRes;
+	sub new { my ($class, %a) = @_; return bless { %a }, $class }
+	sub is_success { return ($_[0]{'code'} // 0) >= 200 && ($_[0]{'code'} // 0) < 300 ? 1 : 0 }
+	sub code { return $_[0]{'code'} // 0 }
+	sub body { return $_[0]{'body'} // '' }
+	sub headers { return FakeEsclHeaders->new($_[0]{'headers'} || {}) }
+	package FakeEsclHeaders;
+	sub new { my ($class, $h) = @_; return bless { %{$h} }, $class }
+	sub location { return $_[0]{'Location'} || '' }
+	sub content_type { return $_[0]{'Content-Type'} || '' }
+	package FakeEsclTX;
+	sub new { my ($class, $res) = @_; return bless { res => $res }, $class }
+	sub result { return $_[0]{'res'} }
+	package FakeEsclUA;
+	sub new { my ($class, %a) = @_; return bless { %a, posts => [], gets => [], deletes => [] }, $class }
+	sub post { my ($self, @a) = @_; push @{$self->{'posts'}}, \@a; return FakeEsclTX->new($self->{'post_res'}) }
+	sub get { my ($self, $url) = @_; push @{$self->{'gets'}}, $url; my $n = scalar @{$self->{'gets'}}; return FakeEsclTX->new($self->{'get_res'}->($url, $n)) }
+	sub delete { my ($self, @a) = @_; push @{$self->{'deletes'}}, \@a; return FakeEsclTX->new(FakeEsclRes->new(code => 200)) }
+}
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $base = "$dir/scan";
+	my $ua = FakeEsclUA->new(
+		post_res => FakeEsclRes->new(code => 201, headers => { Location => 'http://192.168.1.50/eSCL/ScanJobs/job1' }),
+		get_res => sub {
+			my ($url, $n) = @_;
+			return $n == 1
+				? FakeEsclRes->new(code => 200, headers => { 'Content-Type' => 'application/pdf' }, body => "%PDF-1.7\n%%%%EOF\n")
+				: FakeEsclRes->new(code => 404);
+		},
+	);
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::_escl_ua = sub { return $ua };
+	local *JawnOS::Platform::Print::scan_capabilities = sub {
+		return { adf => { width => 2550, height => 4200 }, platen => { width => 2550, height => 3508 } };
+	};
+	my ($err, $pages) = scan_escl('192.168.1.50', 'adf', $base, resolution => 300);
+	is($err, undef, 'an eSCL scan succeeds');
+	is_deeply($pages, [ "$base.pdf" ], 'the printer PDF is kept');
+	ok(-s "$base.pdf", 'and has bytes');
+	like($ua->{'posts'}[0][2], qr/<scan:InputSource>ADF<\/scan:InputSource>/, 'the request names the ADF source');
+	like($ua->{'posts'}[0][2], qr/<pwg:DocumentFormat>application\/pdf<\/pwg:DocumentFormat>/, 'and asks for a PDF');
+	like($ua->{'posts'}[0][2], qr/<pwg:Width>2550<\/pwg:Width>/, 'with the printer scan region');
+	is($ua->{'posts'}[0][0], 'http://192.168.1.50/eSCL/ScanJobs', 'the job is posted to the eSCL endpoint');
+	is_deeply($ua->{'gets'}, [
+		'http://192.168.1.50/eSCL/ScanJobs/job1/NextDocument',
+		'http://192.168.1.50/eSCL/ScanJobs/job1/NextDocument',
+	], 'the pages are read until the printer says there are no more');
+}
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $base = "$dir/scan";
+	my $ua = FakeEsclUA->new(post_res => FakeEsclRes->new(code => 409));
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::_escl_ua = sub { return $ua };
+	local *JawnOS::Platform::Print::scan_capabilities = sub {
+		return { adf => { width => 2550, height => 4200 } };
+	};
+	local *JawnOS::Platform::Print::adf_state = sub { return 'empty' };
+	my ($err, $pages) = scan_escl('192.168.1.50', 'adf', $base);
+	is($err, 'the feeder has no paper', 'an empty feeder says so');
+	is_deeply($pages, [], 'with no pages');
 }
 
 # --- lpadmin ----------------------------------------------------------------

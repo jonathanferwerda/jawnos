@@ -539,9 +539,9 @@ sub manager_starter() {
 
 	# A receipt dropped in the printer's feeder is the printer telling the house
 	# it has paper; the watcher reads the eSCL state and hands the edge to an open
-	# Market window. Only the machine with the scanner can pull the paper, so a
-	# server never runs this loop.
-	if ($device eq 'computer') {
+	# Market window. A computer and a phone can both watch an eSCL printer, so a
+	# phone and printer offsite on a hotspot still work; a server does not.
+	if ($device eq 'computer' || $device eq 'mobile') {
 		&subs::subprocessor(\&jobs::job_adf_receipt_watch, { name => 'adf receipt watch' });
 	}
 

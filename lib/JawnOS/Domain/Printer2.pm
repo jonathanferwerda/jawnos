@@ -334,28 +334,82 @@ sub adf_scanner {
 	return $scanner;
 }
 
-# The printer behind the scanner. The hpaio address carries its IP; a scanner
-# configured another way falls back to the printer the device listing knows.
-sub adf_printer_ip {
+# The printer's address from the local scanner config (the hpaio address).
+# This is the fallback: on a hotspot the printer's address has changed, and the
+# live device listing or mDNS is the current one.
+sub adf_config_ip {
 	my $scanner = &adf_scanner();
 	my $address = $scanner->{'address'} || '';
 	my ($ip) = $address =~ /(?:^|[^0-9])(\d{1,3}(?:\.\d{1,3}){3})(?:[^0-9]|$)/;
-	return $ip if $ip;
+	return $ip || '';
+}
+
+# The printer this machine can reach right now. The device listing is the
+# house's current row (a hotspot Scan writes it); mDNS names the printer when
+# the row is not there yet; the scanner config is the last resort because its
+# hpaio address is often from a network the machine has left.
+sub printer_live_ip {
 	my $printer = &device_lister(&rightNow(), 'printer');
-	$ip = ref $printer eq 'HASH' ? ($printer->{'ip'} || '') : '';
-	return $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/ ? $ip : '';
+	my $ip = ref $printer eq 'HASH' ? ($printer->{'ip'} || '') : '';
+	return $ip if $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	my $mdns = eval { &mdns_printers() } || {};
+	foreach my $p (values %{ $mdns->{'by_ip'} || {} }) {
+		my $cand = ref $p eq 'HASH' ? ($p->{'ip'} || '') : '';
+		return $cand if $cand =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	}
+	my $cached = eval { &cache_get({ app => 'misc', context => 'scan_printer_ip' }) } || '';
+	return $cached if $cached =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	return &adf_config_ip();
+}
+
+# A printer that joined a hotspot is not in any stored row and may not answer
+# mDNS (a phone hotspot often blocks it), but its IPP port is on the same
+# subnet. Sweep once and keep the address that also answers eSCL; the watcher
+# then knows the printer without a person pressing Scan. The sweep is bounded
+# by printer_subnet_candidates and is only reached when the known address does
+# not answer.
+sub printer_discover_escl {
+	my $uris = &printer_subnet_candidates() || [];
+	foreach my $uri (@{ $uris }) {
+		my ($ip) = $uri =~ m{^ipp://([^/:]+)};
+		next unless defined $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+		my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
+		next unless $caps->{'adf'} || $caps->{'platen'};
+		&cache_set({ app => 'misc', context => 'scan_printer_ip', warranty => '-1d' }, $ip);
+		return $ip;
+	}
+	return '';
+}
+
+sub adf_printer_ip {
+	return &printer_live_ip();
 }
 
 # One pass over the feeder. A receipt dropped in is a loaded edge: the house
 # gets one notice (pressing it opens Market) and any open Market window is told
 # to take the paper. The state is kept, so paper left in the tray warns once;
 # removing it and loading the next is a new edge.
+#
+# eSCL makes a phone a scanner: the phone only has to reach the printer, not
+# own a SANE device, so a phone and printer offsite on a hotspot still watch.
 sub adf_receipt_watch {
-	return 0 unless &device_setter() eq 'computer';
-	my $scanner = &adf_scanner();
-	return 0 unless %{$scanner};
-	my $ip = &adf_printer_ip();
+	return 0 unless &device_setter() =~ /^(?:computer|mobile)$/;
+	my $ip = &printer_live_ip();
 	return 0 unless $ip;
+	my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
+	my $local = &adf_scanner();
+	if (!$caps->{'adf'} && !%{$local}) {
+		my $last_try = eval { &cache_get({ app => 'misc', context => 'scan_discovery_at' }) } || 0;
+		if (&rightNow() - $last_try > 120000) {
+			&cache_set({ app => 'misc', context => 'scan_discovery_at', warranty => '-10m' }, &rightNow());
+			my $found = &printer_discover_escl();
+			if ($found) {
+				$ip = $found;
+				$caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
+			}
+		}
+	}
+	return 0 unless $caps->{'adf'} || %{$local};
 	my $state = JawnOS::Platform::Print::adf_state($ip);
 	return 0 if $state eq 'unknown';
 	# The cache, not a setting: the feeder toggles as paper comes and goes, and

@@ -321,6 +321,7 @@ our %SUB = (
 	'market_receipt_name_batch'              => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_read'                    => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_scan'                    => 'JawnOS/Manager/Part06.pm',
+	'market_receipt_scan_escl'               => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_store'                   => 'JawnOS/Manager/Part06.pm',
 	'market_receipts'                        => 'JawnOS/Manager/Part06.pm',
 	'market_receipts_prepared'               => 'JawnOS/Manager/Part06.pm',

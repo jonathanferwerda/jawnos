@@ -104,6 +104,7 @@ sub market_receipt_name_batch;
 sub market_receipt_read;
 sub market_receipt_lines;
 sub market_receipt_scan;
+sub market_receipt_scan_escl;
 sub scanner_log_tail;
 sub scanner_log_reason;
 sub market_receipt_store;

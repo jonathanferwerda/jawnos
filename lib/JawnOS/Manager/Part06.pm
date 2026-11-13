@@ -38,6 +38,7 @@ use POSIX ();
 use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
 use Number::Format qw/:subs/;
 use JawnOS::Platform::Process ();
+use JawnOS::Platform::Print ();
 use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
@@ -506,6 +507,12 @@ sub market_receipt_scan {
 	my $filename = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/market');
 	system('mkdir', '-p', $filename) unless -e $filename;
 	my $base = $filename . '/receipt_' . $scan_id;
+	# A phone beside the printer is a scanner when the printer speaks eSCL: it
+	# needs no SANE device, which is what makes a hotspot work. The local SANE
+	# command is the fallback for a printer that does not answer eSCL.
+	my $escl = &market_receipt_scan_escl($feed, $base);
+	return ($escl->{'error'}, []) if $escl->{'error'};
+	return (undef, $escl->{'pages'}) if $escl->{'pages'};
 	my $command = &scanner_scan_command($feed, $base);
 	return ('the scanner does not offer that feed', []) unless $command;
 	$command =~ s/;\s*$//;
@@ -556,6 +563,62 @@ sub market_receipt_scan {
 	unlink $log;
 	return ('the scanned pages could not be read', []) unless scalar @jpgs;
 	return (undef, \@jpgs);
+}
+
+# The printer's own eSCL scan, converted to the JPEG pages the receipt reader
+# wants. Answers {} when the printer does not offer eSCL for that feed, so the
+# caller falls back to the local SANE command; { error } when eSCL tried and
+# failed; { pages } when it succeeded.
+sub market_receipt_scan_escl {
+	my ($feed, $base) = @_;
+	my $ip = &subs::printer_live_ip();
+	return {} unless $ip;
+	my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
+	my $key = $feed eq 'flatbed' ? 'platen' : 'adf';
+	return {} unless $caps->{$key};
+	my $config = &subs::config_reader() || {};
+	my $scanners = $config->{'scanners'};
+	my $scanner = ref $scanners eq 'ARRAY' ? $scanners->[0] : undef;
+	my $resolution = ($scanner && ($scanner->{'resolution'} || '') =~ /^\d+$/) ? $scanner->{'resolution'} : 300;
+	my $log = $base . '.log';
+	open(my $lf, '>', $log);
+	print $lf 'scanning over eSCL on ' . $ip . "\n";
+	close $lf;
+	my ($err, $paths) = JawnOS::Platform::Print::scan_escl($ip, $feed, $base, resolution => $resolution, format => 'application/pdf');
+	if ($err) { unlink $log; return { error => $err }; }
+	my @jpgs;
+	foreach my $p ( @{$paths} ) {
+		if ($p =~ /\.pdf$/i) {
+			my $stem = $p;
+			$stem =~ s/\.pdf$//i;
+			my $pdftoppm = &subs::printer_command_path('pdftoppm');
+			if (length $pdftoppm) {
+				system($pdftoppm, '-jpeg', '-r', $resolution, $p, $stem);
+			}
+			my @made = sort { ($a =~ /([0-9]+)\.jpg$/)[0] <=> ($b =~ /([0-9]+)\.jpg$/)[0] } glob("$stem-*.jpg");
+			if (!@made) {
+				system('magick', '-density', $resolution, $p, "$stem-%d.jpg");
+				@made = sort { ($a =~ /([0-9]+)\.jpg$/)[0] <=> ($b =~ /([0-9]+)\.jpg$/)[0] } glob("$stem-*.jpg");
+			}
+			push @jpgs, @made;
+			unlink $p if @made;
+		}
+		elsif ($p =~ /\.jpe?g$/i) {
+			push @jpgs, $p;
+		}
+		else {
+			(my $jpg = $p) =~ s/\.[^.]+$//;
+			$jpg .= '.jpg';
+			my $converted = &subs::image_bridge_convert($p, $jpg);
+			system('magick', $p, $jpg) unless $converted;
+			push @jpgs, $jpg if -e $jpg;
+			unlink $p if -e $jpg;
+		}
+	}
+	@jpgs = grep { defined $_ && -e $_ } @jpgs;
+	unlink $log;
+	return { error => 'the scanned pages could not be read' } unless scalar @jpgs;
+	return { pages => \@jpgs };
 }
 
 # The last lines of a log, read from its tail so a chatty scanner (--progress

@@ -17,12 +17,13 @@ use warnings;
 
 use File::Spec;
 use File::Temp ();
+use Mojo::UserAgent;
 
 use Exporter 'import';
 our @EXPORT_OK = qw(
 	available unsupported tool
 	printers discover probe add_queue send pdf_from_html ink scan_argv
-	adf_state
+	adf_state scan_capabilities scan_escl parse_scan_capabilities
 	parse_lpstat
 );
 
@@ -236,6 +237,138 @@ sub adf_state {
 		return 'unknown';
 	}
 	return 'unknown';
+}
+
+# eSCL is the printer's own scan service: the manager asks the printer for a
+# scan job and reads the pages back over HTTP. It is the one path a phone can
+# take with the printer on a hotspot, because it needs no SANE device and no
+# local scanner config. The OfficeJet advertises ADF and platen, JPEG and PDF.
+our %ESCL_CAPS;
+
+sub _escl_ua {
+	return Mojo::UserAgent->new(
+		connect_timeout    => 3,
+		inactivity_timeout => 120,
+		max_response_size  => 64 * 1024 * 1024,
+	);
+}
+
+# The feeder blocks from /eSCL/ScannerCapabilities, in the shape the caller
+# needs: adf/platen -> max width, max height and the formats the printer will
+# return. The OfficeJet uses scan: and pwg: prefixes; both are read.
+sub parse_scan_capabilities {
+	my ($xml) = @_;
+	return {} unless defined $xml && length $xml;
+	my %caps;
+	foreach my $tag ('Adf', 'Platen') {
+		my ($block) = $xml =~ m{(<(?:scan|pwg):\Q$tag\E\b.*?</(?:scan|pwg):\Q$tag\E>)}s;
+		next unless $block;
+		my ($w) = $block =~ m{<(?:scan|pwg):MaxWidth>\s*(\d+)}s;
+		my ($h) = $block =~ m{<(?:scan|pwg):MaxHeight>\s*(\d+)}s;
+		my (@formats) = $block =~ m{<(?:scan|pwg):DocumentFormat(?:Ext)?>\s*([^<]+?)\s*</}g;
+		my %seen;
+		@formats = grep { !$seen{$_}++ } @formats;
+		$caps{lc $tag} = {
+			width   => ($w || 2550),
+			height  => ($h || ($tag eq 'Adf' ? 4200 : 3508)),
+			formats => \@formats,
+		};
+	}
+	return \%caps;
+}
+
+sub scan_capabilities {
+	my ($ip) = @_;
+	return undef unless defined $ip && $ip =~ /^(?:\d{1,3}\.){3}\d{1,3}$/;
+	my $now = time;
+	if ($ESCL_CAPS{$ip} && $now - ($ESCL_CAPS{$ip}{'at'} || 0) < 600) {
+		my $cached = $ESCL_CAPS{$ip}{'caps'};
+		return { map { $_ => { %{$cached->{$_}} } } keys %{$cached} };
+	}
+	my $ua = _escl_ua();
+	my $res = eval { $ua->get('http://' . $ip . '/eSCL/ScannerCapabilities')->result };
+	return undef unless $res && $res->is_success;
+	my $caps = parse_scan_capabilities($res->body);
+	return undef unless %{$caps};
+	$ESCL_CAPS{$ip} = { at => $now, caps => $caps };
+	return { map { $_ => { %{$caps->{$_}} } } keys %{$caps} };
+}
+
+sub _escl_settings {
+	my ($source, $width, $height, $resolution, $format) = @_;
+	$source = 'ADF' unless defined $source && ($source eq 'ADF' || $source eq 'Platen');
+	$format = 'image/jpeg' unless defined $format && ($format eq 'application/pdf' || $format eq 'image/jpeg');
+	return '<?xml version="1.0" encoding="UTF-8"?>'
+		. '<scan:ScanSettings xmlns:scan="http://schemas.hp.com/imaging/escl/2011/05/03" xmlns:pwg="http://www.pwg.org/schemas/2010/12/sm">'
+		. '<pwg:Version>2.0</pwg:Version>'
+		. '<scan:Intent>Document</scan:Intent>'
+		. '<pwg:ScanRegions><pwg:ScanRegion>'
+		. '<pwg:XOffset>0</pwg:XOffset><pwg:YOffset>0</pwg:YOffset>'
+		. '<pwg:Width>' . int($width) . '</pwg:Width><pwg:Height>' . int($height) . '</pwg:Height>'
+		. '</pwg:ScanRegion></pwg:ScanRegions>'
+		. '<scan:InputSource>' . $source . '</scan:InputSource>'
+		. '<scan:ColorMode>RGB24</scan:ColorMode>'
+		. '<pwg:DocumentFormat>' . $format . '</pwg:DocumentFormat>'
+		. '<scan:XResolution>' . int($resolution) . '</scan:XResolution>'
+		. '<scan:YResolution>' . int($resolution) . '</scan:YResolution>'
+		. '</scan:ScanSettings>';
+}
+
+# Run one scan job against the printer. Answers (error, [paths]); each path is a
+# page the printer returned (usually one multi-page PDF for an ADF run). The
+# client bound is generous because the printer scans at its own pace: a long
+# receipt at 300 dpi took about half a minute on the OfficeJet, and a short
+# client timeout clipped the PDF last time. The job is deleted when no page
+# arrives.
+sub scan_escl {
+	my ($ip, $feed, $base, %opt) = @_;
+	return ('no printer address', []) unless defined $ip && $ip =~ /^(?:\d{1,3}\.){3}\d{1,3}$/;
+	return ('no place to keep the pages', []) unless defined $base && length $base;
+	$feed = lc($feed || 'adf');
+	my $source = $feed eq 'flatbed' ? 'Platen' : 'ADF';
+	my $caps = scan_capabilities($ip) || {};
+	my $cap = $caps->{lc $source};
+	return ('the printer does not offer that feeder', []) unless $cap && $cap->{'width'};
+	my $width  = int($opt{'width'}  || $cap->{'width'});
+	my $height = int($opt{'height'} || $cap->{'height'});
+	my $resolution = int($opt{'resolution'} || 300);
+	my $format = $opt{'format'} || 'application/pdf';
+	my $xml = _escl_settings($source, $width, $height, $resolution, $format);
+	my $ua = _escl_ua();
+	my $res = eval { $ua->post('http://' . $ip . '/eSCL/ScanJobs' => { 'Content-Type' => 'text/xml' } => $xml)->result };
+	return ('the printer did not answer the scan request', []) unless $res;
+	return ('the feeder has no paper', []) if $res->code == 409 && adf_state($ip) eq 'empty';
+	return ('the printer refused the scan (' . $res->code . ')', []) unless $res->code == 201;
+	my $loc = $res->headers->location || '';
+	$loc = 'http://' . $ip . $loc if $loc =~ m{^/};
+	return ('the printer did not name the scan job', []) unless $loc =~ m{^https?://};
+	my @paths;
+	my $deadline = time + 180;
+	for my $page (1 .. 20) {
+		last if time > $deadline;
+		my $one = eval { $ua->get($loc . '/NextDocument')->result };
+		last unless $one && $one->is_success;
+		my $body = $one->body;
+		last unless defined $body && length $body;
+		my $type = $one->headers->content_type || '';
+		my $ext = $type =~ m{/pdf}i ? 'pdf'
+			: $type =~ m{jpe?g}i ? 'jpg'
+			: $type =~ m{png}i ? 'png'
+			: $body =~ /^%PDF/ ? 'pdf'
+			: $body =~ /^\xFF\xD8\xFF/ ? 'jpg'
+			: 'bin';
+		my $path = $page == 1 ? $base . '.' . $ext : $base . '_' . $page . '.' . $ext;
+		open(my $fh, '>:raw', $path) or next;
+		print $fh $body;
+		close $fh;
+		push @paths, $path;
+		last if $one->code == 204;
+	}
+	if (!@paths) {
+		eval { $ua->delete($loc)->result };
+		return ('the printer returned no pages', []);
+	}
+	return (undef, \@paths);
 }
 
 # Add one queue with `lpadmin -m everywhere`, retried through `sudo -n` when
