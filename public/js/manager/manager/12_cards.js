@@ -793,6 +793,7 @@ function solitaireDropAt(from, x, y) {
 
 function solitaireHighlight(x, y) {
 	$('.sol_column, .sol_foundation').removeClass('drop_ok drop_no');
+	if (solitaireDrag && solitaireDrag.ghost) { solitaireDrag.ghost.removeClass('ok'); }
 	if (!solitaireState || !solitaireDrag || !solitaireDrag.from) { return; }
 	var target = solitaireDropTarget(x, y);
 	if (!target) { return; }
@@ -801,6 +802,7 @@ function solitaireHighlight(x, y) {
 		? $('.sol_column[data-col="' + target.col + '"]')
 		: $('.sol_foundation[data-suit="' + target.suit + '"]');
 	$el.addClass(ok ? 'drop_ok' : 'drop_no');
+	if (ok && solitaireDrag.ghost) { solitaireDrag.ghost.addClass('ok'); }
 }
 
 // ---- mahjong: the rules ----------------------------------------------------

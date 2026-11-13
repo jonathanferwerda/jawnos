@@ -669,6 +669,13 @@ body.cards_dragging { cursor: var(--jawnos-cursor-grabbing, grabbing); user-sele
 	opacity: .9;
 }
 #cards .sol_drag_ghost .sol_card { position: absolute; left: 0; }
+#cards .sol_drag_ghost.ok .sol_card {
+	box-shadow: 0 0 0 2px #ffe66d, 0 0 18px rgba(255, 230, 109, .8), 0 6px 16px rgba(0, 0, 0, .45);
+}
+#cards .sol_column.drop_ok .sol_card:last-child,
+#cards .sol_foundation.drop_ok .sol_card:last-child {
+	box-shadow: 0 0 0 2px #ffe66d, 0 0 16px rgba(255, 230, 109, .7);
+}
 #cards .sol_column.drop_ok, #cards .sol_foundation.drop_ok { box-shadow: inset 0 0 0 2px #ffe66d; background: rgba(255, 230, 109, .14); }
 #cards .sol_column.drop_no, #cards .sol_foundation.drop_no { box-shadow: inset 0 0 0 2px #d9544d; background: rgba(217, 84, 77, .12); }
 

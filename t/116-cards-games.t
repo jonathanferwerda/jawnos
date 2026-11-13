@@ -49,6 +49,8 @@ unlike($style, qr/#008000|#c0c0c0|#000080|#d0d0d0/, 'and its colours are gone');
 like($style, qr/radial-gradient\(circle at 50% 42%, #164e3a, #0a2a1f 72%\)/, 'the card back is the house lattice');
 like($style, qr/#cards \.sol_pips/, 'the card face has a pip field');
 like($style, qr/\.sol_slot \+ \.sol_card\.up \{ margin-top: 0; \}/, 'a revealed first card sits at the top of its column too');
+like($style, qr/\.sol_drag_ghost\.ok \.sol_card/, 'a valid drop makes the dragged card glow');
+like($style, qr/\.drop_ok \.sol_card:last-child/, 'and the card it would land on');
 like($style, qr/margin-top: calc\(var\(--sol-up/, 'the tableau fan is measured from the card');
 unlike($style, qr/#cards \.sol_pip \{ display: none; \}/, 'the pips stay visible on a narrow screen');
 
@@ -66,6 +68,7 @@ unlike($people_help, qr/Windows 3\.1/, 'the cards help names the house table, no
 my $js = read_file("$root/public/js/manager/manager/12_cards.js");
 like($js, qr/solitaireLastClick/, 'a double click is read from the click pair');
 like($js, qr/e\.clientX - solitaireDrag\.grabX/, 'the drag ghost follows the grab point');
+like($js, qr/solitaireDrag\.ghost\.addClass\('ok'\)/, 'the drag highlight marks the ghost when the drop is valid');
 unlike($js, qr/on\('dblclick'/, 'not from a dblclick on the node the redraw replaced');
 my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
 print $fh <<'JS';
