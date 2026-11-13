@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/manager/12_cards.js templates/cards.html.ep templates/cards/style.html.ep templates/cards/chooser.html.ep templates/cards/tarot.html.ep templates/cards/solitaire.html.ep templates/cards/mahjong.html.ep templates/cards/blackjack.html.ep perl/help/topics_people.pl
+# tests-for: public/js/manager/manager/12_cards.js public/js/manager/windows/01_storage.js templates/cards.html.ep templates/cards/style.html.ep templates/cards/chooser.html.ep templates/cards/tarot.html.ep templates/cards/solitaire.html.ep templates/cards/mahjong.html.ep templates/cards/blackjack.html.ep perl/help/topics_people.pl
 # covers:    The Cards app's four decks. The template offers the choice
 #            (tarot, solitaire, mahjong, blackjack), the tarot spread is three
 #            pictures side by side, and the solitaire, mahjong and blackjack
@@ -66,6 +66,10 @@ unlike($people_help, qr/Windows 3\.1/, 'the cards help names the house table, no
 # The rules are plain functions at the top of 12_cards.js. Load the file in a
 # bare context: nothing top-level may need the DOM or jQuery for this to work.
 my $js = read_file("$root/public/js/manager/manager/12_cards.js");
+my $storage_js = read_file("$root/public/js/manager/windows/01_storage.js");
+like($storage_js, qr/if \(typeof cardsInit === 'function'\) \{ cardsInit\(\); \}/, 'a restored Cards window initialises its table');
+like($js, qr/solitaireSaveState\(\)/, 'the solitaire table is saved');
+like($js, qr/solitaireLoadState\(\)/, 'and read back on the next open');
 like($js, qr/solitaireLastClick/, 'a double click is read from the click pair');
 like($js, qr/e\.clientX - solitaireDrag\.grabX/, 'the drag ghost follows the grab point');
 like($js, qr/solitaireDrag\.ghost\.addClass\('ok'\)/, 'the drag highlight marks the ghost when the drop is valid');
@@ -74,10 +78,13 @@ my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
 print $fh <<'JS';
 var fs = require('fs'), vm = require('vm'), path = process.argv[2];
 var src = fs.readFileSync(path, 'utf8');
+var appData = {};
 var ctx = { console: console, Math: Math, JSON: JSON, Date: Date,
 	setTimeout: function () {}, clearTimeout: function () {},
 	setInterval: function () { return 0; }, clearInterval: function () {},
 	window: {}, document: undefined };
+ctx.jawnosAppFieldGet = function (app, field) { return appData[app + '_' + field] || null; };
+ctx.jawnosAppFieldSet = function (app, field, value) { appData[app + '_' + field] = value; };
 vm.createContext(ctx);
 vm.runInContext(src, ctx);
 var fail = 0;
@@ -229,6 +236,30 @@ var buried = blank();
 buried.tableau[0] = [ card(1, 1), card(2, 0) ];
 eq(ctx.solitaireSendToFoundation(buried, { zone: 'tableau', col: 0, idx: 0 }), false,
 	'a covered card is not sent up');
+
+
+// ---- the table survives a refresh ----
+var saved = ctx.solitaireDeal(function () { return 0.5; });
+ok(ctx.solitaireStateOk(saved), 'a dealt table is a whole pack');
+saved.bank = 77;
+saved.moves = 4;
+saved.startedAt = Date.now() - 5000;
+ctx.solitaireState = saved;
+ctx.solitaireSaveState();
+var resumed = ctx.solitaireLoadState();
+ok(resumed !== null, 'a saved table loads again');
+eq(resumed.bank, 77, 'with its bank');
+eq(resumed.moves, 4, 'and its move count');
+eq(resumed.stock.length, 24, 'and its stock');
+ok(Math.abs(Math.round((Date.now() - resumed.startedAt) / 1000) - 5) <= 1,
+	'and the clock resumes at the time already played');
+
+var broken = JSON.parse(appData['cards_solitaire']);
+broken.state.stock.pop();
+appData['cards_solitaire'] = JSON.stringify(broken);
+eq(ctx.solitaireLoadState(), null, 'a table short of a card is refused');
+appData['cards_solitaire'] = 'not json';
+eq(ctx.solitaireLoadState(), null, 'rubbish in the store is refused');
 
 // ---- the table fits the window ----
 function tallColumn(downCount, upCount) {

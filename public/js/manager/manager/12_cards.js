@@ -30,6 +30,7 @@ var solitaireDrag = null;
 var solitaireLastClick = null;
 var solitaireFitObserver = null;
 var solitaireResizeBound = false;
+var solitairePageHideBound = false;
 var solitaireSuppressClick = false;
 var mahjongState = null;
 var mahjongBannerDefault = '';
@@ -655,13 +656,16 @@ function solitaireTick() {
 
 function solitaireStartClock(state) {
 	if (state.timer) { clearInterval(state.timer); }
-	state.startedAt = Date.now();
+	// A restored table keeps the time it had played; a fresh deal starts now.
+	state.startedAt = state.startedAt || Date.now();
 	state.timer = setInterval(solitaireTick, 1000);
 	solitaireTick();
 }
 
 function solitaireStopClock(state) {
-	if (state && state.timer) { clearInterval(state.timer); state.timer = null; }
+	if (!state) { return; }
+	if (state.timer) { clearInterval(state.timer); state.timer = null; }
+	state.stoppedAt = Date.now();
 }
 
 function solitaireNewDeal(bank) {
@@ -671,19 +675,122 @@ function solitaireNewDeal(bank) {
 	return state;
 }
 
+// The table lives in this browser so a refresh, or a Cards window the manager
+// restores, resumes the hand instead of dealing over it. Only the bank is a
+// server setting; the cards themselves would be a settings write per move.
+function solitaireCardOk(card) {
+	return !!card && typeof card.r === 'number' && card.r >= 1 && card.r <= 13
+		&& typeof card.s === 'number' && card.s >= 0 && card.s <= 3
+		&& typeof card.up === 'boolean';
+}
+
+// A saved table is only trusted when it is a whole deck: seven columns, four
+// foundations and every card exactly once.
+function solitaireStateOk(state) {
+	if (!state || !Array.isArray(state.stock) || !Array.isArray(state.waste)) { return false; }
+	if (!Array.isArray(state.foundations) || state.foundations.length !== 4) { return false; }
+	if (!Array.isArray(state.tableau) || state.tableau.length !== 7) { return false; }
+	var seen = {};
+	var total = 0;
+	function pileOk(pile) {
+		if (!Array.isArray(pile)) { return false; }
+		for (var i = 0; i < pile.length; i++) {
+			var card = pile[i];
+			if (!solitaireCardOk(card)) { return false; }
+			var key = card.s * 13 + card.r;
+			if (seen[key]) { return false; }
+			seen[key] = 1;
+			total++;
+		}
+		return true;
+	}
+	if (!pileOk(state.stock) || !pileOk(state.waste)) { return false; }
+	for (var f = 0; f < 4; f++) { if (!pileOk(state.foundations[f])) { return false; } }
+	for (var c = 0; c < 7; c++) { if (!pileOk(state.tableau[c])) { return false; } }
+	return total === 52;
+}
+
+function solitaireSaveState() {
+	if (!solitaireState || typeof jawnosAppFieldSet !== 'function') { return; }
+	var state = solitaireState;
+	var end = (state.won && state.stoppedAt) ? state.stoppedAt : Date.now();
+	var elapsed = state.startedAt ? Math.max(0, Math.floor((end - state.startedAt) / 1000)) : 0;
+	try {
+		jawnosAppFieldSet('cards', 'solitaire', JSON.stringify({
+			v: 1,
+			elapsed: elapsed,
+			state: {
+				stock: state.stock,
+				waste: state.waste,
+				foundations: state.foundations,
+				tableau: state.tableau,
+				moves: state.moves,
+				passes: state.passes,
+				bank: state.bank,
+				won: state.won,
+				undo: state.undo
+			}
+		}));
+	}
+	catch (e) {
+		// a full or unavailable store must not stop the game
+	}
+}
+
+function solitaireLoadState() {
+	if (typeof jawnosAppFieldGet !== 'function') { return null; }
+	var raw = null;
+	try { raw = jawnosAppFieldGet('cards', 'solitaire'); } catch (e) { return null; }
+	if (!raw) { return null; }
+	var save = null;
+	try { save = JSON.parse(raw); } catch (e) { return null; }
+	if (!save || save.v !== 1 || !solitaireStateOk(save.state)) { return null; }
+	var s = save.state;
+	var elapsed = Number(save.elapsed);
+	if (!isFinite(elapsed) || elapsed < 0) { elapsed = 0; }
+	return {
+		stock: s.stock,
+		waste: s.waste,
+		foundations: s.foundations,
+		tableau: s.tableau,
+		moves: Number(s.moves) || 0,
+		passes: Number(s.passes) || 0,
+		bank: Number(s.bank) || 0,
+		selected: null,
+		undo: Array.isArray(s.undo) ? s.undo : [],
+		won: !!s.won,
+		// Resume the clock at the time already played, not the wall time the
+		// page spent closed; a finished table holds its final time.
+		startedAt: elapsed > 0 ? Date.now() - elapsed * 1000 : 0,
+		stoppedAt: s.won ? Date.now() : 0,
+		timer: null
+	};
+}
+
 function solitaireEnsure() {
 	var $root = $('#cards_solitaire');
 	if (!$root.length) { return; }
 	if (!solitaireState) {
-		var bank = parseFloat($root.attr('data-bank'));
-		if (isNaN(bank)) { bank = 0; }
-		solitaireState = solitaireNewDeal(bank);
+		solitaireState = solitaireLoadState();
+		if (!solitaireState) {
+			var bank = parseFloat($root.attr('data-bank'));
+			if (isNaN(bank)) { bank = 0; }
+			solitaireState = solitaireNewDeal(bank);
+		}
 	}
-	else if (!solitaireState.timer && !solitaireState.won) {
-		solitaireStartClock(solitaireState);
+	if (!solitaireState.won) {
+		if (!solitaireState.timer) { solitaireStartClock(solitaireState); }
+	}
+	else {
+		solitaireTick();
 	}
 	solitaireStatusDefault = $('#sol_status').text();
 	solitaireRender(solitaireState);
+	solitaireSaveState();
+	if (!solitairePageHideBound) {
+		solitairePageHideBound = true;
+		window.addEventListener('pagehide', solitaireSaveState);
+	}
 	// The game lives in a window the person can resize; follow its box rather
 	// than the screen. ResizeObserver covers the panel's own window drag; the
 	// window listener is the fallback for engines without it.
@@ -714,6 +821,7 @@ function solitaireAction(mutate) {
 	solitaireRender(solitaireState);
 	if (!before) { solitaireCheckWin(solitaireState); }
 	solitaireSaveBank();
+	solitaireSaveState();
 }
 
 // ---- solitaire: drag and drop ---------------------------------------------
@@ -1582,6 +1690,7 @@ if (typeof jQuery !== 'undefined') {
 		solitaireState = solitaireNewDeal(solitaireState.bank);
 		$('#sol_win').removeClass('show');
 		solitaireRender(solitaireState);
+		solitaireSaveState();
 	});
 
 	$(document).on('click', '#cards_solitaire #sol_again', function() {
@@ -1594,6 +1703,7 @@ if (typeof jQuery !== 'undefined') {
 			$('#sol_win').removeClass('show');
 			solitaireRender(solitaireState);
 			solitaireSaveBank();
+			solitaireSaveState();
 		}
 	});
 
@@ -1611,6 +1721,7 @@ if (typeof jQuery !== 'undefined') {
 			solitaireState.bank = 0;
 			solitaireRender(solitaireState);
 			solitaireSaveBank();
+			solitaireSaveState();
 		});
 	});
 

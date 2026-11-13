@@ -401,7 +401,7 @@ function appWindowOpenerNow(i,timestamp,v) {
 						twirlGame();
 					}
 					else if (i == 'cards') {
-					//	cardPicker();
+						if (typeof cardsInit === 'function') { cardsInit(); }
 					}
 					else if (i == 'marker') {
 						markerInit();
