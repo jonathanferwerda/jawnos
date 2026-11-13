@@ -2098,10 +2098,12 @@ like($loader, qr/weather_observe_leader/, 'and the household leader');
 
 like($page, qr/id="weather_location_sources"/, 'the toolbar offers Sources beside Delete');
 like($page, qr/name="weather_source_mode"/, 'and the dialog lists the sources');
+like($page, qr/id="weather_sources_back"/, 'the Sources dialog has a way back');
 like($now_partial, qr/id="weather_source_detail"/, 'the Now card has a line for the stations');
 my $sources_js = read_file("$root/public/js/manager/weather_sources.js");
 like($sources_js, qr/weatherSourcesOpen/, 'the Sources script opens the dialog');
 like($sources_js, qr#/manager/weather/sources#, 'and asks the sources route');
+like($sources_js, qr/weather_sources_back/, 'and the Back button closes the dialog');
 like($routes_auto, qr{/manager/weather/sources\b}, 'the sources route exists');
 like($controller_auto, qr/sub action_52022\b/, 'and its GET action');
 like($controller_auto, qr/sub action_52023\b/, 'and its POST action');

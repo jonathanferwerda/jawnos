@@ -9,6 +9,9 @@ var weatherSourcesKeyCleared = false;
 $(document).on('click', '#weather_location_sources', function() {
 	weatherSourcesOpen();
 });
+$(document).on('click', '#weather_sources_back', function() {
+	weatherSourcesClose();
+});
 $(document).on('click', '#weather_sources_cancel', function() {
 	weatherSourcesClose();
 });

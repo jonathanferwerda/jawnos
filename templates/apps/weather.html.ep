@@ -49,6 +49,7 @@
 	<input type="hidden" id="weather_source" value="">
 	<div id="weather_sources_view">
 		<div class="weather_controls">
+			<button type="button" id="weather_sources_back"><%= &subs::ui('Back') %></button>
 			<b><%= &subs::ui('Weather sources') %></b>
 			<span id="weather_sources_place" class="weather_muted"></span>
 			<span id="weather_sources_status" class="weather_muted"></span>
