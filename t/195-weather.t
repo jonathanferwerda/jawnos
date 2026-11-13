@@ -1986,6 +1986,7 @@ like($weather_js, qr/weather_alert_meta/, 'and shows the issue and expiry');
 like($weather_js, qr/weather_alert_areas/, 'the alert shows where the statement is in effect');
 like($weather_js, qr/weather_alert_toggle/, 'the statement body is an accordion');
 like($weather_js, qr/weatherAlertToggle/, 'and the title toggles it');
+like($weather_js, qr/weatherAlertLabel/, 'the accordion uses the statement first line');
 like($weather_js, qr/weatherDayName/, 'and a weekday name');
 like($weather_js, qr/weatherLoading/, 'the app asks once at a time');
 like($weather_style, qr/overscroll-behavior-x/, 'the hourly strip scrolls sideways');

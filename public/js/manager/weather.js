@@ -413,12 +413,29 @@ function weatherSourceDetail(data) {
 	$w.find('#weather_source_detail').html(parts.join('')).toggle(parts.length > 0);
 }
 
+function weatherAlertLabel(a) {
+	var title = (a && a.title) || jawnosT('Weather alert');
+	var text = String((a && a.text) || '').replace(/\r/g, '').trim();
+	if (!text) { return title; }
+	var first = text.split('\n')[0].trim();
+	var sentence = first.match(/^(.+?[.!?])(?:\s|$)/);
+	if (sentence) { first = sentence[1]; }
+	first = first.replace(/[.!?]+$/, '').trim();
+	if (first.length < 10 || /:$/.test(first)) { return title; }
+	if (first.length > 120) {
+		first = first.slice(0, 117).replace(/\s+\S*$/, '').trim() + '…';
+	}
+	return first;
+}
+
 function weatherAlerts(alerts) {
 	var $w = $('.wind[app="weather"]');
 	var html = '';
 	for (var i = 0; i < alerts.length; i++) {
 		var a = alerts[i] || {};
+		var hasReport = !!(a.text || (a.areas && a.areas.length));
 		var meta = [];
+		if (hasReport && a.title) { meta.push(weatherEsc(a.title)); }
 		if (a.region && !(a.areas && a.areas.length)) { meta.push(weatherEsc(a.region)); }
 		if (a.issued_at) { meta.push(jawnosT('Issued') + ' ' + weatherTime(a.issued_at)); }
 		if (a.expires_at) { meta.push(jawnosT('Ends') + ' ' + weatherTime(a.expires_at)); }
@@ -427,21 +444,22 @@ function weatherAlerts(alerts) {
 			+ (a.areas && a.areas.length ? '<div class="weather_alert_areas"><b>' + jawnosT('In effect for') + ':</b> ' + weatherEsc(a.areas.join(', ')) + '</div>' : '')
 			+ (meta.length ? '<div class="weather_alert_meta">' + meta.join(' · ') + '</div>' : '')
 			+ (a.url ? '<a class="weather_alert_more" href="' + weatherEsc(a.url) + '" target="_blank" rel="noopener">' + jawnosT('See the full report') + '</a>' : '');
-		var hasBody = !!(a.text || (a.areas && a.areas.length) || meta.length);
+		var hasBody = !!(hasReport || meta.length);
 		var title = weatherEsc(a.title || jawnosT('Weather alert'));
+		var label = weatherEsc(weatherAlertLabel(a));
 		if (hasBody) {
 			var id = 'weather_alert_body_' + Date.now() + '_' + i;
 			var open = !!weatherAlertOpen[i];
 			html += '<div class="weather_alert">'
-				+ '<button type="button" class="weather_alert_toggle" data-alert-index="' + i + '" aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="' + id + '">'
-				+ '<span class="weather_alert_title">' + title + '</span>'
+				+ '<button type="button" class="weather_alert_toggle" data-alert-index="' + i + '" title="' + title + '" aria-expanded="' + (open ? 'true' : 'false') + '" aria-controls="' + id + '">'
+				+ '<span class="weather_alert_title">' + label + '</span>'
 				+ '<span class="weather_alert_chevron" aria-hidden="true">▸</span>'
 				+ '</button>'
 				+ '<div class="weather_alert_body' + (open ? ' open' : '') + '" id="' + id + '">' + body + '</div>'
 				+ '</div>';
 		}
 		else {
-			html += '<div class="weather_alert"><b>' + title + '</b>' + body + '</div>';
+			html += '<div class="weather_alert"><b>' + label + '</b>' + body + '</div>';
 		}
 	}
 	$w.find('#weather_alerts').html(html).toggle(!!html);
