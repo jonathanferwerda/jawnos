@@ -453,27 +453,24 @@ The journal is at debug level, so every successful request appears
 - **The data is this switch's.** Do not restore another switch's directory here.
   The signed house records are portable; `server.key`, the admission decisions
   and the audit log are not.
-- **Naming has a plan and a live fact.** The roadmap retires this VPS in D11/P6
-  and moves Elixir in P7; until that happens, the apex still resolves here. Check
-  §8 before changing DNS, the certificate, or Caddy.
+- **Naming has a plan and a live fact.** The roadmap records D12 (2026-11-13):
+  the VPS stays, hosts this switch and owns the apex; the KS-5 takes the dev and
+  house containers. The apex resolves here. Check §8 before changing DNS, the
+  certificate, or Caddy.
 
 ## 8. Cross-references
 
 In this tree, `docs/infrastructure-roadmap.md` is the plan: §2 for the `cloud`
-baseline, §4 for names and certificates, §7 P6/P7 for the VPS retirement and the
-Elixir move, §11 for the *JawnOS* backups (a different backup, not this switch),
-and D11 for the retirement decision. The roadmap is the plan; this runbook
+baseline, §4 for names and certificates, §7 P6/P7 for the retained VPS and the
+switch, §11 for the *JawnOS* backups (a different backup, not this switch), and
+D12 for the decision that keeps the VPS. The roadmap is the plan; this runbook
 records the live host and does not edit it.
 
-The roadmap and the live host currently differ in two places worth knowing before
-a change:
-
-- `thejunderground.com` A is `148.113.181.210` (this VPS), and Caddy here holds
-  the apex certificate (expires 2027-02-09). The roadmap's certificate table
-  still assigns the apex to certbot on ks5 with expiry 2027-02-01.
-- P6/P7 plan the VPS retirement and move Elixir to a container on ks5; neither
-  has happened for this service. The switch is not containerized and runs only
-  here.
+The roadmap was updated at v0.1.2860 to match this host: D11 (retire the VPS)
+is superseded by D12 (keep it), P6 no longer cancels it, P7 says Elixir runs
+here rather than in a KS-5 container, and the certificate table assigns the apex
+to this host. If the two disagree again, re-measure the host and fix the
+roadmap, not this page's facts.
 
 Upstream (`https://github.com/jonathanferwerda/junderground`, `master`):
 `README.md` for the environment table and the "what works" list, `docs/API.md`
