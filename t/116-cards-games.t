@@ -65,6 +65,7 @@ unlike($people_help, qr/Windows 3\.1/, 'the cards help names the house table, no
 # bare context: nothing top-level may need the DOM or jQuery for this to work.
 my $js = read_file("$root/public/js/manager/manager/12_cards.js");
 like($js, qr/solitaireLastClick/, 'a double click is read from the click pair');
+like($js, qr/e\.clientX - solitaireDrag\.grabX/, 'the drag ghost follows the grab point');
 unlike($js, qr/on\('dblclick'/, 'not from a dblclick on the node the redraw replaced');
 my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
 print $fh <<'JS';
@@ -89,6 +90,10 @@ function blank() {
 // ---- solitaire deal ----
 eq(ctx.cardsCardUrl('the fool.png'), '/images/cards/the%20fool.png',
 	'a deck name with a space is percent-encoded');
+// ---- the drag keeps the grab point ----
+var grab = ctx.solitaireGrabOffset({ left: 100, top: 200 }, 124, 236);
+eq(grab.x, 24, 'a grabbed card keeps its horizontal grab point');
+eq(grab.y, 36, 'and its vertical grab point');
 // ---- the faces count themselves ----
 function pipCount(html) {
 	var found = html.match(/class="sol_pipmark/g);

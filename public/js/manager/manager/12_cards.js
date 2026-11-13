@@ -747,6 +747,13 @@ function solitaireRunFor(state, from) {
 	return null;
 }
 
+// Where in the card the pointer landed. The ghost keeps that point under the
+// pointer, so the card stays where it was grabbed rather than jumping to the
+// pointer's bottom-right corner.
+function solitaireGrabOffset(rect, x, y) {
+	return { x: x - rect.left, y: y - rect.top };
+}
+
 function solitaireGhost(run) {
 	var $ghost = $('<div class="sol_drag_ghost"></div>');
 	for (var i = 0; i < run.length; i++) {
@@ -1530,7 +1537,15 @@ if (typeof jQuery !== 'undefined') {
 		if (!from || (from.zone !== 'waste' && from.zone !== 'tableau')) { return; }
 		var run = solitaireRunFor(solitaireState, from);
 		if (!run || !solitaireRunOk(run)) { return; }
-		solitaireDrag = { from: from, x: e.clientX, y: e.clientY, started: false, ghost: null, run: run };
+		// The waste always moves its top card, even when an under-card's sliver
+		// was grabbed; anchor the ghost to the card that will actually move.
+		var anchor = this;
+		if (from.zone === 'waste') {
+			var top = $('#sol_waste .sol_card').last()[0];
+			if (top) { anchor = top; }
+		}
+		var grab = solitaireGrabOffset(anchor.getBoundingClientRect(), e.clientX, e.clientY);
+		solitaireDrag = { from: from, x: e.clientX, y: e.clientY, grabX: grab.x, grabY: grab.y, started: false, ghost: null, run: run };
 	});
 
 	$(document).on('pointermove', function(e) {
@@ -1542,7 +1557,7 @@ if (typeof jQuery !== 'undefined') {
 			$('#cards').append(solitaireDrag.ghost);
 			$(document.body).addClass('cards_dragging');
 		}
-		solitaireDrag.ghost.css({ left: (e.clientX + 12) + 'px', top: (e.clientY + 10) + 'px' });
+		solitaireDrag.ghost.css({ left: (e.clientX - solitaireDrag.grabX) + 'px', top: (e.clientY - solitaireDrag.grabY) + 'px' });
 		solitaireHighlight(e.clientX, e.clientY);
 		if (e.preventDefault) { e.preventDefault(); }
 	});
