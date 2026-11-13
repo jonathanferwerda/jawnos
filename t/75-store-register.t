@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Crest.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/Routes/manager_store.pm public/js/store/register.js templates/store/register.html.ep
+# tests-for: lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Crest.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/Routes/manager_store.pm public/js/store/register.js templates/store/register.html.ep public/js/store.js templates/store/store.html.ep templates/ribbons.html.ep
 # covers:    The Store's Register is a cash till, not a customer page.
 
 use strict;
@@ -196,5 +196,35 @@ is($direct->{'rendered'}, undef, 'and is not rendered a second time');
 	is($desk->{'redirect'}, undef, 'the desk opener is not redirected');
 	is($desk->{'rendered'}, 'WINDOW', 'the desk opener gets the window wrapper');
 }
+
+# ------------------------------------ the walk-in and the Manager window
+# The privacy policy is a storefront notice: a desk window already stands in the
+# house, so it is left out there. It also used to be a sibling of the store shell
+# and became a whole column beside it once the window put the contents in a flex
+# row; in the footer it can only ever be a line.
+my $store_page = read_file('templates/store/store.html.ep');
+like($store_page, qr/\$in_manager\s*=\s*\(\s*\(\$window_maker \|\| ''\) eq 'yes'\s*\)/,
+	'the Store page knows whether it is drawn in a Manager window');
+like($store_page, qr/unless \(\$in_manager\)[\s\S]{0,800}?id="store_privacy"/,
+	'the privacy link is left out of a Manager window');
+like($store_page, qr/<footer class="store_footer">[\s\S]*?id="store_privacy"[\s\S]*?<\/footer>/,
+	'the privacy link rides in the footer, where it cannot become a column');
+unlike($store_page, qr{</div>\s*<div id="store_privacy">},
+	'the privacy link is no longer a sibling of the store shell');
+
+# A walk-in has no account, and the customer bar is otherwise empty until a
+# customer is loaded. Its Register opens the same till the toolbar does.
+my $ribbons = read_file('templates/ribbons.html.ep');
+like($ribbons, qr/id="store_register_bottom_open"/,
+	'the customer bar carries a Register till for a walk-in');
+my $store_js = js_source('js/store.js');
+like($store_js, qr/\$\('#store_register_bottom_open'\)\.toggle\(!cx_uuid\)/,
+	'the bottom Register is offered only while no customer is loaded');
+like($store_js, qr/\$\('#store_register_bottom_open'\)\.hide\(\)/,
+	'loading a customer steps the bottom Register aside');
+like($store_js, qr/\$\('#store_register_bottom_open'\)\.show\(\)/,
+	'clearing the customer brings the bottom Register back');
+like($js, qr/#store_register_open, #store_register_bottom_open/,
+	'both Register buttons open the same till');
 
 done_testing();

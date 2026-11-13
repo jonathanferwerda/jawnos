@@ -1,5 +1,9 @@
 <div id="bottom_ribbon" class="store_customer_bar">
 	<% if (($c->session('privilege') || '') eq 'citizen') { %>
+		<button type="button" id="store_register_bottom_open" class="customer_action" title="<%= &subs::lang('common.register') %>">
+			<img src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" alt="">
+			<span><%= &subs::lang('common.register') %></span>
+		</button>
 		<span id="customer" class="store_customer_name"></span>
 		<div id="dock"></div>
 		<div class="store_customer_search">

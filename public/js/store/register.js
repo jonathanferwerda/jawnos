@@ -346,7 +346,7 @@ function storeRegisterSearch() {
 	}, 250);
 }
 
-$(document).on('click', '#store_register_open', function() {
+$(document).on('click', '#store_register_open, #store_register_bottom_open', function() {
 	storeRegisterOpen();
 });
 

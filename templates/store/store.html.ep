@@ -16,6 +16,8 @@
 <%
 	my $chip_counts = $type_counts || {};
 	$item_total = 0 unless defined $item_total;
+	my $citizen = (($c->session('privilege') || '') eq 'citizen');
+	my $in_manager = (($window_maker || '') eq 'yes');
 %>
 <div id="main_window" class="store_shell">
 	<header class="store_toolbar">
@@ -94,9 +96,16 @@
 		</section>
 		<aside id="item_view" class="store_detail" aria-live="polite"></aside>
 	</div>
-	<% if (($c->session('privilege') || '') eq 'citizen') { %>
+	<% if ($citizen || !$in_manager) { %>
 		<footer class="store_footer">
-			<%= include 'ribbons', settings => $settings %>
+			<% if ($citizen) { %>
+				<%= include 'ribbons', settings => $settings %>
+			<% } %>
+			<% unless ($in_manager) { %>
+				<div id="store_privacy">
+					<a href="/privacy" target="_blank" rel="noopener"><%= &subs::lang('privacy.link') %></a>
+				</div>
+			<% } %>
 		</footer>
 	<% } %>
 <div id="main_viewer" class="store_viewer"></div>
@@ -104,6 +113,3 @@
 </div>
 
 <div id="image_viewer"></div>
-<div id="store_privacy">
-	<a href="/privacy" target="_blank" rel="noopener"><%= &subs::lang('privacy.link') %></a>
-</div>

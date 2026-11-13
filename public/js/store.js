@@ -60,6 +60,9 @@ function storeInitializer() {
 	if (cx_uuid) {
 		customerGrabber(cx_uuid);
 	}
+	// The footer's Register till is for the walk-in with no account; when a
+	// customer is loaded their own four actions take its place.
+	$('#store_register_bottom_open').toggle(!cx_uuid);
 
 	// One chip per type, remembered as a filter rather than re-queried.
 	storeState.types = {};
@@ -1104,6 +1107,7 @@ function customerGrabber(cx) {
 			$('#customer_search').val(response.formatted_name);
 			cx_uuid = response.settings.uuid;
 			$('.save_quote').attr('cx', cx_uuid).show();
+			$('#store_register_bottom_open').hide();
 			$('#customer_cancel').show();
 			localStorage.setItem('cx_uuid', cx_uuid);
 			$('#customer_search_results').hide();
@@ -1164,6 +1168,7 @@ $(document).on('click', '#customer_cancel', function() {
 	$('#customer_cancel').hide();
 	$('#customer_search').show();
 	$('.customer_name').hide().text('');
+	$('#store_register_bottom_open').show();
 	$('#main_viewer').html('').hide().attr('type','');
 	localStorage.removeItem('cx_uuid');
 });
