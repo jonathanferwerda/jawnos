@@ -27,6 +27,7 @@ var solitaireStatusDefault = '';
 var solitaireStatusTimer = null;
 var solitaireSaveTimer = null;
 var solitaireDrag = null;
+var solitaireLastClick = null;
 var solitaireFitObserver = null;
 var solitaireResizeBound = false;
 var solitaireSuppressClick = false;
@@ -393,7 +394,9 @@ function solitaireCanDrop(state, from, target) {
 	return solitaireApply(copy, target) !== null;
 }
 
-// Double-click sends a single card to the foundation that will take it.
+// Double-click sends a single card to its own foundation. The four piles are
+// indexed by suit, so a heart always goes to the heart pile even when another
+// pile is still empty.
 function solitaireSendToFoundation(state, from) {
 	var card = null;
 	if (from.zone === 'waste' && state.waste.length) { card = state.waste[state.waste.length - 1]; }
@@ -401,14 +404,10 @@ function solitaireSendToFoundation(state, from) {
 		var pile = state.tableau[from.col];
 		if (pile.length && from.idx === pile.length - 1) { card = pile[pile.length - 1]; }
 	}
-	if (!card) { return false; }
-	for (var s = 0; s < 4; s++) {
-		if (solitaireCanFoundation(card, state.foundations[s])) {
-			state.selected = from.zone === 'waste' ? { zone: 'waste' } : { zone: 'tableau', col: from.col, idx: from.idx };
-			return solitaireApply(state, { zone: 'foundation', suit: s }) !== null;
-		}
-	}
-	return false;
+	if (!card || !card.up) { return false; }
+	if (!solitaireCanFoundation(card, state.foundations[card.s])) { return false; }
+	state.selected = from.zone === 'waste' ? { zone: 'waste' } : { zone: 'tableau', col: from.col, idx: from.idx };
+	return solitaireApply(state, { zone: 'foundation', suit: card.s }) !== null;
 }
 
 // A card can go up without hurting the table when the opposite colour, one rank
@@ -432,22 +431,18 @@ function solitaireAutoFinish(state) {
 		var did = false;
 		if (state.waste.length) {
 			var wasteCard = state.waste[state.waste.length - 1];
-			for (var s = 0; s < 4 && !did; s++) {
-				if (solitaireCanFoundation(wasteCard, state.foundations[s]) && solitaireSafeToFoundation(state, wasteCard)) {
-					state.selected = { zone: 'waste' };
-					did = solitaireApply(state, { zone: 'foundation', suit: s }) !== null;
-				}
+			if (solitaireCanFoundation(wasteCard, state.foundations[wasteCard.s]) && solitaireSafeToFoundation(state, wasteCard)) {
+				state.selected = { zone: 'waste' };
+				did = solitaireApply(state, { zone: 'foundation', suit: wasteCard.s }) !== null;
 			}
 		}
 		for (var col = 0; col < 7 && !did; col++) {
 			var pile = state.tableau[col];
 			if (!pile.length) { continue; }
 			var top = pile[pile.length - 1];
-			for (var f = 0; f < 4 && !did; f++) {
-				if (solitaireCanFoundation(top, state.foundations[f]) && solitaireSafeToFoundation(state, top)) {
-					state.selected = { zone: 'tableau', col: col, idx: pile.length - 1 };
-					did = solitaireApply(state, { zone: 'foundation', suit: f }) !== null;
-				}
+			if (solitaireCanFoundation(top, state.foundations[top.s]) && solitaireSafeToFoundation(state, top)) {
+				state.selected = { zone: 'tableau', col: col, idx: pile.length - 1 };
+				did = solitaireApply(state, { zone: 'foundation', suit: top.s }) !== null;
 			}
 		}
 		if (!did) { break; }
@@ -713,6 +708,7 @@ function solitaireEnsure() {
 // One place for "do the move, redraw, remember the bank, look for a win".
 function solitaireAction(mutate) {
 	if (!solitaireState) { return; }
+	solitaireLastClick = null;
 	var before = solitaireState.won;
 	mutate(solitaireState);
 	solitaireRender(solitaireState);
@@ -1449,6 +1445,28 @@ if (typeof jQuery !== 'undefined') {
 		var zone = $this.attr('data-zone');
 		if (!zone) { return; }
 
+		// A double click is read from the pair of clicks, not the browser's
+		// dblclick event: choosing a card redraws the board, so by the time
+		// dblclick is dispatched its node is detached and the delegated handler
+		// never sees it. The click pair survives the redraw.
+		if ($this.is('.sol_card') && (zone === 'waste' || zone === 'tableau')) {
+			var from = solitaireFromElement($this);
+			var key = (zone === 'tableau') ? 'tableau:' + from.col + ':' + from.idx : 'waste';
+			var now = Date.now();
+			if (solitaireLastClick && solitaireLastClick.key === key
+				&& now - solitaireLastClick.at <= 500
+				&& Math.abs(e.clientX - solitaireLastClick.x) <= 8
+				&& Math.abs(e.clientY - solitaireLastClick.y) <= 8) {
+				solitaireLastClick = null;
+				var sent = false;
+				solitaireAction(function(s) { sent = solitaireSendToFoundation(s, from); });
+				if (sent) { return; }
+			}
+			else {
+				solitaireLastClick = { key: key, at: now, x: e.clientX, y: e.clientY };
+			}
+		}
+
 		if (zone === 'waste') {
 			if (state.selected && state.selected.zone === 'waste') {
 				state.selected = null;
@@ -1504,21 +1522,6 @@ if (typeof jQuery !== 'undefined') {
 			}
 			return;
 		}
-	});
-
-	$(document).on('dblclick', '#cards_solitaire .sol_card', function(e) {
-		e.stopPropagation();
-		if (!solitaireState) { return; }
-		var zone = $(this).attr('data-zone');
-		var from = null;
-		if (zone === 'waste') { from = { zone: 'waste' }; }
-		else if (zone === 'tableau') {
-			from = { zone: 'tableau', col: parseInt($(this).attr('data-col'), 10), idx: parseInt($(this).attr('data-idx'), 10) };
-		}
-		if (!from) { return; }
-		var sent = false;
-		solitaireAction(function(state) { sent = solitaireSendToFoundation(state, from); });
-		if (!sent) { solitaireStatus(window.jawnosT ? jawnosT('No foundation takes that card yet.') : 'No foundation takes that card yet.'); }
 	});
 
 	$(document).on('pointerdown', '#cards_solitaire .sol_card', function(e) {

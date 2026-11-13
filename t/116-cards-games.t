@@ -48,7 +48,7 @@ unlike($style, qr/sol31|Windows 3\.1|MS Sans Serif/, 'the Windows 3.1 skin is go
 unlike($style, qr/#008000|#c0c0c0|#000080|#d0d0d0/, 'and its colours are gone');
 like($style, qr/radial-gradient\(circle at 50% 42%, #164e3a, #0a2a1f 72%\)/, 'the card back is the house lattice');
 like($style, qr/#cards \.sol_pips/, 'the card face has a pip field');
-like($style, qr/#cards \.sol_column \.sol_slot \+ \.sol_card \{ margin-top: 0; \}/, 'the first tableau card sits at the top of its column');
+like($style, qr/\.sol_slot \+ \.sol_card\.up \{ margin-top: 0; \}/, 'a revealed first card sits at the top of its column too');
 like($style, qr/margin-top: calc\(var\(--sol-up/, 'the tableau fan is measured from the card');
 unlike($style, qr/#cards \.sol_pip \{ display: none; \}/, 'the pips stay visible on a narrow screen');
 
@@ -64,6 +64,8 @@ unlike($people_help, qr/Windows 3\.1/, 'the cards help names the house table, no
 # The rules are plain functions at the top of 12_cards.js. Load the file in a
 # bare context: nothing top-level may need the DOM or jQuery for this to work.
 my $js = read_file("$root/public/js/manager/manager/12_cards.js");
+like($js, qr/solitaireLastClick/, 'a double click is read from the click pair');
+unlike($js, qr/on\('dblclick'/, 'not from a dblclick on the node the redraw replaced');
 my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
 print $fh <<'JS';
 var fs = require('fs'), vm = require('vm'), path = process.argv[2];
@@ -201,6 +203,24 @@ eq(s.undo.length, 1, 'the move is on the undo stack');
 ctx.solitaireUndo(s);
 eq(s.foundations[0].length, 0, 'undo takes the card back');
 eq(s.bank, 0, 'and the score with it');
+
+// ---- a card goes up its own foundation ----
+var hearts = blank();
+hearts.waste = [ card(1, 1) ];
+eq(ctx.solitaireSendToFoundation(hearts, { zone: 'waste' }), true, 'a heart ace can be sent up');
+eq(hearts.foundations[1].length, 1, 'and lands in the heart pile');
+eq(hearts.foundations[0].length, 0, 'not in the empty spade pile');
+
+var auto = blank();
+auto.waste = [ card(1, 2) ];
+ctx.solitaireAutoFinish(auto);
+eq(auto.foundations[2].length, 1, 'Auto sends a diamond ace to the diamond pile');
+eq(auto.foundations[0].length, 0, 'and leaves the spade pile alone');
+
+var buried = blank();
+buried.tableau[0] = [ card(1, 1), card(2, 0) ];
+eq(ctx.solitaireSendToFoundation(buried, { zone: 'tableau', col: 0, idx: 0 }), false,
+	'a covered card is not sent up');
 
 // ---- the table fits the window ----
 function tallColumn(downCount, upCount) {

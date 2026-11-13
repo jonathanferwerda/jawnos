@@ -483,8 +483,9 @@
 }
 #cards .sol_pips .sol_pipmark.flip { transform: translate(-50%, -50%) rotate(180deg); }
 #cards .sol_column .sol_card { margin-top: calc(var(--sol-down, calc(var(--card-h) * .22)) - var(--card-h)); }
-#cards .sol_column .sol_slot + .sol_card { margin-top: 0; }
 #cards .sol_column .sol_card.up { margin-top: calc(var(--sol-up, calc(var(--card-h) * .36)) - var(--card-h)); }
+#cards .sol_column .sol_slot + .sol_card,
+#cards .sol_column .sol_slot + .sol_card.up { margin-top: 0; }
 #cards .sol_card.sel {
 	box-shadow: 0 0 0 3px var(--gold), 0 6px 14px rgba(0,0,0,.5);
 	transform: translateY(-3px);
