@@ -1031,6 +1031,22 @@ sub action_44018 {
 	$c->render(json => $status);
 }
 
+# POST /manager/game_play
+# A browser game reports its own touch, pause and stop. The domain keeps the
+# same appointment shape the Gou's tick uses, so play time from the desk, the
+# phone and the handheld all sit in one ledger.
+sub action_44019 {
+	my $c = shift;
+	my $body = eval { $c->req->json } || {};
+	$body = {} unless ref $body eq 'HASH';
+	my $game = defined $body->{'game'} ? $body->{'game'} : $c->param('game');
+	my $state = defined $body->{'state'} ? $body->{'state'} : $c->param('state');
+	my $at = defined $body->{'at'} ? $body->{'at'} : $c->param('at');
+	my $answer = eval { &subs::browser_game_play({ game => $game // '', state => $state // 'play', at => $at // 0 }) };
+	$answer = { ok => 0, error => 'The play session could not be saved.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+}
+
 # GET /manager/controller/config
 # The Configuration tile used to open the house's Configure app, which is a desk
 # of settings a handheld cannot comfortably use. It opens this sublauncher

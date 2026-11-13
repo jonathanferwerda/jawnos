@@ -1,4 +1,4 @@
-# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js perl/help/topics_people.pl public/css/manager.css
+# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js perl/help/topics_people.pl public/css/manager.css
 # covers:    The second launcher behind the Controller's Games tile, Twirl's
 #            clockwise and counter-clockwise turns, and the strip a full-screen
 #            app used to keep where its title bar had been.
@@ -18,11 +18,40 @@ my $root = repo_root();
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_misc9.pm");
 like($routes, qr/\[\s*44004\s*,\s*'get'\s*,\s*'\/manager\/games'\s*,\s*'action_44004'\s*\]/,
 	'GET /manager/games is registered and names its action');
+like($routes, qr/\[\s*44019\s*,\s*'post'\s*,\s*'\/manager\/game_play'\s*,\s*'action_44019'\s*\]/,
+	'POST /manager/game_play is registered');
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
 my ($action) = $controller =~ /(sub action_44004\b.*?\n\})/s;
 ok($action, 'action_44004 exists');
 like($action, qr/template => 'apps\/games'/, 'the action renders the games page');
 like($action, qr/&Manager::window_maker\(/, 'the page is served through the window maker');
+
+# --- browser play sessions ----------------------------------------------------
+my ($play_action) = $controller =~ /(sub action_44019\b.*?\n\})/s;
+ok($play_action, 'action_44019 exists');
+like($play_action, qr/browser_game_play/, 'and saves the browser play session');
+
+my $tracker = read_file("$root/public/js/manager/game_session.js");
+like($tracker, qr/JAWNOS_GAME_QUIET = 30000/, 'a browser game pauses after half a minute');
+like($tracker, qr{/manager/game_play}, 'and reports to the play route');
+like($tracker, qr/visibilitychange/, 'a hidden page pauses it');
+like($tracker, qr/pagehide/, 'and leaving stops it');
+
+my $hooks = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
+like($hooks, qr{/js/manager/game_session\.js}, 'the tracker ships in the eager bundle');
+
+my $cards_js = read_file("$root/public/js/manager/manager/12_cards.js");
+my ($game_map) = $cards_js =~ /(var CARDS_GAME_NAMES = \{[^\}]*\};)/;
+like($game_map, qr/Solitaire.*Mahjong.*Blackjack/, 'the three card games have play sessions');
+unlike($game_map, qr/tarot/i, 'tarot does not');
+like($cards_js, qr/jawnosGameSessionStart\(game/, 'a card touch starts the appointment');
+like($cards_js, qr/jawnosGameSessionStart\('Solitaire'/, 'opening Solitaire starts a session');
+like($cards_js, qr/jawnosGameSessionStart\('Mahjong'/, 'opening Mahjong starts one');
+like($cards_js, qr/jawnosGameSessionStart\('Blackjack'/, 'and Blackjack');
+
+my $twirl_js = read_file("$root/public/js/manager/twirl/01_twirl_game.js");
+like($twirl_js, qr/jawnosGameSessionStart\('Twirl'/, 'Twirl starts one too');
+like($twirl_js, qr/jawnosGameSessionPause\(\)/, 'and Escape pauses the play appointment too');
 
 # --- the shelf ----------------------------------------------------------------
 my $page = read_file("$root/templates/apps/games.html.ep");

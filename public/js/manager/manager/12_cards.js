@@ -76,10 +76,26 @@ function cardsShowSingle(src, title) {
 
 var CARDS_VARIANTS = [ 'tarot', 'solitaire', 'mahjong', 'blackjack' ];
 
+// The three games save a Games play appointment the way the Controller's
+// emulated games do; tarot is a reading, not a game.
+var CARDS_GAME_NAMES = { solitaire: 'Solitaire', mahjong: 'Mahjong', blackjack: 'Blackjack' };
+function cardsGameName(variant) { return CARDS_GAME_NAMES[variant] || ''; }
+function cardsGameScreen(id) {
+	return function() {
+		var pane = document.getElementById(id);
+		return !!pane && $(pane).is(':visible');
+
+	};
+}
+
 function cardsShowVariant(variant, save) {
 	var root = cardsRoot();
 	if (!root) { return; }
 	var known = (CARDS_VARIANTS.indexOf(variant) >= 0) ? variant : '';
+	if (typeof jawnosGameSessionGame === 'function') {
+		var running = jawnosGameSessionGame();
+		if (running && running !== cardsGameName(known)) { jawnosGameSessionStop(); }
+	}
 	root.setAttribute('data-variant', known);
 	$('.cards_variant', root).each(function() {
 		$(this).toggleClass('active', $(this).attr('data-variant') === known);
@@ -770,6 +786,9 @@ function solitaireLoadState() {
 function solitaireEnsure() {
 	var $root = $('#cards_solitaire');
 	if (!$root.length) { return; }
+	if (typeof jawnosGameSessionStart === 'function') {
+		jawnosGameSessionStart('Solitaire', cardsGameScreen('cards_solitaire'));
+	}
 	if (!solitaireState) {
 		solitaireState = solitaireLoadState();
 		if (!solitaireState) {
@@ -1194,6 +1213,9 @@ function mahjongNewGame() {
 
 function mahjongEnsure() {
 	if (!$('#cards_mahjong').length) { return; }
+	if (typeof jawnosGameSessionStart === 'function') {
+		jawnosGameSessionStart('Mahjong', cardsGameScreen('cards_mahjong'));
+	}
 	if (!mahjongState) { mahjongNewGame(); return; }
 	mahjongRender();
 }
@@ -1408,6 +1430,9 @@ function blackjackNewBank(bank) {
 
 function blackjackEnsure() {
 	if (!$('#cards_blackjack').length) { return; }
+	if (typeof jawnosGameSessionStart === 'function') {
+		jawnosGameSessionStart('Blackjack', cardsGameScreen('cards_blackjack'));
+	}
 	if (!blackjackState) {
 		var bank = parseFloat($('#cards_blackjack').attr('data-bank'));
 		if (isNaN(bank)) { bank = BJ_BANK_START; }
@@ -1473,6 +1498,15 @@ if (typeof jQuery !== 'undefined') {
 
 	$(document).on('click', '#cards .cards_brand', function() {
 		cardsShowVariant('', true);
+	});
+
+	// The first touch in a game starts its play appointment; later touches keep
+	// it alive and the clock pauses it when the game goes quiet.
+	$(document).on('pointerdown', '#cards_solitaire, #cards_mahjong, #cards_blackjack', function() {
+		if (typeof jawnosGameSessionStart !== 'function') { return; }
+		var variant = (this.id || '').replace(/^cards_/, '');
+		var game = cardsGameName(variant);
+		if (game) { jawnosGameSessionStart(game, cardsGameScreen(this.id)); }
 	});
 
 	$(document).on('click', '#cards .cards_mode', function() {

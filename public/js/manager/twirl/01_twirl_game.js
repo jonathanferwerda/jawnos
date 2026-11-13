@@ -1,6 +1,23 @@
+// The play appointment shares the Gou's pause rules; the key or click that
+// moves a piece is the touch that starts and keeps it.
+function twirlPlayScreen() {
+	return $('#twirl').length > 0 && $('#twirl').is(':visible');
+}
+function twirlPlayTouch() {
+	if (typeof jawnosGameSessionStart === 'function' && twirlPlayScreen()) {
+		jawnosGameSessionStart('Twirl', twirlPlayScreen);
+	}
+}
+
 function twirlGame() {
 	var canvas = document.getElementById('twirl');
-	if (!canvas || !$('#twirl').is(':visible') || twirlRunning == true) {
+	if (!canvas || !$('#twirl').is(':visible')) {
+		return;
+	}
+	if (typeof jawnosGameSessionStart === 'function') {
+		jawnosGameSessionStart('Twirl', twirlPlayScreen);
+	}
+	if (twirlRunning == true) {
 		return;
 	}
 	twirlRunning = true;
@@ -687,6 +704,7 @@ function twirlGame() {
 
 		$(document).on('keydown', function (e) {
 			if (!activeGame()) { return; }
+			twirlPlayTouch();
 			var cmd = twirlKeyCommand(e.keyCode);
 			if (cmd == 'left' || cmd == 'right' || cmd == 'down') {
 				e.preventDefault();
@@ -706,6 +724,7 @@ function twirlGame() {
 			else if (e.keyCode == 27) {
 				e.preventDefault();
 				twirlControls.pause();
+				if (typeof jawnosGameSessionPause === 'function') { jawnosGameSessionPause(); }
 			}
 			else if (e.keyCode == 67) {
 				e.preventDefault();
@@ -730,6 +749,7 @@ function twirlGame() {
 		   turns it back. */
 		$(document).on('mousedown', '#twirl', function (e) {
 			if (!activeGame() || e.which !== 1) { return; }
+			twirlPlayTouch();
 			e.preventDefault();
 			twirlControls.action('rotate');
 		});

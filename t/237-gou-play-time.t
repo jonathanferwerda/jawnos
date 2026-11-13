@@ -116,6 +116,56 @@ sub sessions {
 	is( $rows->[0]->{'type'}, 'stop', 'closed when the game ends' );
 	is( int( $rows->[0]->{'stop_timestamp'} ), $base + 120_000, 'at the last control' );
 	is( int( $rows->[0]->{'duration'} ), -60_000, '20s + 40s of play, the 60s pause left out' );
+
+	# ---- a browser game reports its own touches ----
+	my $browser_device = 'phone';
+	my $b1 = $base + 200_000;
+	my $browser = sub {
+		return &subs::db_query('select * from appointments where app = ? and source = ? and device = ? order by cast(timestamp as integer)', $app, 'browser_game', $browser_device)->hashes || [];
+	};
+
+	$NOW = $b1 + 1_000;
+	my $answer = &subs::browser_game_play({ device => $browser_device, game => 'Solitaire', state => 'play', at => $b1 });
+	is( $answer->{'ok'}, 1, 'a browser play starts a session' );
+	my $browsed = $browser->();
+	is( scalar @{$browsed}, 1, 'one browser game appointment' );
+	is( $browsed->[0]->{'type'}, 'start', 'running' );
+	is( $browsed->[0]->{'project'}, 'Solitaire', 'named for its game' );
+	is( $browsed->[0]->{'source'}, 'browser_game', 'and marked as the browser’s' );
+	my $browser_uuid = $browsed->[0]->{'uuid'};
+
+	# a quiet game pauses at the last touch
+	$NOW = $b1 + 50_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Solitaire', state => 'pause', at => $b1 + 20_000 });
+	$browsed = $browser->();
+	is( $browsed->[0]->{'type'}, 'stop', 'the quiet browser game pauses' );
+	is( int( $browsed->[0]->{'stop_timestamp'} ), $b1 + 20_000, 'at the last touch' );
+	is( int( $browsed->[0]->{'duration'} ), -20_000, 'with the first play segment' );
+
+	# a touch within five minutes resumes the same row
+	$NOW = $b1 + 90_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Solitaire', state => 'play', at => $b1 + 80_000 });
+	$browsed = $browser->();
+	is( scalar @{$browsed}, 1, 'a resume does not make a second appointment' );
+	is( $browsed->[0]->{'uuid'}, $browser_uuid, 'the same row reopens' );
+	is( $browsed->[0]->{'type'}, 'start', 'and it runs again' );
+
+	# leaving stops it, with the pause left out of the play time
+	$NOW = $b1 + 140_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Solitaire', state => 'stop', at => $b1 + 120_000 });
+	$browsed = $browser->();
+	is( $browsed->[0]->{'type'}, 'stop', 'leaving closes the session' );
+	is( int( $browsed->[0]->{'duration'} ), -60_000, '20s + 40s of play, the 60s pause left out' );
+
+	# another game on the same device is its own row
+	$NOW = $b1 + 150_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Twirl', state => 'play', at => $b1 + 150_000 });
+	$browsed = $browser->();
+	is( scalar @{$browsed}, 2, 'Twirl gets its own session' );
+	is( ($browsed->[1]->{'project'} // ''), 'Twirl', 'named Twirl' );
+
+	is( &subs::browser_game_play({ device => $browser_device, game => 'Tarot', state => 'play' })->{'ok'}, 0,
+		'tarot is not a play session' );
 }
 
 my $helper = read_file(root() . '/scripts/jawnos_game_launch.pl');

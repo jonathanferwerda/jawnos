@@ -601,6 +601,107 @@ sub game_play_appointment_tick {
 	return 1;
 }
 
+# A browser game (Cards' Solitaire, Mahjong and Blackjack, and Twirl) has no
+# input daemon to write activity, so the page reports its own touches. The
+# session is the Gou's shape: one Games row on this device, named by its game;
+# quiet for half a minute closes it at the last touch, a touch within five
+# minutes reopens the same row, and a longer gap starts a new one.
+sub browser_game_play {
+	my ($opts) = @_;
+	$opts ||= {};
+	my %allowed = map { $_ => 1 } qw(Solitaire Mahjong Blackjack Twirl);
+	my $game = $opts->{'game'} // '';
+	$game =~ s/^\s+//;
+	$game =~ s/\s+$//;
+	return { ok => 0, error => 'That game does not save play time.' } unless $allowed{$game};
+	my $state = $opts->{'state'} // 'play';
+	return { ok => 0, error => 'That play state is not known.' } unless $state =~ /^(?:play|pause|stop)$/;
+	my $now = &rightNow();
+	my $device = $opts->{'device'} // &device_setter();
+	my $at = int($opts->{'at'} // 0);
+	$at = $now if $at <= 0 || $at > $now;
+	my $source = 'browser_game';
+	my $tag = substr(sha256_hex(join "\0", $source, $device // '', $game), 0, 24);
+	my $marker_key = { app => '__president', context => 'game_stop', subcontext => $tag, warranty => '-10m' };
+	my $open = &db_query(q{
+		select * from appointments
+		 where app = 'games' and lower(source) = ? and device = ? and project = ?
+		   and (type = 'start' or type = 'record') and stop_seen is null
+		 order by cast(timestamp as integer) desc limit 1
+	}, $source, $device, $game)->hash;
+
+	if ($state eq 'pause' || $state eq 'stop') {
+		if ($open && $open->{'uuid'}) {
+			my $started = int($open->{'timestamp'} // 0);
+			my $stop_at = $at > $started ? $at : $started;
+			&game_session_close($open, $stop_at, $now, $state eq 'pause' ? 'peek' : 'take');
+			if ($state eq 'pause') {
+				&subs::cache_set($marker_key, {
+					uuid => $open->{'uuid'},
+					at => $stop_at,
+					app => 'games',
+					game => $game,
+					source => $source,
+					device => $device,
+				});
+			}
+		}
+		if ($state eq 'stop') { &subs::cache_delete($marker_key); }
+		return { ok => 1, state => $state };
+	}
+
+	if ($open && $open->{'uuid'}) {
+		&db_update('appointments', { server_time => $now }, { uuid => $open->{'uuid'}, app => 'games' });
+		return { ok => 1, state => 'running' };
+	}
+
+	my $marker = &subs::cache_get($marker_key);
+	my $new_start = $at;
+	if (ref $marker eq 'HASH' && ($marker->{'uuid'} // '')) {
+		my $marker_at = int($marker->{'at'} // 0);
+		if (($marker->{'game'} // '') eq $game && ($marker->{'device'} // '') eq $device) {
+			if ($at <= $marker_at) { return { ok => 1, state => 'paused' }; }
+			if ($at < $marker_at + 5 * 60 * 1000) {
+				my $row = &db_query('select uuid, timestamp from appointments where uuid = ? and app = ? limit 1', $marker->{'uuid'}, 'games')->hash;
+				if ($row && $row->{'uuid'}) {
+					my $gap = $at - $marker_at;
+					&session_pause_add($row->{'uuid'}, 'games', $gap) if $gap > 0;
+					&db_update('appointments', {
+						type => 'start',
+						stop_seen => undef,
+						stop_timestamp => undef,
+						server_time => $now,
+					}, { uuid => $row->{'uuid'}, app => 'games' });
+					&subs::cache_delete($marker_key);
+					&intelligent_automation_toggle({ appt_uuid => $row->{'uuid'}, app => 'games', 'state' => 'on', timestamp => $now });
+					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', 'games', $row->{'uuid'})});
+					return { ok => 1, state => 'resumed' };
+				}
+			}
+		}
+		&subs::cache_delete($marker_key);
+	}
+
+	my $settings = &settings_grabber({ app => 'games' });
+	my $uuid = &random_string_creator(90);
+	my $row = {
+		app => 'games',
+		uuid => $uuid,
+		type => 'start',
+		timestamp => $new_start,
+		server_time => $now,
+		device => $device,
+		source => $source,
+		seen => 'yes',
+		project => $game,
+		pos => $settings->{'pos'},
+	};
+	&db_insert('appointments', $row);
+	&intelligent_automation_toggle({ appt_uuid => $uuid, app => 'games', 'state' => 'on', timestamp => $new_start });
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', 'games', $uuid)});
+	return { ok => 1, state => 'started' };
+}
+
 # An open session whose machine stopped reporting - a Gou whose battery died,
 # a browser killed, a manager that was down - is closed at the last moment it
 # was heard from, not at this tick. Only the two sources the house writes
@@ -611,7 +712,7 @@ sub session_housekeeping_tick {
 	my $rows = eval {
 		&db_query(q{
 			select app, uuid, timestamp, server_time from appointments
-			 where lower(source) in ('internet', 'game')
+			 where lower(source) in ('internet', 'game', 'browser_game')
 			   and (type = 'start' or type = 'record') and stop_seen is null
 		})->hashes;
 	} || [];

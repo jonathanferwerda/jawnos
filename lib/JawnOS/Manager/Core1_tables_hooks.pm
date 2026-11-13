@@ -109,6 +109,7 @@ app->hook(after_static => sub {
 our @manager_bundle_files = qw(
 	/js/manager/lazy.js
 	/js/manager/stored.js
+	/js/manager/game_session.js
 	/js/manager/keyboard.js
 	/js/manager/remote_input.js
 	/js/manager/text_editor_variables.js

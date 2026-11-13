@@ -57,6 +57,26 @@ my %cache;
 	is( int( $row->{'stop_timestamp'} ), $base + 60_000, 'at the last heartbeat' );
 	is( int( $row->{'duration'} ), -60_000, 'with the time it was actually heard' );
 	ok( !defined $row->{'stop_seen'} || $row->{'stop_seen'} eq 'yes', 'and it is sealed' );
+
+	my $browser_uuid = 'browserrow-housekeeping-test';
+	&subs::db_insert( 'appointments', {
+		app => 'games',
+		uuid => $browser_uuid,
+		type => 'start',
+		timestamp => $base + 30_000,
+		server_time => $base + 60_000,
+		source => 'browser_game',
+		device => 'phone',
+		project => 'Solitaire',
+		seen => 'yes',
+	} );
+
+	my $closed_browser = &subs::session_housekeeping_tick();
+	cmp_ok( $closed_browser, '>=', 1, 'the housekeeping closes a forgotten browser game' );
+	my $browser_row = &subs::db_query( 'select * from appointments where uuid = ?', $browser_uuid )->hash;
+	is( $browser_row->{'type'}, 'stop', 'as a stop' );
+	is( int( $browser_row->{'stop_timestamp'} ), $base + 60_000, 'at its last heartbeat' );
+	is( int( $browser_row->{'duration'} ), -30_000, 'with the time it was heard' );
 }
 
 my $jobs = read_file(root() . '/perl/jobs.pl');
