@@ -4,8 +4,9 @@
 > is off the current season's critical path. Read it when that move is the task.
 
 **Status:** in progress — the hub move is live on ks5, and the VPS stays: it hosts the junderground
-switch and owns the `thejunderground.com` apex (P7). What remains is the switch's media plane,
-off-box backups and rate limiting. The VPS was re-verified 2026-11-13.
+switch and owns the `thejunderground.com` apex (P7). The switch's coturn relay and nightly off-box
+backups are live; what remains is the SFU adapter and rate limiting. The VPS was re-verified
+2026-11-13.
 **Started:** 2026-11-02 · **Baseline measured** 2026-11-02; the VPS re-checked 2026-11-13.
 **Related:** `AGENTS.md` (run/restart, the database-is-per-device rule, the mesh rules),
 `docs/AGENTS-restart.md`, `docs/AGENTS-firmware.md`, `t/README.md` (what the suite touches)
@@ -579,16 +580,21 @@ longer the control URL; it serves the switch. The items below record the 2026-11
 - [x] The Elixir app is **junderground v0.1.13**, running on the VPS as `junderground.service`
       (code `c68a4b2`, prod release `_build/prod/rel`) and public at `https://thejunderground.com`.
       `/v1/meta` reports one house, one admin and `requires_approval: true`.
-- [x] Admin access is wired 2026-11-13 through the systemd drop-in; an admin key's own house
-      auto-approves on registration.
-- [ ] **Media plane:** coturn/SFU is not deployed (`/v1/meta` reports `turn.urls: []`), so calls
-      and rooms have no TURN service.
-- [ ] **Backups:** `/var/lib/junderground` (six DETS tables plus `server.key`) has no scheduled
-      off-box copy. The ks5 backup in §11 does not cover it.
+- [x] Admin access is a **dedicated admin key**, not the house crest (2026-11-13): the public
+      half is in the systemd drop-in, the private half stays on the laptop, and the house no
+      longer auto-approves its own registration.
+- [x] **TURN:** coturn 4.6.1 is installed and wired (`/v1/meta` carries UDP and TCP TURN URLs);
+      a UDP and TCP relay was proven with `turnutils_uclient`. TURN/TLS on 5349 is not set up.
+- [ ] **SFU:** LiveKit and the `/sfu/*` control-plane adapter are still design-only
+      (`docs/SFU.md`, "Status: design"); the mesh works over TURN.
+- [x] **Backups:** `junderground-backup.timer` stages a tarball of `/var/lib/junderground`
+      (six DETS tables plus `server.key`) at 03:20 UTC with 14-day retention; the laptop pulls it
+      at 04:20. The off-box copy is that one laptop, so it is not yet two independent copies.
 - [ ] **Rate limiting:** the public `/v1/*` endpoint has none, and the service logs every request at
       debug level (`Plug.Logger, log: :debug`).
-- **Exit:** the switch serves the apex, media works, the data is backed up and the endpoint is rate
-      limited. Deploy, data and backup detail: `docs/junderground-vps.md`.
+- **Exit:** the switch serves the apex, the mesh relays over TURN, the data is backed up and the
+      endpoint is rate limited; the SFU adapter is separate work. Deploy, data and backup detail:
+      `docs/junderground-vps.md`.
 
 ### Non-goals
 
