@@ -94,6 +94,33 @@ is(scalar @{$out->{'daily'}}, 1, 'EC reads daily periods');
 is($out->{'daily'}[0]{'precip_prob'}, 40, 'EC reads the chance from the forecast text');
 is($out->{'daily'}[0]{'wind_direction'}, 'W', 'EC turns the forecast bearing into a compass point');
 
+# --- EC warnings: the headline is the description, the body is the link ------
+{
+	my $warn = {
+		properties => {
+			name => { en => 'Lambton Shores' },
+			region => { en => 'Watford - Pinery Park - Eastern Lambton County' },
+			currentConditions => {},
+			hourlyForecastGroup => { hourlyForecasts => [] },
+			forecastGroup => { forecasts => [] },
+			warnings => [{
+				description => { en => 'SPECIAL WEATHER STATEMENT' },
+				type => { en => 'statement' },
+				url => { en => 'https://weather.gc.ca/warnings/report_e.html?onrm47' },
+				eventIssue => { en => '2026-11-13T15:32:53Z' },
+				expiryTime => { en => '2026-11-14T07:32:53Z' },
+			}],
+		},
+	};
+	my $got = subs::weather_ec_normalize($warn);
+	is($got->{'alerts'}[0]{'title'}, 'Special Weather Statement', 'the headline is the alert title, formatted');
+	is($got->{'alerts'}[0]{'text'}, '', 'the duplicate headline is not repeated as body text');
+	is($got->{'alerts'}[0]{'url'}, 'https://weather.gc.ca/warnings/report_e.html?onrm47', 'the alert keeps the report link');
+	is($got->{'alerts'}[0]{'region'}, 'Watford - Pinery Park - Eastern Lambton County', 'and names its region');
+	is($got->{'alerts'}[0]{'issued_at'}, 1794583973000, 'the issue time is kept');
+	is($got->{'alerts'}[0]{'expires_at'}, 1794641573000, 'the expiry time is kept');
+}
+
 # --- Open-Meteo: plain numbers and parallel arrays ---------------------------
 my $om = {
 	timezone => 'America/Toronto',
@@ -586,6 +613,10 @@ like($stamp, qr{^\d{2}/\d{2}/\d{4} \d{1,2}:\d{2}:\d{2}(am|pm)$}, 'the picker sta
 is(subs::weather_stamp_text(undef), '', 'no stamp without a time');
 is(subs::weather_pressure_kpa(1012, 'hPa'), 101.2, 'hPa pressure reads as kPa');
 is(subs::weather_pressure_kpa(101.2, 'kPa'), 101.2, 'kPa pressure is left alone');
+
+is(subs::weather_place_display_name('loc:warwick', { name => 'Warwick' }, 'Lambton Shores'), 'Warwick', 'a saved place keeps its name for the observation');
+is(subs::weather_place_display_name('dev:phone', { name => 'Lambton Shores' }, 'Lambton Shores'), 'Lambton Shores', 'a device reading keeps the provider name');
+is(subs::weather_place_display_name('loc:warwick', undef, 'Lambton Shores'), 'Lambton Shores', 'a missing place falls back to the provider');
 
 my $measured = subs::weather_measure_values({ current => {
 	temperature => 5, condition => 'Light Rain', wind_gust => 25,
@@ -1924,6 +1955,9 @@ like($map_js, qr/weather_map_anchor/, 'and sends it with the save');
 like($loader_auto, qr/weather_location_for_fix/, 'the domain loader maps the fix-to-place helper');
 like($loader_auto, qr/weather_location_anchor/, 'and the anchor writer');
 like($weather_js, qr/weatherDateStamp/, 'the day rows carry a month/day/year stamp');
+like($weather_js, qr/weatherPlaceText/, 'the place line uses the local station name');
+like($weather_js, qr/More details/, 'the alert links to its report');
+like($weather_js, qr/weather_alert_meta/, 'and shows the issue and expiry');
 like($weather_js, qr/weatherDayName/, 'and a weekday name');
 like($weather_js, qr/weatherLoading/, 'the app asks once at a time');
 like($weather_style, qr/overscroll-behavior-x/, 'the hourly strip scrolls sideways');

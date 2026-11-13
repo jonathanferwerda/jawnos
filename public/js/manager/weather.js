@@ -306,6 +306,18 @@ function weatherPlaceLabel(data) {
 	$option.text(data.location_name + (seen ? ' — ' + seen : ''));
 }
 
+function weatherPlaceText(data) {
+	var source = data.source || '';
+	if (data.provider === 'closest' && data.pws) {
+		var station = (data.pws.other && data.pws.other.name) || (data.pws.barometer && data.pws.barometer.name) || '';
+		if (station) {
+			return source && source !== station ? station + ' · ' + source : station;
+		}
+	}
+	var place = data.location_name || '';
+	return source ? (place ? (place + ' · ' + source) : source) : place;
+}
+
 function weatherRender(data) {
 	var $w = $('.wind[app="weather"]');
 	if (!data || data.error) {
@@ -317,9 +329,7 @@ function weatherRender(data) {
 	if (data.lat !== undefined && data.lon !== undefined) {
 		weatherLastLocation = { lat: data.lat, lon: data.lon, city: data.location_name || '', region: data.location_region || data.region || '', location: data.source_location || '' };
 	}
-	var place = data.location_name || '';
-	if (data.source) { place = place ? (place + ' · ' + data.source) : data.source; }
-	$w.find('#weather_place').text(place);
+	$w.find('#weather_place').text(weatherPlaceText(data));
 	$w.find('#weather_check_here').toggle(!!data.needs_place);
 	weatherPlaceLabel(data);
 	$w.find('#weather_temp').text(weatherTemp(cur.temperature));
@@ -362,7 +372,10 @@ function weatherRender(data) {
 	weatherHours(data.hourly || []);
 	weatherDays(data.daily || [], data.hourly || []);
 	var status = data.provider_label || '';
-	if (data.forecast_provider_label) { status += ' · ' + jawnosT('Forecast from') + ' ' + data.forecast_provider_label; }
+	if (data.forecast_provider_label) {
+		status += ' · ' + jawnosT('Forecast from') + ' ' + data.forecast_provider_label;
+		if (data.provider === 'closest' && data.location_name) { status += ' (' + data.location_name + ')'; }
+	}
 	if (data.location_distance_km) { status += ' · ' + Math.round(data.location_distance_km) + ' km'; }
 	status += ' · ' + jawnosT('Updated') + ' ' + weatherTime(data.fetched_at || Date.now());
 	if (data.hourly_provider) { status += ' · ' + jawnosT('Hourly from') + ' ' + (data.hourly_provider_label || data.hourly_provider); }
@@ -398,7 +411,16 @@ function weatherAlerts(alerts) {
 	var html = '';
 	for (var i = 0; i < alerts.length; i++) {
 		var a = alerts[i] || {};
-		html += '<div class="weather_alert"><b>' + weatherEsc(a.title || 'Weather alert') + '</b>' + weatherEsc(a.text || '') + '</div>';
+		var meta = [];
+		if (a.region) { meta.push(weatherEsc(a.region)); }
+		if (a.issued_at) { meta.push(jawnosT('Issued') + ' ' + weatherTime(a.issued_at)); }
+		if (a.expires_at) { meta.push(jawnosT('Ends') + ' ' + weatherTime(a.expires_at)); }
+		html += '<div class="weather_alert">'
+			+ '<b>' + weatherEsc(a.title || jawnosT('Weather alert')) + '</b>'
+			+ (a.text ? '<div class="weather_alert_text">' + weatherEsc(a.text) + '</div>' : '')
+			+ (meta.length ? '<div class="weather_alert_meta">' + meta.join(' · ') + '</div>' : '')
+			+ (a.url ? '<a class="weather_alert_more" href="' + weatherEsc(a.url) + '" target="_blank" rel="noopener">' + jawnosT('More details') + '</a>' : '')
+			+ '</div>';
 	}
 	$w.find('#weather_alerts').html(html).toggle(!!html);
 }

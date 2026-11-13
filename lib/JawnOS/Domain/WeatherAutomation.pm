@@ -1416,6 +1416,16 @@ sub weather_location_delete($uuid) {
 # one observation is one row of values; appt_measure_writer also runs the old
 # condition rules. A changed reading writes at once; an unchanged one waits half
 # an hour. The scheduled pass forces a write.
+# The place a person reads for an observation. A saved place keeps the name
+# the person gave it; the provider's city (Lambton Shores) is the forecast's
+# name, not the house's ground. A device reading keeps the provider's name.
+sub weather_place_display_name($location, $place, $fallback) {
+	if (($location // '') =~ /^loc:/ && ref $place eq 'HASH' && length($place->{'name'} // '')) {
+		return $place->{'name'};
+	}
+	return $fallback // '';
+}
+
 sub weather_observe_record($weather, $opts) {
 	$opts ||= {};
 	return { skipped => 'no condition' }
@@ -1536,7 +1546,7 @@ sub weather_observe_record($weather, $opts) {
 		condition => ($values->{'condition'} // ''),
 		at => $now,
 		changed_at => $changed ? $now : ($last->{'changed_at'} || $now),
-		place => ($place_name || $weather->{'location_name'} || ''),
+		place => &weather_place_display_name($location, $place, $place_name || $weather->{'location_name'}),
 		place_key => $place_key,
 		location => $location,
 	});
@@ -1548,7 +1558,7 @@ sub weather_observe_record($weather, $opts) {
 		rules => $fired,
 		values => $values,
 		location => $location,
-		place => $place_name,
+		place => &weather_place_display_name($location, $place, $place_name),
 		place_key => $place_key,
 		at => $now,
 		uuid => $uuid,

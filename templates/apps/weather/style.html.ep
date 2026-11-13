@@ -124,6 +124,9 @@
 .wind[app="weather"] #weather_alerts { display: flex; flex-direction: column; gap: 4px; }
 .wind[app="weather"] .weather_alert { border: 1px solid var(--danger, #c0392b); border-radius: 8px; padding: 7px 9px; font-size: 13px; }
 .wind[app="weather"] .weather_alert b { display: block; margin-bottom: 2px; }
+.wind[app="weather"] .weather_alert .weather_alert_text { margin-top: 3px; }
+.wind[app="weather"] .weather_alert .weather_alert_meta { margin-top: 4px; font-size: 11px; opacity: .62; }
+.wind[app="weather"] .weather_alert a.weather_alert_more { display: inline-block; margin-top: 5px; font-size: 12px; color: var(--accent, currentColor); }
 .wind[app="weather"] #weather_error { border: 1px solid var(--line); border-radius: 9px; padding: 10px; opacity: .82; }
 .wind[app="weather"] .weather_muted { opacity: .6; font-size: 12px; }
 

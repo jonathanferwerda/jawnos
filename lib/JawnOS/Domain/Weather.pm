@@ -365,10 +365,25 @@ sub weather_ec_normalize($feature) {
 	my @alerts;
 	foreach my $w (@{ $p->{'warnings'} || [] }) {
 		next unless ref $w eq 'HASH';
+		# EC sends the generic category in `type` ("statement") and the words a
+		# person reads in `description` ("SPECIAL WEATHER STATEMENT"). The body of
+		# the report is on the linked page, not in this payload, so keep the URL
+		# and the issue/expiry times for the card.
+		my $headline = &weather_text($w->{'description'})
+			|| &weather_text($w->{'type'})
+			|| &weather_text($w->{'title'})
+			|| 'Weather alert';
+		my $body = &weather_text($w->{'text'});
+		$body = '' if lc($body) eq lc($headline);
+		my $issued = &weather_iso_epoch(&weather_text($w->{'eventIssue'}));
+		my $expires = &weather_iso_epoch(&weather_text($w->{'expiryTime'}));
 		push @alerts, {
-			title => &weather_text($w->{'type'}) || &weather_text($w->{'title'}) || 'Weather alert',
-			text => &weather_text($w->{'description'}) || &weather_text($w->{'text'}) || '',
+			title => &subs::format_name($headline),
+			text => $body,
 			url => &weather_text($w->{'url'}),
+			region => &weather_text($p->{'region'}),
+			($issued ? (issued_at => $issued) : ()),
+			($expires ? (expires_at => $expires) : ()),
 		};
 	}
 	return {
