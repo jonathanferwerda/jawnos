@@ -394,14 +394,15 @@ $topic{'sound'} = {
 # to the house, adds one and confirms its code. Storage and ROMs are named as
 # the next slice, not built here.
 $topic{'controllers'} = {
-			title => 'Controller', category => 'apps', app => 'controllers',
+			title => 'Controllers', category => 'apps', app => 'controllers',
 			templates => [ 'templates/controllers/controllers.html.ep', 'templates/controllers/style.html.ep', 'templates/controllers/body.html.ep', 'public/js/manager/controllers.js' ],
 			verified => '2026-11-13',
 			summary => 'The controllers that can talk to the house: the roster, adding one and confirming its code.',
 			body => [
 				'Controller lists the controllers the house knows. Each row names the controller, where it was last seen (its hostname and address) and when, and a controller waiting to be confirmed is marked pending.',
 				'To add one, type its name and press Add a controller. The house answers with a code, shown large on the page; type that same code on the controller, then type it under Approve a code and press Approve. The roster reads itself again once the code is accepted, and a refused code says why.',
-				'Storage and ROMs are not part of this slice: the page names the section but leaves it empty until the next one.'
+				'Storage names where the controller keeps its documents, downloads, recordings, games, scans, pictures, videos and music: a folder on its SD card. A blank folder means nothing is merged, and the folders only merge while the card is mounted, so a controller can hold its own files without them joining the house.',
+				'ROMs shows the controller\'s games two ways, on its own storage and on the SD card, and copies a game from one to the other. Select a controller first to say which one the page is showing.'
 			],
 			related => [ 'embedded', 'configure' ]
 		};

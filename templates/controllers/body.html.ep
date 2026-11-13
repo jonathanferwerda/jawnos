@@ -31,8 +31,26 @@
 		<div id="controllers_approve_status" class="controller_status" aria-live="polite"></div>
 	</div>
 
-	<%# Deliberately empty: storage and ROMs are the next slice. %>
+	<%# Storage and ROMs act on the controller selected in the roster above. The
+	    sections are drawn by public/js/manager/controllers.js from the two JSON
+	    routes; the markup here is only the frame they fill. %>
 	<div class="controller_section">
-		<h2><%= &subs::ui('Storage and ROMs') %></h2>
-		<p class="controller_next"><%= &subs::ui('Not built yet. Storage and ROMs arrive in the next slice.') %></p>
+		<h2><%= &subs::ui('Storage') %></h2>
+		<p class="controller_note"><%= &subs::ui('A blank archive folder merges nothing: the card has to be mounted for merging to work.') %></p>
+		<div id="controllers_selected" class="controller_selected" aria-live="polite"><%= &subs::ui('Select a controller above to set its storage and copy its ROMs.') %></div>
+		<div id="controllers_storage" class="controller_card">
+			<div class="controller_empty"><%= &subs::ui('Select a controller above to set its storage.') %></div>
+		</div>
+	</div>
+
+	<div class="controller_section">
+		<h2><%= &subs::ui('ROMs') %></h2>
+		<p class="controller_note"><%= &subs::ui('Copy a game from one card to the other. A game already on the other card is left alone and says so.') %></p>
+		<div class="controller_toolbar">
+			<button type="button" id="controllers_refresh_button" disabled><%= &subs::ui('Refresh') %></button>
+			<div id="controllers_roms_status" class="controller_status" aria-live="polite"></div>
+		</div>
+		<div id="controllers_roms" class="controller_roms">
+			<div class="controller_empty"><%= &subs::ui('Select a controller above to see its ROMs.') %></div>
+		</div>
 	</div>

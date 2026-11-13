@@ -102,7 +102,7 @@
 
 				<img id="music_toggle" category="media" src="<%= &subs::icon_for('/images/make believe/music.png') %>" hint="Music" class="jonathan music"></img>
 				<img id="embedded_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/microchip.png') %>" hint="Embedded" class="jonathan embedded"></img>
-				<img id="controllers_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/computer.png') %>" hint="<%= &subs::ui('Controller') %>" class="jonathan controllers"></img>
+				<img id="controllers_toggle" category="games" src="<%= &subs::icon_for('/images/decipherable/computer.png') %>" hint="<%= &subs::ui('Controllers') %>" class="jonathan controllers"></img>
 				<span><img id="ticketmaker" class="jonathan little_thumb" category="business" src="<%= &subs::icon_for('/images/decipherable/ticket.png') %>" hint="Passes"></span>
 				<img id="cards_toggle" category="games" src="<%= &subs::icon_for('/images/decipherable/cards.png') %>" hint="Cards" class="jonathan cards">
 				<br>

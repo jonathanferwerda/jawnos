@@ -23,5 +23,28 @@
 	#controllers_app .controller_code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 32px; font-weight: 700; letter-spacing: .18em; line-height: 1.3; padding: 8px 12px; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); word-break: break-all; }
 	#controllers_app .controller_status { font-size: 13px; min-height: 1.2em; opacity: .85; }
 	#controllers_app .controller_status.controller_error { color: var(--danger, #c0392b); opacity: 1; }
-	#controllers_app .controller_next { opacity: .7; font-style: italic; }
+	#controllers_app .controller_row_selected { background: var(--panel); }
+	#controllers_app .controller_select_on { border-color: var(--accent); }
+	#controllers_app .controller_selected { font-size: 13px; opacity: .85; margin: 0 0 10px; }
+	#controllers_app .controller_toolbar { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+	#controllers_app .controller_toolbar .controller_status { flex: 1 1 auto; }
+	#controllers_app .controller_field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; }
+	#controllers_app .controller_field_label { font-size: 13px; opacity: .78; }
+	#controllers_app input[type="text"]#controllers_archive_dir { flex: 1 1 16em; min-width: 16em; }
+	#controllers_app .controller_check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+	#controllers_app .controller_check input { margin: 0; }
+	#controllers_app .controller_group_title { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; margin: 10px 0 2px; }
+	#controllers_app .controller_folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 16px; }
+	#controllers_app .controller_folder { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+	#controllers_app .controller_folder_state { opacity: .7; white-space: nowrap; }
+	#controllers_app .controller_folder_present .controller_folder_state { color: var(--accent); opacity: 1; }
+	#controllers_app .controller_folder_missing .controller_folder_state { opacity: .5; }
+	#controllers_app .controller_roms { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+	#controllers_app .controller_roms_col { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 10px; min-width: 0; }
+	#controllers_app .controller_roms_title { font-size: 13px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; opacity: .78; }
+	#controllers_app .controller_rom_row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+	#controllers_app .controller_rom_row:last-child { border-bottom: 0; }
+	#controllers_app .controller_rom_name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#controllers_app .controller_rom_size { opacity: .7; font-size: 12px; white-space: nowrap; }
+	#controllers_app .controller_rom_copy { padding: 1px 8px; font-size: 12px; }
 </style>
