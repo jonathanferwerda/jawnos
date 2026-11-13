@@ -164,7 +164,7 @@ sub say_render_wav {
 sub say_speak {
 	my ($text, $voice_override) = @_;
 	return unless defined $text && length $text;
-	return if eval { &subs::silence_active() };
+	return if eval { &subs::sound_muted_for('speech') };
 	my $pick = $voice_override || &subs::misc_setting('say_voice') || &subs::say_default_voice();
 	my $spec = &subs::say_voice_spec($pick) || &subs::say_voice_spec(&subs::say_default_voice());
 	# Piper first, on every device, so the voice is uniform wherever it can
@@ -203,7 +203,7 @@ sub say_it {
 	my $text = shift;
 	my $voice_override = shift;
 	return unless defined $text && length $text;
-	return if eval { &subs::silence_active() };
+	return if eval { &subs::sound_muted_for('speech') };
 	# the error watch's propose runs are headless: a stand-down notice must not
 	# speak (or block on audio) inside a background fork
 	return if $say_quiet;

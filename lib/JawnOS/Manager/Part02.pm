@@ -368,7 +368,7 @@ sub scan($c,$scandata) {
 }
 
 sub play_audio($file) {
-	return $file if eval { &subs::silence_active() };
+	return $file if eval { &subs::sound_muted_for('media') };
 	&subs::subprocessor(sub {
 		if ( `ps -e | grep play` ) {
 			`pkill play`;

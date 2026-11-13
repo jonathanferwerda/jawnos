@@ -272,7 +272,7 @@ Manager::app->routes->get('/play' => sub($c) {
 	if ($mao->{'srv'} eq 'on' && $c->param('ahead') ne '1' && $c->param('clone') ne '1') {
 		# A silenced house still answers the page and the bytes; it just does not
 		# start the machine's own player.
-		unless (eval { &subs::silence_active() }) {
+		unless (eval { &subs::sound_muted_for('media', 'music') }) {
 			&subs::subprocessor(sub {
 
 				# List form: the track name is request data, and terminal_name

@@ -44,7 +44,7 @@ sub notification_sender($m,$db) {
 	$m->{'uuid'} ||= &subs::random_string_creator(20);
 	my $sound = $m->{'sound'} || 'ding.mp3';
 	# A silenced house keeps the notice on the screen but plays nothing.
-	my $silenced = eval { &subs::silence_active() } || 0;
+	my $silenced = eval { &subs::sound_muted_for('notification', $app) } || 0;
 	my $sound_file = $m->{'settings'}->{$m->{'type'} . '_notification_sound'} || './public/sounds/notifications/' . $sound;
 	my $words = $m->{'words'} || $m->{'message'} || $m->{'settings'}->{$m->{'type'} ? $m->{'type'} . '_notification_text' : 'notification_text'};
 	if ($silenced || $m->{'silent'}) {

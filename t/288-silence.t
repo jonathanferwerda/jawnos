@@ -175,6 +175,42 @@ is(subs::sound_app_level('mirror'), 'silence', 'and reads back');
 ok(!subs::sound_app_level_write('', 'mute'), 'an app is required');
 
 # ============================================================================
+# what each level takes
+# ============================================================================
+reset_all();
+is(subs::sound_level_mutes('sound', 'notification'), 0, 'Sound takes nothing');
+is(subs::sound_level_mutes('passive', 'notification'), 0, 'Passive takes nothing of its own');
+is(subs::sound_level_mutes('quiet', 'notification'), 1, 'Quiet drops notifications');
+is(subs::sound_level_mutes('quiet', 'media'), 0, 'but keeps media');
+is(subs::sound_level_mutes('mute', 'media'), 1, 'Mute drops media');
+is(subs::sound_level_mutes('mute', 'speech'), 1, 'and speech');
+is(subs::sound_level_mutes('mute', 'ui'), 1, 'and the interface sounds');
+is(subs::sound_level_mutes('mute', 'alarm'), 0, 'but leaves the alarm');
+is(subs::sound_level_mutes('mute', 'call'), 0, 'and a ringing call');
+is(subs::sound_level_mutes('silence', 'alarm'), 1, 'Silence takes the alarm too');
+is(subs::sound_level_mutes('silence', 'call'), 1, 'and the call, which goes to the IVR');
+
+# The app's own profile wins for its sounds; the newest running profile takes
+# the house for everything else.
+reset_all();
+@QUERY_SETTINGS = (
+	{ app => 'mirror', setting => 'sound_profile', value => 'silence' },
+	{ app => 'lens', setting => 'sound_profile', value => 'sound' },
+);
+@QUERY_APPOINTMENTS = (
+	{ uuid => 'old', app => 'mirror', timestamp => subs::rightNow() - 2000 },
+	{ uuid => 'new', app => 'lens', timestamp => subs::rightNow() - 1000 },
+);
+is(subs::sound_house_level(), 'sound', 'the newest running profile sets the house');
+is(subs::sound_muted_for('alarm', 'mirror'), 1, 'while the older app keeps its own Silence');
+is(subs::sound_muted_for('alarm'), 0, 'and the house keeps its alarm');
+
+reset_all();
+$STORE{'__president|sound_level|all'} = 'quiet';
+is(subs::sound_muted_for('notification'), 1, 'a Quiet house drops notifications');
+is(subs::sound_muted_for('media'), 0, 'and keeps media');
+
+# ============================================================================
 # the state and the appointment hook
 # ============================================================================
 reset_all();
@@ -218,8 +254,10 @@ reset_all();
 is(subs::sound_house_level(), 'sound', 'no running profile leaves the house at Sound');
 $STORE{'__president|sound_level|all'} = 'quiet';
 is(subs::sound_house_level(), 'quiet', 'otherwise the house setting answers');
-$STORE{'mirror|sound_profile|all'} = 'mute';
-$STORE{'lens|sound_profile|all'} = 'silence';
+@QUERY_SETTINGS = (
+	{ app => 'mirror', setting => 'sound_profile', value => 'mute' },
+	{ app => 'lens', setting => 'sound_profile', value => 'silence' },
+);
 @QUERY_APPOINTMENTS = (
 	{ uuid => 'old', app => 'mirror', timestamp => subs::rightNow() - 2000 },
 	{ uuid => 'new', app => 'lens', timestamp => subs::rightNow() - 1000 },
@@ -230,7 +268,10 @@ is(subs::sound_house_level(), 'silence', 'the most recently started profile wins
 	{ uuid => 'new', app => 'mirror', timestamp => subs::rightNow() - 1000 },
 );
 is(subs::sound_house_level(), 'mute', 'and the answer follows the start time');
-$STORE{'lens|sound_profile|all'} = 'passive';
+@QUERY_SETTINGS = (
+	{ app => 'mirror', setting => 'sound_profile', value => 'mute' },
+	{ app => 'lens', setting => 'sound_profile', value => 'passive' },
+);
 @QUERY_APPOINTMENTS = (
 	{ uuid => 'new', app => 'lens', timestamp => subs::rightNow() - 1000 },
 	{ uuid => 'old', app => 'mirror', timestamp => subs::rightNow() - 2000 },
@@ -289,7 +330,7 @@ is_deeply($stop_state->{'released'}, ['u2'],
 # A peer that received that stop must not read its own lagging row as a fresh
 # start: the note suppresses the owner until the row closes or the window ends.
 reset_all();
-$STORE{'mirror|silence|all'} = 'checked';
+@QUERY_SETTINGS = ({ app => 'mirror', setting => 'silence', value => 'checked' });
 @QUERY_APPOINTMENTS = ({ uuid => 'u-lag', app => 'mirror', timestamp => subs::rightNow() - 1000 });
 subs::silence_release_note(['u-lag']);
 $subs::silence_tick_at = 0;
@@ -408,7 +449,7 @@ ok(!subs::silence_active(), 'a verified house release is not undone by a stale l
 # the alarm pass: start and stop without a Manager page
 # ============================================================================
 reset_all();
-$STORE{'mirror|silence|all'} = 'checked';
+@QUERY_SETTINGS = ({ app => 'mirror', setting => 'silence', value => 'checked' });
 @QUERY_APPOINTMENTS = ({ uuid => 'u-open', app => 'mirror' });
 $DEVICE = 'mobile';
 $subs::silence_tick_at = 0;
@@ -429,7 +470,7 @@ is_deeply(state_hash()->{owners}, ['u2-open'], 'the owners follow the open sessi
 # The same holds for a row written ahead of its time: it owns the house only
 # once its timestamp is due, which is what makes a scheduled appointment work.
 reset_all();
-$STORE{'mirror|silence|all'} = 'checked';
+@QUERY_SETTINGS = ({ app => 'mirror', setting => 'silence', value => 'checked' });
 $DEVICE = 'mobile';
 @QUERY_APPOINTMENTS = ({ uuid => 'u-later', app => 'mirror', timestamp => subs::rightNow() + 300000 });
 subs::silence_tick();
@@ -442,7 +483,7 @@ is_deeply(state_hash()->{owners}, ['u-later'], 'the same row starts owning silen
 # A machine that watched that session run stops it at once when its own row
 # closes, and relays the stop - no sync window to wait out.
 reset_all();
-$STORE{'mirror|silence|all'} = 'checked';
+@QUERY_SETTINGS = ({ app => 'mirror', setting => 'silence', value => 'checked' });
 $DEVICE = 'mobile';
 @QUERY_APPOINTMENTS = ({ uuid => 'u-own', app => 'mirror' });
 subs::silence_tick();
@@ -458,7 +499,7 @@ ok($own_off, 'and relays the stop to the peers');
 # Now behave as a peer that received the state but not the appointment: it did
 # not watch any of these owners, so a young state is held for the sync window.
 reset_all();
-$STORE{'mirror|silence|all'} = 'checked';
+@QUERY_SETTINGS = ({ app => 'mirror', setting => 'silence', value => 'checked' });
 $DEVICE = 'mobile';
 @QUERY_APPOINTMENTS = ({ uuid => 'u-later', app => 'mirror', timestamp => subs::rightNow() - 1000 });
 subs::silence_tick();
@@ -499,7 +540,7 @@ ok(!$peer_stop_relay, 'but a peer never relays a release it did not witness');
 # A peer that never saw the owner must not tell the house the session ended:
 # it only clears its own machine and leaves the relay to the machine that ran it.
 reset_all();
-$STORE{'mirror|silence|all'} = 'checked';
+@QUERY_SETTINGS = ({ app => 'mirror', setting => 'silence', value => 'checked' });
 $STORE{'__president|silence_state|all'} = encode_json({
 	active => 1, owners => ['ghost'], apps => { ghost => 'mirror' },
 	since => subs::rightNow() - 1000000,
@@ -581,18 +622,21 @@ like(source('public/js/manager/configure.js'), qr/\.configure_silence_level[\s\S
 like(source('lib/JawnOS/Domain/Phone.pm'), qr/silence_phone_flow/, 'the phone resolution asks silence first');
 like(source('lib/JawnOS/Manager/Part12.pm'), qr/source => 'silence'/, 'the route sheet knows the silence answer');
 like(source('lib/JawnOS/Controller/manager_phone.pm'), qr/silence => \$silenced/, 'the phone sync reports silence');
-like(source('lib/JawnOS/Domain/Notify.pm'), qr/silence_active/, 'notifications are gated');
-like(source('lib/JawnOS/Domain/Say.pm'), qr/silence_active/, 'speech is gated');
+like(source('lib/JawnOS/Domain/Notify.pm'), qr/sound_muted_for\('notification', \$app\)/,
+	'notifications follow the app\'s level');
+like(source('lib/JawnOS/Domain/Say.pm'), qr/sound_muted_for\('speech'\)/, 'speech follows the level');
 like(source('lib/JawnOS/Domain/Clock2.pm'), qr/silence_active.*clock_device_ring/s, 'alarms are gated');
 like(source('lib/JawnOS/Domain/Clock.pm'), qr/sub clock_device_ring.*silence_active/s, 'the board ring is gated');
-like(source('perl/Music.pl'), qr/silence_active/, 'the server-side music player is gated');
-like(source('lib/JawnOS/Manager/Part02.pm'), qr/sub play_audio.*silence_active/s, 'the audio player is gated');
+like(source('perl/Music.pl'), qr/sound_muted_for\('media', 'music'\)/, 'the server-side music player follows the level');
+like(source('lib/JawnOS/Manager/Part02.pm'), qr/sub play_audio.*sound_muted_for\('media'\)/s, 'the audio player follows the level');
 like(source('perl/hooks.pl'), qr{'/manager/silence/peer'}, 'the peer door passes the session gate');
 like(source('lib/JawnOS/Manager/Part30.pm'), qr{'/manager/silence/peer'}, 'and the app gate');
 like(source('public/js/manager/websocket/00_console_router.js'), qr/jawnosSilence:/, 'the console push is routed');
 my $js = source('public/js/manager/silence.js');
 like($js, qr/HTMLMediaElement\.prototype\.play/, 'the browser silences media at play');
 like($js, qr/MutationObserver/, 'and media that arrives later');
+like($js, qr/jawnosSilenceWatchStop/, 'the watcher detaches when the house is audible');
+like($js, qr/count > 8/, 'a whole-window batch is scanned once, not per subtree');
 like($js, qr{/manager/silence}, 'and follows the house state');
 unlike($js, qr/\blocation\s*\.\s*(?:reload|assign|replace)\b/,
 	'switching silence never reloads or navigates the page');

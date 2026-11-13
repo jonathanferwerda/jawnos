@@ -37,6 +37,9 @@ our $SILENCE_LOCAL_FILE;
 our $SILENCE_RELEASED_FILE;
 our $silence_tick_at = 0;
 our $silence_native_off_at = 0;
+# The full hold (channels and streams) runs every ten seconds; the sinks above
+# it are re-muted on every two-second tick.
+our $silence_hold_full_at = 0;
 # Owners this process itself saw open. A release inferred from an owner in this
 # set is this machine's own appointment closing, so it may be relayed; a peer
 # that merely missed the appointment must not tell the house it is over.
@@ -171,46 +174,10 @@ sub sound_house_setting_level {
 	return $level eq 'passive' ? 'sound' : $level;
 }
 
-# The level the house is actually at. An app's own non-Passive profile takes
-# over while one of its appointments is running, and the most recently started
-# one wins when several do; otherwise the house setting answers.
-# Every app with a running appointment, and the level its profile asks for.
-# One query, so the house level and the profiles list never disagree about
-# which sessions are running.
-sub sound_running_levels {
-	my $now = eval { &subs::rightNow() } || (time * 1000);
-	my $open = eval {
-		&subs::db_query(
-			"select app, timestamp from appointments where stop_seen is null "
-			. "and type in ('start','record') and timestamp <= ? "
-			. "order by timestamp desc",
-			$now
-		)->hashes;
-	} || [];
-	my (%level, @order);
-	foreach my $row ( @{$open} ) {
-		next unless ref $row eq 'HASH';
-		my $app = $row->{'app'} // '';
-		next unless length $app;
-		next if exists $level{$app};
-		$level{$app} = &sound_app_level($app);
-		push @order, $app;
-	}
-	return { levels => \%level, order => \@order };
-}
-
-sub sound_house_level {
-	my $running = &sound_running_levels();
-	foreach my $app ( @{ $running->{'order'} } ) {
-		my $level = $running->{'levels'}->{$app};
-		return $level unless $level eq 'passive';
-	}
-	return &sound_house_setting_level();
-}
-
-# The Sound app's profiles list: every app that carries a profile, plus any app
-# running right now, so the panel shows exactly what can be tuned.
-sub sound_profiles_list {
+# One read of every app's profile on the house-wide row, and the legacy Silence
+# box beside it. The alarm pass used to read the whole box in one query; asking
+# per app for a level reached the same cost again, one query per open app.
+sub sound_profile_rows {
 	my $rows = eval {
 		&subs::db_query(
 			"select app, setting, value from settings where device = ? "
@@ -229,13 +196,111 @@ sub sound_profiles_list {
 		if ($setting eq 'sound_profile') { $profile{$app} = $row->{'value'}; }
 		elsif ($setting eq 'silence') { $legacy{$app} = $row->{'value'}; }
 	}
+	return { profile => \%profile, legacy => \%legacy };
+}
+
+# The level a bulk read answers for one app. A row the house does not carry is
+# Passive here; sound_app_level keeps the per-device fallback for the one caller
+# that resolves a single app.
+sub sound_profile_rows_level {
+	my ($rows, $app) = @_;
+	return 'passive' unless defined $app && length $app;
+	return &sound_profile_level($rows->{'profile'}->{$app}) if exists $rows->{'profile'}->{$app};
+	return &sound_profile_level($rows->{'legacy'}->{$app}) if exists $rows->{'legacy'}->{$app};
+	return 'passive';
+}
+
+# Every app with a running appointment, and the level its profile asks for.
+sub sound_running_levels {
+	my $now = eval { &subs::rightNow() } || (time * 1000);
+	my $open = eval {
+		&subs::db_query(
+			"select app, timestamp from appointments where stop_seen is null "
+			. "and type in ('start','record') and timestamp <= ? "
+			. "order by timestamp desc",
+			$now
+		)->hashes;
+	} || [];
+	my $rows = &sound_profile_rows();
+	my (%level, @order);
+	foreach my $row ( @{$open} ) {
+		next unless ref $row eq 'HASH';
+		my $app = $row->{'app'} // '';
+		next unless length $app;
+		next if exists $level{$app};
+		$level{$app} = &sound_profile_rows_level($rows, $app);
+		push @order, $app;
+	}
+	return { levels => \%level, order => \@order };
+}
+
+# The level the house is actually at. An app's own non-Passive profile takes
+# over while one of its appointments is running, and the most recently started
+# one wins when several do; otherwise the house setting answers.
+sub sound_house_level {
 	my $running = &sound_running_levels();
-	my %apps = ( %profile, %legacy, %{ $running->{'levels'} } );
+	foreach my $app ( @{ $running->{'order'} } ) {
+		my $level = $running->{'levels'}->{$app};
+		return $level unless $level eq 'passive';
+	}
+	return &sound_house_setting_level();
+}
+
+# ---- what each level takes ---------------------------------------------------
+# The kinds a sound path can ask about: a notification, speech, media or the
+# interface's own noises; an alarm and a ringing call are the two Mute keeps.
+# Quiet only drops the notifications. Silence takes everything, which is why the
+# sound paths below still ask silence_active() first.
+sub sound_level_mutes {
+	my ($level, $kind) = @_;
+	$level = &sound_profile_level($level);
+	return 0 if $level eq 'sound' || $level eq 'passive';
+	return 1 if $level eq 'silence';
+	$kind = lc($kind // '');
+	return 1 if $level eq 'mute' && $kind =~ /^(?:notification|speech|media|ui)$/;
+	return 1 if $level eq 'quiet' && $kind eq 'notification';
+	return 0;
+}
+
+# The level that governs one app: its own profile while one of its appointments
+# is running, otherwise the level the most recent running profile sets, otherwise
+# the house setting. This is the rule the appointment card and the profiles page
+# describe.
+sub sound_level_for {
+	my ($app) = @_;
+	my $running = &sound_running_levels();
+	if (defined $app && length $app && exists $running->{'levels'}->{$app}) {
+		my $own = $running->{'levels'}->{$app};
+		return $own unless $own eq 'passive';
+	}
+	foreach my $running_app ( @{ $running->{'order'} } ) {
+		my $level = $running->{'levels'}->{$running_app};
+		return $level unless $level eq 'passive';
+	}
+	return &sound_house_setting_level();
+}
+
+# One answer for a sound path. An engaged silence is absolute; otherwise the
+# asking app's level decides for that kind of sound.
+sub sound_muted_for {
+	my ($kind, $app) = @_;
+	return 1 if &silence_active();
+	return &sound_level_mutes(&sound_level_for($app), $kind);
+}
+
+# The Sound app's profiles list: every app that carries a profile, plus any app
+# running right now, so the panel shows exactly what can be tuned.
+sub sound_profiles_list {
+	my $rows = &sound_profile_rows();
+	my $profile = $rows->{'profile'};
+	my $legacy = $rows->{'legacy'};
+	my $running = &sound_running_levels();
+	my %apps = ( %{$profile}, %{$legacy}, %{ $running->{'levels'} } );
 	my @list;
 	foreach my $app ( sort { lc($a) cmp lc($b) } keys %apps ) {
-		my $level = defined $profile{$app}
-			? &sound_profile_level($profile{$app})
-			: &sound_profile_level($legacy{$app});
+		my $level = defined $profile->{$app}
+			? &sound_profile_level($profile->{$app})
+			: &sound_profile_level($legacy->{$app});
 		my $is_running = exists $running->{'levels'}->{$app} ? 1 : 0;
 		next if $level eq 'passive' && !$is_running;
 		push @list, { app => $app, level => $level, running => $is_running };
@@ -350,6 +415,7 @@ sub silence_local_write {
 
 sub silence_local_clear {
 	my $file = &silence_local_file();
+	$silence_hold_full_at = 0;
 	eval { unlink $file; };
 	return 1;
 }
@@ -514,6 +580,7 @@ sub silence_local_apply_on {
 		channels => \%channel_saved,
 		streams => \@streams,
 	});
+	$silence_hold_full_at = eval { &subs::rightNow() } || (time * 1000);
 	return 1;
 }
 
@@ -636,6 +703,12 @@ sub silence_local_hold {
 		next unless ref $device eq 'HASH' && defined $device->{'id'};
 		eval { &subs::sound_mute('output', $device->{'id'}, 1) };
 	}
+	# A channel or a stream only comes back after a mixer restart, so this
+	# full pass runs every ten seconds; the sinks above are the ones a person
+	# can raise, and they are re-muted on every tick.
+	my $now = eval { &subs::rightNow() } || (time * 1000);
+	return 1 if $silence_hold_full_at && $now - $silence_hold_full_at < 10000;
+	$silence_hold_full_at = $now;
 	my $channels = eval { &subs::sound_channels() } || {};
 	foreach my $name ( sort keys %{ $snap->{'channels'} || {} } ) {
 		my $row = $snap->{'channels'}->{$name};
@@ -702,6 +775,7 @@ sub silence_tick {
 		)->hashes;
 	} || [];
 	my (@owners, %apps, %seen, %level);
+	my $level_rows = &sound_profile_rows();
 	my $released_notes = &silence_released_read();
 	my %open_all;
 	foreach my $row ( @{$open} ) {
@@ -716,7 +790,7 @@ sub silence_tick {
 		# Only Silence owns the house here. Mute and Quiet are applied by the
 		# sound paths themselves, and a legacy Silence box reads as Silence.
 		my $app = $row->{'app'} // '';
-		$level{$app} = &sound_app_level($app) unless exists $level{$app};
+		$level{$app} = &sound_profile_rows_level($level_rows, $app) unless exists $level{$app};
 		next unless $level{$app} eq 'silence';
 		push @owners, $uuid;
 		$apps{$uuid} = $app;

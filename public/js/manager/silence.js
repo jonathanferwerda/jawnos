@@ -10,6 +10,8 @@
 // a laptop go quiet at the same moment.
 var jawnosSilenceState = { active: false };
 var jawnosSilenceKnown = false;
+var jawnosSilenceObserver = null;
+var jawnosSilencePending = null;
 
 function jawnosSilenceActive() {
 	return !!jawnosSilenceState.active;
@@ -53,6 +55,11 @@ function jawnosSilenceApply(state) {
 	jawnosSilenceState = (state && typeof state === 'object') ? state : { active: active };
 	jawnosSilenceState.active = active;
 	jawnosSilenceScan(document);
+	// The watcher is attached only while the house is quiet: while it is
+	// audible there is nothing to mute, and a window opening is a lot of nodes
+	// to visit for no reason.
+	if (active) { jawnosSilenceWatchStart(); }
+	else { jawnosSilenceWatchStop(); }
 	$('body').attr('data-jawnos-silence', active ? 'on' : 'off');
 	// The native half is what silences the alarm, ringer, notifications and
 	// every other stream. Hand it the state at once instead of waiting for the
@@ -85,18 +92,42 @@ function jawnosSilenceFetch() {
 	});
 }
 
-// A player created while the house is quiet is muted as it arrives.
-function jawnosSilenceWatch() {
-	if (!window.MutationObserver || !document.body) { return; }
-	var observer = new MutationObserver(function (records) {
+// A player created while the house is quiet is muted as it arrives. Records are
+// coalesced into one pass per turn, and a big batch - a window arriving whole -
+// is answered with one document scan instead of a visit to every added subtree.
+// The old per-node walk repeated the same subtree for every nested append, and
+// that quadratic cost is what made a window slow to open while silence was on.
+function jawnosSilenceWatchStart() {
+	if (jawnosSilenceObserver || !window.MutationObserver || !document.body) { return; }
+	jawnosSilenceObserver = new MutationObserver(function (records) {
 		if (!jawnosSilenceActive()) { return; }
-		records.forEach(function (record) {
-			record.addedNodes.forEach(function (node) {
-				if (node && node.nodeType === 1) { jawnosSilenceScan(node); }
+		if (jawnosSilencePending) {
+			Array.prototype.push.apply(jawnosSilencePending, records);
+			return;
+		}
+		jawnosSilencePending = records;
+		setTimeout(function () {
+			var batch = jawnosSilencePending || [];
+			jawnosSilencePending = null;
+			if (!jawnosSilenceActive()) { return; }
+			var count = 0;
+			batch.forEach(function (record) { count += record.addedNodes.length; });
+			if (count > 8) { jawnosSilenceScan(document); return; }
+			batch.forEach(function (record) {
+				record.addedNodes.forEach(function (node) {
+					if (node && node.nodeType === 1) { jawnosSilenceScan(node); }
+				});
 			});
-		});
+		}, 0);
 	});
-	observer.observe(document.body, { childList: true, subtree: true });
+	jawnosSilenceObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function jawnosSilenceWatchStop() {
+	if (!jawnosSilenceObserver) { return; }
+	jawnosSilenceObserver.disconnect();
+	jawnosSilenceObserver = null;
+	jawnosSilencePending = null;
 }
 
 (function () {
@@ -113,7 +144,6 @@ $(document).on('play volumechange', 'audio, video', function () {
 });
 
 $(document).ready(function () {
-	jawnosSilenceWatch();
 	jawnosSilenceFetch();
 	setInterval(jawnosSilenceFetch, 15000);
 	document.addEventListener('visibilitychange', function () {
