@@ -166,8 +166,12 @@ function jawnosPowerTaskbarPanelProfile(panel) {
 	// in charge, and a real plan is JawnOS's own.
 	var manager = (status && status.manager) || {};
 	var active = manager.units || [];
+	var managing = !!(status && status.config && status.config.manage);
 	var manager_text = '';
-	if (active.length) {
+	if (!managing) {
+		manager_text = jawnosT('Power is managed by the system');
+	}
+	else if (active.length) {
 		manager_text = jawnosT('Power is managed by') + ' ' + active.join(', ');
 		manager_text += current == 'auto'
 			? ' — ' + jawnosT('Auto leaves it in charge.')
@@ -190,6 +194,7 @@ function jawnosPowerTaskbarPanelProfile(panel) {
 			.attr('aria-pressed', plans[i][0] == current ? 'true' : 'false')
 			.text(plans[i][1]);
 		if (plans[i][0] == current) { button.addClass('taskbar_panel_active'); }
+		if (!managing) { button.prop('disabled', true); }
 		section.append(button);
 	}
 	section.append($('<p class="taskbar_panel_note"></p>').attr('data-power-note', '1'));

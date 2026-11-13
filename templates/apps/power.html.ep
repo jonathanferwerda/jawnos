@@ -24,6 +24,8 @@
 #power .power_save.power_dirty { outline: 2px solid var(--accent, #3b7ddd); }
 #power .power_auto_row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
 #power .power_auto_row label { display: flex; align-items: center; gap: 8px; }
+#power .power_manager_row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+#power .power_manage_toggle { display: flex; align-items: center; gap: 8px; }
 #power #power_cpu_panel { padding: 12px 16px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
 #power #power_cpu_grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
 #power #power_cpu_grid b { font-weight: 500; opacity: .72; }
@@ -54,7 +56,14 @@
 			<div id="power_cpu_governor" class="power_muted">—</div>
 		</div>
 	</div>
-	<div id="power_manager_note" class="power_muted"></div>
+	<div class="power_manager_row">
+		<% my $manage_capable = ref $status eq 'HASH' && ($status->{'machine'} || '') ne 'mobile' && ($status->{'platform'} || '') eq 'linux'; %>
+		<% my $manage_on = ref $status eq 'HASH' && ref $status->{'config'} eq 'HASH' && $status->{'config'}{'manage'} ? 1 : 0; %>
+		<% if ($manage_capable) { %>
+		<label class="power_manage_toggle"><input type="checkbox" id="power_manage"<%== $manage_on ? ' checked' : '' %>> <%= &subs::ui('JawnOS manages power') %></label>
+		<% } %>
+		<div id="power_manager_note" class="power_muted"></div>
+	</div>
 	<div class="power_plans">
 		<section class="power_plan_card" id="power_source_ac" active="no">
 			<h4><%= &subs::lang('power_ac') %></h4>

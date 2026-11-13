@@ -98,4 +98,15 @@ sub action_53017 {
 	$c->render(json => $result || { ok => 0, error => 'the charge limit could not be saved' });
 }
 
+# POST /manager/power/manage
+#
+# The master switch beside the management line. On applies the saved plan at
+# once; off only stores the setting, and the tick leaves the kernel alone.
+sub action_53018 {
+	my $c = shift;
+	my $on = ($c->param('manage') || '') =~ /^(?:1|yes|on|true)$/i ? 1 : 0;
+	my $result = eval { &subs::power_manage_set($on) };
+	$c->render(json => $result || { ok => 0, error => 'the setting could not be saved' });
+}
+
 1;

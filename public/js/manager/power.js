@@ -46,6 +46,9 @@ function powerBind() {
 	window_box.on('change', '#power_auto', function() {
 		powerAuto($(this).prop('checked'));
 	});
+	window_box.on('change', '#power_manage', function() {
+		powerManage($(this).prop('checked'));
+	});
 	window_box.on('change', '#power_charge', function() {
 		powerCharge($(this).val());
 	});
@@ -149,6 +152,12 @@ function powerRender(status) {
 		$('#power_save_' + source).removeClass('power_dirty');
 	});
 	$('#power_auto').prop('checked', status.config && status.config.auto ? true : false);
+	var managing = !!(status.config && status.config.manage);
+	$('#power_manage').prop('checked', managing);
+	// With the master switch off a saved plan is only stored, not applied, so
+	// the plan controls wait instead of offering a write that would go nowhere.
+	$('#power_source_ac, #power_source_battery').find('select, input, button').prop('disabled', !managing);
+	$('#power_auto, #power_apply').prop('disabled', !managing);
 	var sleepCaps = status.sleep || {};
 	// The selector names the profile in effect; its own block, or the shared
 	// fallback, fills the four controls. Once the person has picked a profile
@@ -198,7 +207,10 @@ function powerRender(status) {
 	var applied = status.applied || {};
 	var applied_here = applied.source && applied.source == status.source;
 	powerManagerNote(status, applied);
-	if (applied.error && applied_here) {
+	if (!managing) {
+		$('#power_status').text('');
+	}
+	else if (applied.error && applied_here) {
 		$('#power_status').text(jawnosT('The plan could not be applied') + ': ' + applied.error);
 	}
 	else if (applied.supported === 0 && applied_here) {
@@ -336,8 +348,12 @@ function powerManagerNote(status, applied) {
 	var source = status.source || '';
 	var entry = (status.config && status.config[source]) || {};
 	var plan = entry.plan || 'balanced';
+	var managing = !!(status.config && status.config.manage);
 	var text = '';
-	if (active.length) {
+	if (!managing) {
+		text = jawnosT('Power is managed by the system');
+	}
+	else if (active.length) {
 		text = jawnosT('Power is managed by') + ' ' + active.join(', ') + '. ';
 		text += plan == 'auto'
 			? jawnosT('Auto leaves it in charge.')
@@ -379,6 +395,13 @@ function powerAuto(on) {
 	$.post('/manager/power/auto', { auto: on ? 1 : 0 }, function(result) {
 		if (!result || !result.ok) { $('#power_status').text(jawnosT('The setting could not be saved.')); }
 		else { powerLoad(); }
+	}, 'json');
+}
+
+function powerManage(on) {
+	$.post('/manager/power/manage', { manage: on ? 1 : 0 }, function(result) {
+		if (!result || !result.ok) { $('#power_status').text(jawnosT('The setting could not be saved.')); }
+		powerLoad();
 	}, 'json');
 }
 

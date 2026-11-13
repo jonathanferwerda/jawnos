@@ -450,6 +450,7 @@ sub power_plan_options {
 sub power_default_config {
 	return {
 		auto => 1,
+		manage => 1,
 		ac => { plan => 'balanced', limit => 100 },
 		battery => { plan => 'saver', limit => 70 },
 		sleep => {
@@ -467,6 +468,7 @@ sub power_config_clean {
 	my $clean = &power_default_config();
 	return $clean unless ref $config eq 'HASH';
 	$clean->{'auto'} = $config->{'auto'} ? 1 : 0 if exists $config->{'auto'};
+	$clean->{'manage'} = $config->{'manage'} ? 1 : 0 if exists $config->{'manage'};
 	for my $source (qw(ac battery)) {
 		my $entry = $config->{$source};
 		next unless ref $entry eq 'HASH';
@@ -700,8 +702,11 @@ sub power_plan_set {
 	$config = &power_config_save($config);
 	my $status = &power_status();
 	my $applied;
+	# Saving a plan is not a way to take the machine back from the system: when
+	# the master switch is off the plan is only stored, and the tick leaves the
+	# kernel alone.
 	$applied = &power_apply_plan($source, $plan, $limit)
-		if ($status->{'source'} || '') eq $source;
+		if $config->{'manage'} && ($status->{'source'} || '') eq $source;
 	return { ok => 1, config => $config, applied => $applied };
 }
 
@@ -711,6 +716,20 @@ sub power_auto_set {
 	$config->{'auto'} = $on ? 1 : 0;
 	$config = &power_config_save($config);
 	return { ok => 1, config => $config };
+}
+
+# The checkbox beside the management line: JawnOS writes the power knobs, or
+# the system keeps them. Turning it on applies the saved plan now; turning it
+# off stops every automatic write, including the boot restore, without guessing
+# a previous kernel or daemon state to put back.
+sub power_manage_set {
+	my ($on) = @_;
+	my $config = &power_config();
+	$config->{'manage'} = $on ? 1 : 0;
+	$config = &power_config_save($config);
+	my $applied;
+	$applied = &power_apply_current() if $config->{'manage'};
+	return { ok => 1, config => $config, applied => $applied };
 }
 
 sub power_apply_current {
@@ -836,6 +855,7 @@ sub power_sleep_now {
 # keeps the minute tick from rewriting sysfs.
 sub power_plan_tick {
 	my $config = &power_config();
+	return { ok => 1, skipped => 'system managed' } unless $config->{'manage'};
 	my $battery = &power_battery_read();
 	return { ok => 1, skipped => 'no battery' } unless $battery->{'present'};
 	my $source = $battery->{'ac'} ? 'ac' : 'battery';

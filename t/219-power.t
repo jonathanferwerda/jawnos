@@ -82,6 +82,7 @@ no warnings 'redefine';
 	is($status->{'config'}{'battery'}{'plan'}, 'saver', 'the default battery plan is the saver');
 	is($status->{'config'}{'battery'}{'limit'}, 70, 'the default battery speed limit is 70%');
 	is($status->{'config'}{'ac'}{'plan'}, 'balanced', 'the default mains plan is balanced');
+	is($status->{'config'}{'manage'}, 1, 'JawnOS manages power by default');
 	is($status->{'charge'}{'supported'}, 1, 'the pack reports a charge ceiling');
 	is($status->{'charge'}{'end'}, 100, 'at the percentage it currently stops at');
 	ok(exists $status->{'manager'}, 'the status names who manages power');
@@ -143,6 +144,22 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	my $quiet = subs::power_plan_tick();
 	is($quiet->{'skipped'}, 'auto is off', 'while the cable watch stays off');
 	subs::power_auto_set(1);
+}
+
+# --- the master switch -----------------------------------------------------
+{
+	my $off = subs::power_manage_set(0);
+	ok($off->{'ok'}, 'JawnOS management can be turned off');
+	is($off->{'config'}{'manage'}, 0, 'the setting is stored');
+	is(subs::power_plan_tick()->{'skipped'}, 'system managed', 'the tick leaves the machine alone');
+	my $stored = subs::power_plan_set('battery', 'performance', 85);
+	ok($stored->{'ok'}, 'a plan can still be stored while the system manages');
+	ok(!defined $stored->{'applied'}, 'but saving it does not write the plan');
+	my $on = subs::power_manage_set(1);
+	ok($on->{'ok'}, 'JawnOS management can be turned back on');
+	ok($on->{'applied'}{'dry_run'}, 'turning it on applies the saved plan at once');
+	ok($on->{'config'}{'manage'}, 'the setting is on again');
+	is(subs::power_plan_tick()->{'skipped'}, 'already applied', 'the tick is idempotent again');
 }
 
 # --- the fixed writer -------------------------------------------------------
@@ -235,6 +252,7 @@ sub helper {
 	like($routes, qr{/manager/power/auto}, 'the automatic-switch route exists');
 	like($routes, qr{/manager/power/apply}, 'the apply route exists');
 	like($routes, qr{/manager/power/charge}, 'the charge-limit route exists');
+	like($routes, qr{/manager/power/manage}, 'the master-switch route exists');
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_power.pm");
 	like($controller, qr/^sub action_53010\b/m, 'the window action exists');
@@ -243,6 +261,8 @@ sub helper {
 	like($controller, qr/&subs::power_auto_set\(/, 'the automatic-switch action calls the domain');
 	like($controller, qr/&subs::power_apply_current\(/, 'the apply action calls the domain');
 	like($controller, qr/&subs::power_charge_set\(/, 'the charge-limit action calls the domain');
+	like($controller, qr/^sub action_53018\b/m, 'the master-switch action exists');
+	like($controller, qr/&subs::power_manage_set\(/, 'it calls the master switch in the domain');
 
 	my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_status\b/,
@@ -255,6 +275,8 @@ sub helper {
 		'the daemon takeover is in the domain loader');
 	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_manager\b/,
 		'the manager reading is in the domain loader');
+	like($loader, qr/JawnOS::Domain::Power' for qw\([^)]*\bpower_manage_set\b/,
+		'the master switch is in the domain loader');
 
 	my $tiers = read_file("$root/perl/subroutines.pl");
 	like($tiers, qr{/manager/\(\?:configure\|security\|magazine/publish\|power\)},
@@ -296,6 +318,12 @@ sub helper {
 	like($template, qr/class="power_system_button"/, 'and draws the buttons');
 	my $power_js = read_file("$root/public/js/manager/power.js");
 	like($power_js, qr{url:\s*'/manager/power'}, 'a system power button posts to the fixed power route');
+	like($template, qr/id="power_manage"/, 'the management line carries the master switch');
+	like($template, qr/\$manage_capable/, 'the switch is drawn only where JawnOS can manage');
+	like($power_js, qr{\$\.post\('/manager/power/manage'}, 'the master switch posts to its own route');
+	like($power_js, qr/function powerManage\(/, 'the master switch has its handler');
+	my $taskbar_js = read_file("$root/public/js/manager/taskbar_power.js");
+	like($taskbar_js, qr/Power is managed by the system/, 'the taskbar panel says when the system manages');
 }
 
 # --- a gauge that has not learned its counter -------------------------------
