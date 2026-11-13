@@ -28,6 +28,7 @@ our $SILENCE_SETTING_APP = '__president';
 our $SILENCE_SETTING = 'silence_state';
 our $SILENCE_APP_BOX = 'silence';
 our $SILENCE_LOCAL_FILE;
+our $SILENCE_RELEASED_FILE;
 our $silence_tick_at = 0;
 our $silence_native_off_at = 0;
 # Owners this process itself saw open. A release inferred from an owner in this
@@ -146,6 +147,100 @@ sub silence_local_clear {
 	my $file = &silence_local_file();
 	eval { unlink $file; };
 	return 1;
+}
+
+# ---- the owners a verified peer has stopped -------------------------------
+# A machine's copy of an appointment row can lag the stop. The peer that ran the
+# stop names the owners it released; remember them here (this machine's own file,
+# never a house row) so the alarm pass does not read the lagging row as a fresh
+# start and re-silence the house. The note lives until the row itself closes or
+# the sync window passes, whichever comes first.
+our $SILENCE_RELEASED_HOLD = 900000;
+
+sub silence_released_file {
+	return $SILENCE_RELEASED_FILE if defined $SILENCE_RELEASED_FILE && length $SILENCE_RELEASED_FILE;
+	my $env = $ENV{'JAWNOS_SILENCE_RELEASED_FILE'};
+	return $env if defined $env && length $env;
+	my $dir = eval { &subs::home('~/.president') } || '';
+	if (!length $dir || !-d $dir) {
+		$dir = JawnOS::Platform::Paths::tmp_dir();
+	}
+	eval { require File::Path; File::Path::make_path($dir); } unless -d $dir;
+	return $dir . '/silence_released.json';
+}
+
+sub silence_released_read {
+	my $file = &silence_released_file();
+	return {} unless -e $file;
+	my $raw = eval {
+		open(my $fh, '<', $file) or die "open: $!";
+		local $/;
+		my $bytes = <$fh>;
+		close $fh;
+		$bytes;
+	};
+	return {} unless defined $raw && length $raw;
+	my $notes = eval { decode_json($raw) };
+	return ref $notes eq 'HASH' ? $notes : {};
+}
+
+sub silence_released_write {
+	my ($notes) = @_;
+	return 0 unless ref $notes eq 'HASH';
+	my $file = &silence_released_file();
+	if (!keys %{$notes}) {
+		eval { unlink $file; };
+		return 1;
+	}
+	my $ok = eval {
+		open(my $fh, '>', $file) or die "open: $!";
+		print {$fh} encode_json($notes);
+		close $fh;
+		1;
+	};
+	return $ok ? 1 : 0;
+}
+
+# A verified peer's stop names the owners it released. Record each for the
+# sync window; a tick that finds the row still open skips it.
+sub silence_release_note {
+	my ($owners, $now) = @_;
+	return 0 unless ref $owners eq 'ARRAY';
+	$now = eval { &subs::rightNow() } || (time * 1000)
+		unless defined $now && $now =~ /^\d+$/;
+	my $notes = &silence_released_read();
+	my $added = 0;
+	foreach my $owner ( @{$owners} ) {
+		next unless defined $owner && length $owner;
+		$notes->{$owner} = $now + $SILENCE_RELEASED_HOLD;
+		$added++;
+	}
+	return 0 unless $added;
+	return &silence_released_write($notes);
+}
+
+sub silence_released_active {
+	my ($owner, $now) = @_;
+	return 0 unless defined $owner && length $owner;
+	$now = eval { &subs::rightNow() } || (time * 1000)
+		unless defined $now && $now =~ /^\d+$/;
+	my $notes = &silence_released_read();
+	return 0 unless defined $notes->{$owner};
+	return $notes->{$owner} > $now ? 1 : 0;
+}
+
+# A verified peer that starts an owner again (a navigation reopen) lifts the
+# suppression the earlier stop put on it.
+sub silence_release_clear {
+	my ($owners) = @_;
+	return 0 unless ref $owners eq 'ARRAY';
+	my $notes = &silence_released_read();
+	my $changed = 0;
+	foreach my $owner ( @{$owners} ) {
+		next unless defined $owner && length $owner;
+		$changed++ if delete $notes->{$owner};
+	}
+	return $changed ? &silence_released_write($notes) : 0;
 }
 
 # The receptionist's virtual handset owns these sinks. Muting one would mute the
@@ -293,14 +388,16 @@ sub silence_release {
 	my $state = &silence_state();
 	my $had = scalar @{ $state->{'owners'} || [] };
 	my $was_active = $state->{'active'} ? 1 : 0;
-	my @keep;
+	my (@keep, @released);
 	foreach my $held ( @{ $state->{'owners'} || [] } ) {
+		my $drop = 0;
 		if (defined $owner && length $owner) {
-			next if $held eq $owner;
+			$drop = 1 if $held eq $owner;
 		}
 		elsif (defined $app && length $app) {
-			next if ($state->{'apps'}->{$held} // '') eq $app;
+			$drop = 1 if ($state->{'apps'}->{$held} // '') eq $app;
 		}
+		if ($drop) { push @released, $held; next; }
 		push @keep, $held;
 	}
 	return $state if $had == scalar @keep && !$state->{'active'};
@@ -317,6 +414,9 @@ sub silence_release {
 		&silence_local_apply(0);
 		&silence_native_push(0);
 	}
+	# Name the owners this stop released: a peer whose own row still reads open
+	# uses the list to avoid re-engaging what someone else has finished.
+	$state->{'released'} = \@released if @released;
 	&silence_push($state);
 	&silence_broadcast($c, $state);
 	return $state;
@@ -364,6 +464,7 @@ sub silence_release_all {
 	my ($broadcast) = @_;
 	my $state = &silence_state();
 	return $state unless $state->{'active'} || scalar @{ $state->{'owners'} || [] };
+	my @released = @{ $state->{'owners'} || [] };
 	$state->{'active'} = 0;
 	$state->{'owners'} = [];
 	$state->{'apps'} = {};
@@ -371,6 +472,7 @@ sub silence_release_all {
 	&silence_state_write($state);
 	&silence_local_apply(0);
 	&silence_native_push(0);
+	$state->{'released'} = \@released if @released;
 	&silence_push($state);
 	&silence_broadcast(undef, $state) if $broadcast;
 	return $state;
@@ -405,13 +507,31 @@ sub silence_tick {
 		)->hashes;
 	} || [];
 	my (@owners, %apps, %seen);
+	my $released_notes = &silence_released_read();
+	my %open_all;
 	foreach my $row ( @{$open} ) {
 		next unless ref $row eq 'HASH';
-		next unless $quiet{ $row->{'app'} // '' };
 		my $uuid = $row->{'uuid'};
-		next unless defined $uuid && length $uuid && !$seen{$uuid}++;
+		next unless defined $uuid && length $uuid;
+		$open_all{$uuid} = 1;
+		next if $seen{$uuid}++;
+		# A verified peer has already stopped this owner: the row here is the
+		# lagging copy, so it must not read as a fresh start.
+		next if ($released_notes->{$uuid} // 0) > $now;
+		next unless $quiet{ $row->{'app'} // '' };
 		push @owners, $uuid;
 		$apps{$uuid} = $row->{'app'};
+	}
+	if (%{$released_notes}) {
+		# Drop a note once the row is closed or the sync window has passed; a
+		# row that is still open with a live note stays suppressed.
+		my $changed = 0;
+		foreach my $uuid ( keys %{$released_notes} ) {
+			next if $open_all{$uuid} && ($released_notes->{$uuid} // 0) > $now;
+			delete $released_notes->{$uuid};
+			$changed = 1;
+		}
+		&silence_released_write($released_notes) if $changed;
 	}
 	my $state = &silence_state();
 	if (@owners) {

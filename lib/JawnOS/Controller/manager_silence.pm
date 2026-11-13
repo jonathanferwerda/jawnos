@@ -43,6 +43,16 @@ sub action_53042 {
 	$state->{'active'} = $active;
 	$state->{'owners'} = [] unless ref $state->{'owners'} eq 'ARRAY';
 	$state->{'apps'} = {} unless ref $state->{'apps'} eq 'HASH';
+	# A verified peer's state names what it stopped or started. A stop is
+	# remembered so this machine's lagging row cannot re-engage the owner; a
+	# start lifts an earlier note (a navigation reopen).
+	if (!$active) {
+		my $released = $state->{'released'};
+		eval { &subs::silence_release_note($released) } if ref $released eq 'ARRAY';
+	}
+	else {
+		eval { &subs::silence_release_clear($state->{'owners'}) };
+	}
 	&subs::silence_local_apply($active);
 	&subs::silence_state_write($state);
 	&subs::silence_push($state);

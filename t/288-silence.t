@@ -68,6 +68,8 @@ sub reset_all {
 	$NOW = 1000;
 	$subs::SILENCE_LOCAL_FILE = $main::SCRATCH . '/silence_local.json';
 	unlink $subs::SILENCE_LOCAL_FILE;
+	$subs::SILENCE_RELEASED_FILE = $main::SCRATCH . '/silence_released.json';
+	unlink $subs::SILENCE_RELEASED_FILE;
 }
 sub state_row { return $STORE{'__president|silence_state|all'} }
 sub state_hash { my $raw = state_row(); return (defined $raw && length $raw) ? eval { decode_json($raw) } : undef }
@@ -176,6 +178,33 @@ is_deeply($state->{owners}, [], 'and clears the owners');
 is_deeply([ grep { /alsa_output/ } @SET ], ['output|alsa_output|55'], 'the saved volume is put back');
 is((grep { /^alarm\|/ } @CHANNEL)[-1], 'alarm|100|0', 'the alarm channel is restored');
 ok(!-e $subs::SILENCE_LOCAL_FILE, 'the snapshot is cleared');
+my ($stop_msg) = grep { ($_->{'extra'}->{'url'} // '') eq '/manager/silence/peer'
+	&& !$_->{'extra'}->{'params'}->{'active'} } @RELAY;
+my $stop_state = $stop_msg ? decode_json($stop_msg->{'extra'}->{'params'}->{'state'}) : {};
+is_deeply($stop_state->{'released'}, ['u2'],
+	'the stop names the owner it released, for a peer whose row lags');
+
+# A peer that received that stop must not read its own lagging row as a fresh
+# start: the note suppresses the owner until the row closes or the window ends.
+reset_all();
+@QUERY_SETTINGS = ({ app => 'mirror' });
+@QUERY_APPOINTMENTS = ({ uuid => 'u-lag', app => 'mirror', timestamp => subs::rightNow() - 1000 });
+subs::silence_release_note(['u-lag']);
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is(state_hash(), undef, 'a lagging row a verified peer stopped does not re-engage silence');
+my $notes = subs::silence_released_read();
+$notes->{'u-lag'} = subs::rightNow() - 1;
+subs::silence_released_write($notes);
+$subs::silence_tick_at = 0;
+subs::silence_tick();
+is_deeply(state_hash()->{owners}, ['u-lag'],
+	'and the row engages again once the note has expired');
+reset_all();
+subs::silence_release_note(['u-lag']);
+subs::silence_release_clear(['u-lag']);
+is(scalar(keys %{ subs::silence_released_read() }), 0,
+	'a start from the peer lifts the suppression (a navigation reopen)');
 
 # A mixer that refuses the restore must not lose the record of what to put
 # back: the snapshot stays and the next alarm pass tries again.
@@ -411,6 +440,8 @@ like(source('lib/JawnOS/Domain/Silence.pm'), qr/type in \('start','record'\) and
 like(source('lib/JawnOS/Manager/Part05.pm'), qr/silence_appointment_write\([^)]*\$app->\{'timestamp'\}/,
 	'and the writer hands the start time to the hook');
 like(source('perl/Alarm.pl'), qr/silence_tick/, 'the alarm loop starts and stops silence');
+like(source('lib/JawnOS/Controller/manager_silence.pm'), qr/silence_release_note/,
+	'a verified peer stop is remembered against a lagging row');
 like(source('lib/JawnOS/Domain/Loader.pm'), qr/silence_tick/, 'the reconcile helper is mapped');
 
 done_testing();
