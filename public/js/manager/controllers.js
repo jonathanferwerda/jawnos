@@ -1,9 +1,10 @@
 // The Controller app: the roster, adding a controller, confirming its code,
-// and then the selected controller's storage and ROMs. The page itself is
-// drawn by GET /manager/controllers; the roster, the two pairing calls, the
-// storage setting and the ROM copy all answer JSON. The posts go through
-// $.ajax like the other apps' posts, so jQuery's X-Requested-With header
-// satisfies the manager's CSRF check without a bespoke fetch wrapper.
+// flashing a blank board, and then the selected controller's storage and ROMs.
+// The page itself is drawn by GET /manager/controllers; the roster, the two
+// pairing calls, the flash calls, the storage setting and the ROM copy all
+// answer JSON. The posts go through $.ajax like the other apps' posts, so
+// jQuery's X-Requested-With header satisfies the manager's CSRF check without
+// a bespoke fetch wrapper.
 //
 // The selection is page-local: a controller's uuid is kept in one variable
 // and the two lower sections redraw from it. Nothing outside this page needs
@@ -59,6 +60,7 @@ function controllerRosterLoad() {
 		data: { timestamp: Date.now() },
 		dataType: 'json',
 		success: function(response) {
+			controllerNewAvailability(response && response.computer);
 			controllerRosterDraw((response && response.controllers) || []);
 		},
 		error: function() {
@@ -550,4 +552,213 @@ function controllerApprove() {
 			controllerStatus('controllers_approve_status', controllerT('The code was not approved.'), true);
 		}
 	});
+}
+
+// ---- a new controller ------------------------------------------------------
+// "New controller" writes the house image to a blank board over USB. Only the
+// computer that can reach a board may offer it, so the roster's list route says
+// `computer` and the section is not drawn at all anywhere else.
+var controllerComputer = false;
+
+// The board's own recovery steps, kept verbatim: they are what the person does
+// with their hands, so the words are not paraphrased.
+var controllerNewSteps = [
+	'Power off completely (hold power 7-8 s) until every rear LED is dark.',
+	'Connect the USB-C cable to this computer.',
+	'Press and hold the recovery button on the back.',
+	'Press power, wait 1-2 s, then release the recovery button when the Hardkernel logo appears.',
+	'Wait for the red LED to blink like a heartbeat with the blue LED solid.'
+];
+
+$(document).on('click', '#controllers_new_button', function() {
+	controllerNewScan();
+});
+
+$(document).on('click', '.controllers_new_scan', function() {
+	controllerNewScan();
+});
+
+$(document).on('click', '.controllers_new_flash', function() {
+	controllerNewFlash();
+});
+
+function controllerNewAvailability(on) {
+	var section = $('#controllers_new_section');
+	if (!section.length) { return; }
+	controllerComputer = controllerBool(on);
+	if (controllerComputer) {
+		section.prop('hidden', false);
+		return;
+	}
+	// Off this computer the section renders nothing, and a panel left over from
+	// an answer that once said `computer` cannot reappear when it flips back.
+	section.prop('hidden', true);
+	controllerNewReset();
+}
+
+function controllerNewReset() {
+	$('#controllers_new_panel').empty().prop('hidden', true);
+	controllerStatus('controllers_new_status', '', false);
+	$('#controllers_new_button').prop('disabled', false);
+}
+
+// The panel is the state: each answer empties it and draws exactly one state.
+function controllerNewPanel() {
+	var box = $('#controllers_new_panel');
+	if (!box.length) { return $(); }
+	return box.empty().prop('hidden', false);
+}
+
+function controllerNewScanButton() {
+	return $('<button type="button" class="controllers_new_scan"></button>').text(controllerT('Scan'));
+}
+
+// One scan, no polling: count >= 1 is a board to flash, count 0 is the person's
+// hands on the board, and anything the route refuses is its own words.
+function controllerNewScan() {
+	if (!controllerComputer) { return; }
+	var button = $('#controllers_new_button').prop('disabled', true);
+	controllerStatus('controllers_new_status', controllerT('Scanning for a board...'), false);
+	controllerNewPanel().append($('<div class="controller_new_state"></div>').text(controllerT('Scanning for a board...')));
+	$.ajax({
+		url: '/manager/controllers/new/scan',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			button.prop('disabled', false);
+			if (!response || !response.ok) {
+				controllerNewFailure((response && response.error) ? String(response.error) : controllerT('The board could not be found.'));
+				return;
+			}
+			var devices = response.devices || [];
+			if (Number(response.count) >= 1 && devices.length) {
+				controllerNewConfirm(devices);
+			} else {
+				controllerNewRecovery();
+			}
+		},
+		error: function() {
+			button.prop('disabled', false);
+			controllerNewFailure(controllerT('The board could not be found.'));
+		}
+	});
+}
+
+// A board's size arrives as 512-byte sectors, so a number here is a sector count
+// and never an already-formatted byte size.
+function controllerNewSizeGb(sectors) {
+	var n = Number(sectors);
+	if (!isFinite(n) || n <= 0) { return ''; }
+	return (n * 512 / 1073741824).toFixed(1);
+}
+
+function controllerNewConfirm(devices) {
+	var panel = controllerNewPanel();
+	if (!panel.length) { return; }
+	panel.append($('<div class="controller_new_state"></div>').text(controllerT('Board found. Flashing writes the house image to it.')));
+	var list = $('<div class="controller_new_devices"></div>');
+	for (var i = 0; i < devices.length; i++) {
+		var device = devices[i] || {};
+		var row = $('<div class="controller_new_device"></div>');
+		row.append($('<span class="controller_new_dev"></span>').text(device.dev || controllerT('Unknown device')));
+		var size = controllerNewSizeGb(device.size_sectors);
+		if (size) { row.append($('<span class="controller_new_size"></span>').text(controllerT('{0} GB', size))); }
+		if (device.model) { row.append($('<span class="controller_new_model"></span>').text(String(device.model))); }
+		list.append(row);
+	}
+	panel.append(list);
+	panel.append($('<div class="controller_new_actions"></div>').append(
+	$('<button type="button" class="controllers_new_flash"></button>').text(controllerT('Flash'))));
+}
+
+function controllerNewRecovery() {
+	var panel = controllerNewPanel();
+	if (!panel.length) { return; }
+	panel.append($('<div class="controller_new_state"></div>').text(controllerT('No board is in recovery mode. Put it there, then scan again.')));
+	var steps = $('<ol class="controller_new_steps"></ol>');
+	for (var i = 0; i < controllerNewSteps.length; i++) {
+		steps.append($('<li></li>').text(controllerT(controllerNewSteps[i])));
+	}
+	panel.append(steps);
+	panel.append($('<div class="controller_new_actions"></div>').append(controllerNewScanButton()));
+}
+
+// The route's own words, verbatim: a refusal names the device it refused and
+// rewriting it here would lose that.
+function controllerNewFailure(text) {
+	controllerStatus('controllers_new_status', '', false);
+	var panel = controllerNewPanel();
+	if (!panel.length) { return; }
+	panel.append($('<div class="controller_status controller_error"></div>').text(text));
+	panel.append($('<div class="controller_new_actions"></div>').append(controllerNewScanButton()));
+}
+
+function controllerNewFlash() {
+	if (!controllerComputer) { return; }
+	var panel = $('#controllers_new_panel');
+	var button = $('#controllers_new_button').prop('disabled', true);
+	panel.find('button').prop('disabled', true);
+	controllerStatus('controllers_new_status', controllerT('Flashing...'), false);
+	// One blocking write on the other side, so a plain state rather than a
+	// progress bar that would have to invent a percentage.
+	panel.empty().append($('<div class="controller_new_state"></div>').text(controllerT('Flashing...')));
+	$.ajax({
+		url: '/manager/controllers/new/flash',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			button.prop('disabled', false);
+			if (!response || !response.ok) {
+				controllerNewFailure((response && response.error) ? String(response.error) : controllerT('The board was not flashed.'));
+				return;
+			}
+			controllerNewDone(response);
+			controllerStatus('controllers_new_status', controllerT('Flashed.'), false);
+			// The flashed board may already be in the roster, and its card is new:
+			// re-read the roster and the two sections that follow the selection.
+			controllerRosterLoad();
+			controllerStorageLoad();
+			controllerRomsLoad();
+		},
+		error: function() {
+			button.prop('disabled', false);
+			controllerNewFailure(controllerT('The board was not flashed.'));
+		}
+	});
+}
+
+function controllerNewDone(data) {
+	var panel = controllerNewPanel();
+	if (!panel.length) { return; }
+	panel.append($('<div class="controller_new_state"></div>').text(controllerT('The board is flashed.')));
+	if (data.device) {
+		panel.append($('<div class="controller_new_detail"></div>').text(controllerT('Device: {0}', String(data.device))));
+	}
+	var bytes = (data.bytes_written === undefined || data.bytes_written === null)
+	? controllerT('unknown') : String(data.bytes_written);
+	panel.append($('<div class="controller_new_detail"></div>').text(controllerT('Bytes written: {0}', bytes)));
+	panel.append($('<div class="controller_new_detail"></div>').text(controllerT('SHA-256 matches: {0}',
+	controllerBool(data.sha256_match) ? controllerT('yes') : controllerT('no'))));
+	var filled = data.autopopulated || [];
+	if (filled.length) {
+		panel.append($('<div class="controller_new_subtitle"></div>').text(controllerT('Filled in on the board')));
+		var list = $('<ul class="controller_new_list"></ul>');
+		for (var i = 0; i < filled.length; i++) {
+			list.append($('<li></li>').text(controllerNewFieldName(filled[i])));
+		}
+		panel.append(list);
+	} else {
+		panel.append($('<div class="controller_new_detail"></div>').text(controllerT('Nothing was filled in on the board.')));
+	}
+}
+
+// `autopopulated` names the fields the flash filled in, as bare names or as rows
+// carrying one. Only the name is painted: a value could be the Wi-Fi password,
+// and the screen must not show it.
+function controllerNewFieldName(item) {
+	if (item === undefined || item === null) { return ''; }
+	if (typeof item === 'string' || typeof item === 'number') { return String(item); }
+	return String(item.name || item.field || item.key || item.label || '');
 }

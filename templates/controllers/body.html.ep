@@ -9,6 +9,19 @@
 		</div>
 	</div>
 
+	<%# Flash a blank board from this computer. The list route reports whether this
+	    computer can reach a board over USB; until it says so this section stays
+	    hidden, so a phone or a server never sees the button. %>
+	<div class="controller_section" id="controllers_new_section" hidden>
+		<h2><%= &subs::ui('New controller') %></h2>
+		<p class="controller_note"><%= &subs::ui('Flash the house image to a blank board over USB from this computer.') %></p>
+		<div class="controller_toolbar">
+			<button type="button" id="controllers_new_button"><%= &subs::ui('New controller') %></button>
+			<div id="controllers_new_status" class="controller_status" aria-live="polite"></div>
+		</div>
+		<div id="controllers_new_panel" class="controller_card" hidden></div>
+	</div>
+
 	<div class="controller_section">
 		<h2><%= &subs::ui('Add a controller') %></h2>
 		<p class="controller_note"><%= &subs::ui('Name the controller, then add it. The house answers with a code; confirm the same code below.') %></p>

@@ -47,4 +47,17 @@
 	#controllers_app .controller_rom_name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	#controllers_app .controller_rom_size { opacity: .7; font-size: 12px; white-space: nowrap; }
 	#controllers_app .controller_rom_copy { padding: 1px 8px; font-size: 12px; }
+	#controllers_app .controller_new_state { font-size: 13px; margin: 0 0 8px; line-height: 1.4; }
+	#controllers_app .controller_new_devices { margin: 0 0 8px; }
+	#controllers_app .controller_new_device { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+	#controllers_app .controller_new_device:last-child { border-bottom: 0; }
+	#controllers_app .controller_new_dev { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; }
+	#controllers_app .controller_new_size { font-size: 13px; opacity: .78; white-space: nowrap; }
+	#controllers_app .controller_new_model { margin-left: auto; font-size: 12px; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#controllers_app .controller_new_steps { margin: 4px 0 10px; padding-left: 22px; font-size: 13px; line-height: 1.5; }
+	#controllers_app .controller_new_steps li { padding: 2px 0; }
+	#controllers_app .controller_new_detail { font-size: 13px; opacity: .85; padding: 2px 0; }
+	#controllers_app .controller_new_subtitle { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .65; margin: 8px 0 2px; }
+	#controllers_app .controller_new_list { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.5; }
+	#controllers_app .controller_new_actions { display: flex; align-items: center; gap: 10px; margin: 10px 0 0; }
 </style>

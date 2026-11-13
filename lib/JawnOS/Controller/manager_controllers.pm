@@ -7,6 +7,9 @@ use strict;
 use warnings;
 use utf8;
 
+use Cwd ();
+use Mojo::JSON qw(decode_json encode_json);
+
 no warnings 'uninitialized';
 
 our $log;
@@ -49,7 +52,7 @@ sub action_54002 {
 			pending => ($pending ? 1 : 0),
 		};
 	}
-	$c->render(json => { ok => 1, controllers => $controllers });
+	$c->render(json => { ok => 1, controllers => $controllers, computer => (&_controller_is_computer() ? 1 : 0) });
 }
 
 # POST /manager/controllers/request
@@ -146,6 +149,47 @@ sub _controller_archive_dir {
 sub _controller_house_pass {
 	my $c = shift;
 	return (($c->session('authentication') || '') eq 'approved' && &subs::privilege_is_house($c->session('privilege'))) ? 1 : 0;
+}
+
+# This machine's device class is the tree's own answer (Domain/Say.pm
+# device_setter): a desktop is 'computer', while a phone, a server or the
+# handheld itself is not. The New button flashes a handheld over USB from the
+# desktop that has the drive, so it is offered only here.
+sub _controller_is_computer {
+	return ((&subs::device_setter() // '') eq 'computer') ? 1 : 0;
+}
+
+# Run scripts/gou_provision.pl from an argv list, never a shell string. --scan
+# only reads sysfs and runs as the manager; --flash writes a raw device and
+# mounts its second partition, so it goes through sudo -n. The helper prints
+# its answer as JSON on stdout and its progress on stderr, which stays in the
+# worker log. 900s is the ceiling the flash warranty allows.
+sub _controller_gou_run {
+	my ($as_root, @args) = @_;
+	my $script = Cwd::abs_path('scripts/gou_provision.pl');
+	unless (defined $script && length $script && -f $script) {
+		return { ok => 0, error => 'the Controller provisioner is missing' };
+	}
+	my @command = $as_root
+		? ('sudo', '-n', $^X, $script, @args)
+		: ($^X, $script, @args);
+	my $run = eval {
+		&subs::subprocessor_command(\@command, {
+			name => 'gou provision',
+			stdout => 'capture',
+			stderr => 'inherit',
+			warranty => '900s',
+		});
+	};
+	unless (ref $run eq 'HASH' && $run->{'pid'}) {
+		return { ok => 0, error => 'the provisioner could not start' };
+	}
+	my $answer = eval { decode_json($run->{'output'} // '') };
+	return $answer if ref $answer eq 'HASH';
+	my $error = $run->{'timed_out'}
+		? 'the provisioner timed out'
+		: 'the provisioner did not answer';
+	return { ok => 0, error => $error };
 }
 
 # A roster row and its machine row. The roster names a machine by its
@@ -337,6 +381,7 @@ sub action_54008 {
 	my $name = $c->param('name') || '';
 	my $from = $c->param('from') || '';
 	my $to = $c->param('to') || '';
+	my $move = (($c->param('move') // '') eq '1') ? 1 : 0;
 	my ($device, $machine) = &_controller_resolve($uuid);
 	unless ($device || $uuid eq 'local') {
 		return $c->render(json => { ok => 0, error => 'no controller' });
@@ -344,7 +389,7 @@ sub action_54008 {
 	unless (&_controller_is_this($uuid, $device, $machine)) {
 		return $c->render(json => { ok => 0, error => 'remote not wired yet' });
 	}
-	# The name is one directory under a root this action chose, never a path.
+	# The name is one entry under a root this action chose, never a path.
 	unless (length $name && $name !~ m{/} && $name !~ /\.\./ && $name !~ /^\./) {
 		return $c->render(json => { ok => 0, error => 'bad name' });
 	}
@@ -362,15 +407,32 @@ sub action_54008 {
 		return $c->render(json => { ok => 0, error => 'no archive_dir' });
 	}
 	my $source = $source_dir . '/' . $name;
-	my $dest = $dest_dir . '/' . $name;
-	unless (-d $source) {
+	my $is_file = (-f $source) ? 1 : 0;
+	unless ($is_file || -d $source) {
 		return $c->render(json => { ok => 0, error => 'missing' });
 	}
+	# A ROM sold as one file is still one game folder on the shelf: the folder
+	# is the name without its extension and the file goes inside.
+	my $game = $name;
+	my $wrapped = 0;
+	if ($is_file) {
+		$game =~ s/\.[^.]*$//;
+		$game = $name unless length $game;
+		$wrapped = 1;
+	}
+	my $dest = $dest_dir . '/' . $game;
 	if (-e $dest) {
 		return $c->render(json => { ok => 0, error => 'exists' });
 	}
 	Mojo::File->new($dest_dir)->make_path unless -d $dest_dir;
-	my $copied = (system('cp', '-a', '--', $source, $dest) == 0 && -d $dest) ? 1 : 0;
+	my $copied;
+	if ($is_file) {
+		my $target = $dest . '/' . $name;
+		$copied = ((mkdir($dest) && system('cp', '-a', '--', $source, $target) == 0 && -f $target) ? 1 : 0);
+	}
+	else {
+		$copied = ((system('cp', '-a', '--', $source, $dest) == 0 && -d $dest) ? 1 : 0);
+	}
 	unless ($copied) {
 		# A refused copy can leave a partial directory behind, and a retry would
 		# then answer 'exists' with no way through.
@@ -378,8 +440,62 @@ sub action_54008 {
 		$log->info('controller roms copy failed: ' . $name . ' ' . $from . ' -> ' . $to);
 		return $c->render(json => { ok => 0, error => 'copy failed' });
 	}
-	$log->info('controller roms copy: ' . $name . ' ' . $from . ' -> ' . $to);
-	$c->render(json => { ok => 1, name => $name, from => $from, to => $to });
+	my $moved = 0;
+	if ($move) {
+		$moved = $is_file
+			? (unlink($source) ? 1 : 0)
+			: ((system('rm', '-rf', '--', $source) == 0) ? 1 : 0);
+	}
+	$log->info('controller roms ' . ($move ? 'move' : 'copy') . ': ' . $name . ' ' . $from . ' -> ' . $to . ($wrapped ? ' (wrapped)' : ''));
+	$c->render(json => {
+		ok => 1,
+		name => $name,
+		game => $game,
+		from => $from,
+		to => $to,
+		wrapped => $wrapped,
+		move => $move,
+		moved => $moved,
+	});
+}
+
+# ---------------------------------------------------------------------------
+# The Controllers app's New button (54009-54010). The provisioner lives in
+# scripts/gou_provision.pl and owns the device fingerprint: these actions only
+# decide who may ask and pass the person's choices through as an argv list.
+
+# POST /manager/controllers/new/scan
+sub action_54009 {
+	my $c = shift;
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	unless (&_controller_is_computer()) {
+		return $c->render(json => { ok => 0, error => 'not a computer' });
+	}
+	$c->render(json => &_controller_gou_run(0, '--scan'));
+}
+
+# POST /manager/controllers/new/flash
+sub action_54010 {
+	my $c = shift;
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	unless (&_controller_is_computer()) {
+		return $c->render(json => { ok => 0, error => 'not a computer' });
+	}
+	$c->inactivity_timeout(900);
+	my @args = ('--flash');
+	my $image = $c->param('image');
+	push @args, ('--image', substr($image, 0, 400)) if defined $image && length $image;
+	my $ssid = defined $c->param('wifi-ssid') ? $c->param('wifi-ssid') : $c->param('wifi_ssid');
+	my $psk = defined $c->param('wifi-psk') ? $c->param('wifi-psk') : $c->param('wifi_psk');
+	push @args, ('--wifi-ssid', substr($ssid, 0, 64)) if defined $ssid && length $ssid;
+	push @args, ('--wifi-psk', substr($psk, 0, 128)) if defined $psk && length $psk;
+	my $hostname = $c->param('hostname');
+	push @args, ('--hostname', substr($hostname, 0, 63)) if defined $hostname && length $hostname;
+	$c->render(json => &_controller_gou_run(1, @args));
 }
 
 1;

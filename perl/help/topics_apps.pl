@@ -402,7 +402,8 @@ $topic{'controllers'} = {
 				'Controller lists the controllers the house knows. Each row names the controller, where it was last seen (its hostname and address) and when, and a controller waiting to be confirmed is marked pending.',
 				'To add one, type its name and press Add a controller. The house answers with a code, shown large on the page; type that same code on the controller, then type it under Approve a code and press Approve. The roster reads itself again once the code is accepted, and a refused code says why.',
 				'Storage names where the controller keeps its documents, downloads, recordings, games, scans, pictures, videos and music: a folder on its SD card. A blank folder means nothing is merged, and the folders only merge while the card is mounted, so a controller can hold its own files without them joining the house.',
-				'ROMs shows the controller\'s games two ways, on its own storage and on the SD card, and copies a game from one to the other. Select a controller first to say which one the page is showing.'
+				'ROMs shows the controller\'s games two ways, on its own storage and on the SD card, and copies a game from one to the other. Select a controller first to say which one the page is showing.',
+				'On a computer, New puts the house on a fresh controller. It looks for a board waiting in recovery mode; if there is none it shows how to wake one, and Scan looks again. When a board answers it writes the image, checks what it wrote, and fills in the Wi-Fi, the name and the house token before the board first starts, so the board comes up already belonging here. The code above is for a board that joins a different house.'
 			],
 			related => [ 'embedded', 'configure' ]
 		};
