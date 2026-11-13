@@ -1,9 +1,10 @@
-# tests-for: lib/JawnOS/Routes/manager_controllers.pm lib/JawnOS/Controller/manager_controllers.pm lib/JawnOS/Routes.pm templates/controllers/controllers.html.ep templates/controllers/style.html.ep templates/controllers/body.html.ep public/js/manager/controllers.js lib/JawnOS/Manager/Core1_tables_hooks.pm templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js perl/gb/02_labels_and_collectives.pl perl/help/topics_apps.pl scripts/gou_provision.pl
+# tests-for: lib/JawnOS/Routes/manager_controllers.pm lib/JawnOS/Controller/manager_controllers.pm lib/JawnOS/Routes.pm templates/controllers/controllers.html.ep templates/controllers/style.html.ep templates/controllers/body.html.ep public/js/manager/controllers.js lib/JawnOS/Manager/Core1_tables_hooks.pm templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js public/js/manager/windows/01_storage.js perl/gb/02_labels_and_collectives.pl perl/help/topics_apps.pl scripts/gou_provision.pl
 # covers:    The Controller app: its four routes and their action ids, the page and
 #            its partials, the bundle entry, the start-menu toggle, the label row
 #            and the help topic. The handheld's own /manager/controller app is a
 #            different thing and must stay untouched, so the plural path is checked
-#            to the word.
+#            to the word. The window it opens is registered as 'controllers', so a
+#            reload restores this roster and not the handheld launcher.
 
 use strict;
 use warnings;
@@ -40,6 +41,21 @@ like($controller, qr/^package Manager;/m, 'the controller is in package Manager'
 foreach my $id (54001 .. 54010) {
 	like($controller, qr/^sub action_\Q$id\E\b/m, "action_$id is defined");
 }
+
+# The window this route draws belongs to Controllers, not to the handheld app.
+# The app attribute is what windowSaver() writes and windowRetriever() reads, so
+# the singular name sent a reload to /manager/controller instead of /manager/controllers.
+my ($page_action) = $controller =~ /(sub action_54001 \{.*?\n\})/s;
+ok($page_action, 'action_54001 is readable');
+like($page_action, qr/window_maker\(\{[^}]*app => 'controllers'/, 'the page window is registered as controllers');
+unlike($page_action, qr/app => 'controller'[^s]/, 'and not under the singular name');
+like($page_action, qr/title => &subs::ui\('Controllers'\)/, 'its window title is Controllers');
+
+# A reload opens the app through appWindowOpenerNow(), which carries a branch per
+# bespoke app. Without one here the window came back with its roster never read.
+my $storage_js = slurp('public/js/manager/windows/01_storage.js');
+like($storage_js, qr/else if \(i == 'controllers'\) \{\s*if \(typeof controllerOpener === 'function'\) \{ controllerOpener\(\); \}/,
+	'a reload opens Controllers through its own opener');
 
 my $provision = slurp('scripts/gou_provision.pl');
 like($provision, qr/--scan/, 'the provisioning script can scan');

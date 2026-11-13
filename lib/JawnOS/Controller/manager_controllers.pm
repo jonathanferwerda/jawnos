@@ -23,7 +23,10 @@ sub action_54001 {
 		timestamp => $timestamp,
 		config => &subs::config_reader(),
 	);
-	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'controller', title => &subs::ui('Controller'), contents => $content }, $timestamp);
+	# The window belongs to Controllers (plural), the roster this route serves. The
+	# handheld's own /manager/controller launcher is a different app, and a window
+	# saved under its name would restore the wrong page after a reload.
+	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'controllers', title => &subs::ui('Controllers'), contents => $content }, $timestamp);
 	$c->render(text => $contents);
 }
 

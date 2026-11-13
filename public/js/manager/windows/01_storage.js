@@ -363,6 +363,12 @@ function appWindowOpenerNow(i,timestamp,v) {
 		else if (i == 'sound') {
 			if (typeof soundOpener === 'function') { soundOpener(timestamp); }
 		}
+		// Controllers draws its roster from its own list route once the window is
+		// up, so the generic restore path left it saying "Reading the controllers..."
+		// for good. Its opener reads the roster too.
+		else if (i == 'controllers') {
+			if (typeof controllerOpener === 'function') { controllerOpener(); }
+		}
 		else {
 			$.ajax({
 				url: '/manager/' + i,
