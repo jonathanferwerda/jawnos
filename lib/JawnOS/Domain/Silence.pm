@@ -220,32 +220,41 @@ sub silence_local_apply_on {
 sub silence_local_apply_off {
 	my $snap = &silence_local_read();
 	return 0 unless ref $snap eq 'HASH';
+	# A mixer that refuses a restore must not cost us the record of what to put
+	# back: keep the snapshot and let the next alarm pass try again, rather than
+	# leave the machine muted with nothing left to unmute it from.
+	my $ok = 1;
 	foreach my $device ( @{ $snap->{'outputs'} || [] } ) {
 		next unless ref $device eq 'HASH';
 		my $id = $device->{'id'};
 		next unless defined $id && length $id;
-		eval { &subs::sound_mute('output', $id, $device->{'muted'} ? 1 : 0) };
-		eval { &subs::sound_set('output', $id, $device->{'volume'}) }
-			if defined $device->{'volume'};
+		my $muted = eval { &subs::sound_mute('output', $id, $device->{'muted'} ? 1 : 0) };
+		$ok = 0 if ref $muted eq 'HASH' && !$muted->{'ok'};
+		if (defined $device->{'volume'}) {
+			my $set = eval { &subs::sound_set('output', $id, $device->{'volume'}) };
+			$ok = 0 if ref $set eq 'HASH' && !$set->{'ok'};
+		}
 	}
 	foreach my $name ( sort keys %{ $snap->{'channels'} || {} } ) {
 		my $row = $snap->{'channels'}->{$name};
 		next unless ref $row eq 'HASH';
-		eval { &subs::sound_channel_set($name, $row->{'volume'}, $row->{'muted'}) };
+		my $channel = eval { &subs::sound_channel_set($name, $row->{'volume'}, $row->{'muted'}) };
+		$ok = 0 if ref $channel eq 'HASH' && !$channel->{'ok'};
 	}
 	foreach my $stream ( @{ $snap->{'streams'} || [] } ) {
 		next unless ref $stream eq 'HASH';
 		my $id = $stream->{'stream'};
 		next unless defined $id && length $id;
-		eval {
+		my $answer = eval {
 			&subs::device_call('audio.volume', {
 				stream => $id,
 				volume => int($stream->{'volume'} || 0),
 			});
 		};
+		$ok = 0 unless ref $answer eq 'HASH';
 	}
-	&silence_local_clear();
-	return 1;
+	&silence_local_clear() if $ok;
+	return $ok ? 1 : 0;
 }
 
 sub silence_local_apply {

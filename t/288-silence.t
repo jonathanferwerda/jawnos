@@ -37,6 +37,7 @@ require "$root/lib/JawnOS/Domain/Silence.pm";
 
 no warnings 'redefine';
 our (%STORE, @MUTE, @SET, @CHANNEL, @RELAY);
+our $MUTE_FAIL = 0;
 our (@QUERY_SETTINGS, @QUERY_APPOINTMENTS, @NATIVE);
 our $NOW = 1000;
 our $DEVICE = 'computer';
@@ -60,6 +61,7 @@ sub reset_all {
 	@QUERY_APPOINTMENTS = ();
 	@NATIVE = ();
 	$DEVICE = 'computer';
+	$MUTE_FAIL = 0;
 	$subs::silence_tick_at = 0;
 	$subs::silence_native_off_at = 0;
 	%subs::silence_owners_seen = ();
@@ -122,7 +124,7 @@ $main::SCRATCH = $scratch;
 		],
 	};
 };
-*subs::sound_mute = sub { my ($kind, $id, $mute) = @_; push @MUTE, "$kind|$id|$mute"; return { ok => 1 } };
+*subs::sound_mute = sub { my ($kind, $id, $mute) = @_; push @MUTE, "$kind|$id|$mute"; return { ok => ($MUTE_FAIL ? 0 : 1) } };
 *subs::sound_set = sub { my ($kind, $id, $volume) = @_; push @SET, "$kind|$id|$volume"; return { ok => 1 } };
 *subs::sound_channels = sub {
 	return {
@@ -174,6 +176,17 @@ is_deeply($state->{owners}, [], 'and clears the owners');
 is_deeply([ grep { /alsa_output/ } @SET ], ['output|alsa_output|55'], 'the saved volume is put back');
 is((grep { /^alarm\|/ } @CHANNEL)[-1], 'alarm|100|0', 'the alarm channel is restored');
 ok(!-e $subs::SILENCE_LOCAL_FILE, 'the snapshot is cleared');
+
+# A mixer that refuses the restore must not lose the record of what to put
+# back: the snapshot stays and the next alarm pass tries again.
+reset_all();
+subs::silence_local_write({ outputs => [ { id => 'alsa_output', volume => 55, muted => 0 } ], channels => {}, streams => [] });
+$MUTE_FAIL = 1;
+is(subs::silence_local_apply(0), 0, 'a refused restore reports failure');
+ok(-e $subs::SILENCE_LOCAL_FILE, 'and keeps the snapshot for the next pass');
+$MUTE_FAIL = 0;
+is(subs::silence_local_apply(0), 1, 'the next pass restores it');
+ok(!-e $subs::SILENCE_LOCAL_FILE, 'and clears the snapshot');
 
 # A stop releases even when the box was unticked before the stop arrived.
 reset_all();
