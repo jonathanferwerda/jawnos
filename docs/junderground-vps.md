@@ -182,18 +182,25 @@ over the new directory. The copy holds the old code, not the old data.
 
 ## 3. Admin keys
 
-`JG_ADMIN_KEYS` is a comma-separated list of **public** Ed25519 keys, one per
-administrator crest. The unit sets it empty; the drop-in is the effective value
-and holds one key today — the crest key of "Jawn's Homebase". `Admin.keys/0`
-trims the list and drops empty entries, and `/v1/meta.admission.admins` is
+`JG_ADMIN_KEYS` is a comma-separated list of **public** Ed25519 keys. The unit
+sets it empty; the drop-in is the effective value and holds one key today: the
+public half of a dedicated admin key, not a house crest. `Admin.keys/0` trims
+the list and drops empty entries, and `/v1/meta.admission.admins` is
 `Admin.count/0`, the number of configured keys (not the number of decisions).
 
-An admin key is a crest public key — the same Ed25519 key a house registers as
-its crest. `Admission.pending/2` checks `Admin.admin_key?(pubkey)` before
-`JG_AUTO_APPROVE`: a house registering with an admin crest is created `approved`
-with reason `crest is an administrator key`. Everything else stays `pending`
-because `JG_AUTO_APPROVE=0`. That is why the current house is approved with one
-admin.
+The admin private key lives only on the laptop, at `~/.junderground/admin.key`
+(mode `0600`); its public half is `~/.junderground/admin.pub` (`0644`) and is the
+value in the drop-in. It is a standalone Ed25519 key, never derived from or
+shared with a house crest. The switch holds only the public half and never sees
+the private one.
+
+The house crest is **not** an admin key, so the house does not auto-approve its
+own (re-)registration; "Jawn's Homebase" is approved because that decision is
+stored, and its crest still signs its normal house requests. The code path is
+unchanged — `Admission.pending/2` checks `Admin.admin_key?(pubkey)` before
+`JG_AUTO_APPROVE`, and a house registering with an admin key is created
+`approved` with reason `crest is an administrator key` — but no house holds an
+admin key now, so that path is empty by design.
 
 Admin requests are signed exactly like house requests, but name the key in
 `X-JG-Admin` instead of `X-JG-Handle`; only keys listed in `JG_ADMIN_KEYS` are
@@ -224,9 +231,27 @@ Sign the path as the switch sees it (`/v1/...`), not the full public URL. The
 contract is `docs/API.md` §5 and §6b in the upstream repo; the screen contract is
 `docs/CHAT-ADMIN.md`.
 
-### Add or rotate a key
+### Rotate the admin key
 
-Edit the drop-in, keeping the key that is already there when adding:
+Rotation is a new keypair, the new public half in the drop-in, and a restart.
+Generate the keypair on the laptop; the private half is written `0600` and never
+leaves the machine, and only the public half is printed. On the laptop, put the
+JawnOS local::lib on `@INC` first (`eval $(perl -Mlocal::lib)` is one way), then:
+
+```
+mkdir -p ~/.junderground && chmod 0700 ~/.junderground
+perl -MCrypt::PK::Ed25519 -MMIME::Base64=encode_base64 -e '
+  my $k = Crypt::PK::Ed25519->new; $k->generate_key;
+  open my $f, ">", "$ENV{HOME}/.junderground/admin.key" or die $!;
+  binmode $f; print $f $k->export_key_raw("private"); close $f;
+  chmod 0600, "$ENV{HOME}/.junderground/admin.key";
+  open my $p, ">", "$ENV{HOME}/.junderground/admin.pub" or die $!;
+  print $p encode_base64($k->export_key_raw("public"), ""), "\n"; close $p;
+  chmod 0644, "$ENV{HOME}/.junderground/admin.pub";
+  print encode_base64($k->export_key_raw("public"), ""), "\n";'
+```
+
+Edit the drop-in on the VPS as root, keeping its syntax and replacing the value:
 
 ```
 sudoedit /etc/systemd/system/junderground.service.d/admin.conf
@@ -234,10 +259,10 @@ sudoedit /etc/systemd/system/junderground.service.d/admin.conf
 
 ```
 [Service]
-Environment="JG_ADMIN_KEYS=<existing-key>,<new-key>"
+Environment="JG_ADMIN_KEYS=<new-public-key>"
 ```
 
-Then reload and restart, and read the count:
+Then reload and restart only the switch, and read the count:
 
 ```
 sudo systemctl daemon-reload
@@ -246,19 +271,52 @@ curl -sS http://127.0.0.1:4100/v1/meta | grep -o '"admins":[0-9]*'
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4100/v1/admin/queue
 ```
 
-The first prints the configured count; the second must be `401` without a
-signature, proving the admin route is live but closed. A real admin read must be
-signed.
+The first prints the configured count (one for one key); the second must be
+`401` without a signature, proving the admin route is live but closed.
 
-Rotation is two restarts: add the new key, verify it works, then remove the old
-one. Removing a key does not change a house's stored admission status; it only
+Prove the separation from the laptop. The operator tool signs one request with
+`~/.junderground/admin.key` and prints the status and response:
+
+```
+perl ~/.junderground/jg_admin.pl GET /v1/admin/queue
+```
+
+`200 OK` with the queue is the proof the new key works. Signing the same request
+with the house crest is a `403` with `{"error":{"code":"not_admin"}}` — the
+crest is no longer an administrator.
+
+Removing a key does not change a house's stored admission status; it only
 removes that key's ability to sign admin requests. A removed key's own house
 stays approved.
 
-The private half never goes on the VPS: the switch needs only public keys. The
-house's crest key signs on the house side (`perl/junderground.pl`; the browser
-never holds it). Do not paste `server.key`, an admin private key, or secrets into
-a record, a log, a commit or this doc.
+The private half never goes on the VPS: the switch needs only public keys. Do
+not paste `server.key`, an admin private key, or secrets into a record, a log, a
+commit or this doc.
+
+### Recovery if the laptop is lost
+
+The admin private key exists only at `~/.junderground/admin.key` on the laptop.
+Losing that machine does not lock the switch: log in to the VPS as `debian` (or
+any root-capable account), generate a new keypair, and replace the value in the
+drop-in as root. This is the same edit as a rotation, done from the VPS side:
+
+```
+sudoedit /etc/systemd/system/junderground.service.d/admin.conf
+```
+
+```
+[Service]
+Environment="JG_ADMIN_KEYS=<new-public-key>"
+```
+
+```
+sudo systemctl daemon-reload
+sudo systemctl restart junderground
+curl -sS http://127.0.0.1:4100/v1/meta | grep -o '"admins":[0-9]*'
+```
+
+Take the new public half from wherever you generated it and keep the private
+half off the VPS. The lost private half is not needed for recovery.
 
 ## 4. Backup
 
@@ -439,11 +497,13 @@ The journal is at debug level, so every successful request appears
   `IPAddressDeny=any` plus the two loopback `IPAddressAllow` lines. Do not remove
   them without a host firewall. Caddy is the intended door; verify external 4100
   still times out after any unit change.
-- **Secrets.** `server.key` is the switch's signing identity. The admin keys in
-  the drop-in are public; the private half is the house's crest and stays off
-  this host. Never paste `server.key`, an admin private key, TURN/SFU secrets, or
-  a login ticket into a record, a commit, the journal, or this doc. A public
-  admin key is not a secret, but it is not reproduced here either.
+- **Secrets.** `server.key` is the switch's signing identity. The admin key in
+  the drop-in is a public key; its private half is a dedicated Ed25519 key that
+  lives only on the laptop at `~/.junderground/admin.key` (`0600`) and stays off
+  this host. The house crest is not an admin key. Never paste `server.key`, an
+  admin private key, TURN/SFU secrets, or a login ticket into a record, a
+  commit, the journal, or this doc. A public admin key is not a secret, but it
+  is not reproduced here either.
 - **One writer.** DETS has no multi-writer safety. Do not start a second release,
   an `iex -S mix`, or a restore against `/var/lib/junderground` while the unit
   runs. Stop first.
