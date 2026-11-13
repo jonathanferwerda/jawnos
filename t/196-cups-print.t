@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Platform/Mdns.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm lib/JawnOS/Routes/manager_market2.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/websocket/00_console_router.js public/js/store.js public/js/store/register.js public/css/store.css perl/jobs.pl perl/President.pl
+# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Platform/Mdns.pm lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Domain/Scan.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Routes/manager_configure.pm lib/JawnOS/Routes/store_misc.pm lib/JawnOS/Routes/manager_market2.pm templates/configure/device_lister/body.html.ep public/js/manager/configure/01_update_controls.js public/js/manager/configure/02_remote_devices.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/websocket/00_console_router.js public/js/store.js public/js/store/register.js public/css/store.css perl/jobs.pl perl/President.pl
 # covers:    CUPS queue discovery (lpstat), network printer discovery (ippfind),
 #            the ADF status read, adding a queue (lpadmin), the print/PDF path,
 #            the Default printer's network choices, and the Dev/Market wiring.
@@ -26,6 +26,7 @@ use Mojo::JSON qw(encode_json);
 
 my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Printer2.pm";
+require "$root/lib/JawnOS/Domain/Scan.pm";
 require JawnOS::Platform::Net;
 
 # --- names and URIs ---------------------------------------------------------
@@ -264,6 +265,10 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 	my @notes;
 	my @frames;
 	local *subs::device_setter = sub { return 'computer' };
+	local *subs::scan_house_heartbeat = sub { return 1 };
+	local *subs::scan_dispatcher_here = sub { return 1 };
+	local *subs::scan_house_me = sub { return 'me' };
+	local *subs::scan_job_dispatch = sub { return { ok => 1, scan_id => 'scan123', owner => 'me' } };
 	local *subs::config_reader = sub {
 		return { scanners => [ {
 			address => 'hpaio:/net/officejet_3830_series?ip=192.168.1.50',
@@ -295,6 +300,8 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 	is($notes[0]{'app'}, 'market', 'for the Market app');
 	is(scalar @frames, 1, 'and one command to the Market windows');
 	is($frames[0]{'console'}{'cmd'}, 'marketReceiptAdf', 'asking a window to take the paper');
+	is($frames[0]{'console'}{'args'}[0]{'scan_id'}, 'scan123', 'the job scan id is carried');
+	is($frames[0]{'console'}{'args'}[0]{'owner'}, 'me', 'and the delegated machine');
 	is(subs::adf_receipt_watch(), 0, 'the same paper is not announced twice');
 	is(scalar @notes, 1, 'with no second notice');
 	$state = 'empty';
@@ -355,6 +362,62 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 	local *subs::cache_set = sub { $stored = $_[1]; return 1 };
 	is(subs::printer_discover_escl(), '192.168.1.109', 'the sweep finds the printer that answers eSCL');
 	is($stored, '192.168.1.109', 'and remembers it for the watcher');
+}
+
+# --- the scan dispatcher and job -------------------------------------------
+# The AI-evaluation pattern: a readiness ledger, one elected dispatcher, and one
+# job row per loaded edge. A computer is preferred, the Table before another
+# computer, and a phone only when no computer can scan.
+{
+	no warnings 'redefine';
+	local *subs::scan_house_me = sub { return 'me' };
+	local *subs::scan_house_members = sub {
+		return (
+			{ machine => 'phone', device => 'mobile', hostname => 'phone' },
+			{ machine => 'laptop', device => 'computer', hostname => 'laptop' },
+			{ machine => 'table', device => 'computer', hostname => 'table' },
+		);
+	};
+	is(subs::scan_dispatcher(), 'table', 'the Table wins among computers');
+	local *subs::scan_house_members = sub {
+		return (
+			{ machine => 'phone', device => 'mobile', hostname => 'phone' },
+			{ machine => 'laptop', device => 'computer', hostname => 'laptop' },
+		);
+	};
+	is(subs::scan_dispatcher(), 'laptop', 'a computer beats a phone');
+	local *subs::scan_house_members = sub {
+		return ( { machine => 'phone', device => 'mobile', hostname => 'phone' } );
+	};
+	is(subs::scan_dispatcher(), 'phone', 'a phone is the fallback');
+	local *subs::scan_house_members = sub {
+		return ( { machine => 'me', device => 'computer', hostname => 'me' } );
+	};
+	is(subs::scan_dispatcher_here(), 1, 'the elected machine is the dispatcher');
+}
+{
+	no warnings 'redefine';
+	my @inserted;
+	my $existing = 0;
+	local *subs::scan_house_me = sub { return 'me' };
+	local *subs::rightNow = sub { return 1234567890000 };
+	local *subs::path_name = sub { my ($s) = @_; $s =~ s/[^A-Za-z0-9_.-]+/_/g; return $s };
+	local *subs::db_select = sub { return FakeRows->new($existing ? [ { at => 1234567889000 } ] : []) };
+	local *subs::db_insert = sub { push @inserted, $_[1]; return 1 };
+	local *subs::db_delete = sub { return 1 };
+	my $first = subs::scan_job_dispatch('192.168.1.109', 'HP OfficeJet 3830');
+	ok($first->{'ok'}, 'a loaded edge becomes one job');
+	is($first->{'owner'}, 'me', 'owned by the dispatcher');
+	like($first->{'scan_id'}, qr/^scan1921681109\d+$/, 'with a sanitized scan id');
+	is($inserted[0]{'state'}, 'dispatched', 'the job starts dispatched');
+	$existing = 1;
+	my $second = subs::scan_job_dispatch('192.168.1.109', 'HP');
+	is($second->{'ok'}, 0, 'a second watcher in the same edge writes nothing');
+	ok($second->{'existing'}, 'because a fresh job is already there');
+	local *subs::db_insert = sub { return undef };
+	$existing = 0;
+	my $refused = subs::scan_job_dispatch('192.168.1.110', 'HP');
+	is($refused->{'ok'}, 0, 'a job whose row did not land is not announced');
 }
 
 # A CUPS server that does not answer must not hold the Dev panel open: lpstat
@@ -501,6 +564,12 @@ my $part06 = read_file("$root/lib/JawnOS/Manager/Part06.pm");
 like($part06, qr/sub market_receipt_scan_escl\b/, 'the receipt scan has an eSCL path');
 like($part06, qr/JawnOS::Platform::Print::scan_escl/, 'and asks the printer for the pages');
 like($part06, qr/pdftoppm/, 'converting the printer PDF to the pages Market reads');
+my $scan_module = read_file("$root/lib/JawnOS/Domain/Scan.pm");
+like($scan_module, qr/sub scan_dispatcher\b/, 'the scan dispatcher is elected');
+like($scan_module, qr/sub scan_job_dispatch\b/, 'and the loaded edge becomes one job');
+like(read_file("$root/public/js/manager/market/01_tabs_and_receipts.js"), qr/opts\.owner/,
+	'the notice names the delegated machine');
+like($market2, qr/scan_job_state/, 'the claim and the scan update the job');
 
 my $store_routes = read_file("$root/lib/JawnOS/Routes/store_misc.pm");
 like($store_routes, qr{/store/print/printers}, 'the Store printer list route exists');

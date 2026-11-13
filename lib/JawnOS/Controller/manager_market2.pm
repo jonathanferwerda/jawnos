@@ -74,6 +74,7 @@ sub action_4700 {
 		return $c->render(json => { error => 'this machine cannot scan' })
 			unless grep { $_ eq $feed } @{ &market_scan_feeds() };
 		my ($err, $paths) = &market_receipt_scan($feed, $c->param('scan_id'));
+		eval { &subs::scan_job_state($c->param('scan_id'), $err ? 'failed' : 'ran') } if defined $c->param('scan_id');
 		return $c->render(json => { error => $err }) if $err;
 		foreach my $p ( @{$paths} ) { push @pages, { base64 => encode_base64(read_file($p), ''), path => $p }; }
 	}
@@ -332,6 +333,7 @@ sub action_52310 {
 		print $fh $$;
 		close $fh;
 		$go = 1;
+		eval { &subs::scan_job_state($scan_id, 'running') };
 		if (opendir(my $dh, $dir)) {
 			foreach my $f (grep { /\.claim\z/ } readdir($dh)) {
 				my $p = $dir . '/' . $f;

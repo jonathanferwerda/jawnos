@@ -394,6 +394,11 @@ sub adf_printer_ip {
 # own a SANE device, so a phone and printer offsite on a hotspot still watch.
 sub adf_receipt_watch {
 	return 0 unless &device_setter() =~ /^(?:computer|mobile)$/;
+	# The readiness ledger elects one dispatcher: a computer before a phone, and
+	# the Table before another computer. Only that machine watches the feeder, so
+	# two machines cannot raise two notices and two scans.
+	&scan_house_heartbeat();
+	return 0 unless &scan_dispatcher_here();
 	my $ip = &printer_live_ip();
 	return 0 unless $ip;
 	my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
@@ -420,7 +425,10 @@ sub adf_receipt_watch {
 	return 0 unless $state eq 'loaded' && $last ne 'loaded';
 	my $printer = &device_lister(&rightNow(), 'printer') || {};
 	my $name = ref $printer eq 'HASH' ? ($printer->{'name'} || $printer->{'model'} || '') : '';
-	my $scan_id = &rightNow() . int(rand(1000000));
+	my $job = &scan_job_dispatch($ip, $name);
+	return 0 unless $job->{'ok'};
+	my $scan_id = $job->{'scan_id'};
+	my $owner = $job->{'owner'} || &scan_house_me();
 	my $message = $name ne ''
 		? $name . ' has paper in the feeder.'
 		: 'The printer has paper in the feeder.';
@@ -441,6 +449,7 @@ sub adf_receipt_watch {
 				scan_id => $scan_id,
 				printer => $ip,
 				name => $name,
+				owner => $owner,
 				timestamp => &rightNow(),
 			}),
 			timestamp => &rightNow(),

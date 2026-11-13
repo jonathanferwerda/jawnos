@@ -57,13 +57,14 @@ $(document).on('click', '.market_receipt_go', function() {
 	marketReceiptScanFeed(feed);
 });
 
-// The printer saw a receipt in its ADF. Any open Market window hears this; the
-// first to claim the scan id runs it and the rest stand down, so two windows do
-// not pull the same paper twice. The notice (notification_sender) is what opens
-// Market when it is not already up.
+// The printer saw a receipt in its ADF. The notice reaches every device so the
+// whole house can see it, but only the machine the job was delegated to takes
+// the paper; the scan id's claim then keeps two windows on that machine from
+// pulling it twice.
 window.marketReceiptAdf = function(opts) {
 	opts = opts || {};
 	if (!$('#market_body').length) { return; }
+	if (opts.owner && typeof signatorial !== 'undefined' && String(opts.owner) !== String(signatorial)) { return; }
 	var scan_id = String(opts.scan_id || (Date.now() + String(Math.floor(Math.random() * 1000000))));
 	$.post('/manager/market/receipt/adf/claim', { scan_id: scan_id, timestamp: Date.now() }, function(r) {
 		if (!r || !r.go) { return; }
