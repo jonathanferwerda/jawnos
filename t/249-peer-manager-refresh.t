@@ -41,6 +41,7 @@ my $laptop = {
 	port        => 45545,
 	manager     => 'https://127.0.0.1:56138',
 	tunnel      => 'no',
+	hostname    => 'laptop',
 	fqdn        => 'laptop.jonathanferwerda.com',
 };
 
@@ -82,6 +83,8 @@ is($live, 'https://100.64.0.3:45545',
 	is($routes[0], 'https://192.168.1.123:45545', 'the stored route is tried first');
 	ok(scalar(grep { $_ eq 'https://100.64.0.3:45545' } @routes),
 		'and the tailnet is a fallback when it does not answer');
+	ok(scalar(grep { $_ eq 'https://laptop:45545' } @routes),
+		'and the peer hostname is a fallback too');
 });
 
 # A tunnel row's loopback belongs to the hub and is kept exactly as stored.

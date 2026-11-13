@@ -476,6 +476,21 @@ sub remote_relay_routes {
 		next unless defined $url && length $url && !$seen{$url}++;
 		push @routes, $url;
 	}
+	# The manager may answer only to its own name (the hub's working port
+	# rejects an ip Host header), and the row's fqdn is not always a usable name.
+	# The hostname is the one name every peer already knows.
+	my $hostname = $rm->{'hostname'} || '';
+	if ($hostname =~ /^[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?$/
+		&& $hostname !~ /^\d+\.\d+\.\d+\.\d+$/ && length $hostname <= 253) {
+		my $port = $rm->{'port'};
+		my ($mp) = ($rm->{'manager'} || '') =~ m{:([0-9]{1,5})/?$};
+		$port = $mp if (!defined $port || $port !~ /^[0-9]+$/) && defined $mp;
+		$port = 45545 unless defined $port && $port =~ /^[0-9]+$/;
+		my ($scheme) = ($rm->{'manager'} || '') =~ m{^(https?)://};
+		$scheme = 'https' unless $scheme;
+		my $url = $scheme . '://' . $hostname . ':' . $port;
+		push @routes, $url unless $seen{$url}++;
+	}
 	return @routes;
 }
 
