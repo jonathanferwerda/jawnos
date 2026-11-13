@@ -13,7 +13,7 @@
 #   settings <screen> <sleep> <lid> <type>
 #   sleep <type>               type is suspend|hibernate|hybrid_sleep|suspend_then_hibernate
 #   charge <end>               end is the battery's charge limit, 50..100
-#   takeover                   stop a competing power daemon and disable it
+#   takeover                   stop a competing power daemon
 #   restore <json>             put back the daemons a takeover recorded
 #   manager                    name the power daemon still running, if any
 #
@@ -415,8 +415,10 @@ sub run_command {
 
 # The daemons that re-apply their own power profile. Once JawnOS writes the CPU
 # and the sleep rules, a second daemon doing the same is two writers racing, so
-# a real plan asks systemd to stop and disable it. Plan `auto` leaves them
-# alone: auto means the machine's own choice stays in charge.
+# a real plan asks systemd to stop it. The unit is left enabled, so a reboot
+# starts it again even if JawnOS never comes back; the power watch stops it
+# again while JawnOS is managing a real plan. Plan `auto` leaves them alone:
+# auto means the machine's own choice stays in charge.
 my @TAKEOVER_UNITS = qw(power-profiles-daemon tlp auto-cpufreq);
 
 sub takeover {
@@ -425,7 +427,7 @@ sub takeover {
 	return emit({
 		ok => 1,
 		dry_run => 1,
-		command => [ map { [$systemctl, 'disable', '--now', $_] } @TAKEOVER_UNITS ],
+		command => [ map { [$systemctl, 'stop', $_] } @TAKEOVER_UNITS ],
 	}) if $DRY;
 	my (@stopped, @failed, @records);
 	for my $unit (@TAKEOVER_UNITS) {
@@ -435,7 +437,7 @@ sub takeover {
 		# enabled and started again, a disabled one is only started. The note
 		# outlives this run so a crash can still be undone.
 		my $enabled = run_command($systemctl, 'is-enabled', '--quiet', $unit)->{'ok'} ? 1 : 0;
-		my $run = run_command($systemctl, 'disable', '--now', $unit);
+		my $run = run_command($systemctl, 'stop', $unit);
 		if ($run->{'ok'}) {
 			push @stopped, $unit;
 			push @records, { unit => $unit, enabled => $enabled };

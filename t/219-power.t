@@ -164,6 +164,23 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	is(subs::power_plan_tick()->{'skipped'}, 'already applied', 'the tick is idempotent again');
 }
 
+# --- the watch re-asserts management ----------------------------------------
+{
+	my $real_manager = \&subs::power_manager;
+	*subs::power_manager = sub { return { ok => 1, supported => 1, units => ['auto-cpufreq'] }; };
+	my $taken = subs::power_plan_tick();
+	ok($taken->{'dry_run'}, 'a daemon that came back makes the tick apply the plan again');
+	*subs::power_manager = $real_manager;
+
+	# Auto deliberately leaves a competing daemon alone.
+	subs::power_plan_set('battery', 'auto', 85);
+	*subs::power_manager = sub { return { ok => 1, supported => 1, units => ['auto-cpufreq'] }; };
+	my $auto_tick = subs::power_plan_tick();
+	is($auto_tick->{'skipped'}, 'already applied', 'Auto still leaves the daemon alone');
+	*subs::power_manager = $real_manager;
+	subs::power_plan_set('battery', 'performance', 85);
+}
+
 # --- the takeover ledger ----------------------------------------------------
 {
 	unlink "$scratch/takeover.json" if -e "$scratch/takeover.json";
@@ -328,6 +345,9 @@ SH
 	ok($restored->{'ok'}, 'restore runs against systemctl');
 	is_deeply($restored->{'restored'}, [ 'power-profiles-daemon', 'tlp' ], 'both daemons come back');
 	my $calls = read_file($log);
+	like($calls, qr/^stop power-profiles-daemon$/m, 'takeover stops the daemon');
+	like($calls, qr/^stop tlp$/m, 'the disabled one too');
+	unlike($calls, qr/disable/, 'the unit is left enabled for the next boot');
 	like($calls, qr/^enable --now power-profiles-daemon$/m, 'an enabled daemon is enabled and started');
 	like($calls, qr/^start tlp$/m, 'a disabled daemon is only started');
 }

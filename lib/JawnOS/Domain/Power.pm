@@ -893,6 +893,10 @@ sub power_sleep_now {
 # When the boot id changes, take the saved plan back once even with automatic
 # switching off: a reboot is not a plan switch. The same-boot dedupe below still
 # keeps the minute tick from rewriting sysfs.
+#
+# The takeover is a plain stop, so a daemon can return without a cable change.
+# A real plan is re-applied when a competing daemon is running again, which both
+# stops it and restores the CPU it may have changed; Auto still leaves it alone.
 sub power_plan_tick {
 	my $config = &power_config();
 	return { ok => 1, skipped => 'system managed' } unless $config->{'manage'};
@@ -904,6 +908,10 @@ sub power_plan_tick {
 	my $boot = &power_boot_id();
 	return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'})
 		if length $boot && (($last->{'boot'} // '') ne $boot);
+	my $manager = &power_manager();
+	my $active = ref $manager eq 'HASH' && ref $manager->{'units'} eq 'ARRAY' ? $manager->{'units'} : [];
+	return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'})
+		if @{$active} && $wanted->{'plan'} ne 'auto';
 	return { ok => 1, skipped => 'auto is off' } unless $config->{'auto'};
 	return { ok => 1, skipped => 'already applied' }
 		if $last->{'ok'} && ($last->{'source'} || '') eq $source
