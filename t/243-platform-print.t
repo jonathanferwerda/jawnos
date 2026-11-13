@@ -1,7 +1,8 @@
 # tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Domain/Printer.pm lib/JawnOS/Manager/Part02.pm
-# covers:    the print seam: the lpstat/ippfind/scanimage argv and bounds against
-#            fixtures, the ink reply, the safe answers for a machine with no
-#            print stack, and the domain call sites that now ask the seam.
+# covers:    the print seam: the lpstat/ippfind/lpinfo/scanimage argv and bounds
+#            against fixtures, the IPP port probe, the ink reply, the safe
+#            answers for a machine with no print stack, and the domain call
+#            sites that now ask the seam.
 
 use strict;
 use warnings;
@@ -15,7 +16,7 @@ use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 
 use JawnOS::Platform::Print qw(
-	available unsupported printers discover add_queue send pdf_from_html ink
+	available unsupported printers discover probe add_queue send pdf_from_html ink
 	scan_argv parse_lpstat
 );
 
@@ -138,6 +139,54 @@ SH
 		[ 'ipp://192.168.1.50:631/ipp/print', 'ipp://192.168.1.60:631/ipp/print' ],
 		'ippfind answers the IPP URIs, sorted, and drops the rest');
 	is_deeply(recorded($ippfind_log), [ '-T', '5' ], 'ippfind keeps its five-second walk');
+}
+
+# --- lpinfo ---------------------------------------------------------------
+# ippfind lives in cups-ipp-utils and a desktop often does not install it; the
+# CUPS client's own enumeration is the fallback that makes Find printers work
+# there. Only the IPP/CUPS-spooler rows are kept: a dnssd:// or raw URI cannot
+# be added with -m everywhere.
+my $lpinfo_log = "$dir/lpinfo.log";
+my $lpinfo = fake_script('lpinfo', <<"SH");
+printf '%s\\n' "\$@" >> '$lpinfo_log'
+cat <<'OUT'
+network ipp://192.168.1.50:631/ipp/print
+network dnssd://Officejet%20Pro._ipp._tcp.local/%3F
+network socket://192.168.1.50:9100
+direct hp:/usb/HP_LaserJet?serial=X
+file cups-brf:/
+OUT
+SH
+{
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::tool = sub { return $_[0] eq 'lpinfo' ? $lpinfo : ''; };
+	my $found = discover();
+	is_deeply($found, [ 'ipp://192.168.1.50:631/ipp/print' ],
+		'lpinfo answers the IPP URI ippfind did not, and the raw rows are dropped');
+	is_deeply(recorded($lpinfo_log), [ '-v' ], 'lpinfo runs with -v');
+}
+
+# --- the IPP port probe ----------------------------------------------------
+# A printer with Bonjour off is found by asking each live neighbour for IPP; a
+# plain TCP connect is the cheap filter before lpadmin validates the URI.
+{
+	require IO::Socket::INET;
+	my $server = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp',
+		Listen => 1, ReuseAddr => 1,
+	);
+	ok($server, 'a listening socket is made for the probe fixture');
+	my $open_port = $server->sockport;
+	is(probe('127.0.0.1', $open_port), 1, 'a host answering on the port is a candidate');
+	close $server;
+	my $closer = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1', LocalPort => 0, Proto => 'tcp',
+		Listen => 1, ReuseAddr => 1,
+	);
+	my $closed_port = $closer->sockport;
+	close $closer;
+	is(probe('127.0.0.1', $closed_port), 0, 'a closed port is not');
+	is(probe('not-an-address'), 0, 'a non-address is refused');
 }
 
 # --- lpadmin ----------------------------------------------------------------

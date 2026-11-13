@@ -74,21 +74,25 @@ sub cups_printers {
 }
 
 # ---- printers on the network that CUPS does not know yet --------------------
-sub cups_discovered_printers {
+# $deep is the person's own press: it may browse mDNS even when ippfind
+# answered, and when nothing advertises at all it sweeps this machine's
+# subnets. The cheap calls (the Store card, the Dev fill) pass nothing and stay
+# on the stored queues plus ippfind.
+sub cups_discovered_printers($deep = 0) {
 	my %found;
 	foreach my $uri (@{ JawnOS::Platform::Print::discover() }) {
 		$found{$uri} = { uri => $uri, host => $uri, name => $uri };
 	}
-	if (!scalar keys %found) {
+	# mDNS names a printer without CUPS or ippfind being installed, and it is
+	# the only source that knows the printer's own name. A plain fill asks it
+	# only when ippfind found nothing, so the Store page does not pay for the
+	# browse; the explicit press always asks.
+	if ($deep || !scalar keys %found) {
 		my $mdns = eval { &mdns_printers() } || {};
 		foreach my $ip (keys %{ $mdns->{'by_ip'} || {} }) {
 			my $r = $mdns->{'by_ip'}->{$ip} || {};
-			my $port = $r->{'port'} || 631;
-			my $rp = ($r->{'fields'} && $r->{'fields'}->{'rp'}) ? $r->{'fields'}->{'rp'} : 'ipp/print';
-			$rp =~ s{^/+}{};
-			$rp = '' unless $rp =~ /^[A-Za-z0-9._\-\/]+$/;
-			my $uri = 'ipp://' . $ip . ':' . $port . ($rp ne '' ? '/' . $rp : '');
-			next unless &printer_uri_ok($uri);
+			my $uri = &printer_mdns_uri($r);
+			next unless $uri && &printer_uri_ok($uri) && !$found{$uri};
 			$found{$uri} = {
 				uri => $uri,
 				host => $ip,
@@ -96,9 +100,84 @@ sub cups_discovered_printers {
 			};
 		}
 	}
+	# Nothing advertised: a printer with Bonjour off is still on the wireless,
+	# so an explicit Find printers sweeps the house's own subnets and asks each
+	# live host for IPP. Only that press pays for it.
+	if ($deep && !scalar keys %found) {
+		foreach my $uri (@{ &printer_subnet_candidates() }) {
+			next if $found{$uri};
+			$found{$uri} = { uri => $uri, host => $uri, name => $uri };
+		}
+	}
+	# One row per printer: ippfind and mDNS, or _ipp and _ipps, can name the
+	# same host twice, and two queues for one printer is not a choice a person
+	# wants to make. The plain ipp:// URI sorts before ipps://, so it wins.
+	my %by_host;
+	foreach my $uri (sort keys %found) {
+		my ($host) = $uri =~ m{^ipps?://(\[[^\]]+\]|[^/:]+)}i;
+		next unless defined $host && length $host;
+		$by_host{lc $host} ||= $uri;
+	}
 	my %queued = map { ($_->{'uri'} || '') => 1 } @{ &cups_printers() };
-	my @out = grep { !$queued{$_->{'uri'}} } values %found;
+	my @out = grep { !$queued{$_->{'uri'}} } map { $found{$_} } values %by_host;
 	return [ sort { $a->{'uri'} cmp $b->{'uri'} } @out ];
+}
+
+# The IPP URI a printer advertises, from its mDNS record. _ipp._tcp is plain
+# IPP and _ipps._tcp is IPP over TLS; both carry the resource path in the `rp`
+# TXT field (ipp/print when the printer does not say). The raw services
+# (_printer._tcp, _pdl-datastream._tcp) are printers the Store cannot send a
+# PDF to without a driver, so they stay in the Devices list and out of the
+# queue list.
+sub printer_mdns_uri($r) {
+	return '' unless ref $r eq 'HASH';
+	my $service = $r->{'service'} || '_ipp._tcp';
+	return '' unless $service eq '_ipp._tcp' || $service eq '_ipps._tcp';
+	my $ip = $r->{'ip'} || '';
+	return '' unless $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	my $port = $r->{'port'} || 631;
+	return '' unless $port =~ /^\d+$/;
+	my $rp = ($r->{'fields'} && $r->{'fields'}->{'rp'}) ? $r->{'fields'}->{'rp'} : 'ipp/print';
+	$rp =~ s{^/+}{};
+	$rp = '' unless $rp =~ m{^[A-Za-z0-9._\-/]+$};
+	my $scheme = $service eq '_ipps._tcp' ? 'ipps' : 'ipp';
+	return $scheme . '://' . $ip . ':' . $port . ($rp ne '' ? '/' . $rp : '');
+}
+
+# Live hosts on this machine's own subnets that answer IPP on 631, as ipp://
+# URIs. A sweep puts the printer in the neighbour table even when it advertises
+# nothing; the port probe then says which row is the printer. Only private NICs
+# with a real LAN mask are swept, so a tailnet (/32) or a container network
+# never turns Find printers into a wide scan. The sweep itself is bounded by
+# subnet_sweep, and the press is the only caller.
+sub printer_subnet_candidates() {
+	require JawnOS::Platform::Net;
+	my $address = &network_interface_reporter();
+	return [] unless ref $address eq 'HASH' && %{$address};
+	my (%seen, @out);
+	foreach my $nic (sort keys %{$address}) {
+		my $entry = $address->{$nic} || {};
+		my $ip = $entry->{'ip'} || '';
+		my $netmask = $entry->{'netmask'} || '';
+		next unless $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+		next if $ip =~ /^127\./;
+		next unless &ip_is_private($ip);
+		# A point-to-point tunnel reports 255.255.255.255 (or /31); a real
+		# house LAN has a multi-address mask.
+		next unless $netmask =~ /^255\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+		next if $netmask eq '255.255.255.255' || $netmask eq '255.255.255.254';
+		&subnet_sweep($nic, $ip, $netmask);
+		foreach my $line (@{ JawnOS::Platform::Net::neighbour_lines($nic) }) {
+			next if $line =~ /\b(?:FAILED|INCOMPLETE|PROBE)\b/;
+			my ($host) = split /\s+/, $line;
+			next unless defined $host && $host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+			next if $host eq $ip || $host =~ /^127\./;
+			next if $seen{$host}++;
+			next unless JawnOS::Platform::Print::probe($host, 631);
+			push @out, 'ipp://' . $host . ':631/ipp/print';
+		}
+	}
+	return [ sort @out ];
 }
 
 # ---- add the discovered printers as queues ---------------------------------
@@ -109,7 +188,7 @@ sub cups_sync_printers {
 	my %known_uri = map { ($_->{'uri'} || '') => 1 } @{$known};
 	my %taken = map { $_->{'name'} => 1 } @{$known};
 	my (@added, @errors);
-	foreach my $d (@{ &cups_discovered_printers() }) {
+	foreach my $d (@{ &cups_discovered_printers(1) }) {
 		next if $known_uri{$d->{'uri'}};
 		my $name = &printer_queue_clean($d->{'name'} || $d->{'host'} || 'printer');
 		my $base = $name;

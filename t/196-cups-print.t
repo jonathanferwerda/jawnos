@@ -4,6 +4,7 @@
 
 use strict;
 use warnings;
+no warnings 'once';
 use utf8;
 
 use FindBin;
@@ -15,6 +16,7 @@ use RepoSource;
 
 my $root = repo_root();
 require "$root/lib/JawnOS/Domain/Printer2.pm";
+require JawnOS::Platform::Net;
 
 # --- names and URIs ---------------------------------------------------------
 is(subs::printer_queue_clean('HP OfficeJet 3830!'), 'hp-officejet-3830', 'a queue name is made safe');
@@ -58,6 +60,9 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 		return $lpadmin if $name eq 'lpadmin';
 		return '';
 	};
+	# The explicit Find printers press always asks mDNS; this network has no
+	# avahi fixture, so answer empty rather than run a real browse.
+	local *subs::mdns_printers = sub { return { by_ip => {}, by_mac => {} } };
 	my $queues = subs::cups_printers();
 	is(scalar @{$queues}, 2, 'lpstat gives two queues');
 	my ($office) = grep { $_->{'name'} eq 'Officejet' } @{$queues};
@@ -76,6 +81,108 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 	ok($sync->{'ok'}, 'the sync reports ok');
 	is(scalar @{$sync->{'added'}}, 1, 'and adds the discovered printer');
 	is($sync->{'added'}[0]{'uri'}, 'ipp://192.168.1.60:631/ipp/print', 'for the right URI');
+}
+
+# --- mDNS services ----------------------------------------------------------
+# A printer advertises IPP, IPP over TLS, and often only a raw service. The two
+# IPP services are what a queue can be built from; the URI carries the scheme,
+# the advertised port and the rp path. The raw services stay out of the queue
+# list but still label the device in the Devices list (mdns_merge_address).
+{
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::discover = sub { return [] };
+	local *subs::cups_printers = sub { return [] };
+	local *subs::printer_subnet_candidates = sub { die 'no sweep when mDNS answered' };
+	local *subs::mdns_printers = sub {
+		return { by_ip => {
+			'192.168.1.70' => { ip => '192.168.1.70', port => '631', service => '_ipp._tcp',
+				name => 'Officejet', fields => { rp => 'ipp/print' } },
+			'192.168.1.71' => { ip => '192.168.1.71', port => '631', service => '_ipps._tcp',
+				name => 'Laser', fields => {} },
+			'192.168.1.72' => { ip => '192.168.1.72', port => '9100', service => '_pdl-datastream._tcp',
+				name => 'Raw', fields => {} },
+		} };
+	};
+	my $found = subs::cups_discovered_printers(1);
+	is_deeply([ map { $_->{'uri'} } @{$found} ],
+		[ 'ipp://192.168.1.70:631/ipp/print', 'ipps://192.168.1.71:631/ipp/print' ],
+		'the IPP and IPPS records become queues, the raw service does not');
+}
+
+# One printer, one queue: the same host advertised as _ipp and _ipps must not
+# become two choices.
+{
+	no warnings 'redefine';
+	local *subs::cups_printers = sub { return [] };
+	local *subs::printer_subnet_candidates = sub { return [] };
+	local *subs::mdns_printers = sub {
+		return { by_ip => {
+			'192.168.1.73' => { ip => '192.168.1.73', port => '631', service => '_ipps._tcp',
+				name => 'Both', fields => { rp => 'ipp/print' } },
+		} };
+	};
+	local *JawnOS::Platform::Print::discover = sub {
+		return [ 'ipp://192.168.1.73:631/ipp/print' ];
+	};
+	my $found = subs::cups_discovered_printers(1);
+	is(scalar @{$found}, 1, 'a host found twice is listed once');
+	is($found->[0]{'uri'}, 'ipp://192.168.1.73:631/ipp/print', 'the plain IPP URI wins over IPPS');
+}
+
+# --- the deep press ---------------------------------------------------------
+# A printer with Bonjour off advertises nothing, so the explicit press falls
+# back to a subnet sweep. A plain fill (Store card, Dev fill) never pays for it.
+{
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::discover = sub { return [] };
+	local *subs::cups_printers = sub { return [] };
+	local *subs::mdns_printers = sub { return { by_ip => {} } };
+	local *subs::printer_subnet_candidates = sub {
+		return [ 'ipp://192.168.1.80:631/ipp/print' ];
+	};
+	my $found = subs::cups_discovered_printers(1);
+	is_deeply([ map { $_->{'uri'} } @{$found} ],
+		[ 'ipp://192.168.1.80:631/ipp/print' ],
+		'an explicit Find printers sweeps when nothing advertises');
+	local *subs::printer_subnet_candidates = sub { die 'a plain fill must not sweep' };
+	is_deeply(subs::cups_discovered_printers(), [], 'a plain fill never sweeps');
+}
+
+# --- the subnet candidates --------------------------------------------------
+# Only a private NIC with a real LAN mask is swept; the tailnet /32 is not. A
+# live row that answers IPP becomes the ipp:// URI the queue add needs, and a
+# row that is incomplete, this machine itself, or silent on 631 is dropped.
+{
+	no warnings 'redefine';
+	my @swept;
+	local *subs::network_interface_reporter = sub {
+		return {
+			eth0       => { ip => '192.168.1.10', netmask => '255.255.255.0' },
+			tailscale0 => { ip => '100.64.0.4',   netmask => '255.255.255.255' },
+		};
+	};
+	local *subs::subnet_sweep = sub { push @swept, join('|', @_); return };
+	local *subs::ip_is_private = sub { return 1 };
+	local *JawnOS::Platform::Net::neighbour_lines = sub {
+		return [
+			'192.168.1.50 lladdr aa:bb:cc:dd:ee:01 REACHABLE',
+			'192.168.1.60 INCOMPLETE',
+			'192.168.1.10 lladdr aa:bb:cc:dd:ee:02 REACHABLE',
+			'192.168.1.90 lladdr aa:bb:cc:dd:ee:03 REACHABLE',
+		];
+	};
+	my @probed;
+	local *JawnOS::Platform::Print::probe = sub {
+		push @probed, $_[0];
+		return $_[0] eq '192.168.1.50' ? 1 : 0;
+	};
+	my $uris = subs::printer_subnet_candidates();
+	is_deeply($uris, [ 'ipp://192.168.1.50:631/ipp/print' ],
+		'the live host answering IPP becomes a candidate');
+	is_deeply(\@swept, [ 'eth0|192.168.1.10|255.255.255.0' ],
+		'only the real LAN NIC is swept, not the tailnet');
+	is_deeply(\@probed, [ '192.168.1.50', '192.168.1.90' ],
+		'this machine and the incomplete row are not probed');
 }
 
 # A CUPS server that does not answer must not hold the Dev panel open: lpstat

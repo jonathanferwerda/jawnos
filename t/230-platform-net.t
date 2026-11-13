@@ -94,6 +94,8 @@ is_deeply(parse_browse('=;wlan0;IPv4;x;_jawnos._tcp;local;x.local;not-an-ip;1;""
 	'an IPv6 or malformed address is skipped');
 
 is_deeply(browse('not-a-service'), [], 'a malformed service type is refused');
+is_deeply(browse(['_ipp._tcp', 'not-a-service']), [], 'one bad type in a list is refused');
+is_deeply(browse([]), [], 'an empty type list is refused');
 if (available('publish')) {
 	my @argv = publish_argv('_jawnos-house._tcp', 'JawnOS Table (table)', 45545, ['purpose=table']);
 	ok(@argv > 5, 'the publish argv is built when a responder exists');

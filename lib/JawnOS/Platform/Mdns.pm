@@ -57,15 +57,20 @@ sub available {
 	return undef;
 }
 
-# Resolve one service type, as the list the domain report consumes. Linux runs
-# `avahi-browse -rtp`; the timeout keeps a quiet network from holding the pass.
+# Resolve one service type (or a list of them) as the list the domain report
+# consumes. Linux runs `avahi-browse -rtp` once for the whole list; the timeout
+# keeps a quiet network from holding the pass.
 sub browse {
 	my ($type, %opt) = @_;
-	return [] unless defined $type && $type =~ /^_[A-Za-z0-9-]+\._(?:tcp|udp)$/;
+	my @types = ref $type eq 'ARRAY' ? @{$type} : ($type);
+	return [] unless @types;
+	return [] unless !grep {
+		!defined $_ || $_ !~ /^_[A-Za-z0-9-]+\._(?:tcp|udp)$/
+	} @types;
 	return [] unless $^O eq 'linux';
 	my $avahi = available('browse') or return [];
 	my $seconds = (defined $opt{'timeout'} && $opt{'timeout'} > 0) ? int($opt{'timeout'}) : 8;
-	my @command = ($avahi, '-rtp', $type);
+	my @command = ($avahi, '-rtp', @types);
 	if (my $timeout = _tool_path('timeout')) {
 		@command = ($timeout, $seconds, @command);
 	}

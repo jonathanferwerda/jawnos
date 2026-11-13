@@ -680,12 +680,13 @@ sub mdns_browse {
 }
 
 # The printers the local network advertises, keyed by address and by MAC so a
-# scanned device can be recognised either way. _ipp._tcp is the Internet
-# Printing service every modern printer answers; _pdl-datastream (port 9100) is
-# the fallback for one that only speaks raw.
+# scanned device can be recognised either way. One browse asks every service a
+# printer answers on: _ipp._tcp is the Internet Printing service every modern
+# printer speaks, _ipps._tcp is the same over TLS, and _printer._tcp (LPD) and
+# _pdl-datastream._tcp (raw 9100) are what a printer with no IPP advertises, so
+# the Devices list still labels it a printer even when CUPS cannot queue it.
 sub mdns_printers {
-	my $records = &mdns_browse('_ipp._tcp');
-	$records = &mdns_browse('_pdl-datastream._tcp') unless @{$records};
+	my $records = &mdns_browse([qw(_ipp._tcp _ipps._tcp _printer._tcp _pdl-datastream._tcp)]);
 	my (%by_ip, %by_mac);
 	foreach my $r (@{$records}) {
 		$by_ip{$r->{'ip'}} ||= $r;

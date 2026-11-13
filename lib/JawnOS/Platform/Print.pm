@@ -21,7 +21,7 @@ use File::Temp ();
 use Exporter 'import';
 our @EXPORT_OK = qw(
 	available unsupported tool
-	printers discover add_queue send pdf_from_html ink scan_argv
+	printers discover probe add_queue send pdf_from_html ink scan_argv
 	parse_lpstat
 );
 
@@ -150,18 +150,69 @@ sub _uri_ok {
 }
 
 # Printers advertised on the network that CUPS does not know yet, as a sorted
-# list of IPP URIs. ippfind does its own five-second walk. An empty list sends
-# the caller to its own mDNS fallback.
+# list of IPP URIs. ippfind is the fast walk when the machine has it, but it
+# lives in cups-ipp-utils, which a desktop often does not install; `lpinfo -v`
+# is the CUPS client's own enumeration and is there wherever lpstat is, so
+# Find printers still finds a Wi-Fi printer without ippfind. Both walks are
+# bounded. An empty list sends the caller to its own mDNS/sweep fallback.
 sub discover {
-	my $ippfind = tool('ippfind');
-	return [] unless defined $ippfind && length $ippfind;
-	my ($out) = _run($ippfind, '-T', '5');
+	my @uris = _discover_ippfind();
+	@uris = _discover_lpinfo() unless @uris;
 	my %found;
-	foreach my $line (split /\n/, $out) {
+	foreach my $line (@uris) {
 		next unless _uri_ok($line);
 		$found{$line} = 1;
 	}
 	return [ sort keys %found ];
+}
+
+sub _discover_ippfind {
+	my $ippfind = tool('ippfind');
+	return () unless defined $ippfind && length $ippfind;
+	my ($out) = _run($ippfind, '-T', '5');
+	return split /\n/, $out;
+}
+
+# `lpinfo -v` prints one "<class> <uri>" row per device, e.g.
+#   network ipp://192.168.1.50:631/ipp/print
+#   network dnssd://Officejet%20Pro._ipp._tcp.local/%3F...
+# A dnssd URI is CUPS' own name rather than an ipp:// URI with a resolved
+# host, so discover() keeps only the ipp/ipps rows (`_uri_ok`). A raw
+# socket:// or lpd:// printer is left out for the same reason a raw mDNS
+# service is: the Store sends PDFs, and -m everywhere needs IPP.
+sub _discover_lpinfo {
+	my $lpinfo = tool('lpinfo');
+	return () unless defined $lpinfo && length $lpinfo;
+	my ($out) = _run(_bounded(5, $lpinfo, '-v'));
+	my @uris;
+	foreach my $line (split /\n/, $out) {
+		next unless $line =~ /^\s*(?:network|direct|file)\s+(\S+)\s*$/;
+		push @uris, $1;
+	}
+	return @uris;
+}
+
+# Is something answering IPP on this host? A printer with Bonjour off is still
+# in the neighbour table after a subnet sweep, and its IPP port is what tells
+# it from the other appliances on the LAN. A plain TCP connect is enough for
+# discovery: lpadmin -m everywhere is the real validation when the candidate
+# is added, so a host that answers but refuses IPP lands in the caller's error
+# list instead of becoming a queue. One second per host keeps a /24 with a few
+# silent addresses from holding the press.
+sub probe {
+	my ($ip, $port) = @_;
+	return 0 unless defined $ip && $ip =~ /^(?:\d{1,3}\.){3}\d{1,3}$/;
+	$port = 631 unless defined $port && $port =~ /^\d+$/;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(
+		PeerAddr => $ip,
+		PeerPort => $port,
+		Proto    => 'tcp',
+		Timeout  => 1,
+	);
+	return 0 unless $sock;
+	close $sock;
+	return 1;
 }
 
 # Add one queue with `lpadmin -m everywhere`, retried through `sudo -n` when
