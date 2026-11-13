@@ -5688,6 +5688,24 @@ $(document).on('visibilitychange', function() {
 	if (!document.hidden) { musicPicture.queued = false; musicPictureWatch(); }
 });
 
+// A desktop shell runs for days. Chromium can interrupt the audio context
+// without a visibility change; once the element is captured by the graph, that
+// is silence with no sink input at all. While the track is playing, put the
+// context back - no reload, no restart, and never a resume for a pause the
+// person made. Coming back to the window does the same at once.
+function musicContextRecover() {
+	if (!tree || !tree.sound || tree.sound.paused) { return; }
+	var ctx = musicVisual.ctx;
+	if (!ctx || (ctx.state != 'suspended' && ctx.state != 'interrupted')) { return; }
+	musicAudioResume();
+}
+$(window).on('focus pageshow', function() {
+	if (!musicVisual || !musicVisual.ctx) { return; }
+	musicAudioResume();
+	musicVolumeApply();
+});
+setInterval(musicContextRecover, 5000);
+
 // The visualiser's tap. It shares the normaliser's graph so the drawing follows
 // the sound after normalisation, and so neither can capture the element twice.
 function musicVisualAnalyser() {

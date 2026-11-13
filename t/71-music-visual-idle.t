@@ -54,4 +54,10 @@ like($js, qr/\$\(document\)\.on\('visibilitychange', function\(\) \{\n\tif \(!mu
 like($js, qr/musicVisual\.stream\.getTracks\(\)\.forEach\(function\(t\) \{ t\.stop\(\); \}\)/,
 	'a replaced canvas closes the stream that fed it');
 
+# --- an interrupted audio context comes back without a reload ----------------
+like($js, qr/function musicContextRecover\(\) \{[\s\S]{0,300}?tree\.sound\.paused/,
+	'a playing track recovers an interrupted audio context');
+like($js, qr/\$\(window\)\.on\('focus pageshow'/, 'and coming back to the window does it at once');
+like($js, qr/setInterval\(musicContextRecover, 5000\)/, 'on a slow watch, never on a reload');
+
 done_testing();
