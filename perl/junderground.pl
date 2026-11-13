@@ -81,7 +81,8 @@ sub jg_ua {
 
 sub jg_key {
 	my ($c) = @_;
-	my $key = &subs::crest_key_read($c->session('suds'));
+	# Sessions carry only suds_id; the suds itself is resolved server-side.
+	my $key = &subs::crest_key_read(&subs::session_suds($c));
 	return (defined $key && length $key == 32) ? $key : undef;
 }
 
