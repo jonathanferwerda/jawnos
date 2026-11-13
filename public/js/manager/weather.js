@@ -182,6 +182,7 @@ function weatherDeleteState() {
 	var $w = $('.wind[app="weather"]').last();
 	var value = $w.find('#weather_device').val() || '';
 	$w.find('#weather_location_delete').prop('disabled', value.indexOf('loc:') !== 0);
+	$w.find('#weather_location_sources').prop('disabled', !value.length);
 	var $opt = $w.find('#weather_device option:selected');
 	var home = $opt.attr('data-home') === '1';
 	var anchor = $opt.attr('data-anchor') === '1';
@@ -356,15 +357,40 @@ function weatherRender(data) {
 	}
 	add('Observed', weatherObserved(cur));
 	$w.find('#weather_stats').html(stats.join(''));
+	weatherSourceDetail(data);
 	weatherAlerts(data.alerts || []);
 	weatherHours(data.hourly || []);
 	weatherDays(data.daily || [], data.hourly || []);
 	var status = data.provider_label || '';
+	if (data.forecast_provider_label) { status += ' · ' + jawnosT('Forecast from') + ' ' + data.forecast_provider_label; }
 	if (data.location_distance_km) { status += ' · ' + Math.round(data.location_distance_km) + ' km'; }
 	status += ' · ' + jawnosT('Updated') + ' ' + weatherTime(data.fetched_at || Date.now());
 	if (data.hourly_provider) { status += ' · ' + jawnosT('Hourly from') + ' ' + (data.hourly_provider_label || data.hourly_provider); }
 	if (data.daily_provider) { status += ' · ' + jawnosT('Later days from') + ' ' + (data.daily_provider_label || data.daily_provider); }
 	$w.find('#weather_status').text(status);
+}
+
+function weatherSourceDetail(data) {
+	var $w = $('.wind[app="weather"]').last();
+	var parts = [];
+	function line(label, station) {
+		if (!station) { return; }
+		var bits = [];
+		if (station.name) { bits.push(station.name); }
+		if (station.id && station.id !== station.name) { bits.push(station.id); }
+		if (station.distance_km !== undefined && station.distance_km !== null) {
+			bits.push(weatherNum(station.distance_km) + ' km');
+		}
+		parts.push('<span><b>' + weatherEsc(jawnosT(label)) + ':</b> ' + weatherEsc(bits.join(' · ')) + '</span>');
+	}
+	if (data.pws) {
+		line('Barometer', data.pws.barometer);
+		line('Other readings', data.pws.other);
+	}
+	if (data.source_note) {
+		parts.push('<span>' + weatherEsc(data.source_note) + '</span>');
+	}
+	$w.find('#weather_source_detail').html(parts.join('')).toggle(parts.length > 0);
 }
 
 function weatherAlerts(alerts) {

@@ -114,7 +114,8 @@ sub action_52011 {
 		$seen_at = $fix->{'seen'};
 		$location_key = 'dev:' . $sig;
 	}
-	my $weather = eval { &subs::weather_fetch($use_lat, $use_lon, { force => ($c->param('force') ? 1 : 0) }) };
+	my $source = eval { &subs::weather_source_for($location_key) } || { mode => 'closest' };
+	my $weather = eval { &subs::weather_fetch($use_lat, $use_lon, { force => ($c->param('force') ? 1 : 0), source => $source }) };
 	unless ($weather && ref $weather eq 'HASH' && !$weather->{'error'}) {
 		my $why = (ref $weather eq 'HASH' && $weather->{'error'}) || &subs::ui('Weather is unavailable right now.');
 		$log->warn("weather data: fetch for $location_key at $use_lat,$use_lon failed: $why") if $log;
@@ -293,5 +294,36 @@ sub action_52021 {
 	$c->render(json => $result || { error => &subs::ui('That saved location is gone.') });
 }
 
+
+# GET /manager/weather/sources
+sub action_52022 {
+	my $c = shift;
+	my $result = eval {
+		&subs::weather_sources_state({
+			location => $c->param('location') || '',
+			lat => $c->param('lat'),
+			lon => $c->param('lon'),
+			force => ($c->param('force') ? 1 : 0),
+		})
+	};
+	$c->render(json => $result || { error => &subs::ui('Weather sources are unavailable.') });
+}
+
+# POST /manager/weather/sources
+sub action_52023 {
+	my $c = shift;
+	my $result = eval {
+		&subs::weather_sources_save({
+			location => $c->param('location') || '',
+			mode => $c->param('mode') || '',
+			station => $c->param('station') || '',
+			lat => $c->param('lat'),
+			lon => $c->param('lon'),
+			force => ($c->param('force') ? 1 : 0),
+			(defined $c->param('api_key') ? (api_key => $c->param('api_key')) : ()),
+		})
+	};
+	$c->render(json => $result || { error => &subs::ui('The sources were not saved.') });
+}
 
 1;

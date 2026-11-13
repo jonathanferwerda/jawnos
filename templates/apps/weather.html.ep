@@ -37,6 +37,7 @@
 	</div>
 	<div id="weather_actions">
 		<button type="button" id="weather_location_delete" disabled><%= &subs::ui('Delete') %></button>
+		<button type="button" id="weather_location_sources" disabled><%= &subs::ui('Sources') %></button>
 		<button type="button" id="weather_location_anchor" disabled><%= &subs::ui('Anchor') %></button>
 		<button type="button" id="weather_refresh"><%= &subs::ui('Refresh') %></button>
 		<button type="button" id="weather_browser"><%= &subs::ui('Use browser location') %></button>
@@ -46,6 +47,37 @@
 	<input type="hidden" id="weather_lat" value="">
 	<input type="hidden" id="weather_lon" value="">
 	<input type="hidden" id="weather_source" value="">
+	<div id="weather_sources_view">
+		<div class="weather_controls">
+			<b><%= &subs::ui('Weather sources') %></b>
+			<span id="weather_sources_place" class="weather_muted"></span>
+			<span id="weather_sources_status" class="weather_muted"></span>
+		</div>
+		<div id="weather_sources_choices">
+			<label class="weather_source_option"><input type="radio" name="weather_source_mode" value="closest"><span><b><%= &subs::ui('Closest') %></b><br><span class="weather_muted"><%= &subs::ui('Barometer from the nearest station; other readings from the next nearest. The forecast still comes from the usual provider.') %></span></span></label>
+			<label class="weather_source_option"><input type="radio" name="weather_source_mode" value="ec"><span><b><%= &subs::ui('Environment Canada') %></b><br><span class="weather_muted"><%= &subs::ui('Current conditions and forecast from the nearest Environment Canada city page.') %></span></span></label>
+			<label class="weather_source_option"><input type="radio" name="weather_source_mode" value="openmeteo"><span><b><%= &subs::ui('Open-Meteo') %></b><br><span class="weather_muted"><%= &subs::ui('Gridded current conditions and forecast at this coordinate.') %></span></span></label>
+			<label class="weather_source_option"><input type="radio" name="weather_source_mode" value="pws"><span><b><%= &subs::ui('Weather Underground station') %></b><br><span class="weather_muted"><%= &subs::ui('Current readings from one station; the forecast still comes from the usual provider.') %></span></span></label>
+			<label class="weather_source_option"><input type="radio" name="weather_source_mode" value="nws"><span><b><%= &subs::ui('US National Weather Service') %></b><br><span class="weather_muted"><%= &subs::ui('Current conditions and forecast from the nearest National Weather Service office.') %></span></span></label>
+		</div>
+		<div id="weather_sources_picked" class="weather_muted"></div>
+		<div id="weather_sources_station_row">
+			<label for="weather_sources_station"><%= &subs::ui('Station') %></label>
+			<input id="weather_sources_station" placeholder="IWARWI84" autocomplete="off">
+			<span class="weather_muted"><%= &subs::ui('Type a Weather Underground station ID.') %></span>
+		</div>
+		<div id="weather_sources_nearby"></div>
+		<div id="weather_sources_key_row">
+			<label for="weather_sources_key"><%= &subs::ui('Weather Underground API key') %></label>
+			<input type="password" id="weather_sources_key" autocomplete="off" placeholder="<%= &subs::ui('Paste a free key') %>">
+			<button type="button" id="weather_sources_key_clear"><%= &subs::ui('Clear key') %></button>
+			<span id="weather_sources_key_state" class="weather_muted"></span>
+		</div>
+		<div class="weather_controls">
+			<button type="button" id="weather_sources_save"><%= &subs::ui('Save') %></button>
+			<button type="button" id="weather_sources_cancel"><%= &subs::ui('Cancel') %></button>
+		</div>
+	</div>
 	<div id="weather_error" style="display:none;"></div>
 	<div id="weather_tabs">
 		<button type="button" class="weather_tab active" data-tab="now"><%= &subs::ui('Now') %></button>

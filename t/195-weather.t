@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Manager/Part15.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/mapengine/01_engine.js perl/utility_jobs.pl
+# tests-for: lib/JawnOS/Domain/Weather.pm lib/JawnOS/Domain/WeatherHistory.pm lib/JawnOS/Domain/WeatherAutomation.pm lib/JawnOS/Controller/manager_weather.pm lib/JawnOS/Routes/manager_weather.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Manager/Part15.pm templates/apps/weather.html.ep templates/apps/weather/automations.html.ep templates/apps/weather/map.html.ep public/js/manager/weather.js public/js/manager/weather_history.js public/js/manager/weather_automation.js public/js/manager/weather_map.js public/js/manager/weather_sources.js public/js/manager/mapengine/01_engine.js perl/utility_jobs.pl
 # covers:    The Weather app's pure parsers for Environment Canada and Open-Meteo,
 #            the country-to-provider choice, and the app's route/menu/help wiring.
 
@@ -1809,7 +1809,7 @@ like($auto_partial, qr/id="weather_automation_list"/, 'the panel has a rule list
 like($auto_partial, qr/id="weather_automation_check"/, 'the panel can check now');
 my $core_auto = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($core_auto, qr{/js/manager/weather_automation\.js}, 'the lazy app loads the automation script');
-like($core_auto, qr{weather\s*=>\s*\[qw\(/js/manager/weather\.js /js/manager/weather_history\.js /js/manager/weather_automation\.js /js/manager/weather_map\.js\)\]}, 'the automation and map scripts are in the Weather chunk');
+like($core_auto, qr{weather\s*=>\s*\[qw\(/js/manager/weather\.js /js/manager/weather_history\.js /js/manager/weather_automation\.js /js/manager/weather_map\.js /js/manager/weather_sources\.js\)\]}, 'the automation, map and sources scripts are in the Weather chunk');
 my $loader_auto = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader_auto, qr/JawnOS::Domain::WeatherAutomation' for qw\([^)]*weather_observe_record/, 'the domain loader maps the observer');
 my $president = read_file("$root/perl/utility_jobs.pl");
@@ -1935,5 +1935,177 @@ my $defaults_t = read_file("$root/perl/gb/01_state_and_defaults.pl");
 like($defaults_t, qr/'weather_observe'\s*=>\s*\{\s*interval\s*=>\s*60 \* 60/, 'the observer runs every hour');
 like($loader, qr/weather_location_delete/, 'the domain loader maps the delete');
 like($loader, qr/weather_observe_leader/, 'and the household leader');
+
+
+# --- sources: Closest stations, the barometer and the next nearest -----------
+{
+	my $obs = {
+		stationID => 'IWARWI84', neighborhood => 'Warwick',
+		obsTimeUtc => '2026-11-13T15:24:08Z', lat => 43.018, lon => -81.948,
+		humidity => 82, winddir => 46, qcStatus => 1,
+		metric => {
+			temp => 3.7, heatIndex => 3.7, dewpt => 0.8, windSpeed => 12.2,
+			windGust => 14.3, pressure => 1006.77, precipRate => 0, precipTotal => 0,
+		},
+	};
+	my $pws = subs::weather_pws_normalize($obs, 1.9);
+	is($pws->{'id'}, 'IWARWI84', 'the station keeps its id');
+	is($pws->{'name'}, 'Warwick', 'and its neighbourhood');
+	is($pws->{'temperature'}, 3.7, 'the station reads the temperature');
+	is($pws->{'humidity'}, 82, 'and the humidity');
+	is($pws->{'wind_direction'}, 'NE', 'and turns the bearing into a compass point');
+	is($pws->{'pressure_unit'}, 'hPa', 'the barometer stays in hPa for the app');
+	is($pws->{'precip_rate'}, 0, 'the station reads the rain rate');
+	ok((grep { $_ eq 'precip_rate' } @{ $pws->{'measures'} }), 'the measures list names the rain gauge');
+}
+
+{
+	my $now = 1794582000000;
+	my $pick = {
+		barometer => {
+			id => 'IWATFO42', name => 'Watford', distance_km => 0.33,
+			pressure => 1003.05, pressure_unit => 'hPa',
+			observed_at => $now - 60000, observed_text => '2026-11-13T15:24:54Z',
+		},
+		other => {
+			id => 'IWARWI84', name => 'Warwick', distance_km => 1.9,
+			temperature => 3.6, humidity => 82, wind_speed => 10, wind_gust => 13,
+			wind_direction => 'NE', dew_point => 0.8, precip_rate => 0,
+			observed_at => $now - 60000, observed_text => '2026-11-13T15:24:08Z',
+		},
+	};
+	my $base = {
+		provider => 'ec', provider_label => 'Environment Canada',
+		current => { condition => 'Light Rain', temperature => 1.4, pressure => 101.3, pressure_unit => 'kPa', glyph => '🌧️' },
+		hourly => [ { temperature => 1 } ], daily => [],
+	};
+	my $merged = subs::weather_pws_merge($base, $pick);
+	is($merged->{'provider'}, 'closest', 'the merged reading names the stations');
+	is($merged->{'pws'}{'barometer'}{'id'}, 'IWATFO42', 'the nearest station supplies the barometer');
+	is($merged->{'pws'}{'other'}{'id'}, 'IWARWI84', 'the next nearest supplies the other readings');
+	is($merged->{'current'}{'pressure'}, 1003.05, 'the barometer overrides the city pressure');
+	is($merged->{'current'}{'temperature'}, 3.6, 'the other station overrides the city temperature');
+	is($merged->{'current'}{'humidity'}, 82, 'and the humidity');
+	is($merged->{'current'}{'condition'}, 'Cloudy', 'a dry local gauge clears the city rain');
+	is($merged->{'current'}{'glyph'}, '☁️', 'and changes the glyph');
+	is(scalar @{ $merged->{'hourly'} }, 1, 'the forecast rides along unchanged');
+}
+
+{
+	my $now = 1794582000000;
+	my $pick = {
+		barometer => { id => 'B', pressure => 1000, observed_at => $now },
+		other => { id => 'O', temperature => -1, humidity => 90, precip_rate => 2, observed_at => $now },
+	};
+	my $merged = subs::weather_pws_merge({ provider => 'ec', current => { condition => 'Cloudy' } }, $pick);
+	is($merged->{'current'}{'condition'}, 'Snow', 'precipitation below freezing reads as snow');
+	is($merged->{'current'}{'glyph'}, '🌨️', 'with the snow glyph');
+	$pick->{'other'}{'temperature'} = 3;
+	$merged = subs::weather_pws_merge({ provider => 'ec', current => { condition => 'Cloudy' } }, $pick);
+	is($merged->{'current'}{'condition'}, 'Rain', 'precipitation above freezing reads as rain');
+	is($merged->{'current'}{'glyph'}, '🌧️', 'with the rain glyph');
+}
+
+{
+	my $now = 1794582000000;
+	no warnings 'redefine';
+	local *subs::rightNow = sub { $now };
+	local *subs::weather_pws_near = sub {
+		return { at => $now, stations => [
+			{ id => 'NEAR', name => 'Near', distance_km => 0.33 },
+			{ id => 'NEXT', name => 'Next', distance_km => 1.9 },
+		] };
+	};
+	local *subs::weather_pws_current = sub {
+		my ($id) = @_;
+		return {
+			id => $id, name => $id, observed_at => $now - 60000,
+			pressure => ($id eq 'NEAR' ? 1003 : 1006),
+			temperature => ($id eq 'NEXT' ? 3.6 : undef),
+			humidity => ($id eq 'NEXT' ? 82 : undef),
+			precip_rate => ($id eq 'NEXT' ? 0 : undef),
+		};
+	};
+	my $pick = subs::weather_pws_pick(43, -81);
+	is($pick->{'barometer'}{'id'}, 'NEAR', 'the nearest pressure station is the barometer');
+	is($pick->{'other'}{'id'}, 'NEXT', 'the next nearest station supplies everything else');
+}
+
+{
+	my %store = ( 'setting|weather|sources' => Mojo::JSON::encode_json({
+		'loc:home' => { mode => 'ec' },
+		'dev:phone' => { mode => 'pws', station => 'IWARWI84' },
+		'*' => { mode => 'openmeteo' },
+	}) );
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	is(subs::weather_source_for('loc:home')->{'mode'}, 'ec', 'a saved place can choose Environment Canada');
+	is(subs::weather_source_for('dev:phone')->{'mode'}, 'pws', 'a device can name one station');
+	is(subs::weather_source_for('dev:phone')->{'station'}, 'IWARWI84', 'and keeps the station id');
+	is(subs::weather_source_for('loc:other')->{'mode'}, 'openmeteo', 'an unset place follows the house default');
+	delete $store{'setting|weather|sources'};
+	is(subs::weather_source_for('loc:other')->{'mode'}, 'closest', 'and no setting at all is Closest');
+	is(subs::weather_source_for('loc:other')->{'station'}, undef, 'Closest carries no station id');
+}
+
+{
+	my %store;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::weather_pws_api_key = sub { return 'test-key' };
+	local *subs::weather_pws_pick = sub { return { error => 'none' } };
+	my $saved = subs::weather_sources_save({ location => 'loc:home', mode => 'closest', api_key => 'abc123' });
+	is($saved->{'source'}{'mode'}, 'closest', 'Closest saves for the place');
+	is($store{'setting|weather|pws_api_key'}, 'abc123', 'and the key is kept as a setting');
+	my $map = Mojo::JSON::decode_json($store{'setting|weather|sources'});
+	is($map->{'loc:home'}{'mode'}, 'closest', 'the saved map names the place');
+	my $bad = subs::weather_sources_save({ location => 'loc:home', mode => 'pws', station => '' });
+	ok($bad->{'error'}, 'a named station needs an id');
+}
+
+{
+	no warnings 'redefine';
+	local *subs::weather_fetch_raw = sub {
+		return {
+			provider => 'ec', provider_label => 'Environment Canada',
+			current => { condition => 'Light Rain', temperature => 1 },
+		};
+	};
+	local *subs::weather_pws_pick = sub {
+		return {
+			barometer => { id => 'B', pressure => 1003 },
+			other => { id => 'O', temperature => 3.6, humidity => 82, precip_rate => 0 },
+		};
+	};
+	my $out = subs::weather_fetch(43, -81, { source => { mode => 'closest' } });
+	is($out->{'provider'}, 'closest', 'the fetch dispatch reaches the stations');
+	is($out->{'forecast_provider'}, 'ec', 'and remembers the forecast provider');
+	is($out->{'current'}{'condition'}, 'Cloudy', 'and clears the city rain');
+	my $raw = subs::weather_fetch(43, -81, {});
+	is($raw->{'provider'}, 'ec', 'no source keeps the provider');
+}
+
+like($page, qr/id="weather_location_sources"/, 'the toolbar offers Sources beside Delete');
+like($page, qr/name="weather_source_mode"/, 'and the dialog lists the sources');
+like($now_partial, qr/id="weather_source_detail"/, 'the Now card has a line for the stations');
+my $sources_js = read_file("$root/public/js/manager/weather_sources.js");
+like($sources_js, qr/weatherSourcesOpen/, 'the Sources script opens the dialog');
+like($sources_js, qr#/manager/weather/sources#, 'and asks the sources route');
+like($routes_auto, qr{/manager/weather/sources\b}, 'the sources route exists');
+like($controller_auto, qr/sub action_52022\b/, 'and its GET action');
+like($controller_auto, qr/sub action_52023\b/, 'and its POST action');
+like($loader, qr/weather_pws_pick/, 'the domain loader maps the station picker');
+like($loader_auto, qr/weather_sources_save/, 'and the source writer');
 
 done_testing();

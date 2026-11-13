@@ -185,6 +185,7 @@ our @manager_bundle_files = qw(
 	/js/manager/weather_history.js
 	/js/manager/weather_automation.js
 	/js/manager/weather_map.js
+	/js/manager/weather_sources.js
 	/js/manager/clock.js
 	/js/manager/help.js
 	/js/manager/page_agent.js
@@ -223,7 +224,7 @@ our %manager_app_scripts = (
 	people          => [qw(/js/manager/people.js)],
 	notes           => [qw(/js/manager/notes.js)],
 	notifications   => [qw(/js/manager/notifications.js)],
-	weather          => [qw(/js/manager/weather.js /js/manager/weather_history.js /js/manager/weather_automation.js /js/manager/weather_map.js)],
+	weather          => [qw(/js/manager/weather.js /js/manager/weather_history.js /js/manager/weather_automation.js /js/manager/weather_map.js /js/manager/weather_sources.js)],
 	power            => [qw(/js/manager/power.js)],
 	sound            => [qw(/js/manager/sound.js)],
 	search          => [qw(/js/manager/search.js)],

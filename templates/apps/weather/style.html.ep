@@ -213,4 +213,16 @@
 .wind[app="weather"] #weather_measure_form { border: 1px dashed var(--line); border-radius: 9px; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
 .wind[app="weather"] .weather_measure_condition { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .wind[app="weather"] .weather_measure_condition select, .wind[app="weather"] .weather_measure_condition input { max-width: 170px; }
+.wind[app="weather"] #weather.weather_sourcing > :not(#weather_sources_view) { display: none; }
+.wind[app="weather"] #weather_sources_view { display: none; flex-direction: column; gap: 9px; flex: 1 1 auto; min-height: 0; }
+.wind[app="weather"] #weather_sources_view.open { display: flex; }
+.wind[app="weather"] #weather_sources_choices { display: flex; flex-direction: column; gap: 6px; }
+.wind[app="weather"] .weather_source_option { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--line); border-radius: 9px; padding: 8px; }
+.wind[app="weather"] .weather_source_option input { margin-top: 3px; }
+.wind[app="weather"] .weather_source_option b { font-size: 14px; }
+.wind[app="weather"] #weather_sources_station_row, .wind[app="weather"] #weather_sources_key_row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; font-size: 13px; }
+.wind[app="weather"] #weather_sources_station { flex: 0 1 160px; }
+.wind[app="weather"] #weather_sources_key { flex: 1 1 240px; }
+.wind[app="weather"] #weather_sources_nearby { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.wind[app="weather"] #weather_source_detail { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 </style>

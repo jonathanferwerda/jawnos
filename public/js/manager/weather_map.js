@@ -18,6 +18,7 @@ $(document).on('click', '#weather_map_save', function() {
 function weatherPickerOpen() {
 	var $w = $('.wind[app="weather"]').last();
 	if (!$w.length) { return; }
+	if (typeof weatherSourcesClose === 'function') { weatherSourcesClose(); }
 	if (!window.jawnosMap) {
 		$w.find('#weather_status').text(jawnosT('The map is unavailable.'));
 		return;

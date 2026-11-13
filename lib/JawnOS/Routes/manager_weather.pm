@@ -17,6 +17,8 @@ sub routes {
 		[52019, 'post', '/manager/weather/measure_rule', 'action_52019'],
 		[52020, 'post', '/manager/weather/location/delete', 'action_52020'],
 		[52021, 'post', '/manager/weather/location/anchor', 'action_52021'],
+		[52022, 'get', '/manager/weather/sources', 'action_52022'],
+		[52023, 'post', '/manager/weather/sources', 'action_52023'],
 	);
 }
 

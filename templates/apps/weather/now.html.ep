@@ -8,6 +8,7 @@
 	<div id="weather_glyph">🌡️</div>
 	<div id="weather_stats"></div>
 </div>
+<div id="weather_source_detail" class="weather_muted"></div>
 <div id="weather_hourly_title"><%= &subs::ui('Next 24 hours') %></div>
 <div id="weather_hourly"><span class="weather_muted"><%= &subs::ui('Hourly forecast will appear here.') %></span></div>
 <div id="weather_daily_title"><%= &subs::ui('14-day forecast') %></div>

@@ -664,7 +664,312 @@ sub weather_http_get($url, $ua) {
 	return ($json, undef);
 }
 
+# ---- private stations -------------------------------------------------------
+# Environment Canada's city page reads the nearest airport, which in a rural
+# place can be thirty kilometres away. A personal station on Weather Underground
+# is a reading of the ground the person is standing on. "Closest" takes the
+# barometer from the nearest station and the other measures from the next
+# nearest, so a pressure-only station still contributes the reading it has.
+# A saved key is the stable path. With none, read the public key Weather
+# Underground puts in its own page and keep it for a day: the API is the same
+# one the page uses, so Closest works before anyone signs up for a key. A saved
+# key always wins, and the dialog names which one is in use.
+sub weather_pws_api_key() {
+	my $key = eval { &setting_grabber({ app => 'weather', setting => 'pws_api_key' }) };
+	$key = '' unless defined $key;
+	$key =~ s/^\s+|\s+$//g;
+	return $key if length $key;
+	my $cached = eval { &cache_get({ app => 'weather', context => 'wu_key', subcontext => 'public' }) };
+	return $cached->{'key'} if ref $cached eq 'HASH' && ($cached->{'at'} || 0) > &rightNow() - 24 * 3600 * 1000;
+	my $ua = &weather_pws_ua();
+	my $res = eval {
+		$ua->get('https://www.wunderground.com/' => {
+			'User-Agent' => 'JawnOS Weather (weather@jawnos.local)',
+			'Accept' => 'text/html',
+		})->result;
+	};
+	return '' unless $res && $res->is_success;
+	my ($found) = $res->body =~ /"API_KEY":"([A-Za-z0-9]{20,})"/;
+	return '' unless $found;
+	eval { &cache_set({ app => 'weather', context => 'wu_key', subcontext => 'public', warranty => '-1d' }, { at => &rightNow(), key => $found }) };
+	return $found;
+}
+
+sub weather_pws_key_source() {
+	my $saved = eval { &setting_grabber({ app => 'weather', setting => 'pws_api_key' }) };
+	$saved = '' unless defined $saved;
+	$saved =~ s/^\s+|\s+$//g;
+	return 'setting' if length $saved;
+	return 'public' if length &weather_pws_api_key();
+	return '';
+}
+
+sub weather_pws_ua() {
+	return Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 6, request_timeout => 8);
+}
+
+sub weather_pws_near($lat, $lon, $opts = {}) {
+	$opts ||= {};
+	return { error => &subs::ui('A Weather Underground API key is needed for local stations.'), missing_key => 1 }
+		unless length &weather_pws_api_key();
+	return { error => &subs::ui('No coordinate to look up.') } unless defined $lat && defined $lon;
+	my $key = sprintf('%.2f_%.2f', $lat, $lon);
+	my $cached = eval { &cache_get({ app => 'weather', context => 'pws_near', subcontext => $key }) };
+	return $cached if !$opts->{'force'} && ref $cached eq 'HASH' && ($cached->{'at'} || 0) > &rightNow() - 300_000;
+	my $api = &weather_pws_api_key();
+	my $url = 'https://api.weather.com/v3/location/near?geocode=' . $lat . ',' . $lon
+		. '&product=pws&format=json&apiKey=' . $api;
+	my ($json, $error) = &weather_http_get($url, &weather_pws_ua());
+	return { error => $error || &subs::ui('Weather Underground did not answer.') } unless ref $json eq 'HASH';
+	my $loc = ref $json->{'location'} eq 'HASH' ? $json->{'location'} : {};
+	my $list = sub {
+		my ($name) = @_;
+		return ref $loc->{$name} eq 'ARRAY' ? $loc->{$name} : [];
+	};
+	my @ids = @{ $list->('stationId') };
+	my @stations;
+	for my $i (0 .. $#ids) {
+		my $id = $ids[$i] // '';
+		next unless $id =~ /^[A-Za-z0-9]{4,20}$/;
+		my $qc = $list->('qcStatus')->[$i];
+		next if defined $qc && $qc < 0;
+		my $name = $list->('stationName')->[$i] // '';
+		$name = $id unless length $name;
+		my $distance = &weather_number($list->('distanceKm')->[$i]);
+		push @stations, {
+			id => $id,
+			name => $name,
+			distance_km => defined $distance ? 0 + $distance : 0,
+			lat => &weather_number($list->('latitude')->[$i]),
+			lon => &weather_number($list->('longitude')->[$i]),
+			updated => $list->('updateTimeUtc')->[$i],
+		};
+	}
+	@stations = sort { $a->{'distance_km'} <=> $b->{'distance_km'} || $a->{'id'} cmp $b->{'id'} } @stations;
+	my $out = { at => &rightNow(), stations => \@stations };
+	eval { &cache_set({ app => 'weather', context => 'pws_near', subcontext => $key, warranty => '-5m' }, $out) };
+	return $out;
+}
+
+# One observation from Weather Underground in the shape the app already reads.
+# The station's own pressure is kept in hPa; the observer converts it to kPa for
+# a rule, exactly as it does for a national service that sends hPa.
+sub weather_pws_normalize($obs, $distance_km = undef, $name = '') {
+	return undef unless ref $obs eq 'HASH';
+	my $m = ref $obs->{'metric'} eq 'HASH' ? $obs->{'metric'} : {};
+	my $out = {
+		id => $obs->{'stationID'} // '',
+		name => length($obs->{'neighborhood'} // '') ? $obs->{'neighborhood'} : ($name // ''),
+		distance_km => defined $distance_km ? 0 + $distance_km : undef,
+		lat => &weather_number($obs->{'lat'}),
+		lon => &weather_number($obs->{'lon'}),
+		observed_at => &weather_iso_epoch($obs->{'obsTimeUtc'}),
+		observed_text => $obs->{'obsTimeUtc'} // '',
+		temperature => &weather_number($m->{'temp'}),
+		feels_like => &weather_number($m->{'heatIndex'}),
+		humidity => &weather_number($obs->{'humidity'}),
+		wind_speed => &weather_number($m->{'windSpeed'}),
+		wind_gust => &weather_number($m->{'windGust'}),
+		wind_direction => &weather_compass(&weather_number($obs->{'winddir'})),
+		pressure => &weather_number($m->{'pressure'}),
+		pressure_unit => 'hPa',
+		dew_point => &weather_number($m->{'dewpt'}),
+		precip_rate => &weather_number($m->{'precipRate'}),
+		precip_total => &weather_number($m->{'precipTotal'}),
+		uv => &weather_number($obs->{'uv'}),
+		solar_radiation => &weather_number($obs->{'solarRadiation'}),
+		qc_status => $obs->{'qcStatus'},
+		software => $obs->{'softwareType'} // '',
+	};
+	$out->{'feels_like'} = &weather_number($m->{'windChill'}) unless defined $out->{'feels_like'};
+	$out->{'name'} = $out->{'id'} unless length $out->{'name'};
+	my @measures = grep {
+		defined $out->{$_} && (ref $out->{$_} || length "$out->{$_}")
+	} qw(temperature feels_like humidity wind_speed wind_gust wind_direction pressure dew_point precip_rate precip_total uv);
+	$out->{'measures'} = \@measures;
+	return $out;
+}
+
+sub weather_pws_current($id, $opts = {}) {
+	$opts ||= {};
+	return { error => &subs::ui('No station chosen.') } unless defined $id && $id =~ /^[A-Za-z0-9]{4,20}$/;
+	my $cached = eval { &cache_get({ app => 'weather', context => 'pws_current', subcontext => $id }) };
+	return $cached if !$opts->{'force'} && ref $cached eq 'HASH' && ($cached->{'at'} || 0) > &rightNow() - 120_000;
+	my $api = &weather_pws_api_key();
+	return { error => &subs::ui('A Weather Underground API key is needed for local stations.'), missing_key => 1 }
+		unless length $api;
+	my $url = 'https://api.weather.com/v2/pws/observations/current?stationId=' . $id
+		. '&numericPrecision=decimal&format=json&units=m&extraVars=1&apiKey=' . $api;
+	my ($json, $error) = &weather_http_get($url, &weather_pws_ua());
+	return { error => $error || &subs::ui('Weather Underground did not answer.') } unless ref $json eq 'HASH';
+	my $obs = ref $json->{'observations'} eq 'ARRAY' ? $json->{'observations'}->[0] : undef;
+	return { error => &subs::ui('That station has no current reading.') } unless ref $obs eq 'HASH';
+	my $out = &weather_pws_normalize($obs);
+	$out->{'id'} = $id unless length $out->{'id'};
+	$out->{'at'} = &rightNow();
+	eval { &cache_set({ app => 'weather', context => 'pws_current', subcontext => $id, warranty => '-5m' }, $out) };
+	return $out;
+}
+
+sub weather_pws_fresh($obs, $opts = {}) {
+	$opts ||= {};
+	return 0 unless ref $obs eq 'HASH' && !$obs->{'error'};
+	my $max = $opts->{'max_age_ms'} || 90 * 60 * 1000;
+	my $seen = $obs->{'observed_at'} || 0;
+	return ($seen > 0 && $seen >= &rightNow() - $max) ? 1 : 0;
+}
+
+# The nearest station supplies the barometer, the next nearest everything else.
+# A station that has stopped reporting, or one the network flags, is skipped;
+# the next one on the same list takes its role.
+sub weather_pws_pick($lat, $lon, $opts = {}) {
+	$opts ||= {};
+	my $near = &weather_pws_near($lat, $lon, $opts);
+	return $near if $near->{'error'};
+	my @stations = @{ $near->{'stations'} || [] };
+	return { error => &subs::ui('No local station was found.'), near => $near } unless @stations;
+	my $try = $opts->{'try'} || 4;
+	my @fetched;
+	foreach my $station (@stations) {
+		last if @fetched >= $try;
+		my $obs = &weather_pws_current($station->{'id'}, $opts);
+		next if $obs->{'error'};
+		$obs->{'distance_km'} = $station->{'distance_km'} unless defined $obs->{'distance_km'};
+		$obs->{'name'} = $station->{'name'}
+			if !length($obs->{'name'} // '') || $obs->{'name'} eq $obs->{'id'};
+		next unless &weather_pws_fresh($obs, $opts);
+		push @fetched, $obs;
+	}
+	return { error => &subs::ui('No local station has a current reading.'), near => $near } unless @fetched;
+	my ($barometer) = grep { defined $_->{'pressure'} } @fetched;
+	my ($other) = grep {
+		defined $_->{'temperature'} && defined $_->{'humidity'}
+			&& (!$barometer || $_->{'id'} ne $barometer->{'id'})
+	} @fetched;
+	$other ||= $barometer;
+	$barometer ||= $other;
+	$other ||= $fetched[0];
+	$barometer ||= $other;
+	return {
+		at => &rightNow(),
+		barometer => $barometer,
+		other => $other,
+		stations => \@fetched,
+		near => $near,
+	};
+}
+
+sub weather_pws_summary($obs) {
+	return undef unless ref $obs eq 'HASH';
+	return {
+		id => $obs->{'id'} // '',
+		name => $obs->{'name'} // '',
+		distance_km => $obs->{'distance_km'},
+		observed_text => $obs->{'observed_text'} // '',
+		measures => $obs->{'measures'} || [],
+	};
+}
+
+# Fold the local station into the provider's answer. The forecast stays with the
+# national service; only the current measures come from the stations. The local
+# rain gauge decides precipitation, so a city page that reads an airport thirty
+# kilometres away cannot keep the house wet when the station says it is dry.
+sub weather_pws_merge($base, $pick) {
+	return $base unless ref $base eq 'HASH' && ref $pick eq 'HASH';
+	my $out = { %{$base} };
+	my $current = { %{ $base->{'current'} || {} } };
+	my $label = sub {
+		my ($word) = @_;
+		my $shown = eval { &subs::format_name($word) };
+		return defined $shown && length $shown ? $shown : ucfirst($word);
+	};
+	my $bar = $pick->{'barometer'};
+	my $other = $pick->{'other'} || $bar;
+	if ($other) {
+		foreach my $pair (
+			[ 'temperature', 'temperature' ],
+			[ 'feels_like', 'feels_like' ],
+			[ 'humidity', 'humidity' ],
+			[ 'wind_speed', 'wind_speed' ],
+			[ 'wind_gust', 'wind_gust' ],
+			[ 'wind_direction', 'wind_direction' ],
+			[ 'dew_point', 'dew_point' ],
+			[ 'uv', 'uv' ],
+		) {
+			$current->{ $pair->[1] } = $other->{ $pair->[0] }
+				if defined $other->{ $pair->[0] };
+		}
+		$current->{'temperature_unit'} = 'C';
+		$current->{'wind_unit'} = 'km/h';
+		$current->{'observed_at'} = $other->{'observed_at'} if $other->{'observed_at'};
+		$current->{'observed_text'} = $other->{'observed_text'}
+			if length($other->{'observed_text'} // '');
+		if (defined $other->{'precip_rate'}) {
+			my $temp = $current->{'temperature'};
+			if ($other->{'precip_rate'} > 0) {
+				my $word = (defined $temp && $temp <= 0) ? 'snow' : 'rain';
+				$current->{'condition'} = $label->($word);
+				$current->{'glyph'} = $word eq 'snow' ? '🌨️' : '🌧️';
+			}
+			else {
+				my $base_condition = $current->{'condition'} // '';
+				if ($base_condition =~ /rain|shower|drizzle/i) {
+					my $word = $base_condition =~ /thunder|storm/i ? 'thunderstorm' : 'cloudy';
+					$current->{'condition'} = $label->($word);
+					$current->{'glyph'} = $word eq 'thunderstorm' ? '⛈️' : '☁️';
+				}
+			}
+		}
+	}
+	if ($bar && defined $bar->{'pressure'}) {
+		$current->{'pressure'} = $bar->{'pressure'};
+		$current->{'pressure_unit'} = 'hPa';
+	}
+	$out->{'current'} = $current;
+	$out->{'provider'} = 'closest';
+	$out->{'provider_label'} = &subs::ui('Closest stations');
+	$out->{'pws'} = {
+		barometer => &weather_pws_summary($bar),
+		other => &weather_pws_summary($other),
+	};
+	return $out;
+}
+
 sub weather_fetch($lat, $lon, $opts) {
+	$opts ||= {};
+	my $source = $opts->{'source'};
+	$source = { mode => $source } if defined $source && !ref $source;
+	if (ref $source eq 'HASH' && !$opts->{'raw'}) {
+		my $mode = lc($source->{'mode'} // '');
+		if ($mode eq 'closest' || $mode eq 'pws') {
+			my $base = &weather_fetch($lat, $lon, { %{$opts}, raw => 1, source => undef });
+			return $base if ref $base ne 'HASH' || $base->{'error'};
+			my $pick;
+			if ($mode eq 'pws') {
+				my $obs = &weather_pws_current($source->{'station'} // '', { force => $opts->{'force'} });
+				$pick = $obs && !$obs->{'error'}
+					? { barometer => $obs, other => $obs, stations => [$obs] }
+					: { error => ($obs->{'error'} // &subs::ui('That station has no current reading.')), missing_key => $obs->{'missing_key'} };
+			}
+			else {
+				$pick = &weather_pws_pick($lat, $lon, { force => $opts->{'force'} });
+			}
+			if (!$pick || $pick->{'error'}) {
+				$base->{'source_note'} = $pick->{'error'} // &subs::ui('No local station was found.');
+				$base->{'source_missing_key'} = 1 if $pick->{'missing_key'};
+				return $base;
+			}
+			my $out = &weather_pws_merge($base, $pick);
+			$out->{'forecast_provider'} = $base->{'provider'} // '';
+			$out->{'forecast_provider_label'} = $base->{'provider_label'} // '';
+			return $out;
+		}
+		$opts->{'provider'} = $mode if $mode =~ /^(?:ec|nws|openmeteo)$/;
+	}
+	return &weather_fetch_raw($lat, $lon, $opts);
+}
+
+sub weather_fetch_raw($lat, $lon, $opts) {
 	$opts ||= {};
 	my $provider = &weather_provider_for($lat, $lon, $opts->{'provider'});
 	my $key = sprintf('%.2f_%.2f_%s', $lat, $lon, $provider);

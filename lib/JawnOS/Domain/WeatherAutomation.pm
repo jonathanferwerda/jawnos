@@ -692,6 +692,136 @@ sub weather_rule_location_normalize($value) {
 	return '';
 }
 
+# ---- how each place gets its weather --------------------------------------
+# A source is a fact about a place, not a machine: the home plate can read the
+# nearest stations while a phone on a trip reads Open-Meteo. The map is keyed by
+# the same `loc:`/`dev:`/`browser` keys the picker uses; a missing entry means
+# Closest, so every existing place picks up the local stations without a save.
+sub weather_source_key($value) {
+	$value = '' unless defined $value;
+	$value =~ s/^\s+|\s+$//g;
+	return '' unless length $value;
+	return 'dev:' . &subs::signatorial_designer() if $value eq 'me';
+	return 'browser' if $value eq 'browser';
+	return $value if $value =~ /^(?:loc|dev):[A-Za-z0-9_-]+$/;
+	return 'dev:' . $value if $value =~ /^[A-Za-z0-9_-]+$/;
+	return '';
+}
+
+sub weather_sources_map() {
+	my $raw = eval { &subs::setting_grabber({ app => 'weather', setting => 'sources' }) } || '';
+	return $raw if ref $raw eq 'HASH';
+	my $map = eval { decode_json($raw) };
+	return ref $map eq 'HASH' ? $map : {};
+}
+
+sub weather_source_for($key) {
+	my $map = &weather_sources_map();
+	my $wanted = defined $key ? $key : '';
+	my $config = ref $map->{$wanted} eq 'HASH' ? $map->{$wanted} : undef;
+	$config = $map->{'*'} if !$config && ref $map->{'*'} eq 'HASH';
+	$config = { mode => 'closest' } unless $config;
+	my $mode = lc($config->{'mode'} // '');
+	$mode = 'closest' unless $mode =~ /^(?:closest|pws|ec|nws|openmeteo)$/;
+	my %out = ( mode => $mode );
+	if ($mode eq 'pws' && ($config->{'station'} // '') =~ /^[A-Za-z0-9]{4,20}$/) {
+		$out{'station'} = $config->{'station'};
+	}
+	return \%out;
+}
+
+sub weather_source_coordinate($key, $lat = undef, $lon = undef) {
+	if (defined $lat && defined $lon
+		&& "$lat" =~ /^-?\d+(?:\.\d+)?$/ && "$lon" =~ /^-?\d+(?:\.\d+)?$/) {
+		return (0 + $lat, 0 + $lon);
+	}
+	if (($key // '') =~ /^loc:(.+)$/) {
+		my $loc = &weather_location_find($1);
+		return ($loc->{'lat'}, $loc->{'lon'}) if $loc;
+	}
+	elsif (($key // '') =~ /^dev:(.+)$/) {
+		my $fix = eval { &subs::weather_device_fix($1) };
+		return ($fix->{'lat'}, $fix->{'lon'}) if $fix;
+	}
+	return (undef, undef);
+}
+
+sub weather_source_providers() {
+	return [
+		{ mode => 'closest', label => &subs::ui('Closest'), hint => &subs::ui('Barometer from the nearest station; other readings from the next nearest. The forecast still comes from the usual provider.') },
+		{ mode => 'ec', label => &subs::ui('Environment Canada'), hint => &subs::ui('Current conditions and forecast from the nearest Environment Canada city page.') },
+		{ mode => 'openmeteo', label => &subs::ui('Open-Meteo'), hint => &subs::ui('Gridded current conditions and forecast at this coordinate.') },
+		{ mode => 'pws', label => &subs::ui('Weather Underground station'), hint => &subs::ui('Current readings from one station; the forecast still comes from the usual provider.') },
+		{ mode => 'nws', label => &subs::ui('US National Weather Service'), hint => &subs::ui('Current conditions and forecast from the nearest National Weather Service office.') },
+	];
+}
+
+sub weather_sources_state($opts = {}) {
+	$opts ||= {};
+	my $key = &weather_source_key($opts->{'location'});
+	return { error => &subs::ui('Choose a place first.') } unless length $key;
+	my ($lat, $lon) = &weather_source_coordinate($key, $opts->{'lat'}, $opts->{'lon'});
+	my $config = &weather_source_for($key);
+	my $has_key = length(&subs::weather_pws_api_key()) ? 1 : 0;
+	my $key_source = eval { &subs::weather_pws_key_source() } || '';
+	my $default_provider = eval { &subs::weather_provider_for($lat // 0, $lon // 0) } || '';
+	my ($near, $closest);
+	if ($has_key && defined $lat && defined $lon) {
+		my $pick = eval { &subs::weather_pws_pick($lat, $lon, { force => $opts->{'force'} }) };
+		if ($pick && !$pick->{'error'}) {
+			$closest = {
+				barometer => &subs::weather_pws_summary($pick->{'barometer'}),
+				other => &subs::weather_pws_summary($pick->{'other'}),
+			};
+			$near = [ map { &subs::weather_pws_summary($_) } @{ $pick->{'stations'} || [] } ];
+		}
+		elsif ($pick && ref $pick->{'near'} eq 'HASH' && !$pick->{'near'}{'error'}) {
+			$near = [ map {
+				{ id => $_->{'id'}, name => $_->{'name'}, distance_km => $_->{'distance_km'} }
+			} @{ $pick->{'near'}{'stations'} || [] } ];
+		}
+	}
+	return {
+		ok => 1,
+		location => $key,
+		source => $config,
+		has_key => $has_key,
+		key_source => $key_source,
+		default_provider => $default_provider,
+		default_provider_label => eval { &subs::weather_provider_label($default_provider) } || '',
+		providers => &weather_source_providers(),
+		nearest => $near || [],
+		closest => $closest,
+		note => $has_key ? '' : &subs::ui('Add a Weather Underground API key to use local stations.'),
+	};
+}
+
+sub weather_sources_save($opts = {}) {
+	$opts ||= {};
+	my $key = &weather_source_key($opts->{'location'});
+	return { error => &subs::ui('Choose a place first.') } unless length $key;
+	my $mode = lc($opts->{'mode'} // '');
+	return { error => &subs::ui('Choose a source.') } unless $mode =~ /^(?:closest|pws|ec|nws|openmeteo)$/;
+	my $station = $opts->{'station'} // '';
+	$station =~ s/^\s+|\s+$//g;
+	return { error => &subs::ui('Choose a station.') }
+		if $mode eq 'pws' && $station !~ /^[A-Za-z0-9]{4,20}$/;
+	my $map = &weather_sources_map();
+	$map->{$key} = { mode => $mode, ($mode eq 'pws' ? (station => $station) : ()) };
+	&subs::setting_setter({ app => 'weather', setting => 'sources', value => encode_json($map) });
+	if (defined $opts->{'api_key'}) {
+		my $api = $opts->{'api_key'};
+		$api =~ s/^\s+|\s+$//g;
+		&subs::setting_setter({ app => 'weather', setting => 'pws_api_key', value => $api });
+	}
+	return &weather_sources_state({
+		location => $key,
+		lat => $opts->{'lat'},
+		lon => $opts->{'lon'},
+		force => $opts->{'force'},
+	});
+}
+
 sub weather_location_options() {
 	my @out = ({ key => '', label => 'Any location' });
 	my $fixes = eval { &subs::weather_device_fixes(24 * 60 * 60 * 1000) } || [];
@@ -1236,6 +1366,13 @@ sub weather_location_delete($uuid) {
 	return undef unless grep { ($_->{'uuid'} // '') eq $uuid } @{$locations};
 	my @kept = grep { ($_->{'uuid'} // '') ne $uuid } @{$locations};
 	&subs::setting_setter({ app => 'weather', setting => 'locations', value => encode_json \@kept });
+	# The source was a fact about this place; it leaves with it, so a later place
+	# saved on the same ground starts from Closest rather than inheriting a dead
+	# station choice.
+	my $sources = &weather_sources_map();
+	if (delete $sources->{ 'loc:' . $uuid }) {
+		&subs::setting_setter({ app => 'weather', setting => 'sources', value => encode_json $sources });
+	}
 	# A place's readings leave with it. The observer tags each measure with
 	# `place`; readings recorded before places existed used `location`.
 	my $key = 'loc:' . $uuid;
@@ -1431,7 +1568,8 @@ sub weather_observe_now($opts) {
 		$lon = $fix->{'lon'};
 		$opts->{'location'} ||= 'dev:' . $fix->{'signatorial'} if ($fix->{'signatorial'} // '') =~ /^[A-Za-z0-9_-]+$/;
 	}
-	my $weather = eval { &subs::weather_fetch($lat, $lon, { force => ($opts->{'force'} ? 1 : 0) }) };
+	my $source = &weather_source_for($opts->{'location'});
+	my $weather = eval { &subs::weather_fetch($lat, $lon, { force => ($opts->{'force'} ? 1 : 0), source => $source }) };
 	unless (ref $weather eq 'HASH' && !$weather->{'error'}) {
 		my $why = (ref $weather eq 'HASH' && $weather->{'error'}) || &subs::ui('Weather is unavailable right now.');
 		$log->warn("weather observe: fetch for $lat,$lon failed: $why") if $log;
