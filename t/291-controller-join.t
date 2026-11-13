@@ -58,7 +58,8 @@ like($provision, qr{could not copy the first-boot script}, 'the first-boot scrip
 like($provision, qr{/gou_first_boot\.pl}, 'from this tree\'s own scripts directory');
 my $first_boot = slurp('scripts/gou_first_boot.pl');
 like($first_boot, qr/sub _identity_ensure/, 'the first boot mints an identity when none is there');
-like($first_boot, qr/\$report->\{'identity'\} = &_identity_ensure\(\);\s*\n\s*my \$joined = &_join\(\$token\)/, 'and only then introduces itself');
+like($first_boot, qr/_identity_ensure\(\) unless \$token->\{'absent'\};.*?my \$card = undef/s,
+	'a flashed board is itself before anything is written under its name');
 
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');
@@ -67,6 +68,7 @@ like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'th
 
 require 'JawnOS/Manager/Part30.pm';
 require 'JawnOS/Controller/manager_device.pm';
+require 'JawnOS/Controller/manager_controllers.pm';
 # The app hands the package its logger; a probe run has nothing to write, so the
 # level keeps the test's output to its own assertions.
 $Manager::log = Mojo::Log->new(level => 'fatal');
@@ -84,12 +86,14 @@ $Manager::log = Mojo::Log->new(level => 'fatal');
 		return bless {
 			params => $p{'params'} || {},
 			answer => undef,
+			session => $p{'session'} || {},
 			tx => JoinProbeTx->new($p{'remote_address'} || '192.0.2.50'),
 			req => JoinProbeReq->new(Mojo::URL->new('https://192.0.2.10:45545/manager/device/join')),
 		}, $class;
 	}
 	sub param { my ($s, $k) = @_; return $s->{'params'}->{$k} }
 	sub render { my ($s, %o) = @_; $s->{'answer'} = $o{'json'}; return $s }
+	sub session { my ($s, $k) = @_; return $s->{'session'}->{$k} }
 	sub tx { return $_[0]->{'tx'} }
 	sub req { return $_[0]->{'req'} }
 	package main;
@@ -168,6 +172,87 @@ ok($still_there, 'and its token is still waiting');
 clean_join('testjoinsecret0000000000000000000003', '');
 
 clean_join($secret, $SIG);
+
+# The join also files the roster row the Controllers page draws.
+my $joined_roster = subs::db_select('paired_devices', undef, { pubkey => $PUB })->hash || {};
+is($joined_roster->{'name'}, 'gou', 'a joined board is on the controller roster');
+subs::db_query('delete from paired_devices where uuid = ?', $joined_roster->{'uuid'});
+
+# ------------------------------------------------------------- the card choice
+
+# The board reports its card as a per-machine settings row; the page's answer is
+# the same kind of row, and the board applies it on its next boot.
+my $CARD_UUID = 'cardprobeuuid000000000001';
+my $CARD_SIG = 'fedcba9876543210fedcba9876543210';
+
+sub clean_card {
+	subs::db_query('delete from paired_devices where uuid = ?', $CARD_UUID);
+	subs::db_query('delete from remote_machines where uuid = ?', $CARD_UUID);
+	subs::db_query('delete from settings where device = ? and app = ?', $CARD_SIG, '__president');
+}
+
+sub seed_card {
+	my ($state) = @_;
+	&clean_card();
+	subs::db_insert('paired_devices', {
+		uuid => $CARD_UUID, name => 'gou', kind => 'controller', status => 'active',
+		pubkey => "-----BEGIN PUBLIC KEY-----\ncardprobe\n-----END PUBLIC KEY-----\n", privilege => 'citizen',
+		timestamp => subs::rightNow(), server_time => subs::rightNow(),
+	});
+	# The machine row is the one that carries the signatorial; the roster row is
+	# filed under the same uuid, which is how the page finds it.
+	subs::db_insert('remote_machines', {
+		uuid => $CARD_UUID, signatorial => $CARD_SIG, hostname => 'gou',
+		ip => '192.0.2.61', status => 'connected', connection => 'active',
+		timestamp => subs::rightNow(), server_time => subs::rightNow(),
+	});
+	subs::db_insert('settings', {
+		uuid => subs::random_string_creator(25), app => '__president',
+		setting => 'card_finding', device => $CARD_SIG,
+		value => $JSON->encode({ state => $state, fstype => 'exfat', size => 63864569856, label => 'CARD' }),
+		timestamp => subs::rightNow(), server_time => subs::rightNow(),
+	});
+}
+
+sub choose_card {
+	my ($choice, $session) = @_;
+	my $probe = JoinProbe->new(
+		session => ($session || { authentication => 'approved', privilege => 'citizen' }),
+		params => { uuid => $CARD_UUID, choice => $choice },
+	);
+	Manager::action_54011($probe);
+	return $probe->{'answer'};
+}
+
+&seed_card('foreign');
+my $adopted = &choose_card('adopt');
+ok($adopted->{'ok'}, 'a card with another filesystem can be adopted');
+my $choice_row = subs::db_select('settings', undef, { app => '__president', setting => 'card_choice', device => $CARD_SIG })->hash || {};
+is($choice_row->{'value'}, 'adopt', 'the answer is kept where the board reads it');
+
+&seed_card('blank');
+ok((&choose_card('format'))->{'ok'}, 'a card with no filesystem can be formatted');
+
+&seed_card('blank');
+is((&choose_card('adopt'))->{'error'}, 'a card with no filesystem can only be formatted',
+	'a blank card cannot be adopted');
+
+&seed_card('archive');
+is((&choose_card('format'))->{'error'}, 'that card already holds the archive',
+	'the card holding the archive is never formatted from here');
+
+&seed_card('foreign');
+is((&choose_card('nonsense'))->{'error'}, 'choose adopt or format', 'only the two answers are accepted');
+is((&choose_card('adopt', { authentication => 'guest', privilege => 'guest' }))->{'error'}, 'not allowed',
+	'a session below the house cannot answer for a card');
+&clean_card();
+
+# The board side of the same conversation: the plan honours the answer.
+my $boot_js = slurp('scripts/gou_first_boot.pl');
+like($boot_js, qr/sub _card_choice_read/, 'the board reads the answer');
+like($boot_js, qr/sub _card_report/, 'and reports what the slot held');
+like($boot_js, qr/_card_setting_write\('card_finding'/, 'the finding is a per-machine setting');
+like($boot_js, qr/sub _card_setting_clear/, 'the answer is spent once applied');
 
 # --------------------------------------------------------------- the board side
 

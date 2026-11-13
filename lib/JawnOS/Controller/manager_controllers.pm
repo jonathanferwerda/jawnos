@@ -274,7 +274,7 @@ sub action_54005 {
 	my $c = shift;
 	&app_schema_ensure();
 	my $uuid = $c->param('uuid') || '';
-	my ($device, $machine) = &_controller_resolve($uuid);
+	my ($device, $machine, $key) = &_controller_resolve($uuid);
 	unless ($device || $uuid eq 'local') {
 		return $c->render(json => { ok => 0, error => 'no controller' });
 	}
@@ -297,7 +297,71 @@ sub action_54005 {
 		archive => (($machine->{'archive'} // '') eq '1' ? 1 : 0),
 		folders => $folders,
 		present => (($is_this && length $dir && -d $dir) ? 1 : 0),
+		card => &_controller_card_finding($device, $machine, $key),
 	});
+}
+
+# What the controller's own first boot saw in its card slot, and the answer it
+# is waiting for. The board writes the finding as a per-machine settings row
+# under its signatorial (see scripts/gou_first_boot.pl); the row syncs, so this
+# page can show it without the card being anywhere near this computer.
+sub _controller_card_finding {
+	my ($device, $machine, $key) = @_;
+	my $sig = ($device && $device->{'signatorial'}) || ($machine && $machine->{'signatorial'}) || $key || '';
+	return undef unless length $sig;
+	my $row = &subs::db_select('settings', undef, { app => '__president', setting => 'card_finding', device => $sig })->hash;
+	my $finding = eval { decode_json($row->{'value'} // '') } || {};
+	return undef unless ref $finding eq 'HASH' && length($finding->{'state'} || '');
+	my $choice = &subs::db_select('settings', undef, { app => '__president', setting => 'card_choice', device => $sig })->hash;
+	$finding->{'choice'} = $choice ? ($choice->{'value'} // '') : '';
+	return $finding;
+}
+
+# POST /manager/controllers/card
+# The person's answer to that finding: adopt the card as it stands, or format
+# it. The answer is written as the same kind of per-machine setting, and the
+# board applies it the next time it starts. A card that already holds an
+# archive is never formatted: the answer would throw the house's files away.
+sub action_54011 {
+	my $c = shift;
+	&app_schema_ensure();
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	my $choice = $c->param('choice') // '';
+	$choice = '' unless $choice eq 'adopt' || $choice eq 'format';
+	return $c->render(json => { ok => 0, error => 'choose adopt or format' }) unless length $choice;
+	my $uuid = $c->param('uuid') || '';
+	my ($device, $machine, $key) = &_controller_resolve($uuid);
+	unless ($device || $uuid eq 'local') {
+		return $c->render(json => { ok => 0, error => 'no controller' });
+	}
+	my $finding = &_controller_card_finding($device, $machine, $key);
+	my $state = ($finding && length($finding->{'state'} || '')) ? $finding->{'state'} : '';
+	return $c->render(json => { ok => 0, error => 'this controller has not reported a card' }) unless length $state;
+	return $c->render(json => { ok => 0, error => 'that card already holds the archive' })
+		if $choice eq 'format' && $state eq 'archive';
+	return $c->render(json => { ok => 0, error => 'a card with no filesystem can only be formatted' })
+		if $choice eq 'adopt' && $state eq 'blank';
+	my $sig = ($device && $device->{'signatorial'}) || ($machine && $machine->{'signatorial'}) || $key || '';
+	my $now = &subs::rightNow();
+	my $row = &subs::db_select('settings', undef, { app => '__president', setting => 'card_choice', device => $sig })->hash;
+	if ($row) {
+		&subs::db_update('settings', { value => $choice, server_time => $now }, { uuid => $row->{'uuid'} });
+	}
+	else {
+		&subs::db_insert('settings', {
+			uuid => &subs::random_string_creator(25),
+			app => '__president',
+			setting => 'card_choice',
+			device => $sig,
+			value => $choice,
+			timestamp => $now,
+			server_time => $now,
+		});
+	}
+	$log->info('controller card: ' . (($device && $device->{'name'}) || $uuid) . ' choice ' . $choice);
+	$c->render(json => { ok => 1, uuid => $uuid, choice => $choice });
 }
 
 # POST /manager/controllers/storage

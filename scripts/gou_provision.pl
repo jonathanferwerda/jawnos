@@ -482,6 +482,10 @@ Before=jawnos.service
 
 [Service]
 Type=oneshot
+# The mount and the mkfs need root, but the files this pass writes belong to the
+# board's own account: HOME is that account so `~` in the script names its home,
+# not root's.
+Environment=HOME=/home/jawn
 ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/gou_first_boot.pl
 RemainAfterExit=yes
 

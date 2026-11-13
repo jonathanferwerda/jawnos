@@ -15,6 +15,7 @@ sub routes {
 	[54008, 'post', '/manager/controllers/roms/copy', 'action_54008'],
 	[54009, 'post', '/manager/controllers/new/scan',  'action_54009'],
 	[54010, 'post', '/manager/controllers/new/flash', 'action_54010'],
+	[54011, 'post', '/manager/controllers/card',      'action_54011'],
 	);
 }
 

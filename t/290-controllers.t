@@ -32,15 +32,16 @@ ok($routes =~ m{/manager/controllers/new/scan}, 'the New scan route');
 ok($routes =~ m{/manager/controllers/new/flash}, 'the New flash route');
 ok($routes =~ m{/manager/controllers/storage}, 'the storage route');
 ok($routes =~ m{/manager/controllers/roms}, 'the roms route');
+ok($routes =~ m{/manager/controllers/card}, 'the card choice route');
 
-foreach my $id (54001 .. 54010) {
+foreach my $id (54001 .. 54011) {
 	like($routes, qr/\[\Q$id\E,\s*'\w+',\s*'\/manager\/controllers[^']*',\s*'action_\Q$id\E'\]/,
 		"row $id names action_$id");
 }
 
 my $controller = slurp('lib/JawnOS/Controller/manager_controllers.pm');
 like($controller, qr/^package Manager;/m, 'the controller is in package Manager');
-foreach my $id (54001 .. 54010) {
+foreach my $id (54001 .. 54011) {
 	like($controller, qr/^sub action_\Q$id\E\b/m, "action_$id is defined");
 }
 
@@ -121,6 +122,14 @@ like($controllers_js, qr/if \(!ssid\) \{/, 'a name without a password is refused
 like($controllers_js, qr/if \(!psk\) \{/, 'a password without a name is refused');
 like($controllers_js, qr/\$\('#controllers_wifi_psk'\)\.val\(''\)/, 'the password is cleared once the board is flashed');
 like($controllers_js, qr/var controllerNewFields = \{ wifi: 'Wi-Fi network'/, 'the filled-in list names the network in words');
+
+# The card the controller found: the page draws it, offers the choice, and asks
+# once more before formatting.
+like($controllers_js, qr/function controllerCardDraw\(data\)/, 'the card the controller found is drawn');
+like($controllers_js, qr{url: '/manager/controllers/card'}, 'and its answer is posted');
+like($controllers_js, qr/jawnosConfirm\(controllerT\('Format the card in this controller/, 'formatting is asked twice');
+like($controller, qr/sub _controller_card_finding/, 'the page reads what the board reported');
+like($controller, qr/that card already holds the archive/, 'the card holding the archive is never formatted from the page');
 
 # The storage walkthrough steps over the same answer Save produces, and the
 # route now says which of the eight folders are actually on the card.

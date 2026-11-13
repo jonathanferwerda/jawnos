@@ -101,6 +101,9 @@ sub _fail {
 # A token is the house's word that a citizen pressed New for this board. It is
 # read once and never rewritten: the boot either redeems it or leaves it for a
 # later boot, and a token the house has already spent comes back as an error.
+# A token is the house's word that a citizen pressed New for this board. It is
+# read once and never rewritten: the boot either redeems it or leaves it for a
+# later boot, and a token the house has already spent comes back as an error.
 sub _token_read {
 	my ($path) = @_;
 	$path = $DEFAULT_TOKEN unless defined $path && length $path;
@@ -209,8 +212,10 @@ sub _truthy {
 # What to do with one card. Pure: the caller has already probed it, so the
 # rules can be read and tested without a block device.
 #   adopt   the card is usable where it is; scaffold the eight folders
-#   format  the card has no usable filesystem and --format was given
-#   leave   somebody else's filesystem, and no --format
+#   format  the card has no usable filesystem, or a person said so
+#   leave   another filesystem, and nobody has chosen yet
+# `format` is the command-line switch; `choice` is the person's answer from the
+# house's Controllers page, and the answer outranks the switch.
 sub _card_plan {
 	my ($card, $opts) = @_;
 	$opts ||= {};
@@ -218,14 +223,16 @@ sub _card_plan {
 	my $fs = lc($card->{'fstype'} // '');
 	my $state = !length $fs ? 'blank'
 		: ($fs =~ /^(?:ext[234]|xfs|btrfs)$/ ? 'archive' : 'foreign');
-	my $action = 'adopt';
-	$action = 'format' if $state eq 'blank' && $opts->{'format'};
-	$action = 'format' if $state eq 'foreign' && $opts->{'format'};
-	$action = 'leave' if $state eq 'blank' && !$opts->{'format'};
-	$action = 'leave' if $state eq 'foreign' && !$opts->{'format'};
+	my $choice = ($opts->{'choice'} // '') =~ /^(adopt|format)$/ ? $opts->{'choice'} : '';
+	my $action;
+	if ($state eq 'archive') { $action = 'adopt'; }
+	elsif ($choice eq 'format' || $opts->{'format'}) { $action = 'format'; }
+	elsif ($choice eq 'adopt') { $action = 'adopt'; }
+	else { $action = 'leave'; }
 	return {
 		state => $state,
 		action => $action,
+		choice => $choice,
 		description => (
 			$state eq 'archive' ? 'a card ready to hold the archive'
 			: $state eq 'blank' ? 'a card with no filesystem'
@@ -235,7 +242,67 @@ sub _card_plan {
 		fstype => $fs,
 		size => $card->{'size'},
 		mount => $card->{'mount'},
+		label => $card->{'label'},
 	};
+}
+
+# The finding and the choice ride the settings table, which is this machine's
+# own row for a setting and is synced, so the Controllers page on the house can
+# read what the board found and answer it. The board writes under its own
+# signatorial, which is how every per-device setting already travels.
+sub _card_setting_write {
+	my ($setting, $value) = @_;
+	my $sig = &subs::signatorial_designer() || '';
+	return { ok => 0, error => 'this machine has no signatorial yet' } unless length $sig;
+	my $now = &subs::rightNow();
+	my $row = &subs::db_select('settings', undef, { app => '__president', setting => $setting, device => $sig })->hash;
+	if ($row) {
+		&subs::db_update('settings', { value => $value, server_time => $now }, { uuid => $row->{'uuid'} });
+	}
+	else {
+		&subs::db_insert('settings', {
+			uuid => &subs::random_string_creator(25),
+			app => '__president',
+			setting => $setting,
+			device => $sig,
+			value => $value,
+			timestamp => $now,
+			server_time => $now,
+		});
+	}
+	return { ok => 1 };
+}
+
+sub _card_setting_clear {
+	my ($setting) = @_;
+	my $sig = &subs::signatorial_designer() || '';
+	return unless length $sig;
+	&subs::db_delete('settings', { app => '__president', setting => $setting, device => $sig });
+}
+
+# The Controllers page can only offer a choice if it is told what the slot holds.
+# One settings row per machine, written on every pass that saw a card; the page
+# answers it through card_choice.
+sub _card_report {
+	my ($plan, $prepared) = @_;
+	my $finding = {
+		state => $plan->{'state'},
+		action => $plan->{'action'},
+		fstype => $plan->{'fstype'} || '',
+		size => $plan->{'size'} || 0,
+		label => $plan->{'label'} || '',
+		dev => $plan->{'dev'} || '',
+	};
+	$finding->{'archive_dir'} = $prepared->{'archive_dir'} if $prepared && $prepared->{'archive_dir'};
+	my $wrote = &_card_setting_write('card_finding', $JSON->encode($finding));
+	return $wrote->{'ok'} ? 1 : 0;
+}
+
+sub _card_choice_read {
+	my $sig = &subs::signatorial_designer() || '';
+	return '' unless length $sig;
+	my $value = eval { &subs::setting_grabber({ app => '__president', setting => 'card_choice', device => $sig }) } || '';
+	return $value =~ /^(adopt|format)$/ ? $value : '';
 }
 
 # ---------------------------------------------------------------------------
@@ -269,7 +336,7 @@ sub _config_archive_dir {
 }
 
 sub _fstab_add {
-	my ($dev, $mount) = @_;
+	my ($dev, $mount, $fstype) = @_;
 	my $path = '/etc/fstab';
 	my $raw = '';
 	if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh; }
@@ -279,7 +346,10 @@ sub _fstab_add {
 	if (open(my $fh, '-|', 'blkid', '-s', 'UUID', '-o', 'value', $dev)) { $uuid = <$fh> // ''; close $fh; }
 	$uuid =~ s/\s+$//;
 	return { ok => 0, error => 'the card has no UUID' } unless length $uuid;
-	my $line = 'UUID=' . $uuid . ' ' . $mount . ' ext4 defaults,nofail,x-systemd.device-timeout=10 0 2' . "\n";
+	# A card adopted with its own filesystem keeps its own type in fstab; an
+	# entry that named ext4 for an exfat card would fail to mount on the reboot.
+	my $type = ($fstype // '') =~ /^(?:ext[234]|xfs|btrfs|vfat|exfat|ntfs)$/ ? $fstype : 'auto';
+	my $line = 'UUID=' . $uuid . ' ' . $mount . ' ' . $type . ' defaults,nofail,x-systemd.device-timeout=10 0 2' . "\n";
 	$raw .= "\n" unless $raw =~ /\n$/ || !length $raw;
 	my $ok = open(my $out, '>>', $path);
 	return { ok => 0, error => '/etc/fstab could not be written' } unless $ok;
@@ -305,7 +375,7 @@ sub _card_adopt {
 		$mounted_here = 1;
 	}
 	$plan->{'archive_dir'} = $where;
-	my $fstab = &_fstab_add($plan->{'dev'}, $where);
+	my $fstab = &_fstab_add($plan->{'dev'}, $where, $plan->{'fstype'});
 	push @done, 'fstab' if $fstab->{'ok'} && !$fstab->{'already'};
 	my $scaffold = eval { &subs::archive_scaffolder($where) } || {};
 	push @done, 'folders' if $scaffold->{'enabled'};
@@ -342,6 +412,20 @@ sub _card_format {
 # here is a board that has never had one - mint it before anything reads the
 # house's rows. An identity that is already there is left alone: a second boot
 # after a refused join must not churn it.
+# The unit runs as root (mount and mkfs need it) with HOME pointing at the
+# board's own account, so the files this pass writes in that home - the identity,
+# the peer key - have to end up owned by the account the service runs as. The
+# tree's own owner is that account.
+sub _own_by_tree {
+	my @paths = @_;
+	my @tree = stat(Cwd::abs_path('.'));
+	return unless @tree;
+	foreach my $path ( @paths ) {
+		next unless defined $path && length $path && -e $path;
+		chown($tree[4], $tree[5], $path);
+	}
+}
+
 sub _identity_ensure {
 	foreach my $file (&subs::signatorial_identity_file(), &subs::signatorial_identity_mirror()) {
 		next unless defined $file && length $file;
@@ -349,6 +433,7 @@ sub _identity_ensure {
 	}
 	my $fresh = join '', map { sprintf '%x', int(rand(16)) } 1 .. 32;
 	&subs::signatorial_identity_write($fresh);
+	&_own_by_tree(&subs::signatorial_identity_file(), &subs::signatorial_identity_mirror());
 	return 'minted';
 }
 
@@ -445,6 +530,13 @@ if ($token->{'error'}) {
 }
 $report->{'token'} = $token->{'absent'} ? 'none' : 'found';
 
+# A board that was just flashed has no identity of its own yet (the provisioner
+# removes the image's), and both the card's finding and the join are written
+# under it. An unflashed machine keeps the identity it has.
+unless ($opt{'dry_run'}) {
+	$report->{'identity'} = &_identity_ensure() unless $token->{'absent'};
+}
+
 my $card = undef;
 unless ($opt{'no_card'}) {
 	my @candidates = &_card_candidates(&_lsblk());
@@ -457,10 +549,12 @@ unless ($opt{'no_card'}) {
 		last;
 	}
 	if ($chosen) {
-		my $plan = &_card_plan($chosen, { format => $opt{'format'} });
+		my $choice = $opt{'dry_run'} ? '' : &_card_choice_read();
+		my $plan = &_card_plan($chosen, { format => $opt{'format'}, choice => $choice });
 		$report->{'card'} = $plan;
+		my $prepared = undef;
 		if (!$opt{'dry_run'} && $plan->{'action'} ne 'leave') {
-			my $prepared = $plan->{'action'} eq 'format'
+			$prepared = $plan->{'action'} eq 'format'
 				? &_card_format($plan, { mount => $opt{'mount'} })
 				: &_card_adopt($plan, { mount => $opt{'mount'} });
 			if (!$prepared->{'ok'}) {
@@ -470,10 +564,16 @@ unless ($opt{'no_card'}) {
 			$report->{'card'}->{'done'} = $prepared->{'done'};
 			$report->{'card'}->{'archive_dir'} = $prepared->{'archive_dir'};
 			$report->{'card'}->{'fstab_error'} = $prepared->{'fstab_error'} if $prepared->{'fstab_error'};
+			# The answer has been applied; a later boot must not apply it again.
+			&_card_setting_clear('card_choice') if length $choice;
+		}
+		if (!$opt{'dry_run'}) {
+			$report->{'card'}->{'reported'} = &_card_report($plan, $prepared);
 		}
 	}
 	else {
 		$report->{'card'} = { state => 'none' };
+		&_card_setting_clear('card_finding') unless $opt{'dry_run'};
 	}
 }
 
@@ -482,11 +582,14 @@ if (!$opt{'no_join'} && !$token->{'absent'} && !$token->{'error'}) {
 		$report->{'join'} = 'would redeem at ' . ($token->{'house'}->{'manager'} || '');
 	}
 	else {
-		# The board must already be itself before it introduces itself.
-		$report->{'identity'} = &_identity_ensure();
+		# The board is itself before it introduces itself.
+		$report->{'identity'} //= &_identity_ensure();
 		my $joined = &_join($token);
 		$report->{'join'} = $joined;
 		if ($joined->{'ok'}) {
+			# The first signed request made the peer key; the service runs as the
+			# account that owns the tree and must be able to read it.
+			&_own_by_tree(&subs::peer_key_paths());
 			unlink($token->{'path'}) if -f $token->{'path'};
 			$report->{'token'} = 'redeemed';
 		}

@@ -256,6 +256,11 @@ function controllerStorageDraw(data) {
 	controllerStorageAnswer = data;
 	var box = $('#controllers_storage').empty();
 
+	// The card the controller found is the first thing the section says: it may
+	// be holding a decision nobody has made yet.
+	var card = controllerCardDraw(data);
+	if (card) { box.append(card); }
+
 	var field = $('<div class="controller_field"></div>');
 	field.append($('<label class="controller_field_label" for="controllers_archive_dir"></label>').text(controllerT('Archive folder')));
 	field.append($('<input type="text" id="controllers_archive_dir">')
@@ -295,6 +300,89 @@ function controllerStorageDraw(data) {
 	}
 	box.append(grid);
 	controllerWalkthroughDraw(data);
+}
+
+// ---- the card the controller found -----------------------------------------
+// The board reports what its slot held on its first boot, and the person's
+// answer here is applied the next time the board starts. A card that already
+// holds the archive needs no choice, and a card with another filesystem is
+// never formatted by this page without being asked twice.
+var controllerCardStates = {
+	archive: 'A card is ready and holds the archive.',
+	foreign: 'The card holds another filesystem. Adopt it as it is, or format it.',
+	blank: 'The card has no filesystem. It can only be formatted.',
+	none: 'No card is in the slot.'
+};
+
+function controllerCardDraw(data) {
+	var card = data && data.card;
+	if (!card || !card.state) { return null; }
+	var box = $('<div class="controller_card_finding"></div>');
+	box.append($('<div class="controller_group_title"></div>').text(controllerT('Card')));
+	box.append($('<div class="controller_new_state"></div>').text(controllerT(controllerCardStates[card.state] || 'The card could not be read.')));
+	var details = [];
+	if (card.fstype) { details.push(String(card.fstype)); }
+	var size = Number(card.size);
+	if (isFinite(size) && size > 0) { details.push((size / 1073741824).toFixed(1) + ' GB'); }
+	if (card.label) { details.push(String(card.label)); }
+	if (card.archive_dir) { details.push(String(card.archive_dir)); }
+	if (details.length) {
+		box.append($('<div class="controller_new_detail"></div>').text(details.join(' \u00b7 ')));
+	}
+	var buttons = $('<div class="controller_new_actions"></div>');
+	if (card.state === 'foreign') {
+		buttons.append($('<button type="button" class="controller_card_choice" data-choice="adopt"></button>').text(controllerT('Adopt the card')));
+	}
+	if (card.state === 'foreign' || card.state === 'blank') {
+		buttons.append($('<button type="button" class="controller_card_choice" data-choice="format"></button>').text(controllerT('Format the card')));
+	}
+	if (buttons.children().length) { box.append(buttons); }
+	if (card.choice) {
+		box.append($('<div class="controller_note controller_card_pending"></div>')
+			.text(controllerT('{0} is set. The controller applies it the next time it starts.', controllerT(card.choice === 'format' ? 'Format' : 'Adopt'))));
+	}
+	box.append($('<div id="controllers_card_status" class="controller_status" aria-live="polite"></div>'));
+	return box;
+}
+
+$(document).on('click', '.controller_card_choice', function() {
+	var button = $(this);
+	var choice = button.attr('data-choice') || '';
+	if (choice !== 'adopt' && choice !== 'format') { return; }
+	if (choice === 'format') {
+		jawnosConfirm(controllerT('Format the card in this controller? Everything on it is erased.'), function() {
+			controllerCardChoose(choice, button);
+		});
+		return;
+	}
+	controllerCardChoose(choice, button);
+});
+
+function controllerCardChoose(choice, button) {
+	if (!controllerSelection || !controllerSelection.uuid) { return; }
+	button.prop('disabled', true);
+	controllerStatus('controllers_card_status', controllerT(choice === 'format' ? 'Formatting...' : 'Adopting...'), false);
+	$.ajax({
+		url: '/manager/controllers/card',
+		type: 'POST',
+		data: { uuid: controllerSelection.uuid, choice: choice, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			button.prop('disabled', false);
+			if (!response || !response.ok) {
+				controllerStatus('controllers_card_status', (response && response.error) ? String(response.error) : controllerT('The choice was not saved.'), true);
+				return;
+			}
+			// No redraw: the answer is not the board's state until it starts again,
+			// and a redraw would drop the sentence that says so.
+			$('#controllers_storage .controller_card_choice').prop('disabled', true);
+			controllerStatus('controllers_card_status', controllerT('Saved. The controller applies it the next time it starts.'), false);
+		},
+		error: function() {
+			button.prop('disabled', false);
+			controllerStatus('controllers_card_status', controllerT('The choice was not saved.'), true);
+		}
+	});
 }
 
 // ---- setting up the card ---------------------------------------------------

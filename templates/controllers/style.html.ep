@@ -41,6 +41,8 @@
 	#controllers_app .controller_walkthrough_step.is-next { font-weight: 600; }
 	#controllers_app .controller_walkthrough_act { margin-left: 8px; font-weight: 400; }
 	#controllers_app .controller_walkthrough .controller_note { margin: 8px 0 0; }
+	#controllers_app .controller_card_finding { padding: 0 0 10px; margin: 0 0 10px; border-bottom: 1px solid var(--line); }
+	#controllers_app .controller_card_pending { margin: 4px 0 0; }
 	#controllers_app .controller_folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 16px; }
 	#controllers_app .controller_folder { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 3px 0; border-bottom: 1px solid var(--line); }
 	#controllers_app .controller_folder_state { opacity: .7; white-space: nowrap; }

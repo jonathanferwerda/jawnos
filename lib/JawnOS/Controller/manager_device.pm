@@ -522,6 +522,28 @@ sub action_38590 {
 	# The grant a citizen's own machine carries: this row exists because a
 	# citizen pressed New, not because a stranger guessed a code.
 	&subs::peer_grant_setter({ uuid => $uuid, scope => 'trusted', privilege => 'citizen', expires => '' });
+	# The roster the Controllers page draws is paired_devices, and a board that
+	# joined by token is a controller the same way one that confirmed a code is:
+	# file it there under the same uuid the machine row carries (that row is what
+	# holds the signatorial), so Storage, ROMs and the card choice all resolve.
+	my $roster = &subs::db_select('paired_devices', undef, { pubkey => $pubkey })->hash;
+	my $roster_row = {
+		name => $name,
+		kind => 'controller',
+		status => 'active',
+		pubkey => $pubkey,
+		privilege => 'citizen',
+		agent => substr($c->param('agent') || 'controller join', 0, 400),
+		server_time => $now,
+	};
+	if ($roster) {
+		&subs::db_update('paired_devices', $roster_row, { uuid => $roster->{'uuid'} });
+	}
+	else {
+		$roster_row->{'uuid'} = $uuid;
+		$roster_row->{'timestamp'} = $now;
+		&subs::db_insert('paired_devices', $roster_row);
+	}
 	$log->info('controller join: ' . $name . ' uuid ' . $uuid . ' ' . ($host || 'no address'));
 	# The board files this machine the same way; handing back the house's own
 	# identity saves it a discovery pass before its first sync.
