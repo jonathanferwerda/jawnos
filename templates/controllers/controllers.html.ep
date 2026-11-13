@@ -1,0 +1,8 @@
+<%# The controller app, first slice: the roster of controllers that can talk to
+    the house, adding one (which returns a pairing code) and confirming that
+    code. Storage and ROMs are named on the page but deliberately not built
+    yet. The page is wrapped by window_maker, so it draws only its contents. %>
+<div id="controllers_app" style="overflow:auto;background-color:var(--panel);height:100%;width:100%;">
+	<%= include 'controllers/style' %>
+	<%= include 'controllers/body' %>
+</div>

@@ -1,0 +1,27 @@
+<%# Controller's own styles, scoped on #controllers_app like every app's. The
+    root is not #controller: that id still belongs to the retired floating pad
+    in public/css/keyboard.css, whose display:none would hide this page.
+    Colours come from the theme tokens so the page follows the light and dark
+    themes. %>
+<style>
+	#controllers_app { font: inherit; color: var(--ink); padding: 14px 16px; box-sizing: border-box; }
+	#controllers_app h2 { font-size: 17px; margin: 0 0 6px; }
+	#controllers_app .controller_note { margin: 0 0 10px; opacity: .78; font-size: 13px; line-height: 1.4; }
+	#controllers_app .controller_card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 8px 10px; margin: 0 0 16px; }
+	#controllers_app .controller_section { max-width: 720px; }
+	#controllers_app input[type="text"] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; min-width: 12em; }
+	#controllers_app button { font: inherit; color: var(--ink); padding: 4px 12px; margin: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+	#controllers_app button:hover { filter: brightness(1.08); }
+	#controllers_app button[disabled] { opacity: .55; }
+	#controllers_app .controller_row { display: flex; align-items: baseline; gap: 10px; padding: 5px 2px; border-bottom: 1px solid var(--line); }
+	#controllers_app .controller_row:last-child { border-bottom: 0; }
+	#controllers_app .controller_name { font-weight: 700; }
+	#controllers_app .controller_where { opacity: .78; font-size: 13px; }
+	#controllers_app .controller_seen { margin-left: auto; opacity: .65; font-size: 12px; white-space: nowrap; }
+	#controllers_app .controller_badge { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; background: var(--panel); }
+	#controllers_app .controller_empty { opacity: .7; font-style: italic; padding: 4px 2px; }
+	#controllers_app .controller_code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 32px; font-weight: 700; letter-spacing: .18em; line-height: 1.3; padding: 8px 12px; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); word-break: break-all; }
+	#controllers_app .controller_status { font-size: 13px; min-height: 1.2em; opacity: .85; }
+	#controllers_app .controller_status.controller_error { color: var(--danger, #c0392b); opacity: 1; }
+	#controllers_app .controller_next { opacity: .7; font-style: italic; }
+</style>

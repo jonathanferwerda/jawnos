@@ -390,4 +390,20 @@ $topic{'sound'} = {
 		related => [ 'taskbar', 'start_menu', 'clock' ]
 	};
 
+# The controller roster: the window that lists the controllers allowed to talk
+# to the house, adds one and confirms its code. Storage and ROMs are named as
+# the next slice, not built here.
+$topic{'controllers'} = {
+			title => 'Controller', category => 'apps', app => 'controllers',
+			templates => [ 'templates/controllers/controllers.html.ep', 'templates/controllers/style.html.ep', 'templates/controllers/body.html.ep', 'public/js/manager/controllers.js' ],
+			verified => '2026-11-13',
+			summary => 'The controllers that can talk to the house: the roster, adding one and confirming its code.',
+			body => [
+				'Controller lists the controllers the house knows. Each row names the controller, where it was last seen (its hostname and address) and when, and a controller waiting to be confirmed is marked pending.',
+				'To add one, type its name and press Add a controller. The house answers with a code, shown large on the page; type that same code on the controller, then type it under Approve a code and press Approve. The roster reads itself again once the code is accepted, and a refused code says why.',
+				'Storage and ROMs are not part of this slice: the page names the section but leaves it empty until the next one.'
+			],
+			related => [ 'embedded', 'configure' ]
+		};
+
 1;

@@ -155,6 +155,7 @@ our @manager_bundle_files = qw(
 	/js/manager/budget_light.js
 	/js/manager/budget.js
 	/js/manager/embedded.js
+	/js/manager/controllers.js
 	/js/manager/travel.js
 	/js/manager/studio.js
 	/js/manager/synth_presets.js

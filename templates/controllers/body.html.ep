@@ -1,0 +1,38 @@
+<%# Controller's body: the roster, adding one, and confirming a code. The roster
+    is drawn from GET /manager/controllers/list by public/js/manager/controllers.js
+    so it can be refreshed after an approval without redrawing the window. %>
+	<div class="controller_section">
+		<h2><%= &subs::ui('Controllers') %></h2>
+		<p class="controller_note"><%= &subs::ui('The controllers that can talk to this house. A controller waiting to be confirmed is marked pending.') %></p>
+		<div id="controller_roster" class="controller_card" aria-live="polite">
+			<div class="controller_empty"><%= &subs::ui('Reading the controllers...') %></div>
+		</div>
+	</div>
+
+	<div class="controller_section">
+		<h2><%= &subs::ui('Add a controller') %></h2>
+		<p class="controller_note"><%= &subs::ui('Name the controller, then add it. The house answers with a code; confirm the same code below.') %></p>
+		<div>
+			<input type="text" id="controller_name" placeholder="<%= &subs::ui('Controller name') %>" aria-label="<%= &subs::ui('Controller name') %>">
+			<button type="button" id="controller_add_button"><%= &subs::ui('Add a controller') %></button>
+		</div>
+		<div id="controller_code" class="controller_code" hidden></div>
+		<p id="controller_code_note" class="controller_note" hidden><%= &subs::ui('Type this code on the controller, then approve the same code here.') %></p>
+		<div id="controller_add_status" class="controller_status"></div>
+	</div>
+
+	<div class="controller_section">
+		<h2><%= &subs::ui('Approve a code') %></h2>
+		<p class="controller_note"><%= &subs::ui('Type the code the controller shows and approve it.') %></p>
+		<div>
+			<input type="text" id="controllers_approve_code" placeholder="<%= &subs::ui('Code') %>" aria-label="<%= &subs::ui('Code') %>">
+			<button type="button" id="controllers_approve_button"><%= &subs::ui('Approve') %></button>
+		</div>
+		<div id="controllers_approve_status" class="controller_status" aria-live="polite"></div>
+	</div>
+
+	<%# Deliberately empty: storage and ROMs are the next slice. %>
+	<div class="controller_section">
+		<h2><%= &subs::ui('Storage and ROMs') %></h2>
+		<p class="controller_next"><%= &subs::ui('Not built yet. Storage and ROMs arrive in the next slice.') %></p>
+	</div>

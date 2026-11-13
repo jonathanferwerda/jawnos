@@ -153,6 +153,7 @@ our $known_appts = {
 	mailbox => { icon => "/images/decipherable/envelope.png" },
 	music => { icon => "/images/make believe/music.png" },
 	embedded => { icon => "/images/decipherable/microchip.png" },
+	controllers => { icon => "/images/decipherable/computer.png" },
 	box_office => { icon => "/images/decipherable/ticket.png" },
 	cards => { icon => "/images/decipherable/cards.png" },
 	security => { icon => "/images/make believe/badge.png" },
