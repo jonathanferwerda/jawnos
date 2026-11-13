@@ -816,16 +816,35 @@ function controllerNewNetwork() {
 	return { ssid: ssid, psk: psk };
 }
 
+// The board's own name, read once for a flash. It is the name it answers to on
+// the network and the row the house files it under, so the same rule as the
+// provisioner's applies here: letters, numbers, dots and dashes, and no dot or
+// dash at either end.
+function controllerNewHostname() {
+	var name = ($('#controllers_hostname').val() || '').replace(/^\s+|\s+$/g, '');
+	if (!name) { return 'gou'; }
+	if (!/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/.test(name)) {
+		return { error: controllerT('A name is letters, numbers, dots and dashes, and cannot start or end with a dot or a dash.'), focus: '#controllers_hostname' };
+	}
+	return name;
+}
+
 // The fields are the flash's input, so they are held still while it runs and
 // handed back when it answers.
 function controllerNewNetworkLocked(locked) {
-	$('#controllers_wifi_ssid, #controllers_wifi_psk').prop('disabled', !!locked);
+	$('#controllers_hostname, #controllers_wifi_ssid, #controllers_wifi_psk').prop('disabled', !!locked);
 }
 
 function controllerNewFlash() {
 	if (!controllerComputer) { return; }
-	// The board's network is written into the flashed rootfs, so it is read
-	// before the press starts and refused here, not by the provisioner.
+	// The board's name and network are written into the flashed rootfs, so they
+	// are read before the press starts and refused here, not by the provisioner.
+	var name = controllerNewHostname();
+	if (name.error) {
+		controllerStatus('controllers_new_status', name.error, true);
+		$(name.focus).focus();
+		return;
+	}
 	var network = controllerNewNetwork();
 	if (network.error) {
 		controllerStatus('controllers_new_status', network.error, true);
@@ -845,6 +864,7 @@ function controllerNewFlash() {
 		type: 'POST',
 		data: {
 			timestamp: Date.now(),
+			hostname: name,
 			'wifi-ssid': network.ssid,
 			'wifi-psk': network.psk
 		},

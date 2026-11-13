@@ -460,4 +460,81 @@ sub action_38584 {
 	$c->render(json => { ok => 1, status => $row->{'status'}, device_uuid => $row->{'device_uuid'} || '' });
 }
 
+# POST /manager/device/join
+# The other way a machine arrives. New writes a token into a board's image while
+# the board is still in recovery, and the board's first boot redeems it here.
+# The token was minted by an authenticated citizen's press, is single use and
+# lives in the machine-local cache, so redeeming it is proof that the press
+# happened rather than a public door. The row it writes is the same one a
+# citizen makes by accepting a join code, and the grant goes through
+# peer_grant_setter so the lease rules stay in one place.
+sub action_38590 {
+	my $c = shift;
+	my $secret = $c->param('secret') || '';
+	return $c->render(json => { ok => 0, error => 'no token' }) unless $secret =~ /^[A-Za-z0-9]{16,64}$/;
+	my $pubkey = &device_pubkey_clean($c->param('pubkey'));
+	return $c->render(json => { ok => 0, error => 'no key' }) unless $pubkey;
+	# A row without a signatorial could never be proved on the peer rail, so it is
+	# not a machine the house should file. This is checked before the token is
+	# spent: a refused request must not use up the board's one chance.
+	my $signatorial = $c->param('signatorial') || '';
+	return $c->render(json => { ok => 0, error => 'no name for the machine' })
+		unless $signatorial =~ /^[0-9a-fA-F]{16,64}$/;
+	my $now = &subs::rightNow();
+	my $pending = &subs::db_select('cache', undef, { context => 'controller_join', subcontext => $secret })->hash;
+	unless ($pending) {
+		return $c->render(json => { ok => 0, error => 'that token is not waiting, or it has expired' });
+	}
+	# One use only: spend the token before anything else can find it.
+	&subs::db_delete('cache', { uuid => $pending->{'uuid'} });
+	my $wanted = eval { decode_json($pending->{'data'} // '') } || {};
+	my $name = substr(($c->param('name') || $wanted->{'name'} || 'Controller'), 0, 60);
+	# Where the board is: it names its own address the way a joining machine
+	# does; a request that names none is filed by the address it came from.
+	my $address = $c->param('address') || '';
+	$address = ($c->tx->remote_address || '') unless length $address;
+	my $addr = $address;
+	$addr =~ s{^https?://}{};
+	$addr =~ s{/.*$}{};
+	my ($host, $addr_port) = $addr =~ /^(.+?)(?::(\d+))?$/;
+	$host = '' unless defined $host;
+	my $port = $addr_port || $c->param('port') || '';
+	my $known = $signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hash : undef;
+	my $uuid = ($known && $known->{'uuid'}) ? $known->{'uuid'} : &subs::random_string_creator(15);
+	my $row = {
+		uuid => $uuid,
+		ip => $host,
+		fqdn => $host,
+		port => $port,
+		manager => (length $host ? 'https://' . $host . (length $port ? ':' . $port : '') . '/manager' : ''),
+		signatorial => $signatorial,
+		pubkey => $pubkey,
+		hostname => $name,
+		device => substr($c->param('device') || 'controller', 0, 30),
+		ost => substr($c->param('ost') || '', 0, 40),
+		status => 'connected',
+		connection => 'active',
+		server_time => $now,
+		timestamp => $now,
+	};
+	if ($known) { &subs::db_update('remote_machines', $row, { uuid => $uuid }); }
+	else { &subs::db_insert('remote_machines', $row); }
+	# The grant a citizen's own machine carries: this row exists because a
+	# citizen pressed New, not because a stranger guessed a code.
+	&subs::peer_grant_setter({ uuid => $uuid, scope => 'trusted', privilege => 'citizen', expires => '' });
+	$log->info('controller join: ' . $name . ' uuid ' . $uuid . ' ' . ($host || 'no address'));
+	# The board files this machine the same way; handing back the house's own
+	# identity saves it a discovery pass before its first sync.
+	$c->render(json => {
+		ok => 1,
+		uuid => $uuid,
+		house => {
+			manager => &subs::house_manager_address(eval { $c->req->url->to_abs->to_string } || ''),
+			signatorial => &subs::signatorial_designer() || '',
+			pubkey => &subs::peer_pubkey() || '',
+			name => &subs::machine_name() || '',
+		},
+	});
+}
+
 1;

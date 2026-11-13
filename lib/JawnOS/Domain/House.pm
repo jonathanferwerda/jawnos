@@ -88,6 +88,42 @@ sub public_origin_host {
 	return lc $d;
 }
 
+# A machine that has just joined has to call this manager, and it has no roster
+# row to read an address from yet. The best address is the one the person's own
+# browser is using for this manager - it is, by construction, an address on the
+# network the new machine is about to join. A loopback browser (the desktop app
+# talks to the manager that way) is the one case that address cannot serve, so
+# the machine's own LAN address takes over: the board just joined that network,
+# and a LAN address needs no DNS and no hairpin NAT. The house's public name and
+# then config.json keep a headless caller working.
+sub house_manager_address {
+	my ($base) = @_;
+	$base = '' unless defined $base;
+	$base =~ s{^\s+|\s+$}{}g;
+	# Only the authority is kept: the caller may hand over the whole request
+	# URL, and its path is the route that was asked, not part of the address.
+	my ($origin) = $base =~ m{^(https?://[^/]+)}i;
+	$base = defined $origin ? $origin : '';
+	my ($host) = $base =~ m{^https?://([^/]+)}i;
+	my $loopback = (defined $host && $host =~ /^(?:localhost|127\.|\[?::1\]?)/i) ? 1 : 0;
+	return $base . '/manager' if defined $host && length $host && !$loopback;
+	my $config = eval { &config_reader() } || {};
+	my $port = $ENV{'PORT_AHOY'} || $config->{'working_port'} || $config->{'port'} || '';
+	my $lan = '';
+	my $report = eval { &network_interface_reporter() } || {};
+	foreach my $nic (sort keys %{$report}) {
+		next if $nic eq 'public_address';
+		my $ip = (ref $report->{$nic} eq 'HASH') ? ($report->{$nic}->{'ip'} // '') : '';
+		next unless $ip =~ /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/;
+		$lan = $ip;
+		last;
+	}
+	my $name = length $lan ? $lan : &public_origin_host();
+	$name = $config->{'domain'} || '' unless length $name;
+	$name = '127.0.0.1' unless length $name;
+	return 'https://' . $name . (length $port ? ':' . $port : '') . '/manager';
+}
+
 # A state-changing request from a browser must name this house as its Origin,
 # or, when the browser omits Origin, as its Referer. An empty source is allowed
 # only for a caller that says it is an XHR: a cross-origin form cannot set that

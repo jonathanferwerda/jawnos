@@ -18,6 +18,7 @@ sub routes {
 	[38500, 'post', '/manager/device/recover', 'action_38500'],
 	[38547, 'post', '/manager/device/request', 'action_38547'],
 	[38584, 'post', '/manager/device/request_status', 'action_38584'],
+	[38590, 'post', '/manager/device/join', 'action_38590'],
 	);
 }
 

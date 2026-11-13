@@ -8,6 +8,8 @@ use warnings;
 use utf8;
 
 use Cwd ();
+use File::Path ();
+use File::Temp ();
 use Mojo::JSON qw(decode_json encode_json);
 
 no warnings 'uninitialized';
@@ -480,6 +482,66 @@ sub action_54008 {
 # scripts/gou_provision.pl and owns the device fingerprint: these actions only
 # decide who may ask and pass the person's choices through as an argv list.
 
+# A token the board can spend on its first boot, and nothing the house keeps in
+# the clear. The secret is written to the machine-local cache (cache is never
+# exported, so it does not sync to peers) and the file itself goes into the
+# flashed rootfs; the boot script deletes it once it has been redeemed. A token
+# costs one citizen press to mint, is single use, and expires in a day.
+sub _controller_join_token {
+	my ($c, $name, $hostname) = @_;
+	my $secret = &subs::random_string_creator(40);
+	my $now = &subs::rightNow();
+	my $manager = &subs::house_manager_address(eval { $c->req->url->to_abs->to_string } || '');
+	my $token = {
+		kind => 'jawnos-controller-join',
+		v => 1,
+		secret => $secret,
+		name => $name,
+		hostname => $hostname,
+		house => {
+			manager => $manager,
+			signatorial => &subs::signatorial_designer() || '',
+			pubkey => &subs::peer_pubkey() || '',
+			name => &subs::machine_name() || '',
+		},
+		expires => $now + 86_400_000,
+	};
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'controller_join', $now - 7 * 86_400_000);
+	&subs::db_insert('cache', {
+		uuid => &subs::random_string_creator(18),
+		context => 'controller_join',
+		subcontext => $secret,
+		app => '__president',
+		data => encode_json({ name => $name, hostname => $hostname, created => $now }),
+		timestamp => $now,
+		server_time => $now,
+	});
+	my $dir = &subs::home('~/.president');
+	eval { File::Path::make_path($dir) } unless -d $dir;
+	$dir = File::Temp::tempdir('jawnos-join-XXXXXX', TMPDIR => 1, CLEANUP => 1) unless -d $dir;
+	# A flash interrupted before the action could hand its file over leaves a
+	# token with a live secret on disk; anything a day old is spent by then.
+	foreach my $old (glob("$dir/controller_join_*.json")) {
+		next unless -f $old;
+		my $age = time - ((stat($old))[9] // 0);
+		unlink $old if $age > 86_400;
+	}
+	my ($fh, $path) = File::Temp::tempfile('controller_join_XXXXXXXX.json', DIR => $dir, UNLINK => 0);
+	return { error => 'the join token could not be written' } unless $fh && $path;
+	print {$fh} encode_json($token);
+	close $fh;
+	chmod 0600, $path;
+	return { path => $path, secret => $secret };
+}
+
+# A flash that never wrote the board leaves a token nothing will ever redeem:
+# spend it here rather than leave a way in for a day.
+sub _controller_join_forget {
+	my ($secret) = @_;
+	return unless defined $secret && length $secret;
+	&subs::db_delete('cache', { context => 'controller_join', subcontext => $secret });
+}
+
 # POST /manager/controllers/new/scan
 sub action_54009 {
 	my $c = shift;
@@ -518,7 +580,14 @@ sub action_54010 {
 	}
 	my $hostname = $c->param('hostname');
 	push @args, ('--hostname', substr($hostname, 0, 63)) if defined $hostname && length $hostname;
-	$c->render(json => &_controller_gou_run(1, $psk_stdin, @args));
+	# The token is the board's way into the house on its first boot; the
+	# provisioner copies it into the flashed rootfs beside the WiFi profile.
+	my $token = &_controller_join_token($c, (defined $hostname && length $hostname ? $hostname : 'Controller'), (defined $hostname && length $hostname ? $hostname : 'gou'));
+	push @args, ('--join-token', $token->{'path'}) if $token->{'path'};
+	my $answer = &_controller_gou_run(1, $psk_stdin, @args);
+	unlink $token->{'path'} if $token->{'path'};
+	&_controller_join_forget($token->{'secret'}) if $token->{'secret'} && !($answer->{'ok'});
+	$c->render(json => $answer);
 }
 
 1;

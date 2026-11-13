@@ -19,8 +19,10 @@
 		    NetworkManager profile into the flashed rootfs while the board is still in
 		    recovery; blank here means the board comes up with no network at all. %>
 		<div class="controller_new_network" id="controllers_new_network">
-			<p class="controller_note"><%= &subs::ui('The board joins this network the first time it starts. Leave both blank to keep it off the network.') %></p>
+			<p class="controller_note"><%= &subs::ui('The board joins this network the first time it starts, and answers to this name on it. Leave both network fields blank to keep it off the network.') %></p>
 			<div class="controller_field">
+				<label class="controller_field_label" for="controllers_hostname"><%= &subs::ui('Name') %></label>
+				<input type="text" id="controllers_hostname" value="gou" autocomplete="off" spellcheck="false" placeholder="gou">
 				<label class="controller_field_label" for="controllers_wifi_ssid"><%= &subs::ui('Wi-Fi network') %></label>
 				<input type="text" id="controllers_wifi_ssid" autocomplete="off" spellcheck="false" placeholder="<%= &subs::ui('Network name') %>">
 				<label class="controller_field_label" for="controllers_wifi_psk"><%= &subs::ui('Wi-Fi password') %></label>

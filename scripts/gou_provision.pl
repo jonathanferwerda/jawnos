@@ -469,6 +469,27 @@ sub _network_manager_profile {
 		. "method=auto\n";
 }
 
+# The one unit a flashed board runs before the house does: redeem the token,
+# find its card, then get out of the way. A oneshot with no token left is a
+# no-op, so it stays enabled and costs nothing after the first boot.
+sub _first_boot_unit {
+	return <<'UNIT';
+[Unit]
+Description=JawnOS first boot: the board's card and the house join
+Wants=network-online.target
+After=network-online.target
+Before=jawnos.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/gou_first_boot.pl
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
 sub _autopopulate {
 	my ($dev, $hostname, $ssid, $psk, $join) = @_;
 	system('blockdev', '--rereadpt', $dev) if _command_path('blockdev');
@@ -522,6 +543,34 @@ sub _autopopulate {
 		}
 		else {
 			$error = 'could not copy the join token';
+		}
+		# The image is a copy of another card, so it carries that card's machine
+		# identity. A board flashed as a new controller must introduce itself under
+		# its own id, or two boards would overwrite each other's roster row; the
+		# first boot mints one when none is here (see gou_first_boot.pl).
+		foreach my $identity ("$mount/home/jawn/.jawnos_signatorial_id",
+			"$mount/home/jawn/jawnos/database/.jawnos_signatorial_id") {
+			unlink $identity if -f $identity;
+		}
+		push @done, 'identity';
+	}
+	# The board redeems that token, and looks for its card, before the house
+	# starts. The unit is enabled by its wants symlink rather than by running
+	# systemctl against the image, so nothing here needs the board booted.
+	if (!length $error) {
+		my $units = "$etc/systemd/system";
+		File::Path::make_path($units) unless -d $units;
+		my $unit = "$units/jawnos-first-boot.service";
+		my $wants = "$units/multi-user.target.wants";
+		File::Path::make_path($wants) unless -d $wants;
+		my $link = "$wants/jawnos-first-boot.service";
+		if (_write_file($unit, _first_boot_unit())
+			&& chmod(0644, $unit) && chown(0, 0, $unit)) {
+			symlink('jawnos-first-boot.service', $link) unless -e $link || -l $link;
+			push @done, 'first-boot';
+		}
+		else {
+			$error = 'could not write the first-boot unit';
 		}
 	}
 	system('sync');
