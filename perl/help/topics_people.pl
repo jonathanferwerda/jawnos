@@ -174,12 +174,12 @@ $topic{'relational'} = {
 	};
 $topic{'cards'} = {
 		title => 'Cards', category => 'apps', app => 'cards',
-		verified => '2026-11-04',
+		verified => '2026-11-13',
 		summary => 'Four decks: tarot drawn from your own data, solitaire, mahjong and blackjack.',
 		body => [
 			'Cards opens on a chooser with four decks. The table remembers the one you picked; press Cards in the top left to bring the chooser back.',
 			'Tarot is the deck of Jawn: a daily card, a weekly card, or a three-card spread drawn from your own appointments and measures. Press Deal, or click a card, to draw; a spread shows its three cards side by side. The draw lists belong to the house, so every device shows the same recent draws, and the card, table and controls fit a narrow phone screen too.',
-			'Solitaire is Klondike with a three-card deal and a felt table in the house\'s own colours. Click a card, then the column or foundation to move it, or drag the card where it belongs; double-click sends a card to its foundation. The stock is top left and the four foundations stack at the top right. Auto sends the cards that are safe to go up, Undo takes a move back, and Bank keeps a running casino score across rounds.',
+			'Solitaire is Klondike with a three-card deal and a felt table in the house\'s own colours. Each card prints its rank and suit in both corners, and the middle of the card shows one suit emblem per pip, so a nine shows nine. Click a card, then the column or foundation to move it, or drag the card where it belongs; double-click sends a card to its foundation. The stock is top left and the four foundations stack at the top right. The table sizes itself to the window: all seven columns stay in view and the fan of a tall column ends above the bottom edge, in a maximised window as well as a phone. Auto sends the cards that are safe to go up, Undo takes a move back, and Bank keeps a running casino score across rounds.',
 			'Mahjong is a five-layer turtle: pair two matching tiles that are free, which means nothing is stacked on top of them and nothing sits immediately left or right. Clear the upper layers to free the ones below. Shuffle rearranges what is left; the timer starts with your first pick.',
 			'Blackjack is the casino table. Pick a chip, press Deal, then Hit or Stand; Double doubles the stake and draws one card. The dealer stands on seventeen, blackjack pays three to two, and Bank carries across rounds. Reset bank starts it at five hundred again.'
 		],

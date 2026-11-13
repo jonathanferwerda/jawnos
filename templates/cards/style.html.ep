@@ -373,7 +373,7 @@
 #cards .sol_btn:hover, #cards .mj_btn:hover { background: var(--gold); color: #1d1608; }
 #cards .sol_btn.ghost, #cards .mj_btn.ghost { background: transparent; border-color: rgba(255,255,255,.18); color: var(--muted); }
 #cards .sol_btn.ghost:hover, #cards .mj_btn.ghost:hover { color: var(--ink); border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.06); }
-#cards .sol_board { display: flex; flex-direction: column; gap: calc(var(--card-h) * .38); align-items: center; flex: 0 0 auto; }
+#cards .sol_board { display: flex; flex-direction: column; gap: var(--sol-board-gap, calc(var(--card-h) * .38)); align-items: center; flex: 0 0 auto; }
 #cards .sol_row {
 	display: grid;
 	grid-template-columns: repeat(7, var(--card-w));
@@ -395,7 +395,7 @@
 	font-size: calc(var(--card-w) * .34);
 	background: rgba(0,0,0,.1);
 }
-#cards .sol_column { position: relative; width: var(--card-w); min-height: calc(var(--card-h) * 2.4); }
+#cards .sol_column { position: relative; width: var(--card-w); min-height: var(--card-h); }
 #cards .sol_column .sol_slot { inset: 0 auto auto 0; width: var(--card-w); height: var(--card-h); }
 #cards .sol_recycle {
 	position: absolute;
@@ -466,15 +466,25 @@
 	flex-direction: column;
 	align-items: center;
 	font-weight: 700;
-	font-size: calc(var(--card-w) * .2);
-	line-height: .95;
+	font-size: calc(var(--card-w) * .18);
+	line-height: .9;
 }
 #cards .sol_corner.tl { top: 4%; left: 6%; }
 #cards .sol_corner.br { bottom: 4%; right: 6%; transform: rotate(180deg); }
-#cards .sol_pip { font-size: calc(var(--card-w) * .4); line-height: 1; }
-#cards .sol_column .sol_card { margin-top: calc(var(--card-h) * -.7); }
-#cards .sol_column .sol_card:first-child { margin-top: 0; }
-#cards .sol_column .sol_card.up { margin-top: calc(var(--card-h) * -.52); }
+#cards .sol_pip { font-size: calc(var(--card-w) * .42); line-height: 1; }
+#cards .sol_pip.face { display: flex; flex-direction: column; align-items: center; gap: calc(var(--card-w) * .02); font-weight: 700; }
+#cards .sol_pip.face i { font-style: normal; font-size: .6em; }
+#cards .sol_pips { position: absolute; inset: 0; pointer-events: none; }
+#cards .sol_pips .sol_pipmark {
+	position: absolute;
+	font: 400 calc(var(--card-w) * .18)/1 system-ui, sans-serif;
+	font-style: normal;
+	transform: translate(-50%, -50%);
+}
+#cards .sol_pips .sol_pipmark.flip { transform: translate(-50%, -50%) rotate(180deg); }
+#cards .sol_column .sol_card { margin-top: calc(var(--sol-down, calc(var(--card-h) * .22)) - var(--card-h)); }
+#cards .sol_column .sol_slot + .sol_card { margin-top: 0; }
+#cards .sol_column .sol_card.up { margin-top: calc(var(--sol-up, calc(var(--card-h) * .36)) - var(--card-h)); }
 #cards .sol_card.sel {
 	box-shadow: 0 0 0 3px var(--gold), 0 6px 14px rgba(0,0,0,.5);
 	transform: translateY(-3px);
@@ -728,8 +738,7 @@ body.cards_dragging { cursor: var(--jawnos-cursor-grabbing, grabbing); user-sele
 	#cards_solitaire .sol_status { display: none; }
 	#cards_solitaire .sol_actions { margin-left: 0; width: 100%; gap: 4px; justify-content: flex-start; }
 	#cards_solitaire .sol_btn { padding: 5px 9px; font-size: 10px; }
-	#cards .sol_pip { display: none; }
-	#cards .sol_corner { font-size: calc(var(--card-w) * .26); }
+	#cards .sol_corner { font-size: calc(var(--card-w) * .19); }
 
 	/* mahjong: twelve tiles across */
 	#cards_mahjong { --mj-tw: clamp(15px, 6.1vw, 34px); padding: 8px 4px 16px; gap: 8px; }

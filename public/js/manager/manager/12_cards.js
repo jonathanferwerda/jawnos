@@ -27,6 +27,8 @@ var solitaireStatusDefault = '';
 var solitaireStatusTimer = null;
 var solitaireSaveTimer = null;
 var solitaireDrag = null;
+var solitaireFitObserver = null;
+var solitaireResizeBound = false;
 var solitaireSuppressClick = false;
 var mahjongState = null;
 var mahjongBannerDefault = '';
@@ -110,6 +112,38 @@ function solitaireColor(card) {
 	return (card.s === 1 || card.s === 2) ? 'red' : 'black';
 }
 
+// A printed deck counts itself: one suit emblem per pip, laid out the way a
+// card does it, with the lower half turned over. The corner index says the rank
+// and suit twice, so a card stays readable at a glance.
+var SOL_PIP_LAYOUT = {
+	2: [ [ 50, 20, 0 ], [ 50, 80, 1 ] ],
+	3: [ [ 50, 20, 0 ], [ 50, 50, 0 ], [ 50, 80, 1 ] ],
+	4: [ [ 30, 20, 0 ], [ 70, 20, 0 ], [ 30, 80, 1 ], [ 70, 80, 1 ] ],
+	5: [ [ 30, 20, 0 ], [ 70, 20, 0 ], [ 50, 50, 0 ], [ 30, 80, 1 ], [ 70, 80, 1 ] ],
+	6: [ [ 30, 20, 0 ], [ 70, 20, 0 ], [ 30, 50, 0 ], [ 70, 50, 0 ], [ 30, 80, 1 ], [ 70, 80, 1 ] ],
+	7: [ [ 30, 20, 0 ], [ 70, 20, 0 ], [ 50, 35, 0 ], [ 30, 50, 0 ], [ 70, 50, 0 ], [ 30, 80, 1 ], [ 70, 80, 1 ] ],
+	8: [ [ 30, 20, 0 ], [ 70, 20, 0 ], [ 50, 35, 0 ], [ 30, 50, 0 ], [ 70, 50, 0 ], [ 50, 65, 1 ], [ 30, 80, 1 ], [ 70, 80, 1 ] ],
+	9: [ [ 30, 20, 0 ], [ 70, 20, 0 ], [ 30, 40, 0 ], [ 70, 40, 0 ], [ 50, 50, 0 ], [ 30, 60, 1 ], [ 70, 60, 1 ], [ 30, 80, 1 ], [ 70, 80, 1 ] ],
+	10: [ [ 30, 20, 0 ], [ 70, 20, 0 ], [ 50, 30, 0 ], [ 30, 40, 0 ], [ 70, 40, 0 ], [ 30, 60, 1 ], [ 70, 60, 1 ], [ 50, 70, 1 ], [ 30, 80, 1 ], [ 70, 80, 1 ] ]
+};
+
+function solitairePips(card) {
+	var suit = SOL_SUITS[card.s];
+	if (card.r === 1) {
+		return '<span class="sol_pip ace" aria-hidden="true">' + suit + '</span>';
+	}
+	if (card.r >= 11) {
+		return '<span class="sol_pip face" aria-hidden="true"><b>' + SOL_RANKS[card.r] + '</b><i>' + suit + '</i></span>';
+	}
+	var layout = SOL_PIP_LAYOUT[card.r] || [];
+	var html = '<span class="sol_pips" aria-hidden="true">';
+	for (var i = 0; i < layout.length; i++) {
+		html += '<i class="sol_pipmark' + (layout[i][2] ? ' flip' : '') + '"'
+			+ ' style="left:' + layout[i][0] + '%;top:' + layout[i][1] + '%">' + suit + '</i>';
+	}
+	return html + '</span>';
+}
+
 function solitaireCardHtml(card, extra) {
 	if (!card.up) {
 		return '<div class="sol_card down ' + (extra || '') + '"></div>';
@@ -117,10 +151,9 @@ function solitaireCardHtml(card, extra) {
 	var suit = SOL_SUITS[card.s];
 	var red = solitaireColor(card) === 'red' ? ' red' : '';
 	var rank = SOL_RANKS[card.r];
-	var centre = (card.r >= 11) ? rank : suit;
 	return '<div class="sol_card up' + red + ' ' + (extra || '') + '">'
 		+ '<span class="sol_corner tl"><b>' + rank + '</b><i>' + suit + '</i></span>'
-		+ '<span class="sol_pip">' + centre + '</span>'
+		+ solitairePips(card)
 		+ '<span class="sol_corner br"><b>' + rank + '</b><i>' + suit + '</i></span>'
 		+ '</div>';
 }
@@ -429,9 +462,11 @@ function solitaireStatus(text) {
 	var $status = $('#cards_solitaire #sol_status');
 	if (!$status.length) { return; }
 	$status.text(text);
+	solitaireFit();
 	clearTimeout(solitaireStatusTimer);
 	solitaireStatusTimer = setTimeout(function() {
 		$('#cards_solitaire #sol_status').text(solitaireStatusDefault);
+		solitaireFit();
 	}, 2200);
 }
 
@@ -464,7 +499,7 @@ function solitaireRender(state) {
 	else {
 		var shown = state.waste.slice(-SOL_DRAW);
 		for (var w = 0; w < shown.length; w++) {
-			var style = 'left:calc(var(--card-w) * ' + (w * 0.1).toFixed(2) + ');';
+			var style = 'left:calc(var(--card-w) * ' + (w * 0.22).toFixed(2) + ');';
 			var selected = (state.selected && state.selected.zone === 'waste' && w === shown.length - 1) ? ' sel' : '';
 			$waste.append(solitaireCardHtml(shown[w], selected).replace('class="sol_card', 'data-zone="waste" style="' + style + '" class="sol_card'));
 		}
@@ -499,6 +534,103 @@ function solitaireRender(state) {
 
 	if (state.won) { solitaireShowWin(state); }
 	else { $('#sol_win').removeClass('show'); }
+	solitaireFit();
+}
+
+// Size the table from the window the game is in, not the screen: seven columns
+// across, and the fan of the tallest column inside the board's height. The
+// arithmetic is separate from the DOM so the rules test can check it.
+function solitaireFitPlan(availW, availH, tableau) {
+	var cols = 7;
+	var gap = Math.max(2, Math.min(13, Math.round(availW * 0.012)));
+	var w = Math.floor(Math.min(88, (availW - gap * (cols - 1)) / cols));
+	w = Math.max(24, w);
+	var widthW = w;
+	var h = w * 1.42;
+	var boardGap = Math.max(6, Math.round(h * 0.3));
+	var columns = [];
+	for (var c = 0; c < tableau.length; c++) {
+		var pile = tableau[c] || [];
+		var downCount = 0, upCount = 0;
+		for (var i = 1; i < pile.length; i++) {
+			if (pile[i].up) { upCount++; } else { downCount++; }
+		}
+		columns.push({ down: downCount, up: upCount });
+	}
+	// t is how generous the fan is: 0 is the tightest strip that still shows a
+	// corner, 1 the comfortable one. Both ends scale with the card.
+	function fanAt(t) {
+		var down = h * (0.08 + t * 0.16);
+		var up = h * (0.24 + t * 0.20);
+		var worst = 0;
+		for (var c = 0; c < columns.length; c++) {
+			var column = h + columns[c].down * down + columns[c].up * up;
+			if (column > worst) { worst = column; }
+		}
+		return { down: down, up: up, total: h + boardGap + worst };
+	}
+	var plan = fanAt(1);
+	if (plan.total > availH) {
+		var tight = fanAt(0);
+		if (tight.total > availH) {
+			// Even the tightest fan is too tall: the cards themselves shrink,
+			// but no further than a readable size. If that still overflows, the
+			// pane scrolls rather than hiding a card behind an unreadable one.
+			var scale = availH / tight.total;
+			w = Math.max(Math.min(30, widthW), Math.floor(widthW * scale));
+			h = w * 1.42;
+			boardGap = Math.max(6, Math.round(h * 0.3));
+			plan = fanAt(0);
+		}
+		else {
+			var lo = 0, hi = 1;
+			for (var it = 0; it < 16; it++) {
+				var mid = (lo + hi) / 2;
+				if (fanAt(mid).total <= availH) { lo = mid; }
+				else { hi = mid; }
+			}
+			plan = fanAt(lo);
+		}
+	}
+	return {
+		w: Math.round(w),
+		h: Math.round(w * 1.42),
+		gap: gap,
+		boardGap: boardGap,
+		down: Math.round(plan.down * 10) / 10,
+		up: Math.round(plan.up * 10) / 10,
+		total: Math.round(plan.total),
+		fits: plan.total <= availH + 0.5
+	};
+}
+
+function solitaireFit() {
+	var pane = document.getElementById('cards_solitaire');
+	if (!pane || !solitaireState) { return; }
+	var hud = pane.querySelector('.sol_hud');
+	if (!hud) { return; }
+	// A hidden pane or a minimised window has nothing to fit yet.
+	if (pane.clientWidth < 80 || pane.clientHeight < 120) { return; }
+	var style = window.getComputedStyle(pane);
+	var paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+	var paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+	var gap = parseFloat(style.rowGap);
+	if (isNaN(gap)) { gap = 16; }
+	var availW = pane.clientWidth - paddingX;
+	var availH = pane.clientHeight - paddingY - hud.getBoundingClientRect().height - gap;
+	if (availW < 80 || availH < 80) { return; }
+	var plan = solitaireFitPlan(availW, availH, solitaireState.tableau);
+	pane.style.setProperty('--card-w', plan.w + 'px');
+	pane.style.setProperty('--card-h', plan.h + 'px');
+	pane.style.setProperty('--sol-gap', plan.gap + 'px');
+	pane.style.setProperty('--sol-board-gap', plan.boardGap + 'px');
+	pane.style.setProperty('--sol-down', plan.down + 'px');
+	pane.style.setProperty('--sol-up', plan.up + 'px');
+	// The drag ghost is appended to the app root, not the pane. Carrying only
+	// the width there lets the root's own --card-h derive the height, while a
+	// blackjack hand still gets its own width and a matching height.
+	var root = document.getElementById('cards');
+	if (root) { root.style.setProperty('--card-w', plan.w + 'px'); }
 }
 
 function solitaireShowWin(state) {
@@ -557,6 +689,25 @@ function solitaireEnsure() {
 	}
 	solitaireStatusDefault = $('#sol_status').text();
 	solitaireRender(solitaireState);
+	// The game lives in a window the person can resize; follow its box rather
+	// than the screen. ResizeObserver covers the panel's own window drag; the
+	// window listener is the fallback for engines without it.
+	if (!solitaireResizeBound) {
+		solitaireResizeBound = true;
+		window.addEventListener('resize', solitaireFit);
+	}
+	// The window is rebuilt on each open, so re-attach to the pane that is here
+	// now rather than the one the first open observed.
+	if (typeof ResizeObserver === 'function') {
+		var pane = document.getElementById('cards_solitaire');
+		if (pane) {
+			if (!solitaireFitObserver) {
+				solitaireFitObserver = new ResizeObserver(function() { solitaireFit(); });
+			}
+			solitaireFitObserver.disconnect();
+			solitaireFitObserver.observe(pane);
+		}
+	}
 }
 
 // One place for "do the move, redraw, remember the bank, look for a win".

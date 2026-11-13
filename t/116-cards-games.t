@@ -47,6 +47,10 @@ my $style = read_file("$root/templates/cards/style.html.ep");
 unlike($style, qr/sol31|Windows 3\.1|MS Sans Serif/, 'the Windows 3.1 skin is gone');
 unlike($style, qr/#008000|#c0c0c0|#000080|#d0d0d0/, 'and its colours are gone');
 like($style, qr/radial-gradient\(circle at 50% 42%, #164e3a, #0a2a1f 72%\)/, 'the card back is the house lattice');
+like($style, qr/#cards \.sol_pips/, 'the card face has a pip field');
+like($style, qr/#cards \.sol_column \.sol_slot \+ \.sol_card \{ margin-top: 0; \}/, 'the first tableau card sits at the top of its column');
+like($style, qr/margin-top: calc\(var\(--sol-up/, 'the tableau fan is measured from the card');
+unlike($style, qr/#cards \.sol_pip \{ display: none; \}/, 'the pips stay visible on a narrow screen');
 
 my $solitaire = read_file("$root/templates/cards/solitaire.html.ep");
 unlike($solitaire, qr/sol31/, 'the solitaire pane carries no Windows class');
@@ -83,6 +87,21 @@ function blank() {
 // ---- solitaire deal ----
 eq(ctx.cardsCardUrl('the fool.png'), '/images/cards/the%20fool.png',
 	'a deck name with a space is percent-encoded');
+// ---- the faces count themselves ----
+function pipCount(html) {
+	var found = html.match(/class="sol_pipmark/g);
+	return found ? found.length : 0;
+}
+function faceOf(rank) { return ctx.solitaireCardHtml(card(rank, 1)); }
+for (var pips = 2; pips <= 10; pips++) {
+	eq(pipCount(faceOf(pips)), pips, 'a ' + pips + ' prints ' + pips + ' pips');
+}
+eq(pipCount(faceOf(1)), 0, 'an ace has no pip grid');
+ok(/class="sol_pip ace"/.test(faceOf(1)), 'an ace shows one large suit');
+for (var court = 11; court <= 13; court++) {
+	eq(pipCount(faceOf(court)), 0, 'a court card has no pip grid');
+	ok(/class="sol_pip face"/.test(faceOf(court)), 'a court card shows its letter and suit');
+}
 var deal = ctx.solitaireDeal(function () { return 0.5; });
 var total = deal.stock.length, down = 0, up = 0, shape = true;
 for (var col = 0; col < 7; col++) {
@@ -182,6 +201,26 @@ eq(s.undo.length, 1, 'the move is on the undo stack');
 ctx.solitaireUndo(s);
 eq(s.foundations[0].length, 0, 'undo takes the card back');
 eq(s.bank, 0, 'and the score with it');
+
+// ---- the table fits the window ----
+function tallColumn(downCount, upCount) {
+	var column = [];
+	for (var i = 0; i < downCount; i++) { column.push(card(13, 0, false)); }
+	for (var j = 0; j < upCount; j++) { column.push(card(Math.max(1, 13 - j), j % 2, true)); }
+	return column;
+}
+[ [ 900, 600 ], [ 700, 420 ], [ 360, 640 ] ].forEach(function (size) {
+	var plan = ctx.solitaireFitPlan(size[0], size[1], [ tallColumn(6, 13) ]);
+	ok(plan.fits, 'a nineteen-card column fits ' + size[0] + 'x' + size[1]);
+	ok(plan.w >= 22 && plan.h === Math.round(plan.w * 1.42),
+		'the cards keep their shape at ' + size[0] + 'x' + size[1]);
+	// The board is the piles row, the gap, then the tallest column: its first
+	// card plus a strip for each of the five down and thirteen up below it.
+	var used = plan.h + plan.boardGap + plan.h + 5 * plan.down + 13 * plan.up;
+	ok(used <= size[1] + 2, 'the fan ends above the bottom edge at ' + size[0] + 'x' + size[1]
+		+ ' (' + Math.round(used) + ' <= ' + size[1] + ')');
+	ok(plan.up > plan.down, 'a face-up card shows more than a face-down one at ' + size[0] + 'x' + size[1]);
+});
 
 // ---- mahjong ----
 var tiles = ctx.mahjongDeal();
