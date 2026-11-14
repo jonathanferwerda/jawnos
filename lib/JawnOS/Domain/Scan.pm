@@ -274,13 +274,15 @@ sub scan_auto_target {
 # The printer address another machine in the house already found. The readiness
 # ledger is house-wide, so a phone on the same network (whose ARP table is not
 # readable) can use the address that answered for a computer instead of the
-# saved one from a network it left.
+# saved one from a network it left. The row may be a little old on a peer still
+# pulling it; the caller's same-network test is what keeps an offsite address
+# out, so half an hour is still a useful sighting.
 sub scan_house_printer_ip {
 	my $now = &rightNow();
 	my $rows = eval { &db_select('scan_house')->hashes } || [];
 	my @ready = grep {
 		$_->{'scan_ready'}
-			&& (($_->{'seen'} || 0) + 0) > $now - 5 * 60 * 1000
+			&& (($_->{'seen'} || 0) + 0) > $now - 30 * 60 * 1000
 			&& ($_->{'printer'} || '') =~ /^\d{1,3}(?:\.\d{1,3}){3}$/
 	} @{$rows || []};
 	my ($row) = sort { ($b->{'seen'} || 0) <=> ($a->{'seen'} || 0) } @ready;

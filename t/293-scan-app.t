@@ -241,6 +241,24 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 		'the display name travels with the rule');
 	is(subs::scan_auto_enabled('another'), 1, 'a scanner with no rule keeps the default');
 }
+{
+	# The readiness ledger is the phone's fallback; a peer's row may be a little
+	# old in its copy, and one that is not ready is never borrowed from.
+	no warnings 'redefine';
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	local *subs::db_select = sub {
+		return FakeRows->new([
+			{ hostname => 'table', printer => '192.168.1.109', scan_ready => 1, seen => 1_800_000_000_000 - 20 * 60 * 1000 },
+		]);
+	};
+	is(subs::scan_house_printer_ip(), '192.168.1.109', 'a peer sighting half an hour old still names the printer');
+	local *subs::db_select = sub {
+		return FakeRows->new([
+			{ hostname => 'phone', printer => '192.168.1.109', scan_ready => 0, seen => 1_800_000_000_000 },
+		]);
+	};
+	is(subs::scan_house_printer_ip(), '', 'a machine that is not ready is not borrowed from');
+}
 
 # --- an automatic edge is taken once ---------------------------------------
 # The watcher's job carries a scan id; the window that claims it first writes
@@ -334,6 +352,7 @@ like($scan, qr/\$app eq 'scan' && \$source eq 'unclaimed'/, 'a landing scan is a
 like($scan, qr/waiting in Scan/, 'in words that point at the app');
 like($scan, qr/&scanner_escl_pages\(\$feed/, 'a scan tries the printer\'s eSCL service first');
 like($scan, qr/&scan_feeds\(\)/, 'and accepts a feed the live printer offers');
+unlike($scan, qr/&log_writer\(/, 'the scan subprocessor logs through the domain helper');
 my $printer2 = read_file("$root/lib/JawnOS/Domain/Printer2.pm");
 like($printer2, qr/scan_auto_enabled/, 'the ADF watcher obeys the per-scanner switch');
 like($printer2, qr/scan_auto_target/, 'and sends the edge where the rule says');

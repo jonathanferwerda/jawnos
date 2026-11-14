@@ -321,13 +321,13 @@ sub scan($c,$scandata) {
 			else {
 				&subs::cache_set({ app => 'scan', context => 'last_error', warranty => '-5m' },
 					{ at => &subs::rightNow(), message => 'the scanner does not offer that feed' });
-				&log_writer('scan ' . $feed . ' failed: no scanner command');
+				&subs::log_writer('scan ' . $feed . ' failed: no scanner command');
 			}
 		}
 		else {
 			&subs::cache_set({ app => 'scan', context => 'last_error', warranty => '-5m' },
 				{ at => &subs::rightNow(), message => $escl->{'error'} });
-			&log_writer('scan ' . $feed . ' failed: ' . $escl->{'error'});
+			&subs::log_writer('scan ' . $feed . ' failed: ' . $escl->{'error'});
 		}
 		my @filenames;
 		my $count = 1;
@@ -403,7 +403,7 @@ sub scan($c,$scandata) {
 					}, undef);
 					1;
 				};
-				&log_writer('scan ready in the Scan app: ' . $pages . ' page(s)');
+				&subs::log_writer('scan ready in the Scan app: ' . $pages . ' page(s)');
 			}
 			if ($scandata->{'scan_id'}) {
 				eval { &subs::scan_job_finish($scandata->{'scan_id'}) };
