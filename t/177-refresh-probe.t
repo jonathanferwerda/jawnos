@@ -14,6 +14,8 @@ use Test::More;
 use Cwd qw(abs_path);
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
+use Mojo::Template;
+use Encode qw(decode);
 
 my $root = abs_path("$FindBin::Bin/..");
 my $pl   = "$root/scripts/tools/refresh-probe.pl";
@@ -43,12 +45,31 @@ SKIP: {
 	is(system($node, '--check', $js), 0, 'the browser half parses');
 }
 
-my $layout_src = do { local $/; open(my $fh, '<', $layout) or die "$layout: $!"; <$fh> };
+my $layout_src = decode('UTF-8', do { local $/; open(my $fh, '<', $layout) or die "$layout: $!"; <$fh> });
 like($layout_src, qr{/js/probe/refresh-probe\.js}, 'the layout includes the probe');
 like($layout_src, qr{jawnos_probe_endpoint}, 'it injects the collector endpoint');
 like($layout_src, qr{jawnos_probe_host}, 'and the device host name');
 like($layout_src, qr{\$probe_default}, 'the temporary default is a named switch');
 like($layout_src, qr{jawnos_probe=0}, '?probe=0 records a lasting opt-out');
+
+# Reading the source is not enough: a bad if/elsif split across separate
+# <% %> tags is valid text and invalid Perl (it broke the manager page on
+# 2026-11-14). Compile the layout the way the manager does, with the escape
+# sub and stash vars the renderer would install.
+my $compiled = eval {
+	my $mt = Mojo::Template->new->parse($layout_src);
+	my $code = $mt->_wrap($mt->_compile->code, {});
+	$code =~ s/use Mojo::Base -strict;/use Mojo::Base; no strict;/;
+	my $ns = $mt->namespace;
+	{
+		no warnings 'redefine';
+		no strict 'refs';
+		*{"${ns}::_escape"} = sub { $_[0] };
+	}
+	eval $code;
+};
+is($@, '', 'the manager layout compiles');
+ok(ref $compiled eq 'CODE', 'and yields a template');
 
 sub write_file {
 	my ($dir, $name, $text) = @_;

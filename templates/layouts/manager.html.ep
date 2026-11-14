@@ -272,9 +272,12 @@
 	<% my $probe_cookie  = $c->cookie('jawnos_probe'); %>
 	<% my $probe_default = 1; %>
 	<% my $probe_on; %>
-	<% if (defined $probe_param) { $probe_on = ($probe_param eq '0') ? 0 : 1; } %>
-	<% elsif (defined $probe_cookie && $probe_cookie eq '0') { $probe_on = 0; } %>
-	<% else { $probe_on = ($probe_default || defined $probe_cookie) ? 1 : 0; } %>
+	<%# one tag: an if/elsif chain split across separate tags is not valid
+	     Perl once the template is compiled; splitting it broke the manager
+	     page on 2026-11-14 with a syntax error near elsif. %>
+	<% if (defined $probe_param) { $probe_on = ($probe_param eq '0') ? 0 : 1; }
+	   elsif (defined $probe_cookie && $probe_cookie eq '0') { $probe_on = 0; }
+	   else { $probe_on = ($probe_default || defined $probe_cookie) ? 1 : 0; } %>
 	<% if ($probe_on) { %>
 		<script>
 			window.jawnos_probe_endpoint = 'https://dev.jonathanferwerda.com:45997/event';
