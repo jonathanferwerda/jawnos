@@ -8,6 +8,7 @@
 #   perl scripts/note_reseal.pl --batch 100 --after-appt 12000
 #   perl scripts/note_reseal.pl --table rest --apply   # only the rest pass
 #   perl scripts/note_reseal.pl --old-secret-file OLD.txt --apply
+#   perl scripts/note_reseal.pl --try-all               # every security credential
 #
 # Older uploads sealed a note's outer Crypt::Simple layer under the empty
 # passphrase (public knowledge) while the inner cipher stayed keyed to the real
@@ -25,6 +26,12 @@
 # values that did not open otherwise, must decrypt to text, and is never written
 # to the database or the report.
 #
+# --try-all does what the old reader did: it tries every credential the security
+# table holds, whatever its ost, including the door row. A restore or import
+# rewrites ost, so the key that wrote a note can sit after it and the ordinary
+# timestamp walk never reaches it. Combine it with --old-secret-file for a key
+# that is no longer in the table at all.
+#
 # It works in rowid batches so a long sweep reports progress and a kill is not a
 # loss: every batch is committed and the next run picks up from the rowid it
 # prints. --after-appt / --after-mail start from a cursor by hand.
@@ -37,6 +44,7 @@ require './perl/subroutines.pl';
 
 my $apply = (grep { $_ eq '--apply' } @ARGV) ? 1 : 0;
 my $json  = (grep { $_ eq '--json' } @ARGV) ? 1 : 0;
+my $try_all = (grep { $_ eq '--try-all' } @ARGV) ? 1 : 0;
 my ($batch, $after_appt, $after_mail, $only) = (250, 0, 0, 'all');
 my @old_secrets;
 for (my $i = 0; $i < @ARGV; $i++) {
@@ -72,6 +80,7 @@ my $sweep = sub {
 			after_mail => $after_mail,
 			limit => $batch,
 			old_secrets => \@old_secrets,
+			try_all => $try_all,
 		});
 		if ($res->{'error'}) {
 			print "note reseal: $res->{'error'}\n";
@@ -88,7 +97,7 @@ my $sweep = sub {
 $sweep->('appointments') if $only eq 'all' || $only eq 'appointments';
 $sweep->('mailbox') if $only eq 'all' || $only eq 'mailbox';
 if ($only eq 'all' || $only eq 'rest') {
-	my $rest = subs::note_reseal($apply, { table => 'rest', old_secrets => \@old_secrets });
+	my $rest = subs::note_reseal($apply, { table => 'rest', old_secrets => \@old_secrets, try_all => $try_all });
 	if ($rest->{'error'}) {
 		print "note reseal: $rest->{'error'}\n";
 		exit 1;

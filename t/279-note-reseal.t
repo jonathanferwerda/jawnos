@@ -20,7 +20,7 @@ use Mojo::Util qw(url_escape url_unescape);
 use File::Slurp qw(read_file);
 use JawnOSTest;
 
-subs::preload('note_reseal note_reseal_value note_decrypter note_decrypter_strict note_encrypter note_seal_container encrypter_legacy decrypter_strict shorthand_name');
+subs::preload('note_reseal note_reseal_value note_decrypter note_decrypter_strict note_encrypter note_seal_container encrypter encrypter_legacy decrypter_strict shorthand_name');
 
 my $root = root();
 
@@ -188,10 +188,45 @@ my $old_appt = { rowid => 13, notes => $old_note, start_notes => undef, end_note
 	is(scalar @recovered, 1, 'one guarded write');
 	like($recovered[0]->[1]->{'notes'}, qr/\AJS1:/, 'the stored value is JS1');
 	is(subs::note_decrypter_strict($K, $recovered[0]->[1]->{'notes'}), $old_plain,
-		'and reads back to the original words');
-}
+			'and reads back to the original words');
+	}
 
-# --- the token readers and the map name the strict one ---------------------
+	# --- --try-all reaches a credential whose ost was rewritten -----------------
+	# A restore/import rewrites ost, so the key that wrote a note can sit after it;
+	# the timestamp walk then never reaches it, but the row is still in the table.
+	my $late_key = 'the-key-before-the-rotation';
+	my $late_plain = 'a note from before the key changed, whose security row was imported later';
+	my $late_note = old_key_note($late_key, $late_plain);
+	my $wrapped_late = subs::encrypter($K, $late_key);
+	my @late_updates;
+	{
+		no warnings 'redefine';
+		local *subs::suds_grabber = sub { return $K };
+		local *subs::db_query = sub {
+			my ($sql) = @_;
+			return FakeRows->new([{ level => 'oldkey', credential => $wrapped_late, ost => 9999999999999 }]) if $sql =~ /from security/;
+			return FakeRows->new([{ rowid => 14, notes => $late_note, start_notes => undef, end_notes => '', file => undef, ost => 3000 }]) if $sql =~ /from appointments/;
+			return FakeRows->new([]);
+		};
+		local *subs::db_update = sub { push @late_updates, [@_]; return 1; };
+		$subs::note_security_memo = undef;
+		my $miss = subs::note_reseal(0, { table => 'appointments' });
+		is($miss->{'failed'}, 1, 'the timestamp walk misses a credential written after the note');
+		$subs::note_security_memo = undef;
+		my $dry = subs::note_reseal(0, { table => 'appointments', try_all => 1 });
+		is($dry->{'failed'}, 0, '--try-all reaches the late credential');
+		is($dry->{'notes'}, 1, 'and the dry run counts the change');
+		is(scalar @late_updates, 0, 'while writing nothing');
+		$subs::note_security_memo = undef;
+		my $applied = subs::note_reseal(1, { table => 'appointments', try_all => 1 });
+		is($applied->{'notes'}, 1, 'the apply pass rewrites it');
+		is(scalar @late_updates, 1, 'one guarded write');
+		like($late_updates[0]->[1]->{'notes'}, qr/\AJS1:/, 'the stored value is JS1');
+		is(subs::note_decrypter_strict($K, $late_updates[0]->[1]->{'notes'}), $late_plain,
+			'and reads back to the original words');
+	}
+
+	# --- the token readers and the map name the strict one ---------------------
 like(read_file("$root/lib/JawnOS/Domain/Network.pm"), qr/note_decrypter_strict\(\$patience/,
 	'the watch authorizer reads its token strictly');
 like(read_file("$root/lib/JawnOS/Domain/Embedded2.pm"), qr/note_decrypter_strict\(\$watch_settings/,
@@ -202,6 +237,8 @@ like(read_file("$root/scripts/note_reseal.pl"), qr/subs::note_reseal\(\$apply, \
 	'the script runs the shared sweep with its apply flag');
 like(read_file("$root/scripts/note_reseal.pl"), qr/--old-secret-file/,
 	'the script can be handed the passphrase from before the retained history');
+like(read_file("$root/scripts/note_reseal.pl"), qr/--try-all/,
+	'the script can try every credential in the security table');
 
 # --- the rest of the note-shaped data --------------------------------------
 my $hk = 'test-house-key';
