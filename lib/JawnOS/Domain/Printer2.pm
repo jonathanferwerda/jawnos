@@ -402,17 +402,19 @@ sub scanner_live_capabilities {
 	my $peer_ip = &scan_house_printer_ip();
 	if ($peer_ip ne '' && $peer_ip ne $ip) {
 		my $report = eval { &network_interface_reporter() } || {};
-		my $mine = '';
+		my $same_net = 0;
 		if (ref $report eq 'HASH') {
+			# Ask every interface, not just the first: a phone's tailnet address
+			# and its Wi-Fi address are both private, and only one is on the
+			# printer's network.
 			foreach my $nic (sort keys %{$report}) {
 				my $cand = $report->{$nic}->{'ip'} || '';
 				next if $cand =~ /^127\./;
 				next unless &ip_is_private($cand);
-				$mine = $cand;
-				last;
+				if (&same_net_test($cand, $peer_ip)) { $same_net = 1; last; }
 			}
 		}
-		if ($mine ne '' && &same_net_test($mine, $peer_ip)) {
+		if ($same_net) {
 			my $peer_caps = eval { JawnOS::Platform::Print::scan_capabilities($peer_ip) } || {};
 			if ($peer_caps->{'adf'} || $peer_caps->{'platen'}) {
 				&cache_set({ app => 'misc', context => 'scan_printer_ip', warranty => '-1d' }, $peer_ip);

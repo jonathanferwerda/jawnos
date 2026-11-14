@@ -189,9 +189,14 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	};
 	local *subs::adf_scanner = sub { return { name => 'Officejet LivingRoom' } };
 	local *subs::scan_house_printer_ip = sub { return '192.168.1.109' };
-	local *subs::network_interface_reporter = sub { return { wlan0 => { ip => '192.168.1.50' } } };
+	local *subs::network_interface_reporter = sub {
+		return { tun1 => { ip => '100.64.0.9' }, wlan0 => { ip => '192.168.1.106' } };
+	};
 	local *subs::ip_is_private = sub { return 1 };
-	local *subs::same_net_test = sub { return 'yes' };
+	local *subs::same_net_test = sub {
+		my ($mine, $peer) = @_;
+		return $mine =~ /^192\.168\./ ? 'yes' : 'no';
+	};
 	local *subs::cache_set = sub { return 1 };
 	local *subs::rightNow = sub { return 1_800_000_000_000 };
 	my ($ip, $caps) = subs::scanner_live_capabilities();
