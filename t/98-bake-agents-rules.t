@@ -22,6 +22,10 @@ my $script = "$FindBin::Bin/../scripts/bake_agents_rules.pl";
 my $SOURCE = <<'MD';
 # AGENTS.md — JawnOS map
 
+## Worktree per task
+
+Every source write happens in a worktree; the primary checkout is read-only.
+
 ## Look it up — do not grep for it
 
 A locator section that is helpful but not a protocol.
@@ -79,6 +83,8 @@ for my $wanted ('RULE 1', 'Run & restart') {
 	like($baked, qr/^## \Q$wanted\E\b/m, "the $wanted section is carried");
 }
 like($baked, qr/^## Crash-resilient agent work$/m, 'so is the crash-resilient protocol');
+like($baked, qr/^## Worktree per task$/m, 'the worktree rule travels, so a fresh clone has it');
+like($baked, qr/Every source write happens in a worktree/, 'with its instruction, not just its heading');
 like($baked, qr/^## Rules$/m, 'and the Rules');
 like($baked, qr/Every behaviour change ships with a test/, 'with their content, not just their headings');
 

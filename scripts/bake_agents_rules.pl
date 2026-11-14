@@ -28,10 +28,12 @@ exit 0 unless -f $src;
 
 my $text = read_file($src);
 
-# The sections that are protocol, not map: the stop rule, how to run/restart, the
-# concurrent-agent landing protocol, the crash-resilient work protocol, and the
-# Rules (which carry the finishing routine). Matched by heading prefix.
-my @keep = ( qr/^RULE\s*1\b/i, qr/^Run\s*&\s*restart/i, qr/^Many\s+agents\b/i,
+# The sections that are protocol, not map: the worktree rule, the stop rule, how to
+# run/restart, the concurrent-agent landing protocol, the crash-resilient work
+# protocol, and the Rules (which carry the finishing routine). Matched by heading
+# prefix.
+my @keep = ( qr/^Worktree\s+per\s+task/i, qr/^RULE\s*1\b/i, qr/^Run\s*&\s*restart/i,
+	qr/^Many\s+agents\b/i,
 	qr/^Crash-resilient\b/i, qr/^Rules\b/i );
 
 my @sections;

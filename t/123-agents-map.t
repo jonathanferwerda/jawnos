@@ -63,8 +63,21 @@ for my $file (qw(
 
 # --- the concurrency on-ramp an agent has to find --------------------------
 like($text, qr/Worktree per task/, 'the map names the worktree-per-task rule');
-like($text, qr/every source write .* happens in a worktree/,
+like($text, qr/every source write .* happens in a worktree/i,
 	'the map says any write at all belongs in a worktree, not just the commit');
+# The rule used to live only in "Rules", and "Many agents at once" read as if a solo agent were
+# exempt. Both are on-ramps an agent passes before its first edit, so both are pinned: the rule on
+# the first screen, the exemption closed where it used to live.
+(my $first_screen = $text) =~ s{\A(.*?)## Look it up}{$1}s;
+like($first_screen, qr/Worktree per task/,
+	'the map states the rule above the lookup section, not only in Rules');
+like($first_screen, qr/every source write .* happens in a worktree/i, 'with what a write is');
+like($first_screen, qr/even a lone one/, 'and no exemption for a solo agent');
+like($first_screen, qr{worktree add \.worktrees/<task> -b agent/<task> origin/working},
+	'and the command that creates it');
+like($first_screen, qr/before the first edit/, 'before the first edit, not at commit time');
+like($text, qr/Sole agent\? The worktree rule still holds/,
+	'and the landing section does not read as an exemption');
 like($text, qr/primary checkout is\s+read-only for agents/s,
 	'and that the primary checkout is read-only, not merely the place to land from');
 like($text, qr{perl ~/jawnos/scripts/agent_land\.pl},
