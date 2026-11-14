@@ -81,6 +81,9 @@ function attributeSave(att) {
 	if (save_app == true) { save_app = 'on'; }
 	var quantity = att.find('.quantity').val();
 	var unit = att.find('.unit').val();
+	// The option category chosen beside the name rides the Add itself: the row
+	// does not exist yet, so it cannot be saved through the characteristic rail.
+	var option_category = att.find('.char[char_input="option_category"]').val() || '';
 
 	var category = wind.find('.configure_input[setting="category"]').val();
 
@@ -116,6 +119,7 @@ function attributeSave(att) {
 			save_app: save_app,
 			quantity: quantity,
 			unit: unit,
+			option_category: option_category,
 			delay_start: delay_start,
 			delay_stop: delay_stop
 		},
@@ -129,8 +133,11 @@ function attributeSave(att) {
 				// of a twin; say so rather than letting the press look wasted.
 				if (response.duplicate) {
 					var t = (typeof jawnosT === 'function') ? jawnosT : function (s) { return s; };
+					var message = (attribute === 'option')
+						? 'That option already exists in this category. Edit the row already in the list.'
+						: 'That model already exists. Edit the row already in the list.';
 					if (typeof jawnosAlertText === 'function') {
-						jawnosAlertText(t('That model already exists. Edit the row already in the list.'));
+						jawnosAlertText(t(message));
 					}
 				}
 			}
@@ -209,6 +216,10 @@ $(document).on('change', '.char', function(e) {
 	var uuid = ac.attr('uuid');
 	var container = char.closest('.appointment');
 	var app = container.attr('app');
+
+	// A new row has no uuid yet: its category is carried by the Add, so the
+	// duplicate key is known before the row exists. Nothing to save here.
+	if (att_uuid == 'new') { return; }
 
 	ac.data('char_saving', true);
 	$.ajax({

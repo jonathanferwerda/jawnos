@@ -212,17 +212,27 @@ require 'JawnOS/Controller/manager_store.pm';
 	package main;
 }
 
+sub option_chars {
+	my ($category) = @_;
+	return $json->encode([ { name => 'option_category', value => $category, timestamp => 1, uuid => 'char' } ]);
+}
+
 sub add_model {
 	my (%p) = @_;
 	my @inserted;
 	my @updated;
-	my @existing = @{ $p{'existing'} || [] };
+	my @existing_model = @{ $p{'existing_model'} || [] };
+	my @existing_option = @{ $p{'existing_options'} || [] };
 	{
 		no warnings 'redefine';
 		local *subs::db_query = sub {
 			my ($sql) = @_;
-			like($sql, qr/from model where app = \? and name = \?/, 'the duplicate check names the app and the name');
-			return ModelAddRows->new(\@existing);
+			if ($sql =~ /from option\b/) {
+				like($sql, qr/from option where app = \? and name = \?/, 'the option check names the app and the name');
+				return ModelAddRows->new(\@existing_option);
+			}
+			like($sql, qr/from model where app = \? and name = \?/, 'the model check names the app and the name');
+			return ModelAddRows->new(\@existing_model);
 		};
 		local *subs::db_insert = sub { push @inserted, [@_]; return 1 };
 		local *subs::db_update = sub { push @updated, [@_]; return 1 };
@@ -232,33 +242,64 @@ sub add_model {
 			app => $p{'app'} // 'news',
 			name => $p{'name'} // 'global',
 			timestamp => 1_700_000_000_000,
+			option_category => $p{'option_category'} // '',
 		);
 		Manager::action_6625($c);
 		return ($c->{'rendered'}, \@inserted, \@updated);
 	}
 }
 
-my ($reply, $inserted) = add_model(existing => [ { uuid => 'keepglobal' } ]);
+my ($reply, $inserted) = add_model(existing_model => [ { uuid => 'keepglobal' } ]);
 is(scalar @{$inserted}, 0, 'adding a name the catalogue holds writes no second row');
 is($reply->{'uuid'}, 'keepglobal', 'the reply names the row already there');
 ok($reply->{'duplicate'}, 'and marks the answer as the existing row');
 
-($reply, $inserted) = add_model(existing => [], name => 'bbc');
+($reply, $inserted) = add_model(existing_model => [], name => 'bbc');
 is(scalar @{$inserted}, 1, 'a new name is inserted once');
 is($inserted->[0]->[0], 'model', 'into the model table');
 is($inserted->[0]->[1]->{'name'}, 'bbc', 'under the name that was typed');
 is(length($inserted->[0]->[1]->{'uuid'}), 50, 'with the 50-character catalogue uuid');
 ok(!$inserted->[0]->[1]->{'duplicate'}, 'and is not marked a duplicate');
 
-($reply, $inserted) = add_model(existing => [ { uuid => 'keepoption' } ], att => 'option');
-is(scalar @{$inserted}, 1, 'an option name is not guarded: the same name can sit in two categories');
+# An option's key includes its category, so the guard matches only that key.
+($reply, $inserted) = add_model(
+	att => 'option', name => 'maxwell_house', option_category => 'catA',
+	existing_options => [ { uuid => 'keepoption', characteristics => option_chars('catA') } ],
+);
+is(scalar @{$inserted}, 0, 'an option with the same app, name and category writes no second row');
+is($reply->{'uuid'}, 'keepoption', 'the reply names the option already in that category');
+ok($reply->{'duplicate'}, 'and marks it a duplicate');
+
+($reply, $inserted) = add_model(
+	att => 'option', name => 'maxwell_house', option_category => 'catB',
+	existing_options => [ { uuid => 'keepoption', characteristics => option_chars('catA') } ],
+);
+is(scalar @{$inserted}, 1, 'the same option name in another category is inserted');
+my $entered = $json->decode($inserted->[0]->[1]{'characteristics'} // '[]');
+is($entered->[0]->{'name'}, 'option_category', 'and the Add stores the category chosen beside the name');
+is($entered->[0]->{'value'}, 'catB', 'as the value the guard compared');
+
+($reply, $inserted) = add_model(
+	att => 'option', name => 'maxwell_house', option_category => '',
+	existing_options => [ { uuid => 'plainoption', characteristics => '' } ],
+);
+is(scalar @{$inserted}, 0, 'an uncategorised name matches an uncategorised option');
+
+($reply, $inserted) = add_model(
+	att => 'option', name => 'maxwell_house', option_category => 'catB',
+	existing_options => [ { uuid => 'plainoption', characteristics => '' } ],
+);
+is(scalar @{$inserted}, 1, 'while a categorised add does not match an uncategorised one');
 
 # ------------------------------------------------------- what the person sees
 my $js = read_file("$root/public/js/manager/attributes.js");
 like($js, qr/if \(response\.duplicate\)/, 'the Register notices the existing row');
-like($js, qr/That model already exists/, 'and says so rather than letting the press look wasted');
+like($js, qr/That model already exists/, 'and says so rather than letting the model press look wasted');
+like($js, qr/That option already exists in this category/, 'and names the option key in its own notice');
+like($js, qr/option_category: option_category/, 'the Add carries the option category chosen beside the name');
+like($js, qr/if \(att_uuid == 'new'\) \{ return; \}/, 'a new row leaves its category for the Add to save');
 my $help = read_file("$root/perl/help/topics_features.pl");
-like($help, qr/a name the catalogue already holds opens that row instead of adding a second one/,
-	'the guide says an existing name opens its row');
+like($help, qr/a name the catalogue already holds \(in the same option category\) opens that row/,
+	'the guide names the option category in that rule');
 
 done_testing();

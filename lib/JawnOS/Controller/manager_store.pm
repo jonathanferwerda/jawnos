@@ -619,6 +619,7 @@ sub action_6625 {
 	my $quantity = $c->param('quantity');
 	my $delay_start = $c->param('delay_start');
 	my $delay_stop = $c->param('delay_stop');
+	my $option_category = $c->param('option_category') || '';
 
 	if ($quantity =~ /[a-zA-Z]/) {
 		my $gunit = $quantity;
@@ -627,12 +628,13 @@ sub action_6625 {
 		$quantity =~ s/[^0-9.]//gi;
 	}
 
-	# A model row is named by its uuid, and the sync rail merges by uuid, so two
-	# rows with the same app and name never join on their own. Register's Add used
-	# to mint a fresh uuid on every press, which is how one model came to be listed
-	# twice. Adding a name the catalogue already holds is that row, not a twin: the
-	# reply names it and leaves it alone. Options are not guarded here - the same
-	# option name in two categories is a real pair.
+	# A catalogue row is named by its uuid, and the sync rail merges by uuid, so
+	# two rows with the same key never join on their own. Register's Add used to
+	# mint a fresh uuid on every press, which is how one entry came to be listed
+	# twice. Adding a key the catalogue already holds is that row, not a twin: the
+	# reply names it and leaves it alone. A model's key is app + name; an option's
+	# is app + name + option category, because the same option name in two
+	# categories is a real pair.
 	my $duplicate;
 	if ($uuid eq 'new' && $att eq 'model' && length $name) {
 		my $existing = &subs::db_query(
@@ -640,6 +642,20 @@ sub action_6625 {
 			$app, $name
 		)->hashes;
 		$duplicate = $existing->[0] if scalar @{$existing};
+	}
+	elsif ($uuid eq 'new' && $att eq 'option' && length $name) {
+		my $existing = &subs::db_query(
+			'select uuid, characteristics from option where app = ? and name = ? order by cast(ost as integer) desc, rowid desc',
+			$app, $name
+		)->hashes;
+		foreach my $row ( @{$existing} ) {
+			my $chars = eval { return decode_json($row->{'characteristics'} // '') } || [];
+			my ($have) = map { $_->{'value'} } grep { ref $_ eq 'HASH' && ($_->{'name'} // '') eq 'option_category' } @{$chars};
+			$have = '' unless defined $have;
+			next unless $have eq $option_category;
+			$duplicate = $row;
+			last;
+		}
 	}
 
 	if ($uuid ne 'new') {
@@ -675,6 +691,18 @@ sub action_6625 {
 
 
 	$returner->{'category'} = $category if $att eq 'option_category' || $att eq	'subcategory';
+	# A new option carries the category chosen beside its name in the same press.
+	# Once the row exists the category is set by the characteristic setter, as
+	# before; the Add is where the key is decided, so the duplicate check above can
+	# see it.
+	if ($uuid eq 'new' && $att eq 'option' && length $option_category) {
+		$returner->{'characteristics'} = encode_json([ {
+			name => 'option_category',
+			value => $option_category,
+			timestamp => ($timestamp || &subs::rightNow()),
+			uuid => &subs::random_string_creator(27),
+		} ]);
+	}
 	if ($uuid eq 'new') {
 		if ($duplicate) {
 			$returner->{'duplicate'} = 1;
