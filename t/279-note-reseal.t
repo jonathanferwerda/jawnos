@@ -268,6 +268,8 @@ like(read_file("$root/scripts/note_reseal.pl"), qr/--export-keys/,
 	'the script can hand its candidates to another machine');
 like(read_file("$root/scripts/note_reseal.pl"), qr/--from-peers/,
 	'the script can pull the candidates from linked machines');
+like(read_file("$root/perl/hooks.pl"), qr{/manager/legacy_keys},
+	'the peer key route is exempt from the session gate');
 
 # --- the rest of the note-shaped data --------------------------------------
 my $hk = 'test-house-key';
