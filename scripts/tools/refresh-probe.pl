@@ -429,6 +429,10 @@ Mojo::IOLoop->recurring(0.5 => sub {
 		($TAIL_INO, $TAIL_POS) = @tail_st[1, 7];
 		$TAIL_POS = 0;
 	}
+	# A buffered handle that ever saw EOF keeps the flag when the file grows:
+	# the next readline returns undef until a no-op seek clears it. Without
+	# this the tail sat at the old end for a whole 24h run (2026-11-14).
+	seek($TAIL, 0, 1);
 	while (defined(my $line = <$TAIL>)) {
 		$TAIL_POS = tell($TAIL);
 		my $kind = classify($line) or next;

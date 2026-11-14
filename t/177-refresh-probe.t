@@ -13,6 +13,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use Cwd qw(abs_path);
 use File::Temp qw(tempdir);
+use IO::Socket::INET;
 
 my $root = abs_path("$FindBin::Bin/..");
 my $pl   = "$root/scripts/tools/refresh-probe.pl";
@@ -96,5 +97,56 @@ my $quiet = write_file($dir, 'navigate.json',
 	'[{"t":1700000000800,"src":"browser","device":"phone","ev":"page_load","nav":"navigate"}]');
 my $quiet_report = `"$^X" "$pl" --report --out "$dir/none.jsonl" --log "$empty_log" --browser "$quiet" 2>&1`;
 like($quiet_report, qr/no page reloads/, 'a navigating load is not called a reload');
+
+# The collector opens the manager log at its end. A buffered handle that has
+# seen EOF keeps that flag when the file grows, so the live half recorded only
+# its tree fingerprints; this proves a line appended after open is seen.
+SKIP: {
+	my $probe = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1', LocalPort => 0, Listen => 1);
+	skip 'no loopback socket for the live-tail test', 3 unless $probe;
+	my $port = $probe->sockport;
+	close $probe;
+
+	my $live_log = write_file($dir, 'live.log', "before\n");
+	my $live_out = "$dir/live.jsonl";
+	my $pid = fork();
+	skip 'fork failed', 1 unless defined $pid;
+	if (!$pid) {
+		open(STDOUT, '>', '/dev/null');
+		open(STDERR, '>', '/dev/null');
+		exec($^X, $pl, '--port', $port, '--listen', '127.0.0.1',
+			'--log', $live_log, '--out', $live_out, '--hours', '0.001',
+			'--tree', $dir, '--tree-interval', '3600', '--quiet');
+		exit 1;
+	}
+	sleep 1;
+	open(my $lf, '>>', $live_log) or die "$live_log: $!";
+	print {$lf} "worker spawn live-tail-test\n";
+	close $lf;
+
+	my $timed_out = 0;
+	eval {
+		local $SIG{ALRM} = sub { die "timeout\n" };
+		alarm 15;
+		waitpid($pid, 0);
+		alarm 0;
+	};
+	if ($@) {
+		$timed_out = 1;
+		kill 'TERM', $pid;
+		waitpid($pid, 0);
+	}
+	ok(!$timed_out, 'the collector stopped after --hours');
+	my $raw = '';
+	if (-r $live_out) {
+		local $/;
+		open(my $fh, '<', $live_out) or die "$live_out: $!";
+		$raw = <$fh>;
+		close $fh;
+	}
+	like($raw, qr/"kind":"worker_spawn"/, 'the live tail sees a line appended after it opened');
+	like($raw, qr/live-tail-test/, 'and keeps the line text');
+}
 
 done_testing();
