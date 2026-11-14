@@ -1,25 +1,39 @@
-/* refresh-probe.js - explain a WebUI reload.
+/* refresh-probe.js - explain a WebUI reload, across a long run.
  *
- * Paste into the page's console (DevTools) or load it after the app bundle.
- * It posts one JSON record per event to the Perl half:
- *     perl scripts/tools/refresh-probe.pl --port 45997
- * Run that collector on the same machine as the browser (the page posts to
- * 127.0.0.1), then read the capture with --report.
+ * Served by the app (public/js/probe/), and included by the manager layout only
+ * when the browser asks for it with ?probe=1 or already carries the cookie this
+ * file sets. That is the whole point of living here rather than in the console:
+ * a reload (the event being measured) wipes a pasted script, but the next page
+ * loads this file again from the cookie.
  *
- * What it watches: the navigation type of each load, hide/wake/freeze, socket
- * open/close, and the app's own reload paths (jawnosReloadWhenReady,
- * jawnosUpdateQuietReload, jawnosRevisionArrived, websocketRebuild, ...), each
- * with the stack that called it. State lives in localStorage, so the last few
- * events of the previous page survive the reload that this is meant to explain.
+ * It posts one JSON record per event to the collector:
+ *     perl scripts/tools/refresh-probe.pl --port 45997 \
+ *          --listen '*' --cert server/fullchain.pem --key server/privkey.pem
+ *
+ * A page on https cannot post to a plain-http collector (mixed content), so the
+ * collector presents the app's own certificate and the endpoint is the same
+ * host name the browser already trusts. Install once per device:
+ *
+ *   /manager?probe=1&probe_device=phone
+ *          &probe_endpoint=https%3A%2F%2Fdev.example.com%3A45997%2Fevent
+ *
+ * probe_device and probe_endpoint are remembered in localStorage, so later
+ * loads only need the cookie. ?probe=0 clears both and stops the probe.
+ *
+ * State lives in localStorage, so the last few events of the previous page
+ * survive the reload this is meant to explain, even when the beacon that would
+ * have sent them was lost with the page.
  */
 (function () {
   if (window.jawnosRefreshProbe) { return; }
 
-  var URL_ = 'http://127.0.0.1:45997/event';
   var HISTORY = 'jawnos_refresh_probe_history';
   var LAST = 'jawnos_refresh_probe_last';
   var STAMP = 'jawnos_refresh_probe_last_t';
-  var MAX = 300;
+  var ENDPOINT_KEY = 'jawnos_refresh_probe_endpoint';
+  var DEVICE_KEY = 'jawnos_refresh_probe_device';
+  var COOKIE = 'jawnos_probe';
+  var MAX = 400;
 
   function now() { return Date.now(); }
   function read(key, dflt) {
@@ -31,25 +45,74 @@
   function write(key, val) {
     try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
   }
+  function params() {
+    var out = {};
+    try {
+      var search = new URLSearchParams(location.search || '');
+      search.forEach(function (v, k) { out[k] = v; });
+    } catch (e) {}
+    return out;
+  }
   function navType() {
     try {
       var n = performance.getEntriesByType('navigation')[0];
       return n ? n.type : '';
     } catch (e) { return ''; }
   }
+  function guessDevice() {
+    var ua = navigator.userAgent || '';
+    if (/iPad|Tablet/i.test(ua)) { return 'tablet'; }
+    if (/iPhone|iPod|Android.*Mobile/i.test(ua)) { return 'phone'; }
+    if (/Android/i.test(ua)) { return 'tablet'; }
+    if (/Macintosh|Windows NT|Linux|X11|CrOS/i.test(ua)) { return 'laptop'; }
+    return '';
+  }
+  function cookie(value, age) {
+    try {
+      document.cookie = COOKIE + '=' + value + '; path=/; max-age=' + age
+        + '; SameSite=Lax' + (location.protocol === 'https:' ? '; Secure' : '');
+    } catch (e) {}
+  }
+
+  var q = params();
+
+  // The cookie is what makes the layout include this file again after a
+  // reload. Renew it on every load so a 24-hour run does not fall out.
+  cookie('1', 2 * 86400);
+  if (q.probe === '0') { cookie('', 0); }
+
+  var endpoint = q.probe_endpoint;
+  if (endpoint && /^https?:\/\//i.test(endpoint)) { write(ENDPOINT_KEY, endpoint); }
+  endpoint = read(ENDPOINT_KEY, '') || '';
+  if (!endpoint) {
+    endpoint = location.protocol + '//' + location.hostname + ':45997/event';
+  }
+
+  var device = q.probe_device;
+  if (device) { write(DEVICE_KEY, device); }
+  device = read(DEVICE_KEY, '') || guessDevice();
+
+  var started = now();
+  var timer = 0;
+  var alive = true;
+
   function post(rec) {
     var body = JSON.stringify(rec);
     try {
       if (navigator.sendBeacon) {
-        return navigator.sendBeacon(URL_, new Blob([body], { type: 'text/plain;charset=UTF-8' }));
+        return navigator.sendBeacon(endpoint, new Blob([body], { type: 'text/plain;charset=UTF-8' }));
       }
     } catch (e) {}
     try {
-      fetch(URL_, { method: 'POST', body: body, mode: 'no-cors', keepalive: true });
+      fetch(endpoint, { method: 'POST', body: body, mode: 'no-cors', keepalive: true });
     } catch (e) {}
   }
   function send(ev, extra) {
-    var rec = { t: now(), src: 'browser', ev: ev, hidden: document.hidden ? 1 : 0 };
+    if (!alive) { return null; }
+    var rec = {
+      t: now(), src: 'browser', ev: ev, device: device,
+      hidden: document.hidden ? 1 : 0, path: location.pathname
+    };
     if (extra) {
       for (var k in extra) {
         if (Object.prototype.hasOwnProperty.call(extra, k)) { rec[k] = extra[k]; }
@@ -68,11 +131,11 @@
   var prev = read(LAST, null);
   var lastT = 0;
   try { lastT = parseFloat(localStorage.getItem(STAMP) || '0') || 0; } catch (e) {}
-  write(LAST, { t: now(), href: location.href, hidden_at: (prev && prev.hidden_at) || 0,
+  write(LAST, { t: now(), path: location.pathname, hidden_at: (prev && prev.hidden_at) || 0,
     events: read(HISTORY, []).slice(-12) });
   send('page_load', {
     nav: navType(),
-    href: location.href,
+    host: location.hostname,
     version: (typeof jawnos_version !== 'undefined') ? jawnos_version : '',
     autoreload: (function () { try { return localStorage.getItem('jawnos_update_autoreload') || 'off'; } catch (e) { return '?'; } })(),
     since_prev_ms: lastT ? (now() - lastT) : null,
@@ -93,6 +156,7 @@
       send('hidden');
     } else {
       send('visible', { away_ms: hiddenAt ? (now() - hiddenAt) : null });
+      send('heartbeat', { up_ms: now() - started, hidden: 0 });
     }
   });
   window.addEventListener('pageshow', function (e) { send('pageshow', { persisted: e.persisted ? 1 : 0 }); });
@@ -152,14 +216,30 @@
   }
   wrapAll();
   var tries = 0;
-  var timer = setInterval(function () { wrapAll(); if (++tries > 120) { clearInterval(timer); } }, 500);
+  var wrapTimer = setInterval(function () { wrapAll(); if (++tries > 120) { clearInterval(wrapTimer); } }, 500);
+
+  // ---- liveness over a long run ----------------------------------------
+  // A gap in these is how the report tells "nothing happened" from "the probe
+  // was not running", which a 24-hour capture needs to say honestly.
+  function heartbeat() { send('heartbeat', { up_ms: now() - started }); }
+  timer = setInterval(heartbeat, 60000);
+  heartbeat();
 
   window.jawnosRefreshProbe = {
-    url: URL_,
+    url: endpoint,
+    device: device,
     test: function () { return send('probe_test', { hello: 1 }); },
     dump: function () { return read(HISTORY, []); },
-    clear: function () {
-      try { localStorage.removeItem(HISTORY); localStorage.removeItem(LAST); } catch (e) {}
+    disable: function () {
+      alive = false;
+      if (timer) { clearInterval(timer); }
+      cookie('', 0);
+      try {
+        localStorage.removeItem(HISTORY);
+        localStorage.removeItem(LAST);
+        localStorage.removeItem(ENDPOINT_KEY);
+        localStorage.removeItem(DEVICE_KEY);
+      } catch (e) {}
     }
   };
   send('probe_ready');

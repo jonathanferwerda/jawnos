@@ -33,7 +33,7 @@ Run from the repo root, or with an explicit path. `sh` tools run under
 | `audio-pipe-test.sh` | Does a tone into the call sink reach its monitor, and into the prompt sink reach the virtual mic? (no phone call) | `./scripts/tools/audio-pipe-test.sh` | plays a 0.5 s tone; writes temp raw files |
 | `mixer-test.pl` | Which handset commands would be used, and which device is the call's pair on? | `./scripts/tools/mixer-test.pl --mac AA:BB:CC:DD:EE:FF` | read; `--ensure` creates the virtual handset |
 | `json-stress.pl` | How long does JSON::PP take on a large escape/nesting shape, and does it refuse it? | `./scripts/tools/json-stress.pl uesc 4` | read |
-| `refresh-probe.pl` | Why did the WebUI reload? The browser half (`refresh-probe.js`) posts hide/wake/socket/reload events; this half tails the manager log and the code tree beside them | `./scripts/tools/refresh-probe.pl --port 45997`, then `--report` | read; `--out FILE` writes |
+| `refresh-probe.pl` | Why did the WebUI reload, and on which device? The browser half (`public/js/probe/refresh-probe.js`) posts hide/wake/socket/reload events; this half tails the manager log and the code tree beside them, then reports per device over a long run | `./scripts/tools/refresh-probe.pl --listen '*' --cert server/fullchain.pem --key server/privkey.pem --hours 24`, then `--report --last 24h` | read; `--out FILE` writes |
 
 ## Notes
 
@@ -45,6 +45,18 @@ Run from the repo root, or with an explicit path. `sh` tools run under
   `iospy.pl`; `ble-bridge-probe.py`/`ble-mock.py` are ports of `bt_probe.pl`/
   `ble_mock.pl`. The algorithms are unchanged; only argument handling and
   absolute paths were made portable.
+- `refresh-probe.pl` collects a long, multi-device run. The browser half is
+  served by the app and the manager layout includes it only when the browser
+  carries its cookie (or asks for `?probe=1` once), which is what lets it
+  survive the reload it is measuring; a pasted console snippet does not. A page
+  on https cannot beacon to plain http, so the collector presents the app's own
+  certificate (`--cert`/`--key`) and the install URL names the host the browser
+  already trusts. `--hours` stops the run, `--max-mb`/`--keep` bound the file,
+  and `--watch SECONDS` reprints a compact per-device summary. Install once per
+  device as
+  `/manager?probe=1&probe_device=phone&probe_endpoint=https%3A%2F%2F<host>%3A45997%2Fevent`;
+  `?probe=0` removes it. `--report` reads the JSONL plus the manager log, so a
+  collector that died still leaves the server events in the window.
 - `hot-catch.sh` prints evidence to stdout unless `--out FILE` is given (then it
   appends, per the `# WRITES:` header).
 - `android-battery-log.sh` shells out to `adb`; it never uses a credential and

@@ -1,8 +1,9 @@
-# tests-for: scripts/tools/refresh-probe.pl scripts/tools/refresh-probe.js
-# covers:    the two halves of the WebUI refresh probe. The Perl half turns a
-#            browser dump into the reload it saw and the events just before it;
-#            the browser half still parses and still carries the hooks that make
-#            that report possible.
+# tests-for: scripts/tools/refresh-probe.pl public/js/probe/refresh-probe.js templates/layouts/manager.html.ep
+# covers:    the two halves of the WebUI refresh probe. The browser half is
+#            served by the app and reloaded from a cookie, so a reload (the
+#            event being measured) does not lose it; the Perl half collects a
+#            long multi-device run and reports each device's reloads beside
+#            the server events in the same window.
 
 use strict;
 use warnings;
@@ -15,15 +16,22 @@ use File::Temp qw(tempdir);
 
 my $root = abs_path("$FindBin::Bin/..");
 my $pl   = "$root/scripts/tools/refresh-probe.pl";
-my $js   = "$root/scripts/tools/refresh-probe.js";
+my $js   = "$root/public/js/probe/refresh-probe.js";
+my $layout = "$root/templates/layouts/manager.html.ep";
 
 ok(-r $pl, 'the perl half is present');
-ok(-r $js, 'the browser half is present');
+ok(-r $js, 'the browser half is served by the app');
+ok(!-e "$root/scripts/tools/refresh-probe.js",
+	'the console-only copy moved beside the app');
 
 my $src = do { local $/; open(my $fh, '<', $js) or die "$js: $!"; <$fh> };
 like($src, qr/jawnosRefreshProbe/, 'the browser half exposes a dump handle');
 like($src, qr/jawnosUpdateQuietReload/, 'it watches the quiet-reload path');
 like($src, qr/jawnosRevisionArrived/, 'and the revision handler');
+like($src, qr/probe_endpoint/, 'the collector endpoint is installable per device');
+like($src, qr/probe_device/, 'and so is the device label');
+like($src, qr/setInterval\(heartbeat, 60000\)/, 'it sends a heartbeat over a long run');
+like($src, qr/document\.cookie = COOKIE/, 'it renews the cookie that reloads it');
 
 my $node = `command -v node 2>/dev/null`;
 chomp $node;
@@ -32,32 +40,56 @@ SKIP: {
 	is(system($node, '--check', $js), 0, 'the browser half parses');
 }
 
-sub dump_to {
-	my ($dir, $name, $json) = @_;
+my $layout_src = do { local $/; open(my $fh, '<', $layout) or die "$layout: $!"; <$fh> };
+like($layout_src, qr{/js/probe/refresh-probe\.js}, 'the layout includes the probe');
+like($layout_src, qr{jawnos_probe}, 'only behind its cookie or ?probe=1');
+
+sub write_file {
+	my ($dir, $name, $text) = @_;
 	my $path = "$dir/$name";
 	open(my $fh, '>', $path) or die "$path: $!";
-	print {$fh} $json;
+	print {$fh} $text;
 	close $fh;
 	return $path;
 }
 
 my $dir = tempdir(CLEANUP => 1);
-my $dump = dump_to($dir, 'browser.json',
-	'[{"t":1700000000000,"src":"browser","ev":"hidden"},'
-	. '{"t":1700000000100,"src":"browser","ev":"page_load","nav":"reload","since_prev_ms":100,'
-	. '"autoreload":"on","prev_events":[{"t":1700000000000,"ev":"hidden"}]}]');
-my $out = "$dir/probe.jsonl";
-my $report = `"$^X" "$pl" --report --out "$out" --browser "$dump" 2>&1`;
-is($? >> 8, 0, 'the report exits 0');
-like($report, qr/page loads: reload=1/, 'it counts the reload');
-like($report, qr/reload #1/, 'it prints the reload');
-like($report, qr/auto=on/, 'it carries the auto-reload setting');
-like($report, qr/hidden/, 'it shows the event before the reload');
-like($report, qr/browser remembered/, 'and the previous page\'s remembered events');
+my $empty_log = write_file($dir, 'empty.log', '');
 
-my $quiet = dump_to($dir, 'navigate.json',
-	'[{"t":1700000000000,"src":"browser","ev":"page_load","nav":"navigate"}]');
-my $quiet_report = `"$^X" "$pl" --report --out "$out" --browser "$quiet" 2>&1`;
+# Two devices in one capture, one rotated file, and the laptop's own events
+# just before its reload.
+my $old = '{"t":1700000000000,"src":"browser","device":"phone","ev":"page_load","nav":"navigate"}';
+my $out = "$dir/probe.jsonl";
+write_file($dir, 'probe.jsonl.1', "$old\n");
+write_file($dir, 'probe.jsonl',
+	'{"t":1700000000100,"src":"browser","device":"laptop","ev":"page_load","nav":"navigate","ua":"Mozilla/5.0 laptop"}' . "\n"
+	. '{"t":1700000000200,"src":"browser","device":"laptop","ev":"hidden"}' . "\n"
+	. '{"t":1700000000300,"src":"browser","device":"laptop","ev":"page_load","nav":"reload","since_prev_ms":200,"autoreload":"on","prev_events":[{"t":1700000000200,"ev":"hidden"}]}' . "\n"
+	. '{"t":1700000000400,"src":"browser","device":"phone","ev":"page_load","nav":"reload","autoreload":"off"}' . "\n"
+	. '{"t":1700000000500,"src":"browser","device":"phone","ev":"heartbeat"}' . "\n"
+	. '{"t":1700000000600,"src":"browser","device":"phone","ev":"heartbeat"}' . "\n");
+
+my $report = `"$^X" "$pl" --report --out "$out" --log "$empty_log" 2>&1`;
+is($? >> 8, 0, 'the report exits 0');
+like($report, qr/devices:.*laptop=3.*phone=4/, 'it groups the capture by device');
+like($report, qr/^laptop \(laptop\)$/m, 'it names the laptop');
+like($report, qr/^phone$/m, 'and the phone');
+like($report, qr/reloads=1/, 'it counts each device\'s reload');
+like($report, qr/gap=0s/, 'it prints the gap since the previous event');
+like($report, qr/auto=on/, 'it carries the auto-reload setting');
+like($report, qr/cause: hidden/, 'and the event before the reload');
+like($report, qr/auto=off/, 'the other device is not confused with the first');
+like($report, qr/browser remembered/, 'it shows the previous page\'s remembered events');
+like($report, qr{phone/browser:page_load = 2}, 'a rotated file is part of the capture');
+
+my $browser = write_file($dir, 'browser.json',
+	'[{"t":1700000000700,"src":"browser","device":"tablet","ev":"page_load","nav":"reload"}]');
+my $merged = `"$^X" "$pl" --report --out "$out" --log "$empty_log" --browser "$browser" 2>&1`;
+like($merged, qr/tablet/, 'a saved browser dump joins the report');
+
+my $quiet = write_file($dir, 'navigate.json',
+	'[{"t":1700000000800,"src":"browser","device":"phone","ev":"page_load","nav":"navigate"}]');
+my $quiet_report = `"$^X" "$pl" --report --out "$dir/none.jsonl" --log "$empty_log" --browser "$quiet" 2>&1`;
 like($quiet_report, qr/no page reloads/, 'a navigating load is not called a reload');
 
 done_testing();
