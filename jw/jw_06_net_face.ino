@@ -289,6 +289,10 @@ void notifications_processor() {
 
 void notification_display(String title, String notification) {
   if (title) {
+    // the console is the only record of a wake that happened with the screen
+    // off (and the cable cannot be attached through a light sleep), so name the
+    // notification it fired for
+    Serial.printf("[notify] %s: %s\n", title.c_str(), notification.c_str());
     jw_room = "message";
 
     static const char *btns[] = {""};

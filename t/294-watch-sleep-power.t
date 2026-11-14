@@ -45,13 +45,30 @@ like( $jw_sleep, qr/if \(want_sleep && !pmuIrq\) \{/,
 like( $jw_sleep, qr/bridge held for a tap burst/,
 	'the log names the window, so a drain report can be read off the console' );
 
+# A watch on USB cannot be tapped, and no house route carries this setting, so
+# the console is how a notification or battery test turns Sleep on.
+like( $jw_sleep, qr/line\.startsWith\("sleep "\)/, 'the console can set Sleep');
+like( $jw_sleep, qr/lightSleep = \(v == "on"\);\s*configSave\(\);/, 
+	'and saves the choice the Set room would have saved');
+like( $jw_sleep, qr/line == "wifi on" \|\| line == "wifi off"/,
+	'the console can bring WiFi up for the notification fetch');
+
+# A doze entered because the cable was in used to run until the crown: pull the
+# cable and the watch kept its 80 MHz core and radio on the rest of the day.
+like( $jw_doze, qr/static void doze_until_crown\(uint32_t until_ms = 0, bool recheck_usb = false\)/,
+	'the doze knows the cable may be pulled');
+like( $jw_doze, qr/if \(recheck_usb && !watch\.isUsbIn\(\)\) \{\s*Serial\.println\("\[doze\] cable pulled: back to the sleep path"\);\s*break;/,
+	'and ends itself when it is');
+like( $jw_sleep, qr/doze_until_crown\(0, lightSleep\);\s*if \(lightSleep && !watch\.isUsbIn\(\) && !sleep_handler_reentering\) \{/,
+	'the USB doze hands over to the sleep path instead of the wake tail');
+
 # A wrist raise or crown inside the window still gets the screen, instead of
 # falling through into the sleep path.
 like( $jw_sleep, qr/if \(pmuIrq\) \{\s*Serial\.println\("\[sleep\] wake inside the bridge window"\);/,
 	'a wake inside the window ends it in a screen wake' );
 
 # --- the doze can be given a deadline ----------------------------------------
-like( $jw_doze, qr/static void doze_until_crown\(uint32_t until_ms = 0\)/,
+like( $jw_doze, qr/static void doze_until_crown\(uint32_t until_ms = 0, bool recheck_usb = false\)/,
 	'the doze takes an optional deadline' );
 like( $jw_doze, qr/if \(until_ms && \(int32_t\)\(millis\(\) - until_ms\) >= 0\) \{\s*break;/,
 	'and returns once it is reached' );

@@ -114,6 +114,42 @@ static void tilt_serial_command(String line) {
                   (int)watch.pmic.irq().isPekeyShortPress(status),
                   (int)watch.pmic.irq().isPekeyLongPress(status));
   }
+  else if (line.startsWith("sleep ")) {
+    // The Set room's Sleep toggle without touching the screen: "sleep on",
+    // "sleep off", "sleep status". The console is how a watch on USB is driven
+    // during a battery or notification test, when nothing can tap the panel.
+    String v = line.substring(6);
+    v.trim();
+    if (v == "on" || v == "off") {
+      lightSleep = (v == "on");
+      configSave();
+      Serial.printf("[sleep] setting %s\n", lightSleep ? "on" : "off");
+    }
+    else {
+      Serial.printf("[sleep] setting %s (use sleep on|off)\n", lightSleep ? "on" : "off");
+    }
+  }
+  else if (line == "wifi on" || line == "wifi off" || line == "wifi status") {
+    // The next_appt fetch that arms a notification timer only runs on WiFi (see
+    // lowPowerEnergyHandler), so a watch driven over USB needs this to exercise
+    // an appointment the same way it runs in the house.
+    if (line == "wifi on") {
+      wifi_enabled = true;
+      configSave();
+      wifi_join_requested = true;
+      Serial.println("[wifi] joining");
+    }
+    else if (line == "wifi off") {
+      wifi_enabled = false;
+      WiFi.disconnect();
+      configSave();
+      Serial.println("[wifi] off");
+    }
+    else {
+      Serial.printf("[wifi] enabled=%d status=%d ip=%s\n", (int)wifi_enabled,
+                    (int)WiFi.status(), WiFi.localIP().toString().c_str());
+    }
+  }
   else if (line == "sleeptest") {
     // what the light-sleep entry arms, and what the IDF says about it. Run it
     // over USB: the sleep itself needs the cable out, but validation does not.
@@ -329,6 +365,10 @@ static void tilt_serial_poll() {
 // always-on link is a dozing 80 MHz core plus a radio, which is what drained the
 // watch overnight while the setting said it was sleeping.
 #define BLE_LINGER_MS 20000
+// Guards the one re-entry into lowPowerEnergyHandler below: a doze that started
+// with the cable in must hand over to the sleep path when it is pulled, but a
+// plug/unplug cycle must not nest deeper than that.
+static bool sleep_handler_reentering = false;
 
 void lowPowerEnergyHandler()
 {
@@ -600,8 +640,15 @@ void lowPowerEnergyHandler()
         if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) {
           // the chip refused the light sleep (an attached USB serial does that), so the
           // "sleep" returned at once; doze properly instead of bouncing the screen
-          // off and on again every few seconds
-          doze_until_crown();
+          // off and on again every few seconds. If the cable is what refused it, a
+          // later unplug ends the doze rather than leaving the core at 80 MHz.
+          doze_until_crown(0, lightSleep && watch.isUsbIn());
+          if (lightSleep && !watch.isUsbIn() && !sleep_handler_reentering) {
+            sleep_handler_reentering = true;
+            lowPowerEnergyHandler();
+            sleep_handler_reentering = false;
+            return;
+          }
         }
     }
 
@@ -612,7 +659,15 @@ void lowPowerEnergyHandler()
       // straight out of it, so doze properly until the cable is out
       Serial.println("[sleep] USB is attached, dozing instead of light sleeping");
     }
-    doze_until_crown();
+    doze_until_crown(0, lightSleep);
+    if (lightSleep && !watch.isUsbIn() && !sleep_handler_reentering) {
+      // the cable was pulled while we dozed: run the decision again so the real
+      // light sleep (and the notification fetch) starts now
+      sleep_handler_reentering = true;
+      lowPowerEnergyHandler();
+      sleep_handler_reentering = false;
+      return;
+    }
   }
   if (brightnessLevel <= 1) {
     brightnessLevel = 20;

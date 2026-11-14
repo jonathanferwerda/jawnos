@@ -486,8 +486,11 @@ static bool crown_irq_pending() {
 // `until_ms` of 0 waits for the crown alone; a deadline ends the doze at that
 // millis() value, which is how the bridge linger hands control back to the real
 // light sleep instead of keeping the watch awake for as long as a central is
-// attached.
-static void doze_until_crown(uint32_t until_ms = 0) {
+// attached. `recheck_usb` ends the doze when the cable that kept the chip out of
+// light sleep is pulled: without it a watch charged and then taken off its
+// charger dozed at 80 MHz, radio up, until the next crown press - the same drain
+// the Sleep setting is supposed to remove.
+static void doze_until_crown(uint32_t until_ms = 0, bool recheck_usb = false) {
   setCpuFrequencyMhz(80);
   //my_print("=========esp_light_sleep_start=========\n");
   char count = 0;
@@ -500,6 +503,10 @@ static void doze_until_crown(uint32_t until_ms = 0) {
   while (!pmuIrq) {
     if (until_ms && (int32_t)(millis() - until_ms) >= 0) {
       break;                    // the deadline (a bridge linger) is up
+    }
+    if (recheck_usb && !watch.isUsbIn()) {
+      Serial.println("[doze] cable pulled: back to the sleep path");
+      break;
     }
     sportsIrq = false;      // movement must not light the screen back up either
     if (jw_room == "message") {
