@@ -62,13 +62,13 @@ my $js1 = subs::note_encrypter($K, 'already in the authenticated format');
 my $bad = 'plain text that is not a note';
 
 my @appts = (
-	{ rowid => 11, notes => $legacy_real, start_notes => $js1, end_notes => '', file => undef, ost => 1000 },
+	{ rowid => 11, notes => $legacy_real, start_notes => $js1, end_notes => '', file => undef, ost => 1000, server_time => 1001 },
 	{ rowid => 12, notes => $legacy_empty, start_notes => undef, end_notes => $bad,
-	  file => Mojo::JSON::encode_json([{ f => '/tmp/scan.png', ocr => $legacy_ocr }]), ost => 2000 },
+	  file => Mojo::JSON::encode_json([{ f => '/tmp/scan.png', ocr => $legacy_ocr }]), ost => 2000, server_time => 1002 },
 );
 my @mail = (
-	{ rowid => 21, subject => $legacy_real, body => $js1, ost => 1000 },
-	{ rowid => 22, subject => $bad, body => '', ost => 1000 },
+	{ rowid => 21, subject => $legacy_real, body => $js1, ost => 1000, server_time => 1001 },
+	{ rowid => 22, subject => $bad, body => '', ost => 1000, server_time => 1002 },
 );
 
 my @updates;
@@ -104,6 +104,8 @@ ok(!$by_row{22}, 'the row with only an unreadable value is not written');
 
 # --- the written values are JS1 and read back to the same words ------------
 my $appt11 = $by_row{11};
+ok($appt11->[1]->{'server_time'}, 'the write moves server_time so a peer pulls it');
+is($appt11->[2]->{'server_time'}, 1001, 'and is guarded by the old server_time');
 is($appt11->[0], 'appointments', 'an appointment notes write');
 like($appt11->[1]->{'notes'}, qr/\AJS1:/, 'the note is now JS1');
 is(subs::note_decrypter_strict($K, $appt11->[1]->{'notes'}), $plain_real, 'and opens strictly to the same words');
@@ -167,7 +169,7 @@ is(subs::note_decrypter_strict($K, $old_resealed), $old_plain, 'and reads back s
 
 # The sweep threads the candidates through to the values that need them.
 my @recovered;
-my $old_appt = { rowid => 13, notes => $old_note, start_notes => undef, end_notes => '', file => undef, ost => 3000 };
+my $old_appt = { rowid => 13, notes => $old_note, start_notes => undef, end_notes => '', file => undef, ost => 3000, server_time => 3001 };
 {
 	no warnings 'redefine';
 	local *subs::suds_grabber = sub { return $K };
@@ -205,7 +207,7 @@ my $old_appt = { rowid => 13, notes => $old_note, start_notes => undef, end_note
 		local *subs::db_query = sub {
 			my ($sql) = @_;
 			return FakeRows->new([{ level => 'oldkey', credential => $wrapped_late, ost => 9999999999999 }]) if $sql =~ /from security/;
-			return FakeRows->new([{ rowid => 14, notes => $late_note, start_notes => undef, end_notes => '', file => undef, ost => 3000 }]) if $sql =~ /from appointments/;
+			return FakeRows->new([{ rowid => 14, notes => $late_note, start_notes => undef, end_notes => '', file => undef, ost => 3000, server_time => 3002 }]) if $sql =~ /from appointments/;
 			return FakeRows->new([]);
 		};
 		local *subs::db_update = sub { push @late_updates, [@_]; return 1; };
@@ -278,18 +280,18 @@ my $rest;
 	local *subs::house_key = sub { return $hk };
 	local *subs::db_query = sub {
 		my ($sql) = @_;
-		return FakeRows->new([{ rowid => 31, notes => $wh_legacy, ost => 1000 }]) if $sql =~ /from warehouse/;
-		return FakeRows->new([{ rowid => 41, payload => $cr_legacy, ost => 1000 }]) if $sql =~ /from credentials/;
+		return FakeRows->new([{ rowid => 31, notes => $wh_legacy, ost => 1000, server_time => 1001 }]) if $sql =~ /from warehouse/;
+		return FakeRows->new([{ rowid => 41, payload => $cr_legacy, ost => 1000, server_time => 1001 }]) if $sql =~ /from credentials/;
 		return FakeRows->new([{ rowid => 51, value => $vault_legacy }]) if $sql =~ /^select rowid, value from settings where app='__president' and setting='vault'/;
-		return FakeRows->new([{ rowid => 61, value => $email_json }]) if $sql =~ /^select rowid, value from settings where app='mailbox' and setting='email_config'/;
-		return FakeRows->new([{ rowid => 71, value => $door_json }]) if $sql =~ /^select rowid, value from settings where setting='operator_door'/;
-		return FakeRows->new([{ rowid => 91, password => $ticket_pw, secret => $ticket_secret }]) if $sql =~ /from tickets/;
-		return FakeRows->new([{ rowid => 101, data => $data_note, ost => 1000 }, { rowid => 102, data => $data_plain, ost => 1000 }]) if $sql =~ /^select rowid, data, ost from appointments/;
-		return FakeRows->new([{ rowid => 82, value => $keyboard_legacy }]) if $sql =~ /^select rowid, value from settings where app='keyboard'/;
+		return FakeRows->new([{ rowid => 61, value => $email_json, server_time => 1001 }]) if $sql =~ /^select rowid, value, server_time from settings where app='mailbox' and setting='email_config'/;
+		return FakeRows->new([{ rowid => 71, value => $door_json, server_time => 1001 }]) if $sql =~ /^select rowid, value, server_time from settings where setting='operator_door'/;
+		return FakeRows->new([{ rowid => 91, password => $ticket_pw, secret => $ticket_secret, server_time => 1001 }]) if $sql =~ /from tickets/;
+		return FakeRows->new([{ rowid => 101, data => $data_note, ost => 1000, server_time => 1001 }, { rowid => 102, data => $data_plain, ost => 1000, server_time => 1002 }]) if $sql =~ /^select rowid, data, ost/;
+		return FakeRows->new([{ rowid => 82, value => $keyboard_legacy, server_time => 1001 }]) if $sql =~ /^select rowid, value, server_time from settings where app='keyboard'/;
 		return FakeRows->new([
-			{ rowid => 81, app => 'mail',     setting => 'ollama_key', value => $set_legacy, ost => 1000 },
-			{ rowid => 83, app => 'me',       setting => 'plain',      value => 'just text', ost => 1000 },
-		]) if $sql =~ /^select rowid, app, setting, value, ost from settings/;
+			{ rowid => 81, app => 'mail',     setting => 'ollama_key', value => $set_legacy, ost => 1000, server_time => 1001 },
+			{ rowid => 83, app => 'me',       setting => 'plain',      value => 'just text', ost => 1000, server_time => 1002 },
+		]) if $sql =~ /^select rowid, app, setting, value, ost/;
 		return FakeRows->new([]);
 	};
 	local *subs::db_update = sub { push @rest_updates, [@_]; return 1; };
@@ -310,6 +312,8 @@ is(scalar @rest_updates, 9, 'nine rows are written');
 
 my %rest_by = map { ($_->[0] . ':' . ($_->[2]->{'rowid'} // '')) => $_ } @rest_updates;
 my $wh_up = $rest_by{'warehouse:31'};
+ok($wh_up->[1]->{'server_time'}, 'a rest write moves server_time too');
+is($wh_up->[2]->{'server_time'}, 1001, 'guarded by the old server_time');
 ok($wh_up && index($wh_up->[1]->{'notes'}, 'JS1:') == 0, 'the warehouse note is JS1');
 is(subs::note_decrypter_strict($K, $wh_up->[1]->{'notes'}), 'warehouse note', 'and reads back');
 

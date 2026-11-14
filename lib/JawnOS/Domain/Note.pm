@@ -898,12 +898,17 @@ sub note_reseal {
 		}
 	}
 	my $counts = { appointments => 0, notes => 0, ocr => 0, mailbox => 0, warehouse => 0, credentials => 0, settings => 0, keyboard => 0, tickets => 0, appointments_data => 0, vault => 0, mail_tokens => 0, device_tokens => 0, failed => 0, already => 0, seen => 0 };
+	# Every write this sweep makes is a new value, so it carries a new server_time:
+	# the peers' cut for a table is that column, and a reseal that left it alone
+	# would sit inside their watermark and never travel. The value we read stays in
+	# the guard, so a live writer's newer row still wins.
+	my $now = &subs::rightNow();
 	my $next_appt = $opts->{'after_appt'} || 0;
 	my $next_mail = $opts->{'after_mail'} || 0;
 	my ($more_appt, $more_mail) = (0, 0);
 
 	if ($want eq 'both' || $want eq 'appointments') {
-		my $rows = &db_query('select rowid, notes, start_notes, end_notes, file, ost from appointments where rowid > ? and (length(notes)>0 or length(start_notes)>0 or length(end_notes)>0 or length(file)>0) order by rowid' . $limit_sql, $next_appt)->hashes;
+		my $rows = &db_query('select rowid, notes, start_notes, end_notes, file, ost, server_time from appointments where rowid > ? and (length(notes)>0 or length(start_notes)>0 or length(end_notes)>0 or length(file)>0) order by rowid' . $limit_sql, $next_appt)->hashes;
 		foreach my $row ( @{ $rows || [] } ) {
 			$counts->{'seen'}++;
 			$next_appt = $row->{'rowid'};
@@ -937,6 +942,7 @@ sub note_reseal {
 			next unless scalar keys %up;
 			$counts->{'appointments'}++;
 			next unless $apply;
+			$up{'server_time'} = $now;
 			# Only write the row we read: a live writer's newer value must not be
 			# clobbered by this sweep.
 			my %where = ( rowid => $row->{'rowid'} );
@@ -947,7 +953,7 @@ sub note_reseal {
 	}
 
 	if ($want eq 'mailbox' || ($want eq 'both' && !$more_appt)) {
-		my $mail = &db_query('select rowid, subject, body, ost from mailbox where rowid > ? and (length(subject)>0 or length(body)>0) order by rowid' . $limit_sql, $next_mail)->hashes;
+		my $mail = &db_query('select rowid, subject, body, ost, server_time from mailbox where rowid > ? and (length(subject)>0 or length(body)>0) order by rowid' . $limit_sql, $next_mail)->hashes;
 		foreach my $row ( @{ $mail || [] } ) {
 			$counts->{'seen'}++;
 			$next_mail = $row->{'rowid'};
@@ -964,6 +970,7 @@ sub note_reseal {
 			next unless scalar keys %up;
 			$counts->{'mailbox'}++;
 			next unless $apply;
+			$up{'server_time'} = $now;
 			my %where = ( rowid => $row->{'rowid'} );
 			$where{$_} = $row->{$_} for keys %up;
 			&db_update('mailbox', \%up, \%where);
@@ -973,27 +980,27 @@ sub note_reseal {
 
 	if ($want eq 'rest') {
 		# Warehouse notes and saved credential payloads are the same note shape.
-		my $wh = &db_query('select rowid, notes, ost from warehouse where length(notes)>0')->hashes;
+		my $wh = &db_query('select rowid, notes, ost, server_time from warehouse where length(notes)>0')->hashes;
 		foreach my $row ( @{ $wh || [] } ) {
 			my $re = &note_reseal_value($row->{'notes'}, $K, $row->{'ost'}, $old);
 			if (!defined $re) { $counts->{'failed'}++; next; }
 			if ($re eq $row->{'notes'}) { $counts->{'already'}++; next; }
 			$counts->{'warehouse'}++;
 			next unless $apply;
-			&db_update('warehouse', { notes => $re }, { rowid => $row->{'rowid'}, notes => $row->{'notes'} });
+			&db_update('warehouse', { notes => $re, server_time => $now }, { rowid => $row->{'rowid'}, notes => $row->{'notes'}, server_time => $row->{'server_time'} });
 		}
-		my $cr = &db_query('select rowid, payload, ost from credentials where length(payload)>0')->hashes;
+		my $cr = &db_query('select rowid, payload, ost, server_time from credentials where length(payload)>0')->hashes;
 		foreach my $row ( @{ $cr || [] } ) {
 			my $re = &note_reseal_value($row->{'payload'}, $K, $row->{'ost'}, $old);
 			if (!defined $re) { $counts->{'failed'}++; next; }
 			if ($re eq $row->{'payload'}) { $counts->{'already'}++; next; }
 			$counts->{'credentials'}++;
 			next unless $apply;
-			&db_update('credentials', { payload => $re }, { rowid => $row->{'rowid'}, payload => $row->{'payload'} });
+			&db_update('credentials', { payload => $re, server_time => $now }, { rowid => $row->{'rowid'}, payload => $row->{'payload'}, server_time => $row->{'server_time'} });
 		}
 		# Note-shaped settings. Most settings are plain text and are not this
 		# sweep's business; a sealed one that will not open is counted a failure.
-		my $set = &db_query("select rowid, app, setting, value, ost from settings where length(value)>0 and not (app='__president' and setting='vault') and setting != 'operator_door' and not (app='mailbox' and setting='email_config') and not (app='keyboard' and setting in ('keyboard','calculator'))")->hashes;
+		my $set = &db_query("select rowid, app, setting, value, ost, server_time from settings where length(value)>0 and not (app='__president' and setting='vault') and setting != 'operator_door' and not (app='mailbox' and setting='email_config') and not (app='keyboard' and setting in ('keyboard','calculator'))")->hashes;
 		foreach my $row ( @{ $set || [] } ) {
 			my $re = &note_reseal_value($row->{'value'}, $K, $row->{'ost'}, $old);
 			if (!defined $re) {
@@ -1005,21 +1012,21 @@ sub note_reseal {
 			if ($re eq $row->{'value'}) { $counts->{'already'}++; next; }
 			$counts->{'settings'}++;
 			next unless $apply;
-			&db_update('settings', { value => $re }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+			&db_update('settings', { value => $re, server_time => $now }, { rowid => $row->{'rowid'}, value => $row->{'value'}, server_time => $row->{'server_time'} });
 		}
 		# The keyboard layouts are encrypter-sealed rather than note-shaped.
-		my $kb = &db_query("select rowid, value from settings where app='keyboard' and setting in ('keyboard','calculator') and length(value)>0")->hashes;
+		my $kb = &db_query("select rowid, value, server_time from settings where app='keyboard' and setting in ('keyboard','calculator') and length(value)>0")->hashes;
 		foreach my $row ( @{ $kb || [] } ) {
 			my $re = &sealed_reseal_value($row->{'value'}, $K);
 			next unless defined $re;
 			if ($re eq $row->{'value'}) { $counts->{'already'}++; next; }
 			$counts->{'keyboard'}++;
 			next unless $apply;
-			&db_update('settings', { value => $re }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+			&db_update('settings', { value => $re, server_time => $now }, { rowid => $row->{'rowid'}, value => $row->{'value'}, server_time => $row->{'server_time'} });
 		}
 		# A ticket's secret is url-escaped base64 of a note sealed under the
 		# ticket's own one-time password; the password stays a random plaintext key.
-		my $tk = &db_query("select rowid, password, secret from tickets where length(password)>0 and length(secret)>0")->hashes;
+		my $tk = &db_query("select rowid, password, secret, server_time from tickets where length(password)>0 and length(secret)>0")->hashes;
 		foreach my $row ( @{ $tk || [] } ) {
 			my $ver = url_unescape(decode_base64($row->{'secret'}));
 			next unless defined $ver && length $ver;
@@ -1029,11 +1036,11 @@ sub note_reseal {
 			my $new = url_escape(encode_base64($re, ''));
 			$counts->{'tickets'}++;
 			next unless $apply;
-			&db_update('tickets', { secret => $new }, { rowid => $row->{'rowid'}, secret => $row->{'secret'} });
+			&db_update('tickets', { secret => $new, server_time => $now }, { rowid => $row->{'rowid'}, secret => $row->{'secret'}, server_time => $row->{'server_time'} });
 		}
 		# Appointment data is plain JSON for most rows; a row sealed by an older
 		# path is upgraded and the plain rows are left exactly as they are.
-		my $ad = &db_query('select rowid, data, ost from appointments where length(data)>0')->hashes;
+		my $ad = &db_query('select rowid, data, ost, server_time from appointments where length(data)>0')->hashes;
 		foreach my $row ( @{ $ad || [] } ) {
 			my $re = &note_reseal_value($row->{'data'}, $K, $row->{'ost'}, $old);
 			$re = &sealed_reseal_value($row->{'data'}, $K) unless defined $re;
@@ -1041,7 +1048,7 @@ sub note_reseal {
 			if ($re eq $row->{'data'}) { $counts->{'already'}++; next; }
 			$counts->{'appointments_data'}++;
 			next unless $apply;
-			&db_update('appointments', { data => $re }, { rowid => $row->{'rowid'}, data => $row->{'data'} });
+			&db_update('appointments', { data => $re, server_time => $now }, { rowid => $row->{'rowid'}, data => $row->{'data'}, server_time => $row->{'server_time'} });
 		}
 		# The vault is sealed with the house key, not the suds.
 		my $hk = eval { &house_key() } || '';
@@ -1064,7 +1071,7 @@ sub note_reseal {
 			}
 		}
 		# Mail account secrets live inside the email_config JSON.
-		my $ec = &db_query("select rowid, value from settings where app='mailbox' and setting='email_config' and length(value)>0")->hashes;
+		my $ec = &db_query("select rowid, value, server_time from settings where app='mailbox' and setting='email_config' and length(value)>0")->hashes;
 		foreach my $row ( @{ $ec || [] } ) {
 			my $servers = eval { decode_json($row->{'value'}) };
 			next unless ref $servers eq 'ARRAY';
@@ -1085,11 +1092,11 @@ sub note_reseal {
 			next unless $changed;
 			my $new = encode_json($servers);
 			next unless $apply;
-			&db_update('settings', { value => $new }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+			&db_update('settings', { value => $new, server_time => $now }, { rowid => $row->{'rowid'}, value => $row->{'value'}, server_time => $row->{'server_time'} });
 		}
 		# Watch/deck authorizations live inside the operator_door JSON, sealed
 		# under the per-device patience rather than the house suds.
-		my $od = &db_query("select rowid, value from settings where setting='operator_door' and length(value)>0")->hashes;
+		my $od = &db_query("select rowid, value, server_time from settings where setting='operator_door' and length(value)>0")->hashes;
 		foreach my $row ( @{ $od || [] } ) {
 			my $door = eval { decode_json($row->{'value'}) };
 			next unless ref $door eq 'HASH';
@@ -1113,7 +1120,7 @@ sub note_reseal {
 			next unless $changed;
 			my $new = encode_json($door);
 			next unless $apply;
-			&db_update('settings', { value => $new }, { rowid => $row->{'rowid'}, value => $row->{'value'} });
+			&db_update('settings', { value => $new, server_time => $now }, { rowid => $row->{'rowid'}, value => $row->{'value'}, server_time => $row->{'server_time'} });
 		}
 	}
 
