@@ -20,7 +20,7 @@ use Mojo::Util qw(url_escape url_unescape);
 use File::Slurp qw(read_file);
 use JawnOSTest;
 
-subs::preload('note_reseal note_reseal_value note_decrypter note_decrypter_strict note_encrypter note_seal_container encrypter encrypter_legacy decrypter_strict shorthand_name');
+subs::preload('note_reseal note_reseal_value note_decrypter note_decrypter_strict note_encrypter note_seal_container encrypter encrypter_legacy decrypter_strict shorthand_name note_legacy_candidates');
 
 my $root = root();
 
@@ -210,6 +210,8 @@ my $old_appt = { rowid => 13, notes => $old_note, start_notes => undef, end_note
 		};
 		local *subs::db_update = sub { push @late_updates, [@_]; return 1; };
 		$subs::note_security_memo = undef;
+		my $cands = subs::note_legacy_candidates($K);
+		ok((grep { defined $_ && $_ eq $late_key } @{$cands}), 'the export candidates include the late credential');
 		my $miss = subs::note_reseal(0, { table => 'appointments' });
 		is($miss->{'failed'}, 1, 'the timestamp walk misses a credential written after the note');
 		$subs::note_security_memo = undef;
@@ -239,6 +241,8 @@ like(read_file("$root/scripts/note_reseal.pl"), qr/--old-secret-file/,
 	'the script can be handed the passphrase from before the retained history');
 like(read_file("$root/scripts/note_reseal.pl"), qr/--try-all/,
 	'the script can try every credential in the security table');
+like(read_file("$root/scripts/note_reseal.pl"), qr/--export-keys/,
+	'the script can hand its candidates to another machine');
 
 # --- the rest of the note-shaped data --------------------------------------
 my $hk = 'test-house-key';

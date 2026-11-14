@@ -9,6 +9,7 @@
 #   perl scripts/note_reseal.pl --table rest --apply   # only the rest pass
 #   perl scripts/note_reseal.pl --old-secret-file OLD.txt --apply
 #   perl scripts/note_reseal.pl --try-all               # every security credential
+#   perl scripts/note_reseal.pl --export-keys OLD.txt   # candidates for another machine
 #
 # Older uploads sealed a note's outer Crypt::Simple layer under the empty
 # passphrase (public knowledge) while the inner cipher stayed keyed to the real
@@ -32,12 +33,18 @@
 # timestamp walk never reaches it. Combine it with --old-secret-file for a key
 # that is no longer in the table at all.
 #
+# --export-keys writes those candidates to a file (mode 0600) instead of running
+# the sweep. Run it on a machine that still has the old security rows, copy the
+# file to the machine whose notes will not open, and pass it back in with
+# --old-secret-file. The file holds secrets: delete it after use.
+#
 # It works in rowid batches so a long sweep reports progress and a kill is not a
 # loss: every batch is committed and the next run picks up from the rowid it
 # prints. --after-appt / --after-mail start from a cursor by hand.
 use strict;
 use warnings;
 use FindBin;
+use Fcntl qw(O_WRONLY O_CREAT O_TRUNC);
 require Mojo::JSON;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
 require './perl/subroutines.pl';
@@ -45,6 +52,7 @@ require './perl/subroutines.pl';
 my $apply = (grep { $_ eq '--apply' } @ARGV) ? 1 : 0;
 my $json  = (grep { $_ eq '--json' } @ARGV) ? 1 : 0;
 my $try_all = (grep { $_ eq '--try-all' } @ARGV) ? 1 : 0;
+my $export = '';
 my ($batch, $after_appt, $after_mail, $only) = (250, 0, 0, 'all');
 my @old_secrets;
 for (my $i = 0; $i < @ARGV; $i++) {
@@ -59,6 +67,9 @@ for (my $i = 0; $i < @ARGV; $i++) {
 		close $fh;
 		push @old_secrets, grep { length } map { my $s = $_; $s =~ s/\s+\z//; $s } split /\r?\n/, $text;
 	}
+	elsif ($ARGV[$i] eq '--export-keys' && defined $ARGV[$i + 1]) {
+		$export = $ARGV[++$i];
+	}
 	elsif ($ARGV[$i] eq '--old-secret' && defined $ARGV[$i + 1]) {
 		# argv is visible in ps; the file and the environment are the safe ways.
 		print STDERR "note reseal: --old-secret is visible in the process list; prefer --old-secret-file or JAWNOS_OLD_SECRET\n";
@@ -69,6 +80,22 @@ push @old_secrets, $ENV{'JAWNOS_OLD_SECRET'} if defined $ENV{'JAWNOS_OLD_SECRET'
 my %seen_secret;
 @old_secrets = grep { length && !$seen_secret{$_}++ } @old_secrets;
 $batch = 1 if $batch < 1;
+
+# Hand the security table's candidates to another machine. This writes a secret
+# file, not the database, and says how many it wrote (never what they are).
+if (length $export) {
+	my $keys = subs::note_legacy_candidates();
+	unless (ref $keys eq 'ARRAY' && scalar @{$keys}) {
+		print "note reseal: no security candidates on this machine\n";
+		exit 1;
+	}
+	sysopen(my $out, $export, O_WRONLY | O_CREAT | O_TRUNC, 0600) or do { print "note reseal: cannot write $export: $!\n"; exit 1 };
+	chmod 0600, $export;
+	print $out "$_\n" for @{$keys};
+	close $out;
+	print "note reseal: wrote ", scalar(@{$keys}), " candidate(s) to $export (mode 0600; delete it after use)\n";
+	exit 0;
+}
 
 my %sum = map { $_ => 0 } qw(seen appointments notes ocr mailbox warehouse credentials settings keyboard tickets appointments_data vault mail_tokens device_tokens failed already);
 my $sweep = sub {

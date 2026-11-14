@@ -651,6 +651,31 @@ sub note_security_rows {
 	return \@rows;
 }
 
+# Every credential the security table holds, unwrapped into a note key. The key
+# in use now peels the kept history (rotations re-seal each older key one layer
+# from the live one); the empty passphrase peels the canaries written before the
+# reseal. The door row is included because older builds kept the login password
+# there and the pre-0.1.283 reader tried it. A machine that still has the rows
+# can --export-keys this list for one that does not.
+sub note_legacy_candidates {
+	my ($K) = @_;
+	$K = &suds_grabber() || $gb::suds unless defined $K && length $K;
+	return [] unless $K;
+	my @rows = @{ &note_security_rows(undef) };
+	my $door = &db_query('select credential from security where level = ? limit 1', 'door')->hashes->[0];
+	push @rows, $door if $door && defined $door->{'credential'} && length $door->{'credential'};
+	my @keys;
+	foreach my $row ( @rows ) {
+		next unless defined $row->{'credential'} && length $row->{'credential'};
+		foreach my $via ( $K, undef ) {
+			my $secret = &decrypter($via, $row->{'credential'});
+			push @keys, $secret if defined $secret && length $secret;
+		}
+	}
+	my %seen;
+	return [ grep { defined $_ && length $_ && !$seen{$_}++ } @keys ];
+}
+
 sub note_unseal {
 	my ($key, $contented, $strict) = @_;
 	# The ordinary reader, not the strict one, by default: a note written by an
@@ -865,25 +890,11 @@ sub note_reseal {
 	# --try-all: the old reader's habit of trying every credential the security
 	# table holds, whatever its ost. A restore or import rewrites ost, so the key
 	# that wrote a note can sit "after" it; the timestamp walk then never sees it.
-	# The door row is included too, because older builds kept the login password
-	# there and the pre-0.1.283 reader tried it.
 	if ($opts->{'try_all'}) {
-		my @rows = @{ &note_security_rows(undef) };
-		my $door = &db_query('select credential from security where level = ? limit 1', 'door')->hashes->[0];
-		push @rows, $door if $door && defined $door->{'credential'} && length $door->{'credential'};
-		my @history;
-		foreach my $row ( @rows ) {
-			next unless defined $row->{'credential'} && length $row->{'credential'};
-			# the key in use now unwraps the kept history; the empty passphrase
-			# unwraps the old canaries that predate the reseal
-			foreach my $via ( $K, undef ) {
-				my $secret = &decrypter($via, $row->{'credential'});
-				push @history, $secret if defined $secret && length $secret;
-			}
-		}
-		if (scalar @history) {
+		my $history = &note_legacy_candidates($K);
+		if (scalar @{$history}) {
 			my %seen;
-			$old = [ grep { defined $_ && length $_ && !$seen{$_}++ } ( @{ $old || [] }, @history ) ];
+			$old = [ grep { defined $_ && length $_ && !$seen{$_}++ } ( @{ $old || [] }, @{$history} ) ];
 		}
 	}
 	my $counts = { appointments => 0, notes => 0, ocr => 0, mailbox => 0, warehouse => 0, credentials => 0, settings => 0, keyboard => 0, tickets => 0, appointments_data => 0, vault => 0, mail_tokens => 0, device_tokens => 0, failed => 0, already => 0, seen => 0 };
