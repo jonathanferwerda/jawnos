@@ -404,6 +404,8 @@ $catalog{'ru'} = {
 		'network.refresh' => 'Обновить',
 		'network.scan' => 'Сканировать',
 		'network.connect' => 'Подключить',
+		'network.connected' => 'Подключено',
+
 		'network.addressing' => 'Адресация',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'Статический',

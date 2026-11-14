@@ -418,6 +418,8 @@ $catalog{'en'} = {
 		'network.refresh' => 'Refresh',
 		'network.scan' => 'Scan',
 		'network.connect' => 'Connect',
+		'network.connected' => 'Connected',
+
 		'network.addressing' => 'Addressing',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'Static',

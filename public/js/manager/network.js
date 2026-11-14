@@ -11,6 +11,9 @@
 // section calls it directly and the Linux paths stay untouched.
 
 var network_poll_timer = null;
+var network_last_wifi = null;
+var network_last_scan = null;
+var network_last_connected = null;
 
 function networkT(text) {
 	var args = Array.prototype.slice.call(arguments);
@@ -163,6 +166,41 @@ function networkSignalText(network) {
 	return text || '—';
 }
 
+function networkConnectedSsid(wifi) {
+	wifi = wifi || network_last_wifi || {};
+	var list = wifi.interfaces || [];
+	for (var i = 0; i < list.length; i++) {
+		var iface = list[i] || {};
+		if (String(iface.state || '').toLowerCase() === 'connected' && iface.ssid) { return iface.ssid; }
+	}
+	return '';
+}
+
+// The connected network is the thing the person is most likely to act on, so
+// it takes the first row whatever the scan's signal order was.
+function networkScanOrder(networks, connected) {
+	var ordered = [];
+	var first = null;
+	for (var i = 0; i < networks.length; i++) {
+		var net = networks[i] || {};
+		if (!first && connected && net.ssid === connected) { first = net; }
+		else { ordered.push(net); }
+	}
+	if (first) { ordered.unshift(first); }
+	return ordered;
+}
+
+// The widget is core and the app is the lazy chunk, so the widget owns the
+// small shared scan cache. A page without the widget still scans normally.
+function networkScanCacheGet(iface) {
+	if (typeof jawnosNetworkScanFresh === 'function') { return jawnosNetworkScanFresh(iface, 30000); }
+	return null;
+}
+
+function networkScanCachePut(iface, networks) {
+	if (typeof jawnosNetworkScanRemember === 'function') { jawnosNetworkScanRemember(iface, networks); }
+}
+
 function networkRenderWifi(wifi) {
 	wifi = wifi || {};
 	var interfaces = wifi.interfaces || [];
@@ -191,6 +229,22 @@ function networkRenderWifi(wifi) {
 		else if (wifi.can_connect && first) { opening = networkT('Press Scan to list networks.'); }
 		wifi_list.append($('<div>').addClass('network_empty').text(opening));
 	}
+
+	// Opening the app should not always wait for a scan: a scan from the widget
+	// (or another window) less than thirty seconds old is used as it is. After
+	// that, scan once per opening.
+	network_last_wifi = wifi;
+	var connected = networkConnectedSsid(wifi);
+	if (first && !wifi_list.attr('data-autoscan')) {
+		wifi_list.attr('data-autoscan', '1');
+		var cached = networkScanCacheGet(first.name);
+		if (cached) { networkRenderScan(cached.networks || []); }
+		else { networkScan(); }
+	}
+	else if (network_last_scan && connected !== network_last_connected) {
+		networkRenderScan(network_last_scan);
+	}
+	network_last_connected = connected;
 
 	var state_box = $('#network_wifi_state').empty();
 	for (var i = 0; i < interfaces.length; i++) {
@@ -229,27 +283,41 @@ function networkRenderWifi(wifi) {
 }
 
 function networkRenderScan(networks) {
+	networks = networks || [];
+	network_last_scan = networks;
 	var box = $('#network_wifi_list').empty();
-	if (!networks || !networks.length) {
+	if (!networks.length) {
 		box.append($('<div>').addClass('network_empty').text(networkT('No networks found.')));
 		return;
 	}
-	for (var i = 0; i < networks.length; i++) {
-		var net = networks[i] || {};
-		var row = $('<div>').addClass('network_wifi_row').attr('data-ssid', net.ssid || '');
-		row.append($('<span>').addClass('network_wifi_name').text(net.ssid || ''));
+	var iface = $('#network_wifi_hint').attr('data-iface') || '';
+	var connected = networkConnectedSsid();
+	var ordered = networkScanOrder(networks, connected);
+	for (var i = 0; i < ordered.length; i++) {
+		var net = ordered[i] || {};
+		var ssid = net.ssid || '';
+		var is_connected = connected && ssid === connected;
+		var row = $('<div>').addClass('network_wifi_row')
+			.attr('data-ssid', ssid)
+			.attr('data-interface', iface)
+			.attr('data-secure', net.secure ? '1' : '0');
+		row.append($('<span>').addClass('network_wifi_name').text(ssid));
+		if (is_connected) {
+			row.append($('<span>').addClass('network_pill network_up').text(networkLabel('connected', 'Connected')));
+		}
 		row.append($('<span>').addClass('network_pill').text(net.secure ? (net.security || networkT('Secured')) : networkT('Open')));
 		row.append($('<span>').addClass('network_signal').text(networkSignalText(net)));
-		if (net.secure) {
-			row.append($('<input type="password">').addClass('network_wifi_pass')
-				.attr('placeholder', networkLabel('passphrase', 'Passphrase'))
-				.attr('autocomplete', 'off'));
+		if (is_connected) {
+			row.append($('<button type="button">').addClass('network_button network_wifi_row_disconnect')
+				.attr('data-interface', iface).text(networkLabel('disconnect', 'Disconnect')));
 		}
-		row.append($('<button type="button">').addClass('network_button network_wifi_connect').text(networkLabel('connect', 'Connect')));
-		row.append($('<button type="button">').addClass('network_button network_wifi_options_toggle')
-			.text(networkLabel('options', 'Options')));
+		else {
+			row.append($('<button type="button">').addClass('network_button network_wifi_connect').text(networkLabel('connect', 'Connect')));
+			row.append($('<button type="button">').addClass('network_button network_wifi_options_toggle')
+				.text(networkLabel('options', 'Options')));
+		}
 		row.append($('<span>').addClass('network_wifi_msg'));
-		row.append(networkWifiOptions());
+		if (!is_connected) { row.append(networkWifiOptions()); }
 		box.append(row);
 	}
 }
@@ -260,7 +328,9 @@ function networkScan() {
 	box.append($('<div>').addClass('network_empty').text(networkT('Scanning…')));
 	networkPost('wifi_scan', { interface: iface }, function(response) {
 		if (response.ok) {
-			networkRenderScan(response.networks || []);
+			var networks = response.networks || [];
+			networkScanCachePut(iface, networks);
+			networkRenderScan(networks);
 			return;
 		}
 		box.empty().append($('<div>').addClass('network_empty').text(response.error || networkT('The scan failed.')));
@@ -416,15 +486,12 @@ function networkRenderAndroidNetworks(networks) {
 	}
 	for (var i = 0; i < networks.length; i++) {
 		var net = networks[i] || {};
-		var row = $('<div>').addClass('network_wifi_row').attr('data-ssid', net.ssid || '');
+		var row = $('<div>').addClass('network_wifi_row')
+			.attr('data-ssid', net.ssid || '')
+			.attr('data-secure', net.secure ? '1' : '0');
 		row.append($('<span>').addClass('network_wifi_name').text(net.ssid || ''));
 		row.append($('<span>').addClass('network_pill').text(net.secure ? networkT('Secured') : networkT('Open')));
 		row.append($('<span>').addClass('network_signal').text(networkSignalText({ signal: net.signal })));
-		if (net.secure) {
-			row.append($('<input type="password">').addClass('network_android_pass')
-				.attr('placeholder', networkLabel('passphrase', 'Passphrase'))
-				.attr('autocomplete', 'off'));
-		}
 		row.append($('<button type="button">').addClass('network_button network_android_connect').text(networkLabel('connect', 'Connect')));
 		row.append($('<span>').addClass('network_wifi_msg'));
 		box.append(row);

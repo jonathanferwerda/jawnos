@@ -404,6 +404,8 @@ $catalog{'id'} = {
 		'network.refresh' => 'Segarkan',
 		'network.scan' => 'Pindai',
 		'network.connect' => 'Sambungkan',
+		'network.connected' => 'Terhubung',
+
 		'network.addressing' => 'Pengalamatan',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'Statis',

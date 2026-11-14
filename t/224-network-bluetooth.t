@@ -318,6 +318,24 @@ my $css = source('public/css/manager.css');
 like($css, qr/\.taskbar_network_bluetooth/, 'the glyph has a style');
 like($css, qr/\[bluetooth=on\].*taskbar_network_bluetooth/s, 'and lights up when connected');
 
+# --- the Wi-Fi join --------------------------------------------------------
+my $app_js = source('public/js/manager/network.js');
+my $wifi_actions = source('public/js/manager/network/01_wifi_vpn_android.js');
+like($wifi_actions, qr/jawnosPasswordPrompt\(/, 'the app asks for a passphrase in the house dialog');
+unlike($app_js, qr/type="password"/, 'and leaves no passphrase field in the scan list');
+like($taskbar, qr/jawnosPasswordPrompt\(/, 'the widget asks the same way');
+unlike($taskbar, qr/type="password"/, 'and leaves no passphrase field in its list');
+like($app_js, qr/function networkScanOrder/, 'the app puts the connected network first');
+like($app_js, qr/network_wifi_row_disconnect/, 'and turns its Connect button into Disconnect');
+like($app_js, qr/networkScanCacheGet/, 'the app reuses a scan less than thirty seconds old');
+like($app_js, qr/jawnosNetworkScanFresh\(iface, 30000\)/, 'and asks for that thirty-second limit');
+like($taskbar, qr/function jawnosNetworkScanFresh/, 'the widget owns the shared scan cache');
+like($taskbar, qr/jawnosNetworkScanFresh\(iface\.name, 30000\)/, 'with the same thirty-second limit');
+like($taskbar, qr/jawnosNetworkTaskbarOrder/, 'the widget puts the connected network first');
+like($taskbar, qr/taskbar_network_panel_disconnect/, 'and disconnects from that row');
+like($taskbar, qr/taskbar_network_saved_toggle/, 'Saved networks is an accordion in the widget');
+like($template, qr/data-connected=/, 'the app template carries the Connected label');
+
 # --- the help topic names the new tabs and the widget ------------------------
 {
 	no warnings 'once';

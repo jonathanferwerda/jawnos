@@ -404,6 +404,8 @@ $catalog{'ja'} = {
 		'network.refresh' => '更新',
 		'network.scan' => 'スキャン',
 		'network.connect' => '接続',
+		'network.connected' => '接続済み',
+
 		'network.addressing' => 'アドレス設定',
 		'network.dhcp' => 'DHCP',
 		'network.static' => '静的',

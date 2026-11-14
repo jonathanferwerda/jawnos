@@ -404,6 +404,8 @@ $catalog{'tr'} = {
 		'network.refresh' => 'Yenile',
 		'network.scan' => 'Tara',
 		'network.connect' => 'Bağlan',
+		'network.connected' => 'Bağlı',
+
 		'network.addressing' => 'Adresleme',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'Statik',

@@ -122,7 +122,7 @@ function jawnosConfirm(message, on_yes, options) {
 	var content = $('#alert');
 	content.text(message === undefined ? '' : message).addClass('jawnos_dialog_text');
 	$('#alert_message').text('');
-	$('#alert_input').hide().val('');
+	$('#alert_input').attr('type', 'text').attr('autocomplete', 'off').hide().val('');
 	$('#alert_buttons').html(
 		'<button type="button" class="cancel" id="alert_confirm_cancel">' + jawnosDialogT('Cancel') + '</button>' +
 		'<button type="button" class="ok" id="alert_confirm_ok">' + jawnosDialogT('OK') + '</button>'
@@ -148,8 +148,19 @@ function jawnosPrompt(message, default_value, on_yes, options) {
 	}
 	jawnosConfirm(message, on_yes, options);
 	$('#alert_input')
+		.attr('type', options.password ? 'password' : 'text')
+		.attr('autocomplete', options.password ? 'new-password' : 'off')
 		.val(default_value === undefined || default_value === null ? '' : default_value)
 		.show().trigger('focus').select();
+}
+
+// A one-line question whose answer is masked: a Wi-Fi passphrase or another
+// secret. It is the same shell and the same OK/Cancel as jawnosPrompt, so the
+// value is read once and the input is emptied when the dialog closes.
+function jawnosPasswordPrompt(message, on_yes, options) {
+	options = options || {};
+	options.password = true;
+	jawnosPrompt(message, '', on_yes, options);
 }
 
 // Drop a pending question. `run_cancel` is true only when the person dismissed
@@ -159,7 +170,7 @@ function jawnosConfirmClear(run_cancel) {
 	jawnos_confirm_yes = null;
 	jawnos_confirm_no = null;
 	$('#alert_buttons').hide().empty();
-	$('#alert_input').hide().val('');
+	$('#alert_input').attr('type', 'text').attr('autocomplete', 'off').hide().val('');
 	$('#alert').removeClass('jawnos_dialog_text');
 	if (run_cancel && typeof no === 'function') { no(); }
 }

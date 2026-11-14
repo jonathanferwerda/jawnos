@@ -404,6 +404,8 @@ $catalog{'ko'} = {
 		'network.refresh' => '새로 고침',
 		'network.scan' => '스캔',
 		'network.connect' => '연결',
+		'network.connected' => '연결됨',
+
 		'network.addressing' => '주소 지정',
 		'network.dhcp' => 'DHCP',
 		'network.static' => '고정',

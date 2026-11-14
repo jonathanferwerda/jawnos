@@ -959,6 +959,9 @@ sub wifi_connect_iwd {
 	my $prepared = prepare_iwd_addressing($interface, $ssid, $options);
 	return { ok => 0, error => $prepared->{'error'} } if $prepared->{'error'};
 	my @command = ('iwctl', '--dont-ask');
+	# iwctl exposes no non-interactive stdin form, so the passphrase reaches it
+	# as an argument. iwd stores the credential in its own known-network file
+	# under /var/lib/iwd (root-only); the app never writes it into /etc.
 	push @command, '--passphrase=' . $passphrase if defined $passphrase && length $passphrase;
 	push @command, 'station', $interface, 'connect', $ssid;
 	my ($stdout, $stderr, $status) = run_write(undef, @command);
@@ -1091,6 +1094,9 @@ sub wifi_connect_nmcli {
 			unless $status == 0;
 	}
 	my @modify = ('nmcli', 'connection', 'modify', $name);
+	# nmcli likewise takes the PSK as a setting value. NetworkManager keeps it
+	# in its own profile under /etc/NetworkManager/system-connections (0600,
+	# root-only); the JawnOS address drop-in carries no secret.
 	# An empty passphrase means "use what the profile already has". Writing
 	# key-mgmt=none here would throw a saved credential away.
 	push @modify, 'wifi-sec.key-mgmt', 'wpa-psk', 'wifi-sec.psk', $passphrase if length $passphrase;

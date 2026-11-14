@@ -417,6 +417,8 @@ $catalog{'zh'} = {
 		'network.refresh' => '刷新',
 		'network.scan' => '扫描',
 		'network.connect' => '连接',
+		'network.connected' => '已连接',
+
 		'network.addressing' => '地址设置',
 		'network.dhcp' => 'DHCP',
 		'network.static' => '静态',

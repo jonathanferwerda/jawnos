@@ -15,6 +15,53 @@
 var jawnosNetworkTaskbarData = null;
 var jawnosNetworkTaskbarBluetoothData = null;
 var jawnosNetworkTaskbarScanToken = 0;
+var jawnosNetworkTaskbarLastScan = null;
+var jawnosNetworkTaskbarLastConnected = null;
+
+// The widget is core and the Network app is the lazy chunk, so this small
+// shared record is how the app can open on the widget's last scan. It keeps
+// the raw list and the time it was taken; thirty seconds is the app's age.
+window.jawnosNetworkScanCache = window.jawnosNetworkScanCache || { at: 0, interface: '', networks: [] };
+
+function jawnosNetworkScanRemember(interface_name, networks) {
+	window.jawnosNetworkScanCache = {
+		at: Date.now(),
+		interface: String(interface_name || ''),
+		networks: networks ? networks.slice() : []
+	};
+}
+
+function jawnosNetworkScanFresh(interface_name, max_age) {
+	var cache = window.jawnosNetworkScanCache || {};
+	var age = Number(max_age) > 0 ? Number(max_age) : 30000;
+	if (!cache.at || (Date.now() - cache.at) > age) { return null; }
+	if (interface_name && cache.interface !== String(interface_name)) { return null; }
+	return cache;
+}
+
+function jawnosNetworkTaskbarConnectedSsid(status) {
+	var wifi = (status && status.wifi) || {};
+	var list = wifi.interfaces || [];
+	for (var i = 0; i < list.length; i++) {
+		var item = list[i] || {};
+		if (String(item.state || '').toLowerCase() == 'connected' && item.ssid) { return String(item.ssid); }
+	}
+	return '';
+}
+
+// The connected network is the row a person is most likely to act on, so it
+// takes the first place whatever the scan's signal order was.
+function jawnosNetworkTaskbarOrder(networks, connected) {
+	var ordered = [];
+	var first = null;
+	for (var i = 0; i < networks.length; i++) {
+		var net = networks[i] || {};
+		if (!first && connected && String(net.ssid || '') === connected) { first = net; }
+		else { ordered.push(net); }
+	}
+	if (first) { ordered.unshift(first); }
+	return ordered;
+}
 
 function jawnosNetworkTaskbarBars(item) {
 	if (!item) { return 0; }
@@ -133,16 +180,20 @@ function jawnosNetworkTaskbarBluetooth(bluetooth) {
 	}
 }
 
-function jawnosNetworkTaskbarLoad() {
+function jawnosNetworkTaskbarLoad(done) {
 	if (!$('#taskbar_network').length) { return; }
 	if (typeof document !== 'undefined' && document.hidden) { return; }
 	$.ajax({
 		url: '/manager/network/status',
 		type: 'GET',
 		cache: false,
-		success: function(status) { jawnosNetworkTaskbarRender(status); },
+		success: function(status) {
+			jawnosNetworkTaskbarRender(status);
+			if (typeof done === 'function') { done(status); }
+		},
 		error: function() {
 			jawnosNetworkTaskbarRender(null);
+			if (typeof done === 'function') { done(null); }
 		}
 	});
 	$.ajax({
@@ -238,6 +289,8 @@ function jawnosNetworkTaskbarPanelWifiState(panel) {
 	var iface = jawnosNetworkTaskbarWifiInterface(status);
 	var networks = panel.find('.taskbar_network_panel_networks');
 	var scanning = networks.attr('data-scanning') == '1';
+	var was_scanned = networks.attr('data-scanned') == '1';
+	var connected_ssid = connected ? String(connected.ssid || '') : '';
 	panel.find('.taskbar_network_panel_scan').prop('disabled', !iface || scanning);
 	var note = panel.find('.taskbar_network_panel_wifi_note');
 	// A machine with neither iwctl nor nmcli cannot join a network. Say so
@@ -246,68 +299,119 @@ function jawnosNetworkTaskbarPanelWifiState(panel) {
 	if (iface && !wifi.can_connect && !scanning) { note.text(jawnosT('Wi-Fi connect needs iwctl or nmcli.')); }
 	jawnosNetworkTaskbarPanelSaved(panel, wifi, iface);
 	// One scan per opening: a fresh list is unscanned, and the first answer
-	// marks it so the status poll that follows does not scan again.
+	// marks it so the status poll that follows does not scan again. A scan the
+	// app or another opening took less than thirty seconds ago is used as it is.
 	if (iface && !networks.attr('data-scanned') && !scanning) {
-		jawnosNetworkTaskbarPanelScan(panel);
+		var cached = jawnosNetworkScanFresh(iface.name, 30000);
+		if (cached) {
+			networks.attr('data-scanned', '1').empty();
+			jawnosNetworkTaskbarPanelNetworks(panel, cached.networks, iface);
+		}
+		else {
+			jawnosNetworkTaskbarPanelScan(panel);
+		}
 	}
+	else if (was_scanned && connected_ssid !== jawnosNetworkTaskbarLastConnected) {
+		jawnosNetworkTaskbarPanelRefreshList(panel);
+	}
+	jawnosNetworkTaskbarLastConnected = connected_ssid;
 }
 
-// Saved networks are plain names; a join needs no passphrase. Keep the list
-// short because the scan answer is the main thing in this section.
+// Saved networks are plain names; a join uses the credential the stack already
+// holds. The list is an accordion so the scan answer keeps the room.
 function jawnosNetworkTaskbarPanelSaved(panel, wifi, iface) {
-	var box = panel.find('.taskbar_network_panel_saved').empty();
-	if (!wifi.can_connect || !iface) { return; }
+	var box = panel.find('.taskbar_network_panel_saved');
+	if (!wifi.can_connect || !iface) { box.empty().removeAttr('data-saved'); return; }
 	var saved = wifi.saved || [];
-	if (!saved.length) { return; }
-	box.append($('<div></div>').addClass('taskbar_panel_note').text(jawnosT('Saved networks')));
-	var scroll = $('<div></div>').addClass('taskbar_panel_scroll').appendTo(box);
+	if (!saved.length) { box.empty().removeAttr('data-saved'); return; }
+	// The status beat also runs while the panel is open. An unchanged name
+	// list keeps its accordion and anything typed into an Options panel.
+	var signature = saved.join('\u0001');
+	if (box.attr('data-saved') === signature && box.find('.taskbar_network_saved_toggle').length) { return; }
+	var open = false;
+	var old_body = box.find('.taskbar_network_saved_body');
+	if (old_body.length) { open = !old_body.prop('hidden'); }
+	box.attr('data-saved', signature).empty();
+	var body = $('<div></div>').addClass('taskbar_network_saved_body');
+	if (!open) { body.attr('hidden', 'hidden'); }
+	var scroll = $('<div></div>').addClass('taskbar_panel_scroll').appendTo(body);
 	for (var i = 0; i < saved.length && i < 6; i++) {
 		var ssid = String(saved[i] || '');
 		if (!ssid) { continue; }
 		var row = $('<div></div>').addClass('taskbar_panel_row taskbar_network_panel_network')
 			.attr('data-ssid', ssid)
-			.attr('data-interface', iface.name);
+			.attr('data-interface', iface.name)
+			.attr('data-saved', '1');
 		row.append($('<span></span>').addClass('taskbar_panel_label').text(ssid));
 		row.append($('<button type="button"></button>').addClass('taskbar_network_panel_connect').text(jawnosT('Connect')));
 		row.append($('<button type="button"></button>').addClass('taskbar_network_options_toggle').text(jawnosT('Options')));
 		row.append(jawnosNetworkTaskbarPanelOptions());
 		scroll.append(row);
 	}
+	var toggle = $('<button type="button"></button>').addClass('taskbar_network_saved_toggle')
+		.attr('aria-expanded', open ? 'true' : 'false')
+		.append($('<span></span>').addClass('taskbar_network_saved_caret').text(open ? '▾' : '▸'))
+		.append($('<span></span>').addClass('taskbar_network_saved_label').text(jawnosT('Saved networks')));
+	box.append(toggle).append(body);
 }
 
 function jawnosNetworkTaskbarPanelNetworks(panel, networks, iface) {
 	var list = panel.find('.taskbar_network_panel_networks');
 	var wifi = (jawnosNetworkTaskbarData && jawnosNetworkTaskbarData.wifi) || {};
 	var can_connect = !!(wifi.can_connect && iface);
+	var connected = jawnosNetworkTaskbarConnectedSsid(jawnosNetworkTaskbarData);
 	if (!networks || !networks.length) {
 		list.append($('<div></div>').addClass('taskbar_panel_empty').text(jawnosT('No networks found.')));
 		return;
 	}
-	for (var i = 0; i < networks.length; i++) {
-		var net = networks[i] || {};
+	jawnosNetworkTaskbarLastScan = { interface: iface ? iface.name : '', networks: networks.slice() };
+	var ordered = jawnosNetworkTaskbarOrder(networks, connected);
+	for (var i = 0; i < ordered.length; i++) {
+		var net = ordered[i] || {};
 		var ssid = String(net.ssid || '');
 		if (!ssid) { continue; }
+		var is_connected = connected && ssid === connected;
 		var row = $('<div></div>').addClass('taskbar_panel_row taskbar_network_panel_network')
 			.attr('data-ssid', ssid)
-			.attr('data-interface', iface ? iface.name : '');
+			.attr('data-interface', iface ? iface.name : '')
+			.attr('data-secure', net.secure ? '1' : '0');
 		row.append($('<span></span>').addClass('taskbar_panel_label').text(ssid));
+		if (is_connected) {
+			row.append($('<span></span>').addClass('taskbar_panel_badge taskbar_panel_up').text(jawnosT('Connected')));
+		}
 		if (net.secure) {
 			row.append($('<span></span>').addClass('taskbar_panel_badge').text(net.security || jawnosT('Secured')));
 		}
 		row.append(jawnosNetworkTaskbarPanelBars(jawnosNetworkTaskbarBars(net)));
 		if (can_connect) {
-			if (net.secure) {
-				row.append($('<input type="password">').addClass('taskbar_panel_pass')
-					.attr('placeholder', jawnosT('Passphrase'))
-					.attr('aria-label', jawnosT('Passphrase'))
-					.attr('autocomplete', 'off'));
+			if (is_connected) {
+				row.append($('<button type="button"></button>').addClass('taskbar_network_panel_disconnect').text(jawnosT('Disconnect')));
 			}
-			row.append($('<button type="button"></button>').addClass('taskbar_network_panel_connect').text(jawnosT('Connect')));
-			row.append($('<button type="button"></button>').addClass('taskbar_network_options_toggle').text(jawnosT('Options')));
-			row.append(jawnosNetworkTaskbarPanelOptions());
+			else {
+				row.append($('<button type="button"></button>').addClass('taskbar_network_panel_connect').text(jawnosT('Connect')));
+				row.append($('<button type="button"></button>').addClass('taskbar_network_options_toggle').text(jawnosT('Options')));
+				row.append(jawnosNetworkTaskbarPanelOptions());
+			}
 		}
 		list.append(row);
 	}
+}
+
+// After a join or a disconnect the status reload has the new answer; putting
+// the cached scan back through the renderer moves the connected row and swaps
+// its button without a second radio scan.
+function jawnosNetworkTaskbarPanelRefreshList(panel) {
+	if (!panel || !panel.length) { return; }
+	var iface = jawnosNetworkTaskbarWifiInterface(jawnosNetworkTaskbarData);
+	if (!iface) { return; }
+	var cached = jawnosNetworkScanFresh(iface.name, 30000);
+	var networks = cached ? cached.networks : null;
+	if (!networks && jawnosNetworkTaskbarLastScan && jawnosNetworkTaskbarLastScan.interface === iface.name) {
+		networks = jawnosNetworkTaskbarLastScan.networks;
+	}
+	if (!networks) { return; }
+	panel.find('.taskbar_network_panel_networks').attr('data-scanned', '1').empty();
+	jawnosNetworkTaskbarPanelNetworks(panel, networks, iface);
 }
 
 function jawnosNetworkTaskbarPanelScan(panel) {
@@ -336,7 +440,9 @@ function jawnosNetworkTaskbarPanelScan(panel) {
 			list.append($('<div></div>').addClass('taskbar_panel_empty').text((response && response.error) || jawnosT('The scan failed.')));
 		}
 		else {
-			jawnosNetworkTaskbarPanelNetworks(panel, response.networks || [], iface);
+			var networks = response.networks || [];
+			jawnosNetworkScanRemember(iface.name, networks);
+			jawnosNetworkTaskbarPanelNetworks(panel, networks, iface);
 		}
 		button.prop('disabled', false);
 	}).fail(function(xhr) {
@@ -641,33 +747,84 @@ $(document).on('change', '.taskbar_network_method', function() {
 	box.find('.taskbar_network_static').prop('hidden', $(this).val() !== 'static');
 });
 
-// One handler for a scanned network and a saved one: the saved row simply has
-// no passphrase input, so its value is empty.
-$(document).on('click', '.taskbar_network_panel_connect', function() {
-	var button = $(this);
-	var row = button.closest('.taskbar_network_panel_network');
-	var panel = button.closest('#taskbar_network_panel');
+function jawnosNetworkTaskbarPanelJoin(panel, row, button, ssid, passphrase) {
 	var note = panel.find('.taskbar_network_panel_wifi_note');
 	var iface = row.attr('data-interface') || '';
-	var ssid = row.attr('data-ssid') || '';
-	var passphrase = row.find('.taskbar_panel_pass').val() || '';
-	if (!iface || !ssid) { return; }
 	button.prop('disabled', true);
 	note.text(jawnosT('Connecting…'));
 	$.ajax({
 		url: '/manager/network/wifi_connect',
 		type: 'POST',
 		dataType: 'json',
-		data: $.extend({ interface: iface, ssid: ssid, passphrase: passphrase }, jawnosNetworkTaskbarPanelOptionsData(row))
+		data: $.extend({ interface: iface, ssid: ssid, passphrase: passphrase || '' }, jawnosNetworkTaskbarPanelOptionsData(row))
 	}).done(function(response) {
+		button.prop('disabled', false);
 		if (response && response.ok) {
-			note.text(jawnosT('Connected to {0}.', ssid));
-			button.prop('disabled', false);
-			jawnosNetworkTaskbarLoad();
+			note.text(response.message || jawnosT('Connected to {0}.', ssid));
+			jawnosNetworkTaskbarLoad(function() { jawnosNetworkTaskbarPanelRefreshList(panel); });
 			return;
 		}
 		note.text((response && response.error) || jawnosT('Could not connect.'));
+	}).fail(function(xhr) {
+		note.text(jawnosT('The request failed.') + ' (' + xhr.status + ')');
 		button.prop('disabled', false);
+	});
+}
+
+$(document).on('click', '.taskbar_network_saved_toggle', function() {
+	var button = $(this);
+	var body = button.closest('.taskbar_network_panel_saved').find('.taskbar_network_saved_body');
+	var opening = body.prop('hidden');
+	body.prop('hidden', !opening);
+	button.attr('aria-expanded', opening ? 'true' : 'false');
+	button.find('.taskbar_network_saved_caret').text(opening ? '▾' : '▸');
+});
+
+// A scanned secured network asks in the house password dialog; a saved row
+// already has its credential, so it joins directly.
+$(document).on('click', '.taskbar_network_panel_connect', function() {
+	var button = $(this);
+	var row = button.closest('.taskbar_network_panel_network');
+	var panel = button.closest('#taskbar_network_panel');
+	var note = panel.find('.taskbar_network_panel_wifi_note');
+	var ssid = row.attr('data-ssid') || '';
+	if (!row.attr('data-interface') || !ssid) { return; }
+	if (row.attr('data-secure') !== '1' || row.attr('data-saved') === '1') {
+		jawnosNetworkTaskbarPanelJoin(panel, row, button, ssid, '');
+		return;
+	}
+	jawnosPasswordPrompt(jawnosT('Passphrase for {0}', ssid), function(passphrase) {
+		passphrase = passphrase || '';
+		if (!passphrase.length) {
+			note.text(jawnosT('Enter the passphrase.'));
+			return;
+		}
+		jawnosNetworkTaskbarPanelJoin(panel, row, button, ssid, passphrase);
+	}, { title: jawnosT('Wi-Fi') });
+});
+
+$(document).on('click', '.taskbar_network_panel_disconnect', function() {
+	var button = $(this);
+	var row = button.closest('.taskbar_network_panel_network');
+	var panel = button.closest('#taskbar_network_panel');
+	var note = panel.find('.taskbar_network_panel_wifi_note');
+	var iface = row.attr('data-interface') || '';
+	if (!iface) { return; }
+	button.prop('disabled', true);
+	note.text(jawnosT('Working…'));
+	$.ajax({
+		url: '/manager/network/wifi_disconnect',
+		type: 'POST',
+		dataType: 'json',
+		data: { interface: iface }
+	}).done(function(response) {
+		button.prop('disabled', false);
+		if (response && response.ok) {
+			note.text(jawnosT('Disconnected.'));
+			jawnosNetworkTaskbarLoad(function() { jawnosNetworkTaskbarPanelRefreshList(panel); });
+			return;
+		}
+		note.text((response && response.error) || jawnosT('Could not disconnect.'));
 	}).fail(function(xhr) {
 		note.text(jawnosT('The request failed.') + ' (' + xhr.status + ')');
 		button.prop('disabled', false);

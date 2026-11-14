@@ -404,6 +404,8 @@ $catalog{'hi'} = {
 		'network.refresh' => 'रीफ़्रेश',
 		'network.scan' => 'स्कैन',
 		'network.connect' => 'कनेक्ट',
+		'network.connected' => 'जुड़ा हुआ',
+
 		'network.addressing' => 'एड्रेसिंग',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'स्थिर',

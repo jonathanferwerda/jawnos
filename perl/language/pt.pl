@@ -417,6 +417,8 @@ $catalog{'pt'} = {
 		'network.refresh' => 'Atualizar',
 		'network.scan' => 'Procurar',
 		'network.connect' => 'Ligar',
+		'network.connected' => 'Conectado',
+
 		'network.addressing' => 'Endereçamento',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'Estático',

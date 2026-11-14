@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/dialog.js templates/manager.html.ep public/js/manager/keyboard/03_editor_switcher.js public/js/manager/configure/03_platform_misc.js public/js/manager/marker/02_input_panel.js public/js/manager/manager/10_appointment_edit.js public/js/manager/manager/12_cards.js public/js/manager/configure/01_update_controls.js public/js/manager/configure/05_database_records.js public/js/manager/configure/06_watch_pay.js public/js/manager/network/01_wifi_vpn_android.js public/js/manager/network/02_tabs_bluetooth_remote.js public/js/manager/security/01_house_key.js public/js/manager/twirl/01_twirl_game.js public/js/manager/budget/01_reconcile_payables.js public/js/manager/warehouse.js public/js/manager/internet.js public/js/manager/marker.js public/js/manager/transaction/01_record_crypto.js public/js/manager/market.js public/js/manager/phone.js public/js/manager/email.js public/js/manager/configure/04_currency_backup.js
+# tests-for: public/js/manager/dialog.js templates/manager.html.ep public/js/manager/keyboard/03_editor_switcher.js public/js/manager/configure/03_platform_misc.js public/js/manager/marker/02_input_panel.js public/js/manager/manager/10_appointment_edit.js public/js/manager/manager/12_cards.js public/js/manager/configure/01_update_controls.js public/js/manager/configure/05_database_records.js public/js/manager/configure/06_watch_pay.js public/js/manager/network/01_wifi_vpn_android.js public/js/manager/network/02_tabs_bluetooth_remote.js public/js/manager/taskbar_network.js public/js/manager/security/01_house_key.js public/js/manager/twirl/01_twirl_game.js public/js/manager/budget/01_reconcile_payables.js public/js/manager/warehouse.js public/js/manager/internet.js public/js/manager/marker.js public/js/manager/transaction/01_record_crypto.js public/js/manager/market.js public/js/manager/phone.js public/js/manager/email.js public/js/manager/configure/04_currency_backup.js
 # covers:    a dialog is the house's own Alert shell - a message, a question with
 #           OK and Cancel, or a question with one line of text - so the engine's
 #           confirm(), alert() and prompt() (a Qt box in the live image, an
@@ -56,6 +56,13 @@ like($dialog, qr/typeof window\.alert === 'function'/,
 	'a page without the shell still alerts through the browser');
 like($dialog, qr/function jawnosPrompt\(message, default_value, on_yes, options\)/,
 	'a question may take one line of text');
+like($dialog, qr/function jawnosPasswordPrompt\(message, on_yes, options\)/,
+	'a password question uses the same shell');
+like($dialog, qr/options\.password = true;/, 'and marks its answer as secret');
+like($dialog, qr/\.attr\('type', options\.password \? 'password' : 'text'\)/,
+	'so the input is masked');
+like($dialog, qr/\.attr\('autocomplete', options\.password \? 'new-password' : 'off'\)/,
+	'and not offered to a password manager');
 like($dialog, qr/\$\('#alert_input'\)[\s\S]*?\.val\(default_value === undefined \|\| default_value === null \? '' : default_value\)[\s\S]*?\.show\(\)\.trigger\('focus'\)\.select\(\);/,
 	'the prompt fills, shows and focuses the input');
 like($dialog, qr/var value = \$\('#alert_input'\)\.is\(':visible'\)/,
@@ -106,6 +113,7 @@ my %house = (
 	'public/js/manager/configure/06_watch_pay.js'      => 'jawnosAlertText(',
 	'public/js/manager/configure/04_currency_backup.js' => 'jawnosPrompt(',
 	'public/js/manager/network/01_wifi_vpn_android.js' => 'jawnosConfirm(',
+	'public/js/manager/taskbar_network.js' => 'jawnosPasswordPrompt(',
 	'public/js/manager/network/02_tabs_bluetooth_remote.js' => 'jawnosConfirm(',
 	'public/js/manager/security/01_house_key.js'       => 'jawnosAlertText(',
 	'public/js/manager/twirl/01_twirl_game.js'         => 'jawnosPrompt(',
@@ -122,6 +130,8 @@ for my $rel (sort keys %house) {
 	my $src = read_file("$root/$rel");
 	like($src, qr/\Q$house{$rel}\E/, "$rel asks the house");
 }
+like(read_file("$root/public/js/manager/network/01_wifi_vpn_android.js"), qr/jawnosPasswordPrompt\(/,
+	'the Network app asks for a Wi-Fi passphrase in the password dialog');
 
 my @native;
 find(sub {

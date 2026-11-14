@@ -404,6 +404,8 @@ $catalog{'ar'} = {
 		'network.refresh' => 'تحديث',
 		'network.scan' => 'بحث',
 		'network.connect' => 'اتصال',
+		'network.connected' => 'متصل',
+
 		'network.addressing' => 'العنونة',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'ثابت',

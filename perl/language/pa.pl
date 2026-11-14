@@ -404,6 +404,8 @@ $catalog{'pa'} = {
 		'network.refresh' => 'ਰਿਫ੍ਰੈਸ਼',
 		'network.scan' => 'ਸਕੈਨ',
 		'network.connect' => 'ਕਨੈਕਟ',
+		'network.connected' => 'ਜੁੜਿਆ',
+
 		'network.addressing' => 'ਐਡਰੈਸਿੰਗ',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'ਸਥਿਰ',

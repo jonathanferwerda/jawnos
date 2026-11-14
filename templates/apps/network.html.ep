@@ -52,7 +52,6 @@
 	.network_wifi_row, .network_vpn_card, .network_android_row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .45); padding:7px 9px; background:var(--panel); }
 	.network_wifi_name, .network_vpn_name { font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 120px; }
 	.network_signal { flex:0 0 auto; font-family:var(--mono-font, monospace); letter-spacing:1px; }
-	.network_wifi_pass { flex:1 1 120px; min-width:100px; font:inherit; font-size:12px; padding:3px 6px; color:inherit; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
 	.network_wifi_msg { flex:1 1 100%; font-size:11px; opacity:.75; }
 	.network_wifi_options { flex:1 1 100%; display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:6px 2px 2px; border-top:1px dashed var(--line); margin-top:2px; }
 	.network_wifi_options[hidden] { display:none !important; }
@@ -77,6 +76,7 @@
 </style>
 <div class="network_app" id="network_app"
 	data-connect="<%= $t->('network.connect') %>"
+	data-connected="<%= $t->('network.connected') %>"
 	data-disconnect="<%= $t->('network.disconnect') %>"
 	data-forget="<%= $t->('network.forget') %>"
 	data-scan="<%= $t->('network.scan') %>"

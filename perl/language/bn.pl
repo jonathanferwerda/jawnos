@@ -404,6 +404,8 @@ $catalog{'bn'} = {
 		'network.refresh' => 'রিফ্রেশ',
 		'network.scan' => 'স্ক্যান',
 		'network.connect' => 'সংযোগ',
+		'network.connected' => 'সংযুক্ত',
+
 		'network.addressing' => 'ঠিকানা',
 		'network.dhcp' => 'DHCP',
 		'network.static' => 'স্থির',
