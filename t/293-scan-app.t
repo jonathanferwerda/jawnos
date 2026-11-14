@@ -101,7 +101,7 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	no warnings 'redefine';
 	my (%seen, $wrote);
 	local *Manager::appointment_writer = sub { $wrote = 1; return 1; };
-	local *Manager::market_scan_feeds = sub { return [ 'adf', 'flatbed' ] };
+	local *Manager::scan_feeds = sub { return [ 'adf', 'flatbed' ] };
 	local *Manager::scan = sub { my ($c, $data) = @_; $seen{'scan'} = { %{$data} }; return 'ok'; };
 	local *subs::scan_house_me = sub { return 'this-machine'; };
 	local *subs::scan_dispatcher = sub { return 'this-machine'; };
@@ -178,6 +178,19 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	is($ip, '192.168.1.109', 'a stale saved address is replaced by the live printer');
 	ok($caps->{'adf'}, 'and the live capabilities come with it');
 }
+{
+	# The feed list follows the live printer, so a phone beside it is a scanner
+	# even though the static capability table has no scan entry for a phone.
+	no warnings 'redefine';
+	local $gb::capabilities = { mobile => { camera => [ 0 ], printer => [ 'house' ] } };
+	local *subs::device_setter = sub { return 'mobile' };
+	local *subs::scanner_live_capabilities = sub {
+		return ( '192.168.1.109', { adf => { width => 2550, height => 4200 }, platen => { width => 2550, height => 3508 } } );
+	};
+	is_deeply(Manager::scan_feeds(), [ 'adf', 'flatbed' ], 'a phone gets the printer\'s own feeds');
+	local *subs::scanner_live_capabilities = sub { return ( '', {} ) };
+	is_deeply(Manager::scan_feeds(), [], 'and no feeds when no printer answers');
+}
 
 # --- the automatic service's per-scanner rule -----------------------------
 # The ADF watcher and the app read the same house-wide rule; on and Market are
@@ -211,7 +224,7 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	no warnings 'redefine';
 	my (@scanned, $claimed);
 	local *Manager::appointment_writer = sub { return 1 };
-	local *Manager::market_scan_feeds = sub { return [ 'adf' ] };
+	local *Manager::scan_feeds = sub { return [ 'adf' ] };
 	local *Manager::scan = sub { my ($c, $data) = @_; push @scanned, { %{$data} }; return 'ok' };
 	local *Manager::scan_claim_once = sub { return $claimed };
 	local *subs::scan_house_me = sub { return 'this-machine' };
@@ -255,6 +268,7 @@ like($controller, qr/scan_claim_once/, 'an automatic edge is claimed once');
 like($controller, qr/scan_scanner_rule_save/, 'and the choice is saved house-wide');
 like($controller, qr/scanners => &scan_scanner_rows/, 'the pool lists the scanners');
 like($controller, qr/pending => &scan_pending_job/, 'with the edge waiting to be taken');
+like($controller, qr/&scan_feeds\(\)/, 'and follows the live printer\'s feeds');
 
 my $template = read_file("$root/templates/apps/scan.html.ep");
 like($template, qr/id="scan_app"/, 'the page has its own panel');
@@ -294,6 +308,7 @@ my $scan = read_file("$root/lib/JawnOS/Manager/Part02.pm");
 like($scan, qr/\$app eq 'scan' && \$source eq 'unclaimed'/, 'a landing scan is announced for the house');
 like($scan, qr/waiting in Scan/, 'in words that point at the app');
 like($scan, qr/&scanner_escl_pages\(\$feed/, 'a scan tries the printer\'s eSCL service first');
+like($scan, qr/&scan_feeds\(\)/, 'and accepts a feed the live printer offers');
 my $printer2 = read_file("$root/lib/JawnOS/Domain/Printer2.pm");
 like($printer2, qr/scan_auto_enabled/, 'the ADF watcher obeys the per-scanner switch');
 like($printer2, qr/scan_auto_target/, 'and sends the edge where the rule says');

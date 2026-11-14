@@ -111,6 +111,7 @@ sub market_receipt_store;
 sub market_receipt_file;
 sub market_scan_feeds;
 sub scan_claim_once;
+sub scan_feeds;
 sub scan_pending_job;
 sub scan_pool_items;
 sub scan_scanner_rows;

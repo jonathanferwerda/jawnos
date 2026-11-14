@@ -509,6 +509,7 @@ our %SUB = (
 	'run_thumb_command'                      => 'JawnOS/Manager/Part03.pm',
 	'scan'                                   => 'JawnOS/Manager/Part02.pm',
 	'scan_claim_once'                        => 'JawnOS/Manager/Part06.pm',
+	'scan_feeds'                             => 'JawnOS/Manager/Part06.pm',
 	'scan_pending_job'                       => 'JawnOS/Manager/Part06.pm',
 	'scan_pool_items'                        => 'JawnOS/Manager/Part06.pm',
 	'scan_scanner_rows'                      => 'JawnOS/Manager/Part06.pm',

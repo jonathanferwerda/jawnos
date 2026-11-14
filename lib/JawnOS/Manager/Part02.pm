@@ -281,7 +281,7 @@ sub scan($c,$scandata) {
 		&remote_relay_request($c, { remote_uuid => $remote_uuid });
 		return 'denial';
 	}
-	if (!grep { $_ eq $scandata->{'feed'} } @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] }) {
+	if (!grep { $_ eq $scandata->{'feed'} } @{ &scan_feeds() }) {
 		# as with a picture: a named machine that cannot scan with this feeder is
 		# the end of the request, not a reason to scan somewhere else
 		return 'denial' if ($remote_uuid ne '');

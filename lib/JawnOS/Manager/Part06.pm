@@ -749,12 +749,29 @@ sub market_receipt_file {
 	&subs::setting_setter({ app => 'market', setting => 'receipts', value => encode_json($receipts) });
 }
 
-# The scan feeds THIS machine can run: the capability table's answer for the host
-# device. A computer has the ADF and the flatbed, a server neither, so the Market
-# offers the scanner buttons only when this is non-empty (a phone reaching the
-# house still scans on the computer that holds the scanner - the scan runs here).
+# The scan feeds THIS machine can run: its device type's answer, plus whatever
+# the printer answering eSCL offers. A phone beside an eSCL printer is a scanner
+# even though the static capability table has no scan entry for a phone, and a
+# computer whose saved SANE address is stale still has the feeds the live
+# printer advertises. The probe is cached and rate-limited by
+# scanner_live_capabilities.
+sub scan_feeds {
+	my $device = &subs::device_setter();
+	my (%seen, @feeds);
+	foreach my $f ( @{ $gb::capabilities->{$device}->{'scan'} || [] } ) {
+		push @feeds, $f unless $seen{$f}++;
+	}
+	my (undef, $caps) = &subs::scanner_live_capabilities();
+	foreach my $pair ( [ 'adf', 'adf' ], [ 'flatbed', 'platen' ] ) {
+		next unless $caps->{ $pair->[1] };
+		push @feeds, $pair->[0] unless $seen{ $pair->[0] }++;
+	}
+	return \@feeds;
+}
+
+# The Market's name for the same answer (its receipt buttons follow these).
 sub market_scan_feeds {
-	return [ @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] } ];
+	return &scan_feeds();
 }
 
 # The scanners the Scan app can show, each with the house-wide rule that says

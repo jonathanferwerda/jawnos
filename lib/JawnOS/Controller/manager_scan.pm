@@ -39,7 +39,7 @@ sub action_52327 {
 		items => &scan_pool_items($c),
 		scanner => &subs::scan_dispatcher(),
 		here => &subs::scan_dispatcher_here() ? 1 : 0,
-		feeds => &market_scan_feeds(),
+		feeds => &scan_feeds(),
 		scanners => &scan_scanner_rows(),
 		pending => &scan_pending_job(),
 		error => $last_error ? $last_error->{'message'} : undef,
@@ -66,7 +66,7 @@ sub action_52328 {
 	# two machines agree on which row the scan belongs to.
 	my $me = &subs::scan_house_me();
 	my $dispatcher = &subs::scan_dispatcher();
-	my $can_here = grep { $_ eq $feed } @{ &market_scan_feeds() };
+	my $can_here = grep { $_ eq $feed } @{ &scan_feeds() };
 	if (!$can_here && $dispatcher ne '' && $dispatcher ne $me) {
 		my $handed = &subs::random_string_creator(20);
 		$c->param('uuid' => $handed);
