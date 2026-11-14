@@ -385,6 +385,26 @@ sub adf_printer_ip {
 	return &printer_live_ip();
 }
 
+# The printer that answers eSCL from this machine now, and its capabilities. A
+# saved address from a network the machine has left does not answer; when that
+# happens, sweep the current LAN once in a while (the same scan_discovery_at gate
+# the ADF watcher uses) and try the printer the sweep names. The found address
+# is cached by printer_discover_escl, so later calls are plain reads. A machine
+# with no scanner configured is never swept.
+sub scanner_live_capabilities {
+	my $ip = &printer_live_ip() || '';
+	my $caps = $ip ? (eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {}) : {};
+	return ($ip, $caps) if $caps->{'adf'} || $caps->{'platen'};
+	return ($ip, $caps) unless %{ &adf_scanner() };
+	my $last_try = eval { &cache_get({ app => 'misc', context => 'scan_discovery_at' }) } || 0;
+	return ($ip, $caps) unless (&rightNow() - $last_try) > 120000;
+	&cache_set({ app => 'misc', context => 'scan_discovery_at', warranty => '-10m' }, &rightNow());
+	my $found = &printer_discover_escl();
+	return ($ip, $caps) unless $found;
+	my $found_caps = eval { JawnOS::Platform::Print::scan_capabilities($found) } || {};
+	return ($found, $found_caps);
+}
+
 # One pass over the feeder. A receipt dropped in is a loaded edge: the house
 # gets one notice (pressing it opens Market) and any open Market window is told
 # to take the paper. The state is kept, so paper left in the tray warns once;
@@ -404,20 +424,8 @@ sub adf_receipt_watch {
 	my $local = &adf_scanner();
 	my $scanner_key = &scan_scanner_key($local);
 	return 0 unless &scan_auto_enabled($scanner_key);
-	my $ip = &printer_live_ip();
+	my ($ip, $caps) = &scanner_live_capabilities();
 	return 0 unless $ip;
-	my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
-	if (!$caps->{'adf'} && !%{$local}) {
-		my $last_try = eval { &cache_get({ app => 'misc', context => 'scan_discovery_at' }) } || 0;
-		if (&rightNow() - $last_try > 120000) {
-			&cache_set({ app => 'misc', context => 'scan_discovery_at', warranty => '-10m' }, &rightNow());
-			my $found = &printer_discover_escl();
-			if ($found) {
-				$ip = $found;
-				$caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
-			}
-		}
-	}
 	return 0 unless $caps->{'adf'} || %{$local};
 	my $state = JawnOS::Platform::Print::adf_state($ip);
 	return 0 if $state eq 'unknown';

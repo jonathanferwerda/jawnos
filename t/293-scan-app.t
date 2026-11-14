@@ -15,6 +15,7 @@ use Mojo::JSON qw(decode_json);
 my $root = "$FindBin::Bin/..";
 
 require "$root/lib/JawnOS/Domain/Scan.pm";
+require "$root/lib/JawnOS/Domain/Printer2.pm";
 require "$root/lib/JawnOS/Manager/Part06.pm";
 # Part06's BEGIN puts lib/ on @INC, so Part02 and the controller load here too.
 require "$root/lib/JawnOS/Manager/Part02.pm";
@@ -157,6 +158,25 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	ok(!$@, 'the eSCL receipt path does not die on a bare scanner entry');
 	is(ref $escl, 'HASH', 'it still answers a hash');
 	is($escl->{'error'}, 'the scanner did not answer', 'with the printer\'s own error');
+}
+{
+	# A machine that left the printer's network keeps a stale address in its
+	# config. The readiness and scan paths must find the printer answering eSCL
+	# on the network the machine is on now, instead of trusting that address.
+	no warnings 'redefine';
+	local *subs::printer_live_ip = sub { return '192.168.0.74' };
+	local *JawnOS::Platform::Print::scan_capabilities = sub {
+		my ($ip) = @_;
+		return $ip eq '192.168.1.109' ? { adf => { width => 2550, height => 4200 } } : {};
+	};
+	local *subs::adf_scanner = sub { return { name => 'Officejet LivingRoom' } };
+	local *subs::cache_get = sub { return 0 };
+	local *subs::cache_set = sub { return 1 };
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	local *subs::printer_discover_escl = sub { return '192.168.1.109' };
+	my ($ip, $caps) = subs::scanner_live_capabilities();
+	is($ip, '192.168.1.109', 'a stale saved address is replaced by the live printer');
+	ok($caps->{'adf'}, 'and the live capabilities come with it');
 }
 
 # --- the automatic service's per-scanner rule -----------------------------

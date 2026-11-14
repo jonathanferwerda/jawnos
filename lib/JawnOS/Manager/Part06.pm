@@ -609,9 +609,10 @@ sub scan_pool_items($c) {
 # command; { error } when eSCL tried and failed; { pages } when it succeeded.
 sub scanner_escl_pages {
 	my ($feed, $base) = @_;
-	my $ip = &subs::printer_live_ip();
+	# The live printer, discovered if the saved address no longer answers: a
+	# machine that moved networks still finds its scanner through eSCL.
+	my ($ip, $caps) = &subs::scanner_live_capabilities();
 	return {} unless $ip;
-	my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
 	my $key = $feed eq 'flatbed' ? 'platen' : 'adf';
 	return {} unless $caps->{$key};
 	my $config = &subs::config_reader() || {};

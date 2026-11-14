@@ -59,10 +59,11 @@ sub scan_house_publish {
 	my $now = &rightNow();
 	my $device = &device_setter() || '';
 	my $host = &machine_hostname() || '';
-	my $ip = &printer_live_ip() || '';
+	my $ip = '';
 	my $ready = 0;
-	if ($ip) {
-		my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
+	my ($live_ip, $caps) = &scanner_live_capabilities();
+	if ($live_ip) {
+		$ip = $live_ip;
 		$ready = 1 if $caps->{'adf'} || $caps->{'platen'};
 	}
 	my $row = eval { &db_select('scan_house', undef, { machine => $me })->hashes->[0] };
@@ -103,19 +104,16 @@ sub scan_house_members {
 		push @out, $r;
 	}
 	if (length $me && !$seen{$me}) {
-		my $ip = &printer_live_ip() || '';
-		if ($ip) {
-			my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
-			if ($caps->{'adf'} || $caps->{'platen'}) {
-				push @out, {
-					machine => $me,
-					device => &device_setter() || '',
-					hostname => &machine_hostname() || '',
-					printer => $ip,
-					scan_ready => 1,
-					seen => $now,
-				};
-			}
+		my ($ip, $caps) = &scanner_live_capabilities();
+		if ($ip && ($caps->{'adf'} || $caps->{'platen'})) {
+			push @out, {
+				machine => $me,
+				device => &device_setter() || '',
+				hostname => &machine_hostname() || '',
+				printer => $ip,
+				scan_ready => 1,
+				seen => $now,
+			};
 		}
 	}
 	return @out;
