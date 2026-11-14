@@ -129,6 +129,7 @@ function inventoryDetails(app) {
 				var new_s_scroll = iq.find('.statistic_graphs').scrollTop();
 
 				iq.html(response.content);
+				inventoryCellHints(iq, response);
 
 				appointment_chron();
 				scrollerFinder(iq);
@@ -279,6 +280,34 @@ function chartDate(date, scope) {
 		return '' + date.getFullYear();
 	}
 	return day;
+}
+
+// The matrix can show the aggregate, not the dates it came from. Every cell
+// already carries its range for the popup; turn it into the hover/long-press
+// hint too, in the browser's own timezone. The running banner gets the same
+// treatment for the moment it began.
+function inventoryUiText(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+function inventoryCellHints(container, data) {
+	container.find('.statistic_entry').each(function() {
+		var s = $(this);
+		var scope = s.attr('scope') || '';
+		var start = numeral(s.attr('start_timestamp')).value();
+		var end = numeral(s.attr('end_timestamp')).value();
+		var value = $.trim(s.text());
+		var when = '';
+		if (start) {
+			when = chartDate(new Date(start), scope);
+			if (end && end > start) { when += ' – ' + chartDate(new Date(end), scope); }
+		}
+		var hint = when ? (when + (value ? ': ' + value : '')) : value;
+		if (hint) { s.attr('hint', hint); }
+	});
+	if (data && data.running && data.running.timestamp) {
+		var since = new Date(Number(data.running.timestamp));
+		container.find('.inventory_running_since').text(inventoryUiText('since') + ' ' + chartDate(since, 'minute'));
+	}
 }
 
 function statisticGrapher(data,canvasId,mark) {
@@ -473,9 +502,27 @@ function statisticUnit(data) {
 	if (data.page_scope && $.inArray(data.page_scope, data.time_lengths) >= 0) { return data.page_scope; }
 	return ($.inArray('day', data.time_lengths) >= 0) ? 'day' : data.time_lengths[0];
 }
+// The chart captions name the measure, the unit and the scope the wheel is a
+// share of, so the three drawings do not have to be inferred from their axes.
+function statisticChartCaptions(data) {
+	var ir = $('.appointment[app="' + data.app + '"]');
+	var unit = statisticUnit(data);
+	var display = data.settings.s_display || '';
+	var displayLabel = inventoryUiText(display);
+	var unitLabel = inventoryUiText(unit);
+	if (displayLabel) { displayLabel = displayLabel.charAt(0).toUpperCase() + displayLabel.slice(1); }
+	if (unitLabel) { unitLabel = unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1); }
+	ir.find('.statistic_graph_caption').text(displayLabel + ' · ' + unitLabel);
+	var caption;
+	if (statistic_pie_by == 'hour') { caption = inventoryUiText('by hour'); }
+	else if (statistic_pie_by == 'weekday') { caption = inventoryUiText('by weekday'); }
+	else { caption = inventoryUiText('This') + ' ' + inventoryUiText(unit); }
+	ir.find('.statistic_pie_caption').text(caption);
+}
 function statisticRedrawCharts(app) {
 	var data = statisticData[app];
 	if (!data) { return; }
+	statisticChartCaptions(data);
 	// the trend is redrawn by the graph pass; the bar and pie read the same data
 	statisticBars(data, statisticUnit(data));
 	statisticPie(data, statisticUnit(data), statistic_pie_by);

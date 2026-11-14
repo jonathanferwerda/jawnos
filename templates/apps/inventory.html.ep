@@ -1,17 +1,48 @@
 <%
 	# the headline numbers as cards, so the shape of the app reads at a glance
-	# before any scrolling
+	# before any scrolling. These five are all time on purpose: the table and
+	# charts follow the Measure select, the cards stay the app's whole record.
 	my @inventory_cards = (
-		[ 'Occurrences', $returner->{'total_occurences'} ],
-		[ 'Average Duration', &subs::duration_readout($returner->{'average_duration'} || 0) ],
-		[ 'Total Duration', &subs::duration_readout($returner->{'total_duration'} || 0) ],
-		[ 'Average Between', &subs::duration_readout($returner->{'between_average'} || 0) ],
-		[ 'Total Between', &subs::duration_readout($returner->{'between_total'} || 0) ],
+		[ &subs::ui('Occurrences'), $returner->{'total_occurences'}, &subs::ui('Events matching the selected movements, all time.') ],
+		[ &subs::ui('Average duration'), &subs::duration_readout($returner->{'average_duration'} || 0), &subs::ui('Total duration divided by occurrences.') ],
+		[ &subs::ui('Total duration'), &subs::duration_readout($returner->{'total_duration'} || 0), &subs::ui('All recorded time, all time.') ],
+		[ &subs::ui('Average gap'), &subs::duration_readout($returner->{'between_average'} || 0), &subs::ui('Average time between one occurrence and the next.') ],
+		[ &subs::ui('First to last'), &subs::duration_readout($returner->{'between_total'} || 0), &subs::ui('Time from the first occurrence to the last.') ],
+	);
+	# A lookback row is only a number of periods; the column says which period.
+	my %row_label;
+	foreach my $rw ( @{$time_scopes} ) {
+		if ($rw eq 'this') { $row_label{$rw} = &subs::ui('Current'); }
+		elsif ($rw eq 'last') { $row_label{$rw} = &subs::ui('Previous'); }
+		elsif ($rw eq 'average') { $row_label{$rw} = &subs::ui('Average'); }
+		elsif ($rw eq 'total') { $row_label{$rw} = &subs::lang('common.total'); }
+		elsif ($rw =~ /^([0-9]+)last$/) { $row_label{$rw} = $1 . ' ' . &subs::ui('back'); }
+		else { $row_label{$rw} = &subs::format_name($rw); }
+	}
+	my @budget_statuses = (
+		[ 'budgeted', &subs::ui('Budgeted') ],
+		[ 'accomplished', &subs::ui('Accomplished') ],
+		[ 'burnt_out', &subs::ui('Burnt out') ],
+		[ 'overkill', &subs::ui('Overkill') ],
+		[ 'achievable', &subs::ui('Achievable') ],
+		[ 'neglected', &subs::ui('Neglected') ],
+		[ 'abandoned', &subs::ui('Abandoned') ],
 	);
 %>
+<% if ($returner->{'running'}) { %>
+	<div class="inventory_running" hint="<%= &subs::ui('Its time is included in the table and charts.') %>">
+		<b><%= &subs::ui('Still running') %></b>
+		<span class="inventory_running_since" timestamp="<%= $returner->{'running'}->{'timestamp'} %>"></span>
+		<span class="inventory_running_duration"><%= $returner->{'running'}->{'duration_text'} %></span>
+	</div>
+<% } %>
+<div class="inventory_cards_head">
+	<b><%= &subs::ui('All time') %></b>
+	<span><%= &subs::ui('Occurrences and time, whatever the measure shows below.') %></span>
+</div>
 <div class="statistic_cards" style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px;">
 	<% foreach my $card ( @inventory_cards ) { %>
-		<span class="statistic_card" style="flex:1 1 120px;min-width:110px;border:solid 1px;border-radius:6px;padding:6px 10px;">
+		<span class="statistic_card hover" hint="<%= $card->[2] %>" style="flex:1 1 120px;min-width:110px;border:solid 1px;border-radius:6px;padding:6px 10px;">
 			<span style="opacity:.55;font-size:85%;display:block;white-space:nowrap;"><%= $card->[0] %></span>
 			<b style="font-size:150%;"><%== $card->[1] %></b>
 		</span>
@@ -21,103 +52,95 @@
 <% my @rows = @{$time_scopes}; %>
 <% my $s_display = $settings->{'s_display'}; %>
 <% my $s_calc = $settings->{'s_calc'}; %>
-<% my $s_visual = $settings->{'s_visual'} // 'historical'; %>
 <% my $s_lock = $settings->{'s_lock'}; %>
 <% my $s_count = $settings->{'s_scope_count'}; %>
 <% my $s_movement = $settings->{'s_movement'}; %>
 <% my $ctl = 'display:flex;flex-direction:column;gap:2px;font-size:85%;'; %>
 <div class="inventory_controls" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;margin:6px 0;">
-	<label style="<%= $ctl %>">Movements
-		<select multiple class="statistic_movement" style="height:70px;min-width:132px;">
+	<label style="<%= $ctl %>"><%= &subs::ui('Events') %>
+		<select multiple class="statistic_movement" hint="<%= &subs::ui('The event types to include.') %>" style="height:70px;min-width:132px;">
 			<% foreach my $m ( @{$movements} ) { %>
 				<option value="<%= $m %>" <% if (grep { $_ eq $m } @{$s_movement}) { %>selected<% } %>><%= &subs::format_name($m) %></option>
 			<% } %>
 		</select>
 	</label>
-	<label style="<%= $ctl %>">View
-		<select class="statistic_visual">
-			<% foreach my $v ( qw/historical allocation/ ) { %>
-				<option value="<%= $v %>" <% if ($s_visual eq $v) { %>selected<% } %>><%= &subs::format_name($v) %></option>
-			<% } %>
-		</select>
-	</label>
-	<label style="<%= $ctl %>">Calc
-		<select class="statistic_calc" data-measure_calc="<%= $measure_calc_json || '{}' %>">
+	<%# The Allocation visual is hidden until its mixed row and column ranges are
+	    rebuilt; a stored choice is read as the timeline by inventory_details. %>
+	<input type="hidden" class="statistic_visual" value="historical">
+	<label style="<%= $ctl %>"><%= &subs::ui('Statistic') %>
+		<select class="statistic_calc" hint="<%= &subs::ui('How a period combines its readings.') %>" data-measure_calc="<%= $measure_calc_json || '{}' %>">
 			<% foreach my $cal ( qw/sum average high low/ ) { %>
 				<option value="<%= $cal %>" <% if ($s_calc eq $cal) { %>selected<% } %>><%= &subs::format_name($cal) %></option>
 			<% } %>
 		</select>
 	</label>
-	<label style="<%= $ctl %>">Display
-		<select class="statistic_display">
+	<label style="<%= $ctl %>"><%= &subs::ui('Measure') %>
+		<select class="statistic_display" hint="<%= &subs::ui('What the table and charts show.') %>">
 			<% foreach my $o (@{$display_options}) { %>
 				<option value="<%= $o->{'name'} %>" <% if ($o->{'name'} eq $s_display) { %>selected<% } %>><%= $o->{'formatted_name'} %></option>
 			<% } %>
 		</select>
 	</label>
-	<label style="<%= $ctl %>">Count
-		<select class="statistic_scope_count" app="<%= $app %>">
+	<label style="<%= $ctl %>"><%= &subs::ui('Periods') %>
+		<select class="statistic_scope_count" app="<%= $app %>" hint="<%= &subs::ui('How many lookback rows the table shows.') %>">
 			<% foreach my $count (1..30) { %>
 				<option value="<%= $count %>" <% if ($count == $s_count) { %>selected<% } %>><%= $count %></option>
 			<% } %>
 		</select>
 	</label>
-	<label style="<%= $ctl %>">Lock
-		<img src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Lock" class="statistic_lock little_thumb hover" app="<%= $app %>" locked="<%= $s_lock %>">
+	<label style="<%= $ctl %>"><%= &subs::ui('Freeze') %>
+		<img src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="<%= &subs::ui('Keep the time windows fixed to the moment the panel loaded.') %>" aria-label="<%= &subs::ui('Freeze the time windows') %>" class="statistic_lock little_thumb hover" app="<%= $app %>" locked="<%= $s_lock %>">
 	</label>
-	<label style="<%= $ctl %>">&nbsp;
-		<img class="little_thumb budget_autocalc hover" app="<%= $app %>" circumstance="<%= $s_display %>" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="Calculator">
+	<label style="<%= $ctl %>"><%= &subs::ui('Auto-calc') %>
+		<img class="little_thumb budget_autocalc hover" app="<%= $app %>" circumstance="<%= $s_display %>" src="<%= &subs::icon_for('/images/decipherable/calculator.png') %>" hint="<%= &subs::ui('Recalculate the budget from the readings.') %>" aria-label="<%= &subs::ui('Recalculate the budget') %>">
 	</label>
 </div>
 <% if (scalar @{$appts} > 0) { %>
 	<% my $scope_page = $returner->{'scope_page'} || 0; %>
-	<% my $page_letter = ''; %>
-	<% if ($scope_page != 0 && $returner->{'page_scope'}) { my $fl = uc substr($returner->{'page_scope'}, 0, 1); $page_letter = $returner->{'page_scope'} eq 'minute' ? lc($fl) : $fl; } %>
 	<% my $page_icon = $scope_page == 0 ? 'now' : ($scope_page > 0 ? 'back' : 'forward'); %>
 	<% my $page_colours = &subs::icon_plate_colours($page_icon); %>
-	<%# the page button wears where a scroll or a swipe has walked - N at now,
-	    2P two pages back, 1F one page forward - and then the unit of the canvas
-	    that was walked, as in 1FD; it stays wide enough for 99FY, and tapping
-	    it returns to now while its tile follows the walk %>
 	<% my $chart_unit = $returner->{'page_scope'} || 'day'; %>
+	<% my $page_label = $scope_page == 0 ? &subs::ui('Now') : ($scope_page > 0 ? '‹ ' . abs($scope_page) : abs($scope_page) . ' ›'); %>
+	<% my $page_hint = $scope_page == 0
+		? &subs::ui('Scroll or swipe the graph to walk through the periods')
+		: abs($scope_page) . ' ' . &subs::ui('pages ' . ($scope_page > 0 ? 'back' : 'forward') . ' in') . ' ' . &subs::format_name($chart_unit) . '; ' . &subs::ui('tap for now'); %>
 	<div class="statistic_chart_head" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 2px;">
-		<b style="font-size:90%;opacity:.6;">Trend</b>
-		<select class="statistic_chart_unit" style="font-size:90%;">
+		<b style="font-size:90%;opacity:.6;"><%= &subs::ui('Trend') %></b>
+		<select class="statistic_chart_unit" hint="<%= &subs::ui('The period size the trend and the share use.') %>" style="font-size:90%;">
 			<% foreach my $col ( @cols ) { %>
 				<option value="<%= $col %>"<% if ($col eq $chart_unit) { %> selected<% } %>><%= &subs::format_name($col) %></option>
 			<% } %>
 		</select>
-		<button class="statistic_page little_thumb hover" style="min-width:68px;<% if ($page_colours->{'plate'}) { %>background-color:<%= $page_colours->{'plate'} %>;color:<%= $page_colours->{'ink'} %>;<% } %>" hint="<%= $scope_page == 0 ? 'Scroll or swipe the graph to walk through the periods' : 'Tap to return to now' %>"><%= $scope_page == 0 ? 'N' : abs($scope_page) . ($scope_page > 0 ? 'P' : 'F') . $page_letter %></button>
+		<span class="inventory_chart_note statistic_graph_caption"><%= &subs::format_name($s_display) %></span>
+		<button class="statistic_page little_thumb hover" style="min-width:68px;<% if ($page_colours->{'plate'}) { %>background-color:<%= $page_colours->{'plate'} %>;color:<%= $page_colours->{'ink'} %>;<% } %>" hint="<%= $page_hint %>" aria-label="<%= $page_hint %>"><%= $page_label %></button>
 	</div>
 	<canvas id="<%= $app %>_line_graph" class="statistic_graph" scope="<%= $chart_unit %>" style="width:100%;height:230px;"></canvas>
 	<div class="statistic_graph_information" style="display:none;position:fixed;background-color:white;border:solid;border-radius:5px;padding:2px;"></div>
-	<%# the same periods as bars (easier to compare) and as shares (a pie), so
-	    the shape is read three ways from one page of data %>
 	<div class="statistic_bars_pie" style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0;align-items:flex-start;">
 		<div style="flex:3 1 340px;min-width:240px;">
-			<b style="font-size:90%;opacity:.6;">By period</b>
+			<b style="font-size:90%;opacity:.6;"><%= &subs::ui('By period') %></b>
+			<div class="inventory_chart_note"><%= &subs::ui('The same periods, drawn as bars.') %></div>
 			<canvas id="<%= $app %>_bars_graph" class="statistic_bars" style="width:100%;height:160px;"></canvas>
 		</div>
 		<div style="flex:2 1 260px;min-width:220px;">
-			<div style="display:flex;justify-content:space-between;align-items:baseline;">
-				<b style="font-size:90%;opacity:.6;">Share</b>
-				<select class="statistic_pie_by" style="font-size:85%;">
+			<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;flex-wrap:wrap;">
+				<b style="font-size:90%;opacity:.6;"><%= &subs::ui('Share') %></b>
+				<select class="statistic_pie_by" hint="<%= &subs::ui('What the wheel splits into parts.') %>" style="font-size:85%;">
 					<option value="scope"><%= &subs::ui('of this scope') %></option>
 					<option value="hour"><%= &subs::ui('by hour') %></option>
 					<option value="weekday"><%= &subs::ui('by weekday') %></option>
 				</select>
 			</div>
-			<%# the wheel is the selected scope split into its own parts - a week into
-			    days, a day into hours - drawn from the shares the panel already built;
-			    the two clocks are the older readings, kept as the other two choices %>
+			<div class="inventory_chart_note statistic_pie_caption"><%= &subs::ui('Each slice is a part of the selected scope.') %></div>
 			<canvas id="<%= $app %>_pie_graph" class="statistic_pie" data-empty="No time recorded" data-other="other" style="width:100%;height:200px;"></canvas>
 		</div>
 	</div>
+	<p class="inventory_table_help"><%= &subs::ui('Rows are how far back; columns are the period size. A cell is the amount recorded in that window. Columns overlap, so do not add them.') %></p>
 	<div class="statistic_table_scroll" style="max-height:360px;overflow:auto;border:solid 1px;border-radius:6px;">
-	<table id="<%= $app %>_inventory_table" style="width:100%;">
+	<table id="<%= $app %>_inventory_table" aria-label="<%= &subs::ui('Lookback table') %>" style="width:100%;">
 		<thead style="position:sticky;top:0;background:var(--panel);z-index:1;">
 			<tr>
-				<th></th>
+				<th><%= &subs::ui('Lookback') %></th>
 				<% foreach my $ty ( @cols ) { %>
 					<th><%= &subs::format_name($ty) %></th>
 				<% } %>
@@ -126,16 +149,26 @@
 		<tbody >
 			<% foreach my $rw ( @rows ) { %>
 				<tr>
-					<td><%= &subs::format_name($rw) %></td>
+					<td><%= $row_label{$rw} %></td>
 					<% foreach my $ry ( @cols ) { %>
-						<td>
-							<% if ($returner->{$rw}->{$ry}) { %>
-								<% if ( $returner->{$rw}->{$ry} =~ /[A-Za-z0-9]/gi ) { %>
-									<% my $end_seen = $returner->{$rw}->{$ry}->{'end_timestamp'} ? $returner->{$rw}->{$ry}->{'end_timestamp'} - 1000 : ''; %>
+						<td<% if ($rw ne 'average' && $rw ne 'total' && !$returner->{$rw}->{$ry}) { %> class="statistic_empty" hint="<%= &subs::ui('Nothing recorded in this window') %>"<% } %>>
+							<% if ($rw eq 'average' || $rw eq 'total') { %>
+								<% if ($returner->{$rw}->{$ry}) { %>
+									<% if ($s_display eq 'occurences') { %>
+										<%= $returner->{$rw}->{$ry}->{$s_display} %>
+									<% } elsif ($s_display eq 'duration') { %>
+										<%== &subs::duration_readout($returner->{$rw}->{$ry}->{$s_display}) %>
+									<% } elsif ($s_display eq 'amount' || $s_display eq 'total') { %>
+										<%= &subs::price_formatter($returner->{$rw}->{$ry}->{$s_display}) %>
+									<% } else { %>
+										<%= $returner->{$rw}->{$ry}->{$s_display} %>
+									<% } %>
+								<% } else { %>
+									–
+								<% } %>
+							<% } elsif ($returner->{$rw}->{$ry}) { %>
+								<% my $end_seen = $returner->{$rw}->{$ry}->{'end_timestamp'} ? $returner->{$rw}->{$ry}->{'end_timestamp'} - 1000 : ''; %>
 								<% my $budget = $returner->{$rw}->{$ry}->{'budget'}; %>
-								<% # The status a cell wears comes from the panel's own palette, one set
-								   # for light and one for the dark theme, so the tint is readable in both.
-								   # A budget without a status keeps the colour it came with. %>
 								<% my $budget_status = ''; %>
 								<% if ($budget && $budget->{'status'}) { $budget_status = lc $budget->{'status'}; $budget_status =~ s/[^a-z0-9]+/_/g; } %>
 								<span class="statistic_entry hover<% if ($budget_status) { %> inv_status_<%= $budget_status %><% } %>" inventory_timestamp="<%= $returner->{'timestamp'} %>" start_timestamp="<%= $returner->{$rw}->{$ry}->{'start_timestamp'} %>" end_timestamp="<%= $end_seen %>"
@@ -153,48 +186,41 @@
 									<% } %>
 									"
 									>
-											<% if ($s_display eq 'occurences') { %>
-												<%= $returner->{$rw}->{$ry}->{$s_display} %>
-											<% } elsif ($s_display eq 'duration') { %>
-												<%== &subs::duration_readout($returner->{$rw}->{$ry}->{$s_display}) %>
-											<% } elsif ($s_display eq 'amount' || $s_display eq 'total') { %>
-												<%= &subs::price_formatter($returner->{$rw}->{$ry}->{$s_display}) %>
-											<% } else { %>
-												<%= $returner->{$rw}->{$ry}->{$s_display} %>
-											<% } %>
-										</span>
-									<% } elsif ($rw eq 'average' || $rw eq 'total') { %>
-									<% if ($s_display eq 'occurences') { %>
-										<%= $returner->{$rw}->{$ry} %>
-									<% } elsif ($s_display eq 'duration') { %>
-										<%== &subs::duration_readout($returner->{$rw}->{$ry}) %>
-									<% } elsif ($s_display eq 'amount' || $s_display eq 'total') { %>
-										<%= &subs::price_formatter($returner->{$rw}->{$ry}) %>
-									<% } else { %>
-										<%= $returner->{$rw}->{$ry} %>
-									<% } %>
+										<% if ($s_display eq 'occurences') { %>
+											<%= $returner->{$rw}->{$ry}->{$s_display} %>
+										<% } elsif ($s_display eq 'duration') { %>
+											<%== &subs::duration_readout($returner->{$rw}->{$ry}->{$s_display}) %>
+										<% } elsif ($s_display eq 'amount' || $s_display eq 'total') { %>
+											<%= &subs::price_formatter($returner->{$rw}->{$ry}->{$s_display}) %>
+										<% } else { %>
+											<%= $returner->{$rw}->{$ry}->{$s_display} %>
+										<% } %>
+									</span>
+							<% } else { %>
+								–
 							<% } %>
-
-						<% } %>
-							</td>
+						</td>
 					<% } %>
 				</tr>
 			<% } %>
-				<tr>
-
-			</tr>
 		</tbody >
 	</table >
 	</div >
+	<% if (keys %{$returner->{'budget_status'} || {}}) { %>
+		<div class="inventory_status_legend">
+			<b><%= &subs::ui('Cell colours') %></b>
+			<% foreach my $bs ( @budget_statuses ) { %>
+				<span class="inventory_status_chip inv_status_<%= $bs->[0] %>"><%= $bs->[1] %></span>
+			<% } %>
+		</div>
+	<% } %>
 	<br>
 	<% if (keys %{$returner->{'budgets'} || {}}) { %>
 		<% foreach my $b (keys %{$returner->{'budgets'} || {}}) { %>
 			<b><%= &subs::format_name($b) %>:</b> <%= $returner->{'budgets'}->{$b} %><br>
 		<% } %>
 	<% } %>
-	<%# the evaluation now lives at the foot of the appointment wrapper; the
-	    inventory keeps the numbers and leaves the report to that one place %>
 	<span class="statistic_information_container" app="<%= $app %>"></span>
 <% } else { %>
-	<h4>None</h4>
+	<h4><%= &subs::ui('None') %></h4>
 <% } %>

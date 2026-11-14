@@ -3628,6 +3628,44 @@ body.dark_theme .inventory_details {
 .inventory_details .statistic_entry.inv_status_neglected { background-color: var(--inv-neglected-bg); color: var(--inv-neglected-ink); }
 .inventory_details .statistic_entry.inv_status_abandoned { background-color: var(--inv-abandoned-bg); color: var(--inv-abandoned-ink); }
 
+/* The panel's own reading aids: the running-session notice, the all-time card
+   heading, the lookback explanation, the chart captions and the budget-status
+   key. They read the panel palette, so both themes tint them together. */
+.inventory_details .inventory_running {
+	display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+	margin: 6px 0; padding: 4px 8px;
+	border-left: 3px solid var(--inv-ink);
+	background: rgba(127,127,127,.10);
+	border-radius: 4px;
+	font-size: 90%;
+}
+.inventory_details .inventory_running_since { opacity: .75; }
+.inventory_details .inventory_running_duration { font-weight: 600; }
+.inventory_details .inventory_cards_head {
+	display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+	margin: 2px 0 4px; font-size: 90%;
+}
+.inventory_details .inventory_cards_head span { opacity: .65; }
+.inventory_details .inventory_table_help {
+	margin: 4px 0; max-width: 80ch; font-size: 88%; opacity: .7;
+}
+.inventory_details .inventory_chart_note { font-size: 85%; opacity: .65; }
+.inventory_details .inventory_status_legend {
+	display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+	margin: 6px 0; font-size: 80%;
+}
+.inventory_details .inventory_status_chip {
+	display: inline-block; padding: 1px 7px; border-radius: 999px;
+}
+.inventory_details .statistic_empty { opacity: .35; }
+.inventory_details .inventory_status_chip.inv_status_budgeted { background-color: var(--inv-budgeted-bg); color: var(--inv-budgeted-ink); }
+.inventory_details .inventory_status_chip.inv_status_accomplished { background-color: var(--inv-accomplished-bg); color: var(--inv-accomplished-ink); }
+.inventory_details .inventory_status_chip.inv_status_burnt_out { background-color: var(--inv-burnt_out-bg); color: var(--inv-burnt_out-ink); }
+.inventory_details .inventory_status_chip.inv_status_overkill { background-color: var(--inv-overkill-bg); color: var(--inv-overkill-ink); }
+.inventory_details .inventory_status_chip.inv_status_achievable { background-color: var(--inv-achievable-bg); color: var(--inv-achievable-ink); }
+.inventory_details .inventory_status_chip.inv_status_neglected { background-color: var(--inv-neglected-bg); color: var(--inv-neglected-ink); }
+.inventory_details .inventory_status_chip.inv_status_abandoned { background-color: var(--inv-abandoned-bg); color: var(--inv-abandoned-ink); }
+
 /* Configure -> Plat -> QA: the nightly reports. One accordion per run, a table
    per section inside it. The tables are narrow enough for the card, and a wide
    one scrolls inside its own box instead of stretching the panel. */

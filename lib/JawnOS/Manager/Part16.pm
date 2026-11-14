@@ -86,6 +86,9 @@ sub inventory_details($c,$settings) {
 		$settings->{'s_display'} = 'occurences';
 	}
 	my $s_display = $settings->{'s_display'};
+	# The Allocation visual is hidden: its table mixed unrelated value ranges in
+	# one numbered grid. A stored choice reads as the timeline until it is rebuilt.
+	$settings->{'s_visual'} = 'historical' if (($settings->{'s_visual'} || '') eq 'allocation');
 	$settings->{'s_movement'} = eval { decode_json $settings->{'s_movement'} } || ['all'];
 	$appts = &subs::db_query('select * from appointments where app = ? or model = ? order by timestamp', $app, $app)->hashes;
 	my $movements = [ 'all' ];
@@ -267,6 +270,17 @@ sub inventory_details($c,$settings) {
 				}
 				else {
 					$a->{'duration'} = &subs::time_abbrev_translator($settings->{'duration'});
+				}
+			}
+			# The open session is why a current row can be far larger than the
+			# app duration; name it so the numbers do not read as recorded time.
+			if (($a->{'type'} eq 'start' || $a->{'type'} eq 'record') && $a->{'timestamp'} < $view_now) {
+				if (!$returner->{'running'} || $a->{'timestamp'} > $returner->{'running'}->{'timestamp'}) {
+					$returner->{'running'} = {
+						timestamp => $a->{'timestamp'},
+						duration => $a->{'duration'},
+						duration_text => $duration_sayer->($a->{'duration'} / 1000),
+					};
 				}
 			}
 			$a->{'duration'} = abs $a->{'duration'};

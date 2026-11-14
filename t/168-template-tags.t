@@ -206,7 +206,8 @@ like( $configure, qr/^\s*<option value=""[^\n]*><\/option>/m, 'the blank Might A
 like( $configure, qr/main_image_config.*?\.remove\(\)" \/>/s, 'the main-image delete button is a complete img' );
 
 my $inventory = read_file("$root/templates/apps/inventory.html.ep");
-unlike( $inventory, qr/<% \} elsif \(\$rw eq 'average'.*?<\/span>\s*<% \} %>/s,
+my ($inventory_average) = $inventory =~ /(<% \} elsif \(\$rw eq 'average'.*?<% \} %>)/s;
+unlike( $inventory_average || '', qr/<\/span>/,
 	'the average/total cells do not close a span they never opened' );
 
 my $app_details = read_file("$root/templates/apps/app_details.html.ep");

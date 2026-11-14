@@ -151,13 +151,17 @@ $topic{'market'} = {
 	};
 $topic{'inventory'} = {
 		title => 'Inventory', category => 'apps', app => 'inventory',
-		verified => '2026-11-01',
+		verified => '2026-11-14',
 		summary => 'An app\'s own record of what it holds and has been up to.',
 		body => [
 			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together, with statistics. The Evaluation report and the controls that run it live at the foot of the app itself.',
+			'The five cards at the top are all time: occurrences, average and total duration, the average gap between occurrences, and the span from the first occurrence to the last. They stay all time whatever the Measure select shows below; hover or long-press a card for what its number means.',
+			'The table is a lookback matrix. Each column is a period size and each row is how far back; a cell is the amount recorded in that window. Columns overlap, so do not add them. Hover or long-press a cell for its exact dates; tap it to open the period and its written summary.',
+			'A session still running is called out above the cards. Its time is included in the table and charts, which is why the current row can be larger than the app\'s usual duration.',
+			'Events chooses which event types are included, Statistic chooses how a period combines its readings, Measure chooses what the table and charts show, Periods chooses how many lookback rows the table shows, Freeze holds the windows to the moment the panel loaded, and Auto-calc recalculates the budget from the readings.',
 			'The Share wheel is the scope on screen split into its own parts: a week into its seven days, a day into its hours, a month into its days, a year into its months, an hour into its minutes. Each slice names its part and its percentage of the scope, oldest first, and the percentages add up to 100; a scope with nothing recorded shows an empty wheel rather than a broken one. The wheel follows the Trend unit, so changing that select changes the share. The other two choices in the wheel\'s own list keep the older readings — where in the day and where in the week the time falls.',
-			'The panel carries two colour sets, one for the light theme and one for the dark theme: the wheel\'s slices and the tint a cell wears for its budget status both read from them, so the two modes never borrow each other\'s colours.',
-			'When Duration is shown, in Historical and Allocation alike, time is counted where it was actually spent: a session that runs from late evening into the next morning gives each day, hour and weekday the part that happened in it, while its occurrence stays with the period it started in. The same split is used by the app\'s duration budget, so an overnight session does not land wholly on the day it began.'
+			'The panel carries two colour sets, one for the light theme and one for the dark theme: the wheel\'s slices and the tint a cell wears for its budget status both read from them, so the two modes never borrow each other\'s colours. The key under the table names the cell colours when a budget gives them a status.',
+			'When Duration is shown, time is counted where it was actually spent: a session that runs from late evening into the next morning gives each day, hour and weekday the part that happened in it, while its occurrence stays with the period it started in. The same split is used by the app\'s duration budget, so an overnight session does not land wholly on the day it began.'
 		],
 		related => [ 'evaluation', 'measures', 'warehouse' ]
 	};
