@@ -641,7 +641,9 @@ sub action_17694 {
 	my $value = $c->param('value');
 	my $oldvalue = $c->param('oldvalue');
 	my $amway = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'app_measures' }) } || {};
-	$amway->{$measure} = {} unless $amway->{$measure};
+	# An older row may carry a bare reading; a definition hash is what the
+	# configurator edits, so start one and let the stale reading go.
+	$amway->{$measure} = {} unless ref $amway->{$measure} eq 'HASH';
 
 	if ($setting eq 'options') {
 		my @value = split ',', $value;
@@ -680,7 +682,9 @@ sub action_17694 {
 			}
 		}
 		if ($changing == 1) {
-			$amway->{$value} = $amway->{$oldvalue};
+			my $definition = $amway->{$oldvalue};
+			$definition = {} unless ref $definition eq 'HASH';
+			$amway->{$value} = $definition;
 			delete $amway->{$oldvalue};
 		}
 	}

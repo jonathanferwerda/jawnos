@@ -81,6 +81,10 @@ sub appt_measure_writer($c,$data) {
 	my $appt_measure = \%appt_measure;
 
 	if ($measure) {
+		# An older app_measures row may carry the reading itself instead of a
+		# definition hash. The writer needs somewhere to put the new reading
+		# and its unit, so start a definition and let the stale bare value go.
+		$appt_measure->{$measure} = {} unless ref $appt_measure->{$measure} eq 'HASH';
 
 		if ($appt_measure->{$measure}->{'unit'} && ($appt_measure->{$measure}->{'type'} eq 'range' || $appt_measure->{$measure}->{'type'} eq 'number')) {
 			if ($value =~ /([a-zA-Z])/gi) {
