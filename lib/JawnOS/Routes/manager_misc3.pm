@@ -7,6 +7,7 @@ sub routes {
 	return (
 	[9883, 'get', '/manager/vault_share', 'action_9883'],
 	[9907, 'get', '/manager/legacy_reseal', 'action_9907'],
+	[9908, 'get', '/manager/legacy_keys', 'action_9908'],
 	[9920, 'post', '/manager/key_push', 'action_9920'],
 	[9944, 'post', '/manager/operator_door', 'action_9944'],
 	[10187, 'post', '/manager/self_deploy', 'action_10187'],

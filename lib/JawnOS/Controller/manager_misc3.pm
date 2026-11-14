@@ -103,6 +103,25 @@ sub action_9907 {
 	$c->render(json => { %{$result}, by => &subs::signatorial_designer() });
 }
 
+# GET /manager/legacy_keys
+sub action_9908 {
+	my $c = shift;
+	# A trusted peer asks for the keys this machine's security table still holds,
+	# sealed to a one-time secret it supplied. The keys never travel in the clear
+	# and the answer is one note-shaped blob. The gate is the same as
+	# legacy_reseal and vault_share: a pinned key, a signature, and the trusted
+	# privilege.
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) { $c->rendered(403); return; }
+	my $seal = $c->param('seal');
+	unless (defined $seal && $seal =~ /^[0-9A-Za-z-]{20,80}$/) { $c->render(json => { ok => 0 }); return; }
+	my $keys = &subs::note_legacy_candidates();
+	my $sealed = &subs::note_encrypter($seal, encode_json($keys));
+	unless (defined $sealed && length $sealed) { $c->render(json => { ok => 0 }); return; }
+	$c->render(json => { ok => 1, sealed => $sealed, count => scalar @{$keys} });
+}
+
 # POST /manager/key_push
 sub action_9920 {
 	my $c = shift;

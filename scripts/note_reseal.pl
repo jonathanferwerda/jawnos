@@ -10,6 +10,7 @@
 #   perl scripts/note_reseal.pl --old-secret-file OLD.txt --apply
 #   perl scripts/note_reseal.pl --try-all               # every security credential
 #   perl scripts/note_reseal.pl --export-keys OLD.txt   # candidates for another machine
+#   perl scripts/note_reseal.pl --from-peers --try-all  # pull linked machines' keys
 #
 # Older uploads sealed a note's outer Crypt::Simple layer under the empty
 # passphrase (public knowledge) while the inner cipher stayed keyed to the real
@@ -38,6 +39,10 @@
 # file to the machine whose notes will not open, and pass it back in with
 # --old-secret-file. The file holds secrets: delete it after use.
 #
+# --from-peers pulls the same candidate list from every linked machine over the
+# signed peer rail. Each answer is sealed to a one-time secret, nothing is
+# written, and a peer still on a build without the route contributes nothing.
+#
 # It works in rowid batches so a long sweep reports progress and a kill is not a
 # loss: every batch is committed and the next run picks up from the rowid it
 # prints. --after-appt / --after-mail start from a cursor by hand.
@@ -52,6 +57,7 @@ require './perl/subroutines.pl';
 my $apply = (grep { $_ eq '--apply' } @ARGV) ? 1 : 0;
 my $json  = (grep { $_ eq '--json' } @ARGV) ? 1 : 0;
 my $try_all = (grep { $_ eq '--try-all' } @ARGV) ? 1 : 0;
+my $from_peers = (grep { $_ eq '--from-peers' } @ARGV) ? 1 : 0;
 my $export = '';
 my ($batch, $after_appt, $after_mail, $only) = (250, 0, 0, 'all');
 my @old_secrets;
@@ -79,6 +85,19 @@ for (my $i = 0; $i < @ARGV; $i++) {
 push @old_secrets, $ENV{'JAWNOS_OLD_SECRET'} if defined $ENV{'JAWNOS_OLD_SECRET'} && length $ENV{'JAWNOS_OLD_SECRET'};
 my %seen_secret;
 @old_secrets = grep { length && !$seen_secret{$_}++ } @old_secrets;
+
+# Ask the linked machines for the keys their security tables still hold. The
+# answer is sealed to a one-time secret and only the count is printed.
+if ($from_peers) {
+	my $pulled = eval { subs::legacy_keys_mesh() };
+	my $n = ref $pulled eq 'ARRAY' ? scalar @{$pulled} : 0;
+	print STDERR "note reseal: pulled $n candidate(s) from linked machines\n";
+	if ($n) {
+		push @old_secrets, @{$pulled};
+		%seen_secret = ();
+		@old_secrets = grep { length && !$seen_secret{$_}++ } @old_secrets;
+	}
+}
 $batch = 1 if $batch < 1;
 
 # Hand the security table's candidates to another machine. This writes a secret

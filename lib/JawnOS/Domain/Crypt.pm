@@ -253,6 +253,59 @@ sub legacy_reseal_peer_one {
 	return $json;
 }
 
+# Ask one linked machine for the keys its security table still holds, sealed to a
+# one-time secret this process made. The answer is secret, so unlike the reseal
+# request it requires the verified peer listener: the one-time seal travels in
+# the URL and the keys come back under it, so an unverified rail is refused
+# rather than trusted.
+sub legacy_keys_peer {
+	my ($rm, $seal) = @_;
+	return unless $rm && $rm->{'signatorial'};
+	return unless defined $seal && length $seal;
+	my $manager = $rm->{'manager'};
+	$manager = 'https://' . $rm->{'ip'} . ':' . ($rm->{'port'} || '45545') unless $manager;
+	return unless $manager;
+	my ($secure_manager, $verified) = &subs::peer_secure_url($rm, $manager);
+	return unless $verified;
+	my $ua = Mojo::UserAgent->new();
+	$ua->max_response_size(0);
+	return unless &subs::peer_tls_verify($ua);
+	$manager = $secure_manager;
+	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
+	my $url = $manager . '/manager/legacy_keys?signatorial=' . &signatorial_designer() . '&seal=' . url_escape($seal);
+	my $res = eval { $ua->inactivity_timeout(20)->get($url)->result };
+	return unless $res && $res->is_success;
+	my $json = eval { decode_json $res->body } || {};
+	return unless $json->{'ok'} && defined $json->{'sealed'} && length $json->{'sealed'};
+	my $payload = &subs::note_decrypter($seal, $json->{'sealed'});
+	return unless defined $payload && length $payload;
+	my $keys = eval { decode_json($payload) };
+	return ref $keys eq 'ARRAY' ? $keys : undef;
+}
+
+# Every linked machine's candidates, deduped. A peer that is offline or still on
+# a build without the route simply contributes nothing.
+sub legacy_keys_mesh {
+	my ($only, $fetch) = @_;
+	$fetch = \&legacy_keys_peer unless ref $fetch eq 'CODE';
+	my $me = &signatorial_designer();
+	my %seen;
+	my @keys;
+	my $rms = &db_select('remote_machines')->hashes || [];
+	foreach my $rm ( @{$rms} ) {
+		my $rsig = $rm->{'signatorial'};
+		next unless $rsig && $rsig ne $me;
+		next if $only && $rsig ne $only;
+		next unless $rm->{'manager'} || $rm->{'ip'};
+		my $seal = &code_chars_make(40);
+		my $got = eval { $fetch->($rm, $seal) };
+		foreach my $k ( @{ $got || [] } ) {
+			push @keys, $k if defined $k && length $k && !$seen{$k}++;
+		}
+	}
+	return \@keys;
+}
+
 sub legacy_reseal_mesh {
 	my $me = &signatorial_designer();
 	my $rms = &db_select('remote_machines')->hashes || [];

@@ -20,7 +20,7 @@ use Mojo::Util qw(url_escape url_unescape);
 use File::Slurp qw(read_file);
 use JawnOSTest;
 
-subs::preload('note_reseal note_reseal_value note_decrypter note_decrypter_strict note_encrypter note_seal_container encrypter encrypter_legacy decrypter_strict shorthand_name note_legacy_candidates');
+subs::preload('note_reseal note_reseal_value note_decrypter note_decrypter_strict note_encrypter note_seal_container encrypter encrypter_legacy decrypter_strict shorthand_name note_legacy_candidates legacy_keys_mesh');
 
 my $root = root();
 
@@ -230,6 +230,27 @@ my $old_appt = { rowid => 13, notes => $old_note, start_notes => undef, end_note
 			'and reads back to the original words');
 	}
 
+	# --- the peer key pull ------------------------------------------------------
+	# The same candidate list, asked of every linked machine over the signed rail.
+	# This machine is skipped and duplicate keys from several peers are collapsed.
+	{
+		no warnings 'redefine';
+		local *subs::db_select = sub {
+			return FakeRows->new([
+				{ signatorial => 'me',     manager => 'https://me', ip => '127.0.0.1' },
+				{ signatorial => 'peer-a', manager => 'https://a',  ip => '10.0.0.1' },
+				{ signatorial => 'peer-b', manager => 'https://b',  ip => '10.0.0.2' },
+			]);
+		};
+		local *subs::signatorial_designer = sub { return 'me' };
+		my $fetch = sub {
+			my ($rm, $seal) = @_;
+			return $rm->{'signatorial'} eq 'peer-a' ? ['one', 'two'] : ['two', 'three'];
+		};
+		is_deeply(subs::legacy_keys_mesh(undef, $fetch), ['one', 'two', 'three'],
+			'the mesh pull skips this machine and dedupes the peers');
+	}
+
 	# --- the token readers and the map name the strict one ---------------------
 like(read_file("$root/lib/JawnOS/Domain/Network.pm"), qr/note_decrypter_strict\(\$patience/,
 	'the watch authorizer reads its token strictly');
@@ -245,6 +266,8 @@ like(read_file("$root/scripts/note_reseal.pl"), qr/--try-all/,
 	'the script can try every credential in the security table');
 like(read_file("$root/scripts/note_reseal.pl"), qr/--export-keys/,
 	'the script can hand its candidates to another machine');
+like(read_file("$root/scripts/note_reseal.pl"), qr/--from-peers/,
+	'the script can pull the candidates from linked machines');
 
 # --- the rest of the note-shaped data --------------------------------------
 my $hk = 'test-house-key';
