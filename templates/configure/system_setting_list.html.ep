@@ -270,6 +270,35 @@
 	</div>
 	</details>
 
+	<details class="cfg-acc" data-acc="sys-workers">
+		<summary><%= &subs::ui('Workers') %></summary>
+		<p class="cfg-note"><%= &subs::ui('How many prefork workers each server runs, and the most it may grow to. A maximum above the resting count makes the pool dynamic: it adds a worker while every one is busy and retires the extra when the pool goes quiet. Changes take effect on the next restart, and a server this machine never starts simply ignores its row.') %></p>
+		<div class="cfg-scroll">
+			<table>
+				<thead>
+					<tr>
+						<th style="text-align:left;"><%= &subs::ui('Server') %></th>
+						<th hint="<%= &subs::ui('The number of workers the server keeps running.') %>"><%= &subs::ui('Workers') %></th>
+						<th hint="<%= &subs::ui('The most workers the server may grow to while every worker is busy.') %>"><%= &subs::ui('Most') %></th>
+						<th><%= &subs::ui('Mode') %></th>
+					</tr>
+				</thead>
+				<tbody>
+				<% my $worker_rows = &subs::worker_pools({ device => $device }); %>
+				<% foreach my $w ( @{$worker_rows} ) { %>
+					<tr>
+						<td style="text-align:left;"><%= &subs::ui($w->{'label'}) %></td>
+						<td><input type="number" min="1" max="64" style="width:5em;" class="sys_setting worker_setting" pool="<%= $w->{'key'} %>" kind="min" setting="worker_<%= $w->{'key'} %>_min" device="<%= $device %>" value="<%= $w->{'min'} %>"></td>
+						<td><input type="number" min="1" max="64" style="width:5em;" class="sys_setting worker_setting" pool="<%= $w->{'key'} %>" kind="max" setting="worker_<%= $w->{'key'} %>_max" device="<%= $device %>" value="<%= $w->{'max'} %>"></td>
+						<td class="worker_mode" pool="<%= $w->{'key'} %>"><%= ($w->{'max'} > $w->{'min'} ? &subs::ui('Dynamic') : &subs::ui('Fixed')) %></td>
+					</tr>
+				<% } %>
+				</tbody>
+			</table>
+		</div>
+		<p class="cfg-note"><%= &subs::ui('The WebSocket, ticket and alarm servers, and the terminal socket channel, usually keep a steady pool of one. Main, watch and teletype answer requests, so they grow while every worker is busy and settle back when the pool goes quiet.') %></p>
+	</details>
+
 	<details class="cfg-acc" data-acc="sys-utility" open>
 		<summary><%= &subs::lang('configure.utility_controller') %></summary>
 		<p class="cfg-note">Toggle each background job, set how often it runs, and watch its last result. Changes apply as you make them.</p>

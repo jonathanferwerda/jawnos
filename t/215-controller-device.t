@@ -19,20 +19,21 @@ use RepoSource;
 # back the memory without changing what the device is for.
 
 my $src = read_file(repo_root() . '/perl/President.pl');
+my $workers = read_file(repo_root() . '/lib/JawnOS/Domain/Workers.pm');
 
 # main worker pool: two resting workers, and no +2 growth for a controller
-like($src, qr/\$device eq 'controller' \? 2 :/,
+like($workers, qr/\$device eq 'controller' \? 2/,
 	'a controller rests at two main workers');
 
-my ($autoscale) = $src =~ /(&server_process\('\.\/perl\/Manager\.pl'.*?autoscale_max =>.*?;)/s;
-ok($autoscale, 'the main pool still autoscales through one call');
-like($autoscale, qr/autoscale_max => \$main_workers_max/,
-	'the pool ceiling is the configured or default cap');
-my ($max_rule) = $src =~ /(my \$main_workers_max = \$configured_max.*?\$main_workers \+ 2\);)/s;
-ok($max_rule, 'the ceiling rule is declared before the pool');
+my ($autoscale) = $src =~ /(&server_process\('\.\/perl\/Manager\.pl'.*?&worker_pool_options\('main'\)\).*?;)/s;
+ok($autoscale, 'the main pool still takes its range through one call');
+like($autoscale, qr/&worker_pool_options\('main'\)/,
+	'the pool range is the configured or default one');
+my ($max_rule) = $workers =~ /(sub worker_pool_defaults \{.*?return \(\$min, \$max\);)/s;
+ok($max_rule, 'the ceiling rule is declared in the worker-pool helper');
 like($max_rule, qr/\$device eq 'mobile' \|\| \$device eq 'controller'/,
 	'the default ceiling consults the controller and mobile device');
-like($max_rule, qr/\$main_workers : \$main_workers \+ 2/,
+like($max_rule, qr/\$min : \$min \+ 2/,
 	'a controller rests at its count; a desktop grows by two');
 
 # A controller gate is `unless ($device eq 'controller') { ... }` indented one

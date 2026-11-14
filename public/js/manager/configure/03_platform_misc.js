@@ -303,6 +303,17 @@ $(document).on('change','.sys_setting', function() {
 			timestamp: timestamp
 		},
 		success: function(response) {
+			// A worker range is saved as two settings: the server may have moved
+			// the other side to keep the minimum at or below the maximum, so read
+			// both back instead of trusting the field that was typed in.
+			if (response && response.pool && typeof response.min !== 'undefined') {
+				var row = $('.worker_setting[pool="' + response.pool + '"]');
+				row.filter('[kind="min"]').val(response.min);
+				row.filter('[kind="max"]').val(response.max);
+				var mode = response.max > response.min ? 'Dynamic' : 'Fixed';
+				if (typeof jawnosT === 'function') { mode = jawnosT(mode); }
+				$('.worker_mode[pool="' + response.pool + '"]').text(mode);
+			}
 		}
 	});
 });

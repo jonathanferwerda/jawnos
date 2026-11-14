@@ -47,9 +47,11 @@ Manager::app->hook(before_dispatch => sub {
 	my $path = $c->req->url->path->to_string;
 	# Tell the worker supervisor (President.pl) that this worker is inside a
 	# request. Static assets are skipped: they are microseconds long, and a burst
-	# of them must not look like a full pool. The flag on the stash keeps the
-	# matching decrement in after_dispatch even when a hook renders early.
-	if (($ENV{PURPOSE} || '') eq 'main' && $path !~ m{^/(?:js|css|images|icons|sounds|fonts)/}) {
+	# of them must not look like a full pool. A pool only asks for this when its
+	# ceiling is above its resting count; a fixed pool pays no file write. The
+	# flag on the stash keeps the matching decrement in after_dispatch even when
+	# a hook renders early.
+	if ($ENV{'JAWNOS_WORKER_AUTOSCALE'} && $path !~ m{^/(?:js|css|images|icons|sounds|fonts)/}) {
 		$c->stash('request_busy' => 1);
 		&subs::request_busy_change(1);
 	}

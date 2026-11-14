@@ -8,19 +8,20 @@ use warnings;
 no warnings qw(uninitialized once);
 use vars qw($log);
 
-# ---- add a main worker when they are all busy --------------------------------
+# ---- add a worker when they are all busy --------------------------------
 # A worker serves one request at a time, and a model answer or a mail fetch can
-# hold it for minutes. Every main worker keeps a marker under
-# ~/.president/busy while it is inside a request (subs::request_busy_change).
-# This supervisor watches those markers: when every worker in the pool has been
-# busy for two seconds it sends TTIN, which Mojo::Server::Prefork's manager
-# answers by adding a worker; when the pool has been quiet for half a minute it
-# sends TTOU and retires one. Every machine may grow by two (a phone included:
-# a gallery or music window can open a burst of files at once, and letting the
-# phone grow while a burst is on screen beats pinning four idle workers all day).
-# The supervisor is a child of the prefork manager (the process that becomes the
-# manager when run() is called), so its signal names the manager directly and it
-# retires with it.
+# hold it for minutes. Every worker in a pool with a dynamic range keeps a
+# marker under ~/.president/busy/<pool> while it is inside a request
+# (subs::request_busy_change). This supervisor watches those markers: when
+# every worker in the pool has been busy for two seconds it sends TTIN, which
+# Mojo::Server::Prefork's manager answers by adding a worker; when the pool has
+# been quiet for half a minute it sends TTOU and retires one. The range comes
+# from Configure -> Sys -> Workers, where a phone and a controller keep their
+# maximum equal to their resting count (every extra worker is another full copy
+# of the tree, and that spike is what tripped Android's killer), while a desktop
+# and a server may grow by two. The supervisor is a child of the prefork manager
+# (the process that becomes the manager when run() is called), so its signal
+# names the manager directly and it retires with it.
 #
 # The pool it reasons about is read from the manager, never assumed. TTIN and
 # TTOU are ordinary signals, so a burst of them is coalesced by the kernel into
@@ -34,7 +35,12 @@ sub prefork_autoscale {
 	my $min = $opt{'min'} || $prefork->workers;
 	my $max = $opt{'max'} || $min + 2;
 	return $prefork if $max <= $min;
-	my $dir = &subs::home('~/.president/busy');
+	# One folder per pool: every manager runs a supervisor, and a shared folder
+	# would let the socket server's supervisor count the main server's busy
+	# workers and grow a pool nobody was waiting on.
+	my $pool = $opt{'pool'} || 'main';
+	$pool = 'main' unless $pool =~ /^[a-z0-9_]+$/;
+	my $dir = &subs::home('~/.president/busy/' . $pool);
 	eval { mkdir $dir unless -d $dir; };
 	my $parent = $$;
 	my $pid = fork();
@@ -44,7 +50,7 @@ sub prefork_autoscale {
 	}
 	return $prefork if $pid;   # the prefork manager carries on
 	# ---- supervisor child ----
-	$0 = 'jawn autoscale';
+	$0 = 'jawn autoscale ' . $pool;
 	$SIG{$_} = 'DEFAULT' for qw/INT TERM HUP CHLD/;
 	my ($current, $high, $low) = ($min, 0, 0);
 	# A worker that has just finished still says the person is moving: the marker
@@ -93,7 +99,7 @@ sub prefork_autoscale {
 			$current = $live + $add;
 			$high = 0;
 			$low = 0;
-			$log->info('autoscale: all ' . $live . ' main workers active; raising to ' . $current);
+			$log->info('autoscale ' . $pool . ': all ' . $live . ' workers active; raising to ' . $current);
 		}
 		if ($busy <= $live - 1) { $low++ } else { $low = 0 }
 		if ($low >= $shrink_after && $live > $min) {
@@ -103,7 +109,7 @@ sub prefork_autoscale {
 			$current = $live - $drop;
 			$low = 0;
 			$high = 0;
-			$log->info('autoscale: main workers quiet; back to ' . $current);
+			$log->info('autoscale ' . $pool . ': workers quiet; back to ' . $current);
 		}
 	}
 	POSIX::_exit(0);

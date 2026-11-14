@@ -653,10 +653,15 @@ else {
 
 sub request_busy_change {
 	my ($delta) = @_;
-	return unless (($ENV{PURPOSE} || '') eq 'main');
+	# Only a pool whose ceiling is above its resting count has a supervisor to
+	# read this. The pool name is stamped by President's run_server; a worker
+	# started by an older tree or by hand simply writes no marker.
+	return unless $ENV{'JAWNOS_WORKER_AUTOSCALE'};
+	my $pool = $ENV{'JAWNOS_WORKER_POOL'} || 'main';
+	$pool = 'main' unless $pool =~ /^[a-z0-9_]+$/;
 	$request_busy_depth += $delta;
 	$request_busy_depth = 0 if $request_busy_depth < 0;
-	my $dir = &home('~/.president/busy');
+	my $dir = &home('~/.president/busy/' . $pool);
 	my $file = $dir . '/' . $$;
 	# `start` while the request runs, `end` when it finishes. The marker stays
 	# for a few seconds after the end so the autoscaler can see a burst of short

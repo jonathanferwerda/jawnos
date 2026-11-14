@@ -543,6 +543,16 @@ sub action_19216 {
 	my $setting = &subs::unformat_name($c->param('setting'));
 	my $value = $c->param('value');
 	my $device = &subs::unformat_name($c->param('device'));
+	# A worker range is two settings that must stay ordered. Let the domain
+	# helper clamp the count and move the other side when it has to, instead of
+	# storing a minimum above a maximum nobody can see.
+	if ($setting =~ /^worker_([a-z0-9_]+)_(min|max)$/) {
+		my $saved = &subs::worker_pool_setting_save({
+			pool => $1, kind => $2, value => $value, device => $device,
+		});
+		$c->render(json => $saved);
+		return;
+	}
 	my $set = &subs::setting_setter({ app => '__president', setting => $setting, value => $value, device => $device });
 	$c->render(json => $set);
 }

@@ -27,6 +27,7 @@ use RepoSource;
 my $root = repo_root();
 my $src = read_file("$root/perl/President.pl");
 my $autoscale = read_file("$root/perl/President/prefork_autoscale.pl");
+my $workers = read_file("$root/lib/JawnOS/Domain/Workers.pm");
 
 my @guards;
 while ($src =~ /if \(\$device ne 'mobile'\) \{/g) {
@@ -43,8 +44,12 @@ for my $keep ('Pro Locker Server', 'Pro WS Server', 'Pro Main Server', 'Pro Alar
 	like($rest, qr/name => '\Q$keep\E'/, "$keep still starts on a phone");
 }
 
-like($src, qr/my \$configured_max = .*?main_workers_max/s, 'a configured burst ceiling is read');
-like($src, qr/autoscale_max => \$main_workers_max\)/, 'the ceiling reaches the pool');
+like($workers, qr/sub worker_pool_defaults/, 'the device defaults live in one worker-pool helper');
+like($workers, qr/sub worker_pool_limits/, 'a pool range is read from the panel settings');
+like($src, qr/&worker_pool_options\('main'\),?/, 'the main pool takes its range from one place');
+like($src, qr/autoscale_max => \$limits->\{'max'\}/, 'the ceiling reaches the pool');
+like($workers, qr/my \$max = \(\$device eq 'mobile' \|\| \$device eq 'controller'\) \? \$min : \$min \+ 2;/,
+	'a phone and a controller rest at their count; a desktop grows by two');
 like($autoscale, qr/my \$recent_ms = 3000;/, 'a worker that just finished still counts as active');
 like($autoscale, qr/my \$grow_by = 3;/, 'a burst opens three slots at a time');
 like($autoscale, qr/my \$shrink_after = 20;/, 'ten quiet seconds retires workers at a half-second sample');

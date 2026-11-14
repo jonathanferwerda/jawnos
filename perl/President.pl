@@ -335,6 +335,22 @@ sub prefork_tune {
 	return $prefork;
 }
 
+# The resting count and the ceiling one server may grow to, read from
+# Configure -> Sys -> Workers (worker_<pool>_min/_max), then config.json, then
+# the device's own default. A ceiling equal to the resting count is a fixed
+# pool; a wider range is the dynamic one prefork_autoscale grows and retires.
+sub worker_pool_options {
+	my ($pool) = @_;
+	my $limits = &subs::worker_pool_limits($pool, config => $config, device => $device)
+		|| { 'min' => 1, 'max' => 1 };
+	return (
+		pool          => $pool,
+		workers       => $limits->{'min'},
+		autoscale_min => $limits->{'min'},
+		autoscale_max => $limits->{'max'},
+	);
+}
+
 # One place that starts an HTTP server, so portable mode can choose a
 # single-process Daemon instead of Prefork without repeating the decision at
 # every listener. Native behaviour is unchanged: the same prefork_tune, the
@@ -342,19 +358,29 @@ sub prefork_tune {
 sub run_server {
 	my ($app, $listeners, %opt) = @_;
 	$ENV{'PURPOSE'} = $opt{'purpose'} if defined $opt{'purpose'};
+	# The workers read these to name the busy-marker folder their supervisor
+	# watches. Only a pool with a range wider than its resting count writes
+	# markers: a fixed pool has no supervisor to read them, so a phone pays
+	# nothing for a setting it never uses.
+	my $pool = $opt{'pool'} || 'main';
+	my $min = $opt{'autoscale_min'} || $opt{'workers'} || 1;
+	my $max = $opt{'autoscale_max'} || $min;
+	$ENV{'JAWNOS_WORKER_POOL'} = $pool;
+	$ENV{'JAWNOS_WORKER_AUTOSCALE'} = 0;
 	if (JawnOS::Platform::portable()) {
 		my $daemon = Mojo::Server::Daemon->new(listen => $listeners);
 		$daemon->load_app($app);
 		$daemon->run;
 		return;
 	}
+	$ENV{'JAWNOS_WORKER_AUTOSCALE'} = $max > $min ? 1 : 0;
 	# The floored subclass refuses a TTOU that would take `workers` below the
 	# resting pool (prefork_autoscale.pl). Without it a shrink that outran the
 	# real pool reached zero, and a zero-worker manager never spawns again.
 	my $prefork = &prefork_tune(
 		President::PoolPrefork->new(
 			listen      => $listeners,
-			min_workers => $opt{'autoscale_min'} || $opt{'workers'} || 1,
+			min_workers => $min,
 		),
 		keep_alive => ($opt{'keep_alive'} ? 1 : 0),
 	);
@@ -362,8 +388,9 @@ sub run_server {
 	$prefork->load_app($app);
 	$prefork->workers($opt{'workers'} || 1);
 	&prefork_autoscale($prefork,
-		min => $opt{'autoscale_min'},
-		max => $opt{'autoscale_max'},
+		min  => $min,
+		max  => $max,
+		pool => $pool,
 	) if $opt{'autoscale_min'};
 	$prefork->run;
 	return;
@@ -675,7 +702,8 @@ sub manager_starter() {
 		# every 90 seconds.
 		print "Starting Pro Locker Server on port " . $dock_port . "\n";
 		&server_process('./perl/Manager.pl', [ 'https://*:' . $dock_port . $certs ],
-			purpose => 'locker', name => 'Pro Locker Server', workers => 1);
+			purpose => 'locker', name => 'Pro Locker Server',
+			&worker_pool_options('locker'));
 		$log->info('after locker server');
 
 		print "Starting Pro WS Server on port " . $ws_port . "\n";
@@ -685,7 +713,8 @@ sub manager_starter() {
 		# app answers the peer routes there.
 		push @ws_listeners, 'https://*:' . $peer_port . $peer_certs if $peer_certs ne '';
 		&server_process('./perl/Manager.pl', \@ws_listeners,
-			purpose => 'websocket', name => 'Pro WS Server', workers => 1, keep_alive => 1);
+			purpose => 'websocket', name => 'Pro WS Server',
+			&worker_pool_options('websocket'), keep_alive => 1);
 		$log->info('after ws server');
 
 		print "Starting Pro Prefork Main Server on port " . $port . "\n";
@@ -699,32 +728,21 @@ sub manager_starter() {
 		# does not grow the pool: every extra worker was a fork of a 100 MB+
 		# process, and that spike is what Android's killer reaped the tree for.
 		# A burst waits behind the two instead; a desktop rests at three and a
-		# server at four, each growing by two. `main_workers` in config.json
-		# overrides the resting count when a machine wants another.
-		my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
-			? int($config->{'main_workers'}) : 0;
-		my $main_workers = $configured_workers || ($device eq 'controller' ? 2 : ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3)));
-		# A burst pool: `main_workers` is where the pool rests and
-		# `main_workers_max` is the ceiling an interactive burst may reach.
-		# Without a configured ceiling the old rule stands: a phone and a
-		# controller rest, a desktop and a server grow by two.
-		my $configured_max = (defined $config->{'main_workers_max'} && $config->{'main_workers_max'} =~ /^\d+$/ && $config->{'main_workers_max'} > 0)
-			? int($config->{'main_workers_max'}) : 0;
-		my $main_workers_max = $configured_max
-			|| (($device eq 'mobile' || $device eq 'controller') ? $main_workers : $main_workers + 2);
-		$main_workers_max = $main_workers if $main_workers_max < $main_workers;
+		# server at four, each growing by two. Configure -> Sys -> Workers can
+		# override both the resting count and that ceiling; config.json's
+		# main_workers/main_workers_max still keep their old meaning as the
+		# fallback for a headless machine.
 		&server_process('./perl/Manager.pl', [ 'https://*:' . $port . $certs ],
 			purpose => 'main', name => 'Pro Main Server',
-			workers => $main_workers,
-			autoscale_min => $main_workers,
-			autoscale_max => $main_workers_max);
+			&worker_pool_options('main'));
 		$log->info('after main server');
 		# A controller answers no alarm, runs no terminal and keeps no window
 		# fleet, so none of these listeners has a client on it.
 		unless ($device eq 'controller') {
 			print "Starting Pro Prefork Alarm Server on port " . $alarm_port . "\n";
 			&server_process('./perl/Alarm.pl', [ 'https://*:' . $alarm_port . $certs ],
-				purpose => 'alarm', name => 'Pro Alarm Server', workers => 1, keep_alive => 1);
+				purpose => 'alarm', name => 'Pro Alarm Server',
+				&worker_pool_options('alarm'), keep_alive => 1);
 			$log->info('after alarm server');
 		}
 
@@ -745,7 +763,7 @@ sub manager_starter() {
 			print "Starting Pro Watch Server on port " . $watch_port . "\n";
 			&server_process('./perl/watch.pl', [ 'https://*:' . $watch_port . $device_certs ],
 				purpose => 'watch', name => 'Watch Server',
-				workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 2 : 1));
+				&worker_pool_options('watch'));
 		}
 
 		# A handheld is not a Linux deck: a teletype session needs a shell on the
@@ -761,7 +779,7 @@ sub manager_starter() {
 				print "Starting Pro TTY Server on port " . $tty_port . "\n";
 				&server_process('./perl/teletype.pl', [ 'https://*:' . $tty_port . $device_certs ],
 					purpose => 'teletype', name => 'TTY Server',
-					workers => $device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2), keep_alive => 1);
+					&worker_pool_options('teletype'), keep_alive => 1);
 			}
 			# The deck's control channel carries keystrokes, pointer movement and
 			# button presses, so it is TLS like every other listener. This is the
@@ -774,7 +792,8 @@ sub manager_starter() {
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
 				&server_process('./perl/teletype.pl', [ 'https://*:' . $ws_tty_port . $device_certs ],
-					purpose => 'teletype', name => 'TTY WS Server', workers => 1, keep_alive => 1);
+					purpose => 'teletype', name => 'TTY WS Server',
+					&worker_pool_options('teletype_ws'), keep_alive => 1);
 			}
 		}
 	}
