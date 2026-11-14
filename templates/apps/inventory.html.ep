@@ -48,7 +48,7 @@
 		</span>
 	<% } %>
 </div>
-<% my @cols = @{$time_lengths}; #qw/minute hour day week month year/; %>
+<% my @cols = @{$time_lengths}; %>
 <% my @rows = @{$time_scopes}; %>
 <% my $s_display = $settings->{'s_display'}; %>
 <% my $s_calc = $settings->{'s_calc'}; %>
