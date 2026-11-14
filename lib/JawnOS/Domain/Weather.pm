@@ -989,6 +989,8 @@ sub weather_pws_merge($base, $pick) {
 			[ 'wind_direction', 'wind_direction' ],
 			[ 'dew_point', 'dew_point' ],
 			[ 'uv', 'uv' ],
+			[ 'precip_rate', 'precip_rate' ],
+			[ 'precip_total', 'precip_total' ],
 		) {
 			$current->{ $pair->[1] } = $other->{ $pair->[0] }
 				if defined $other->{ $pair->[0] };

@@ -646,12 +646,31 @@ is(subs::weather_place_display_name('loc:warwick', undef, 'Lambton Shores'), 'La
 my $measured = subs::weather_measure_values({ current => {
 	temperature => 5, condition => 'Light Rain', wind_gust => 25,
 	wind_direction => 'NNE', pressure => 1012, pressure_unit => 'hPa',
+	precip_rate => 0.25, precip_total => 21.84,
 } });
 is($measured->{'temperature'}, 5, 'the observer reads the temperature');
 is($measured->{'wind_gust'}, 25, 'the observer reads the gust');
 is($measured->{'wind_direction'}, 'nne', 'the observer reads the direction as the stored key');
 is($measured->{'pressure'}, 101.2, 'the observer reads pressure in kPa');
 is($measured->{'condition'}, 'light_rain', 'the observer reads the condition as the stored key');
+is($measured->{'precip_rate'}, 0.25, 'the observer reads the precipitation rate');
+is($measured->{'precip_total'}, 21.84, 'and the accumulated precipitation');
+
+my $measure_defs = subs::weather_measure_definitions();
+is($measure_defs->{'precip_rate'}{'unit'}, 'mm/h', 'the rate is a measure in mm/h');
+is($measure_defs->{'precip_total'}{'unit'}, 'mm', 'the total is a measure in mm');
+my %measure_catalog = map { $_->{'key'} => $_ } @{ subs::weather_measure_catalog() };
+ok($measure_catalog{'precip_rate'}, 'the rule picker offers the precipitation rate');
+ok($measure_catalog{'precip_total'}, 'and the accumulated precipitation');
+my $rain_rule = subs::weather_measure_rule_normalize({
+	uuid => 'rain-rate-rule', name => 'Rain rate',
+	when => [{ measure => 'precip_rate', op => '>', value => 0 }],
+	for_ms => 20 * 60000, action => 'start', app => 'raining',
+});
+is($rain_rule->{'when'}[0]{'measure'}, 'precip_rate', 'a rule can name the precipitation rate');
+is($rain_rule->{'when'}[0]{'value'}, 0, 'and keeps a zero threshold');
+my $wa_source = read_file("$root/lib/JawnOS/Domain/WeatherAutomation.pm");
+like($wa_source, qr/\@order = qw\([^)]*precip_rate precip_total\)/, 'the observer writes the precipitation measures');
 
 my $gust_rule = subs::weather_measure_rule_normalize({
 	uuid => 'gust-rule', name => 'Gusty north wind',
@@ -2035,7 +2054,7 @@ like($loader, qr/weather_observe_leader/, 'and the household leader');
 		other => {
 			id => 'IWARWI84', name => 'Warwick', distance_km => 1.9,
 			temperature => 3.6, humidity => 82, wind_speed => 10, wind_gust => 13,
-			wind_direction => 'NE', dew_point => 0.8, precip_rate => 0,
+			wind_direction => 'NE', dew_point => 0.8, precip_rate => 0, precip_total => 9.5,
 			observed_at => $now - 60000, observed_text => '2026-11-13T15:24:08Z',
 		},
 	};
@@ -2051,6 +2070,8 @@ like($loader, qr/weather_observe_leader/, 'and the household leader');
 	is($merged->{'current'}{'pressure'}, 1003.05, 'the barometer overrides the city pressure');
 	is($merged->{'current'}{'temperature'}, 3.6, 'the other station overrides the city temperature');
 	is($merged->{'current'}{'humidity'}, 82, 'and the humidity');
+	is($merged->{'current'}{'precip_rate'}, 0, 'the station rain rate rides into the reading');
+	is($merged->{'current'}{'precip_total'}, 9.5, 'and the accumulated total');
 	is($merged->{'current'}{'condition'}, 'Cloudy', 'a dry local gauge clears the city rain');
 	is($merged->{'current'}{'glyph'}, '☁️', 'and changes the glyph');
 	is(scalar @{ $merged->{'hourly'} }, 1, 'the forecast rides along unchanged');
@@ -2069,6 +2090,7 @@ like($loader, qr/weather_observe_leader/, 'and the household leader');
 	$merged = subs::weather_pws_merge({ provider => 'ec', current => { condition => 'Cloudy' } }, $pick);
 	is($merged->{'current'}{'condition'}, 'Rain', 'precipitation above freezing reads as rain');
 	is($merged->{'current'}{'glyph'}, '🌧️', 'with the rain glyph');
+	is($merged->{'current'}{'precip_rate'}, 2, 'the wet rate is kept for the measurement rules');
 }
 
 {

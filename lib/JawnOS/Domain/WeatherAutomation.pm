@@ -126,6 +126,8 @@ sub weather_measure_definitions() {
 		wind_gust      => { type => 'number', unit => 'km/h' },
 		wind_direction => { type => 'text' },
 		pressure       => { type => 'number', unit => 'kPa' },
+		precip_rate    => { type => 'number', unit => 'mm/h' },
+		precip_total   => { type => 'number', unit => 'mm' },
 		visibility     => { type => 'number', unit => 'km' },
 		dew_point      => { type => 'number', unit => 'C' },
 		uv             => { type => 'number' },
@@ -139,6 +141,8 @@ sub weather_measure_catalog() {
 		{ key => 'wind', label => 'Wind speed', unit => 'km/h', type => 'number', ops => [qw(> >= < <= == !=)] },
 		{ key => 'wind_direction', label => 'Wind direction', unit => '', type => 'direction', ops => ['from'], points => \@points },
 		{ key => 'pressure', label => 'Pressure', unit => 'kPa', type => 'number', ops => [qw(> >= < <= == !=)] },
+		{ key => 'precip_rate', label => 'Precipitation rate', unit => 'mm/h', type => 'number', ops => [qw(> >= < <= == !=)] },
+		{ key => 'precip_total', label => 'Precipitation total', unit => 'mm', type => 'number', ops => [qw(> >= < <= == !=)] },
 		{ key => 'temperature', label => 'Temperature', unit => '°C', type => 'number', ops => [qw(> >= < <= == !=)] },
 		{ key => 'feels_like', label => 'Feels like', unit => '°C', type => 'number', ops => [qw(> >= < <= == !=)] },
 		{ key => 'humidity', label => 'Humidity', unit => '%', type => 'number', ops => [qw(> >= < <= == !=)] },
@@ -159,6 +163,7 @@ sub weather_measure_values($weather) {
 		['humidity', 'humidity'], ['wind', 'wind_speed'],
 		['wind_gust', 'wind_gust'], ['visibility', 'visibility'],
 		['dew_point', 'dew_point'], ['uv', 'uv'],
+		['precip_rate', 'precip_rate'], ['precip_total', 'precip_total'],
 	) {
 		my $n = &subs::weather_number($cur->{ $pair->[1] });
 		$v{ $pair->[0] } = $n if defined $n;
@@ -1497,7 +1502,7 @@ sub weather_observe_record($weather, $opts) {
 	# is the one that acts, and the other machines still keep the reading they saw.
 	my $leader = &weather_observe_leader() ? 1 : 0;
 	my $uuid;
-	my @order = qw(condition temperature feels_like humidity wind wind_gust wind_direction pressure visibility dew_point uv);
+	my @order = qw(condition temperature feels_like humidity wind wind_gust wind_direction pressure visibility dew_point uv precip_rate precip_total);
 	foreach my $measure (@order) {
 		next unless exists $values->{$measure};
 		my $written = eval {
