@@ -1,8 +1,8 @@
 # Concurrent agents
 
-More than one agent works this tree at a time. The map cannot hold this protocol — it is already at
-its size budget — so it lives here: the why, and the edges the short pointer in `AGENTS.md` cannot
-carry.
+More than one agent works this tree at a time. The map holds the pointer and the on-ramp, not the
+why — its budget is spent on what an agent needs on the way to an edit — so the protocol lives here:
+the edges the short pointer in `AGENTS.md` cannot carry.
 
 ## The three things that are global
 

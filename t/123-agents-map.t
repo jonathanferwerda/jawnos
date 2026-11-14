@@ -20,7 +20,10 @@ my $map  = "$root/AGENTS.md";
 ok(-f $map, 'AGENTS.md exists');
 
 my $size = -s $map;
-cmp_ok($size, '<=', 17_000,
+# 20,000, deliberately loose. The map is read whole on every task, so it stays a map - but the
+# rules an agent meets before its first edit earn space that rationale does not. Anything not
+# read on the way to an edit belongs in docs/AGENTS-*.md.
+cmp_ok($size, '<=', 20_000,
 	"the map stays within its budget ($size bytes; move rationale to docs/AGENTS-*.md)");
 
 open my $fh, '<', $map or die "AGENTS.md: $!";
