@@ -8,6 +8,12 @@ A low-token index of where things live. Read this before searching, then search 
 
 ---
 
+## Worktree per task
+
+Every source write — edit, new file, delete — happens in a worktree; the primary checkout is
+read-only for agents, even a lone one. Make one before the first edit —
+`git -C ~/jawnos worktree add .worktrees/<task> -b agent/<task> origin/working` — then work in it.
+
 ## Look it up — do not grep for it
 
 Two commands read the tree's test-checked indexes. **Reach for them before `grep`** — a grep answers
@@ -81,11 +87,10 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Many agents at once
 
-The primary checkout is read-only for agents: a dirty one blocks landings. Branch from
-`origin/working` and queue it with `scripts/land_enqueue.pl --trunk working --wait`; it lands and
-returns the verdict. Sole agent? Land with `perl ~/jawnos/scripts/agent_land.pl`;
-the lock guards both. The primary-checkout recipe is the human owner's. Never push or restart by
-hand. Doc: `docs/AGENTS-concurrency.md`.
+Branch from `origin/working` and queue it with `scripts/land_enqueue.pl --trunk working --wait`.
+Sole agent? The worktree rule still holds — only the landing method
+changes: `perl ~/jawnos/scripts/agent_land.pl`, whose lock guards both. The primary-checkout recipe is
+the human owner's. Never push or restart by hand. Doc: `docs/AGENTS-concurrency.md`.
 
 ## Crash-resilient agent work
 
@@ -154,9 +159,7 @@ translatable in the same change:
 
 ## Rules
 
-- **Worktree per task: every source write — edit, new file, delete — happens in a worktree.** Read
-  in the primary; host config and out-of-repo writes are not source writes. Create one before the
-  first edit if none exists (`docs/AGENTS-concurrency.md`).
+
 - **Maintain the locator from its ledger.** Before changing `scripts/where.pl` or its maps, run
   `perl scripts/where_audit.pl --prompt` and fix what it names: misses, wrong reports, map drift.
   Confirm each case in the source, add a test for each new shape, and report a hit you acted on.
