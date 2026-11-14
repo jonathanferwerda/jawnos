@@ -411,6 +411,7 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 	local *Manager::appt_measure_writer = sub {
 		my ($c, $data) = @_;
 		$store{'measure'} = $data;
+		$store{ 'measure_' . ($data->{'measure'} // '') } = $data;
 		return 'measure-uuid';
 	};
 	local $gb::known_appts = { raining => {}, snowing => {} };
@@ -433,7 +434,7 @@ is(scalar @{ subs::weather_automation_matches($rules, 'Partly Cloudy') }, 0, 'a 
 
 	my $first = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
 	is($first->{'ok'}, 1, 'a condition is recorded');
-	is($store{'measure'}{'value'}, 'light_rain', 'the condition is handed to the measure writer in its stored key');
+	is($store{'measure_condition'}{'value'}, 'light_rain', 'the condition is handed to the measure writer in its stored key');
 	is($first->{'matched'}[0]{'app'}, 'raining', 'the matching rule is reported');
 
 	my $again = subs::weather_observe_record({ current => { condition => 'Light Rain' } }, {});
@@ -655,13 +656,27 @@ is($measured->{'pressure'}, 101.2, 'the observer reads pressure in kPa');
 is($measured->{'condition'}, 'light_rain', 'the observer reads the condition as the stored key');
 is($measured->{'precip_rate'}, 0.25, 'the observer reads the precipitation rate');
 is($measured->{'precip_total'}, 21.84, 'and the accumulated precipitation');
+is($measured->{'precipitation'}, 'rain', 'the gauge decides the precipitation state');
+my $no_gauge = subs::weather_measure_values({ current => { condition => 'Light Rain', temperature => 2 } });
+is($no_gauge->{'precipitation'}, 'rain', 'without a gauge the condition word says rain');
+ok(!defined $no_gauge->{'precip_rate'}, 'and no rate is invented');
+my $dry_gauge = subs::weather_measure_values({ current => { condition => 'Light Rain', precip_rate => 0, temperature => 2 } });
+is($dry_gauge->{'precipitation'}, 'none', 'a zero gauge rate is authoritative over the condition word');
+my $snow_fallback = subs::weather_measure_values({ current => { condition => 'Snow', temperature => -1 } });
+is($snow_fallback->{'precipitation'}, 'snow', 'without a gauge the condition word says snow');
+my $freezing = subs::weather_measure_values({ current => { condition => 'Freezing Rain', temperature => -1 } });
+is($freezing->{'precipitation'}, 'snow', 'freezing rain below zero reads as snow');
+my $cloudy_fallback = subs::weather_measure_values({ current => { condition => 'Cloudy', temperature => 2 } });
+is($cloudy_fallback->{'precipitation'}, 'none', 'a cloudy condition is not precipitation');
 
 my $measure_defs = subs::weather_measure_definitions();
 is($measure_defs->{'precip_rate'}{'unit'}, 'mm/h', 'the rate is a measure in mm/h');
 is($measure_defs->{'precip_total'}{'unit'}, 'mm', 'the total is a measure in mm');
+is($measure_defs->{'precipitation'}{'type'}, 'text', 'the derived state is a text measure');
 my %measure_catalog = map { $_->{'key'} => $_ } @{ subs::weather_measure_catalog() };
 ok($measure_catalog{'precip_rate'}, 'the rule picker offers the precipitation rate');
 ok($measure_catalog{'precip_total'}, 'and the accumulated precipitation');
+ok($measure_catalog{'precipitation'}, 'and the derived precipitation state');
 my $rain_rule = subs::weather_measure_rule_normalize({
 	uuid => 'rain-rate-rule', name => 'Rain rate',
 	when => [{ measure => 'precip_rate', op => '>', value => 0 }],
@@ -670,7 +685,7 @@ my $rain_rule = subs::weather_measure_rule_normalize({
 is($rain_rule->{'when'}[0]{'measure'}, 'precip_rate', 'a rule can name the precipitation rate');
 is($rain_rule->{'when'}[0]{'value'}, 0, 'and keeps a zero threshold');
 my $wa_source = read_file("$root/lib/JawnOS/Domain/WeatherAutomation.pm");
-like($wa_source, qr/\@order = qw\([^)]*precip_rate precip_total\)/, 'the observer writes the precipitation measures');
+like($wa_source, qr/\@order = qw\([^)]*precip_rate precip_total precipitation\)/, 'the observer writes the precipitation measures');
 
 my $gust_rule = subs::weather_measure_rule_normalize({
 	uuid => 'gust-rule', name => 'Gusty north wind',
@@ -938,16 +953,49 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is(scalar @{$rules}, 2, 'two precipitation rules are added');
 	my ($rain) = grep { $_->{'app'} eq 'raining' } @{$rules};
 	my ($snow) = grep { $_->{'app'} eq 'snowing' } @{$rules};
-	is($rain->{'when'}[0]{'measure'}, 'precip_rate', 'rain reads the precipitation rate');
-	is($rain->{'when'}[1]{'measure'}, 'temperature', 'and the temperature');
-	is($rain->{'when'}[1]{'op'}, '>', 'rain starts above freezing');
-	is($snow->{'when'}[1]{'op'}, '<=', 'snow starts at or below freezing');
+	is($rain->{'when'}[0]{'measure'}, 'precipitation', 'rain reads the derived precipitation state');
+	is($rain->{'when'}[0]{'op'}, 'is', 'with an is comparison');
+	is($rain->{'when'}[0]{'value'}, 'rain', 'for rain');
+	is($snow->{'when'}[0]{'value'}, 'snow', 'and snow for the snow rule');
 	is($rain->{'hold_check'}, 1, 'the rain rule holds its stop');
 	is($rain->{'location'}, 'loc:home1', 'at the place the old rule named');
 	my $raining = Mojo::JSON::decode_json($store{'setting|raining|app_measures'});
 	is($raining->{'precip_rate'}{'unit'}, 'mm/h', 'the raining app knows the precipitation measure');
-	is($store{'setting|weather_station|precip_rules'}, 'v1', 'the migration is marked done');
+	is($store{'setting|weather_station|precip_rules'}, 'v2', 'the migration is marked done');
 	is(subs::weather_automation_precip_rules(), 0, 'and it does not run again');
+}
+
+# --- a v1 precip_rate rule is upgraded to the derived state ------------------
+{
+	my %store;
+	my $n = 0;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::weather_home_place = sub { return { uuid => 'home1' } };
+	local *subs::random_string_creator = sub { 'rule-' . (++$n) };
+	$store{'setting|weather_station|precip_rules'} = 'v1';
+	$store{'setting|weather_station|weather_rules'} = Mojo::JSON::encode_json([
+		{ uuid => 'v1-rain', name => 'Rain', when => [
+			{ measure => 'precip_rate', op => '>', value => 0 },
+			{ measure => 'temperature', op => '>', value => 0 },
+		], for_ms => 0, hold_check => 1, action => 'start', app => 'raining', location => 'loc:home1' },
+		{ uuid => 'other', when => [{ measure => 'wind_gust', op => '>', value => 20 }], action => 'start', app => 'gusty', location => 'loc:home1' },
+	]);
+	is(subs::weather_automation_precip_rules(), 1, 'a v1 rule is upgraded');
+	my $rules = Mojo::JSON::decode_json($store{'setting|weather_station|weather_rules'});
+	my ($rain) = grep { $_->{'app'} eq 'raining' } @{$rules};
+	is($rain->{'when'}[0]{'measure'}, 'precipitation', 'the precip_rate rule becomes the derived state');
+	ok(!(grep { $_->{'uuid'} eq 'v1-rain' } @{$rules}), 'and the v1 rule is gone');
+	ok((grep { $_->{'uuid'} eq 'other' } @{$rules}), 'the other measurement rule stays');
+	is($store{'setting|weather_station|precip_rules'}, 'v2', 'the marker moves to v2');
 }
 
 # --- a rule names its own place ----------------------------------------------

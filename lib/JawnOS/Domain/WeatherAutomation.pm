@@ -128,6 +128,7 @@ sub weather_measure_definitions() {
 		pressure       => { type => 'number', unit => 'kPa' },
 		precip_rate    => { type => 'number', unit => 'mm/h' },
 		precip_total   => { type => 'number', unit => 'mm' },
+		precipitation  => { type => 'text' },
 		visibility     => { type => 'number', unit => 'km' },
 		dew_point      => { type => 'number', unit => 'C' },
 		uv             => { type => 'number' },
@@ -143,6 +144,7 @@ sub weather_measure_catalog() {
 		{ key => 'pressure', label => 'Pressure', unit => 'kPa', type => 'number', ops => [qw(> >= < <= == !=)] },
 		{ key => 'precip_rate', label => 'Precipitation rate', unit => 'mm/h', type => 'number', ops => [qw(> >= < <= == !=)] },
 		{ key => 'precip_total', label => 'Precipitation total', unit => 'mm', type => 'number', ops => [qw(> >= < <= == !=)] },
+		{ key => 'precipitation', label => 'Precipitation', unit => '', type => 'text', ops => ['is'] },
 		{ key => 'temperature', label => 'Temperature', unit => '°C', type => 'number', ops => [qw(> >= < <= == !=)] },
 		{ key => 'feels_like', label => 'Feels like', unit => '°C', type => 'number', ops => [qw(> >= < <= == !=)] },
 		{ key => 'humidity', label => 'Humidity', unit => '%', type => 'number', ops => [qw(> >= < <= == !=)] },
@@ -172,6 +174,25 @@ sub weather_measure_values($weather) {
 	$v{'wind_direction'} = &subs::unformat_name($direction) if defined $direction && length $direction;
 	my $pressure = &subs::weather_pressure_kpa($cur->{'pressure'}, $cur->{'pressure_unit'});
 	$v{'pressure'} = $pressure if defined $pressure;
+	my $rate = $v{'precip_rate'};
+	if (defined $rate) {
+		# The local gauge is authoritative when it reports a rate.
+		$v{'precipitation'} = $rate > 0
+			? ((defined $v{'temperature'} && $v{'temperature'} <= 0) ? 'snow' : 'rain')
+			: 'none';
+	}
+	elsif (defined $v{'condition'} && length $v{'condition'}) {
+		# No rain gauge: fall back to the condition word the provider gave us.
+		if ($v{'condition'} =~ /snow|flurr|sleet|ice/) {
+			$v{'precipitation'} = 'snow';
+		}
+		elsif ($v{'condition'} =~ /rain|shower|drizzle|precip/) {
+			$v{'precipitation'} = (defined $v{'temperature'} && $v{'temperature'} <= 0) ? 'snow' : 'rain';
+		}
+		else {
+			$v{'precipitation'} = 'none';
+		}
+	}
 	return \%v;
 }
 
@@ -586,24 +607,42 @@ sub weather_observe_prepare() {
 
 # The rain and snow condition rules keyed on a word that the station merge
 # rewrites whenever the gauge reads zero between tips, so the apps flapped.
-# Move them to the precipitation measures once, at each place they named, and
-# hold the stop until the next check so one dry reading does not stop the app.
-# A manual check (the person is looking) still stops it at once.
+# Move them to the derived precipitation state once, at each place they named:
+# the gauge when a local station reports a rate, and the condition word when no
+# gauge is available. The stop is held until the next check so one dry reading
+# does not stop the app; a manual check still stops it at once.
 sub weather_automation_precip_rules($own = undef) {
 	my $app = &weather_automation_app();
-	return 0 if &subs::setting_grabber({ app => $app, setting => 'precip_rules' });
+	my $version = &subs::setting_grabber({ app => $app, setting => 'precip_rules' }) // '';
+	return 0 if $version eq 'v2';
 	my $am = ref $own eq 'HASH'
 		? $own
 		: (eval { decode_json(&subs::setting_grabber({ app => $app, setting => 'app_measures' }) // '') } || {});
 	my $condition = ref $am->{'condition'} eq 'HASH' ? $am->{'condition'} : {};
 	my $cms = ref $condition->{'cm'} eq 'ARRAY' ? $condition->{'cm'} : [];
-	my $rules = &weather_measure_rules();
-	my %have = map {
-		(($_->{'app'} // '') . '|' . &weather_rule_location_normalize($_->{'location'})) => 1
-	} grep { ref $_ eq 'HASH' } @{$rules};
-	my @keep;
+	my @rules = grep { ref $_ eq 'HASH' } @{ &weather_measure_rules() || [] };
 	my %places;
 	my $changed = 0;
+	# A v1 rule is the precip_rate rule this migration used to write; replace it
+	# with the derived state so a gauge-less place can still start the app.
+	my @kept;
+	foreach my $rule (@rules) {
+		my $target = $rule->{'app'} // '';
+		my $v1 = 0;
+		if ($target eq 'raining' || $target eq 'snowing') {
+			foreach my $candidate (@{ $rule->{'when'} || [] }) {
+				$v1 = 1 if ref $candidate eq 'HASH' && ($candidate->{'measure'} // '') eq 'precip_rate';
+			}
+			if ($v1) {
+				$places{$target}{ &weather_rule_location_normalize($rule->{'location'}) } = 1;
+				$changed = 1;
+				next;
+			}
+		}
+		push @kept, $rule;
+	}
+	# The old condition rules are removed; their places seed the new rules.
+	my @keep;
 	foreach my $rule (@{$cms}) {
 		next unless ref $rule eq 'HASH';
 		my $target = $rule->{'app'} // '';
@@ -621,15 +660,16 @@ sub weather_automation_precip_rules($own = undef) {
 		next if keys %{ $places{$target} || {} };
 		$places{$target}{ $home_key } = 1 if length $home_key;
 	}
+	my %have = map {
+		(($_->{'app'} // '') . '|' . &weather_rule_location_normalize($_->{'location'})) => 1
+	} @kept;
 	my @added;
 	foreach my $target (qw(raining snowing)) {
 		foreach my $loc (sort keys %{ $places{$target} || {} }) {
 			next if $have{ $target . '|' . $loc };
-			my @when = ({ measure => 'precip_rate', op => '>', value => 0 });
-			push @when, { measure => 'temperature', op => ($target eq 'snowing' ? '<=' : '>'), value => 0 };
 			my $clean = &weather_measure_rule_normalize({
 				name => ($target eq 'snowing' ? 'Snow' : 'Rain'),
-				when => \@when,
+				when => [ { measure => 'precipitation', op => 'is', value => ($target eq 'snowing' ? 'snow' : 'rain') } ],
 				for_ms => 0,
 				hold_check => 1,
 				action => 'start',
@@ -640,18 +680,18 @@ sub weather_automation_precip_rules($own = undef) {
 		}
 	}
 	if (!$changed && !@added) {
-		&subs::setting_setter({ app => $app, setting => 'precip_rules', value => 'v1' }) if length $home_key;
+		&subs::setting_setter({ app => $app, setting => 'precip_rules', value => 'v2' }) if length $home_key;
 		return 0;
 	}
 	$condition->{'cm'} = \@keep;
 	$am->{'condition'} = $condition;
 	&subs::setting_setter({ app => $app, setting => 'app_measures', value => encode_json $am });
-	&subs::setting_setter({ app => $app, setting => 'weather_rules', value => encode_json [ @{$rules}, @added ] }) if @added;
+	&subs::setting_setter({ app => $app, setting => 'weather_rules', value => encode_json [ @kept, @added ] }) if @added || $changed;
 	my $definitions = &weather_measure_definitions();
 	foreach my $target (qw(raining snowing)) {
 		my $own_app = eval { decode_json(&subs::setting_grabber({ app => $target, setting => 'app_measures' }) // '') } || {};
 		my $app_changed = 0;
-		my @keys = qw(precip_rate precip_total);
+		my @keys = qw(precipitation precip_rate precip_total);
 		push @keys, 'temperature' if $target eq 'snowing';
 		foreach my $key (@keys) {
 			next if ref $own_app->{$key} eq 'HASH';
@@ -660,7 +700,7 @@ sub weather_automation_precip_rules($own = undef) {
 		}
 		&subs::setting_setter({ app => $target, setting => 'app_measures', value => encode_json $own_app }) if $app_changed;
 	}
-	&subs::setting_setter({ app => $app, setting => 'precip_rules', value => 'v1' });
+	&subs::setting_setter({ app => $app, setting => 'precip_rules', value => 'v2' });
 	return 1;
 }
 
@@ -762,9 +802,10 @@ sub weather_automation_state($opts = {}) {
 	my $rules = &weather_automation_rules($am);
 	my $measure_rules = &weather_measure_rules();
 	my $seen = eval { decode_json(&subs::setting_grabber({ app => $app, setting => 'seen_measures' }) // '') } || [];
-	# The station also stores compass points (wind direction is a text measure);
-	# they are not conditions and would clutter the condition picker.
-	my %compass = map { $_ => 1 } qw(n nne ne ene e ese se sse s ssw sw wsw w wnw nw nnw);
+	# The station also stores compass points (wind direction is a text measure)
+	# and the derived precipitation state; they are not conditions and would
+	# clutter the condition picker.
+	my %compass = map { $_ => 1 } qw(n nne ne ene e ese se sse s ssw sw wsw w wnw nw nnw none);
 	my @conditions = grep { !$compass{$_} } @{ ref $seen eq 'ARRAY' ? $seen : [] };
 	my $last = eval { &cache_get({ app => 'weather', context => 'observe', subcontext => 'last' }) } || {};
 	my $locations = &weather_location_options();
@@ -1646,7 +1687,7 @@ sub weather_observe_record($weather, $opts) {
 	# is the one that acts, and the other machines still keep the reading they saw.
 	my $leader = &weather_observe_leader() ? 1 : 0;
 	my $uuid;
-	my @order = qw(condition temperature feels_like humidity wind wind_gust wind_direction pressure visibility dew_point uv precip_rate precip_total);
+	my @order = qw(condition temperature feels_like humidity wind wind_gust wind_direction pressure visibility dew_point uv precip_rate precip_total precipitation);
 	foreach my $measure (@order) {
 		next unless exists $values->{$measure};
 		my $written = eval {
