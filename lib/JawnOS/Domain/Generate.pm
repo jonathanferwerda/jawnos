@@ -366,9 +366,14 @@ sub source_appt_writer {
 
 	my $quantity = $data->{'quantity'} || $m->{'quantity'};
 
-	my $recursion_check = &subs::db_select('appointments', undef, { app => $m->{'name'}, source_uuid => $uuid })->hashes;
+	# The app key is the unformatted name. appointment_writer unformats it on the
+	# way in anyway; doing it here too makes the recursion check below find the
+	# child it already made (a model named `Solitaire` and the `solitaire` app
+	# are one row), so a resume does not write it a second time.
+	my $child_app = &subs::unformat_name($m->{'name'});
+	my $recursion_check = &subs::db_select('appointments', undef, { app => $child_app, source_uuid => $uuid })->hashes;
 	my $datas = {
-		app => $m->{'name'},
+		app => $child_app,
 		timestamp => $timestamp,
 		type => $type,
 		duration => $duration || 1000,

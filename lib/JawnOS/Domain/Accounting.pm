@@ -813,6 +813,57 @@ sub guide_message_warranty {
 			&subs::say_it("backfill games_options_v1: removed $removed duplicate game option(s)");
 			return 1;
 		},
+		'games_options_v2' => sub {
+			# The game is its own app as well as an option of Games. The first pass
+			# cleared save_app when it collapsed the hand-made option; restore it so
+			# selecting the option (or the browser's own attach) writes the child
+			# record. The child's key is unformat_name('Solitaire') = `solitaire`, the
+			# app that already holds the earlier recordings, not a second
+			# `Solitaire` app.
+			my $now = &subs::rightNow();
+			my $cat_uuid = 'games_option_category_v1';
+			my $cat = &subs::db_select('option_category', undef, { app => 'games', uuid => $cat_uuid })->hashes->[0];
+			unless ($cat && ($cat->{'uuid'} // '') ne '') {
+				&subs::db_insert('option_category', {
+					app => 'games',
+					name => 'Games',
+					uuid => $cat_uuid,
+					timestamp => $now,
+					server_time => $now,
+				});
+			}
+			my %canon = (solitaire => 'Solitaire', mahjong => 'Mahjong', blackjack => 'Blackjack', twirl => 'Twirl');
+			my $rows = &subs::db_query("select * from option where app = 'games'")->hashes || [];
+			my $n = 0;
+			foreach my $row ( @{$rows} ) {
+				my $key = lc($row->{'name'} // '');
+				$key =~ s/^\s+|\s+$//g;
+				next unless $canon{$key};
+				my %up;
+				$up{'save_app'} = 'on' if (($row->{'save_app'} // '') ne 'on');
+				$up{'name'} = $canon{$key} if ($row->{'name'} // '') ne $canon{$key};
+				my $chars = eval { decode_json($row->{'characteristics'} // '') };
+				$chars = [] unless ref $chars eq 'ARRAY';
+				my ($prior) = grep { ref $_ eq 'HASH' && ($_->{'name'} // '') eq 'option_category' } @{$chars};
+				unless ($prior && ($prior->{'value'} // '') eq $cat_uuid) {
+					my @others = grep { ref $_ eq 'HASH' && ($_->{'name'} // '') ne 'option_category' } @{$chars};
+					my $stamp = (ref $prior eq 'HASH' && defined $prior->{'timestamp'}) ? $prior->{'timestamp'} : $now;
+					$up{'characteristics'} = encode_json([ {
+						name => 'option_category',
+						value => $cat_uuid,
+						timestamp => $stamp,
+						uuid => 'games_option_category_' . $row->{'uuid'},
+					}, @others ]);
+				}
+				if (scalar keys %up) {
+					$up{'server_time'} = $now;
+					&subs::db_update('option', \%up, { uuid => $row->{'uuid'} });
+					$n++;
+				}
+			}
+			&subs::say_it("backfill games_options_v2: marked $n game option(s) as their own app");
+			return 1;
+		},
 		'remote_machine_payload_prune_v1' => sub {
 			# Rows written before the mirror/data views still carry the whole
 			# login body and each peer's full row. Rewrite them once; the live

@@ -483,6 +483,51 @@ sub game_activity_ms {
 	return $raw =~ /^\d+$/ ? int($raw) : 0;
 }
 
+# A model or option session is a child linked by source_uuid. A game session
+# written from the browser carries the game's own app too - the `solitaire`
+# option writes a `solitaire` row - so that app's history follows the play.
+# The child takes the parent's span and its duration: the pause the parent
+# leaves out of its play time is left out of the child's too.
+sub game_session_child_close {
+	my ($uuid, $stop_at, $duration, $now) = @_;
+	return 0 unless ($uuid // '') ne '';
+	my $children = &db_select('appointments', undef, { source_uuid => $uuid })->hashes || [];
+	my $closed = 0;
+	foreach my $child ( @{$children} ) {
+		next unless ($child->{'type'} // '') =~ /^(?:start|record)$/;
+		&db_update('appointments', {
+			type => 'stop',
+			stop_timestamp => $stop_at,
+			stop_seen => 'yes',
+			duration => $duration,
+			server_time => $now,
+		}, { uuid => $child->{'uuid'}, app => $child->{'app'} });
+		$closed++;
+	}
+	return $closed;
+}
+
+# A touch that resumes the Games row reopens the children it closed, so a game
+# paused for half a minute comes back on the same session rather than a second
+# row in its own app.
+sub game_session_child_reopen {
+	my ($uuid, $now) = @_;
+	return 0 unless ($uuid // '') ne '';
+	my $children = &db_select('appointments', undef, { source_uuid => $uuid })->hashes || [];
+	my $reopened = 0;
+	foreach my $child ( @{$children} ) {
+		next unless ($child->{'type'} // '') =~ /^(?:stop|cancel|pause)$/;
+		&db_update('appointments', {
+			type => 'start',
+			stop_seen => undef,
+			stop_timestamp => undef,
+			server_time => $now,
+		}, { uuid => $child->{'uuid'}, app => $child->{'app'} });
+		$reopened++;
+	}
+	return $reopened;
+}
+
 sub game_session_close {
 	my ($open, $stop_at, $now, $mode) = @_;
 	my $uuid = $open->{'uuid'} || return 0;
@@ -500,6 +545,7 @@ sub game_session_close {
 		duration => $duration,
 		server_time => $now,
 	}, { uuid => $uuid, app => $app });
+	&game_session_child_close($uuid, $stop_at, $duration, $now);
 	&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_at });
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	return 1;
@@ -569,6 +615,7 @@ sub game_play_appointment_tick {
 					my $gap = $activity - $marker_at;
 					&session_pause_add($row->{'uuid'}, $app, $gap) if $gap > 0;
 					&db_update('appointments', { type => 'start', stop_seen => undef, stop_timestamp => undef, server_time => $now }, { uuid => $row->{'uuid'}, app => $app });
+					&game_session_child_reopen($row->{'uuid'}, $now);
 					&subs::cache_delete($marker_key);
 					&intelligent_automation_toggle({ appt_uuid => $row->{'uuid'}, app => $app, 'state' => 'on', timestamp => $now });
 					&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $row->{'uuid'})});
@@ -606,10 +653,12 @@ sub game_play_appointment_tick {
 # session is the Gou's shape: one Games row on this device, named by its game;
 # quiet for half a minute closes it at the last touch, a touch within five
 # minutes reopens the same row, and a longer gap starts a new one.
-# The game is an option of the Games appointment, not a second session: the
-# catalog row is what the details view lists, and the parent's options JSON is
-# what marks it selected. The row is made on first play and is never a default,
-# so a new Games appointment does not collect every game it could have been.
+# The game is an option of the Games appointment and is also its own app: the
+# catalog row is what the details view lists, the parent's options JSON marks it
+# selected, and save_app on makes the game's own app (the `solitaire` the person
+# already has) a child row over the same span. The row is made on first play and
+# is never a default, so a new Games appointment does not collect every game it
+# could have been.
 # A game option is filed under one option category named Games: the details
 # view groups its rows by category, and an option with none draws no heading,
 # so the played game would not show under the appointment it belongs to. The
@@ -681,23 +730,23 @@ sub browser_game_option {
 			def => 'off',
 			quantity => 1,
 			unit => 'games',
-			save_app => '',
+			save_app => 'on',
 			description => $game,
 			characteristics => &browser_game_option_characteristics($uuid, '', $now),
 		};
 		&db_insert('option', $row);
 		return $row;
 	}
-	# A game option names the game and nothing else: it starts no child app (the
-	# play session is the Games row itself), it is never a default, and it sits
-	# under Games. Normalize a row an older build or a hand edit left different.
+	# Save app on: the game also records its own app, whose key is
+	# unformat_name(name), so `Solitaire` lands on the existing `solitaire` app
+	# with its earlier recordings and not on a second `Solitaire` app.
 	my $want = &browser_game_option_characteristics($row->{'uuid'}, $row->{'characteristics'}, $now);
 	my %up;
 	$up{'name'} = $game if ($row->{'name'} // '') ne $game;
 	$up{'description'} = $game if ($row->{'description'} // '') ne $game;
 	$up{'unit'} = 'games' if ($row->{'unit'} // '') ne 'games';
 	$up{'def'} = 'off' if ($row->{'def'} // '') ne 'off';
-	$up{'save_app'} = '' if ($row->{'save_app'} // '') ne '';
+	$up{'save_app'} = 'on' if ($row->{'save_app'} // '') ne 'on';
 	$up{'characteristics'} = $want if ($row->{'characteristics'} // '') ne $want;
 	if (scalar keys %up) {
 		$up{'server_time'} = $now;
@@ -721,6 +770,25 @@ sub browser_game_option_attach {
 		delay_start => $option->{'delay_start'},
 		delay_stop => $option->{'delay_stop'},
 	});
+	# The game is also its own app. source_appt_writer writes the child once,
+	# linked by source_uuid, and unformats the option name so `Solitaire`'s
+	# child is the existing `solitaire` app; the session's pause, resume and stop
+	# then carry it along (game_session_child_close/reopen).
+	if (($option->{'save_app'} // '') eq 'on') {
+		my $parent = &db_select('appointments', undef, { uuid => $uuid })->hashes->[0];
+		if ($parent && ($parent->{'uuid'} // '') ne '') {
+			&source_appt_writer($option, {
+				app => $parent->{'app'},
+				uuid => $parent->{'uuid'},
+				type => $parent->{'type'},
+				quantity => 1,
+				unit => 'games',
+				duration => $parent->{'duration'},
+				timestamp => $parent->{'timestamp'},
+				project => $parent->{'project'},
+			}, 'option');
+		}
+	}
 }
 
 sub browser_game_play {
@@ -789,6 +857,7 @@ sub browser_game_play {
 						stop_timestamp => undef,
 						server_time => $now,
 					}, { uuid => $row->{'uuid'}, app => 'games' });
+					&game_session_child_reopen($row->{'uuid'}, $now);
 					&subs::cache_delete($marker_key);
 					&intelligent_automation_toggle({ appt_uuid => $row->{'uuid'}, app => 'games', 'state' => 'on', timestamp => $now });
 					&browser_game_option_attach($row->{'uuid'}, $game, $at, $now);

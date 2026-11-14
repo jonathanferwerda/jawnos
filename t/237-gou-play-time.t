@@ -54,6 +54,18 @@ sub sessions {
 	local *subs::device_setter = sub { return 'computer' };
 	local *subs::intelligent_automation_toggle = sub { return 1 };
 	local *Websocket::send = sub { return 1 };
+	# source_appt_writer builds a controller for the house writer; this test has
+	# no Manager app object, so hand it an empty one and capture the child row.
+	local *subs::controller_builder = sub { return {} };
+	# The browser game's option writes its own app through the house writer; this
+	# test wants the row it writes, not the window and bookkeeping around it.
+	local *Manager::appointment_writer = sub {
+		my ($c, $row) = @_;
+		my %r = %{$row};
+		delete $r{'quiet_child'};
+		&subs::db_insert('appointments', \%r);
+		return \%r;
+	};
 	local *subs::cache_set = sub {
 		my ( $key, $value ) = @_;
 		$cache{ ( $key->{'context'} // '' ) . '|' . ( $key->{'subcontext'} // '' ) } = $value;
@@ -123,6 +135,10 @@ sub sessions {
 	my $browser = sub {
 		return &subs::db_query('select * from appointments where app = ? and source = ? and device = ? order by cast(timestamp as integer)', $app, 'browser_game', $browser_device)->hashes || [];
 	};
+	my $solitaire_rows = sub {
+		my ($parent_uuid) = @_;
+		return &subs::db_query('select * from appointments where app = ? and source_uuid = ? order by cast(timestamp as integer)', 'solitaire', $parent_uuid)->hashes || [];
+	};
 	# A hand-made option wrote the name in whatever case the person chose. The
 	# browser's lookup must find it rather than make a second row, keeping the
 	# one the person already had and giving it the game's own spelling.
@@ -154,12 +170,18 @@ sub sessions {
 	my $game_rows = &subs::db_query("select * from option where app = 'games' and lower(name) = 'solitaire'")->hashes;
 	is( scalar @{$game_rows}, 1, 'one catalog row per game, whatever the name case' );
 	is( $browser_catalog->{'def'}, 'off', 'and it is not a default option' );
-	is( $browser_catalog->{'save_app'}, '', 'a game option starts no child app' );
+	is( $browser_catalog->{'save_app'}, 'on', 'a game option records its own app' );
 	my $games_category = &subs::db_select('option_category', undef, { app => 'games', uuid => 'games_option_category_v1' })->hashes->[0];
 	ok( $games_category && $games_category->{'name'} eq 'Games', 'the option is filed under a Games category' );
 	my $browser_chars = eval { decode_json($browser_catalog->{'characteristics'}) } || [];
 	is( ($browser_chars->[0] // {})->{'value'}, 'games_option_category_v1',
 		'and the catalog row points at that category' );
+	# the game's own app is the existing `solitaire`, written by unformat_name
+	my $solitaire = $solitaire_rows->($browser_uuid);
+	is( scalar @{$solitaire}, 1, 'the game also records its own app' );
+	is( $solitaire->[0]->{'app'}, 'solitaire', 'under the unformatted app key' );
+	is( $solitaire->[0]->{'type'}, 'start', 'running with the play session' );
+	is( int( $solitaire->[0]->{'timestamp'} ), $b1, 'from the play session start' );
 
 	# a quiet game pauses at the last touch
 	$NOW = $b1 + 50_000;
@@ -168,6 +190,10 @@ sub sessions {
 	is( $browsed->[0]->{'type'}, 'stop', 'the quiet browser game pauses' );
 	is( int( $browsed->[0]->{'stop_timestamp'} ), $b1 + 20_000, 'at the last touch' );
 	is( int( $browsed->[0]->{'duration'} ), -20_000, 'with the first play segment' );
+	$solitaire = $solitaire_rows->($browser_uuid);
+	is( $solitaire->[0]->{'type'}, 'stop', 'the child pauses with the session' );
+	is( int( $solitaire->[0]->{'stop_timestamp'} ), $b1 + 20_000, 'at the same last touch' );
+	is( int( $solitaire->[0]->{'duration'} ), -20_000, 'with the same play time' );
 
 	# a touch within five minutes resumes the same row
 	$NOW = $b1 + 90_000;
@@ -176,6 +202,9 @@ sub sessions {
 	is( scalar @{$browsed}, 1, 'a resume does not make a second appointment' );
 	is( $browsed->[0]->{'uuid'}, $browser_uuid, 'the same row reopens' );
 	is( $browsed->[0]->{'type'}, 'start', 'and it runs again' );
+	$solitaire = $solitaire_rows->($browser_uuid);
+	is( $solitaire->[0]->{'type'}, 'start', 'the child resumes with the session' );
+	ok( !defined $solitaire->[0]->{'stop_seen'}, 'and is open again' );
 
 	# leaving stops it, with the pause left out of the play time
 	$NOW = $b1 + 140_000;
@@ -183,6 +212,10 @@ sub sessions {
 	$browsed = $browser->();
 	is( $browsed->[0]->{'type'}, 'stop', 'leaving closes the session' );
 	is( int( $browsed->[0]->{'duration'} ), -60_000, '20s + 40s of play, the 60s pause left out' );
+	$solitaire = $solitaire_rows->($browser_uuid);
+	is( scalar @{$solitaire}, 1, 'still one row in the game\'s own app' );
+	is( $solitaire->[0]->{'type'}, 'stop', 'the child stops with the session' );
+	is( int( $solitaire->[0]->{'duration'} ), -60_000, 'and keeps the same play time' );
 
 	# another game on the same device is its own row
 	$NOW = $b1 + 150_000;

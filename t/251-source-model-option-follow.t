@@ -163,7 +163,24 @@ $gb::database_holder = {
 	is(int($cream->{'timestamp'}), $now - 600_000, 'beginning with the parent');
 	is(int($cream->{'stop_timestamp'}), $now - 300_000, 'and ending with it');
 	is(int($cream->{'duration'}), -300_000, 'over the parent duration');
-	is($cream->{'source_uuid'}, $tea, 'linked to the parent');
+	is( $cream->{'source_uuid'}, $tea, 'linked to the parent' );
+
+	# The child's app key is unformatted: an option named `Cream Test` writes the
+	# existing `cream_test` app, and the recursion check looks there too.
+	my $tea_cap = 'tea-uuid-capital';
+	$db->insert('appointments', {
+		app => 'tea-test', uuid => $tea_cap, type => 'stop', timestamp => $now - 700_000,
+		server_time => $now - 400_000, seen => 'yes', stop_seen => 'yes',
+	});
+	&subs::source_appt_writer(
+		{ name => 'Cream Test', unit => 'splash', quantity => 1, characteristics => '[]' },
+		{ app => 'tea-test', uuid => $tea_cap, type => 'stop', duration => -300_000, timestamp => $now - 700_000 },
+		'option'
+	);
+	my $capital = $db->query('select * from appointments where source_uuid = ? and app = ?', $tea_cap, 'cream_test')->hash;
+	ok($capital && $capital->{'uuid'}, 'a capitalized option name writes the unformatted app');
+	my $raw = $db->query('select * from appointments where source_uuid = ? and app = ?', $tea_cap, 'Cream Test')->hash;
+	ok(!$raw, 'and not a second app under the raw name');
 
 	# a purchase whose item matches a model keeps that model: it shared
 	# source_uuid and the name, but it is not the parent's model session
