@@ -36,6 +36,14 @@ $dbh->do(q{create table model (
 	discount text, markup text, ost text, manufacturer text, def text,
 	quantity text, unit text, save_app text, file text, delay_start text,
 	delay_stop text, def_month text, def_day text, def_hour text, def_wday text)});
+$dbh->do(q{create table option (
+	app text, name text, price text, characteristics text, timestamp text,
+	server_time text, uuid text unique, files text, cost text, description text,
+	discount text, markup text, ost text, manufacturer text, def text,
+	quantity text, unit text, save_app text, file text, delay_start text,
+	delay_stop text, def_month text, def_day text, def_hour text, def_wday text)});
+$dbh->do(q{create table option_category (app text, name text, uuid text)});
+$dbh->do(q{insert into option_category (app, name, uuid) values ('coffee', 'brand', 'cat_brand')});
 $dbh->do(q{create table appointments (rowid integer primary key, app text,
 	model text, item text, option text, options text, server_time text)});
 $dbh->do(q{create table sync_log (id integer primary key autoincrement,
@@ -59,8 +67,29 @@ for my $n (1 .. 3) {
 	$add_appt->execute('news', $json->encode({ uuid => 'keepglobal', name => 'global', quantity => 1 }), 100);
 }
 $add_appt->execute('news', $json->encode({ uuid => 'dropglobal', name => 'global', quantity => 1 }), 100);
-$add_appt->execute('news', $json->encode({ uuid => 'dropcbc', name => 'cbc', quantity => 1 }), 100);
+$add_appt->execute('news', $json->encode({ uuid => 'keepcbc', name => 'cbc', quantity => 1 }), 100);
 $add_appt->finish;
+
+my $brand = $json->encode([ { name => 'option_category', uuid => 'char_brand', value => 'cat_brand', timestamp => 1 } ]);
+my $other = $json->encode([ { name => 'option_category', uuid => 'char_other', value => 'cat_other', timestamp => 1 } ]);
+my $add_option = $dbh->prepare(q{insert into option
+	(app, name, uuid, timestamp, ost, server_time, unit, quantity, def, save_app, characteristics)
+	values (?,?,?,?,?,?,?,?,?,?,?)});
+$add_option->execute('coffee', 'maxwell_house', 'keepopt', 3000, 3000, 3000, 'oz', '10', 'off', '', $brand);
+$add_option->execute('coffee', 'maxwell_house', 'dropopt', 1000, 1000, 1000, 'maxwell_house', '', 'off', '', $brand);
+$add_option->execute('coffee', 'maxwell_house', 'otheropt', 2000, 2000, 2000, 'oz', '', 'off', '', $other);
+$add_option->finish;
+
+my $add_opt_appt = $dbh->prepare(q{insert into appointments (app, options, server_time) values (?,?,?)});
+$add_opt_appt->execute('coffee', $json->encode([
+	{ uuid => 'keepopt', name => 'maxwell_house', unit => 'oz', quantity => '10' },
+	{ uuid => 'sugar', name => 'sugar', unit => 'tsp', quantity => 2 },
+]), 100);
+$add_opt_appt->execute('coffee', $json->encode([
+	{ uuid => 'dropopt', name => 'maxwell_house', unit => 'maxwell_house', quantity => '' },
+	{ uuid => 'sugar', name => 'sugar', unit => 'tsp', quantity => 2 },
+]), 100);
+$add_opt_appt->finish;
 
 $dbh->do(q{insert into remote_machines (uuid, signatorial, deletions) values ('peer1', 'peer1', '[]')});
 $dbh->disconnect;
@@ -78,6 +107,12 @@ like($out, qr/news\/global/, 'and names the duplicated model');
 like($out, qr/keepglobal/, 'showing the row it would keep');
 like($out, qr/dropglobal/, 'and the row it would drop');
 like($out, qr/dry run: nothing changed/, 'and writes nothing');
+
+($rc, $out) = run_script("--database=$db", '--app', 'coffee');
+is($rc, 0, 'the option dry run exits 0');
+like($out, qr/option coffee\/maxwell_house \[brand\]/, 'an option is keyed by its category, and the category is named');
+like($out, qr/keepopt/, 'and names the option row it would keep');
+like($out, qr/dropopt/, 'and the one it would drop');
 
 my $count = sub {
 	my ($sql, @args) = @_;
@@ -102,6 +137,8 @@ is($count->("select count(*) from model where uuid = 'dropglobal'"), 0, 'the unc
 is($count->("select count(*) from model where uuid = 'keepglobal'"), 1, 'the row the records pointed at is kept');
 is($count->("select count(*) from model where app = 'news' and name = 'cbc'"), 2,
 	'a pair where the row to drop carries a setting the keeper lacks is left whole');
+is($count->("select count(*) from option where app = 'coffee'"), 3,
+	"an --app run leaves the other apps' option duplicates alone");
 
 my $dbh2 = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
 my @repointed;
@@ -132,6 +169,28 @@ ok($survivor_refs && ($json->decode($survivor_refs)->{'uuid'} // '') eq $survivo
 	'and the cbc record names the row that survived');
 is($dbh2->selectrow_array("select count(*) from sync_log where uuid in ('keepcbc', 'dropcbc')"), 1,
 	'with a tombstone for the row removed by --force');
+
+# ------------------------------------------------------------------ options
+($rc, $out) = run_script("--database=$db", '--app=coffee', '--apply', '--no-backup');
+is($rc, 0, 'the option run applies') or diag($out);
+is($count->("select count(*) from option where app = 'coffee' and name = 'maxwell_house' and uuid = 'keepopt'"), 1,
+	'the option the records point at is kept');
+is($count->("select count(*) from option where uuid = 'dropopt'"), 0, 'and its twin is gone');
+is($count->("select count(*) from option where uuid = 'otheropt'"), 1,
+	'a same-named option in another category is not the same key and is kept');
+my @coffee_options = map { $json->decode($_) } @{ $dbh2->selectcol_arrayref("select options from appointments where app = 'coffee' order by rowid") };
+is(scalar @coffee_options, 2, 'both coffee records survive');
+is($coffee_options[0]->[0]->{'uuid'}, 'keepopt', 'the record that already named the keeper still does');
+is($coffee_options[1]->[0]->{'uuid'}, 'keepopt', 'the record that named the option loser now names the keeper');
+is($coffee_options[1]->[0]->{'name'}, 'maxwell_house', 'and keeps the name it recorded');
+is($coffee_options[1]->[1]->{'uuid'}, 'sugar', 'the other option on that record is untouched');
+is($coffee_options[0]->[1]->{'uuid'}, 'sugar', 'and the other record is untouched');
+is($dbh2->selectrow_array("select count(*) from sync_log where tbl = 'option' and uuid = 'dropopt' and app = 'coffee' and scope = 'single'"), 1,
+	'the option row leaves a durable option tombstone');
+my ($deletions_after) = $dbh2->selectrow_array("select deletions from remote_machines where uuid = 'peer1'");
+my $queued_after = $json->decode($deletions_after);
+is(scalar(grep { ($_->{'uuid'} // '') eq 'dropopt' && ($_->{'table'} // '') eq 'option' } @{$queued_after}), 1,
+	'and the peer rail queues the option deletion');
 $dbh2->disconnect;
 
 # ------------------------------------------------- the Register's Add route

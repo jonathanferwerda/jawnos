@@ -1,27 +1,31 @@
 #!/usr/bin/perl
 # model_duplicates.pl - merge catalogue rows that name the same thing twice.
 #
-# A model row is the catalogue entry an app's model picker lists. Register's Add
-# used to mint a fresh uuid on every press, and the sync rail merges rows by
-# uuid, so entering the same model again (on a machine that had not synced the
-# first, or simply a second time) left two rows with the same app and name and
-# nothing ever joined them. The picker then showed the name twice.
+# A catalogue row is a model or an option: the entries an app's picker lists.
+# Register's Add minted a fresh uuid on every press and the sync rail merges
+# rows by uuid, so entering the same entry again (on a machine that had not
+# synced the first, or simply a second time) left two rows with the same app and
+# name and nothing ever joined them. The picker then showed the name twice.
 #
-# This tool finds every (app, name) the catalogue holds more than once, keeps the
-# row the records point at and that carries a configuration, repoints the records
-# that name a loser, and tombstones then deletes the losers so every peer drops
-# them too. A bare SQL delete would be undone by the next pull: the deletion has
-# to travel on the sync rail.
+# An option name is unique only inside its option category: two "regular" sizes
+# in different categories are two real options, so the category is part of the
+# key for an option row. A model needs no such key.
+#
+# This tool finds every duplicate key, keeps the row the records point at and
+# that carries a configuration, repoints the records that name a loser, and
+# tombstones then deletes the losers so every peer drops them too. A bare SQL
+# delete would be undone by the next pull: the deletion travels on the sync rail.
 #
 #   perl scripts/model_duplicates.pl                       dry run, every app
 #   perl scripts/model_duplicates.pl --app news            dry run, one app
 #   perl scripts/model_duplicates.pl --app news --apply    merge that app
 #   perl scripts/model_duplicates.pl --apply --yes         merge every app
 #
-# --app may be repeated or comma separated. An Add is merged by hand when the
-# row it would drop carries a setting the kept row does not; --force overrides
-# that refusal. --database and --no-backup exist for QA against a scratch
-# database: the live run takes a SQLite backup before it writes anything.
+# --app may be repeated or comma separated. A pair is left for a person when the
+# row it would drop carries a behaviour flag the kept row does not (save_app, a
+# default, a schedule or a delay); --force overrides that refusal. --database
+# and --no-backup exist for QA against a scratch database: the live run takes a
+# backup before it writes anything.
 #
 # The kept row is the one with the most appointments naming it, then the most
 # settings, then the newest stamp. Every write moves server_time forward, so the
@@ -37,6 +41,8 @@ use File::Basename qw(dirname);
 use JSON::PP ();
 use File::Path qw(make_path);
 use POSIX qw(strftime);
+
+our @TABLES = qw(model option);
 
 my ($apply, $no_backup, $yes, $force, $database, @apps) = (0, 0, 0, 0, '', ());
 
@@ -107,38 +113,75 @@ sub when {
 	return strftime('%Y-%m-%d %H:%M UTC', gmtime(int($ms / 1000)));
 }
 
-sub configured {
-	my ($r) = @_;
-	my $n = 0;
-	for my $k (qw/save_app unit def def_month def_day def_hour def_wday delay_start delay_stop price cost discount markup description manufacturer characteristics file files quantity/) {
-		my $v = $r->{$k};
-		next unless defined $v && length $v;
-		next if $v eq '[]' || $v eq '{}';
-		next if $k eq 'def' && $v eq 'off';
-		$n++;
+# An option row names its category in `characteristics`; that value is what
+# keeps two same-named options in different categories apart.
+sub option_category {
+	my ($raw) = @_;
+	my $chars = eval { $json->decode($raw // '') };
+	return '' unless ref $chars eq 'ARRAY';
+	for my $c ( @{$chars} ) {
+		next unless ref $c eq 'HASH';
+		return ($c->{'value'} // '') if ($c->{'name'} // '') eq 'option_category';
 	}
-	return $n;
+	return '';
 }
 
-sub config_names {
+my %category_name;
+if (has_table('option_category')) {
+	my $cats = $dbh->selectall_arrayref('select uuid, name from option_category', { Slice => {} });
+	for my $cat ( @{$cats} ) {
+		next unless defined $cat->{'uuid'};
+		$category_name{$cat->{'uuid'}} = $cat->{'name'} if defined $cat->{'name'};
+	}
+}
+
+sub category_label {
+	my ($uuid) = @_;
+	return '' unless defined $uuid && length $uuid;
+	return $category_name{$uuid} // substr($uuid, 0, 8) . '...';
+}
+
+my (%refs, %ref_hits);
+
+# Fields a row carries only when somebody configured them. A value field with a
+# different value on the loser is a choice, not a loss; these are the ones whose
+# disappearance changes what the catalogue does.
+sub flag_names {
 	my ($r) = @_;
 	my @names;
-	for my $k (qw/save_app unit def def_month def_day def_hour def_wday delay_start delay_stop price cost discount markup description manufacturer characteristics file files quantity/) {
+	for my $k ( qw/save_app def/ ) {
+		push @names, $k if ($r->{$k} // '') eq 'on';
+	}
+	for my $k ( qw/def_month def_day def_hour def_wday delay_start delay_stop/ ) {
 		my $v = $r->{$k};
 		next unless defined $v && length $v;
 		next if $v eq '[]' || $v eq '{}';
-		next if $k eq 'def' && $v eq 'off';
 		push @names, $k;
 	}
 	return @names;
 }
 
-my (%refs, %ref_rowids);
+sub value_names {
+	my ($r) = @_;
+	my @names;
+	for my $k ( qw/unit price cost discount markup description manufacturer characteristics file files quantity/ ) {
+		my $v = $r->{$k};
+		next unless defined $v && length $v;
+		next if $v eq '[]' || $v eq '{}';
+		push @names, $k;
+	}
+	return @names;
+}
+
+sub configured {
+	my ($r) = @_;
+	return scalar flag_names($r) + scalar value_names($r);
+}
 
 sub row_line {
 	my ($r) = @_;
 	my $refs = $refs{$r->{'uuid'}} || 0;
-	my @config = config_names($r);
+	my @config = (flag_names($r), value_names($r));
 	return sprintf('%s %-7s refs=%-4d config=%-2d %s',
 		substr($r->{'uuid'} // '', 0, 10) . '...',
 		($r->{'def'} // '') eq 'on' ? 'DEFAULT' : '',
@@ -146,35 +189,11 @@ sub row_line {
 		scalar @config ? join(',', @config) : '(none)');
 }
 
-my $models = $dbh->selectall_arrayref(
-	q{select rowid as rowid, app, name, uuid, timestamp, server_time, ost,
-	         save_app, unit, def, def_month, def_day, def_hour, def_wday,
-	         delay_start, delay_stop, price, cost, discount, markup,
-	         description, manufacturer, characteristics, file, files, quantity
-	  from model
-	  where name is not null and name != ''
-	  order by app, name, cast(ost as integer), rowid},
-	{ Slice => {} },
-);
-
-my %group;
-for my $r ( @{$models} ) {
-	next if scalar @apps && !grep { $_ eq ($r->{'app'} // '') } @apps;
-	push @{$group{($r->{'app'} // '') . "\0" . $r->{'name'}}}, $r;
-}
-my @keys = grep { scalar @{$group{$_}} > 1 } sort keys %group;
-
-if (has_table('appointments')) {
-	my $appts = $dbh->selectall_arrayref(
-		q{select rowid as rowid, model from appointments where model is not null and model != ''},
-		{ Slice => {} },
-	);
-	for my $a ( @{$appts} ) {
-		my $hit = eval { $json->decode($a->{'model'}) };
-		next unless ref $hit eq 'HASH' && defined $hit->{'uuid'} && length $hit->{'uuid'};
-		$refs{$hit->{'uuid'}}++;
-		push @{$ref_rowids{$hit->{'uuid'}}}, $a->{'rowid'};
-	}
+sub add_hit {
+	my ($uuid, $rowid, $field, $index) = @_;
+	return unless defined $uuid && length $uuid;
+	$refs{$uuid}++;
+	push @{$ref_hits{$uuid}}, { rowid => $rowid, field => $field, index => $index };
 }
 
 sub pick_keep {
@@ -189,33 +208,84 @@ sub pick_keep {
 	return $rows[0];
 }
 
-# A setting the row to drop carries and the kept row does not would vanish with
-# it, so that pair is left for a person unless --force says otherwise.
+# A behaviour flag the row to drop carries and the kept row does not would vanish
+# with it, so that pair is left for a person unless --force says otherwise.
 sub lost_config {
 	my ($keep, $drop) = @_;
 	my @lost;
-	for my $k (config_names($drop)) {
-		my $kv = $keep->{$k};
-		next if defined $kv && length $kv && !($k eq 'def' && $kv eq 'off');
-		push @lost, $k;
+	for my $k ( flag_names($drop) ) {
+		push @lost, $k unless grep { $_ eq $k } flag_names($keep);
 	}
 	return @lost;
 }
 
-my @plan;
-for my $key ( @keys ) {
-	my @rows = @{$group{$key}};
-	my ($app, $name) = split /\0/, $key, 2;
-	my $keep = pick_keep(@rows);
-	my @drop = grep { $_->{'uuid'} ne $keep->{'uuid'} } @rows;
-	push @plan, { app => $app, name => $name, keep => $keep, drop => \@drop };
+my @rows;
+for my $t ( @TABLES ) {
+	my $rs = $dbh->selectall_arrayref(
+		"select rowid as rowid, app, name, uuid, timestamp, server_time, ost,
+		        save_app, unit, def, def_month, def_day, def_hour, def_wday,
+		        delay_start, delay_stop, price, cost, discount, markup,
+		        description, manufacturer, characteristics, file, files, quantity
+		 from $t
+		 where name is not null and name != ''
+		 order by app, name, cast(ost as integer), rowid",
+		{ Slice => {} },
+	);
+	for my $r ( @{$rs} ) {
+		$r->{'table'} = $t;
+		$r->{'category'} = ($t eq 'option') ? option_category($r->{'characteristics'}) : '';
+		push @rows, $r;
+	}
 }
 
-print "model duplicates";
+my %group;
+for my $r ( @rows ) {
+	next if scalar @apps && !grep { $_ eq ($r->{'app'} // '') } @apps;
+	my $key = join("\0", $r->{'table'}, $r->{'app'} // '', $r->{'name'} // '', $r->{'category'} // '');
+	push @{$group{$key}}, $r;
+}
+my @keys = grep { scalar @{$group{$_}} > 1 } sort keys %group;
+
+if (has_table('appointments')) {
+	my $appts = $dbh->selectall_arrayref(
+		q{select rowid as rowid, model, option, options from appointments
+		  where coalesce(model, '') != '' or coalesce(option, '') != '' or coalesce(options, '') != ''},
+		{ Slice => {} },
+	);
+	for my $a ( @{$appts} ) {
+		my $m = eval { $json->decode($a->{'model'} // '') };
+		add_hit(($m->{'uuid'} // ''), $a->{'rowid'}, 'model') if ref $m eq 'HASH';
+		my $o = eval { $json->decode($a->{'option'} // '') };
+		add_hit(($o->{'uuid'} // ''), $a->{'rowid'}, 'option') if ref $o eq 'HASH';
+		my $os = eval { $json->decode($a->{'options'} // '') };
+		if (ref $os eq 'ARRAY') {
+			for my $i ( 0 .. $#{$os} ) {
+				next unless ref $os->[$i] eq 'HASH';
+				add_hit(($os->[$i]->{'uuid'} // ''), $a->{'rowid'}, 'options', $i);
+			}
+		}
+	}
+}
+
+my @plan;
+for my $key ( @keys ) {
+	my @candidates = @{$group{$key}};
+	my ($table, $app, $name, $category) = split /\0/, $key, 4;
+	my $keep = pick_keep(@candidates);
+	my @drop = grep { $_->{'uuid'} ne $keep->{'uuid'} } @candidates;
+	push @plan, {
+		table => $table, app => $app, name => $name, category => $category,
+		keep => $keep, drop => \@drop,
+	};
+}
+
+print "catalogue duplicates";
 print ' for ' . join(', ', @apps) if scalar @apps;
 print ': ' . scalar(@plan) . " group(s)\n";
 for my $g ( @plan ) {
-	print "\n$g->{'app'}/$g->{'name'}\n";
+	my $label = "$g->{'app'}/$g->{'name'}";
+	$label .= ' [' . category_label($g->{'category'}) . ']' if $g->{'table'} eq 'option';
+	print "\n$g->{'table'} $label\n";
 	print '  keep ' . row_line($g->{'keep'}) . '  ' . when($g->{'keep'}->{'timestamp'} || $g->{'keep'}->{'ost'}) . "\n";
 	for my $lose ( @{$g->{'drop'}} ) {
 		my @lost = lost_config($g->{'keep'}, $lose);
@@ -223,7 +293,7 @@ for my $g ( @plan ) {
 		if (scalar @lost) {
 			print '       carries ' . join(',', @lost) . " only on this row - left for a person, or merged with --force\n";
 		}
-		print '       repoints ' . scalar(@{$ref_rowids{$lose->{'uuid'}} || []}) . " record(s), then tombstones and deletes\n" unless scalar(@lost) && !$force;
+		print '       repoints ' . scalar(@{$ref_hits{$lose->{'uuid'}} || []}) . " record(s), then tombstones and deletes\n" unless scalar(@lost) && !$force;
 	}
 }
 
@@ -256,6 +326,37 @@ my $remote = has_table('remote_machines')
 	? $dbh->selectall_arrayref('select rowid as rowid, deletions from remote_machines', { Slice => {} })
 	: [];
 
+sub repoint_record {
+	my ($hit, $old, $new, $stamp) = @_;
+	my ($model, $option, $options) = $dbh->selectrow_array(
+		'select model, option, options from appointments where rowid = ?', undef, $hit->{'rowid'},
+	);
+	if ($hit->{'field'} eq 'model') {
+		my $j = eval { $json->decode($model // '') };
+		return 0 unless ref $j eq 'HASH' && ($j->{'uuid'} // '') eq $old;
+		$j->{'uuid'} = $new;
+		$dbh->do('update appointments set model = ?, server_time = ? where rowid = ?', undef, $json->encode($j), $stamp, $hit->{'rowid'});
+		return 1;
+	}
+	if ($hit->{'field'} eq 'option') {
+		my $j = eval { $json->decode($option // '') };
+		return 0 unless ref $j eq 'HASH' && ($j->{'uuid'} // '') eq $old;
+		$j->{'uuid'} = $new;
+		$dbh->do('update appointments set option = ?, server_time = ? where rowid = ?', undef, $json->encode($j), $stamp, $hit->{'rowid'});
+		return 1;
+	}
+	if ($hit->{'field'} eq 'options') {
+		my $arr = eval { $json->decode($options // '') };
+		return 0 unless ref $arr eq 'ARRAY' && defined $hit->{'index'};
+		my $entry = $arr->[$hit->{'index'}];
+		return 0 unless ref $entry eq 'HASH' && ($entry->{'uuid'} // '') eq $old;
+		$entry->{'uuid'} = $new;
+		$dbh->do('update appointments set options = ?, server_time = ? where rowid = ?', undef, $json->encode($arr), $stamp, $hit->{'rowid'});
+		return 1;
+	}
+	return 0;
+}
+
 $dbh->begin_work;
 eval {
 	for my $g ( @plan ) {
@@ -265,53 +366,48 @@ eval {
 			my @lost = lost_config($keep, $lose);
 			if (scalar @lost && !$force) {
 				$skipped++;
-				print "\n$g->{'app'}/$g->{'name'}: left $u in place (carries " . join(',', @lost) . ")\n";
+				print "\n$g->{'table'} $g->{'app'}/$g->{'name'}: left $u in place (carries " . join(',', @lost) . ")\n";
 				next;
 			}
-			# Anything naming the loser outside the record's model JSON would be
-			# left pointing at a deleted row; refuse that loser and name the place.
+			# Anything naming the loser outside the fields the tool rewrites would
+			# be left pointing at a deleted row; refuse that loser and name it.
 			my @outside;
 			if (has_table('appointments')) {
-				for my $col (qw/item option options/) {
+				my @cols = ($g->{'table'} eq 'model') ? qw/item option options/ : qw/item/;
+				for my $col ( @cols ) {
 					my $c = $dbh->selectrow_array("select count(*) from appointments where $col like ?", undef, '%' . $u . '%') || 0;
 					push @outside, "appointments.$col ($c)" if $c;
 				}
 			}
 			if (has_table('warehouse')) {
-				for my $col (qw/model options/) {
+				for my $col ( qw/model options/ ) {
 					my $c = $dbh->selectrow_array("select count(*) from warehouse where $col like ?", undef, '%' . $u . '%') || 0;
 					push @outside, "warehouse.$col ($c)" if $c;
 				}
 			}
-			my $c = $dbh->selectrow_array(
-				q{select count(*) from model where uuid != ? and (characteristics like ? or files like ? or coalesce(file, '') like ?)},
-				undef, $u, '%' . $u . '%', '%' . $u . '%', '%' . $u . '%',
-			) || 0;
-			push @outside, "another model's characteristics/files ($c)" if $c;
+			for my $t ( @TABLES ) {
+				my $c = $dbh->selectrow_array(
+					"select count(*) from $t where uuid != ? and (characteristics like ? or files like ? or coalesce(file, '') like ?)",
+					undef, $u, '%' . $u . '%', '%' . $u . '%', '%' . $u . '%',
+				) || 0;
+				push @outside, "$t characteristics/files ($c)" if $c;
+			}
 			if (scalar @outside) {
 				$skipped++;
-				print "\n$g->{'app'}/$g->{'name'}: left $u in place (named by " . join(', ', @outside) . ")\n";
+				print "\n$g->{'table'} $g->{'app'}/$g->{'name'}: left $u in place (named by " . join(', ', @outside) . ")\n";
 				next;
 			}
-			for my $rowid ( @{$ref_rowids{$u} || []} ) {
-				my ($raw) = $dbh->selectrow_array('select model from appointments where rowid = ?', undef, $rowid);
-				my $hit = eval { $json->decode($raw // '') };
-				next unless ref $hit eq 'HASH' && ($hit->{'uuid'} // '') eq $u;
-				$hit->{'uuid'} = $keep->{'uuid'};
-				$dbh->do(
-					'update appointments set model = ?, server_time = ? where rowid = ?',
-					undef, $json->encode($hit), $now, $rowid,
-				);
-				$repointed++;
+			for my $hit ( @{$ref_hits{$u} || []} ) {
+				$repointed++ if repoint_record($hit, $u, $keep->{'uuid'}, $now);
 			}
 			$dbh->do(
 				'insert into sync_log (server_time, signatorial, tbl, app, uuid, scope) values (?,?,?,?,?,?)',
-				undef, $now, $sign, 'model', $g->{'app'}, $u, 'single',
+				undef, $now, $sign, $g->{'table'}, $g->{'app'}, $u, 'single',
 			);
 			for my $rm ( @{$remote} ) {
 				my $dels = eval { $json->decode($rm->{'deletions'} || '[]') } || [];
 				push @{$dels}, {
-					table => 'model',
+					table => $g->{'table'},
 					app => $g->{'app'},
 					uuid => $u,
 					scope => 'single',
@@ -322,7 +418,7 @@ eval {
 				$dbh->do('update remote_machines set deletions = ? where rowid = ?', undef, $queued, $rm->{'rowid'});
 				$rm->{'deletions'} = $queued;
 			}
-			$dbh->do('delete from model where uuid = ?', undef, $u);
+			$dbh->do("delete from $g->{'table'} where uuid = ?", undef, $u);
 			$deleted++;
 		}
 	}
