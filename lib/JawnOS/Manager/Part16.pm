@@ -116,8 +116,12 @@ sub inventory_details($c,$settings) {
 	my $am = eval { return decode_json $settings->{'app_measures'} } || {};
 	foreach my $ameas ( keys %{$am} ) {
 		my $formatted_name = &subs::format_name($ameas);
-		if ($am->{$ameas}->{'unit'}) {
-			$formatted_name = $formatted_name . ' (' . $am->{$ameas}->{'unit'} . ')';
+		# A measure definition is a hash; an older row may carry the reading
+		# itself as a bare value, and that one simply has no unit.
+		my $entry = $am->{$ameas};
+		my $unit = (ref $entry eq 'HASH') ? $entry->{'unit'} : undef;
+		if ($unit) {
+			$formatted_name = $formatted_name . ' (' . $unit . ')';
 		}
 		push @display_options, { name => $ameas, formatted_name => $formatted_name } unless grep { $_->{'name'} eq $ameas } @display_options;
 	}
