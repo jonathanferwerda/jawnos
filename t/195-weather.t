@@ -684,6 +684,12 @@ is(scalar @{ $gust_rule->{'when'} }, 2, 'a measurement rule keeps both condition
 is($gust_rule->{'when'}[1]{'value'}, 'n', 'a direction is stored as the compass key');
 is($gust_rule->{'for_ms'}, 0, 'no duration means immediately');
 is($gust_rule->{'location'}, '', 'a measurement rule with no place applies anywhere');
+is($gust_rule->{'hold_check'}, 0, 'a rule without the hold stops on the first dry reading');
+my $held_rule = subs::weather_measure_rule_normalize({
+	uuid => 'rain-held', when => [{ measure => 'precip_rate', op => '>', value => 0 }],
+	hold_check => 1, action => 'start', app => 'raining',
+});
+is($held_rule->{'hold_check'}, 1, 'a rule can hold its stop until the next check');
 is(subs::weather_measure_rule_normalize({
 	uuid => 'cabin-gust',
 	when => [{ measure => 'wind_gust', op => '>', value => 20 }],
@@ -813,6 +819,135 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is($run->[0]{'action'}, 'run', 'a run rule fires');
 	is_deeply(\@runs, ['echo hi'], 'the command is run once');
 	is(scalar @{ subs::weather_measure_rule_evaluate({ pressure => 100 }, [], 'appt-1', $now) }, 0, 'and not again while the condition holds');
+}
+
+# --- a held stop waits for the next check, and a manual check skips it --------
+{
+	my %store;
+	my @appointments;
+	my $now = 1794020000000;
+	my $rules_json = Mojo::JSON::encode_json([{
+		uuid => 'rain-1', name => 'Rain',
+		when => [{ measure => 'precip_rate', op => '>', value => 0 }],
+		for_ms => 0, hold_check => 1, action => 'start', app => 'raining',
+	}]);
+	no warnings 'redefine';
+	local $gb::timeouts = { weather_observe => { interval => 1800 } };
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $value) = @_;
+		$store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $value;
+		return 1;
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $rules_json if $q->{'app'} eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *Manager::appointment_writer = sub {
+		my ($c, $data) = @_;
+		push @appointments, $data;
+		return $data;
+	};
+	local *subs::open_session_uuid = sub { '' };
+	local *subs::random_string_creator = sub { 'measure-uuid' };
+	my $wet = { precip_rate => 0.5 };
+	my $dry = { precip_rate => 0 };
+	is(scalar @{ subs::weather_measure_rule_evaluate($wet, [], 'appt-1', $now) }, 1, 'the first wet reading starts the app');
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'appt-1', $now + 30 * 60000) }, 0, 'a dry check inside the hold keeps it on');
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'appt-1', $now + 60 * 60000) }, 1, 'the next check stops it');
+	delete $store{'weather|rules|state'};
+	is(scalar @{ subs::weather_measure_rule_evaluate($wet, [], 'appt-2', $now + 120 * 60000) }, 1, 'the app starts again on a wet check');
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'appt-2', $now + 130 * 60000, '', '', { manual => 1 }) }, 1, 'a manual dry check stops it at once');
+}
+
+# --- the appointment carries the reading that drove the rule -----------------
+{
+	my %store = ( 'setting|snowing|toggle' => 'off' );
+	my @appointments;
+	my $now = 1794020000000;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *Manager::appointment_writer = sub {
+		my ($c, $data) = @_;
+		push @appointments, $data;
+		return $data;
+	};
+	local *subs::open_session_uuid = sub { '' };
+	local *subs::random_string_creator = sub { 'measure-uuid' };
+	my $rule = { when => [
+		{ measure => 'precip_rate', op => '>', value => 0 },
+		{ measure => 'temperature', op => '<=', value => 0 },
+	], action => 'start', app => 'snowing' };
+	is(subs::weather_rule_app_switch('snowing', 1, 'appt-9', $now, '', { precip_rate => 0.5, precip_total => 3.2, temperature => -2, wind_gust => 20 }, 'loc:home', $rule), 1, 'a snow rule starts its app');
+	my ($start) = grep { ($_->{'type'} // '') eq 'start' } @appointments;
+	my $measures = Mojo::JSON::decode_json($start->{'measures'} // '[]');
+	my %got = map { %{$_} } @{$measures};
+	is($got{'precip_rate'}, 0.5, 'the appointment carries the precipitation rate');
+	is($got{'precip_total'}, 3.2, 'and the accumulated total');
+	is($got{'temperature'}, -2, 'and the temperature the rule named');
+	ok(!exists $got{'wind_gust'}, 'it does not carry a measure the rule did not name');
+}
+
+# --- the one-time rain/snow migration ----------------------------------------
+{
+	my %store;
+	my $n = 0;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . $q->{'app'} . '|' . $q->{'setting'} } = $q->{'value'};
+		return 1;
+	};
+	local *subs::weather_home_place = sub { return { uuid => 'home1', name => 'Home' } };
+	local *subs::random_string_creator = sub { 'rule-' . (++$n) };
+	$store{'setting|weather_station|app_measures'} = Mojo::JSON::encode_json({
+		condition => { type => 'text', value => 'rain', cm => [
+			{ uuid => 'rain-old', match => 'rain', app => 'raining', action => 'start', location => 'loc:home1', type => 'match' },
+			{ uuid => 'snow-old', match => 'snow', app => 'snowing', action => 'start', location => 'loc:home1', type => 'match' },
+			{ uuid => 'fog-old', match => 'fog', app => 'foggy', action => 'start', location => 'loc:home1', type => 'match' },
+		] },
+	});
+	$store{'setting|raining|app_measures'} = Mojo::JSON::encode_json({ speed => { type => 'number', unit => 'km/h' } });
+	is(subs::weather_automation_precip_rules(), 1, 'the rain and snow rules migrate');
+	my $am = Mojo::JSON::decode_json($store{'setting|weather_station|app_measures'});
+	my @cm = @{ $am->{condition}{cm} };
+	is(scalar @cm, 1, 'the old rain and snow condition rules are gone');
+	is($cm[0]{app}, 'foggy', 'the fog rule stays a condition rule');
+	my $rules = Mojo::JSON::decode_json($store{'setting|weather_station|weather_rules'});
+	is(scalar @{$rules}, 2, 'two precipitation rules are added');
+	my ($rain) = grep { $_->{'app'} eq 'raining' } @{$rules};
+	my ($snow) = grep { $_->{'app'} eq 'snowing' } @{$rules};
+	is($rain->{'when'}[0]{'measure'}, 'precip_rate', 'rain reads the precipitation rate');
+	is($rain->{'when'}[1]{'measure'}, 'temperature', 'and the temperature');
+	is($rain->{'when'}[1]{'op'}, '>', 'rain starts above freezing');
+	is($snow->{'when'}[1]{'op'}, '<=', 'snow starts at or below freezing');
+	is($rain->{'hold_check'}, 1, 'the rain rule holds its stop');
+	is($rain->{'location'}, 'loc:home1', 'at the place the old rule named');
+	my $raining = Mojo::JSON::decode_json($store{'setting|raining|app_measures'});
+	is($raining->{'precip_rate'}{'unit'}, 'mm/h', 'the raining app knows the precipitation measure');
+	is($store{'setting|weather_station|precip_rules'}, 'v1', 'the migration is marked done');
+	is(subs::weather_automation_precip_rules(), 0, 'and it does not run again');
 }
 
 # --- a rule names its own place ----------------------------------------------
@@ -1868,6 +2003,9 @@ like($controller_auto, qr/sub action_52016\b/, 'the automation save action exist
 like($controller_auto, qr/sub action_52017\b/, 'the observe-now action exists');
 unlike($controller_auto, qr/weather_observe_record/, 'looking at a place does not record it');
 like($controller_auto, qr/home_uuid/, 'the page finds the home plate for the picker');
+like($controller_auto, qr/manual => 1/, 'Check now and opening the page act at once');
+like($controller_auto, qr/migrate => 1/, 'the first observation migrates the rain and snow rules');
+like($controller_auto, qr/weather_measure_rule_evaluate\(\$values, \[\], /, 'opening the page applies the rules without recording');
 
 my $page = read_file("$root/templates/apps/weather.html.ep");
 like($page, qr/data-tab="automations"/, 'the page has an Automations tab');
@@ -1945,6 +2083,8 @@ my $auto_js = read_file("$root/public/js/manager/weather_automation.js");
 like($auto_js, qr/weatherAutomationLocations/, 'the script fills the place pickers');
 like($auto_js, qr/data\.apps/, 'and the app suggestions');
 like($auto_js, qr/location_label/, 'a saved rule shows its place in the sentence');
+like($auto_partial, qr/id="weather_measure_hold"/, 'the measurement form offers the stop hold');
+like($auto_js, qr/hold_check/, 'and saves it with the rule');
 like($loader_auto, qr/weather_rule_location_normalize/, 'the domain loader maps the place normaliser');
 like($loader_auto, qr/weather_rule_locations/, 'and the places the tick covers');
 

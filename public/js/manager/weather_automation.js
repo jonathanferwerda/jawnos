@@ -384,6 +384,7 @@ function weatherMeasureSentence(rule) {
 	}
 	var sentence = jawnosT('When') + ' ' + parts.join(' ' + jawnosT('and') + ' ');
 	if (rule.for_ms) { sentence += ' ' + jawnosT('for') + ' ' + weatherMeasureDurationText(rule.for_ms); }
+		if (rule.hold_check) { sentence += ' ' + jawnosT('and holds the stop until the next weather check'); }
 	if (rule.action === 'run') {
 		sentence += ', ' + jawnosT('run') + ' ' + (rule.command || '');
 	}
@@ -416,6 +417,7 @@ function weatherMeasureFormOpen(rule) {
 		$w.find('#weather_measure_for').val('0');
 		$w.find('#weather_measure_for_unit').val('3600000');
 	}
+	$w.find('#weather_measure_hold').prop('checked', !!(rule && rule.hold_check));
 	$w.find('#weather_measure_action').val(rule ? (rule.action || 'start') : 'start');
 	$w.find('#weather_measure_app').val(rule ? (rule.app || '') : '');
 	$w.find('#weather_measure_command').val(rule ? (rule.command || '') : '');
@@ -535,6 +537,7 @@ function weatherMeasureSave() {
 			location: $w.find('#weather_measure_location').val() || '',
 			when: JSON.stringify(conditions),
 			for_ms: forMs,
+			hold_check: $w.find('#weather_measure_hold').is(':checked') ? 1 : 0,
 			action: action,
 			app: app,
 			command: command,

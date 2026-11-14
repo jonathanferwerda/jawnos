@@ -56,6 +56,10 @@
 				<span class="weather_muted"><%= &subs::ui('0 means as soon as it happens. A duration starts counting from the first reading the house keeps.') %></span>
 			</div>
 			<div class="weather_controls">
+				<label><input id="weather_measure_hold" type="checkbox"> <%= &subs::ui('Hold the stop until the next weather check') %></label>
+				<span class="weather_muted"><%= &subs::ui('A start rule keeps its app on through one dry reading and stops it at the next check; a manual check stops it at once.') %></span>
+			</div>
+			<div class="weather_controls">
 				<label for="weather_measure_action"><%= &subs::ui('Then') %></label>
 				<select id="weather_measure_action">
 					<option value="start"><%= &subs::ui('Start an app') %></option>

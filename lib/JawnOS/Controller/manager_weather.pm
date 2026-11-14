@@ -140,6 +140,14 @@ sub action_52321 {
 		$weather->{'saved_place_km'} = defined $nearest ? 0 + sprintf('%.1f', $nearest) : undef;
 		$weather->{'needs_place'} = (!defined $nearest || $nearest > &subs::weather_place_match_km()) ? 1 : 0;
 	}
+	# Opening the page is the person looking: a dry reading stops a held app at
+	# once, the same as Check now, without recording a second observation.
+	if (($location_key // '') =~ /^loc:/ && &subs::weather_observe_leader()) {
+		eval {
+			my $values = &subs::weather_measure_values($weather);
+			&subs::weather_measure_rule_evaluate($values, [], '', &subs::rightNow(), $location_key, '', { manual => 1 });
+		};
+	}
 	$c->render(json => $weather);
 }
 
@@ -212,7 +220,7 @@ sub action_52017 {
 	my $lat = $c->param('lat');
 	my $lon = $c->param('lon');
 	my $location = &subs::weather_rule_location_normalize($c->param('location') || '');
-	my $opts = { force => 1, location => $location };
+	my $opts = { force => 1, manual => 1, migrate => 1, location => $location };
 	if (defined $lat && defined $lon
 		&& $lat =~ /^-?\d+(?:\.\d+)?$/ && $lon =~ /^-?\d+(?:\.\d+)?$/
 		&& $lat >= -90 && $lat <= 90 && $lon >= -180 && $lon <= 180) {
@@ -269,6 +277,7 @@ sub action_52019 {
 			name => $c->param('name') || '',
 			when => $conditions,
 			for_ms => $c->param('for_ms') || 0,
+						hold_check => ($c->param('hold_check') ? 1 : 0),
 			action => $c->param('action') || 'start',
 			app => $c->param('app') || '',
 			command => $c->param('command') || '',
