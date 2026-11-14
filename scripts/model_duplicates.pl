@@ -31,7 +31,9 @@ use strict;
 use warnings;
 
 use FindBin qw($Bin);
+use Cwd qw(abs_path);
 use DBI;
+use File::Basename qw(dirname);
 use JSON::PP ();
 use File::Path qw(make_path);
 use POSIX qw(strftime);
@@ -55,9 +57,10 @@ for (my $i = 0; $i < @ARGV; $i++) {
 	else { die "unknown argument: $a\n" }
 }
 
-my $root = "$Bin/..";
+my $root = abs_path("$Bin/..");
 $database ||= "$root/database/jawnos.db";
 die "no database at $database\n" unless -f $database;
+$database = abs_path($database);
 
 my $json = JSON::PP->new->utf8->allow_nonref;
 my $dbh = DBI->connect("dbi:SQLite:dbname=$database", '', '', {
@@ -77,7 +80,16 @@ die "no model table at $database\n" unless has_table('model');
 die "no sync_log table; refusing to delete without a tombstone\n" if $apply && !has_table('sync_log');
 
 sub signatorial {
-	for my $file ("$root/database/.jawnos_signatorial_id", (defined $ENV{'HOME'} && length $ENV{'HOME'} ? "$ENV{'HOME'}/.jawnos_signatorial_id" : ())) {
+	# The identity beside the database being changed, not beside the checkout the
+	# tool happens to run from: a worktree has an identity of its own, and a
+	# tombstone signed with it would name a machine that is not the one deleting.
+	my @files = (
+		dirname($database) . '/.jawnos_signatorial_id',
+		"$root/database/.jawnos_signatorial_id",
+		(defined $ENV{'HOME'} && length $ENV{'HOME'} ? "$ENV{'HOME'}/.jawnos_signatorial_id" : ()),
+	);
+	my %seen;
+	for my $file ( grep { defined $_ && !$seen{$_}++ } @files ) {
 		next unless defined $file && -f $file;
 		open(my $fh, '<', $file) or next;
 		my $id = <$fh>;

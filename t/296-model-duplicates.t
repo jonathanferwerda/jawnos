@@ -23,6 +23,11 @@ my $root = root();
 # --------------------------------------------------------------- the dedupe tool
 my $dir = tempdir(CLEANUP => 1);
 my $db  = "$dir/dupes.db";
+# The identity beside the database, which is the machine the tombstone must
+# name - not the checkout the tool happens to run from.
+open(my $idfh, '>', "$dir/.jawnos_signatorial_id") or die "identity: $!";
+print $idfh "0123456789abcdef0123456789abcdef\n";
+close $idfh;
 my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
 
 $dbh->do(q{create table model (
@@ -108,6 +113,8 @@ is(scalar(grep { $_->{'uuid'} eq 'keepcbc' } @repointed) + scalar(grep { $_->{'u
 	'the refused pair keeps its record untouched');
 is($dbh2->selectrow_array("select count(*) from sync_log where tbl = 'model' and uuid = 'dropglobal' and app = 'news' and scope = 'single'"), 1,
 	'the removed row leaves a durable tombstone');
+is($dbh2->selectrow_array("select signatorial from sync_log where uuid = 'dropglobal'"), '0123456789abcdef0123456789abcdef',
+	'signed by the machine that owns the database, not the checkout running the tool');
 is($dbh2->selectrow_array("select count(*) from sync_log where uuid in ('keepcbc', 'dropcbc')"), 0, 'the refused pair leaves none');
 my ($deletions) = $dbh2->selectrow_array("select deletions from remote_machines where uuid = 'peer1'");
 my $queued = $json->decode($deletions);
