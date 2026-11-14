@@ -49,6 +49,32 @@ void awake_notifications() {
   }
 }
 
+// The SX1262 draws its receive current from the PMU rail as long as it is
+// listening, and setup() boots it into continuous receive whatever the saved
+// setting says (both LoRa directions default to off). Follow the Receive toggle:
+// listen only while it is on, sleep the radio otherwise. This is a few mA the
+// watch was paying awake and, because the sleep path never touched the radio,
+// asleep as well. `force` re-applies the state even if the setting did not
+// change: a transmit leaves the radio in standby, so the listen state has to be
+// restored after one.
+static void radio_follow_receive(bool force) {
+  static bool armed = false;
+  static bool known = false;
+  if (!force && known && armed == loraChatReceiver) {
+    return;
+  }
+  known = true;
+  armed = loraChatReceiver;
+  if (armed) {
+    radio.startReceive();
+    Serial.println("[lora] receive on");
+  }
+  else {
+    radio.sleep();
+    Serial.println("[lora] receive off; radio asleep");
+  }
+}
+
 void readRadio() {
   if (operationDone) {
     operationDone = false;
@@ -478,26 +504,35 @@ void update_wigi_indicator() {
 void ip_writer() {
   if (face_bt) {
     // the net room's BT line: the bridge's own name when it sent one, else
-    // the address the connect event carried, else the state of the radio
+    // the address the connect event carried, else the state of the radio.
+    // The style is set only when the state changes: a style write invalidates
+    // the label, and this runs on every ~5 ms pass.
+    static int bt_state = -1;   // -1 unknown, else 0 off / 1 linked / 2 waiting / 3 starting
     char bt_line[64];
+    int state;
     if (bt_enabled == false) {
+      state = 0;
       snprintf(bt_line, sizeof(bt_line), "BT: off");
-      lv_obj_set_style_text_color(face_bt, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
     }
     else if (deviceConnected) {
+      state = 1;
       const char *who = ble_peer_name[0] ? ble_peer_name : (ble_peer_addr[0] ? ble_peer_addr : "?");
       snprintf(bt_line, sizeof(bt_line), "BT: %s", who);
-      lv_obj_set_style_text_color(face_bt, lv_color_hex(0x00FF00), LV_PART_MAIN);
     }
     else if (ble_radio_up) {
+      state = 2;
       snprintf(bt_line, sizeof(bt_line), "BT: waiting");
-      lv_obj_set_style_text_color(face_bt, lv_color_hex(0xFFE000), LV_PART_MAIN);
     }
     else {
+      state = 3;
       snprintf(bt_line, sizeof(bt_line), "BT: starting");
-      lv_obj_set_style_text_color(face_bt, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     }
-    lv_label_set_text(face_bt, bt_line);
+    if (state != bt_state) {
+      bt_state = state;
+      static const uint32_t bt_colours[] = { 0xb0b0b0, 0x00FF00, 0xFFE000, 0xFFFFFF };
+      lv_obj_set_style_text_color(face_bt, lv_color_hex(bt_colours[state]), LV_PART_MAIN);
+    }
+    label_set_if_changed(face_bt, bt_line);
   }
   if (!face_ip) {
     return;
@@ -505,29 +540,29 @@ void ip_writer() {
   // the addresses only belong on the screen in the net room; everywhere else the
   // row stays blank so it cannot sit on top of a room's buttons
   if (jw_room != "net") {
-    lv_label_set_text(face_ip, "");
-    lv_label_set_text(face_gw, "");
-    lv_label_set_text(face_ap, "");
-    lv_label_set_text(face_apgw, "");
+    label_set_if_changed(face_ip, "");
+    label_set_if_changed(face_gw, "");
+    label_set_if_changed(face_ap, "");
+    label_set_if_changed(face_apgw, "");
     return;
   }
   IPAddress ip = WiFi.localIP();
   sprintf(bufIP, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
   IPAddress gw_ip = WiFi.gatewayIP();
   sprintf(bufgwIP, "%d.%d.%d.%d", gw_ip[0], gw_ip[1], gw_ip[2], gw_ip[3]);
-  lv_label_set_text(face_ip, bufIP);
-  lv_label_set_text(face_gw, bufgwIP);
+  label_set_if_changed(face_ip, bufIP);
+  label_set_if_changed(face_gw, bufgwIP);
   if (wifi_ap_enabled) {
     apIP = WiFi.softAPIP();
     // the soft AP is its own gateway on this little subnet
     sprintf(bufapIP, "%d.%d.%d.%d", apIP[0], apIP[1], apIP[2], apIP[3] );
     sprintf(bufapgwIP, "%d.%d.%d.%d", apIP[0], apIP[1], apIP[2], apIP[3] );
-    lv_label_set_text(face_ap, bufapIP);
-    lv_label_set_text(face_apgw, bufapgwIP);
+    label_set_if_changed(face_ap, bufapIP);
+    label_set_if_changed(face_apgw, bufapgwIP);
   }
   else {
-    lv_label_set_text(face_ap, "");
-    lv_label_set_text(face_apgw, "");
+    label_set_if_changed(face_ap, "");
+    label_set_if_changed(face_apgw, "");
   }
 }
 

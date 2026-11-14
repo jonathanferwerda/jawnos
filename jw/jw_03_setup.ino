@@ -259,7 +259,7 @@ void jawn_setup() {
   //  radio.startTransmit(public_announcement);
   //  server.send(200, "text/plain", "done");
   //  delay(1000);
-    radio.startReceive();
+    radio_follow_receive(true);
     server.send(200, "text/plain", "sent wifi info");
   });
   server.on("/send_telephone", []() {
@@ -274,7 +274,7 @@ void jawn_setup() {
       Serial.println("Sending msg: " + jsm);
       radio.startTransmit(jsm);
       delay(1000);
-      radio.startReceive();
+      radio_follow_receive(true);   // transmit leaves the radio in standby
       server.send(200, "text/plain", "transmission sent");
       buttonMillis = millis();
       lastMillis = millis();
@@ -481,6 +481,9 @@ void jawn_setup() {
     configRestoreBackup();
     configRestore();
   }
+  // the radio came up in continuous receive before the saved setting was known;
+  // park it if LoRa receive is off, which is the default
+  radio_follow_receive();
   // what the hardware clock holds at boot: the watch face reads it directly,
   // so a wrong morning clock shows up here before anything else can fix it
   {

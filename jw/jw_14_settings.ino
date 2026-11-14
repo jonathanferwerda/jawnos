@@ -244,7 +244,9 @@ void configSave() {
       conf["lightsleep"] = "on";
   }
   else {
-    lightSleep == false;
+    // this was a comparison, not an assignment, so "off" was never written and
+    // the key silently disappeared from the saved picture
+    conf["lightsleep"] = "off";
   }
   if (wifi_ap_enabled == true) {
     conf["wifi_ap_enabled"] = "on";

@@ -203,6 +203,9 @@ void configRestore() {
   else if (jw_room == "net") {
     net_room();
   }
+  // the file also carries the LoRa receive preference, so a Restore changes the
+  // radio's listen state as well as the toggles it paints
+  radio_follow_receive();
 }
 
 

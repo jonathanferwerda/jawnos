@@ -803,6 +803,12 @@ sub is_definition {
 	{
 		return 1 if $line =~ /^\s*#\s*define\s+$n\b/;
 		return 1 if $line =~ /^\s*(?:class|struct|enum|namespace)\s+$n\b/;
+		# A firmware flag is a file-scope declaration: without this a plain
+		# `static bool x = false;` was only ever a mention, and the mention
+		# scan's 8-line cap could be spent on an earlier tree (jp, then jt, then
+		# jw), hiding the watch's flag behind the deck's. Only bool - it is the
+		# house's flag type, and matching every type turned locals into hits.
+		return 1 if $line =~ /^\s*(?:static\s+)?bool\s+$n\s*(?:=|;)/;
 		# A definition starts with a return type. The keywords are excluded
 		# because "return foo(" and "if (foo(" fit the shape; a prototype ends
 		# in ';' and is not a definition.

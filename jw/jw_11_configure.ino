@@ -307,6 +307,9 @@ static void loraReceiveToggle(lv_event_t *e) {
     lv_obj_set_style_bg_color(lora_button, lv_color_hex(0xb0b0b0), LV_PART_MAIN);
     loraChatReceiver = false;
   }
+  // follow the new setting now: off parks the radio instead of leaving the
+  // SX1262 listening for the rest of the watch's life
+  radio_follow_receive();
 }
 
 static void ap_lora_send(lv_event_t *e) {
@@ -316,6 +319,7 @@ static void ap_lora_send(lv_event_t *e) {
   pa["ap_password"] = ap_password;
   String public_announcement = JSON.stringify(pa);
   radio.startTransmit(public_announcement);
+  radio_follow_receive(true);   // transmit leaves the radio in standby
   //Serial.print(public_announcement);
 }
 
@@ -327,6 +331,7 @@ static void wifi_lora_send(lv_event_t *e) {
   pa["ap_password"] = password;
   String public_announcement = JSON.stringify(pa);
   radio.startTransmit(public_announcement);
+  radio_follow_receive(true);   // transmit leaves the radio in standby
   //Serial.print(public_announcement);
 }
 
@@ -477,7 +482,12 @@ static bool crown_irq_pending() {
          watch.pmic.irq().isPekeyLongPress(status);
 }
 
-static void doze_until_crown() {
+// Waits for the crown (and the wrist raise) at 80 MHz with the panel dark.
+// `until_ms` of 0 waits for the crown alone; a deadline ends the doze at that
+// millis() value, which is how the bridge linger hands control back to the real
+// light sleep instead of keeping the watch awake for as long as a central is
+// attached.
+static void doze_until_crown(uint32_t until_ms = 0) {
   setCpuFrequencyMhz(80);
   //my_print("=========esp_light_sleep_start=========\n");
   char count = 0;
@@ -488,6 +498,9 @@ static void doze_until_crown() {
   uint32_t crown_at = 0;
 
   while (!pmuIrq) {
+    if (until_ms && (int32_t)(millis() - until_ms) >= 0) {
+      break;                    // the deadline (a bridge linger) is up
+    }
     sportsIrq = false;      // movement must not light the screen back up either
     if (jw_room == "message") {
       if (buttonMillis != 0  && millis() - buttonMillis > DEFAULT_SCREEN_TIMEOUT && count > 58) {
@@ -522,6 +535,9 @@ static void doze_until_crown() {
     // running anyway; the crown is re-checked inside the beat so a press is
     // not held up by the sampling.
     uint32_t beat_end = millis() + (tiltDbg ? 20 : 500);
+    if (until_ms && (int32_t)(until_ms - beat_end) < 0) {
+      beat_end = until_ms;      // do not overshoot the deadline by a whole beat
+    }
     while (!pmuIrq && (int32_t)(beat_end - millis()) > 0) {
       if (wristPoll()) {
         // the arm came up while dozing: end the doze the way a crown click would

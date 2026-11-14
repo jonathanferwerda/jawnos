@@ -20,6 +20,21 @@ String https_request_raw(String url, String method, String payloadData);
 void apply_president_payload();
 static void clock_apply_to_face();
 
+// lv_label_set_text() frees and reallocates the label's text and invalidates the
+// area even when the text is identical, and the loop calls the face writers on
+// every pass (~5 ms). Compare first: an unchanged label then costs one strcmp and
+// no heap churn, no redraw. Used by ip_writer() and the battery/clock strip.
+static void label_set_if_changed(lv_obj_t *obj, const char *text) {
+  if (!obj || !text) {
+    return;
+  }
+  const char *old = lv_label_get_text(obj);
+  if (old && strcmp(old, text) == 0) {
+    return;
+  }
+  lv_label_set_text(obj, text);
+}
+
 // The current LilyGoLib keeps its board object in a global reference called
 // `instance` (LilyGoWatch2022 for the T-Watch S3). The rest of this sketch was
 // written against the old fork, which called it `watch`.
@@ -294,6 +309,7 @@ static int house_volume_last = -1;
 static bool house_volume_ok = false;
 void lowPowerEnergyHandler();
 static bool accel_sample(float &x, float &y, float &z);
+static void radio_follow_receive(bool force = false);
 static void tilt_serial_poll();
 static void tilt_dbg_stream();
 static void tilt_wake_control(lv_event_t *e);

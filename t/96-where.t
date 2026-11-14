@@ -249,7 +249,7 @@ for my $name (qw(subs::path_name path_name)) {
 # --- a fixture: JS const declarations and generated-tree pruning -----------
 {
 	my $tmp = tempdir(CLEANUP => 1);
-	make_path("$tmp/public/js", "$tmp/jw/.pio/build");
+	make_path("$tmp/public/js", "$tmp/jt", "$tmp/jw/.pio/build");
 	write_file("$tmp/public/js/app.js", <<'JS');
 function plainOne() {
 }
@@ -261,6 +261,11 @@ JS
 	write_file("$tmp/jw/.pio/build/dup.cpp", "void probe_fn() {\n}\n");
 	write_file("$tmp/jw/big_model.h", "#define probe_big 1\n" . ('x' x 140000) . "\n");
 	write_file("$tmp/public/js/jquery.js", "function probe_vendored() {\n}\n");
+	# The deck is scanned before the watch, and the mention scan stops at eight
+	# lines: a flag the deck mentions often used to hide the watch's declaration.
+	write_file("$tmp/jt/deck.ino", "static bool probe_flag = false;\n"
+		. join('', map { "probe_flag = $_;\n" } 1 .. 10));
+	write_file("$tmp/jw/watch.ino", "static bool probe_flag = false;\n");
 
 	my (undef, $out) = where('--root', $tmp, 'probeConst');
 	like($out, qr{^probeConst\tpublic/js/app\.js:3$}m, 'a const-function is a declaration');
@@ -268,6 +273,11 @@ JS
 	(undef, $out) = where('--root', $tmp, 'probe_fn');
 	like($out, qr{^probe_fn\tjw/sketch\.ino:1$}m, 'the sketch that defines it');
 	unlike($out, qr{\.pio|dup\.cpp}, 'the build copy is pruned');
+
+	(undef, $out) = where('--root', $tmp, 'probe_flag');
+	like($out, qr{^probe_flag\tjw/watch\.ino:1$}m,
+		'a firmware bool is a declaration, even when an earlier tree mentions it more');
+	like($out, qr{^probe_flag\tjt/deck\.ino:1$}m, 'and every tree that declares it is named');
 
 	my ($code) = where('--root', $tmp, 'probe_big');
 	is($code, 1, 'a generated header over the size cap is skipped');

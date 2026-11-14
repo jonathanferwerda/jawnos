@@ -21,14 +21,16 @@ my $jw_ui   = read_file("$root/jw/jw_06_net_face.ino");
 my $jw_face = read_file("$root/jw/jw_07_house_audio.ino");
 my $jw_sleep = read_file("$root/jw/jw_13_serial_lowpower.ino");
 
-# --- a burst of taps rides one connection ------------------------------------
+# --- a burst of taps rides one connection, then the watch really sleeps ------
 # The real light sleep tears the radio down, and only the crown wakes the chip,
 # so a press after the screen went dark paid for a bring-up and a central
-# reconnect. With a central on the link the watch dozes instead, keeping it.
-like( $jw_sleep, qr/if \(lightSleep && !watch\.isUsbIn\(\) && !ble_link_ready\(\)\)/,
-	'a live central keeps the radio up through the doze' );
-like( $jw_sleep, qr/bridge connected, dozing to keep the link/,
-	'and the log says which of the two reasons kept it awake' );
+# reconnect. The bridge is held for a bounded window for that burst; keeping it
+# for as long as a central was attached (and dozing instead of sleeping) is the
+# drain t/294 covers.
+like( $jw_sleep, qr/doze_until_crown\(millis\(\) \+ BLE_LINGER_MS\);/,
+	'a live central keeps the radio up through the bridge window' );
+like( $jw_sleep, qr/if \(want_sleep && !pmuIrq\) \{/,
+	'and the real sleep follows the window, so the watch does sleep' );
 like( $jw_loop, qr/millis\(\) - ble_link_up_at > 250\)/,
 	'a queued tap flushes once the link is subscribed, not after 2.5 s' );
 unlike( $jw_loop, qr/millis\(\) - ble_link_up_at > 2500\)/,

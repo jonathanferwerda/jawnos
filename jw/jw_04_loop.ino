@@ -25,8 +25,8 @@ void loraChatBroadcast(String computer_name, String body, long timestamp) {
     Serial.println(returns);
     radio.startTransmit(returns);
     Serial.println("transmitted");
-   // delay(2000);
-  //   radio.startReceive();
+    // back to listening only when receive is on (transmit leaves standby)
+    radio_follow_receive(true);
     Serial.println("back to listening");
   }
 }
@@ -48,6 +48,13 @@ void step_writer() {
   if (stepCounter != true || jw_room != "watch") {
     return;
   }
+  // the pedometer register is an I2C read and the sample it feeds is at most one
+  // a minute; reading it on every 5 ms pass only burned bus time
+  static uint32_t counter_read_at = 0;
+  if (millis() - counter_read_at < 1000) {
+    return;
+  }
+  counter_read_at = millis();
   uint32_t counter = watch.getStepCounter();
   if (counter == steps) {
     return;                   // no steps since the last sample, nothing to add
@@ -209,39 +216,53 @@ void jawn_loop() {
   // over, so keep it fresh wherever we are: that way turning the AP on shows its
   // address on the screen right away instead of only while standing in net room.
   ip_writer();
-  int volts = watch.getBatteryPercent();
+  // The fuel gauge is an I2C transaction, and every label write frees and
+  // reallocates its text and invalidates the area; the loop runs every ~5 ms, so
+  // reading and painting the strip on every pass was a constant I2C + redraw
+  // cost. Sample it at 1 Hz and only touch a label whose text actually changed.
+  static uint32_t face_gauge_at = 0;
+  static int face_volts = -1;
+  if (face_volts < 0 || millis() - face_gauge_at >= 1000) {
+    face_gauge_at = millis();
+    face_volts = (int)watch.getBatteryPercent();
+  }
   // the status strip belongs to the watch face; the Set room owns that space
   // for its tab row, so leave the labels empty while we are in there. Off the
   // clock room the face (and its clock) is not on screen, so its corner shows
   // the time instead - the battery reading only means something beside the clock.
   if (face_battery && jw_room != "configure") {
-    lv_color_t status_colour;
-    if (volts < 20) {
-      status_colour = lv_color_hex(0xFF0000);
+    static int face_band = -1;   // 0 low, 1 mid, 2 good: repaint on a band change only
+    static uint32_t face_clock_at = 0;
+    int band = (face_volts < 20) ? 0 : (face_volts < 40) ? 1 : 2;
+    if (band != face_band) {
+      face_band = band;
+      lv_color_t status_colour = band == 0 ? lv_color_hex(0xFF0000)
+                              : band == 1 ? lv_color_hex(0xFFFF00)
+                                          : lv_color_hex(0x00FF00);
+      lv_obj_set_style_text_color(face_battery, status_colour, LV_PART_MAIN);
+      lv_obj_set_style_text_color(face_percent, status_colour, LV_PART_MAIN);
     }
-    else if (volts < 40) {
-      status_colour = lv_color_hex(0xFFFF00);
-    }
-    else {
-      status_colour = lv_color_hex(0x00FF00);
-    }
-    lv_obj_set_style_text_color(face_battery, status_colour, LV_PART_MAIN);
-    lv_obj_set_style_text_color(face_percent, status_colour, LV_PART_MAIN);
     if (jw_room == "watch") {
-      lv_label_set_text_fmt(face_battery, "%d", volts);
-      lv_label_set_text(face_percent, "%");
+      char volts_text[8];
+      snprintf(volts_text, sizeof(volts_text), "%d", face_volts);
+      label_set_if_changed(face_battery, volts_text);
+      label_set_if_changed(face_percent, "%");
+      face_clock_at = 0;   // leaving the face repaints the corner at once
     }
     else {
-      lv_label_set_text(face_battery, rtc.getTime("%H:%M").c_str());
-      lv_label_set_text(face_percent, "");
+      if (face_clock_at == 0 || millis() - face_clock_at >= 1000) {
+        face_clock_at = millis();
+        label_set_if_changed(face_battery, rtc.getTime("%H:%M").c_str());
+      }
+      label_set_if_changed(face_percent, "");
     }
     // the machine serving the watch, by name; the address is the fallback until
     // a Now Me has ever named it
     if (computer_name != "") {
-      lv_label_set_text(face_name, computer_name.c_str());
+      label_set_if_changed(face_name, computer_name.c_str());
     }
     else {
-      lv_label_set_text(face_name, homebaseIP.c_str());
+      label_set_if_changed(face_name, homebaseIP.c_str());
     }
   }
   touch_watch();

@@ -323,6 +323,13 @@ static void tilt_serial_poll() {
   }
 }
 
+// How long the bridge is kept up after the screen goes dark. A burst of taps
+// arrives within a few seconds of the screen going off; after this the link is
+// torn down and the real light sleep starts (see lowPowerEnergyHandler). An
+// always-on link is a dozing 80 MHz core plus a radio, which is what drained the
+// watch overnight while the setting said it was sleeping.
+#define BLE_LINGER_MS 20000
+
 void lowPowerEnergyHandler()
 {
   Serial.println("Enter light sleep mode!");
@@ -367,15 +374,26 @@ void lowPowerEnergyHandler()
   wrist_look_watch = false;   // the glance ends with the screen
   wristPollReset();    // both sleep paths start their pose from scratch
 
-  // A burst of taps has to ride one connection. The real sleep below tears the
+  // A burst of taps has to ride one connection: the real sleep below tears the
   // radio down (stop_ble_transfer) and only the crown wakes the chip, so every
   // press after the screen went dark paid for a fresh bring-up and a central
-  // reconnect - each tap landed on a different link. While a central is on the
-  // other end, doze at 80 MHz instead and keep the link; with no central the
-  // real sleep still runs, so the battery saving is only given up when the
-  // homebase is actually there.
-  if (lightSleep && !watch.isUsbIn() && !ble_link_ready()) {
-    
+  // reconnect. Hold the bridge for a short window after the screen goes off -
+  // long enough for a run of presses - and then tear it down and sleep. Keeping
+  // the link for as long as a central was attached (the 2026-11-07 build) meant
+  // the watch never entered the real sleep at home at all: the doze runs at
+  // 80 MHz with the radio up, which is the battery drain, not the saving.
+  const bool want_sleep = lightSleep && !watch.isUsbIn();
+  if (want_sleep && ble_link_ready()) {
+    Serial.println("[sleep] bridge held for a tap burst");
+    doze_until_crown(millis() + BLE_LINGER_MS);
+    if (pmuIrq) {
+      Serial.println("[sleep] wake inside the bridge window");
+    }
+  }
+  if (want_sleep && !pmuIrq) {
+    // a bridge linger ends with dozing cleared; the real sleep is still "asleep"
+    // for the voice ship task, which must not start a send while the radio goes
+    dozing = true;
     Serial.println("right before sleep");
     crumb("ls enter");
     // a latched PMU event keeps PMU_INT pulled low, and EXT1 would read that as
@@ -588,17 +606,11 @@ void lowPowerEnergyHandler()
     }
 
 
-  } else {
+  } else if (!want_sleep) {
     if (lightSleep) {
       // an attached USB serial both refuses the light sleep and wakes the chip
-      // straight out of it, so doze properly until the cable is out; a live
-      // bridge is the other reason to doze, and keeps the link for a burst
-      if (watch.isUsbIn()) {
-        Serial.println("[sleep] USB is attached, dozing instead of light sleeping");
-      }
-      else {
-        Serial.println("[sleep] bridge connected, dozing to keep the link");
-      }
+      // straight out of it, so doze properly until the cable is out
+      Serial.println("[sleep] USB is attached, dozing instead of light sleeping");
     }
     doze_until_crown();
   }
