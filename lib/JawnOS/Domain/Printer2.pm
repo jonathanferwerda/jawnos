@@ -396,6 +396,30 @@ sub scanner_live_capabilities {
 	my $caps = $ip ? (eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {}) : {};
 	return ($ip, $caps) if $caps->{'adf'} || $caps->{'platen'};
 	return ($ip, $caps) unless %{ &adf_scanner() };
+	# A machine that already found the printer names it in the readiness ledger.
+	# A phone whose ARP table is not readable can use that address when it is on
+	# the same network, instead of the saved one from a network it has left.
+	my $peer_ip = &scan_house_printer_ip();
+	if ($peer_ip ne '' && $peer_ip ne $ip) {
+		my $report = eval { &network_interface_reporter() } || {};
+		my $mine = '';
+		if (ref $report eq 'HASH') {
+			foreach my $nic (sort keys %{$report}) {
+				my $cand = $report->{$nic}->{'ip'} || '';
+				next if $cand =~ /^127\./;
+				next unless &ip_is_private($cand);
+				$mine = $cand;
+				last;
+			}
+		}
+		if ($mine ne '' && &same_net_test($mine, $peer_ip)) {
+			my $peer_caps = eval { JawnOS::Platform::Print::scan_capabilities($peer_ip) } || {};
+			if ($peer_caps->{'adf'} || $peer_caps->{'platen'}) {
+				&cache_set({ app => 'misc', context => 'scan_printer_ip', warranty => '-1d' }, $peer_ip);
+				return ($peer_ip, $peer_caps);
+			}
+		}
+	}
 	my $last_try = eval { &cache_get({ app => 'misc', context => 'scan_discovery_at' }) } || 0;
 	return ($ip, $caps) unless (&rightNow() - $last_try) > 120000;
 	&cache_set({ app => 'misc', context => 'scan_discovery_at', warranty => '-10m' }, &rightNow());

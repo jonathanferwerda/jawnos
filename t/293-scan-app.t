@@ -179,6 +179,26 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	ok($caps->{'adf'}, 'and the live capabilities come with it');
 }
 {
+	# A phone cannot read the ARP table, so it borrows the address a computer
+	# already found and published in the house's readiness ledger.
+	no warnings 'redefine';
+	local *subs::printer_live_ip = sub { return '192.168.0.74' };
+	local *JawnOS::Platform::Print::scan_capabilities = sub {
+		my ($ip) = @_;
+		return $ip eq '192.168.1.109' ? { adf => { width => 2550, height => 4200 } } : {};
+	};
+	local *subs::adf_scanner = sub { return { name => 'Officejet LivingRoom' } };
+	local *subs::scan_house_printer_ip = sub { return '192.168.1.109' };
+	local *subs::network_interface_reporter = sub { return { wlan0 => { ip => '192.168.1.50' } } };
+	local *subs::ip_is_private = sub { return 1 };
+	local *subs::same_net_test = sub { return 'yes' };
+	local *subs::cache_set = sub { return 1 };
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	my ($ip, $caps) = subs::scanner_live_capabilities();
+	is($ip, '192.168.1.109', 'the house ledger lends the phone the printer address');
+	ok($caps->{'adf'}, 'with the capabilities that answered');
+}
+{
 	# The feed list follows the live printer, so a phone beside it is a scanner
 	# even though the static capability table has no scan entry for a phone.
 	no warnings 'redefine';
@@ -313,6 +333,7 @@ my $printer2 = read_file("$root/lib/JawnOS/Domain/Printer2.pm");
 like($printer2, qr/scan_auto_enabled/, 'the ADF watcher obeys the per-scanner switch');
 like($printer2, qr/scan_auto_target/, 'and sends the edge where the rule says');
 like($printer2, qr/scanAutomatic/, 'the Scan app hears the physical edge');
+like($printer2, qr/scan_house_printer_ip/, 'a phone borrows the printer the house found');
 like(read_file("$root/lib/JawnOS/Domain/Scan.pm"), qr/sub scan_scanner_rules\b/,
 	'the rules live with the scan readiness ledger');
 
