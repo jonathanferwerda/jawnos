@@ -125,6 +125,14 @@ function attributeSave(att) {
 				// field must not insert the same name a second time
 				att.data('att_saved', true);
 				wind.find('.' + attribute + '_list').replaceWith(response.template);
+				// A name the catalogue already holds answers with that row instead
+				// of a twin; say so rather than letting the press look wasted.
+				if (response.duplicate) {
+					var t = (typeof jawnosT === 'function') ? jawnosT : function (s) { return s; };
+					if (typeof jawnosAlertText === 'function') {
+						jawnosAlertText(t('That model already exists. Edit the row already in the list.'));
+					}
+				}
 			}
 			else {
 				att.removeData('att_saving');

@@ -627,6 +627,21 @@ sub action_6625 {
 		$quantity =~ s/[^0-9.]//gi;
 	}
 
+	# A model row is named by its uuid, and the sync rail merges by uuid, so two
+	# rows with the same app and name never join on their own. Register's Add used
+	# to mint a fresh uuid on every press, which is how one model came to be listed
+	# twice. Adding a name the catalogue already holds is that row, not a twin: the
+	# reply names it and leaves it alone. Options are not guarded here - the same
+	# option name in two categories is a real pair.
+	my $duplicate;
+	if ($uuid eq 'new' && $att eq 'model' && length $name) {
+		my $existing = &subs::db_query(
+			'select uuid from model where app = ? and name = ? order by cast(ost as integer) desc, rowid desc limit 1',
+			$app, $name
+		)->hashes;
+		$duplicate = $existing->[0] if scalar @{$existing};
+	}
+
 	if ($uuid ne 'new') {
 		if ($def eq 'on' && $att eq 'model') {
 #			&subs::db_update($att, { def => 'off' }, { app => $app })->hashes;
@@ -642,7 +657,7 @@ sub action_6625 {
 		discount => $discount,
 		markup => $markup,
 		description => $description,
-		uuid => &subs::random_string_creator(50),
+		uuid => ($duplicate ? $duplicate->{'uuid'} : &subs::random_string_creator(50)),
 		timestamp => $timestamp,
 		server_time => $server_time,
 		manufacturer => $manufacturer,
@@ -661,7 +676,12 @@ sub action_6625 {
 
 	$returner->{'category'} = $category if $att eq 'option_category' || $att eq	'subcategory';
 	if ($uuid eq 'new') {
-		&subs::db_insert($att, $returner);
+		if ($duplicate) {
+			$returner->{'duplicate'} = 1;
+		}
+		else {
+			&subs::db_insert($att, $returner);
+		}
 	}
 	else {
 		$returner->{'uuid'} = $uuid;
