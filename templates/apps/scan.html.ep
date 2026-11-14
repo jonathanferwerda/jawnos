@@ -12,6 +12,12 @@
 	.scan_feed:hover { background: var(--line); }
 	.scan_where { font-size: 12px; opacity: .7; }
 	.scan_app_status { min-height: 20px; margin: 6px 0 10px; color: #8e8e8e; font-size: 13px; }
+	.scan_scanners { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+	.scan_scanners_head { font-size: 12px; opacity: .7; margin-bottom: 4px; }
+	.scan_scanner { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; padding: 2px 0; }
+	.scan_scanner_name { font-weight: bold; min-width: 140px; }
+	.scan_scanner label { display: inline-flex; gap: 4px; align-items: center; }
+	.scan_scanner select { font: inherit; }
 	.scan_pool_head { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
 	.scan_pool { display: flex; flex-wrap: wrap; gap: 8px; max-height: 300px; overflow: auto; margin-top: 8px; }
 	.scan_item { position: relative; width: 112px; border: 1px solid var(--line); border-radius: 8px;
@@ -40,6 +46,11 @@
 		<span class="scan_where"></span>
 	</div>
 	<div class="scan_app_status"></div>
+
+	<div class="scan_scanners">
+		<div class="scan_scanners_head"><b><%= &subs::ui('Scanners') %></b></div>
+		<div class="scan_scanner_list"></div>
+	</div>
 
 	<div class="scan_pool_head">
 		<b><%= &subs::ui('Unclaimed scans') %></b>

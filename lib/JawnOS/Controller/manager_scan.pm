@@ -31,12 +31,18 @@ sub action_52326 {
 # GET /manager/scan/pool
 sub action_52327 {
 	my $c = shift;
+	my $last_error = eval { &subs::cache_get({ app => 'scan', context => 'last_error' }) };
+	$last_error = undef unless ref $last_error eq 'HASH'
+		&& (($last_error->{'at'} || 0) + 0) > &subs::rightNow() - 5 * 60 * 1000;
 	$c->render(json => {
 		ok => 1,
 		items => &scan_pool_items($c),
 		scanner => &subs::scan_dispatcher(),
 		here => &subs::scan_dispatcher_here() ? 1 : 0,
 		feeds => &market_scan_feeds(),
+		scanners => &scan_scanner_rows(),
+		pending => &scan_pending_job(),
+		error => $last_error ? $last_error->{'message'} : undef,
 	});
 }
 
@@ -69,6 +75,20 @@ sub action_52328 {
 	}
 	my $uuid = $c->param('uuid') || &subs::random_string_creator(20);
 	$c->param('uuid' => $uuid);
+	# An automatic edge names its scan id. The claim file makes the app window
+	# that got there first the only one that takes the paper; the rest stand
+	# down, and the row this press writes is the same id the job recorded.
+	my $scan_id = $c->param('scan_id') || '';
+	$scan_id =~ s/[^A-Za-z0-9]//g;
+	$scan_id = substr($scan_id, 0, 64);
+	if (length $scan_id) {
+		unless (&scan_claim_once($scan_id)) {
+			return $c->render(json => { ok => 1, claimed => 0, queued => 1, uuid => $uuid });
+		}
+		eval { &subs::scan_job_state($scan_id, 'running') };
+		$c->param('uuid' => $scan_id);
+		$uuid = $scan_id;
+	}
 	my $started = eval {
 		&appointment_writer($c, {
 			app => 'scan',
@@ -95,8 +115,31 @@ sub action_52328 {
 		uuid => $uuid,
 		app => 'scan',
 		source => 'unclaimed',
+		scan_id => $scan_id,
 	});
 	$c->render(json => { ok => 1, uuid => $uuid });
+}
+
+# What the automatic scan service does for one scanner: watch the feeder or not,
+# and where a loaded edge goes (Market's receipt reader, or the Scan app's pool).
+# The rules are house-wide, so every machine edits and reads the same choice.
+# POST /manager/scan/scanner
+sub action_52330 {
+	my $c = shift;
+	my $key = $c->param('key') || '';
+	my $row = (grep { ($_->{'key'} || '') eq $key } @{ &scan_scanner_rows() })[0];
+	unless ($row) { return $c->render(json => { ok => 0, error => 'no such scanner' }); }
+	my $auto = $c->param('auto') ? 1 : 0;
+	my $target = ($c->param('target') || '') eq 'scan' ? 'scan' : 'market';
+	&subs::scan_scanner_rule_save($key, $row->{'name'}, $auto, $target);
+	eval {
+		&Websocket::send('server', {
+			console => &Websocket::console_command('scanScannersReload'),
+			timestamp => &subs::rightNow(),
+		});
+		1;
+	};
+	$c->render(json => { ok => 1, scanners => &scan_scanner_rows() });
 }
 
 # Throw a scan away: the paper is not worth keeping, and the pool should not

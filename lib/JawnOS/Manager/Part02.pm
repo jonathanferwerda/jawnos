@@ -299,39 +299,64 @@ sub scan($c,$scandata) {
 	system('mkdir', '-p', $thumb_folder) unless -e $thumb_folder;
 	my $thumb = $thumb_folder . '/' . $app_path . '_' . $timestamp . '.jpg';
 	my $file = $filename . '/' . $app_path . '_' . $timestamp;
-	my $image_file = $file . '.jpg';
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		($db,$database,$sql) = &subs::database_grabber();
-		my $command = &scanner_scan_command($feed, $file);
-		my $run = &subs::subprocessor_command($command, { name => 'document scanner', stderr => 'inherit' });
-		my $caseworker = $run->{'output'} // '';
-		sleep 1;
-		my @scans = &scanner_page_list($file);
+		# The printer's own eSCL service first: it needs no SANE device, so a
+		# phone - or a machine whose SANE address moved - can scan. The local
+		# scanimage run stays the fallback for a printer that does not answer it.
+		my @scans;
+		my $escl = &scanner_escl_pages($feed, $file);
+		if ($escl->{'pages'}) {
+			@scans = @{$escl->{'pages'}};
+		}
+		elsif (!defined $escl->{'error'}) {
+			my $command = &scanner_scan_command($feed, $file);
+			if (defined $command) {
+				my $run = &subs::subprocessor_command($command, { name => 'document scanner', stderr => 'inherit' });
+				my $caseworker = $run->{'output'} // '';
+				sleep 1;
+				@scans = &scanner_page_list($file);
+			}
+			else {
+				&subs::cache_set({ app => 'scan', context => 'last_error', warranty => '-5m' },
+					{ at => &subs::rightNow(), message => 'the scanner does not offer that feed' });
+				&log_writer('scan ' . $feed . ' failed: no scanner command');
+			}
+		}
+		else {
+			&subs::cache_set({ app => 'scan', context => 'last_error', warranty => '-5m' },
+				{ at => &subs::rightNow(), message => $escl->{'error'} });
+			&log_writer('scan ' . $feed . ' failed: ' . $escl->{'error'});
+		}
 		my @filenames;
 		my $count = 1;
 		my $photo_size = &subs::setting_grabber({ app => 'misc', setting => 'scan_size', device => $device } ) || '1920x1080';
 		foreach my $scan (@scans) {
-			$file = $scan;
-			$file =~ s/\.[^.]+$//;
-			$image_file = $file . '.jpg';
+			my $image_file = $scan;
+			my $already_jpg = ($image_file =~ /\.jpe?g$/i);
+			unless ($already_jpg) {
+				(my $stem = $image_file) =~ s/\.[^.]+$//;
+				$image_file = $stem . '.jpg';
+			}
 
 			my @image_file = split /\//, $image_file;
 			my $thumb_file = pop @image_file;
 			$thumb = $thumb_folder . '/' . $thumb_file;
 
-
 			my $ocr = &ocr_reader($c,$scan);
-			if ($photo_size ne "Raw") {
-				my ($pw, $ph) = &subs::image_resolution_parts($photo_size);
-				my $converted = ($pw && $ph) ? &subs::image_bridge_convert($scan, $image_file, max_width => $pw, max_height => $ph, auto_orient => 1) : undef;
-				system('magick', 'convert', $scan, '-auto-orient', '-strip', '-resize', $photo_size, $image_file) unless $converted;
+			unless ($already_jpg) {
+				if ($photo_size ne "Raw") {
+					my ($pw, $ph) = &subs::image_resolution_parts($photo_size);
+					my $converted = ($pw && $ph) ? &subs::image_bridge_convert($scan, $image_file, max_width => $pw, max_height => $ph, auto_orient => 1) : undef;
+					system('magick', 'convert', $scan, '-auto-orient', '-strip', '-resize', $photo_size, $image_file) unless $converted;
+				}
+				else {
+					my $converted = &subs::image_bridge_convert($scan, $image_file, auto_orient => 1);
+					system('magick', 'convert', $scan, '-auto-orient', '-strip', $image_file) unless $converted;
+				}
+				&subs::secure_unlink($scan);
 			}
-			else {
-				my $converted = &subs::image_bridge_convert($scan, $image_file, auto_orient => 1);
-				system('magick', 'convert', $scan, '-auto-orient', '-strip', $image_file) unless $converted;
-			}
-			&subs::secure_unlink($scan);
 			push @filenames, { f => $image_file , thumb => $thumb, ocr => $ocr};
 
 			$count++;
@@ -380,15 +405,21 @@ sub scan($c,$scandata) {
 				};
 				&log_writer('scan ready in the Scan app: ' . $pages . ' page(s)');
 			}
+			if ($scandata->{'scan_id'}) {
+				eval { &subs::scan_job_finish($scandata->{'scan_id'}) };
+			}
 		}
 		elsif ( scalar @filenames == 0 && $source ne 'existing' ) {
 			&subs::db_delete('appointments', { uuid => $uuid });
 			&Websocket::send('server', { console => &Websocket::console_command('removeAppointmentDetail', $app, $uuid)});
+			if ($scandata->{'scan_id'}) {
+				eval { &subs::scan_job_state($scandata->{'scan_id'}, 'failed') };
+			}
 		}
 		&subs::file_encrypter({ app => $app });
 	}, { name => 'document scanner' });
 	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
-	return encode_json [{ f => $image_file }];
+	return encode_json [{ f => $file . '.jpg' }];
 }
 
 sub play_audio($file) {

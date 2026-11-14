@@ -3,7 +3,7 @@
 // pool is the same shape, so filing reuses /manager/unclaimed/claim with
 // holder=scan. Two buttons take a page, and the kind on each card is read off
 // the page's own text - a label, never a destination.
-var jawnScan = { items: [], selected: {}, target: null, poll: null };
+var jawnScan = { items: [], selected: {}, target: null, poll: null, scanners: [], claimed: '' };
 
 function scanOpener() {
 	$.ajax({
@@ -36,12 +36,16 @@ function jawnScanPool() {
 			jawnScan.items = (res && res.items) || [];
 			jawnScan.selected = {};
 			jawnScan.target = null;
+			jawnScan.scanners = (res && res.scanners) || [];
 			var where = $('#scan_app .scan_where');
 			if (res && res.scanner) {
 				where.text(res.here ? jawnosT('This machine scans.') : jawnosT('Scans run on') + ' ' + res.scanner + '.');
 			}
 			else { where.text(''); }
 			jawnScanRender();
+			jawnScanRenderScanners();
+			jawnScanPending(res);
+			if (res && res.error) { jawnScanStatus(res.error); }
 		},
 		error: function () { jawnScanStatus(jawnosT('Could not load the scans.')); }
 	});
@@ -116,6 +120,78 @@ function jawnScanRender() {
 	});
 	jawnScanClaimState();
 }
+
+// One row per scanner: whether the automatic service watches it, and where a
+// loaded edge goes. Both are house-wide (the rules live in the scan app's own
+// settings), so every device shows and edits the same choice.
+function jawnScanRenderScanners() {
+	var list = $('#scan_app .scan_scanner_list').empty();
+	if (!jawnScan.scanners.length) {
+		list.append($('<div class="scan_scanner" style="opacity:.6;"></div>').text(jawnosT('No scanner is listed for this machine.')));
+		return;
+	}
+	$.each(jawnScan.scanners, function (i, s) {
+		var row = $('<div class="scan_scanner"></div>').attr('scanner_key', s.key || '');
+		row.append($('<span class="scan_scanner_name"></span>').text(s.name || s.key || ''));
+		var auto = $('<label></label>')
+			.append($('<input type="checkbox" class="scan_scanner_auto" hint="Watch this scanner for paper">').prop('checked', !!s.auto))
+			.append(document.createTextNode(' ' + jawnosT('Auto-scan')));
+		var target = $('<label></label>')
+			.append(document.createTextNode(jawnosT('Paper goes to') + ' '))
+			.append($('<select class="scan_scanner_target" hint="Where a loaded page is sent">'
+				+ '<option value="market">' + jawnosT('Market (receipt)') + '</option>'
+				+ '<option value="scan">' + jawnosT('Scan') + '</option></select>').val(s.target || 'market'));
+		auto.find('input').on('change', function () { jawnScanSaveScanner(s, row); });
+		target.find('select').on('change', function () { jawnScanSaveScanner(s, row); });
+		row.append(auto).append(target);
+		list.append(row);
+	});
+}
+
+function jawnScanSaveScanner(s, row) {
+	var auto = row.find('.scan_scanner_auto').prop('checked') ? 1 : 0;
+	var target = row.find('.scan_scanner_target').val() || 'market';
+	$.ajax({
+		url: '/manager/scan/scanner',
+		type: 'POST',
+		data: { key: s.key, auto: auto, target: target, timestamp: Date.now() },
+		success: function (res) {
+			if (res && res.ok) { jawnScan.scanners = res.scanners || jawnScan.scanners; jawnScanRenderScanners(); }
+			else { jawnScanStatus((res && res.error) || jawnosT('Could not save the scanner.')); }
+		},
+		error: function () { jawnScanStatus(jawnosT('Could not save the scanner.')); }
+	});
+}
+
+// A loaded edge the watcher recorded for this machine: take it now, once. The
+// claim file answers the second window with queued=0, so two open Scan windows
+// cannot pull the same paper twice.
+function jawnScanPending(res) {
+	if (!res || !res.here || !res.pending) { return; }
+	var id = String(res.pending.scan_id || '');
+	if (!id || jawnScan.claimed === id) { return; }
+	jawnScan.claimed = id;
+	jawnScanStatus(jawnosT('Scanning…'));
+	$.ajax({
+		url: '/manager/scan/capture',
+		type: 'POST',
+		data: { feed: 'adf', scan_id: id, timestamp: Date.now() },
+		success: function (r) { if (r && r.ok) { jawnScanWatch(); } else { jawnScan.claimed = ''; } },
+		error: function () { jawnScan.claimed = ''; }
+	});
+}
+
+// The watcher's console notice for a loaded edge (see adf_receipt_watch). It
+// names the owner so another machine's window does not take this paper.
+window.scanAutomatic = function (opts) {
+	opts = opts || {};
+	if (opts.owner && typeof signatorial !== 'undefined' && String(opts.owner) !== String(signatorial)) { return; }
+	if ($('#scan_app').length) { jawnScanPool(); }
+};
+
+window.scanScannersReload = function () {
+	if ($('#scan_app').length) { jawnScanPool(); }
+};
 
 function jawnScanSelectedIds() {
 	return $.map(jawnScan.selected, function (v, k) { return k; });

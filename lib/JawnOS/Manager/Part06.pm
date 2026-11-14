@@ -510,7 +510,7 @@ sub market_receipt_scan {
 	# A phone beside the printer is a scanner when the printer speaks eSCL: it
 	# needs no SANE device, which is what makes a hotspot work. The local SANE
 	# command is the fallback for a printer that does not answer eSCL.
-	my $escl = &market_receipt_scan_escl($feed, $base);
+	my $escl = &scanner_escl_pages($feed, $base);
 	return ($escl->{'error'}, []) if $escl->{'error'};
 	return (undef, $escl->{'pages'}) if $escl->{'pages'};
 	my $command = &scanner_scan_command($feed, $base);
@@ -602,11 +602,12 @@ sub scan_pool_items($c) {
 	return [ sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) } @items ];
 }
 
-# The printer's own eSCL scan, converted to the JPEG pages the receipt reader
-# wants. Answers {} when the printer does not offer eSCL for that feed, so the
-# caller falls back to the local SANE command; { error } when eSCL tried and
-# failed; { pages } when it succeeded.
-sub market_receipt_scan_escl {
+# The printer's own eSCL scan, converted to the JPEG pages the callers read. It
+# is the one path a phone can take with the printer on a hotspot, because it
+# needs no SANE device and no local scanner config. Answers {} when the printer
+# does not offer eSCL for that feed, so the caller falls back to the local SANE
+# command; { error } when eSCL tried and failed; { pages } when it succeeded.
+sub scanner_escl_pages {
 	my ($feed, $base) = @_;
 	my $ip = &subs::printer_live_ip();
 	return {} unless $ip;
@@ -753,6 +754,89 @@ sub market_receipt_file {
 # house still scans on the computer that holds the scanner - the scan runs here).
 sub market_scan_feeds {
 	return [ @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] } ];
+}
+
+# The scanners the Scan app can show, each with the house-wide rule that says
+# whether the automatic service watches it and where a loaded edge goes. A
+# scanner in this machine's config is named from there; a rule another machine
+# saved for a scanner this one does not hold is still listed, so every device
+# edits the same choice.
+sub scan_scanner_rows {
+	my $config = &subs::config_reader() || {};
+	my $scanners = $config->{'scanners'};
+	my @local = ref $scanners eq 'ARRAY' ? grep { ref $_ eq 'HASH' } @{$scanners} : ();
+	my $rules = &subs::scan_scanner_rules();
+	my (@rows, %seen);
+	foreach my $scanner (@local) {
+		my $key = &subs::scan_scanner_key($scanner);
+		next if $seen{$key}++;
+		my $rule = &subs::scan_scanner_rule($key);
+		push @rows, {
+			key => $key,
+			name => &subs::format_name($scanner->{'name'} || $scanner->{'address'} || $key),
+			auto => $rule->{'auto'},
+			target => $rule->{'target'},
+			local => 1,
+		};
+	}
+	foreach my $key (sort keys %{$rules}) {
+		next if $seen{$key}++;
+		my $rule = &subs::scan_scanner_rule($key);
+		push @rows, {
+			key => $key,
+			name => &subs::format_name($rule->{'name'} || $key),
+			auto => $rule->{'auto'},
+			target => $rule->{'target'},
+			local => 0,
+		};
+	}
+	return \@rows;
+}
+
+# The freshest loaded edge this machine owns and has not taken yet. The watcher
+# writes the job and the Scan app claims it on the next pool read, so paper is
+# taken even when the app was closed when the edge happened.
+sub scan_pending_job {
+	my $me = &subs::scan_house_me();
+	return undef unless length $me;
+	my $now = &subs::rightNow();
+	my $rows = eval { &subs::db_select('scan_jobs')->hashes } || [];
+	my ($job) = sort { ($b->{'at'} || 0) <=> ($a->{'at'} || 0) } grep {
+		($_->{'owner'} || '') eq $me
+			&& (($_->{'state'} || '') eq 'dispatched')
+			&& ((($_->{'at'} || 0) + 0) > $now - 10 * 60 * 1000)
+	} @{$rows || []};
+	return $job ? { scan_id => $job->{'scan_id'}, printer => $job->{'printer'}, at => $job->{'at'} } : undef;
+}
+
+# One loaded edge is taken once: a file created O_EXCL under the house's temp
+# dir names the scan id, so two Scan windows cannot pull the same paper twice.
+# Old claims are cleared as they are met, the way the Market ADF claim does.
+sub scan_claim_once {
+	my ($scan_id) = @_;
+	return 0 unless defined $scan_id && length $scan_id;
+	$scan_id =~ s/[^A-Za-z0-9]//g;
+	$scan_id = substr($scan_id, 0, 64);
+	return 0 unless length $scan_id;
+	require JawnOS::Platform::Paths;
+	my $dir = JawnOS::Platform::Paths::tmp_dir() . '/jawn_scan_adf';
+	eval { mkdir $dir unless -d $dir; 1 };
+	my $file = $dir . '/' . $scan_id . '.claim';
+	my $fh;
+	unless (sysopen($fh, $file, O_CREAT | O_EXCL | O_WRONLY, 0600)) {
+		return 0;
+	}
+	print $fh $$;
+	close $fh;
+	if (opendir(my $dh, $dir)) {
+		foreach my $f (grep { /\.claim\z/ } readdir($dh)) {
+			my $p = $dir . '/' . $f;
+			my $age = -M $p;
+			unlink $p if defined $age && $age > 1;
+		}
+		closedir($dh);
+	}
+	return 1;
 }
 
 # The kept receipts, newest first (the raw `receipts` setting on the market app).

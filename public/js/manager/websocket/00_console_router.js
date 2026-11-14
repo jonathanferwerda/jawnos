@@ -131,6 +131,12 @@ var jawnosConsoleCommands = {
 	marketReceiptAdf: function (a) {
 		if (typeof marketReceiptAdf === 'function') { marketReceiptAdf(a[0] || {}); }
 	},
+	scanAutomatic: function (a) {
+		if (typeof scanAutomatic === 'function') { scanAutomatic(a[0] || {}); }
+	},
+	scanScannersReload: function () {
+		if (typeof scanScannersReload === 'function') { scanScannersReload(); }
+	},
 	jawnosThemeBundleApply: function (a) {
 		if (typeof jawnosThemeBundleApply === 'function') { jawnosThemeBundleApply(a[0], a[1]); }
 	},

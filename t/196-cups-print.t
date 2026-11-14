@@ -561,7 +561,7 @@ like(read_file("$root/public/js/manager/websocket/00_console_router.js"), qr/mar
 # so a phone on a hotspot needs no SANE device; the local command is the
 # fallback. The eSCL PDF is turned into the JPEG pages Market reads.
 my $part06 = read_file("$root/lib/JawnOS/Manager/Part06.pm");
-like($part06, qr/sub market_receipt_scan_escl\b/, 'the receipt scan has an eSCL path');
+like($part06, qr/sub scanner_escl_pages\b/, 'the receipt scan has an eSCL path');
 like($part06, qr/JawnOS::Platform::Print::scan_escl/, 'and asks the printer for the pages');
 like($part06, qr/pdftoppm/, 'converting the printer PDF to the pages Market reads');
 my $scan_module = read_file("$root/lib/JawnOS/Domain/Scan.pm");

@@ -399,10 +399,14 @@ sub adf_receipt_watch {
 	# two machines cannot raise two notices and two scans.
 	&scan_house_heartbeat();
 	return 0 unless &scan_dispatcher_here();
+	# The service is a choice per scanner, kept house-wide. Even when it is off,
+	# the heartbeat above still publishes this machine's readiness.
+	my $local = &adf_scanner();
+	my $scanner_key = &scan_scanner_key($local);
+	return 0 unless &scan_auto_enabled($scanner_key);
 	my $ip = &printer_live_ip();
 	return 0 unless $ip;
 	my $caps = eval { JawnOS::Platform::Print::scan_capabilities($ip) } || {};
-	my $local = &adf_scanner();
 	if (!$caps->{'adf'} && !%{$local}) {
 		my $last_try = eval { &cache_get({ app => 'misc', context => 'scan_discovery_at' }) } || 0;
 		if (&rightNow() - $last_try > 120000) {
@@ -429,6 +433,38 @@ sub adf_receipt_watch {
 	return 0 unless $job->{'ok'};
 	my $scan_id = $job->{'scan_id'};
 	my $owner = $job->{'owner'} || &scan_house_me();
+	# Where the edge goes is the scanner's own choice. Market keeps its receipt
+	# reader; Scan takes the paper into its holding pool. Either way the job row
+	# is already written, so the same edge is claimed once.
+	if (&scan_auto_target($scanner_key) eq 'scan') {
+		eval {
+			&notification_sender({
+				app => 'scan',
+				role => 'all',
+				title => &ui('Paper in the feeder'),
+				message => &ui('Paper is waiting for Scan.'),
+				uuid => &random_string_creator(20),
+				timestamp => &rightNow(),
+			}, undef);
+			1;
+		};
+		eval {
+			&Websocket::send('server', {
+				console => &Websocket::console_command('scanAutomatic', {
+					scan_id => $scan_id,
+					printer => $ip,
+					name => $name,
+					owner => $owner,
+					feed => 'adf',
+					timestamp => &rightNow(),
+				}),
+				timestamp => &rightNow(),
+			});
+			1;
+		};
+		&log_writer('adf scan waiting for the Scan app on ' . $ip);
+		return 1;
+	}
 	my $message = $name ne ''
 		? $name . ' has paper in the feeder.'
 		: 'The printer has paper in the feeder.';

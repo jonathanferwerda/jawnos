@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Scan.pm lib/JawnOS/Controller/manager_scan.pm lib/JawnOS/Routes/manager_scan.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Controller/manager_misc.pm templates/apps/scan.html.ep public/js/manager/scan.js templates/start_menu/start_menu.html.ep lib/JawnOS/Manager/Core1_tables_hooks.pm perl/help/topics_web.pl perl/help/topics_functions.pl
+# tests-for: lib/JawnOS/Domain/Scan.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Controller/manager_scan.pm lib/JawnOS/Routes/manager_scan.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Controller/manager_misc.pm templates/apps/scan.html.ep public/js/manager/scan.js public/js/manager/websocket/00_console_router.js templates/start_menu/start_menu.html.ep lib/JawnOS/Manager/Core1_tables_hooks.pm perl/help/topics_web.pl perl/help/topics_functions.pl
 # covers:    the Scan app's pool (unclaimed scans held for a week), the kind read
 #            off a page's text, and the wiring that puts the app on the start
 #            menu, in the rotation and in the claim route's holder list.
@@ -153,10 +153,66 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	local *subs::config_reader = sub { return { scanners => [ 'hpaio:/net/officejet_3830_series?ip=192.168.2.6' ] } };
 	local *JawnOS::Platform::Print::scan_capabilities = sub { return { adf => { width => 2550, height => 4200 } } };
 	local *JawnOS::Platform::Print::scan_escl = sub { return ( 'the scanner did not answer', [] ); };
-	my $escl = eval { Manager::market_receipt_scan_escl('adf', $dir . '/receipt_test') };
+	my $escl = eval { Manager::scanner_escl_pages('adf', $dir . '/receipt_test') };
 	ok(!$@, 'the eSCL receipt path does not die on a bare scanner entry');
 	is(ref $escl, 'HASH', 'it still answers a hash');
 	is($escl->{'error'}, 'the scanner did not answer', 'with the printer\'s own error');
+}
+
+# --- the automatic service's per-scanner rule -----------------------------
+# The ADF watcher and the app read the same house-wide rule; on and Market are
+# the defaults, and a saved choice is visible from another machine.
+{
+	no warnings 'redefine';
+	local *subs::path_name = sub { my $n = shift; $n =~ s/\s+/_/g; return $n; };
+	local *subs::warranty_device = sub { return 'all'; };
+	my $stored;
+	local *subs::setting_grabber = sub { return $stored };
+	local *subs::setting_setter = sub { my ($s) = @_; $stored = $s->{'value'}; return 1 };
+
+	is(subs::scan_scanner_key({ name => 'Officejet LivingRoom' }), 'Officejet_LivingRoom',
+		'a scanner is keyed by its name');
+	is(subs::scan_scanner_key({}), 'scanner', 'and an unnamed one by a stable default');
+	is(subs::scan_auto_enabled('Officejet_LivingRoom'), 1, 'the service watches a scanner by default');
+	is(subs::scan_auto_target('Officejet_LivingRoom'), 'market', 'and sends paper to Market by default');
+	ok(subs::scan_scanner_rule_save('Officejet_LivingRoom', 'Officejet LivingRoom', 0, 'scan'),
+		'a rule is saved');
+	is(subs::scan_auto_enabled('Officejet_LivingRoom'), 0, 'Auto-scan can be turned off');
+	is(subs::scan_auto_target('Officejet_LivingRoom'), 'scan', 'and the paper sent to Scan');
+	is(subs::scan_scanner_rule('Officejet_LivingRoom')->{'name'}, 'Officejet LivingRoom',
+		'the display name travels with the rule');
+	is(subs::scan_auto_enabled('another'), 1, 'a scanner with no rule keeps the default');
+}
+
+# --- an automatic edge is taken once ---------------------------------------
+# The watcher's job carries a scan id; the window that claims it first writes
+# the holding row under that id, and a second window is told to stand down.
+{
+	no warnings 'redefine';
+	my (@scanned, $claimed);
+	local *Manager::appointment_writer = sub { return 1 };
+	local *Manager::market_scan_feeds = sub { return [ 'adf' ] };
+	local *Manager::scan = sub { my ($c, $data) = @_; push @scanned, { %{$data} }; return 'ok' };
+	local *Manager::scan_claim_once = sub { return $claimed };
+	local *subs::scan_house_me = sub { return 'this-machine' };
+	local *subs::scan_dispatcher = sub { return 'this-machine' };
+	local *subs::scan_job_state = sub { return 1 };
+	local *subs::random_string_creator = sub { return 'rand' };
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+
+	$claimed = 1;
+	my $c = FakeController->new(feed => 'adf', scan_id => 'scan123');
+	Manager::action_52328($c);
+	is(scalar @scanned, 1, 'the claiming window runs the scan');
+	is($scanned[0]{'scan_id'}, 'scan123', 'under the job id');
+	is($scanned[0]{'uuid'}, 'scan123', 'and the holding row carries it too');
+	is($c->{'rendered'}{'json'}{'ok'}, 1, 'and answers ok');
+
+	$claimed = 0;
+	my $second = FakeController->new(feed => 'adf', scan_id => 'scan123');
+	Manager::action_52328($second);
+	is(scalar @scanned, 1, 'a second window does not pull the paper again');
+	is($second->{'rendered'}{'json'}{'claimed'}, 0, 'it is told the edge is already taken');
 }
 
 # --- the app's wiring -------------------------------------------------------
@@ -165,6 +221,7 @@ like($scan_routes, qr{'/manager/scan'}, 'the page has a route');
 like($scan_routes, qr{'/manager/scan/pool'}, 'the pool has one');
 like($scan_routes, qr{'/manager/scan/capture'}, 'and taking a page has one');
 like($scan_routes, qr{'/manager/scan/discard'}, 'and throwing one away has one');
+like($scan_routes, qr{'/manager/scan/scanner'}, 'and a scanner rule has one');
 like(read_file("$root/lib/JawnOS/Routes.pm"), qr/\bmanager_scan\b/, 'the route group is registered');
 
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_scan.pm");
@@ -173,18 +230,30 @@ like($controller, qr/7 \* 24 \* 60 \* 60 \* 1000/, 'for a week');
 like($controller, qr/type => 'scan'/, 'as a scan appointment');
 like($controller, qr/&delete_file\b/, 'discarding one page unlinks it');
 like($controller, qr/&delete_app\b/, 'discarding the last page removes the holder');
+like($controller, qr/sub action_52330\b/, 'the scanner rule has its action');
+like($controller, qr/scan_claim_once/, 'an automatic edge is claimed once');
+like($controller, qr/scan_scanner_rule_save/, 'and the choice is saved house-wide');
+like($controller, qr/scanners => &scan_scanner_rows/, 'the pool lists the scanners');
+like($controller, qr/pending => &scan_pending_job/, 'with the edge waiting to be taken');
 
 my $template = read_file("$root/templates/apps/scan.html.ep");
 like($template, qr/id="scan_app"/, 'the page has its own panel');
 like($template, qr/class="scan_feed" feed="adf"/, 'the feeder is a press');
 like($template, qr/class="scan_feed" feed="flatbed"/, 'so is the flatbed');
 like($template, qr/class="scan_pool"/, 'and the pool is drawn');
+like($template, qr/class="scan_scanner_list"/, 'the scanners have their own list');
 
 my $js = read_file("$root/public/js/manager/scan.js");
 like($js, qr/url: '\/manager\/scan\/capture'/, 'the buttons take a page');
 like($js, qr/holder: 'scan'/, 'filing names the Scan holder');
 like($js, qr/\.notification\[app="scan"\]/, 'the notice opens the app');
 like($js, qr/url: '\/manager\/scan\/discard'/, 'a card can be thrown away');
+like($js, qr/url: '\/manager\/scan\/scanner'/, 'a scanner rule can be saved');
+like($js, qr/scan_scanner_auto/, 'Auto-scan is a switch');
+like($js, qr/scan_scanner_target/, 'and Paper goes to is a choice');
+like($js, qr/window\.scanAutomatic\s*=/, 'an open window takes the physical edge');
+like(read_file("$root/public/js/manager/websocket/00_console_router.js"), qr/scanAutomatic/,
+	'and the console router reaches it');
 
 my $menu = read_file("$root/templates/start_menu/start_menu.html.ep");
 like($menu, qr/id="scan_toggle"/, 'the start menu offers Scan');
@@ -204,10 +273,19 @@ like($claim, qr{encode_json\(\\\@left\).*?\$holder_app}s, 'and it stops listing 
 my $scan = read_file("$root/lib/JawnOS/Manager/Part02.pm");
 like($scan, qr/\$app eq 'scan' && \$source eq 'unclaimed'/, 'a landing scan is announced for the house');
 like($scan, qr/waiting in Scan/, 'in words that point at the app');
+like($scan, qr/&scanner_escl_pages\(\$feed/, 'a scan tries the printer\'s eSCL service first');
+my $printer2 = read_file("$root/lib/JawnOS/Domain/Printer2.pm");
+like($printer2, qr/scan_auto_enabled/, 'the ADF watcher obeys the per-scanner switch');
+like($printer2, qr/scan_auto_target/, 'and sends the edge where the rule says');
+like($printer2, qr/scanAutomatic/, 'the Scan app hears the physical edge');
+like(read_file("$root/lib/JawnOS/Domain/Scan.pm"), qr/sub scan_scanner_rules\b/,
+	'the rules live with the scan readiness ledger');
 
 # --- the help topic ---------------------------------------------------------
 my $help = read_file("$root/perl/help/topics_web.pl");
 like($help, qr/app => 'scan'/, 'the Scan page has its own topic');
+like($help, qr/Auto-scan/, 'the topic explains the auto-scan switch');
+like($help, qr/Paper goes to/, 'and the destination choice');
 like(read_file("$root/perl/help/topics_functions.pl"), qr/'scan',/,
 	'and scanning names it');
 

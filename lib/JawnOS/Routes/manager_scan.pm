@@ -9,6 +9,7 @@ sub routes {
 	[52327, 'get', '/manager/scan/pool', 'action_52327'],
 	[52328, 'post', '/manager/scan/capture', 'action_52328'],
 	[52329, 'post', '/manager/scan/discard', 'action_52329'],
+	[52330, 'post', '/manager/scan/scanner', 'action_52330'],
 	);
 }
 

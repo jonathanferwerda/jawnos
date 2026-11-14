@@ -215,4 +215,62 @@ sub scan_doc_kind {
 	return 'document';
 }
 
+# ---- what the automatic scan service does ----------------------------------
+# The ADF watcher and the Scan app share one rule per scanner, kept house-wide in
+# the settings table (device 'all') so every machine reads the same choice. A
+# rule names whether the service watches at all, and where a loaded edge goes:
+# to Market (its receipt reader) or to the Scan app's holding pool.
+sub scan_scanner_key {
+	my ($scanner) = @_;
+	my $name = ref $scanner eq 'HASH' ? ($scanner->{'name'} || $scanner->{'address'} || '') : '';
+	$name = 'scanner' unless defined $name && length $name;
+	return &path_name($name);
+}
+
+sub scan_scanner_rules {
+	my $raw = &setting_grabber({ app => 'scan', setting => 'auto_scan', device => &warranty_device() });
+	my $rules = eval { return decode_json($raw || '') } || {};
+	return ref $rules eq 'HASH' ? $rules : {};
+}
+
+# One scanner's rule, with the service on and Market as the destination when the
+# house has not chosen otherwise.
+sub scan_scanner_rule {
+	my ($key) = @_;
+	my $rule = { auto => 1, target => 'market', name => '' };
+	return $rule unless defined $key && length $key;
+	my $saved = &scan_scanner_rules()->{$key};
+	return $rule unless ref $saved eq 'HASH';
+	$rule->{'auto'} = $saved->{'auto'} ? 1 : 0 if defined $saved->{'auto'};
+	$rule->{'target'} = 'scan' if ($saved->{'target'} || '') eq 'scan';
+	$rule->{'name'} = $saved->{'name'} || '';
+	return $rule;
+}
+
+sub scan_scanner_rule_save {
+	my ($key, $name, $auto, $target) = @_;
+	return 0 unless defined $key && length $key && length $key <= 200;
+	my $rules = &scan_scanner_rules();
+	$rules->{$key} = {
+		auto => ($auto ? 1 : 0),
+		target => (($target || '') eq 'scan' ? 'scan' : 'market'),
+		name => (defined $name ? $name : ''),
+	};
+	&setting_setter({
+		app => 'scan', setting => 'auto_scan', device => &warranty_device(),
+		value => encode_json($rules),
+	});
+	return 1;
+}
+
+sub scan_auto_enabled {
+	my ($key) = @_;
+	return &scan_scanner_rule($key)->{'auto'} ? 1 : 0;
+}
+
+sub scan_auto_target {
+	my ($key) = @_;
+	return &scan_scanner_rule($key)->{'target'};
+}
+
 1;
