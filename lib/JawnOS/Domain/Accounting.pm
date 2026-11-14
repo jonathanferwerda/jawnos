@@ -726,6 +726,93 @@ sub guide_message_warranty {
 			&subs::say_it('backfill settings_dedupe_null_keys: collapsed ' . $sth->rows . ' duplicate settings row(s)');
 			return 1;
 		},
+		'games_options_v1' => sub {
+			# A games option is what the appointment details list, and the details
+			# group their options by option category. The games app had no category,
+			# so the game the browser attached to a play session had no heading to
+			# appear under; and a hand-made option (`solitaire`) plus the browser's
+			# own (`Solitaire`) could both exist, because the lookup matched the
+			# name's case exactly. Give the app one Games category, keep one row per
+			# game, and repoint every appointment's options list at the row that
+			# survives. A machine that receives the code runs this once.
+			my $now = &subs::rightNow();
+			my $cat_uuid = 'games_option_category_v1';
+			my $cat = &subs::db_select('option_category', undef, { app => 'games', uuid => $cat_uuid })->hashes->[0];
+			unless ($cat && ($cat->{'uuid'} // '') ne '') {
+				&subs::db_insert('option_category', {
+					app => 'games',
+					name => 'Games',
+					uuid => $cat_uuid,
+					timestamp => $now,
+					server_time => $now,
+				});
+			}
+			my %canon = (solitaire => 'Solitaire', mahjong => 'Mahjong', blackjack => 'Blackjack', twirl => 'Twirl');
+			my $rows = &subs::db_query("select * from option where app = 'games'")->hashes || [];
+			my %by_game;
+			foreach my $row ( @{$rows} ) {
+				my $key = lc($row->{'name'} // '');
+				$key =~ s/^\s+|\s+$//g;
+				next unless $canon{$key};
+				push @{ $by_game{$key} }, $row;
+			}
+			my $removed = 0;
+			foreach my $key ( sort keys %by_game ) {
+				my @group = sort { (0 + ($b->{'timestamp'} // 0)) <=> (0 + ($a->{'timestamp'} // 0)) } @{ $by_game{$key} };
+				my ($keep) = grep { (($_->{'uuid'} // '') ne '') && ($_->{'name'} // '') eq $canon{$key} && (($_->{'save_app'} // '') ne 'on') } @group;
+				$keep ||= (grep { ($_->{'uuid'} // '') ne '' } @group)[0];
+				next unless $keep && ($keep->{'uuid'} // '') ne '';
+				foreach my $member ( @group ) {
+					next unless defined $member->{'uuid'} && length $member->{'uuid'};
+					my $is_keep = ($member->{'uuid'} // '') eq ($keep->{'uuid'} // '');
+					my $refs = &subs::db_query('select uuid, options from appointments where options like ?', '%' . ($member->{'uuid'} // '') . '%')->hashes || [];
+					foreach my $ref ( @{$refs} ) {
+						my $opts = eval { decode_json($ref->{'options'}) };
+						next unless ref $opts eq 'ARRAY';
+						my $changed = 0;
+						foreach my $o ( @{$opts} ) {
+							next unless ref $o eq 'HASH';
+							if (($o->{'uuid'} // '') eq ($member->{'uuid'} // '')) {
+								$o->{'uuid'} = $keep->{'uuid'};
+								$changed = 1;
+							}
+							if (($o->{'name'} // '') =~ /^\s*\Q$key\E\s*$/i) {
+								$o->{'name'} = $canon{$key};
+								$changed = 1;
+							}
+						}
+						&subs::db_update('appointments', { options => encode_json($opts) }, { uuid => $ref->{'uuid'} }) if $changed;
+					}
+					next if $is_keep;
+					&subs::db_delete('option', { uuid => $member->{'uuid'} });
+					$removed++;
+				}
+				my $chars = eval { decode_json($keep->{'characteristics'} // '') };
+				$chars = [] unless ref $chars eq 'ARRAY';
+				my ($prior) = grep { ref $_ eq 'HASH' && ($_->{'name'} // '') eq 'option_category' } @{$chars};
+				my $stamp = (ref $prior eq 'HASH' && defined $prior->{'timestamp'}) ? $prior->{'timestamp'} : $now;
+				my @others = grep { ref $_ eq 'HASH' && ($_->{'name'} // '') ne 'option_category' } @{$chars};
+				my $want = encode_json([ {
+					name => 'option_category',
+					value => $cat_uuid,
+					timestamp => $stamp,
+					uuid => 'games_option_category_' . $keep->{'uuid'},
+				}, @others ]);
+				my %up;
+				$up{'name'} = $canon{$key} if ($keep->{'name'} // '') ne $canon{$key};
+				$up{'description'} = $canon{$key} if ($keep->{'description'} // '') ne $canon{$key};
+				$up{'unit'} = 'games' if ($keep->{'unit'} // '') ne 'games';
+				$up{'def'} = 'off' if ($keep->{'def'} // '') ne 'off';
+				$up{'save_app'} = '' if ($keep->{'save_app'} // '') ne '';
+				$up{'characteristics'} = $want if ($keep->{'characteristics'} // '') ne $want;
+				if (scalar keys %up) {
+					$up{'server_time'} = $now;
+					&subs::db_update('option', \%up, { uuid => $keep->{'uuid'} });
+				}
+			}
+			&subs::say_it("backfill games_options_v1: removed $removed duplicate game option(s)");
+			return 1;
+		},
 		'remote_machine_payload_prune_v1' => sub {
 			# Rows written before the mirror/data views still carry the whole
 			# login body and each peer's full row. Rewrite them once; the live

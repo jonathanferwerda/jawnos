@@ -610,24 +610,100 @@ sub game_play_appointment_tick {
 # catalog row is what the details view lists, and the parent's options JSON is
 # what marks it selected. The row is made on first play and is never a default,
 # so a new Games appointment does not collect every game it could have been.
-sub browser_game_option {
-	my ($game, $now) = @_;
-	my $row = &db_select('option', undef, { app => 'games', name => $game })->hashes->[0];
-	return $row if $row && ($row->{'uuid'} // '') ne '';
+# A game option is filed under one option category named Games: the details
+# view groups its rows by category, and an option with none draws no heading,
+# so the played game would not show under the appointment it belongs to. The
+# category's uuid is fixed so every machine that receives this code agrees on
+# the row it syncs.
+sub browser_game_option_category {
+	my ($now) = @_;
 	$now ||= &rightNow();
+	my $uuid = 'games_option_category_v1';
+	my $row = &db_select('option_category', undef, { app => 'games', uuid => $uuid })->hashes->[0];
+	return $row if $row && ($row->{'uuid'} // '') ne '';
 	$row = {
 		app => 'games',
-		name => $game,
-		uuid => &random_string_creator(40),
+		name => 'Games',
+		uuid => $uuid,
 		timestamp => $now,
 		server_time => $now,
-		def => 'off',
-		quantity => 1,
-		unit => 'games',
-		save_app => '',
-		description => $game,
 	};
-	&db_insert('option', $row);
+	&db_insert('option_category', $row);
+	return $row;
+}
+
+# The characteristics a game option carries: the Games category, and whatever
+# other characteristics the row already had. A fixed characteristic uuid and
+# the row's own first stamp keep the JSON stable across the every-touch call,
+# so a resume does not rewrite the catalog row just to say the same thing.
+sub browser_game_option_characteristics {
+	my ($option_uuid, $existing, $now) = @_;
+	my $chars = eval { decode_json($existing // '') };
+	$chars = [] unless ref $chars eq 'ARRAY';
+	my ($prior) = grep { ref $_ eq 'HASH' && ($_->{'name'} // '') eq 'option_category' } @{$chars};
+	my @others = grep { ref $_ eq 'HASH' && ($_->{'name'} // '') ne 'option_category' } @{$chars};
+	my $stamp = (ref $prior eq 'HASH' && defined $prior->{'timestamp'}) ? $prior->{'timestamp'} : $now;
+	return encode_json([
+		{
+			name => 'option_category',
+			value => 'games_option_category_v1',
+			timestamp => $stamp,
+			uuid => 'games_option_category_' . $option_uuid,
+		},
+		@others,
+	]);
+}
+
+sub browser_game_option {
+	my ($game, $now) = @_;
+	$now ||= &rightNow();
+	&browser_game_option_category($now);
+	# The hand-made option for a game wrote its name in whatever case the person
+	# chose (`solitaire`), so an exact-name lookup made a second row (`Solitaire`)
+	# the first time the browser played it. Match the name without case, prefer
+	# the browser's own row, and reuse that one row from then on.
+	my $row = &db_query(q{
+		select * from option
+		 where app = 'games' and lower(trim(name)) = lower(?)
+		 order by case when name = ? then 0 else 1 end,
+		          case when save_app = '' or save_app is null then 0 else 1 end,
+		          cast(timestamp as integer) desc
+		 limit 1
+	}, $game, $game)->hash;
+	if (!$row || ($row->{'uuid'} // '') eq '') {
+		my $uuid = &random_string_creator(40);
+		$row = {
+			app => 'games',
+			name => $game,
+			uuid => $uuid,
+			timestamp => $now,
+			server_time => $now,
+			def => 'off',
+			quantity => 1,
+			unit => 'games',
+			save_app => '',
+			description => $game,
+			characteristics => &browser_game_option_characteristics($uuid, '', $now),
+		};
+		&db_insert('option', $row);
+		return $row;
+	}
+	# A game option names the game and nothing else: it starts no child app (the
+	# play session is the Games row itself), it is never a default, and it sits
+	# under Games. Normalize a row an older build or a hand edit left different.
+	my $want = &browser_game_option_characteristics($row->{'uuid'}, $row->{'characteristics'}, $now);
+	my %up;
+	$up{'name'} = $game if ($row->{'name'} // '') ne $game;
+	$up{'description'} = $game if ($row->{'description'} // '') ne $game;
+	$up{'unit'} = 'games' if ($row->{'unit'} // '') ne 'games';
+	$up{'def'} = 'off' if ($row->{'def'} // '') ne 'off';
+	$up{'save_app'} = '' if ($row->{'save_app'} // '') ne '';
+	$up{'characteristics'} = $want if ($row->{'characteristics'} // '') ne $want;
+	if (scalar keys %up) {
+		$up{'server_time'} = $now;
+		&db_update('option', \%up, { uuid => $row->{'uuid'}, app => 'games' });
+		$row->{$_} = $up{$_} foreach keys %up;
+	}
 	return $row;
 }
 

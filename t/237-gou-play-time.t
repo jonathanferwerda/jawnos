@@ -123,6 +123,16 @@ sub sessions {
 	my $browser = sub {
 		return &subs::db_query('select * from appointments where app = ? and source = ? and device = ? order by cast(timestamp as integer)', $app, 'browser_game', $browser_device)->hashes || [];
 	};
+	# A hand-made option wrote the name in whatever case the person chose. The
+	# browser's lookup must find it rather than make a second row, keeping the
+	# one the person already had and giving it the game's own spelling.
+	&subs::db_delete('option', { app => 'games' });
+	&subs::db_delete('option_category', { app => 'games' });
+	&subs::db_insert('option', {
+		app => 'games', name => 'solitaire', uuid => 'hand-made-solitaire',
+		timestamp => $b1 - 1_000, server_time => $b1 - 1_000,
+		def => 'false', quantity => 1, unit => 'games', save_app => 'on', description => 'Solitaire',
+	});
 
 	$NOW = $b1 + 1_000;
 	my $answer = &subs::browser_game_play({ device => $browser_device, game => 'Solitaire', state => 'play', at => $b1 });
@@ -140,7 +150,16 @@ sub sessions {
 	is( $browser_options->[0]->{'name'}, 'Solitaire', 'named Solitaire' );
 	my $browser_catalog = &subs::db_select('option', undef, { app => 'games', name => 'Solitaire' })->hashes->[0];
 	ok( $browser_catalog->{'uuid'}, 'with a row in the model/option table' );
+	is( $browser_catalog->{'uuid'}, 'hand-made-solitaire', 'the hand-made row is reused, not duplicated' );
+	my $game_rows = &subs::db_query("select * from option where app = 'games' and lower(name) = 'solitaire'")->hashes;
+	is( scalar @{$game_rows}, 1, 'one catalog row per game, whatever the name case' );
 	is( $browser_catalog->{'def'}, 'off', 'and it is not a default option' );
+	is( $browser_catalog->{'save_app'}, '', 'a game option starts no child app' );
+	my $games_category = &subs::db_select('option_category', undef, { app => 'games', uuid => 'games_option_category_v1' })->hashes->[0];
+	ok( $games_category && $games_category->{'name'} eq 'Games', 'the option is filed under a Games category' );
+	my $browser_chars = eval { decode_json($browser_catalog->{'characteristics'}) } || [];
+	is( ($browser_chars->[0] // {})->{'value'}, 'games_option_category_v1',
+		'and the catalog row points at that category' );
 
 	# a quiet game pauses at the last touch
 	$NOW = $b1 + 50_000;
