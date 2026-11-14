@@ -42,6 +42,16 @@ sub legacy_note {
 }
 
 my $K = 'test-house-key';
+
+# The oldest stored shape: an inner container keyed to a house key the security
+# history no longer holds, an empty-key outer layer, and no md5 marker. The
+# plaintext is the only thing that can vouch for a recovery key.
+sub old_key_note {
+	my ($secret, $plain) = @_;
+	my $container = subs::note_seal_container($plain, $secret, 'aes-256-cbc');
+	my $payload = encode_base64($container, '') . ':::---:::' . 'aes-256-cbc';
+	return subs::encrypter_legacy(undef, $payload);
+}
 my $plain_real  = 'legacy note under the real key';
 my $plain_empty = 'legacy note from an upload with no session';
 my $plain_ocr   = 'text read off a scanned page';
@@ -139,6 +149,48 @@ is(subs::note_decrypter_strict($patience, $empty_token), '',
 is(subs::note_decrypter($patience, $empty_token), 'the device token',
 	'while the ordinary note reader still opens it for at-rest data');
 
+# --- a note from before the retained key history --------------------------
+# The same rows the live sweep reports as `failed`: sealed under a passphrase
+# that no security row carries any more. A caller that has the old passphrase
+# hands it in, and the sweep re-seals under the key in use now.
+my $old_key = 'the-key-before-the-rotation';
+my $old_plain = 'a note written before the house key changed, long enough to be judged text';
+my $old_note = old_key_note($old_key, $old_plain);
+is(subs::note_decrypter($K, $old_note), '', 'without the old passphrase the lost-key note does not open');
+is(subs::note_decrypter($K, $old_note, undef, 0, [$old_key]), $old_plain,
+	'the old passphrase opens it when it is handed in');
+is(subs::note_reseal_value($old_note, $K, undef, ['the-wrong-passphrase']), undef,
+	'a wrong old passphrase leaves the note untouched');
+my $old_resealed = subs::note_reseal_value($old_note, $K, undef, [$old_key]);
+like($old_resealed, qr/\AJS1:/, 'a recovered note is rewritten as JS1');
+is(subs::note_decrypter_strict($K, $old_resealed), $old_plain, 'and reads back strictly to the same words');
+
+# The sweep threads the candidates through to the values that need them.
+my @recovered;
+my $old_appt = { rowid => 13, notes => $old_note, start_notes => undef, end_notes => '', file => undef, ost => 3000 };
+{
+	no warnings 'redefine';
+	local *subs::suds_grabber = sub { return $K };
+	local *subs::db_query = sub {
+		my ($sql) = @_;
+		return FakeRows->new($sql =~ /from appointments/ ? [$old_appt] : []);
+	};
+	local *subs::db_update = sub { push @recovered, [@_]; return 1; };
+	my $miss = subs::note_reseal(0, { table => 'appointments' });
+	is($miss->{'failed'}, 1, 'the sweep reports a lost-key note without the old passphrase');
+	is($miss->{'notes'}, 0, 'and changes nothing');
+	my $dry = subs::note_reseal(0, { table => 'appointments', old_secrets => [$old_key] });
+	is($dry->{'failed'}, 0, 'with the old passphrase the note is no longer a failure');
+	is($dry->{'notes'}, 1, 'and the dry run counts the change');
+	is(scalar @recovered, 0, 'while writing nothing');
+	my $applied = subs::note_reseal(1, { table => 'appointments', old_secrets => [$old_key] });
+	is($applied->{'notes'}, 1, 'the apply pass rewrites it');
+	is(scalar @recovered, 1, 'one guarded write');
+	like($recovered[0]->[1]->{'notes'}, qr/\AJS1:/, 'the stored value is JS1');
+	is(subs::note_decrypter_strict($K, $recovered[0]->[1]->{'notes'}), $old_plain,
+		'and reads back to the original words');
+}
+
 # --- the token readers and the map name the strict one ---------------------
 like(read_file("$root/lib/JawnOS/Domain/Network.pm"), qr/note_decrypter_strict\(\$patience/,
 	'the watch authorizer reads its token strictly');
@@ -148,6 +200,8 @@ like(read_file("$root/lib/JawnOS/Domain/Loader.pm"), qr/note_decrypter note_decr
 	'the domain map carries the strict reader and the sweep');
 like(read_file("$root/scripts/note_reseal.pl"), qr/subs::note_reseal\(\$apply, \{/,
 	'the script runs the shared sweep with its apply flag');
+like(read_file("$root/scripts/note_reseal.pl"), qr/--old-secret-file/,
+	'the script can be handed the passphrase from before the retained history');
 
 # --- the rest of the note-shaped data --------------------------------------
 my $hk = 'test-house-key';

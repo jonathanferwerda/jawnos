@@ -684,6 +684,39 @@ sub note_unseal {
 	return $plain;
 }
 
+# Open a legacy note with one candidate secret, for a note sealed before a key
+# rotation whose old credential is no longer in the security history (a restore
+# that dropped it, or a rotation older than the history this build keeps). Unlike
+# the ordinary reader, nothing here vouches for the candidate: a CTR stream
+# decrypts to *something* under every key, and a CBC block has a one-in-256
+# chance of unpadding by accident. A payload that names its md5 must match it;
+# anything else has to read as text, which is what a note is. (A note shorter
+# than 32 bytes with no marker cannot be proven, so it is left alone.)
+sub note_recover_with {
+	my ($contented, $secret) = @_;
+	return undef unless defined $contented && length $contented;
+	return undef unless defined $secret && length $secret;
+	my $payload = &subs::decrypter($secret, $contented);
+	return undef unless defined $payload && length $payload;
+	my ($b64, $standard, $md5) = split ':::---:::', $payload, 3;
+	return undef unless defined $b64 && length $b64;
+	$standard = 'aes-256-ctr' unless defined $standard && length $standard;
+	my $container = decode_base64($b64);
+	return undef unless defined $container && length $container;
+	my $plain = &note_open_container($container, $secret, $standard);
+	return undef unless defined $plain && length $plain;
+	if (defined $md5 && length $md5) {
+		# a note that carries a marker names its own plaintext: a mismatch is a
+		# wrong key, even when the padding happened to come out.
+		my $mark = lc substr($md5, 0, 5);
+		return $plain if &shorthand_name(md5_sum($plain), 5) eq $mark;
+		my $chopped = $plain; chomp $chopped;
+		return $chopped if &shorthand_name(md5_sum($chopped), 5) eq $mark;
+		return undef;
+	}
+	return &plaintext_looks_text($plain) ? $plain : undef;
+}
+
 sub note_memo_put {
 	my ($key, $value) = @_;
 	return if exists $note_memo{$key};
@@ -699,7 +732,7 @@ sub note_memo_put {
 }
 
 sub note_decrypter {
-	my ($secret, $contented, $timestamp, $tries) = @_;
+	my ($secret, $contented, $timestamp, $tries, $extra) = @_;
 	$tries ||= 0;
 	return '' unless defined $contented && length $contented;
 
@@ -708,8 +741,11 @@ sub note_decrypter {
 	# key rotation is opened with the credentials current then - and it is always
 	# present for mail, so leaving it out kept every message out of the memo and
 	# made a re-read pay the key derivation again. A timed miss is not kept: a
-	# historical credential that arrives later can still open it.
-	my $memo_key = md5_sum($secret // '') . ':' . md5_sum($contented) . ':' . md5_sum($timestamp // '');
+	# historical credential that arrives later can still open it. The recovery
+	# candidates name their own memo slot: the same ciphertext opens differently
+	# once the caller supplies the key it was written under.
+	my $extra_key = ($extra && @{$extra}) ? md5_sum(join "\x1e", @{$extra}) : '';
+	my $memo_key = md5_sum($secret // '') . ':' . md5_sum($contented) . ':' . md5_sum($timestamp // '') . ':' . $extra_key;
 	return $note_memo{$memo_key} if defined $note_memo{$memo_key};
 
 	# the key in use now opens almost every note, and one in-process try costs
@@ -732,8 +768,20 @@ sub note_decrypter {
 	# nothing opened it: the note may predate the oldest credential we hold, so ask
 	# again from a moment further back, twice at most
 	if (!defined $plain && !$timestamp && $tries < 2) {
-		my $deep = &note_decrypter($secret, $contented, &subs::rightNow() * 10000, $tries + 1);
+		my $deep = &note_decrypter($secret, $contented, &subs::rightNow() * 10000, $tries + 1, $extra);
 		$plain = $deep if defined $deep && length $deep;
+	}
+
+	# A backfill can be handed the passphrase the house used before the retained
+	# rotation history. Each candidate has to prove itself on the plaintext; see
+	# note_recover_with.
+	if (!defined $plain && $extra) {
+		foreach my $cand ( @{$extra} ) {
+			next unless defined $cand && length $cand;
+			next if defined $secret && $cand eq $secret;
+			my $opened = &note_recover_with($contented, $cand);
+			if (defined $opened && length $opened) { $plain = $opened; last; }
+		}
 	}
 
 	$plain = '' unless defined $plain;
@@ -762,10 +810,10 @@ sub note_decrypter_strict {
 # format. This sweep rewrites each legacy note as JS1 under the key in use now;
 # it is idempotent and only writes a value that proves it reads back strictly.
 sub note_reseal_value {
-	my ($v, $K, $timestamp) = @_;
+	my ($v, $K, $timestamp, $old_secrets) = @_;
 	return undef unless defined $v && length $v && defined $K && length $K;
 	return $v if index($v, 'JS1:') == 0 && defined &subs::decrypter_strict($K, $v);
-	my $plain = &note_decrypter($K, $v, $timestamp);
+	my $plain = &note_decrypter($K, $v, $timestamp, 0, $old_secrets);
 	return undef unless defined $plain && length $plain;
 	# Re-seal the plaintext exactly: this note is already missing the newline
 	# note_encrypter drops on a first write, so asking it to drop another would
@@ -805,6 +853,10 @@ sub note_reseal {
 	my $want = $opts->{'table'} || 'both';
 	my $K = &suds_grabber() || $gb::suds;
 	return { ok => 0, error => 'no key on this machine' } unless $K;
+	# Passphrases from before the retained rotation history, tried only on the
+	# values the current key cannot open. They are never written anywhere.
+	my $old = $opts->{'old_secrets'};
+	$old = undef unless ref $old eq 'ARRAY' && scalar @{$old};
 	my $counts = { appointments => 0, notes => 0, ocr => 0, mailbox => 0, warehouse => 0, credentials => 0, settings => 0, keyboard => 0, tickets => 0, appointments_data => 0, vault => 0, mail_tokens => 0, device_tokens => 0, failed => 0, already => 0, seen => 0 };
 	my $next_appt = $opts->{'after_appt'} || 0;
 	my $next_mail = $opts->{'after_mail'} || 0;
@@ -819,7 +871,7 @@ sub note_reseal {
 			foreach my $field ( qw/notes start_notes end_notes/ ) {
 				my $v = $row->{$field};
 				next unless defined $v && length $v;
-				my $re = &note_reseal_value($v, $K, $row->{'ost'});
+				my $re = &note_reseal_value($v, $K, $row->{'ost'}, $old);
 				$re = &sealed_reseal_value($v, $K) unless defined $re;
 				if (!defined $re) { $counts->{'failed'}++; next; }
 				if ($re eq $v) { $counts->{'already'}++; next; }
@@ -833,7 +885,7 @@ sub note_reseal {
 				my $changed = 0;
 				foreach my $f ( @files ) {
 					next unless ref $f eq 'HASH' && defined $f->{'ocr'} && length $f->{'ocr'};
-					my $re = &note_reseal_value($f->{'ocr'}, $K, $row->{'ost'});
+					my $re = &note_reseal_value($f->{'ocr'}, $K, $row->{'ost'}, $old);
 					if (!defined $re) { $counts->{'failed'}++; next; }
 					if ($re eq $f->{'ocr'}) { $counts->{'already'}++; next; }
 					$f->{'ocr'} = $re;
@@ -863,7 +915,7 @@ sub note_reseal {
 			foreach my $field ( qw/subject body/ ) {
 				my $v = $row->{$field};
 				next unless defined $v && length $v;
-				my $re = &note_reseal_value($v, $K, $row->{'ost'});
+				my $re = &note_reseal_value($v, $K, $row->{'ost'}, $old);
 				$re = &sealed_reseal_value($v, $K) unless defined $re;
 				if (!defined $re) { $counts->{'failed'}++; next; }
 				if ($re eq $v) { $counts->{'already'}++; next; }
@@ -883,7 +935,7 @@ sub note_reseal {
 		# Warehouse notes and saved credential payloads are the same note shape.
 		my $wh = &db_query('select rowid, notes, ost from warehouse where length(notes)>0')->hashes;
 		foreach my $row ( @{ $wh || [] } ) {
-			my $re = &note_reseal_value($row->{'notes'}, $K, $row->{'ost'});
+			my $re = &note_reseal_value($row->{'notes'}, $K, $row->{'ost'}, $old);
 			if (!defined $re) { $counts->{'failed'}++; next; }
 			if ($re eq $row->{'notes'}) { $counts->{'already'}++; next; }
 			$counts->{'warehouse'}++;
@@ -892,7 +944,7 @@ sub note_reseal {
 		}
 		my $cr = &db_query('select rowid, payload, ost from credentials where length(payload)>0')->hashes;
 		foreach my $row ( @{ $cr || [] } ) {
-			my $re = &note_reseal_value($row->{'payload'}, $K, $row->{'ost'});
+			my $re = &note_reseal_value($row->{'payload'}, $K, $row->{'ost'}, $old);
 			if (!defined $re) { $counts->{'failed'}++; next; }
 			if ($re eq $row->{'payload'}) { $counts->{'already'}++; next; }
 			$counts->{'credentials'}++;
@@ -903,7 +955,7 @@ sub note_reseal {
 		# sweep's business; a sealed one that will not open is counted a failure.
 		my $set = &db_query("select rowid, app, setting, value, ost from settings where length(value)>0 and not (app='__president' and setting='vault') and setting != 'operator_door' and not (app='mailbox' and setting='email_config') and not (app='keyboard' and setting in ('keyboard','calculator'))")->hashes;
 		foreach my $row ( @{ $set || [] } ) {
-			my $re = &note_reseal_value($row->{'value'}, $K, $row->{'ost'});
+			my $re = &note_reseal_value($row->{'value'}, $K, $row->{'ost'}, $old);
 			if (!defined $re) {
 				$counts->{'failed'}++
 					if defined &subs::decrypter($K, $row->{'value'})
@@ -943,7 +995,7 @@ sub note_reseal {
 		# path is upgraded and the plain rows are left exactly as they are.
 		my $ad = &db_query('select rowid, data, ost from appointments where length(data)>0')->hashes;
 		foreach my $row ( @{ $ad || [] } ) {
-			my $re = &note_reseal_value($row->{'data'}, $K, $row->{'ost'});
+			my $re = &note_reseal_value($row->{'data'}, $K, $row->{'ost'}, $old);
 			$re = &sealed_reseal_value($row->{'data'}, $K) unless defined $re;
 			next unless defined $re;
 			if ($re eq $row->{'data'}) { $counts->{'already'}++; next; }
@@ -982,7 +1034,7 @@ sub note_reseal {
 				foreach my $field ( qw/password oauth_access_token oauth_refresh_token oauth_client_secret/ ) {
 					my $v = $es->{$field};
 					next unless defined $v && length $v;
-					my $re = &note_reseal_value($v, $K, undef);
+					my $re = &note_reseal_value($v, $K, undef, $old);
 					if (!defined $re) { $counts->{'failed'}++; next; }
 					if ($re eq $v) { $counts->{'already'}++; next; }
 					$es->{$field} = $re;

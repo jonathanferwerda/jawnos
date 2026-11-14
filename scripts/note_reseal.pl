@@ -7,6 +7,7 @@
 #   perl scripts/note_reseal.pl --json    # machine-readable result
 #   perl scripts/note_reseal.pl --batch 100 --after-appt 12000
 #   perl scripts/note_reseal.pl --table rest --apply   # only the rest pass
+#   perl scripts/note_reseal.pl --old-secret-file OLD.txt --apply
 #
 # Older uploads sealed a note's outer Crypt::Simple layer under the empty
 # passphrase (public knowledge) while the inner cipher stayed keyed to the real
@@ -15,6 +16,14 @@
 # under the key this machine holds now: appointment notes (notes, start_notes,
 # end_notes), the OCR text stored inside an appointment's file JSON, and mailbox
 # subject/body. Safe to re-run: a value that already opens as JS1 is left alone.
+#
+# A value sealed under a key this machine no longer holds (the security history
+# was restored from a copy that had already dropped it, or the rotation predates
+# the history this build keeps) cannot be opened by the key in use now. If the
+# person still has that passphrase, hand it in with --old-secret-file (one per
+# line), --old-secret, or JAWNOS_OLD_SECRET. Each candidate is tried only on the
+# values that did not open otherwise, must decrypt to text, and is never written
+# to the database or the report.
 #
 # It works in rowid batches so a long sweep reports progress and a kill is not a
 # loss: every batch is committed and the next run picks up from the rowid it
@@ -29,12 +38,28 @@ require './perl/subroutines.pl';
 my $apply = (grep { $_ eq '--apply' } @ARGV) ? 1 : 0;
 my $json  = (grep { $_ eq '--json' } @ARGV) ? 1 : 0;
 my ($batch, $after_appt, $after_mail, $only) = (250, 0, 0, 'all');
+my @old_secrets;
 for (my $i = 0; $i < @ARGV; $i++) {
 	$batch      = int($ARGV[$i + 1]) if $ARGV[$i] eq '--batch' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^\d+$/;
 	$after_appt = int($ARGV[$i + 1]) if $ARGV[$i] eq '--after-appt' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^\d+$/;
 	$after_mail = int($ARGV[$i + 1]) if $ARGV[$i] eq '--after-mail' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^\d+$/;
 	$only = $ARGV[$i + 1] if $ARGV[$i] eq '--table' && defined $ARGV[$i + 1] && $ARGV[$i + 1] =~ /^(?:appointments|mailbox|rest|all)$/;
+	if ($ARGV[$i] eq '--old-secret-file' && defined $ARGV[$i + 1]) {
+		my $path = $ARGV[++$i];
+		open(my $fh, '<', $path) or do { print "note reseal: cannot read $path: $!\n"; exit 1 };
+		my $text = do { local $/; <$fh> };
+		close $fh;
+		push @old_secrets, grep { length } map { my $s = $_; $s =~ s/\s+\z//; $s } split /\r?\n/, $text;
+	}
+	elsif ($ARGV[$i] eq '--old-secret' && defined $ARGV[$i + 1]) {
+		# argv is visible in ps; the file and the environment are the safe ways.
+		print STDERR "note reseal: --old-secret is visible in the process list; prefer --old-secret-file or JAWNOS_OLD_SECRET\n";
+		push @old_secrets, $ARGV[++$i];
+	}
 }
+push @old_secrets, $ENV{'JAWNOS_OLD_SECRET'} if defined $ENV{'JAWNOS_OLD_SECRET'} && length $ENV{'JAWNOS_OLD_SECRET'};
+my %seen_secret;
+@old_secrets = grep { length && !$seen_secret{$_}++ } @old_secrets;
 $batch = 1 if $batch < 1;
 
 my %sum = map { $_ => 0 } qw(seen appointments notes ocr mailbox warehouse credentials settings keyboard tickets appointments_data vault mail_tokens device_tokens failed already);
@@ -46,6 +71,7 @@ my $sweep = sub {
 			after_appt => $after_appt,
 			after_mail => $after_mail,
 			limit => $batch,
+			old_secrets => \@old_secrets,
 		});
 		if ($res->{'error'}) {
 			print "note reseal: $res->{'error'}\n";
@@ -62,7 +88,7 @@ my $sweep = sub {
 $sweep->('appointments') if $only eq 'all' || $only eq 'appointments';
 $sweep->('mailbox') if $only eq 'all' || $only eq 'mailbox';
 if ($only eq 'all' || $only eq 'rest') {
-	my $rest = subs::note_reseal($apply, { table => 'rest' });
+	my $rest = subs::note_reseal($apply, { table => 'rest', old_secrets => \@old_secrets });
 	if ($rest->{'error'}) {
 		print "note reseal: $rest->{'error'}\n";
 		exit 1;
