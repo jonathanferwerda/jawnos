@@ -16,6 +16,9 @@ my $root = "$FindBin::Bin/..";
 
 require "$root/lib/JawnOS/Domain/Scan.pm";
 require "$root/lib/JawnOS/Manager/Part06.pm";
+# Part06's BEGIN puts lib/ on @INC, so Part02 and the controller load here too.
+require "$root/lib/JawnOS/Manager/Part02.pm";
+require "$root/lib/JawnOS/Controller/manager_scan.pm";
 
 # --- what a page is, read from its own text --------------------------------
 is(subs::scan_doc_kind(''), 'blank', 'no text at all is blank');
@@ -81,6 +84,79 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	is($items->[1]{'file_type'}, 'pdf', 'a PDF page is a pdf');
 	is($items->[2]{'kind'}, 'letter', 'the older holder is read too');
 	like($items->[0]{'text'}, qr/TOTAL 4\.43/, 'the text travels for the card\'s tooltip');
+}
+
+# --- the press runs the scanner --------------------------------------------
+# The route writes the holding row and must then run the scan into it, the same
+# press the appointment windows send; otherwise the row stays empty forever.
+{
+	package FakeController;
+	sub new { my ($class, %p) = @_; return bless { params => \%p, rendered => undef }, $class }
+	sub param { my ($s, $k, $v) = @_; $s->{'params'}{$k} = $v if @_ > 2; return $s->{'params'}{$k}; }
+	sub render { my ($s, %a) = @_; $s->{'rendered'} = \%a; return 1; }
+}
+
+{
+	no warnings 'redefine';
+	my (%seen, $wrote);
+	local *Manager::appointment_writer = sub { $wrote = 1; return 1; };
+	local *Manager::market_scan_feeds = sub { return [ 'adf', 'flatbed' ] };
+	local *Manager::scan = sub { my ($c, $data) = @_; $seen{'scan'} = { %{$data} }; return 'ok'; };
+	local *subs::scan_house_me = sub { return 'this-machine'; };
+	local *subs::scan_dispatcher = sub { return 'this-machine'; };
+	local *subs::random_string_creator = sub { return 'held-uuid'; };
+	local *subs::rightNow = sub { return 1_800_000_000_000; };
+
+	my $c = FakeController->new(feed => 'adf');
+	Manager::action_52328($c);
+	ok($wrote, 'the press writes the holding row');
+	is($seen{'scan'}{'feed'}, 'adf', 'and runs the scanner for that feeder');
+	is($seen{'scan'}{'uuid'}, 'held-uuid', 'into the row it just wrote');
+	is($seen{'scan'}{'app'}, 'scan', 'as a Scan-app scan');
+	is($seen{'scan'}{'source'}, 'unclaimed', 'which the pool can hold');
+	is($c->{'rendered'}{'json'}{'ok'}, 1, 'and the press still answers at once');
+}
+
+# --- a scanner entry the old way does not break the routes ------------------
+# The scanner config is hand-edited; an older house keeps a bare address where
+# the list of scanner hashes belongs. Reading it must answer "cannot scan", not
+# die a 500 on the Market's Scan (ADF) or the appointment scan buttons.
+{
+	no warnings 'redefine';
+	local *subs::rightNow = sub { return 1_800_000_000_000; };
+	local *subs::device_lister = sub { return undef; };
+	my @shapes = (
+		[ 'a bare address string', { scanners => [ 'hpaio:/net/officejet_3830_series?ip=192.168.2.6' ] } ],
+		[ 'a hash of scanners',    { scanners => { officejet => { address => 'x', feeds => [ 'ADF' ] } } } ],
+		[ 'a bare feeds value',    { scanners => [ { address => 'x', feeds => 'ADF', resolution => '300' } ] } ],
+		[ 'no scanners key',       {} ],
+	);
+	foreach my $shape (@shapes) {
+		local $Manager::config = $shape->[1];
+		my $command = eval { Manager::scanner_scan_command('adf', '/tmp/page') };
+		ok(!$@, 'scanning does not die on ' . $shape->[0]);
+		is($command, undef, 'and says that scanner cannot do that (' . $shape->[0] . ')');
+	}
+	local $Manager::config = { scanners => [ {
+		address => 'hpaio:/net/officejet_3830_series?ip=192.168.2.6',
+		resolution => '300',
+		feeds => [ 'ADF', 'Flatbed' ],
+	} ] };
+	my $command = Manager::scanner_scan_command('adf', '/tmp/page');
+	like($command, qr/^scanimage .*--source ADF/, 'the real scanner shape still builds the ADF command');
+}
+{
+	require File::Temp;
+	my $dir = File::Temp::tempdir(CLEANUP => 1);
+	no warnings 'redefine';
+	local *subs::printer_live_ip = sub { return '192.168.2.6'; };
+	local *subs::config_reader = sub { return { scanners => [ 'hpaio:/net/officejet_3830_series?ip=192.168.2.6' ] } };
+	local *JawnOS::Platform::Print::scan_capabilities = sub { return { adf => { width => 2550, height => 4200 } } };
+	local *JawnOS::Platform::Print::scan_escl = sub { return ( 'the scanner did not answer', [] ); };
+	my $escl = eval { Manager::market_receipt_scan_escl('adf', $dir . '/receipt_test') };
+	ok(!$@, 'the eSCL receipt path does not die on a bare scanner entry');
+	is(ref $escl, 'HASH', 'it still answers a hash');
+	is($escl->{'error'}, 'the scanner did not answer', 'with the printer\'s own error');
 }
 
 # --- the app's wiring -------------------------------------------------------

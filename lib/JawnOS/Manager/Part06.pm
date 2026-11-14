@@ -615,7 +615,9 @@ sub market_receipt_scan_escl {
 	return {} unless $caps->{$key};
 	my $config = &subs::config_reader() || {};
 	my $scanners = $config->{'scanners'};
-	my $scanner = ref $scanners eq 'ARRAY' ? $scanners->[0] : undef;
+	# As in adf_scanner: a scanner entry is a hash. A bare value (an older or
+	# hand-edited config) simply has no resolution of its own.
+	my $scanner = (ref $scanners eq 'ARRAY' && ref $scanners->[0] eq 'HASH') ? $scanners->[0] : undef;
 	my $resolution = ($scanner && ($scanner->{'resolution'} || '') =~ /^\d+$/) ? $scanner->{'resolution'} : 300;
 	my $log = $base . '.log';
 	open(my $lf, '>', $log);

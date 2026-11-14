@@ -232,12 +232,19 @@ sub take_picture($c,$data) {
 # base (an ADF pages itself with --batch and a %d suffix). Undef for a feed the
 # scanner does not offer, which callers read as "this scanner cannot do that".
 sub scanner_scan_command($feed, $file) {
-	my $scanner = $config->{'scanners'}->[0];
+	# The scanner config is machine-local and hand-edited: an older or edited
+	# file may carry a bare value (or a map) where the list of scanner hashes
+	# belongs. Read only the shape understood here and answer undef for anything
+	# else, which every caller already reads as "this scanner cannot do that".
+	my $scanners = $config->{'scanners'};
+	my $scanner = (ref $scanners eq 'ARRAY' && ref $scanners->[0] eq 'HASH') ? $scanners->[0] : undef;
 	return undef unless $scanner && $file;
 	my $printer = &subs::device_lister(&subs::rightNow(),'printer');
-	my $address = ($printer && $printer->{'ip'}) ? "hpaio:/net/officejet_3830_series?ip=" . $printer->{'ip'} : $scanner->{'address'};
+	my $printer_ip = (ref $printer eq 'HASH') ? ($printer->{'ip'} || '') : '';
+	my $address = ($printer_ip ne '') ? "hpaio:/net/officejet_3830_series?ip=" . $printer_ip : $scanner->{'address'};
 	my $resolution = $scanner->{'resolution'};
-	my @feeds = map { lc } @{ $scanner->{'feeds'} || [] };
+	my $feeds = $scanner->{'feeds'};
+	my @feeds = ref $feeds eq 'ARRAY' ? map { lc } @{$feeds} : ();
 	$feed = lc($feed || '');
 	# The seam builds the argv; this keeps the feeder the scanner advertises as
 	# the one it will run. The call sites still hold a shell string.

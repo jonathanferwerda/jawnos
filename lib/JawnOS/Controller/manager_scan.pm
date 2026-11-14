@@ -85,6 +85,17 @@ sub action_52328 {
 	unless ($started) {
 		return $c->render(json => { ok => 0, error => 'the scan could not be started' });
 	}
+	# The row is the waiting place, not the scan: the same press the appointment
+	# windows send fills it. scan() resolves the feeder, writes the pages into
+	# this row and raises the house notice; it forks the run, so the answer below
+	# is still immediate.
+	&scan($c, {
+		timestamp => $now,
+		feed => $feed,
+		uuid => $uuid,
+		app => 'scan',
+		source => 'unclaimed',
+	});
 	$c->render(json => { ok => 1, uuid => $uuid });
 }
 
