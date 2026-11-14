@@ -11,6 +11,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 
 use File::Temp qw(tempdir);
+use File::Copy qw(copy);
 use IPC::Open3 qw(open3);
 use Mojo::JSON qw(decode_json);
 use Symbol qw(gensym);
@@ -32,6 +33,7 @@ my $empty   = "$scratch/empty";
 my $fake    = "$scratch/bin";
 mkdir $empty or die "cannot make $empty: $!";
 mkdir $fake  or die "cannot make $fake: $!";
+mkdir "$scratch/networkd" or die "cannot make $scratch/networkd: $!";
 
 sub write_exe {
 	my ($path, $body) = @_;
@@ -46,10 +48,10 @@ args="$*"
 case "$args" in
 	"adapter list") printf 'Name  Powered  Adapter\nphy0  on       phy0\n' ;;
 	"station wlan0 get-networks") printf '  jawn-test-net   psk   ****\n  open-test-net   open  **\n' ;;
-	"station wlan0 show") printf 'Station: wlan0\n  State                     connected\n  Connected network         jawn-test-net\n' ;;
+	"station wlan0 show") name="jawn-test-net"; if [ -n "$IWCTL_STATE" ] && [ -s "$IWCTL_STATE" ]; then IFS= read -r name < "$IWCTL_STATE"; fi; printf 'Station: wlan0\n  State                     connected\n  Connected network         %s\n' "$name" ;;
 	"known-networks list") printf '  jawn-test-net\n' ;;
 	*disconnect*) exit 0 ;;
-	*"station wlan0 connect "*) exit 0 ;;
+	*"station wlan0 connect "*) if [ -n "$IWCTL_STATE" ]; then printf '%s' "${args#*station wlan0 connect }" > "$IWCTL_STATE"; fi; exit 0 ;;
 	*forget*) exit 0 ;;
 	*set-property*) exit 0 ;;
 	"station wlan0 scan") exit 0 ;;
@@ -65,10 +67,21 @@ fi
 exit 0
 FAKE_IP
 
+# systemd-networkd's reload/reconfigure answers are enough here: the helper
+# writes the drop-in into the scratch directory and only needs a zero status.
+write_exe("$fake/networkctl", q{exit 0});
+
 sub run_net {
 	my %opt = @_;
 	local $ENV{'PATH'} = defined $opt{'path'} ? $opt{'path'} : $empty;
 	local $ENV{'HOME'} = $scratch;
+	# The fake iwctl remembers the network the last connect named, so a test can
+	# use a real SSID (including one with a space) end to end.
+	unlink "$scratch/iwctl-state";
+	local $ENV{'IWCTL_STATE'} = "$scratch/iwctl-state";
+	# Keep every static write inside the test's scratch directory. The helper
+	# honours this for its systemd-networkd drop-ins.
+	local $ENV{'JAWNOS_NETWORKD_DIR'} = defined $opt{'networkd'} ? $opt{'networkd'} : "$scratch/networkd";
 	my $err = gensym;
 	my $pid = open3(my $in, my $out, $err, $^X, $script, @{ $opt{'args'} || [] });
 	print {$in} $opt{'stdin'} if defined $opt{'stdin'};
@@ -78,6 +91,15 @@ sub run_net {
 	my $stderr = <$err> // '';
 	waitpid($pid, 0);
 	return ($? >> 8, $stdout, $stderr);
+}
+
+sub read_text {
+	my ($path) = @_;
+	open my $fh, '<', $path or return '';
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	return defined $text ? $text : '';
 }
 
 # One JSON object on stdout, and the exit status is always 0: the app reads the
@@ -145,7 +167,7 @@ expect_error('No such VPN configuration.', 'vpn_unit naming a config that is not
 # --- a source that is not installed ------------------------------------------
 expect_error('No WiFi tool is installed (iwctl or nmcli).', 'wifi_scan with no WiFi tool',
 	args => ['wifi_scan', 'wlan0']);
-expect_error('iwd is not installed.', 'wifi_connect with no iwctl',
+expect_error('No WiFi tool is installed (iwctl or nmcli).', 'wifi_connect with no WiFi tool',
 	args => ['wifi_connect', 'wlan0', 'jawn-test-net'], stdin => "correcthorse\n");
 expect_error('iwd is not installed.', 'wifi_disconnect with no iwctl',
 	args => ['wifi_disconnect', 'wlan0']);
@@ -167,7 +189,7 @@ like(( run_net('args' => ['interface', 'up', 'wlan0']) )[1],
 	is_deeply([ sort keys %{$data} ], [qw(interfaces ok vpn wifi)], 'status carries ok/interfaces/wifi/vpn');
 	is($data->{'ok'}, 1, 'status succeeds');
 	is_deeply([ sort keys %{ $data->{'wifi'} } ],
-		[ qw(adapters interfaces iwd present radio_powered saved) ],
+		[ qw(adapters can_connect interfaces iwd present radio_powered saved) ],
 		'wifi carries the documented fields');
 
 	my $interfaces = $data->{'interfaces'};
@@ -219,13 +241,23 @@ like(( run_net('args' => ['interface', 'up', 'wlan0']) )[1],
 	mkdir $nm or die "cannot make $nm: $!";
 	write_exe("$nm/ip", q{exit 0});
 	write_exe("$nm/nmcli", <<'FAKE_NMCLI');
-case "$*" in
-	*"--fields SSID,SECURITY,SIGNAL"*)
-		printf 'jawn-test-net:WPA2:80\ntest net with space:WPA2:60\nopen-test-net::40\ncolon\\:name:WPA2:20\n' ;;
-	"radio wifi on"|"radio wifi off") exit 0 ;;
-	"radio wifi") printf 'enabled\n' ;;
-	*) exit 1 ;;
-esac
+	if [ -n "$NM_LOG" ]; then printf '%s\n' "$*" >> "$NM_LOG"; fi
+	case "$*" in
+		*"--fields SSID,SECURITY,SIGNAL"*)
+			printf 'jawn-test-net:WPA2:80\ntest net with space:WPA2:60\nopen-test-net::40\ncolon\\:name:WPA2:20\n' ;;
+		*"--fields 802-11-wireless.ssid connection show"*) if [ -n "$NM_EXISTING" ]; then printf 'jawn-test-net\n'; fi; exit 0 ;;
+		*"--fields NAME,TYPE connection show"*) if [ -n "$NM_EXISTING" ]; then printf 'Home:802-11-wireless\n'; fi; exit 0 ;;
+		*"--fields NAME connection show"*) exit 0 ;;
+		*"connection add"*) exit 0 ;;
+		*"connection modify"*) exit 0 ;;
+		*"connection up"*) exit 0 ;;
+		*"802-11-wireless.ssid"*) if [ -n "$NM_EXISTING" ]; then printf 'jawn-test-net\n'; else printf '\n'; fi ;;
+		*"device disconnect"*) exit 0 ;;
+		*"connection delete"*) exit 0 ;;
+		"radio wifi on"|"radio wifi off") exit 0 ;;
+		"radio wifi") printf 'enabled\n' ;;
+		*) exit 1 ;;
+	esac
 FAKE_NMCLI
 
 	my ($rc, $out) = run_net(path => $nm, args => [qw(wifi_scan wlan0)]);
@@ -266,6 +298,13 @@ FAKE_NMCLI
 		my $wifi = $data->{'wifi'};
 		is($wifi->{'iwd'}, 0, 'iwd is reported absent without iwctl');
 		is($wifi->{'radio_powered'}, 1, 'the radio state comes from nmcli radio wifi');
+	}
+	{
+		local $ENV{'NM_EXISTING'} = '1';
+		my (undef, $out) = run_net(path => $nm, args => ['status']);
+		my $data = answer(0, $out, '', 'status with saved nmcli profiles');
+		is_deeply($data->{'wifi'}->{'saved'}, ['jawn-test-net'],
+			'nmcli saved networks are listed');
 	}
 }
 
@@ -352,5 +391,185 @@ expect_error('the public address was not an address',
 	path => $curlbin, args => ['public_ip_lookup']);
 expect_error('the public address could not be read',
 	'public_ip_lookup with no curl or wget', path => $empty, args => ['public_ip_lookup']);
+
+# --- the connect choices -----------------------------------------------------
+# A connect can carry an addressing choice and DNS servers. Every value is
+# validated before any command runs, so a mistyped field is named back.
+expect_error('The addressing method is DHCP or static.', 'connect with an unknown method',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'sometimes'], stdin => '');
+expect_error('The address is not a valid IPv4 address.', 'static with no address',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'static', '', '24'], stdin => '');
+expect_error('The address is not a valid IPv4 address.', 'static with an out-of-range address',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'static', '192.0.2.300', '24'], stdin => '');
+expect_error('The prefix length must be 1 to 32.', 'static with a bad prefix',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'static', '192.0.2.50', '33'], stdin => '');
+expect_error('The gateway is not a valid IPv4 address.', 'static with a bad gateway',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'static', '192.0.2.50', '24', 'router'], stdin => '');
+expect_error('The DNS server is not a valid address.', 'connect with a hostname for DNS',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'dhcp', '', '', '', 'one.one.one.one'], stdin => '');
+expect_error('At most four DNS servers can be given.', 'connect with five DNS servers',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'dhcp', '', '', '', '1.1.1.1,8.8.8.8,9.9.9.9,4.4.4.4,2.2.2.2'], stdin => '');
+
+# A static address and DNS go into a systemd-networkd drop-in scoped to this
+# interface and SSID, so the other networks keep their DHCP.
+{
+	my (undef, $out) = run_net(path => $fake,
+		args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'static', '192.0.2.50', '24', '192.0.2.1', '1.1.1.1,8.8.8.8'],
+		stdin => "correcthorse\n");
+	my $data = answer(0, $out, '', 'wifi_connect with a static address');
+	is($data->{'ok'}, 1, 'the static connect succeeds');
+	is($data->{'message'},
+		'Connected to jawn-test-net. Address 192.0.2.50/24, gateway 192.0.2.1, DNS 1.1.1.1, 8.8.8.8.',
+		'and names the address, gateway and DNS it applied');
+	my @files = glob("$scratch/networkd/*.network");
+	is(scalar @files, 1, 'one drop-in is written');
+	my $unit = read_text($files[0]);
+	like($unit, qr/^\[Match\]$/m, 'it starts with a Match section');
+	like($unit, qr/^Name=wlan0$/m, 'the interface is named');
+	like($unit, qr/^SSID="jawn-test-net"$/m, 'and the network it belongs to');
+	like($unit, qr/^DHCP=no$/m, 'DHCP is off');
+	like($unit, qr/^Address=192\.0\.2\.50\/24$/m, 'the address is written');
+	like($unit, qr/^Gateway=192\.0\.2\.1$/m, 'with its gateway');
+	like($unit, qr/^DNS=1\.1\.1\.1 8\.8\.8\.8$/m, 'and both DNS servers');
+	unlike($unit, qr/^\[DHCP\]$/m, 'a static unit has no DHCP section');
+}
+
+# A name with a space is quoted, because the Match parser splits unquoted
+# whitespace.
+{
+	my (undef, $out) = run_net(path => $fake,
+		args => ['wifi_connect', 'wlan0', 'my home net', 'static', '192.0.2.60', '24', '', ''],
+		stdin => "correcthorse\n");
+	my $data = answer(0, $out, '', 'static connect to a name with a space');
+	is($data->{'ok'}, 1, 'a name with a space connects');
+	my ($unit) = grep { read_text($_) =~ /my home net/ } glob("$scratch/networkd/*.network");
+	ok($unit, 'its drop-in is written');
+	like(read_text($unit), qr/^SSID="my home net"$/m, 'and the name is quoted');
+}
+
+# DHCP with a chosen DNS server keeps the lease but replaces its resolver.
+{
+	my (undef, $out) = run_net(path => $fake,
+		args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'dhcp', '', '', '', '2606:4700:4700::1111'],
+		stdin => "correcthorse\n");
+	my $data = answer(0, $out, '', 'wifi_connect with DHCP and a DNS server');
+	is($data->{'ok'}, 1, 'the DHCP connect succeeds');
+	is($data->{'message'}, 'Connected to jawn-test-net. DNS 2606:4700:4700::1111.',
+		'and names the DNS server it applied');
+	my @files = grep { read_text($_) =~ /^SSID="jawn-test-net"$/m } glob("$scratch/networkd/*.network");
+	is(scalar @files, 1, 'the drop-in is rewritten');
+	my $unit = read_text($files[0]);
+	like($unit, qr/^DHCP=yes$/m, 'DHCP stays on');
+	like($unit, qr/^DNS=2606:4700:4700::1111$/m, 'the DNS server is written');
+	like($unit, qr/^UseDNS=no$/m, 'and the lease DNS is ignored');
+	unlike($unit, qr/^Address=/m, 'there is no static address');
+}
+
+# Choosing plain DHCP again removes the drop-in, returning the interface to
+# the image's own 20-wireless.network.
+{
+	my (undef, $out) = run_net(path => $fake,
+		args => ['wifi_connect', 'wlan0', 'jawn-test-net'], stdin => "correcthorse\n");
+	my $data = answer(0, $out, '', 'wifi_connect returning to DHCP');
+	is($data->{'message'}, 'Connected to jawn-test-net.', 'plain DHCP keeps the short message');
+	my @files = grep { read_text($_) =~ /^SSID="jawn-test-net"$/m } glob("$scratch/networkd/*.network");
+	is(scalar @files, 0, 'the old drop-in is removed');
+}
+
+# A machine without systemd-networkd can still take the address and DNS now,
+# through ip and resolvectl.
+{
+	my $plain = "$scratch/plain";
+	mkdir $plain or die "cannot make $plain: $!";
+	copy("$fake/iwctl", "$plain/iwctl") or die "cannot copy iwctl: $!";
+	copy("$fake/ip", "$plain/ip") or die "cannot copy ip: $!";
+	chmod 0755, "$plain/iwctl", "$plain/ip";
+	write_exe("$plain/resolvectl", q{exit 0});
+	my (undef, $out) = run_net(path => $plain,
+		args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'static', '192.0.2.50', '24', '192.0.2.1', '1.1.1.1'],
+		stdin => "correcthorse\n");
+	my $data = answer(0, $out, '', 'static connect without networkd');
+	is($data->{'ok'}, 1, 'the fallback connect succeeds');
+	like($data->{'message'}, qr/Address 192\.0\.2\.50\/24/, 'and reports the address it set');
+}
+
+# --- NetworkManager: the same choices in the profile itself -------------------
+{
+	my $nm = "$scratch/nm";
+	my $log = "$scratch/nm-dhcp.log";
+	unlink $log;
+	local $ENV{'NM_LOG'} = $log;
+	my (undef, $out) = run_net(path => $nm,
+		args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'dhcp', '', '', '', ''],
+		stdin => "correcthorse\n");
+	my $data = answer(0, $out, '', 'nmcli DHCP connect');
+	is($data->{'ok'}, 1, 'the connection is created');
+	is($data->{'message'}, 'Connected to jawn-test-net.', 'and reported');
+	my $calls = read_text($log);
+	like($calls, qr/connection add type wifi con-name jawnos-wifi-\w+ ifname wlan0 ssid jawn-test-net/,
+		'a profile is created for the SSID');
+	like($calls, qr/wifi-sec\.key-mgmt wpa-psk wifi-sec\.psk correcthorse/,
+		'with the passphrase');
+	like($calls, qr/ipv4\.method auto/, 'DHCP is automatic');
+	like($calls, qr/ipv4\.ignore-auto-dns no/, 'and the lease DNS is kept');
+	like($calls, qr/connection up jawnos-wifi-/, 'the profile is activated');
+}
+{
+	my $nm = "$scratch/nm";
+	my $log = "$scratch/nm-static.log";
+	unlink $log;
+	local $ENV{'NM_LOG'} = $log;
+	my (undef, $out) = run_net(path => $nm,
+		args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'static', '192.0.2.50', '24', '192.0.2.1', '1.1.1.1'],
+		stdin => "correcthorse\n");
+	my $data = answer(0, $out, '', 'nmcli static connect');
+	is($data->{'ok'}, 1, 'the static connect succeeds');
+	is($data->{'message'},
+		'Connected to jawn-test-net. Address 192.0.2.50/24, gateway 192.0.2.1, DNS 1.1.1.1.',
+		'and names the chosen address and DNS');
+	my $calls = read_text($log);
+	like($calls, qr/ipv4\.method manual/, 'the method is manual');
+	like($calls, qr/ipv4\.addresses 192\.0\.2\.50\/24/, 'the address is set');
+	like($calls, qr/ipv4\.gateway 192\.0\.2\.1/, 'the gateway is set');
+	like($calls, qr/ipv4\.dns 1\.1\.1\.1/, 'the DNS server is set');
+	like($calls, qr/ipv4\.ignore-auto-dns yes/, 'and the lease DNS is ignored');
+}
+{
+	my $nm = "$scratch/nm";
+	my $log = "$scratch/nm-existing.log";
+	unlink $log;
+	local $ENV{'NM_LOG'} = $log;
+	local $ENV{'NM_EXISTING'} = '1';
+	my (undef, $out) = run_net(path => $nm,
+		args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'dhcp', '', '', '', ''],
+		stdin => "");
+	my $data = answer(0, $out, '', 'nmcli connect to a saved profile');
+	is($data->{'ok'}, 1, 'the saved profile connects');
+	my $calls = read_text($log);
+	unlike($calls, qr/connection add/, 'no second profile is created');
+	like($calls, qr/connection modify Home/, 'the existing profile is modified');
+	unlike($calls, qr/wifi-sec\.key-mgmt/, 'its saved passphrase is left alone');
+	like($calls, qr/connection up Home/, 'and it is activated');
+}
+{
+	my $nm = "$scratch/nm";
+	my (undef, $out) = run_net(path => $nm, args => [qw(wifi_disconnect wlan0)]);
+	is_deeply(eval { decode_json($out) }, { ok => 1, message => 'Disconnected.' },
+		'wifi_disconnect works through nmcli');
+	(undef, $out) = run_net(path => $nm, args => ['wifi_forget', 'jawn-test-net']);
+	is_deeply(eval { decode_json($out) }, { ok => 1, message => 'Forgot jawn-test-net.' },
+		'wifi_forget removes an nmcli profile');
+}
+{
+	my $nm = "$scratch/nm";
+	my $log = "$scratch/nm-forget.log";
+	unlink $log;
+	local $ENV{'NM_LOG'} = $log;
+	local $ENV{'NM_EXISTING'} = '1';
+	my (undef, $out) = run_net(path => $nm, args => ['wifi_forget', 'jawn-test-net']);
+	my $data = answer(0, $out, '', 'wifi_forget on a named profile');
+	is($data->{'ok'}, 1, 'the named profile is forgotten');
+	like(read_text($log), qr/connection delete Home/, 'the profile that owns the SSID is deleted');
+}
 
 done_testing();

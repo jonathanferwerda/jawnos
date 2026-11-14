@@ -304,6 +304,15 @@ sub action_7874 {
 	my $interface = $c->param('interface') // '';
 	my $ssid = $c->param('ssid') // '';
 	my $passphrase = $c->param('passphrase') // '';
+	my $method = lc($c->param('method') // '');
+	$method = 'dhcp' unless length $method;
+	my $address = $c->param('address') // '';
+	my $prefix = $c->param('prefix') // '';
+	my $gateway = $c->param('gateway') // '';
+	my $dns = $c->param('dns') // '';
+	foreach my $value ($address, $prefix, $gateway, $dns) {
+		$value =~ s/^\s+|\s+$//g;
+	}
 	my $error;
 	$error = 'That interface name is not valid.' unless $interface =~ /^[A-Za-z0-9_.:-]{1,32}$/;
 	$error = 'That network name is not valid.'
@@ -311,11 +320,40 @@ sub action_7874 {
 	$error = 'The passphrase must be 8 to 63 printable characters, or 64 hexadecimal digits.'
 		if !$error && length $passphrase
 			&& !($passphrase =~ /^[\x20-\x7e]{8,63}$/ || $passphrase =~ /^[0-9A-Fa-f]{64}$/);
+	$error = 'The addressing method is DHCP or static.'
+		unless $error || $method =~ /^(?:dhcp|static)$/;
+	if (!$error && $method eq 'static') {
+		$error = 'The address is not a valid IPv4 address.'
+			unless $address =~ /^(?:\d{1,3}\.){3}\d{1,3}$/
+				&& !grep { $_ > 255 } split /\./, $address;
+		$error = 'The prefix length must be 1 to 32.'
+			unless $error || ($prefix =~ /^\d{1,2}$/ && $prefix >= 1 && $prefix <= 32);
+		$error = 'The gateway is not a valid IPv4 address.'
+			if !$error && length $gateway
+				&& !($gateway =~ /^(?:\d{1,3}\.){3}\d{1,3}$/
+					&& !grep { $_ > 255 } split /\./, $gateway);
+	}
+	if (!$error && length $dns) {
+		require Socket;
+		my @servers = grep { length } split /[,\s]+/, $dns;
+		$error = 'At most four DNS servers can be given.' if @servers > 4;
+		unless ($error) {
+			foreach my $server (@servers) {
+				my $ipv4 = eval { Socket::inet_pton(Socket::AF_INET(), $server) };
+				my $ipv6 = $ipv4 ? 1 : eval { Socket::inet_pton(Socket::AF_INET6(), $server) };
+				unless ($ipv4 || $ipv6) {
+					$error = 'The DNS server is not a valid address.';
+					last;
+				}
+			}
+		}
+	}
 	if ($error) {
 		$c->render(json => { ok => 0, error => $error });
 		return;
 	}
-	my $answer = eval { &network_helper(['wifi_connect', $interface, $ssid], $passphrase) };
+	my $answer = eval { &network_helper(
+		['wifi_connect', $interface, $ssid, $method, $address, $prefix, $gateway, $dns], $passphrase) };
 	$answer = { ok => 0, error => 'The connection could not be attempted.' } unless ref $answer eq 'HASH';
 	$c->render(json => $answer);
 }

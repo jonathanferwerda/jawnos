@@ -113,6 +113,47 @@ function networkRenderInterfaces(list) {
 
 // --------------------------------------------------------------------- wi-fi
 
+// The addressing choices that ride with a connect: DHCP by default, or a
+// static address with an optional gateway, plus a DNS server either way.
+function networkWifiField(label, classes, placeholder) {
+	var field = $('<label>').addClass('network_wifi_field');
+	field.append($('<span>').text(label));
+	field.append($('<input type="text">').addClass(classes)
+		.attr('placeholder', placeholder || '')
+		.attr('autocomplete', 'off'));
+	return field;
+}
+
+function networkWifiOptions() {
+	var box = $('<div>').addClass('network_wifi_options').attr('hidden', 'hidden');
+	var method_row = $('<label>').addClass('network_wifi_field');
+	method_row.append($('<span>').text(networkLabel('addressing', 'Addressing')));
+	var method = $('<select>').addClass('network_wifi_method');
+	method.append($('<option>').attr('value', 'dhcp').text(networkLabel('dhcp', 'DHCP')));
+	method.append($('<option>').attr('value', 'static').text(networkLabel('static', 'Static')));
+	method_row.append(method);
+	box.append(method_row);
+	box.append(networkWifiField(networkLabel('ip_address', 'IP address'), 'network_wifi_address', '192.168.1.50')
+		.addClass('network_wifi_static').attr('hidden', 'hidden'));
+	box.append(networkWifiField(networkLabel('prefix', 'Prefix'), 'network_wifi_prefix', '24')
+		.addClass('network_wifi_static').attr('hidden', 'hidden'));
+	box.append(networkWifiField(networkLabel('gateway', 'Gateway'), 'network_wifi_gateway', '192.168.1.1')
+		.addClass('network_wifi_static').attr('hidden', 'hidden'));
+	box.append(networkWifiField(networkLabel('dns', 'DNS server'), 'network_wifi_dns', '1.1.1.1'));
+	return box;
+}
+
+function networkWifiOptionsData(row) {
+	var box = row.find('.network_wifi_options');
+	return {
+		method: box.find('.network_wifi_method').val() || 'dhcp',
+		address: box.find('.network_wifi_address').val() || '',
+		prefix: box.find('.network_wifi_prefix').val() || '',
+		gateway: box.find('.network_wifi_gateway').val() || '',
+		dns: box.find('.network_wifi_dns').val() || ''
+	};
+}
+
 function networkSignalText(network) {
 	var bars = Number(network.bars);
 	if (!isFinite(bars)) { bars = Math.round((Number(network.signal) || 0) / 25); }
@@ -130,7 +171,7 @@ function networkRenderWifi(wifi) {
 		.text(first ? (networkT('Interface') + ': ' + first.name) : networkT('No wireless interface found.'))
 		.attr('data-iface', first ? first.name : '');
 	var radio = $('#network_radio_toggle');
-	if (wifi.iwd) {
+	if (wifi.can_connect) {
 		radio.prop('disabled', false)
 			.attr('aria-pressed', wifi.radio_powered ? 'true' : 'false')
 			.toggleClass('network_off', !wifi.radio_powered)
@@ -139,15 +180,15 @@ function networkRenderWifi(wifi) {
 	else {
 		radio.prop('disabled', true).removeClass('network_off').attr('aria-pressed', 'false').text(networkT('Radio'));
 	}
-	if (!wifi.iwd && first) { $('#network_wifi_hint').text(networkT('iwd is not installed.')); }
-	$('#network_wifi_scan').prop('disabled', !first || !wifi.iwd);
-	$('#network_wifi_disconnect').prop('disabled', !first || !wifi.iwd);
+	if (!wifi.can_connect && first) { $('#network_wifi_hint').text(networkT('No Wi-Fi tool is installed (iwctl or nmcli).')); }
+	$('#network_wifi_scan').prop('disabled', !first || !wifi.can_connect);
+	$('#network_wifi_disconnect').prop('disabled', !first || !wifi.can_connect);
 	var wifi_list = $('#network_wifi_list');
 	if (!wifi_list.attr('data-ready')) {
 		wifi_list.attr('data-ready', '1').empty();
 		var opening = networkT('No wireless interface found.');
-		if (!wifi.iwd && first) { opening = networkT('iwd is not installed.'); }
-		else if (wifi.iwd && first) { opening = networkT('Press Scan to list networks.'); }
+		if (!wifi.can_connect && first) { opening = networkT('No Wi-Fi tool is installed (iwctl or nmcli).'); }
+		else if (wifi.can_connect && first) { opening = networkT('Press Scan to list networks.'); }
 		wifi_list.append($('<div>').addClass('network_empty').text(opening));
 	}
 
@@ -161,19 +202,29 @@ function networkRenderWifi(wifi) {
 		state_box.append(row);
 	}
 
-	var saved_box = $('#network_saved_list').empty();
+	var saved_box = $('#network_saved_list');
 	var saved = wifi.saved || [];
-	if (!saved.length) {
-		saved_box.append($('<div>').addClass('network_empty').text(networkT('No saved networks.')));
-	}
-	for (var j = 0; j < saved.length; j++) {
-		var saved_row = $('<div>').addClass('network_wifi_row').attr('data-ssid', saved[j]);
-		saved_row.append($('<span>').addClass('network_wifi_name').text(saved[j]));
-		saved_row.append($('<button type="button">').addClass('network_button network_wifi_connect').text(networkLabel('connect', 'Connect')));
-		saved_row.append($('<button type="button">').addClass('network_button network_wifi_forget')
-			.attr('data-ssid', saved[j]).text(networkLabel('forget', 'Forget')));
-		saved_row.append($('<span>').addClass('network_wifi_msg'));
-		saved_box.append(saved_row);
+	// The status poll runs every fifteen seconds. Rebuilding an unchanged list
+	// would close an Options panel the person is filling in, so only rebuild
+	// when the saved names really changed.
+	var saved_signature = saved.join('\u0001');
+	if (saved_box.attr('data-saved') !== saved_signature) {
+		saved_box.attr('data-saved', saved_signature).empty();
+		if (!saved.length) {
+			saved_box.append($('<div>').addClass('network_empty').text(networkT('No saved networks.')));
+		}
+		for (var j = 0; j < saved.length; j++) {
+			var saved_row = $('<div>').addClass('network_wifi_row').attr('data-ssid', saved[j]);
+			saved_row.append($('<span>').addClass('network_wifi_name').text(saved[j]));
+			saved_row.append($('<button type="button">').addClass('network_button network_wifi_connect').text(networkLabel('connect', 'Connect')));
+			saved_row.append($('<button type="button">').addClass('network_button network_wifi_forget')
+				.attr('data-ssid', saved[j]).text(networkLabel('forget', 'Forget')));
+			saved_row.append($('<button type="button">').addClass('network_button network_wifi_options_toggle')
+				.text(networkLabel('options', 'Options')));
+			saved_row.append($('<span>').addClass('network_wifi_msg'));
+			saved_row.append(networkWifiOptions());
+			saved_box.append(saved_row);
+		}
 	}
 }
 
@@ -195,7 +246,10 @@ function networkRenderScan(networks) {
 				.attr('autocomplete', 'off'));
 		}
 		row.append($('<button type="button">').addClass('network_button network_wifi_connect').text(networkLabel('connect', 'Connect')));
+		row.append($('<button type="button">').addClass('network_button network_wifi_options_toggle')
+			.text(networkLabel('options', 'Options')));
 		row.append($('<span>').addClass('network_wifi_msg'));
+		row.append(networkWifiOptions());
 		box.append(row);
 	}
 }

@@ -54,6 +54,13 @@
 	.network_signal { flex:0 0 auto; font-family:var(--mono-font, monospace); letter-spacing:1px; }
 	.network_wifi_pass { flex:1 1 120px; min-width:100px; font:inherit; font-size:12px; padding:3px 6px; color:inherit; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
 	.network_wifi_msg { flex:1 1 100%; font-size:11px; opacity:.75; }
+	.network_wifi_options { flex:1 1 100%; display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:6px 2px 2px; border-top:1px dashed var(--line); margin-top:2px; }
+	.network_wifi_options[hidden] { display:none !important; }
+	.network_wifi_field { display:flex; align-items:center; gap:5px; font-size:11px; }
+	.network_wifi_field[hidden] { display:none !important; }
+	.network_wifi_field input, .network_wifi_field select { font:inherit; font-size:12px; padding:3px 6px; color:inherit; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+	.network_wifi_address, .network_wifi_gateway, .network_wifi_dns { min-width:120px; }
+	.network_wifi_prefix { width:60px; }
 	.network_bt_addr { font-family:var(--mono-font, monospace); font-size:11px; opacity:.7; }
 	.network_vpn_card { align-items:flex-start; }
 	.network_vpn_card h5 { margin:0 0 2px; font-size:13px; }
@@ -74,6 +81,15 @@
 	data-forget="<%= $t->('network.forget') %>"
 	data-scan="<%= $t->('network.scan') %>"
 	data-passphrase="<%= $t->('network.passphrase') %>"
+	data-addressing="<%= $t->('network.addressing') %>"
+	data-dhcp="<%= $t->('network.dhcp') %>"
+	data-static="<%= $t->('network.static') %>"
+	data-ip_address="<%= $t->('network.ip_address') %>"
+	data-prefix="<%= $t->('network.prefix') %>"
+	data-gateway="<%= $t->('network.gateway') %>"
+	data-dns="<%= $t->('network.dns') %>"
+	data-options="<%= $t->('network.options') %>"
+	data-hide_options="<%= $t->('network.hide_options') %>"
 	data-refresh="<%= $t->('network.refresh') %>"
 	data-pair="<%= &subs::ui('Pair') %>"
 	data-trust="<%= &subs::ui('Trust') %>">

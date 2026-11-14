@@ -11,7 +11,8 @@
 #
 #   status
 #   wifi_scan [interface]
-#   wifi_connect <interface> <ssid>      (passphrase on stdin, empty for open)
+#   wifi_connect <interface> <ssid> [dhcp|static] [address] [prefix] [gateway] [dns]
+#                                       (passphrase on stdin, empty for open)
 #   wifi_disconnect <interface>
 #   wifi_forget <ssid>
 #   radio on|off
@@ -30,8 +31,11 @@ use warnings;
 use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 use JSON::PP ();
-use Encode qw(decode_utf8);
+use Encode qw(decode_utf8 encode_utf8);
+use Digest::SHA qw(sha1_hex);
+use File::Temp qw(tempfile);
 use IPC::Open3 qw(open3);
+use Socket qw(AF_INET AF_INET6 inet_pton);
 use Symbol qw(gensym);
 use IO::Select;
 
@@ -135,6 +139,142 @@ sub valid_passphrase {
 	return 1 if length($pass) >= 8 && length($pass) <= 63 && $pass !~ /[^\x20-\x7e]/;
 	return 1 if $pass =~ /\A[0-9A-Fa-f]{64}\z/;
 	return 0;
+}
+
+# An address a person types into the static fields or the DNS box. inet_pton
+# accepts exactly the two families the house uses and rejects a hostname, so a
+# name can never become part of a networkd unit or an nmcli setting.
+sub ip_family {
+	my ($ip) = @_;
+	return 0 unless defined $ip && length $ip && length($ip) <= 45;
+	return 4 if eval { inet_pton(AF_INET, $ip) };
+	return 6 if eval { inet_pton(AF_INET6, $ip) };
+	return 0;
+}
+
+sub valid_ipv4 {
+	return ip_family($_[0]) == 4 ? 1 : 0;
+}
+
+# The addressing choices a connect carries. DHCP is the default; static needs
+# an IPv4 address and a prefix, and the gateway is optional. DNS is a comma or
+# space separated list and every entry must be an address.
+sub addressing_options {
+	my ($method, $address, $prefix, $gateway, $dns) = @_;
+	$method = lc(trim(defined $method ? $method : ''));
+	$method = 'dhcp' unless length $method;
+	return { error => 'The addressing method is DHCP or static.' } unless $method eq 'dhcp' || $method eq 'static';
+	my @servers;
+	foreach my $server ( split /[,\s]+/, (defined $dns ? $dns : '') ) {
+		next unless length $server;
+		return { error => 'The DNS server is not a valid address.' } unless ip_family($server);
+		push @servers, $server;
+	}
+	return { error => 'At most four DNS servers can be given.' } if @servers > 4;
+	my $options = { method => $method, dns => \@servers };
+	if ($method eq 'static') {
+		$address = trim(defined $address ? $address : '');
+		$prefix  = trim(defined $prefix  ? $prefix  : '');
+		$gateway = trim(defined $gateway ? $gateway : '');
+		return { error => 'The address is not a valid IPv4 address.' } unless valid_ipv4($address);
+		return { error => 'The prefix length must be 1 to 32.' }
+			unless $prefix =~ /\A\d{1,2}\z/ && $prefix >= 1 && $prefix <= 32;
+		return { error => 'The gateway is not a valid IPv4 address.' }
+			if length $gateway && !valid_ipv4($gateway);
+		$options->{address} = $address;
+		$options->{prefix}  = $prefix + 0;
+		$options->{gateway} = $gateway;
+	}
+	return $options;
+}
+
+# The message a successful connect answers. DHCP with no DNS keeps the short
+# form the app has always shown; anything a person chose is named back.
+sub connection_message {
+	my ($ssid, $options) = @_;
+	my @parts;
+	if ($options->{'method'} eq 'static') {
+		push @parts, 'Address ' . $options->{'address'} . '/' . $options->{'prefix'};
+		push @parts, 'gateway ' . $options->{'gateway'} if length $options->{'gateway'};
+	}
+	push @parts, 'DNS ' . join(', ', @{ $options->{'dns'} }) if @{ $options->{'dns'} };
+	return 'Connected to ' . $ssid . '.' unless @parts;
+	return 'Connected to ' . $ssid . '. ' . join(', ', @parts) . '.';
+}
+
+# The networkd drop-in that carries a static address or a DNS override for one
+# SSID. A 10- prefix sorts before the image's 20-wireless.network, so this unit
+# wins while the named network is connected and the default DHCP unit still
+# applies to every other network.
+sub networkd_dir {
+	return defined $ENV{'JAWNOS_NETWORKD_DIR'} && length $ENV{'JAWNOS_NETWORKD_DIR'}
+		? $ENV{'JAWNOS_NETWORKD_DIR'} : '/etc/systemd/network';
+}
+
+sub networkd_unit_path {
+	my ($ssid) = @_;
+	return networkd_dir() . '/10-jawnos-wifi-' . substr(sha1_hex(encode_utf8($ssid)), 0, 16) . '.network';
+}
+
+sub networkd_unit_text {
+	my ($interface, $ssid, $options) = @_;
+	# SSID= is a shell-style glob, and the parser splits unquoted whitespace.
+	# Quote the name and escape a quote, a backslash and the glob
+	# metacharacters, so any name matches only itself.
+	my $pattern = $ssid;
+	$pattern =~ s/(["\\*?\[\]])/\\$1/g;
+	$pattern = '"' . $pattern . '"';
+	my @lines = (
+		'# Written by the JawnOS Network app. Remove this file to return to DHCP.',
+		'[Match]',
+		'Name=' . $interface,
+		'SSID=' . $pattern,
+		'',
+		'[Network]',
+	);
+	if ($options->{'method'} eq 'static') {
+		push @lines, 'DHCP=no';
+		push @lines, 'Address=' . $options->{'address'} . '/' . $options->{'prefix'};
+		push @lines, 'Gateway=' . $options->{'gateway'} if length $options->{'gateway'};
+	}
+	else {
+		push @lines, 'DHCP=yes';
+	}
+	if (@{ $options->{'dns'} }) {
+		push @lines, 'DNS=' . join(' ', @{ $options->{'dns'} });
+		# A custom DNS server replaces the one the lease carries.
+		push @lines, '', '[DHCP]', 'UseDNS=no' if $options->{'method'} ne 'static';
+	}
+	return encode_utf8(join("\n", @lines) . "\n");
+}
+
+# Write straight to the path when this process may, otherwise stage the text in
+# a temp file and install it through run_write's sudo fallback. Returns 1 on
+# success; the caller turns 0 into a readable error.
+sub write_root_file {
+	my ($path, $content) = @_;
+	if (open my $fh, '>', $path) {
+		binmode $fh;
+		print {$fh} $content;
+		close $fh;
+		chmod 0644, $path;
+		return 1;
+	}
+	my ($tmp, $tmp_name) = tempfile('jawnos-network-XXXXXX', TMPDIR => 1, UNLINK => 0);
+	return 0 unless $tmp;
+	binmode $tmp;
+	print {$tmp} $content;
+	close $tmp;
+	my ($stdout, $stderr, $status) = run_write(undef, 'install', '-m', '0644', $tmp_name, $path);
+	unlink $tmp_name;
+	return $status == 0 ? 1 : 0;
+}
+
+sub remove_root_file {
+	my ($path) = @_;
+	return 1 if unlink $path;
+	my ($stdout, $stderr, $status) = run_write(undef, 'rm', '-f', $path);
+	return $status == 0 ? 1 : 0;
 }
 
 # Read-only calls answer within a few seconds or not at all, so a missing
@@ -334,13 +474,43 @@ sub adapter_name {
 
 # The address method is only called "static" when a systemd-networkd unit really
 # carries an Address= line for this interface. A DHCP lease is the networkd
-# lease file; anything else stays unknown rather than guessing.
+# lease file; anything else stays unknown rather than guessing. A unit scoped
+# to an SSID only counts while that network is the one the station joined.
+sub networkd_words {
+	my ($text) = @_;
+	my @words;
+	while ($text =~ /\G\s*(?:"((?:\\.|[^"\\])*)"|(\S+))/g) {
+		push @words, defined $1 ? $1 : $2;
+	}
+	return @words;
+}
+
+sub networkd_glob_match {
+	my ($pattern, $value) = @_;
+	my $regex = '';
+	my $i = 0;
+	my $length = length $pattern;
+	while ($i < $length) {
+		my $char = substr($pattern, $i, 1);
+		if ($char eq '\\' && $i + 1 < $length) {
+			$regex .= quotemeta(substr($pattern, $i + 1, 1));
+			$i += 2;
+			next;
+		}
+		$regex .= $char eq '*' ? '.*' : $char eq '?' ? '.' : quotemeta($char);
+		$i++;
+	}
+	return $value =~ /\A$regex\z/s ? 1 : 0;
+}
+
 sub static_configured {
 	my ($name) = @_;
-	foreach my $file ( glob('/etc/systemd/network/*.network') ) {
+	my %current_ssid;
+	foreach my $file ( glob(networkd_dir() . '/*.network') ) {
 		my $text = slurp($file);
 		my $section = '';
 		my ($matches, $has_address) = (0, 0);
+		my @ssid_patterns;
 		foreach my $line ( split /\n/, $text ) {
 			if ($line =~ /^\s*\[([^\]]+)\]/) {
 				$section = lc($1);
@@ -348,19 +518,29 @@ sub static_configured {
 			}
 			next if $line =~ /^\s*[#;]/;
 			if ($section eq 'match' && $line =~ /^\s*Name\s*=\s*(.+)$/) {
-				foreach my $pattern ( split /\s+/, $1 ) {
-					my $regex = $pattern;
-					$regex =~ s/([.+^$(){}\[\]|\\])/\\$1/g;
-					$regex =~ s/\*/.*/g;
-					$regex =~ s/\?/./g;
-					$matches = 1 if $name =~ /^$regex$/;
+				foreach my $pattern ( networkd_words($1) ) {
+					$matches = 1 if networkd_glob_match($pattern, $name);
 				}
+			}
+			if ($section eq 'match' && $line =~ /^\s*SSID\s*=\s*(.+)$/) {
+				push @ssid_patterns, networkd_words($1);
 			}
 			if ($section eq 'network' && $line =~ /^\s*Address\s*=/) {
 				$has_address = 1;
 			}
 		}
-		return 1 if $matches && $has_address;
+		next unless $matches && $has_address;
+		if (@ssid_patterns) {
+			$current_ssid{$name} = station_report($name)->{'connected network'} || ''
+				unless exists $current_ssid{$name};
+			my $current = $current_ssid{$name};
+			my $applies = 0;
+			foreach my $pattern (@ssid_patterns) {
+				$applies = 1 if networkd_glob_match($pattern, $current);
+			}
+			next unless $applies;
+		}
+		return 1;
 	}
 	return 0;
 }
@@ -405,17 +585,50 @@ sub station_report {
 }
 
 sub saved_networks {
-	return [] unless find_command('iwctl');
-	my ($stdout, $stderr, $status) = run_privileged_read('iwctl', 'known-networks', 'list');
+	if (find_command('iwctl')) {
+		my ($stdout, $stderr, $status) = run_privileged_read('iwctl', 'known-networks', 'list');
+		return [] unless $status == 0;
+		my @saved;
+		foreach my $line ( split /\n/, $stdout ) {
+			next if $line =~ /^\s*$/;
+			next if $line =~ /^\s*-+\s*$/;
+			next if $line =~ /Known networks/i;
+			(my $name = $line) =~ s/^\s+|\s+$//g;
+			$name = utf8_text($name);
+			push @saved, $name if valid_ssid($name);
+		}
+		return \@saved;
+	}
+	# NetworkManager keeps the SSID in the profile, not in the connection name.
+	# One field query answers the whole list; an older nmcli that does not know
+	# a setting field falls back to asking each wireless profile by name.
+	return [] unless find_command('nmcli');
+	my (@saved, %seen);
+	my ($ssids, $ssids_err, $ssids_status) = run_read('nmcli', '--terse', '--fields',
+		'802-11-wireless.ssid', 'connection', 'show');
+	if ($ssids_status == 0) {
+		foreach my $line ( split /\n/, (defined $ssids ? $ssids : '') ) {
+			my $ssid = utf8_text(trim(nmcli_unescape($line)));
+			next unless valid_ssid($ssid) && !$seen{$ssid}++;
+			push @saved, $ssid;
+		}
+		return \@saved;
+	}
+	my ($stdout, $stderr, $status) = run_read('nmcli', '--terse', '--fields', 'NAME,TYPE', 'connection', 'show');
 	return [] unless $status == 0;
-	my @saved;
 	foreach my $line ( split /\n/, $stdout ) {
-		next if $line =~ /^\s*$/;
-		next if $line =~ /^\s*-+\s*$/;
-		next if $line =~ /Known networks/i;
-		(my $name = $line) =~ s/^\s+|\s+$//g;
-		$name = utf8_text($name);
-		push @saved, $name if valid_ssid($name);
+		next unless length $line;
+		my @fields = split /(?<!\\):/, $line, 2;
+		next unless @fields >= 2;
+		my $name = nmcli_unescape($fields[0]);
+		next unless $fields[1] =~ /wifi|wireless/i;
+		my ($ssid_out, $ssid_err, $ssid_status) = run_read('nmcli', '--terse', '--get-values',
+			'802-11-wireless.ssid', 'connection', 'show', $name);
+		my $ssid = $ssid_status == 0 ? trim(nmcli_unescape($ssid_out)) : '';
+		$ssid = $name unless length $ssid;
+		$ssid = utf8_text($ssid);
+		next unless valid_ssid($ssid) && !$seen{$ssid}++;
+		push @saved, $ssid;
 	}
 	return \@saved;
 }
@@ -494,6 +707,7 @@ sub wifi_status {
 	return {
 		present       => scalar(@wireless) ? 1 : 0,
 		iwd           => $adapters->{'present'} ? 1 : 0,
+		can_connect   => (find_command('iwctl') || find_command('nmcli')) ? 1 : 0,
 		interfaces    => \@wireless,
 		adapters      => $adapters->{'adapters'},
 		radio_powered => $radio_powered,
@@ -604,13 +818,27 @@ sub wifi_scan_nmcli {
 }
 
 sub wifi_connect {
-	my ($interface, $ssid, $passphrase) = @_;
+	my ($interface, $ssid, $passphrase, $method, $address, $prefix, $gateway, $dns) = @_;
 	$ssid = utf8_text($ssid);
 	return { ok => 0, error => 'That interface name is not valid.' } unless valid_interface($interface);
 	return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($ssid);
 	return { ok => 0, error => 'The passphrase must be 8 to 63 characters, or 64 hexadecimal digits.' }
 		unless valid_passphrase($passphrase);
-	return { ok => 0, error => 'iwd is not installed.' } unless find_command('iwctl');
+	my $options = addressing_options($method, $address, $prefix, $gateway, $dns);
+	return { ok => 0, error => $options->{'error'} } if $options->{'error'};
+	# iwd first: it is the stack the live image configures. A NetworkManager
+	# machine with no iwctl gets the same choices through nmcli.
+	return wifi_connect_iwd($interface, $ssid, $passphrase, $options) if find_command('iwctl');
+	return wifi_connect_nmcli($interface, $ssid, $passphrase, $options) if find_command('nmcli');
+	return { ok => 0, error => 'No WiFi tool is installed (iwctl or nmcli).' };
+}
+
+sub wifi_connect_iwd {
+	my ($interface, $ssid, $passphrase, $options) = @_;
+	# The address settings are written before the association, so networkd has
+	# them when the link comes up.
+	my $prepared = prepare_iwd_addressing($interface, $ssid, $options);
+	return { ok => 0, error => $prepared->{'error'} } if $prepared->{'error'};
 	my @command = ('iwctl', '--dont-ask');
 	push @command, '--passphrase=' . $passphrase if defined $passphrase && length $passphrase;
 	push @command, 'station', $interface, 'connect', $ssid;
@@ -629,17 +857,162 @@ sub wifi_connect {
 			last;
 		}
 	}
-	return { ok => 1, message => 'Connected to ' . $ssid . '.' } if $connected;
+	if ($connected) {
+		my $finished = finish_iwd_addressing($interface, $options);
+		return { ok => 0, error => $finished->{'error'} } if $finished->{'error'};
+		return { ok => 1, message => connection_message($ssid, $options) };
+	}
 	my $message = clean($stderr) || clean($stdout);
 	$message = 'Could not connect to ' . $ssid . '.' unless length $message;
 	return { ok => 0, error => $message };
 }
 
+# On the live image systemd-networkd owns the address. One drop-in per SSID
+# carries the choice: a 10- prefix sorts before 20-wireless.network, and
+# SSID= keeps the static address or DNS override scoped to that network.
+sub prepare_iwd_addressing {
+	my ($interface, $ssid, $options) = @_;
+	return {} unless find_command('networkctl');
+	my $path = networkd_unit_path($ssid);
+	my $custom = ($options->{'method'} eq 'static' || @{ $options->{'dns'} }) ? 1 : 0;
+	my $changed = 0;
+	if ($custom) {
+		return { error => 'Could not save the address settings.' }
+			unless write_root_file($path, networkd_unit_text($interface, $ssid, $options));
+		$changed = 1;
+	}
+	elsif (-e $path) {
+		return { error => 'Could not clear the old address settings.' }
+			unless remove_root_file($path);
+		$changed = 1;
+	}
+	run_write(undef, 'networkctl', 'reload') if $changed;
+	return {};
+}
+
+sub finish_iwd_addressing {
+	my ($interface, $options) = @_;
+	if (find_command('networkctl')) {
+		run_write(undef, 'networkctl', 'reconfigure', $interface);
+		select(undef, undef, undef, 1);
+		return {};
+	}
+	return apply_imperative_addressing($interface, $options);
+}
+
+# A machine without networkd (or a test tree) can still take the address now;
+# it simply does not persist past a reconnect.
+sub apply_imperative_addressing {
+	my ($interface, $options) = @_;
+	if ($options->{'method'} eq 'static') {
+		run_write(undef, 'ip', '-4', 'address', 'flush', 'dev', $interface);
+		my ($out, $err, $status) = run_write(undef, 'ip', 'address', 'add',
+			$options->{'address'} . '/' . $options->{'prefix'}, 'dev', $interface);
+		return { error => clean($err) || clean($out) || 'Could not set the address.' } unless $status == 0;
+		if (length $options->{'gateway'}) {
+			($out, $err, $status) = run_write(undef, 'ip', 'route', 'replace', 'default',
+				'via', $options->{'gateway'}, 'dev', $interface);
+			return { error => clean($err) || clean($out) || 'Could not set the gateway.' } unless $status == 0;
+		}
+	}
+	if (@{ $options->{'dns'} }) {
+		return { error => 'resolvectl is not installed.' } unless find_command('resolvectl');
+		my ($out, $err, $status) = run_write(undef, 'resolvectl', 'dns', $interface, @{ $options->{'dns'} });
+		return { error => clean($err) || clean($out) || 'Could not set the DNS server.' } unless $status == 0;
+	}
+	return {};
+}
+
+# NetworkManager keeps everything a connect chose in the profile itself. The
+# name is derived from the SSID, so a second connect edits the same profile
+# instead of piling up duplicates.
+sub nmcli_profile_name {
+	my ($ssid) = @_;
+	return 'jawnos-wifi-' . substr(sha1_hex(encode_utf8($ssid)), 0, 16);
+}
+
+# Find a wireless profile that already belongs to this SSID. The profile name
+# is not the SSID on NetworkManager, so each wireless profile's SSID is asked
+# for by name.
+sub nmcli_profile_for_ssid {
+	my ($ssid) = @_;
+	my ($list, $list_err, $list_status) = run_read('nmcli', '--terse', '--fields', 'NAME,TYPE', 'connection', 'show');
+	return undef unless $list_status == 0;
+	my @wifi;
+	foreach my $line ( split /\n/, (defined $list ? $list : '') ) {
+		next unless length $line;
+		my @fields = split /(?<!\\):/, $line, 2;
+		next unless @fields >= 2 && $fields[1] =~ /wifi|wireless/i;
+		push @wifi, nmcli_unescape($fields[0]);
+	}
+	my $derived = nmcli_profile_name($ssid);
+	return $derived if grep { $_ eq $derived } @wifi;
+	foreach my $candidate (@wifi) {
+		my ($ssid_out, $ssid_err, $ssid_status) = run_read('nmcli', '--terse', '--get-values',
+			'802-11-wireless.ssid', 'connection', 'show', $candidate);
+		next unless $ssid_status == 0;
+		return $candidate if trim(nmcli_unescape($ssid_out)) eq $ssid;
+	}
+	return undef;
+}
+
+sub wifi_connect_nmcli {
+	my ($interface, $ssid, $passphrase, $options) = @_;
+	# Reuse a profile that already carries this SSID, so a saved passphrase is
+	# used instead of being replaced by a second, empty profile. Our own
+	# derived name is preferred when it exists.
+	my $name = nmcli_profile_for_ssid($ssid);
+	my $exists = defined $name;
+	$name = nmcli_profile_name($ssid) unless $exists;
+	my ($stdout, $stderr, $status);
+	if (!$exists) {
+		($stdout, $stderr, $status) = run_write(undef, 'nmcli', 'connection', 'add',
+			'type', 'wifi', 'con-name', $name, 'ifname', $interface, 'ssid', $ssid);
+		return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not create the connection.' }
+			unless $status == 0;
+	}
+	my @modify = ('nmcli', 'connection', 'modify', $name);
+	# An empty passphrase means "use what the profile already has". Writing
+	# key-mgmt=none here would throw a saved credential away.
+	push @modify, 'wifi-sec.key-mgmt', 'wpa-psk', 'wifi-sec.psk', $passphrase if length $passphrase;
+	if ($options->{'method'} eq 'static') {
+		push @modify,
+			'ipv4.method', 'manual',
+			'ipv4.addresses', $options->{'address'} . '/' . $options->{'prefix'};
+		push @modify, 'ipv4.gateway', $options->{'gateway'} if length $options->{'gateway'};
+		push @modify, 'ipv4.ignore-auto-dns', 'yes';
+		push @modify, 'ipv4.dns', join(',', @{ $options->{'dns'} }) if @{ $options->{'dns'} };
+	}
+	else {
+		push @modify, 'ipv4.method', 'auto';
+		if (@{ $options->{'dns'} }) {
+			push @modify, 'ipv4.ignore-auto-dns', 'yes';
+			push @modify, 'ipv4.dns', join(',', @{ $options->{'dns'} });
+		}
+		else {
+			push @modify, 'ipv4.ignore-auto-dns', 'no';
+			push @modify, 'ipv4.dns', '';
+		}
+	}
+	($stdout, $stderr, $status) = run_write(undef, @modify);
+	return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not save the connection settings.' }
+		unless $status == 0;
+	($stdout, $stderr, $status) = run_write(undef, 'nmcli', '--wait', '30', 'connection', 'up', $name);
+	return { ok => 0, error => clean($stderr) || clean($stdout) || ('Could not connect to ' . $ssid . '.') }
+		unless $status == 0;
+	return { ok => 1, message => connection_message($ssid, $options) };
+}
+
 sub wifi_disconnect {
 	my ($interface) = @_;
 	return { ok => 0, error => 'That interface name is not valid.' } unless valid_interface($interface);
-	return { ok => 0, error => 'iwd is not installed.' } unless find_command('iwctl');
-	my ($stdout, $stderr, $status) = run_write(undef, 'iwctl', 'station', $interface, 'disconnect');
+	if (find_command('iwctl')) {
+		my ($stdout, $stderr, $status) = run_write(undef, 'iwctl', 'station', $interface, 'disconnect');
+		return { ok => 1, message => 'Disconnected.' } if $status == 0;
+		return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not disconnect.' };
+	}
+	return { ok => 0, error => 'iwd is not installed.' } unless find_command('nmcli');
+	my ($stdout, $stderr, $status) = run_write(undef, 'nmcli', 'device', 'disconnect', $interface);
 	return { ok => 1, message => 'Disconnected.' } if $status == 0;
 	return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not disconnect.' };
 }
@@ -648,10 +1021,25 @@ sub wifi_forget {
 	my ($ssid) = @_;
 	$ssid = utf8_text($ssid);
 	return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($ssid);
-	return { ok => 0, error => 'iwd is not installed.' } unless find_command('iwctl');
-	my ($stdout, $stderr, $status) = run_write(undef, 'iwctl', 'known-networks', $ssid, 'forget');
-	return { ok => 1, message => 'Forgot ' . $ssid . '.' } if $status == 0;
-	return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not forget that network.' };
+	if (find_command('iwctl')) {
+		my ($stdout, $stderr, $status) = run_write(undef, 'iwctl', 'known-networks', $ssid, 'forget');
+		return { ok => 1, message => 'Forgot ' . $ssid . '.' } if $status == 0;
+		return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not forget that network.' };
+	}
+	return { ok => 0, error => 'iwd is not installed.' } unless find_command('nmcli');
+	# Our own profile carries a derived name; a profile a person made in
+	# NetworkManager may carry any name with this SSID. Try the profile that
+	# really belongs to the SSID, then the two conventional names.
+	my $forgot = 0;
+	my %tried;
+	my @names = ( nmcli_profile_for_ssid($ssid), nmcli_profile_name($ssid), $ssid );
+	foreach my $name ( @names ) {
+		next unless defined $name && length $name && !$tried{$name}++;
+		my ($stdout, $stderr, $status) = run_write(undef, 'nmcli', 'connection', 'delete', $name);
+		$forgot = 1 if $status == 0;
+	}
+	return { ok => 1, message => 'Forgot ' . $ssid . '.' } if $forgot;
+	return { ok => 0, error => 'No saved connection for ' . $ssid . '.' };
 }
 
 sub radio_set {
@@ -920,7 +1308,7 @@ elsif ($command eq 'wifi_scan') {
 	emit(wifi_scan(shift @ARGV));
 }
 elsif ($command eq 'wifi_connect') {
-	my ($interface, $ssid) = @ARGV;
+	my ($interface, $ssid, $method, $address, $prefix, $gateway, $dns) = @ARGV;
 	my $passphrase = '';
 	unless (-t STDIN) {
 		local $/;
@@ -928,7 +1316,7 @@ elsif ($command eq 'wifi_connect') {
 		$passphrase = '' unless defined $passphrase;
 	}
 	$passphrase =~ s/\r?\n\z//;
-	emit(wifi_connect($interface, $ssid, $passphrase));
+	emit(wifi_connect($interface, $ssid, $passphrase, $method, $address, $prefix, $gateway, $dns));
 }
 elsif ($command eq 'wifi_disconnect') {
 	emit(wifi_disconnect(shift @ARGV));

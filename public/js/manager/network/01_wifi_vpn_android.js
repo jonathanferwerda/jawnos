@@ -1,3 +1,16 @@
+$(document).on('click', '.network_wifi_options_toggle', function() {
+	var button = $(this);
+	var box = button.closest('.network_wifi_row').find('.network_wifi_options');
+	var opening = box.prop('hidden');
+	box.prop('hidden', !opening);
+	button.text(opening ? networkLabel('hide_options', 'Hide options') : networkLabel('options', 'Options'));
+});
+
+$(document).on('change', '.network_wifi_method', function() {
+	var box = $(this).closest('.network_wifi_options');
+	box.find('.network_wifi_static').prop('hidden', $(this).val() !== 'static');
+});
+
 $(document).on('click', '.network_wifi_connect', function() {
 	var row = $(this).closest('.network_wifi_row');
 	var button = $(this);
@@ -6,7 +19,8 @@ $(document).on('click', '.network_wifi_connect', function() {
 	var passphrase = row.find('.network_wifi_pass').val() || '';
 	var message = row.find('.network_wifi_msg').text(networkT('Working…'));
 	button.prop('disabled', true);
-	networkPost('wifi_connect', { interface: iface, ssid: ssid, passphrase: passphrase }, function(response) {
+	var data = $.extend({ interface: iface, ssid: ssid, passphrase: passphrase }, networkWifiOptionsData(row));
+	networkPost('wifi_connect', data, function(response) {
 		button.prop('disabled', false);
 		if (response.ok) {
 			message.text(networkT('Connected to {0}.', ssid));
