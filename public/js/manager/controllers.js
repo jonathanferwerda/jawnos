@@ -776,6 +776,7 @@ function controllerNewAvailability(on) {
 	controllerComputer = controllerBool(on);
 	if (controllerComputer) {
 		section.prop('hidden', false);
+		controllerCurrentNetwork();
 		return;
 	}
 	// Off this computer the section renders nothing, and a panel left over from
@@ -883,69 +884,31 @@ function controllerNewFailure(text) {
 	panel.append($('<div class="controller_new_actions"></div>').append(controllerNewScanButton()));
 }
 
-// The manager's own radio already knows the networks around it - the same scan
-// the Networks app and Embedded use - and that is the network the board will
-// join. Picking one fills the name in, so a space in a network name is not lost
-// to typing; the password stays a separate field.
-$(document).on('click', '#controllers_wifi_scan', function() {
-	controllerWifiScan();
-});
-
-function controllerWifiScan() {
-	var button = $('#controllers_wifi_scan').prop('disabled', true);
-	var picks = $('#controllers_wifi_picks').empty();
-	controllerStatus('controllers_wifi_scan_status', controllerT('Scanning for networks...'), false);
+// The board joins the Wi-Fi this computer is on, and the Network app already
+// knows it. The page names that network here; the flash action reads the key on
+// the server, so neither the page nor the person handles it.
+function controllerCurrentNetwork() {
+	var note = $('#controllers_network_note');
+	if (!note.length) { return; }
+	note.text(controllerT('Reading the network this computer is on...'));
 	$.ajax({
-		url: '/manager/network/wifi_scan',
-		type: 'POST',
+		url: '/manager/network/status',
+		type: 'GET',
 		dataType: 'json',
 		data: { timestamp: Date.now() }
 	}).done(function(response) {
-		button.prop('disabled', false);
-		var networks = (response && response.networks) || [];
-		var seen = 0;
-		for (var i = 0; i < networks.length; i++) {
-			var ssid = networks[i] && networks[i].ssid;
-			if (!ssid) { continue; }
-			picks.append($('<button type="button" class="controller_wifi_pick"></button>')
-				.attr('data-ssid', ssid).text(ssid));
-			seen++;
+		var wifi = (response && response.wifi) || {};
+		var interfaces = wifi.interfaces || [];
+		var ssid = '';
+		for (var i = 0; i < interfaces.length; i++) {
+			if (interfaces[i] && interfaces[i].ssid) { ssid = String(interfaces[i].ssid); break; }
 		}
-		controllerStatus('controllers_wifi_scan_status', seen
-			? controllerT('{0} network(s) found. Pick one, or type the name.', seen)
-			: controllerT('No networks were found; type the name instead.'), false);
+		note.text(ssid
+			? controllerT('The board will join {0}.', ssid)
+			: controllerT('This computer is not on Wi-Fi; the board will come up with no network.'));
 	}).fail(function() {
-		button.prop('disabled', false);
-		controllerStatus('controllers_wifi_scan_status', controllerT('The scan failed; type the name instead.'), true);
+		note.text(controllerT('The network this computer is on could not be read.'));
 	});
-}
-
-$(document).on('click', '.controller_wifi_pick', function() {
-	var ssid = $(this).attr('data-ssid') || '';
-	$('#controllers_wifi_ssid').val(ssid);
-	controllerStatus('controllers_wifi_scan_status', controllerT('Chosen: {0}', ssid), false);
-	$('#controllers_wifi_psk').focus();
-});
-
-// The board's network, read once for a flash. The provisioner refuses the same
-// shapes; saying it here keeps a typo off a 900-second press.
-function controllerNewNetwork() {
-	var ssid = ($('#controllers_wifi_ssid').val() || '').replace(/^\s+|\s+$/g, '');
-	var psk = $('#controllers_wifi_psk').val() || '';
-	if (!ssid && !psk) { return { ssid: '', psk: '' }; }
-	if (!ssid) {
-		return { error: controllerT('Type the network name, or clear the password to leave the board off the network.'), focus: '#controllers_wifi_ssid' };
-	}
-	if (!psk) {
-		return { error: controllerT('Type the network password, or clear the network name to leave the board off the network.'), focus: '#controllers_wifi_psk' };
-	}
-	if (ssid.length > 32) {
-		return { error: controllerT('A network name is at most 32 characters.'), focus: '#controllers_wifi_ssid' };
-	}
-	if (psk.length < 8 || psk.length > 63) {
-		return { error: controllerT('A Wi-Fi password is 8 to 63 characters.'), focus: '#controllers_wifi_psk' };
-	}
-	return { ssid: ssid, psk: psk };
 }
 
 // The board's own name, read once for a flash. It is the name it answers to on
@@ -964,7 +927,7 @@ function controllerNewHostname() {
 // The fields are the flash's input, so they are held still while it runs and
 // handed back when it answers.
 function controllerNewNetworkLocked(locked) {
-	$('#controllers_hostname, #controllers_wifi_ssid, #controllers_wifi_psk, #controllers_card_choice').prop('disabled', !!locked);
+	$('#controllers_hostname, #controllers_card_choice').prop('disabled', !!locked);
 }
 
 function controllerNewFlash() {
@@ -975,12 +938,6 @@ function controllerNewFlash() {
 	if (name.error) {
 		controllerStatus('controllers_new_status', name.error, true);
 		$(name.focus).focus();
-		return;
-	}
-	var network = controllerNewNetwork();
-	if (network.error) {
-		controllerStatus('controllers_new_status', network.error, true);
-		$(network.focus || '#controllers_wifi_ssid').focus();
 		return;
 	}
 	var panel = $('#controllers_new_panel');
@@ -997,8 +954,6 @@ function controllerNewFlash() {
 		data: {
 			timestamp: Date.now(),
 			hostname: name,
-			'wifi-ssid': network.ssid,
-			'wifi-psk': network.psk,
 			card: ($('#controllers_card_choice').val() === 'format' ? 'format' : 'adopt')
 		},
 		dataType: 'json',
@@ -1009,9 +964,6 @@ function controllerNewFlash() {
 				controllerNewFailure((response && response.error) ? String(response.error) : controllerT('The board was not flashed.'));
 				return;
 			}
-			// The password has served its purpose; a secret is not left sitting in
-			// the page for the next person at the desk.
-			$('#controllers_wifi_psk').val('');
 			controllerNewDone(response);
 			controllerStatus('controllers_new_status', controllerT('Flashed.'), false);
 			// The flashed board may already be in the roster, and its card is new:
@@ -1056,7 +1008,11 @@ function controllerNewDone(data) {
 // `autopopulated` names the fields the flash filled in, as bare names or as rows
 // carrying one. Only the name is painted: a value could be the Wi-Fi password,
 // and the screen must not show it.
-var controllerNewFields = { wifi: 'Wi-Fi network', hostname: 'Name', 'join-token': 'House token' };
+var controllerNewFields = {
+	wifi: 'Wi-Fi network', hostname: 'Name', 'join-token': 'House token',
+	identity: 'Machine identity', config: 'Configuration', database: 'Database',
+	state: 'Runtime state', network: 'Saved networks'
+};
 
 function controllerNewFieldName(item) {
 	if (item === undefined || item === null) { return ''; }

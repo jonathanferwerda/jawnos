@@ -634,16 +634,30 @@ sub action_54010 {
 	my @args = ('--flash');
 	my $image = $c->param('image');
 	push @args, ('--image', substr($image, 0, 400)) if defined $image && length $image;
-	my $ssid = defined $c->param('wifi-ssid') ? $c->param('wifi-ssid') : $c->param('wifi_ssid');
-	my $psk = defined $c->param('wifi-psk') ? $c->param('wifi-psk') : $c->param('wifi_psk');
-	push @args, ('--wifi-ssid', substr($ssid, 0, 64)) if defined $ssid && length $ssid;
+	# The board joins this house's Wi-Fi, and the house already knows it: the
+	# Network app reads the connection the manager is on. Nothing is typed here,
+	# and the key stays on the server - only the provisioner's stdin sees it.
+	# A manager that is not on Wi-Fi (or a key it cannot read) flashes the board
+	# with no network; the board's USB gadget still answers, and its Network app
+	# can join one later.
+	my $network = eval { &network_helper(['wifi_current']) };
+	my ($wifi_ssid, $wifi_psk) = ('', '');
+	if (ref $network eq 'HASH' && $network->{'ok'}) {
+		my $candidate = $network->{'ssid'} // '';
+		my $key = $network->{'passphrase'} // '';
+		if (length $candidate && length($candidate) <= 32 && $candidate !~ /[\x00-\x1f\x7f]/
+			&& ($key =~ /^[\x20-\x7e]{8,63}$/ || $key =~ /^[0-9A-Fa-f]{64}$/)) {
+			($wifi_ssid, $wifi_psk) = ($candidate, $key);
+		}
+	}
+	push @args, ('--wifi-ssid', $wifi_ssid) if length $wifi_ssid;
 	# The password is handed over on the child's stdin: sudo keeps the argv
 	# visible in `ps` to every user on the machine, and a secret does not belong
 	# there.
 	my $psk_stdin;
-	if (defined $psk && length $psk) {
+	if (length $wifi_ssid) {
 		push @args, '--wifi-psk-stdin';
-		$psk_stdin = substr($psk, 0, 128);
+		$psk_stdin = $wifi_psk;
 	}
 	my $hostname = $c->param('hostname');
 	push @args, ('--hostname', substr($hostname, 0, 63)) if defined $hostname && length $hostname;
@@ -658,6 +672,10 @@ sub action_54010 {
 	my $answer = &_controller_gou_run(1, $psk_stdin, @args);
 	unlink $token->{'path'} if $token->{'path'};
 	&_controller_join_forget($token->{'secret'}) if $token->{'secret'} && !($answer->{'ok'});
+	$answer = {} unless ref $answer eq 'HASH';
+	# The page says which network the board was given (an empty name means it
+	# was flashed with no network).
+	$answer->{'wifi'} = $wifi_ssid;
 	$c->render(json => $answer);
 }
 

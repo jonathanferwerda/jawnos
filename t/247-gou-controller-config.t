@@ -96,6 +96,7 @@ for my $page (qw(time retroarch)) {
 	no warnings 'redefine';
 	*subs::ui = sub { $_[0] };
 	*subs::icon_for = sub { $_[0] };
+	*subs::icon_path = sub { $_[1] };
 	# the real renderer supplies include; this harness compiles one file
 	*Mojo::Template::Sandbox::include = sub { '' };
 	my $mt = Mojo::Template->new({ vars => 1 });

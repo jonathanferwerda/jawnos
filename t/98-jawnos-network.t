@@ -308,6 +308,76 @@ FAKE_NMCLI
 	}
 }
 
+# --- the network this computer is on -----------------------------------------
+# New on the Controllers page asks for the connection the manager is on, so the
+# board is flashed with this house's network instead of a typed name and key.
+{
+	my $nmc = "$scratch/nm_current";
+	mkdir $nmc or die "cannot make $nmc: $!";
+	write_exe("$nmc/ip", q{exit 0});
+	write_exe("$nmc/nmcli", <<'FAKE_NMCLI');
+case "$*" in
+	*"--show-secrets"*"--get-values 802-11-wireless-security.psk"*) printf 'correcthorsebattery\n' ;;
+	*"--fields NAME,TYPE,DEVICE connection show --active"*) printf 'jawn-house:802-11-wireless:wlan0\n' ;;
+	*"--get-values 802-11-wireless.ssid"*) printf 'jawn-house\n' ;;
+	*"--get-values 802-11-wireless-security.key-mgmt"*) printf 'wpa-psk\n' ;;
+	*) exit 1 ;;
+esac
+FAKE_NMCLI
+	my ($rc, $out) = run_net(path => $nmc, args => ['wifi_current']);
+	my $data = answer($rc, $out, '', 'wifi_current on a NetworkManager machine');
+	is($data->{'ok'}, 1, 'the current network is reported');
+	is($data->{'ssid'}, 'jawn-house', 'with its name');
+	is($data->{'passphrase'}, 'correcthorsebattery', 'and the key the board needs');
+	is($data->{'secure'}, 1, 'a WPA network is marked secure');
+}
+{
+	# iwd keeps the key in one file per network; the directory is overridable so
+	# this reads a temp copy, not the machine's store.
+	my $iwd = "$scratch/iwd_current";
+	my $keys = "$scratch/iwd_keys";
+	mkdir $iwd or die "cannot make $iwd: $!";
+	mkdir $keys or die "cannot make $keys: $!";
+	open(my $kf, '>', "$keys/jawn-house.psk") or die "cannot write the key: $!";
+	print $kf "[Security]\nPreSharedKey=correcthorsebattery\n";
+	close $kf;
+	write_exe("$iwd/cat", 'exec /bin/cat "$@"');
+	write_exe("$iwd/ip", <<'FAKE_IP');
+if [ "$*" = "-j address show" ]; then
+	printf '[{"ifname":"wlan0","address":"00:11:22:33:44:55","operstate":"up","addr_info":[{"family":"inet","local":"192.0.2.10","prefixlen":24}]}]'
+	exit 0
+fi
+exit 0
+FAKE_IP
+	write_exe("$iwd/iw", <<'FAKE_IW');
+case "$*" in
+	"dev wlan0 info") printf 'Interface wlan0\n\ttype managed\n' ;;
+	"dev wlan0 link") printf 'Connected to aa:bb:cc:dd:ee:ff\n\tSSID: jawn-house\n' ;;
+	*) exit 1 ;;
+esac
+FAKE_IW
+	write_exe("$iwd/iwctl", <<'FAKE_IWCTL');
+case "$*" in
+	"station wlan0 show") printf 'Station: wlan0\n  State                     connected\n  Connected network         jawn-house\n' ;;
+	*) exit 1 ;;
+esac
+FAKE_IWCTL
+	{
+		local $ENV{'JAWNOS_IWD_DIR'} = $keys;
+		my ($rc, $out) = run_net(path => $iwd, args => ['wifi_current']);
+		my $data = answer($rc, $out, '', 'wifi_current over iwd');
+		is($data->{'ok'}, 1, 'iwd reports the current network');
+		is($data->{'ssid'}, 'jawn-house', 'with its name');
+		is($data->{'passphrase'}, 'correcthorsebattery', 'and the key from its own store');
+	}
+}
+{
+	my ($rc, $out) = run_net(args => ['wifi_current']);
+	my $data = answer($rc, $out, '', 'wifi_current with no Wi-Fi');
+	is($data->{'ok'}, 0, 'a computer with no Wi-Fi answers ok 0');
+	is($data->{'error'}, 'This computer is not on Wi-Fi.', 'and says so');
+}
+
 {
 	my (undef, $out) = run_net(path => $fake, args => [qw(wifi_disconnect wlan0)]);
 	my $data = eval { decode_json($out) };

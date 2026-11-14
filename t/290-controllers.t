@@ -65,24 +65,21 @@ like($provision, qr/--scan/, 'the provisioning script can scan');
 like($provision, qr/--flash/, 'the provisioning script can flash');
 like($provision, qr/30_?535_?680/, 'the script knows the eMMC sector count');
 
-# The board's network is typed on the page before New, and the password travels
-# on the child's stdin: sudo keeps argv readable in `ps` to every user.
+# The board joins this computer's Wi-Fi, read from the Network app at New time;
+# nothing is typed on the page and the key stays on the server.
 my $body = slurp('templates/controllers/body.html.ep');
-like($body, qr/id="controllers_wifi_ssid"/, 'the New section asks for the network name');
-like($body, qr/id="controllers_wifi_psk"[^>]*type="password"|type="password"[^>]*id="controllers_wifi_psk"/,
-	'and the password in a password field');
-like($body, qr/for="controllers_wifi_ssid"/, 'the network name has a label');
-like($body, qr/for="controllers_wifi_psk"/, 'the password has a label');
+like($body, qr/id="controllers_hostname"/, 'the New section asks for the board name');
+like($body, qr/for="controllers_hostname"/, 'the name has a label');
+unlike($body, qr/id="controllers_wifi_ssid"/, 'the network name is not typed');
+unlike($body, qr/id="controllers_wifi_psk"/, 'the password is not typed');
+like($body, qr/id="controllers_network_note"/, 'the page names the network the board will join');
 
-like($controller, qr/'--wifi-ssid', substr\(\$ssid, 0, 64\)/, 'the flash passes the network name');
+like($controller, qr/network_helper\(\['wifi_current'\]\)/, 'the flash reads the Wi-Fi this computer is on from the Network app');
+like($controller, qr/push \@args, \('--wifi-ssid', \$wifi_ssid\)/, 'the flash passes the network name');
 like($controller, qr/push \@args, '--wifi-psk-stdin'/, 'the password is named on stdin, not argv');
 unlike($controller, qr/'--wifi-psk',/, 'the password never reaches the argv');
 like($controller, qr/&_controller_gou_run\(1, \$psk_stdin, \@args\)/, 'the password is handed to the runner');
 like($controller, qr/\$params\{'stdin'\} = \$stdin if defined \$stdin/, 'and written to the child stdin');
-
-like($provision, qr/'wifi-psk-stdin'\s*=>\s*\\\$opt\{'wifi_psk_stdin'\}/, 'the provisioner accepts the password on stdin');
-like($provision, qr/my \$piped = <STDIN>;/, 'and reads it');
-like($provision, qr/give both the WiFi name and its password/, 'a half-given network is refused');
 
 # The password arrives on the pipe, and the same shapes the page refuses are
 # refused here before a board is looked for, so a typo is answered at once.
@@ -114,14 +111,13 @@ sub run_provision {
 }
 
 my $controllers_js = slurp('public/js/manager/controllers.js');
-like($controllers_js, qr/'wifi-ssid': network\.ssid/, 'the flash sends the network name');
-like($controllers_js, qr/'wifi-psk': network\.psk/, 'the flash sends the password');
-like($controllers_js, qr/function controllerNewNetwork\(\)/, 'the page reads the two fields itself');
-like($controllers_js, qr/if \(!ssid && !psk\) \{ return \{ ssid: '', psk: '' \}; \}/, 'blank keeps the board off the network');
-like($controllers_js, qr/if \(!ssid\) \{/, 'a name without a password is refused');
-like($controllers_js, qr/if \(!psk\) \{/, 'a password without a name is refused');
-like($controllers_js, qr/\$\('#controllers_wifi_psk'\)\.val\(''\)/, 'the password is cleared once the board is flashed');
-like($controllers_js, qr/var controllerNewFields = \{ wifi: 'Wi-Fi network'/, 'the filled-in list names the network in words');
+like($controllers_js, qr/function controllerCurrentNetwork\(\)/, 'the page reads the network from the Network app');
+like($controllers_js, qr{url: '/manager/network/status'}, 'through the Network app status route');
+unlike($controllers_js, qr/'wifi-ssid'/, 'the flash sends no typed network name');
+unlike($controllers_js, qr/'wifi-psk'/, 'and no typed password');
+unlike($controllers_js, qr/function controllerNewNetwork\(\)/, 'the old field reader is gone');
+like($controllers_js, qr/var controllerNewFields = \{/, 'the filled-in list keeps its words');
+like($controllers_js, qr/identity: 'Machine identity'/, 'and names the identity the flash clears');
 
 # The card the controller found: the page draws it, offers the choice, and asks
 # once more before formatting.
@@ -131,15 +127,11 @@ like($controllers_js, qr/jawnosConfirm\(controllerT\('Format the card in this co
 like($controller, qr/sub _controller_card_finding/, 'the page reads what the board reported');
 like($controller, qr/that card already holds the archive/, 'the card holding the archive is never formatted from the page');
 
-# Before a flash: the network can be scanned for (the manager's own radio, the
-# same scan Embedded and the Networks app use), and the card's fate is chosen
-# here because the card is in the board and this computer cannot see it.
-like($body, qr/id="controllers_wifi_scan"/, 'the New section can scan for networks');
-like($body, qr/id="controllers_wifi_picks"/, 'and shows what it found');
-like($body, qr/id="controllers_card_choice"/, 'and asks what to do with the card');
-like($controllers_js, qr{url: '/manager/network/wifi_scan'}, 'the scan reuses the Networks app route');
-like($controllers_js, qr/\.controller_wifi_pick/, 'a found network can be picked');
+# The card's fate is chosen here because the card is in the board; the network
+# is no longer a field, only the note the page fills from the Network app.
+like($body, qr/id="controllers_card_choice"/, 'the New section asks what to do with the card');
 like($controllers_js, qr/card: \(\$\('#controllers_card_choice'\)/, 'the card answer travels with the flash');
+like($controllers_js, qr/The board will join \{0\}\./, 'the page names the network it will join');
 like($controller, qr/card => \(\$card =~ \/\^\(adopt\|format\)\$\//, 'the token carries it to the board');
 
 # The storage walkthrough steps over the same answer Save produces, and the

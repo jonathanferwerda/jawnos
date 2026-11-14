@@ -344,6 +344,79 @@ my $sd_blank = '{"name":"mmcblk0","type":"disk","size":63864569856,"rm":true,"fs
 	is($said->{'card'}->{'action'}, 'adopt', 'the card holding the archive is still never formatted');
 }
 
+# A blank card is not adopted even when the token says so: there is nothing to
+# mount, and the desk's rule is that only a format makes one usable.
+{
+	my $said = &run_first_boot_with_token($emmc . ',' . $sd_blank, 'adopt');
+	is($said->{'card'}->{'action'}, 'leave', 'a blank card is not adopted by the token answer');
+}
+
+# A board with no config.json (the image drops it; the config is machine
+# identity) has to seed one before the tree loads, or the first boot dies at the
+# require. The seed is the server's own setup script, run as the tree owner.
+sub run_first_boot_seeded {
+	my $store = tempdir(CLEANUP => 1);
+	my $home  = tempdir(CLEANUP => 1);
+	local $ENV{'JAWNOS_STORE_DIR'} = $store;
+	local $ENV{'HOME'} = $home;
+	my $err = "$home/seed.err";
+	open(my $save, '>&', \*STDERR) or die "cannot duplicate stderr: $!";
+	open(STDERR, '>', $err) or die "cannot redirect stderr: $!";
+	my $pid = open(my $out, '-|', $^X, root() . '/scripts/gou_first_boot.pl',
+		'--dry-run', '--no-card', '--no-join');
+	my $said = do { local $/; <$out> };
+	close $out;
+	waitpid($pid, 0);
+	open(STDERR, '>&', $save) or die "cannot restore stderr: $!";
+	return ($JSON->decode($said || '{}'), $store);
+}
+
+{
+	my ($said, $store) = &run_first_boot_seeded();
+	is($said->{'ok'}, 1, 'a first boot with no config seeds one and continues');
+	is($said->{'token'}, 'none', 'and the seed does not invent a join token');
+	my $raw = -f "$store/config.json" ? read_file("$store/config.json") : '';
+	my $config = length $raw ? $JSON->decode($raw) : {};
+	is($config->{'device'}, 'controller', 'the board is a controller, not a computer');
+	is($config->{'domain'}, '127.0.0.1', 'its own local house, not the copied card');
+	ok(length($config->{'name'}), 'it carries the board name');
+	ok(length($config->{'signatorial'}), 'the config is usable, so the server does not seed again');
+	ok(-f "$store/database/jawnos.db", 'the seed built the board database');
+}
+
+# The join used to dial the browser's manager port and verify it against the
+# house CA; that port presents the public wildcard, so the verified request
+# always failed. It is routed through peer_secure_url (the port + 6 listener,
+# whose leaf the CA proves), with the signed unverified rail as the fallback.
+like($boot_js, qr/peer_secure_url\(\$rm, \$url\)/, 'the join is routed to the listener that proves the house CA');
+like($boot_js, qr/if \(\$verified && &subs::peer_tls_verify\(\$ua\)\) \{ \$url = \$endpoint; \}/,
+	'and verified only when that listener proves the address');
+like($boot_js, qr/\$ua->insecure\(1\);/, 'otherwise the signed request rides the unverified rail');
+like($boot_js, qr/device => 'controller',/, 'the board files itself as a controller');
+like($boot_js, qr/sub _self_address.*?device_hostname_better/s,
+	'the board names itself by hostname, not by a stale configured domain');
+
+# The image is a copy of another card; the flash is the last pass that makes the
+# board itself, so an image built before the builder's exclusion list still
+# cannot bring the source card's identity, house or saved network with it.
+like($provision, qr/sub _scrub_copied_machine/, 'the flash scrubs the copied card');
+like($provision, qr{database/jawnos\.db}, 'removing the copied database');
+like($provision, qr{config\.json}, 'and the copied configuration');
+like($provision, qr{/etc/machine-id}, 'and the copied machine id');
+like($provision, qr{usb-gadget}, 'keeping the USB gadget profile');
+like($provision, qr/After=network-online\.target gou-wifi-reset\.service/,
+	'the first boot waits for the Wi-Fi guard');
+like($provision, qr{\.shots/ticket\.txt}, 'the copied kiosk ticket is cleared');
+like($boot_js, qr/sub _kiosk_ticket/, 'the first boot mints this board a kiosk ticket');
+like($boot_js, qr/'desktop', '--save'/, 'with the desktop view ticket the launcher reads');
+
+# Root creates the card's folders and opens the database; the service runs as
+# the tree's account, so both are handed over before the service starts.
+like($boot_js, qr/uid=.*gid=.*umask=0077/, 'a foreign card is mounted for the service account');
+like($boot_js, qr/archive_location_folder\(\$where, \$location\)/,
+	'the folders it makes are given to the service account');
+like($boot_js, qr/sub _own_database/, 'and the database is handed to the service account');
+
 # The manager page asks for the name that goes on the board.
 my $body = slurp('templates/controllers/body.html.ep');
 like($body, qr/id="controllers_hostname"[^>]*value="gou"/, 'the New section carries the board name');
@@ -351,6 +424,6 @@ like($body, qr/for="controllers_hostname"/, 'with a label of its own');
 my $js = slurp('public/js/manager/controllers.js');
 like($js, qr/function controllerNewHostname/, 'the page reads the name itself');
 like($js, qr/hostname: name,/, 'and sends it with the flash');
-like($js, qr/#controllers_hostname, #controllers_wifi_ssid, #controllers_wifi_psk/, 'the fields are held still while it runs');
+like($js, qr/#controllers_hostname, #controllers_card_choice/, 'the fields are held still while it runs');
 
 done_testing();

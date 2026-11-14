@@ -40,11 +40,16 @@ use warnings;
 
 use Cwd ();
 use FindBin qw($Bin);
+use File::Basename ();
 use File::Path ();
 use Getopt::Long ();
 use JSON::PP ();
 
+use lib "$Bin/../lib";
+use JawnOS::Platform::Paths ();
+
 chdir Cwd::abs_path("$Bin/..") or die "gou_first_boot: cannot find the jawnos root\n";
+&_config_bootstrap();
 require './perl/subroutines.pl';
 
 my $JSON = JSON::PP->new->utf8(1)->canonical(1);
@@ -75,6 +80,75 @@ USAGE
 
 # ---------------------------------------------------------------------------
 # Output
+
+# Every Perl entrypoint loads config.json while perl/subroutines.pl compiles.
+# An image built by gou_image_build.sh has none on purpose - the config is
+# machine identity, not image content - so the first boot seeds one here, as
+# ./jawn does on a fresh install. The seed runs as the account that owns the
+# tree: the config, the database and the identity it writes all belong to that
+# account, not to root, and the service that starts after this pass has to be
+# able to write them.
+sub _config_bootstrap {
+	my $config = JawnOS::Platform::Paths::config_path();
+	return if -e $config && -s $config > 20;
+	my $name = &_board_name();
+	my ($uid, $gid, $home) = &_tree_owner();
+	my @seed = ($^X, 'scripts/jawnos_setup.pl',
+		'--seed', '--device', 'controller', '--name', $name, '--language', 'en');
+	my $user = $uid ? (getpwuid($uid))[0] : '';
+	if ($< == 0 && defined $user && length $user && length $home && $uid != 0) {
+		@seed = ('runuser', '-u', $user, '--', 'env', 'HOME=' . $home, @seed);
+	}
+	my ($said, $status) = &_capture(@seed);
+	print STDERR $said if length $said;
+	unless (-e $config && -s $config > 20) {
+		# The seed could not run (an image with no setup script, a failed
+		# database build). Leave a config the tree can load; ./jawn sees no
+		# signatorial and finishes the seed on its own first start.
+		my $placeholder = {
+			name => $name, device => 'controller',
+			logfile => '~/manager.log', environment => 'production',
+			domain => '127.0.0.1', port => '3000', working_port => '45545',
+		};
+		my $dir = File::Basename::dirname($config);
+		File::Path::make_path($dir) unless -d $dir;
+		if (open(my $fh, '>', $config)) {
+			print {$fh} JSON::PP->new->canonical->pretty->utf8->encode($placeholder);
+			close $fh;
+			chmod 0644, $config;
+			chown $uid, $gid, $config if $< == 0;
+		}
+		print STDERR "gou_first_boot: the config seed did not finish (status $status); wrote a placeholder\n";
+	}
+	chown $uid, $gid, $config if $< == 0 && -e $config;
+}
+
+sub _board_name {
+	my $name = '';
+	if (open(my $fh, '<', '/etc/hostname')) {
+		$name = <$fh> // '';
+		close $fh;
+	}
+	$name =~ s/^\s+|\s+$//g if defined $name;
+	return 'gou' unless defined $name && $name =~ /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/;
+	return $name;
+}
+
+sub _tree_owner {
+	my @stat = stat(Cwd::abs_path('.'));
+	return (0, 0, '') unless @stat;
+	my @pw = getpwuid($stat[4]);
+	return ($stat[4], $stat[5], ($pw[7] // ''));
+}
+
+sub _capture {
+	my (@args) = @_;
+	open my $fh, '-|', @args or return ('', -1);
+	local $/;
+	my $said = <$fh>;
+	close $fh;
+	return ((defined $said ? $said : ''), $? >> 8);
+}
 
 sub _emit {
 	my ($data, $code) = @_;
@@ -226,6 +300,11 @@ sub _card_plan {
 	my $choice = ($opts->{'choice'} // '') =~ /^(adopt|format)$/ ? $opts->{'choice'} : '';
 	my $action;
 	if ($state eq 'archive') { $action = 'adopt'; }
+	# A card with no filesystem cannot be adopted: there is nothing to mount.
+	# The answer travels in the token before the person can see the card, so the
+	# desk's "a card with no filesystem can only be formatted" has to hold here
+	# too - an adopt answer leaves it alone for a later boot.
+	elsif ($state eq 'blank') { $action = ($choice eq 'format' || $opts->{'format'}) ? 'format' : 'leave'; }
 	elsif ($choice eq 'format' || $opts->{'format'}) { $action = 'format'; }
 	elsif ($choice eq 'adopt') { $action = 'adopt'; }
 	else { $action = 'leave'; }
@@ -328,9 +407,15 @@ sub _config_archive_dir {
 	print {$out} $JSON->pretty->encode($config);
 	close $out;
 	# An install that runs as jawn keeps config.json's owner; root writing it
-	# here must not leave a file the service cannot write.
+	# here must not leave a file the service cannot write. A config that did not
+	# exist yet (the image drops it, and the bootstrap may have written only a
+	# placeholder) belongs to the tree's account too.
 	my @stat = stat($path);
 	if (@stat) { chown($stat[4], $stat[5], $tmp) }
+	else {
+		my ($uid, $gid) = &_tree_owner();
+		chown($uid, $gid, $tmp);
+	}
 	rename($tmp, $path) or return { ok => 0, error => 'config.json could not be replaced' };
 	return { ok => 1, path => $path };
 }
@@ -349,7 +434,15 @@ sub _fstab_add {
 	# A card adopted with its own filesystem keeps its own type in fstab; an
 	# entry that named ext4 for an exfat card would fail to mount on the reboot.
 	my $type = ($fstype // '') =~ /^(?:ext[234]|xfs|btrfs|vfat|exfat|ntfs)$/ ? $fstype : 'auto';
-	my $line = 'UUID=' . $uuid . ' ' . $mount . ' ' . $type . ' defaults,nofail,x-systemd.device-timeout=10 0 2' . "\n";
+	# A vfat/exfat/ntfs card has no Unix owners of its own: the mount options are
+	# what give the service (which runs as jawn, not root) a card it can write.
+	my $owners = '';
+	if ($type =~ /^(?:vfat|exfat|ntfs)$/) {
+		my ($uid, $gid) = &_tree_owner();
+		$owners = 'uid=' . $uid . ',gid=' . $gid . ',umask=0077,';
+	}
+	my $line = 'UUID=' . $uuid . ' ' . $mount . ' ' . $type . ' ' . $owners
+		. 'defaults,nofail,x-systemd.device-timeout=10 0 2' . "\n";
 	$raw .= "\n" unless $raw =~ /\n$/ || !length $raw;
 	my $ok = open(my $out, '>>', $path);
 	return { ok => 0, error => '/etc/fstab could not be written' } unless $ok;
@@ -378,7 +471,19 @@ sub _card_adopt {
 	my $fstab = &_fstab_add($plan->{'dev'}, $where, $plan->{'fstype'});
 	push @done, 'fstab' if $fstab->{'ok'} && !$fstab->{'already'};
 	my $scaffold = eval { &subs::archive_scaffolder($where) } || {};
-	push @done, 'folders' if $scaffold->{'enabled'};
+	if ($scaffold->{'enabled'}) {
+		push @done, 'folders';
+		# The mount is root's for this pass, but the folders are the service's:
+		# an adopted card's existing files keep their owners, and only the folders
+		# this pass made are given to the tree's account.
+		if ($< == 0) {
+			my ($uid, $gid) = &_tree_owner();
+			foreach my $location ( @{ $scaffold->{'created'} || [] } ) {
+				my $path = eval { &subs::archive_location_folder($where, $location) } || '';
+				chown($uid, $gid, $path) if length $path && -e $path;
+			}
+		}
+	}
 	my $config = &_config_archive_dir($where);
 	return { ok => 0, error => $config->{'error'} } unless $config->{'ok'};
 	push @done, 'archive_dir';
@@ -426,6 +531,30 @@ sub _own_by_tree {
 	}
 }
 
+sub _own_database {
+	my $database = eval { &subs::database_path() } || '';
+	return unless length $database;
+	&_own_by_tree($database, $database . '-wal', $database . '-shm', File::Basename::dirname($database));
+}
+
+sub _kiosk_ticket {
+	my $script = 'scripts/app_ticket.pl';
+	return 0 unless -f $script;
+	my ($uid, $gid, $home) = &_tree_owner();
+	my @command = ($^X, $script, 'desktop', '--save');
+	my $user = $uid ? (getpwuid($uid))[0] : '';
+	if ($< == 0 && defined $user && length $user && length $home && $uid != 0) {
+		@command = ('runuser', '-u', $user, '--', 'env', 'HOME=' . $home, @command);
+	}
+	my ($said, $status) = &_capture(@command);
+	# $said is the URL; do not print it. Only --save's 0600 file is kept.
+	my $shots = Cwd::abs_path('.') . '/.shots';
+	File::Path::make_path($shots) unless -d $shots;
+	&_own_by_tree($shots, $shots . '/ticket.txt');
+	print STDERR "gou_first_boot: the kiosk ticket could not be minted (status $status)\n" if $status != 0;
+	return $status == 0;
+}
+
 sub _identity_ensure {
 	foreach my $file (&subs::signatorial_identity_file(), &subs::signatorial_identity_mirror()) {
 		next unless defined $file && length $file;
@@ -437,11 +566,18 @@ sub _identity_ensure {
 	return 'minted';
 }
 
+# Where the board says it is: its own name and the manager port, never a
+# stale configured domain (an image copied from another card can carry that
+# card's domain, or loopback). The join row is how the house reaches the board
+# later, so a loopback or somebody else's name is worse than the hostname.
 sub _self_address {
 	my $config = eval { &subs::config_reader() } || {};
 	my $port = $ENV{'PORT_AHOY'} || $config->{'working_port'} || $config->{'port'} || '';
-	my $host = $config->{'domain'} || '';
-	$host = &subs::device_hostname_better((`hostname` || ''), '', '') unless length $host;
+	my $host = &subs::device_hostname_better((`hostname` || ''), '', '');
+	if (!length $host) {
+		$host = $config->{'domain'} || '';
+		$host = '' if $host =~ /^(?:localhost|127\.|\[?::1\]?)/i;
+	}
 	return $host . (length $port ? ':' . $port : '');
 }
 
@@ -454,10 +590,31 @@ sub _join {
 	my ($token) = @_;
 	require Mojo::UserAgent;
 	require Mojo::JSON;
+	my $house = ref $token->{'house'} eq 'HASH' ? $token->{'house'} : {};
+	my $manager = $house->{'manager'} // '';
+	my ($scheme, $host, $port) = $manager =~ m{^(https?)://(\[[^\]]+\]|[^/:]+)(?::(\d+))?};
+	$host = '' unless defined $host;
+	$port = '' unless defined $port;
+	my $url = $manager . '/device/join';
+	# The token's address names the browser's manager port, whose certificate is
+	# the public wildcard (or the local self-signed pair). The house-CA leaf that
+	# proves an address lives on the peer listener, port + 6; peer_secure_url
+	# rewrites the origin to it when it answers. When it cannot, the signed
+	# request still authenticates the board, so the unverified rail is the
+	# fallback - the same rail manager_configure2 uses for a house not rostered.
+	my $rm = {
+		ip => $host, fqdn => $host, port => $port,
+		manager => $manager,
+		signatorial => $house->{'signatorial'} // '',
+		pubkey => $house->{'pubkey'} // '',
+		hostname => $house->{'name'} // '',
+		tunnel => '',
+	};
+	my ($endpoint, $verified) = &subs::peer_secure_url($rm, $url);
 	my $ua = Mojo::UserAgent->new->connect_timeout(20)->request_timeout(40);
-	&subs::peer_tls_verify($ua);
+	if ($verified && &subs::peer_tls_verify($ua)) { $url = $endpoint; }
+	else { $ua->insecure(1); }
 	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req) });
-	my $url = ($token->{'house'}->{'manager'} // '') . '/device/join';
 	my $pubkey = &subs::peer_pubkey() || '';
 	return { ok => 0, error => 'this machine has no peer key' } unless length $pubkey;
 	my $res = eval {
@@ -466,7 +623,9 @@ sub _join {
 			signatorial => &subs::signatorial_designer() || '',
 			pubkey => $pubkey,
 			name => $token->{'hostname'} || $token->{'name'} || 'Controller',
-			device => &subs::device_setter() || 'controller',
+			# The board is a controller, whatever the tree's device class says
+			# before the config seed has been read.
+			device => 'controller',
 			ost => $^O,
 			address => &_self_address(),
 			version => &subs::jawn_version(),
@@ -479,9 +638,9 @@ sub _join {
 	unless ($answer->{'ok'}) {
 		return { ok => 0, error => ($answer->{'error'} || 'the house refused the token (' . $res->code . ')') };
 	}
-	my $house = ref $answer->{'house'} eq 'HASH' ? $answer->{'house'} : {};
-	my $row = &_house_row($house);
-	return { ok => 1, uuid => $answer->{'uuid'}, house => $house, filed => ($row->{'ok'} ? 1 : 0), error => $row->{'error'} };
+	my $sent = ref $answer->{'house'} eq 'HASH' ? $answer->{'house'} : {};
+	my $row = &_house_row($sent);
+	return { ok => 1, uuid => $answer->{'uuid'}, house => $sent, filed => ($row->{'ok'} ? 1 : 0), error => $row->{'error'} };
 }
 
 # File the house on this board's roster, so the first sync has somewhere to go.
@@ -523,6 +682,13 @@ sub _house_row {
 # main
 
 my $report = { ok => 1, dry_run => ($opt{'dry_run'} ? 1 : 0) };
+
+# The image drops the source card's ticket, and the desktop view's fallback
+# file with it. Mint this board's own forever ticket here, before the launcher
+# opens it, so a fresh board arrives logged in instead of at the gate. The URL
+# is a credential: the mint's stdout is captured and never written to the log;
+# --save puts it in .shots/ticket.txt (0600), which the view reads.
+&_kiosk_ticket() unless $opt{'dry_run'};
 
 my $token = &_token_read($opt{'token'});
 if ($token->{'error'}) {
@@ -602,10 +768,19 @@ if (!$opt{'no_join'} && !$token->{'absent'} && !$token->{'error'}) {
 			$report->{'token'} = 'redeemed';
 		}
 		else {
+			# The card's finding may already have made a WAL as root; hand the
+			# database back before the token is kept for the next boot.
+			&_own_database();
 			_fail(6, $joined->{'error'});
 		}
 	}
 }
+
+# The settings row the card reported and the roster row the join filed are
+# written by this root pass. SQLite creates the WAL and SHM beside the database
+# as this process, so hand the whole family to the tree's account before the
+# service opens it; otherwise jawn can read the database and not write it.
+&_own_database() unless $opt{'dry_run'};
 
 _emit($report, 0);
 

@@ -477,7 +477,7 @@ sub _first_boot_unit {
 [Unit]
 Description=JawnOS first boot: the board's card and the house join
 Wants=network-online.target
-After=network-online.target
+After=network-online.target gou-wifi-reset.service
 Before=jawnos.service
 
 [Service]
@@ -492,6 +492,68 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 UNIT
+}
+
+# The image is a copy of another card. Everything that makes that card itself
+# - its config, database, keys, runtime state, saved networks and host identity
+# - has to go before this board introduces itself. The builder's exclusion list
+# removes most of it; this is the last pass, so an image built before that list
+# existed still comes out a new board rather than a clone.
+sub _scrub_copied_machine {
+	my ($mount) = @_;
+	my $home = "$mount/home/jawn";
+	my $tree = "$home/jawnos";
+	my @done;
+
+	my $identity = 0;
+	foreach my $path ("$home/.jawnos_signatorial", "$home/.jawnos_signatorial_id",
+		"$tree/database/.jawnos_signatorial_id", "$home/.house.key",
+		"$home/.peer.key", "$home/.peer.pub",
+		"$tree/server/fullchain.pem", "$tree/server/privkey.pem",
+		"$tree/server/peer-fullchain.pem", "$tree/server/peer-privkey.pem",
+		"$tree/.shots/ticket.txt") {
+		$identity = 1 if -f $path && unlink $path;
+	}
+	# machine-id is this system's identity to journald and dbus; systemd mints a
+	# new one when the file is absent. The SSH host keys are the same story.
+	$identity = 1 if -f "$mount/etc/machine-id" && unlink("$mount/etc/machine-id");
+	foreach my $key (glob("$mount/etc/ssh/ssh_host_*")) {
+		$identity = 1 if -f $key && unlink $key;
+	}
+	push @done, 'identity' if $identity;
+
+	my $config = "$tree/config.json";
+	push @done, 'config' if -f $config && unlink $config;
+
+	my $database = 0;
+	foreach my $path ("$tree/database/jawnos.db", "$tree/database/jawnos.db-wal",
+		"$tree/database/jawnos.db-shm") {
+		$database = 1 if -f $path && unlink $path;
+	}
+	if (-d "$tree/database/backups") {
+		File::Path::remove_tree("$tree/database/backups");
+		$database = 1;
+	}
+	push @done, 'database' if $database;
+
+	my $state = 0;
+	if (-d "$home/.president") {
+		File::Path::remove_tree("$home/.president");
+		$state = 1;
+	}
+	push @done, 'state' if $state;
+
+	# The source card's saved Wi-Fi is the source's network; the provisioner
+	# writes this board's own profile after this pass. The USB gadget stays: it is
+	# how a board with no Wi-Fi is reached.
+	my $networks = 0;
+	foreach my $profile (glob("$mount/etc/NetworkManager/system-connections/*.nmconnection")) {
+		next if $profile =~ m{/usb-gadget\.nmconnection$};
+		$networks = 1 if -f $profile && unlink $profile;
+	}
+	push @done, 'network' if $networks;
+
+	return @done;
 }
 
 sub _autopopulate {
@@ -515,6 +577,9 @@ sub _autopopulate {
 		$mounted_here = 1;
 	}
 	my (@done, $error);
+	# The image is a copy of another card: everything that makes that card
+	# itself goes before this board writes anything of its own.
+	push @done, &_scrub_copied_machine($mount);
 	my $etc = "$mount/etc";
 	File::Path::make_path($etc) unless -d $etc;
 	if (_write_file("$etc/hostname", "$hostname\n")) {
@@ -548,15 +613,9 @@ sub _autopopulate {
 		else {
 			$error = 'could not copy the join token';
 		}
-		# The image is a copy of another card, so it carries that card's machine
-		# identity. A board flashed as a new controller must introduce itself under
-		# its own id, or two boards would overwrite each other's roster row; the
-		# first boot mints one when none is here (see gou_first_boot.pl).
-		foreach my $identity ("$mount/home/jawn/.jawnos_signatorial_id",
-			"$mount/home/jawn/jawnos/database/.jawnos_signatorial_id") {
-			unlink $identity if -f $identity;
-		}
-		push @done, 'identity';
+		# The source card's identity, config and database went in the scrub above;
+		# the first boot mints this board's own before it introduces itself (see
+		# gou_first_boot.pl).
 	}
 	# The board redeems that token, and looks for its card, before the house
 	# starts. The unit is enabled by its wants symlink rather than by running

@@ -11,6 +11,7 @@
 #
 #   status
 #   wifi_scan [interface]
+#   wifi_current                        the connected network and its key
 #   wifi_connect <interface> <ssid> [dhcp|static] [address] [prefix] [gateway] [dns]
 #                                       (passphrase on stdin, empty for open)
 #   wifi_disconnect <interface>
@@ -631,6 +632,124 @@ sub saved_networks {
 		push @saved, $ssid;
 	}
 	return \@saved;
+}
+
+# The network this computer is on, with the key another machine needs for the
+# same profile. A read: it never changes the connection. New on the Controllers
+# page asks for it so the board is flashed with this house's Wi-Fi instead of a
+# typed name and password. The key is read through the same sudo fallback every
+# privileged read uses, and only for a citizen who pressed New.
+sub wifi_current {
+	my @wireless = grep { $_->{'wireless'} } @{ interface_report() };
+	my ($interface, $ssid);
+	foreach my $candidate (@wireless) {
+		my $name = connected_ssid($candidate->{'name'});
+		next unless length $name;
+		($interface, $ssid) = ($candidate->{'name'}, $name);
+		last;
+	}
+	# A NetworkManager machine without iw still has an active wireless profile;
+	# nmcli names it even when the kernel interface list cannot be read.
+	if (!defined $ssid && find_command('nmcli')) {
+		my $nm = nmcli_current('', '');
+		if ($nm->{'found'} && length($nm->{'ssid'} // '')) {
+			$ssid = $nm->{'ssid'};
+			$interface = @wireless ? $wireless[0]->{'name'} : '';
+		}
+	}
+	return { ok => 0, error => 'This computer is not on Wi-Fi.' } unless defined $ssid;
+	my $secret = wifi_current_secret($interface, $ssid);
+	return {
+		ok => 1,
+		interface => $interface,
+		ssid => $secret->{'ssid'} || $ssid,
+		passphrase => $secret->{'passphrase'} // '',
+		secure => $secret->{'secure'} ? 1 : 0,
+	};
+}
+
+# The SSID of a connected station: iwd's own report, then `iw dev <if> link`
+# for a NetworkManager machine that has no iwctl.
+sub connected_ssid {
+	my ($interface) = @_;
+	return '' unless valid_interface($interface);
+	my $station = station_report($interface);
+	my $name = $station->{'connected network'} || '';
+	if (!length $name && find_command('iw')) {
+		my ($out, $err, $status) = run_read('iw', 'dev', $interface, 'link');
+		$name = $1 if $status == 0 && $out =~ /^\s*SSID:\s*(.+?)\s*$/m;
+	}
+	$name = utf8_text(trim($name));
+	return valid_ssid($name) ? $name : '';
+}
+
+sub wifi_current_secret {
+	my ($interface, $ssid) = @_;
+	my $nm = nmcli_current($interface, $ssid);
+	return $nm if $nm->{'found'};
+	my $iwd = iwd_current($ssid);
+	return $iwd if $iwd->{'found'};
+	return { ssid => $ssid, passphrase => '', secure => 0 };
+}
+
+# NetworkManager keeps the SSID and the key in the profile, and the active list
+# says which profile owns the link. --show-secrets is what makes the key
+# readable; a system connection needs root, which run_privileged_read handles.
+sub nmcli_current {
+	my ($interface, $ssid) = @_;
+	return {} unless find_command('nmcli');
+	my ($list, $list_err, $list_status) = run_privileged_read(
+		'nmcli', '--terse', '--fields', 'NAME,TYPE,DEVICE', 'connection', 'show', '--active');
+	return {} unless $list_status == 0;
+	my $connection;
+	foreach my $line ( split /\n/, $list ) {
+		next unless length $line;
+		my @fields = split /(?<!\\):/, $line, 3;
+		next unless @fields >= 2 && $fields[1] =~ /(?:802-11-wireless|wifi)/i;
+		my $device = @fields > 2 ? nmcli_unescape($fields[2]) : '';
+		next if length $interface && length $device && $device ne $interface;
+		$connection = nmcli_unescape($fields[0]);
+		last;
+	}
+	return {} unless defined $connection;
+	my $profile_ssid = '';
+	my ($ssid_out, $ssid_err, $ssid_status) = run_privileged_read(
+		'nmcli', '--terse', '--get-values', '802-11-wireless.ssid', 'connection', 'show', $connection);
+	$profile_ssid = trim(nmcli_unescape($ssid_out)) if $ssid_status == 0;
+	$profile_ssid = $ssid unless length $profile_ssid;
+	my ($mgmt_out, $mgmt_err, $mgmt_status) = run_privileged_read(
+		'nmcli', '--terse', '--get-values', '802-11-wireless-security.key-mgmt', 'connection', 'show', $connection);
+	my $key_mgmt = $mgmt_status == 0 ? lc(trim(nmcli_unescape($mgmt_out))) : '';
+	my $secure = $key_mgmt =~ /^(?:wpa-psk|sae|wpa-eap|wpa-eap-suite-b-192)$/ ? 1 : 0;
+	my $passphrase = '';
+	if ($secure) {
+		my ($psk_out, $psk_err, $psk_status) = run_privileged_read(
+			'nmcli', '--show-secrets', '--terse', '--get-values',
+			'802-11-wireless-security.psk', 'connection', 'show', $connection);
+		$passphrase = trim(nmcli_unescape($psk_out)) if $psk_status == 0;
+	}
+	return { found => 1, ssid => $profile_ssid, passphrase => $passphrase, secure => $secure };
+}
+
+# iwd keeps one file per known network: <ssid>.psk carries PreSharedKey. The
+# name is the network with any slash replaced; the directory is overridable so
+# the plan can be read in a test without the real store.
+sub iwd_current {
+	my ($ssid) = @_;
+	return {} unless find_command('iwctl');
+	my $dir = defined $ENV{'JAWNOS_IWD_DIR'} && length $ENV{'JAWNOS_IWD_DIR'}
+		? $ENV{'JAWNOS_IWD_DIR'} : '/var/lib/iwd';
+	my @names = ($ssid);
+	(my $flat = $ssid) =~ s{/}{_}g;
+	push @names, $flat if $flat ne $ssid;
+	foreach my $name (@names) {
+		next unless length $name && $name !~ m{/};
+		my ($out, $err, $status) = run_privileged_read('cat', $dir . '/' . $name . '.psk');
+		next unless $status == 0;
+		my ($key) = $out =~ /^\s*PreSharedKey\s*=\s*(\S+)\s*$/m;
+		return { found => 1, ssid => $ssid, passphrase => ($key // ''), secure => 1 };
+	}
+	return {};
 }
 
 # A Wi-Fi link's strength. iw is the direct answer; /proc/net/wireless is the
@@ -1306,6 +1425,9 @@ if ($command eq 'status') {
 }
 elsif ($command eq 'wifi_scan') {
 	emit(wifi_scan(shift @ARGV));
+}
+elsif ($command eq 'wifi_current') {
+	emit(wifi_current());
 }
 elsif ($command eq 'wifi_connect') {
 	my ($interface, $ssid, $method, $address, $prefix, $gateway, $dns) = @ARGV;
