@@ -46,13 +46,16 @@ Run from the repo root, or with an explicit path. `sh` tools run under
   `ble_mock.pl`. The algorithms are unchanged; only argument handling and
   absolute paths were made portable.
 - `refresh-probe.pl` collects a long, multi-device run. The browser half is
-  served by the app and the manager layout includes it only when the browser
-  carries its cookie (or asks for `?probe=1` once), which is what lets it
-  survive the reload it is measuring; a pasted console snippet does not. A page
-  on https cannot beacon to plain http, so the collector presents the app's own
-  certificate (`--cert`/`--key`) and the install URL names the host the browser
-  already trusts. `--hours` stops the run, `--max-mb`/`--keep` bound the file,
-  and `--watch SECONDS` reprints a compact per-device summary. Install once per
+  served by the app and the manager layout normally includes it only when the
+  browser carries its cookie (or asks for `?probe=1` once), which is what lets
+  it survive the reload it is measuring; a pasted console snippet does not.
+  During a reload investigation `$probe_default` in the layout makes it the
+  default and injects the collector endpoint and the device host name;
+  `?probe=0` then opts a browser out for two days. A page on https cannot beacon
+  to plain http, so the collector presents the app's own certificate
+  (`--cert`/`--key`) and the install URL names the host the browser already
+  trusts. `--hours` stops the run, `--max-mb`/`--keep` bound the file, and
+  `--watch SECONDS` reprints a compact per-device summary. Install once per
   device as
   `/manager?probe=1&probe_device=phone&probe_endpoint=https%3A%2F%2F<host>%3A45997%2Fevent`;
   `?probe=0` removes it. `--report` reads the JSONL plus the manager log, so a

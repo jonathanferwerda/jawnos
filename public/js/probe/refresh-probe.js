@@ -1,8 +1,10 @@
 /* refresh-probe.js - explain a WebUI reload, across a long run.
  *
- * Served by the app (public/js/probe/), and included by the manager layout only
- * when the browser asks for it with ?probe=1 or already carries the cookie this
- * file sets. That is the whole point of living here rather than in the console:
+ * Served by the app (public/js/probe/). Normally the manager layout includes it
+ * only when the browser asks for it with ?probe=1 or already carries the cookie
+ * this file sets; during the current reload investigation it is the default,
+ * and ?probe=0 opts a browser out. That is the whole point of living here
+ * rather than in the console:
  * a reload (the event being measured) wipes a pasted script, but the next page
  * loads this file again from the cookie.
  *
@@ -76,21 +78,31 @@
 
   var q = params();
 
-  // The cookie is what makes the layout include this file again after a
-  // reload. Renew it on every load so a 24-hour run does not fall out.
-  cookie('1', 2 * 86400);
-  if (q.probe === '0') { cookie('', 0); }
+  // An explicit ?probe=1 pins the probe in this browser. The temporary
+  // default-on layout includes this file without a param and must not leave a
+  // cookie that outlives that window; ?probe=0 records the opt-out instead.
+  if (q.probe === '1') { cookie('1', 2 * 86400); }
+  else if (q.probe === '0') { cookie('0', 2 * 86400); }
 
+  var injectedEndpoint = (typeof window.jawnos_probe_endpoint === 'string')
+    ? window.jawnos_probe_endpoint : '';
   var endpoint = q.probe_endpoint;
   if (endpoint && /^https?:\/\//i.test(endpoint)) { write(ENDPOINT_KEY, endpoint); }
   endpoint = read(ENDPOINT_KEY, '') || '';
   if (!endpoint) {
-    endpoint = location.protocol + '//' + location.hostname + ':45997/event';
+    endpoint = /^https?:\/\//i.test(injectedEndpoint) ? injectedEndpoint
+      : (location.protocol + '//' + location.hostname + ':45997/event');
   }
 
+  var injectedHost = (typeof window.jawnos_probe_host === 'string')
+    ? window.jawnos_probe_host : '';
   var device = q.probe_device;
   if (device) { write(DEVICE_KEY, device); }
-  device = read(DEVICE_KEY, '') || guessDevice();
+  device = read(DEVICE_KEY, '') || '';
+  if (!device) {
+    device = (injectedHost && injectedHost !== 'localhost'
+      && injectedHost !== 'localhost.localdomain') ? injectedHost : guessDevice();
+  }
 
   var started = now();
   var timer = 0;

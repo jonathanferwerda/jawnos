@@ -32,6 +32,8 @@ like($src, qr/probe_endpoint/, 'the collector endpoint is installable per device
 like($src, qr/probe_device/, 'and so is the device label');
 like($src, qr/setInterval\(heartbeat, 60000\)/, 'it sends a heartbeat over a long run');
 like($src, qr/document\.cookie = COOKIE/, 'it renews the cookie that reloads it');
+like($src, qr/window\.jawnos_probe_endpoint/, 'the injected collector is the default');
+like($src, qr/window\.jawnos_probe_host/, 'so is the injected host name');
 
 my $node = `command -v node 2>/dev/null`;
 chomp $node;
@@ -42,7 +44,10 @@ SKIP: {
 
 my $layout_src = do { local $/; open(my $fh, '<', $layout) or die "$layout: $!"; <$fh> };
 like($layout_src, qr{/js/probe/refresh-probe\.js}, 'the layout includes the probe');
-like($layout_src, qr{jawnos_probe}, 'only behind its cookie or ?probe=1');
+like($layout_src, qr{jawnos_probe_endpoint}, 'it injects the collector endpoint');
+like($layout_src, qr{jawnos_probe_host}, 'and the device host name');
+like($layout_src, qr{\$probe_default}, 'the temporary default is a named switch');
+like($layout_src, qr{jawnos_probe=0}, '?probe=0 records a lasting opt-out');
 
 sub write_file {
 	my ($dir, $name, $text) = @_;

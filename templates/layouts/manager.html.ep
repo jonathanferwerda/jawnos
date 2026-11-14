@@ -262,16 +262,27 @@
 	<% for my $script (&subs::js_script_urls('public/js/manager/jp.js')) { %>
 		<script src="<%= $script %>?string=<%= $string %>"></script>
 	<% } %>
-	<%# The refresh probe is off unless this browser carries the cookie its own
-	     script sets, or this request asks for it once with ?probe=1. Living
-	     beside the app (rather than in a pasted console snippet) is what lets
-	     it survive the reload it is measuring: the next load includes it
-	     again from the cookie. ?probe=0 clears it. %>
-	<% my $probe_wanted = $c->param('probe'); %>
-	<% if (defined $probe_wanted && $probe_wanted eq '0') { %>
-		<script>document.cookie = 'jawnos_probe=; path=/; max-age=0; SameSite=Lax';</script>
-	<% } elsif ($probe_wanted || $c->cookie('jawnos_probe')) { %>
+	<%# Temporary (2026-11-14): the probe is the default while we chase the
+	     random reloads. It is included on every manager page; set
+	     $probe_default to 0 and open ?probe=0 once per browser to end the
+	     window. The endpoint is the collector on dev, and the host name makes
+	     each device's records distinguishable (the Android trees report
+	     "localhost", so the script falls back to its user-agent guess there). %>
+	<% my $probe_param   = $c->param('probe'); %>
+	<% my $probe_cookie  = $c->cookie('jawnos_probe'); %>
+	<% my $probe_default = 1; %>
+	<% my $probe_on; %>
+	<% if (defined $probe_param) { $probe_on = ($probe_param eq '0') ? 0 : 1; } %>
+	<% elsif (defined $probe_cookie && $probe_cookie eq '0') { $probe_on = 0; } %>
+	<% else { $probe_on = ($probe_default || defined $probe_cookie) ? 1 : 0; } %>
+	<% if ($probe_on) { %>
+		<script>
+			window.jawnos_probe_endpoint = 'https://dev.jonathanferwerda.com:45997/event';
+			window.jawnos_probe_host = '<%= &subs::machine_hostname() %>';
+		</script>
 		<script src="/js/probe/refresh-probe.js?string=<%= $string %>"></script>
+	<% } elsif (defined $probe_param && $probe_param eq '0') { %>
+		<script>document.cookie = 'jawnos_probe=0; path=/; max-age=172800; SameSite=Lax';</script>
 	<% } %>
 	<div id="printer_view" style="display:none;"></div>
 </html>
