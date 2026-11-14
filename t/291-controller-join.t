@@ -389,8 +389,10 @@ sub run_first_boot_seeded {
 # always failed. It is routed through peer_secure_url (the port + 6 listener,
 # whose leaf the CA proves), with the signed unverified rail as the fallback.
 like($boot_js, qr/peer_secure_url\(\$rm, \$url\)/, 'the join is routed to the listener that proves the house CA');
-like($boot_js, qr/if \(\$verified && &subs::peer_tls_verify\(\$ua\)\) \{ \$url = \$endpoint; \}/,
-	'and verified only when that listener proves the address');
+like($boot_js, qr/my \$trusted = \(\$verified && &subs::peer_tls_verify\(\$ua\)\) \? 1 : 0;/,
+	'and records that only when the listener proves the address');
+like($boot_js, qr/if \(\$trusted\) \{ \$url = \$endpoint; \}/,
+	'that verified route is the one dialled');
 like($boot_js, qr/\$ua->insecure\(1\);/, 'otherwise the signed request rides the unverified rail');
 like($boot_js, qr/device => 'controller',/, 'the board files itself as a controller');
 like($boot_js, qr/sub _self_address.*?device_hostname_better/s,
@@ -425,5 +427,125 @@ my $js = slurp('public/js/manager/controllers.js');
 like($js, qr/function controllerNewHostname/, 'the page reads the name itself');
 like($js, qr/hostname: name,/, 'and sends it with the flash');
 like($js, qr/#controllers_hostname, #controllers_card_choice/, 'the fields are held still while it runs');
+
+# A joining board is named under the house domain and, when the CA is on this
+# machine, given its own leaf for that name. The map is the synced one
+# Configure -> Plat -> DNS shows, so the name appears there and the board reads
+# its own entry back through public_host.
+{
+	my $openssl = `command -v openssl 2>/dev/null`;
+	chomp $openssl;
+	SKIP: {
+	skip 'openssl is not installed', 15 unless $openssl && length $openssl && -x $openssl;
+	local $ENV{'JAWNOS_STORE_DIR'} = sandbox();
+	my $ca_log = "$dry/house-ca.log";
+	open(my $save, '>&', \*STDOUT) or die "cannot duplicate stdout: $!";
+	open(STDOUT, '>', $ca_log) or die "cannot redirect stdout: $!";
+	my $ca = system($^X, root() . '/scripts/house_ca.pl', 'init');
+	open(STDOUT, '>&', $save) or die "cannot restore stdout: $!";
+	is($ca, 0, 'a test house CA is created');
+
+	subs::setting_setter({ app => '__president', setting => 'house_domain', device => 'all', value => 'example.test' });
+	subs::db_delete('settings', { app => '__president', setting => 'device_hosts' });
+	my $secret2 = 'testjoinsecret0000000000000000000004';
+	my $sig2 = '0011223344556677889900aabbccddee';
+	pending_token($secret2);
+	my $probe2 = JoinProbe->new(params => {
+		secret => $secret2, pubkey => $PUB, signatorial => $sig2,
+		name => 'gou2026', device => 'controller', address => 'gou2026:45545',
+		tls_verified => 1,
+	});
+	Manager::action_38590($probe2);
+	my $answer2 = $probe2->{'answer'} || {};
+	ok($answer2->{'ok'}, 'a board with a house domain joins named');
+	is($answer2->{'public_host'}, 'gou2026.example.test', 'its name is under the house domain');
+	my $map = subs::device_hosts();
+	is($map->{lc $sig2}, 'gou2026.example.test', 'the synced name map carries it');
+	my $row2 = subs::db_select('remote_machines', undef, { signatorial => $sig2 })->hash || {};
+	is($row2->{'fqdn'}, 'gou2026.example.test', 'the roster row is named');
+	is($row2->{'manager'}, 'https://gou2026.example.test:45545/manager', 'and is reached by that name');
+	ok($answer2->{'tls'}->{'ok'}, 'the house CA issued the board a leaf');
+	is($answer2->{'tls'}->{'host'}, 'gou2026.example.test', 'for the public name');
+	like($answer2->{'tls'}->{'cert'}, qr/-----BEGIN CERTIFICATE-----/, 'the certificate travels to the board');
+	like($answer2->{'tls'}->{'key'}, qr/PRIVATE KEY-----/, 'with the key it needs');
+	# The board already trusts server/house-ca.pem; the leaf must chain to it.
+	my $leaf_file = "$dry/gou2026-leaf.pem";
+	open(my $leaf_fh, '>', $leaf_file) or die "cannot write $leaf_file: $!";
+	print {$leaf_fh} $answer2->{'tls'}->{'cert'} // '';
+	close $leaf_fh;
+	my $verify = `$openssl verify -CAfile '$ENV{'JAWNOS_STORE_DIR'}/server/house-ca.pem' '$leaf_file' 2>&1`;
+	like($verify, qr/: OK/, 'and it chains to the CA the board already trusts');
+	# A key is returned only to a board that proved the house's leaf: the signed
+	# fallback rail is not confidential, so an unverified join gets the name and
+	# no private key.
+	my $secret3 = 'testjoinsecret0000000000000000000005';
+	my $sig3 = 'ffeeddccbbaa00998877665544332211';
+	pending_token($secret3);
+	my $probe3 = JoinProbe->new(params => {
+		secret => $secret3, pubkey => $PUB, signatorial => $sig3,
+		name => 'gou2026', device => 'controller', address => 'gou2026:45545',
+	});
+	Manager::action_38590($probe3);
+	my $answer3 = $probe3->{'answer'} || {};
+	ok($answer3->{'ok'}, 'an unverified board still joins');
+	is($answer3->{'public_host'}, 'gou2026.example.test', 'and is still named under the house domain');
+	ok(!$answer3->{'tls'}->{'ok'}, 'but no leaf is issued over the unverified rail');
+	ok(!defined $answer3->{'tls'}->{'key'}, 'and no private key travels');
+	clean_join($secret3, $sig3);
+	subs::db_delete('paired_devices', { uuid => $answer3->{'uuid'} }) if $answer3->{'uuid'};
+	# The DB here is the test's copy; put the naming settings back as they were.
+	clean_join($secret2, $sig2);
+	subs::db_delete('paired_devices', { uuid => $answer2->{'uuid'} }) if $answer2->{'uuid'};
+	subs::db_delete('settings', { app => '__president', setting => 'house_domain' });
+	subs::db_delete('settings', { app => '__president', setting => 'device_hosts' });
+	}
+}
+
+my $device_source = slurp('lib/JawnOS/Controller/manager_device.pm');
+like($device_source, qr/sub _controller_join_certificate/, 'the join issues a leaf for the board');
+like($device_source, qr/house_machine_name\(/, 'and derives the name under the house domain');
+like($device_source, qr/house-ca\.key/, 'only where the house CA key is');
+like($device_source, qr/tls_verified/, 'a leaf is only issued to a verified board');
+like($boot_js, qr/tls_verified => \$trusted/, 'and the board says so inside the signed body');
+like($boot_js, qr/sub _install_join_certificate/, 'the board installs the leaf');
+like($boot_js, qr/fullchain\.pem.*?peer-privkey\.pem/s, 'as both listeners pairs');
+like($boot_js, qr/_own_by_tree\(\@written\)/, 'owned by the service account');
+like($provision, qr{server/house-ca\.key}, 'the copied CA key is never left on a board');
+like(slurp('lib/JawnOS/Domain/Loader.pm'), qr/house_machine_name/, 'the new domain helper is mapped');
+
+# The installer itself, taken from the script and given a leaf the way the join
+# hands it over: four files, the two main names and the two peer names, the keys
+# 0600, and the service account owning what root wrote.
+{
+	require File::Path;
+	my ($installer) = $boot_js =~ /^(sub _install_join_certificate \{.*?^\})/ms;
+	ok(defined $installer, 'the installer is a sub of its own');
+	my $code = "package GouLeafTest; our \@owned; sub _own_by_tree { \@owned = \@_ }\n"
+		. ($installer // 'sub _install_join_certificate { return "missing" }') . "\n1;\n";
+	eval $code;
+	is($@, '', 'the installer compiles on its own');
+	my $store = tempdir(CLEANUP => 1);
+	local $ENV{'JAWNOS_STORE_DIR'} = $store;
+	my $status = GouLeafTest::_install_join_certificate({
+		ok => 1, host => 'gou2026.example.test',
+		cert => "-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----\n",
+		key => "-----BEGIN EC PRIVATE KEY-----\nsecret\n-----END EC PRIVATE KEY-----\n",
+	});
+	is($status, 'installed', 'the leaf is installed as both pairs');
+	foreach my $pair ([qw(fullchain.pem 0644)], [qw(peer-fullchain.pem 0644)],
+		[qw(privkey.pem 0600)], [qw(peer-privkey.pem 0600)]) {
+		my ($name, $mode) = @$pair;
+		my $path = "$store/server/$name";
+		ok(-f $path, "$name is written");
+		is(sprintf('%04o', (stat($path))[2] & 07777), $mode, "$name is mode $mode");
+	}
+	like(read_file("$store/server/fullchain.pem"), qr/BEGIN CERTIFICATE/, 'the certificate is the leaf');
+	like(read_file("$store/server/privkey.pem"), qr/BEGIN EC PRIVATE KEY/, 'the key is the leaf\'s own');
+	is(scalar @GouLeafTest::owned, 4, 'all four files are handed to the service account');
+	is(GouLeafTest::_install_join_certificate({ ok => 0, error => 'no CA' }), 'none',
+		'a join without a leaf writes nothing');
+	is(GouLeafTest::_install_join_certificate({ ok => 1, cert => 'nope', key => 'nope' }), 'invalid',
+		'a malformed leaf is refused');
+}
 
 done_testing();

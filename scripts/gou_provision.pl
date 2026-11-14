@@ -511,7 +511,7 @@ sub _scrub_copied_machine {
 		"$home/.peer.key", "$home/.peer.pub",
 		"$tree/server/fullchain.pem", "$tree/server/privkey.pem",
 		"$tree/server/peer-fullchain.pem", "$tree/server/peer-privkey.pem",
-		"$tree/.shots/ticket.txt") {
+		"$tree/server/house-ca.key", "$tree/.shots/ticket.txt") {
 		$identity = 1 if -f $path && unlink $path;
 	}
 	# machine-id is this system's identity to journald and dbus; systemd mints a

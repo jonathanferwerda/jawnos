@@ -612,7 +612,11 @@ sub _join {
 	};
 	my ($endpoint, $verified) = &subs::peer_secure_url($rm, $url);
 	my $ua = Mojo::UserAgent->new->connect_timeout(20)->request_timeout(40);
-	if ($verified && &subs::peer_tls_verify($ua)) { $url = $endpoint; }
+	# Whether this board proved the house's leaf. The house returns its own leaf
+	# (and key) only to a board that did: the fallback rail is signed but not
+	# confidential, and a key that crossed it would be usable by whoever read it.
+	my $trusted = ($verified && &subs::peer_tls_verify($ua)) ? 1 : 0;
+	if ($trusted) { $url = $endpoint; }
 	else { $ua->insecure(1); }
 	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req) });
 	my $pubkey = &subs::peer_pubkey() || '';
@@ -629,6 +633,9 @@ sub _join {
 			ost => $^O,
 			address => &_self_address(),
 			version => &subs::jawn_version(),
+			# Signed with the body: the house may return a private key only on
+			# a connection the board proved.
+			tls_verified => $trusted,
 		})->result;
 	};
 	unless ($res) {
@@ -639,8 +646,49 @@ sub _join {
 		return { ok => 0, error => ($answer->{'error'} || 'the house refused the token (' . $res->code . ')') };
 	}
 	my $sent = ref $answer->{'house'} eq 'HASH' ? $answer->{'house'} : {};
+	# The house named this board under its domain and, when its CA is here,
+	# issued the leaf for that name. Install it before the manager starts; the
+	# report shows the status, never the key.
+	my $tls = ref $answer->{'tls'} eq 'HASH' ? $answer->{'tls'} : {};
+	my $certificate = &_install_join_certificate($tls);
 	my $row = &_house_row($sent);
-	return { ok => 1, uuid => $answer->{'uuid'}, house => $sent, filed => ($row->{'ok'} ? 1 : 0), error => $row->{'error'} };
+	return {
+		ok => 1, uuid => $answer->{'uuid'}, house => $sent,
+		filed => ($row->{'ok'} ? 1 : 0),
+		public_host => ($answer->{'public_host'} // ''),
+		tls => $certificate,
+		tls_host => ($tls->{'host'} // ''),
+		error => $row->{'error'},
+	};
+}
+
+# The house CA issued this board a leaf for the name it joined under. Install it
+# as both pairs before the manager starts: the main listener serves the public
+# name, and the peer listener serves the same leaf. The CA certificate stays
+# beside them (the tree already trusts it), and the service account owns what
+# root just wrote. The leaf's key never reaches the report or the log.
+sub _install_join_certificate {
+	my ($tls) = @_;
+	return 'none' unless ref $tls eq 'HASH' && $tls->{'ok'};
+	my $cert = $tls->{'cert'} // '';
+	my $key = $tls->{'key'} // '';
+	return 'invalid' unless $cert =~ /-----BEGIN CERTIFICATE-----/ && $key =~ /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+	my $server = eval { &subs::server_dir() } || '';
+	return 'failed' unless length $server;
+	File::Path::make_path($server) unless -d $server;
+	my @written;
+	foreach my $pair (['fullchain.pem', $cert, 0644], ['privkey.pem', $key, 0600],
+		['peer-fullchain.pem', $cert, 0644], ['peer-privkey.pem', $key, 0600]) {
+		my ($name, $body, $mode) = @$pair;
+		my $path = "$server/$name";
+		next unless open(my $fh, '>', $path);
+		print {$fh} $body;
+		close $fh;
+		chmod $mode, $path;
+		push @written, $path;
+	}
+	&_own_by_tree(@written);
+	return @written == 4 ? 'installed' : 'partial';
 }
 
 # File the house on this board's roster, so the first sync has somewhere to go.

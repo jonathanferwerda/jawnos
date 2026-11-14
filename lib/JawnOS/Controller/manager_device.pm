@@ -499,14 +499,19 @@ sub action_38590 {
 	my ($host, $addr_port) = $addr =~ /^(.+?)(?::(\d+))?$/;
 	$host = '' unless defined $host;
 	my $port = $addr_port || $c->param('port') || '';
+	# A joining board is named under the house domain, unless a person already
+	# named it: the map is the same Configure -> Plat -> DNS list, written once
+	# and synced, so the board reads its own entry back through public_host().
+	my $public_name = &subs::house_machine_name($name, $signatorial, 1);
+	my $reachable = length $public_name ? $public_name : $host;
 	my $known = $signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hash : undef;
 	my $uuid = ($known && $known->{'uuid'}) ? $known->{'uuid'} : &subs::random_string_creator(15);
 	my $row = {
 		uuid => $uuid,
 		ip => $host,
-		fqdn => $host,
+		fqdn => (length $public_name ? $public_name : $host),
 		port => $port,
-		manager => (length $host ? 'https://' . $host . (length $port ? ':' . $port : '') . '/manager' : ''),
+		manager => (length $reachable ? 'https://' . $reachable . (length $port ? ':' . $port : '') . '/manager' : ''),
 		signatorial => $signatorial,
 		pubkey => $pubkey,
 		hostname => $name,
@@ -544,12 +549,34 @@ sub action_38590 {
 		$roster_row->{'timestamp'} = $now;
 		&subs::db_insert('paired_devices', $roster_row);
 	}
-	$log->info('controller join: ' . $name . ' uuid ' . $uuid . ' ' . ($host || 'no address'));
+	# The leaf is issued after the row exists: the CA signs a name that is now the
+	# board's, and only this response carries the certificate and its key. A board
+	# says whether it proved the house's leaf; the request is signed with its body,
+	# so an on-path relay cannot turn an unverified join into a verified one. Only
+	# a verified board is handed a private key.
+	my $trusted = ($c->param('tls_verified') // '') eq '1';
+	my $tls;
+	if (!length $public_name) {
+		$tls = { ok => 0, error => 'the house has no public domain' };
+	}
+	elsif (!$trusted) {
+		$tls = { ok => 0, error => 'the board did not verify this connection' };
+	}
+	else {
+		$tls = &_controller_join_certificate($public_name, $host);
+	}
+	$log->info('controller join: ' . $name . ' uuid ' . $uuid . ' ' . ($host || 'no address')
+		. (length $public_name ? ' as ' . $public_name : '')
+		. ($tls->{'ok'} ? ' with a house leaf' : ' without a leaf (' . ($tls->{'error'} || 'no CA') . ')'));
 	# The board files this machine the same way; handing back the house's own
-	# identity saves it a discovery pass before its first sync.
+	# identity saves it a discovery pass before its first sync. The leaf is the
+	# board's own certificate: it is never logged, and only this board's response
+	# carries it.
 	$c->render(json => {
 		ok => 1,
 		uuid => $uuid,
+		public_host => $public_name,
+		tls => $tls,
 		house => {
 			manager => &subs::house_manager_address(eval { $c->req->url->to_abs->to_string } || ''),
 			signatorial => &subs::signatorial_designer() || '',
@@ -557,6 +584,65 @@ sub action_38590 {
 			name => &subs::machine_name() || '',
 		},
 	});
+}
+
+# The house CA issues the board a leaf for the name it just joined under. The
+# leaf covers the public name, the address the board gave, and 127.0.0.1 (the
+# kiosk opens the local manager); the first boot installs it as both pairs, so
+# the main listener serves the public name and the peer listener serves the same
+# leaf, signed by the CA every enrolled machine already trusts. The CA key never
+# leaves the house: a machine without it still names the board and says why the
+# leaf is missing.
+sub _controller_join_certificate {
+	my ($fqdn, $address) = @_;
+	return { ok => 0, error => 'the house CA script is missing' } unless -f 'scripts/house_ca.pl';
+	my $server = eval { &subs::server_dir() } || 'server';
+	return { ok => 0, error => 'the house CA is not on this machine' }
+		unless -f "$server/house-ca.pem" && -f "$server/house-ca.key";
+	my ($label) = split /\./, $fqdn;
+	my @args = ('--name', $label, '--dns', $fqdn, '--ip', '127.0.0.1');
+	if (defined $address && length $address) {
+		if ($address =~ /^\d{1,3}(?:\.\d{1,3}){3}$/) { push @args, '--ip', $address }
+		elsif ($address =~ /^[A-Za-z0-9][A-Za-z0-9.-]*$/ && $address =~ /\./ && lc $address ne lc $fqdn) {
+			push @args, '--dns', $address;
+		}
+	}
+	require File::Temp;
+	require File::Path;
+	my $out = File::Temp::tempdir('jawnos-join-leaf-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+	push @args, '--out', $out, '--force';
+	# house_ca.pl reads the store's server/ directory. Give the child this
+	# process's store, so a test sandbox and a packaged install agree.
+	my $run = eval {
+		&subs::subprocessor_command([$^X, 'scripts/house_ca.pl', 'issue', @args], {
+			name => 'house CA leaf', stdout => 'capture', stderr => 'capture',
+			warranty => '60s', env => { 'JAWNOS_STORE_DIR' => &subs::store_dir() },
+		});
+	};
+	unless (ref $run eq 'HASH') {
+		return { ok => 0, error => 'the house CA could not run' };
+	}
+	my $cert = &_join_pem("$out/peer-fullchain.pem");
+	my $key = &_join_pem("$out/peer-privkey.pem");
+	unless (length $cert && length $key) {
+		my $why = $run->{'output'} || $run->{'error'} || '';
+		$why =~ s/\s+/ /g;
+		$why =~ s/^\s+|\s+$//g;
+		File::Path::remove_tree($out);
+		return { ok => 0, error => (length $why ? substr($why, 0, 300) : 'the house CA did not issue the leaf') };
+	}
+	File::Path::remove_tree($out);
+	return { ok => 1, host => $fqdn, cert => $cert, key => $key };
+}
+
+sub _join_pem {
+	my ($path) = @_;
+	return '' unless defined $path && -f $path;
+	return '' unless open(my $fh, '<', $path);
+	local $/;
+	my $body = <$fh> // '';
+	close $fh;
+	return $body;
 }
 
 1;

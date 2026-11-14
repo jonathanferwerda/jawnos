@@ -68,6 +68,31 @@ sub device_hosts {
 	return ref $map eq 'HASH' ? $map : {};
 }
 
+# The public name a joining machine is given under the house domain: the first
+# label of its own name, lower-cased. A machine a person has already named keeps
+# that name; the map is the same one Configure -> Plat -> DNS writes, so this is
+# the one place a name is chosen. With $assign the entry is written once, and
+# because the map is a synced setting the machine reads its own entry back
+# through public_host().
+sub house_machine_name {
+	my ($label, $sig, $assign) = @_;
+	my $house = &house_domain();
+	return '' unless length $house;
+	$label = '' unless defined $label;
+	$label =~ s/^\s+|\s+$//g;
+	($label) = split /\./, $label;
+	return '' unless $label =~ /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+	my $fqdn = lc($label) . '.' . $house;
+	$sig = defined $sig ? lc $sig : '';
+	return $fqdn unless $assign && $sig =~ /^[0-9a-f]{16,64}$/;
+	my $map = &device_hosts();
+	if (!length($map->{$sig} // '')) {
+		$map->{$sig} = $fqdn;
+		&setting_setter({ app => '__president', setting => 'device_hosts', device => 'all', value => encode_json($map) });
+	}
+	return $map->{$sig};
+}
+
 sub public_host {
 	my $map = &device_hosts();
 	my $sig = &signatorial_designer();
