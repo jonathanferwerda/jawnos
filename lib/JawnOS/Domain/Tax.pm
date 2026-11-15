@@ -72,8 +72,12 @@ sub tax_entry_normalize {
 }
 
 # One house list. A stored list that has been emptied is still a list: the
-# caller asked for no taxes, so no legacy entry is invented over it. The
-# legacy multiplier is used only when the setting was never written.
+# caller asked for no taxes, so no legacy entry is invented over it. A house
+# that never wrote a list is offered the suggested taxes of its home currency
+# instead of an empty editor; the suggestions follow the currency until the
+# list is saved. The legacy multiplier is used when it was written and does not
+# match a suggestion; when it matches one (CAD 1.13 is HST 13), that entry is
+# the default and keeps charging the same rate under its proper name.
 sub tax_catalog {
 	my $raw = &setting_grabber({ app => 'me', setting => 'taxes', device => &warranty_device() });
 	my $list = eval { return decode_json($raw // '') };
@@ -93,12 +97,136 @@ sub tax_catalog {
 		push @out, $e;
 	}
 	unless (scalar @out || $stored) {
-		my $legacy = &setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1;
-		my $rate = 0 + sprintf('%.2f', (($legacy || 0) - 1) * 100);
-		push @out, { code => 'SALES', name => 'Sales tax', rate => $rate, country => '', default => 1 }
-			if $rate > 0;
+		my $seed = &tax_suggested_catalog(&cash_rounding_home_currency());
+		my $legacy = &setting_grabber({ app => 'me', setting => 'sales_tax' });
+		my $rate = (defined $legacy && length $legacy) ? 0 + sprintf('%.2f', (($legacy || 0) - 1) * 100) : 0;
+		if ($rate > 0) {
+			my ($match) = grep { abs(($_->{'rate'} || 0) - $rate) < 0.0001 } @{$seed};
+			if ($match) {
+				$_->{'default'} = 0 for @{$seed};
+				$match->{'default'} = 1;
+				return $seed;
+			}
+			$_->{'default'} = 0 for @{$seed};
+			return [ { code => 'SALES', name => 'Sales tax', rate => $rate, country => '', default => 1 }, @{$seed} ];
+		}
+		return $seed;
 	}
 	return \@out;
+}
+
+# ---- suggested catalog -----------------------------------------------------
+# A house that has never named a tax starts from the standard rates of the
+# country its home currency belongs to, so the editor is useful on day one.
+# These are standard rates only, current as of 2026-11 (Wikipedia, "Value-added
+# tax", standard-rate table); a house edits or removes them in Me - Taxes, and
+# nothing is stored until the list is saved. A reduced or zero rate is listed
+# only where it is commonly charged on retail goods. Currencies with no
+# national consumption tax (HKD) suggest nothing.
+#
+# Entry: [ code, name, rate, country, default ]
+my %TAX_SUGGESTIONS = (
+	CAD => [
+		[ 'HST_ON',  'HST (ON)',       13,    'CA', 1 ],
+		[ 'HST_NS',  'HST (NS)',       14,    'CA',   0 ],
+		[ 'HST_ATL', 'HST (NB/NL/PE)', 15,    'CA',   0 ],
+		[ 'GST',     'GST',             5,    'CA',   0 ],
+		[ 'QST',     'QST (QC)',        9.975, 'CA',  0 ],
+		[ 'GST_PST', 'GST+PST (BC)',   12,    'CA',   0 ],
+	],
+	USD => [
+		[ 'US_SALES', 'Sales tax (set your state)', 0, 'US', 1 ],
+	],
+	GBP => [
+		[ 'VAT',     'VAT',         20, 'GB', 1 ],
+		[ 'VAT_RED', 'VAT reduced',  5, 'GB', 0 ],
+		[ 'VAT_ZERO','VAT zero',     0, 'GB', 0 ],
+	],
+	EUR => [
+		[ 'VAT_DE', 'VAT (DE)', 19,   'DE', 1 ],
+		[ 'VAT_FR', 'VAT (FR)', 20,   'FR', 0 ],
+		[ 'VAT_IT', 'VAT (IT)', 22,   'IT', 0 ],
+		[ 'VAT_ES', 'VAT (ES)', 21,   'ES', 0 ],
+		[ 'VAT_NL', 'VAT (NL)', 21,   'NL', 0 ],
+		[ 'VAT_BE', 'VAT (BE)', 21,   'BE', 0 ],
+		[ 'VAT_AT', 'VAT (AT)', 20,   'AT', 0 ],
+		[ 'VAT_IE', 'VAT (IE)', 23,   'IE', 0 ],
+		[ 'VAT_PT', 'VAT (PT)', 23,   'PT', 0 ],
+		[ 'VAT_FI', 'VAT (FI)', 25.5, 'FI', 0 ],
+	],
+	AUD => [ [ 'GST', 'GST', 10, 'AU', 1 ] ],
+	NZD => [ [ 'GST', 'GST', 15, 'NZ', 1 ] ],
+	JPY => [
+		[ 'CT',     'Consumption tax',         10, 'JP', 1 ],
+		[ 'CT_RED', 'Consumption tax reduced',  8, 'JP', 0 ],
+	],
+	CHF => [
+		[ 'VAT',     'VAT',          8.1, 'CH', 1 ],
+		[ 'VAT_RED', 'VAT reduced',  2.6, 'CH', 0 ],
+	],
+	SEK => [
+		[ 'VAT',     'VAT',         25, 'SE', 1 ],
+		[ 'VAT_RED', 'VAT reduced', 12, 'SE', 0 ],
+		[ 'VAT_RED2','VAT reduced 2', 6, 'SE', 0 ],
+	],
+	NOK => [ [ 'VAT', 'VAT', 25, 'NO', 1 ] ],
+	DKK => [ [ 'VAT', 'VAT', 25, 'DK', 1 ] ],
+	INR => [
+		[ 'GST',     'GST',          18, 'IN', 1 ],
+		[ 'GST_RED', 'GST reduced',   5, 'IN', 0 ],
+	],
+	MXN => [ [ 'IVA', 'IVA', 16, 'MX', 1 ] ],
+	ZAR => [ [ 'VAT', 'VAT', 15, 'ZA', 1 ] ],
+	SGD => [ [ 'GST', 'GST', 9, 'SG', 1 ] ],
+	CNY => [ [ 'VAT', 'VAT', 13, 'CN', 1 ] ],
+	KRW => [ [ 'VAT', 'VAT', 10, 'KR', 1 ] ],
+	TWD => [ [ 'VAT', 'VAT', 5, 'TW', 1 ] ],
+	PLN => [ [ 'VAT', 'VAT', 23, 'PL', 1 ] ],
+	CZK => [ [ 'VAT', 'VAT', 21, 'CZ', 1 ] ],
+	HUF => [ [ 'VAT', 'VAT', 27, 'HU', 1 ] ],
+	RON => [ [ 'VAT', 'VAT', 21, 'RO', 1 ] ],
+	BGN => [ [ 'VAT', 'VAT', 20, 'BG', 1 ] ],
+	TRY => [ [ 'VAT', 'VAT', 20, 'TR', 1 ] ],
+	ILS => [ [ 'VAT', 'VAT', 18, 'IL', 1 ] ],
+	AED => [ [ 'VAT', 'VAT', 5, 'AE', 1 ] ],
+	SAR => [ [ 'VAT', 'VAT', 15, 'SA', 1 ] ],
+	THB => [ [ 'VAT', 'VAT', 7, 'TH', 1 ] ],
+	IDR => [ [ 'VAT', 'VAT', 12, 'ID', 1 ] ],
+	PHP => [ [ 'VAT', 'VAT', 12, 'PH', 1 ] ],
+	VND => [ [ 'VAT', 'VAT', 10, 'VN', 1 ] ],
+	MYR => [ [ 'SST', 'SST', 8, 'MY', 1 ] ],
+	EGP => [ [ 'VAT', 'VAT', 14, 'EG', 1 ] ],
+	NGN => [ [ 'VAT', 'VAT', 7.5, 'NG', 1 ] ],
+	KES => [ [ 'VAT', 'VAT', 16, 'KE', 1 ] ],
+	PKR => [ [ 'GST', 'GST', 18, 'PK', 1 ] ],
+	BDT => [ [ 'VAT', 'VAT', 15, 'BD', 1 ] ],
+	LKR => [ [ 'VAT', 'VAT', 18, 'LK', 1 ] ],
+	NPR => [ [ 'VAT', 'VAT', 13, 'NP', 1 ] ],
+	ARS => [ [ 'VAT', 'VAT', 21, 'AR', 1 ] ],
+	CLP => [ [ 'VAT', 'VAT', 19, 'CL', 1 ] ],
+	COP => [ [ 'VAT', 'VAT', 19, 'CO', 1 ] ],
+	PEN => [ [ 'VAT', 'VAT', 18, 'PE', 1 ] ],
+	CRC => [ [ 'VAT', 'VAT', 13, 'CR', 1 ] ],
+	ISK => [ [ 'VAT', 'VAT', 24, 'IS', 1 ] ],
+	RSD => [ [ 'VAT', 'VAT', 20, 'RS', 1 ] ],
+	GEL => [ [ 'VAT', 'VAT', 18, 'GE', 1 ] ],
+	KZT => [ [ 'VAT', 'VAT', 12, 'KZ', 1 ] ],
+	UAH => [ [ 'VAT', 'VAT', 20, 'UA', 1 ] ],
+);
+
+sub tax_suggested_catalog {
+	my ($currency) = @_;
+	my $key = uc($currency // '');
+	my $rows = $TAX_SUGGESTIONS{$key} or return [];
+	return [ map {
+		{
+			code => $_->[0],
+			name => $_->[1],
+			rate => 0 + sprintf('%.4f', $_->[2]),
+			country => $_->[3],
+			($_->[4] ? ( default => 1 ) : ()),
+		}
+	} @{$rows} ];
 }
 
 sub tax_catalog_write {

@@ -1,7 +1,8 @@
 # tests-for: lib/JawnOS/Domain/Tax.pm database/schema.sql lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_transaction2.pm lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/PDF/Store.pm templates/configure/me_setting_list.html.ep templates/configure/store_setting_list.html.ep templates/configure/appointment_list.html.ep templates/apps/transaction/expense.html.ep templates/apps/transaction/income.html.ep templates/apps/app_details.html.ep templates/store/item.html.ep templates/store/register.html.ep templates/store/printer/header.html.ep public/js/manager/transaction.js public/js/store.js public/js/store/register.js public/js/manager/configure/03_platform_misc.js
-# covers:    The house tax catalog is one list, rates are percents, a line's
-#            selected taxes are snapshotted, a customer's exemption travels with
-#            the sale, and the Store's sales-tax switch can be off.
+# covers:    The house tax catalog is one list, rates are percents, a fresh house
+#            is offered its home currency's standard rates, a line's selected
+#            taxes are snapshotted, a customer's exemption travels with the
+#            sale, and the Store's sales-tax switch can be off.
 
 use strict;
 use warnings;
@@ -21,7 +22,7 @@ foreach my $name (qw(tax_catalog tax_catalog_write tax_percent tax_entry_normali
 	tax_codes_value tax_entries_for_codes tax_compute tax_line_snapshot
 	tax_snapshot_merge tax_transaction_snapshot tax_exemption_for tax_countries
 	store_tax_enabled store_tax_default_codes store_tax_settings
-	store_tax_line_snapshot store_tax_totals cash_rounding_home_currency
+	store_tax_line_snapshot store_tax_totals tax_suggested_catalog cash_rounding_home_currency
 	cash_rounding_setting cash_rounding_step cash_rounding_apply)) {
 	ok(subs::provides($name), "$name is mapped");
 }
@@ -73,9 +74,120 @@ is($entry->{'country'}, 'CA', 'the country is upper-cased');
 		return 1.13;
 	};
 	my $cat = subs::tax_catalog();
-	is($cat->[0]->{'code'}, 'SALES', 'a legacy 1.13 multiplier becomes one 13% entry');
+	is($cat->[0]->{'code'}, 'HST_ON', 'a legacy 1.13 becomes the matching HST 13 entry');
 	is($cat->[0]->{'rate'}, 13, 'the legacy multiplier keeps its rate');
+	is($cat->[0]->{'default'}, 1, 'and is the default');
+	ok((grep { $_->{'code'} eq 'GST' } @{$cat}), 'the other Canadian rates are offered beside it');
 }
+
+# --- a fresh house starts from the home currency's standard rates ----------
+{
+	local *subs::warranty_device = sub { 'all' };
+	local *subs::setting_grabber = sub {
+		my ($p) = @_;
+		my $s = $p->{'setting'} // '';
+		return 'CAD' if $s eq 'currency';
+		return undef if $s eq 'taxes' || $s eq 'sales_tax';
+		return '';
+	};
+	my $cat = subs::tax_catalog();
+	is($cat->[0]->{'code'}, 'HST_ON', 'a Canadian house starts with HST 13 first');
+	is($cat->[0]->{'rate'}, 13, 'at the Ontario rate');
+	is($cat->[0]->{'country'}, 'CA', 'and names its country');
+	is($cat->[0]->{'default'}, 1, 'HST is the default');
+	my %by = map { $_->{'code'} => $_ } @{$cat};
+	is($by{'GST'}->{'rate'}, 5, 'GST is offered at 5%');
+	is($by{'QST'}->{'rate'}, 9.975, 'QST keeps its fraction');
+	is($by{'HST_ATL'}->{'rate'}, 15, 'the Atlantic HST is 15%');
+	is($by{'HST_NS'}->{'rate'}, 14, 'the Nova Scotia HST is 14%');
+	is($by{'GST_PST'}->{'rate'}, 12, 'the BC combined rate is 12%');
+}
+{
+	local *subs::warranty_device = sub { 'all' };
+	local *subs::setting_grabber = sub {
+		my ($p) = @_;
+		my $s = $p->{'setting'} // '';
+		return 'eur' if $s eq 'currency';
+		return undef if $s eq 'taxes' || $s eq 'sales_tax';
+		return '';
+	};
+	my $cat = subs::tax_catalog();
+	my %by = map { $_->{'code'} => $_ } @{$cat};
+	is($cat->[0]->{'code'}, 'VAT_DE', 'a euro house starts with Germany');
+	is($cat->[0]->{'default'}, 1, 'one entry is the default');
+	is($by{'VAT_FR'}->{'rate'}, 20, 'France is 20%');
+	is($by{'VAT_IT'}->{'rate'}, 22, 'Italy is 22%');
+	is($by{'VAT_IE'}->{'rate'}, 23, 'Ireland is 23%');
+}
+{
+	local *subs::warranty_device = sub { 'all' };
+	local *subs::setting_grabber = sub {
+		my ($p) = @_;
+		my $s = $p->{'setting'} // '';
+		return 'USD' if $s eq 'currency';
+		return undef if $s eq 'taxes' || $s eq 'sales_tax';
+		return '';
+	};
+	my $cat = subs::tax_catalog();
+	is(scalar @{$cat}, 1, 'a US house gets one row to fill in');
+	is($cat->[0]->{'code'}, 'US_SALES', 'named for a state sales tax');
+	is($cat->[0]->{'rate'}, 0, 'at 0 until the state rate is typed');
+	is($cat->[0]->{'country'}, 'US', 'in the United States');
+}
+{
+	local *subs::warranty_device = sub { 'all' };
+	local *subs::setting_grabber = sub {
+		my ($p) = @_;
+		my $s = $p->{'setting'} // '';
+		return 'GBP' if $s eq 'currency';
+		return undef if $s eq 'taxes' || $s eq 'sales_tax';
+		return '';
+	};
+	my $cat = subs::tax_catalog();
+	is($cat->[0]->{'code'}, 'VAT', 'a UK house starts with VAT');
+	is($cat->[0]->{'rate'}, 20, 'at 20%');
+}
+{
+	local *subs::warranty_device = sub { 'all' };
+	local *subs::setting_grabber = sub {
+		my ($p) = @_;
+		my $s = $p->{'setting'} // '';
+		return 'XXX' if $s eq 'currency';
+		return undef if $s eq 'taxes' || $s eq 'sales_tax';
+		return '';
+	};
+	is_deeply(subs::tax_catalog(), [], 'an unknown currency suggests nothing');
+}
+{
+	local *subs::warranty_device = sub { 'all' };
+	local *subs::setting_grabber = sub {
+		my ($p) = @_;
+		my $s = $p->{'setting'} // '';
+		return 'CAD' if $s eq 'currency';
+		return encode_json([ { code => 'MINE', name => 'Mine', rate => 7, country => 'CA' } ]) if $s eq 'taxes';
+		return 1.13 if $s eq 'sales_tax';
+		return '';
+	};
+	my $cat = subs::tax_catalog();
+	is(scalar @{$cat}, 1, 'a saved list wins over the suggestions');
+	is($cat->[0]->{'code'}, 'MINE', 'and is the one that comes back');
+}
+{
+	local *subs::warranty_device = sub { 'all' };
+	local *subs::setting_grabber = sub {
+		my ($p) = @_;
+		return 'CAD' if (($p->{'setting'} // '') eq 'currency');
+		return undef if (($p->{'setting'} // '') eq 'taxes');
+		return 1.20;
+	};
+	my $cat = subs::tax_catalog();
+	is($cat->[0]->{'code'}, 'SALES', 'an unmatched legacy rate keeps its own row first');
+	is($cat->[0]->{'rate'}, 20, 'at its own rate');
+	is($cat->[0]->{'default'}, 1, 'and stays the default');
+	ok(!(grep { $_->{'default'} } @{$cat}[1..$#$cat]), 'the suggestions do not add a second default');
+}
+is(subs::tax_suggested_catalog('nzd')->[0]->{'rate'}, 15, 'the suggestion reader takes a lowercase currency');
+is_deeply(subs::tax_suggested_catalog('HKD'), [], 'a place with no consumption tax suggests nothing');
 
 # --- write normalizes the list ---------------------------------------------
 {
@@ -287,6 +399,8 @@ my $paper = read_file("$root/templates/store/printer/header.html.ep");
 like($paper, qr/paper_rounding/, 'the printed bill carries the rounding');
 my $pdf = read_file("$root/lib/JawnOS/PDF/Store.pm");
 like($pdf, qr/labels->\{'rounding'\}/, 'the PDF labels the rounding row');
+my $me_ui = read_file("$root/templates/configure/me_setting_list.html.ep");
+like($me_ui, qr/suggests common rates for the home currency/, 'the Me panel says the list follows the home currency');
 
 
 done_testing();

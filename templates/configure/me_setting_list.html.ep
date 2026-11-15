@@ -36,7 +36,7 @@
 	<% my $tax_catalog = &subs::tax_catalog(); %>
 	<div class="cfg-card tax_catalog_card" id="me_tax_card">
 		<h3><%= &subs::ui('Taxes') %></h3>
-		<p class="cfg-note"><%= &subs::ui('The tax list for the whole house. A rate is a percent, so 13 means 13%.') %></p>
+		<p class="cfg-note"><%= &subs::ui('The tax list for the whole house. A rate is a percent, so 13 means 13%. Until you save, it suggests common rates for the home currency.') %></p>
 		<div class="tax_catalog_rows">
 			<% foreach my $tax ( @{$tax_catalog} ) { %>
 				<% my $rate_text = $tax->{'rate'} // ''; $rate_text =~ s/0+$// if $rate_text =~ /\./; $rate_text =~ s/\.$//; %>
