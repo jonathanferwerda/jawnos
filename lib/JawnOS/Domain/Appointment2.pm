@@ -960,6 +960,26 @@ sub appointment_statistics_for {
 		}
 	} @{$units};
 
+	# How long the shelf lasts: the level over the daily draw of the last thirty
+	# days. A single day's pace swings with one glass, and the year's hides a
+	# change in habit, so the month is the steadier rate behind the number. A
+	# different unit is a different draw, so the rate is kept per unit.
+	my $recent_out = &subs::db_query(
+		"select unit,
+		        sum(case when cast(quantity as real) < 0 then -cast(quantity as real) else 0 end) as out_qty
+		   from warehouse
+		  where item = ? and coalesce(nullif(kind,''),'stock') = 'stock'
+		    and coalesce(type,'') != 'inventory' and coalesce(account,'') = ''
+		    and cast(timestamp as integer) >= ? and cast(timestamp as integer) <= ?
+		  group by unit",
+		$item, $now - 30 * 86400000, $now)->hashes || [];
+	my %out_30 = map { ($_->{'unit'} || 'each') => ($_->{'out_qty'} || 0) + 0 } @{$recent_out};
+	foreach my $held ( @inventory ) {
+		my $daily = ($out_30{$held->{'unit'}} || 0) / 30;
+		$held->{'days_left'} = $held->{'on_hand'} <= 0 ? 0
+			: ($daily > 0 ? $held->{'on_hand'} / $daily : undef);
+	}
+
 	# The shelf above is a running balance. What the shelf took in and gave out
 	# inside each period is read from the movement clock, with the same rows the
 	# balance counts (stock only - a usage row is history, not stock), and the

@@ -21,6 +21,7 @@
 				<th><%= &subs::ui('In') %></th>
 				<th><%= &subs::ui('Out') %></th>
 				<th><%= &subs::ui('On hand') %></th>
+				<th title="<%= &subs::ui('At the pace of the last 30 days') %>"><%= &subs::ui('Days left') %></th>
 			</tr>
 			<% foreach my $u ( @{$inv->{'units'}} ) { %>
 				<tr>
@@ -28,6 +29,7 @@
 					<td><%= &subs::numeric_formatter($u->{'in'}) %></td>
 					<td><%= &subs::numeric_formatter($u->{'out'}) %></td>
 					<td><%= &subs::numeric_formatter($u->{'on_hand'}) %></td>
+					<td><%= defined $u->{'days_left'} ? $pace_number->($u->{'days_left'}) : '-' %></td>
 				</tr>
 			<% } %>
 		</table>

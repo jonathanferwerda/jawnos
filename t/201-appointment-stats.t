@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
-# covers:    the appointment's bottom line - shelf in/out and its movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end
+# covers:    the appointment's bottom line - shelf in/out, days of stock left and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end
 
 use strict;
 use warnings;
@@ -196,6 +196,8 @@ is($stats->{'inventory'}->{'units'}->[0]->{'in'}, 16, 'the shelf counts what cam
 is($stats->{'inventory'}->{'units'}->[0]->{'out'}, 6, 'the shelf counts what went out');
 is($stats->{'inventory'}->{'units'}->[0]->{'on_hand'}, 10, 'the shelf level is in minus out');
 is($stats->{'inventory'}->{'units'}->[0]->{'unit'}, 'g', 'the unit is the shelf unit');
+cmp_ok(abs($stats->{'inventory'}->{'units'}->[0]->{'days_left'} - 75), '<', 1e-9,
+	'ten on hand at the last 30 days pace lasts seventy-five days');
 
 # the shelf's movements inside each period, kept per unit, with the out carried
 # to the period's end at the same pace the other tables read
@@ -225,6 +227,10 @@ is(scalar @{$groups}, 2, 'each shelf unit gets its own period table');
 is_deeply([ map { $_->{'unit'} } @{$groups} ], [qw/g ml/], 'the units come in shelf order');
 is($groups->[0]->{'rows'}->[0]->{'in'}, 5, 'the grams keep their own in');
 is($groups->[1]->{'rows'}->[0]->{'out'}, 20, 'the millilitres keep their own out');
+ok(!defined $two_units->{'inventory'}->{'units'}->[0]->{'days_left'},
+	'a unit with no draw has no days-left reading');
+is($two_units->{'inventory'}->{'units'}->[1]->{'days_left'}, 0,
+	'a shelf already spent reads zero days left');
 
 my $empty = &subs::appointment_statistics_for('nothing_here', $now);
 is($empty->{'periods'}->[0]->{'count'}, 0, 'an app with no rows reads zero');
@@ -258,7 +264,7 @@ my $pace_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
 		app => 'walk',
 		app_stats => {
 			item => 'walk',
-			inventory => { units => [ { unit => 'g', in => 10, out => 4, on_hand => 6 } ], periods => [ {
+			inventory => { units => [ { unit => 'g', in => 10, out => 4, on_hand => 6, days_left => 75 } ], periods => [{
 				unit => 'g',
 				rows => [ { key => 'today', label => 'Today', in => 10, out => 4, pace => 8 } ],
 			} ] },
@@ -291,6 +297,8 @@ like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="app
 	'an averaged measure has no pace to carry');
 like($pace_html, qr/<th>g<\/th>.*?<td>Today<\/td>\s*<td>10<\/td>\s*<td>4<\/td>\s*<td>8<\/td>/s,
 	'the inventory period row shows in, out and the out pace');
+like($pace_html, qr/<td>g<\/td>\s*<td>10<\/td>\s*<td>4<\/td>\s*<td>6<\/td>\s*<td>75<\/td>/,
+	'the shelf row shows the days of stock left');
 my $section_controller = read_file("$root/lib/JawnOS/Controller/manager_misc.pm");
 like($section_controller, qr/template => 'apps\/appointment_stats'/,
 	'the app_section route draws the readings from the lazy partial');
