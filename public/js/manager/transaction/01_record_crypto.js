@@ -284,6 +284,9 @@ $(document).on('click', '.record_purchase', function() {
 	var iq = $(this).closest('.app_details');
 	var appointment = iq.closest('.appointment');
 	var app = iq.attr('app');
+	// a receipt carries its own moment; the save sends that instead of now, and an
+	// Ago or the Time Machine still overrides it on the server as usual
+	var receipt_timestamp = iq.attr('receipt_timestamp') || '';
 	var ago = appointment.find('.ago').val();
 	var warranty = appointment.find('.warranty').val();
 	var schedule = appointment.find('.schedule').val();
@@ -346,7 +349,7 @@ $(document).on('click', '.record_purchase', function() {
 		duration: duration,
 		warranty: warranty,
 		schedule: schedule,
-		timestamp: timestamp,
+		timestamp: receipt_timestamp || timestamp,
 		currency: currency,
 		app: app,
 		notes: notes,

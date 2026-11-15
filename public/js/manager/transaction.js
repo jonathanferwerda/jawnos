@@ -364,6 +364,10 @@ function transactionStorageSaver(app) {
 		var change = appt.find('.tx_change').text() || '';
 		storage[movement]['totals']['tendered'] = tendered;
 		storage[movement]['totals']['change'] = (change == '\u2014' ? '' : change);
+		// the receipt's own moment travels with the draft, so switching movement or
+		// reopening the window keeps the day it was bought on
+		storage[movement]['totals']['receipt_timestamp'] = appt.find('.app_details').attr('receipt_timestamp') || '';
+		storage[movement]['totals']['receipt_when'] = appt.find('.app_details').attr('receipt_when') || '';
 	}
 	$('.purchase_details[app="' + app + '"]').each(function(i,v) {
 		var uuid = $(v).attr('uuid');
@@ -434,6 +438,16 @@ function txTenderChange(ad) {
 	var out = ad.find('.tx_change');
 	if (!paid || !total) { out.text('').removeClass('tx_short'); return; }
 	out.text(numeral(change).format('0.00')).toggleClass('tx_short', change < 0);
+}
+
+// A receipt carries the day and time it was printed. Checkout stamps them on the
+// form, and the draft keeps them across a movement switch, so the saved record
+// is backdated instead of landing on the moment it was entered.
+function txReceiptPaint(ad) {
+	if (!ad || !ad.length) { return; }
+	var when = ad.attr('receipt_when') || '';
+	var label = (typeof jawnosT === 'function') ? jawnosT('Receipt') : 'Receipt';
+	ad.find('.tx_receipt_when').text(when ? label + ': ' + when : '').toggle(!!when);
 }
 
 $(document).on('input change', '.tx_tendered', function() {
@@ -554,6 +568,13 @@ function transactionStorageRetriever(app) {
 			appt.find('.vendor.purchase_input').val(totals['vendor']);
 		}
 		if (totals['tendered']) { appt.find('.tx_tendered').val(totals['tendered']); }
+		// the receipt's moment rides on the appointment, not on a line
+		var details = appt.find('.app_details');
+		if (totals['receipt_timestamp']) { details.attr('receipt_timestamp', totals['receipt_timestamp']); }
+		else { details.removeAttr('receipt_timestamp'); }
+		if (totals['receipt_when']) { details.attr('receipt_when', totals['receipt_when']); }
+		else { details.removeAttr('receipt_when'); }
+		txReceiptPaint(details);
 		txTenderPaint(appt.find('.app_details'));
 	}
 	// the vendor's change brings the open invoices for that vendor back into
@@ -591,6 +612,9 @@ function transactionStorageDeleter(app) {
 	appt.find('.transaction_information_viewer').html('').hide();
 	appt.find('.tx_tendered').val('');
 	appt.find('.tx_change').text('').removeClass('tx_short');
+	// a cleared form is not a receipt any more
+	appt.find('.app_details').removeAttr('receipt_timestamp').removeAttr('receipt_when');
+	appt.find('.tx_receipt_when').text('').hide();
 	// Only the transaction form's own pickers are reset here. The appointment
 	// details list carries model/option selectors of its own; clearing those made
 	// the model dropdown vanish until the next refresh (the GPS fix), which is the

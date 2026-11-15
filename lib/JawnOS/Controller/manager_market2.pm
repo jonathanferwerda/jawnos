@@ -114,15 +114,24 @@ sub action_4700 {
 		push @images, { page => $page, url => '/manager/market/receipt/image?file=' . $name };
 		$page++;
 	}
+	# The expense category is the app the transaction will be filed under. It
+	# defaults to the list in view, but a receipt may be for something else, so
+	# the confirm panel offers the apps the house has used and takes a typed name.
+	my $receipt_category = &market_list_key($c->param('list') || '');
+	my @category_choices = map { $_->{'app'} } @{ &subs::db_query("select app, count(*) as c from appointments where type in ('transaction','purchase') and app is not null and app != '' group by app order by c desc limit 150")->hashes || [] };
+	unshift @category_choices, $receipt_category if $receipt_category ne '' && !grep { $_ eq $receipt_category } @category_choices;
 	$c->render(json => {
 		vendor => &subs::unformat_name($out->{'vendor'} || ''),
 		vendor_formatted => &subs::format_name($out->{'vendor'} || ''),
 		date => $out->{'date'} || '',
+		time => $out->{'time'} || '',
 		total => (defined $out->{'total'} && $out->{'total'} =~ /[0-9]/) ? 0 + $out->{'total'} : undef,
 		payment_method => ($out->{'payment_method'} || ''),
 		payment_ref => ($out->{'payment_ref'} || ''),
 		account => &market_payment_account($out->{'payment_method'}),
 		accounts => &market_accounts(),
+		category => $receipt_category,
+		categories => \@category_choices,
 		lines => &market_receipt_lines($out),
 		files => \@files,
 		images => \@images,
@@ -139,6 +148,21 @@ sub action_4765 {
 	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
 	my $list_name = $c->param('list') || '';
 	my $account = &subs::unformat_name($c->param('account')) || '';
+	# The receipt's own moment and the app it belongs to travel with the cart rows
+	# so Checkout can hand the transaction form both. The moment arrives as the
+	# browser's epoch: the printed time is the person's local time, and the box
+	# runs UTC.
+	my $category = &subs::unformat_name($c->param('category')) || '';
+	my $receipt_date = $c->param('date') || '';
+	my $receipt_time = $c->param('time') || '';
+	my $receipt_when = join(' ', grep { defined $_ && length $_ } ($receipt_date, $receipt_time));
+	my $receipt_ts = $c->param('receipt_timestamp');
+	$receipt_ts = undef unless defined $receipt_ts && $receipt_ts =~ /^\s*\d{10,13}\s*$/;
+	if (defined $receipt_ts) {
+		$receipt_ts += 0;
+		$receipt_ts *= 1000 if $receipt_ts < 100000000000;
+		$receipt_ts = undef if $receipt_ts < 946684800000;
+	}
 	my $lines = eval { return decode_json $c->param('lines') } || [];
 	return $c->render(json => { error => 'nothing to add' }) unless ref $lines eq 'ARRAY' && scalar @{$lines};
 	my $now = &subs::rightNow();
@@ -163,6 +187,9 @@ sub action_4765 {
 			next unless lc($it->{'text'} || '') eq lc($item) || &subs::unformat_name($it->{'text'} || '') eq $item;
 			$it->{'picked'} = 1;
 			$it->{'account'} = $account if $account;
+			$it->{'category'} = $category if $category ne '';
+			$it->{'receipt_when'} = $receipt_when if $receipt_when ne '';
+			$it->{'receipt_timestamp'} = $receipt_ts if defined $receipt_ts;
 			$it->{'quantity'} = 0 + $l->{'qty'} if defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/;
 			$it->{'price'} = 0 + $l->{'price'} if defined $l->{'price'} && $l->{'price'} =~ /[0-9]/;
 			$found = 1;
@@ -182,6 +209,9 @@ sub action_4765 {
 		};
 		$row->{'price'} = 0 + $l->{'price'} if defined $l->{'price'} && $l->{'price'} =~ /[0-9]/;
 		$row->{'account'} = $account if $account;
+		$row->{'category'} = $category if $category ne '';
+		$row->{'receipt_when'} = $receipt_when if $receipt_when ne '';
+		$row->{'receipt_timestamp'} = $receipt_ts if defined $receipt_ts;
 		$row->{'barcode'} = $code if length $code >= 8;
 		unshift @{$list}, $row;
 		push @added, $item;
@@ -189,7 +219,7 @@ sub action_4765 {
 	&market_save_list($list);
 	&market_lists_touch_vendor($list_key, &subs::format_name($list_name), $vendor) if $list_key && $vendor;
 	my $files = eval { return decode_json $c->param('files') } || [];
-	&market_receipt_file({ files => $files, lines => $lines, date => $c->param('date'), vendor => $vendor, total => $c->param('total'), payment_method => $c->param('payment_method'), payment_ref => $c->param('payment_ref'), account => $account }) if scalar @{$files};
+	&market_receipt_file({ files => $files, lines => $lines, date => $receipt_date, time => $receipt_time, category => $category, vendor => $vendor, total => $c->param('total'), payment_method => $c->param('payment_method'), payment_ref => $c->param('payment_ref'), account => $account }) if scalar @{$files};
 	$c->render(json => { added => scalar @added, linked => $linked });
 }
 

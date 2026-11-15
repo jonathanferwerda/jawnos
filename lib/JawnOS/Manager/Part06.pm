@@ -423,7 +423,7 @@ sub market_receipt_read {
 	return (undef, 'no receipt image to read') unless $pages && scalar @{$pages};
 	my $system = 'You read shop receipts for JawnOS and answer with strict JSON only, no prose.';
 	my $ask = 'These images are the pages of ONE shop receipt, page one first. Return ONLY JSON: '
-		. '{"vendor":"the shop name or empty","date":"YYYY-MM-DD or empty","total":the printed total as a number or null,'
+		. '{"vendor":"the shop name or empty","date":"YYYY-MM-DD or empty","time":"the printed time of day as HH:MM in 24-hour form, or empty","total":the printed total as a number or null,'
 		. '"payment_method":"the tender as printed (cash, debit, credit, visa, mastercard, amex, mobile, gift, other) or empty",'
 		. '"payment_ref":"the card number\'s last 4 digits, or an approval/auth code printed with the tender, digits only, else empty",'
 		. '"lines":[{"description":"the item text as printed, trimmed","code":"a barcode, UPC or ISBN printed on that line, digits only, else empty",'
@@ -761,6 +761,8 @@ sub market_receipt_file {
 		uuid => &subs::random_string_creator(20),
 		at => &subs::rightNow(),
 		date => ($data->{'date'} || ''),
+		time => ($data->{'time'} || ''),
+		category => ($data->{'category'} || ''),
 		vendor => ($data->{'vendor'} || ''),
 		total => (defined $data->{'total'} && $data->{'total'} =~ /[0-9]/) ? 0 + $data->{'total'} : undef,
 		payment_method => ($data->{'payment_method'} || ''),

@@ -162,15 +162,20 @@ sub action_3497 {
 	# The money side: one expense transaction on the list's category, handed to
 	# the person to check and save. Each line carries record_item, so saving it
 	# writes the purchase (and its stock move) with the edited quantity/unit.
-	my $category = &market_list_key($c->param('list') || '');
+	my $category = '';
 	my (@lines, $total, $account, $vendor);
+	my ($receipt_ts, $receipt_when);
 	# Checkout always opens an expense: money leaves the account, so the stored
 	# figure carries the negative sign Accounting reads as an outlay. A refund is
 	# the exception, flipped in the form later.
 	my $sign = -1;
 	foreach my $it ( @{$list} ) {
 		next unless $it->{'cart'};
-		$category = $it->{'list'} if $category eq '' && ($it->{'list'} || '') ne '';
+		# the receipt's own category beats the list, and its moment beats now
+		$category = $it->{'category'} if !$category && ($it->{'category'} || '') ne '';
+		$category = $it->{'list'} if !$category && ($it->{'list'} || '') ne '';
+		$receipt_when = $it->{'receipt_when'} if !$receipt_when && ($it->{'receipt_when'} || '') ne '';
+		$receipt_ts = $it->{'receipt_timestamp'} if !$receipt_ts && ($it->{'receipt_timestamp'} || '') ne '';
 		$account = $it->{'account'} if !$account && ($it->{'account'} || '') ne '';
 		$vendor = $it->{'vendor'} if !$vendor && ($it->{'vendor'} || '') ne '';
 		my $qty = ($it->{'quantity'} || 1) + 0;
@@ -190,6 +195,7 @@ sub action_3497 {
 		};
 	}
 	$vendor ||= $vendor_default;
+	$category ||= &market_list_key($c->param('list') || '');
 	$category ||= &subs::unformat_name($lines[0]->{'item'}) if scalar @lines;
 	$account ||= 'cash';
 	my $storage;
@@ -204,12 +210,12 @@ sub action_3497 {
 				record_item => 'on'
 			};
 		}
-		$mov{'totals'} = { uuid => $lines[0]->{'uuid'}, vendor => $vendor, information => 'none', amount => $total * $sign, tax => 0, aux => 0, total => $total * $sign };
+		$mov{'totals'} = { uuid => $lines[0]->{'uuid'}, vendor => $vendor, information => 'none', amount => $total * $sign, tax => 0, aux => 0, total => $total * $sign, receipt_timestamp => $receipt_ts, receipt_when => $receipt_when };
 		$storage = { expense => \%mov };
 	}
 	$c->render(json => {
 		items => scalar @lines,
-		transaction => { app => $category, account => $account, vendor => $vendor, total => $total * $sign, storage => $storage },
+		transaction => { app => $category, account => $account, vendor => $vendor, total => $total * $sign, timestamp => $receipt_ts, when => $receipt_when, storage => $storage },
 	});
 }
 

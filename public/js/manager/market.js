@@ -158,6 +158,16 @@ function marketCheckoutOpen(t) {
 				if (stored) { localStorage.setItem('transactionSaver_' + app, stored); }
 				if (t.account) { w.find('.app_details .account').val(t.account); }
 				if (typeof transactionStorageRetriever === 'function') { transactionStorageRetriever(app); }
+				// the receipt's own moment, so Save records the day it was printed
+				if (t.timestamp || t.when) {
+					var details = w.find('.app_details');
+					// a left-over Ago would override the receipt on the server
+					w.find('.ago').val('');
+					if (t.timestamp) { details.attr('receipt_timestamp', t.timestamp); }
+					if (t.when) { details.attr('receipt_when', t.when); }
+					if (typeof txReceiptPaint === 'function') { txReceiptPaint(details); }
+					if (typeof transactionStorageSaver === 'function') { transactionStorageSaver(app); }
+				}
 			};
 			setTimeout(fill, 800);
 			setTimeout(fill, 1600);

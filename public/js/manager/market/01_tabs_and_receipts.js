@@ -131,11 +131,16 @@ $(document).on('click', '#market_receipt_apply', function() {
 	});
 	if (!lines.length) { marketReceiptPanel(); return; }
 	var panel = $('#market_receipt_panel');
+	var rdate = $('#market_receipt_date').val() || '';
+	var rtime = $('#market_receipt_time').val() || '';
 	$.post('/manager/market/receipt/apply', {
 		lines: JSON.stringify(lines),
 		vendor: marketVendor || panel.attr('data-vendor') || '', list: marketList,
 		total: $('#market_receipt_total').val() || '',
-		date: $('#market_receipt_date').val() || '',
+		date: rdate,
+		time: rtime,
+		receipt_timestamp: marketReceiptMoment(rdate, rtime),
+		category: $('#market_receipt_category').val() || '',
 		payment_method: $('#market_receipt_payment').val() || '',
 		payment_ref: $('#market_receipt_payment_ref').val() || '',
 		account: $('#market_receipt_account').val() || '',
@@ -143,6 +148,26 @@ $(document).on('click', '#market_receipt_apply', function() {
 		timestamp: Date.now()
 	}, function() { marketReceiptPanel(); });
 });
+
+// The printed date and time are the person's local time, and the box is UTC, so
+// the moment is resolved here (the browser's zone) and sent as an epoch. A bare
+// date is local midnight, not the UTC midnight Date would pick for it alone.
+function marketReceiptMoment(date, time) {
+	date = (date || '').trim();
+	if (!date) { return ''; }
+	var t = (time || '').trim();
+	var m = t.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i);
+	if (m) {
+		var h = parseInt(m[1], 10), mi = parseInt(m[2], 10), se = parseInt(m[3] || 0, 10);
+		var ap = (m[4] || '').toLowerCase();
+		if (ap === 'pm' && h < 12) { h += 12; }
+		if (ap === 'am' && h === 12) { h = 0; }
+		t = (h < 10 ? '0' : '') + h + ':' + (mi < 10 ? '0' : '') + mi + ':' + (se < 10 ? '0' : '') + se;
+	}
+	else { t = '00:00:00'; }
+	var ms = new Date(date + 'T' + t).getTime();
+	return isNaN(ms) ? '' : ms;
+}
 
 // undefined hides the panel; a string fills and shows it.
 function marketReceiptPanel(html) {
@@ -184,11 +209,16 @@ $(document).on('click', '#market_receipts_close', function() { $('#market_receip
 
 $(document).on('click', '.market_receipt_readd', function() {
 	var row = $(this).closest('.market_receipt_row');
+	var rdate = row.attr('data-date') || '';
+	var rtime = row.attr('data-time') || '';
 	$.post('/manager/market/receipt/apply', {
 		lines: row.attr('data-apply'),
 		files: row.attr('data-files'),
 		total: row.attr('data-total') || '',
-		date: row.attr('data-date') || '',
+		date: rdate,
+		time: rtime,
+		receipt_timestamp: marketReceiptMoment(rdate, rtime),
+		category: row.attr('data-category') || '',
 		payment_method: row.attr('data-payment') || '',
 		payment_ref: row.attr('data-payment-ref') || '',
 		account: row.attr('data-account') || '',
@@ -205,6 +235,9 @@ function marketReceiptShow(response) {
 	}
 	var lines = response.lines || [];
 	var images = response.images || [];
+	var category_options = (response.categories || []).map(function(c) {
+		return '<option value="' + marketEsc(c) + '"></option>';
+	}).join('');
 	var h = '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;padding:6px;font-size:17px;">';
 	// the paper, at the full width of its column (click a page to open it full size)
 	h += '<div style="flex:1 1 380px;min-width:300px;max-height:78vh;overflow:auto;border:1px solid var(--line);">';
@@ -220,9 +253,12 @@ function marketReceiptShow(response) {
 	h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
 		+ '<b>' + marketEsc(response.vendor_formatted || response.vendor || 'Receipt') + '</b>'
 		+ '<label style="font-size:14px;">date <input id="market_receipt_date" type="text" value="' + marketEsc(response.date || '') + '" style="width:110px;"></label>'
+		+ '<label style="font-size:14px;">time <input id="market_receipt_time" type="text" value="' + marketEsc(response.time || '') + '" style="width:70px;"></label>'
 		+ '<label style="font-size:14px;">total <input id="market_receipt_total" type="text" value="' + marketEsc(response.total === null || response.total === undefined ? '' : response.total) + '" style="width:80px;"></label>'
 		+ '</div>';
 	h += '<div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap;">'
+		+ '<label style="font-size:14px;">category <input id="market_receipt_category" list="market_receipt_categories" type="text" value="' + marketEsc(response.category || '') + '" style="width:130px;" placeholder="' + ((typeof jawnosT === 'function') ? jawnosT('Food, Vape, Dinner...') : 'Food, Vape, Dinner...') + '"></label>'
+		+ '<datalist id="market_receipt_categories">' + category_options + '</datalist>'
 		+ '<label style="font-size:14px;">paid by <input id="market_receipt_payment" type="text" value="' + marketEsc(response.payment_method || '') + '" style="width:110px;"></label>'
 		+ '<label style="font-size:14px;">ref <input id="market_receipt_payment_ref" type="text" value="' + marketEsc(response.payment_ref || '') + '" style="width:70px;"></label>'
 		+ '<label style="font-size:14px;">account <select id="market_receipt_account"><option value="">(choose)</option>';

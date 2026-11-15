@@ -77,6 +77,7 @@
 			<%= include 'apps/transaction/' . $movement_choice, appts => $appts, a => $a, app => $app, source => 'transaction' %>
 		</span>
 	</span>
+	<span class="tx_receipt_when" style="display:none;font-size:14px;opacity:.7;"></span>
 	<div class="tx_add_row">
 		<button type="button" class="add_transaction_item"><%= &subs::ui('+ Add item') %></button>
 	</div>

@@ -35,7 +35,7 @@ like($market, qr/amount => \$price \* \$sign,/, 'each line amount is signed');
 like($market, qr/total => \$price \* \$sign,/, 'each line total is signed');
 like($market, qr/amount => \$total \* \$sign, tax => 0, aux => 0, total => \$total \* \$sign/,
 	'the line totals are signed');
-like($market, qr/total => \$total \* \$sign, storage => \$storage/,
+like($market, qr/total => \$total \* \$sign, timestamp => \$receipt_ts, when => \$receipt_when, storage => \$storage/,
 	'the returned transaction total is signed too');
 
 # --- and the guide says it in the on-screen words --------------------------
