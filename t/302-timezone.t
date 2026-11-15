@@ -92,22 +92,27 @@ my @elsewhere = grep { $_ ne subs::clock_zone_system() } qw(Europe/Paris America
 
 # --- Configure -> Me offers the picker and writes the house setting ---------
 my $configure = read_file("$root/lib/JawnOS/Controller/manager_configure.pm");
-like($configure, qr/timezone => \(&subs::misc_setting\('clock_timezone'\) \/\/ ''\)/, 'the Me panel shows the saved zone (empty means Local)');
 like($configure, qr/timezones => &subs::clock_zone_list\(\)/, 'the Me panel offers the zone list');
+unlike($configure, qr/timezone => /, 'the Me panel no longer passes one shared zone');
 
 my $me = read_file("$root/templates/configure/me_setting_list.html.ep");
-like($me, qr/class="me_timezone"/, 'the Me panel has a time-zone picker');
+like($me, qr/class="me_timezone" device="<%= \$d %>"/, 'each device card has its own time-zone picker');
+like($me, qr/misc_setting\('clock_timezone', \$d\)/, 'each card reads its own device row');
 like($me, qr/class="me_timezone_note"/, 'the picker has a place to report the OS result');
 like($me, qr/\@\{ \$timezones/, 'the picker renders the list');
 
 my $js = read_file("$root/public/js/manager/configure/03_platform_misc.js");
 like($js, qr/'\.me_timezone'/, 'the picker saves on change');
-like($js, qr/setting: 'clock_timezone'/, 'it writes the same house setting the taskbar reads');
+like($js, qr{url: '/manager/setting_setter'}, 'it saves through the per-device setter');
+like($js, qr/setting: 'clock_timezone'/, 'it writes the same setting the taskbar reads');
+like($js, qr/device: pick\.attr\('device'\)/, 'it writes the card device row');
+like($js, qr/pick\.attr\('device'\) == device/, 'it knows whether the card is this machine');
 like($js, qr/timezone_os/, 'the page reads the OS result');
 
 # --- saving the setting sets the OS clock, and says when it could not -------
 my $name = read_file("$root/lib/JawnOS/Domain/Name.pm");
 like($name, qr/clock_zone_apply\(\$value\)/, 'setting_setter applies the zone to the OS');
+like($name, qr/\(\$dev \/\/ ''\) eq \(&device_setter\(\) \/\/ ''\)/, 'only the current machine row sets the OS clock');
 like($name, qr/timezone_os/, 'the OS result rides back to the caller');
 like($name, qr/!\$sync && \(\$setting \/\/ ''\) eq 'clock_timezone'/, 'a peer replay is not a local time-zone pick');
 
@@ -125,6 +130,6 @@ like($budget, qr/\$restore_zone->\(\)/, 'the worker zone is restored after the r
 # --- the help topic covers the template it now names -----------------------
 my $help = read_file("$root/perl/help/topics_configure.pl");
 like($help, qr/templates\/configure\/me_setting_list\.html\.ep/, 'the Configure topic names the Me panel');
-like($help, qr/Time zone sets the one clock/, 'the help explains the time-zone picker');
+like($help, qr/Each device card also has its own Time zone/, 'the help explains the per-device picker');
 
 done_testing();

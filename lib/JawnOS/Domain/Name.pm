@@ -556,13 +556,15 @@ sub setting_setter {
 		# appointment write
 		eval { &clock_appointment_sync({ app => $app }); };
 	}
-	# The house's time zone is one choice, and the operating system should follow
-	# it: the taskbar, the handheld and the evaluation report all read
-	# `clock_timezone`, so a picker anywhere also sets the machine's own clock.
-	# A peer replay is not a local pick; a refusal (no root, no sudo -n) rides back
-	# to the caller so a page can say the box did not change.
+	# A device's time zone is its own: the taskbar, the handheld and an evaluation
+	# running on that machine read that device's row. Only the current machine's
+	# row sets the operating system's clock, so picking the server's zone on a
+	# laptop never moves the laptop. A peer replay is not a local pick; a refusal
+	# (no root, no sudo -n) rides back to the caller so a page can say the box did
+	# not change.
 	my $zone_os;
-	if (!$sync && ($setting // '') eq 'clock_timezone' && defined $value && length $value && $value ne 'local') {
+	if (!$sync && ($setting // '') eq 'clock_timezone' && defined $value && length $value && $value ne 'local'
+		&& (($dev // '') eq (&device_setter() // ''))) {
 		$zone_os = eval { &subs::clock_zone_apply($value) };
 	}
 	return { app => $app, timestamp => $timestamp, setting => $setting, value => $value, device => $dev,

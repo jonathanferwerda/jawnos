@@ -751,30 +751,36 @@ $(document).on('change', '.me_setting', function() {
 	});
 });
 
-// The Me panel's Time zone is the same `clock_timezone` the taskbar and the
-// handheld read, so one pick moves every clock; the server also writes it into
-// the operating system, and says when the box refused the change.
+// Each device card keeps its own `clock_timezone` row, so a phone and a server
+// can read different clocks. The setting is written for that card's device
+// only; the server sets the machine's own clock when the card is this machine's
+// and leaves another machine's card alone.
 $(document).on('change', '.me_timezone', function() {
 	var pick = $(this);
 	var note = pick.closest('.cfg-row').find('.me_timezone_note');
 	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
 	if (note.length) { note.text(''); }
 	$.ajax({
-		url: '/manager/configure/misc_setting',
+		url: '/manager/setting_setter',
 		type: 'POST',
 		data: {
+			app: 'misc',
 			setting: 'clock_timezone',
 			value: pick.val(),
 			device: pick.attr('device'),
 			timestamp: Date.now()
 		},
-		success: function(response) {
-			var rows = Array.isArray(response) ? response : [response];
-			var os = null;
-			$.each(rows, function(i, row) {
-				if (row && row['timezone_os']) { os = row['timezone_os']; return false; }
-			});
+		success: function(result) {
 			if (!note.length) { return; }
+			if (!pick.val()) { note.text(t('Saved.')); return; }
+			var current = (typeof device === 'undefined' || pick.attr('device') == device);
+			if (!current) {
+				var name = pick.attr('device');
+				if (typeof format_name === 'function') { name = format_name(name); }
+				note.text(t('Saved for') + ' ' + name + '.');
+				return;
+			}
+			var os = result && result['timezone_os'];
 			if (os && os['ok'] == 0) {
 				note.text(os['error'] || t('The machine clock could not be changed.'));
 			}

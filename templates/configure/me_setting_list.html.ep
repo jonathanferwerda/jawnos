@@ -21,25 +21,27 @@
 	</div>
 
 	<% my $me_device = &subs::device_setter(); %>
-	<%# One zone for the house. The taskbar, the handheld and the evaluation report
-	    all read `clock_timezone`, and saving it here also sets the machine clock. %>
-	<div class="cfg-row">
-		<label><%= &subs::ui('Time zone') %></label>
-		<span>
-			<select class="me_timezone" device="<%= $me_device %>" hint="<%= &subs::ui('The zone this house reads; saving it also sets the machine clock') %>">
-				<option value=""><%= &subs::ui('Local') %></option>
-				<% foreach my $z (@{ $timezones || [] }) { %>
-					<option value="<%= $z %>"<% if (defined $timezone && $z eq $timezone) { %> selected<% } %>><%= $z %></option>
-				<% } %>
-			</select>
-			<span class="me_timezone_note" aria-live="polite"></span>
-		</span>
-	</div>
-
 	<% foreach my $d ( @gb::device_types ) { %>
 		<details class="cfg-acc" data-acc="me-<%= &subs::html_name($d) %>"<% if ($d eq $me_device) { %> open<% } %>>
 			<summary><%= $d %></summary>
 			<div class="cfg-card">
+
+			<%# Each device keeps its own zone: the taskbar, the handheld's launcher and an
+			    evaluation running on that machine all read this device's row. Saving it
+			    sets the machine's own clock only when the card is this machine's. %>
+			<% my $device_zone = &subs::misc_setting('clock_timezone', $d) || ''; %>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Time zone') %></label>
+				<span>
+					<select class="me_timezone" device="<%= $d %>" hint="<%= &subs::ui('The zone this device reads; saving it also sets this machine\'s clock when you are on it') %>">
+						<option value=""><%= &subs::ui('Local') %></option>
+						<% foreach my $z (@{ $timezones || [] }) { %>
+							<option value="<%= $z %>"<% if ($z eq $device_zone) { %> selected<% } %>><%= $z %></option>
+						<% } %>
+					</select>
+					<span class="me_timezone_note" aria-live="polite"></span>
+				</span>
+			</div>
 
 			<div class="me_grid">
 				<% foreach my $m ( sort keys %{$me->{$d}} ) { %>

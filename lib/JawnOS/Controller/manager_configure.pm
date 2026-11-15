@@ -359,7 +359,6 @@ sub action_8043 {
 		template => 'configure/me_setting_list',
 		me => $me,
 		pos_list => $gb::pos,
-		timezone => (&subs::misc_setting('clock_timezone') // ''),
 		timezones => &subs::clock_zone_list()
 	);
 }

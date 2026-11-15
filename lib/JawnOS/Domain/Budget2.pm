@@ -111,9 +111,9 @@ sub evaluation_agent {
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
 	my $model = $settings->{'eval_assistant'};
 	my $now = &subs::rightNow();
-	# The house reads one clock. The taskbar, the handheld and this report all
-	# take their zone from `clock_timezone`, so the report speaks in the person's
-	# time rather than the box's UTC. Adopting the zone here also moves SQLite's
+	# This machine reads its own device's clock. The taskbar, the handheld and
+	# this report all take their zone from `clock_timezone`, so the report speaks
+	# in the person's time rather than the box's UTC. Adopting the zone here also moves SQLite's
 	# `localtime` buckets (daily counts, hourly and weekday shapes) and every
 	# localtime in the gather below, daylight saving included; the old zone is put
 	# back when the run finishes.
