@@ -227,6 +227,7 @@ $catalog{'ar'} = {
 		'person.add' => 'إضافة',
 		'person.revoke' => 'إلغاء',
 		'person.privilege' => 'امتياز',
+		'person.name' => 'الاسم',
 		'common.close' => 'إغلاق',
 		'common.save' => 'حفظ',
 		'common.search' => 'بحث',

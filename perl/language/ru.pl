@@ -227,6 +227,7 @@ $catalog{'ru'} = {
 		'person.add' => 'Добавить',
 		'person.revoke' => 'Отозвать',
 		'person.privilege' => 'Права',
+		'person.name' => 'Имя',
 		'common.close' => 'Закрыть',
 		'common.save' => 'Сохранить',
 		'common.search' => 'Поиск',

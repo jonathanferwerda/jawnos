@@ -227,6 +227,7 @@ $catalog{'pa'} = {
 		'person.add' => 'ਸ਼ਾਮਲ ਕਰੋ',
 		'person.revoke' => 'ਰੱਦ ਕਰੋ',
 		'person.privilege' => 'ਅਧਿਕਾਰ',
+		'person.name' => 'ਨਾਮ',
 		'common.close' => 'ਬੰਦ ਕਰੋ',
 		'common.save' => 'ਸੰਭਾਲੋ',
 		'common.search' => 'ਖੋਜੋ',

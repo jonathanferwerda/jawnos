@@ -227,6 +227,7 @@ $catalog{'bn'} = {
 		'person.add' => 'যোগ করুন',
 		'person.revoke' => 'প্রত্যাহার করুন',
 		'person.privilege' => 'সুবিধা',
+		'person.name' => 'নাম',
 		'common.close' => 'বন্ধ করুন',
 		'common.save' => 'সংরক্ষণ করুন',
 		'common.search' => 'খুঁজুন',

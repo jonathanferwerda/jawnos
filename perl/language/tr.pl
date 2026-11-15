@@ -227,6 +227,7 @@ $catalog{'tr'} = {
 		'person.add' => 'Ekle',
 		'person.revoke' => 'İptal et',
 		'person.privilege' => 'Yetki',
+		'person.name' => 'Ad',
 		'common.close' => 'Kapat',
 		'common.save' => 'Kaydet',
 		'common.search' => 'Ara',

@@ -227,6 +227,7 @@ $catalog{'id'} = {
 		'person.add' => 'Tambah',
 		'person.revoke' => 'Cabut',
 		'person.privilege' => 'Hak akses',
+		'person.name' => 'Nama',
 		'common.close' => 'Tutup',
 		'common.save' => 'Simpan',
 		'common.search' => 'Cari',

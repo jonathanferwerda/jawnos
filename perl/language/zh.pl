@@ -227,6 +227,7 @@ $catalog{'zh'} = {
 		'person.add' => '添加',
 		'person.revoke' => '撤销',
 		'person.privilege' => '权限',
+		'person.name' => '姓名',
 		'common.close' => '关闭',
 		'common.save' => '保存',
 		'common.search' => '搜索',

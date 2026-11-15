@@ -227,6 +227,7 @@ $catalog{'it'} = {
 		'person.add' => 'Aggiungi',
 		'person.revoke' => 'Revoca',
 		'person.privilege' => 'Privilegio',
+		'person.name' => 'Nome',
 		'common.close' => 'Chiudi',
 		'common.save' => 'Salva',
 		'common.search' => 'Cerca',

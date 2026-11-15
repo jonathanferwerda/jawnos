@@ -227,6 +227,7 @@ $catalog{'ja'} = {
 		'person.add' => '追加',
 		'person.revoke' => '取り消す',
 		'person.privilege' => '権限',
+		'person.name' => '名前',
 		'common.close' => '閉じる',
 		'common.save' => '保存',
 		'common.search' => '検索',

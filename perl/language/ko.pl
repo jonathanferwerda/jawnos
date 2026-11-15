@@ -227,6 +227,7 @@ $catalog{'ko'} = {
 		'person.add' => '추가',
 		'person.revoke' => '취소',
 		'person.privilege' => '권한',
+		'person.name' => '이름',
 		'common.close' => '닫기',
 		'common.save' => '저장',
 		'common.search' => '검색',
