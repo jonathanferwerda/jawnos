@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
-# covers:    the appointment's bottom line - shelf in/out, and time, count, money and measures for today/week/month/year
+# covers:    the appointment's bottom line - shelf in/out, and time, count, money and measures for today/week/month/year, each with its pace to the period's end
 
 use strict;
 use warnings;
@@ -147,6 +147,30 @@ is_deeply(\@measure_names, [qw/steps weight/],
 	'ts, timestamp and server_time are the entry clock, not measures in the table');
 is($measure_name{'steps'}->{'unit'}, '', 'a measure without a unit says so');
 is($measure_name{'weight'}->{'unit'}, 'lb', 'a measure keeps the unit the app declares it in');
+
+# ---------------------------------------------------------------- the pace
+# A reading is a period still running, so its pace is the same rate carried to
+# the period's end: one count at noon projects two for the day, an hour two
+# hours, ten dollars twenty. A sum measure paces the same way; an average has
+# no rate to carry.
+my $today_elapsed = $p{'today'}->{'elapsed'};
+cmp_ok(abs($today_elapsed - 0.5), '<', 1e-9, 'noon is half way through the day');
+cmp_ok(abs($p{'today'}->{'projected'}->{'count'} - 2), '<', 1e-9,
+	'one count by noon projects two for the day');
+cmp_ok(abs($p{'today'}->{'projected'}->{'duration'} - 7200000), '<', 0.5,
+	'an hour by noon projects two hours');
+cmp_ok(abs($p{'today'}->{'projected'}->{'money'} - 20), '<', 1e-9,
+	'ten by noon projects twenty for the day');
+cmp_ok(abs($p{'today'}->{'measures'}->{'steps'}->{'projected'} - 2000), '<', 1e-6,
+	'a sum measure carries its pace');
+ok(!defined $p{'today'}->{'measures'}->{'weight'}->{'projected'},
+	'an average measure has no pace');
+my (undef, undef, $week_elapsed) = &subs::period_bounds('week', $now, 0);
+cmp_ok(abs($p{'week'}->{'elapsed'} - $week_elapsed), '<', 1e-12,
+	'the week reads the elapsed share its own window gives');
+cmp_ok(abs($p{'week'}->{'projected'}->{'count'} - 3 / $week_elapsed), '<', 1e-9,
+	'the week carries its count to the end of the week');
+is($p{'today'}->{'progress'}, '50', 'the progress says the share the pace was read at');
 my $series = &subs::measure_series(0);
 is_deeply([ sort keys %{ $series->{'walk'} } ], [qw/steps weight/],
 	'the same clock fields are left out of the per-day series');
@@ -174,6 +198,7 @@ is($stats->{'inventory'}->{'units'}->[0]->{'unit'}, 'g', 'the unit is the shelf 
 
 my $empty = &subs::appointment_statistics_for('nothing_here', $now);
 is($empty->{'periods'}->[0]->{'count'}, 0, 'an app with no rows reads zero');
+is($empty->{'periods'}->[0]->{'projected'}->{'count'}, 0, 'and paces at zero');
 is(scalar @{ $empty->{'inventory'}->{'units'} }, 0, 'and holds no stock');
 
 # ------------------------------------------------------------- the template
@@ -196,6 +221,40 @@ my $stats_template = read_file("$root/templates/apps/appointment_stats.html.ep")
 foreach my $stat ( qw/inv time count money meas/ ) {
 	like($stats_template, qr/stat="\Q$stat\E"/, "the $stat panel is in the fetched partial");
 }
+my $pace_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
+	scalar $stats_template,
+	{
+		app => 'walk',
+		app_stats => {
+			item => 'walk',
+			inventory => { units => [] },
+			periods => [ {
+				key => 'today', label => 'Today',
+				duration => 3600000, count => 1, money => 10,
+				elapsed => 0.5, progress => '50',
+				projected => { duration => 7200000, count => 2, money => 20 },
+				measures => {
+					steps => { value => 1000, calc => 'sum', unit => '', projected => 2000 },
+					weight => { value => 170, calc => 'average', unit => 'lb' },
+				},
+			} ],
+			measure_names => [
+				{ name => 'steps', unit => '', calc => 'sum' },
+				{ name => 'weight', unit => 'lb', calc => 'average' },
+			],
+		},
+	},
+);
+like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>2h<\/td>/,
+	'the time table carries the hour to the day end');
+like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>2<\/td>/,
+	'the count table carries one occurrence to two');
+like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>\$20\.00<\/td>/,
+	'the money table carries ten dollars to twenty');
+like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>2000<\/td>/,
+	'the summed measure carries its pace');
+like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>-<\/td>/,
+	'an averaged measure has no pace to carry');
 my $section_controller = read_file("$root/lib/JawnOS/Controller/manager_misc.pm");
 like($section_controller, qr/template => 'apps\/appointment_stats'/,
 	'the app_section route draws the readings from the lazy partial');

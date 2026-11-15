@@ -818,11 +818,12 @@ sub appointment_statistics_for {
 		# The week is the house's week: it starts on Sunday, the same boundary
 		# father_time builds for a locked budget, so this panel and the budget
 		# light above it agree about which days are in "this week".
-		my ($begin, $end) = &subs::period_bounds($unit_for{$key}, $now, 0);
+		my ($begin, $end, $elapsed) = &subs::period_bounds($unit_for{$key}, $now, 0);
 		$window{$key} = { begin => $begin, end => $end };
 		$period{$key} = {
 			key => $key,
 			label => &subs::ui($label_for{$key}),
+			elapsed => $elapsed,
 			duration => 0,
 			count => 0,
 			money => 0,
@@ -907,6 +908,18 @@ sub appointment_statistics_for {
 	}
 
 	foreach my $key ( @order ) {
+		# The reading is a period still running, so its pace is the same rate
+		# carried to the period's end: three glasses by noon is six by midnight.
+		# This is the division the budget panel makes (value / elapsed); a period
+		# at its opening instant has no rate yet and carries no pace.
+		my $elapsed = $period{$key}->{'elapsed'};
+		my $pace = ($elapsed > 0) ? 1 / $elapsed : undef;
+		$period{$key}->{'progress'} = sprintf('%.0f', $elapsed * 100);
+		$period{$key}->{'projected'} = defined $pace ? {
+			duration => $period{$key}->{'duration'} * $pace,
+			count => $period{$key}->{'count'} * $pace,
+			money => $period{$key}->{'money'} * $pace,
+		} : undef;
 		foreach my $name ( keys %{$period{$key}->{'measures'}} ) {
 			my $m = $period{$key}->{'measures'}->{$name};
 			my $calc = &subs::measure_calc_for($app, $name, $settings->{'s_calc'}) || 'sum';
@@ -916,6 +929,9 @@ sub appointment_statistics_for {
 				: $calc eq 'low' ? ($m->{'min'} || 0)
 				: $m->{'sum'};
 			$m->{'unit'} = $measure_unit{$name} || '';
+			# a sum accumulates over the period, so it has a pace; an average,
+			# a high or a low is already a whole-period reading and does not
+			$m->{'projected'} = ($calc eq 'sum' && defined $pace) ? $m->{'value'} * $pace : undef;
 		}
 	}
 

@@ -2,6 +2,16 @@
     time a header asks for one. The evaluation stays in the wrapper, because its
     headline is what the window opens on. %>
 <% my $stats = $app_stats || {}; %>
+<%# A pace is a rate carried to the end of a period still running, so it usually
+    lands between whole numbers; one decimal, and no trailing .0, reads without
+    suggesting the count is exact. A period with no rate yet shows a dash. %>
+<% my $pace_number = sub {
+	my $n = shift;
+	return '-' unless defined $n;
+	my $s = sprintf('%.1f', $n);
+	$s =~ s/\.0$//;
+	return $s;
+}; %>
 <div class="appointment_stats_panel" stat="inv" style="display:none;">
 	<% my $inv = $stats->{'inventory'} || {}; %>
 	<% if (scalar @{ $inv->{'units'} || [] }) { %>
@@ -29,18 +39,21 @@
 	<table class="appointment_stats_table">
 		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
 		<tr><td><%= &subs::ui('Duration') %></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::duration_sayer(($p->{'duration'} || 0) / 1000) %></td><% } %></tr>
+		<tr class="appointment_stats_pace"><td><%= &subs::ui('Pace') %> <span class="appointment_stats_calc"><%= &subs::ui('by the end') %></span></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><% if (defined $p->{'projected'}) { %><%= &subs::duration_sayer(($p->{'projected'}->{'duration'} || 0) / 1000) %><% } else { %>-<% } %></td><% } %></tr>
 	</table>
 </div>
 <div class="appointment_stats_panel" stat="count" style="display:none;">
 	<table class="appointment_stats_table">
 		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
 		<tr><td><%= &subs::ui('Count') %></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::numeric_formatter($p->{'count'}) %></td><% } %></tr>
+		<tr class="appointment_stats_pace"><td><%= &subs::ui('Pace') %> <span class="appointment_stats_calc"><%= &subs::ui('by the end') %></span></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= $pace_number->($p->{'projected'} ? $p->{'projected'}->{'count'} : undef) %></td><% } %></tr>
 	</table>
 </div>
 <div class="appointment_stats_panel" stat="money" style="display:none;">
 	<table class="appointment_stats_table">
 		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
 		<tr><td>$</td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::price_formatter($p->{'money'} || 0) %></td><% } %></tr>
+		<tr class="appointment_stats_pace"><td><%= &subs::ui('Pace') %> <span class="appointment_stats_calc"><%= &subs::ui('by the end') %></span></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><% if ($p->{'projected'}) { %><%= &subs::price_formatter($p->{'projected'}->{'money'} || 0) %><% } else { %>-<% } %></td><% } %></tr>
 	</table>
 </div>
 <div class="appointment_stats_panel" stat="meas" style="display:none;">
@@ -56,6 +69,7 @@
 						<td><% if ($reading) { %><%= &subs::numeric_formatter($reading->{'value'}) . ($m->{'unit'} ? ' ' . $m->{'unit'} : '') %><% } else { %>-<% } %></td>
 					<% } %>
 				</tr>
+				<tr class="appointment_stats_pace"><td><%= &subs::ui('Pace') %> <span class="appointment_stats_calc"><%= &subs::ui('by the end') %></span></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><% my $one = $p->{'measures'}->{$m->{'name'}}; %><td><% if ($one && defined $one->{'projected'}) { %><%= $pace_number->($one->{'projected'}) . ($m->{'unit'} ? ' ' . $m->{'unit'} : '') %><% } else { %>-<% } %></td><% } %></tr>
 			<% } %>
 		</table>
 	<% } else { %>

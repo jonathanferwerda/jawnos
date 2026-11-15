@@ -299,6 +299,9 @@
 	.appointment_stats_table th:first-child, .appointment_stats_table td:first-child { text-align: left; }
 	.appointment_stats_table th { font-weight: normal; opacity: .7; }
 	.appointment_stats_calc { font-size: 85%; opacity: .6; }
+	/* The pace carries a period still running to its end; a dotted rule sets it
+	   apart from the reading above it without inventing a second table. */
+	.appointment_stats_pace td { border-top: 1px dotted rgba(128,128,128,.45); opacity: .85; }
 	.appointment_stats_empty { font-style: italic; opacity: .6; }
 	/* The readings are fetched on the first press: the placeholder says so while
 	   it waits, in the person's own language, and the answer replaces the words. */
