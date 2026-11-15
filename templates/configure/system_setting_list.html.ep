@@ -272,7 +272,7 @@
 
 	<details class="cfg-acc" data-acc="sys-workers">
 		<summary><%= &subs::ui('Workers') %></summary>
-		<p class="cfg-note"><%= &subs::ui('How many prefork workers each server runs, and the most it may grow to. A maximum above the resting count makes the pool dynamic: it adds a worker while every one is busy and retires the extra when the pool goes quiet. Changes take effect on the next restart, and a server this machine never starts simply ignores its row.') %></p>
+		<p class="cfg-note"><%= &subs::ui('How many prefork workers each server runs, and the most it may grow to. A maximum above the resting count makes the pool dynamic: it adds a worker while every one is busy and retires the extra when the pool goes quiet. Changes take effect on the next restart, and a server this machine never starts simply ignores its row. The range is saved for this machine alone, so a phone and a computer each keep their own.') %></p>
 		<div class="cfg-scroll">
 			<table>
 				<thead>

@@ -167,7 +167,12 @@ sub worker_pools {
 # moved only as far as it must be to keep minimum <= maximum. Both rows are
 # written so the panel, a restart and a sync all read the same range.
 sub worker_pool_setting_save {
-	my (%arg) = @_;
+	# The panel hands this one hashref, the shape every other domain helper takes,
+	# and the tests hand it a plain list. Reading the hashref as a list leaves
+	# every argument undefined - the pool failed as "unknown", the route still
+	# answered ok, and Configure -> Sys -> Workers appeared to save a range that
+	# was never written (2026-11-14). Accept both shapes.
+	my (%arg) = @_ == 1 && ref $_[0] eq 'HASH' ? %{ $_[0] } : @_;
 	my $pool = $arg{'pool'} // '';
 	return { ok => 0, error => 'unknown worker pool' } unless exists $WORKER_POOL{$pool};
 	my $kind = $arg{'kind'} // '';
@@ -187,8 +192,21 @@ sub worker_pool_setting_save {
 		$max = $value;
 		$min = $max if $min > $max;
 	}
-	eval { &setting_setter({ app => '__president', setting => 'worker_' . $pool . '_min', value => $min, device => $device }) };
-	eval { &setting_setter({ app => '__president', setting => 'worker_' . $pool . '_max', value => $max, device => $device }) };
+	# A write that fails must not be reported as saved: the panel shows the range
+	# it was given back, and a swallowed error here is what made a restart return
+	# the old count with no sign that anything was refused.
+	my $stored = eval {
+		&setting_setter({ app => '__president', setting => 'worker_' . $pool . '_min', value => $min, device => $device });
+		&setting_setter({ app => '__president', setting => 'worker_' . $pool . '_max', value => $max, device => $device });
+		1;
+	};
+	unless ($stored) {
+		my $why = $@ || 'unknown error';
+		$why =~ s/\s+$//;
+		# the caller's own log may not exist yet on the boot that reads this first
+		eval { &subs::log_writer('worker range not stored for ' . $pool . ' (' . $device . '): ' . $why) };
+		return { ok => 0, error => 'the range could not be stored', pool => $pool, kind => $kind, device => $device };
+	}
 	return {
 		ok     => 1,
 		pool   => $pool,

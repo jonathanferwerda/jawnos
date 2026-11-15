@@ -314,6 +314,12 @@ $(document).on('change','.sys_setting', function() {
 				if (typeof jawnosT === 'function') { mode = jawnosT(mode); }
 				$('.worker_mode[pool="' + response.pool + '"]').text(mode);
 			}
+			// A refused range must not sit on screen looking saved: put the field
+			// back to the value the panel drew, which is what the next restart
+			// will use.
+			if (response && response.ok === 0) {
+				set.val(set.attr('value'));
+			}
 		}
 	});
 });
@@ -339,6 +345,7 @@ $(document).on('change', '.utility_controller', function() {
 		data: { control: control, device: device, value: value, setting: setting },
 		success: function(response) {
 			$('#utility_controls_container').html(response.html);
+			utilityDeviceApply();
 		},
 		error: function(e) {
 			// a failed save must not leave the switch reading the value we tried to set
@@ -384,6 +391,7 @@ function utilityPoolsSave(pools, members) {
 		success: function(response) {
 			if (response && response.html) {
 				$('#utility_controls_container').html(response.html);
+				utilityDeviceApply();
 				appointment_chron();
 			}
 			else { utilityControllerReloader(); }
@@ -519,10 +527,44 @@ function utilityControllerReloader() {
 		data: {  },
 		success: function(response) {
 			$('#utility_controls_container').html(response.html);
+			utilityDeviceApply();
 			appointment_chron();
 		}
 	});
 }
+
+// ---- the house device bar --------------------------------------------------
+// The Utility controller shows one device's card at a time, chosen from the bar
+// above it: this machine first, then the rest of the house by name. A repaint
+// after a save replaces the whole panel, so the choice is kept per browser and
+// re-applied after every paint. The first card is this machine, so a browser
+// that has never chosen still opens on its own schedules.
+function utilityDeviceKey() {
+	try { return localStorage.getItem('jawnos_utility_device') || ''; }
+	catch (e) { return ''; }
+}
+function utilityDeviceApply() {
+	var root = $('#utility_controls');
+	if (!root.length) { return; }
+	var views = root.find('.utility_device_view');
+	if (!views.length) { return; }
+	var key = utilityDeviceKey();
+	var picked = views.filter(function () {
+		return ($(this).attr('data-utility-device') || '') === key;
+	}).first();
+	if (!picked.length) { picked = views.first(); }
+	key = picked.attr('data-utility-device') || '';
+	views.each(function () { $(this).prop('hidden', this !== picked[0]); });
+	root.find('.utility_device_chip').each(function () {
+		var on = ($(this).attr('data-utility-device') || '') === key;
+		$(this).attr('status', on ? 'active' : '');
+	});
+}
+$(document).on('click', '.utility_device_chip', function () {
+	var key = $(this).attr('data-utility-device') || '';
+	try { localStorage.setItem('jawnos_utility_device', key); } catch (e) {}
+	utilityDeviceApply();
+});
 
 
 $(document).on('change', '.device_domain', function() {
@@ -727,6 +769,7 @@ $(document).on('click', '#system_setting_lister', function() {
 		data: { local_storage: local_storage },
 		success: function(response) {
 			c.html(response);
+			utilityDeviceApply();
 			if (typeof jawnosBalanceWindowRestore === 'function') { jawnosBalanceWindowRestore(c[0]); }
 			if (jawnosConfigureShow('system_setting_lister', c)) {
 				b.text(text);

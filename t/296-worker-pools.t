@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Workers.pm perl/President.pl perl/President/prefork_autoscale.pl lib/JawnOS/Domain/Calendar.pm perl/hooks.pl lib/JawnOS/Controller/manager_configure4.pm templates/configure/system_setting_list.html.ep public/js/manager/configure/03_platform_misc.js lib/JawnOS/Domain/Loader.pm
+# tests-for: lib/JawnOS/Domain/Workers.pm perl/President.pl perl/President/prefork_autoscale.pl lib/JawnOS/Domain/Calendar.pm perl/hooks.pl lib/JawnOS/Controller/manager_configure4.pm templates/configure/system_setting_list.html.ep templates/configure/utility_controller.html.ep public/js/manager/configure/03_platform_misc.js lib/JawnOS/Domain/Loader.pm
 # covers:    the worker pools behind Configure -> Sys -> Workers: the device
 #           defaults, the min/max range read from the settings table (with
 #           config.json and the old main_workers keys as fallbacks), the save
@@ -97,6 +97,32 @@ is( scalar @SETTER, 0, 'and nothing is written' );
 $saved = subs::worker_pool_setting_save(pool => 'nope', kind => 'min', value => '2', device => 'computer');
 is( $saved->{'ok'}, 0, 'an unknown pool is refused' );
 
+# ---- the shape the panel actually posts ------------------------------------
+# Configure -> Sys hands the helper one hashref. Reading that hashref as a list
+# leaves every named argument undefined, so the pool read as an unknown one and
+# the route answered ok with nothing written - the panel showed the new count
+# until the next repaint, then the old one came back.
+%DB = (); @SETTER = ();
+$saved = subs::worker_pool_setting_save({ pool => 'main', kind => 'min', value => '5', device => 'computer' });
+is( $saved->{'ok'}, 1, 'the panel hashref form saves a range' );
+is_deeply( [ $saved->{'min'}, $saved->{'max'} ], [ 5, 5 ], 'and reports the range it stored' );
+is( $DB{'worker_main_min'}, 5, 'the minimum reached the settings table' );
+is( $DB{'worker_main_max'}, 5, 'and so did the ceiling' );
+is( $SETTER[-1]->{'device'}, 'computer', 'the write is keyed to this machine' );
+is( scalar @SETTER, 2, 'a hashref save still writes both sides' );
+
+# A write that dies is not a save: reporting ok here is what made a stored 5
+# come back as 3 after a restart with no sign that anything was refused.
+{
+	no warnings 'redefine';
+	my $ok_setter = \&subs::setting_setter;
+	*subs::setting_setter = sub { die "the settings table is busy\n" };
+	my $refused = subs::worker_pool_setting_save({ pool => 'main', kind => 'max', value => '8', device => 'computer' });
+	is( $refused->{'ok'}, 0, 'a failed write is reported as not saved' );
+	is( $refused->{'error'}, 'the range could not be stored', 'and names the failure' );
+	*subs::setting_setter = $ok_setter;
+}
+
 # ---- the sources the panel and the launcher share ---------------------------
 my $src = read_file("$root/perl/President.pl");
 for my $pool (qw(main websocket locker alarm watch teletype teletype_ws)) {
@@ -124,11 +150,26 @@ like( $panel, qr/class="sys_setting worker_setting"/, 'each pool has an editable
 like( $panel, qr/worker_mode/, 'and a mode cell the save response updates' );
 
 my $ctl = read_file("$root/lib/JawnOS/Controller/manager_configure4.pm");
-like( $ctl, qr/worker_pool_setting_save/, 'the sys_setting route sends a worker range through the domain helper' );
+like( $ctl, qr/worker_pool_setting_save\(\{/, 'the sys_setting route hands the worker helper a hashref' );
 
 my $js = read_file("$root/public/js/manager/configure/03_platform_misc.js");
 like( $js, qr/\.worker_setting\[pool=/, 'the panel writes back both sides of the range' );
 like( $js, qr/\.worker_mode\[pool=/, 'and refreshes the mode it shows' );
+like( $js, qr/response\.ok === 0/, 'and puts a refused range back to the drawn value' );
+
+# ---- the utility controller's device bar ----------------------------------
+# The section used to be every machine's card in one long scroll. A bar now
+# names the house, the name shown is the machine's own, and one card is on
+# screen at a time.
+my $utility_panel = read_file("$root/templates/configure/utility_controller.html.ep");
+like( $utility_panel, qr/id="utility_device_bar"/, 'the utility controller opens with a device bar' );
+like( $utility_panel, qr/overflow-x:scroll/, 'the bar scrolls sideways rather than wrapping' );
+like( $utility_panel, qr/remote_machine_lister/, 'the bar lists the house roster' );
+like( $utility_panel, qr/class="utility_device_chip".*html_text\(\$d->\{'name'\}\)/, 'a chip shows the machine name, not its signatorial' );
+like( $utility_panel, qr/data-utility-device=/, 'each chip and card carries its machine key' );
+like( $utility_panel, qr/id="utility_device_views"/, 'and the cards sit in one switchable stack' );
+like( $js, qr/jawnos_utility_device/, 'the chosen device is remembered per browser' );
+like( $js, qr/function utilityDeviceApply/, 'and re-applied after every repaint' );
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like( $loader, qr/'JawnOS::Domain::Workers' for qw\([^)]*\bworker_pool_limits\b/, 'the domain loader maps the worker helpers' );
