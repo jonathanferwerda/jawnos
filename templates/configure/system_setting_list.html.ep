@@ -97,6 +97,18 @@
 				<%= &subs::ui('confirmed') %> <%= $sum->{'right'} || 0 %> &middot;
 				<%= &subs::ui('wrong') %> <%= $sum->{'wrong'} || 0 %>
 				</p>
+				<%# A lead is a name a miss printed; it is followed when a later lookup
+				   asked for that name. The rate separates a wrong ranking from a name
+				   the tree simply does not have. Numbers are filled after translation. %>
+				<% my $wl = $wa->{'leads'} || {}; %>
+				<% if ($wl->{'offered'}) { %>
+				<p class="cfg-note where_lead_note" hint="<%= &subs::ui('A lead is a name a miss printed; it is followed when a later lookup asked for that name.') %>">
+				<% my @lead_values = map { defined $_ ? $_ : 0 } ($wl->{'offered'}, $wl->{'followed'}); %>
+				<% my $lead_line = &subs::ui('Near leads: {0} offered, {1} followed.'); %>
+				<% $lead_line =~ s/\{(\d+)\}/$lead_values[$1]/g; %>
+				<%= $lead_line %>
+				</p>
+				<% } %>
 				<% if (@{ $wa->{'misses'} || [] }) { %>
 					<p class="cfg-note"><b><%= &subs::ui('Misses') %></b></p>
 					<ul class="cfg-note">

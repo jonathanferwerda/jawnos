@@ -248,6 +248,13 @@ like(read_file("$root/lib/JawnOS/Controller/manager_configure4.pm"),
 	qr/where_stats => &subs::where_lookup_stats/, 'the Sys panel is given the locator stats');
 like(read_file("$root/templates/configure/system_setting_list.html.ep"),
 	qr/where_lookup_note/, 'and shows them beside the cost ledger');
+{
+	my $tpl = read_file("$root/templates/configure/system_setting_list.html.ep");
+	like($tpl, qr/where_lead_note/, 'the panel shows the lead rate the audit measured');
+	like($tpl, qr/\$wa->\{'leads'\}/, 'reading it from the kept report, not a second query');
+	like($tpl, qr/Near leads: \{0\} offered, \{1\} followed/,
+		'with the numbers filled into a translatable sentence');
+}
 
 # ---- the locator audit's cadence -------------------------------------------
 {
@@ -311,7 +318,7 @@ like(read_file("$root/templates/configure/system_setting_list.html.ep"),
 	$dbh->do('insert into where_audit (uuid,machine,at,report,server_time) values (?,?,?,?,?)',
 		undef, 'old', 'desktop', 1000, JSON::PP->new->encode({ at => 1000, ok => 1, summary => { calls => 3 } }), 1000);
 	$dbh->do('insert into where_audit (uuid,machine,at,report,server_time) values (?,?,?,?,?)',
-		undef, 'new', 'laptop', 2000, JSON::PP->new->encode({ at => 2000, ok => 1, summary => { calls => 4 } }), 2000);
+		undef, 'new', 'laptop', 2000, JSON::PP->new->encode({ at => 2000, ok => 1, summary => { calls => 4 }, leads => { offered => 7, followed => 3 } }), 2000);
 	no warnings 'redefine';
 	my $seen_sql;
 	local *subs::db_query = sub {
@@ -326,6 +333,8 @@ like(read_file("$root/templates/configure/system_setting_list.html.ep"),
 		'the newest synced report is the one shown';
 	is $report->{'summary'}{'calls'}, 4, 'with the latest run\'s numbers';
 	is $report->{'machine'}, 'laptop', 'and the machine that made it';
+	is $report->{'leads'}{'offered'}, 7, 'and the lead rate the audit measured';
+	is $report->{'leads'}{'followed'}, 3, 'rides the same kept report';
 }
 {
 	no warnings 'redefine';
