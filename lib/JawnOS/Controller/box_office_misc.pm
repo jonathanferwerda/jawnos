@@ -72,9 +72,12 @@ sub action_14132 {
 	my $community = $c->param('community');
 	my $timestamp = $c->param('timestamp');
 	if ($call eq 'form') {
+		# The public form offers the house's roles by name only: a role's
+		# permissions are the house's business, never a stranger's.
 		my $content = $c->render_to_string(
 			template => 'store/ticket_request',
-			error => 0
+			error => 0,
+			roles => [ map { { uuid => $_->{'uuid'}, name => $_->{'name'} } } @{ &subs::role_catalog() } ]
 		);
 		$c->render(json => { content => $content });
 	}
@@ -90,13 +93,16 @@ sub action_14132 {
 	}
 	elsif ($call eq 'submit') {
 		my $data = eval { return decode_json $c->param('data') } || {};
+		# A re-rendered form has to offer the role list again; it is names only.
+		my $public_roles = [ map { { uuid => $_->{'uuid'}, name => $_->{'name'} } } @{ &subs::role_catalog() } ];
 		# GDPR: no request is stored until the person has acknowledged the
 		# privacy notice. The acknowledgement travels with the request so the
 		# house can show how and when it was given.
 		if (($data->{'consent'} // '') ne 'on') {
 			my $content = $c->render_to_string(
 				template => 'store/ticket_request',
-				error => 1
+				error => 1,
+				roles => $public_roles
 			);
 			$c->render(json => { status => 'error', html => $content });
 			return;
@@ -121,18 +127,18 @@ sub action_14132 {
 		my $crest_record;
 		if (length $crest_code) {
 			if (length $crest_code > 4000) {
-				my $content = $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 1);
+				my $content = $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 1, roles => $public_roles);
 				$c->render(json => { status => 'error', html => $content });
 				return;
 			}
 			$crest_record = &subs::crest_code_parse($crest_code);
 			unless ($crest_record && &subs::crest_verify_record($crest_record)) {
-				$c->render(json => { status => 'error', html => $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 1) });
+				$c->render(json => { status => 'error', html => $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 1, roles => $public_roles) });
 				return;
 			}
 			my $own_crest = &subs::crest_record_read();
 			if (($own_crest->{'uuid'} || '') ne '' && ($crest_record->{'uuid'} || '') eq $own_crest->{'uuid'}) {
-				$c->render(json => { status => 'error', html => $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 2) });
+				$c->render(json => { status => 'error', html => $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 2, roles => $public_roles) });
 				return;
 			}
 			$info->{'crest'} = {
@@ -145,6 +151,22 @@ sub action_14132 {
 				sig => $crest_record->{'sig'} || '',
 			};
 		}
+		# What the person is applying for. The roles are filtered against the
+		# house's catalog, so a stale or invented key never reaches the desk.
+		my $roles_applied = &subs::role_keys_filter(&subs::role_catalog(), $data->{'roles'});
+		$info->{'roles'} = $roles_applied if scalar @{$roles_applied};
+		my $interview = $data->{'interview'} || '';
+		$interview = ref $interview ? '' : $interview;
+		$interview =~ s/^\s+|\s+$//g;
+		$interview =~ s/[\x00-\x1f\x7f]+/ /g;
+		$interview =~ s/^\s+|\s+$//g;
+		$interview = substr($interview, 0, 300);
+		$info->{'interview'} = $interview if length $interview;
+		my $trial = $data->{'trial'} || '';
+		$trial = ref $trial ? '' : $trial;
+		$trial =~ s/^\s+|\s+$//g;
+		$trial = substr($trial, 0, 1000);
+		$info->{'trial'} = $trial if length $trial;
 		my $browser_tab_id = $c->param('browser_tab_id') || '';
 		my $policy = &ticket_policy();
 		# the door's rules: a blacklisted identifier and a flood both get the

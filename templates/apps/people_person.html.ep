@@ -81,6 +81,7 @@
 	<button class="people_person_relational" app="<%= $app %>"><%= &subs::ui('Open Relational') %></button>
 </div>
 
+<% if (($c->session('privilege') || '') eq 'citizen') { %>
 <% my %held_role = map { $_ => 1 } @{ $person_roles || [] }; %>
 <div class="people_person_roles" data-person-uuid="<%= $person->{'uuid'} // '' %>">
 	<h3><%= &subs::ui('Roles') %></h3>
@@ -102,3 +103,4 @@
 		<span class="people_person_role_status people_role_status"></span>
 	</div>
 </div>
+<% } %>

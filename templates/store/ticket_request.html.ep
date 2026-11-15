@@ -36,6 +36,20 @@
 
 <span id="ticket_request_role_container"></span>
 <br>
+<%# The role catalog is offered by name only: what a role grants is the
+    house's business, so the public form never renders it. %>
+<%= &subs::ui('Role applied for') %>:
+<select class="ticket_request_input" id="ticket_request_role" name="roles" multiple>
+	<% foreach my $role ( @{$roles || []} ) { %>
+		<option value="<%= $role->{'uuid'} %>"><%= $role->{'name'} %></option>
+	<% } %>
+</select>
+<span style="font-size:12px;"><%= &subs::ui('Choose one or more roles, or leave it blank if you are not sure.') %></span><br>
+<%= &subs::ui('Interview availability') %>:
+<input class="ticket_request_input" id="ticket_request_interview" name="interview" maxlength="300" placeholder="<%= &subs::ui('When could you come in to talk?') %>"><br>
+<%= &subs::ui('Trial task') %>:<br>
+<textarea class="ticket_request_input" id="ticket_request_trial" name="trial" rows="3" maxlength="1000" placeholder="<%= &subs::ui('Something you made, or a link to it') %>"></textarea><br>
+<span style="font-size:12px;"><%= &subs::ui('What you can show us, or a link to it.') %></span><br>
 <input type="hidden" name="approval_rating" value="<%= 1 %>">
 <button id="ticket_request_submit"><%= &subs::lang('home.submit') %></button>
 <button id="ticket_request_clear"><%= &subs::lang('home.clear') %></button>

@@ -755,7 +755,9 @@ sub action_24390 {
 # presets, so the editor and an assignment made today agree on the same words.
 sub action_24700 {
 	my $c = shift;
-	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	# Role administration is a citizen's act: a resident with the People
+	# surface may read people, but a role it could edit could grant itself more.
+	unless (($c->session('privilege') || '') eq 'citizen') { return $c->render(json => { ok => 0, error => 'citizen only' }); }
 	$c->render(json => {
 		ok => 1,
 		roles => &subs::role_catalog(),
@@ -766,7 +768,9 @@ sub action_24700 {
 # POST /manager/people/roles/save
 sub action_24701 {
 	my $c = shift;
-	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	# Role administration is a citizen's act: a resident with the People
+	# surface may read people, but a role it could edit could grant itself more.
+	unless (($c->session('privilege') || '') eq 'citizen') { return $c->render(json => { ok => 0, error => 'citizen only' }); }
 	my $roles = &subs::role_catalog_save($c->param('roles'));
 	$c->render(json => { ok => 1, roles => $roles });
 }
@@ -774,7 +778,9 @@ sub action_24701 {
 # POST /manager/people/roles/delete
 sub action_24702 {
 	my $c = shift;
-	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	# Role administration is a citizen's act: a resident with the People
+	# surface may read people, but a role it could edit could grant itself more.
+	unless (($c->session('privilege') || '') eq 'citizen') { return $c->render(json => { ok => 0, error => 'citizen only' }); }
 	my $uuid = $c->param('uuid') || '';
 	unless (length $uuid) { return $c->render(json => { ok => 0, error => 'no role named' }); }
 	&subs::role_catalog_delete($uuid);
@@ -786,7 +792,9 @@ sub action_24702 {
 # so re-creating it with the same key restores the grant.
 sub action_24703 {
 	my $c = shift;
-	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	# Role administration is a citizen's act: a resident with the People
+	# surface may read people, but a role it could edit could grant itself more.
+	unless (($c->session('privilege') || '') eq 'citizen') { return $c->render(json => { ok => 0, error => 'citizen only' }); }
 	my $uuid = $c->param('uuid') || '';
 	my $person = eval { &subs::db_select('people', ['uuid'], { uuid => $uuid })->hash };
 	unless ($person) { return $c->render(json => { ok => 0, error => 'no such person' }); }

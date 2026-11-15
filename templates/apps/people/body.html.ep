@@ -186,6 +186,7 @@
 			<div class="people_empty"><%= &subs::ui('No people yet. Add a person in Relational.') %></div>
 		<% } %>
 
+		<% if (($c->session('privilege') || '') eq 'citizen') { %>
 		<div id="people_roles_card" class="people_roles_card" data-permission-keys="<%= join(' ', @{ $permission_keys || [] }) %>">
 			<h3><%= &subs::ui('Staff roles') %></h3>
 			<div class="people_note"><%= &subs::ui('A role is a name, a department and the app surfaces a person may use.') %></div>
@@ -210,6 +211,7 @@
 				<span id="people_roles_status" class="people_role_status"></span>
 			</div>
 		</div>
+		<% } %>
 	</div>
 
 	<% foreach my $construct ( @{$constructs} ) { %>

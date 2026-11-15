@@ -43,6 +43,7 @@ my %known = map { $_ => 1 } qw(
 	sms.list
 	mms.list
 	telephony.call_log
+	telephony.numbers
 	contact.list
 	location.current
 	speech.speak

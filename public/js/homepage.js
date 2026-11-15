@@ -114,13 +114,19 @@ $(document).on('click', '#ticket_request_submit', function() {
 		}
 		return;
 	}
-	var form = [];
+	var form = {};
 	var timestamp = Date.now();
 	$('.ticket_request_input').each(function(i,v) {
 		var name = $(v).attr('name');
 		var value = $(v).is('[type=checkbox]') ? ($(v).prop('checked') ? 'on' : 'off') : $(v).val();
 		form[name] = value;
 	});
+	// A multiple select answers with the list of chosen roles, and an absent
+	// field is sent as an empty one rather than "undefined".
+	var role_select = $('#ticket_request_role');
+	form['roles'] = role_select.length ? (role_select.val() || []) : [];
+	form['interview'] = $('#ticket_request_interview').val() || '';
+	form['trial'] = $('#ticket_request_trial').val() || '';
 
 	var formData = JSON.stringify(form);
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || bti;

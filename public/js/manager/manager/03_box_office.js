@@ -136,12 +136,17 @@ $(document).on('click', '.ticket_approve', function() {
 	var b = $(this);
 	var row = b.closest('.ticket_request');
 	var ticket = b.attr('ticket');
+	var roles = [];
+	row.find('.ticket_approve_role:checked').each(function() {
+		roles.push($(this).val());
+	});
 	$.ajax({
 		url: '/manager/box_office/approve',
 		type: 'POST',
 		data: {
 			timestamp: Date.now(),
 			ticket: ticket,
+			roles: JSON.stringify(roles),
 			privilege: row.find('.ticket_request_privilege').val(),
 			warranty: row.find('.ticket_request_warranty').val()
 		},

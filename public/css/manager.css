@@ -581,6 +581,17 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .taskbar_widget_sound[state=muted] .taskbar_sound_waves,
 .taskbar_widget_sound[level="0"] .taskbar_sound_waves { display: none; }
 .taskbar_widget_sound[state=muted] .taskbar_sound_glyph::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; border-radius: 1px; background: var(--ink, currentColor); transform: rotate(-38deg); }
+#taskbar_identity {
+	flex: 0 0 auto;
+	white-space: nowrap;
+	max-width: 34vw;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	padding: 2px 9px;
+	margin-left: auto;
+	font-size: 12px;
+	opacity: .78;
+}
 #taskbar_clock {
 	flex: 0 0 auto;
 	white-space: nowrap;

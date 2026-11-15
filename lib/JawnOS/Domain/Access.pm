@@ -103,6 +103,41 @@ sub access_app_for_path {
 	return undef;
 }
 
+# The roles a resident's session holds. They are read from the person row on
+# each request, never from the cookie: a role changed or revoked in People takes
+# effect on the next page, not when the pass expires.
+sub session_role_keys {
+	my ($c) = @_;
+	return [] unless $c;
+	my $uuid = eval { $c->session('person_uuid') } || '';
+	return [] unless defined $uuid && length $uuid;
+	return &person_role_keys($uuid);
+}
+
+sub session_role_names {
+	my ($c) = @_;
+	my $keys = ($c && $c->stash('session_roles')) || &session_role_keys($c);
+	my %want = map { $_ => 1 } @{$keys};
+	my $catalog = &role_catalog();
+	return [ map { $_->{'name'} } grep { $want{ $_->{'uuid'} } } @{$catalog} ];
+}
+
+# What a resident is missing to reach a path. A citizen or a guest returns
+# undef: the tier gate owns those rungs, not a role. 'core' is open to every
+# resident. An unclassified path is refused by name, because the route audit
+# should have caught it first.
+sub access_scope_missing {
+	my ($path, $privilege, $role_keys, $catalog) = @_;
+	return undef unless (($privilege // '') eq 'resident');
+	return undef unless defined $path && $path =~ m{^/manager(?:/|$)};
+	my $need = &access_app_for_path($path);
+	return 'unclassified' unless defined $need;
+	return undef if $need eq 'core' || $need eq '';
+	$catalog ||= &role_catalog();
+	return undef if &role_permission_allowed($catalog, $role_keys, $need);
+	return $need;
+}
+
 # Does this route exist in the map at all? A role editor uses this to refuse a
 # key it does not recognise; the audit test uses the same answer for routes.
 sub access_permission_known {

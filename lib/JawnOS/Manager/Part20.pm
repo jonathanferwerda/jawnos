@@ -376,7 +376,15 @@ sub budget_autocalc($data) {
 # between them come next; nothing here writes a peer row.
 sub people_citizen {
 	my ($c) = @_;
-	return (($c->session('privilege') || '') eq 'citizen') ? 1 : 0;
+	my $privilege = $c->session('privilege') || '';
+	return 1 if $privilege eq 'citizen';
+	# A resident holding a role that names the People surface may read and edit
+	# it: that is what the Human Resources role is for. The route gate has
+	# already checked the scope; this guard keeps a resident with no such role
+	# out of the person actions the window calls directly.
+	return 0 unless $privilege eq 'resident';
+	my $roles = $c->stash('session_roles') || &subs::session_role_keys($c);
+	return &subs::access_scope_missing('/manager/people', $privilege, $roles) ? 0 : 1;
 }
 
 # Keep the people table and the person constructs in step. A person construct

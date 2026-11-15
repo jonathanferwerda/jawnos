@@ -229,6 +229,24 @@ Manager::app->hook(before_dispatch => sub {
 		return;
 	}
 
+	# The scope check. A resident's pass names roles, and a role names the app
+	# surfaces it reaches; the tier gate above only says the rung. A citizen is
+	# never scoped, and the rails that authenticate themselves are the same
+	# carve-outs the tier check uses. The denial names the missing surface so the
+	# person can ask for the right role instead of guessing.
+	if ($privilege eq 'resident'
+		&& !&app_public_path($path)
+		&& $path ne '/manager/security/media_lock') {
+		my $roles = $c->stash('session_roles') ||= &subs::session_role_keys($c);
+		my $missing = &subs::access_scope_missing($path, $privilege, $roles);
+		if (defined $missing) {
+			my $label = $missing eq 'unclassified' ? 'this surface' : ucfirst join(' ', split(/_/, $missing));
+			$c->render(template => 'guest_layouts/denial', layout => undef,
+				message => '... this pass does not include ' . $label . '.', status => 403);
+			return;
+		}
+	}
+
 	my $ug = $uuid_generator ||= Data::UUID->new;
 	unless ($c->param('browser_tab_id') || $c->session('browser_tab_id')) {
 		my $uuid = $ug->create_str();

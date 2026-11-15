@@ -32,14 +32,16 @@ our @ROLE_PRESET = (
 	},
 	{
 		uuid => 'hr', name => 'Human Resources', department => 'Staff/HR', builtin => 1,
-		permissions => [qw(people box_office records mail)],
+		# the pass desk is a citizen's act: minting a pass can hand out a tier,
+		# so a role never carries it.
+		permissions => [qw(people records mail)],
 	},
 	{
 		uuid => 'manager', name => 'Store Manager', department => 'Operations', builtin => 1,
 		# everything a resident may reach; the citizen-only desks (configure,
 		# security, power, packages, network writes, the code desk) are absent on
 		# purpose, because a role can never raise a tier.
-		permissions => [qw(store market inventory warehouse pay people box_office
+		permissions => [qw(store market inventory warehouse pay people
 			accounting budget records crypto mail chat phone reception web library
 			help device studio media games weather travel notes clock)],
 	},
@@ -163,20 +165,33 @@ sub person_role_keys {
 	return [ grep { defined $_ && !ref $_ && length $_ } @{$decoded} ];
 }
 
+# Keep only the keys the catalog knows, in the order they arrived. Accepts the
+# shapes a form or an API sends: an array, a JSON list, or a comma list.
+sub role_keys_filter {
+	my ($catalog, $value) = @_;
+	my $list = $value;
+	if (!ref $list) {
+		my $decoded = eval { return decode_json($list // '') };
+		$list = ref $decoded eq 'ARRAY' ? $decoded : [ split /\s*,\s*/, ($list // '') ];
+	}
+	$list = [] unless ref $list eq 'ARRAY';
+	my %known = map { $_->{'uuid'} => 1 } @{$catalog || []};
+	my (@out, %seen);
+	foreach my $key ( @{$list} ) {
+		next unless defined $key && !ref $key && length $key;
+		next unless $known{$key} && !$seen{$key}++;
+		push @out, $key;
+	}
+	return \@out;
+}
+
 sub person_roles_write {
 	my ($person_uuid, $keys, $catalog) = @_;
 	return [] unless defined $person_uuid && length $person_uuid;
 	$catalog ||= &role_catalog();
-	my %known = map { $_->{'uuid'} => 1 } @{$catalog};
-	my @keep;
-	my %seen;
-	foreach my $key ( @{$keys || []} ) {
-		next unless defined $key && !ref $key && length $key;
-		next unless $known{$key} && !$seen{$key}++;
-		push @keep, $key;
-	}
-	&db_update('people', { roles => encode_json(\@keep) }, { uuid => $person_uuid });
-	return \@keep;
+	my $keep = &role_keys_filter($catalog, $keys);
+	&db_update('people', { roles => encode_json($keep) }, { uuid => $person_uuid });
+	return $keep;
 }
 
 # The union of the permissions a set of roles grants. This is what a scope

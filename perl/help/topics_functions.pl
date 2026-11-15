@@ -210,7 +210,7 @@ $topic{'tickets'} = {
 		summary => 'A single-use link that is the credential.',
 		body => [
 			'A pass is a single-use link that carries its own secret. Opening it mints a session and lands you on the desktop (or the store, or the homepage, depending on the pass\'s privilege).',
-			'Because the link is the credential, treat it like a password and revoke it from the Box Office when you are done. It is also how the desktop and Android apps log themselves in.'
+			'Because the link is the credential, treat it like a password and revoke it from the Box Office when you are done. It is also how the desktop and Android apps log themselves in. A pass requested from the public page may name the roles the person is applying for, when they can interview, and a trial task or a link to it; the Box Office shows those beside the contact when it approves or declines.'
 		],
 		related => [ 'box_office', 'security' ]
 	};

@@ -146,6 +146,7 @@ sub action_14039 {
 		warranty => $warranty,
 		projects => $projects,
 		people => $people,
+		roles => &subs::role_catalog(),
 		config => &subs::config_reader(),
 		view => $view
 	);
@@ -176,16 +177,38 @@ sub action_14274 {
 		$c->render(json => { error => 'no request' });
 		return;
 	}
+	# The roles the desk approved with are the request's own unless the
+	# picker sent a choice; either way the catalog decides which keys are real.
+	my $catalog = &subs::role_catalog();
+	my $roles_value = $c->param('roles');
+	unless (defined $roles_value && length $roles_value) {
+		my $info = eval { return decode_json $request->{'information'} } || {};
+		$roles_value = $info->{'roles'};
+	}
+	my $wanted = &subs::role_keys_filter($catalog, $roles_value);
 	my $minted = &ticket_request_mint($c, $request, $privilege, $warranty);
 	unless ($minted) {
 		$c->render(json => { error => 'no key' });
 		return;
 	}
+	# The approval admits a person as well as minting a link: the person
+	# outlives the ticket, and their roles are what the staff surface reads.
+	my $pt = { %$request, privilege => 'resident' };
+	my $person = &subs::person_for_ticket($pt);
+	if ($person) {
+		&subs::person_roles_write($person->{'uuid'}, $wanted, $catalog);
+		$minted->{'person_uuid'} = $person->{'uuid'};
+	}
 	&subs::db_delete('tickets', { uuid => $uuid });
 	&subs::db_insert('tickets', $minted);
 	&subs::db_update('tickets', { crest_uuid => $request->{'crest_uuid'} }, { uuid => $minted->{'uuid'} }) if $request->{'crest_uuid'};
 	&Websocket::send('server', { console => &Websocket::console_command('ticketList')});
-	$c->render(json => { ticket => $minted->{'uuid'}, url => $minted->{'url'} });
+	$c->render(json => {
+		ticket => $minted->{'uuid'},
+		url => $minted->{'url'},
+		roles => $wanted,
+		person => $person ? $person->{'uuid'} : ''
+	});
 }
 
 # POST /manager/box_office/decline

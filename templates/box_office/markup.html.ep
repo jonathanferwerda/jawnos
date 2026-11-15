@@ -270,6 +270,7 @@
 							<th><%= &subs::ui('Name') %></th>
 							<th><%= &subs::ui('Contact') %></th>
 							<th><%= &subs::ui('Description') %></th>
+							<th><%= &subs::ui('Requested roles') %></th>
 							<th><%= &subs::ui('Known') %></th>
 							<th><%= &subs::lang('crest') %></th>
 							<th><%= &subs::ui('Asked') %></th>
@@ -280,9 +281,22 @@
 					<tbody>
 						<% foreach my $r ( @{$requests || []} ) { %>
 							<tr class="ticket_request" uuid="<%= $r->{'uuid'} %>">
+								<% my @role_keys = @{ &subs::role_keys_filter($roles, $r->{'info'}->{'roles'}) }; %>
 								<td><span class="bo_ticket_name"><%= $r->{'name'} %></span></td>
 								<td><span class="bo_contact"><%= $r->{'info'}->{'email'} %><br><%= $r->{'info'}->{'phone'} %></span></td>
 								<td class="bo_description"><%= $r->{'info'}->{'description'} %></td>
+								<td class="bo_request_roles">
+									<% foreach my $key (@role_keys) { my $role = &subs::role_find($roles, $key); %>
+										<span class="bo_chip"><%= $role ? $role->{'name'} : $key %></span>
+									<% } %>
+									<% if (!scalar @role_keys) { %><span class="bo_muted">&mdash;</span><% } %>
+									<% if (defined $r->{'info'}->{'interview'} && length $r->{'info'}->{'interview'}) { %>
+										<div class="bo_interview"><b><%= &subs::ui('Interview') %></b> <%= $r->{'info'}->{'interview'} %></div>
+									<% } %>
+									<% if (defined $r->{'info'}->{'trial'} && length $r->{'info'}->{'trial'}) { %>
+										<div class="bo_trial"><b><%= &subs::ui('Trial') %></b> <%= $r->{'info'}->{'trial'} %></div>
+									<% } %>
+								</td>
 								<td><%== join '<br>', map { &subs::format_name($_) } @{$r->{'known'} || []} %></td>
 								<td class="ticket_request_crest bo_crest_cell">
 									<% if ($r->{'crest'}) { %>
@@ -316,6 +330,11 @@
 										<% } %>
 									</select>
 									<input class="ticket_request_warranty bo_input_sm" value="<%= $policy->{'guest_warranty'} %>" placeholder="-1d">
+									<div class="bo_role_picker">
+										<% foreach my $role ( @{$roles || []} ) { %>
+											<label class="bo_check bo_role"><input type="checkbox" class="ticket_approve_role" value="<%= $role->{'uuid'} %>" data-role="<%= $role->{'uuid'} %>" <% if (grep { $_ eq $role->{'uuid'} } @role_keys) { %>checked<% } %>> <span><%= $role->{'name'} %></span></label>
+										<% } %>
+									</div>
 									<button type="button" class="ticket_approve bo_small bo_primary" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('Approve') %></button>
 								</td>
 								<td class="bo_actions">
@@ -325,7 +344,7 @@
 							</tr>
 						<% } %>
 						<% if (!scalar @{$requests || []}) { %>
-							<tr><td colspan="8" class="bo_empty"><%= &subs::ui('No requests waiting.') %></td></tr>
+							<tr><td colspan="9" class="bo_empty"><%= &subs::ui('No requests waiting.') %></td></tr>
 						<% } %>
 					</tbody>
 				</table>

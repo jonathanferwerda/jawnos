@@ -18,6 +18,9 @@
 <div id="taskbar" class="theme_surface_soft jawnos_bar jawnos_taskbar" data-bar-kind="taskbar" data-bar-primary="1" position="<%= $taskbar_position %>">
 	<span id="taskbar_windows" class="taskbar_windows" data-role="windows"></span>
 	<span id="taskbar_icons" class="taskbar_icons" data-role="icons"></span>
+	<% if (($c->session('privilege') || '') eq 'resident') { my $role_names = &subs::session_role_names($c); %>
+	<span id="taskbar_identity" class="taskbar_identity" title="<%= &subs::ui('Signed in as') %> <%= $c->session('name') %>"><%= $c->session('name') %><% if (@{$role_names}) { %> &middot; <%= join(', ', @{$role_names}) %><% } %></span>
+	<% } %>
 	<span id="taskbar_clock" class="taskbar_clock" data-role="clock"></span>
 </div>
 <%# The clock's own little menu, hung under or over the taskbar clock by
