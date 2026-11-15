@@ -1,7 +1,8 @@
-# tests-for: templates/travel/travel.html.ep public/js/manager/travel.js public/js/manager/travel/03_near3d.js public/js/manager/travel/04_globe.js public/js/three.min.js scripts/fetch_cesium.sh perl/help/topics_people.pl lib/JawnOS.pm
-# covers:    the Travel long press's menu and the three views behind it: the
-#            street preview, the three.js model of measured maps and places, and
+# tests-for: templates/travel/travel.html.ep public/js/manager/travel.js public/js/manager/travel/03_near3d.js public/js/manager/travel/04_globe.js public/js/manager/travel/05_basemap.js public/js/three.min.js scripts/fetch_cesium.sh scripts/fetch_basemap_libs.sh perl/help/topics_people.pl lib/JawnOS.pm
+# covers:    the Travel long press's menu and the four views behind it: the
+#            street preview, the three.js model of measured maps and places,
 #            the Cesium globe (local build only, no third-party script origin)
+#            and the house's own MapLibre + PMTiles street map
 
 use strict;
 use warnings;
@@ -19,10 +20,11 @@ my $root = root();
 # renderers only own their stage and never have to invent window chrome.
 my $template = read_file("$root/templates/travel/travel.html.ep");
 for my $id (qw(travel_3d travel_3d_stage travel_3d_title travel_3d_close travel_3d_reset travel_3d_note
-		travel_globe travel_globe_stage travel_globe_title travel_globe_close travel_globe_status)) {
+		travel_globe travel_globe_stage travel_globe_title travel_globe_close travel_globe_status
+		travel_basemap travel_basemap_stage travel_basemap_title travel_basemap_close travel_basemap_note)) {
 	like( $template, qr/id="$id"/, "the window carries #$id" );
 }
-like( $template, qr/long-press for street view, 3D or globe/, 'the hint names the three views' );
+like( $template, qr/long-press for street view, 3D, globe or the house street map/, 'the hint names the four views' );
 
 # ---- the long press asks, rather than assuming street view ----------------
 my $travel_js = read_file("$root/public/js/manager/travel.js");
@@ -32,10 +34,12 @@ like( $travel_js, qr/function travelViewMenu\(lat, lon, sx, sy\)/, 'the menu is 
 like( $travel_js, qr/jawnosT\('Photos \/ street view'\)/, 'one row is the existing street preview' );
 like( $travel_js, qr/jawnosT\('3D model'\)/, 'one row is the three.js model' );
 like( $travel_js, qr/jawnosT\('Globe'\)/, 'one row is the globe' );
+like( $travel_js, qr/jawnosT\('House street map'\)/, 'one row is the house\'s own street map' );
 like( $travel_js, qr/travelStreetPreview\(at\.lat, at\.lon, at\.sx, at\.sy\)/,
 	'Photos / street view still calls the preview card, where Set a plate here lives' );
 like( $travel_js, qr/travelNear3dOpen\(at\.lat, at\.lon\)/, '3D model calls the three.js view' );
 like( $travel_js, qr/travelGlobeOpen\(at\.lat, at\.lon\)/, 'Globe calls the Cesium view' );
+like( $travel_js, qr/travelBasemapOpen\(at\.lat, at\.lon\)/, 'House street map calls the MapLibre view' );
 like( $travel_js, qr/'background-color': 'var\(--panel\)'/, 'the menu wears the guess menu\'s panel colour' );
 like( $travel_js, qr/border: '2px solid var\(--line\)'/, 'and its 2px line and rounded edge' );
 like( $travel_js, qr/closest\('#travel_view_menu'\)/, 'a press away folds the menu' );
@@ -104,6 +108,51 @@ like( $fetch_text, qr{public/js/cesium}, 'it unpacks into the loader\'s local pa
 like( $fetch_text, qr{package/Build/Cesium}, 'from the npm tarball\'s Build/Cesium' );
 like( read_file("$root/.gitignore"), qr{^public/js/cesium/$}m, 'the installed bundle is gitignored' );
 
+# ---- the house street map: MapLibre + PMTiles, local and same-origin ------
+my $basemap = read_file("$root/public/js/manager/travel/05_basemap.js");
+like( $basemap, qr/^function travelBasemapOpen\(lat, lon\)/m, 'travelBasemapOpen is the view\'s entry point' );
+like( $basemap, qr{href = '/js/basemap/maplibre-gl\.css'}, 'the stylesheet comes from the local path' );
+like( $basemap, qr{'/js/basemap/pmtiles\.js'}, 'PMTiles is injected on first use' );
+like( $basemap, qr{'/js/basemap/maplibre-gl-csp\.js'}, 'the CSP build of MapLibre is preferred' );
+like( $basemap, qr{maplibregl\.setWorkerUrl\('/js/basemap/maplibre-gl-csp-worker\.js'\)},
+	'its worker is a same-origin file, so worker-src blob: is not needed' );
+like( $basemap, qr{'/js/basemap/maplibre-gl\.js'}, 'the plain build is the fallback' );
+like( $basemap, qr/maplibregl\.addProtocol\('pmtiles', protocol\.tile\)/, 'the PMTiles protocol is registered once' );
+like( $basemap, qr/maplibregl\.setWorkerCount\(1\)/, 'the pool is one worker' );
+like( $basemap, qr{url: 'pmtiles:///manager/travel/basemap'}, 'the archive is the house\'s own same-origin route' );
+like( $basemap, qr/maxzoom: 14/, 'the source stops at the archive\'s z14' );
+like( $basemap, qr/'source-layer': 'transportation'/, 'roads come from the transportation layer' );
+like( $basemap, qr/'source-layer': 'water'/, 'and water from the water layer' );
+like( $basemap, qr/'source-layer': 'building'/, 'buildings are drawn from the building layer' );
+like( $basemap, qr/'source-layer': 'landuse'/, 'land use is drawn from landuse' );
+like( $basemap, qr/sourceLayer: 'place'/, 'place names come from the place layer' );
+like( $basemap, qr/road-motorway-casing/, 'roads wear a casing under the fill' );
+like( $basemap, qr/function travelBasemapLabels/, 'labels are drawn as DOM text, with no glyph atlas' );
+like( $basemap, qr/The house\\?'s street map is not installed - run scripts\/fetch_basemap_libs\.sh/,
+	'a missing install says how to install it' );
+like( $basemap, qr/osm_basemap\.pl --all/, 'a missing archive says how to build one' );
+like( $basemap, qr/function travelBasemapClose/, 'the view has a close' );
+like( $basemap, qr/st\.map\.remove\(\)/, 'and disposes the map on close' );
+like( $basemap, qr/st\.map\.off\('idle', st\.labels\)/, 'and lets go of its render listeners' );
+like( $basemap, qr/m\.remove\(\)/, 'and removes its DOM labels' );
+unlike( $basemap, qr{https?://}, 'no absolute URL: nothing is fetched from a third party' );
+unlike( $basemap, qr/jsdelivr|unpkg|cdn\./, 'and no CDN is named' );
+
+# ---- the basemap installer, pinned and gitignored -----------------------
+my $fetch_basemap = "$root/scripts/fetch_basemap_libs.sh";
+ok( -f $fetch_basemap, 'scripts/fetch_basemap_libs.sh exists' );
+ok( -x $fetch_basemap, 'and is executable' );
+my $fb_text = read_file($fetch_basemap);
+like( $fb_text, qr/^#!\/bin\/sh/m, 'it is POSIX sh' );
+like( $fb_text, qr/^MAPLIBRE_VERSION=4\.7\.1$/m, 'MapLibre is pinned' );
+like( $fb_text, qr/^PMTILES_VERSION=3\.2\.1$/m, 'PMTiles is pinned' );
+like( $fb_text, qr{registry\.npmjs\.org/maplibre-gl/-/maplibre-gl-\$\{MAPLIBRE_VERSION\}\.tgz}, 'the pinned MapLibre tarball URL' );
+like( $fb_text, qr{registry\.npmjs\.org/pmtiles/-/pmtiles-\$\{PMTILES_VERSION\}\.tgz}, 'the pinned PMTiles tarball URL' );
+like( $fb_text, qr{maplibre-gl-csp-worker\.js}, 'the CSP worker is staged too' );
+like( $fb_text, qr{^DEST="\$ROOT/public/js/basemap"$}m, 'it installs into the loader\'s local path' );
+like( $fb_text, qr/--force/, 'and can be told to reinstall' );
+like( read_file("$root/.gitignore"), qr{^public/js/basemap/$}m, 'the installed basemap libs are gitignored' );
+
 # ---- vendored three.js is a real UMD build, not a stub -------------------
 my $three = "$root/public/js/three.min.js";
 ok( -f $three, 'public/js/three.min.js is committed' );
@@ -126,5 +175,8 @@ like( $travel_help, qr/3D model builds a small scene with three\.js/, 'the topic
 like( $travel_help, qr/Globe draws the whole world with CesiumJS/, 'the topic names the globe' );
 like( $travel_help, qr/fetch_cesium\.sh/, 'and how to install Cesium locally' );
 like( $travel_help, qr/Nothing is fetched from the open internet/, 'and that the globe fetches nothing from the open internet' );
+like( $travel_help, qr/House street map draws the house\\?'s own vector basemap/, 'the topic names the fourth row in its on-screen words' );
+like( $travel_help, qr/fetch_basemap_libs\.sh/, 'and how to install MapLibre and PMTiles locally' );
+like( $travel_help, qr/osm_basemap\.pl --all/, 'and how to build the archive' );
 
 done_testing();

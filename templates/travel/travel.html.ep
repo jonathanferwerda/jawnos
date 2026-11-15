@@ -50,7 +50,7 @@
 
 	<% } else { %>
 		<canvas id="travel_campus" view="<%= $settings->{'map_view'} // '' %>" style="display:none;width:100%;height:70vh;"></canvas>
-		<div class="travel_map_hint" style="font-size:12px;opacity:.7;"><%= &subs::ui('Drag to move · tap for nearby pictures · long-press for street view, 3D or globe') %></div>
+		<div class="travel_map_hint" style="font-size:12px;opacity:.7;"><%= &subs::ui('Drag to move · tap for nearby pictures · long-press for street view, 3D, globe or the house street map') %></div>
 	<% } %>
 
 
@@ -77,10 +77,11 @@
 		</div>
 	</div>
 
-	<!-- The long press's other two answers. Both are full-window layers inside
-	     the Travel window, the same shape as #travel_street: a title bar, a close
-	     button and a stage the renderer owns. three.js and Cesium are injected on
-	     demand (03_near3d.js, 04_globe.js), so opening Travel never pays for them. -->
+	<!-- The long press's other answers. All are full-window layers inside the
+	     Travel window, the same shape as #travel_street: a title bar, a close
+	     button and a stage the renderer owns. three.js, Cesium and MapLibre are
+	     injected on demand (03_near3d.js, 04_globe.js, 05_basemap.js), so opening
+	     Travel never pays for them. -->
 	<div id="travel_3d" style="display:none;position:absolute;inset:0;z-index:13;background:#111;flex-direction:column;">
 		<div style="flex:0 0 36px;display:flex;align-items:center;justify-content:space-between;padding:0 8px;background:rgba(255,255,255,.06);color:#fff;">
 			<span id="travel_3d_title" style="font-size:12px;"><%= &subs::ui('3D model') %></span>
@@ -101,6 +102,16 @@
 		</div>
 		<div id="travel_globe_status" style="display:none;flex:0 0 auto;padding:3px 8px;font-size:11px;color:#ffd27a;background:#1b1b1b;border-bottom:1px solid #333;"></div>
 		<div id="travel_globe_stage" style="position:relative;flex:1;min-height:0;background:#000;"></div>
+	</div>
+
+	<div id="travel_basemap" style="display:none;position:absolute;inset:0;z-index:13;background:#111;flex-direction:column;">
+		<div style="flex:0 0 36px;display:flex;align-items:center;justify-content:space-between;padding:0 8px;background:rgba(255,255,255,.06);color:#fff;">
+			<span id="travel_basemap_title" style="font-size:12px;"><%= &subs::ui('House street map') %></span>
+			<button id="travel_basemap_close" hint="<%= &subs::ui('Close the house street map') %>" style="font-size:18px;line-height:1;background:none;border:0;color:#fff;cursor:var(--jawnos-cursor-pointer, pointer);">✕</button>
+		</div>
+		<div id="travel_basemap_stage" style="position:relative;flex:1;min-height:0;background:#f6f3ec;">
+			<div id="travel_basemap_note" style="display:none;position:absolute;inset:0;z-index:2;align-items:center;justify-content:center;padding:16px;text-align:center;color:#333;background:rgba(246,243,236,.9);font-size:13px;"></div>
+		</div>
 	</div>
 
 	<div id="travel_street_preview" style="display:none;position:absolute;z-index:11;width:250px;border-radius:10px;overflow:hidden;box-shadow:0 6px 22px rgba(0,0,0,.45);background:#111;cursor:var(--jawnos-cursor-pointer, pointer);">

@@ -57,7 +57,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - synth (topic synth): 3 file(s), 1 route(s)
 - tasks (topic tasks): 2 file(s), 3 route(s)
 - terminal (topic terminal): 4 file(s), 3 route(s)
-- travel (topic travel): 10 file(s), 9 route(s)
+- travel (topic travel): 11 file(s), 9 route(s)
 - twirl (topic twirl): 3 file(s), 1 route(s)
 - video (topic video): 2 file(s)
 - warehouse (topic warehouse): 4 file(s), 5 route(s)

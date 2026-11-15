@@ -4,6 +4,7 @@
      02_maps_config_guess.js - delete map, providers, config, guess and site type
      03_near3d.js - the long press's three.js model of the maps and places
      04_globe.js - the same ground on Cesium's globe
+     05_basemap.js - the same ground on the house's own PMTiles street map
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var campusProxy = {};
@@ -251,7 +252,8 @@ function travelViewMenu(lat, lon, sx, sy) {
 	$.each([
 		{ view: 'street', label: jawnosT('Photos / street view') },
 		{ view: '3d', label: jawnosT('3D model') },
-		{ view: 'globe', label: jawnosT('Globe') }
+		{ view: 'globe', label: jawnosT('Globe') },
+		{ view: 'basemap', label: jawnosT('House street map') }
 	], function(i, row) {
 		$('<span class="travel_view_menu_row hover"></span>').attr('view', row.view)
 			.css({ display: 'block', padding: '4px', cursor: 'var(--jawnos-cursor-pointer, pointer)', 'border-radius': '5px' })
@@ -271,7 +273,8 @@ $(document).on('click', '.travel_view_menu_row', function() {
 	travelViewMenuHide();
 	if (view == 'street') { travelStreetPreview(at.lat, at.lon, at.sx, at.sy); return; }
 	if (view == '3d' && typeof travelNear3dOpen === 'function') { travelNear3dOpen(at.lat, at.lon); return; }
-	if (view == 'globe' && typeof travelGlobeOpen === 'function') { travelGlobeOpen(at.lat, at.lon); }
+	if (view == 'globe' && typeof travelGlobeOpen === 'function') { travelGlobeOpen(at.lat, at.lon); return; }
+	if (view == 'basemap' && typeof travelBasemapOpen === 'function') { travelBasemapOpen(at.lat, at.lon); }
 });
 
 $(document).on('mousedown touchstart', function(e) {

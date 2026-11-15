@@ -94,3 +94,6 @@ perl/sco/sco_helper
 # --- CesiumJS installed by scripts/fetch_cesium.sh (the globe's offline path). ---
 # --- Not source: several megabytes most installs never need. ---
 public/js/cesium/
+# --- MapLibre GL JS + PMTiles installed by scripts/fetch_basemap_libs.sh ---
+# --- (the street map's offline path). Also an installed asset, not source. ---
+public/js/basemap/
