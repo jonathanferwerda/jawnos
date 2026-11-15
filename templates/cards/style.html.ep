@@ -157,6 +157,30 @@
 #cards .deal_art i:nth-child(2) { transform: translateY(-4px); z-index: 1; }
 #cards .deal_art i:nth-child(3) { transform: rotate(12deg) translateX(-8px); }
 #cards .deal_art i:nth-child(3)::after { content: "\2665"; color: #b02530; }
+#cards .spider_art i {
+	display: block;
+	width: 30px;
+	height: 43px;
+	border-radius: 4px;
+	background: var(--paper);
+	border: 1px solid #cfc7b4;
+	box-shadow: 0 3px 8px rgba(0,0,0,.4);
+	position: relative;
+}
+#cards .spider_art i::after {
+	content: "\2660";
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: #22252b;
+	font-size: 17px;
+}
+#cards .spider_art i:nth-child(1) { transform: rotate(-7deg) translateX(6px); }
+#cards .spider_art i:nth-child(2) { transform: translateY(-6px); z-index: 1; }
+#cards .spider_art i:nth-child(3) { transform: rotate(7deg) translateX(-6px); }
+#cards .spider_art i:nth-child(3)::after { content: "\2665"; color: #b02530; }
 #cards .tile_art { display: grid; grid-template-columns: repeat(3, 21px); gap: 4px; }
 #cards .tile_art i {
 	display: block;
@@ -493,6 +517,37 @@
 #cards .sol_waste .sol_card { position: absolute; top: 0; left: 0; }
 #cards .sol_waste .sol_slot { font-size: calc(var(--card-w) * .22); letter-spacing: .06em; }
 
+/* ---- spider solitaire ------------------------------------------------- */
+#cards_spider { flex-direction: column; padding: 12px 14px 22px; gap: 16px; overflow: auto; }
+#cards .spi_board { display: flex; flex-direction: column; gap: var(--spi-board-gap, calc(var(--card-h) * .3)); align-items: center; flex: 0 0 auto; }
+#cards .spi_top {
+	display: grid;
+	grid-template-columns: repeat(10, var(--card-w));
+	gap: var(--spi-gap, var(--sol-gap));
+	justify-content: center;
+	align-items: start;
+}
+#cards .spi_columns {
+	display: grid;
+	grid-template-columns: repeat(10, var(--card-w));
+	gap: var(--spi-gap, var(--sol-gap));
+	justify-content: center;
+	align-items: start;
+}
+#cards .spi_suits_wrap { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+#cards .spi_suits {
+	appearance: none;
+	background: rgba(0,0,0,.24);
+	border: 1px solid rgba(231,200,115,.35);
+	border-radius: 7px;
+	color: var(--gold);
+	font: 600 11px/1 system-ui, sans-serif;
+	padding: 6px 8px;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+#cards .spi_foundation .sol_slot { font-size: calc(var(--card-w) * .3); }
+#cards .spi_foundation .sol_card { position: absolute; inset: 0; }
+
 /* ---- mahjong ---------------------------------------------------------- */
 #cards_mahjong {
 	--mj-tw: clamp(19px, 3.4vw, 44px);
@@ -600,7 +655,6 @@
 #cards_blackjack .bj_table {
 	flex: 1 1 auto;
 	width: 100%;
-	max-width: 900px;
 	margin: 0 auto;
 	display: flex;
 	flex-direction: column;
@@ -747,6 +801,16 @@ body.cards_dragging { cursor: var(--jawnos-cursor-grabbing, grabbing); user-sele
 	#cards_solitaire .sol_actions { margin-left: 0; width: 100%; gap: 4px; justify-content: flex-start; }
 	#cards_solitaire .sol_btn { padding: 5px 9px; font-size: 10px; }
 	#cards .sol_corner { font-size: calc(var(--card-w) * .19); }
+
+	/* spider: ten columns in the window, a little tighter than solitaire */
+	#cards_spider { --card-w: clamp(19px, 8vw, 52px); --spi-gap: 2px; padding: 8px 4px 16px; gap: 8px; }
+	#cards_spider .sol_hud { gap: 8px; }
+	#cards_spider .sol_stat b { font-size: 13px; }
+	#cards_spider .sol_stat span { font-size: 8px; }
+	#cards_spider .sol_status { display: none; }
+	#cards_spider .sol_actions { margin-left: 0; width: 100%; gap: 4px; justify-content: flex-start; }
+	#cards_spider .sol_btn { padding: 5px 9px; font-size: 10px; }
+	#cards_spider .spi_suits { padding: 4px 5px; font-size: 10px; }
 
 	/* mahjong: twelve tiles across */
 	#cards_mahjong { --mj-tw: clamp(15px, 6.1vw, 34px); padding: 8px 4px 16px; gap: 8px; }

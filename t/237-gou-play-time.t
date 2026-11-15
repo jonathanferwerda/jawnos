@@ -224,6 +224,21 @@ sub sessions {
 	is( scalar @{$browsed}, 2, 'Twirl gets its own session' );
 	is( ($browsed->[1]->{'project'} // ''), 'Twirl', 'named Twirl' );
 
+	# Spider Solitaire is a play session, and its own app records the same span
+	my $spider_start = $b1 + 200_000;
+	$NOW = $spider_start;
+	&subs::browser_game_play({ device => $browser_device, game => 'Spider Solitaire', state => 'play', at => $spider_start });
+	my ($spider) = grep { ($_->{'project'} // '') eq 'Spider Solitaire' } @{ $browser->() };
+	ok( $spider && $spider->{'uuid'}, 'Spider Solitaire starts its own session' );
+	my $spider_uuid = $spider ? ($spider->{'uuid'} // '') : '';
+	my $spider_child = &subs::db_query(
+		'select * from appointments where app = ? and source_uuid = ?', 'spider_solitaire', $spider_uuid
+	)->hashes || [];
+	is( scalar @{$spider_child}, 1, 'and records the game\'s own app' );
+	is( ($spider_child->[0] // {})->{'app'}, 'spider_solitaire', 'under the unformatted app key' );
+	$NOW = $spider_start + 60_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Spider Solitaire', state => 'stop', at => $NOW });
+
 	is( &subs::browser_game_play({ device => $browser_device, game => 'Tarot', state => 'play' })->{'ok'}, 0,
 		'tarot is not a play session' );
 

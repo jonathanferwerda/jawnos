@@ -1,8 +1,9 @@
-// The Cards app: four decks on one table.
+// The Cards app: five decks on one table.
 //
 // Tarot is the old deck of Jawn, drawn from the person's own days. Solitaire is
 // Klondike with a three-card deal, the house's felt table and a bank that carries
-// across rounds. Mahjong is a multi-layer turtle of paired tiles. Blackjack is
+// across rounds. Spider is the ten-column patience game, dealt from one, two or
+// four suits. Mahjong is a multi-layer turtle of paired tiles. Blackjack is
 // the casino table with chips and a running bank.
 //
 // The rules live in plain functions so they can be checked without a browser
@@ -13,6 +14,8 @@
 var SOL_RANKS = [ '', 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K' ];
 var SOL_SUITS = [ '\u2660', '\u2665', '\u2666', '\u2663' ];
 var SOL_DRAW = 3;
+var SPIDER_COLUMNS = 10;
+var SPIDER_FOUNDATIONS = 8;
 var MAHJONG_ROWS = [ 12, 8, 10, 12, 12, 10, 8, 12 ];
 var MAHJONG_LAYERS = [
 	{ x: 0, y: 0, cols: 12, rows: 8, counts: MAHJONG_ROWS },
@@ -32,10 +35,22 @@ var solitaireFitObserver = null;
 var solitaireResizeBound = false;
 var solitairePageHideBound = false;
 var solitaireSuppressClick = false;
+var spiderState = null;
+var spiderStatusDefault = '';
+var spiderStatusTimer = null;
+var spiderDrag = null;
+var spiderFitObserver = null;
+var spiderResizeBound = false;
+var spiderPageHideBound = false;
+var spiderSuppressClick = false;
 var mahjongState = null;
 var mahjongBannerDefault = '';
+var mahjongFitObserver = null;
+var mahjongResizeBound = false;
 var blackjackState = null;
 var blackjackSaveTimer = null;
+var blackjackFitObserver = null;
+var blackjackResizeBound = false;
 
 // ---- shared helpers --------------------------------------------------------
 
@@ -74,11 +89,11 @@ function cardsShowSingle(src, title) {
 
 // ---- choosing a deck -------------------------------------------------------
 
-var CARDS_VARIANTS = [ 'tarot', 'solitaire', 'mahjong', 'blackjack' ];
+var CARDS_VARIANTS = [ 'tarot', 'solitaire', 'spider', 'mahjong', 'blackjack' ];
 
-// The three games save a Games play appointment the way the Controller's
+// The four games save a Games play appointment the way the Controller's
 // emulated games do; tarot is a reading, not a game.
-var CARDS_GAME_NAMES = { solitaire: 'Solitaire', mahjong: 'Mahjong', blackjack: 'Blackjack' };
+var CARDS_GAME_NAMES = { solitaire: 'Solitaire', spider: 'Spider Solitaire', mahjong: 'Mahjong', blackjack: 'Blackjack' };
 function cardsGameName(variant) { return CARDS_GAME_NAMES[variant] || ''; }
 function cardsGameScreen(id) {
 	return function() {
@@ -107,6 +122,7 @@ function cardsShowVariant(variant, save) {
 	});
 	$('#cards_tarot', root).toggleClass('active', known === 'tarot');
 	$('#cards_solitaire', root).toggleClass('active', known === 'solitaire');
+	$('#cards_spider', root).toggleClass('active', known === 'spider');
 	$('#cards_mahjong', root).toggleClass('active', known === 'mahjong');
 	$('#cards_blackjack', root).toggleClass('active', known === 'blackjack');
 	$('#cards_chooser', root).toggleClass('open', !known);
@@ -114,6 +130,7 @@ function cardsShowVariant(variant, save) {
 		settingSetter({ app: 'cards', setting: 'variant', value: known });
 	}
 	if (known === 'solitaire') { solitaireEnsure(); }
+	else if (known === 'spider') { spiderEnsure(); }
 	else if (known === 'mahjong') { mahjongEnsure(); }
 	else if (known === 'blackjack') { blackjackEnsure(); }
 	else if (known === 'tarot') { cardPicker(); }
@@ -124,6 +141,7 @@ function cardsInit() {
 	if (!root) { return; }
 	var variant = root.getAttribute('data-variant') || '';
 	if (variant === 'solitaire') { solitaireEnsure(); }
+	else if (variant === 'spider') { spiderEnsure(); }
 	else if (variant === 'mahjong') { mahjongEnsure(); }
 	else if (variant === 'blackjack') { blackjackEnsure(); }
 	else if (variant === 'tarot') { cardPicker(); }
@@ -560,7 +578,7 @@ function solitaireRender(state) {
 function solitaireFitPlan(availW, availH, tableau) {
 	var cols = 7;
 	var gap = Math.max(2, Math.min(13, Math.round(availW * 0.012)));
-	var w = Math.floor(Math.min(88, (availW - gap * (cols - 1)) / cols));
+	var w = Math.floor((availW - gap * (cols - 1)) / cols);
 	w = Math.max(24, w);
 	var widthW = w;
 	var h = w * 1.42;
@@ -937,6 +955,552 @@ function solitaireHighlight(x, y) {
 	if (ok && solitaireDrag.ghost) { solitaireDrag.ghost.addClass('ok'); }
 }
 
+// ---- spider: the rules -----------------------------------------------------
+
+// Eight sets of A-K split over one, two or four suits. One suit is the easy
+// table; two and four mix the deck so a run of one suit is harder to build,
+// though a card still lands on any card one rank higher.
+function spiderDeck(suits) {
+	suits = (suits === 2 || suits === 4) ? suits : 1;
+	var copies = 8 / suits;
+	var deck = [];
+	for (var s = 0; s < suits; s++) {
+		for (var copy = 0; copy < copies; copy++) {
+			for (var r = 1; r <= 13; r++) { deck.push({ r: r, s: s, up: false }); }
+		}
+	}
+	return deck;
+}
+
+function spiderShuffle(list, rnd) {
+	return solitaireShuffle(list, rnd);
+}
+
+// Ten columns: the first four take six cards, the last six take five, and the
+// last card of every column is face up. Fifty cards stay in the stock, dealt
+// ten at a time.
+function spiderDeal(rnd, suits) {
+	suits = (suits === 2 || suits === 4) ? suits : 1;
+	var deck = spiderShuffle(spiderDeck(suits), rnd);
+	var state = {
+		suits: suits,
+		stock: [],
+		foundations: [],
+		tableau: [],
+		moves: 0,
+		selected: null,
+		undo: [],
+		won: false,
+		startedAt: 0,
+		timer: null
+	};
+	for (var col = 0; col < SPIDER_COLUMNS; col++) {
+		state.tableau.push([]);
+		var count = col < 4 ? 6 : 5;
+		for (var row = 0; row < count; row++) {
+			var card = deck.pop();
+			card.up = (row === count - 1);
+			state.tableau[col].push(card);
+		}
+	}
+	state.stock = deck;
+	return state;
+}
+
+// A movable run is face up and descends by one in a single suit. Any card may
+// land on a card one rank higher, whatever its suit; only a King starts an
+// empty column.
+function spiderRunOk(cards) {
+	if (!cards || !cards.length) { return false; }
+	for (var i = 0; i < cards.length; i++) {
+		if (!cards[i].up) { return false; }
+	}
+	for (var j = 1; j < cards.length; j++) {
+		if (cards[j].s !== cards[j - 1].s) { return false; }
+		if (cards[j].r !== cards[j - 1].r - 1) { return false; }
+	}
+	return true;
+}
+
+function spiderCanTableau(run, destTop) {
+	if (!run || !run.length) { return false; }
+	if (!destTop) { return run[0].r === 13; }
+	return run[0].r + 1 === destTop.r;
+}
+
+// A complete run at the top of a column - King down to Ace in one suit - leaves
+// the table and counts toward the eight that win.
+function spiderComplete(state) {
+	var runs = 0;
+	for (var col = 0; col < state.tableau.length; col++) {
+		var pile = state.tableau[col];
+		var start = pile.length - 13;
+		if (start < 0) { continue; }
+		if (pile[pile.length - 1].r !== 1) { continue; }
+		var ok = true;
+		for (var i = start; i < pile.length; i++) {
+			if (!pile[i].up) { ok = false; break; }
+		}
+		if (ok) {
+			for (var j = start + 1; j < pile.length; j++) {
+				if (pile[j].s !== pile[start].s || pile[j].r !== pile[j - 1].r - 1) { ok = false; break; }
+			}
+		}
+		if (!ok || pile[start].r !== 13) { continue; }
+		var suit = pile[start].s;
+		pile.splice(start, 13);
+		state.foundations.push({ s: suit });
+		if (pile.length && !pile[pile.length - 1].up) { pile[pile.length - 1].up = true; }
+		runs++;
+	}
+	return runs;
+}
+
+function spiderWon(state) {
+	return state.foundations.length >= SPIDER_FOUNDATIONS;
+}
+
+function spiderSnapshot(state) {
+	return JSON.stringify({
+		stock: state.stock,
+		foundations: state.foundations,
+		tableau: state.tableau,
+		moves: state.moves
+	});
+}
+
+function spiderPushUndo(state) {
+	state.undo.push(spiderSnapshot(state));
+	if (state.undo.length > 100) { state.undo.shift(); }
+}
+
+function spiderUndo(state) {
+	if (!state.undo.length) { return false; }
+	var saved = JSON.parse(state.undo.pop());
+	state.stock = saved.stock;
+	state.foundations = saved.foundations;
+	state.tableau = saved.tableau;
+	state.moves = saved.moves;
+	state.selected = null;
+	state.won = false;
+	return true;
+}
+
+// Move the selected run to another column. Returns true when it lands; the
+// completed runs are lifted and counted at the end of every move.
+function spiderApply(state, from, targetCol) {
+	if (!from || from.col === undefined) { return false; }
+	if (targetCol === undefined || targetCol === from.col) { return false; }
+	var pile = state.tableau[from.col];
+	if (!pile || from.idx < 0 || from.idx >= pile.length) { return false; }
+	var run = pile.slice(from.idx);
+	if (!spiderRunOk(run)) { return false; }
+	var dest = state.tableau[targetCol];
+	if (!dest) { return false; }
+	if (!spiderCanTableau(run, dest.length ? dest[dest.length - 1] : null)) { return false; }
+	spiderPushUndo(state);
+	pile.splice(from.idx);
+	for (var i = 0; i < run.length; i++) { dest.push(run[i]); }
+	if (pile.length && !pile[pile.length - 1].up) { pile[pile.length - 1].up = true; }
+	state.moves++;
+	state.selected = null;
+	spiderComplete(state);
+	return true;
+}
+
+// The stock deals a card to each column at once. A column with a gap stops the
+// deal: the space has to be filled first.
+function spiderDraw(state) {
+	if (!state.stock.length) { return false; }
+	for (var c = 0; c < SPIDER_COLUMNS; c++) {
+		if (!state.tableau[c].length) { return false; }
+	}
+	spiderPushUndo(state);
+	for (var col = 0; col < SPIDER_COLUMNS; col++) {
+		var card = state.stock.pop();
+		card.up = true;
+		state.tableau[col].push(card);
+	}
+	state.moves++;
+	state.selected = null;
+	spiderComplete(state);
+	return true;
+}
+
+// ---- spider: the table -----------------------------------------------------
+
+function spiderStatus(text) {
+	var $status = $('#cards_spider #spi_status');
+	if (!$status.length) { return; }
+	$status.text(text);
+	spiderFit();
+	clearTimeout(spiderStatusTimer);
+	spiderStatusTimer = setTimeout(function() {
+		$('#cards_spider #spi_status').text(spiderStatusDefault);
+		spiderFit();
+	}, 2200);
+}
+
+function spiderRender(state) {
+	if (!state || !$('#cards_spider').length) { return; }
+	$('#spi_runs').text(state.foundations.length);
+	$('#spi_moves').text(state.moves);
+
+	var $stock = $('#spi_stock').empty();
+	if (state.stock.length) {
+		$stock.append(solitaireCardHtml({ up: false, r: 0, s: 0 }))
+			.append('<span class="sol_count">' + state.stock.length + '</span>');
+	}
+	else {
+		$stock.append('<div class="sol_recycle">\u2014</div>');
+	}
+
+	for (var f = 0; f < SPIDER_FOUNDATIONS; f++) {
+		var $foundation = $('.spi_foundation[data-foundation="' + f + '"]');
+		$foundation.find('.sol_card').remove();
+		var run = state.foundations[f];
+		if (run) {
+			$foundation.find('.sol_slot').hide();
+			$foundation.append(solitaireCardHtml({ r: 13, s: run.s, up: true }));
+		}
+		else {
+			$foundation.find('.sol_slot').show().text(f + 1);
+		}
+	}
+
+	for (var col = 0; col < SPIDER_COLUMNS; col++) {
+		var $column = $('.spi_column[data-col="' + col + '"]');
+		$column.find('.sol_card').remove();
+		var cards = state.tableau[col];
+		$column.find('.sol_slot').css('display', cards.length ? 'none' : 'flex');
+		for (var i = 0; i < cards.length; i++) {
+			var inRun = state.selected && state.selected.col === col && i >= state.selected.idx;
+			var attrs = 'data-zone="tableau" data-col="' + col + '" data-idx="' + i + '"';
+			$column.append(solitaireCardHtml(cards[i], inRun ? 'sel' : '').replace('class="sol_card', attrs + ' class="sol_card'));
+		}
+	}
+
+	if (state.won) { spiderShowWin(state); }
+	else { $('#spi_win').removeClass('show'); }
+	spiderFit();
+}
+
+// Ten columns share the window's width; the board is the stock/foundation row,
+// a gap, then the tallest tableau column. The arithmetic is separate from the
+// DOM so the rules test can check it.
+function spiderFitPlan(availW, availH, tableau) {
+	var cols = SPIDER_COLUMNS;
+	var gap = Math.max(1, Math.min(10, Math.round(availW * 0.009)));
+	var w = Math.floor((availW - gap * (cols - 1)) / cols);
+	w = Math.max(18, w);
+	var widthW = w;
+	var h = w * 1.42;
+	var boardGap = Math.max(5, Math.round(h * 0.28));
+	var columns = [];
+	for (var c = 0; c < tableau.length; c++) {
+		var pile = tableau[c] || [];
+		var downCount = 0, upCount = 0;
+		for (var i = 1; i < pile.length; i++) {
+			if (pile[i].up) { upCount++; } else { downCount++; }
+		}
+		columns.push({ down: downCount, up: upCount });
+	}
+	function fanAt(t) {
+		var down = h * (0.08 + t * 0.16);
+		var up = h * (0.24 + t * 0.20);
+		var worst = 0;
+		for (var c = 0; c < columns.length; c++) {
+			var column = h + columns[c].down * down + columns[c].up * up;
+			if (column > worst) { worst = column; }
+		}
+		return { down: down, up: up, total: h + boardGap + worst };
+	}
+	var plan = fanAt(1);
+	if (plan.total > availH) {
+		var tight = fanAt(0);
+		if (tight.total > availH) {
+			var scale = availH / tight.total;
+			w = Math.max(Math.min(24, widthW), Math.floor(widthW * scale));
+			h = w * 1.42;
+			boardGap = Math.max(5, Math.round(h * 0.28));
+			plan = fanAt(0);
+		}
+		else {
+			var lo = 0, hi = 1;
+			for (var it = 0; it < 16; it++) {
+				var mid = (lo + hi) / 2;
+				if (fanAt(mid).total <= availH) { lo = mid; }
+				else { hi = mid; }
+			}
+			plan = fanAt(lo);
+		}
+	}
+	return {
+		w: Math.round(w),
+		h: Math.round(w * 1.42),
+		gap: gap,
+		boardGap: boardGap,
+		down: Math.round(plan.down * 10) / 10,
+		up: Math.round(plan.up * 10) / 10,
+		total: Math.round(plan.total),
+		fits: plan.total <= availH + 0.5
+	};
+}
+
+function spiderFit() {
+	var pane = document.getElementById('cards_spider');
+	if (!pane || !spiderState) { return; }
+	var hud = pane.querySelector('.sol_hud');
+	if (!hud) { return; }
+	if (pane.clientWidth < 80 || pane.clientHeight < 120) { return; }
+	var style = window.getComputedStyle(pane);
+	var paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+	var paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+	var gap = parseFloat(style.rowGap);
+	if (isNaN(gap)) { gap = 16; }
+	var availW = pane.clientWidth - paddingX;
+	var availH = pane.clientHeight - paddingY - hud.getBoundingClientRect().height - gap;
+	if (availW < 80 || availH < 80) { return; }
+	var plan = spiderFitPlan(availW, availH, spiderState.tableau);
+	pane.style.setProperty('--card-w', plan.w + 'px');
+	pane.style.setProperty('--card-h', plan.h + 'px');
+	pane.style.setProperty('--spi-gap', plan.gap + 'px');
+	pane.style.setProperty('--spi-board-gap', plan.boardGap + 'px');
+	pane.style.setProperty('--sol-down', plan.down + 'px');
+	pane.style.setProperty('--sol-up', plan.up + 'px');
+	var root = document.getElementById('cards');
+	if (root) { root.style.setProperty('--card-w', plan.w + 'px'); }
+}
+
+function spiderShowWin(state) {
+	var $win = $('#spi_win');
+	if (!$win.length) { return; }
+	$('#spi_win_note').text((window.jawnosT ? jawnosT('Eight runs in') : 'Eight runs in') + ' '
+		+ state.moves + ' ' + (window.jawnosT ? jawnosT('moves.') : 'moves.'));
+	$win.addClass('show');
+}
+
+function spiderCheckWin(state) {
+	if (state.won || !spiderWon(state)) { return; }
+	state.won = true;
+	spiderStopClock(state);
+	spiderShowWin(state);
+}
+
+function spiderTick() {
+	if (!spiderState || !spiderState.startedAt) { return; }
+	var seconds = Math.floor((Date.now() - spiderState.startedAt) / 1000);
+	var mins = Math.floor(seconds / 60);
+	var secs = seconds % 60;
+	$('#spi_time').text(mins + ':' + (secs < 10 ? '0' : '') + secs);
+}
+
+function spiderStartClock(state) {
+	if (state.timer) { clearInterval(state.timer); }
+	state.startedAt = state.startedAt || Date.now();
+	state.timer = setInterval(spiderTick, 1000);
+	spiderTick();
+}
+
+function spiderStopClock(state) {
+	if (!state) { return; }
+	if (state.timer) { clearInterval(state.timer); state.timer = null; }
+	state.stoppedAt = Date.now();
+}
+
+function spiderNewDeal(suits) {
+	var state = spiderDeal(undefined, suits);
+	spiderStartClock(state);
+	return state;
+}
+
+// A saved table is only trusted when it is a whole Spider pack: ten columns,
+// eight runs at most, and no more copies of a card than the suit count dealt.
+function spiderCardOk(card) {
+	return !!card && typeof card.r === 'number' && card.r >= 1 && card.r <= 13
+		&& typeof card.s === 'number' && card.s >= 0 && card.s <= 3
+		&& typeof card.up === 'boolean';
+}
+
+function spiderStateOk(state) {
+	if (!state || !Array.isArray(state.stock)) { return false; }
+	if (!Array.isArray(state.foundations)) { return false; }
+	if (!Array.isArray(state.tableau) || state.tableau.length !== SPIDER_COLUMNS) { return false; }
+	var suits = state.suits;
+	if (suits !== 1 && suits !== 2 && suits !== 4) { return false; }
+	var copies = 8 / suits;
+	var counts = {};
+	var total = 0;
+	function add(card) {
+		if (!spiderCardOk(card) || card.s >= suits) { return false; }
+		var key = card.s * 13 + card.r;
+		counts[key] = (counts[key] || 0) + 1;
+		if (counts[key] > copies) { return false; }
+		total++;
+		return true;
+	}
+	if (state.foundations.length > SPIDER_FOUNDATIONS) { return false; }
+	for (var f = 0; f < state.foundations.length; f++) {
+		var run = state.foundations[f];
+		if (!run || typeof run.s !== 'number' || run.s < 0 || run.s >= suits) { return false; }
+		for (var r = 1; r <= 13; r++) {
+			var key = run.s * 13 + r;
+			counts[key] = (counts[key] || 0) + 1;
+			if (counts[key] > copies) { return false; }
+		}
+		total += 13;
+	}
+	function pileOk(pile) {
+		if (!Array.isArray(pile)) { return false; }
+		for (var i = 0; i < pile.length; i++) { if (!add(pile[i])) { return false; } }
+		return true;
+	}
+	if (!pileOk(state.stock)) { return false; }
+	for (var c = 0; c < SPIDER_COLUMNS; c++) { if (!pileOk(state.tableau[c])) { return false; } }
+	return total === 104;
+}
+
+function spiderSaveState() {
+	if (!spiderState || typeof jawnosAppFieldSet !== 'function') { return; }
+	var state = spiderState;
+	var end = (state.won && state.stoppedAt) ? state.stoppedAt : Date.now();
+	var elapsed = state.startedAt ? Math.max(0, Math.floor((end - state.startedAt) / 1000)) : 0;
+	try {
+		jawnosAppFieldSet('cards', 'spider', JSON.stringify({
+			v: 1,
+			elapsed: elapsed,
+			state: {
+				suits: state.suits,
+				stock: state.stock,
+				foundations: state.foundations,
+				tableau: state.tableau,
+				moves: state.moves,
+				won: state.won,
+				undo: state.undo
+			}
+		}));
+	}
+	catch (e) {
+		// a full or unavailable store must not stop the game
+	}
+}
+
+function spiderLoadState() {
+	if (typeof jawnosAppFieldGet !== 'function') { return null; }
+	var raw = null;
+	try { raw = jawnosAppFieldGet('cards', 'spider'); } catch (e) { return null; }
+	if (!raw) { return null; }
+	var save = null;
+	try { save = JSON.parse(raw); } catch (e) { return null; }
+	if (!save || save.v !== 1 || !spiderStateOk(save.state)) { return null; }
+	var s = save.state;
+	var elapsed = Number(save.elapsed);
+	if (!isFinite(elapsed) || elapsed < 0) { elapsed = 0; }
+	return {
+		suits: s.suits,
+		stock: s.stock,
+		foundations: s.foundations,
+		tableau: s.tableau,
+		moves: Number(s.moves) || 0,
+		selected: null,
+		undo: Array.isArray(s.undo) ? s.undo : [],
+		won: !!s.won,
+		startedAt: elapsed > 0 ? Date.now() - elapsed * 1000 : 0,
+		stoppedAt: s.won ? Date.now() : 0,
+		timer: null
+	};
+}
+
+function spiderEnsure() {
+	var $root = $('#cards_spider');
+	if (!$root.length) { return; }
+	if (typeof jawnosGameSessionStart === 'function') {
+		jawnosGameSessionStart('Spider Solitaire', cardsGameScreen('cards_spider'));
+	}
+	if (!spiderState) {
+		spiderState = spiderLoadState();
+		if (!spiderState) { spiderState = spiderNewDeal(1); }
+	}
+	if (!spiderState.won) {
+		if (!spiderState.timer) { spiderStartClock(spiderState); }
+	}
+	else {
+		spiderTick();
+	}
+	spiderStatusDefault = $('#spi_status').text();
+	var $suits = $('#spi_suits');
+	if ($suits.length) { $suits.val(String(spiderState.suits)); }
+	spiderRender(spiderState);
+	spiderSaveState();
+	if (!spiderPageHideBound) {
+		spiderPageHideBound = true;
+		window.addEventListener('pagehide', spiderSaveState);
+	}
+	if (!spiderResizeBound) {
+		spiderResizeBound = true;
+		window.addEventListener('resize', spiderFit);
+	}
+	if (typeof ResizeObserver === 'function') {
+		var pane = document.getElementById('cards_spider');
+		if (pane) {
+			if (!spiderFitObserver) {
+				spiderFitObserver = new ResizeObserver(function() { spiderFit(); });
+			}
+			spiderFitObserver.disconnect();
+			spiderFitObserver.observe(pane);
+		}
+	}
+}
+
+function spiderAction(mutate) {
+	if (!spiderState) { return; }
+	var before = spiderState.won;
+	mutate(spiderState);
+	spiderRender(spiderState);
+	if (!before) { spiderCheckWin(spiderState); }
+	spiderSaveState();
+}
+
+// ---- spider: drag and drop -------------------------------------------------
+
+function spiderDropTarget(x, y) {
+	var el = document.elementFromPoint(x, y);
+	if (!el) { return null; }
+	var $target = $(el).closest('.spi_column');
+	if (!$target.length) { return null; }
+	return { col: parseInt($target.attr('data-col'), 10) };
+}
+
+function spiderDropAt(from, x, y) {
+	if (!spiderState) { return; }
+	var target = spiderDropTarget(x, y);
+	if (!target) { return; }
+	var landed = false;
+	spiderAction(function(state) {
+		state.selected = from;
+		landed = spiderApply(state, from, target.col);
+		if (!landed) { state.selected = null; }
+	});
+	if (!landed) {
+		spiderStatus(window.jawnosT ? jawnosT('That run will not go there.') : 'That run will not go there.');
+	}
+}
+
+function spiderHighlight(x, y) {
+	$('.spi_column').removeClass('drop_ok drop_no');
+	if (spiderDrag && spiderDrag.ghost) { spiderDrag.ghost.removeClass('ok'); }
+	if (!spiderState || !spiderDrag || !spiderDrag.from) { return; }
+	var target = spiderDropTarget(x, y);
+	if (!target) { return; }
+	var run = spiderState.tableau[spiderDrag.from.col].slice(spiderDrag.from.idx);
+	var dest = spiderState.tableau[target.col];
+	var ok = target.col !== spiderDrag.from.col && spiderRunOk(run)
+		&& spiderCanTableau(run, dest.length ? dest[dest.length - 1] : null);
+	var $el = $('.spi_column[data-col="' + target.col + '"]');
+	$el.addClass(ok ? 'drop_ok' : 'drop_no');
+	if (ok && spiderDrag.ghost) { spiderDrag.ghost.addClass('ok'); }
+}
+
 // ---- mahjong: the rules ----------------------------------------------------
 
 function mahjongFaces() {
@@ -1082,6 +1646,50 @@ function mahjongBanner(text) {
 	}
 }
 
+// The turtle spans thirteen tile-columns (the twelve of the board plus the
+// layered overhang) and eight rows; the plan takes whichever of width and
+// height is tighter so the tiles grow with the window instead of topping out
+// at a fixed size.
+function mahjongFitPlan(availW, availH) {
+	var boardW = 13 + 12 * 0.08;
+	var boardH = 1.04 + 8 * 1.38;
+	var byWidth = availW / boardW;
+	var byHeight = availH / boardH;
+	var tw = Math.floor(Math.min(byWidth, byHeight));
+	tw = Math.max(15, tw);
+	return {
+		tw: tw,
+		th: Math.round(tw * 1.3),
+		gap: Math.round(tw * 0.08),
+		pad: Math.round(tw * 1.3 * 0.8),
+		fits: Math.min(byWidth, byHeight) >= 15
+	};
+}
+
+function mahjongFit() {
+	var pane = document.getElementById('cards_mahjong');
+	if (!pane || !mahjongState) { return; }
+	if (pane.clientWidth < 80 || pane.clientHeight < 120) { return; }
+	var hud = pane.querySelector('.mj_hud');
+	var banner = pane.querySelector('.mj_banner');
+	if (!hud) { return; }
+	var style = window.getComputedStyle(pane);
+	var paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+	var paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+	var gap = parseFloat(style.rowGap);
+	if (isNaN(gap)) { gap = 12; }
+	var fixed = hud.getBoundingClientRect().height + gap * 2;
+	if (banner) { fixed += banner.getBoundingClientRect().height; }
+	var availW = pane.clientWidth - paddingX;
+	var availH = pane.clientHeight - paddingY - fixed;
+	if (availW < 80 || availH < 80) { return; }
+	var plan = mahjongFitPlan(availW, availH);
+	pane.style.setProperty('--mj-tw', plan.tw + 'px');
+	pane.style.setProperty('--mj-th', plan.th + 'px');
+	pane.style.setProperty('--mj-gap', plan.gap + 'px');
+	pane.style.setProperty('--mj-pad', plan.pad + 'px');
+}
+
 function mahjongRender() {
 	var state = mahjongState;
 	if (!state || !$('#cards_mahjong').length) { return; }
@@ -1108,6 +1716,7 @@ function mahjongRender() {
 	}
 	$('#mj_left').text(mahjongTilesLeft(state.tiles));
 	$('#mj_moves').text(state.moves);
+	mahjongFit();
 }
 
 function mahjongTick() {
@@ -1221,8 +1830,22 @@ function mahjongEnsure() {
 	if (typeof jawnosGameSessionStart === 'function') {
 		jawnosGameSessionStart('Mahjong', cardsGameScreen('cards_mahjong'));
 	}
-	if (!mahjongState) { mahjongNewGame(); return; }
-	mahjongRender();
+	if (!mahjongState) { mahjongNewGame(); }
+	else { mahjongRender(); }
+	if (!mahjongResizeBound) {
+		mahjongResizeBound = true;
+		window.addEventListener('resize', mahjongFit);
+	}
+	if (typeof ResizeObserver === 'function') {
+		var pane = document.getElementById('cards_mahjong');
+		if (pane) {
+			if (!mahjongFitObserver) {
+				mahjongFitObserver = new ResizeObserver(function() { mahjongFit(); });
+			}
+			mahjongFitObserver.disconnect();
+			mahjongFitObserver.observe(pane);
+		}
+	}
 }
 
 // ---- blackjack: the rules --------------------------------------------------
@@ -1395,6 +2018,54 @@ function blackjackSaveBank() {
 	}, 800);
 }
 
+// A hand overlaps its cards by .62, so n cards span 1.24 + .38n card widths
+// including the hand's left pad. The plan takes the tighter of that width and
+// the height of the two hand rows, so a maximised table grows its cards.
+function blackjackFitPlan(availW, availH, maxCards) {
+	var n = Math.max(2, maxCards || 2);
+	var handW = 1.24 + 0.38 * n;
+	var byWidth = availW / handW;
+	var byHeight = availH / 2 / 1.42;
+	var w = Math.floor(Math.min(byWidth, byHeight));
+	w = Math.max(38, w);
+	return { w: w, h: Math.round(w * 1.42), fits: Math.min(byWidth, byHeight) >= 38 };
+}
+
+function blackjackFit() {
+	var pane = document.getElementById('cards_blackjack');
+	if (!pane || !blackjackState) { return; }
+	if (pane.clientWidth < 80 || pane.clientHeight < 120) { return; }
+	var table = pane.querySelector('.bj_table');
+	var hud = pane.querySelector('.bj_hud');
+	var actions = pane.querySelector('.bj_actions');
+	var divider = pane.querySelector('.bj_divider');
+	if (!table || !hud || !actions || !divider) { return; }
+	var style = window.getComputedStyle(pane);
+	var paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+	var paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+	var tableGap = parseFloat(window.getComputedStyle(table).rowGap);
+	if (isNaN(tableGap)) { tableGap = 10; }
+	var handGap = parseFloat(window.getComputedStyle(pane.querySelector('.bj_dealer')).rowGap);
+	if (isNaN(handGap)) { handGap = 8; }
+	// Four gaps between the HUD, dealer, divider, player and actions, plus the
+	// heading and gap inside each of the two hands.
+	var fixed = hud.getBoundingClientRect().height
+		+ actions.getBoundingClientRect().height
+		+ divider.getBoundingClientRect().height
+		+ tableGap * 4 + handGap * 2;
+	var headings = pane.querySelectorAll('.bj_dealer h3, .bj_player h3');
+	for (var i = 0; i < headings.length; i++) { fixed += headings[i].getBoundingClientRect().height; }
+	var availW = pane.clientWidth - paddingX;
+	var availH = pane.clientHeight - paddingY - fixed;
+	if (availW < 80 || availH < 80) { return; }
+	var maxCards = Math.max(blackjackState.dealer.length, blackjackState.player.length, 2);
+	var plan = blackjackFitPlan(availW, availH, maxCards);
+	pane.style.setProperty('--card-w', plan.w + 'px');
+	pane.style.setProperty('--card-h', plan.h + 'px');
+	var root = document.getElementById('cards');
+	if (root) { root.style.setProperty('--card-w', plan.w + 'px'); }
+}
+
 function blackjackRender() {
 	var state = blackjackState;
 	if (!state || !$('#cards_blackjack').length) { return; }
@@ -1425,6 +2096,7 @@ function blackjackRender() {
 		message += ' Out of chips - reset the bank.';
 	}
 	$('#bj_message').text(message);
+	blackjackFit();
 }
 
 function blackjackNewBank(bank) {
@@ -1442,9 +2114,24 @@ function blackjackEnsure() {
 		var bank = parseFloat($('#cards_blackjack').attr('data-bank'));
 		if (isNaN(bank)) { bank = BJ_BANK_START; }
 		blackjackNewBank(bank);
-		return;
 	}
-	blackjackRender();
+	else {
+		blackjackRender();
+	}
+	if (!blackjackResizeBound) {
+		blackjackResizeBound = true;
+		window.addEventListener('resize', blackjackFit);
+	}
+	if (typeof ResizeObserver === 'function') {
+		var pane = document.getElementById('cards_blackjack');
+		if (pane) {
+			if (!blackjackFitObserver) {
+				blackjackFitObserver = new ResizeObserver(function() { blackjackFit(); });
+			}
+			blackjackFitObserver.disconnect();
+			blackjackFitObserver.observe(pane);
+		}
+	}
 }
 
 // ---- tarot: the deck picker ------------------------------------------------
@@ -1507,7 +2194,7 @@ if (typeof jQuery !== 'undefined') {
 
 	// The first touch in a game starts its play appointment; later touches keep
 	// it alive and the clock pauses it when the game goes quiet.
-	$(document).on('pointerdown', '#cards_solitaire, #cards_mahjong, #cards_blackjack', function() {
+	$(document).on('pointerdown', '#cards_solitaire, #cards_spider, #cards_mahjong, #cards_blackjack', function() {
 		if (typeof jawnosGameSessionStart !== 'function') { return; }
 		var variant = (this.id || '').replace(/^cards_/, '');
 		var game = cardsGameName(variant);
@@ -1762,6 +2449,121 @@ if (typeof jQuery !== 'undefined') {
 			solitaireSaveBank();
 			solitaireSaveState();
 		});
+	});
+
+	// ---- spider ----
+
+	$(document).on('click', '#cards_spider #spi_stock', function() {
+		if (!spiderState) { return; }
+		if (!spiderState.stock.length) {
+			spiderStatus(window.jawnosT ? jawnosT('The stock is empty.') : 'The stock is empty.');
+			return;
+		}
+		var drew = false;
+		spiderAction(function(state) { drew = spiderDraw(state); });
+		if (!drew) {
+			spiderStatus(window.jawnosT ? jawnosT('Fill the empty column before dealing.') : 'Fill the empty column before dealing.');
+		}
+	});
+
+	$(document).on('click', '#cards_spider .sol_card, #cards_spider .spi_column', function(e) {
+		if (!spiderState || spiderSuppressClick) { return; }
+		if (!$(this).is('.sol_card') && $(e.target).closest('.sol_card').length) { return; }
+		var $this = $(this);
+		var col = parseInt($this.attr('data-col'), 10);
+		if (isNaN(col)) { return; }
+		var idxAttr = $this.attr('data-idx');
+		var idx = (idxAttr === undefined) ? undefined : parseInt(idxAttr, 10);
+		var state = spiderState;
+
+		if (state.selected) {
+			if (idx !== undefined && state.selected.col === col && state.selected.idx === idx) {
+				state.selected = null;
+				spiderRender(state);
+				return;
+			}
+			var moved = false;
+			spiderAction(function(s) { s.selected = state.selected; moved = spiderApply(s, state.selected, col); });
+			if (moved) { return; }
+		}
+
+		if (idx === undefined) { return; }
+		var run = state.tableau[col].slice(idx);
+		if (spiderRunOk(run)) {
+			state.selected = { col: col, idx: idx };
+			spiderRender(state);
+		}
+		else {
+			spiderStatus(window.jawnosT ? jawnosT('Only a same-suit run moves together.') : 'Only a same-suit run moves together.');
+		}
+	});
+
+	$(document).on('pointerdown', '#cards_spider .sol_card', function(e) {
+		if (!spiderState || e.button !== 0) { return; }
+		var col = parseInt($(this).attr('data-col'), 10);
+		var idx = parseInt($(this).attr('data-idx'), 10);
+		if (isNaN(col) || isNaN(idx)) { return; }
+		var run = spiderState.tableau[col].slice(idx);
+		if (!spiderRunOk(run)) { return; }
+		var grab = solitaireGrabOffset(this.getBoundingClientRect(), e.clientX, e.clientY);
+		spiderDrag = { from: { col: col, idx: idx }, x: e.clientX, y: e.clientY, grabX: grab.x, grabY: grab.y, started: false, ghost: null, run: run };
+	});
+
+	$(document).on('pointermove', function(e) {
+		if (!spiderDrag) { return; }
+		if (!spiderDrag.started) {
+			if (Math.abs(e.clientX - spiderDrag.x) < 6 && Math.abs(e.clientY - spiderDrag.y) < 6) { return; }
+			spiderDrag.started = true;
+			spiderDrag.ghost = solitaireGhost(spiderDrag.run);
+			$('#cards').append(spiderDrag.ghost);
+			$(document.body).addClass('cards_dragging');
+		}
+		spiderDrag.ghost.css({ left: (e.clientX - spiderDrag.grabX) + 'px', top: (e.clientY - spiderDrag.grabY) + 'px' });
+		spiderHighlight(e.clientX, e.clientY);
+		if (e.preventDefault) { e.preventDefault(); }
+	});
+
+	$(document).on('pointerup', function(e) {
+		if (!spiderDrag) { return; }
+		var drag = spiderDrag;
+		spiderDrag = null;
+		$(document.body).removeClass('cards_dragging');
+		$('.spi_column').removeClass('drop_ok drop_no');
+		if (!drag.ghost) { return; }
+		drag.ghost.remove();
+		spiderSuppressClick = true;
+		setTimeout(function() { spiderSuppressClick = false; }, 60);
+		spiderDropAt(drag.from, e.clientX, e.clientY);
+	});
+
+	$(document).on('click', '#cards_spider #spi_new', function() {
+		if (!spiderState) { return; }
+		var suits = parseInt($('#spi_suits').val(), 10);
+		spiderState = spiderNewDeal(suits);
+		$('#spi_win').removeClass('show');
+		spiderRender(spiderState);
+		spiderSaveState();
+	});
+
+	$(document).on('click', '#cards_spider #spi_again', function() {
+		$('#cards_spider #spi_new').trigger('click');
+	});
+
+	$(document).on('change', '#cards_spider #spi_suits', function() {
+		var suits = parseInt($(this).val(), 10);
+		spiderState = spiderNewDeal(suits);
+		$('#spi_win').removeClass('show');
+		spiderRender(spiderState);
+		spiderSaveState();
+	});
+
+	$(document).on('click', '#cards_spider #spi_undo', function() {
+		if (!spiderState) { return; }
+		if (spiderUndo(spiderState)) {
+			$('#spi_win').removeClass('show');
+			spiderRender(spiderState);
+			spiderSaveState();
+		}
 	});
 
 	// ---- mahjong ----

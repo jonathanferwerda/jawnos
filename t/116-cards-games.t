@@ -1,11 +1,11 @@
-# tests-for: public/js/manager/manager/12_cards.js public/js/manager/windows/01_storage.js templates/cards.html.ep templates/cards/style.html.ep templates/cards/chooser.html.ep templates/cards/tarot.html.ep templates/cards/solitaire.html.ep templates/cards/mahjong.html.ep templates/cards/blackjack.html.ep perl/help/topics_people.pl
-# covers:    The Cards app's four decks. The template offers the choice
-#            (tarot, solitaire, mahjong, blackjack), the tarot spread is three
-#            pictures side by side, and the solitaire, mahjong and blackjack
-#            rule functions are loaded in a bare JS context and played out
-#            here: deal three, the casino scores, runs, foundations, the
-#            turtle's five layers and free-tile rule, and a blackjack shoe
-#            dealt from a known order.
+# tests-for: public/js/manager/manager/12_cards.js public/js/manager/windows/01_storage.js templates/cards.html.ep templates/cards/style.html.ep templates/cards/chooser.html.ep templates/cards/tarot.html.ep templates/cards/solitaire.html.ep templates/cards/spider.html.ep templates/cards/mahjong.html.ep templates/cards/blackjack.html.ep perl/help/topics_people.pl
+# covers:    The Cards app's five decks. The template offers the choice
+#            (tarot, solitaire, spider, mahjong, blackjack), the tarot spread is
+#            three pictures side by side, and the solitaire, spider, mahjong and
+#            blackjack rule functions are loaded in a bare JS context and played
+#            out here: deal three, the casino scores, runs, foundations, spider's
+#            ten-column deal and eight runs, the turtle's five layers and
+#            free-tile rule, and a blackjack shoe dealt from a known order.
 
 use strict;
 use warnings;
@@ -29,6 +29,9 @@ my @pages = (
 	[ 'templates/cards/tarot.html.ep', qr/id="deck_history"/, 'and keeps the history rail' ],
 	[ 'templates/cards/solitaire.html.ep', qr/data-bank/, 'the solitaire pane carries the bank in' ],
 	[ 'templates/cards/solitaire.html.ep', qr/id="sol_stock"/, 'and has a stock to deal from' ],
+	[ 'templates/cards/spider.html.ep', qr/id="spi_stock"/, 'the spider pane has a stock to deal from' ],
+	[ 'templates/cards/spider.html.ep', qr/id="spi_tableau"/, 'and a ten-column tableau' ],
+	[ 'templates/cards/spider.html.ep', qr/id="spi_suits"/, 'and a suit count to choose' ],
 	[ 'templates/cards/mahjong.html.ep', qr/id="mj_board"/, 'the mahjong pane has a board' ],
 	[ 'templates/cards/blackjack.html.ep', qr/id="bj_dealer"/, 'the blackjack pane has a dealer hand' ],
 	[ 'templates/cards/blackjack.html.ep', qr/id="bj_hit"/, 'and the player actions' ],
@@ -73,6 +76,9 @@ like($js, qr/solitaireLoadState\(\)/, 'and read back on the next open');
 like($js, qr/solitaireLastClick/, 'a double click is read from the click pair');
 like($js, qr/e\.clientX - solitaireDrag\.grabX/, 'the drag ghost follows the grab point');
 like($js, qr/solitaireDrag\.ghost\.addClass\('ok'\)/, 'the drag highlight marks the ghost when the drop is valid');
+like($js, qr/spiderSaveState\(\)/, 'the spider table is saved');
+like($js, qr/spiderLoadState\(\)/, 'and read back on the next open');
+like($js, qr/jawnosGameSessionStart\('Spider Solitaire'/, 'opening Spider starts a play session');
 unlike($js, qr/on\('dblclick'/, 'not from a dblclick on the node the redraw replaced');
 my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
 print $fh <<'JS';
@@ -280,6 +286,152 @@ function tallColumn(downCount, upCount) {
 		+ ' (' + Math.round(used) + ' <= ' + size[1] + ')');
 	ok(plan.up > plan.down, 'a face-up card shows more than a face-down one at ' + size[0] + 'x' + size[1]);
 });
+
+// ---- spider ----
+function spiderBlank() {
+	return { suits: 1, stock: [], foundations: [],
+		tableau: [ [], [], [], [], [], [], [], [], [], [] ],
+		moves: 0, selected: null, undo: [], won: false };
+}
+eq(ctx.spiderDeck(1).length, 104, 'a one-suit spider deck is one hundred and four cards');
+var spiderCounts = {};
+ctx.spiderDeck(1).forEach(function (c) { spiderCounts[c.r] = (spiderCounts[c.r] || 0) + 1; });
+var eightEach = true;
+for (var sr = 1; sr <= 13; sr++) { if (spiderCounts[sr] !== 8) { eightEach = false; } }
+ok(eightEach, 'with eight copies of every rank');
+var twoSuits = {}, fourSuits = {};
+ctx.spiderDeck(2).forEach(function (c) { twoSuits[c.s] = (twoSuits[c.s] || 0) + 1; });
+ctx.spiderDeck(4).forEach(function (c) { fourSuits[c.s] = (fourSuits[c.s] || 0) + 1; });
+eq(JSON.stringify([ twoSuits[0], twoSuits[1] ]), JSON.stringify([ 52, 52 ]), 'two suits split the pack in half');
+eq(JSON.stringify([ fourSuits[0], fourSuits[1], fourSuits[2], fourSuits[3] ]),
+	JSON.stringify([ 26, 26, 26, 26 ]), 'four suits split it four ways');
+
+var spiderDealt = ctx.spiderDeal(function () { return 0.5; }, 1);
+eq(spiderDealt.tableau.length, 10, 'the deal makes ten columns');
+var spiderShape = true, spiderTableau = 0, spiderUp = 0, spiderDown = 0;
+for (var scol = 0; scol < 10; scol++) {
+	var want = scol < 4 ? 6 : 5;
+	if (spiderDealt.tableau[scol].length !== want) { spiderShape = false; }
+	spiderTableau += spiderDealt.tableau[scol].length;
+	for (var si = 0; si < spiderDealt.tableau[scol].length; si++) {
+		var sc = spiderDealt.tableau[scol][si];
+		if (sc.up) { spiderUp++; if (si !== spiderDealt.tableau[scol].length - 1) { spiderShape = false; } }
+		else { spiderDown++; }
+	}
+}
+ok(spiderShape, 'the first four columns take six, the rest five, only the last face up');
+eq(spiderTableau, 54, 'fifty-four cards are dealt');
+eq(spiderDealt.stock.length, 50, 'and fifty stay in the stock');
+eq(spiderUp, 10, 'ten cards start face up');
+eq(spiderDown, 44, 'and forty-four face down');
+
+ok(ctx.spiderRunOk([ card(9, 0), card(8, 0), card(7, 0) ]), 'same-suit descending cards form a run');
+ok(!ctx.spiderRunOk([ card(9, 0), card(8, 1) ]), 'mixed suits do not move together');
+ok(!ctx.spiderRunOk([ card(8, 0), card(9, 0) ]), 'ascending is not a run');
+ok(!ctx.spiderRunOk([ card(9, 0, false), card(8, 0) ]), 'a face-down card is not movable');
+ok(ctx.spiderCanTableau([ card(13, 0) ], null), 'a king starts an empty column');
+ok(!ctx.spiderCanTableau([ card(12, 0) ], null), 'a queen does not');
+ok(ctx.spiderCanTableau([ card(5, 1) ], card(6, 3)), 'a five lands on any six');
+ok(!ctx.spiderCanTableau([ card(5, 1) ], card(7, 3)), 'but not on a seven');
+
+var smove = spiderBlank();
+smove.tableau[0] = [ card(9, 0, false), card(8, 0), card(7, 0) ];
+smove.tableau[1] = [ card(9, 1) ];
+ok(ctx.spiderApply(smove, { col: 0, idx: 1 }, 1), 'a same-suit run lands on a higher card');
+eq(smove.tableau[1].length, 3, 'the run moves as one');
+eq(smove.tableau[0].length, 1, 'leaving the rest of the column');
+eq(smove.tableau[0][0].up, true, 'and turning the next card over');
+eq(smove.moves, 1, 'counting the move');
+
+var mixed = spiderBlank();
+mixed.tableau[0] = [ card(9, 0), card(8, 1) ];
+mixed.tableau[1] = [ card(13, 0) ];
+ok(!ctx.spiderApply(mixed, { col: 0, idx: 0 }, 1), 'a mixed-suit pair is not a run to move');
+
+var done = spiderBlank();
+for (var dr = 13; dr >= 1; dr--) { done.tableau[0].push({ r: dr, s: 0, up: true }); }
+eq(ctx.spiderComplete(done), 1, 'a king-to-ace run leaves the table');
+eq(done.foundations.length, 1, 'and counts as a run');
+eq(done.tableau[0].length, 0, 'the column empties');
+var splitRun = spiderBlank();
+for (var rr = 13; rr >= 1; rr--) { splitRun.tableau[0].push({ r: rr, s: (rr === 7 ? 1 : 0), up: true }); }
+eq(ctx.spiderComplete(splitRun), 0, 'a run that changes suit is left on the table');
+
+var spiderDrawState = spiderBlank();
+for (var dd = 1; dd <= 10; dd++) { spiderDrawState.stock.push(card(dd, 0)); }
+for (var dc = 0; dc < 10; dc++) { spiderDrawState.tableau[dc].push(card(13, 0, false)); }
+ok(ctx.spiderDraw(spiderDrawState), 'the stock deals');
+eq(spiderDrawState.stock.length, 0, 'the stock empties');
+eq(spiderDrawState.tableau[0].length, 2, 'a card lands on every column');
+eq(spiderDrawState.tableau[0][1].up, true, 'face up');
+eq(spiderDrawState.moves, 1, 'counting the deal');
+var gapState = spiderBlank();
+gapState.stock = [ card(1, 0) ];
+for (var gc = 0; gc < 10; gc++) { if (gc !== 3) { gapState.tableau[gc].push(card(13, 0, false)); } }
+ok(!ctx.spiderDraw(gapState), 'a gap stops the deal');
+eq(gapState.stock.length, 1, 'and the stock is kept');
+
+var winState = spiderBlank();
+for (var wr = 0; wr < 8; wr++) { winState.foundations.push({ s: 0 }); }
+ok(ctx.spiderWon(winState), 'eight runs win');
+winState.foundations.pop();
+ok(!ctx.spiderWon(winState), 'seven do not');
+
+var savedSpider = ctx.spiderDeal(function () { return 0.5; }, 2);
+ok(ctx.spiderStateOk(savedSpider), 'a dealt two-suit table is a whole pack');
+savedSpider.moves = 7;
+savedSpider.startedAt = Date.now() - 5000;
+ctx.spiderState = savedSpider;
+ctx.spiderSaveState();
+var resumedSpider = ctx.spiderLoadState();
+ok(resumedSpider !== null, 'a saved spider table loads again');
+eq(resumedSpider.suits, 2, 'with its suit count');
+eq(resumedSpider.moves, 7, 'and its move count');
+eq(resumedSpider.stock.length, 50, 'and its stock');
+var brokenSpider = JSON.parse(appData['cards_spider']);
+brokenSpider.state.stock.pop();
+appData['cards_spider'] = JSON.stringify(brokenSpider);
+eq(ctx.spiderLoadState(), null, 'a spider table short of a card is refused');
+appData['cards_spider'] = 'not json';
+eq(ctx.spiderLoadState(), null, 'rubbish in the spider store is refused');
+
+var spiPlan = ctx.spiderFitPlan(900, 600, [ tallColumn(5, 13) ]);
+ok(spiPlan.fits, 'a nineteen-card spider column fits 900x600');
+eq(spiPlan.h, Math.round(spiPlan.w * 1.42), 'the spider cards keep their shape');
+var spiUsed = spiPlan.h + spiPlan.boardGap + spiPlan.h + 5 * spiPlan.down + 13 * spiPlan.up;
+ok(spiUsed <= 604, 'the spider fan ends above the bottom edge (' + Math.round(spiUsed) + ' <= 600)');
+ok(spiPlan.up > spiPlan.down, 'a face-up spider card shows more than a face-down one');
+
+// ---- the tables fill a maximised window ----
+// The cards used to stop at a fixed width (88px solitaire, 80px spider, 44px
+// mahjong, 82px blackjack). A wide, tall window must now put the room into the
+// cards instead, keeping the whole table inside it.
+var solWide = ctx.solitaireFitPlan(1600, 1000, [ [ card(1, 0) ] ]);
+var solSmall = ctx.solitaireFitPlan(800, 1000, [ [ card(1, 0) ] ]);
+ok(solWide.w > 200, 'solitaire grows past its old 88px cap in a wide window (' + solWide.w + ')');
+ok(solWide.w > solSmall.w, 'solitaire cards grow with the window (' + solWide.w + ' > ' + solSmall.w + ')');
+ok(solWide.w * 7 + solWide.gap * 6 <= 1602, 'seven solitaire columns still fit 1600px');
+
+var spiWide = ctx.spiderFitPlan(1900, 1100, [ [ card(1, 0) ] ]);
+var spiSmall = ctx.spiderFitPlan(900, 1100, [ [ card(1, 0) ] ]);
+ok(spiWide.w > 150, 'spider grows past its old 80px cap in a wide window (' + spiWide.w + ')');
+ok(spiWide.w > spiSmall.w, 'spider cards grow with the window (' + spiWide.w + ' > ' + spiSmall.w + ')');
+ok(spiWide.w * 10 + spiWide.gap * 9 <= 1902, 'ten spider columns still fit 1900px');
+
+var mjWide = ctx.mahjongFitPlan(1600, 900);
+var mjSmall = ctx.mahjongFitPlan(800, 600);
+ok(mjWide.tw > 60, 'mahjong tiles grow past their old 44px cap (' + mjWide.tw + ')');
+ok(mjWide.tw > mjSmall.tw, 'mahjong tiles grow with the window (' + mjWide.tw + ' > ' + mjSmall.tw + ')');
+eq(mjWide.th, Math.round(mjWide.tw * 1.3), 'mahjong tiles keep their shape');
+ok(mjWide.tw * 13.96 <= 1602, 'the mahjong board fits 1600px');
+ok(mjWide.tw * 12.08 <= 902, 'and the full turtle fits 900px of height');
+
+var bjWide = ctx.blackjackFitPlan(1600, 700, 3);
+var bjSmall = ctx.blackjackFitPlan(800, 300, 3);
+ok(bjWide.w > 82, 'blackjack cards grow past their old 82px cap (' + bjWide.w + ')');
+ok(bjWide.w > bjSmall.w, 'blackjack cards grow with the window (' + bjWide.w + ' > ' + bjSmall.w + ')');
+ok(bjWide.w * (1.24 + 0.38 * 3) <= 1602, 'a three-card blackjack hand fits 1600px');
+eq(bjWide.h, Math.round(bjWide.w * 1.42), 'blackjack cards keep their shape');
 
 // ---- mahjong ----
 var tiles = ctx.mahjongDeal();

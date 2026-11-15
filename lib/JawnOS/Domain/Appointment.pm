@@ -684,9 +684,10 @@ sub game_play_appointment_tick {
 	return 1;
 }
 
-# A browser game (Cards' Solitaire, Mahjong and Blackjack, and Twirl) has no
-# input daemon to write activity, so the page reports its own touches. The
-# session is the Gou's shape: one Games row on this device, named by its game;
+# A browser game (Cards' Solitaire, Spider Solitaire, Mahjong and Blackjack, and
+# Twirl) has no input daemon to write activity, so the page reports its own
+# touches. The session is the Gou's shape: one Games row on this device, named
+# by its game;
 # quiet for half a minute closes it at the last touch, a touch within five
 # minutes reopens the same row, and a longer gap starts a new one.
 # The game is an option of the Games appointment and is also its own app: the
@@ -830,7 +831,7 @@ sub browser_game_option_attach {
 sub browser_game_play {
 	my ($opts) = @_;
 	$opts ||= {};
-	my %allowed = map { $_ => 1 } qw(Solitaire Mahjong Blackjack Twirl);
+	my %allowed = map { $_ => 1 } ('Solitaire', 'Spider Solitaire', 'Mahjong', 'Blackjack', 'Twirl');
 	my $game = $opts->{'game'} // '';
 	$game =~ s/^\s+//;
 	$game =~ s/\s+$//;

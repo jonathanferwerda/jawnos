@@ -12,7 +12,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - box_office (topic box_office): 17 file(s), 9 route(s)
 - budget (topic budget): 6 file(s), 14 route(s)
 - camera (topic camera): 2 file(s), 1 route(s)
-- cards (topic cards): 6 file(s), 1 route(s)
+- cards (topic cards): 7 file(s), 1 route(s)
 - chat (topic chat): 17 file(s), 1 route(s)
 - clock (topic clock): 6 file(s), 5 route(s)
 - clothesline (topic clothesline): 3 file(s), 2 route(s)

@@ -1,11 +1,12 @@
 <% my @decks = (
 	[ tarot     => &subs::ui('Tarot') ],
 	[ solitaire => &subs::ui('Solitaire') ],
+	[ spider    => &subs::ui('Spider') ],
 	[ mahjong   => &subs::ui('Mahjong') ],
 	[ blackjack => &subs::ui('Blackjack') ],
 );
 my $start = $variant // '';
-my $known = ($start eq 'tarot' || $start eq 'solitaire' || $start eq 'mahjong' || $start eq 'blackjack') ? $start : '';
+my $known = ($start eq 'tarot' || $start eq 'solitaire' || $start eq 'spider' || $start eq 'mahjong' || $start eq 'blackjack') ? $start : '';
 %>
 <div id="cards" class="cards_app" data-variant="<%= $known %>">
 <%= include 'cards/style' %>
@@ -21,6 +22,7 @@ my $known = ($start eq 'tarot' || $start eq 'solitaire' || $start eq 'mahjong' |
 		<%= include 'cards/chooser', open => (length $known ? 0 : 1) %>
 		<%= include 'cards/tarot', history => $history, mode => $mode, active => ($known eq 'tarot') %>
 		<%= include 'cards/solitaire', bank => $bank, active => ($known eq 'solitaire') %>
+		<%= include 'cards/spider', active => ($known eq 'spider') %>
 		<%= include 'cards/mahjong', active => ($known eq 'mahjong') %>
 		<%= include 'cards/blackjack', bank => $blackjack_bank, active => ($known eq 'blackjack') %>
 	</main>

@@ -240,7 +240,7 @@
         "slug": "cards-mahjong",
         "crop": "window",
         "title": "Cards",
-        "description": "Four decks on one table: mahjong, solitaire, tarot and blackjack.",
+        "description": "Five decks on one table: tarot, solitaire, spider, mahjong and blackjack.",
         "alt": "The JawnOS Cards app showing a five-layer mahjong turtle of ivory tiles, with the timer, tiles left and moves above the board."
       }
     }

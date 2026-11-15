@@ -95,7 +95,7 @@
 		<a class="games_tile" href="/manager?open=cards&amp;full=1&amp;back=%2Fmanager%2Fgames">
 			<img class="games_tile_icon" src="<%= &subs::icon_for('/images/decipherable/cards.png') %>" alt="">
 			<span class="games_tile_label"><%= &subs::ui('Cards') %></span>
-			<span class="games_tile_note"><%= &subs::ui('The card room, solitaire and blackjack') %></span>
+			<span class="games_tile_note"><%= &subs::ui('The card room: solitaire, spider, mahjong and blackjack') %></span>
 		</a>
 		<a class="games_tile" href="/manager?open=twirl&amp;full=1&amp;back=%2Fmanager%2Fgames">
 			<img class="games_tile_icon" src="<%= &subs::icon_for('/images/decipherable/tetris.png') %>" alt="">

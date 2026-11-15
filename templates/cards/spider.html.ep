@@ -1,0 +1,44 @@
+<section id="cards_spider" class="cards_pane<% if ($active) { %> active<% } %>">
+	<div class="sol_hud spi_hud">
+		<div class="sol_stat"><span><%= &subs::ui('Runs') %></span><b id="spi_runs">0</b></div>
+		<div class="sol_stat"><span><%= &subs::ui('Moves') %></span><b id="spi_moves">0</b></div>
+		<div class="sol_stat"><span><%= &subs::ui('Time') %></span><b id="spi_time">0:00</b></div>
+		<div class="sol_status" id="spi_status"><%= &subs::ui('Eight runs of King to Ace clear the table. Click a card or drag it to its column.') %></div>
+		<div class="sol_actions">
+			<label class="spi_suits_wrap"><%= &subs::ui('Suits') %>
+				<select id="spi_suits" class="spi_suits">
+					<option value="1"><%= &subs::ui('One suit') %></option>
+					<option value="2"><%= &subs::ui('Two suits') %></option>
+					<option value="4"><%= &subs::ui('Four suits') %></option>
+				</select>
+			</label>
+			<button type="button" class="sol_btn" id="spi_new"><%= &subs::ui('New game') %></button>
+			<button type="button" class="sol_btn" id="spi_undo" hint="<%= &subs::ui('Take a move back') %>"><%= &subs::ui('Undo') %></button>
+		</div>
+	</div>
+	<div class="spi_board">
+		<div class="spi_top">
+			<div class="sol_pile" id="spi_stock" data-zone="stock"></div>
+			<% for my $i (0 .. 7) { %>
+				<div class="sol_pile spi_foundation" data-foundation="<%= $i %>">
+					<div class="sol_slot spi_slot"><%= $i + 1 %></div>
+				</div>
+			<% } %>
+			<div class="sol_gap"></div>
+		</div>
+		<div class="spi_columns" id="spi_tableau">
+			<% for my $col (0 .. 9) { %>
+				<div class="sol_column spi_column" data-zone="tableau" data-col="<%= $col %>">
+					<div class="sol_slot"></div>
+				</div>
+			<% } %>
+		</div>
+	</div>
+	<div id="spi_win" class="cards_win">
+		<div class="cards_win_inner">
+			<h2><%= &subs::ui('The eight runs are home') %></h2>
+			<p id="spi_win_note"></p>
+			<button type="button" class="sol_btn" id="spi_again"><%= &subs::ui('Deal again') %></button>
+		</div>
+	</div>
+</section>

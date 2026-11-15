@@ -50,10 +50,12 @@ like($hooks, qr{/js/manager/game_session\.js}, 'the tracker ships in the eager b
 
 my $cards_js = read_file("$root/public/js/manager/manager/12_cards.js");
 my ($game_map) = $cards_js =~ /(var CARDS_GAME_NAMES = \{[^\}]*\};)/;
-like($game_map, qr/Solitaire.*Mahjong.*Blackjack/, 'the three card games have play sessions');
+like($game_map, qr/Solitaire.*Mahjong.*Blackjack/, 'the card games have play sessions');
+like($game_map, qr/spider: 'Spider Solitaire'/, 'spider is logged as Spider Solitaire');
 unlike($game_map, qr/tarot/i, 'tarot does not');
 like($cards_js, qr/jawnosGameSessionStart\(game/, 'a card touch starts the appointment');
 like($cards_js, qr/jawnosGameSessionStart\('Solitaire'/, 'opening Solitaire starts a session');
+like($cards_js, qr/jawnosGameSessionStart\('Spider Solitaire'/, 'opening Spider starts one');
 like($cards_js, qr/jawnosGameSessionStart\('Mahjong'/, 'opening Mahjong starts one');
 like($cards_js, qr/jawnosGameSessionStart\('Blackjack'/, 'and Blackjack');
 like($cards_js, qr/if \(running && !next\) \{ jawnosGameSessionPause\(\); \}/,
