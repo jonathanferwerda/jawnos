@@ -784,14 +784,28 @@ sub market_upgrade_need {
 }
 
 # An item on the list the warehouse says is due: its own app's fixed-level quantity
-# budget (6quantity) names the target, and on-hand below it is due.
+# budget (6quantity) names the target, and on-hand below it is due. An item whose
+# shelf has a draw and is inside its Low stock days is due too, so the days left
+# the appointment panel shows and the need here are one reading.
 sub market_item_due {
-	my ($text) = @_;
+	my ($text, $now) = @_;
 	return 0 unless defined $text && $text ne '';
 	my $item = &subs::unformat_name($text);
 	my $b = eval { &Manager::budget_calculator({ app => $item, circumstance => 'quantity' }) };
-	return 0 unless $b && $b->{'fixed'} && ($b->{'circumstance'} || '') eq 'quantity' && defined $b->{'budgeted'} && $b->{'budgeted'} ne '';
-	return (($b->{'value'} || 0) < ($b->{'budgeted'} || 0)) ? 1 : 0;
+	if ($b && $b->{'fixed'} && ($b->{'circumstance'} || '') eq 'quantity'
+		&& defined $b->{'budgeted'} && $b->{'budgeted'} ne ''
+		&& ($b->{'value'} || 0) < ($b->{'budgeted'} || 0)) {
+		return 1;
+	}
+	my $shelf = eval { &subs::stock_days_for($item, $now) };
+	return 0 unless $shelf && ref $shelf->{'units'} eq 'ARRAY';
+	foreach my $unit ( @{$shelf->{'units'}} ) {
+		# a shelf with no draw has no pace to read; only an item the house
+		# actually draws can be running low
+		next unless ($unit->{'out_30'} || 0) > 0;
+		return 1 if ($unit->{'stock_state'} || '') ne '';
+	}
+	return 0;
 }
 
 # Every due row becomes a need: the list keeps its own books in step with the

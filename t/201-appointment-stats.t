@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
-# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end
+# tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Web.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Manager/Part05.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
+# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end; and the shopping list reading the same shelf as a due item
 
 use strict;
 use warnings;
@@ -249,6 +249,15 @@ my $low = &subs::appointment_statistics_for('walk_low', $now);
 is($low->{'inventory'}->{'units'}->[0]->{'days_left'}, 6, 'four on hand at a two-thirds-a-day draw lasts six days');
 is($low->{'inventory'}->{'units'}->[0]->{'stock_state'}, 'low',
 	'the default seven days turns days left amber');
+
+# the shopping list reads the same shelf: an item inside its low days is due
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk_fine', 'g', '100', 'stock', ts(2026, 11, 7, 9));
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk_fine', 'g', '-20', 'stock', ts(2026, 11, 7, 10));
+require "$root/lib/JawnOS/Manager/Part05.pm";
+is(Manager::market_item_due('walk_fine', $now), 0, 'a shelf with plenty left is not due');
+is(Manager::market_item_due('walk_low', $now), 1, 'a shelf inside its low days is due');
+is(Manager::market_item_due('walk', $now), 1, "a shelf inside its own urgent line is due");
+is(Manager::market_item_due('nothing_here', $now), 0, 'an item with no shelf is not due');
 
 my $empty = &subs::appointment_statistics_for('nothing_here', $now);
 is($empty->{'periods'}->[0]->{'count'}, 0, 'an app with no rows reads zero');

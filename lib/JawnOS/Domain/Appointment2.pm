@@ -941,58 +941,11 @@ sub appointment_statistics_for {
 	my $item = &subs::setting_grabber({ app => $app, setting => 'stock_item' });
 	$item = $app unless defined $item && $item =~ /\S/;
 	$item = &subs::unformat_name($item);
-	my $units = &subs::db_query(
-		"select unit,
-		        sum(case when cast(quantity as real) > 0 then cast(quantity as real) else 0 end) as in_qty,
-		        sum(case when cast(quantity as real) < 0 then -cast(quantity as real) else 0 end) as out_qty,
-		        sum(cast(quantity as real)) as level
-		   from warehouse
-		  where item = ? and coalesce(nullif(kind,''),'stock') = 'stock'
-		    and coalesce(type,'') != 'inventory' and coalesce(account,'') = ''
-		  group by unit order by unit",
-		$item)->hashes || [];
-	my @inventory = map {
-		{
-			unit => ($_->{'unit'} || 'each'),
-			in => ($_->{'in_qty'} || 0) + 0,
-			out => ($_->{'out_qty'} || 0) + 0,
-			on_hand => ($_->{'level'} || 0) + 0,
-		}
-	} @{$units};
-
-	# How long the shelf lasts: the level over the daily draw of the last thirty
-	# days. A single day's pace swings with one glass, and the year's hides a
-	# change in habit, so the month is the steadier rate behind the number. A
-	# different unit is a different draw, so the rate is kept per unit.
-	my $recent_out = &subs::db_query(
-		"select unit,
-		        sum(case when cast(quantity as real) < 0 then -cast(quantity as real) else 0 end) as out_qty
-		   from warehouse
-		  where item = ? and coalesce(nullif(kind,''),'stock') = 'stock'
-		    and coalesce(type,'') != 'inventory' and coalesce(account,'') = ''
-		    and cast(timestamp as integer) >= ? and cast(timestamp as integer) <= ?
-		  group by unit",
-		$item, $now - 30 * 86400000, $now)->hashes || [];
-	my %out_30 = map { ($_->{'unit'} || 'each') => ($_->{'out_qty'} || 0) + 0 } @{$recent_out};
-	# The warning lines are the app's own: Low stock days (seven unless set) is
-	# where the reading turns amber, and Urgent stock days (two unless set) where
-	# it turns red. Urgent never sits beyond low, or the two would trade places.
-	my $low_days = $settings->{'low_stock_days'};
-	$low_days = 7 unless defined $low_days && $low_days =~ /^\s*[0-9]+(?:\.[0-9]+)?\s*$/;
-	$low_days += 0;
-	my $urgent_days = $settings->{'urgent_stock_days'};
-	$urgent_days = 2 unless defined $urgent_days && $urgent_days =~ /^\s*[0-9]+(?:\.[0-9]+)?\s*$/;
-	$urgent_days += 0;
-	$urgent_days = $low_days if $urgent_days > $low_days;
-	foreach my $held ( @inventory ) {
-		my $daily = ($out_30{$held->{'unit'}} || 0) / 30;
-		$held->{'days_left'} = $held->{'on_hand'} <= 0 ? 0
-			: ($daily > 0 ? $held->{'on_hand'} / $daily : undef);
-		$held->{'stock_state'} = !defined $held->{'days_left'} ? ''
-			: $held->{'days_left'} <= $urgent_days ? 'urgent'
-			: $held->{'days_left'} <= $low_days ? 'low'
-			: '';
-	}
+	# The shelf's level, its all-time in/out, its draw of the last thirty days and
+	# the days that draw leaves are one domain reading, so the Days left here and
+	# the shopping list's due test can never drift apart.
+	my $shelf = &subs::stock_days_for($item, $now, $app);
+	my @inventory = @{ $shelf->{'units'} || [] };
 
 	# The shelf above is a running balance. What the shelf took in and gave out
 	# inside each period is read from the movement clock, with the same rows the

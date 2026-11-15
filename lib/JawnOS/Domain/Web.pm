@@ -695,6 +695,63 @@ sub warehouse_restock_for {
 	return $plan;
 }
 
+# The shelf's state per unit: what it holds, what it took in and gave out, the
+# draw of the last thirty days, and how many days that draw leaves. The
+# appointment panel's Days left and the shopping list's due test read the same
+# figures; the app's Low stock days and Urgent stock days (seven and two unless
+# set) say where the reading turns amber and red. Only stock rows count - a
+# usage row is history, not stock.
+sub stock_days_for {
+	my ($item, $now, $app) = @_;
+	$now = &rightNow() unless defined $now;
+	$app = $item unless defined $app && length $app;
+	my $settings = &settings_grabber({ app => $app }) || {};
+	my $low_days = $settings->{'low_stock_days'};
+	$low_days = 7 unless defined $low_days && $low_days =~ /^\s*[0-9]+(?:\.[0-9]+)?\s*$/;
+	$low_days += 0;
+	my $urgent_days = $settings->{'urgent_stock_days'};
+	$urgent_days = 2 unless defined $urgent_days && $urgent_days =~ /^\s*[0-9]+(?:\.[0-9]+)?\s*$/;
+	$urgent_days += 0;
+	$urgent_days = $low_days if $urgent_days > $low_days;
+	my $rows = &db_query(
+		"select unit,
+		        sum(case when cast(quantity as real) > 0 then cast(quantity as real) else 0 end) as in_qty,
+		        sum(case when cast(quantity as real) < 0 then -cast(quantity as real) else 0 end) as out_qty,
+		        sum(cast(quantity as real)) as level
+		   from warehouse
+		  where item = ? and coalesce(nullif(kind,''),'stock') = 'stock'
+		    and coalesce(type,'') != 'inventory' and coalesce(account,'') = ''
+		  group by unit order by unit",
+		$item)->hashes || [];
+	my $recent = &db_query(
+		"select unit,
+		        sum(case when cast(quantity as real) < 0 then -cast(quantity as real) else 0 end) as out_qty
+		   from warehouse
+		  where item = ? and coalesce(nullif(kind,''),'stock') = 'stock'
+		    and coalesce(type,'') != 'inventory' and coalesce(account,'') = ''
+		    and cast(timestamp as integer) >= ? and cast(timestamp as integer) <= ?
+		  group by unit",
+		$item, $now - 30 * 86400000, $now)->hashes || [];
+	my %out_30 = map { ($_->{'unit'} || 'each') => ($_->{'out_qty'} || 0) + 0 } @{$recent};
+	my @units = map {
+		my $unit = $_->{'unit'} || 'each';
+		my $level = ($_->{'level'} || 0) + 0;
+		my $drawn = $out_30{$unit} || 0;
+		my $daily = $drawn / 30;
+		my $days = $level <= 0 ? 0 : ($daily > 0 ? $level / $daily : undef);
+		{
+			unit => $unit,
+			in => ($_->{'in_qty'} || 0) + 0,
+			out => ($_->{'out_qty'} || 0) + 0,
+			on_hand => $level,
+			out_30 => $drawn,
+			days_left => $days,
+			stock_state => !defined $days ? '' : $days <= $urgent_days ? 'urgent' : $days <= $low_days ? 'low' : '',
+		}
+	} @{$rows};
+	return { item => $item, low_days => $low_days, urgent_days => $urgent_days, units => \@units };
+}
+
 # The shelf life (e.g. '3w') declared on an item's packaging, if any.
 sub warehouse_item_expires {
 	my $item = shift;
