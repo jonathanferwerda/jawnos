@@ -1030,7 +1030,8 @@ function controllerFlashDraw() {
 function controllerFlashPaint(job) {
 	job = job || {};
 	var state = String(job.state || '');
-	var said = state === 'verifying' ? controllerT('Checking the write...')
+	var said = state === 'checking' ? controllerT('Checking the image...')
+		: state === 'verifying' ? controllerT('Checking the write...')
 		: state === 'preparing' ? controllerT('Preparing the board...')
 		: controllerT('Flashing...');
 	$('#controllers_flash_state').text(said);

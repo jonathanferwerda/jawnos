@@ -215,9 +215,22 @@ sub insert_token {
 		ok(!JawnOS::Platform::Process::running($child), 'the process group is gone');
 	}
 
+	# A job that has a live session leader but has not written a byte yet is
+	# checking the image, not dead. The route records the pid before the child can
+	# spend a minute hashing, so a status poll during that wait leaves it alone.
+	write_job(
+		state => 'starting', pid => $$, start_ticks => $ticks,
+		started_ms => (time() * 1000) - 60_000, updated_ms => (time() * 1000) - 60_000,
+	);
+	{
+		my $said = status();
+		is($said->{'state'}, 'starting', 'a live job that has not written yet is not called dead');
+	}
+
 	# --- the script and the page ------------------------------------------
 	my $provision = read_file(root() . '/scripts/gou_provision.pl');
 	like($provision, qr/'progress=s'/, 'the provisioner takes a progress file');
+	like($provision, qr/_progress_write\('checking'/, 'and says when it is checking the image');
 	like($provision, qr/_progress_write\('writing'/, 'and writes the byte count as it goes');
 	like($provision, qr/_progress_write\('verifying'/, 'then verifying');
 	like($provision, qr/_progress_write\('preparing'/, 'then preparing the board');
@@ -238,6 +251,10 @@ sub insert_token {
 	my $routes = read_file(root() . '/lib/JawnOS/Routes/manager_controllers.pm');
 	like($routes, qr{54012, 'get',\s+'/manager/controllers/new/flash/status'}, 'the status route is registered');
 	like($routes, qr{54013, 'post',\s+'/manager/controllers/new/flash/cancel'}, 'the cancel route is registered');
+
+	my $controller = read_file(root() . '/lib/JawnOS/Controller/manager_controllers.pm');
+	like($controller, qr/pid => \$pid,\s*\n\s*start_ticks => JawnOS::Platform::Process::start_time\(\$pid\)/,
+		'the route records the session leader before the child can be called dead');
 
 	my $js = read_file(root() . '/public/js/manager/controllers.js');
 	like($js, qr{/manager/controllers/new/flash/status}, 'the page polls the status route');

@@ -791,6 +791,9 @@ sub _flash {
 		_fail(4, "image not found: $image");
 	}
 	my $length = _uncompressed_length($image);
+	# The hash of a multi-gigabyte image takes a while and comes before the first
+	# write; say so, or the page sits on "starting" with no total to show.
+	_progress_write('checking', image => $image, total => $length, hostname => $hostname, bytes => 0, rate => 0);
 	my $want = _sibling_sha256($image);
 	if (defined $want) {
 		my $got = _file_sha256($image);
