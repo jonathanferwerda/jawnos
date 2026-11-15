@@ -192,7 +192,14 @@ $(document).on('click', '#travel_update', function() {
 	if ($('.now').attr('presence') == 'not') {
 		ts = timestamp; 
 	}
-	travelViewer({ timestamp: ts });
+	// The Start and End boxes write their setting as they lose focus, which is
+	// exactly what pressing Update does; wait for those writes, or the viewer is
+	// answered with the window from before the edit.
+	var refresh = function() { travelViewer({ timestamp: ts }); };
+	if (typeof settingWritesSettled === 'function') {
+		settingWritesSettled('travel').then(refresh, refresh);
+	}
+	else { refresh(); }
 });
 
 $(document).on('click', '#travel_home_plate', function() {

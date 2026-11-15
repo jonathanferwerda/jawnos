@@ -19,7 +19,9 @@ my @TRAVEL_COMPASS = qw(N NE E SE S SW W NW);
 # The Start and End fields are distances from the moment being looked at ("an
 # hour ago"), not moments of their own. They are saved as an age so opening
 # Travel a week later still means an hour, instead of the week that a fixed
-# moment would have stretched to by then.
+# moment would have stretched to by then. The age key is the field's own setting
+# name with `_ago` on it (`start_time_ago`) - the rule the time field writes by
+# (`07_timeshift.js`) - so the two cannot drift apart again.
 #
 # `start_time`/`end_time` are the older shape - a fixed moment with no age
 # beside it. They are still honoured here, in the order they were written, so
@@ -40,8 +42,8 @@ sub travel_window {
 	$length = 5 * 60 * 1000 unless defined $length && $length > 0;
 	my ( $start, $end ) = ( $timestamp - $length, $timestamp + $length );
 
-	my $start_age = $settings->{'start_ago'};
-	my $end_age = $settings->{'end_ago'};
+	my $start_age = $settings->{'start_time_ago'};
+	my $end_age = $settings->{'end_time_ago'};
 	if ( defined $start_age && $start_age =~ /^-?\d+(?:\.\d+)?$/ ) {
 		$start = $timestamp - $start_age;
 	}
@@ -66,8 +68,8 @@ sub travel_window {
 sub travel_window_legacy {
 	my ($settings) = @_;
 	return 0 unless ref $settings eq 'HASH';
-	return 0 if ( defined $settings->{'start_ago'} && length $settings->{'start_ago'} );
-	return 0 if ( defined $settings->{'end_ago'} && length $settings->{'end_ago'} );
+	return 0 if ( defined $settings->{'start_time_ago'} && length $settings->{'start_time_ago'} );
+	return 0 if ( defined $settings->{'end_time_ago'} && length $settings->{'end_time_ago'} );
 	return 1 if ( defined $settings->{'start_time'} && length $settings->{'start_time'} );
 	return 1 if ( defined $settings->{'end_time'} && length $settings->{'end_time'} );
 	return 0;

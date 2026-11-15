@@ -62,14 +62,15 @@ $(document).on('click', '#travel_config_toggle', function() {
 $(document).on('click', '.travel_now', function() {
 	settingDeleter({ 'app': 'travel', 'setting': 'start_time' });
 	settingDeleter({ 'app': 'travel', 'setting': 'end_time' });
-	settingDeleter({ 'app': 'travel', 'setting': 'start_ago' });
-	settingDeleter({ 'app': 'travel', 'setting': 'end_ago' });
+	// the age beside each field is the field's own setting name with _ago on it
+	settingDeleter({ 'app': 'travel', 'setting': 'start_time_ago' });
+	settingDeleter({ 'app': 'travel', 'setting': 'end_time_ago' });
 	settingDeleter({ 'app': 'travel', 'setting': 'appt' });
 	var settings = {
 		start_time: null,
 		end_time: null,
-		start_ago: null,
-		end_ago: null,
+		start_time_ago: null,
+		end_time_ago: null,
 		appt: null
 	};
 	var timestamp = Date.now();

@@ -145,6 +145,10 @@ $(document).on('click', '#error_dot', function() {
 // exact repeat. The first send for a key always goes through, and a failed one
 // is forgotten so the next caller retries it.
 var settingSetterSent = {};
+// Writes still in flight, by app. Travel's Update is about to ask the server for
+// the window the person just typed; without this it can race its own write and
+// be answered with the settings from before the edit.
+var settingSetterPending = {};
 async function settingSetter(setter) {
 	var app = setter['app'];
 	var value = setter['value'];
@@ -165,10 +169,29 @@ async function settingSetter(setter) {
 			return response;
 		}
 	});
+	if (app) {
+		(settingSetterPending[app] = settingSetterPending[app] || []).push(request);
+		request.always(function() {
+			var list = settingSetterPending[app] || [];
+			var at = list.indexOf(request);
+			if (at >= 0) { list.splice(at, 1); }
+		});
+	}
 	request.fail(function() {
 		if (settingSetterSent[key] === encoded) { delete settingSetterSent[key]; }
 	});
 	return request;
+}
+
+// Resolves once every setting write this page has started for an app has
+// finished (either way), so a caller that re-reads the settings sees what the
+// person just typed.
+function settingWritesSettled(app) {
+	var list = (settingSetterPending[app] || []).slice();
+	if (!list.length) { return Promise.resolve(); }
+	return Promise.all(list.map(function(request) {
+		return request.then(function(){}, function(){});
+	}));
 }
 
 async function settingGrabber(setter) {

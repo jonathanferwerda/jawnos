@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Travel.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Controller/manager_travel.pm scripts/navigation_probe.pl
+# tests-for: lib/JawnOS/Domain/Travel.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Controller/manager_travel.pm public/js/manager/manager/07_timeshift.js public/js/manager/travel/01_map_render_points.js public/js/manager/travel/02_maps_config_guess.js public/js/universal/02_settings_ajax_hidden.js scripts/navigation_probe.pl
 # covers:    the Travel window keeps the span the person asked for however long
 #            the app is left unopened; the place list's distance and compass on
 #            the WGS84 ellipsoid; a navigation capture that no longer skips its
@@ -21,12 +21,12 @@ my $root = root();
 my $hour = 60 * 60 * 1000;
 my $now  = 1_800_000_000_000;
 
-my $win = &subs::travel_window({ settings => { start_ago => $hour, end_ago => 0 }, timestamp => $now });
+my $win = &subs::travel_window({ settings => { start_time_ago => $hour, end_time_ago => 0 }, timestamp => $now });
 is( $win->{'start'}, $now - $hour, 'a saved age is measured back from the moment being viewed' );
 is( $win->{'end'},   $now,          'and an end age of zero is that moment' );
 
 my $week_later = &subs::travel_window({
-	settings => { start_ago => $hour, end_ago => 0 },
+	settings => { start_time_ago => $hour, end_time_ago => 0 },
 	timestamp => $now + 7 * 24 * 3600 * 1000,
 });
 is( $week_later->{'end'} - $week_later->{'start'}, $hour, 'the window keeps its span a week later' );
@@ -45,7 +45,7 @@ is( $legacy->{'start'}, $now - $hour, 'a fixed start still bounds the window' );
 is( $legacy->{'end'},   $now,         'and a fixed end still bounds it' );
 
 ok( &subs::travel_window_legacy({ start_time => $now - $hour }), 'a fixed moment with no age beside it is the old shape' );
-ok( !&subs::travel_window_legacy({ start_time => $now - $hour, start_ago => $hour }), 'an age beside the moment is not' );
+ok( !&subs::travel_window_legacy({ start_time => $now - $hour, start_time_ago => $hour }), 'an age beside the moment is not' );
 ok( !&subs::travel_window_legacy({}), 'and no window is not' );
 
 # a window typed backwards is read in the order it lies
@@ -184,5 +184,26 @@ my $silent = &subs::navigation_probe_summary(
 like( $silent->{'lines'}->[0], qr/no run or capture seen/, 'no run in the window is named' );
 
 like( read_file("$root/scripts/navigation_probe.pl"), qr/navigation_probe_summary/, 'the script asks the shared rule for its verdict' );
+
+# ---- the age's name is one name on both sides of the wire ----------------
+# The time field writes the age under the field's own setting plus _ago
+# (setting="start_time" -> start_time_ago). v0.1.2996 read start_ago in the
+# window, so a window the person had just set looked like a legacy fixed moment,
+# was dropped, and Travel reopened on the default scope with no fixes in view.
+my $timeshift = read_file("$root/public/js/manager/manager/07_timeshift.js");
+like( $timeshift, qr/input\.attr\('setting'\) \+ '_ago'/, 'the time field writes <setting>_ago' );
+my $travel_domain = read_file("$root/lib/JawnOS/Domain/Travel.pm");
+like( $travel_domain, qr/\{'start_time_ago'\}/, 'and the window reads the age of start_time' );
+unlike( $travel_domain, qr/\{'start_ago'\}/, 'no shorter name is read by the window' );
+my $now_js = read_file("$root/public/js/manager/travel/02_maps_config_guess.js");
+like( $now_js, qr/'setting': 'start_time_ago'/, 'Now clears the key the field writes' );
+
+# A change to Start is written as the field blurs, which is the same press as
+# Update; the viewer must wait for that write or it is answered with the window
+# from before the edit.
+my $settings_js = read_file("$root/public/js/universal/02_settings_ajax_hidden.js");
+like( $settings_js, qr/function settingWritesSettled/, 'pending setting writes can be awaited' );
+my $map_points = read_file("$root/public/js/manager/travel/01_map_render_points.js");
+like( $map_points, qr/settingWritesSettled\('travel'\)/, 'and Travel Update waits for them before reading the window' );
 
 done_testing();
