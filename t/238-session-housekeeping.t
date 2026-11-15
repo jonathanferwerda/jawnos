@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment.pm perl/jobs.pl
-# covers: an open session whose machine stopped reporting closes at its last heartbeat, not at the housekeeping tick
+# covers: an open session whose machine stopped reporting closes at its last heartbeat, not at the housekeeping tick; a game under a minute is tombstoned, and a paused one is dropped once its resume window has passed
 
 use strict;
 use warnings;
@@ -74,9 +74,35 @@ my %cache;
 	my $closed_browser = &subs::session_housekeeping_tick();
 	cmp_ok( $closed_browser, '>=', 1, 'the housekeeping closes a forgotten browser game' );
 	my $browser_row = &subs::db_query( 'select * from appointments where uuid = ?', $browser_uuid )->hash;
-	is( $browser_row->{'type'}, 'stop', 'as a stop' );
-	is( int( $browser_row->{'stop_timestamp'} ), $base + 60_000, 'at its last heartbeat' );
-	is( int( $browser_row->{'duration'} ), -30_000, 'with the time it was heard' );
+	ok( !$browser_row, 'a forgotten game under a minute is tombstoned, not kept' );
+	cmp_ok( scalar @{ &subs::db_query('select id from sync_log where uuid = ?', $browser_uuid)->hashes }, '>=', 1,
+		'with a tombstone the peers can read' );
+
+	# a game that did run over a minute is closed at its last heartbeat
+	my $long_uuid = 'browserrow-long-housekeeping-test';
+	&subs::db_insert( 'appointments', {
+		app => 'games', uuid => $long_uuid, type => 'start',
+		timestamp => $base + 30_000, server_time => $base + 150_000,
+		source => 'browser_game', device => 'phone', project => 'Solitaire', seen => 'yes',
+	} );
+	&subs::session_housekeeping_tick();
+	my $long_row = &subs::db_query( 'select * from appointments where uuid = ?', $long_uuid )->hash;
+	is( $long_row->{'type'}, 'stop', 'a game over a minute is closed' );
+	is( int( $long_row->{'stop_timestamp'} ), $base + 150_000, 'at its last heartbeat' );
+	is( int( $long_row->{'duration'} ), -120_000, 'with the time it was actually heard' );
+
+	# a short game the page paused is dropped once the five-minute resume window
+	# has passed, and left alone inside it
+	my $paused_uuid = 'browserrow-paused-housekeeping-test';
+	&subs::db_insert( 'appointments', {
+		app => 'games', uuid => $paused_uuid, type => 'stop', stop_seen => 'yes',
+		timestamp => $base + 9 * 60_000, stop_timestamp => $base + 10 * 60_000,
+		duration => 0, server_time => $base + 10 * 60_000,
+		source => 'browser_game', device => 'phone', project => 'Solitaire', seen => 'yes',
+	} );
+	&subs::session_housekeeping_tick();
+	my $paused_row = &subs::db_query( 'select * from appointments where uuid = ?', $paused_uuid )->hash;
+	ok( !$paused_row, 'an abandoned short pause is tombstoned after its resume window' );
 }
 
 my $jobs = read_file(root() . '/perl/jobs.pl');

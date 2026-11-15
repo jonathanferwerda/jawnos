@@ -94,7 +94,12 @@ function cardsShowVariant(variant, save) {
 	var known = (CARDS_VARIANTS.indexOf(variant) >= 0) ? variant : '';
 	if (typeof jawnosGameSessionGame === 'function') {
 		var running = jawnosGameSessionGame();
-		if (running && running !== cardsGameName(known)) { jawnosGameSessionStop(); }
+		var next = cardsGameName(known);
+		// Tarot and the chooser are not play: keep the running session (it pauses
+		// when its pane leaves the screen) so coming back resumes the same game.
+		// Another game ends this one now, and a session under a minute is dropped.
+		if (running && !next) { jawnosGameSessionPause(); }
+		else if (running && running !== next) { jawnosGameSessionStop(); }
 	}
 	root.setAttribute('data-variant', known);
 	$('.cards_variant', root).each(function() {

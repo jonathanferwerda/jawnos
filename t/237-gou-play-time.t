@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Loader.pm scripts/jawnos_game_launch.pl perl/help/topics_people.pl
-# covers: a GOU game session starts at the launch, pauses when the controls go quiet, resumes the same row within five minutes, and leaves the pause out of the play time
+# covers: a GOU game session starts at the launch, pauses when the controls go quiet, resumes the same row within five minutes, and leaves the pause out of the play time; a browser game does the same, a play on an already-open row after a quiet spell is a pause, and a session under a minute is tombstoned with its own-app child
 
 use strict;
 use warnings;
@@ -226,6 +226,34 @@ sub sessions {
 
 	is( &subs::browser_game_play({ device => $browser_device, game => 'Tarot', state => 'play' })->{'ok'}, 0,
 		'tarot is not a play session' );
+
+	# a play that lands on a still-open row after a quiet spell is a reopened
+	# window, not continuous play: the gap is a pause and is left out
+	my $bj_start = $b1 + 1_000_000;
+	$NOW = $bj_start;
+	&subs::browser_game_play({ device => $browser_device, game => 'Blackjack', state => 'play', at => $bj_start });
+	$NOW = $bj_start + 10 * 60_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Blackjack', state => 'play', at => $NOW });
+	$NOW = $bj_start + 10 * 60_000 + 120_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Blackjack', state => 'stop', at => $NOW });
+	my ($bj) = grep { ($_->{'project'} // '') eq 'Blackjack' } @{ $browser->() };
+	is( int( $bj->{'duration'} ), -120_000, 'the quiet spell on an open row is a pause, not play' );
+
+	# a game under a minute is not a session: it is tombstoned, with its child
+	my $short_start = $NOW + 10_000;
+	$NOW = $short_start;
+	&subs::browser_game_play({ device => $browser_device, game => 'Mahjong', state => 'play', at => $short_start });
+	my ($short) = grep { ($_->{'project'} // '') eq 'Mahjong' } @{ $browser->() };
+	ok( $short && $short->{'uuid'}, 'a short game starts a session' );
+	my $short_uuid = $short->{'uuid'};
+	$NOW = $short_start + 20_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Mahjong', state => 'stop', at => $NOW });
+	my @short_rows = grep { ($_->{'project'} // '') eq 'Mahjong' } @{ $browser->() };
+	is( scalar @short_rows, 0, 'a game under a minute is tombstoned, not kept' );
+	is( scalar @{ &subs::db_query('select uuid from appointments where source_uuid = ?', $short_uuid)->hashes },
+		0, 'and the game\'s own app child goes with it' );
+	is( scalar @{ &subs::db_query('select id from sync_log where uuid = ?', $short_uuid)->hashes }, 1,
+		'with a tombstone the peers can read' );
 }
 
 my $helper = read_file(root() . '/scripts/jawnos_game_launch.pl');

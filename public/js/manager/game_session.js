@@ -52,7 +52,10 @@ function jawnosGameSessionTick() {
 	var s = jawnosGameSession;
 	if (!s.started) { return; }
 	if (typeof s.screen === 'function' && !s.screen()) {
-		jawnosGameSessionStop();
+		// The game's pane is no longer on screen: leaving Solitaire for Tarot or
+		// the deck chooser is not the end of the play. Pause and keep the session
+		// for the resume window; closing the window stops it.
+		jawnosGameSessionPause();
 		return;
 	}
 	if (document.visibilityState === 'hidden') {
@@ -72,7 +75,19 @@ function jawnosGameSessionStart(game, screen) {
 	if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { return; }
 	var s = jawnosGameSession;
 	if (s.started && s.game === game) {
-		jawnosGameSessionTouch();
+		// A reopened window or a second init after a quiet spell is not a play:
+		// close the old segment at its last touch (a pause, which the server
+		// leaves out of the play time) and begin a new one now.
+		if (Date.now() - s.last >= JAWNOS_GAME_QUIET) {
+			jawnosGameSessionPause();
+			s.paused = false;
+			s.last = Date.now();
+			s.sent = s.last;
+			jawnosGameSessionPost(game, 'play', s.last);
+		}
+		else {
+			jawnosGameSessionTouch();
+		}
 		return;
 	}
 	if (s.started) { jawnosGameSessionStop(); }

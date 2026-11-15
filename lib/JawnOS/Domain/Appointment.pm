@@ -456,6 +456,14 @@ sub internet_site_appointment_tick {
 	return 1;
 }
 
+# A game session shorter than a minute is not time the person played: opening
+# the app and leaving it, or a launch that failed, would otherwise leave a
+# record in the day.
+our $GAME_MIN_PLAY_MS = 60 * 1000;
+# Half a minute without a control is the quiet the tick pauses at, and also the
+# longest gap a browser game may report as play in one step.
+our $GAME_QUIET_MS = 30 * 1000;
+
 # The Gou's game helper writes launch.json (state, at, game, title); its input
 # daemon writes activity, the last moment a control was touched. A game session
 # is one appointment for the games app on this machine: it starts at the launch,
@@ -528,6 +536,28 @@ sub game_session_child_reopen {
 	return $reopened;
 }
 
+# A game the person opened but did not play is not a record. Drop the row, the
+# game's own app child and the pause ledger, and tombstone the deletion so every
+# machine drops its copy too. A real stop under a minute comes here; a pause is
+# left for its resume window (session_housekeeping_tick discards it if the person
+# never comes back).
+sub game_session_discard {
+	my ($open, $now) = @_;
+	my $uuid = $open->{'uuid'} || return 0;
+	my $app = $open->{'app'} || 'games';
+	$now ||= &rightNow();
+	my $children = &db_select('appointments', undef, { source_uuid => $uuid })->hashes || [];
+	foreach my $child ( @{$children} ) {
+		next unless ($child->{'uuid'} // '') ne '' && ($child->{'app'} // '') ne '';
+		&subs::records_tombstone($child->{'app'}, $child->{'uuid'});
+	}
+	&subs::records_tombstone($app, $uuid);
+	&session_pause_take($uuid);
+	&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $now });
+	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
+	return 1;
+}
+
 sub game_session_close {
 	my ($open, $stop_at, $now, $mode) = @_;
 	my $uuid = $open->{'uuid'} || return 0;
@@ -538,6 +568,12 @@ sub game_session_close {
 	my $paused = ($mode // '') eq 'take' ? &session_pause_take($uuid) : &session_pause_peek($uuid);
 	my $duration = $started - $stop_at + $paused;
 	$duration = 0 if $duration > 0;
+	# A stop under a minute is a glance at the game or a failed launch, not a
+	# session: drop it rather than keeping a record of no play. A pause stays so
+	# the same row can resume; the housekeeping tick discards it when the resume
+	# window passes.
+	return &game_session_discard($open, $now)
+		if ($mode // '') eq 'take' && abs($duration) < $GAME_MIN_PLAY_MS;
 	&db_update('appointments', {
 		type => 'stop',
 		stop_timestamp => $stop_at,
@@ -836,6 +872,13 @@ sub browser_game_play {
 	}
 
 	if ($open && $open->{'uuid'}) {
+		# A play that arrives while the row is still open after a quiet spell is
+		# a reopened window or a late control, not continuous play: the gap since
+		# the last report is a pause and is left out of the session's length.
+		my $beat = int($open->{'server_time'} // 0) || int($open->{'timestamp'} // 0);
+		if ($at > $beat + $GAME_QUIET_MS) {
+			&session_pause_add($open->{'uuid'}, 'games', $at - $beat);
+		}
 		&db_update('appointments', { server_time => $now }, { uuid => $open->{'uuid'}, app => 'games' });
 		return { ok => 1, state => 'running' };
 	}
@@ -899,7 +942,7 @@ sub session_housekeeping_tick {
 	my $stale = 10 * 60 * 1000;
 	my $rows = eval {
 		&db_query(q{
-			select app, uuid, timestamp, server_time from appointments
+			select app, uuid, timestamp, server_time, source from appointments
 			 where lower(source) in ('internet', 'game', 'browser_game')
 			   and (type = 'start' or type = 'record') and stop_seen is null
 		})->hashes;
@@ -916,6 +959,11 @@ sub session_housekeeping_tick {
 		my $paused = &session_pause_take($uuid);
 		my $duration = $started - $stop_at + $paused;
 		$duration = 0 if $duration > 0;
+		if (($open->{'source'} // '') =~ /^(?:game|browser_game)$/i && abs($duration) < $GAME_MIN_PLAY_MS) {
+			&game_session_discard($open, $now);
+			$closed++;
+			next;
+		}
 		&db_update('appointments', {
 			type => 'stop',
 			stop_timestamp => $stop_at,
@@ -926,6 +974,23 @@ sub session_housekeeping_tick {
 		&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_at });
 		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 		$closed++;
+	}
+	# A sub-minute game the page paused is waiting out its five-minute resume
+	# window. Once that window has passed it is not a game the person played:
+	# drop it (and its own-app child) with the house's tombstone. Only recent
+	# rows are touched, so a short session from the day's history is left alone.
+	my $short = eval {
+		&db_query(q{
+			select app, uuid, timestamp, stop_timestamp, duration, source from appointments
+			 where lower(source) in ('game', 'browser_game')
+			   and type = 'stop' and stop_seen = 'yes'
+			   and stop_timestamp is not null
+			   and stop_timestamp <= ? and stop_timestamp > ?
+			   and abs(cast(duration as integer)) < ?
+		}, $now - 5 * 60 * 1000, $now - 15 * 60 * 1000, $GAME_MIN_PLAY_MS)->hashes;
+	} || [];
+	foreach my $row ( @{$short} ) {
+		&game_session_discard($row, $now);
 	}
 	return $closed;
 }

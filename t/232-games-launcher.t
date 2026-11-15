@@ -1,4 +1,4 @@
-# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js templates/apps/transaction/options.html.ep perl/help/topics_people.pl public/css/manager.css
+# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js public/js/manager/windows/03_stack.js templates/apps/transaction/options.html.ep perl/help/topics_people.pl public/css/manager.css
 # covers:    The second launcher behind the Controller's Games tile, Twirl's
 #            clockwise and counter-clockwise turns, and the strip a full-screen
 #            app used to keep where its title bar had been.
@@ -36,6 +36,14 @@ like($tracker, qr/JAWNOS_GAME_QUIET = 30000/, 'a browser game pauses after half 
 like($tracker, qr{/manager/game_play}, 'and reports to the play route');
 like($tracker, qr/visibilitychange/, 'a hidden page pauses it');
 like($tracker, qr/pagehide/, 'and leaving stops it');
+like($tracker, qr/Date\.now\(\) - s\.last >= JAWNOS_GAME_QUIET[\s\S]*?jawnosGameSessionPause\(\)/,
+	'a reopened game after a quiet spell pauses the old segment first');
+my ($tick) = $tracker =~ /(function jawnosGameSessionTick\b.*?\n\})/s;
+ok($tick, 'the tick exists');
+like($tick, qr/!s\.screen\(\)\) \{[\s\S]*?jawnosGameSessionPause\(\)/,
+	'a game that leaves the screen pauses rather than stops');
+unlike($tick, qr/!s\.screen\(\)\) \{[\s\S]*?jawnosGameSessionStop\(\)/,
+	'so moving to Tarot or the chooser keeps the session');
 
 my $hooks = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($hooks, qr{/js/manager/game_session\.js}, 'the tracker ships in the eager bundle');
@@ -48,10 +56,18 @@ like($cards_js, qr/jawnosGameSessionStart\(game/, 'a card touch starts the appoi
 like($cards_js, qr/jawnosGameSessionStart\('Solitaire'/, 'opening Solitaire starts a session');
 like($cards_js, qr/jawnosGameSessionStart\('Mahjong'/, 'opening Mahjong starts one');
 like($cards_js, qr/jawnosGameSessionStart\('Blackjack'/, 'and Blackjack');
+like($cards_js, qr/if \(running && !next\) \{ jawnosGameSessionPause\(\); \}/,
+	'Tarot and the chooser pause the running game instead of ending it');
+like($cards_js, qr/else if \(running && running !== next\) \{ jawnosGameSessionStop\(\); \}/,
+	'another game ends the one that was running');
 
 my $twirl_js = read_file("$root/public/js/manager/twirl/01_twirl_game.js");
 like($twirl_js, qr/jawnosGameSessionStart\('Twirl'/, 'Twirl starts one too');
 like($twirl_js, qr/jawnosGameSessionPause\(\)/, 'and Escape pauses the play appointment too');
+
+my $stack = read_file("$root/public/js/manager/windows/03_stack.js");
+like($stack, qr/app == 'cards'[\s\S]*?jawnosGameSessionStop\(\)/,
+	'closing the card room ends its game');
 
 my $options_template = read_file("$root/templates/apps/transaction/options.html.ep");
 like($options_template, qr/\$l->\{'app'\} eq 'games'/, 'a game option opens the Cards app');

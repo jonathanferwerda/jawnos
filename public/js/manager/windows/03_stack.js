@@ -89,6 +89,18 @@ function closeWindow(timestamp, done) {
 	var app = win.attr('app');
 	if (app == 'twirl') {
 		twirlRunning = false;
+		if (typeof jawnosGameSessionGame === 'function' && jawnosGameSessionGame() === 'Twirl'
+			&& typeof jawnosGameSessionStop === 'function') { jawnosGameSessionStop(); }
+	}
+	// Closing the card room is the end of its game: the pane being hidden is only
+	// a pause, and a session under a minute is dropped when the stop lands. Only
+	// the card games are stopped, so closing a background Cards window cannot end
+	// a Twirl session.
+	if (app == 'cards' && typeof jawnosGameSessionGame === 'function' && typeof jawnosGameSessionStop === 'function') {
+		var card_game = jawnosGameSessionGame();
+		if (card_game === 'Solitaire' || card_game === 'Mahjong' || card_game === 'Blackjack') {
+			jawnosGameSessionStop();
+		}
 	}
 	if (app == 'mailbox' && typeof mailSocketClose == 'function') { mailSocketClose(); }
 	// closing the app closes its padlock in this tab as well as on the server
