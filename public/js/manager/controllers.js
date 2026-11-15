@@ -1175,7 +1175,7 @@ function controllerNewDone(data) {
 var controllerNewFields = {
 	wifi: 'Wi-Fi network', hostname: 'Name', 'join-token': 'House token',
 	identity: 'Machine identity', config: 'Configuration', database: 'Database',
-	state: 'Runtime state', network: 'Saved networks'
+	state: 'Runtime state', network: 'Saved networks', recovery: 'Recovery image'
 };
 
 function controllerNewFieldName(item) {

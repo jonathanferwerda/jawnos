@@ -29,6 +29,7 @@ use warnings;
 use Cwd ();
 use Digest::SHA ();
 use File::Basename ();
+use File::Copy ();
 use File::Path ();
 use File::Temp ();
 use Getopt::Long ();
@@ -39,6 +40,9 @@ use Time::HiRes ();
 # bytes. A device with any other size is a different disk and is refused.
 my $EMMC_SIZE = 30_535_680;
 my $DEFAULT_IMAGE = '/home/jawn/gou/gou-emmc-0.1.2807.img.zst';
+# The recovery card image. It is copied onto the flashed rootfs, so a board
+# always carries the way back even when the card in its slot is formatted.
+my $DEFAULT_RECOVERY = '/home/jawn/gou/sdcard_recovery.img';
 my $DEFAULT_HOSTNAME = 'gou';
 
 my $JSON = JSON::PP->new->utf8(1)->canonical(1);
@@ -65,6 +69,7 @@ Getopt::Long::GetOptions(
 	'hostname=s'      => \$opt{'hostname'},
 	'join-token=s'    => \$opt{'join_token'},
 	'progress=s'      => \$opt{'progress'},
+	'recovery-image=s' => \$opt{'recovery_image'},
 	'no-autopopulate' => \$opt{'no_autopopulate'},
 	'dry-run'         => \$opt{'dry_run'},
 	'backup=s'        => \$opt{'backup'},
@@ -81,7 +86,7 @@ if ($opt{'help'}) {
 	print <<'USAGE';
 gou_provision.pl --scan | --flash [--device /dev/sdX]
   [--image FILE] [--wifi-ssid S --wifi-psk P | --wifi-psk-stdin] [--hostname NAME]
-  [--join-token FILE] [--progress FILE] [--no-autopopulate] [--dry-run] [--backup PATH]
+  [--join-token FILE] [--progress FILE] [--recovery-image FILE] [--no-autopopulate] [--dry-run] [--backup PATH]
 USAGE
 	exit 0;
 }
@@ -739,6 +744,25 @@ sub _autopopulate {
 		}
 		else {
 			$error = 'could not write the first-boot unit';
+		}
+	}
+	if (!length $error) {
+		# The card in the slot is often blank and the New form may format it on
+		# first start. The board keeps its own copy of the recovery image, so a
+		# recovery card can be made again from the board or from this tree.
+		my $recovery = defined $opt{'recovery_image'} && length $opt{'recovery_image'}
+			? $opt{'recovery_image'} : $DEFAULT_RECOVERY;
+		if (-f $recovery) {
+			my $dir = "$mount/home/jawn/jawnos/recovery";
+			File::Path::make_path($dir) unless -d $dir;
+			my $path = "$dir/sdcard_recovery.img";
+			if (File::Copy::copy($recovery, $path) && chmod(0644, $path) && chown(1001, 1001, $path)) {
+				push @done, 'recovery';
+			}
+			else {
+				unlink $path;
+				_note('the recovery image could not be copied; the board carries none');
+			}
 		}
 	}
 	system('sync');

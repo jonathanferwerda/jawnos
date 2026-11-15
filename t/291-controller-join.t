@@ -56,6 +56,9 @@ like($provision, qr/\.jawnos_signatorial_id/, 'the provisioner clears the copied
 # unit calls; the provisioner copies this tree's own alongside the unit.
 like($provision, qr{could not copy the first-boot script}, 'the first-boot script is copied into the image, not assumed there');
 like($provision, qr{/gou_first_boot\.pl}, 'from this tree\'s own scripts directory');
+like($provision, qr/'recovery-image=s'/, 'the flash takes a recovery image');
+like($provision, qr/sdcard_recovery\.img/, 'and copies it onto the flashed rootfs');
+like($provision, qr/push \@done, 'recovery'/, 'reporting it as filled in on the board');
 my $first_boot = slurp('scripts/gou_first_boot.pl');
 like($first_boot, qr/sub _identity_ensure/, 'the first boot mints an identity when none is there');
 like($first_boot, qr/_identity_ensure\(\) unless \$token->\{'absent'\};.*?my \$card = undef/s,
@@ -432,6 +435,8 @@ my $js = slurp('public/js/manager/controllers.js');
 like($js, qr/function controllerNewHostname/, 'the page reads the name itself');
 like($js, qr/hostname: name,/, 'and sends it with the flash');
 like($js, qr/#controllers_hostname, #controllers_card_choice/, 'the fields are held still while it runs');
+like($js, qr/recovery: 'Recovery image'/, 'the page names the recovery copy it found');
+like(read_file(root() . '/perl/help/topics_apps.pl'), qr/copy of the recovery image/, 'the guide says the board keeps a copy');
 
 # The flash mints its single-use token into a temp file before the provisioner
 # runs. File::Temp needs the X's at the end of the template: a .json after them
