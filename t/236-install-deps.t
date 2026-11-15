@@ -65,6 +65,27 @@ like($deps, qr/system\("[^"]*-c 'import \$module'/,
 	'and the helper imports the module it is asked about');
 like($deps, qr/^sub have_bluetoothctl \{/m, 'bluetoothctl has its own probe');
 
+# --- the basemap builder's tools are optional -------------------------------
+# The house runs without them; only scripts/osm_basemap.pl builds an extract.
+my ($tools) = $deps =~ /(my \@tools = \(.*?\n\);)/s;
+ok(length $tools, 'the checker keeps its tool rows in one list');
+like($tools, qr/\{ cmd => 'osmium',\s*apt => 'osmium-tool'[^\n]*optional => 1/,
+	'osmium is an optional tool and Debian package osmium-tool');
+like($tools, qr/\{ cmd => 'tilemaker',\s*apt => 'tilemaker'[^\n]*optional => 1/,
+	'tilemaker is the optional tiler');
+unlike($tools, qr/cmd => 'pmtiles'/,
+	'the pmtiles CLI is not packaged: osm_basemap.pl fetches it into its cache');
+like($deps, qr/\$t->\{'optional'\}\) \{ push \@missing_optional/,
+	'a missing optional tool is kept out of the required set');
+like($deps, qr/exit\(\$core_missing \? 1 : 0\)/,
+	'--report still fails only on a missing required tool');
+like($deps, qr/optional_tools\s*=>/,
+	'--json names the optional tools even when they are present');
+like($deps, qr/my \@optional_here = grep \{ \$platform ne 'arch'/,
+	'pacman is never handed an AUR-only name');
+like($deps, qr/Optional build tools are in the AUR/,
+	'and the Arch install path says where they are');
+
 # --- --install refuses to run apt without root ------------------------------
 like($deps, qr/^sub need_root_without_sudo \{/m, 'one rule decides when root is missing');
 like($deps, qr/return 0 if -x '\/usr\/bin\/sudo';/, 'it accepts an installed sudo');
@@ -79,7 +100,7 @@ like($guard, qr/exit 1/, 'and exits nonzero');
 
 # The no-sudo path must not reach apt-get as this user: the package manager
 # calls stay inside the branch that follows the guard.
-my ($block) = $deps =~ /(# Core tools and any opted-in desktop extras.*?\n\})/s;
+my ($block) = $deps =~ /(# Core tools.*?\n\})/s;
 ok(length $block, 'the package-manager block is in one place');
 my ($before_guard, $after_guard) = split /if \(need_root_without_sudo\(\)\) \{/, $block, 2;
 ok(defined $after_guard, 'the guard comes first');

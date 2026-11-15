@@ -241,6 +241,16 @@ my @tools = (
 	{ cmd => 'cpanm',     apt => 'cpanminus',        pacman => 'cpanminus',      termux => 'perl',             label => 'cpanminus', cpanm => 'App::cpanminus' },
 	{ cmd => 'git',       apt => 'git',              pacman => 'git',            termux => 'git',              label => 'git' },
 	{ cmd => 'node',      apt => 'nodejs',           pacman => 'nodejs',         termux => 'nodejs',           label => 'Node.js', alt => 'nodejs' },
+	# Only a person building the house's own OpenStreetMap basemap runs
+	# scripts/osm_basemap.pl; the house itself runs without these, so they are
+	# reported and installed but never make a check fail. The pmtiles CLI is not
+	# a package at all -- osm_basemap.pl downloads it into ~/.cache/jawnos-basemap
+	# itself. Arch carries both only in the AUR (no pacman repository builds
+	# them), so the row names the AUR package and the installer prints the helper
+	# command instead of handing pacman a name it cannot resolve. A phone does
+	# not build extracts, so the row does not apply on Termux or Windows.
+	{ cmd => 'osmium',    apt => 'osmium-tool',      aur => 'osmium-tool',       label => 'osmium (OSM basemap)', optional => 1, required_on => sub { $^O ne 'MSWin32' && $platform ne 'termux' } },
+	{ cmd => 'tilemaker', apt => 'tilemaker',        aur => 'tilemaker',         label => 'tilemaker (OSM basemap)', optional => 1, required_on => sub { $^O ne 'MSWin32' && $platform ne 'termux' } },
 );
 
 # --- required perl modules ---------------------------------------------------
@@ -1467,9 +1477,13 @@ if ($freshness) {
 	);
 }
 
-my (@missing_tools, @missing_modules, @missing_desktop, @missing_extras);
+my (@missing_tools, @missing_optional, @missing_modules, @missing_desktop, @missing_extras);
 foreach my $t (@tools) {
-	push @missing_tools, $t unless have_command($t);
+	next if have_command($t);
+	# An optional tool is reported like any other but never fails the check:
+	# the house runs without a basemap builder.
+	if ($t->{'optional'}) { push @missing_optional, $t }
+	else { push @missing_tools, $t }
 }
 foreach my $m (@modules) {
 	push @missing_modules, $m unless have_module($m);
@@ -1496,6 +1510,8 @@ if ($json) {
 		platform        => $platform,
 		ok              => (@missing_tools + @missing_modules == 0) ? 1 : 0,
 		missing_tools   => [ map { { cmd => $_->{'cmd'}, label => $_->{'label'}, package => pkg_for($_) } } @missing_tools ],
+		missing_optional_tools => [ map { { cmd => $_->{'cmd'}, label => $_->{'label'}, package => pkg_for($_), (defined $_->{'aur'} ? (aur => $_->{'aur'}) : ()) } } @missing_optional ],
+		optional_tools  => [ map { { cmd => $_->{'cmd'}, label => $_->{'label'}, package => pkg_for($_), (defined $_->{'aur'} ? (aur => $_->{'aur'}) : ()), present => have_command($_) ? 1 : 0 } } grep { $_->{'optional'} && tool_required($_) } @tools ],
 		missing_modules => [ @missing_modules ],
 		missing_desktop => [ map { { label => $_->{'label'}, package => pkg_for($_) } } @missing_desktop ],
 		missing_extras  => [ map { { id => $_->{'id'}, label => $_->{'label'} } } @missing_extras ],
@@ -1520,6 +1536,21 @@ else {
 	print "command line tools missing:\n";
 	foreach my $t (@missing_tools) {
 		printf "  - %-16s (%s)\n", $t->{'label'}, pkg_for($t);
+	}
+}
+# Optional build tools are named even when only one is missing: they are what a
+# basemap build needs, not what running the house needs.
+my @optional_checked = grep { $_->{'optional'} && tool_required($_) } @tools;
+if (@optional_checked) {
+	if (!@missing_optional) {
+		print "optional build tools: all present\n";
+	}
+	else {
+		print "optional build tools missing (only needed to build an OSM basemap with\n";
+		print "scripts/osm_basemap.pl; the house runs without them):\n";
+		foreach my $t (@missing_optional) {
+			printf "  - %-16s (%s)\n", $t->{'label'}, optional_pkg($t);
+		}
 	}
 }
 if (!@missing_modules) {
@@ -1562,13 +1593,21 @@ if (!$no_extras) {
 
 my $core_missing = (@missing_tools + @missing_modules) > 0;
 my $desktop_missing = @missing_desktop > 0;
-if (!$core_missing && !$desktop_missing) {
+my $optional_missing = @missing_optional > 0;
+if (!$core_missing && !$desktop_missing && !$optional_missing) {
 	print "\nEverything is installed. You're good to go.\n";
 	exit 0;
 }
 if ($report_only) {
-	# The desktop extras are optional: only a missing core dependency fails --report.
+	# Optional build tools are not a missing dependency: --report succeeds
+	# without them, exactly as it does without the desktop extras.
 	exit($core_missing ? 1 : 0);
+}
+# Only the optional basemap tools are missing: running the house needs nothing
+# more, and a plain report is done. --install/--yes is the request to fetch them.
+if (!$core_missing && !$desktop_missing && !$install) {
+	print "\nEverything required is installed. You're good to go.\n";
+	exit 0;
 }
 exit 1 if $platform eq 'unknown';
 
@@ -1763,8 +1802,12 @@ sub after_update_run {
 }
 
 {
-	# Core tools and any opted-in desktop extras in one transaction.
-	my @pkgs = split_pkgs(map { pkg_for($_) } (@missing_tools, @missing_desktop));
+	# Core tools, any opted-in desktop extras and the optional basemap builder in
+	# one transaction. AUR-only rows are left out: the package manager would
+	# reject the whole transaction for a name it cannot resolve (see the hint
+	# below).
+	my @optional_here = grep { $platform ne 'arch' || !defined $_->{'aur'} } @missing_optional;
+	my @pkgs = split_pkgs(map { pkg_for($_) } (@missing_tools, @missing_desktop, @optional_here));
 	if (@pkgs && defined $local_lib && length $local_lib) {
 		print "Skipping system packages in --local-lib mode: " . join(' ', @pkgs) . "\n";
 	}
@@ -1790,6 +1833,18 @@ sub after_update_run {
 		elsif ($platform eq 'termux') {
 			run( 'pkg', 'install', '-y', @pkgs );
 		}
+	}
+}
+
+# Arch does not carry either basemap tool in its repositories; both live in the
+# AUR. An AUR helper is the person's choice, not something this script runs.
+if ($platform eq 'arch') {
+	my @aur = grep { defined $_->{'aur'} && length $_->{'aur'} } @missing_optional;
+	if (@aur) {
+		print "\nOptional build tools are in the AUR, not the Arch repositories:\n";
+		print "  " . join(' ', map { $_->{'aur'} } @aur)
+			. "  (install with yay/paru, e.g. yay -S --needed "
+			. join(' ', map { $_->{'aur'} } @aur) . ")\n";
 	}
 }
 
@@ -1820,11 +1875,16 @@ unless ($no_extras) {
 }
 
 # --- final verdict -----------------------------------------------------------
-my @still_tools = grep { !have_command($_) } @tools;
+my @still_tools = grep { !$_->{'optional'} && !have_command($_) } @tools;
 my @still_modules = grep { !have_module($_) } @modules;
 my @still_desktop = grep { !$_->{'check'}->() } @missing_desktop;
+my @still_optional = grep { $_->{'optional'} && tool_required($_) && !have_command($_) } @tools;
 if (!@still_tools && !@still_modules && !@still_desktop) {
 	print "\nAll dependencies installed.\n";
+	if (@still_optional) {
+		print "Optional build tools still missing (not needed to run the house): "
+			. join(', ', map { $_->{'label'} } @still_optional) . ".\n";
+	}
 	exit 0;
 }
 print "\nStill missing " . scalar(@still_tools) . " tool(s) and " . scalar(@still_modules) . " module(s).\n";
@@ -1833,6 +1893,15 @@ if (@still_desktop) {
 }
 print "You may need to install them by hand (see the README).\n";
 exit( (@still_tools || @still_modules) ? 1 : 0 );
+
+# The package a person has to install for an optional tool. Arch names an AUR
+# package that pacman cannot resolve, so the report says so instead of pretending
+# the repositories offer it.
+sub optional_pkg {
+	my $t = shift;
+	return pkg_for($t) unless $platform eq 'arch';
+	return (defined $t->{'aur'} && length $t->{'aur'}) ? $t->{'aur'} . ' (AUR)' : pkg_for($t);
+}
 
 sub pkg_for {
 	my $t = shift;
@@ -1856,13 +1925,15 @@ sub install_script {
 	push @lines, '# Generated by scripts/jawnos_deps.pl --sh';
 	push @lines, '';
 
-	my @pkgs = split_pkgs(map { pkg_for($_) } (@missing_tools, @missing_desktop));
+	my @optional_here = grep { $platform ne 'arch' || !defined $_->{'aur'} } @missing_optional;
+	my @pkgs = split_pkgs(map { pkg_for($_) } (@missing_tools, @missing_desktop, @optional_here));
 	if (@pkgs && defined $local_lib && length $local_lib) {
 		push @lines, '# system packages skipped: --local-lib installs for this user only';
 		push @lines, '';
 	}
 	elsif (@pkgs) {
-		push @lines, '# command line tools' . (@missing_desktop ? ' and desktop extras' : '');
+		push @lines, '# command line tools' . (@missing_desktop ? ' and desktop extras' : '')
+			. (@optional_here ? ' and optional basemap tools' : '');
 		if ($platform eq 'debian') {
 			push @lines, join(' ', sudo(), 'apt-get', 'update');
 			push @lines, join(' ', sudo(), 'apt-get', 'install', '-y', @pkgs);
@@ -1878,6 +1949,14 @@ sub install_script {
 			push @lines, '# unknown platform -- install these by hand: ' . join(' ', @pkgs);
 		}
 		push @lines, '';
+	}
+
+	if ($platform eq 'arch') {
+		my @aur = grep { defined $_->{'aur'} && length $_->{'aur'} } @missing_optional;
+		if (@aur) {
+			push @lines, '# optional basemap tools are in the AUR: ' . join(' ', map { $_->{'aur'} } @aur);
+			push @lines, '';
+		}
 	}
 
 	if (@missing_modules) {

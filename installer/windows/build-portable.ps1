@@ -12,6 +12,10 @@
 # The staged payload is <OutDir>\JawnOS-<version>\ (app\, runtime\ and the
 # install scripts). The zip beside it holds that same folder. Nothing is
 # signed yet.
+#
+# The bundle does not build OpenStreetMap basemaps: there is no reliable native
+# Windows tilemaker/osmium build, and the house reads the .pmtiles archive its
+# Unix box serves at /manager/travel/basemap. Nothing here adds those tools.
 
 [CmdletBinding()]
 param(

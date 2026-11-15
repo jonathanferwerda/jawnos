@@ -124,6 +124,14 @@ reproduces:
 The tree is relocatable: a copied Strawberry install works and `@INC` points at
 the copy, which is what makes the bundle possible.
 
+## Basemaps and OpenStreetMap
+
+The Windows install does not build its own basemap. `tilemaker` and `osmium`
+have no reliable native Windows builds, and the house reads the `.pmtiles`
+archive the Unix box builds with `scripts/osm_basemap.pl` and serves at
+`/manager/travel/basemap` (or the newest staged archive). No basemap tool is
+staged in the payload, and none is a dependency of the bundle.
+
 ## Deferred / follow-ups
 
 - **Signing.** `Setup.exe` currently carries a **self-signed test signature**

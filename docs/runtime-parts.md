@@ -80,6 +80,11 @@ inside them.
   unversioned soname while core's own ELFs name `libz.so.1`; the part then
   points at a core path instead of shipping a cross-part link.
 
+**The basemap builder is not in the runtime.** `tilemaker` and `osmium` are
+build-host tools (`scripts/osm_basemap.pl`), not phone binaries; a device reads
+the `.pmtiles` archive the house serves at `/manager/travel/basemap`. The
+`pmtiles` CLI is downloaded into the builder's cache, never packed here.
+
 ## Update, install and rollback order
 
 1. **Core first.** The app installs/updates the core as it already does. A core

@@ -53,10 +53,24 @@ for my $module (qw(DBI IO::Pty WebService::Ollama Email::Sender Text::Unidecode 
 my ($tools_block) = $source =~ /my \@tools = \((.*?)\n\);/s;
 my @commands = (defined $tools_block ? $tools_block : '') =~ /cmd\s*=>\s*'([^']+)'/g;
 ok(scalar @commands > 10, 'the dependency checker names the tool set');
+# An optional row is a build-host tool, not a dependency of the package: a .deb
+# that Depend'ed on tilemaker would install a basemap tiler on every server. The
+# checker reports and installs these on request; they stay out of deps.json.
+my %optional;
+for my $line (split /\n/, (defined $tools_block ? $tools_block : '')) {
+	my ($command) = $line =~ /cmd\s*=>\s*'([^']+)'/ or next;
+	$optional{$command} = 1 if $line =~ /optional\s*=>\s*1/;
+}
+is_deeply([ sort keys %optional ], [ 'osmium', 'tilemaker' ],
+	'the OSM basemap tools are the optional rows');
+for my $command (sort keys %optional) {
+	ok(!$deps->{'tools'}{$command}, "$command is optional, so packaging does not depend on it");
+}
 for my $command (@commands) {
 	# cpanm is the checker's self-install path, not a runtime tool: a packaged
 	# install never runs it (the vendors are fetched at build time).
 	next if $command eq 'cpanm';
+	next if $optional{$command};
 	ok($deps->{'tools'}{$command}, "$command is in the packaging manifest");
 }
 

@@ -68,6 +68,11 @@ my %TOOL = map { $_ => 1 } qw(
 #
 # ImageMagick is the `media` part and Tesseract the `ocr` part for the same
 # reason: a fallback/optional tool should cost a download only when it is used.
+#
+# The basemap builder is not in the diet either: tilemaker and osmium are
+# build-host tools for scripts/osm_basemap.pl, and a phone reads the .pmtiles
+# archive the house serves at /manager/travel/basemap. The pmtiles CLI is
+# fetched into the builder's cache by that script, never packed here.
 
 # Never ship, even if the source has it: the package manager and its state.
 my %NEVER = map { $_ => 1 } qw(

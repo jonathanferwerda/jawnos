@@ -467,6 +467,11 @@ Add `mkosi.profiles/debian.conf` with `Distribution=debian` and
 `--profile debian`; keep the profile separate rather than branching `mkosi.conf`,
 so an Arch build cannot be broken by a Debian change.
 
+Neither package list includes the basemap builder: the image runs the house, it
+does not tile OpenStreetMap. On a Debian box used as the basemap build host,
+`scripts/osm_basemap.pl` wants `tilemaker` and `osmium-tool` (both in trixie)
+and downloads the pmtiles CLI into `~/.cache/jawnos-basemap` itself.
+
 `--output-dir` is per build, so two backends can sit side by side.
 
 ## Not Yocto
