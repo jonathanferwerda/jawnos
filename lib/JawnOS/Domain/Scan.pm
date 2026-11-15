@@ -227,6 +227,11 @@ sub scan_scanner_key {
 
 sub scan_scanner_rules {
 	my $raw = &setting_grabber({ app => 'scan', setting => 'auto_scan', device => &warranty_device() });
+	# A peer's copy (or an older write) may carry this device's own row where the
+	# house row belongs; read it the way cards_list reads its list.
+	if (!defined $raw || !length $raw) {
+		$raw = &setting_grabber({ app => 'scan', setting => 'auto_scan' });
+	}
 	my $rules = eval { return decode_json($raw || '') } || {};
 	return ref $rules eq 'HASH' ? $rules : {};
 }

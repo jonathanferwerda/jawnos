@@ -242,6 +242,20 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	is(subs::scan_auto_enabled('another'), 1, 'a scanner with no rule keeps the default');
 }
 {
+	# A peer's sync may leave the rule on this device's row instead of the house
+	# one; the reader still finds it.
+	no warnings 'redefine';
+	local *subs::warranty_device = sub { return 'all' };
+	local *subs::setting_grabber = sub {
+		my ($s) = @_;
+		return undef if ($s->{'device'} || '') eq 'all';
+		return '{"Officejet%20LivingRoom":{"auto":0,"target":"scan"}}';
+	};
+	my $rules = subs::scan_scanner_rules();
+	ok($rules->{'Officejet%20LivingRoom'}, 'a per-device copy is read when the house row is missing');
+	is(subs::scan_auto_target('Officejet%20LivingRoom'), 'scan', 'with the choice it carries');
+}
+{
 	# The readiness ledger is the phone's fallback; a peer's row may be a little
 	# old in its copy, and one that is not ready is never borrowed from.
 	no warnings 'redefine';
