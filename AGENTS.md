@@ -20,9 +20,11 @@ Two commands read the tree's test-checked indexes. **Reach for them before `grep
 "this string appears here", not "this is where that lives".
 
 - `perl scripts/where.pl <name>` — one line, `file:line`: a Manager helper, a domain sub, a route
-action (`action_7408`), a route path (`/manager/pen`), a help topic by name, a JavaScript, firmware,
-`perl/` or `scripts/` declaration, or a file (its topics). A miss still prints its mention lines with
-their text, so it is judgeable without opening the file. A JS/firmware declaration comes with its body
+action (`action_7408`), a route path (`/manager/pen`, including one a service registers), a help topic
+by name, a JavaScript, firmware, or a Perl declaration anywhere in `lib/`, `perl/` or `scripts/`, or a
+file (its topics). A miss prints its mention lines with their text, and up to three `near` names — a
+typo, or a guessed name whose words do exist — so it is judgeable without opening the file. A
+`--topics`/`--tools` pattern that matches nothing says so and exits 1. A JS/firmware declaration comes with its body
 (`--body`); `--outline FILE`
 lists declarations as `line<TAB>kind name`, so read the range, not the file.
 `--topics`/`--tools` list the help registry/probe shelf (PATTERN narrows), `--tech <app>` prints the technical brief

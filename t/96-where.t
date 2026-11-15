@@ -1,7 +1,9 @@
 # tests-for: scripts/where.pl lib/JawnOS/Routes/ perl/help/
-# covers:    the point locator - helper/domain/route resolution, JavaScript and
-#           firmware declarations and their bodies, mention lines, the map the
-#           output agrees with, and the map-drift report
+# covers:    the point locator - helper/domain/route resolution, a route a
+#           service registers, a sub in any lib/ subdirectory, JavaScript and
+#           firmware declarations and their bodies, mention lines, the near
+#           lines a miss prints, the map the output agrees with, and the
+#           map-drift report
 
 use strict;
 use warnings;
@@ -87,6 +89,18 @@ for my $name (qw(subs::path_name path_name)) {
 		'a route path resolves to the row');
 	like($out, qr{^  action\tlib/JawnOS/Controller/js_misc\.pm:\d+$}m,
 		'and to the action body');
+
+	# /watch/* is registered by the watch service, not by the route table.
+	(undef, $out) = where('/watch/volume');
+	like($out, qr{^route\tperl/watch\.pl:(\d+)\tpost /watch/volume$}m,
+		'a route a service registers resolves to that service');
+	my ($watch_line) = $out =~ /^route\tperl\/watch\.pl:(\d+)\t/m;
+	my @watch = split /\n/, read_file("$root/perl/watch.pl");
+	like($watch[$watch_line - 1], qr{^\s*post\s+'/watch/volume'},
+		'and the line is the registration, not the call site');
+
+	my ($unregistered) = where('/watch/nothing_here');
+	is($unregistered, 1, 'a path no service registers is still a miss');
 }
 
 # --- a help topic, by name --------------------------------------------------
@@ -158,8 +172,11 @@ for my $name (qw(subs::path_name path_name)) {
 	like($out, qr{^help::start_menu\t}m, 'a spaced pattern folds like a topic name');
 
 	($code, $out) = where('--topics', 'no_such_topic_anywhere');
-	is($code, 0, 'a filter that matches nothing still exits 0');
+	is($code, 1, 'a filter that matches nothing exits 1');
 	is($out, '', 'and prints nothing');
+	my (undef, undef, $empty_err) = where('--topics', 'no_such_topic_anywhere');
+	like($empty_err, qr/no help topic matches no_such_topic_anywhere/,
+		'and says so, because an empty answer reads as a topic that does not exist');
 }
 
 # --- a JavaScript declaration ---------------------------------------------
@@ -288,10 +305,30 @@ JS
 
 # --- a name nobody has -----------------------------------------------------
 {
-	my ($code, $out, $err) = where('no_such_helper_at_all');
+	my ($code, $out, $err) = where('xyzzy_plugh');
 	is($code, 1, 'an unknown name exits 1');
-	is($out, '', 'and prints no hit');
-	like($err, qr/no_such_helper_at_all/, 'and says which name');
+	is($out, '', 'and prints no hit when no name is near');
+	like($err, qr/no xyzzy_plugh/, 'and says which name');
+}
+
+# --- a miss that is a typo names the sub that was meant --------------------
+{
+	my ($code, $out) = where('guide_find_targt');
+	is($code, 1, 'a one-edit typo is still a miss');
+	like($out, qr{^  near\tguide_find_target\tlib/JawnOS/Manager/Part29\.pm:\d+$}m,
+		'and the near line is the sub that was meant');
+	is(scalar(grep { /^\s+near\t/ } split /\n/, $out), 1,
+		'a conclusive typo is not padded with guesses');
+}
+
+# --- a miss that is a guessed name answers with the words it shares --------
+{
+	my ($code, $out) = where('crew_advert');
+	is($code, 1, 'a name that is not in the tree is a miss');
+	like($out, qr{^  near\tadvert_get\tperl/crew\.pl:\d+$}m,
+		'the real names that share its word come first');
+	cmp_ok(scalar(grep { /^\s+near\t/ } split /\n/, $out), '<=', 3,
+		'at most three leads');
 }
 
 # --- the printed file agrees with Index.pm ---------------------------------
@@ -337,6 +374,20 @@ PM
 	like($out, qr{^coding_prompt\tperl/help\.pl:\d+$}m, 'to the file that defines it');
 }
 
+# --- every lib/ subdirectory is in scope, not a list of remembered ones ---
+{
+	# This sub lives in Sco/, which a hand-kept list of globs had left out: the
+	# scan walks lib/ whole, so a module added next year is already home.
+	my ($code, $out) = where('music_root');
+	is($code, 0, 'a sub in lib/JawnOS/Sco/ resolves');
+	like($out, qr{^music_root\tlib/JawnOS/Sco/Hold\.pm:(\d+)$}m,
+		'to its module, outside the Manager and Domain maps');
+
+	my ($line) = $out =~ /^music_root\tlib\/JawnOS\/Sco\/Hold\.pm:(\d+)$/m;
+	my @src = split /\n/, read_file("$root/lib/JawnOS/Sco/Hold.pm");
+	like($src[$line - 1], qr/^\s*sub\s+music_root\b/, 'the line is the sub');
+}
+
 # --- the shareable tool shelf ----------------------------------------------
 {
 	my ($code, $out) = where('cpuspy');
@@ -367,6 +418,11 @@ PM
 	(undef, $list) = where('--tools', 'audio');
 	like($list, qr{^tool::audio-watch\t}m, 'a pattern narrows the shelf');
 	unlike($list, qr{^tool::cpuspy\t}m, 'and leaves the rest out');
+
+	my ($empty_code, $empty_out, $empty_err) = where('--tools', 'no_such_tool_anywhere');
+	is($empty_code, 1, 'a tool pattern that matches nothing exits 1');
+	is($empty_out, '', 'and prints nothing');
+	like($empty_err, qr/no tool matches no_such_tool_anywhere/, 'and says what did not match');
 }
 
 # --- --outline lists a file's declarations ---------------------------------
@@ -403,6 +459,12 @@ EP
 
 	my (undef, $page_out) = where('--outline', 'templates/apps/gallery.html.ep');
 	like($page_out, qr{^\d+\tid gallery$}m, 'a real page names its root id');
+
+	my ($name_code, $name_out, $name_err) = where('--outline', 'guide_find_target');
+	is($name_code, 1, '--outline on a name is refused');
+	is($name_out, '', 'with no outline printed');
+	like($name_err, qr/--outline reads a file/,
+		'and says the flag wants a file, which is the mistake behind it');
 }
 
 # --- the body has a character budget as well as a line budget --------------

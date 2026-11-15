@@ -17,13 +17,16 @@
 #
 # The maps are read, never loaded: lib/JawnOS/Manager/Index.pm is %SUB (helper
 # -> part) and lib/JawnOS/Domain/Loader.pm is %DOMAIN_MODULE (sub -> module).
-# Routes are read from lib/JawnOS/Routes/*.pm and help topics from
+# Routes are read from lib/JawnOS/Routes/*.pm, from the service scripts that
+# register their own (perl/watch.pl), and help topics from
 # perl/help/topics_*.pl, so nothing boots the app. A name neither map knows is
-# searched for as a sub across the parts, the domain modules, perl/ and scripts/,
+# searched for as a sub across the parts, the rest of lib/, perl/ and scripts/,
 # then as a shareable tool in scripts/tools/ (the README catalog says what it
 # answers and how to run it), then as a help topic, then as a declaration in a
 # controller, a JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a
-# mention that prints the matching line itself (capped by --limit). A single
+# mention that prints the matching line itself (capped by --limit). A miss
+# prints up to three `near` lines - the nearest names, by edit distance for a
+# typo and by shared word for a guessed name. A single
 # JavaScript or firmware declaration
 # arrives with its body (--body), because a location still costs a second read.
 # When a map names a file that does not define the sub, the hit prints where it
@@ -143,6 +146,12 @@ my @domain_files     = grep { -f $_ } glob "$root/lib/JawnOS/Domain/*.pm";
 my @controller_files = grep { -f $_ } glob "$root/lib/JawnOS/Controller/*.pm";
 my @route_files      = grep { -f $_ } glob "$root/lib/JawnOS/Routes/*.pm";
 
+# A service registers its own routes: the watch server owns /watch/* in
+# perl/watch.pl, the teletype socket in perl/teletype.pl, the alarm's catch-all
+# in perl/Alarm.pl. They are searched only when the route table has no exact
+# match, so the common lookup still reads one table.
+my @service_files = grep { -f $_ } glob "$root/perl/*.pl";
+
 # --- the shareable tool shelf ------------------------------------------------
 #
 # scripts/tools/ holds the probes an agent may run instead of writing a throwaway:
@@ -214,14 +223,15 @@ my @embedded_files = source_files(
 	max_bytes => 131072,
 );
 
-# perl/ and scripts/ sit outside every name map, so a name defined in help.pl or
-# a CLI script used to fall through to "no X in the tree". Tests belong here too:
-# a helper that only exists in t/ is still a real location.
+# lib/, perl/ and scripts/ all sit outside the name maps, so a name defined in a
+# domain part, a service script or help.pl used to fall through to "no X in the
+# tree". lib/ is walked whole instead of by a list of remembered subdirectories:
+# Sco, Ble, PDF and Database hold subs too, and a hand-kept list of globs is how
+# a module went missing (music_root in lib/JawnOS/Sco/Hold.pm). Tests belong here
+# as well: a helper that only exists in t/ is still a real location.
 my %mapped = map { $_ => 1 } (@manager_files, @domain_files, @controller_files, @route_files);
-my @perl_extra_files = sort grep { !$mapped{$_} } (
-	source_files(dirs => [qw(perl scripts t)], ext => [qw(pl pm t)]),
-	grep { -f $_ } ("$root/lib/JawnOS.pm", glob("$root/lib/JawnOS/*.pm"), glob("$root/lib/JawnOS/Platform/*.pm")),
-);
+my @perl_extra_files = sort grep { !$mapped{$_} }
+	source_files(dirs => [qw(lib perl scripts t)], ext => [qw(pl pm t)]);
 # A test file is a place a sub can be declared, but its fixture strings are not
 # evidence a name exists: mention-search would find the test's own 'no such name'
 # probe and call it a hit. Definitions in t/ stay in scope.
@@ -273,6 +283,13 @@ if ($list_topics) {
 		$out .= 'help::' . $t->{'id'} . "\t" . rel($t->{'file'}) . ':' . $t->{'line'} . "\n";
 		$matched++;
 	}
+	# An empty answer is not an answer: a pattern that matches nothing is the
+	# miss this script exists to make visible, not a quiet exit 0.
+	if (@wanted && !$matched) {
+		warn 'where: no help topic matches ', join(' ', @ARGV), "\n";
+		where_log('--topics', 0, 'topics', 0);
+		exit 1;
+	}
 	print $out;
 	where_log('--topics', ($matched ? 1 : 0), 'topics', length $out);
 	exit 0;
@@ -295,6 +312,11 @@ if ($list_tools) {
 		} @wanted;
 		$out .= 'tool::' . $stem . "\t" . rel($path) . ":1\t" . $answers . "\n";
 		$matched++;
+	}
+	if (@wanted && !$matched) {
+		warn 'where: no tool matches ', join(' ', @ARGV), "\n";
+		where_log('--tools', 0, 'tools', 0);
+		exit 1;
 	}
 	print $out;
 	where_log('--tools', ($matched ? 1 : 0), 'tools', length $out);
@@ -330,7 +352,7 @@ if ($outline) {
 	for my $raw (@ARGV) {
 		my $abs = $raw =~ m{^/} ? $raw : "$root/$raw";
 		unless (-f $abs) {
-			warn "where: no file $raw\n";
+			warn "where: no file $raw (--outline reads a file; '$raw' alone looks up a name)\n";
 			next;
 		}
 		$out .= "$raw\n" if @ARGV > 1;
@@ -444,7 +466,13 @@ sub lookup {
 	# Nothing declares it: show the lines that mention it, with their text. A
 	# bare file:line cannot be judged without opening the file - the cost this
 	# script exists to avoid - so a mention prints grep's matching line too.
+	#
+	# The pass also remembers every `sub` it reads. On a full miss nothing stops
+	# it early, so that is the whole tree for free, and a miss is usually a guess
+	# one or two edits off a name that does exist: the nearest few print as `near`
+	# lines, so the agent's next call lands.
 	my $hits = 0;
+	my %declared;
 	for my $file (@manager_files, @domain_files, @controller_files, @route_files,
 		@perl_extra_mention, @js_files, @template_files, @embedded_files)
 	{
@@ -452,14 +480,133 @@ sub lookup {
 		my $n    = 0;
 		for my $line (split /\n/, $text, -1) {
 			$n++;
+			$declared{$1} //= rel($file) . ":$n" if $line =~ /^\s*sub\s+(\w+)/;
 			next unless $line =~ /(?<![\w:])\Q$name\E(?!\w)/;
 			print '  ', rel($file), ":$n:", mention_text($line), "\n";
 			last if ++$hits >= $limit;
 		}
 		last if $hits >= $limit;
 	}
-	warn "where: no $name in the tree (maps, subs, declarations, references)\n" unless $hits;
+	unless ($hits) {
+		warn "where: no $name in the tree (maps, subs, declarations, references)\n";
+		print_near($name, \%declared);
+	}
 	return $hits;
+}
+
+# Rank the names the miss pass saw and print the closest few. Two misses look
+# alike and want different answers: a typo is one or two edits from a name that
+# exists, while a guess is a name that does not exist at all but whose words do.
+#
+# Edit distance settles only the first. A guessed name can land two edits from
+# an unrelated helper, so those lines would mislead; the guess is answered by
+# the words it is made of, longest shared word first. Typos print first because
+# when one exists it is almost always the answer, and three lines is the cap.
+sub print_near {
+	my ($name, $declared) = @_;
+
+	my %seen = %$declared;
+	for my $map (\%helper_part, \%domain_file) {
+		for my $key (keys %$map) {
+			$seen{$key} //= rel($map->{$key});
+		}
+	}
+
+	my @picked;
+	my %taken;
+	my $conclusive = 0;
+	for my $typo (typo_near($name, \%seen)) {
+		push @picked, $typo;
+		$taken{ $typo->[0] } = 1;
+		# One edit is the answer, not a ranking: do not pad it with guesses.
+		$conclusive = 1 if $typo->[2] == 1;
+		last if $conclusive || @picked >= 2;
+	}
+	unless ($conclusive) {
+		for my $guess (word_near($name, \%seen)) {
+			next if $taken{ $guess->[0] };
+			push @picked, $guess;
+			last if @picked >= 3;
+		}
+	}
+	print "  near\t$_->[0]\t$_->[1]\n" for @picked;
+	return;
+}
+
+# The one- or two-edit candidates, nearest first. Short names get one edit, not
+# two: two edits from `loop` reaches `login`, which is not a typo of it.
+sub typo_near {
+	my ($name, $seen) = @_;
+
+	my $max = length($name) < 6 ? 1 : 2;
+	my @near;
+	for my $candidate (keys %$seen) {
+		next if $candidate eq $name;
+		next if abs(length($candidate) - length($name)) > $max;
+		my $distance = edit_distance($name, $candidate, $max);
+		next unless defined $distance;
+		push @near, [ $distance, length($candidate), $candidate ];
+	}
+	@near = sort {
+		$a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] || $a->[2] cmp $b->[2]
+	} @near;
+	return map { [ $_->[2], $seen->{ $_->[2] }, $_->[0] ] } @near;
+}
+
+# Names that share a whole word with the query, ranked by how many words they
+# share and then by how long those words are: `gate` in a name is better evidence
+# than `app`, and a one-word answer that is short and common (`app`, `call`) is
+# not evidence at all.
+sub word_near {
+	my ($name, $seen) = @_;
+
+	my @words = grep { length >= 3 } split /_/, $name;
+	return () unless @words;
+
+	my %rank;
+	for my $candidate (keys %$seen) {
+		my %part = map { $_ => 1 } split /_/, $candidate;
+		my @shared = grep { $part{$_} } @words;
+		next unless @shared;
+		my $weight = 0;
+		$weight += length for @shared;
+		next if @shared == 1 && $weight < 4;
+		$rank{$candidate} = [ scalar @shared, $weight, length $candidate ];
+	}
+	return map { [ $_, $seen->{$_} ] }
+		sort {
+		$rank{$b}[0] <=> $rank{$a}[0]
+			|| $rank{$b}[1] <=> $rank{$a}[1]
+			|| $rank{$a}[2] <=> $rank{$b}[2]
+			|| $a cmp $b
+		} keys %rank;
+}
+
+# Levenshtein with a cap: a candidate past $max edits cannot be worth a line, so
+# the row minimum - a lower bound on the finished distance - ends the walk early.
+sub edit_distance {
+	my ($a, $b, $max) = @_;
+	return 0 if $a eq $b;
+	return if abs(length($a) - length($b)) > $max;
+
+	my @previous = (0 .. length $b);
+	for my $i (1 .. length $a) {
+		my @row   = ($i);
+		my $least = $i;
+		my $ca    = substr($a, $i - 1, 1);
+		for my $j (1 .. length $b) {
+			my $value     = $previous[ $j - 1 ] + ($ca eq substr($b, $j - 1, 1) ? 0 : 1);
+			my $deletion  = $previous[$j] + 1;
+			my $insertion = $row[ $j - 1 ] + 1;
+			$value = $deletion  if $deletion < $value;
+			$value = $insertion if $insertion < $value;
+			$row[$j] = $value;
+			$least = $value if $value < $least;
+		}
+		return if $least > $max;
+		@previous = @row;
+	}
+	return $previous[ length $b ] <= $max ? $previous[ length $b ] : undef;
 }
 
 # Print a located sub. $map_file is what the name map claimed, when it claimed
@@ -699,6 +846,25 @@ sub route_path {
 				my $line = find_sub($controller, $action) or next;
 				print '  action	', rel($controller), ":$line\n";
 				last;
+			}
+		}
+	}
+
+	# A service registers its own routes: the watch server answers /watch/*, not
+	# the route table. An exact path here beats the prefix guess below, because a
+	# sibling of a wildcard route is not what the agent asked for.
+	if (!$hits) {
+		for my $file (@service_files) {
+			my $text = slurp($file) // next;
+			my $n    = 0;
+			for my $line (split /\n/, $text, -1) {
+				$n++;
+				my ($method, $p) = $line
+					=~ /^\s*(get|post|put|patch|del|delete|any|websocket)\s+'([^']+)'/
+					or next;
+				next unless $p eq $path;
+				print "route\t", rel($file), ":$n\t$method $p\n";
+				$hits++;
 			}
 		}
 	}
@@ -1275,11 +1441,13 @@ Prints file:line for each. A name the maps do not know is searched for as a
 sub in lib/, perl/ or scripts/, then as a probe in scripts/tools/ (with its
 catalog row), then as a help topic, then as a declaration in a controller, a
 JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a mention:
-file:line plus the matching line, at most --limit lines. --context N adds N
+file:line plus the matching line, at most --limit lines. A miss also prints up
+to three `near` lines: the nearest names by edit distance (a typo) and by
+shared word (a guessed name that is not in the tree). --context N adds N
 lines after any hit, --terse prints only file:line, --topics lists every help
 topic with the line it is defined on, and --tools lists the shareable probes
-with what they answer (PATTERN... narrows either list). Exits 0 if anything was
-found.
+with what they answer (PATTERN... narrows either list; a pattern that matches
+nothing says so and exits 1). Exits 0 if anything was found.
 
   --body        print the declaration and its body, stopping at the closing
                 brace (or the dedent of a Python def), at most --body-lines
