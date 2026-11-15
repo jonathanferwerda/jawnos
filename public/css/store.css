@@ -1138,3 +1138,28 @@ input.pi.price_edit {
 @media print {
 	#store_print_bar { display: none !important; }
 }
+
+/* ---- the cart: lines, totals, save/issue -------------------------------- */
+.store_cart_panel {
+	position: fixed; right: 18px; top: 92px; width: min(420px, 92vw);
+	max-height: 72vh; overflow: auto; background: var(--panel);
+	border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+	box-shadow: 0 10px 30px rgba(0,0,0,.22); z-index: 60;
+}
+.store_cart_header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.store_cart_header h2 { margin: 0 0 8px; font-size: 19px; }
+.store_cart_id { color: var(--ink-muted); font-size: 13px; font-weight: 600; }
+.store_cart_lines { display: flex; flex-direction: column; }
+.store_cart_line { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.store_cart_line_name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.store_cart_line_qty { color: var(--ink-muted); }
+.store_cart_line_total { min-width: 74px; text-align: right; }
+.store_cart_line_edit, .store_cart_line_remove { padding: 2px 7px; font-size: 12px; }
+.store_cart_totals { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: flex-end; padding: 10px 0 4px; border-bottom: 1px solid var(--line); }
+.store_cart_actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; }
+.store_cart_status { margin-top: 8px; font-size: 13px; }
+.store_cart_empty { color: var(--ink-muted); margin: 10px 0; }
+.store_cart_add_row { margin-top: 10px; display: flex; justify-content: flex-end; }
+.store_cart_open_button img { width: 18px; height: 18px; vertical-align: -3px; margin-right: 5px; }
+
+.store_document_superseded { color: var(--ink-muted); font-size: 12px; font-weight: 600; }

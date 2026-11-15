@@ -22,6 +22,8 @@ sub routes {
 	[6418, 'post', '/manager/store/register/cancel', 'action_6418'],
 	[6419, 'post', '/manager/store/register/sale', 'action_6419'],
 	[6420, 'get', '/manager/store/register/receipt', 'action_6420'],
+	[6421, 'post', '/manager/store/number_mint', 'action_6421'],
+	[6422, 'post', '/manager/store/number_block', 'action_6422'],
 	[6466, 'get', '/manager/store/customer_correspondence', 'action_6466'],
 	[6625, 'post', '/manager/store/:att/save', 'action_6625'],
 	[6809, 'post', '/manager/store/attribute_characteristic_setter', 'action_6809'],

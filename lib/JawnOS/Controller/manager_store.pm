@@ -202,6 +202,9 @@ sub action_6378 {
 		my $list = &subs::db_select('appointments', undef, { type => $type, app => $customer->{'app'} })->hashes;
 		foreach my $l ( @{$list} ) {
 			$l->{$type} = eval { return decode_json $l->{'data'} } || {};
+			# A superseded invoice is shown as the reference, but the summary is
+			# the live documents only.
+			next if ($l->{'status'} || '') eq 'superseded';
 			foreach my $number ( keys %{$l->{$type}->{'numbers'}} ) {
 				$totals->{$number} += $l->{$type}->{'numbers'}->{$number};
 			}
@@ -236,6 +239,9 @@ sub action_6410 {
 	$totals{'total'} = $totals{'paid'} = $totals{'balance'} = $totals{'count'} = 0;
 	foreach my $r ( @{$rows} ) {
 		next unless ($r->{'type'} || '') eq 'invoice' || ($r->{'type'} || '') eq 'sale';
+		# A superseded invoice is the old copy of a revised one: it stays in the
+		# invoice list as the reference, but it is not a second sale.
+		next if ($r->{'status'} || '') eq 'superseded';
 		my $d = eval { return decode_json $r->{'data'} } || {};
 		my $n = $d->{'numbers'} || {};
 		my $total = &subs::numeric_formatter($n->{'total'});
@@ -257,7 +263,7 @@ sub action_6410 {
 			status => $r->{'status'},
 			timestamp => &subs::numeric_formatter($r->{'timestamp'}),
 			id => $d->{'id'} || '',
-			item => &subs::format_name($d->{'item'} || ''),
+			item => &subs::store_document_item_label($d),
 			total => $total,
 			paid => $paid,
 			balance => $balance,
@@ -473,7 +479,10 @@ sub action_6419 {
 	if (($built->{'payment'}->{'method'} || '') eq 'cash' && $built->{'change'}->{'short'}) {
 		return $c->render(json => { ok => 0, error => 'cash received is less than the total', short => 1, change => $built->{'change'} });
 	}
-	my $sale_id = &quote_id_maker($built->{'data'});
+	my $minted = &subs::store_numbering_mint('invoice');
+	return $c->render(json => { ok => 0, error => ($minted && $minted->{'error'}) || 'could not allocate an invoice number' })
+		unless $minted && !$minted->{'error'} && defined $minted->{'id'};
+	my $sale_id = $minted->{'id'};
 	$built->{'data'}->{'id'} = $sale_id;
 	my $appt = &appointment_writer($c, {
 		app => $app,
@@ -529,6 +538,54 @@ sub action_6420 {
 	}
 	my $printer = &store_printer({ type => 'sale', uuid => $uuid, customer_app => $app });
 	$c->render(text => $c->render_to_string(%{$printer}));
+}
+
+# A peer asks the numbering authority for the next document number. The hub
+# owns the counter; a machine that is not the hub reaches this over the signed
+# relay rail (see subs::store_numbering_relay). A house session may also call
+# it when the hub is opened locally.
+# POST /manager/store/number_mint
+sub action_6421 {
+	my $c = shift;
+	unless ((&subs::device_setter() // '') eq 'server') {
+		return $c->render(json => { ok => 0, error => 'this machine is not the numbering authority' });
+	}
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ((($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
+		|| ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted'))) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	my $minted = &subs::store_numbering_mint_local($c->param('series'));
+	return $c->render(json => { ok => 0, error => 'the series is not ready' }) unless $minted && defined $minted->{'number'};
+	$c->render(json => {
+		ok => 1,
+		series => $minted->{'series'},
+		number => $minted->{'number'},
+		id => $minted->{'id'},
+	});
+}
+
+# A device reserves a block of numbers for use when it cannot reach the hub.
+# The counter advances by the whole block, so no other machine can be given a
+# number in it; the device owns the block row and records how far it has used.
+# POST /manager/store/number_block
+sub action_6422 {
+	my $c = shift;
+	unless ((&subs::device_setter() // '') eq 'server') {
+		return $c->render(json => { ok => 0, error => 'this machine is not the numbering authority' });
+	}
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ((($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
+		|| ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted'))) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	my $block = &subs::store_numbering_block_reserve_local($c->param('series'), $c->param('device') || $signatorial, $c->param('size'));
+	return $c->render(json => { ok => 0, error => 'the series is not ready' }) unless $block;
+	$c->render(json => { ok => 1, %{$block} });
 }
 
 # GET /manager/store/customer_correspondence

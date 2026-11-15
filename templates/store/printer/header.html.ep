@@ -59,7 +59,7 @@
 		<table class="paper_items">
 			<thead>
 				<tr>
-					<th class="paper_item_col"><span class="paper_item_name"><% if (ref $data->{'register'} eq 'HASH' && ref $data->{'register'}->{'items'} eq 'ARRAY' && scalar @{$data->{'register'}->{'items'}}) { %><%= &subs::lang('common.item') %><% } else { %><%= &subs::format_name($data->{'item'}) %><% } %></span></th>
+					<th class="paper_item_col"><span class="paper_item_name"><%= &subs::lang('common.item') %></span></th>
 					<th class="paper_num"><%= &subs::lang('common.quantity') %></th>
 					<th class="paper_num"><%= &subs::lang('common.price') %></th>
 					<th class="paper_num"><%= &subs::lang('store.discount') %></th>
@@ -67,45 +67,35 @@
 				</tr>
 			</thead>
 			<tbody>
-				<% if (ref $data->{'register'} eq 'HASH' && ref $data->{'register'}->{'items'} eq 'ARRAY' && scalar @{$data->{'register'}->{'items'}}) { %>
-					<%# A till receipt may carry many lines; each one prints from the order itself. %>
-					<% foreach my $line ( @{$data->{'register'}->{'items'}} ) { %>
-						<tr>
-							<td class="paper_item_col"><span class="paper_line"><%= &subs::format_name($line->{'name'}) %></span></td>
-							<td class="paper_num"><%= $line->{'quantity'} || 1 %></td>
-							<td class="paper_num"><%= &subs::price_formatter($line->{'price'}) %></td>
-							<td class="paper_num"></td>
-							<td class="paper_num"><%= &subs::price_formatter($line->{'total'}) %></td>
-						</tr>
-					<% } %>
-				<% } else { %>
-					<% my $model = &subs::db_select('model', undef, { app => $data->{'item'}, uuid => $data->{'model'}->{'uuid'} })->hashes->[0]; %>
+				<% foreach my $line ( @{ &subs::store_document_lines($data) } ) { %>
+					<% my $model = ref $line->{'model'} eq 'HASH' ? $line->{'model'} : {}; %>
+					<% my $mdb = &subs::db_select('model', undef, { app => $line->{'item'} || $data->{'item'}, uuid => $model->{'uuid'} })->hashes->[0]; %>
 					<tr>
 						<td class="paper_item_col">
-							<span class="paper_line"><%= &subs::format_name($data->{'model'}->{'name'}) %></span>
-							<% my $mdesc = &subs::article_html_clean($data->{'model'}->{'description'} || $model->{'description'}); %>
+							<span class="paper_line"><%= &subs::format_name($model->{'name'}) %></span>
+							<% my $mdesc = &subs::article_html_clean($model->{'description'} || ($mdb ? $mdb->{'description'} : '')); %>
 							<% if (length $mdesc) { %><div class="paper_desc"><%== $mdesc %></div><% } %>
 						</td>
-						<td class="paper_num"><%= $data->{'model'}->{'quantity'} || 1 %></td>
-						<td class="paper_num"><%= &subs::price_formatter($data->{'model'}->{'price'}) %></td>
-						<td class="paper_num"><%= $data->{'model'}->{'discount'} ? &subs::price_formatter($data->{'model'}->{'discount'} * ($data->{'model'}->{'quantity'} || 1)) : '' %></td>
-						<td class="paper_num"><%= &subs::price_formatter($data->{'model'}->{'price'} * ($data->{'model'}->{'quantity'} || 1)) %></td>
+						<td class="paper_num"><%= $model->{'quantity'} || 1 %></td>
+						<td class="paper_num"><%= &subs::price_formatter($model->{'price'}) %></td>
+						<td class="paper_num"><%= $model->{'discount'} ? &subs::price_formatter($model->{'discount'} * ($model->{'quantity'} || 1)) : '' %></td>
+						<td class="paper_num"><%= &subs::price_formatter($model->{'total'} || ($model->{'price'} * ($model->{'quantity'} || 1))) %></td>
 					</tr>
-				<% } %>
-				<% foreach my $oc ( sort keys %{$data->{'options'}} ) { %>
-					<% foreach my $o ( @{$data->{'options'}->{$oc}} ) { %>
-						<% my $option = &subs::db_select('option', undef, { app => $data->{'item'}, uuid => $o->{'uuid'} })->hashes->[0]; %>
-						<tr>
-							<td class="paper_item_col">
-								<span class="paper_line"><%= &subs::format_name($o->{'name'}) %></span>
-								<% my $odesc = &subs::article_html_clean($o->{'description'} || $option->{'description'}); %>
-								<% if (length $odesc) { %><div class="paper_desc"><%== $odesc %></div><% } %>
-							</td>
-							<td class="paper_num"><%= $o->{'quantity'} || 1 %></td>
-							<td class="paper_num"><%= &subs::price_formatter($o->{'price'}) %></td>
-							<td class="paper_num"><%= $o->{'discount'} ? &subs::price_formatter($o->{'discount'} * ($o->{'quantity'} || 1)) : '' %></td>
-							<td class="paper_num"><%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %></td>
-						</tr>
+					<% foreach my $oc ( sort keys %{ $line->{'options'} || {} } ) { %>
+						<% foreach my $o ( @{ $line->{'options'}->{$oc} || [] } ) { %>
+							<% my $odb = &subs::db_select('option', undef, { app => $line->{'item'} || $data->{'item'}, uuid => $o->{'uuid'} })->hashes->[0]; %>
+							<tr>
+								<td class="paper_item_col">
+									<span class="paper_line"><%= &subs::format_name($o->{'name'}) %></span>
+									<% my $odesc = &subs::article_html_clean($o->{'description'} || ($odb ? $odb->{'description'} : '')); %>
+									<% if (length $odesc) { %><div class="paper_desc"><%== $odesc %></div><% } %>
+								</td>
+								<td class="paper_num"><%= $o->{'quantity'} || 1 %></td>
+								<td class="paper_num"><%= &subs::price_formatter($o->{'price'}) %></td>
+								<td class="paper_num"><%= $o->{'discount'} ? &subs::price_formatter($o->{'discount'} * ($o->{'quantity'} || 1)) : '' %></td>
+								<td class="paper_num"><%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %></td>
+							</tr>
+						<% } %>
 					<% } %>
 				<% } %>
 			</tbody>

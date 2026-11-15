@@ -15,19 +15,22 @@
 				<div class="store_document_head">
 					<div class="store_document_identity">
 						<strong class="store_document_id">#<%= $q->{'id'} %></strong>
-						<span class="store_journal_muted"><%= &subs::format_name($q->{'item'}) %> · <%= &subs::format_name($q->{'model'}->{'name'}) %></span>
+						<span class="store_journal_muted"><%= &subs::store_document_item_label($q) %></span>
 					</div>
 					<div class="store_document_date"><span class="time" mode="fixed" timestamp="<%= $quote->{'timestamp'} %>"></span></div>
 					<div class="store_document_total"><%= &subs::price_formatter($numbers->{'total'}) %></div>
+					<% if ($q->{'superseded_by'}) { %><div class="store_document_superseded"><%= &subs::ui('Superseded') %></div><% } %>
 					<div class="store_document_actions">
 						<img type="<%= $type %>" action="print" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/feeder.png') %>" hint="<%= &subs::lang('common.print') %>" class="medium_thumb print hover">
 						<img type="<%= $type %>" action="email" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="<%= &subs::lang('common.email') %>" class="medium_thumb email hover">
 						<% if ($type eq 'quote') { %>
+							<img cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="<%= &subs::ui('Edit this quote') %>" class="medium_thumb quote_edit hover">
 							<img type="<%= $type %>" action="invoice" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/register.png') %>" hint="<%= &subs::lang('common.invoice') %>" class="medium_thumb quote_move hover">
 						<% } %>
 						<% if ($type eq 'invoice') { %>
-							<img type="<%= $type %>" action="quote" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="<%= &subs::lang('common.quote') %>" class="medium_thumb quote_move hover">
-							<img type="<%= $type %>" action="sale" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" hint="<%= &subs::lang('common.sale') %>" class="medium_thumb quote_move hover">
+							<% if ($q->{'source_quote_uuid'}) { %>
+								<img cx_uuid="<%= $customer->{'value'} %>" source_uuid="<%= $q->{'source_quote_uuid'} %>" src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="<%= &subs::ui('Revise the quote behind this invoice') %>" class="medium_thumb quote_revise hover">
+							<% } %>
 							<% if (scalar @{$crypto_wallets}) { %>
 								<img type="<%= $type %>" cx_uuid="<%= $customer->{'value'} %>" uuid="<%= $quote->{'uuid'} %>" src="<%= &subs::icon_path('wallet', '/images/decipherable/cash.png') %>" hint="Crypto payment" class="medium_thumb crypto_payment hover">
 							<% } %>
@@ -52,49 +55,52 @@
 						</tr>
 					</thead>
 					<tbody>
-						<tr>
-							<td><%= &subs::lang('common.model') %></td>
-							<td><%= &subs::format_name($q->{'model'}->{'name'}) %></td>
-							<td><%= $q->{'model'}->{'quantity'} || 1 %></td>
-							<td><%= $q->{'model'}->{'unit'} %></td>
-							<td><%= &subs::price_formatter($q->{'model'}->{'cost'}) %></td>
-							<td><% if ($q->{'model'}->{'cost'} && $q->{'model'}->{'price'}) { %><%= &subs::percent_formatter(($q->{'model'}->{'price'} / $q->{'model'}->{'cost'}) - 1) %><% } %></td>
-							<td><%= &subs::price_formatter($q->{'model'}->{'price'}) %></td>
-							<td><%= &subs::price_formatter($q->{'model'}->{'tax'}) %></td>
-							<td>
-								<% my $mq = $q->{'model'}->{'quantity'} || 1; %>
-								<% if ($q->{'model'}->{'price'} && $numbers->{'tax_rate'}) { %>
-									<%= &subs::price_formatter(($q->{'model'}->{'price'} + $q->{'model'}->{'tax'}) * $mq) %>
-								<% } else { %>
-									<%= &subs::price_formatter($q->{'model'}->{'price'} * $mq) %>
-								<% } %>
-							</td>
-							<td></td>
-						</tr>
-						<% foreach my $oc ( sort keys %{ $q->{'options'} || {} } ) { %>
-							<% next unless scalar @{ $q->{'options'}->{$oc} || [] } > 0; %>
-							<tr class="store_document_group">
-								<td colspan="10"><%= &subs::format_name($oc) %></td>
+						<% foreach my $line ( @{ &subs::store_document_lines($q) } ) { %>
+							<% my $model = ref $line->{'model'} eq 'HASH' ? $line->{'model'} : {}; %>
+							<tr>
+								<td><%= &subs::lang('common.model') %></td>
+								<td><%= &subs::format_name($model->{'name'}) %></td>
+								<td><%= $model->{'quantity'} || 1 %></td>
+								<td><%= $model->{'unit'} %></td>
+								<td><%= &subs::price_formatter($model->{'cost'}) %></td>
+								<td><% if ($model->{'cost'} && $model->{'price'}) { %><%= &subs::percent_formatter(($model->{'price'} / $model->{'cost'}) - 1) %><% } %></td>
+								<td><%= &subs::price_formatter($model->{'price'}) %></td>
+								<td><%= &subs::price_formatter($model->{'tax'}) %></td>
+								<td>
+									<% my $mq = $model->{'quantity'} || 1; %>
+									<% if ($model->{'price'} && $numbers->{'tax_rate'}) { %>
+										<%= &subs::price_formatter(($model->{'price'} + $model->{'tax'}) * $mq) %>
+									<% } else { %>
+										<%= &subs::price_formatter($model->{'price'} * $mq) %>
+									<% } %>
+								</td>
+								<td></td>
 							</tr>
-							<% foreach my $o ( @{ $q->{'options'}->{$oc} } ) { %>
-								<tr>
-									<td><%= &subs::lang('common.option') %></td>
-									<td><%= &subs::format_name($o->{'name'}) %></td>
-									<td><%= $o->{'quantity'} || 1 %></td>
-									<td><%= $o->{'unit'} %></td>
-									<td><%= &subs::price_formatter($o->{'cost'}) %></td>
-									<td><% if ($o->{'cost'} && $o->{'price'}) { %><%= &subs::percent_formatter(($o->{'price'} / $o->{'cost'}) - 1) %><% } %></td>
-									<td><%= &subs::price_formatter($o->{'price'}) %></td>
-									<td><%= &subs::price_formatter($o->{'tax'}) %></td>
-									<td>
-										<% if ($o->{'price'} && $numbers->{'tax_rate'}) { %>
-											<%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1) * $numbers->{'tax_rate'}) %>
-										<% } else { %>
-											<%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %>
-										<% } %>
-									</td>
-									<td></td>
+							<% foreach my $oc ( sort keys %{ $line->{'options'} || {} } ) { %>
+								<% next unless scalar @{ $line->{'options'}->{$oc} || [] } > 0; %>
+								<tr class="store_document_group">
+									<td colspan="10"><%= &subs::format_name($oc) %></td>
 								</tr>
+								<% foreach my $o ( @{ $line->{'options'}->{$oc} } ) { %>
+									<tr>
+										<td><%= &subs::lang('common.option') %></td>
+										<td><%= &subs::format_name($o->{'name'}) %></td>
+										<td><%= $o->{'quantity'} || 1 %></td>
+										<td><%= $o->{'unit'} %></td>
+										<td><%= &subs::price_formatter($o->{'cost'}) %></td>
+										<td><% if ($o->{'cost'} && $o->{'price'}) { %><%= &subs::percent_formatter(($o->{'price'} / $o->{'cost'}) - 1) %><% } %></td>
+										<td><%= &subs::price_formatter($o->{'price'}) %></td>
+										<td><%= &subs::price_formatter($o->{'tax'}) %></td>
+										<td>
+											<% if ($o->{'price'} && $numbers->{'tax_rate'}) { %>
+												<%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1) * $numbers->{'tax_rate'}) %>
+											<% } else { %>
+												<%= &subs::price_formatter($o->{'price'} * ($o->{'quantity'} || 1)) %>
+											<% } %>
+										</td>
+										<td></td>
+									</tr>
+								<% } %>
 							<% } %>
 						<% } %>
 					</tbody>

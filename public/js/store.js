@@ -676,19 +676,30 @@ $(document).on('change', '.pi', function() {
 });
 
 $(document).on('click', '.quote_move', function() {
+	var a = $(this);
 	var timestamp = Date.now();
-	var uuid = $(this).attr('uuid');
-	var cx_uuid = $(this).attr('cx_uuid');
-	var action = $(this).attr('action');
-	var type = $(this).attr('type');
+	var uuid = a.attr('uuid');
+	var cx_uuid = a.attr('cx_uuid');
+	var action = a.attr('action');
+	var type = a.attr('type');
 	$.ajax({
 		url: '/store/quote/move',
 		type: 'POST',
 		data: { timestamp: timestamp, uuid: uuid, cx_uuid: cx_uuid, action: action, type: type },
 		success: function(response) {
-			customerList(cx_uuid,type);
+			var r = {};
+			try { r = JSON.parse(response); } catch (e) { r = response || {}; }
+			if (r && r.ok) {
+				customerList(cx_uuid, 'invoice');
+				if (typeof storeCartAlert === 'function') {
+					storeCartAlert(storeT('Invoice {0} created.').replace('{0}', r.id || ''));
+				}
+			}
+			else if (typeof storeCartAlert === 'function') {
+				storeCartAlert((r && r.error) || storeT('The invoice could not be created.'));
+			}
 		}
-	});	
+	});
 });
 
 $(document).on('click', '.print', function() {
@@ -746,27 +757,10 @@ $(document).on('click', '#printer_view', function() {
 });
 
 
+// The cart owns the document now; the save icon saves the cart as a quote.
+// (The function lives in store/cart.js, loaded with this script.)
 function storeWriter() {
-	var store = localStorage.getItem('store') || '{ "items": {}, "total_price": 0 }';
-	store = JSON.parse(store);
-	var timestamp = Date.now();
-	var total_price = 0;
-	var q = saveQuote();
-	var quote = JSON.stringify(q);
-	$.ajax({
-		url: '/store/quote/save',
-		type: 'POST',
-		data: { quote: quote, movement: q['movement'], timestamp: timestamp, item: q.item, uuid: q.uuid, cx: cx_uuid },
-		success: function(response) {
-			if (!response.error) {
-				$('.item').attr('quote_uuid', response['quote']['uuid']);
-				$('.item').attr('quote_id', response['quote']['id']);
-			}
-		}
-	});
-
-	localStorage.setItem('store', JSON.stringify(store));
-	$('#total_price').text(total_price);
+	storeCartSaveQuote();
 }
 
 $(document).on('click', '.quote_title', function() { 

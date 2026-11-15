@@ -54,6 +54,12 @@
 				</select>
 			</label>
 			<button type="button" id="store_clear_filters" class="store_text_button"><%= &subs::lang('home.clear') %></button>
+<% if ($citizen) { %>
+			<button type="button" id="store_cart_open" class="store_text_button store_cart_open_button">
+				<img src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" alt="">
+				<span><%= &subs::ui('Cart') %> <span id="store_cart_count">0</span></span>
+			</button>
+<% } %>
 			<button type="button" id="store_register_open" class="store_text_button store_register_open_button">
 				<img src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" alt="">
 				<span><%= &subs::lang('common.register') %></span>
@@ -109,6 +115,27 @@
 		</footer>
 	<% } %>
 <div id="main_viewer" class="store_viewer"></div>
+<% if ($citizen) { %>
+<div id="store_cart_panel" class="store_cart_panel" data-open="no" style="display:none;" role="dialog" aria-label="<%= &subs::ui('Cart') %>">
+	<header class="store_cart_header">
+		<h2><%= &subs::ui('Cart') %> <span id="store_cart_quote_id" class="store_cart_id"></span></h2>
+		<button type="button" id="store_cart_close" class="store_text_button"><%= &subs::lang('common.close') %></button>
+	</header>
+	<div id="store_cart_lines" class="store_cart_lines"></div>
+	<div class="store_cart_totals">
+		<span><%= &subs::ui('Subtotal') %> <b id="store_cart_subtotal">$0.00</b></span>
+		<span><%= &subs::lang('common.tax') %> <b id="store_cart_tax">$0.00</b></span>
+		<span><%= &subs::lang('common.total') %> <b id="store_cart_total">$0.00</b></span>
+	</div>
+	<div class="store_cart_actions">
+		<button type="button" id="store_cart_save" class="store_text_button"><%= &subs::ui('Save quote') %></button>
+		<button type="button" id="store_cart_invoice" class="store_text_button" style="display:none;"><%= &subs::ui('Create invoice') %></button>
+		<button type="button" id="store_cart_clear" class="store_text_button"><%= &subs::ui('Clear') %></button>
+	</div>
+	<div id="store_cart_status" class="store_cart_status" role="status" style="display:none;"></div>
+</div>
+<% } %>
+
 <div id="register_app" class="store_register_app"></div>
 </div>
 

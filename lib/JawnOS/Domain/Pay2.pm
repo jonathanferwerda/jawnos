@@ -232,7 +232,10 @@ sub pay_interac_parse {
 	elsif ($text =~ /([A-Z][A-Za-z0-9 .'-]{1,70})\s+(?:(?:has\s+)?sent you|vous a envoyé)\s+\$?[0-9]/) { $sender = $1; }
 	$sender =~ s/^\s+|\s+$//g;
 	my $reference = '';
-	$reference = $1 if $text =~ /(?:Reference|Numéro de référence)\s*(?:Number|No\.?)?\s*:?\s*([A-Z0-9]{6,})/i;
+	# The house's invoice numbers start at 1001, so a four-character reference is
+	# valid. The label above is what keeps a year or an amount from being read as
+	# one, so the floor is the label, not the length.
+	$reference = $1 if $text =~ /(?:Reference|Numéro de référence)\s*(?:(?:Number|No\.?)\s*)?:?\s*((?!Number\b|No\b)[A-Z0-9]{4,})/i;
 	my $memo = '';
 	$memo = $1 if $text =~ /(?:Message|Memo)\s*:?\s*(.{0,200}?)(?:\s+Reference\s|\s+Numéro de référence\s|\s+To deposit\s|\s+Pour déposer\s|\s+Autodeposit\s|\s+Dépôt automatique\s|\s+You can deposit\s|$)/i;
 	$memo =~ s/^\s+|\s+$//g;

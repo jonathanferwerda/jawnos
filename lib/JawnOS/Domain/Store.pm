@@ -16,6 +16,7 @@ use warnings;
 use utf8;
 
 use POSIX ();
+use Mojo::JSON qw(decode_json encode_json);
 
 our %REGISTER_ORDERS;
 our $REGISTER_ORDER_SEQ = 0;
@@ -371,6 +372,252 @@ sub store_register_sale_data {
 			change => $cash->{'change'},
 		},
 	};
+}
+
+# ---- document numbering -----------------------------------------------------
+# A document's id is a human label, not its identity: the appointment uuid is
+# what refers to it. Invoices and sales share one series (a sale is an invoice
+# at the till); quotes have their own, so an invoice number is never spent on a
+# quote that was never accepted. Both start at 1001.
+my %NUMBERING_SERIES = (
+	invoice => { start => 1001, prefix => '' },
+	quote   => { start => 1001, prefix => 'Q-' },
+);
+
+sub store_numbering_series {
+	my ($series) = @_;
+	$series = lc(defined $series ? $series : '');
+	return exists $NUMBERING_SERIES{$series} ? $series : 'invoice';
+}
+
+sub store_numbering_format {
+	my ($series, $number) = @_;
+	my $key = &store_numbering_series($series);
+	return '' unless defined $number && $number =~ /^\d+$/;
+	return $NUMBERING_SERIES{$key}->{'prefix'} . ($number + 0);
+}
+
+sub store_numbering_row {
+	my ($series) = @_;
+	my $key = &store_numbering_series($series);
+	my $q = &db_select('numbering', undef, { series => $key });
+	my $row = $q ? $q->hashes->[0] : undef;
+	unless ($row) {
+		my $now = &rightNow();
+		&db_insert('numbering', {
+			uuid => 'numbering:' . $key,
+			series => $key,
+			next_number => $NUMBERING_SERIES{$key}->{'start'},
+			block_size => 100,
+			timestamp => $now,
+			server_time => $now,
+		});
+		my $again = &db_select('numbering', undef, { series => $key });
+		$row = $again ? $again->hashes->[0] : undef;
+		$row ||= { series => $key, next_number => $NUMBERING_SERIES{$key}->{'start'} };
+	}
+	return $row;
+}
+
+# The machine that owns the counter. A server mints locally; every other machine
+# asks its server over the relay. A house with no server row has no authority:
+# it falls back to whatever block it already holds.
+sub store_numbering_hub {
+	return undef if (&device_setter() // '') eq 'server';
+	my $q = &db_select('remote_machines', undef, { device => 'server' });
+	my @rows = $q ? @{ $q->hashes || [] } : ();
+	return undef unless scalar @rows;
+	my ($active) = grep { ($_->{'connection'} // '') eq 'active' } @rows;
+	return $active || $rows[0];
+}
+
+sub store_numbering_relay {
+	my ($path, $params) = @_;
+	my $hub = &store_numbering_hub();
+	return undef unless $hub;
+	$params = {} unless ref $params eq 'HASH';
+	$params->{'signatorial'} = &signatorial_designer();
+	my $body = eval {
+		return &relay_headless({
+			path => $path,
+			method => 'POST',
+			remote_uuid => $hub->{'uuid'},
+			params => $params,
+			expect_json => 1,
+		});
+	};
+	return undef unless defined $body && $body =~ /^\s*\{/;
+	my $json = eval { decode_json $body } || {};
+	return ref $json eq 'HASH' ? $json : undef;
+}
+
+sub store_numbering_mint_local {
+	my ($series) = @_;
+	my $key = &store_numbering_series($series);
+	&store_numbering_row($key);
+	my $now = &rightNow();
+	my $q = &db_query('update numbering set next_number = next_number + 1, server_time = ?, timestamp = ? where series = ? returning next_number as after_next', $now, $now, $key);
+	my $row = $q ? $q->hash : undef;
+	return undef unless $row && defined $row->{'after_next'};
+	my $number = $row->{'after_next'} + 0 - 1;
+	return { series => $key, number => $number, id => &store_numbering_format($key, $number) };
+}
+
+sub store_numbering_block_reserve_local {
+	my ($series, $device, $size) = @_;
+	my $key = &store_numbering_series($series);
+	$size = 100 unless defined $size && $size =~ /^\d+$/ && $size > 0;
+	$size = 1000 if $size > 1000;
+	&store_numbering_row($key);
+	my $now = &rightNow();
+	my $q = &db_query('update numbering set next_number = next_number + ?, server_time = ?, timestamp = ? where series = ? returning next_number as after_next', $size, $now, $now, $key);
+	my $row = $q ? $q->hash : undef;
+	return undef unless $row && defined $row->{'after_next'};
+	my $after = $row->{'after_next'} + 0;
+	return {
+		series => $key,
+		device => defined $device ? $device : '',
+		from => $after - $size,
+		to => $after - 1,
+		size => $size,
+	};
+}
+
+sub store_numbering_block_rows {
+	my ($series) = @_;
+	my $key = &store_numbering_series($series);
+	my $sig = &signatorial_designer();
+	my $q = &db_query('select * from number_blocks where series = ? and device = ? order by from_number asc', $key, $sig);
+	return $q ? ( $q->hashes || [] ) : [];
+}
+
+sub store_numbering_block_remaining {
+	my ($series) = @_;
+	my $key = &store_numbering_series($series);
+	my $sig = &signatorial_designer();
+	my $q = &db_query('select coalesce(sum(case when used <= to_number then to_number - used + 1 else 0 end),0) as left from number_blocks where series = ? and device = ?', $key, $sig);
+	my $row = $q ? $q->hash : undef;
+	return ($row && defined $row->{'left'}) ? $row->{'left'} + 0 : 0;
+}
+
+sub store_numbering_block_take {
+	my ($series) = @_;
+	my $key = &store_numbering_series($series);
+	my $sig = &signatorial_designer();
+	my $now = &rightNow();
+	my $q = &db_query('update number_blocks set used = used + 1, server_time = ?, timestamp = ? where uuid = (select uuid from number_blocks where series = ? and device = ? and used <= to_number order by used asc limit 1) and used <= to_number returning used as after_used', $now, $now, $key, $sig);
+	my $row = $q ? $q->hash : undef;
+	return undef unless $row && defined $row->{'after_used'};
+	my $number = $row->{'after_used'} + 0 - 1;
+	return { series => $key, number => $number, id => &store_numbering_format($key, $number), offline => 1 };
+}
+
+sub store_numbering_block_ensure {
+	my ($series) = @_;
+	my $key = &store_numbering_series($series);
+	return undef if (&device_setter() // '') eq 'server';
+	my ($open) = grep { ($_->{'used'} // 0) + 0 <= ($_->{'to_number'} // 0) + 0 } @{ &store_numbering_block_rows($key) };
+	return 1 if $open;
+	my $sig = &signatorial_designer();
+	my $answer = &store_numbering_relay('/manager/store/number_block', { series => $key, device => $sig, size => 100 });
+	return 0 unless $answer && $answer->{'ok'} && defined $answer->{'from'} && defined $answer->{'to'};
+	my $now = &rightNow();
+	&db_insert('number_blocks', {
+		uuid => &random_string_creator(25),
+		series => $key,
+		device => $sig,
+		from_number => $answer->{'from'} + 0,
+		to_number => $answer->{'to'} + 0,
+		used => $answer->{'from'} + 0,
+		timestamp => $now,
+		server_time => $now,
+	});
+	return 1;
+}
+
+# Mint one document number. The hub is asked first; a device that cannot reach
+# it takes from its reserved block. The block is reserved after a successful
+# online mint, so a machine that has written an invoice online carries 100
+# numbers into a place with no network. If the hub is away and no block is left,
+# the caller must not write a document: a duplicate is worse than a retry.
+sub store_numbering_mint {
+	my ($series) = @_;
+	my $key = &store_numbering_series($series);
+	if ((&device_setter() // '') eq 'server') {
+		return &store_numbering_mint_local($key);
+	}
+	my $answer = &store_numbering_relay('/manager/store/number_mint', { series => $key });
+	if ($answer && $answer->{'ok'} && defined $answer->{'number'}) {
+		&store_numbering_block_ensure($key);
+		my $number = $answer->{'number'} + 0;
+		return { series => $key, number => $number, id => $answer->{'id'} || &store_numbering_format($key, $number) };
+	}
+	my $offline = &store_numbering_block_take($key);
+	return $offline if $offline;
+	return { series => $key, error => 'the numbering authority could not be reached and no reserved block is left' };
+}
+
+# ---- document lines ---------------------------------------------------------
+# A document's lines. A quote/invoice built before multi-line support has one
+# model and its options; a register sale has register.items. Everything that
+# reads a document asks here, so the old shapes keep working while new
+# documents write lines.
+sub store_document_lines {
+	my ($data) = @_;
+	return [] unless ref $data eq 'HASH';
+	if (ref $data->{'lines'} eq 'ARRAY' && scalar @{$data->{'lines'}}) {
+		return [ grep { ref $_ eq 'HASH' } @{$data->{'lines'}} ];
+	}
+	my $register = ref $data->{'register'} eq 'HASH' ? $data->{'register'} : undef;
+	if ($register && ref $register->{'items'} eq 'ARRAY' && scalar @{$register->{'items'}}) {
+		return [ map {
+			{
+				item => $_->{'item'} || '',
+				model => {
+					name => $_->{'name'} || '',
+					price => $_->{'price'} || 0,
+					quantity => $_->{'quantity'} || 1,
+					total => $_->{'total'} || 0,
+				},
+				options => {},
+			}
+		} grep { ref $_ eq 'HASH' } @{$register->{'items'}} ];
+	}
+	my $model = ref $data->{'model'} eq 'HASH' ? $data->{'model'} : {};
+	my $options = ref $data->{'options'} eq 'HASH' ? $data->{'options'} : {};
+	return [ { item => $data->{'item'} || '', model => $model, options => $options } ];
+}
+
+# The item and quantity a document's stock movement should carry, one per line.
+# For a register sale the line's `item` is the store app; for a quote it is the
+# line's own item. A line with no item cannot move stock.
+sub store_document_stock_lines {
+	my ($data) = @_;
+	my @out;
+	foreach my $line ( @{ &store_document_lines($data) } ) {
+		my $item = $line->{'item'} || '';
+		next unless defined $item && length $item;
+		my $model = ref $line->{'model'} eq 'HASH' ? $line->{'model'} : {};
+		my $quantity = &store_register_number($model->{'quantity'});
+		$quantity = 1 if $quantity <= 0;
+		push @out, {
+			item => $item,
+			quantity => $quantity,
+			unit => $model->{'unit'} || '',
+			model => $model->{'uuid'} || '',
+		};
+	}
+	return \@out;
+}
+
+sub store_document_item_label {
+	my ($data) = @_;
+	my @names;
+	foreach my $line ( @{ &store_document_lines($data) } ) {
+		my $name = ref $line->{'model'} eq 'HASH' ? ($line->{'model'}->{'name'} || '') : '';
+		push @names, $name if length $name;
+	}
+	return join(' · ', @names);
 }
 
 1;

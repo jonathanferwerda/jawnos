@@ -223,6 +223,38 @@ sub _num {
 	return $value;
 }
 
+sub _document_line_rows {
+	my ($model, $options) = @_;
+	my @out;
+	$model = {} unless ref $model eq 'HASH';
+	my $qty = _num($model->{'quantity'}, 1);
+	push @out, {
+		name        => _display_name($model->{'name'}),
+		description => _plain($model->{'description'}),
+		qty         => $qty,
+		price       => _num($model->{'price'}, 0),
+		discount    => _num($model->{'discount'}, 0) * $qty,
+		total       => _num($model->{'price'}, 0) * $qty,
+		uuid        => $model->{'uuid'} || '',
+	};
+	$options = {} unless ref $options eq 'HASH';
+	for my $category (sort keys %{$options}) {
+		next unless ref $options->{$category} eq 'ARRAY';
+		for my $option (@{$options->{$category}}) {
+			my $oqty = _num($option->{'quantity'}, 1);
+			push @out, {
+				name        => _display_name($option->{'name'}),
+				description => _plain($option->{'description'}),
+				qty         => $oqty,
+				price       => _num($option->{'price'}, 0),
+				discount    => _num($option->{'discount'}, 0) * $oqty,
+				total       => _num($option->{'price'}, 0) * $oqty,
+			};
+		}
+	}
+	return @out;
+}
+
 sub _register_lines {
 	my ($data) = @_;
 	my @lines;
@@ -240,33 +272,15 @@ sub _register_lines {
 		}
 		return @lines;
 	}
-	my $model = ref $data->{'model'} eq 'HASH' ? $data->{'model'} : {};
-	my $qty = _num($model->{'quantity'}, 1);
-	push @lines, {
-		name        => _display_name($model->{'name'}),
-		description => _plain($model->{'description'}),
-		qty         => $qty,
-		price       => _num($model->{'price'}, 0),
-		discount    => _num($model->{'discount'}, 0) * $qty,
-		total       => _num($model->{'price'}, 0) * $qty,
-		uuid        => $model->{'uuid'} || '',
-	};
-	my $options = ref $data->{'options'} eq 'HASH' ? $data->{'options'} : {};
-	for my $category (sort keys %{$options}) {
-		next unless ref $options->{$category} eq 'ARRAY';
-		for my $option (@{$options->{$category}}) {
-			my $oqty = _num($option->{'quantity'}, 1);
-			push @lines, {
-				name        => _display_name($option->{'name'}),
-				description => _plain($option->{'description'}),
-				qty         => $oqty,
-				price       => _num($option->{'price'}, 0),
-				discount    => _num($option->{'discount'}, 0) * $oqty,
-				total       => _num($option->{'price'}, 0) * $oqty,
-			};
+	my $document_lines = ref $data->{'lines'} eq 'ARRAY' ? $data->{'lines'} : [];
+	if (scalar @{$document_lines}) {
+		for my $line (@{$document_lines}) {
+			next unless ref $line eq 'HASH';
+			push @lines, _document_line_rows($line->{'model'}, $line->{'options'});
 		}
+		return @lines;
 	}
-	return @lines;
+	return _document_line_rows($data->{'model'}, $data->{'options'});
 }
 
 sub model {

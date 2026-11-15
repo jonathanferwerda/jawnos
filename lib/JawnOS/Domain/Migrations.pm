@@ -724,7 +724,42 @@ sub update_database($data) {
 		'DROP INDEX IF EXISTS idx6_appts',
 		'DROP INDEX IF EXISTS idx3_continent',
 		'DROP INDEX IF EXISTS idx4_continent',
-		'DROP INDEX IF EXISTS idx5_continent'
+		'DROP INDEX IF EXISTS idx5_continent',
+		# Document numbering: one monotonic series per kind. The hub mints from
+		# next_number; a device that is offline takes from a block the hub reserved
+		# for it (number_blocks), so a phone in a cement building can still write an
+		# invoice without sharing a number with anyone. The fixed uuid is deliberate:
+		# one row has the same uuid on every machine, so the ordinary uuid merge has
+		# one row to compare rather than two rows to reconcile.
+		'create table if not exists numbering (
+			uuid VARCHAR(255) unique,
+			series VARCHAR(50) unique,
+			next_number INTEGER,
+			block_size INTEGER,
+			timestamp VARCHAR(25),
+			server_time VARCHAR(500),
+			ost VARCHAR(25)
+		)',
+		'create table if not exists number_blocks (
+			uuid VARCHAR(255) unique,
+			series VARCHAR(50),
+			device VARCHAR(255),
+			from_number INTEGER,
+			to_number INTEGER,
+			used INTEGER,
+			timestamp VARCHAR(25),
+			server_time VARCHAR(500),
+			ost VARCHAR(25)
+		)',
+		# A device can only own one block at a given first number; a retried reserve
+		# therefore cannot create a second row for the same range.
+		'create unique index if not exists idx1_number_blocks on number_blocks (series, device, from_number)',
+		'create index if not exists idx2_number_blocks on number_blocks (series, device, used)',
+		# The first invoice and the first quote are 1001. next_number is the number
+		# the next allocation returns, so minting subtracts one from the advanced
+		# value (and a block subtracts its size).
+		"insert or ignore into numbering (uuid, series, next_number, block_size, timestamp, server_time, ost) values ('numbering:invoice', 'invoice', 1001, 100, " . &rightNow() . ", " . &rightNow() . ", " . &rightNow() . ")",
+		"insert or ignore into numbering (uuid, series, next_number, block_size, timestamp, server_time, ost) values ('numbering:quote', 'quote', 1001, 100, " . &rightNow() . ", " . &rightNow() . ", " . &rightNow() . ")"
 	];
 	foreach my $t ( qw/model option option_category subcategory/) {
 		foreach my $h ( qw/month day hour wday/ ) {

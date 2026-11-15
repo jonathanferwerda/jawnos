@@ -169,6 +169,7 @@ our @manager_bundle_files = qw(
 	/js/device.js
 	/js/manager/tasks.js
 	/js/store.js
+	/js/store/cart.js
 	/js/manager/twirl.js
 	/js/manager/transaction.js
 	/js/manager/time_preview.js
@@ -235,7 +236,7 @@ our %manager_app_scripts = (
 	sound            => [qw(/js/manager/sound.js)],
 	search          => [qw(/js/manager/search.js)],
 	ide             => [qw(/js/manager/ide.js /js/manager/ide_code.js)],
-	store           => [qw(/js/store.js)],
+	store           => [qw(/js/store.js /js/store/cart.js)],
 	email           => [qw(/js/manager/email.js)],
 	packages        => [qw(/js/manager/packages.js)],
 );

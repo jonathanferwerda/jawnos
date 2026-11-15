@@ -64,16 +64,17 @@ $topic{'sealing_files'} = {
 		related => [ 'folders', 'security', 'mailbox' ]
 	};
 $topic{'invoices_payments'} = {
-		title => 'Invoices and payments', category => 'functions',
+		title => 'Invoices and payments', category => 'functions', verified => '2026-11-15',
 		summary => 'A document that closes itself when it is paid.',
 		body => [
-			'A quote or invoice is built from store items and prints to a house-styled sheet. Recording a payment against it writes the matching income transaction and pushes a payment onto the document, updating the balance and closing it when the balance reaches zero.',
+			'A quote or invoice is built from store items and prints to a house-styled sheet. A quote is the working copy and can be edited: add, change or remove its lines in the cart. An invoice is a snapshot of the quote, not the same record: issuing one gives it its own number, leaves the quote in place, and keeps the earlier invoice as the reference (marked superseded) when the quote is issued again. Recording a payment against an invoice writes the matching income transaction and pushes a payment onto the document, updating the balance and closing it when the balance reaches zero.',
 			'Deleting that transaction unwinds the payment: the balance goes back up, and a document that had closed reopens.',
 			'An unpaid invoice\'s public page also carries the online ways to settle it when Configure -> Plat -> Pay has a method ready: a hosted checkout for cards or PayPal, and the e-Transfer address with the invoice reference. The buttons are on the public page only; the printed sheet and the emailed attachment carry the QR that opens it.'
 		],
 		steps => [
-			'Build the document in Store from items and options.',
-			'Move a quote to an invoice when it is accepted.',
+			'Build the document in Store from items and options. A cart can hold as many lines as the customer needs, each with its own options.',
+			'When the quote is accepted, issue an invoice from it. The quote stays editable, so a later change is made there and issued again.',
+			'The invoice number is a house series starting at 1001; the hub mints it, and a device with no network uses a block of 100 it reserved, so a number can skip when that device was offline.',
 			'Send or print the invoice; its QR opens the public page, where a ready online method can be used.',
 			'Record a payment against it, or let the provider\'s return or webhook record an online one; the balance falls.',
 			'At zero it closes. Delete the payment\'s transaction and it reopens, balance restored.'

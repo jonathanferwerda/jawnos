@@ -174,6 +174,27 @@ sub merge_table_rows {
 			}
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
+							# A document number only ever moves forward. The hub is the only
+							# writer of next_number, but a peer's copy can still be older than
+							# ours (or arrive after a restore); taking the larger value means a
+							# number the hub already issued is never issued again. A plain
+							# newer-wins upsert would let 1005 overwrite 1012.
+							if ($q eq 'numbering') {
+								my $peer_next = ($r->{'next_number'} // 0) + 0;
+								my $local_next = ($h && defined $h->{'next_number'}) ? $h->{'next_number'} + 0 : 0;
+								if ($peer_next > $local_next) {
+									my $now = &subs::rightNow();
+									if ($h) {
+										&subs::db_update('numbering', { next_number => $peer_next, server_time => $now, timestamp => $now }, { uuid => $r->{'uuid'} });
+										$rows_updated++;
+									}
+									else {
+										&subs::db_insert('numbering', $r);
+										$rows_inserted++;
+									}
+								}
+								next ROW;
+							}
 							next ROW if ($q eq 'appointments' || $q eq 'mailbox') && $tombstone_single{$r->{'uuid'}};
 							$percentage = $results_size ? sprintf("%.2f", $n / $results_size * 100) : 0;
 							if ($sync_job && &subs::rightNow() >= ($job_alert + 250)) {

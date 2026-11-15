@@ -548,44 +548,33 @@ sub store_item_merchandiser($items,$types) {
 }
 
 sub quote_id_maker($quote) {
-	my $server_time = &subs::rightNow();
-	my $time = localtime($server_time / 1000);
-
-	my $id = ($time->[4] + 1) . ($time->[3]) . ($time->[5] + 1900);
-	my $today_quotes = &subs::db_query('select type,data,uuid from appointments where ( type=? or type=? or type=? or type=? ) and timestamp > ? and timestamp < ? order by server_time',
-		'order','invoice','quote','purchase', &subs::ago_calc('1d',$server_time), &subs::ago_calc('-1d',$server_time))->hashes;
-	my $quote_number = 1;
-
-	foreach my $q ( @{$today_quotes} ) {
-		my $qd = eval { return decode_json $q->{'data'} } || {};
-		my @qid = split '-', $qd->{'id'};
-		$quote_number = $qid[1] + 1 unless $quote_number > $qid[1] + 1;
-	}
-
-	$id .= '-' . $quote_number . &subs::shorthand_name(&subs::signatorial_designer(),3);
-	return $id;
+	# The date and the signatorial are gone: a document number is a plain,
+	# house-wide sequence now. Kept as the old entry point for a caller that has
+	# not moved to store_numbering_mint; the invoice series is the default.
+	my $minted = &subs::store_numbering_mint('invoice');
+	return ($minted && !$minted->{'error'}) ? ($minted->{'id'} || '') : '';
 }
 
 # Move the stock a quote/invoice/sale represents through the warehouse. $sign
 # is +1 to apply the movement and -1 to reverse it (when the document is
-# deleted or moved back to a quote). Only fires when the item has a place.
+# deleted or superseded). Only fires when the line names an item that has a
+# place. A document can carry several lines now; each one moves its own store
+# item and its own quantity, so a cart of different products is not one
+# quantity smeared across all of them.
 sub store_quote_stock($appt,$sign) {
 	return unless $appt && $appt->{'data'};
-	my $q = eval { return decode_json $appt->{'data'} } || {};
-	return unless $q->{'item'};
+	my $q = eval { decode_json $appt->{'data'} } || {};
 	return unless ($q->{'movement'} eq 'income' || $q->{'movement'} eq 'expense');
-	my $place = &subs::warehouse_place_for($appt->{'app'}, $q->{'item'});
-	return unless $place;
-	my $quantity = &subs::numeric_formatter($q->{'model'}->{'quantity'} || 1) + 0;
 	my $signed = ($q->{'movement'} eq 'income') ? -1 : 1;
-	foreach my $i ( split ',', $q->{'item'} ) {
-		next unless $i;
+	foreach my $line ( @{ &subs::store_document_stock_lines($q) } ) {
+		my $place = &subs::warehouse_place_for($appt->{'app'}, $line->{'item'});
+		next unless $place;
 		&subs::warehouse_movement({
-			item => $i,
-			quantity => $quantity * $signed * $sign,
-			unit => $q->{'model'}->{'unit'},
+			item => $line->{'item'},
+			quantity => $line->{'quantity'} * $signed * $sign,
+			unit => $line->{'unit'},
 			place => $place,
-			model => $q->{'model'}->{'uuid'},
+			model => $line->{'model'},
 			timestamp => $appt->{'timestamp'},
 			app_uuid => $appt->{'uuid'},
 			type => 'stock',

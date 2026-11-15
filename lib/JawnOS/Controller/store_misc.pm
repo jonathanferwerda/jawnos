@@ -304,24 +304,67 @@ sub action_6055 {
 		return $c->rendered(403);
 	}
 	my $timestamp = $c->param('timestamp');
-	my $item = $c->param('item');
-	my $quote_uuid = $c->param('uuid');
-	my $cx = $c->param('cx');
 	my $movement = $c->param('movement');
-	if ($cx) {
-		my $quote = eval { return decode_json $c->param('quote') } || { info => {}, options => [], model => {}, numbers => {}};
-
-		my $customer_s = &subs::db_select('settings', undef, { setting => 'uuid', value => $cx })->hashes->[0];
-		my $s = &subs::settings_grabber({ app => $customer_s->{'app'} });
-		$quote->{'id'} = &quote_id_maker($quote);# unless $quote->{'id'};
-		my $jquote = encode_json $quote;
-		&appointment_writer($c, { data => $jquote, movement => $movement, app => $customer_s->{'app'}, duration => &subs::time_abbrev_translator('10s'), timestamp => $timestamp, type => 'quote' });
-
-		$c->render(json => { quote => $quote });
+	my $cx = $c->param('cx');
+	my $quote_uuid = $c->param('uuid');
+	return $c->render(json => { error => 'no customer' }) unless $cx;
+	my $customer_s = &subs::db_select('settings', undef, { setting => 'uuid', value => $cx })->hashes->[0];
+	my $app = $customer_s->{'app'};
+	return $c->render(json => { error => 'no customer' }) unless defined $app && length $app;
+	my $quote = eval { decode_json $c->param('quote') } || { info => {}, lines => [], options => [], model => {}, numbers => {}};
+	# A quote is the working copy. Saving it again updates that quote and keeps
+	# its number; an invoice is never written through this route.
+	my $existing;
+	if (defined $quote_uuid && length $quote_uuid && $quote_uuid ne 'new') {
+		$existing = &subs::db_select('appointments', undef, { uuid => $quote_uuid, app => $app })->hashes->[0];
+		return $c->render(json => { error => 'that document is not a quote' })
+			if $existing && ($existing->{'type'} || '') ne 'quote';
+	}
+	my $id = '';
+	if ($existing) {
+		my $old = eval { decode_json $existing->{'data'} } || {};
+		$id = $old->{'id'} || '';
+	}
+	unless (length $id) {
+		my $minted = &subs::store_numbering_mint('quote');
+		return $c->render(json => { error => ($minted && $minted->{'error'}) || 'could not allocate a quote number' })
+			unless $minted && !$minted->{'error'} && defined $minted->{'id'};
+		$id = $minted->{'id'};
+	}
+	$quote->{'id'} = $id;
+	$quote->{'type'} = 'quote';
+	$quote->{'timestamp'} = ($quote->{'timestamp'} && $quote->{'timestamp'} =~ /^\d+$/) ? $quote->{'timestamp'} : ($timestamp || &subs::rightNow());
+	my $lines = (ref $quote->{'lines'} eq 'ARRAY' && scalar @{$quote->{'lines'}}) ? $quote->{'lines'} : [];
+	if (scalar @{$lines} && (!defined $quote->{'item'} || !length $quote->{'item'})) {
+		$quote->{'item'} = $lines->[0]->{'item'} || '';
+	}
+	my $item_label = &subs::store_document_item_label($quote);
+	my $jquote = encode_json $quote;
+	my $server_time = &subs::rightNow();
+	if ($existing) {
+		&subs::db_update('appointments', {
+			data => $jquote,
+			item => $item_label,
+			movement => $movement,
+			timestamp => $quote->{'timestamp'},
+			server_time => $server_time,
+			status => 'open',
+		}, { uuid => $existing->{'uuid'}, app => $app });
+		$quote->{'uuid'} = $existing->{'uuid'};
 	}
 	else {
-		$c->render(json => { error => 'no customer' });
+		my $appt = &appointment_writer($c, {
+			data => $jquote,
+			item => $item_label,
+			movement => $movement,
+			app => $app,
+			duration => &subs::time_abbrev_translator('10s'),
+			timestamp => $quote->{'timestamp'},
+			type => 'quote',
+		});
+		$quote->{'uuid'} = $appt->{'uuid'} || '';
 	}
+	$c->render(json => { quote => $quote });
 }
 
 # POST /store/quote/delete
@@ -345,13 +388,22 @@ sub action_6126 {
 	# deleting a sale/invoice puts the stock back (or takes it back out)
 	if ($type eq 'invoice' || $type eq 'sale') {
 		my $appt = &subs::db_select('appointments', undef, $data)->hashes->[0];
-		&store_quote_stock($appt, -1);
+		my $qd = $appt ? (eval { decode_json $appt->{'data'} } || {}) : {};
+		# A superseded invoice already had its stock taken back when its
+		# replacement was issued; a second reversal would count it twice.
+		&store_quote_stock($appt, -1) unless $qd->{'stock_reversed'};
 	}
 	&delete_app($customer_s->{'app'},$uuid,$server_time,'quote_delete');
 	$c->render(text => $data);
 }
 
 # POST /store/quote/move
+#
+# A quote is the working copy; an invoice is a snapshot of it. The two do not
+# share a row: issuing an invoice writes a new document with its own number and
+# leaves the quote where it is, so editing the quote and issuing again gives a
+# second invoice while the first stays as the reference. An invoice is never
+# moved back to a quote - that is what editing the quote is for.
 sub action_6143 {
 	my $c = shift;
 	# A shop's documents change here. cx_uuid is printed into the public
@@ -366,40 +418,76 @@ sub action_6143 {
 	my $cx_uuid = $c->param('cx_uuid');
 	my $uuid = $c->param('uuid');
 	my $action = $c->param('action');
-	my $type = $c->param('type');
 	my $customer_s = &subs::db_select('settings', undef, { setting => 'uuid', value => $cx_uuid })->hashes->[0];
-
-
-
-	my $data = { type => $type, app => $customer_s->{'app'}, uuid => $uuid };
-	my $appt = &subs::db_select('appointments', undef, $data)->hashes->[0];
-	return $c->render(text => 'no document') unless $appt;
-	my $was = $appt->{'type'};
-	my $source_server_time = $appt->{'server_time'};
-	if ($action eq 'invoice' && $appt->{'type'} eq 'quote') {
-		my $d = eval { return decode_json $appt->{'data'} };
-		$d->{'numbers'}->{'balance'} = $d->{'numbers'}->{'total'};
-		$appt->{'data'} = encode_json $d;
+	my $app = $customer_s->{'app'};
+	return $c->render(text => 'no customer') unless defined $app && length $app;
+	my $source = &subs::db_select('appointments', undef, { type => 'quote', app => $app, uuid => $uuid })->hashes->[0];
+	return $c->render(text => 'no quote') unless $source;
+	return $c->render(text => 'an invoice is created from a quote') unless $action eq 'invoice';
+	my $quote = eval { decode_json $source->{'data'} } || {};
+	my $minted = &subs::store_numbering_mint('invoice');
+	return $c->render(text => ($minted && $minted->{'error'}) || 'could not allocate an invoice number', status => 500)
+		unless $minted && !$minted->{'error'} && defined $minted->{'id'};
+	my $invoice = eval { decode_json encode_json $quote } || {};
+	my $now = &subs::rightNow();
+	$invoice->{'id'} = $minted->{'id'};
+	$invoice->{'type'} = 'invoice';
+	$invoice->{'source_quote_uuid'} = $source->{'uuid'};
+	$invoice->{'source_quote_id'} = $quote->{'id'} || '';
+	$invoice->{'timestamp'} = $now;
+	$invoice->{'numbers'} = {} unless ref $invoice->{'numbers'} eq 'HASH';
+	$invoice->{'numbers'}->{'balance'} = $invoice->{'numbers'}->{'total'} || 0;
+	$invoice->{'payments'} = [];
+	my $new_uuid = &subs::random_string_creator(25);
+	my $row = {
+		app => $app,
+		type => 'invoice',
+		uuid => $new_uuid,
+		item => &subs::store_document_item_label($invoice),
+		movement => $source->{'movement'},
+		timestamp => $now,
+		server_time => $now,
+		status => 'open',
+		device => &subs::device_setter(),
+		data => encode_json $invoice,
+	};
+	&subs::db_insert('appointments', $row);
+	# An earlier unpaid invoice made from this quote is a draft of the same sale:
+	# keep it as reference, mark it superseded, and take its stock back once. A
+	# paid one is a real sale and is left alone.
+	my $earlier = &subs::db_query(
+		"select * from appointments where app = ? and type = 'invoice' and uuid != ? and (status is null or status not in ('completed','superseded')) order by cast(timestamp as integer) asc",
+		$app, $new_uuid)->hashes;
+	foreach my $old ( @{$earlier} ) {
+		my $od = eval { decode_json $old->{'data'} } || {};
+		next unless ($od->{'source_quote_uuid'} || '') eq ($source->{'uuid'} || '');
+		next if $od->{'stock_reversed'};
+		&store_quote_stock($old, -1);
+		$od->{'stock_reversed'} = 1;
+		$od->{'superseded_by'} = $new_uuid;
+		$od->{'superseded_at'} = $now;
+		# The replaced invoice is a reference, not a receivable: its total stays
+		# on the paper, but nothing is owed on it any more.
+		$od->{'numbers'} = {} unless ref $od->{'numbers'} eq 'HASH';
+		$od->{'numbers'}->{'balance'} = 0;
+		&subs::db_update('appointments', {
+			data => encode_json $od,
+			status => 'superseded',
+			server_time => $now,
+		}, { uuid => $old->{'uuid'}, app => $app });
 	}
-	$appt->{'type'} = $action;
-	$appt->{'status'} = 'open';
-	$appt->{'server_time'} = &subs::rightNow();
-	$appt->{'uuid'} = &subs::random_string_creator(25);
-	&subs::db_insert('appointments', $appt, $data);
-
-	# a moved document that becomes a receivable is an invoice now: give it its
-	# own receiving address (a quote had none)
-	if (($appt->{'type'} || '') eq 'invoice' && ($appt->{'uuid'} || '') ne '') {
-		my $wallet = &subs::crypto_invoice_wallet('BTC');
-		&subs::crypto_invoice_address({ app => $wallet->{'app'}, invoice => $appt->{'uuid'} }) if $wallet;
-	}
-
-	# The invoice's paper version, written whenever the invoice is saved: each
-	# save is its own file, so the papers read as a history and none is
+	# The new invoice moves its own stock, keyed by its own uuid.
+	&store_quote_stock($row, 1);
+	# a document that becomes a receivable is an invoice now: give it its own
+	# receiving address (a quote had none)
+	my $wallet = &subs::crypto_invoice_wallet('BTC');
+	&subs::crypto_invoice_address({ app => $wallet->{'app'}, invoice => $new_uuid }) if $wallet;
+	# The invoice's paper version, written whenever the invoice is issued: each
+	# one is its own file, so the papers read as a history and none is
 	# overwritten. The render is slow, so a machine that can fork does it in the
 	# background; the Store's own setting decides whether it is kept at all.
-	if (($appt->{'type'} || '') eq 'invoice' && &store_invoice_paper_enabled()) {
-		my %paper = ( app => $appt->{'app'}, uuid => $appt->{'uuid'}, customer_app => $appt->{'app'} );
+	if (&store_invoice_paper_enabled()) {
+		my %paper = ( app => $app, uuid => $new_uuid, customer_app => $app );
 		require JawnOS::Platform;
 		if (JawnOS::Platform::use_fork()) {
 			eval { &subs::subprocessor(sub { &store_invoice_paper(%paper); }, { name => 'invoice paper' }); };
@@ -409,21 +497,13 @@ sub action_6143 {
 			eval { &store_invoice_paper(%paper); };
 		}
 	}
-
-	# a quote becoming an invoice/sale moves stock; moving it back reverses
-	if ($was eq 'quote' && ($action eq 'invoice' || $action eq 'sale')) {
-		&store_quote_stock($appt, 1);
-	}
-	elsif (($was eq 'invoice' || $was eq 'sale') && $action eq 'quote') {
-		&store_quote_stock($appt, -1);
-	}
-
-	# a move is a move: the document the new one was made from is gone, not
-	# standing beside it. Its files go with it, and the new document's stock
-	# movement stays put - delete_app does not reverse stock.
-	&delete_app($data->{'app'}, $data->{'uuid'}, $source_server_time, 'quote_move');
-
-	$c->render(text => 'ok');
+	$c->render(json => {
+		ok => 1,
+		uuid => $new_uuid,
+		id => $minted->{'id'},
+		source_quote_uuid => $source->{'uuid'},
+		source_quote_id => $quote->{'id'} || '',
+	});
 }
 
 # GET /store/quote/load

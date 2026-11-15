@@ -442,6 +442,11 @@ Manager::app->hook(before_dispatch => sub {
 		# and restart. The request rides the same signed rail with no session,
 		# and the route peer_verifies it; without this entry the app gate
 		# answered with the Gate page and the deploy silently did nothing.
+		# the document-number rail: a device asks the house hub for the next
+		# invoice/quote number, or reserves a block to use while offline. A peer
+		# has no session, and both routes peer_verify the caller first.
+		$path eq '/manager/store/number_mint' ||
+		$path eq '/manager/store/number_block' ||
 		$path eq '/manager/self_deploy' ||
 		# the restart half of the deploy rail: a peer asks this machine to
 		# reboot its tree after a code sync. The route peer_verifies the caller

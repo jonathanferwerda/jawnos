@@ -126,4 +126,9 @@
 			</label>
 		</div>
 	<% } %>
+<% if (($c->session('privilege') || '') eq 'citizen') { %>
+	<div class="store_cart_add_row">
+		<button type="button" class="store_text_button store_cart_add" hint="<%= &subs::ui('Add this line to the cart') %>"><%= &subs::ui('Add to cart') %></button>
+	</div>
+<% } %>
 </div>
