@@ -851,4 +851,53 @@ sub action_45290 {
 	$c->render(json => $s);
 }
 
+# GET /manager/shell/rooms
+# The named rooms the console keeps, newest first, one row per name. A workspace
+# panel turns a row into a desk; the console's own recall route restores it.
+sub action_45301 {
+	my $c = shift;
+	my %seen;
+	my @rooms;
+	my $q = &subs::db_query("select room, timestamp, windows from websockets where app = ? and room is not null order by timestamp desc limit 80", 'tab');
+	foreach my $row ( @{ $q->hashes } ) {
+		my $name = $row->{'room'} || '';
+		next if $name eq '' || $seen{$name}++;
+		my $windows = eval { return decode_json($row->{'windows'} || '') } || {};
+		my $count = 0;
+		foreach my $w ( values %{$windows} ) {
+			$count++ if ref $w eq 'HASH' && ($w->{'type'} || '') eq 'window';
+		}
+		push @rooms, { name => $name, timestamp => 0 + ($row->{'timestamp'} || 0), windows => $count };
+	}
+	$c->render(json => { ok => 1, rooms => \@rooms });
+}
+
+# GET /manager/shell/machines
+# The peers a workspace can stand for, as the Go button knows them.
+sub action_45302 {
+	my $c = shift;
+	my %seen;
+	my @machines;
+	foreach my $rm ( @{ &subs::remote_machine_lister({ self => 'no', mirrors => 'none' }) } ) {
+		next unless ref $rm eq 'HASH';
+		my $uuid = $rm->{'uuid'} || '';
+		my $manager = $rm->{'manager'} || '';
+		next if $uuid eq '' && $manager eq '';
+		my $name = $rm->{'hostname'} || $rm->{'device'} || $uuid || $manager;
+		my $key = $uuid || $manager;
+		next if $seen{$key}++;
+		push @machines, {
+			uuid => $uuid,
+			manager => $manager,
+			hostname => $name,
+			device => $rm->{'device'} || '',
+			status => $rm->{'status'} || '',
+			connection => $rm->{'connection'} || '',
+			online => ((($rm->{'connection'} || '') eq 'active' || ($rm->{'status'} || '') eq 'connected') ? 1 : 0),
+		};
+	}
+	@machines = sort { lc($a->{'hostname'}) cmp lc($b->{'hostname'}) } @machines;
+	$c->render(json => { ok => 1, machines => \@machines });
+}
+
 1;

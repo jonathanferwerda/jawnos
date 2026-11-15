@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/shell_layout.js public/js/manager/shell_workspaces.js public/js/manager/taskbar.js public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/keyboard.js public/js/manager/windows.js public/js/manager/windows/01_storage.js public/css/manager.css templates/manager.html.ep templates/pseudonyms.html.ep templates/layouts/manager.html.ep lib/JawnOS/Manager/Core1_tables_hooks.pm public/icons/workspaces.svg perl/help/topics_features.pl
+# tests-for: public/js/manager/shell_layout.js public/js/manager/shell_workspaces.js public/js/manager/taskbar.js public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/keyboard.js public/js/manager/windows.js public/js/manager/windows/01_storage.js public/css/manager.css templates/manager.html.ep templates/pseudonyms.html.ep templates/layouts/manager.html.ep lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Routes/manager_misc13.pm lib/JawnOS/Controller/manager_misc13.pm public/icons/workspaces.svg perl/help/topics_features.pl
 # covers:    More than one workspace, taskbar and dock. A bar added in edit mode
 #            takes the next free edge; every bar can be dragged by the grip on
 #            its left side to an edge (locked) or into the open (floating), and
@@ -25,6 +25,8 @@ my $page = read_file("$root/templates/manager.html.ep");
 my $pseudonyms = read_file("$root/templates/pseudonyms.html.ep");
 my $layout = read_file("$root/templates/layouts/manager.html.ep");
 my $core = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
+my $routes13 = read_file("$root/lib/JawnOS/Routes/manager_misc13.pm");
+my $ctrl13 = read_file("$root/lib/JawnOS/Controller/manager_misc13.pm");
 
 # --- the state: workspaces, each with its own bars --------------------------
 like($shell, qr/var jawnosShell = \{/, 'the shell layer has its own state');
@@ -153,7 +155,20 @@ like($edit, qr/w == 'workspaces'/, 'and builds its slot glyph');
 like($space, qr/function jawnosWorkspaceWidgetPanelBuild/, 'it opens a panel of desks');
 like($space, qr/data-workspace-add/, 'with an Add workspace row');
 like($space, qr/data-workspace-remove/, 'and a Remove this workspace row');
+like($space, qr{/manager/shell/rooms}, 'the panel reads the console rooms');
+like($space, qr{/manager/shell/machines}, 'and the house machines');
+like($space, qr/function jawnosWorkspaceRoomEnter/, 'a room becomes a desk with its windows restored');
+like($space, qr{/manager/past_life_recall}, 'through the console\'s own recall route');
+like($space, qr/function jawnosWorkspaceMachineDesk/, 'a machine becomes a desk');
+like($space, qr/jawnosRemoteManagerOpen\(machine\.uuid/, 'that opens the peer\'s live Manager');
+like($space, qr/data-room-index/, 'the saved rooms are rows');
+like($space, qr/data-machine-index/, 'and so are the machines');
+like($shell, qr/found\.kind == 'peer'.*jawnosRemoteManagerOpen/s, 'choosing a peer desk opens its Manager');
 like($core, qr{/js/manager/shell_workspaces\.js}, 'the window side is in the core bundle');
+like($routes13, qr{/manager/shell/rooms.*action_45301}s, 'the panel can list the console rooms');
+like($routes13, qr{/manager/shell/machines.*action_45302}s, 'and the house machines');
+like($ctrl13, qr/sub action_45301/, 'the room list has its action');
+like($ctrl13, qr/sub action_45302/, 'and the machine list');
 ok(-e "$root/public/icons/workspaces.svg", 'the widget icon exists');
 like($css, qr/\.taskbar_widget_workspaces \.taskbar_workspaces_glyph/, 'the glyph is styled');
 like($css, qr/\.taskbar_panel button\.taskbar_panel_workspace/, 'and the panel row');

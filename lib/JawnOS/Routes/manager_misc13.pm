@@ -37,6 +37,8 @@ sub routes {
 	[45278, 'get', '/manager/setting_grabber', 'action_45278'],
 	[45284, 'post', '/manager/setting_deleter', 'action_45284'],
 	[45290, 'get', '/manager/settings_grabber', 'action_45290'],
+	[45301, 'get', '/manager/shell/rooms', 'action_45301'],
+	[45302, 'get', '/manager/shell/machines', 'action_45302'],
 	[45410, 'post', '/manager/volume', 'action_45410'],
 	);
 }

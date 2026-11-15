@@ -474,11 +474,16 @@ function jawnosShellWorkspaceRows(context) {
 // layout follows it, and the window list is rebuilt from what is now on screen.
 function jawnosShellWorkspaceSet(id) {
 	var layout = jawnosShellLayout();
-	var found = false;
-	$.each(layout.workspaces, function (i, ws) { if (ws.id == id) { found = true; } });
+	var found = null;
+	$.each(layout.workspaces, function (i, ws) { if (ws.id == id) { found = ws; } });
 	if (!found) { return; }
 	layout.active = id;
 	jawnosShellSave();
+	// A desk that stands for a peer opens that peer's own live Manager; the
+	// local desk stays as the way back.
+	if (found.kind == 'peer' && found.peer && typeof jawnosRemoteManagerOpen == 'function') {
+		jawnosRemoteManagerOpen(found.peer.uuid || '', found.peer.manager || '');
+	}
 	if (typeof jawnosWorkspaceApplyWindows == 'function') { jawnosWorkspaceApplyWindows(); }
 	jawnosShellApply();
 	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }

@@ -178,6 +178,116 @@ function jawnosWorkspaceWidgetSync() {
 	widget.removeAttr('hidden').show();
 }
 
+// ---- saved rooms and peer machines -----------------------------------------
+// The console's named rooms and the house's other machines are the two sources a
+// desk can be made from. Both are read once per page and cached; a desk is made
+// on demand, and a second press on the same source returns to its desk.
+var jawnosWorkspaceSources = { rooms: null, machines: null, loading: false, at: 0 };
+
+function jawnosWorkspaceSourcesLoad() {
+	if (jawnosWorkspaceSources.loading) { return; }
+	jawnosWorkspaceSources.loading = true;
+	jawnosWorkspaceSources.at = Date.now();
+	var pending = 2;
+	var done = function () {
+		if (--pending > 0) { return; }
+		jawnosWorkspaceSources.loading = false;
+		// The panel may have been rebuilt while the reads were out; rebuild the
+		// one on the page rather than the detached copy this call started with.
+		jawnosWorkspaceWidgetPanelRebuild();
+	};
+	$.getJSON('/manager/shell/rooms', function (response) {
+		jawnosWorkspaceSources.rooms = (response && response.rooms) || [];
+	}).fail(function () { jawnosWorkspaceSources.rooms = []; }).always(done);
+	$.getJSON('/manager/shell/machines', function (response) {
+		jawnosWorkspaceSources.machines = (response && response.machines) || [];
+	}).fail(function () { jawnosWorkspaceSources.machines = []; }).always(done);
+}
+
+// A room becomes a desk once; a press on the same room again returns to it.
+function jawnosWorkspaceRoomDesk(room) {
+	if (!room || !room.name) { return; }
+	var layout = jawnosShellLayout();
+	var found = null;
+	$.each(layout.workspaces, function (i, ws) {
+		if (ws.kind == 'room' && ws.room && ws.room.name == room.name) { found = ws; }
+	});
+	if (found) { jawnosShellWorkspaceSet(found.id); return; }
+	if (layout.workspaces.length >= jawnosShellMaxWorkspaces) { return; }
+	var ws = jawnosShellWorkspaceAdd('room', {
+		name: room.name,
+		room: { name: room.name, timestamp: room.timestamp }
+	});
+	if (ws) { jawnosWorkspaceRoomEnter(ws); }
+}
+
+// The console's own recall call, with the room's window set handed to the
+// retriever. The windows are stamped with this desk so they come back here.
+function jawnosWorkspaceRoomEnter(ws) {
+	if (!ws || !ws.room || !ws.room.timestamp) { return; }
+	$.ajax({
+		url: '/manager/past_life_recall',
+		type: 'GET',
+		data: { direction: 'load', timestamp: ws.room.timestamp },
+		success: function (response) {
+			var json = response && response.json_windows;
+			if (!json) { return; }
+			var parsed = {};
+			try { parsed = JSON.parse(json) || {}; } catch (e) { parsed = {}; }
+			$.each(parsed, function (k, v) {
+				if (!v || v.type != 'window') { return; }
+				v.workspace = ws.id;
+				// A legacy main-desk pile is lifted to this desk's own pile.
+				if (v.stack === undefined || v.stack === null || v.stack === ''
+					|| String(v.stack) == windowTiledDefaultStack) {
+					v.stack = jawnosWorkspaceStackDefault(ws.id);
+				}
+			});
+			if (typeof windowRetriever == 'function') { windowRetriever(JSON.stringify(parsed)); }
+			if (typeof portfolioMaker == 'function' && response.portfolio) { portfolioMaker(response.portfolio); }
+			// The console's room recall also carries the view to the moment the
+			// room was saved; this desk keeps that reading too.
+			if (typeof quality_inventory == 'function') {
+				var zone = quality_inventory(ws.room.timestamp);
+				if (zone) {
+					sessionStorage.setItem('time_machine', zone);
+					if ($('#time_machine').length) { $('#time_machine').val(zone); }
+				}
+			}
+			setTimeout(function () {
+				if (typeof jawnosWorkspaceApplyWindows == 'function') { jawnosWorkspaceApplyWindows(); }
+			}, 0);
+		}
+	});
+}
+
+// A machine becomes a desk whose live Manager is opened in its own window; the
+// local desk stays empty and is the way back.
+function jawnosWorkspaceMachineDesk(machine) {
+	if (!machine || (!machine.uuid && !machine.manager)) { return; }
+	var layout = jawnosShellLayout();
+	var found = null;
+	$.each(layout.workspaces, function (i, ws) {
+		if (ws.kind != 'peer' || !ws.peer) { return; }
+		if (machine.uuid && ws.peer.uuid == machine.uuid) { found = ws; }
+		else if (!found && machine.manager && ws.peer.manager == machine.manager) { found = ws; }
+	});
+	if (found) {
+		// WorkspaceSet opens the peer's Manager for a peer desk.
+		jawnosShellWorkspaceSet(found.id);
+		return;
+	}
+	if (layout.workspaces.length >= jawnosShellMaxWorkspaces) { return; }
+	var ws = jawnosShellWorkspaceAdd('peer', {
+		name: machine.hostname || machine.device || machine.uuid || machine.manager,
+		peer: { uuid: machine.uuid || '', manager: machine.manager || '', hostname: machine.hostname || '' }
+	});
+	if (!ws) { return; }
+	if (typeof jawnosRemoteManagerOpen == 'function') {
+		jawnosRemoteManagerOpen(machine.uuid || '', machine.manager || '');
+	}
+}
+
 function jawnosWorkspaceWidgetPanelBuild(panel) {
 	if (!panel || !panel.length) { return; }
 	panel.empty();
@@ -205,6 +315,56 @@ function jawnosWorkspaceWidgetPanelBuild(panel) {
 		section.append($('<button type="button" class="taskbar_panel_open" data-workspace-remove="1"></button>').text(jawnosT('Remove this workspace')));
 	}
 	panel.append(section);
+
+	// Saved rooms from the console.
+	var saved = $('<div class="taskbar_panel_section"></div>');
+	saved.append($('<h4></h4>').text(jawnosT('Saved')));
+	var rooms = jawnosWorkspaceSources.rooms;
+	if (rooms === null) {
+		saved.append($('<p class="taskbar_panel_empty"></p>').text(jawnosT('Loading…')));
+	}
+	else if (!rooms.length) {
+		saved.append($('<p class="taskbar_panel_empty"></p>').text(jawnosT('No saved rooms')));
+	}
+	else {
+		$.each(rooms, function (i, room) {
+			var row = $('<button type="button" class="taskbar_panel_row taskbar_panel_workspace"></button>')
+				.attr('data-room-index', i);
+			row.append($('<span class="taskbar_panel_label"></span>').text(room.name));
+			row.append($('<span class="taskbar_panel_value"></span>').text(room.windows || 0));
+			saved.append(row);
+		});
+	}
+	panel.append(saved);
+
+	// The other machines in the house.
+	var machines = $('<div class="taskbar_panel_section"></div>');
+	machines.append($('<h4></h4>').text(jawnosT('Machines')));
+	var peers = jawnosWorkspaceSources.machines;
+	if (peers === null) {
+		machines.append($('<p class="taskbar_panel_empty"></p>').text(jawnosT('Loading…')));
+	}
+	else if (!peers.length) {
+		machines.append($('<p class="taskbar_panel_empty"></p>').text(jawnosT('No machines')));
+	}
+	else {
+		$.each(peers, function (i, machine) {
+			var row = $('<button type="button" class="taskbar_panel_row taskbar_panel_workspace"></button>')
+				.attr('data-machine-index', i);
+			row.append($('<span class="taskbar_panel_dot"></span>').attr('data-online', machine.online ? '1' : '0'));
+			row.append($('<span class="taskbar_panel_label"></span>').text(machine.hostname || machine.device || machine.uuid || machine.manager));
+			if (machine.device) {
+				row.append($('<span class="taskbar_panel_badge"></span>').text(jawnosT(machine.device)));
+			}
+			machines.append(row);
+		});
+	}
+	panel.append(machines);
+
+	if (jawnosWorkspaceSources.rooms === null || jawnosWorkspaceSources.machines === null
+		|| Date.now() - jawnosWorkspaceSources.at > 30000) {
+		jawnosWorkspaceSourcesLoad();
+	}
 }
 
 function jawnosWorkspaceWidgetPanelRebuild() {
@@ -233,6 +393,20 @@ $(document).on('click', '#taskbar_workspaces_panel [data-workspace-add]', functi
 $(document).on('click', '#taskbar_workspaces_panel [data-workspace-remove]', function () {
 	var active = jawnosShellActiveWorkspace();
 	if (active) { jawnosShellWorkspaceRemove(active.id); }
+	jawnosWorkspaceWidgetPanelRebuild();
+});
+
+$(document).on('click', '#taskbar_workspaces_panel [data-room-index]', function () {
+	var i = parseInt($(this).attr('data-room-index'), 10);
+	var rooms = jawnosWorkspaceSources.rooms || [];
+	if (rooms[i]) { jawnosWorkspaceRoomDesk(rooms[i]); }
+	jawnosWorkspaceWidgetPanelRebuild();
+});
+
+$(document).on('click', '#taskbar_workspaces_panel [data-machine-index]', function () {
+	var i = parseInt($(this).attr('data-machine-index'), 10);
+	var machines = jawnosWorkspaceSources.machines || [];
+	if (machines[i]) { jawnosWorkspaceMachineDesk(machines[i]); }
 	jawnosWorkspaceWidgetPanelRebuild();
 });
 
