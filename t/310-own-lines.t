@@ -64,7 +64,7 @@ my $rows = sub {
 	local *subs::setting_setter = sub { push @writes, $_[0]; return 1 };
 	my $n = subs::telephone_own_number_check();
 	is( $n, 1, 'the SIM with a number is filed, the one without is not' );
-	is( $writes[0]->{'app'}, 'sim1', 'the line is named for its slot' );
+	is( $writes[0]->{'app'}, 'sim1', 'two lines are named for their slots' );
 	is( $writes[0]->{'setting'}, 'own_phone', 'and kept as an own line' );
 	is( $writes[0]->{'value'}, '5199188319', 'the number is stored as bare digits' );
 	is( $writes[0]->{'device'}, 'Phone', 'the row belongs to this machine' );
@@ -73,7 +73,20 @@ my $rows = sub {
 {
 	my @writes;
 	local $subs::device = 'mobile';
-	local *subs::device_call = sub { return { lines => [ { slot => 0, number => '5199188319' } ] } };
+	local *subs::device_call = sub { return { lines => [ { slot => 1, number => '5199188319' } ] } };
+	local *subs::machine_hostname = sub { return 'Phone' };
+	local *subs::db_select = sub { return FakeRows->new([]) };
+	local *subs::db_query = sub { return FakeRows->new([]) };
+	local *subs::setting_setter = sub { push @writes, $_[0]; return 1 };
+	subs::telephone_own_number_check();
+	is( $writes[0]->{'app'}, 'sim', 'a lone eSIM in slot 1 is just the phone\'s line' );
+	is( $writes[0]->{'value'}, '5199188319', 'and it still carries the number' );
+}
+
+{
+	my @writes;
+	local $subs::device = 'mobile';
+	local *subs::device_call = sub { return { lines => [ { slot => 0, number => '5199188319' }, { slot => 1, number => '' } ] } };
 	local *subs::machine_hostname = sub { return 'Phone' };
 	local *subs::db_select = sub {
 		my (undef, undef, $where) = @_;
@@ -95,6 +108,17 @@ my $rows = sub {
 	is_deeply( $people, ['5199188322'], 'the house\'s own line is not one of the people to reply to' );
 }
 
+{
+	local *subs::machine_hostname = sub { return 'localhost' };
+	local $subs::config = { domain => 'phone.jawnos.ca' };
+	is( subs::own_phone_host(), 'Phone', 'a phone is named by its domain, not by the localhost every Android shares' );
+}
+{
+	local *subs::machine_hostname = sub { return 'devbox' };
+	local $subs::config = { domain => '' };
+	is( subs::own_phone_host(), 'devbox', 'a machine with no domain keeps its kernel name' );
+}
+
 my $sync = read_file("$root/lib/JawnOS/Domain/Sync.pm");
 like( $sync, qr/next if &subs::own_phone_number\(\$peer\);/, 'an inbound group leaves the house\'s own line out of its cc' );
 
@@ -104,7 +128,7 @@ like( $route, qr{post', '/manager/phone/lines', 'action_91842'}, 'the Lines pane
 
 my $controller = read_file("$root/lib/JawnOS/Controller/manager_phone.pm");
 like( $controller, qr/sub action_91842 \{/, 'and an action' );
-like( $controller, qr/own_lines => &subs::own_phone_lines\(&subs::machine_hostname\(\)\)/, 'the page hands its own lines to the pane' );
+like( $controller, qr/own_lines => &subs::own_phone_lines\(&subs::own_phone_host\(\)\)/, 'the page hands its own lines to the pane' );
 
 my $template = read_file("$root/templates/apps/phone.html.ep");
 like( $template, qr/pane="lines"/, 'the Phone app has a Lines pane' );

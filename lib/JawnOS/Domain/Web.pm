@@ -556,6 +556,16 @@ sub telephone_call_log_check {
 # radio (telephone_own_number_check keeps those rows current); a VoIP line is
 # typed in the Phone app, because another app's number is its own private data
 # and nothing on the phone may read it.
+# The machine a line belongs to, as the house names it. Android answers
+# hostname(1) with 'localhost', which every phone and tablet shares, so the name
+# is the one the session check derives: the first label of the configured domain
+# (phone.jawnos.ca -> Phone), and the kernel name only when that says nothing.
+sub own_phone_host {
+	my $own = &subs::machine_hostname();
+	my $named = &subs::device_hostname_better($own, '', $subs::config->{'domain'});
+	return length $named ? $named : $own;
+}
+
 sub own_phone_lines {
 	my ($only_host) = @_;
 	my (@lines, %seen);
@@ -580,7 +590,7 @@ sub own_phone_number {
 	$number =~ s/\D+//g;
 	$number =~ s/^1//;
 	return 0 unless length $number;
-	foreach my $line ( @{ &subs::own_phone_lines(&subs::machine_hostname()) } ) {
+	foreach my $line ( @{ &subs::own_phone_lines(&own_phone_host()) } ) {
 		return 1 if $line->{'number'} eq $number;
 	}
 	return 0;
@@ -597,8 +607,12 @@ sub telephone_own_number_check {
 	return $changed unless $device eq 'mobile';
 	my $info = &subs::device_call('telephony.numbers');
 	return $changed unless $info && ref $info->{'lines'} eq 'ARRAY';
-	my $host = &subs::machine_hostname();
+	my $host = &own_phone_host();
 	my %found;
+	# A lone line is just 'sim': an eSIM lives in slot 1, and a phone with one
+	# SIM should not read as its own second line. Two lines are named for their
+	# slots, so the key stays put when the order the radio lists them changes.
+	my $alone = (scalar @{$info->{'lines'}} == 1);
 	foreach my $line ( @{$info->{'lines'}} ) {
 		next unless ref $line eq 'HASH';
 		my $number = $line->{'number'} || '';
@@ -606,7 +620,7 @@ sub telephone_own_number_check {
 		$number =~ s/^1//;
 		next unless length $number;
 		my $slot = (defined $line->{'slot'} && $line->{'slot'} =~ /^\d+$/) ? $line->{'slot'} : 0;
-		my $label = 'sim' . ($slot + 1);
+		my $label = $alone ? 'sim' : 'sim' . ($slot + 1);
 		$found{$label} = 1;
 		my $old = &subs::db_select('settings', undef, { app => $label, setting => 'own_phone', device => $host })->hashes->[0];
 		next if $old && ($old->{'value'} || '') eq $number;
@@ -616,7 +630,7 @@ sub telephone_own_number_check {
 	if (scalar @{$info->{'lines'}} > 0) {
 		foreach my $row ( @{ &subs::db_query('select app from settings where setting = ? and device = ?', 'own_phone', $host)->hashes } ) {
 			my $label = $row->{'app'} || '';
-			next unless $label =~ /^sim\d+$/;
+			next unless $label =~ /^sim\d*$/;
 			next if $found{$label};
 			&subs::setting_setter({ app => $label, setting => 'own_phone', value => '', device => $host });
 			$changed++;

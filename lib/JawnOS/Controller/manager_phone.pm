@@ -111,7 +111,7 @@ sub action_23201 {
 		blocked => $blocked,
 		ivr => $ivr,
 		ringtone => &phone_ringtone(),
-		own_lines => &subs::own_phone_lines(&subs::machine_hostname()),
+		own_lines => &subs::own_phone_lines(&subs::own_phone_host()),
 		ivr_machines => &phone_ivr_machines(),
 		routes => &phone_routes_read(),
 		ivr_voices => [ &subs::say_voices() ],
@@ -484,7 +484,7 @@ sub action_91842 {
 	my $c = shift;
 	my $action = $c->param('action') || 'add';
 	my $label = $c->param('label') || '';
-	my $host = &subs::machine_hostname();
+	my $host = &subs::own_phone_host();
 	$label = lc($label);
 	$label =~ s/[^a-z0-9_-]+//g;
 	if ($action eq 'remove') {
