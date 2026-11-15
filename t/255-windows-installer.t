@@ -1,4 +1,4 @@
-# tests-for: installer/windows/
+# tests-for: installer/windows/ jawn
 # covers:    the Windows bundle, first-run installer and Inno wrapper keep the
 #            promises the VM200 measurements depend on: both bundled PATH
 #            directories, the non-interactive seed, the unlock-code file, the
@@ -33,6 +33,7 @@ my $uninstall = read_source('installer/windows/uninstall.ps1');
 my $firewall  = read_source('installer/windows/firewall.ps1');
 my $bat       = read_source('installer/windows/Install.bat');
 my $iss       = read_source('installer/windows/jawnos.iss');
+my $jawn      = read_source('jawn');
 
 # PowerShell 5.1 reads "$Variable: ..." inside a double-quoted string as a
 # drive-qualified variable and fails to parse the file. env: and the other
@@ -109,6 +110,20 @@ like($install, qr/New-Item -ItemType Directory -Force -Path \$candidate/,
 	'the resolved shortcut folder is created');
 like($install, qr/"%~dp0runtime\\perl\\bin\\perl\.exe" jawn/,
 	'launch.bat names the bundled perl by its full path');
+
+# The Start menu and desktop icons open the interface; the Startup entry only
+# starts the service. The icon used to run launch.bat alone, so a second click
+# while the house was already serving did nothing and no browser ever opened.
+like($install, qr/launch\.ps1/, 'install.ps1 generates the interface launcher');
+like($install, qr/start\.vbs/, 'install.ps1 generates a service-only launcher');
+like($install, qr/\$startArgs\s*=/, 'the Startup shortcut has its own arguments');
+like($install, qr/New-JawnShortcut -LinkPath \$startupShortcut[^\n]*\$startArgs/,
+	'the Startup shortcut starts the service only');
+like($install, qr/Start-Process -FilePath \$wscript -ArgumentList \$startArgs/,
+	'the installer starts the service while it waits, not the interface');
+like($install, qr/Start-Process "https:\/\/127\.0\.0\.1:\$port\/manager"/,
+	'the interface launcher opens the manager');
+like($install, qr/Test-JawnPort/, 'the interface launcher checks the port first');
 
 unlike($install, qr{C:\\Strawberry}i, 'install.ps1 does not hardcode C:\Strawberry');
 
@@ -212,6 +227,17 @@ like($iss, qr/SaveStringToFile/, 'Setup writes the answers file');
 like($iss, qr/-AnswersFile/, 'install.ps1 receives the answers file');
 like($iss, qr/\[UninstallDelete\]/, 'the uninstaller removes generated files');
 like($iss, qr/\{app\}\\app/, 'the app tree is removed on uninstall');
+like($iss, qr/\{group\}\\JawnOS[^\n]*launch\.vbs/,
+	'the Start menu icon opens the interface');
+like($iss, qr/\{userstartup\}\\JawnOS[^\n]*start\.vbs/,
+	'the Startup shortcut starts the service only');
+like($iss, qr/\{app\}\\launch\.ps1/, 'the uninstaller removes the interface launcher');
+like($iss, qr/\{app\}\\start\.vbs/, 'the uninstaller removes the service launcher');
 like($iss, qr/PrepareToInstall/, 'an upgrade stops the running house before replacing files');
+
+# The master creates manager.log without a shell. `touch` is Unix-only; on
+# Windows it wrote "not recognized" into the log file it was creating.
+unlike($jawn, qr/`\s*touch\s+\$logfile\s*`/, 'jawn does not run the Unix touch command');
+like($jawn, qr/open\(my \$log_fh,\s*'>>',\s*\$logfile\)/, 'jawn creates manager.log portably');
 
 done_testing();

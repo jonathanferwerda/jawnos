@@ -178,8 +178,9 @@ INSTALL
      (the installer is not code-signed yet).
   3. Keep the unlock code it shows. It is also saved as
      %LOCALAPPDATA%\JawnOS\unlock-code.txt.
-  4. JawnOS opens in your browser. A Start menu shortcut is created, and
-     JawnOS starts with Windows unless you installed with -NoAutostart.
+  4. JawnOS opens in your browser. The Start menu and desktop shortcuts open
+     the web interface (starting JawnOS first if it is not running); the
+     Startup entry only starts it in the background.
 
 THE UNLOCK CODE
   The six-digit code opens the web interface and is the only key to your

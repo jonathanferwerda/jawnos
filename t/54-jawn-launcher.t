@@ -34,6 +34,11 @@ like($src, qr/sub\s+log_seed/, 'the master seeds the ring from the supervisor ta
 like($src, qr/jawn-stdout\.log/, 'the crash record is the supervisor\'s jawn-stdout.log');
 like($src, qr/&log_seed\(\)/, 'and seeds before the tree starts');
 
+# The log file is created without a shell. `touch` is Unix-only, and a first
+# start on Windows wrote "'touch' is not recognized" into the log it was making.
+unlike($src, qr/`\s*touch\s+\$logfile\s*`/, 'the log is not created with the Unix touch command');
+like($src, qr/open\(my \$log_fh,\s*'>>',\s*\$logfile\)/, 'the log is created portably');
+
 # The shell layer is gone.
 unlike($src, qr/program\s*=>\s*["']bash["']/, 'no interactive bash between the master and President');
 unlike($src, qr/\b(?:INPUTRC|PROMPT_COMMAND)\b/, 'no bash-only environment is left behind');

@@ -225,7 +225,13 @@ if (-e $dump_dir && opendir(my $dump, $dump_dir)) {
 my $subprocesses = {};
 our $logfile = &home('~/manager.log');
 
-`touch $logfile` if not -e $logfile;
+# Create the log the first time without a shell: `touch` is Unix-only, and on
+# Windows the failed command wrote "not recognized" into the very log it was
+# making. The umask above keeps the new file private, as Mojo::Log would.
+if (not -e $logfile) {
+	open(my $log_fh, '>>', $logfile) or die "open $logfile: $!";
+	close $log_fh;
+}
 our $log = Mojo::Log->new(path => $logfile);
 
 # The transport rendezvous: the master owns the base and the token. A client

@@ -65,9 +65,12 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#PayloadDir}\JawnOS-{#AppVersion}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
+; The Start menu and desktop icons open the web interface (launch.vbs starts
+; the house first when it is not listening). The Startup entry must not: it
+; starts the service only, so a logon never pops a browser.
 Name: "{group}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"
 Name: "{autodesktop}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; Tasks: desktopicon
-Name: "{userstartup}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; Tasks: autostart
+Name: "{userstartup}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start.vbs"""; WorkingDir: "{app}"; Tasks: autostart
 
 [Run]
 ; The interactive entry launches the house, waits for the port and opens the
@@ -88,12 +91,14 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile
 
 [UninstallDelete]
 ; Inno removes only the files it installed. config.json, the database, the
-; certificates, launch.bat/vbs and the log are created by install.ps1 and the
+; certificates, the launchers and the log are created by install.ps1 and the
 ; app, so without these entries the folder cannot be removed (error 145).
 Type: filesandordirs; Name: "{app}\app"
 Type: filesandordirs; Name: "{app}\runtime"
 Type: files; Name: "{app}\launch.bat"
 Type: files; Name: "{app}\launch.vbs"
+Type: files; Name: "{app}\launch.ps1"
+Type: files; Name: "{app}\start.vbs"
 Type: files; Name: "{app}\master.log"
 Type: files; Name: "{app}\unlock-code.txt"
 Type: dirifempty; Name: "{app}"

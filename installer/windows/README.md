@@ -16,9 +16,12 @@ prepared Strawberry Perl runtime. Two entry points install the same bundle:
 - The manager, the web interface (`https://127.0.0.1:<working_port>/manager`),
   the database, and the verified restart path (the web UI's Restart button is a
   kill and a start).
-- A Start menu shortcut, autostart with Windows by default (`-NoAutostart`
-  turns it off), and a program-scoped firewall rule for the bundled
-  `perl.exe` on the private profile.
+- A Start menu shortcut and an optional desktop icon that open the web
+  interface. The launcher starts the house first when it is not listening, so
+  a second click while it runs only opens the browser. Autostart with Windows
+  by default (`-NoAutostart` turns it off) uses a separate service-only
+  launcher, so a logon does not pop a browser. A program-scoped firewall rule
+  covers the bundled `perl.exe` on the private profile.
 - First-run seeding without `sqlite3`, `tail` or a browser: `install.ps1`
   writes `config.json`, runs `scripts\jawnos_setup.pl --seed`, and saves a
   six-digit unlock code to `unlock-code.txt`.

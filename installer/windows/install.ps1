@@ -283,6 +283,15 @@ if ($needConfig -or $needDb) {
 }
 
 # --- launch files -----------------------------------------------------------
+# One job per entry point:
+#   launch.bat  starts the house (the service);
+#   start.vbs   runs launch.bat hidden, and is all the Startup shortcut does;
+#   launch.ps1  opens the web interface, starting the service first if needed;
+#   launch.vbs  runs launch.ps1 hidden - the Start menu and desktop icon.
+#
+# The icon used to run launch.bat alone. A second click while the house was
+# already serving did nothing at all (the master's one-instance check stands
+# down) and no browser ever opened, so the icon looked dead.
 
 $batPath = Join-Path $InstallDir 'launch.bat'
 $bat = @"
@@ -296,10 +305,63 @@ cd /d "%JAWNOS_DIR%"
 "@
 Set-Content -LiteralPath $batPath -Value $bat -Encoding ASCII
 
+$startVbsPath = Join-Path $InstallDir 'start.vbs'
+$startVbs = @"
+Set sh = CreateObject("WScript.Shell")
+sh.Run Chr(34) & "$batPath" & Chr(34), 0, False
+"@
+Set-Content -LiteralPath $startVbsPath -Value $startVbs -Encoding ASCII
+
+$launchPs1Path = Join-Path $InstallDir 'launch.ps1'
+$launchPs1 = @'
+# Open the JawnOS web interface. Start the house first when it is not answering;
+# when it is already running this only opens the browser.
+$ErrorActionPreference = 'Stop'
+$install = $PSScriptRoot
+$port = 45545
+try {
+    $cfg = Get-Content -LiteralPath (Join-Path $install 'app\config.json') -Raw | ConvertFrom-Json
+    if ($cfg.working_port) { $port = [int]$cfg.working_port }
+} catch { }
+
+function Test-JawnPort([int]$candidate) {
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $connect = $client.ConnectAsync('127.0.0.1', $candidate)
+        return ($connect.Wait(1000) -and $client.Connected)
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
+}
+
+if (-not (Test-JawnPort $port)) {
+    $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    Start-Process -FilePath $wscript -ArgumentList ('"' + (Join-Path $install 'start.vbs') + '"') | Out-Null
+    $deadline = (Get-Date).AddSeconds(120)
+    while ((Get-Date) -lt $deadline -and -not (Test-JawnPort $port)) {
+        Start-Sleep -Seconds 2
+    }
+}
+
+if (Test-JawnPort $port) {
+    Start-Process "https://127.0.0.1:$port/manager"
+} else {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $message = "JawnOS did not answer on https://127.0.0.1:$port/manager. See $install\master.log for details."
+        [System.Windows.Forms.MessageBox]::Show($message, 'JawnOS', 'OK', 'Warning') | Out-Null
+    } catch { }
+}
+'@
+Set-Content -LiteralPath $launchPs1Path -Value $launchPs1 -Encoding UTF8
+
 $vbsPath = Join-Path $InstallDir 'launch.vbs'
 $vbs = @"
 Set sh = CreateObject("WScript.Shell")
-sh.Run Chr(34) & "$batPath" & Chr(34), 0, False
+ps = sh.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
+sh.Run Chr(34) & ps & Chr(34) & " -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Chr(34) & "$launchPs1Path" & Chr(34), 0, False
 "@
 Set-Content -LiteralPath $vbsPath -Value $vbs -Encoding ASCII
 
@@ -310,6 +372,7 @@ Set-Content -LiteralPath $vbsPath -Value $vbs -Encoding ASCII
 $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscript)) { $wscript = 'wscript.exe' }
 $launchArgs = '"' + $vbsPath + '"'
+$startArgs = '"' + $startVbsPath + '"'
 
 $startMenu = ''
 $desktopShortcut = ''
@@ -338,7 +401,7 @@ if ($SkipShortcuts) {
     if (-not $NoAutostart) {
         $startupShortcut = Get-ShortcutPath 'Startup'
         if ($startupShortcut) {
-            New-JawnShortcut -LinkPath $startupShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
+            New-JawnShortcut -LinkPath $startupShortcut -Target $wscript -Arguments $startArgs -WorkingDirectory $InstallDir
             Write-Step "Autostart shortcut: $startupShortcut"
         } else {
             Write-Warning 'Could not create the autostart shortcut: no Startup folder was found.'
@@ -392,7 +455,7 @@ $url = "https://127.0.0.1:$port/manager"
 $up = $false
 if (-not $NoLaunch) {
     Write-Step 'Starting JawnOS ...'
-    Start-Process -FilePath $wscript -ArgumentList $launchArgs | Out-Null
+    Start-Process -FilePath $wscript -ArgumentList $startArgs | Out-Null
 
     # Readiness is a TCP connect, not an HTTP request: this box's .NET/SChannel
     # stack fails the house certificate's handshake even though the server
