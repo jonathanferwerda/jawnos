@@ -239,6 +239,19 @@ sub _write_file {
 	return ($printed && $closed) ? 1 : 0;
 }
 
+# A 32-hex machine-id. It has to be written before the board boots: systemd
+# cannot mint one while the root is still read-only, and an invalid id makes
+# systemd-journald restart forever ahead of sysinit.target, which stops the
+# whole boot (see _autopopulate).
+sub _fresh_machine_id {
+	open my $fh, '<:raw', '/dev/urandom' or return undef;
+	my $bytes = '';
+	my $got = read($fh, $bytes, 16);
+	close $fh;
+	return undef unless defined $got && $got == 16;
+	return unpack('H*', $bytes);
+}
+
 # ---------------------------------------------------------------------------
 # sysfs: the device's own answer, never a guess from lsblk.
 
@@ -827,7 +840,21 @@ sub _autopopulate {
 	push @done, &_scrub_copied_machine($mount);
 	my $etc = "$mount/etc";
 	File::Path::make_path($etc) unless -d $etc;
-	if (_write_file("$etc/hostname", "$hostname\n")) {
+	# The scrub removed the copied machine-id. systemd is supposed to mint one on
+	# the first boot, but it runs before the initrd's root is remounted writable,
+	# so it writes the sentinel `uninitialized` instead - and systemd-journald,
+	# which restarts forever ahead of sysinit.target, then never lets the boot
+	# leave early userspace. Write a real id now, one per board.
+	my $machine_id = _fresh_machine_id();
+	if (defined $machine_id && _write_file("$etc/machine-id", "$machine_id\n")) {
+		chmod 0644, "$etc/machine-id";
+		chown 0, 0, "$etc/machine-id";
+		push @done, 'machine-id';
+	}
+	else {
+		$error = 'could not write /etc/machine-id';
+	}
+	if (!length $error && _write_file("$etc/hostname", "$hostname\n")) {
 		chmod 0644, "$etc/hostname";
 		chown 0, 0, "$etc/hostname";
 		push @done, 'hostname';

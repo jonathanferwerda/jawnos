@@ -25,7 +25,11 @@
 #      runs and the kiosk shows "this page cannot be displayed".
 #   3. The USB gadget profile (192.168.7.2 on usb0), so a board can be reached
 #      over the cable without Wi-Fi.
-#   4. A blank /etc/machine-id and no SSH host keys, so every board is itself.
+#   4. A valid /etc/machine-id and no SSH host keys, so every board is itself.
+#      An empty id is not enough: systemd cannot write one while the initrd's
+#      root is read-only and leaves the sentinel `uninitialized`, which makes
+#      systemd-journald restart forever ahead of sysinit.target and hangs the
+#      boot before the kiosk.
 #
 # Wi-Fi, the hostname and the house token are NOT written here: the provision
 # script writes those per board, and an image that carried one house's Wi-Fi
@@ -223,9 +227,14 @@ NM
 	chmod 600 "$root/etc/NetworkManager/system-connections/usb-gadget.nmconnection"
 	chown 0:0 "$root/etc/NetworkManager/system-connections/usb-gadget.nmconnection"
 
-	# 4. per-board identity: an empty machine-id is generated on first boot
-	: > "$root/etc/machine-id"
-	chmod 444 "$root/etc/machine-id"
+	# 4. identity: a valid machine-id, never an empty one. systemd runs before
+	# the initrd's root is remounted writable, so it cannot mint one and writes
+	# the sentinel `uninitialized` instead; systemd-journald then restarts forever
+	# ahead of sysinit.target and the boot never reaches the kiosk. The
+	# provisioner mints a fresh id per board; this one is the fallback for an
+	# image booted as it is.
+	printf '%s\n' "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" > "$root/etc/machine-id"
+	chmod 644 "$root/etc/machine-id"
 	printf 'gou\n' > "$root/etc/hostname"
 
 	# The boot partition and the root are named by UUID, never by LABEL: the

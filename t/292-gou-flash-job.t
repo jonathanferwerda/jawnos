@@ -241,6 +241,12 @@ sub insert_token {
 	like($provision, qr/_progress_write\('verifying', bytes => 0/, 'the verify starts the bar again');
 	like($provision, qr/_wait_for_reboot/, 'the flash waits for the board to restart');
 	like($provision, qr/'no-reboot'/, 'and can be told not to ask it to');
+	# An empty machine-id hangs the boot before the kiosk: systemd cannot write
+	# one while the initrd's root is read-only and writes `uninitialized`, and
+	# journald then restarts forever ahead of sysinit.target.
+	like($provision, qr/sub _fresh_machine_id/, 'the flash mints a machine-id for the board');
+	like($provision, qr/unpack\('H\*', \$bytes\)/, 'as 32 hex characters from /dev/urandom');
+	like($provision, qr/push \@done, 'machine-id'/, 'and reports it as filled in');
 
 	# The failed-image path writes the progress file without root or a device,
 	# so the page still shows the reason.

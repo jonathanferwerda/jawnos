@@ -1185,7 +1185,7 @@ var controllerNewFields = {
 	wifi: 'Wi-Fi network', hostname: 'Name', 'join-token': 'House token',
 	identity: 'Machine identity', config: 'Configuration', database: 'Database',
 	state: 'Runtime state', network: 'Saved networks', recovery: 'Recovery image',
-	'recovery-entry': 'Recovery entry', 'reboot-watch': 'Restart on completion', 'recovery-script': 'Recovery command'
+	'recovery-entry': 'Recovery entry', 'reboot-watch': 'Restart on completion', 'recovery-script': 'Recovery command', 'machine-id': 'Machine identity'
 };
 
 function controllerNewFieldName(item) {
