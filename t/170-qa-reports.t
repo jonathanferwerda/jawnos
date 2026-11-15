@@ -327,6 +327,8 @@ like( $js, qr/report\.sections/, 'a job that brings its own sections is rendered
 like( $js, qr/function qaReportEscape/, 'values are escaped before they reach the DOM' );
 like( $js, qr/function qaReportTrend/, 'the line-count trend has its own renderer' );
 like( $js, qr/qaReportTrend\(r\.trend\)/, 'drawn from the trend the route returns' );
+like( $js, qr/Since the previous run/, 'the change column names what it compares with' );
+like( $js, qr/\\u2014/, 'a point with no earlier run shows a dash, not a zero' );
 like( $js, qr/entry\.kind === 'installers'/, 'the package wording is scoped to the installer kind' );
 unlike( $js, qr/!bits\.length && entry\.report\)\s*\{/,
 	'so a count or emulator run never borrows it' );
