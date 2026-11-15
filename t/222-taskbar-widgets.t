@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/taskbar_power.js public/js/manager/taskbar_network.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_notifications.js public/js/manager/taskbar_panel.js public/js/manager/notifications_toast.js templates/manager.html.ep public/css/manager.css scripts/jawnos_network.pl public/icons/network.svg public/icons/notifications.svg perl/help/topics_features.pl perl/help/topics_web.pl perl/help/topics_apps.pl
+# tests-for: public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/taskbar_power.js public/js/manager/taskbar_network.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_notifications.js public/js/manager/taskbar_desktop.js public/js/manager/taskbar_panel.js public/js/manager/notifications_toast.js templates/manager.html.ep public/css/manager.css scripts/jawnos_network.pl public/icons/network.svg public/icons/notifications.svg public/icons/desktop.svg perl/help/topics_features.pl perl/help/topics_web.pl perl/help/topics_apps.pl
 # covers:    Taskbar widgets - the add-items list, the three display modes, the
 #            widget order, and the network widget's Wi-Fi/Ethernet reading.
 
@@ -22,11 +22,13 @@ my $root = repo_root();
 # --- the registry and the add-items list ------------------------------------
 my $edit = read_file("$root/public/js/manager/taskbar_edit.js");
 like($edit, qr/jawnosTaskbarWidgets = \{/, 'the widget registry exists');
-like($edit, qr/power: \{ hint: 'Battery'/, 'Battery is a widget');
+like($edit, qr/power: \{ hint: 'Power'/, 'Power is a widget');
 like($edit, qr/network: \{ hint: 'Network'/, 'Network is a widget');
 like($edit, qr/notifications: \{ hint: 'Notifications'/, 'Notifications is a widget');
 like($edit, qr/w == 'notifications'/, 'the notifications widget builds its bell');
 like($edit, qr/jawnosTaskbarWidgetItem\('notifications', 'full'\)/, 'and rides the default bar');
+like($edit, qr/desktop: \{ hint: 'Desktop'/, 'Desktop is a widget');
+like($edit, qr/w == 'desktop'/, 'the desktop widget builds its screen glyph');
 like($edit, qr/function jawnosTaskbarWidgetSet\(/, 'a widget mode can be written');
 like($edit, qr/function jawnosTaskbarWidgetToggle\(/, 'a widget can be turned on and off');
 like($edit, qr/function jawnosTaskbarWidgetMake\(/, 'a widget builds its element');
@@ -51,7 +53,18 @@ like($events, qr/pin_widget/, 'the row carries the widget name');
 # --- the pollers ------------------------------------------------------------
 my $power = read_file("$root/public/js/manager/taskbar_power.js");
 like($power, qr/jawnosTaskbarEditing/, 'a press in edit mode does not open the app');
-like($power, qr/\#taskbar_power/, 'the battery poller finds the built widget');
+like($power, qr/\#taskbar_power/, 'the power poller finds the built widget');
+like($power, qr/function jawnosPowerTaskbarNoBattery/, 'a machine with no pack still shows the widget');
+like($power, qr/jawnosPowerTaskbarPlanLabel/, 'its text names the plan in use');
+like($power, qr/!status \|\| !status\.ok \|\| !battery\)/, 'only a failed reading hides it');
+
+my $desktop = read_file("$root/public/js/manager/taskbar_desktop.js");
+like($desktop, qr/function jawnosDesktopTaskbarToggle/, 'the desktop widget toggles the desk');
+like($desktop, qr/\#taskbar_desktop/, 'it finds the built widget');
+like($desktop, qr/windowMinimizer\(ts\)/, 'it puts windows away through the window manager');
+like($desktop, qr/jawnosDesktopTaskbarHidden/, 'and remembers only the ones it put away');
+like($desktop, qr/jawnosT\('Show desktop'\)/, 'its title names the press that follows');
+ok(-e "$root/public/icons/desktop.svg", 'the desktop icon exists');
 
 my $network = read_file("$root/public/js/manager/taskbar_network.js");
 like($network, qr{url: '/manager/network/status'}, 'the network widget reads the network status');
@@ -117,9 +130,12 @@ $css = read_file("$root/public/css/manager.css");
 like($css, qr/\.taskbar_widget\b/, 'the shared widget plate exists');
 like($css, qr/\.taskbar_widget\[mode=icon\] \.taskbar_widget_text/, 'Icon mode hides the text');
 like($css, qr/\.taskbar_network_bars/, 'the network bars have a style');
+like($css, qr/\.taskbar_widget_desktop \.taskbar_desktop_glyph/, 'the desktop glyph has a style');
+like($css, qr/\[state=desktop\].*\.taskbar_desktop_glyph i/s, 'and a bare desk fades its windows');
 like($css, qr/\[kind=ethernet\].*taskbar_network_wire/s, 'Ethernet swaps in the wire glyph');
 $core = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($core, qr{/js/manager/taskbar_network\.js}, 'the network poller is in the core bundle');
+like($core, qr{/js/manager/taskbar_desktop\.js}, 'the desktop widget is in the core bundle');
 ok(-e "$root/public/icons/network.svg", 'the add-items icon exists');
 
 # --- help -------------------------------------------------------------------

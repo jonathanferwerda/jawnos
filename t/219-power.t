@@ -98,6 +98,21 @@ write_file("$sys/class/power_supply/AC/online", "1\n");
 }
 write_file("$sys/class/power_supply/AC/online", "0\n");
 
+# --- a machine with no pack ------------------------------------------------
+# A desktop has mains and no battery. It must read as the mains source, or the
+# taskbar widget and the app would offer the battery plan it does not have.
+{
+	my $bare = tempdir(CLEANUP => 1);
+	make_path("$bare/class/power_supply/AC");
+	write_file("$bare/class/power_supply/AC/type", "Mains\n");
+	write_file("$bare/class/power_supply/AC/online", "1\n");
+	local $ENV{'JAWNOS_POWER_SYSFS'} = $bare;
+	my $status = subs::power_status();
+	is($status->{'battery'}{'present'}, 0, 'a machine with no pack has no battery reading');
+	is($status->{'source'}, 'ac', 'and it stands on mains rather than a battery it lacks');
+	is($status->{'config'}{'ac'}{'plan'}, 'balanced', 'so its plan is the mains plan');
+}
+
 # --- saving a plan applies it when its source is the one in use -------------
 {
 	my $saved = subs::power_plan_set('battery', 'performance', 85);
@@ -463,7 +478,7 @@ SH
 
 	my $edit = read_file("$root/public/js/manager/taskbar_edit.js");
 	like($edit, qr/jawnosTaskbarWidgets = \{/, 'the widget registry exists');
-	like($edit, qr/power: \{ hint: 'Battery'/, 'the battery widget is in it');
+	like($edit, qr/power: \{ hint: 'Power'/, 'the Power widget is in it');
 	like($edit, qr/network: \{ hint: 'Network'/, 'and the network widget');
 	like($edit, qr/jawnosTaskbarWidgetMake\(/, 'a widget is built from its order entry');
 	like($edit, qr/> \.taskbar_widget/, 'edit mode can drag a widget');

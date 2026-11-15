@@ -217,6 +217,12 @@ function jawnosDockWidgetRemove(w) {
 	jawnosDockPinsSave(pins);
 }
 function jawnosDockWidgetOpen(w) {
+	// The Desktop face is a press, not an app: it puts the windows away or
+	// brings them back, exactly as the taskbar's widget does.
+	if (w == 'desktop') {
+		if (typeof jawnosDesktopTaskbarToggle == 'function') { jawnosDesktopTaskbarToggle(); }
+		return;
+	}
 	var app = { power: 'power', network: 'network', sound: 'sound', notifications: 'notifications' }[w] || w;
 	jawnosDockAppOpen(app);
 }

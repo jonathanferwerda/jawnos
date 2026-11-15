@@ -1059,7 +1059,9 @@ sub power_status {
 	my $battery = &power_battery_read();
 	my $config = &power_config();
 	my $cpu = &power_cpu_read();
-	my $source = $battery->{'ac'} ? 'ac' : 'battery';
+	# A machine with no pack stands on mains: before, it named the battery source
+	# it did not have, so the battery plan was read and applied on a desktop.
+	my $source = (!$battery->{'present'} || $battery->{'ac'}) ? 'ac' : 'battery';
 	my $charge = &power_charge_read();
 	# The saved ceiling is the person's intent; end is what the pack holds now,
 	# which can lag until the watch puts it back. The app shows the choice.

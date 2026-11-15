@@ -477,6 +477,42 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .taskbar_widget_power[state=charging] .taskbar_power_fill { background: #3fa34d; }
 .taskbar_widget_power[state=low] .taskbar_power_fill { background: #c0392b; }
 .taskbar_widget_power[state=full] .taskbar_power_fill { background: #3fa34d; }
+/* A machine with no pack still has a power source and a plan: the glyph keeps
+   an empty pack and the text names the plan in use. */
+.taskbar_widget_power[state=ac] .taskbar_power_fill { width: 0 !important; }
+.taskbar_widget_desktop .taskbar_desktop_glyph {
+	position: relative;
+	display: block;
+	width: calc(var(--taskbar_h, 44px) * 0.52);
+	height: calc(var(--taskbar_h, 44px) * 0.34);
+	border: 2px solid var(--ink, currentColor);
+	border-radius: 3px;
+	box-sizing: border-box;
+}
+.taskbar_widget_desktop .taskbar_desktop_glyph::after {
+	content: '';
+	position: absolute;
+	left: 50%;
+	bottom: -5px;
+	transform: translateX(-50%);
+	width: 38%;
+	height: 3px;
+	border-radius: 1px;
+	background: var(--ink, currentColor);
+}
+.taskbar_widget_desktop .taskbar_desktop_glyph i {
+	position: absolute;
+	bottom: 3px;
+	width: 26%;
+	height: 45%;
+	border-radius: 1px;
+	background: var(--accent, #3b7ddd);
+	transition: opacity .18s ease;
+}
+.taskbar_widget_desktop .taskbar_desktop_glyph i:nth-child(1) { left: 12%; }
+.taskbar_widget_desktop .taskbar_desktop_glyph i:nth-child(2) { right: 12%; height: 32%; }
+.taskbar_widget_desktop[state=desktop] .taskbar_desktop_glyph i { opacity: .18; }
+.taskbar_widget_desktop[state=desktop] { border-color: var(--accent, #3b7ddd); }
 .taskbar_widget_network .taskbar_network_glyph {
 	position: relative;
 	display: flex;

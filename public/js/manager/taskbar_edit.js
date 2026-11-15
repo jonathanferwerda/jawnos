@@ -16,7 +16,7 @@
 
 // Where the bar's slots live. Order keys that are plain strings name these; a
 // pin (an app or keyboard the user added) is an object and builds its own tile,
-// and so does a widget (battery, network).
+// and so does a widget (power, network, desktop).
 function jawnosTaskbarSlots() {
 	return {
 		'search': '#search_entanglement',
@@ -31,10 +31,11 @@ function jawnosTaskbarSlots() {
 // `off` keeps the entry in the order (so it is not re-added as a default) but
 // builds no element, which is what makes Disabled stick across reloads.
 var jawnosTaskbarWidgets = {
-	power: { hint: 'Battery', icon: '/icons/power.svg' },
+	power: { hint: 'Power', icon: '/icons/power.svg' },
 	network: { hint: 'Network', icon: '/icons/network.svg' },
 	sound: { hint: 'Sound', icon: '/icons/sound.svg' },
-	notifications: { hint: 'Notifications', icon: '/icons/notifications.svg' }
+	notifications: { hint: 'Notifications', icon: '/icons/notifications.svg' },
+	desktop: { hint: 'Desktop', icon: '/icons/desktop.svg' }
 };
 
 function jawnosTaskbarWidgetItem(w, mode) {
@@ -44,7 +45,7 @@ function jawnosTaskbarWidgetItem(w, mode) {
 // The order before the user has ever dragged anything: the window list, the
 // clock and the start button, with the search at the leading edge when it lives
 // here. The old start-button side setting is honoured once, so a bar that had
-// the button on the left keeps it there until it is dragged. The battery widget
+// the button on the left keeps it there until it is dragged. The power widget
 // is on by default, because a bar that has one should say so until told not to.
 function jawnosTaskbarDefaultOrder() {
 	var left = (typeof jawnosBars != 'undefined' && jawnosBars.start_side == 'left');
@@ -171,7 +172,7 @@ function jawnosTaskbarOrderApply() {
 	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order.slice() : jawnosTaskbarDefaultOrder();
 	// upgrade a pin that names a start-menu row but not the app behind it, and
 	// undo an older pin that mistook an action (now) for an app. The first
-	// battery widget was a bare 'power' string; it becomes the widget object.
+	// power widget was a bare 'power' string; it becomes the widget object.
 	order = order.map(function (item) {
 		if (item === 'power' || item === 'network') { return jawnosTaskbarWidgetItem(item, 'full'); }
 		if (item && typeof item === 'object' && item.k == 'pin' && item.sel) {
@@ -181,7 +182,7 @@ function jawnosTaskbarOrderApply() {
 		}
 		return item;
 	});
-	// A bar saved before widgets existed gains the battery widget; a bar that has
+	// A bar saved before widgets existed gains the power widget; a bar that has
 	// a widget entry - even a disabled one - is left exactly as the person left it.
 	var has_widget = order.some(function (item) { return item && typeof item === 'object' && item.k == 'widget'; });
 	if (!has_widget) {
@@ -443,7 +444,7 @@ function jawnosTaskbarAppPinned(app) {
 }
 
 // The widget entry in the order, including the short-lived shape the first
-// battery widget used (a bare 'power' string). A missing entry is "off".
+// power widget used (a bare 'power' string). A missing entry is "off".
 function jawnosTaskbarWidgetEntry(w) {
 	var order = (jawnosBars.order && jawnosBars.order.length) ? jawnosBars.order : [];
 	for (var i = 0; i < order.length; i++) {
@@ -518,6 +519,11 @@ function jawnosTaskbarWidgetMake(item) {
 		el.append('<span class="taskbar_notifications_badge">0</span>');
 		el.append('<span class="taskbar_notifications_text taskbar_widget_text"></span>');
 		setTimeout(function () { if (typeof jawnosNotificationsTaskbarLoad === 'function') { jawnosNotificationsTaskbarLoad(); } }, 0);
+	}
+	else if (w == 'desktop') {
+		el.append('<span class="taskbar_desktop_glyph"><i></i><i></i></span>');
+		el.append('<span class="taskbar_desktop_text taskbar_widget_text"></span>');
+		setTimeout(function () { if (typeof jawnosDesktopTaskbarSync === 'function') { jawnosDesktopTaskbarSync(); } }, 0);
 	}
 	return el;
 }
@@ -597,6 +603,8 @@ function jawnosTaskbarPinsRefresh() {
 	});
 	// the window in front keeps a bright title bar; the rest are greyed
 	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(); }
+	// the Desktop widget wears the state of the desk: pressed while no window is up
+	if (typeof jawnosDesktopTaskbarSync == 'function') { jawnosDesktopTaskbarSync(); }
 }
 
 function jawnosTaskbarClockZones() {

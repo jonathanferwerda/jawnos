@@ -1,7 +1,9 @@
-// The taskbar's battery widget. It is core, not part of the Power app's lazy
+// The taskbar's Power widget. It is core, not part of the Power app's lazy
 // chunk: the battery must be readable before the Power window is ever opened.
 // The reading is the same /manager/power_status the app uses, polled once a
-// minute while the taskbar is on screen.
+// minute while the taskbar is on screen. A machine with no pack still has a
+// power source and a plan, so the widget names the plan in use there instead of
+// hiding itself.
 //
 // Clicking the widget opens a panel hung under it (taskbar_panel.js owns the
 // frame). The panel is a quick glance and a short reach: the battery summary,
@@ -24,13 +26,39 @@ function jawnosPowerTaskbarDuration(hours) {
 	return h + 'h ' + (m < 10 ? '0' + m : m) + 'm';
 }
 
+// The plan names both the widget and the panel use.
+function jawnosPowerTaskbarPlanLabel(plan) {
+	var labels = { auto: 'Auto', saver: 'Power saver', balanced: 'Balanced', performance: 'Performance' };
+	return jawnosT(labels[plan] || labels.balanced);
+}
+
+// A machine with no pack still has a power source and a plan: the widget keeps
+// its empty pack, and its text names the plan in use. Only a reading that
+// failed hides it.
+function jawnosPowerTaskbarNoBattery(widget, status) {
+	var source = (status && status.source == 'battery') ? 'battery' : 'ac';
+	var config = (status && status.config) || {};
+	var plan = (config[source] || {}).plan || 'balanced';
+	var label = jawnosPowerTaskbarPlanLabel(plan);
+	var title = jawnosT('Power') + ' — ' + (source == 'ac' ? jawnosT('On AC power') : jawnosT('On battery power')) + ' — ' + label;
+	widget.find('.taskbar_power_fill').css('width', '0%');
+	widget.attr('state', 'ac');
+	widget.find('.taskbar_power_text').text(label);
+	widget.attr('title', title).removeAttr('hidden').show();
+}
+
 function jawnosPowerTaskbarRender(status) {
 	var widget = $('#taskbar_power');
 	if (!widget.length) { return; }
 	jawnosPowerTaskbarData = status;
 	var battery = status && status.battery;
-	if (!status || !status.ok || !battery || !battery.present) {
+	if (!status || !status.ok || !battery) {
 		widget.attr('hidden', 'hidden').hide();
+		jawnosPowerTaskbarPanelSync();
+		return;
+	}
+	if (!battery.present) {
+		jawnosPowerTaskbarNoBattery(widget, status);
 		jawnosPowerTaskbarPanelSync();
 		return;
 	}
@@ -183,12 +211,9 @@ function jawnosPowerTaskbarPanelProfile(panel) {
 		if (took.length) { manager_text += ' — ' + jawnosT('took over from') + ' ' + took.join(', '); }
 	}
 	section.append($('<div class="taskbar_panel_note"></div>').text(manager_text));
-	var plans = [
-		['auto', jawnosT('Auto')],
-		['saver', jawnosT('Power saver')],
-		['balanced', jawnosT('Balanced')],
-		['performance', jawnosT('Performance')]
-	];
+	var plans = ['auto', 'saver', 'balanced', 'performance'].map(function(plan) {
+		return [plan, jawnosPowerTaskbarPlanLabel(plan)];
+	});
 	// The section is a flex column, so the four choices stack as a menu.
 	for (var i = 0; i < plans.length; i++) {
 		var button = $('<button type="button"></button>')

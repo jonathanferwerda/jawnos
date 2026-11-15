@@ -99,6 +99,7 @@ unlike($dock, qr/jawnosTaskbarAppPinned/, 'not the taskbar pin');
 like($dock, qr/function jawnosDockWidgetHas\(w\)/, 'a widget face asks the dock list too');
 unlike($dock, qr/jawnosTaskbarWidgetToggle/, 'not the taskbar widget setting');
 like($dock, qr/function jawnosDockWidgetOpen\(w\)/, 'a widget face opens the app it stands for');
+like($dock, qr/w == 'desktop'.*jawnosDesktopTaskbarToggle/s, 'the Desktop face toggles the desk instead of opening an app');
 like($dock, qr/jawnosDockAppAdd\(app, info\.hint \|\| app, info\.src \|\| ''\)/,
 	'a browser\'s old dock apps are carried onto the dock');
 like($dock, qr/remote_control: 1/, 'the retired remote control face is not offered back');
