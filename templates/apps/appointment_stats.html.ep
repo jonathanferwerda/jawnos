@@ -31,7 +31,29 @@
 				</tr>
 			<% } %>
 		</table>
-	<% } else { %>
+			<%# What the shelf moved inside each period: the running balance above hides
+			    whether today's out is a sip or the month's whole supply, so the same
+			    periods the other tables read are shown here per unit, with the out
+			    carried to the period's end at the pace so far. %>
+			<% foreach my $group ( @{ $inv->{'periods'} || [] } ) { %>
+				<table class="appointment_stats_table" style="margin-top:4px;">
+					<tr style="opacity:.6;font-size:90%;">
+						<th><%= $group->{'unit'} || &subs::ui('each') %></th>
+						<th><%= &subs::ui('In') %></th>
+						<th><%= &subs::ui('Out') %></th>
+						<th title="<%= &subs::ui('Out carried to the end of the period') %>"><%= &subs::ui('Pace') %></th>
+					</tr>
+					<% foreach my $p ( @{ $group->{'rows'} || [] } ) { %>
+						<tr>
+							<td><%= $p->{'label'} %></td>
+							<td><%= &subs::numeric_formatter($p->{'in'}) %></td>
+							<td><%= &subs::numeric_formatter($p->{'out'}) %></td>
+							<td><% if (defined $p->{'pace'}) { %><%= $pace_number->($p->{'pace'}) %><% } else { %>-<% } %></td>
+						</tr>
+					<% } %>
+				</table>
+			<% } %>
+		<% } else { %>
 		<div class="appointment_stats_empty"><%= &subs::ui('No stock') %></div>
 	<% } %>
 </div>

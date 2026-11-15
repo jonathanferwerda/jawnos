@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
-# covers:    the appointment's bottom line - shelf in/out, and time, count, money and measures for today/week/month/year, each with its pace to the period's end
+# covers:    the appointment's bottom line - shelf in/out and its movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end
 
 use strict;
 use warnings;
@@ -31,7 +31,7 @@ close $fh;
 my $sql = Mojo::SQLite->new('sqlite:' . $dbfile);
 my $db  = $sql->db;
 $db->query('create table appointments (app text, timestamp text, stop_timestamp text, type text, duration text, total text, measures text)');
-$db->query('create table warehouse (item text, unit text, quantity text, kind text, type text, account text)');
+$db->query('create table warehouse (item text, unit text, quantity text, kind text, type text, account text, timestamp text)');
 $db->query('create table settings (setting text, value text, timestamp text, id integer primary key autoincrement, '
 	. 'app text, server_time text, device text, browser_tab_id text, uuid text, ost text, subsetting text)');
 my @st = stat($dbfile);
@@ -88,11 +88,12 @@ $db->query('insert into settings (setting, value, app, device, uuid, server_time
 	'app_measures', '{"steps":{"type":"number"},"weight":{"type":"number","unit":"lb"}}',
 	'walk', $device, 'set-app-measures', $now);
 
-# the shelf: two in, two out, one Usage row that must not count
-$db->query('insert into warehouse (item, unit, quantity, kind) values (?,?,?,?)', 'walk', 'g', '10', 'stock');
-$db->query('insert into warehouse (item, unit, quantity, kind) values (?,?,?,?)', 'walk', 'g', '6',  'stock');
-$db->query('insert into warehouse (item, unit, quantity, kind) values (?,?,?,?)', 'walk', 'g', '-4', 'stock');
-$db->query('insert into warehouse (item, unit, quantity, kind) values (?,?,?,?)', 'walk', 'g', '-2', 'stock');
+# the shelf: two in, two out, one Usage row that must not count. The stock rows
+# carry their own clock too, so the period rows can show when each moved.
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk', 'g', '10', 'stock', ts(2026, 11,  7, 10));
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk', 'g', '6',  'stock', ts(2026, 11,  3, 10));
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk', 'g', '-4', 'stock', ts(2026, 11,  1, 10));
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk', 'g', '-2', 'stock', ts(2026,  2,  1, 10));
 $db->query('insert into warehouse (item, unit, quantity, kind) values (?,?,?,?)', 'walk', 'g', '100', 'usage');
 # a balance anchor and a money row name the item but are not stock
 $db->query('insert into warehouse (item, unit, quantity, type) values (?,?,?,?)', 'walk', 'g', '500', 'inventory');
@@ -196,10 +197,40 @@ is($stats->{'inventory'}->{'units'}->[0]->{'out'}, 6, 'the shelf counts what wen
 is($stats->{'inventory'}->{'units'}->[0]->{'on_hand'}, 10, 'the shelf level is in minus out');
 is($stats->{'inventory'}->{'units'}->[0]->{'unit'}, 'g', 'the unit is the shelf unit');
 
+# the shelf's movements inside each period, kept per unit, with the out carried
+# to the period's end at the same pace the other tables read
+my $shelf_periods = $stats->{'inventory'}->{'periods'};
+is(scalar @{$shelf_periods}, 1, 'one unit gives one period table');
+is($shelf_periods->[0]->{'unit'}, 'g', 'the period table names its unit');
+my %ip = map { $_->{'key'} => $_ } @{ $shelf_periods->[0]->{'rows'} };
+is_deeply([ map { $_->{'key'} } @{ $shelf_periods->[0]->{'rows'} } ], [qw/today week month year/],
+	'the period rows come in the house order');
+is($ip{'today'}->{'in'}, 10, 'today counts the ten that came in today');
+is($ip{'today'}->{'out'}, 0, 'and nothing went out today');
+is($ip{'week'}->{'in'}, 16, 'the week adds the six from Tuesday');
+is($ip{'month'}->{'out'}, 4, 'the month holds the four that went out on the first');
+is($ip{'year'}->{'out'}, 6, 'the year holds both draws');
+cmp_ok(abs($ip{'today'}->{'pace'} - 0), '<', 1e-9, 'a day with no out paces at zero');
+cmp_ok(abs($ip{'month'}->{'pace'} - 4 / $p{'month'}->{'elapsed'}), '<', 1e-9,
+	'the month carries its out to the month end');
+cmp_ok(abs($ip{'year'}->{'pace'} - 6 / $p{'year'}->{'elapsed'}), '<', 1e-9,
+	'the year carries its out to the year end');
+
+# grams and millilitres are kept apart: each shelf unit gets its own period rows
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk_two', 'g', '5', 'stock', ts(2026, 11, 7, 10));
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk_two', 'ml', '-20', 'stock', ts(2026, 11, 7, 11));
+my $two_units = &subs::appointment_statistics_for('walk_two', $now);
+my $groups = $two_units->{'inventory'}->{'periods'};
+is(scalar @{$groups}, 2, 'each shelf unit gets its own period table');
+is_deeply([ map { $_->{'unit'} } @{$groups} ], [qw/g ml/], 'the units come in shelf order');
+is($groups->[0]->{'rows'}->[0]->{'in'}, 5, 'the grams keep their own in');
+is($groups->[1]->{'rows'}->[0]->{'out'}, 20, 'the millilitres keep their own out');
+
 my $empty = &subs::appointment_statistics_for('nothing_here', $now);
 is($empty->{'periods'}->[0]->{'count'}, 0, 'an app with no rows reads zero');
 is($empty->{'periods'}->[0]->{'projected'}->{'count'}, 0, 'and paces at zero');
 is(scalar @{ $empty->{'inventory'}->{'units'} }, 0, 'and holds no stock');
+is(scalar @{ $empty->{'inventory'}->{'periods'} }, 0, 'and has no shelf period rows');
 
 # ------------------------------------------------------------- the template
 my $wrapper = read_file("$root/templates/appointment_wrapper.html.ep");
@@ -227,7 +258,10 @@ my $pace_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
 		app => 'walk',
 		app_stats => {
 			item => 'walk',
-			inventory => { units => [] },
+			inventory => { units => [ { unit => 'g', in => 10, out => 4, on_hand => 6 } ], periods => [ {
+				unit => 'g',
+				rows => [ { key => 'today', label => 'Today', in => 10, out => 4, pace => 8 } ],
+			} ] },
 			periods => [ {
 				key => 'today', label => 'Today',
 				duration => 3600000, count => 1, money => 10,
@@ -255,6 +289,8 @@ like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="app
 	'the summed measure carries its pace');
 like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>-<\/td>/,
 	'an averaged measure has no pace to carry');
+like($pace_html, qr/<th>g<\/th>.*?<td>Today<\/td>\s*<td>10<\/td>\s*<td>4<\/td>\s*<td>8<\/td>/s,
+	'the inventory period row shows in, out and the out pace');
 my $section_controller = read_file("$root/lib/JawnOS/Controller/manager_misc.pm");
 like($section_controller, qr/template => 'apps\/appointment_stats'/,
 	'the app_section route draws the readings from the lazy partial');

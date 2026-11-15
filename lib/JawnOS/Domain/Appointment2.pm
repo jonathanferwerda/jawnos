@@ -806,7 +806,7 @@ sub device_labels {
 sub appointment_statistics_for {
 	my ($app, $now) = @_;
 	$now = &subs::rightNow() unless defined $now;
-	my $blank = { item => $app || '', inventory => { item => $app || '', units => [] }, periods => [], measure_names => [] };
+	my $blank = { item => $app || '', inventory => { item => $app || '', units => [], periods => [] }, periods => [], measure_names => [] };
 	return $blank unless defined $app && length $app;
 
 	my $settings = &subs::settings_grabber({ app => $app }) || {};
@@ -960,10 +960,55 @@ sub appointment_statistics_for {
 		}
 	} @{$units};
 
+	# The shelf above is a running balance. What the shelf took in and gave out
+	# inside each period is read from the movement clock, with the same rows the
+	# balance counts (stock only - a usage row is history, not stock), and the
+	# out column carries the same pace the other tables do: a period still running
+	# projects its consumption to the period's end. Units are kept apart, because
+	# grams of flour and a dozen eggs do not add up.
+	my $moves = &subs::db_query(
+		"select timestamp, quantity, unit from warehouse
+		  where item = ? and coalesce(nullif(kind,''),'stock') = 'stock'
+		    and coalesce(type,'') != 'inventory' and coalesce(account,'') = ''
+		    and cast(timestamp as integer) >= ?",
+		$item, $since)->hashes || [];
+	my %moved;
+	foreach my $move ( @{$moves} ) {
+		my $ts = $move->{'timestamp'};
+		my $quantity = $move->{'quantity'};
+		next unless defined $ts && $ts =~ /^-?[0-9]+$/;
+		next unless defined $quantity && $quantity =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
+		my $unit = $move->{'unit'} || 'each';
+		foreach my $key ( @order ) {
+			next unless $ts + 0 >= $window{$key}->{'begin'} && $ts + 0 < $window{$key}->{'end'};
+			my $slot = $moved{$unit}->{$key} ||= { in => 0, out => 0 };
+			if ($quantity + 0 > 0) { $slot->{'in'} += $quantity + 0; }
+			elsif ($quantity + 0 < 0) { $slot->{'out'} -= $quantity + 0; }
+		}
+	}
+	my @inventory_periods;
+	foreach my $held ( @inventory ) {
+		my @period_rows;
+		foreach my $key ( @order ) {
+			my $slot = $moved{$held->{'unit'}}->{$key} || { in => 0, out => 0 };
+			my $elapsed = $period{$key}->{'elapsed'};
+			push @period_rows, {
+				key => $key,
+				label => $period{$key}->{'label'},
+				in => $slot->{'in'},
+				out => $slot->{'out'},
+				elapsed => $elapsed,
+				progress => $period{$key}->{'progress'},
+				pace => ($elapsed > 0) ? $slot->{'out'} / $elapsed : undef,
+			};
+		}
+		push @inventory_periods, { unit => $held->{'unit'}, rows => \@period_rows };
+	}
+
 	return {
 		app => $app,
 		item => $item,
-		inventory => { item => $item, units => \@inventory },
+		inventory => { item => $item, units => \@inventory, periods => \@inventory_periods },
 		periods => [ map { $period{$_} } @order ],
 		measure_names => [ map { { name => $_, unit => $measure_unit{$_} || '', calc => ($period{'year'}->{'measures'}->{$_}->{'calc'} || 'sum') } } sort keys %{ $period{'year'}->{'measures'} } ],
 	};
