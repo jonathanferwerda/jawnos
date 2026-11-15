@@ -236,11 +236,24 @@ of racing a deadline (2026-11-15):
   the collector runs, so a line always follows the collector's open, whichever
   moment that is.
 
-Two are still open and are **not** timing tests: neither `t/75` nor `t/249`
-contains a sleep or a timeout. `t/249` also failed alone on a differently
-provisioned box, so it looks environment-dependent; `t/75` failed once with no
-failing assertion at all, which is a `die` or a plan mismatch rather than a race.
-Both need their own diagnosis.
+Every run also says which commit it tested - the summary line ends `(HEAD
+<short>)` - and a run whose HEAD moved prints a warning naming both trees, so a
+suite that spans an auto-update can no longer be credited to the wrong commit.
+
+`t/249` was not a race at all: the probe it exercises calls `peer_secure_url`,
+which reads a house CA off the filesystem and dials the candidate's TLS port for
+real. On a checkout that has `server/house-ca.pem`, with a live peer on the
+tailnet, it verified a certificate and returned the TLS port - the two failures
+the ledger recorded. The file stubs it now, and `t/187-house-ca.t` owns the
+certificate side against a listener it starts itself.
+
+`t/75` cannot fail by assertion (it ends in `done_testing`), so a run with no
+`not ok` had a child that stopped before its plan - and the fork engine lost the
+reason, because TAP went to a block-buffered STDOUT. That is fixed: the child's
+STDOUT is autoflushed, and a failure with no output names the exit and signal
+(`(no output; the child exited 3 before printing TAP)`). Its relative reads are
+anchored to `root()` as well. The trigger is still unknown; the next occurrence
+will say which kind of death it was.
 
 Until then: a lone failure is a flake only after that file passes alone. Re-run
 the gate deliberately rather than editing a test that is not broken (the landing

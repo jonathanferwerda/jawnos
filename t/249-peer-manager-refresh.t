@@ -18,16 +18,25 @@ use JawnOSTest;
 # The domain layer is lazy: load the real definitions before any local stub.
 subs::preload(qw(network_interface_reporter peer_literal_addresses peer_probe_candidates
 	peer_literal_manager peer_live_manager peer_manager_host peer_manager_url
-	peer_presence_probe peer_manager_remember peer_on_our_lan remote_relay_routes db_update));
+	peer_presence_probe peer_manager_remember peer_on_our_lan remote_relay_routes db_update
+	peer_secure_url));
 
 # Run one assertion inside a known local network. This is the only input that
 # decides whether a peer's LAN literal is a route or a leftover.
+#
+# peer_secure_url is stubbed too, because it is not pure: it reads a house CA off
+# the filesystem and dials the candidate's TLS port for real. On a checkout that
+# has server/house-ca.pem, with a live peer on the tailnet, the probe verified a
+# certificate and returned the TLS port and two bases for one literal - the two
+# failures this file was reported for. This file decides routes, not leaves;
+# t/187-house-ca.t owns the certificate side against a listener it starts itself.
 sub as_machine_at {
 	my ($ip, $code) = @_;
 	no warnings qw(redefine once);
 	local *subs::network_interface_reporter = sub {
 		return { eth0 => { ip => $ip }, public_address => { ip => '203.0.113.9' } };
 	};
+	local *subs::peer_secure_url = sub { return ($_[1], 0) };
 	return $code->();
 }
 

@@ -1,5 +1,6 @@
 # tests-for: scripts/run_tests.pl scripts/run_tests_fork.pl
-# covers:    the suite runner - the fork engine, its job cap, and the prove fallback
+# covers:    the suite runner - the fork engine, its job cap, the prove fallback,
+#            and the commit stamp that names the tree a run actually tested
 
 use strict;
 use warnings;
@@ -44,6 +45,20 @@ sub run_engine {
 	my $stderr = <$err> // '';
 	waitpid($pid, 0);
 	return ($? >> 8, $stdout . $stderr);
+}
+
+# Same run, streams kept apart: the moved-HEAD warning has to be on STDERR and
+# the summary on STDOUT, or a script reading one gets the other's words.
+sub run_engine_split {
+	my @args = @_;
+	my $err = gensym;
+	my $pid = open3(my $in, my $out, $err, $^X, $runner, @args);
+	close $in;
+	local $/;
+	my $stdout = <$out> // '';
+	my $stderr = <$err> // '';
+	waitpid($pid, 0);
+	return ($? >> 8, $stdout, $stderr);
 }
 
 sub detected_cores {
@@ -145,5 +160,120 @@ subtest 'the fork engine reports pass and failure' => sub {
 	like($source, qr/worktree_seed\.pl/,
 		'the runner seeds a worktree before it starts the engine');
 }
+
+# --- the commit stamp --------------------------------------------------------
+# The box auto-updates: a watcher pulls into the checkout and restarts the app,
+# sometimes while a suite runs. The summary names the commit the run started on,
+# and a HEAD that moves under the run is warned about without failing a green
+# run. A stand-in git answers HEAD from a per-probe file, so both cases are
+# exercised without this checkout's refs ever moving; every other subcommand is
+# the real git, which the front door needs to seed a worktree.
+
+sub write_pass {
+	my ($dir, $name) = @_;
+	my $path = "$dir/$name";
+	open(my $fh, '>', $path) or die "$path: $!";
+	print $fh "use Test::More;\nok(1, 'fine');\ndone_testing;\n";
+	close $fh;
+	return $path;
+}
+
+sub repo_head {
+	open(my $fh, '-|', 'git', '-C', "$FindBin::Bin/..", 'rev-parse', '--short', 'HEAD')
+		or return '';
+	my $out = <$fh>;
+	close $fh;
+	chomp $out if defined $out;
+	return defined $out && $out =~ /^[0-9a-f]{4,40}$/ ? $out : '';
+}
+
+# Returns the bin dir to prepend to PATH, or undef when the test cannot stand
+# in for git. Answers live in $JAWNOS_FAKE_GIT_HEAD.1, .2, ... - one per probe.
+sub fake_git {
+	my ($dir) = @_;
+	my $real = '';
+	for my $path (split /:/, ($ENV{PATH} // '')) {
+		next unless length $path && -f "$path/git" && -x "$path/git";
+		$real = "$path/git" if "$path/git" =~ m{^[\w./+-]+$};
+		last if $real;
+	}
+	return undef unless $real;
+
+	my $bin = "$dir/bin";
+	mkdir $bin or return undef;
+	my $script = <<'SH';
+#!/bin/sh
+case " $* " in
+*" rev-parse "*" HEAD "*)
+	n=$(cat "$JAWNOS_FAKE_GIT_HEAD.n" 2>/dev/null || echo 0)
+	n=$((n + 1))
+	echo "$n" > "$JAWNOS_FAKE_GIT_HEAD.n"
+	if [ -f "$JAWNOS_FAKE_GIT_HEAD.$n" ]; then
+		cat "$JAWNOS_FAKE_GIT_HEAD.$n"
+		exit 0
+	fi
+	echo "fatal: not a git repository (or any of the parent directories): .git" >&2
+	exit 128
+	;;
+esac
+exec REAL_GIT "$@"
+SH
+	$script =~ s{REAL_GIT}{$real};
+	open(my $fh, '>', "$bin/git") or return undef;
+	print $fh $script;
+	close $fh;
+	chmod 0755, "$bin/git" or return undef;
+	return $bin;
+}
+
+# 10. every run names the commit it tested, on the summary line
+subtest 'the summary names the commit the run tested' => sub {
+	my $dir = tempdir(CLEANUP => 1);
+	my ($rc, $out) = run_engine(write_pass($dir, 'pass.t'));
+	is($rc, 0, 'a passing run exits 0');
+	like($out, qr/s wallclock \(HEAD [0-9a-f]{4,40}\)\n/,
+		'the summary carries the short HEAD');
+	my $head = repo_head();
+	if (length $head) {
+		like($out, qr/\(HEAD \Q$head\E\)/, "and it is this checkout's HEAD ($head)");
+	}
+	unlike($out, qr/\bWARNING\b/, 'one tree, so no warning');
+};
+
+# 11. a pull landing under the suite is named, and does not fail the run
+subtest 'a run that spans two commits warns and still passes' => sub {
+	my $dir = tempdir(CLEANUP => 1);
+	my $bin = fake_git($dir) or plan skip_all => 'no git on PATH to stand in for';
+	for my $spec ([1, 'a1b2c3d'], [2, 'e5f6a7b']) {
+		open(my $fh, '>', "$dir/HEAD.$spec->[0]") or die "$dir/HEAD.$spec->[0]: $!";
+		print $fh "$spec->[1]\n";
+		close $fh;
+	}
+
+	local $ENV{PATH} = "$bin:$ENV{PATH}";
+	local $ENV{JAWNOS_FAKE_GIT_HEAD} = "$dir/HEAD";
+	my ($rc, $out, $err) = run_engine_split(write_pass($dir, 'pass.t'));
+	is($rc, 0, 'a green run stays green when HEAD moves');
+	like($out, qr/\(HEAD a1b2c3d\)/, 'the summary names the commit the run started on');
+	like($err, qr/\bWARNING\b/, 'the move is warned about on STDERR');
+	like($err, qr/a1b2c3d/, 'the warning names the starting commit');
+	like($err, qr/e5f6a7b/, 'and the one it finished on');
+	like($err, qr/span two trees/, 'and says the results span two trees');
+	unlike($out, qr/\bWARNING\b/, 'stdout stays parseable');
+};
+
+# 12. an unreadable HEAD is said out loud, quietly, and is not fatal
+subtest 'an unreadable HEAD is reported as unknown, not fatal' => sub {
+	my $dir = tempdir(CLEANUP => 1);
+	my $bin = fake_git($dir) or plan skip_all => 'no git on PATH to stand in for';
+
+	local $ENV{PATH} = "$bin:$ENV{PATH}";
+	local $ENV{JAWNOS_FAKE_GIT_HEAD} = "$dir/HEAD";    # no .1 answer exists
+	my ($rc, $out, $err) = run_engine_split(write_pass($dir, 'pass.t'));
+	is($rc, 0, 'the suite still runs without a readable HEAD');
+	like($out, qr/s wallclock \(HEAD unknown\)/, 'the summary says the tree is unknown');
+	unlike($err, qr/fatal:/, "git's complaint is not leaked into the run");
+	unlike($out, qr/\bWARNING\b/, 'nothing to warn about');
+};
 
 done_testing();

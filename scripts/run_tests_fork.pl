@@ -15,6 +15,11 @@
 #   perl scripts/run_tests_fork.pl -v t/01-names.t verbose TAP
 #   perl scripts/run_tests_fork.pl t/01-names.t t/02-formatters.t
 #
+# Every run names the short commit it started on, on the same summary line as
+# the file and assertion counts, and warns on stderr if HEAD moved under it (the
+# auto-updater pulling mid-suite). The tests that ran still pass; the results,
+# though, belong to neither commit alone, so they are not attributed to one.
+#
 # This is what scripts/run_tests.pl uses. `prove -l t` still works if you want
 # the old path (scripts/run_tests.pl --prove).
 #
@@ -28,6 +33,7 @@ use warnings;
 
 use Cwd qw(abs_path getcwd);
 use File::Basename qw(dirname basename);
+use File::Spec ();
 use File::Temp qw(tempfile);
 use FindBin ();
 use Getopt::Long qw(GetOptions);
@@ -46,6 +52,13 @@ $ENV{JAWNOS_ROOT} = $root;
 # builds a throwaway git repo would inherit it, and `git -C <temp>` would act on
 # this checkout. Start every run with the git environment cleared.
 delete @ENV{qw(GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR)};
+
+# The box auto-updates: a git watcher pulls and restarts the app, sometimes while
+# a suite is mid-flight. One run that began on one commit and ended on another
+# still prints one summary, and that summary is then credited to whichever
+# commit happened to be HEAD. Stamp the tree here, stamp it again once the last
+# child is reaped, and say so when the two disagree.
+my $head_before = head_commit();
 
 my ($jobs, $serial, $verbose, $quiet);
 GetOptions(
@@ -136,17 +149,34 @@ write_hints(%durations);
 
 # --- say it ------------------------------------------------------------------
 
+# The second stamp, taken before anything is printed so the warning cannot lag
+# the numbers it is about.
+my $head_after = head_commit();
+
 if (@failed) {
 	for my $f (@failed) {
 		print "\n--- $f->{'display'} failed\n";
-		print failure_excerpt($f->{'tap'});
+		print failure_excerpt($f);
 	}
 	print "\n";
 }
-printf "%d files, %d assertions, %.1f s wallclock\n",
-	scalar(@tests), $assertions, $wall;
+# The commit stays on the existing summary line, after the numbers, so a
+# reader grepping "N files, N assertions" is unaffected and every run names
+# the tree it tested - an unknown tree is said out loud, never guessed.
+printf "%d files, %d assertions, %.1f s wallclock (HEAD %s)\n",
+	scalar(@tests), $assertions, $wall,
+	(length $head_before ? $head_before : 'unknown');
 print @failed ? "Result: FAIL (" . scalar(@failed) . " test file(s))\n"
               : "Result: PASS\n";
+
+# A moved HEAD is a warning, not a failure: the tests that ran did pass. It is
+# the attribution that is wrong, and only the person reading can decide what the
+# result is worth, so both trees are named.
+if (length $head_before && length $head_after && $head_after ne $head_before) {
+	print STDERR "\nrun_tests_fork: WARNING: HEAD moved during this run: $head_before -> $head_after\n",
+		"run_tests_fork: WARNING: these results span two trees; do not attribute them to either commit alone.\n";
+}
+
 exit(@failed ? 1 : 0);
 
 # --- helpers -----------------------------------------------------------------
@@ -167,8 +197,11 @@ sub start_test {
 		open(STDOUT, '>', $tap) or POSIX::_exit(127);
 		open(STDERR, '>&', \*STDOUT) or POSIX::_exit(127);
 		# Test::Builder finalises in END; an unflushed STDERR would be lost if
-		# that path leaves through POSIX::_exit.
-		select(STDERR); $| = 1; select(STDOUT);
+		# that path leaves through POSIX::_exit. TAP goes to STDOUT, so it needs the
+		# same: a child that stopped through one of the guards above, or on a
+		# handled signal, flushed nothing and the run reported a failure with no
+		# assertion to read (that is how t/75 once failed with no 'not ok').
+		select(STDERR); $| = 1; select(STDOUT); $| = 1;
 		chdir $root or POSIX::_exit(127);
 
 		# Each test gets its own copy of the house database; see JawnOSTest.
@@ -247,15 +280,24 @@ sub finish_test {
 	else {
 		$result->{'tap'} = $tap;
 		$result->{'exit'} = $exit;
+		$result->{'signal'} = $signal;
 		push @failed, $result;
 	}
 	return;
 }
 
 sub failure_excerpt {
-	my ($tap) = @_;
+	my ($result) = @_;
+	my $tap = $result->{'tap'} // '';
 	my @lines = split /\n/, $tap;
-	return "  (no output; the test died before printing TAP)\n" unless @lines;
+	unless (@lines) {
+		# Name how it ended, so the next silent death says which kind it was.
+		my $exit   = $result->{'exit'}   // 0;
+		my $signal = $result->{'signal'} // 0;
+		return "  (no output; the child exited $exit"
+			. ($signal ? " on signal $signal" : '')
+			. " before printing TAP)\n";
+	}
 
 	# the failing assertions and their diagnostics, plus the last lines that
 	# explain a die or a missing plan
@@ -312,6 +354,24 @@ sub slurp {
 	my $text = <$fh>;
 	close $fh;
 	return defined $text ? $text : '';
+}
+
+# The short HEAD, or '' when nothing can be read. A tarball checkout, a missing
+# git, or a broken repository must not stop the suite - and git's own "fatal:
+# not a git repository" is not this run's news, so the probe is silent. The
+# summary then says the tree is unknown instead of naming the wrong one.
+sub head_commit {
+	my $pid = open(my $fh, '-|');
+	return '' unless defined $pid;
+	if (!$pid) {
+		open(STDERR, '>', File::Spec->devnull);
+		exec('git', '-C', $root, 'rev-parse', '--short', 'HEAD')
+			or POSIX::_exit(127);
+	}
+	my $out = <$fh>;
+	close $fh;
+	return '' unless defined $out && $out =~ /^([0-9a-f]{4,40})\s*$/;
+	return $1;
 }
 
 sub cores {

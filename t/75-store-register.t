@@ -16,6 +16,11 @@ use RepoSource;
 binmode Test::More->builder->output,         ':encoding(UTF-8)';
 binmode Test::More->builder->failure_output, ':encoding(UTF-8)';
 
+# Every path below is anchored to the tree. Relative reads made the working
+# directory an input, and a file the child could not open killed the run before
+# its plan with no assertion to read.
+my $root = root();
+
 # The Store's Register is a cash till, not a customer page. A walk-in has no
 # account: the order is kept in the manager's memory, and only a paid order is
 # written as a sale. These checks pin the money, the independent tabs, the
@@ -126,7 +131,7 @@ is_deeply( \@missing, [], 'every till label is written in all sixteen languages'
 	or diag( 'missing: ' . join( ', ', @missing ) );
 
 # ------------------------------------------------------------- the template and JS
-my $register_src = read_file('templates/store/register.html.ep');
+my $register_src = read_file("$root/templates/store/register.html.ep");
 my $rendered = eval { Mojo::Template->new(vars => 1)->name('store/register.html.ep')->render($register_src, { cx => '' }) };
 ok( defined $rendered && length $rendered, 'the register template renders' ) or diag($@);
 like( $rendered || '', qr/id="store_register_complete"/, 'a resident session gets the complete-sale control' );
@@ -150,12 +155,12 @@ like( $js, qr/store_register_tab/, 'open orders are tabs' );
 like( $js, qr/store_register_denomination/, 'the denomination buttons are wired' );
 
 # --------------------------------------------------------------- the route
-my $routes = read_file('lib/JawnOS/Routes/manager_store.pm');
+my $routes = read_file("$root/lib/JawnOS/Routes/manager_store.pm");
 like( $routes, qr{\[6411, 'get', '/manager/store/register', 'action_6411'\]}, 'the register has its own route' );
 like( $routes, qr{\[6419, 'post', '/manager/store/register/sale', 'action_6419'\]}, 'the sale route is registered' );
 like( $routes, qr{\[6420, 'get', '/manager/store/register/receipt', 'action_6420'\]}, 'the receipt can be reopened' );
 
-my $controller = read_file('lib/JawnOS/Controller/manager_store.pm');
+my $controller = read_file("$root/lib/JawnOS/Controller/manager_store.pm");
 like( $controller, qr/sub action_6411 \{/, 'the register action exists' );
 like( $controller, qr/template => 'store\/register'/, 'the register action renders the register template' );
 like( $controller, qr/template => 'store\/journal'/, 'the customer history still renders the journal' );
@@ -175,7 +180,7 @@ is( &subs::store_register_order_open()->{'customer'}->{'app'}, 'Customer', 'an o
 # store_maker's window_maker branch returns the window's contents; its other
 # branch renders the Store page itself. The action used to render again after
 # that, and the unfinished response hung until the watchdog restarted the tree.
-require 'JawnOS/Controller/manager_store.pm';
+require "$root/lib/JawnOS/Controller/manager_store.pm";
 {
 	package StoreActionProbe;
 	sub new { bless { p => { window_maker => $_[1], user_agent => 'probe' }, redirect => undef, rendered => undef }, $_[0] }
@@ -203,7 +208,7 @@ is($direct->{'rendered'}, undef, 'and is not rendered a second time');
 # house, so it is left out there. It also used to be a sibling of the store shell
 # and became a whole column beside it once the window put the contents in a flex
 # row; in the footer it can only ever be a line.
-my $store_page = read_file('templates/store/store.html.ep');
+my $store_page = read_file("$root/templates/store/store.html.ep");
 like($store_page, qr/\$in_manager\s*=\s*\(\s*\(\$window_maker \|\| ''\) eq 'yes'\s*\)/,
 	'the Store page knows whether it is drawn in a Manager window');
 like($store_page, qr/unless \(\$in_manager\)[\s\S]{0,800}?id="store_privacy"/,
@@ -215,7 +220,7 @@ unlike($store_page, qr{</div>\s*<div id="store_privacy">},
 
 # A walk-in has no account, and the customer bar is otherwise empty until a
 # customer is loaded. Its Register opens the same till the toolbar does.
-my $ribbons = read_file('templates/ribbons.html.ep');
+my $ribbons = read_file("$root/templates/ribbons.html.ep");
 like($ribbons, qr/id="store_register_bottom_open"/,
 	'the customer bar carries a Register till for a walk-in');
 my $store_js = js_source('js/store.js');
