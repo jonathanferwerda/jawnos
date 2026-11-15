@@ -637,6 +637,21 @@ sub _controller_leaf_from_house {
 		# machine proved is the house's peer listener. No insecure fallback: a
 		# name without a certificate is better than a key on an unverified rail.
 		next unless $verified && &subs::peer_tls_verify($ua);
+		# The machine's own peer session is the second proof the house gate
+		# accepts. A roster key can rotate or a mirror row can be stale, while
+		# the session this machine already syncs under still names it; send
+		# both, over the verified connection only.
+		my $jar = eval { decode_json($rm->{'cookie'} // '') };
+		if (ref $jar eq 'ARRAY') {
+			require Mojo::Cookie::Response;
+			foreach my $c ( @{$jar} ) {
+				next unless ref $c eq 'HASH' && defined $c->{'name'};
+				$ua->cookie_jar->add(Mojo::Cookie::Response->new(
+					name => $c->{'name'}, value => ($c->{'value'} // ''),
+					domain => ($c->{'domain'} // ''), path => ($c->{'path'} // '/'),
+				));
+			}
+		}
 		$ua->on(start => sub { &subs::peer_sign_request($_[1]->req) });
 		my $res = eval {
 			$ua->post($endpoint . '/device/leaf' => form => {
