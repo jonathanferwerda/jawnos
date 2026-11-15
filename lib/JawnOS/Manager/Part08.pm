@@ -572,8 +572,7 @@ sub store_setting_list() {
 
 # Whether the Store keeps a paper version of each invoice when it is saved.
 # Unset means yes: an invoice whose paper is kept is the point of it, and a
-# house that does not want the render (a slow or absent weasyprint) turns it
-# off in Configure - Store.
+# house that does not want the render turns it off in Configure - Store.
 sub store_invoice_paper_enabled {
 	my $v = &subs::setting_grabber({ app => 'me', setting => 'invoice_paper' });
 	return 1 unless defined $v && length $v;
@@ -592,10 +591,9 @@ sub store_receipt_paper_enabled {
 # A paper copy of an invoice, kept with the invoice it belongs to. Every save
 # writes its own version - the name carries the moment, so an old paper is never
 # overwritten and the versions read as a history. The store's own sheet is drawn
-# by JawnOS::PDF::Store (a phone has no weasyprint); the fallback HTML render can
-# be slow (weasyprint under a 45-second bound), so the caller runs this in a
-# subprocess. A machine that can draw neither keeps no paper and the invoice is
-# untouched.
+# by JawnOS::PDF::Store on every machine, the phone included, so the caller runs
+# the render in a subprocess. A machine where the engine cannot draw keeps no
+# paper and the invoice is untouched.
 # $data->{'type'} names the document ('invoice' by default, 'sale' for the
 # register); the row it wrote is returned so a receipt can staple the same
 # paper to itself.
@@ -607,25 +605,18 @@ sub store_invoice_paper($data) {
 	my $customer_app = $data->{'customer_app'} || $app;
 	my $appt = eval { &subs::db_select('appointments', undef, { app => $app, uuid => $uuid, type => $type })->hashes->[0] };
 	return 0 unless $appt;
-	my $c = &subs::controller_builder();
 	my $paper = &store_printer({ type => $type, uuid => $uuid, customer_app => $customer_app });
-	# The engine draws the store's own paper on a phone with no weasyprint. It
-	# is tried first; the HTML render and weasyprint are the fallback for a
-	# machine that has them and a defect this writer has not met.
+	# The engine is the one renderer for the store's own sheet: there is no HTML
+	# fallback and no second tool to install.
 	my ($pdf, $error);
 	eval {
 		($pdf, $error) = JawnOS::PDF::Store::paper_pdf($paper,
 			logger => sub { &subs::log_writer($_[0]) });
 		1;
 	} or $error = $@ || 'the PDF engine failed';
-	unless (defined $pdf && -s $pdf) {
-		my $html = eval { $c->render_to_string(%{$paper}) };
-		($pdf, $error) = &subs::printer_pdf_from_html($html)
-			if defined $html && length $html;
-	}
 	unless ($pdf && -s $pdf) {
-		# A machine with no renderer (a phone, a terminal) keeps no paper; say so
-		# once per save instead of leaving the invoice mysteriously paperless.
+		# A machine where the engine cannot draw keeps no paper; say so once per
+		# save instead of leaving the invoice mysteriously paperless.
 		&subs::log_writer($type . ' paper: ' . ($error || 'no PDF was made') . ' for ' . $app . ' ' . $uuid);
 		return 0;
 	}
@@ -711,21 +702,14 @@ sub store_payment_receipt($data) {
 		# paper is the one the receipt refers to.
 		my $invoice_row = &store_invoice_paper({ app => $app, uuid => $uuid, customer_app => $app, type => $type });
 		push @files, $invoice_row if ref $invoice_row eq 'HASH';
-		my $c = &subs::controller_builder();
 		my $paper = &store_printer({ type => 'receipt', uuid => $receipt_uuid, customer_app => $app, query_app => $paper_app });
-		# The engine first, exactly as the invoice's paper: a phone draws the
-		# receipt itself, and only a machine with weasyprint falls back to HTML.
+		# The engine is the one renderer here too; a phone draws the receipt itself.
 		my ($pdf, $error);
 		eval {
 			($pdf, $error) = JawnOS::PDF::Store::paper_pdf($paper,
 				logger => sub { &subs::log_writer($_[0]) });
 			1;
 		} or $error = $@ || 'the PDF engine failed';
-		unless (defined $pdf && -s $pdf) {
-			my $html = eval { $c->render_to_string(%{$paper}) };
-			($pdf, $error) = &subs::printer_pdf_from_html($html)
-				if defined $html && length $html;
-		}
 		if ($pdf && -s $pdf) {
 			my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($paper_app));
 			system('mkdir', '-p', $folder) unless -e $folder;

@@ -95,8 +95,6 @@ like($cfg, qr/setting="<%=\$m%>".*invoice_paper|invoice_paper/s,
 	'Configure offers the switch');
 
 {
-	package FakePaperC;
-	sub render_to_string { return '<html>invoice</html>' }
 	package FakePaperRows;
 	sub new    { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
 	sub hashes { return $_[0]->{'rows'} }
@@ -105,14 +103,10 @@ like($cfg, qr/setting="<%=\$m%>".*invoice_paper|invoice_paper/s,
 	require $part08_path;
 	require File::Temp;
 	my $dir = File::Temp::tempdir(CLEANUP => 1);
-	my $render = "$dir/render.pdf";
-	write_file($render, '%PDF-1.4 invoice');
 	my ($updated, @logged);
 	no warnings 'redefine';
 	local *subs::db_select = sub { return FakePaperRows->new([ { app => 'bluewater_pallet', uuid => 'i1', file => '[]' } ]) };
-	local *subs::controller_builder = sub { return bless {}, 'FakePaperC' };
 	local *Manager::store_printer = sub { return { template => 'fake' } };
-	local *subs::printer_pdf_from_html = sub { return ($render, undef) };
 	local *subs::setting_grabber = sub { return 'Documents' };
 	local *subs::home = sub { return $dir . '/' . ($_[0] || '') };
 	local *subs::path_name = sub { return 'bluewater_pallet' };
@@ -129,27 +123,18 @@ like($cfg, qr/setting="<%=\$m%>".*invoice_paper|invoice_paper/s,
 	ok(-e $files->[0]{'f'}, 'and the paper is on disk');
 	ok((grep { /invoice paper saved/ } @logged), 'the save is recorded');
 
-	# The engine draws the paper even on a machine with no weasyprint: that is
-	# the phone this writer exists for.
-	@logged = ();
-	local *subs::printer_pdf_from_html = sub { return (undef, 'weasyprint is not installed') };
-	ok(Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i3' }), 'no weasyprint, still a paper');
-	ok(!(grep { /weasyprint is not installed/ } @logged), 'because the engine drew it first');
-
-	# If the engine cannot draw it, HTML and weasyprint are still the fallback.
+	# The engine is the one renderer now: there is no HTML fallback to hide a
+	# defect in it.
 	@logged = ();
 	local *JawnOS::PDF::Store::paper_pdf = sub { return (undef, 'the engine failed') };
-	local *subs::printer_pdf_from_html = sub { return ($render, undef) };
-	ok(Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i4' }), 'the fallback still makes a paper');
-
-	# A machine with neither keeps no paper, and says why instead of leaving the
-	# invoice silently paperless.
-	@logged = ();
-	local *JawnOS::PDF::Store::paper_pdf = sub { return (undef, 'the engine failed') };
-	local *subs::printer_pdf_from_html = sub { return (undef, 'weasyprint is not installed') };
-	ok(!Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i5' }), 'no engine and no renderer, no paper');
-	ok((grep { /weasyprint is not installed/ } @logged), 'and the log says what stopped it');
+	ok(!Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i5' }), 'no engine, no paper');
+	ok((grep { /the engine failed/ } @logged), 'and the log says what stopped it');
 }
+
+# --- the store's print and mail paths use the same engine -------------------
+my $store_misc = source('lib/JawnOS/Controller/store_misc.pm');
+like($store_misc, qr/JawnOS::PDF::Store::paper_pdf/, 'the print/PDF routes draw with the engine');
+unlike($store_misc, qr/printer_pdf_from_html/, 'and keep no HTML fallback');
 
 # --- a receipt is written for every invoice payment -------------------------
 my $part08_again = source('lib/JawnOS/Manager/Part08.pm');
@@ -195,16 +180,12 @@ like(source('templates/store/printer/header.html.ep'), qr/include 'store\/printe
 }
 
 {
-	package FakeReceiptC;
-	sub render_to_string { return '<html>receipt</html>' }
 	package FakeReceiptRows;
 	sub new    { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
 	sub hashes { return $_[0]->{'rows'} }
 	package main;
 	require File::Temp;
 	my $dir = File::Temp::tempdir(CLEANUP => 1);
-	my $render = "$dir/receipt.pdf";
-	write_file($render, '%PDF-1.4 receipt');
 	my ($inserted, $updated);
 	no warnings 'redefine';
 	local *subs::db_select = sub { return FakeReceiptRows->new([ {
@@ -221,10 +202,8 @@ like(source('templates/store/printer/header.html.ep'), qr/include 'store\/printe
 		return '';
 	};
 	local *JawnOS::Platform::use_fork = sub { return 0 };
-	local *subs::controller_builder = sub { return bless {}, 'FakeReceiptC' };
 	local *Manager::store_invoice_paper = sub { return { f => $dir . '/invoice_1.pdf', shared => 1, type => 'document' } };
 	local *Manager::store_printer = sub { return { template => 'fake' } };
-	local *subs::printer_pdf_from_html = sub { return ($render, undef) };
 	local *subs::home = sub { return $_[0] };
 	local *subs::path_name = sub { return 'computer_repair' };
 	local *subs::rightNow = sub { return 1_800_000_000_000 };
@@ -248,16 +227,12 @@ like(source('templates/store/printer/header.html.ep'), qr/include 'store\/printe
 
 # --- the row is written now; the two renders wait for the child -------------
 {
-	package ForkReceiptC;
-	sub render_to_string { return '<html>receipt</html>' }
 	package ForkReceiptRows;
 	sub new    { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
 	sub hashes { return $_[0]->{'rows'} }
 	package main;
 	require File::Temp;
 	my $dir = File::Temp::tempdir(CLEANUP => 1);
-	my $render = "$dir/receipt.pdf";
-	write_file($render, '%PDF-1.4 receipt');
 	my ($inserted, $updated, $captured);
 	no warnings 'redefine';
 	local *subs::db_select = sub { return ForkReceiptRows->new([ {
@@ -272,10 +247,8 @@ like(source('templates/store/printer/header.html.ep'), qr/include 'store\/printe
 		return $dir if ($q->{'setting'} || '') eq 'scan_location';
 		return '';
 	};
-	local *subs::controller_builder = sub { return bless {}, 'ForkReceiptC' };
 	local *Manager::store_invoice_paper = sub { return { f => $dir . '/invoice_1.pdf', shared => 1, type => 'document' } };
 	local *Manager::store_printer = sub { return { template => 'fake' } };
-	local *subs::printer_pdf_from_html = sub { return ($render, undef) };
 	local *subs::home = sub { return $_[0] };
 	local *subs::path_name = sub { return 'computer_repair' };
 	local *subs::rightNow = sub { return 1_800_000_000_000 };

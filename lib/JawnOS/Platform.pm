@@ -203,7 +203,7 @@ sub capabilities {
 		pactl wpctl amixer say afplay
 		parec pacat pulseaudio
 		lpstat lp lpadmin cupsd
-		ipptool weasyprint ippfind scanimage
+		ipptool ippfind scanimage
 		avahi-browse avahi-publish-service dns-sd
 		xclip xsel wl-paste wl-copy xdg-open notify-send
 		stty

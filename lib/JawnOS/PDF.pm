@@ -4,8 +4,8 @@ package JawnOS::PDF;
 # here, the standard-14 faces are described from the Adobe-wide AFM metrics,
 # and a document is laid out by asking this module to draw lines and words at
 # points on a page. It exists because the house prints its store papers on a
-# phone, where weasyprint (~69 MiB and no package) cannot be installed, and the
-# phone must still hand a customer a receipt.
+# phone, where an HTML renderer (~69 MiB and no package manager) cannot be
+# installed, and the phone must still hand a customer a receipt.
 #
 # What it draws: text runs in Helvetica, Helvetica-Bold, Times-Roman and
 # Courier (WinAnsiEncoding), wrapped paragraphs, rules, filled rectangles, a
@@ -25,9 +25,9 @@ package JawnOS::PDF;
 # WinAnsi characters it can keep, the rest become '?', and the substitution is
 # logged through the logger the caller supplied (warn otherwise).
 #
-# Two things this deliberately does not do: it does not render HTML (that stays
-# weasyprint's job) and it does not decode PNG or SVG. A JPEG is cheap because
-# its bytes are already DCT data; anything else would be an image decoder.
+# Two things this deliberately does not do: it does not render HTML and it
+# does not decode PNG or SVG. A JPEG is cheap because its bytes are already DCT
+# data; anything else would be an image decoder.
 
 use strict;
 use warnings;

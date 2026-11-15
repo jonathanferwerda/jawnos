@@ -166,8 +166,7 @@ Install it from `qa/README.md`; logs land in `$QA_ROOT/docker/<stamp>/smoke.log`
   `docker compose exec`.
 - **The alarm server** listens on `working_port + 5` (45550 by default). Publish
   that port too if a phone pairs with this house.
-- **Optional extras** (weasyprint PDF rendering, Ollama, whisper.cpp, Piper
-  voices) are not in the image. Add them in a derived image or through a volume
+- **Optional extras** (Ollama, whisper.cpp, Piper voices) are not in the image. Add them in a derived image or through a volume
   if you need them; the app uses its documented fallbacks until then.
 - **One benign warning in the logs.** `Manager::encode_json` prints a
   `Prototype mismatch` warning from `perl/junderground.pl` and `perl/Music.pl`.

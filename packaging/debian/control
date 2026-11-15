@@ -27,7 +27,7 @@ Depends: ${misc:Depends},
  libwww-perl, hostname, nodejs, openssh-client, openssl, perl, python3, qrencode, rsync, sox,
  sqlite3, tesseract-ocr, tmux, tzdata, zbar-tools, zip, libyaml-libyaml-perl
 Recommends: bluez, fonts-noto-color-emoji, python3-dbus, python3-gi,
- python3-pyside6.qtwebenginewidgets, weasyprint
+ python3-pyside6.qtwebenginewidgets
 Suggests: ollama, piper-tts, whisper.cpp
 Description: local-first personal server and desktop
  JawnOS is a personal environment that runs as a house server and, with the

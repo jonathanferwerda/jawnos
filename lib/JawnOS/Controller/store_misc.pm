@@ -28,6 +28,7 @@ use Mojo::Parameters;
 use Mojo::DOM;
 use Mojo::URL;
 use Mojo::JSON qw(decode_json encode_json);
+use JawnOS::PDF::Store ();
 use URI::Encode qw(uri_encode uri_decode);
 use List::Util qw(shuffle);
 use Data::Dumper;
@@ -503,8 +504,7 @@ sub action_52031 {
 		uuid => $c->param('uuid'),
 		customer_app => $customer_app,
 	});
-	my $html = $c->render_to_string(%{$paper});
-	my ($pdf, $error) = &subs::printer_pdf_from_html($html);
+	my ($pdf, $error) = JawnOS::PDF::Store::paper_pdf($paper);
 	return $c->render(json => { ok => 0, error => $error }) unless $pdf;
 	my $result = &subs::printer_cups_send($printer, $pdf);
 	unlink $pdf;
@@ -529,8 +529,7 @@ sub action_52032 {
 		uuid => $c->param('uuid'),
 		customer_app => $customer_app,
 	});
-	my $html = $c->render_to_string(%{$paper});
-	my ($pdf, $error) = &subs::printer_pdf_from_html($html);
+	my ($pdf, $error) = JawnOS::PDF::Store::paper_pdf($paper);
 	return $c->render(text => $error || 'could not make the PDF', status => 500) unless $pdf;
 	my $bytes = read_file($pdf, binmode => ':raw');
 	unlink $pdf;
@@ -573,7 +572,6 @@ sub action_31938 {
 	});
 	my $attachments = [{
 			type => 'printer',
-			html => $c->render_to_string(%{$printer}),
 			printer => $printer,
 			uuid => $printer->{'uuid'}
 		}

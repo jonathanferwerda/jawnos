@@ -5,44 +5,47 @@ nothing here overrides it.
 
 ## Landed and in use
 
-- v0.1.2984 - Store: a receipt for every payment, stapled to the revised invoice; register
-  sales keep receipts too.
-- v0.1.2988 - Perl PDF writer (`lib/JawnOS/PDF.pm`, `lib/JawnOS/PDF/Store.pm`): the store's
-  receipt and invoice are drawn by it; weasyprint is the fallback.
-- v0.1.2990 - Packages app, first slice (apt/pacman, install/update/remove, upload a package
-  file; the mobile runtime is read-only and says so).
+- v0.1.3000 - PDF: `JawnOS::PDF` embeds a **sparse TrueType subset** - only the glyphs a paper
+  drew, with their composite components - instead of the whole face. The two sample store papers
+  fell from ~360-388 KB to ~77-82 KB. `_ttf_subset`, `_ttf_components`, `_ttf_checksum` in
+  `lib/JawnOS/PDF.pm`; `t/303-pdf-subset.t`.
+- v0.1.3000 - Packages: apt and pacman plus **AUR through yay/paru**, **flatpak**, **snap**,
+  **pip3** and **npm**. **Purge** (route `54030`) removes configuration while Remove keeps it.
+  Every command is a literal argv and every name is validated per backend; writes are refused
+  outside the JawnOS desktop window. The mobile runtime case says why it is read-only.
+  `lib/JawnOS/Domain/Packages.pm`, `t/302-packages.t`.
+- v0.1.3000 - Store: a **receipt paper for every payment received**, with its own
+  Configure - Store switch (`receipt_paper`, on by default). Turning it off keeps the receipt row
+  and draws no paper; the receipt no longer follows the invoice-paper switch.
+  `store_receipt_paper_enabled` and the gate in `store_payment_receipt`, `t/304-store-receipt-paper.t`.
+- This follow-up - **weasyprint is gone from the store path and the installers**. The invoice and
+  receipt papers, `/store/print/pdf`, `/store/print/send` and emailed papers all use
+  `JawnOS::PDF::Store`. `Platform::Print::pdf_from_html`, `printer_pdf_from_html`, the
+  `weasyprint` tool probe, and the Debian, AUR, Docker and README entries are removed.
 
-Earlier in the same run: receipts delete house-wide and reference their pages on the category,
-vendor and every item (`market_receipt_attach`); the receipts list names the apps that use a
-receipt (`market_receipt_referrers`); invoices keep a versioned paper (`store_invoice_paper`);
-the receipt vendor matches the name the House already keeps (`market_vendor_resolve`).
+Earlier in the run: receipts delete house-wide and reference their pages on the category, vendor
+and every item (`market_receipt_attach`); the receipts list names the apps that use a receipt
+(`market_receipt_referrers`); invoices keep a versioned paper (`store_invoice_paper`); the receipt
+vendor matches the name the House already keeps (`market_vendor_resolve`).
 
 ## Left to do, in the order I would take it
 
-1. Check a printed invoice and receipt, then take weasyprint out of the store path.
-   `lib/JawnOS/Manager/Part08.pm` (`store_invoice_paper`, `store_payment_receipt`) tries the
-   engine first, then weasyprint. Print one of each, compare with the HTML sheet, and if they
-   agree remove the weasyprint fallback for these two documents. Then the desktop installer
-   can drop weasyprint too (the phone cannot have it: ~69 MiB marginal, and the runtime has no
-   package manager - `JawnRuntime.java:56/380`).
-
-2. TTF subsetting for the PDF engine. A paper with non-Latin text embeds the whole face
-   (0.4-2 MB). `lib/JawnOS/PDF.pm` (CID fonts) embeds Type0 + Identity-H + CIDFontType2 with
-   cmap 4/12. Subsetting brings a paper to tens of KB and is what makes keeping a paper per
-   payment cheap. Papers are correct until then, just large.
-
-3. Decide the peer render is no longer needed. It was going to draw on a computer for the
-   phone; the engine now draws on the phone. Close it once step 2 lands.
-
-4. Packages, next slice: AUR through yay/paru; Flatpak/Snap/pip/npm; purge (Remove keeps config
-   today); the in-app window check on the desktop. Then refine what the mobile runtime case
-   shows (it lists the shipped binaries and refuses to install).
-   Key files: `lib/JawnOS/Domain/Packages.pm` (argv, validation, `packages_lock_take`, upload
-   guard), `lib/JawnOS/Controller/manager_packages.pm`,
-   `lib/JawnOS/Routes/manager_packages.pm` (ids 54020-54029), `templates/apps/packages.html.ep`,
-   `public/js/manager/packages.js`.
-
-5. Scan leftovers worth a pass (working, not yet leaned on):
+1. **Logo on the papers (the next feature).** The engine draws text and JPEG images but no PNG;
+   the stored `logo` is always a PNG data URI (action `9374` hardcodes `image/png`). To get a
+   colour logo on invoices and a black-and-white one on receipts: at upload, write two JPEG
+   renditions beside the PNG (colour and `magick -colorspace Gray`), keep them as settings, and
+   draw the invoice's from the first and the receipt's from the second. On a phone with no
+   magick, use the image bridge; if neither exists, keep no JPEG and the paper stays text-only.
+   Files: `lib/JawnOS/Controller/manager_configure.pm` (action `9374`),
+   `lib/JawnOS/PDF/Store.pm` (`_header`), `lib/JawnOS/PDF.pm` (`image_jpeg`),
+   `templates/configure/store_setting_list.html.ep`, `t/302-pdf-writer.t`.
+2. **Close the peer render.** It was going to draw on a computer for the phone; the engine now
+   draws on the phone and subsetting has landed, so the peer path is no longer needed.
+3. **Packages refinements.** Snap and flatpak column parsing should be checked on a real host
+   (the parsers are heuristics); pip may be refused by a PEP 668-managed Python and should say
+   so; the desktop window gate is client-side, while the server still relies on the approved
+   session plus `confirm=1`.
+4. **Scan leftovers worth a pass** (working, not yet leaned on):
    - the phone's `computer health probe` line: after a pass,
      `grep 'computer health probe' ~/manager.log` on the phone should read
      `answered (table) - this phone stands aside`.
@@ -53,12 +56,13 @@ the receipt vendor matches the name the House already keeps (`market_vendor_reso
 
 ## Open decisions
 
-- Does the Store's invoice-paper switch also govern receipt papers, or are they always kept?
-  Today both follow the same render path.
-- Partial payments write a receipt with the remaining balance (implemented). Confirm the
-  wording on the sheet once you see one.
 - `payment_paper_app` blank means "the income transaction's own app". Set it to
   `computer_repair` if that is where the stapled papers belong.
+- Partial payments write a receipt with the remaining balance (implemented). Confirm the
+  wording on the sheet once you see one.
+- Turning `receipt_paper` off suppresses the payment's whole render, including the revised
+  invoice sheet normally stapled to the receipt. Split them if the invoice paper should keep
+  refreshing independently.
 
 ## Verification
 
@@ -68,15 +72,14 @@ the receipt vendor matches the name the House already keeps (`market_vendor_reso
   `qa/coding_night/agent-index.md` conflicts - rebase, regenerate the index with
   `perl scripts/agent_help.pl --write-index`, retitle with the new version.
 - Known parallel flakes: `t/57-control-socket`, `t/78-manager-killer`; both pass alone.
-- New tests this run: `t/300-receipt-when-category`, `t/262-store-scope`, `t/302-pdf-writer`,
-  `t/302-packages`.
+- Tests added in v0.1.3000: `t/303-pdf-subset`, `t/304-store-receipt-paper`; `t/302-packages`,
+  `t/302-pdf-writer`, `t/262-store-scope`, `t/196-cups-print`, `t/243-platform-print`,
+  `t/219-platform-capabilities` and `t/258-shell-sinks` were updated for the engine-only path.
 
 ## Worktrees from this run
 
-All landed and safe to remove: scan-followup, scan-receipt-test, scan-jam,
-scan-computer-first, scan-probe-log, scan-help-button, market-vendor-match, receipt-house,
-receipt-ref, receipt-referrers, invoice-paper, invoice-paper-log, store-receipt, pdf-writer,
-packages-app.
+- `pdf-packages` - landed as v0.1.3000; safe to remove.
+- `store-paper` - this branch (weasyprint removal and this doc). Safe to remove once landed.
 
     git -C ~/jawnos worktree list
     git -C ~/jawnos worktree remove .worktrees/<name>    # then: git branch -D agent/<branch>

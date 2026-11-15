@@ -566,29 +566,12 @@ like(read_file("$root/lib/JawnOS/Platform/Print.pm"),
 	is(subs::printer_default_saved(), 'PDF', 'the saved default is read without CUPS');
 }
 
-# --- the PDF path -----------------------------------------------------------
+# --- the store's papers no longer go through an HTML renderer --------------
 {
-	no warnings 'redefine';
-	local *JawnOS::Platform::Print::tool = sub { return ''; };
-	my ($pdf, $error) = subs::printer_pdf_from_html('<html><body>x</body></html>');
-	ok(!defined $pdf, 'no PDF without weasyprint');
-	like($error, qr/weasyprint/, 'and the error names it');
-}
-{
-	my $weasy = fake_script('weasyprint', 'printf "%%PDF-1.4\\n" > "$2"');
-	no warnings 'redefine';
-	local *JawnOS::Platform::Print::tool = sub { return $weasy if $_[0] eq 'weasyprint'; return ''; };
-	my ($pdf, $error) = subs::printer_pdf_from_html('<html><body>x</body></html>');
-	ok(defined $pdf, 'a PDF is produced when weasyprint is there');
-	is($error, undef, 'with no error');
-	ok(-s $pdf, 'and the file has bytes');
-	if (defined $pdf) {
-		open my $fh, '<', $pdf;
-		my $head = <$fh>;
-		close $fh;
-		like($head, qr/^%PDF/, 'and starts with the PDF signature');
-		unlink $pdf;
-	}
+	my $print = read_file("$root/lib/JawnOS/Platform/Print.pm");
+	unlike($print, qr/weasyprint|pdf_from_html/, 'the print seam carries no HTML renderer');
+	my $printer2 = read_file("$root/lib/JawnOS/Domain/Printer2.pm");
+	unlike($printer2, qr/printer_pdf_from_html/, 'and the domain wrapper is gone');
 }
 
 # --- the wiring -------------------------------------------------------------

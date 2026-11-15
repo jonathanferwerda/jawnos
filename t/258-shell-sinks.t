@@ -94,7 +94,8 @@ like($notify, qr/system\(\@argv\) if \@argv/, 'the notification sound passes arg
 unlike($notify, qr/`am broadcast/, 'no notification text reaches a shell');
 
 my $sent = source('lib/JawnOS/Domain/Sent.pm');
-like($sent, qr/system\('weasyprint', \$page, \$loc\)/, 'the paper draw runs in list form');
+like($sent, qr/JawnOS::PDF::Store::paper_bytes/, 'the mailed paper is drawn by the store engine');
+unlike($sent, qr/weasyprint/, 'and no HTML renderer is invoked');
 like($sent, qr/system\('mkdir', '-p', \$destination\)/, 'the attachment folder is made in list form');
 like($sent, qr/system\('shred', '-u', \$loc\)/, 'the attachment scratch is shredded in list form');
 

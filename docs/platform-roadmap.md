@@ -322,7 +322,7 @@ model have already landed (P3, below).
 | `Platform::Mdns` | Avahi browse and publish | `dns-sd` (P2), the DNS-SD API (P3) |
 | `Platform::Audio` | pactl, then wpctl, then amixer; devices, volume, default, player/recorder argv | CoreAudio (P2), WASAPI (P3) |
 | `Platform::Serial` | `/dev/ttyACM*` and `/dev/ttyUSB*`, stty, the shared console protocol | `/dev/cu.*` (P2), `COM*` (P3) |
-| `Platform::Print` | the CUPS client, weasyprint PDF, ipptool ink, scanimage | CUPS (P2), the spooler (P3) |
+| `Platform::Print` | the CUPS client, ipptool ink, scanimage | CUPS (P2), the spooler (P3) |
 | `Platform::Shell` | clipboard, opener, notification, terminal list | `pbcopy`/`open`/`osascript` (P2), `clip`/`ShellExecute`/toasts (P3) |
 | `Platform::Paths` | XDG install roots, `tool_path`, a temp that can fall back | Application Support (P2), `LOCALAPPDATA`/`%TEMP%` (P3) |
 | `Platform::Ports` | base-relative duty and transport tables, the configured tunnel range | none: the numbers are shared |

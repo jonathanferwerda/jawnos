@@ -1,13 +1,12 @@
 package JawnOS::Platform::Print;
 
 # Printing behind one interface. Linux runs the CUPS client the domain code
-# did - lpstat to list queues, lpadmin to add one, lp to send, weasyprint for
-# the PDF, ipptool for an ink read - and scanimage for the two feeders the
-# house uses. The argv, the bounds (3s lpstat, 5s ippfind, 45s PDF, 6s ink)
-# and the `sudo -n` retry are the ones the domain code built, so a Linux house
-# prints exactly as it did. macOS speaks the same CUPS commands; the Windows
-# spooler backend is P3. A machine with no print stack answers empty results
-# or an error hash instead of dying.
+# did - lpstat to list queues, lpadmin to add one, lp to send, ipptool for an
+# ink read - and scanimage for the two feeders the house uses. The argv, the
+# bounds (3s lpstat, 5s ippfind, 6s ink) and the `sudo -n` retry are the ones
+# the domain code built, so a Linux house prints exactly as it did. macOS
+# speaks the same CUPS commands; the Windows spooler backend is P3. A machine
+# with no print stack answers empty results or an error hash instead of dying.
 #
 # The parsers are exported so a fixture can pin the shapes: parse_lpstat reads
 # `lpstat -p -d -v -a`, and scan_argv builds the scanimage argv.
@@ -22,7 +21,7 @@ use Mojo::UserAgent;
 use Exporter 'import';
 our @EXPORT_OK = qw(
 	available unsupported tool
-	printers discover probe add_queue send pdf_from_html ink scan_argv
+	printers discover probe add_queue send ink scan_argv
 	adf_state scan_capabilities scan_escl parse_scan_capabilities
 	parse_lpstat scan_pdf_jpegs
 );
@@ -455,27 +454,6 @@ sub send {
 	my $rc = system($lp, '-d', $name, $pdf_path);
 	$rc = system('sudo', '-n', $lp, '-d', $name, $pdf_path) if $rc != 0;
 	return $rc;
-}
-
-# Turn HTML into a PDF with weasyprint under a 45-second bound. Answers
-# ($pdf_path, undef) or (undef, $error); the caller removes the file.
-sub pdf_from_html {
-	my ($html) = @_;
-	return (undef, 'no paper to print') unless defined $html && length $html;
-	my $weasyprint = tool('weasyprint');
-	return (undef, 'weasyprint is not installed') unless defined $weasyprint && length $weasyprint;
-	my ($fh, $html_path) = File::Temp::tempfile('jawn_print_XXXXXX', SUFFIX => '.html', DIR => File::Spec->tmpdir, UNLINK => 0);
-	return (undef, 'could not write the print file') unless $fh;
-	print $fh $html;
-	close $fh;
-	(my $pdf_path = $html_path) =~ s/\.html$/.pdf/;
-	my $timeout = tool('timeout');
-	my $rc = (defined $timeout && length $timeout)
-		? system($timeout, '45', $weasyprint, $html_path, $pdf_path)
-		: system($weasyprint, $html_path, $pdf_path);
-	unlink $html_path;
-	return (undef, 'weasyprint failed') unless $rc == 0 && -s $pdf_path;
-	return ($pdf_path, undef);
 }
 
 # What a printer says about its own consumables, read over IPP with ipptool

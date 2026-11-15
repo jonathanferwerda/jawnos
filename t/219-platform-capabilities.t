@@ -92,7 +92,7 @@ ok($caps->{'print_available'} eq '0' || $caps->{'print_available'} eq '1',
 # The names each seam owns are reported, so a missing tool shows up in the probe.
 foreach my $name (qw(
 	parec pacat pulseaudio
-	ipptool weasyprint ippfind scanimage
+	ipptool ippfind scanimage
 	xclip xsel wl-paste wl-copy xdg-open notify-send
 	stty
 	ip ifconfig route arp

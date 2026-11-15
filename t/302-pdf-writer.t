@@ -3,7 +3,7 @@
 #           /Length, wrapping, table column x, stamp, repeating header, JPEG
 #           passthrough), the store receipt/invoice layout drawn from the same
 #           appointment data as the HTML sheet, the WinAnsi fallback warning,
-#           and the wiring that tries the engine before weasyprint.
+#           and the wiring that gives both store documents to the engine.
 
 use strict;
 use warnings;
@@ -17,11 +17,11 @@ use Test::More;
 use JawnOS::PDF ();
 use JawnOS::PDF::Store ();
 
-# The phone has no weasyprint, so the store's paper is drawn here. These are the
-# facts that make the output a PDF a viewer accepts and the receipt the paper
-# the template prints: structure, page count, a known word in a stream whose
-# /Length is true, wrapping, a column's x, the PAID stamp, the receipt's
-# balance/message, and the Part08 order that keeps weasyprint a fallback.
+# The store's paper is drawn here on every machine, the phone included. These
+# are the facts that make the output a PDF a viewer accepts and the receipt the
+# paper the template prints: structure, page count, a known word in a stream
+# whose /Length is true, wrapping, a column's x, the PAID stamp, the receipt's
+# balance/message, and the Part08 wiring that gives it both store documents.
 
 sub bytes_of {
 	my (@pages) = @_;
@@ -178,7 +178,7 @@ sub paper {
 	my ($bytes, $error) = JawnOS::PDF::Store::paper_bytes(
 		paper(type => 'receipt', payment => 23.20, balance => 20), store => $store
 	);
-	ok(defined $bytes, 'the receipt is drawn without weasyprint') or diag $error;
+	ok(defined $bytes, 'the receipt is drawn by the engine') or diag $error;
 	like($bytes, qr/\(REMAINING BALANCE\) Tj/, 'the receipt names the remaining balance');
 	like($bytes, qr/\(THIS PAYMENT\) Tj/, 'and the payment it receipts');
 	like($bytes, qr/Thanks for shopping with us today!/, 'the house receipt message is the footer');
@@ -225,15 +225,12 @@ sub paper {
 	}
 }
 
-# --- Part08 tries the engine first, weasyprint second ------------------------
+# --- Part08 draws both store documents with the engine only ------------------
 {
 	my $source = read_file("$FindBin::Bin/../lib/JawnOS/Manager/Part08.pm");
 	like($source, qr/use JawnOS::PDF::Store \(\);/, 'Part08 loads the document layer');
-	my $engine = index($source, 'JawnOS::PDF::Store::paper_pdf');
-	my $weasy = index($source, 'subs::printer_pdf_from_html');
-	cmp_ok($engine, '>=', 0, 'Part08 calls the engine');
-	cmp_ok($weasy, '>=', 0, 'Part08 still keeps the HTML fallback');
-	cmp_ok($engine, '<', $weasy, 'the engine is called before the fallback');
+	unlike($source, qr/printer_pdf_from_html/, 'and never falls back to an HTML renderer');
+	unlike($source, qr/weasyprint/, 'and names no HTML tool');
 	my @calls = $source =~ /JawnOS::PDF::Store::paper_pdf/g;
 	is(scalar @calls, 2, 'both the invoice paper and the receipt call it');
 }

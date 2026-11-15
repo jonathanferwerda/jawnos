@@ -6,10 +6,10 @@ package subs;
 # this machine should use by default.
 #
 # The commands and their parsing live in JawnOS::Platform::Print now: lpstat,
-# lpadmin, lp, weasyprint and ippfind keep the same argv, bounds and `sudo -n`
-# retry there, so Linux prints exactly as it did. This module keeps the house's
-# policy - the queue list memo, the mDNS fallback, the saved default - and the
-# JSON shapes its routes answer.
+# lpadmin, lp and ippfind keep the same argv, bounds and `sudo -n` retry there,
+# so Linux prints exactly as it did. This module keeps the house's policy - the
+# queue list memo, the mDNS fallback, the saved default - and the JSON shapes
+# its routes answer.
 #
 # Loaded on demand by lib/JawnOS/Domain/Loader.pm.
 use strict;
@@ -538,10 +538,6 @@ sub adf_receipt_watch {
 }
 
 # ---- paper ----------------------------------------------------------------
-sub printer_pdf_from_html($html) {
-	return JawnOS::Platform::Print::pdf_from_html($html);
-}
-
 sub printer_cups_send($name, $pdf_path) {
 	return { ok => 0, error => 'no printer' } unless defined $name && length $name;
 	my @known = map { $_->{'name'} } @{ &cups_printers() };

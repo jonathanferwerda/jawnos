@@ -26,6 +26,7 @@ use MIME::Base64;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
 use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
+use JawnOS::PDF::Store ();
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
 use Text::Unidecode;
@@ -143,30 +144,23 @@ sub email_send {
 	my @mail_files;
 	foreach my $att ( @{$data->{'attachments'}} ) {
 		if ($att->{'type'} eq 'printer') {
-			my $att_url = $att->{'printer'}->{'qr_code'};
 			my $loc_name = &subs::format_name($att->{'printer'}->{'type'}) . ' ' . $att->{'printer'}->{'id'} . '.pdf';
 			my $loc = $gb::tmp_dir . '/' . $loc_name;
 			push @locations, $loc;
-			# the paper draws itself from the very html the compose carried - it was
-			# rendered by the house the document was made on, it needs no network
-			# (the logo and the qr are data uris), and no theme or cache can reach
-			# it. The urls stand in should that html be absent.
-			my $local_url = $att->{'printer'}->{'pdf_url'} || $att_url;
-			if ($att->{'html'}) {
-				my $page = $gb::tmp_dir . '/paper_' . &subs::random_string_creator(12) . '.html';
-				write_file($page, '<!DOCTYPE html><html><head><meta charset="utf-8"><base href="' . $att_url . '"></head><body>' . $att->{'html'} . '</body></html>');
-				system('weasyprint', $page, $loc);
-				unlink $page;
-			}
-			unless (-s $loc) {
-				system('weasyprint', $local_url, $loc);
-			}
-			unless (-s $loc) {
-				system('weasyprint', $att_url, $loc);
+			# The store's own engine draws the paper from the attachment's data,
+			# with no network and no second renderer to install.
+			my ($bytes, $error) = JawnOS::PDF::Store::paper_bytes($att->{'printer'} || {});
+			if (defined $bytes && length $bytes) {
+				write_file($loc, $bytes);
 			}
 			&subs::log_writer('mail paper ' . $loc_name . ' drawn: ' . (-s $loc) . ' bytes');
-			$stuffer->attach_file($loc);
-			push @mail_files, { src => $loc, name => $loc_name, type => 'document' };
+			if (-s $loc) {
+				$stuffer->attach_file($loc);
+				push @mail_files, { src => $loc, name => $loc_name, type => 'document' };
+			}
+			else {
+				&subs::log_writer('mail paper ' . $loc_name . ' not drawn: ' . ($error || 'no PDF was made'));
+			}
 		}
 		else {
 

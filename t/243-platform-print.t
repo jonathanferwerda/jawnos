@@ -16,7 +16,7 @@ use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 
 use JawnOS::Platform::Print qw(
-	available unsupported printers discover probe add_queue send pdf_from_html ink
+	available unsupported printers discover probe add_queue send ink
 	adf_state scan_capabilities scan_escl parse_scan_capabilities scan_argv parse_lpstat
 	scan_pdf_jpegs
 );
@@ -405,40 +405,11 @@ my $sudo = fake_script('sudo', "printf '%s\\n' \"\$@\" >> '$sudo_log'\nexit 0");
 		'with the same command under sudo -n');
 }
 
-# --- the PDF path -----------------------------------------------------------
-my $weasy_log = "$dir/weasy.log";
-my $weasy = fake_script('weasyprint', "printf '%s\\n' \"\$@\" >> '$weasy_log'\nprintf '%%PDF-1.4\\n' > \"\$2\"");
-my $pdf_timeout_log = "$dir/pdf_timeout.log";
-my $pdf_timeout = fake_script('pdf_timeout', <<"SH");
-printf '%s\\n' "\$@" >> '$pdf_timeout_log'
-shift
-exec "\$@"
-SH
+# --- the store's papers no longer go through an HTML renderer ----------------
 {
-	no warnings 'redefine';
-	local *JawnOS::Platform::Print::tool = sub {
-		return $pdf_timeout if $_[0] eq 'timeout';
-		return $weasy if $_[0] eq 'weasyprint';
-		return '';
-	};
-	my ($pdf, $error) = pdf_from_html('<html><body>x</body></html>');
-	ok(defined $pdf, 'a PDF is produced');
-	is($error, undef, 'with no error');
-	ok(-s $pdf, 'and the file has bytes');
-	my $argv = recorded($pdf_timeout_log);
-	is(scalar @{$argv}, 4, 'weasyprint runs under a bound');
-	is($argv->[0], '45', 'of 45 seconds');
-	is($argv->[1], $weasy, 'with weasyprint');
-	like($argv->[2], qr/\.html$/, 'and the HTML file');
-	like($argv->[3], qr/\.pdf$/, 'writing the PDF file');
-	unlink $pdf if defined $pdf;
-}
-{
-	no warnings 'redefine';
-	local *JawnOS::Platform::Print::tool = sub { return ''; };
-	my ($pdf, $error) = pdf_from_html('<html><body>x</body></html>');
-	ok(!defined $pdf, 'no PDF without weasyprint');
-	like($error, qr/weasyprint/, 'and the error names it');
+	my $sent = read_file("$root/lib/JawnOS/Domain/Sent.pm");
+	like($sent, qr/JawnOS::PDF::Store::paper_bytes/, 'the mailed paper is drawn by the store engine');
+	unlike($sent, qr/weasyprint/, 'and no HTML renderer is invoked');
 }
 
 # --- ink ------------------------------------------------------------------
@@ -497,7 +468,7 @@ like($print2, qr/JawnOS::Platform::Print::printers\b/, 'Printer2 lists queues th
 like($print2, qr/JawnOS::Platform::Print::discover\b/, 'Printer2 discovers through the seam');
 like($print2, qr/JawnOS::Platform::Print::add_queue\b/, 'Printer2 adds a queue through the seam');
 like($print2, qr/JawnOS::Platform::Print::send\b/, 'Printer2 sends through the seam');
-like($print2, qr/JawnOS::Platform::Print::pdf_from_html\b/, 'Printer2 makes the PDF through the seam');
+unlike($print2, qr/pdf_from_html/, 'Printer2 no longer makes an HTML PDF');
 like($print2, qr/sub printer_command_path.*?JawnOS::Platform::Print::tool/s,
 	'the old path helper delegates to the seam');
 unlike($print2, qr/`[^`\n]*\$lpstat/, 'Printer2 runs no lpstat of its own');

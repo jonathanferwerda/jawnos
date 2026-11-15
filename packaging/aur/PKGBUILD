@@ -28,7 +28,6 @@ optdepends=(
 	'python-dbus: BLE bridge'
 	'bluez: BLE bridge'
 	'noto-fonts-emoji: SMS emoji'
-	'python-weasyprint: PDF rendering'
 	'ollama: local AI models'
 	'whisper.cpp: offline transcription'
 	'piper-tts: natural voice'

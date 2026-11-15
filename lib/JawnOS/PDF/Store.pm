@@ -1,13 +1,12 @@
 package JawnOS::PDF::Store;
 
-# The store's paper, drawn with JawnOS::PDF instead of weasyprint. The shop on
-# a phone has no weasyprint (and no room for its 69 MiB), but a customer who
-# pays is still owed a receipt, so the receipt and the invoice are laid out
-# here from the same appointment data the HTML sheet uses. The HTML route is
-# untouched: printer_pdf_from_html stays the way an arbitrary HTML sheet is
-# rendered.
+# The store's paper, drawn with JawnOS::PDF. The shop on a phone has no HTML
+# renderer (and no room for one), but a customer who pays is still owed a
+# receipt, so the receipt and the invoice are laid out here from the same
+# appointment data the HTML sheet used. This is the one renderer for the
+# store's paper now; there is no HTML fallback behind it.
 #
-# What it answers is the same contract as the weasyprint path:
+# What it answers is the contract the print routes expect:
 #   my ($pdf_path, undef) = paper_pdf($paper);     # a temp PDF to move or unlink
 #   my (undef, $error)    = paper_pdf($paper);     # why no paper was made
 # `$paper` is the hash store_printer returns (registers, totals, cx, type,

@@ -417,8 +417,8 @@ The bars can be moved, hidden or set to auto-hide, and the interface scales to t
   (`Mojolicious`, `Mojo::SQLite`, `Minion`, `Sereal`, `Crypt::Simple` and friends).
 - A handful of command-line tools: `ffmpeg`, `imagemagick`, `tesseract`, `sqlite3`, `qrencode`,
   `zbar`, `espeak`, `curl`, `rsync`, `openssl`, `sshpass` and `autossh` (see below).
-- Optional, for the full feature set: Python `weasyprint` (PDF rendering), `ollama` (local AI
-  models), and a `whisper.cpp` build with the base model (audio transcription).
+- Optional, for the full feature set: `ollama` (local AI models), and a
+  `whisper.cpp` build with the base model (audio transcription).
 - Optional, for the Linux desktop app (`desktop/`, the phone's dashboard and BLE bridge on a
   computer): `python3-gi`, `python3-dbus`, BlueZ, **PySide6 with Qt WebEngine** and the Qt
   **Wayland** platform plugin (the only view, and the engine with WebRTC); a **colour emoji font**
@@ -493,8 +493,6 @@ cpanm --notest --force Mojolicious::Lite \
  Minion Minion::Backend::SQLite Mojo::IOLoop::ReadWriteFork \
  Sereal::Encoder WebService::Ollama
 
-pip install weasyprint
-
 # Piper, for the natural speech voice: glibc-repo adds the repo glibc-runner needs
 # (Termux is bionic, so the glibc Piper build runs under glibc-runner)
 pkg install -y glibc-repo && pkg install -y glibc-runner
@@ -531,7 +529,7 @@ sudo apt install lib32z1-dev cpanminus \
 ssh espeak build-essential zip openssl libssl-dev \
 perl tesseract-ocr imagemagick sqlite3 sshpass \
 ssh curl sox iproute2 qrencode rsync ffmpeg libbarcode-zbar-perl \
-tmux weasyprint autossh net-tools ollama
+tmux autossh net-tools ollama
 
 # For the Linux desktop app (desktop/): the Qt WebEngine view (the only engine)
 # and hardware video decode. It ALSO needs the VA-API driver for your GPU (pick
@@ -590,7 +588,7 @@ sudo pacman -Syu
 sudo pacman -S base-devel cpanminus sqlite3 \
 chromium xclip rsync sshpass certbot zip \
 imagemagick espeak-ng tesseract xsane sox \
-net-tools xdotool qrencode zbar fprintd python-weasyprint \
+net-tools xdotool qrencode zbar fprintd \
 autossh lm_sensors ollama cmake python-pip
 
 # For the Linux desktop app (desktop/): the Qt WebEngine view (the only engine)
