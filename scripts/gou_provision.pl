@@ -176,6 +176,10 @@ sub _progress_write {
 	return unless open(my $fh, '>', $tmp);
 	print {$fh} $JSON->encode(\%data);
 	close $fh;
+	# This runs as root through sudo, under the manager's umask 0077. The file holds
+	# no secret and the manager must read it, so give it a mode the service account
+	# can open; a 0600 root file read as an empty job and every poll said "stopped".
+	chmod 0644, $tmp;
 	rename($tmp, $PROGRESS_PATH) or unlink $tmp;
 	return 1;
 }

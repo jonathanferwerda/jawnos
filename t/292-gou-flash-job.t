@@ -249,6 +249,10 @@ sub insert_token {
 	like($written->{'error'}, qr/image not found/, 'with the reason the page shows');
 	ok(($written->{'pid'} // 0) > 1, 'the provisioner records its own pid');
 	ok(length($written->{'start_ticks'} // ''), 'and its start time');
+	# The provisioner runs as root under the manager's umask 0077. The file holds no
+	# secret and the manager reads it, so a root 0600 file is a job nobody can see.
+	is(sprintf('%04o', (stat($progress))[2] & 07777), '0644', 'the progress file is readable by the manager');
+	like($provision, qr/chmod 0644, \$tmp/, 'and the writer sets that mode itself');
 
 	my $routes = read_file(root() . '/lib/JawnOS/Routes/manager_controllers.pm');
 	like($routes, qr{54012, 'get',\s+'/manager/controllers/new/flash/status'}, 'the status route is registered');
