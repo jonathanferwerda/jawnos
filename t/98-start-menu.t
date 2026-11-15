@@ -1,5 +1,6 @@
 # tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js
-# covers:    the running list lists open sessions only, and Internet is the one web entry point
+# covers:    the running list lists open sessions only, Internet is the one web entry
+#            point, and every catalog-driven app label reads as a capitalised name
 
 use strict;
 use warnings;
@@ -59,5 +60,17 @@ is_deeply(\@apps, ['brushing'],
 
 like($template, qr/id="keyboard_toggle"/, 'the keyboard is a start-menu app');
 like($template, qr/id="calculator_toggle"/, 'and the calculator');
+
+# Every app label drawn through the core catalog must read as a label. A key
+# with no entry in language.pl falls back to printing itself, which is how the
+# keyboard icon stayed lowercase beside Clock and Sound. The catalogue is
+# loaded by JawnOSTest; the English value is the one the fallback shows.
+my @lang_hints = $template =~ /hint="<%=\s*&subs::lang\('([^']+)'\)\s*%>"/g;
+ok(scalar(@lang_hints), 'the start menu draws app labels through the core catalog');
+for my $key (@lang_hints) {
+	my $label = language::translate('en', $key);
+	isnt($label, $key, "the $key label has a catalog entry");
+	like($label, qr/^[A-Z]/, "the $key label starts with a capital letter");
+}
 
 done_testing();

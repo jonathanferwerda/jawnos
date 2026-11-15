@@ -47,6 +47,7 @@ $catalog{'ar'} = {
 		'add' => 'إضافة',
 		'label' => 'تسمية',
 		'sound' => 'صوت',
+		'keyboard' => 'لوحة المفاتيح',
 		'volume' => 'مستوى الصوت',
 		'ramp' => 'تصعيد الصوت',
 		'link_appointment' => 'موعد مرتبط',

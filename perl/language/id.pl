@@ -47,6 +47,7 @@ $catalog{'id'} = {
 		'add' => 'Tambah',
 		'label' => 'Label',
 		'sound' => 'Suara',
+		'keyboard' => 'Papan ketik',
 		'volume' => 'Volume',
 		'ramp' => 'Kenaikan volume',
 		'link_appointment' => 'Janji temu tertaut',

@@ -47,6 +47,7 @@ $catalog{'en'} = {
 		'add' => 'Add',
 		'label' => 'Label',
 		'sound' => 'Sound',
+		'keyboard' => 'Keyboard',
 		'volume' => 'Volume',
 		'ramp' => 'Volume ramp',
 		'link_appointment' => 'Linked appointment',

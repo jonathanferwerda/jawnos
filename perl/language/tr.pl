@@ -47,6 +47,7 @@ $catalog{'tr'} = {
 		'add' => 'Ekle',
 		'label' => 'Etiket',
 		'sound' => 'Ses',
+		'keyboard' => 'Klavye',
 		'volume' => 'Ses düzeyi',
 		'ramp' => 'Ses artışı',
 		'link_appointment' => 'Bağlı randevu',

@@ -47,6 +47,7 @@ $catalog{'it'} = {
 		'add' => 'Aggiungi',
 		'label' => 'Etichetta',
 		'sound' => 'Suono',
+		'keyboard' => 'Tastiera',
 		'volume' => 'Volume',
 		'ramp' => 'Aumento volume',
 		'link_appointment' => 'Appuntamento collegato',

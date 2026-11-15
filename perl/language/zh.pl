@@ -47,6 +47,7 @@ $catalog{'zh'} = {
 		'add' => '添加',
 		'label' => '标签',
 		'sound' => '声音',
+		'keyboard' => '键盘',
 		'volume' => '音量',
 		'ramp' => '音量渐强',
 		'link_appointment' => '关联预约',

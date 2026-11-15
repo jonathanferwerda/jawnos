@@ -47,6 +47,7 @@ $catalog{'ja'} = {
 		'add' => '追加',
 		'label' => 'ラベル',
 		'sound' => 'サウンド',
+		'keyboard' => 'キーボード',
 		'volume' => '音量',
 		'ramp' => '音量の立ち上がり',
 		'link_appointment' => '関連する予定',

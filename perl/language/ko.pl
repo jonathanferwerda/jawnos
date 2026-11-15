@@ -47,6 +47,7 @@ $catalog{'ko'} = {
 		'add' => '추가',
 		'label' => '라벨',
 		'sound' => '소리',
+		'keyboard' => '키보드',
 		'volume' => '볼륨',
 		'ramp' => '볼륨 증가',
 		'link_appointment' => '연결된 약속',

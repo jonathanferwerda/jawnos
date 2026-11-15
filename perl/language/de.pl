@@ -47,6 +47,7 @@ $catalog{'de'} = {
 		'add' => 'Hinzufügen',
 		'label' => 'Bezeichnung',
 		'sound' => 'Ton',
+		'keyboard' => 'Tastatur',
 		'volume' => 'Lautstärke',
 		'ramp' => 'Lautstärkeanstieg',
 		'link_appointment' => 'Verknüpfter Termin',
