@@ -2,6 +2,8 @@
    travel.js is part 1. The rest live in travel/ in name order:
      01_map_render_points.js - map render, plates, viewer, GPS and navigation
      02_maps_config_guess.js - delete map, providers, config, guess and site type
+     03_near3d.js - the long press's three.js model of the maps and places
+     04_globe.js - the same ground on Cesium's globe
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var campusProxy = {};
@@ -73,8 +75,9 @@ function travelMapEngine() {
 	travelMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, travelMap.canvas); });
 	// a single tap asks for the pictures taken on the ground the map is showing
 	travelMap.onMapClick(function(lat, lon) { travelNearShow(lat, lon); });
-	// a still long press offers a small street-view preview of that ground
-	travelMap.onLongPress(function(lat, lon, sx, sy) { travelStreetPreview(lat, lon, sx, sy); });
+	// a still long press asks which view to open: the street-level preview, a 3D
+	// model of the measured maps and the places near them, or a globe
+	travelMap.onLongPress(function(lat, lon, sx, sy) { travelViewMenu(lat, lon, sx, sy); });
 	// a right-click on a guessed gap offers to drop it (so the hat may fill that
 	// ground afresh); anywhere else the engine leaves the event alone
 	travelMap.onMapContext(function(m, sx, sy) {
@@ -216,6 +219,64 @@ function travelNearShow(lat, lon) {
 	var bounds = travelMap ? travelMap.viewBounds() : null;
 	travelNearFetch(lat, lon, bounds, 'travel_near', null, true);
 }
+
+// ---- the long press's menu: which view of this ground? ----
+// The three ways to look at the same place: the street-level photo, a 3D model
+// of the measured maps and nearby places, and a globe. It is the guess menu's
+// little sibling (same look); any click away folds it. "Photos / street view"
+// is also how "Set a plate here" stays reachable: that form lives in the street
+// preview card, so choosing street view opens the card and the plate rides on it.
+var travelViewMenuAt = null;
+
+function travelViewMenu(lat, lon, sx, sy) {
+	travelViewMenuHide();
+	var canvas = document.getElementById('travel_campus');
+	if (!canvas) { return; }
+	travelViewMenuAt = { lat: lat, lon: lon, sx: sx, sy: sy };
+	var rect = canvas.getBoundingClientRect();
+	var menu = $('<div id="travel_view_menu"></div>').css({
+		position: 'fixed',
+		left: Math.max(4, Math.min(rect.left + sx, $(window).width() - 190)) + 'px',
+		top: Math.max(4, Math.min(rect.top + sy, $(window).height() - 110)) + 'px',
+		'z-index': 9000,
+		'background-color': 'var(--panel)',
+		border: '2px solid var(--line)',
+		'border-radius': '8px',
+		padding: '4px 6px',
+		'box-shadow': '0 6px 18px rgba(0,0,0,.35)',
+		'font-size': '13px',
+		'min-width': '165px'
+	});
+	$('<b></b>').text(jawnosT('Open this ground as')).css({ display: 'block', 'font-size': '12px', opacity: '.7', padding: '0 4px 2px' }).appendTo(menu);
+	$.each([
+		{ view: 'street', label: jawnosT('Photos / street view') },
+		{ view: '3d', label: jawnosT('3D model') },
+		{ view: 'globe', label: jawnosT('Globe') }
+	], function(i, row) {
+		$('<span class="travel_view_menu_row hover"></span>').attr('view', row.view)
+			.css({ display: 'block', padding: '4px', cursor: 'var(--jawnos-cursor-pointer, pointer)', 'border-radius': '5px' })
+			.text(row.label).appendTo(menu);
+	});
+	menu.appendTo('body');
+}
+
+function travelViewMenuHide() {
+	$('#travel_view_menu').remove();
+}
+
+$(document).on('click', '.travel_view_menu_row', function() {
+	var view = $(this).attr('view');
+	var at = travelViewMenuAt || {};
+	travelViewMenuAt = null;
+	travelViewMenuHide();
+	if (view == 'street') { travelStreetPreview(at.lat, at.lon, at.sx, at.sy); return; }
+	if (view == '3d' && typeof travelNear3dOpen === 'function') { travelNear3dOpen(at.lat, at.lon); return; }
+	if (view == 'globe' && typeof travelGlobeOpen === 'function') { travelGlobeOpen(at.lat, at.lon); }
+});
+
+$(document).on('mousedown touchstart', function(e) {
+	if ($(e.target).closest('#travel_view_menu').length == 0) { travelViewMenuAt = null; travelViewMenuHide(); }
+});
 
 // ---- street view: a long press shows a small preview; pressing it opens the view ----
 var travelStreetPreviewAt = null;
