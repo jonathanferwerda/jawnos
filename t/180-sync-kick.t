@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl perl/help/topics_features.pl scripts/sync_kick.pl
-# covers:    the sync kick job clears the three things that stall a rail and nudges the ordinary pass; a dead hub is not chosen
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl perl/help/topics_features.pl scripts/sync_kick.pl
+# covers:    the sync kick job clears the three things that stall a rail and nudges the ordinary pass; a dead hub is not chosen; a controller holds its automatic sync until its card is mounted
 
 use strict;
 use warnings;
@@ -9,6 +9,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use File::Temp qw(tempdir);
 use JawnOSTest;
 
 my $root = root();
@@ -100,6 +101,36 @@ my $now = JawnOSTest::ts(2026, 11, 5, 14, 0, 0);
 	is($sets[1][1], '', 'the hub setting is cleared');
 	is($sets[2][1], 0, 'the reconnector timer is reset');
 	is(scalar @cache, 1, 'the ordinary pass is nudged once');
+}
+
+# --- a controller waits for its card -----------------------------------------
+# The card is the archive, so a pull before it is mounted writes the house's
+# appointments and files to the eMMC. The board's own first boot sets
+# archive_dir on adoption; an empty or unready root is the hold.
+{
+	my $mounted = tempdir(CLEANUP => 1);
+	is(subs::sync_auto_hold({ device => 'controller', archive_dir => '' }),
+		'no archive card', 'a controller with no card holds its sync');
+	is(subs::sync_auto_hold({ device => 'controller', archive_dir => "$mounted/missing" }),
+		'the archive card is not mounted', 'a card that is not there holds it too');
+	is(subs::sync_auto_hold({ device => 'controller', archive_dir => $mounted, archive_dev => 1, root_dev => 1 }),
+		'the archive card is not mounted', 'an empty mountpoint on the root filesystem is not a card');
+	is(subs::sync_auto_hold({ device => 'controller', archive_dir => $mounted, archive_dev => 2, root_dev => 1 }), undef,
+		'a card on its own device lets the pass run');
+	is(subs::sync_auto_hold({ device => 'computer', archive_dir => '' }), undef,
+		'a computer has no card rule');
+	is(subs::sync_auto_hold({}), undef, 'a machine with no device class is not held');
+
+	my $lan = read_file("$root/lib/JawnOS/Domain/Lan.pm");
+	like($lan, qr/sync_auto_hold\(\{ device => \$device, archive_dir => \$archive_dir \}\)/,
+		'the negotiator asks the hold before it dials a peer');
+	like($lan, qr/config_reader\(\).*?archive_dir/s,
+		'and reads the card this machine adopted, not a shared drive setting');
+	like($lan, qr/return;/,
+		'and leaves the pass when the card is not ready');
+	my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
+	like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_auto_hold\b/s,
+		'the domain loader maps the hold to Sync.pm');
 }
 
 # --- the job is declared, wired and documented -------------------------------

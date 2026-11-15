@@ -222,8 +222,13 @@ def prepare_wayland_env():
 # the same login the WebKit shell uses, without importing GTK
 # --------------------------------------------------------------------------
 
-def ticket_url():
-    """The stored login ticket, if any (keyring, Fernet file, or .shots)."""
+def ticket_url(jawn_dir=None):
+    """The stored login ticket, if any (keyring, Fernet file, or .shots).
+
+    The installed tree is checked too: a packaged desktop lives under
+    ~/.local/share/jawnos, whose ROOT_DIR is not the working tree the board's
+    first boot writes its ticket into. Pass jawn_dir so a fresh board finds it.
+    """
     try:
         from . import secrets
         stored = secrets.load()
@@ -236,7 +241,15 @@ def ticket_url():
         with open(path, "r", encoding="utf-8") as fh:
             return fh.read().strip() or None
     except OSError:
-        return None
+        pass
+    if jawn_dir:
+        path = os.path.join(jawn_dir, ".shots", "ticket.txt")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                return fh.read().strip() or None
+        except OSError:
+            pass
+    return None
 
 
 def manager_url(jawn_dir, ticket=None):
@@ -1757,7 +1770,7 @@ def main(argv=None):
     _allow_fullscreen(page, view, qt, restore_window)
 
     # ---- the launcher URL, and the bridge installation --------------------
-    ticket = None if (args.url or args.probe) else ticket_url()
+    ticket = None if (args.url or args.probe) else ticket_url(settings["jawn_dir"])
     manager = None if (args.url or args.probe) else manager_url(settings["jawn_dir"], ticket)
     manager_base = manager or args.url or ""
     # A profile that still holds the session cookie opens the Manager directly;

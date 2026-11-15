@@ -41,6 +41,8 @@ our $gb;
 our $lan_beacon;
 our $log;
 our %m;
+# One line per hold reason, not one per two-minute pass.
+our $sync_auto_hold_logged;
 
 # A directed unicast sweep of the /24 around each private NIC. Broadcast is the
 # cheap path when it is delivered, but Android drops it for a Termux socket; a
@@ -473,6 +475,27 @@ sub lan_presence_listen {
 
 sub remote_machine_negotiator {
 	my $data = shift;
+	# A controller holds its automatic sync until its card is mounted. The card
+	# is the archive, so a pull before it is ready writes the house's
+	# appointments and files to the eMMC instead. The reason is logged once per
+	# change; the two-minute slot still runs, it just has nothing to do. The
+	# directory is this machine's own config.json value - the card the first
+	# boot adopted - not the shared misc setting, which may name another
+	# machine's drive.
+	my $archive_dir = '';
+	if (($device // '') eq 'controller') {
+		my $cfg = eval { &subs::config_reader() } || {};
+		$archive_dir = $cfg->{'archive_dir'} // '';
+	}
+	my $hold = &sync_auto_hold({ device => $device, archive_dir => $archive_dir });
+	if (defined $hold && length $hold) {
+		unless (defined $sync_auto_hold_logged && $sync_auto_hold_logged eq $hold) {
+			&subs::log_writer('sync hold: ' . $hold . '; automatic sync waits for the card');
+			$sync_auto_hold_logged = $hold;
+		}
+		return;
+	}
+	$sync_auto_hold_logged = '';
 	$gb::suds = &suds_grabber();
 	my $c = &subs::controller_builder();
 	$c->session('gimme' => $data->{'gimme'});

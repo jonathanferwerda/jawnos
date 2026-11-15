@@ -518,6 +518,30 @@ sub sync_backoff_clear {
 	&db_query('delete from cache where context = ? and uuid = ?', 'sync_backoff', $peer);
 }
 
+# A controller's automatic sync waits for its card. The card is the archive,
+# and a pull that lands appointments, attachments and files on the eMMC before
+# the card is mounted is on the wrong disk and can fill it. The first boot
+# adopts the card and records it in config.json, so a board with no card (or a
+# card the kernel has not mounted yet) holds the pass instead of pulling. A
+# non-controller has no such rule: a laptop or server syncs as it always has.
+#
+# The root has to be on a device of its own. A card that failed to mount leaves
+# its empty mountpoint on the eMMC, and a plain -d would call that ready; the
+# device number is what tells the card from the directory that stands in for it.
+sub sync_auto_hold {
+	my ($data) = @_;
+	$data ||= {};
+	return undef unless ($data->{'device'} // '') eq 'controller';
+	my $root = $data->{'archive_dir'} // '';
+	return 'no archive card' unless length $root;
+	return 'the archive card is not mounted' unless -d $root;
+	my @dir = defined $data->{'archive_dev'} ? ($data->{'archive_dev'}) : stat($root);
+	my @base = defined $data->{'root_dev'} ? ($data->{'root_dev'}) : stat('/');
+	return 'the archive card is not mounted'
+		unless @dir && @base && $dir[0] != $base[0];
+	return undef;
+}
+
 # A sync pass starts at most one pull: the marker holds the slot until the
 # forked child claims it. Roster order therefore decides who gets to sync, and
 # a busy first peer (the laptop in daily use) takes every pass while a peer that

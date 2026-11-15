@@ -55,8 +55,13 @@ like($provision, qr/\.jawnos_signatorial_id/, 'the provisioner clears the copied
 # The image is a copy of another card, so its tree may not carry the script the
 # unit calls; the provisioner copies this tree's own alongside the unit.
 like($provision, qr{could not copy \$name}, 'the board scripts are copied into the image, not assumed there');
-like($provision, qr/for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl\)\)/, 'both the first-boot and the recovery script');
+like($provision, qr/for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl gou_splash\.pl\)\)/, 'the board scripts the flash needs, including the splash');
 like($provision, qr{/gou_first_boot\.pl}, 'from this tree\'s own scripts directory');
+like($provision, qr{/gou_splash\.pl}, 'and the splash script travels with the flash');
+# A copied desktop ticket outranks the fresh one the first boot writes, so the
+# source machine's ticket store has to go before the board introduces itself.
+like($provision, qr{\$home/\.config/jawnos}, 'the copier removes the source desktop ticket store');
+like($provision, qr{\$home/\.local/share/jawnos/\.shots/ticket\.txt}, 'and the installed shell\'s copy');
 like($provision, qr/'recovery-image=s'/, 'the flash takes a recovery image');
 like($provision, qr/sdcard_recovery\.img/, 'and copies it onto the flashed rootfs');
 like($provision, qr/push \@done, 'recovery'/, 'reporting it as filled in on the board');
@@ -64,6 +69,9 @@ my $first_boot = slurp('scripts/gou_first_boot.pl');
 like($first_boot, qr/sub _identity_ensure/, 'the first boot mints an identity when none is there');
 like($first_boot, qr/_identity_ensure\(\) unless \$token->\{'absent'\};.*?my \$card = undef/s,
 	'a flashed board is itself before anything is written under its name');
+like($first_boot, qr{sub _ticket_share}, 'the board shares its fresh ticket with the installed shell');
+like($first_boot, qr{\.local/share/jawnos}, 'at the installed shell\'s root, not only the tree');
+like($first_boot, qr{\$root/\.shots}, 'in the .shots directory that root reads');
 
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');

@@ -152,6 +152,8 @@ write_excludes() {
 /var/lib/systemd/random-seed
 /home/jawn/build
 /home/jawn/.cache
+/home/jawn/.config/jawnos
+/home/jawn/.local/share/jawnos/.shots
 /home/jawn/roms
 /home/jawn/.president
 /home/jawn/.presence

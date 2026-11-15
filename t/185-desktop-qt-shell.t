@@ -50,6 +50,8 @@ like($qt, qr/UNMASKED_RENDERER_WEBGL/,
 	'and reports which renderer paints (software, or the Intel card)');
 like($qt, qr/--probe/, 'the probe is a command-line mode');
 like($qt, qr/def ticket_url/, 'it reads the same stored ticket as always');
+like($qt, qr/def ticket_url\(jawn_dir=None\)/, 'and can look in the installed tree too');
+like($qt, qr/ticket_url\(settings\["jawn_dir"\]\)/, 'which is what the launcher passes it');
 like($qt, qr/def _probe_url/, 'the probe uses a real origin for the bridge');
 like($qt, qr/def manager_url/, 'and derives the manager URL from it');
 like($qt, qr/def landed_on_gate/, 'the Gate landing is told from a Manager load');

@@ -766,12 +766,14 @@ sub _wants_link {
 # The mark on the panel while the Manager starts. gou-rotate presents the X
 # root, so painting the root puts the mark up the moment the kernel console
 # goes away; a kiosk that never arrives leaves the mark rather than a bare
-# cursor.
+# cursor. The script composes one full-screen frame (black, one centred mark,
+# its halo, the step and a progress bar); the old unit handed the icon straight
+# to display(1), which tiled it three times across the root.
 sub _splash_unit {
 	return <<'UNIT';
 [Unit]
-Description=JawnOS mark on the panel while the Manager starts
-After=gou-x.service
+Description=JawnOS boot splash on the panel
+After=gou-x.service gou-rotate.service
 Wants=gou-x.service
 Before=jawnos-kiosk.service
 
@@ -779,11 +781,10 @@ Before=jawnos-kiosk.service
 Type=simple
 User=jawn
 Group=jawn
+Environment=HOME=/home/jawn
 Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/1001
-# display(1) paints the root window; it is in the image already, and a board
-# without it simply keeps the dark root it had.
-ExecStart=-/usr/bin/display -window root /home/jawn/.local/share/jawnos/desktop/icons/jawnos.png
+ExecStart=-/usr/bin/perl /home/jawn/jawnos/scripts/gou_splash.pl --watch
 Restart=no
 
 [Install]
@@ -828,8 +829,16 @@ sub _scrub_copied_machine {
 		"$home/.peer.key", "$home/.peer.pub",
 		"$tree/server/fullchain.pem", "$tree/server/privkey.pem",
 		"$tree/server/peer-fullchain.pem", "$tree/server/peer-privkey.pem",
-		"$tree/server/house-ca.key", "$tree/.shots/ticket.txt") {
+		"$tree/server/house-ca.key", "$tree/.shots/ticket.txt",
+		"$home/.local/share/jawnos/.shots/ticket.txt") {
 		$identity = 1 if -f $path && unlink $path;
+	}
+	# The desktop shell's own config and ticket store. A copied ticket.enc wins
+	# over the fresh .shots ticket the first boot writes, so a board that kept it
+	# tried to log in with the source machine's token and parked at the Gate.
+	if (-d "$home/.config/jawnos") {
+		File::Path::remove_tree("$home/.config/jawnos");
+		$identity = 1;
 	}
 	# machine-id is this system's identity to journald and dbus; systemd mints a
 	# new one when the file is absent. The SSH host keys are the same story.
@@ -959,7 +968,7 @@ sub _autopopulate {
 		my $source_dir = File::Basename::dirname(Cwd::abs_path($0));
 		my $dir = "$mount/home/jawn/jawnos/scripts";
 		File::Path::make_path($dir) unless -d $dir;
-		for my $name (qw(gou_first_boot.pl gou_recovery.pl)) {
+		for my $name (qw(gou_first_boot.pl gou_recovery.pl gou_splash.pl)) {
 			my $source = "$source_dir/$name";
 			my $script = -f $source ? _slurp($source) : '';
 			my $path = "$dir/$name";
@@ -969,7 +978,8 @@ sub _autopopulate {
 				$error = "could not copy $name";
 				last;
 			}
-			push @done, $name eq 'gou_first_boot.pl' ? 'first-boot-script' : 'recovery-script';
+			push @done, $name eq 'gou_first_boot.pl' ? 'first-boot-script'
+				: $name eq 'gou_splash.pl' ? 'splash-script' : 'recovery-script';
 		}
 	}
 	if (!length $error) {

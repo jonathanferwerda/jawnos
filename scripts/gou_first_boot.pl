@@ -552,7 +552,38 @@ sub _kiosk_ticket {
 	File::Path::make_path($shots) unless -d $shots;
 	&_own_by_tree($shots, $shots . '/ticket.txt');
 	print STDERR "gou_first_boot: the kiosk ticket could not be minted (status $status)\n" if $status != 0;
-	return $status == 0;
+	return 0 unless $status == 0;
+	my $shared = &_ticket_share($home);
+	print STDERR "gou_first_boot: the kiosk ticket could not be saved for the installed shell\n"
+		unless $shared;
+	return 1;
+}
+
+# The Qt shell is installed at ~/.local/share/jawnos/desktop, so its ROOT_DIR is
+# ~/.local/share/jawnos and it reads ROOT_DIR/.shots/ticket.txt - not the working
+# tree's .shots. app_ticket.pl --save writes the tree's copy; put the same ticket
+# where the installed shell looks, or a freshly flashed board stays at the Gate.
+sub _ticket_share {
+	my ($home) = @_;
+	return 0 unless defined $home && length $home;
+	my $source = Cwd::abs_path('.') . '/.shots/ticket.txt';
+	return 0 unless -f $source;
+	my $body = '';
+	if (open(my $in, '<', $source)) { local $/; $body = <$in> // ''; close $in; }
+	return 0 unless length $body;
+	my $root = $home . '/.local/share/jawnos';
+	return 0 unless -d "$root/desktop";
+	my $dir = "$root/.shots";
+	File::Path::make_path($dir) unless -d $dir;
+	my $dest = $dir . '/ticket.txt';
+	my $tmp = $dest . '.new';
+	return 0 unless open(my $out, '>', $tmp);
+	print {$out} $body;
+	close $out;
+	chmod 0600, $tmp;
+	return 0 unless rename($tmp, $dest);
+	&_own_by_tree($dir, $dest);
+	return 1;
 }
 
 sub _identity_ensure {
@@ -731,18 +762,7 @@ sub _house_row {
 
 my $report = { ok => 1, dry_run => ($opt{'dry_run'} ? 1 : 0) };
 
-# The image drops the source card's ticket, and the desktop view's fallback
-# file with it. Mint this board's own forever ticket here, before the launcher
-# opens it, so a fresh board arrives logged in instead of at the gate. The URL
-# is a credential: the mint's stdout is captured and never written to the log;
-# --save puts it in .shots/ticket.txt (0600), which the view reads.
-&_kiosk_ticket() unless $opt{'dry_run'};
-
 my $token = &_token_read($opt{'token'});
-if ($token->{'error'}) {
-	_fail(6, $token->{'error'});
-}
-$report->{'token'} = $token->{'absent'} ? 'none' : 'found';
 
 # A board that was just flashed has no identity of its own yet (the provisioner
 # removes the image's), and both the card's finding and the join are written
@@ -750,6 +770,19 @@ $report->{'token'} = $token->{'absent'} ? 'none' : 'found';
 unless ($opt{'dry_run'}) {
 	$report->{'identity'} = &_identity_ensure() unless $token->{'absent'};
 }
+
+# The image drops the source card's ticket, and the desktop view's fallback
+# file with it. Mint this board's own forever ticket here, before the launcher
+# opens it, so a fresh board arrives logged in instead of at the gate. The URL
+# is a credential: the mint's stdout is captured and never written to the log;
+# --save puts it in .shots/ticket.txt (0600), and _ticket_share puts it where
+# the installed Qt shell reads it.
+&_kiosk_ticket() unless $opt{'dry_run'};
+
+if ($token->{'error'}) {
+	_fail(6, $token->{'error'});
+}
+$report->{'token'} = $token->{'absent'} ? 'none' : 'found';
 
 my $card = undef;
 unless ($opt{'no_card'}) {
