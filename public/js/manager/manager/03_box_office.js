@@ -419,3 +419,78 @@ $(document).on('click', '.suspend_ticket', function() {
 	});
 });
 
+
+// ---- interview room --------------------------------------------------------
+// The room lives on the switch, not in this house. The house registers it and
+// mints a one-use pass; the applicant spends the pass at thejunderground, so
+// their audio and video never enter the house's network.
+
+function boRoomStatus(row, text) {
+	row.find('.ticket_room_status').text(text || '');
+}
+
+function boRoomCopyText(chip) {
+	var sw = chip.attr('data-switch') || '';
+	var handle = chip.attr('data-handle') || '';
+	var room = chip.attr('data-room') || '';
+	var ticket = chip.attr('data-ticket') || '';
+	return 'Interview room: ' + sw + '\nRoom: ' + handle + '/' + room + '\nPass: ' + ticket + '\nThe pass works once and expires in two hours.';
+}
+
+function boRoomCopied(row) {
+	boRoomStatus(row, jawnosT('Pass copied.'));
+}
+
+$(document).on('click', '.ticket_room', function() {
+	var b = $(this);
+	var row = b.closest('.ticket_request');
+	b.prop('disabled', true);
+	boRoomStatus(row, jawnosT('Opening the room…'));
+	$.ajax({
+		url: '/manager/box_office/room',
+		type: 'POST',
+		data: { ticket: b.attr('ticket'), timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || !response.ok) {
+				b.prop('disabled', false);
+				boRoomStatus(row, (response && response.error) || jawnosT('Could not open the room.'));
+				return;
+			}
+			var chip = $('<span class="bo_chip bo_room_chip"></span>')
+				.attr({
+					'data-switch': response.switch || '',
+					'data-handle': response.handle || '',
+					'data-room': response.room || '',
+					'data-ticket': response.ticket || ''
+				})
+				.text((response.handle || '') + '/' + (response.room || ''));
+			var copy = $('<button type="button" class="ticket_room_copy bo_small"></button>').text(jawnosT('Copy pass'));
+			b.replaceWith($('<span></span>').append(chip).append(document.createTextNode(' ')).append(copy));
+			boRoomStatus(row, jawnosT('Room ready. Copy the pass and send it to the applicant.'));
+		},
+		error: function() {
+			b.prop('disabled', false);
+			boRoomStatus(row, jawnosT('Could not open the room.'));
+		}
+	});
+});
+
+$(document).on('click', '.ticket_room_copy', function() {
+	var row = $(this).closest('.ticket_request');
+	var chip = row.find('.bo_room_chip');
+	var text = boRoomCopyText(chip);
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text).then(function() {
+			boRoomCopied(row);
+		}, function() {
+			boRoomStatus(row, jawnosT('Could not copy the pass.'));
+		});
+		return;
+	}
+	var area = $('<textarea></textarea>').val(text).css({ position: 'fixed', top: '-1000px' }).appendTo(document.body);
+	area[0].select();
+	try { document.execCommand('copy'); boRoomCopied(row); }
+	catch (e) { boRoomStatus(row, jawnosT('Could not copy the pass.')); }
+	area.remove();
+});

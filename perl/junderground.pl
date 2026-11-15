@@ -234,6 +234,77 @@ sub jg_room {
 	return \%out;
 }
 
+# A room slug is stricter than a house handle: the switch's room shape is
+# ^[a-z0-9][a-z0-9._-]{0,62}$, so an underscore is not a room character even
+# though jg_slug makes them.
+sub jg_room_slug {
+	my ($v) = @_;
+	$v = lc($v // '');
+	$v =~ s/[^a-z0-9._-]+/-/g;
+	$v =~ s/^[^a-z0-9]+//;
+	$v =~ s/-+$//;
+	return substr($v, 0, 63);
+}
+
+# Register a room on the switch. A room record is signed by the house crest key,
+# exactly like the house record; seq starts at 1 because a room is created under
+# a fresh slug (an interview names the ticket), so there is no chain to continue
+# from a public read. The room is not advertised and is invite-only: the pass is
+# the only door.
+sub jg_room_register {
+	my ($c, $handle, $room, %opt) = @_;
+	my $h = &jg_slug($handle);
+	my $r = &jg_room_slug($room);
+	return { error => 'no room' } unless length $h && length $r;
+	my $priv = &jg_key($c) or return { error => 'house key locked' };
+	my $crest = &subs::crest_record_read();
+	my $pub = $crest->{'pubkey'} || '';
+	return { error => 'this house has no crest yet' } unless length $pub;
+
+	my $record = {
+		format => 'junderground-room',
+		version => 1,
+		kind => 'register',
+		handle => $h,
+		room => $r,
+		name => $opt{'name'} || 'Room',
+		pubkey => $pub,
+		seq => 1,
+		issued => time,
+		constructs => {},
+		advertised => 'no',
+		policy => $opt{'policy'} || 'invite',
+		max => $opt{'max'} || 8,
+		recording => 'off',
+		expires => 0,
+	};
+	my $signed = &subs::crest_sign_record($record, $priv) or return { error => 'could not sign the room record' };
+	my $res = &jg_call($c, 'POST', '/v1/rooms', $jg_json->encode($signed), 1);
+	return $res if $res->{'error'};
+	return { %$res, handle => $h, room => $r, seq => 1 };
+}
+
+# A one-use bearer pass for the room. Bearer because the applicant has no house
+# identity to bind to; one use and a short expiry because the pass is the whole
+# credential. The pass token is a grant, and the applicant spends it at the
+# switch, never at this house.
+sub jg_room_pass {
+	my ($c, $handle, $room, %opt) = @_;
+	my $h = &jg_slug($handle);
+	my $r = &jg_room_slug($room);
+	return { error => 'no room' } unless length $h && length $r;
+	my $body = {
+		bind => 'bearer',
+		uses => $opt{'uses'} || 1,
+		caps => $opt{'caps'} || [qw(join publish_audio publish_video)],
+		expires => $opt{'expires'} || (time + 7200),
+		meta => $opt{'meta'} || {},
+	};
+	my $res = &jg_call($c, 'POST', "/v1/rooms/$h/$r/passes", $jg_json->encode($body), 1);
+	return $res if $res->{'error'};
+	return { %$res, handle => $h, room => $r };
+}
+
 sub jg_join {
 	my ($c, $handle, $room, $ticket) = @_;
 	my $h = &jg_slug($handle);

@@ -336,6 +336,16 @@
 										<% } %>
 									</div>
 									<button type="button" class="ticket_approve bo_small bo_primary" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('Approve') %></button>
+									<% my $room = ref $r->{'info'}->{'room'} eq 'HASH' ? $r->{'info'}->{'room'} : {}; %>
+									<div class="bo_room">
+										<% if (length($room->{'room'} || '')) { %>
+											<span class="bo_chip bo_room_chip" data-switch="<%= $room->{'switch'} || &jg_url() %>" data-handle="<%= $room->{'handle'} %>" data-room="<%= $room->{'room'} %>" data-ticket="<%= $room->{'ticket'} %>"><%= $room->{'handle'} %>/<%= $room->{'room'} %></span>
+											<button type="button" class="ticket_room_copy bo_small"><%= &subs::ui('Copy pass') %></button>
+										<% } else { %>
+											<button type="button" class="ticket_room bo_small" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('Interview room') %></button>
+										<% } %>
+										<span class="ticket_room_status"></span>
+									</div>
 								</td>
 								<td class="bo_actions">
 									<button type="button" class="ticket_decline bo_small" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('Decline') %></button>

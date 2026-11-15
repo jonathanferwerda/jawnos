@@ -310,4 +310,56 @@ sub action_24775 {
 	$c->render(json => { ok => 1, number => $blocked, numbers => &ticket_blacklist_numbers() });
 }
 
+# POST /manager/box_office/room
+# An interview happens on the switch, not in this house: the room, its signaling
+# and its SFU are thejunderground's, and the applicant spends a one-use pass
+# there. No remote_machines row, no tailnet address and no house session are
+# created, so an applicant never joins the house's private network.
+sub action_24780 {
+	my $c = shift;
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { error => 'denied' });
+		return;
+	}
+	my $uuid = $c->param('ticket') || '';
+	my $request = &subs::db_query('select * from tickets where uuid=? and status=?', $uuid, 'request')->hashes->[0];
+	unless ($request->{'uuid'}) {
+		$c->render(json => { error => 'no request' });
+		return;
+	}
+	my $info = eval { return decode_json $request->{'information'} } || {};
+	my $crest = &subs::crest_record_read();
+	my $handle = &jg_handle($crest);
+	my $room = &jg_room_slug('interview-' . $uuid);
+	my $made = &jg_room_register($c, $handle, $room,
+		name => 'Interview', policy => 'invite', max => 8);
+	if ($made->{'error'}) {
+		$c->render(json => { error => $made->{'error'} });
+		return;
+	}
+	my $pass = &jg_room_pass($c, $handle, $room,
+		uses => 1, expires => time + 7200,
+		meta => { purpose => 'interview', name => ($info->{'name'} || '') });
+	if ($pass->{'error'}) {
+		$c->render(json => { error => $pass->{'error'} });
+		return;
+	}
+	$info->{'room'} = {
+		handle => $handle,
+		room => $room,
+		ticket => $pass->{'ticket'},
+		expires => $pass->{'expires'},
+		switch => &jg_url(),
+	};
+	&subs::db_update('tickets', { information => encode_json($info) }, { uuid => $uuid });
+	$c->render(json => {
+		ok => 1,
+		switch => &jg_url(),
+		handle => $handle,
+		room => $room,
+		ticket => $pass->{'ticket'},
+		expires => $pass->{'expires'},
+	});
+}
+
 1;

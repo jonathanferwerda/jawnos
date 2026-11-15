@@ -12,6 +12,9 @@ sub routes {
 	[14341, 'post', '/manager/box_office/blacklist/remove', 'action_14341'],
 	[14353, 'post', '/manager/box_office/policy', 'action_14353'],
 	[24775, 'post', '/manager/box_office/blacklist/number', 'action_24775'],
+	# The interview room: registered on the switch, with a one-use pass for the
+	# applicant who has no house identity.
+	[24780, 'post', '/manager/box_office/room', 'action_24780'],
 	);
 }
 
