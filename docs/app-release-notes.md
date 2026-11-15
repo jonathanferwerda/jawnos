@@ -5,6 +5,18 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-15 — the house rings, and pictures arrive
+
+- **The Phone app's ringtone is the house's.** A new Ringtone pane (Ring, Chime,
+  Sonar) saves the choice for this phone; the app plays it on the incoming call
+  and the house's own notice stays quiet. A call that rings through now writes
+  its appointment at the ring, so the Alarm loop can fire for a live call
+  instead of waiting for the hangup.
+- **Inbound MMS reaches Chat.** The app reads the phone's MMS store
+  (`mms.list`), and the house files the text and each media part into the
+  conversation, deduped by the carrier's message id. A five-minute poll files
+  pictures that arrived while the app was away.
+
 ## 2026-11-14 — the alarm face outlives an update, and opens unlocked
 
 - **The alarm screen no longer depends on the permission Android resets.**

@@ -237,6 +237,11 @@ sub alarm_clock() {
 				my $name = &subs::format_name($a->{'app'});
 				my $app = &subs::unformat_name($a->{'app'});
 				my $account = &subs::format_name($a->{'account'});
+				# A live ring's appointment is written before the call ends. The
+				# phone's own ringer plays the chosen sound, so the house notice
+				# must stay quiet rather than ring twice.
+				my $appt_data = eval { decode_json($a->{'data'} || '') } || {};
+				my $live_ring = (($a->{'subtype'} || '') eq 'phone' && ref $appt_data eq 'HASH' && $appt_data->{'live'}) ? 1 : 0;
 				if ($settings->{'notification'} && $settings->{'notification'} eq 'on') {
 					# no uuid: keying on the appointment's made a start and a stop
 					# notification the same notifications row, so the second insert met
@@ -251,6 +256,7 @@ sub alarm_clock() {
 						message => $settings->{'notification_text'},
 						settings => $settings,
 						sound => $default_sound,
+						silent => $live_ring ? 1 : 0,
 						title => $name,
 					},$dot);
 				}

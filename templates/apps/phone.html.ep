@@ -174,6 +174,15 @@
 	.phone_route_choice:hover { background:var(--line); }
 	.phone_route_choice.on { border-color:var(--accent,#4a90d9); box-shadow:inset 0 0 0 1px var(--accent,#4a90d9); }
 	.phone_app_empty { color:var(--muted,#8e8e8e); font-size:13px; text-align:center; padding:18px; }
+	.phone_app_ringtone { max-width:360px; margin:0 auto; }
+	.phone_app_ringtone_title { font-size:16px; margin-bottom:4px; }
+	.phone_app_ringtone_note { font-size:12px; color:var(--muted,#8e8e8e); margin-bottom:10px; }
+	.phone_app_ringtone_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+	.phone_app_ringtone_row select { flex:1 1 auto; min-width:0; padding:8px; border:1px solid var(--line);
+		border-radius:9px; background:var(--panel); color:inherit; font:inherit; }
+	.phone_app_ringtone_row button { flex:0 0 auto; padding:8px 14px; border:1px solid var(--line);
+		border-radius:999px; background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font:inherit; }
+	.phone_app_ringtone_status { font-size:12px; color:var(--muted,#8e8e8e); min-height:16px; margin-top:8px; }
 </style>
 
 <div id="phone_app" class="phone_app" style="padding:14px;">
@@ -185,6 +194,7 @@
 		<span class="phone_app_tab" pane="ivr" hint="IVR">IVR</span>
 		<span class="phone_app_tab" pane="all" hint="All">All</span>
 		<span class="phone_app_tab" pane="dial" hint="Dial">Dial</span>
+		<span class="phone_app_tab" pane="ringtone" hint="Ringtone"><%= &subs::ui('Ringtone') %></span>
 	</div>
 	<div class="phone_app_status" id="phone_app_status">Idle</div>
 	<div class="phone_app_callerid_row" style="text-align:center;margin-bottom:10px;">
@@ -387,6 +397,25 @@
 			<div class="phone_app_call">
 				<img class="medium_thumb phone_app_dial_btn" hint="Call" src="<%= &subs::icon_path('phone', '/images/decipherable/phone.png') %>">
 			</div>
+		</div>
+	</div>
+
+	<%# Ringtone: the sound this phone makes for an incoming call. The choice
+	    belongs to the phone, so /manager/phone/sync hands it to the app. %>
+	<div class="phone_app_pane" pane="ringtone">
+		<div class="phone_app_ringtone">
+			<div class="phone_app_ringtone_title" hint="Ringtone"><%= &subs::ui('Ringtone') %></div>
+			<div class="phone_app_ringtone_note"><%= &subs::ui('The sound this phone makes when a call comes in.') %></div>
+			<div class="phone_app_ringtone_row">
+				<select id="phone_ringtone">
+					<option value="notifications/ring.mp3" <%= $ringtone eq 'notifications/ring.mp3' ? 'selected' : '' %>><%= &subs::ui('Ring') %></option>
+					<option value="notifications/chime.mp3" <%= $ringtone eq 'notifications/chime.mp3' ? 'selected' : '' %>><%= &subs::ui('Chime') %></option>
+					<option value="notifications/sonar.mp3" <%= $ringtone eq 'notifications/sonar.mp3' ? 'selected' : '' %>><%= &subs::ui('Sonar') %></option>
+				</select>
+				<button type="button" id="phone_ringtone_preview" hint="Play"><%= &subs::ui('Play') %></button>
+				<button type="button" id="phone_ringtone_save" hint="Save"><%= &subs::ui('Save') %></button>
+			</div>
+			<div class="phone_app_ringtone_status" id="phone_ringtone_status"></div>
 		</div>
 	</div>
 

@@ -274,6 +274,7 @@ function jawnPhoneSync() {
 						routes: (response && response.routes) || {},
 						avatars: (response && response.avatars) || {},
 						ivr: (response && response.ivr) || {},
+						ringtone: (response && response.ringtone) || 'notifications/ring.mp3',
 						silence: (response && response.silence) ? 1 : 0
 					}));
 					if (typeof window.JawnPhone.setSilence === 'function') {

@@ -95,6 +95,10 @@ our $timeouts = {
 	'sync_kick' => { interval => 5 * 60, toggle => 'on', timeout => 120, group => 'fast' },
 	'navigation' => { interval => 4 * 60, interval_divider => 10, last_run => &subs::rightNow(), toggle => 'off', timeout => 90, group => 'navigation' },
 	'sms' => { interval => 30 * 10, toggle => 'off', timeout => 90, group => 'fast' },
+	# The phone's own MMS store: the app downloads the picture and this reads it
+	# into Chat on the same five-minute beat as SMS. On by default because an
+	# inbound picture is otherwise lost until someone opens the phone's app.
+	'mms' => { interval => 30 * 10, toggle => 'on', timeout => 120, group => 'fast' },
 	'backups' => { interval => 1 * 60 * 60, toggle => 'on', timeout => 360, group => 'daily' },
 	'headless_browser' => { interval => 10 * 60, toggle => 'off', timeout => 370, group => 'fast' },
 	# The Weather app's automations need a condition even when nobody has the app

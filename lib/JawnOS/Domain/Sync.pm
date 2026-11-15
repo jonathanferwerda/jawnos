@@ -789,6 +789,87 @@ my $returner = '';
 	return $returner;
 }
 
+# Inbound MMS: the phone's own store, read through the app's mms.list op. A
+# message is deduped by its system id (message_id 'mms:<id>'), so the five-minute
+# poll, a re-read and another machine all keep one row. The text is sealed like
+# any mail; each media part is kept on its own appointment and named in the
+# message's attachments, which is the shape the Chat bubble already draws.
+sub mms_list_check {
+my $returner = '';
+	if ($device eq 'mobile') {
+		my $timestamp = &subs::rightNow();
+		my $c = &subs::controller_builder();
+		my $suds = &suds_grabber();
+		my $bridge = &subs::device_call('mms.list', { limit => 10 });
+		my $list = ($bridge && ref $bridge->{'messages'} eq 'ARRAY') ? $bridge->{'messages'} : [];
+		foreach my $m ( @{$list} ) {
+			next unless ref $m eq 'HASH' && defined $m->{'id'};
+			my $phone = $m->{'number'} || '';
+			$phone =~ s/\D+//gi;
+			$phone =~ s/^1//;
+			next unless $phone;
+			my $message_id = 'mms:' . $m->{'id'};
+			my $already = &subs::db_select('mailbox', undef, { message_id => $message_id })->hashes;
+			next if scalar @{$already};
+			my $time = &subs::epoch_or_span($m->{'received'}, $timestamp);
+			my $app = &subs::phone_number_app($phone);
+			next unless $app;
+			my $body = $m->{'body'} || '';
+			$body =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g;
+			$body = &subs::ui('Picture message') unless length $body;
+			my $sealed = &subs::note_encrypter($suds, $body);
+			next unless defined $sealed && length $sealed;
+			my @atts;
+			foreach my $part ( @{ $m->{'parts'} || [] } ) {
+				next unless ref $part eq 'HASH' && defined $part->{'data'} && length $part->{'data'};
+				my $entry = &Manager::mms_attachment_store({
+					app => $app,
+					timestamp => $time,
+					name => $part->{'name'},
+					mime => $part->{'mime'},
+					data => $part->{'data'},
+				});
+				push @atts, $entry if $entry && $entry->{'f'};
+			}
+			my $attachments = scalar @atts ? encode_json(\@atts) : undef;
+			my $suuid = &subs::random_string_creator(44);
+			my $sender = &subs::format_name($app);
+			&subs::db_insert('mailbox', {
+				uuid => $suuid,
+				timestamp => $time,
+				server_time => &subs::rightNow(),
+				body => $sealed,
+				manager_file => $sender,
+				status => 'inbox',
+				phone => $phone,
+				message_id => $message_id,
+				attachments => $attachments,
+			});
+			&subs::mail_arrival({
+				c => $c,
+				uuid => $suuid,
+				phone => $phone,
+				manager_file => $sender,
+				body => $body,
+				status => 'inbox',
+				($attachments ? (attachments => $attachments) : ()),
+			});
+			my $q = &subs::db_query('select * from appointments where app = ? and type = ? and timestamp = ?', $app, 'sms', $time);
+			if (scalar @{ $q->hashes } == 0) {
+				&Manager::appointment_writer($c, {
+					app => &subs::unformat_name($app),
+					timestamp => $time || $timestamp,
+					type => 'sms',
+					notes => &subs::note_encrypter($suds, &subs::format_name('inbox') . ': ' . $body),
+					duration => 5000,
+				});
+			}
+			$returner .= 'MMS from ' . $phone . ' - ' . $app . "\n";
+		}
+	}
+	return $returner;
+}
+
 # A sealed blob carries its own salt and nonce:
 #   JS1: base64( salt(16) . nonce(12) . tag(16) . ciphertext )
 # The key is PBKDF2-HMAC-SHA256(secret, salt, 10000, 32) and the cipher is

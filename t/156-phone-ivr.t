@@ -938,6 +938,7 @@ like $help, qr/Add number/, 'the help topic names the number control';
 			{
 				calls => [], known => [], numbers => [], blocked => [],
 				ivr => $ivr,
+				ringtone => 'notifications/ring.mp3',
 				ivr_machines => [],
 				ivr_voices => [ &subs::say_voices() ],
 				caller_choices => [],

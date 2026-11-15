@@ -549,6 +549,13 @@ sub utility_functions() {
 			$n++ while (defined $r && $r =~ /Phone: /g);
 			return $n ? "sms: filed $n new message(s)" : 'sms: ran, no new messages';
 		};
+		$gb::timeouts->{'mms'}->{'subroutine'} = sub {
+			return 'mms: not a mobile' unless $device eq 'mobile';
+			my $r = eval { &subs::mms_list_check() };
+			my $n = 0;
+			$n++ while (defined $r && $r =~ /MMS from /g);
+			return $n ? "mms: filed $n new message(s)" : 'mms: ran, no new messages';
+		};
 		$gb::timeouts->{'backups'}->{'subroutine'} = sub {
 			eval {
 				my ($db,$database,$sql) = &subs::database_grabber();

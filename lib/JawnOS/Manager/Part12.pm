@@ -569,6 +569,16 @@ sub phone_ivr_settings {
 	return &subs::phone_ivr_settings();
 }
 
+# The Phone app's own ring: three shipped sounds, stored per device because the
+# ring belongs to the phone that rings. The house vocabulary is
+# notifications/<name>.mp3, which is also the file the app plays under
+# public/sounds/; an unknown value falls back to the classic ring.
+sub phone_ringtone {
+	my $value = &subs::setting_grabber({ app => 'phone', setting => 'ringtone', benign => 1 });
+	my %allowed = map { $_ => 1 } qw( notifications/ring.mp3 notifications/chime.mp3 notifications/sonar.mp3 );
+	return (defined $value && $allowed{$value}) ? $value : 'notifications/ring.mp3';
+}
+
 sub phone_ivr_save($params) {
 	my $next = &phone_ivr_settings();
 	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks hold)) {

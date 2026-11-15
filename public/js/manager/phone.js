@@ -46,7 +46,7 @@ function jawnPhoneAppRender() {
 // on Home, so the window's own saved state is gone; this one small preference
 // is what makes the next press land on the same pane (IVR, for one) instead of
 // always starting at Known.
-var jawnPhonePanes = { known: 1, recent: 1, voicemail: 1, blocked: 1, ivr: 1, all: 1, dial: 1 };
+var jawnPhonePanes = { known: 1, recent: 1, voicemail: 1, blocked: 1, ivr: 1, all: 1, dial: 1, ringtone: 1 };
 function jawnPhonePaneRestore() {
 	if (!$('#phone_app').length) { return; }
 	var pane = '';
@@ -156,6 +156,33 @@ $(document).on('click', '#phone_app .phone_app_tab', function () {
 	$('#phone_app .phone_app_pane').removeClass('on');
 	$('#phone_app .phone_app_pane[pane="' + pane + '"]').addClass('on');
 	try { localStorage.setItem('phone_pane', pane); } catch (e) { }
+});
+
+// The Ringtone pane: the choice belongs to this phone, saved as the house's
+// notifications/<name>.mp3 setting. Play hears it before saving.
+$(document).on('click', '#phone_app #phone_ringtone_preview', function (e) {
+	e.preventDefault();
+	var sound = $('#phone_app #phone_ringtone').val() || 'notifications/ring.mp3';
+	try { new Audio('/sounds/' + sound).play(); } catch (err) { }
+});
+$(document).on('click', '#phone_app #phone_ringtone_save', function (e) {
+	e.preventDefault();
+	var status = $('#phone_app #phone_ringtone_status');
+	status.text(jawnosT('Saving…'));
+	$.ajax({
+		url: '/manager/phone/ringtone',
+		type: 'POST',
+		data: { timestamp: Date.now(), ringtone: $('#phone_app #phone_ringtone').val() || '' },
+		success: function (res) {
+			if (res && res.ok) {
+				status.text(jawnosT('Ringtone saved.'));
+				if (typeof jawnPhoneSync === 'function') { jawnPhoneSync(); }
+			} else {
+				status.text(jawnosT('Could not save the ringtone.'));
+			}
+		},
+		error: function () { status.text(jawnosT('Could not save the ringtone.')); }
+	});
 });
 
 // The phone icon on a recent opens the device's default dialer with the number

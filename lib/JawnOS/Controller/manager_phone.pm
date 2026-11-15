@@ -110,6 +110,7 @@ sub action_23201 {
 		numbers => $directory->{'numbers'},
 		blocked => $blocked,
 		ivr => $ivr,
+		ringtone => &phone_ringtone(),
 		ivr_machines => &phone_ivr_machines(),
 		routes => &phone_routes_read(),
 		ivr_voices => [ &subs::say_voices() ],
@@ -184,8 +185,15 @@ sub action_24636 {
 			subtype => 'phone',
 			timestamp => $timestamp,
 			account => $number,
-			data => encode_json({ direction => ($c->param('direction') || 'incoming'), number => $number }),
+			data => encode_json({ direction => ($c->param('direction') || 'incoming'), number => $number, live => 1 }),
 		});
+		unless ($wrote && $wrote->{'uuid'}) {
+			$c->render(json => { ok => 0, error => 'no appointment' });
+			return;
+		}
+		# appointment_writer stamps a row at or before now as seen; a live ring is
+		# the one appointment the Alarm loop must still claim, so put it back.
+		&subs::db_update('appointments', { seen => undef, server_time => &subs::rightNow() }, { uuid => $wrote->{'uuid'} });
 		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
 		return;
 	}
@@ -230,7 +238,14 @@ sub action_24636 {
 		my $ended = $c->param('ended') || $started;
 		my $answered = ($c->param('answered') || '') eq 'yes';
 		my $direction = $c->param('direction') || 'incoming';
-		my $wrote = &appointment_writer($c, {
+		# A call that rang through already wrote its appointment from the ring
+		# event; close that row rather than writing a second one for the same
+		# call. The ring and the call's own start are seconds apart.
+		my $open = &subs::db_query(
+			'select uuid from appointments where subtype = ? and account = ? and timestamp between ? and ? and stop_seen is null order by timestamp desc limit 1',
+			'phone', $number, $started - 60000, $started + 60000
+		)->hashes->[0];
+		my $wrote = $open ? { uuid => $open->{'uuid'} } : &appointment_writer($c, {
 			app => $app,
 			type => 'start',
 			subtype => 'phone',
@@ -454,7 +469,24 @@ sub action_24755 {
 		avatars => \%avatars,
 		ivr => $ivr,
 		silence => $silenced,
+		ringtone => &phone_ringtone(),
 	});
+}
+
+# POST /manager/phone/ringtone
+sub action_24765 {
+	my $c = shift;
+	# The Ringtone pane's save. The value is the house's notifications/ path; the
+	# per-device setting is what /manager/phone/sync hands the phone, and the app
+	# plays that file under public/sounds/.
+	my $ringtone = $c->param('ringtone') || '';
+	my %allowed = map { $_ => 1 } qw( notifications/ring.mp3 notifications/chime.mp3 notifications/sonar.mp3 );
+	unless ($allowed{$ringtone}) {
+		$c->render(json => { ok => 0, error => 'unknown ringtone' });
+		return;
+	}
+	&subs::setting_setter({ app => 'phone', setting => 'ringtone', device => &subs::device_setter(), value => $ringtone });
+	$c->render(json => { ok => 1, ringtone => $ringtone });
 }
 
 1;

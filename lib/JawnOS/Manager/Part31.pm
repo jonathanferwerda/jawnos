@@ -34,6 +34,7 @@ use File::Find;
 use File::Slurp;
 use File::Type;
 use File::Copy;
+use File::Path qw(make_path);
 use POSIX ();
 use Fcntl qw(:flock O_CREAT O_EXCL O_WRONLY);
 use Number::Format qw/:subs/;
@@ -534,6 +535,78 @@ sub mms_part_prepare($path, $mime) {
 	my $converted = &subs::image_bridge_convert($path, $out, max_width => 1280, max_height => 960, quality => 82, auto_orient => 1);
 	my $rc = defined $converted ? 0 : system('magick', $path, '-auto-orient', '-strip', '-resize', '1280x960>', '-quality', '82', $out);
 	return (($rc == 0 && -e $out && (-s $out) > 0) ? ($out, 'image/jpeg') : ($path, $mime));
+}
+
+# One media part of an inbound MMS, kept the way an upload or a greeting is:
+# written beside the app's own pictures, filed on an appointment the file
+# resolver can find by uuid, then sealed with file_encrypter. The returned
+# entry is the shape the Chat message carries: a uuid, the current (possibly
+# sealed) path, a file_open URL for the page, and the original name and mime.
+sub mms_attachment_store {
+	my ($args) = @_;
+	my $app = $args->{'app'} || 'phone';
+	my $mime = $args->{'mime'} || 'application/octet-stream';
+	my $name = $args->{'name'} || 'part';
+	my $data = $args->{'data'} || '';
+	return undef unless defined $data && length $data;
+	return undef if length($data) > (12 * 1024 * 1024);
+	my $bytes = eval { decode_base64($data) };
+	return undef unless defined $bytes && length $bytes;
+	my %ext_for = (
+		'image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif',
+		'image/webp' => 'webp', 'image/heic' => 'heic', 'image/heif' => 'heif',
+		'audio/mpeg' => 'mp3', 'audio/amr' => 'amr', 'audio/3gpp' => '3gp',
+		'video/mp4' => 'mp4', 'video/3gpp' => '3gp',
+	);
+	my $ext = $ext_for{lc $mime};
+	if (!$ext && $name =~ /[.]([A-Za-z0-9]{1,5})$/) { $ext = lc $1; }
+	$ext ||= 'bin';
+	my $type = ($mime =~ m{^image/}i) ? 'image'
+		: ($mime =~ m{^audio/}i) ? 'audio'
+		: ($mime =~ m{^video/}i) ? 'video' : 'file';
+	my $app_path = &subs::path_name($app);
+	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'photo_location' }) || '~/Pictures');
+	my $dir = $folder . '/' . $app_path;
+	make_path($dir) unless -d $dir;
+	my $uuid = &subs::random_string_creator(9);
+	my $file = $dir . '/' . $app_path . '_mms_' . $uuid . '.' . $ext;
+	open(my $out, '>', $file) or return undef;
+	binmode $out;
+	print {$out} $bytes;
+	close $out or return undef;
+	my $entry = {
+		server_time => &subs::rightNow(),
+		f => $file,
+		uuid => $uuid,
+		type => $type,
+		name => $name,
+		mime => $mime,
+	};
+	my $appt_uuid = &subs::random_string_creator(20);
+	my $wrote = eval {
+		&subs::db_insert('appointments', {
+			app => $app,
+			type => $type,
+			subtype => 'mms',
+			file => encode_json([ $entry ]),
+			timestamp => $args->{'timestamp'} || &subs::rightNow(),
+			server_time => &subs::rightNow(),
+			uuid => $appt_uuid,
+			duration => 0,
+		});
+	};
+	return $entry unless $wrote;
+	eval { &subs::file_encrypter({ app => $app }) };
+	my $sealed = eval { &subs::db_select('appointments', undef, { uuid => $appt_uuid })->hashes->[0] };
+	my $files = eval { decode_json($sealed->{'file'}) } || [];
+	$files = [ $files ] if eval { $files->{'f'} };
+	my ($one) = grep { ($_->{'uuid'} || '') eq $uuid } @{ ref $files eq 'ARRAY' ? $files : [] };
+	if ($one && $one->{'f'}) {
+		$entry->{'f'} = $one->{'f'};
+		$entry->{'thumb'} = $one->{'thumb'} if $one->{'thumb'};
+	}
+	$entry->{'src'} = '/file_open?file=' . uri_encode($entry->{'f'}) if $entry->{'f'};
+	return $entry;
 }
 
 sub sms_message_send($digits,$message) {

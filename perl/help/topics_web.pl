@@ -152,8 +152,8 @@ $topic{'scan'} = {
 $topic{'phone'} = {
 		title => 'Phone', category => 'apps', app => 'phone',
 		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js', 'public/js/manager/screening.js' ],
-		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'IVR', 'Dial', 'Call', 'Call routing', 'Caller ID', 'Phone app', 'Block', 'Unblock', 'Save', 'Follow the person', 'Ring through', 'Receptionist', 'Voicemail', 'Reject', 'Arm the gateway', 'Hold music', 'Voicemail length', 'Record greeting', 'Stop', 'Play greeting', 'Remove greeting', 'Transcript', 'Add flow', 'Edit flow', 'Rename flow', 'Delete flow', 'After', 'Hide', 'Add step', 'Remove step', 'Drag to reorder', 'Step type' ],
-		verified => '2026-11-12',
+		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'IVR', 'Dial', 'Ringtone', 'Call', 'Call routing', 'Caller ID', 'Phone app', 'Block', 'Unblock', 'Save', 'Follow the person', 'Ring through', 'Receptionist', 'Voicemail', 'Reject', 'Arm the gateway', 'Hold music', 'Voicemail length', 'Record greeting', 'Stop', 'Play greeting', 'Remove greeting', 'Transcript', 'Add flow', 'Edit flow', 'Rename flow', 'Delete flow', 'After', 'Hide', 'Add step', 'Remove step', 'Drag to reorder', 'Step type' ],
+		verified => '2026-11-15',
 		summary => 'Calls, the house\'s known contacts, and a dial pad.',
 		body => [
 			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the numbers the house knows. The app remembers the tab you were last on, so opening it again lands on that pane - IVR, for one - rather than always starting at Known. Known is the people it knows; Recent lists the latest calls, and a row opens that person\'s thread; All adds the numbers that are only numbers, the ones a caller left behind that no name has claimed yet, which is where you go to find an unknown caller and name them.',
@@ -164,6 +164,7 @@ $topic{'phone'} = {
 			'In the app a screened call has a face of its own: with the screen on it is a floating panel over whatever you are doing, and with the screen off or the phone locked it is an alarm-style screen raised over the lock screen. It shows the caller and the same live transcript, with Connect phone (take the call back on this phone, on the earpiece or a headset) and Disconnect. Connect me, on the IVR pane, hands the call to the device you pressed it on over WebRTC: you hear the caller and speak from that device, with the tailnet carrying the audio and the gateway speaker and microphone out of the path. Press it again to hand the call back. While a dialer call is screened the app face shows Connect me (it opens this device\'s Phone page and bridges the call to it), Connect phone and Disconnect.',
 			'Known and All: tapping a number fills the dial pad with it. In the app the device\'s own address book (window.JawnContacts) replaces the Known list once its permission is granted.',
 			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
+			'Ringtone chooses the sound this phone makes for an incoming call: Ring, Chime or Sonar. Play hears the choice; Save keeps it on this phone, and the app plays it on the phone\'s own ring stream while the call is ringing. The house\'s notification for the live call stays quiet, so the ringtone is the only sound. When the phone app owns the call, the call\'s appointment is written at the ring, which is what lets the house\'s notification fire for a live call instead of waiting for the hangup.',
 			'The reception only works while JawnOS is the phone app: without that role Android hands an incoming call to another dialer and the house never sees it, so a Be the phone app button appears beside the caller-ID button. Press it and accept the system\'s confirmation.',
 			'With Caller ID on (the button asks for the Call screening role), the house learns who is calling as it rings. In the app that role names the caller on screen: an incoming call wakes the screen over the lock screen with their picture (the house\'s own image for them, or the JawnOS logo), their name, the number, and Answer and Decline. Without it the house\'s call-log check files the call a moment later.',
 			'A call is recorded by the app itself, not by whatever page happens to be open: the phone keeps one record per call - who, which way, when, and whether anyone answered - and the house files it from that, so a call taken with the app in the background still becomes an appointment on the caller\'s own app (or the phone app when the number is not known). It opens at the ring and closes at the hangup, or cancels when nobody answered.',
@@ -179,7 +180,8 @@ $topic{'phone'} = {
 			'Blocked: press Unblock twice to let a number through again.',
 			'IVR: choose a machine, open a flow to set its voice, words and hold music, drag its steps into the order it should speak and add a keypad menu where a caller should choose, point each kind of caller at a flow, then press Save.',
 			'IVR: open a flow and press Record greeting beside its voicemail greeting to record one - Stop ends it, Play hears it, and Remove uses the typed words again.',
-			'Dial: key a number and press Call.'
+			'Dial: key a number and press Call.',
+			'Ringtone: open the Ringtone pane, choose Ring, Chime or Sonar, press Play to hear it, then Save.',
 		],
 		related => [ 'mailbox', 'box_office' ]
 	};

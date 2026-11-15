@@ -71,19 +71,22 @@ Done: native call screen (avatar, name over number, Answer/Decline, wake-on-ring
 the app records each call once and the house files it (one appointment per call);
 incoming/outgoing/missed → appointment on the caller's own app; Box Office
 blacklist + two-press Block; caller-ID (Call screening) role; Voicemail-style
-"respond via message" service; ringtones (`ring.mp3` etc.) + custom sound upload;
+"respond via message" service; ringtones (`ring.mp3` etc.) + custom sound upload,
+and the **Ringtone** pane (Ring, Chime, Sonar) now plays the house's chosen
+sound on a live call - the call's appointment is written at the ring, so the
+Alarm loop can fire for it;
 Known/Recent/Blocked/All panes; multi-line contacts (a second number resolves to
 the person); and the messages role — the Chat header's **Be the messages app**
 button asks Android for `ROLE_SMS` (`JawnSms`), so SMS can be set from the app or
 Settings without an adb grant.
 
 Still to do:
-- **App owns the ringtone** — silence the system ring and play the house's, instead
-  of only firing `ring.mp3` when the appointment's `notification` ability is on.
 - **Lock-screen capture from the real device** — we have mock geometry only;
   take a real capture.
-- **MMS end to end** — machinery is declared (klinkerapps push/transaction,
-  `RECEIVE_MMS`); never observed a real MMS in or out.
+- **MMS on a real handset** — the app reads inbound `content://mms` (`mms.list`)
+  and the house files the text and each media part into Chat; outbound already
+  rides the klinkerapps transaction. Still to observe: a carrier WAP push
+  download, the sent row, and a group MMS.
 - **Native halves are in** — photo/video/audio (`JawnCamera`, `DeviceService`),
   contacts (`JawnContactsBridge`) and the call log (`telephony.call_log`) come
   from the app, and the phone/camera JS drives those bridges directly. Verify the
@@ -213,7 +216,7 @@ Still to do:
 
 **Every APK change bumps `versionCode` and is published** (`perl scripts/app_build.pl`
 then `perl scripts/app_publish.pl`). The staged and published build here is
-**1315 / 0.118.317** (`releases/app_release.json`).
+**1316 / 0.118.318** (`releases/app_release.json`).
 
 Landed since this note: the notification badge (`JawnNotifyReceiver` posts jawn's
 notifications on the app's own channel), the status/nav-bar option
@@ -1221,6 +1224,10 @@ state it is in. Handoff note written 2026-11-02 03:45.
 - App release: `scripts/app_build.pl`, `scripts/app_release.pl`, `scripts/app_publish.pl`;
   repo `~/jawnos-app/termux-app` (`jawnos` branch, `fork` remote).
 - Probes/scratch: `.shots/` (gitignored), ticket in `.shots/ticket.txt`.
+- Ringtone: `phone_ringtone` (`lib/JawnOS/Manager/Part12.pm`) and the app's `JawnRinger`.
+- MMS: `subs::mms_list_check` (`lib/JawnOS/Domain/Sync.pm`),
+  `Manager::mms_attachment_store` (`lib/JawnOS/Manager/Part31.pm`), the `mms`
+  job in `perl/gb/01_state_and_defaults.pl`, and the app's `DeviceService.mmsList`.
 
 ### Quick file map for the shopping / market / receipt work
 

@@ -41,6 +41,7 @@ my %known = map { $_ => 1 } qw(
 	power.wake_unlock
 	sms.send
 	sms.list
+	mms.list
 	telephony.call_log
 	contact.list
 	location.current
