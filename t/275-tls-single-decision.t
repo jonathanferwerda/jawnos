@@ -146,6 +146,7 @@ subs::preload($_) for qw(
 	is($fake->{'tls_verified'}, 1, 'the house CA is applied instead');
 	is($got->{'ua'}, $fake, 'the helper hands back the agent it decided on');
 	is($got->{'manager'}, 'https://10.0.0.5:45551', 'and the verified listener route');
+	is($got->{'manager_verified'}, 1, 'and the verdict is handed to the caller');
 }
 
 # An unverified peer is marked insecure by the helper, not by a caller.
@@ -167,6 +168,53 @@ subs::preload($_) for qw(
 	}
 	is($fake->{'insecure'}, 1, 'an unverified peer is marked insecure once');
 	ok(!$fake->{'tls_verified'}, 'and no CA is claimed for it');
+	is($got->{'manager_verified'}, 0, 'and the unverified verdict is handed back');
+}
+
+# A caller may hand over the route that just answered (the pull's own record).
+# The helper still decides its TLS: the house-CA listener when it proves the
+# route, otherwise the caller's route with the unverified agent. This is the
+# windowed-pull case that failed when a mobile's entry port served the
+# self-signed jawnos-local leaf and the pull had stamped it verified.
+{
+	my ($fake, $got);
+	{
+		no warnings 'redefine';
+		local *subs::remote_machine_tunnel_processor = sub { $_[0] };
+		local *subs::peer_live_manager = sub { die 'a supplied route is not re-resolved' };
+		local *subs::peer_secure_url = sub { ('https://10.0.0.5:45551', 1) };
+		local *subs::peer_tls_verify = sub { $_[0]->{'tls_verified'} = 1; return 1 };
+		local *Mojo::UserAgent::new = sub { $fake = FakeUA->new };
+		$got = subs::remote_useragent_maker({
+			manager => 'https://10.0.0.5:45545',
+			rm => {
+				manager => 'https://10.0.0.5:45545', ip => '10.0.0.5',
+				port => '45545', signatorial => 'ab' x 16,
+			},
+		});
+	}
+	is($got->{'manager'}, 'https://10.0.0.5:45551', 'a supplied route resolves to the verified listener');
+	is($fake->{'insecure'}, 0, 'and the verifying agent is kept');
+}
+{
+	my ($fake, $got);
+	{
+		no warnings 'redefine';
+		local *subs::remote_machine_tunnel_processor = sub { $_[0] };
+		local *subs::peer_live_manager = sub { die 'a supplied route is not re-resolved' };
+		local *subs::peer_secure_url = sub { return ($_[1], 0) };
+		local *subs::peer_tls_verify = sub { $_[0]->{'tls_verified'} = 1; return 1 };
+		local *Mojo::UserAgent::new = sub { $fake = FakeUA->new };
+		$got = subs::remote_useragent_maker({
+			manager => 'https://10.0.0.5:45545',
+			rm => {
+				manager => 'https://10.0.0.5:45545', ip => '10.0.0.5',
+				port => '45545', signatorial => 'ab' x 16,
+			},
+		});
+	}
+	is($got->{'manager'}, 'https://10.0.0.5:45545', 'an unproven supplied route is kept');
+	is($fake->{'insecure'}, 1, 'and the helper marks its agent insecure');
 }
 
 # --- a verified helper agent reaches the request unmodified -----------------
@@ -251,6 +299,12 @@ for my $rel (@overriders) {
 like(slurp_file(root() . '/lib/JawnOS/Manager/Part10.pm'),
 	qr/else \{ \$ua->insecure\(1\); \}/,
 	'Part10 still disables verification for a requested install, not a peer agent');
+like(slurp_file(root() . '/lib/JawnOS/Manager/Part10.pm'),
+	qr/manager => &subs::peer_manager_base\(\$chosen_manager\)/,
+	'Part10 hands the chosen route to the single TLS decision point');
+unlike(slurp_file(root() . '/lib/JawnOS/Manager/Part10.pm'),
+	qr/\$remote_machine->\{'manager'\} = \$params->\{'manager'\};/,
+	'Part10 no longer overrides the helper route with the caller route');
 
 # --- the five standalone peer agents -----------------------------------------
 # These do not ride remote_useragent_maker, so each makes the canonical decision

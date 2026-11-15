@@ -49,6 +49,7 @@ my %known = map { $_ => 1 } qw(
 	silence.set
 	telephony.dial
 	telephony.deviceinfo
+	telephony.numbers
 	media.player
 	media.thumbnail
 	share.send

@@ -519,14 +519,23 @@ sub remote_useragent_maker($data) {
 	my $remote_address = $rm->{'ip'};
 	my $port = $rm->{'port'};
 
-	my $manager = $rm->{'manager'};
+	# A caller may hand over the route that just answered (the reconnect probe,
+	# the pull's own record). Decide on that route; otherwise resolve the stored
+	# row's. Either way the TLS decision below is this function's: a route that
+	# answers is not a certificate-proven one, and a mobile's entry port may
+	# carry a self-signed leaf while its house-CA listener is port + 6.
+	my $hinted_manager = (defined $data->{'manager'} && length $data->{'manager'})
+		? $data->{'manager'}
+		: undef;
+	my $manager = $hinted_manager // $rm->{'manager'};
 	# A retired tunnel leaves 127.0.0.1 behind, and a name is the only route
 	# left. Resolve it before the cookie is scoped and every url is built.
 	# A time-critical fan-out (a volume tap) must not spend its short warranty
 	# probing every peer's live and secure URL before it writes; the stored
 	# manager is the signed rail's normal address, and the signature still proves
-	# the caller. Callers that can wait keep the probes.
-	my $live_manager = $data->{'no_probe'}
+	# the caller. Callers that can wait keep the probes. A caller-supplied route
+	# is already the one that answered, so it is not re-resolved.
+	my $live_manager = ($data->{'no_probe'} || defined $hinted_manager)
 		? $manager
 		: &subs::peer_live_manager($rm);
 	if (($manager || '') ne $live_manager) {
@@ -549,6 +558,11 @@ sub remote_useragent_maker($data) {
 		$rm->{'manager'} = $manager;
 		&subs::peer_tls_verify($ua);
 	}
+	# Hand the verdict to the caller: the snapshot and row paths use it to decide
+	# whether a peer's LAN address may replace this route. Without it they read
+	# "unverified" even for a route the helper had just proved, and could swap a
+	# proved listener for a self-signed LAN port under the verifying agent.
+	$rm->{'manager_verified'} = $manager_verified ? 1 : 0;
 	# The TLS decision is made here and handed to the caller in `ua`: a verified
 	# peer keeps the house CA, an unverified one is marked insecure below. Callers
 	# must not call insecure(1) on this agent - that override downgrades a peer

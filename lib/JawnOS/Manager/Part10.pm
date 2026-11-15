@@ -185,25 +185,34 @@ sub remote_upgrade_plan($c,$params) {
 	# sync_version and plan. Run it before the UA is built so the proven route wins.
 	&remote_upgrade_plan($c,$params) if $params->{'handshake'} && ($params->{'sync_version'} || 0) < 3;
 
-	$remote_machine = &remote_useragent_maker({ signatorial => $remote_signatorial });
 	# The caller may already have proved a route (the reconnector's probe rewrites
 	# the row's manager to whatever answered). remote_useragent_maker re-reads the
 	# stored row, which can still name a dead tunnel or a LAN address the peer has
-	# left, so keep the proven one. A caller with no probe (the Upgrade route) gets
-	# the same resolution here instead of calling the stored address and reporting
-	# the peer unreachable.
+	# left, so hand it the proven route to decide on. A caller with no probe (the
+	# Upgrade route) gets the same resolution here instead of calling the stored
+	# address and reporting the peer unreachable. The TLS decision stays with the
+	# helper: a route that answers is not a certificate-proven one, so a mobile's
+	# self-signed entry port is dialled by the unverified agent rather than being
+	# stamped verified and then verified against that leaf.
+	my $chosen_manager;
+	my $chosen_ip;
 	if ($params->{'manager'}) {
-		$remote_machine->{'manager'} = $params->{'manager'};
-		$remote_machine->{'manager_verified'} = 1;
+		$chosen_manager = $params->{'manager'};
 	}
 	else {
 		my $donor = &subs::remote_machine_lister({ signatorial => $remote_signatorial, limit => 1 });
 		if ($donor && &remote_machine_online({ rm => $donor, ip => $donor->{'ip'}, port => $donor->{'port'}, signatorial => $remote_signatorial })) {
-			$remote_machine->{'manager'} = $donor->{'manager'};
-			$remote_machine->{'ip'} = $donor->{'ip'};
-			$remote_machine->{'manager_verified'} = 1;
+			$chosen_manager = $donor->{'manager'};
+			$chosen_ip = $donor->{'ip'};
 		}
 	}
+	$remote_machine = &subs::remote_useragent_maker({
+		signatorial => $remote_signatorial,
+		(defined $chosen_manager && length $chosen_manager
+			? (manager => &subs::peer_manager_base($chosen_manager))
+			: ()),
+	});
+	$remote_machine->{'ip'} = $chosen_ip if defined $chosen_ip && length $chosen_ip;
 	# Every route below appends /manager/..., so the address must be a base. A
 	# caller that names the panel's own address (scripts/peer_pull.pl, the signed
 	# lever) hands over .../manager; dialling it unchanged asked for
