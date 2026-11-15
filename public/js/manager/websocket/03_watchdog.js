@@ -69,7 +69,18 @@ function wsWatchdogTick() {
 			if (now - socket['connectingAt'] > wsWatchdogConnectGrace) { rebuild = 1; }
 			continue;
 		}
-		if (socket.readyState != 1) { rebuild = 1; continue; }
+		if (socket.readyState != 1) {
+			// onclose already armed the paced retry (websocketRetryLater).
+			// Rebuilding here would ignore that backoff and tear down and
+			// reopen every socket every couple of seconds while a tree is
+			// restarting - a handshake storm against the workers coming up,
+			// and the probe caught exactly that. Let the retry own the next
+			// attempt; a handshake that never completes is still retired by
+			// the grace above, and a clock jump rebuilds before this loop.
+			if (socket.readyState > 1 && wsRetryTimer) { continue; }
+			rebuild = 1;
+			continue;
+		}
 		var heard = socket['ackAt'] || socket['stayingAlive'] || 0;
 		var age = now - heard;
 		if (age > stayingAliveInterval * 2) { rebuild = 1; continue; }

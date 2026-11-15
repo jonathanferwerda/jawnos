@@ -242,6 +242,13 @@ like($qt, qr/page\.loadStarted\.connect\(lambda: nav_guard\.start\(LOAD_TIMEOUT_
 	'the deadline is armed by every navigation');
 like($qt, qr/view\.stop\(\)/, 'a stalled navigation is stopped, not left running');
 like($qt, qr/this page retries by itself/, 'and the dark page says it retries by itself');
+# The dark page is a setHtml load, and its loadFinished arrives ok=True. The
+# handler cleared nav["retry"] and stopped the retry timer, so drawing the page
+# cancelled the retry it promises: the window sat there until Try again.
+like($qt, qr/nav\["drawing_error"\] = True/,
+	'the dark page load is marked as its own');
+like($qt, qr/if nav\.pop\("drawing_error", False\):.*?nav\["stalled"\] = False\s*return/s,
+	'so that load leaves the armed retry running');
 like($qt, qr/errorpage\.watch\(page_obj\)/, 'and peer windows show one at once');
 like($errpage, qr/background:#000000/, 'the error page is on the black ground');
 like($errpage, qr/#ffcc00/, 'with the jawn yellow for the retry');

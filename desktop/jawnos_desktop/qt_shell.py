@@ -2129,7 +2129,7 @@ def main(argv=None):
     # the dark page, and keep retrying until the Manager answers again.
     LOAD_TIMEOUT_MS = 20000
     RETRY_MS = 10000
-    nav = {"stalled": False, "retry": None}
+    nav = {"stalled": False, "retry": None, "drawing_error": False}
     nav_guard = QTimer()
     nav_guard.setSingleShot(True)
     retry_timer = QTimer()
@@ -2148,6 +2148,12 @@ def main(argv=None):
     def show_unanswered(target):
         if args.probe or not target:
             return
+        # Drawing the dark page is a load of its own, and a successful
+        # loadFinished clears nav["retry"] and stops the retry timer. Left
+        # unmarked, that cancelled the very retry the hint promises, and the
+        # window sat on "The Manager did not answer" until someone pressed
+        # Try again. Mark this one load so on_load leaves the retry armed.
+        nav["drawing_error"] = True
         try:
             page.setHtml(errorpage.dark_page(
                 "The Manager did not answer.",
@@ -2155,7 +2161,7 @@ def main(argv=None):
                 hint="It may be starting or restarting. Press Try again, or "
                      "wait: this page retries by itself."))
         except Exception:
-            pass
+            nav["drawing_error"] = False
         retry_navigation(target)
 
     def on_stall():
@@ -2173,6 +2179,12 @@ def main(argv=None):
     def on_load(_ok):
         nonlocal login_pending, migration_pending, ticket_tried
         nav_guard.stop()
+        if nav.pop("drawing_error", False):
+            # the dark page finished drawing: the retry armed beside it is the
+            # only thing that brings the Manager back, so it must survive this
+            # load. The hint on that page says so.
+            nav["stalled"] = False
+            return
         if not _ok and nav["stalled"]:
             # view.stop() from the deadline: the dark page is already drawn
             nav["stalled"] = False

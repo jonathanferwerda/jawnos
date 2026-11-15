@@ -37,6 +37,13 @@ like($src, qr/setInterval\(heartbeat, 60000\)/, 'it sends a heartbeat over a lon
 like($src, qr/document\.cookie = COOKIE/, 'it renews the cookie that reloads it');
 like($src, qr/window\.jawnos_probe_endpoint/, 'the injected collector is the default');
 like($src, qr/window\.jawnos_probe_host/, 'so is the injected host name');
+# A fixed 40-character tail of the URL was the user agent for every socket, so
+# a report could not say which app kept failing. The app and the origin name
+# it without recording the query (which carries the session token).
+like($src, qr/function socketApp\(url\)/, 'the probe reads the app a socket carries');
+like($src, qr/function socketOrigin\(url\)/, 'and the origin it dialled');
+like($src, qr/send\('ws_close', \{ url: tail, app: app, origin: origin, code: e\.code,/,
+	'a close names the app and the origin, not only the user agent tail');
 
 my $node = `command -v node 2>/dev/null`;
 chomp $node;

@@ -72,6 +72,12 @@ like($watch, qr/delete ws\[app\]\['probeCount'\];/,
 	'a heard frame clears the probe count');
 like($watch, qr/if \(now - socket\['connectingAt'\] > wsWatchdogConnectGrace\) \{ rebuild = 1; \}/,
 	'a stuck handshake is retired too');
+# onclose already armed the paced retry. Rebuilding on the next tick as well
+# ignored that backoff: the refresh probe caught a restarting tree being torn
+# down and reopened every two seconds, this tick alternating with the retry
+# timer, each rebuild opening every app's socket again (v0.1.2993).
+like($watch, qr/if \(socket\.readyState != 1\) \{\s*\/\/ onclose already armed the paced retry.*?if \(socket\.readyState > 1 && wsRetryTimer\) \{ continue; \}\s*rebuild = 1;\s*continue;\s*\}/s,
+	'a closed socket is left to the retry that already owns the next attempt');
 like($watch, qr/function wsTouched\(app\) \{.*?ws\[app\]\['ackAt'\] = Date\.now\(\);\s*delete ws\[app\]\['probedAt'\];/s,
 	'any frame is proof of life');
 like($ws, qr/ws\[app\]\.onmessage = function \(event\) \{\s*\/\/ any frame is an ack.*?wsTouched\(app\);\s*wsMessageHandler\(event\);/s,

@@ -55,6 +55,18 @@
     } catch (e) {}
     return out;
   }
+  // Which socket this was is the one thing the old record could not say: the
+  // URL tail was the user agent for every app. The query carries the session
+  // token, so the app name and the origin are recorded, never the whole URL.
+  function socketApp(url) {
+    try {
+      var m = String(url).match(/[?&]app=([^&]*)/);
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch (e) { return ''; }
+  }
+  function socketOrigin(url) {
+    try { return String(url).replace(/^([a-z]+:\/\/[^\/]+).*$/i, '$1'); } catch (e) { return ''; }
+  }
   function navType() {
     try {
       var n = performance.getEntriesByType('navigation')[0];
@@ -186,12 +198,14 @@
       var socket = (protocols === undefined) ? new NativeWS(url) : new NativeWS(url, protocols);
       var opened = now();
       var tail = String(url).replace(/^[a-z]+:\/\//, '').slice(-40);
-      socket.addEventListener('open', function () { send('ws_open', { url: tail, after_ms: now() - opened }); });
+      var app = socketApp(url);
+      var origin = socketOrigin(url);
+      socket.addEventListener('open', function () { send('ws_open', { url: tail, app: app, origin: origin, after_ms: now() - opened }); });
       socket.addEventListener('close', function (e) {
-        send('ws_close', { url: tail, code: e.code, reason: String(e.reason || '').slice(0, 60),
+        send('ws_close', { url: tail, app: app, origin: origin, code: e.code, reason: String(e.reason || '').slice(0, 60),
           clean: e.wasClean ? 1 : 0, life_ms: now() - opened });
       });
-      socket.addEventListener('error', function () { send('ws_error', { url: tail }); });
+      socket.addEventListener('error', function () { send('ws_error', { url: tail, app: app, origin: origin }); });
       return socket;
     };
     Wrapped.prototype = NativeWS.prototype;
