@@ -12,6 +12,7 @@ no warnings 'experimental::signatures';
 
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::IOLoop;
+use Mojo::UserAgent::CookieJar;
 use Mojo::URL;
 use Mojo::UserAgent;
 use Mojo::Util qw(url_escape b64_decode b64_encode);
@@ -610,8 +611,19 @@ sub remote_useragent_maker($data) {
 			# behind it. Bound this one request and put the long timeout back for the
 			# requests that need it.
 			my $long_timeout = $rm->{'ua'}->inactivity_timeout;
+			# The signed handshake needs no session: the route is gate-exempt and
+			# authenticates the caller by its peer key. A stored session cookie can be
+			# a lapsed or denial session, and the gate can refuse it before the route's
+			# signature check (a 500 page). That read as "the peer is offline", so
+			# every machine stopped pulling a peer whose rows had plainly moved - the
+			# tablet's new appointments did not reach the others. Send the handshake
+			# on an empty jar and restore the stored session for the gated calls that
+			# follow (the auth probe and the relay).
+			my $held_jar = $rm->{'ua'}->cookie_jar;
+			$rm->{'ua'}->cookie_jar(Mojo::UserAgent::CookieJar->new);
 			$rm->{'ua'}->inactivity_timeout(15);
 			my $res = eval { return $rm->{'ua'}->get($url => {Accept => '*/*'} => 'Content!')->result };
+			$rm->{'ua'}->cookie_jar($held_jar);
 			$rm->{'ua'}->inactivity_timeout($long_timeout);
 			if (eval { $res->is_success }) {
 				$rm->{'res'} = $res;

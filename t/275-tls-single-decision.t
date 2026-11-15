@@ -51,6 +51,12 @@ subs::preload($_) for qw(
 	sub max_response_size { $_[0] }
 	sub on { $_[0] }
 	sub insecure { $_[0]->{'insecure'}++; $_[0] }
+	sub cookie_jar {
+		my ($self, $new) = @_;
+		if (defined $new) { my $old = $self->{'jar'}; $self->{'jar'} = $new; return $old }
+		$self->{'jar'} ||= FakeJar->new;
+		return $self->{'jar'};
+	}
 	sub tls_options { $_[0]->{'tls'} = $_[1] if defined $_[1]; return $_[0]->{'tls'} }
 	sub connect_timeout { $_[0] }
 	sub request_timeout { $_[0] }
@@ -63,6 +69,7 @@ subs::preload($_) for qw(
 	sub get {
 		my ($self, $url) = @_;
 		push @{$self->{'gets'}}, $url;
+		$self->{'jar_at_get'} = $self->{'jar'};
 		return FakeTX->new(result => $self->{'get_result'});
 	}
 	sub post {
@@ -96,6 +103,9 @@ subs::preload($_) for qw(
 	package FakeRows;
 	sub new { my ($class, $rows) = @_; return bless { rows => $rows || [] }, $class }
 	sub hashes { return $_[0]->{'rows'} }
+	package FakeJar;
+	sub new { return bless { cookies => [] }, shift }
+	sub add { push @{$_[0]->{'cookies'}}, $_[1]; return $_[0] }
 	package FakeController;
 		sub new { return bless {}, shift }
 		sub param { return $_[1] eq 'uuid' ? 'uuid-1234' : undef }
@@ -215,6 +225,36 @@ subs::preload($_) for qw(
 	}
 	is($got->{'manager'}, 'https://10.0.0.5:45545', 'an unproven supplied route is kept');
 	is($fake->{'insecure'}, 1, 'and the helper marks its agent insecure');
+}
+
+
+# The signed handshake must not carry the stored session cookie: a lapsed or
+# denial session makes the gate answer a 500/page before the signature check,
+# and the peer then reads as offline - the tablet's new rows stopped syncing
+# to every machine that held a stale cookie.
+{
+	my ($fake, $got, $jar_at_get);
+	{
+		no warnings 'redefine';
+		local $subs::config = { domain => 'jawnos.test' };
+		local *subs::remote_machine_tunnel_processor = sub { $_[0] };
+		local *subs::peer_live_manager = sub { $_[0]->{'manager'} };
+		local *subs::peer_secure_url = sub { ($_[1], 0) };
+		local *subs::peer_tls_verify = sub { 1 };
+		local *subs::signatorial_designer = sub { 'self-sig' };
+		local *Mojo::UserAgent::new = sub { $fake = FakeUA->new };
+		$got = subs::remote_useragent_maker({
+			auth_test => 'yes',
+			rm => {
+				manager => 'https://10.0.0.5:45545', ip => '10.0.0.5', port => '45545',
+				signatorial => 'ab' x 16,
+				cookie => '[{"name":"president","value":"x","domain":"10.0.0.5","path":"/"}]',
+			},
+		});
+		$jar_at_get = $fake->{'jar_at_get'};
+	}
+	ok($jar_at_get && ref($jar_at_get) eq 'Mojo::UserAgent::CookieJar', 'the signed handshake is sent on an empty jar');
+	ok($fake->{'jar'} && ref($fake->{'jar'}) eq 'FakeJar', 'and the stored session is restored afterwards');
 }
 
 # --- a verified helper agent reaches the request unmodified -----------------
