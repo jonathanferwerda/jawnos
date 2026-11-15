@@ -632,17 +632,31 @@ sub scanner_escl_pages {
 		if ($p =~ /\.pdf$/i) {
 			my $stem = $p;
 			$stem =~ s/\.pdf$//i;
-			my $pdftoppm = &subs::printer_command_path('pdftoppm');
-			if (length $pdftoppm) {
-				system($pdftoppm, '-jpeg', '-r', $resolution, $p, $stem);
+			# The printer wraps its page in a PDF whose images are JPEGs already,
+			# so they are taken out first: that needs no PDF renderer, which is
+			# what made a phone with neither pdftoppm nor Ghostscript fail even
+			# though the printer had answered.
+			my @pulled = JawnOS::Platform::Print::scan_pdf_jpegs($p, $stem);
+			unless (@pulled) {
+				my $pdftoppm = &subs::printer_command_path('pdftoppm');
+				if (length $pdftoppm) {
+					system($pdftoppm, '-jpeg', '-r', $resolution, $p, $stem);
+					@pulled = sort { ($a =~ /([0-9]+)\.jpg$/)[0] <=> ($b =~ /([0-9]+)\.jpg$/)[0] } glob("$stem-*.jpg");
+				}
+				if (!@pulled) {
+					system('magick', '-density', $resolution, $p, "$stem-%d.jpg");
+					@pulled = sort { ($a =~ /([0-9]+)\.jpg$/)[0] <=> ($b =~ /([0-9]+)\.jpg$/)[0] } glob("$stem-*.jpg");
+				}
 			}
-			my @made = sort { ($a =~ /([0-9]+)\.jpg$/)[0] <=> ($b =~ /([0-9]+)\.jpg$/)[0] } glob("$stem-*.jpg");
-			if (!@made) {
-				system('magick', '-density', $resolution, $p, "$stem-%d.jpg");
-				@made = sort { ($a =~ /([0-9]+)\.jpg$/)[0] <=> ($b =~ /([0-9]+)\.jpg$/)[0] } glob("$stem-*.jpg");
+			if (!@pulled) {
+				# say what is missing, so the Scan app can show a reason instead
+				# of a bare "could not be read"
+				open(my $lf2, '>>', $log);
+				print $lf2 "the printer sent a PDF and this machine has no PDF renderer\n";
+				close $lf2;
 			}
-			push @jpgs, @made;
-			unlink $p if @made;
+			push @jpgs, @pulled;
+			unlink $p if @pulled;
 		}
 		elsif ($p =~ /\.jpe?g$/i) {
 			push @jpgs, $p;
@@ -657,8 +671,13 @@ sub scanner_escl_pages {
 		}
 	}
 	@jpgs = grep { defined $_ && -e $_ } @jpgs;
+	my @log_lines = &scanner_log_tail($log);
 	unlink $log;
-	return { error => 'the scanned pages could not be read' } unless scalar @jpgs;
+	unless (scalar @jpgs) {
+		my $why = (grep { /no PDF renderer/ } @log_lines)[0];
+		return { error => 'the printer sent a PDF and this machine has no PDF renderer' } if $why;
+		return { error => 'the scanned pages could not be read' };
+	}
 	return { pages => \@jpgs };
 }
 
@@ -716,14 +735,19 @@ sub market_receipt_store {
 # own folder) and a record of what it was - vendor, total, date, the lines read -
 # is kept under the market app's own settings, beside the shopping list and the
 # barcode cache rather than as an appointment, so nothing else about the app is
-# touched by a receipt.
+# touched by a receipt. The list is one row for the house (device 'all'), and a
+# receipt names the machine holding its pages, so every device sees the receipt
+# and asks that machine for the image.
 sub market_receipt_file {
 	my ($data) = @_;
 	my @files = grep { defined $_ && -e $_ } @{ $data->{'files'} || [] };
 	return unless scalar @files;
-	my $raw = &subs::setting_grabber({ app => 'market', setting => 'receipts' });
+	my $raw = &subs::setting_grabber({ app => 'market', setting => 'receipts', device => &subs::warranty_device() });
 	my $receipts = eval { return decode_json $raw } || [];
 	$receipts = [ grep { ref $_ eq 'HASH' } @{$receipts} ];
+	# The first house write seeds the list from the per-device rows an earlier
+	# build wrote, so a receipt kept before this change is not lost.
+	unless (defined $raw && length $raw) { $receipts = &market_receipts_merged(); }
 	my @lines;
 	foreach my $l ( @{ $data->{'lines'} || [] } ) {
 		next unless ref $l eq 'HASH';
@@ -742,11 +766,47 @@ sub market_receipt_file {
 		payment_method => ($data->{'payment_method'} || ''),
 		payment_ref => ($data->{'payment_ref'} || ''),
 		account => ($data->{'account'} || ''),
+		machine => &subs::signatorial_designer(),
 		files => \@files,
 		lines => \@lines,
 	};
 	pop @{$receipts} while scalar @{$receipts} > 50;
-	&subs::setting_setter({ app => 'market', setting => 'receipts', value => encode_json($receipts) });
+	&subs::setting_setter({ app => 'market', setting => 'receipts', device => &subs::warranty_device(), value => encode_json($receipts) });
+	# A receipt is house news: the whole house is told, and the other machines
+	# are asked to pull the new row now rather than on their next pass.
+	eval {
+		&notification_sender({
+			app => 'market',
+			role => 'all',
+			title => &subs::ui('Receipt in Market'),
+			message => ($data->{'vendor'} || '') ne ''
+				? &subs::ui('A receipt from') . ' ' . &subs::format_name($data->{'vendor'}) . '.'
+				: &subs::ui('A receipt is waiting in Market.'),
+			uuid => &subs::random_string_creator(20),
+			timestamp => &subs::rightNow(),
+		}, undef);
+		1;
+	};
+	eval { &subs::subprocessor(sub { &subs::remote_available_announce(); }, { name => 'receipt announce' }); };
+}
+
+# Every kept receipt this house has, from the house row and from the per-device
+# rows an earlier build wrote, newest first and once each.
+sub market_receipts_merged {
+	my (@all, %seen, @out);
+	my $rows = eval { &subs::db_select('settings', ['value'], { app => 'market', setting => 'receipts' })->hashes } || [];
+	foreach my $row ( @{$rows} ) {
+		my $list = eval { return decode_json($row->{'value'} || '') } || [];
+		push @all, @{$list} if ref $list eq 'ARRAY';
+	}
+	foreach my $r ( @all ) {
+		next unless ref $r eq 'HASH';
+		my $key = ($r->{'uuid'} || '') ne '' ? $r->{'uuid'} : join '|', ($r->{'at'} || ''), ($r->{'vendor'} || ''), ($r->{'total'} // '');
+		next if $seen{$key}++;
+		push @out, $r;
+	}
+	@out = sort { ($b->{'at'} || 0) <=> ($a->{'at'} || 0) } @out;
+	return \@out;
 }
 
 # The scan feeds THIS machine can run: its device type's answer, plus whatever
@@ -811,9 +871,11 @@ sub scan_scanner_rows {
 	return \@rows;
 }
 
-# The freshest loaded edge this machine owns and has not taken yet. The watcher
-# writes the job and the Scan app claims it on the next pool read, so paper is
-# taken even when the app was closed when the edge happened.
+# The freshest loaded edge this machine owns and has not taken yet, when the
+# scanner's rule says the paper goes to Scan. A job whose rule says Market is
+# the receipt reader's, and this app stays out of it even with the pool open.
+# The watcher writes the job and the Scan app claims it on the next pool read,
+# so paper is taken even when the app was closed when the edge happened.
 sub scan_pending_job {
 	my $me = &subs::scan_house_me();
 	return undef unless length $me;
@@ -822,6 +884,7 @@ sub scan_pending_job {
 	my ($job) = sort { ($b->{'at'} || 0) <=> ($a->{'at'} || 0) } grep {
 		($_->{'owner'} || '') eq $me
 			&& (($_->{'state'} || '') eq 'dispatched')
+			&& (($_->{'target'} || '') eq 'scan')
 			&& ((($_->{'at'} || 0) + 0) > $now - 10 * 60 * 1000)
 	} @{$rows || []};
 	return $job ? { scan_id => $job->{'scan_id'}, printer => $job->{'printer'}, at => $job->{'at'} } : undef;
@@ -857,9 +920,12 @@ sub scan_claim_once {
 	return 1;
 }
 
-# The kept receipts, newest first (the raw `receipts` setting on the market app).
+# The kept receipts, newest first (the house `receipts` setting on the market
+# app; a house that has not written it yet still answers with its own device's
+# row).
 sub market_receipts {
-	my $raw = &subs::setting_grabber({ app => 'market', setting => 'receipts' });
+	my $raw = &subs::setting_grabber({ app => 'market', setting => 'receipts', device => &subs::warranty_device() });
+	$raw = &subs::setting_grabber({ app => 'market', setting => 'receipts' }) unless defined $raw && length $raw;
 	my $receipts = eval { return decode_json $raw } || [];
 	return [ grep { ref $_ eq 'HASH' } @{$receipts} ];
 }
@@ -870,7 +936,9 @@ sub market_receipts {
 sub market_receipts_prepared {
 	my @out;
 	foreach my $r ( @{ &market_receipts() } ) {
-		my @files = grep { defined $_ && -e $_ } @{ $r->{'files'} || [] };
+		# Every page the receipt recorded, not only the ones this machine holds:
+		# receipt_page asks the machine that scanned them when they are not here.
+		my @files = grep { defined $_ && length $_ } @{ $r->{'files'} || [] };
 		my @pages;
 		if ($r->{'uuid'}) {
 			my $i = 0;

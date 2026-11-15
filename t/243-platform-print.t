@@ -18,6 +18,7 @@ use File::Temp qw(tempdir);
 use JawnOS::Platform::Print qw(
 	available unsupported printers discover probe add_queue send pdf_from_html ink
 	adf_state scan_capabilities scan_escl parse_scan_capabilities scan_argv parse_lpstat
+	scan_pdf_jpegs
 );
 
 my $root = "$FindBin::Bin/..";
@@ -312,6 +313,40 @@ XML
 	my ($err, $pages) = scan_escl('192.168.1.50', 'adf', $base);
 	is($err, 'the feeder has no paper', 'an empty feeder says so');
 	is_deeply($pages, [], 'with no pages');
+}
+
+# --- the pages inside the printer's PDF --------------------------------------
+# A printer answers an eSCL scan with a PDF that holds each page as a JPEG
+# (/DCTDecode). Taking those streams out needs no renderer, which is what makes
+# a phone with no pdftoppm or Ghostscript scan at all.
+{
+	my $dir = tempdir(CLEANUP => 1);
+	# a real 1x1 JPEG, so the extracted page is an image and not just a header
+	my $jpeg = pack('H*', 'ffd8ffe000104a46494600010100000100010000ffdb0043000806060706050807070709'
+		. '0a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e3334'
+		. '32ffc0000b080001000101011100ffc40014000100000000000000000000000000000009ffc40014100100000000'
+		. '00000000000000000000000000ffda0008010100003f00'
+		. '2affd9');
+	my $second = $jpeg;
+	my $pdf = "%PDF-1.7\n"
+		. "1 0 obj\n<< /Type /XObject /Subtype /Image /Width 1 /Height 1\n/Filter /DCTDecode /Length 9 0 R >>\nstream\n"
+		. $jpeg . "\nendstream\nendobj\n"
+		. "2 0 obj\n<< /Type /XObject /Subtype /Image\n/Filter /DCTDecode /Length " . length($second) . " >>\nstream\r\n"
+		. $second . "\r\nendstream\nendobj\n"
+		. "9 0 obj\n" . length($jpeg) . "\nendobj\ntrailer\n<< >>\n%%EOF\n";
+	write_file("$dir/scan.pdf", $pdf);
+	my @pages = scan_pdf_jpegs("$dir/scan.pdf", "$dir/page");
+	is(scalar @pages, 2, 'both page images come out of the PDF');
+	is_deeply([ map { -e $_ ? 1 : 0 } @pages ], [ 1, 1 ], 'each page is written to its own file');
+	is(read_file($pages[0]), $jpeg, 'an indirect /Length reads the page exactly');
+	is(read_file($pages[1]), $second, 'a direct /Length and a CRLF stream read too');
+	like($pages[0], qr/-1\.jpg$/, 'pages are numbered like the renderer names them');
+
+	# a PDF whose page is not a JPEG (a Flate page, or a text page) is left to a
+	# real renderer rather than turned into a broken file
+	write_file("$dir/flate.pdf", "%PDF-1.7\n1 0 obj\n<< /Subtype /Image /Filter /FlateDecode /Length 4 >>\nstream\n\x78\x9c\x03\x00\nendstream\nendobj\n%%EOF\n");
+	is_deeply([ scan_pdf_jpegs("$dir/flate.pdf", "$dir/flate") ], [], 'a non-JPEG page is not extracted');
+	is_deeply([ scan_pdf_jpegs("$dir/missing.pdf", "$dir/missing") ], [], 'a missing PDF extracts nothing');
 }
 
 # --- lpadmin ----------------------------------------------------------------

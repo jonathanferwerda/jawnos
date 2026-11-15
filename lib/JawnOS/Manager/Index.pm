@@ -323,6 +323,7 @@ our %SUB = (
 	'market_receipt_scan'                    => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_store'                   => 'JawnOS/Manager/Part06.pm',
 	'market_receipts'                        => 'JawnOS/Manager/Part06.pm',
+	'market_receipts_merged'                 => 'JawnOS/Manager/Part06.pm',
 	'market_receipts_prepared'               => 'JawnOS/Manager/Part06.pm',
 	'market_save_list'                       => 'JawnOS/Manager/Part05.pm',
 	'market_scan_device_id'                  => 'JawnOS/Manager/Part06.pm',

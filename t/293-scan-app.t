@@ -9,7 +9,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(decode_json);
 
 my $root = "$FindBin::Bin/..";
@@ -158,6 +158,49 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	ok(!$@, 'the eSCL receipt path does not die on a bare scanner entry');
 	is(ref $escl, 'HASH', 'it still answers a hash');
 	is($escl->{'error'}, 'the scanner did not answer', 'with the printer\'s own error');
+}
+{
+	# The printer answers an eSCL scan with a PDF whose pages are JPEGs. A phone
+	# has neither pdftoppm nor Ghostscript, so the pages must come out of the PDF
+	# itself; otherwise the feeder runs and nothing reaches Market or Scan.
+	require File::Temp;
+	my $dir = File::Temp::tempdir(CLEANUP => 1);
+	my $jpeg = pack('H*', 'ffd8ffe000104a46494600010100000100010000ffdb00430008060607060508070707090a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e333432ffc0000b080001000101011100ffc40014000100000000000000000000000000000009ffc4001410010000000000000000000000000000000000ffda0008010100003f002affd9');
+	my $pdf = "%PDF-1.7\n1 0 obj\n<< /Type /XObject /Subtype /Image /Filter /DCTDecode /Length 4 0 R >>\nstream\n"
+		. $jpeg . "\nendstream\nendobj\n4 0 obj\n" . length($jpeg) . "\nendobj\ntrailer\n<< >>\n%%EOF\n";
+	no warnings 'redefine';
+	local *subs::scanner_live_capabilities = sub { return ('192.168.1.109', { adf => { width => 2550, height => 4200 } }) };
+	local *subs::config_reader = sub { return { scanners => [ { name => 'Officejet LivingRoom', resolution => '300' } ] } };
+	# a phone: the PDF is the only renderer the printer's page has
+	local *subs::printer_command_path = sub { return '' };
+	local *JawnOS::Platform::Print::scan_escl = sub {
+		my ($ip, $feed, $base) = @_;
+		write_file("$base.pdf", $pdf);
+		return (undef, [ "$base.pdf" ]);
+	};
+	my $escl = eval { Manager::scanner_escl_pages('adf', "$dir/receipt_test") };
+	ok(!$@, 'the eSCL page path does not die on a machine with no PDF renderer');
+	is($escl->{'error'}, undef, 'and the scan is not an error');
+	is(scalar @{ $escl->{'pages'} || [] }, 1, 'the printer PDF gives up its page with no pdftoppm');
+	ok(-s ($escl->{'pages'}[0] || ''), 'and the page is a real file');
+}
+{
+	# The scanner's rule says where the paper goes. A job the rule sent to Market
+	# is the receipt reader's, so the Scan app must not claim it even with its
+	# pool open (which is how one paper was pulled by the wrong app).
+	no warnings 'redefine';
+	local *subs::scan_house_me = sub { return 'me' };
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	my $rows = [ {
+		scan_id => 'to_scan', owner => 'me', state => 'dispatched', target => 'scan',
+		printer => '192.168.1.109', at => 1_800_000_000_000 - 5_000,
+	} ];
+	local *subs::db_select = sub { return FakeRows->new($rows) };
+	my $pending = Manager::scan_pending_job();
+	is(ref $pending, 'HASH', 'a loaded edge the rule sends here is offered to the Scan app');
+	is($pending->{'scan_id'}, 'to_scan', 'with the job\'s own scan id');
+	$rows->[0]{'target'} = 'market';
+	is(Manager::scan_pending_job(), undef, 'a receipt job belongs to Market, not to Scan');
 }
 {
 	# A machine that left the printer's network keeps a stale address in its

@@ -419,6 +419,37 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 	my $refused = subs::scan_job_dispatch('192.168.1.110', 'HP');
 	is($refused->{'ok'}, 0, 'a job whose row did not land is not announced');
 }
+{
+	# A machine whose ledger is a little stale elects itself too, so the same
+	# paper can reach a second watcher a minute later. Any job for this printer
+	# that is still fresh is that same paper, whoever owns it.
+	no warnings 'redefine';
+	my @inserted;
+	local *subs::scan_house_me = sub { return 'me' };
+	local *subs::rightNow = sub { return 1234567890000 };
+	local *subs::path_name = sub { my ($s) = @_; $s =~ s/[^A-Za-z0-9_.-]+/_/g; return $s };
+	my $recent = [ { printer => '192.168.1.109', state => 'dispatched', at => 1234567890000 - 30_000,
+		owner => 'another', scan_id => 'scan192168110929911811', target => 'market' } ];
+	local *subs::db_select = sub {
+		my ($table, $cols, $where) = @_;
+		return FakeRows->new([]) if $where && $where->{'job'};
+		return FakeRows->new($recent);
+	};
+	local *subs::db_insert = sub { push @inserted, $_[1]; return 1 };
+	local *subs::db_delete = sub { return 1 };
+	my $same = subs::scan_job_dispatch('192.168.1.109', 'HP', 'scan');
+	is($same->{'ok'}, 0, 'a job another machine wrote for this printer is the same paper');
+	ok($same->{'existing'}, 'the caller stands down');
+	is($same->{'scan_id'}, 'scan192168110929911811', 'and is handed the scan id that holds it');
+	is(scalar @inserted, 0, 'so no second scan is dispatched');
+
+	# A failed attempt did not take the paper, so it does not hold the edge.
+	$recent->[0]{'state'} = 'failed';
+	my $retry = subs::scan_job_dispatch('192.168.1.109', 'HP', 'scan');
+	ok($retry->{'ok'}, 'a failed attempt leaves the paper to a retry');
+	is($inserted[0]{'target'}, 'scan', 'and the job records where the rule sends the paper');
+	is($inserted[0]{'printer'}, '192.168.1.109', 'with the printer that has it');
+}
 
 # A CUPS server that does not answer must not hold the Dev panel open: lpstat
 # talks to cupsd and waits out its own connect timeout when it cannot. The read

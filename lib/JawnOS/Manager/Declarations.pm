@@ -116,6 +116,7 @@ sub scan_pending_job;
 sub scan_pool_items;
 sub scan_scanner_rows;
 sub market_receipts;
+sub market_receipts_merged;
 sub market_receipts_prepared;
 sub warehouse_grabber;
 sub warehouse_moves;

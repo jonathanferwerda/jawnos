@@ -132,6 +132,11 @@ sub action_52330 {
 	my $auto = $c->param('auto') ? 1 : 0;
 	my $target = ($c->param('target') || '') eq 'scan' ? 'scan' : 'market';
 	&subs::scan_scanner_rule_save($key, $row->{'name'}, $auto, $target);
+	# The choice is one row for the house, but a row only travels when a peer
+	# pulls. Announce it now so the other machines ask for it within seconds
+	# instead of waiting for their next scheduled pass - a person changes this
+	# and loads paper in the same breath.
+	eval { &subs::subprocessor(sub { &subs::remote_available_announce(); }, { name => 'scan rule announce' }); };
 	eval {
 		&Websocket::send('server', {
 			console => &Websocket::console_command('scanScannersReload'),

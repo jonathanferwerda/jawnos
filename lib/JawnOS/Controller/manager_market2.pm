@@ -300,7 +300,28 @@ sub action_4913 {
 	my ($receipt) = grep { ($_->{'uuid'} || '') eq $uuid } @{ &market_receipts() };
 	my $files = ($receipt && ref $receipt->{'files'} eq 'ARRAY') ? $receipt->{'files'} : [];
 	my $file = $files->[$page] || '';
-	unless ($file && -f $file) { $c->rendered(404); return; }
+	unless ($file && -f $file) {
+		# The receipt is a house fact, but its pages are on the machine that
+		# scanned them. That machine answers for them when it is awake; every
+		# other device asks it the same way it asks for any other file.
+		my $machine = $receipt ? ($receipt->{'machine'} || '') : '';
+		if ($machine ne '' && $machine ne &subs::signatorial_designer()) {
+			my $data = &subs::remote_relay_request($c, { remote_uuid => $machine });
+			if (defined $data && length $data) {
+				my $type = $data =~ /^\x89PNG/ ? 'image/png'
+					: $data =~ /^\xFF\xD8\xFF/ ? 'image/jpeg'
+					: $data =~ /^GIF8/ ? 'image/gif'
+					: $data =~ /^RIFF....WEBP/s ? 'image/webp'
+					: 'application/octet-stream';
+				$c->res->headers->content_type($type);
+				$c->res->headers->cache_control('private, max-age=60');
+				$c->render(data => $data);
+				return;
+			}
+		}
+		$c->rendered(404);
+		return;
+	}
 	my $data = read_file($file);
 	unless (defined $data && length $data) { $c->rendered(404); return; }
 	my $type = $data =~ /^\x89PNG/ ? 'image/png'
@@ -323,6 +344,10 @@ sub action_52310 {
 	$scan_id =~ s/[^A-Za-z0-9]//g;
 	$scan_id = substr($scan_id, 0, 64);
 	return $c->render(json => { go => 0 }) unless length $scan_id;
+	# A job the scanner's rule sent to Scan belongs to the Scan app: Market must
+	# not pull that paper even with its window open.
+	my $row = eval { &subs::db_select('scan_jobs', undef, { scan_id => $scan_id })->hashes->[0] };
+	return $c->render(json => { go => 0 }) if $row && (($row->{'target'} || '') eq 'scan');
 	require JawnOS::Platform::Paths;
 	my $dir = JawnOS::Platform::Paths::tmp_dir() . '/jawn_market_adf';
 	eval { mkdir $dir unless -d $dir; 1 };

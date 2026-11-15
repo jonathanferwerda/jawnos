@@ -34,12 +34,15 @@ sub scan_house_heartbeat {
 	unless ($scan_ledger_ready) {
 		foreach my $sql (
 			'create table if not exists scan_house (uuid VARCHAR(255), machine VARCHAR(255) unique, device VARCHAR(25), hostname VARCHAR(255), printer VARCHAR(255), scan_ready INT, seen VARCHAR(25), ost VARCHAR(255), server_time VARCHAR(255))',
-			'create table if not exists scan_jobs (uuid VARCHAR(255), job VARCHAR(255) unique, owner VARCHAR(255), printer VARCHAR(255), scan_id VARCHAR(64), at VARCHAR(25), state VARCHAR(25), ost VARCHAR(255), server_time VARCHAR(255))',
+			'create table if not exists scan_jobs (uuid VARCHAR(255), job VARCHAR(255) unique, owner VARCHAR(255), printer VARCHAR(255), scan_id VARCHAR(64), at VARCHAR(25), state VARCHAR(25), target VARCHAR(25), ost VARCHAR(255), server_time VARCHAR(255))',
 			'create unique index if not exists idx_scan_house_machine on scan_house (machine)',
 			'create unique index if not exists idx_scan_jobs_job on scan_jobs (job)',
 		) {
 			eval { &db_query($sql) };
 		}
+		# A table created before the rule named a destination has no column for
+		# it; the add is a no-op on a table that already has one.
+		eval { &db_query('alter table scan_jobs add column target VARCHAR(25)') };
 		$scan_ledger_ready = 1;
 	}
 	return &scan_house_publish();
@@ -148,13 +151,18 @@ sub scan_dispatcher_here {
 }
 
 # The loaded edge becomes one job. The key is the printer and the minute the
-# edge was seen, so a second watcher in the same minute writes nothing; the
-# owner is the elected dispatcher, and the notice carries that owner so a
-# Market window on another machine does not pull the paper.
-sub scan_job_dispatch($ip, $name) {
+# edge was seen, so a second watcher in the same minute writes nothing. The
+# minute is not enough on its own: a machine whose ledger is a little stale
+# elects itself too, and the two passes can land a minute apart. So any job for
+# this printer still fresh - whoever owns it - is the same paper, and answers
+# "already dispatched" instead of a second scan. The owner is the elected
+# dispatcher, the destination is the scanner's own rule, and the notice carries
+# both so a Market or Scan window on another machine does not take the paper.
+sub scan_job_dispatch($ip, $name, $target = 'market') {
 	my $me = &scan_house_me();
 	return { ok => 0 } unless length $me;
 	return { ok => 0 } unless defined $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	$target = ($target || '') eq 'scan' ? 'scan' : 'market';
 	my $now = &rightNow();
 	my $minute = int($now / 60000);
 	my $job = 'scan:' . $ip . ':' . $minute;
@@ -162,6 +170,15 @@ sub scan_job_dispatch($ip, $name) {
 	my $scan_id = 'scan' . $flat . $minute;
 	my $existing = eval { &db_select('scan_jobs', undef, { job => $job })->hashes->[0] };
 	return { ok => 0, existing => 1 } if $existing && ((($existing->{'at'} || 0) + 0) > ($now - 10 * 60000));
+	# one paper, one scan: a job another machine wrote for the same printer a
+	# moment ago is this same loaded edge. A failed one did not take the paper,
+	# so it does not hold the edge against a retry.
+	my $recent = eval { &db_select('scan_jobs', undef, { printer => $ip })->hashes } || [];
+	foreach my $row ( @{$recent} ) {
+		next unless (($row->{'at'} || 0) + 0) > ($now - 3 * 60000);
+		next if (($row->{'state'} || '') eq 'failed');
+		return { ok => 0, existing => 1, scan_id => $row->{'scan_id'}, target => $row->{'target'} };
+	}
 	eval { &db_delete('scan_jobs', { job => $job }) };
 	# A job that did not land is not a job: the caller must not announce a scan
 	# whose row the other machines cannot see.
@@ -174,11 +191,12 @@ sub scan_job_dispatch($ip, $name) {
 			scan_id => $scan_id,
 			at => $now,
 			state => 'dispatched',
+			target => $target,
 			server_time => $now,
 		});
 	};
 	return { ok => 0 } unless $wrote;
-	return { ok => 1, job => $job, scan_id => $scan_id, owner => $me };
+	return { ok => 1, job => $job, scan_id => $scan_id, owner => $me, target => $target };
 }
 
 sub scan_job_state($scan_id, $state) {

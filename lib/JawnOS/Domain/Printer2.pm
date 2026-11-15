@@ -463,7 +463,7 @@ sub adf_receipt_watch {
 	return 0 unless $state eq 'loaded' && $last ne 'loaded';
 	my $printer = &device_lister(&rightNow(), 'printer') || {};
 	my $name = ref $printer eq 'HASH' ? ($printer->{'name'} || $printer->{'model'} || '') : '';
-	my $job = &scan_job_dispatch($ip, $name);
+	my $job = &scan_job_dispatch($ip, $name, &scan_auto_target($scanner_key));
 	return 0 unless $job->{'ok'};
 	my $scan_id = $job->{'scan_id'};
 	my $owner = $job->{'owner'} || &scan_house_me();

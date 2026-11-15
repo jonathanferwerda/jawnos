@@ -24,7 +24,7 @@ our @EXPORT_OK = qw(
 	available unsupported tool
 	printers discover probe add_queue send pdf_from_html ink scan_argv
 	adf_state scan_capabilities scan_escl parse_scan_capabilities
-	parse_lpstat
+	parse_lpstat scan_pdf_jpegs
 );
 
 BEGIN {
@@ -369,6 +369,57 @@ sub scan_escl {
 		return ('the printer returned no pages', []);
 	}
 	return (undef, \@paths);
+}
+
+# The integer a PDF object number holds (`/Length 2 0 R` points at one).
+sub _pdf_object_int {
+	my ($data, $num) = @_;
+	return undef unless defined $num && $num =~ /^\d+$/;
+	return undef unless $data =~ m{\b\Q$num\E\s+0\s+obj\s+(\d+)}s;
+	return $1 + 0;
+}
+
+# A printer's scanned PDF is a wrapper around the page images: each page is an
+# image XObject with a /DCTDecode filter, which is a JPEG stream already. Pull
+# those streams out, one file per page, so a machine with no PDF renderer - a
+# phone with neither pdftoppm nor Ghostscript - still scans. Answers the paths
+# written, in page order, or an empty list when a page is not the JPEG this
+# understands, so the caller can fall back to a real renderer.
+sub scan_pdf_jpegs {
+	my ($pdf, $base) = @_;
+	return () unless defined $pdf && -f $pdf && defined $base && length $base;
+	open(my $fh, '<:raw', $pdf) or return ();
+	local $/;
+	my $data = <$fh>;
+	close $fh;
+	return () unless defined $data && length $data;
+	my (@paths, $cursor);
+	$cursor = 0;
+	while ((my $at = index($data, '/DCTDecode', $cursor)) >= 0) {
+		last if scalar @paths >= 20;
+		# the dictionary that names the filter ends at its stream keyword, and
+		# the page bytes start after the stream keyword's own line break
+		my $stream = index($data, 'stream', $at);
+		last if $stream < 0;
+		my $head = substr($data, $at, $stream - $at);
+		my $body = $stream + 6;
+		$body += (substr($data, $body, 2) eq "\r\n") ? 2 : 1;
+		my $length;
+		if ($head =~ m{/Length\s+(\d+)\s+(\d+)\s+R}) { $length = &_pdf_object_int($data, $1); }
+		elsif ($head =~ m{/Length\s+(\d+)}) { $length = $1 + 0; }
+		# the length is what the page really is; a stream this cannot measure or
+		# that does not begin with a JPEG start-of-image is left to the renderer
+		return () unless defined $length && $length > 0;
+		my $bytes = substr($data, $body, $length);
+		return () unless length($bytes) == $length && $bytes =~ /^\xFF\xD8\xFF/;
+		my $path = $base . '-' . (scalar(@paths) + 1) . '.jpg';
+		open(my $out, '>:raw', $path) or return ();
+		print $out $bytes;
+		close $out;
+		push @paths, $path;
+		$cursor = $body + $length;
+	}
+	return @paths;
 }
 
 # Add one queue with `lpadmin -m everywhere`, retried through `sudo -n` when

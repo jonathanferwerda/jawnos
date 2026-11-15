@@ -220,7 +220,7 @@ my @embedded_files = source_files(
 my %mapped = map { $_ => 1 } (@manager_files, @domain_files, @controller_files, @route_files);
 my @perl_extra_files = sort grep { !$mapped{$_} } (
 	source_files(dirs => [qw(perl scripts t)], ext => [qw(pl pm t)]),
-	grep { -f $_ } ("$root/lib/JawnOS.pm", glob("$root/lib/JawnOS/*.pm")),
+	grep { -f $_ } ("$root/lib/JawnOS.pm", glob("$root/lib/JawnOS/*.pm"), glob("$root/lib/JawnOS/Platform/*.pm")),
 );
 # A test file is a place a sub can be declared, but its fixture strings are not
 # evidence a name exists: mention-search would find the test's own 'no such name'
