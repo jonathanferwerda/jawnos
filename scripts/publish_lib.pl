@@ -78,7 +78,7 @@ sub trunk_text {
 	return $rc ? '' : $text;
 }
 
-# land($root, $trunk, $rel, $text, $subject) -> (1, $branch) queued,
+# land($root, $trunk, $rel, $text, $decode, $subject) -> (1, $branch) queued,
 # (0, $why) not queued.
 #
 # Commits $text as $rel on a fresh branch from origin/$trunk and hands it to
@@ -88,11 +88,20 @@ sub trunk_text {
 # and leaves the caller's checkout untouched; the publisher decides what to do
 # about it (it writes the file itself rather than losing the release).
 sub land {
-	my ($root, $trunk, $rel, $text, $subject) = @_;
+	my ($root, $trunk, $rel, $text, $decode, $subject) = @_;
 	my ($frc) = _git($root, 'fetch', 'origin', '--quiet');
 	return (0, 'could not fetch origin') if $frc;
 	my ($vrc) = _git($root, 'rev-parse', '--verify', "origin/$trunk");
 	return (0, "there is no origin/$trunk to land on") if $vrc;
+
+	# A rerun before the ticket lands would queue the same snapshot a second
+	# time. The branch the first run made still holds it byte for byte, so hand
+	# that one back instead of making another.
+	my (undef, $refs) = _git($root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/publish/');
+	for my $ref (grep { length } split /\n/, $refs) {
+		my ($src, $have) = _git($root, 'show', "$ref:$rel");
+		return (1, $ref) if $src == 0 && _same_manifest($text, $have, $decode);
+	}
 
 	my @t = gmtime(time());
 	my $base = sprintf('downloads-%04d%02d%02d%02d%02d%02d',
@@ -148,6 +157,18 @@ sub _commit_then_queue {
 	my $rc = system($^X, $script, '--trunk', $trunk, '--branch', $branch);
 	chdir $cwd;
 	return $rc == 0 ? '' : 'the landing queue refused it';
+}
+
+# Two spellings of one manifest: identical bytes, or the same document once the
+# generated stamp is set aside. A rerun a second later differs only in the
+# stamp, and it is still the same release.
+sub _same_manifest {
+	my ($a, $b, $decode) = @_;
+	return 1 if defined $a && defined $b && $a eq $b;
+	my $da = eval { $decode->($a) };
+	my $db = eval { $decode->($b) };
+	return 0 unless defined $da && defined $db;
+	return _canonical($da) eq _canonical($db);
 }
 
 # A stable string for the manifest without its generated stamp. The values are

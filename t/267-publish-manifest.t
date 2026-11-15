@@ -204,6 +204,14 @@ subtest 'app_publish queues the snapshot instead of dirtying the checkout' => su
 	my (undef, $files) = git_at($root, 'show', '--name-only', '--format=', $branch);
 	is_deeply([ grep { /\S/ } split /\n/, $files ], [ 'server/downloads.json' ],
 		'and the commit carries the manifest and nothing else');
+	# A rerun before the coordinator picks the branch up must not queue the same
+	# snapshot again: it hands back the branch that already holds it.
+	($code, $out) = publish($root, $releases, $app_repo);
+	is($code, 0, 'a rerun before landing still succeeds') or diag($out);
+	like($out, qr/queued \Q$branch\E for the working trunk/,
+		'and names the branch that already holds the snapshot');
+	my $pending = () = slurp($calls) =~ /\n/g;
+	is($pending, 1, 'without queueing a second ticket');
 
 	# Stand in for the coordinator: the branch lands on the trunk.
 	($rc, $err) = git_at($root, 'push', '-q', 'origin', "$branch:refs/heads/working");

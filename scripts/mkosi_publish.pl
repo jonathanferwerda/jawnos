@@ -427,7 +427,7 @@ sub write_downloads_json {
 	return unless $changed;
 
 	my $subject = "downloads: the desktop image names $version";
-	my ($landed, $what) = PublishManifest::land($root, 'working', $rel, $json, $subject);
+	my ($landed, $what) = PublishManifest::land($root, 'working', $rel, $json, $decode, $subject);
 	if ($landed) {
 		print "queued $what for the working trunk; jawnos.ca sees this image after promotion\n";
 		return;
