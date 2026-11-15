@@ -25,7 +25,7 @@ nothing here overrides it.
 - This follow-up - **the logo and item pictures are on the papers.** Configure - Store's
   `invoice_images` dropdown chooses **None** (default), **Invoice line** (a thumbnail beside each
   line), **Single Product Picture** (one near the top) or **Both**. The invoice draws the colour
-  JPEGs and the receipt the grayscale ones. `lib/JawnOS/Domain/PaperImage.pm` caches a colour and
+  JPEGs; the receipt carries only the logo, in grayscale. `lib/JawnOS/Domain/PaperImage.pm` caches a colour and
   a grayscale JPEG per source under `.paper-images` beside the scans, makes them on demand (image
   bridge, then magick), and forgets them when the app's `main_image` changes or the file is
   deleted. The `logo` (a PNG data URI) uses the same cache: colour on the invoice, grayscale on
@@ -62,9 +62,6 @@ vendor matches the name the House already keeps (`market_vendor_resolve`).
 - Turning `receipt_paper` off suppresses the payment's whole render, including the revised
   invoice sheet normally stapled to the receipt. Split them if the invoice paper should keep
   refreshing independently.
-- The image mode also governs the receipt, in grayscale, although the setting is named
-  Include images in Invoice. Confirm that is the intent; the logo is always drawn and is not
-  governed by the dropdown.
 
 ## Verification
 

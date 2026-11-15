@@ -72,10 +72,10 @@ SKIP: {
 SKIP: {
 	my $magick = `command -v magick 2>/dev/null`;
 	chomp $magick if defined $magick;
-	skip 'no magick on this machine', 8 unless defined $magick && length $magick;
+	skip 'no magick on this machine', 9 unless defined $magick && length $magick;
 	my $jpeg = "$dir/paper.jpg";
 	system($magick, '-size', '20x20', 'xc:blue', $jpeg);
-	skip 'could not make a picture', 8 unless -s $jpeg;
+	skip 'could not make a picture', 9 unless -s $jpeg;
 	my $paper = {
 		type => 'invoice',
 		id => 'A1',
@@ -105,6 +105,12 @@ SKIP: {
 		local *subs::paper_image_mode = sub { 'none' };
 		my ($bytes) = JawnOS::PDF::Store::paper_bytes($paper, store => { store_name => 'Shop' });
 		unlike($bytes, qr{/Subtype /Image}, 'None keeps the paper text-only');
+	}
+	{
+		local *subs::paper_image_mode = sub { 'both' };
+		my ($receipt) = JawnOS::PDF::Store::paper_bytes({ %$paper, type => 'receipt' },
+			store => { store_name => 'Shop' });
+		unlike($receipt, qr{/Subtype /Image}, 'the receipt carries no item pictures');
 	}
 }
 

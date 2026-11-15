@@ -330,7 +330,8 @@ sub model {
 			}
 		}
 	}
-	if ($image_mode ne 'none' && defined &subs::paper_image_for_model && defined &subs::paper_image_cache) {
+	if ($page_type ne 'receipt' && $image_mode ne 'none'
+		&& defined &subs::paper_image_for_model && defined &subs::paper_image_cache) {
 		for my $line (@lines) {
 			my $uuid = $line->{'uuid'} || '';
 			next unless length $uuid;
@@ -497,15 +498,6 @@ sub _receipt {
 	$pdf->stamp(uc($labels->{'paid'}), x => $pdf->width / 2, y => $pdf->height * 0.3,
 		size => 54, color => '#e06666') if $doc->{'paid'};
 	my $y = _header($pdf, $doc);
-	if (($doc->{'image_mode'} eq 'single' || $doc->{'image_mode'} eq 'both')
-		&& $doc->{'single_gray'}) {
-		my $image = _image_box($doc->{'single_gray'}, $cw * 0.7, 80);
-		if ($image) {
-			my $ix = $left + ($cw - $image->{'w'}) / 2;
-			$pdf->image_jpeg($image->{'bytes'}, $ix, $y, $image->{'w'}, $image->{'h'});
-			$y += $image->{'h'} + 8;
-		}
-	}
 	$pdf->text(uc($labels->{$doc->{'type'}}), $left, $y, font => 'Helvetica-Bold',
 		size => 10, align => 'center', width => $cw);
 	$y += 14;
@@ -524,18 +516,12 @@ sub _receipt {
 		$y = $pdf->table(
 			x       => $left,
 			y       => $y,
-			widths  => [0.48, 0.20, 0.32],
+			widths  => [0.46, 0.22, 0.32],
 			align   => ['left', 'right', 'right'],
 			size    => 7.5,
 			padding => 2.5,
 			header  => [uc($labels->{'item'}), uc($labels->{'qty'}), uc($labels->{'amount'})],
 			rows    => \@rows,
-			images  => [ map {
-				($doc->{'image_mode'} eq 'line' || $doc->{'image_mode'} eq 'both')
-					? _image_box($_->{'image_gray'} || $_->{'image_colour'}, 22, 22)
-					: undef
-			} @{$items} ],
-			image_pad => 4,
 		);
 	}
 	$y += 10;
