@@ -355,7 +355,11 @@ SKIP: {
 		'the ppid closure finds the grandchild');
 	is(kill_tree($child, 'KILL'), 2, 'kill_tree signals the child and the grandchild');
 	waitpid($child, 0);
-	my $deadline = time + 5;
+	# SIGKILL is instant; being reaped is not. The grandchild is reparented when its
+	# parent dies, so a loaded box can take seconds to notice - the 5s this waited
+	# for failed a --jobs 2 pass at load 6. The assertion is about the kill tree,
+	# not the scheduler.
+	my $deadline = time + 20;
 	while (time < $deadline && running($grand)) {
 		sleep 0.02;
 	}

@@ -15,6 +15,7 @@ use Cwd qw(abs_path);
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
 use Mojo::Template;
+use POSIX qw(WNOHANG);
 use Encode qw(decode);
 
 my $root = abs_path("$FindBin::Bin/..");
@@ -148,16 +149,21 @@ SKIP: {
 			'--tree', $dir, '--tree-interval', '3600', '--quiet');
 		exit 1;
 	}
-	sleep 1;
-	open(my $lf, '>>', $live_log) or die "$live_log: $!";
-	print {$lf} "worker spawn live-tail-test\n";
-	close $lf;
-
 	my $timed_out = 0;
 	eval {
 		local $SIG{ALRM} = sub { die "timeout\n" };
 		alarm 15;
-		waitpid($pid, 0);
+		# The collector opens the log at its end, and a loaded box can be slow to
+		# reach that point: a single append raced the open and, when it landed
+		# first, sat in the file the collector then opened, so the tail never
+		# counted it. Append for as long as it runs instead, so some line always
+		# follows the open whatever the order.
+		while (waitpid($pid, WNOHANG) == 0) {
+			open(my $lf, '>>', $live_log) or die "$live_log: $!";
+			print {$lf} "worker spawn live-tail-test\n";
+			close $lf;
+			select undef, undef, undef, 0.25;
+		}
 		alarm 0;
 	};
 	if ($@) {

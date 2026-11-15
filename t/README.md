@@ -202,7 +202,9 @@ correct and is unchanged.
 
 Runs on 2026-11-15 kept failing one file at a time: `t/57-control-socket.t` twice
 (both on a landing), then `t/177-refresh-probe.t` and `t/277-note-legacy-outer.t`
-- a different file every time, never the code that had just changed. **Measured** (this box, 8 cores, other work running throughout; a worktree pinned
+- a different file every time, never the code that had just changed.
+
+**Measured** (this box, 8 cores, other work running throughout; a worktree pinned
 at v0.1.3029 so the tree could not move under the suite):
 
 | pass | jobs | load in → out | result |
@@ -217,10 +219,28 @@ at v0.1.3029 so the tree could not move under the suite):
 Every file named above passes alone (0 failures each). The failures follow
 `--jobs 2`, not load: pass 3 failed starting at load 6, while pass 4 passed
 ending at 37. So this is contention between test children, not a slow or broken
-test, and the fix is one of two: give these tests a contended-box allowance (all
-of them assert a wall-clock window - a socket that times out, a process tree
-that is gone, an address that answered), or keep timing-sensitive files out of
-the concurrent pass. Either way it gets a regression test.
+test.
+
+Three of them assert a wall-clock window, and now wait for the condition instead
+of racing a deadline (2026-11-15):
+
+- `t/227` gave a reaped grandchild 5s; it gets 20s, because a loaded box is slow
+  to reparent it to init and reap it.
+- `t/57` had two timing assumptions. The stand-in master closed its socket right
+  after reading the request, so the close could beat the client's timeout and
+  read as a closed socket; it now holds the line until the caller gives up. And
+  the test wrote the record before calling `send`, so on a loaded box its stamp
+  could fall outside the client's one-second grace; the stand-in master now
+  writes the record after reading the request, as the real one does.
+- `t/177` appended one line after a blind 1s sleep; it now appends for as long as
+  the collector runs, so a line always follows the collector's open, whichever
+  moment that is.
+
+Two are still open and are **not** timing tests: neither `t/75` nor `t/249`
+contains a sleep or a timeout. `t/249` also failed alone on a differently
+provisioned box, so it looks environment-dependent; `t/75` failed once with no
+failing assertion at all, which is a `die` or a plan mismatch rather than a race.
+Both need their own diagnosis.
 
 Until then: a lone failure is a flake only after that file passes alone. Re-run
 the gate deliberately rather than editing a test that is not broken (the landing

@@ -169,7 +169,17 @@ sub fake_master {
 		exit 2 unless $client;
 		my $request = <$client>;
 		if (defined $request && length $request) {
-			print $client $reply, "\n" if defined $reply;
+			if (defined $reply) {
+				print $client $reply, "\n";
+			}
+			else {
+				# A reply of undef means "never answer". Hold the connection open
+				# until the caller gives up, so this close cannot beat the caller's
+				# timeout and read as a closed socket instead of a timeout - the
+				# race that failed this test under a loaded --jobs 2 pass. The
+				# bound is a safety net, not the thing being tested.
+				IO::Select->new($client)->can_read(10);
+			}
 		}
 		close $client;
 		close $server;
@@ -209,7 +219,7 @@ is($reply->{'ok'}, 1, 'the client decodes the master answer');
 is($reply->{'status'}, 'started', 'and hands back its fields');
 
 unlink $socket;
-$pid = &fake_master($socket, undef);   # accepts, answers nothing, hangs up
+$pid = &fake_master($socket, undef);   # accepts, never answers, holds the line open
 $reply = &control::send({ cmd => 'restart' }, socket => $socket, dir => $dir, timeout => 2);
 &reap($pid);
 is($reply->{'error'}, 'timeout', 'a master that never answers reads as a timeout, not a crash');
@@ -223,9 +233,15 @@ like($reply->{'message'}, qr/no jawn master/, 'with a message a person can act o
 # substitutes for a request over the socket. That is what keeps a caller from
 # reading another restart's record as its own answer.
 unlink $socket;
-&control::write_record({ ok => 1, reason => 'asked over the control socket', source => 'scripts/restart.pl' }, dir => $dir);
-my $no_reason_pid = &fake_master_frames($socket, []);
-my $no_reason = &control::send({ cmd => 'restart' }, socket => $socket, dir => $dir, timeout => 2);
+# The record is written by the stand-in master, after it reads the request, the
+# way the real one does. Written before the call it could land more than the
+# one-second grace behind the caller's start on a loaded box, and the client
+# would rightly call it somebody else's errand.
+my $no_reason_pid = &fake_master_frames($socket, [], record => {
+	ok => 1, reason => 'asked over the control socket', source => 'scripts/restart.pl' });
+# The record match is not a timing test, so the client gets a budget a loaded
+# box cannot spend: a short one only races the record write against the deadline.
+my $no_reason = &control::send({ cmd => 'restart' }, socket => $socket, dir => $dir, timeout => 15);
 &reap($no_reason_pid);
 is($no_reason->{'from'}, 'record', 'a reasonless restart is matched by the socket wording');
 
@@ -383,7 +399,7 @@ ok(!&control::handle('{"cmd":"status"}', $ctx)->{'ack'}, 'status is answered dir
 # order, then hangs up. An empty list is a master that read the request and said
 # nothing at all.
 sub fake_master_frames {
-	my ($path, $lines) = @_;
+	my ($path, $lines, %opt) = @_;
 	my $pid = fork();
 	die "fork: $!" unless defined $pid;
 	if (!$pid) {
@@ -395,6 +411,7 @@ sub fake_master_frames {
 		exit 2 unless $client;
 		my $request = <$client>;
 		if (defined $request && length $request) {
+			&control::write_record($opt{'record'}, dir => $dir) if $opt{'record'};
 			for my $line (@{ $lines || [] }) { print $client $line, "\n" }
 		}
 		close $client;
