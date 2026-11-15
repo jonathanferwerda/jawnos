@@ -590,9 +590,15 @@ sub action_33700 {
 				$sl->{'latitude'}, $sl->{'longitude'}
 			);
 			$sl->{'distance'} = sprintf( '%.2f', $offset->{'metres'} );
-			$sl->{'distance_label'} = &subs::travel_distance_phrase( $offset->{'metres'} );
-			$sl->{'direction'} = $offset->{'bearing'};
-			$sl->{'direction_label'} = &subs::travel_compass( $offset->{'bearing'} );
+			# standing on it is not a direction: a place within 10 m is "here"
+			if ( $offset->{'metres'} < 10 ) {
+				$sl->{'here'} = 1;
+			}
+			else {
+				$sl->{'distance_label'} = &subs::travel_distance_phrase( $offset->{'metres'} );
+				$sl->{'direction'} = $offset->{'bearing'};
+				$sl->{'direction_label'} = &subs::travel_compass( $offset->{'bearing'} );
+			}
 		}
 		$sl->{'home_plate'} = $plate;
 
@@ -605,6 +611,9 @@ sub action_33700 {
 			? $a->{'distance'} <=> $b->{'distance'}
 			: ( defined $a->{'distance'} ? -1 : ( defined $b->{'distance'} ? 1 : 0 ) )
 	} @{$proxies->{'near'}};
+	# one row per place: an app's fixes at the same spot are one place to go, as
+	# the map already treats them
+	$proxies->{'near'} = &subs::travel_collapse_places( $proxies->{'near'}, 50 );
 
 	push @{$proxies->{'near'}}, $main_map->{'home_plate'};
 	$proxies->{'here'} = $main_map->{'home_plate'};

@@ -98,12 +98,25 @@ is( &subs::travel_compass(45),  'NE', 'north east' );
 is( &subs::travel_compass(350), 'N',  'a bearing just west of north still reads north' );
 is( &subs::travel_compass(-90), 'W',  'a negative bearing wraps' );
 
+# one row per place: an app's fixes at the same spot are one place to go, and a
+# second visit in another place stays its own row
+my $collapse = &subs::travel_collapse_places([
+	{ app => 'president', name => 'President', latitude => '43.002400', longitude => '-81.942100' },
+	{ app => 'president', name => 'President', latitude => '43.002420', longitude => '-81.942120' },  # ~3 m away
+	{ app => 'water',     name => 'Water',     latitude => '43.002400', longitude => '-81.942100' },  # other app, same spot
+	{ app => 'president', name => 'President', latitude => '43.005000', longitude => '-81.942100' },  # ~290 m away
+], 50 );
+is( scalar @{ $collapse }, 3, 'a duplicate collapses, another app and another visit do not' );
+is( $collapse->[0]->{'latitude'}, '43.002400', 'the nearest row is the one kept' );
+is( &subs::travel_collapse_places( [] )->[0], undef, 'an empty list is empty' );
+
 # ---- the viewer and the scheduler read the shared rule --------------------
 my $viewer = read_file("$root/lib/JawnOS/Controller/manager_travel.pm");
 like( $viewer, qr/&subs::travel_window\(\{/,          'the viewer builds its window with the shared rule' );
 like( $viewer, qr/&subs::travel_window_legacy\(\$settings\)/, 'and drops the stale fixed pair once' );
 like( $viewer, qr/&subs::geodesic_offset\(/,          'the place list measures distance with the shared rule' );
 like( $viewer, qr/\$proxies->\{'origin'\}/,           'and names what it measures from' );
+like( $viewer, qr/&subs::travel_collapse_places\(/,   'and collapses an app\'s fixes at one spot' );
 
 my $headless = read_file("$root/lib/JawnOS/Domain/Headless.pm");
 unlike( $headless, qr/\$now - \$gb::timeouts->\{'navigation'\}->\{'lasted_run'\}/,

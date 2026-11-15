@@ -1,4 +1,4 @@
-<% my @places = grep { defined $_->{'distance_label'} && length $_->{'distance_label'} } @{ $proxies->{'near'} || [] }; %>
+<% my @places = grep { defined $_->{'distance'} && length $_->{'distance'} } @{ $proxies->{'near'} || [] }; %>
 <% my $limit = 120; %>
 <% my $shown = scalar(@places) > $limit ? $limit : scalar(@places); %>
 <div class="proxy_view" style="padding:4px 8px 6px;">
@@ -16,10 +16,10 @@
 		<% foreach my $place ( @places ) {
 			last if $n++ >= $shown;
 		%>
-			<span class="proxy travel_place" app="<%= $place->{'app'} %>" timestamp="<%= $place->{'timestamp'} %>" title="<%= $place->{'distance_label'} %> <%= $place->{'direction_label'} %>" style="display:flex;align-items:center;gap:8px;padding:4px 3px;border-bottom:1px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);">
+			<span class="proxy travel_place" app="<%= $place->{'app'} %>" timestamp="<%= $place->{'timestamp'} %>" title="<%= $place->{'here'} ? &subs::ui('here') : $place->{'distance_label'} . ' ' . $place->{'direction_label'} %>" style="display:flex;align-items:center;gap:8px;padding:4px 3px;border-bottom:1px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);">
 				<span style="flex:0 0 9px;height:9px;border-radius:50%;background:<%= ( $place->{'settings'} && $place->{'settings'}->{'colour'} ) || '#2f6f9f' %>;"></span>
 				<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b><%= $place->{'name'} || &subs::format_name( $place->{'app'} ) %></b></span>
-				<span style="flex:0 0 auto;font-variant-numeric:tabular-nums;white-space:nowrap;"><%= $place->{'distance_label'} %><% if ( $place->{'direction_label'} ) { %> <%= $place->{'direction_label'} %><% } %></span>
+				<span style="flex:0 0 auto;font-variant-numeric:tabular-nums;white-space:nowrap;"><% if ( $place->{'here'} ) { %><%= &subs::ui('here') %><% } else { %><%= $place->{'distance_label'} %><% if ( $place->{'direction_label'} ) { %> <%= $place->{'direction_label'} %><% } %><% } %></span>
 				<span class="time" timestamp="<%= $place->{'timestamp'} %>" style="flex:0 0 8.5em;text-align:right;font-size:11px;opacity:.7;white-space:nowrap;"></span>
 			</span>
 		<% } %>

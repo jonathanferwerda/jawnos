@@ -199,4 +199,27 @@ sub travel_compass {
 	return $TRAVEL_COMPASS[$point];
 }
 
+# One row per place in a list that is already nearest-first. The continent files
+# a fix on every action, so one app appears several times at the same spot (a
+# morning's taps at the kitchen table) and the map groups those within 50 m -
+# the list does the same, keeping the nearest of each. Two visits of the same app
+# in different places stay two rows: only near-coincident fixes collapse.
+sub travel_collapse_places {
+	my ( $rows, $metres ) = @_;
+	return [] unless ref $rows eq 'ARRAY';
+	$metres = 50 unless defined $metres && $metres =~ /^\d+(?:\.\d+)?$/;
+	my @kept;
+	foreach my $row ( @{$rows} ) {
+		next unless ref $row eq 'HASH';
+		my $dupe = 0;
+		foreach my $seen ( grep { ( $_->{'app'} // '' ) eq ( $row->{'app'} // '' ) } @kept ) {
+			next unless defined $seen->{'latitude'} && defined $row->{'latitude'};
+			my $offset = &geodesic_offset( $seen->{'latitude'}, $seen->{'longitude'}, $row->{'latitude'}, $row->{'longitude'} );
+			if ( $offset->{'metres'} <= $metres ) { $dupe = 1; last; }
+		}
+		push @kept, $row unless $dupe;
+	}
+	return \@kept;
+}
+
 1;
