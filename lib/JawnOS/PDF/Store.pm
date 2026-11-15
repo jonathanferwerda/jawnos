@@ -632,8 +632,6 @@ sub _invoice {
 	my $left = $pdf->margin;
 	my $cw = $pdf->content_width;
 	my $right = $left + $cw;
-	$pdf->stamp(uc($labels->{'paid'}), x => $pdf->width / 2, y => $pdf->height * 0.4,
-		size => 96, color => '#e06666') if $doc->{'paid'};
 	my $y = $pdf->margin;
 	if ($doc->{'logo_colour'}) {
 		my $image = _image_box($doc->{'logo_colour'}, 110, 54);
@@ -687,6 +685,10 @@ sub _invoice {
 			$y += $image->{'h'} + 12;
 		}
 	}
+	# The stamp is a watermark above the picture but below the sheet's text, so
+	# a product picture cannot cover it and it never hides a line.
+	$pdf->stamp(uc($labels->{'paid'}), x => $pdf->width / 2, y => $pdf->height * 0.4,
+		size => 96, color => '#e06666') if $doc->{'paid'};
 	$pdf->text(uc($labels->{$doc->{'type'}}), $left, $y, font => 'Helvetica-Bold',
 		size => 22, align => 'center', width => $cw);
 	$y += 26;
