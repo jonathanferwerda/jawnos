@@ -6,7 +6,7 @@ function jawnosWindowMaximized(app) {
 // A window's own menu: the things a window manager offers, plus the pin the bar
 // already had. Right-clicking (or holding) a window button raises this instead
 // of the bar's menu.
-function jawnosWindowContextBuild(app) {
+function jawnosWindowContextBuild(app, timestamp) {
 	var selected = function (on) { return on ? '✓' : ''; };
 	var context = $('<div class="taskbar_context"></div>');
 	context.append('<div class="taskbar_context_selection" act="win_close" app="' + app + '">Close</div>');
@@ -14,6 +14,37 @@ function jawnosWindowContextBuild(app) {
 	context.append('<div class="taskbar_context_selection" act="win_min" app="' + app + '">Minimize</div>');
 	var moving = (typeof jawnos_move_app != 'undefined' && jawnos_move_app == app);
 	context.append('<div class="taskbar_context_selection" act="win_move" app="' + app + '">Move<span class="taskbar_context_check">' + selected(moving) + '</span></div>');
+	// A local window may move to another desk; a peer desk holds no local window,
+	// and a dialog is not a window of any one desk.
+	if (app != 'dialog' && typeof jawnosShellLayout == 'function') {
+		var layout = jawnosShellLayout();
+		var active = (typeof jawnosShellActiveWorkspace == 'function') ? jawnosShellActiveWorkspace() : null;
+		var multi = (app == 'terminal' || app == 'folders' || app == 'now');
+		var others = $.grep(layout.workspaces || [], function (ws) {
+			if (!ws || ws.id == (active && active.id) || ws.kind == 'peer') { return false; }
+			// A single-window app cannot live on two desks at once: a desk that
+			// already holds it is left out rather than duplicating it.
+			if (multi) { return true; }
+			var clash = false;
+			$('.wind').each(function () {
+				if ($(this).attr('app') == app && $(this).attr('workspace') == ws.id) { clash = true; }
+			});
+			return !clash;
+		});
+		context.append($('<div class="taskbar_context_label"></div>').text(jawnosT('Move to desktop')));
+		if (!others.length) {
+			context.append($('<div class="taskbar_context_label"></div>').text(jawnosT('No other desktop')));
+		}
+		else {
+			$.each(others, function (i, ws) {
+				var name = ws.name || jawnosT('Workspace');
+				if (ws.kind == 'room') { name += ' — ' + jawnosT('Saved'); }
+				context.append($('<div class="taskbar_context_selection" act="win_ws"></div>')
+					.attr('app', app).attr('ws', ws.id).attr('timestamp', timestamp || '')
+					.append($('<span></span>').text(name)));
+			});
+		}
+	}
 	context.append('<div class="taskbar_context_label">Taskbar</div>');
 	var pinned = jawnosTaskbarAppPinned(app);
 	context.append('<div class="taskbar_context_selection" act="pin_app" app="' + app + '">' + (pinned ? 'Unpin from taskbar' : 'Pin to taskbar') + '</div>');
@@ -21,9 +52,9 @@ function jawnosWindowContextBuild(app) {
 	return context;
 }
 
-function jawnosTaskbarContextOpen(x, y, app, widget, bar) {
+function jawnosTaskbarContextOpen(x, y, app, widget, bar, timestamp) {
 	jawnosTaskbarContextClose();
-	var context = app ? jawnosWindowContextBuild(app)
+	var context = app ? jawnosWindowContextBuild(app, timestamp)
 		: (widget ? jawnosTaskbarWidgetContextBuild(widget, bar) : jawnosTaskbarContextBuild(bar));
 	$('body').append(context);
 	// keep it on screen
@@ -57,7 +88,8 @@ $(document).on('contextmenu', '.jawnos_taskbar', function (e) {
 	// the app under the pointer, if the press landed on a window button
 	var win = $(e.target).closest('.window_toggle');
 	var app = win.length ? win.attr('app') : null;
-	jawnosTaskbarContextOpen(e.clientX, e.clientY, app, null, bar);
+	var timestamp = win.length ? (win.attr('timestamp') || '') : '';
+	jawnosTaskbarContextOpen(e.clientX, e.clientY, app, null, bar, timestamp);
 });
 
 // a long press opens the same menu on touch: the shared handler dispatches a
@@ -159,6 +191,17 @@ $(document).on('click', '.taskbar_context_selection', function () {
 		// the window is dragged from anywhere for one move, or until pressed again
 		var mapp = $(this).attr('app');
 		if (typeof jawnosWindowMoveMode == 'function') { jawnosWindowMoveMode(mapp); }
+		jawnosTaskbarContextClose();
+	}
+	else if (act == 'win_ws') {
+		// The tile carries the window's own stamp, so a second Terminal or
+		// Folders window moves instead of the first one of its app.
+		var wts = $(this).attr('timestamp') || '';
+		var wapp = $(this).attr('app') || '';
+		var wind = wts ? $('#window_' + wts) : $('.wind[app="' + wapp + '"]').first();
+		if (wind.length && typeof jawnosWorkspaceWindowMove == 'function') {
+			jawnosWorkspaceWindowMove(wind, $(this).attr('ws'));
+		}
 		jawnosTaskbarContextClose();
 	}
 });

@@ -163,6 +163,17 @@ like($space, qr/function jawnosWorkspaceMachineDesk/, 'a machine becomes a desk'
 like($space, qr/jawnosRemoteManagerOpen\(machine\.uuid/, 'that opens the peer\'s live Manager');
 like($space, qr/data-room-index/, 'the saved rooms are rows');
 like($space, qr/data-machine-index/, 'and so are the machines');
+
+# --- a window moves to another desk from its own menu ----------------------
+like($events, qr/act="win_ws"/, 'a window can be sent to another desktop');
+like($events, qr/jawnosWorkspaceWindowMove/, 'through the workspace layer');
+like($events, qr/Move to desktop/, 'the menu names the move');
+like($events, qr/ws\.kind == 'peer'/, 'a peer desktop is left out of the list');
+like($events, qr/clash = true/, 'and a desk already holding the same single-window app');
+like($space, qr/function jawnosWorkspaceWindowMove/, 'the move re-homes the window');
+like($space, qr/windowTiledLeave\(win, free\)/, 'closing the pile it leaves');
+like($space, qr/windowTiledInsertAt/, 'and joining the target desktop\'s pile');
+like($windows, qr/\.attr\('timestamp', \$\(v\)\.attr\('timestamp'\)/, 'a window tile carries its own stamp');
 like($shell, qr/found\.kind == 'peer'.*jawnosRemoteManagerOpen/s, 'choosing a peer desk opens its Manager');
 like($core, qr{/js/manager/shell_workspaces\.js}, 'the window side is in the core bundle');
 like($routes13, qr{/manager/shell/rooms.*action_45301}s, 'the panel can list the console rooms');

@@ -154,6 +154,47 @@ function jawnosWorkspaceApplyWindows() {
 	});
 }
 
+// Send a window to another desk. A tiled window joins that desk's own pile; a
+// pinned, maximized or free one keeps the place it has. It leaves its old pile
+// closed behind it and waits on the target desk in the state it was in.
+function jawnosWorkspaceWindowMove(win, target) {
+	win = (win && win.jquery) ? win : $(win);
+	if (!win.length) { return; }
+	var layout = jawnosShellLayout();
+	var to = null;
+	$.each(layout.workspaces || [], function (i, ws) { if (ws && ws.id == target) { to = ws; } });
+	if (!to || to.kind == 'peer' || to.id == jawnosWorkspaceActiveId()) { return; }
+	var state = win.hasClass('jawnos_ws_away') ? (win.attr('ws_visible') || 'no') : (win.is(':visible') ? 'yes' : 'no');
+	var free = win.attr('free') == '1';
+	var keep = free
+		|| win.attr('pre_dimensioned') == '1'
+		|| win.attr('view') == 'max' || win.attr('view') == 'left' || win.attr('view') == 'right'
+		|| (typeof windowPlaceIsLocked == 'function' && windowPlaceIsLocked(win));
+	// Close the slot it held on the desk it is leaving.
+	if (typeof windowTiledLeave == 'function') { windowTiledLeave(win, free); }
+	win.attr('workspace', to.id).attr('ws_visible', state);
+	win.removeAttr('tile').removeAttr('stack_at');
+	if (keep) {
+		win.removeAttr('stack');
+		if (free) { win.attr('free', '1'); }
+	}
+	else {
+		var stack = jawnosWorkspaceStackDefault(to.id);
+		if (stack != windowTiledDefaultStack) { win.attr('stack', stack); }
+		else { win.removeAttr('stack'); }
+		if (typeof windowTiledInsertAt == 'function' && typeof windowNextTileSlot == 'function') {
+			windowTiledInsertAt(win, windowNextTileSlot(stack), stack);
+		}
+	}
+	// It is on the other desk now, and waits there in the state it had.
+	win.addClass('jawnos_ws_away').hide();
+	if (typeof jawnosWorkspaceApplyWindows == 'function') { jawnosWorkspaceApplyWindows(); }
+	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
+	if (typeof jawnosDockWindowsRender == 'function') { jawnosDockWindowsRender(); }
+	if (typeof windowSaver == 'function') { windowSaver(); }
+	if (typeof jawnosWorkspaceWidgetSync == 'function') { jawnosWorkspaceWidgetSync(); }
+}
+
 // ---- the switcher widget ---------------------------------------------------
 
 function jawnosWorkspaceWidgetSync() {

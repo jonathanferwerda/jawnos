@@ -234,7 +234,9 @@ function taskbarDisplayer(destination) {
 		// The app, the names and the ids are attributes, and a window's name is
 		// text: build the wrapper as DOM so a name with markup stays a label.
 		var wrapper = $('<span class="hover window_toggle" style="text-align:center;"></span>')
-			.attr('id', rand).attr('app', app).attr('formatted_name', named);
+			.attr('id', rand).attr('app', app).attr('formatted_name', named)
+			// the window's own stamp, so its menu can act on this window alone
+			.attr('timestamp', $(v).attr('timestamp') || '');
 		if (terminal_id) { wrapper.attr('data-terminal-id', terminal_id); }
 		if (window_id) { wrapper.attr('data-window-id', window_id); }
 		if (dialog_id) { wrapper.attr('data-dialog-id', dialog_id); }
