@@ -557,7 +557,49 @@ sub store_numbering_mint {
 	return { series => $key, error => 'the numbering authority could not be reached and no reserved block is left' };
 }
 
-# ---- document lines ---------------------------------------------------------
+# What Configure -> Store's numbering card shows: the next number in each
+# series and how many numbers this device can still mint with no network. The
+# counter is the last value the house synced; the block is exact because only
+# this device writes its `used`.
+sub store_numbering_status {
+	my $authority = ((&device_setter() // '') eq 'server') ? 1 : 0;
+	my $hub = $authority ? undef : &store_numbering_hub();
+	my %series;
+	my $sig = &signatorial_designer();
+	foreach my $key ( sort keys %NUMBERING_SERIES ) {
+		my $row = eval { &store_numbering_row($key) } || {};
+		my $next = (defined $row->{'next_number'} && $row->{'next_number'} =~ /^\d+$/)
+			? $row->{'next_number'} + 0
+			: $NUMBERING_SERIES{$key}->{'start'};
+		my $q = eval { &db_query('select * from number_blocks where series = ? and device = ? and used <= to_number order by used asc', $key, $sig) };
+		my @blocks = $q ? @{ $q->hashes || [] } : ();
+		my $remaining = 0;
+		my ($from, $to, $used);
+		foreach my $block ( @blocks ) {
+			my $left = ($block->{'to_number'} // 0) + 0 - ($block->{'used'} // 0) + 0 + 1;
+			next unless $left > 0;
+			$remaining += $left;
+			($from, $to, $used) = (($block->{'from_number'} // 0) + 0, ($block->{'to_number'} // 0) + 0, ($block->{'used'} // 0) + 0)
+				unless defined $from;
+		}
+		$series{$key} = {
+			series => $key,
+			next => $next,
+			next_id => &store_numbering_format($key, $next),
+			remaining => $remaining,
+			block_from => $from,
+			block_to => $to,
+			block_used => $used,
+			authority => $authority,
+		};
+	}
+	return {
+		authority => $authority,
+		hub => ($hub ? ($hub->{'hostname'} || $hub->{'fqdn'} || '') : ''),
+		series => \%series,
+	};
+}
+
 # A document's lines. A quote/invoice built before multi-line support has one
 # model and its options; a register sale has register.items. Everything that
 # reads a document asks here, so the old shapes keep working while new

@@ -909,6 +909,38 @@ $(document).on('change', '#store_tax_card .store_cash_rounding', function() {
 	});
 });
 
+// Configure -> Store -> Document numbers: a device keeps a block of invoice
+// and quote numbers for when it is offline. The button asks the hub for a
+// fresh block; the hub itself mints every number and has none to reserve.
+$(document).on('click', '#store_numbering_reserve', function() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	var status = $('#store_numbering_status');
+	status.text(t('Reserving\u2026'));
+	$.ajax({
+		url: '/manager/store/number_reserve',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			var r = {};
+			if (typeof response === 'string') {
+				try { r = JSON.parse(response); } catch (e) { r = {}; }
+			}
+			else { r = response || {}; }
+			if (!r.ok) { status.text(r.error || t('Could not reserve. Try again.')); return; }
+			if (r.invoice) {
+				if (r.invoice.next_id) { $('#store_numbering_next_invoice').text(r.invoice.next_id); }
+				$('#store_numbering_left_invoice').text(r.invoice.remaining || 0);
+			}
+			if (r.quote) {
+				if (r.quote.next_id) { $('#store_numbering_next_quote').text(r.quote.next_id); }
+				$('#store_numbering_left_quote').text(r.quote.remaining || 0);
+			}
+			status.text(t('Saved.'));
+		},
+		error: function() { status.text(t('Could not reserve. Try again.')); }
+	});
+});
+
 // Each device card keeps its own `clock_timezone` row, so a phone and a server
 // can read different clocks. The setting is written for that card's device
 // only; the server sets the machine's own clock when the card is this machine's

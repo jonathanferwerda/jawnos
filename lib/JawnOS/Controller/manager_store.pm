@@ -588,6 +588,40 @@ sub action_6422 {
 	$c->render(json => { ok => 1, %{$block} });
 }
 
+# POST /manager/store/number_reserve
+# The Configure -> Store card's one action: ask the hub for a fresh block of
+# offline numbers for this device. The hub itself mints every number and has
+# nothing to reserve, so it is simply reported as the authority.
+sub action_6423 {
+	my $c = shift;
+	unless ((($c->session('authentication') || '') eq 'approved'
+		&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	my $status = &subs::store_numbering_status() || { series => {} };
+	my $authority = $status->{'authority'} ? 1 : 0;
+	my ($invoice_ok, $quote_ok) = (1, 1);
+	unless ($authority) {
+		$invoice_ok = &subs::store_numbering_block_ensure('invoice') ? 1 : 0;
+		$quote_ok = &subs::store_numbering_block_ensure('quote') ? 1 : 0;
+	}
+	my $after = &subs::store_numbering_status() || $status;
+	my $inv_left = ($after->{'series'}->{'invoice'}->{'remaining'} || 0) + 0;
+	my $quo_left = ($after->{'series'}->{'quote'}->{'remaining'} || 0) + 0;
+	my $error = '';
+	if (!$authority && ((!$invoice_ok && !$inv_left) || (!$quote_ok && !$quo_left))) {
+		$error = 'the numbering hub could not be reached';
+	}
+	$c->render(json => {
+		ok => ($error ? 0 : 1),
+		error => $error,
+		authority => $authority,
+		invoice => $after->{'series'}->{'invoice'} || {},
+		quote => $after->{'series'}->{'quote'} || {},
+		hub => $after->{'hub'} || '',
+	});
+}
+
 # GET /manager/store/customer_correspondence
 sub action_6466 {
 	my $c = shift;

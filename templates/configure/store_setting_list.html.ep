@@ -71,6 +71,48 @@
 		<% } %>
 	</div>
 
+	<%# The document series belongs to the house, not to a handset: the hub mints
+	    it and each device keeps a block for the times it is offline. %>
+	<% my $numbering = &subs::store_numbering_status(); %>
+	<% my $numbering_invoice = $numbering->{'series'}->{'invoice'} || {}; %>
+	<% my $numbering_quote = $numbering->{'series'}->{'quote'} || {}; %>
+	<div class="cfg-card store_numbering_card" id="store_numbering_card">
+		<h3><%= &subs::ui('Document numbers') %></h3>
+		<p class="cfg-note"><%= &subs::ui('Invoices and quotes are numbered from one house series. The hub mints the next number; a device with no network uses the numbers it reserved.') %></p>
+		<div class="cfg-row">
+			<label><%= &subs::ui('Next invoice') %></label>
+			<span id="store_numbering_next_invoice"><%= $numbering_invoice->{'next_id'} || '\u2014' %></span>
+		</div>
+		<div class="cfg-row">
+			<label><%= &subs::ui('Next quote') %></label>
+			<span id="store_numbering_next_quote"><%= $numbering_quote->{'next_id'} || '\u2014' %></span>
+		</div>
+		<% if ($numbering->{'authority'}) { %>
+			<p class="cfg-note"><%= &subs::ui('This machine is the numbering authority; it mints its own numbers.') %></p>
+		<% } else { %>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Offline invoices left') %></label>
+				<span id="store_numbering_left_invoice"><%= $numbering_invoice->{'remaining'} + 0 %></span>
+			</div>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Offline quotes left') %></label>
+				<span id="store_numbering_left_quote"><%= $numbering_quote->{'remaining'} + 0 %></span>
+			</div>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Numbering hub') %></label>
+				<span><%= length($numbering->{'hub'} || '') ? &subs::format_name($numbering->{'hub'}) : &subs::ui('not found') %></span>
+			</div>
+			<div class="cfg-row">
+				<label>&nbsp;</label>
+				<span>
+					<button type="button" id="store_numbering_reserve" class="store_text_button"><%= &subs::ui('Reserve 100 offline numbers') %></button>
+					<span id="store_numbering_status" class="store_tax_status" aria-live="polite"></span>
+				</span>
+			</div>
+		<% } %>
+		<p class="cfg-note"><%= &subs::ui('A number is used once. An offline block can leave gaps when the device never used the whole block.') %></p>
+	</div>
+
 	<% foreach my $d ( @gb::device_types ) { %>
 		<div class="cfg-card">
 			<h3><%= $d %></h3>
