@@ -14,6 +14,19 @@
 	my @receipts = @{ $receipts || [] };
 	# one renderer for a row, so the list tab and the shopping tab never drift;
 	# the list tab carries the need/want dial, the shopping tab a plain badge.
+	# The due reason rides on the badge in the shopping tab and beside the dial
+	# in the list tab, so both tabs say why the row is there and how long it lasts.
+	my $due_reason = sub {
+		my ($it) = @_;
+		return '' unless $it->{'due'};
+		if (($it->{'due_reason'} || '') eq 'days' && defined $it->{'due_days'}) {
+			my $shown = sprintf('%.1f', $it->{'due_days'});
+			$shown =~ s/\.0$//;
+			return ' - ' . $shown . ' ' . ($shown == 1 ? &subs::ui('day left') : &subs::ui('days left'));
+		}
+		return ' - ' . &subs::ui('below keep level') if ($it->{'due_reason'} || '') eq 'budget';
+		return '';
+	};
 	my $row = sub {
 		my ($it, $editable) = @_;
 		my $kind = ($it->{'kind'} || '') eq 'need' ? 'need' : 'want';
@@ -30,23 +43,14 @@
 		}
 		else {
 			my $col = $kind eq 'need' ? '#b8860b' : 'var(--line)';
-			$o .= '<span style="font-size:14px;font-weight:700;color:' . $col . ';">' . &subs::format_name($kind) . '</span>';
+			$o .= '<span style="font-size:14px;font-weight:700;color:' . $col . ';">' . &subs::format_name($kind) . $due_reason->($it) . '</span>';
 		}
 		$o .= '<span class="market_text" style="margin-left:8px;">' . &subs::format_name($it->{'text'}) . '</span>';
 		if ($it->{'vendor'}) {
 			$o .= '<span style="opacity:.55;font-size:13px;margin-left:8px;">' . &subs::format_name($it->{'vendor'}) . '</span>';
 		}
-		if ($it->{'due'}) {
-			$o .= '<span style="margin-left:8px;font-size:13px;opacity:.8;">- due';
-			if (($it->{'due_reason'} || '') eq 'days' && defined $it->{'due_days'}) {
-				my $shown = sprintf('%.1f', $it->{'due_days'});
-				$shown =~ s/\.0$//;
-				$o .= ' - ' . $shown . ' ' . ($shown == 1 ? &subs::ui('day left') : &subs::ui('days left'));
-			}
-			elsif (($it->{'due_reason'} || '') eq 'budget') {
-				$o .= ' - ' . &subs::ui('below keep level');
-			}
-			$o .= '</span>';
+		if ($editable && $it->{'due'}) {
+			$o .= '<span style="margin-left:8px;font-size:13px;opacity:.8;">- due' . $due_reason->($it) . '</span>';
 		}
 		$o .= '<button class="market_delete" uuid="' . $uuid . '" style="float:right;" title="Delete">X</button>';
 		$o .= '</div>';

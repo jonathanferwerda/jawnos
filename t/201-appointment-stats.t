@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Web.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Manager/Part05.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep templates/market/market.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
-# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end; and the shopping list reading the same shelf as a due item, with its runway named on the row
+# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end; and the shopping list reading the same shelf as a due item, with its runway named on the row and on the Shopping tab badge
 
 use strict;
 use warnings;
@@ -362,6 +362,8 @@ my $market_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
 );
 like($market_html, qr/- due - 3 days left/, 'the market row shows the runway beside due');
 like($market_html, qr/- due - below keep level/, 'and names the keep level when that is the rule');
+like($market_html, qr/>Need - 3 days left</, 'the shopping tab badge carries the runway');
+like($market_html, qr/>Need - below keep level</, 'and the keep level');
 my $section_controller = read_file("$root/lib/JawnOS/Controller/manager_misc.pm");
 like($section_controller, qr/template => 'apps\/appointment_stats'/,
 	'the app_section route draws the readings from the lazy partial');
