@@ -492,8 +492,8 @@ function jawnosLeaveMenu(toggle) {
 		restart: { label: 'power_restart', note: 'Restart the computer' },
 		shutdown: { label: 'power_shutdown', note: 'Turn the computer off' },
 		sleep: { label: 'power_sleep', note: 'Suspend, the same as closing the lid' },
-		screen_off: { label: 'Screen off', note: 'Darken the display' },
-		logout: { label: 'Log out', note: 'End this session' }
+		screen_off: { label: 'power_screen_off', note: 'Darken the display' },
+		logout: { label: 'power_logout', note: 'End this session' }
 	};
 	$.each(supported, function (i, action) {
 		if (extra[action]) { choices.push($.extend({ action: action }, extra[action])); }

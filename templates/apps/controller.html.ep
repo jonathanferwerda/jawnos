@@ -94,14 +94,9 @@
 	my @power_available = ref $power_actions eq 'ARRAY' ? @{ $power_actions } : ();
 	my %power_has = map { $_ => 1 } @power_available;
 	my @power_order = qw(sleep screen_off restart shutdown logout);
-	my %power_label = (
-		sleep => 'Sleep',
-		screen_off => 'Screen off',
-		restart => 'Restart',
-		shutdown => 'Shut down',
-		logout => 'Log out',
-	);
-	my %power_ui = map { $_ => &subs::ui($power_label{$_}) } keys %power_label;
+	# The five Leave choices are core labels, so the controller, the start menu
+	# and the Leave dialog all read the same hand-written translations.
+	my %power_ui = map { $_ => &subs::lang('power_' . $_) } @power_order;
 	my $status = ref $power_status eq 'HASH' ? $power_status : {};
 	my $battery = ref $status->{'battery'} eq 'HASH' ? $status->{'battery'} : {};
 	my $cpu = ref $status->{'cpu'} eq 'HASH' ? $status->{'cpu'} : {};
@@ -230,7 +225,7 @@
 % if (@power_available) {
 			<div class="controller_leave_actions">
 % for my $action (grep { $power_has{$_} } @power_order) {
-				<button type="button" class="controller_leave_button" data-power-action="<%= $action %>"><%= &subs::ui($power_label{$action}) %></button>
+				<button type="button" class="controller_leave_button" data-power-action="<%= $action %>"><%= $power_ui{$action} %></button>
 % }
 			</div>
 			<span class="controller_leave_result" aria-live="polite"></span>
