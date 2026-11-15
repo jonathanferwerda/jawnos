@@ -297,14 +297,10 @@ sub action_44484 {
 		my $similar = &subs::db_query('select * from continent where type=?', 'proxy_set');
 
 		foreach my $sl (@{$similar->hashes}) {
-			my $lat = ($sl->{'longitude'} - $l->{'longitude'});
-			my $long = ($sl->{'longitude'} - $l->{'longitude'});
-			my $radius = 6372.8;
-			my @BNA = (deg2rad($l->{'longitude'}), deg2rad(90 - $l->{'latitude'}));
-			my @LAX = (deg2rad($sl->{'longitude'}), deg2rad(90 - $sl->{'latitude'}));
-
-			my $distance = great_circle_distance(@BNA, @LAX, $radius);
-			my $metres = $distance * 1000;
+			my $metres = &subs::geodesic_offset(
+				$l->{'latitude'}, $l->{'longitude'},
+				$sl->{'latitude'}, $sl->{'longitude'}
+			)->{'metres'};
 
 			$sl->{'distance'} = sprintf("%.2f", $metres);
 			$sl->{'ago'} = &subs::duration_sayer(($timestamp - $sl->{'timestamp'}) / 1000);

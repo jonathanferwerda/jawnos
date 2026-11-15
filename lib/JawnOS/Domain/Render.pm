@@ -1113,6 +1113,105 @@ sub navigation_pace {
 	return $fastest;
 }
 
+# What a navigation probe's samples say about each machine keeping the pace its
+# utility row was given. The probe (scripts/navigation_probe.pl) only collects;
+# the judgement lives here so it can be fed fixtures in a test.
+#
+# A sample is { at => ms, devices => [ { sig, toggle, pace, last_run, temp_ts,
+# effect, status }, ... ] }: last_run is the controller's stamp for that machine,
+# temp_ts the timestamp on the one `temporary` place row the navigator rewrites
+# on every capture. Two stamps are two beats; a gap longer than 1.75 paces is a
+# missed slot. A window shorter than two paces cannot say anything either way.
+sub navigation_probe_summary {
+	my ($samples, $opts) = @_;
+	$opts ||= {};
+	my @list = ref $samples eq 'ARRAY' ? @{$samples} : ();
+	my (%dev, $first, $last);
+	foreach my $sample ( @list ) {
+		next unless ref $sample eq 'HASH';
+		my $at = 0 + ( $sample->{'at'} || 0 );
+		next unless $at > 0;
+		$first = $at if !defined $first || $at < $first;
+		$last  = $at if !defined $last  || $at > $last;
+		foreach my $d ( @{ ref $sample->{'devices'} eq 'ARRAY' ? $sample->{'devices'} : [] } ) {
+			next unless ref $d eq 'HASH' && defined $d->{'sig'} && length $d->{'sig'};
+			my $sig = $d->{'sig'};
+			my $rec = $dev{$sig} ||= {
+				sig => $sig, runs => {}, fixes => {}, pace => 0,
+				toggle => '', effect => '', status => '',
+			};
+			$rec->{'toggle'} = $d->{'toggle'} if defined $d->{'toggle'};
+			$rec->{'effect'} = $d->{'effect'} if defined $d->{'effect'} && length $d->{'effect'};
+			$rec->{'status'} = $d->{'status'} if defined $d->{'status'} && length $d->{'status'};
+			$rec->{'pace'} = 0 + $d->{'pace'} if defined $d->{'pace'} && $d->{'pace'} =~ /^\d+$/ && $d->{'pace'} > 0;
+			$rec->{'runs'}->{ 0 + $d->{'last_run'} } = 1 if defined $d->{'last_run'} && $d->{'last_run'} =~ /^\d+$/ && $d->{'last_run'} > 0;
+			$rec->{'fixes'}->{ 0 + $d->{'temp_ts'} } = 1 if defined $d->{'temp_ts'} && $d->{'temp_ts'} =~ /^\d+$/ && $d->{'temp_ts'} > 0;
+		}
+	}
+
+	my $span = ( defined $first && defined $last ) ? $last - $first : 0;
+	my $out = { samples => scalar @list, span_ms => $span, devices => {}, lines => [] };
+	foreach my $sig ( sort keys %dev ) {
+		my $rec = $dev{$sig};
+		my $pace = $rec->{'pace'} || 0 + ( $opts->{'pace'} || 240 );
+		my $expected = $pace * 1000;
+		my @runs  = sort { $a <=> $b } keys %{ $rec->{'runs'} };
+		my @fixes = sort { $a <=> $b } keys %{ $rec->{'fixes'} };
+		# Judge the beat a machine actually left. last_run is the controller's own
+		# stamp for a run; the place row is the capture that came out of it, and it
+		# is what survives a machine whose controller row never synced here.
+		my ( @beats, $kind );
+		if ( @runs >= @fixes ) { @beats = @runs; $kind = 'run'; }
+		else { @beats = @fixes; $kind = 'capture'; }
+		my @gaps      = map { $runs[$_] - $runs[ $_ - 1 ] } 1 .. $#runs;
+		my @fix_gaps  = map { $fixes[$_] - $fixes[ $_ - 1 ] } 1 .. $#fixes;
+		my @beat_gaps = map { $beats[$_] - $beats[ $_ - 1 ] } 1 .. $#beats;
+		my $late = grep { $_ > $expected * 1.75 } @beat_gaps;
+		my ($longest) = sort { $b <=> $a } @gaps;
+		my ($longest_fix) = sort { $b <=> $a } @fix_gaps;
+		my ($longest_beat) = sort { $b <=> $a } @beat_gaps;
+		my $row = {
+			sig => $sig,
+			toggle => $rec->{'toggle'},
+			pace => $pace,
+			expected_ms => $expected,
+			runs => scalar @runs,
+			fixes => scalar @fixes,
+			beats_kind => $kind,
+			late => $late,
+			longest_gap_ms => ( $longest || 0 ),
+			longest_fix_gap_ms => ( $longest_fix || 0 ),
+			longest_beat_gap_ms => ( $longest_beat || 0 ),
+			last_effect => $rec->{'effect'},
+			status => $rec->{'status'},
+		};
+		$out->{'devices'}->{$sig} = $row;
+
+		my $name = substr( $sig, 0, 8 );
+		if ( ( $rec->{'toggle'} || '' ) ne 'on' ) {
+			push @{ $out->{'lines'} }, $name . ': navigation is off';
+		}
+		elsif ( $span < $expected * 2 ) {
+			push @{ $out->{'lines'} }, $name . ': not watched long enough to judge (' . int( $span / 1000 ) . ' s)';
+		}
+		elsif ( !@beats ) {
+			push @{ $out->{'lines'} }, $name . ': no run or capture seen in ' . int( $span / 60000 ) . ' minute(s)';
+		}
+		elsif ( @beats < 2 ) {
+			push @{ $out->{'lines'} }, $name . ': one ' . $kind . ' seen, not enough beats to judge yet';
+		}
+		elsif ($late) {
+			push @{ $out->{'lines'} }, sprintf( '%s: %d %s gap(s) longer than the %ds pace (longest %ds)',
+				$name, $late, $kind, $pace, int( ( $longest_beat || 0 ) / 1000 ) );
+		}
+		else {
+			push @{ $out->{'lines'} }, sprintf( '%s: kept the %ds pace across %d %s(s)',
+				$name, $pace, scalar @beats, $kind );
+		}
+	}
+	return $out;
+}
+
 # How long a fix the browser writes stays the machine's current place. It has
 # to outlive the next automatic navigation run or the place falls back to public
 # between fixes - the old flat five minutes did exactly that whenever the

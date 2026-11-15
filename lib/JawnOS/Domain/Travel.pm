@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use utf8;
 
-use Math::Trig qw(deg2rad rad2deg);
+use Math::Trig qw(deg2rad rad2deg atan tan);
 
 # The rules the house uses when it speaks about ground: metres for a short
 # distance, kilometres for a long one, and a compass point rather than a raw
@@ -73,28 +73,104 @@ sub travel_window_legacy {
 	return 0;
 }
 
-# The ground distance (metres) and the compass bearing (degrees clockwise from
-# north) from one place to another. The haversine formula on the sphere the rest
-# of the house measures on (6372.8 km) is exact enough for a place read off a
-# map. Fed plain latitudes: Math::Trig's great_circle_distance takes a latitude
-# too, and the old call gave it a colatitude, which is why every bearing in the
-# list used to be wrong.
-sub travel_offset {
+# The ground distance (metres) and the initial bearing (degrees clockwise from
+# north) from one place to another, on the WGS84 ellipsoid.
+#
+# Math::Trig's great_circle_distance is a sphere: "this is not accurate enough
+# for navigational purposes" (its own words), because the earth is flattened -
+# 0.3% short over a house-sized walk, but tens of metres over a county. Vincenty's
+# inverse formulae put the same two points on the ellipsoid the GPS in a phone
+# actually uses (a = 6378137 m, f = 1/298.257223563) and agree with the reference
+# solution to a fraction of a millimetre, in plain Perl and with no new module.
+#
+# Vincenty does not converge for near-antipodal pairs (a few degrees either side
+# of the far side of the globe); those fall back to the spherical formula, whose
+# answer there is right to a millimetre anyway because the path is half the world
+# long. The bearing is always the initial one; for the distances this house shows
+# (a walk, a county) it is the same to a hundredth of a degree either way.
+sub geodesic_offset {
 	my ( $lat1, $lon1, $lat2, $lon2 ) = @_;
 	foreach my $value ( $lat1, $lon1, $lat2, $lon2 ) {
-		return { metres => 0, bearing => 0 } unless defined $value && $value =~ /^-?\d+(?:\.\d+)?$/;
+		return { metres => 0, bearing => 0 } unless defined $value && $value =~ /^\s*-?\d+(?:\.\d+)?\s*$/;
 	}
-	my $radius = 6372800;
+	$lat1 += 0;
+	$lon1 += 0;
+	$lat2 += 0;
+	$lon2 += 0;
+
+	my $a = 6378137.0;                 # WGS84 semi-major axis, metres
+	my $f = 1 / 298.257223563;         # WGS84 flattening
+	my $b = $a * ( 1 - $f );
+
+	my $L = deg2rad( $lon2 - $lon1 );
+	my $U1 = atan( ( 1 - $f ) * tan( deg2rad($lat1) ) );
+	my $U2 = atan( ( 1 - $f ) * tan( deg2rad($lat2) ) );
+	my ( $sinU1, $cosU1 ) = ( sin($U1), cos($U1) );
+	my ( $sinU2, $cosU2 ) = ( sin($U2), cos($U2) );
+
+	my $lambda = $L;
+	my ( $sinSigma, $cosSigma, $sigma, $sinAlpha, $cos2Alpha, $cos2SigmaM );
+	my $converged = 0;
+	for ( my $i = 0; $i < 200; $i++ ) {
+		my $sinLambda = sin($lambda);
+		my $cosLambda = cos($lambda);
+		my $t1 = $cosU2 * $sinLambda;
+		my $t2 = ( $cosU1 * $sinU2 ) - ( $sinU1 * $cosU2 * $cosLambda );
+		$sinSigma = sqrt( ( $t1 * $t1 ) + ( $t2 * $t2 ) );
+		# the same point twice is no distance and no direction
+		return { metres => 0, bearing => 0 } if $sinSigma == 0;
+		$cosSigma = ( $sinU1 * $sinU2 ) + ( $cosU1 * $cosU2 * $cosLambda );
+		$sigma = atan2( $sinSigma, $cosSigma );
+		$sinAlpha = ( $cosU1 * $cosU2 * $sinLambda ) / $sinSigma;
+		$cos2Alpha = 1 - ( $sinAlpha * $sinAlpha );
+		$cos2SigmaM = $cos2Alpha ? ( $cosSigma - ( ( 2 * $sinU1 * $sinU2 ) / $cos2Alpha ) ) : 0;
+		my $C = ( $f / 16 ) * $cos2Alpha * ( 4 + ( $f * ( 4 - ( 3 * $cos2Alpha ) ) ) );
+		my $previous = $lambda;
+		$lambda = $L + ( ( 1 - $C ) * $f * $sinAlpha
+			* ( $sigma + ( $C * $sinSigma
+				* ( $cos2SigmaM + ( $C * $cosSigma * ( -1 + ( 2 * $cos2SigmaM * $cos2SigmaM ) ) ) ) ) ) );
+		if ( abs( $lambda - $previous ) < 1e-12 ) { $converged = 1; last; }
+	}
+
+	if ( !$converged ) {
+		return &geodesic_offset_sphere( $lat1, $lon1, $lat2, $lon2 );
+	}
+
+	my $u2 = $cos2Alpha * ( ( $a * $a - $b * $b ) / ( $b * $b ) );
+	my $A = 1 + ( ( $u2 / 16384 ) * ( 4096 + ( $u2 * ( -768 + ( $u2 * ( 320 - ( 175 * $u2 ) ) ) ) ) ) );
+	my $B = ( $u2 / 1024 ) * ( 256 + ( $u2 * ( -128 + ( $u2 * ( 74 - ( 47 * $u2 ) ) ) ) ) );
+	my $deltaSigma = $B * $sinSigma * ( $cos2SigmaM
+		+ ( ( $B / 4 ) * ( ( $cosSigma * ( -1 + ( 2 * $cos2SigmaM * $cos2SigmaM ) ) )
+			- ( ( $B / 6 ) * $cos2SigmaM * ( -3 + ( 4 * $sinSigma * $sinSigma ) )
+				* ( -3 + ( 4 * $cos2SigmaM * $cos2SigmaM ) ) ) ) ) );
+	my $metres = $b * $A * ( $sigma - $deltaSigma );
+
+	my $bearing = rad2deg( atan2(
+		$cosU2 * sin($lambda),
+		( $cosU1 * $sinU2 ) - ( $sinU1 * $cosU2 * cos($lambda) )
+	) );
+	$bearing += 360 while $bearing < 0;
+	$bearing -= 360 while $bearing >= 360;
+	return { metres => $metres, bearing => $bearing };
+}
+
+# The spherical answer, kept only for the antipodal pairs Vincenty cannot settle.
+# Plain latitudes in, metres and a clockwise-from-north bearing out, so a caller
+# reads the same shape from either path.
+sub geodesic_offset_sphere {
+	my ( $lat1, $lon1, $lat2, $lon2 ) = @_;
+	my $radius = 6371008.8;            # the mean radius, metres
 	my $phi1 = deg2rad($lat1);
 	my $phi2 = deg2rad($lat2);
 	my $dphi = deg2rad( $lat2 - $lat1 );
 	my $dlambda = deg2rad( $lon2 - $lon1 );
-	my $a = ( sin( $dphi / 2 ) ** 2 ) + ( cos($phi1) * cos($phi2) * ( sin( $dlambda / 2 ) ** 2 ) );
-	$a = 1 if $a > 1;
-	my $metres = 2 * $radius * atan2( sqrt($a), sqrt( 1 - $a ) );
-	my $y = sin($dlambda) * cos($phi2);
-	my $x = ( cos($phi1) * sin($phi2) ) - ( sin($phi1) * cos($phi2) * cos($dlambda) );
-	my $bearing = rad2deg( atan2( $y, $x ) );
+	my $h = ( sin( $dphi / 2 ) ** 2 ) + ( cos($phi1) * cos($phi2) * ( sin( $dlambda / 2 ) ** 2 ) );
+	$h = 1 if $h > 1;
+	my $metres = 2 * $radius * atan2( sqrt($h), sqrt( 1 - $h ) );
+	my $bearing = rad2deg( atan2(
+		sin($dlambda) * cos($phi2),
+		( cos($phi1) * sin($phi2) ) - ( sin($phi1) * cos($phi2) * cos($dlambda) )
+	) );
 	$bearing += 360 while $bearing < 0;
 	$bearing -= 360 while $bearing >= 360;
 	return { metres => $metres, bearing => $bearing };

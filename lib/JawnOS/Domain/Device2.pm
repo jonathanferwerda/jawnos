@@ -174,7 +174,7 @@ sub evaluation_continent {
 		$west = $lon if !defined $west || $lon < $west;
 		$from ||= [ $lat, $lon ];
 		$to = [ $lat, $lon ];
-		$distance += great_circle_distance(deg2rad($prev_lon), deg2rad(90 - $prev_lat), deg2rad($lon), deg2rad(90 - $lat), $gb::planet_radius) if defined $prev_lat;
+		$distance += &subs::geodesic_offset( $prev_lat, $prev_lon, $lat, $lon )->{'metres'} / 1000 if defined $prev_lat;
 		($prev_lat, $prev_lon) = ($lat, $lon);
 		if (defined $r->{'speed'} && $r->{'speed'} =~ /^-?[0-9.]+$/) {
 			$sp_sum += $r->{'speed'};

@@ -749,9 +749,9 @@ sub carrier_device {
 			&& $lat =~ /^-?[0-9]/ && $lon =~ /^-?[0-9]/;
 		my $dev = defined $fix->{'signatorial'} ? $fix->{'signatorial'} : '';
 		$count{$dev}++;
-		my @here = ( deg2rad($lon), deg2rad(90 - $lat) );
+		my @here = ( $lat + 0, $lon + 0 );
 		if ( $anchor{$dev} ) {
-			my $step = great_circle_distance( @{ $anchor{$dev} }, @here, $gb::planet_radius ) * 1000;
+			my $step = &subs::geodesic_offset( @{ $anchor{$dev} }, @here )->{'metres'};
 			next if $step < $jitter;
 			$metres{$dev} += $step;
 		}

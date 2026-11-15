@@ -184,36 +184,32 @@ sub action_25444 {
 		my @homebase_plate;
 		if ($main_home_plate->{'latitude'} && $main_home_plate->{'longitude'}) {
 			my $hp = $main_home_plate;
-			@homebase_plate = (deg2rad($hp->{'longitude'}), deg2rad(90 - $hp->{'latitude'}));
+			@homebase_plate = ( $hp->{'latitude'} + 0, $hp->{'longitude'} + 0 );
 		}
 		my $c_count = 0;
 		foreach my $continent ( @{$continental} ) {
 			if ($continent->{'latitude'}) {
-				my $radius = $gb::planet_radius;
 				my @home_plate;
 
 				if ($l->{'model'}->{'home_plate'}->{'latitude'} && $l->{'model'}->{'home_plate'}->{'longitude'}) {
 					my $hp = $l->{'model'}->{'home_plate'};
-					@home_plate = (deg2rad($hp->{'longitude'}), deg2rad(90 - $hp->{'latitude'}));
+					@home_plate = ( $hp->{'latitude'} + 0, $hp->{'longitude'} + 0 );
 				}
 				elsif ($settings->{'home_plate'}->{'latitude'} && $settings->{'home_plate'}->{'longitude'}) {
 					my $hp = $settings->{'home_plate'};
-					@home_plate = (deg2rad($hp->{'longitude'}), deg2rad(90 - $hp->{'latitude'}));
+					@home_plate = ( $hp->{'latitude'} + 0, $hp->{'longitude'} + 0 );
 				}
-				else {
-					@home_plate = (deg2rad($hp->{'longitude'}), deg2rad(90 - $hp->{'latitude'}));
-				}
-				my @visitor = (deg2rad($continent->{'longitude'}), deg2rad(90 - $continent->{'latitude'}));
-				my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $radius));
-
-
+				my @visitor = ( $continent->{'latitude'} + 0, $continent->{'longitude'} + 0 );
+				# kilometres on the WGS84 ellipsoid, the same rule as the plate
+				# automation and the Travel list
+				my $distance = sprintf( '%.3f', &subs::geodesic_offset( @home_plate, @visitor )->{'metres'} / 1000 ) if scalar @home_plate;
 
 				if ($main_home_plate->{'latitude'} && $main_home_plate->{'longitude'}) {
-					$continent->{'home_distance'} = sprintf("%.3f", great_circle_distance(@homebase_plate, @visitor, $radius));
+					$continent->{'home_distance'} = sprintf( '%.3f', &subs::geodesic_offset( @homebase_plate, @visitor )->{'metres'} / 1000 );
 				}
 				my ($speed,$increment_distance);
 				if ($last_visitor->{'visitor'}) {
-					$increment_distance = great_circle_distance(@visitor, @{$last_visitor->{'visitor'}}, $radius);
+					$increment_distance = &subs::geodesic_offset( @visitor, @{$last_visitor->{'visitor'}} )->{'metres'} / 1000;
 					$speed = &travel_speed_calculator({ distance => $increment_distance, start => $last_visitor->{'continent'}->{'timestamp'}, end => $continent->{'timestamp'} });
 					$l->{'total_distance'} += sprintf("%.4f", $increment_distance);
 					if ($speed) {

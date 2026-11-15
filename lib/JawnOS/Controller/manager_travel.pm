@@ -585,7 +585,7 @@ sub action_33700 {
 		# how far the place lies from the origin above, in the words a person
 		# would use - the same rule on a phone, a desktop and a test
 		if ( $origin && $sl->{'latitude'} && $sl->{'longitude'} ) {
-			my $offset = &subs::travel_offset(
+			my $offset = &subs::geodesic_offset(
 				$origin->{'latitude'}, $origin->{'longitude'},
 				$sl->{'latitude'}, $sl->{'longitude'}
 			);

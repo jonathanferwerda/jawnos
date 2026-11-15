@@ -1124,9 +1124,15 @@ sub navigation_automation {
 				my $plate_lat = $hp->{'latitude'} || $home_plate->{'latitude'};
 				my $plate_lon = $hp->{'longitude'} || $home_plate->{'longitude'};
 				next unless $plate_lat && $plate_lon;
-				my @home_plate = (deg2rad($plate_lon), deg2rad(90 - $plate_lat));
-					my @visitor = (deg2rad($returner->{'longitude'}), deg2rad(90 - $returner->{'latitude'}));
-					my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $gb::planet_radius));
+				# the distance the duty is compared in, in kilometres, from the
+				# WGS84 ellipsoid a GPS actually reports against. One closure for
+				# the fix now and the recorded fixes the stop branch checks.
+				my $plate_km = sub {
+					return sprintf( '%.3f', &subs::geodesic_offset(
+						$plate_lat, $plate_lon, $_[0]->{'latitude'}, $_[0]->{'longitude'}
+					)->{'metres'} / 1000 );
+				};
+				my $distance = $plate_km->($returner);
 					my $duty_key = $hp->{'uuid'};
 					$duty_key = join('|', $hpder->{'app'} || '', $app || '', $hp->{'placement'} || '', $hp->{'distance'} || '', $hp->{'action'} || '') unless $duty_key;
 					# A stop-side fix farther than three radii is a certain leave. The
@@ -1220,8 +1226,7 @@ sub navigation_automation {
 									}
 									my $locals = &subs::db_query('select * from continent where app=? and uuid like ? and signatorial=?', $app, $lappt->{'uuid'} . '%',$signatorial)->hashes;
 									foreach my $local ( @{$locals} ) {
-										my @visitor = (deg2rad($local->{'longitude'}), deg2rad(90 - $local->{'latitude'}));
-										my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $gb::planet_radius));
+										my $distance = $plate_km->($local);
 										if ($distance <= $hp->{'distance'}) {
 											$stop_uuid = $lappt->{'uuid'};
 											last;
@@ -1265,8 +1270,7 @@ sub navigation_automation {
 									}
 									my $locals = &subs::db_query('select * from continent where app=? and uuid like ? and signatorial=?', $app, $lappt->{'uuid'} . '%',$signatorial)->hashes;
 									foreach my $local ( @{$locals} ) {
-										my @visitor = (deg2rad($local->{'longitude'}), deg2rad(90 - $local->{'latitude'}));
-										my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $gb::planet_radius));
+										my $distance = $plate_km->($local);
 										if ($distance >= $hp->{'distance'}) {
 											$stop_uuid = $lappt->{'uuid'};
 											last;

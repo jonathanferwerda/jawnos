@@ -232,9 +232,10 @@ sub navigation_information {
 		$navigation_information->{$cl->{'signatorial'}}->{'__location'} = $cl;
 		if (!$cache->{'__location'}) { $runs++; $runs++; next; }
 		if (!$cache->{'__location'}->{'warranty'} || $cache->{'__location'}->{'warranty'} < &subs::rightNow()) { $runs++; $runs++; next; }
-		my @old_location = (deg2rad($cache->{'__location'}->{'longitude'}), deg2rad(90 - $cache->{'__location'}->{'latitude'}));
-		my @new_location = (deg2rad($cl->{'longitude'}), deg2rad(90 - $cl->{'latitude'}));
-		my $distance = sprintf("%.3f", great_circle_distance(@old_location, @new_location, $gb::planet_radius));
+		my $distance = sprintf('%.3f', &subs::geodesic_offset(
+			$cache->{'__location'}->{'latitude'}, $cache->{'__location'}->{'longitude'},
+			$cl->{'latitude'}, $cl->{'longitude'}
+		)->{'metres'} / 1000 );
 
 		if ($distance < .020 || (($data->{'cache'} || '') eq 'yes' && $cache->{'__location'}->{'latitude'}) ) {
 			$navigation_information->{$cl->{'signatorial'}} = $cache;
@@ -278,7 +279,6 @@ sub navigation_information {
 					my $plate_lat = $hp->{'latitude'} || $home_plate->{'latitude'};
 					my $plate_lon = $hp->{'longitude'} || $home_plate->{'longitude'};
 					next unless $plate_lat && $plate_lon;
-					my @home_plate = (deg2rad($plate_lon), deg2rad(90 - $plate_lat));
 					foreach my $returner ( @{$current_locations} ) {
 						next if grep { $_ eq $returner->{'signatorial'}} @{$hp->{'signatorials'}};
 						push @{$hp->{'signatorials'}}, $returner->{'signatorial'};
@@ -286,8 +286,10 @@ sub navigation_information {
 						$pset->{$returner->{'signatorial'}} = &subs::settings_grabber({ app => '__president', settings => [ $returner->{'signatorial'} . '_site_type', $returner->{'signatorial'} . '_site_rating' ] })
 							unless $pset->{$returner->{'signatorial'}};
 
-						my @visitor = (deg2rad($returner->{'longitude'}), deg2rad(90 - $returner->{'latitude'}));
-						my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $gb::planet_radius));
+						my $distance = sprintf('%.3f', &subs::geodesic_offset(
+							$plate_lat, $plate_lon,
+							$returner->{'latitude'}, $returner->{'longitude'}
+						)->{'metres'} / 1000 );
 
 						my $hset = &subs::settings_grabber({ app => $app, settings => [ 'warranty', 'toggle', 'site_type'] });
 						my $tog = $hset->{'toggle'};

@@ -492,7 +492,7 @@ sub handbook_today {
 # kilometres between two latitude/longitude pairs, in the app's own units
 sub help_distance_km($lat1, $lon1, $lat2, $lon2) {
 	return 0 unless defined $lat1 && defined $lon1 && defined $lat2 && defined $lon2;
-	return great_circle_distance(deg2rad($lon1), deg2rad(90 - $lat1), deg2rad($lon2), deg2rad(90 - $lat2), $gb::planet_radius);
+	return &subs::geodesic_offset($lat1, $lon1, $lat2, $lon2)->{'metres'} / 1000;
 }
 
 # The current place's rating - 1 at home (private), 2 out (public), 3 dangerous.
