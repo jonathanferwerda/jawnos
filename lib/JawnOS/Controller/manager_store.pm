@@ -450,6 +450,13 @@ sub action_6419 {
 		item => $built->{'data'}->{'item'},
 	});
 	my $uuid = $appt->{'uuid'} || '';
+	# A register sale is a payment too: the sale's own paper and a receipt are
+	# stapled together on the receipt row, after the sale is written.
+	if ($uuid && ref $built->{'data'}->{'payments'} eq 'ARRAY' && scalar @{$built->{'data'}->{'payments'}}) {
+		unless (eval { &store_payment_receipt({ app => $app, uuid => $uuid, tx_app => $app, type => 'sale', payment => $built->{'data'}->{'payments'}->[0] }) }) {
+			&subs::log_writer('receipt paper: ' . ($@ || 'the receipt was not written') . ' for ' . $app . ' ' . $uuid);
+		}
+	}
 	&subs::store_register_order_cancel($id);
 	my $receipt = '';
 	if ($uuid) {

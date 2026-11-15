@@ -1,0 +1,33 @@
+<% no warnings 'uninitialized'; %>
+<%# The receipt's own block. The header above already prints the store's name
+    and address, the invoice's id, the date, the customer, the item lines, the
+    totals and every payment on the invoice. This adds the one payment this
+    paper receipts, the balance it left, and the house's parting words, and the
+    receipt is then the same white sheet an invoice prints. %>
+<% my $receipt_payment; my $receipt_invoice; my $receipt_balance = 0; %>
+<% foreach my $reg ( @{$registers} ) { %>
+	<% my $receipt_data = $reg->{'data'} || {}; %>
+	<% $receipt_payment = $receipt_data->{'payment'} if ref $receipt_data->{'payment'} eq 'HASH'; %>
+	<% $receipt_invoice = $receipt_data->{'invoice'} if ref $receipt_data->{'invoice'} eq 'HASH'; %>
+	<% $receipt_balance += $receipt_data->{'numbers'}->{'balance'} || 0; %>
+<% } %>
+<% $receipt_balance = 0 if abs($receipt_balance) < 0.005; %>
+<% if ($receipt_invoice && ($receipt_invoice->{'id'} || '') ne '') { %>
+	<div class="paper_receipt_id"><%= &subs::ui('For invoice') %> <b><%= $receipt_invoice->{'id'} %></b></div>
+<% } %>
+<table class="paper_receipt"><tbody>
+	<% if ($receipt_payment) { %>
+		<tr>
+			<td class="paper_label_cell"><%= &subs::ui('This payment') %></td>
+			<td class="paper_value"><%= &subs::price_formatter($receipt_payment->{'amount'}) %></td>
+		</tr>
+	<% } %>
+	<tr class="paper_receipt_balance">
+		<td class="paper_label_cell"><%= &subs::ui('Remaining balance') %></td>
+		<td class="paper_value"><%= &subs::price_formatter($receipt_balance) %></td>
+	</tr>
+</tbody></table>
+<% my $receipt_message = &subs::setting_grabber({ app => 'me', setting => 'receipt_message' }); %>
+<% if (defined $receipt_message && length $receipt_message) { %>
+	<div class="paper_receipt_message"><%= $receipt_message %></div>
+<% } %>

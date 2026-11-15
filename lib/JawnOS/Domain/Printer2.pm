@@ -215,7 +215,14 @@ sub cups_sync_printers {
 sub printer_customer_app($uuid, $type) {
 	return '' unless defined $uuid && length $uuid;
 	my $row = &db_select('appointments', undef, { uuid => $uuid, type => $type })->hashes->[0];
-	return $row ? ($row->{'app'} || '') : '';
+	return '' unless $row;
+	# A receipt is filed where the payment papers live, which can be another app
+	# than the invoice customer's; its data names the customer it prints for.
+	if (($type || '') eq 'receipt') {
+		my $d = eval { decode_json($row->{'data'} || '') } || {};
+		return $d->{'customer_app'} || $row->{'app'} || '';
+	}
+	return $row->{'app'} || '';
 }
 
 sub printer_default_saved {

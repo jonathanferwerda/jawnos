@@ -69,6 +69,7 @@ sub store_printer($data) {
 	# directly, and "Customer" is the house's anonymous account. An unknown or
 	# empty customer is still a paper that prints instead of a route that dies.
 	my $customer_app = $data->{'customer_app'};
+	my $query_app = $data->{'query_app'};
 	my $c = &subs::controller_builder();
 	my $customer_s;
 	if (defined $customer_app && length $customer_app) {
@@ -84,13 +85,29 @@ sub store_printer($data) {
 	my $due_date;
 	my $cx = $cx_settings;
 	$cx->{'app'} = $customer_s->{'app'};
+	my $lookup_app = (defined $query_app && length $query_app) ? $query_app : $cx->{'app'};
 
 	my $registers;
 	if ( $uuid eq 'all' ) {
-		$registers = &subs::db_select('appointments', undef, { type => $type, app => $cx->{'app'} })->hashes;
+		$registers = &subs::db_select('appointments', undef, { type => $type, app => $lookup_app })->hashes;
 	}
 	else {
-		$registers = &subs::db_select('appointments', undef, { type => $type, app => $cx->{'app'}, uuid => $uuid })->hashes;
+		$registers = &subs::db_select('appointments', undef, { type => $type, app => $lookup_app, uuid => $uuid })->hashes;
+		# A receipt is filed where the payment papers live, which can be another
+		# app than the customer's. Its data names the customer it was printed
+		# for, so a print or an email that starts from that customer finds it.
+		if (!scalar @{$registers} && ($type || '') eq 'receipt' && length $uuid) {
+			$registers = &subs::db_select('appointments', undef, { type => 'receipt', uuid => $uuid })->hashes;
+			if (scalar @{$registers}) {
+				my $rd = eval { decode_json($registers->[0]->{'data'} || '') } || {};
+				my $named = $rd->{'customer_app'} || '';
+				if (length $named) {
+					$cx_settings = &subs::settings_grabber({ app => $named });
+					$cx = $cx_settings;
+					$cx->{'app'} = $named;
+				}
+			}
+		}
 	}
 	my (@i);
 	my $totals = { price => 0, tax => 0, discount => 0, total => 0 };
@@ -539,7 +556,7 @@ sub me_setting_list() {
 sub store_setting_list() {
 	my ($db,$database,$sql) = &subs::database_grabber();
 
-	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date invoice_paper/;
+	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date invoice_paper payment_paper_app receipt_message/;
 	my $settings = {};
 
 	foreach my $dt ( @gb::device_types ) {
@@ -566,28 +583,32 @@ sub store_invoice_paper_enabled {
 # overwritten and the versions read as a history. The render is slow (weasyprint
 # under a 45-second bound), so the caller runs this in a subprocess; a machine
 # without a renderer keeps no paper and the invoice is untouched.
+# $data->{'type'} names the document ('invoice' by default, 'sale' for the
+# register); the row it wrote is returned so a receipt can staple the same
+# paper to itself.
 sub store_invoice_paper($data) {
 	my $app = $data->{'app'} || '';
 	my $uuid = $data->{'uuid'} || '';
+	my $type = $data->{'type'} || 'invoice';
 	return 0 unless length $app && length $uuid;
 	my $customer_app = $data->{'customer_app'} || $app;
-	my $appt = eval { &subs::db_select('appointments', undef, { app => $app, uuid => $uuid, type => 'invoice' })->hashes->[0] };
+	my $appt = eval { &subs::db_select('appointments', undef, { app => $app, uuid => $uuid, type => $type })->hashes->[0] };
 	return 0 unless $appt;
 	my $c = &subs::controller_builder();
-	my $paper = &store_printer({ type => 'invoice', uuid => $uuid, customer_app => $customer_app });
+	my $paper = &store_printer({ type => $type, uuid => $uuid, customer_app => $customer_app });
 	my $html = eval { $c->render_to_string(%{$paper}) };
 	return 0 unless defined $html && length $html;
 	my ($pdf, $error) = &subs::printer_pdf_from_html($html);
 	unless ($pdf && -s $pdf) {
 		# A machine with no renderer (a phone, a terminal) keeps no paper; say so
 		# once per save instead of leaving the invoice mysteriously paperless.
-		&subs::log_writer('invoice paper: ' . ($error || 'no PDF was made') . ' for ' . $app . ' ' . $uuid);
+		&subs::log_writer($type . ' paper: ' . ($error || 'no PDF was made') . ' for ' . $app . ' ' . $uuid);
 		return 0;
 	}
 	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($app));
 	system('mkdir', '-p', $folder) unless -e $folder;
 	my $stamp = &subs::rightNow();
-	my $dest = $folder . '/invoice_' . $stamp . '.pdf';
+	my $dest = $folder . '/' . $type . '_' . $stamp . '.pdf';
 	my $bytes = read_file($pdf, binmode => ':raw');
 	unlink $pdf;
 	return 0 unless defined $bytes && length $bytes;
@@ -595,19 +616,126 @@ sub store_invoice_paper($data) {
 	return 0 unless -s $dest;
 	my $saved = eval { return decode_json $appt->{'file'} } || [];
 	my @files = ref $saved eq 'ARRAY' ? @{$saved} : ();
-	push @files, {
+	my $row = {
 		f => $dest,
 		thumb => '',
 		uuid => &subs::random_string_creator(17),
 		type => 'document',
-		of => 'invoice-' . $stamp . '.pdf',
+		of => $type . '-' . $stamp . '.pdf',
 		shared => 1,
 		server_time => $stamp,
 	};
+	push @files, $row;
 	&subs::db_update('appointments', { file => encode_json(\@files), server_time => &subs::rightNow() }, { app => $app, uuid => $uuid });
 	eval { &Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid) }); };
-	&subs::log_writer('invoice paper saved for ' . $app . ' ' . $uuid . ' as ' . $dest);
-	return 1;
+	&subs::log_writer($type . ' paper saved for ' . $app . ' ' . $uuid . ' as ' . $dest);
+	return $row;
+}
+
+# A receipt for one payment, stapled to the invoice's own paper as it stands
+# after that payment. The row is filed on the app Configure names for payment
+# papers (the income transaction's app when that is blank), and it carries the
+# invoice's data - numbers, register, every payment - plus the one payment this
+# paper receipts, so the printed sheet shows what was paid and what is left.
+# Both papers are attached to the receipt, invoice first; a machine with no
+# renderer keeps the row and logs why rather than losing the record. The row
+# itself is cheap and is written before the caller is answered; the two slow
+# renders and their file rows belong to a forked child, so no payment waits on
+# weasyprint.
+sub store_payment_receipt($data) {
+	my $app = $data->{'app'} || '';
+	my $uuid = $data->{'uuid'} || '';
+	my $type = $data->{'type'} || 'invoice';
+	return 0 unless length $app && length $uuid;
+	my $payment = ref $data->{'payment'} eq 'HASH' ? $data->{'payment'} : {};
+	my $appt = eval { &subs::db_select('appointments', undef, { app => $app, uuid => $uuid, type => $type })->hashes->[0] };
+	return 0 unless $appt;
+	my $invoice = eval { decode_json($appt->{'data'} || '') } || {};
+	my $tx_app = $data->{'tx_app'} || $app;
+	my $paper_app = &subs::setting_grabber({ app => 'me', setting => 'payment_paper_app' });
+	$paper_app = $tx_app unless defined $paper_app && length $paper_app;
+	$paper_app = $app unless defined $paper_app && length $paper_app;
+	my $stamp = $payment->{'timestamp'} || &subs::rightNow();
+	my $receipt_uuid = &subs::random_string_creator(40);
+	my $receipt = { %{$invoice} };
+	$receipt->{'numbers'} = { %{ $invoice->{'numbers'} || {} } };
+	$receipt->{'customer_app'} = $app;
+	$receipt->{'invoice'} = { app => $app, uuid => $uuid, id => $invoice->{'id'} || '' };
+	$receipt->{'payment'} = $payment;
+	&subs::db_insert('appointments', {
+		app => $paper_app,
+		uuid => $receipt_uuid,
+		type => 'receipt',
+		movement => 'income',
+		timestamp => $stamp,
+		server_time => &subs::rightNow(),
+		status => 'completed',
+		item => $invoice->{'item'} || '',
+		data => encode_json($receipt),
+		file => '[]',
+	});
+	# The receipt row is the record and the caller needs its uuid now. Rendering
+	# the two papers is the slow part, so it runs where the invoice's own paper
+	# does: in a forked child when this machine can fork, inline when it cannot.
+	my $render = sub {
+		my @files;
+		# The invoice as of this payment: the balance has already fallen, so this
+		# paper is the one the receipt refers to.
+		my $invoice_row = &store_invoice_paper({ app => $app, uuid => $uuid, customer_app => $app, type => $type });
+		push @files, $invoice_row if ref $invoice_row eq 'HASH';
+		my $c = &subs::controller_builder();
+		my $paper = &store_printer({ type => 'receipt', uuid => $receipt_uuid, customer_app => $app, query_app => $paper_app });
+		my $html = eval { $c->render_to_string(%{$paper}) };
+		if (defined $html && length $html) {
+			my ($pdf, $error) = &subs::printer_pdf_from_html($html);
+			if ($pdf && -s $pdf) {
+				my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($paper_app));
+				system('mkdir', '-p', $folder) unless -e $folder;
+				my $dest = $folder . '/receipt_' . $stamp . '.pdf';
+				my $bytes = read_file($pdf, binmode => ':raw');
+				unlink $pdf;
+				if (defined $bytes && length $bytes) {
+					write_file($dest, $bytes);
+					if (-s $dest) {
+						push @files, {
+							f => $dest,
+							thumb => '',
+							uuid => &subs::random_string_creator(17),
+							type => 'document',
+							of => 'receipt-' . $stamp . '.pdf',
+							shared => 1,
+							server_time => $stamp,
+						};
+					}
+				}
+			}
+			else {
+				&subs::log_writer('receipt paper: ' . ($error || 'no PDF was made') . ' for ' . $paper_app . ' ' . $receipt_uuid);
+			}
+		}
+		else {
+			&subs::log_writer('receipt paper: the receipt could not be rendered for ' . $paper_app . ' ' . $receipt_uuid);
+		}
+		if (scalar @files) {
+			&subs::db_update('appointments', { file => encode_json(\@files), server_time => &subs::rightNow() }, { app => $paper_app, uuid => $receipt_uuid });
+		}
+		eval { &Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $paper_app, $receipt_uuid) }); };
+		&subs::log_writer('receipt paper saved for ' . $paper_app . ' ' . $receipt_uuid . ' with ' . scalar(@files) . ' paper(s)') if scalar @files;
+	};
+	require JawnOS::Platform;
+	if (JawnOS::Platform::use_fork()) {
+		# The payment has already been answered; the child owns the slow part.
+		unless (eval { &subs::subprocessor($render, { name => 'payment paper' }); 1 }) {
+			&subs::log_writer('receipt paper: the render could not be started for ' . $paper_app . ' ' . $receipt_uuid . ' (' . ($@ || 'no reason given') . ')');
+		}
+	}
+	else {
+		# No fork (a phone): a machine with no renderer answers at once.
+		unless (eval { $render->(); 1 }) {
+			&subs::log_writer('receipt paper: ' . ($@ || 'the papers were not written') . ' for ' . $paper_app . ' ' . $receipt_uuid);
+		}
+	}
+	return $receipt_uuid;
 }
 
 # Where a mugshot is rendered from. Older installs still hold a data URI in

@@ -247,6 +247,11 @@ sub pay_record_payment {
 	my $status = $new_balance <= 0 ? 'completed' : 'open';
 	&db_update('appointments', { data => encode_json($data), status => $status, server_time => $server_time }, { uuid => $uuid, app => $inv->{'app'} });
 	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $inv->{'app'}, $uuid)});
+	# The provider's payment is on the invoice now; the receipt and the revised
+	# invoice paper are rendered from the balance it left.
+	unless (eval { &Manager::store_payment_receipt({ app => $inv->{'app'}, uuid => $uuid, tx_app => $inv->{'app'}, payment => $payment }) }) {
+		&log_writer('receipt paper: ' . ($@ || 'the receipt was not written') . ' for ' . $inv->{'app'} . ' ' . $uuid);
+	}
 	&pay_session_forget($provider, $uuid);
 	return {
 		ok => 1,

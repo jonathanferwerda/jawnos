@@ -239,7 +239,8 @@ sub action_16986 {
 				unless ($data->{'payments'}) {
 					$data->{'payments'} = [];
 				}
-				push @{$data->{'payments'}}, { account => $account, uuid => &subs::random_string_creator(12), appt_uuid => $uuid, amount => $total, timestamp => $timestamp, server_time => &subs::rightNow(), };
+				my $payment = { account => $account, uuid => &subs::random_string_creator(12), appt_uuid => $uuid, amount => $total, timestamp => $timestamp, server_time => &subs::rightNow(), };
+				push @{$data->{'payments'}}, $payment;
 				$data->{'numbers'}->{'balance'} = $data->{'numbers'}->{'balance'} - $total;
 				$inv->{'data'} = encode_json $data;
 				$inv->{'server_time'} = &subs::rightNow();
@@ -248,6 +249,11 @@ sub action_16986 {
 				}
 				&subs::db_update('appointments', $inv, { uuid => $inv->{'uuid'}, app => $inv->{'app'} });
 				&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $vendor, $inv->{'uuid'})});
+				# The backdated or hand-entered payment is on the invoice and its
+				# balance is down; write the receipt and the paper that shows it.
+				unless (eval { &store_payment_receipt({ app => $inv->{'app'}, uuid => $inv->{'uuid'}, tx_app => $write->{'app'}, payment => $payment }) }) {
+					&subs::log_writer('receipt paper: ' . ($@ || 'the receipt was not written') . ' for ' . $inv->{'app'} . ' ' . $inv->{'uuid'});
+				}
 			}
 		}
 		if ($vendor && $record_vendor eq 'on') {

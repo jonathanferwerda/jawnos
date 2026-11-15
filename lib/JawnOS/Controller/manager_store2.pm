@@ -338,6 +338,11 @@ sub action_8308 {
 	my $status = $new_balance <= 0 ? 'completed' : 'open';
 	&subs::db_update('appointments', { data => encode_json($data), status => $status, server_time => $server_time }, { uuid => $uuid, app => $app });
 	&Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
+	# The payment is in and the balance has fallen: the receipt and the fresh
+	# invoice paper are written from this state, never from before it.
+	unless (eval { &store_payment_receipt({ app => $app, uuid => $uuid, tx_app => $app, payment => $payment }) }) {
+		&subs::log_writer('receipt paper: ' . ($@ || 'the receipt was not written') . ' for ' . $app . ' ' . $uuid);
+	}
 	$c->render(json => {
 		ok => 1,
 		payment => { %{$payment}, proof => undef },

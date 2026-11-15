@@ -169,6 +169,10 @@
 		</td>
 	</tr></tbody></table>
 
+	<% if (($type || '') eq 'receipt') { %>
+		<%= include 'store/printer/receipt' %>
+	<% } %>
+
 </div>
 
 <style>
@@ -218,6 +222,11 @@
 	.paper_value { text-align: right; padding: 2px 0 2px 8px; white-space: nowrap; }
 	.paper_total_row td { border-top: 2px solid #000000; font-weight: 700; font-size: 17px; padding-top: 5px; }
 	.paper_footnote { color: #555555; font-size: 11px; word-break: break-all; }
+	.paper_receipt { width: auto !important; margin-left: auto; margin-top: 10px; }
+	.paper_receipt td { padding: 3px 8px 3px 0; }
+	.paper_receipt_balance td { border-top: 2px solid #000000; font-weight: 700; font-size: 17px; padding-top: 5px; }
+	.paper_receipt_id { text-align: right; color: #555555; font-size: 13px; margin-top: 10px; }
+	.paper_receipt_message { margin-top: 16px; padding-top: 10px; border-top: 1px solid #dddddd; text-align: center; font-size: 14px; white-space: pre-wrap; }
 	.paper_paid { position: absolute; top: 32%; left: 0; width: 100%; text-align: center; color: #cc0000; opacity: .5; font-size: 90px; font-weight: 900; letter-spacing: 14px; transform: rotate(-8deg); }
 	@page { margin: 0; }
 	@media print {
