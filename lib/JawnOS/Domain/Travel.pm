@@ -1,6 +1,7 @@
 package subs;
 
-# Travel: what a Travel view covers, and how far away a place on it is.
+# Travel: what a Travel view covers, how far away a place on it is, and which
+# way a picture taken there was facing.
 #
 # Loaded on demand by lib/JawnOS/Domain/Loader.pm.
 use strict;
@@ -199,6 +200,59 @@ sub travel_compass {
 	$at -= 360 while $at >= 360;
 	my $point = int( ( $at + 22.5 ) / 45 ) % 8;
 	return $TRAVEL_COMPASS[$point];
+}
+
+# Which way a device was facing when a picture was taken.
+#
+# A phone reports its attitude as three angles: alpha turns the device about the
+# vertical, beta is nose-up/down and gamma is left/right roll. Browser alpha runs
+# counter-clockwise, so the clockwise compass heading is 360 - alpha; iOS also
+# offers webkitCompassHeading, which is already a true-north heading and wins.
+# The source says whether a later reader may treat the heading as true north: an
+# absolute event (or a compass heading) is, a plain relative one is the device's
+# own frame and only a direction relative to wherever it started.
+sub camera_heading {
+	my ( $alpha, $compass, $absolute ) = @_;
+	my ( $heading, $source );
+	if ( defined $compass && $compass =~ /^-?\d+(?:\.\d+)?$/ ) {
+		$heading = $compass + 0;
+		$source  = 'absolute';
+	}
+	elsif ( defined $alpha && $alpha =~ /^-?\d+(?:\.\d+)?$/ ) {
+		$heading = 360 - ( $alpha + 0 );
+		$source  = $absolute ? 'absolute' : 'relative';
+	}
+	return { heading => undef, source => undef } unless defined $heading;
+	# `%` would truncate to an integer; a full turn is subtracted once instead,
+	# so a long numeric parameter cannot spin here. A parameter so long it
+	# overflows to infinity is not an attitude and is refused rather than
+	# normalised into nonsense.
+	return { heading => undef, source => undef } if $heading != $heading || abs($heading) >= 1e9;
+	$heading -= 360 * int( $heading / 360 );
+	$heading += 360 if $heading < 0;
+	return { heading => sprintf( '%.1f', $heading ) + 0, source => $source };
+}
+
+# The orientation fields a photo's own record keeps, or none when the reading is
+# not a real one. The ranges are what the device can mean (a heading is a full
+# turn, pitch is level to straight up/down, roll a half turn either way), and
+# anything outside them is a junk parameter, not a reading: a field that fails
+# is dropped on its own, so a good heading survives a bad pitch.
+sub camera_orientation_reading {
+	my ( $heading, $pitch, $roll, $source ) = @_;
+	my %reading;
+	if ( defined $heading && $heading =~ /^-?\d+(?:\.\d+)?$/ && $heading >= 0 && $heading <= 360 ) {
+		$reading{'heading'} = sprintf( '%.1f', $heading + 0 ) + 0;
+		$source = lc( $source // '' );
+		$reading{'heading_source'} = $source if $source eq 'absolute' || $source eq 'relative';
+	}
+	if ( defined $pitch && $pitch =~ /^-?\d+(?:\.\d+)?$/ && $pitch >= -90 && $pitch <= 90 ) {
+		$reading{'pitch'} = sprintf( '%.1f', $pitch + 0 ) + 0;
+	}
+	if ( defined $roll && $roll =~ /^-?\d+(?:\.\d+)?$/ && $roll >= -180 && $roll <= 180 ) {
+		$reading{'roll'} = sprintf( '%.1f', $roll + 0 ) + 0;
+	}
+	return \%reading;
 }
 
 # One row per place in a list that is already nearest-first. The continent files

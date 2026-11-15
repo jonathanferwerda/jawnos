@@ -74,6 +74,12 @@ sub action_832 {
 	# A native capture (window.JawnCamera) is handed over as a small reference to
 	# a file the app already wrote; the bytes never travel through the WebView.
 	my $native_path = $c->param('native_path') || '';
+	# A native capture can carry the page's own orientation reading through the
+	# pending capture; validate it here once and let it ride on the same data the
+	# deferred duty would keep.
+	my $orientation = &subs::camera_orientation_reading(
+		$c->param('heading'), $c->param('pitch'), $c->param('roll'), $c->param('heading_source')
+	);
 	my $data = {
 		app => $app,
 		timestamp => $timestamp,
@@ -84,7 +90,8 @@ sub action_832 {
 		native_name => $c->param('native_name'),
 		native_mime => $c->param('native_mime'),
 		duty => 'image',
-		duuid => &subs::random_string_creator()
+		duuid => &subs::random_string_creator(),
+		%{$orientation}
 	};
 	# A capture that has already happened cannot be deferred as a future duty:
 	# the staged file must be claimed now or the app's cache may clear it.

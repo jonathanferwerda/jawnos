@@ -184,6 +184,15 @@ sub take_picture($c,$data) {
 	}
 	my $duration = $server_time - &subs::rightNow();
 	my $u_data = { thumb => $thumb, server_time => &subs::rightNow(), f => $filename, uuid => &subs::random_string_creator(9), type => $kind, ocr => $ocr };
+	# The reading came in on the capture request (and rode along in a deferred
+	# duty); re-validate it here so a remote relay or an older caller cannot put
+	# junk on the picture's own record. A video has no one direction to keep.
+	if ( $kind eq 'image' ) {
+		my $orientation = &subs::camera_orientation_reading(
+			$data->{'heading'}, $data->{'pitch'}, $data->{'roll'}, $data->{'heading_source'}
+		);
+		foreach my $key ( keys %{$orientation} ) { $u_data->{$key} = $orientation->{$key}; }
+	}
 	$u_data = &thumbnail_creator($u_data);
 
 	my $files = [$u_data];

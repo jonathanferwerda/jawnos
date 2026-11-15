@@ -73,11 +73,141 @@ function cameraT(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
 }
 
+// --- orientation ----------------------------------------------------------
+// A picture remembers which way the phone was facing. The browser reports the
+// device's attitude as deviceorientation events; iOS gates that sensor behind an
+// explicit grant, which may only be asked for from a press. The latest reading
+// rides on the upload and is filed on the picture's own record.
+var jawnCameraAppOrientation = { reading: null, listening: false, absolute_at: 0, observer: null };
+
+// The heading rule, mirrored from subs::camera_heading (Domain/Travel.pm): a
+// webkitCompassHeading is true north and wins; otherwise alpha runs
+// counter-clockwise, so the clockwise heading is 360 - alpha. Rounded to a
+// tenth of a degree, the precision the record keeps.
+function jawnCameraHeading(alpha, compass, absolute) {
+	var heading = null;
+	var source = null;
+	if (typeof compass == 'number' && isFinite(compass)) {
+		heading = compass;
+		source = 'absolute';
+	}
+	else if (typeof alpha == 'number' && isFinite(alpha)) {
+		heading = 360 - alpha;
+		source = absolute ? 'absolute' : 'relative';
+	}
+	if (heading === null) { return { heading: null, source: null }; }
+	heading = heading % 360;
+	if (heading < 0) { heading += 360; }
+	return { heading: Math.round(heading * 10) / 10, source: source };
+}
+
+function jawnCameraAppOrientationNote(e) {
+	if (!e) { return; }
+	var absolute_event = (e.type === 'deviceorientationabsolute') || (e.absolute === true);
+	var compass = (typeof e.webkitCompassHeading == 'number') ? e.webkitCompassHeading : null;
+	var rule = jawnCameraHeading(e.alpha, compass, absolute_event);
+	if (rule.heading === null) { return; }
+	var now = Date.now();
+	// An absolute reading is the one that knows true north. Chrome fires both
+	// events on a phone, so a plain relative event that follows must not
+	// overwrite the provenance a moment later.
+	if (rule.source !== 'absolute' && jawnCameraAppOrientation.reading
+		&& jawnCameraAppOrientation.reading.heading_source === 'absolute'
+		&& now - jawnCameraAppOrientation.absolute_at < 3000) { return; }
+	var reading = { heading: rule.heading, heading_source: rule.source, at: now };
+	// The server keeps pitch level-to-up/down and roll a half turn either way;
+	// a value outside that is the device lying about its own attitude, so it is
+	// left off rather than sent to be dropped on the other side.
+	if (typeof e.beta == 'number' && isFinite(e.beta) && e.beta >= -90 && e.beta <= 90) {
+		reading.pitch = Math.round(e.beta * 10) / 10;
+	}
+	if (typeof e.gamma == 'number' && isFinite(e.gamma) && e.gamma >= -180 && e.gamma <= 180) {
+		reading.roll = Math.round(e.gamma * 10) / 10;
+	}
+	jawnCameraAppOrientation.reading = reading;
+	if (rule.source === 'absolute') { jawnCameraAppOrientation.absolute_at = now; }
+}
+
+function jawnCameraAppOrientationStart() {
+	if (jawnCameraAppOrientation.listening || !window.DeviceOrientationEvent) { return; }
+	jawnCameraAppOrientation.listening = true;
+	// Both are attached where the browser offers them: an absolute event names
+	// true north, a plain one is the device's own frame. The note keeps the
+	// stronger reading rather than letting a trailing relative event replace it.
+	window.addEventListener('deviceorientationabsolute', jawnCameraAppOrientationNote, true);
+	window.addEventListener('deviceorientation', jawnCameraAppOrientationNote, true);
+}
+
+function jawnCameraAppOrientationStop() {
+	window.removeEventListener('deviceorientationabsolute', jawnCameraAppOrientationNote, true);
+	window.removeEventListener('deviceorientation', jawnCameraAppOrientationNote, true);
+	jawnCameraAppOrientation.listening = false;
+	jawnCameraAppOrientation.reading = null;
+	jawnCameraAppOrientation.absolute_at = 0;
+	if (jawnCameraAppOrientation.observer) {
+		jawnCameraAppOrientation.observer.disconnect();
+		jawnCameraAppOrientation.observer = null;
+	}
+}
+
+// The camera window is a direct child of #browser, so watching only its direct
+// children keeps this off every keystroke elsewhere on the desk. The panel goes
+// with the window, and the sensor listeners go with the panel.
+function jawnCameraAppOrientationWatch() {
+	if (jawnCameraAppOrientation.observer || typeof MutationObserver !== 'function') { return; }
+	var browser = document.getElementById('browser');
+	if (!browser) { return; }
+	jawnCameraAppOrientation.observer = new MutationObserver(function () {
+		if (!document.getElementById('camera_app')) { jawnCameraAppOrientationStop(); }
+	});
+	jawnCameraAppOrientation.observer.observe(browser, { childList: true });
+}
+
+// Called from the photo press, never from page load: iOS refuses a sensor grant
+// that does not come from a press. On every other browser this just starts the
+// listeners.
+function jawnCameraAppOrientationEnable() {
+	if (!window.DeviceOrientationEvent) { return; }
+	jawnCameraAppOrientationStart();
+	jawnCameraAppOrientationWatch();
+	if (typeof DeviceOrientationEvent.requestPermission != 'function') { return; }
+	try {
+		DeviceOrientationEvent.requestPermission().then(function (state) {
+			if (state !== 'granted') { jawnCameraAppOrientationStop(); }
+		}).catch(function () {});
+	} catch (e) {}
+}
+
+function jawnCameraAppOrientationReading() {
+	return jawnCameraAppOrientation.reading || null;
+}
+
+// The fields the upload and the native capture both send. An unknown part is
+// omitted rather than sent as null, so a browser with only a heading still
+// records the heading.
+function jawnCameraAppOrientationFields(reading) {
+	var fields = {};
+	if (!reading) { return fields; }
+	$.each(['heading', 'pitch', 'roll'], function (i, key) {
+		if (typeof reading[key] == 'number' && isFinite(reading[key])) { fields[key] = reading[key]; }
+	});
+	if (reading.heading_source && typeof reading.heading == 'number') {
+		fields.heading_source = reading.heading_source;
+	}
+	return fields;
+}
+
 $(document).ready(function () {
 	jawnCameraAppSourceLoad();
 	// the panel's buttons render for whichever camera this machine has
 	if (jawnCameraAppNative()) { document.documentElement.classList.add('camera-native'); }
 	else if (jawnCameraAppWebcam()) { document.documentElement.classList.add('camera-webcam'); }
+	// a restored Camera window is already open, so its sensor listener should be
+	// running before the first press
+	if (document.getElementById('camera_app')) {
+		jawnCameraAppOrientationStart();
+		jawnCameraAppOrientationWatch();
+	}
 	if (jawnCameraAppWebcam()) {
 		jawnCameraAppRefreshSources();
 		// a phone only learns its front/back at first permission, so ask once and
@@ -93,7 +223,7 @@ $(document).on('click', '#camera_toggle', function () {
 		url: '/manager/camera',
 		type: 'GET',
 		data: { timestamp: Date.now(), window_maker: 'yes' },
-		success: function (response) { windowMaker(response); jawnCameraAppPool(); jawnCameraAppRefreshSources(); }
+		success: function (response) { windowMaker(response); jawnCameraAppPool(); jawnCameraAppRefreshSources(); jawnCameraAppOrientationStart(); jawnCameraAppOrientationWatch(); }
 	});
 });
 
@@ -137,6 +267,13 @@ function jawnCameraAppUpload(blob, name, kind) {
 	formData.append('timestamp', Date.now());
 	formData.append('type', kind);
 	formData.append('blob', blob, name);
+	// Only a picture carries the reading: a video's heading would be the one it
+	// started at, which is not the direction the whole clip faced.
+	if (kind == 'image') {
+		$.each(jawnCameraAppOrientationFields(jawnCameraAppOrientationReading()), function (key, value) {
+			formData.append(key, value);
+		});
+	}
 	$.ajax({
 		url: '/manager/upload_file',
 		type: 'POST',
@@ -156,12 +293,22 @@ function jawnCameraAppUpload(blob, name, kind) {
 // Take a photo: the OS camera in the app, a webcam frame on the desktop.
 $(document).on('click', '.camera_app_photo', function () {
 	if (jawnCameraAppNative()) {
-		window.__jawnCameraPending = { app: 'camera', status: '#camera_app .camera_app_status' };
+		// The bridge hands back a path, a kind, a name and a mime - no attitude of
+		// its own. The page's own reading, taken while the Camera window was open,
+		// rides on the pending capture instead; a WebView with no sensor sends
+		// none, and the picture is filed without one.
+		jawnCameraAppOrientationEnable();
+		var pending = { app: 'camera', status: '#camera_app .camera_app_status' };
+		var fields = jawnCameraAppOrientationFields(jawnCameraAppOrientationReading());
+		if (!$.isEmptyObject(fields)) { pending.orientation = fields; }
+		window.__jawnCameraPending = pending;
 		// open the OS camera in image mode; the user picks front/back in its UI
 		window.JawnCamera.photo();
 		return;
 	}
 	if (!jawnCameraAppWebcam()) { jawnCameraAppStatus('No camera here.'); return; }
+	// the sensor grant is asked for on this press, before the stream starts
+	jawnCameraAppOrientationEnable();
 	jawnCameraAppStatus('Starting the webcam...');
 	jawnCameraAppStreamStart().then(function () {
 		var v = document.querySelector('#camera_app .camera_app_preview');

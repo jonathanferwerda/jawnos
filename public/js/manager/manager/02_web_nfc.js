@@ -122,19 +122,23 @@ function jawnCameraUpload(result) {
 	// the answer never arrived. The path keeps both the details view and the
 	// wrapper on the one route that already knows how to file a picture.
 	if (result.path) {
+		var data = {
+			app: pending.app || '',
+			uuid: pending.uuid || '',
+			camera: pending.camera || '0',
+			timestamp: pending.timestamp || Date.now(),
+			native_path: result.path,
+			native_kind: kind,
+			native_name: result.name || '',
+			native_mime: result.mime || ''
+		};
+		// The bridge's result carries no attitude of its own; the Camera app put
+		// the page's own reading on the pending capture before opening the camera.
+		if (pending.orientation) { $.extend(data, pending.orientation); }
 		$.ajax({
 			url: '/manager/take_picture',
 			type: 'POST',
-			data: {
-				app: pending.app || '',
-				uuid: pending.uuid || '',
-				camera: pending.camera || '0',
-				timestamp: pending.timestamp || Date.now(),
-				native_path: result.path,
-				native_kind: kind,
-				native_name: result.name || '',
-				native_mime: result.mime || ''
-			},
+			data: data,
 			success: function(response) {
 				setStatus('Saved.');
 				// The server resolved which row the capture belongs to (the app's
@@ -161,6 +165,9 @@ function jawnCameraUpload(result) {
 	formData.append('timestamp', Date.now());
 	formData.append('type', kind);
 	formData.append('blob', blob, (pending.app || 'capture') + ext);
+	if (pending.orientation) {
+		$.each(pending.orientation, function (key, value) { formData.append(key, value); });
+	}
 	$.ajax({
 		url: '/manager/upload_file',
 		type: 'POST',

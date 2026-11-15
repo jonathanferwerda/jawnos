@@ -273,6 +273,20 @@ sub action_14764 {
 		}
 
 		my $u_data = { server_time => &subs::rightNow(), ocr => $ocr, f => $filename, uuid => $new_uuid, type => $upload_type };
+		# A picture remembers which way the phone was facing. The reading is
+		# written on the file's own record, the JSON this route puts in the
+		# appointment's `file`, because the direction belongs to the picture and
+		# not to the moment. Only a reading the shared rule accepts is stored; a
+		# junk parameter is left out rather than written beside a real file.
+		# TODO: a fix cannot carry this yet - lib/JawnOS/Manager/Part13.pm's
+		# continent_record has no heading, and database/schema.sql's `continent`
+		# table has no heading column. Both would have to arrive together.
+		if ( ($upload_type // '') eq 'image' ) {
+			my $orientation = &subs::camera_orientation_reading(
+				$c->param('heading'), $c->param('pitch'), $c->param('roll'), $c->param('heading_source')
+			);
+			foreach my $key ( keys %{$orientation} ) { $u_data->{$key} = $orientation->{$key}; }
+		}
 
 		if ($thumb) {
 			make_path($thumb) unless -e $thumb;
