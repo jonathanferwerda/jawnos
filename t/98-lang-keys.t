@@ -1,5 +1,5 @@
 # tests-for: perl/language.pl perl/language/*.pl
-# tests-for: public/js/manager/sound.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_edit.js public/js/manager/power.js
+# tests-for: public/js/manager/sound.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_edit.js public/js/manager/power.js public/js/manager/keyboard.js
 # tests-for: public/js/manager/manager/10_appointment_edit.js templates/apps/controller.html.ep lib/JawnOS/Domain/WeatherAutomation.pm
 # covers:    literal keys and the maps that build labels at runtime resolve to labels
 
@@ -109,6 +109,21 @@ push @taskbar_labels, $taskbar_js =~ /hint:\s*'([^']+)'/g;
 cmp_ok(scalar(@taskbar_labels), '>=', 7, 'the taskbar label maps are read');
 is_deeply([ grep { looks_like_key($_) && !exists $catalog->{$_} } @taskbar_labels ], [],
 	'every key-shaped taskbar label has a catalog entry');
+
+# The dock's context menu builds its labels through jawnosDockText(key, english),
+# whose English fallback hides a missing key. Every key it asks for is now a
+# catalog entry, so the fallback is only a safety net.
+my $dock_js = read_file("$root/public/js/manager/keyboard.js");
+my @dock_keys;
+while ($dock_js =~ /jawnosDockText\('([^']+)'/g) {
+	push @dock_keys, $1 unless $1 =~ /\.$/;
+}
+my ($dock_edges) = $dock_js =~ /dock\.position.*?\[\[(.*?)\]\]/s;
+push @dock_keys, map { "dock.pos.$_" } ($dock_edges =~ /'([a-z]+)'/g) if defined $dock_edges;
+cmp_ok(scalar(@dock_keys), '>=', 22, 'the dock menu keys are read');
+my %seen_dock;
+my @dock_missing = grep { !exists $catalog->{$_} } grep { !$seen_dock{$_}++ } @dock_keys;
+is_deeply(\@dock_missing, [], 'every dock menu key has a catalog entry');
 
 # The weather automation labels its measures through jawnosT too. The catalog is
 # English text today, and this keeps a key-shaped label honest if one is added.

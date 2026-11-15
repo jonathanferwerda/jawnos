@@ -245,6 +245,38 @@ foreach my $code ( keys %sound_labels ) {
 	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
 }
 
+# The dock's context menu. These are core labels on the dock and its menu, so
+# they are written here in every interface language rather than left to the
+# English fallback. The four older dock labels (add, remove, open_windows and
+# transparent) already live in the per-language catalogues; these are the rest.
+my @dock_keys = qw( dock.title dock.edit dock.add_dock dock.remove_bar dock.position
+	dock.pos.bottom dock.pos.top dock.pos.left dock.pos.right dock.pos.hidden
+	dock.show_icons dock.hide_icons dock.add_items dock.removed_faces
+	dock.apps dock.widgets dock.no_apps dock.loading dock.load_error );
+my %dock_labels = (
+en => [ 'Dock', 'Edit dock', 'Add dock', 'Remove this bar', 'Dock position', 'Bottom', 'Top', 'Left', 'Right', 'Hidden', 'Show icons', 'Hide icons', 'Add items', 'Removed faces', 'Apps', 'Widgets', 'No apps found', 'Loading apps…', 'Could not load the apps' ],
+zh => [ '停靠栏', '编辑停靠栏', '添加停靠栏', '移除此栏', '停靠栏位置', '下方', '上方', '左边', '右边', '隐藏', '显示图标', '隐藏图标', '添加项目', '已移除的面', '应用', '小部件', '未找到应用', '正在加载应用…', '无法加载应用' ],
+fr => [ 'Dock', 'Modifier le dock', 'Ajouter un dock', 'Retirer cette barre', 'Position du dock', 'En dessous', 'Au-dessus', 'À gauche', 'À droite', 'Masqué', 'Afficher les icônes', 'Masquer les icônes', 'Ajouter des éléments', 'Faces retirées', 'Applications', 'Widgets', 'Aucune application trouvée', 'Chargement des applications…', 'Impossible de charger les applications' ],
+es => [ 'Dock', 'Editar el dock', 'Añadir dock', 'Quitar esta barra', 'Posición del dock', 'Abajo', 'Arriba', 'A la izquierda', 'A la derecha', 'Oculto', 'Mostrar iconos', 'Ocultar iconos', 'Añadir elementos', 'Caras quitadas', 'Aplicaciones', 'Widgets', 'No se encontraron aplicaciones', 'Cargando aplicaciones…', 'No se pudieron cargar las aplicaciones' ],
+de => [ 'Dock', 'Dock bearbeiten', 'Dock hinzufügen', 'Diese Leiste entfernen', 'Dock-Position', 'Unten', 'Oben', 'Links', 'Rechts', 'Ausgeblendet', 'Symbole anzeigen', 'Symbole ausblenden', 'Elemente hinzufügen', 'Entfernte Flächen', 'Apps', 'Widgets', 'Keine Apps gefunden', 'Apps werden geladen…', 'Apps konnten nicht geladen werden' ],
+pt => [ 'Dock', 'Editar a dock', 'Adicionar dock', 'Remover esta barra', 'Posição da dock', 'Abaixo', 'Acima', 'À esquerda', 'À direita', 'Oculto', 'Mostrar ícones', 'Ocultar ícones', 'Adicionar itens', 'Faces removidas', 'Apps', 'Widgets', 'Nenhum app encontrado', 'Carregando apps…', 'Não foi possível carregar os apps' ],
+hi => [ 'डॉक', 'डॉक संपादित करें', 'डॉक जोड़ें', 'यह बार हटाएँ', 'डॉक की स्थिति', 'नीचे', 'ऊपर', 'बाएँ', 'दाएँ', 'छिपा हुआ', 'आइकन दिखाएँ', 'आइकन छिपाएँ', 'आइटम जोड़ें', 'हटाए गए फ़ेस', 'ऐप्स', 'विजेट', 'कोई ऐप नहीं मिला', 'ऐप्स लोड हो रहे हैं…', 'ऐप्स लोड नहीं हो सके' ],
+ar => [ 'الرصيف', 'تعديل الرصيف', 'أضف رصيفًا', 'إزالة هذا الشريط', 'موضع الرصيف', 'أسفل', 'أعلى', 'على اليسار', 'على اليمين', 'مخفي', 'إظهار الرموز', 'إخفاء الرموز', 'إضافة عناصر', 'أوجه مزالة', 'التطبيقات', 'الأدوات', 'لم يتم العثور على تطبيقات', 'جارٍ تحميل التطبيقات…', 'تعذر تحميل التطبيقات' ],
+bn => [ 'ডক', 'ডক সম্পাদনা করুন', 'ডক যোগ করুন', 'এই বারটি সরান', 'ডকের অবস্থান', 'নিচে', 'উপরে', 'বাঁয়ে', 'ডানে', 'লুকানো', 'আইকন দেখান', 'আইকন লুকান', 'আইটেম যোগ করুন', 'সরানো ফেস', 'অ্যাপ', 'উইজেট', 'কোনো অ্যাপ পাওয়া যায়নি', 'অ্যাপ লোড হচ্ছে…', 'অ্যাপ লোড করা যায়নি' ],
+ru => [ 'Док', 'Изменить док', 'Добавить док', 'Убрать эту панель', 'Положение дока', 'Снизу', 'Сверху', 'Слева', 'Справа', 'Скрыто', 'Показать значки', 'Скрыть значки', 'Добавить элементы', 'Удалённые грани', 'Приложения', 'Виджеты', 'Приложения не найдены', 'Загрузка приложений…', 'Не удалось загрузить приложения' ],
+ja => [ 'ドック', 'ドックを編集', 'ドックを追加', 'このバーを削除', 'ドックの位置', '下', '上', '左', '右', '非表示', 'アイコンを表示', 'アイコンを非表示', 'アイテムを追加', '削除された面', 'アプリ', 'ウィジェット', 'アプリが見つかりません', 'アプリを読み込み中…', 'アプリを読み込めませんでした' ],
+pa => [ 'ਡੌਕ', 'ਡੌਕ ਸੰਪਾਦਿਤ ਕਰੋ', 'ਡੌਕ ਸ਼ਾਮਲ ਕਰੋ', 'ਇਹ ਬਾਰ ਹਟਾਓ', 'ਡੌਕ ਦੀ ਸਥਿਤੀ', 'ਹੇਠਾਂ', 'ਉੱਪਰ', 'ਖੱਬੇ', 'ਸੱਜੇ', 'ਲੁਕਿਆ', 'ਆਈਕਨ ਦਿਖਾਓ', 'ਆਈਕਨ ਲੁਕਾਓ', 'ਆਈਟਮ ਸ਼ਾਮਲ ਕਰੋ', 'ਹਟਾਏ ਗਏ ਫੇਸ', 'ਐਪਾਂ', 'ਵਿਜੇਟ', 'ਕੋਈ ਐਪ ਨਹੀਂ ਮਿਲੀ', 'ਐਪਾਂ ਲੋਡ ਹੋ ਰਹੀਆਂ ਹਨ…', 'ਐਪਾਂ ਲੋਡ ਨਹੀਂ ਹੋ ਸਕੀਆਂ' ],
+id => [ 'Dock', 'Edit dock', 'Tambah dock', 'Hapus bilah ini', 'Posisi dock', 'Bawah', 'Atas', 'Kiri', 'Kanan', 'Tersembunyi', 'Tampilkan ikon', 'Sembunyikan ikon', 'Tambah item', 'Ikon dihapus', 'Aplikasi', 'Widget', 'Tidak ada aplikasi ditemukan', 'Memuat aplikasi…', 'Tidak dapat memuat aplikasi' ],
+ko => [ '독', '독 편집', '독 추가', '이 바 제거', '독 위치', '아래', '위', '왼쪽', '오른쪽', '숨김', '아이콘 표시', '아이콘 숨기기', '항목 추가', '제거된 면', '앱', '위젯', '앱을 찾을 수 없음', '앱 불러오는 중…', '앱을 불러오지 못했습니다' ],
+it => [ 'Dock', 'Modifica dock', 'Aggiungi dock', 'Rimuovi questa barra', 'Posizione del dock', 'Sotto', 'Sopra', 'A sinistra', 'A destra', 'Nascosto', 'Mostra icone', 'Nascondi icone', 'Aggiungi elementi', 'Facce rimosse', 'App', 'Widget', 'Nessuna app trovata', 'Caricamento app…', 'Impossibile caricare le app' ],
+tr => [ 'Dock', "Dock'u düzenle", 'Dock ekle', 'Bu çubuğu kaldır', 'Dock konumu', 'Altta', 'Üstte', 'Solda', 'Sağda', 'Gizli', 'Simgeleri göster', 'Simgeleri gizle', 'Öğe ekle', 'Kaldırılan yüzler', 'Uygulamalar', 'Bileşenler', 'Uygulama bulunamadı', 'Uygulamalar yükleniyor…', 'Uygulamalar yüklenemedi' ],
+);
+foreach my $code ( keys %dock_labels ) {
+	my %add;
+	@add{@dock_keys} = @{$dock_labels{$code}};
+	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
+}
+
 # Configure -> Plat -> QA. These are core labels on a settings panel, so they
 # are written here in every interface language rather than left to the English
 # backfill. The surrounding explanation is help text and goes through subs::ui.
