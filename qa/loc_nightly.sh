@@ -124,6 +124,29 @@ SUMMARY=$(perl -MJSON::PP -e '
 publish ok "$SUMMARY at $SHA$DIRTY" --table "Languages:$TSV" --metrics "$METRICS"
 echo "qa-loc: $SUMMARY at $SHA$DIRTY"
 
+# The long history: the report tree keeps 14 days, but a point a night is
+# nothing to keep, so the panel's trend reads this file before it falls back to
+# the directories. A later line for the same stamp wins, so a re-run corrects
+# the night rather than repeating it.
+TREND_DIR="$QA_ROOT/reports/loc"
+TREND="$TREND_DIR/trend.jsonl"
+mkdir -p "$TREND_DIR"
+if perl -MJSON::PP -e '
+	my ($metrics, $stamp, $sha, $dirty) = @ARGV;
+	open(my $fh, "<", $metrics) or die "loc: $metrics: $!\n";
+	local $/;
+	my $point = JSON::PP::decode_json(<$fh>);
+	close $fh;
+	$point->{"stamp"} = $stamp;
+	$point->{"sha"} = $sha;
+	$point->{"dirty"} = ($dirty eq "+dirty" ? 1 : 0);
+	print JSON::PP->new->canonical->encode($point), "\n";
+' "$METRICS" "$STAMP" "$SHA" "$DIRTY" >> "$TREND"; then
+	echo "qa-loc: trend point appended to $TREND"
+else
+	echo "qa-loc: the long trend line was not written" >&2
+fi
+
 # The report tree ages out through qa_report.pl on every write; the run dirs
 # (count, metrics, table) follow the same 14 days here.
 find "$QA_ROOT/loc" -mindepth 1 -maxdepth 1 -type d -mtime +"$KEEP_DAYS" \

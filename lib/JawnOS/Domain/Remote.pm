@@ -1127,21 +1127,64 @@ sub qa_reports_list {
 	return [];
 }
 
-# The trend the card draws above the drawers: one point per retained run of one
-# kind, newest first like the list, with each point's change against the run
-# before it. It reads that kind's own directories rather than the capped list,
-# so four nightly kinds cannot push the older points out of sight.
-# A run that wrote no report, a broken report, or one with no authored_code is
-# skipped: a night that could not count must not read as zero authored lines.
+# The trend the card draws above the drawers: one point per run of one kind,
+# newest first, with each point's change against the run before it. The long
+# history is <kind>/trend.jsonl - one line a night, written by the job and kept
+# after the 14-day report tree prunes its directories - so the size of the house
+# can be followed for as long as the QA box runs. A machine with no such file
+# yet falls back to the run directories it does have.
+# A line with no authored_code, a broken report or no report at all is skipped:
+# a night that could not count must not read as zero authored lines.
 sub qa_reports_trend {
 	my ($kind, $opts) = @_;
 	$opts ||= {};
 	return [] unless defined $kind && length $kind;
 	my $root = (defined $opts->{'root'} && length $opts->{'root'}) ? $opts->{'root'} : &qa_reports_root();
-	my $most = defined $opts->{'trend_limit'} ? $opts->{'trend_limit'} + 0 : 14;
-	$most = 1 if $most < 1;
 	my $kind_dir = "$root/$kind";
-	opendir(my $dh, $kind_dir) or return [];
+
+	my $long = _qa_trend_file("$kind_dir/trend.jsonl");
+	my $most = defined $opts->{'trend_limit'} ? $opts->{'trend_limit'} + 0
+		: (@$long ? 90 : 14);
+	$most = 1 if $most < 1;
+	my @points = @$long ? @$long : _qa_trend_runs($kind_dir, $most);
+	splice(@points, $most) if @points > $most;
+
+	for my $i (0 .. $#points) {
+		next unless $i < $#points;
+		$points[$i]{'change'} = $points[$i]{'code'} - $points[$i + 1]{'code'};
+	}
+	return \@points;
+}
+
+# One JSON object a line: {stamp, sha, dirty, authored_code, authored_files,
+# ...}. A later line for a stamp wins, so a re-run corrects the night instead
+# of repeating it, and a line the reader cannot use is skipped rather than
+# breaking the trend.
+sub _qa_trend_file {
+	my $file = shift;
+	open(my $fh, '<', $file) or return [];
+	my %point;
+	while (my $line = <$fh>) {
+		my $row = eval { decode_json($line) };
+		next unless ref $row eq 'HASH';
+		my $stamp = $row->{'stamp'};
+		next unless defined $stamp && $stamp =~ /^\d{8}T\d{6}Z$/;
+		my $code = $row->{'authored_code'};
+		next unless defined $code && $code =~ /^\d+$/;
+		my %keep = ( stamp => $stamp, code => $code + 0 );
+		my $files = $row->{'authored_files'};
+		$keep{'files'} = $files + 0 if defined $files && $files =~ /^\d+$/;
+		$point{$stamp} = \%keep;
+	}
+	close $fh;
+	return [ map { $point{$_} } sort { $b cmp $a } keys %point ];
+}
+
+# The fallback: the runs still inside the 14-day window, newest first. Kept
+# separate because a peer that upgraded the reader before the job has no file.
+sub _qa_trend_runs {
+	my ($kind_dir, $most) = @_;
+	opendir(my $dh, $kind_dir) or return;
 	my @stamps = sort { $b cmp $a }
 		grep { /^\d{8}T\d{6}Z$/ && -d "$kind_dir/$_" } readdir $dh;
 	closedir $dh;
@@ -1163,11 +1206,7 @@ sub qa_reports_trend {
 		$point{'files'} = $files + 0 if defined $files && $files =~ /^\d+$/;
 		push @points, \%point;
 	}
-	for my $i (0 .. $#points) {
-		next unless $i < $#points;
-		$points[$i]{'change'} = $points[$i]{'code'} - $points[$i + 1]{'code'};
-	}
-	return \@points;
+	return @points;
 }
 
 sub qa_hop_answer {

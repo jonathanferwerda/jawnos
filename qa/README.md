@@ -643,6 +643,12 @@ files as they are on disk: a nightly on a dirty checkout is counting edits
 nobody committed. Vendored libraries and generated data are excluded and only
 reported under the table. A count takes seconds and needs no network.
 
+The trend is `$QA_ROOT/reports/loc/trend.jsonl`, one JSON object a night
+(`stamp`, `sha`, `dirty`, `authored_code`, `authored_files` and the line
+counts). It is appended, never pruned, so the size of the house can be followed
+for years; the panel draws the newest 90 points and falls back to the 14-day
+report directories on a machine that has not written the file yet.
+
 A rehearsal writes into a scratch root and touches nothing the panel reads:
 
 ```sh

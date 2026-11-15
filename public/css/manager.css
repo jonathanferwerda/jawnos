@@ -3706,6 +3706,9 @@ body.dark_theme .inventory_details {
    per section inside it. The tables are narrow enough for the card, and a wide
    one scrolls inside its own box instead of stretching the panel. */
 .qa_reports { font-size: 13px; }
+/* The line-count trend grows with the house: keep the card short and let the
+   points scroll, newest at the top. */
+.qa_reports .qa_trend { max-height: 320px; overflow-y: auto; }
 .qa_report {
 	margin: 0 0 8px;
 	border: 1px solid var(--line, rgba(127,127,127,.28));

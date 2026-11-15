@@ -504,10 +504,11 @@ function qaReportNumber(value) {
 	return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-// The line-count trend above the drawers: one row per retained nightly count,
-// newest first like the list. Each Change is against the run below it (the one
-// before it in time), so a growing house reads down that column, and the oldest
-// retained point has nothing to compare with.
+// The line-count trend above the drawers: one row per nightly count, newest
+// first, up to 90 points from the long history the job keeps. Each Change is
+// against the run below it (the one before it in time), so a growing house
+// reads down that column, and the oldest retained point has nothing to compare
+// with.
 function qaReportTrend(points) {
 	if (!points || !points.length) { return ''; }
 	var rows = points.map(function(point) {
@@ -519,8 +520,10 @@ function qaReportTrend(points) {
 		}
 		return [qaReportStamp(point.stamp), qaReportNumber(point.code), change];
 	});
-	return qaReportTable(qaT('Authored lines of code'),
-		[qaT('Run'), qaT('Authored lines'), qaT('Change')], rows);
+	return '<div class="qa_trend">'
+		+ qaReportTable(qaT('Authored lines of code'),
+			[qaT('Run'), qaT('Authored lines'), qaT('Change')], rows)
+		+ '</div>';
 }
 
 function qaReportRun(entry) {

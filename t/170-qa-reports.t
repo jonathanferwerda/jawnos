@@ -125,6 +125,32 @@ is( scalar @{ subs::qa_reports_trend('loc', { root => $loc_root, trend_limit => 
 is_deeply( subs::qa_reports_trend('loc', { root => "$loc_root/nowhere" }), [], 'a machine with no counts has no trend' );
 is_deeply( subs::qa_reports_trend('', { root => $loc_root }), [], 'a trend needs a kind' );
 
+# --- the long trend file outlives the report tree -----------------------------
+# One line a night, kept after the 14-day directories prune. The reader prefers
+# it, folds a duplicate stamp to the later line, and skips a broken one.
+my $long_root = File::Temp::tempdir(CLEANUP => 1);
+make_path("$long_root/loc");
+my $long_file = "$long_root/loc/trend.jsonl";
+write_file($long_file, join('', map { JSON::PP->new->canonical->encode($_) . "\n" } (
+	{ stamp => '20260101T023000Z', authored_code => 100, authored_files => 5 },
+	{ stamp => '20260102T023000Z', authored_code => 150, authored_files => 6 },
+	{ stamp => '20260103T023000Z', authored_code => 140, authored_files => 6 },
+	{ stamp => '20260102T023000Z', authored_code => 160, authored_files => 6 },
+)) . "{not json}\n");
+make_run(root => $long_root, kind => 'loc', stamp => '20260103T023000Z',
+	status => 'ok', report => loc_doc(999, 9));
+
+my $long = subs::qa_reports_trend('loc', { root => $long_root });
+is( scalar @$long, 3, 'one point a night, a repeated stamp folded to one' );
+is( $long->[0]{'stamp'}, '20260103T023000Z', 'the long file reads newest first' );
+is( $long->[0]{'code'}, 140, 'the long file wins over a report directory' );
+is( $long->[0]{'change'}, -20, 'the change is against the night before' );
+is( $long->[1]{'code'}, 160, 'a later line corrects that night' );
+is( $long->[1]{'change'}, 60, 'and the correction reaches the change column' );
+ok( !exists $long->[2]{'change'}, 'the oldest point has nothing to compare with' );
+is( scalar @{ subs::qa_reports_trend('loc', { root => $long_root, trend_limit => 2 }) }, 2,
+	'the long trend is capped for the card' );
+
 # --- the report writer every job shares --------------------------------------
 
 my $qa_root = File::Temp::tempdir(CLEANUP => 1);
@@ -200,6 +226,8 @@ like( $loc_job, qr/QA_ROOT=\$\{QA_ROOT:-\$HOME\/jawnos-qa\}/, 'the root is expli
 like( $loc_job, qr/STAMP=\$\{STAMP:-/, 'a rehearsal can pin the stamp' );
 like( $loc_job, qr/GIT_OPTIONAL_LOCKS=0/, 'a read-only checkout is not refreshed' );
 like( $loc_job, qr/-mtime \+"\$KEEP_DAYS"/, 'its run dirs age out on the same 14 days' );
+like( $loc_job, qr/trend\.jsonl/, 'it appends the long history the card reads' );
+like( $loc_job, qr/>> "\$TREND"/, 'the long history is appended, never pruned' );
 
 my $loc_unit  = read_file("$root/qa/systemd/jawnos-qa-loc.service");
 my $loc_timer = read_file("$root/qa/systemd/jawnos-qa-loc.timer");
