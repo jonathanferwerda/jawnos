@@ -32,6 +32,7 @@ $topic{'internet'} = {
 $topic{'web'} = {
 		title => 'Web', category => 'apps', app => 'web',
 		templates => [ 'templates/web/web.html.ep', 'templates/web/web_measure_confirm.html.ep' ],
+		controls => [ 'Delete', 'Home', 'Measures', 'Save' ],
 		verified => '2026-11-09',
 		summary => 'The pages the house fetched, with measures.',
 		body => [
@@ -43,6 +44,7 @@ $topic{'web'} = {
 	};
 $topic{'terminal'} = {
 		title => 'Terminal', category => 'apps', app => 'terminal',
+		controls => [ 'Explode', 'List', 'Run command' ],
 		summary => 'A shell, in a window - on this machine or another one.',
 		verified => '2026-11-02',
 		body => [
@@ -65,6 +67,7 @@ $topic{'terminal'} = {
 $topic{'network'} = {
 		title => 'Network', category => 'apps', app => 'network',
 		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js', 'public/js/manager/network/02_tabs_bluetooth_remote.js', 'public/js/manager/taskbar_network.js', 'scripts/jawnos_network.pl', 'scripts/jawnos_bluetooth.pl' ],
+		controls => [ 'Bring the keyboard and mouse back to this machine', 'Open Remote control on this machine' ],
 		verified => '2026-11-15',
 		summary => 'Interfaces, Wi-Fi, VPN, Bluetooth, the machines on the mesh, the remote machines, and the Controller.',
 		body => [

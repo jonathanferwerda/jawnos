@@ -115,6 +115,7 @@ $topic{'transactions'} = {
 	};
 $topic{'evaluation'} = {
 		title => 'Evaluation', category => 'functions', app => 'evaluation', verified => '2026-11-03',
+		controls => [ 'Tap to open the controls' ],
 		summary => 'A model-backed appraisal of an app\'s activity.',
 		body => [
 			'Evaluation is an appraisal of any app\'s activity, run on demand or on a cadence. It reads what the app is and what it has been doing, weighs day, week, month and year together, and leaves a report at the foot of the app with a headline and links to everything it names.',

@@ -7,6 +7,7 @@ our %topic;
 $topic{'configure'} = {
 		'title' => 'Configure', category => 'apps', app => 'configure',
 		templates => [ 'templates/configure/configure.html.ep', 'templates/configure/misc_setting_list.html.ep', 'templates/configure/device_lister.html.ep', 'templates/configure/device_lister/body.html.ep', 'templates/configure/device_lister/join_house.html.ep', 'templates/configure/plat_setting_list.html.ep', 'templates/configure/qa_panel.html.ep', 'templates/configure/map_setting_list.html.ep', 'templates/configure/dns_clients.html.ep', 'public/js/manager/configure.js', 'public/js/manager/configure/02_remote_devices.js', 'public/js/manager/configure/07_qa_nightly.js', 'templates/configure/appointment_list.html.ep' ],
+		controls => [ 'Add sound', 'Adopt', 'Clothesline', 'Dark theme colour', 'Delete', 'Delete app', 'Home', 'Lock', 'Mirror', 'Run the audit now', 'Theme while running', 'Unlock', 'Vacuum', 'Window' ],
 		verified => '2026-11-15',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
@@ -169,6 +170,7 @@ $topic{'box_office'} = {
 $topic{'handbook'} = {
 		title => 'Handbook', category => 'apps', app => 'handbook',
 		templates => [ 'templates/handbook/handbook.html.ep', 'templates/handbook/today.html.ep' ],
+		controls => [ 'Chapters', 'Explode', 'Home', 'Next day', 'Previous day', 'The day as a journal', 'Type a day and press Enter' ],
 		verified => '2026-11-15',
 		summary => 'The day as a journal, and chaptered notes about the system itself.',
 		body => [
@@ -192,6 +194,7 @@ $topic{'handbook'} = {
 $topic{'embedded'} = {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep', 'templates/embedded/body.html.ep' ],
+		controls => [ 'A name for this pin on the device', 'Add this pin', 'Bad', 'Choose a watch, deck or board', 'Choose the device to control', 'Close', 'Delay', 'Good', 'Home', 'Read the board\'s learned remotes again', 'Save', 'The machine this device is paired to', 'This pin is wired', 'What a press does', 'Which machine runs this' ],
 		verified => '2026-11-15',
 		summary => 'The device fleet, from the desktop.',
 		body => [

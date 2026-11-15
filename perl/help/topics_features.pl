@@ -76,6 +76,7 @@ $topic{'appointment_windows'} = {
 		'title' => 'Appointment windows', category => 'features', verified => '2026-11-15',
 		summary => 'The window that gathers everything about one record.',
 		templates => [ 'templates/appointment_wrapper.html.ep', 'templates/pos/attributes.html.ep', 'public/js/manager/attributes.js' ],
+		controls => [ 'Details', 'Inventory', 'Lock', 'Save', 'Transaction', 'Up' ],
 		body => [
 			'Opening an appointment — a task, an invoice, a scan, a note, a measurement — spawns a window built around that one record. It gathers what the record is (its details), what has happened to it, and the things that name it: files, mail, transactions, the apps it touches.',
 			'An appointment window is a centre view: it is not one app but a hub, and it can pull in panels from several apps at once. That is why opening one can feel like the whole desktop leaning in — it is.',
@@ -154,6 +155,7 @@ $topic{'start_menu'} = {
 		verified => '2026-11-15',
 		summary => 'A second bar for the keyboard panels and the apps you keep at hand.',
 		templates => [ 'templates/pseudonyms.html.ep', 'public/js/manager/keyboard.js' ],
+		controls => [ 'Close', 'Search' ],
 		body => [
 			'The dock is a second bar you can place on any edge. Its faces are the keyboard panels, its own pinned apps and widgets, and the open windows it is told to show. It can also host the search box; a side dock tucks itself away and slides back when you call for it. A row dock (top or bottom) keeps the search\'s strip on screen when it tucks: press that strip to call the row back, and a press on the background where the row would have been stays a press on the background.',
 			'One desk can have more than one dock. With Edit dock on, the dock\'s menu offers Add dock, which puts another dock on the next free edge, and a dock\'s own grip on its left side drags it to an edge to lock it there or out into a floating box. Dragged along the top or bottom edge, a dock snaps to that edge\'s left, centre or right; dropped between those anchors it floats where it was left. The same menu lists the desk\'s workspaces, so each workspace can keep its own docks.',
@@ -189,6 +191,7 @@ $topic{'clothesline'} = {
 $topic{'search'} = {
 		title => 'Search', category => 'apps', app => 'search',
 		templates => [ 'templates/apps/search.html.ep', 'public/js/manager/search.js' ],
+		controls => [ 'Search engines' ],
 		verified => '2026-11-15',
 		summary => 'One window for the house, the web and the Guide, with a tab for each.',
 		body => [

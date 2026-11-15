@@ -8,6 +8,7 @@ use utf8;
 
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
+use File::Temp qw(tempfile);
 use Test::More;
 use JawnOSTest;
 
@@ -103,6 +104,19 @@ my %is_orphan = map { $_ => 1 } @orphans;
 my @closed = grep { !$is_orphan{$_} } sort keys %known_gap;
 note(scalar(@closed) . ' known gap(s) now have a topic - prune %known_gap: ' . join(', ', @closed))
 	if @closed;
+
+# --- a fixed label is a control, a stitched one is not ------------------------
+# help::hints feeds both the Guide's inventory and every topic's `controls`
+# check, so it must read a label wrapped in the translation helper and must not
+# invent one from a hint built by concatenation.
+my ($hfh, $hpath) = tempfile(SUFFIX => '.html.ep');
+print $hfh qq{<img hint="' + jawnosT('stale') + '"><button hint="<%= &subs::ui('Save this thing') %>">};
+close $hfh;
+is_deeply([ help::fixed_labels($hpath) ], [ 'Save this thing' ],
+	'a fixed subs::ui label is a control; a stitched hint is not');
+is_deeply([ help::hints($hpath) ], [],
+	'the brief list keeps plain hints only, not translated or stitched ones');
+unlink $hpath;
 
 # --- staleness compares days, not moments -----------------------------------
 # `verified` is a day. A commit made on the day a topic was vetted must not

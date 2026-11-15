@@ -57,6 +57,7 @@ $topic{'ble_bridge'} = {
 $topic{'help_app'} = {
 		title => 'This Help app', category => 'features', app => 'help',
 		templates => [ 'templates/apps/help.html.ep', 'public/js/manager/help.js', 'public/js/manager/page_agent.js' ],
+		controls => [ 'Ask, or ask it to do it', 'Back to the topics', 'Take the tour', 'This answer was good', 'This answer was not good' ],
 		summary => 'The map you are reading now, and its guide.',
 		verified => '2026-11-15',
 		body => [

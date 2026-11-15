@@ -8,6 +8,7 @@ $topic{'store'} = {
 		title => 'Store', category => 'apps', app => 'store',
 		verified => '2026-11-13',
 		templates => [ 'templates/store/store.html.ep', 'templates/store/category.html.ep', 'templates/store/item.html.ep', 'templates/store/item_selection.html.ep', 'templates/store/list.html.ep', 'templates/store/register.html.ep', 'templates/store/journal.html.ep', 'templates/store/correspondence.html.ep', 'templates/store/customer.html.ep', 'templates/ribbons.html.ep', 'templates/store/printer/header.html.ep', 'public/css/store.css', 'public/js/store.js', 'public/js/store/register.js' ],
+		controls => [ 'Crypto payment' ],
 		summary => 'Items, models, options, quotes, invoices and a cash register.',
 		body => [
 			'Store is the catalogue and the paperwork. Items carry models and options, each with its own prices; a quote or invoice is built from them and prints to a white, house-styled sheet that can be delivered by email.',
@@ -36,6 +37,7 @@ $topic{'crypto'} = {
 		title => 'Crypto wallets and rates', category => 'functions',
 		verified => '2026-11-15',
 		templates => [ 'templates/configure/pay_setting_list.html.ep', 'templates/configure/crypto_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/store/crypto_payment.html.ep', 'templates/store/printer/header.html.ep', 'templates/store/pay_box.html.ep', 'templates/store/list.html.ep', 'public/js/manager/configure.js', 'public/js/manager/transaction.js', 'public/js/store.js' ],
+		controls => [ 'Crypto payment' ],
 		summary => 'Wallet accounts that hold a coin, per-invoice receiving addresses from an xpub, live fiat and coin rates, and cost or market valuation.',
 		body => [
 			'A wallet is an ordinary account whose Payment Type is crypto. It keeps a public address and the coin it holds, and it records transactions, transfers and statements like any other account. JawnOS never holds a key, cannot spend from a wallet, and refuses anything that looks like a seed phrase or a private key; if a page ever asks for one, it is not JawnOS.',
@@ -151,6 +153,7 @@ $topic{'market'} = {
 	};
 $topic{'inventory'} = {
 		title => 'Inventory', category => 'apps', app => 'inventory',
+		controls => [ 'How a period combines its readings.', 'How many lookback rows the table shows.', 'Its time is included in the table and charts.', 'Keep the time windows fixed to the moment the panel loaded.', 'Nothing recorded in this window', 'Recalculate the budget from the readings.', 'The event types to include.', 'The period size the trend and the share use.', 'What the table and charts show.', 'What the wheel splits into parts.' ],
 		verified => '2026-11-14',
 		summary => 'An app\'s own record of what it holds and has been up to.',
 		body => [

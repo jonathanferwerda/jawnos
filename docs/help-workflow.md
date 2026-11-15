@@ -38,7 +38,8 @@ The in-app guide lives in `help.pl` (a `%topic` registry) and is served by the `
   listing the real on-screen hints. Keep button labels and the topic's words identical so the two agree.
 - To bind a topic to files the convention misses (e.g. `handbook`, `process_monitor`, `web`), give it a
   `templates => [ ... ]` list; give a topic a `controls => [ ... ]` list to have the auditor verify the
-  names it mentions still exist.
+  names it mentions are still fixed on-screen labels. A `hint="..."` counts, and so does one wrapped in
+  `&subs::ui('...')`; a hint stitched together from variables does not.
 - Vetting a topic for real: run a fixture-only probe (see `.shots/help_probe*.js`, `.shots/gallery_probe.js`)
   — create a fixture appointment of an allowed type, drive the app, then clean up and restore every
   setting you touched. Fixture rules above still apply.

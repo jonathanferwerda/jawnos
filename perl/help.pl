@@ -494,9 +494,12 @@ sub resolve_files {
 	return @out;
 }
 
-# The on-screen controls a topic's files declare, taken from their `hint="..."`
+# The on-screen hints a topic's files declare, taken from their `hint="..."`
 # literals. Interpolated hints (the ones with <, >, { or }) are skipped: only a
-# fixed label is something the auditor can match a step against.
+# fixed label is something the auditor can match a step against. A hint stitched
+# together at runtime (`hint="' + x + '"`) has no fixed label, so it is skipped
+# too. This stays the smaller list the generated brief and the Guide's inventory
+# read; the auditor's `controls` check reads fixed_labels below.
 sub hints {
 	my @files = @_;
 	my %h;
@@ -507,7 +510,38 @@ sub hints {
 		my $body = <$fh>;
 		close $fh;
 		next unless defined $body;
-		while ($body =~ /hint="([^"<>{}]+)"/g) { $h{$1} = 1; }
+		while ($body =~ /hint="([^"<>{}]+)"/g) {
+			my $v = $1;
+			next if $v =~ /^'|'$/ || $v =~ / \+ /;
+			$h{$v} = 1;
+		}
+	}
+	return sort keys %h;
+}
+
+# The fixed labels a topic's files put on screen, for the `controls` check: a
+# `hint="..."` literal and a fixed label wrapped in the translation helper are
+# both stable enough to verify. This is deliberately separate from hints(): the
+# generated brief keeps its budget, while a control may be a visible label too.
+sub fixed_labels {
+	my @files = @_;
+	my %h;
+	foreach my $f (@files) {
+		next unless -e $f;
+		open my $fh, '<', $f or next;
+		local $/;
+		my $body = <$fh>;
+		close $fh;
+		next unless defined $body;
+		while ($body =~ /hint="([^"<>{}]+)"/g) {
+			my $v = $1;
+			next if $v =~ /^'|'$/ || $v =~ / \+ /;
+			$h{$v} = 1;
+		}
+		while ($body =~ /hint="<%= &subs::ui\('((?:[^'\\]|\\.)+)'\) %>"/g) {
+			(my $v = $1) =~ s/\\'/'/g;
+			$h{$v} = 1;
+		}
 	}
 	return sort keys %h;
 }
@@ -548,9 +582,9 @@ sub audit {
 			push @out, [ 'warn', $id, "no source files resolved for app '$t->{'app'}' - add a templates list" ];
 		}
 		if ($t->{'controls'}) {
-			my %h = map { $_ => 1 } help::hints(@files);
+			my %h = map { $_ => 1 } help::fixed_labels(@files);
 			foreach my $c ( @{ $t->{'controls'} } ) {
-				push @out, [ 'error', $id, "control '$c' is no longer an on-screen hint in the app" ] unless $h{$c};
+				push @out, [ 'error', $id, "control '$c' is no longer an on-screen control in the app" ] unless $h{$c};
 			}
 		}
 		my $v = $t->{'verified'} || $verified_default;

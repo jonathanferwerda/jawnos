@@ -7,6 +7,7 @@ our %topic;
 $topic{'chat'} = {
 		title => 'Chat', category => 'apps', app => 'chat',
 		templates => [ 'templates/apps/chat.html.ep', 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'templates/mail/chat_sections.html.ep', 'templates/soft_keyboard.html.ep', 'templates/ime.html.ep', 'public/js/manager/chat.js', 'public/js/manager/soft_keyboard.js', 'public/css/chat.css', 'public/css/soft_keyboard.css' ],
+		controls => [ 'Back to the appointment', 'LoRa mesh broadcast', 'Show or hide the chat lists' ],
 		verified => '2026-11-12',
 		summary => 'The house\'s conversations: sms, the dial, pass threads and lora.',
 		body => [
@@ -44,6 +45,7 @@ $topic{'chat'} = {
 $topic{'email'} = {
 		title => 'Email', category => 'apps', app => 'email',
 		templates => [ 'templates/apps/email.html.ep', 'templates/mail/email_rail.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_rows.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/email.js' ],
+		controls => [ 'Back to the list', 'Clear the ticks', 'Folders', 'Mark the ticked letters read', 'Mark the ticked letters unread', 'Mark this folder read', 'Move the ticked letters here', 'Move the ticked letters to Trash', 'Refresh', 'Search the subject, body, sender and copies', 'Server settings', 'Sort direction', 'Sort the list by', 'Write a new email' ],
 		verified => '2026-11-15',
 		summary => 'A mail client: folders, a paged and searchable list, and the letter or the draft in the pane.',
 		body => [
@@ -71,6 +73,7 @@ $topic{'email'} = {
 $topic{'mailbox'} = {
 		title => 'Mailbox', category => 'apps', app => 'mailbox',
 		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],
+		controls => [ 'Configure', 'Menu', 'New file', 'Remove', 'Telephone' ],
 		verified => '2026-11-15',
 		summary => 'The whole mailbox in one window — email, sms, lora, the dial, the list, pass threads and the pen.',
 		body => [
@@ -92,6 +95,7 @@ $topic{'mailbox'} = {
 $topic{'pen'} = {
 		title => 'Pen', category => 'apps', app => 'pen',
 		templates => [ 'templates/apps/pen.html.ep', 'public/js/manager/pen.js' ],
+		controls => [ 'Menu' ],
 		verified => '2026-11-15',
 		summary => 'A conversation that remembers, and can make pictures, sounds and videos.',
 		body => [

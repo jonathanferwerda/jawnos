@@ -84,6 +84,7 @@ $topic{'notes'} = {
 	};
 $topic{'tasks'} = {
 		title => 'Tasks', category => 'apps', app => 'tasks',
+		controls => [ 'Configure', 'Delete' ],
 		summary => 'Nested checklists with colour, priority, renewal and budget.',
 		verified => '2026-11-15',
 		body => [
@@ -233,6 +234,7 @@ $topic{'budget'} = {
 		title => 'Accounting', category => 'apps', app => 'budget',
 		verified => '2026-11-15',
 		templates => [ 'templates/budget.html.ep', 'templates/budget_reconcile.html.ep', 'templates/budget/runway.html.ep', 'public/js/manager/budget.js' ],
+		controls => [ 'App', 'Configure', 'Movement' ],
 		summary => 'Accrual income statement and balance sheet, cash flow, runway, account activity, trial balance, receivables, scheduled payables, the ledger and bank reconciliation.',
 		body => [
 			'Accounting turns your transaction history into the statements a business reads: an income statement, a balance sheet, a cash flow statement, account activity, receivables, payables, the ledger of what has moved, the document ledger of invoices and quotes, a day book, and a reconciliation screen for a bank statement. The income statement and the balance sheet are kept on an accrual basis - an invoice is revenue when it is written and a bill is a cost when it arrives, whether or not the money has moved. The cash flow statement is the cash view, so it reports what actually moved through the accounts in its period.',

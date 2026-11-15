@@ -8,6 +8,7 @@ our %topic;
 $topic{'folders'} = {
 		'title' => 'Folders', category => 'apps', app => 'folders',
 		templates => [ 'templates/folders/folders.html.ep', 'templates/folders/context.html.ep', 'templates/folders/properties.html.ep', 'templates/folders/dialog_box.html.ep', 'templates/folders/app_picker.html.ep', 'templates/folders/cloud_sync.html.ep', 'templates/folders/cloud_list.html.ep', 'public/js/manager/folders.js', 'public/js/manager/desk.js' ],
+		controls => [ 'Archived copy', 'Back', 'Bookmarks', 'Close', 'Files', 'Folders', 'Forward', 'Home', 'Lock', 'Refresh', 'Sidebar', 'Switch between icons and a list', 'Type a path', 'Up' ],
 		summary => 'Browse, manage, seal and play with your files.',
 		verified => '2026-11-15',
 		body => [
@@ -124,6 +125,7 @@ $topic{'gallery'} = {
 	};
 $topic{'marker'} = {
 		title => 'Marker', category => 'apps', app => 'marker',
+		controls => [ 'Bring to front', 'Delete', 'Delete layer', 'Double click to rename', 'Erase with the current brush', 'Fit the drawing (0 key)', 'Gallery', 'Hide the toolbox', 'Load this drawing in the marker', 'Lower layer', 'New drawing', 'New layer', 'Pause', 'Play', 'Raise layer', 'Record', 'Redo', 'Save this drawing as a session', 'Show the toolbox', 'Show/hide', 'Start', 'Stylus (palm protection)', 'Target', 'Undo' ],
 		verified => '2026-11-15',
 		summary => 'A layered paint board for drawing and annotation.',
 		body => [
@@ -158,6 +160,7 @@ $topic{'studio'} = {
 	};
 $topic{'synth'} = {
 		title => 'Synth', category => 'apps', app => 'synth',
+		controls => [ 'A connected USB MIDI keyboard', 'Arm MIDI learn for the chosen parameter', 'Arpeggiate the notes you hold', 'Arpeggiator octaves', 'Arpeggiator pattern', 'Arpeggiator speed (steps per second)', 'Choose a preset', 'Clear every cell', 'Connect a USB MIDI keyboard', 'Forget every learned mapping', 'Glide (milliseconds between notes when Mono is on)', 'Grid length (steps)', 'Loop this step grid through the synth', 'Octave for the computer keyboard (Z down, X up)', 'One voice, gliding between notes', 'Sequencer speed (steps per second)' ],
 		summary => 'A polyphonic synthesiser with 88 keys, MIDI, and a computer-keyboard mode.',
 		verified => '2026-11-15',
 		body => [
@@ -240,6 +243,7 @@ $topic{'video'} = {
 	};
 $topic{'editor'} = {
 		title => 'Editor', category => 'apps', app => 'editor',
+		controls => [ 'Add a dividing rule', 'Add a paragraph at the end', 'Add a picture, a track or a video', 'Article', 'Delete this article', 'Drag to move this block', 'New article' ],
 		summary => 'Write and lay out a magazine article on a page that reads like the newspaper.',
 		verified => '2026-11-01',
 		body => [
@@ -259,6 +263,7 @@ $topic{'editor'} = {
 $topic{'ide'} = {
 		title => 'IDE', category => 'apps', app => 'ide',
 		templates => [ 'templates/apps/coding_chat.html.ep', 'public/js/manager/coding.js' ],
+		controls => [ 'Coding agent', 'Menu', 'New file', 'Save' ],
 		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
 		verified => '2026-11-15',
 		body => [
