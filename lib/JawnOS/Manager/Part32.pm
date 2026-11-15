@@ -342,7 +342,9 @@ sub delete_file($data) {
 			&subs::setting_setter({ app => 'marker', setting => 'background', value => $jbackgrounds });
 		}
 
-		if ($thumb && -e $thumb) {
+		# a shared row only drops the reference: the file belongs to the record
+		# that shared it (a receipt's page), not to this appointment.
+		if (!$file->{'shared'} && $thumb && -e $thumb) {
 			&subs::secure_unlink($thumb);
 			my @folder = split '/', $thumb;
 			pop @folder;
@@ -354,8 +356,8 @@ sub delete_file($data) {
 
 		# The preview is a second copy beside the file (TIFF/XCF/HEIC); it must
 		# go with it, and the Android runtime has no shred, so secure_unlink.
-		&subs::secure_unlink($preview) if $preview && -e $preview;
-		if (-e $filing) {
+		&subs::secure_unlink($preview) if !$file->{'shared'} && $preview && -e $preview;
+		if (!$file->{'shared'} && -e $filing) {
 			my $file = $filing;
 			&subs::secure_unlink($file);
 			my @folder = split '/', $file;

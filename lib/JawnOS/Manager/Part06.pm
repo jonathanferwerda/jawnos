@@ -810,7 +810,12 @@ sub market_receipt_remove {
 	if ($mine) {
 		foreach my $page ( @{ $gone->{'files'} || [] } ) {
 			next unless defined $page && length $page;
-			unlink $page if -f $page;
+			next unless -f $page;
+			# A purchase, vendor or item that names the page owns it now: the
+			# receipt record goes, the paper stays where those records point.
+			my $named = eval { &subs::db_query('select uuid from appointments where file like ? limit 1', '%' . $page . '%')->hashes->[0] };
+			next if $named;
+			unlink $page;
 		}
 	}
 	# the removal is house news too: ask the others to pull it now
@@ -836,43 +841,38 @@ sub market_receipt_attach {
 	return 0 unless scalar @pages;
 	my $appt = eval { &subs::db_select('appointments', undef, { app => $app, uuid => $uuid })->hashes->[0] };
 	return 0 unless $appt;
-	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($app));
-	system('mkdir', '-p', $folder) unless -e $folder;
-	my $thumbs = $folder . '/.thumbs';
-	system('mkdir', '-p', $thumbs) unless -e $thumbs;
 	my $saved = eval { return decode_json $appt->{'file'} } || [];
 	my @files = ref $saved eq 'ARRAY' ? @{$saved} : ();
-	my ($kept, $n) = (0, 0);
+	# The page is not copied. It stays where the receipt keeps it and each app -
+	# the category, the vendor, every item - names the same path, so the paper is
+	# one file several records point at. The row says `shared` so the sealer does
+	# not seal the receipt's own page in place and the delete does not unlink it
+	# from under the other records.
+	my $remote = ($receipt->{'machine'} || '') ne '' && ($receipt->{'machine'} || '') ne &subs::signatorial_designer()
+		? $receipt->{'machine'} : '';
+	my %seen = map { ($_->{'f'} || '') => 1 } @files;
+	my $added = 0;
 	foreach my $page ( @pages ) {
-		$n++;
-		next unless -f $page;
-		my $dest = $folder . '/receipt_' . &subs::rightNow() . '_' . $n . '.jpg';
-		my $bytes = eval { read_file($page) };
-		next unless defined $bytes && length $bytes;
-		write_file($dest, $bytes);
-		next unless -s $dest;
-		(my $base = $dest) =~ s{.*/}{};
-		my $file_data = {
-			server_time => &subs::rightNow(),
-			ocr => '',
-			f => $dest,
-			thumb => $thumbs . '/' . $base,
-			uuid => &subs::random_string_creator(10),
+		next if $seen{$page}++;
+		(my $base = $page) =~ s{.*/}{};
+		my $row = {
+			f => $page,
+			thumb => $page,
+			uuid => &subs::random_string_creator(17),
 			type => 'document',
-			'of' => $dest,
+			of => $base,
+			shared => 1,
+			server_time => &subs::rightNow(),
 		};
-		$file_data = &thumbnail_creator($file_data);
-		push @files, $file_data;
-		$kept++;
+		$row->{'remote_uuid'} = $remote if $remote ne '';
+		push @files, $row;
+		$added++;
 	}
-	my $skipped = scalar(@pages) - $kept;
-	if ($kept) {
-		&subs::db_update('appointments', { file => encode_json(\@files), server_time => &subs::rightNow() }, { app => $app, uuid => $uuid });
-		eval { &Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid) }); };
-		&subs::log_writer('receipt ' . $receipt_uuid . ' attached to ' . $app . ' as ' . $kept . ' page(s)');
-	}
-	&subs::log_writer('receipt ' . $receipt_uuid . ': ' . $skipped . ' page(s) are on another machine') if $skipped;
-	return $kept ? 1 : 0;
+	return 0 unless $added;
+	&subs::db_update('appointments', { file => encode_json(\@files), server_time => &subs::rightNow() }, { app => $app, uuid => $uuid });
+	eval { &Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid) }); };
+	&subs::log_writer('receipt ' . $receipt_uuid . ' referenced by ' . $app . ' (' . $added . ' page(s))');
+	return 1;
 }
 
 # Every kept receipt this house has, from the house row and from the per-device

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_market.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Controller/manager_transaction2.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part06.pm public/js/manager/market.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/transaction.js public/js/manager/transaction/01_record_crypto.js templates/apps/app_details.html.ep templates/market/market.html.ep perl/help/topics_business.pl perl/help/topics_functions.pl
+# tests-for: lib/JawnOS/Controller/manager_market.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Controller/manager_transaction2.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part32.pm public/js/manager/market.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/transaction.js public/js/manager/transaction/01_record_crypto.js templates/apps/app_details.html.ep templates/market/market.html.ep perl/help/topics_business.pl perl/help/topics_functions.pl
 # covers:    A receipt's printed time and its category were lost at Checkout: the transaction was saved at "now" under the shopping list's category, with no way to file a Vape/Coffee/Dinner receipt elsewhere.
 
 use strict;
@@ -125,6 +125,7 @@ require "$root/lib/JawnOS/Manager/Part06.pm";
 		return [ { uuid => 'r1', machine => 'me', files => [ $page ] }, { uuid => 'r2', files => [] } ];
 	};
 	local *subs::setting_setter = sub { push @writes, $_[0]; return 1 };
+	local *subs::db_query = sub { return FakeRows->new([]) };
 	local *subs::signatorial_designer = sub { return 'me' };
 	local *subs::subprocessor = sub { return 1 };
 	ok(Manager::market_receipt_remove('r1'), 'a kept receipt is thrown away');
@@ -133,6 +134,13 @@ require "$root/lib/JawnOS/Manager/Part06.pm";
 	is($left->[0]{'uuid'}, 'r2', 'the other receipt stays');
 	ok(!-e $page, 'the page this machine kept goes with it');
 	ok(!Manager::market_receipt_remove('nope'), 'an unknown receipt is not a removal');
+	# a page a saved purchase still names is not ours to delete
+	my $shared = "$dir/ref.jpg";
+	write_file($shared, 'ref');
+	local *Manager::market_receipts = sub { return [ { uuid => 'r3', machine => 'me', files => [ $shared ] } ] };
+	local *subs::db_query = sub { return FakeRows->new([ { uuid => 'a1' } ]) };
+	ok(Manager::market_receipt_remove('r3'), 'a receipt whose page a purchase names is still removed');
+	ok(-e $shared, 'and the page stays for that purchase');
 }
 
 # --- the paper is copied onto the purchase it paid for ---------------------
@@ -157,9 +165,10 @@ require "$root/lib/JawnOS/Manager/Part06.pm";
 		'the receipt page is attached to the purchase');
 	my $files = decode_json($updated->{'file'});
 	is(scalar @{$files}, 1, 'one page is on the appointment');
-	like($files->[0]{'f'}, qr{clothes/receipt_}, 'copied into the app own folder');
-	ok(-e $files->[0]{'f'}, 'and the copy is on disk');
-	is(read_file($files->[0]{'f'}), 'receipt page bytes', 'with the page own bytes');
+	is($files->[0]{'f'}, $page, 'naming the receipt own page, not a copy');
+	ok($files->[0]{'shared'}, 'marked shared, so sealing and deleting leave it alone');
+	ok(-e $page, 'and the page is still where the receipt keeps it');
+	is(read_file($page), 'receipt page bytes', 'with its own bytes');
 	ok(!Manager::market_receipt_attach({ app => 'clothes', uuid => 'a1', receipt_uuid => 'gone' }),
 		'an unknown receipt attaches nothing');
 }
@@ -175,10 +184,19 @@ ok(index($market, 'uuid => $receipt_uuid, storage => $storage') >= 0, 'checkout 
 ok(index($market_js, "attr('receipt_uuid', t.uuid)") >= 0, 'which the form carries');
 ok(index($tx_js, "['receipt_uuid']") >= 0, 'the draft keeps it too');
 ok(index($record_js, 'receipt_uuid: receipt_uuid') >= 0, 'and the save sends it');
-ok(index($save, 'market_receipt_attach') >= 0, 'the save copies the paper onto the appointment');
+ok(index($save, 'market_receipt_attach') >= 0, 'the save points the appointment at the paper');
+ok(index($save, 'market_receipt_attach({ app => $vendor, uuid => $vendor_uuid') >= 0, 'the vendor names the same page');
+ok(index($save, 'market_receipt_attach({ app => $i, uuid => $purchase->{\'uuid\'}') >= 0, 'and so does every item');
+my $file_domain = read_file("$root/lib/JawnOS/Domain/File.pm");
+my $part32 = read_file("$root/lib/JawnOS/Manager/Part32.pm");
+ok(index($file_domain, q{next if ref $fi eq 'HASH' && $fi->{'shared'};}) >= 0,
+	'the sealer leaves a shared page where it is');
+ok(index($part32, q{if (!$file->{'shared'} && -e $filing)}) >= 0,
+	'and deleting the row leaves the shared page on disk');
 ok(index($help, 'The') >= 0 && index($help, 'throws it away for the whole House') >= 0,
 	'the guide says a receipt can be thrown away');
-ok(index($help, 'copied onto a saved transaction') >= 0, 'and that a saved transaction keeps its page');
+ok(index($help, 'points the app it is filed under, its vendor and each item at that same page') >= 0,
+	'and that the app, vendor and items point at the same page');
 
 # --- what done_testing is for -----------------------------------------
 done_testing();

@@ -251,6 +251,7 @@ sub action_16986 {
 			}
 		}
 		if ($vendor && $record_vendor eq 'on') {
+			my $vendor_uuid = &subs::random_string_creator(20);
 			my $init = &subs::settings_grabber({ app => $vendor });
 
 			$init = &subs::setting_initializer($vendor . ' vendor',$timestamp) unless $init->{'pos'};
@@ -268,13 +269,15 @@ sub action_16986 {
 				unit => $unit,
 				movement => $movement,
 				item => $item,
-				uuid => &subs::random_string_creator(20),
+				uuid => $vendor_uuid,
 				total => $transactions->{$movement}->{'totals'}->{'total'} || $total,
 				amount => $transactions->{$movement}->{'totals'}->{'amount'} || $amount,
 				tax => $transactions->{$movement}->{'totals'}->{'tax'} || $tax,
 				aux => $transactions->{$movement}->{'totals'}->{'aux'} || $aux,
 				source_uuid => $uuid
 			});
+			&market_receipt_attach({ app => $vendor, uuid => $vendor_uuid, receipt_uuid => $c->param('receipt_uuid') })
+				if ($c->param('receipt_uuid') || '') ne '';
 		}
 
 		foreach my $t ( keys %{$transactions->{$movement}} ) {
@@ -337,6 +340,8 @@ sub action_16986 {
 							currency => $currency
 						};
 						&appointment_writer($c, $purchase);
+						&market_receipt_attach({ app => $i, uuid => $purchase->{'uuid'}, receipt_uuid => $c->param('receipt_uuid') })
+							if ($c->param('receipt_uuid') || '') ne '';
 					}
 				}
 			}

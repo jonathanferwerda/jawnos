@@ -134,6 +134,10 @@ sub file_encrypter {
 			$files = [ $files ];
 		}
 		foreach my $fi ( @{$files} ) {
+			# a shared row names the file another record owns (a receipt's page
+			# that a purchase, its vendor and its items all point at): sealing it
+			# here would move the bytes out from under every other record.
+			next if ref $fi eq 'HASH' && $fi->{'shared'};
 			foreach my $file_type ( qw/f thumb preview/ ) {
 				my $f = $fi->{$file_type};
 
@@ -221,6 +225,10 @@ sub file_decrypter {
 	foreach my $filing ( @{$filings} ) {
 		my $files = eval { return decode_json $filing->{'file'} } || [];
 		foreach my $fi ( @{$files} ) {
+			# a shared row names the file another record owns (a receipt's page
+			# that a purchase, its vendor and its items all point at): sealing it
+			# here would move the bytes out from under every other record.
+			next if ref $fi eq 'HASH' && $fi->{'shared'};
 			foreach my $file_type ( qw/f thumb preview/ ) {
 				my $f = $fi->{$file_type};
 				if (defined $f && length $f && -e $f && $f =~ /\.enc/gi) {
