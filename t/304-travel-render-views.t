@@ -49,6 +49,10 @@ like( $near3d, qr/window\.jawnosMap\.mapBounds\(m\)/, 'each measured map is plac
 like( $near3d, qr/var MPD = 111194\.9;/, 'the projection uses metres per degree' );
 like( $near3d, qr/Math\.cos\(centre\.lat \* Math\.PI \/ 180\)/, 'narrowed by cos(latitude), as jawnosMarkerMetres is' );
 like( $near3d, qr/z: -\(latitude - centre\.lat\) \* MPD/, 'and z is negated so north is -z' );
+like( $near3d, qr/var covers = centre\.lat <= bounds\.nw\.lat && centre\.lat >= bounds\.se\.lat/,
+	'only a map that covers the pressed ground sets the opening distance' );
+like( $near3d, qr/if \(covers\) \{ span = Math\.max\(span, widthM, heightM\); \}/,
+	'a measured map elsewhere in the county still draws without pulling the camera to it' );
 like( $near3d, qr/travelAllMaps/, 'the last atlas answer supplies the maps' );
 like( $near3d, qr/mapData && mapData\.near/, 'the nearby places come from the viewer response' );
 like( $near3d, qr/travelPlateList/, 'home plates are drawn as houses' );

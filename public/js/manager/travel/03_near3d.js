@@ -105,7 +105,7 @@ function travelNear3dStart(lat, lon) {
 	stage.appendChild(renderer.domElement);
 
 	var scene = new THREE.Scene();
-	scene.background = new THREE.Color(0x0b0d10);
+	scene.background = new THREE.Color(0xe9edf1);
 	var camera = new THREE.PerspectiveCamera(60, (stage.clientWidth || 640) / (stage.clientHeight || 360), 0.5, 200000);
 
 	scene.add(new THREE.HemisphereLight(0xdfe6ef, 0x1a1d22, 0.9));
@@ -115,10 +115,10 @@ function travelNear3dStart(lat, lon) {
 
 	// a two-part ground grid: 100 m squares with a 1 km frame, so a house and a
 	// county can both be read at their own zoom
-	var fine = new THREE.GridHelper(2000, 20, 0x26303a, 0x1b222a);
+	var fine = new THREE.GridHelper(2000, 20, 0x9fb0be, 0xc8d2db);
 	fine.position.y = 0;
 	scene.add(fine);
-	var coarse = new THREE.GridHelper(10000, 10, 0x33404d, 0x232c35);
+	var coarse = new THREE.GridHelper(10000, 10, 0x8fa0ae, 0xbec9d3);
 	coarse.position.y = -0.05;
 	scene.add(coarse);
 
@@ -188,7 +188,13 @@ function travelNear3dStart(lat, lon) {
 		var widthM = (bounds.se.lon - bounds.nw.lon) * MPD * cosLat;
 		var heightM = (bounds.nw.lat - bounds.se.lat) * MPD;
 		if (!(widthM > 0) || !(heightM > 0)) { return; }
-		span = Math.max(span, widthM, heightM);
+		// Only a map that covers the pressed ground sets the opening distance. A
+		// measured map elsewhere in the county is still drawn (pan out to it),
+		// but framing on its size put the camera kilometres away from the pins
+		// the press was about.
+		var covers = centre.lat <= bounds.nw.lat && centre.lat >= bounds.se.lat
+			&& centre.lon >= bounds.nw.lon && centre.lon <= bounds.se.lon;
+		if (covers) { span = Math.max(span, widthM, heightM); }
 
 		var mid = metres((bounds.nw.lat + bounds.se.lat) / 2, (bounds.nw.lon + bounds.se.lon) / 2);
 		// the plate is the pixel the picture is pinned by; it is the pivot of a
@@ -299,7 +305,7 @@ function travelNear3dStart(lat, lon) {
 	var open = {
 		az: 0.65,
 		elev: 0.82,
-		dist: Math.max(140, Math.min(6000, span > 0 ? span * 1.35 : 220))
+		dist: Math.max(140, Math.min(6000, span > 0 ? span * 1.35 : 260))
 	};
 	var rig = { az: open.az, elev: open.elev, dist: open.dist };
 
