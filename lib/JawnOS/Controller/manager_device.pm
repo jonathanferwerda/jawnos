@@ -632,7 +632,10 @@ sub _controller_leaf_from_house {
 		my $manager = &subs::peer_live_manager($rm) || $rm->{'manager'};
 		my ($endpoint, $verified) = &subs::peer_secure_url($rm, $manager);
 		my $port = '';
-		$port = $1 if ($rm->{'manager'} // '') =~ m{:(\d{1,5})/manager/?$};
+		# A row's manager may be https://host:port with or without the /manager
+		# path: the hub row carried the bare base, so a regex wanting /manager left
+		# the public try on port 443 and the leaf was never asked for.
+		$port = $1 if ($rm->{'manager'} // '') =~ m{:(\d{1,5})(?:/|$)};
 		# The public name first: its wildcard is a certificate the machine's
 		# system store already trusts, and the route answers a signed request
 		# there. The peer listener, whose leaf the house CA signs, is the
