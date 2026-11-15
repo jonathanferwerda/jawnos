@@ -16,6 +16,13 @@
 			<div class="store_register_customer">
 				<span class="store_register_customer_label"><%= &subs::lang('common.customer') %></span>
 				<strong id="store_register_customer_name">—</strong>
+				<div class="store_register_exemption">
+					<label class="store_register_exempt_toggle">
+						<input type="checkbox" id="store_register_tax_exempt">
+						<%= &subs::ui('Tax exempt') %>
+					</label>
+					<input type="text" id="store_register_tax_exemption" class="store_register_exemption_id" placeholder="<%= &subs::ui('Exemption ID') %>" style="display:none;">
+				</div>
 			</div>
 
 			<div id="store_register_items" class="store_register_items"></div>
@@ -24,6 +31,7 @@
 				<span><%= &subs::lang('common.quantity') %> <b id="store_register_quantity">0</b></span>
 				<span><%= &subs::lang('common.total') %> <b id="store_register_total">$0.00</b></span>
 			</div>
+			<div id="store_register_tax_lines" class="store_register_tax_lines"></div>
 
 			<label class="store_register_search_wrap">
 				<span class="store_register_search_label"><%= &subs::lang('common.item') %></span>
@@ -62,6 +70,7 @@
 					<span><%= &subs::lang('store.change') %></span>
 					<strong id="store_register_change">$0.00</strong>
 				</div>
+				<div id="store_register_rounding" class="store_register_rounding" style="display:none;font-size:13px;opacity:.8;margin-top:4px;"></div>
 				<div id="store_register_breakdown" class="store_register_breakdown"></div>
 			</div>
 

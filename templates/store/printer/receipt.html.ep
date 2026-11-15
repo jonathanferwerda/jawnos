@@ -21,7 +21,7 @@
 			<td class="paper_label_cell"><%= &subs::ui('This payment') %></td>
 			<td class="paper_value"><%= &subs::price_formatter($receipt_payment->{'amount'}) %></td>
 		</tr>
-	<% } %>
+		<% } %>
 	<tr class="paper_receipt_balance">
 		<td class="paper_label_cell"><%= &subs::ui('Remaining balance') %></td>
 		<td class="paper_value"><%= &subs::price_formatter($receipt_balance) %></td>

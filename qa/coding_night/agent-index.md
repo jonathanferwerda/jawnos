@@ -16,7 +16,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - chat (topic chat): 17 file(s), 1 route(s)
 - clock (topic clock): 6 file(s), 5 route(s)
 - clothesline (topic clothesline): 3 file(s), 2 route(s)
-- configure (topic configure): 20 file(s), 135 route(s)
+- configure (topic configure): 21 file(s), 135 route(s)
 - controller (topic controller): 5 file(s), 9 route(s)
 - controllers (topic controllers): 4 file(s), 13 route(s)
 - edit_app (no topic): 1 file(s), 2 route(s)
@@ -68,7 +68,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 ## tables
 
 38 tables (database/schema.sql). Columns are inline; `perl scripts/agent_help.pl --schema <table>` adds the apps that use one.
-- appointments (55): app, timestamp, data, type, account, amount, unit, duration, status, notes, start_notes, end_notes, vendor, tax, quantity, total, item, server_time, file, device, project, pos, club, warranty, source, formulas, position, toggle, uuid, ticket_uuid, browser_tab_id, seen, model, option, movement, aux, aux_description, state, has_tax, has_totes, ost, balance, measures, manufacturer, encryption_standard, options, source_uuid, currency, stop_seen, stop_timestamp, duties, next_duty, subtype, app_uuid, autostop
+- appointments (57): app, timestamp, data, type, account, amount, unit, duration, status, notes, start_notes, end_notes, vendor, tax, quantity, total, item, server_time, file, device, project, pos, club, warranty, source, formulas, position, toggle, uuid, ticket_uuid, browser_tab_id, seen, model, option, movement, aux, aux_description, state, has_tax, has_totes, ost, balance, measures, manufacturer, encryption_standard, options, source_uuid, currency, stop_seen, stop_timestamp, duties, next_duty, subtype, app_uuid, autostop, taxes, tax_exemption
 - backups (12): timestamp, server_time, signatorial, destination, size, reason, warranty, uuid, recipient, recipient, ost, enc_file
 - cache (10): timestamp, server_time, app, context, warranty, subcontext, device, uuid, ost, data
 - continent (14): latitude, longitude, accuracy, timestamp, operator, operator_door, server_time, uuid, type, scope, app, warranty, ost, signatorial
@@ -117,7 +117,7 @@ One route: `perl scripts/where.pl /manager/pen`.
 ## helpers
 
 659 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-2377 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+2401 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware

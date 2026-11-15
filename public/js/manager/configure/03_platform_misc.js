@@ -751,6 +751,164 @@ $(document).on('change', '.me_setting', function() {
 	});
 });
 
+// Configure -> Me -> Taxes is one house row (me/taxes, device 'all'), not a
+// per-device setting: the card collects every row and saves the whole list in
+// one write. A rate keeps whatever was typed (13 or 13%); normalization
+// happens on the server when the catalog is read, so the card reloads after a
+// save to show the tidy values.
+function jawnosTaxCatalogList() {
+	var list = [];
+	$('#me_tax_card .tax_catalog_row').each(function() {
+		var row = $(this);
+		var trim = function(v) { return (v || '').replace(/^\s+|\s+$/g, ''); };
+		var code = trim(row.find('.tax_catalog_code').val());
+		var name = trim(row.find('.tax_catalog_name').val());
+		var rate = trim(row.find('.tax_catalog_rate').val());
+		var country = trim(row.find('.tax_catalog_country').val());
+		if (!code.length && !name.length) { return; }
+		var entry = { code: code, name: name, rate: rate, country: country, default: row.find('.tax_catalog_default input').is(':checked') ? 1 : 0 };
+		list.push(entry);
+	});
+	return list;
+}
+
+function jawnosTaxCatalogStatus(text) {
+	var status = $('#me_tax_card .tax_catalog_status');
+	if (status.length) { status.text(text || ''); }
+}
+
+function jawnosTaxCatalogRow() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	var row = $('<div class="tax_catalog_row"></div>');
+	$('<input type="text" class="tax_catalog_code" maxlength="40">')
+		.attr({ placeholder: t('Code'), 'aria-label': t('Code') }).appendTo(row);
+	$('<input type="text" class="tax_catalog_name">')
+		.attr({ placeholder: t('Name'), 'aria-label': t('Name') }).appendTo(row);
+	$('<input type="text" class="tax_catalog_rate">')
+		.attr({ placeholder: '13%', 'aria-label': t('Rate') }).appendTo(row);
+	$('<input type="text" class="tax_catalog_country" maxlength="2">')
+		.attr({ placeholder: t('Country'), 'aria-label': t('Country') }).appendTo(row);
+	var label = $('<label class="tax_catalog_default"></label>');
+	label.append('<input type="checkbox">').append($('<span></span>').text(' ' + t('Default')));
+	row.append(label);
+	row.append($('<button type="button" class="tax_catalog_remove"></button>')
+		.attr({ 'aria-label': t('Remove this tax'), hint: t('Remove this tax') })
+		.text('\u00d7'));
+	return row;
+}
+
+$(document).on('input change', '#me_tax_card .tax_catalog_row input, #me_tax_card .tax_catalog_row select', function() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	jawnosTaxCatalogStatus(t('Not saved'));
+});
+
+$(document).on('click', '#me_tax_card .tax_catalog_add', function() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	var row = jawnosTaxCatalogRow();
+	$('#me_tax_card .tax_catalog_rows').append(row);
+	$('#me_tax_card .tax_catalog_empty').hide();
+	jawnosTaxCatalogStatus(t('Not saved'));
+	row.find('.tax_catalog_code').focus();
+});
+
+$(document).on('click', '#me_tax_card .tax_catalog_remove', function() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	$(this).closest('.tax_catalog_row').remove();
+	jawnosTaxCatalogStatus(t('Not saved'));
+});
+
+$(document).on('click', '#me_tax_card .tax_catalog_save', function() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	var list = jawnosTaxCatalogList();
+	jawnosTaxCatalogStatus(t('Saving\u2026'));
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: {
+			app: 'me',
+			setting: 'taxes',
+			device: 'all',
+			value: JSON.stringify(list),
+			timestamp: Date.now()
+		},
+		success: function() {
+			$.get('/manager/configure/me_settings', { timestamp: Date.now() }, function(html) {
+				var fresh = $('<div>').html(html).find('#me_tax_card').first();
+				if (fresh.length) {
+					$('#me_tax_card').replaceWith(fresh);
+				}
+				jawnosTaxCatalogStatus(t('Saved.'));
+			}).fail(function() {
+				jawnosTaxCatalogStatus(t('Saved. Reload to see the tidy values.'));
+			});
+		},
+		error: function() {
+			jawnosTaxCatalogStatus(t('Could not save. Try again.'));
+		}
+	});
+});
+
+// Configure -> Store -> Taxes: two house rows (sales_tax_enabled and
+// sales_tax_codes, both device 'all'). A disabled Store charges nothing on a
+// sale; its default taxes are kept and shown, just secondary, so turning it
+// back on is one tick.
+function jawnosStoreTaxStatus(text) {
+	var status = $('#store_tax_card .store_tax_status');
+	if (status.length) { status.text(text || ''); }
+}
+
+$(document).on('change', '#store_tax_card .store_tax_enabled', function() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	var value = $(this).is(':checked') ? 'on' : 'off';
+	jawnosStoreTaxStatus(t('Saving\u2026'));
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: { app: 'me', setting: 'sales_tax_enabled', device: 'all', value: value, timestamp: Date.now() },
+		success: function() {
+			$('#store_tax_card .store_tax_defaults').toggleClass('is_secondary', value !== 'on');
+			$('#store_tax_card .store_tax_off_note').toggle(value !== 'on');
+			jawnosStoreTaxStatus(t('Saved.'));
+		},
+		error: function() {
+			jawnosStoreTaxStatus(t('Could not save. Try again.'));
+		}
+	});
+});
+
+$(document).on('change', '#store_tax_card .store_tax_codes', function() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	var codes = $(this).val() || [];
+	jawnosStoreTaxStatus(t('Saving\u2026'));
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: { app: 'me', setting: 'sales_tax_codes', device: 'all', value: JSON.stringify(codes), timestamp: Date.now() },
+		success: function() {
+			jawnosStoreTaxStatus(t('Saved.'));
+		},
+		error: function() {
+			jawnosStoreTaxStatus(t('Could not save. Try again.'));
+		}
+	});
+});
+
+$(document).on('change', '#store_tax_card .store_cash_rounding', function() {
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	jawnosStoreTaxStatus(t('Saving…'));
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: { app: 'me', setting: 'cash_rounding', device: 'all', value: $(this).val(), timestamp: Date.now() },
+		success: function() {
+			jawnosStoreTaxStatus(t('Saved.'));
+		},
+		error: function() {
+			jawnosStoreTaxStatus(t('Could not save. Try again.'));
+		}
+	});
+});
+
 // Each device card keeps its own `clock_timezone` row, so a phone and a server
 // can read different clocks. The setting is written for that card's device
 // only; the server sets the machine's own clock when the card is this machine's

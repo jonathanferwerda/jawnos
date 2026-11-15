@@ -294,16 +294,31 @@ sub store_register_customer_for {
 			$name = &subs::format_name($app);
 		}
 	}
-	return { app => $app, name => $name, cx => (defined $cx ? $cx : '') };
+	my $tax_settings = &subs::store_tax_settings();
+	my $tax_exemption = &subs::tax_exemption_for($app, $tax_settings->{'catalog'});
+	return { app => $app, name => $name, cx => (defined $cx ? $cx : ''), tax_exemption => $tax_exemption };
 }
 
 sub store_register_payload {
 	my ($order) = @_;
-	my $tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1;
-	my $totals = &subs::store_register_totals($order->{'items'}, $tax);
+	my $settings = &subs::store_tax_settings();
+	my $totals = &subs::store_register_totals($order->{'items'}, $settings);
+	my $tax = 1;
+	if ($settings->{'enabled'}) {
+		my $entries = &subs::tax_entries_for_codes($settings->{'catalog'}, $settings->{'default_codes'});
+		my $percent = 0;
+		$percent += ($_->{'rate'} || 0) for @{$entries};
+		$tax = 1 + ($percent / 100);
+	}
+	my $exemption = (ref $order->{'tax_exemption'} eq 'HASH')
+		? $order->{'tax_exemption'}
+		: &subs::tax_exemption_for(($order->{'customer'} || {})->{'app'} || 'Customer', $settings->{'catalog'});
 	return {
 		ok => 1,
 		tax => 0 + $tax,
+		tax_settings => $settings,
+		tax_exemption => $exemption,
+		cash_rounding => &subs::cash_rounding_setting(),
 		order => { %{$order}, totals => $totals },
 	};
 }
@@ -322,17 +337,26 @@ sub action_6411 {
 # GET /manager/store/register/state
 sub action_6412 {
 	my $c = shift;
-	my $tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1;
+	my $settings = &subs::store_tax_settings();
+	my $tax = 1;
+	if ($settings->{'enabled'}) {
+		my $entries = &subs::tax_entries_for_codes($settings->{'catalog'}, $settings->{'default_codes'});
+		my $percent = 0;
+		$percent += ($_->{'rate'} || 0) for @{$entries};
+		$tax = 1 + ($percent / 100);
+	}
 	my @orders;
 	foreach my $order ( @{ &subs::store_register_orders() } ) {
 		push @orders, {
 			%{$order},
-			totals => &subs::store_register_totals($order->{'items'}, $tax),
+			totals => &subs::store_register_totals($order->{'items'}, $settings),
 		};
 	}
 	$c->render(json => {
 		ok => 1,
 		tax => 0 + $tax,
+		tax_settings => $settings,
+		cash_rounding => &subs::cash_rounding_setting(),
 		orders => \@orders,
 		methods => &subs::store_register_payment_methods(),
 		denominations => &subs::store_register_denominations(),
@@ -348,6 +372,7 @@ sub action_6413 {
 		cx => $customer->{'cx'},
 		app => $customer->{'app'},
 		name => $customer->{'name'},
+		tax_exemption => $customer->{'tax_exemption'},
 	});
 	$c->render(json => &store_register_payload($order));
 }
@@ -375,6 +400,7 @@ sub action_6414 {
 			name => &subs::format_name($item->{'app'}),
 			price => &subs::numeric_formatter($item->{'price'}),
 			type => $item->{'type'} || 'product',
+			tax_codes => &subs::tax_codes_value(($item->{'settings'} || {})->{'tax_codes'}),
 		};
 	}
 	$c->render(json => { ok => 1, items => \@out });
@@ -391,6 +417,7 @@ sub action_6415 {
 		name => $c->param('name'),
 		price => $c->param('price'),
 		quantity => $c->param('quantity') || 1,
+		tax_codes => $c->param('tax_codes'),
 	});
 	$c->render(json => &store_register_payload($order));
 }
@@ -430,9 +457,18 @@ sub action_6419 {
 	my $order = &subs::store_register_order($id);
 	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
 	return $c->render(json => { ok => 0, error => 'the order is empty' }) unless scalar @{$order->{'items'}};
-	my $tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1;
+	my $tax_settings = &subs::store_tax_settings();
 	my $app = $order->{'customer'}->{'app'} || 'Customer';
-	my $built = &subs::store_register_sale_data($order, $c->param('payment'), $c->param('received'), $app, '', $tax);
+	# The customer's own exemption is the default; the till's toggle (and its
+	# field) overrides it for this sale. Only an exempt sale records an id.
+	my $exemption = &subs::tax_exemption_for($app, $tax_settings->{'catalog'});
+	my $exempt_param = $c->param('tax_exempt');
+	$exemption->{'exempt'} = ($exempt_param =~ /^(?:on|1|yes|true)$/i) ? 1 : 0
+		if defined $exempt_param;
+	my $exempt_id = $c->param('tax_exemption');
+	$exemption->{'id'} = $exempt_id if defined $exempt_id && length $exempt_id;
+	$exemption->{'id'} = '' unless $exemption->{'exempt'};
+	my $built = &subs::store_register_sale_data($order, $c->param('payment'), $c->param('received'), $app, '', $tax_settings, $exemption);
 	return $c->render(json => { ok => 0, error => $built->{'error'} || 'the sale could not be built' }) unless $built->{'ok'};
 	if (($built->{'payment'}->{'method'} || '') eq 'cash' && $built->{'change'}->{'short'}) {
 		return $c->render(json => { ok => 0, error => 'cash received is less than the total', short => 1, change => $built->{'change'} });
@@ -448,6 +484,8 @@ sub action_6419 {
 		data => encode_json($built->{'data'}),
 		status => 'completed',
 		item => $built->{'data'}->{'item'},
+		taxes => encode_json($built->{'data'}->{'numbers'}->{'taxes'} || []),
+		tax_exemption => $built->{'data'}->{'tax_exemption'} || '',
 	});
 	my $uuid = $appt->{'uuid'} || '';
 	# A register sale is a payment too: the sale's own paper and a receipt are

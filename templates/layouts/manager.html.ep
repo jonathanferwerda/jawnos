@@ -70,6 +70,9 @@
 			<% my $sales_tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }); $sales_tax = 1 unless defined $sales_tax && $sales_tax =~ /^\d+(?:\.\d+)?$/; %>
 			var me_tax = <%= $tax %>;
 			var sales_tax = <%= $sales_tax %>;
+			var jawnos_tax_catalog = <%== encode_json(&subs::tax_catalog()) %>;
+			var jawnos_store_tax = <%== encode_json(&subs::store_tax_settings()) %>;
+			var jawnos_cash_rounding = <%== encode_json(&subs::cash_rounding_setting()) %>;
 			// what the keyboard's config keeps per device: the damping the timeline
 			// and the clothesline read, seeded here so either is right before its
 			// keyboard is ever opened

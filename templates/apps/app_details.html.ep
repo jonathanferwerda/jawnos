@@ -67,6 +67,10 @@
 			<label><%= &subs::ui('Change') %></label>
 			<span class="tx_change"></span>
 		</span>
+		<span class="tx_field tx_rounding_field">
+			<label><%= &subs::ui('Rounding') %></label>
+			<span class="tx_rounding"></span>
+		</span>
 	</div>
 
 

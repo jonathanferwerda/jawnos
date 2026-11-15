@@ -67,8 +67,12 @@ sub store_register_number {
 }
 
 sub store_register_totals {
-	my ($items, $tax_rate) = @_;
+	my ($items, $tax_settings) = @_;
 	$items = [] unless ref $items eq 'ARRAY';
+	# A hash is the catalog settings (each line's own codes, the Store default
+	# for a line that names none); a plain number is the old single multiplier,
+	# kept for callers that have no settings to pass.
+	return &store_tax_totals($items, $tax_settings) if ref $tax_settings eq 'HASH';
 	my $subtotal = 0;
 	my $quantity = 0;
 	foreach my $item ( @{$items} ) {
@@ -79,7 +83,7 @@ sub store_register_totals {
 		$subtotal += $price * $qty;
 		$quantity += $qty;
 	}
-	my $rate = &store_register_number($tax_rate);
+	my $rate = &store_register_number($tax_settings);
 	$rate = 1 if $rate <= 0;
 	$subtotal = 0 + sprintf('%.2f', $subtotal);
 	my $total = 0 + sprintf('%.2f', $subtotal * $rate);
@@ -151,6 +155,9 @@ sub store_register_order_open {
 	unless (defined $label && length $label) {
 		$label = &lang('common.customer') . ' ' . $REGISTER_ORDER_SEQ;
 	}
+	my $tax_exemption = (ref $params->{'tax_exemption'} eq 'HASH')
+		? $params->{'tax_exemption'}
+		: { exempt => 0, id => '', country => '', codes => [] };
 	my $order = {
 		id => $id,
 		label => $label,
@@ -160,6 +167,7 @@ sub store_register_order_open {
 			app => ($params->{'app'} && length $params->{'app'}) ? $params->{'app'} : 'Customer',
 			name => ($params->{'name'} && length $params->{'name'}) ? $params->{'name'} : &lang('common.customer'),
 		},
+		tax_exemption => $tax_exemption,
 		items => [],
 	};
 	$REGISTER_ORDERS{$id} = $order;
@@ -204,6 +212,7 @@ sub store_register_order_add {
 		name => $name,
 		price => $price,
 		quantity => $quantity,
+		tax_codes => &tax_codes_value($item->{'tax_codes'}),
 	};
 	return $order;
 }
@@ -251,24 +260,57 @@ sub store_register_order_reset {
 # data->numbers keep working, and data->register.items is the extra the receipt
 # uses to print more than one line.
 sub store_register_sale_data {
-	my ($order, $method, $received, $app, $id, $tax_rate) = @_;
+	my ($order, $method, $received, $app, $id, $tax_settings, $exemption) = @_;
 	return { ok => 0, error => 'no order' } unless ref $order eq 'HASH';
 	return { ok => 0, error => 'no items' } unless ref $order->{'items'} eq 'ARRAY' && scalar @{$order->{'items'}};
+	# A hash is the catalog settings, a number is the legacy single multiplier,
+	# and nothing means read the Store's own switch and catalog now. An exempt
+	# sale charges no tax at all, whatever the catalog says.
+	$tax_settings = &store_tax_settings()
+		unless ref $tax_settings eq 'HASH' || (defined $tax_settings && length $tax_settings);
+	my $exempt = ref $exemption eq 'HASH' ? $exemption : {};
+	my $exempt_on = $exempt->{'exempt'} ? 1 : 0;
+	my $exemption_id = $exempt_on ? ($exempt->{'id'} // '') : '';
+	my $totals_settings = $tax_settings;
+	$totals_settings = ref $tax_settings eq 'HASH' ? { %{$tax_settings}, enabled => 0 } : 1
+		if $exempt_on;
 	my $payment = &store_register_payment_valid($method);
 	$payment = 'cash' unless length $payment;
-	my $totals = &store_register_totals($order->{'items'}, $tax_rate);
+	my $totals = &store_register_totals($order->{'items'}, $totals_settings);
+	# Canada has no penny: a cash sale is rounded to the nearest five cents (the
+	# house setting), while a card sale keeps the exact total. The rounding is
+	# recorded beside the exact subtotal and tax so the receipt can show it.
+	my $cash_rounding = { exact => $totals->{'total'}, step => 0, rounded => $totals->{'total'}, rounding => 0 };
+	if ($payment eq 'cash') {
+		$cash_rounding = &cash_rounding_apply($totals->{'total'}, &cash_rounding_home_currency());
+		$totals->{'rounding'} = $cash_rounding->{'rounding'};
+		$totals->{'cash_total'} = $cash_rounding->{'rounded'};
+		$totals->{'total'} = $cash_rounding->{'rounded'};
+	}
 	my $cash = &store_register_change($totals->{'total'}, $received);
 	# A cash payment must cover the sale; card and the rest are charged the total.
 	$received = $totals->{'total'} if $payment ne 'cash';
 	$cash = &store_register_change($totals->{'total'}, $received);
 	my @lines;
 	foreach my $item ( @{$order->{'items'}} ) {
+		my $price = &store_register_number($item->{'price'});
+		my $quantity = &store_register_number($item->{'quantity'});
+		my $line_total = 0 + sprintf('%.2f', $price * $quantity);
+		my $codes = &tax_codes_value($item->{'tax_codes'});
+		# What this line charged, so a later catalog change never rewrites an
+		# old bill. An exempt sale has no tax on any line.
+		my $line_taxes = [];
+		if (!$exempt_on && ref $tax_settings eq 'HASH' && $tax_settings->{'enabled'}) {
+			$line_taxes = &store_tax_line_snapshot($line_total, $codes, $tax_settings);
+		}
 		push @lines, {
 			item => $item->{'item'} || '',
 			name => $item->{'name'} || '',
-			price => &store_register_number($item->{'price'}),
-			quantity => &store_register_number($item->{'quantity'}),
-			total => 0 + sprintf('%.2f', &store_register_number($item->{'price'}) * &store_register_number($item->{'quantity'})),
+			price => $price,
+			quantity => $quantity,
+			total => $line_total,
+			tax_codes => $codes,
+			taxes => $line_taxes,
 		};
 	}
 	my $first = $lines[0] || { name => '', price => 0, quantity => 1 };
@@ -292,15 +334,20 @@ sub store_register_sale_data {
 			items => \@lines,
 			payment => $payment,
 			customer => $app || 'Customer',
+			tax_exemption => $exemption_id,
 		},
 		numbers => {
 			subtotal => $totals->{'subtotal'},
 			discount => 0,
 			tax => $totals->{'tax'},
+			taxes => $totals->{'taxes'} || [],
+			rounding => $totals->{'rounding'} || 0,
+			cash_total => $totals->{'cash_total'} || $totals->{'total'},
 			aux => 0,
 			total => $totals->{'total'},
 			balance => 0,
 		},
+		tax_exemption => $exemption_id,
 		payments => [{
 			method => $payment,
 			label => $label,

@@ -197,6 +197,17 @@ sub action_16986 {
 	my $returner = { uuid => $uuid, app => $app, timestamp => $timestamp, navigation => 'once' };
 
 	if ($movement eq 'income' || $movement eq 'expense') {
+	# The selected taxes are a snapshot of what this transaction charged, so a
+	# later catalog change never rewrites an old bill. The line keeps its old
+	# `tax` amount; these ride beside it.
+	my $tax_snapshot = &subs::tax_transaction_snapshot(
+		ref $transactions->{$movement} eq 'HASH' ? $transactions->{$movement} : {}
+	);
+	my $tax_exemption = (ref $transactions->{$movement} eq 'HASH' && ref $transactions->{$movement}->{'totals'} eq 'HASH')
+		? ($transactions->{$movement}->{'totals'}->{'tax_exemption'} // '')
+		: '';
+	$tax_exemption = $c->param('tax_exemption') // '' unless length $tax_exemption;
+
 		my $write = {
 			timestamp => $timestamp,
 			app => &subs::unformat_name($app),
@@ -223,6 +234,8 @@ sub action_16986 {
 			unit => $unit,
 			uuid => $uuid,
 			data => $jtransactions,
+			taxes => encode_json($tax_snapshot),
+			tax_exemption => $tax_exemption,
 			currency => $currency
 		};
 
@@ -280,6 +293,8 @@ sub action_16986 {
 				amount => $transactions->{$movement}->{'totals'}->{'amount'} || $amount,
 				tax => $transactions->{$movement}->{'totals'}->{'tax'} || $tax,
 				aux => $transactions->{$movement}->{'totals'}->{'aux'} || $aux,
+				taxes => encode_json($tax_snapshot),
+				tax_exemption => $tax_exemption,
 				source_uuid => $uuid
 			});
 			&market_receipt_attach({ app => $vendor, uuid => $vendor_uuid, receipt_uuid => $c->param('receipt_uuid') })
@@ -343,6 +358,8 @@ sub action_16986 {
 							quantity => $tr->{'quantity'},
 							unit => $tr->{'unit'},
 							source_uuid => $uuid,
+							taxes => encode_json(&subs::tax_transaction_snapshot({ $t => $tr })),
+							tax_exemption => $tax_exemption,
 							currency => $currency
 						};
 						&appointment_writer($c, $purchase);

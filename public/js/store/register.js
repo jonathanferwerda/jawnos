@@ -13,6 +13,10 @@ var storeRegisterData = {
 	orders: [],
 	active: '',
 	tax: 1,
+	tax_settings: null,
+	cash_rounding: null,
+	exemption: { exempt: false, id: '' },
+	exemption_order: '',
 	payment: 'cash',
 	received: 0,
 	last: null,
@@ -35,6 +39,102 @@ function storeRegisterMoney(value) {
 	return isNaN(n) || n === null ? 0 : Math.round(n * 100) / 100;
 }
 
+// The house's tax catalog, as the server sends it with the register state. The
+// page globals are the fallback for a reply from an older server.
+function storeRegisterTaxSettings() {
+	var settings = storeRegisterData.tax_settings;
+	if (!settings || typeof settings !== 'object') {
+		settings = (typeof jawnos_store_tax !== 'undefined' && jawnos_store_tax) ? jawnos_store_tax : {};
+	}
+	if (!settings.catalog || !settings.catalog.length) {
+		settings.catalog = (typeof jawnos_tax_catalog !== 'undefined' && jawnos_tax_catalog) ? jawnos_tax_catalog : [];
+	}
+	if (!settings.default_codes) { settings.default_codes = []; }
+	if (settings.enabled === undefined) { settings.enabled = storeRegisterMoney(storeRegisterData.tax) > 1; }
+	return settings;
+}
+
+function storeRegisterTaxExempt() {
+	return !!(storeRegisterData.exemption && storeRegisterData.exemption.exempt);
+}
+
+// The selected customer's exemption is the starting point. A different tab (or
+// a sale clearing the order) brings its own, and re-rendering the same order
+// must not wipe a toggle the person just flipped.
+function storeRegisterAdoptExemption(order) {
+	var id = order ? (order.id || '') : '';
+	if (storeRegisterData.exemption_order === id) { return; }
+	storeRegisterData.exemption_order = id;
+	var exempt = (order && order.tax_exemption) ? order.tax_exemption : {};
+	storeRegisterData.exemption = { exempt: !!exempt.exempt, id: exempt.id || '' };
+}
+
+function storeRegisterTaxEntries(codes, settings) {
+	if (typeof codes === 'string') {
+		try { codes = JSON.parse(codes); } catch (e) { codes = codes ? [codes] : []; }
+	}
+	if (!codes || !codes.length) { codes = settings.default_codes || []; }
+	if (typeof codes === 'string') { codes = [codes]; }
+	var catalog = settings.catalog || [];
+	var entries = [];
+	$.each(codes, function(i, code) {
+		if (code && typeof code === 'object') {
+			if (code.code) { entries.push(code); }
+			return;
+		}
+		$.each(catalog, function(j, entry) {
+			if (entry && String(entry.code).toLowerCase() === String(code).toLowerCase()) { entries.push(entry); }
+		});
+	});
+	return entries;
+}
+
+// One line's tax, by its own codes or the Store default. The parts are by rate
+// and the last absorbs the rounding, exactly as JawnOS::Domain::Tax does.
+function storeRegisterLineTaxes(line, settings) {
+	var price = storeRegisterMoney(line.price);
+	var qty = storeRegisterMoney(line.quantity);
+	if (qty <= 0) { qty = 1; }
+	var amount = price * qty;
+	var entries = storeRegisterTaxEntries(line.tax_codes, settings);
+	var percent = 0;
+	$.each(entries, function(i, entry) { percent += parseFloat(entry.rate) || 0; });
+	if (percent <= 0) { return { tax: 0, taxes: [] }; }
+	var tax = Math.round(amount * percent) / 100;
+	var taxes = [];
+	var left = tax;
+	$.each(entries, function(i, entry) {
+		var part = (i === entries.length - 1)
+			? left
+			: Math.round(tax * (parseFloat(entry.rate) || 0) / percent * 100) / 100;
+		left = Math.round((left - part) * 100) / 100;
+		taxes.push({ code: entry.code, name: entry.name, rate: entry.rate, amount: Math.round(part * 100) / 100 });
+	});
+	return { tax: Math.round(tax * 100) / 100, taxes: taxes };
+}
+
+function storeRegisterMergeTaxes(snapshots) {
+	var by = {}, order = [];
+	$.each(snapshots || [], function(i, list) {
+		$.each(list || [], function(j, tax) {
+			var code = String(tax.code || tax.name || '').toLowerCase();
+			if (!code) { return; }
+			if (!by[code]) {
+				by[code] = { code: tax.code, name: tax.name, rate: tax.rate, amount: 0 };
+				order.push(code);
+			}
+			by[code].amount += parseFloat(tax.amount) || 0;
+		});
+	});
+	var out = [];
+	$.each(order, function(i, code) {
+		var tax = by[code];
+		tax.amount = Math.round(tax.amount * 100) / 100;
+		out.push(tax);
+	});
+	return out;
+}
+
 function storeRegisterActive() {
 	for (var i = 0; i < storeRegisterData.orders.length; i++) {
 		if (storeRegisterData.orders[i].id === storeRegisterData.active) {
@@ -44,8 +144,8 @@ function storeRegisterActive() {
 	return null;
 }
 
-// The same sum the server does: each line's unit price times its units, tax on
-// the subtotal, both kept in cents.
+// The same sum the server does: each line's unit price times its units, then
+// every line's own tax codes (or the Store default) on top.
 function storeRegisterTotals(order) {
 	var items = (order && order.items) ? order.items : [];
 	var subtotal = 0;
@@ -58,13 +158,22 @@ function storeRegisterTotals(order) {
 		quantity += qty;
 	});
 	subtotal = Math.round(subtotal * 100) / 100;
-	var rate = storeRegisterMoney(storeRegisterData.tax);
-	if (rate <= 0) { rate = 1; }
-	var total = Math.round(subtotal * rate * 100) / 100;
+	var settings = storeRegisterTaxSettings();
+	var tax = 0;
+	var snapshots = [];
+	if (settings.enabled && !storeRegisterTaxExempt()) {
+		$.each(items, function(i, line) {
+			var line_tax = storeRegisterLineTaxes(line, settings);
+			tax += line_tax.tax;
+			if (line_tax.taxes.length) { snapshots.push(line_tax.taxes); }
+		});
+	}
+	tax = Math.round(tax * 100) / 100;
 	return {
 		subtotal: subtotal,
-		tax: Math.round((total - subtotal) * 100) / 100,
-		total: total,
+		tax: tax,
+		taxes: snapshots.length ? storeRegisterMergeTaxes(snapshots) : [],
+		total: Math.round((subtotal + tax) * 100) / 100,
 		quantity: quantity,
 		count: items.length
 	};
@@ -72,6 +181,35 @@ function storeRegisterTotals(order) {
 
 // Cash received less the total, in cents. Exact and overpaid are named so the
 // till can show "Change $6.50" or refuse a short cash payment.
+// Cash rounding is a house rule keyed to the home currency: the server sends
+// the step with the register state, and a sale in another currency carries no
+// step at all. The till rounds the cash total before working out the change.
+function storeRegisterCashRounding() {
+	var cr = storeRegisterData.cash_rounding;
+	if (!cr || typeof cr !== 'object') {
+		cr = (typeof jawnos_cash_rounding !== 'undefined' && jawnos_cash_rounding) ? jawnos_cash_rounding : null;
+	}
+	if (!cr || !cr.step) { return 0; }
+	var step = parseFloat(cr.step);
+	return isNaN(step) || step <= 0 ? 0 : step;
+}
+
+function storeRegisterCashTotal(order) {
+	var totals = storeRegisterTotals(order);
+	var step = storeRegisterCashRounding();
+	if ((storeRegisterData.payment || 'cash') !== 'cash' || !step) {
+		return { exact: totals.total, rounded: totals.total, rounding: 0, step: 0 };
+	}
+	var rounded = Math.round(totals.total / step) * step;
+	rounded = Math.round(rounded * 100) / 100;
+	return {
+		exact: totals.total,
+		rounded: rounded,
+		rounding: Math.round((rounded - totals.total) * 100) / 100,
+		step: step
+	};
+}
+
 function storeRegisterChange(total, received) {
 	var t = storeRegisterMoney(total);
 	var r = storeRegisterMoney(received);
@@ -151,6 +289,8 @@ function storeRegisterRefresh(active) {
 		var was_active = storeRegisterData.active;
 		storeRegisterData.orders = r.orders || [];
 		storeRegisterData.tax = storeRegisterMoney(r.tax) || 1;
+		storeRegisterData.tax_settings = r.tax_settings || storeRegisterData.tax_settings;
+		storeRegisterData.cash_rounding = r.cash_rounding || storeRegisterData.cash_rounding;
 		if (active && storeRegisterOrderById(active)) {
 			storeRegisterData.active = active;
 		}
@@ -260,12 +400,15 @@ function storeRegisterRenderTabs() {
 
 function storeRegisterRenderOrder() {
 	var order = storeRegisterActive();
+	storeRegisterAdoptExemption(order);
 	var items = $('#store_register_items').empty();
 	if (!order) {
 		items.append($('<p class="store_register_empty"></p>').text(storeRegisterT('No open orders')));
 		$('#store_register_customer_name').text('—');
 		$('#store_register_total').text('$0.00');
 		$('#store_register_quantity').text('0');
+		$('#store_register_tax_lines').empty();
+		storeRegisterRenderExemption();
 		return;
 	}
 	$('#store_register_customer_name').text((order.customer && order.customer.name) || storeRegisterT('Customer'));
@@ -290,18 +433,59 @@ function storeRegisterRenderOrder() {
 	var totals = storeRegisterTotals(order);
 	$('#store_register_total').text(numeral(totals.total).format('$0.00'));
 	$('#store_register_quantity').text(totals.quantity);
+	storeRegisterRenderTaxLines(totals);
+	storeRegisterRenderExemption();
+}
+
+// Each tax this order charged: its name, rate and amount. Nothing is drawn
+// while the Store's tax switch is off or the customer is exempt.
+function storeRegisterRenderTaxLines(totals) {
+	var lines = $('#store_register_tax_lines').empty();
+	var settings = storeRegisterTaxSettings();
+	if (!settings.enabled || storeRegisterTaxExempt()) { return; }
+	$.each(totals.taxes || [], function(i, tax) {
+		var name = tax.name || '';
+		if (tax.rate !== undefined && tax.rate !== null && tax.rate !== '') {
+			name += ' · ' + numeral(tax.rate).format('0.####') + '%';
+		}
+		var row = $('<div class="store_register_tax_line"></div>');
+		row.append($('<span class="store_register_tax_name"></span>').text(name));
+		row.append($('<span class="store_register_tax_amount"></span>').text(numeral(tax.amount).format('$0.00')));
+		lines.append(row);
+	});
+}
+
+function storeRegisterRenderExemption() {
+	var exemption = storeRegisterData.exemption || { exempt: false, id: '' };
+	var enabled = storeRegisterTaxSettings().enabled;
+	$('#store_register_tax_exempt').prop('disabled', !enabled).prop('checked', !!exemption.exempt);
+	var field = $('#store_register_tax_exemption');
+	field.toggle(!!exemption.exempt);
+	if (!field.is(':focus')) { field.val(exemption.id || ''); }
 }
 
 function storeRegisterRenderPay() {
 	var order = storeRegisterActive();
 	var totals = storeRegisterTotals(order);
+	var cash_total = storeRegisterCashTotal(order);
 	var method = storeRegisterData.payment || 'cash';
 	$('.store_register_method').each(function() {
 		$(this).toggleClass('active', $(this).attr('data-method') === method);
 	});
 	$('#store_register_cash').toggle(method === 'cash');
-	var received = (method === 'cash') ? storeRegisterMoney(storeRegisterData.received) : totals.total;
-	var cash = storeRegisterChange(totals.total, received);
+	var received = (method === 'cash') ? storeRegisterMoney(storeRegisterData.received) : cash_total.rounded;
+	var cash = storeRegisterChange(cash_total.rounded, received);
+	var rounding = $('#store_register_rounding');
+	if (rounding.length) {
+		if (method === 'cash' && cash_total.rounding) {
+			rounding.text(storeRegisterT('Cash total {0} · rounding {1}',
+				numeral(cash_total.rounded).format('$0.00'),
+				numeral(cash_total.rounding).format('$0.00'))).show();
+		}
+		else {
+			rounding.text('').hide();
+		}
+	}
 	if (!$('#store_register_received').is(':focus')) {
 		$('#store_register_received').val(numeral(cash.received).format('0.00'));
 	}
@@ -337,7 +521,8 @@ function storeRegisterSearch() {
 				var button = $('<button type="button" class="store_register_result"></button>')
 					.attr('data-item', item.app)
 					.attr('data-name', item.name)
-					.attr('data-price', item.price);
+					.attr('data-price', item.price)
+					.attr('data-tax-codes', JSON.stringify(item.tax_codes || []));
 				button.append($('<span class="store_register_result_name"></span>').text(item.name));
 				button.append($('<span class="store_register_result_price"></span>').text(numeral(item.price).format('$0.00')));
 				results.append(button);
@@ -380,7 +565,8 @@ $(document).on('click', '.store_register_result', function() {
 		item: button.attr('data-item'),
 		name: button.attr('data-name'),
 		price: button.attr('data-price'),
-		quantity: 1
+		quantity: 1,
+		tax_codes: button.attr('data-tax-codes') || '[]'
 	}, function(r) {
 		$('#store_register_results').empty();
 		$('#store_register_search').val('');
@@ -456,6 +642,20 @@ $(document).on('input', '#store_register_received', function() {
 	$('#store_register_complete').prop('disabled', !storeRegisterActive() || cash.short);
 });
 
+// An exempt sale is charged no tax at all; the toggle and its id ride with the
+// sale so the server records both. A sale with the switch off has no tax anyway.
+$(document).on('change', '#store_register_tax_exempt', function() {
+	if (!storeRegisterData.exemption) { storeRegisterData.exemption = { exempt: false, id: '' }; }
+	storeRegisterData.exemption.exempt = $(this).is(':checked');
+	storeRegisterRenderOrder();
+	storeRegisterRenderPay();
+});
+
+$(document).on('input change', '#store_register_tax_exemption', function() {
+	if (!storeRegisterData.exemption) { storeRegisterData.exemption = { exempt: false, id: '' }; }
+	storeRegisterData.exemption.id = $(this).val();
+});
+
 $(document).on('click', '#store_register_complete', function() {
 	var order = storeRegisterActive();
 	if (!order) { return; }
@@ -470,7 +670,9 @@ $(document).on('click', '#store_register_complete', function() {
 	storeRegisterPost('/manager/store/register/sale', {
 		id: order.id,
 		payment: method,
-		received: received
+		received: received,
+		tax_exempt: (storeRegisterData.exemption && storeRegisterData.exemption.exempt) ? 'on' : 'off',
+		tax_exemption: (storeRegisterData.exemption && storeRegisterData.exemption.exempt) ? (storeRegisterData.exemption.id || '') : ''
 	}, function(r) {
 		storeRegisterData.receipt_html = r.receipt || '';
 		if (r.sale && r.sale.uuid) {

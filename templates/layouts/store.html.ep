@@ -1,3 +1,4 @@
+% use Mojo::JSON qw/encode_json/;
 <html lang="<%= &subs::language() %>" dir="<%= &subs::language_dir() %>">
 	<head>
 		<meta charset="utf-8">
@@ -30,6 +31,9 @@
 			<% my $sales_tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }); $sales_tax = 1 unless defined $sales_tax && $sales_tax =~ /^\d+(?:\.\d+)?$/; %>
 			var me_tax = <%= $tax %>;
 			var sales_tax = <%= $sales_tax %>;
+			var jawnos_tax_catalog = <%== encode_json(&subs::tax_catalog()) %>;
+			var jawnos_store_tax = <%== encode_json(&subs::store_tax_settings()) %>;
+			var jawnos_cash_rounding = <%== encode_json(&subs::cash_rounding_setting()) %>;
 			window.jawnos_lang = <%== &subs::lang_js() %>;
 			window.jawnos_lang_code = '<%= &subs::language() %>';
 			window.jawnos_lang_dir = '<%= &subs::language_dir() %>';

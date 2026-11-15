@@ -543,7 +543,7 @@ sub webauthn_person($c) {
 sub me_setting_list() {
 	my ($db,$database,$sql) = &subs::database_grabber();
 
-	my @settings = qw/mugshot log_me my_name home_plate currency tax information budget_alarm computer_name unit activity_timeout login_warranty warranty room_count duration worth pos advertise_watching gallery_appts/;
+	my @settings = qw/mugshot log_me my_name home_plate currency information budget_alarm computer_name unit activity_timeout login_warranty warranty room_count duration worth pos advertise_watching gallery_appts/;
 	my $settings = {};
 
 	foreach my $dt ( @gb::device_types ) {
@@ -558,7 +558,7 @@ sub me_setting_list() {
 sub store_setting_list() {
 	my ($db,$database,$sql) = &subs::database_grabber();
 
-	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date invoice_paper receipt_paper payment_paper_app receipt_message invoice_images/;
+	my @settings = qw/store_name slogan logo markup address email phone tax_number doc_notes payment_due_date invoice_paper receipt_paper payment_paper_app receipt_message invoice_images/;
 	my $settings = {};
 
 	foreach my $dt ( @gb::device_types ) {

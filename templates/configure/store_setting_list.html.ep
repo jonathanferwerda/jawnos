@@ -1,3 +1,13 @@
+<style>
+/* The Store's tax switch and its default selection belong to the house, not to
+   a handset, so they sit in one card above the per-device cards. While the
+   switch is off the default list stays usable but recedes. */
+.store_tax_card h3 { margin:0 0 6px; font-size:15px; }
+.store_tax_codes { width:100%; min-width:180px; box-sizing:border-box; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+.store_tax_defaults.is_secondary { opacity:.55; }
+.store_tax_status { margin-left:8px; font-size:12px; opacity:.8; }
+.store_tax_off_note { margin-top:-4px; }
+</style>
 <div class="cfg">
 	<h2>Store</h2>
 	<p class="cfg-note">Your shop's details, kept per device. Change one device's setting, or tick Anchor to copy a change to every device at once.</p>
@@ -5,6 +15,60 @@
 	<div class="cfg-row">
 		<label>Anchor</label>
 		<span><input type="checkbox" class="anchor_all_settings" setting_type="me"></span>
+	</div>
+
+	<%# One house row for the charge switch and one for the default codes. The
+	    catalog itself is edited under Me; this card never duplicates the
+	    per-device tax_number registration. When the switch is off the API
+	    reports no default codes, so read the stored selection for the display. %>
+	<% my $store_tax = &subs::store_tax_settings(); %>
+	<% my $cash_rounding = &subs::cash_rounding_setting(); %>
+	<% my $tax_catalog = $store_tax->{'catalog'}; %>
+	<% my $tax_default_codes = $store_tax->{'enabled'} ? $store_tax->{'default_codes'} : &subs::store_tax_default_codes($tax_catalog); %>
+	<% my %tax_default = map { $_ => 1 } @{$tax_default_codes || []}; %>
+	<% my $tax_rows = scalar @{$tax_catalog}; $tax_rows = 6 if ($tax_rows > 6); $tax_rows = 1 if ($tax_rows < 1); %>
+	<div class="cfg-card store_tax_card" id="store_tax_card">
+		<h3><%= &subs::ui('Taxes') %></h3>
+		<p class="cfg-note"><%= &subs::ui('Edit the tax list under Me.') %></p>
+		<div class="cfg-row">
+			<label><%= &subs::ui('Charge sales tax') %></label>
+			<span><input type="checkbox" class="store_tax_enabled" setting="sales_tax_enabled" device="all"<% if ($store_tax->{'enabled'}) { %> checked<% } %>></span>
+			<span class="store_tax_status" aria-live="polite"><%= &subs::ui('Saved') %></span>
+		</div>
+		<p class="cfg-note store_tax_off_note"<% if ($store_tax->{'enabled'}) { %> style="display:none;"<% } %>><%= &subs::ui('No tax is charged on any sale while this is off.') %></p>
+		<div class="cfg-row store_tax_defaults<% unless ($store_tax->{'enabled'}) { %> is_secondary<% } %>">
+			<label><%= &subs::ui('Default tax') %></label>
+			<span>
+				<select class="store_tax_codes" setting="sales_tax_codes" device="all" multiple size="<%= $tax_rows %>">
+					<% foreach my $tax ( @{$tax_catalog} ) { %>
+						<% my $rate_text = $tax->{'rate'} // ''; $rate_text =~ s/0+$// if $rate_text =~ /\./; $rate_text =~ s/\.$//; %>
+						<option value="<%= $tax->{'code'} %>"<% if ($tax_default{$tax->{'code'}}) { %> selected<% } %>><%= $tax->{'name'} %> (<%= $rate_text %>%)</option>
+					<% } %>
+				</select>
+			</span>
+		</div>
+		<div class="cfg-row">
+			<label><%= &subs::ui('Cash rounding') %></label>
+			<span>
+				<select class="store_cash_rounding" setting="cash_rounding" device="all">
+					<option value="auto"<% if ($cash_rounding->{'setting'} eq 'auto') { %> selected<% } %>><%= &subs::ui('Auto (5¢ in Canada, none elsewhere)') %></option>
+					<option value="off"<% if ($cash_rounding->{'setting'} eq 'off') { %> selected<% } %>><%= &subs::ui('None (to the cent)') %></option>
+					<option value="0.05"<% if ($cash_rounding->{'setting'} eq '0.05') { %> selected<% } %>><%= &subs::ui('Nearest 5¢') %></option>
+					<option value="0.10"<% if ($cash_rounding->{'setting'} eq '0.10') { %> selected<% } %>><%= &subs::ui('Nearest 10¢') %></option>
+				</select>
+				<span class="store_tax_status" aria-live="polite"></span>
+			</span>
+		</div>
+		<p class="cfg-note">
+			<% if ($cash_rounding->{'home_currency'} eq 'CAD' && $cash_rounding->{'step'}) { %>
+				<%= &subs::ui('Home currency CAD: cash rounds to 5¢. A transaction in another currency is never rounded.') %>
+			<% } else { %>
+				<%= &subs::ui('Cash stays at the cent. Auto rounds only when the home currency is CAD; a transaction in another currency is never rounded.') %>
+			<% } %>
+		</p>
+		<% if (!scalar @{$tax_catalog}) { %>
+			<p class="cfg-note"><%= &subs::ui('The tax list is empty. Add taxes under Me.') %></p>
+		<% } %>
 	</div>
 
 	<% foreach my $d ( @gb::device_types ) { %>

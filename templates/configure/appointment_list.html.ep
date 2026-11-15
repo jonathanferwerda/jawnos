@@ -18,7 +18,20 @@
 		quantity => 'calculator', home_plate => 'home', nfc => 'key',
 		navigation => 'gps', birthday => 'cake', evaluation => 'checkmark',
 	);
+	# The customer-like constructs carry a tax identity: an exemption, a country
+	# and the taxes they usually pay. The list itself is the one house catalog
+	# edited under Configure - Me.
+	my $tax_catalog = &subs::tax_catalog();
+	my %tax_kind = map { $_ => 1 } qw(person customer vendor corporation government institution);
 %>
+<style>
+#configuration_container .app_tax { margin:8px 0; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2, var(--panel)); }
+#configuration_container .app_tax_title { margin:0 0 4px; font-size:13px; opacity:.85; }
+#configuration_container .app_tax .cfg-grid { gap:6px 10px; }
+#configuration_container .app_tax .cfg-row { margin:4px 0; }
+#configuration_container .app_tax .cfg-row > label { min-width:110px; font-size:12.5px; }
+#configuration_container .app_tax select[multiple] { min-height:74px; }
+</style>
 <div id="configuration_container" class="cfg">
 	<%= include 'configure/appointment_list/style' %>
 	<% &subs::manufacturer_grabber(); %>
@@ -149,6 +162,57 @@
 							</span>
 						</div>
 					</div>
+					<%# A person or a customer-like construct can be exempt, can name a
+					    country, and can keep the taxes it usually pays. These are
+					    ordinary app settings; the existing .configure_input handler
+					    saves them (a multiple select arrives as a JSON array). %>
+					<% my $app_tax_pos = $appts->{$a}->{'setting'}->{'pos'} || ''; %>
+					<% my $app_tax_mab = $appts->{$a}->{'setting'}->{'mab'} || ''; %>
+					<% if ($tax_kind{$app_tax_pos} || $tax_kind{$app_tax_mab}) { %>
+						<% my $app_tax_codes = eval { decode_json($appts->{$a}->{'setting'}->{'tax_codes'} // '') } || []; %>
+						<% $app_tax_codes = [] unless ref $app_tax_codes eq 'ARRAY'; %>
+						<% my %app_tax_selected = map { $_ => 1 } grep { !ref($_) && length($_) } @{$app_tax_codes}; %>
+						<% my $app_tax_country = uc($appts->{$a}->{'setting'}->{'tax_country'} || ''); %>
+						<% my $tax_rows = scalar @{$tax_catalog}; $tax_rows = 6 if ($tax_rows > 6); $tax_rows = 1 if ($tax_rows < 1); %>
+						<div class="app_tax">
+							<h4 class="app_tax_title"><%= &subs::ui('Tax') %></h4>
+							<div class="cfg-grid">
+								<div class="cfg-row">
+									<label><%= &subs::ui('Tax exempt') %></label>
+									<span><input type="checkbox" class="configure_input" app="<%= $a %>" setting="tax_exempt" value="on"<% if (($appts->{$a}->{'setting'}->{'tax_exempt'} || '') eq 'on') { %> checked<% } %>></span>
+								</div>
+								<div class="cfg-row">
+									<label><%= &subs::ui('Exemption ID') %></label>
+									<span><input type="text" class="configure_input" app="<%= $a %>" setting="tax_exemption_id" value="<%= $appts->{$a}->{'setting'}->{'tax_exemption_id'} %>"></span>
+								</div>
+								<div class="cfg-row">
+									<label><%= &subs::ui('Tax country') %></label>
+									<span>
+										<select class="configure_input" app="<%= $a %>" setting="tax_country">
+											<option value=""><%= &subs::ui('Any country') %></option>
+											<% foreach my $country ( @{ &subs::tax_countries($tax_catalog) } ) { %>
+												<option value="<%= $country %>"<% if ($country eq $app_tax_country) { %> selected<% } %>><%= $country %></option>
+											<% } %>
+										</select>
+									</span>
+								</div>
+								<div class="cfg-row">
+									<label><%= &subs::ui('Taxes') %></label>
+									<span>
+										<select class="configure_input" app="<%= $a %>" setting="tax_codes" multiple size="<%= $tax_rows %>">
+											<% foreach my $app_tax ( @{$tax_catalog} ) { %>
+												<% my $rate_text = $app_tax->{'rate'} // ''; $rate_text =~ s/0+$// if $rate_text =~ /\./; $rate_text =~ s/\.$//; %>
+												<option value="<%= $app_tax->{'code'} %>"<% if ($app_tax_selected{$app_tax->{'code'}}) { %> selected<% } %>><%= $app_tax->{'name'} %> (<%= $rate_text %>%)</option>
+											<% } %>
+										</select>
+									</span>
+								</div>
+							</div>
+							<% if (!scalar @{$tax_catalog}) { %>
+								<p class="cfg-note" style="margin:0;"><%= &subs::ui('No taxes yet. Add them under Configure - Me.') %></p>
+							<% } %>
+						</div>
+					<% } %>
 					<% if ($appts->{$a}->{'setting'}->{'main_image'}) { %>
 						<span class="main_image_config" app="<%= $a %>">
 							<% my $main_image = &subs::main_icon_maker({ app => $a, timestamp => $timestamp, settings => $appts->{$a}->{'setting'}, size => 'huge' }); %>

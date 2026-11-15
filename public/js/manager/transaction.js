@@ -36,6 +36,10 @@ $(document).on('change', '.purchase_input', function() {
 	var value = input.val();
 	var length = value.length;
 	var attribute = input.attr('attribute');
+	// The tax selection and the exemption ID are the line's own snapshot, not an
+	// app setting: this handler writes settings and autofills names, neither of
+	// which applies here. The arithmetic handler below still sees the change.
+	if (attribute == 'taxes' || attribute == 'tax_exemption') { return; }
 	if (!$(this).is('select') && $(this).attr('type') != 'checkbox') {
 		if (1) {
 			$.ajax({
@@ -188,6 +192,101 @@ $(document).on('change', '.transaction_information', function() {
 
 });
 
+// The rate a line charges: the selected catalog entries added together, or the
+// old single multiplier when the line has selected none (an old draft, or a
+// house that never wrote a catalog). jawnos_tax_catalog is the layout's list.
+function transactionTaxRate(line) {
+	var catalog = (typeof jawnos_tax_catalog !== 'undefined' && jawnos_tax_catalog) ? jawnos_tax_catalog : [];
+	var selected = line.find('.purchase_input[attribute="taxes"]').val();
+	if (!$.isArray(selected)) { selected = (selected === null || selected === undefined || selected === '') ? [] : [selected]; }
+	var percent = 0;
+	var found = 0;
+	$.each(selected, function(i, code) {
+		$.each(catalog, function(ci, entry) {
+			if (entry && String(entry.code) === String(code)) {
+				percent += numeral(entry.rate).value();
+				found++;
+			}
+		});
+	});
+	if (!found) { return (typeof me_tax !== 'undefined' && me_tax) ? numeral(me_tax).value() : 1; }
+	return 1 + (percent / 100);
+}
+
+// The Amount field is gross when "Price includes tax" is on and net when it is
+// off, so the button's label decides the arithmetic. On a gross amount the tax
+// is the portion inside it; on a net amount it is added.
+function transactionTaxApply(amount, rate, inclusive, aux) {
+	if (!(rate > 0)) { rate = 1; }
+	if (inclusive) {
+		var gross_tax = amount - (amount / rate);
+		return { tax: gross_tax, total: amount + aux };
+	}
+	var net_tax = amount * (rate - 1);
+	return { tax: net_tax, total: amount + net_tax + aux };
+}
+
+// Recompute a line from its Amount field and its own rate, used when the rate
+// changes without an amount edit. The Amount is left as the person typed it.
+function transactionTaxRecalculate(line, rate) {
+	if (rate === undefined) { rate = transactionTaxRate(line); }
+	var inclusive = (line.find('.purchase_config[config="tax"]').attr('enabled') == 'on');
+	var amount = numeral(line.find('.purchase_input[attribute="amount"]').val()).value();
+	var aux = numeral(line.find('.purchase_input[attribute="aux"]').val()).value();
+	var figures = transactionTaxApply(amount, rate, inclusive, aux);
+	line.find('.purchase_input[attribute="tax"]').val(numeral(figures.tax).format('0.00'));
+	line.find('.purchase_input[attribute="total"]').val(numeral(figures.total).format('0.00'));
+}
+
+// The exemption belongs to the vendor, so the ID field is shown only while that
+// vendor is exempt.
+function taxExemptionPaint(line, exempt, id) {
+	var field = line.find('.tx_tax_exempt');
+	if (!field.length) { return; }
+	field.attr('tax_exempt', exempt ? 'on' : 'off');
+	var input = line.find('.purchase_input[attribute="tax_exemption"]');
+	if (exempt) { input.val(id || ''); field.show(); }
+	else { input.val(''); field.hide(); }
+}
+
+// A vendor keeps its exemption on its own app. The four settings arrive one at
+// a time from setting_grabber; the last one paints the line, and an exempt
+// vendor takes the tax off it so the record matches the paper.
+function taxExemptionFetch(line, vendor) {
+	if (!line || !line.length) { return; }
+	if (!vendor) { taxExemptionPaint(line, false, ''); return; }
+	var app = line.closest('.appointment').attr('app');
+	var found = { tax_exempt: '', tax_exemption_id: '', tax_codes: '', tax_country: '' };
+	var waiting = 4;
+	var finish = function() {
+		waiting--;
+		if (waiting > 0) { return; }
+		var exempt = (found.tax_exempt == 'on' || found.tax_exempt == '1' || found.tax_exempt === true);
+		taxExemptionPaint(line, exempt, found.tax_exemption_id || '');
+		if (exempt) {
+			line.find('.purchase_input[attribute="taxes"]').val([]);
+			// an exempt vendor charges nothing, even though an empty selection
+			// would otherwise fall back to the old single multiplier
+			transactionTaxRecalculate(line, 1);
+		}
+		if (app) { transactionStorageSaver(app); }
+	};
+	$.each(['tax_exempt', 'tax_exemption_id', 'tax_codes', 'tax_country'], function(i, setting) {
+		$.ajax({
+			url: '/manager/setting_grabber',
+			type: 'GET',
+			data: { app: vendor, setting: setting },
+			success: function(response) { found[setting] = response; },
+			error: function() { found[setting] = ''; },
+			complete: finish
+		});
+	});
+}
+
+$(document).on('change', '.purchase_details .vendor', function() {
+	taxExemptionFetch($(this).closest('.purchase_details'), $(this).val());
+});
+
 $(document).on('change', '.purchase_input', function() {
 	var e = $(this);
 	var iq = $(this).closest('.app_details');
@@ -197,8 +296,7 @@ $(document).on('change', '.purchase_input', function() {
 	var quantity = numeral(quantity_in.val() || 1).value();
 	var multiplier = 1;
 	var totes = iq.find('.purchase_config[config="totes"]').attr('enabled');
-	var tax = iq.find('.purchase_config[config="tax"]').attr('enabled');
-	var original_me_tax = me_tax;
+	var inclusive = (iq.find('.purchase_config[config="tax"]').attr('enabled') == 'on');
 	if (totes != 'on') {
 		if (quantity_in.attr('previously')) {
 			var previously = numeral(quantity_in.attr('previously')).value();
@@ -213,9 +311,8 @@ $(document).on('change', '.purchase_input', function() {
 			multiplier = quantity;
 		}
 	}
-	if (tax != 'on') {
-		me_tax = 1;
-	}
+	var rate = transactionTaxRate(iq);
+	if (!(rate > 0)) { rate = 1; }
 	var vendor = iq.find('.vendor').val();
 	var ago = iq.find('.ago').val();
 
@@ -236,47 +333,54 @@ $(document).on('change', '.purchase_input', function() {
 		$(v).attr('previously', previously);
 	});
 	var timestamp = Date.now();
+	var figures;
 	if (e.hasClass('total')) {
 		total = total * multiplier;
 		total_in.val(numeral(total).format('0.00'));
-		amount = total / me_tax;
+		var taxable = total - aux;
+		tax = taxable - (taxable / rate);
+		amount = inclusive ? taxable : (taxable / rate);
 		amount_in.val(numeral(amount).format('0.00'));
-		tax = ((amount * me_tax) - amount);
 		tax_in.val(numeral(tax).format('0.00'));
-		aux = total - tax - amount;
 	}
 	else if (e.hasClass('aux')) {
-		//$('.amount').val(numeral(total - aux - tax).format('0.00'));
-		total_in.val(numeral(amount + aux + tax).format('0.00'));
+		total_in.val(numeral(amount + aux + (inclusive ? 0 : tax)).format('0.00'));
 	}
 	else if (e.hasClass('tax')) {
-		amount_in.val(numeral((total - aux - tax)).format('0.00'))
+		// the person's own figure wins and the total stays put, so the amount
+		// follows it. A gross amount already contains its tax.
+		amount = total - aux - (inclusive ? 0 : tax);
+		amount_in.val(numeral(amount).format('0.00'));
+	}
+	else if (e.hasClass('taxes')) {
+		figures = transactionTaxApply(amount, rate, inclusive, aux);
+		tax_in.val(numeral(figures.tax).format('0.00'));
+		total_in.val(numeral(figures.total).format('0.00'));
+	}
+	else if (e.hasClass('tax_exemption')) {
+		// the exemption ID is recorded beside the line; it changes no amount
 	}
 	else if (e.hasClass('amount')) {
 		amount = amount * multiplier;
 		amount_in.val(numeral(amount).format('0.00'));
-		total = amount * me_tax;
-		total_in.val(numeral(total).format('0.00'));
-		tax = ((amount * me_tax) - amount);
-		tax_in.val(numeral(tax).format('0.00'));
+		figures = transactionTaxApply(amount, rate, inclusive, aux);
+		tax_in.val(numeral(figures.tax).format('0.00'));
+		total_in.val(numeral(figures.total).format('0.00'));
 	}
 	else if (e.hasClass('quantity')) {
 		amount = amount * multiplier;
 		amount_in.val(numeral(amount).format('0.00'));
-		total = amount * me_tax;
-		total_in.val(numeral(total).format('0.00'));
-		tax = ((amount * me_tax) - amount);
-		tax_in.val(numeral(tax).format('0.00'));
+		figures = transactionTaxApply(amount, rate, inclusive, aux);
+		tax_in.val(numeral(figures.tax).format('0.00'));
+		total_in.val(numeral(figures.total).format('0.00'));
 	}
 	else {
 		amount = amount * multiplier;
 		amount_in.val(numeral(amount).format('0.00'));
-		total = amount * me_tax;
-		total_in.val(numeral(total).format('0.00'));
-		tax = ((amount * me_tax) - amount);
-		tax_in.val(numeral(tax).format('0.00'));
+		figures = transactionTaxApply(amount, rate, inclusive, aux);
+		tax_in.val(numeral(figures.tax).format('0.00'));
+		total_in.val(numeral(figures.total).format('0.00'));
 	}
-	me_tax = original_me_tax;
 	txTenderChange(iq.closest('.app_details'));
 	transactionStorageSaver(app);
 
@@ -286,6 +390,8 @@ $(document).on('keyup click', '.purchase_input', function() {
 	var me = $(this);
 	var value = me.val();
 	var attribute = me.attr('attribute');
+	// the tax selection and its exemption ID are not names to autocomplete
+	if (attribute == 'taxes' || attribute == 'tax_exemption') { return; }
 	var ad = me.closest('.app_details');
 	var pd = me.closest('.purchase_details');
 	var app = ad.attr('app');
@@ -400,6 +506,20 @@ function transactionStorageSaver(app) {
 
 
 	});
+	// the save route records one exemption for the transaction: the ID beside an
+	// exempt vendor, taken from the line that shows it
+	var exemption = '';
+	$('.purchase_details[app="' + app + '"]').each(function(i, v) {
+		var pd = $(v);
+		if (pd.find('.tx_tax_exempt').attr('tax_exempt') != 'on') { return; }
+		var value = pd.find('.purchase_input[attribute="tax_exemption"]').val() || '';
+		if (value.length) { exemption = value; }
+	});
+	storage[movement]['totals']['tax_exemption'] = exemption;
+	var cash_rounding = numeral(appt.find('.tx_rounding').attr('data-rounding')).value() || 0;
+	var cash_total = numeral(appt.find('.tx_rounding').attr('data-cash-total')).value() || 0;
+	storage[movement]['totals']['rounding'] = cash_rounding;
+	if (cash_total) { storage[movement]['totals']['cash_total'] = cash_total; }
 	$('.transaction_total').each( function(i,v) {
 		var att = $(v).attr('attribute');
 		if (numeral(storage[movement]['totals'][att]).value() != 0) {
@@ -430,13 +550,37 @@ function txTenderPaint(ad) {
 	txTenderChange(ad);
 }
 
+// A cash sale in the home currency is rounded to the house's cash step (5¢ in
+// Canada). The ledger keeps the exact line totals; the rounded total is what
+// the person hands over and gets change from, and it is kept with the draft so
+// the paper can show it. Another currency is never rounded.
+function txCashRounding(ad, total) {
+	var cr = (typeof jawnos_cash_rounding !== 'undefined' && jawnos_cash_rounding) ? jawnos_cash_rounding : null;
+	if (!cr || !cr.step) { return { step: 0, rounded: total, rounding: 0 }; }
+	var currency = (ad.find('.currency').val() || '').toUpperCase();
+	if (!currency || currency !== String(cr.home_currency || '').toUpperCase()) {
+		return { step: 0, rounded: total, rounding: 0 };
+	}
+	var rounded = Math.round(total / cr.step) * cr.step;
+	rounded = Math.round(rounded * 100) / 100;
+	return { step: cr.step, rounded: rounded, rounding: Math.round((rounded - total) * 100) / 100 };
+}
+
 function txTenderChange(ad) {
 	if (!ad || !ad.length) { return; }
 	var paid = numeral(ad.find('.tx_tendered').val()).value();
 	var total = 0;
 	ad.find('.purchase_details .total').each(function() { total += numeral($(this).val()).value(); });
-	var change = paid - total;
+	var cash = ad.find('.tx_tender_on').length > 0;
+	var round = cash ? txCashRounding(ad, total) : { step: 0, rounded: total, rounding: 0 };
+	var change = paid - round.rounded;
 	var out = ad.find('.tx_change');
+	var note = ad.find('.tx_rounding');
+	if (note.length) {
+		note.text(round.step ? ('Cash total ' + numeral(round.rounded).format('0.00') + ' · rounding ' + numeral(round.rounding).format('0.00')) : '')
+			.attr('data-rounding', round.rounding)
+			.attr('data-cash-total', round.rounded);
+	}
 	if (!paid || !total) { out.text('').removeClass('tx_short'); return; }
 	out.text(numeral(change).format('0.00')).toggleClass('tx_short', change < 0);
 }
@@ -461,6 +605,12 @@ $(document).on('change', '.app_details .account', function() {
 	var ad = $(this).closest('.app_details');
 	txTenderPaint(ad);
 	txTransferPaint(ad);
+});
+
+$(document).on('change', '.app_details .currency', function() {
+	var ad = $(this).closest('.app_details');
+	txTenderPaint(ad);
+	txTenderChange(ad);
 });
 
 // The same account picker is the source of an expense and of a transfer, so its

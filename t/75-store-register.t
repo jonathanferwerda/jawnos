@@ -94,8 +94,9 @@ my $built = &subs::store_register_sale_data($second, 'cash', 20, 'Customer', 'TE
 ok( $built->{'ok'}, 'a paid order builds a sale document' );
 is( $built->{'payment'}->{'method'}, 'cash', 'the payment method is carried' );
 is( $built->{'data'}->{'payments'}->[0]->{'method'}, 'cash', 'and is on the receipt payment' );
-is( sprintf('%.2f', $built->{'data'}->{'numbers'}->{'total'}), '15.82', 'the sale total is recomputed by the server' );
-is( sprintf('%.2f', $built->{'data'}->{'payments'}->[0]->{'change'}), '4.18', 'the change is on the receipt payment' );
+is( sprintf('%.2f', $built->{'data'}->{'numbers'}->{'total'}), '15.80', 'the sale total is recomputed by the server, rounded for cash' );
+is( sprintf('%.2f', $built->{'data'}->{'numbers'}->{'rounding'}), '-0.02', 'and the cash rounding is recorded' );
+is( sprintf('%.2f', $built->{'data'}->{'payments'}->[0]->{'change'}), '4.20', 'the change is worked from the rounded total' );
 is( $built->{'data'}->{'register'}->{'customer'}, 'Customer', 'the receipt names the anonymous customer' );
 is( scalar @{$built->{'data'}->{'register'}->{'items'}}, 1, 'the receipt lists the order lines' );
 is( $built->{'data'}->{'payments'}->[0]->{'label'}, &subs::lang('common.cash'), 'the method label is a translated core label' );

@@ -408,6 +408,7 @@ function storeItem(item,quote) {
 			else {
 				saveQuote();
 			}
+			storeItemTaxRefresh();
 			if (!response.settings) {
 				setTimeout(storeCloseDetail, 2000);
 			}
@@ -994,9 +995,73 @@ function doTheMath() {
 	$('.display_discount').text(numeral(r.discount).format('$0.00'));
 	$('.display_tax').text(numeral(r.tax).format('$0.00'));
 	$('.display_total').text(numeral(r.total).format('$0.00'));
+	storeItemTaxRefresh();
 
 	return r;
 }
+
+// The item's own tax selection. The catalog is the server's list; a selection
+// that names none uses the Store default, exactly as the register does. When
+// the Store's tax switch is off there is no tax and the picker is inert.
+function storeItemTaxSettings() {
+	if (typeof jawnos_store_tax !== 'undefined' && jawnos_store_tax) { return jawnos_store_tax; }
+	return { enabled: false, default_codes: [], catalog: (typeof jawnos_tax_catalog !== 'undefined' && jawnos_tax_catalog) ? jawnos_tax_catalog : [] };
+}
+
+function storeItemTaxPrice() {
+	var value = numeral($('.display_price').first().text()).value();
+	if (isNaN(value) || value === null) { value = numeral($('.item').attr('price')).value(); }
+	return isNaN(value) || value === null ? 0 : value;
+}
+
+function storeItemTaxRefresh() {
+	var picker = $('#item_tax_codes');
+	if (!picker.length) { return; }
+	var settings = storeItemTaxSettings();
+	var price = storeItemTaxPrice();
+	if (!settings.enabled) {
+		picker.prop('disabled', true);
+		$('.display_tax').text(numeral(0).format('$0.00'));
+		$('.display_total').text(numeral(price).format('$0.00'));
+		return;
+	}
+	picker.prop('disabled', false);
+	var codes = picker.val() || [];
+	if (typeof codes === 'string') { codes = [codes]; }
+	if (!codes.length) { codes = settings.default_codes || []; }
+	var catalog = settings.catalog || [];
+	var percent = 0;
+	$.each(codes, function(i, code) {
+		$.each(catalog, function(j, entry) {
+			if (entry && String(entry.code).toLowerCase() === String(code).toLowerCase()) {
+				percent += parseFloat(entry.rate) || 0;
+			}
+		});
+	});
+	var tax = Math.round(price * percent) / 100;
+	$('.display_tax').text(numeral(tax).format('$0.00'));
+	$('.display_total').text(numeral(price + tax).format('$0.00'));
+}
+
+$(document).on('change', '#item_tax_codes', function() {
+	var item = $('#item').attr('item') || $('.item').attr('item');
+	var codes = $(this).val() || [];
+	if (typeof codes === 'string') { codes = [codes]; }
+	if (item) {
+		$.ajax({
+			url: '/manager/setting_setter',
+			type: 'POST',
+			data: {
+				app: item,
+				setting: 'tax_codes',
+				device: (typeof device !== 'undefined' && device !== null) ? device : '',
+				value: JSON.stringify(codes),
+				timestamp: Date.now()
+			}
+		});
+	}
+	storeItemTaxRefresh();
+});
 
 function markupCalculator(id) {
 	var angle = $('#' + id);
@@ -1067,8 +1132,7 @@ function markupCalculator(id) {
 
 	});
 
-
-
+	storeItemTaxRefresh();
 }
 
 

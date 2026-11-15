@@ -6,6 +6,17 @@
 	my $units = &Manager::measures_all();
 	no warnings 'uninitialized';
 	my $has_models = scalar @{$appts->{$a}->{'model'} || []} > 0;
+	# The line's own selection is a snapshot (codes, or whole entries when the
+	# catalog has changed); a line that never chose one starts from the customer's
+	# usual taxes. An explicit empty selection stays empty.
+	my $tax_catalog = &subs::tax_catalog();
+	my $tax_vendor = &subs::tax_exemption_for($app->{'vendor'} || $appts->{$a}->{'last_transaction'}->{'vendor'}, $tax_catalog);
+	my @tax_codes = map { ref $_ ? ($_->{'code'} // '') : $_ } @{ &subs::tax_codes_value($app->{'taxes'}) };
+	@tax_codes = grep { length } @tax_codes;
+	@tax_codes = @{ $tax_vendor->{'codes'} } unless (defined $app->{'taxes'} && length $app->{'taxes'});
+	@tax_codes = () if $tax_vendor->{'exempt'};
+	my %tax_selected = map { $_ => 1 } @tax_codes;
+	my $tax_exemption_id = (defined $app->{'tax_exemption'} && length $app->{'tax_exemption'}) ? $app->{'tax_exemption'} : ($tax_vendor->{'id'} || '');
 	foreach my $i ( @{$informations} ) {
 		$i->{'data'} = eval { return decode_json $i->{'data'} } || {};
 	}
@@ -86,6 +97,19 @@
 		<span class="tx_field">
 			<label><%= &subs::ui('Tax') %></label>
 			<input type="text" name="tax" attribute="tax" value="<%= $app->{'tax'} %>" class="purchase_input tax" placeholder="0.00">
+		</span>
+		<span class="tx_field tx_taxes_field">
+			<label><%= &subs::ui('Taxes') %></label>
+			<select multiple class="purchase_input taxes" attribute="taxes" name="taxes" size="3">
+				<% foreach my $tax ( @{$tax_catalog} ) { %>
+					<option value="<%= $tax->{'code'} %>"<% if ($tax_selected{$tax->{'code'}}) { %> selected<% } %>><%= $tax->{'name'} || $tax->{'code'} %> (<%= $tax->{'rate'} %>%)</option>
+				<% } %>
+			</select>
+		</span>
+		<span class="tx_field tx_tax_exempt" tax_exempt="<%= $tax_vendor->{'exempt'} ? 'on' : 'off' %>"<% unless ($tax_vendor->{'exempt'}) { %> style="display:none;"<% } %>>
+			<label><%= &subs::ui('Tax exempt') %></label>
+			<input type="text" name="tax_exemption" attribute="tax_exemption" class="purchase_input tax_exemption"
+				value="<%= $tax_exemption_id %>" placeholder="<%= &subs::ui('Exemption ID') %>">
 		</span>
 		<span class="tx_field tx_total">
 			<label><%= &subs::ui('Total') %></label>

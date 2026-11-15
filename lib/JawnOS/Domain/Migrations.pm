@@ -195,6 +195,8 @@ sub update_database($data) {
 		# The details bar can turn off the plate's automatic stop for the session
 		# that is running; an unset value means on, which is every older row.
 		'alter table appointments add column autostop VARCHAR(10)',
+		'alter table appointments add column taxes LONGTEXT',
+		'alter table appointments add column tax_exemption VARCHAR(255)',
 		'alter table mailbox add column sender VARCHAR(25)',
 		'alter table mailbox add column email_server VARCHAR(255)',
 		# schema.sql has carried these two for a while, but the migration list

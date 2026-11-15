@@ -140,10 +140,39 @@
 		<% } %>
 	<% } %>
 
+	<%# A till sale carries the taxes it actually charged, merged by code so
+	    several lines read as one house tax. An old sale has only `numbers.tax`
+	    and prints that single row below. %>
+	<%
+		my (@paper_taxes, %paper_tax_by, $paper_exemption, $paper_rounding);
+		$paper_rounding = 0;
+		foreach my $reg ( @{$registers} ) {
+			my $d = $reg->{'data'} || {};
+			if (ref $d->{'numbers'} eq 'HASH' && ref $d->{'numbers'}->{'taxes'} eq 'ARRAY') {
+				foreach my $t ( @{$d->{'numbers'}->{'taxes'}} ) {
+					next unless ref $t eq 'HASH';
+					my $key = lc($t->{'code'} // $t->{'name'} // '');
+					next unless length $key;
+					if (!$paper_tax_by{$key}) {
+						$paper_tax_by{$key} = { name => $t->{'name'} // '', rate => $t->{'rate'}, amount => 0 };
+						push @paper_taxes, $paper_tax_by{$key};
+					}
+					$paper_tax_by{$key}->{'amount'} += $t->{'amount'} || 0;
+				}
+			}
+			$paper_rounding += $d->{'numbers'}->{'rounding'} || 0;
+			my $e = $d->{'tax_exemption'} // ((ref $d->{'register'} eq 'HASH') ? $d->{'register'}->{'tax_exemption'} : '');
+			$paper_exemption = $e if defined $e && length $e && !length $paper_exemption;
+		}
+	%>
+
 	<table class="paper_foot"><tbody><tr>
 		<td class="paper_foot_left">
 			<% if (my $tax_number = &subs::setting_grabber({ app => 'me', 'setting' => 'tax_number' })) { %>
 				<div><b>Tax:</b> <%= $tax_number %></div>
+			<% } %>
+			<% if (length $paper_exemption) { %>
+				<div><b><%= &subs::ui('Tax exemption') %>:</b> <%= $paper_exemption %></div>
 			<% } %>
 			<% if (my $doc_notes = &subs::setting_grabber({ app => 'me', 'setting' => 'doc_notes' })) { %>
 				<div><b>Note:</b> <%= $doc_notes %></div>
@@ -155,8 +184,15 @@
 					<tr><td class="paper_label_cell"><%= &subs::lang('store.discount') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'discount'}) %></td></tr>
 				<% } %>
 				<tr><td class="paper_label_cell"><%= &subs::lang('store.subtotal') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'subtotal'}) %></td></tr>
-				<% if ($totals->{'tax'}) { %>
+				<% if (scalar @paper_taxes) { %>
+					<% foreach my $t ( sort { lc($a->{'name'} // '') cmp lc($b->{'name'} // '') } @paper_taxes ) { %>
+						<tr><td class="paper_label_cell"><%= &subs::format_name($t->{'name'}) %><% if (defined $t->{'rate'} && $t->{'rate'} ne '') { %> (<%= $t->{'rate'} %>%)<% } %></td><td class="paper_value"><%= &subs::price_formatter($t->{'amount'}) %></td></tr>
+					<% } %>
+				<% } elsif ($totals->{'tax'}) { %>
 					<tr><td class="paper_label_cell"><%= &subs::lang('common.tax') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'tax'}) %></td></tr>
+				<% } %>
+				<% if ($paper_rounding) { %>
+					<tr><td class="paper_label_cell"><%= &subs::ui('Rounding') %></td><td class="paper_value"><%= &subs::price_formatter($paper_rounding) %></td></tr>
 				<% } %>
 				<% if ($totals->{'aux'}) { %>
 					<tr><td class="paper_label_cell"><%= &subs::lang('store.aux') %></td><td class="paper_value"><%= &subs::price_formatter($totals->{'aux'}) %></td></tr>

@@ -1,6 +1,19 @@
 <% 
 	use Mojo::JSON qw/decode_json/;
 	no warnings 'uninitialized';
+	my $tax_settings = &subs::store_tax_settings();
+	my $tax_catalog = $tax_settings->{'catalog'} || [];
+	my $item_tax_codes = &subs::tax_codes_value($item->{'settings'}->{'tax_codes'});
+	my @item_tax_codes = map { ref $_ ? $_->{'code'} : $_ } grep { defined && (ref $_ || length $_) } @{$item_tax_codes};
+	my %item_tax_selected = map { lc($_) => 1 } @item_tax_codes;
+	my $tax_entries = &subs::tax_entries_for_codes($tax_catalog, \@item_tax_codes);
+	$tax_entries = &subs::tax_entries_for_codes($tax_catalog, $tax_settings->{'default_codes'}) unless scalar @{$tax_entries};
+	my $display_tax = 0;
+	my $display_total = $item->{'price'} || 0;
+	if ($tax_settings->{'enabled'}) {
+		$display_tax += ($_->{'amount'} || 0) for @{ &subs::tax_line_snapshot($item->{'price'} || 0, $tax_entries, 0) };
+		$display_total = ($item->{'price'} || 0) + $display_tax;
+	}
 %>
 
 <div class="item" id="item" item="<%= $item->{'app'} %>" price="<%= $item->{'price'} %>" quote_id="<%= $item->{'quote'}->{'id'} %>" quote_uuid="<%= $item->{'quote'}->{'uuid'} || 'new' %>"
@@ -93,13 +106,24 @@
 		</div>
 		<div class="price_cell">
 			<span class="price_label"><%= &subs::lang('common.tax') %></span>
-			<span class="pi display_tax" id="pi_tax" angle="tax"><%= &subs::price_formatter($item->{'tax'}) %></span>
+			<span class="pi display_tax" id="pi_tax" angle="tax"><%= &subs::price_formatter($display_tax) %></span>
 			<input type="number" class="pi display_tax price_edit" style="display:none;" id="pi_tax_edit" angle="tax">
 		</div>
 		<div class="price_cell price_cell_total">
 			<span class="price_label"><%= &subs::lang('common.total') %></span>
-			<span class="pi display_total" id="pi_total" angle="total"><%= &subs::price_formatter($item->{'price'}) %></span>
+			<span class="pi display_total" id="pi_total" angle="total"><%= &subs::price_formatter($display_total) %></span>
 			<input type="number" class="pi display_total price_edit" style="display:none;" id="pi_total_edit" angle="total">
 		</div>
 	</div>
+
+	<% if ($c->session('privilege') eq 'citizen') { %>
+		<div class="store_tax_picker" data-tax-enabled="<%= $tax_settings->{'enabled'} ? 1 : 0 %>">
+			<label class="store_control item_tax_codes">
+				<span class="store_control_label"><%= &subs::ui('Taxes') %></span>
+				<select id="item_tax_codes" multiple<%= $tax_settings->{'enabled'} ? '' : ' disabled' %>><% foreach my $tax ( @{$tax_catalog} ) { %>
+					<option value="<%= $tax->{'code'} %>"<% if ($tax_settings->{'enabled'} && $item_tax_selected{lc $tax->{'code'}}) { %> selected<% } %>><%= $tax->{'name'} %> (<%= $tax->{'rate'} %>%)</option><% } %>
+				</select>
+			</label>
+		</div>
+	<% } %>
 </div>

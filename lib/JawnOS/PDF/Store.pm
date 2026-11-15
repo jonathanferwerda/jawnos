@@ -64,6 +64,8 @@ my %DEFAULT_LABEL = (
 	this_payment  => 'This payment',
 	remaining     => 'Remaining balance',
 	for_invoice   => 'For invoice',
+	tax_exemption => 'Tax exemption',
+	rounding => 'Rounding',
 );
 
 my %LANG_KEY = (
@@ -170,7 +172,7 @@ sub _labels {
 		my $text = _call_sub('subs::lang', $LANG_KEY{$key});
 		$out{$key} = $text if defined $text;
 	}
-	for my $key (qw(this_payment remaining for_invoice customer)) {
+	for my $key (qw(this_payment remaining for_invoice customer tax_exemption rounding)) {
 		my $text = _call_sub('subs::ui', $DEFAULT_LABEL{$key});
 		$out{$key} = $text if defined $text;
 	}
@@ -274,7 +276,8 @@ sub model {
 	my $registers = ref $paper->{'registers'} eq 'ARRAY' ? $paper->{'registers'} : [];
 	my @lines;
 	my @payments;
-	my %sum = (subtotal => 0, discount => 0, tax => 0, aux => 0, total => 0, balance => 0);
+	my %sum = (subtotal => 0, discount => 0, tax => 0, rounding => 0, aux => 0, total => 0, balance => 0);
+	my (@tax_rows, %tax_by, $tax_exemption);
 	my $stamp = 0;
 	my $receipt;
 	my $till = 0;
@@ -283,7 +286,23 @@ sub model {
 		$stamp = $register->{'timestamp'} if ($register->{'timestamp'} || 0) > $stamp;
 		if (ref $data->{'numbers'} eq 'HASH') {
 			$sum{$_} += _num($data->{'numbers'}{$_}, 0) for keys %sum;
+			# Each sale carries the taxes it actually charged; merge by code so a
+			# bill's lines read as the house's taxes rather than one total.
+			if (ref $data->{'numbers'}{'taxes'} eq 'ARRAY') {
+				for my $tax (@{$data->{'numbers'}{'taxes'}}) {
+					next unless ref $tax eq 'HASH';
+					my $key = lc($tax->{'code'} // $tax->{'name'} // '');
+					next unless length $key;
+					unless ($tax_by{$key}) {
+						$tax_by{$key} = { code => $tax->{'code'}, name => $tax->{'name'}, rate => $tax->{'rate'}, amount => 0 };
+						push @tax_rows, $tax_by{$key};
+					}
+					$tax_by{$key}{'amount'} += _num($tax->{'amount'}, 0);
+				}
+			}
 		}
+		my $exempt = $data->{'tax_exemption'} // ((ref $data->{'register'} eq 'HASH') ? $data->{'register'}{'tax_exemption'} : '');
+		$tax_exemption = $exempt if defined $exempt && length $exempt && !length $tax_exemption;
 		$till = 1 if ref $data->{'register'} eq 'HASH';
 		push @lines, _register_lines($data);
 		push @payments, @{$data->{'payments'}} if ref $data->{'payments'} eq 'ARRAY';
@@ -296,6 +315,10 @@ sub model {
 			? $given->{$key}
 			: $sum{$key};
 	}
+	for my $tax (@tax_rows) {
+		$tax->{'amount'} = 0 + sprintf('%.2f', $tax->{'amount'} || 0);
+	}
+	my @taxes = sort { lc($a->{'name'} // '') cmp lc($b->{'name'} // '') } @tax_rows;
 	my $cx = ref $paper->{'cx'} eq 'HASH' ? $paper->{'cx'} : {};
 	my $id = defined $paper->{'id'} ? $paper->{'id'} : '';
 	$id = _plain($id);
@@ -373,6 +396,8 @@ sub model {
 		store        => $store,
 		labels       => $labels,
 		totals       => \%totals,
+		taxes        => \@taxes,
+		tax_exemption => $tax_exemption,
 		lines        => \@lines,
 		payments     => \@payment_rows,
 		paid         => $balance <= 0.005,
@@ -468,7 +493,18 @@ sub _totals_block {
 	my @rows;
 	push @rows, [$labels->{'discount'}, $totals->{'discount'}, 0] if $totals->{'discount'};
 	push @rows, [$labels->{'subtotal'}, $totals->{'subtotal'}, 0];
-	push @rows, [$labels->{'tax'}, $totals->{'tax'}, 0] if $totals->{'tax'};
+	my $taxes = ref $doc->{'taxes'} eq 'ARRAY' ? $doc->{'taxes'} : [];
+	if (scalar @{$taxes}) {
+		for my $tax (@{$taxes}) {
+			my $name = (defined $tax->{'name'} && length $tax->{'name'}) ? $tax->{'name'} : $labels->{'tax'};
+			$name .= ' (' . $tax->{'rate'} . '%)' if defined $tax->{'rate'} && length $tax->{'rate'};
+			push @rows, [$name, $tax->{'amount'}, 0];
+		}
+	}
+	elsif ($totals->{'tax'}) {
+		push @rows, [$labels->{'tax'}, $totals->{'tax'}, 0];
+	}
+	push @rows, [$labels->{'rounding'}, $totals->{'rounding'}, 0] if $totals->{'rounding'};
 	push @rows, [$labels->{'aux'}, $totals->{'aux'}, 0] if $totals->{'aux'};
 	push @rows, [$labels->{'total'}, $totals->{'total'}, 1];
 	push @rows, [$labels->{'balance'}, $totals->{'balance'}, 0]
@@ -573,6 +609,12 @@ sub _receipt {
 		);
 	}
 	my $message = $doc->{'store'}{'receipt_message'};
+	if (defined $doc->{'tax_exemption'} && length $doc->{'tax_exemption'}) {
+		$y += 8;
+		$pdf->text(uc($labels->{'tax_exemption'}), $left, $y, font => 'Helvetica-Bold', size => 8);
+		$pdf->text($doc->{'tax_exemption'}, $right - 150, $y, size => 8, align => 'right', width => 150);
+		$y += 12;
+	}
 	if (defined $message && length $message) {
 		$y += 10;
 		$pdf->rule($left, $y, $right, $y, width => 0.5, color => '#cccccc');
@@ -720,6 +762,8 @@ sub _invoice {
 	my @notes;
 	push @notes, [$labels->{'tax'}, $store->{'tax_number'}]
 		if defined $store->{'tax_number'} && length $store->{'tax_number'};
+	push @notes, [$labels->{'tax_exemption'}, $doc->{'tax_exemption'}]
+		if defined $doc->{'tax_exemption'} && length $doc->{'tax_exemption'};
 	push @notes, ['Note', $store->{'doc_notes'}]
 		if defined $store->{'doc_notes'} && length $store->{'doc_notes'};
 	my $note_y = $pdf->bottom - 12 * scalar(@notes);

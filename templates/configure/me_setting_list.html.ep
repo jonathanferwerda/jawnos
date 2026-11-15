@@ -10,6 +10,16 @@
 #me_setting_list .me_checks label { display:inline-flex; align-items:center; gap:6px; font-size:13px; }
 #me_setting_list .me_timezone { min-width:240px; font:inherit; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); }
 #me_setting_list .me_timezone_note { margin-left:8px; font-size:12px; opacity:.8; }
+#me_setting_list .tax_catalog_card h3 { margin:0 0 6px; font-size:15px; }
+#me_setting_list .tax_catalog_row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 6px; }
+#me_setting_list .tax_catalog_row > input[type=text] { box-sizing:border-box; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; line-height:1.3; }
+#me_setting_list .tax_catalog_code { flex:0 1 110px; }
+#me_setting_list .tax_catalog_name { flex:1 1 170px; min-width:120px; }
+#me_setting_list .tax_catalog_rate { flex:0 1 78px; }
+#me_setting_list .tax_catalog_country { flex:0 1 86px; }
+#me_setting_list .tax_catalog_default { display:inline-flex; align-items:center; gap:5px; font-size:13px; }
+#me_setting_list .tax_catalog_remove { flex:0 0 auto; line-height:1; padding:5px 9px; }
+#me_setting_list .tax_catalog_status { margin-left:8px; font-size:12px; opacity:.8; }
 </style>
 <div class="cfg">
 	<h2>Me</h2>
@@ -18,6 +28,36 @@
 	<div class="cfg-row">
 		<label>Anchor</label>
 		<span><input type="checkbox" class="anchor_all_settings" setting_type="me"></span>
+	</div>
+
+	<%# One house list, not a card per device: the Store, an invoice and a
+	    customer's exemption all read it. The rate keeps the raw text the person
+	    typed (13 or 13%); the catalog read normalizes it. %>
+	<% my $tax_catalog = &subs::tax_catalog(); %>
+	<div class="cfg-card tax_catalog_card" id="me_tax_card">
+		<h3><%= &subs::ui('Taxes') %></h3>
+		<p class="cfg-note"><%= &subs::ui('The tax list for the whole house. A rate is a percent, so 13 means 13%.') %></p>
+		<div class="tax_catalog_rows">
+			<% foreach my $tax ( @{$tax_catalog} ) { %>
+				<% my $rate_text = $tax->{'rate'} // ''; $rate_text =~ s/0+$// if $rate_text =~ /\./; $rate_text =~ s/\.$//; %>
+				<div class="tax_catalog_row">
+					<input type="text" class="tax_catalog_code" value="<%= $tax->{'code'} %>" placeholder="<%= &subs::ui('Code') %>" aria-label="<%= &subs::ui('Code') %>" maxlength="40">
+					<input type="text" class="tax_catalog_name" value="<%= $tax->{'name'} %>" placeholder="<%= &subs::ui('Name') %>" aria-label="<%= &subs::ui('Name') %>">
+					<input type="text" class="tax_catalog_rate" value="<%= $rate_text %>" placeholder="13%" aria-label="<%= &subs::ui('Rate') %>">
+					<input type="text" class="tax_catalog_country" value="<%= $tax->{'country'} %>" placeholder="<%= &subs::ui('Country') %>" aria-label="<%= &subs::ui('Country') %>" maxlength="2">
+					<label class="tax_catalog_default"><input type="checkbox"<% if ($tax->{'default'}) { %> checked<% } %>> <%= &subs::ui('Default') %></label>
+					<button type="button" class="tax_catalog_remove" hint="<%= &subs::ui('Remove this tax') %>" aria-label="<%= &subs::ui('Remove this tax') %>">&times;</button>
+				</div>
+			<% } %>
+		</div>
+		<% if (!scalar @{$tax_catalog}) { %>
+			<p class="cfg-note tax_catalog_empty"><%= &subs::ui('No taxes yet. Add one below.') %></p>
+		<% } %>
+		<div class="cfg-row">
+			<button type="button" class="tax_catalog_add"><%= &subs::ui('Add tax') %></button>
+			<button type="button" class="tax_catalog_save"><%= &subs::ui('Save taxes') %></button>
+			<span class="tax_catalog_status" aria-live="polite"><%= &subs::ui('Saved') %></span>
+		</div>
 	</div>
 
 	<% my $me_device = &subs::device_setter(); %>
