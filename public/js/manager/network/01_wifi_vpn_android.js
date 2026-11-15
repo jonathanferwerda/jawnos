@@ -17,7 +17,7 @@ function networkWifiJoin(row, button, ssid, passphrase) {
 	var message = row.find('.network_wifi_msg').text(networkT('Working…'));
 	button.prop('disabled', true);
 	var secure = row.attr('data-saved') === '1' || row.attr('data-secure') !== '0' ? 1 : 0;
-	var data = $.extend({ interface: iface, ssid: ssid, passphrase: passphrase || '', secure: secure }, networkWifiOptionsData(row));
+	var data = $.extend({ interface: iface, ssid: ssid, passphrase: passphrase || '', secure: secure }, networkAddressOptionsData(row));
 	networkPost('wifi_connect', data, function(response) {
 		button.prop('disabled', false);
 		if (response.ok) {

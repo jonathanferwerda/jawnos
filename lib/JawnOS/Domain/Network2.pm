@@ -477,6 +477,28 @@ sub network_apply_current {
 	return &network_apply_profile($kind, $key, $interface, $profile);
 }
 
+# Apply one saved profile by name, whether or not its network is the live
+# target. The panel's Apply button uses this; the tick still works from the
+# effective profile of whatever is connected.
+sub network_apply_saved {
+	my ($kind, $key) = @_;
+	$kind = lc(defined $kind ? $kind : '');
+	$kind = $1 if !$kind && defined $key && $key =~ /^(wifi|ethernet):/;
+	return { ok => 0, error => 'the network kind is not known' }
+		unless $kind eq 'wifi' || $kind eq 'ethernet';
+	my $profile = &network_profile_clean({ kind => $kind, key => $key });
+	return { ok => 0, error => 'the network profile is not valid' } unless $profile;
+	my $config = &network_config();
+	my $stored = ref $config->{'profiles'} eq 'HASH' ? $config->{'profiles'}{ $profile->{'key'} } : undef;
+	return { ok => 0, error => 'the network profile was not found' } unless ref $stored eq 'HASH';
+	return &network_apply_profile(
+		$stored->{'kind'} // $kind,
+		$stored->{'key'} // $profile->{'key'},
+		$stored->{'interface'} // '',
+		$stored,
+	);
+}
+
 # The minute turn. A boot change is applied even with automatic switching off;
 # a competing daemon only makes a static profile re-apply; otherwise a changed
 # network is automatic switching's job.
@@ -620,6 +642,49 @@ sub network_profile_set {
 		}
 	}
 	return { ok => 1, config => $config, profile => $profile, applied => $applied };
+}
+
+# The default block: the addressing and DNS a network gets when it has no saved
+# profile of its own. It lives beside the profiles, not in them, because it is
+# not a named network; the panel shows it as one row for "any network".
+sub network_default_set {
+	my ($method, $address, $prefix, $gateway, $dns) = @_;
+	my $probe = &network_profile_clean({
+		kind => 'ethernet',
+		key => 'ethernet:default',
+		interface => 'default',
+		method => $method,
+		address => $address,
+		prefix => $prefix,
+		gateway => $gateway,
+		dns => $dns,
+	});
+	return { ok => 0, error => 'the default profile is not valid' } unless $probe;
+	my $block = { method => $probe->{'method'}, dns => $probe->{'dns'} };
+	if ($probe->{'method'} eq 'static') {
+		$block->{'address'} = $probe->{'address'};
+		$block->{'prefix'} = $probe->{'prefix'};
+		$block->{'gateway'} = $probe->{'gateway'};
+	}
+	my $config = &network_config();
+	$config->{'default'} = $block;
+	$config = &network_config_save($config);
+	my $applied;
+	if ($config->{'manage'}) {
+		my $watch = &network_command('watch');
+		if (ref $watch eq 'HASH' && $watch->{'ok'}) {
+			my $target = $network_watch_target->($watch->{'interfaces'});
+			if ($target) {
+				my $live_key = $target->{'kind'} eq 'wifi'
+					? 'wifi:' . ($target->{'ssid'} // '')
+					: 'ethernet:' . ($target->{'name'} // '');
+				my $profiles = ref $config->{'profiles'} eq 'HASH' ? $config->{'profiles'} : {};
+				$applied = &network_apply_profile($target->{'kind'}, $live_key, $target->{'name'} // '', $block)
+					unless $profiles->{$live_key};
+			}
+		}
+	}
+	return { ok => 1, config => $config, default => $block, applied => $applied };
 }
 
 sub network_profile_delete {

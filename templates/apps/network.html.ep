@@ -69,6 +69,10 @@
 	.network_manage_text { font-size:11px; opacity:.7; margin:6px 0 0; }
 	#network_manager_note { display:block; font-size:12px; opacity:.85; margin:6px 0 0; }
 	#network_manager_note div { margin:2px 0 0; }
+	#network_profiles_list { max-height:260px; overflow-y:auto; }
+	.network_profile_row { align-items:flex-start; }
+	.network_profile_summary { flex:1 1 100%; font-size:11px; opacity:.75; }
+	.network_profile_actions { display:flex; align-items:center; gap:6px; margin-left:auto; }
 	.network_android_list { display:flex; flex-direction:column; gap:6px; margin:8px 0 0; }
 	@media (max-width:640px) {
 		#network_interfaces_section .network_table th:nth-child(3), #network_interfaces_section .network_table td:nth-child(3),
@@ -94,6 +98,13 @@
 	data-dns="<%= $t->('network.dns') %>"
 	data-options="<%= $t->('network.options') %>"
 	data-hide_options="<%= $t->('network.hide_options') %>"
+	data-edit="<%= &subs::ui('Edit') %>"
+	data-save="<%= &subs::ui('Save') %>"
+	data-cancel="<%= &subs::ui('Cancel') %>"
+	data-apply="<%= &subs::ui('Apply') %>"
+	data-remove="<%= &subs::ui('Remove') %>"
+	data-default_profile="<%= &subs::ui('Default') %>"
+	data-using_default="<%= &subs::ui('Using the default') %>"
 	data-refresh="<%= $t->('network.refresh') %>"
 	data-pair="<%= &subs::ui('Pair') %>"
 	data-trust="<%= &subs::ui('Trust') %>">
@@ -125,6 +136,16 @@
 				</label>
 				<div id="network_manager_note"></div>
 				<p class="network_manage_text"><%= &subs::ui('JawnOS reapplies the saved address and DNS for the current network after a boot or resume, and keeps its passphrase encrypted with systemd-creds when the machine offers it.') %></p>
+			</div>
+		</section>
+
+		<section class="network_section" id="network_profiles_section">
+			<div class="network_section_head"><h3><%= &subs::ui('Saved profiles') %></h3></div>
+			<div class="network_section_body">
+				<div id="network_profiles_list" class="network_list">
+					<div class="network_empty"><%= &subs::ui('No wired interfaces found.') %></div>
+				</div>
+				<p class="network_manage_text"><%= &subs::ui('A wired profile keeps the address and DNS for one interface. The default is used by any network without a profile of its own.') %></p>
 			</div>
 		</section>
 

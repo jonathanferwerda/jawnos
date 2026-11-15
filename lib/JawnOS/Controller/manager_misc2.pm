@@ -324,19 +324,31 @@ sub action_7865 {
 #
 # The saved address and DNS for one network, keyed by interface and network.
 # The watch and "Apply now" read it; a connect saves it as it goes.
+#
+# kind=default edits the block that every network without a profile of its own
+# follows, so the panel can offer one row for the whole machine.
 sub action_7867 {
 	my $c = shift;
+	my $kind = $c->param('kind') // '';
 	my $result = eval {
-		&subs::network_profile_set(
-			$c->param('kind'),
-			$c->param('key'),
-			$c->param('interface'),
-			$c->param('method'),
-			$c->param('address'),
-			$c->param('prefix'),
-			$c->param('gateway'),
-			$c->param('dns'),
-		);
+		lc($kind) eq 'default'
+			? &subs::network_default_set(
+				$c->param('method'),
+				$c->param('address'),
+				$c->param('prefix'),
+				$c->param('gateway'),
+				$c->param('dns'),
+			)
+			: &subs::network_profile_set(
+				$kind,
+				$c->param('key'),
+				$c->param('interface'),
+				$c->param('method'),
+				$c->param('address'),
+				$c->param('prefix'),
+				$c->param('gateway'),
+				$c->param('dns'),
+			);
 	};
 	$c->render(json => $result || { ok => 0, error => 'The profile could not be saved.' });
 }
@@ -355,9 +367,19 @@ sub action_7869 {
 }
 
 # POST /manager/network/apply
+#
+# "Apply now" applies the live network's effective profile. A kind and key
+# name one saved profile instead, so a person can configure a wired interface
+# while a different network is the one carrying the machine.
 sub action_7871 {
 	my $c = shift;
-	my $result = eval { &subs::network_apply_current() };
+	my $kind = $c->param('kind') // '';
+	my $key = $c->param('key') // '';
+	my $result = eval {
+		length($kind)
+			? &subs::network_apply_saved($kind, $key)
+			: &subs::network_apply_current();
+	};
 	$c->render(json => $result || { ok => 0, error => 'The saved network could not be applied.' });
 }
 

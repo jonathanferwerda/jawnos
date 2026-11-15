@@ -127,7 +127,7 @@ function networkWifiField(label, classes, placeholder) {
 	return field;
 }
 
-function networkWifiOptions() {
+function networkAddressOptions() {
 	var box = $('<div>').addClass('network_wifi_options').attr('hidden', 'hidden');
 	var method_row = $('<label>').addClass('network_wifi_field');
 	method_row.append($('<span>').text(networkLabel('addressing', 'Addressing')));
@@ -146,7 +146,7 @@ function networkWifiOptions() {
 	return box;
 }
 
-function networkWifiOptionsData(row) {
+function networkAddressOptionsData(row) {
 	var box = row.find('.network_wifi_options');
 	return {
 		method: box.find('.network_wifi_method').val() || 'dhcp',
@@ -278,7 +278,7 @@ function networkRenderWifi(wifi) {
 			saved_row.append($('<button type="button">').addClass('network_button network_wifi_options_toggle')
 				.text(networkLabel('options', 'Options')));
 			saved_row.append($('<span>').addClass('network_wifi_msg'));
-			saved_row.append(networkWifiOptions());
+			saved_row.append(networkAddressOptions());
 			saved_box.append(saved_row);
 		}
 	}
@@ -319,7 +319,7 @@ function networkRenderScan(networks) {
 				.text(networkLabel('options', 'Options')));
 		}
 		row.append($('<span>').addClass('network_wifi_msg'));
-		if (!is_connected) { row.append(networkWifiOptions()); }
+		if (!is_connected) { row.append(networkAddressOptions()); }
 		box.append(row);
 	}
 }
@@ -372,6 +372,7 @@ function networkRenderManager(data) {
 	var manage = !!config.manage;
 	$('#network_manage').prop('checked', manage);
 	$('#network_apply').prop('disabled', !manage);
+	networkRenderProfiles(data);
 	var note = $('#network_manager_note').empty();
 	if (!manage) {
 		note.text(networkT('JawnOS does not manage networking.'));
@@ -397,6 +398,114 @@ function networkRenderManager(data) {
 	if (secrets.available !== undefined && !secrets.available) {
 		note.append($('<div>').text(networkT('Passphrases cannot be stored encrypted on this machine, so each network asks for its passphrase again.')));
 	}
+}
+
+// ---------------------------------------------------------------- profiles
+
+// One saved profile, described in a line: the method, then the address and DNS
+// it carries, so the row says what will be applied without opening the editor.
+function networkProfileSummary(profile) {
+	if (!profile) { return ''; }
+	var method = String(profile.method || 'dhcp');
+	var parts = [ method === 'static' ? networkT('Static') : networkT('DHCP') ];
+	if (method === 'static' && profile.address) {
+		parts.push(profile.address + (profile.prefix ? '/' + profile.prefix : ''));
+		if (profile.gateway) { parts.push(networkLabel('gateway', 'Gateway') + ' ' + profile.gateway); }
+	}
+	var dns = profile.dns || [];
+	if (dns.length) { parts.push(networkLabel('dns', 'DNS') + ' ' + dns.join(', ')); }
+	return parts.join(' \u00b7 ');
+}
+
+function networkAddressFill(box, profile) {
+	profile = profile || {};
+	var static_method = String(profile.method || 'dhcp') === 'static';
+	box.find('.network_wifi_method').val(static_method ? 'static' : 'dhcp');
+	box.find('.network_wifi_address').val(profile.address || '');
+	box.find('.network_wifi_prefix').val(profile.prefix === 0 || profile.prefix ? profile.prefix : '');
+	box.find('.network_wifi_gateway').val(profile.gateway || '');
+	box.find('.network_wifi_dns').val((profile.dns || []).join(', '));
+	box.find('.network_wifi_static').prop('hidden', !static_method);
+	return box;
+}
+
+// The same addressing controls the Wi-Fi rows use, prefilled from a saved
+// profile. The delegated change handler that hides the static fields works by
+// class, so a profile editor needs no handler of its own.
+function networkProfileEditor(profile) {
+	var box = networkAddressFill(networkAddressOptions(), profile);
+	box.addClass('network_profile_options').attr('hidden', 'hidden');
+	var actions = $('<span>').addClass('network_profile_actions');
+	actions.append($('<button type="button">').addClass('network_button network_profile_save')
+		.text(networkLabel('save', 'Save')));
+	actions.append($('<button type="button">').addClass('network_button network_profile_cancel')
+		.text(networkLabel('cancel', 'Cancel')));
+	box.append(actions);
+	return box;
+}
+
+// A wired interface or the default block. Only a stored interface profile can
+// be applied on its own or removed; the default is what everything else falls
+// back to, so it is edited in place.
+function networkProfileRow(kind, key, interface_name, label, profile, stored) {
+	var row = $('<div>').addClass('network_wifi_row network_profile_row');
+	row.attr('data-kind', kind).attr('data-key', key).attr('data-interface', interface_name || '');
+	row.append($('<span>').addClass('network_wifi_name').text(label));
+	row.append($('<span>').addClass('network_pill').text(
+		String((profile && profile.method) || 'dhcp') === 'static' ? networkT('Static') : networkT('DHCP')
+	));
+	row.append($('<span>').addClass('network_profile_summary').text(
+		stored ? networkProfileSummary(profile) : networkLabel('using_default', 'Using the default')
+	));
+	var actions = $('<span>').addClass('network_profile_actions');
+	actions.append($('<button type="button">').addClass('network_button network_profile_edit')
+		.text(networkLabel('edit', 'Edit')));
+	if (stored) {
+		actions.append($('<button type="button">').addClass('network_button network_profile_apply')
+			.text(networkLabel('apply', 'Apply')));
+		actions.append($('<button type="button">').addClass('network_button network_off network_profile_remove')
+			.text(networkLabel('remove', 'Remove')));
+	}
+	row.append(actions);
+	row.append(networkProfileEditor(profile || {}));
+	return row;
+}
+
+// The section lists every wired interface the machine has, plus the default
+// block. The status poll runs often, so an open editor (or an unchanged list)
+// keeps the current DOM.
+function networkRenderProfiles(data) {
+	var box = $('#network_profiles_list');
+	if (!box.length) { return; }
+	var config = (data && data.config) || {};
+	var profiles = config.profiles || {};
+	var open = box.find('.network_profile_options').filter(function() {
+		return !$(this).attr('hidden');
+	}).length;
+	var interfaces = [];
+	var list = (data && data.interfaces) || [];
+	for (var i = 0; i < list.length; i++) {
+		var iface = list[i] || {};
+		if (!iface.name || iface.name === 'lo' || iface.wireless) { continue; }
+		interfaces.push(iface.name);
+	}
+	interfaces.sort();
+	var default_profile = {
+		method: (config.default && config.default.method) || 'dhcp',
+		address: (config.default && config.default.address) || '',
+		prefix: (config.default && config.default.prefix) || '',
+		gateway: (config.default && config.default.gateway) || '',
+		dns: (config.default && config.default.dns) || []
+	};
+	var signature = JSON.stringify([ interfaces, profiles, default_profile ]);
+	if (open || box.attr('data-profiles') === signature) { return; }
+	box.attr('data-profiles', signature).empty();
+	for (var j = 0; j < interfaces.length; j++) {
+		var name = interfaces[j];
+		var saved = profiles['ethernet:' + name] || null;
+		box.append(networkProfileRow('ethernet', 'ethernet:' + name, name, name, saved || default_profile, !!saved));
+	}
+	box.append(networkProfileRow('default', '', '', networkLabel('default_profile', 'Default'), default_profile, false));
 }
 
 // ----------------------------------------------------------------------- VPN
@@ -637,6 +746,83 @@ $(document).on('click', '#network_apply', function() {
 		if (response.error || response.ok === 0) {
 			$('#network_status_line').text(response.error || networkT('The saved network could not be applied.'));
 		}
+		networkRefreshAll();
+	});
+});
+
+// A profile editor is one row's addressing block. Save writes the profile (the
+// default row writes the default block), Apply pushes a saved interface profile
+// on its own, and Remove deletes it. The list's signature is cleared so the
+// next status poll rebuilds it with the answer.
+$(document).on('click', '.network_profile_edit', function() {
+	var row = $(this).closest('.network_profile_row');
+	var box = row.find('.network_profile_options');
+	var opening = !!box.attr('hidden');
+	if (opening) { box.removeAttr('hidden'); } else { box.attr('hidden', 'hidden'); }
+	$(this).text(opening ? networkLabel('cancel', 'Cancel') : networkLabel('edit', 'Edit'));
+});
+
+$(document).on('click', '.network_profile_cancel', function() {
+	var row = $(this).closest('.network_profile_row');
+	row.find('.network_profile_options').attr('hidden', 'hidden');
+	row.find('.network_profile_edit').text(networkLabel('edit', 'Edit'));
+});
+
+$(document).on('click', '.network_profile_save', function() {
+	var button = $(this);
+	var row = button.closest('.network_profile_row');
+	var values = networkAddressOptionsData(row);
+	var kind = row.attr('data-kind') || '';
+	var payload = {
+		kind: kind,
+		key: row.attr('data-key') || '',
+		interface: kind === 'default' ? '' : (row.attr('data-interface') || ''),
+		method: values.method,
+		address: values.address,
+		prefix: values.prefix,
+		gateway: values.gateway,
+		dns: values.dns
+	};
+	button.prop('disabled', true);
+	networkPost('profile', payload, function(response) {
+		button.prop('disabled', false);
+		if (response.error || response.ok === 0) {
+			$('#network_status_line').text(response.error || networkT('The profile could not be saved.'));
+			return;
+		}
+		$('#network_profiles_list').removeAttr('data-profiles');
+		networkRefreshAll();
+	});
+});
+
+$(document).on('click', '.network_profile_apply', function() {
+	var button = $(this);
+	var row = button.closest('.network_profile_row');
+	button.prop('disabled', true);
+	networkPost('apply', { kind: row.attr('data-kind') || '', key: row.attr('data-key') || '' }, function(response) {
+		button.prop('disabled', false);
+		if (response.error || response.ok === 0) {
+			$('#network_status_line').text(response.error || networkT('The saved network could not be applied.'));
+		}
+		networkRefreshAll();
+	});
+});
+
+$(document).on('click', '.network_profile_remove', function() {
+	var button = $(this);
+	var row = button.closest('.network_profile_row');
+	button.prop('disabled', true);
+	networkPost('profile/remove', {
+		kind: row.attr('data-kind') || '',
+		key: row.attr('data-key') || '',
+		interface: row.attr('data-interface') || ''
+	}, function(response) {
+		button.prop('disabled', false);
+		if (response.error || response.ok === 0) {
+			$('#network_status_line').text(response.error || networkT('The profile could not be removed.'));
+			return;
+		}
+		$('#network_profiles_list').removeAttr('data-profiles');
 		networkRefreshAll();
 	});
 });

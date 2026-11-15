@@ -293,6 +293,30 @@ sub read_private_file {
 	return $status == 0 ? $out : '';
 }
 
+# systemd-creds asks polkit for the host key when a non-root caller needs it,
+# which is every machine without a usable TPM2. Polkit cannot answer a
+# manager's or a remote session on its own, so the person is asked for an
+# administrator password - and a headless machine has nobody to ask at all. The
+# live image gives jawn passwordless sudo and the installer carries that file
+# to the installed disk, so try root first. The direct call stays the fallback
+# for a machine without it, where polkit asking is the only answer there is.
+sub run_creds {
+	my ($input, @args) = @_;
+	my $creds = creds_path();
+	return (undef, 'systemd-creds is not installed.', 127) unless $creds;
+	my @command = ($creds, @args);
+	return capture($input, @command) if $> == 0 || !find_command('sudo');
+	my ($sudo_out, $sudo_err, $sudo_status) = capture($input, 'sudo', '-n', @command);
+	return ($sudo_out, $sudo_err, $sudo_status) if $sudo_status == 0;
+	my ($out, $err, $status) = capture($input, @command);
+	return ($out, $err, $status) if $status == 0;
+	# Report the direct failure, which names what the machine actually lacks;
+	# use sudo's only when the direct attempt said nothing at all.
+	my $direct = clean($err) || clean($out);
+	my $via_sudo = clean($sudo_err) || clean($sudo_out);
+	return ($out, ($direct ? $err : $via_sudo ? $sudo_err : $err), $status);
+}
+
 # Encrypt on stdin and write the ciphertext. The passphrase never reaches argv.
 sub encrypt_secret {
 	my ($ssid, $plaintext) = @_;
@@ -300,7 +324,7 @@ sub encrypt_secret {
 	return { ok => 0, error => 'systemd-creds is not installed.' } unless $creds;
 	return { ok => 0, error => 'Could not create the secret directory.' } unless ensure_secret_dir();
 	my $name = 'jawnos-wifi-' . secret_hash($ssid);
-	my ($out, $err, $status) = run_write($plaintext, $creds,
+	my ($out, $err, $status) = run_creds($plaintext,
 		'encrypt', '--with-key=auto', '--name=' . $name, '-', '-');
 	return { ok => 0, error => clean($err) || clean($out) || 'systemd-creds could not encrypt the passphrase.' }
 		unless $status == 0;
@@ -315,11 +339,11 @@ sub encrypt_secret {
 sub decrypt_secret {
 	my ($ssid) = @_;
 	my $path = secret_path($ssid);
-	return { error => 'No stored passphrase for ' . $ssid . '.' } unless -s $path;
+	return { error => 'No stored passphrase for ' . $ssid . '.' } unless root_file_present($path);
 	my $creds = creds_path();
 	return { error => 'systemd-creds is not installed.' } unless $creds;
 	my $name = 'jawnos-wifi-' . secret_hash($ssid);
-	my ($out, $err, $status) = run_privileged_read($creds,
+	my ($out, $err, $status) = run_creds(undef,
 		'decrypt', '--name=' . $name, $path, '-');
 	return { error => clean($err) || clean($out) || 'systemd-creds could not decrypt the passphrase.' }
 		unless $status == 0;
@@ -328,9 +352,29 @@ sub decrypt_secret {
 	return { passphrase => $out };
 }
 
+# The store is root:root 0700/0600, so an unprivileged helper cannot stat into
+# it: -s answers "no file" for a ciphertext that is there, and the stored key
+# would never be found. Ask sudo (the same fallback the writes use) before
+# believing the answer.
+sub root_file_exists {
+	my ($path) = @_;
+	return 1 if -e $path;
+	return 0 if $> == 0 || !find_command('sudo');
+	my ($out, $err, $status) = capture(undef, 'sudo', '-n', 'test', '-e', $path);
+	return $status == 0 ? 1 : 0;
+}
+
+sub root_file_present {
+	my ($path) = @_;
+	return 1 if -s $path;
+	return 0 if $> == 0 || !find_command('sudo');
+	my ($out, $err, $status) = capture(undef, 'sudo', '-n', 'test', '-s', $path);
+	return $status == 0 ? 1 : 0;
+}
+
 sub secret_present_raw {
 	my ($ssid) = @_;
-	return -s secret_path($ssid) ? 1 : 0;
+	return root_file_present(secret_path($ssid));
 }
 
 sub secret_status {
@@ -383,7 +427,7 @@ sub secret_clear {
 	$ssid = utf8_text($ssid);
 	return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($ssid);
 	my $path = secret_path($ssid);
-	return { ok => 1, cleared => 0, present => 0 } unless -e $path;
+	return { ok => 1, cleared => 0, present => 0 } unless root_file_exists($path);
 	return { ok => 0, error => 'Could not remove the stored passphrase.' }
 		unless remove_root_file($path);
 	return { ok => 1, cleared => 1, present => 0 };

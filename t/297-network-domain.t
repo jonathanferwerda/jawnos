@@ -239,6 +239,47 @@ subtest 'profiles are stored and removed' => sub {
 	is($missing->{'ok'}, 0, 'deleting a missing profile is refused');
 };
 
+# --- wired profiles and the default block -----------------------------------
+subtest 'a wired profile and the default block' => sub {
+	unlink "$scratch/config.json";
+	@commands = ();
+
+	my $set = subs::network_profile_set('ethernet', 'ethernet:eth0', 'eth0', 'static',
+		'10.20.0.60', 24, '10.20.0.1', '9.9.9.9');
+	ok($set->{'ok'}, 'a wired profile is saved');
+	is($set->{'profile'}{'key'}, 'ethernet:eth0', 'keyed by the interface');
+	is($set->{'config'}{'profiles'}{'ethernet:eth0'}{'address'}, '10.20.0.60', 'with its address');
+	ok(!defined $set->{'applied'}, 'and nothing is applied while the system manages');
+
+	@commands = ();
+	my $apply = subs::network_apply_saved('ethernet', 'ethernet:eth0');
+	ok($apply->{'ok'}, 'a saved wired profile is applied on its own');
+	my ($command) = grep { ($_->{'command'}[2] // '') eq 'profile_apply' } @commands;
+	ok($command, 'the helper is asked for the profile');
+	is($command->{'command'}[3], 'ethernet', 'with the kind');
+	is($command->{'command'}[4], 'eth0', 'with the interface the helper expects');
+	is($command->{'command'}[6], 'static', 'and the saved method');
+	is($command->{'command'}[7], '10.20.0.60', 'and the saved address');
+
+	my $missing = subs::network_apply_saved('ethernet', 'ethernet:eth3');
+	is($missing->{'ok'}, 0, 'an interface with no profile is refused');
+
+	my $def = subs::network_default_set('static', '10.20.0.90', 24, '10.20.0.1', '1.1.1.1, 2606:4700:4700::1111');
+	ok($def->{'ok'}, 'the default block is saved');
+	is($def->{'config'}{'default'}{'method'}, 'static', 'with its method');
+	is($def->{'config'}{'default'}{'address'}, '10.20.0.90', 'and its address');
+	is_deeply($def->{'default'}{'dns'}, ['1.1.1.1', '2606:4700:4700::1111'], 'and both DNS servers');
+	ok(!exists $def->{'config'}{'profiles'}{'ethernet:default'}, 'the default is not stored as a network profile');
+
+	my $bad = subs::network_default_set('static', 'nope', 24, '', '');
+	is($bad->{'ok'}, 0, 'an invalid default is refused');
+
+	my $dhcp = subs::network_default_set('dhcp', '', '', '', '');
+	ok($dhcp->{'ok'}, 'the default can go back to DHCP');
+	is($dhcp->{'config'}{'default'}{'method'}, 'dhcp', 'with no method left over');
+	ok(!exists $dhcp->{'config'}{'default'}{'address'}, 'and the static fields gone');
+};
+
 # --- the master switch ------------------------------------------------------
 subtest 'manage on applies, off releases' => sub {
 	unlink "$scratch/config.json";

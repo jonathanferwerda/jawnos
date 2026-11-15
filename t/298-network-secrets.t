@@ -29,8 +29,9 @@ my $iwd     = "$scratch/iwd";
 my $nm_dir  = "$scratch/nm";
 my $secrets = "$scratch/secrets";
 my $networkd = "$scratch/networkd";
+my $nosudo = "$scratch/nosudo";
 mkdir $_ or die "cannot make $_: $!"
-	for $iwdbin, $nmbindir, $iwd, $nm_dir, $secrets, $networkd;
+	for $iwdbin, $nmbindir, $iwd, $nm_dir, $secrets, $networkd, $nosudo;
 chmod 0700, $secrets;
 
 my $iwd_state = "$scratch/iwctl-state";
@@ -39,6 +40,8 @@ my $nm_log    = "$scratch/nm.log";
 my $nm_passwd = "$scratch/nm-passwd";
 my $creds_argv = "$scratch/creds-argv.log";
 my $creds_stdin = "$scratch/creds-stdin.log";
+my $creds_root = "$scratch/creds-root.log";
+my $sudo_log = "$scratch/sudo.log";
 my $creds = "$iwdbin/systemd-creds";
 
 sub write_exe {
@@ -49,7 +52,20 @@ sub write_exe {
 	chmod 0755, $path or die "cannot chmod $path: $!";
 }
 
+write_exe("$iwdbin/test", <<'FAKE_TEST');
+if [ "$1" = "-s" ]; then [ -s "$2" ]; exit $?; fi
+if [ "$1" = "-e" ]; then [ -e "$2" ]; exit $?; fi
+exit 1
+FAKE_TEST
+
 write_exe($creds, <<'FAKE_CREDS');
+# The real tool needs root (or a polkit agent) for the host key. This fixture
+# refuses an unprivileged call, so a test can prove the helper asked sudo first
+# instead of leaving the person - or a headless machine - to a password prompt.
+if [ "$1" = "encrypt" ] || [ "$1" = "decrypt" ]; then
+    [ "$JAWNOS_FAKE_ROOT" = "1" ] || { echo 'Interactive authentication required.' >&2; exit 1; }
+    printf '1' > "$CREDS_ROOT"
+fi
 if [ "$1" = "encrypt" ]; then
 	printf '%s\n' "$*" >> "$CREDS_ARGV"
 	/bin/cat > "$CREDS_STDIN"
@@ -63,6 +79,24 @@ if [ "$1" = "decrypt" ]; then
 fi
 exit 1
 FAKE_CREDS
+
+# A passwordless sudo, as the image has. It only marks the environment so the
+# creds fixture can tell a privileged call from a direct one.
+write_exe("$iwdbin/sudo", <<'FAKE_SUDO');
+[ "$1" = "-n" ] && shift
+printf '%s\n' "$*" >> "$SUDO_LOG"
+JAWNOS_FAKE_ROOT=1
+export JAWNOS_FAKE_ROOT
+exec "$@"
+FAKE_SUDO
+
+write_exe("$nmbindir/sudo", <<'FAKE_SUDO');
+[ "$1" = "-n" ] && shift
+printf '%s\n' "$*" >> "$SUDO_LOG"
+JAWNOS_FAKE_ROOT=1
+export JAWNOS_FAKE_ROOT
+exec "$@"
+FAKE_SUDO
 
 write_exe("$iwdbin/iwctl", <<'FAKE_IWCTL');
 printf '%s\n' "$*" >> "$IWCTL_LOG"
@@ -126,11 +160,10 @@ FAKE_IP
 sub run_net {
 	my %opt = @_;
 	my $tools = defined $opt{'tools'} ? $opt{'tools'} : 'iwd';
-	local $ENV{'PATH'} = $tools eq 'nm' ? $nmbindir : $iwdbin;
+	local $ENV{'PATH'} = defined $opt{'path'} ? $opt{'path'} : ($tools eq 'nm' ? $nmbindir : $iwdbin);
 	local $ENV{'HOME'} = $scratch;
 	local $ENV{'JAWNOS_IWD_DIR'} = $iwd;
 	local $ENV{'JAWNOS_NM_DIR'} = $nm_dir;
-	local $ENV{'JAWNOS_SECRET_DIR'} = $secrets;
 	local $ENV{'JAWNOS_NETWORKD_DIR'} = $networkd;
 	local $ENV{'JAWNOS_CREDS'} = defined $opt{'creds'} ? $opt{'creds'} : $creds;
 	local $ENV{'IWCTL_STATE'} = $iwd_state;
@@ -140,6 +173,9 @@ sub run_net {
 	local $ENV{'NM_PASSWD'} = $nm_passwd;
 	local $ENV{'CREDS_ARGV'} = $creds_argv;
 	local $ENV{'CREDS_STDIN'} = $creds_stdin;
+	local $ENV{'CREDS_ROOT'} = $creds_root;
+	local $ENV{'SUDO_LOG'} = $sudo_log;
+	local $ENV{'JAWNOS_SECRET_DIR'} = defined $opt{'secrets'} ? $opt{'secrets'} : $secrets;
 	my $err = gensym;
 	my $pid = open3(my $in, my $out, $err, $^X, $script, @{ $opt{'args'} || [] });
 	print {$in} $opt{'stdin'} if defined $opt{'stdin'};
@@ -204,6 +240,9 @@ my $cred = "$secrets/$hash.cred";
 	like($argv, qr/--name=jawnos-wifi-\Q$hash\E/, 'with the SSID hash in the credential name');
 	unlike($argv, qr/correcthorse/, 'the passphrase never reaches argv');
 	is(read_text($creds_stdin), 'correcthorse', 'it reaches the tool on stdin, without the newline');
+	# The host key is root-only, and a manager session has no polkit agent to
+	# answer for it, so the helper asks sudo before it asks the person.
+	is(read_text($creds_root), '1', 'systemd-creds is run through sudo, not as the person');
 
 	my $before = read_text($cred);
 	my @encrypted = read_text($creds_argv) =~ /^encrypt /mg;
@@ -218,6 +257,37 @@ my $cred = "$secrets/$hash.cred";
 	($rc, $out) = run_net(args => ['secret_present', 'jawn-test-net']);
 	$data = answer($rc, $out, '', 'secret_present');
 	is_deeply($data, { ok => 1, present => 1 }, 'the stored passphrase is present');
+}
+
+{
+	# No sudo on PATH: the direct call is the fallback, and its refusal is what
+	# the person sees rather than a silent failure.
+	unlink "$secrets/" . sha256_hex('no-sudo-net') . '.cred';
+	my ($rc, $out) = run_net(path => $nosudo, args => ['secret_set', 'no-sudo-net'], stdin => "correcthorse\n");
+	my $data = answer($rc, $out, '', 'secret_set without sudo');
+	is($data->{'ok'}, 0, 'without sudo the store fails instead of pretending');
+	like($data->{'error'}, qr/Interactive authentication required/, 'and the refusal is reported');
+}
+
+{
+	# The real store is root-only, so -s cannot see into it. A directory without
+	# search permission models that; the helper must ask sudo rather than trust
+	# the failed stat. This fixture's sudo is not really root, so the answer is
+	# asserted live on the VM; here the call itself is the point.
+	my $locked = "$scratch/locked";
+	mkdir $locked or die "cannot make $locked: $!";
+	my $locked_cred = "$locked/" . sha256_hex('locked-net') . '.cred';
+	open my $lfh, '>', $locked_cred or die "cannot write $locked_cred: $!";
+	print $lfh 'ciphertext';
+	close $lfh;
+	chmod 0000, $locked;
+	open my $slfh, '>', $sudo_log or die "cannot write $sudo_log: $!";
+	close $slfh;
+	my ($rc, $out) = run_net(secrets => $locked, args => ['secret_present', 'locked-net']);
+	my $data = answer($rc, $out, '', 'secret_present in a root-only store');
+	is($data->{'ok'}, 1, 'a root-only store is still answered');
+	like(read_text($sudo_log), qr/^test -s /m, 'and the helper asks sudo to look inside');
+	chmod 0700, $locked;
 }
 
 {

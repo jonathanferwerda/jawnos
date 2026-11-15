@@ -482,6 +482,24 @@ like($manage_js, qr/JawnOS does not manage networking\./,
 like($manage_js, qr/Passphrases cannot be stored encrypted/,
 	'and warns when a secret cannot be sealed');
 
+# --- wired profiles in the panel ---------------------------------------------
+like($manage_actions, qr/lc\(\$kind\) eq 'default'/,
+	'the profile route can edit the default block');
+like($manage_actions, qr/&subs::network_default_set\(/,
+	'which writes the default setter');
+like($manage_actions, qr/&subs::network_apply_saved\(\$kind, \$key\)/,
+	'the apply route can name one saved profile');
+like($template, qr/id="network_profiles_list"/, 'the saved profiles section exists');
+like($template, qr/&subs::ui\('Saved profiles'\)/, 'and is labelled in the on-screen words');
+like($template, qr/&subs::ui\('Using the default'\)/, 'and names the fallback row');
+like($manage_js, qr/function networkRenderProfiles\(/, 'the index renders the saved profiles');
+like($manage_js, qr/'ethernet:' \+ name/, 'a wired row is keyed by its interface');
+like($manage_js, qr/networkAddressOptionsData\(row\)/, 'the editor reads the same fields as Wi-Fi');
+like($manage_js, qr/networkPost\('profile', payload/, 'and saves a profile');
+like($manage_js, qr/networkPost\('profile\/remove'/, 'and can remove one');
+like($manage_js, qr/networkPost\('apply', \{ kind: row\.attr\('data-kind'\)/, 'and apply one on its own');
+like($manage_js, qr/network_profile_options/, 'an open editor survives the status poll');
+
 {
 	no warnings 'once';
 	require "$root/perl/help.pl";
