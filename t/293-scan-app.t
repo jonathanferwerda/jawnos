@@ -203,6 +203,45 @@ is(subs::scan_doc_kind("Total 4.43"), 'document', 'one money word alone is not e
 	is(Manager::scan_pending_job(), undef, 'a receipt job belongs to Market, not to Scan');
 }
 {
+	# A kept receipt is one row for the house: every device lists it, and the
+	# record names the machine that holds its pages (receipt_page asks it).
+	require File::Temp;
+	my $dir = File::Temp::tempdir(CLEANUP => 1);
+	my $page = "$dir/receipt_1.jpg";
+	write_file($page, chr(0xff) . chr(0xd8) . 'page');
+	my (@writes, @notices);
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub { return '' };
+	local *subs::db_select = sub {
+		return FakeRows->new([
+			{ value => '[' . '{"uuid":"old_computer","at":"1","vendor":"Corner Store","files":["/x/old.jpg"]}' . ']' },
+			{ value => '[' . '{"uuid":"old_mobile","at":"2","vendor":"Bakery","files":["/y/old.jpg"]}' . ']' },
+		]);
+	};
+	local *subs::setting_setter = sub { push @writes, $_[0]; return 1 };
+	local *subs::signatorial_designer = sub { return 'phone_id' };
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	local *subs::random_string_creator = sub { return 'newreceipt' };
+	local *subs::subprocessor = sub { return 1 };
+	local *Manager::notification_sender = sub { push @notices, $_[0]; return 1 };
+	Manager::market_receipt_file({
+		files => [$page], vendor => 'Corner Store', total => '4.43', date => '2026-11-14',
+		lines => [ { item => 'freshener', qty => 1, price => 5.97 } ],
+	});
+	is(scalar @writes, 1, 'the receipt is kept once');
+	is($writes[0]{'device'}, 'all', 'on the house row every device reads');
+	my $kept = eval { decode_json($writes[0]{'value'}) } || [];
+	is(scalar @{$kept}, 3, 'seeded with the per-device receipts an earlier build kept');
+	is($kept->[0]{'uuid'}, 'newreceipt', 'with the new one first');
+	is($kept->[0]{'machine'}, 'phone_id', 'naming the machine that holds the pages');
+	is($kept->[0]{'files'}[0], $page, 'and the page it kept');
+	ok((grep { ($_->{'uuid'} || '') eq 'old_computer' } @{$kept}), 'an old computer receipt survives');
+	ok((grep { ($_->{'uuid'} || '') eq 'old_mobile' } @{$kept}), 'an old phone receipt survives too');
+	is(scalar @notices, 1, 'the house is told once');
+	is($notices[0]{'app'}, 'market', 'as Market news');
+	is($notices[0]{'role'}, 'all', 'to every device');
+}
+{
 	# A machine that left the printer's network keeps a stale address in its
 	# config. The readiness and scan paths must find the printer answering eSCL
 	# on the network the machine is on now, instead of trusting that address.
