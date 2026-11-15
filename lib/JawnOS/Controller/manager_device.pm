@@ -631,39 +631,51 @@ sub _controller_leaf_from_house {
 	foreach my $rm ( @candidates ) {
 		my $manager = &subs::peer_live_manager($rm) || $rm->{'manager'};
 		my ($endpoint, $verified) = &subs::peer_secure_url($rm, $manager);
-		$endpoint = $manager unless defined $endpoint && length $endpoint;
-		my $ua = Mojo::UserAgent->new->connect_timeout(2)->request_timeout(5);
-		# A leaf carries a private key, so it crosses only a connection this
-		# machine proved is the house's peer listener. No insecure fallback: a
-		# name without a certificate is better than a key on an unverified rail.
-		next unless $verified && &subs::peer_tls_verify($ua);
-		# The machine's own peer session is the second proof the house gate
-		# accepts. A roster key can rotate or a mirror row can be stale, while
-		# the session this machine already syncs under still names it; send
-		# both, over the verified connection only.
-		my $jar = eval { decode_json($rm->{'cookie'} // '') };
-		if (ref $jar eq 'ARRAY') {
-			require Mojo::Cookie::Response;
-			foreach my $c ( @{$jar} ) {
-				next unless ref $c eq 'HASH' && defined $c->{'name'};
-				$ua->cookie_jar->add(Mojo::Cookie::Response->new(
-					name => $c->{'name'}, value => ($c->{'value'} // ''),
-					domain => ($c->{'domain'} // ''), path => ($c->{'path'} // '/'),
-				));
-			}
+		my $port = '';
+		$port = $1 if ($rm->{'manager'} // '') =~ m{:(\d{1,5})/manager/?$};
+		# The public name first: its wildcard is a certificate the machine's
+		# system store already trusts, and the route answers a signed request
+		# there. The peer listener, whose leaf the house CA signs, is the
+		# fallback for a house without public DNS. Both are verified rails;
+		# there is no insecure one, because the answer carries a private key.
+		my @tries;
+		my $public = $rm->{'fqdn'} // '';
+		if (length $public && $public =~ /\./ && $public !~ /^(?:localhost|127\.)/i) {
+			push @tries, ['https://' . $public . (length $port ? ':' . $port : '') . '/manager', 0];
 		}
-		$ua->on(start => sub { &subs::peer_sign_request($_[1]->req) });
-		my $res = eval {
-			$ua->post($endpoint . '/device/leaf' => form => {
-				signatorial => $mine,
-				name => $fqdn,
-				address => ($address // ''),
-			})->result;
-		};
-		next unless $res;
-		my $answer = eval { Mojo::JSON::decode_json($res->body // '') } || {};
-		next unless ref $answer eq 'HASH' && $answer->{'ok'} && ref $answer->{'tls'} eq 'HASH';
-		return $answer->{'tls'} if $answer->{'tls'}->{'ok'};
+		push @tries, [$endpoint, 1] if $verified && defined $endpoint && length $endpoint;
+		foreach my $try ( @tries ) {
+			my ($base, $use_ca) = @{$try};
+			my $ua = Mojo::UserAgent->new->connect_timeout(3)->request_timeout(6);
+			next if $use_ca && !&subs::peer_tls_verify($ua);
+			# The machine's own peer session is the second proof the house gate
+			# accepts. A roster key can rotate or a mirror row can be stale, while
+			# the session this machine already syncs under still names it; send
+			# both, over the verified connection only.
+			my $jar = eval { decode_json($rm->{'cookie'} // '') };
+			if (ref $jar eq 'ARRAY') {
+				require Mojo::Cookie::Response;
+				foreach my $c ( @{$jar} ) {
+					next unless ref $c eq 'HASH' && defined $c->{'name'};
+					$ua->cookie_jar->add(Mojo::Cookie::Response->new(
+						name => $c->{'name'}, value => ($c->{'value'} // ''),
+						domain => ($c->{'domain'} // ''), path => ($c->{'path'} // '/'),
+					));
+				}
+			}
+			$ua->on(start => sub { &subs::peer_sign_request($_[1]->req) });
+			my $res = eval {
+				$ua->post($base . '/device/leaf' => form => {
+					signatorial => $mine,
+					name => $fqdn,
+					address => ($address // ''),
+				})->result;
+			};
+			next unless $res;
+			my $answer = eval { Mojo::JSON::decode_json($res->body // '') } || {};
+			next unless ref $answer eq 'HASH' && $answer->{'ok'} && ref $answer->{'tls'} eq 'HASH';
+			return $answer->{'tls'} if $answer->{'tls'}->{'ok'};
+		}
 	}
 	return undef;
 }

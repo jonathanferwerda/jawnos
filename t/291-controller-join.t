@@ -561,6 +561,7 @@ like($device_source, qr/sub action_38591/, 'the house can issue a leaf for a pee
 like($device_source, qr/peer_allows\(\$c, \$rm, 'trusted'\)/, 'only a trusted peer may ask');
 like($device_source, qr/that name is not under this house domain/, 'and only for a name under it');
 like($device_source, qr/cookie_jar->add\(Mojo::Cookie::Response/, 'the relay also presents the machine\'s peer session');
+like($device_source, qr/'https:\/\/' \. \$public/, 'the relay tries the house\'s public name first');
 like(slurp('lib/JawnOS/Routes/manager_device.pm'), qr{38591.*device/leaf}, 'the leaf route is registered');
 like($device_source, qr/house_machine_name\(/, 'and derives the name under the house domain');
 like($device_source, qr/house-ca\.key/, 'only where the house CA key is');
