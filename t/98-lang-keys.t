@@ -2,6 +2,7 @@
 # tests-for: public/js/manager/sound.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_edit.js public/js/manager/power.js public/js/manager/keyboard.js
 # tests-for: public/js/manager/manager/10_appointment_edit.js templates/apps/controller.html.ep lib/JawnOS/Domain/WeatherAutomation.pm
 # tests-for: public/js/manager/editor.js public/js/manager/notes/02_categories.js
+# tests-for: lib/JawnOS/Domain/Phone.pm lib/JawnOS/Domain/Store.pm
 # covers:    literal keys and the maps that build labels at runtime resolve to labels
 
 use strict;
@@ -153,6 +154,26 @@ cmp_ok(scalar(@weather_labels), '>', 10, 'the weather measure catalog is read');
 is_deeply([ grep { !length } @weather_labels ], [], 'every weather measure has a label');
 is_deeply([ grep { looks_like_key($_) && !exists $catalog->{$_} } @weather_labels ], [],
 	'every key-shaped weather measure label has a catalog entry');
+
+# The phone's builtin flows and the store's payment methods reach jawnosT from
+# server data. Their names are English today, so a key-shaped one must resolve;
+# the payment labels are built as store.<method> and must never print the key.
+my $flow_seed = do { local $SIG{__WARN__} = sub {}; subs::phone_ivr_flow_seed() };
+my @flow_names = map { $_->{'name'} // '' } grep { ref $_ eq 'HASH' } values %{ $flow_seed || {} };
+cmp_ok(scalar(@flow_names), '>=', 2, 'the builtin phone flows are read');
+is_deeply([ grep { !length } @flow_names ], [], 'every builtin phone flow has a name');
+is_deeply([ grep { looks_like_key($_) && !exists $catalog->{$_} } @flow_names ], [],
+	'every key-shaped phone flow name has a catalog entry');
+
+my @payment_methods = @{ subs::store_register_payment_methods() || [] };
+cmp_ok(scalar(@payment_methods), '>=', 4, 'the store payment methods are read');
+my @payment_missing;
+for my $method (@payment_methods) {
+	my $key = $method eq 'cash' ? 'common.cash' : "store.$method";
+	my $label = subs::store_register_payment_label($method);
+	push @payment_missing, $key unless length $label && $label ne $key;
+}
+is_deeply(\@payment_missing, [], 'every store payment method has a label');
 
 # The Power app's sleep types are the same kind of map: English today, keys if
 # they are ever changed to them.
