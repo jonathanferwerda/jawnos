@@ -593,7 +593,11 @@ sub _controller_join_token {
 		my $age = time - ((stat($old))[9] // 0);
 		unlink $old if $age > 86_400;
 	}
-	my ($fh, $path) = File::Temp::tempfile('controller_join_XXXXXXXX.json', DIR => $dir, UNLINK => 0);
+	# File::Temp wants the X's at the end of the template; a suffix after them
+	# made every flash die here and the page showed only "The board was not
+	# flashed." (2026-11-15), because the token is minted before the
+	# provisioner runs. SUFFIX keeps the .json the cleanup glob looks for.
+	my ($fh, $path) = File::Temp::tempfile('controller_join_XXXXXXXX', DIR => $dir, SUFFIX => '.json', UNLINK => 0);
 	return { error => 'the join token could not be written' } unless $fh && $path;
 	print {$fh} encode_json($token);
 	close $fh;

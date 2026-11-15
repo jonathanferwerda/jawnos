@@ -428,6 +428,28 @@ like($js, qr/function controllerNewHostname/, 'the page reads the name itself');
 like($js, qr/hostname: name,/, 'and sends it with the flash');
 like($js, qr/#controllers_hostname, #controllers_card_choice/, 'the fields are held still while it runs');
 
+# The flash mints its single-use token into a temp file before the provisioner
+# runs. File::Temp needs the X's at the end of the template: a .json after them
+# made every flash die before the write, and the page showed only "The board was
+# not flashed." (2026-11-15).
+{
+	local $ENV{'HOME'} = $dry;
+	my $mint = Manager::_controller_join_token(JoinProbe->new, 'gou2026', 'gou2026', 'adopt');
+	ok(ref $mint eq 'HASH' && defined $mint->{'path'}, 'the flash mints a join token file');
+	my $path = $mint->{'path'} // '';
+	ok(length($path) && -f $path, 'the token file is written');
+	like($path, qr{controller_join_.*\.json$}, 'named as a json file');
+	is(sprintf('%04o', (stat($path))[2] & 07777), '0600', 'readable only by its owner');
+	my $token = eval { $JSON->decode(read_file($path)) } || {};
+	is($token->{'kind'}, 'jawnos-controller-join', 'it is a controller join token');
+	is($token->{'card'}, 'adopt', 'carrying the card answer');
+	is($token->{'secret'}, $mint->{'secret'}, 'and the secret the cache holds');
+	ok(subs::db_select('cache', undef, { context => 'controller_join', subcontext => $mint->{'secret'} })->hash,
+		'the secret waits in the local cache');
+	unlink $path if length $path;
+	subs::db_delete('cache', { context => 'controller_join', subcontext => $mint->{'secret'} }) if $mint->{'secret'};
+}
+
 # A joining board is named under the house domain and, when the CA is on this
 # machine, given its own leaf for that name. The map is the synced one
 # Configure -> Plat -> DNS shows, so the name appears there and the board reads
