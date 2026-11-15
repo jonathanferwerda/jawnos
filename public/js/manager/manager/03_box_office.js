@@ -437,43 +437,53 @@ function boRoomCopyText(chip) {
 	return 'Interview room: ' + sw + '\nRoom: ' + handle + '/' + room + '\nPass: ' + ticket + '\nThe pass works once and expires in two hours.';
 }
 
-function boRoomCopied(row) {
-	boRoomStatus(row, jawnosT('Pass copied.'));
+function boRoomRender(row, response) {
+	var box = row.find('.bo_room');
+	if (!box.length) { return; }
+	box.empty();
+	var chip = $('<span class="bo_chip bo_room_chip"></span>')
+		.attr({
+			'data-switch': response.switch || '',
+			'data-handle': response.handle || '',
+			'data-room': response.room || '',
+			'data-ticket': response.ticket || ''
+		})
+		.text((response.handle || '') + '/' + (response.room || ''));
+	var copy = $('<button type="button" class="ticket_room_copy bo_small"></button>').text(jawnosT('Copy pass'));
+	var again = $('<button type="button" class="ticket_room_new bo_small"></button>')
+		.attr('ticket', row.attr('uuid') || '').text(jawnosT('New room'));
+	box.append(chip).append(document.createTextNode(' ')).append(copy)
+		.append(document.createTextNode(' ')).append(again)
+		.append($('<span class="ticket_room_status"></span>'));
 }
 
-$(document).on('click', '.ticket_room', function() {
-	var b = $(this);
-	var row = b.closest('.ticket_request');
-	b.prop('disabled', true);
+function boRoomOpen(button, row) {
+	button.prop('disabled', true);
 	boRoomStatus(row, jawnosT('Opening the room…'));
 	$.ajax({
 		url: '/manager/box_office/room',
 		type: 'POST',
-		data: { ticket: b.attr('ticket'), timestamp: Date.now() },
+		data: { ticket: button.attr('ticket') || row.attr('uuid'), timestamp: Date.now() },
 		dataType: 'json',
 		success: function(response) {
 			if (!response || !response.ok) {
-				b.prop('disabled', false);
+				button.prop('disabled', false);
 				boRoomStatus(row, (response && response.error) || jawnosT('Could not open the room.'));
 				return;
 			}
-			var chip = $('<span class="bo_chip bo_room_chip"></span>')
-				.attr({
-					'data-switch': response.switch || '',
-					'data-handle': response.handle || '',
-					'data-room': response.room || '',
-					'data-ticket': response.ticket || ''
-				})
-				.text((response.handle || '') + '/' + (response.room || ''));
-			var copy = $('<button type="button" class="ticket_room_copy bo_small"></button>').text(jawnosT('Copy pass'));
-			b.replaceWith($('<span></span>').append(chip).append(document.createTextNode(' ')).append(copy));
+			boRoomRender(row, response);
 			boRoomStatus(row, jawnosT('Room ready. Copy the pass and send it to the applicant.'));
 		},
 		error: function() {
-			b.prop('disabled', false);
+			button.prop('disabled', false);
 			boRoomStatus(row, jawnosT('Could not open the room.'));
 		}
 	});
+}
+
+$(document).on('click', '.ticket_room, .ticket_room_new', function() {
+	var b = $(this);
+	boRoomOpen(b, b.closest('.ticket_request'));
 });
 
 $(document).on('click', '.ticket_room_copy', function() {
@@ -482,7 +492,7 @@ $(document).on('click', '.ticket_room_copy', function() {
 	var text = boRoomCopyText(chip);
 	if (navigator.clipboard && navigator.clipboard.writeText) {
 		navigator.clipboard.writeText(text).then(function() {
-			boRoomCopied(row);
+			boRoomStatus(row, jawnosT('Pass copied.'));
 		}, function() {
 			boRoomStatus(row, jawnosT('Could not copy the pass.'));
 		});
@@ -490,7 +500,7 @@ $(document).on('click', '.ticket_room_copy', function() {
 	}
 	var area = $('<textarea></textarea>').val(text).css({ position: 'fixed', top: '-1000px' }).appendTo(document.body);
 	area[0].select();
-	try { document.execCommand('copy'); boRoomCopied(row); }
+	try { document.execCommand('copy'); boRoomStatus(row, jawnosT('Pass copied.')); }
 	catch (e) { boRoomStatus(row, jawnosT('Could not copy the pass.')); }
 	area.remove();
 });

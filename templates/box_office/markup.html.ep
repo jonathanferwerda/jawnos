@@ -341,6 +341,7 @@
 										<% if (length($room->{'room'} || '')) { %>
 											<span class="bo_chip bo_room_chip" data-switch="<%= $room->{'switch'} || &jg_url() %>" data-handle="<%= $room->{'handle'} %>" data-room="<%= $room->{'room'} %>" data-ticket="<%= $room->{'ticket'} %>"><%= $room->{'handle'} %>/<%= $room->{'room'} %></span>
 											<button type="button" class="ticket_room_copy bo_small"><%= &subs::ui('Copy pass') %></button>
+											<button type="button" class="ticket_room_new bo_small" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('New room') %></button>
 										<% } else { %>
 											<button type="button" class="ticket_room bo_small" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('Interview room') %></button>
 										<% } %>

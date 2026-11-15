@@ -276,7 +276,7 @@ sub jg_room_register {
 		policy => $opt{'policy'} || 'invite',
 		max => $opt{'max'} || 8,
 		recording => 'off',
-		expires => 0,
+		expires => $opt{'expires'} || 0,
 	};
 	my $signed = &subs::crest_sign_record($record, $priv) or return { error => 'could not sign the room record' };
 	my $res = &jg_call($c, 'POST', '/v1/rooms', $jg_json->encode($signed), 1);

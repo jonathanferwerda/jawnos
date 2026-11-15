@@ -40,7 +40,7 @@ my @calls;
 		return { ok => 1 };
 	};
 	my $made = main::jg_room_register(undef, 'Jawn House', 'Interview-ABC',
-		name => 'Interview', policy => 'invite', max => 8);
+		name => 'Interview', policy => 'invite', max => 8, expires => 42);
 	ok($made->{'ok'}, 'the switch accepted the room');
 	is($made->{'room'}, 'interview-abc', 'the registered room is the slug');
 	my $call = $calls[-1];
@@ -59,6 +59,7 @@ my @calls;
 	is($record->{'policy'}, 'invite', 'and is invite-only');
 	is($record->{'max'}, 8, 'with the room size');
 	is($record->{'recording'}, 'off', 'recording is off');
+	is($record->{'expires'}, 42, 'the room can expire with its pass');
 	is($record->{'signed_with'}, 'K' x 32, 'the room record was signed with the house key');
 }
 
@@ -90,6 +91,8 @@ my ($action) = $controller =~ /(sub action_24780\b.*?)(?=\nsub |\z)/s;
 like($action, qr/jg_room_register/, 'it registers the room');
 like($action, qr/jg_room_pass/, 'and mints the pass');
 like($action, qr/\$info->\{'room'\}/, 'it stores the room on the request');
+like($action, qr/expires => \$until/, 'the room expires with the pass');
+like($action, qr/substr\(\$uuid, 0, 8\)/, 'each press makes a fresh room slug');
 unlike($action, qr/db_(?:insert|update)\(\s*'remote_machines'/, 'it never makes a mesh row for the applicant');
 unlike($action, qr/tailnet_ip/, 'and never gives them a tailnet address');
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_box_office.pm");
@@ -97,9 +100,11 @@ like($routes, qr{/manager/box_office/room}, 'the room route is registered');
 my $markup = read_file("$root/templates/box_office/markup.html.ep");
 like($markup, qr/class="ticket_room\b/, 'the desk offers an interview room');
 like($markup, qr/ticket_room_copy/, 'and a copy for an existing pass');
+like($markup, qr/ticket_room_new/, 'and a fresh room when it expires');
 my $js = read_file("$root/public/js/manager/manager/03_box_office.js");
 like($js, qr{/manager/box_office/room}, 'the script opens the room');
 like($js, qr/bo_room_chip/, 'and shows the room it made');
+like($js, qr/ticket_room_new/, 'and can mint a fresh one');
 my $help = read_file("$root/perl/help/topics_configure.pl");
 like($help, qr/Interview room/, 'the help explains the room');
 

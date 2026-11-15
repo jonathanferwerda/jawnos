@@ -330,15 +330,19 @@ sub action_24780 {
 	my $info = eval { return decode_json $request->{'information'} } || {};
 	my $crest = &subs::crest_record_read();
 	my $handle = &jg_handle($crest);
-	my $room = &jg_room_slug('interview-' . $uuid);
+	# A fresh slug each time: the pass expires in two hours and the desk may
+	# have to issue another after a missed call. The room expires with it, so an
+	# abandoned room does not sit on the switch forever.
+	my $until = time + 7200;
+	my $room = &jg_room_slug('interview-' . substr($uuid, 0, 8) . '-' . time);
 	my $made = &jg_room_register($c, $handle, $room,
-		name => 'Interview', policy => 'invite', max => 8);
+		name => 'Interview', policy => 'invite', max => 8, expires => $until);
 	if ($made->{'error'}) {
 		$c->render(json => { error => $made->{'error'} });
 		return;
 	}
 	my $pass = &jg_room_pass($c, $handle, $room,
-		uses => 1, expires => time + 7200,
+		uses => 1, expires => $until,
 		meta => { purpose => 'interview', name => ($info->{'name'} || '') });
 	if ($pass->{'error'}) {
 		$c->render(json => { error => $pass->{'error'} });
