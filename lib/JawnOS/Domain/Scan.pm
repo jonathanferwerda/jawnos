@@ -122,10 +122,61 @@ sub scan_house_members {
 	return @out;
 }
 
+# A computer in the House takes the paper, and a phone is the scanner of last
+# resort: a computer has the vision model and the app's own tools, and the pages
+# stay where the receipt reader can read them. A computer counts when its
+# heartbeat is fresh, or when this machine can still reach it - a phone off the
+# LAN reaches a computer over the VPN, and a phone that has been asleep carries
+# an old heartbeat for a computer that is wide awake. The reachable answer is
+# held for two minutes so a watcher pass does not ask the same peer again and
+# again. Answers the computer's row, or undef when there is no computer at hand.
+sub scan_computer_available {
+	my $me = &scan_house_me();
+	my $now = &rightNow();
+	my $rows = eval { &db_select('scan_house')->hashes } || [];
+	my @peers = grep {
+		($_->{'machine'} || '') ne $me
+			&& (($_->{'device'} || '') =~ /^(?:computer|server)$/)
+			&& ($_->{'scan_ready'} || 0)
+	} @{$rows || []};
+	return undef unless @peers;
+	my ($fresh) = grep { (($_->{'seen'} || 0) + 0) > $now - 5 * 60000 } @peers;
+	return $fresh if $fresh;
+	my $key = join ',', sort map { $_->{'machine'} } @peers;
+	my $memo = eval { &cache_get({ app => 'scan', context => 'computer_available' }) } || {};
+	if (ref $memo eq 'HASH' && ($memo->{'key'} || '') eq $key && (($memo->{'at'} || 0) + 0) > $now - 2 * 60000) {
+		my ($row) = grep { ($_->{'machine'} || '') eq ($memo->{'machine'} || '') } @peers;
+		return $row;
+	}
+	my $up;
+	foreach my $row ( @peers ) {
+		my $rm = eval { &db_select('remote_machines', undef, { signatorial => $row->{'machine'} })->hashes->[0] };
+		next unless ref $rm eq 'HASH';
+		my ($ua, $p) = &peer_useragent($rm);
+		next unless $ua && ref $p eq 'HASH' && ($p->{'manager'} || '') ne '';
+		# The health route is the House's own "are you there": it is gated to the
+		# signed peer rail, so an answer also proves this machine may talk to it.
+		my $res = eval {
+			$ua->connect_timeout(2)->inactivity_timeout(3)
+				->get($p->{'manager'} . '/manager/health?signatorial=' . $me)->result;
+		};
+		if ($res && $res->is_success) { $up = $row; last; }
+	}
+	&cache_set({ app => 'scan', context => 'computer_available', warranty => '-2m' },
+		{ key => $key, at => $now, machine => ($up ? ($up->{'machine'} || '') : '') });
+	return $up;
+}
+
 # One dispatcher: a computer (or a server, which is a computer on the LAN)
 # before a phone or tablet, and the Table before another computer. The ranking
 # is deterministic, so every machine elects the same one from the same rows.
+# A phone never names itself while a computer can take the paper, even one it
+# only knows from an old heartbeat: it asks that computer first.
 sub scan_dispatcher {
+	if ((&device_setter() || '') eq 'mobile') {
+		my $computer = &scan_computer_available();
+		return $computer->{'machine'} if ref $computer eq 'HASH' && ($computer->{'machine'} || '') ne '';
+	}
 	my @rows = &scan_house_members();
 	return '' unless @rows;
 	my $rank = sub {
@@ -147,6 +198,8 @@ sub scan_dispatcher {
 sub scan_dispatcher_here {
 	my $me = &scan_house_me();
 	return 0 unless length $me;
+	# the phone's fallback is no computer in the House and no VPN to one
+	if ((&device_setter() || '') eq 'mobile' && &scan_computer_available()) { return 0; }
 	return (&scan_dispatcher() eq $me) ? 1 : 0;
 }
 

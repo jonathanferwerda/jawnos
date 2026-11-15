@@ -371,6 +371,7 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 {
 	no warnings 'redefine';
 	local *subs::scan_house_me = sub { return 'me' };
+	local *subs::device_setter = sub { return 'computer' };
 	local *subs::scan_house_members = sub {
 		return (
 			{ machine => 'phone', device => 'mobile', hostname => 'phone' },
@@ -394,6 +395,67 @@ my $lpadmin = fake_script('lpadmin', 'exit 0');
 		return ( { machine => 'me', device => 'computer', hostname => 'me' } );
 	};
 	is(subs::scan_dispatcher_here(), 1, 'the elected machine is the dispatcher');
+}
+{
+	# A phone is the scanner of last resort. While a computer can take the paper
+	# the phone stands down, even when its own copy of the ledger is old - that
+	# is the state a phone wakes into, and it used to elect itself and pull the
+	# paper before the computer could.
+	package FakeScanRes;
+	sub new { my ($class, $ok) = @_; return bless { ok => $ok }, $class }
+	sub is_success { return $_[0]->{'ok'} ? 1 : 0 }
+	package FakeScanTX;
+	sub new { my ($class, $ok) = @_; return bless { ok => $ok }, $class }
+	sub result { return FakeScanRes->new($_[0]->{'ok'}) }
+	package FakeScanUA;
+	sub new { my ($class, %o) = @_; return bless { %o, gets => [] }, $class }
+	sub connect_timeout { return $_[0] }
+	sub inactivity_timeout { return $_[0] }
+	sub get { my ($self, $url) = @_; push @{$self->{'gets'}}, $url; return FakeScanTX->new($self->{'ok'}) }
+	package main;
+
+	no warnings 'redefine';
+	local *subs::scan_house_me = sub { return 'me' };
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	local *subs::device_setter = sub { return 'mobile' };
+	local *subs::scan_house_members = sub { return ( { machine => 'me', device => 'mobile', hostname => 'localhost' } ) };
+	my ($memo, $computer, $probe_ok);
+	local *subs::cache_get = sub { return ref $memo eq 'HASH' ? $memo : {} };
+	local *subs::cache_set = sub { $memo = $_[1]; return 1 };
+	local *subs::db_select = sub {
+		my ($table) = @_;
+		return FakeRows->new($computer ? [ $computer ] : []) if $table eq 'scan_house';
+		return FakeRows->new([ { signatorial => 'table', manager => 'https://100.64.0.1:45545', cookie => '[]' } ])
+			if $table eq 'remote_machines';
+		return FakeRows->new([]);
+	};
+	my $ua = FakeScanUA->new(ok => 1);
+	local *subs::peer_useragent = sub { return ($ua, { manager => 'https://100.64.0.1:45545' }) };
+
+	$computer = { machine => 'table', device => 'computer', hostname => 'table', scan_ready => 1, seen => 1_800_000_000_000 - 3_000 };
+	is(subs::scan_dispatcher(), 'table', 'a phone names the computer whose heartbeat is fresh');
+	is(subs::scan_dispatcher_here(), 0, 'and does not take the paper itself');
+	is(scalar @{$ua->{'gets'}}, 0, 'without asking anyone, because the row says it is here');
+
+	$memo = undef;
+	$computer->{'seen'} = 1_800_000_000_000 - 3_600_000;
+	is(subs::scan_dispatcher_here(), 0, 'an old heartbeat does not make the phone the scanner');
+	is(scalar @{$ua->{'gets'}}, 1, 'the phone asks the computer before deciding');
+	like($ua->{'gets'}[0], qr{^https://100\.64\.0\.1:45545/manager/health\?signatorial=me$}, 'over the peer rail, naming itself');
+	is(subs::scan_dispatcher(), 'table', 'and answers with the computer that replied');
+
+	$memo = undef;
+	$ua->{'ok'} = 0;
+	is(subs::scan_dispatcher_here(), 1, 'a computer that does not answer leaves the phone the scanner');
+	is(subs::scan_dispatcher(), 'me', 'and the phone names itself');
+
+	$memo = undef;
+	$computer = undef;
+	is(subs::scan_dispatcher_here(), 1, 'no computer in the House at all is also the phone\'s turn');
+
+	$memo = undef;
+	local *subs::device_setter = sub { return 'computer' };
+	is(subs::scan_dispatcher_here(), 1, 'a computer is still its own dispatcher');
 }
 {
 	no warnings 'redefine';

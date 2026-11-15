@@ -34,10 +34,19 @@ sub action_52327 {
 	my $last_error = eval { &subs::cache_get({ app => 'scan', context => 'last_error' }) };
 	$last_error = undef unless ref $last_error eq 'HASH'
 		&& (($last_error->{'at'} || 0) + 0) > &subs::rightNow() - 5 * 60 * 1000;
+	# Who would scan is a machine id in the ledger; the app shows the machine's
+	# own name, so it says "Scans run on table" rather than a hash.
+	my $scanner = &subs::scan_dispatcher();
+	if ($scanner ne '' && $scanner ne &subs::scan_house_me()) {
+		my $rows = eval { &subs::db_select('scan_house')->hashes } || [];
+		my ($row) = grep { ($_->{'machine'} || '') eq $scanner } @{$rows};
+		my $name = $row ? ($row->{'hostname'} || '') : '';
+		$scanner = $name if $name ne '' && $name ne 'localhost';
+	}
 	$c->render(json => {
 		ok => 1,
 		items => &scan_pool_items($c),
-		scanner => &subs::scan_dispatcher(),
+		scanner => $scanner,
 		here => &subs::scan_dispatcher_here() ? 1 : 0,
 		feeds => &scan_feeds(),
 		scanners => &scan_scanner_rows(),

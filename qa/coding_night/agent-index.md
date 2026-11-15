@@ -116,7 +116,7 @@ One route: `perl scripts/where.pl /manager/pen`.
 ## helpers
 
 649 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-2293 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+2294 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware
