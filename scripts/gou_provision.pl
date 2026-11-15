@@ -16,6 +16,8 @@
 #   --join-token FILE            JSON copied to
 #                                /home/jawn/jawnos/.controller-join.json
 #   --no-autopopulate            skip the rootfs writes
+#   --no-reboot                  leave the board in recovery; do not ask it to restart
+#   --reboot-wait SECONDS        how long to wait for the board to restart (default 8)
 #   --dry-run                    do everything except write to the device/mount
 #   --backup PATH                read the current eMMC here before writing
 #
@@ -71,6 +73,8 @@ Getopt::Long::GetOptions(
 	'progress=s'      => \$opt{'progress'},
 	'recovery-image=s' => \$opt{'recovery_image'},
 	'no-autopopulate' => \$opt{'no_autopopulate'},
+	'no-reboot'       => \$opt{'no_reboot'},
+	'reboot-wait=i'   => \$opt{'reboot_wait'},
 	'dry-run'         => \$opt{'dry_run'},
 	'backup=s'        => \$opt{'backup'},
 	'help|h'          => \$opt{'help'},
@@ -86,7 +90,7 @@ if ($opt{'help'}) {
 	print <<'USAGE';
 gou_provision.pl --scan | --flash [--device /dev/sdX]
   [--image FILE] [--wifi-ssid S --wifi-psk P | --wifi-psk-stdin] [--hostname NAME]
-  [--join-token FILE] [--progress FILE] [--recovery-image FILE] [--no-autopopulate] [--dry-run] [--backup PATH]
+  [--join-token FILE] [--progress FILE] [--recovery-image FILE] [--no-autopopulate] [--no-reboot] [--dry-run] [--backup PATH]
 USAGE
 	exit 0;
 }
@@ -505,23 +509,173 @@ sub _write_image {
 	# the file size; dd's own count is the same number and is the fallback.
 	my $length = defined $expected ? $expected : $count;
 	my $back = Digest::SHA->new(256);
-	open my $device, '<:raw', $dev or return { ok => 0, error => "could not reread $dev: $!" };
+	# The read-back goes through dd, not read(2): the USB gadget answers a raw
+	# read in a few kilobytes, so a plain loop made one syscall per 4 KB - a
+	# silent ten-minute crawl at a bar pinned on 100% for a 6.8 GB image. dd
+	# asks for whole blocks and its count is bounded by the image, not by the
+	# 14.6 GB disk behind it.
+	my $blocks = int(($length + 8 * 1024 * 1024 - 1) / (8 * 1024 * 1024));
 	my $left = $length;
+	my $read_back = 0;
+	my $verify_started = Time::HiRes::time();
+	my $verify_report = $verify_started;
+	_progress_write('verifying', bytes => 0, total => $length, rate => 0);
+	open my $device, '-|', 'dd', "if=$dev", 'bs=8M', "count=$blocks", 'status=none'
+		or return { ok => 0, error => "could not reread $dev: $!" };
 	while ($left > 0) {
-		my $want = $left > 8 * 1024 * 1024 ? 8 * 1024 * 1024 : $left;
+		last if $CANCELLED;
+		my $want = $left > 4 * 1024 * 1024 ? 4 * 1024 * 1024 : $left;
 		my $got = read($device, my $buffer, $want);
 		last unless defined $got && $got > 0;
+		$got = $left if $got > $left;
 		$back->add($buffer);
 		$left -= $got;
+		$read_back += $got;
+		my $now = Time::HiRes::time();
+		if ($now - $verify_report >= 0.5) {
+			$verify_report = $now;
+			my $elapsed = $now - $verify_started;
+			_progress_write('verifying', bytes => $read_back, total => $length,
+				rate => ($elapsed > 0 ? int($read_back / $elapsed) : 0));
+		}
 	}
 	close $device;
+	my $read_status = $?;
+	return { ok => 0, cancelled => 1, bytes => $count, error => 'cancelled' } if $CANCELLED;
 	my $match = ($left == 0 && $back->hexdigest eq $sha->hexdigest) ? 1 : 0;
 	return {
 		ok => $match,
 		bytes => $count,
 		sha256_match => $match,
-		($match ? () : (error => 'the read-back does not match the image')),
+		($match ? () : (error => $left == 0
+			? 'the read-back does not match the image'
+			: 'the read-back stopped before the end of the image')),
 	};
+}
+
+# The BOOT partition of the flashed eMMC is the bootloader's: boot.ini and the
+# recovery BIOS live there. The provisioner puts the eMMC's own way back into
+# recovery there, so a board never depends on a microSD to be recovered.
+sub _first_partition {
+	my ($dev) = @_;
+	my $out = _capture('lsblk', '-lno', 'NAME,TYPE', '--', $dev);
+	if (defined $out) {
+		for my $line (split /\n/, $out) {
+			my ($name, $type) = split /\s+/, _trim($line);
+			next unless defined $type && $type eq 'part';
+			return "/dev/$name";
+		}
+	}
+	return $dev . 'p1' if $dev =~ m{/dev/(?:mmcblk|nvme)\d+};
+	return $dev . '1';
+}
+
+# The bootloader's recovery entry. It boots the BIOS already on this partition
+# with bootmode=recovery, which starts the USB mass-storage gadget instead of
+# JawnOS. Nothing here is needed on the normal path, and a board without the
+# marker boots exactly as it did before.
+sub _recovery_entry {
+	return <<'ENTRY';
+
+# --- JawnOS recovery --------------------------------------------------------
+# A board that must come back in recovery carries the marker file RECOVERY on
+# this BOOT partition; scripts/gou_recovery.pl writes it and a reflash removes
+# it. The BIOS is already here, so this needs no microSD.
+if test "x${devno}" = "x"; then setenv devno 0; fi
+if test "x${cramfsaddr}" = "x"; then setenv cramfsaddr 0x20000000; fi
+if load mmc ${devno}:1 0x1F000000 RECOVERY; then
+	setenv bootmode recovery
+	setenv bootdev mmc
+	load mmc ${devno}:1 ${cramfsaddr} ODROIDBIOS.BIN
+	cramfsload 0x2000000 uImage
+	cramfsload 0x3000000 rootfs.cpio.uboot
+	cramfsload 0x1000000 meson64_odroid${variant}.dtb
+	setenv bootargs "root=/dev/ram0 init=/init console=tty0 console=ttyS0,115200 no_console_suspend earlyprintk=aml-uart,0xff803000 ramoops.pstore_en1=1 ramoops.record_size=0x8000 ramoops.console_size=0x4000 logo=osd0,loaded,0x3d800000 vout=${hdmimode},enable hdmimode=${hdmimode} voutmode=dvi disablehpd=true osd_reverse=0 video_reverse=0 bootdev=mmc bootmode=recovery reboot_mode=normal quiet fbcon=rotate:3"
+	bootm 0x2000000 0x3000000 0x1000000
+fi
+ENTRY
+}
+
+sub _install_recovery_entry {
+	my ($path) = @_;
+	my $text = _slurp($path);
+	return 0 unless length $text;
+	return 0 if index($text, 'load mmc ${devno}:1 0x1F000000 RECOVERY') >= 0;
+	my $anchor = "setenv outputmode \"panel\"\n";
+	my $at = index($text, $anchor);
+	return 0 if $at < 0;
+	$at += length $anchor;
+	my $fresh = substr($text, 0, $at) . _recovery_entry() . substr($text, $at);
+	return _write_file($path, $fresh) ? 1 : 0;
+}
+
+# Put the recovery entry and the reboot-capable BIOS on the BOOT partition, then
+# ask the board to restart. A stock recovery BIOS (a microSD) has no watcher, so
+# the wait ends without a restart and the page says to use F3+F6; a board that
+# carries this BIOS restarts on its own.
+sub _prepare_boot {
+	my ($dev) = @_;
+	$dev = '/dev/sda' unless defined $dev && length $dev;
+	my $p1 = _first_partition($dev);
+	return { patched => 0, reboot => 0, reason => "could not find the boot partition of $dev" }
+		unless defined $p1 && -e $p1;
+	my $mount = _mounted_path($p1);
+	my $mounted_here = 0;
+	if (!length $mount) {
+		$mount = File::Temp::tempdir('gou-boot-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+		return { patched => 0, reboot => 0, reason => "could not mount $p1" }
+			if system('mount', $p1, $mount) != 0;
+		$mounted_here = 1;
+	}
+	my (@done, @notes);
+	push @done, 'recovery-entry' if _install_recovery_entry("$mount/boot.ini");
+	my $patched = 0;
+	my $patcher = File::Basename::dirname(Cwd::abs_path($0)) . '/gou_bios_patch.pl';
+	if (-f $patcher && -f "$mount/ODROIDBIOS.BIN") {
+		my $fresh = "$mount/.ODROIDBIOS.BIN.new";
+		if (system($^X, $patcher, '--bios', "$mount/ODROIDBIOS.BIN", '--out', $fresh) == 0
+			&& -s $fresh) {
+			if (rename($fresh, "$mount/ODROIDBIOS.BIN")) {
+				chmod 0644, "$mount/ODROIDBIOS.BIN";
+				$patched = _write_file("$mount/JNBIOS.TXT", "jawnos-reboot=1\n") ? 1 : 0;
+				push @done, 'reboot-watch' if $patched;
+			}
+			else {
+				unlink $fresh;
+				push @notes, 'the recovery BIOS could not be replaced';
+			}
+		}
+		else {
+			unlink $fresh;
+			push @notes, 'the recovery BIOS could not be rebuilt; the board will not restart on its own';
+		}
+	}
+	my $marker = 0;
+	if ($patched && !$opt{'no_reboot'}) {
+		$marker = _write_file("$mount/JNREBOOT", "reboot\n") ? 1 : 0;
+	}
+	system('sync');
+	system('umount', $mount) if $mounted_here;
+	my $result = { patched => $patched, reboot => $marker, done => \@done, notes => \@notes };
+	if ($marker) {
+		my $wait = defined $opt{'reboot_wait'} ? $opt{'reboot_wait'} : 8;
+		$result->{'rebooted'} = _wait_for_reboot($dev, $wait);
+	}
+	return $result;
+}
+
+# The board restarts by taking its gadget away. A host-side eject would also
+# make the device node vanish while the board is still up, so this only watches
+# for the board's own departure.
+sub _wait_for_reboot {
+	my ($dev, $wait) = @_;
+	system('blockdev', '--flushbufs', $dev) if _command_path('blockdev');
+	my $until = time + ($wait > 0 ? $wait : 0);
+	while (time <= $until) {
+		return 1 unless -e $dev;
+		select(undef, undef, undef, 0.5);
+	}
+	return 0;
 }
 
 # ---------------------------------------------------------------------------
@@ -712,22 +866,24 @@ sub _autopopulate {
 	# starts. The unit is enabled by its wants symlink rather than by running
 	# systemctl against the image, so nothing here needs the board booted.
 	if (!length $error) {
-		# The script comes from this tree, not from the image: the image is a copy
+		# The scripts come from this tree, not from the image: the image is a copy
 		# of another card, whose tree may predate it (or not be a tree at all),
-		# and a unit that calls a missing script would fail silently on the boot
-		# that matters.
-		my $source = File::Basename::dirname(Cwd::abs_path($0)) . '/gou_first_boot.pl';
-		my $script = -f $source ? _slurp($source) : '';
+		# and a unit or a person that calls a missing script would fail silently
+		# on the boot that matters.
+		my $source_dir = File::Basename::dirname(Cwd::abs_path($0));
 		my $dir = "$mount/home/jawn/jawnos/scripts";
 		File::Path::make_path($dir) unless -d $dir;
-		my $path = "$dir/gou_first_boot.pl";
-		if (length $script
-			&& _write_file($path, $script)
-			&& chmod(0755, $path) && chown(1001, 1001, $path)) {
-			push @done, 'first-boot-script';
-		}
-		else {
-			$error = 'could not copy the first-boot script';
+		for my $name (qw(gou_first_boot.pl gou_recovery.pl)) {
+			my $source = "$source_dir/$name";
+			my $script = -f $source ? _slurp($source) : '';
+			my $path = "$dir/$name";
+			unless (length $script
+				&& _write_file($path, $script)
+				&& chmod(0755, $path) && chown(1001, 1001, $path)) {
+				$error = "could not copy $name";
+				last;
+			}
+			push @done, $name eq 'gou_first_boot.pl' ? 'first-boot-script' : 'recovery-script';
 		}
 	}
 	if (!length $error) {
@@ -880,10 +1036,21 @@ sub _flash {
 		@done = @{ $populated->{'done'} || [] };
 	}
 
+	my $boot = {};
+	if (!$opt{'dry_run'}) {
+		_progress_write('finishing', device => $dev, image => $image, total => $length,
+			bytes => $write->{'bytes'}, hostname => $hostname);
+		$boot = _prepare_boot($dev);
+		_note($_) for @{ $boot->{'notes'} || [] };
+		push @done, @{ $boot->{'done'} || [] };
+	}
+
 	_progress_write('done',
 		device => $dev, image => $image, total => $length,
 		bytes => $write->{'bytes'}, hostname => $hostname,
 		sha256_match => $write->{'sha256_match'}, autopopulated => \@done,
+		reboot => ($boot->{'reboot'} ? 1 : 0),
+		rebooted => ($boot->{'rebooted'} ? 1 : 0),
 		($opt{'dry_run'} ? (dry_run => 1) : ()));
 
 	_emit({
@@ -893,6 +1060,8 @@ sub _flash {
 		bytes_written => $write->{'bytes'},
 		sha256_match => $write->{'sha256_match'},
 		autopopulated => \@done,
+		reboot => ($boot->{'reboot'} ? 1 : 0),
+		rebooted => ($boot->{'rebooted'} ? 1 : 0),
 		($opt{'dry_run'} ? (dry_run => 1) : ()),
 		(defined $backup && length $backup ? (backup => $backup) : ()),
 	}, 0);

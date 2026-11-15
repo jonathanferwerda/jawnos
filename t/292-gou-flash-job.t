@@ -237,6 +237,10 @@ sub insert_token {
 	like($provision, qr/_progress_write\('done'/, 'and done');
 	like($provision, qr/\$SIG\{'TERM'\}/, 'TERM cancels the write');
 	like($provision, qr/return \{ ok => 0, cancelled => 1/, 'a cancelled write is not a write error');
+	like($provision, qr/"if=\$dev", 'bs=8M'/, 'the read-back reads whole blocks through dd');
+	like($provision, qr/_progress_write\('verifying', bytes => 0/, 'the verify starts the bar again');
+	like($provision, qr/_wait_for_reboot/, 'the flash waits for the board to restart');
+	like($provision, qr/'no-reboot'/, 'and can be told not to ask it to');
 
 	# The failed-image path writes the progress file without root or a device,
 	# so the page still shows the reason.
@@ -270,6 +274,7 @@ sub insert_token {
 	like($js, qr/MB\/s/, 'a rate in MB per second');
 	like($js, qr/controllerFlashResume/, 'a reopened window resumes the job');
 	like($js, qr/The panel restarted; the flash is still running\./, 'and a restart is not a failure');
+	like($js, qr/F3\+F6/, 'the page says how to restart a board that stayed in recovery');
 	like(read_file(root() . '/templates/controllers/style.html.ep'), qr/\.controller_flash_bar/, 'the bar has a style');
 	like(read_file(root() . '/perl/help/topics_apps.pl'), qr/Cancel button beside it/, 'the guide names the bar and Cancel');
 }

@@ -31,6 +31,9 @@ like($source, qr{\.local/state/jawnos}, 'the state directory the unit logs to');
 like($source, qr/usb-gadget\.nmconnection/, 'the USB gadget profile');
 like($source, qr{/etc/machine-id}, 'the machine-id is blanked');
 like($source, qr{s/mmc 1:1/mmc 0:1}, 'boot.ini is rewritten to mmc 0');
+like($source, qr/recovery_stanza/, 'the eMMC carries a boot.ini recovery entry');
+like($source, qr/0x1F000000 RECOVERY/, 'which starts the BIOS when the marker is present');
+like($source, qr/apply_recovery_entry/, 'and it is applied by both build and repair');
 
 # What the image must not keep.
 foreach my $pattern (qw(/root/kbuild /usr/share/doc /etc/ssh/ssh_host_ /home/jawn/roms /opt/retroarch-stock)) {

@@ -238,6 +238,49 @@ FSTAB
 	chmod 644 "$root/etc/fstab"
 }
 
+# --- the eMMC's way back -----------------------------------------------------
+# A board that must come back in recovery carries the marker file RECOVERY on
+# this BOOT partition. The bootloader then starts the BIOS that is already here
+# (ODROIDBIOS.BIN) with bootmode=recovery, which exports the eMMC over USB
+# instead of booting JawnOS. scripts/gou_recovery.pl on the board writes the
+# marker; a reflash removes it.
+recovery_stanza() {
+	cat <<'ENTRY'
+
+# --- JawnOS recovery --------------------------------------------------------
+# A board that must come back in recovery carries the marker file RECOVERY on
+# this BOOT partition; scripts/gou_recovery.pl writes it and a reflash removes
+# it. The BIOS is already here, so this needs no microSD.
+if test "x${devno}" = "x"; then setenv devno 0; fi
+if test "x${cramfsaddr}" = "x"; then setenv cramfsaddr 0x20000000; fi
+if load mmc ${devno}:1 0x1F000000 RECOVERY; then
+	setenv bootmode recovery
+	setenv bootdev mmc
+	load mmc ${devno}:1 ${cramfsaddr} ODROIDBIOS.BIN
+	cramfsload 0x2000000 uImage
+	cramfsload 0x3000000 rootfs.cpio.uboot
+	cramfsload 0x1000000 meson64_odroid${variant}.dtb
+	setenv bootargs "root=/dev/ram0 init=/init console=tty0 console=ttyS0,115200 no_console_suspend earlyprintk=aml-uart,0xff803000 ramoops.pstore_en1=1 ramoops.record_size=0x8000 ramoops.console_size=0x4000 logo=osd0,loaded,0x3d800000 vout=${hdmimode},enable hdmimode=${hdmimode} voutmode=dvi disablehpd=true osd_reverse=0 video_reverse=0 bootdev=mmc bootmode=recovery reboot_mode=normal quiet fbcon=rotate:3"
+	bootm 0x2000000 0x3000000 0x1000000
+fi
+ENTRY
+}
+
+apply_recovery_entry() {
+	local p1="$1"
+	local boot="$p1/boot.ini"
+	[[ -f "$boot" ]] || { log "no boot.ini on the BOOT partition; recovery entry not added"; return 0; }
+	grep -q '0x1F000000 RECOVERY' "$boot" && return 0
+	if ! grep -qF 'setenv outputmode "panel"' "$boot"; then
+		log "boot.ini has no outputmode line; recovery entry not added"
+		return 0
+	fi
+	local snippet="$WORK/recovery.snippet"
+	recovery_stanza > "$snippet" || return 1
+	sed -i '/^setenv outputmode "panel"$/r '"$snippet" "$boot" || return 1
+	log "added the recovery entry to boot.ini"
+}
+
 # --- helpers -----------------------------------------------------------------
 bootloader_from() {
 	local src="$1" dest="$2"
@@ -299,6 +342,16 @@ do_repair() {
 
 	apply_fixes "$MNT_P2" "$boot_uuid" "$root_uuid"
 
+	# The BOOT partition carries the recovery entry, so a board that was
+	# repaired keeps its way back without a rebuild of the whole image.
+	MNT_P1="$WORK/p1"
+	mkdir -p "$MNT_P1"
+	mount "${LOOP_OUT}p1" "$MNT_P1"
+	apply_recovery_entry "$MNT_P1"
+	sync
+	umount "$MNT_P1"
+	MNT_P1=""
+
 	sync
 	umount "$MNT_P2"
 	MNT_P2=""
@@ -352,6 +405,7 @@ do_build() {
 	rsync -a --no-perms "${LOOP_DUMP}p1"/ "$MNT_P1"/
 	# u-boot on the eMMC is mmc 0; the card's own script says mmc 1.
 	sed -i 's/mmc 1:1/mmc 0:1/g' "$MNT_P1/boot.ini"
+	apply_recovery_entry "$MNT_P1"
 	umount "$MNT_P1"
 	MNT_P1=""
 

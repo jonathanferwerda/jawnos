@@ -965,7 +965,8 @@ function controllerNewFlash() {
 			}
 			controllerFlashFinish({
 				state: 'done', device: response.device, bytes: response.bytes_written,
-				sha256_match: response.sha256_match, autopopulated: response.autopopulated
+				sha256_match: response.sha256_match, autopopulated: response.autopopulated,
+				reboot: response.reboot, rebooted: response.rebooted
 			});
 		},
 		error: function() {
@@ -1033,6 +1034,7 @@ function controllerFlashPaint(job) {
 	var said = state === 'checking' ? controllerT('Checking the image...')
 		: state === 'verifying' ? controllerT('Checking the write...')
 		: state === 'preparing' ? controllerT('Preparing the board...')
+		: state === 'finishing' ? controllerT('Finishing the board...')
 		: controllerT('Flashing...');
 	$('#controllers_flash_state').text(said);
 	var pct = (typeof job.percent === 'number') ? Math.max(0, Math.min(100, job.percent)) : 0;
@@ -1125,7 +1127,9 @@ function controllerFlashFinish(job) {
 			device: job.device,
 			bytes_written: job.bytes,
 			sha256_match: job.sha256_match,
-			autopopulated: job.autopopulated || []
+			autopopulated: job.autopopulated || [],
+			reboot: job.reboot,
+			rebooted: job.rebooted
 		});
 		controllerRosterLoad();
 		controllerStorageLoad();
@@ -1148,6 +1152,11 @@ function controllerNewDone(data) {
 	var panel = controllerNewPanel();
 	if (!panel.length) { return; }
 	panel.append($('<div class="controller_new_state"></div>').text(controllerT('The board is flashed.')));
+	if (data.rebooted) {
+		panel.append($('<div class="controller_new_detail"></div>').text(controllerT('The board is restarting into JawnOS.')));
+	} else if (data.reboot) {
+		panel.append($('<div class="controller_new_detail"></div>').text(controllerT('Press F3+F6 on the board to restart it.')));
+	}
 	if (data.device) {
 		panel.append($('<div class="controller_new_detail"></div>').text(controllerT('Device: {0}', String(data.device))));
 	}
@@ -1175,7 +1184,8 @@ function controllerNewDone(data) {
 var controllerNewFields = {
 	wifi: 'Wi-Fi network', hostname: 'Name', 'join-token': 'House token',
 	identity: 'Machine identity', config: 'Configuration', database: 'Database',
-	state: 'Runtime state', network: 'Saved networks', recovery: 'Recovery image'
+	state: 'Runtime state', network: 'Saved networks', recovery: 'Recovery image',
+	'recovery-entry': 'Recovery entry', 'reboot-watch': 'Restart on completion', 'recovery-script': 'Recovery command'
 };
 
 function controllerNewFieldName(item) {

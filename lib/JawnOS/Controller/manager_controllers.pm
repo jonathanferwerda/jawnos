@@ -871,6 +871,8 @@ sub action_54010 {
 			ok => 1, state => 'done', device => $job->{'device'},
 			bytes_written => $job->{'bytes'}, sha256_match => $job->{'sha256_match'},
 			autopopulated => ($job->{'autopopulated'} || []), wifi => $wifi_ssid,
+			reboot => ($job->{'reboot'} ? 1 : 0),
+			rebooted => ($job->{'rebooted'} ? 1 : 0),
 		});
 	}
 	if ($state eq 'cancelled') {

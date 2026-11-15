@@ -54,7 +54,8 @@ like($provision, qr#ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/gou_first_
 like($provision, qr/\.jawnos_signatorial_id/, 'the provisioner clears the copied machine identity');
 # The image is a copy of another card, so its tree may not carry the script the
 # unit calls; the provisioner copies this tree's own alongside the unit.
-like($provision, qr{could not copy the first-boot script}, 'the first-boot script is copied into the image, not assumed there');
+like($provision, qr{could not copy \$name}, 'the board scripts are copied into the image, not assumed there');
+like($provision, qr/for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl\)\)/, 'both the first-boot and the recovery script');
 like($provision, qr{/gou_first_boot\.pl}, 'from this tree\'s own scripts directory');
 like($provision, qr/'recovery-image=s'/, 'the flash takes a recovery image');
 like($provision, qr/sdcard_recovery\.img/, 'and copies it onto the flashed rootfs');
