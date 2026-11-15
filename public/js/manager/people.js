@@ -1,6 +1,7 @@
 /* [[js-split]]
    people.js is part 1. The rest live in people/ in name order:
      01_crest_tabs.js - crest scan capture upload verify import - peer vouch - house name - tabbed person window
+     02_roles.js - staff roles: the house's role catalog and the roles a person holds
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 // The People app. The first pass owns the house's own crest: scan the drawing on

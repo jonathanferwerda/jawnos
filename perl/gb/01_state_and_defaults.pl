@@ -132,11 +132,14 @@ $gb::alarm_haircut_running = 0;
 
 our $whatevs = {};
 
+# The session chairs, ordered by the one privilege ladder. The numbers come from
+# %subs::privilege_rank so the box office chooser and the route gate can never
+# drift apart; they are display order now, not a second scale.
 our $chairs = {
-	guest => { rank => 3 },
-	resident => { rank => 2 },
-	citizen => { rank => 1 },
-	blacklisted => { rank => 0 },
+	blacklisted => { rank => $subs::privilege_rank{'blacklisted'} },
+	guest       => { rank => $subs::privilege_rank{'guest'} },
+	resident    => { rank => $subs::privilege_rank{'resident'} },
+	citizen     => { rank => $subs::privilege_rank{'citizen'} },
 };
 
 our @device_types = qw/mobile computer server/;

@@ -43,7 +43,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - notifications (topic notifications): 5 file(s), 7 route(s)
 - packages (topic packages): 2 file(s), 11 route(s)
 - pen (topic pen): 2 file(s), 1 route(s)
-- people (topic people): 5 file(s), 18 route(s)
+- people (topic people): 6 file(s), 22 route(s)
 - phone (topic phone): 3 file(s), 11 route(s)
 - power (topic power): 5 file(s), 9 route(s)
 - process_monitor (topic process_monitor): 2 file(s), 2 route(s)
@@ -67,7 +67,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 
 ## tables
 
-38 tables (database/schema.sql). Columns are inline; `perl scripts/agent_help.pl --schema <table>` adds the apps that use one.
+39 tables (database/schema.sql). Columns are inline; `perl scripts/agent_help.pl --schema <table>` adds the apps that use one.
 - appointments (57): app, timestamp, data, type, account, amount, unit, duration, status, notes, start_notes, end_notes, vendor, tax, quantity, total, item, server_time, file, device, project, pos, club, warranty, source, formulas, position, toggle, uuid, ticket_uuid, browser_tab_id, seen, model, option, movement, aux, aux_description, state, has_tax, has_totes, ost, balance, measures, manufacturer, encryption_standard, options, source_uuid, currency, stop_seen, stop_timestamp, duties, next_duty, subtype, app_uuid, autostop, taxes, tax_exemption
 - backups (12): timestamp, server_time, signatorial, destination, size, reason, warranty, uuid, recipient, recipient, ost, enc_file
 - cache (10): timestamp, server_time, app, context, warranty, subcontext, device, uuid, ost, data
@@ -88,8 +88,9 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - option (25): app, name, price, characteristics, timestamp, server_time, uuid, files, cost, description, discount, markup, ost, manufacturer, def, quantity, unit, save_app, file, delay_start, delay_stop, def_month, def_day, def_hour, def_wday
 - option_category (27): supplier, app, name, multi, timestamp, server_time, uuid, characteristics, price, category, cost, description, discount, markup, ost, manufacturer, def, quantity, unit, save_app, file, delay_start, delay_stop, def_month, def_day, def_hour, def_wday
 - paired_devices (14): uuid, name, pubkey, bio_pubkey, privilege, status, timestamp, server_time, ost, last_seen, agent, kind, person_uuid, share_pubkey
-- people (8): uuid, name, privilege, status, created, ost, server_time, app
+- people (9): uuid, name, privilege, status, created, ost, server_time, app, roles
 - remote_machines (42): uuid, ip, mac, timestamp, server_time, connected, status, log, port, buttons, manager, data, signatorial, cookie, connection, nic, deletions, ws_port, fqdn, ws_auth, manager_file, additions, edits, device, ost, hostname, tunnel, mirrors, network, tailnet_ip, pseudonyms, dock_port, archive_dir, archive, version, sync_cursor, pubkey, privilege, grant_scope, grant_expires, crest_uuid, crest_cosig
+- roles (7): uuid, name, department, permissions, builtin, server_time, ost
 - routers (11): uuid, ip, mac, nic, name, model, manager, last_seen, timestamp, server_time, ost
 - security (7): level, credential, server_time, timestamp, database, uuid, ost
 - settings (11): setting, value, timestamp, id, app, server_time, device, browser_tab_id, uuid, ost, subsetting
@@ -109,15 +110,15 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 
 ## routes
 
-988 routes in 80 modules.
-By controller: Root_misc (3), apps_misc (3), box_office_misc (2), crest_misc (1), download_program_misc (1), embedded_misc (1), file_open_misc (1), gate_misc (1), i18n_misc (1), js_misc (2), mail_misc (2), mail_ws (1), manager_box_office (7), manager_budget (7), manager_budget2 (7), manager_clock (5), manager_configure (36), manager_configure2 (33), manager_configure3 (22), manager_configure4 (20), manager_configure5 (22), manager_controllers (13), manager_crypto (8), manager_device (15), manager_embedded (25), manager_folders (15), manager_folders2 (22), manager_gallery (5), manager_help (29), manager_mail (28), manager_mail2 (10), manager_mapping (2), manager_market (20), manager_market2 (9), manager_misc (23), manager_misc10 (32), manager_misc11 (45), manager_misc12 (21), manager_misc13 (35), manager_misc14 (9), manager_misc2 (44), manager_misc3 (24), manager_misc4 (24), manager_misc5 (17), manager_misc6 (25), manager_misc7 (16), manager_misc8 (25), manager_misc9 (37), manager_packages (11), manager_people (15), manager_people2 (3), manager_phone (10), manager_power (9), manager_relational (9), manager_scan (5), manager_sco (12), manager_security (30), manager_security2 (13), manager_security3 (5), manager_silence (2), manager_sound (7), manager_store (27), manager_store2 (3), manager_transaction (5), manager_transaction2 (2), manager_travel (8), manager_watch (11), manager_weather (14), manager_ws (3), manifest_json_misc (1), mugshot_misc (1), observer_misc (1), passkey_misc (3), pay_misc (4), privacy_misc (1), public_view_misc (1), sesh_check (1), store_misc (13), teletype_misc (1), watch_misc (1).
-By first path segment: / (1), /apps (3), /box_office (2), /crest (1), /device (1), /download_program (1), /embedded (1), /file_open (1), /gate (1), /house (1), /i18n (1), /js (2), /mail (3), /manager (940), /manifest.json (1), /mugshot (1), /observer (1), /passkey (3), /pay (4), /privacy (1), /public_view (1), /sesh_check (1), /store (13), /teletype (1), /watch (1), /ws (1).
+992 routes in 80 modules.
+By controller: Root_misc (3), apps_misc (3), box_office_misc (2), crest_misc (1), download_program_misc (1), embedded_misc (1), file_open_misc (1), gate_misc (1), i18n_misc (1), js_misc (2), mail_misc (2), mail_ws (1), manager_box_office (7), manager_budget (7), manager_budget2 (7), manager_clock (5), manager_configure (36), manager_configure2 (33), manager_configure3 (22), manager_configure4 (20), manager_configure5 (22), manager_controllers (13), manager_crypto (8), manager_device (15), manager_embedded (25), manager_folders (15), manager_folders2 (22), manager_gallery (5), manager_help (29), manager_mail (28), manager_mail2 (10), manager_mapping (2), manager_market (20), manager_market2 (9), manager_misc (23), manager_misc10 (32), manager_misc11 (45), manager_misc12 (21), manager_misc13 (35), manager_misc14 (9), manager_misc2 (44), manager_misc3 (24), manager_misc4 (24), manager_misc5 (17), manager_misc6 (25), manager_misc7 (16), manager_misc8 (25), manager_misc9 (37), manager_packages (11), manager_people (19), manager_people2 (3), manager_phone (10), manager_power (9), manager_relational (9), manager_scan (5), manager_sco (12), manager_security (30), manager_security2 (13), manager_security3 (5), manager_silence (2), manager_sound (7), manager_store (27), manager_store2 (3), manager_transaction (5), manager_transaction2 (2), manager_travel (8), manager_watch (11), manager_weather (14), manager_ws (3), manifest_json_misc (1), mugshot_misc (1), observer_misc (1), passkey_misc (3), pay_misc (4), privacy_misc (1), public_view_misc (1), sesh_check (1), store_misc (13), teletype_misc (1), watch_misc (1).
+By first path segment: / (1), /apps (3), /box_office (2), /crest (1), /device (1), /download_program (1), /embedded (1), /file_open (1), /gate (1), /house (1), /i18n (1), /js (2), /mail (3), /manager (944), /manifest.json (1), /mugshot (1), /observer (1), /passkey (3), /pay (4), /privacy (1), /public_view (1), /sesh_check (1), /store (13), /teletype (1), /watch (1), /ws (1).
 One route: `perl scripts/where.pl /manager/pen`.
 
 ## helpers
 
 661 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-2426 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+2441 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware

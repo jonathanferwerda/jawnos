@@ -80,3 +80,25 @@
 	<% } %>
 	<button class="people_person_relational" app="<%= $app %>"><%= &subs::ui('Open Relational') %></button>
 </div>
+
+<% my %held_role = map { $_ => 1 } @{ $person_roles || [] }; %>
+<div class="people_person_roles" data-person-uuid="<%= $person->{'uuid'} // '' %>">
+	<h3><%= &subs::ui('Roles') %></h3>
+	<div class="people_note"><%= &subs::ui('A role grants app surfaces to this person. It never reaches the Configure, Security or Power desks.') %></div>
+	<% if (@{ $role_catalog || [] }) { %>
+		<div class="people_role_picker">
+			<% foreach my $role ( @{ $role_catalog } ) { %>
+				<label class="people_person_role">
+					<input class="people_person_role_key" type="checkbox" value="<%= $role->{'uuid'} // '' %>"<% if ($held_role{ $role->{'uuid'} // '' }) { %> checked<% } %>><%= $role->{'name'} // '' %>
+					<% if (length($role->{'department'} // '')) { %><span class="people_row_sub"><%= $role->{'department'} %></span><% } %>
+				</label>
+			<% } %>
+		</div>
+	<% } else { %>
+		<div class="people_empty"><%= &subs::ui('No roles yet. Add them in the Staff roles card.') %></div>
+	<% } %>
+	<div class="people_actions">
+		<button type="button" class="people_person_role_save" hint="<%= &subs::ui('Save roles') %>"><%= &subs::ui('Save roles') %></button>
+		<span class="people_person_role_status people_role_status"></span>
+	</div>
+</div>

@@ -184,7 +184,17 @@ CREATE TABLE IF NOT EXISTS people (
 	created VARCHAR(255),
 	ost VARCHAR(25),
 	server_time VARCHAR(255),
-	app VARCHAR(255)
+	app VARCHAR(255),
+	roles LONGTEXT
+);
+CREATE TABLE IF NOT EXISTS roles (
+	uuid VARCHAR(255) unique,
+	name VARCHAR(255),
+	department VARCHAR(255),
+	permissions LONGTEXT,
+	builtin INTEGER,
+	server_time VARCHAR(255),
+	ost VARCHAR(25)
 );
 CREATE TABLE IF NOT EXISTS device_requests (
 	uuid VARCHAR(255) unique,

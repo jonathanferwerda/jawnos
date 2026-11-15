@@ -181,6 +181,8 @@ sub action_23753 {
 		people => \@people,
 		backers => $backers,
 		constructs => $index->{'constructs'},
+		roles => &subs::role_catalog(),
+		permission_keys => &subs::access_permission_keys(),
 		scanner => $scanner,
 		camera => $camera,
 		nfc => $nfc,
@@ -436,6 +438,8 @@ sub action_24073 {
 		template => 'apps/people_person',
 		person => $person,
 		app => $app,
+		person_roles => &subs::person_role_keys($uuid),
+		role_catalog => &subs::role_catalog(),
 		relationship => &subs::person_relationship_value($app),
 		chips => $chips,
 		crest => $crest,
@@ -744,5 +748,51 @@ sub action_24390 {
 	return $fail->('the card could not be stored') unless &subs::crest_peer_upsert($entry);
 	return $c->render(json => { ok => 1, crest => $incoming, entry => $entry });
 }
+
+
+# GET /manager/people/roles
+# The role catalog the People window edits. An unsaved house is offered the
+# presets, so the editor and an assignment made today agree on the same words.
+sub action_24700 {
+	my $c = shift;
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	$c->render(json => {
+		ok => 1,
+		roles => &subs::role_catalog(),
+		keys => &subs::access_permission_keys(),
+	});
+}
+
+# POST /manager/people/roles/save
+sub action_24701 {
+	my $c = shift;
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $roles = &subs::role_catalog_save($c->param('roles'));
+	$c->render(json => { ok => 1, roles => $roles });
+}
+
+# POST /manager/people/roles/delete
+sub action_24702 {
+	my $c = shift;
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $uuid = $c->param('uuid') || '';
+	unless (length $uuid) { return $c->render(json => { ok => 0, error => 'no role named' }); }
+	&subs::role_catalog_delete($uuid);
+	$c->render(json => { ok => 1, roles => &subs::role_catalog() });
+}
+
+# POST /manager/people/person/roles
+# The roles a person holds. A deleted role stays on the row but grants nothing,
+# so re-creating it with the same key restores the grant.
+sub action_24703 {
+	my $c = shift;
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $uuid = $c->param('uuid') || '';
+	my $person = eval { &subs::db_select('people', ['uuid'], { uuid => $uuid })->hash };
+	unless ($person) { return $c->render(json => { ok => 0, error => 'no such person' }); }
+	my $roles = &subs::person_roles_write($uuid, &subs::tax_codes_value($c->param('roles')));
+	$c->render(json => { ok => 1, roles => $roles });
+}
+
 
 1;

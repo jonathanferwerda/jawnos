@@ -43,6 +43,7 @@ our %M;
 our $crest_peer_list_cache;
 our $crest_peer_list_raw;
 our $device;
+our %privilege_rank;
 our %tier_rank;
 # What a session's privilege must be to reach a path. A citizen reaches
 # everything; a resident everything except the citizen's desk; a guest nothing
@@ -580,7 +581,9 @@ sub construct_crest_image_src {
 # unknown word is never a promotion. grant_expires is epoch milliseconds, the
 # same clock server_time uses; empty means no expiry (also grandfathered).
 sub peer_scope_rank {
-	return ( none => 0, revoked => 0, visitor => 1, resident => 2, member => 2, trusted => 3 );
+	# Derived from the one ladder in subroutines.pl. A peer grant may use only
+	# these words, so a session word can never become a peer promotion.
+	return map { $_ => $privilege_rank{$_} } qw(none revoked visitor resident member trusted);
 }
 
 # What a peer may ask for, and the rung each needs. config is absent on purpose:

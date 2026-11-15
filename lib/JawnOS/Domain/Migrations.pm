@@ -99,6 +99,20 @@ sub update_database($data) {
 		# `app` links the people row to that settings app so the People window
 		# and the Relational window cannot drift apart
 		'alter table people add column app VARCHAR(255)',
+		# The roles a person holds, as a JSON array of role uuids. The role
+		# catalog itself is house data; a preset's uuid is its key so an
+		# assignment made before the list is saved still resolves.
+		'alter table people add column roles LONGTEXT',
+		'create table if not exists roles (
+			uuid VARCHAR(255) unique,
+			name VARCHAR(255),
+			department VARCHAR(255),
+			permissions LONGTEXT,
+			builtin INTEGER,
+			server_time VARCHAR(255),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_roles on roles (uuid)',
 		'create index if not exists idx2_people on people (app)',
 		'alter table tickets add column person_uuid VARCHAR(255)',
 		'alter table tickets add column peer_signatorial VARCHAR(255)',

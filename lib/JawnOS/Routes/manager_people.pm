@@ -20,6 +20,11 @@ sub routes {
 	[24359, 'post', '/manager/people/construct/crest/upload', 'action_24359'],
 	[24370, 'post', '/manager/people/crest/verify', 'action_24370'],
 	[24390, 'post', '/manager/people/crest/import', 'action_24390'],
+	# Staff roles: the catalog, its editor, and the roles a person holds.
+	[24700, 'get', '/manager/people/roles', 'action_24700'],
+	[24701, 'post', '/manager/people/roles/save', 'action_24701'],
+	[24702, 'post', '/manager/people/roles/delete', 'action_24702'],
+	[24703, 'post', '/manager/people/person/roles', 'action_24703'],
 	);
 }
 

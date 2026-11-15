@@ -748,7 +748,20 @@ our $tier_required = [
 	[ 'citizen',  qr{^/manager/network/(?:manage|profile|apply)(?:/|$)} ],
 	[ 'resident', qr{^/manager(?:/|$)} ],
 ];
-our %tier_rank = ( guest => 1, resident => 2, citizen => 3 );
+# One privilege ladder for the whole house. Two vocabularies name the same
+# rungs: a session is guest/resident/citizen, a peer grant is
+# visitor/resident/trusted. The floor words all rank 0; an unknown word ranks 0
+# and is refused, never waved through. Every check (the session gate, a peer
+# grant, the box office chooser) reads this one map.
+our @privilege_ladder = qw(blacklisted visitor guest resident citizen trusted);
+our %privilege_rank = (
+	blacklisted => 0, none => 0, revoked => 0,
+	visitor => 1, guest => 1,
+	resident => 2, member => 2,
+	citizen => 3, trusted => 3,
+);
+# The session tier keeps its old name for the callers that spell it that way.
+our %tier_rank = %privilege_rank;
 our $SPEED_MEASURE_GAP_MS = 60000;   # one reading a minute
 our $SPEED_MEASURE_CAP = 500;        # a single appointment keeps this many at most
 # A join request is only a short introduction: ten minutes is long enough for a

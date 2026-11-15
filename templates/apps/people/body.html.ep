@@ -1,3 +1,28 @@
+<style>
+	#people_app .people_roles_card { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:16px 0 0; }
+	#people_app .people_roles_card h3 { margin:0 0 6px; font-size:16px; }
+	#people_app .people_roles_list { max-height:34vh; overflow:auto; }
+	#people_app .people_role_row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 0;
+		border-bottom:1px solid var(--line); }
+	#people_app .people_role_name, #people_app .people_role_department { padding:5px 8px; border:1px solid var(--line);
+		border-radius:8px; background:var(--panel); color:inherit; font:inherit; font-size:13px; }
+	#people_app .people_role_name { flex:0 1 170px; min-width:120px; }
+	#people_app .people_role_department { flex:0 1 140px; min-width:110px; }
+	#people_app .people_role_keys { display:flex; flex-wrap:wrap; gap:2px 10px; flex:1 1 300px; min-width:0; }
+	#people_app .people_role_key { display:inline-flex; align-items:center; gap:3px; font-size:11px;
+		white-space:nowrap; color:var(--muted,#8e8e8e); }
+	#people_app .people_role_key input { margin:0; }
+	#people_app .people_role_delete { flex:0 0 auto; padding:4px 9px; border:1px solid var(--line); border-radius:8px;
+		background:var(--panel); color:inherit; font-size:12px; cursor:var(--jawnos-cursor-pointer, pointer); }
+	#people_app .people_role_delete:hover { background:var(--line); }
+	#people_app .people_role_status { font-size:12px; color:var(--muted,#8e8e8e); }
+	#people_app .people_person_roles { border-top:1px solid var(--line); margin-top:14px; padding-top:10px; }
+	#people_app .people_person_roles h3 { margin:0 0 6px; font-size:16px; }
+	#people_app .people_role_picker { display:flex; flex-wrap:wrap; gap:5px 14px; margin:8px 0; }
+	#people_app .people_person_role { display:inline-flex; align-items:baseline; gap:4px; font-size:13px; }
+	#people_app .people_person_role .people_row_sub { font-size:11px; }
+</style>
+
 <div id="people_app" class="people_app">
 	<div class="people_tabs">
 		<button class="people_tab active" data-tab="me"><%= &subs::lang('people.me') %></button>
@@ -160,6 +185,31 @@
 		<% } else { %>
 			<div class="people_empty"><%= &subs::ui('No people yet. Add a person in Relational.') %></div>
 		<% } %>
+
+		<div id="people_roles_card" class="people_roles_card" data-permission-keys="<%= join(' ', @{ $permission_keys || [] }) %>">
+			<h3><%= &subs::ui('Staff roles') %></h3>
+			<div class="people_note"><%= &subs::ui('A role is a name, a department and the app surfaces a person may use.') %></div>
+			<div id="people_roles_list" class="people_roles_list">
+				<% foreach my $role ( @{ $roles || [] } ) { %>
+					<div class="people_role_row" data-role-uuid="<%= $role->{'uuid'} // '' %>" data-role-builtin="<%= $role->{'builtin'} ? 1 : 0 %>">
+						<input class="people_role_name" type="text" maxlength="60" value="<%= $role->{'name'} // '' %>" placeholder="<%= &subs::ui('Role name') %>" hint="<%= &subs::ui('Role name') %>">
+						<input class="people_role_department" type="text" maxlength="60" value="<%= $role->{'department'} // '' %>" placeholder="<%= &subs::ui('Department') %>" hint="<%= &subs::ui('Department') %>">
+						<div class="people_role_keys">
+							<% foreach my $key ( @{ $permission_keys || [] } ) { %>
+								<% my $key_label = ucfirst join(' ', split(/_/, $key)); %>
+								<label class="people_role_key"><input class="people_role_permission" type="checkbox" value="<%= $key %>"<% if (grep { $_ eq $key } @{ $role->{'permissions'} || [] }) { %> checked<% } %>><%= &subs::ui($key_label) %></label>
+							<% } %>
+						</div>
+						<button type="button" class="people_role_delete" hint="<%= &subs::ui('Delete role') %>"><%= &subs::ui('Delete') %></button>
+					</div>
+				<% } %>
+			</div>
+			<div class="people_actions">
+				<button type="button" class="people_role_add" hint="<%= &subs::ui('Add role') %>"><%= &subs::ui('Add role') %></button>
+				<button type="button" class="people_role_save_all" hint="<%= &subs::ui('Save all') %>"><%= &subs::ui('Save all') %></button>
+				<span id="people_roles_status" class="people_role_status"></span>
+			</div>
+		</div>
 	</div>
 
 	<% foreach my $construct ( @{$constructs} ) { %>
