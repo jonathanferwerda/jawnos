@@ -227,7 +227,7 @@ SH
 {
 	no warnings 'redefine';
 	local *JawnOS::Platform::Print::tool = sub { return $_[0] eq 'curl' ? $adf_jam : ''; };
-	is(adf_state('192.168.1.50'), 'unknown', 'a jam is not announced as paper');
+	is(adf_state('192.168.1.50'), 'jam', 'a jam is named as a jam, never as paper');
 	is(adf_state('not-an-address'), 'unknown', 'a non-address has no feeder');
 }
 
@@ -313,6 +313,24 @@ XML
 	my ($err, $pages) = scan_escl('192.168.1.50', 'adf', $base);
 	is($err, 'the feeder has no paper', 'an empty feeder says so');
 	is_deeply($pages, [], 'with no pages');
+}
+{
+	# A jammed feeder accepts the job and then returns no page. Saying "no pages"
+	# sent the person looking at the app; the printer knows it jammed.
+	my $dir = tempdir(CLEANUP => 1);
+	my $base = "$dir/scan";
+	my $ua = FakeEsclUA->new(
+		post_res => FakeEsclRes->new(code => 201, headers => { Location => 'http://192.168.1.50/eSCL/ScanJobs/job9' }),
+		get_res => sub { return FakeEsclRes->new(code => 500) },
+	);
+	no warnings 'redefine';
+	local *JawnOS::Platform::Print::_escl_ua = sub { return $ua };
+	local *JawnOS::Platform::Print::scan_capabilities = sub { return { adf => { width => 2550, height => 4200 } } };
+	local *JawnOS::Platform::Print::adf_state = sub { return 'jam' };
+	my ($err, $pages) = scan_escl('192.168.1.50', 'adf', $base);
+	is($err, 'the feeder is jammed - open it, clear the paper, then put it back', 'a jam that returns no page says so');
+	is_deeply($pages, [], 'with no pages');
+	is_deeply($ua->{'deletes'}, [ [ 'http://192.168.1.50/eSCL/ScanJobs/job9' ] ], 'and the dead job is deleted');
 }
 
 # --- the pages inside the printer's PDF --------------------------------------

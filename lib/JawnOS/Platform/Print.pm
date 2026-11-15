@@ -219,9 +219,10 @@ sub probe {
 
 # What the printer's document feeder says right now. eSCL (the AirScan status
 # endpoint every modern printer answers) reports ScannerAdfLoaded for a page
-# waiting and ScannerAdfEmpty when the tray is clear; the older /Scan/Status
-# path is tried when the eSCL one is silent. `unknown` covers a printer that is
-# off, asleep, or raw-only, so a caller can stay quiet instead of guessing.
+# waiting, ScannerAdfEmpty when the tray is clear and ScannerAdfJam when the
+# page did not feed; the older /Scan/Status path is tried when the eSCL one is
+# silent. `unknown` covers a printer that is off, asleep, or raw-only, so a
+# caller can stay quiet instead of guessing.
 sub adf_state {
 	my ($ip) = @_;
 	return 'unknown' unless defined $ip && $ip =~ /^(?:\d{1,3}\.){3}\d{1,3}$/;
@@ -234,6 +235,10 @@ sub adf_state {
 		next unless defined $state && length $state;
 		return 'loaded' if $state eq 'ScannerAdfLoaded';
 		return 'empty'  if $state eq 'ScannerAdfEmpty' || $state eq 'ScannerAdfNoDocument';
+		# A jam is its own answer: paper is in the feeder but the printer cannot
+		# pull it, so a scan that returns nothing can say why instead of blaming
+		# the client. It is never an edge, and clearing it (paper still loaded) is.
+		return 'jam'    if $state =~ /Jam/i;
 		return 'unknown';
 	}
 	return 'unknown';
@@ -337,7 +342,11 @@ sub scan_escl {
 	my $ua = _escl_ua();
 	my $res = eval { $ua->post('http://' . $ip . '/eSCL/ScanJobs' => { 'Content-Type' => 'text/xml' } => $xml)->result };
 	return ('the printer did not answer the scan request', []) unless $res;
-	return ('the feeder has no paper', []) if $res->code == 409 && adf_state($ip) eq 'empty';
+	if ($res->code == 409) {
+		my $state = adf_state($ip);
+		return ('the feeder is jammed - open it, clear the paper, then put it back', []) if $state eq 'jam';
+		return ('the feeder has no paper', []) if $state eq 'empty';
+	}
 	return ('the printer refused the scan (' . $res->code . ')', []) unless $res->code == 201;
 	my $loc = $res->headers->location || '';
 	$loc = 'http://' . $ip . $loc if $loc =~ m{^/};
@@ -366,6 +375,8 @@ sub scan_escl {
 	}
 	if (!@paths) {
 		eval { $ua->delete($loc)->result };
+		return ('the feeder is jammed - open it, clear the paper, then put it back', [])
+			if adf_state($ip) eq 'jam';
 		return ('the printer returned no pages', []);
 	}
 	return (undef, \@paths);
