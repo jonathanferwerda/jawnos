@@ -36,7 +36,7 @@ BEGIN {
 use JawnOS::PDF ();
 use File::Temp ();
 
-my @STORE_KEYS = qw(store_name address phone email slogan tax_number doc_notes receipt_message);
+my @STORE_KEYS = qw(store_name address phone email slogan tax_number doc_notes receipt_message logo);
 
 my %DEFAULT_LABEL = (
 	invoice       => 'Invoice',
@@ -233,6 +233,7 @@ sub _register_lines {
 				qty   => $qty,
 				price => _num($item->{'price'}, 0),
 				total => _num($item->{'total'}, _num($item->{'price'}, 0) * $qty),
+				uuid  => $item->{'uuid'} || '',
 			};
 		}
 		return @lines;
@@ -246,6 +247,7 @@ sub _register_lines {
 		price       => _num($model->{'price'}, 0),
 		discount    => _num($model->{'discount'}, 0) * $qty,
 		total       => _num($model->{'price'}, 0) * $qty,
+		uuid        => $model->{'uuid'} || '',
 	};
 	my $options = ref $data->{'options'} eq 'HASH' ? $data->{'options'} : {};
 	for my $category (sort keys %{$options}) {
@@ -310,6 +312,41 @@ sub model {
 		: '';
 	my $store = _store_settings(%opt);
 	my $labels = _labels(%opt);
+	my $image_mode = 'none';
+	if (defined &subs::paper_image_mode) {
+		$image_mode = &subs::paper_image_mode();
+	}
+	my ($single_colour, $single_gray);
+	my ($logo_colour, $logo_gray);
+	my $logo_value = $store->{'logo'};
+	if (defined $logo_value && length $logo_value
+		&& defined &subs::paper_image_source && defined &subs::paper_image_cache) {
+		my $source = eval { &subs::paper_image_source($logo_value, 'me') };
+		if (defined $source && length $source) {
+			my $paths = eval { &subs::paper_image_cache($source) };
+			if (ref $paths eq 'HASH') {
+				$logo_colour = _image_info($paths->{'colour'});
+				$logo_gray = _image_info($paths->{'gray'}) || $logo_colour;
+			}
+		}
+	}
+	if ($image_mode ne 'none' && defined &subs::paper_image_for_model && defined &subs::paper_image_cache) {
+		for my $line (@lines) {
+			my $uuid = $line->{'uuid'} || '';
+			next unless length $uuid;
+			my $source = eval { &subs::paper_image_for_model($uuid) };
+			next unless defined $source && length $source;
+			my $paths = eval { &subs::paper_image_cache($source) };
+			next unless ref $paths eq 'HASH';
+			my $colour = _image_info($paths->{'colour'});
+			my $gray = _image_info($paths->{'gray'}) || $colour;
+			$line->{'image_colour'} = $colour if $colour;
+			$line->{'image_gray'} = $gray if $gray;
+		}
+		my ($first) = grep { $_->{'image_colour'} } @lines;
+		$single_colour = $first->{'image_colour'} if $first;
+		$single_gray = $first->{'image_gray'} if $first;
+	}
 	my @payment_rows;
 	for my $payment (@payments) {
 		next unless ref $payment eq 'HASH';
@@ -341,6 +378,41 @@ sub model {
 		balance      => $balance,
 		this_payment => $this_payment,
 		invoice_id   => $invoice_id,
+		image_mode   => $image_mode,
+		single_colour => $single_colour,
+		single_gray   => $single_gray,
+		logo_colour  => $logo_colour,
+		logo_gray    => $logo_gray,
+	};
+}
+
+# One JPEG file as the document layer needs it: its bytes and its natural
+# pixel size. A path that is missing, empty or not a JPEG answers undef and the
+# paper simply omits that picture.
+sub _image_info {
+	my ($path) = @_;
+	return undef unless defined $path && length $path && -s $path;
+	open my $fh, '<:raw', $path or return undef;
+	local $/;
+	my $bytes = <$fh>;
+	close $fh;
+	my ($w, $h) = JawnOS::PDF::_jpeg_info($bytes);
+	return undef unless $w && $h;
+	return { bytes => $bytes, w => $w, h => $h };
+}
+
+sub _image_box {
+	my ($image, $max_w, $max_h) = @_;
+	return undef unless ref $image eq 'HASH' && $image->{'bytes'}
+		&& ($image->{'w'} || 0) > 0 && ($image->{'h'} || 0) > 0;
+	my $scale = $max_w / $image->{'w'};
+	my $other = $max_h / $image->{'h'};
+	$scale = $other if $other < $scale;
+	$scale = 1 if $scale > 1;
+	return {
+		bytes => $image->{'bytes'},
+		w     => $image->{'w'} * $scale,
+		h     => $image->{'h'} * $scale,
 	};
 }
 
@@ -351,6 +423,14 @@ sub _header {
 	my $left = $pdf->margin;
 	my $cw = $pdf->content_width;
 	my $y = $pdf->margin;
+	if ($doc->{'logo_gray'}) {
+		my $image = _image_box($doc->{'logo_gray'}, $cw * 0.5, 46);
+		if ($image) {
+			my $ix = $left + ($cw - $image->{'w'}) / 2;
+			$pdf->image_jpeg($image->{'bytes'}, $ix, $y, $image->{'w'}, $image->{'h'});
+			$y += $image->{'h'} + 4;
+		}
+	}
 	$y += 14;
 	$pdf->text($store->{'store_name'} || 'JawnOS', $left, $y,
 		font => 'Helvetica-Bold', size => 12, align => 'center', width => $cw);
@@ -417,6 +497,15 @@ sub _receipt {
 	$pdf->stamp(uc($labels->{'paid'}), x => $pdf->width / 2, y => $pdf->height * 0.3,
 		size => 54, color => '#e06666') if $doc->{'paid'};
 	my $y = _header($pdf, $doc);
+	if (($doc->{'image_mode'} eq 'single' || $doc->{'image_mode'} eq 'both')
+		&& $doc->{'single_gray'}) {
+		my $image = _image_box($doc->{'single_gray'}, $cw * 0.7, 80);
+		if ($image) {
+			my $ix = $left + ($cw - $image->{'w'}) / 2;
+			$pdf->image_jpeg($image->{'bytes'}, $ix, $y, $image->{'w'}, $image->{'h'});
+			$y += $image->{'h'} + 8;
+		}
+	}
 	$pdf->text(uc($labels->{$doc->{'type'}}), $left, $y, font => 'Helvetica-Bold',
 		size => 10, align => 'center', width => $cw);
 	$y += 14;
@@ -435,12 +524,18 @@ sub _receipt {
 		$y = $pdf->table(
 			x       => $left,
 			y       => $y,
-			widths  => [0.56, 0.12, 0.32],
+			widths  => [0.48, 0.20, 0.32],
 			align   => ['left', 'right', 'right'],
 			size    => 7.5,
 			padding => 2.5,
 			header  => [uc($labels->{'item'}), uc($labels->{'qty'}), uc($labels->{'amount'})],
 			rows    => \@rows,
+			images  => [ map {
+				($doc->{'image_mode'} eq 'line' || $doc->{'image_mode'} eq 'both')
+					? _image_box($_->{'image_gray'} || $_->{'image_colour'}, 22, 22)
+					: undef
+			} @{$items} ],
+			image_pad => 4,
 		);
 	}
 	$y += 10;
@@ -512,6 +607,13 @@ sub _invoice {
 	$pdf->stamp(uc($labels->{'paid'}), x => $pdf->width / 2, y => $pdf->height * 0.4,
 		size => 96, color => '#e06666') if $doc->{'paid'};
 	my $y = $pdf->margin;
+	if ($doc->{'logo_colour'}) {
+		my $image = _image_box($doc->{'logo_colour'}, 110, 54);
+		if ($image) {
+			$pdf->image_jpeg($image->{'bytes'}, $left, $y, $image->{'w'}, $image->{'h'});
+			$y += $image->{'h'} + 6;
+		}
+	}
 	my $name_size = 20;
 	$pdf->text($store->{'store_name'} || 'JawnOS', $left, $y + $name_size,
 		font => 'Helvetica-Bold', size => $name_size);
@@ -548,6 +650,15 @@ sub _invoice {
 		}
 	}
 	$y += 14;
+	if (($doc->{'image_mode'} eq 'single' || $doc->{'image_mode'} eq 'both')
+		&& $doc->{'single_colour'}) {
+		my $image = _image_box($doc->{'single_colour'}, $cw * 0.45, 120);
+		if ($image) {
+			my $ix = $left + ($cw - $image->{'w'}) / 2;
+			$pdf->image_jpeg($image->{'bytes'}, $ix, $y, $image->{'w'}, $image->{'h'});
+			$y += $image->{'h'} + 12;
+		}
+	}
 	$pdf->text(uc($labels->{$doc->{'type'}}), $left, $y, font => 'Helvetica-Bold',
 		size => 22, align => 'center', width => $cw);
 	$y += 26;
@@ -568,13 +679,19 @@ sub _invoice {
 		$y = $pdf->table(
 			x       => $left,
 			y       => $y,
-			widths  => [0.44, 0.10, 0.14, 0.14, 0.18],
+			widths  => [0.40, 0.12, 0.14, 0.14, 0.20],
 			align   => ['left', 'right', 'right', 'right', 'right'],
 			size    => 9,
 			padding => 4,
 			header  => [uc($labels->{'item'}), uc($labels->{'qty'}), uc($labels->{'price'}),
 				uc($labels->{'discount'}), uc($labels->{'subtotal'})],
 			rows    => \@rows,
+			images  => [ map {
+				($doc->{'image_mode'} eq 'line' || $doc->{'image_mode'} eq 'both')
+					? _image_box($_->{'image_colour'}, 36, 36)
+					: undef
+			} @{$items} ],
+			image_pad => 6,
 		);
 	}
 	$y += 16;

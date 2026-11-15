@@ -660,17 +660,37 @@ sub table {
 		return $at + $h;
 	};
 	$y = $draw_header->($y);
+	my $images = $opt{'images'} || [];
+	my $image_pad = defined $opt{'image_pad'} ? $opt{'image_pad'} : 4;
+	my $row_index = -1;
 	for my $row (@{$opt{'rows'} || []}) {
+		$row_index++;
+		my $image = $images->[$row_index];
+		my $has_image = (ref $image eq 'HASH' && defined $image->{'bytes'}
+			&& ($image->{'w'} || 0) > 0 && ($image->{'h'} || 0) > 0) ? 1 : 0;
+		my $first_width = $w[0];
+		if ($has_image) {
+			$first_width -= $image->{'w'} + $image_pad;
+			$first_width = 1 if $first_width < 1;
+		}
 		my @cells;
 		my $h = 0;
 		for my $i (0 .. $#w) {
 			my ($txt, $fam, $al, $col) = _cell_parts($row->[$i], $font);
 			$al = $aligns->[$i] if defined $aligns->[$i]
 				&& !(ref $row->[$i] eq 'HASH' && defined $row->[$i]{'align'});
-			my $lines = $self->wrap($txt, $fam, $size, $w[$i] - 2 * $pad);
+			my $avail = ($i == 0) ? $first_width : $w[$i];
+			$avail = 1 if $avail < 1;
+			my $tw = $avail - 2 * $pad;
+			$tw = 1 if $tw < 1;
+			my $lines = $self->wrap($txt, $fam, $size, $tw);
 			push @cells, { lines => $lines, fam => $fam, align => $al, color => $col };
 			my $lh = scalar(@{$lines}) * $leading;
 			$h = $lh if $lh > $h;
+		}
+		if ($has_image) {
+			my $ih = $image->{'h'} + 2 * $pad;
+			$h = $ih if $ih > $h;
 		}
 		$h += 2 * $pad;
 		if ($y + $h > $bottom) {
@@ -683,9 +703,18 @@ sub table {
 			my $cell = $cells[$i];
 			my $lx = $colx + $pad;
 			my $ly = $y + $pad + $size * 0.8;
+			my $avail = ($i == 0) ? $first_width : $w[$i];
+			$avail = 1 if $avail < 1;
+			if ($i == 0 && $has_image) {
+				$self->image_jpeg($image->{'bytes'}, $colx + $pad, $y + $pad,
+					$image->{'w'}, $image->{'h'});
+				$lx += $image->{'w'} + $image_pad;
+			}
 			for my $line (@{$cell->{'lines'}}) {
+				my $tw = $avail - 2 * $pad;
+				$tw = 1 if $tw < 1;
 				$self->text($line, $lx, $ly, font => $cell->{'fam'}, size => $size,
-					align => $cell->{'align'}, width => $w[$i] - 2 * $pad,
+					align => $cell->{'align'}, width => $tw,
 					color => $cell->{'color'});
 				$ly += $leading;
 			}

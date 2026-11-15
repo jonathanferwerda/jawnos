@@ -12,7 +12,7 @@
 			<h3><%= $d %></h3>
 			<% foreach my $m ( sort keys %{$store->{$d}} ) { %>
 
-				<% unless ($m eq 'logo' || $m eq 'doc_notes' || $m eq 'receipt_message' || $m eq 'invoice_paper' || $m eq 'receipt_paper' ) { %>
+				<% unless ($m eq 'logo' || $m eq 'doc_notes' || $m eq 'receipt_message' || $m eq 'invoice_paper' || $m eq 'receipt_paper' || $m eq 'invoice_images' ) { %>
 					<div class="cfg-row">
 						<label><%= &subs::format_name($m) %></label>
 						<input type="text" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $store->{$d}->{$m} %>">
@@ -21,6 +21,19 @@
 					<div class="cfg-row">
 						<label><%= &subs::format_name($m) %></label>
 						<span><input type="checkbox" class="me_setting" device="<%= $d %>" setting="<%= $m %>"<% if (($store->{$d}->{$m} || '') ne 'off') { %> checked<% } %>></span>
+					</div>
+				<% } elsif ($m eq 'invoice_images') { %>
+					<div class="cfg-row">
+						<label><%= &subs::ui('Include images in Invoice') %></label>
+						<span>
+							<select class="me_setting" device="<%= $d %>" setting="<%= $m %>">
+								<% my $iv = $store->{$d}->{$m} || 'none'; %>
+								<option value="none"<% if ($iv eq 'none') { %> selected<% } %>><%= &subs::ui('None') %></option>
+								<option value="line"<% if ($iv eq 'line') { %> selected<% } %>><%= &subs::ui('Invoice line') %></option>
+								<option value="single"<% if ($iv eq 'single') { %> selected<% } %>><%= &subs::ui('Single Product Picture') %></option>
+								<option value="both"<% if ($iv eq 'both') { %> selected<% } %>><%= &subs::ui('Both') %></option>
+							</select>
+						</span>
 					</div>
 				<% } elsif ($m eq 'doc_notes' || $m eq 'receipt_message' ) { %>
 					<div class="cfg-row">

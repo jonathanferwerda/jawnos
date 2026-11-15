@@ -646,12 +646,21 @@ sub action_9374 {
 	my @uploads = @{$c->req->uploads};
 	my $image;
 	my $ass;
+	my $old_logo;
 	if (scalar @uploads > 0) {
+		$old_logo = &subs::setting_grabber({ app => 'me', setting => 'logo' });
 		foreach my $u ( @uploads ) {
 		  $ass = $u->asset->slurp;
 			$image = 'data:image/png;base64,' . encode_base64($ass);
 			&subs::setting_setter({ app => 'me', setting => 'logo', value => $image });
 		}
+	}
+	# The old logo's cached JPEGs go with it; the new one is drawn on the next
+	# paper, where the engine asks the cache for it.
+	if (defined $old_logo && length $old_logo) {
+		my $old_source = &subs::paper_image_source($old_logo, 'me');
+		&subs::paper_image_forget($old_source) if defined $old_source && length $old_source;
+		&subs::paper_image_forget($old_logo);
 	}
 	$c->render(text =>  $image );
 }

@@ -776,7 +776,27 @@ sub action_45199 {
 	# machine reads the one shared row); the route used to drop it and store the
 	# value against this device class instead
 	my $device = $c->param('device');
+	my $old_main_image;
+	if ($setting eq 'main_image' && defined $app && length $app) {
+		$old_main_image = &subs::setting_grabber({ app => $app, setting => 'main_image' });
+	}
 	my $s = &subs::setting_setter({ app => $app, setting => $setting, value => $value, timestamp => $timestamp, subsetting => $subsetting, device => $device });
+	# A new picture invalidates the renditions of the old one; when the Store is
+	# printing pictures, warm the cache for the new one straight away. The paper
+	# would make them on its next draw anyway, so a conversion that fails here is
+	# only a slower first paper, not a lost setting.
+	if ($setting eq 'main_image' && defined $app && length $app) {
+		my $old_source = (defined $old_main_image && length $old_main_image)
+			? &subs::paper_image_source($old_main_image, $app) : undef;
+		&subs::paper_image_forget($old_source)
+			if defined $old_source && length $old_source;
+		&subs::paper_image_forget($old_main_image)
+			if defined $old_main_image && length $old_main_image;
+		if (&subs::paper_image_mode() ne 'none' && defined $value && length $value) {
+			my $source = &subs::paper_image_source($value, $app);
+			&subs::paper_image_cache($source) if defined $source && length $source;
+		}
+	}
 	# A budget's window is taken from s_lock, so a lock toggle changes both the
 	# light and the panel. Recompute the app's budget; the runner pushes both.
 	if ($setting eq 's_lock' && defined $app && length $app) {
@@ -811,7 +831,14 @@ sub action_45278 {
 sub action_45284 {
 	my $c = shift;
 	my $app = &subs::unformat_name($c->param('app'));
-	my $s = &subs::setting_deleter({ app => $app, setting => $c->param('setting'), device => $c->param('device') });
+	my $setting = $c->param('setting');
+	my $old = &subs::setting_grabber({ app => $app, setting => $setting });
+	my $s = &subs::setting_deleter({ app => $app, setting => $setting, device => $c->param('device') });
+	if ($setting eq 'main_image' && defined $old && length $old) {
+		my $old_source = &subs::paper_image_source($old, $app);
+		&subs::paper_image_forget($old_source) if defined $old_source && length $old_source;
+		&subs::paper_image_forget($old);
+	}
 	$c->render(json => $s);
 }
 

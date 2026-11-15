@@ -359,6 +359,11 @@ sub delete_file($data) {
 		&subs::secure_unlink($preview) if !$file->{'shared'} && $preview && -e $preview;
 		if (!$file->{'shared'} && -e $filing) {
 			my $file = $filing;
+			# The paper renditions belong to the picture being removed; drop them
+			# with it so a later invoice never draws a deleted image.
+			&subs::paper_image_forget($filing);
+			&subs::paper_image_forget($thumb) if defined $thumb && length $thumb;
+			&subs::paper_image_forget($preview) if defined $preview && length $preview;
 			&subs::secure_unlink($file);
 			my @folder = split '/', $file;
 			pop @folder;

@@ -22,6 +22,14 @@ nothing here overrides it.
   receipt papers, `/store/print/pdf`, `/store/print/send` and emailed papers all use
   `JawnOS::PDF::Store`. `Platform::Print::pdf_from_html`, `printer_pdf_from_html`, the
   `weasyprint` tool probe, and the Debian, AUR, Docker and README entries are removed.
+- This follow-up - **the logo and item pictures are on the papers.** Configure - Store's
+  `invoice_images` dropdown chooses **None** (default), **Invoice line** (a thumbnail beside each
+  line), **Single Product Picture** (one near the top) or **Both**. The invoice draws the colour
+  JPEGs and the receipt the grayscale ones. `lib/JawnOS/Domain/PaperImage.pm` caches a colour and
+  a grayscale JPEG per source under `.paper-images` beside the scans, makes them on demand (image
+  bridge, then magick), and forgets them when the app's `main_image` changes or the file is
+  deleted. The `logo` (a PNG data URI) uses the same cache: colour on the invoice, grayscale on
+  the receipt. `t/305-paper-images.t`.
 
 Earlier in the run: receipts delete house-wide and reference their pages on the category, vendor
 and every item (`market_receipt_attach`); the receipts list names the apps that use a receipt
@@ -30,22 +38,13 @@ vendor matches the name the House already keeps (`market_vendor_resolve`).
 
 ## Left to do, in the order I would take it
 
-1. **Logo on the papers (the next feature).** The engine draws text and JPEG images but no PNG;
-   the stored `logo` is always a PNG data URI (action `9374` hardcodes `image/png`). To get a
-   colour logo on invoices and a black-and-white one on receipts: at upload, write two JPEG
-   renditions beside the PNG (colour and `magick -colorspace Gray`), keep them as settings, and
-   draw the invoice's from the first and the receipt's from the second. On a phone with no
-   magick, use the image bridge; if neither exists, keep no JPEG and the paper stays text-only.
-   Files: `lib/JawnOS/Controller/manager_configure.pm` (action `9374`),
-   `lib/JawnOS/PDF/Store.pm` (`_header`), `lib/JawnOS/PDF.pm` (`image_jpeg`),
-   `templates/configure/store_setting_list.html.ep`, `t/302-pdf-writer.t`.
-2. **Close the peer render.** It was going to draw on a computer for the phone; the engine now
+1. **Close the peer render.** It was going to draw on a computer for the phone; the engine now
    draws on the phone and subsetting has landed, so the peer path is no longer needed.
-3. **Packages refinements.** Snap and flatpak column parsing should be checked on a real host
+2. **Packages refinements.** Snap and flatpak column parsing should be checked on a real host
    (the parsers are heuristics); pip may be refused by a PEP 668-managed Python and should say
    so; the desktop window gate is client-side, while the server still relies on the approved
    session plus `confirm=1`.
-4. **Scan leftovers worth a pass** (working, not yet leaned on):
+3. **Scan leftovers worth a pass** (working, not yet leaned on):
    - the phone's `computer health probe` line: after a pass,
      `grep 'computer health probe' ~/manager.log` on the phone should read
      `answered (table) - this phone stands aside`.
@@ -63,6 +62,9 @@ vendor matches the name the House already keeps (`market_vendor_resolve`).
 - Turning `receipt_paper` off suppresses the payment's whole render, including the revised
   invoice sheet normally stapled to the receipt. Split them if the invoice paper should keep
   refreshing independently.
+- The image mode also governs the receipt, in grayscale, although the setting is named
+  Include images in Invoice. Confirm that is the intent; the logo is always drawn and is not
+  governed by the dropdown.
 
 ## Verification
 
@@ -72,14 +74,16 @@ vendor matches the name the House already keeps (`market_vendor_resolve`).
   `qa/coding_night/agent-index.md` conflicts - rebase, regenerate the index with
   `perl scripts/agent_help.pl --write-index`, retitle with the new version.
 - Known parallel flakes: `t/57-control-socket`, `t/78-manager-killer`; both pass alone.
-- Tests added in v0.1.3000: `t/303-pdf-subset`, `t/304-store-receipt-paper`; `t/302-packages`,
-  `t/302-pdf-writer`, `t/262-store-scope`, `t/196-cups-print`, `t/243-platform-print`,
-  `t/219-platform-capabilities` and `t/258-shell-sinks` were updated for the engine-only path.
+- Tests added in v0.1.3000: `t/303-pdf-subset`, `t/304-store-receipt-paper`, and this run's
+  `t/305-paper-images`; `t/302-packages`, `t/302-pdf-writer`, `t/262-store-scope`, `t/196-cups-print`,
+  `t/243-platform-print`, `t/219-platform-capabilities` and `t/258-shell-sinks` were updated for
+  the engine-only path.
 
 ## Worktrees from this run
 
 - `pdf-packages` - landed as v0.1.3000; safe to remove.
-- `store-paper` - this branch (weasyprint removal and this doc). Safe to remove once landed.
+- `store-paper` - landed as v0.1.3005; safe to remove.
+- `store-pictures` - this branch (logo and item pictures, this doc). Safe to remove once landed.
 
     git -C ~/jawnos worktree list
     git -C ~/jawnos worktree remove .worktrees/<name>    # then: git branch -D agent/<branch>

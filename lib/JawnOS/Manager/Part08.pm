@@ -558,7 +558,7 @@ sub me_setting_list() {
 sub store_setting_list() {
 	my ($db,$database,$sql) = &subs::database_grabber();
 
-	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date invoice_paper receipt_paper payment_paper_app receipt_message/;
+	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date invoice_paper receipt_paper payment_paper_app receipt_message invoice_images/;
 	my $settings = {};
 
 	foreach my $dt ( @gb::device_types ) {
