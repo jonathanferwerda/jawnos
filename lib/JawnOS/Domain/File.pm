@@ -409,6 +409,21 @@ sub basemap_range_plan {
 	return ( $start, $end - $start + 1 );
 }
 
+# The newest staged archive answers the route with no name: the map should not
+# have to know which county the house built last. Returns the file name alone
+# (no directory, no extension), or '' when nothing is staged.
+sub basemap_newest {
+	my ($dir) = @_;
+	return '' unless defined $dir && length $dir && -d $dir;
+	opendir my $dh, $dir or return '';
+	my @names = grep { /\.pmtiles$/ && -f "$dir/$_" } readdir $dh;
+	closedir $dh;
+	return '' unless @names;
+	my ($newest) = sort { ( stat "$dir/$b" )[9] <=> ( stat "$dir/$a" )[9] } @names;
+	$newest =~ s/\.pmtiles$//;
+	return $newest;
+}
+
 sub cache_set {
 	my ($params,$data) = @_;
 	my $app = &subs::unformat_name($params->{'app'});

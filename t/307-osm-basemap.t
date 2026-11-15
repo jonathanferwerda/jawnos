@@ -64,6 +64,19 @@ is( JawnOS::Platform::Paths::basemaps_dir( root => '/tmp/tree' ), '/tmp/tree/bas
 	'the basemaps directory sits in the store root' );
 is( JawnOS::Platform::Paths::basemaps_dir( env => { JAWNOS_STORE_DIR => '/tmp/store' } ), '/tmp/store/basemaps',
 	'and follows JAWNOS_STORE_DIR, so a package keeps its own' );
+
+# No name in the URL is the newest archive: the renderer must not need to know
+# which county the house built last, and a rebuild must not need a client edit.
+my $bm = tempdir( CLEANUP => 1 );
+is( subs::basemap_newest($bm), '', 'an empty store has no newest basemap' );
+is( subs::basemap_newest('/nonexistent/basemaps'), '', 'and neither has a missing one' );
+write_file( "$bm/older.pmtiles", 'x' );
+write_file( "$bm/notes.txt", 'x' );
+utime( time - 3600, time - 3600, "$bm/older.pmtiles" );
+write_file( "$bm/newer.pmtiles", 'x' );
+is( subs::basemap_newest($bm), 'newer', 'the newest .pmtiles wins, and only .pmtiles counts' );
+utime( time - 7200, time - 7200, "$bm/older.pmtiles" );
+is( subs::basemap_newest($bm), 'newer', 'an older file does not displace it' );
 like( read_file("$root/.gitignore"), qr{^basemaps/$}m, 'the built archives are gitignored' );
 
 my $key = read_file("$root/lib/JawnOS/Domain/Key.pm");
@@ -82,8 +95,9 @@ my $controller = read_file("$root/lib/JawnOS/Controller/manager_travel.pm");
 my ($action) = $controller =~ /(sub action_34017 \{.*?\n\}\n)/s;
 ok( $action, 'the action is there' );
 like( $action, qr/&subs::basemap_range_plan\(\s*\$c->req->headers->range/, 'it plans from the request Range' );
-like( $action, qr/&subs::basemaps_dir\(\) \. '\/' \. \$name \. '\.pmtiles'/,
-	'it reads the named archive out of the store' );
+like( $action, qr/&subs::basemaps_dir\(\);/, 'it reads the store\'s basemaps directory' );
+like( $action, qr/&subs::basemap_newest\(\$dir\)/, 'and with no name serves the newest archive staged' );
+like( $action, qr/\$dir \. '\/' \. \$name \. '\.pmtiles'/, 'the archive is the named file in it' );
 like( $action, qr/&subs::path_name\(/, 'the name is a filesystem component, not a path' );
 like( $action, qr/content_type\('application\/vnd\.pmtiles'\)/, 'it names the PMTiles type' );
 like( $action, qr/accept_ranges\('bytes'\)/, 'and says ranges are welcome' );

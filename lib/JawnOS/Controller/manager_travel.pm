@@ -637,14 +637,19 @@ sub action_33700 {
 # the whole archive answers the same URL. Nothing here reaches the internet.
 sub action_34017 {
 	my $c = shift;
+	my $dir = &subs::basemaps_dir();
 	my $asked = $c->param('name');
-	my $name = &subs::path_name( defined $asked && length $asked ? $asked : 'basemap' );
-	my $file = &subs::basemaps_dir() . '/' . $name . '.pmtiles';
-	unless ( -f $file ) {
+	# no name is "the house's basemap": the newest one staged, so a map URL need
+	# not know which county was built last
+	my $name = ( defined $asked && length $asked )
+		? &subs::path_name($asked)
+		: &subs::basemap_newest($dir);
+	my $file = length $name ? $dir . '/' . $name . '.pmtiles' : '';
+	unless ( length $file && -f $file ) {
 		$c->res->code(404);
 		$c->res->headers->content_type('text/plain; charset=utf-8');
-		$c->render(text => 'No basemap named ' . $name
-			. ". Build one with: perl scripts/osm_basemap.pl --all\n");
+		$c->render(text => ( length $name ? 'No basemap named ' . $name . '.' : 'No basemap is staged.' )
+			. " Build one with: perl scripts/osm_basemap.pl --all\n");
 		return;
 	}
 	my $size = -s $file;
