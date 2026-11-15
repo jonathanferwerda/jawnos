@@ -5,6 +5,35 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-14 — the alarm face outlives an update, and opens unlocked
+
+- **The alarm screen no longer depends on the permission Android resets.**
+  `USE_FULL_SCREEN_INTENT` is a special access on Android 14+, and Android
+  revokes it on every APK update for a sideloaded build — the reason the
+  lock-screen grant had to be turned on again each time. The alarm face now
+  uses **Display over other apps**, which is granted once, persists across
+  updates, and is the exemption Android needs to open an activity from the
+  background. The full-screen intent remains a bonus; the ring notification
+  offers the overlay grant (not the lock-screen switch) when it is missing.
+- **The alarm screen comes to the front when the screen is already on.**
+  Previously the direct start was attempted only when the phone was locked or
+  asleep, so an alarm that arrived while the phone was in use sat in the
+  notification drawer. It is now asked for on every screen state; the overlay
+  grant is what lets Android honour it while unlocked.
+- **A skipped day stays skipped.** The phone's already-queued AlarmManager wake
+  checks the schedule file before sounding: if the next alarm has moved (a
+  skip, a dismiss, an edit or another machine's change), the stale wake is
+  ignored. Two Skip taps also get one request file each instead of overwriting
+  the same file, and a stale half-hour notice can no longer name a day the
+  alarm does not fire on.
+- **A lost grant is offered once per update.** If an APK update leaves the
+  overlay or notification grant missing, the dashboard opens the permission
+  screen once for that version instead of waiting for an alarm to be missed.
+  The permission screen names overlay as the alarm grant, adds the
+  **Alarms & reminders** page for exact timing, and keeps the full-screen
+  intent as optional. Exact alarms now fall back to a doze-surviving inexact
+  wake rather than failing to arm at all.
+
 ## 2026-11-11 — the tailnet server is an admin setting
 
 - **The control URL is no longer built into the APK.** The dashboard's Tailnet

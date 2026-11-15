@@ -100,8 +100,10 @@ sub clock_tick {
 				$fire_at = $candidate if $candidate && $candidate <= $now;
 			}
 			next unless $fire_at;
-			# A skipped occurrence stays in the schedule but does not sound.
-			next if $alarm->{'skip_fire'} && $fire_at <= $alarm->{'skip_fire'};
+			# A skipped day stays in the schedule but does not sound. Match the
+			# day, not "everything before the moment": an alarm edited later
+			# that same day is still the skipped day, and tomorrow still rings.
+			next if &clock_alarm_skip_covers($alarm, $fire_at);
 			# A fire that was dismissed (or snoozed) elsewhere before this machine
 			# got there does not ring late.
 			next if $alarm->{'stop_at'} && $fire_at <= $alarm->{'stop_at'};

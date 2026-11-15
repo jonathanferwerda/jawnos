@@ -278,17 +278,9 @@ sub action_22744 {
 			# Skip the occurrence that is coming (or the snooze that stands in
 			# for it) without touching the days or the switch. An alarm already
 			# ringing is today's; stopping it is the skip, so tomorrow stays.
-			my $next;
-			if ($alarm->{'snooze_until'} && $alarm->{'snooze_until'} > $now) {
-				$next = $alarm->{'snooze_until'};
-			}
-			elsif ($alarm->{'ringing'}) {
-				$next = $now;
-			}
-			else {
-				$next = &subs::clock_alarm_next_ms($alarm, $now);
-			}
-			$alarm->{'skip_fire'} = $next || 0;
+			# The helper names a real occurrence, so a skip can never store a
+			# moment that matches no fire and therefore never silences one.
+			$alarm->{'skip_fire'} = &subs::clock_alarm_skip_target($alarm, 0, $now) || 0;
 			$alarm->{'snooze_until'} = 0;
 			$alarm->{'ringing'} = 0;
 			$alarm->{'ring_started'} = 0;

@@ -59,9 +59,7 @@ sub clock_write_device_alarm {
 			$candidate = $alarm->{'snooze_until'};
 		}
 		elsif ($alarm->{'enabled'}) {
-			my $from = $now;
-			$from = $alarm->{'skip_fire'} if $alarm->{'skip_fire'} && $alarm->{'skip_fire'} > $now;
-			$candidate = &clock_alarm_next_ms($alarm, $from);
+			$candidate = &clock_alarm_next_ms($alarm, &clock_alarm_skip_from($alarm, $now));
 		}
 		next unless $candidate;
 		if (!$next || $candidate < $next) {
@@ -416,9 +414,7 @@ sub clock_next_wake {
 			$candidate = $a->{'snooze_until'};
 		}
 		elsif ($a->{'enabled'}) {
-			my $from = $now;
-			$from = $a->{'skip_fire'} if $a->{'skip_fire'} && $a->{'skip_fire'} > $now;
-			$candidate = &clock_alarm_next_ms($a, $from);
+			$candidate = &clock_alarm_next_ms($a, &clock_alarm_skip_from($a, $now));
 		}
 		$next = $candidate if $candidate && (!$next || $candidate < $next);
 	}
@@ -525,9 +521,70 @@ sub clock_alarm_next_at {
 	$now = &rightNow() unless defined $now;
 	return $alarm->{'snooze_until'} if $alarm->{'snooze_until'} && $alarm->{'snooze_until'} > $now;
 	return 0 unless $alarm->{'enabled'};
-	my $from = $now;
-	$from = $alarm->{'skip_fire'} if $alarm->{'skip_fire'} && $alarm->{'skip_fire'} > $now;
-	return &clock_alarm_next_ms($alarm, $from) || 0;
+	return &clock_alarm_next_ms($alarm, &clock_alarm_skip_from($alarm, $now)) || 0;
+}
+
+# A skip is one local day, not "everything before this moment". The moment in
+# skip_fire names the occurrence the person skipped; any other time the alarm
+# is edited to on that same day is skipped too, and the identical time on the
+# next day rings normally.
+sub clock_alarm_skip_day {
+	my ($ms) = @_;
+	return unless $ms;
+	my @lt = localtime(int($ms / 1000));
+	return ($lt[5], $lt[4], $lt[3]);
+}
+
+sub clock_alarm_skip_covers {
+	my ($alarm, $fire_at) = @_;
+	my $skip = int($alarm->{'skip_fire'} || 0);
+	return 0 unless $skip && $fire_at;
+	my ($sy, $sm, $sd) = &clock_alarm_skip_day($skip);
+	my ($fy, $fm, $fd) = &clock_alarm_skip_day($fire_at);
+	return 0 unless defined $sy && defined $fy;
+	return ($sy == $fy && $sm == $fm && $sd == $fd) ? 1 : 0;
+}
+
+# Where the next-occurrence search starts. A skipped day resumes at the next
+# local midnight (minus a millisecond, so a 00:00 alarm is not lost); a skip
+# named for a later day resumes after that occurrence; an old skip is spent.
+sub clock_alarm_skip_from {
+	my ($alarm, $now) = @_;
+	$now = &rightNow() unless defined $now;
+	my $skip = int($alarm->{'skip_fire'} || 0);
+	return $now unless $skip;
+	my ($sy, $sm, $sd) = &clock_alarm_skip_day($skip);
+	my @n = localtime(int($now / 1000));
+	if (defined $sy && $sy == $n[5] && $sm == $n[4] && $sd == $n[3]) {
+		return POSIX::mktime(0, 0, 0, $n[3] + 1, $n[4], $n[5]) * 1000 - 1;
+	}
+	return $skip if $skip > $now;
+	return $now;
+}
+
+# The occurrence a skip request names. A request from the phone carries the
+# moment its notice was posted; a schedule that moved since then, or a value
+# that is not one of this alarm's times, must not skip the wrong day. The
+# ringing occurrence wins over "the next one" so Skip while it sounds leaves
+# tomorrow alone.
+sub clock_alarm_skip_target {
+	my ($alarm, $at, $now) = @_;
+	$at = int($at || 0);
+	$now = &rightNow() unless defined $now;
+	my $hour = int($alarm->{'hour'} || 0);
+	my $minute = int($alarm->{'minute'} || 0);
+	my @days = @{ $alarm->{'days'} || [] };
+	if ($at > 0 && $at >= $now - 120000 && $at <= $now + 8 * 86400000) {
+		my @lt = localtime(int($at / 1000));
+		my $time_ok = ($lt[2] == $hour && $lt[1] == $minute);
+		my $day_ok = !scalar @days || grep { $_ == $lt[6] } @days;
+		return $at if $time_ok && $day_ok;
+	}
+	my $recent = &clock_alarm_next_ms($alarm, $now - 120000);
+	return $recent if $recent && $recent <= $now;
+	my $snooze = int($alarm->{'snooze_until'} || 0);
+	return $snooze if $snooze && $snooze > $now;
+	return &clock_alarm_next_ms($alarm, $now) || $at;
 }
 
 # The phone's "Skip today" button cannot call the manager, so it writes this
@@ -540,36 +597,68 @@ sub clock_skip_file {
 	return $dir . '/clock_skip.json';
 }
 
-sub clock_skip_apply {
-	my $file = &clock_skip_file();
-	return 0 unless -e $file;
-	my $raw = eval { read_file($file) } // '';
-	unlink $file;
-	my $data = eval { decode_json($raw) };
-	return 0 unless ref $data eq 'HASH';
-	my $uuid = $data->{'uuid'} || '';
-	return 0 unless length $uuid;
-	my $now = &rightNow();
-	my $lock = &clock_lock_take();
-	my $alarms = &clock_alarms_read();
-	my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{ $alarms };
-	if (!$alarm) {
-		&clock_lock_drop($lock);
-		return 0;
+# One file per tap. Two Skips a moment apart used to overwrite the same
+# clock_skip.json, losing the first; a unique name in this directory keeps both.
+sub clock_skip_dir {
+	my $dir = &home('~/.president');
+	$dir = JawnOS::Platform::Paths::tmp_dir() unless -d $dir;
+	return $dir . '/clock_skip.d';
+}
+
+# The legacy single file first, then the queue in name order. The caller renames
+# each before reading it, so a request written during a pass is left for the next
+# one instead of being unlinked unseen.
+sub _clock_skip_requests {
+	my @out;
+	my $legacy = &clock_skip_file();
+	push @out, $legacy if -e $legacy;
+	my $dir = &clock_skip_dir();
+	if (opendir(my $dh, $dir)) {
+		push @out, map { "$dir/$_" } sort grep { /\.json\z/ } readdir($dh);
+		closedir($dh);
 	}
-	my $at = int($data->{'at'} || 0);
-	$at = &clock_alarm_next_ms($alarm, $now) if $at <= 0;
-	$alarm->{'skip_fire'} = $at;
-	$alarm->{'snooze_until'} = 0;
-	$alarm->{'ringing'} = 0;
-	$alarm->{'ring_started'} = 0;
-	$alarm->{'ring_last'} = 0;
-	&clock_alarms_write($alarms);
-	&clock_lock_drop($lock);
-	&clock_alarm_stop_sound($uuid);
-	&clock_write_device_alarm($alarms, $now);
-	&clock_poke($now);
-	return 1;
+	return @out;
+}
+
+sub clock_skip_apply {
+	my @files = &_clock_skip_requests();
+	return 0 unless @files;
+	my $now = &rightNow();
+	my $applied = 0;
+	foreach my $file (@files) {
+		my $work = $file . '.reading';
+		next unless rename($file, $work);
+		my $raw = eval { read_file($work) } // '';
+		unlink $work;
+		my $data = eval { decode_json($raw) };
+		next unless ref $data eq 'HASH';
+		my $uuid = $data->{'uuid'} || '';
+		next unless length $uuid;
+		my $lock = &clock_lock_take();
+		my $alarms = &clock_alarms_read();
+		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{ $alarms };
+		if (!$alarm) {
+			&clock_lock_drop($lock);
+			next;
+		}
+		my $at = &clock_alarm_skip_target($alarm, $data->{'at'}, $now);
+		$alarm->{'skip_fire'} = $at || 0;
+		$alarm->{'snooze_until'} = 0;
+		$alarm->{'ringing'} = 0;
+		$alarm->{'ring_started'} = 0;
+		$alarm->{'ring_last'} = 0;
+		$alarm->{'updated'} = $now;
+		&clock_alarms_write($alarms);
+		&clock_lock_drop($lock);
+		&clock_alarm_stop_sound($uuid);
+		&clock_write_device_alarm($alarms, $now);
+		$applied++;
+	}
+	if ($applied) {
+		&clock_poke($now);
+		return 1;
+	}
+	return 0;
 }
 
 # Every NFC tag row for an app, across devices. A tag is written from the phone
