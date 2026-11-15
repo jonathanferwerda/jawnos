@@ -821,6 +821,10 @@ sub subprocessor {
 		: undef;
 	my $wrapped_subroutine = sub {
 		Mojo::IOLoop->reset({ freeze => 1 });
+		# A forked job is not a request worker - a prefork worker, which has to
+		# accept, never comes through here. A job that outlives the master (a
+		# long render, a tunnel holder) must not keep the web port bound.
+		JawnOS::Platform::Process::release_listeners() if $$ != $parent_pid;
 		$gb::subprocessed++;
 		$subs::heartbeat_sent_at = undef;
 		my $file = &subs::home('~/.process_watch');
@@ -870,6 +874,14 @@ sub subprocessor {
 		&subs::unix_socket_sender($file,$subprocess);
 
 		if ($@) { warn "Worker $$: Failed to send 'start' state: $@" }
+		# The reaper's ledger is the master's memory; this mark is what a killer
+		# or a supervisor can read while the tree is down (see job_managed).
+		if ($pid != $parent_pid) {
+			JawnOS::Platform::Process::job_mark_write($pid,
+				start => $start_ticks,
+				until => (defined $warranty && $warranty =~ /^\d+$/ && $warranty < &subs::forever_warranty()) ? $warranty : 0,
+				name => $name);
+		}
 		# The helper the loop calls reads these from the child's own package.
 		my $previous_uuid = $gb::subprocessor_uuid;
 		my $previous_name = $gb::subprocessor_name;
@@ -888,6 +900,7 @@ sub subprocessor {
 			&subs::unix_socket_sender($file,$subprocess);
 		};
 		if ($@) { warn "Worker $$: Failed to send 'stop' state: $@" }
+		JawnOS::Platform::Process::job_mark_forget($pid) if $pid != $parent_pid;
 
 		# If the core subroutine crashed, re-throw its error now so Mojolicious knows it failed
 		if ($sub_error) {

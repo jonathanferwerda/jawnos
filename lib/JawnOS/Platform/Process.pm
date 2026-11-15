@@ -26,9 +26,10 @@ use warnings;
 use Exporter 'import';
 our @EXPORT_OK = qw(
 	pid_exists state running same_process start_time command_line
-	cpu_ticks descendants parse_stat signal
+	cpu_ticks descendants parse_stat signal release_listeners
 	comm ppid pgrp cwd exe environ rss_kib
 	table tree kill_tree ppid_closure
+	jobs_dir job_mark_file job_mark_write job_mark_forget job_record job_managed
 	meminfo uptime loadavg cpu_times
 	parse_tasklist parse_cim parse_windows_os parse_windows_cpu
 	cim_epoch windows_rows windows_snapshot windows_os windows_signal
@@ -413,6 +414,191 @@ sub signal {
 
 # MemTotal and MemAvailable in KiB, 0 when /proc/meminfo is unavailable (as the
 # Monitor has always shown them).
+# ------------------------------------------------------------ child  sockets
+#
+# A child the tree forks must not keep the tree's listening sockets. Mojo
+# clears close-on-exec on its listener so prefork workers can inherit it, and a
+# child that only forks (a subprocessor job) keeps the descriptor even without
+# exec. On 2026-11-15 a 9.8 GB flash run through `sudo` from a request worker
+# kept the 45545 listener: the master stopped for a git update, the port stayed
+# open, and every browser connect queued in a backlog no process ever accepted.
+# The supervisor's bare connect read that as "jawn is up", so the tree stayed
+# down for 18 minutes until the flash finished.
+#
+# release_listeners() closes only the descriptors this process is accepting on,
+# in the child. A server about to bind its own listener opens it after this
+# call; a prefork worker, which must accept, never calls it. The identity is the
+# socket's inode in /proc/self/net/tcp in LISTEN state, so no descriptor has to
+# be duplicated or reinterpreted. A platform without /proc (macOS) is the empty
+# answer, the same convention as every other read here.
+
+sub _open_fds {
+	my @fd;
+	if (opendir(my $dh, _proc_path('self/fd'))) {
+		# The listing's own descriptor is not one of the caller's, and reading
+		# /proc/self/fd shows it. A caller that closed the lowest number would
+		# otherwise find its own directory handle in the answer.
+		my $self = fileno $dh;
+		@fd = grep { /^\d+$/ && $_ != $self } readdir $dh;
+		closedir $dh;
+	}
+	return sort { $a <=> $b } @fd;
+}
+
+# Inodes of the sockets in LISTEN state in this process's network namespace.
+sub _listening_inodes {
+	my %inode;
+	foreach my $file ('net/tcp', 'net/tcp6') {
+		open(my $fh, '<', _proc_path("self/$file")) or next;
+		my $header = <$fh>;
+		while (my $line = <$fh>) {
+			my @field = split ' ', $line;
+			next unless @field >= 10 && defined $field[3] && $field[3] eq '0A';
+			$inode{$field[9]} = 1;
+		}
+		close $fh;
+	}
+	return \%inode;
+}
+
+sub release_listeners {
+	return 0 if $^O eq 'MSWin32';
+	require POSIX;
+	my $listening = _listening_inodes();
+	return 0 unless scalar keys %{$listening};
+	my $closed = 0;
+	foreach my $fd (_open_fds()) {
+		next if $fd <= 2;
+		my $target = readlink(_proc_path("self/fd/$fd"));
+		next unless defined $target && $target =~ /^socket:\[(\d+)\]$/;
+		next unless $listening->{$1};
+		eval { POSIX::close($fd) };
+		$closed++;
+	}
+	return $closed;
+}
+
+# --------------------------------------------------------------- managed jobs
+#
+# The ledger the reaper keeps (%subprocesses) lives in the master's memory, so
+# a killer or a supervisor running while the tree is down has nothing to ask.
+# Each child therefore leaves a file naming itself: pid, /proc start token,
+# warranty moment (0 = no deadline) and name.
+#
+# That is the difference the house needs. A long-lived child the tree started
+# on purpose, still inside its warranty (a flash, a render, a tunnel holder), is
+# a managed job: not a wedged script, and not something a stop may kill. A
+# process with no mark, a mark whose start token no longer matches (the pid was
+# reused), or one whose warranty has run out is unmanaged - the reaper's or the
+# killer's business.
+#
+# A SIGKILLed job leaves a stale mark; it is forgotten when read, so the cost is
+# one file rather than a growing directory.
+
+# Tests point this at a fixture; nothing in a house sets it.
+our $JOBS_DIR;
+
+sub jobs_dir {
+	return $JOBS_DIR if defined $JOBS_DIR && length $JOBS_DIR;
+	require JawnOS::Platform::Paths;
+	return JawnOS::Platform::Paths::data_dir() . '/jobs';
+}
+
+sub job_mark_file {
+	my ($pid) = @_;
+	return '' unless _is_pid($pid);
+	return jobs_dir() . "/$pid.job";
+}
+
+sub job_mark_write {
+	my ($pid, %opt) = @_;
+	my $file = job_mark_file($pid);
+	return 0 unless length $file;
+	my $dir = jobs_dir();
+	unless (-d $dir) {
+		require File::Path;
+		eval { File::Path::make_path($dir) };
+		return 0 unless -d $dir;
+	}
+	my $name = defined $opt{'name'} ? $opt{'name'} : '';
+	$name =~ s/[\t\r\n]+/ /g;
+	my $start = defined $opt{'start'} ? $opt{'start'} : '';
+	my $until = (defined $opt{'until'} && $opt{'until'} =~ /^\d+$/) ? $opt{'until'} : 0;
+	open(my $fh, '>', $file) or return 0;
+	print {$fh} join("\t", $pid, $start, $until, $name) . "\n";
+	close $fh;
+	_job_sweep();
+	return 1;
+}
+
+# A job killed with SIGKILL never reaches its own cleanup, so the next write
+# sweeps the directory - once a minute, so a spawn-heavy pass pays one readdir.
+# A mark whose process is gone or whose pid was reused is deleted; a live one is
+# left alone even past its warranty (job_managed, not the file, decides that).
+# $JOB_SWEEP_AT is a test seam; nothing in a house sets it.
+our $JOB_SWEEP_AT = 0;
+
+sub _job_sweep {
+	my $now = time();
+	return if $now - $JOB_SWEEP_AT < 60;
+	$JOB_SWEEP_AT = $now;
+	my $dir = jobs_dir();
+	opendir(my $dh, $dir) or return;
+	my @entries = grep { /^\d+\.job$/ } readdir $dh;
+	closedir $dh;
+	foreach my $entry (@entries) {
+		(my $pid = $entry) =~ s/\.job$//;
+		my $record = job_record($pid);
+		if (!$record || !same_process($pid, $record->{'start_ticks'})) {
+			unlink("$dir/$entry");
+		}
+	}
+}
+
+sub job_mark_forget {
+	my ($pid) = @_;
+	my $file = job_mark_file($pid);
+	return 0 unless length $file && -e $file;
+	return unlink($file) ? 1 : 0;
+}
+
+sub job_record {
+	my ($pid) = @_;
+	my $file = job_mark_file($pid);
+	return undef unless length $file && -f $file;
+	open(my $fh, '<', $file) or return undef;
+	my $line = <$fh>;
+	close $fh;
+	return undef unless defined $line;
+	chomp $line;
+	my ($recorded, $start, $until, $name) = split /\t/, $line, 4;
+	return undef unless defined $recorded && $recorded eq $pid;
+	return {
+		pid => $pid,
+		start_ticks => defined $start ? $start : '',
+		until => (defined $until && $until =~ /^\d+$/) ? $until : 0,
+		name => defined $name ? $name : '',
+	};
+}
+
+# The job is managed while the process is still the one that wrote the mark and
+# its warranty has not run out. 0 is no deadline (a resident loop, a server or a
+# tunnel holder) and is never expired. An overdue job is not managed: the reaper
+# owns it, so a port it still holds is a wedge.
+sub job_managed {
+	my ($pid, %opt) = @_;
+	my $record = job_record($pid);
+	return undef unless $record;
+	unless (same_process($pid, $record->{'start_ticks'})) {
+		job_mark_forget($pid);
+		return undef;
+	}
+	my $now = defined $opt{'now'} ? $opt{'now'} : time() * 1000;
+	my $until = $record->{'until'};
+	return undef if $until > 0 && $now >= $until;
+	return $record;
+}
+
 sub meminfo {
 	return _windows_meminfo() if $^O eq 'MSWin32';
 	my %info = (total => 0, available => 0);

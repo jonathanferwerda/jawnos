@@ -37,8 +37,20 @@ like($core_paths, qr/def is_held\(\):/, 'a deliberate stop is remembered');
 like($core, qr/return "held", "stopped by request"/, 'the watcher leaves a stopped tree alone');
 like($cli, qr/action in \("started", "restarted"\)/,
 	'the watch cooldown covers a start');
-like($cli, qr/action in \("started", "restarted", "failed", "down", "held"\)/,
-	'the watch reports a start and a hold');
+like($cli, qr/action in \("started", "restarted", "failed", "down", "held", "blocked"\)/,
+	'the watch reports a start, a hold and a blocked port');
+
+# Up means the app answered. A listener a child inherited (a flash started
+# through sudo) accepts connections and never answers, so a bare connect read as
+# "up" and the supervisor left the tree down for 18 minutes (2026-11-15). The
+# bound-but-silent state is now its own action instead of a start that cannot
+# succeed.
+like($core, qr/def port_held\(/, 'the supervisor names the bound-but-silent probe');
+like($core, qr/jawn_health\(jawn_dir, timeout=1\.0, port=port\)/,
+	'up is the app health answer, not a bare connect');
+like($core, qr/if port_held\(port\):/, 'a held port is checked before a start');
+like($core, qr/return "blocked", /, 'and is reported as its own action');
+like($cli, qr/"blocked"/, 'the watcher prints a blocked port');
 like($unit, qr{^ExecStart=\@DESKTOP\@/jawnosctl watch --interval 10$}m,
 	'the unit runs the watcher');
 like($unit, qr/^Restart=always$/m, 'systemd restarts the watcher itself');
@@ -121,6 +133,7 @@ print('downheld:' + core.restart_if_stale('/x')[0])
 core.set_held(False)
 print('cleared:' + str(core.is_held()))
 
+core.port_held = lambda port: False
 core.start_all = lambda d, with_ble=True: (True, 'starting jawn')
 print('down:' + core.restart_if_stale('/x')[0])
 

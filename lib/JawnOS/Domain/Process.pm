@@ -381,6 +381,10 @@ sub subprocessor_command {
 		return { ok => 0, error => "could not fork: $!" };
 	}
 	if (!$pid) {
+		# A command is not a request worker: the tree's listeners are not its to
+		# hold. Without this a flash, a render or anything run through sudo that
+		# outlives the master keeps the web port bound and answers no one.
+		JawnOS::Platform::Process::release_listeners();
 		open(STDIN, '<', $stdin_path) or POSIX::_exit(127);
 		open(STDOUT, '>', $out_path) or POSIX::_exit(127);
 		if ($stderr eq 'stdout' || $stderr eq 'capture') {
@@ -422,6 +426,12 @@ sub subprocessor_command {
 	if ($record) {
 		$watch = &subs::home('~/.process_watch');
 		&subs::unix_socket_sender($watch, $child) if $watch && (JawnOS::Transport::tcp() || -e $watch);
+		# The ledger above is the master's memory; this mark is what a killer or
+		# a supervisor can read while the tree is down (see job_managed).
+		JawnOS::Platform::Process::job_mark_write($pid,
+			start => $start_ticks,
+			until => ($warranty < $forever ? $warranty : 0),
+			name => $name);
 	}
 
 	my $status;
@@ -458,6 +468,7 @@ sub subprocessor_command {
 		$child->{'stop_timestamp'} = &subs::rightNow();
 		$child->{'exit'} = (defined $status && $status >= 0) ? ($status >> 8) : 127;
 		&subs::unix_socket_sender($watch, $child) if $watch && (JawnOS::Transport::tcp() || -e $watch);
+		JawnOS::Platform::Process::job_mark_forget($pid);
 	}
 
 	my $output = '';

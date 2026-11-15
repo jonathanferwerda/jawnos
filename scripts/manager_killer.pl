@@ -340,20 +340,40 @@ if (@ordered) {
 # the tree and the master by their program, which is the only identity Windows
 # exposes. Skipping the port read also keeps a Windows stop from killing an
 # unrelated listener on the same port.
+#
+# Two holders are not a wedged script. A listener this user cannot name is
+# another user's - a job started through sudo is root's - so it cannot be
+# signalled from here; say so rather than report the port as free. A listener
+# this user can name is kept when it is a managed job: the tree started it on
+# purpose and its warranty has not run out (Platform::Process's job_managed).
+# Everything else on the port is swept, as it always was.
 unless ($list_only || $scope || $^O eq 'MSWin32') {
 	my $working_port = &working_port();
 	my %listeners;
+	my %invisible;
 	my $ss = `ss -tlnp 2>/dev/null`;
 	foreach my $line (split /\n/, $ss) {
 		next unless $line =~ /:(\d+)\s/;
 		my $port = $1;
 		next unless $port == $working_port || $port == 3000;
+		$invisible{$port} = 1 unless $line =~ /pid=/;
 		while ($line =~ /pid=(\d+)/g) { $listeners{$1} = 1 }
+	}
+	if (keys %invisible) {
+		my @port = sort { $a <=> $b } keys %invisible;
+		print 'manager_killer: port' . (@port > 1 ? 's' : '') . " @port held by a listener this user cannot inspect (another user, e.g. a sudo flash); it is not signalled here\n";
 	}
 	foreach my $pid (sort { $a <=> $b } keys %listeners) {
 		next if $pid == $self || ($parent && $pid == $parent);
 		next unless &running($pid);
 		next unless &in_cwd_scope($pid);
+		my $job = JawnOS::Platform::Process::job_managed($pid);
+		if ($job) {
+			my $what = (defined $job->{'name'} && length $job->{'name'}) ? $job->{'name'} : 'a tree job';
+			my $deadline = $job->{'until'} ? 'inside its warranty' : 'no deadline';
+			print "keep $pid $what (managed job, $deadline)\n";
+			next;
+		}
 		JawnOS::Platform::Process::signal('KILL', $pid);
 		print "KILL $pid listener\n";
 	}

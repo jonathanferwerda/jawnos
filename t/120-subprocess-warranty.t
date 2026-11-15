@@ -64,6 +64,23 @@ my @unseeded = grep { !defined &subs::subprocessor_warranty_for($_) } @seeded;
 is_deeply(\@unseeded, [], 'every named President subprocess has a warranty seed')
 	or diag('add to Process.pm %WARRANTY: ' . join(', ', @unseeded));
 
+# A child must not keep the tree's listeners, and it must name itself so a
+# killer or a supervisor can tell it from a wedged script. The incident: a flash
+# run through sudo kept 45545 bound after the master stopped for a git update,
+# and the supervisor read the open port as a live house for 18 minutes.
+my $domain_process = read_file("$root/lib/JawnOS/Domain/Process.pm");
+my $calendar_src = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
+like($domain_process, qr/JawnOS::Platform::Process::release_listeners\(\);/,
+	'subprocessor_command drops the inherited listeners in the child');
+like($domain_process, qr/JawnOS::Platform::Process::job_mark_write/,
+	'and leaves a durable mark naming the job');
+like($domain_process, qr/JawnOS::Platform::Process::job_mark_forget/,
+	'which the wait clears');
+like($calendar_src, qr/JawnOS::Platform::Process::release_listeners\(\) if \$\$ != \$parent_pid/,
+	'a forked subprocessor job drops them too');
+like($calendar_src, qr/JawnOS::Platform::Process::job_mark_write/,
+	'and marks itself while it runs');
+
 # ---------------------------------------------------------------------- reaper
 sub tracked_record {
 	my (%record) = @_;

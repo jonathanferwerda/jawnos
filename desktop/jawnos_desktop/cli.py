@@ -46,6 +46,9 @@ def cmd_status(args):
         return 0
     print("jawn:       %s   (%s)" % (_tick(info["jawn_up"]), info["jawn_dir"]))
     print("  ui port:  %d" % info["jawn_port"])
+    if not info["jawn_up"] and info.get("port_held"):
+        print("  port:     %d is bound but the manager does not answer" % info["jawn_port"])
+        print("            (a leftover listener; a job started with sudo keeps it)")
     health = info.get("health")
     if health:
         peers = health.get("peers") or []
@@ -109,7 +112,7 @@ def cmd_watch(args):
                     last_restart = time.time()
             else:
                 action, message = "waiting", "restart settling"
-            if action != last_action and action in ("started", "restarted", "failed", "down", "held"):
+            if action != last_action and action in ("started", "restarted", "failed", "down", "held", "blocked"):
                 print("%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), message), flush=True)
             last_action = action
             # The console stream is append-only and inherited by ./jawn, so a

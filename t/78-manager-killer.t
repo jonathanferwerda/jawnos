@@ -427,4 +427,17 @@ is($list_rc, 0, '--list still exits 0');
 kill 'KILL', $list_server if kill(0, $list_server);
 waitpid($list_server, 0);
 
+# ------------------------------------------------------- a port holder that is a job
+# The port is the tree's last claim, but not every holder is a wedged script. A
+# job the tree started on purpose and still inside its warranty (a flash, a
+# render) is kept and named; a listener this user cannot name - root's, from a
+# sudo flash - is reported rather than pretended free. Everything else on the
+# port is still swept. The classification itself is the platform seam's
+# job_managed, pinned in t/227.
+like($src, qr/JawnOS::Platform::Process::job_managed\(\$pid\)/,
+	'the port sweep asks whether a holder is a managed job');
+like($src, qr/print "keep \$pid /, 'a managed job is kept, and named');
+like($src, qr/print "KILL \$pid listener/, 'an unmanaged holder is still swept');
+like($src, qr/cannot inspect/, 'a listener this user cannot name (root) is reported');
+
 done_testing();

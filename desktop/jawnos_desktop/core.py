@@ -375,9 +375,28 @@ def port_open(port, host="127.0.0.1", timeout=0.4):
 
 
 def jawn_up(jawn_dir):
-    """jawn answers on its working port and always on the dock port (3000)."""
+    """jawn answers with its own health page, not merely an open socket.
+
+    A listener can outlive its manager. A child that inherited the listening
+    socket (a flash run through sudo accepted connections into its backlog for
+    18 minutes) made a bare connect report a wedged house as up, so the
+    supervisor never restarted the tree (2026-11-15). Only the app's answer
+    counts; both the working port and the dock port are asked, as before.
+    """
     reap_detached()
-    return port_open(jawn_working_port(jawn_dir)) or port_open(DOCK_PORT)
+    for port in (jawn_working_port(jawn_dir), DOCK_PORT):
+        if port_open(port) and jawn_health(jawn_dir, timeout=1.0, port=port) is not None:
+            return True
+    return False
+
+
+def port_held(port, host="127.0.0.1", timeout=0.4):
+    """Something is listening on the port, whether or not it answers.
+
+    `ss` names no pid for another user's socket, so the supervisor can report
+    that the port is held and by what kind of thing, not which pid.
+    """
+    return port_open(port, host=host, timeout=timeout)
 
 
 def game_running():
@@ -438,14 +457,14 @@ def jawn_status(jawn_up, now=None):
     return "not running", "red"
 
 
-def jawn_health(jawn_dir, timeout=2.5):
+def jawn_health(jawn_dir, timeout=2.5, port=None):
     """Ask the app's own /manager/health over loopback. Returns a dict or None.
 
     The route trusts a loopback caller (no session needed), so status can report
     what the running tree itself says - version, uptime, peers - and not merely
     that a port is open. The cert is self-signed, so it is not verified.
     """
-    port = jawn_working_port(jawn_dir)
+    port = port or jawn_working_port(jawn_dir)
     request = urllib.request.Request(
         "https://127.0.0.1:%d/manager/health" % port,
         headers={"X-Requested-With": "jawnosctl"})
@@ -502,6 +521,13 @@ def restart_if_stale(jawn_dir, with_ble=True):
         if not jawn_up(jawn_dir):
             if is_held():
                 return "held", "stopped by request"
+            # A port that accepts but never answers is not a tree to start over:
+            # the started one could not bind it. Say what is wrong instead of
+            # reporting a start that cannot happen.
+            port = jawn_working_port(jawn_dir)
+            if port_held(port):
+                return "blocked", ("port %d is bound but the manager does not answer; "
+                                    "a listener the tree did not start holds it" % port)
             ok, message = start_all(jawn_dir, with_ble=with_ble)
             if ok:
                 return "started", "jawn was down; started it (%s)" % message
@@ -596,10 +622,12 @@ def status(settings=None):
     settings = settings or load_settings()
     jawn_dir = settings["jawn_dir"]
     up = jawn_up(jawn_dir)
+    port = jawn_working_port(jawn_dir)
     return {
         "jawn_dir": jawn_dir,
         "jawn_up": up,
-        "jawn_port": jawn_working_port(jawn_dir),
+        "jawn_port": port,
+        "port_held": False if up else port_held(port),
         "health": jawn_health(jawn_dir) if up else None,
         "ble_up": ble_up(),
         "autostart": autostart_enabled(),

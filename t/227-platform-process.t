@@ -25,13 +25,14 @@ use Test::More;
 use POSIX ();
 use Cwd ();
 use File::Path qw(make_path);
-use File::Temp qw(tempdir);
+use File::Temp qw(tempdir tempfile);
 use Time::HiRes qw(sleep);
 use JawnOS::Platform::Process qw(
 	parse_stat state running pid_exists same_process start_time
-	command_line cpu_ticks descendants signal
+	command_line cpu_ticks descendants signal release_listeners
 	comm ppid pgrp cwd exe environ rss_kib
 	table tree kill_tree ppid_closure
+	jobs_dir job_mark_file job_mark_write job_mark_forget job_record job_managed
 	meminfo uptime loadavg cpu_times
 	parse_tasklist parse_cim parse_windows_os parse_windows_cpu
 	cim_epoch windows_rows windows_snapshot windows_os windows_signal
@@ -646,6 +647,113 @@ my $process_src = do {
 # module is never loaded.
 is(JawnOS::Platform::Process::_win_liveness_api(), undef,
 	'the direct query is unavailable off Windows');
-ok(!$INC{'Win32/API.pm'}, 'and Win32::API was never loaded here');
+ok(!$INC{'Win32/API.pm'}, 'and Win32/API.pm was never loaded here');
+
+# ------------------------------------------------- a child drops its listeners
+# A forked child must not keep the tree's sockets. Mojo clears close-on-exec on
+# its listener so prefork workers can inherit it, and a child that only forks
+# keeps the descriptor even without exec: that is how a flash kept 45545 bound
+# with no manager behind it (2026-11-15).
+SKIP: {
+	skip 'no /proc on this platform', 5 unless $linux;
+	require IO::Socket::INET;
+	my $listener = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1', LocalPort => 0, Listen => 5,
+		ReuseAddr => 1, Proto => 'tcp',
+	);
+	ok($listener, 'a listening socket to release') or skip 'no listener', 4;
+	my $fd = fileno $listener;
+	my ($pipe_r, $pipe_w);
+	pipe($pipe_r, $pipe_w) or die "pipe: $!";
+	cmp_ok(release_listeners(), '>=', 1, 'a pass closes the listening socket(s)');
+	ok(!-e "/proc/$$/fd/$fd", 'the listener descriptor is gone');
+	syswrite($pipe_w, "still here\n");
+	my $line = <$pipe_r>;
+	is($line, "still here\n", 'and a descriptor that is not listening still works');
+
+	# What the house actually needs: after a fork and an exec (the flash path),
+	# the child carries no listening socket. The probe counts them itself, so the
+	# descriptor numbers the run happens to use do not matter.
+	my $second = IO::Socket::INET->new(
+		LocalAddr => '127.0.0.1', LocalPort => 0, Listen => 5,
+		ReuseAddr => 1, Proto => 'tcp',
+	);
+	my $probe = 'require Socket; require POSIX; opendir(my $d, "/proc/self/fd") or exit 9;'
+		. ' my $self = fileno $d;'
+		. ' for my $e (readdir $d) { next unless $e =~ /^\d+$/ && $e != $self;'
+		. ' my $dup = POSIX::dup($e); next unless defined $dup && $dup >= 0;'
+		. ' if (open(my $f, "<&=" . $dup)) { my $r = getsockopt($f, Socket::SOL_SOCKET(), Socket::SO_ACCEPTCONN()); close $f; $n++ if defined $r && unpack("i", $r) }'
+		. ' else { POSIX::close($dup) } }'
+		. ' print "", ($n || 0), "\\n";';
+	my ($report, $report_path) = tempfile(CLEANUP => 1);
+	close $report;
+	my $pid = fork();
+	die "fork: $!\n" unless defined $pid;
+	if (!$pid) {
+		open(STDOUT, '>', $report_path) or POSIX::_exit(127);
+		release_listeners();
+		exec($^X, '-e', $probe);
+		POSIX::_exit(127);
+	}
+	waitpid($pid, 0);
+	open(my $fh, '<', $report_path) or die "read report: $!";
+	my $said = <$fh> // '';
+	close $fh;
+	is($said, "0\n", 'a forked child carries no listening socket into exec');
+	close $second if $second;
+	close $pipe_r;
+	close $pipe_w;
+}
+
+# ------------------------------------------------------ managed job marks
+# The difference the house needs: a child the tree started on purpose and still
+# inside its warranty is a managed job, not a wedged script. A missing mark, a
+# mismatched start token (the pid was reused) or an expired warranty is not.
+my $jobs = tempdir(CLEANUP => 1);
+local $JawnOS::Platform::Process::JOBS_DIR = $jobs;
+my $start = start_time($$) || '';
+
+ok(job_mark_write($$, start => $start, until => 0, name => 'gou provision'),
+	'a child leaves a mark naming itself');
+my $record = job_record($$);
+is($record->{'pid'}, $$, 'the mark carries the pid');
+is($record->{'start_ticks'}, $start, 'and the start token that survives pid reuse');
+is($record->{'until'}, 0, 'no deadline is 0');
+is($record->{'name'}, 'gou provision', 'and the job name');
+is(job_managed($$)->{'name'}, 'gou provision', 'a live job with no deadline is managed');
+
+job_mark_write($$, start => $start, until => 1_000, name => 'short');
+is(job_managed($$, now => 1_001), undef, 'a warranty that ran out is not managed');
+
+job_mark_write($$, start => $start, until => 0, name => "flash\tnow");
+is(job_record($$)->{'name'}, 'flash now', 'a tab in the name cannot forge a field');
+
+job_mark_write($$, start => 'not-this-start', until => 0, name => 'reused');
+is(job_managed($$), undef, 'a mark whose start token does not match is unmanaged');
+ok(!-e job_mark_file($$), 'and the stale mark is forgotten');
+
+my $gone = 4_000_000_999;
+job_mark_write($gone, start => '1', until => 0, name => 'dead');
+is(job_managed($gone), undef, 'a mark for a pid that is gone is unmanaged');
+ok(!-e job_mark_file($gone), 'and is forgotten');
+
+job_mark_write($$, start => $start, until => 0, name => 'finished');
+is(job_mark_forget($$), 1, 'a finished job clears its mark');
+ok(!-e job_mark_file($$), 'and the file is gone');
+is(job_mark_forget($$), 0, 'forgetting twice is not an error');
+
+# A job killed with SIGKILL never reaches its own cleanup: the next write sweeps
+# the directory, once a minute, so the marks cannot pile up.
+local $JawnOS::Platform::Process::JOB_SWEEP_AT = 0;
+job_mark_write($gone, start => '1', until => 0, name => 'dead');
+ok(!-e job_mark_file($gone), 'a write sweeps a mark whose process is gone');
+job_mark_write($$, start => $start, until => 0, name => 'kept');
+ok(-e job_mark_file($$), 'and leaves the live job alone');
+
+# The Windows backend has no job directory and no listener to release: the empty
+# answer is the contract there, exactly as for the /proc reads.
+if (!$linux) {
+	is(release_listeners(), 0, 'a platform without listening sockets releases none');
+}
 
 done_testing();
