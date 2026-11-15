@@ -579,6 +579,26 @@ sub market_vendors {
 	return [ map { $_->{'app'} } @{$rows} ];
 }
 
+# A shop is one shop however the paper spelled it. The vision model reads what was
+# printed, and a till slip prints WALMART while the house keeps Wal-mart, so a raw
+# name would start a second vendor app and split that shop's purchases in two.
+# Compare on letters and digits alone - spaces, hyphens, underscores and case are
+# not part of the name - and answer the house's own key when one matches. A shop
+# the house does not keep yet is left exactly as it was read.
+sub market_vendor_resolve {
+	my $wanted = &subs::unformat_name(shift);
+	return $wanted if !length $wanted;
+	my $key = lc $wanted;
+	$key =~ s/[^[:alnum:]]//g;
+	return $wanted unless length $key;
+	foreach my $vendor ( @{ &market_vendors() } ) {
+		my $other = lc &subs::unformat_name($vendor);
+		$other =~ s/[^[:alnum:]]//g;
+		return $vendor if $other eq $key;
+	}
+	return $wanted;
+}
+
 # The registry of named lists (Grocery, Hardware, Clothing, ...) with the vendors
 # each is shopped at, so a vendor's location can name the lists that apply there.
 # Names come from the house's categories, so a list lines up with the budget's

@@ -120,9 +120,10 @@ sub action_4700 {
 	my $receipt_category = &market_list_key($c->param('list') || '');
 	my @category_choices = map { $_->{'app'} } @{ &subs::db_query("select app, count(*) as c from appointments where type in ('transaction','purchase') and app is not null and app != '' group by app order by c desc limit 150")->hashes || [] };
 	unshift @category_choices, $receipt_category if $receipt_category ne '' && !grep { $_ eq $receipt_category } @category_choices;
+	my $receipt_vendor = &market_vendor_resolve($out->{'vendor'} || '');
 	$c->render(json => {
-		vendor => &subs::unformat_name($out->{'vendor'} || ''),
-		vendor_formatted => &subs::format_name($out->{'vendor'} || ''),
+		vendor => $receipt_vendor,
+		vendor_formatted => &subs::format_name($receipt_vendor),
 		date => $out->{'date'} || '',
 		time => $out->{'time'} || '',
 		total => (defined $out->{'total'} && $out->{'total'} =~ /[0-9]/) ? 0 + $out->{'total'} : undef,
@@ -145,7 +146,7 @@ sub action_4700 {
 # POST /manager/market/receipt/apply
 sub action_4765 {
 	my $c = shift;
-	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
+	my $vendor = &market_vendor_resolve($c->param('vendor') || '');
 	my $list_name = $c->param('list') || '';
 	my $account = &subs::unformat_name($c->param('account')) || '';
 	# The receipt's own moment and the app it belongs to travel with the cart rows

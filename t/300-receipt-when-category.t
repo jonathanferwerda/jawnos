@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_market.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Manager/Part06.pm public/js/manager/market.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/transaction.js public/js/manager/transaction/01_record_crypto.js templates/apps/app_details.html.ep templates/market/market.html.ep perl/help/topics_business.pl perl/help/topics_functions.pl
+# tests-for: lib/JawnOS/Controller/manager_market.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part06.pm public/js/manager/market.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/transaction.js public/js/manager/transaction/01_record_crypto.js templates/apps/app_details.html.ep templates/market/market.html.ep perl/help/topics_business.pl perl/help/topics_functions.pl
 # covers:    A receipt's printed time and its category were lost at Checkout: the transaction was saved at "now" under the shopping list's category, with no way to file a Vape/Coffee/Dinner receipt elsewhere.
 
 use strict;
@@ -76,4 +76,33 @@ like($help, qr/the date and time, total, category, paid-by, reference and accoun
 like($help, qr/The category is the app the expense is filed under/, 'and says what the category means');
 like($help, qr/keeps the receipt\\'s printed date and time/, 'the transactions topic says the record is backdated');
 
+# --- a shop keeps the name the house already uses --------------------------
+# A till slip prints WALMART and the house keeps Wal-mart: the read must find
+# that vendor instead of starting a second app with a second set of purchases.
+require "$root/lib/JawnOS/Manager/Part05.pm";
+{
+	no warnings 'redefine';
+	local *Manager::market_vendors = sub { return [ 'wal-mart', 'canadian_tire', 'circle_k' ] };
+	is(Manager::market_vendor_resolve('Walmart'), 'wal-mart', 'a spelling without the hyphen finds the house name');
+	is(Manager::market_vendor_resolve('WAL-MART'), 'wal-mart', 'and so does the upper-case one');
+	is(Manager::market_vendor_resolve('Wal Mart'), 'wal-mart', 'a space where the house has a hyphen finds it too');
+	is(Manager::market_vendor_resolve('wal-mart'), 'wal-mart', 'the house name itself is left alone');
+	is(Manager::market_vendor_resolve('Canadian Tire'), 'canadian_tire', 'an underscore in the key is not part of the name');
+	is(Manager::market_vendor_resolve('Walmart Supercentre'), 'walmart_supercentre',
+		'a different shop is not forced onto one it only resembles');
+	is(Manager::market_vendor_resolve('Target'), 'target', 'a shop the house has not kept yet is left as read');
+	is(Manager::market_vendor_resolve(''), '', 'no vendor stays no vendor');
+}
+like($receipt, qr/my \$receipt_vendor = &market_vendor_resolve\(\$out->\{'vendor'\} \|\| ''\);/,
+	'the read resolves the vendor before the confirm shows it');
+like($receipt, qr/vendor_formatted => &subs::format_name\(\$receipt_vendor\),/,
+	'and the panel names it the house way');
+like($receipt, qr/my \$vendor = &market_vendor_resolve\(\$c->param\('vendor'\) \|\| ''\);/,
+	'apply resolves a vendor typed by hand too');
+
+# --- the guide says the shop is the one the house keeps -------------------
+like($help, qr/are one shop, so the purchases stay on the vendor you already have/,
+	'the Market topic says a known shop keeps its name');
+
+# --- what done_testing is for -----------------------------------------
 done_testing();

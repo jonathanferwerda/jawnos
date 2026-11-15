@@ -339,6 +339,7 @@ our %SUB = (
 	'market_upgrade_need'                    => 'JawnOS/Manager/Part05.pm',
 	'market_vendor_place'                    => 'JawnOS/Manager/Part05.pm',
 	'market_vendors'                         => 'JawnOS/Manager/Part05.pm',
+	'market_vendor_resolve'                  => 'JawnOS/Manager/Part05.pm',
 	'markup_adjuster'                        => 'JawnOS/Manager/Part07.pm',
 	'me_setting_list'                        => 'JawnOS/Manager/Part08.pm',
 	'measure_conversion_edges'               => 'JawnOS/Manager/Part32.pm',

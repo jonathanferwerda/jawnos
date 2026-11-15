@@ -60,6 +60,7 @@ sub appointment_writer;
 sub homepage_maker;
 sub register_grabber;
 sub market_vendors;
+sub market_vendor_resolve;
 sub market_lists;
 sub market_lists_for_menu;
 sub market_list_key;
