@@ -124,6 +124,13 @@ function travelPointsDraw() {
 	travelMap.setPoints(travelBasePoints.concat(travelPlaceGroups).concat(plates));
 }
 
+// The place list under the map: a tap opens that app's appointment window, the
+// same as a tap on its dot on the map.
+$(document).on('click', '.travel_place', function() {
+	var app = $(this).attr('app');
+	if (app) { appointmentGrabber(app, Date.now()); }
+});
+
 // fetched for the ground on screen, cached by the view, so panning into a place
 // only asks for the plates there
 function travelPlatesLoad() {

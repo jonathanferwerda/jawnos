@@ -43,6 +43,16 @@ window.jawnosMap = (function () {
 	function yToLat(y, z) { var n = Math.PI - 2 * Math.PI * y / Math.pow(2, z); return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))); }
 	function worldPx(lat, lon, z) { return [lonToX(lon, z) * TILE, latToY(lat, z) * TILE]; }
 	function geoAt(wx, wy, z) { return { lat: yToLat(wy / TILE, z), lon: xToLon(wx / TILE, z) }; }
+	// A longitude is only meaningful inside one turn of the globe. Panning and
+	// fitting used to let the view's centre drift past ±180 (the tile layer wraps,
+	// so the view still looked right), and that unbounded number was then saved as
+	// the remembered centre: on the next open every measured map and marker was
+	// projected a whole turn away and the map looked empty. Keep it in range
+	// wherever the centre is set, and normalise an older saved value on the way in.
+	function normLon(lon) {
+		if (!isFinite(lon)) { return lon; }
+		return ((((lon + 180) % 360) + 360) % 360) - 180;
+	}
 
 	// The ground bounds of a measured map: the latitude/longitude of its top-left
 	// and bottom-right image pixels, from its home_plate and scale bar. North-up,
@@ -94,7 +104,7 @@ window.jawnosMap = (function () {
 		// ends at 16, OpenTopoMap at 17): the initial zoom is held to it too.
 		var view = {
 			lat: (typeof opts.lat === 'number') ? opts.lat : 43.0,
-			lon: (typeof opts.lon === 'number') ? opts.lon : -81.94,
+			lon: (typeof opts.lon === 'number') ? normLon(opts.lon) : -81.94,
 			z: clampZ((typeof opts.z === 'number') ? opts.z : 14)
 		};
 		var maps = [];        // measured maps, each with a georeference
@@ -134,7 +144,7 @@ window.jawnosMap = (function () {
 		// tiles hold each span in the viewport (Mercator stretches latitude by
 		// 1/cos(lat), so its degrees read bigger). margin > 1 backs off a little.
 		function fitBox(minLat, maxLat, minLon, maxLon, margin) {
-			var lat = (minLat + maxLat) / 2, lon = (minLon + maxLon) / 2;
+			var lat = (minLat + maxLat) / 2, lon = normLon((minLon + maxLon) / 2);
 			var dim = size();
 			var spanLon = Math.max(maxLon - minLon, 0.0005);
 			var spanLat = Math.max(maxLat - minLat, 0.0005);
@@ -418,7 +428,7 @@ window.jawnosMap = (function () {
 			var c = worldPx(view.lat, view.lon, view.z);
 			var g = geoAt(c[0] - dx, c[1] - dy, view.z);
 			view.lat = Math.max(-85, Math.min(85, g.lat));
-			view.lon = g.lon;
+			view.lon = normLon(g.lon);
 			draw();
 		}
 		// zoom by dz, keeping the ground under screen point (sx,sy) pinned there
@@ -431,7 +441,7 @@ window.jawnosMap = (function () {
 			var aw = worldPx(anchor.lat, anchor.lon, nz);
 			var c = geoAt(aw[0] - sx + dim.w / 2, aw[1] - sy + dim.h / 2, nz);
 			view.lat = Math.max(-85, Math.min(85, c.lat));
-			view.lon = c.lon;
+			view.lon = normLon(c.lon);
 			view.z = nz;
 			draw();
 			fire();
@@ -691,7 +701,7 @@ window.jawnosMap = (function () {
 			draw: draw,
 			zoom: zoomBy,
 			setZoom: function (z) { view.z = clampZ(z); draw(); },
-			center: function (lat, lon) { view.lat = lat; view.lon = lon; draw(); },
+			center: function (lat, lon) { view.lat = lat; view.lon = normLon(lon); draw(); },
 			setProvider: function (key, url, keys) {
 				var nextUrl = (url === undefined || url === null) ? customUrl : url;
 				var nextKeys = (keys && typeof keys === 'object') ? keys : apiKeys;
@@ -792,7 +802,7 @@ window.jawnosMap = (function () {
 				var o = originFor(view, dim.w, dim.h);
 				return screenFor(lat, lon, o, view.z);
 			},
-			view: function () { return view; }
+			view: function () { return { lat: view.lat, lon: normLon(view.lon), z: view.z }; }
 		};
 		return api;
 	}

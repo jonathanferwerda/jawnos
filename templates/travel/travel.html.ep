@@ -37,8 +37,8 @@
 
 			<span><b>Search</b> <input id="travel_search" value="<%= $settings->{'search'} %>" style="width:8em;"></span>
 
-			<span><b>Start</b> <input class="time travel_time" setting="start_time" app="travel" timestamp="<%= $settings->{'start_time'} %>" id="travel_start_time" style="width:9em;"></span>
-			<span><b>End</b> <input class="time travel_time" setting="end_time" app="travel" timestamp="<%= $settings->{'end_time'} %>" id="travel_end_time" style="width:9em;"></span>
+			<span><b>Start</b> <input class="time travel_time" setting="start_time" app="travel" timestamp="<%= $window->{'start'} %>" id="travel_start_time" style="width:9em;"></span>
+			<span><b>End</b> <input class="time travel_time" setting="end_time" app="travel" timestamp="<%= $window->{'end'} %>" id="travel_end_time" style="width:9em;"></span>
 		</div>
 	</div>
 

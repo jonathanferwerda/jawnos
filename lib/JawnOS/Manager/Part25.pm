@@ -632,6 +632,14 @@ sub travel_grabber($c) {
 	# one to select (and it never rides into the settings row of measured maps)
 	my $measured = eval { return decode_json $settings->{'maps'} } || [];
 	$settings->{'maps'} = [ grep { !$_->{'guessed'} } @{$measured} ];
+	# the window the page opens on: the same rule the viewer uses, so the Start
+	# and End boxes show the age that was saved instead of a moment that has aged
+	# into a different window
+	my $window = &subs::travel_window({
+		settings => $settings,
+		timestamp => $timestamp,
+		scope => $settings->{'time_scope'}
+	});
 
 	my $contents = $c->render_to_string(
 		template => '/travel/travel',
@@ -639,6 +647,7 @@ sub travel_grabber($c) {
 		home_plate_enabled => $home_plate_enabled,
 		window_maker => $c->param('window_maker'),
 		timestamp => $timestamp,
+		window => $window,
 		settings => $settings
 	);
 	return $contents;

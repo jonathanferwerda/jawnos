@@ -433,17 +433,20 @@ sub action_33700 {
 
 	my $settings = &subs::settings_grabber({ app => 'travel' });
 	my $timestamp = $c->param('timestamp');
+	$timestamp = &subs::rightNow() unless defined $timestamp && $timestamp =~ /^\d+$/;
 	my $uuid = $c->param('uuid');
 	my $time_scope = $c->param('time_scope') ? $c->param('time_scope') : '5minute';
-	my $t = &subs::time_span($time_scope, $timestamp); #timestamp at beginning
-	my $t1 = ($timestamp - $t);
-	my $t2 = ($t1 + $timestamp);
-	if ($settings->{'start_time'}) {
-		$t = $settings->{'start_time'};
+	# The Start and End fields are ages ("an hour ago"), not moments: the window
+	# keeps its span however long Travel is left unopened. A pair written before
+	# the ages were kept is a fixed moment with no age beside it, and a fixed
+	# moment only grows more wrong with every day; drop it once so the view opens
+	# on Now rather than on the week the stale pair stretched to.
+	if ( &subs::travel_window_legacy($settings) ) {
+		&subs::setting_deleter({ app => 'travel', setting => $_ }) for qw(start_time end_time);
+		delete @{$settings}{qw(start_time end_time)};
 	}
-	if ($settings->{'end_time'}) {
-		$t2 = $settings->{'end_time'};
-	}
+	my $window = &subs::travel_window({ settings => $settings, timestamp => $timestamp, scope => $time_scope });
+	my ($t, $t2) = ( $window->{'start'}, $window->{'end'} );
 
 	my $map = $c->param('map');
 
@@ -484,7 +487,36 @@ sub action_33700 {
 	# position (the 'temporary' row) so the view opens on it when there is one.
 	# Guesses ride along only while the guess toggle is on.
 	$proxies->{'all_maps'} = &travel_atlas_maps($maps, ($settings->{'guess_enabled'} eq 'enabled'));
-	$proxies->{'position'} = &travel_here_position();
+	my $here = &travel_here_position();
+	$proxies->{'position'} = $here;
+	# What the distances are measured from: where this machine is now (the red
+	# marker), else the house's own plate, else the measured map's anchor. A map's
+	# anchor is only a georeference - a landmark can be named there - so it is the
+	# last resort, not the definition of "how far away".
+	my $origin;
+	my $origin_label;
+	my $origin_kind = 'map';
+	if ( $here && $here->{'latitude'} && $here->{'longitude'} ) {
+		$origin = { latitude => $here->{'latitude'} + 0, longitude => $here->{'longitude'} + 0 };
+		$origin_label = 'You are here';
+		$origin_kind = 'here';
+	}
+	unless ($origin) {
+		my $house = eval { return decode_json( &subs::setting_grabber({ app => 'me', setting => 'home_plate' }) // '' ) } || {};
+		if ( $house->{'latitude'} && $house->{'longitude'} ) {
+			$origin = { latitude => $house->{'latitude'} + 0, longitude => $house->{'longitude'} + 0 };
+			$origin_label = 'Home';
+			$origin_kind = 'home';
+		}
+	}
+	my $plate = $main_map->{'home_plate'} || {};
+	unless ($origin) {
+		if ( $plate->{'latitude'} && $plate->{'longitude'} ) {
+			$origin = { latitude => $plate->{'latitude'} + 0, longitude => $plate->{'longitude'} + 0 };
+			$origin_label = $plate->{'formatted_legend'} || $main_map->{'name'} || '';
+		}
+	}
+	$proxies->{'origin'} = $origin ? { %{$origin}, kind => $origin_kind, label => $origin_label } : undef;
 	my $locations = [];
 	if ($settings->{'home_plate_enabled'} eq 'enabled') {
 		my $home_plates = &subs::db_select('settings', undef, { setting => 'home_plate' })->hashes;
@@ -527,12 +559,10 @@ sub action_33700 {
 		}
 	}
 
-  sub NESW { deg2rad($_[0]), deg2rad(90 - $_[1]) }
 	&subs::setting_setter({ app => 'travel', setting => 'time_scope', value => $time_scope });
 
 	my $universal_settings = {};
 	$main_map->{'home_plate'}->{'app'} = $main_map->{'home_plate'}->{'legend'};
-	my @home_plate = NESW($main_map->{'home_plate'}->{'longitude'}, $main_map->{'home_plate'}->{'latitude'});
 
 	foreach my $sl (@{$locations}) {
 		# the device that was with the person on this appointment; the map draws
@@ -552,33 +582,29 @@ sub action_33700 {
 		# list reads straight off this)
 		$sl->{'name'} = &subs::format_name($sl->{'settings'}->{'name'} || $sl->{'app'});
 		next if &subs::app_hidden_now($sl->{'app'});
-		my $radius = 6372.8;
-		my @visitor = NESW($sl->{'longitude'}, $sl->{'latitude'});
-		$sl->{'rad'} = clone \@visitor;
-		$sl->{'rad'}->[2] = 2;
-		my $distance = great_circle_distance(@home_plate, @visitor, $radius);
-		my $metres = $distance * 1000;
-		my $direction = great_circle_direction(@home_plate, @visitor);
-
-		my @destination = great_circle_destination(@home_plate,$distance,$direction);
-
-		$sl->{'direction'} = rad2deg($direction);
-
-		$sl->{'destination'} = \@destination;
-		$sl->{'distance'} = sprintf("%.2f", $metres);
-		$sl->{'home_plate'} = $main_map->{'home_plate'};
-
-
-
-
-		my ($x,$y);
-		$sl->{'map_coordinates'} = {
-			'x' => $x,
-			'y' => $y
-		};
+		# how far the place lies from the origin above, in the words a person
+		# would use - the same rule on a phone, a desktop and a test
+		if ( $origin && $sl->{'latitude'} && $sl->{'longitude'} ) {
+			my $offset = &subs::travel_offset(
+				$origin->{'latitude'}, $origin->{'longitude'},
+				$sl->{'latitude'}, $sl->{'longitude'}
+			);
+			$sl->{'distance'} = sprintf( '%.2f', $offset->{'metres'} );
+			$sl->{'distance_label'} = &subs::travel_distance_phrase( $offset->{'metres'} );
+			$sl->{'direction'} = $offset->{'bearing'};
+			$sl->{'direction_label'} = &subs::travel_compass( $offset->{'bearing'} );
+		}
+		$sl->{'home_plate'} = $plate;
 
 		push @{$proxies->{'near'}}, $sl;
 	}
+
+	# nearest first is the order a person reads the list in
+	@{$proxies->{'near'}} = sort {
+		( defined $a->{'distance'} && defined $b->{'distance'} )
+			? $a->{'distance'} <=> $b->{'distance'}
+			: ( defined $a->{'distance'} ? -1 : ( defined $b->{'distance'} ? 1 : 0 ) )
+	} @{$proxies->{'near'}};
 
 	push @{$proxies->{'near'}}, $main_map->{'home_plate'};
 	$proxies->{'here'} = $main_map->{'home_plate'};

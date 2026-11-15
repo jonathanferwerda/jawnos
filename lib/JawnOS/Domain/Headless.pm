@@ -71,6 +71,7 @@ our $visibility_exposure_cache;
 our %visibility_graph_links;
 our $visibility_graph_ready;
 our %visibility_graph_uuid_app;
+our $navigation_captured_at;
 
 sub headless_navigation {
 	my $signatorial = &subs::signatorial_designer();
@@ -108,12 +109,14 @@ sub headless_navigation {
 	}
 
 	# utility_runner is the navigation schedule; this second gate only guards a
-	# call from elsewhere. The runner's tick of slack keeps a call landing a few
-	# milliseconds before the interval from skipping a whole slot (the stamp is
-	# taken at the slot, so a strict comparison can be just short).
-	my $pace = &navigation_pace();
-	if ($now - $gb::timeouts->{'navigation'}->{'lasted_run'} >= ($pace * 1000) - 5000) {
-		$gb::timeouts->{'navigation'}->{'lasted_run'} = $now;
+	# call from elsewhere. It must not read the persisted `lasted_run`: adoption
+	# stamps that marker to "now" for a fresh process, so a phone that wakes the
+	# tree for each utility tick skipped every capture that was actually due - the
+	# walk was logged once in an evening instead of once a pace. A marker this
+	# process keeps is enough to make two callers in the same few seconds one
+	# capture.
+	if (!$navigation_captured_at || $now - $navigation_captured_at >= 5000) {
+		$navigation_captured_at = $now;
 		my $returner = {
 			uuid => &subs::random_string_creator(103),
 			type => 'temporary',

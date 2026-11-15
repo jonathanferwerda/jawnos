@@ -80,6 +80,10 @@ $(document).on('focus, click', 'input.time', function() {
 	$(this).addClass('editing');
 });
 
+// A time field that belongs to an app (the Travel window's Start and End) keeps
+// the distance from now as well as the moment it resolved to. The moment would be
+// stale the next time the app is opened days later; the distance still means what
+// the person typed ("an hour ago"), so the app reads that one.
 $(document).on('change, focusout', 'input.time', function() {
 	var input = $(this);
 	var time = input.val();
@@ -94,6 +98,7 @@ $(document).on('change, focusout', 'input.time', function() {
 			input.removeClass('editing');
 			if (input.attr('setting') && input.attr('app')) {
 				settingSetter({'app': input.attr('app'), 'setting': input.attr('setting'), value: response });
+				settingSetter({'app': input.attr('app'), 'setting': input.attr('setting') + '_ago', value: timestamp - response });
 			}
 		}
 	});

@@ -1,9 +1,33 @@
-<div class="proxy_view">
-	Start: <span class="time" timestamp="<%= $start_time %>"></span> - End: <span class="time" timestamp="<%= $end_time %>"></span><br>
-	<%= scalar @{$proxies->{'near'}} %><br>
-	<% foreach my $n ( @{$proxies->{'near'}}) { %>
-		<span class="proxy" uuid="<%= $n->{'uuid'} %>">
-			<b style="color:<%= $n->{'settings'}->{'colour'} %>;"><%= &subs::format_name($n->{'app'}) %></b> <%= $n->{'distance'} %>m <%= $n->{'direction'} %> <span class="time" timestamp="<%= $n->{'timestamp'} %>"><%= $n->{'ago'} %></span><br>
-		</span>
+<% my @places = grep { defined $_->{'distance_label'} && length $_->{'distance_label'} } @{ $proxies->{'near'} || [] }; %>
+<% my $limit = 120; %>
+<% my $shown = scalar(@places) > $limit ? $limit : scalar(@places); %>
+<div class="proxy_view" style="padding:4px 8px 6px;">
+	<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:2px 0 4px;border-bottom:2px solid var(--line);">
+		<b style="font-size:13px;"><%= scalar(@places) %> <%= scalar(@places) == 1 ? &subs::ui('place') : &subs::ui('places') %></b>
+		<% my $origin = $proxies->{'origin'}; %>
+		<% if ( $origin && $origin->{'label'} ) { %>
+			<span style="font-size:12px;opacity:.75;"><%= &subs::ui('from') %> <%= $origin->{'kind'} eq 'map' ? $origin->{'label'} : &subs::ui( $origin->{'kind'} eq 'home' ? 'Home' : 'You are here' ) %></span>
+		<% } %>
+		<span style="font-size:12px;opacity:.75;margin-left:auto;white-space:nowrap;"><%= &subs::ui('Start') %> <span class="time" timestamp="<%= $start_time %>"></span> – <%= &subs::ui('End') %> <span class="time" timestamp="<%= $end_time %>"></span></span>
+	</div>
+	<% if ( $shown ) { %>
+	<div style="max-height:34vh;overflow-y:auto;">
+		<% my $n = 0; %>
+		<% foreach my $place ( @places ) {
+			last if $n++ >= $shown;
+		%>
+			<span class="proxy travel_place" app="<%= $place->{'app'} %>" timestamp="<%= $place->{'timestamp'} %>" title="<%= $place->{'distance_label'} %> <%= $place->{'direction_label'} %>" style="display:flex;align-items:center;gap:8px;padding:4px 3px;border-bottom:1px solid var(--line);cursor:var(--jawnos-cursor-pointer, pointer);">
+				<span style="flex:0 0 9px;height:9px;border-radius:50%;background:<%= ( $place->{'settings'} && $place->{'settings'}->{'colour'} ) || '#2f6f9f' %>;"></span>
+				<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b><%= $place->{'name'} || &subs::format_name( $place->{'app'} ) %></b></span>
+				<span style="flex:0 0 auto;font-variant-numeric:tabular-nums;white-space:nowrap;"><%= $place->{'distance_label'} %><% if ( $place->{'direction_label'} ) { %> <%= $place->{'direction_label'} %><% } %></span>
+				<span class="time" timestamp="<%= $place->{'timestamp'} %>" style="flex:0 0 8.5em;text-align:right;font-size:11px;opacity:.7;white-space:nowrap;"></span>
+			</span>
+		<% } %>
+	</div>
+	<% } else { %>
+		<div style="font-size:12px;opacity:.7;padding:6px 2px;"><%= &subs::ui('Nothing was recorded in this window. Press Now to look at the present.') %></div>
+	<% } %>
+	<% if ( scalar(@places) > $shown ) { %>
+		<div style="font-size:11px;opacity:.7;padding:4px 2px;"><%= &subs::ui('and') %> <%= scalar(@places) - $shown %> <%= &subs::ui('more in this window') %></div>
 	<% } %>
 </div>
