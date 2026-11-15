@@ -200,23 +200,33 @@ correct and is unchanged.
 
 ## Open - flakes under parallel load
 
-Four full-suite runs on 2026-11-15 each had one test file fail and pass alone:
-`t/57-control-socket.t` twice (both on a landing), and once each
-`t/177-refresh-probe.t` and `t/277-note-legacy-outer.t`. A different file each
-time, never the code that had just changed. **Done when:** two runs at
-`--jobs 2` and two at `--jobs 1` on an otherwise idle box produce the same
-failing set - which would mean a real ordering
-bug - or a failing set that only appears at `--jobs 2`, which would mean load.
-The fix is then either the test's timing assumptions or the runner's scheduling,
-and it gets a regression test like any other change.
+Runs on 2026-11-15 kept failing one file at a time: `t/57-control-socket.t` twice
+(both on a landing), then `t/177-refresh-probe.t` and `t/277-note-legacy-outer.t`
+- a different file every time, never the code that had just changed. **Measured** (this box, 8 cores, other work running throughout; a worktree pinned
+at v0.1.3029 so the tree could not move under the suite):
+
+| pass | jobs | load in → out | result |
+|---|---|---|---|
+| 1 | 2 | 18 → 31 | `t/249-peer-manager-refresh` (13, 14) |
+| 2 | 2 | 5 → 9 | `t/75-store-register` |
+| 3 | 2 | 6 → 18 | `t/227-platform-process` (102), `t/57-control-socket` (61) |
+| 4 | 2 | 14 → 37 | clean |
+| 5 | 1 | 32 → 22 | clean |
+| 6 | 1 | 20 → 13 | clean |
+
+Every file named above passes alone (0 failures each). The failures follow
+`--jobs 2`, not load: pass 3 failed starting at load 6, while pass 4 passed
+ending at 37. So this is contention between test children, not a slow or broken
+test, and the fix is one of two: give these tests a contended-box allowance (all
+of them assert a wall-clock window - a socket that times out, a process tree
+that is gone, an address that answered), or keep timing-sensitive files out of
+the concurrent pass. Either way it gets a regression test.
 
 Until then: a lone failure is a flake only after that file passes alone. Re-run
 the gate deliberately rather than editing a test that is not broken (the landing
 rule allows one deliberate re-run; `--jobs 1` is the softer setting).
 
-Attempted on `table` (4 cores, Manjaro, 2026-11-15) and it cannot answer the
-question yet: six of that box's seven failures reproduce alone, because it is not
-provisioned like a dev checkout - no `.githooks` installed (`t/136`), and the
-tools `t/172`, `t/190`, `t/239`, `t/249` and `t/298` need are absent. Only
-`t/93-test-map.t` failed under load there and passed alone. Provision it first,
-or run the experiment on the machine that already passes the suite.
+`table` is not a lab for this: six of its seven failures reproduce alone, because
+it is not provisioned like a dev checkout - no `.githooks` installed (`t/136`),
+and the tools `t/172`, `t/190`, `t/239`, `t/249` and `t/298` need are absent.
+Only `t/93-test-map.t` failed under load there and passed alone.
