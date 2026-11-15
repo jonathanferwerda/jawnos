@@ -366,15 +366,26 @@ sub model {
 				$logo_gray = _image_info($paths->{'gray'}) || $logo_colour;
 			}
 		}
+		elsif (defined &subs::log_writer) {
+			eval { &subs::log_writer('paper image: the Store logo could not be read'); 1 };
+		}
 	}
 	if ($page_type ne 'receipt' && $image_mode ne 'none'
 		&& defined &subs::paper_image_for_model && defined &subs::paper_image_cache) {
 		for my $line (@lines) {
 			my $uuid = $line->{'uuid'} || '';
 			next unless length $uuid;
-			my $source = eval { &subs::paper_image_for_model($uuid) };
+			my $resolved = eval { &subs::paper_image_for_model($uuid) };
+			my ($source, $stamp);
+			if (ref $resolved eq 'HASH') {
+				$source = $resolved->{'path'};
+				$stamp = $resolved->{'stamp'};
+			}
+			elsif (defined $resolved && length $resolved) {
+				$source = $resolved;
+			}
 			next unless defined $source && length $source;
-			my $paths = eval { &subs::paper_image_cache($source) };
+			my $paths = eval { &subs::paper_image_cache($source, { stamp => $stamp }) };
 			next unless ref $paths eq 'HASH';
 			my $colour = _image_info($paths->{'colour'});
 			my $gray = _image_info($paths->{'gray'}) || $colour;

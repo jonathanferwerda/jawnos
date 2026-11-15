@@ -100,7 +100,45 @@ sub paper_image_for_model {
 	my $row = eval { &db_select('model', ['app', 'uuid'], { uuid => $uuid })->hash };
 	return undef unless ref $row eq 'HASH' && ($row->{'app'} || '') =~ /\S/;
 	my $value = &setting_grabber({ app => $row->{'app'}, setting => 'main_image' });
-	return &paper_image_source($value, $row->{'app'});
+	my $source = &paper_image_source($value, $row->{'app'});
+	unless (defined $source && length $source) {
+		eval { &log_writer('paper image: no local picture for ' . $row->{'app'} . ' main_image'); 1 }
+			if defined &log_writer;
+		return undef;
+	}
+	return {
+		path  => $source,
+		app   => $row->{'app'},
+		stamp => &paper_image_stamp($source, $row->{'app'}),
+	};
+}
+
+# A cache is only fresh while the source and its file row are unchanged. The
+# filesystem mtime/size catch an edit in place; the file row's own
+# server_time/timestamp catches a sync or a re-filing of the picture. The stamp
+# is read on every paper, so no write path can forget to refresh it.
+sub paper_image_stamp {
+	my ($source, $app) = @_;
+	return undef unless defined $source && length $source;
+	my @st = stat($source);
+	return undef unless @st;
+	my $stamp = $st[9] . ':' . $st[7];
+	return $stamp unless defined $app && length $app;
+	my $rows = eval { &db_select('appointments', ['file', 'server_time', 'timestamp'], { app => $app })->hashes } || [];
+	my $json = JSON::PP->new;
+	foreach my $row (@{$rows}) {
+		next unless defined $row->{'file'} && length $row->{'file'};
+		my $files = eval { $json->decode($row->{'file'}) };
+		next unless ref $files eq 'ARRAY';
+		foreach my $entry (@{$files}) {
+			next unless ref $entry eq 'HASH';
+			next unless grep { defined $entry->{$_} && $entry->{$_} eq $source } qw(f thumb preview);
+			my $row_stamp = $entry->{'server_time'} // $entry->{'timestamp'}
+				// $row->{'server_time'} // $row->{'timestamp'} // '';
+			return $stamp . ':' . $row_stamp;
+		}
+	}
+	return $stamp;
 }
 
 # Make (or reuse) the two JPEGs. Answers the paths, or undef when the source is
@@ -112,14 +150,33 @@ sub paper_image_cache {
 	return undef unless defined $source && length $source && -e $source;
 	my $paths = &paper_image_paths($source);
 	return undef unless $paths;
+	my $stamp = exists $opts->{'stamp'} ? $opts->{'stamp'}
+		: &paper_image_stamp($source, $opts->{'app'});
+	my $stamp_file = $paths->{'colour'} . '.stamp';
+	my $cached_stamp = '';
+	if (-e $stamp_file) {
+		if (open my $sf, '<', $stamp_file) {
+			local $/;
+			$cached_stamp = <$sf> // '';
+			close $sf;
+			$cached_stamp =~ s/\s+\z//;
+		}
+	}
 	my $have_colour = &_paper_image_jpeg($paths->{'colour'}) ? 1 : 0;
 	my $have_gray = &_paper_image_jpeg($paths->{'gray'}) ? 1 : 0;
-	return $paths if $have_colour && $have_gray && !$opts->{'force'};
+	my $fresh = $have_colour && $have_gray && defined $stamp && $cached_stamp eq $stamp;
+	return $paths if $fresh && !$opts->{'force'};
 	my $max = $opts->{'max'} || $paper_image_max;
-	&_paper_image_convert($source, $paths->{'colour'}, $max, 0) unless $have_colour;
-	&_paper_image_convert($source, $paths->{'gray'}, $max, 1) unless $have_gray;
+	&_paper_image_convert($source, $paths->{'colour'}, $max, 0) unless $have_colour && $fresh;
+	&_paper_image_convert($source, $paths->{'gray'}, $max, 1) unless $have_gray && $fresh;
 	unlink $paths->{'gray'} unless &_paper_image_jpeg($paths->{'gray'});
-	return &_paper_image_jpeg($paths->{'colour'}) ? $paths : undef;
+	unless (&_paper_image_jpeg($paths->{'colour'})) {
+		eval { &log_writer('paper image: no JPEG could be made from ' . $source); 1 }
+			if defined &log_writer;
+		return undef;
+	}
+	write_file($stamp_file, $stamp) if defined $stamp;
+	return $paths;
 }
 
 # Remove both renditions. Called when a main_image changes and when the source
@@ -134,6 +191,11 @@ sub paper_image_forget {
 		my $ok = eval { &secure_unlink($path); 1 };
 		unlink $path unless $ok;
 		$removed++ unless -e $path;
+	}
+	my $stamp_file = $paths->{'colour'} . '.stamp';
+	if (-e $stamp_file) {
+		my $ok = eval { &secure_unlink($stamp_file); 1 };
+		unlink $stamp_file unless $ok;
 	}
 	# A snapshot source (a data URI written out for magick) is ours too; do not
 	# leave it behind when the picture that named it goes away.

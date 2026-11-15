@@ -28,7 +28,10 @@ nothing here overrides it.
   JPEGs; the receipt carries only the logo, in grayscale. `lib/JawnOS/Domain/PaperImage.pm` caches a colour and
   a grayscale JPEG per source under `.paper-images` beside the scans, makes them on demand (image
   bridge, then magick), and forgets them when the app's `main_image` changes or the file is
-  deleted. The `logo` (a PNG data URI) uses the same cache: colour on the invoice, grayscale on
+  deleted. The cache carries a stamp of the source's mtime/size and the file row's
+  `server_time`/`timestamp`; a changed stamp regenerates the JPEGs, and a picture that cannot
+  be converted is logged. The tablet's bridge applied `modulate 100,0` (`skipped: []`) and
+  `image.convert` produced a JPEG for the receipt logo. The `logo` (a PNG data URI) uses the same cache: colour on the invoice, grayscale on
   the receipt. `t/305-paper-images.t`.
 
 Earlier in the run: receipts delete house-wide and reference their pages on the category, vendor

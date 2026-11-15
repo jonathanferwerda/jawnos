@@ -55,27 +55,66 @@ write_file($source, "\xFF\xD8\xFF\xD9");
 SKIP: {
 	my $magick = `command -v magick 2>/dev/null`;
 	chomp $magick if defined $magick;
-	skip 'no magick on this machine', 4 unless defined $magick && length $magick;
+	skip 'no magick on this machine', 10 unless defined $magick && length $magick;
 	my $photo = "$dir/photo.jpg";
 	system($magick, '-size', '20x20', 'xc:red', $photo);
-	skip 'could not make a fixture', 4 unless -s $photo;
+	skip 'could not make a fixture', 10 unless -s $photo;
 	local *subs::setting_grabber = sub { $dir };
 	local *subs::home = sub { $_[0] };
 	my $paths = &subs::paper_image_cache($photo);
 	ok(ref $paths eq 'HASH', 'the cache is made on demand');
 	ok(-s $paths->{'colour'}, 'a colour JPEG is written');
 	ok(-s $paths->{'gray'}, 'a grayscale JPEG is written');
-	is(&subs::paper_image_forget($photo), 2, 'and both leave with the source');
+	ok(-e $paths->{'colour'} . '.stamp', 'the cache carries a stamp');
+	{
+		no warnings 'redefine';
+		my $calls = 0;
+		local *subs::_paper_image_convert = sub { $calls++; return 1 };
+		&subs::paper_image_cache($photo, { stamp => 'v1' });
+		is($calls, 2, 'a new stamp runs both conversions');
+		&subs::paper_image_cache($photo, { stamp => 'v1' });
+		is($calls, 2, 'the same stamp reuses them');
+		&subs::paper_image_cache($photo, { stamp => 'v2' });
+		is($calls, 4, 'a changed stamp runs them again');
+	}
+	is(&subs::paper_image_forget($photo), 2, 'and both renditions leave with the source');
+	ok(!-e $paths->{'colour'} . '.stamp', 'the stamp leaves with them');
+	{
+		package FakeImageModelRow;
+		sub hash { return { app => 'Item' } }
+		package main;
+		local *subs::db_select = sub { return bless {}, 'FakeImageModelRow' };
+		local *subs::setting_grabber = sub { $photo };
+		local *subs::paper_image_source = sub { $photo };
+		local *subs::paper_image_stamp = sub { 's1' };
+		my $res = &subs::paper_image_for_model('m1');
+		ok(ref $res eq 'HASH' && $res->{'path'} eq $photo && $res->{'stamp'} eq 's1',
+			'the model resolves to a path and a stamp');
+	}
+}
+
+# --- an unreadable source says why ------------------------------------------
+{
+	local *subs::setting_grabber = sub { $dir };
+	local *subs::home = sub { $_[0] };
+	my @logged;
+	local *subs::log_writer = sub { push @logged, join('', @_) };
+	local *subs::_paper_image_convert = sub { return 0 };
+	my $txt = "$dir/not-a-picture.txt";
+	write_file($txt, 'plain text');
+	my $paths = &subs::paper_image_cache($txt);
+	ok(!defined $paths, 'a non-picture makes no cache');
+	ok((grep { /paper image/ } @logged), 'and the skip is logged');
 }
 
 # --- the paper draws them in every mode -------------------------------------
 SKIP: {
 	my $magick = `command -v magick 2>/dev/null`;
 	chomp $magick if defined $magick;
-	skip 'no magick on this machine', 11 unless defined $magick && length $magick;
+	skip 'no magick on this machine', 13 unless defined $magick && length $magick;
 	my $jpeg = "$dir/paper.jpg";
 	system($magick, '-size', '20x20', 'xc:blue', $jpeg);
-	skip 'could not make a picture', 11 unless -s $jpeg;
+	skip 'could not make a picture', 13 unless -s $jpeg;
 	my $paper = {
 		type => 'invoice',
 		id => 'A1',
