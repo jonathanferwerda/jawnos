@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_transaction.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Domain/Pay.pm lib/JawnOS/Controller/manager_configure2.pm
+# tests-for: lib/JawnOS/Controller/manager_transaction.pm lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Domain/Pay.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Manager/Part08.pm templates/configure/store_setting_list.html.ep
 # covers:    The seventh pass, data scope: a column name is checked before it
 #           becomes SQL, a quote is read or changed only by its customer or the
 #           house, a payment token that matches nothing scopes nothing, and a
@@ -10,8 +10,9 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
 use JawnOSTest;
+use Mojo::JSON qw(decode_json);
 
 sub source { return read_file(root() . '/' . $_[0]) }
 
@@ -73,5 +74,58 @@ like($conf, qr/my \$same_machine = \(\$old_sig ne '' \|\| \$old_key ne ''\)/,
 	'and only the identity that made a code may replace it');
 like($conf, qr/that code is already pending/,
 	'and a stranger is refused');
+
+# --- an invoice keeps a paper version when it is saved ---------------------
+my $store = source('lib/JawnOS/Controller/store_misc.pm');
+like($store, qr/&store_invoice_paper_enabled\(\)/,
+	'the move to an invoice asks the Store setting');
+like($store, qr/&store_invoice_paper\(%paper\)/,
+	'and writes the invoice\'s paper when it is allowed');
+my $part08 = source('lib/JawnOS/Manager/Part08.pm');
+like($part08, qr/payment_due_date invoice_paper/,
+	'the paper switch is a setting the Store keeps');
+like($part08, qr/sub store_invoice_paper\b/,
+	'and the paper has its own helper');
+like($part08, qr/shared => 1/,
+	'the paper is one file the invoice names, never a copy');
+my $cfg = source('templates/configure/store_setting_list.html.ep');
+like($cfg, qr/setting="<%=\$m%>".*invoice_paper|invoice_paper/s,
+	'Configure offers the switch');
+
+{
+	package FakePaperC;
+	sub render_to_string { return '<html>invoice</html>' }
+	package FakePaperRows;
+	sub new    { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
+	sub hashes { return $_[0]->{'rows'} }
+	package main;
+	my $part08_path = root() . '/lib/JawnOS/Manager/Part08.pm';
+	require $part08_path;
+	require File::Temp;
+	my $dir = File::Temp::tempdir(CLEANUP => 1);
+	my $render = "$dir/render.pdf";
+	write_file($render, '%PDF-1.4 invoice');
+	my ($updated, @logged);
+	no warnings 'redefine';
+	local *subs::db_select = sub { return FakePaperRows->new([ { app => 'bluewater_pallet', uuid => 'i1', file => '[]' } ]) };
+	local *subs::controller_builder = sub { return bless {}, 'FakePaperC' };
+	local *Manager::store_printer = sub { return { template => 'fake' } };
+	local *subs::printer_pdf_from_html = sub { return ($render, undef) };
+	local *subs::setting_grabber = sub { return 'Documents' };
+	local *subs::home = sub { return $dir . '/' . ($_[0] || '') };
+	local *subs::path_name = sub { return 'bluewater_pallet' };
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	local *subs::random_string_creator = sub { return 'fuuid' };
+	local *subs::db_update = sub { $updated = $_[1]; return 1 };
+	local *subs::log_writer = sub { push @logged, join('', @_); return 1 };
+	ok(Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i1' }), 'the invoice keeps a paper');
+	my $files = decode_json($updated->{'file'});
+	is(scalar @{$files}, 1, 'one paper is on the invoice');
+	is($files->[0]{'type'}, 'document', 'as an ordinary document row');
+	like($files->[0]{'f'}, qr{/invoice_\d+\.pdf$}, 'named as its own version');
+	ok($files->[0]{'shared'}, 'shared, so the sealer leaves the paper where it is');
+	ok(-e $files->[0]{'f'}, 'and the paper is on disk');
+	ok((grep { /invoice paper saved/ } @logged), 'the save is recorded');
+}
 
 done_testing();

@@ -539,7 +539,7 @@ sub me_setting_list() {
 sub store_setting_list() {
 	my ($db,$database,$sql) = &subs::database_grabber();
 
-	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date/;
+	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date invoice_paper/;
 	my $settings = {};
 
 	foreach my $dt ( @gb::device_types ) {
@@ -549,6 +549,60 @@ sub store_setting_list() {
 		}
 	}
 	return $settings;
+}
+
+# Whether the Store keeps a paper version of each invoice when it is saved.
+# Unset means yes: an invoice whose paper is kept is the point of it, and a
+# house that does not want the render (a slow or absent weasyprint) turns it
+# off in Configure - Store.
+sub store_invoice_paper_enabled {
+	my $v = &subs::setting_grabber({ app => 'me', setting => 'invoice_paper' });
+	return 1 unless defined $v && length $v;
+	return $v eq 'off' ? 0 : 1;
+}
+
+# A paper copy of an invoice, kept with the invoice it belongs to. Every save
+# writes its own version - the name carries the moment, so an old paper is never
+# overwritten and the versions read as a history. The render is slow (weasyprint
+# under a 45-second bound), so the caller runs this in a subprocess; a machine
+# without a renderer keeps no paper and the invoice is untouched.
+sub store_invoice_paper($data) {
+	my $app = $data->{'app'} || '';
+	my $uuid = $data->{'uuid'} || '';
+	return 0 unless length $app && length $uuid;
+	my $customer_app = $data->{'customer_app'} || $app;
+	my $appt = eval { &subs::db_select('appointments', undef, { app => $app, uuid => $uuid, type => 'invoice' })->hashes->[0] };
+	return 0 unless $appt;
+	my $c = &subs::controller_builder();
+	my $paper = &store_printer({ type => 'invoice', uuid => $uuid, customer_app => $customer_app });
+	my $html = eval { $c->render_to_string(%{$paper}) };
+	return 0 unless defined $html && length $html;
+	my ($pdf, $error) = &subs::printer_pdf_from_html($html);
+	return 0 unless $pdf && -s $pdf;
+	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($app));
+	system('mkdir', '-p', $folder) unless -e $folder;
+	my $stamp = &subs::rightNow();
+	my $dest = $folder . '/invoice_' . $stamp . '.pdf';
+	my $bytes = read_file($pdf, binmode => ':raw');
+	unlink $pdf;
+	return 0 unless defined $bytes && length $bytes;
+	write_file($dest, $bytes);
+	return 0 unless -s $dest;
+	my $saved = eval { return decode_json $appt->{'file'} } || [];
+	my @files = ref $saved eq 'ARRAY' ? @{$saved} : ();
+	push @files, {
+		f => $dest,
+		thumb => '',
+		uuid => &subs::random_string_creator(17),
+		type => 'document',
+		of => 'invoice-' . $stamp . '.pdf',
+		shared => 1,
+		server_time => $stamp,
+	};
+	&subs::db_update('appointments', { file => encode_json(\@files), server_time => &subs::rightNow() }, { app => $app, uuid => $uuid });
+	eval { &Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid) }); };
+	&subs::log_writer('invoice paper saved for ' . $app . ' ' . $uuid . ' as ' . $dest);
+	return 1;
 }
 
 # Where a mugshot is rendered from. Older installs still hold a data URI in

@@ -393,6 +393,22 @@ sub action_6143 {
 		&subs::crypto_invoice_address({ app => $wallet->{'app'}, invoice => $appt->{'uuid'} }) if $wallet;
 	}
 
+	# The invoice's paper version, written whenever the invoice is saved: each
+	# save is its own file, so the papers read as a history and none is
+	# overwritten. The render is slow, so a machine that can fork does it in the
+	# background; the Store's own setting decides whether it is kept at all.
+	if (($appt->{'type'} || '') eq 'invoice' && &store_invoice_paper_enabled()) {
+		my %paper = ( app => $appt->{'app'}, uuid => $appt->{'uuid'}, customer_app => $appt->{'app'} );
+		require JawnOS::Platform;
+		if (JawnOS::Platform::use_fork()) {
+			eval { &subs::subprocessor(sub { &store_invoice_paper(%paper); }, { name => 'invoice paper' }); };
+		}
+		else {
+			# no fork (a phone): a machine without a renderer answers at once
+			eval { &store_invoice_paper(%paper); };
+		}
+	}
+
 	# a quote becoming an invoice/sale moves stock; moving it back reverses
 	if ($was eq 'quote' && ($action eq 'invoice' || $action eq 'sale')) {
 		&store_quote_stock($appt, 1);

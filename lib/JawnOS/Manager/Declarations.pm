@@ -139,6 +139,8 @@ sub quote_id_maker;
 sub qrencode_png;
 sub store_quote_stock;
 sub store_printer;
+sub store_invoice_paper;
+sub store_invoice_paper_enabled;
 sub editor_maker;
 sub manager_bundle_paths;
 sub manager_chunk_paths;
