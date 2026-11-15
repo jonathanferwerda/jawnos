@@ -126,6 +126,13 @@ like($cfg, qr/setting="<%=\$m%>".*invoice_paper|invoice_paper/s,
 	ok($files->[0]{'shared'}, 'shared, so the sealer leaves the paper where it is');
 	ok(-e $files->[0]{'f'}, 'and the paper is on disk');
 	ok((grep { /invoice paper saved/ } @logged), 'the save is recorded');
+
+	# a machine with no renderer keeps no paper, and says why instead of leaving
+	# the invoice silently paperless
+	@logged = ();
+	local *subs::printer_pdf_from_html = sub { return (undef, 'weasyprint is not installed') };
+	ok(!Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i2' }), 'no renderer, no paper');
+	ok((grep { /weasyprint is not installed/ } @logged), 'and the log says what stopped it');
 }
 
 done_testing();

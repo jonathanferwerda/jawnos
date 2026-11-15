@@ -578,7 +578,12 @@ sub store_invoice_paper($data) {
 	my $html = eval { $c->render_to_string(%{$paper}) };
 	return 0 unless defined $html && length $html;
 	my ($pdf, $error) = &subs::printer_pdf_from_html($html);
-	return 0 unless $pdf && -s $pdf;
+	unless ($pdf && -s $pdf) {
+		# A machine with no renderer (a phone, a terminal) keeps no paper; say so
+		# once per save instead of leaving the invoice mysteriously paperless.
+		&subs::log_writer('invoice paper: ' . ($error || 'no PDF was made') . ' for ' . $app . ' ' . $uuid);
+		return 0;
+	}
 	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($app));
 	system('mkdir', '-p', $folder) unless -e $folder;
 	my $stamp = &subs::rightNow();
