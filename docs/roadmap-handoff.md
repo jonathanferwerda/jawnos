@@ -6,8 +6,9 @@
 > OS/session · Data & records · Devices & networks · Handheld · T-Deck · Shopping & warehouse ·
 > Platforms & multi-user · Coding nightly · Cross-cutting · OS backbones.
 
-The remaining plan, as of **v0.1.1441** (2026-10-26); the tree is now v0.1.2496, so treat unmarked items as candidates and verify before starting. Done work is marked so it is
-not redone; everything unmarked is still to do. Keep this in step as items land.
+The remaining plan, audited against the tree at **v0.1.2994** (2026-11-15). Done
+work is marked so it is not redone; everything unmarked is still to do. Keep this
+in step as items land.
 
 ---
 
@@ -54,13 +55,15 @@ roadmap was deleted once this summary was in place.
 
 ---
 
-## House key (next up)
+## House key (operational finish)
 
-The password is no longer a citizen login (v0.1.938), but it still unwraps the
-vault. Phase 2 — a random `K_house`, wrapped to device keys, with the password
-as a recovery share — is written up in
-[`docs/house-key-phase2.md`](house-key-phase2.md). Do not demote the password
-further until a `K_house` recovery drill passes.
+Phase 2 is implemented and drilled (v0.1.940–v0.1.959): `K_house` is random,
+wrapped to each device's key, and the password no longer resolves the data key
+or seals a recovery share. Three paper or device shares recover the house; the
+detail is in [`docs/house-key-phase2.md`](house-key-phase2.md). What remains is
+operational, not code: run the lost-key drill on a physical spare with three
+shares the person actually holds, and settle the two keyless Desktop window
+rows. See [`AGENTS-roadmap.md`](AGENTS-roadmap.md).
 
 ## Phone — calling & messaging
 
@@ -75,17 +78,18 @@ the person).
 Still to do:
 - **App owns the ringtone** — silence the system ring and play the house's, instead
   of only firing `ring.mp3` when the appointment's `notification` ability is on.
-- **Lock-screen capture from the real device** — we have mock geometry only
-  (`.shots/call_screen_logo.png`); take a real one.
+- **Lock-screen capture from the real device** — we have mock geometry only;
+  take a real capture.
 - **MMS end to end** — machinery is declared (klinkerapps push/transaction,
   `RECEIVE_MMS`); never observed a real MMS in or out.
 - **SMS role from Settings** — SMS had to be granted over adb (`cmd role
   add-role-holder --user 0 android.app.role.SMS com.termux`); the user could set
   Phone but not SMS from Settings. Re-check after the next build; `JawnRespondViaMessageService`
   was the gate.
-- **Replace termux with native** — audio, image, video (camera record), contacts,
-  call log. The call log's `termux-call-log` "hasn't been working"; the app's own
-  `JawnInCallService` record is now the source, so verify the log pane is current.
+- **Native halves are in** — photo/video/audio (`JawnCamera`, `DeviceService`),
+  contacts (`JawnContactsBridge`) and the call log (`telephony.call_log`) come
+  from the app, and the phone/camera JS drives those bridges directly. Verify the
+  log pane is current against the app's own `JawnInCallService` record.
 - **Wider messaging** — MMS (above), RCS, and possibly relaying Facebook Messenger.
 - **Native contacts/calls already partly done** — finish: names/numbers of unsaved
   people arrive as their own app, then get renamed/merged (merge panel below).
@@ -180,17 +184,16 @@ exist, so a reply stays in its thread even if its subject changes. The reading
 pane's **Move** is a folder menu (Inbox, Archive, Drafts, Trash), **attachments
 open** as links, and the split mail windows now **restore on a page refresh**
 (`appWindowOpener` grew email/chat/pen branches instead of falling to the
-appointment path).
-onto their ticket thread.
+  appointment path).
 
 Still to do:
-- **Pen** — finish moving it out (the last mailbox section that has a route but no
-  own window/UI work).
+- **Pen** — its own window and help topic landed (`templates/apps/pen.html.ep`,
+  `public/js/manager/pen.js`); the remaining gap is a start-menu entry.
 - **LoRa** — its own app on regular **LoRaWAN** protocols (not the current
   mailbox Lora section); decide whether it stays in the chat dropdown meanwhile.
 - **Messages** — the plain "messages" home for sms when it is not a person thread.
-- **`$gb::known_appts`** — add `phone`, `email`, `chat` (and later `pen`, `lora`)
-  as each lands, so the start menu / taskbar know them.
+- **`$gb::known_appts`** — add `pen` and `lora`; `phone`, `email` and `chat` are
+  already in the map, so the start menu / taskbar know them.
 - **Merge panel shortcut** — a "select all non-defaults" button (the panel already
   pre-selects the non-default side per row).
 
@@ -211,23 +214,20 @@ Still to do:
 ## Native app (Android) — `~/jawnos-app/termux-app` (branch `jawnos`, remote `fork`)
 
 **Every APK change bumps `versionCode` and is published** (`perl scripts/app_build.pl`
-then `perl scripts/app_publish.pl`). Last shipped here: **1039 / 0.118.40**.
+then `perl scripts/app_publish.pl`). The staged and published build here is
+**1314 / 0.118.316** (`releases/app_release.json`).
+
+Landed since this note: the notification badge (`JawnNotifyReceiver` posts jawn's
+notifications on the app's own channel), the status/nav-bar option
+(`JawnDashboardActivity`), native camera/video/audio (`JawnCamera`,
+`DeviceService`, driven from `camera.js` and the appointment buttons), native NFC
+(`JawnNfcBridge` arms reader mode so a tap reaches the page), and the unreachable
+gate fallback (logo-with-glow splash plus an Admin Panel button after 700 ms).
 
 Still to do:
-- **Notification badge** — stop the native termux app showing its own notifications
-  on the home-screen icon; carry the program's own notifications there instead.
-- **Status/nav bars** — an option (in the admin panel) to show the Android
-  clock/battery/notification bar and always-on home/back buttons.
-- **Native camera / video / audio** in the appointment camera buttons and the
-  start-menu **Camera** app (replacing the termux pipeline); webcam on desktop is
-  done.
-- **Native NFC** — a scan currently falls through to the system NFC page; want the
-  Chrome-like read/write the web side has (`jawnNfc*`).
 - **WebUSB** — enable it (a MIDI keyboard is planned).
 - **Permissions** — the web app half reported `navigator.*` not working; verify
   geolocation/camera/mic/notifications grants in the WebView.
-- **Gate behaviour** — if the webapp is unreachable within ~3s, show the logo with
-  a glow and an **Admin Panel** button instead of a blank gate.
 - **Default apps** — Phone is settable; SMS needed adb (see Phone above).
 
 ## Desktop — `desktop/`
@@ -237,10 +237,13 @@ an update **button** (not a background refresh while working).
 
 Still to do:
 - Make the desktop **as beautiful as the Android app** (visual pass).
-- Same permissions as the app, **except GPS when there is no module** — and keep
-  ignoring the ISP's low-accuracy position (navigation already disregards it).
 - The Guide associate on desktop: confirm the mic permissions and that the
   "hey jawn" requirement is gone; the close button had a drag bug (check).
+
+Landed since this note: the desktop permission prompts match the app's, with
+geolocation granted only when a real receiver is present
+(`desktop/jawnos_desktop/gps.py`), so the ISP's low-accuracy position is still
+ignored.
 
 ## Gate / startup / login
 
@@ -250,11 +253,13 @@ the redirect animation and logo work.
 Still to do:
 - **Bypass the login while keeping the view intact** — go straight to `/manager`
   without the loading animation when a session is already held (target <1s).
-- Gate polish: **Admin Panel** button on the gate, the logo at the top, and the
-  logo-with-glow splash while the webapp loads (pairs with the app item above).
 - **The padlock is a server-side gate now (P0, v0.1.802+).** Shadow logs what
   it would refuse; Enforce answers `423` and the locked page. The session-level
   work (P1/P2) below is what remains.
+
+Landed since this note: the gate carries the Admin Panel button and the logo, and
+the app shows the logo-with-glow splash with an Admin Panel button when jawn does
+not answer within 700 ms (`JawnWebViewActivity`).
 
 ## JawnOS as the OS / session — the real gate
 
@@ -471,9 +476,10 @@ Shadow remains available to check the deny list first.
 ## Data / records
 
 - **Records recovery** — the self-heal that lists appointments a repair shortened
-  from the sealed snapshot and restores only the named apps (co-agent area,
-  `scripts/records_recover.pl`, `subs::records_*`). In review; keep the "leave this
-  app alone" silences honest.
+  from the sealed snapshot and restores only the named apps
+  (`scripts/records_recover.pl`, `subs::records_recover_scan`/`_apply`,
+  `t/98-records-recover.t`). Landed and tested; keep the "leave this app alone"
+  silences honest.
 
 ## Devices & networks
 
@@ -508,10 +514,13 @@ Still to do:
 
 ## Handheld / Controller — Odroid Go Ultra (deferred)
 
-**Not started (2026-10-26).** The idea: a handheld becomes a **Controller** — a
-paired device that takes a game (Twirl today, Wheels next) and its scores from the
-house, plays it **offline**, and hands the scores back when it reconnects. The
-same device is also a selectable **music output**.
+**Started (2026-11-13).** The board now boots a Controller launcher with Games,
+a per-console button map and RetroArch, and the house flashes, seeds and recovers
+its eMMC (`templates/apps/controller.html.ep`, `/manager/controller`,
+`scripts/gou_provision.pl`). What is not built is the **offline game bundle**: a
+Controller taking a game and its scores from the house, playing it offline, and
+handing the scores back when it reconnects. The same device is also a selectable
+**music output**.
 
 **Target hardware.** Odroid Go Ultra Clear: Amlogic S922X, 2 GB RAM, 5" 854×480,
 Ubuntu 20.04 stock (EmulationStation-first), the optional USB Wi-Fi/Bluetooth
@@ -590,10 +599,11 @@ bundle must not depend on the gate.
 5. Then Wheels, built standalone-first.
 
 **File map.** `public/js/manager/twirl.js`, `templates/twirl.html.ep`,
-`templates/start_menu/start_menu.html.ep`, `Manager.pl` (the `/manager/twirl`
-route and settings), `Music.pl` (outputs/video), `desktop/` (shell),
-`scripts/app_release.pl` / `releases/` (only if the Controller is an Android app;
-it is not, on the stock Ubuntu).
+`templates/start_menu/start_menu.html.ep`, `lib/JawnOS/Routes/manager_misc9.pm`
+(the `/manager/twirl` and `/manager/controller` routes),
+`templates/apps/controller.html.ep`, `scripts/gou_provision.pl`, `Music.pl`
+(outputs/video), `desktop/` (shell), `scripts/app_release.pl` / `releases/`
+(only if the Controller is an Android app; it is not, on the stock Ubuntu).
 
 ## T-Deck parity (from the watch)
 
@@ -604,7 +614,7 @@ inflated (`ble_inflate_if_zlib`), and a button tap goes over BLE first
 (`tap_over_ble`, wired into mb1..mb8) with queued taps flushed the same way - the
 tap envelope is ~450 bytes and is no longer truncated to 20.
 
-Still to do:
+State and remaining work:
 - **Voice clips on the deck (route A) are in.** A recording (`/recordings/
   <epoch>.wav`, 16 kHz mono) is folded to 8 kHz, compressed to IMA ADPCM (~8:1 on
   the deck: 128000 -> 16444 bytes, verified) and sent as one base64 `voice`
@@ -641,9 +651,9 @@ Still to do:
   wake-word stack still to come; it now sits at ~48% of 6 MB, with FFat still
   holding ~30 clips. Flashing the new table erased the FFat (config restored to
   defaults; the deck's BLE identity is the server's record, so it stayed known).
-- Wake words (`hey jawn` / `jawn do`) still need the TFLM stack copied over
-  (`voice_models.h` -> `jawn_micro_features` + the model headers). `jawn_do` is
-  not trained yet either. The VAD/manual clip is the first target.
+- Wake words run on the deck from `jt/voice_models.h` (`vad` and `hey_jawn`).
+  `jawn_do` is trained and wired on the watch (`jw/jawn_do_model.h`,
+  `jw/voice_models.h`), but the deck's `voice_words[]` has no row for it yet.
 - The deck's **FFat was corrupt** (it mounted, listed no files, yet reported only
   part free, and every write failed); it now heals that at boot with a write
   probe and a reformat, which is what let recordings land again.
@@ -1157,31 +1167,34 @@ state it is in. Handoff note written 2026-11-02 03:45.
   'all'`, which includes this choice) now moves the durable sync digest, so a
   choice saved on the phone reaches the table on its next sync instead of
   waiting for unrelated activity.
+- The **index generator** landed: `perl scripts/agent_help.pl --write-index`
+  rewrites `qa/coding_night/agent-index.md`, the nightly loads it, and `t/97`
+  pins it to the tree.
 
 **Next (in order)**
 1. **First app-lane run.** The keyboard note (status/navigation bars -> IME
    gap) is still open; the app repo is on table and `gh` is authenticated.
-2. **Index generator.** It was cancelled mid-build (context is 65 KB / ~16.4k
-   tokens). Revisit only if context cost starts to hurt.
-3. **Notes sync.** The nightly reads each device's own database; confirm the
+2. **Notes sync.** The nightly reads each device's own database; confirm the
    JawnOS notes sync across laptop and table before relying on table's 06:00
    queue.
-4. **QEMU image.** Rebuild on table when convenient (artefact 0.1.1739 vs tree
-   0.1.18xx); l5 reports `version_match=no`.
+3. **QEMU image.** Rebuild on table when convenient (the artefact is 0.1.1739
+   against the current tree); l5 reports `version_match=no`.
 
 **Caution**
 - The nightly pushes and restarts the live tree; a failed rollback restart is
   the one case a person must handle (`ROLLBACK RESTART FAILED`).
 - A green suite is not proof of a UI claim. l3 now proves the budget light's
-  core handler in WebKitGTK; any other UI note still needs its own probe, and
-  a UI change the layer cannot exercise is unverified, not done.
+  core handler in Qt WebEngine (`qa/ui/webkit_probe.py`); any other UI note
+  still needs its own probe, and a UI change the layer cannot exercise is
+  unverified, not done.
 
 ## Cross-cutting
 
 - **Help** — update each app's topic in the same commit as its UI, then
   `perl scripts/help_audit.pl`; the audit runs on push (`.githooks/pre-push`).
 - **Version & restart discipline** — bump `./VERSION`, commit `v<version> - …`,
-  push, then `printf 'restart' > ~/.president/status` and wait for `good`.
+  push, then `perl scripts/restart.pl --reason "v<version> - …"` and read the
+  verdict (0 accepted, 1 refused). Never write the status file by hand.
 - **Selftest/home-away** — the phone gets stuck (timeline won't move) until the app
   is fully exited and reopened; investigate the websocket/reconnect path.
 - **Access-denied errors** on laptop and phone (from an earlier session) — believed
@@ -1191,37 +1204,45 @@ state it is in. Handoff note written 2026-11-02 03:45.
 
 ### Quick file map for the phone/chat/mail work
 
-- Routes: `Manager.pl` — `/manager/phone`, `/manager/phone/sync`, `/manager/phone/call`,
-  `/manager/chat`, `/manager/email`, `/manager/pen`, `mail_checker`,
-  `phone_directory`, `phone_names`, `ticket_request_known`, `email_receiver`.
-- Shared helpers: `subroutines.pl` — `contact_normalizer`, `contact_matches`,
-  `contact_apps`, `contact_lines`, `contact_line_label`, `phone_number_app`,
-  `merge_setting_values`, `name_change_pairs`/`_apply`.
+- Routes: `lib/JawnOS/Routes/manager_phone.pm`, `manager_misc10.pm` — `/manager/phone`,
+  `/manager/phone/sync`, `/manager/phone/call`, `/manager/chat`, `/manager/email`,
+  `/manager/pen`; `mail_checker` is `Manager/Part25.pm`, `ticket_request_known`
+  is `Manager/Part12.pm`, `email_receiver` is `Domain/People.pm`, and
+  `phone_directory`/`phone_names` are in `Manager/Part12.pm`.
+- Shared helpers: `lib/JawnOS/Domain/Web.pm` — `contact_normalizer`,
+  `contact_matches`, `contact_apps`, `contact_lines`, `contact_line_label`,
+  `phone_number_app`; `Domain/Embedded2.pm` — `merge_setting_values`,
+  `name_change_pairs`/`_apply`.
 - Templates: `templates/apps/phone.html.ep`, `templates/apps/chat.html.ep`,
-  `templates/mail/conversation.html.ep`, `templates/mail/mailbox.html.ep`,
-  `templates/configure/appointment_list.html.ep`, `templates/appointment_wrapper.html.ep`.
+  `templates/apps/pen.html.ep`, `templates/mail/conversation.html.ep`,
+  `templates/mail/mailbox.html.ep`, `templates/configure/appointment_list.html.ep`,
+  `templates/appointment_wrapper.html.ep`.
 - JS: `public/js/manager/phone.js`, `public/js/manager/chat.js`,
-  `public/js/manager/configure.js`, `public/js/mailbox.js`.
+  `public/js/manager/pen.js`, `public/js/manager/configure.js`,
+  `public/js/mailbox.js`.
 - App release: `scripts/app_build.pl`, `scripts/app_release.pl`, `scripts/app_publish.pl`;
   repo `~/jawnos-app/termux-app` (`jawnos` branch, `fork` remote).
 - Probes/scratch: `.shots/` (gitignored), ticket in `.shots/ticket.txt`.
 
 ### Quick file map for the shopping / market / receipt work
 
-- Routes: `Manager.pl` — `/manager/market`, `/manager/market/item_add`,
-  `/item_kind`, `/item_delete`, `/item_flag`, `/cancel`, `/checkout`, `/scan`,
-  `/receipt`, `/receipt/apply`, `/need`, `/refresh`.
-- Shared helpers: `Manager.pl` — `market_list`, `market_lists_*`, `market_item_due`,
-  `market_upgrade_need`, `market_sweep_needs`, `market_barcode_*`,
-  `market_receipt_*` (read/name-batch/lines/scan/store/file), `scanner_scan_command`;
-  `subroutines.pl` — `warehouse_on_hand`, `warehouse_restock_for`,
-  `warehouse_money_mirror`.
+- Routes: `lib/JawnOS/Routes/manager_market.pm`, `manager_market2.pm` —
+  `/manager/market`, `/manager/market/item_add`, `/item_kind`, `/item_delete`,
+  `/item_flag`, `/cancel`, `/checkout`, `/scan`, `/receipt`, `/receipt/apply`,
+  `/need`, `/refresh`.
+- Shared helpers: `lib/JawnOS/Manager/Part05.pm` and `Part06.pm` — `market_list`,
+  `market_lists_*`, `market_item_due`, `market_upgrade_need`, `market_sweep_needs`,
+  `market_barcode_*`, `market_receipt_*` (read/name-batch/lines/scan/store/file);
+  `scanner_scan_command` is `Manager/Part02.pm`; `Domain/Web.pm` —
+  `warehouse_on_hand`, `warehouse_restock_for`; `warehouse_money_mirror` is
+  `Manager/Part07.pm`.
 - Templates/JS: `templates/market/market.html.ep`, `public/js/manager/market.js`;
   the budget picker `templates/configure/budget_goals.html.ep`.
-- The scanner is an OfficeJet 3830 (`hpaio:/net/officejet_3830_series`), feeds
-  `ADF` + `Flatbed`, in `config.json`.
-- The live receipt test used `.shots/receipt_probe.pl` (read) and the cleanup
-  `.shots/receipt_cleanup.pl` / `market_restore.pl`.
+- Each machine lists its own scanners in `config.json` (`scanners`); the office
+  scanner is configured on the machine it is attached to, and may offer `ADF` and
+  `Flatbed`.
+- The live receipt test used scratch probes under `.shots/` that are no longer
+  kept; `.shots/` is gitignored scratch.
 - Snapshot recovery for a bad write: `subs::records_backup_decrypt` unseals
   `database/backups/jawnos_<ms>.enc`; **beware `subs::vacuum($app)`** —
   `delete_app` runs it and it wipes *all* of an app's settings when the app has no

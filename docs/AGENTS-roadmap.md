@@ -19,14 +19,16 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   a bare IP (Tailscale validates the control certificate). **The VPS stays**: it hosts the
   junderground switch (`junderground.service`, v0.1.13) and owns `thejunderground.com`; it is no
   longer retired. The KS-5 runs `headscale`, `house` and `dev` as containers, with off-box,
-  rehearsed backups as the house's insurance. Buy the **32 GB** KS-5; the SYS-1 was costed and
-  rejected (more expensive at equal memory, and the extra cores buy seconds). The cutover (P5) is
+  rehearsed backups as the house's insurance. Buy the **64 GB** KS-5 (the only size offered
+  in Beauharnois); the SYS-1 was costed and rejected (more expensive at equal memory, and
+  the extra cores buy seconds). The cutover (P5) is
   the phase that can lock people out, so it is scheduled, with `/var/lib/headscale/` copied and
   every node re-pointed while devices are in reach. Two constraints: the embedded devices are
   hardwired to a **LAN** manager (`192.168.1.3` in the Pico 2 W, `192.168.2.3:45547` on the
   ESP32s), so firmware is **compiled on the KS-5 and staged/uploaded on the laptop** (USB flashing
-  may also happen from the table); and the wildcard renewal (`tls_issue.pl`) must move before
-  **2027-01-01**. The VPS's mail stack is not a mail server — IMAP/SMTP go straight to Gmail;
+  may also happen from the table); and the wildcard renews on the `house` container
+  (`jawnos-tls.timer`, expires 2027-02-01). The VPS's mail stack is not a mail server —
+  IMAP/SMTP go straight to Gmail;
   rspamd and valkey are unreferenced. The switch's coturn relay, LiveKit SFU and nightly off-box
   backups are live; rate limiting remains. Its runbook is `docs/junderground-vps.md`.
   Phases, measured baseline and open
