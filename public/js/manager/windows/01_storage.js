@@ -363,6 +363,10 @@ function appWindowOpenerNow(i,timestamp,v) {
 		else if (i == 'sound') {
 			if (typeof soundOpener === 'function') { soundOpener(timestamp); }
 		}
+		// Packages is a shell until its opener asks for the manager reading.
+		else if (i == 'packages') {
+			if (typeof packagesOpener === 'function') { packagesOpener(timestamp); }
+		}
 		// Controllers draws its roster from its own list route once the window is
 		// up, so the generic restore path left it saying "Reading the controllers..."
 		// for good. Its opener reads the roster too.

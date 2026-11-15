@@ -1,0 +1,95 @@
+<% my $info = ref($status) eq 'HASH' ? $status : {}; %>
+<% my $kind = $info->{'kind'} || 'none'; %>
+<% my $runtime = $info->{'runtime'} || 'computer'; %>
+<% my $manager = $info->{'manager'} || ''; %>
+<% my $version = $info->{'manager_version'} || ''; %>
+<% my $aur = $info->{'aur_helper'} || $info->{'aur'} || ''; %>
+<% my $read_only = $info->{'read_only'} ? 1 : 0; %>
+<% my $restart = $info->{'restart_needed'} ? 1 : 0; %>
+<style>
+#packages { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; font-size: 16px; }
+#packages .packages_head { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: baseline; }
+#packages .packages_manager_name { font-size: 20px; font-weight: 600; }
+#packages .packages_manager_version { opacity: .78; }
+#packages .packages_line { min-height: 1.2em; opacity: .8; }
+#packages .packages_restart { color: #b26a00; }
+#packages .packages_readonly { padding: 10px 14px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .7); opacity: .85; }
+#packages .packages_toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#packages .packages_toolbar input[type=text] { flex: 1 1 220px; min-width: 0; }
+#packages .packages_toolbar input[type=file] { flex: 1 1 220px; min-width: 0; }
+#packages .packages_columns { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+#packages .packages_section { flex: 1 1 340px; min-width: 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
+#packages .packages_section h3 { margin: 0 0 8px; font-size: 17px; }
+#packages .packages_rows { display: flex; flex-direction: column; max-height: 46vh; overflow: auto; }
+#packages .packages_row { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+#packages .packages_row_name { flex: 1 1 150px; min-width: 0; overflow-wrap: anywhere; }
+#packages .packages_row_version { flex: 0 1 150px; min-width: 0; opacity: .78; overflow-wrap: anywhere; font-size: 14px; }
+#packages .packages_row_size { flex: 0 0 auto; opacity: .7; font-size: 14px; }
+#packages .packages_row button { flex: 0 0 auto; }
+#packages .packages_empty { opacity: .7; padding: 6px 0; }
+#packages .packages_more { opacity: .7; padding: 6px 0; font-size: 14px; }
+#packages .packages_capped { opacity: .7; font-size: 14px; }
+</style>
+<div id="packages" app="packages">
+	<div class="packages_head">
+		<span class="packages_manager_name" id="packages_manager">
+% if ($kind eq 'apt') {
+			<%= &subs::ui('Debian or Ubuntu packages') %>
+% }
+% elsif ($kind eq 'pacman') {
+			<%= &subs::ui('Arch packages') %><% if ($aur) { %> + <%= $aur %><% } %>
+% }
+% elsif ($kind eq 'runtime') {
+			<%= &subs::ui('This runtime') %>
+% }
+% else {
+			<%= &subs::ui('No package manager') %>
+% }
+		</span>
+		<span class="packages_manager_version" id="packages_manager_version"><%= $version %></span>
+	</div>
+	<div class="packages_line" id="packages_status_line"><%= &subs::ui('Reading the machine...') %></div>
+% if ($kind eq 'runtime') {
+	<div class="packages_readonly" id="packages_runtime_note"><%= &subs::ui('This device runs a prebuilt runtime, not a package manager. The list below is what the runtime ships, and it is read-only: nothing can be installed, upgraded or removed from here.') %></div>
+% }
+% elsif ($kind eq 'none') {
+	<div class="packages_readonly" id="packages_runtime_note"><%= &subs::ui('No package manager was found on this machine. The app can show what is installed, but it cannot change anything.') %></div>
+% }
+% if ($restart) {
+	<div class="packages_line packages_restart" id="packages_restart"><%= &subs::ui('A restart is needed so the running system uses the new packages.') %></div>
+% }
+% else {
+	<div class="packages_line packages_restart" id="packages_restart" style="display:none;"></div>
+% }
+% unless ($read_only) {
+	<div class="packages_toolbar">
+		<input type="text" id="packages_search_term" hint="<%= &subs::ui('Search for a package') %>" placeholder="<%= &subs::ui('Search for a package') %>">
+		<button id="packages_search_go" hint="<%= &subs::ui('Search for a package') %>"><%= &subs::ui('Search') %></button>
+		<button id="packages_refresh" hint="<%= &subs::ui('Read the installed and outdated lists again') %>"><%= &subs::ui('Refresh') %></button>
+		<button id="packages_update" hint="<%= &subs::ui('Refresh the index without upgrading anything') %>"><%= &subs::ui('Update index') %></button>
+		<button id="packages_upgrade" hint="<%= &subs::ui('Upgrade every outdated package') %>"><%= &subs::ui('Upgrade all') %></button>
+	</div>
+	<div class="packages_toolbar">
+		<input type="text" id="packages_install_name" placeholder="<%= &subs::ui('Package name') %>">
+		<button id="packages_install_go" hint="<%= &subs::ui('Install one package by name') %>"><%= &subs::ui('Install') %></button>
+		<input type="file" id="packages_file" accept=".deb,.zst,.xz,.gz,.bz2">
+		<button id="packages_file_go" hint="<%= &subs::ui('Install a package file from this machine') %>"><%= &subs::ui('Install from file') %></button>
+	</div>
+% }
+	<div class="packages_columns">
+		<section class="packages_section">
+			<h3><%= &subs::ui('Installed') %> <span id="packages_installed_count" class="packages_capped"></span></h3>
+			<div class="packages_rows" id="packages_installed"></div>
+		</section>
+		<section class="packages_section">
+			<h3><%= &subs::ui('Outdated') %> <span id="packages_outdated_count" class="packages_capped"></span></h3>
+			<div class="packages_rows" id="packages_outdated"></div>
+		</section>
+	</div>
+% unless ($read_only) {
+	<section class="packages_section" id="packages_search_section" style="display:none;">
+		<h3><%= &subs::ui('Search results') %></h3>
+		<div class="packages_rows" id="packages_search_results"></div>
+	</section>
+% }
+</div>

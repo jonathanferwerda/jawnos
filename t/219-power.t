@@ -398,7 +398,7 @@ SH
 	cmp_ok(scalar @restores, '>=', 3, 'the start, stop and fatal-exit hooks restore the takeover');
 
 	my $tiers = read_file("$root/perl/subroutines.pl");
-	like($tiers, qr{/manager/\(\?:configure\|security\|magazine/publish\|power\)},
+	like($tiers, qr{/manager/\(\?:configure\|security\|magazine/publish\|packages\|power\)},
 		'the citizen tier table names the power prefix');
 	require "$root/qa/lib/Probe.pm";
 	is(Probe::tier_needed('/manager/power'), 'citizen', 'the app desk is a citizen route');

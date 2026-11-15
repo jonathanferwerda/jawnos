@@ -742,7 +742,7 @@ our $crockford_alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 our $crest_peer_list_cache;
 our $crest_peer_list_raw;
 our $tier_required = [
-	[ 'citizen',  qr{^/manager/(?:configure|security|magazine/publish|power)(?:/|$)} ],
+	[ 'citizen',  qr{^/manager/(?:configure|security|magazine/publish|packages|power)(?:/|$)} ],
 	# The Network writes take the machine's own connection into JawnOS's hands,
 	# the same desk as Power. Status stays resident: the taskbar reads it.
 	[ 'citizen',  qr{^/manager/network/(?:manage|profile|apply)(?:/|$)} ],

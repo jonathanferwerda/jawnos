@@ -485,7 +485,7 @@ write_file($log, '');
 	is(Probe::tier_needed('/manager/sound'), 'resident', 'the Sound window is a resident route');
 	is(Probe::tier_needed('/manager/sound_status'), 'resident', 'the taskbar reading is a resident route');
 	my $tiers = read_file("$root/perl/subroutines.pl");
-	like($tiers, qr{/manager/\(\?:configure\|security\|magazine/publish\|power\)},
+	like($tiers, qr{/manager/\(\?:configure\|security\|magazine/publish\|packages\|power\)},
 		'the citizen tier table does not swallow Sound');
 }
 

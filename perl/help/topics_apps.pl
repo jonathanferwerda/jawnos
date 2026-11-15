@@ -425,4 +425,33 @@ $topic{'controllers'} = {
 			related => [ 'embedded', 'configure' ]
 		};
 
+$topic{'packages'} = {
+	title => 'Packages', category => 'apps', app => 'packages',
+	templates => [ 'templates/apps/packages.html.ep', 'public/js/manager/packages.js' ],
+	controls => [ 'Search for a package', 'Read the installed and outdated lists again', 'Refresh the index without upgrading anything', 'Upgrade every outdated package', 'Install one package by name', 'Install a package file from this machine' ],
+	verified => '2026-11-15',
+	summary => 'The software on this machine: what is installed, what is outdated, and the changes the house may make.',
+	body => [
+		'Packages reads the software on the machine JawnOS is running on and, on a computer or server, changes it. It does not assume a manager: the page names the one it found and its version. A Debian or Ubuntu machine answers apt and dpkg; an Arch machine answers pacman, and the header also names yay or paru when one is installed. A machine with neither says No package manager and shows no buttons that would promise a change.',
+		'The header names the manager and its version, and the line under it says what is happening now. Installed lists every package the manager knows, with its version and, under apt, its installed size; Outdated lists only the packages that have a newer version, old and new together. Both lists are capped - 2,000 rows for the installed list and 100 for a search - and say so when the cap is reached rather than silently stopping.',
+		'Search asks the manager for one package name and lists what matches, each row with an Install button. Install takes one package name and installs it; Remove on a row removes that package. Update index refreshes what the manager knows about available versions but upgrades nothing. Upgrade all upgrades every outdated package. Install from file takes a .deb on apt or an Arch package (.pkg.tar.zst or .xz) on pacman, and refuses any other kind of file.',
+		'Every change needs root. The app runs it through sudo -n, which never asks for a password: if the machine will not allow that, the app says the action needs root and was refused instead of waiting for a prompt that cannot appear. Only one package operation runs at a time, so two clicks or two browsers cannot interleave an upgrade with a removal. After a change that touched the running system, a line says a restart is needed; it is the machine\'s cue to reboot, not something the app does.',
+		'On a phone the app is read-only and says plainly why: the device runs a prebuilt runtime with no package manager. Installed lists the binaries that runtime ships, and there are no buttons for search, update, upgrade, install or remove. On a computer with no manager at all, the app also stays read-only and says so.',
+		'Packages does not build packages from source, does not use an AUR helper to fetch from the AUR in this slice, and does not manage Flatpak, Snap, pip, npm or language-specific installers. Remove leaves a package\'s configuration files in place (it is a remove, not a purge).',
+	],
+	steps => [
+		'Open Packages from the start menu.',
+		'Read the header for the manager and its version; a phone says this runtime and offers no changes.',
+		'Read Installed for the packages on the machine and Outdated for the ones with a newer version.',
+		'Press Update index to refresh what is available; it upgrades nothing.',
+		'Press Upgrade all to upgrade every outdated package, and confirm when asked.',
+		'Type a package name in the search box and press Search, then press Install on a result.',
+		'Type one package name and press Install to install it directly, or press Remove on an installed row to take it away.',
+		'Choose a .deb or Arch package with the file field and press Install from file; any other file is refused.',
+		'If a restart line appears, restart the machine when it suits you so the running system uses the new packages.',
+	],
+	prompt => 'The reader is using JawnOS\'s Packages app. It names the manager it detected (apt on Debian or Ubuntu, pacman on Arch, or this runtime on a phone with no manager) and its version. Installed and Outdated are read-only lists; Search, Update index, Upgrade all, Install, Remove and Install from file are the changes, and each change is confirmed and runs with sudo -n. Never promise a change on a phone or a machine the page calls read-only, never claim a restart was performed (the line only says one is needed), and describe a refused sudo as refused rather than as a prompt. The app does not build from source, does not drive an AUR helper in this slice, and does not manage Flatpak, Snap, pip or npm.',
+	related => [ 'start_menu', 'configure', 'terminal' ]
+	};
+
 1;

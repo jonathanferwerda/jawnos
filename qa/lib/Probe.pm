@@ -25,7 +25,7 @@ our $VERSION = '1';
 # here so route classification needs no app boot; t/15-tier.t asserts the two agree
 # for every route, so drift is a test failure rather than a surprise.
 my @TIER = (
-	['citizen',  qr{^/manager/(?:configure|security|magazine/publish|power)(?:/|$)}],
+	['citizen',  qr{^/manager/(?:configure|security|magazine/publish|packages|power)(?:/|$)}],
 	['citizen',  qr{^/manager/network/(?:manage|profile|apply)(?:/|$)}],
 	['resident', qr{^/manager(?:/|$)}],
 );
