@@ -164,7 +164,7 @@ sub action_3497 {
 	# writes the purchase (and its stock move) with the edited quantity/unit.
 	my $category = '';
 	my (@lines, $total, $account, $vendor);
-	my ($receipt_ts, $receipt_when);
+	my ($receipt_ts, $receipt_when, $receipt_uuid);
 	# Checkout always opens an expense: money leaves the account, so the stored
 	# figure carries the negative sign Accounting reads as an outlay. A refund is
 	# the exception, flipped in the form later.
@@ -176,6 +176,7 @@ sub action_3497 {
 		$category = $it->{'list'} if !$category && ($it->{'list'} || '') ne '';
 		$receipt_when = $it->{'receipt_when'} if !$receipt_when && ($it->{'receipt_when'} || '') ne '';
 		$receipt_ts = $it->{'receipt_timestamp'} if !$receipt_ts && ($it->{'receipt_timestamp'} || '') ne '';
+		$receipt_uuid = $it->{'receipt_uuid'} if !$receipt_uuid && ($it->{'receipt_uuid'} || '') ne '';
 		$account = $it->{'account'} if !$account && ($it->{'account'} || '') ne '';
 		$vendor = $it->{'vendor'} if !$vendor && ($it->{'vendor'} || '') ne '';
 		my $qty = ($it->{'quantity'} || 1) + 0;
@@ -215,7 +216,7 @@ sub action_3497 {
 	}
 	$c->render(json => {
 		items => scalar @lines,
-		transaction => { app => $category, account => $account, vendor => $vendor, total => $total * $sign, timestamp => $receipt_ts, when => $receipt_when, storage => $storage },
+		transaction => { app => $category, account => $account, vendor => $vendor, total => $total * $sign, timestamp => $receipt_ts, when => $receipt_when, uuid => $receipt_uuid, storage => $storage },
 	});
 }
 

@@ -165,6 +165,7 @@ function marketCheckoutOpen(t) {
 					w.find('.ago').val('');
 					if (t.timestamp) { details.attr('receipt_timestamp', t.timestamp); }
 					if (t.when) { details.attr('receipt_when', t.when); }
+					if (t.uuid) { details.attr('receipt_uuid', t.uuid); }
 					if (typeof txReceiptPaint === 'function') { txReceiptPaint(details); }
 					if (typeof transactionStorageSaver === 'function') { transactionStorageSaver(app); }
 				}

@@ -367,6 +367,7 @@ function transactionStorageSaver(app) {
 		// the receipt's own moment travels with the draft, so switching movement or
 		// reopening the window keeps the day it was bought on
 		storage[movement]['totals']['receipt_timestamp'] = appt.find('.app_details').attr('receipt_timestamp') || '';
+		storage[movement]['totals']['receipt_uuid'] = appt.find('.app_details').attr('receipt_uuid') || '';
 		storage[movement]['totals']['receipt_when'] = appt.find('.app_details').attr('receipt_when') || '';
 	}
 	$('.purchase_details[app="' + app + '"]').each(function(i,v) {
@@ -574,6 +575,8 @@ function transactionStorageRetriever(app) {
 		else { details.removeAttr('receipt_timestamp'); }
 		if (totals['receipt_when']) { details.attr('receipt_when', totals['receipt_when']); }
 		else { details.removeAttr('receipt_when'); }
+		if (totals['receipt_uuid']) { details.attr('receipt_uuid', totals['receipt_uuid']); }
+		else { details.removeAttr('receipt_uuid'); }
 		txReceiptPaint(details);
 		txTenderPaint(appt.find('.app_details'));
 	}
@@ -613,7 +616,7 @@ function transactionStorageDeleter(app) {
 	appt.find('.tx_tendered').val('');
 	appt.find('.tx_change').text('').removeClass('tx_short');
 	// a cleared form is not a receipt any more
-	appt.find('.app_details').removeAttr('receipt_timestamp').removeAttr('receipt_when');
+	appt.find('.app_details').removeAttr('receipt_timestamp').removeAttr('receipt_when').removeAttr('receipt_uuid');
 	appt.find('.tx_receipt_when').text('').hide();
 	// Only the transaction form's own pickers are reset here. The appointment
 	// details list carries model/option selectors of its own; clearing those made

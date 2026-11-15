@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_market.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part06.pm public/js/manager/market.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/transaction.js public/js/manager/transaction/01_record_crypto.js templates/apps/app_details.html.ep templates/market/market.html.ep perl/help/topics_business.pl perl/help/topics_functions.pl
+# tests-for: lib/JawnOS/Controller/manager_market.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Controller/manager_transaction2.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part06.pm public/js/manager/market.js public/js/manager/market/01_tabs_and_receipts.js public/js/manager/transaction.js public/js/manager/transaction/01_record_crypto.js templates/apps/app_details.html.ep templates/market/market.html.ep perl/help/topics_business.pl perl/help/topics_functions.pl
 # covers:    A receipt's printed time and its category were lost at Checkout: the transaction was saved at "now" under the shopping list's category, with no way to file a Vape/Coffee/Dinner receipt elsewhere.
 
 use strict;
@@ -7,16 +7,19 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
+use Mojo::JSON qw(decode_json);
 use RepoSource;
 
 my $root = repo_root();
 my $market = read_file("$root/lib/JawnOS/Controller/manager_market.pm");
 my $receipt = read_file("$root/lib/JawnOS/Controller/manager_market2.pm");
 my $part06 = read_file("$root/lib/JawnOS/Manager/Part06.pm");
+my $save = read_file("$root/lib/JawnOS/Controller/manager_transaction2.pm");
 my $market_js = read_file("$root/public/js/manager/market.js");
 my $receipt_js = read_file("$root/public/js/manager/market/01_tabs_and_receipts.js");
 my $tx_js = js_source('public/js/manager/transaction.js');
+my $record_js = js_source('public/js/manager/transaction/01_record_crypto.js');
 my $details = template_source('apps/app_details');
 my $market_page = template_source('market/market');
 my $help = help_source();
@@ -103,6 +106,79 @@ like($receipt, qr/my \$vendor = &market_vendor_resolve\(\$c->param\('vendor'\) \
 # --- the guide says the shop is the one the house keeps -------------------
 like($help, qr/are one shop, so the purchases stay on the vendor you already have/,
 	'the Market topic says a known shop keeps its name');
+
+# --- a kept receipt can be thrown away ------------------------------------
+{
+	package FakeRows;
+	sub new    { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
+	sub hashes { return $_[0]->{'rows'} }
+}
+require "$root/lib/JawnOS/Manager/Part06.pm";
+{
+	require File::Temp;
+	my $dir = File::Temp::tempdir(CLEANUP => 1);
+	my $page = "$dir/keep.jpg";
+	write_file($page, 'pages');
+	my @writes;
+	no warnings 'redefine';
+	local *Manager::market_receipts = sub {
+		return [ { uuid => 'r1', machine => 'me', files => [ $page ] }, { uuid => 'r2', files => [] } ];
+	};
+	local *subs::setting_setter = sub { push @writes, $_[0]; return 1 };
+	local *subs::signatorial_designer = sub { return 'me' };
+	local *subs::subprocessor = sub { return 1 };
+	ok(Manager::market_receipt_remove('r1'), 'a kept receipt is thrown away');
+	my $left = decode_json($writes[0]{'value'});
+	is(scalar @{$left}, 1, 'the house row keeps the rest');
+	is($left->[0]{'uuid'}, 'r2', 'the other receipt stays');
+	ok(!-e $page, 'the page this machine kept goes with it');
+	ok(!Manager::market_receipt_remove('nope'), 'an unknown receipt is not a removal');
+}
+
+# --- the paper is copied onto the purchase it paid for ---------------------
+{
+	require File::Temp;
+	my $dir = File::Temp::tempdir(CLEANUP => 1);
+	my $page = "$dir/receipt_1.jpg";
+	write_file($page, 'receipt page bytes');
+	my ($updated, @logged);
+	no warnings 'redefine';
+	local *Manager::market_receipts = sub { return [ { uuid => 'r9', machine => 'me', files => [ $page ] } ] };
+	local *subs::setting_grabber = sub { return 'Documents' };
+	local *subs::home = sub { return $dir . '/' . ($_[0] || '') };
+	local *subs::path_name = sub { return 'clothes' };
+	local *subs::db_select = sub { return FakeRows->new([ { uuid => 'a1', app => 'clothes', file => '[]' } ]) };
+	local *subs::db_update = sub { $updated = $_[1]; return 1 };
+	local *Manager::thumbnail_creator = sub { return $_[0] };
+	local *subs::rightNow = sub { return 1_800_000_000_000 };
+	local *subs::random_string_creator = sub { return 'fuuid' };
+	local *subs::log_writer = sub { push @logged, join('', @_); return 1 };
+	ok(Manager::market_receipt_attach({ app => 'clothes', uuid => 'a1', receipt_uuid => 'r9' }),
+		'the receipt page is attached to the purchase');
+	my $files = decode_json($updated->{'file'});
+	is(scalar @{$files}, 1, 'one page is on the appointment');
+	like($files->[0]{'f'}, qr{clothes/receipt_}, 'copied into the app own folder');
+	ok(-e $files->[0]{'f'}, 'and the copy is on disk');
+	is(read_file($files->[0]{'f'}), 'receipt page bytes', 'with the page own bytes');
+	ok(!Manager::market_receipt_attach({ app => 'clothes', uuid => 'a1', receipt_uuid => 'gone' }),
+		'an unknown receipt attaches nothing');
+}
+
+# --- the wiring between the pane, the cart, the form and the save ---------
+ok(index($receipt, 'market_receipt_remove($uuid)') >= 0, 'the remove route asks the helper');
+ok(index($receipt_js, '/manager/market/receipt/remove') >= 0, 'the pane posts to the remove route');
+ok(index($market_page, 'market_receipt_drop') >= 0, 'the kept receipt row carries a delete button');
+ok(index($market_page, 'data-uuid=') >= 0, 'and the id that button removes');
+ok(index($receipt, 'my $receipt_uuid = &subs::random_string_creator(20);') >= 0, 'apply names the kept receipt on the cart rows');
+ok(index($receipt, 'uuid => $receipt_uuid, files => $files') >= 0, 'and keeps it under that id');
+ok(index($market, 'uuid => $receipt_uuid, storage => $storage') >= 0, 'checkout hands it to the transaction form');
+ok(index($market_js, "attr('receipt_uuid', t.uuid)") >= 0, 'which the form carries');
+ok(index($tx_js, "['receipt_uuid']") >= 0, 'the draft keeps it too');
+ok(index($record_js, 'receipt_uuid: receipt_uuid') >= 0, 'and the save sends it');
+ok(index($save, 'market_receipt_attach') >= 0, 'the save copies the paper onto the appointment');
+ok(index($help, 'The') >= 0 && index($help, 'throws it away for the whole House') >= 0,
+	'the guide says a receipt can be thrown away');
+ok(index($help, 'copied onto a saved transaction') >= 0, 'and that a saved transaction keeps its page');
 
 # --- what done_testing is for -----------------------------------------
 done_testing();

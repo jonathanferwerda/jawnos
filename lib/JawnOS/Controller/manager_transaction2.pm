@@ -227,6 +227,11 @@ sub action_16986 {
 		};
 
 		&appointment_writer($c,$write);
+		# The paper the shopping run was read off belongs to the purchase it paid
+		# for: copy its pages onto this appointment (the category - clothes, say),
+		# so they sit in that app's own Files and outlive the Receipts list.
+		&market_receipt_attach({ app => $app, uuid => $uuid, receipt_uuid => $c->param('receipt_uuid') })
+			if ($c->param('receipt_uuid') || '') ne '';
 		if ($transaction_information && $transaction_information ne '' && $vendor) {
 			my $inv = &subs::db_query('select * from appointments where app=? and uuid=?', $vendor, $transaction_information)->hashes->[0];
 			if ($inv) {

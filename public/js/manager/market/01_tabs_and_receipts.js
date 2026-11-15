@@ -207,6 +207,20 @@ $(document).on('click', '#market_receipts_open', function() { $('#market_receipt
 
 $(document).on('click', '#market_receipts_close', function() { $('#market_receipts').hide(); });
 
+// The × on a kept receipt throws it away: the house row loses it on every device
+// and the pages this machine keeps go with it. A receipt already copied onto a
+// saved transaction stays there, because that copy is the app's own file.
+$(document).on('click', '.market_receipt_drop', function() {
+	var row = $(this).closest('.market_receipt_row');
+	var uuid = row.attr('data-uuid') || '';
+	if (!uuid) { row.remove(); return; }
+	jawnosConfirm(jawnosT('Throw this receipt away? The pages this machine keeps go with it.'), function() {
+		$.post('/manager/market/receipt/remove', { uuid: uuid, timestamp: Date.now() }, function(r) {
+			if (r && r.ok) { row.remove(); }
+		}, 'json');
+	});
+});
+
 $(document).on('click', '.market_receipt_readd', function() {
 	var row = $(this).closest('.market_receipt_row');
 	var rdate = row.attr('data-date') || '';

@@ -757,8 +757,9 @@ sub market_receipt_file {
 			price => $l->{'price'},
 		};
 	}
+	my $receipt_uuid = ($data->{'uuid'} || '') ne '' ? $data->{'uuid'} : &subs::random_string_creator(20);
 	unshift @{$receipts}, {
-		uuid => &subs::random_string_creator(20),
+		uuid => $receipt_uuid,
 		at => &subs::rightNow(),
 		date => ($data->{'date'} || ''),
 		time => ($data->{'time'} || ''),
@@ -790,6 +791,88 @@ sub market_receipt_file {
 		1;
 	};
 	eval { &subs::subprocessor(sub { &subs::remote_available_announce(); }, { name => 'receipt announce' }); };
+	return $receipt_uuid;
+}
+
+# Throw a kept receipt away. The record leaves the house row every device reads,
+# so it leaves the Receipts list everywhere; the pages on the machine that scanned
+# them go with it. A page another machine holds is left to that machine - nothing
+# here can unlink another disk - and its receipt is still gone everywhere.
+sub market_receipt_remove {
+	my ($uuid) = @_;
+	return 0 unless defined $uuid && length $uuid;
+	my $receipts = &market_receipts();
+	my ($gone) = grep { ($_->{'uuid'} || '') eq $uuid } @{$receipts};
+	return 0 unless $gone;
+	$receipts = [ grep { ($_->{'uuid'} || '') ne $uuid } @{$receipts} ];
+	&subs::setting_setter({ app => 'market', setting => 'receipts', device => &subs::warranty_device(), value => encode_json($receipts) });
+	my $mine = ($gone->{'machine'} || '') eq '' || ($gone->{'machine'} || '') eq &subs::signatorial_designer();
+	if ($mine) {
+		foreach my $page ( @{ $gone->{'files'} || [] } ) {
+			next unless defined $page && length $page;
+			unlink $page if -f $page;
+		}
+	}
+	# the removal is house news too: ask the others to pull it now
+	eval { &subs::subprocessor(sub { &subs::remote_available_announce(); }, { name => 'receipt remove announce' }); };
+	return 1;
+}
+
+# The paper a receipt was read off belongs to the purchase it paid for, not only
+# to the Receipts list: when the transaction is saved, its pages are copied onto
+# the appointment the transaction was written on (the category - clothes, say),
+# so the page sits in that app's own Files and stays after the receipt is removed
+# from Market. Pages this machine holds are copied; a page only another machine
+# holds is left where it is, and the log says how many were not here.
+sub market_receipt_attach {
+	my ($data) = @_;
+	my $app = $data->{'app'} || '';
+	my $uuid = $data->{'uuid'} || '';
+	my $receipt_uuid = $data->{'receipt_uuid'} || '';
+	return 0 unless length $app && length $uuid && length $receipt_uuid;
+	my ($receipt) = grep { ($_->{'uuid'} || '') eq $receipt_uuid } @{ &market_receipts() };
+	return 0 unless $receipt;
+	my @pages = grep { defined $_ && length $_ } @{ $receipt->{'files'} || [] };
+	return 0 unless scalar @pages;
+	my $appt = eval { &subs::db_select('appointments', undef, { app => $app, uuid => $uuid })->hashes->[0] };
+	return 0 unless $appt;
+	my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($app));
+	system('mkdir', '-p', $folder) unless -e $folder;
+	my $thumbs = $folder . '/.thumbs';
+	system('mkdir', '-p', $thumbs) unless -e $thumbs;
+	my $saved = eval { return decode_json $appt->{'file'} } || [];
+	my @files = ref $saved eq 'ARRAY' ? @{$saved} : ();
+	my ($kept, $n) = (0, 0);
+	foreach my $page ( @pages ) {
+		$n++;
+		next unless -f $page;
+		my $dest = $folder . '/receipt_' . &subs::rightNow() . '_' . $n . '.jpg';
+		my $bytes = eval { read_file($page) };
+		next unless defined $bytes && length $bytes;
+		write_file($dest, $bytes);
+		next unless -s $dest;
+		(my $base = $dest) =~ s{.*/}{};
+		my $file_data = {
+			server_time => &subs::rightNow(),
+			ocr => '',
+			f => $dest,
+			thumb => $thumbs . '/' . $base,
+			uuid => &subs::random_string_creator(10),
+			type => 'document',
+			'of' => $dest,
+		};
+		$file_data = &thumbnail_creator($file_data);
+		push @files, $file_data;
+		$kept++;
+	}
+	my $skipped = scalar(@pages) - $kept;
+	if ($kept) {
+		&subs::db_update('appointments', { file => encode_json(\@files), server_time => &subs::rightNow() }, { app => $app, uuid => $uuid });
+		eval { &Websocket::send('server', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid) }); };
+		&subs::log_writer('receipt ' . $receipt_uuid . ' attached to ' . $app . ' as ' . $kept . ' page(s)');
+	}
+	&subs::log_writer('receipt ' . $receipt_uuid . ': ' . $skipped . ' page(s) are on another machine') if $skipped;
+	return $kept ? 1 : 0;
 }
 
 # Every kept receipt this house has, from the house row and from the per-device

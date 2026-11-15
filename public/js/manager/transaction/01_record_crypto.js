@@ -287,6 +287,8 @@ $(document).on('click', '.record_purchase', function() {
 	// a receipt carries its own moment; the save sends that instead of now, and an
 	// Ago or the Time Machine still overrides it on the server as usual
 	var receipt_timestamp = iq.attr('receipt_timestamp') || '';
+	// the kept receipt the cart came from, so Save can copy its paper onto this app
+	var receipt_uuid = iq.attr('receipt_uuid') || '';
 	var ago = appointment.find('.ago').val();
 	var warranty = appointment.find('.warranty').val();
 	var schedule = appointment.find('.schedule').val();
@@ -350,6 +352,7 @@ $(document).on('click', '.record_purchase', function() {
 		warranty: warranty,
 		schedule: schedule,
 		timestamp: receipt_timestamp || timestamp,
+		receipt_uuid: receipt_uuid,
 		currency: currency,
 		app: app,
 		notes: notes,
