@@ -50,17 +50,45 @@ function Invoke-Robocopy {
     }
 }
 
-# Native commands write progress on stderr; under $ErrorActionPreference=Stop a
-# redirected stderr becomes a terminating error in PowerShell 5.1. Capture the
-# output with Continue in force and judge the exit code instead.
+# Native commands are captured through temp files, not a pipeline. Inno runs
+# this script under 32-bit PowerShell ({sys} was SysWOW64); a `2>&1 | Out-String`
+# capture of the 64-bit perl.exe could block forever there with no child left to
+# wait on, freezing the Setup on "Checking the bundled Perl runtime". A file
+# redirect has no pipe for a grandchild to inherit, and the wait is bounded so a
+# wedged child is reported instead of waited on.
+function ConvertTo-QuotedArgument {
+    param([string]$Value)
+    if ($null -eq $Value -or $Value -eq '') { return '""' }
+    if ($Value -match '[\s"]') {
+        return '"' + ($Value -replace '"', '\"') + '"'
+    }
+    return $Value
+}
+
 function Invoke-Capture {
-    param([string]$FilePath, [string[]]$Arguments)
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments,
+        [int]$TimeoutSeconds = 180
+    )
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
     try {
-        $text = (& $FilePath @Arguments 2>&1 | Out-String)
-        $code = $LASTEXITCODE
+        $argLine = (@($Arguments) | ForEach-Object { ConvertTo-QuotedArgument $_ }) -join ' '
+        $proc = Start-Process -FilePath $FilePath -ArgumentList $argLine -PassThru -NoNewWindow `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile -ErrorAction Stop
+        if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $proc.Kill() } catch { }
+            throw "$FilePath did not finish within $TimeoutSeconds seconds"
+        }
+        $text = ''
+        if (Test-Path -LiteralPath $outFile) { $text += [string](Get-Content -LiteralPath $outFile -Raw) }
+        if (Test-Path -LiteralPath $errFile) { $text += [string](Get-Content -LiteralPath $errFile -Raw) }
+        $code = $proc.ExitCode
     } finally {
+        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
         $ErrorActionPreference = $saved
     }
     return [pscustomobject]@{ Text = $text; Code = $code }

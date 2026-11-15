@@ -130,6 +130,14 @@ like($install, qr/Test-JawnPort/, 'the interface launcher checks the port first'
 like($install, qr/IconLocation/, 'the shortcuts set their icon');
 like($install, qr/jawnos\.ico/, 'install.ps1 names the icon file');
 
+# The probe once froze the Setup: Inno's 32-bit PowerShell captured the 64-bit
+# perl through `2>&1 | Out-String` and never saw the pipeline close. Native
+# output goes through temp files now, and the wait is bounded.
+like($install, qr/RedirectStandardOutput/, 'native output is captured through a file');
+like($install, qr/WaitForExit\(\$TimeoutSeconds \* 1000\)/, 'the capture wait is bounded');
+unlike($install, qr/& \$FilePath \@Arguments 2>&1/, 'the probe does not capture through a pipeline');
+like($install, qr/ConvertTo-QuotedArgument/, 'an argument with spaces stays one argument');
+
 unlike($install, qr{C:\\Strawberry}i, 'install.ps1 does not hardcode C:\Strawberry');
 
 # --- build-portable.ps1 -----------------------------------------------------
@@ -223,6 +231,8 @@ like($iss, qr/\[Icons\]/, 'Inno owns the shortcuts');
 like($iss, qr/\[UninstallRun\]/, 'jawnos.iss runs the uninstaller');
 like($iss, qr/-KeepFolder/, 'the Inno uninstaller owns the folder');
 like($iss, qr/WizardIsTaskSelected\('lanaccess'\)/, 'the firewall entry follows the LAN task');
+like($iss, qr/ArchitecturesInstallIn64BitMode=x64/,
+	'Setup runs in 64-bit mode, so {sys} is the native PowerShell');
 
 # config.json is written by the installer, not by a web wizard, and the
 # uninstaller has to remove the files Inno did not install.
@@ -251,7 +261,7 @@ if (-s $icon_path) {
 	open(my $icon_fh, '<:raw', $icon_path) or die "read jawnos.ico: $!\n";
 	read($icon_fh, my $icon_head, 4);
 	close $icon_fh;
-	is($icon_head, "\x0\x0\x1\x0", 'the icon file is a Windows ICO');
+	is($icon_head, "\x00\x00\x01\x00", 'the icon file is a Windows ICO');
 }
 like($build, qr/jawnos\.ico/, 'build-portable.ps1 stages the icon');
 

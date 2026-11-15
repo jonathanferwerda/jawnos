@@ -49,6 +49,10 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64
+; Run in 64-bit install mode so {sys} is the 64-bit System32. In 32-bit mode
+; {sys} pointed at SysWOW64's PowerShell, and capturing the 64-bit perl on that
+; host could deadlock the runtime probe.
+ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=lowest
 ; PrepareToInstall stops the house itself. Restart Manager cannot close a
 ; console perl.exe reliably, so it must not try.
