@@ -87,6 +87,15 @@ sub power_limit_round {
 	return &power_limit_clamp($limit);
 }
 
+# The pack's own charging ceiling, in whole percent. The app offers 50..100;
+# the helper checks the same range again before it writes anything.
+sub power_charge_valid {
+	my ($end) = @_;
+	return 0 unless defined $end && $end =~ /^\d+$/;
+	$end += 0;
+	return ($end >= 50 && $end <= 100) ? 1 : 0;
+}
+
 sub power_read {
 	my ($path) = @_;
 	my $value = '';
@@ -459,6 +468,8 @@ sub power_default_config {
 			lid_action => 'suspend',
 			sleep_type => 'suspend',
 		},
+		# end is 0 until the person chooses a ceiling; the pack is left alone.
+		charge => { end => 0 },
 		profiles => {},
 	};
 }
@@ -475,6 +486,11 @@ sub power_config_clean {
 		$clean->{$source}->{'plan'} = $entry->{'plan'} if &power_plan_valid($entry->{'plan'});
 		$clean->{$source}->{'limit'} = &power_limit_round($entry->{'limit'}) if exists $entry->{'limit'};
 	}
+	# The ceiling is a choice, not a reading. Storing it is what lets a boot - or
+	# a competing daemon that restores the firmware's 100% - be put back.
+	my $charge = $config->{'charge'};
+	$clean->{'charge'}->{'end'} = $charge->{'end'} + 0
+		if ref $charge eq 'HASH' && &power_charge_valid($charge->{'end'});
 	my $sleep = $config->{'sleep'};
 	if (ref $sleep eq 'HASH') {
 		$clean->{'sleep'}->{'screen_timeout'} = $sleep->{'screen_timeout'} + 0
@@ -717,13 +733,17 @@ sub power_apply_plan {
 	# the competing daemon. Auto leaves both alone: auto means the machine (or
 	# auto-cpufreq) keeps its own schedule, so there is nothing to race. A
 	# failed sleep write never changes the plan's own verdict.
+	my $config = &power_config();
 	if ($plan ne 'auto') {
 		my ($sleep_answer, $ignored) = &power_sleep_write(
-			&power_sleep_block(&power_config(), $plan),
+			&power_sleep_block($config, $plan),
 		);
 		$result{'sleep'} = { %{$sleep_answer}, plan => $plan, sleep_ignored => $ignored };
 		$result{'takeover'} = &power_takeover();
 	}
+	# The ceiling belongs to the pack, not to a plan, and the master switch is
+	# already on for every caller of this sub - so Auto restores it too.
+	$result{'charge'} = &power_charge_apply($config);
 	return \%result;
 }
 
@@ -900,6 +920,9 @@ sub power_sleep_now {
 sub power_plan_tick {
 	my $config = &power_config();
 	return { ok => 1, skipped => 'system managed' } unless $config->{'manage'};
+	# The ceiling is a choice the kernel does not remember either. Put it back
+	# when a boot, the firmware or a restored daemon has moved it.
+	&power_charge_apply($config);
 	my $battery = &power_battery_read();
 	return { ok => 1, skipped => 'no battery' } unless $battery->{'present'};
 	my $source = $battery->{'ac'} ? 'ac' : 'battery';
@@ -941,9 +964,49 @@ sub power_charge_read {
 sub power_charge_set {
 	my ($end) = @_;
 	return { ok => 0, error => 'the charge limit must be between 50 and 100' }
-		unless defined $end && $end =~ /^\d+$/ && $end >= 50 && $end <= 100;
+		unless &power_charge_valid($end);
+	$end += 0;
 	my $answer = &power_helper('charge', $end);
-	return { %{$answer}, charge => &power_charge_read() };
+	my $result = { %{ ref $answer eq 'HASH' ? $answer : { ok => 0, error => 'the charge helper failed' } }, charge => &power_charge_read() };
+	# The kernel has no memory for this choice: the firmware or a competing
+	# daemon returns the pack to 100%. Store it only once the write landed, so a
+	# saved value always means the pack took it at least once.
+	if (ref $answer eq 'HASH' && $answer->{'ok'} && !$answer->{'dry_run'}) {
+		my $config = &power_config();
+		$config->{'charge'} = { end => $end };
+		$config = &power_config_save($config);
+		$result->{'end'} = $end;
+		$result->{'config'} = $config;
+	}
+	return $result;
+}
+
+# The ceiling the person chose, or 0 when there is none.
+sub power_charge_saved {
+	my ($config) = @_;
+	$config = &power_config() unless ref $config eq 'HASH';
+	my $entry = ref $config->{'charge'} eq 'HASH' ? $config->{'charge'} : {};
+	my $end = $entry->{'end'};
+	return &power_charge_valid($end) ? $end + 0 : 0;
+}
+
+# Put the saved ceiling back after a boot, a firmware reset or a daemon that
+# rewrote it. A pack already at the chosen value costs one read and no write;
+# a machine without the attribute is left alone rather than retried forever.
+sub power_charge_apply {
+	my ($config) = @_;
+	my $end = &power_charge_saved($config);
+	return { ok => 1, applied => 0 } unless $end;
+	my $charge = &power_charge_read();
+	return { ok => 1, applied => 0, supported => 0 } unless $charge->{'supported'};
+	return { ok => 1, applied => 0, end => $end }
+		if defined $charge->{'end'} && $charge->{'end'} == $end;
+	my $answer = &power_helper('charge', $end);
+	return {
+		%{ ref $answer eq 'HASH' ? $answer : { ok => 0, error => 'the charge helper failed' } },
+		applied => (ref $answer eq 'HASH' && $answer->{'ok'}) ? 1 : 0,
+		end => $end,
+	};
 }
 
 # Once JawnOS writes the CPU and the sleep rules, a second daemon re-applying
@@ -997,6 +1060,11 @@ sub power_status {
 	my $config = &power_config();
 	my $cpu = &power_cpu_read();
 	my $source = $battery->{'ac'} ? 'ac' : 'battery';
+	my $charge = &power_charge_read();
+	# The saved ceiling is the person's intent; end is what the pack holds now,
+	# which can lag until the watch puts it back. The app shows the choice.
+	my $saved_charge = &power_charge_saved($config);
+	$charge->{'saved'} = $saved_charge if $charge->{'supported'} && $saved_charge;
 	return {
 		ok => 1,
 		at => &subs::rightNow(),
@@ -1013,6 +1081,6 @@ sub power_status {
 		manager => &power_manager(),
 		takeover => &power_takeover_state(),
 		sleep_plan => &power_plan_valid($config->{$source}{'plan'}) ? $config->{$source}{'plan'} : 'balanced',
-		charge => &power_charge_read(),
+		charge => $charge,
 	};
 }

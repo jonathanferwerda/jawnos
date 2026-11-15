@@ -296,6 +296,42 @@ sub helper {
 	is($high->{'ok'}, 0, 'a limit above 100 is refused');
 }
 
+# --- the ceiling is remembered and put back --------------------------------
+# The kernel does not remember the choice: a boot, the firmware or a restored
+# competing daemon returns the pack to 100%. JawnOS stores the percentage and
+# writes it again, and only writes when the pack has drifted.
+{
+	my $ceiling = "$sys/class/power_supply/BAT0/charge_control_end_threshold";
+	write_file($ceiling, "100\n");
+	my $real_helper = \&subs::power_helper;
+	no warnings 'redefine';
+	*subs::power_helper = sub {
+		my ($command, $end) = @_;
+		if ($command eq 'charge') {
+			write_file($ceiling, "$end\n");
+			return { ok => 1, end => $end };
+		}
+		return { ok => 1 };
+	};
+	my $saved = subs::power_charge_set('80');
+	ok($saved->{'ok'}, 'the chosen ceiling is written');
+	is(subs::power_charge_saved(), 80, 'the choice is stored in the config');
+	is(subs::power_config()->{'charge'}{'end'}, 80, 'and survives the config cleaner');
+
+	write_file($ceiling, "100\n");
+	my $back = subs::power_charge_apply();
+	ok($back->{'applied'}, 'a pack reset to 100 is written back');
+	is(read_file($ceiling), "80\n", 'the saved ceiling is on the pack again');
+	my $settled = subs::power_charge_apply();
+	is($settled->{'applied'}, 0, 'a pack already at the ceiling is left alone');
+
+	my $status = subs::power_status();
+	is($status->{'charge'}{'saved'}, 80, 'the status reports the choice, not only the reading');
+	is(subs::power_config_clean({ charge => { end => 42 } })->{'charge'}{'end'}, 0,
+		'a saved ceiling outside the offered range is dropped');
+	*subs::power_helper = $real_helper;
+}
+
 # --- who is managing power --------------------------------------------------
 # A fake systemctl that reports auto-cpufreq running and the others absent:
 # the manager answer must name exactly the daemon that would race JawnOS.
@@ -540,6 +576,8 @@ SH
 	my $jobs = read_file("$root/perl/jobs.pl");
 	like($jobs, qr/name => 'power watch'/, 'the slow loop carries the source switch');
 	like($jobs, qr/&subs::power_plan_tick\(\)/, 'and calls the domain helper');
+	like($jobs, qr/sub job_slow_loops \{.*?eval \{ &subs::power_plan_tick\(\); \};.*?my \@slow_loops/s,
+		'the plan is taken back at once when the slow worker starts');
 }
 
 done_testing();

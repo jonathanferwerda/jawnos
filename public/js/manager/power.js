@@ -132,10 +132,14 @@ function powerRender(status) {
 		$('#power_battery_card').hide();
 	}
 	// The charge ceiling is a battery property: a pack without the sysfs
-	// attribute hides the row rather than offering a dead control.
+	// attribute hides the row rather than offering a dead control. The saved
+	// ceiling is what the person chose, so it wins over a pack that has just
+	// been reset to 100 until the power watch puts it back.
 	var charge = status.charge || {};
 	if (battery.present && charge.supported) {
-		var charge_end = (charge.end !== undefined && charge.end !== null) ? charge.end : (charge.max || 100);
+		var charge_saved = (charge.saved !== undefined && charge.saved !== null && charge.saved >= 50) ? charge.saved : null;
+		var charge_end = charge_saved !== null ? charge_saved
+			: ((charge.end !== undefined && charge.end !== null) ? charge.end : (charge.max || 100));
 		$('#power_charge').val(charge_end);
 		$('#power_charge_value').text(charge_end + '%');
 		$('#power_charge_row').show();

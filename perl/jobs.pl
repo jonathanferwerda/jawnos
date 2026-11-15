@@ -92,6 +92,12 @@ sub job_slow_loops {
 	# crew.pl is a script President loads separately; a worker starts with the
 	# library only, so load it before taking coderefs to its subs.
 	require './perl/crew.pl';
+	# A clean stop puts back the power daemons JawnOS had taken over, and a boot
+	# resets the kernel's governor and the pack's charge ceiling. Take the saved
+	# plan back now, before the first slot, so a restart is managed by JawnOS
+	# again from the moment the app is back instead of half a minute later. The
+	# tick is idempotent: a machine that already holds its plan costs one read.
+	eval { &subs::power_plan_tick(); };
 	my @slow_loops = (
 		{ name => 'crew advert sync', first => 45, every => 300, run => \&crew::advert_sync },
 		{ name => 'crew queue tick', first => 20, every => 60, run => \&crew::tick },
