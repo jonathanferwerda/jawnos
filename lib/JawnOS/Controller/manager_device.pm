@@ -593,7 +593,69 @@ sub action_38590 {
 # leaf, signed by the CA every enrolled machine already trusts. The CA key never
 # leaves the house: a machine without it still names the board and says why the
 # leaf is missing.
+# The leaf a joining board is given. A machine that holds the house CA signs it
+# locally; a client (a laptop flashing a board) asks the house over the peer
+# rail, so the CA key still never leaves the house. Returns the same
+# {ok, host, cert, key} shape either way, or an error explaining why not.
 sub _controller_join_certificate {
+	my ($fqdn, $address) = @_;
+	my $local = &_controller_issue_leaf_here($fqdn, $address);
+	return $local if $local->{'ok'};
+	return $local unless ($local->{'error'} // '') eq 'the house CA is not on this machine';
+	my $remote = &_controller_leaf_from_house($fqdn, $address);
+	return $remote if $remote;
+	return $local;
+}
+
+# Ask the rostered machines for the leaf. Only the one holding the CA key answers
+# with a certificate; the rest say they are not it, and a machine that has not
+# been updated yet simply does not answer. Server rows are tried first, and the
+# list is short because the joining board is waiting on this answer.
+sub _controller_leaf_from_house {
+	my ($fqdn, $address) = @_;
+	my $mine = &subs::signatorial_designer() || '';
+	my $rows = eval { &subs::db_select('remote_machines')->hashes } || [];
+	my @candidates = grep {
+		ref $_ eq 'HASH'
+			&& ($_->{'signatorial'} // '') ne $mine
+			&& length($_->{'pubkey'} // '')
+			&& ($_->{'manager'} // '') =~ m{^https?://}
+	} @{$rows};
+	@candidates = sort {
+		(($b->{'device'} // '') eq 'server' ? 1 : 0) <=> (($a->{'device'} // '') eq 'server' ? 1 : 0)
+	} @candidates;
+	@candidates = @candidates[0 .. 1] if @candidates > 2;
+	return undef unless @candidates;
+	require Mojo::UserAgent;
+	require Mojo::JSON;
+	foreach my $rm ( @candidates ) {
+		my $manager = &subs::peer_live_manager($rm) || $rm->{'manager'};
+		my ($endpoint, $verified) = &subs::peer_secure_url($rm, $manager);
+		$endpoint = $manager unless defined $endpoint && length $endpoint;
+		my $ua = Mojo::UserAgent->new->connect_timeout(2)->request_timeout(5);
+		# A leaf carries a private key, so it crosses only a connection this
+		# machine proved is the house's peer listener. No insecure fallback: a
+		# name without a certificate is better than a key on an unverified rail.
+		next unless $verified && &subs::peer_tls_verify($ua);
+		$ua->on(start => sub { &subs::peer_sign_request($_[1]->req) });
+		my $res = eval {
+			$ua->post($endpoint . '/device/leaf' => form => {
+				signatorial => $mine,
+				name => $fqdn,
+				address => ($address // ''),
+			})->result;
+		};
+		next unless $res;
+		my $answer = eval { Mojo::JSON::decode_json($res->body // '') } || {};
+		next unless ref $answer eq 'HASH' && $answer->{'ok'} && ref $answer->{'tls'} eq 'HASH';
+		return $answer->{'tls'} if $answer->{'tls'}->{'ok'};
+	}
+	return undef;
+}
+
+# Issue the leaf on this machine. Only the machine holding the CA key can; the
+# join route asks the house when it cannot.
+sub _controller_issue_leaf_here {
 	my ($fqdn, $address) = @_;
 	return { ok => 0, error => 'the house CA script is missing' } unless -f 'scripts/house_ca.pl';
 	my $server = eval { &subs::server_dir() } || 'server';
@@ -633,6 +695,32 @@ sub _controller_join_certificate {
 	}
 	File::Path::remove_tree($out);
 	return { ok => 1, host => $fqdn, cert => $cert, key => $key };
+}
+
+# POST /manager/device/leaf
+# A house machine that flashed a board on this house's behalf asks the CA holder
+# for the board's leaf. Only a rostered peer on the Trusted rung may ask, and
+# only for a name under the house domain; the CA key stays here.
+sub action_38591 {
+	my $c = shift;
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = $signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hash : undef;
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
+		$c->rendered(403);
+		return;
+	}
+	my $fqdn = lc($c->param('name') || '');
+	my $address = $c->param('address') || '';
+	my $domain = &subs::house_domain();
+	unless (length $domain
+		&& $fqdn =~ /^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.\Q$domain\E$/) {
+		return $c->render(json => { ok => 0, error => 'that name is not under this house domain' });
+	}
+	my $tls = &_controller_issue_leaf_here($fqdn, $address);
+	unless ($tls->{'ok'}) {
+		return $c->render(json => { ok => 0, error => ($tls->{'error'} || 'the house CA is not on this machine') });
+	}
+	$c->render(json => { ok => 1, tls => $tls });
 }
 
 sub _join_pem {

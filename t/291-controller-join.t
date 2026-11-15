@@ -96,6 +96,11 @@ $Manager::log = Mojo::Log->new(level => 'fatal');
 	sub session { my ($s, $k) = @_; return $s->{'session'}->{$k} }
 	sub tx { return $_[0]->{'tx'} }
 	sub req { return $_[0]->{'req'} }
+	package LeafProbe;
+	sub new { bless { params => $_[1] || {}, answer => undef, status => undef }, $_[0] }
+	sub param { my ($s, $k) = @_; return $s->{'params'}->{$k} }
+	sub render { my ($s, %o) = @_; $s->{'answer'} = $o{'json'}; return $s }
+	sub rendered { my ($s, $code) = @_; $s->{'status'} = $code; return $s }
 	package main;
 }
 
@@ -458,7 +463,7 @@ like($js, qr/#controllers_hostname, #controllers_card_choice/, 'the fields are h
 	my $openssl = `command -v openssl 2>/dev/null`;
 	chomp $openssl;
 	SKIP: {
-	skip 'openssl is not installed', 15 unless $openssl && length $openssl && -x $openssl;
+	skip 'openssl is not installed', 21 unless $openssl && length $openssl && -x $openssl;
 	local $ENV{'JAWNOS_STORE_DIR'} = sandbox();
 	my $ca_log = "$dry/house-ca.log";
 	open(my $save, '>&', \*STDOUT) or die "cannot duplicate stdout: $!";
@@ -497,6 +502,32 @@ like($js, qr/#controllers_hostname, #controllers_card_choice/, 'the fields are h
 	close $leaf_fh;
 	my $verify = `$openssl verify -CAfile '$ENV{'JAWNOS_STORE_DIR'}/server/house-ca.pem' '$leaf_file' 2>&1`;
 	like($verify, qr/: OK/, 'and it chains to the CA the board already trusts');
+	# The house can issue the leaf for a peer. A laptop that flashes a board has
+	# no CA key, so its join asks the CA holder over the peer rail; this route is
+	# the other half of that. Only a trusted peer and a name under the domain are
+	# accepted.
+	{
+		no warnings 'redefine';
+		local *subs::peer_verify = sub { 1 };
+		local *subs::peer_allows = sub { 1 };
+		my $probe3 = LeafProbe->new({ signatorial => $sig2, name => 'gou2026.example.test', address => '192.168.1.50' });
+		Manager::action_38591($probe3);
+		my $leaf = $probe3->{'answer'} || {};
+		ok($leaf->{'ok'}, 'the house issues a leaf for a peer that asks');
+		is($leaf->{'tls'}->{'host'}, 'gou2026.example.test', 'for the name it asked about');
+		like($leaf->{'tls'}->{'cert'}, qr/-----BEGIN CERTIFICATE-----/, 'with the chain');
+		like($leaf->{'tls'}->{'key'}, qr/PRIVATE KEY-----/, 'and the key');
+		my $peer_leaf = "$dry/peer-leaf.pem";
+		open(my $pl, '>', $peer_leaf) or die "cannot write $peer_leaf: $!";
+		print {$pl} $leaf->{'tls'}->{'cert'} // '';
+		close $pl;
+		my $peer_ok = `$openssl verify -CAfile '$ENV{'JAWNOS_STORE_DIR'}/server/house-ca.pem' '$peer_leaf' 2>&1`;
+		like($peer_ok, qr/: OK/, 'and it chains to this house CA');
+
+		my $outside = LeafProbe->new({ signatorial => $sig2, name => 'evil.example.org', address => '192.168.1.50' });
+		Manager::action_38591($outside);
+		ok(!$outside->{'answer'}->{'ok'}, 'a name outside the house domain is refused');
+	}
 	# A key is returned only to a board that proved the house's leaf: the signed
 	# fallback rail is not confidential, so an unverified join gets the name and
 	# no private key.
@@ -525,6 +556,11 @@ like($js, qr/#controllers_hostname, #controllers_card_choice/, 'the fields are h
 
 my $device_source = slurp('lib/JawnOS/Controller/manager_device.pm');
 like($device_source, qr/sub _controller_join_certificate/, 'the join issues a leaf for the board');
+like($device_source, qr/sub _controller_leaf_from_house/, 'a client asks the house for the leaf');
+like($device_source, qr/sub action_38591/, 'the house can issue a leaf for a peer');
+like($device_source, qr/peer_allows\(\$c, \$rm, 'trusted'\)/, 'only a trusted peer may ask');
+like($device_source, qr/that name is not under this house domain/, 'and only for a name under it');
+like(slurp('lib/JawnOS/Routes/manager_device.pm'), qr{38591.*device/leaf}, 'the leaf route is registered');
 like($device_source, qr/house_machine_name\(/, 'and derives the name under the house domain');
 like($device_source, qr/house-ca\.key/, 'only where the house CA key is');
 like($device_source, qr/tls_verified/, 'a leaf is only issued to a verified board');

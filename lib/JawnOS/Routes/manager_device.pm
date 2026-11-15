@@ -19,6 +19,7 @@ sub routes {
 	[38547, 'post', '/manager/device/request', 'action_38547'],
 	[38584, 'post', '/manager/device/request_status', 'action_38584'],
 	[38590, 'post', '/manager/device/join', 'action_38590'],
+	[38591, 'post', '/manager/device/leaf', 'action_38591'],
 	);
 }
 
