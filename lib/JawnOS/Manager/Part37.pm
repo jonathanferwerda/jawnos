@@ -591,6 +591,8 @@ sub mailws_group_addresses($thread) {
 			$digits =~ s/\D+//g;
 			$digits =~ s/^1//;
 			next unless length $digits;
+			# the house's own line is never one of the people to send to
+			next if &subs::own_phone_number($digits);
 			push @numbers, $digits unless $seen{$digits}++;
 		}
 	}

@@ -15,6 +15,7 @@ sub routes {
 	[24763, 'post', '/manager/phone/greeting', 'action_24763'],
 	[24764, 'get', '/manager/phone/greeting', 'action_24764'],
 	[24765, 'post', '/manager/phone/ringtone', 'action_24765'],
+	[91842, 'post', '/manager/phone/lines', 'action_91842'],
 	);
 }
 

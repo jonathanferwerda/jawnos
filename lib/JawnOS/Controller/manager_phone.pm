@@ -111,6 +111,7 @@ sub action_23201 {
 		blocked => $blocked,
 		ivr => $ivr,
 		ringtone => &phone_ringtone(),
+		own_lines => &subs::own_phone_lines(&subs::machine_hostname()),
 		ivr_machines => &phone_ivr_machines(),
 		routes => &phone_routes_read(),
 		ivr_voices => [ &subs::say_voices() ],
@@ -471,6 +472,44 @@ sub action_24755 {
 		silence => $silenced,
 		ringtone => &phone_ringtone(),
 	});
+}
+
+# POST /manager/phone/lines
+# The Lines pane: the numbers this machine answers on. The phone's own SIMs are
+# written by the telephone poll (`telephone_own_number_check`), so this is how a
+# VoIP line is named - Fongo and TextNow keep their number inside their own app,
+# which nothing here may read, so the only way to know one is to be told. A line
+# is keyed by its label, so saving the same label again replaces that number.
+sub action_91842 {
+	my $c = shift;
+	my $action = $c->param('action') || 'add';
+	my $label = $c->param('label') || '';
+	my $host = &subs::machine_hostname();
+	$label = lc($label);
+	$label =~ s/[^a-z0-9_-]+//g;
+	if ($action eq 'remove') {
+		if (length $label) {
+			&subs::setting_setter({ app => $label, setting => 'own_phone', value => '', device => $host });
+		}
+		$c->render(json => { ok => 1, lines => &subs::own_phone_lines($host) });
+		return;
+	}
+	my $number = $c->param('number') || '';
+	$number =~ s/\D+//g;
+	$number =~ s/^1//;
+	unless (length $number >= 7 && length $number <= 15) {
+		$c->render(json => { ok => 0, error => 'not a phone number', lines => &subs::own_phone_lines($host) });
+		return;
+	}
+	# a number cannot be its own line twice under two names
+	foreach my $line ( @{ &subs::own_phone_lines($host) } ) {
+		next if $line->{'number'} ne $number;
+		next if $label && $line->{'label'} eq $label;
+		&subs::setting_setter({ app => $line->{'label'}, setting => 'own_phone', value => '', device => $host });
+	}
+	$label = 'line' unless length $label;
+	&subs::setting_setter({ app => $label, setting => 'own_phone', value => $number, device => $host });
+	$c->render(json => { ok => 1, lines => &subs::own_phone_lines($host) });
 }
 
 # POST /manager/phone/ringtone

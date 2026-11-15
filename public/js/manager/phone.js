@@ -165,6 +165,64 @@ $(document).on('click', '#phone_app #phone_ringtone_preview', function (e) {
 	var sound = $('#phone_app #phone_ringtone').val() || 'notifications/ring.mp3';
 	try { new Audio('/sounds/' + sound).play(); } catch (err) { }
 });
+// The Lines pane: the numbers this device answers on. The phone finds its own
+// SIM lines by asking the radio, so the rows it writes need no help; a VoIP
+// line - Fongo, TextNow - is typed here, because another app keeps its number
+// to itself and nothing on the phone may read it.
+function phoneLinesPaint(lines) {
+	var list = $('#phone_app #phone_lines_list');
+	if (!list.length) { return; }
+	list.empty();
+	if (!lines || !lines.length) {
+		list.append($('<div class="phone_app_ringtone_status"></div>').text(jawnosT('No lines yet.')));
+		return;
+	}
+	$.each(lines, function (i, line) {
+		var row = $('<div class="phone_app_line_row"></div>').attr('label', line.label || '');
+		row.append($('<span class="phone_app_line_label"></span>').text(line.label || ''));
+		row.append($('<span class="phone_app_line_number"></span>').text(line.number || ''));
+		row.append($('<span class="phone_app_line_remove" title="' + jawnosT('Remove') + '">×</span>').attr('label', line.label || ''));
+		list.append(row);
+	});
+}
+$(document).on('click', '#phone_app #phone_line_add', function (e) {
+	e.preventDefault();
+	var status = $('#phone_app #phone_lines_status');
+	var number = $('#phone_app #phone_line_number').val() || '';
+	var label = $('#phone_app #phone_line_label').val() || '';
+	status.text(jawnosT('Saving…'));
+	$.ajax({
+		url: '/manager/phone/lines',
+		type: 'POST',
+		data: { timestamp: Date.now(), action: 'add', number: number, label: label },
+		success: function (res) {
+			if (res && res.ok) {
+				status.text(jawnosT('Line saved.'));
+				$('#phone_app #phone_line_number').val('');
+				phoneLinesPaint(res.lines);
+			}
+			else {
+				status.text(jawnosT('Could not save that line.'));
+			}
+		},
+		error: function () { status.text(jawnosT('Could not save that line.')); }
+	});
+});
+$(document).on('click', '#phone_app .phone_app_line_remove', function (e) {
+	e.preventDefault();
+	var label = $(this).attr('label') || '';
+	$.ajax({
+		url: '/manager/phone/lines',
+		type: 'POST',
+		data: { timestamp: Date.now(), action: 'remove', label: label },
+		success: function (res) {
+			if (res && res.ok) {
+				$('#phone_app #phone_lines_status').text(jawnosT('Line removed.'));
+				phoneLinesPaint(res.lines);
+			}
+		}
+	});
+});
 $(document).on('click', '#phone_app #phone_ringtone_save', function (e) {
 	e.preventDefault();
 	var status = $('#phone_app #phone_ringtone_status');

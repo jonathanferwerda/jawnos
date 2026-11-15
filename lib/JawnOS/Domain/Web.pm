@@ -549,6 +549,82 @@ sub telephone_call_log_check {
 	return $n;
 }
 
+# The numbers the house itself answers on. A settings row per line - app is the
+# line's own name ('sim1', 'sim2', 'fongo', 'textnow') and the value is the
+# number - so a group message that lists one of them as a recipient can tell
+# the house from the other people on it. A phone's SIMs are found by asking the
+# radio (telephone_own_number_check keeps those rows current); a VoIP line is
+# typed in the Phone app, because another app's number is its own private data
+# and nothing on the phone may read it.
+sub own_phone_lines {
+	my ($only_host) = @_;
+	my (@lines, %seen);
+	foreach my $r ( @{ &subs::db_query('select app, value, device from settings where setting = ? and value != ?', 'own_phone', '')->hashes } ) {
+		next if defined $only_host && length $only_host && ($r->{'device'} || '') ne $only_host;
+		my $number = $r->{'value'} || '';
+		$number =~ s/\D+//g;
+		$number =~ s/^1//;
+		next unless length $number;
+		next if $seen{$number}++;
+		push @lines, { number => $number, label => ($r->{'app'} || 'line'), device => ($r->{'device'} || '') };
+	}
+	return \@lines;
+}
+
+# Is this number one of the house's own? A number arrives from a carrier in
+# whatever shape it likes, so both sides are compared as bare digits with the
+# leading 1 dropped - the same rule the phone threads are keyed by.
+sub own_phone_number {
+	my ($digits) = @_;
+	my $number = defined $digits ? $digits : '';
+	$number =~ s/\D+//g;
+	$number =~ s/^1//;
+	return 0 unless length $number;
+	foreach my $line ( @{ &subs::own_phone_lines(&subs::machine_hostname()) } ) {
+		return 1 if $line->{'number'} eq $number;
+	}
+	return 0;
+}
+
+# The radio's own numbers, kept current: one row per inserted SIM, named for
+# its slot, so a second SIM that is later inserted simply appears. A carrier
+# that does not provision the number on the SIM answers empty and nothing is
+# written - a guessed number is worse than an absent one. A line the person
+# typed is never touched, and a sim row whose slot has gone is removed, but
+# only when the radio did answer, so a missing permission cannot wipe the rows.
+sub telephone_own_number_check {
+	my $changed = 0;
+	return $changed unless $device eq 'mobile';
+	my $info = &subs::device_call('telephony.numbers');
+	return $changed unless $info && ref $info->{'lines'} eq 'ARRAY';
+	my $host = &subs::machine_hostname();
+	my %found;
+	foreach my $line ( @{$info->{'lines'}} ) {
+		next unless ref $line eq 'HASH';
+		my $number = $line->{'number'} || '';
+		$number =~ s/\D+//g;
+		$number =~ s/^1//;
+		next unless length $number;
+		my $slot = (defined $line->{'slot'} && $line->{'slot'} =~ /^\d+$/) ? $line->{'slot'} : 0;
+		my $label = 'sim' . ($slot + 1);
+		$found{$label} = 1;
+		my $old = &subs::db_select('settings', undef, { app => $label, setting => 'own_phone', device => $host })->hashes->[0];
+		next if $old && ($old->{'value'} || '') eq $number;
+		&subs::setting_setter({ app => $label, setting => 'own_phone', value => $number, device => $host });
+		$changed++;
+	}
+	if (scalar @{$info->{'lines'}} > 0) {
+		foreach my $row ( @{ &subs::db_query('select app from settings where setting = ? and device = ?', 'own_phone', $host)->hashes } ) {
+			my $label = $row->{'app'} || '';
+			next unless $label =~ /^sim\d+$/;
+			next if $found{$label};
+			&subs::setting_setter({ app => $label, setting => 'own_phone', value => '', device => $host });
+			$changed++;
+		}
+	}
+	return $changed;
+}
+
 sub appt_toggle_checker {
 	my $app = shift;
 	return unless $app;

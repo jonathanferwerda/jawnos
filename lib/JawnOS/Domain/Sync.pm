@@ -859,6 +859,9 @@ my $returner = '';
 				$peer =~ s/^1//;
 				next unless length $peer;
 				next if $peer eq $phone;
+				# the house's own line is not a member of the group: a carrier
+				# lists it as a recipient of every message it delivers
+				next if &subs::own_phone_number($peer);
 				next if $group_seen{$peer}++;
 				push @group, $peer;
 			}

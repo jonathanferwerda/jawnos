@@ -13,6 +13,10 @@ use JawnOSTest;
 
 subs::preload('mms_list_check');
 subs::preload('controller_builder');
+# The group loop asks whether an address is one of the house's own lines, and
+# that module has to be loaded before the test stubs anything or loading it
+# later replaces the stubs.
+subs::preload('own_phone_number');
 
 { package FakeRows;
   sub new { my ($class, $rows) = @_; return bless { rows => $rows || [] }, $class; }
@@ -50,6 +54,7 @@ my $bridge = [];
 	local *subs::db_query = sub { return FakeRows->new([]) };
 	local *subs::mail_arrival = sub { push @arrivals, $_[0]; return $_[0] };
 	local *Manager::appointment_writer = sub { push @appointments, $_[1]; return { uuid => 'appt' } };
+	local *subs::own_phone_number = sub { return 0 };
 
 	# A group message from the phone: FROM is the sender the house files
 	# under, and the other three are TO/TO/CC - one named twice, the way a

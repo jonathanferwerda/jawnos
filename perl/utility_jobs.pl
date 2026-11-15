@@ -606,12 +606,15 @@ sub utility_functions() {
 
 		$gb::timeouts->{'telephone_check'}->{'subroutine'} = sub {
 			return 'telephone: not a mobile' unless $device eq 'mobile';
-			my ($contacts, $calls) = (0, 0);
+			my ($contacts, $calls, $lines) = (0, 0, 0);
 			eval {
 				$contacts = &subs::telephone_contacts_check() || 0;
 				$calls = &subs::telephone_call_log_check() || 0;
+				# the house's own numbers, so a group message can tell its own
+				# line from the other people on it
+				$lines = &subs::telephone_own_number_check() || 0;
 			};
-			return "telephone: $contacts contact change(s), $calls call(s)";
+			return "telephone: $contacts contact change(s), $calls call(s), $lines line change(s)";
 		};
 
 		$gb::timeouts->{'email_sender'}->{'subroutine'} = sub {

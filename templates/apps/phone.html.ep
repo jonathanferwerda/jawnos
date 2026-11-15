@@ -183,6 +183,16 @@
 	.phone_app_ringtone_row button { flex:0 0 auto; padding:8px 14px; border:1px solid var(--line);
 		border-radius:999px; background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font:inherit; }
 	.phone_app_ringtone_status { font-size:12px; color:var(--muted,#8e8e8e); min-height:16px; margin-top:8px; }
+	.phone_app_lines_list { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+	.phone_app_line_row { display:flex; gap:8px; align-items:center; padding:7px 10px; border:1px solid var(--line);
+		border-radius:9px; background:var(--panel); }
+	.phone_app_line_label { flex:1 1 auto; font-size:13px; opacity:0.75; text-transform:capitalize; }
+	.phone_app_line_number { font-variant-numeric:tabular-nums; }
+	.phone_app_line_remove { cursor:var(--jawnos-cursor-pointer, pointer); font-size:18px; line-height:1; padding:0 4px; opacity:0.65; }
+	.phone_app_line_input { padding:8px; border:1px solid var(--line); border-radius:9px; background:var(--panel);
+		color:inherit; font:inherit; min-width:0; }
+	#phone_app #phone_line_label { flex:1 1 40%; }
+	#phone_app #phone_line_number { flex:1 1 50%; }
 </style>
 
 <div id="phone_app" class="phone_app" style="padding:14px;">
@@ -195,6 +205,7 @@
 		<span class="phone_app_tab" pane="all" hint="All">All</span>
 		<span class="phone_app_tab" pane="dial" hint="Dial">Dial</span>
 		<span class="phone_app_tab" pane="ringtone" hint="Ringtone"><%= &subs::ui('Ringtone') %></span>
+		<span class="phone_app_tab" pane="lines" hint="Lines"><%= &subs::ui('Lines') %></span>
 	</div>
 	<div class="phone_app_status" id="phone_app_status">Idle</div>
 	<div class="phone_app_callerid_row" style="text-align:center;margin-bottom:10px;">
@@ -416,6 +427,35 @@
 				<button type="button" id="phone_ringtone_save" hint="Save"><%= &subs::ui('Save') %></button>
 			</div>
 			<div class="phone_app_ringtone_status" id="phone_ringtone_status"></div>
+		</div>
+	</div>
+
+	<%# Lines: the numbers this machine answers on. The phone's own SIM lines
+	    appear by themselves - the telephone poll asks the radio - while a VoIP
+	    line (Fongo, TextNow) is typed here, because another app keeps its number
+	    to itself and nothing on the phone may read it. %>
+	<div class="phone_app_pane" pane="lines">
+		<div class="phone_app_ringtone">
+			<div class="phone_app_ringtone_title" hint="Lines"><%= &subs::ui('Lines') %></div>
+			<div class="phone_app_ringtone_note"><%= &subs::ui('The numbers this device answers on. The phone finds its own SIM lines; a VoIP line is added here.') %></div>
+			<div class="phone_app_lines_list" id="phone_lines_list">
+				<% foreach my $line ( @{ $own_lines || [] } ) { %>
+					<div class="phone_app_line_row" label="<%= $line->{'label'} %>">
+						<span class="phone_app_line_label"><%= $line->{'label'} %></span>
+						<span class="phone_app_line_number"><%= $line->{'number'} %></span>
+						<span class="phone_app_line_remove" hint="Remove" label="<%= $line->{'label'} %>">×</span>
+					</div>
+				<% } %>
+				<% if (!scalar @{ $own_lines || [] }) { %>
+					<div class="phone_app_ringtone_status" id="phone_lines_empty"><%= &subs::ui('No lines yet.') %></div>
+				<% } %>
+			</div>
+			<div class="phone_app_ringtone_row">
+				<input type="text" id="phone_line_label" class="phone_app_line_input" placeholder="<%= &subs::ui('Name, such as textnow') %>">
+				<input type="text" id="phone_line_number" class="phone_app_line_input" placeholder="<%= &subs::ui('Number') %>" inputmode="tel">
+				<button type="button" id="phone_line_add" hint="Add"><%= &subs::ui('Add') %></button>
+			</div>
+			<div class="phone_app_ringtone_status" id="phone_lines_status"></div>
 		</div>
 	</div>
 
