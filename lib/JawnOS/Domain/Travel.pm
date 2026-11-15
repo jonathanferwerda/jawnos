@@ -45,16 +45,22 @@ sub travel_window {
 
 	my $start_age = $settings->{'start_time_ago'};
 	my $end_age = $settings->{'end_time_ago'};
-	if ( defined $start_age && $start_age =~ /^-?\d+(?:\.\d+)?$/ ) {
+	my $start_aged = defined $start_age && $start_age =~ /^-?\d+(?:\.\d+)?$/;
+	my $end_aged = defined $end_age && $end_age =~ /^-?\d+(?:\.\d+)?$/;
+	if ($start_aged) {
 		$start = $timestamp - $start_age;
 	}
-	elsif ( defined $settings->{'start_time'} && $settings->{'start_time'} =~ /^\d+$/ ) {
+	# A fixed moment is the window only when nothing here is an age. A house
+	# that edited Start after the fix carries an age on that field and an old
+	# fixed End from before it; letting that End through kept a stale window
+	# (25 days in one real case) while the Start already looked right.
+	elsif ( !$end_aged && defined $settings->{'start_time'} && $settings->{'start_time'} =~ /^\d+$/ ) {
 		$start = $settings->{'start_time'} + 0;
 	}
-	if ( defined $end_age && $end_age =~ /^-?\d+(?:\.\d+)?$/ ) {
+	if ($end_aged) {
 		$end = $timestamp - $end_age;
 	}
-	elsif ( defined $settings->{'end_time'} && $settings->{'end_time'} =~ /^\d+$/ ) {
+	elsif ( !$start_aged && defined $settings->{'end_time'} && $settings->{'end_time'} =~ /^\d+$/ ) {
 		$end = $settings->{'end_time'} + 0;
 	}
 

@@ -48,6 +48,23 @@ ok( &subs::travel_window_legacy({ start_time => $now - $hour }), 'a fixed moment
 ok( !&subs::travel_window_legacy({ start_time => $now - $hour, start_time_ago => $hour }), 'an age beside the moment is not' );
 ok( !&subs::travel_window_legacy({}), 'and no window is not' );
 
+# A half-migrated window: an age on Start, and a fixed End written before the
+# ages existed. The stale End must not keep the window stretched (one live house
+# showed Start 10h and End in 25 days after the first fix).
+my $mixed = &subs::travel_window({
+	settings  => { start_time_ago => $hour, end_time => $now + 26 * 24 * 3600 * 1000 },
+	timestamp => $now,
+	scope     => 'tenminute',
+});
+is( $mixed->{'start'}, $now - $hour, 'the aged start is used' );
+is( $mixed->{'end'},   $now + 10 * 60 * 1000, 'and the stale fixed end falls back to the scope' );
+my $mixed_other = &subs::travel_window({
+	settings  => { start_time => $now - $hour, end_time_ago => 0 },
+	timestamp => $now,
+	scope     => 'tenminute',
+});
+is( $mixed_other->{'end'}, $now, 'and a stale fixed start cannot stretch an aged end either' );
+
 # a window typed backwards is read in the order it lies
 my $backwards = &subs::travel_window({ settings => { start_time => $now, end_time => $now - $hour }, timestamp => $now });
 is( $backwards->{'start'}, $now - $hour, 'the earlier moment is the start' );
