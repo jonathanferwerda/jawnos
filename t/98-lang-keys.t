@@ -1,6 +1,7 @@
 # tests-for: perl/language.pl perl/language/*.pl
 # tests-for: public/js/manager/sound.js public/js/manager/taskbar_sound.js public/js/manager/taskbar_edit.js public/js/manager/power.js public/js/manager/keyboard.js
 # tests-for: public/js/manager/manager/10_appointment_edit.js templates/apps/controller.html.ep lib/JawnOS/Domain/WeatherAutomation.pm
+# tests-for: public/js/manager/editor.js public/js/manager/notes/02_categories.js
 # covers:    literal keys and the maps that build labels at runtime resolve to labels
 
 use strict;
@@ -124,6 +125,26 @@ cmp_ok(scalar(@dock_keys), '>=', 22, 'the dock menu keys are read');
 my %seen_dock;
 my @dock_missing = grep { !exists $catalog->{$_} } grep { !$seen_dock{$_}++ } @dock_keys;
 is_deeply(\@dock_missing, [], 'every dock menu key has a catalog entry');
+
+# Two more key-or-English wrappers: editorT(key, fallback) and
+# notesCategoryText(text). Their calls are English UI text today, so they take
+# the on-demand path; a key-shaped argument must be a real catalog key.
+my @wrapper_missing;
+my $wrapper_uses = 0;
+for my $spec (
+	[ 'public/js/manager/editor.js', qr/editorT\(/ ],
+	[ 'public/js/manager/notes/02_categories.js', qr/notesCategoryText\(/ ],
+) {
+	my ($file, $call) = @$spec;
+	my $js = read_file("$root/$file");
+	my @args = $js =~ /$call\s*(?:\x27|")([^\x27"]+)(?:\x27|")/g;
+	$wrapper_uses += scalar @args;
+	push @wrapper_missing,
+		map { "$file $_" } grep { looks_like_key($_) && !exists $catalog->{$_} } @args;
+}
+is_deeply(\@wrapper_missing, [],
+	'every key-shaped editor/notes wrapper argument has a catalog entry');
+cmp_ok($wrapper_uses, '>=', 8, 'the editor and notes wrapper calls are read');
 
 # The weather automation labels its measures through jawnosT too. The catalog is
 # English text today, and this keeps a key-shaped label honest if one is added.
