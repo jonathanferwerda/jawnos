@@ -8,7 +8,7 @@ our %topic;
 $topic{'appointments'} = {
 		'title' => 'Appointments', category => 'functions',
 		templates => [ 'templates/appointment_wrapper.html.ep', 'templates/apps/edit_app.html.ep', 'templates/apps/app_file.html.ep' ],
-		verified => '2026-11-07',
+		verified => '2026-11-15',
 		summary => 'The one record everything else hangs from.',
 		body => [
 			'An appointment is the atom of JawnOS: a timestamped record with a type, a status, a duration and an app-specific body. Files, invoices, measurements, notes and mail are all appointments under the hood, which is why they can refer to one another.',
@@ -89,7 +89,7 @@ $topic{'moves_ledger'} = {
 		related => [ 'warehouse', 'invoices_payments', 'budget' ]
 	};
 $topic{'transactions'} = {
-		title => 'Recording a transaction', category => 'functions', verified => '2026-11-02',
+		title => 'Recording a transaction', category => 'functions', verified => '2026-11-15',
 		summary => 'Enter what you spent or received from the record\'s own window.',
 		templates => [ 'templates/apps/app_details.html.ep', 'templates/apps/transaction/expense.html.ep', 'templates/apps/transaction/income.html.ep', 'templates/apps/transaction/transfer.html.ep', 'templates/apps/transaction/inventory.html.ep', 'templates/apps/transaction/models.html.ep', 'templates/apps/app_transaction.html.ep', 'public/js/manager/transaction.js' ],
 		body => [
@@ -144,7 +144,7 @@ $topic{'assistant'} = {
 $topic{'agents'} = {
 		title => 'Agents (associates and coding)', category => 'functions',
 		templates => [ 'public/js/manager/agents.js' ],
-		verified => '2026-11-02',
+		verified => '2026-11-15',
 		summary => 'Every Guide associate and Coding agent conversation, named and kept.',
 		body => [
 			'Double-press the Assistant button — the taskbar pin, the start menu\'s icon, or an associate\'s own corner icon — and the Agents list opens against the button it was pressed on: beneath it, or just above when there is no room below — or wherever you last left it, if you have dragged it. A double-press shows the list only — the chat panel itself waits for a single press. The list holds every conversation the Guide\'s associate and the Coding agent have had, newest first; a row whose panel is on screen says open, and the rest are history, re-opened with what was said replayed into them when pressed. The panels you left open come back after a page reload, and a coding run keeps going in the background while its panel is away. A panel is moved by its header, which wears the keyboard\'s grip - an open hand at rest, a closed one while dragging - and it reopens where you left it. It opens under the top edge — below the taskbar or the clothesline when one rides there — and is shortened to fit a small screen, so its header, with the close, is always in reach. Drag its edge or corner to size it, and the size is remembered on this device beside its place.',
@@ -164,7 +164,7 @@ $topic{'platform'} = {
 		title => 'Platform (AI providers)', category => 'functions',
 		templates => [ 'templates/configure/plat_setting_list.html.ep' ],
 		summary => 'Choose the model each assistant uses, test it, add provider keys, and teach the Guide runtime commands.',
-		verified => '2026-11-10',
+		verified => '2026-11-15',
 		body => [
 			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs. On this machine {{live:models}} assistant roles have a model set, and the local Ollama is {{live:ollama}}.',
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',

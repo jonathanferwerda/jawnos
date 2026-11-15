@@ -8,7 +8,7 @@ $topic{'people'} = {
 		title => 'People', category => 'apps', app => 'people',
 		templates => [ 'templates/apps/people.html.ep', 'templates/apps/people/body.html.ep', 'templates/apps/people_person.html.ep', 'public/js/manager/people.js' ],
 		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Save card here', 'Show QR', 'Write to NFC tag', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh', 'Publish', 'Published', 'Upload a logo', 'Open their page' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'The house crest, and the people the house knows.',
 		body => [
 			'People holds the house crest: the one hand-drawn picture that names it to other houses. The picture is what a person recognises; it is not the proof. A house key signs a record that pins the drawing\'s hashes, and the short fingerprint on the card is what another house compares. Keep the original drawing - the scan is a copy.',
@@ -85,7 +85,7 @@ $topic{'notes'} = {
 $topic{'tasks'} = {
 		title => 'Tasks', category => 'apps', app => 'tasks',
 		summary => 'Nested checklists with colour, priority, renewal and budget.',
-		verified => '2026-10-16',
+		verified => '2026-11-15',
 		body => [
 			'Tasks is a nested checklist. Each item carries a colour, a priority, a renewal interval and a budget, so a task can repeat on its own and keep its own tally.',
 			'Ticking an item off can record the matching appointment, so doing the thing and logging the thing are one action.',
@@ -118,7 +118,7 @@ $topic{'travel'} = {
 		title => 'Travel', category => 'apps', app => 'travel',
 		templates => [ 'templates/travel/travel.html.ep', 'public/js/manager/travel.js', 'public/js/manager/mapengine.js', 'public/js/manager/mapmarkers.js', 'public/js/manager/continentprinter.js' ],
 		controls => [ 'Configure', 'Now', 'Delete', 'Guess the gaps' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'A pannable map of every map you have measured, with your history on it.',
 		body => [
 			'Travel logs where you have been and turns it into history: routes, distance covered, and speed. It draws on the fixes the phone feeds in as well as anything logged by hand, and lays them on a map.',
@@ -154,7 +154,7 @@ $topic{'travel'} = {
 $topic{'relational'} = {
 		title => 'Relational', category => 'apps', app => 'relational',
 		templates => [ 'templates/relational/workspace.html.ep', 'public/js/manager/relational.js' ],
-		verified => '2026-10-27',
+		verified => '2026-11-15',
 		summary => 'The social constructs, and the relationships between them.',
 		body => [
 			'Relational is where the house\'s social structure is made: people, teams, clubs, communities, projects, institutions, governments, corporations, places, vendors and events. The window is a workspace. The left column is the library of constructs, one tab per kind, with a search and a New name box; the right side is the construct you are working on, with one drop group for each kind it can belong to.',
@@ -187,7 +187,7 @@ $topic{'cards'} = {
 	};
 $topic{'twirl'} = {
 		title => 'Twirl', category => 'apps', app => 'twirl',
-		verified => '2026-11-05',
+		verified => '2026-11-15',
 		templates => [ 'templates/twirl.html.ep', 'public/js/manager/twirl.js' ],
 		summary => 'A falling-block puzzle in a ten-by-twenty well.',
 		body => [
@@ -215,7 +215,7 @@ $topic{'controller'} = {
 	};
 $topic{'games'} = {
 	title => 'Games', category => 'apps', app => 'games',
-	verified => '2026-11-12',
+	verified => '2026-11-15',
 	templates => [ 'templates/apps/games.html.ep', 'public/js/manager/twirl.js' ],
 	summary => 'The games launcher: Cards and Twirl, and an emulated shelf that installs its emulators, reads the ROMs under ~/roms, filters them by system, fetches their covers and runs one outside the house view.',
 	body => [
@@ -231,7 +231,7 @@ $topic{'games'} = {
 };
 $topic{'budget'} = {
 		title => 'Accounting', category => 'apps', app => 'budget',
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		templates => [ 'templates/budget.html.ep', 'templates/budget_reconcile.html.ep', 'templates/budget/runway.html.ep', 'public/js/manager/budget.js' ],
 		summary => 'Accrual income statement and balance sheet, cash flow, runway, account activity, trial balance, receivables, scheduled payables, the ledger and bank reconciliation.',
 		body => [

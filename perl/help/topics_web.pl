@@ -7,7 +7,7 @@ our %topic;
 $topic{'internet'} = {
 		title => 'Internet', category => 'apps', app => 'internet',
 		templates => [ 'templates/internet/internet.html.ep', 'templates/web/web.html.ep', 'public/js/manager/internet.js', 'public/js/manager/page_agent.js' ],
-		verified => '2026-11-04',
+		verified => '2026-11-15',
 		summary => 'Web and Browse: saved pages with measures, and a real browser that counts site time.',
 		body => [
 			'Internet has two components. Web holds the pages the house fetched; each can be opened, or measured with the Measures tool. Browse opens a real browser in its own window on a computer (or its own screen on a phone), because a live page cannot run inside the manager window. The tab you used last is the tab Internet opens, so Web and Browse do not keep switching places.',
@@ -65,7 +65,7 @@ $topic{'terminal'} = {
 $topic{'network'} = {
 		title => 'Network', category => 'apps', app => 'network',
 		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js', 'public/js/manager/network/02_tabs_bluetooth_remote.js', 'public/js/manager/taskbar_network.js', 'scripts/jawnos_network.pl', 'scripts/jawnos_bluetooth.pl' ],
-		verified => '2026-11-14',
+		verified => '2026-11-15',
 		summary => 'Interfaces, Wi-Fi, VPN, Bluetooth, the machines on the mesh, the remote machines, and the Controller.',
 		body => [
 			'Network is the app for the connection itself. It opens from the start menu with four tabs: Network, Bluetooth, Remote Machines and Controller. The tab you used last is remembered, and the Refresh button and the status line stay in the same place above them.',
@@ -104,7 +104,7 @@ $topic{'camera'} = {
 		title => 'Camera', category => 'apps', app => 'camera',
 		'templates' => [ 'templates/apps/camera.html.ep', 'public/js/manager/camera.js' ],
 		controls => [ 'Take a photo', 'Record a video', 'Unclaimed media', 'Select all', 'Approved' ],
-		verified => '2026-11-01',
+		verified => '2026-11-15',
 		summary => 'The device camera and video recorder, plus the pool of unclaimed media waiting to be filed.',
 		body => [
 			'Camera takes a photo or records a video. In the app it opens the device camera and its video recorder (window.JawnCamera), so you get a viewfinder you can see and the camera\'s own processing. On the desktop and in a browser it uses the machine\'s own webcam through getUserMedia.',

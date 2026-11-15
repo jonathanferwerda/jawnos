@@ -44,7 +44,7 @@ $topic{'chat'} = {
 $topic{'email'} = {
 		title => 'Email', category => 'apps', app => 'email',
 		templates => [ 'templates/apps/email.html.ep', 'templates/mail/email_rail.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_rows.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/email.js' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'A mail client: folders, a paged and searchable list, and the letter or the draft in the pane.',
 		body => [
 			'Email is the mailbox\'s mail half as an app of its own: it speaks IMAP and SMTP directly, so mail arrives on the desktop, and a new message raises the dot in the start menu.',
@@ -71,7 +71,7 @@ $topic{'email'} = {
 $topic{'mailbox'} = {
 		title => 'Mailbox', category => 'apps', app => 'mailbox',
 		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'The whole mailbox in one window — email, sms, lora, the dial, the list, pass threads and the pen.',
 		body => [
 			'Mailbox speaks IMAP and SMTP directly. Mail arrives on the desktop rather than in a separate client: a new message raises the mailbox dot in the start menu and, if no mailbox is watching, a notification.',
@@ -92,7 +92,7 @@ $topic{'mailbox'} = {
 $topic{'pen'} = {
 		title => 'Pen', category => 'apps', app => 'pen',
 		templates => [ 'templates/apps/pen.html.ep', 'public/js/manager/pen.js' ],
-		verified => '2026-11-02',
+		verified => '2026-11-15',
 		summary => 'A conversation that remembers, and can make pictures, sounds and videos.',
 		body => [
 			'Pen is the house\'s general chat, kept apart from the mailbox: the window it opens is the mailbox\'s pen section drawn on its own, so the conversation picker, the thread and the live socket are the same ones, but it carries no section switcher - the pen is the only section it owns. Each conversation keeps its own thread, so a new chat starts clean and an old one carries on where it stopped.',

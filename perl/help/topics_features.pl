@@ -9,7 +9,7 @@ $topic{'welcome'} = {
 		title => 'Welcome to JawnOS', category => 'features',
 		templates => [ 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
 		controls => [ 'Take the tour' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'A short tour of the desktop: windows, the start menu and System page, the dock, Configure and this Guide.',
 		body => [
 			'JawnOS is a desktop made of apps. Everything you open is a window: drag it by its title bar, pull its edge to resize it, and use the buttons in the title bar to minimise, maximise or close it. The window you last touched comes to the front. Press the question mark in a window\'s title bar to ask this Guide about that window, or press F1 to read the help topic for whatever is in front.',
@@ -35,7 +35,7 @@ $topic{'welcome'} = {
 $topic{'voice'} = {
 		title => 'Voice and wake words', category => 'features',
 		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'Speak to the watch or t-deck; it listens for a phrase and files the rest.',
 		body => [
 			'A watch or a t-deck can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
@@ -73,7 +73,7 @@ $topic{'windows'} = {
 		related => [ 'taskbar', 'start_menu', 'appointment_windows', 'help_app' ]
 	};
 $topic{'appointment_windows'} = {
-		'title' => 'Appointment windows', category => 'features', verified => '2026-11-10',
+		'title' => 'Appointment windows', category => 'features', verified => '2026-11-15',
 		summary => 'The window that gathers everything about one record.',
 		templates => [ 'templates/appointment_wrapper.html.ep', 'templates/pos/attributes.html.ep', 'public/js/manager/attributes.js' ],
 		body => [
@@ -151,7 +151,7 @@ $topic{'start_menu'} = {
 	};
 	$topic{'dock'} = {
 		title => 'The dock', category => 'features',
-		verified => '2026-11-09',
+		verified => '2026-11-15',
 		summary => 'A second bar for the keyboard panels and the apps you keep at hand.',
 		templates => [ 'templates/pseudonyms.html.ep', 'public/js/manager/keyboard.js' ],
 		body => [
@@ -175,7 +175,7 @@ $topic{'start_menu'} = {
 	};
 $topic{'clothesline'} = {
 		title => 'The clothesline', category => 'features', app => 'clothesline',
-		verified => '2026-10-22',
+		verified => '2026-11-15',
 		summary => 'A rail that hangs the routines belonging to this hour.',
 		body => [
 			'The clothesline runs along the top of the desktop and hangs the routines and rituals that belong at the current hour, in the order they usually happen.',
@@ -189,7 +189,7 @@ $topic{'clothesline'} = {
 $topic{'search'} = {
 		title => 'Search', category => 'apps', app => 'search',
 		templates => [ 'templates/apps/search.html.ep', 'public/js/manager/search.js' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'One window for the house, the web and the Guide, with a tab for each.',
 		body => [
 			'The search box in the start menu, the taskbar or the dock still filters apps as you type. The magnifier beside it opens Search, the app: it keeps your words and lets you choose what to search.',
@@ -276,6 +276,7 @@ $topic{'utility_controller'} = {
 			'Below the wake switch, PPH comparator groups the battery history by which lock was in force when each sample was taken - Scheduled wake or Permanent lock - and works out the drain in percent per hour for each. It needs a few hours of discharging samples in each state before it prints a number; until then it reads not enough samples. Points is the number of readings used, Hours the span they cover. The readings come from the history the manager already keeps, so looking at the table does not itself keep the phone awake.',
 			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, the remote relay (which hands a change queued with no browser behind it on to the other machines), the code sync (git fetch from the authority or a peer, every thirty minutes by default), navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop), the worktree sweep (it deletes the scratch copy an agent worked in once that work is on the trunk, and leaves anything unfinished alone) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',
 			'It is per machine: an interval or a switch set here applies to the machine whose card it is on, so one job can run every two minutes on the phone and hourly on the server.',
+			'Workers, above the Utility controller, sets how many prefork workers each server keeps running and the most it may grow to. Each server has a Workers box, a Most box and a Dynamic or Fixed word. A Most above the resting count makes the pool dynamic: it adds a worker while every one is busy and retires the extra when the pool goes quiet. The WebSocket, ticket and alarm servers and the terminal socket channel usually keep one; Main, watch and teletype grow while every worker is busy. Changes take effect on the next restart, and a server this machine never starts ignores its row.',
 			'The Sys panel also shows the house at a glance, above the Utility controller: one row per machine, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
 			'Below it is the API balances table, and it lists only the providers with an account on file — a key or account entered under Configure → Plat, under Provider access. For each of those it says what is left, where the provider reports it: OpenRouter and DeepSeek do; the rest — Ollama, Cloudflare, OpenAI, Anthropic, Google, xAI, Mistral and Groq — have no balance endpoint and read “no balance API”. A provider with no account entered is not listed. The read happens in the background every ten minutes, so the page never waits.',
 			'Under the table, Balance drop is a chart of how quickly each balance is falling. The same ten-minute background read keeps a rolling month of samples, so the Last Hour, Last Day, Last Week and Last Month buttons redraw from what is already stored and never make another provider call. A month of readings is thinned as it ages — every reading for the last day, one an hour out to the week, one per three hours beyond — so a month fits in the panel. The provider dropdown beside the title chooses which account\'s line and bars are shown. The ‹ and › arrows at the right of the balance step the chart one window at a time: left shows the period before, then the one before that, from the stored samples, and right steps back toward now. Stepping right past now draws the runway, projecting the balance forward at the same recent burn rate until it reaches zero; a future period has no bars to press. The figure beneath each line is the pace in money per day — Drop, or Holding steady when it has not moved. A top-up is not a rise and not a burn: only the falls between readings are counted as spending, so a week that holds a top-up still reports the drop rate either side of it; the top-up itself is named under the line with its amount and time. Beside the pace are two lines — the runway (about how long the balance lasts at that rate) and the projected spend per day, week and month, plus a price per thousand tokens when the ledger has counted the traffic. Beneath them, Time in use is the span of the call sessions in this window — calls no more than fifteen minutes apart belong to one session — so it measures the hours you actually spent with the agents rather than every hour of the calendar, and the line gives the money, and the tokens, per hour in use. A fresh install reads Collecting samples until a few readings are in. Only providers with a balance endpoint have a line. Every amount in the table and the chart carries a currency dropdown: the house currency (Configure → Misc) is selected by default, the amount\'s own currency is the second choice, and the rest of the currencies with a loaded rate follow. Picking another converts that amount and its pace in place, at today\'s rate.',
@@ -290,17 +291,18 @@ $topic{'utility_controller'} = {
 			'Tick the switch to run a job, and set its interval in the box beside it (for example 2m).',
 			'Watch the last-run time and the good/bad dot to see whether it is keeping up.',
 			'In the Sys panel, read the house table and the API balances to see the AI work and what is left on each registered account.',
+			'Under Workers, set each server\'s resting count and its most, and read Dynamic or Fixed; the change lands on the next restart.',
 			'Under API balances, press Last Hour, Last Day, Last Week or Last Month to see how the balance has been falling, how long it will last at that rate, what it is costing per day, week and month, and how long the agents were actually in use and what each hour in use cost.',
 			'In the same chart, press Last Hour, Last Day, Last Week or Last Month to change what the bars show, and press a bar to see that period\'s drop, its share of the window and the tokens used in it.', 
 		],
-		prompt => 'Explain the Utility controller in Configure → Sys: a bar across the top names every machine in the house (this one first, then the peers by name) and scrolls sideways; pressing a name shows that machine\'s card, one at a time. Each background job has a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another; a peer\'s switches and the intervals of its jobs outside a pool share the utility record, so they can be set from any machine and the peer picks the change up on its next sync. The Batch pools card holds pools of jobs - Navigation (four minutes), Fast (fifteen), Slow (one hour), Daily - and a job dropped into a pool runs on the pool\'s pace instead of its own interval, so the pool wakes together. A job outside every pool keeps its own interval. Pools can be added, renamed, retimed and removed; removing one returns its jobs to the regular bin. The Crew section below the card is not a job list: it is what this machine can do and what the peers have advertised, and it is what decides where a job runs. Above the Utility controller, Wake schedule releases the phone\'s CPU as soon as a scheduled wake has finished its work, and the PPH comparator compares battery drain between the scheduled wake and the old permanent lock. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, which lists only the providers with an account registered under Configure → Plat; only OpenRouter and DeepSeek report a balance and the rest read no balance API. Balance drop charts the fall of each balance as a line over the last hour, day, week or month, with the same window drawn below as bars - two minutes apiece for the hour, one per hour for the day, one per day for the week and the month - and pressing a bar reports that period\'s drop, its share of the window, the tokens the house used on that provider in it and the model behind most of them. Below the bars, By role groups the window\'s tokens by the app that asked, with each app\'s time in use, share of the money and cost per hour in use, and the accounts\' pace for the window is compared. Balance alerts, under the chart, writes one Handbook note when an hour costs more than the amount set or the runway drops under the days set. Do not invent job names beyond the ones listed.',
+		prompt => 'Explain the Utility controller in Configure → Sys: a bar across the top names every machine in the house (this one first, then the peers by name) and scrolls sideways; pressing a name shows that machine\'s card, one at a time. Each background job has a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another; a peer\'s switches and the intervals of its jobs outside a pool share the utility record, so they can be set from any machine and the peer picks the change up on its next sync. The Batch pools card holds pools of jobs - Navigation (four minutes), Fast (fifteen), Slow (one hour), Daily - and a job dropped into a pool runs on the pool\'s pace instead of its own interval, so the pool wakes together. A job outside every pool keeps its own interval. Pools can be added, renamed, retimed and removed; removing one returns its jobs to the regular bin. The Crew section below the card is not a job list: it is what this machine can do and what the peers have advertised, and it is what decides where a job runs. Workers, above the Utility controller, sets each server\'s resting prefork worker count and the most it may grow to; a maximum above the resting count makes the pool dynamic, and the change applies on the next restart. Above the Utility controller, Wake schedule releases the phone\'s CPU as soon as a scheduled wake has finished its work, and the PPH comparator compares battery drain between the scheduled wake and the old permanent lock. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, which lists only the providers with an account registered under Configure → Plat; only OpenRouter and DeepSeek report a balance and the rest read no balance API. Balance drop charts the fall of each balance as a line over the last hour, day, week or month, with the same window drawn below as bars - two minutes apiece for the hour, one per hour for the day, one per day for the week and the month - and pressing a bar reports that period\'s drop, its share of the window, the tokens the house used on that provider in it and the model behind most of them. Below the bars, By role groups the window\'s tokens by the app that asked, with each app\'s time in use, share of the money and cost per hour in use, and the accounts\' pace for the window is compared. Balance alerts, under the chart, writes one Handbook note when an hour costs more than the amount set or the runway drops under the days set. Do not invent job names beyond the ones listed.',
 		related => [ 'crew', 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
 	};
 $topic{'crew'} = {
 		title => 'Crew', category => 'features',
 		templates => [ 'perl/crew.pl', 'templates/configure/utility_controller.html.ep', 'templates/configure/plat_setting_list.html.ep' ],
 		controls => [ 'This machine', 'Peers', 'Advertise now', 'Processor cores', 'One-minute load average', 'Free and total memory', 'Job kinds this machine can run', 'Peer machine', 'Peer load' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'What each machine in the house can do, and where a job is sent to run.',
 		body => [
 			'The Crew is the house\'s account of its own machines. Each one advertises what it can do - processor cores, one-minute load, memory, free disk, operating system and architecture, battery state when the hardware reports one, the AI models its local Ollama lists, and the tools it has such as a browser, ffmpeg, tesseract and whisper - and the house keeps the most recent advert from every reachable peer. Configure → Sys → Crew shows this machine\'s own facts first, then one line per peer with its load, its model count and the job kinds it can take. Advertise now asks this machine to re-read its facts and pulls every reachable peer\'s advert in at once, instead of waiting for the five-minute pass.',
@@ -322,7 +324,7 @@ $topic{'crew'} = {
 $topic{'navigation'} = {
 		title => 'Navigation (location logging)', category => 'features',
 		templates => [ 'templates/appointment_details.html.ep', 'templates/appointment_wrapper.html.ep', 'templates/start_menu/start_menu.html.ep', 'public/js/manager/travel.js' ],
-		verified => '2026-11-09',
+		verified => '2026-11-15',
 		summary => 'JawnOS records where a device is on a schedule from its own GPS, screen on or off, and never from the network.',
 		body => [
 			'Navigation is the autonomous location log. On a handheld the Android app runs a GPS foreground service: it reads the GPS provider and nothing else, and writes each fix to a small file the manager reads. The navigation utility takes that fix once per navigation interval - four minutes by default, set in Configure → Sys, whether or not the app is open and whether or not the screen is on - and writes it down as the machine\'s current position. The service is a location foreground service, so Android wakes it when a fix arrives; the phone is not held awake between fixes. The app also arms a short scheduled wake each interval so the Perl tree can run its due utilities, then releases the CPU again.',

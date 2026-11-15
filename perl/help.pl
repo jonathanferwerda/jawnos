@@ -555,9 +555,14 @@ sub audit {
 		}
 		my $v = $t->{'verified'} || $verified_default;
 		if ($v && @files) {
-			open my $fh, '-|', 'git', 'log', '--oneline', "--since=$v", '--', @files or next;
-			my @commits = <$fh>;
+			# `verified` is a day, not a moment: a commit made on the day a topic
+			# was vetted does not make it stale, or a same-commit vetting could
+			# never clear its own topic. Compare the commit's day against it.
+			open my $fh, '-|', 'git', 'log', '--format=%cs', "--since=$v", '--', @files or next;
+			my @days = <$fh>;
 			close $fh;
+			chomp @days;
+			my @commits = grep { $_ gt $v } @days;
 			push @out, [ 'stale', $id, "source changed since it was vetted on $v (" . scalar(@commits) . ' commit(s))' ] if @commits;
 		}
 	}

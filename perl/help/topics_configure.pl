@@ -7,7 +7,7 @@ our %topic;
 $topic{'configure'} = {
 		'title' => 'Configure', category => 'apps', app => 'configure',
 		templates => [ 'templates/configure/configure.html.ep', 'templates/configure/misc_setting_list.html.ep', 'templates/configure/device_lister.html.ep', 'templates/configure/device_lister/body.html.ep', 'templates/configure/device_lister/join_house.html.ep', 'templates/configure/plat_setting_list.html.ep', 'templates/configure/qa_panel.html.ep', 'templates/configure/map_setting_list.html.ep', 'templates/configure/dns_clients.html.ep', 'public/js/manager/configure.js', 'public/js/manager/configure/02_remote_devices.js', 'public/js/manager/configure/07_qa_nightly.js', 'templates/configure/appointment_list.html.ep' ],
-		verified => '2026-11-14',
+		verified => '2026-11-15',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (themes, colour schemes, font, texture, icon set, cursor set, zoom, bar heights, the window border and the button border), the device lister, the utility controller and the remote-machine and mesh settings all live here. This copy is JawnOS {{live:version}}, running on {{live:machine}}.',
@@ -93,7 +93,7 @@ $topic{'privacy'} = {
 $topic{'translation'} = {
 		title => 'Translation', category => 'features',
 		templates => [ 'templates/configure/misc_setting_list.html.ep', 'public/js/translate.js', 'public/js/manager/help.js' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'Translate text or the visible window on demand with the Guide\'s model.',
 		body => [
 			'JawnOS ships English plus fifteen interface languages (Mandarin, French, Spanish, German, Portuguese, Hindi, Arabic, Bengali, Russian, Japanese, Punjabi, Indonesian, Korean, Italian and Turkish). The Language selector at the top of Configure -> Misc changes the saved interface language, and the page reloads in it.',
@@ -112,7 +112,7 @@ $topic{'translation'} = {
 $topic{'security'} = {
 		'title' => 'Security', category => 'apps', app => 'security',
 		templates => [ 'templates/security.html.ep', 'templates/padlock.html.ep', 'templates/padlock_key.html.ep', 'templates/layouts/padlock_key.html.ep', 'templates/locked.html.ep', 'templates/locked_screen.html.ep', 'templates/layouts/locked.html.ep', 'templates/app_required.html.ep', 'public/js/manager/security.js' ],
-		verified => '2026-10-28',
+		verified => '2026-11-15',
 		summary => 'Passwords, pseudonyms, screen lock, the gate and secrets.',
 		body => [
 			'Security gathers the safety tools: password and pseudonym generation, QR codes, encryption helpers, screen locking and a keyring-style secret store.',
@@ -139,7 +139,7 @@ $topic{'security'} = {
 $topic{'box_office'} = {
 		title => 'Box Office', category => 'apps', app => 'box_office',
 		templates => [ 'templates/box_office.html.ep', 'templates/store/ticket_request.html.ep', 'public/js/manager/manager.js', 'public/js/homepage.js' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'Issue, suspend, renew and revoke passes.',
 		body => [
 			'The Box Office manages passes — the single-use links that log a visitor in. The Passes tab opens on an issue form: choose who the pass is for, the app it opens, its privilege, an optional project and the warranty, then press Issue pass. Nothing has to be dragged onto a window any more; the app is a field on the form.',
@@ -169,7 +169,7 @@ $topic{'box_office'} = {
 $topic{'handbook'} = {
 		title => 'Handbook', category => 'apps', app => 'handbook',
 		templates => [ 'templates/handbook/handbook.html.ep', 'templates/handbook/today.html.ep' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'The day as a journal, and chaptered notes about the system itself.',
 		body => [
 			'Handbook opens on Today: the day read as a journal. It gathers what the house already knows - what money moved and what bills are due, the shape of the day, the latest measures and notes, the projects that have moved recently, and the people named in the day\'s plans - so the day can be read in one place.',
@@ -192,7 +192,7 @@ $topic{'handbook'} = {
 $topic{'embedded'} = {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep', 'templates/embedded/body.html.ep' ],
-		verified => '2026-11-08',
+		verified => '2026-11-15',
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',

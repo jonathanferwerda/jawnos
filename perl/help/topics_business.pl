@@ -34,7 +34,7 @@ $topic{'store'} = {
 	};
 $topic{'crypto'} = {
 		title => 'Crypto wallets and rates', category => 'functions',
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		templates => [ 'templates/configure/pay_setting_list.html.ep', 'templates/configure/crypto_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/store/crypto_payment.html.ep', 'templates/store/printer/header.html.ep', 'templates/store/pay_box.html.ep', 'templates/store/list.html.ep', 'public/js/manager/configure.js', 'public/js/manager/transaction.js', 'public/js/store.js' ],
 		summary => 'Wallet accounts that hold a coin, per-invoice receiving addresses from an xpub, live fiat and coin rates, and cost or market valuation.',
 		body => [
@@ -68,7 +68,7 @@ $topic{'crypto'} = {
 		related => [ 'budget', 'store', 'configure' ]
 	};
 $topic{'pay'} = {
-		title => 'Taking payment online', category => 'functions', verified => '2026-10-30',
+		title => 'Taking payment online', category => 'functions', verified => '2026-11-15',
 		templates => [ 'templates/configure/pay_setting_list.html.ep', 'templates/configure/crypto_setting_list.html.ep', 'templates/store/pay_box.html.ep', 'templates/store/printer/header.html.ep', 'templates/pay/message.html.ep', 'templates/pay/return.html.ep', 'public/js/manager/configure.js' ],
 		summary => 'Stripe, Square, PayPal and Interac e-Transfer on a public invoice, beside the crypto wallets they share a page with.',
 		body => [
@@ -98,7 +98,7 @@ $topic{'pay'} = {
 	};
 $topic{'warehouse'} = {
 		title => 'Warehouse', category => 'apps', app => 'warehouse',
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'Money and goods tracked per place.',
 		body => [
 			'Warehouse tracks stock per place: what is where and how much of it. Packaging carries real quantities (a carton of twelve, a box of nails by weight), and shelf life means expired stock is swept up on its own.',
@@ -119,7 +119,7 @@ $topic{'warehouse'} = {
 	};
 $topic{'market'} = {
 		title => 'Market', category => 'apps', app => 'market',
-		'verified' => '2026-10-30',
+		'verified' => '2026-11-15',
 		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js', 'public/js/manager/market/01_tabs_and_receipts.js' ],
 		summary => 'The shopping list and the shopping run.',
 		body => [

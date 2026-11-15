@@ -9,7 +9,7 @@ $topic{'folders'} = {
 		'title' => 'Folders', category => 'apps', app => 'folders',
 		templates => [ 'templates/folders/folders.html.ep', 'templates/folders/context.html.ep', 'templates/folders/properties.html.ep', 'templates/folders/dialog_box.html.ep', 'templates/folders/app_picker.html.ep', 'templates/folders/cloud_sync.html.ep', 'templates/folders/cloud_list.html.ep', 'public/js/manager/folders.js', 'public/js/manager/desk.js' ],
 		summary => 'Browse, manage, seal and play with your files.',
-		verified => '2026-11-10',
+		verified => '2026-11-15',
 		body => [
 			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
 			'The toolbar carries Sidebar, Home, Back, Forward, Up and Refresh, a clickable breadcrumb back to Home, the machine chooser, and a button that switches the listing between a grid of icons and a list showing each item\'s type, size and date. Back and Forward walk the folders already visited (Alt+Left and Alt+Right do the same), and the path can be typed instead: press the small button beside the breadcrumb, or Ctrl+L, and Enter to go. The breadcrumb and the window\'s title bar read each folder in the house\'s own words - underscores as spaces and each word capitalised - while every command still works on the real path and name; typing a path shows the real one.',
@@ -56,7 +56,7 @@ $topic{'folders'} = {
 $topic{'clock'} = {
 		title => 'Clock', category => 'apps', app => 'clock',
 		templates => [ 'templates/apps/clock.html.ep', 'public/js/manager/clock.js', 'templates/manager.html.ep' ],
-		verified => '2026-11-14',
+		verified => '2026-11-15',
 		summary => 'Alarms, a stopwatch, timers, world clocks, the time machine and sessions, with alarms and timers that can start and stop appointments.',
 		body => [
 			'The Clock app has six faces. Alarm holds up to ten alarms, each with a time, a name, an optional sound and a linked appointment. Each alarm is a folded row: the strip shows its time, its name and the machines that carry it as pills, with the on/off switch at its end. Press the strip (or the arrow) to open the alarm and see the editors - the time and name, the days, the next run, the sound and Play mode - and press it again to fold it away; only one alarm is open at a time. Stopwatch counts up with laps. Timer holds up to ten countdowns, and several can run at once. World Clock shows the local time beside any time zones you add. Time machine carries the desk to another time, and Sessions is the marker room\'s playbook and history.',
@@ -101,7 +101,7 @@ $topic{'gallery'} = {
 		'title' => 'Gallery', category => 'apps', app => 'gallery',
 		templates => [ 'templates/apps/gallery.html.ep', 'public/js/images.js' ],
 		controls => [ 'Albums', 'All photos', 'Search', 'Configure', 'Order', 'Archives', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'Full screen', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
-		verified => '2026-11-05',
+		verified => '2026-11-15',
 		summary => 'Browse your photos and videos by album, in a grid, or one at a time.',
 		body => [
 			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
@@ -124,7 +124,7 @@ $topic{'gallery'} = {
 	};
 $topic{'marker'} = {
 		title => 'Marker', category => 'apps', app => 'marker',
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'A layered paint board for drawing and annotation.',
 		body => [
 			'Marker is a layered paint board with pencil, paintbrush, spray, fill and matching erase tools, plus undo and redo, zoom and pan.',
@@ -141,7 +141,7 @@ $topic{'studio'} = {
 		title => 'Studio', category => 'apps', app => 'studio',
 		templates => [ 'templates/studio/studio.html.ep', 'public/js/manager/studio.js' ],
 		summary => 'A multitrack audio studio with takes and a pedalboard.',
-		verified => '2026-10-28',
+		verified => '2026-11-15',
 		body => [
 			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
 			'The knobs and pedal backdrops follow the selected icon set, so the mixer wears the same finish as the rest of the desk.',
@@ -159,7 +159,7 @@ $topic{'studio'} = {
 $topic{'synth'} = {
 		title => 'Synth', category => 'apps', app => 'synth',
 		summary => 'A polyphonic synthesiser with 88 keys, MIDI, and a computer-keyboard mode.',
-		verified => '2026-10-16',
+		verified => '2026-11-15',
 		body => [
 			'Synth is a polyphonic software synthesiser. It plays from the on-screen keys (a full 88-key range, A0 to C8, that scrolls sideways), a connected USB MIDI keyboard, or your computer keyboard. It shares the studio\'s audio engine, so it can be routed into a channel and recorded like any other source.',
 			'Its voices are two oscillators (plus a noise transient) through a resonant filter, each with its own envelope and a shared LFO, or a plucked-string voice that gives a convincing piano, harpsichord or guitar without any samples; a harder strike is brighter, not just louder. The sound library is twelve instruments - Acoustic Piano, Electric Piano, Organ, Strings, Brass, Woodwind, Guitar & Plucked, Bells & Mallets, Bass, Lead, Pad and Synth Poly - each with twenty sounds, the most popular first.',
@@ -180,7 +180,7 @@ $topic{'music'} = {
 		'title' => 'Music', category => 'apps', app => 'music',
 		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/audio.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/apps/video/markup.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization', 'Volume normalization', 'Remote audio format', 'Sync offset', 'Me audio delay', 'Remote delay', 'Left speaker', 'Stereo', 'Right speaker', 'Video enhancement', 'Sharpness', 'Quality', 'Frame rate', 'Video status' ],
-		verified => '2026-11-05',
+		verified => '2026-11-15',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
@@ -226,7 +226,7 @@ $topic{'music'} = {
 	};
 $topic{'video'} = {
 		title => 'Video', category => 'apps', app => 'video',
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'Play video from your media folders.',
 		body => [
 			'Video plays your files in the window. Playback quality is the browser\'s (or, in the desktop app, GStreamer\'s) — the desktop app page covers the hardware-decode setup that keeps HD smooth.'
@@ -260,7 +260,7 @@ $topic{'ide'} = {
 		title => 'IDE', category => 'apps', app => 'ide',
 		templates => [ 'templates/apps/coding_chat.html.ep', 'public/js/manager/coding.js' ],
 		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
-		verified => '2026-11-02',
+		verified => '2026-11-15',
 		body => [
 			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.',
 			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate, and it reopens where you left it. A run keeps going in its own process: reloading the page or restarting the tree does not lose it, the panel picks the run back up when it returns, and stop in its bar asks it to finish the step it is on. Beside each step, thinking opens the model\'s working for that turn, the answer is written into the panel as it arrives, and the foot of the log says what the run is doing now. A task can also be handed to a subagent: it investigates or makes an edit inside the paths it is given, reports back, and never ships - the finishing routine stays with the agent you gave the task to. The subagent limit is set beside the Coding model in Configure → Plat → Coding: ten by default, and zero turns subagents off. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the manager\'s scripts or its shell asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it). Double-press the Assistant button for the Agents list: every coding conversation and guide associate, named, with history a press away — and the panels you left open come back with it.',
@@ -281,7 +281,7 @@ $topic{'ide'} = {
 $topic{'weather'} = {
 		title => 'Weather', category => 'apps', app => 'weather',
 		templates => [ 'templates/apps/weather.html.ep', 'templates/apps/weather/style.html.ep', 'templates/apps/weather/now.html.ep', 'templates/apps/weather/history.html.ep', 'templates/apps/weather/accuracy.html.ep', 'templates/apps/weather/automations.html.ep', 'templates/apps/weather/map.html.ep', 'public/js/manager/weather.js', 'public/js/manager/weather_history.js', 'public/js/manager/weather_automation.js', 'public/js/manager/weather_map.js', 'public/js/manager/weather_sources.js' ],
-		verified => '2026-11-13',
+		verified => '2026-11-15',
 		summary => 'Current conditions and a seven-day forecast for the phone, tablet or machine you choose.',
 		body => [
 			'Weather reads the house\'s own GPS fixes, not a fixed city page. The picker lists places, not machines: machines reporting the same ground share one entry, and each entry is named after the place the weather service reads for (Kitchener rather than a coordinate), so the list reads as places. The location dropdown and Add stay at the top of the window while a tab scrolls, so the place you are reading stays in view. Hover an entry to see which machines are there. A saved place within thirty kilometres of a fix is where that reading belongs, so a nearby town does not become a second place. The house\'s home plate is its own station: it sits first in the picker, marked always checked, and the hourly pass always reads there, whatever phone is away. Moving the home plate to a new place unanchors the old home; it stays in Places as an added place, and Anchor keeps it recording if you want it. The app\'s display name follows the new home when it still reads as the old home\'s name; a name you set yourself is left alone. Choosing a place asks Environment Canada for the nearest city when it is in Canada, the US National Weather Service when it is in the United States, and Open-Meteo anywhere else. A Canadian fix therefore names the nearest Environment Canada city instead of an hour-away city page. A place outside Canada and the United States is named by a reverse geocoder (BigDataCloud), and the answer is kept, so the picker reads a place rather than a coordinate.',
@@ -311,7 +311,7 @@ $topic{'weather'} = {
 $topic{'power'} = {
 		title => 'Power', category => 'apps', app => 'power',
 		templates => [ 'templates/apps/power.html.ep', 'public/js/manager/power.js', 'public/js/manager/taskbar_power.js', 'templates/manager.html.ep', 'public/css/manager.css' ],
-		verified => '2026-11-12',
+		verified => '2026-11-15',
 		summary => 'Battery, CPU speed, the charge limit, saved power plans, and sleep and display settings.',
 		body => [
 			'Power reads this machine\'s battery and CPU and keeps one plan for each power source. The battery card shows the charge, whether it is charging, discharging or full, and the time left (or the time to full while it is charging), taken from the pack\'s own gauge where it reports one. A machine with no battery simply hides that card; a machine with no CPU speed control says so where the CPU figures would be.',
@@ -345,7 +345,7 @@ $topic{'power'} = {
 $topic{'notifications'} = {
 		title => 'Notifications', category => 'apps', app => 'notifications',
 		templates => [ 'templates/apps/notifications.html.ep', 'public/js/manager/notifications.js', 'public/js/manager/notifications_toast.js', 'public/js/manager/taskbar_notifications.js', 'templates/notification.html.ep' ],
-		verified => '2026-11-09',
+		verified => '2026-11-15',
 		summary => 'The house\'s notices, with a search and an app filter, and the taskbar bell.',
 		body => [
 			'Notifications lists what the house has told you, newest first: a payment, an alarm, a request to pair, a plan that was applied, and anything else an app announces. Each row names its app and its time, and its X removes that notice.',
@@ -366,7 +366,7 @@ $topic{'notifications'} = {
 $topic{'sound'} = {
 		title => 'Sound', category => 'apps', app => 'sound',
 		templates => [ 'templates/apps/sound.html.ep', 'public/js/manager/sound.js', 'public/js/manager/taskbar_sound.js', 'public/icons/sound.svg', 'templates/start_menu/start_menu.html.ep', 'templates/manager.html.ep', 'public/css/manager.css' ],
-		verified => '2026-11-09',
+		verified => '2026-11-15',
 		summary => 'Output and input devices, the default speaker and microphone, and the machine\'s volume and mute.',
 		body => [
 			'Sound lists the machine\'s output devices and input devices. The default speaker and the default microphone are marked Default; every other row carries Set default. The default output has a volume slider and a Mute button, and the default microphone has the same controls when the machine\'s mixer exposes them. The list is read from the machine itself - pactl, then wpctl, then amixer - so the ids on the screen are the devices the controls actually write to.',
@@ -398,7 +398,7 @@ $topic{'sound'} = {
 $topic{'controllers'} = {
 			title => 'Controllers', category => 'apps', app => 'controllers',
 			templates => [ 'templates/controllers/controllers.html.ep', 'templates/controllers/style.html.ep', 'templates/controllers/body.html.ep', 'public/js/manager/controllers.js' ],
-			verified => '2026-11-13',
+			verified => '2026-11-15',
 			summary => 'The controllers that can talk to the house: the roster, adding one and confirming its code.',
 			body => [
 				'Controller lists the controllers the house knows. Each row names the controller, where it was last seen (its hostname and address) and when, and a controller waiting to be confirmed is marked pending.',

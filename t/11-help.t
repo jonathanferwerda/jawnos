@@ -104,4 +104,20 @@ my @closed = grep { !$is_orphan{$_} } sort keys %known_gap;
 note(scalar(@closed) . ' known gap(s) now have a topic - prune %known_gap: ' . join(', ', @closed))
 	if @closed;
 
+# --- staleness compares days, not moments -----------------------------------
+# `verified` is a day. A commit made on the day a topic was vetted must not
+# make it stale, or the commit that updates a topic could never clear it. The
+# audit compares the commit's own day, so a same-day vetting still counts.
+chomp(my $newest_day = `git log -1 --format=%cs -- perl/help/topics_apps.pl`);
+if ($newest_day) {
+	$help::topic{'__boundary'} = {
+		title => 'Boundary', category => 'apps', summary => 'Boundary test.',
+		body => [], templates => [ 'perl/help/topics_apps.pl' ],
+		verified => $newest_day,
+	};
+	my @boundary = grep { $_->[0] eq 'stale' && $_->[1] eq '__boundary' } help::audit();
+	is(scalar(@boundary), 0, 'a topic vetted on the commit day is not stale');
+	delete $help::topic{'__boundary'};
+}
+
 done_testing();

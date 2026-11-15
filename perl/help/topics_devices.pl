@@ -58,7 +58,7 @@ $topic{'help_app'} = {
 		title => 'This Help app', category => 'features', app => 'help',
 		templates => [ 'templates/apps/help.html.ep', 'public/js/manager/help.js', 'public/js/manager/page_agent.js' ],
 		summary => 'The map you are reading now, and its guide.',
-		verified => '2026-11-02',
+		verified => '2026-11-15',
 		body => [
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on. The question-mark button in a window\'s title bar opens a Guide associate for that window — the same Guide, in a chat of its own, already aware of the window it came from. The Take the tour button at the foot of the window replays a short tour of the desktop: its windows, the start menu and its System page, the dock and its pseudonyms, Configure, and how to ask the Guide.',
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Friends" plays every episode it matches, as a list. Asked "when did I last have a beer" or "when am I next free", it reads the oldest, newest and next matching appointment from your own records (across the appointments log and the other tables), and the time machine reads them the same way. It reports each step as it goes, and when the model returns its working beside the answer a small thinking control opens it.',
@@ -85,7 +85,7 @@ $topic{'help_app'} = {
 $topic{'live_docs'} = {
 		title => 'Live docs', category => 'functions',
 		templates => [ 'perl/help.pl', 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
-		verified => '2026-10-30',
+		verified => '2026-11-15',
 		summary => 'Help pages that carry a value read when the page is drawn, and examples that open what they describe.',
 		body => [
 			'Most help is written once and read later, so a version number typed into a sentence goes stale. A live doc fills the value when the page is drawn instead: this page was drawn on {{live:machine}} running JawnOS {{live:version}}, and it is one of {{live:topics}} topics. Open the topic again and the value is read again.',
