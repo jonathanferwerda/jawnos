@@ -72,7 +72,8 @@ function New-JawnShortcut {
         [string]$LinkPath,
         [string]$Target,
         [string]$Arguments,
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        [string]$Icon = ''
     )
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($LinkPath)
@@ -80,6 +81,11 @@ function New-JawnShortcut {
     $shortcut.Arguments = $Arguments
     $shortcut.WorkingDirectory = $WorkingDirectory
     $shortcut.Description = 'JawnOS'
+    # The icon is the house mark - the same one the Linux .desktop and the
+    # Android launcher use - not wscript.exe's generic script icon.
+    if ($Icon -and (Test-Path -LiteralPath $Icon)) {
+        $shortcut.IconLocation = "$Icon,0"
+    }
     $shortcut.Save()
 }
 
@@ -145,7 +151,7 @@ if ($sourceFull -ne $InstallDir) {
     Write-Step "Copying JawnOS to $InstallDir ..."
     Invoke-Robocopy (Join-Path $SourceDir 'app') (Join-Path $InstallDir 'app')
     Invoke-Robocopy (Join-Path $SourceDir 'runtime') (Join-Path $InstallDir 'runtime')
-    foreach ($name in @('install.ps1', 'Install.bat', 'uninstall.ps1', 'README.txt')) {
+    foreach ($name in @('install.ps1', 'Install.bat', 'uninstall.ps1', 'README.txt', 'jawnos.ico')) {
         $from = Join-Path $SourceDir $name
         if (Test-Path -LiteralPath $from) {
             Copy-Item -LiteralPath $from -Destination $InstallDir -Force
@@ -373,6 +379,7 @@ $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
 if (-not (Test-Path -LiteralPath $wscript)) { $wscript = 'wscript.exe' }
 $launchArgs = '"' + $vbsPath + '"'
 $startArgs = '"' + $startVbsPath + '"'
+$iconPath = Join-Path $InstallDir 'jawnos.ico'
 
 $startMenu = ''
 $desktopShortcut = ''
@@ -382,7 +389,7 @@ if ($SkipShortcuts) {
 } else {
     $startMenu = Get-ShortcutPath 'Programs'
     if ($startMenu) {
-        New-JawnShortcut -LinkPath $startMenu -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
+        New-JawnShortcut -LinkPath $startMenu -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir -Icon $iconPath
         Write-Step "Start menu shortcut: $startMenu"
     } else {
         Write-Warning 'Could not create the Start menu shortcut: no Start menu Programs folder was found.'
@@ -391,7 +398,7 @@ if ($SkipShortcuts) {
     if ($Desktop) {
         $desktopShortcut = Get-ShortcutPath 'Desktop'
         if ($desktopShortcut) {
-            New-JawnShortcut -LinkPath $desktopShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir
+            New-JawnShortcut -LinkPath $desktopShortcut -Target $wscript -Arguments $launchArgs -WorkingDirectory $InstallDir -Icon $iconPath
             Write-Step "Desktop shortcut: $desktopShortcut"
         } else {
             Write-Warning 'Could not create the desktop shortcut: no Desktop folder was found.'
@@ -401,7 +408,7 @@ if ($SkipShortcuts) {
     if (-not $NoAutostart) {
         $startupShortcut = Get-ShortcutPath 'Startup'
         if ($startupShortcut) {
-            New-JawnShortcut -LinkPath $startupShortcut -Target $wscript -Arguments $startArgs -WorkingDirectory $InstallDir
+            New-JawnShortcut -LinkPath $startupShortcut -Target $wscript -Arguments $startArgs -WorkingDirectory $InstallDir -Icon $iconPath
             Write-Step "Autostart shortcut: $startupShortcut"
         } else {
             Write-Warning 'Could not create the autostart shortcut: no Startup folder was found.'

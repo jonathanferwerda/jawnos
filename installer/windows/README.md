@@ -20,8 +20,10 @@ prepared Strawberry Perl runtime. Two entry points install the same bundle:
   interface. The launcher starts the house first when it is not listening, so
   a second click while it runs only opens the browser. Autostart with Windows
   by default (`-NoAutostart` turns it off) uses a separate service-only
-  launcher, so a logon does not pop a browser. A program-scoped firewall rule
-  covers the bundled `perl.exe` on the private profile.
+  launcher, so a logon does not pop a browser. All three shortcuts carry the
+  JawnOS mark (`jawnos.ico`), the same logo as the Linux `.desktop` and the
+  Android launcher. A program-scoped firewall rule covers the bundled
+  `perl.exe` on the private profile.
 - First-run seeding without `sqlite3`, `tail` or a browser: `install.ps1`
   writes `config.json`, runs `scripts\jawnos_setup.pl --seed`, and saves a
   six-digit unlock code to `unlock-code.txt`.

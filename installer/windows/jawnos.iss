@@ -54,7 +54,7 @@ PrivilegesRequired=lowest
 ; console perl.exe reliably, so it must not try.
 CloseApplications=no
 RestartApplications=no
-UninstallDisplayIcon={app}\runtime\perl\bin\perl.exe
+UninstallDisplayIcon={app}\jawnos.ico
 
 [Tasks]
 Name: "lanaccess"; Description: "Allow other devices on this network to reach JawnOS (needs administrator)"; GroupDescription: "Network:"; Flags: checkedonce
@@ -67,10 +67,11 @@ Source: "{#PayloadDir}\JawnOS-{#AppVersion}\*"; DestDir: "{app}"; Flags: recurse
 [Icons]
 ; The Start menu and desktop icons open the web interface (launch.vbs starts
 ; the house first when it is not listening). The Startup entry must not: it
-; starts the service only, so a logon never pops a browser.
-Name: "{group}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"
-Name: "{autodesktop}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; Tasks: desktopicon
-Name: "{userstartup}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start.vbs"""; WorkingDir: "{app}"; Tasks: autostart
+; starts the service only, so a logon never pops a browser. All three carry
+; the house mark, not the generic wscript icon.
+Name: "{group}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\jawnos.ico"; IconIndex: 0
+Name: "{autodesktop}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\launch.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\jawnos.ico"; IconIndex: 0; Tasks: desktopicon
+Name: "{userstartup}\JawnOS"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\jawnos.ico"; IconIndex: 0; Tasks: autostart
 
 [Run]
 ; The interactive entry launches the house, waits for the port and opens the

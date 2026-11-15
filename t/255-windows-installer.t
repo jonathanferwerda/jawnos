@@ -125,6 +125,11 @@ like($install, qr/Start-Process "https:\/\/127\.0\.0\.1:\$port\/manager"/,
 	'the interface launcher opens the manager');
 like($install, qr/Test-JawnPort/, 'the interface launcher checks the port first');
 
+# The shortcuts carry the house mark, the same logo the Linux .desktop and the
+# Android launcher use, not the generic wscript script icon.
+like($install, qr/IconLocation/, 'the shortcuts set their icon');
+like($install, qr/jawnos\.ico/, 'install.ps1 names the icon file');
+
 unlike($install, qr{C:\\Strawberry}i, 'install.ps1 does not hardcode C:\Strawberry');
 
 # --- build-portable.ps1 -----------------------------------------------------
@@ -233,7 +238,22 @@ like($iss, qr/\{userstartup\}\\JawnOS[^\n]*start\.vbs/,
 	'the Startup shortcut starts the service only');
 like($iss, qr/\{app\}\\launch\.ps1/, 'the uninstaller removes the interface launcher');
 like($iss, qr/\{app\}\\start\.vbs/, 'the uninstaller removes the service launcher');
+like($iss, qr/IconFilename:\s*"\{app\}\\jawnos\.ico"/, 'the Inno shortcuts use the JawnOS icon');
+like($iss, qr/UninstallDisplayIcon=\{app\}\\jawnos\.ico/, 'Apps & features shows the JawnOS icon');
 like($iss, qr/PrepareToInstall/, 'an upgrade stops the running house before replacing files');
+
+# The icon is a real multi-size Windows ICO, shipped with the installer and the
+# bundle. A missing or empty file would leave every shortcut with the wscript
+# script icon again.
+my $icon_path = "$root/installer/windows/jawnos.ico";
+ok(-s $icon_path, 'the launcher icon is in the tree');
+if (-s $icon_path) {
+	open(my $icon_fh, '<:raw', $icon_path) or die "read jawnos.ico: $!\n";
+	read($icon_fh, my $icon_head, 4);
+	close $icon_fh;
+	is($icon_head, "\x0\x0\x1\x0", 'the icon file is a Windows ICO');
+}
+like($build, qr/jawnos\.ico/, 'build-portable.ps1 stages the icon');
 
 # The master creates manager.log without a shell. `touch` is Unix-only; on
 # Windows it wrote "not recognized" into the log file it was creating.
