@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Workers.pm perl/President.pl perl/President/prefork_autoscale.pl lib/JawnOS/Domain/Calendar.pm perl/hooks.pl lib/JawnOS/Controller/manager_configure4.pm templates/configure/system_setting_list.html.ep templates/configure/utility_controller.html.ep public/js/manager/configure/03_platform_misc.js lib/JawnOS/Domain/Loader.pm
+# tests-for: lib/JawnOS/Domain/Workers.pm perl/President.pl perl/President/prefork_autoscale.pl lib/JawnOS/Domain/Calendar.pm perl/hooks.pl lib/JawnOS/Controller/manager_configure4.pm templates/configure/system_setting_list.html.ep templates/configure/utility_controller.html.ep templates/configure/utility_chip.html.ep public/js/manager/configure/03_platform_misc.js lib/JawnOS/Domain/Loader.pm
 # covers:    the worker pools behind Configure -> Sys -> Workers: the device
 #           defaults, the min/max range read from the settings table (with
 #           config.json and the old main_workers keys as fallbacks), the save
@@ -170,6 +170,24 @@ like( $utility_panel, qr/data-utility-device=/, 'each chip and card carries its 
 like( $utility_panel, qr/id="utility_device_views"/, 'and the cards sit in one switchable stack' );
 like( $js, qr/jawnos_utility_device/, 'the chosen device is remembered per browser' );
 like( $js, qr/function utilityDeviceApply/, 'and re-applied after every repaint' );
+
+# ---- a peer's card is the same grid of buckets ------------------------------
+# The remote machine's card used to be a flat list of job rows with its pools
+# spelled out underneath. It now draws the same pool grid as this machine's, so
+# the shape is recognisable at a glance; its buckets are read-only, because a
+# pool's name and pace belong to the machine that owns it.
+my $grids = () = $utility_panel =~ /class="utility_pools"/g;
+is( $grids, 2, 'both this machine and a peer draw the pool grid' );
+like( $utility_panel, qr/draggable => 0/, 'a peer tile is rendered without dragging' );
+like( $utility_panel, qr/utility_pool_static/, 'and its buckets read as labels, not fields' );
+like( $utility_panel, qr/device => \$key/, 'a peer tile still saves against that machine' );
+
+my $chip = read_file("$root/templates/configure/utility_chip.html.ep");
+like( $chip, qr/my \$drag = defined \$draggable/, 'a tile takes whether it may be dragged' );
+like( $chip, qr/draggable="<%= \$drag \? 'true' : 'false' %>"/, 'and says so in the markup' );
+
+like( $js, qr/'#utility_pools \.utility_chip'/, 'drag handlers are scoped to this machine\'s grid' );
+like( $js, qr/'#utility_pools \.utility_pool_members'/, 'and so are the drop zones' );
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like( $loader, qr/'JawnOS::Domain::Workers' for qw\([^)]*\bworker_pool_limits\b/, 'the domain loader maps the worker helpers' );

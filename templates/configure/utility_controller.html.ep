@@ -12,47 +12,41 @@
 <% } %>
 
 <style>
-/* One card per peer machine, one row per background job: a job's name on the
-   left, its controls on the right, wrapping under the name on a phone. No wide
-   table, so nothing is hidden off the right edge. */
-.utility_machine { display:flex; flex-direction:column; gap:10px; }
-.utility_machine .utility_machine_name { margin:0 0 6px; }
-.utility_machine .utility_jobs { display:flex; flex-direction:column; }
-.utility_machine .utility_job { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:6px 0; border-top:1px solid var(--line); }
-.utility_machine .utility_job:first-child { border-top:0; }
-.utility_machine .utility_job_name { flex:1 1 150px; min-width:0; font-size:13px; }
-.utility_machine .utility_job_controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.utility_machine .utility_controller_timeout { width:78px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
-.utility_machine .utility_job_when { opacity:.6; font-size:85%; white-space:nowrap; }
-.utility_machine .utility_job_effect { flex:1 1 100%; opacity:.7; font-size:82%; font-style:italic; }
 /* The batch pools: one card per pool in a responsive grid, and a grid of job
    tiles inside each, so the functions line up and read as a set. A tile is the
    job's whole row in miniature - switch, name, dot, last run - so a pooled job
-   needs no second copy in the flat list below. */
-#utility_pools { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap:10px; align-items:start; }
-#utility_pools .utility_pool { min-width:0; border:1px solid var(--line); border-radius:10px; padding:8px 10px; background:var(--panel); }
-#utility_pools .utility_pool_regular { grid-column:1 / -1; border-style:dashed; }
-#utility_pools .utility_pool_head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-#utility_pools .utility_pool_label { flex:1 1 110px; min-width:0; padding:4px 6px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--ink); font:inherit; font-weight:600; }
-#utility_pools .utility_pool_label:hover,
-#utility_pools .utility_pool_label:focus { border-color:var(--line); background:var(--field, var(--panel)); }
-#utility_pools .utility_pool_seconds { width:76px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
-#utility_pools .utility_pool_remove { border:0; background:transparent; color:inherit; opacity:.55; font-size:18px; line-height:1; padding:2px 6px; cursor:var(--jawnos-cursor-pointer, pointer); }
-#utility_pools .utility_pool_remove:hover { opacity:1; }
-#utility_pools .utility_pool_members { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap:6px; align-content:start; min-height:36px; padding:6px 0 0; }
-#utility_pools .utility_pool_members.utility_pool_over { outline:2px dashed var(--accent, #7aa7ff); outline-offset:2px; border-radius:8px; }
-#utility_pools .utility_pool_empty { grid-column:1 / -1; opacity:.5; font-size:85%; font-style:italic; padding:6px 2px; }
-#utility_pools .utility_chip { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid var(--line); background:var(--panel); font-size:13px; cursor:var(--jawnos-cursor-grab, grab); touch-action:none; user-select:none; }
-#utility_pools .utility_chip:hover { border-color:var(--accent, #7aa7ff); }
-#utility_pools .utility_chip.utility_chip_dragging { opacity:.45; }
-#utility_pools .utility_chip_name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
-#utility_pools .utility_chip_interval { width:64px; box-sizing:border-box; padding:2px 5px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; font-size:12px; }
-#utility_pools .utility_chip_meta { flex:1 1 100%; display:flex; align-items:center; gap:6px; min-height:16px; }
-#utility_pools .utility_chip_meta .utility_job_when { margin-left:auto; opacity:.6; font-size:82%; white-space:nowrap; }
+   needs no second copy in the flat list below. A peer's card draws the same
+   grid from the schedules it reported; there it is read-only on the bucket
+   side, so its tiles cannot be dragged and its name and pace read as labels. */
+.utility_pools { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap:10px; align-items:start; }
+.utility_pools .utility_pool { min-width:0; border:1px solid var(--line); border-radius:10px; padding:8px 10px; background:var(--panel); }
+.utility_pools .utility_pool_regular { grid-column:1 / -1; border-style:dashed; }
+.utility_pools .utility_pool_head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.utility_pools .utility_pool_label { flex:1 1 110px; min-width:0; padding:4px 6px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--ink); font:inherit; font-weight:600; }
+.utility_pools .utility_pool_label:hover,
+.utility_pools .utility_pool_label:focus { border-color:var(--line); background:var(--field, var(--panel)); }
+.utility_pools .utility_pool_seconds { width:76px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+.utility_pools .utility_pool_remove { border:0; background:transparent; color:inherit; opacity:.55; font-size:18px; line-height:1; padding:2px 6px; cursor:var(--jawnos-cursor-pointer, pointer); }
+.utility_pools .utility_pool_remove:hover { opacity:1; }
+.utility_pools .utility_pool_members { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap:6px; align-content:start; min-height:36px; padding:6px 0 0; }
+.utility_pools .utility_pool_members.utility_pool_over { outline:2px dashed var(--accent, #7aa7ff); outline-offset:2px; border-radius:8px; }
+.utility_pools .utility_pool_empty { grid-column:1 / -1; opacity:.5; font-size:85%; font-style:italic; padding:6px 2px; }
+.utility_pools .utility_chip { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid var(--line); background:var(--panel); font-size:13px; cursor:var(--jawnos-cursor-grab, grab); touch-action:none; user-select:none; }
+.utility_pools .utility_chip:hover { border-color:var(--accent, #7aa7ff); }
+.utility_pools .utility_chip.utility_chip_dragging { opacity:.45; }
+.utility_pools .utility_chip_name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+.utility_pools .utility_chip_interval { width:64px; box-sizing:border-box; padding:2px 5px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; font-size:12px; }
+.utility_pools .utility_chip_meta { flex:1 1 100%; display:flex; align-items:center; gap:6px; min-height:16px; }
+.utility_pools .utility_chip_meta .utility_job_when { margin-left:auto; opacity:.6; font-size:82%; white-space:nowrap; }
+/* A peer's grid is the same layout with nothing to change on the bucket side: a
+   pool's name and pace are set on that machine, so they read as labels rather
+   than fields, and a tile keeps its switch but cannot be dragged. */
+.utility_pools .utility_pool_static .utility_pool_label,
+.utility_pools .utility_pool_static .utility_pool_seconds { padding-left:0; border-color:transparent; background:transparent; }
+.utility_pools .utility_chip_static { cursor:var(--jawnos-cursor-default, default); touch-action:auto; }
 #utility_batch_groups .utility_pool_add { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 #utility_batch_groups .utility_pool_new_name { flex:1 1 160px; min-width:0; padding:5px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
-.utility_machine .utility_pool_group { border-top:1px solid var(--line); padding-top:4px; }
-.utility_machine .utility_pool_group_head { font-size:85%; opacity:.7; padding:4px 0 0; }
+.utility_machine .utility_machine_name { margin:0 0 6px; }
 /* The device bar: every machine in the house as a chip, this one first. It
    scrolls sideways rather than wrapping, so a phone shows the whole house in
    one row and never a second row of tabs. The cards below it are one device
@@ -77,7 +71,7 @@
 .crew_advertise:hover { border-color:var(--accent, #7aa7ff); }
 .crew_advertise:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
 @media (max-width:560px) {
-	.utility_machine .utility_job_name { flex:1 1 100%; }
+	.utility_pools .utility_pool_head { gap:4px; }
 }
 </style>
 
@@ -141,7 +135,7 @@
 						<input class="utility_pool_new_name" hint="New pool name" placeholder="<%= &subs::ui('New pool name') %>">
 						<button type="button" class="utility_pool_add_button" hint="Add a pool"><%= &subs::ui('Add a pool') %></button>
 					</div>
-					<div id="utility_pools">
+					<div id="utility_pools" class="utility_pools">
 						<% foreach my $pool ( @{$my_pools} ) { %>
 							<% my @members = grep { $controls->{$signatorial}->{$_} && ($my_member->($_) || {})->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
 							<div class="utility_pool" data-pool="<%= $pool->{'id'} %>">
@@ -183,62 +177,43 @@
 					<% if (!$row_dev) { %>
 						<p class="cfg-note"><%= &subs::ui('This machine has not reported any schedules to the house yet.') %></p>
 					<% } else { %>
-					<div class="utility_jobs">
-						<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
-							<% next unless ref $row_dev->{$t} eq 'HASH'; %>
-							<% next if &subs::batch_pool_of($row_dev, $t); %>
-							<div class="utility_job">
-								<span class="utility_job_name"><%= &subs::format_name($t) %></span>
-								<div class="utility_job_controls">
-									<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= &subs::html_text($key) %>" setting="toggle" hint="Run this job" <% if (($row_dev->{$t}->{'toggle'} || '') eq 'on') { %>checked="checked"<% } %>>
-									<input class="utility_controller utility_controller_timeout" control="<%= $t %>" setting="interval" device="<%= &subs::html_text($key) %>" hint="How often" value="<%= &subs::duration_sayer($row_dev->{$t}->{'interval'}) %>">
-									<% if ($row_dev->{$t}->{'status'} eq 'good') { %>
-										<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
-									<% } elsif ($row_dev->{$t}->{'status'} eq 'bad') { %>
-										<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
-									<% } %>
-									<% if ($row_dev->{$t}->{'last_run'}) { %>
-										<span class="time utility_job_when" timestamp="<%= $row_dev->{$t}->{'last_run'} %>"></span>
-									<% } %>
-									<% if ($row_dev->{$t}->{'last_effect'}) { %>
-										<span class="utility_job_effect" hint="what the last run did"><%= $row_dev->{$t}->{'last_effect'} %></span>
+					<% my $peer_pools = &subs::batch_pools($row_dev); %>
+					<% my %peer_pool = map { $_->{'id'} => $_ } @{$peer_pools}; %>
+					<% my $peer_member = sub { my $job = shift; my $group = $row_dev->{$job}->{'group'} || ''; return ($group ne '' && $peer_pool{$group}) ? $peer_pool{$group} : undef; }; %>
+					<p class="cfg-note"><%= &subs::ui('The same buckets this machine keeps, read from the schedules it reported. A pool\'s name and pace are set on the machine itself; its jobs and the jobs outside every pool can be switched from here.') %></p>
+					<div class="utility_pools">
+						<% foreach my $pool ( @{$peer_pools} ) { %>
+							<% my @members = grep { $row_dev->{$_} && ($peer_member->($_) || {})->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
+							<div class="utility_pool utility_pool_static" data-pool="<%= $pool->{'id'} %>">
+								<div class="utility_pool_head">
+									<span class="utility_pool_label" hint="Pool name"><%= &subs::ui($pool->{'label'}) %></span>
+									<span class="utility_pool_seconds" hint="Pace for this pool"><%= &subs::duration_sayer($pool->{'seconds'}) %></span>
+								</div>
+								<div class="utility_pool_members" data-pool="<%= $pool->{'id'} %>" hint="Jobs in this pool">
+									<% if (scalar @members) { %>
+										<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', job => $t, device => $key, row => $row_dev->{$t}, show_interval => 0, draggable => 0 %><% } %>
+									<% } else { %>
+										<span class="utility_pool_empty"><%= &subs::ui('Nothing in this pool') %></span>
 									<% } %>
 								</div>
 							</div>
 						<% } %>
-					</div>
-					<% my $peer_pools = &subs::batch_pools($row_dev); %>
-					<% if (scalar @{$peer_pools}) { %>
-						<p class="cfg-note"><%= &subs::ui('A job in a pool runs on that pool\'s pace, which is set on the machine itself.') %></p>
-					<% } %>
-					<% foreach my $pool ( @{$peer_pools} ) { %>
-						<% my @members = grep { my $p = &subs::batch_pool_of($row_dev, $_); $p && $p->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
-						<% next unless scalar @members; %>
-						<div class="utility_pool_group">
-							<div class="utility_pool_group_head"><%= &subs::ui($pool->{'label'}) %> · <%= &subs::duration_sayer($pool->{'seconds'}) %></div>
-							<div class="utility_jobs">
-								<% foreach my $t ( @members ) { %>
-									<div class="utility_job">
-										<span class="utility_job_name"><%= &subs::format_name($t) %></span>
-										<div class="utility_job_controls">
-											<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= &subs::html_text($key) %>" setting="toggle" hint="Run this job" <% if (($row_dev->{$t}->{'toggle'} || '') eq 'on') { %>checked="checked"<% } %>>
-											<% if ($row_dev->{$t}->{'status'} eq 'good') { %>
-												<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
-											<% } elsif ($row_dev->{$t}->{'status'} eq 'bad') { %>
-												<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
-											<% } %>
-											<% if ($row_dev->{$t}->{'last_run'}) { %>
-												<span class="time utility_job_when" timestamp="<%= $row_dev->{$t}->{'last_run'} %>"></span>
-											<% } %>
-											<% if ($row_dev->{$t}->{'last_effect'}) { %>
-												<span class="utility_job_effect" hint="what the last run did"><%= $row_dev->{$t}->{'last_effect'} %></span>
-											<% } %>
-										</div>
-									</div>
+						<% my @loose = sort {
+							(($row_dev->{$a}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
+								<=> (($row_dev->{$b}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
+								|| $a cmp $b
+						} grep { $row_dev->{$_} && !$peer_member->($_) } keys %{$gb::timeouts}; %>
+						<div class="utility_pool utility_pool_regular utility_pool_static">
+							<div class="utility_pool_head"><span class="utility_pool_label" hint="Not in a pool"><%= &subs::ui('Not in a pool') %></span></div>
+							<div class="utility_pool_members" data-pool="" hint="Jobs outside every pool">
+								<% if (scalar @loose) { %>
+									<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', job => $t, device => $key, row => $row_dev->{$t}, show_interval => 1, draggable => 0 %><% } %>
+								<% } else { %>
+									<span class="utility_pool_empty"><%= &subs::ui('Everything is in a pool') %></span>
 								<% } %>
 							</div>
 						</div>
-					<% } %>
+					</div>
 					<% } %>
 				</div>
 		<% } %>
