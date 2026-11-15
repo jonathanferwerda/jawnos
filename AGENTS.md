@@ -102,7 +102,12 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
   log tail. Downscale images before context; write `.shots` captures as **WebP**
   (`magick in.png -resize 1024x1024\> -quality 82 /tmp/small.webp`).
 - **Delegate** builds, suites, `logcat` and repo-wide searches to a sub-agent returning finding +
-  `file:line` + reproduce command, no raw logs; keep edits in the main thread.
+  `file:line` + reproduce command, no raw logs.
+- **A task with several independent parts may run as sub-agents in parallel** — one per part, each with
+  a disjoint write set (or read-only), each given the full context it needs (paths, constraints, what
+  "done" means) and returning what changed, `file:line` and how it was verified; they do not see this
+  thread. The main thread owns the plan, the review and the commit, and keeps the edits when the parts
+  touch the same files. Sub-agent writes still go through the task's worktree.
 - **Checkpoint** each step in `.shots/AGENT-CHECKPOINT.md` and commit it. It may be shared: identify
   yourself, re-read, replace only your own entry.
 - **Ask for the hunk** (`where.pl --outline`, `--body`), not the file; keep the prefix stable. Full

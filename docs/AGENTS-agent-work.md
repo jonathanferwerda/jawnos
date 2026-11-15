@@ -22,7 +22,11 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
   body through the model. If an HTTP upload answers 413, send one file per request or in parts. Compress,
   crop and thumbnail as its own step (see `scripts/gallery/`), then inspect the contact sheet.
 - **Delegate** builds, test suites, `logcat` and repo-wide searches to a sub-agent returning finding +
-  `file:line` + reproduce command, no raw logs; keep edits in the main thread so the diff is visible.
+  `file:line` + reproduce command, no raw logs. **A task with several independent parts may run as
+  sub-agents in parallel** — one per part, each with a disjoint write set (or read-only), given the
+  context it needs and returning what changed, `file:line` and how it was verified. The main thread keeps
+  the plan, the review and the commit; sub-agent writes go through the task's worktree, and the edits
+  stay in the main thread when the parts touch the same files.
 - **Checkpoint** each step in `.shots/AGENT-CHECKPOINT.md` (goal, done + paths, next action, last commit)
   and **commit** it (`git add -p`, `v<version> - <summary>`). After a crash start a *fresh* thread that
   reads it first; delete it when the task is done. While it is open the lander keeps your
