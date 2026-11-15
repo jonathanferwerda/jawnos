@@ -204,7 +204,7 @@ type.
 - **Inventory** — each app's own record of what it holds and has been up to: its measures,
   documents and reports together, with charts, a share wheel and the **Evaluation** reports.
 - **Notes & documents** — note-taking with document scanning, OCR (Tesseract), barcode/QR reading
-  (zbar) and PDF rendering (WeasyPrint). A note is an appointment like everything else, can be
+  (zbar) and PDF documents. A note is an appointment like everything else, can be
   dragged onto an appointment to attach it, and is where speech that named no command lands.
 
 ### Communication & assistance
