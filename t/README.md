@@ -36,6 +36,11 @@ prove serially and is not the house path. `scripts/verify_change.pl` owns the
 "does every file compile" gate on `git push`; this suite covers behaviour that
 a syntax check cannot.
 
+A checkout whose modules live in a local::lib needs that path on `@INC` before
+anything will boot: `PERL5LIB=~/perl5/lib/perl5 perl scripts/run_tests.pl`. Without
+it the harness dies on the first module it cannot find (`Can't locate Minion.pm`)
+and no test runs at all - that is a provisioning gap, not a failure.
+
 ## The runner
 
 `scripts/run_tests.pl` uses `scripts/run_tests_fork.pl`, which boots
@@ -192,3 +197,26 @@ minutes, `2days` as two seconds, and `1 hour 30 minutes` as thirty-one minutes.
 The reader now splits compact, joined and spaced forms into number/unit tokens,
 and `t/02-formatters.t` covers each spelling. `interval_parse` was already
 correct and is unchanged.
+
+## Open - flakes under parallel load
+
+Four full-suite runs on 2026-11-15 each had one test file fail and pass alone:
+`t/57-control-socket.t` twice (both on a landing), and once each
+`t/177-refresh-probe.t` and `t/277-note-legacy-outer.t`. A different file each
+time, never the code that had just changed. **Done when:** two runs at
+`--jobs 2` and two at `--jobs 1` on an otherwise idle box produce the same
+failing set - which would mean a real ordering
+bug - or a failing set that only appears at `--jobs 2`, which would mean load.
+The fix is then either the test's timing assumptions or the runner's scheduling,
+and it gets a regression test like any other change.
+
+Until then: a lone failure is a flake only after that file passes alone. Re-run
+the gate deliberately rather than editing a test that is not broken (the landing
+rule allows one deliberate re-run; `--jobs 1` is the softer setting).
+
+Attempted on `table` (4 cores, Manjaro, 2026-11-15) and it cannot answer the
+question yet: six of that box's seven failures reproduce alone, because it is not
+provisioned like a dev checkout - no `.githooks` installed (`t/136`), and the
+tools `t/172`, `t/190`, `t/239`, `t/249` and `t/298` need are absent. Only
+`t/93-test-map.t` failed under load there and passed alone. Provision it first,
+or run the experiment on the machine that already passes the suite.
