@@ -8,7 +8,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file write_file);
-use Mojo::JSON qw(decode_json);
+use Mojo::JSON qw(decode_json encode_json);
 use RepoSource;
 
 my $root = repo_root();
@@ -138,7 +138,9 @@ require "$root/lib/JawnOS/Manager/Part06.pm";
 	my $shared = "$dir/ref.jpg";
 	write_file($shared, 'ref');
 	local *Manager::market_receipts = sub { return [ { uuid => 'r3', machine => 'me', files => [ $shared ] } ] };
-	local *subs::db_query = sub { return FakeRows->new([ { uuid => 'a1' } ]) };
+	local *subs::db_query = sub {
+		return FakeRows->new([ { app => 'clothes', uuid => 'a1', file => encode_json([ { f => $shared } ]) } ]);
+	};
 	ok(Manager::market_receipt_remove('r3'), 'a receipt whose page a purchase names is still removed');
 	ok(-e $shared, 'and the page stays for that purchase');
 }
@@ -173,11 +175,29 @@ require "$root/lib/JawnOS/Manager/Part06.pm";
 		'an unknown receipt attaches nothing');
 }
 
+# --- the list says which apps use a receipt --------------------------------
+{
+	local *subs::db_query = sub {
+		return FakeRows->new([
+			{ app => 'clothes', uuid => 'a1', file => encode_json([ { f => '/d/market/receipt_1.jpg' } ]) },
+			{ app => 'wal-mart', uuid => 'a2', file => encode_json([ { f => '/d/market/receipt_2.jpg' } ]) },
+			{ app => 'unrelated', uuid => 'a3', file => encode_json([ { f => '/d/other.jpg' } ]) },
+		]);
+	};
+	my $refs = Manager::market_receipt_referrers([
+		{ uuid => 'r1', files => [ '/d/market/receipt_1.jpg', '/d/market/receipt_2.jpg' ] },
+	]);
+	is_deeply($refs->{'r1'}, [ 'clothes', 'wal-mart' ], 'every app that names a page is listed');
+	my $none = Manager::market_receipt_referrers([ { uuid => 'r2', files => [ '/d/market/none.jpg' ] } ]);
+	ok(!defined $none->{'r2'}, 'a receipt nothing uses lists nothing');
+}
+
 # --- the wiring between the pane, the cart, the form and the save ---------
 ok(index($receipt, 'market_receipt_remove($uuid)') >= 0, 'the remove route asks the helper');
 ok(index($receipt_js, '/manager/market/receipt/remove') >= 0, 'the pane posts to the remove route');
 ok(index($market_page, 'market_receipt_drop') >= 0, 'the kept receipt row carries a delete button');
 ok(index($market_page, 'data-uuid=') >= 0, 'and the id that button removes');
+ok(index($market_page, 'referenced_by') >= 0, 'the row says which apps use the receipt');
 ok(index($receipt, 'my $receipt_uuid = &subs::random_string_creator(20);') >= 0, 'apply names the kept receipt on the cart rows');
 ok(index($receipt, 'uuid => $receipt_uuid, files => $files') >= 0, 'and keeps it under that id');
 ok(index($market, 'uuid => $receipt_uuid, storage => $storage') >= 0, 'checkout hands it to the transaction form');
@@ -195,6 +215,7 @@ ok(index($part32, q{if (!$file->{'shared'} && -e $filing)}) >= 0,
 	'and deleting the row leaves the shared page on disk');
 ok(index($help, 'The') >= 0 && index($help, 'throws it away for the whole House') >= 0,
 	'the guide says a receipt can be thrown away');
+ok(index($help, 'The list also says which apps use a receipt') >= 0, 'the guide says the list names its users');
 ok(index($help, 'points the app it is filed under, its vendor and each item at that same page') >= 0,
 	'and that the app, vendor and items point at the same page');
 

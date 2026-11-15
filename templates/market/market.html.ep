@@ -119,6 +119,7 @@
 					<% if ($r->{'payment_method'}) { %><span style="opacity:.6;font-size:14px;margin-left:6px;">paid by <%= $r->{'payment_method'} %><% if ($r->{'payment_ref'}) { %> <%= $r->{'payment_ref'} %><% } %></span><% } %>
 					<% if ($r->{'account'}) { %><span style="opacity:.6;font-size:14px;margin-left:6px;">account <%= &subs::format_name($r->{'account'}) %></span><% } %>
 					<span style="opacity:.6;font-size:14px;margin-left:6px;"><%= scalar @{ $r->{'lines'} || [] } %> lines</span>
+					<% if (scalar @{ $r->{'referenced_by'} || [] }) { %><span class="market_receipt_used" style="opacity:.6;font-size:14px;margin-left:6px;">used by <%= join ', ', map { &subs::format_name($_) } @{ $r->{'referenced_by'} } %></span><% } %>
 					<button class="market_receipt_readd" style="float:right;font-size:15px;">Add to list</button>
 					<button class="market_receipt_drop" title="Remove this receipt" style="float:right;font-size:15px;margin-right:6px;">&times;</button>
 				</div>

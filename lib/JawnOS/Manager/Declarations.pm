@@ -112,6 +112,7 @@ sub market_receipt_store;
 sub market_receipt_file;
 sub market_receipt_remove;
 sub market_receipt_attach;
+sub market_receipt_referrers;
 sub market_scan_feeds;
 sub scan_claim_once;
 sub scan_feeds;

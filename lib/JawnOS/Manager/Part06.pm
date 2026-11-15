@@ -807,14 +807,11 @@ sub market_receipt_remove {
 	$receipts = [ grep { ($_->{'uuid'} || '') ne $uuid } @{$receipts} ];
 	&subs::setting_setter({ app => 'market', setting => 'receipts', device => &subs::warranty_device(), value => encode_json($receipts) });
 	my $mine = ($gone->{'machine'} || '') eq '' || ($gone->{'machine'} || '') eq &subs::signatorial_designer();
-	if ($mine) {
+	my $used_by = &market_receipt_referrers([ $gone ]);
+	if ($mine && !scalar @{ $used_by->{ $gone->{'uuid'} || '' } || [] }) {
 		foreach my $page ( @{ $gone->{'files'} || [] } ) {
 			next unless defined $page && length $page;
 			next unless -f $page;
-			# A purchase, vendor or item that names the page owns it now: the
-			# receipt record goes, the paper stays where those records point.
-			my $named = eval { &subs::db_query('select uuid from appointments where file like ? limit 1', '%' . $page . '%')->hashes->[0] };
-			next if $named;
 			unlink $page;
 		}
 	}
@@ -1015,12 +1012,46 @@ sub market_receipts {
 	return [ grep { ref $_ eq 'HASH' } @{$receipts} ];
 }
 
+# Which appointments name a page a receipt kept, so the Receipts list can say
+# what a receipt is used by before the person throws it away. One pass for the
+# whole pane: every appointment whose file column mentions the market folder is
+# read once and its rows decoded - the JSON escapes its slashes, so a LIKE on a
+# plain path never matches.
+sub market_receipt_referrers {
+	my ($receipts) = @_;
+	my @wanted;
+	foreach my $r ( @{ ref $receipts eq 'ARRAY' ? $receipts : [] } ) {
+		next unless ref $r eq 'HASH' && ($r->{'uuid'} || '') ne '';
+		foreach my $page ( @{ $r->{'files'} || [] } ) {
+			next unless defined $page && length $page;
+			push @wanted, [ $page, $r->{'uuid'} ];
+		}
+	}
+	my %out;
+	return \%out unless scalar @wanted;
+	my $rows = eval { &subs::db_query('select app, uuid, file from appointments where file like ?', '%market%')->hashes } || [];
+	foreach my $row ( @{$rows} ) {
+		my $saved = eval { return decode_json $row->{'file'} } || [];
+		next unless ref $saved eq 'ARRAY';
+		foreach my $f ( @{$saved} ) {
+			next unless ref $f eq 'HASH' && defined $f->{'f'} && length $f->{'f'};
+			foreach my $pair ( @wanted ) {
+				next unless $f->{'f'} eq $pair->[0];
+				$out{ $pair->[1] }->{ $row->{'app'} } = 1 if ($row->{'app'} || '') ne '';
+			}
+		}
+	}
+	return { map { $_ => [ sort keys %{ $out{$_} } ] } keys %out };
+}
+
 # The kept receipts prepared for the Market pane: the pages that are still on
 # disk as /file_open links, and each receipt's lines ready to re-apply (so the
 # pane can put the whole shop back on the list in one press).
 sub market_receipts_prepared {
 	my @out;
-	foreach my $r ( @{ &market_receipts() } ) {
+	my $kept = &market_receipts();
+	my $referrers = &market_receipt_referrers($kept);
+	foreach my $r ( @{$kept} ) {
 		# Every page the receipt recorded, not only the ones this machine holds:
 		# receipt_page asks the machine that scanned them when they are not here.
 		my @files = grep { defined $_ && length $_ } @{ $r->{'files'} || [] };
@@ -1039,6 +1070,7 @@ sub market_receipts_prepared {
 		}
 		push @out, {
 			%{$r},
+			referenced_by => $referrers->{ $r->{'uuid'} || '' } || [],
 			pages => \@pages,
 			apply_json => encode_json(\@lines),
 			files_json => encode_json(\@files),
