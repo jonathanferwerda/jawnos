@@ -783,29 +783,49 @@ sub market_upgrade_need {
 	return $upgraded;
 }
 
-# An item on the list the warehouse says is due: its own app's fixed-level quantity
-# budget (6quantity) names the target, and on-hand below it is due. An item whose
-# shelf has a draw and is inside its Low stock days is due too, so the days left
-# the appointment panel shows and the need here are one reading.
-sub market_item_due {
+# Why an item on the list is due: the runway the appointment panel reads (days
+# left inside the app's Low stock days) or the fixed-level quantity budget
+# (6quantity) sitting above on-hand. The first is named with its days; the
+# second only says the shelf is below its keep level. A shelf with no draw has
+# no pace to read, so only an item the house actually draws can be running low.
+sub market_item_due_detail {
 	my ($text, $now) = @_;
-	return 0 unless defined $text && $text ne '';
+	my $detail = { due => 0, reason => '', days_left => undef };
+	return $detail unless defined $text && $text ne '';
 	my $item = &subs::unformat_name($text);
+	my $budget_due = 0;
 	my $b = eval { &Manager::budget_calculator({ app => $item, circumstance => 'quantity' }) };
 	if ($b && $b->{'fixed'} && ($b->{'circumstance'} || '') eq 'quantity'
 		&& defined $b->{'budgeted'} && $b->{'budgeted'} ne ''
 		&& ($b->{'value'} || 0) < ($b->{'budgeted'} || 0)) {
-		return 1;
+		$budget_due = 1;
 	}
+	my $days_left;
 	my $shelf = eval { &subs::stock_days_for($item, $now) };
-	return 0 unless $shelf && ref $shelf->{'units'} eq 'ARRAY';
-	foreach my $unit ( @{$shelf->{'units'}} ) {
-		# a shelf with no draw has no pace to read; only an item the house
-		# actually draws can be running low
-		next unless ($unit->{'out_30'} || 0) > 0;
-		return 1 if ($unit->{'stock_state'} || '') ne '';
+	if ($shelf && ref $shelf->{'units'} eq 'ARRAY') {
+		foreach my $unit ( @{$shelf->{'units'}} ) {
+			next unless ($unit->{'out_30'} || 0) > 0;
+			next if ($unit->{'stock_state'} || '') eq '';
+			next unless defined $unit->{'days_left'};
+			if (!defined $days_left || $unit->{'days_left'} < $days_left) {
+				$days_left = $unit->{'days_left'};
+			}
+		}
 	}
-	return 0;
+	if (defined $days_left) {
+		$detail = { due => 1, reason => 'days', days_left => $days_left };
+	}
+	elsif ($budget_due) {
+		$detail = { due => 1, reason => 'budget', days_left => undef };
+	}
+	return $detail;
+}
+
+# The boolean the list and its sweep ask for.
+sub market_item_due {
+	my ($text, $now) = @_;
+	my $detail = &market_item_due_detail($text, $now);
+	return $detail->{'due'} ? 1 : 0;
 }
 
 # Every due row becomes a need: the list keeps its own books in step with the
@@ -826,7 +846,10 @@ sub market_maker {
 	my $vendor = &subs::unformat_name($c->param('vendor')) || '';
 	my $list = &market_list();
 	foreach my $it ( @{$list} ) {
-		$it->{'due'} = &market_item_due($it->{'text'});
+		my $due = &market_item_due_detail($it->{'text'});
+		$it->{'due'} = $due->{'due'};
+		$it->{'due_reason'} = $due->{'reason'};
+		$it->{'due_days'} = $due->{'days_left'};
 	}
 	my $nearby = &market_nearby_lists();
 	return $c->render_to_string(

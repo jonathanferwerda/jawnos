@@ -78,6 +78,7 @@ sub market_list;
 sub market_save_list;
 sub market_upgrade_need;
 sub market_item_due;
+sub market_item_due_detail;
 sub market_sweep_needs;
 sub market_maker;
 sub market_accounts;

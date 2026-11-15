@@ -37,7 +37,16 @@
 			$o .= '<span style="opacity:.55;font-size:13px;margin-left:8px;">' . &subs::format_name($it->{'vendor'}) . '</span>';
 		}
 		if ($it->{'due'}) {
-			$o .= '<span style="margin-left:8px;font-size:13px;opacity:.8;">- due</span>';
+			$o .= '<span style="margin-left:8px;font-size:13px;opacity:.8;">- due';
+			if (($it->{'due_reason'} || '') eq 'days' && defined $it->{'due_days'}) {
+				my $shown = sprintf('%.1f', $it->{'due_days'});
+				$shown =~ s/\.0$//;
+				$o .= ' - ' . $shown . ' ' . ($shown == 1 ? &subs::ui('day left') : &subs::ui('days left'));
+			}
+			elsif (($it->{'due_reason'} || '') eq 'budget') {
+				$o .= ' - ' . &subs::ui('below keep level');
+			}
+			$o .= '</span>';
 		}
 		$o .= '<button class="market_delete" uuid="' . $uuid . '" style="float:right;" title="Delete">X</button>';
 		$o .= '</div>';

@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Web.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Manager/Part05.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
-# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end; and the shopping list reading the same shelf as a due item
+# tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Web.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Manager/Part05.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep templates/market/market.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
+# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end; and the shopping list reading the same shelf as a due item, with its runway named on the row
 
 use strict;
 use warnings;
@@ -258,6 +258,24 @@ is(Manager::market_item_due('walk_fine', $now), 0, 'a shelf with plenty left is 
 is(Manager::market_item_due('walk_low', $now), 1, 'a shelf inside its low days is due');
 is(Manager::market_item_due('walk', $now), 1, "a shelf inside its own urgent line is due");
 is(Manager::market_item_due('nothing_here', $now), 0, 'an item with no shelf is not due');
+my $low_detail = Manager::market_item_due_detail('walk_low', $now);
+is($low_detail->{'due'}, 1, 'the low shelf is due with its reason');
+is($low_detail->{'reason'}, 'days', 'and the reason is the runway');
+is($low_detail->{'days_left'}, 6, 'the runway carries the days the shelf has left');
+is(Manager::market_item_due_detail('walk_fine', $now)->{'reason'}, '',
+	'a well-stocked shelf has no due reason');
+{
+	no warnings 'redefine';
+	*Manager::budget_calculator = sub {
+		my ($d) = @_;
+		return $d->{'app'} eq 'walk_budget'
+			? { fixed => 1, circumstance => 'quantity', budgeted => 6, value => 2 }
+			: undef;
+	};
+}
+my $budget_detail = Manager::market_item_due_detail('walk_budget', $now);
+is($budget_detail->{'due'}, 1, 'a shelf below its keep level is due');
+is($budget_detail->{'reason'}, 'budget', 'and the reason is the keep level');
 
 my $empty = &subs::appointment_statistics_for('nothing_here', $now);
 is($empty->{'periods'}->[0]->{'count'}, 0, 'an app with no rows reads zero');
@@ -331,6 +349,19 @@ like($abilities_src, qr/low_stock_days/, 'the app panel offers a Low stock days 
 like($abilities_src, qr/urgent_stock_days/, 'and an Urgent stock days setting');
 like($wrapper, qr/\.appointment_stats_days_low/, 'the low reading has its amber rule');
 like($wrapper, qr/\.appointment_stats_days_urgent/, 'and the urgent reading its red rule');
+my $market_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
+	scalar read_file("$root/templates/market/market.html.ep"),
+	{
+		list => [
+			{ uuid => 'u1', text => 'milk', kind => 'need', due => 1, due_reason => 'days', due_days => 3 },
+			{ uuid => 'u2', text => 'eggs', kind => 'need', due => 1, due_reason => 'budget' },
+			{ uuid => 'u3', text => 'bread', kind => 'want', due => 0 },
+		],
+		vendors => [], vendor => '', lists => {}, nearby => [], receipts => [], scan_feeds => [],
+	},
+);
+like($market_html, qr/- due - 3 days left/, 'the market row shows the runway beside due');
+like($market_html, qr/- due - below keep level/, 'and names the keep level when that is the rule');
 my $section_controller = read_file("$root/lib/JawnOS/Controller/manager_misc.pm");
 like($section_controller, qr/template => 'apps\/appointment_stats'/,
 	'the app_section route draws the readings from the lazy partial');

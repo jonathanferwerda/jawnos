@@ -307,6 +307,7 @@ our %SUB = (
 	'market_client_type'                     => 'JawnOS/Manager/Part06.pm',
 	'market_here'                            => 'JawnOS/Manager/Part05.pm',
 	'market_item_due'                        => 'JawnOS/Manager/Part05.pm',
+	'market_item_due_detail'                 => 'JawnOS/Manager/Part05.pm',
 	'market_list'                            => 'JawnOS/Manager/Part05.pm',
 	'market_list_key'                        => 'JawnOS/Manager/Part05.pm',
 	'market_list_row'                        => 'JawnOS/Manager/Part06.pm',
