@@ -41,6 +41,8 @@ our $abilities = {
 	stock_movement => { config => 'select', options => [ 'off', 'consume', 'produce' ], formatted => 'yes' },
 	stock_item => {},
 	stock_place => {},
+	low_stock_days => {},
+	urgent_stock_days => {},
 	quantity => {},
 	home_plate => {},
 	nfc => {},

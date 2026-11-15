@@ -974,10 +974,24 @@ sub appointment_statistics_for {
 		  group by unit",
 		$item, $now - 30 * 86400000, $now)->hashes || [];
 	my %out_30 = map { ($_->{'unit'} || 'each') => ($_->{'out_qty'} || 0) + 0 } @{$recent_out};
+	# The warning lines are the app's own: Low stock days (seven unless set) is
+	# where the reading turns amber, and Urgent stock days (two unless set) where
+	# it turns red. Urgent never sits beyond low, or the two would trade places.
+	my $low_days = $settings->{'low_stock_days'};
+	$low_days = 7 unless defined $low_days && $low_days =~ /^\s*[0-9]+(?:\.[0-9]+)?\s*$/;
+	$low_days += 0;
+	my $urgent_days = $settings->{'urgent_stock_days'};
+	$urgent_days = 2 unless defined $urgent_days && $urgent_days =~ /^\s*[0-9]+(?:\.[0-9]+)?\s*$/;
+	$urgent_days += 0;
+	$urgent_days = $low_days if $urgent_days > $low_days;
 	foreach my $held ( @inventory ) {
 		my $daily = ($out_30{$held->{'unit'}} || 0) / 30;
 		$held->{'days_left'} = $held->{'on_hand'} <= 0 ? 0
 			: ($daily > 0 ? $held->{'on_hand'} / $daily : undef);
+		$held->{'stock_state'} = !defined $held->{'days_left'} ? ''
+			: $held->{'days_left'} <= $urgent_days ? 'urgent'
+			: $held->{'days_left'} <= $low_days ? 'low'
+			: '';
 	}
 
 	# The shelf above is a running balance. What the shelf took in and gave out

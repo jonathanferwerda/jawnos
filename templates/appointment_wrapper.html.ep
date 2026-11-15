@@ -299,6 +299,10 @@
 	.appointment_stats_table th:first-child, .appointment_stats_table td:first-child { text-align: left; }
 	.appointment_stats_table th { font-weight: normal; opacity: .7; }
 	.appointment_stats_calc { font-size: 85%; opacity: .6; }
+	/* A shelf near its end wears the house's warning colours: amber inside the
+	   app's Low stock days, red inside its Urgent stock days. */
+	.appointment_stats_days_low { color: var(--warn, #b7791f); font-weight: 700; }
+	.appointment_stats_days_urgent { color: var(--danger, #c53030); font-weight: 700; }
 	/* The pace carries a period still running to its end; a dotted rule sets it
 	   apart from the reading above it without inventing a second table. */
 	.appointment_stats_pace td { border-top: 1px dotted rgba(128,128,128,.45); opacity: .85; }

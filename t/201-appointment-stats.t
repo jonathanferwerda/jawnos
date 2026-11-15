@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
-# covers:    the appointment's bottom line - shelf in/out, days of stock left and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end
+# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end
 
 use strict;
 use warnings;
@@ -87,6 +87,12 @@ foreach my $set ( [ 'measure_calc', 'sum', 'steps' ], [ 'measure_calc', 'average
 $db->query('insert into settings (setting, value, app, device, uuid, server_time) values (?,?,?,?,?,?)',
 	'app_measures', '{"steps":{"type":"number"},"weight":{"type":"number","unit":"lb"}}',
 	'walk', $device, 'set-app-measures', $now);
+# the app's own warning lines: this item is urgent at eighty days, amber at a
+# hundred, so the seventy-five-day reading lands in the red
+foreach my $set ( [ 'low_stock_days', '100' ], [ 'urgent_stock_days', '80' ] ) {
+	$db->query('insert into settings (setting, value, app, device, uuid, server_time) values (?,?,?,?,?,?)',
+		$set->[0], $set->[1], 'walk', $device, 'set-' . $set->[0], $now);
+}
 
 # the shelf: two in, two out, one Usage row that must not count. The stock rows
 # carry their own clock too, so the period rows can show when each moved.
@@ -198,6 +204,8 @@ is($stats->{'inventory'}->{'units'}->[0]->{'on_hand'}, 10, 'the shelf level is i
 is($stats->{'inventory'}->{'units'}->[0]->{'unit'}, 'g', 'the unit is the shelf unit');
 cmp_ok(abs($stats->{'inventory'}->{'units'}->[0]->{'days_left'} - 75), '<', 1e-9,
 	'ten on hand at the last 30 days pace lasts seventy-five days');
+is($stats->{'inventory'}->{'units'}->[0]->{'stock_state'}, 'urgent',
+	"the app's own urgent line colours the reading red");
 
 # the shelf's movements inside each period, kept per unit, with the out carried
 # to the period's end at the same pace the other tables read
@@ -231,6 +239,16 @@ ok(!defined $two_units->{'inventory'}->{'units'}->[0]->{'days_left'},
 	'a unit with no draw has no days-left reading');
 is($two_units->{'inventory'}->{'units'}->[1]->{'days_left'}, 0,
 	'a shelf already spent reads zero days left');
+is($two_units->{'inventory'}->{'units'}->[1]->{'stock_state'}, 'urgent',
+	'a spent shelf is urgent');
+
+# with no settings the house defaults hold: seven days is amber, two is red
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk_low', 'l', '24', 'stock', ts(2026, 11, 7, 10));
+$db->query('insert into warehouse (item, unit, quantity, kind, timestamp) values (?,?,?,?,?)', 'walk_low', 'l', '-20', 'stock', ts(2026, 11, 7, 11));
+my $low = &subs::appointment_statistics_for('walk_low', $now);
+is($low->{'inventory'}->{'units'}->[0]->{'days_left'}, 6, 'four on hand at a two-thirds-a-day draw lasts six days');
+is($low->{'inventory'}->{'units'}->[0]->{'stock_state'}, 'low',
+	'the default seven days turns days left amber');
 
 my $empty = &subs::appointment_statistics_for('nothing_here', $now);
 is($empty->{'periods'}->[0]->{'count'}, 0, 'an app with no rows reads zero');
@@ -264,7 +282,7 @@ my $pace_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
 		app => 'walk',
 		app_stats => {
 			item => 'walk',
-			inventory => { units => [ { unit => 'g', in => 10, out => 4, on_hand => 6, days_left => 75 } ], periods => [{
+			inventory => { units => [ { unit => 'g', in => 10, out => 4, on_hand => 6, days_left => 75, stock_state => 'low' } ], periods => [{
 				unit => 'g',
 				rows => [ { key => 'today', label => 'Today', in => 10, out => 4, pace => 8 } ],
 			} ] },
@@ -297,8 +315,13 @@ like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="app
 	'an averaged measure has no pace to carry');
 like($pace_html, qr/<th>g<\/th>.*?<td>Today<\/td>\s*<td>10<\/td>\s*<td>4<\/td>\s*<td>8<\/td>/s,
 	'the inventory period row shows in, out and the out pace');
-like($pace_html, qr/<td>g<\/td>\s*<td>10<\/td>\s*<td>4<\/td>\s*<td>6<\/td>\s*<td>75<\/td>/,
-	'the shelf row shows the days of stock left');
+like($pace_html, qr/<td>g<\/td>\s*<td>10<\/td>\s*<td>4<\/td>\s*<td>6<\/td>\s*<td class="appointment_stats_days_low">75<\/td>/,
+	'the shelf row shows the days of stock left in its warning colour');
+my $abilities_src = read_file("$root/perl/gb/05_abilities_and_studio.pl");
+like($abilities_src, qr/low_stock_days/, 'the app panel offers a Low stock days setting');
+like($abilities_src, qr/urgent_stock_days/, 'and an Urgent stock days setting');
+like($wrapper, qr/\.appointment_stats_days_low/, 'the low reading has its amber rule');
+like($wrapper, qr/\.appointment_stats_days_urgent/, 'and the urgent reading its red rule');
 my $section_controller = read_file("$root/lib/JawnOS/Controller/manager_misc.pm");
 like($section_controller, qr/template => 'apps\/appointment_stats'/,
 	'the app_section route draws the readings from the lazy partial');

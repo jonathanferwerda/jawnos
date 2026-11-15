@@ -29,7 +29,7 @@
 					<td><%= &subs::numeric_formatter($u->{'in'}) %></td>
 					<td><%= &subs::numeric_formatter($u->{'out'}) %></td>
 					<td><%= &subs::numeric_formatter($u->{'on_hand'}) %></td>
-					<td><%= defined $u->{'days_left'} ? $pace_number->($u->{'days_left'}) : '-' %></td>
+					<td<% if ($u->{'stock_state'}) { %> class="appointment_stats_days_<%= $u->{'stock_state'} %>"<% } %>><%= defined $u->{'days_left'} ? $pace_number->($u->{'days_left'}) : '-' %></td>
 				</tr>
 			<% } %>
 		</table>
