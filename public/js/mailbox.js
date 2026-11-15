@@ -75,10 +75,13 @@ function mailMaker(incomingData, app) {
 	var contact_uuid = localStorage.getItem('mail_contact');
 	var mail_phone = localStorage.getItem('mail_phone');
 	var mail_email = localStorage.getItem('mail_email');
+	// a group MMS is read by the phone's thread id; without it the refresh would
+	// reopen the one thread of whoever spoke last
+	var mail_thread = localStorage.getItem('mail_thread') || '';
 	$.ajax({
 		url: url,
 		type: 'GET',
-		data: { window_maker: 'yes', timestamp: timestamp, email: mail_email, phone: mail_phone, mail_contact: contact_uuid, picker: picked, incoming_data: jData, scope: mailAppScope() },
+		data: { window_maker: 'yes', timestamp: timestamp, email: mail_email, phone: mail_phone, mail_contact: contact_uuid, mail_thread: mail_thread, picker: picked, incoming_data: jData, scope: mailAppScope() },
 		success: function(response) {
 			if (incomingData['scroll'] != 1) {
 				windowMaker(response);
@@ -786,6 +789,7 @@ function sendIt() {
 	var phone;
 	var email;
 	var conversation_uuid;
+	var mail_thread = localStorage.getItem('mail_thread') || '';
 	if ($('.mail_subsection.active').attr('section') == 'pen') {
 		mail_contact = 'pen';
 		conversation_uuid = $('.chatbot_configure.selected').attr('uuid');
@@ -819,6 +823,15 @@ function sendIt() {
 			phone = $('#mail_transport option[value="sms"]:selected').attr('data-line') || localStorage.getItem('mail_phone') || '';
 		}
 	}
+	// A group MMS belongs to the phone's thread, and goes to everyone on it: the
+	// sender in mail_phone is a member, not the recipient.
+	if (mail_thread) {
+		mail_contact = undefined;
+		phone = '';
+		email = '';
+		picked = {};
+		if (!transport) { transport = 'sms'; }
+	}
 	// LoRa is a road of its own: the message is filed on the `lora` contact and
 	// the server sends it through the T-Deck's LoRaWAN node, not to a phone.
 	if (section == 'lora' || transport == 'lora') {
@@ -838,6 +851,7 @@ function sendIt() {
 		timestamp:timestamp,
 		type: 'message',
 		transport: transport,
+		mail_thread: mail_thread,
 		picker: picked,
 		conversation_uuid: conversation_uuid,
 		// the paperclip's files ride the message; on the sms road they go as an MMS
@@ -959,7 +973,8 @@ function mailAddressGrabber() {
 		picker: JSON.stringify(mail_picker()),
 		mail_contact: '',
 		phone: '',
-		email: ''
+		email: '',
+		mail_thread: localStorage.getItem('mail_thread') || ''
 	};
 	if (section == 'pen') {
 		address.mail_contact = 'pen';
@@ -986,6 +1001,9 @@ function mailAddressGrabber() {
 		address.section = 'tickets';
 		address.mail_contact = localStorage.getItem('mail_contact') || '';
 		address.phone = (transport == 'sms') ? (localStorage.getItem('mail_phone') || '') : '';
+		// the group's socket is the phone's thread, so a member's reply lands
+		// in the group and not in their one-to-one thread
+		address.mail_thread = localStorage.getItem('mail_thread') || '';
 		if (section == 'lora' || transport == 'lora') {
 			address.mail_contact = 'lora';
 			address.phone = '';

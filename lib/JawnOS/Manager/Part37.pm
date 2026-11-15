@@ -546,7 +546,13 @@ sub mailws_address($c, $picker) {
 		my $phone = $c->param('phone');
 		my $email = $c->param('email');
 		my $contact = $c->param('mail_contact');
-		if ($phone && $phone ne 'null' && $phone ne 'undefined') {
+		my $thread = $c->param('mail_thread');
+		if ($thread && $thread =~ /^mms:/) {
+			# a group MMS is watched by the phone's thread id, not by whichever
+			# member spoke last
+			$address->{'thread'} = $thread;
+		}
+		elsif ($phone && $phone ne 'null' && $phone ne 'undefined') {
 			$address->{'phone'} = $phone;
 		}
 		elsif ($email && $email ne 'null' && $email ne 'undefined') {
@@ -572,8 +578,30 @@ sub mailws_message_constructs($m) {
 	return &mailws_constructs($picker);
 }
 
+# Everyone on a group thread, as bare digits: the sender of each row and the
+# people listed beside them. The phone's thread id is the whole group, so this
+# is who the next message goes to - once, however often a carrier repeats an
+# address. A thread the house has not seen has no one to send to.
+sub mailws_group_addresses($thread) {
+	my (@numbers, %seen);
+	return \@numbers unless defined $thread && $thread =~ /^mms:/;
+	foreach my $row ( @{ &subs::db_query('select phone, cc from mailbox where thread = ? order by rowid desc limit 50', $thread)->hashes } ) {
+		foreach my $num ( ($row->{'phone'} // ''), split(/,/, $row->{'cc'} // '') ) {
+			my $digits = $num;
+			$digits =~ s/\D+//g;
+			$digits =~ s/^1//;
+			next unless length $digits;
+			push @numbers, $digits unless $seen{$digits}++;
+		}
+	}
+	return \@numbers;
+}
+
 sub mailws_address_matches($address, $m, $constructs) {
 	return 0 unless $address;
+	if ($m->{'thread'} && $m->{'thread'} =~ /^mms:/) {
+		return (defined $address->{'thread'} && $address->{'thread'} eq $m->{'thread'}) ? 1 : 0;
+	}
 	if ($m->{'phone'}) {
 		return (defined $address->{'phone'} && $address->{'phone'} eq $m->{'phone'}) ? 1 : 0;
 	}

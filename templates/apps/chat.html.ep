@@ -55,7 +55,7 @@
 							<% foreach my $rc ( @{$recent_chats} ) { %>
 								<% my $fallback = $rc->{'kind'} eq 'sms' ? &subs::lang('chat.sms') : $rc->{'kind'} eq 'lora' ? &subs::lang('chat.lora') : &subs::lang('chat.tickets'); %>
 								<% my $preview = length($rc->{'preview'} || '') ? $rc->{'preview'} : $fallback; %>
-								<div class="chat_friend chat_recent" uuid="<%= $rc->{'uuid'} %>" phone="<%= $rc->{'phone'} %>" data-section="<%= $rc->{'section'} %>" data-kind="<%= $rc->{'kind'} %>" name="<%= $rc->{'name'} %>">
+								<div class="chat_friend chat_recent" uuid="<%= $rc->{'uuid'} %>" phone="<%= $rc->{'phone'} %>" thread="<%= $rc->{'thread'} || '' %>" data-section="<%= $rc->{'section'} %>" data-kind="<%= $rc->{'kind'} %>" name="<%= $rc->{'name'} %>">
 									<span class="chat_friend_avatar"><%= substr($rc->{'name'}, 0, 1) %></span>
 									<span class="chat_friend_text">
 										<span class="chat_friend_name"><%= $rc->{'name'} %></span>

@@ -760,7 +760,10 @@ sub sms_mms_relay($digits, $text, $attachments, $jawn_uuid) {
 			push @{$parts}, { name => $name || 'part', mime => $mime, data => encode_base64($bytes) };
 		}
 	}
-	return { ok => 0, error => 'no parts' } unless scalar @{$parts} > 0;
+	# a group thread is one mms even when it is only words: the phone's thread id
+	# is what keeps the replies together, so the only thing with nothing to send
+	# is an empty message with no parts
+	return { ok => 0, error => 'no parts' } unless scalar @{$parts} > 0 || (defined $text && length $text);
 	if (&subs::device_setter() eq 'mobile') {
 		# a wifi tablet can read a picture but has no radio to carry it
 		return { ok => 0, error => 'this device has no telephony' } unless &telephony_status()->{'telephony'};

@@ -276,6 +276,7 @@ our %SUB = (
 	'mail_text_chars'                        => 'JawnOS/Manager/Part24.pm',
 	'mailws_address'                         => 'JawnOS/Manager/Part37.pm',
 	'mailws_address_matches'                 => 'JawnOS/Manager/Part37.pm',
+	'mailws_group_addresses'                 => 'JawnOS/Manager/Part37.pm',
 	'mailws_constructs'                      => 'JawnOS/Manager/Part37.pm',
 	'mailws_message_constructs'              => 'JawnOS/Manager/Part37.pm',
 	'mailws_picker_dialled'                  => 'JawnOS/Manager/Part37.pm',

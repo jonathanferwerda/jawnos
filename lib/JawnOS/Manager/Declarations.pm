@@ -662,6 +662,7 @@ sub mailws_untrusted_throttle;
 sub mailws_address;
 sub mailws_message_constructs;
 sub mailws_address_matches;
+sub mailws_group_addresses;
 sub mailws_sender;
 
 1;

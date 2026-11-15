@@ -123,6 +123,7 @@ sub mail_checker($c) {
 	my $contact = $c->param('mail_contact');
 	my $phone = $c->param('phone');
 	my $email = $c->param('email');
+	my $thread = $c->param('mail_thread');
 	my $main_title;
 	if ($privilege eq 'guest') {
 		# a guest's dial is honoured only when the house advertises it; any
@@ -196,6 +197,25 @@ sub mail_checker($c) {
 		}
 	}
 
+	# A group MMS is a conversation of its own: the phone's thread id keys it and
+	# the addresses on the row name it. One rule serves the rail and the thread
+	# header, so both read the group the way the phone does.
+	my $group_name = sub {
+		my ($rows) = @_;
+		my (@names, %seen);
+		foreach my $row ( @{$rows || []} ) {
+			foreach my $num ( ($row->{'phone'} // ''), split(/,/, $row->{'cc'} // '') ) {
+				my $digits = $num;
+				$digits =~ s/\D+//g;
+				next unless length $digits;
+				next if $seen{$digits}++;
+				my @apps = &subs::contact_apps('phone', $digits);
+				my ($named) = grep { $_ !~ /^\d+$/ } @apps;
+				push @names, &subs::format_name($named || $apps[0] || $digits);
+			}
+		}
+		return join(', ', @names);
+	};
 	# Chat's recent list: the conversations that have actually spoken lately,
 	# newest first. It is built from the mailbox rather than the friends list so a
 	# thread still shows after its person is renamed or its ticket closes; a
@@ -212,7 +232,7 @@ sub mail_checker($c) {
 			$ticket_by_app{$key} ||= $t if length $key;
 		}
 		my $rows = &subs::db_query(
-			"select uuid, timestamp, server_time, status, phone, contact, body, manager_file, ost
+			"select uuid, timestamp, server_time, status, phone, contact, body, manager_file, ost, thread, cc
 			 from mailbox
 			 where coalesce(status,'') not in ('ignored','draft')
 			   and coalesce(contact,'') != 'pen'
@@ -224,7 +244,7 @@ sub mail_checker($c) {
 			my $contact = $r->{'contact'} || '';
 			my $ph = $r->{'phone'} || '';
 			next if $contact eq 'pen';
-			my ($key, $kind, $section, $uuid, $name, $phone) = ('', '', '', '', '', '');
+			my ($key, $kind, $section, $uuid, $name, $phone, $thread_key) = ('', '', '', '', '', '', '');
 			if ($contact eq 'lora') {
 				$key = 'lora';
 				$kind = 'lora';
@@ -239,6 +259,17 @@ sub mail_checker($c) {
 				$kind = 'chat';
 				$section = 'tickets';
 				$name = &subs::format_name($t->{'name'} || $t->{'contact_name'} || $t->{'app'} || '');
+			}
+			elsif (length($r->{'thread'} || '') && $r->{'thread'} =~ /^mms:/) {
+				# the phone's own thread id is the group, and it outranks the
+				# sender: keyed by sender, every group would collapse into that
+				# person's one-to-one thread
+				$key = 'g:' . $r->{'thread'};
+				$thread_key = $r->{'thread'};
+				$phone = $ph;
+				$kind = 'sms';
+				$section = 'sms';
+				$name = $group_name->([ $r ]);
 			}
 			elsif (length $ph) {
 				my @apps = &subs::contact_apps('phone', $ph);
@@ -268,7 +299,7 @@ sub mail_checker($c) {
 			next if $best{$key} && $best{$key}->{'sort'} >= $sort;
 			$best{$key} = {
 				key => $key, kind => $kind, section => $section,
-				uuid => $uuid, phone => $phone, name => $name,
+				uuid => $uuid, phone => $phone, name => $name, thread => $thread_key,
 				sort => $sort, timestamp => $ts || $r->{'server_time'} || '',
 				incoming => &subs::mail_message_incoming($r, $me) ? 1 : 0,
 				row => $r,
@@ -339,6 +370,14 @@ sub mail_checker($c) {
 	elsif ($settings->{'subsection'} eq 'lora') {
 		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, 'lora');
 		$main_title = 'LoRa';
+	}
+	elsif (length($thread || '') && $thread =~ /^mms:/) {
+		# a group is read by the phone's thread id, not by whoever spoke last
+		my $tq = &subs::db_fresh('select * from mailbox where timestamp < ? and thread = ? and coalesce(status, \'\') != \'ignored\' order by timestamp desc LIMIT 30', $timestamp, $thread);
+		my @trows = $tq ? $tq->hashes : ();
+		$q = \@trows;
+		$main_title = $group_name->(\@trows);
+		$main_title = &subs::lang('chat.sms') unless length $main_title;
 	}
 	elsif ($phone) {
 		$phone =~ s/\D+//gi;

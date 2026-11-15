@@ -178,6 +178,14 @@ sub action_45571 {
 				$m->{'phone'} =~ s/\D+//g;
 				$m->{'phone'} =~ s/^1//;
 			}
+			# A group MMS is its own conversation: the phone's thread id names
+			# it, and every address on that thread is who the next message goes
+			# to. The row keeps the thread and the people beside the sender, so
+			# the rail, the bubble and the next reply read the group without
+			# asking the phone again.
+			my $group_thread = (($m->{'mail_thread'} // '') =~ /^mms:/) ? $m->{'mail_thread'} : '';
+			my @group_send = $group_thread ? @{ &mailws_group_addresses($group_thread) } : ();
+			$m->{'phone'} = $group_send[0] || '' if $group_thread;
 			# the social constructs are defaulted the way the mailbox reads them,
 			# so a message sent from a tab with its pickers hidden still lands on
 			# the thread the reader will open; a message addressed to a phone, an
@@ -217,7 +225,9 @@ sub action_45571 {
 				phone => $m->{'phone'},
 				email => $m->{'email'},
 				conversation_uuid => $m->{'conversation_uuid'},
-				attachments => $m_attachments
+				attachments => $m_attachments,
+				thread => ($group_thread || undef),
+				cc => ($group_thread && scalar @group_send ? join(', ', @group_send) : undef)
 			};
 			# filed words are stored; a visitor's room words are only ever heard
 			# live by whoever is tuned in, so they are never written down
@@ -244,9 +254,12 @@ sub action_45571 {
 				# system thread showed a text bubble and a picture bubble for the
 				# one thing the person sent).
 				my $rides_mms = (ref $m->{'attachments'} eq 'ARRAY' && scalar @{$m->{'attachments'}} > 0);
-				&sms_message_send($m->{'phone'}, $sms_msg) unless $rides_mms;
-				if ($rides_mms) {
-					my $mms = &sms_mms_relay($m->{'phone'}, $sms_msg, $m->{'attachments'}, $m->{'uuid'});
+				# a group is one mms to everyone, words alone included: separate
+				# texts would split it into a thread per person
+				my $send_to = $group_thread ? join(' ', @group_send) : $m->{'phone'};
+				&sms_message_send($send_to, $sms_msg) unless $rides_mms || $group_thread;
+				if ($rides_mms || $group_thread) {
+					my $mms = &sms_mms_relay($send_to, $sms_msg, $m->{'attachments'} || [], $m->{'uuid'});
 					$log->info('mms relay: ' . ($mms->{'via'} || $mms->{'error'} || '?'));
 					if ($mms->{'mms_id'}) {
 						&subs::db_update('mailbox', &sms_mms_row_link($mms->{'mms_id'}, $mms->{'mms_date'}), { uuid => $m->{'uuid'} });
@@ -395,7 +408,10 @@ sub action_45571 {
 			my $picker = $address->{'picker'} || {};
 			my $last_message = $m->{'last_message'} || 0;
 			my $q;
-			if ($address->{'phone'}) {
+			if ($address->{'thread'}) {
+				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and thread = ? and coalesce(status, \'\') != \'ignored\' order by timestamp desc LIMIT 20', $last_message, $address->{'thread'});
+			}
+			elsif ($address->{'phone'}) {
 				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and phone = ? and coalesce(status, \'\') != \'ignored\' order by timestamp desc LIMIT 20', $last_message, $address->{'phone'});
 			}
 			elsif ($address->{'email'}) {

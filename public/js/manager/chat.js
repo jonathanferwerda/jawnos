@@ -98,6 +98,8 @@ $(window).on('focus', jawnChatSmsRole);
 function chatMethodKey() {
 	var phone = localStorage.getItem('mail_phone') || '';
 	var contact = localStorage.getItem('mail_contact') || '';
+	var thread = localStorage.getItem('mail_thread') || '';
+	if (thread) { return 'thread:' + thread; }
 	if (phone) { return 'phone:' + phone; }
 	if (contact && contact != 'pen' && contact != 'lora') { return 'contact:' + contact; }
 	return '';
@@ -106,6 +108,11 @@ function chatMethodKey() {
 function chatRememberedMethod() {
 	var phone = localStorage.getItem('mail_phone') || '';
 	var contact = localStorage.getItem('mail_contact') || '';
+	var thread = localStorage.getItem('mail_thread') || '';
+	if (thread) {
+		var by_thread = localStorage.getItem('chat_method_thread:' + thread);
+		if (by_thread) { return by_thread; }
+	}
 	if (phone) {
 		var by_phone = localStorage.getItem('chat_method_phone:' + phone);
 		if (by_phone) { return by_phone; }
@@ -123,6 +130,8 @@ function chatRememberMethod(value) {
 	// the chosen sms line can name the person even when the ticket, not a phone
 	// row, opened the thread
 	var line = $('#mail_transport option[value="sms"]:selected').attr('data-line') || '';
+	var thread = localStorage.getItem('mail_thread') || '';
+	if (thread) { localStorage.setItem('chat_method_thread:' + thread, value); }
 	if (phone) { localStorage.setItem('chat_method_phone:' + phone, value); }
 	if (line) { localStorage.setItem('chat_method_phone:' + line, value); }
 	if (contact && contact != 'pen' && contact != 'lora') { localStorage.setItem('chat_method_contact:' + contact, value); }
@@ -164,17 +173,22 @@ $(document).on('click', '.mail_subsection', function () {
 $(document).on('click', '.chat_shell .chat_friend', function () {
 	var uuid = $(this).attr('uuid') || '';
 	var phone = $(this).attr('phone') || '';
+	// a group MMS row is read by the phone's thread id, not by the person who
+	// spoke last, so the row opens the group instead of that person's thread
+	var thread = $(this).attr('thread') || '';
 	var section = $(this).attr('data-section') || (uuid ? 'tickets' : 'sms');
 	chatScrollSave();
 	chatRailAutoClose();
 	localStorage.setItem('mail_contact', uuid);
 	localStorage.setItem('mail_phone', phone);
+	localStorage.setItem('mail_thread', thread);
 	var data = {
 		timestamp: Date.now(),
 		window_maker: 'yes',
 		incoming_data: JSON.stringify({ settings: [{ setting: 'subsection', value: section }] })
 	};
 	if (uuid) { data.mail_contact = uuid; }
+	else if (thread) { data.mail_thread = thread; }
 	else if (phone) { data.phone = phone; }
 	$.ajax({
 		url: '/manager/chat',
@@ -208,6 +222,7 @@ $(document).on('click', '.appointment .chat_launcher', function () {
 	var phone = $(this).attr('phone') || '';
 	localStorage.setItem('mail_contact', uuid);
 	localStorage.setItem('mail_phone', phone);
+	localStorage.setItem('mail_thread', '');
 	var data = {
 		timestamp: Date.now(),
 		window_maker: 'yes',
