@@ -1,9 +1,9 @@
 <% use Mojo::JSON qw(encode_json); %>
 <%= include 'controller/standalone' %>
 <%# Time settings. The launcher and the taskbar read one house setting,
-    `clock_timezone`; the machine itself stays on UTC and keeps perfect time
-    through NTP. The page says both so a person can see why the box and the
-    clock on the bar disagree. %>
+    `clock_timezone`; saving it also writes that zone into the operating system,
+    so the box and the clock on the bar agree. The page says both, and whether
+    network time is synchronized. %>
 <style>
 	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
 	.wind[app="controller"] .top_navbar { display:none !important; }
@@ -70,6 +70,8 @@
 	if (!now || !pick) { return; }
 	var failed = <%== encode_json(&subs::ui('That did not work.')) %>;
 	var saved = <%== encode_json(&subs::ui('Saved. The launcher and taskbar now use this zone.')) %>;
+	var machine_saved = <%== encode_json(&subs::ui('The machine clock now uses it too.')) %>;
+	var machine_failed = <%== encode_json(&subs::ui('The machine clock could not be changed.')) %>;
 	function zone() {
 		var z = pick.value;
 		return (!z || z === 'local') ? undefined : z;
@@ -98,7 +100,15 @@
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 			body: new URLSearchParams({ timezone: pick.value })
 		}).then(function (r) { return r.json(); }).then(function (result) {
-			if (note) { note.textContent = result && result.ok ? saved : (failed + (result && result.error ? ' (' + result.error + ')' : '')); }
+			if (note) {
+				if (result && result.ok) {
+					var os = result.timezone_os;
+					note.textContent = saved + (!os ? '' : (os.ok ? ' ' + machine_saved : ' ' + machine_failed + (os.error ? ' (' + os.error + ')' : '')));
+				}
+				else {
+					note.textContent = failed + (result && result.error ? ' (' + result.error + ')' : '');
+				}
+			}
 			if (save) { save.disabled = false; }
 			paint();
 		}).catch(function () {

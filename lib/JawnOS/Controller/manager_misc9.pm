@@ -1061,9 +1061,10 @@ sub action_44010 {
 
 # GET /manager/controller/time
 # Time settings for the handheld: the zone the launcher and the taskbar read,
-# and what the machine's own clock is doing. The zone is a house setting, so it
-# is saved on this device rather than written into /etc/localtime: the box stays
-# on UTC and every surface agrees on the person's Eastern time.
+# and what the machine's own clock is doing. The zone is a house setting, and
+# saving it also writes it into the operating system (through timedatectl, or
+# the /etc/localtime link when that is absent), so the box and every surface
+# agree on the person's time.
 sub action_44011 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
@@ -1103,8 +1104,9 @@ sub action_44012 {
 		$c->render(json => { ok => 0, error => 'That is not a time zone this machine knows.' });
 		return;
 	}
-	&subs::setting_setter({ app => 'misc', setting => 'clock_timezone', value => $zone });
-	$c->render(json => { ok => 1, timezone => $zone });
+	my $saved = &subs::setting_setter({ app => 'misc', setting => 'clock_timezone', value => $zone });
+	my $zone_os = ref $saved eq 'HASH' ? $saved->{'timezone_os'} : undef;
+	$c->render(json => { ok => 1, timezone => $zone, ($zone_os ? (timezone_os => $zone_os) : ()) });
 }
 
 # GET /manager/controller/retroarch

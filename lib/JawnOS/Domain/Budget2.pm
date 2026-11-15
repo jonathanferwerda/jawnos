@@ -111,6 +111,15 @@ sub evaluation_agent {
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
 	my $model = $settings->{'eval_assistant'};
 	my $now = &subs::rightNow();
+	# The house reads one clock. The taskbar, the handheld and this report all
+	# take their zone from `clock_timezone`, so the report speaks in the person's
+	# time rather than the box's UTC. Adopting the zone here also moves SQLite's
+	# `localtime` buckets (daily counts, hourly and weekday shapes) and every
+	# localtime in the gather below, daylight saving included; the old zone is put
+	# back when the run finishes.
+	my $zone = &subs::clock_zone_house();
+	my $restore_zone = &subs::clock_zone_adopt($zone);
+	my $now_text = &subs::clock_zone_text($now, $zone);
 	my $machine = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '';
 	# The windows the report reads, shortest first. A change of pace only shows
 	# against a longer one, so every run weighs them all rather than one: the
@@ -164,7 +173,7 @@ sub evaluation_agent {
 			$schedule = {
 				cadence => $cadence,
 				(@days ? (days => \@days) : ()),
-				($sch && $sch->{'next_run'} ? (next_run => $sch->{'next_run'}) : ()),
+				($sch && $sch->{'next_run'} ? (next_run => $sch->{'next_run'}, next_run_text => &subs::clock_zone_text($sch->{'next_run'} * 1000, $zone)) : ()),
 			};
 		}
 	}
@@ -421,6 +430,7 @@ sub evaluation_agent {
 	if (($prior->{'text'} || '') =~ /\S/) {
 		$last_report = {
 			timestamp => $prior->{'timestamp'},
+			ran_at => &subs::clock_zone_text($prior->{'timestamp'}, $zone),
 			model => $prior->{'model'},
 			text => substr($prior->{'text'}, 0, 1200),
 		};
@@ -430,6 +440,10 @@ sub evaluation_agent {
 	# turn from a standing one.
 	my @recent = @{ (&subs::evaluation_headline_list($app)) };
 	@recent = @recent[0 .. 9] if scalar @recent > 10;
+	foreach my $head ( @recent ) {
+		next unless ref $head eq 'HASH' && $head->{'timestamp'};
+		$head->{'at'} = &subs::clock_zone_text($head->{'timestamp'}, $zone);
+	}
 	# The same windows as the last run left them, so even a small model is handed
 	# the change rather than left to infer it from prose
 	my $since_last;
@@ -451,13 +465,15 @@ sub evaluation_agent {
 			}
 			$delta{$wname} = { was => $was, now => $now };
 		}
-		$since_last = { previous_at => $prior->{'timestamp'}, windows => \%delta } if scalar keys %delta;
+		$since_last = { previous_at => $prior->{'timestamp'}, previous_at_text => &subs::clock_zone_text($prior->{'timestamp'}, $zone), windows => \%delta } if scalar keys %delta;
 	}
 	# How much the answer should carry: brief is a headline only (cheap, for a
 	# daily run), full is the whole report
 	my $depth = (&subs::setting_grabber({ app => $app, setting => 'evaluation_depth' }) || '') eq 'brief' ? 'brief' : 'full';
 	my $briefing = {
 		scope => $global ? 'the whole house' : $app,
+		time_zone => $zone,
+		now => $now_text,
 		constructs => [ sort keys %{$gb::relationals} ],
 		windows => $windows,
 		($measure_app ? (measurements_only => 1) : ()),
@@ -483,6 +499,7 @@ sub evaluation_agent {
 	# the readings are the whole subject, so the model is told plainly not to
 	# invent a pace from the count of readings.
 	$system .= ' This scope records measurements, not events: each appointment is a reading of a value. Report only the measured values and what changed between them - never occurrences, sessions, episodes, days active, pace, logs or counts of any kind. A window with no readings is a gap in logging, not a fall to zero.' if $measure_app;
+	$system .= " The house's time zone is $zone; it is $now_text there now. Timestamps in the briefing are epoch milliseconds (UTC): when you name a time, a day or an hour, read it and write it in $zone, never UTC. Where a stamp rides with its local text (ran_at, at, previous_at_text, next_run_text, latest_at), use that text as the zone's own reading.";
 	$system .= ' Speed is not a reading of this scope; do not mention it, even if a previous report did.' if !$global && !$speed_app;
 	my $measure_instructions = 'Begin with a single headline line - at most twenty words, no label - that names what the values did, then a blank line. Say what changed since the last run using since_last (and previous when it rides along). Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends, give each measurement\'s latest value against that window\'s average, min and max, and say whether it is rising, falling or steady across the windows; hold the range the app is set to expect against it where the briefing gives one. This scope records measurements, not events: never mention occurrences, sessions, episodes, days active, pace, logs or how often anything was recorded. A window with no readings is a gap in logging, not a fall to zero. Under Correlations, weigh any conditions the briefing carries, or say there is nothing to correlate. Under Predictions give two or three concrete, falsifiable predictions that the readings carry. Plain text.';
 	my $instructions = $depth eq 'brief'
@@ -587,6 +604,7 @@ sub evaluation_agent {
 			&subs::setting_setter({ app => $app, setting => 'evaluation_headlines', value => encode_json(\@heads) });
 		}
 	}
+	$restore_zone->() if $restore_zone;
 	return $report;
 }
 

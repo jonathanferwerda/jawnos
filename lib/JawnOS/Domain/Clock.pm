@@ -840,4 +840,163 @@ sub clock_alarm_sound {
 	return $command;
 }
 
+# ---- the house's time zone -------------------------------------------------
+# One zone is read by every surface that speaks a clock: the taskbar, the
+# handheld's launcher and its Time page, and the evaluation agent. It is kept in
+# `misc clock_timezone` (per device, falling back to the person's own machine), so
+# the picker in Configure -> Me writes the same setting the others already read.
+# Saving it also sets the operating system's zone, through the machine's own
+# timedatectl (or the /etc/localtime link when that is absent); a refusal is
+# reported to the caller rather than hidden, because a page that says "saved"
+# while the box stayed on UTC is the bug this helper exists to stop.
+
+# Every zone this machine's tz database names, for a picker. zone.tab is the
+# canonical list; a machine without it gets the house's usual choices.
+sub clock_zone_list {
+	my @zones;
+	if (open(my $fh, '<', '/usr/share/zoneinfo/zone.tab')) {
+		while (my $line = <$fh>) {
+			next if $line =~ /^\s*#/ || $line !~ /\S/;
+			my (undef, undef, $zone) = split /\t/, $line;
+			push @zones, $zone if defined $zone && $zone =~ m{^[A-Za-z0-9_+\-/]+$};
+		}
+		close $fh;
+	}
+	unless (scalar @zones) {
+		@zones = qw(
+			America/New_York America/Chicago America/Denver America/Los_Angeles
+			America/Anchorage Pacific/Honolulu America/Toronto America/Phoenix
+			Europe/London Europe/Paris Europe/Berlin Asia/Tokyo Australia/Sydney UTC
+		);
+	}
+	push @zones, 'UTC' unless grep { $_ eq 'UTC' } @zones;
+	my %seen;
+	return [ sort { lc $a cmp lc $b } grep { !$seen{$_}++ } @zones ];
+}
+
+# A zone is a name in the tz database, not a path: no dots, no traversal, and
+# it must really exist on this machine.
+sub clock_zone_valid {
+	my ($zone) = @_;
+	return 0 unless defined $zone && length $zone;
+	return 1 if $zone eq 'UTC';
+	return 0 unless $zone =~ m{^[A-Za-z0-9_+\-/]+$} && $zone !~ m{\.\.};
+	return -e "/usr/share/zoneinfo/$zone" ? 1 : 0;
+}
+
+# What the operating system itself is set to, read from /etc/timezone first and
+# the /etc/localtime link when that file is absent (as on many Arch machines).
+sub clock_zone_system {
+	my $zone = '';
+	if (open(my $fh, '<', '/etc/timezone')) {
+		$zone = <$fh> // '';
+		close $fh;
+		$zone =~ s/\s+$//;
+	}
+	unless (length $zone) {
+		my $link = readlink('/etc/localtime');
+		($zone) = ($link // '') =~ m{zoneinfo/(.+)$};
+		$zone = '' unless defined $zone;
+	}
+	return $zone;
+}
+
+# The zone the house reads: the chosen setting, then the house's Eastern default
+# (the same default the handheld's clock uses). The box's own zone is not the
+# fallback: the house keeps its clock on UTC on purpose, and a report that
+# inherited that would be the UTC report this helper exists to replace.
+sub clock_zone_house {
+	my $zone = &misc_setting('clock_timezone');
+	$zone = '' if defined $zone && $zone eq 'local';
+	$zone = 'America/New_York' unless defined $zone && length $zone;
+	$zone = 'America/New_York' unless &clock_zone_valid($zone);
+	return $zone;
+}
+
+# Format a moment (milliseconds) in a named zone, without trusting the worker's
+# own TZ. The zone is made current for the call and put back afterwards, so a
+# report can be read in the person's clock while the rest of the process keeps
+# the zone it started with.
+sub clock_zone_text {
+	my ($ms, $zone, $format) = @_;
+	$ms = 0 unless defined $ms && $ms =~ /^\s*\d+(?:\.\d+)?\s*$/;
+	$zone = &clock_zone_house() unless defined $zone && length $zone;
+	$format = '%A, %B %d %Y, %I:%M%P %Z' unless defined $format && length $format;
+	my $had = exists $ENV{'TZ'};
+	my $old = $ENV{'TZ'};
+	$ENV{'TZ'} = $zone;
+	POSIX::tzset();
+	my $t = localtime(int($ms / 1000));
+	my $text = ref $t ? $t->strftime($format) : '';
+	if ($had) { $ENV{'TZ'} = $old } else { delete $ENV{'TZ'} }
+	POSIX::tzset();
+	return $text;
+}
+
+# Make one zone the process's own for the work that follows - SQLite's
+# `localtime` buckets and every Perl localtime included - and return a coderef
+# that puts the old zone back. The caller decides how long the work lasts.
+sub clock_zone_adopt {
+	my ($zone) = @_;
+	return undef unless defined $zone && length $zone;
+	my $had = exists $ENV{'TZ'};
+	my $old = $ENV{'TZ'};
+	$ENV{'TZ'} = $zone;
+	POSIX::tzset();
+	return sub {
+		if ($had) { $ENV{'TZ'} = $old } else { delete $ENV{'TZ'} }
+		POSIX::tzset();
+	};
+}
+
+# Write the zone into the operating system. Direct first (a user-owned system or
+# a container), then the same command through `sudo -n`; a password prompt is
+# never shown, so a refusal returns at once. JAWNOS_TIMEZONE_DRY_RUN answers the
+# command without running it, the way the power helper does for its tests.
+sub clock_zone_apply {
+	my ($zone) = @_;
+	return { ok => 0, zone => ($zone // ''), error => 'That is not a time zone this machine knows.' }
+		unless &clock_zone_valid($zone);
+	my $current = &clock_zone_system();
+	if ($current eq $zone) {
+		POSIX::tzset() unless exists $ENV{'TZ'} && length $ENV{'TZ'};
+		return { ok => 1, zone => $zone, system => $current, applied => 'already' };
+	}
+	my @attempts;
+	my $timedatectl = `command -v timedatectl 2>/dev/null`;
+	chomp $timedatectl;
+	push @attempts, [ $timedatectl, 'set-timezone', $zone ] if length $timedatectl;
+	# The files are the floor every Linux has: a link and a line. They also cover
+	# a box where timedatectl exists but systemd is not running it.
+	my $zoneinfo = "/usr/share/zoneinfo/$zone";
+	push @attempts, [ 'sh', '-c', 'ln -sfn "$0" /etc/localtime && printf "%s\n" "$1" > /etc/timezone', $zoneinfo, $zone ];
+	if ($ENV{'JAWNOS_TIMEZONE_DRY_RUN'}) {
+		return { ok => 1, dry_run => 1, zone => $zone, system => $current, command => $attempts[0] };
+	}
+	my ($ok, $sudo_used, $last_error) = (0, 0, '');
+	foreach my $command ( @attempts ) {
+		my $rc = system(@{$command});
+		if ($rc == 0) { $ok = 1; last; }
+		my $sudo = `command -v sudo 2>/dev/null`;
+		chomp $sudo;
+		if (length $sudo) {
+			$rc = system($sudo, '-n', @{$command});
+			if ($rc == 0) { $ok = 1; $sudo_used = 1; last; }
+			$last_error = 'sudo -n was refused';
+		}
+		else {
+			$last_error = 'it needs root';
+		}
+	}
+	unless ($ok) {
+		return { ok => 0, zone => $zone, system => $current,
+			error => 'the machine clock could not be changed' . (length $last_error ? " ($last_error)" : '') };
+	}
+	# This worker keeps the zone it read at start; re-read it so it agrees with
+	# the rest of the machine without waiting for a restart.
+	POSIX::tzset() unless exists $ENV{'TZ'} && length $ENV{'TZ'};
+	return { ok => 1, zone => $zone, system => (&clock_zone_system() || $zone), applied => 'set',
+		($sudo_used ? (sudo => 1) : ()) };
+}
+
 1;

@@ -8,6 +8,8 @@
 #me_setting_list .me_field > input, #me_setting_list .me_field > select { width:100%; box-sizing:border-box; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; line-height:1.3; }
 #me_setting_list .me_checks { display:flex; flex-wrap:wrap; gap:6px 18px; margin:0 0 4px; }
 #me_setting_list .me_checks label { display:inline-flex; align-items:center; gap:6px; font-size:13px; }
+#me_setting_list .me_timezone { min-width:240px; font:inherit; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); }
+#me_setting_list .me_timezone_note { margin-left:8px; font-size:12px; opacity:.8; }
 </style>
 <div class="cfg">
 	<h2>Me</h2>
@@ -19,6 +21,21 @@
 	</div>
 
 	<% my $me_device = &subs::device_setter(); %>
+	<%# One zone for the house. The taskbar, the handheld and the evaluation report
+	    all read `clock_timezone`, and saving it here also sets the machine clock. %>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Time zone') %></label>
+		<span>
+			<select class="me_timezone" device="<%= $me_device %>" hint="<%= &subs::ui('The zone this house reads; saving it also sets the machine clock') %>">
+				<option value=""><%= &subs::ui('Local') %></option>
+				<% foreach my $z (@{ $timezones || [] }) { %>
+					<option value="<%= $z %>"<% if (defined $timezone && $z eq $timezone) { %> selected<% } %>><%= $z %></option>
+				<% } %>
+			</select>
+			<span class="me_timezone_note" aria-live="polite"></span>
+		</span>
+	</div>
+
 	<% foreach my $d ( @gb::device_types ) { %>
 		<details class="cfg-acc" data-acc="me-<%= &subs::html_name($d) %>"<% if ($d eq $me_device) { %> open<% } %>>
 			<summary><%= $d %></summary>
