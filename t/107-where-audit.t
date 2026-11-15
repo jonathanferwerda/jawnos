@@ -1,6 +1,7 @@
 # tests-for: scripts/where_audit.pl scripts/where.pl lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Migrations.pm
-# covers:    the locator's audit - misses, wrong reports, map drift, the JSON
-#           shape, the Coding agent's task brief and the strict exit.
+# covers:    the locator's audit - misses, wrong reports, map drift, the near
+#           leads a miss left behind, the JSON shape, the Coding agent's task
+#           brief and the strict exit.
 
 use strict;
 use warnings;
@@ -118,5 +119,40 @@ is($bounded->{'summary'}{'calls'}, 0, '--since bounds the lookup window');
 is($bounded->{'since'}, '2099-01-01', 'and the window is reported');
 ok((grep { $_->{'name'} eq 'drifted_name' } @{ $bounded->{'drift'} }),
 	'while map drift is still read');
+
+# --- the leads a miss printed, and whether one was followed ----------------
+{
+	my $ldir = tempdir(CLEANUP => 1);
+	my $ldb  = "$ldir/where.db";
+	my $ldbh = DBI->connect("dbi:SQLite:dbname=$ldb", '', '', { RaiseError => 1, PrintError => 0 });
+	$ldbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
+	$ldbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
+	$ldbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits,context) values ('l1','me',?,?,0,0,?)",
+		undef, $minute, 'lead_missed', '{"near":["good_sub","ghost_sub"]}');
+	$ldbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('l2','me',?,'good_sub',1,1)", undef, $minute);
+	$ldbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits,context) values ('l3','me',?,?,0,0,?)",
+		undef, $minute, 'cold_missed', '{"near":["ghost_sub"]}');
+	$ldbh->disconnect;
+
+	my ($lcode, $lout) = run_audit('--db', $ldb, '--root', $tree, '--days', 14);
+	is($lcode, 0, 'a ledger with leads still exits 0');
+	like($lout, qr/NEAR LEADS/, 'the report has a lead section');
+	like($lout, qr/1 of 2 led somewhere/, 'counting the leads that were followed');
+	like($lout, qr/lead_missed\s+offered good_sub, ghost_sub · followed good_sub/,
+		'and naming the lead the next lookup used');
+	like($lout, qr/cold_missed\s+offered ghost_sub\s*$/m, 'while a cold lead has no followed name');
+
+	my (undef, $ljson) = run_audit('--db', $ldb, '--root', $tree, '--days', 14, '--json');
+	my $ldata = decode_json($ljson);
+	is($ldata->{'leads'}{'offered'}, 2, 'the JSON counts the misses that offered a lead');
+	is($ldata->{'leads'}{'followed'}, 1, 'and how many led somewhere');
+	my ($follower) = grep { $_->{'name'} eq 'lead_missed' } @{ $ldata->{'leads'}{'rows'} };
+	is_deeply($follower->{'followed'}, ['good_sub'], 'with the name that was used');
+
+	my (undef, $lbrief) = run_audit('--db', $ldb, '--root', $tree, '--days', 14, '--prompt');
+	like($lbrief, qr/NEAR LEADS nobody followed/, 'the brief raises the lead nobody used');
+	like($lbrief, qr/cold_missed offered ghost_sub/, 'with the names it offered');
+	unlike($lbrief, qr/lead_missed offered/, 'and leaves out the one that was followed');
+}
 
 done_testing();

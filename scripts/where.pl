@@ -34,7 +34,8 @@
 #
 # Every lookup is recorded in the where_calls table (a hit or a miss, the minute
 # and the machine), so Configure -> System can show the locator's hit rate beside
-# the cost ledger. --no-log skips the row.
+# the cost ledger. A miss also records the leads it printed, so
+# scripts/where_audit.pl can say whether they were followed. --no-log skips the row.
 
 use strict;
 use warnings;
@@ -64,6 +65,7 @@ my $report_found;
 my $report_note;
 my $tech_name;
 my $list_topics = 0;
+my @near_offered;    # the leads the current miss printed, for the ledger
 my $list_tools = 0;
 my $help       = 0;
 
@@ -374,6 +376,7 @@ for my $raw (@ARGV) {
 		next;
 	}
 	# Capture the hit so the ledger can record what this name cost to print.
+	@near_offered = ();
 	my ($text, $hits) = capture_stdout(sub { lookup($raw, $name, $hint) });
 	print $text;
 	where_log($name, $hits, 'name', length $text);
@@ -530,6 +533,7 @@ sub print_near {
 		}
 	}
 	print "  near\t$_->[0]\t$_->[1]\n" for @picked;
+	push @near_offered, $_->[0] for @picked;
 	return;
 }
 
@@ -1208,7 +1212,7 @@ sub where_log {
 		$safe = substr($safe, 0, 200);
 		$dbh->do(
 			'insert into where_calls (uuid, machine, minute, name, hit, hits, context, ost, server_time) values (?,?,?,?,?,?,?,?,?)',
-			undef, $uuid, hostname(), $minute, $safe, ($hits ? 1 : 0), ($hits || 0), where_context($mode, $out_bytes), $now, $now,
+			undef, $uuid, hostname(), $minute, $safe, ($hits ? 1 : 0), ($hits || 0), where_context($mode, $out_bytes, \@near_offered), $now, $now,
 		);
 		$dbh->disconnect;
 		1;
@@ -1229,9 +1233,11 @@ sub where_log {
 # sync as the lookup row. Values are capped; no environment secrets are read.
 # mode and out_bytes are how the expensive modes are priced in the same row: a
 # named lookup, a --topics filter, an --outline or a --tech brief, and the bytes
-# it printed. The context column stays well inside its 2000-character cap.
+# it printed. near is the leads a miss offered: without them the ledger can only
+# count misses, and an audit cannot tell a wrong ranking from a name that simply
+# is not in the tree. The context column stays well inside its 2000-character cap.
 sub where_context {
-	my ($mode, $out_bytes) = @_;
+	my ($mode, $out_bytes, $near) = @_;
 	my $cwd = eval { getcwd() } // ($ENV{'PWD'} // '');
 	my $parent = getppid();
 	my $parent_cmd = '';
@@ -1272,6 +1278,9 @@ sub where_context {
 		mode        => $mode // 'name',
 		out_bytes   => defined $out_bytes ? int($out_bytes) : 0,
 	};
+	if ($near && @$near) {
+		$context->{'near'} = [ map { substr($_, 0, 60) } @$near ];
+	}
 	return JSON::PP->new->canonical->encode($context);
 }
 

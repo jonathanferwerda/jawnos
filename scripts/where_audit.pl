@@ -11,7 +11,9 @@
 # where.pl writes one row per lookup (where_calls) and one per explicit report
 # (where_feedback). This reads both, plus the two name maps, and prints the
 # misses worth covering, the hits an agent said were wrong, and any map that no
-# longer defines the name it claims. Nothing here edits the tree; the Coding
+# longer defines the name it claims. It also says whether the leads a miss
+# printed were followed, since that is what separates a wrong ranking from a name
+# that is simply not in the tree. Nothing here edits the tree; the Coding
 # agent does that from --prompt, with a test, like any other change.
 
 use strict;
@@ -60,8 +62,8 @@ if (defined $since_arg && length $since_arg) {
 	}
 }
 
-my %summary = (calls => 0, hits => 0, misses => 0, right => 0, wrong => 0);
-my (@misses, @wrong);
+my %summary = (calls => 0, hits => 0, misses => 0, right => 0, wrong => 0, leads => 0, followed => 0);
+my (@misses, @wrong, @leads);
 
 if (-f $db) {
 	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', {
@@ -107,6 +109,43 @@ if (-f $db) {
 				{ Slice => {} }, $since);
 		} || [];
 		@wrong = @{$wrong_rows};
+
+		# A miss that printed a lead carries the names in its context. The only
+		# evidence this table holds that a lead helped is a later hit for one of
+		# those names; it is a lead, not proof, because the agent may have grepped
+		# instead. Kept out of $findings deliberately: an unfollowed lead is a
+		# question about the ranking, not a thing the locator must fix.
+		my $lead_rows = eval {
+			$dbh->selectall_arrayref(
+				'select name, minute, context from where_calls'
+				. ' where hit = 0 and minute >= ?'
+				. q{ and context like '%"near"%'}
+				. ' order by minute desc limit 500',
+				{ Slice => {} }, $since);
+		} || [];
+		my $hit_rows = eval {
+			$dbh->selectall_arrayref(
+				'select name, max(minute) as last from where_calls'
+					. ' where hit > 0 and minute >= ? group by name',
+				undef, $since);
+		} || [];
+		my %hit_latest = map { $_->[0] => $_->[1] } @{$hit_rows};
+		for my $row (@{$lead_rows}) {
+			my $c = eval { JSON::PP->new->decode($row->{'context'}) };
+			next unless ref $c eq 'HASH' && ref $c->{'near'} eq 'ARRAY' && @{ $c->{'near'} };
+			my @offered  = @{ $c->{'near'} };
+			my @followed = grep {
+				defined $hit_latest{$_} && $hit_latest{$_} ge $row->{'minute'}
+			} @offered;
+			push @leads, {
+				name     => $row->{'name'},
+				minute   => $row->{'minute'},
+				offered  => \@offered,
+				followed => \@followed,
+			};
+		}
+		$summary{'leads'}    = scalar @leads;
+		$summary{'followed'} = scalar(grep { @{ $_->{'followed'} } } @leads);
 		$dbh->disconnect;
 	}
 }
@@ -121,6 +160,25 @@ for my $row (@misses) {
 	$row->{'context_text'} = context_text($row->{'context'});
 }
 
+# One entry per missed name: a guessed name misses repeatedly, and the reply
+# needs the lead once, carrying every name followed in any of its calls. The
+# JSON keeps the per-call rows; this merged view is what a person reads.
+my @lead_names;
+{
+	my %by;
+	for my $row (@leads) {
+		my $name = $row->{'name'};
+		$by{$name} ||= do {
+			push @lead_names, { name => $name, offered => [], followed => [] };
+			$lead_names[-1];
+		};
+		for my $key (qw(offered followed)) {
+			my %have = map { $_ => 1 } @{ $by{$name}{$key} };
+			push @{ $by{$name}{$key} }, grep { !$have{$_}++ } @{ $row->{$key} };
+		}
+	}
+}
+
 my @drift   = map_drift();
 my $findings = @misses + @wrong + @drift;
 
@@ -132,6 +190,11 @@ if ($json) {
 		summary  => { %summary },
 		misses   => \@misses,
 		wrong    => \@wrong,
+		leads    => {
+			offered  => $summary{'leads'},
+			followed => $summary{'followed'},
+			rows     => \@leads,
+		},
 		drift    => \@drift,
 		findings => $findings,
 	}), "\n";
@@ -139,13 +202,14 @@ if ($json) {
 }
 
 if ($prompt) {
-	print audit_prompt(\@misses, \@wrong, \@drift, $days);
+	print audit_prompt(\@misses, \@wrong, \@drift, \@lead_names, $days, $limit);
 	exit(($strict && $findings) ? 1 : 0);
 }
 
 printf "where audit: since %s from %s\n", $since, $db;
 printf "calls %d · hit %d · miss %d · confirmed %d · wrong %d\n",
 	@summary{qw(calls hits misses right wrong)};
+printf "near leads %d offered, %d followed\n", @summary{qw(leads followed)} if $summary{'leads'};
 
 if (@misses) {
 	print "\nMISSES (the locator found nothing; cover these)\n";
@@ -164,6 +228,16 @@ if (@wrong) {
 	}
 	print "  (ranking = the right answer was among the hits; coverage = it was not returned)\n";
 }
+if (@leads) {
+	print "\nNEAR LEADS (a miss prints up to three names; one is followed when the ledger has a hit for it afterwards)\n";
+	printf "  %d of %d led somewhere\n", @summary{ 'followed', 'leads' };
+	my $shown = 0;
+	for my $r (@lead_names) {
+		last if $shown++ >= $limit;
+		printf "  %-28s offered %s%s\n", $r->{'name'}, join(', ', @{ $r->{'offered'} }),
+			(@{ $r->{'followed'} } ? ' · followed ' . join(', ', @{ $r->{'followed'} }) : '');
+	}
+}
 if (@drift) {
 	print "\nMAP DRIFT (the map names a file that no longer defines the name)\n";
 	for my $r (@drift) {
@@ -176,7 +250,7 @@ exit(($strict && $findings) ? 1 : 0);
 # --- the brief ---------------------------------------------------------------
 
 sub audit_prompt {
-	my ($misses, $wrong, $drift, $days) = @_;
+	my ($misses, $wrong, $drift, $leads, $days, $limit) = @_;
 	my @lines = ('Maintain the locator (scripts/where.pl, lib/JawnOS/Manager/Index.pm, lib/JawnOS/Domain/Loader.pm).');
 	push @lines, "Its ledger for the last $days days shows:";
 	if (@{$misses}) {
@@ -195,6 +269,15 @@ sub audit_prompt {
 	if (@{$drift}) {
 		push @lines, '', 'MAP DRIFT (the map names a file that no longer defines the name):';
 		push @lines, sprintf('  %s: %s says %s', $_->{'name'}, $_->{'kind'}, $_->{'map'}) for @{$drift};
+	}
+	my @cold = grep { !@{ $_->{'followed'} } } @{$leads};
+	if (@cold) {
+		push @lines, '', 'NEAR LEADS nobody followed (the miss printed these names; open one and check whether it was the answer - if it was, the ranking is wrong, if another name was, the coverage is missing):';
+		my $shown = 0;
+		for my $r (@cold) {
+			last if $shown++ >= $limit;
+			push @lines, sprintf('  %s offered %s', $r->{'name'}, join(', ', @{ $r->{'offered'} }));
+		}
 	}
 	push @lines, '', 'Confirm every case in the source before editing; add a test for each new shape; run `perl scripts/tests_for.pl --staged --run`, then `perl scripts/run_tests.pl`; finish with bump, commit, push, restart.';
 	return join("\n", @lines) . "\n";

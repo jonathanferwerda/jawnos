@@ -519,6 +519,35 @@ EP
 	ok($fb{'jawnosAgentsPanel'}[4], 'and the call it refers to');
 }
 
+# --- a miss records the leads it printed -----------------------------------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $db  = "$dir/where.db";
+	require DBI;
+	require JSON::PP;
+	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
+	$dbh->disconnect;
+
+	local $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	delete $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	local $ENV{'JAWNOS_WHERE_DB'} = $db;
+
+	where('crew_advert');
+	where('xyzzy_plugh');
+
+	my $check = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	my $rows  = $check->selectall_arrayref('select name, context from where_calls', { Slice => {} });
+	$check->disconnect;
+	my %context = map { $_->{'name'} => JSON::PP->new->decode($_->{'context'}) } @{$rows};
+	ok(ref $context{'crew_advert'}{'near'} eq 'ARRAY',
+		'a miss records the leads it printed, so the audit can follow them');
+	ok((grep { $_ eq 'advert_get' } @{ $context{'crew_advert'}{'near'} }),
+		'including the name that was most likely meant');
+	ok(!exists $context{'xyzzy_plugh'}{'near'},
+		'and a miss with no lead records no near key at all');
+}
+
 # --- the expensive modes are priced in the same ledger ---------------------
 {
 	my $dir = tempdir(CLEANUP => 1);
