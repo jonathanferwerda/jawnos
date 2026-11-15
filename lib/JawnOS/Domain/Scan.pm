@@ -164,6 +164,12 @@ sub scan_computer_available {
 	}
 	&cache_set({ app => 'scan', context => 'computer_available', warranty => '-2m' },
 		{ key => $key, at => $now, machine => ($up ? ($up->{'machine'} || '') : '') });
+	# A probe is the one moment the answer is not in the ledger, so it is the one
+	# worth a line: this is how a person (or an agent) sees why a phone did or
+	# did not take the paper when the ledger was too old to say.
+	&log_writer('scan: computer health probe '
+		. ($up ? 'answered (' . (($up->{'hostname'} || '') ne '' ? $up->{'hostname'} : ($up->{'machine'} || 'unknown')) . ')' : 'went unanswered')
+		. ((&device_setter() || '') eq 'mobile' ? ' - this phone stands aside' : ' - this machine decides'));
 	return $up;
 }
 
