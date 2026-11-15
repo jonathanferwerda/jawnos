@@ -198,6 +198,12 @@ like( $ctl, qr/change_time => \$change_time/, 'carrying the stamp it wrote' );
 like( $ctl, qr/unless \(length \$relay_id/, 'and only the origin forwards it' );
 like( $ctl, qr/peer_verify\(\$c, \$rm\) && &subs::peer_allows\(\$c, \$rm, 'trusted'\)/, 'the door verifies the sender as a trusted peer' );
 
+# A switch and an interval take the same road: the panel route stores through
+# utility_control_apply and relays the same peer door, which applies either shape.
+like( $ctl, qr/my \$saved = \(defined \$target && length \$target\)\s*\n\s*\? &subs::utility_control_apply/, 'the save route stores a job change through the one applier' );
+like( $ctl, qr/name => 'utility control relay'/, 'and relays a switch or an interval too' );
+like( $ctl, qr/if \(length \$control \|\| length \$setting\) \{/, 'the door applies a single job change as well as a pool set' );
+
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_configure4.pm");
 like( $routes, qr{\[19422, 'post', '/manager/configure/utility_controller/peer', 'action_19422'\]}, 'the peer door has its route row' );
 
@@ -214,7 +220,7 @@ require "$root/lib/JawnOS/Domain/Render.pm";
 	*subs::setting_grabber = sub { return $STORED{'utility_controller'} };
 	*subs::setting_setter  = sub { my ($arg) = @_; $STORED{'utility_controller'} = $arg->{'value'}; return 1 };
 	*subs::rightNow        = sub { 1700000000000 };
-	*subs::time_abbrev_translator = sub { return 900000 };
+	*subs::time_abbrev_translator = sub { my ($v) = @_; return ($v =~ /^(\d+)m$/i) ? $1 * 60000 : undef };
 	$gb::timeouts = { backups => { toggle => 'on', interval => 600 }, sms => { toggle => 'off', interval => 600 } };
 	$gb::batch_groups = { fast => { label => 'Fast', seconds => 900 } };
 
@@ -234,6 +240,29 @@ require "$root/lib/JawnOS/Domain/Render.pm";
 
 	my $bad = subs::utility_pools_apply({ device => 'not-a-key', pools => [] });
 	is( $bad->{'ok'}, 0, 'a device key the blob cannot hold is refused' );
+
+	# ---- a switch and an interval take the same road ----------------------
+	# The peer door and the panel's own route both store a single job change
+	# through utility_control_apply, so a switch flipped on a peer's card is
+	# written exactly as that machine's own page writes it.
+	my $toggle = subs::utility_control_apply({ device => $peer, control => 'sms', setting => 'toggle', value => 'on', change_time => 1700000000200 });
+	is( $toggle->{'ok'}, 1, 'a switch is accepted' );
+	$blob = decode_json($STORED{'utility_controller'});
+	is( $blob->{$peer}->{'sms'}->{'toggle'}, 'on', 'and stored as on' );
+	is( $blob->{$peer}->{'__settings'}->{'last_change'}, 1700000000200, 'with the sender\'s clock' );
+
+	my $pace = subs::utility_control_apply({ device => $peer, control => 'backups', setting => 'interval', value => '2m', change_time => 1700000000300 });
+	is( $pace->{'ok'}, 1, 'a pace is accepted' );
+	is( $pace->{'value'}, 120, '2m is stored as 120 seconds' );
+	$blob = decode_json($STORED{'utility_controller'});
+	is( $blob->{$peer}->{'backups'}->{'interval'}, 120, 'and lands on the row' );
+
+	is( subs::utility_control_apply({ device => $peer, control => 'backups', setting => 'interval', value => 'soon' })->{'ok'}, 0,
+		'a pace that does not parse is refused rather than stored as zero' );
+	is( subs::utility_control_apply({ device => $peer, control => '__settings', setting => 'toggle', value => 'on' })->{'ok'}, 0,
+		'the blob\'s own bookkeeping is not a job' );
+	is( subs::utility_control_apply({ device => $peer, control => 'sms', setting => 'group', value => 'fast' })->{'ok'}, 0,
+		'only a switch and a pace are accepted' );
 }
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");

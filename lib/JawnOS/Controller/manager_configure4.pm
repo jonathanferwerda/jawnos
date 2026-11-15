@@ -584,63 +584,76 @@ sub action_19236 {
 # POST /manager/configure/utility_controller/save
 sub action_19245 {
 	my $c = shift;
-	&subs::subprocessor(sub {
-    Mojo::IOLoop->reset;
-#		&remote_relay_request($c, { dissemination => 'yes' });
-	}, { name => 'utility remote relay' });
 	my $device = $c->param('device');
 	my $control = $c->param('control');
 	my $setting = $c->param('setting');
 	my $value = $c->param('value');
-	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $real_device = &subs::device_setter();
 	my $signatorial = &subs::signatorial_designer();
-	my $controls = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
-	if (scalar keys %{$controls} == 0) {
-		foreach my $dt ( (&subs::signatorial_designer(), @gb::device_types ) ) {
-			$controls->{$dt} = clone $gb::timeouts;
-		}
-	}
-	if ($setting eq 'interval') {
-		# the field shows a duration such as "2m"; a bare number is seconds, so
-		# typing 120 cannot silently become 120 minutes
-		$value = ($value =~ /^\s*-?\d+(\.\d+)?\s*$/)
-			? ($value + 0)
-			: &subs::time_abbrev_translator($value,$timestamp) / 1000;
-	}
 
-	# Write the row that was edited and stamp its own last_change. The runtime
-	# reads only the signatorial key, so a device-type post (a stale page, or the
-	# old device tab) must not create or change a device row: fold it onto our
-	# signatorial when it is this machine's own device type, and ignore it
-	# otherwise. This is what stopped a device-type row from reading a job off
-	# while the signatorial row - the one that runs - stayed untouched.
-	my $now = &subs::rightNow();
+	# Write the row that was edited and stamp its own last_change. The runtime reads
+	# only the signatorial key, so a device-type post (a stale page, or the old
+	# device tab) must not create or change a device row: fold it onto our
+	# signatorial when it is this machine's own device type, and ignore it otherwise.
+	# This is what stopped a device-type row from reading a job off while the
+	# signatorial row - the one that runs - stayed untouched.
+	my $target = $device;
 	if (grep { $_ eq $device } @gb::device_types) {
-		if ($device eq $real_device) {
-			$controls->{$signatorial}->{$control}->{$setting} = $value;
-			$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
-			$controls->{$signatorial}->{'__settings'}->{$setting}->{'last_change'} = $now;
-		}
+		$target = ($device eq $real_device) ? $signatorial : '';
 	}
-	else {
-		$controls->{$device}->{$control}->{$setting} = $value;
-		$controls->{$device}->{'__settings'}->{'last_change'} = $now;
-		$controls->{$device}->{'__settings'}->{$setting}->{'last_change'} = $now;
-	}
-	my $jcontrols = encode_json $controls;
+	my $saved = (defined $target && length $target)
+		? &subs::utility_control_apply({
+			device      => $target,
+			control     => $control,
+			setting     => $setting,
+			value       => $value,
+			change_time => $c->param('change_time'),
+		})
+		: { ok => 0, error => 'unknown device' };
+
 	# Name every utility save in the log, with the row key it came from - a job
 	# being read off with nobody touching it has to be traceable to the page (or
 	# machine) that posted the value.
-	&subs::log_writer('utility save: sig=' . substr($signatorial, 0, 8) . ' device=' . $device . ' real=' . $real_device . ' ' . $control . '.' . $setting . '=' . (defined $value ? $value : 'undef'));
+	&subs::log_writer('utility save: sig=' . substr($signatorial, 0, 8) . ' device=' . ($device // '') . ' real=' . $real_device . ' ' . ($control // '') . '.' . ($setting // '') . '=' . (defined $value ? $value : 'undef'));
 
-	&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => $jcontrols });
+	# Hand it on now, as a pool change does. The blob is kept out of the settings
+	# digest, so a switch or an interval set for another machine would otherwise
+	# wait for whatever next pulls a snapshot and carries the merge. The origin
+	# broadcasts once; a receiver keeps the relay_id and the peer door never
+	# forwards it again.
+	my $relay_id = $c->param('relay_id') || '';
+	unless (!$saved->{'ok'} || length $relay_id || ($c->param('remoted') || '') eq 'yes') {
+		my $self = $signatorial || '';
+		$relay_id = &subs::random_string_creator(30);
+		eval { &subs::relay_fresh($relay_id) };
+		my %relay = (
+			signatorial => $self,
+			device => $target,
+			control => $control,
+			setting => $setting,
+			value => $saved->{'value'},
+			change_time => $saved->{'change_time'},
+			dissemination => 'yes',
+			source_signatorial => $self,
+			relay_from => $self,
+			relay_id => $relay_id,
+		);
+		eval { &subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&subs::remote_relay_request($c, {
+				override => 'manual',
+				url => '/manager/configure/utility_controller/peer',
+				type => 'post',
+				dissemination => 'yes',
+				params => \%relay,
+			});
+		}, { name => 'utility control relay' }); };
+	}
+
 	my $html = $c->render_to_string(
 		template => 'configure/utility_controller',
 	);
-
-	$c->render(json => { html => $html, controls => $controls });
-
+	$c->render(json => { html => $html, saved => $saved });
 }
 
 # POST /manager/configure/utility_pools/save
@@ -711,11 +724,13 @@ sub action_19305 {
 # POST /manager/configure/utility_controller/peer
 #
 # The peer door for a utility schedule another machine set. The house keeps every
-# machine's jobs in one blob keyed by signatorial, and a pool edited for a peer
-# used to wait for the next sync pass to reach it. The editor relays the change
-# here instead: the caller is a pinned house machine, the blob key travels with
-# the change, and the sender's stamp is kept so a later edit still wins the
-# per-key merge.
+# machine's jobs in one blob keyed by signatorial, and a change made for a peer
+# used to wait for the next sync pass to reach it. The panel relays it here
+# instead: the caller is a pinned house machine, the blob key travels with the
+# change, and the sender's stamp is kept so a later edit still wins the per-key
+# merge. Two shapes arrive - a whole pool set (pools/members) and one switch or
+# interval (control/setting/value) - and both land through the same appliers the
+# machine's own page uses.
 sub action_19422 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial') || '';
@@ -724,18 +739,36 @@ sub action_19422 {
 		return $c->rendered(403);
 	}
 	my $device = $c->param('device') || '';
-	my $pools = eval { decode_json($c->param('pools') // '[]') };
-	$pools = [] unless ref $pools eq 'ARRAY';
-	my $members = eval { decode_json($c->param('members') // '{}') };
-	$members = {} unless ref $members eq 'HASH';
-	my $saved = &subs::utility_pools_apply({
-		device      => $device,
-		pools       => $pools,
-		members     => $members,
-		change_time => $c->param('change_time'),
-	});
-	&subs::log_writer('utility pools from ' . substr($signatorial, 0, 8) . ': '
-		. ($saved->{'ok'} ? scalar(@{ $saved->{'pools'} || [] }) . ' pool(s) for ' . substr($device, 0, 8) : $saved->{'error'}));
+	my $control = $c->param('control') || '';
+	my $setting = $c->param('setting') || '';
+	my $saved;
+	if (length $control || length $setting) {
+		$saved = &subs::utility_control_apply({
+			device      => $device,
+			control     => $control,
+			setting     => $setting,
+			value       => $c->param('value'),
+			change_time => $c->param('change_time'),
+		});
+	}
+	else {
+		my $pools = eval { decode_json($c->param('pools') // '[]') };
+		$pools = [] unless ref $pools eq 'ARRAY';
+		my $members = eval { decode_json($c->param('members') // '{}') };
+		$members = {} unless ref $members eq 'HASH';
+		$saved = &subs::utility_pools_apply({
+			device      => $device,
+			pools       => $pools,
+			members     => $members,
+			change_time => $c->param('change_time'),
+		});
+	}
+	&subs::log_writer('utility from ' . substr($signatorial, 0, 8) . ': '
+		. ($saved->{'ok'}
+			? (length $control
+				? $control . '.' . $setting . ' for ' . substr($device, 0, 8)
+				: scalar(@{ $saved->{'pools'} || [] }) . ' pool(s) for ' . substr($device, 0, 8))
+			: $saved->{'error'}));
 	$c->render(json => $saved);
 }
 

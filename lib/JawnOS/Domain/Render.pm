@@ -949,6 +949,47 @@ sub utility_pools_apply {
 	return { ok => 1, device => $device, pools => \@clean, moved => $moved, change_time => $now };
 }
 
+# Apply one switch or one interval to a machine's utility row. The panel route and
+# the peer door both come here, so a job switched on another machine's card is
+# stored exactly as that machine's own page stores it, and a relayed change keeps
+# the sender's `change_time` for the same reason a pool change does. $arg:
+#   device      => the signatorial the blob keys on (required)
+#   control     => the job's name in gb.pl's table
+#   setting     => 'toggle' or 'interval'
+#   value       => 'on'/'off', or a duration such as 2m (a bare number is seconds)
+#   change_time => the stamp to write (optional; this machine's clock otherwise)
+sub utility_control_apply {
+	my (%arg) = @_ == 1 && ref $_[0] eq 'HASH' ? %{ $_[0] } : @_;
+	my $device = $arg{'device'} // '';
+	return { ok => 0, error => 'bad device' } unless $device =~ /^[0-9a-f]{32}$/i;
+	my $control = $arg{'control'} // '';
+	return { ok => 0, error => 'bad control' }
+		unless $control =~ /^[A-Za-z0-9_]+$/ && $control !~ /^__/ && ref $gb::timeouts->{$control} eq 'HASH';
+	my $setting = $arg{'setting'} // '';
+	return { ok => 0, error => 'bad setting' } unless $setting eq 'toggle' || $setting eq 'interval';
+	my $now = ($arg{'change_time'} // '') =~ /^\s*\d+\s*$/ ? ($arg{'change_time'} + 0) : &rightNow();
+	my $value = $arg{'value'};
+	if ($setting eq 'interval') {
+		# The field shows a duration such as "2m"; a bare number is seconds, so
+		# typing 120 cannot silently become 120 minutes. A pace that does not parse
+		# is refused rather than stored as zero, which would run the job every tick.
+		$value = (defined $value && $value =~ /^\s*-?\d+(\.\d+)?\s*$/)
+			? ($value + 0)
+			: do { my $parsed = &time_abbrev_translator($value, $now); defined $parsed ? $parsed / 1000 : undef };
+		return { ok => 0, error => 'a pace is a duration' } unless defined $value && $value > 0;
+	}
+	else {
+		$value = (($value // '') eq 'on') ? 'on' : 'off';
+	}
+	my $controls = eval { decode_json &setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
+	$controls->{$device} = clone $gb::timeouts unless defined $controls->{$device};
+	$controls->{$device}->{$control}->{$setting} = $value;
+	$controls->{$device}->{'__settings'}->{'last_change'} = $now;
+	$controls->{$device}->{'__settings'}->{$setting}->{'last_change'} = $now;
+	&setting_setter({ app => '__president', setting => 'utility_controller', value => encode_json($controls) });
+	return { ok => 1, device => $device, control => $control, setting => $setting, value => $value, change_time => $now };
+}
+
 # A job table adopted from the stored utility blob becomes this process's runtime.
 # `lasted_run` is process state - when this runtime last executed the job - so a
 # marker written by a *previous* process (anything before this one started) is
