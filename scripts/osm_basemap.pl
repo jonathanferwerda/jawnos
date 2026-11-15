@@ -10,6 +10,7 @@
 #   perl scripts/osm_basemap.pl --all         # download, cut, build, stage
 #   perl scripts/osm_basemap.pl --build       # again from the cut extract
 #   perl scripts/osm_basemap.pl --bbox=-82.4,42.6,-81.7,43.4 --name=lambton
+#   perl scripts/osm_basemap.pl --build --maxzoom=16   # deeper than the profile
 #
 # The chain is Geofabrik's regional extract (1 GB for Ontario, fetched once into
 # the cache and resumed if interrupted), `osmium extract` to cut the county out
@@ -22,6 +23,11 @@
 # into the cache automatically. Vector tiles are what a 3D view needs later:
 # buildings carry their height and level tags, which a picture of a map never
 # can.
+#
+# The packaged OpenMapTiles profile pins every layer to z14, so --maxzoom writes
+# a patched copy of its config into the cache (never /usr/share) with the top
+# level and each layer raised to the zoom asked for. The Lua processor stays as
+# the package ships it.
 #
 # The default bbox is the county plate measured in Travel (the widest measured
 # map that covers the house), and the default name is the county it sits in.
@@ -37,26 +43,30 @@ use Cwd qw(abs_path);
 use JawnOS::Platform::Paths ();
 
 my $PMTILES_RELEASE = 'v1.31.2';
+# The OpenMapTiles profile stops at z14; a PMTiles reader addresses no deeper
+# than z17 in practice, and the packaged config has no layer above z14 to raise.
+my $MAXZOOM = 17;
 
 my %opt = (
-	region => 'north-america/canada/ontario',
-	name   => 'lambton',
-	bbox   => '-82.24519,42.67353,-81.82710,43.33643',
-	cache  => File::Spec->catdir( JawnOS::Platform::Paths::home(), '.cache', 'jawnos-basemap' ),
+	region  => 'north-america/canada/ontario',
+	name    => 'lambton',
+	bbox    => '-82.24519,42.67353,-81.82710,43.33643',
+	cache   => File::Spec->catdir( JawnOS::Platform::Paths::home(), '.cache', 'jawnos-basemap' ),
+	maxzoom => 14,
 );
 my %want;
 # A flag this script does not know is a typo, and silently doing nothing is the
 # worst answer: --fetc would build nothing and exit 0.
-my %is_flag  = map { $_ => 1 } qw( fetch extract build all status help force );
-my %is_option = map { $_ => 1 } qw( region name bbox cache );
+my %is_flag  = map { $_ => 1 } qw( fetch extract build all status help force dry-run );
+my %is_option = map { $_ => 1 } qw( region name bbox cache maxzoom );
 
 foreach my $arg ( @ARGV ) {
-	if ( $arg =~ /^--([a-z]+)=(.*)$/ ) {
+	if ( $arg =~ /^--([a-z][a-z-]*)=(.*)$/ ) {
 		die "osm_basemap: unknown option '--$1' (try --help)\n" unless $is_option{$1};
 		$opt{$1} = $2;
 		next;
 	}
-	if ( $arg =~ /^--([a-z]+)$/ ) {
+	if ( $arg =~ /^--([a-z][a-z-]*)$/ ) {
 		die "osm_basemap: unknown argument '--$1' (try --help)\n" unless $is_flag{$1};
 		$want{$1} = 1;
 		next;
@@ -74,10 +84,19 @@ perl scripts/osm_basemap.pl --build           tile the cut extract into basemaps
   --region=north-america/canada/ontario   Geofabrik path of the regional extract
   --name=lambton                          the archive's name (and the route's ?name=)
   --bbox=minlon,minlat,maxlon,maxlat      the ground to tile
+  --maxzoom=N                             tile up to zoom N (default 14; the
+                                          profile stops at 14, so raise it;
+                                          z15+ needs tilemaker 3.1.0 or newer)
   --cache=DIR                             where extracts and tools are kept
+  --dry-run                               write the patched profile, tile nothing
 USAGE
 	exit 0;
 }
+
+# A bad --maxzoom must stop the build: silently tiling at the profile's own 14
+# would look like the option was honoured.
+die "osm_basemap: --maxzoom needs a whole number from 0 to $MAXZOOM (got '$opt{'maxzoom'}')\n"
+	unless $opt{'maxzoom'} =~ /^\d+$/ && $opt{'maxzoom'} <= $MAXZOOM;
 
 my $stage = JawnOS::Platform::Paths::basemaps_dir( root => abs_path("$RealBin/..") );
 my $cache = $opt{'cache'};
@@ -155,6 +174,37 @@ sub profile_assets {
 		. '  looked in: ' . join( ', ', @dirs ) . "\n";
 }
 
+# tilemaker ships an OpenMapTiles profile pinned to z14. A deeper archive needs
+# the top-level maxzoom raised and every layer that stops below it raised too.
+# Only those numbers change, in the text: re-encoding the JSON would scramble the
+# order of the layers, and tilemaker resolves a layer's write_to (glacier ->
+# landcover) against a layer defined earlier in the file. The .lua processor is
+# passed through untouched and nothing under /usr/share is ever written.
+#
+# tilemaker also insists maxzoom <= basezoom ("maxzoom must be the same or
+# smaller than basezoom"), so basezoom rises with the top level.
+sub patched_config {
+	my ( $src, $maxzoom ) = @_;
+	open my $in, '<', $src
+		or die "osm_basemap: cannot read the profile config $src: $!\n";
+	my $patched = do { local $/; <$in> };
+	close $in;
+	# every layer that stops below N, and basezoom if the top level passes it
+	$patched =~ s/("(?:maxzoom|basezoom)"\s*:\s*)(\d+)/$1 . ($2 < $maxzoom ? $maxzoom : $2)/ge;
+	# the top-level setting is the archive's own ceiling, so it is exactly N even
+	# when N is shallower than the profile's 14
+	my $settings_at = index( $patched, '"settings"' );
+	die "osm_basemap: the profile config $src has no settings block\n"
+		if $settings_at < 0;
+	substr( $patched, $settings_at ) =~ s/("maxzoom"\s*:\s*)\d+/$1$maxzoom/;
+	make_path($cache);
+	my $dest = "$cache/config-$opt{'name'}-z$maxzoom.json";
+	open my $out, '>', $dest or die "osm_basemap: cannot write $dest: $!\n";
+	print $out $patched;
+	close $out or die "osm_basemap: cannot write $dest: $!\n";
+	return $dest;
+}
+
 sub fetch {
 	make_path($cache);
 	&need_tool( 'curl', 'curl' );
@@ -192,16 +242,28 @@ sub extract_county {
 
 sub build {
 	my $tilemaker = &need_tool( 'tilemaker', 'tilemaker' );
+	# The Debian package is tilemaker 3.0.0 built without FAT_TILE_INDEX: its
+	# tile coordinates are 16-bit and its z6 offsets 8-bit ("supports up to
+	# z14" in coordinates.h), so a basezoom above 14 silently truncates them.
+	# Refuse before spending the build, not after it stages a degraded map.
+	my $help = `"$tilemaker" --help 2>&1`;
+	my ($tm_version) = $help =~ /^tilemaker\s+(\d+\.\d+\.\d+)/m;
+	if ( $opt{'maxzoom'} > 14 && defined $tm_version && $tm_version < '3.1.0' ) {
+		die "osm_basemap: --maxzoom=$opt{'maxzoom'} needs tilemaker 3.1.0 or newer;\n"
+			. "  the installed $tm_version was built without FAT_TILE_INDEX and tops out at z14.\n";
+	}
 	die "osm_basemap: no cut extract at $county_pbf; run --extract first\n"
 		unless -f $county_pbf;
-	my ( $config, $process ) = profile_assets();
+	my ( $profile_config, $process ) = profile_assets();
+	my $config = patched_config( $profile_config, $opt{'maxzoom'} );
 	my $pmtiles = &fetch_pmtiles_cli();
 	die "osm_basemap: the pmtiles CLI is required to write a valid archive;\n"
 		. "  it could not be fetched into $cache\n"
 		unless length $pmtiles;
 	my $mbtiles = "$cache/$opt{'name'}.mbtiles";
 	make_path($stage);
-	print 'build: ', basename($county_pbf), ' -> ', basename($mbtiles), "\n";
+	print 'build: ', basename($county_pbf), ' -> ', basename($mbtiles),
+		' at z', $opt{'maxzoom'}, ' (', basename($config), ")\n";
 	system( $tilemaker,
 		'--input', $county_pbf,
 		'--output', $mbtiles,
@@ -215,11 +277,30 @@ sub build {
 	# offset of 0, which the reference verifier and a strict reader reject. The
 	# reference converter rewrites the same tiles into a clean archive, so the
 	# archive is always made that way and then verified.
+	#
+	# It is converted beside the staged name first: a build that fails a check
+	# must not replace the archive already staged.
+	my $staged = "$out.part";
 	print 'build: ', basename($mbtiles), ' -> ', basename($out), "\n";
-	system( $pmtiles, 'convert', $mbtiles, $out ) == 0
+	system( $pmtiles, 'convert', '--force', $mbtiles, $staged ) == 0
 		or die "osm_basemap: pmtiles convert failed\n";
-	my $verdict = `"$pmtiles" verify "$out" 2>&1`;
-	die 'osm_basemap: the archive does not verify:' . "\n$verdict\n" if $? != 0;
+	my $verdict = `"$pmtiles" verify "$staged" 2>&1`;
+	if ( $? != 0 ) {
+		unlink $staged;
+		die 'osm_basemap: the archive does not verify:' . "\n$verdict\n";
+	}
+	# An archive that quietly stops short of the zoom asked for is the worst
+	# answer: tilemaker 3.0.0 overflows its tile bitmap at z16 and up, so it
+	# writes nothing above 15. Read the archive back and refuse rather than
+	# stage a shallower map under a deeper name.
+	my $show = `"$pmtiles" show "$staged" 2>&1`;
+	if ( $show =~ /^max zoom:\s*(\d+)/m && $1 < $opt{'maxzoom'} ) {
+		unlink $staged;
+		die "osm_basemap: asked for z$opt{'maxzoom'} but the archive stops at z$1;\n"
+			. "  the tilemaker that built it cannot write tiles that deep.\n"
+			. "  Nothing was staged.\n";
+	}
+	rename $staged, $out or die "osm_basemap: cannot stage $out: $!\n";
 	print 'build: staged ', human_size( -s $out ), " and verified\n";
 	return 0;
 }
@@ -240,6 +321,15 @@ sub fetch_pmtiles_cli {
 	system( 'tar', '-xzf', $tar, '-C', $cache ) == 0 or return '';
 	unlink $tar;
 	return "$cache/pmtiles";
+}
+
+# --dry-run writes the patched profile and stops: it shows what the build would
+# use without needing the extract, tilemaker or the network.
+if ( $want{'dry-run'} ) {
+	my ($profile_config) = profile_assets();
+	my $config = patched_config( $profile_config, $opt{'maxzoom'} );
+	print 'dry-run: profile z', $opt{'maxzoom'}, ' -> ', $config, "\n";
+	exit 0;
 }
 
 if ( $want{'status'} ) {

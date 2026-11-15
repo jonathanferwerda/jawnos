@@ -9,6 +9,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use JSON::PP ();
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
@@ -115,10 +116,19 @@ like( $text, qr/download\.geofabrik\.de/, 'it fetches the regional extract from 
 like( $text, qr/'extract', '--overwrite', '--strategy', 'complete_ways'/, 'osmium cuts the county whole' );
 like( $text, qr/'--bbox=' \. \$opt\{'bbox'\}/, 'tilemaker gets the bounding box its profile needs' );
 like( $text, qr/\$pmtiles, 'convert'/, 'and the reference converter writes the archive' );
-like( $text, qr/"\$pmtiles" verify "\$out"/, 'which is then verified, not assumed' );
+like( $text, qr/"\$pmtiles" verify "\$staged"/, 'which is then verified, not assumed' );
 like( $text, qr{/usr/share/doc/tilemaker/examples}, 'the profile comes from the installed package' );
 like( $text, qr/apt-get install \$package/, 'a missing tool names the package that provides it' );
 like( $text, qr/basemaps_dir/, 'it stages into the store\'s basemaps directory' );
+like( $text, qr/^my %is_option = map \{ \$_ => 1 \} qw\( region name bbox cache maxzoom \);$/m,
+	'--maxzoom is a known option' );
+like( $text, qr/my \$config = patched_config\(/, 'the profile config is patched before the build' );
+like( $text, qr/'--config', \$config/, 'tilemaker gets the patched copy, not /usr/share' );
+like( $text, qr/'--process', \$process/, 'while the packaged Lua processor is passed unchanged' );
+like( $text, qr/asked for z\$opt\{'maxzoom'\} but the archive stops at z\$1/,
+	'an archive that stops short of --maxzoom is refused, not staged' );
+like( $text, qr/--maxzoom=\$opt\{'maxzoom'\} needs tilemaker 3\.1\.0 or newer/,
+	'and a tilemaker too old for the zoom asked for is refused before the build' );
 
 # ---- --status, run for real on a fixture -------------------------------
 # A stand-in pmtiles CLI keeps this test off the network: the script only runs
@@ -157,5 +167,42 @@ like( $out, qr/unknown argument '--nonsense'/, 'by name' );
 ( $code, $out ) = $run->( '--bboxx=1,2,3,4' );
 isnt( $code, 0, 'an unknown --option=value is refused' );
 like( $out, qr/unknown option '--bboxx'/, 'by name too, not silently ignored' );
+
+# ---- --maxzoom: refused when wrong, patched when right ------------------
+( $code, $out ) = $run->( '--maxzoom=banana', "--cache=$cache" );
+isnt( $code, 0, 'a non-numeric --maxzoom is refused rather than ignored' );
+like( $out, qr/--maxzoom needs a whole number from 0 to 17/, 'naming the option and its range' );
+( $code, $out ) = $run->( '--maxzoom=18', "--cache=$cache" );
+isnt( $code, 0, 'a --maxzoom deeper than 17 is refused' );
+( $code, $out ) = $run->( '--maxzoom=16', "--cache=$cache" );
+is( $code, 0, 'and --maxzoom=16 alone still only parses and builds nothing' );
+
+# --dry-run reaches the config patch without tilemaker, the extract or the net.
+SKIP: {
+	my $packaged = '/usr/share/doc/tilemaker/examples/config-openmaptiles.json';
+	skip 'the packaged tilemaker profile is not installed', 11 unless -f $packaged;
+
+	( $code, $out ) = $run->( '--dry-run', "--cache=$cache" );
+	is( $code, 0, '--dry-run writes the profile and stops' );
+	my $patched = "$cache/config-lambton-z14.json";
+	ok( -f $patched, 'the default copy lands in the cache, never /usr/share' );
+	my $cfg = JSON::PP->new->decode( scalar read_file($patched) );
+	is( $cfg->{settings}{maxzoom}, 14, 'the default leaves the top-level zoom at 14' );
+	unlike( $out, qr/^build:/m, 'and tiles nothing' );
+
+	( $code, $out ) = $run->( '--dry-run', '--maxzoom=16', "--cache=$cache" );
+	is( $code, 0, '--dry-run at z16 succeeds' );
+	$patched = "$cache/config-lambton-z16.json";
+	ok( -f $patched, 'the patched profile is named for the zoom asked for' );
+	$cfg = JSON::PP->new->decode( scalar read_file($patched) );
+	is( $cfg->{settings}{maxzoom}, 16, 'the top-level maxzoom is raised to N' );
+	is( $cfg->{layers}{building}{maxzoom}, 16, 'and a layer pinned at 14 is raised too' );
+	is( $cfg->{settings}{basezoom}, 16, 'basezoom rises with it, as tilemaker requires' );
+	like( scalar read_file($patched), qr/"landcover".*"glacier"/s,
+		'the profile order survives: a write_to layer follows its target' );
+	my @above = grep { $_->{'maxzoom'} > 16 }
+		grep { ref $_ eq 'HASH' && defined $_->{'maxzoom'} } values %{ $cfg->{layers} };
+	is( scalar @above, 0, 'no layer is left above N' );
+}
 
 done_testing();
