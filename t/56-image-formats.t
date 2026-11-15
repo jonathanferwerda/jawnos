@@ -193,4 +193,39 @@ ok(subs::file_sentinel_stub($servable_stub), 'the one-byte "no" stub is recogniz
 ok(subs::file_sentinel_stub($servable_fragment), 'a short non-container .enc fragment is recognized');
 ok(!subs::file_sentinel_stub($servable_good), 'a real sealed container is not a stub');
 
+
+# --- a smaller incoming file must explain itself ---------------------------
+my $guard_local = {
+	f => '/tmp/not-used.jpg.enc',
+	size => 1000,
+	info => { width => 800, height => 600 },
+	manifest => [ { action => 'seal', file => 'f', size => 1000, timestamp => 100 } ],
+};
+is( subs::file_entry_merge_verdict($guard_local,
+	{ size => 500, manifest => [ { action => 'seal', file => 'f', size => 500, timestamp => 200 } ] }, 'f'),
+	'keep', 'a smaller file with no edit to explain it is refused' );
+is( subs::file_entry_merge_verdict($guard_local,
+	{ size => 500, manifest => [ { action => 'resize', file => 'f', size => 500, timestamp => 200 } ] }, 'f'),
+	'take', 'a recorded resize explains the smaller file' );
+is( subs::file_entry_merge_verdict($guard_local,
+	{ size => 500, info => { width => 400, height => 600 }, manifest => [] }, 'f'),
+	'take', 'changed dimensions explain the smaller file' );
+is( subs::file_entry_merge_verdict($guard_local, { size => 2000, manifest => [] }, 'f'),
+	'take', 'a larger file is taken' );
+is( subs::file_entry_merge_verdict($guard_local, { manifest => [] }, 'f'),
+	'take', 'a row older than sizes is not second-guessed' );
+is( subs::file_entry_merge_verdict($guard_local, { size => 500, manifest => [] }, 'f'),
+	'keep', 'a smaller row with no manifest to explain it is refused' );
+
+my $guard_dir = tempdir(CLEANUP => 1);
+my $guard_file = "$guard_dir/pic.jpg.enc";
+write_file($guard_file, 'Salted__' . ('x' x 400));
+is( subs::file_entry_merge_verdict({ f => $guard_file }, { size => 100, manifest => [] }, 'f'),
+	'keep', 'a local size on disk still refuses an unexplained drop' );
+
+my $measured = { f => $guard_file, manifest => [] };
+subs::media_entry_measure($measured, $guard_file, 'seal', 'f');
+is( $measured->{'size'}, 408, 'the entry records the stored size' );
+is( $measured->{'manifest'}[0]{'action'}, 'seal', 'and the event that set it' );
+
 done_testing();

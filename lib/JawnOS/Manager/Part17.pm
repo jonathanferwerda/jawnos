@@ -428,6 +428,19 @@ sub merge_table_rows {
 										foreach my $file_type ( qw/f thumb/ ) {
 											next unless $fi->{$file_type};
 											my $file = $fi->{$file_type};
+											my $size_key = &subs::media_entry_size_key($file_type);
+											my $kept_path = '';
+											my ($home_match) = grep { ($_->{'uuid'} // '') eq ($fi->{'uuid'} // '') } @{$h_files};
+											# A peer can name a file it no longer has. The row's size says what the
+											# file was; a smaller one is only believed when the manifest (or changed
+											# dimensions) explains it. Keeping the local entry keeps its path, size
+											# and history, not just the bytes.
+											if ($home_match && &subs::file_entry_merge_verdict($home_match, $fi, $file_type) eq 'keep') {
+												$fi->{$file_type} = $home_match->{$file_type};
+												$fi->{$size_key} = $home_match->{$size_key} if defined $home_match->{$size_key};
+												$fi->{'manifest'} = $home_match->{'manifest'} if ref $home_match->{'manifest'} eq 'ARRAY';
+												next;
+											}
 											$last_percent = $percentage;
 											# A row stream (the v3 pull) has no snapshot size to divide
 											# by: `$results_size` is 0 there, and the file-carry progress
@@ -449,8 +462,8 @@ sub merge_table_rows {
 											$fi->{'type'} = $type unless $fi->{'type'};
 											my $dest = $destination . $asset;
 
-											if (my @h_fil = grep { $_->{'uuid'} eq $fi->{'uuid'} } @{$h_files} ) {
-												my $h_file = $h_fil[0];
+											if ($home_match) {
+												my $h_file = $home_match;
 
 												my ($hdestination,$hasset) = &subs::file_device_renamer({ file => $h_file->{$file_type}, app => $h->{'app'}, misc_settings => $misc_settings, type => $h_file->{'type'} });
 												unless ($asset eq $hasset) {
@@ -483,16 +496,36 @@ sub merge_table_rows {
 														# the destination can be unwritable (a logo row whose
 														# app has no local media folder); keep the row anyway
 														if (defined $fd && length $fd) {
-															eval { write_file($dest,$fd) };
+															my $claimed = $fi->{$size_key};
+															if (defined $claimed && length $claimed && length($fd) != $claimed) {
+																# the body is not the size the row names: a truncated or empty
+																# answer. Keep the local copy rather than write a smaller file
+																# over a picture; with no local copy, keep the row but drop the
+																# size claim a later pass checks.
+																if ($home_match && -e $home_match->{$file_type}) {
+																	$kept_path = $home_match->{$file_type};
+																	$fi->{$file_type} = $kept_path;
+																}
+																delete $fi->{$size_key};
+															}
+															else {
+																														eval { write_file($dest,$fd) };
 															# a short write is not a copy: do not leave a truncated
 															# file claiming to be the picture
 															unlink $dest if (-e $dest && (-s $dest || 0) != length($fd));
+															&subs::media_entry_measure($fi, $dest, 'sync', $file_type) if -e $dest;
+															}
 														}
 													}
 												}
 											}
-											$file = $dest;
+											$file = length $kept_path ? $kept_path : $dest;
 											$fi->{$file_type} = $file;
+											# A row written before sizes existed: learn the local size (never a
+											# stub's) so the next merge can compare.
+											if (-e $file && (!defined $fi->{$size_key} || !length $fi->{$size_key}) && !&subs::file_sentinel_stub($file)) {
+												&subs::media_entry_measure($fi, $file, 'sync', $file_type);
+											}
 										}
 									}
 									$r->{'file'} = encode_json $files;

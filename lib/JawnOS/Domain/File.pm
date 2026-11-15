@@ -126,6 +126,83 @@ sub synced_file_payload {
 	return $bytes;
 }
 
+# Which key in a file entry carries a sealed file's byte size. An original is
+# `size`; its thumbnail is `thumb_size`, so a row names both without a nested
+# object older readers cannot see.
+sub media_entry_size_key {
+	my ($type) = @_;
+	return $type eq 'thumb' ? 'thumb_size' : 'size';
+}
+
+# A size drop an edit explains. The manifest records what happened to a file; a
+# crop, resize, rotate or transcode is a real reason to be smaller. The stored
+# dimensions are a second witness for rows written before manifests.
+sub media_entry_shrink_explained {
+	my ($local, $incoming) = @_;
+	return 0 unless ref $incoming eq 'HASH';
+	my @shrink = qw(crop resize rotate transcode trim compress thumbnail);
+	my $last = 0;
+	foreach my $e ( @{ (ref $local->{'manifest'} eq 'ARRAY' ? $local->{'manifest'} : []) } ) {
+		next unless ref $e eq 'HASH';
+		$last = $e->{'timestamp'} if ($e->{'timestamp'} || 0) > $last;
+	}
+	foreach my $e ( @{ (ref $incoming->{'manifest'} eq 'ARRAY' ? $incoming->{'manifest'} : []) } ) {
+		next unless ref $e eq 'HASH';
+		next unless grep { $_ eq ($e->{'action'} || '') } @shrink;
+		return 1 if ($e->{'timestamp'} || 0) > $last;
+	}
+	my $li = ref $local->{'info'} eq 'HASH' ? $local->{'info'} : {};
+	my $ii = ref $incoming->{'info'} eq 'HASH' ? $incoming->{'info'} : {};
+	foreach my $k (qw(width height duration)) {
+		next unless defined $li->{$k} && defined $ii->{$k} && length $li->{$k} && length $ii->{$k};
+		return 1 if "$li->{$k}" ne "$ii->{$k}";
+	}
+	return 0;
+}
+
+# Would an incoming entry's size replace the local one? A peer that lost its
+# file can serve a stub or an empty answer; the row still names the file, and
+# its size says what it should be. A smaller size with nothing in the manifest
+# (and no changed dimensions) to explain it is bad data: keep the local entry.
+# A row with no size or no manifest is older than this check and is not
+# second-guessed.
+sub file_entry_merge_verdict {
+	my ($local, $incoming, $type) = @_;
+	return 'take' unless ref $local eq 'HASH' && ref $incoming eq 'HASH';
+	my $key = &media_entry_size_key($type);
+	my $local_size = $local->{$key};
+	$local_size = -s $local->{$type}
+		if (!defined $local_size || !length $local_size) && defined $local->{$type} && -e $local->{$type};
+	my $incoming_size = $incoming->{$key};
+	return 'take' unless defined $local_size && length $local_size
+		&& defined $incoming_size && length $incoming_size;
+	return 'take' if $incoming_size >= $local_size;
+	return 'take' if &media_entry_shrink_explained($local, $incoming);
+	return 'keep';
+}
+
+# Record a stored file's size on its entry, and the event that changed it. The
+# manifest is the history a receiving machine reads before it believes a
+# smaller file, so every writer that changes a file records here.
+sub media_entry_measure {
+	my ($entry, $path, $action, $type) = @_;
+	return $entry unless ref $entry eq 'HASH';
+	$type = 'f' unless defined $type && length $type;
+	my $key = &media_entry_size_key($type);
+	$path = $entry->{$type} unless defined $path && length $path;
+	return $entry unless defined $path && length $path && -e $path;
+	my $size = -s $path;
+	return $entry unless defined $size;
+	return $entry if defined $entry->{$key} && $entry->{$key} eq $size;
+	$entry->{$key} = $size;
+	$entry->{'manifest'} = [] unless ref $entry->{'manifest'} eq 'ARRAY';
+	push @{ $entry->{'manifest'} }, {
+		action => ($action || 'measure'), file => $type, size => $size,
+		timestamp => &subs::rightNow()
+	};
+	return $entry;
+}
+
 sub file_encrypter {
 	my $data = shift;
 
@@ -178,6 +255,7 @@ sub file_encrypter {
 					&secure_unlink($path);
 					$f = $enc_path;
 					$fi->{$file_type} = $f;
+					&media_entry_measure($fi, $f, 'seal', $file_type);
 					$fi->{'server_time'} = &subs::rightNow();
 					$fi->{'uuid'} = &subs::random_string_creator(17) unless $fi->{'uuid'};
 					if ($file_type eq 'f') {
@@ -268,6 +346,7 @@ sub file_decrypter {
 
 
 					$fi->{$file_type} = $f;
+					&media_entry_measure($fi, $f, 'unseal', $file_type);
 					$fi->{'server_time'} = &subs::rightNow();
 					$fi->{'uuid'} = &subs::random_string_creator(7) unless $fi->{'uuid'};
 

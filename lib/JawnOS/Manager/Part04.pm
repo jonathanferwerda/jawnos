@@ -497,6 +497,7 @@ sub rock_and_roll($c) {
 										$file_data = &subs::file_media_information($file_data,$filename);
 										write_file($filename, $data);
 										&subs::seal_file($filename, $path, $secret, $encryption_standard);
+										&subs::media_entry_measure($file_data, $path, 'thumbnail', 'thumb');
 										my $appt = &subs::db_select('appointments', undef, { uuid => $appter->[0]->{'uuid'}, app => $appter->[0]->{'app'} })->hashes->[0];
 										$atf = eval { return decode_json $appt->{'file'} } || [];
 										my @natf = grep { $_->{'uuid'} eq $file_data->{'uuid'} } @{$atf};
