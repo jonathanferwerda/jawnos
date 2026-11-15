@@ -33,6 +33,7 @@ use File::Path ();
 use File::Temp ();
 use Getopt::Long ();
 use JSON::PP ();
+use Time::HiRes ();
 
 # The ODROID Go Ultra's eMMC as the USB gadget presents it: 15,634,268,160
 # bytes. A device with any other size is a different disk and is refused.
@@ -41,6 +42,15 @@ my $DEFAULT_IMAGE = '/home/jawn/gou/gou-emmc-0.1.2807.img.zst';
 my $DEFAULT_HOSTNAME = 'gou';
 
 my $JSON = JSON::PP->new->utf8(1)->canonical(1);
+
+# A flash is long and a person watches it. When the manager starts one it names
+# a progress file; this script owns that file from then on, so a panel restart
+# still finds the truth. The last state written is what the Controllers page
+# shows: writing with a byte count and a rate, then verifying, preparing, and
+# done, failed or cancelled. No secret is ever written here.
+my $PROGRESS_PATH;
+my $PROGRESS_STARTED;
+my $CANCELLED = 0;
 
 my %opt;
 Getopt::Long::Configure('no_ignore_case');
@@ -54,17 +64,24 @@ Getopt::Long::GetOptions(
 	'wifi-psk-stdin'  => \$opt{'wifi_psk_stdin'},
 	'hostname=s'      => \$opt{'hostname'},
 	'join-token=s'    => \$opt{'join_token'},
+	'progress=s'      => \$opt{'progress'},
 	'no-autopopulate' => \$opt{'no_autopopulate'},
 	'dry-run'         => \$opt{'dry_run'},
 	'backup=s'        => \$opt{'backup'},
 	'help|h'          => \$opt{'help'},
 ) or _fail(4, 'bad options');
 
+# From here on every failure and every phase goes to the progress file, so the
+# page sees more than "it stopped". A helper that exits before this line has no
+# file to write, and the caller reports the failure it got on stdout.
+$PROGRESS_PATH = $opt{'progress'} if defined $opt{'progress'} && length $opt{'progress'};
+$PROGRESS_STARTED = _now_ms();
+
 if ($opt{'help'}) {
 	print <<'USAGE';
 gou_provision.pl --scan | --flash [--device /dev/sdX]
   [--image FILE] [--wifi-ssid S --wifi-psk P | --wifi-psk-stdin] [--hostname NAME]
-  [--join-token FILE] [--no-autopopulate] [--dry-run] [--backup PATH]
+  [--join-token FILE] [--progress FILE] [--no-autopopulate] [--dry-run] [--backup PATH]
 USAGE
 	exit 0;
 }
@@ -94,6 +111,7 @@ sub _emit {
 sub _fail {
 	my ($code, $message) = @_;
 	$message = _clean($message) || 'the provisioner failed';
+	_progress_write('failed', error => $message) if defined $PROGRESS_PATH;
 	print STDERR "gou_provision: $message\n";
 	_emit({ ok => 0, error => $message }, $code);
 }
@@ -110,6 +128,56 @@ sub _clean {
 	$text =~ s/\s+/ /g;
 	$text =~ s/^\s+|\s+$//g;
 	return substr($text, 0, 400);
+}
+
+# ---------------------------------------------------------------------------
+# The progress file
+#
+# Written atomically (a rename, so a reader never sees half a JSON object) and
+# owned by this process: state, bytes, total, rate, and the pid of the process
+# group the manager must signal to cancel. The manager starts this script in its
+# own session, so a panel restart neither kills the write nor loses the count.
+
+sub _now_ms { return int(Time::HiRes::time() * 1000) }
+
+# /proc/<pid>/stat's start time (field 22). The pid-reuse guard: a recycled pid
+# starts later, so the manager can tell "still my flash" from "a stranger".
+sub _start_ticks {
+	my ($pid) = @_;
+	return '' unless defined $pid && $pid =~ /^\d+$/;
+	open my $fh, '<', "/proc/$pid/stat" or return '';
+	my $line = <$fh> // '';
+	close $fh;
+	return '' unless length $line;
+	# The command name is parenthesised and may contain spaces; split after it.
+	$line =~ s/^.*\)\s+//;
+	my @field = split /\s+/, $line;
+	return $field[19] // '';
+}
+
+sub _progress_write {
+	my ($state, %extra) = @_;
+	return unless defined $PROGRESS_PATH && length $PROGRESS_PATH;
+	my $group = getpgrp();
+	my $now = _now_ms();
+	my %data = (
+		state => $state,
+		pid => $group,
+		start_ticks => _start_ticks($group),
+		started_ms => $PROGRESS_STARTED,
+		updated_ms => $now,
+		# The manager seeded these before the exec; carry them forward so a
+		# later write does not erase where the token is or which board this is.
+		token_path => ($ENV{'JAWNOS_FLASH_TOKEN_PATH'} // ''),
+		hostname => ($ENV{'JAWNOS_FLASH_HOSTNAME'} // ''),
+		%extra,
+	);
+	my $tmp = $PROGRESS_PATH . '.' . $$ . '.tmp';
+	return unless open(my $fh, '>', $tmp);
+	print {$fh} $JSON->encode(\%data);
+	close $fh;
+	rename($tmp, $PROGRESS_PATH) or unlink $tmp;
+	return 1;
 }
 
 # ---------------------------------------------------------------------------
@@ -377,10 +445,13 @@ sub _write_image {
 	my $sha = Digest::SHA->new(256);
 	my $count = 0;
 	my $error = '';
+	my $started = Time::HiRes::time();
+	my $last_report = $started;
 	while (1) {
+		last if $CANCELLED;
 		my $read = read($src, my $buffer, 8 * 1024 * 1024);
 		unless (defined $read) {
-			$error = "reading $image failed: $!";
+			$error = "reading $image failed: $!" unless $CANCELLED;
 			last;
 		}
 		last unless $read > 0;
@@ -389,24 +460,35 @@ sub _write_image {
 		while ($offset < $read) {
 			my $wrote = syswrite($dd, $buffer, $read - $offset, $offset);
 			unless (defined $wrote && $wrote > 0) {
-				$error = 'dd stopped accepting data: ' . ($! || 'write returned 0');
+				$error = 'dd stopped accepting data: ' . ($! || 'write returned 0') unless $CANCELLED;
 				last;
 			}
 			$offset += $wrote;
 		}
 		last if length $error;
 		$count += $read;
+		my $now = Time::HiRes::time();
+		if ($now - $last_report >= 0.5) {
+			$last_report = $now;
+			my $elapsed = $now - $started;
+			my $rate = $elapsed > 0 ? int($count / $elapsed) : 0;
+			_progress_write('writing', bytes => $count, total => $expected, rate => $rate);
+		}
 	}
 	close $src;
 	my $src_status = $?;
 	close $dd;
 	my $dd_status = $?;
+	return { ok => 0, cancelled => 1, bytes => $count, error => 'cancelled' } if $CANCELLED;
 	return { ok => 0, error => $error } if length $error;
 	return { ok => 0, error => 'reading ' . $image . ' failed' } if $src_status != 0;
 	return { ok => 0, error => 'dd failed writing ' . $dev } if $dd_status != 0;
 	if (defined $expected && $expected != $count) {
 		return { ok => 0, error => "wrote $count bytes, expected $expected" };
 	}
+	my $elapsed = Time::HiRes::time() - $started;
+	_progress_write('verifying', bytes => $count, total => $expected,
+		rate => ($elapsed > 0 ? int($count / $elapsed) : 0));
 	system('sync');
 	system('blockdev', '--flushbufs', $dev) if _command_path('blockdev');
 
@@ -671,6 +753,8 @@ sub _flash {
 	# A person's own fields are checked first: a name, a password or a hostname
 	# that cannot be written is answered before the device is looked for, and
 	# never leaves the person watching a scan for a board that would be refused.
+	local $SIG{'TERM'} = sub { $CANCELLED = 1 };
+	local $SIG{'INT'} = sub { $CANCELLED = 1 };
 	my $hostname = defined $opt{'hostname'} && length $opt{'hostname'} ? $opt{'hostname'} : $DEFAULT_HOSTNAME;
 	unless ($hostname =~ /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/) {
 		_fail(4, 'invalid hostname');
@@ -742,15 +826,31 @@ sub _flash {
 
 	_note('flashing ' . $image . ' to ' . $dev
 		. (defined $length ? " ($length bytes)" : ''));
+	_progress_write('writing',
+		device => $dev, image => $image, total => $length, bytes => 0, rate => 0,
+		hostname => $hostname, device_bytes => $EMMC_SIZE * 512);
 	my $write = _write_image($image, $dev, $opt{'dry_run'}, $length);
+	if ($write->{'cancelled'}) {
+		_progress_write('cancelled', device => $dev, image => $image, total => $length,
+			bytes => ($write->{'bytes'} // 0), hostname => $hostname);
+		_emit({ ok => 0, cancelled => 1, error => 'cancelled' }, 1);
+	}
 	_fail(5, $write->{'error'}) unless $write->{'ok'};
 
 	my @done;
 	if (!$opt{'no_autopopulate'} && !$opt{'dry_run'}) {
+		_progress_write('preparing', device => $dev, image => $image, total => $length,
+			bytes => $write->{'bytes'}, hostname => $hostname);
 		my $populated = _autopopulate($dev, $hostname, $ssid, $psk, $join);
 		_fail(5, $populated->{'error'}) unless $populated->{'ok'};
 		@done = @{ $populated->{'done'} || [] };
 	}
+
+	_progress_write('done',
+		device => $dev, image => $image, total => $length,
+		bytes => $write->{'bytes'}, hostname => $hostname,
+		sha256_match => $write->{'sha256_match'}, autopopulated => \@done,
+		($opt{'dry_run'} ? (dry_run => 1) : ()));
 
 	_emit({
 		ok => 1,

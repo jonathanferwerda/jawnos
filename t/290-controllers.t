@@ -78,8 +78,10 @@ like($controller, qr/network_helper\(\['wifi_current'\]\)/, 'the flash reads the
 like($controller, qr/push \@args, \('--wifi-ssid', \$wifi_ssid\)/, 'the flash passes the network name');
 like($controller, qr/push \@args, '--wifi-psk-stdin'/, 'the password is named on stdin, not argv');
 unlike($controller, qr/'--wifi-psk',/, 'the password never reaches the argv');
-like($controller, qr/&_controller_gou_run\(1, \$psk_stdin, \@args\)/, 'the password is handed to the runner');
-like($controller, qr/\$params\{'stdin'\} = \$stdin if defined \$stdin/, 'and written to the child stdin');
+like($controller, qr/File::Temp::tempfile\('gou_flash_psk_XXXXXXXX'/, 'the password is written to a private file for stdin');
+like($controller, qr/open\(STDIN, '<', \$psk_path\)/, 'and the child reads it as its stdin');
+like($controller, qr/POSIX::setsid\(\)/, 'the flash runs in its own session, so a restart does not kill it');
+like($controller, qr/push \@args, \('--progress', \$job_path\)/, 'the progress file is named for the page');
 
 # The password arrives on the pipe, and the same shapes the page refuses are
 # refused here before a board is looked for, so a typo is answered at once.

@@ -16,6 +16,8 @@ sub routes {
 	[54009, 'post', '/manager/controllers/new/scan',  'action_54009'],
 	[54010, 'post', '/manager/controllers/new/flash', 'action_54010'],
 	[54011, 'post', '/manager/controllers/card',      'action_54011'],
+	[54012, 'get',  '/manager/controllers/new/flash/status', 'action_54012'],
+	[54013, 'post', '/manager/controllers/new/flash/cancel', 'action_54013'],
 	);
 }
 

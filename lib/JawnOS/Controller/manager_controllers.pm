@@ -11,6 +11,7 @@ use Cwd ();
 use File::Path ();
 use File::Temp ();
 use Mojo::JSON qw(decode_json encode_json);
+use POSIX ();
 
 no warnings 'uninitialized';
 
@@ -613,6 +614,104 @@ sub _controller_join_forget {
 	&subs::db_delete('cache', { context => 'controller_join', subcontext => $secret });
 }
 
+# ---------------------------------------------------------------------------
+# A flash job
+#
+# A flash writes a raw device for five to ten minutes, so it is not tied to one
+# request, one worker or one panel lifetime: the provisioner runs in its own
+# session and writes a progress file, and the page polls a status route. A
+# restart therefore neither kills the write nor loses the count - the next poll
+# (or a reopened Controllers window) reads the same file. Cancel signals the
+# session's process group, which is the sudo wrapper and the zstd/dd under it.
+
+sub _flash_now_ms { return int(time() * 1000) }
+
+sub _flash_job_path {
+	my $given = $ENV{'JAWNOS_FLASH_JOB'} // '';
+	return $given if length $given;
+	return &subs::home('~/.president') . '/gou_flash.json';
+}
+
+sub _flash_job_read {
+	my ($path) = @_;
+	$path = _flash_job_path() unless defined $path && length $path;
+	return {} unless -f $path;
+	my $raw = '';
+	if (open(my $fh, '<', $path)) { local $/; $raw = <$fh> // ''; close $fh }
+	my $job = eval { decode_json($raw) };
+	return ref $job eq 'HASH' ? $job : {};
+}
+
+sub _flash_job_write {
+	my ($job, $path) = @_;
+	return 0 unless ref $job eq 'HASH';
+	$path = _flash_job_path() unless defined $path && length $path;
+	my $dir = $path;
+	$dir =~ s{/[^/]+$}{};
+	eval { File::Path::make_path($dir) } if length $dir && !-d $dir;
+	my $tmp = $path . '.' . $$ . '.tmp';
+	return 0 unless open(my $fh, '>', $tmp);
+	print {$fh} encode_json($job);
+	close $fh;
+	return rename($tmp, $path) ? 1 : 0;
+}
+
+sub _flash_job_active {
+	my ($state) = @_;
+	$state = '' unless defined $state;
+	return $state =~ /^(?:starting|checking|writing|verifying|preparing)$/ ? 1 : 0;
+}
+
+# The pid is the flash's session leader. Its start time is what tells "still my
+# flash" from a recycled number, so a cancel never signals a stranger.
+sub _flash_job_alive {
+	my ($job) = @_;
+	my $pid = (ref $job eq 'HASH' && $job->{'pid'}) ? $job->{'pid'} : '';
+	return 0 unless defined $pid && $pid =~ /^\d+$/ && $pid > 1;
+	require JawnOS::Platform::Process;
+	return JawnOS::Platform::Process::same_process($pid, $job->{'start_ticks'} // '') ? 1 : 0;
+}
+
+# What the page draws: the same record plus the two numbers it would otherwise
+# have to derive. A total of zero means the image's size is not known yet, so no
+# percentage is invented.
+sub _flash_job_view {
+	my ($job) = @_;
+	my %view = %{ ref $job eq 'HASH' ? $job : {} };
+	delete $view{'token_path'};
+	my $bytes = $view{'bytes'} // 0;
+	my $total = $view{'total'} // 0;
+	$view{'percent'} = $total > 0 ? int($bytes * 100 / $total) : undef;
+	$view{'percent'} = 100 if defined $view{'percent'} && $view{'percent'} > 100;
+	my $started = $view{'started_ms'} // 0;
+	my $updated = $view{'updated_ms'} // 0;
+	$view{'elapsed'} = ($started && $updated > $started) ? ($updated - $started) / 1000 : 0;
+	$view{'rate'} = 0 unless defined $view{'rate'};
+	$view{'ok'} = 1;
+	return \%view;
+}
+
+# A finished job's token is settled exactly once. A done flash keeps the cache
+# row (the board redeems it on its first boot) and drops the host's copy of the
+# file; a failed or cancelled flash also spends the row, so a token nothing will
+# redeem does not sit there for a day.
+sub _flash_job_cleanup {
+	my ($job) = @_;
+	return unless ref $job eq 'HASH' && ($job->{'state'} // '') =~ /^(?:done|failed|cancelled)$/;
+	return if $job->{'cleaned'};
+	my $token = $job->{'token_path'} // '';
+	my $secret = '';
+	if (length $token && -f $token) {
+		my $raw = '';
+		if (open(my $fh, '<', $token)) { local $/; $raw = <$fh> // ''; close $fh }
+		my $parsed = eval { decode_json($raw) } || {};
+		$secret = $parsed->{'secret'} // '';
+		unlink $token;
+	}
+	&_controller_join_forget($secret) if $job->{'state'} ne 'done' && length $secret;
+	_flash_job_write({ %{ $job }, cleaned => 1 });
+}
+
 # POST /manager/controllers/new/scan
 sub action_54009 {
 	my $c = shift;
@@ -658,10 +757,8 @@ sub action_54010 {
 	# The password is handed over on the child's stdin: sudo keeps the argv
 	# visible in `ps` to every user on the machine, and a secret does not belong
 	# there.
-	my $psk_stdin;
 	if (length $wifi_ssid) {
 		push @args, '--wifi-psk-stdin';
-		$psk_stdin = $wifi_psk;
 	}
 	my $hostname = $c->param('hostname');
 	push @args, ('--hostname', substr($hostname, 0, 63)) if defined $hostname && length $hostname;
@@ -673,14 +770,160 @@ sub action_54010 {
 	$card = '' unless $card eq 'adopt' || $card eq 'format';
 	my $token = &_controller_join_token($c, (defined $hostname && length $hostname ? $hostname : 'Controller'), (defined $hostname && length $hostname ? $hostname : 'gou'), $card);
 	push @args, ('--join-token', $token->{'path'}) if $token->{'path'};
-	my $answer = &_controller_gou_run(1, $psk_stdin, @args);
-	unlink $token->{'path'} if $token->{'path'};
-	&_controller_join_forget($token->{'secret'}) if $token->{'secret'} && !($answer->{'ok'});
-	$answer = {} unless ref $answer eq 'HASH';
-	# The page says which network the board was given (an empty name means it
-	# was flashed with no network).
-	$answer->{'wifi'} = $wifi_ssid;
-	$c->render(json => $answer);
+	my $job_path = _flash_job_path();
+	my $running = _flash_job_read($job_path);
+	if (_flash_job_active($running->{'state'}) && (_flash_job_alive($running)
+		|| (!$running->{'pid'} && defined $running->{'started_ms'} && (_flash_now_ms() - $running->{'started_ms'}) < 5000))) {
+		unlink $token->{'path'} if $token->{'path'};
+		&_controller_join_forget($token->{'secret'}) if $token->{'secret'};
+		return $c->render(json => { ok => 0, error => 'a flash is already running' });
+	}
+	my $script = Cwd::abs_path('scripts/gou_provision.pl');
+	unless (defined $script && length $script && -f $script) {
+		unlink $token->{'path'} if $token->{'path'};
+		&_controller_join_forget($token->{'secret'}) if $token->{'secret'};
+		return $c->render(json => { ok => 0, error => 'the Controller provisioner is missing' });
+	}
+	push @args, ('--progress', $job_path);
+	# The password rides the child's stdin, not its argv: sudo keeps argv in `ps`.
+	my $psk_path;
+	if (length $wifi_ssid) {
+		my ($pfh, $path) = File::Temp::tempfile('gou_flash_psk_XXXXXXXX', TMPDIR => 1, UNLINK => 0);
+		if ($pfh) {
+			print {$pfh} $wifi_psk;
+			close $pfh;
+			chmod 0600, $path;
+			$psk_path = $path;
+		}
+	}
+	my $log_path = $job_path . '.log';
+	_flash_job_write({
+		state => 'starting',
+		hostname => (defined $hostname ? $hostname : ''),
+		token_path => ($token->{'path'} // ''),
+		started_ms => _flash_now_ms(), bytes => 0, total => 0,
+	}, $job_path);
+	my $pid = fork();
+	unless (defined $pid) {
+		unlink $token->{'path'} if $token->{'path'};
+		unlink $psk_path if $psk_path;
+		&_controller_join_forget($token->{'secret'}) if $token->{'secret'};
+		return $c->render(json => { ok => 0, error => 'the flash could not start' });
+	}
+	if (!$pid) {
+		# Its own session: a worker restart must not kill the write, and a cancel
+		# signals the whole group (sudo, perl, zstd, dd).
+		eval { POSIX::setsid() };
+		if ($psk_path) { open(STDIN, '<', $psk_path) or open(STDIN, '<', '/dev/null') }
+		else { open(STDIN, '<', '/dev/null') }
+		open(STDOUT, '>', $log_path);
+		open(STDERR, '>&', \*STDOUT);
+		$ENV{'JAWNOS_FLASH_TOKEN_PATH'} = $token->{'path'} // '';
+		$ENV{'JAWNOS_FLASH_HOSTNAME'} = $hostname // '';
+		exec('sudo', '-n', $^X, $script, @args) or POSIX::_exit(127);
+	}
+	unlink $psk_path if $psk_path;
+	# This request waits for the answer, so a normal flash needs no polling. If
+	# the worker dies, the session keeps writing and the status route reads on.
+	my $deadline = time + 900;
+	my $job;
+	while (1) {
+		$job = _flash_job_read($job_path);
+		last if ($job->{'state'} // '') =~ /^(?:done|failed|cancelled)$/;
+		my $reaped = waitpid($pid, POSIX::WNOHANG());
+		if ($reaped == $pid) {
+			$job = _flash_job_read($job_path);
+			last if ($job->{'state'} // '') =~ /^(?:done|failed|cancelled)$/;
+			$job = { %{ $job }, state => 'failed', error => 'the flash process stopped before it finished' };
+			_flash_job_write($job, $job_path);
+			last;
+		}
+		if (time > $deadline) {
+			kill 'TERM', -$pid;
+			$job = { %{ $job }, state => 'failed', error => 'the flash timed out' };
+			_flash_job_write($job, $job_path);
+			last;
+		}
+		select(undef, undef, undef, 0.5);
+	}
+	_flash_job_cleanup($job);
+	my $state = $job->{'state'} // 'failed';
+	if ($state eq 'done') {
+		return $c->render(json => {
+			ok => 1, state => 'done', device => $job->{'device'},
+			bytes_written => $job->{'bytes'}, sha256_match => $job->{'sha256_match'},
+			autopopulated => ($job->{'autopopulated'} || []), wifi => $wifi_ssid,
+		});
+	}
+	if ($state eq 'cancelled') {
+		return $c->render(json => { ok => 0, state => 'cancelled', cancelled => 1, error => 'cancelled', wifi => $wifi_ssid });
+	}
+	return $c->render(json => {
+		ok => 0, state => 'failed',
+		error => ($job->{'error'} || 'the board was not flashed'), wifi => $wifi_ssid,
+	});
+}
+
+# GET /manager/controllers/new/flash/status
+# The page polls this while a flash runs and once when the window opens, so a
+# restarted panel picks the job up where it was rather than declaring failure.
+sub action_54012 {
+	my $c = shift;
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	unless (&_controller_is_computer()) {
+		return $c->render(json => { ok => 0, error => 'not a computer' });
+	}
+	my $path = _flash_job_path();
+	my $job = _flash_job_read($path);
+	return $c->render(json => { ok => 1, state => 'idle' }) unless %$job;
+	if (_flash_job_active($job->{'state'})) {
+		my $waiting = !$job->{'pid'} && defined $job->{'started_ms'}
+			&& (_flash_now_ms() - $job->{'started_ms'}) < 5000;
+		if (!$waiting && !_flash_job_alive($job)) {
+			$job = { %{ $job }, state => 'failed', error => 'the flash process stopped before it finished' };
+			_flash_job_write($job, $path);
+		}
+	}
+	my $view = _flash_job_view($job);
+	_flash_job_cleanup($job) unless _flash_job_active($job->{'state'});
+	$c->render(json => $view);
+}
+
+# POST /manager/controllers/new/flash/cancel
+# A cancel is the person saying stop: TERM the whole session, then KILL it if it
+# has not written a final state. The partial device is not a bootable board, so
+# the token is spent with it.
+sub action_54013 {
+	my $c = shift;
+	unless (&_controller_house_pass($c)) {
+		return $c->render(json => { ok => 0, error => 'not allowed' });
+	}
+	unless (&_controller_is_computer()) {
+		return $c->render(json => { ok => 0, error => 'not a computer' });
+	}
+	my $path = _flash_job_path();
+	my $job = _flash_job_read($path);
+	unless (_flash_job_active($job->{'state'}) && _flash_job_alive($job)) {
+		return $c->render(json => { ok => 0, error => 'no flash is running' });
+	}
+	my $pid = $job->{'pid'};
+	kill 'TERM', -$pid;
+	my $until = time + 6;
+	while (time < $until) {
+		my $now = _flash_job_read($path);
+		last unless _flash_job_active($now->{'state'});
+		select(undef, undef, undef, 0.1);
+	}
+	my $now = _flash_job_read($path);
+	if (_flash_job_active($now->{'state'})) {
+		kill 'KILL', -$pid;
+		$now = { %{ $now }, state => 'cancelled', error => 'cancelled' };
+		_flash_job_write($now, $path);
+	}
+	_flash_job_cleanup($now);
+	$c->render(json => { ok => 1, state => ($now->{'state'} // 'cancelled') });
 }
 
 1;

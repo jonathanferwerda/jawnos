@@ -777,6 +777,7 @@ function controllerNewAvailability(on) {
 	if (controllerComputer) {
 		section.prop('hidden', false);
 		controllerCurrentNetwork();
+		controllerFlashResume();
 		return;
 	}
 	// Off this computer the section renders nothing, and a panel left over from
@@ -786,6 +787,7 @@ function controllerNewAvailability(on) {
 }
 
 function controllerNewReset() {
+	if (controllerFlashTimer) { clearTimeout(controllerFlashTimer); controllerFlashTimer = null; }
 	$('#controllers_new_panel').empty().prop('hidden', true);
 	controllerStatus('controllers_new_status', '', false);
 	$('#controllers_new_button').prop('disabled', false);
@@ -940,14 +942,13 @@ function controllerNewFlash() {
 		$(name.focus).focus();
 		return;
 	}
-	var panel = $('#controllers_new_panel');
 	var button = $('#controllers_new_button').prop('disabled', true);
-	panel.find('button').prop('disabled', true);
 	controllerNewNetworkLocked(true);
 	controllerStatus('controllers_new_status', controllerT('Flashing...'), false);
-	// One blocking write on the other side, so a plain state rather than a
-	// progress bar that would have to invent a percentage.
-	panel.empty().append($('<div class="controller_new_state"></div>').text(controllerT('Flashing...')));
+	// The write is minutes long: the panel shows the job's own count, polled
+	// from the status route, so a panel restart does not lose it. The post
+	// answers with the final state when it can; the poll is the truth.
+	controllerFlashWatch();
 	$.ajax({
 		url: '/manager/controllers/new/flash',
 		type: 'POST',
@@ -958,26 +959,188 @@ function controllerNewFlash() {
 		},
 		dataType: 'json',
 		success: function(response) {
-			button.prop('disabled', false);
-			controllerNewNetworkLocked(false);
 			if (!response || !response.ok) {
-				controllerNewFailure((response && response.error) ? String(response.error) : controllerT('The board was not flashed.'));
+				controllerFlashFinish({ state: 'failed', error: (response && response.error) ? String(response.error) : controllerT('The board was not flashed.') });
 				return;
 			}
-			controllerNewDone(response);
-			controllerStatus('controllers_new_status', controllerT('Flashed.'), false);
-			// The flashed board may already be in the roster, and its card is new:
-			// re-read the roster and the two sections that follow the selection.
-			controllerRosterLoad();
-			controllerStorageLoad();
-			controllerRomsLoad();
+			controllerFlashFinish({
+				state: 'done', device: response.device, bytes: response.bytes_written,
+				sha256_match: response.sha256_match, autopopulated: response.autopopulated
+			});
 		},
 		error: function() {
-			button.prop('disabled', false);
-			controllerNewNetworkLocked(false);
-			controllerNewFailure(controllerT('The board was not flashed.'));
+			// The panel may have restarted mid-write. The job kept going; keep
+			// reading its state instead of calling a live flash failed.
+			controllerFlashStartLost = true;
+			if (!controllerFlashTimer) { controllerFlashPoll(); }
 		}
 	});
+}
+
+// --------------------------------------------------------------- the flash job
+//
+// One state at a time: a bar with the percent the provisioner has written, the
+// rate it is writing at, and a Cancel button. The status route reads a file the
+// provisioner owns, so a restarted panel (or a reopened window) picks up the
+// same run. Nothing here shows the Wi-Fi key or the join token.
+var controllerFlashTimer = null;
+var controllerFlashMisses = 0;
+var controllerFlashStartLost = false;
+var controllerFlashIdle = 0;
+var controllerFlashFinished = false;
+
+$(document).on('click', '#controllers_flash_cancel', function() {
+	var button = $(this).prop('disabled', true);
+	$('#controllers_flash_state').text(controllerT('Cancelling...'));
+	$.ajax({
+		url: '/manager/controllers/new/flash/cancel',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		dataType: 'json'
+	}).done(function(response) {
+		if (!response || !response.ok) {
+			button.prop('disabled', false);
+			$('#controllers_flash_state').text(controllerT('Flashing...'));
+		}
+	}).fail(function() {
+		button.prop('disabled', false);
+	});
+});
+
+function controllerFlashBytes(bytes) {
+	var n = Number(bytes);
+	if (!isFinite(n) || n <= 0) { return '0 MB'; }
+	if (n >= 1073741824) { return (n / 1073741824).toFixed(1) + ' GB'; }
+	return Math.round(n / 1048576) + ' MB';
+}
+
+function controllerFlashDraw() {
+	var panel = controllerNewPanel();
+	if (!panel.length) { return $(); }
+	panel.append($('<div class="controller_new_state" id="controllers_flash_state"></div>').text(controllerT('Flashing...')));
+	var bar = $('<div class="controller_flash_bar" id="controllers_flash_bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"></div>');
+	bar.append($('<span></span>'));
+	panel.append(bar);
+	panel.append($('<div class="controller_new_detail" id="controllers_flash_detail"></div>').text(''));
+	panel.append($('<div class="controller_new_actions"></div>').append(
+		$('<button type="button" id="controllers_flash_cancel"></button>').text(controllerT('Cancel'))));
+	return panel;
+}
+
+function controllerFlashPaint(job) {
+	job = job || {};
+	var state = String(job.state || '');
+	var said = state === 'verifying' ? controllerT('Checking the write...')
+		: state === 'preparing' ? controllerT('Preparing the board...')
+		: controllerT('Flashing...');
+	$('#controllers_flash_state').text(said);
+	var pct = (typeof job.percent === 'number') ? Math.max(0, Math.min(100, job.percent)) : 0;
+	$('#controllers_flash_bar span').css('width', pct + '%');
+	$('#controllers_flash_bar').attr('aria-valuenow', pct);
+	var parts = [];
+	if (typeof job.percent === 'number') { parts.push(controllerT('{0}%', pct)); }
+	if (job.rate) { parts.push(controllerT('{0} MB/s', (job.rate / 1048576).toFixed(1))); }
+	if (job.total) { parts.push(controllerT('{0} of {1}', controllerFlashBytes(job.bytes), controllerFlashBytes(job.total))); }
+	$('#controllers_flash_detail').text(parts.join(' · '));
+}
+
+function controllerFlashPoll() {
+	if (controllerFlashTimer) { clearTimeout(controllerFlashTimer); }
+	controllerFlashTimer = setTimeout(controllerFlashPollOnce, 1000);
+}
+
+function controllerFlashPollOnce() {
+	controllerFlashTimer = null;
+	$.ajax({
+		url: '/manager/controllers/new/flash/status',
+		type: 'GET',
+		data: { timestamp: Date.now() },
+		dataType: 'json'
+	}).done(function(job) {
+		controllerFlashMisses = 0;
+		var state = String((job && job.state) || 'idle');
+		if (state === 'idle') {
+			// The post may have failed before the job was written. Give it a
+			// moment, then tell the person; a live job never reads idle.
+			if (controllerFlashStartLost && ++controllerFlashIdle >= 3) {
+				controllerFlashFinish({ state: 'failed', error: controllerT('The board was not flashed.') });
+				return;
+			}
+			controllerFlashPoll();
+			return;
+		}
+		controllerFlashIdle = 0;
+		if (state === 'done' || state === 'failed' || state === 'cancelled') {
+			controllerFlashFinish(job);
+			return;
+		}
+		controllerFlashPaint(job);
+		controllerFlashPoll();
+	}).fail(function() {
+		controllerFlashMisses++;
+		if (controllerFlashMisses === 3) {
+			$('#controllers_flash_state').text(controllerT('The panel restarted; the flash is still running.'));
+		}
+		controllerFlashPoll();
+	});
+}
+
+function controllerFlashWatch() {
+	controllerFlashDraw();
+	controllerFlashMisses = 0;
+	controllerFlashIdle = 0;
+	controllerFlashStartLost = false;
+	controllerFlashFinished = false;
+	controllerFlashPoll();
+}
+
+// A reopened Controllers window asks the route whether a flash is still going,
+// and draws the bar where it really is instead of a fresh "Flashing...".
+function controllerFlashResume() {
+	if (controllerFlashTimer) { return; }
+	$.ajax({
+		url: '/manager/controllers/new/flash/status',
+		type: 'GET',
+		data: { timestamp: Date.now() },
+		dataType: 'json'
+	}).done(function(job) {
+		var state = String((job && job.state) || 'idle');
+		if (state === 'idle' || state === 'done' || state === 'failed' || state === 'cancelled') { return; }
+		controllerFlashWatch();
+		controllerFlashPaint(job);
+	});
+}
+
+function controllerFlashFinish(job) {
+	if (controllerFlashFinished) { return; }
+	controllerFlashFinished = true;
+	if (controllerFlashTimer) { clearTimeout(controllerFlashTimer); controllerFlashTimer = null; }
+	$('#controllers_new_button').prop('disabled', false);
+	controllerNewNetworkLocked(false);
+	var state = String((job && job.state) || 'failed');
+	if (state === 'done') {
+		controllerStatus('controllers_new_status', controllerT('Flashed.'), false);
+		controllerNewDone({
+			device: job.device,
+			bytes_written: job.bytes,
+			sha256_match: job.sha256_match,
+			autopopulated: job.autopopulated || []
+		});
+		controllerRosterLoad();
+		controllerStorageLoad();
+		controllerRomsLoad();
+		return;
+	}
+	if (state === 'cancelled') {
+		controllerStatus('controllers_new_status', controllerT('Cancelled.'), false);
+		var panel = controllerNewPanel();
+		if (panel.length) {
+			panel.append($('<div class="controller_new_state"></div>').text(controllerT('The flash was cancelled; the board has no complete image.')));
+			panel.append($('<div class="controller_new_actions"></div>').append(controllerNewScanButton()));
+		}
+		return;
+	}
+	controllerNewFailure((job && job.error) ? String(job.error) : controllerT('The board was not flashed.'));
 }
 
 function controllerNewDone(data) {
