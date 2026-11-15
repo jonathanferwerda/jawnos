@@ -41,6 +41,8 @@ use SQL::Abstract;
 use Mojo::SQLite;
 use Mojo::IOLoop;
 
+use JawnOS::PDF::Store ();
+
 use Mojolicious::Sessions;
 use Mojo::Server::Daemon;
 use Mojolicious::Renderer;
@@ -580,9 +582,11 @@ sub store_invoice_paper_enabled {
 
 # A paper copy of an invoice, kept with the invoice it belongs to. Every save
 # writes its own version - the name carries the moment, so an old paper is never
-# overwritten and the versions read as a history. The render is slow (weasyprint
-# under a 45-second bound), so the caller runs this in a subprocess; a machine
-# without a renderer keeps no paper and the invoice is untouched.
+# overwritten and the versions read as a history. The store's own sheet is drawn
+# by JawnOS::PDF::Store (a phone has no weasyprint); the fallback HTML render can
+# be slow (weasyprint under a 45-second bound), so the caller runs this in a
+# subprocess. A machine that can draw neither keeps no paper and the invoice is
+# untouched.
 # $data->{'type'} names the document ('invoice' by default, 'sale' for the
 # register); the row it wrote is returned so a receipt can staple the same
 # paper to itself.
@@ -596,9 +600,20 @@ sub store_invoice_paper($data) {
 	return 0 unless $appt;
 	my $c = &subs::controller_builder();
 	my $paper = &store_printer({ type => $type, uuid => $uuid, customer_app => $customer_app });
-	my $html = eval { $c->render_to_string(%{$paper}) };
-	return 0 unless defined $html && length $html;
-	my ($pdf, $error) = &subs::printer_pdf_from_html($html);
+	# The engine draws the store's own paper on a phone with no weasyprint. It
+	# is tried first; the HTML render and weasyprint are the fallback for a
+	# machine that has them and a defect this writer has not met.
+	my ($pdf, $error);
+	eval {
+		($pdf, $error) = JawnOS::PDF::Store::paper_pdf($paper,
+			logger => sub { &subs::log_writer($_[0]) });
+		1;
+	} or $error = $@ || 'the PDF engine failed';
+	unless (defined $pdf && -s $pdf) {
+		my $html = eval { $c->render_to_string(%{$paper}) };
+		($pdf, $error) = &subs::printer_pdf_from_html($html)
+			if defined $html && length $html;
+	}
 	unless ($pdf && -s $pdf) {
 		# A machine with no renderer (a phone, a terminal) keeps no paper; say so
 		# once per save instead of leaving the invoice mysteriously paperless.
@@ -637,11 +652,10 @@ sub store_invoice_paper($data) {
 # papers (the income transaction's app when that is blank), and it carries the
 # invoice's data - numbers, register, every payment - plus the one payment this
 # paper receipts, so the printed sheet shows what was paid and what is left.
-# Both papers are attached to the receipt, invoice first; a machine with no
-# renderer keeps the row and logs why rather than losing the record. The row
-# itself is cheap and is written before the caller is answered; the two slow
-# renders and their file rows belong to a forked child, so no payment waits on
-# weasyprint.
+# Both papers are attached to the receipt, invoice first; a machine that can
+# draw neither keeps the row and logs why rather than losing the record. The row
+# itself is cheap and is written before the caller is answered; the two renders
+# and their file rows belong to a forked child, so no payment waits on one.
 sub store_payment_receipt($data) {
 	my $app = $data->{'app'} || '';
 	my $uuid = $data->{'uuid'} || '';
@@ -685,36 +699,42 @@ sub store_payment_receipt($data) {
 		push @files, $invoice_row if ref $invoice_row eq 'HASH';
 		my $c = &subs::controller_builder();
 		my $paper = &store_printer({ type => 'receipt', uuid => $receipt_uuid, customer_app => $app, query_app => $paper_app });
-		my $html = eval { $c->render_to_string(%{$paper}) };
-		if (defined $html && length $html) {
-			my ($pdf, $error) = &subs::printer_pdf_from_html($html);
-			if ($pdf && -s $pdf) {
-				my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($paper_app));
-				system('mkdir', '-p', $folder) unless -e $folder;
-				my $dest = $folder . '/receipt_' . $stamp . '.pdf';
-				my $bytes = read_file($pdf, binmode => ':raw');
-				unlink $pdf;
-				if (defined $bytes && length $bytes) {
-					write_file($dest, $bytes);
-					if (-s $dest) {
-						push @files, {
-							f => $dest,
-							thumb => '',
-							uuid => &subs::random_string_creator(17),
-							type => 'document',
-							of => 'receipt-' . $stamp . '.pdf',
-							shared => 1,
-							server_time => $stamp,
-						};
-					}
+		# The engine first, exactly as the invoice's paper: a phone draws the
+		# receipt itself, and only a machine with weasyprint falls back to HTML.
+		my ($pdf, $error);
+		eval {
+			($pdf, $error) = JawnOS::PDF::Store::paper_pdf($paper,
+				logger => sub { &subs::log_writer($_[0]) });
+			1;
+		} or $error = $@ || 'the PDF engine failed';
+		unless (defined $pdf && -s $pdf) {
+			my $html = eval { $c->render_to_string(%{$paper}) };
+			($pdf, $error) = &subs::printer_pdf_from_html($html)
+				if defined $html && length $html;
+		}
+		if ($pdf && -s $pdf) {
+			my $folder = &subs::home(&subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => $device }) . '/' . &subs::path_name($paper_app));
+			system('mkdir', '-p', $folder) unless -e $folder;
+			my $dest = $folder . '/receipt_' . $stamp . '.pdf';
+			my $bytes = read_file($pdf, binmode => ':raw');
+			unlink $pdf;
+			if (defined $bytes && length $bytes) {
+				write_file($dest, $bytes);
+				if (-s $dest) {
+					push @files, {
+						f => $dest,
+						thumb => '',
+						uuid => &subs::random_string_creator(17),
+						type => 'document',
+						of => 'receipt-' . $stamp . '.pdf',
+						shared => 1,
+						server_time => $stamp,
+					};
 				}
-			}
-			else {
-				&subs::log_writer('receipt paper: ' . ($error || 'no PDF was made') . ' for ' . $paper_app . ' ' . $receipt_uuid);
 			}
 		}
 		else {
-			&subs::log_writer('receipt paper: the receipt could not be rendered for ' . $paper_app . ' ' . $receipt_uuid);
+			&subs::log_writer('receipt paper: ' . ($error || 'no PDF was made') . ' for ' . $paper_app . ' ' . $receipt_uuid);
 		}
 		if (scalar @files) {
 			&subs::db_update('appointments', { file => encode_json(\@files), server_time => &subs::rightNow() }, { app => $paper_app, uuid => $receipt_uuid });

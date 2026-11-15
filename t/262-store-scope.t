@@ -118,7 +118,7 @@ like($cfg, qr/setting="<%=\$m%>".*invoice_paper|invoice_paper/s,
 	local *subs::path_name = sub { return 'bluewater_pallet' };
 	local *subs::rightNow = sub { return 1_800_000_000_000 };
 	local *subs::random_string_creator = sub { return 'fuuid' };
-	local *subs::db_update = sub { $updated = $_[1]; return 1 };
+	local *subs::db_update = sub { $updated = $_[1] if ($_[0] || '') eq 'appointments'; return 1 };
 	local *subs::log_writer = sub { push @logged, join('', @_); return 1 };
 	ok(Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i1' }), 'the invoice keeps a paper');
 	my $files = decode_json($updated->{'file'});
@@ -129,11 +129,25 @@ like($cfg, qr/setting="<%=\$m%>".*invoice_paper|invoice_paper/s,
 	ok(-e $files->[0]{'f'}, 'and the paper is on disk');
 	ok((grep { /invoice paper saved/ } @logged), 'the save is recorded');
 
-	# a machine with no renderer keeps no paper, and says why instead of leaving
-	# the invoice silently paperless
+	# The engine draws the paper even on a machine with no weasyprint: that is
+	# the phone this writer exists for.
 	@logged = ();
 	local *subs::printer_pdf_from_html = sub { return (undef, 'weasyprint is not installed') };
-	ok(!Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i2' }), 'no renderer, no paper');
+	ok(Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i3' }), 'no weasyprint, still a paper');
+	ok(!(grep { /weasyprint is not installed/ } @logged), 'because the engine drew it first');
+
+	# If the engine cannot draw it, HTML and weasyprint are still the fallback.
+	@logged = ();
+	local *JawnOS::PDF::Store::paper_pdf = sub { return (undef, 'the engine failed') };
+	local *subs::printer_pdf_from_html = sub { return ($render, undef) };
+	ok(Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i4' }), 'the fallback still makes a paper');
+
+	# A machine with neither keeps no paper, and says why instead of leaving the
+	# invoice silently paperless.
+	@logged = ();
+	local *JawnOS::PDF::Store::paper_pdf = sub { return (undef, 'the engine failed') };
+	local *subs::printer_pdf_from_html = sub { return (undef, 'weasyprint is not installed') };
+	ok(!Manager::store_invoice_paper({ app => 'bluewater_pallet', uuid => 'i5' }), 'no engine and no renderer, no paper');
 	ok((grep { /weasyprint is not installed/ } @logged), 'and the log says what stopped it');
 }
 
@@ -197,8 +211,8 @@ like(source('templates/store/printer/header.html.ep'), qr/include 'store\/printe
 		app => 'bluewater_pallet', uuid => 'inv-9', type => 'invoice',
 		data => '{"id":"INV-9","item":"Widget","numbers":{"total":100,"balance":5},"payments":[]}',
 		file => '[]' } ]) };
-	local *subs::db_insert = sub { $inserted = $_[1]; return 1 };
-	local *subs::db_update = sub { $updated = $_[1]; return 1 };
+	local *subs::db_insert = sub { $inserted = $_[1] if ($_[0] || '') eq 'appointments'; return 1 };
+	local *subs::db_update = sub { $updated = $_[1] if ($_[0] || '') eq 'appointments'; return 1 };
 	local *subs::setting_grabber = sub {
 		my ($q) = @_;
 		return 'computer_repair' if ($q->{'setting'} || '') eq 'payment_paper_app';
@@ -250,8 +264,8 @@ like(source('templates/store/printer/header.html.ep'), qr/include 'store\/printe
 		app => 'bluewater_pallet', uuid => 'inv-9', type => 'invoice',
 		data => '{"id":"INV-9","item":"Widget","numbers":{"total":100,"balance":5}}',
 		file => '[]' } ]) };
-	local *subs::db_insert = sub { $inserted = $_[1]; return 1 };
-	local *subs::db_update = sub { $updated = $_[1]; return 1 };
+	local *subs::db_insert = sub { $inserted = $_[1] if ($_[0] || '') eq 'appointments'; return 1 };
+	local *subs::db_update = sub { $updated = $_[1] if ($_[0] || '') eq 'appointments'; return 1 };
 	local *subs::setting_grabber = sub {
 		my ($q) = @_;
 		return 'computer_repair' if ($q->{'setting'} || '') eq 'payment_paper_app';
