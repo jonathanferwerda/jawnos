@@ -115,10 +115,10 @@ function travelNear3dStart(lat, lon) {
 
 	// a two-part ground grid: 100 m squares with a 1 km frame, so a house and a
 	// county can both be read at their own zoom
-	var fine = new THREE.GridHelper(2000, 20, 0x9fb0be, 0xc8d2db);
+	var fine = new THREE.GridHelper(2000, 20, 0xa9b9c7, 0xcdd8e1);
 	fine.position.y = 0;
 	scene.add(fine);
-	var coarse = new THREE.GridHelper(10000, 10, 0x8fa0ae, 0xbec9d3);
+	var coarse = new THREE.GridHelper(10000, 10, 0x93a6b6, 0xb9c7d3);
 	coarse.position.y = -0.05;
 	scene.add(coarse);
 
@@ -169,9 +169,9 @@ function travelNear3dStart(lat, lon) {
 		var texture = new THREE.CanvasTexture(canvas);
 		texture.minFilter = THREE.LinearFilter;
 		var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
-		// about 9 m tall at the opening distance: readable without swallowing the
-		// places it names
-		sprite.scale.set(width * 0.25, 38 * 0.25, 1);
+		// the declutter sizes it on screen (20 px tall, in proportion), so a room's
+		// name reads the same at the house and at the county
+		sprite.userData.aspect = width / 38;
 		return sprite;
 	}
 
@@ -179,6 +179,12 @@ function travelNear3dStart(lat, lon) {
 	var maps = (typeof travelAllMaps !== 'undefined' && travelAllMaps && travelAllMaps.length)
 		? travelAllMaps : ((typeof mapData !== 'undefined' && mapData && mapData.all_maps) || []);
 	var span = 0;
+	// the places are what a press asks about, so they set the opening frame: a
+	// house's rooms are metres apart, while the map under them is a county
+	var pinSpan = 0, pinSeen = 0;
+	// labels in the order they win a place on screen; the declutter below keeps
+	// the first of any pair that would overlap, so the machine's own tag is first
+	var tags = [];
 
 	$.each(maps, function(i, m) {
 		if (!m || !m.file) { return; }
@@ -188,10 +194,10 @@ function travelNear3dStart(lat, lon) {
 		var widthM = (bounds.se.lon - bounds.nw.lon) * MPD * cosLat;
 		var heightM = (bounds.nw.lat - bounds.se.lat) * MPD;
 		if (!(widthM > 0) || !(heightM > 0)) { return; }
-		// Only a map that covers the pressed ground sets the opening distance. A
-		// measured map elsewhere in the county is still drawn (pan out to it),
-		// but framing on its size put the camera kilometres away from the pins
-		// the press was about.
+		// A map that covers the pressed ground is the fallback frame, for a press
+		// with no places near it. A measured map elsewhere in the county is still
+		// drawn (pan out to it), but it never sets the distance: a county plate
+		// put the camera kilometres above the pins the press was about.
 		var covers = centre.lat <= bounds.nw.lat && centre.lat >= bounds.se.lat
 			&& centre.lon >= bounds.nw.lon && centre.lon <= bounds.se.lon;
 		if (covers) { span = Math.max(span, widthM, heightM); }
@@ -260,6 +266,13 @@ function travelNear3dStart(lat, lon) {
 		var plat = parseFloat(p && p.latitude), plon = parseFloat(p && p.longitude);
 		if (!isFinite(plat) || !isFinite(plon)) { return; }
 		var at = metres(plat, plon);
+		// only the places in the pressed neighbourhood frame the view; one place
+		// across the county must not pull the camera out to it
+		var away = Math.sqrt(at.x * at.x + at.z * at.z);
+		if (away <= 2000) {
+			pinSeen++;
+			if (away * 2 > pinSpan) { pinSpan = away * 2; }
+		}
 		var colour = (p.settings && p.settings.colour) || p.colour || '#2f6f9f';
 		var group = pin(colour, 1);
 		group.position.set(at.x, 0, at.z);
@@ -269,6 +282,7 @@ function travelNear3dStart(lat, lon) {
 			var tag = label(text);
 			tag.position.set(at.x, 11, at.z);
 			scene.add(tag);
+			tags.push({ sprite: tag, x: at.x, y: 11, z: at.z });
 			labelled++;
 		}
 	});
@@ -295,6 +309,7 @@ function travelNear3dStart(lat, lon) {
 			var hereTag = label(here.label || jawnosT('You are here'));
 			hereTag.position.set(at.x, 13, at.z);
 			scene.add(hereTag);
+			tags.unshift({ sprite: hereTag, x: at.x, y: 13, z: at.z });
 		}
 	}
 
@@ -302,15 +317,49 @@ function travelNear3dStart(lat, lon) {
 	// to move closer. Rendering is on demand (no animation loop), because
 	// nothing in this scene moves on its own.
 	var target = new THREE.Vector3(0, 0, 0);
+	var framed = pinSeen > 0 ? Math.max(40, pinSpan) : span;
 	var open = {
 		az: 0.65,
 		elev: 0.82,
-		dist: Math.max(140, Math.min(6000, span > 0 ? span * 1.35 : 260))
+		dist: Math.max(60, Math.min(6000, framed > 0 ? framed * 1.35 : 260))
 	};
 	var rig = { az: open.az, elev: open.elev, dist: open.dist };
 
 	function clampElev(v) { return Math.max(0.1, Math.min(1.45, v)); }
 	function clampDist(v) { return Math.max(12, Math.min(20000, v)); }
+
+	// A house's rooms are metres apart, so at the opening distance their labels
+	// are wider than the ground between them and pile into an unreadable block.
+	// Project each one and keep it only when it does not sit on a label already
+	// kept: the list is ordered, so the machine's tag and the nearest places win
+	// and the rest come back as the person zooms in or swings around.
+	function declutterTags() {
+		if (!tags.length) { return; }
+		var w = renderer.domElement.width, h = renderer.domElement.height;
+		var pxPerUnit = h / (2 * Math.tan(camera.fov * Math.PI / 360));
+		var kept = [];
+		var at = new THREE.Vector3();
+		for (var i = 0; i < tags.length; i++) {
+			var t = tags[i];
+			at.set(t.x, t.y, t.z);
+			var d = camera.position.distanceTo(at);
+			// one size on screen at every zoom: the world size that spans that many
+			// pixels depends on how far the label is from the camera
+			var ph = 20, pw = ph * (t.sprite.userData.aspect || 4);
+			t.sprite.scale.set(pw * d / pxPerUnit, ph * d / pxPerUnit, 1);
+			at.project(camera);
+			var sx = (at.x + 1) * w / 2, sy = (1 - at.y) * h / 2;
+			var box = [sx - pw / 2, sy - ph / 2, sx + pw / 2, sy + ph / 2];
+			var clash = at.z > 1;
+			for (var j = 0; !clash && j < kept.length; j++) {
+				var k = kept[j];
+				clash = box[0] < k[2] && box[2] > k[0] && box[1] < k[3] && box[3] > k[1];
+			}
+			t.sprite.visible = !clash;
+			if (!clash) { kept.push(box); }
+		}
+	}
+
 	function apply() {
 		var ce = Math.cos(rig.elev), se = Math.sin(rig.elev);
 		camera.position.set(
@@ -319,6 +368,8 @@ function travelNear3dStart(lat, lon) {
 			target.z + rig.dist * ce * Math.cos(rig.az)
 		);
 		camera.lookAt(target);
+		camera.updateMatrixWorld();
+		declutterTags();
 		renderer.render(scene, camera);
 	}
 

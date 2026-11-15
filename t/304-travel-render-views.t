@@ -53,6 +53,12 @@ like( $near3d, qr/var covers = centre\.lat <= bounds\.nw\.lat && centre\.lat >= 
 	'only a map that covers the pressed ground sets the opening distance' );
 like( $near3d, qr/if \(covers\) \{ span = Math\.max\(span, widthM, heightM\); \}/,
 	'a measured map elsewhere in the county still draws without pulling the camera to it' );
+like( $near3d, qr/var pinSpan = 0, pinSeen = 0;/, 'the places near the press frame the opening view' );
+like( $near3d, qr/var framed = pinSeen > 0 \? Math\.max\(40, pinSpan\) : span;/,
+	'a house\'s places beat the county map that covers them, and the map is the fallback' );
+like( $near3d, qr/function declutterTags\(\)/, 'labels that would sit on each other are dropped' );
+like( $near3d, qr/^\t\tdeclutterTags\(\);$/m, 'and the declutter runs on every render' );
+like( $near3d, qr/tags\.unshift\(\{ sprite: hereTag/, 'the machine\'s own tag keeps the first place on screen' );
 like( $near3d, qr/travelAllMaps/, 'the last atlas answer supplies the maps' );
 like( $near3d, qr/mapData && mapData\.near/, 'the nearby places come from the viewer response' );
 like( $near3d, qr/travelPlateList/, 'home plates are drawn as houses' );
