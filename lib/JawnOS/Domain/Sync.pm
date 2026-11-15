@@ -817,7 +817,10 @@ my $returner = '';
 # message is deduped by its system id (message_id 'mms:<id>'), so the five-minute
 # poll, a re-read and another machine all keep one row. The text is sealed like
 # any mail; each media part is kept on its own appointment and named in the
-# message's attachments, which is the shape the Chat bubble already draws.
+# message's attachments, which is the shape the Chat bubble already draws. A
+# group message also carries every address the phone saw (FROM, TO, CC, BCC):
+# it is filed under the sender as before, and the other people are kept on the
+# row with the device's own thread id, so the group is readable later.
 sub mms_list_check {
 my $returner = '';
 	if ($device eq 'mobile') {
@@ -843,6 +846,28 @@ my $returner = '';
 			$body = &subs::ui('Picture message') unless length $body;
 			my $sealed = &subs::note_encrypter($suds, $body);
 			next unless defined $sealed && length $sealed;
+			# The sender already names the thread the row is drawn in, so the
+			# rest of the address list is the group. A plain MMS names the
+			# house's own line there too - that is one other address, not a
+			# group - so a third party is what makes the row a group. Without
+			# one, the row is written exactly as it was before recipients.
+			my (@group, %group_seen);
+			foreach my $addr ( ref $m->{'recipients'} eq 'ARRAY' ? @{ $m->{'recipients'} } : () ) {
+				next unless ref $addr eq 'HASH';
+				my $peer = $addr->{'number'} || '';
+				$peer =~ s/\D+//gi;
+				$peer =~ s/^1//;
+				next unless length $peer;
+				next if $peer eq $phone;
+				next if $group_seen{$peer}++;
+				push @group, $peer;
+			}
+			# the phone's thread id is the group's own key; 'mms:' keeps it in
+			# its own namespace, clear of an email header chain. The people are
+			# named on the row (cc) because that column is a plain, readable
+			# list - a later UI draws the group without re-reading the phone.
+			my $group_key = (scalar @group > 1) ? 'mms:' . ($m->{'thread'} || $m->{'id'}) : undef;
+			my %group_row = $group_key ? (thread => $group_key, cc => join(', ', @group)) : ();
 			my @atts;
 			foreach my $part ( @{ $m->{'parts'} || [] } ) {
 				next unless ref $part eq 'HASH' && defined $part->{'data'} && length $part->{'data'};
@@ -868,6 +893,7 @@ my $returner = '';
 				phone => $phone,
 				message_id => $message_id,
 				attachments => $attachments,
+				%group_row,
 			});
 			&subs::mail_arrival({
 				c => $c,
@@ -877,6 +903,7 @@ my $returner = '';
 				body => $body,
 				status => 'inbox',
 				($attachments ? (attachments => $attachments) : ()),
+				%group_row,
 			});
 			my $q = &subs::db_query('select * from appointments where app = ? and type = ? and timestamp = ?', $app, 'sms', $time);
 			if (scalar @{ $q->hashes } == 0) {

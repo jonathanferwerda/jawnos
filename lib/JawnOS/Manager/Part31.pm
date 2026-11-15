@@ -542,6 +542,8 @@ sub mms_part_prepare($path, $mime) {
 # resolver can find by uuid, then sealed with file_encrypter. The returned
 # entry is the shape the Chat message carries: a uuid, the current (possibly
 # sealed) path, a file_open URL for the page, and the original name and mime.
+# A picture also carries `thumb`, the .thumbs preview the Chat bubble draws,
+# made while the part is still plain because magick cannot read it sealed.
 sub mms_attachment_store {
 	my ($args) = @_;
 	my $app = $args->{'app'} || 'phone';
@@ -574,6 +576,41 @@ sub mms_attachment_store {
 	binmode $out;
 	print {$out} $bytes;
 	close $out or return undef;
+	# The same small preview an upload gets, then a small conversion of our own.
+	# thumbnail_creator honours thumbnail_size, whose default is 'none', and a
+	# picture in a chat should still be a picture: when it writes nothing the
+	# part is shrunk here instead (the bridge, then the magick call
+	# mms_part_prepare uses). The thumb rides this json entry, so file_encrypter
+	# seals both files and the read-back below names the sealed thumb. A missing
+	# magick costs the preview, never the message.
+	my $thumb;
+	if ($type eq 'image') {
+		my $thumb_dir = $dir . '/.thumbs';
+		my $thumb_path = $thumb_dir . '/' . $app_path . '_mms_' . $uuid . '.png';
+		make_path($thumb_dir) unless -d $thumb_dir;
+		my $made = eval { &thumbnail_creator({ f => $file, type => 'image', thumb => $thumb_path }) };
+		if (ref $made eq 'HASH') {
+			$thumb = $made->{'thumb'} if $made->{'thumb'} && (-s $made->{'thumb'});
+			# A HEIC/TIFF part also gets a full-size preview for the details
+			# view. The bubble does not draw it, and unlisted it would sit in
+			# the pictures folder unsealed, so it goes rather than leaks.
+			unlink $made->{'preview'} if $made->{'preview'} && $made->{'preview'} ne ($thumb // '');
+		}
+		unless ($thumb) {
+			my $converted = eval { &subs::image_bridge_convert($file, $thumb_path, max_width => 320, max_height => 320, quality => 82, auto_orient => 1) };
+			unless (defined $converted && -e $thumb_path && (-s $thumb_path) > 0) {
+				# [0] takes the first page/layer, so a multi-page TIFF names the one
+				# thumb file the row carries instead of writing frames over it.
+				eval {
+					local $SIG{'__WARN__'} = sub { };
+					system('magick', $file . '[0]', '-auto-orient', '-strip', '-resize', '320x320>', '-quality', '82', $thumb_path);
+				};
+				unlink $thumb_path unless -e $thumb_path && (-s $thumb_path) > 0;
+			}
+			$thumb = $thumb_path if -e $thumb_path && (-s $thumb_path) > 0;
+		}
+		rmdir($thumb_dir) if !$thumb && -d $thumb_dir;
+	}
 	my $entry = {
 		server_time => &subs::rightNow(),
 		f => $file,
@@ -582,6 +619,7 @@ sub mms_attachment_store {
 		name => $name,
 		mime => $mime,
 	};
+	$entry->{'thumb'} = $thumb if defined $thumb && length $thumb;
 	my $appt_uuid = &subs::random_string_creator(20);
 	my $wrote = eval {
 		&subs::db_insert('appointments', {

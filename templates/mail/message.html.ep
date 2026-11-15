@@ -23,6 +23,9 @@
 				<span class="time chat_time" timestamp="<%= $m->{'timestamp'} %>"></span>
 				<% if ($incoming) { %><b class="chat_sender"><%= $m->{'manager_file'} %></b><% } else { %><b class="chat_sender"><%= &subs::lang('people.me') %></b><% } %>
 				<span class="mailbox_message_contents chat_text" uuid="<%= $m->{'uuid'} %>"><%= $body_text %></span>
+				<%# a group message names everyone it reached; the bubble still belongs to
+				    the sender, so the group rides one small line under the words %>
+				<% if ($m->{'cc'}) { %><span class="chat_group" style="display:block;font-size:10px;opacity:.65;"><%= &subs::ui('with') %> <%= $m->{'cc'} %></span><% } %>
 			</span>
 		<% } elsif ($incoming) { %>
 			<span style="float:left;border:solid;border-radius:5px;background-color:lightblue;width:80%;overflow-wrap:break-word;"><span class="time" timestamp="<%= $m->{'timestamp'} %>"></span> <b><%= $m->{'manager_file'} %></b><br>

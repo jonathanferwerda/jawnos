@@ -75,5 +75,7 @@ like($help, qr/Ring, Chime or Sonar/, 'the help names the three sounds');
 my $alarm = source('perl/Alarm.pl');
 like($alarm, qr/live_ring/, 'the Alarm loop knows a live ring');
 like($alarm, qr/silent => \$live_ring/, 'the live ring notice stays quiet for the phone ringer');
+like($alarm, qr/\|\| \$live_ring/, 'a live ring fires even with the caller app\'s notification off');
+like($alarm, qr/Incoming call/, 'a live ring has words when the caller app has none');
 
 done_testing();

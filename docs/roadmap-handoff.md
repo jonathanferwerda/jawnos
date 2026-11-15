@@ -74,7 +74,8 @@ blacklist + two-press Block; caller-ID (Call screening) role; Voicemail-style
 "respond via message" service; ringtones (`ring.mp3` etc.) + custom sound upload,
 and the **Ringtone** pane (Ring, Chime, Sonar) now plays the house's chosen
 sound on a live call - the call's appointment is written at the ring, so the
-Alarm loop can fire for it;
+Alarm loop can fire for it; a group picture message names its other people
+under the bubble, and a picture part gets a small preview before it is sealed;
 Known/Recent/Blocked/All panes; multi-line contacts (a second number resolves to
 the person); and the messages role — the Chat header's **Be the messages app**
 button asks Android for `ROLE_SMS` (`JawnSms`), so SMS can be set from the app or
@@ -85,8 +86,10 @@ Still to do:
   take a real capture.
 - **MMS on a real handset** — the app reads inbound `content://mms` (`mms.list`)
   and the house files the text and each media part into Chat; outbound already
-  rides the klinkerapps transaction. Still to observe: a carrier WAP push
-  download, the sent row, and a group MMS.
+  rides the klinkerapps transaction. A group row now names its people (`cc`)
+  under a stable `mms:<thread>` key. Still to observe: a carrier WAP push
+  download, the sent row, and a group MMS; a true group thread (Chat selecting
+  by that key and replying to everyone) remains.
 - **Native halves are in** — photo/video/audio (`JawnCamera`, `DeviceService`),
   contacts (`JawnContactsBridge`) and the call log (`telephony.call_log`) come
   from the app, and the phone/camera JS drives those bridges directly. Verify the
@@ -216,7 +219,7 @@ Still to do:
 
 **Every APK change bumps `versionCode` and is published** (`perl scripts/app_build.pl`
 then `perl scripts/app_publish.pl`). The staged and published build here is
-**1316 / 0.118.318** (`releases/app_release.json`).
+**1317 / 0.118.319** (`releases/app_release.json`).
 
 Landed since this note: the notification badge (`JawnNotifyReceiver` posts jawn's
 notifications on the app's own channel), the status/nav-bar option

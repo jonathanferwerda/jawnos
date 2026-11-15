@@ -16,6 +16,15 @@ under a dated heading; older sections stay as history.
   (`mms.list`), and the house files the text and each media part into the
   conversation, deduped by the carrier's message id. A five-minute poll files
   pictures that arrived while the app was away.
+- **Group MMS names its people.** The app returns every address on an inbound
+  MMS; the house marks the group and shows "with <people>" under the bubble.
+  The thread still belongs to the sender; a true group thread is the next step.
+- **Inbound pictures get a preview.** A media part is shrunk to a 320 px
+  thumbnail before it is sealed, so the Chat bubble draws a small picture even
+  when the house's upload thumbnails are off.
+- **A live ring fires the alarm path even when the caller's app has
+  notifications off.** The notice stays silent (the phone's ringer owns the
+  sound), so it appears in Notifications without a second ring.
 
 ## 2026-11-14 — the alarm face outlives an update, and opens unlocked
 
