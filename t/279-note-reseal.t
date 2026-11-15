@@ -20,7 +20,7 @@ use Mojo::Util qw(url_escape url_unescape);
 use File::Slurp qw(read_file);
 use JawnOSTest;
 
-subs::preload('note_reseal note_reseal_value note_decrypter note_decrypter_strict note_encrypter note_seal_container encrypter encrypter_legacy decrypter_strict shorthand_name note_legacy_candidates legacy_keys_mesh');
+subs::preload('note_reseal note_reseal_value note_decrypter note_decrypter_strict note_encrypter note_seal_container encrypter encrypter_legacy decrypter_strict shorthand_name note_legacy_candidates legacy_keys_mesh login_picture_secret');
 
 my $root = root();
 
@@ -230,6 +230,17 @@ my $old_appt = { rowid => 13, notes => $old_note, start_notes => undef, end_note
 			'and reads back to the original words');
 	}
 
+	# --- the pre-vault picture-plus-numerics login ------------------------------
+	# The old /sesh_check interleaved the picture's base64 bytes with the typed
+	# characters. That secret is the key the oldest notes were sealed with.
+	is(subs::login_picture_secret('1234', 'hello world'), '8G2by81b=8GgV2b=Ga8G3Ga8G8G4',
+		'the picture and numerics derive the old login secret');
+	is(subs::login_picture_secret('1234'), '1234', 'without a picture the numerics are the key');
+	my $pic_secret = subs::login_picture_secret('1234', 'hello world');
+	my $pic_note = legacy_note($pic_secret, 'a note from the picture login', undef);
+	is(subs::note_decrypter($K, $pic_note, undef, 0, [$pic_secret]), 'a note from the picture login',
+		'the derived key opens a note sealed with it');
+
 	# --- the peer key pull ------------------------------------------------------
 	# The same candidate list, asked of every linked machine over the signed rail.
 	# This machine is skipped and duplicate keys from several peers are collapsed.
@@ -268,6 +279,10 @@ like(read_file("$root/scripts/note_reseal.pl"), qr/--export-keys/,
 	'the script can hand its candidates to another machine');
 like(read_file("$root/scripts/note_reseal.pl"), qr/--from-peers/,
 	'the script can pull the candidates from linked machines');
+like(read_file("$root/scripts/note_reseal.pl"), qr/--picture-file/,
+	'the script can rebuild the picture-plus-numerics key');
+like(read_file("$root/scripts/note_reseal.pl"), qr/--password-file/,
+	'from a password file, never argv');
 like(read_file("$root/perl/hooks.pl"), qr{/manager/legacy_keys},
 	'the peer key route is exempt from the session gate');
 

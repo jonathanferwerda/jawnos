@@ -11,6 +11,7 @@
 #   perl scripts/note_reseal.pl --try-all               # every security credential
 #   perl scripts/note_reseal.pl --export-keys OLD.txt   # candidates for another machine
 #   perl scripts/note_reseal.pl --from-peers --try-all  # pull linked machines' keys
+#   perl scripts/note_reseal.pl --picture-file PIC --password-file PW.txt
 #
 # Older uploads sealed a note's outer Crypt::Simple layer under the empty
 # passphrase (public knowledge) while the inner cipher stayed keyed to the real
@@ -43,6 +44,12 @@
 # signed peer rail. Each answer is sealed to a one-time secret, nothing is
 # written, and a peer still on a build without the route contributes nothing.
 #
+# The pre-vault login was a picture plus numerics: the old /sesh_check built the
+# suds from the picture's base64 bytes interleaved with the typed characters.
+# --picture-file (repeatable, in the order the login uploaded them) and
+# --password-file rebuild that key. The picture must be the exact file that was
+# uploaded; a re-encoded copy has different bytes. The key is never printed.
+#
 # It works in rowid batches so a long sweep reports progress and a kill is not a
 # loss: every batch is committed and the next run picks up from the rowid it
 # prints. --after-appt / --after-mail start from a cursor by hand.
@@ -59,6 +66,8 @@ my $json  = (grep { $_ eq '--json' } @ARGV) ? 1 : 0;
 my $try_all = (grep { $_ eq '--try-all' } @ARGV) ? 1 : 0;
 my $from_peers = (grep { $_ eq '--from-peers' } @ARGV) ? 1 : 0;
 my $export = '';
+my @pictures;
+my $password_file = '';
 my ($batch, $after_appt, $after_mail, $only) = (250, 0, 0, 'all');
 my @old_secrets;
 for (my $i = 0; $i < @ARGV; $i++) {
@@ -75,6 +84,12 @@ for (my $i = 0; $i < @ARGV; $i++) {
 	}
 	elsif ($ARGV[$i] eq '--export-keys' && defined $ARGV[$i + 1]) {
 		$export = $ARGV[++$i];
+	}
+	elsif ($ARGV[$i] eq '--picture-file' && defined $ARGV[$i + 1]) {
+		push @pictures, $ARGV[++$i];
+	}
+	elsif ($ARGV[$i] eq '--password-file' && defined $ARGV[$i + 1]) {
+		$password_file = $ARGV[++$i];
 	}
 	elsif ($ARGV[$i] eq '--old-secret' && defined $ARGV[$i + 1]) {
 		# argv is visible in ps; the file and the environment are the safe ways.
@@ -97,6 +112,35 @@ if ($from_peers) {
 		%seen_secret = ();
 		@old_secrets = grep { length && !$seen_secret{$_}++ } @old_secrets;
 	}
+}
+
+# Rebuild the picture-plus-numerics key of the pre-vault login. Only the count is
+# printed; the secret stays in memory.
+if (scalar @pictures || length $password_file) {
+	unless (scalar @pictures && length $password_file) {
+		print "note reseal: --picture-file and --password-file go together\n";
+		exit 1;
+	}
+	open(my $pf, '<', $password_file) or do { print "note reseal: cannot read $password_file: $!\n"; exit 1 };
+	my $pw_text = do { local $/; <$pf> };
+	close $pf;
+	my ($password) = split /\r?\n/, $pw_text, 2;
+	my @bytes;
+	foreach my $path ( @pictures ) {
+		open(my $fh, '<:raw', $path) or do { print "note reseal: cannot read $path: $!\n"; exit 1 };
+		my $body = do { local $/; <$fh> };
+		close $fh;
+		push @bytes, $body;
+	}
+	my $secret = subs::login_picture_secret($password, @bytes);
+	unless (defined $secret && length $secret) {
+		print "note reseal: the picture and password did not make a key (a picture over 10 MB was refused at login too)\n";
+		exit 1;
+	}
+	push @old_secrets, $secret;
+	%seen_secret = ();
+	@old_secrets = grep { length && !$seen_secret{$_}++ } @old_secrets;
+	print STDERR "note reseal: derived one candidate from the picture and password\n";
 }
 $batch = 1 if $batch < 1;
 

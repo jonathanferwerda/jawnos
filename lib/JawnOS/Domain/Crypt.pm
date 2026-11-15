@@ -325,6 +325,40 @@ sub legacy_reseal_mesh {
 	return $summary;
 }
 
+# The pre-vault login key. Before v0.1.283 the person picked a picture and typed
+# numerics, and the suds was their interleaving: for each typed character, three
+# points in the picture's base64 (the low, middle and upper third, divided by the
+# position) contribute two bytes, then the character itself. A login with no
+# picture used the numerics alone. The picture must be the exact file the login
+# uploaded - a re-encoded copy has different bytes and therefore a different key.
+sub login_picture_secret {
+	my ($password, @pictures) = @_;
+	return undef unless defined $password && length $password;
+	return $password unless scalar @pictures;
+	my @numerics = split //, $password;
+	my $count = scalar @numerics;
+	my $secret = '';
+	foreach my $bytes ( @pictures ) {
+		return undef if defined $bytes && length($bytes) > 10_000_000;
+		my $ass = encode_base64($bytes // '', '');
+		$ass =~ s/\\\n//gi;
+		my @asset = split //, $ass;
+		my $size = scalar @asset;
+		my $mid = $size / 2;
+		my $low_mid = $size * .3333;
+		my $up_mid = $size * .6666;
+		for (my $i = 1; $i <= $count; $i++) {
+			foreach my $nm ( ($low_mid, $mid, $up_mid) ) {
+				my $n = ($nm / $i);
+				if ($n =~ /\./) { my @s = split /\./, $n; $n = $s[0]; }
+				$secret .= ($asset[$n + $i] // '') . ($asset[$n + $i - 5] // '');
+			}
+			$secret .= $numerics[$i - 1];
+		}
+	}
+	return $secret;
+}
+
 sub suds_grabber {
 	my $duty_time = &subs::setting_grabber({ app => '__president', setting => 'remote_duty' });
 	if (( !$gb::suds || $duty_time eq '' || !$duty_time || $duty_time != $gb::duty_time || !$gb::duty_time)) {
