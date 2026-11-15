@@ -4,7 +4,8 @@ use strict;
 use warnings;
 
 # The Packages app. The reads answer a JSON status and three lists; the five
-# writes each take the machine's package lock and require confirm=1.
+# writes each take the machine's package lock and require confirm=1. Purge is a
+# sixth write: remove the package and the configuration it left behind.
 sub routes {
 	return (
 		[54020, 'get',  '/manager/packages',          'action_54020'],
@@ -17,6 +18,7 @@ sub routes {
 		[54027, 'post', '/manager/packages/install',  'action_54027'],
 		[54028, 'post', '/manager/packages/remove',   'action_54028'],
 		[54029, 'post', '/manager/packages/file',     'action_54029'],
+		[54030, 'post', '/manager/packages/purge',    'action_54030'],
 	);
 }
 

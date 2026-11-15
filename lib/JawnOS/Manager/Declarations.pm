@@ -142,6 +142,7 @@ sub store_printer;
 sub store_invoice_paper;
 sub store_invoice_paper_enabled;
 sub store_payment_receipt;
+sub store_receipt_paper_enabled;
 sub editor_maker;
 sub manager_bundle_paths;
 sub manager_chunk_paths;

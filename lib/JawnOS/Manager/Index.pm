@@ -564,6 +564,7 @@ our %SUB = (
 	'store_invoice_paper'                    => 'JawnOS/Manager/Part08.pm',
 	'store_invoice_paper_enabled'            => 'JawnOS/Manager/Part08.pm',
 	'store_payment_receipt'                  => 'JawnOS/Manager/Part08.pm',
+	'store_receipt_paper_enabled'            => 'JawnOS/Manager/Part08.pm',
 	'store_quote_stock'                      => 'JawnOS/Manager/Part07.pm',
 	'store_setting_list'                     => 'JawnOS/Manager/Part08.pm',
 	'store_subcategory_counts'               => 'JawnOS/Manager/Part07.pm',

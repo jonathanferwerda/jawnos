@@ -12,12 +12,12 @@
 			<h3><%= $d %></h3>
 			<% foreach my $m ( sort keys %{$store->{$d}} ) { %>
 
-				<% unless ($m eq 'logo' || $m eq 'doc_notes' || $m eq 'receipt_message' || $m eq 'invoice_paper' ) { %>
+				<% unless ($m eq 'logo' || $m eq 'doc_notes' || $m eq 'receipt_message' || $m eq 'invoice_paper' || $m eq 'receipt_paper' ) { %>
 					<div class="cfg-row">
 						<label><%= &subs::format_name($m) %></label>
 						<input type="text" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $store->{$d}->{$m} %>">
 					</div>
-				<% } elsif ($m eq 'invoice_paper') { %>
+				<% } elsif ($m eq 'invoice_paper' || $m eq 'receipt_paper') { %>
 					<div class="cfg-row">
 						<label><%= &subs::format_name($m) %></label>
 						<span><input type="checkbox" class="me_setting" device="<%= $d %>" setting="<%= $m %>"<% if (($store->{$d}->{$m} || '') ne 'off') { %> checked<% } %>></span>

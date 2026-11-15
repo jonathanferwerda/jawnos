@@ -558,7 +558,7 @@ sub me_setting_list() {
 sub store_setting_list() {
 	my ($db,$database,$sql) = &subs::database_grabber();
 
-	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date invoice_paper payment_paper_app receipt_message/;
+	my @settings = qw/store_name slogan logo markup sales_tax address email phone tax_number doc_notes payment_due_date invoice_paper receipt_paper payment_paper_app receipt_message/;
 	my $settings = {};
 
 	foreach my $dt ( @gb::device_types ) {
@@ -576,6 +576,15 @@ sub store_setting_list() {
 # off in Configure - Store.
 sub store_invoice_paper_enabled {
 	my $v = &subs::setting_grabber({ app => 'me', setting => 'invoice_paper' });
+	return 1 unless defined $v && length $v;
+	return $v eq 'off' ? 0 : 1;
+}
+
+# Whether a payment draws its receipt paper. Unset means yes: money received
+# gets a sheet, and Configure - Store turns it off for a house that would rather
+# keep only the receipt row. The row itself is written either way.
+sub store_receipt_paper_enabled {
+	my $v = &subs::setting_grabber({ app => 'me', setting => 'receipt_paper' });
 	return 1 unless defined $v && length $v;
 	return $v eq 'off' ? 0 : 1;
 }
@@ -688,6 +697,11 @@ sub store_payment_receipt($data) {
 		data => encode_json($receipt),
 		file => '[]',
 	});
+	# Configure - Store can turn the receipt paper off. The row above is the
+	# record either way, so the journal still shows the payment; only the drawing
+	# and its file rows are skipped, and no render is started.
+	return $receipt_uuid unless &store_receipt_paper_enabled();
+
 	# The receipt row is the record and the caller needs its uuid now. Rendering
 	# the two papers is the slow part, so it runs where the invoice's own paper
 	# does: in a forked child when this machine can fork, inline when it cannot.

@@ -4,15 +4,17 @@ package subs;
 #
 # The app asks the machine what it is instead of assuming: a Debian or Ubuntu
 # box answers apt + dpkg, an Arch box answers pacman (and yay or paru for the
-# AUR), and a phone's prebuilt runtime answers neither - it ships binaries but
-# no package manager, and the app lists them read-only rather than pretending
-# to install.
+# AUR), and other machines may answer flatpak, snap, pip3 or npm. A phone's
+# prebuilt runtime answers none - it ships binaries but no package manager, and
+# the app lists them read-only rather than pretending to install.
 #
 # Every command is an argv list. Nothing here is interpolated into a shell, a
 # package name is checked against a closed pattern first, and every mutating
-# run is one `sudo -n` command with a bounded timeout. A refused password prompt
-# is reported, never waited on. One operation at a time is the lock file under
-# the runtime directory, taken with O_EXCL.
+# run that needs root is one `sudo -n` command with a bounded timeout. A refused
+# password prompt is reported, never waited on. One operation at a time is the
+# lock file under the runtime directory, taken with O_EXCL. AUR helpers (yay,
+# paru) and the per-user managers (flatpak, pip, npm) are never wrapped in sudo:
+# they do their own privilege handling, and running them as root would be worse.
 #
 # Loaded on demand by lib/JawnOS/Domain/Loader.pm.
 
@@ -74,43 +76,181 @@ sub packages_runtime_kind {
 	return 'computer';
 }
 
+# The fixed tool names the app looks for. The name is never caller text.
+my @PACKAGE_TOOL_NAMES = qw(
+	apt apt-get dpkg dpkg-query apt-cache pacman yay paru
+	flatpak snap pip3 npm
+);
+
+# The label a backend carries on screen. The controller and the template use
+# this instead of matching backend names themselves.
+my %PACKAGE_BACKEND_LABEL = (
+	apt     => 'Debian or Ubuntu packages',
+	pacman  => 'Arch packages',
+	aur     => 'AUR packages',
+	flatpak => 'Flatpak apps',
+	snap    => 'Snap packages',
+	pip     => 'Python packages (pip)',
+	npm     => 'Node packages (npm)',
+);
+
+sub packages_backend_label {
+	my ($name) = @_;
+	return defined $name && length $name ? ($PACKAGE_BACKEND_LABEL{$name} // $name) : '';
+}
+
 # Which managers exist and which one the app will use. apt wins when both answer
 # because a Debian box whose user installed pacman for a chroot still has apt as
-# its own manager; the other one is reported, never guessed at.
+# its own manager; the other one is reported, never guessed at. Every backend is
+# returned in preference order: the machine's own manager, the AUR helper, then
+# the system and language managers that coexist with it.
 sub packages_detect {
 	my ($opts) = @_;
 	$opts ||= {};
 	my $tool = $opts->{'tool'} || \&packages_tool;
 	my $runtime = &packages_runtime_kind($opts);
 
-	my @names = qw(apt apt-get dpkg dpkg-query apt-cache pacman yay paru);
 	my %path;
-	foreach my $name (@names) {
+	foreach my $name (@PACKAGE_TOOL_NAMES) {
 		my $found = $tool->($name);
 		$path{$name} = $found if defined $found && length $found;
 	}
 
-	my ($kind, $manager, $aur) = ('none', '', '');
-	if ($path{'apt-get'} && $path{'dpkg'}) {
-		($kind, $manager) = ('apt', 'apt');
+	my @backends;
+	my $aur = '';
+	if ($runtime ne 'mobile') {
+		if ($path{'apt-get'} && $path{'dpkg'}) {
+			push @backends, { name => 'apt', kind => 'apt', tool => $path{'apt-get'}, tools => \%path, elevated => 1 };
+		}
+		if ($path{'pacman'}) {
+			push @backends, { name => 'pacman', kind => 'pacman', tool => $path{'pacman'}, tools => \%path, elevated => 1 };
+			# An AUR helper must run as the person, not under sudo: yay and paru
+			# escalate for the package step themselves.
+			$aur = $path{'yay'} ? 'yay' : ($path{'paru'} ? 'paru' : '');
+			push @backends, { name => 'aur', kind => 'aur', tool => $path{$aur}, helper => $aur, tools => \%path, elevated => 0 }
+				if length $aur;
+		}
+		push @backends, { name => 'flatpak', kind => 'flatpak', tool => $path{'flatpak'}, tools => \%path, elevated => 0 }
+			if $path{'flatpak'};
+		push @backends, { name => 'snap', kind => 'snap', tool => $path{'snap'}, tools => \%path, elevated => 1 }
+			if $path{'snap'};
+		push @backends, { name => 'pip', kind => 'pip', tool => $path{'pip3'}, tools => \%path, elevated => 0 }
+			if $path{'pip3'};
+		push @backends, { name => 'npm', kind => 'npm', tool => $path{'npm'}, tools => \%path, elevated => 0 }
+			if $path{'npm'};
 	}
-	elsif ($path{'pacman'}) {
-		($kind, $manager) = ('pacman', 'pacman');
-		$aur = 'yay' if $path{'yay'};
-		$aur = 'paru' if !$aur && $path{'paru'};
-	}
+
 	# A phone's runtime ships a bin/ prefix and no manager; saying 'runtime' is
 	# the honest answer even when a busybox-looking binary happens to match.
-	$kind = 'runtime' if $runtime eq 'mobile';
+	my $kind = $runtime eq 'mobile' ? 'runtime' : (@backends ? $backends[0]->{'kind'} : 'none');
+	my $manager = @backends ? $backends[0]->{'name'} : '';
 
 	return {
-		ok      => 1,
-		runtime => $runtime,
-		kind    => $kind,
-		manager => $manager,
-		aur     => $aur,
-		tools   => \%path,
+		ok       => 1,
+		runtime  => $runtime,
+		kind     => $kind,
+		manager  => $manager,
+		aur      => $aur,
+		tools    => \%path,
+		backends => \@backends,
 	};
+}
+
+# The backend a request names, or the machine's first choice. A name that is
+# not in the detected list is refused rather than silently mapped to the first.
+sub packages_backend {
+	my ($name, $opts) = @_;
+	$opts ||= {};
+	my $det = $opts->{'detect'} || &packages_detect($opts);
+	my $list = $det->{'backends'} || [];
+	return $list->[0] unless defined $name && length $name;
+	foreach my $backend (@$list) {
+		return $backend if $backend->{'name'} eq $name || $backend->{'kind'} eq $name;
+	}
+	return undef;
+}
+
+# The argv one backend runs for one action, before the timeout and sudo wrapper.
+# Every list is literal: the package name or search term is the only caller text
+# and it has already passed packages_validate_name. undef means the backend has
+# no such action (snap, pip and npm keep no separate index to refresh).
+sub packages_backend_argv {
+	my ($backend, $action, $arg) = @_;
+	return undef unless ref $backend eq 'HASH' && defined $action && length $action;
+	my $name = $backend->{'name'} || '';
+	my $tool = $backend->{'tool'} || '';
+	my $tools = $backend->{'tools'} || {};
+	return undef unless length $tool;
+
+	if ($name eq 'apt') {
+		my $query = $tools->{'dpkg-query'} || $tools->{'dpkg'} || '';
+		return [ $query, '-W', '-f=${binary:Package}\t${Version}\t${Installed-Size}\n' ] if $action eq 'list';
+		if ($action eq 'outdated') {
+			my $apt = $tools->{'apt'};
+			return [ $apt, 'list', '--upgradable' ] if $apt;
+			return [ $tool, '--just-print', 'upgrade' ];
+		}
+		return undef unless $tools->{'apt-cache'};
+		return [ $tools->{'apt-cache'}, 'search', $arg ] if $action eq 'search';
+		return [ $tool, 'install', '-y', $arg ] if $action eq 'install';
+		return [ $tool, 'remove', '-y', $arg ] if $action eq 'remove';
+		return [ $tool, 'purge', '-y', $arg ] if $action eq 'purge';
+		return [ $tool, 'update' ] if $action eq 'update';
+		return [ $tool, '-y', 'upgrade' ] if $action eq 'upgrade';
+		return undef;
+	}
+	if ($name eq 'pacman' || $name eq 'aur') {
+		return [ $tool, '-Qm' ] if $name eq 'aur' && $action eq 'list';
+		return [ $tool, '-Q' ] if $action eq 'list';
+		return [ $tool, $name eq 'aur' ? '-Qua' : '-Qu' ] if $action eq 'outdated';
+		return [ $tool, '-Ss', $arg ] if $action eq 'search';
+		return [ $tool, '-S', '--noconfirm', $arg ] if $action eq 'install';
+		return [ $tool, '-R', '--noconfirm', $arg ] if $action eq 'remove';
+		return [ $tool, '-Rns', '--noconfirm', $arg ] if $action eq 'purge';
+		return [ $tool, '-Sy' ] if $action eq 'update';
+		return [ $tool, '-Syu', '--noconfirm' ] if $action eq 'upgrade';
+		return undef;
+	}
+	if ($name eq 'flatpak') {
+		return [ $tool, 'list', '--app', '--columns=application,version' ] if $action eq 'list';
+		return [ $tool, 'remote-ls', '--updates', '--columns=application,version' ] if $action eq 'outdated';
+		return [ $tool, 'search', '--columns=name,application,version,description', $arg ] if $action eq 'search';
+		return [ $tool, 'install', '-y', '--noninteractive', $arg ] if $action eq 'install';
+		return [ $tool, 'uninstall', '-y', $arg ] if $action eq 'remove';
+		return [ $tool, 'uninstall', '-y', '--delete-data', $arg ] if $action eq 'purge';
+		return [ $tool, 'update', '--appstream' ] if $action eq 'update';
+		return [ $tool, 'update', '-y' ] if $action eq 'upgrade';
+		return undef;
+	}
+	if ($name eq 'snap') {
+		return [ $tool, 'list' ] if $action eq 'list';
+		return [ $tool, 'refresh', '--list' ] if $action eq 'outdated';
+		return [ $tool, 'find', $arg ] if $action eq 'search';
+		return [ $tool, 'install', $arg ] if $action eq 'install';
+		return [ $tool, 'remove', $arg ] if $action eq 'remove';
+		return [ $tool, 'remove', '--purge', $arg ] if $action eq 'purge';
+		return [ $tool, 'refresh' ] if $action eq 'upgrade';
+		return undef;
+	}
+	if ($name eq 'pip') {
+		return [ $tool, 'list', '--format=freeze', '--disable-pip-version-check' ] if $action eq 'list';
+		return [ $tool, 'list', '--outdated', '--format=json', '--disable-pip-version-check' ] if $action eq 'outdated';
+		return [ $tool, 'index', 'versions', $arg ] if $action eq 'search';
+		return [ $tool, 'install', '--user', $arg ] if $action eq 'install';
+		return [ $tool, 'uninstall', '-y', $arg ] if $action eq 'remove' || $action eq 'purge';
+		return [ $tool, 'install', '--user', '--upgrade', $arg ] if $action eq 'upgrade_one';
+		return undef;
+	}
+	if ($name eq 'npm') {
+		return [ $tool, 'ls', '-g', '--depth=0', '--json' ] if $action eq 'list';
+		return [ $tool, 'outdated', '-g', '--json' ] if $action eq 'outdated';
+		return [ $tool, 'search', '--json', $arg ] if $action eq 'search';
+		return [ $tool, 'install', '-g', $arg ] if $action eq 'install';
+		return [ $tool, 'uninstall', '-g', $arg ] if $action eq 'remove' || $action eq 'purge';
+		return [ $tool, 'update', '-g' ] if $action eq 'upgrade';
+		return undef;
+	}
+	return undef;
 }
 
 # The manager's own version, from its fixed --version switch. A machine where
@@ -136,35 +276,56 @@ sub packages_status {
 	my ($opts) = @_;
 	$opts ||= {};
 	my $det = &packages_detect($opts);
+	my $backends = $det->{'backends'} || [];
+	my $primary = $backends->[0];
 	my $out = {
-		ok      => 1,
-		runtime => $det->{'runtime'},
-		kind    => $det->{'kind'},
-		manager => $det->{'manager'},
-		aur     => $det->{'aur'},
+		ok       => 1,
+		runtime  => $det->{'runtime'},
+		kind     => $det->{'kind'},
+		manager  => $det->{'manager'},
+		aur      => $det->{'aur'},
 		managers => [],
+		backends => [],
 	};
-	if ($det->{'kind'} eq 'apt' || $det->{'kind'} eq 'pacman') {
-		my $version = &packages_version($det->{'kind'}, { %$opts, detect => $det });
-		my $name = $det->{'kind'};
-		my $path = $det->{'tools'}->{ $name eq 'pacman' ? 'pacman' : 'apt-get' };
-		$out->{'manager_version'} = $version;
-		$out->{'manager_path'} = $path;
-		push @{ $out->{'managers'} }, {
-			name    => $name,
-			path    => $path,
-			version => $version,
-		};
-		$out->{'aur_helper'} = $det->{'aur'} if length $det->{'aur'};
-	}
-	elsif ($det->{'kind'} eq 'runtime') {
+
+	if ($det->{'kind'} eq 'runtime') {
 		my $listing = &packages_runtime_listing($opts);
 		$out->{'read_only'} = 1;
 		$out->{'runtime_prefix'} = $listing->{'prefix'} || '';
 		$out->{'runtime_binaries'} = scalar @{ $listing->{'packages'} || [] };
+		$out->{'runtime_note'} = 'This device runs a prebuilt runtime, not a package manager: the software it ships is updated with the app, not from this window.';
+		$out->{'runtime_can'} = [
+			'read the list of binaries this runtime ships',
+			"add developer tools in a terminal on this device, with the package tool that terminal provides",
+		];
+	}
+	elsif (!@$backends) {
+		$out->{'read_only'} = 1;
+		$out->{'runtime_note'} = 'No package manager was found on this machine, so this window can only show what it can read.';
 	}
 	else {
-		$out->{'read_only'} = 1;
+		my $version = '';
+		if ($det->{'kind'} eq 'apt' || $det->{'kind'} eq 'pacman') {
+			$version = &packages_version($det->{'kind'}, { %$opts, detect => $det });
+			$out->{'manager_version'} = $version;
+			$out->{'manager_path'} = $primary->{'tool'};
+		}
+		foreach my $backend (@$backends) {
+			my $is_primary = $primary && $backend->{'name'} eq $primary->{'name'};
+			push @{ $out->{'managers'} }, {
+				name    => $backend->{'name'},
+				path    => $backend->{'tool'},
+				version => $is_primary ? $version : '',
+			};
+			push @{ $out->{'backends'} }, {
+				name    => $backend->{'name'},
+				kind    => $backend->{'kind'},
+				label   => &packages_backend_label($backend->{'name'}),
+				tool    => $backend->{'tool'},
+				version => $is_primary ? $version : '',
+			};
+		}
+		$out->{'aur_helper'} = $det->{'aur'} if length $det->{'aur'};
 	}
 
 	$out->{'restart_needed'} = &packages_restart_needed($opts) ? 1 : 0;
@@ -366,48 +527,26 @@ sub packages_list {
 	$opts ||= {};
 	my $det = &packages_detect($opts);
 	return &packages_runtime_listing($opts) if $det->{'kind'} eq 'runtime';
+	my $backend = &packages_backend($opts->{'backend'}, { %$opts, detect => $det });
 	return { ok => 0, error => 'no package manager was found on this machine', kind => 'none' }
-		if $det->{'kind'} ne 'apt' && $det->{'kind'} ne 'pacman';
+		unless $backend;
 
-	my ($argv, $res);
-	if ($det->{'kind'} eq 'apt') {
-		my $query = $det->{'tools'}->{'dpkg-query'} || $det->{'tools'}->{'dpkg'};
-		return { ok => 0, error => 'dpkg-query is not available' } unless $query;
-		$argv = &packages_command({ %$opts, elevated => 0 },
-			$query, '-W', '-f=${binary:Package}\t${Version}\t${Installed-Size}\n');
-	}
-	else {
-		$argv = &packages_command({ %$opts, elevated => 0 }, $det->{'tools'}->{'pacman'}, '-Q');
-	}
-	$res = &packages_run({ %$opts, quiet => 1, argv => $argv, max_lines => 0 });
+	my $raw = &packages_backend_argv($backend, 'list');
+	return { ok => 0, error => 'this package manager cannot list installed packages' }
+		unless defined $raw;
+	my $argv = &packages_command({ %$opts, elevated => 0 }, @$raw);
+	my $res = &packages_run({ %$opts, quiet => 1, argv => $argv, max_lines => 0 });
 	return { ok => 0, error => $res->{'output'} || 'the package list could not be read', output => $res->{'output'} }
 		unless $res->{'ok'};
 
-	my @rows;
-	my $capped = 0;
-	foreach my $line (@{ $res->{'lines'} || [] }) {
-		next unless defined $line && length $line;
-		my ($name, $version, $kb);
-		if ($det->{'kind'} eq 'apt') {
-			($name, $version, $kb) = split /\t/, $line;
-		}
-		else {
-			($name, $version) = split /\s+/, $line, 2;
-		}
-		next unless defined $name && length $name;
-		push @rows, {
-			name    => $name,
-			version => defined $version ? $version : '',
-			size_kb => (defined $kb && $kb =~ /^\d+$/) ? $kb + 0 : undef,
-		};
-		if (@rows >= $packages_list_cap) { $capped = 1; last; }
-	}
+	my ($rows, $capped) = &packages_parse_installed($backend, $res->{'lines'});
 	return {
-		ok      => 1,
-		kind    => $det->{'kind'},
-		manager => $det->{'manager'},
-		packages => \@rows,
-		capped  => $capped,
+		ok       => 1,
+		kind     => $backend->{'kind'},
+		backend  => $backend->{'name'},
+		manager  => $backend->{'name'},
+		packages => $rows,
+		capped   => $capped,
 	};
 }
 
@@ -415,91 +554,289 @@ sub packages_outdated {
 	my ($opts) = @_;
 	$opts ||= {};
 	my $det = &packages_detect($opts);
-	return { ok => 0, error => 'no package manager was found on this machine' }
-		if $det->{'kind'} ne 'apt' && $det->{'kind'} ne 'pacman';
 	return { ok => 1, kind => 'runtime', read_only => 1, packages => [], note => 'the runtime has no package manager' }
 		if $det->{'kind'} eq 'runtime';
+	my $backend = &packages_backend($opts->{'backend'}, { %$opts, detect => $det });
+	return { ok => 0, error => 'no package manager was found on this machine' }
+		unless $backend;
 
-	my $argv;
-	if ($det->{'kind'} eq 'apt') {
-		my $apt = $det->{'tools'}->{'apt'};
-		$argv = $apt
-			? &packages_command({ %$opts, elevated => 0 }, $apt, 'list', '--upgradable')
-			: &packages_command({ %$opts, elevated => 0 }, $det->{'tools'}->{'apt-get'}, '--just-print', 'upgrade');
-	}
-	else {
-		$argv = &packages_command({ %$opts, elevated => 0 }, $det->{'tools'}->{'pacman'}, '-Qu');
-	}
+	my $raw = &packages_backend_argv($backend, 'outdated');
+	return { ok => 0, error => 'this package manager cannot list outdated packages' }
+		unless defined $raw;
+	my $argv = &packages_command({ %$opts, elevated => 0 }, @$raw);
 	my $res = &packages_run({ %$opts, quiet => 1, argv => $argv, max_lines => 0 });
-	# pacman exits 1 when nothing is outdated; that is an empty list, not a fault.
-	my $expected = $det->{'kind'} eq 'pacman' && !@{$res->{'lines'} || []};
-	return { ok => 0, error => $res->{'output'} || 'the outdated list could not be read' }
+	my $output = $res->{'output'} // '';
+	# pacman exits 1 when nothing is outdated; npm exits 1 when something is.
+	# Both are answers, not faults.
+	my $expected = (($backend->{'name'} eq 'pacman' || $backend->{'name'} eq 'aur')
+			&& !@{ $res->{'lines'} || [] })
+		|| ($backend->{'name'} eq 'npm' && $output =~ /^\s*[\{\[]/);
+	return { ok => 0, error => $output || 'the outdated list could not be read' }
 		if !$res->{'ok'} && !$expected;
 
-	my @rows;
-	foreach my $line (@{ $res->{'lines'} || [] }) {
-		next unless defined $line && length $line;
-		if ($det->{'kind'} eq 'apt') {
-			my ($name, $version, $old) = $line =~ /^(\S+?)\/\S+\s+(\S+)\s+\S+(?:.*?\[upgradable from:\s*([^\]]+)\])?/;
-			next unless defined $name && length $name;
-			push @rows, { name => $name, version => ($version // ''), from => ($old // '') };
-		}
-		else {
-			my ($name, $old, $new) = $line =~ /^(\S+)\s+(\S+)\s+->\s+(\S+)/;
-			next unless defined $name && length $name;
-			push @rows, { name => $name, from => $old, version => $new };
-		}
-	}
-	return { ok => 1, kind => $det->{'kind'}, packages => \@rows, count => scalar @rows };
+	my $rows = &packages_parse_outdated($backend, $res->{'lines'}, $output);
+	return {
+		ok      => 1,
+		kind    => $backend->{'kind'},
+		backend => $backend->{'name'},
+		packages => $rows,
+		count   => scalar @$rows,
+	};
 }
 
 sub packages_search {
 	my ($term, $opts) = @_;
 	$opts ||= {};
-	my ($good, $why) = &packages_validate_name($term);
-	return { ok => 0, error => $why } unless $good;
 	my $det = &packages_detect($opts);
-	return { ok => 0, error => 'no package manager was found on this machine', kind => 'none' }
-		if $det->{'kind'} ne 'apt' && $det->{'kind'} ne 'pacman';
 	return { ok => 1, kind => 'runtime', read_only => 1, packages => [], note => 'the runtime has no package manager' }
 		if $det->{'kind'} eq 'runtime';
+	my $backend = &packages_backend($opts->{'backend'}, { %$opts, detect => $det });
+	return { ok => 0, error => 'no package manager was found on this machine', kind => 'none' }
+		unless $backend;
+	my ($good, $why) = &packages_validate_name($term, $backend->{'name'});
+	return { ok => 0, error => $why } unless $good;
 
-	my $argv;
-	if ($det->{'kind'} eq 'apt') {
-		return { ok => 0, error => 'apt-cache is not available' } unless $det->{'tools'}->{'apt-cache'};
-		$argv = &packages_command({ %$opts, elevated => 0 }, $det->{'tools'}->{'apt-cache'}, 'search', $term);
-	}
-	else {
-		$argv = &packages_command({ %$opts, elevated => 0 }, $det->{'tools'}->{'pacman'}, '-Ss', $term);
-	}
+	my $raw = &packages_backend_argv($backend, 'search', $term);
+	return { ok => 0, error => 'this package manager cannot search' } unless defined $raw;
+	my $argv = &packages_command({ %$opts, elevated => 0 }, @$raw);
 	my $res = &packages_run({ %$opts, quiet => 1, argv => $argv, max_lines => 0 });
 	return { ok => 0, error => $res->{'output'} || 'the search failed' } unless $res->{'ok'};
 
+	my $rows = &packages_parse_search($backend, $res->{'lines'}, $res->{'output'}, $term);
+	return {
+		ok      => 1,
+		kind    => $backend->{'kind'},
+		backend => $backend->{'name'},
+		term    => $term,
+		packages => $rows,
+		capped  => @$rows >= $packages_search_cap ? 1 : 0,
+	};
+}
+
+# ---- reading a backend's answer --------------------------------------------
+
+# Decode a backend's JSON answer without trusting anything about it. A tool
+# may print a warning before the document; decode from the first bracket as a
+# fallback so one stderr line does not turn a list into an error.
+sub packages_json {
+	my ($text) = @_;
+	return undef unless defined $text && length $text;
+	require JSON::PP;
+	my $json = JSON::PP->new->utf8;
+	my $data = eval { $json->decode($text) };
+	return $data if ref $data;
+	my $from = index($text, '{');
+	my $array = index($text, '[');
+	$from = $array if $from < 0 || ($array >= 0 && $array < $from);
+	return undef if $from < 0;
+	$data = eval { $json->decode(substr($text, $from)) };
+	return ref $data ? $data : undef;
+}
+
+sub packages_parse_installed {
+	my ($backend, $lines) = @_;
+	$lines ||= [];
+	my $name = $backend->{'name'} || '';
 	my @rows;
-	my $capped = 0;
-	if ($det->{'kind'} eq 'apt') {
-		foreach my $line (@{ $res->{'lines'} || [] }) {
-			my ($name, $description) = $line =~ /^(\S+)\s+-\s+(.*)$/;
-			next unless defined $name && length $name;
-			push @rows, { name => $name, version => '', description => ($description // '') };
-			if (@rows >= $packages_search_cap) { $capped = 1; last; }
+
+	if ($name eq 'npm') {
+		my $data = &packages_json(join("\n", @$lines));
+		my $deps = ref $data eq 'HASH' ? ($data->{'dependencies'} || {}) : {};
+		foreach my $pkg (sort keys %$deps) {
+			my $row = $deps->{$pkg};
+			push @rows, {
+				name    => $pkg,
+				version => ref $row eq 'HASH' ? ($row->{'version'} // '') : '',
+				size_kb => undef,
+			};
+			last if @rows >= $packages_list_cap;
 		}
+		return (\@rows, @rows >= $packages_list_cap ? 1 : 0);
 	}
-	else {
-		my $row;
-		foreach my $line (@{ $res->{'lines'} || [] }) {
+
+	foreach my $line (@$lines) {
+		next unless defined $line && length $line;
+		my ($pkg, $version, $kb);
+		if ($name eq 'apt') {
+			($pkg, $version, $kb) = split /\t/, $line;
+		}
+		elsif ($name eq 'flatpak') {
+			($pkg, $version) = split /\t/, $line, 2;
+		}
+		elsif ($name eq 'snap') {
+			next if $line =~ /^Name\s+Version\s+/i;
+			($pkg, $version) = split /\s+/, $line, 3;
+		}
+		elsif ($name eq 'pip') {
+			($pkg, $version) = $line =~ /^([^=<>!\s]+)==(\S+)/;
+		}
+		else {
+			($pkg, $version) = split /\s+/, $line, 2;
+		}
+		next unless defined $pkg && length $pkg;
+		push @rows, {
+			name    => $pkg,
+			version => defined $version ? $version : '',
+			size_kb => (defined $kb && $kb =~ /^\d+$/) ? $kb + 0 : undef,
+		};
+		last if @rows >= $packages_list_cap;
+	}
+	return (\@rows, @rows >= $packages_list_cap ? 1 : 0);
+}
+
+sub packages_parse_outdated {
+	my ($backend, $lines, $text) = @_;
+	$lines ||= [];
+	my $name = $backend->{'name'} || '';
+	my @rows;
+
+	if ($name eq 'apt') {
+		foreach my $line (@$lines) {
+			my ($pkg, $version, $old) = $line =~ /^(\S+?)\/\S+\s+(\S+)\s+\S+(?:.*?\[upgradable from:\s*([^\]]+)\])?/;
+			next unless defined $pkg && length $pkg;
+			push @rows, { name => $pkg, version => ($version // ''), from => ($old // '') };
+		}
+		return \@rows;
+	}
+	if ($name eq 'pacman' || $name eq 'aur') {
+		foreach my $line (@$lines) {
+			my ($pkg, $old, $new) = $line =~ /^(\S+)\s+(\S+)\s+->\s+(\S+)/;
+			next unless defined $pkg && length $pkg;
+			push @rows, { name => $pkg, from => $old, version => $new };
+		}
+		return \@rows;
+	}
+	if ($name eq 'flatpak') {
+		foreach my $line (@$lines) {
+			my ($pkg, $version) = split /\t/, $line, 2;
+			next unless defined $pkg && length $pkg;
+			push @rows, { name => $pkg, version => ($version // ''), from => '' };
+		}
+		return \@rows;
+	}
+	if ($name eq 'snap') {
+		my $seen_header = 0;
+		foreach my $line (@$lines) {
+			next unless defined $line && length $line;
+			if (!$seen_header) {
+				$seen_header = 1 if $line =~ /^Name\s+Version/i;
+				next;
+			}
+			my ($pkg, $version) = split /\s+/, $line, 3;
+			next unless defined $pkg && length $pkg;
+			push @rows, { name => $pkg, version => ($version // ''), from => '' };
+		}
+		return \@rows;
+	}
+	if ($name eq 'pip' || $name eq 'npm') {
+		my $data = &packages_json($text);
+		if (ref $data eq 'ARRAY') {
+			foreach my $row (@$data) {
+				next unless ref $row eq 'HASH' && defined $row->{'name'} && length $row->{'name'};
+				push @rows, {
+					name    => $row->{'name'},
+					version => ($row->{'latest_version'} // $row->{'latest'} // ''),
+					from    => ($row->{'version'} // $row->{'current'} // ''),
+				};
+			}
+		}
+		elsif (ref $data eq 'HASH') {
+			foreach my $pkg (sort keys %$data) {
+				my $row = $data->{$pkg};
+				next unless ref $row eq 'HASH';
+				push @rows, {
+					name    => $pkg,
+					version => ($row->{'latest'} // ''),
+					from    => ($row->{'current'} // ''),
+				};
+			}
+		}
+		return \@rows;
+	}
+	return \@rows;
+}
+
+sub packages_parse_search {
+	my ($backend, $lines, $text, $term) = @_;
+	$lines ||= [];
+	my $name = $backend->{'name'} || '';
+	my @rows;
+
+	if ($name eq 'apt') {
+		foreach my $line (@$lines) {
+			my ($pkg, $description) = $line =~ /^(\S+)\s+-\s+(.*)$/;
+			next unless defined $pkg && length $pkg;
+			push @rows, { name => $pkg, version => '', description => ($description // '') };
+			last if @rows >= $packages_search_cap;
+		}
+		return \@rows;
+	}
+	if ($name eq 'pacman' || $name eq 'aur') {
+		my $is_row = 0;
+		foreach my $line (@$lines) {
 			if ($line =~ /^\S+\/(\S+)\s+(\S+)/) {
-				$row = [ $1, $2, '' ];
+				$is_row = 1;
 				push @rows, { name => $1, version => $2, description => '' };
-				if (@rows >= $packages_search_cap) { $capped = 1; last; }
+				last if @rows >= $packages_search_cap;
 			}
-			elsif ($row && $line =~ /^\s+(\S.*)$/) {
+			elsif ($is_row && $line =~ /^\s+(\S.*)$/) {
 				$rows[-1]->{'description'} = $1 unless length $rows[-1]->{'description'};
-				$row = undef;
+				$is_row = 0;
 			}
 		}
+		return \@rows;
 	}
-	return { ok => 1, kind => $det->{'kind'}, term => $term, packages => \@rows, capped => $capped };
+	if ($name eq 'flatpak') {
+		foreach my $line (@$lines) {
+			my ($label, $pkg, $version, $description) = split /\t/, $line, 4;
+			next unless defined $pkg && length $pkg;
+			push @rows, {
+				name => $pkg,
+				version => ($version // ''),
+				description => ($label // $description // ''),
+			};
+			last if @rows >= $packages_search_cap;
+		}
+		return \@rows;
+	}
+	if ($name eq 'snap') {
+		foreach my $line (@$lines) {
+			next if $line =~ /^(?:Name|Command)\s/i;
+			next if $line =~ /^-+\s*$/;
+			my ($pkg, $version, $publisher, $notes, $summary) = split /\s{2,}/, $line;
+			next unless defined $pkg && length $pkg;
+			push @rows, { name => $pkg, version => ($version // ''), description => ($summary // '') };
+			last if @rows >= $packages_search_cap;
+		}
+		return \@rows;
+	}
+	if ($name eq 'pip') {
+		foreach my $line (@$lines) {
+			my ($pkg, $versions) = $line =~ /^(\S+)\s+\(([^)]+)\)/;
+			next unless defined $pkg && length $pkg;
+			my @v = split /,/, $versions;
+			my ($latest) = $v[0] =~ /(\S+)/;
+			push @rows, { name => $pkg, version => ($latest // ''), description => '' };
+			last;
+		}
+		return \@rows;
+	}
+	if ($name eq 'npm') {
+		my $data = &packages_json($text);
+		if (ref $data eq 'ARRAY') {
+			foreach my $row (@$data) {
+				next unless ref $row eq 'HASH' && defined $row->{'name'} && length $row->{'name'};
+				push @rows, {
+					name => $row->{'name'},
+					version => ($row->{'version'} // ''),
+					description => ($row->{'description'} // ''),
+				};
+				last if @rows >= $packages_search_cap;
+			}
+		}
+		return \@rows;
+	}
+	return \@rows;
 }
 
 # The runtime a phone ships is a prebuilt prefix: list what is there, read-only.
@@ -528,11 +865,11 @@ sub packages_runtime_listing {
 		packages  => [],
 	};
 	unless (defined $dir) {
-		$out->{'note'} = 'this runtime ships no package manager and names no bin directory';
+		$out->{'note'} = 'this device ships no package manager and names no bin directory; the software it runs is part of the app';
 		return $out;
-	}
+	};
 	opendir(my $dh, $dir) or do {
-		$out->{'note'} = "could not read $dir";
+		$out->{'note'} = "could not read the runtime's bin directory ($dir)";
 		return $out;
 	};
 	my @names;
@@ -549,15 +886,21 @@ sub packages_runtime_listing {
 	$out->{'prefix'} = $dir;
 	$out->{'packages'} = [ map { { name => $_, version => '', size_kb => undef } } @names ];
 	$out->{'capped'} = $capped;
-	$out->{'note'} = 'the runtime ships these binaries and no package manager; nothing can be installed from here';
+	$out->{'note'} = 'this device runs a prebuilt runtime with no package manager: these are the binaries it ships, and this window cannot install, upgrade or remove any of them';
 	return $out;
 }
 
 # ---- validation and errors --------------------------------------------------
 
+# npm's scoped names are the one grammar the bare rule cannot express. The
+# pattern still refuses a path, a flag or a shell metacharacter: it is a name,
+# an @, a scope, and one slash.
+our $packages_npm_scope_pattern = qr/^@[A-Za-z0-9][A-Za-z0-9._-]{0,63}\/[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
 sub packages_validate_name {
-	my ($name) = @_;
+	my ($name, $backend) = @_;
 	return (0, 'no package name was given') unless defined $name && length $name;
+	return (1, $name) if defined $backend && $backend eq 'npm' && $name =~ $packages_npm_scope_pattern;
 	return (0, 'a package name must be one word: letters, digits and + . _ : - only')
 		unless $name =~ $packages_name_pattern;
 	return (1, $name);
@@ -572,21 +915,42 @@ sub packages_sudo_refused {
 		? 1 : 0;
 }
 
+# A phone's runtime is a whole answer, not a missing manager: say what it is,
+# why nothing can change, and where the person can go instead.
+sub packages_runtime_refusal {
+	return {
+		ok        => 0,
+		read_only => 1,
+		kind      => 'runtime',
+		error     => 'this device runs a prebuilt runtime with no package manager, so software is not installed, removed or upgraded from here',
+		note      => 'the runtime and the app are updated together; for developer tools, open a terminal on this device and use the package tool that terminal provides',
+	};
+}
+
 # ---- writes -----------------------------------------------------------------
 
 sub packages_update {
 	my ($opts) = @_;
 	$opts ||= {};
+	my $det = &packages_detect($opts);
+	return &packages_runtime_refusal() if $det->{'kind'} eq 'runtime';
+	my $backend = &packages_backend($opts->{'backend'}, { %$opts, detect => $det });
+	return { ok => 0, error => 'no package manager was found on this machine' } unless $backend;
+
+	my $raw = &packages_backend_argv($backend, 'update');
+	unless (defined $raw) {
+		return {
+			ok      => 1,
+			changed => 0,
+			noop    => 1,
+			backend => $backend->{'name'},
+			note    => 'this package manager keeps its own index, so there is nothing to refresh',
+		};
+	}
 	return &packages_operation({
 		%$opts,
 		work => sub {
-			my $det = &packages_detect($opts);
-			return { ok => 0, error => 'no package manager was found on this machine' }
-				if $det->{'kind'} ne 'apt' && $det->{'kind'} ne 'pacman';
-			return { ok => 0, error => 'the runtime has no package manager' } if $det->{'kind'} eq 'runtime';
-			my $argv = $det->{'kind'} eq 'apt'
-				? &packages_command({ %$opts, elevated => 1 }, $det->{'tools'}->{'apt-get'}, 'update')
-				: &packages_command({ %$opts, elevated => 1 }, $det->{'tools'}->{'pacman'}, '-Sy');
+			my $argv = &packages_command({ %$opts, elevated => $backend->{'elevated'} }, @$raw);
 			return &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 0);
 		},
 	});
@@ -595,59 +959,86 @@ sub packages_update {
 sub packages_upgrade {
 	my ($opts) = @_;
 	$opts ||= {};
+	my $det = &packages_detect($opts);
+	return &packages_runtime_refusal() if $det->{'kind'} eq 'runtime';
+	my $backend = &packages_backend($opts->{'backend'}, { %$opts, detect => $det });
+	return { ok => 0, error => 'no package manager was found on this machine' } unless $backend;
+
+	# pip upgrades one package at a time; the outdated list is the work queue.
+	if ($backend->{'name'} eq 'pip') {
+		return &packages_operation({
+			%$opts,
+			work => sub {
+				my $outdated = &packages_outdated({ %$opts, backend => 'pip', detect => $det });
+				my @names = map { $_->{'name'} } @{ $outdated->{'packages'} || [] };
+				return { ok => 1, changed => 0, noop => 1, note => 'every pip package is already up to date' }
+					unless @names;
+				my (@text, $failed);
+				foreach my $pkg (@names) {
+					my $raw = &packages_backend_argv($backend, 'upgrade_one', $pkg);
+					next unless defined $raw;
+					my $res = &packages_run({
+						%$opts,
+						argv => &packages_command({ %$opts, elevated => 0 }, @$raw),
+					});
+					$failed = 1 unless $res->{'ok'};
+					push @text, $res->{'output'} if defined $res->{'output'} && length $res->{'output'};
+				}
+				return &packages_finish($opts, { status => $failed ? 1 : 0, output => join("\n", @text) }, 1);
+			},
+		});
+	}
+
+	my $raw = &packages_backend_argv($backend, 'upgrade');
+	return { ok => 0, error => 'this package manager cannot upgrade' } unless defined $raw;
 	return &packages_operation({
 		%$opts,
 		work => sub {
-			my $det = &packages_detect($opts);
-			return { ok => 0, error => 'no package manager was found on this machine' }
-				if $det->{'kind'} ne 'apt' && $det->{'kind'} ne 'pacman';
-			return { ok => 0, error => 'the runtime has no package manager' } if $det->{'kind'} eq 'runtime';
-			my $argv = $det->{'kind'} eq 'apt'
-				? &packages_command({ %$opts, elevated => 1 }, $det->{'tools'}->{'apt-get'}, '-y', 'upgrade')
-				: &packages_command({ %$opts, elevated => 1 }, $det->{'tools'}->{'pacman'}, '-Syu', '--noconfirm');
+			my $argv = &packages_command({ %$opts, elevated => $backend->{'elevated'} }, @$raw);
 			return &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 1);
+		},
+	});
+}
+
+# One name, one backend, one action. The name is checked against the backend's
+# own grammar before any argv is built.
+sub packages_single_action {
+	my ($action, $name, $opts, $note) = @_;
+	$opts ||= {};
+	my $det = &packages_detect($opts);
+	return &packages_runtime_refusal() if $det->{'kind'} eq 'runtime';
+	my $backend = &packages_backend($opts->{'backend'}, { %$opts, detect => $det });
+	return { ok => 0, error => 'no package manager was found on this machine' } unless $backend;
+	# pip and npm own no separate configuration to delete; say so rather than
+	# pretending their purge differs from a remove.
+	$note = 'this package manager keeps no separate configuration to delete'
+		if $action eq 'purge' && ($backend->{'name'} eq 'pip' || $backend->{'name'} eq 'npm');
+	my ($good, $why) = &packages_validate_name($name, $backend->{'name'});
+	return { ok => 0, error => $why } unless $good;
+	my $raw = &packages_backend_argv($backend, $action, $name);
+	return { ok => 0, error => 'this package manager cannot ' . $action . ' by name' } unless defined $raw;
+	return &packages_operation({
+		%$opts,
+		work => sub {
+			my $argv = &packages_command({ %$opts, elevated => $backend->{'elevated'} }, @$raw);
+			return &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 1, $name, $note);
 		},
 	});
 }
 
 sub packages_install {
 	my ($name, $opts) = @_;
-	$opts ||= {};
-	my ($good, $why) = &packages_validate_name($name);
-	return { ok => 0, error => $why } unless $good;
-	return &packages_operation({
-		%$opts,
-		work => sub {
-			my $det = &packages_detect($opts);
-			return { ok => 0, error => 'no package manager was found on this machine' }
-				if $det->{'kind'} ne 'apt' && $det->{'kind'} ne 'pacman';
-			return { ok => 0, error => 'the runtime has no package manager' } if $det->{'kind'} eq 'runtime';
-			my $argv = $det->{'kind'} eq 'apt'
-				? &packages_command({ %$opts, elevated => 1 }, $det->{'tools'}->{'apt-get'}, 'install', '-y', $name)
-				: &packages_command({ %$opts, elevated => 1 }, $det->{'tools'}->{'pacman'}, '-S', '--noconfirm', $name);
-			return &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 1, $name);
-		},
-	});
+	return &packages_single_action('install', $name, $opts);
 }
 
 sub packages_remove {
 	my ($name, $opts) = @_;
-	$opts ||= {};
-	my ($good, $why) = &packages_validate_name($name);
-	return { ok => 0, error => $why } unless $good;
-	return &packages_operation({
-		%$opts,
-		work => sub {
-			my $det = &packages_detect($opts);
-			return { ok => 0, error => 'no package manager was found on this machine' }
-				if $det->{'kind'} ne 'apt' && $det->{'kind'} ne 'pacman';
-			return { ok => 0, error => 'the runtime has no package manager' } if $det->{'kind'} eq 'runtime';
-			my $argv = $det->{'kind'} eq 'apt'
-				? &packages_command({ %$opts, elevated => 1 }, $det->{'tools'}->{'apt-get'}, 'remove', '-y', $name)
-				: &packages_command({ %$opts, elevated => 1 }, $det->{'tools'}->{'pacman'}, '-R', '--noconfirm', $name);
-			return &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 1, $name);
-		},
-	});
+	return &packages_single_action('remove', $name, $opts);
+}
+
+sub packages_purge {
+	my ($name, $opts) = @_;
+	return &packages_single_action('purge', $name, $opts);
 }
 
 # Install a package file the person uploaded. The path must be inside the
@@ -667,9 +1058,9 @@ sub packages_install_file {
 		work => sub {
 			my $det = &packages_detect($opts);
 			my $kind = $det->{'kind'};
-			return { ok => 0, error => 'no package manager was found on this machine' }
-				if $kind ne 'apt' && $kind ne 'pacman';
-			return { ok => 0, error => 'the runtime has no package manager' } if $kind eq 'runtime';
+			return &packages_runtime_refusal() if $kind eq 'runtime';
+			return { ok => 0, error => 'this package manager cannot install a package file' }
+				unless $kind eq 'apt' || $kind eq 'pacman';
 
 			my $lower = $file;
 			$lower =~ s/.*\///;
@@ -712,7 +1103,7 @@ sub packages_install_file {
 # named as such, a success records that the running system changed, and the
 # manager's own tail is carried back for the log.
 sub packages_finish {
-	my ($opts, $res, $changed, $what) = @_;
+	my ($opts, $res, $changed, $what, $note) = @_;
 	my $output = $res->{'output'} // '';
 	if (!$res->{'ok'} && &packages_sudo_refused($output)) {
 		return {
@@ -725,7 +1116,7 @@ sub packages_finish {
 	if ($res->{'ok'} && $changed) {
 		eval { &packages_restart_mark($opts) };
 	}
-	return {
+	my $answer = {
 		ok        => $res->{'ok'} ? 1 : 0,
 		changed   => $res->{'ok'} && $changed ? 1 : 0,
 		what      => $what // '',
@@ -734,6 +1125,8 @@ sub packages_finish {
 		error     => $res->{'ok'} ? undef : ($output || 'the package manager failed'),
 		restart_needed => &packages_restart_needed($opts) ? 1 : 0,
 	};
+	$answer->{'note'} = $note if defined $note && length $note;
+	return $answer;
 }
 
 # ---- the upload path --------------------------------------------------------

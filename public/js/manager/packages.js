@@ -31,6 +31,7 @@ function packagesBind() {
 	window_box.data('packages_bound', 1);
 
 	window_box.on('click', '#packages_refresh', function() { packagesLoad(); });
+	window_box.on('change', '#packages_backend', function() { packagesLoad(); });
 	window_box.on('click', '#packages_search_go', function() { packagesSearchGo(); });
 	window_box.on('keydown', '#packages_search_term', function(event) {
 		if (event.key === 'Enter') { packagesSearchGo(); }
@@ -45,6 +46,26 @@ function packagesBind() {
 	window_box.on('click', '.packages_remove', function() {
 		packagesRemove($(this).attr('data-name'));
 	});
+	window_box.on('click', '.packages_purge', function() {
+		packagesPurge($(this).attr('data-name'));
+	});
+}
+
+// The backend the person chose, or empty for the machine's own manager. The
+// server sends the list; a machine with one manager never shows the selector.
+function packagesBackend() {
+	var select = $('#packages_backend');
+	return select.length ? (select.val() || '') : '';
+}
+
+// A package change only runs in a window the desktop app opened. The desktop
+// sets window.JawnDesktop at document start (desktop/jawnos_desktop/bridge.py,
+// DESKTOP_MARKER_JS); a plain browser has no such marker. This is the same
+// check the remote-window and app-login code already keys off, not a new one.
+function packagesWriteAllowed() {
+	if (window.JawnDesktop) { return true; }
+	packagesNote(jawnosT('Package changes run only in the JawnOS desktop window. Open JawnOS to install, remove or purge software.'));
+	return false;
 }
 
 function packagesNote(text) {
@@ -72,6 +93,7 @@ function packagesLoad() {
 	$.ajax({
 		url: '/manager/packages/list',
 		type: 'GET',
+		data: { backend: packagesBackend() },
 		dataType: 'json',
 		success: function(response) {
 			packagesRenderInstalled(response);
@@ -83,6 +105,7 @@ function packagesLoad() {
 	$.ajax({
 		url: '/manager/packages/outdated',
 		type: 'GET',
+		data: { backend: packagesBackend() },
 		dataType: 'json',
 		success: function(response) {
 			packagesRenderOutdated(response);
@@ -111,7 +134,8 @@ function packagesRenderInstalled(response) {
 				+ '<span class="packages_row_version">' + packagesEscape(row.version || '') + '</span>'
 				+ '<span class="packages_row_size">' + packagesEscape(packagesHumanSize(row.size_kb)) + '</span>';
 			if (!read_only) {
-				html += '<button class="packages_remove" data-name="' + packagesEscape(row.name) + '" hint="' + jawnosT('Remove this package') + '">' + jawnosT('Remove') + '</button>';
+				html += '<button class="packages_remove" data-name="' + packagesEscape(row.name) + '" hint="' + jawnosT('Remove this package') + '">' + jawnosT('Remove') + '</button>'
+					+ '<button class="packages_purge" data-name="' + packagesEscape(row.name) + '" hint="' + jawnosT('Purge this package, including its configuration') + '">' + jawnosT('Purge') + '</button>';
 			}
 			html += '</div>';
 		}
@@ -151,7 +175,7 @@ function packagesSearchGo() {
 	$.ajax({
 		url: '/manager/packages/search',
 		type: 'GET',
-		data: { term: term },
+		data: { term: term, backend: packagesBackend() },
 		dataType: 'json',
 		success: function(response) {
 			var rows = (response && response.packages) || [];
@@ -189,11 +213,14 @@ function packagesSearchGo() {
 // One write at a time: the server holds the lock too, but a second click while
 // the first request is still out would only queue behind it.
 function packagesPost(url, data, after) {
+	if (!packagesWriteAllowed()) { return; }
 	if (packagesBusy) {
 		packagesNote(jawnosT('A package operation is already running.'));
 		return;
 	}
 	packagesBusy = true;
+	data = data || {};
+	if (packagesBackend()) { data.backend = packagesBackend(); }
 	$.ajax({
 		url: url,
 		type: 'POST',
@@ -220,6 +247,7 @@ function packagesAnswer(response) {
 		text = response.ok ? jawnosT('Done.') : jawnosT('The request did not run.');
 	}
 	packagesNote(String(text).split('\n').slice(-3).join(' '));
+	if (response.note) { packagesNote(jawnosT(response.note)); }
 	if (response.needs_root) {
 		packagesNote(jawnosT('This needs root, and sudo -n was refused. No password is asked for here.'));
 	}
@@ -230,11 +258,13 @@ function packagesAnswer(response) {
 }
 
 function packagesUpdate() {
+	if (!packagesWriteAllowed()) { return; }
 	packagesNote(jawnosT('Refreshing the package index...'));
 	packagesPost('/manager/packages/update', { confirm: 1 });
 }
 
 function packagesUpgrade() {
+	if (!packagesWriteAllowed()) { return; }
 	jawnosConfirm(jawnosT('Upgrade every outdated package now?'), function() {
 		packagesNote(jawnosT('Upgrading every outdated package...'));
 		packagesPost('/manager/packages/upgrade', { confirm: 1 });
@@ -242,6 +272,7 @@ function packagesUpgrade() {
 }
 
 function packagesInstall(name) {
+	if (!packagesWriteAllowed()) { return; }
 	if (!name) { name = $.trim($('#packages_install_name').val() || ''); }
 	if (!name) { return; }
 	jawnosConfirm(jawnosT('Install this package now?') + ' ' + name, function() {
@@ -251,6 +282,7 @@ function packagesInstall(name) {
 }
 
 function packagesRemove(name) {
+	if (!packagesWriteAllowed()) { return; }
 	if (!name) { return; }
 	jawnosConfirm(jawnosT('Remove this package now?') + ' ' + name, function() {
 		packagesNote(jawnosT('Removing...'));
@@ -258,7 +290,17 @@ function packagesRemove(name) {
 	});
 }
 
+function packagesPurge(name) {
+	if (!packagesWriteAllowed()) { return; }
+	if (!name) { return; }
+	jawnosConfirm(jawnosT('Purge this package and its configuration now?') + ' ' + name, function() {
+		packagesNote(jawnosT('Purging...'));
+		packagesPost('/manager/packages/purge', { confirm: 1, name: name });
+	});
+}
+
 function packagesFile() {
+	if (!packagesWriteAllowed()) { return; }
 	var input = document.getElementById('packages_file');
 	if (!input || !input.files || !input.files.length) {
 		packagesNote(jawnosT('Choose a package file to install.'));
@@ -270,8 +312,10 @@ function packagesFile() {
 }
 
 function packagesFileSend(input) {
+	if (!packagesWriteAllowed()) { return; }
 	var form = new FormData();
 	form.append('confirm', '1');
+	if (packagesBackend()) { form.append('backend', packagesBackend()); }
 	form.append('file', input.files[0]);
 	if (packagesBusy) {
 		packagesNote(jawnosT('A package operation is already running.'));

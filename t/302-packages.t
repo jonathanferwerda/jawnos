@@ -65,6 +65,28 @@ is($phone->{'kind'}, 'runtime', 'a phone runtime is not a package manager');
 my $none = subs::packages_detect({ tool => tool_for({}), runtime => 'computer' });
 is($none->{'kind'}, 'none', 'a computer with no manager says so');
 
+my $all = subs::packages_detect({
+	tool => tool_for({ %ARCH, 'flatpak' => '/usr/bin/flatpak', 'snap' => '/usr/bin/snap',
+		'pip3' => '/usr/bin/pip3', 'npm' => '/usr/bin/npm' }),
+	runtime => 'computer',
+});
+is_deeply([ map { $_->{'name'} } @{ $all->{'backends'} } ],
+	[qw(pacman aur flatpak snap pip npm)], 'every detected backend is reported in order');
+is($all->{'kind'}, 'pacman', 'the machine manager stays first');
+
+my $flat_only = subs::packages_detect({
+	tool => tool_for({ 'timeout' => '/usr/bin/timeout', 'flatpak' => '/usr/bin/flatpak' }),
+	runtime => 'computer',
+});
+is($flat_only->{'kind'}, 'flatpak', 'a machine with only flatpak still has a manager');
+is($flat_only->{'manager'}, 'flatpak', 'and names it');
+
+my $paru = subs::packages_detect({
+	tool => tool_for({ 'pacman' => '/usr/bin/pacman', 'paru' => '/usr/bin/paru' }),
+	runtime => 'computer',
+});
+is($paru->{'aur'}, 'paru', 'paru is the AUR helper when yay is absent');
+
 # ---- the argv each action builds ------------------------------------------
 
 my $tmp = tempdir(CLEANUP => 1);
@@ -122,6 +144,72 @@ subs::packages_remove('vim', action_opts(\%ARCH, recording_runner()));
 is_deeply($calls[0], [qw(/usr/bin/sudo -n /usr/bin/timeout 300 /usr/bin/pacman -R --noconfirm vim)],
 	'pacman remove is -R --noconfirm');
 
+# ---- more backends ---------------------------------------------------------
+
+my %FLATPAK = ('timeout' => '/usr/bin/timeout', 'flatpak' => '/usr/bin/flatpak');
+my %SNAP = ('timeout' => '/usr/bin/timeout', 'sudo' => '/usr/bin/sudo', 'snap' => '/usr/bin/snap');
+my %PIP = ('timeout' => '/usr/bin/timeout', 'pip3' => '/usr/bin/pip3');
+my %NPM = ('timeout' => '/usr/bin/timeout', 'npm' => '/usr/bin/npm');
+
+sub aur_opts {
+	my ($runner) = @_;
+	my $opts = action_opts(\%ARCH, $runner);
+	$opts->{'backend'} = 'aur';
+	return $opts;
+}
+
+subs::packages_install('thing', aur_opts(recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/timeout 300 /usr/bin/yay -S --noconfirm thing)],
+	'the AUR helper installs as the person, with no sudo');
+unlike(join(' ', @{ $calls[0] }), qr/\bsudo\b/, 'yay is never wrapped in sudo');
+
+subs::packages_purge('thing', aur_opts(recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/timeout 300 /usr/bin/yay -Rns --noconfirm thing)],
+	'the AUR helper purges with -Rns');
+
+subs::packages_purge('vim', action_opts(\%APT, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/sudo -n /usr/bin/timeout 300 /usr/bin/apt-get purge -y vim)],
+	'apt purge is its own command');
+subs::packages_purge('vim', action_opts(\%ARCH, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/sudo -n /usr/bin/timeout 300 /usr/bin/pacman -Rns --noconfirm vim)],
+	'pacman purge removes the configuration too');
+
+subs::packages_install('org.example.App', action_opts(\%FLATPAK, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/timeout 300 /usr/bin/flatpak install -y --noninteractive org.example.App)],
+	'flatpak installs an app id without sudo');
+subs::packages_purge('org.example.App', action_opts(\%FLATPAK, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/timeout 300 /usr/bin/flatpak uninstall -y --delete-data org.example.App)],
+	'flatpak purge deletes the app data');
+
+subs::packages_install('firefox', action_opts(\%SNAP, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/sudo -n /usr/bin/timeout 300 /usr/bin/snap install firefox)],
+	'snap installs under sudo -n');
+subs::packages_purge('firefox', action_opts(\%SNAP, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/sudo -n /usr/bin/timeout 300 /usr/bin/snap remove --purge firefox)],
+	'snap purge is remove --purge');
+
+subs::packages_install('requests', action_opts(\%PIP, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/timeout 300 /usr/bin/pip3 install --user requests)],
+	'pip installs for the person');
+subs::packages_remove('requests', action_opts(\%PIP, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/timeout 300 /usr/bin/pip3 uninstall -y requests)],
+	'pip removes without sudo');
+
+subs::packages_install('left-pad', action_opts(\%NPM, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/timeout 300 /usr/bin/npm install -g left-pad)],
+	'npm installs globally');
+subs::packages_install('@scope/pkg', action_opts(\%NPM, recording_runner()));
+is_deeply($calls[0], [qw(/usr/bin/timeout 300 /usr/bin/npm install -g @scope/pkg)],
+	'a scoped npm name is accepted as one argv word');
+my $npm_bad = subs::packages_install('../evil', action_opts(\%NPM, recording_runner()));
+is($npm_bad->{'ok'}, 0, 'a path is not an npm package name');
+is(scalar @calls, 0, 'and no argv was built for it');
+
+my $snap_update = subs::packages_update(action_opts(\%SNAP, recording_runner()));
+is($snap_update->{'ok'}, 1, 'snap update is an honest no-op');
+is($snap_update->{'noop'}, 1, 'and says so');
+is(scalar @calls, 0, 'without running a command');
+
 my $bad = subs::packages_install('vim; rm -rf /', action_opts(\%APT, recording_runner()));
 is($bad->{'ok'}, 0, 'an invalid name never reaches the manager');
 is(scalar @calls, 0, 'and no argv was built for it');
@@ -162,6 +250,43 @@ my $list = subs::packages_list(action_opts(\%APT, $list_runner));
 is(scalar @{ $list->{'packages'} }, 2, 'two installed rows are parsed');
 is($list->{'packages'}->[0]->{'name'}, 'vim', 'the first row names the package');
 is($list->{'packages'}->[0]->{'size_kb'}, 3200, 'and carries its installed size in KB');
+
+# ---- more backend parsers --------------------------------------------------
+
+my $flat_list = subs::packages_list(action_opts(\%FLATPAK, recording_runner(sub {
+	return { status => 0, output => "org.example.App\t1.4.2\n" };
+})));
+is($flat_list->{'packages'}->[0]->{'name'}, 'org.example.App', 'flatpak lists app ids');
+is($flat_list->{'packages'}->[0]->{'version'}, '1.4.2', 'with their versions');
+
+my $pip_list = subs::packages_list(action_opts(\%PIP, recording_runner(sub {
+	return { status => 0, output => "requests==2.32.3\nclick==8.1.7\n" };
+})));
+is(scalar @{ $pip_list->{'packages'} }, 2, 'pip freeze rows are parsed');
+is($pip_list->{'packages'}->[1]->{'name'}, 'click', 'the name is before ==');
+
+my $npm_list = subs::packages_list(action_opts(\%NPM, recording_runner(sub {
+	return { status => 0, output => '{"dependencies":{"left-pad":{"version":"1.3.0"}}}' };
+})));
+is($npm_list->{'packages'}->[0]->{'name'}, 'left-pad', 'npm JSON rows are parsed');
+is($npm_list->{'packages'}->[0]->{'version'}, '1.3.0', 'with the installed version');
+
+my $pip_out = subs::packages_outdated(action_opts(\%PIP, recording_runner(sub {
+	return { status => 0, output => '[{"name":"requests","version":"2.31.0","latest_version":"2.32.3"}]' };
+})));
+is($pip_out->{'packages'}->[0]->{'from'}, '2.31.0', 'pip outdated carries the old version');
+is($pip_out->{'packages'}->[0]->{'version'}, '2.32.3', 'and the new one');
+
+my $npm_out = subs::packages_outdated(action_opts(\%NPM, recording_runner(sub {
+	return { status => 1, output => '{"left-pad":{"current":"1.2.0","latest":"1.3.0"}}' };
+})));
+is($npm_out->{'ok'}, 1, 'npm exit 1 with a JSON body is an outdated list, not a fault');
+is($npm_out->{'packages'}->[0]->{'name'}, 'left-pad', 'and the row is parsed');
+
+my $flat_search = subs::packages_search('app', action_opts(\%FLATPAK, recording_runner(sub {
+	return { status => 0, output => "Example\torg.example.App\t1.4.2\tan example\n" };
+})));
+is($flat_search->{'packages'}->[0]->{'name'}, 'org.example.App', 'flatpak search installs by app id');
 
 # ---- the upload path -------------------------------------------------------
 
@@ -258,6 +383,27 @@ is_deeply([ map { $_->{'name'} } @{ $runtime->{'packages'} } ], ['one'],
 	'only the executable the runtime ships is listed');
 like($runtime->{'note'}, qr/no package manager/, 'and the note says there is no manager');
 
+# ---- the phone's runtime ---------------------------------------------------
+
+my $phone_status = subs::packages_status({
+	%{ action_opts({}, recording_runner()) },
+	runtime => 'mobile',
+	bin_dir => $bin,
+});
+is($phone_status->{'read_only'}, 1, 'a phone runtime status is read-only');
+like($phone_status->{'runtime_note'}, qr/prebuilt runtime/, 'and explains what the runtime is');
+ok(scalar @{ $phone_status->{'runtime_can'} || [] } >= 2, 'and names what the person can do');
+
+my $phone_install = subs::packages_install('vim', {
+	%{ action_opts({}, recording_runner()) },
+	runtime => 'mobile',
+});
+is($phone_install->{'ok'}, 0, 'a phone runtime refuses an install');
+is($phone_install->{'read_only'}, 1, 'as a read-only answer');
+like($phone_install->{'error'}, qr/prebuilt runtime/, 'and says why in words');
+like($phone_install->{'note'}, qr/terminal/, 'and points at the terminal it does have');
+is(scalar @calls, 0, 'without running a command');
+
 # ---- status ----------------------------------------------------------------
 
 my $version_runner = sub {
@@ -329,7 +475,7 @@ is(Manager::packages_write_gate($confirmed, 'install'), 1, 'confirm=1 lets the w
 
 require "$root/lib/JawnOS/Routes/manager_packages.pm";
 my @routes = JawnOS::Routes::manager_packages->routes();
-is(scalar @routes, 10, 'the app registers ten routes');
+is(scalar @routes, 11, 'the app registers eleven routes');
 my %expected = (
 	54020 => ['get',  '/manager/packages'],
 	54021 => ['get',  '/manager/packages/status'],
@@ -341,6 +487,7 @@ my %expected = (
 	54027 => ['post', '/manager/packages/install'],
 	54028 => ['post', '/manager/packages/remove'],
 	54029 => ['post', '/manager/packages/file'],
+	54030 => ['post', '/manager/packages/purge'],
 );
 for my $row (@routes) {
 	my ($id, $method, $path, $action) = @$row;
@@ -378,6 +525,12 @@ unlike($js, qr/'(?:apt-get|pacman|dpkg)\\b/, 'the browser never names a package 
 my $template = read_file("$root/templates/apps/packages.html.ep");
 like($template, qr/hint="<%= &subs::ui\('Upgrade every outdated package'\) %>"/,
 	'the upgrade button carries its hint');
+like($js, qr#/manager/packages/purge#, 'the chunk has its own purge request');
+like($js, qr/window\.JawnDesktop/, 'a write refuses outside the desktop window');
+like($js, qr/packagesBackend/, 'the chunk sends the chosen backend');
+like($template, qr/id="packages_backend"/, 'the page offers the backend selector');
+like($template, qr/prebuilt runtime/, 'the runtime case explains itself');
+like($loader, qr/\bpackages_purge\b/, 'the purge helper is in the domain loader');
 like(read_file("$root/perl/help/topics_apps.pl"), qr/app => 'packages'/, 'the help topic names the app');
 
 done_testing();

@@ -6,6 +6,8 @@
 <% my $aur = $info->{'aur_helper'} || $info->{'aur'} || ''; %>
 <% my $read_only = $info->{'read_only'} ? 1 : 0; %>
 <% my $restart = $info->{'restart_needed'} ? 1 : 0; %>
+<% my $backends = ref($info->{'backends'}) eq 'ARRAY' ? $info->{'backends'} : []; %>
+<% my $primary = $backends->[0] || {}; %>
 <style>
 #packages { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; font-size: 16px; }
 #packages .packages_head { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: baseline; }
@@ -14,9 +16,12 @@
 #packages .packages_line { min-height: 1.2em; opacity: .8; }
 #packages .packages_restart { color: #b26a00; }
 #packages .packages_readonly { padding: 10px 14px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .7); opacity: .85; }
+#packages .packages_readonly p { margin: 0 0 8px; }
+#packages .packages_readonly p:last-child { margin-bottom: 0; }
 #packages .packages_toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 #packages .packages_toolbar input[type=text] { flex: 1 1 220px; min-width: 0; }
 #packages .packages_toolbar input[type=file] { flex: 1 1 220px; min-width: 0; }
+#packages .packages_backend_label { display: flex; gap: 8px; align-items: center; opacity: .85; }
 #packages .packages_columns { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
 #packages .packages_section { flex: 1 1 340px; min-width: 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
 #packages .packages_section h3 { margin: 0 0 8px; font-size: 17px; }
@@ -33,27 +38,44 @@
 <div id="packages" app="packages">
 	<div class="packages_head">
 		<span class="packages_manager_name" id="packages_manager">
-% if ($kind eq 'apt') {
-			<%= &subs::ui('Debian or Ubuntu packages') %>
-% }
-% elsif ($kind eq 'pacman') {
-			<%= &subs::ui('Arch packages') %><% if ($aur) { %> + <%= $aur %><% } %>
-% }
-% elsif ($kind eq 'runtime') {
+% if ($kind eq 'runtime') {
 			<%= &subs::ui('This runtime') %>
 % }
-% else {
+% elsif (ref($primary) eq 'HASH' && $primary->{'label'}) {
+			<%= &subs::ui($primary->{'label'}) %>
+% }
+% elsif ($kind eq 'none') {
 			<%= &subs::ui('No package manager') %>
+% }
+% else {
+			<%= &subs::ui('Packages') %>
 % }
 		</span>
 		<span class="packages_manager_version" id="packages_manager_version"><%= $version %></span>
+% if (length $aur) {
+		<span class="packages_manager_version" id="packages_aur"><%= &subs::ui('AUR through') %> <%= $aur %></span>
+% }
 	</div>
+% if (@$backends > 1) {
+	<div class="packages_toolbar">
+		<label class="packages_backend_label" for="packages_backend"><%= &subs::ui('Package manager') %></label>
+		<select id="packages_backend" hint="<%= &subs::ui('Choose which package manager to use') %>">
+% for my $backend (@$backends) {
+			<option value="<%= $backend->{'name'} %>"><%= &subs::ui($backend->{'label'} || $backend->{'name'}) %></option>
+% }
+		</select>
+	</div>
+% }
 	<div class="packages_line" id="packages_status_line"><%= &subs::ui('Reading the machine...') %></div>
 % if ($kind eq 'runtime') {
-	<div class="packages_readonly" id="packages_runtime_note"><%= &subs::ui('This device runs a prebuilt runtime, not a package manager. The list below is what the runtime ships, and it is read-only: nothing can be installed, upgraded or removed from here.') %></div>
+	<div class="packages_readonly" id="packages_runtime_note">
+		<p><%= &subs::ui('This device runs a prebuilt runtime, not a package manager. The software here ships with the app, and the app updates it together with the app itself.') %></p>
+		<p><%= &subs::ui('The list below is what the runtime ships. It is read-only, so nothing can be installed, upgraded or removed from this window.') %></p>
+		<p><%= &subs::ui('To add developer tools, open a terminal on this device and use the package tool that terminal provides. Changes made there are outside this window.') %></p>
+	</div>
 % }
 % elsif ($kind eq 'none') {
-	<div class="packages_readonly" id="packages_runtime_note"><%= &subs::ui('No package manager was found on this machine. The app can show what is installed, but it cannot change anything.') %></div>
+	<div class="packages_readonly" id="packages_runtime_note"><%= &subs::ui('No package manager was found on this machine. This window can show what it can read, but it cannot change anything.') %></div>
 % }
 % if ($restart) {
 	<div class="packages_line packages_restart" id="packages_restart"><%= &subs::ui('A restart is needed so the running system uses the new packages.') %></div>
@@ -72,8 +94,10 @@
 	<div class="packages_toolbar">
 		<input type="text" id="packages_install_name" placeholder="<%= &subs::ui('Package name') %>">
 		<button id="packages_install_go" hint="<%= &subs::ui('Install one package by name') %>"><%= &subs::ui('Install') %></button>
+% if ($kind eq 'apt' || $kind eq 'pacman') {
 		<input type="file" id="packages_file" accept=".deb,.zst,.xz,.gz,.bz2">
 		<button id="packages_file_go" hint="<%= &subs::ui('Install a package file from this machine') %>"><%= &subs::ui('Install from file') %></button>
+% }
 	</div>
 % }
 	<div class="packages_columns">

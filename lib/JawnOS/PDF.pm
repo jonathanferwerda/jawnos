@@ -20,8 +20,8 @@ package JawnOS::PDF;
 # Names are not always Latin-1: the house accepts every printable character in
 # a name. When a string cannot be written in WinAnsi and a TrueType font is on
 # the machine (DejaVu, Liberation or the Android system fonts), the text is
-# drawn as a Type0/Identity-H CIDFontType2 with the whole font embedded and
-# glyph ids read from its cmap. With no font file, the text is sanitised to the
+# drawn as a Type0/Identity-H CIDFontType2 with the glyphs the document used
+# embedded as a sparse subset of the face, and glyph ids read from its cmap. With no font file, the text is sanitised to the
 # WinAnsi characters it can keep, the rest become '?', and the substitution is
 # logged through the logger the caller supplied (warn otherwise).
 #
@@ -959,6 +959,166 @@ sub _deflate {
 	return $out;
 }
 
+# -------------------------------------------------------------- TTF subsets
+# The content stream, /W and /CIDToGIDMap are all keyed by the source glyph
+# id, so a subset cannot renumber glyphs. It keeps numGlyphs and every glyph
+# number and empties the glyf outlines the document never draws. `loca` and
+# `glyf` are rebuilt, `DSIG` is dropped (its signature covers bytes that are no
+# longer there), every other table is copied verbatim, and the table directory
+# and checksums are recomputed.
+
+sub _ttf_checksum {
+	my ($bytes) = @_;
+	my $sum = 0;
+	for (my $i = 0; $i < length $bytes; $i += 4) {
+		my $word = substr($bytes, $i, 4);
+		$word .= "\0" x (4 - length $word) if length $word < 4;
+		$sum = ($sum + unpack('N', $word)) & 0xFFFFFFFF;
+	}
+	return $sum;
+}
+
+# Component glyph ids of a composite glyph, or undef when its component record
+# runs off the end. A simple (or empty) glyph answers an empty list.
+sub _ttf_components {
+	my ($glyph) = @_;
+	return [] if length($glyph) < 10;
+	return [] unless unpack('s>', substr($glyph, 0, 2)) < 0;
+	my @out;
+	my $p = 10;    # numberOfContours + xMin/yMin/xMax/yMax
+	while (1) {
+		return undef if $p + 4 > length $glyph;
+		my $flags = unpack('n', substr($glyph, $p, 2));
+		push @out, unpack('n', substr($glyph, $p + 2, 2));
+		$p += 4;
+		$p += ($flags & 0x0001) ? 4 : 2;    # ARG_1_AND_2_ARE_WORDS
+		if    ($flags & 0x0008) { $p += 2 }  # WE_HAVE_A_SCALE
+		elsif ($flags & 0x0040) { $p += 4 }  # WE_HAVE_AN_X_AND_Y_SCALE
+		elsif ($flags & 0x0080) { $p += 8 }  # WE_HAVE_A_TWO_BY_TWO
+		return undef if $p > length $glyph;
+		last unless $flags & 0x0020;         # MORE_COMPONENTS
+	}
+	return \@out;
+}
+
+# A sparse subset of a TrueType face: $used is a hashref of glyph ids the
+# document drew. Returns the new sfnt bytes, or undef when the face is not one
+# this can safely rewrite (the caller then embeds the whole face as before).
+sub _ttf_subset {
+	my ($data, $used) = @_;
+	return undef unless defined $data && length($data) >= 12;
+	return undef unless substr($data, 0, 4) eq "\x00\x01\x00\x00";
+	my $count = unpack('n', substr($data, 4, 2));
+	return undef if $count < 1 || 12 + $count * 16 > length $data;
+	my %tab;
+	for my $i (0 .. $count - 1) {
+		my ($tag, $sum, $off, $len) = unpack('a4 N N N', substr($data, 12 + $i * 16, 16));
+		return undef if $off + $len > length $data;
+		$tab{$tag} = [$off, $len];
+	}
+	for my $need (qw(head hhea maxp hmtx cmap loca glyf)) {
+		return undef unless $tab{$need};
+	}
+	my ($head_off, $head_len) = @{$tab{'head'}};
+	my ($maxp_off, $maxp_len) = @{$tab{'maxp'}};
+	my ($loca_off, $loca_len) = @{$tab{'loca'}};
+	my ($glyf_off, $glyf_len) = @{$tab{'glyf'}};
+	return undef if $head_len < 54 || $maxp_len < 6;
+	my $num_glyphs = unpack('n', substr($data, $maxp_off + 4, 2));
+	return undef if $num_glyphs < 1;
+	my $head = substr($data, $head_off, $head_len);
+	my $loca_format = unpack('s>', substr($head, 50, 2));
+	return undef unless $loca_format == 0 || $loca_format == 1;
+	my $width = $loca_format ? 4 : 2;
+	return undef if $loca_len < ($num_glyphs + 1) * $width;
+	my @loca = $loca_format
+		? unpack('N*', substr($data, $loca_off, ($num_glyphs + 1) * 4))
+		: map { $_ * 2 } unpack('n*', substr($data, $loca_off, ($num_glyphs + 1) * 2));
+	my $glyf = substr($data, $glyf_off, $glyf_len);
+	for my $i (0 .. $num_glyphs) {
+		return undef if $loca[$i] > $glyf_len;
+		return undef if $i && $loca[$i] < $loca[$i - 1];
+	}
+
+	# Every drawn glyph plus .notdef, expanded through composite components.
+	my %keep = (0 => 1);
+	my @queue = (0, keys %{$used || {}});
+	my %seen;
+	while (@queue) {
+		my $gid = shift @queue;
+		next if $seen{$gid}++;
+		return undef if $gid < 0 || $gid >= $num_glyphs;
+		$keep{$gid} = 1;
+		my $start = $loca[$gid];
+		my $end = $loca[$gid + 1];
+		my $glyph = $end > $start ? substr($glyf, $start, $end - $start) : '';
+		my $components = _ttf_components($glyph);
+		return undef unless defined $components;
+		push @queue, @{$components};
+	}
+
+	# Rebuild glyf in glyph-id order, 4-byte aligned between glyphs, and keep
+	# loca monotonic. A glyph that was empty stays empty even when drawn (a
+	# space), and an unused glyph simply contributes no bytes.
+	my $new_glyf = '';
+	my @new_loca = (0);
+	for my $gid (0 .. $num_glyphs - 1) {
+		my $start = $loca[$gid];
+		my $end = $loca[$gid + 1];
+		if ($keep{$gid} && $end > $start) {
+			$new_glyf .= substr($glyf, $start, $end - $start);
+			$new_glyf .= "\0" x ((4 - length($new_glyf) % 4) % 4);
+		}
+		$new_loca[$gid + 1] = length $new_glyf;
+	}
+	my $out_format = $loca_format;
+	$out_format = 1 if !$out_format && length($new_glyf) > 0x1FFFE;
+	my $new_loca = $out_format
+		? pack('N*', @new_loca)
+		: pack('n*', map { $_ / 2 } @new_loca);
+	my $new_head = $head;
+	substr($new_head, 8, 4) = "\0\0\0\0";        # checkSumAdjustment
+	substr($new_head, 50, 2) = pack('s>', $out_format);
+
+	my %out_tab;
+	for my $tag (keys %tab) {
+		next if $tag eq 'DSIG' || $tag eq 'head' || $tag eq 'loca' || $tag eq 'glyf';
+		$out_tab{$tag} = substr($data, $tab{$tag}[0], $tab{$tag}[1]);
+	}
+	$out_tab{'head'} = $new_head;
+	$out_tab{'loca'} = $new_loca;
+	$out_tab{'glyf'} = $new_glyf;
+
+	my @tags = sort keys %out_tab;
+	my $n = scalar @tags;
+	my $entry_selector = 0;
+	$entry_selector++ while (1 << ($entry_selector + 1)) <= $n;
+	my $search_range = (1 << $entry_selector) * 16;
+	my $range_shift = $n * 16 - $search_range;
+	my %record;
+	my $offset = 12 + $n * 16;
+	for my $tag (@tags) {
+		my $bytes = $out_tab{$tag};
+		$record{$tag} = { sum => _ttf_checksum($bytes), off => $offset, len => length $bytes };
+		$offset += length $bytes;
+		$offset += (4 - $offset % 4) % 4;
+	}
+	my $out = pack('N n n n n', 0x00010000, $n, $search_range, $entry_selector, $range_shift);
+	for my $tag (@tags) {
+		$out .= $tag . pack('N N N', $record{$tag}{sum}, $record{$tag}{off}, $record{$tag}{len});
+	}
+	for my $tag (@tags) {
+		my $pad = $record{$tag}{off} - length $out;
+		return undef if $pad < 0;
+		$out .= "\0" x $pad;
+		$out .= $out_tab{$tag};
+	}
+	$out .= "\0" x ((4 - length($out) % 4) % 4);
+	my $adjust = (0xB1B0AFBA - _ttf_checksum($out)) & 0xFFFFFFFF;
+	substr($out, $record{'head'}{off} + 8, 4) = pack('N', $adjust);
+	return $out;
+}
+
 sub _build_unicode_fonts {
 	my ($self) = @_;
 	for my $path (keys %{$self->{'uni_fonts'}}) {
@@ -982,6 +1142,14 @@ sub _build_unicode_fonts {
 		}
 		my $w = '[ ' . join(' ', map { $_->[0] . ' [' . join(' ', @{$_->[2]}) . ']' } @runs) . ' ]';
 		my $data = $font->{'data'};
+		my $subset = _ttf_subset($data, $entry->{'used'});
+		if (defined $subset) {
+			$data = $subset;
+		}
+		else {
+			$self->_warn('PDF: could not subset ' . $font->{'path'}
+				. '; embedding the whole font');
+		}
 		my $packed = _deflate($data);
 		my $filter = defined $packed ? ' /Filter /FlateDecode' : '';
 		my $bytes = defined $packed ? $packed : $data;

@@ -87,7 +87,7 @@ sub action_54022 {
 	my $c = shift;
 	return unless &packages_reading_gate($c, 'list');
 	&packages_action_log($c, 'list');
-	$c->render(json => eval { &subs::packages_list() }
+	$c->render(json => eval { &subs::packages_list({ backend => $c->param('backend') }) }
 		|| { ok => 0, error => 'the installed packages could not be listed' });
 }
 
@@ -96,7 +96,7 @@ sub action_54023 {
 	my $c = shift;
 	return unless &packages_reading_gate($c, 'outdated');
 	&packages_action_log($c, 'outdated');
-	$c->render(json => eval { &subs::packages_outdated() }
+	$c->render(json => eval { &subs::packages_outdated({ backend => $c->param('backend') }) }
 		|| { ok => 0, error => 'the outdated packages could not be listed' });
 }
 
@@ -105,7 +105,7 @@ sub action_54024 {
 	my $c = shift;
 	return unless &packages_reading_gate($c, 'search');
 	&packages_action_log($c, 'search');
-	$c->render(json => eval { &subs::packages_search($c->param('term')) }
+	$c->render(json => eval { &subs::packages_search($c->param('term'), { backend => $c->param('backend') }) }
 		|| { ok => 0, error => 'the search failed' });
 }
 
@@ -114,7 +114,7 @@ sub action_54025 {
 	my $c = shift;
 	return unless &packages_write_gate($c, 'update');
 	&packages_action_log($c, 'update');
-	$c->render(json => eval { &subs::packages_update() }
+	$c->render(json => eval { &subs::packages_update({ backend => $c->param('backend') }) }
 		|| { ok => 0, error => 'the package index could not be refreshed' });
 }
 
@@ -123,7 +123,7 @@ sub action_54026 {
 	my $c = shift;
 	return unless &packages_write_gate($c, 'upgrade');
 	&packages_action_log($c, 'upgrade');
-	$c->render(json => eval { &subs::packages_upgrade() }
+	$c->render(json => eval { &subs::packages_upgrade({ backend => $c->param('backend') }) }
 		|| { ok => 0, error => 'the upgrade did not run' });
 }
 
@@ -133,7 +133,7 @@ sub action_54027 {
 	return unless &packages_write_gate($c, 'install');
 	my $name = $c->param('name');
 	&packages_action_log($c, 'install ' . (defined $name ? $name : ''));
-	$c->render(json => eval { &subs::packages_install($name) }
+	$c->render(json => eval { &subs::packages_install($name, { backend => $c->param('backend') }) }
 		|| { ok => 0, error => 'the install did not run' });
 }
 
@@ -143,8 +143,22 @@ sub action_54028 {
 	return unless &packages_write_gate($c, 'remove');
 	my $name = $c->param('name');
 	&packages_action_log($c, 'remove ' . (defined $name ? $name : ''));
-	$c->render(json => eval { &subs::packages_remove($name) }
+	$c->render(json => eval { &subs::packages_remove($name, { backend => $c->param('backend') }) }
 		|| { ok => 0, error => 'the removal did not run' });
+}
+
+# POST /manager/packages/purge
+#
+# Remove keeps the package's configuration. Purge is the separate promise: the
+# package and the files it left behind. It takes the same lock and confirm gate
+# as every other write, and is logged under its own name.
+sub action_54030 {
+	my $c = shift;
+	return unless &packages_write_gate($c, 'purge');
+	my $name = $c->param('name');
+	&packages_action_log($c, 'purge ' . (defined $name ? $name : ''));
+	$c->render(json => eval { &subs::packages_purge($name, { backend => $c->param('backend') }) }
+		|| { ok => 0, error => 'the purge did not run' });
 }
 
 # POST /manager/packages/file (multipart upload)
