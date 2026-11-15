@@ -221,8 +221,13 @@ sub apply_primary {
 	my ($primary, $main, $version, $subject) = @_;
 	my ($frc, $fout) = git_in($primary, 'fetch', 'origin', '--quiet');
 	return (0, "fetch failed: $fout", 'skipped') if $frc != 0;
-	my (undef, $dirty) = git_in($primary, 'status', '--porcelain', '--untracked-files=no');
-	return (0, "the primary checkout has uncommitted changes:\n$dirty", 'skipped') if length $dirty;
+	# Untracked files count too, and the flag is explicit so a user's
+	# status.showUntrackedFiles=no cannot hide them: a stray file at the root is
+	# how a one-off loop in the checkout goes unnoticed until it is committed.
+	# Ignored files (.shots/, releases/, the live database) stay out of it.
+	my (undef, $dirty) = git_in($primary, 'status', '--porcelain', '--untracked-files=normal');
+	return (0, "the primary checkout has uncommitted or untracked files; commit or remove them:\n$dirty", 'skipped')
+		if length $dirty;
 	my ($mrc, $mout) = git_in($primary, 'merge', '--ff-only', "origin/$main");
 	return (0, "fast-forward failed: $mout", 'skipped') if $mrc != 0;
 	return (1, '', 'skipped') unless $opt{'restart'};

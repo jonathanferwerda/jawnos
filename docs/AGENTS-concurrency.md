@@ -172,8 +172,9 @@ It runs the **full** suite first: `land-queue/tested.json` records the tip and t
 coordinator tested, and only a `full` record for the same tip is promoted without repeating it. A
 normally scoped working wave, a hand push to `working`, or a branch landed by an older coordinator all
 get the full suite here, so main is never gated by the path-scoped working gate. A red suite, a main
-that is not an ancestor of working, or a dirty primary changes nothing; the loop event says why. The
-first run creates `origin/working` from `origin/main`.
+that is not an ancestor of working, or a primary with uncommitted **or untracked** files changes
+nothing — ignored files such as `.shots/`, `releases/` and the live database do not count — and the
+loop event says why. The first run creates `origin/working` from `origin/main`.
 
 A direct commit to main (or `agent_land.pl`) breaks the fast-forward promotion: main must stay an
 ancestor of working. The hand-land path is the owner's emergency route, not the normal one.
@@ -226,7 +227,8 @@ checkout and the master — the authority:
   directory; the worktree stays until the ticket is landed (then `worktree_gc` may sweep it) or
   refused (then it stays for the fix). Do not delete it before the verdict.
 - **A dirty primary blocks promotion, not working.** The coordinator's `--no-apply` leaves the
-  primary alone; the promotion job fast-forwards main and the primary when the checkout is clean.
+  primary alone; the promotion job fast-forwards main and the primary only when the checkout holds no
+  uncommitted or untracked files (ignored ones are fine).
 - **One coordinator per trunk.** Two boxes running it would race the push. The authority is the box
   with the suite and the primary. A worker pushes its branch and runs
   `perl scripts/land_enqueue.pl --authority <host> --trunk working --wait`; that runs the authority's copy over ssh (port

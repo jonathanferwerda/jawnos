@@ -627,6 +627,41 @@ subtest 'a diverged main is refused' => sub {
 	like($out, qr/not an ancestor/, 'it names the divergence');
 };
 
+subtest 'an untracked file in the primary blocks the apply, never the trunk' => sub {
+	my $f = fixture();
+	make_working($f);
+	commit_file($f->{'wt1'}, 'working.txt', "working\n", 'working: add a file');
+	git($f->{'wt1'}, 'push', 'origin', 'working');
+	my (undef, $before) = git($f->{'primary'}, 'rev-parse', 'HEAD');
+	write_file("$f->{'primary'}/stray,fragment", "");
+
+	my ($rc, $out) = promoter($f);
+	is($rc, 0, 'the promoter runs') or diag($out);
+	like($out, qr/but the primary checkout did not take it/, 'it reports the apply it refused') or diag($out);
+	like($out, qr/stray,fragment/, 'it names the untracked file') or diag($out);
+	my (undef, $main) = git($f->{'primary'}, 'rev-parse', 'origin/main');
+	my (undef, $work) = git($f->{'primary'}, 'rev-parse', 'origin/working');
+	is($main, $work, 'the release branch still moved');
+	my (undef, $after) = git($f->{'primary'}, 'rev-parse', 'HEAD');
+	is($after, $before, 'the primary checkout stayed where it was');
+};
+
+subtest 'an ignored file in the primary does not block the apply' => sub {
+	my $f = fixture();
+	make_working($f);
+	commit_file($f->{'wt1'}, 'working.txt', "working\n", 'working: add a file');
+	git($f->{'wt1'}, 'push', 'origin', 'working');
+	make_path("$f->{'primary'}/.shots");
+	write_file("$f->{'primary'}/.shots/notes.txt", "notes\n");
+
+	my ($rc, $out) = promoter($f);
+	is($rc, 0, 'the promoter runs') or diag($out);
+	like($out, qr/promoted main/, 'it promotes') or diag($out);
+	my (undef, $head) = git($f->{'primary'}, 'rev-parse', 'HEAD');
+	my (undef, $work) = git($f->{'primary'}, 'rev-parse', 'origin/working');
+	is($head, $work, 'the primary took the fast-forward beside an ignored file');
+};
+
 subtest 'the working coordinator promotes the tested tip at the end of the drain' => sub {
 	my $f = fixture();
 	make_working($f);
