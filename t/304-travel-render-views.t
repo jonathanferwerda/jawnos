@@ -59,6 +59,7 @@ like( $near3d, qr/var framed = pinSeen > 0 \? Math\.max\(40, pinSpan\) : span;/,
 like( $near3d, qr/function declutterTags\(\)/, 'labels that would sit on each other are dropped' );
 like( $near3d, qr/^\t\tdeclutterTags\(\);$/m, 'and the declutter runs on every render' );
 like( $near3d, qr/tags\.unshift\(\{ sprite: hereTag/, 'the machine\'s own tag keeps the first place on screen' );
+like( $near3d, qr/fine\.position\.y = 0\.08;/, 'the grid draws above the map plates, not under a pale one' );
 like( $near3d, qr/travelAllMaps/, 'the last atlas answer supplies the maps' );
 like( $near3d, qr/mapData && mapData\.near/, 'the nearby places come from the viewer response' );
 like( $near3d, qr/travelPlateList/, 'home plates are drawn as houses' );

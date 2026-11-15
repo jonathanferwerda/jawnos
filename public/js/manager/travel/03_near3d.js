@@ -113,13 +113,18 @@ function travelNear3dStart(lat, lon) {
 	sun.position.set(400, 900, 300);
 	scene.add(sun);
 
-	// a two-part ground grid: 100 m squares with a 1 km frame, so a house and a
-	// county can both be read at their own zoom
+	// a three-part ground grid: 10 m squares about the pressed point, 100 m within
+	// 2 km, and a 1 km frame. The lines sit above the map plates (y = 0.04): a
+	// county plate stretched over 74 km is a pale wash at house scale, and drawing
+	// under it left the ground blank white.
+	var nearGrid = new THREE.GridHelper(200, 20, 0x8fa0ae, 0xc3cfd9);
+	nearGrid.position.y = 0.1;
+	scene.add(nearGrid);
 	var fine = new THREE.GridHelper(2000, 20, 0xa9b9c7, 0xcdd8e1);
-	fine.position.y = 0;
+	fine.position.y = 0.08;
 	scene.add(fine);
 	var coarse = new THREE.GridHelper(10000, 10, 0x93a6b6, 0xb9c7d3);
-	coarse.position.y = -0.05;
+	coarse.position.y = 0.06;
 	scene.add(coarse);
 
 	// shared geometry: a pin is a shaft and a head, a plate is a house, so a
