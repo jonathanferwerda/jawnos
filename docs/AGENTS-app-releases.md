@@ -25,9 +25,14 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   release, so a device can pull it from github.com as well as from a peer. **A build that is only
   staged never reaches GitHub** — peers carry it, but a device reading the GitHub manifest sees the old
   versionCode and stays "up to date". Always build **and** publish. The site's
-  `server/downloads.json` is rewritten only when the build it names changes, so
-  rerunning a publish is not a source write and leaves the checkout clean; a
-  genuine change is committed with the release, as before.
+  `server/downloads.json` is rewritten only when the build the trunk names
+  changes. The publisher commits it on a branch from `origin/working` and
+  queues that branch with `land_enqueue.pl`, so the primary stays clean and a
+  publish can neither dirty the checkout nor block a landing or promotion;
+  jawnos.ca sees the build once the queue lands it and the release promotion
+  reaches `main`. A rerun for the same build makes no branch at all. If the
+  queue cannot be reached (no `origin/working`, a refusal) the file is written
+  in the checkout instead and you are told to commit it.
 - **Runtime zips ride the same release.** `scripts/runtime_build.pl` assembles the Perl runtime the APK
   unpacks on first run (`jawnrt-<arch>-<version>.zip` for the core, `jawnrt-<arch>-<part>-<version>.zip`
   for the optional parts such as `video`, `media`, `ocr`), and `app_publish.pl` uploads one when the

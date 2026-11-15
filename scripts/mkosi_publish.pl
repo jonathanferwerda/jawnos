@@ -399,29 +399,42 @@ sub upload_r2 {
 
 # jawnos.ca is static and its host has no outbound network, so the page reads
 # this one small file from raw.githubusercontent. A successful publish records
-# the image; the release routine commits the file, which is what makes the site
-# see it. A rerun for the image the file already names changes nothing, so it
-# cannot leave the checkout dirty.
+# the image on a branch from origin/working and queues it for the landing
+# coordinator, so the primary stays clean and the site sees it after the next
+# promotion. A rerun for the image the trunk already names changes nothing, so
+# it cannot make an empty commit. If the queue cannot be reached the file is
+# written in the checkout instead, for a human to commit.
 sub write_downloads_json {
 	my ($ok, $url, $manifest_url, $version, $size, $sha) = @_;
-	my $path = "$root/server/downloads.json";
-	my $wrote = PublishManifest::update(
-		$path,
-		{
-			'desktop' => {
-				'ok' => $ok ? JSON::PP::true : JSON::PP::false,
-				'url' => $url,
-				'manifest' => $manifest_url,
-				'size' => $size + 0,
-				'sha256' => $sha,
-				'version' => $version,
-				'label' => 'One file, no parts',
-			},
+	my $rel = 'server/downloads.json';
+	my $payload = {
+		'desktop' => {
+			'ok' => $ok ? JSON::PP::true : JSON::PP::false,
+			'url' => $url,
+			'manifest' => $manifest_url,
+			'size' => $size + 0,
+			'sha256' => $sha,
+			'version' => $version,
+			'label' => 'One file, no parts',
 		},
-		sub { JSON::PP->new->canonical->pretty->encode($_[0]) },
-		sub { JSON::PP->new->decode($_[0]) },
+	};
+	my $encode = sub { JSON::PP->new->canonical->pretty->encode($_[0]) };
+	my $decode = sub { JSON::PP->new->decode($_[0]) };
+
+	my ($json, $changed) = PublishManifest::update_text(
+		PublishManifest::trunk_text($root, 'working', $rel), $payload, $encode, $decode,
 	);
-	print "updated downloads.json (commit it so jawnos.ca sees this image)\n" if $wrote;
+	return unless $changed;
+
+	my $subject = "downloads: the desktop image names $version";
+	my ($landed, $what) = PublishManifest::land($root, 'working', $rel, $json, $subject);
+	if ($landed) {
+		print "queued $what for the working trunk; jawnos.ca sees this image after promotion\n";
+		return;
+	}
+	if (PublishManifest::update("$root/$rel", $payload, $encode, $decode)) {
+		print "updated downloads.json ($what); commit it so jawnos.ca sees this image\n";
+	}
 }
 
 sub download_url {

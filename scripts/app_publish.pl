@@ -303,36 +303,50 @@ print "runtimes already on the release\n" unless @up;
 
 # The site is static and its host has no outbound network, so it reads this one
 # small file from raw.githubusercontent (the only cross-origin place a browser
-# can read). Update it after a real upload; the release routine commits it,
-# which is what makes jawnos.ca see the new build. A rerun for the build the
-# file already names changes nothing, so it cannot leave the checkout dirty.
+# can read). Update it after a real upload; the manifest is committed on a
+# branch from origin/working and queued for the landing coordinator, so the
+# primary stays clean and jawnos.ca sees the build after the next promotion. A
+# rerun for the build the trunk already names changes nothing, so it cannot
+# make an empty commit. If the queue cannot be reached the file is written in
+# the checkout instead, for a human to commit — a release is never lost.
 sub update_downloads_json {
 	my ($j) = @_;
 	return unless ($j->{'product'} || '') eq 'app';
-	my $path = "$root/server/downloads.json";
-	my $wrote = PublishManifest::update(
-		$path,
-		{
-			'app' => {
-				'ok' => Mojo::JSON::true,
-				'url' => "https://github.com/$repo/releases/download/$tag/" . $j->{'filename'},
-				'filename' => $j->{'filename'},
-				'versionName' => $j->{'vn'},
-				'versionCode' => $j->{'vc'} + 0,
-				'size' => $j->{'size'} + 0,
-				'sha256' => $j->{'sha'},
-				'source' => $j->{'source_commit'}
-					? "https://github.com/jonathanferwerda/termux-app/tree/$j->{'source_commit'}"
-					: 'https://github.com/jonathanferwerda/termux-app',
-				'sourceCommit' => $j->{'source_commit'} || '',
-				'sourceVersion' => $j->{'source_version'} || '',
-				'license' => 'GPL-3.0',
-			},
+	my $rel = 'server/downloads.json';
+	my $payload = {
+		'app' => {
+			'ok' => Mojo::JSON::true,
+			'url' => "https://github.com/$repo/releases/download/$tag/" . $j->{'filename'},
+			'filename' => $j->{'filename'},
+			'versionName' => $j->{'vn'},
+			'versionCode' => $j->{'vc'} + 0,
+			'size' => $j->{'size'} + 0,
+			'sha256' => $j->{'sha'},
+			'source' => $j->{'source_commit'}
+				? "https://github.com/jonathanferwerda/termux-app/tree/$j->{'source_commit'}"
+				: 'https://github.com/jonathanferwerda/termux-app',
+			'sourceCommit' => $j->{'source_commit'} || '',
+			'sourceVersion' => $j->{'source_version'} || '',
+			'license' => 'GPL-3.0',
 		},
-		sub { encode_json($_[0]) },
-		sub { decode_json($_[0]) },
+	};
+	my $encode = sub { encode_json($_[0]) };
+	my $decode = sub { decode_json($_[0]) };
+
+	my ($json, $changed) = PublishManifest::update_text(
+		PublishManifest::trunk_text($root, 'working', $rel), $payload, $encode, $decode,
 	);
-	print "updated downloads.json (commit it so jawnos.ca sees this build)\n" if $wrote;
+	return unless $changed;
+
+	my $subject = "downloads: the app release names $j->{'vn'} ($j->{'filename'})";
+	my ($landed, $what) = PublishManifest::land($root, 'working', $rel, $json, $subject);
+	if ($landed) {
+		print "queued $what for the working trunk; jawnos.ca sees this build after promotion\n";
+		return;
+	}
+	if (PublishManifest::update("$root/$rel", $payload, $encode, $decode)) {
+		print "updated downloads.json ($what); commit it so jawnos.ca sees this build\n";
+	}
 }
 
 foreach my $j (@jobs) {
