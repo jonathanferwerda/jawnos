@@ -1,8 +1,9 @@
-# tests-for: scripts/media_stub_audit.pl
-# covers:    the media stub audit - it lists exactly the sentinel stubs the old
-#            sync merge wrote (0x9e, 0x9e 0x89 0xde, and an empty file) and
-#            leaves real media alone. --apply refuses to run without a peer to
-#            ask, and --check reports a finding through its exit code.
+# tests-for: scripts/media_stub_audit.pl lib/JawnOS/Domain/File.pm
+# covers:    the media stub audit - it lists the sentinel stubs the old sync
+#            merge wrote (0x9e, 0x9e 0x89 0xde, an empty file) and the
+#            truncated .enc fragments it also left, and leaves real media
+#            alone. --apply refuses to run without a peer to ask, and --check
+#            reports a finding through its exit code.
 
 use strict;
 use warnings;
@@ -21,20 +22,21 @@ my $dir = tempdir(CLEANUP => 1);
 make_path("$dir/a", "$dir/b", "$dir/c");
 write_file("$dir/a/one.jpg.enc", "\x9e");
 write_file("$dir/a/three.jpg.enc", "\x9e\x89\xde");
+write_file("$dir/a/fragment.jpg.enc", "not-an-openssl-container");
 write_file("$dir/b/empty.png.enc", '');
 write_file("$dir/b/real.jpg.enc", 'Salted__' . ('x' x 32));
 write_file("$dir/c/photo.jpg", "\xff\xd8\xff\xe0jpeg-picture");
 write_file("$dir/c/notes.txt", "just some words\n");
 
 my $scan = media_stub_scan([$dir]);
-is( $scan->{'total'}, 3, 'three sentinel stubs are found' );
+is( $scan->{'total'}, 4, 'the sentinels and the fragment are found' );
 is( $scan->{'kind'}->{'one'}, 1, 'the one-byte "no" stub is counted' );
 is( $scan->{'kind'}->{'three'}, 1, 'the three-byte "none" stub is counted' );
 is( $scan->{'kind'}->{'empty'}, 1, 'an empty file is counted' );
-is( $scan->{'bytes'}, 4, 'the byte total is the stubs, not the media' );
+is( $scan->{'bytes'}, 28, 'the byte total is the stubs, not the media' );
 is_deeply(
 	[ map { $_->{'path'} } @{ $scan->{'files'} } ],
-	[ "$dir/a/one.jpg.enc", "$dir/a/three.jpg.enc", "$dir/b/empty.png.enc" ],
+	[ "$dir/a/fragment.jpg.enc", "$dir/a/one.jpg.enc", "$dir/a/three.jpg.enc", "$dir/b/empty.png.enc" ],
 	'the real sealed file and the open picture/notes are not stubs'
 );
 
@@ -42,9 +44,9 @@ is_deeply(
 # same tree arrives twice from the settings list. It must be walked once, and a
 # root passed inside another must not repeat its parent.
 my $twice = media_stub_scan([$dir, $dir]);
-is( $twice->{'total'}, 3, 'the same root named twice is walked once' );
+is( $twice->{'total'}, 4, 'the same root named twice is walked once' );
 my $nested = media_stub_scan([$dir, "$dir/a"]);
-is( $nested->{'total'}, 3, 'a root inside another is not counted twice' );
+is( $nested->{'total'}, 4, 'a root inside another is not counted twice' );
 
 # `main` prints; capture the answer and the exit code.
 sub run_main {
@@ -61,7 +63,7 @@ sub run_main {
 
 my ($rc, $out) = run_main('--root', $dir, '--no-db', '--check');
 is( $rc, 1, '--check exits 1 when a stub is found' );
-like( $out, qr/3 stub\(s\)/, 'and names the count' );
+like( $out, qr/4 stub\(s\)/, 'and names the count' );
 
 ($rc, $out) = run_main('--root', $dir, '--no-db', '--apply');
 is( $rc, 1, '--apply without --from is refused' );

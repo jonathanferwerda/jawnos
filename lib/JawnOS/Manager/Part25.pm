@@ -596,6 +596,11 @@ sub travel_nearby_items {
 				$thumb_path = $tlocal if length $tlocal && -e $tlocal;
 			}
 			my $thumb_ok = (length $thumb_path && -e $thumb_path && (-s $thumb_path) > 100) ? 1 : 0;
+			# A row can name media whose files are the fragments a broken sync
+			# left behind; nobody can open one, and listing it drew a broken cell
+			# in the strip. Serve from the thumbnail when it is real, else the
+			# original, else leave the row out instead of offering a 404.
+			next unless $thumb_ok || &subs::media_path_servable($path);
 			my $server_time = $f->{'server_time'} || $appt->{'server_time'} || 0;
 			my $thumb = '/file_open?file=' . $uenc->($thumb_ok ? $thumb_path : $path)
 				. '&app=' . $uenc->($app)

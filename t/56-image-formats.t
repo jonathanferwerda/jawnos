@@ -171,4 +171,26 @@ like($part32, qr/&subs::secure_unlink\(\$file\)/, 'the picture is removed withou
 like($part32, qr/secure_unlink\(\$preview\)/, 'a TIFF/XCF preview is removed with its picture');
 unlike($part32, qr/`shred -u/, 'no shred backtick remains on the delete path (the Android runtime has none)');
 
+
+# --- media the house cannot answer is not listed ---------------------------
+my $servable_dir = tempdir(CLEANUP => 1);
+my $servable_good = "$servable_dir/good.jpg.enc";
+my $servable_stub = "$servable_dir/stub.jpg.enc";
+my $servable_header = "$servable_dir/header.jpg.enc";
+my $servable_fragment = "$servable_dir/fragment.jpg.enc";
+my $servable_big_fragment = "$servable_dir/big-fragment.jpg.enc";
+write_file($servable_good, 'Salted__' . ('x' x 200));
+write_file($servable_stub, "\x9e");
+write_file($servable_header, 'Salted__' . ('x' x 8));
+write_file($servable_fragment, 'not-an-openssl-container');
+write_file($servable_big_fragment, 'not-an-openssl-container' . ('x' x 200));
+ok(subs::media_path_servable($servable_good), 'a real sealed file is servable');
+ok(!subs::media_path_servable($servable_stub), 'a one-byte stub is not servable');
+ok(!subs::media_path_servable($servable_header), 'a container header with no picture is not servable');
+ok(!subs::media_path_servable($servable_big_fragment), 'a long fragment without the container head is not servable');
+ok(!subs::media_path_servable("$servable_dir/missing.jpg.enc"), 'a missing file is not servable');
+ok(subs::file_sentinel_stub($servable_stub), 'the one-byte "no" stub is recognized');
+ok(subs::file_sentinel_stub($servable_fragment), 'a short non-container .enc fragment is recognized');
+ok(!subs::file_sentinel_stub($servable_good), 'a real sealed container is not a stub');
+
 done_testing();

@@ -200,6 +200,20 @@ sub media_path_allowed {
 	return 0;
 }
 
+# A media path the manager can answer with a picture: the file exists and holds
+# more than a container header. A broken sync left one-, three- and 22-byte
+# fragments in the media paths, and every reader of such a file fails. Callers
+# that list media (the Travel strip, the Gallery's near view) leave an
+# unreadable row out rather than offer a cell that answers 404.
+sub media_path_servable {
+	my ($path) = @_;
+	return 0 unless defined $path && length $path;
+	return 0 unless -e $path;
+	return 0 unless (-s $path) > 100;
+	return 0 if &subs::file_sentinel_stub($path);
+	return 1;
+}
+
 sub path_name {
 	my $name = shift;
 	$name = '' unless defined $name;

@@ -87,6 +87,19 @@ sub file_sentinel_stub {
 	return 0 unless defined $path && length $path && -f $path;
 	my $size = -s $path || 0;
 	return 1 if $size == 0;
+	# A sealed file is an OpenSSL container: "Salted__", a salt, then the
+	# ciphertext. A fragment shorter than that header, or one that does not
+	# begin with it, is a truncated answer however many bytes it holds - the
+	# old merge also left 22-byte fragments the word checks below missed.
+	if ($path =~ /\.enc\z/i) {
+		return 1 if $size <= 16;
+		my $head = '';
+		if (open my $fh, '<:raw', $path) {
+			read($fh, $head, 8);
+			close $fh;
+		}
+		return ($head eq 'Salted__') ? 0 : 1;
+	}
 	return 0 if $size > 3;
 	my $bytes = eval { &read_file($path) };
 	return 0 unless defined $bytes;
