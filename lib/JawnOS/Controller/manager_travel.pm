@@ -629,4 +629,58 @@ sub action_33700 {
 	$c->render(json => $proxies);
 }
 
+# GET /manager/travel/basemap?name=<archive>
+# The house's own vector basemap: a PMTiles archive built from an OSM extract by
+# scripts/osm_basemap.pl and staged in basemaps/ (a build artifact, gitignored,
+# like releases/). A PMTiles reader opens it by byte range - header, directory,
+# then one tile - so Range is the normal request here, not an optimisation, and
+# the whole archive answers the same URL. Nothing here reaches the internet.
+sub action_34017 {
+	my $c = shift;
+	my $asked = $c->param('name');
+	my $name = &subs::path_name( defined $asked && length $asked ? $asked : 'basemap' );
+	my $file = &subs::basemaps_dir() . '/' . $name . '.pmtiles';
+	unless ( -f $file ) {
+		$c->res->code(404);
+		$c->res->headers->content_type('text/plain; charset=utf-8');
+		$c->render(text => 'No basemap named ' . $name
+			. ". Build one with: perl scripts/osm_basemap.pl --all\n");
+		return;
+	}
+	my $size = -s $file;
+	my ($start, $length) = &subs::basemap_range_plan($c->req->headers->range, $size);
+	unless ( defined $start ) {
+		$c->res->code(416);
+		$c->res->headers->content_range('bytes */' . ( defined $size ? $size : 0 ));
+		$c->res->headers->accept_ranges('bytes');
+		$c->res->body('');
+		return;
+	}
+	my $code = ( $start == 0 && $length == $size ) ? 200 : 206;
+	open my $fh, '<:raw', $file or do { $c->rendered(500); return; };
+	unless ( seek( $fh, $start, 0 ) ) { close $fh; $c->rendered(500); return; }
+	$c->res->code($code);
+	$c->res->headers->content_type('application/vnd.pmtiles');
+	$c->res->headers->accept_ranges('bytes');
+	$c->res->headers->content_length($length);
+	$c->res->headers->content_range('bytes ' . $start . '-' . ( $start + $length - 1 ) . '/' . $size)
+		if $code == 206;
+	# the archive is rebuilt in place by the script, so a cached copy is stale
+	$c->res->headers->cache_control('private, no-cache');
+	my $remaining = $length;
+	my $chunk = 256 * 1024;
+	my $emit;
+	$emit = sub {
+		if ( $remaining <= 0 ) { close $fh; $c->write(''); return; }
+		my $want = $remaining < $chunk ? $remaining : $chunk;
+		my $buf = '';
+		my $got = read( $fh, $buf, $want );
+		if ( !defined $got || $got <= 0 ) { close $fh; $c->write(''); return; }
+		$remaining -= $got;
+		$c->write( $buf, $emit );
+	};
+	$emit->();
+	return;
+}
+
 1;

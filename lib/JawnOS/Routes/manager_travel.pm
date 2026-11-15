@@ -13,6 +13,7 @@ sub routes {
 	[33508, 'post', '/manager/travel/guess_gap', 'action_33508'],
 	[33680, 'get', '/manager/travel/guess_image', 'action_33680'],
 	[33700, 'get', '/manager/travel/viewer', 'action_33700'],
+	[34017, 'get', '/manager/travel/basemap', 'action_34017'],
 	);
 }
 

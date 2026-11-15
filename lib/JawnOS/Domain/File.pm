@@ -379,6 +379,36 @@ sub media_range_plan {
 	return [ $start, $len ];
 }
 
+# A PMTiles reader asks for exact byte ranges - the header, then a directory,
+# then one tile - and any rounding or cap hands it the wrong bytes, so this
+# planner answers exactly what was asked: (start, length), or nothing at all
+# when the request cannot be met (416). No Range header is the whole archive,
+# which is the same URL. A multi-range request keeps its first range; PMTiles
+# never sends one.
+sub basemap_range_plan {
+	my ($header, $size) = @_;
+	return unless defined $size && $size > 0;
+	return ( 0, $size ) unless defined $header && length $header;
+	return unless $header =~ m/^bytes=(\d*)-(\d*)/;
+	my ( $s, $e ) = ( $1, $2 );
+	return if $s eq '' && $e eq '';
+	my ( $start, $end );
+	if ( $s eq '' ) {
+		my $want = int $e;
+		return if $want <= 0;
+		$want = $size if $want > $size;
+		$start = $size - $want;
+		$end = $size - 1;
+	}
+	else {
+		$start = int $s;
+		$end = ( $e ne '' ) ? int $e : $size - 1;
+		$end = $size - 1 if $end > $size - 1;
+	}
+	return if $start < 0 || $start >= $size || $end < $start;
+	return ( $start, $end - $start + 1 );
+}
+
 sub cache_set {
 	my ($params,$data) = @_;
 	my $app = &subs::unformat_name($params->{'app'});

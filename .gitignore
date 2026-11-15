@@ -35,6 +35,11 @@ Thumbs.db
 # --- committed: a ~35 MB binary per version would bloat git history forever. ---
 releases/
 
+# --- Built vector basemaps (PMTiles). scripts/osm_basemap.pl stages them here ---
+# --- for /manager/travel/basemap; one county is tens of MB, and it is rebuilt ---
+# --- from OpenStreetMap, so it lives in the store beside releases/. ---
+basemaps/
+
 # --- Windows build output (build-portable.ps1, the release workflow). ---
 # --- The Setup.exe is a build artifact; release copies live in releases/. ---
 dist/

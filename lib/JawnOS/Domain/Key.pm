@@ -263,6 +263,7 @@ sub config_path { return JawnOS::Platform::Paths::config_path() }
 sub server_dir { return JawnOS::Platform::Paths::server_dir(root => $install_dir) }
 sub voices_dir { return JawnOS::Platform::Paths::voices_dir(root => $install_dir) }
 sub releases_dir { return JawnOS::Platform::Paths::releases_dir(root => $install_dir) }
+sub basemaps_dir { return JawnOS::Platform::Paths::basemaps_dir(root => $install_dir) }
 
 # The read-only seeds stay with the code, never in the store: a packaged tree
 # ships schema.sql and initial.enc and the store only ever gains the database

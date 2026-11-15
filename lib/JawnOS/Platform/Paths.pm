@@ -34,6 +34,7 @@ use Exporter 'import';
 our @EXPORT_OK = qw(
 	home tree_dir data_dir config_dir state_dir tmp_dir
 	store_dir config_path database_dir run_dir server_dir voices_dir releases_dir
+	basemaps_dir
 	database_seed_path database_schema_path
 	log_path tool_path
 );
@@ -147,6 +148,14 @@ sub voices_dir {
 sub releases_dir {
 	my %opt = @_;
 	return File::Spec->catdir(store_dir(%opt), 'releases');
+}
+
+# Built vector basemaps (.pmtiles from tilemaker). Same deal as releases/ and
+# voices/: a build artifact, big, rebuilt by scripts/osm_basemap.pl, never in
+# the tree's history.
+sub basemaps_dir {
+	my %opt = @_;
+	return File::Spec->catdir(store_dir(%opt), 'basemaps');
 }
 
 sub database_seed_path {
