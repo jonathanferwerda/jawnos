@@ -197,6 +197,11 @@ sub action_7845 {
 	# rather than a lexical in the parent template.
 	my $browser_tab_id = $c->param('browser_tab_id') || '';
 	my $websockets = eval { &subs::db_query('select * from websockets where browser_tab_id = ?', $browser_tab_id)->hashes } || [];
+	# The management checkbox is drawn from the saved setting, so a page opened
+	# after a toggle shows the truth without waiting for the status beat. The
+	# domain may not be present on a bare tree; zero is the safe start.
+	my $manage_on = eval { &subs::network_config()->{'manage'} } || 0;
+	$c->stash('manage_on' => $manage_on);
 	my $content = $c->render_to_string(template => 'apps/network', websockets => $websockets);
 	my $contents = &window_maker({
 		user_agent => $c->param('user_agent'),
@@ -280,7 +285,13 @@ sub action_7855 {
 # GET /manager/network/status
 sub action_7857 {
 	my $c = shift;
-	my $answer = eval { &network_helper(['status']) };
+	# The domain's answer already carries the helper's interfaces/wifi/vpn plus
+	# the saved config, last application, manager and secret status. One helper
+	# read per poll instead of a second status subprocess.
+	my $answer = eval { &subs::network_status() };
+	if (ref $answer ne 'HASH' || !$answer->{'ok'}) {
+		$answer = eval { &network_helper(['status']) };
+	}
 	$answer = { ok => 0, error => 'The network status could not be read.' } unless ref $answer eq 'HASH';
 	$c->render(json => $answer);
 }
@@ -296,6 +307,58 @@ sub action_7863 {
 	my $answer = eval { &network_helper(['wifi_scan', $interface]) };
 	$answer = { ok => 0, error => 'The scan could not be run.' } unless ref $answer eq 'HASH';
 	$c->render(json => $answer);
+}
+
+# POST /manager/network/manage
+#
+# The master switch over the stack. On takes the machine's networking into
+# JawnOS's hands; off stores the setting and leaves the system in charge.
+sub action_7865 {
+	my $c = shift;
+	my $manage = ($c->param('manage') || '') =~ /^(?:1|yes|on|true)$/i ? 1 : 0;
+	my $result = eval { &subs::network_manage_set($manage) };
+	$c->render(json => $result || { ok => 0, error => 'The setting could not be saved.' });
+}
+
+# POST /manager/network/profile
+#
+# The saved address and DNS for one network, keyed by interface and network.
+# The watch and "Apply now" read it; a connect saves it as it goes.
+sub action_7867 {
+	my $c = shift;
+	my $result = eval {
+		&subs::network_profile_set(
+			$c->param('kind'),
+			$c->param('key'),
+			$c->param('interface'),
+			$c->param('method'),
+			$c->param('address'),
+			$c->param('prefix'),
+			$c->param('gateway'),
+			$c->param('dns'),
+		);
+	};
+	$c->render(json => $result || { ok => 0, error => 'The profile could not be saved.' });
+}
+
+# POST /manager/network/profile/remove
+sub action_7869 {
+	my $c = shift;
+	my $result = eval {
+		&subs::network_profile_delete(
+			$c->param('kind'),
+			$c->param('key'),
+			$c->param('interface'),
+		);
+	};
+	$c->render(json => $result || { ok => 0, error => 'The profile could not be removed.' });
+}
+
+# POST /manager/network/apply
+sub action_7871 {
+	my $c = shift;
+	my $result = eval { &subs::network_apply_current() };
+	$c->render(json => $result || { ok => 0, error => 'The saved network could not be applied.' });
 }
 
 # POST /manager/network/wifi_connect
@@ -352,9 +415,25 @@ sub action_7874 {
 		$c->render(json => { ok => 0, error => $error });
 		return;
 	}
+	# Which credential the helper keeps: managed means JawnOS stores it encrypted;
+	# unmanaged leaves it with the network stack. A scanned open network sends
+	# secure=0 and needs no stored secret. A saved row leaves secure unset, so an
+	# empty passphrase tries the keyring first; the helper falls back to the stack
+	# when there is no stored key.
+	my $manage = eval { &subs::network_config()->{'manage'} } ? 1 : 0;
+	my $secure = ($c->param('secure') // '1') =~ /^(?:1|yes|on|true)$/i ? 1 : 0;
+	my $mode;
+	if (length $passphrase) { $mode = $manage ? 'store' : 'none'; }
+	elsif ($manage && $secure) { $mode = 'use'; }
+	else { $mode = 'none'; }
 	my $answer = eval { &network_helper(
-		['wifi_connect', $interface, $ssid, $method, $address, $prefix, $gateway, $dns], $passphrase) };
+		['wifi_connect', $interface, $ssid, $method, $address, $prefix, $gateway, $dns, $mode], $passphrase) };
 	$answer = { ok => 0, error => 'The connection could not be attempted.' } unless ref $answer eq 'HASH';
+	# When JawnOS owns the stack the profile is saved here too, so the watch can
+	# reapply this address and DNS after a boot or a resume.
+	if ($answer->{'ok'}) {
+		eval { &subs::network_profile_set('wifi', $ssid, $interface, $method, $address, $prefix, $gateway, $dns) };
+	}
 	$c->render(json => $answer);
 }
 

@@ -16,11 +16,14 @@ function networkWifiJoin(row, button, ssid, passphrase) {
 	if (!iface || !ssid) { return; }
 	var message = row.find('.network_wifi_msg').text(networkT('Working…'));
 	button.prop('disabled', true);
-	var data = $.extend({ interface: iface, ssid: ssid, passphrase: passphrase || '' }, networkWifiOptionsData(row));
+	var secure = row.attr('data-saved') === '1' || row.attr('data-secure') !== '0' ? 1 : 0;
+	var data = $.extend({ interface: iface, ssid: ssid, passphrase: passphrase || '', secure: secure }, networkWifiOptionsData(row));
 	networkPost('wifi_connect', data, function(response) {
 		button.prop('disabled', false);
 		if (response.ok) {
-			message.text(response.message || networkT('Connected to {0}.', ssid));
+			var text = response.message || networkT('Connected to {0}.', ssid);
+			if (response.warning) { text += ' ' + networkT('The passphrase could not be stored encrypted; the Wi-Fi stack keeps it.'); }
+			message.text(text);
 			networkRefreshAll();
 		}
 		else {

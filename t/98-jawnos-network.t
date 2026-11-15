@@ -15,6 +15,7 @@ use File::Copy qw(copy);
 use IPC::Open3 qw(open3);
 use Mojo::JSON qw(decode_json);
 use Symbol qw(gensym);
+use Digest::SHA qw(sha1_hex);
 
 # This script is what the Network app shells out to, and every answer it makes is
 # a JSON object (an operational failure is { ok => 0, error }, not an exit status).
@@ -34,6 +35,9 @@ my $fake    = "$scratch/bin";
 mkdir $empty or die "cannot make $empty: $!";
 mkdir $fake  or die "cannot make $fake: $!";
 mkdir "$scratch/networkd" or die "cannot make $scratch/networkd: $!";
+mkdir "$scratch/iwd" or die "cannot make $scratch/iwd: $!";
+mkdir "$scratch/secrets" or die "cannot make $scratch/secrets: $!";
+mkdir "$scratch/nm-etc" or die "cannot make $scratch/nm-etc: $!";
 
 sub write_exe {
 	my ($path, $body) = @_;
@@ -64,12 +68,16 @@ if [ "$*" = "-j address show" ]; then
 	printf '[{"ifname":"jawn0","address":"00:11:22:33:44:55","operstate":"up","addr_info":[{"family":"inet","local":"192.0.2.10","prefixlen":24}]}]'
 	exit 0
 fi
+if [ "$*" = "-j route show default" ]; then
+	printf '[{"dev":"jawn0","gateway":"192.0.2.1"}]'
+	exit 0
+fi
 exit 0
 FAKE_IP
 
 # systemd-networkd's reload/reconfigure answers are enough here: the helper
 # writes the drop-in into the scratch directory and only needs a zero status.
-write_exe("$fake/networkctl", q{exit 0});
+write_exe("$fake/networkctl", q{if [ -n "$NETCTL_LOG" ]; then printf '%s\n' "$*" >> "$NETCTL_LOG"; fi; exit 0});
 
 sub run_net {
 	my %opt = @_;
@@ -80,8 +88,16 @@ sub run_net {
 	unlink "$scratch/iwctl-state";
 	local $ENV{'IWCTL_STATE'} = "$scratch/iwctl-state";
 	# Keep every static write inside the test's scratch directory. The helper
-	# honours this for its systemd-networkd drop-ins.
+	# honours this for its systemd-networkd drop-ins, and the three other
+	# locations (iwd's store, the keyring, NetworkManager's keyfiles) so a test
+	# never touches the machine's real ones.
 	local $ENV{'JAWNOS_NETWORKD_DIR'} = defined $opt{'networkd'} ? $opt{'networkd'} : "$scratch/networkd";
+	local $ENV{'JAWNOS_IWD_DIR'} = $ENV{'JAWNOS_IWD_DIR'} // "$scratch/iwd";
+	local $ENV{'JAWNOS_SECRET_DIR'} = $ENV{'JAWNOS_SECRET_DIR'} // "$scratch/secrets";
+	local $ENV{'JAWNOS_NM_DIR'} = $ENV{'JAWNOS_NM_DIR'} // "$scratch/nm-etc";
+	local $ENV{'JAWNOS_CREDS'} = defined $opt{'creds'} ? $opt{'creds'} : ($ENV{'JAWNOS_CREDS'} // '');
+	local $ENV{'JAWNOS_NETWORK_DRY_RUN'} = defined $opt{'dry_run'} ? $opt{'dry_run'} : ($ENV{'JAWNOS_NETWORK_DRY_RUN'} // '');
+	local $ENV{'JAWNOS_NETWORK_BOOT_ID'} = defined $opt{'boot_id'} ? $opt{'boot_id'} : ($ENV{'JAWNOS_NETWORK_BOOT_ID'} // '');
 	my $err = gensym;
 	my $pid = open3(my $in, my $out, $err, $^X, $script, @{ $opt{'args'} || [] });
 	print {$in} $opt{'stdin'} if defined $opt{'stdin'};
@@ -408,8 +424,10 @@ FAKE_IWCTL
 	my (undef, $out) = run_net(path => $fake,
 		args => ['wifi_connect', 'wlan0', 'jawn-test-net'], stdin => "correcthorse\n");
 	my $data = eval { decode_json($out) };
-	is_deeply($data, { ok => 1, message => 'Connected to jawn-test-net.' },
-		'wifi_connect confirms the station really joined');
+	is($data->{'ok'}, 1, 'wifi_connect confirms the station really joined');
+	is($data->{'message'}, 'Connected to jawn-test-net.', 'and reports the network');
+	is($data->{'secret_stored'}, 0, 'with no systemd-creds the stack keeps the key');
+	like($data->{'warning'}, qr/systemd-creds/, 'and says why the key was not stored');
 }
 
 {
@@ -578,8 +596,11 @@ expect_error('At most four DNS servers can be given.', 'connect with five DNS se
 	my $calls = read_text($log);
 	like($calls, qr/connection add type wifi con-name jawnos-wifi-\w+ ifname wlan0 ssid jawn-test-net/,
 		'a profile is created for the SSID');
-	like($calls, qr/wifi-sec\.key-mgmt wpa-psk wifi-sec\.psk correcthorse/,
-		'with the passphrase');
+	like($calls, qr/wifi-sec\.key-mgmt wpa-psk/, 'with WPA');
+	like($calls, qr/wifi-sec\.psk-flags 0/, 'system-owned, supplied at activation');
+	unlike($calls, qr/correcthorse/, 'the passphrase never reaches argv');
+	like($calls, qr/connection up jawnos-wifi-\w+ passwd-file /,
+		'it is supplied through a passwd-file');
 	like($calls, qr/ipv4\.method auto/, 'DHCP is automatic');
 	like($calls, qr/ipv4\.ignore-auto-dns no/, 'and the lease DNS is kept');
 	like($calls, qr/connection up jawnos-wifi-/, 'the profile is activated');
@@ -640,6 +661,238 @@ expect_error('At most four DNS servers can be given.', 'connect with five DNS se
 	my $data = answer(0, $out, '', 'wifi_forget on a named profile');
 	is($data->{'ok'}, 1, 'the named profile is forgotten');
 	like(read_text($log), qr/connection delete Home/, 'the profile that owns the SSID is deleted');
+}
+
+# --- the new commands' argument validation -----------------------------------
+expect_error('The passphrase mode is store, use or none.', 'connect with a bad passphrase mode',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'dhcp', '', '', '', '', 'sometimes'],
+	stdin => "correcthorse\n");
+expect_error('The use mode reads the stored passphrase; leave stdin empty.', 'use with a typed passphrase',
+	args => ['wifi_connect', 'wlan0', 'jawn-test-net', 'dhcp', '', '', '', '', 'use'],
+	stdin => "correcthorse\n");
+expect_error('The profile kind is wifi or ethernet.', 'profile_apply with a bad kind',
+	args => ['profile_apply', 'lte', 'jawn', 'wlan0', 'dhcp']);
+expect_error('That network name is not valid.', 'profile_apply with a bad ssid',
+	args => ['profile_apply', 'wifi', 'x' x 33, 'wlan0', 'dhcp']);
+expect_error('That interface name is not valid.', 'profile_apply with a bad interface',
+	args => ['profile_apply', 'wifi', 'jawn-test-net', 'bad iface', 'dhcp']);
+expect_error('The address is not a valid IPv4 address.', 'profile_apply static without an address',
+	args => ['profile_apply', 'wifi', 'jawn-test-net', 'wlan0', 'static', '', '24']);
+expect_error('The profile kind is wifi or ethernet.', 'profile_remove with a bad kind',
+	args => ['profile_remove', 'lte', 'jawn']);
+expect_error('unreadable restore list', 'restore with no JSON', args => ['restore']);
+expect_error('That network name is not valid.', 'secret_present with a bad ssid',
+	args => ['secret_present', 'x' x 33]);
+expect_error('That network name is not valid.', 'secret_clear with a bad ssid',
+	args => ['secret_clear', 'x' x 33]);
+expect_error('The passphrase must be 8 to 63 characters, or 64 hexadecimal digits.',
+	'secret_set with a short passphrase', args => ['secret_set', 'jawn-test-net'], stdin => "short\n");
+
+# --- watch -------------------------------------------------------------------
+{
+	my $watchbin = "$scratch/watchbin";
+	mkdir $watchbin or die "cannot make $watchbin: $!";
+	write_exe("$watchbin/ip", <<'FAKE_IP');
+if [ "$*" = "-j address show" ]; then
+	printf '[{"ifname":"wlan0","address":"00:11:22:33:44:55","operstate":"up","ifindex":2,"addr_info":[{"family":"inet","local":"192.0.2.10","prefixlen":24}]}]'
+	exit 0
+fi
+if [ "$*" = "-j route show default" ]; then
+	printf '[{"dev":"wlan0","gateway":"192.0.2.1"}]'
+	exit 0
+fi
+exit 0
+FAKE_IP
+	write_exe("$watchbin/iw", <<'FAKE_IW');
+case "$*" in
+	"dev wlan0 info") printf 'Interface wlan0\n\ttype managed\n' ;;
+	*) exit 1 ;;
+esac
+FAKE_IW
+	write_exe("$watchbin/resolvectl", q{printf 'Link 2 (wlan0): 1.1.1.1 8.8.8.8\n'});
+	write_exe("$watchbin/iwctl", <<'FAKE_IWCTL');
+case "$*" in
+	"station wlan0 show") printf 'Station: wlan0\n  State                     connected\n  Connected network         jawn-house\n' ;;
+	*) exit 1 ;;
+esac
+FAKE_IWCTL
+	my ($rc, $out) = run_net(path => $watchbin, boot_id => 'boot-7', args => ['watch']);
+	my $data = answer($rc, $out, '', 'watch');
+	is_deeply([ sort keys %{$data} ], [qw(boot interfaces manager ok stack)],
+		'watch has the documented top fields');
+	is($data->{'boot'}, 'boot-7', 'the boot id comes from the hook');
+	is($data->{'stack'}, 'iwd', 'and names the stack it found');
+	my $interface = $data->{'interfaces'}->[0];
+	is($interface->{'name'}, 'wlan0', 'the wireless interface is listed');
+	is($interface->{'kind'}, 'wifi', 'as wifi');
+	is($interface->{'ssid'}, 'jawn-house', 'with the connected network');
+	is($interface->{'address'}, '192.0.2.10', 'its address');
+	is($interface->{'prefix'}, 24, 'and prefix');
+	is($interface->{'gateway'}, '192.0.2.1', 'the default gateway');
+	is_deeply($interface->{'dns'}, ['1.1.1.1', '8.8.8.8'], 'and the resolver');
+	is($interface->{'wireless'}, 1, 'and says it is wireless');
+	is($data->{'manager'}->{'stack'}, 'iwd', 'the manager block names the stack');
+	ok(grep { $_ eq 'iwd' } @{ $data->{'manager'}->{'units'} }, 'and lists iwd as active');
+}
+
+# --- a named profile is applied once, not on every poll -----------------------
+{
+	my $log = "$scratch/netctl.log";
+	unlink $log;
+	local $ENV{'NETCTL_LOG'} = $log;
+	my $unit = "$scratch/networkd/10-jawnos-wifi-" . substr(sha1_hex('jawn-profile-net'), 0, 16) . '.network';
+	unlink $unit;
+	my @apply = ('profile_apply', 'wifi', 'jawn-profile-net', 'wlan0', 'static', '192.0.2.70', '24', '192.0.2.1', '1.1.1.1');
+	my (undef, $out) = run_net(path => $fake, args => \@apply);
+	my $data = answer(0, $out, '', 'profile_apply');
+	is($data->{'ok'}, 1, 'the profile is applied');
+	is($data->{'applied'}, 1, 'and says so');
+	is($data->{'stack'}, 'networkd', 'through the networkd drop-in');
+	is_deeply($data->{'changed'}, ['profile'], 'a new profile records itself as the change');
+	ok(-e $unit, 'the drop-in exists');
+	like(read_text($unit), qr/^Address=192\.0\.2\.70\/24$/m, 'with the address');
+	like(read_text($log), qr/^reconfigure wlan0$/m, 'and the interface is reconfigured');
+
+	unlink $log;
+	(undef, $out) = run_net(path => $fake, args => \@apply);
+	$data = answer(0, $out, '', 'profile_apply with nothing new');
+	is($data->{'applied'}, 0, 'a second identical apply changes nothing');
+	is_deeply($data->{'changed'}, [], 'with no changed fields');
+	is(read_text($log), '', 'and does not reload or reconfigure');
+
+	unlink $log;
+	my @changed = @apply;
+	$changed[5] = '192.0.2.71';
+	(undef, $out) = run_net(path => $fake, args => \@changed);
+	$data = answer(0, $out, '', 'profile_apply with a new address');
+	is($data->{'applied'}, 1, 'a changed address is applied');
+	is_deeply($data->{'changed'}, ['address'], 'and only the address is named');
+
+	(undef, $out) = run_net(path => $fake, args => ['profile_remove', 'wifi', 'jawn-profile-net', 'wlan0']);
+	$data = answer(0, $out, '', 'profile_remove');
+	is($data->{'removed'}, 1, 'the JawnOS drop-in is removed');
+	ok(!-e $unit, 'and gone from disk');
+	(undef, $out) = run_net(path => $fake, args => ['profile_remove', 'wifi', 'jawn-profile-net', 'wlan0']);
+	$data = answer(0, $out, '', 'profile_remove with nothing left');
+	is($data->{'removed'}, 0, 'and a second remove is a no-op');
+}
+
+{
+	my $unit = "$scratch/networkd/10-jawnos-wifi-" . substr(sha1_hex('personal-net'), 0, 16) . '.network';
+	open my $fh, '>', $unit or die "cannot write $unit: $!";
+	print $fh "[Match]\nName=wlan0\n\n[Network]\nDHCP=yes\n";
+	close $fh;
+	my (undef, $out) = run_net(path => $fake, args => ['profile_remove', 'wifi', 'personal-net', 'wlan0']);
+	my $data = answer(0, $out, '', 'profile_remove of a person\'s own file');
+	is($data->{'removed'}, 0, 'a file without the JawnOS header is not ours');
+	ok(-e $unit, 'and is left alone');
+	unlink $unit;
+}
+
+# --- a dry run changes nothing -------------------------------------------------
+{
+	my $log = "$scratch/netctl-dry.log";
+	unlink $log;
+	local $ENV{'NETCTL_LOG'} = $log;
+	my $unit = "$scratch/networkd/10-jawnos-wifi-" . substr(sha1_hex('dry-net'), 0, 16) . '.network';
+	my ($rc, $out) = run_net(path => $fake, dry_run => 1,
+		args => ['profile_apply', 'wifi', 'dry-net', 'wlan0', 'static', '192.0.2.80', '24', '', '']);
+	my $data = answer($rc, $out, '', 'profile_apply in a dry run');
+	is($data->{'dry_run'}, 1, 'the answer is a dry run');
+	is(ref $data->{'command'}, 'ARRAY', 'with the plan as a command list');
+	ok(!-e $unit, 'and no drop-in is written');
+	is(read_text($log), '', 'and nothing is run');
+
+	# A dry-run remove still needs an owned file to discuss.
+	open my $fh, '>', $unit or die "cannot write $unit: $!";
+	print $fh "# Written by the JawnOS Network app. Remove this file to return to DHCP.\n[Match]\nName=wlan0\n[Network]\nDHCP=yes\n";
+	close $fh;
+	(undef, $out) = run_net(path => $fake, dry_run => 1,
+		args => ['profile_remove', 'wifi', 'dry-net', 'wlan0']);
+	$data = answer(0, $out, '', 'profile_remove in a dry run');
+	is($data->{'dry_run'}, 1, 'the remove is a dry run');
+	ok(-e $unit, 'and the file is still there');
+	unlink $unit;
+}
+
+# --- which stack is in charge, and the legacy daemons --------------------------
+{
+	my $sys = "$scratch/sysbin";
+	mkdir $sys or die "cannot make $sys: $!";
+	my $log = "$scratch/sys.log";
+	write_exe("$sys/systemctl", <<'FAKE_SYSTEMCTL');
+if [ -n "$SYS_LOG" ]; then printf '%s\n' "$*" >> "$SYS_LOG"; fi
+case "$*" in
+	"is-active --quiet iwd"|"is-active --quiet dhcpcd") exit 0 ;;
+	"is-enabled --quiet dhcpcd") exit 0 ;;
+	"stop dhcpcd"|"enable --now dhcpcd"|"start connman") exit 0 ;;
+	"cat --no-pager dhcpcd") exit 0 ;;
+	*) exit 1 ;;
+esac
+FAKE_SYSTEMCTL
+	local $ENV{'SYS_LOG'} = $log;
+	my (undef, $out) = run_net(path => $sys, args => ['manager']);
+	my $data = answer(0, $out, '', 'manager');
+	is($data->{'ok'}, 1, 'manager answers');
+	is($data->{'supported'}, 1, 'systemd is present');
+	is($data->{'stack'}, 'iwd', 'iwd owns the machine');
+	is_deeply($data->{'units'}, ['iwd'], 'iwd is the active manager');
+	is_deeply($data->{'competitors'}, ['dhcpcd'], 'dhcpcd is the competitor');
+
+	unlink $log;
+	(undef, $out) = run_net(path => $sys, args => ['takeover']);
+	$data = answer(0, $out, '', 'takeover');
+	is($data->{'ok'}, 1, 'takeover succeeds');
+	is_deeply($data->{'stopped'}, ['dhcpcd'], 'dhcpcd is stopped');
+	is_deeply($data->{'records'}, [ { unit => 'dhcpcd', enabled => 1 } ],
+		'and recorded with its enabled state');
+	like(read_text($log), qr/^stop dhcpcd$/m, 'through systemctl');
+
+	unlink $log;
+	(undef, $out) = run_net(path => $sys,
+		args => ['restore', '[{"unit":"dhcpcd","enabled":1},{"unit":"connman","enabled":0}]']);
+	$data = answer(0, $out, '', 'restore');
+	is_deeply($data->{'restored'}, ['dhcpcd'], 'an enabled unit is enabled and started');
+	is_deeply($data->{'missing'}, ['connman'], 'a missing unit is reported, not failed');
+	like(read_text($log), qr/^enable --now dhcpcd$/m, 'with the right systemctl verb');
+
+	unlink $log;
+	(undef, $out) = run_net(path => $sys, dry_run => 1, args => ['takeover']);
+	$data = answer(0, $out, '', 'takeover in a dry run');
+	is($data->{'dry_run'}, 1, 'takeover can be planned');
+	is(scalar @{ $data->{'command'} }, 2, 'with both units in the plan');
+	like($data->{'command'}->[0]->[0], qr/systemctl\z/, 'the plan names systemctl');
+	is_deeply([ @{ $data->{'command'}->[0] }[1 .. 2] ], ['stop', 'dhcpcd'],
+		'and the first unit to stop');
+	is(read_text($log), '', 'and nothing is stopped');
+}
+
+# --- the keyring without a tool ----------------------------------------------
+{
+	my (undef, $out) = run_net(args => ['secret_status']);
+	my $data = answer(0, $out, '', 'secret_status without systemd-creds');
+	is($data->{'available'}, 0, 'the keyring reports itself unavailable');
+	is($data->{'backend'}, 'none', 'with no backend');
+	is($data->{'dir'}, "$scratch/secrets", 'and names the store directory');
+}
+{
+	my (undef, $out) = run_net(creds => '/bin/true', args => ['secret_status']);
+	my $data = answer(0, $out, '', 'secret_status with a provided tool');
+	is($data->{'available'}, 1, 'a provided systemd-creds is available');
+	is($data->{'backend'}, 'systemd-creds', 'and named');
+}
+{
+	my (undef, $out) = run_net(args => ['secret_present', 'jawn-test-net']);
+	my $data = answer(0, $out, '', 'secret_present with an empty store');
+	is_deeply($data, { ok => 1, present => 0 }, 'nothing is present');
+}
+{
+	my (undef, $out) = run_net(args => ['secret_set', 'jawn-test-net'], stdin => "correcthorse\n");
+	my $data = answer(0, $out, '', 'secret_set without systemd-creds');
+	is($data->{'stored'}, 0, 'the passphrase is not stored');
+	like($data->{'warning'}, qr/systemd-creds/, 'and the answer says why');
+	my @cred = glob("$scratch/secrets/*.cred");
+	is(scalar @cred, 0, 'the keyring stays empty');
 }
 
 done_testing();

@@ -268,7 +268,9 @@ function networkRenderWifi(wifi) {
 			saved_box.append($('<div>').addClass('network_empty').text(networkT('No saved networks.')));
 		}
 		for (var j = 0; j < saved.length; j++) {
-			var saved_row = $('<div>').addClass('network_wifi_row').attr('data-ssid', saved[j]);
+			var saved_row = $('<div>').addClass('network_wifi_row')
+			.attr('data-ssid', saved[j])
+			.attr('data-saved', '1');
 			saved_row.append($('<span>').addClass('network_wifi_name').text(saved[j]));
 			saved_row.append($('<button type="button">').addClass('network_button network_wifi_connect').text(networkLabel('connect', 'Connect')));
 			saved_row.append($('<button type="button">').addClass('network_button network_wifi_forget')
@@ -342,11 +344,59 @@ function networkRefreshAll() {
 	networkGet('status', {}, function(data) {
 		if (data.error) { $('#network_status_line').text(data.error); }
 		else { $('#network_status_line').text(new Date().toLocaleTimeString()); }
+		networkRenderManager(data);
 		networkRenderInterfaces(data.interfaces || []);
 		networkRenderWifi(data.wifi || {});
 		networkRenderVpn(data.vpn || {});
 		networkRenderAndroid();
 	});
+}
+
+// The management row: the checkbox, the Apply button and the short note that
+// says who is writing the machine's connection. The status answer carries the
+// saved config, the manager the helper found, the takeover ledger (an array of
+// { unit, enabled } like Power's) and whether a secret can be stored encrypted.
+function networkManagerNames(list) {
+	var names = [];
+	if (!list || !list.length) { return names; }
+	for (var i = 0; i < list.length; i++) {
+		var item = list[i];
+		var name = (typeof item === 'string') ? item : ((item && item.unit) || '');
+		if (name && names.indexOf(name) < 0) { names.push(name); }
+	}
+	return names;
+}
+
+function networkRenderManager(data) {
+	var config = (data && data.config) || {};
+	var manage = !!config.manage;
+	$('#network_manage').prop('checked', manage);
+	$('#network_apply').prop('disabled', !manage);
+	var note = $('#network_manager_note').empty();
+	if (!manage) {
+		note.text(networkT('JawnOS does not manage networking.'));
+		return;
+	}
+	var manager = (data && data.manager) || {};
+	var stack = (typeof manager === 'string') ? manager : (manager.stack || manager.name || '');
+	note.append($('<div>').text(stack
+		? networkT('JawnOS is applying saved addresses through {0}.', stack)
+		: networkT('JawnOS is applying saved addresses.')));
+	// The stack itself (iwd, systemd-networkd, NetworkManager) is the one JawnOS
+	// drives, not a competitor. Only the legacy daemons are worth naming, and
+	// the takeover ledger lists the ones JawnOS stopped.
+	var competitors = networkManagerNames(manager.competitors);
+	if (competitors.length) {
+		note.append($('<div>').text(networkT('{0} is also running.', competitors.join(', '))));
+	}
+	var stopped = networkManagerNames(data && data.takeover);
+	if (stopped.length) {
+		note.append($('<div>').text(networkT('JawnOS stopped {0}.', stopped.join(', '))));
+	}
+	var secrets = (data && data.secrets) || {};
+	if (secrets.available !== undefined && !secrets.available) {
+		note.append($('<div>').text(networkT('Passphrases cannot be stored encrypted on this machine, so each network asks for its passphrase again.')));
+	}
 }
 
 // ----------------------------------------------------------------------- VPN
@@ -559,6 +609,34 @@ $(document).on('click', '#network_radio_toggle', function() {
 	box.prop('disabled', true);
 	networkPost('radio', { state: state }, function() {
 		box.prop('disabled', false);
+		networkRefreshAll();
+	});
+});
+
+$(document).on('change', '#network_manage', function() {
+	var box = $(this);
+	var on = box.prop('checked') ? 1 : 0;
+	box.prop('disabled', true);
+	networkPost('manage', { manage: on }, function(response) {
+		box.prop('disabled', false);
+		if (response.error || response.ok === 0) {
+			box.prop('checked', !on);
+			$('#network_status_line').text(response.error || networkT('The setting could not be saved.'));
+			return;
+		}
+		networkRefreshAll();
+	});
+});
+
+$(document).on('click', '#network_apply', function() {
+	var button = $(this);
+	if (button.prop('disabled')) { return; }
+	button.prop('disabled', true);
+	networkPost('apply', {}, function(response) {
+		button.prop('disabled', false);
+		if (response.error || response.ok === 0) {
+			$('#network_status_line').text(response.error || networkT('The saved network could not be applied.'));
+		}
 		networkRefreshAll();
 	});
 });

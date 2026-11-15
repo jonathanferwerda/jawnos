@@ -743,6 +743,9 @@ our $crest_peer_list_cache;
 our $crest_peer_list_raw;
 our $tier_required = [
 	[ 'citizen',  qr{^/manager/(?:configure|security|magazine/publish|power)(?:/|$)} ],
+	# The Network writes take the machine's own connection into JawnOS's hands,
+	# the same desk as Power. Status stays resident: the taskbar reads it.
+	[ 'citizen',  qr{^/manager/network/(?:manage|profile|apply)(?:/|$)} ],
 	[ 'resident', qr{^/manager(?:/|$)} ],
 ];
 our %tier_rank = ( guest => 1, resident => 2, citizen => 3 );

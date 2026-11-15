@@ -65,6 +65,10 @@
 	.network_vpn_card h5 { margin:0 0 2px; font-size:13px; }
 	.network_vpn_line { font-size:12px; opacity:.85; }
 	.network_dev_note { font-size:11px; opacity:.7; margin:8px 0 0; }
+	.network_manage_row { display:flex; align-items:center; gap:8px; font-size:13px; }
+	.network_manage_text { font-size:11px; opacity:.7; margin:6px 0 0; }
+	#network_manager_note { display:block; font-size:12px; opacity:.85; margin:6px 0 0; }
+	#network_manager_note div { margin:2px 0 0; }
 	.network_android_list { display:flex; flex-direction:column; gap:6px; margin:8px 0 0; }
 	@media (max-width:640px) {
 		#network_interfaces_section .network_table th:nth-child(3), #network_interfaces_section .network_table td:nth-child(3),
@@ -108,6 +112,21 @@
 	</div>
 
 	<div class="network_tab_panel" id="network_panel_network" data-network-panel="network">
+
+		<section class="network_section" id="network_manage_section">
+			<div class="network_section_head">
+				<h3><%= &subs::ui('Networking') %></h3>
+				<button type="button" id="network_apply" class="network_button"><%= &subs::ui('Apply now') %></button>
+			</div>
+			<div class="network_section_body">
+				<label class="network_manage_row" for="network_manage">
+					<input type="checkbox" id="network_manage"<%= $manage_on ? ' checked' : '' %>>
+					<span><%= &subs::ui('JawnOS manages networking') %></span>
+				</label>
+				<div id="network_manager_note"></div>
+				<p class="network_manage_text"><%= &subs::ui('JawnOS reapplies the saved address and DNS for the current network after a boot or resume, and keeps its passphrase encrypted with systemd-creds when the machine offers it.') %></p>
+			</div>
+		</section>
 
 		<section class="network_section" id="network_interfaces_section">
 			<div class="network_section_head"><h3><%= $t->('network.interfaces') %></h3></div>

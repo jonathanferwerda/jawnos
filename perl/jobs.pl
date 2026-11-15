@@ -126,6 +126,10 @@ sub job_slow_loops {
 		# tick is idempotent (the applied row makes it a no-op) so a machine on
 		# mains pays one battery read per minute and no sysfs write.
 		{ name => 'power watch', first => 25, every => 60, run => sub { &subs::power_plan_tick(); } },
+		# The network changed or a new boot reset it: keep the saved addressing
+		# profile applied. The applied row makes the minute tick a no-op while the
+		# live network already matches, and turning management off skips it.
+		{ name => 'network watch', first => 40, every => 60, run => sub { &subs::network_watch_tick(); } },
 	);
 	my $started = time;
 	my %due = map { $_->{'name'} => $started + $_->{'first'} } @slow_loops;

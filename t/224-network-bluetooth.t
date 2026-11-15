@@ -421,4 +421,75 @@ like($remote_js2, qr/\}, 5000\);/, 'at five seconds');
 like($remote_js2, qr/never overwrite it with the cache/,
 	'a live beat that landed first wins over the saved picture');
 
+# --- the management switch and the saved profile -----------------------------
+my $manage_routes = source('lib/JawnOS/Routes/manager_misc2.pm');
+like($manage_routes, qr{\[7865, 'post', '/manager/network/manage', 'action_7865'\]},
+	'the management switch has a route');
+like($manage_routes, qr{\[7867, 'post', '/manager/network/profile', 'action_7867'\]},
+	'a profile can be saved');
+like($manage_routes, qr{\[7869, 'post', '/manager/network/profile/remove', 'action_7869'\]},
+	'and removed');
+like($manage_routes, qr{\[7871, 'post', '/manager/network/apply', 'action_7871'\]},
+	'Apply now has a route');
+
+my $manage_actions = source('lib/JawnOS/Controller/manager_misc2.pm');
+like($manage_actions, qr/^sub action_7865 \{/m, 'the management action exists');
+like($manage_actions, qr/^sub action_7867 \{/m, 'the profile save action exists');
+like($manage_actions, qr/^sub action_7869 \{/m, 'the profile remove action exists');
+like($manage_actions, qr/^sub action_7871 \{/m, 'the apply action exists');
+like($manage_actions, qr/network_manage_set\(\$manage\)/, 'the switch calls the domain setter');
+like($manage_actions, qr/&subs::network_status\(\)/, 'the status answer asks the domain once');
+like($manage_actions, qr/&network_helper\(\['status'\]\)/, 'and keeps the helper fallback');
+like($manage_actions, qr/my \$manage = eval \{ &subs::network_config\(\)->\{'manage'\} \}/,
+	'the connect reads the management setting');
+like($manage_actions, qr/my \$secure = \(\$c->param\('secure'\)/,
+	'and whether the network is secured');
+like($manage_actions, qr/\$mode = \$manage \? 'store' : 'none'/,
+	'and chooses store or none for a typed passphrase');
+like($manage_actions, qr/elsif \(\$manage && \$secure\) \{ \$mode = 'use'; \}/,
+	'and the stored secret for a saved secured network');
+like($manage_actions, qr/network_profile_set\('wifi', \$ssid/,
+	'a successful connect saves the profile for the watch');
+like(source('public/js/manager/network/01_wifi_vpn_android.js'), qr/secure: secure/,
+	'the app tells the connect whether the network is secured');
+like(source('public/js/manager/network/01_wifi_vpn_android.js'), qr/response\.warning/,
+	'and says when the passphrase could not be sealed');
+like($taskbar, qr/secure: \(row\.attr\('data-saved'\)/,
+	'the widget does too');
+like($taskbar, qr/response\.warning/,
+	'and says when the passphrase could not be sealed');
+like($manage_actions, qr/\$c->stash\('manage_on' => \$manage_on\)/,
+	'the window hands the saved switch to the template');
+
+like($template, qr/id="network_manage"/, 'the management checkbox exists');
+like($template, qr/JawnOS manages networking/, 'and is labelled in the on-screen words');
+like($template, qr/id="network_apply"/, 'the Apply now button exists');
+like($template, qr/id="network_manager_note"/, 'the manager note exists');
+like($template, qr/\$manage_on \? ' checked' : ''/, 'the checkbox starts from the saved setting');
+
+my $manage_js = source('public/js/manager/network.js');
+like($manage_js, qr/\$\(document\)\.on\('change', '#network_manage'/,
+	'the index binds the management change');
+like($manage_js, qr/networkPost\('manage', \{ manage: on \}/,
+	'and posts the new setting');
+like($manage_js, qr/networkPost\('apply', \{\}/, 'the Apply now button posts the apply route');
+like($manage_js, qr/function networkRenderManager/, 'the index renders the manager note');
+like($manage_js, qr/config\.manage/, 'it reads the saved switch from the status answer');
+like($manage_js, qr/JawnOS is applying saved addresses through \{0\}\./,
+	'and names the stack JawnOS is using');
+like($manage_js, qr/JawnOS does not manage networking\./,
+	'and says when JawnOS leaves the stack alone');
+like($manage_js, qr/Passphrases cannot be stored encrypted/,
+	'and warns when a secret cannot be sealed');
+
+{
+	no warnings 'once';
+	require "$root/perl/help.pl";
+	my $body = join(' ', @{ $help::topic{'network'}->{'body'} });
+	like($body, qr/JawnOS manages networking/, 'the help topic explains the management switch');
+	like($body, qr/sixty seconds/, 'and the watch that reapplies the saved address');
+	like($body, qr/Apply now/, 'and Apply now');
+	like($body, qr/systemd-creds/, 'and the encrypted credential path');
+}
+
 done_testing();

@@ -26,6 +26,7 @@ our $VERSION = '1';
 # for every route, so drift is a test failure rather than a surprise.
 my @TIER = (
 	['citizen',  qr{^/manager/(?:configure|security|magazine/publish|power)(?:/|$)}],
+	['citizen',  qr{^/manager/network/(?:manage|profile|apply)(?:/|$)}],
 	['resident', qr{^/manager(?:/|$)}],
 );
 

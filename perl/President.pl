@@ -107,6 +107,13 @@ sub tree_stop {
 	};
 	my $power_error = $@;
 	$log->warn('power: the takeover could not be restored on stop: ' . ($power_error =~ s/\s+/ /gr)) if $power_error;
+	# The same for the network managers this tree stopped.
+	eval {
+		require "$FindBin::Bin/../lib/JawnOS/Domain/Network2.pm";
+		&subs::network_release_takeover() if @{ &subs::network_takeover_state() };
+	};
+	my $network_error = $@;
+	$log->warn('network: the takeover could not be restored on stop: ' . ($network_error =~ s/\s+/ /gr)) if $network_error;
 	exit 0;
 }
 
@@ -189,6 +196,17 @@ eval {
 };
 my $stale_power_error = $@;
 $log->warn('power: the previous takeover could not be restored: ' . ($stale_power_error =~ s/\s+/ /gr)) if $stale_power_error;
+
+# The network ledger is the same: a crash left it behind, so put the system's
+# manager back unless this tree is managing the network.
+eval {
+	require "$FindBin::Bin/../lib/JawnOS/Domain/Network2.pm";
+	my $network_config = &subs::network_config();
+	&subs::network_release_takeover()
+		if !$network_config->{'manage'} && @{ &subs::network_takeover_state() };
+};
+my $stale_network_error = $@;
+$log->warn('network: the previous takeover could not be restored: ' . ($stale_network_error =~ s/\s+/ /gr)) if $stale_network_error;
 
 $SIG{INT} = sub {
 	# Do not print "President Died" here: ./jawn reads that phrase as a crash and
@@ -447,6 +465,10 @@ END {
 	eval {
 		require "$FindBin::Bin/../lib/JawnOS/Domain/Power.pm";
 		&subs::power_release_takeover();
+	};
+	eval {
+		require "$FindBin::Bin/../lib/JawnOS/Domain/Network2.pm";
+		&subs::network_release_takeover() if @{ &subs::network_takeover_state() };
 	};
 }
 

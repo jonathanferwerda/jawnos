@@ -756,11 +756,13 @@ function jawnosNetworkTaskbarPanelJoin(panel, row, button, ssid, passphrase) {
 		url: '/manager/network/wifi_connect',
 		type: 'POST',
 		dataType: 'json',
-		data: $.extend({ interface: iface, ssid: ssid, passphrase: passphrase || '' }, jawnosNetworkTaskbarPanelOptionsData(row))
+		data: $.extend({ interface: iface, ssid: ssid, passphrase: passphrase || '', secure: (row.attr('data-saved') === '1' || row.attr('data-secure') !== '0' ? 1 : 0) }, jawnosNetworkTaskbarPanelOptionsData(row))
 	}).done(function(response) {
 		button.prop('disabled', false);
 		if (response && response.ok) {
-			note.text(response.message || jawnosT('Connected to {0}.', ssid));
+			var text = response.message || jawnosT('Connected to {0}.', ssid);
+			if (response.warning) { text += ' ' + jawnosT('The passphrase could not be stored encrypted; the Wi-Fi stack keeps it.'); }
+			note.text(text);
 			jawnosNetworkTaskbarLoad(function() { jawnosNetworkTaskbarPanelRefreshList(panel); });
 			return;
 		}

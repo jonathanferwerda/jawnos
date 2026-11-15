@@ -10,19 +10,36 @@
 # meant to be used.
 #
 #   status
+#   watch                        one cheap answer for the 60s watch
 #   wifi_scan [interface]
 #   wifi_current                        the connected network and its key
 #   wifi_connect <interface> <ssid> [dhcp|static] [address] [prefix] [gateway] [dns]
-#                                       (passphrase on stdin, empty for open)
+#                [store|use|none]      (passphrase on stdin, empty for open)
 #   wifi_disconnect <interface>
 #   wifi_forget <ssid>
 #   radio on|off
 #   interface up|down <interface>
+#   profile_apply <kind> <key> <interface> <method> [address] [prefix] [gateway] [dns]
+#   profile_remove <kind> <key> [interface]
+#   manager                      which stack is in charge, and who competes
+#   takeover | restore <json>    stop/put back dhcpcd or connman
+#   secret_status
+#   secret_set <ssid>            (passphrase on stdin)
+#   secret_present <ssid>
+#   secret_clear <ssid>
+#   secrets_release              put the stored keys back into the stack
 #   vpn_status
 #   vpn_tailscale up|down
 #   vpn_unit start|stop wg|openvpn <name>
 #   public_ip                    name a globally routable address on this machine
 #   public_ip_lookup             ask a public echo service for the outward address
+#
+# The Wi-Fi keyring is systemd-creds: one ciphertext per SSID under
+# /var/lib/jawnos/secrets/wifi, root-only. A secret reaches systemd-creds on
+# stdin and iwctl/nmcli through a private file, never as an argument. When the
+# tool is missing the stack keeps the passphrase the way it always did.
+#
+# JAWNOS_NETWORK_DRY_RUN=1 turns every mutating command into { dry_run, command }.
 #
 # Every answer is a JSON object. An operational failure is { ok => 0, error };
 # it is not an exit status, so the caller always gets a readable message.
@@ -33,7 +50,8 @@ use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 use JSON::PP ();
 use Encode qw(decode_utf8 encode_utf8);
-use Digest::SHA qw(sha1_hex);
+use Digest::SHA qw(sha1_hex sha256_hex);
+use File::Path qw(make_path);
 use File::Temp qw(tempfile);
 use IPC::Open3 qw(open3);
 use Socket qw(AF_INET AF_INET6 inet_pton);
@@ -41,6 +59,10 @@ use Symbol qw(gensym);
 use IO::Select;
 
 my $JSON = JSON::PP->new->utf8(1)->allow_nonref(1);
+
+# A dry run never writes: the mutating commands answer with the argv they would
+# have run, so a caller can show the plan without trusting the box.
+my $DRY = $ENV{'JAWNOS_NETWORK_DRY_RUN'} ? 1 : 0;
 
 sub emit {
 	my ($data) = @_;
@@ -189,6 +211,204 @@ sub addressing_options {
 	return $options;
 }
 
+# --- the Wi-Fi keyring -------------------------------------------------------
+# A passphrase the person asked JawnOS to keep lives in systemd-creds, never in
+# the stack's own file. One ciphertext per SSID, named by the hash of its UTF-8
+# bytes, root:root 0600 under a root:root 0700 directory.
+
+sub secret_dir {
+	return $ENV{'JAWNOS_SECRET_DIR'} if defined $ENV{'JAWNOS_SECRET_DIR'} && length $ENV{'JAWNOS_SECRET_DIR'};
+	return '/var/lib/jawnos/secrets/wifi';
+}
+
+sub secret_hash {
+	my ($ssid) = @_;
+	return sha256_hex(encode_utf8($ssid));
+}
+
+sub secret_path {
+	my ($ssid) = @_;
+	return secret_dir() . '/' . secret_hash($ssid) . '.cred';
+}
+
+# JAWNOS_CREDS names the tool for a test: an absolute path, or `none` for a
+# machine that has no systemd-creds at all. The production answer is PATH.
+sub creds_path {
+	my $set = $ENV{'JAWNOS_CREDS'};
+	if (defined $set && length $set) {
+		return undef if lc($set) eq 'none';
+		return $set;
+	}
+	return find_command('systemd-creds');
+}
+
+# --with-key=auto uses the TPM2 when the machine has one and the host key
+# otherwise. The only answer that would weaken the store is --with-key=null,
+# which this helper never asks for.
+sub tpm_present {
+	return (glob('/dev/tpm*')) ? 1 : 0;
+}
+
+sub ensure_secret_dir {
+	my $dir = secret_dir();
+	if (-d $dir) {
+		chmod 0700, $dir;
+		return 1;
+	}
+	if (eval { make_path($dir, { mode => 0700 }) }) {
+		chmod 0700, $dir;
+		return 1;
+	}
+	my ($out, $err, $status) = run_write(undef, 'install', '-d', '-m', '0700', '-o', 'root', '-g', 'root', $dir);
+	return $status == 0 ? 1 : 0;
+}
+
+# A root-owned 0600 file. When this process may write the path directly (a test
+# scratch directory, or a root worker) it does; otherwise the bytes are staged
+# in a temp file and installed through the sudo fallback.
+sub write_private_file {
+	my ($path, $content) = @_;
+	if (open my $fh, '>', $path) {
+		binmode $fh;
+		print {$fh} $content;
+		close $fh;
+		chmod 0600, $path;
+		return 1;
+	}
+	my ($tmp, $tmp_name) = tempfile('jawnos-private-XXXXXX', TMPDIR => 1, UNLINK => 0);
+	return 0 unless $tmp;
+	binmode $tmp;
+	print {$tmp} $content;
+	close $tmp;
+	my ($stdout, $stderr, $status) = run_write(undef, 'install', '-m', '0600', '-o', 'root', '-g', 'root', $tmp_name, $path);
+	unlink $tmp_name;
+	return $status == 0 ? 1 : 0;
+}
+
+sub read_private_file {
+	my ($path) = @_;
+	my $text = slurp($path);
+	return $text if length $text;
+	my ($out, $err, $status) = run_privileged_read('cat', $path);
+	return $status == 0 ? $out : '';
+}
+
+# Encrypt on stdin and write the ciphertext. The passphrase never reaches argv.
+sub encrypt_secret {
+	my ($ssid, $plaintext) = @_;
+	my $creds = creds_path();
+	return { ok => 0, error => 'systemd-creds is not installed.' } unless $creds;
+	return { ok => 0, error => 'Could not create the secret directory.' } unless ensure_secret_dir();
+	my $name = 'jawnos-wifi-' . secret_hash($ssid);
+	my ($out, $err, $status) = run_write($plaintext, $creds,
+		'encrypt', '--with-key=auto', '--name=' . $name, '-', '-');
+	return { ok => 0, error => clean($err) || clean($out) || 'systemd-creds could not encrypt the passphrase.' }
+		unless $status == 0;
+	return { ok => 0, error => 'systemd-creds returned an empty credential.' } unless length $out;
+	return { ok => 0, error => 'Could not write the credential.' }
+		unless write_private_file(secret_path($ssid), $out);
+	return { ok => 1, backend => 'systemd-creds', tpm => tpm_present() };
+}
+
+# Decrypt into memory only. A missing file, a missing tool and a failed decrypt
+# are all one answer: { error } and no passphrase.
+sub decrypt_secret {
+	my ($ssid) = @_;
+	my $path = secret_path($ssid);
+	return { error => 'No stored passphrase for ' . $ssid . '.' } unless -s $path;
+	my $creds = creds_path();
+	return { error => 'systemd-creds is not installed.' } unless $creds;
+	my $name = 'jawnos-wifi-' . secret_hash($ssid);
+	my ($out, $err, $status) = run_privileged_read($creds,
+		'decrypt', '--name=' . $name, $path, '-');
+	return { error => clean($err) || clean($out) || 'systemd-creds could not decrypt the passphrase.' }
+		unless $status == 0;
+	$out = '' unless defined $out;
+	$out =~ s/\r?\n\z//;
+	return { passphrase => $out };
+}
+
+sub secret_present_raw {
+	my ($ssid) = @_;
+	return -s secret_path($ssid) ? 1 : 0;
+}
+
+sub secret_status {
+	my $creds = creds_path();
+	return {
+		ok        => 1,
+		available => $creds ? 1 : 0,
+		backend   => $creds ? 'systemd-creds' : 'none',
+		tpm       => tpm_present(),
+		dir       => secret_dir(),
+	};
+}
+
+sub secret_set {
+	my ($ssid, $passphrase) = @_;
+	$ssid = utf8_text($ssid);
+	return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($ssid);
+	return { ok => 0, error => 'The passphrase must be 8 to 63 characters, or 64 hexadecimal digits.' }
+		unless valid_passphrase($passphrase);
+	my $creds = creds_path();
+	if (!length($passphrase) || !$creds) {
+		return { ok => 1, stored => 0, backend => 'none', tpm => tpm_present(),
+			warning => 'systemd-creds is not installed; the passphrase stays with the Wi-Fi stack.' };
+	}
+	if ($DRY) {
+		return dry_run_answer([ [ $creds, 'encrypt', '--with-key=auto',
+			'--name=jawnos-wifi-' . secret_hash($ssid), '-', '-' ] ]);
+	}
+	# A second set of the same passphrase rewrites nothing: decrypt and compare.
+	if (secret_present_raw($ssid)) {
+		my $existing = decrypt_secret($ssid);
+		if (!defined $existing->{'error'} && ($existing->{'passphrase'} // '') eq $passphrase) {
+			return { ok => 1, stored => 1, changed => 0, backend => 'systemd-creds', tpm => tpm_present() };
+		}
+	}
+	my $encrypted = encrypt_secret($ssid, $passphrase);
+	return { ok => 0, error => $encrypted->{'error'} } if $encrypted->{'error'};
+	return { ok => 1, stored => 1, changed => 1, backend => 'systemd-creds', tpm => $encrypted->{'tpm'} };
+}
+
+sub secret_present {
+	my ($ssid) = @_;
+	$ssid = utf8_text($ssid);
+	return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($ssid);
+	return { ok => 1, present => secret_present_raw($ssid) };
+}
+
+sub secret_clear {
+	my ($ssid) = @_;
+	$ssid = utf8_text($ssid);
+	return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($ssid);
+	my $path = secret_path($ssid);
+	return { ok => 1, cleared => 0, present => 0 } unless -e $path;
+	return { ok => 0, error => 'Could not remove the stored passphrase.' }
+		unless remove_root_file($path);
+	return { ok => 1, cleared => 1, present => 0 };
+}
+
+# Put every stored key back into the stack and turn its auto-connect back on.
+# Used when JawnOS management is turned off, so the machine keeps joining these
+# networks without the keyring. Only SSIDs the stack already knows are touched;
+# a stored key whose network is unknown cannot be placed, and is reported.
+sub secrets_release {
+	my $creds = creds_path();
+	return { ok => 0, error => 'systemd-creds is not installed.', restored => [], missing => [] }
+		unless $creds;
+	my $stack = find_command('iwctl') ? 'iwd' : (find_command('nmcli') ? 'nm' : network_stack());
+	my (@restored, @missing);
+	foreach my $ssid ( @{ saved_networks() || [] } ) {
+		next unless secret_present_raw($ssid);
+		my $decrypted = decrypt_secret($ssid);
+		if ($decrypted->{'error'}) { push @missing, $ssid; next; }
+		if (stack_store_secret($ssid, $decrypted->{'passphrase'}, $stack)) { push @restored, $ssid; }
+		else { push @missing, $ssid; }
+	}
+	return { ok => 1, restored => \@restored, missing => \@missing };
+}
+
 # The message a successful connect answers. DHCP with no DNS keeps the short
 # form the app has always shown; anything a person chose is named back.
 sub connection_message {
@@ -294,9 +514,17 @@ sub capture {
 	my $pid = eval { open3($in, $out, $err, @command) };
 	return ('', 'could not run ' . join(' ', @command), 127) unless $pid;
 	if (defined $input) {
-		print {$in} $input;
+		# The first attempt can exit before reading stdin (a non-root
+		# systemd-creds, or a tool that refuses its arguments), and writing to
+		# that closed pipe is a SIGPIPE that would kill this worker. Ignore it
+		# and let the exit status carry the answer.
+		local $SIG{'PIPE'} = 'IGNORE';
+		eval { print {$in} $input };
+		eval { close $in };
 	}
-	close $in;
+	else {
+		close $in;
+	}
 	my $select = IO::Select->new($out, $err);
 	my ($stdout, $stderr) = ('', '');
 	my $deadline = time() + $capture_timeout;
@@ -665,6 +893,8 @@ sub wifi_current {
 		ssid => $secret->{'ssid'} || $ssid,
 		passphrase => $secret->{'passphrase'} // '',
 		secure => $secret->{'secure'} ? 1 : 0,
+		secret_source => $secret->{'secret_source'} || 'none',
+		secret_stored => $secret->{'secret_stored'} ? 1 : 0,
 	};
 }
 
@@ -685,11 +915,31 @@ sub connected_ssid {
 
 sub wifi_current_secret {
 	my ($interface, $ssid) = @_;
+	# The keyring is the first answer: a passphrase JawnOS stored is the one the
+	# person asked it to keep, and it outlives a stack that has been scrubbed.
+	my $decrypted = decrypt_secret($ssid);
+	if (!defined $decrypted->{'error'}) {
+		return {
+			ssid => $ssid,
+			passphrase => $decrypted->{'passphrase'} // '',
+			secure => 1,
+			secret_source => 'store',
+			secret_stored => 1,
+		};
+	}
 	my $nm = nmcli_current($interface, $ssid);
-	return $nm if $nm->{'found'};
+	if ($nm->{'found'}) {
+		$nm->{'secret_source'} = 'nm';
+		$nm->{'secret_stored'} = 0;
+		return $nm;
+	}
 	my $iwd = iwd_current($ssid);
-	return $iwd if $iwd->{'found'};
-	return { ssid => $ssid, passphrase => '', secure => 0 };
+	if ($iwd->{'found'}) {
+		$iwd->{'secret_source'} = 'iwd';
+		$iwd->{'secret_stored'} = 0;
+		return $iwd;
+	}
+	return { ssid => $ssid, passphrase => '', secure => 0, secret_source => 'none', secret_stored => 0 };
 }
 
 # NetworkManager keeps the SSID and the key in the profile, and the active list
@@ -731,25 +981,119 @@ sub nmcli_current {
 	return { found => 1, ssid => $profile_ssid, passphrase => $passphrase, secure => $secure };
 }
 
-# iwd keeps one file per known network: <ssid>.psk carries PreSharedKey. The
-# name is the network with any slash replaced; the directory is overridable so
-# the plan can be read in a test without the real store.
+# iwd keeps one file per known network: <encoded ssid>.psk carries the key.
+# The name is the SSID verbatim only when every byte is alphanumeric, '-' or
+# '_' or a space; otherwise it is '=' followed by the lowercase hex of the UTF-8
+# bytes. The directory is overridable so a test reads a scratch store.
+sub iwd_dir {
+	return defined $ENV{'JAWNOS_IWD_DIR'} && length $ENV{'JAWNOS_IWD_DIR'}
+		? $ENV{'JAWNOS_IWD_DIR'} : '/var/lib/iwd';
+}
+
+sub iwd_filename {
+	my ($ssid) = @_;
+	my $bytes = encode_utf8($ssid);
+	return $ssid if $bytes =~ /\A[A-Za-z0-9_ -]+\z/;
+	return '=' . unpack('H*', $bytes);
+}
+
+sub iwd_network_path {
+	my ($ssid, $secure) = @_;
+	return iwd_dir() . '/' . iwd_filename($ssid) . ($secure ? '.psk' : '.open');
+}
+
+sub iwd_security_line {
+	my ($passphrase) = @_;
+	return 'PreSharedKey=' . $passphrase if $passphrase =~ /\A[0-9A-Fa-f]{64}\z/;
+	return 'Passphrase=' . $passphrase;
+}
+
+sub iwd_network_text {
+	my ($ssid, $passphrase, $autoconnect) = @_;
+	my @lines = ('[Settings]', 'AutoConnect=' . ($autoconnect ? 'true' : 'false'));
+	if (defined $passphrase && length $passphrase) {
+		push @lines, '', '[Security]', iwd_security_line($passphrase);
+	}
+	return join("\n", @lines) . "\n";
+}
+
+sub iwd_write_text {
+	my ($path, $text) = @_;
+	return write_private_file($path, encode_utf8($text));
+}
+
+# Split an iwd network file into its groups, so an edit can drop [Security] and
+# still keep anything else a person or a profile put there.
+sub iwd_groups {
+	my ($text) = @_;
+	my @groups;
+	my $current = { name => '', lines => [] };
+	foreach my $line ( split /\n/, (defined $text ? $text : ''), -1 ) {
+		if ($line =~ /^\s*\[([^\]]+)\]\s*$/) {
+			push @groups, $current if length $current->{'name'} || @{ $current->{'lines'} };
+			$current = { name => $1, lines => [] };
+			next;
+		}
+		push @{ $current->{'lines'} }, $line;
+	}
+	push @groups, $current if length $current->{'name'} || @{ $current->{'lines'} };
+	return @groups;
+}
+
+# After a connect whose key JawnOS stored itself, the stack must not keep a
+# second copy. Remove the [Security] group and leave AutoConnect off; every
+# other group is written back byte for byte.
+sub iwd_scrub {
+	my ($ssid) = @_;
+	my $path = iwd_network_path($ssid, 1);
+	return { changed => 0 } unless -e $path;
+	my $text = read_private_file($path);
+	return { changed => 0 } unless length $text;
+	my @kept;
+	my $changed = 0;
+	foreach my $group ( iwd_groups($text) ) {
+		if (lc($group->{'name'}) eq 'security') { $changed = 1; next; }
+		if (lc($group->{'name'}) eq 'settings') {
+			my $seen = 0;
+			foreach my $line ( @{ $group->{'lines'} } ) {
+				if ($line =~ /^\s*AutoConnect\s*=/) {
+					if ($line ne 'AutoConnect=false') { $line = 'AutoConnect=false'; $changed = 1; }
+					$seen = 1;
+				}
+			}
+			if (!$seen) { push @{ $group->{'lines'} }, 'AutoConnect=false'; $changed = 1; }
+		}
+		push @kept, $group;
+	}
+	if ($changed) {
+		my @lines;
+		foreach my $group (@kept) {
+			push @lines, '' if @lines;
+			push @lines, '[' . $group->{'name'} . ']' if length $group->{'name'};
+			push @lines, @{ $group->{'lines'} };
+		}
+		return { changed => 0 } unless iwd_write_text($path, join("\n", @lines) . "\n");
+	}
+	return { changed => $changed };
+}
+
+# The undo of a scrub: put the key back and turn auto-connect on, for a machine
+# that will keep joining this network without JawnOS holding the key.
+sub iwd_store_network {
+	my ($ssid, $passphrase) = @_;
+	return iwd_write_text(iwd_network_path($ssid, length($passphrase) ? 1 : 0),
+		iwd_network_text($ssid, $passphrase, 1));
+}
+
 sub iwd_current {
 	my ($ssid) = @_;
 	return {} unless find_command('iwctl');
-	my $dir = defined $ENV{'JAWNOS_IWD_DIR'} && length $ENV{'JAWNOS_IWD_DIR'}
-		? $ENV{'JAWNOS_IWD_DIR'} : '/var/lib/iwd';
-	my @names = ($ssid);
-	(my $flat = $ssid) =~ s{/}{_}g;
-	push @names, $flat if $flat ne $ssid;
-	foreach my $name (@names) {
-		next unless length $name && $name !~ m{/};
-		my ($out, $err, $status) = run_privileged_read('cat', $dir . '/' . $name . '.psk');
-		next unless $status == 0;
-		my ($key) = $out =~ /^\s*PreSharedKey\s*=\s*(\S+)\s*$/m;
-		return { found => 1, ssid => $ssid, passphrase => ($key // ''), secure => 1 };
-	}
-	return {};
+	my $path = iwd_network_path($ssid, 1);
+	return {} unless -e $path;
+	my $out = read_private_file($path);
+	return {} unless length $out;
+	my ($key) = $out =~ /^\s*(?:PreSharedKey|Passphrase)\s*=\s*(\S+)\s*$/m;
+	return { found => 1, ssid => $ssid, passphrase => ($key // ''), secure => 1 };
 }
 
 # A Wi-Fi link's strength. iw is the direct answer; /proc/net/wireless is the
@@ -937,7 +1281,7 @@ sub wifi_scan_nmcli {
 }
 
 sub wifi_connect {
-	my ($interface, $ssid, $passphrase, $method, $address, $prefix, $gateway, $dns) = @_;
+	my ($interface, $ssid, $passphrase, $method, $address, $prefix, $gateway, $dns, $mode) = @_;
 	$ssid = utf8_text($ssid);
 	return { ok => 0, error => 'That interface name is not valid.' } unless valid_interface($interface);
 	return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($ssid);
@@ -945,27 +1289,127 @@ sub wifi_connect {
 		unless valid_passphrase($passphrase);
 	my $options = addressing_options($method, $address, $prefix, $gateway, $dns);
 	return { ok => 0, error => $options->{'error'} } if $options->{'error'};
+
+	$mode = lc(trim(defined $mode ? $mode : ''));
+	if (!length $mode) {
+		# The old two-argument callers keep their behaviour: a typed passphrase is
+		# worth keeping, an empty one reuses a stored secret or opens the network.
+		if (length $passphrase) { $mode = 'store'; }
+		elsif (secret_present_raw($ssid)) { $mode = 'use'; }
+		else { $mode = 'none'; }
+	}
+	return { ok => 0, error => 'The passphrase mode is store, use or none.' }
+		unless $mode eq 'store' || $mode eq 'use' || $mode eq 'none';
+	if ($mode eq 'use' && length $passphrase) {
+		return { ok => 0, error => 'The use mode reads the stored passphrase; leave stdin empty.' };
+	}
+
+	my $creds = creds_path();
+	if ($mode eq 'use') {
+		my $decrypted = decrypt_secret($ssid);
+		if ($decrypted->{'error'}) {
+			# No keyring copy. The stack may still hold an open network or its
+			# own saved credential; let it try rather than refusing the join.
+			my $fallback = connect_with_stack($interface, $ssid, '', $options, 'none');
+			if ($fallback->{'ok'}) {
+				$fallback->{'secret_stored'} = 0;
+				$fallback->{'secret_source'} = 'none';
+			}
+			return $fallback;
+		}
+		$passphrase = $decrypted->{'passphrase'};
+		my $answer = connect_with_stack($interface, $ssid, $passphrase, $options, 'use');
+		if ($answer->{'ok'}) {
+			scrub_connected_stack($ssid, $answer->{'stack'});
+			$answer->{'secret_stored'} = 1;
+			$answer->{'secret_source'} = 'store';
+		}
+		return $answer;
+	}
+
+	if ($mode eq 'store' && length $passphrase && $creds) {
+		my $answer = connect_with_stack($interface, $ssid, $passphrase, $options, 'store');
+		return $answer unless $answer->{'ok'};
+		my $encrypted = encrypt_secret($ssid, $passphrase);
+		if ($encrypted->{'ok'}) {
+			# Only now is the stack's copy redundant. A failed store leaves the
+			# key where it is, so the connection still works the old way.
+			scrub_connected_stack($ssid, $answer->{'stack'});
+			$answer->{'secret_stored'} = 1;
+			$answer->{'secret_source'} = 'store';
+		}
+		else {
+			# Encryption failed after a successful connect. Put the stack's own
+			# copy back exactly where the old path kept it, so auto-connect still
+			# works without the keyring.
+			stack_store_secret($ssid, $passphrase, $answer->{'stack'});
+			$answer->{'secret_stored'} = 0;
+			$answer->{'secret_source'} = 'stack';
+			$answer->{'warning'} = $encrypted->{'error'}
+				|| 'The passphrase could not be stored; the Wi-Fi stack keeps it.';
+		}
+		return $answer;
+	}
+
+	# store without a usable keyring keeps the legacy stack copy, and none never
+	# had a keyring copy at all.
+	my $answer = connect_with_stack($interface, $ssid, $passphrase, $options, 'none');
+	if ($answer->{'ok'}) {
+		$answer->{'secret_stored'} = 0;
+		$answer->{'secret_source'} = 'none';
+		$answer->{'warning'} = 'systemd-creds is not installed; the passphrase stays with the Wi-Fi stack.'
+			if $mode eq 'store' && length $passphrase && !$creds;
+	}
+	return $answer;
+}
+
+sub scrub_connected_stack {
+	my ($ssid, $stack) = @_;
+	return iwd_scrub($ssid) if ($stack // '') eq 'iwd';
+	return nm_scrub_secret($ssid) if ($stack // '') eq 'nm';
+	return stack_scrub_secret($ssid);
+}
+
+sub connect_with_stack {
+	my ($interface, $ssid, $passphrase, $options, $mode) = @_;
 	# iwd first: it is the stack the live image configures. A NetworkManager
 	# machine with no iwctl gets the same choices through nmcli.
-	return wifi_connect_iwd($interface, $ssid, $passphrase, $options) if find_command('iwctl');
-	return wifi_connect_nmcli($interface, $ssid, $passphrase, $options) if find_command('nmcli');
+	return wifi_connect_iwd($interface, $ssid, $passphrase, $options, $mode) if find_command('iwctl');
+	return wifi_connect_nmcli($interface, $ssid, $passphrase, $options, $mode) if find_command('nmcli');
 	return { ok => 0, error => 'No WiFi tool is installed (iwctl or nmcli).' };
 }
 
 sub wifi_connect_iwd {
-	my ($interface, $ssid, $passphrase, $options) = @_;
+	my ($interface, $ssid, $passphrase, $options, $mode) = @_;
 	# The address settings are written before the association, so networkd has
 	# them when the link comes up.
 	my $prepared = prepare_iwd_addressing($interface, $ssid, $options);
 	return { ok => 0, error => $prepared->{'error'} } if $prepared->{'error'};
-	my @command = ('iwctl', '--dont-ask');
-	# iwctl exposes no non-interactive stdin form, so the passphrase reaches it
-	# as an argument. iwd stores the credential in its own known-network file
-	# under /var/lib/iwd (root-only); the app never writes it into /etc.
-	push @command, '--passphrase=' . $passphrase if defined $passphrase && length $passphrase;
-	push @command, 'station', $interface, 'connect', $ssid;
-	my ($stdout, $stderr, $status) = run_write(undef, @command);
+
+	my ($stdout, $stderr, $status);
+	my ($path, $prior);
+	if ($mode eq 'none') {
+		# The legacy path: iwd itself writes the known network, and its own file
+		# keeps the key and auto-connect. This is the shape a machine that has
+		# no systemd-creds (or asked to keep its stack copy) relies on.
+		my @command = ('iwctl', '--dont-ask');
+		push @command, '--passphrase=' . $passphrase if defined $passphrase && length $passphrase;
+		push @command, 'station', $interface, 'connect', $ssid;
+		($stdout, $stderr, $status) = run_write(undef, @command);
+	}
+	else {
+		# iwctl has no non-interactive stdin form, so the key reaches it through
+		# the network file it reads. It is 0600 and starts with AutoConnect off;
+		# once the key is stored (or reused) the [Security] group is removed.
+		$path = iwd_network_path($ssid, length($passphrase) ? 1 : 0);
+		$prior = -e $path ? read_private_file($path) : undef;
+		return { ok => 0, error => 'Could not write the Wi-Fi profile.' }
+			unless iwd_write_text($path, iwd_network_text($ssid, $passphrase, 0));
+		($stdout, $stderr, $status) = run_write(undef, 'iwctl', '--dont-ask',
+			'station', $interface, 'connect', $ssid);
+	}
 	if ($status != 0) {
+		restore_iwd_file($path, $prior) if defined $path;
 		my $message = clean($stderr) || clean($stdout) || ('Could not connect to ' . $ssid . '.');
 		return { ok => 0, error => $message };
 	}
@@ -979,14 +1423,22 @@ sub wifi_connect_iwd {
 			last;
 		}
 	}
-	if ($connected) {
-		my $finished = finish_iwd_addressing($interface, $options);
-		return { ok => 0, error => $finished->{'error'} } if $finished->{'error'};
-		return { ok => 1, message => connection_message($ssid, $options) };
+	if (!$connected) {
+		restore_iwd_file($path, $prior) if defined $path;
+		my $message = clean($stderr) || clean($stdout);
+		$message = 'Could not connect to ' . $ssid . '.' unless length $message;
+		return { ok => 0, error => $message };
 	}
-	my $message = clean($stderr) || clean($stdout);
-	$message = 'Could not connect to ' . $ssid . '.' unless length $message;
-	return { ok => 0, error => $message };
+	my $finished = finish_iwd_addressing($interface, $options);
+	return { ok => 0, error => $finished->{'error'} } if $finished->{'error'};
+	return { ok => 1, message => connection_message($ssid, $options), stack => 'iwd' };
+}
+
+sub restore_iwd_file {
+	my ($path, $prior) = @_;
+	return unless defined $path;
+	if (defined $prior) { write_private_file($path, $prior); }
+	else { unlink $path; }
 }
 
 # On the live image systemd-networkd owns the address. One drop-in per SSID
@@ -1078,8 +1530,12 @@ sub nmcli_profile_for_ssid {
 	return undef;
 }
 
+# NetworkManager keeps a profile, not a secret, when JawnOS holds the key. The
+# PSK reaches the activation through a 0600 passwd-file, which is unlinked as
+# soon as nmcli returns. psk-flags 1 says the profile has no system copy left.
 sub wifi_connect_nmcli {
-	my ($interface, $ssid, $passphrase, $options) = @_;
+	my ($interface, $ssid, $passphrase, $options, $mode) = @_;
+	my $managed = $mode eq 'store' || $mode eq 'use';
 	# Reuse a profile that already carries this SSID, so a saved passphrase is
 	# used instead of being replaced by a second, empty profile. Our own
 	# derived name is preferred when it exists.
@@ -1094,12 +1550,20 @@ sub wifi_connect_nmcli {
 			unless $status == 0;
 	}
 	my @modify = ('nmcli', 'connection', 'modify', $name);
-	# nmcli likewise takes the PSK as a setting value. NetworkManager keeps it
-	# in its own profile under /etc/NetworkManager/system-connections (0600,
-	# root-only); the JawnOS address drop-in carries no secret.
-	# An empty passphrase means "use what the profile already has". Writing
-	# key-mgmt=none here would throw a saved credential away.
-	push @modify, 'wifi-sec.key-mgmt', 'wpa-psk', 'wifi-sec.psk', $passphrase if length $passphrase;
+	if ($managed) {
+		# Nothing typed here may stay in the profile or in argv. An open
+		# network has no security group to write.
+		push @modify, 'connection.autoconnect', 'no';
+		push @modify, 'wifi-sec.key-mgmt', 'wpa-psk', 'wifi-sec.psk-flags', '1',
+			'wifi-sec.psk', '' if length $passphrase;
+	}
+	else {
+		# Legacy: an empty passphrase means "use what the profile already has".
+		# A typed one is system-owned (psk-flags 0) and supplied at activation.
+		push @modify, 'connection.autoconnect', 'yes';
+		push @modify, 'wifi-sec.key-mgmt', 'wpa-psk', 'wifi-sec.psk-flags', '0'
+			if length $passphrase;
+	}
 	if ($options->{'method'} eq 'static') {
 		push @modify,
 			'ipv4.method', 'manual',
@@ -1122,10 +1586,108 @@ sub wifi_connect_nmcli {
 	($stdout, $stderr, $status) = run_write(undef, @modify);
 	return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not save the connection settings.' }
 		unless $status == 0;
-	($stdout, $stderr, $status) = run_write(undef, 'nmcli', '--wait', '30', 'connection', 'up', $name);
+	if (length $passphrase) {
+		my ($fh, $tmp) = tempfile('jawnos-nm-XXXXXX', TMPDIR => 1, UNLINK => 0);
+		return { ok => 0, error => 'Could not prepare the passphrase.' } unless $fh;
+		binmode $fh;
+		print {$fh} '802-11-wireless-security.psk:' . $passphrase . "\n";
+		close $fh;
+		chmod 0600, $tmp;
+		($stdout, $stderr, $status) = run_write(undef, 'nmcli', '--wait', '30',
+			'connection', 'up', $name, 'passwd-file', $tmp);
+		unlink $tmp;
+	}
+	else {
+		($stdout, $stderr, $status) = run_write(undef, 'nmcli', '--wait', '30', 'connection', 'up', $name);
+	}
 	return { ok => 0, error => clean($stderr) || clean($stdout) || ('Could not connect to ' . $ssid . '.') }
 		unless $status == 0;
-	return { ok => 1, message => connection_message($ssid, $options) };
+	nm_scrub_keyfile($name) if $managed;
+	return { ok => 1, message => connection_message($ssid, $options), stack => 'nm' };
+}
+
+# Best effort: the keyfile NetworkManager wrote for this profile must not carry
+# the key either. We only touch a file we can find and read; a profile kept
+# somewhere else is left to nmcli's own psk-flags.
+sub nm_keyfile_path {
+	my ($name) = @_;
+	my $dir = defined $ENV{'JAWNOS_NM_DIR'} && length $ENV{'JAWNOS_NM_DIR'}
+		? $ENV{'JAWNOS_NM_DIR'} : '/etc/NetworkManager/system-connections';
+	# The derived name is the file NetworkManager writes for our profile. Read it
+	# through the sudo fallback; a profile kept under another name is found by
+	# scanning, which needs a readable directory.
+	my $direct = $dir . '/' . $name . '.nmconnection';
+	return $direct if length read_private_file($direct);
+	foreach my $path ( glob($dir . '/*.nmconnection') ) {
+		my ($base) = $path =~ m{([^/]+)\.nmconnection\z};
+		return $path if defined $base && $base eq $name;
+		my $text = read_private_file($path);
+		return $path if $text =~ /^\s*id\s*=\s*\Q$name\E\s*$/m;
+	}
+	return undef;
+}
+
+sub nm_scrub_keyfile {
+	my ($name) = @_;
+	my $path = nm_keyfile_path($name);
+	return 0 unless defined $path;
+	my $text = read_private_file($path);
+	return 0 unless length $text;
+	my @groups = split /(?=^\[)/m, $text;
+	my $changed = 0;
+	my @kept;
+	foreach my $group (@groups) {
+		if ($group =~ /^\[wifi-security\]/) {
+			my @lines = split /\n/, $group;
+			my @body = (shift @lines);
+			my $flags = 0;
+			foreach my $line (@lines) {
+				if ($line =~ /^\s*psk\s*=/) { $changed = 1; next; }
+				if ($line =~ /^\s*psk-flags\s*=/) {
+					$line = 'psk-flags=1';
+					$flags = 1;
+					$changed = 1;
+				}
+				push @body, $line;
+			}
+			if (!$flags) { push @body, 'psk-flags=1'; $changed = 1; }
+			$group = join("\n", @body);
+			$group .= "\n" unless $group =~ /\n\z/;
+		}
+		push @kept, $group;
+	}
+	return 1 unless $changed;
+	return write_private_file($path, join('', @kept)) ? 1 : 0;
+}
+
+sub nm_scrub_secret {
+	my ($ssid) = @_;
+	my $name = nmcli_profile_for_ssid($ssid);
+	return 1 unless defined $name;
+	my ($stdout, $stderr, $status) = run_write(undef, 'nmcli', 'connection', 'modify', $name,
+		'wifi-sec.psk-flags', '1', 'wifi-sec.psk', '', 'connection.autoconnect', 'no');
+	nm_scrub_keyfile($name);
+	return $status == 0 ? 1 : 0;
+}
+
+# The inverse of a scrub: the stack owns the key again and may join on its own.
+sub nm_store_secret {
+	my ($ssid, $passphrase) = @_;
+	my $name = nmcli_profile_for_ssid($ssid);
+	return 0 unless defined $name;
+	my ($stdout, $stderr, $status) = run_write(undef, 'nmcli', 'connection', 'modify', $name,
+		'wifi-sec.key-mgmt', 'wpa-psk', 'wifi-sec.psk-flags', '0', 'connection.autoconnect', 'yes');
+	return 0 unless $status == 0;
+	my ($fh, $tmp) = tempfile('jawnos-nm-XXXXXX', TMPDIR => 1, UNLINK => 0);
+	return 0 unless $fh;
+	binmode $fh;
+	print {$fh} '802-11-wireless-security.psk:' . $passphrase . "\n";
+	close $fh;
+	chmod 0600, $tmp;
+	($stdout, $stderr, $status) = run_write(undef, 'nmcli', '--wait', '30',
+		'connection', 'up', $name, 'passwd-file', $tmp);
+	unlink $tmp;
+	return $status == 0 ? 1 : 0;
 }
 
 sub wifi_disconnect {
@@ -1146,11 +1708,16 @@ sub wifi_forget {
 	my ($ssid) = @_;
 	$ssid = utf8_text($ssid);
 	return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($ssid);
+	# The keyring copy is forgotten with the saved network; a stack that has no
+	# entry for it must not leave a secret behind either.
+	my $cleared = 0;
+	$cleared = remove_root_file(secret_path($ssid)) ? 1 : 0 if secret_present_raw($ssid);
 	if (find_command('iwctl')) {
 		my ($stdout, $stderr, $status) = run_write(undef, 'iwctl', 'known-networks', $ssid, 'forget');
-		return { ok => 1, message => 'Forgot ' . $ssid . '.' } if $status == 0;
+		return { ok => 1, message => 'Forgot ' . $ssid . '.' } if $status == 0 || $cleared;
 		return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not forget that network.' };
 	}
+	return { ok => 1, message => 'Forgot ' . $ssid . '.' } if !find_command('nmcli') && $cleared;
 	return { ok => 0, error => 'iwd is not installed.' } unless find_command('nmcli');
 	# Our own profile carries a derived name; a profile a person made in
 	# NetworkManager may carry any name with this SSID. Try the profile that
@@ -1163,7 +1730,7 @@ sub wifi_forget {
 		my ($stdout, $stderr, $status) = run_write(undef, 'nmcli', 'connection', 'delete', $name);
 		$forgot = 1 if $status == 0;
 	}
-	return { ok => 1, message => 'Forgot ' . $ssid . '.' } if $forgot;
+	return { ok => 1, message => 'Forgot ' . $ssid . '.' } if $forgot || $cleared;
 	return { ok => 0, error => 'No saved connection for ' . $ssid . '.' };
 }
 
@@ -1198,6 +1765,533 @@ sub unit_active {
 	my ($unit) = @_;
 	my ($stdout, $stderr, $status) = run_read('systemctl', 'is-active', '--quiet', $unit);
 	return $status == 0 ? 1 : 0;
+}
+
+sub unit_enabled {
+	my ($unit) = @_;
+	return 0 unless find_command('systemctl');
+	my ($stdout, $stderr, $status) = run_read('systemctl', 'is-enabled', '--quiet', $unit);
+	return $status == 0 ? 1 : 0;
+}
+
+# Which stack owns the addresses. systemd reports it directly; without systemd
+# the installed tool is the only honest answer. iwd is checked before
+# NetworkManager when both are installed, because that is the house's stack.
+sub network_stack {
+	if (find_command('systemctl')) {
+		return 'nm' if unit_active('NetworkManager');
+		return 'iwd' if unit_active('iwd');
+		return 'networkd' if unit_active('systemd-networkd');
+	}
+	return 'iwd' if find_command('iwctl');
+	return 'nm' if find_command('nmcli');
+	return 'networkd' if find_command('networkctl');
+	return 'none';
+}
+
+my @COMPETITOR_UNITS = qw(dhcpcd connman);
+
+sub dry_run_answer {
+	my ($commands) = @_;
+	return { ok => 1, dry_run => 1, command => $commands };
+}
+
+# The daemons JawnOS may stop, and only these: NetworkManager, iwd and
+# systemd-networkd are never taken over.
+sub manager_report {
+	my $systemctl = find_command('systemctl');
+	my @units;
+	if ($systemctl) {
+		push @units, 'NetworkManager' if unit_active('NetworkManager');
+		push @units, 'iwd' if unit_active('iwd');
+		push @units, 'systemd-networkd' if unit_active('systemd-networkd');
+	}
+	else {
+		push @units, 'NetworkManager' if find_command('nmcli');
+		push @units, 'iwd' if find_command('iwctl');
+		push @units, 'systemd-networkd' if find_command('networkctl');
+	}
+	my @competitors;
+	foreach my $unit (@COMPETITOR_UNITS) {
+		if ($systemctl) { push @competitors, $unit if unit_active($unit); }
+		else { push @competitors, $unit if find_command($unit); }
+	}
+	my $supported = ($systemctl || @units) ? 1 : 0;
+	return {
+		ok => 1,
+		supported => $supported,
+		stack => network_stack(),
+		units => \@units,
+		competitors => \@competitors,
+	};
+}
+
+# Power-style ledger, restricted to the two legacy daemons. An enabled unit is
+# enabled and started again; a disabled one is only started. Missing units are
+# reported, not failed, so a removed package cannot keep the ledger alive.
+sub network_takeover {
+	my $systemctl = find_command('systemctl');
+	return { ok => 1, supported => 0, reason => 'no systemctl', stopped => [], records => [] }
+		unless $systemctl;
+	return dry_run_answer([ map { [ $systemctl, 'stop', $_ ] } @COMPETITOR_UNITS ]) if $DRY;
+	my (@stopped, @failed, @records);
+	foreach my $unit (@COMPETITOR_UNITS) {
+		next unless unit_active($unit);
+		my $enabled = unit_enabled($unit);
+		my ($stdout, $stderr, $status) = run_write(undef, 'systemctl', 'stop', $unit);
+		if ($status == 0) {
+			push @stopped, $unit;
+			push @records, { unit => $unit, enabled => $enabled };
+		}
+		else { push @failed, $unit; }
+	}
+	return { ok => 0, error => 'permission', needs_sudo => 1,
+		stopped => \@stopped, failed => \@failed, records => \@records } if @failed;
+	return { ok => 1, stopped => \@stopped, failed => [], records => \@records };
+}
+
+sub network_restore {
+	my ($text) = @_;
+	my $records = eval { $JSON->decode(defined $text ? $text : '') };
+	return { ok => 0, error => 'unreadable restore list' } unless ref $records eq 'ARRAY';
+	my %allowed = map { $_ => 1 } @COMPETITOR_UNITS;
+	my @clean = grep {
+		ref $_ eq 'HASH' && defined $_->{'unit'} && $allowed{ $_->{'unit'} }
+	} @{$records};
+	return { ok => 1, restored => [], failed => [], missing => [] } unless @clean;
+	my $systemctl = find_command('systemctl');
+	return { ok => 1, supported => 0, reason => 'no systemctl', restored => [], missing => [] }
+		unless $systemctl;
+	if ($DRY) {
+		return dry_run_answer([ map {
+			$_->{'enabled'}
+				? [ $systemctl, 'enable', '--now', $_->{'unit'} ]
+				: [ $systemctl, 'start', $_->{'unit'} ]
+		} @clean ]);
+	}
+	my (@restored, @failed, @missing);
+	foreach my $record (@clean) {
+		my $unit = $record->{'unit'};
+		my ($cat, $cat_err, $cat_status) = run_read('systemctl', 'cat', '--no-pager', $unit);
+		if ($cat_status != 0) { push @missing, $unit; next; }
+		my @args = $record->{'enabled'}
+			? ('systemctl', 'enable', '--now', $unit)
+			: ('systemctl', 'start', $unit);
+		my ($stdout, $stderr, $status) = run_write(undef, @args);
+		if ($status == 0) { push @restored, $unit; }
+		else { push @failed, $unit; }
+	}
+	return { ok => 0, error => 'permission', needs_sudo => 1,
+		restored => \@restored, failed => \@failed, missing => \@missing } if @failed;
+	return { ok => 1, restored => \@restored, failed => [], missing => \@missing };
+}
+
+# The stack's copy is unnecessary once the keyring holds the key. The answer is
+# a best effort: a stack whose file cannot be read keeps its own copy.
+sub stack_scrub_secret {
+	my ($ssid) = @_;
+	my $stack = network_stack();
+	if ($stack eq 'iwd') { iwd_scrub($ssid); return 1; }
+	if ($stack eq 'nm') { return nm_scrub_secret($ssid); }
+	if (find_command('iwctl')) { iwd_scrub($ssid); return 1; }
+	if (find_command('nmcli')) { return nm_scrub_secret($ssid); }
+	return 0;
+}
+
+sub stack_store_secret {
+	my ($ssid, $passphrase, $stack) = @_;
+	$stack = network_stack() unless defined $stack;
+	return iwd_store_network($ssid, $passphrase) if $stack eq 'iwd';
+	return nm_store_secret($ssid, $passphrase) if $stack eq 'nm';
+	return iwd_store_network($ssid, $passphrase) if find_command('iwctl');
+	return nm_store_secret($ssid, $passphrase) if find_command('nmcli');
+	return 0;
+}
+
+# --- the watch answer --------------------------------------------------------
+# One call every 60s. It reuses the same readers the status page uses and never
+# starts a scan. The boot id lets the caller notice a reboot without a second
+# round trip; the test hook pins it.
+sub network_boot_id {
+	return $ENV{'JAWNOS_NETWORK_BOOT_ID'} if defined $ENV{'JAWNOS_NETWORK_BOOT_ID'} && length $ENV{'JAWNOS_NETWORK_BOOT_ID'};
+	return trim(slurp('/proc/sys/kernel/random/boot_id'));
+}
+
+sub default_gateways {
+	my ($stdout, $stderr, $status) = run_read('ip', '-j', 'route', 'show', 'default');
+	my $list = eval { $JSON->decode($stdout) };
+	return {} unless ref $list eq 'ARRAY';
+	my %gateway;
+	foreach my $route ( @{$list} ) {
+		next unless ref $route eq 'HASH';
+		my $dev = $route->{'dev'} || '';
+		my $via = $route->{'gateway'} || '';
+		$gateway{$dev} = $via if length $dev && length $via;
+	}
+	return %gateway;
+}
+
+# resolvectl's per-link answer, then nmcli's. Anything that is not an address
+# is dropped, and a missing tool is an empty list, never an error.
+sub interface_dns {
+	my ($name) = @_;
+	if (find_command('resolvectl')) {
+		my ($out, $err, $status) = run_read('resolvectl', 'dns', $name);
+		if ($status == 0) {
+			my @servers;
+			if ($out =~ /:\s*(.+)$/m) {
+				foreach my $token ( split /\s+/, $1 ) {
+					(my $address = $token) =~ s/#.*\z//;
+					push @servers, $address if ip_family($address);
+				}
+			}
+			return \@servers;
+		}
+	}
+	if (find_command('nmcli')) {
+		my ($out, $err, $status) = run_read('nmcli', '-g', 'IP4.DNS', 'device', 'show', $name);
+		if ($status == 0) {
+			my @servers = grep { ip_family($_) } map { trim($_) } split /\n/, (defined $out ? $out : '');
+			return \@servers;
+		}
+	}
+	return [];
+}
+
+sub watch_report {
+	my $interfaces = interface_report();
+	my %gateway = default_gateways();
+	my @answer;
+	foreach my $interface ( @{$interfaces} ) {
+		my $name = $interface->{'name'} || '';
+		next unless length $name && $name ne 'lo';
+		my $wireless = $interface->{'wireless'} ? 1 : 0;
+		my $pick = @{ $interface->{'ipv4'} || [] } ? $interface->{'ipv4'}->[0]
+			: (@{ $interface->{'ipv6'} || [] } ? $interface->{'ipv6'}->[0] : undef);
+		push @answer, {
+			name => $name,
+			state => $interface->{'state'} || 'unknown',
+			kind => $wireless ? 'wifi' : 'ethernet',
+			ssid => $wireless ? connected_ssid($name) : '',
+			method => $interface->{'method'} || 'none',
+			address => $pick ? ($pick->{'address'} || '') : '',
+			prefix => $pick ? ($pick->{'prefix'} || '') : '',
+			gateway => $gateway{$name} || '',
+			dns => interface_dns($name),
+			wireless => $wireless,
+		};
+	}
+	my $manager = manager_report();
+	return {
+		ok => 1,
+		boot => network_boot_id(),
+		stack => $manager->{'stack'},
+		interfaces => \@answer,
+		manager => $manager,
+	};
+}
+
+# --- named profiles ----------------------------------------------------------
+# A profile is a Wi-Fi SSID or an ethernet interface. JawnOS owns only the file
+# it wrote: the header below is the whole ownership test, so a person's own
+# unit or NetworkManager profile is never removed.
+sub normalize_profile_kind {
+	my ($kind) = @_;
+	$kind = lc(trim(defined $kind ? $kind : ''));
+	return 'wifi' if $kind eq 'wifi' || $kind eq 'wireless' || $kind eq 'wlan';
+	return 'ethernet' if $kind eq 'ethernet' || $kind eq 'wired' || $kind eq 'eth';
+	return '';
+}
+
+sub networkd_owned {
+	my ($text) = @_;
+	return defined $text && $text =~ /\A# Written by the JawnOS Network app\./ ? 1 : 0;
+}
+
+sub profile_unit_path {
+	my ($kind, $key) = @_;
+	return networkd_unit_path($key) if $kind eq 'wifi';
+	return networkd_dir() . '/10-jawnos-eth-' . substr(sha1_hex(encode_utf8($key)), 0, 16) . '.network';
+}
+
+sub networkd_body_lines {
+	my ($options) = @_;
+	my @lines;
+	if ($options->{'method'} eq 'static') {
+		push @lines, 'DHCP=no';
+		push @lines, 'Address=' . $options->{'address'} . '/' . $options->{'prefix'};
+		push @lines, 'Gateway=' . $options->{'gateway'} if length $options->{'gateway'};
+	}
+	else {
+		push @lines, 'DHCP=yes';
+	}
+	if (@{ $options->{'dns'} }) {
+		push @lines, 'DNS=' . join(' ', @{ $options->{'dns'} });
+		push @lines, '', '[DHCP]', 'UseDNS=no' if $options->{'method'} ne 'static';
+	}
+	return @lines;
+}
+
+sub profile_unit_text {
+	my ($kind, $key, $interface, $options) = @_;
+	return networkd_unit_text($interface, $key, $options) if $kind eq 'wifi';
+	my @lines = (
+		'# Written by the JawnOS Network app. Remove this file to return to DHCP.',
+		'[Match]',
+		'Name=' . $interface,
+		'',
+		'[Network]',
+		networkd_body_lines($options),
+	);
+	return encode_utf8(join("\n", @lines) . "\n");
+}
+
+# What a drop-in currently says, so a re-apply can name the fields that really
+# changed instead of rewriting the file on every watch.
+sub networkd_options_from_text {
+	my ($text) = @_;
+	my $options = { method => 'dhcp', address => '', prefix => '', gateway => '', dns => [] };
+	my $section = '';
+	foreach my $line ( split /\n/, (defined $text ? $text : '') ) {
+		if ($line =~ /^\s*\[([^\]]+)\]/) { $section = lc($1); next; }
+		next if $line =~ /^\s*[#;]/;
+		next unless $section eq 'network';
+		$options->{'method'} = 'static' if $line =~ /^\s*DHCP\s*=\s*no\b/i;
+		if ($line =~ /^\s*Address\s*=\s*(\S+?)\/(\d+)\s*$/) {
+			$options->{'address'} = $1;
+			$options->{'prefix'} = $2;
+			$options->{'method'} = 'static';
+		}
+		$options->{'gateway'} = $1 if $line =~ /^\s*Gateway\s*=\s*(\S+)/;
+		if ($line =~ /^\s*DNS\s*=\s*(.+)$/) { $options->{'dns'} = [ networkd_words($1) ]; }
+	}
+	return $options;
+}
+
+sub options_changed_fields {
+	my ($current, $options) = @_;
+	my @changed;
+	push @changed, 'method' if $current->{'method'} ne $options->{'method'};
+	if ($options->{'method'} eq 'static') {
+		push @changed, 'address'
+			if $current->{'address'} ne $options->{'address'} || $current->{'prefix'} ne $options->{'prefix'};
+		push @changed, 'gateway' if $current->{'gateway'} ne $options->{'gateway'};
+	}
+	push @changed, 'dns'
+		if join(' ', @{ $current->{'dns'} || [] }) ne join(' ', @{ $options->{'dns'} || [] });
+	return @changed;
+}
+
+sub profile_apply {
+	my ($kind, $key, $interface, $method, $address, $prefix, $gateway, $dns) = @_;
+	$kind = normalize_profile_kind($kind);
+	return { ok => 0, error => 'The profile kind is wifi or ethernet.' } unless length $kind;
+	$key = utf8_text($key);
+	if ($kind eq 'wifi') {
+		return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($key);
+	}
+	elsif (!defined $key || $key !~ /\A[A-Za-z0-9_.: -]{1,64}\z/) {
+		return { ok => 0, error => 'That profile name is not valid.' };
+	}
+	return { ok => 0, error => 'That interface name is not valid.' } unless valid_interface($interface);
+	my $options = addressing_options($method, $address, $prefix, $gateway, $dns);
+	return { ok => 0, error => $options->{'error'} } if $options->{'error'};
+	# Match the connect path: iwd wins when it is installed; its addresses are
+	# networkd's (or the imperative fallback), and a pure NetworkManager machine
+	# uses nmcli.
+	return profile_apply_nm($kind, $key, $interface, $options)
+		if !find_command('iwctl') && find_command('nmcli');
+	return profile_apply_networkd($kind, $key, $interface, $options) if find_command('networkctl');
+	return profile_apply_imperative($kind, $key, $interface, $options) if find_command('ip');
+	return { ok => 0, error => 'No network tool is installed.' };
+}
+
+sub profile_apply_networkd {
+	my ($kind, $key, $interface, $options) = @_;
+	my $path = profile_unit_path($kind, $key);
+	my $custom = ($options->{'method'} eq 'static' || @{ $options->{'dns'} }) ? 1 : 0;
+	if (!$custom) {
+		return { ok => 1, applied => 0, changed => [], stack => 'networkd' } unless -e $path;
+		my $text = read_private_file($path);
+		return { ok => 1, applied => 0, changed => [], stack => 'networkd' } unless networkd_owned($text);
+		if ($DRY) {
+			return dry_run_answer([ [ 'rm', '-f', $path ], [ 'networkctl', 'reload' ],
+				[ 'networkctl', 'reconfigure', $interface ] ]);
+		}
+		return { ok => 0, error => 'Could not remove the address settings.' } unless remove_root_file($path);
+		run_write(undef, 'networkctl', 'reload');
+		run_write(undef, 'networkctl', 'reconfigure', $interface);
+		return { ok => 1, applied => 1, changed => ['profile'], stack => 'networkd' };
+	}
+	my $intended = profile_unit_text($kind, $key, $interface, $options);
+	my $current = -e $path ? read_private_file($path) : '';
+	if (length $current && $current eq $intended) {
+		return { ok => 1, applied => 0, changed => [], stack => 'networkd' };
+	}
+	my @changed = length $current
+		? options_changed_fields(networkd_options_from_text($current), $options)
+		: ();
+	@changed = ('profile') unless @changed;
+	if ($DRY) {
+		return dry_run_answer([ [ 'install', '-m', '0644', '-', $path ],
+			[ 'networkctl', 'reload' ], [ 'networkctl', 'reconfigure', $interface ] ]);
+	}
+	return { ok => 0, error => 'Could not save the address settings.' }
+		unless write_root_file($path, $intended);
+	run_write(undef, 'networkctl', 'reload');
+	run_write(undef, 'networkctl', 'reconfigure', $interface);
+	return { ok => 1, applied => 1, changed => \@changed, stack => 'networkd' };
+}
+
+sub nmcli_profile_for_key {
+	my ($kind, $key) = @_;
+	return nmcli_profile_for_ssid($key) if $kind eq 'wifi';
+	my $derived = nmcli_profile_name($key);
+	my ($list, $err, $status) = run_privileged_read('nmcli', '--terse', '--fields', 'NAME,TYPE', 'connection', 'show');
+	return undef unless $status == 0;
+	foreach my $line ( split /\n/, (defined $list ? $list : '') ) {
+		my @fields = split /(?<!\\):/, $line, 2;
+		return $derived if @fields && $fields[0] eq $derived;
+	}
+	return undef;
+}
+
+sub nmcli_profile_values {
+	my ($name) = @_;
+	my ($out, $err, $status) = run_privileged_read('nmcli', '--terse', '--get-values',
+		'ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns', 'connection', 'show', $name);
+	return undef unless $status == 0;
+	my @lines = split /\n/, (defined $out ? $out : ''), -1;
+	my ($method, $addresses, $gateway, $dns) = @lines[0 .. 3];
+	my ($address, $prefix) = ('', '');
+	($address, $prefix) = ($1, $2) if defined $addresses && $addresses =~ /(\d+\.\d+\.\d+\.\d+)\/(\d+)/;
+	my @servers = grep { length } split /[,\s]+/, (defined $dns ? $dns : '');
+	return {
+		method => (defined $method && $method =~ /manual/ ? 'static' : 'dhcp'),
+		address => $address,
+		prefix => $prefix,
+		gateway => (defined $gateway ? $gateway : ''),
+		dns => \@servers,
+	};
+}
+
+sub profile_apply_nm {
+	my ($kind, $key, $interface, $options) = @_;
+	my $name = nmcli_profile_for_key($kind, $key);
+	my $exists = defined $name;
+	$name = nmcli_profile_name($key) unless $exists;
+	my @commands;
+	if (!$exists) {
+		my @add = ('nmcli', 'connection', 'add', 'type', ($kind eq 'wifi' ? 'wifi' : 'ethernet'),
+			'con-name', $name, 'ifname', $interface);
+		push @add, ('ssid', $key) if $kind eq 'wifi';
+		push @commands, \@add;
+		unless ($DRY) {
+			my ($stdout, $stderr, $status) = run_write(undef, @add);
+			return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not create the connection.' }
+				unless $status == 0;
+		}
+	}
+	my $current = $exists ? nmcli_profile_values($name) : undef;
+	my @changed = $current ? options_changed_fields($current, $options) : ();
+	return { ok => 1, applied => 0, changed => [], stack => 'nm' } if $exists && !@changed;
+	@changed = ('profile') unless @changed;
+	my @modify = ('nmcli', 'connection', 'modify', $name);
+	if ($options->{'method'} eq 'static') {
+		push @modify, 'ipv4.method', 'manual',
+			'ipv4.addresses', $options->{'address'} . '/' . $options->{'prefix'};
+		push @modify, 'ipv4.gateway', $options->{'gateway'} if length $options->{'gateway'};
+		push @modify, 'ipv4.ignore-auto-dns', 'yes';
+		push @modify, 'ipv4.dns', join(',', @{ $options->{'dns'} }) if @{ $options->{'dns'} };
+	}
+	else {
+		push @modify, 'ipv4.method', 'auto';
+		if (@{ $options->{'dns'} }) {
+			push @modify, 'ipv4.ignore-auto-dns', 'yes', 'ipv4.dns', join(',', @{ $options->{'dns'} });
+		}
+		else {
+			push @modify, 'ipv4.ignore-auto-dns', 'no', 'ipv4.dns', '';
+		}
+	}
+	push @commands, \@modify, [ 'nmcli', '--wait', '30', 'connection', 'up', $name ];
+	return dry_run_answer(\@commands) if $DRY;
+	my ($stdout, $stderr, $status) = run_write(undef, @modify);
+	return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not save the connection settings.' }
+		unless $status == 0;
+	($stdout, $stderr, $status) = run_write(undef, 'nmcli', '--wait', '30', 'connection', 'up', $name);
+	return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not apply the connection.' }
+		unless $status == 0;
+	return { ok => 1, applied => 1, changed => \@changed, stack => 'nm' };
+}
+
+sub profile_apply_imperative {
+	my ($kind, $key, $interface, $options) = @_;
+	my ($entry) = grep { ($_->{'name'} || '') eq $interface } @{ interface_report() || [] };
+	my $current = { method => 'dhcp', address => '', prefix => '', gateway => '', dns => interface_dns($interface) };
+	my $pick = $entry && @{ $entry->{'ipv4'} || [] } ? $entry->{'ipv4'}->[0] : undef;
+	if ($pick) { $current->{'address'} = $pick->{'address'} || ''; $current->{'prefix'} = $pick->{'prefix'} || ''; }
+	my %gateway = default_gateways();
+	$current->{'gateway'} = $gateway{$interface} || '';
+	# The imperative reader cannot know whether the address came from DHCP or a
+	# static unit, so the method itself is never reported as a change here.
+	$current->{'method'} = $options->{'method'};
+	my @changed = options_changed_fields($current, $options);
+	return { ok => 1, applied => 0, changed => [], stack => 'imperative' } unless @changed;
+	my @commands;
+	if ($options->{'method'} eq 'static') {
+		push @commands, [ 'ip', '-4', 'address', 'flush', 'dev', $interface ],
+			[ 'ip', 'address', 'add', $options->{'address'} . '/' . $options->{'prefix'}, 'dev', $interface ];
+		push @commands, [ 'ip', 'route', 'replace', 'default', 'via', $options->{'gateway'}, 'dev', $interface ]
+			if length $options->{'gateway'};
+	}
+	push @commands, [ 'resolvectl', 'dns', $interface, @{ $options->{'dns'} } ] if @{ $options->{'dns'} };
+	return dry_run_answer(\@commands) if $DRY;
+	my $applied = apply_imperative_addressing($interface, $options);
+	return { ok => 0, error => $applied->{'error'} } if $applied->{'error'};
+	return { ok => 1, applied => 1, changed => \@changed, stack => 'imperative' };
+}
+
+sub profile_remove {
+	my ($kind, $key, $interface) = @_;
+	$kind = normalize_profile_kind($kind);
+	return { ok => 0, error => 'The profile kind is wifi or ethernet.' } unless length $kind;
+	$key = utf8_text($key);
+	if ($kind eq 'wifi') {
+		return { ok => 0, error => 'That network name is not valid.' } unless valid_ssid($key);
+	}
+	elsif (!defined $key || $key !~ /\A[A-Za-z0-9_.: -]{1,64}\z/) {
+		return { ok => 0, error => 'That profile name is not valid.' };
+	}
+	my $stack = network_stack();
+	my $path = profile_unit_path($kind, $key);
+	if (-e $path) {
+		my $text = read_private_file($path);
+		if (networkd_owned($text)) {
+			$interface = $1 if (!defined $interface || !length $interface)
+				&& $text =~ /^\s*Name\s*=\s*(\S+)/m;
+			if ($DRY) {
+				return dry_run_answer([ [ 'rm', '-f', $path ], [ 'networkctl', 'reload' ],
+					[ 'networkctl', 'reconfigure', defined $interface ? $interface : '' ] ]);
+			}
+			return { ok => 0, error => 'Could not remove the profile.' } unless remove_root_file($path);
+			run_write(undef, 'networkctl', 'reload');
+			run_write(undef, 'networkctl', 'reconfigure', $interface) if defined $interface && length $interface;
+			return { ok => 1, removed => 1, stack => 'networkd' };
+		}
+	}
+	if (find_command('nmcli')) {
+		my $derived = nmcli_profile_name($key);
+		my $found = nmcli_profile_for_key($kind, $key);
+		# Only the derived name is ours. A profile a person named themselves is
+		# never deleted, even when it carries the same SSID.
+		if (defined $found && $found eq $derived) {
+			return dry_run_answer([ [ 'nmcli', 'connection', 'delete', $derived ] ]) if $DRY;
+			my ($stdout, $stderr, $status) = run_write(undef, 'nmcli', 'connection', 'delete', $derived);
+			return { ok => 1, removed => 1, stack => 'nm' } if $status == 0;
+			return { ok => 0, error => clean($stderr) || clean($stdout) || 'Could not remove the profile.' };
+		}
+	}
+	return { ok => 1, removed => 0, stack => $stack };
 }
 
 sub tailscale_status {
@@ -1429,6 +2523,9 @@ if ($command eq 'status') {
 		vpn        => vpn_status(),
 	});
 }
+elsif ($command eq 'watch') {
+	emit(watch_report());
+}
 elsif ($command eq 'wifi_scan') {
 	emit(wifi_scan(shift @ARGV));
 }
@@ -1436,7 +2533,7 @@ elsif ($command eq 'wifi_current') {
 	emit(wifi_current());
 }
 elsif ($command eq 'wifi_connect') {
-	my ($interface, $ssid, $method, $address, $prefix, $gateway, $dns) = @ARGV;
+	my ($interface, $ssid, $method, $address, $prefix, $gateway, $dns, $mode) = @ARGV;
 	my $passphrase = '';
 	unless (-t STDIN) {
 		local $/;
@@ -1444,7 +2541,47 @@ elsif ($command eq 'wifi_connect') {
 		$passphrase = '' unless defined $passphrase;
 	}
 	$passphrase =~ s/\r?\n\z//;
-	emit(wifi_connect($interface, $ssid, $passphrase, $method, $address, $prefix, $gateway, $dns));
+	emit(wifi_connect($interface, $ssid, $passphrase, $method, $address, $prefix, $gateway, $dns, $mode));
+}
+elsif ($command eq 'profile_apply') {
+	my ($kind, $key, $interface, $method, $address, $prefix, $gateway, $dns) = @ARGV;
+	emit(profile_apply($kind, $key, $interface, $method, $address, $prefix, $gateway, $dns));
+}
+elsif ($command eq 'profile_remove') {
+	my ($kind, $key, $interface) = @ARGV;
+	emit(profile_remove($kind, $key, $interface));
+}
+elsif ($command eq 'manager') {
+	emit(manager_report());
+}
+elsif ($command eq 'takeover') {
+	emit(network_takeover());
+}
+elsif ($command eq 'restore') {
+	emit(network_restore(shift @ARGV));
+}
+elsif ($command eq 'secret_status') {
+	emit(secret_status());
+}
+elsif ($command eq 'secret_set') {
+	my $ssid = shift @ARGV;
+	my $passphrase = '';
+	unless (-t STDIN) {
+		local $/;
+		$passphrase = <STDIN>;
+		$passphrase = '' unless defined $passphrase;
+	}
+	$passphrase =~ s/\r?\n\z//;
+	emit(secret_set($ssid, $passphrase));
+}
+elsif ($command eq 'secret_present') {
+	emit(secret_present(shift @ARGV));
+}
+elsif ($command eq 'secret_clear') {
+	emit(secret_clear(shift @ARGV));
+}
+elsif ($command eq 'secrets_release') {
+	emit(secrets_release());
 }
 elsif ($command eq 'wifi_disconnect') {
 	emit(wifi_disconnect(shift @ARGV));
