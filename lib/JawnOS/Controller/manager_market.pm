@@ -164,6 +164,10 @@ sub action_3497 {
 	# writes the purchase (and its stock move) with the edited quantity/unit.
 	my $category = &market_list_key($c->param('list') || '');
 	my (@lines, $total, $account, $vendor);
+	# Checkout always opens an expense: money leaves the account, so the stored
+	# figure carries the negative sign Accounting reads as an outlay. A refund is
+	# the exception, flipped in the form later.
+	my $sign = -1;
 	foreach my $it ( @{$list} ) {
 		next unless $it->{'cart'};
 		$category = $it->{'list'} if $category eq '' && ($it->{'list'} || '') ne '';
@@ -176,10 +180,10 @@ sub action_3497 {
 			uuid => &subs::random_string_creator(12),
 			item => &subs::format_name($it->{'text'}),
 			quantity => $qty,
-			amount => $price,
+			amount => $price * $sign,
 			tax => 0,
 			aux => 0,
-			total => $price,
+			total => $price * $sign,
 			unit => ($it->{'unit'} || 'each'),
 			state => 'delivered',
 			record_item => 'on',
@@ -200,12 +204,12 @@ sub action_3497 {
 				record_item => 'on'
 			};
 		}
-		$mov{'totals'} = { uuid => $lines[0]->{'uuid'}, vendor => $vendor, information => 'none', amount => $total, tax => 0, aux => 0, total => $total };
+		$mov{'totals'} = { uuid => $lines[0]->{'uuid'}, vendor => $vendor, information => 'none', amount => $total * $sign, tax => 0, aux => 0, total => $total * $sign };
 		$storage = { expense => \%mov };
 	}
 	$c->render(json => {
 		items => scalar @lines,
-		transaction => { app => $category, account => $account, vendor => $vendor, total => $total, storage => $storage },
+		transaction => { app => $category, account => $account, vendor => $vendor, total => $total * $sign, storage => $storage },
 	});
 }
 

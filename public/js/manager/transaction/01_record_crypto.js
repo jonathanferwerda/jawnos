@@ -98,6 +98,8 @@ $(document).on('click', '.plusminus', function() {
 		var b = a * -1;
 		iq.find('.' + v).val(b);
 	});
+	// a positive expense total is a refund; the change handler leaves it alone
+	iq.attr('refund', numeral(iq.find('.total').val()).value() > 0 ? 'on' : 'off');
 	transactionStorageSaver(app);
 });
 

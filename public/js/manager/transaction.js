@@ -6,6 +6,21 @@
 
 var originalTransactionAutofills = {};
 
+// An expense is money out, so it is written with a negative sign; a refund is
+// the exception. A positive figure typed into an expense line is read as an
+// outlay and turned negative before the form does its arithmetic on it. The
+// Refund button marks a line, and a line brought back from history carries the
+// mark its stored sign implies, so a refund keeps its positive figure.
+$(document).on('change', '.purchase_details .amount, .purchase_details .tax, .purchase_details .aux, .purchase_details .total', function() {
+	var input = $(this);
+	var line = input.closest('.purchase_details');
+	var ad = line.closest('.app_details');
+	if (ad.find('.movement').val() != 'expense') { return; }
+	if (line.attr('refund') == 'on') { return; }
+	if ($.trim(input.val() || '') === '') { return; }
+	var value = numeral(input.val()).value();
+	if (value > 0) { input.val(numeral(-value).format('0.00')); }
+});
 
 $(document).on('change', '.purchase_input', function() {
 	var input = $(this);
@@ -523,6 +538,9 @@ function transactionStorageRetriever(app) {
 					input.val(vr);
 				}
 			});
+			// the stored sign says what the line is: a positive expense total is a
+			// refund, so mark it before anything can turn it negative again
+			block.attr('refund', numeral(block.find('.total').val()).value() > 0 ? 'on' : 'off');
 		});
 		// whatever block is left unclaimed belongs to no stored item
 		$.each(available, function(i,v) { v.remove(); });
