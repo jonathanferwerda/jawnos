@@ -1,10 +1,10 @@
 <h3>Schedule</h3>
-<input class="clothes" app="<%= $app %>" setting="schedule" style="width:100%" value="<%= $cl->{'schedule'} %>">
+<input class="clothes" app="<%= $app %>" setting="schedule" hint="<%= &subs::ui('Set when this routine hangs') %>" style="width:100%" value="<%= $cl->{'schedule'} %>">
 <h3>Budgets</h3>
 <% foreach my $bm ( keys %{$gb::budget_modes} ) { %>
 	<span style="display:inline-block;max-width:30%;">
 		<label><%= &subs::format_name($bm) %></label>
-		<select class="clothes" app="<%= $app %>" multiple setting="<%= $bm %>_budget" style="height:100px;">
+		<select class="clothes" app="<%= $app %>" multiple setting="<%= $bm %>_budget" hint="<%= &subs::ui('Choose the budgets this hang may show') %>" style="height:100px;">
 			<% my @bs = keys %{$gb::budget_statuses}; %>
 			<% unshift @bs, 'none'; %>
 			<% foreach my $bs ( @bs ) { %>

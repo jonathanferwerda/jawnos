@@ -7,6 +7,7 @@ our %topic;
 $topic{'internet'} = {
 		title => 'Internet', category => 'apps', app => 'internet',
 		templates => [ 'templates/internet/internet.html.ep', 'templates/web/web.html.ep', 'public/js/manager/internet.js', 'public/js/manager/page_agent.js' ],
+		controls => [ 'Pages the house fetched, ready to open or measure', 'A real browser that counts site time', 'Type an address and press Enter', 'Open the address in the JawnOS browser' ],
 		verified => '2026-11-15',
 		summary => 'Web and Browse: saved pages with measures, and a real browser that counts site time.',
 		body => [

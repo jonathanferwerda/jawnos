@@ -13,7 +13,7 @@
 <div id="weather">
 	<div id="weather_toolbar">
 		<label for="weather_device"><%= &subs::ui('Location') %></label>
-		<select id="weather_device">
+		<select id="weather_device" hint="<%= &subs::ui('Choose the place the weather is read for') %>">
 			<% if ($home_loc) { %>
 				<option value="loc:<%= $home_loc->{'uuid'} %>" data-lat="<%= $home_loc->{'lat'} %>" data-lon="<%= $home_loc->{'lon'} %>" data-anchor="<%= $home_loc->{'anchor'} ? 1 : 0 %>" data-home="1" title="<%= &subs::ui('The house\'s home plate, read every hour') %>"><%= length $home_label ? $home_label . ' — ' : '' %><%= &subs::ui('Home, always checked') %></option>
 			<% } %>
@@ -33,14 +33,14 @@
 				</optgroup>
 			<% } %>
 		</select>
-		<button type="button" id="weather_location_add"><%= &subs::ui('Add') %></button>
+		<button type="button" id="weather_location_add" hint="<%= &subs::ui('Place a new point on the map and save it as a place') %>"><%= &subs::ui('Add') %></button>
 	</div>
 	<div id="weather_actions">
 		<button type="button" id="weather_location_delete" disabled><%= &subs::ui('Delete') %></button>
-		<button type="button" id="weather_location_sources" disabled><%= &subs::ui('Sources') %></button>
-		<button type="button" id="weather_location_anchor" disabled><%= &subs::ui('Anchor') %></button>
-		<button type="button" id="weather_refresh"><%= &subs::ui('Refresh') %></button>
-		<button type="button" id="weather_browser"><%= &subs::ui('Use browser location') %></button>
+		<button type="button" id="weather_location_sources" hint="<%= &subs::ui('Choose how this place reads its weather') %>" disabled><%= &subs::ui('Sources') %></button>
+		<button type="button" id="weather_location_anchor" hint="<%= &subs::ui('Keep this place in the hourly weather pass') %>" disabled><%= &subs::ui('Anchor') %></button>
+		<button type="button" id="weather_refresh" hint="<%= &subs::ui('Ask the provider again instead of using the ten-minute cache') %>"><%= &subs::ui('Refresh') %></button>
+		<button type="button" id="weather_browser" hint="<%= &subs::ui('Read the weather here without keeping a place') %>"><%= &subs::ui('Use browser location') %></button>
 		<button type="button" id="weather_check_here" style="display:none;"><%= &subs::ui('Check weather here') %></button>
 		<span id="weather_status"></span>
 	</div>

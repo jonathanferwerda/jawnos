@@ -47,7 +47,7 @@ my $launcher = read_file("$root/templates/apps/controller.html.ep");
 like($launcher, qr/href="\/manager\/controller\/config"/, 'Configuration leaves the launcher for the sublauncher');
 unlike($launcher, qr/href="\/manager\?open=configure&amp;full=1"/, 'the old Configure app link is gone');
 like($launcher, qr/id="controller_clock"/, 'the clock is on the bar');
-like($launcher, qr/controller_manager_button[^>]*><%= &subs::ui\('Manager'\) %><\/a>\s*<span id="controller_clock"/,
+like($launcher, qr/controller_manager_button.*?><%= &subs::ui\('Manager'\) %><\/a>\s*<span id="controller_clock"/,
 	'the clock sits to the right of Manager');
 like($launcher, qr/width:80%/, 'tile icons fill 80% of their tile');
 

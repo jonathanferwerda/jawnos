@@ -81,7 +81,7 @@
 				<span class="channel_fx" channel="<%= $ch %>" hint="Inserted pedals (drag a pedal here)"></span>
 				<span class="channel_fader">
 					<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
-					<input height="50" channel="<%= $ch %>" type="range" min="0" max="100" control="volume" class="channel_volume channel_volume_<%= $ch %>" value="1">
+					<input height="50" channel="<%= $ch %>" type="range" min="0" max="100" control="volume" hint="<%= &subs::ui('Mix this track against the others') %>" class="channel_volume channel_volume_<%= $ch %>" value="1">
 				</span>
 
 			</span>

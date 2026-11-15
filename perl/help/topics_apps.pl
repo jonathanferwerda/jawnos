@@ -56,7 +56,8 @@ $topic{'folders'} = {
 	};
 $topic{'clock'} = {
 		title => 'Clock', category => 'apps', app => 'clock',
-		templates => [ 'templates/apps/clock.html.ep', 'public/js/manager/clock.js', 'templates/manager.html.ep' ],
+		templates => [ 'templates/apps/clock.html.ep', 'templates/apps/clock/body.html.ep', 'public/js/manager/clock.js', 'templates/manager.html.ep' ],
+		controls => [ 'Show the alarms', 'Add an alarm to the list', 'Start counting up', 'Add this countdown', 'Add a city or time zone' ],
 		verified => '2026-11-15',
 		summary => 'Alarms, a stopwatch, timers, world clocks, the time machine and sessions, with alarms and timers that can start and stop appointments.',
 		body => [
@@ -141,7 +142,8 @@ $topic{'marker'} = {
 	};
 $topic{'studio'} = {
 		title => 'Studio', category => 'apps', app => 'studio',
-		templates => [ 'templates/studio/studio.html.ep', 'public/js/manager/studio.js' ],
+		templates => [ 'templates/studio/studio.html.ep', 'templates/studio/markup.html.ep', 'templates/studio/song_select.html.ep', 'templates/studio/plug_selection.html.ep', 'public/js/manager/studio.js' ],
+		controls => [ 'Mix this track against the others', 'Pick a song from the library Music uses', 'Use this microphone or camera on the channel', 'Put another window or a screen share on the channel', 'Patch this app into the channel' ],
 		summary => 'A multitrack audio studio with takes and a pedalboard.',
 		verified => '2026-11-15',
 		body => [
@@ -229,6 +231,8 @@ $topic{'music'} = {
 	};
 $topic{'video'} = {
 		title => 'Video', category => 'apps', app => 'video',
+		templates => [ 'templates/apps/video.html.ep', 'templates/apps/video/markup.html.ep' ],
+		controls => [ 'Seek', 'Previous', 'Play / Pause', 'Next', 'Theatre mode', 'Shuffle', 'Repeat', 'Fullscreen', 'Subtitles', 'More tools', 'Playback speed', 'Save a snapshot' ],
 		verified => '2026-11-15',
 		summary => 'Play video from your media folders.',
 		body => [
@@ -286,6 +290,7 @@ $topic{'ide'} = {
 $topic{'weather'} = {
 		title => 'Weather', category => 'apps', app => 'weather',
 		templates => [ 'templates/apps/weather.html.ep', 'templates/apps/weather/style.html.ep', 'templates/apps/weather/now.html.ep', 'templates/apps/weather/history.html.ep', 'templates/apps/weather/accuracy.html.ep', 'templates/apps/weather/automations.html.ep', 'templates/apps/weather/map.html.ep', 'public/js/manager/weather.js', 'public/js/manager/weather_history.js', 'public/js/manager/weather_automation.js', 'public/js/manager/weather_map.js', 'public/js/manager/weather_sources.js' ],
+		controls => [ 'Choose the place the weather is read for', 'Place a new point on the map and save it as a place', 'Choose how this place reads its weather', 'Keep this place in the hourly weather pass', 'Ask the provider again instead of using the ten-minute cache', 'Read the weather here without keeping a place' ],
 		verified => '2026-11-15',
 		summary => 'Current conditions and a seven-day forecast for the phone, tablet or machine you choose.',
 		body => [
@@ -316,6 +321,7 @@ $topic{'weather'} = {
 $topic{'power'} = {
 		title => 'Power', category => 'apps', app => 'power',
 		templates => [ 'templates/apps/power.html.ep', 'public/js/manager/power.js', 'public/js/manager/taskbar_power.js', 'templates/manager.html.ep', 'public/css/manager.css' ],
+		controls => [ 'Stop the pack charging at this percentage', 'Let JawnOS write the CPU and sleep settings', 'Choose the plan while plugged in', 'Store the plan for mains power', 'Apply the matching plan when the cable changes', 'Use the saved plan for the current source now' ],
 		verified => '2026-11-15',
 		summary => 'Battery, CPU speed, the charge limit, saved power plans, and sleep and display settings.',
 		body => [
@@ -350,6 +356,7 @@ $topic{'power'} = {
 $topic{'notifications'} = {
 		title => 'Notifications', category => 'apps', app => 'notifications',
 		templates => [ 'templates/apps/notifications.html.ep', 'public/js/manager/notifications.js', 'public/js/manager/notifications_toast.js', 'public/js/manager/taskbar_notifications.js', 'templates/notification.html.ep' ],
+		controls => [ 'Type to filter the list', 'Show only one app in the list', 'Clear every notice the filter shows', 'Remove this notice' ],
 		verified => '2026-11-15',
 		summary => 'The house\'s notices, with a search and an app filter, and the taskbar bell.',
 		body => [
@@ -371,6 +378,7 @@ $topic{'notifications'} = {
 $topic{'sound'} = {
 		title => 'Sound', category => 'apps', app => 'sound',
 		templates => [ 'templates/apps/sound.html.ep', 'public/js/manager/sound.js', 'public/js/manager/taskbar_sound.js', 'public/icons/sound.svg', 'templates/start_menu/start_menu.html.ep', 'templates/manager.html.ep', 'public/css/manager.css' ],
+		controls => [ 'Set the house level: Sound, Quiet, Mute or Silence', 'Make this output the default speaker', 'Drag to set the default speaker volume', 'Mute the default speaker', 'Make this input the default microphone', 'Drag to set the default microphone volume, when the mixer exposes it', 'Mute the default microphone' ],
 		verified => '2026-11-15',
 		summary => 'Output and input devices, the default speaker and microphone, and the machine\'s volume and mute.',
 		body => [
@@ -403,6 +411,7 @@ $topic{'sound'} = {
 $topic{'controllers'} = {
 			title => 'Controllers', category => 'apps', app => 'controllers',
 			templates => [ 'templates/controllers/controllers.html.ep', 'templates/controllers/style.html.ep', 'templates/controllers/body.html.ep', 'public/js/manager/controllers.js' ],
+		controls => [ 'Put the house on a blank board', 'Keep the card or format it on first start', 'Name the controller for the network', 'Add the controller and read its code', 'Confirm the code the controller shows', 'Step through the storage setup' ],
 			verified => '2026-11-15',
 			summary => 'The controllers that can talk to the house: the roster, adding one and confirming its code.',
 			body => [

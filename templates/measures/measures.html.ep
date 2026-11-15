@@ -45,7 +45,7 @@
 							<%= &subs::format_name($measures->{$m}->{'app_measure'}) %>
 						<% } %>
 					</td>
-					<td class="measures_pv hover" app="<%= $measures->{$m}->{'app'} %>" measure="<%= $measures->{$m}->{'app_measure'} %>"><%= $measures->{$m}->{'pv'} || 'PV' %></td>
+					<td class="measures_pv hover" hint="<%= &subs::ui('Attach this row to an app measure') %>" app="<%= $measures->{$m}->{'app'} %>" measure="<%= $measures->{$m}->{'app_measure'} %>"><%= $measures->{$m}->{'pv'} || 'PV' %></td>
 				</tr>
 				<tr>
 					<td colspan="6" class="measure_editor_container" uuid="<%= $measures->{$m}->{'uuid'} %>" style="display:none;"><%= include 'measures/edit', measure => $measures->{$m} %></td>

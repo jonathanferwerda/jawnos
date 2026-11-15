@@ -10,7 +10,7 @@ my $known = ($start eq 'tarot' || $start eq 'solitaire' || $start eq 'mahjong' |
 <div id="cards" class="cards_app" data-variant="<%= $known %>">
 <%= include 'cards/style' %>
 	<header class="cards_bar">
-		<button type="button" class="cards_brand" data-variant=""><%= &subs::ui('Cards') %></button>
+		<button type="button" class="cards_brand" hint="<%= &subs::ui('Bring the deck chooser back') %>" data-variant=""><%= &subs::ui('Cards') %></button>
 		<nav class="cards_variant_bar" aria-label="<%= &subs::ui('Decks') %>">
 			<% foreach my $deck ( @decks ) { %>
 				<button type="button" class="cards_variant<% if ($known eq $deck->[0]) { %> active<% } %>" data-variant="<%= $deck->[0] %>"><%= $deck->[1] %></button>

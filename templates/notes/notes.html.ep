@@ -221,7 +221,7 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 <div id="notes" data-header-agent="<%= $header_agent ? 1 : 0 %>">
 	<div id="notes_body">
 		<div id="notes_category_bar" style="flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding-bottom:4px;font-size:13px;">
-			<button class="notes_chip" category="" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.all') %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $total || 0 %></span></button>
+			<button class="notes_chip" category="" hint="<%= &subs::ui('Show every note, whatever its category') %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.all') %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $total || 0 %></span></button>
 			<% foreach my $cat ( @{$categories} ) { %>
 				<button class="notes_chip" category="<%= $cat->{'code'} %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:var(--jawnos-cursor-pointer, pointer);"><%= $cat->{'label'} %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $counts->{ $cat->{'code'} } || 0 %></span></button>
 			<% } %>
@@ -229,7 +229,7 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 				<% foreach my $cat ( @{$categories} ) { next unless $cat->{'target'}; %>
 					<button class="notes_category_open" category="<%= $cat->{'code'} %>" target="<%= $cat->{'target'} %>" style="display:none;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);" title="<%= $cat->{'open_label'} %>"><%= $cat->{'open_label'} %></button>
 				<% } %>
-				<button id="notes_categories_manage" type="button" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.categories') %></button>
+				<button id="notes_categories_manage" type="button" hint="<%= &subs::ui('Add, rename or remove a category') %>" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:var(--jawnos-cursor-pointer, pointer);"><%= &subs::lang('notes.categories') %></button>
 			</span>
 		</div>
 		<div id="notes_list">
@@ -245,7 +245,7 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 					<span class="note_status note_status_<%= $status %>" title="<%= &subs::lang('notes.status') %>"><%= &subs::lang( 'notes.status.' . $status ) %></span>
 					<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } elsif (($n->{'category'} || '') ne '') { %><span class="note_category" title="<%= &subs::lang('notes.category') %>" style="padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:0.8;"><%= &subs::notes_category_label( $n->{'category'} ) %></span><% } %>
 					<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
-					<div class="note_text"><%= &subs::notes_header_fallback( $n->{'text'} ) %></div>
+					<div class="note_text" hint="<%= &subs::ui('Open the whole note on its own screen') %>"><%= &subs::notes_header_fallback( $n->{'text'} ) %></div>
 					<div class="note_editor" title="<%= &subs::lang('notes.set_category_status') %>">
 						<span class="note_editor_label"><%= &subs::lang('notes.set_category_status') %></span>
 						<label><%= &subs::lang('notes.category') %>
@@ -270,14 +270,14 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 	<div id="notes_input_row">
 		<div id="notes_category_row">
 			<label for="notes_category" style="opacity:0.8;"><%= &subs::lang('notes.category') %></label>
-			<select id="notes_category" style="margin-left:4px;">
+			<select id="notes_category" hint="<%= &subs::ui('File the note you are about to write') %>" style="margin-left:4px;">
 				<% foreach my $cat ( @{$categories} ) { %>
 					<option value="<%= $cat->{'code'} %>"<%= (($cat->{'code'} || '') eq ($selected || '') ? ' selected' : '') %>><%= $cat->{'label'} %></option>
 				<% } %>
 			</select>
 		</div>
 		<textarea id="notes_input" rows="2" placeholder="<%= &subs::ui('Write a note... (Enter saves, Shift+Enter makes a line)') %>"></textarea>
-		<button id="notes_save"><%= &subs::lang('save') %></button>
+		<button id="notes_save" hint="<%= &subs::ui('Save the note under the chosen category') %>"><%= &subs::lang('save') %></button>
 	</div>
 	<%# The note's own screen. Back returns to the list without writing; Save is
 	    the only thing that changes the row. The textarea is upgradeable, so the
@@ -286,7 +286,7 @@ body.soft_kb_open .wind[app="notes"] #notes_input_row {
 		<div id="notes_edit_bar">
 			<button id="notes_edit_back" type="button"><%= &subs::lang('notes.back') %></button>
 			<span id="notes_edit_title"><%= &subs::lang('notes.edit') %></span>
-			<button id="notes_edit_save" type="button"><%= &subs::lang('save') %></button>
+			<button id="notes_edit_save" type="button" hint="<%= &subs::ui('Write the changed words back') %>"><%= &subs::lang('save') %></button>
 		</div>
 		<div id="notes_edit_fields">
 			<label for="notes_edit_category"><%= &subs::lang('notes.category') %></label>

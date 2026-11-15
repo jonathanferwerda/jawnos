@@ -112,24 +112,24 @@
 	<div id="games_bar">
 		<a id="games_home" href="/manager/games"><%= &subs::ui('Back') %></a>
 		<span id="games_bar_spacer"></span>
-		<button type="button" class="games_action" id="games_install_emulators"><%= &subs::ui('Install emulators') %></button>
-		<button type="button" class="games_action" id="games_install_roms"><%= &subs::ui('Install ROMs') %></button>
-		<button type="button" class="games_action" id="games_covers"><%= &subs::ui('Fetch covers') %></button>
+		<button type="button" class="games_action" id="games_install_emulators" hint="<%= &subs::ui('Fetch RetroArch and the emulator cores') %>"><%= &subs::ui('Install emulators') %></button>
+		<button type="button" class="games_action" id="games_install_roms" hint="<%= &subs::ui('Copy ROMs in from the emmc or a USB stick') %>"><%= &subs::ui('Install ROMs') %></button>
+		<button type="button" class="games_action" id="games_covers" hint="<%= &subs::ui('Look up covers for games that have none') %>"><%= &subs::ui('Fetch covers') %></button>
 		<span id="games_covers_note" aria-live="polite"></span>
 		<span id="games_install_note" aria-live="polite"></span>
 	</div>
 	<div id="games_shelf">
 		<div id="games_shelf_row">
 			<div id="games_filters" role="group" aria-label="<%= &subs::ui('Filter by system') %>">
-				<button type="button" class="games_filter is_active" data-filter="all" aria-pressed="true"><%= &subs::ui('All') %></button>
+				<button type="button" class="games_filter is_active" data-filter="all" hint="<%= &subs::ui('Bring every game back') %>" aria-pressed="true"><%= &subs::ui('All') %></button>
 % for my $sys (@filter_systems) {
 				<button type="button" class="games_filter" data-filter="<%= $sys->{'id'} %>" data-system="<%= $sys->{'id'} %>" aria-pressed="false"><%= (defined $sys->{'label'} && length $sys->{'label'}) ? $sys->{'label'} : $sys->{'id'} %><% if (defined $sys->{'count'}) { %><span class="games_filter_count"><%= $sys->{'count'} %></span><% } %></button>
 % }
 			</div>
-			<a id="games_controls" class="games_action" href="/manager/games/mapping"><%= &subs::ui('Controls') %></a>
+			<a id="games_controls" class="games_action" hint="<%= &subs::ui('Map the buttons for this system') %>" href="/manager/games/mapping"><%= &subs::ui('Controls') %></a>
 		</div>
 % if (@picker_systems) {
-		<details id="games_emulators">
+		<details id="games_emulators" hint="<%= &subs::ui('Choose the emulator each system runs on') %>">
 			<summary><%= &subs::ui('Systems') %></summary>
 % for my $sys (@picker_systems) {
 			<div class="games_system_row">

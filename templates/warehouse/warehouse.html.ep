@@ -4,14 +4,14 @@
 
 <div id="warehouse" style="width:100%;height:100%;background-color:var(--panel);display:flex;flex-direction:column;">
 	<div id="warehouse_toolbar" style="padding:4px;flex:0 0 auto;">
-		<select id="warehouse_display" class="warehouse_config" config="display" style="vertical-align:top;">
+		<select id="warehouse_display" hint="<%= &subs::ui('Show stock levels or the moves ledger') %>" class="warehouse_config" config="display" style="vertical-align:top;">
 			<% foreach my $d ( qw/levels moves/ ) { %>
 				<option value="<%= $d %>" <% if (($settings->{'display'} || 'levels') eq $d) { %>selected<% } %>><%= &subs::format_name($d) %></option>
 			<% } %>
 		</select>
 		<input type="text" id="warehouse_search" placeholder="Search items" style="width:50%;vertical-align:top;">
 		<button type="button" id="warehouse_stock_in" style="vertical-align:top;" hint="<%= &subs::ui('Add stock that arrived without a purchase: a gift, something found, a transfer in.') %>"><%= &subs::ui('+ Stock') %></button>
-		<select id="warehouse_place" class="warehouse_config" config="place" multiple style="height:100px;max-width:45%;">
+		<select id="warehouse_place" hint="<%= &subs::ui('Show stock from the places you keep') %>" class="warehouse_config" config="place" multiple style="height:100px;max-width:45%;">
 			<option value="all" <% if (grep { $_ eq 'all' } @{$settings->{'place'}}) { %>selected<% } %>>All</option>
 			<% foreach my $p ( sort { $a->{'app'} cmp $b->{'app'} } @{$places} ) { %>
 				<option value="<%= $p->{'app'} %>" <% if (grep { $_ eq $p->{'app'} } @{$settings->{'place'}}) { %>selected<% } %>><%= &subs::format_name($p->{'app'}) %></option>

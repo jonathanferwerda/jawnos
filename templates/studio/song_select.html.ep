@@ -1,4 +1,4 @@
-<select id="studio_song_select" style="vertical-align:top;" value="<%= $last_song %>">
+<select id="studio_song_select" hint="<%= &subs::ui('Pick a song from the library Music uses') %>" style="vertical-align:top;" value="<%= $last_song %>">
 	<option value="none">None</option>
 	<% foreach my $song ( @{$songs} ) { %>
 		<option value="<%= $song->{'uuid'} %>" <% if ($last_song eq $song->{'uuid'}) { %>selected<% } %>><%= &subs::format_name($song->{'app'}) %> <span class="time" timestamp="<%= $song->{'timestamp'} %>"></span></option>

@@ -100,7 +100,7 @@ like($page, qr/No games yet\. Install the emulators/, 'the empty-shelf message s
 # --- the per-system emulator picker ------------------------------------------
 like($page, qr/<select[^>]*data-system-emulator=/,
 	'a system with runners gets an emulator picker');
-like($page, qr/<details id="games_emulators">/, 'the pickers sit in a compact, folded Systems list');
+like($page, qr/<details id="games_emulators"[^>]*>/, 'the pickers sit in a compact, folded Systems list');
 like($page, qr/\$sys->\{'runners'\}/, 'the picker is drawn from the runners the backend reports');
 like($page, qr/\$sys->\{'chosen'\}/, 'and marks the chosen runner');
 like($page, qr{post\('/manager/games/emulator'}, 'a change saves through the emulator route');
@@ -124,7 +124,7 @@ like($page, qr/The game did not start\./, 'a launch that never reaches the emula
 like($page, qr/The game has ended\./, 'and a returned kiosk says the game ended');
 
 # --- the controls page --------------------------------------------------------
-like($page, qr/id="games_controls"[^>]*href="\/manager\/games\/mapping"/,
+like($page, qr/id="games_controls".*?href="\/manager\/games\/mapping"/,
 	'Controls points at the mapping page');
 like($page, qr/encodeURIComponent\(system\)/, 'the chosen system follows the Controls link into its query');
 unlike($page, qr/cursor:(?!var\()/, 'every cursor uses the house pointer token');

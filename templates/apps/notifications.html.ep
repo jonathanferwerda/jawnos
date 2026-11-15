@@ -21,14 +21,14 @@
 </style>
 <div id="notifications_app" app="notifications">
 	<div class="notifications_app_toolbar">
-		<input type="search" id="notifications_app_search" class="notifications_app_search" placeholder="<%= &subs::ui('Search notifications') %>" value="<%= $notifications->{'settings'}->{'search'} // '' %>">
-		<select id="notifications_app_filter" class="notifications_app_filter" aria-label="<%= &subs::ui('Filter by app') %>">
+		<input type="search" id="notifications_app_search" hint="<%= &subs::ui('Type to filter the list') %>" class="notifications_app_search" placeholder="<%= &subs::ui('Search notifications') %>" value="<%= $notifications->{'settings'}->{'search'} // '' %>">
+		<select id="notifications_app_filter" hint="<%= &subs::ui('Show only one app in the list') %>" class="notifications_app_filter" aria-label="<%= &subs::ui('Filter by app') %>">
 			<option value="all"<%== (($notifications->{'settings'}->{'filter'} || '') eq '' || $notifications->{'settings'}->{'filter'} eq 'all') ? ' selected' : '' %>><%= &subs::ui('All apps') %></option>
 			<% foreach my $app ( sort @{ $notifications->{'apps'} || [] } ) { %>
 				<option value="<%= $app %>"<%== (($notifications->{'settings'}->{'filter'} || '') eq $app) ? ' selected' : '' %>><%= &subs::format_name($app) %></option>
 			<% } %>
 		</select>
-		<button type="button" class="notification_remove notifications_app_clear" scope="all" uuid=""><%= &subs::ui('Remove all') %></button>
+		<button type="button" class="notification_remove notifications_app_clear" hint="<%= &subs::ui('Clear every notice the filter shows') %>" scope="all" uuid=""><%= &subs::ui('Remove all') %></button>
 	</div>
 	<div id="notifications_app_list" class="notifications_app_list"><%== $notifications->{'content'} %></div>
 	<div id="notifications_app_note" class="notifications_app_note"></div>

@@ -9,7 +9,7 @@
 	<% if ($n->{'key'} && $n->{'key'} =~ /com\.termux\.api/) { %> 
 		<button style="float:right;" id="notification_<%= $n->{'tag'} %>_remove" class="notification_remove" timestamp="<%= $n->{'timestamp'} %>" title="<%= $n->{'title'} %>" tag="<%= $n->{'tag'} %>">X</button>
 	<% }  else { %>
-		<button style="float:right;" id="notification_<%= $n->{'timestamp'} %>_remove" scope="single" uuid="<%= $n->{'uuid'} %>" class="notification_remove" timestamp="<%= $n->{'timestamp'} %>" title="<%= $n->{'title'} %>">X</button>
+		<button style="float:right;" id="notification_<%= $n->{'timestamp'} %>_remove" scope="single" hint="<%= &subs::ui('Remove this notice') %>" uuid="<%= $n->{'uuid'} %>" class="notification_remove" timestamp="<%= $n->{'timestamp'} %>" title="<%= $n->{'title'} %>">X</button>
 	<% } %>
 	<b><%= $n->{'title'} %></b><br>
 

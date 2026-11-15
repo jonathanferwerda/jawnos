@@ -177,6 +177,7 @@ $topic{'start_menu'} = {
 	};
 $topic{'clothesline'} = {
 		title => 'The clothesline', category => 'features', app => 'clothesline',
+		controls => [ 'Set when this routine hangs', 'Choose the budgets this hang may show' ],
 		verified => '2026-11-15',
 		summary => 'A rail that hangs the routines belonging to this hour.',
 		body => [

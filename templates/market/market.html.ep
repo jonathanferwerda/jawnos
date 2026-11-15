@@ -47,23 +47,23 @@
 <div id="market_body" data-scan="<%= join(',', @scan_feeds) %>" style="width:100%;height:100%;background-color:var(--panel);padding:6px;box-sizing:border-box;display:flex;flex-direction:column;position:relative;">
 	<div style="flex:0 0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
 		<b style="font-size:20px;">Market</b>
-		<select id="market_list" style="flex:0 1 auto;">
+		<select id="market_list" hint="<%= &subs::ui('The kind of list to shop from') %>" style="flex:0 1 auto;">
 			<option value="">All lists</option>
 			<% foreach my $k ( sort { lc($lists->{$a}->{'name'} || $a) cmp lc($lists->{$b}->{'name'} || $b) } keys %{$lists} ) { %>
 				<option value="<%= $k %>"><%= &subs::format_name($lists->{$k}->{'name'} || $k) %></option>
 			<% } %>
 		</select>
-		<select id="market_vendor" style="flex:0 1 auto;">
+		<select id="market_vendor" hint="<%= &subs::ui('Scope both tabs to one shop') %>" style="flex:0 1 auto;">
 			<option value="">All vendors</option>
 			<% foreach my $v ( @vendors ) { %>
 				<option value="<%= $v %>" <% if ($vendor eq $v) { %>selected<% } %>><%= &subs::format_name($v) %></option>
 			<% } %>
 		</select>
 		<span style="flex:1 1 auto;"></span>
-		<button id="market_scan" style="font-size:15px;">Scan</button>
-		<button id="market_receipt" style="font-size:15px;">Receipt</button>
+		<button id="market_scan" hint="<%= &subs::ui('Read a barcode with a phone or this machine') %>" style="font-size:15px;">Scan</button>
+		<button id="market_receipt" hint="<%= &subs::ui('Scan a whole receipt after the shop') %>" style="font-size:15px;">Receipt</button>
 		<% if (scalar @receipts) { %><button id="market_receipts_open" style="font-size:15px;">Receipts</button><% } %>
-		<button id="market_checkout" style="font-size:15px;">Checkout (<span id="market_cart_count">0</span>)</button>
+		<button id="market_checkout" hint="<%= &subs::ui('Retire the cart and open the expense') %>" style="font-size:15px;">Checkout (<span id="market_cart_count">0</span>)</button>
 		<button id="market_cancel" style="font-size:15px;">Cancel</button>
 		<button class="market_tab" tab="list">Shopping List</button>
 		<button class="market_tab" tab="shopping">Shopping</button>
@@ -75,7 +75,7 @@
 	<% } %>
 	<div id="market_list_panel" style="flex:1 1 auto;overflow:auto;padding-top:6px;display:flex;flex-direction:column;">
 		<div style="flex:0 0 auto;padding-bottom:4px;">
-			<input id="market_item_input" type="text" placeholder="Add an item... (Enter adds)" style="width:78%;">
+			<input id="market_item_input" hint="<%= &subs::ui('Type an item and press Enter to add it') %>" type="text" placeholder="Add an item... (Enter adds)" style="width:78%;">
 			<button id="market_item_add" style="width:18%;">Add</button>
 		</div>
 		<div id="market_list_rows" style="flex:1 1 auto;overflow:auto;">

@@ -47,8 +47,8 @@
 		<table>
 			<thead>
 				<tr>
-					<th class="monitor_sort" data-key="cpu" style="text-align:right;">CPU %</th>
-					<th class="monitor_sort" data-key="mem" style="text-align:right;">MEM %</th>
+					<th class="monitor_sort" data-key="cpu" hint="<%= &subs::ui('Sort by CPU to find what is busy') %>" style="text-align:right;">CPU %</th>
+					<th class="monitor_sort" data-key="mem" hint="<%= &subs::ui('Sort by memory to find what is busy') %>" style="text-align:right;">MEM %</th>
 					<th class="monitor_sort" data-key="age" style="text-align:right;">AGE</th>
 					<th class="monitor_sort" data-key="pid" style="text-align:right;">PID</th>
 					<th class="monitor_sort" data-key="name">COMMAND</th>

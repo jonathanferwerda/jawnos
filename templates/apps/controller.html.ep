@@ -138,10 +138,10 @@
 
 <div id="controller_shell">
 	<div id="controller_bar">
-		<button type="button" id="controller_network" class="controller_bar_button" aria-expanded="false" aria-controls="controller_network_panel"><%= &subs::ui('Network') %></button>
-		<button type="button" id="controller_volume" class="controller_bar_button" aria-expanded="false" aria-controls="controller_volume_panel"><%= &subs::ui('Sound') %></button>
-		<button type="button" id="controller_battery" class="controller_bar_button" aria-expanded="false" aria-controls="controller_power_panel"><span id="controller_battery_pct"><%= $battery_pct %></span></button>
-		<a id="controller_manager_button" class="controller_bar_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
+		<button type="button" id="controller_network" hint="<%= &subs::ui('Check and switch Wi-Fi and Bluetooth') %>" class="controller_bar_button" aria-expanded="false" aria-controls="controller_network_panel"><%= &subs::ui('Network') %></button>
+		<button type="button" id="controller_volume" hint="<%= &subs::ui('Set the master level and each channel') %>" class="controller_bar_button" aria-expanded="false" aria-controls="controller_volume_panel"><%= &subs::ui('Sound') %></button>
+		<button type="button" id="controller_battery" hint="<%= &subs::ui('Read the battery and pick a CPU profile') %>" class="controller_bar_button" aria-expanded="false" aria-controls="controller_power_panel"><span id="controller_battery_pct"><%= $battery_pct %></span></button>
+		<a id="controller_manager_button" hint="<%= &subs::ui('Open the Manager desk') %>" class="controller_bar_button" href="/manager?desk=1"><%= &subs::ui('Manager') %></a>
 		<span id="controller_clock" class="controller_bar_button controller_clock" aria-label="<%= &subs::ui('Time') %>">—</span>
 	</div>
 	<div id="controller_power_panel" hidden>
@@ -224,7 +224,7 @@
 			<span class="controller_tile_label"><%= &subs::ui('Automation') %></span>
 			<span class="controller_tile_note"><%= &subs::ui('Toggles for the house devices') %></span>
 		</a>
-		<div class="controller_tile controller_tile_leave" tabindex="0">
+		<div class="controller_tile controller_tile_leave" tabindex="0" hint="<%= &subs::ui('Screen off, restart or shut down') %>">
 			<img class="controller_tile_icon" src="<%= &subs::icon_for('/images/decipherable/exit.png') %>" alt="">
 			<span class="controller_tile_label"><%= &subs::ui('Leave') %></span>
 % if (@power_available) {

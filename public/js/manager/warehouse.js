@@ -127,12 +127,12 @@ $(document).on('click', '#warehouse_stock_in', function() {
 	var box = $('<div id="warehouse_stock_prompt" style="position:fixed;z-index:100000;left:50%;top:35%;transform:translate(-50%,-50%);background:var(--panel);border:2px solid var(--line);border-radius:8px;padding:14px;font-size:17px;min-width:340px;box-shadow:0 8px 30px rgba(0,0,0,.35);">'
 		+ '<div style="font-weight:700;margin-bottom:8px;">' + L.title + '</div>'
 		+ datalist
-		+ '<input id="warehouse_stock_item" list="warehouse_stock_items" type="text" placeholder="' + L.item + '" style="width:100%;font-size:17px;padding:4px;">'
+		+ '<input id="warehouse_stock_item" hint="Name the item that arrived" list="warehouse_stock_items" type="text" placeholder="' + L.item + '" style="width:100%;font-size:17px;padding:4px;">'
 		+ '<div style="margin-top:8px;display:flex;gap:6px;">'
-		+ '<input id="warehouse_stock_quantity" type="text" placeholder="' + L.quantity + '" style="flex:1;font-size:17px;padding:4px;">'
-		+ '<select id="warehouse_stock_place" style="flex:1;">' + (place_options || '<option value="">' + L.noplace + '</option>') + '</select>'
+		+ '<input id="warehouse_stock_quantity" hint="Amount as a count or a measure, like 12 or 355mL" type="text" placeholder="' + L.quantity + '" style="flex:1;font-size:17px;padding:4px;">'
+		+ '<select id="warehouse_stock_place" hint="The place the stock arrives in" style="flex:1;">' + (place_options || '<option value="">' + L.noplace + '</option>') + '</select>'
 		+ '</div>'
-		+ '<div style="margin-top:8px;"><select id="warehouse_stock_reason" style="width:100%;">' + reasons + '</select></div>'
+		+ '<div style="margin-top:8px;"><select id="warehouse_stock_reason" hint="Why it arrived: a gift, something found, or a transfer in" style="width:100%;">' + reasons + '</select></div>'
 		+ '<div style="margin-top:10px;"><button id="warehouse_stock_add">' + L.add + '</button> <button id="warehouse_stock_cancel">' + L.cancel + '</button></div>'
 		+ '</div>');
 	$('body').append(box);

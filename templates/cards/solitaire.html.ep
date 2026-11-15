@@ -6,8 +6,8 @@
 		<div class="sol_status" id="sol_status"><%= &subs::ui('Deal three. Click a card or drag it to its pile.') %></div>
 		<div class="sol_actions">
 			<button type="button" class="sol_btn" id="sol_new"><%= &subs::ui('Deal') %></button>
-			<button type="button" class="sol_btn" id="sol_undo"><%= &subs::ui('Undo') %></button>
-			<button type="button" class="sol_btn" id="sol_auto"><%= &subs::ui('Auto') %></button>
+			<button type="button" class="sol_btn" id="sol_undo" hint="<%= &subs::ui('Take a move back') %>"><%= &subs::ui('Undo') %></button>
+			<button type="button" class="sol_btn" id="sol_auto" hint="<%= &subs::ui('Send the cards that are safe to go up') %>"><%= &subs::ui('Auto') %></button>
 			<button type="button" class="sol_btn" id="sol_reset"><%= &subs::ui('Reset bank') %></button>
 		</div>
 	</div>

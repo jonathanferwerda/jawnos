@@ -27,7 +27,7 @@
 						$av->{'av'} = 'a';
 					}
 				%>
-					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="usermedia" sid="<%= $av->{'deviceId'} %>" av="<%= $av->{'av'} %>" app="">
+					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="usermedia" hint="<%= &subs::ui('Use this microphone or camera on the channel') %>" sid="<%= $av->{'deviceId'} %>" av="<%= $av->{'av'} %>" app="">
 						<td><img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/' . $av->{'icon'} . '.png') %>" hint="<%= &subs::format_name($av->{'icon'}) %>"></td>
 						<td style="font-size:20px;vertical-align:top;"><%= $av->{'label'} %></td>
 					</tr>
@@ -36,12 +36,12 @@
 				<% foreach my $app ( grep { $_->{'direction'} eq $direction || !$_->{'direction'} } @{$apps} ) {
 					my $main_image = &subs::main_icon_maker({ app => $app->{'app'}, timestamp => &subs::rightNow, size => 'little' });
 				%>
-					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="app" sid="<%= $app->{'id'} %>" app="<%= $app->{'app'} %>" av="<%= $app->{'av'} %>">
+					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="app" hint="<%= &subs::ui('Patch this app into the channel') %>" sid="<%= $app->{'id'} %>" app="<%= $app->{'app'} %>" av="<%= $app->{'av'} %>">
 						<td><%== $main_image %></td><td style="font-size:20px;vertical-align:top;"><%= &subs::format_name($app->{'app'}) %></td>
 					</tr>
 				<% } %>
 				% if ($screen_share && $direction eq 'input') {
-					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="screen_share" av="av" sid="" app=""> 
+					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="screen_share" hint="<%= &subs::ui('Put another window or a screen share on the channel') %>" av="av" sid="" app=""> 
 						<td><img src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Monitor" class="little_thumb"></td><td style="font-size:20px;vertical-align:top;">Screen Share</td>
 					</tr>
 				% }

@@ -42,7 +42,7 @@
 	<section class="sound_section sound_level_section">
 		<h3><%= &subs::lang('sound_level') %></h3>
 		<div class="sound_level_row">
-			<select id="sound_level">
+			<select id="sound_level" hint="<%= &subs::ui('Set the house level: Sound, Quiet, Mute or Silence') %>">
 % foreach my $opt ( grep { $_ ne 'passive' } @subs::SOUND_LEVELS ) {
 				<option value="<%= $opt %>"<% if ($level eq $opt) { %> selected="selected"<% } %>><%= &subs::sound_level_label($opt) %></option>
 % }
@@ -82,7 +82,7 @@
 % if ($device->{'default'}) {
 					<span class="sound_badge"><%= &subs::lang('sound_default') %></span>
 % } else {
-					<button type="button" class="sound_default" data-kind="output" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
+					<button type="button" class="sound_default" data-kind="output" hint="<%= &subs::ui('Make this output the default speaker') %>" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
 % }
 				</div>
 % }
@@ -92,10 +92,10 @@
 			</div>
 			<div class="sound_control">
 				<label><%= &subs::lang('sound_volume') %>
-					<input type="range" id="sound_output_volume" min="0" max="100" step="1" value="<%= $output_volume %>"<% if (!$output->{'id'}) { %> disabled<% } %>>
+					<input type="range" id="sound_output_volume" hint="<%= &subs::ui('Drag to set the default speaker volume') %>" min="0" max="100" step="1" value="<%= $output_volume %>"<% if (!$output->{'id'}) { %> disabled<% } %>>
 					<span id="sound_output_volume_value"><%= $output_volume %>%</span>
 				</label>
-				<button type="button" id="sound_output_mute" data-kind="output"<% if (!$output->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
+				<button type="button" id="sound_output_mute" hint="<%= &subs::ui('Mute the default speaker') %>" data-kind="output"<% if (!$output->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
 			</div>
 		</section>
 		<section class="sound_section" data-kind="input"<% if (!$input_supported) { %> data-unsupported="1"<% } %>>
@@ -109,7 +109,7 @@
 % if ($device->{'default'}) {
 					<span class="sound_badge"><%= &subs::lang('sound_default') %></span>
 % } else {
-					<button type="button" class="sound_default" data-kind="input" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
+					<button type="button" class="sound_default" data-kind="input" hint="<%= &subs::ui('Make this input the default microphone') %>" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
 % }
 				</div>
 % }
@@ -119,10 +119,10 @@
 			</div>
 			<div class="sound_control">
 				<label><%= &subs::lang('sound_volume') %>
-					<input type="range" id="sound_input_volume" min="0" max="100" step="1" value="<%= $input_volume %>"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>>
+					<input type="range" id="sound_input_volume" hint="<%= &subs::ui('Drag to set the default microphone volume, when the mixer exposes it') %>" min="0" max="100" step="1" value="<%= $input_volume %>"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>>
 					<span id="sound_input_volume_value"><%= $input_volume %>%</span>
 				</label>
-				<button type="button" id="sound_input_mute" data-kind="input"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
+				<button type="button" id="sound_input_mute" hint="<%= &subs::ui('Mute the default microphone') %>" data-kind="input"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
 			</div>
 		</section>
 		<%= include 'apps/sound/media' %>

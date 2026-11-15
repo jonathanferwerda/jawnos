@@ -44,7 +44,7 @@
 				<div id="power_battery_eta" class="power_muted"></div>
 				<div id="power_charge_row" class="power_charge_row" style="display:none;">
 					<label><%= &subs::ui('Charge limit') %>
-						<input type="range" id="power_charge" min="50" max="100" step="5" value="100">
+						<input type="range" id="power_charge" hint="<%= &subs::ui('Stop the pack charging at this percentage') %>" min="50" max="100" step="5" value="100">
 						<span id="power_charge_value">—</span>
 					</label>
 				</div>
@@ -60,7 +60,7 @@
 		<% my $manage_capable = ref $status eq 'HASH' && ($status->{'machine'} || '') ne 'mobile' && ($status->{'platform'} || '') eq 'linux'; %>
 		<% my $manage_on = ref $status eq 'HASH' && ref $status->{'config'} eq 'HASH' && $status->{'config'}{'manage'} ? 1 : 0; %>
 		<% if ($manage_capable) { %>
-		<label class="power_manage_toggle"><input type="checkbox" id="power_manage"<%== $manage_on ? ' checked' : '' %>> <%= &subs::ui('JawnOS manages power') %></label>
+		<label class="power_manage_toggle"><input type="checkbox" id="power_manage" hint="<%= &subs::ui('Let JawnOS write the CPU and sleep settings') %>"<%== $manage_on ? ' checked' : '' %>> <%= &subs::ui('JawnOS manages power') %></label>
 		<% } %>
 		<div id="power_manager_note" class="power_muted"></div>
 	</div>
@@ -68,7 +68,7 @@
 		<section class="power_plan_card" id="power_source_ac" active="no">
 			<h4><%= &subs::lang('power_ac') %></h4>
 			<label><%= &subs::ui('Power plan') %>
-				<select id="power_plan_ac" class="power_plan_select" data-source="ac">
+				<select id="power_plan_ac" hint="<%= &subs::ui('Choose the plan while plugged in') %>" class="power_plan_select" data-source="ac">
 					<option value="auto"><%= &subs::lang('power_auto') %></option>
 					<option value="saver"><%= &subs::lang('power_saver') %></option>
 					<option value="balanced" selected><%= &subs::lang('power_balanced') %></option>
@@ -79,7 +79,7 @@
 				<input type="range" id="power_limit_ac" class="power_limit" data-source="ac" min="25" max="100" step="5" value="100">
 				<span id="power_limit_value_ac">100%</span>
 			</label>
-			<button type="button" class="power_save" id="power_save_ac" data-source="ac"><%= &subs::ui('Save') %></button>
+			<button type="button" class="power_save" id="power_save_ac" hint="<%= &subs::ui('Store the plan for mains power') %>" data-source="ac"><%= &subs::ui('Save') %></button>
 		</section>
 		<section class="power_plan_card" id="power_source_battery" active="no">
 			<h4><%= &subs::lang('power_battery') %></h4>
@@ -99,8 +99,8 @@
 		</section>
 	</div>
 	<div class="power_auto_row">
-		<label><input type="checkbox" id="power_auto" checked> <%= &subs::ui('Switch plans automatically when the power source changes') %></label>
-		<button type="button" id="power_apply"><%= &subs::ui('Apply now') %></button>
+		<label><input type="checkbox" id="power_auto" hint="<%= &subs::ui('Apply the matching plan when the cable changes') %>" checked> <%= &subs::ui('Switch plans automatically when the power source changes') %></label>
+		<button type="button" id="power_apply" hint="<%= &subs::ui('Use the saved plan for the current source now') %>"><%= &subs::ui('Apply now') %></button>
 	</div>
 	<% my $sleep_caps = (ref $status eq 'HASH' && ref $status->{'sleep'} eq 'HASH') ? $status->{'sleep'} : {}; %>
 	<% my %sleep_type_ok = map { $_ => 1 } @{ $sleep_caps->{'types'} || [] }; %>

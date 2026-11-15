@@ -31,7 +31,7 @@
 			    in the house token and is applied on that first boot. %>
 			<div class="controller_field">
 				<label class="controller_field_label" for="controllers_card_choice"><%= &subs::ui('The card in the controller') %></label>
-				<select id="controllers_card_choice">
+				<select id="controllers_card_choice" hint="<%= &subs::ui('Keep the card or format it on first start') %>">
 					<option value="adopt"><%= &subs::ui('Keep what is on it') %></option>
 					<option value="format"><%= &subs::ui('Format it when the board starts') %></option>
 				</select>
@@ -39,7 +39,7 @@
 		</div>
 
 		<div class="controller_toolbar">
-			<button type="button" id="controllers_new_button"><%= &subs::ui('New controller') %></button>
+			<button type="button" id="controllers_new_button" hint="<%= &subs::ui('Put the house on a blank board') %>"><%= &subs::ui('New controller') %></button>
 			<div id="controllers_new_status" class="controller_status" aria-live="polite"></div>
 		</div>
 		<div id="controllers_new_panel" class="controller_card" hidden></div>
@@ -49,8 +49,8 @@
 		<h2><%= &subs::ui('Add a controller') %></h2>
 		<p class="controller_note"><%= &subs::ui('Name the controller, then add it. The house answers with a code; confirm the same code below.') %></p>
 		<div>
-			<input type="text" id="controller_name" placeholder="<%= &subs::ui('Controller name') %>" aria-label="<%= &subs::ui('Controller name') %>">
-			<button type="button" id="controller_add_button"><%= &subs::ui('Add a controller') %></button>
+			<input type="text" id="controller_name" hint="<%= &subs::ui('Name the controller for the network') %>" placeholder="<%= &subs::ui('Controller name') %>" aria-label="<%= &subs::ui('Controller name') %>">
+			<button type="button" id="controller_add_button" hint="<%= &subs::ui('Add the controller and read its code') %>"><%= &subs::ui('Add a controller') %></button>
 		</div>
 		<div id="controller_code" class="controller_code" hidden></div>
 		<p id="controller_code_note" class="controller_note" hidden><%= &subs::ui('Type this code on the controller, then approve the same code here.') %></p>
@@ -62,7 +62,7 @@
 		<p class="controller_note"><%= &subs::ui('Type the code the controller shows and approve it.') %></p>
 		<div>
 			<input type="text" id="controllers_approve_code" placeholder="<%= &subs::ui('Code') %>" aria-label="<%= &subs::ui('Code') %>">
-			<button type="button" id="controllers_approve_button"><%= &subs::ui('Approve') %></button>
+			<button type="button" id="controllers_approve_button" hint="<%= &subs::ui('Confirm the code the controller shows') %>"><%= &subs::ui('Approve') %></button>
 		</div>
 		<div id="controllers_approve_status" class="controller_status" aria-live="polite"></div>
 	</div>
@@ -81,7 +81,7 @@
 		    storage answer and its button presses the control the step names, so it
 		    cannot drift from what Save does. %>
 		<div class="controller_toolbar">
-			<button type="button" id="controllers_walkthrough_button" aria-expanded="false" aria-controls="controllers_walkthrough"><%= &subs::ui('Walk me through it') %></button>
+			<button type="button" id="controllers_walkthrough_button" hint="<%= &subs::ui('Step through the storage setup') %>" aria-expanded="false" aria-controls="controllers_walkthrough"><%= &subs::ui('Walk me through it') %></button>
 		</div>
 		<div id="controllers_walkthrough" class="controller_card" hidden></div>
 	</div>

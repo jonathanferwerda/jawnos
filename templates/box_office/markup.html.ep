@@ -58,7 +58,7 @@
 			<div class="bo_form">
 				<label class="bo_field">
 					<span><%= &subs::ui('Who') %></span>
-					<select id="ticket_name">
+					<select id="ticket_name" hint="<%= &subs::ui('Choose who the pass is for') %>">
 						<option value="" <% unless ($name_found) { %>selected<% } %>><%= &subs::ui('Visitor') %></option>
 						<% foreach my $p ( sort { lc($a->{'app'}) cmp lc($b->{'app'}) } @people_list ) { %>
 							<option value="<%= $p->{'app'} %>" <% if (&subs::unformat_name($p->{'app'}) eq $selected_name) { %>selected<% } %>><%= &subs::format_name($p->{'app'}) %></option>
@@ -67,7 +67,7 @@
 				</label>
 				<label class="bo_field">
 					<span><%= &subs::ui('App') %></span>
-					<select id="ticket_app">
+					<select id="ticket_app" hint="<%= &subs::ui('Choose the app the pass opens') %>">
 						<% foreach my $a ( @apps_list ) { %>
 							<option value="<%= $a %>" <% if ($a eq 'box_office') { %>selected<% } %>><%= &subs::format_name($a) %></option>
 						<% } %>
@@ -75,7 +75,7 @@
 				</label>
 				<label class="bo_field">
 					<span><%= &subs::ui('Privilege') %></span>
-					<select id="ticket_privilege">
+					<select id="ticket_privilege" hint="<%= &subs::ui('Choose the privilege for this pass') %>">
 						<% foreach my $p ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
 							<option value="<%= $p %>" <% if ($selected_priv eq $p) { %>selected<% } %>><%= &subs::format_name($p) %></option>
 						<% } %>
@@ -92,7 +92,7 @@
 				</label>
 				<label class="bo_field">
 					<span><%= &subs::ui('Warranty') %></span>
-					<input type="text" id="ticket_warranty" value="<%= $warranty %>" placeholder="-1d, -1y, forever">
+					<input type="text" id="ticket_warranty" hint="<%= &subs::ui('Set how long the pass lasts') %>" value="<%= $warranty %>" placeholder="-1d, -1y, forever">
 				</label>
 				<div class="bo_form_action">
 					<button type="button" id="ticket_issue" class="bo_primary" hint="<%= &subs::ui('Issue a pass now') %>"><%= &subs::ui('Issue pass') %></button>
@@ -100,7 +100,7 @@
 				</div>
 			</div>
 
-			<details class="bo_acc" id="bo_network">
+			<details class="bo_acc" id="bo_network" hint="<%= &subs::ui('Set the address the pass link points at') %>">
 				<summary>
 					<span class="bo_acc_title"><%= &subs::ui('Network address') %></span>
 					<span class="bo_acc_meta" id="ticket_network_meta"><%= $selected_nic %></span>
@@ -249,7 +249,7 @@
 				<span class="bo_muted"><%= &subs::ui('How the public pass form is answered.') %></span>
 			</div>
 			<div id="ticket_request_policy" class="bo_policy">
-				<label class="bo_check"><input type="checkbox" id="ticket_policy_auto" <% if ($policy->{'issue_guest_on_request'}) { %>checked<% } %>> <span><%= &subs::ui('Issue guest passes on request') %></span></label>
+				<label class="bo_check"><input type="checkbox" id="ticket_policy_auto" hint="<%= &subs::ui('Mint a guest pass as each request arrives') %>" <% if ($policy->{'issue_guest_on_request'}) { %>checked<% } %>> <span><%= &subs::ui('Issue guest passes on request') %></span></label>
 				<label class="bo_field bo_field_inline">
 					<span><%= &subs::ui('Guest warranty') %></span>
 					<input type="text" id="ticket_policy_warranty" value="<%= $policy->{'guest_warranty'} %>" placeholder="-1d">

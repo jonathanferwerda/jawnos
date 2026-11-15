@@ -58,6 +58,7 @@ $topic{'people'} = {
 $topic{'notes'} = {
 		title => 'Notes', category => 'apps', app => 'notes',
 		templates => [ 'templates/notes/notes.html.ep', 'public/js/manager/notes.js' ],
+		controls => [ 'Show every note, whatever its category', 'Add, rename or remove a category', 'File the note you are about to write', 'Save the note under the chosen category', 'Open the whole note on its own screen', 'Write the changed words back' ],
 		verified => '2026-11-11',
 		summary => 'Free-form notes filed under the house\'s categories or Uncategorized, each open or completed, shown as a one-line heading and opened on a screen of its own for editing, plus the drafts of notes being typed in an appointment.',
 		body => [
@@ -102,6 +103,9 @@ $topic{'tasks'} = {
 	};
 $topic{'measures'} = {
 		title => 'Measures', category => 'apps', app => 'measures',
+		templates => [ 'templates/measures/measures.html.ep', 'templates/measures/edit.html.ep' ],
+		controls => [ 'The unit this row is kept in', 'Ranges, multiple-selects and free values', 'Attach this row to an app measure' ],
+		verified => '2026-11-15',
 		summary => 'Track a value over time.',
 		body => [
 			'Measures records a number against a time — weight, a reading, a score — and charts it. Ranges, multiple-selects and free values are all available, and the evaluation app can read what it finds.',
@@ -155,6 +159,7 @@ $topic{'travel'} = {
 $topic{'relational'} = {
 		title => 'Relational', category => 'apps', app => 'relational',
 		templates => [ 'templates/relational/workspace.html.ep', 'public/js/manager/relational.js' ],
+		controls => [ 'Filter the library by name', 'Pick a kind; the library shows its cards', 'Name a new construct', 'Add the construct without leaving the board', 'Drop a card here to link it', 'Drag a member here to end the relationship' ],
 		verified => '2026-11-15',
 		summary => 'The social constructs, and the relationships between them.',
 		body => [
@@ -175,6 +180,8 @@ $topic{'relational'} = {
 	};
 $topic{'cards'} = {
 		title => 'Cards', category => 'apps', app => 'cards',
+		templates => [ 'templates/cards.html.ep', 'templates/cards/chooser.html.ep', 'templates/cards/solitaire.html.ep', 'templates/cards/mahjong.html.ep', 'templates/cards/blackjack.html.ep', 'templates/cards/tarot.html.ep' ],
+		controls => [ 'Bring the deck chooser back', 'Take a move back', 'Send the cards that are safe to go up', 'Rearrange what is left', 'Take another card', 'Start the bank at five hundred again' ],
 		verified => '2026-11-15',
 		summary => 'Four decks: tarot drawn from your own data, solitaire, mahjong and blackjack.',
 		body => [
@@ -201,6 +208,7 @@ $topic{'controller'} = {
 		title => 'Controller', category => 'apps', app => 'controller',
 		verified => '2026-11-13',
 		templates => [ 'templates/apps/controller.html.ep', 'templates/controller/config.html.ep', 'templates/controller/time.html.ep', 'templates/controller/retroarch.html.ep', 'templates/controller/mapping.html.ep' ],
+		controls => [ 'Check and switch Wi-Fi and Bluetooth', 'Set the master level and each channel', 'Read the battery and pick a CPU profile', 'Open the Manager desk', 'Screen off, restart or shut down' ],
 		summary => 'The handheld\'s home: eight tiles, Network, Sound, battery/CPU, Manager and a clock, and a Leave panel that puts the panel into a dark idle.',
 		body => [
 			'Controller is the home screen of the handheld. It has no desk of windows: it shows eight tiles, each one press away from the surface it names, with Network, Sound, the battery reading, a Manager button and the time at the top right. The time follows the house\'s clock time zone, which is Eastern unless Time settings says otherwise. Press the battery reading for the pack\'s state and the CPU profile (Auto, Power saver, Balanced, Performance).',
@@ -218,6 +226,7 @@ $topic{'games'} = {
 	title => 'Games', category => 'apps', app => 'games',
 	verified => '2026-11-15',
 	templates => [ 'templates/apps/games.html.ep', 'public/js/manager/twirl.js' ],
+		controls => [ 'Fetch RetroArch and the emulator cores', 'Copy ROMs in from the emmc or a USB stick', 'Look up covers for games that have none', 'Bring every game back', 'Map the buttons for this system', 'Choose the emulator each system runs on' ],
 	summary => 'The games launcher: Cards and Twirl, and an emulated shelf that installs its emulators, reads the ROMs under ~/roms, filters them by system, fetches their covers and runs one outside the house view.',
 	body => [
 		'Games is a second launcher, one press in from the Controller\'s Games tile. Cards opens the card room and its solitaire and blackjack games. Twirl opens the falling-block puzzle, where the left and right arrows slide a piece, the down arrow nudges it, the space bar drops it, and Enter deals again after a game over.',

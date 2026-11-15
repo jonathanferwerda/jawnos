@@ -113,6 +113,7 @@ $topic{'translation'} = {
 $topic{'security'} = {
 		'title' => 'Security', category => 'apps', app => 'security',
 		templates => [ 'templates/security.html.ep', 'templates/padlock.html.ep', 'templates/padlock_key.html.ep', 'templates/layouts/padlock_key.html.ep', 'templates/locked.html.ep', 'templates/locked_screen.html.ep', 'templates/layouts/locked.html.ep', 'templates/app_required.html.ep', 'public/js/manager/security.js' ],
+		controls => [ 'Set the screen lock and the gate that guards it', 'See which machines are trusted, and with what privilege', 'See and revoke the browsers and phones paired to the house', 'Keep the paper code and shares that get you back in', 'Make a passkey on this device' ],
 		verified => '2026-11-15',
 		summary => 'Passwords, pseudonyms, screen lock, the gate and secrets.',
 		body => [
@@ -139,7 +140,8 @@ $topic{'security'} = {
 	};
 $topic{'box_office'} = {
 		title => 'Box Office', category => 'apps', app => 'box_office',
-		templates => [ 'templates/box_office.html.ep', 'templates/store/ticket_request.html.ep', 'public/js/manager/manager.js', 'public/js/homepage.js' ],
+		templates => [ 'templates/box_office.html.ep', 'templates/box_office/markup.html.ep', 'templates/store/ticket_request.html.ep', 'public/js/manager/manager.js', 'public/js/homepage.js' ],
+		controls => [ 'Choose who the pass is for', 'Choose the app the pass opens', 'Choose the privilege for this pass', 'Set how long the pass lasts', 'Set the address the pass link points at', 'Mint a guest pass as each request arrives' ],
 		verified => '2026-11-15',
 		summary => 'Issue, suspend, renew and revoke passes.',
 		body => [

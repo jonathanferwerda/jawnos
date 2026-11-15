@@ -2,12 +2,12 @@
 
 <div id="security" device_uuid="<%= $current_device_uuid || '' %>" style="background-color:var(--panel);width:100%;height:100%;box-sizing:border-box;">
 	<div class="security_tabs">
-		<button class="security_view_select" view="padlock" style="<% if ($president->{'security_view'} eq 'padlock') { %>background-color:lightgreen;<% } %>">Padlock</button>
-		<button class="security_view_select" view="neighbour_link" style="<% if ($president->{'security_view'} eq 'neighbour_link') { %>background-color:lightgreen;<% } %>">Neighbour</button>
+		<button class="security_view_select" view="padlock" hint="<%= &subs::ui('Set the screen lock and the gate that guards it') %>" style="<% if ($president->{'security_view'} eq 'padlock') { %>background-color:lightgreen;<% } %>">Padlock</button>
+		<button class="security_view_select" view="neighbour_link" hint="<%= &subs::ui('See which machines are trusted, and with what privilege') %>" style="<% if ($president->{'security_view'} eq 'neighbour_link') { %>background-color:lightgreen;<% } %>">Neighbour</button>
 		<button class="security_view_select" view="signatorial" style="<% if ($president->{'security_view'} eq 'signatorial') { %>background-color:lightgreen;<% } %>">Signatorial</button>
-		<button class="security_view_select" view="devices" style="<% if ($president->{'security_view'} eq 'devices') { %>background-color:lightgreen;<% } %>">Devices</button>
-		<button class="security_view_select" view="recovery" style="<% if ($president->{'security_view'} eq 'recovery') { %>background-color:lightgreen;<% } %>">Recovery</button>
-		<button class="security_view_select" view="passkeys" style="<% if ($president->{'security_view'} eq 'passkeys') { %>background-color:lightgreen;<% } %>">Passkeys</button>
+		<button class="security_view_select" view="devices" hint="<%= &subs::ui('See and revoke the browsers and phones paired to the house') %>" style="<% if ($president->{'security_view'} eq 'devices') { %>background-color:lightgreen;<% } %>">Devices</button>
+		<button class="security_view_select" view="recovery" hint="<%= &subs::ui('Keep the paper code and shares that get you back in') %>" style="<% if ($president->{'security_view'} eq 'recovery') { %>background-color:lightgreen;<% } %>">Recovery</button>
+		<button class="security_view_select" view="passkeys" hint="<%= &subs::ui('Make a passkey on this device') %>" style="<% if ($president->{'security_view'} eq 'passkeys') { %>background-color:lightgreen;<% } %>">Passkeys</button>
 	</div>
 	<%= include 'security/padlock' %>
 	<%= include 'security/passkeys' %>

@@ -409,7 +409,7 @@ like( $rendered_long, qr/data-text="\Q$long_note\E"/,
 	'the whole note stays on the row for the editor' );
 like( $rendered_long, qr/data-sig="1000"/, 'the row carries the signature its heading is cached against' );
 like( $rendered_long, qr/data-header-agent="1"/, 'a Guide model is announced to the browser' );
-my ($shown_heading) = $rendered_long =~ m{<div class="note_text">(.*?)</div>}s;
+my ($shown_heading) = $rendered_long =~ m{<div class="note_text".*?(?<!%)>(.*?)</div>}s;
 is( $shown_heading, $heading, 'the row shows the heading, cut at a word' );
 isnt( $shown_heading, $long_note, 'the row does not show the whole note' );
 
@@ -433,7 +433,7 @@ my $rendered_plain = eval {
 };
 like( $rendered_plain, qr/data-header-agent="0"/,
 	'with no model the browser is told not to ask' );
-my ($plain_heading) = $rendered_plain =~ m{<div class="note_text">(.*?)</div>}s;
+my ($plain_heading) = $rendered_plain =~ m{<div class="note_text".*?(?<!%)>(.*?)</div>}s;
 is( $plain_heading, $heading, 'and the server cut is still the heading' );
 
 done_testing();

@@ -90,7 +90,7 @@ function relationalCardHtml(row, type, hidden) {
 function relationalLibraryHtml(data) {
 	var tabs = (data.types || []).map(function(type) {
 		var active = (type.name === relationalState.activeType) ? ' active' : '';
-		return '<button class="relational_type_tab' + active + '" data-type="' + relationalEsc(type.name) + '" data-sing="' + relationalEsc(type.sing) + '">'
+		return '<button class="relational_type_tab' + active + '" data-type="' + relationalEsc(type.name) + '" data-sing="' + relationalEsc(type.sing) + '" hint="Pick a kind; the library shows its cards">'
 			+ relationalEsc(type.label) + ' <span class="relational_count">' + type.count + '</span></button>';
 	}).join('');
 	var cards = [];
@@ -101,12 +101,12 @@ function relationalLibraryHtml(data) {
 	});
 	return '<aside class="relational_library">'
 		+ '<div class="relational_library_title">' + relationalEsc(data.labels.library) + '</div>'
-		+ '<input id="relational_search" class="relational_search_input" placeholder="' + relationalEsc(data.labels.search) + '" value="' + relationalEsc(relationalState.search) + '">'
+		+ '<input id="relational_search" hint="Filter the library by name" class="relational_search_input" placeholder="' + relationalEsc(data.labels.search) + '" value="' + relationalEsc(relationalState.search) + '">'
 		+ '<div class="relational_type_tabs">' + tabs + '</div>'
 		+ '<div class="relational_add_row">'
-		+ '<input id="relational_add_name" class="relational_add_name" placeholder="' + relationalEsc(data.labels.add_placeholder) + '">'
+		+ '<input id="relational_add_name" hint="Name a new construct" class="relational_add_name" placeholder="' + relationalEsc(data.labels.add_placeholder) + '">'
 		+ '<select id="relational_add_type" class="relational_add_type">' + relationalTypeOptions(data) + '</select>'
-		+ '<button id="relational_add_button" class="relational_add_button">' + relationalEsc(data.labels.add) + '</button>'
+		+ '<button id="relational_add_button" class="relational_add_button" hint="Add the construct without leaving the board">' + relationalEsc(data.labels.add) + '</button>'
 		+ '</div>'
 		+ '<div class="relational_cards">' + cards.join('') + '</div>'
 		+ '</aside>';
@@ -137,7 +137,7 @@ function relationalBoardHtml(data) {
 		var members = list.length ? list.map(relationalMemberHtml).join('') : '<div class="relational_empty">' + relationalEsc(data.labels.empty_members) + '</div>';
 		return '<section class="relational_column" data-type="' + relationalEsc(type.name) + '" data-sing="' + relationalEsc(type.sing) + '">'
 			+ '<div class="relational_column_head"><span>' + relationalEsc(type.label) + '</span><span class="relational_count">' + list.length + '</span></div>'
-			+ '<div class="relational_dropzone" data-type="' + relationalEsc(type.name) + '" data-sing="' + relationalEsc(type.sing) + '">' + members + '</div>'
+			+ '<div class="relational_dropzone" data-type="' + relationalEsc(type.name) + '" data-sing="' + relationalEsc(type.sing) + '" hint="Drop a card here to link it">' + members + '</div>'
 			+ '</section>';
 	}).join('');
 	return '<main class="relational_board">'
@@ -153,7 +153,7 @@ function relationalBoardHtml(data) {
 		+ '</div>'
 		+ details
 		+ '</div>'
-		+ '<div class="relational_trash">' + relationalEsc(data.labels.drop_to_remove) + '</div>'
+		+ '<div class="relational_trash" hint="Drag a member here to end the relationship">' + relationalEsc(data.labels.drop_to_remove) + '</div>'
 		+ '</div>'
 		+ '<p class="relational_hint">' + relationalEsc(data.labels.focus_hint) + '</p>'
 		+ '<div class="relational_columns">' + columns + '</div>'

@@ -2,7 +2,7 @@
 
 <div id="clock_app" class="clock_app" data-clock-tab="<%= $tab %>">
 	<div class="clock_tabbar" role="tablist">
-		<button type="button" class="clock_tab <%= $tab eq 'alarm' ? 'selected' : '' %>" data-clock-tab="alarm" role="tab" aria-selected="<%= $tab eq 'alarm' ? 'true' : 'false' %>">
+		<button type="button" class="clock_tab <%= $tab eq 'alarm' ? 'selected' : '' %>" data-clock-tab="alarm" hint="<%= &subs::ui('Show the alarms') %>" role="tab" aria-selected="<%= $tab eq 'alarm' ? 'true' : 'false' %>">
 			<img src="<%= &subs::icon_path('alarm', '/icons/alarm.svg') %>" alt=""><span><%= &subs::lang('alarm') %></span>
 		</button>
 		<button type="button" class="clock_tab <%= $tab eq 'stopwatch' ? 'selected' : '' %>" data-clock-tab="stopwatch" role="tab" aria-selected="<%= $tab eq 'stopwatch' ? 'true' : 'false' %>">
@@ -26,7 +26,7 @@
 		<section class="clock_panel <%= $tab eq 'alarm' ? 'selected' : '' %>" data-clock-panel="alarm" role="tabpanel">
 			<div class="clock_panel_head">
 				<span class="clock_count"><%= scalar @{$alarms} %>/<%= $max %></span>
-				<button type="button" class="clock_add clock_add_alarm"<%= scalar @{$alarms} >= $max ? ' disabled' : '' %>><%= &subs::lang('add_alarm') %></button>
+				<button type="button" class="clock_add clock_add_alarm" hint="<%= &subs::ui('Add an alarm to the list') %>"<%= scalar @{$alarms} >= $max ? ' disabled' : '' %>><%= &subs::lang('add_alarm') %></button>
 			</div>
 			<div class="clock_alarm_list">
 				<% foreach my $alarm ( @{$alarms} ) { %>
@@ -141,7 +141,7 @@
 			<div class="clock_stopwatch">
 				<div class="clock_sw_display">00:00:00.00</div>
 				<div class="clock_sw_buttons">
-					<button type="button" class="clock_sw_start"><%= &subs::lang('start') %></button>
+					<button type="button" class="clock_sw_start" hint="<%= &subs::ui('Start counting up') %>"><%= &subs::lang('start') %></button>
 					<button type="button" class="clock_sw_lap"><%= &subs::lang('lap') %></button>
 					<button type="button" class="clock_sw_reset"><%= &subs::lang('reset') %></button>
 				</div>
@@ -167,7 +167,7 @@
 					<span><%= &subs::lang('volume') %> · 70%</span>
 					<input type="range" min="5" max="100" step="5" class="clock_timer_volume" inputmode="none" data-soft_keyboard="off" aria-label="<%= &subs::lang('volume') %>" value="70">
 				</label>
-				<button type="button" class="clock_add clock_add_timer"<%= $running_timers >= $max ? ' disabled' : '' %>><%= &subs::lang('add_timer') %></button>
+				<button type="button" class="clock_add clock_add_timer" hint="<%= &subs::ui('Add this countdown') %>"<%= $running_timers >= $max ? ' disabled' : '' %>><%= &subs::lang('add_timer') %></button>
 			</div>
 			<div class="clock_presets">
 				<button type="button" class="clock_preset" data-preset="60"><%= &subs::ui('1 min') %></button>
@@ -212,7 +212,7 @@
 			<div class="clock_world">
 				<div class="clock_world_add">
 					<input type="text" list="clock_zones" class="clock_world_zone" placeholder="<%= &subs::ui('City or time zone') %>" aria-label="<%= &subs::ui('City or time zone') %>">
-					<button type="button" class="clock_world_add_button"><%= &subs::lang('add') %></button>
+					<button type="button" class="clock_world_add_button" hint="<%= &subs::ui('Add a city or time zone') %>"><%= &subs::lang('add') %></button>
 				</div>
 				<div class="clock_world_list"></div>
 				<datalist id="clock_zones"></datalist>

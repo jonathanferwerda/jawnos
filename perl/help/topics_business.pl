@@ -100,6 +100,8 @@ $topic{'pay'} = {
 	};
 $topic{'warehouse'} = {
 		title => 'Warehouse', category => 'apps', app => 'warehouse',
+		templates => [ 'templates/warehouse/warehouse.html.ep', 'templates/warehouse/listing.html.ep', 'templates/warehouse/moves.html.ep' ],
+		controls => [ 'Name the item that arrived', 'Amount as a count or a measure, like 12 or 355mL', 'The place the stock arrives in', 'Why it arrived: a gift, something found, or a transfer in', 'Show stock levels or the moves ledger', 'Show stock from the places you keep' ],
 		verified => '2026-11-15',
 		summary => 'Money and goods tracked per place.',
 		body => [
@@ -123,6 +125,7 @@ $topic{'market'} = {
 		title => 'Market', category => 'apps', app => 'market',
 		'verified' => '2026-11-15',
 		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js', 'public/js/manager/market/01_tabs_and_receipts.js' ],
+		controls => [ 'The kind of list to shop from', 'Scope both tabs to one shop', 'Type an item and press Enter to add it', 'Read a barcode with a phone or this machine', 'Scan a whole receipt after the shop', 'Retire the cart and open the expense' ],
 		summary => 'The shopping list and the shopping run.',
 		body => [
 			'Market is where what you need to buy gathers. A Lists dropdown groups what to buy by kind, prepopulated with the house\'s categories (Clothes, Food, Household, Tech, and the rest) and opening the list you were last on; a Vendors dropdown scopes to a shop. The Shopping List tab holds what to buy, each row carrying a need/want dial, and Enter adds an item; the Shopping tab reads the same list through a Needs, Wants or All filter.',

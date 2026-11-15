@@ -107,6 +107,7 @@ $topic{'pen'} = {
 $topic{'process_monitor'} = {
 		title => 'Process Monitor', category => 'apps', app => 'process_monitor',
 		templates => [ 'templates/monitor/monitor.html.ep', 'public/js/manager/monitor.js' ],
+		controls => [ 'Sort by CPU to find what is busy', 'Sort by memory to find what is busy' ],
 		verified => '2026-11-14',
 		summary => 'Live CPU, memory and battery health, per-core graphs and a process list.',
 		body => [
