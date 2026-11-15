@@ -1,7 +1,8 @@
 # tests-for: scripts/loc.pl
 # covers:    the authored line count - the language buckets, the comment rules,
-#           vendored and generated data kept out of the table, and every tracked
-#           file landing in exactly one bucket
+#           vendored and generated data kept out of the table, every tracked
+#           file landing in exactly one bucket, and an extension nobody
+#           classified being named instead of quietly swallowed
 
 use strict;
 use warnings;
@@ -128,6 +129,7 @@ put("$dir/sub/launcher", "#!/usr/bin/env perl\nprint 1;\n");
 
 put("$dir/lib.min.js", "var x=1;\n");
 put("$dir/notes.md", "# notes\n\nnot code\n");
+put("$dir/artifact.xyz", "one\ntwo\n");
 
 my $fixture = json_loc('--root', $dir);
 my %lang = map { $_->{language} => $_ } @{ $fixture->{languages} };
@@ -154,8 +156,10 @@ is($lang{'Shell'}{comment}, 2, 'shebang and hash comment');
 is($lang{'SQL'}{code}, 1, 'a statement after SQL comments is code');
 
 is($fixture->{vendored}{files}, 1, 'the minified file is weighed as vendored');
-is($fixture->{not_counted}{files}, 1, 'markdown is not code');
+is($fixture->{not_counted}{files}, 2, 'markdown and an unknown extension are not code');
 is($fixture->{not_counted}{by_extension}{md}{lines}, 3, 'markdown lines are still reported');
+is_deeply($fixture->{not_counted}{unknown}, ['xyz'],
+	'an extension nobody classified is named, not hidden');
 
 for my $row (@{ $fixture->{languages} }) {
 	is($row->{lines}, $row->{blank} + $row->{comment} + $row->{code},
@@ -178,8 +182,14 @@ is($repo->{total}{code}, $sum{code}, 'total code is the sum of the languages');
 is($rows[0]{language}, 'Perl', 'Perl is the largest language');
 
 my %present = map { $_->{language} => 1 } @rows;
-my @expected = ("Perl", "JavaScript", "CSS", "Python", "Shell", "SQL", "C/C++ (Arduino)", "Perl (Mojo templates)", "C/C++ header");
+my @expected = ("Perl", "JavaScript", "CSS", "Python", "Shell", "SQL", "Batch", "C/C++ (Arduino)", "Perl (Mojo templates)", "C/C++ header");
 ok($present{$_}, "the repo has $_") for @expected;
+
+is_deeply($repo->{not_counted}{unknown}, [],
+	'every non-code extension in the tree has a category');
+my @unclassified = grep { $repo->{not_counted}{by_extension}{$_}{category} eq 'unclassified' }
+	keys %{ $repo->{not_counted}{by_extension} };
+is_deeply(\@unclassified, [], 'no non-code bucket entry falls back to unclassified');
 
 my %tracked = map { $_ => 1 } tracked_files();
 is($repo->{total}{files} + $repo->{vendored}{files} + $repo->{not_counted}{files},

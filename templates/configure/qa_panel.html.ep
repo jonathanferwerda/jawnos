@@ -135,7 +135,7 @@
 		</div>
 	</div>
 	<p class="cfg-note" style="margin:6px 0 8px;">
-		<%= &subs::ui('The last 14 days of QA runs, newest first: the nightly installer check, the weekly build and the emulator run. Each drawer says which cadence it was and opens to a table per section - the Perl modules, the Debian and Arch packages, the Android SDK, the build steps, the emulator measurements. A run that found nothing wrong says so; one that stopped early says where. The reports stay on the machine that ran the job, so this list is the same from any machine you open the panel on.') %>
+		<%= &subs::ui('The last 14 days of QA runs, newest first: the nightly installer check, the security audit and the line count, the weekly build and the emulator run. The line count opens as a trend across those runs, with the change since the run before, so the authored lines can be followed from night to night; vendored libraries and generated data are left out of it. Each drawer says which cadence it was and opens to a table per section - the Perl modules, the Debian and Arch packages, the Android SDK, the build steps, the emulator measurements. A run that found nothing wrong says so; one that stopped early says where. The reports stay on the machine that ran the job, so this list is the same from any machine you open the panel on.') %>
 	</p>
 	<div id="qa_reports" class="qa_reports"><%= &subs::ui('Loading…') %></div>
 </div>

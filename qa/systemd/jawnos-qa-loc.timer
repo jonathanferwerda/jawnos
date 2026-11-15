@@ -1,0 +1,14 @@
+[Unit]
+Description=Nightly JawnOS authored line count
+
+[Timer]
+# 02:30, ahead of the Sunday 03:00 artefact build and the 03:45 installer check:
+# the count only reads the checkout, so it is seconds and must not queue behind
+# anything heavier.
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=jawnos-qa-loc.service
+
+[Install]
+WantedBy=timers.target

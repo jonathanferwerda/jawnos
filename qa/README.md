@@ -620,6 +620,35 @@ deliberately not in the nightly set while the JavaScript refactor is in flight.
 The UX loop (`l6`) has its own timer at 05:30 - do not add it to this unit, or a
 20-minute UX run can hold the route/database layers.
 
+### Line count (02:30)
+
+`qa/loc_nightly.sh` runs `perl scripts/loc.pl --json` and publishes the run the
+way every other night does, so the size of the house is a trend in
+Configure -> Plat -> QA rather than a number somebody remembers:
+
+```sh
+sudo cp qa/systemd/jawnos-qa-loc.service qa/systemd/jawnos-qa-loc.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-qa-loc.timer
+systemctl list-timers jawnos-qa-loc.timer
+```
+
+It is gated by `qa/device_target.pl` like the suite, reads the checkout and
+writes only `$QA_ROOT/reports/loc/<stamp>/` (plus its own count and table under
+`$QA_ROOT/loc/<stamp>/`): `report.json` carries `metrics.authored_code` and one
+table row per language, and that metric is what the panel's trend reads, so a
+night that could not count leaves no point rather than a zero. The note always
+names the short SHA and a `+dirty` marker, because `loc.pl` counts the tracked
+files as they are on disk: a nightly on a dirty checkout is counting edits
+nobody committed. Vendored libraries and generated data are excluded and only
+reported under the table. A count takes seconds and needs no network.
+
+A rehearsal writes into a scratch root and touches nothing the panel reads:
+
+```sh
+QA_ROOT=/tmp/qa-loc STAMP=20260101T000000Z qa/loc_nightly.sh
+```
+
 ### Security audit (04:45)
 
 `scripts/security_audit.pl` reads the tree and the machine and fails on a new

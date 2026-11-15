@@ -1,13 +1,17 @@
-# tests-for: lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm perl/hooks.pl qa/installers/run.sh qa/nightly_build.sh qa/android/run.sh scripts/qa_report.pl scripts/jawnos_deps.pl templates/configure/qa_panel.html.ep public/js/manager/configure/07_qa_nightly.js perl/help/topics_configure.pl
+# tests-for: lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm perl/hooks.pl qa/installers/run.sh qa/nightly_build.sh qa/android/run.sh qa/loc_nightly.sh qa/systemd/jawnos-qa-loc.service qa/systemd/jawnos-qa-loc.timer scripts/qa_report.pl scripts/jawnos_deps.pl templates/configure/qa_panel.html.ep public/js/manager/configure/07_qa_nightly.js perl/help/topics_configure.pl
 # covers:    Configure -> Plat -> QA shows the last 14 days of QA runs: the
-#           installer check (nightly), the weekly build and the emulator run,
-#           each an accordion labelled with its cadence and a table per section.
-#           A job writes $QA_ROOT/reports/<kind>/<stamp>/report.json and
-#           status.txt; the panel reads that directory on the machine that did
-#           the work (the same signed hop readiness uses), so a laptop sees the
-#           QA box's own reports without anything being synced here. A run that
-#           died early still appears with the status it managed, and retention
-#           is days, not a count of runs.
+#           installer check (nightly), the line count (nightly), the weekly build
+#           and the emulator run, each an accordion labelled with its cadence and
+#           a table per section. The line count also draws a trend across the
+#           retained runs, above the drawers, with the change since the run
+#           before it; a run that wrote a broken report or no count leaves a gap
+#           in that trend rather than a zero. A job writes
+#           $QA_ROOT/reports/<kind>/<stamp>/report.json and status.txt; the panel
+#           reads that directory on the machine that did the work (the same
+#           signed hop readiness uses), so a laptop sees the QA box's own reports
+#           without anything being synced here. A run that died early still
+#           appears with the status it managed, and retention is days, not a
+#           count of runs.
 
 use strict;
 use warnings;
@@ -28,7 +32,8 @@ my $tmp  = File::Temp::tempdir(CLEANUP => 1);
 
 sub make_run {
 	my (%arg) = @_;
-	my $dir = "$tmp/$arg{'kind'}/$arg{'stamp'}";
+	my $base = $arg{'root'} || $tmp;
+	my $dir = "$base/$arg{'kind'}/$arg{'stamp'}";
 	make_path($dir);
 	write_file("$dir/status.txt", "$arg{'status'}\n") if $arg{'status'};
 	write_file("$dir/report.json", $arg{'report'}) if defined $arg{'report'};
@@ -79,6 +84,46 @@ is( $with_odd->[3]{'kind'}, 'emulator', 'a third kind is picked up too' );
 is( $with_odd->[3]{'status'}, 'ok', 'a status without a newline still reads' );
 ok( !defined $with_odd->[3]{'report'}, 'a broken report is dropped, not fatal' );
 ok( ref subs::qa_reports_list({ root => "$tmp/nowhere" }) eq 'ARRAY', 'a machine with no runs answers with an empty list' );
+
+# --- the line-count trend -----------------------------------------------------
+# The count is a number per night, so the card draws it across the retained runs.
+# A run that never counted (no report, a broken report, no metric) leaves a gap:
+# a missing count must not read as zero authored lines.
+my $loc_root = File::Temp::tempdir(CLEANUP => 1);
+sub loc_doc {
+	my ($code, $files) = @_;
+	return JSON::PP->new->canonical->encode({
+		ok => 1, kind => 'loc', schedule => 'nightly', status => 'ok',
+		title => 'Line count', note => "$code authored lines in $files files at abc1234",
+		metrics => { authored_code => $code, authored_files => $files },
+		sections => [ { title => 'Languages', columns => [ 'Language', 'Files', 'Lines', 'Code' ],
+			rows => [ [ 'Perl', $files, $code, $code ] ] } ],
+	});
+}
+make_run(root => $loc_root, kind => 'loc', stamp => '20261103T023000Z', status => 'ok', report => loc_doc(1000, 10));
+make_run(root => $loc_root, kind => 'loc', stamp => '20261104T023000Z', status => 'ok', report => loc_doc(1050, 11));
+make_run(root => $loc_root, kind => 'loc', stamp => '20261105T023000Z', status => 'ok', report => loc_doc(1040, 11));
+make_run(root => $loc_root, kind => 'loc', stamp => '20261106T023000Z', status => 'failed');
+make_run(root => $loc_root, kind => 'loc', stamp => '20261107T023000Z', status => 'ok', report => 'not json at all');
+make_run(root => $loc_root, kind => 'loc', stamp => '20261108T023000Z', status => 'ok', report => '{"ok":1,"metrics":{}}');
+
+my $loc_reports = subs::qa_reports_list({ root => $loc_root, limit => 2 });
+is( $loc_reports->[0]{'kind'}, 'loc', 'the line count is a listed kind' );
+is( $loc_reports->[0]{'stamp'}, '20261108T023000Z', 'its runs sort with every other kind' );
+is( $loc_reports->[0]{'status'}, 'ok', 'a run whose count failed still carries its status' );
+
+my $trend = subs::qa_reports_trend('loc', { root => $loc_root });
+is( scalar @$trend, 3, 'only the runs that counted become a point' );
+is( $trend->[0]{'stamp'}, '20261105T023000Z', 'newest first, like the list' );
+is( $trend->[0]{'code'}, 1040, 'the authored code count travels' );
+is( $trend->[0]{'files'}, 11, 'and the file count with it' );
+is( $trend->[0]{'change'}, -10, 'the change is against the run before it' );
+is( $trend->[1]{'change'}, 50, 'a growing night reads positive' );
+ok( !exists $trend->[2]{'change'}, 'the oldest retained point has nothing to compare with' );
+is( scalar @{ subs::qa_reports_trend('loc', { root => $loc_root, trend_limit => 2 }) }, 2,
+	'the trend is capped to the retained window' );
+is_deeply( subs::qa_reports_trend('loc', { root => "$loc_root/nowhere" }), [], 'a machine with no counts has no trend' );
+is_deeply( subs::qa_reports_trend('', { root => $loc_root }), [], 'a trend needs a kind' );
 
 # --- the report writer every job shares --------------------------------------
 
@@ -140,6 +185,32 @@ my $deps = read_file("$root/scripts/jawnos_deps.pl");
 like( $deps, qr/'report-file=s'/, 'the checker takes a report file' );
 like( $deps, qr/generated => time/, 'and the report says when it was made' );
 
+# The line count is a job like the others: it publishes through qa_report.pl, so
+# the panel renders it with no branch of its own, and it always says which tree
+# it counted.
+my $loc_job = read_file("$root/qa/loc_nightly.sh");
+like( $loc_job, qr/--kind=loc --schedule=nightly/, 'the line count labels its run nightly' );
+like( $loc_job, qr/loc\.pl" --json/, 'it counts with the locator script' );
+like( $loc_job, qr/--note "\$note" --stamp "\$STAMP"/, 'every run carries a note and its stamp' );
+like( $loc_job, qr/rev-parse --short HEAD/, 'the note names the commit it counted' );
+like( $loc_job, qr/\+dirty/, 'and marks a checkout with edits nobody committed' );
+like( $loc_job, qr/--table "Languages:\$TSV" --metrics "\$METRICS"/,
+	'one row per language, and the metrics the trend reads' );
+like( $loc_job, qr/QA_ROOT=\$\{QA_ROOT:-\$HOME\/jawnos-qa\}/, 'the root is explicit and overridable' );
+like( $loc_job, qr/STAMP=\$\{STAMP:-/, 'a rehearsal can pin the stamp' );
+like( $loc_job, qr/GIT_OPTIONAL_LOCKS=0/, 'a read-only checkout is not refreshed' );
+like( $loc_job, qr/-mtime \+"\$KEEP_DAYS"/, 'its run dirs age out on the same 14 days' );
+
+my $loc_unit  = read_file("$root/qa/systemd/jawnos-qa-loc.service");
+my $loc_timer = read_file("$root/qa/systemd/jawnos-qa-loc.timer");
+like( $loc_unit, qr/Environment=QA_ROOT=\/home\/jawn\/jawnos-qa/,
+	'the service writes where the panel reads' );
+like( $loc_unit, qr/ExecCondition=.*qa\/device_target\.pl/, 'it runs on the chosen machine only' );
+like( $loc_unit, qr/ExecStart=\/bin\/sh .*qa\/loc_nightly\.sh/, 'it starts the count' );
+like( $loc_unit, qr/ReadWritePaths=\/home\/jawn\/jawnos-qa/, 'and writes only the QA root' );
+like( $loc_timer, qr/OnCalendar=\*-\*-\* 02:30:00/, 'nightly at 02:30, before the build lane' );
+like( $loc_timer, qr/Unit=jawnos-qa-loc\.service/, 'the timer starts that service' );
+
 # --- the route the panel calls -----------------------------------------------
 
 my $routes = read_file("$root/lib/JawnOS/Routes/manager_configure2.pm");
@@ -153,6 +224,7 @@ like( $controller, qr/authentication'\) eq 'approved'/, 'a person must be signed
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like( $loader, qr/qa_reports_for/, 'the domain sub is registered in the loader' );
+like( $loader, qr/\bqa_reports_trend\b/, 'and so is the trend it draws' );
 
 my $remote = read_file("$root/lib/JawnOS/Domain/Remote.pm");
 like( $remote, qr/sub qa_reports_for/, 'the domain sub exists' );
@@ -162,6 +234,9 @@ like( $remote, qr/qa_hop_answer\(\$res, 'that machine did not answer the report 
 	'the reports hop uses it' );
 like( $remote, qr/qa_nightly_is_off/, 'Off stands the panel down as every other QA card does' );
 like( $remote, qr/sub qa_report_kinds/, 'the kinds it lists are named in one place' );
+like( $remote, qr/qw\(installers security loc build emulator\)/,
+	'and the line count is one of them' );
+like( $remote, qr/trend => &qa_reports_trend\('loc'/, 'the card is handed the trend with the drawers' );
 
 # --- the peer lookup the QA reads share ---------------------------------------
 # Dev learns the Laptop through the hub's mirror blob, not as a direct roster
@@ -212,6 +287,8 @@ my $panel = read_file("$root/templates/configure/qa_panel.html.ep");
 like( $panel, qr/id="qa_reports"/, 'the QA panel has the reports area' );
 like( $panel, qr/id="qa_reports_refresh"/, 'with its own refresh' );
 like( $panel, qr/14 days/, 'and says how far back it goes' );
+like( $panel, qr/line count/, 'the card copy names the line count' );
+like( $panel, qr/trend across those runs/, 'and the trend it draws' );
 
 my $js = read_file("$root/public/js/manager/configure/07_qa_nightly.js");
 like( $js, qr/\$\.getJSON\('\/manager\/configure\/qa_reports'/, 'the script asks the route' );
@@ -220,9 +297,15 @@ like( $js, qr/<table class="qa_report_table"/, 'each section is a table' );
 like( $js, qr/qa_report_schedule/, 'the cadence is shown on the accordion' );
 like( $js, qr/report\.sections/, 'a job that brings its own sections is rendered' );
 like( $js, qr/function qaReportEscape/, 'values are escaped before they reach the DOM' );
+like( $js, qr/function qaReportTrend/, 'the line-count trend has its own renderer' );
+like( $js, qr/qaReportTrend\(r\.trend\)/, 'drawn from the trend the route returns' );
+like( $js, qr/entry\.kind === 'installers'/, 'the package wording is scoped to the installer kind' );
+unlike( $js, qr/!bits\.length && entry\.report\)\s*\{/,
+	'so a count or emulator run never borrows it' );
 
 my $help = read_file("$root/perl/help/topics_configure.pl");
 like( $help, qr/Nightly reports/, 'the help topic describes the card' );
+like( $help, qr/line count/, 'and names the count among the nightly runs' );
 
 sub slurp {
 	my ($path) = @_;

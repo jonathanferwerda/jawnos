@@ -1,0 +1,40 @@
+[Unit]
+Description=JawnOS nightly authored line count (read-only)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+# The report lands where Configure -> Plat -> QA reads it.
+Environment=QA_ROOT=/home/jawn/jawnos-qa
+# loc.pl lists git's index; a read-only checkout must not be refreshed.
+Environment=GIT_OPTIONAL_LOCKS=0
+# The house's nightly work runs on the machine chosen in Configure -> Plat -> QA.
+# The helper exits 0 for the chosen machine (or when no choice is saved, or when
+# this machine cannot read its own identity) and 1 for every other, which skips
+# this unit without marking it failed.
+ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
+ExecStart=/bin/sh /home/jawn/jawnos/qa/loc_nightly.sh
+
+# Count the checkout; write only the QA root. The count needs no network.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=512M
+CPUQuota=100%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/jawn/jawnos-qa
+NoNewPrivileges=yes
+IPAddressDeny=any
+IPAddressAllow=localhost
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

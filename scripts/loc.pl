@@ -25,8 +25,10 @@
 # brace, a bracket or a lone template tag counts as code, the way cloc does.
 #
 # A new vendored file goes in %VENDOR with its reason; a new language goes in
-# %LANGUAGE and %STYLE. t/305-loc.t checks that every tracked file lands in
-# exactly one bucket, so a file that appears in none of them fails the suite.
+# %LANGUAGE and %STYLE; an extension that is not code goes in %NONCODE with
+# what it is. t/305-loc.t fails a tracked file that lands in no bucket, and one
+# that lands in "not code" without a category - so a new asset type, or a
+# language nobody counted, is a decision rather than an accident.
 use strict;
 use warnings;
 
@@ -52,6 +54,9 @@ my %LANGUAGE = (
 	sql => 'SQL',
 	ps1 => 'PowerShell',
 	iss => 'Inno Setup',
+	PL  => 'Perl',
+	mjs => 'JavaScript',
+	bat => 'Batch',
 );
 
 # language => comment style, read by classify_line below.
@@ -68,6 +73,7 @@ my %STYLE = (
 	'SQL'                   => 'sql',
 	'PowerShell'            => 'hash',
 	'Inno Setup'            => 'iss',
+	'Batch'                 => 'batch',
 );
 
 # interpreter => language, for whatever is tracked without an extension
@@ -110,6 +116,33 @@ my %VENDOR = (
 my %TEXT = map { $_ => 1 } qw(
 	md txt json yml yaml ini conf service timer svg xml patch desktop in
 	iss bat csv env tmpfiles preset network os-release gitignore example
+);
+
+# Extensions that are deliberately not code, with what they are. The bucket is
+# not a dumping ground: an extension missing from here is reported by --json as
+# unknown and fails t/305-loc.t, so a new asset, document or data file is named
+# here once instead of quietly lowering the count.
+my %NONCODE = (
+	# prose and notes
+	md => 'docs', txt => 'docs', ipynb => 'docs', patch => 'docs',
+	# configuration and packaging metadata
+	json => 'config', yml => 'config', yaml => 'config', ini => 'config',
+	conf => 'config', service => 'config', timer => 'config',
+	network => 'config', preset => 'config', in => 'config',
+	desktop => 'config', xml => 'config', gitignore => 'config',
+	dockerignore => 'config', example => 'config', env => 'config',
+	net => 'config', sysusers => 'config', tmpfiles => 'config',
+	install => 'config', bash_profile => 'config',
+	'lintian-overrides' => 'config',
+	# images, audio and the vendored bitmap font format
+	svg => 'assets', png => 'assets', jpg => 'assets', webp => 'assets',
+	mp3 => 'assets', vlw => 'assets', xcf => 'assets', ico => 'assets',
+	# the boot splash theme (its .script is not a shell script)
+	plymouth => 'theme', script => 'theme',
+	# data the app reads, not code it runs
+	csv => 'data', jawn => 'data', enc => 'data',
+	# no extension at all: licences, VERSION, PKGBUILD, debian/rules
+	none => 'extensionless',
 );
 
 my %opt;
@@ -193,11 +226,13 @@ if ($opt{json}) {
 			files  => $other{files},
 			lines  => $other{lines},
 			binary => $other{binary},
+			unknown => [ grep { !$NONCODE{$_} } sort keys %{ $other{ext} } ],
 			by_extension => {
 				map {
 					$_ => {
-						files => $other{ext}{$_}[0],
-						lines => $other{ext}{$_}[1],
+						files    => $other{ext}{$_}[0],
+						lines    => $other{ext}{$_}[1],
+						category => $NONCODE{$_} // 'unclassified',
 					}
 				} sort keys %{ $other{ext} }
 			},
@@ -222,6 +257,10 @@ if (@vendor) {
 }
 my @ext = sort { $other{ext}{$b}[1] <=> $other{ext}{$a}[1] || $a cmp $b }
 	keys %{ $other{ext} };
+my @unknown = grep { !$NONCODE{$_} } @ext;
+print STDERR "loc: unclassified extension(s): @unknown"
+	. " - add a language to %LANGUAGE or a category to %NONCODE\n"
+	if @unknown;
 splice(@ext, 5) if @ext > 5;
 my @top = map { sprintf '%s (%d files)', $_, $other{ext}{$_}[0] } @ext;
 printf "%d files / %s lines not code: %s\n",
@@ -263,8 +302,10 @@ sub disk_files {
 sub language_for {
 	my ($root, $rel) = @_;
 	my ($ext) = $rel =~ /\.([^.\/]+)$/;
-	return $LANGUAGE{$ext} if defined $ext;
+	return $LANGUAGE{$ext} if defined $ext && exists $LANGUAGE{$ext};
 
+	# An extension nobody has mapped may still be a script - a Debian
+	# maintainer script, a packaging wrapper - so the shebang decides.
 	open(my $fh, '<', "$root/$rel") or return undef;
 	my $first = <$fh>;
 	close $fh;
@@ -359,6 +400,10 @@ sub classify_line {
 
 	if ($style eq 'iss') {
 		return $line =~ /^\s*;/ ? 'comment' : 'code';
+	}
+
+	if ($style eq 'batch') {
+		return $line =~ /^\s*(?:rem\b|::)/i ? 'comment' : 'code';
 	}
 
 	return $line =~ /^\s*#/ ? 'comment' : 'code';

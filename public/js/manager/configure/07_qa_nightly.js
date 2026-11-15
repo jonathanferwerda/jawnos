@@ -499,6 +499,30 @@ function qaReportTable(title, head, rows) {
 	return html + '</tbody></table>';
 }
 
+function qaReportNumber(value) {
+	if (value === null || value === undefined || value === '') { return ''; }
+	return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// The line-count trend above the drawers: one row per retained nightly count,
+// newest first like the list. Each Change is against the run below it (the one
+// before it in time), so a growing house reads down that column, and the oldest
+// retained point has nothing to compare with.
+function qaReportTrend(points) {
+	if (!points || !points.length) { return ''; }
+	var rows = points.map(function(point) {
+		var change = '';
+		if (typeof point.change === 'number' && point.change !== 0) {
+			change = (point.change > 0 ? '+' : '\u2212') + qaReportNumber(Math.abs(point.change));
+		} else if (point.change === 0) {
+			change = '0';
+		}
+		return [qaReportStamp(point.stamp), qaReportNumber(point.code), change];
+	});
+	return qaReportTable(qaT('Authored lines of code'),
+		[qaT('Run'), qaT('Authored lines'), qaT('Change')], rows);
+}
+
 function qaReportRun(entry) {
 	var report = entry.report || {};
 	var summary = report.summary || {};
@@ -509,7 +533,9 @@ function qaReportRun(entry) {
 	if (summary.outdated || summary.android_outdated) {
 		bits.push((summary.outdated + (summary.android_outdated || 0)) + ' ' + qaT('behind upstream'));
 	}
-	if (!bits.length && entry.report) { bits.push(qaT('nothing missing upstream')); }
+	// Only the installer document counts packages, so only it can say this. A
+	// line count or an emulator run with nothing to report must not borrow it.
+	if (!bits.length && entry.report && entry.kind === 'installers') { bits.push(qaT('nothing missing upstream')); }
 	var tone = qaReportTone(entry.status);
 	var title = report.title || entry.kind || '';
 	var schedule = report.schedule || '';
@@ -575,7 +601,7 @@ function qaReportsRender(r) {
 		box.text(qaT('No reports yet. The first nightly run writes one.'));
 		return;
 	}
-	box.html(list.map(qaReportRun).join(''));
+	box.html(qaReportTrend(r.trend) + list.map(qaReportRun).join(''));
 }
 
 function qaReportsRefresh() {

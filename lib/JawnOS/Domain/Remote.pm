@@ -1068,10 +1068,10 @@ sub qa_reports_root {
 }
 
 # Every kind a job can leave: the installer check, the security audit and the
-# full suite (nightly), the weekly build and the emulator run (manual). The
+# line count (nightly), the weekly build and the emulator run (manual). The
 # order is the card's order when two runs share a stamp.
 sub qa_report_kinds {
-	return qw(installers security build emulator);
+	return qw(installers security loc build emulator);
 }
 
 sub qa_reports_list {
@@ -1127,6 +1127,49 @@ sub qa_reports_list {
 	return [];
 }
 
+# The trend the card draws above the drawers: one point per retained run of one
+# kind, newest first like the list, with each point's change against the run
+# before it. It reads that kind's own directories rather than the capped list,
+# so four nightly kinds cannot push the older points out of sight.
+# A run that wrote no report, a broken report, or one with no authored_code is
+# skipped: a night that could not count must not read as zero authored lines.
+sub qa_reports_trend {
+	my ($kind, $opts) = @_;
+	$opts ||= {};
+	return [] unless defined $kind && length $kind;
+	my $root = (defined $opts->{'root'} && length $opts->{'root'}) ? $opts->{'root'} : &qa_reports_root();
+	my $most = defined $opts->{'trend_limit'} ? $opts->{'trend_limit'} + 0 : 14;
+	$most = 1 if $most < 1;
+	my $kind_dir = "$root/$kind";
+	opendir(my $dh, $kind_dir) or return [];
+	my @stamps = sort { $b cmp $a }
+		grep { /^\d{8}T\d{6}Z$/ && -d "$kind_dir/$_" } readdir $dh;
+	closedir $dh;
+	my @points;
+	for my $stamp (@stamps) {
+		last if @points >= $most;
+		open(my $fh, '<', "$kind_dir/$stamp/report.json") or next;
+		local $/;
+		my $text = <$fh>;
+		close $fh;
+		my $report = eval { decode_json($text) };
+		next unless ref $report eq 'HASH';
+		my $metrics = $report->{'metrics'};
+		next unless ref $metrics eq 'HASH';
+		my $code = $metrics->{'authored_code'};
+		next unless defined $code && $code =~ /^\d+$/;
+		my %point = ( stamp => $stamp, code => $code + 0 );
+		my $files = $metrics->{'authored_files'};
+		$point{'files'} = $files + 0 if defined $files && $files =~ /^\d+$/;
+		push @points, \%point;
+	}
+	for my $i (0 .. $#points) {
+		next unless $i < $#points;
+		$points[$i]{'change'} = $points[$i]{'code'} - $points[$i + 1]{'code'};
+	}
+	return \@points;
+}
+
 sub qa_hop_answer {
 	my ($res, $fallback, $target) = @_;
 	# A peer that is not signed in answers JSON (403); a peer the gate does not
@@ -1146,7 +1189,7 @@ sub qa_hop_answer {
 sub qa_reports_for {
 	my ($signatorial, $opts) = @_;
 	$opts ||= {};
-	return { ok => 1, off => 1, reports => [] } if &qa_nightly_is_off($signatorial);
+	return { ok => 1, off => 1, reports => [], trend => [] } if &qa_nightly_is_off($signatorial);
 	my $guard = &qa_install_guard($signatorial, $opts);
 	return { ok => 0, error => $guard->{'error'} } unless $guard->{'ok'};
 	my $target = $guard->{'target'};
@@ -1156,6 +1199,7 @@ sub qa_reports_for {
 			local => 1,
 			target => $target->{'signatorial'} || '',
 			reports => &qa_reports_list($opts),
+			trend => &qa_reports_trend('loc', $opts),
 		};
 	}
 	# The peer hop readiness takes, for the same reason: the report lives on the
