@@ -647,52 +647,96 @@ sub action_19245 {
 sub action_19305 {
 	my $c = shift;
 	# The pool editor sends its whole state: the pools in the person's order and
-	# the pool each job sits in (an empty id means the regular list). Saving the
-	# whole thing keeps drag-and-drop, add, remove and rename to one route.
+	# the pool each job sits in (an empty id means the regular list), plus the
+	# machine whose card is open. Saving the whole thing keeps drag-and-drop, add,
+	# remove and rename to one route.
+	my $device = $c->param('device') // '';
+	# The bar names a machine by its signatorial; a request that names nothing (a
+	# page from before the bar) keeps the old meaning and edits this machine's row.
+	$device = &subs::signatorial_designer() unless $device =~ /^[0-9a-f]{32}$/i;
 	my $pools = eval { decode_json($c->param('pools') // '[]') };
 	$pools = [] unless ref $pools eq 'ARRAY';
 	my $members = eval { decode_json($c->param('members') // '{}') };
 	$members = {} unless ref $members eq 'HASH';
 
-	my (@clean, %seen);
-	foreach my $pool ( @{$pools} ) {
-		next unless ref $pool eq 'HASH';
-		my $id = $pool->{'id'} // '';
-		$id =~ s/[^a-z0-9_]//g;
-		$id = substr($id, 0, 40);
-		next if $id eq '' || $seen{$id}++;
-		my $raw = $pool->{'seconds'};
-		my $seconds = (defined $raw && $raw =~ /^\s*-?\d+(\.\d+)?\s*$/)
-			? int($raw)
-			: int(&subs::time_abbrev_translator($raw, &subs::rightNow()) / 1000);
-		$seconds = $gb::batch_groups->{$id}->{'seconds'} || 900 unless $seconds > 0;
-		my $label = $pool->{'label'} // '';
-		$label =~ s/^\s+|\s+$//g;
-		$label = substr($label, 0, 40);
-		$label = $id if $label eq '';
-		push @clean, { id => $id, label => $label, seconds => $seconds };
+	my $saved = &subs::utility_pools_apply({
+		device      => $device,
+		pools       => $pools,
+		members     => $members,
+		change_time => $c->param('change_time'),
+	});
+	&subs::log_writer('utility pools: ' . scalar(@{ $saved->{'pools'} || [] }) . ' pool(s), ' . ($saved->{'moved'} || 0)
+		. ' job(s) placed for ' . substr($device, 0, 8));
+
+	# Hand it on now. A change made for another machine is useless in this
+	# machine's copy alone, and the sync pass carries the blob only when something
+	# else happens to pull the settings table - so the machine that owns the card
+	# would not see it for minutes. The origin broadcasts once; a receiver keeps
+	# the relay_id and the peer door below never forwards it again.
+	my $relay_id = $c->param('relay_id') || '';
+	unless (length $relay_id || ($c->param('remoted') || '') eq 'yes') {
+		my $self = &subs::signatorial_designer() || '';
+		$relay_id = &subs::random_string_creator(30);
+		eval { &subs::relay_fresh($relay_id) };
+		my $pools_json = encode_json($saved->{'pools'} || []);
+		my $members_json = encode_json($members);
+		my $change_time = $saved->{'change_time'};
+		my $target = $device;
+		eval { &subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&subs::remote_relay_request($c, {
+				override => 'manual',
+				url => '/manager/configure/utility_controller/peer',
+				type => 'post',
+				dissemination => 'yes',
+				params => {
+					signatorial => $self,
+					device => $target,
+					pools => $pools_json,
+					members => $members_json,
+					change_time => $change_time,
+					dissemination => 'yes',
+					source_signatorial => $self,
+					relay_from => $self,
+					relay_id => $relay_id,
+				},
+			});
+		}, { name => 'utility pools relay' }); };
 	}
 
-	my $signatorial = &subs::signatorial_designer();
-	my $controls = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
-	$controls->{$signatorial} = clone $gb::timeouts unless $controls->{$signatorial};
-	$controls->{$signatorial}->{'__batch_groups'} = \@clean;
-	my $now = &subs::rightNow();
-	$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
-	my $moved = 0;
-	foreach my $t ( keys %{$gb::timeouts} ) {
-		next if $t =~ /^__/;
-		next unless ref $gb::timeouts->{$t} eq 'HASH';
-		$controls->{$signatorial}->{$t} = clone $gb::timeouts->{$t} unless $controls->{$signatorial}->{$t};
-		my $group = $members->{$t};
-		$group = '' unless defined $group && $seen{$group};
-		$controls->{$signatorial}->{$t}->{'group'} = $group;
-		$moved++;
-	}
-	&subs::log_writer('utility pools: ' . scalar(@clean) . ' pool(s), ' . $moved . ' job(s) placed');
-	&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => encode_json($controls) });
 	my $html = $c->render_to_string(template => 'configure/utility_controller');
-	$c->render(json => { html => $html, pools => \@clean });
+	$c->render(json => { html => $html, pools => $saved->{'pools'} });
+}
+
+# POST /manager/configure/utility_controller/peer
+#
+# The peer door for a utility schedule another machine set. The house keeps every
+# machine's jobs in one blob keyed by signatorial, and a pool edited for a peer
+# used to wait for the next sync pass to reach it. The editor relays the change
+# here instead: the caller is a pinned house machine, the blob key travels with
+# the change, and the sender's stamp is kept so a later edit still wins the
+# per-key merge.
+sub action_19422 {
+	my $c = shift;
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
+		return $c->rendered(403);
+	}
+	my $device = $c->param('device') || '';
+	my $pools = eval { decode_json($c->param('pools') // '[]') };
+	$pools = [] unless ref $pools eq 'ARRAY';
+	my $members = eval { decode_json($c->param('members') // '{}') };
+	$members = {} unless ref $members eq 'HASH';
+	my $saved = &subs::utility_pools_apply({
+		device      => $device,
+		pools       => $pools,
+		members     => $members,
+		change_time => $c->param('change_time'),
+	});
+	&subs::log_writer('utility pools from ' . substr($signatorial, 0, 8) . ': '
+		. ($saved->{'ok'} ? scalar(@{ $saved->{'pools'} || [] }) . ' pool(s) for ' . substr($device, 0, 8) : $saved->{'error'}));
+	$c->render(json => $saved);
 }
 
 # POST /manager/configure/utility_batch_group/save

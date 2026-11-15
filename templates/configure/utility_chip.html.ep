@@ -1,10 +1,6 @@
 <% no warnings 'uninitialized'; %>
 <% my $row = $row || {}; %>
-<%# A peer's tiles show the same thing but cannot be dragged: its pools are
-    set on the machine itself, so the tile only carries its switch, its name,
-    the dot and the last run. %>
-<% my $drag = defined $draggable ? $draggable : 1; %>
-<span class="utility_chip<%= $drag ? '' : ' utility_chip_static' %>" draggable="<%= $drag ? 'true' : 'false' %>" data-job="<%= $job %>" data-device="<%= $device %>">
+<span class="utility_chip" draggable="true" data-job="<%= $job %>" data-device="<%= $device %>">
 	<input type="checkbox" class="utility_controller" control="<%= $job %>" device="<%= $device %>" setting="toggle" hint="Run this job" <% if ($row->{'toggle'} eq 'on') { %>checked="checked"<% } %>>
 	<span class="utility_chip_name"><%= &subs::format_name($job) %></span>
 	<% if ($show_interval || $row->{'status'} eq 'good' || $row->{'status'} eq 'bad' || $row->{'last_run'}) { %>

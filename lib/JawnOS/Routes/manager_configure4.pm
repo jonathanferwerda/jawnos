@@ -24,6 +24,7 @@ sub routes {
 	[19387, 'get', '/manager/configure/restore_list', 'action_19387'],
 	[19400, 'post', '/manager/configure/where_audit/run', 'action_19400'],
 	[19411, 'get', '/manager/configure/balance_period', 'action_19411'],
+	[19422, 'post', '/manager/configure/utility_controller/peer', 'action_19422'],
 	);
 }
 

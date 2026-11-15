@@ -38,14 +38,8 @@
 .utility_pools .utility_chip_interval { width:64px; box-sizing:border-box; padding:2px 5px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; font-size:12px; }
 .utility_pools .utility_chip_meta { flex:1 1 100%; display:flex; align-items:center; gap:6px; min-height:16px; }
 .utility_pools .utility_chip_meta .utility_job_when { margin-left:auto; opacity:.6; font-size:82%; white-space:nowrap; }
-/* A peer's grid is the same layout with nothing to change on the bucket side: a
-   pool's name and pace are set on that machine, so they read as labels rather
-   than fields, and a tile keeps its switch but cannot be dragged. */
-.utility_pools .utility_pool_static .utility_pool_label,
-.utility_pools .utility_pool_static .utility_pool_seconds { padding-left:0; border-color:transparent; background:transparent; }
-.utility_pools .utility_chip_static { cursor:var(--jawnos-cursor-default, default); touch-action:auto; }
-#utility_batch_groups .utility_pool_add { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
-#utility_batch_groups .utility_pool_new_name { flex:1 1 160px; min-width:0; padding:5px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+.utility_pool_editor .utility_pool_add { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+.utility_pool_editor .utility_pool_new_name { flex:1 1 160px; min-width:0; padding:5px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 .utility_machine .utility_machine_name { margin:0 0 6px; }
 /* The device bar: every machine in the house as a chip, this one first. It
    scrolls sideways rather than wrapping, so a phone shows the whole house in
@@ -125,96 +119,16 @@
 		<% my $key = $d->{'key'}; %>
 		<div class="utility_device_view" data-utility-device="<%= &subs::html_text($key) %>"<% if (!$d->{'self'}) { %> hidden<% } %>>
 		<% if ($d->{'self'}) { %>
-				<% my $my_pools = &subs::batch_pools($controls->{$signatorial}); %>
-				<% my %my_pool = map { $_->{'id'} => $_ } @{$my_pools}; %>
-				<% my $my_member = sub { my $job = shift; my $group = $controls->{$signatorial}->{$job}->{'group'} || ''; return ($group ne '' && $my_pool{$group}) ? $my_pool{$group} : undef; }; %>
-				<div class="cfg-card" id="utility_batch_groups" hint="Batch groups">
+				<div class="cfg-card" hint="Batch groups">
 					<h4 class="utility_machine_name" hint="Batch pools"><%= &subs::ui('Batch pools') %> — <%= &subs::html_text($d->{'name'}) %></h4>
 					<p class="cfg-note"><%= &subs::ui('Drop a job into a pool and it runs on that pool\'s pace, so the whole pool wakes together and the device naps between. A job outside every pool keeps its own interval, further down.') %></p>
-					<div class="utility_pool_add">
-						<input class="utility_pool_new_name" hint="New pool name" placeholder="<%= &subs::ui('New pool name') %>">
-						<button type="button" class="utility_pool_add_button" hint="Add a pool"><%= &subs::ui('Add a pool') %></button>
-					</div>
-					<div id="utility_pools" class="utility_pools">
-						<% foreach my $pool ( @{$my_pools} ) { %>
-							<% my @members = grep { $controls->{$signatorial}->{$_} && ($my_member->($_) || {})->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
-							<div class="utility_pool" data-pool="<%= $pool->{'id'} %>">
-								<div class="utility_pool_head">
-									<input class="utility_pool_label" data-pool="<%= $pool->{'id'} %>" hint="Pool name" value="<%= $pool->{'label'} %>">
-									<input class="utility_pool_seconds" data-pool="<%= $pool->{'id'} %>" hint="Pace for this pool" value="<%= &subs::duration_sayer($pool->{'seconds'}) %>">
-									<button type="button" class="utility_pool_remove" data-pool="<%= $pool->{'id'} %>" hint="Remove this pool">&times;</button>
-								</div>
-								<div class="utility_pool_members" data-pool="<%= $pool->{'id'} %>" hint="Drop jobs here">
-									<% if (scalar @members) { %>
-										<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t}, show_interval => 0 %><% } %>
-									<% } else { %>
-										<span class="utility_pool_empty"><%= &subs::ui('Drop jobs here') %></span>
-									<% } %>
-								</div>
-							</div>
-						<% } %>
-						<% my @loose = sort {
-							(($controls->{$signatorial}->{$a}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
-								<=> (($controls->{$signatorial}->{$b}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
-								|| $a cmp $b
-						} grep { $controls->{$signatorial}->{$_} && !$my_member->($_) } keys %{$gb::timeouts}; %>
-						<div class="utility_pool utility_pool_regular">
-							<div class="utility_pool_head"><span class="utility_pool_label" hint="Not in a pool"><%= &subs::ui('Not in a pool') %></span></div>
-							<div class="utility_pool_members" data-pool="" hint="Drop jobs here">
-								<% if (scalar @loose) { %>
-									<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t}, show_interval => 1 %><% } %>
-								<% } else { %>
-									<span class="utility_pool_empty"><%= &subs::ui('Everything is in a pool') %></span>
-								<% } %>
-							</div>
-						</div>
-					</div>
+					<%= include 'configure/utility_pools', device => $key, row => $controls->{$key} %>
 				</div>
 		<% } else { %>
-				<% my $row_dev = $controls->{$key}; %>
 				<div class="cfg-card utility_machine">
 					<h4 class="utility_machine_name"><%= &subs::html_text($d->{'name'}) %></h4>
-					<% if (!$row_dev) { %>
-						<p class="cfg-note"><%= &subs::ui('This machine has not reported any schedules to the house yet.') %></p>
-					<% } else { %>
-					<% my $peer_pools = &subs::batch_pools($row_dev); %>
-					<% my %peer_pool = map { $_->{'id'} => $_ } @{$peer_pools}; %>
-					<% my $peer_member = sub { my $job = shift; my $group = $row_dev->{$job}->{'group'} || ''; return ($group ne '' && $peer_pool{$group}) ? $peer_pool{$group} : undef; }; %>
-					<p class="cfg-note"><%= &subs::ui('The same buckets this machine keeps, read from the schedules it reported. A pool\'s name and pace are set on the machine itself; its jobs and the jobs outside every pool can be switched from here.') %></p>
-					<div class="utility_pools">
-						<% foreach my $pool ( @{$peer_pools} ) { %>
-							<% my @members = grep { $row_dev->{$_} && ($peer_member->($_) || {})->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
-							<div class="utility_pool utility_pool_static" data-pool="<%= $pool->{'id'} %>">
-								<div class="utility_pool_head">
-									<span class="utility_pool_label" hint="Pool name"><%= &subs::ui($pool->{'label'}) %></span>
-									<span class="utility_pool_seconds" hint="Pace for this pool"><%= &subs::duration_sayer($pool->{'seconds'}) %></span>
-								</div>
-								<div class="utility_pool_members" data-pool="<%= $pool->{'id'} %>" hint="Jobs in this pool">
-									<% if (scalar @members) { %>
-										<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', job => $t, device => $key, row => $row_dev->{$t}, show_interval => 0, draggable => 0 %><% } %>
-									<% } else { %>
-										<span class="utility_pool_empty"><%= &subs::ui('Nothing in this pool') %></span>
-									<% } %>
-								</div>
-							</div>
-						<% } %>
-						<% my @loose = sort {
-							(($row_dev->{$a}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
-								<=> (($row_dev->{$b}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
-								|| $a cmp $b
-						} grep { $row_dev->{$_} && !$peer_member->($_) } keys %{$gb::timeouts}; %>
-						<div class="utility_pool utility_pool_regular utility_pool_static">
-							<div class="utility_pool_head"><span class="utility_pool_label" hint="Not in a pool"><%= &subs::ui('Not in a pool') %></span></div>
-							<div class="utility_pool_members" data-pool="" hint="Jobs outside every pool">
-								<% if (scalar @loose) { %>
-									<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', job => $t, device => $key, row => $row_dev->{$t}, show_interval => 1, draggable => 0 %><% } %>
-								<% } else { %>
-									<span class="utility_pool_empty"><%= &subs::ui('Everything is in a pool') %></span>
-								<% } %>
-							</div>
-						</div>
-					</div>
-					<% } %>
+					<p class="cfg-note"><%= $controls->{$key} ? &subs::ui('Its buckets, read from the schedules it reported. A change here is saved on this machine and sent to that machine as you make it.') : &subs::ui('It has not reported its schedules yet; a change here seeds them.') %></p>
+					<%= include 'configure/utility_pools', device => $key, row => $controls->{$key} %>
 				</div>
 		<% } %>
 		</div>

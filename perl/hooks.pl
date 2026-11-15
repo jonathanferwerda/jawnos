@@ -317,6 +317,11 @@ Manager::app->hook(before_dispatch => sub {
 		$path eq '/manager/configure/remote_machine/tunnel/request' ||
 		$path eq '/manager/configure/remote_machine/tunnel/confirm' ||
 		$path eq '/manager/configure/remote_machine/tunnel/close' ||
+		# a utility schedule set for another machine is handed to that machine at
+		# once. The door peer_verifies the sender against the roster and keeps the
+		# sender's stamp, so a peer with no session still receives it and the
+		# per-key merge has one change time to compare.
+		$path eq '/manager/configure/utility_controller/peer' ||
 		$path eq '/payment' ||
 		$path eq '/box_office/ticket_request' ||
 		# a machine logs itself in before it has a session, and the script that

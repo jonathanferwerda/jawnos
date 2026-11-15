@@ -893,6 +893,62 @@ sub batch_interval {
 	return $pool ? $pool->{'seconds'} : undef;
 }
 
+# Store one machine's batch pools and the jobs placed in them. The panel's editor
+# and the peer door both come here, so a pool set on another machine is written
+# exactly as that machine's own page would write it. The blob keys a machine's
+# jobs by its signatorial, and `change_time` is the sender's stamp: it travels
+# with a relayed change so every copy carries the same one and a later edit still
+# wins the per-key merge (a receiver that stamped its own clock could crown a
+# stale copy on a machine whose clock runs fast). $arg:
+#   device      => the signatorial the blob keys on (required)
+#   pools       => [ { id, label, seconds }, ... ] in the person's order
+#   members     => { job => pool id, ... }; an empty id is the regular list
+#   change_time => the stamp to write (optional; this machine's clock otherwise)
+sub utility_pools_apply {
+	my (%arg) = @_ == 1 && ref $_[0] eq 'HASH' ? %{ $_[0] } : @_;
+	my $device = $arg{'device'} // '';
+	return { ok => 0, error => 'bad device' } unless $device =~ /^[0-9a-f]{32}$/i;
+	my $pools = ref $arg{'pools'} eq 'ARRAY' ? $arg{'pools'} : [];
+	my $members = ref $arg{'members'} eq 'HASH' ? $arg{'members'} : {};
+
+	my (@clean, %seen);
+	foreach my $pool ( @{$pools} ) {
+		next unless ref $pool eq 'HASH';
+		my $id = $pool->{'id'} // '';
+		$id =~ s/[^a-z0-9_]//g;
+		$id = substr($id, 0, 40);
+		next if $id eq '' || $seen{$id}++;
+		my $raw = $pool->{'seconds'};
+		my $seconds = (defined $raw && $raw =~ /^\s*-?\d+(\.\d+)?\s*$/)
+			? int($raw)
+			: int(&time_abbrev_translator($raw, &rightNow()) / 1000);
+		$seconds = $gb::batch_groups->{$id}->{'seconds'} || 900 unless $seconds > 0;
+		my $label = $pool->{'label'} // '';
+		$label =~ s/^\s+|\s+$//g;
+		$label = substr($label, 0, 40);
+		$label = $id if $label eq '';
+		push @clean, { id => $id, label => $label, seconds => $seconds };
+	}
+
+	my $now = ($arg{'change_time'} // '') =~ /^\s*\d+\s*$/ ? ($arg{'change_time'} + 0) : &rightNow();
+	my $controls = eval { decode_json &setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
+	$controls->{$device} = clone $gb::timeouts unless defined $controls->{$device};
+	$controls->{$device}->{'__batch_groups'} = \@clean;
+	$controls->{$device}->{'__settings'}->{'last_change'} = $now;
+	my $moved = 0;
+	foreach my $t ( keys %{$gb::timeouts} ) {
+		next if $t =~ /^__/;
+		next unless ref $gb::timeouts->{$t} eq 'HASH';
+		$controls->{$device}->{$t} = clone $gb::timeouts->{$t} unless $controls->{$device}->{$t};
+		my $group = $members->{$t};
+		$group = '' unless defined $group && $seen{$group};
+		$controls->{$device}->{$t}->{'group'} = $group;
+		$moved++;
+	}
+	&setting_setter({ app => '__president', setting => 'utility_controller', value => encode_json($controls) });
+	return { ok => 1, device => $device, pools => \@clean, moved => $moved, change_time => $now };
+}
+
 # A job table adopted from the stored utility blob becomes this process's runtime.
 # `lasted_run` is process state - when this runtime last executed the job - so a
 # marker written by a *previous* process (anything before this one started) is

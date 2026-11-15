@@ -356,12 +356,21 @@ $(document).on('change', '.utility_controller', function() {
 	});
 });
 
-// The batch pools. The editor is one drop zone per pool plus a regular bin. The
-// whole state is saved at once, so a drag, a rename, a pace and a removal all
-// take the same route and the panel repaints from what the server stored.
-function utilityPoolState() {
+// The batch pools. Each device's card carries its own editor - one drop zone per
+// pool plus a regular bin - and the whole state is saved at once, so a drag, a
+// rename, a pace and a removal all take the same route. The editor names the
+// machine it belongs to, so this one path edits this machine's row or a peer's;
+// for a peer the route hands the change on to that machine straight away.
+function utilityPoolEditor(el) {
+	var editor = $(el).closest('.utility_pool_editor');
+	if (editor.length) { return editor; }
+	return $('.utility_pool_editor:visible').first();
+}
+
+function utilityPoolState(editor) {
+	var grid = editor.find('.utility_pools');
 	var pools = [];
-	$('#utility_pools .utility_pool').each(function() {
+	grid.find('.utility_pool').each(function() {
 		var card = $(this);
 		var id = card.attr('data-pool');
 		if (!id) { return; }
@@ -372,15 +381,18 @@ function utilityPoolState() {
 		});
 	});
 	var members = {};
-	$('#utility_pools .utility_chip').each(function() {
+	grid.find('.utility_chip').each(function() {
 		members[$(this).attr('data-job')] = $(this).closest('.utility_pool_members').attr('data-pool') || '';
 	});
 	return { pools: pools, members: members };
 }
 
-function utilityPoolsSave(pools, members) {
-	var state = utilityPoolState();
+function utilityPoolsSave(editor, pools, members) {
+	editor = (editor && editor.length) ? editor : utilityPoolEditor();
+	if (!editor.length) { return; }
+	var state = utilityPoolState(editor);
 	var data = {
+		device: editor.attr('data-utility-device') || '',
 		pools: JSON.stringify(pools || state.pools),
 		members: JSON.stringify(members || state.members)
 	};
@@ -401,13 +413,14 @@ function utilityPoolsSave(pools, members) {
 }
 
 function utilityPoolPlace(chip, poolId) {
-	var zone = $('#utility_pools .utility_pool_members').filter(function() {
+	var editor = utilityPoolEditor(chip);
+	var zone = editor.find('.utility_pool_members').filter(function() {
 		return ($(this).attr('data-pool') || '') === (poolId || '');
 	}).first();
 	if (!zone.length) { return; }
 	zone.find('.utility_pool_empty').remove();
 	chip.appendTo(zone);
-	utilityPoolsSave();
+	utilityPoolsSave(editor);
 }
 
 $(document).on('change', '.utility_pool_seconds, .utility_pool_label', function() {
@@ -418,39 +431,45 @@ $(document).on('change', '.utility_pool_seconds, .utility_pool_label', function(
 		utilityControllerReloader();
 		return;
 	}
-	utilityPoolsSave();
+	utilityPoolsSave(utilityPoolEditor(input));
 });
 
 $(document).on('click', '.utility_pool_add_button', function() {
-	var input = $('#utility_batch_groups .utility_pool_new_name');
+	var editor = utilityPoolEditor(this);
+	var input = editor.find('.utility_pool_new_name').first();
 	var label = $.trim(input.val() || '');
 	if (!label) { input.focus(); return; }
 	var base = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'pool';
 	var id = base, n = 2;
-	while ($('#utility_pools .utility_pool[data-pool="' + id + '"]').length) { id = base + '_' + (n++); }
-	var state = utilityPoolState();
+	while (editor.find('.utility_pool[data-pool="' + id + '"]').length) { id = base + '_' + (n++); }
+	var state = utilityPoolState(editor);
 	state.pools.push({ id: id, label: label, seconds: '15m' });
-	utilityPoolsSave(state.pools, state.members);
+	utilityPoolsSave(editor, state.pools, state.members);
 });
 
-$(document).on('keydown', '#utility_batch_groups .utility_pool_new_name', function(e) {
-	if (e.key === 'Enter') { e.preventDefault(); $(this).closest('#utility_batch_groups').find('.utility_pool_add_button').trigger('click'); }
+$(document).on('keydown', '.utility_pool_new_name', function(e) {
+	if (e.key === 'Enter') {
+		e.preventDefault();
+		$(this).closest('.utility_pool_editor').find('.utility_pool_add_button').trigger('click');
+	}
 });
 
 $(document).on('click', '.utility_pool_remove', function() {
+	var editor = utilityPoolEditor(this);
 	var id = $(this).attr('data-pool');
-	var state = utilityPoolState();
+	var state = utilityPoolState(editor);
 	state.pools = $.grep(state.pools, function(pool) { return pool.id !== id; });
 	$.each(state.members, function(job, pool) {
 		if (pool === id) { state.members[job] = ''; }
 	});
-	utilityPoolsSave(state.pools, state.members);
+	utilityPoolsSave(editor, state.pools, state.members);
 });
 
-// Mouse drag and drop. Only this machine's grid can be rearranged: a peer's
-// grid is drawn from that machine's own record and its tiles are static, so
-// every handler here is scoped to #utility_pools.
-$(document).on('dragstart', '#utility_pools .utility_chip', function(e) {
+// Mouse drag and drop. Every card has its own editor, so the chip and the drop
+// zone are both looked up inside the editor the drag started in: a job dropped
+// on a peer's card moves that machine's job, never this machine's job of the
+// same name.
+$(document).on('dragstart', '.utility_pool_editor .utility_chip', function(e) {
 	var ev = e.originalEvent;
 	if (!ev.dataTransfer) { return; }
 	ev.dataTransfer.setData('text/plain', $(this).attr('data-job'));
@@ -458,26 +477,27 @@ $(document).on('dragstart', '#utility_pools .utility_chip', function(e) {
 	$(this).addClass('utility_chip_dragging');
 });
 
-$(document).on('dragend', '#utility_pools .utility_chip', function() {
+$(document).on('dragend', '.utility_pool_editor .utility_chip', function() {
 	$(this).removeClass('utility_chip_dragging');
-	$('#utility_pools .utility_pool_members').removeClass('utility_pool_over');
+	utilityPoolEditor(this).find('.utility_pool_members').removeClass('utility_pool_over');
 });
 
-$(document).on('dragover', '#utility_pools .utility_pool_members', function(e) {
+$(document).on('dragover', '.utility_pool_editor .utility_pool_members', function(e) {
 	e.preventDefault();
 	if (e.originalEvent.dataTransfer) { e.originalEvent.dataTransfer.dropEffect = 'move'; }
-	$('#utility_pools .utility_pool_members').removeClass('utility_pool_over');
+	utilityPoolEditor(this).find('.utility_pool_members').removeClass('utility_pool_over');
 	$(this).addClass('utility_pool_over');
 });
 
-$(document).on('dragleave', '#utility_pools .utility_pool_members', function() {
+$(document).on('dragleave', '.utility_pool_editor .utility_pool_members', function() {
 	$(this).removeClass('utility_pool_over');
 });
 
-$(document).on('drop', '#utility_pools .utility_pool_members', function(e) {
+$(document).on('drop', '.utility_pool_editor .utility_pool_members', function(e) {
 	e.preventDefault();
 	var job = e.originalEvent.dataTransfer ? e.originalEvent.dataTransfer.getData('text/plain') : '';
-	var chip = $('#utility_pools .utility_chip').filter(function() { return $(this).attr('data-job') === job; }).first();
+	var editor = utilityPoolEditor(this);
+	var chip = editor.find('.utility_chip').filter(function() { return $(this).attr('data-job') === job; }).first();
 	$(this).removeClass('utility_pool_over');
 	if (chip.length) { utilityPoolPlace(chip, $(this).attr('data-pool') || ''); }
 });
@@ -485,7 +505,7 @@ $(document).on('drop', '#utility_pools .utility_pool_members', function(e) {
 // Touch drag and drop: a finger that moves past a few pixels lifts the chip and
 // follows it; a tap that stays still leaves the switch inside the chip to work.
 var utilityPoolDrag = null;
-$(document).on('pointerdown', '#utility_pools .utility_chip', function(e) {
+$(document).on('pointerdown', '.utility_pool_editor .utility_chip', function(e) {
 	if (e.originalEvent.pointerType === 'mouse') { return; }
 	if ($(e.target).is('input, img')) { return; }
 	utilityPoolDrag = {
@@ -497,7 +517,7 @@ $(document).on('pointerdown', '#utility_pools .utility_chip', function(e) {
 	};
 });
 
-$(document).on('pointermove', '#utility_pools .utility_chip', function(e) {
+$(document).on('pointermove', '.utility_pool_editor .utility_chip', function(e) {
 	if (!utilityPoolDrag || utilityPoolDrag.chip[0] !== this || utilityPoolDrag.id !== e.originalEvent.pointerId) { return; }
 	var dx = e.originalEvent.clientX - utilityPoolDrag.x;
 	var dy = e.originalEvent.clientY - utilityPoolDrag.y;
@@ -505,20 +525,20 @@ $(document).on('pointermove', '#utility_pools .utility_chip', function(e) {
 	utilityPoolDrag.moving = true;
 	e.preventDefault();
 	utilityPoolDrag.chip.addClass('utility_chip_dragging');
-	$('#utility_pools .utility_pool_members').removeClass('utility_pool_over');
-	var zone = $(document.elementFromPoint(e.originalEvent.clientX, e.originalEvent.clientY)).closest('#utility_pools .utility_pool_members');
+	utilityPoolEditor(this).find('.utility_pool_members').removeClass('utility_pool_over');
+	var zone = $(document.elementFromPoint(e.originalEvent.clientX, e.originalEvent.clientY)).closest('.utility_pool_editor .utility_pool_members');
 	if (zone.length) { zone.addClass('utility_pool_over'); }
 });
 
-$(document).on('pointerup pointercancel', '#utility_pools .utility_chip', function(e) {
+$(document).on('pointerup pointercancel', '.utility_pool_editor .utility_chip', function(e) {
 	if (!utilityPoolDrag || utilityPoolDrag.chip[0] !== this || utilityPoolDrag.id !== e.originalEvent.pointerId) { return; }
 	var drag = utilityPoolDrag;
 	utilityPoolDrag = null;
 	drag.chip.removeClass('utility_chip_dragging');
-	$('#utility_pools .utility_pool_members').removeClass('utility_pool_over');
+	utilityPoolEditor(this).find('.utility_pool_members').removeClass('utility_pool_over');
 	if (!drag.moving) { return; }
 	e.preventDefault();
-	var zone = $(document.elementFromPoint(e.originalEvent.clientX, e.originalEvent.clientY)).closest('#utility_pools .utility_pool_members');
+	var zone = $(document.elementFromPoint(e.originalEvent.clientX, e.originalEvent.clientY)).closest('.utility_pool_editor .utility_pool_members');
 	if (zone.length) { utilityPoolPlace(drag.chip, zone.attr('data-pool') || ''); }
 });
 

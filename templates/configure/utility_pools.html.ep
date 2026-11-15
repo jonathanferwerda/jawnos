@@ -1,0 +1,51 @@
+<% no warnings 'uninitialized'; %>
+<%# One machine's batches, drawn as the panel's pool editor: a card per pool
+    with the jobs in it as tiles, a dashed bin for the jobs outside every pool,
+    and the fields that name a pool and set its pace. The card that includes this
+    names the machine; every control here keys its save on $device, so the same
+    markup edits this machine's row or a peer's. %>
+<% my $row = $row || {}; %>
+<% my $device = $device || ''; %>
+<% my $pools = &subs::batch_pools($row); %>
+<% my %pool = map { $_->{'id'} => $_ } @{$pools}; %>
+<% my $member = sub { my $job = shift; my $group = $row->{$job}->{'group'} || ''; return ($group ne '' && $pool{$group}) ? $pool{$group} : undef; }; %>
+<div class="utility_pool_editor" data-utility-device="<%= &subs::html_text($device) %>">
+	<div class="utility_pool_add">
+		<input class="utility_pool_new_name" hint="New pool name" placeholder="<%= &subs::ui('New pool name') %>">
+		<button type="button" class="utility_pool_add_button" hint="Add a pool"><%= &subs::ui('Add a pool') %></button>
+	</div>
+	<div class="utility_pools">
+		<% foreach my $one ( @{$pools} ) { %>
+			<% my @members = grep { $row->{$_} && ($member->($_) || {})->{'id'} eq $one->{'id'} } sort keys %{$gb::timeouts}; %>
+			<div class="utility_pool" data-pool="<%= $one->{'id'} %>">
+				<div class="utility_pool_head">
+					<input class="utility_pool_label" data-pool="<%= $one->{'id'} %>" hint="Pool name" value="<%= $one->{'label'} %>">
+					<input class="utility_pool_seconds" data-pool="<%= $one->{'id'} %>" hint="Pace for this pool" value="<%= &subs::duration_sayer($one->{'seconds'}) %>">
+					<button type="button" class="utility_pool_remove" data-pool="<%= $one->{'id'} %>" hint="Remove this pool">&times;</button>
+				</div>
+				<div class="utility_pool_members" data-pool="<%= $one->{'id'} %>" hint="Drop jobs here">
+					<% if (scalar @members) { %>
+						<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', job => $t, device => $device, row => $row->{$t}, show_interval => 0 %><% } %>
+					<% } else { %>
+						<span class="utility_pool_empty"><%= &subs::ui('Drop jobs here') %></span>
+					<% } %>
+				</div>
+			</div>
+		<% } %>
+		<% my @loose = sort {
+			(($row->{$a}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
+				<=> (($row->{$b}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
+				|| $a cmp $b
+		} grep { $row->{$_} && !$member->($_) } keys %{$gb::timeouts}; %>
+		<div class="utility_pool utility_pool_regular">
+			<div class="utility_pool_head"><span class="utility_pool_label" hint="Not in a pool"><%= &subs::ui('Not in a pool') %></span></div>
+			<div class="utility_pool_members" data-pool="" hint="Drop jobs here">
+				<% if (scalar @loose) { %>
+					<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', job => $t, device => $device, row => $row->{$t}, show_interval => 1 %><% } %>
+				<% } else { %>
+					<span class="utility_pool_empty"><%= &subs::ui('Everything is in a pool') %></span>
+				<% } %>
+			</div>
+		</div>
+	</div>
+</div>
