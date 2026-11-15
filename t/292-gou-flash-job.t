@@ -247,6 +247,15 @@ sub insert_token {
 	like($provision, qr/sub _fresh_machine_id/, 'the flash mints a machine-id for the board');
 	like($provision, qr/unpack\('H\*', \$bytes\)/, 'as 32 hex characters from /dev/urandom');
 	like($provision, qr/push \@done, 'machine-id'/, 'and reports it as filled in');
+	# A wants link is relative to its own directory. Pointing at the bare unit
+	# name made it resolve to itself, which systemd refuses, so the first-boot
+	# unit never ran: no config seed, no join, no kiosk ticket.
+	like($provision, qr/sub _wants_link/, 'wants links are made by one helper');
+	like($provision, qr/my \$target = "\.\.\/\$unit"/, 'and point at the unit beside them, not at themselves');
+	like($provision, qr/sub _splash_unit/, 'the panel carries the mark while the Manager starts');
+	like($provision, qr/sub _tune_kiosk/, 'the kiosk is tuned for a low-memory board');
+	like($provision, qr/enable-low-end-device-mode/, 'with Chromium low-end mode');
+	like($provision, qr/renderer-process-limit=1/, 'and a single renderer');
 
 	# The failed-image path writes the progress file without root or a device,
 	# so the page still shows the reason.

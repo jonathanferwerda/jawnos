@@ -292,6 +292,7 @@ like($president, qr/local \@ARGV/, 'handed to the gateway child, not to the mast
 like($president, qr/'--token'/, 'and the token travels as an argument');
 like($president, qr/\$is_gateway/, 'only the machine the house names as the gateway listens');
 like($president, qr/if \(\$is_gateway\)/, 'and only it starts the Reception armer');
+like($president, qr/!length\(\$ivr_machine\) && \$device ne 'controller'/, 'a handheld never offers itself as the phone gateway');
 
 my $daemon = read_file("$repo/perl/Sco.pl");
 like($daemon, qr/--listen/, 'the daemon can listen on the tailnet');

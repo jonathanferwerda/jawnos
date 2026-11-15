@@ -752,6 +752,65 @@ WantedBy=multi-user.target
 UNIT
 }
 
+# A wants link is relative to the directory that holds it. Pointing at the bare
+# unit name makes the link resolve to itself, and systemd refuses the loop.
+sub _wants_link {
+	my ($wants, $unit) = @_;
+	my $link = "$wants/$unit";
+	my $target = "../$unit";
+	unlink $link if -l $link && readlink($link) ne $target;
+	symlink($target, $link) unless -l $link;
+	return 1;
+}
+
+# The mark on the panel while the Manager starts. gou-rotate presents the X
+# root, so painting the root puts the mark up the moment the kernel console
+# goes away; a kiosk that never arrives leaves the mark rather than a bare
+# cursor.
+sub _splash_unit {
+	return <<'UNIT';
+[Unit]
+Description=JawnOS mark on the panel while the Manager starts
+After=gou-x.service
+Wants=gou-x.service
+Before=jawnos-kiosk.service
+
+[Service]
+Type=simple
+User=jawn
+Group=jawn
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/1001
+# display(1) paints the root window; it is in the image already, and a board
+# without it simply keeps the dark root it had.
+ExecStart=-/usr/bin/display -window root /home/jawn/.local/share/jawnos/desktop/icons/jawnos.png
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+# The panel is 480x854 on a 2 GB board, and Qt WebEngine is the largest thing
+# on it. These flags are Chromium's own low-memory mode: one renderer, the
+# small-heap profile, and shared memory in /tmp (the tiny /dev/shm fills first).
+# They go after the script's own export so both sets apply.
+sub _tune_kiosk {
+	my ($mount) = @_;
+	my $path = "$mount/home/jawn/.local/bin/jawnos-kiosk.sh";
+	my $script = _slurp($path);
+	return 0 unless length $script;
+	return 0 if index($script, 'enable-low-end-device-mode') >= 0;
+	my $decl = index($script, 'export QTWEBENGINE_CHROMIUM_FLAGS');
+	return 0 if $decl < 0;
+	my $eol = index($script, "\n", $decl);
+	return 0 if $eol < 0;
+	my $line = 'export QTWEBENGINE_CHROMIUM_FLAGS="$QTWEBENGINE_CHROMIUM_FLAGS'
+		. ' --enable-low-end-device-mode --renderer-process-limit=1 --disable-dev-shm-usage"' . "\n";
+	my $fresh = substr($script, 0, $eol + 1) . $line . substr($script, $eol + 1);
+	return _write_file($path, $fresh) ? 1 : 0;
+}
+
 # The image is a copy of another card. Everything that makes that card itself
 # - its config, database, keys, runtime state, saved networks and host identity
 # - has to go before this board introduces itself. The builder's exclusion list
@@ -919,15 +978,34 @@ sub _autopopulate {
 		my $unit = "$units/jawnos-first-boot.service";
 		my $wants = "$units/multi-user.target.wants";
 		File::Path::make_path($wants) unless -d $wants;
-		my $link = "$wants/jawnos-first-boot.service";
 		if (_write_file($unit, _first_boot_unit())
 			&& chmod(0644, $unit) && chown(0, 0, $unit)) {
-			symlink('jawnos-first-boot.service', $link) unless -e $link || -l $link;
+			# The target is relative to the wants directory. A bare
+			# 'jawnos-first-boot.service' made the link point at itself, and
+			# systemd refused the loop ("too many levels of symbolic links"), so
+			# the unit never ran: no config seed, no join, no kiosk ticket.
+			&_wants_link($wants, 'jawnos-first-boot.service');
 			push @done, 'first-boot';
 		}
 		else {
 			$error = 'could not write the first-boot unit';
 		}
+	}
+	if (!length $error) {
+		my $units = "$etc/systemd/system";
+		my $wants = "$units/multi-user.target.wants";
+		File::Path::make_path($wants) unless -d $wants;
+		my $splash = "$units/gou-splash.service";
+		if (_write_file($splash, _splash_unit()) && chmod(0644, $splash) && chown(0, 0, $splash)) {
+			&_wants_link($wants, 'gou-splash.service');
+			push @done, 'splash';
+		}
+		else {
+			$error = 'could not write the splash unit';
+		}
+	}
+	if (!length $error) {
+		push @done, 'low-memory-kiosk' if &_tune_kiosk($mount);
 	}
 	if (!length $error) {
 		# The card in the slot is often blank and the New form may format it on

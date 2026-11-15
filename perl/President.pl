@@ -838,7 +838,14 @@ sub manager_starter() {
 		my $ivr_machine = eval { &subs::phone_ivr_grab('ivr_machine') } || '';
 		my $self_sig = eval { &subs::signatorial_designer() } || '';
 		my $sco_named = eval { &subs::setting_grabber({ app => 'misc', setting => 'sco_gateway', device => 'all', benign => 1 }) } || '';
-		my $is_gateway = !length($ivr_machine) || (length($self_sig) && $ivr_machine eq $self_sig) || length($sco_named);
+		# A handheld is not the phone gateway. With no machine named, only a
+		# machine that can play the prompts (a computer or a server) offers its
+		# adapter; a controller waits for the house to name a gateway, instead of
+		# starting Sco.pl, Reception and the piper TTS on a 2 GB board. Naming this
+		# board explicitly (ivr_machine or sco_gateway) still wins.
+		my $named_here = length($ivr_machine) && length($self_sig) && $ivr_machine eq $self_sig;
+		my $is_gateway = $named_here || length($sco_named)
+			|| (!length($ivr_machine) && $device ne 'controller');
 		# The network face is what lets a phone with no helper of its own use
 		# this machine's adapter. The port is the house's; the secret is one
 		# value for the house, minted once here, and never logged. Sco.pl
