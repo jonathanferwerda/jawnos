@@ -35,7 +35,8 @@ var jawnosTaskbarWidgets = {
 	network: { hint: 'Network', icon: '/icons/network.svg' },
 	sound: { hint: 'Sound', icon: '/icons/sound.svg' },
 	notifications: { hint: 'Notifications', icon: '/icons/notifications.svg' },
-	desktop: { hint: 'Desktop', icon: '/icons/desktop.svg' }
+	desktop: { hint: 'Desktop', icon: '/icons/desktop.svg' },
+	workspaces: { hint: 'Workspaces', icon: '/icons/workspaces.svg' }
 };
 
 function jawnosTaskbarWidgetItem(w, mode) {
@@ -135,6 +136,15 @@ function jawnosTaskbarPinPress(pin) {
 	var win = $('.wind[app="' + app + '"]');
 	var timestamp = Date.now();
 	if (win.length) {
+		// an app open on another desk takes the person to that desk first
+		var here = (typeof jawnosWorkspaceActiveId == 'function') ? jawnosWorkspaceActiveId() : '';
+		var there = win.attr('workspace') || '';
+		var multi = (app == 'terminal' || app == 'folders' || app == 'now');
+		if (!multi && there && here && there != here && typeof jawnosShellWorkspaceSet == 'function') {
+			jawnosShellWorkspaceSet(there);
+			if (typeof topLevelNow == 'function') { topLevelNow(win); }
+			return;
+		}
 		// the button should be parked here already; this is a safety net
 		if (!win.is(':visible')) { windowRestorer(timestamp, app); }
 		else if (app == topWindow()) { windowMinimizer(timestamp, app); }
@@ -524,6 +534,11 @@ function jawnosTaskbarWidgetMake(item) {
 		el.append('<span class="taskbar_desktop_glyph"><i></i><i></i></span>');
 		el.append('<span class="taskbar_desktop_text taskbar_widget_text"></span>');
 		setTimeout(function () { if (typeof jawnosDesktopTaskbarSync === 'function') { jawnosDesktopTaskbarSync(); } }, 0);
+	}
+	else if (w == 'workspaces') {
+		el.append('<span class="taskbar_workspaces_glyph"></span>');
+		el.append('<span class="taskbar_workspaces_text taskbar_widget_text"></span>');
+		setTimeout(function () { if (typeof jawnosWorkspaceWidgetSync === 'function') { jawnosWorkspaceWidgetSync(); } }, 0);
 	}
 	return el;
 }

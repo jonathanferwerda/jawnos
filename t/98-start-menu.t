@@ -73,4 +73,8 @@ for my $key (@lang_hints) {
 	like($label, qr/^[A-Z]/, "the $key label starts with a capital letter");
 }
 
+like($menu_js, qr/\.start_menu_toggle_copy/, 'a start button copied into an added bar answers');
+like($menu_js, qr/closest\('#start_menu_toggle, \.start_menu_toggle_copy'\)/,
+	'a press on the copy is not mistaken for an outside press');
+
 done_testing();

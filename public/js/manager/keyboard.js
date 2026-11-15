@@ -216,11 +216,19 @@ function jawnosDockWidgetRemove(w) {
 	var pins = jawnosDockPinsEnsure().filter(function(item) { return !(item && item.k == 'widget' && item.w == w); });
 	jawnosDockPinsSave(pins);
 }
-function jawnosDockWidgetOpen(w) {
+function jawnosDockWidgetOpen(w, face) {
 	// The Desktop face is a press, not an app: it puts the windows away or
 	// brings them back, exactly as the taskbar's widget does.
 	if (w == 'desktop') {
 		if (typeof jawnosDesktopTaskbarToggle == 'function') { jawnosDesktopTaskbarToggle(); }
+		return;
+	}
+	// The switcher's face hangs the same panel from itself.
+	if (w == 'workspaces') {
+		if (face && face.length && typeof jawnosTaskbarPanelToggle == 'function'
+			&& typeof jawnosWorkspaceWidgetPanelBuild == 'function') {
+			jawnosTaskbarPanelToggle('taskbar_workspaces_panel', face, jawnosWorkspaceWidgetPanelBuild);
+		}
 		return;
 	}
 	var app = { power: 'power', network: 'network', sound: 'sound', notifications: 'notifications' }[w] || w;
@@ -314,6 +322,17 @@ function jawnosDockAppOpen(app) {
 	if (!app) { return; }
 	var win = $('.wind').filter(function() { return $(this).attr('app') === app; }).first();
 	if (win.length) {
+		// The app is open on another desk: the face takes the person there
+		// rather than lifting that window onto this one.
+		var here = (typeof jawnosWorkspaceActiveId == 'function') ? jawnosWorkspaceActiveId() : '';
+		var there = win.attr('workspace') || '';
+		var multi = (app == 'terminal' || app == 'folders' || app == 'now');
+		if (!multi && there && here && there != here && typeof jawnosShellWorkspaceSet == 'function') {
+			jawnosShellWorkspaceSet(there);
+			// the press was "take me there", not "put it away again"
+			if (typeof topLevelNow == 'function') { topLevelNow(win); }
+			return;
+		}
 		if (!win.is(':visible') && typeof windowRestorer == 'function') { windowRestorer(Date.now(), app); }
 		else if (typeof topWindow == 'function' && typeof windowMinimizer == 'function' && topWindow() == app) { windowMinimizer(Date.now(), app); }
 		else if (typeof topLevelNow == 'function') { topLevelNow(win); }
@@ -404,6 +423,7 @@ function jawnosDockWindowFaces() {
 	if (!jawnosDockWindowsOn()) { return faces; }
 	var tiles = [];
 	$('.wind').each(function(i, v) {
+		if (typeof jawnosWorkspaceWindowHere == 'function' && !jawnosWorkspaceWindowHere(this)) { return; }
 		var el = $(v);
 		var app = el.attr('app') || '';
 		var key = (typeof jawnosTaskbarWindowKey == 'function') ? jawnosTaskbarWindowKey(v) : ('app:' + app);

@@ -25,9 +25,11 @@ function jawnosTaskbarPanelWidgetId(panel_id) {
 // kept inside the screen on either side. The max-height is the room left
 // between the widget and the far screen edge, so a long list scrolls inside.
 function jawnosTaskbarPanelPlace(panel, anchor_selector) {
-	var bar = $('#taskbar');
 	var anchor = $(anchor_selector || jawnosTaskbarPanelWidgetId(panel.attr('id')));
 	if (!panel.length || !anchor.length || !panel.is(':visible')) { return; }
+	// A widget copied into an added bar is hung from that bar's own edge.
+	var bar = anchor.closest('.jawnos_bar');
+	if (!bar.length) { bar = $('#taskbar'); }
 	var rect = anchor[0].getBoundingClientRect();
 	var width = $(window).width();
 	var height = $(window).height();
@@ -94,6 +96,9 @@ $(document).on('click', function (e) {
 	if ($(e.target).closest('.taskbar_panel').length) { return; }
 	var widget = jawnosTaskbarPanelWidgetId(jawnosTaskbarPanelOpenId);
 	if ($(e.target).closest(widget).length) { return; }
+	// A widget copied into an added bar has no id; its name is the same.
+	var name = String(jawnosTaskbarPanelOpenId).replace(/_panel$/, '').replace(/^taskbar_/, '');
+	if (name && $(e.target).closest('.taskbar_widget[widget="' + name + '"], .dock_widget[dock_widget="' + name + '"]').length) { return; }
 	jawnosTaskbarPanelClose();
 });
 

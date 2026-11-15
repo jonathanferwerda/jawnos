@@ -149,6 +149,7 @@ our @manager_bundle_files = qw(
 	/js/manager/taskbar_notifications.js
 	/js/manager/taskbar_desktop.js
 	/js/manager/shell_layout.js
+	/js/manager/shell_workspaces.js
 	/js/manager/narratorprinter.js
 	/js/manager/marker.js
 	/js/pm.js

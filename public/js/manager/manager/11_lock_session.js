@@ -1,3 +1,9 @@
+// A lock icon copied into an added bar triggers the page's own button.
+$(document).on('click', '.lock_session_copy', function(e) {
+	e.preventDefault();
+	$('#lock_session').trigger('click');
+});
+
 $(document).on('click', '#lock_session', function() {
 	if (lockSessionTap) {
 		clearTimeout(lockSessionTap);

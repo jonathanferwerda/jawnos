@@ -155,6 +155,7 @@ function taskbarDisplayer(destination) {
 	var tiles = [];
 	var timestamp = Date.now();
 	$('.wind').each(function(i,v) {
+		if (typeof jawnosWorkspaceWindowHere == 'function' && !jawnosWorkspaceWindowHere(this)) { return; }
 		var z = numeral($(v).css('z-index')).value();
 		var icon = $(v).find('.window_icon');
 		var formatted_name = $(v).find('.name_text').text();
@@ -260,6 +261,7 @@ function startMenuDisplayer(destination) {
     var valueB = numeral($(b).css('z-index')).value();
 
     return valueA - valueB; }).each(function(i,v) {
+		if (typeof jawnosWorkspaceWindowHere == 'function' && !jawnosWorkspaceWindowHere(this)) { return; }
 		var icon = $(v).find('.window_icon');
 		var formatted_name = $(v).find('.name_text').text();
 		var new_icon = icon.clone();
@@ -461,6 +463,9 @@ function windowMaker(response, fragment) {
 		
 		if (matches == 0 && response != "null") {
 			$('#browser').append('' + response + '');
+			// The desk the window belongs to, and its pile, are set before the
+			// reorganizer lays it into a slot.
+			if (typeof jawnosWorkspaceWindowNew == 'function') { jawnosWorkspaceWindowNew($('#' + window_id)); }
 			// A window that is new to this page never inherits a media unlock: the
 			// token belongs to the window that asked for the print. A restored
 			// window (or one opened beside another) draws its locked view.
@@ -650,7 +655,11 @@ function windowTiledSlot(win) {
 
 function windowTiledStackId(win) {
 	var stack = $(win).attr('stack');
-	return (stack === undefined || stack === null || stack === '') ? windowTiledDefaultStack : String(stack);
+	if (stack !== undefined && stack !== null && stack !== '') { return String(stack); }
+	// A workspace without a pile of its own falls back to that desk's default,
+	// so hidden windows of another desk never number this one's slots.
+	if (typeof jawnosWorkspaceWindowStack == 'function') { return jawnosWorkspaceWindowStack(win); }
+	return windowTiledDefaultStack;
 }
 
 // Every pile on the desk, in no particular order: the id is read from the
@@ -755,12 +764,12 @@ function windowNextTileSlot(stack) {
 		var slot = windowTiledSlot(this);
 		if (slot >= next) { next = slot + 1; }
 	});
-	if (stack !== windowTiledDefaultStack) { return next; }
 	var now = Date.now();
 	var pruned = false;
 	for (var stamp in windowTiledPending) {
 		var p = windowTiledPending[stamp];
 		if (!p) { continue; }
+		if ((p.stack || windowTiledDefaultStack) !== stack) { continue; }
 		if (now - p.at > 20000) {
 			delete windowTiledPending[stamp];
 			if (p.app && windowTiledPendingApp[p.app] === stamp) { delete windowTiledPendingApp[p.app]; }
@@ -797,7 +806,8 @@ function windowTiledReserve(timestamp, app) {
 		if (typeof windowTiledPress === 'function') { windowTiledPress(open); }
 		return;
 	}
-	windowTiledPending[timestamp] = { slot: windowNextTileSlot(windowTiledDefaultStack), at: Date.now(), app: app };
+	var stack = (typeof jawnosWorkspaceStackDefault == 'function') ? jawnosWorkspaceStackDefault() : windowTiledDefaultStack;
+	windowTiledPending[timestamp] = { slot: windowNextTileSlot(stack), at: Date.now(), app: app, stack: stack };
 	windowTiledPendingApp[app] = String(timestamp);
 }
 
@@ -1499,7 +1509,10 @@ function windowReorganizer(window_id) {
 		var win = $('#' + window_id);
 		var window_app = win.attr('app');
 		var app = window_app;
-		var winCount = $('.wind').length;
+		var winCount = 0;
+		$('.wind').each(function () {
+			if (typeof jawnosWorkspaceWindowHere != 'function' || jawnosWorkspaceWindowHere(this)) { winCount++; }
+		});
 	//	if (!windowPhoneChecker()) {
 			winCount = winCount - 1;
 	//	}
@@ -1563,11 +1576,15 @@ function windowReorganizer(window_id) {
 				// fresh window opened while a restore is still arriving is never covered.
 				// The pile's id and anchor travel with each member, so a pile away from
 				// the corner comes back where it stood.
-				var tileStack = (restored && restored.stack !== undefined && restored.stack !== null && restored.stack !== '') ? String(restored.stack) : windowTiledDefaultStack;
+				var tileStack = windowTiledStackId(win);
+				if (restored && restored.stack !== undefined && restored.stack !== null && restored.stack !== ''
+					&& String(restored.stack) !== windowTiledDefaultStack) {
+					tileStack = String(restored.stack);
+				}
 				if (tileStack !== windowTiledDefaultStack) {
 					win.attr('stack', tileStack);
-					if (restored.stack_at) { win.attr('stack_at', restored.stack_at); }
-					else if (restored.left !== undefined) { win.attr('stack_at', restored.left + ',' + restored.top); }
+					if (restored && restored.stack_at) { win.attr('stack_at', restored.stack_at); }
+					else if (restored && restored.left !== undefined) { win.attr('stack_at', restored.left + ',' + restored.top); }
 				}
 				var tileCount = windowTiledSlot(win);
 				if (tileCount < 0) {
@@ -1576,7 +1593,7 @@ function windowReorganizer(window_id) {
 						// that answered later still lands above a later one; a press opens
 						// into the default pile
 						tileCount = pending.slot;
-						tileStack = windowTiledDefaultStack;
+						tileStack = pending.stack || windowTiledStackId(win);
 					}
 					else if (restored && restored.tile !== undefined && restored.tile !== null && restored.tile !== '') {
 						tileCount = parseInt(restored.tile, 10);

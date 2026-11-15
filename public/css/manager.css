@@ -513,6 +513,26 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .taskbar_widget_desktop .taskbar_desktop_glyph i:nth-child(2) { right: 12%; height: 32%; }
 .taskbar_widget_desktop[state=desktop] .taskbar_desktop_glyph i { opacity: .18; }
 .taskbar_widget_desktop[state=desktop] { border-color: var(--accent, #3b7ddd); }
+.taskbar_widget_workspaces .taskbar_workspaces_glyph {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: calc(var(--taskbar_h, 44px) * 0.34);
+}
+.taskbar_widget_workspaces .taskbar_workspaces_glyph i {
+	display: block;
+	width: calc(var(--taskbar_h, 44px) * 0.12);
+	height: 100%;
+	border-radius: 1px;
+	background: var(--ink, currentColor);
+	opacity: .22;
+}
+.taskbar_widget_workspaces .taskbar_workspaces_glyph i.on { opacity: 1; background: var(--accent, #3b7ddd); }
+.taskbar_widget_workspaces .taskbar_workspaces_glyph i.peer { border: 1px solid var(--accent, #3b7ddd); background: transparent; }
+.taskbar_widget_workspaces .taskbar_workspaces_glyph i.peer.on { background: var(--accent, #3b7ddd); }
+.taskbar_widget_workspaces .taskbar_workspaces_glyph i.room { border: 1px dashed var(--accent, #3b7ddd); background: transparent; }
+.taskbar_widget_workspaces .taskbar_workspaces_glyph i.room.on { background: var(--accent, #3b7ddd); }
+.taskbar_panel button.taskbar_panel_workspace { width: 100%; justify-content: flex-start; text-align: left; }
 .taskbar_widget_network .taskbar_network_glyph {
 	position: relative;
 	display: flex;
@@ -756,14 +776,14 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 #clock_toast .clock_toast_close:hover { background-color: var(--line); }
 /* the corner's own buttons come aboard while the bar stands: bare tiles of the
    bar's inner height, sitting between the window list and the clock */
-#taskbar_icons { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 100%; padding-left: 6px; }
+#taskbar_icons, .jawnos_taskbar .taskbar_icons { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; height: 100%; padding-left: 6px; }
 /* the start button is the bar's own height, a couple of pixels short: the
    border and the bar's air make the gap */
-#taskbar_icons img { box-sizing: border-box; width: calc(var(--taskbar_h, 44px) - 4px); height: calc(var(--taskbar_h, 44px) - 4px); max-width: none; object-fit: contain; }
+#taskbar_icons img, .jawnos_taskbar .taskbar_icons img { box-sizing: border-box; width: calc(var(--taskbar_h, 44px) - 4px); height: calc(var(--taskbar_h, 44px) - 4px); max-width: none; object-fit: contain; }
 /* The start button always wears its own frame - on the bar or in the corner -
    so it reads as a button rather than a loose picture. (The class raises the
    specificity past the corner's transparent border.) */
-#start_menu_toggle.start {
+#start_menu_toggle.start, .start_menu_toggle_copy.start {
 	border: solid 3px;
 	border-color: var(--ink-muted, rgba(0, 0, 0, 0.5));
 	border-radius: calc(var(--jawnos-corner, 12px) * .75);

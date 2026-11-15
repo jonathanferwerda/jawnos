@@ -626,10 +626,10 @@ function jawnosNetworkTaskbarPanelBuild(panel) {
 		.text(jawnosT('Open Network')));
 }
 
-$(document).on('click', '#taskbar_network', function() {
+$(document).on('click', '.taskbar_widget[widget="network"]', function() {
 	if (typeof jawnosTaskbarEditing === 'function' && jawnosTaskbarEditing()) { return; }
 	if (typeof jawnosTaskbarPanelToggle !== 'function') { return; }
-	jawnosTaskbarPanelToggle('taskbar_network_panel', '#taskbar_network', jawnosNetworkTaskbarPanelBuild);
+	jawnosTaskbarPanelToggle('taskbar_network_panel', $(this), jawnosNetworkTaskbarPanelBuild);
 	if (typeof jawnosTaskbarPanelIsOpen === 'function' && jawnosTaskbarPanelIsOpen('taskbar_network_panel')) {
 		jawnosNetworkTaskbarLoad();
 	}

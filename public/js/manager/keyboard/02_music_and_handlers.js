@@ -162,7 +162,7 @@ $(document).on('click','.pseudonym', function() {
 	// A widget face opens the app the widget stands for; a launcher pin hands
 	// its press to the start-menu row it was cloned from.
 	if ($(this).hasClass('dock_widget')) {
-		jawnosDockWidgetOpen($(this).attr('dock_widget'));
+		jawnosDockWidgetOpen($(this).attr('dock_widget'), $(this));
 		return;
 	}
 	if ($(this).hasClass('dock_launcher')) {

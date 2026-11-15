@@ -107,6 +107,11 @@ $(document).on('click', '.taskbar_context_selection', function () {
 		jawnosShellWorkspaceAdd();
 		jawnosTaskbarContextClose();
 	}
+	else if (act == 'shell_ws_remove') {
+		var ws = (typeof jawnosShellActiveWorkspace == 'function') ? jawnosShellActiveWorkspace() : null;
+		if (ws) { jawnosShellWorkspaceRemove(ws.id); }
+		jawnosTaskbarContextClose();
+	}
 	else if (act == 'autohide') {
 		jawnosBars.autohide = (jawnosBars.autohide == 'on') ? 'off' : 'on';
 		jawnosTaskbarSave('taskbar_autohide', jawnosBars.autohide);

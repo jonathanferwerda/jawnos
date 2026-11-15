@@ -122,11 +122,11 @@ function jawnosNotificationsTaskbarPanelRefresh() {
 	jawnosNotificationsTaskbarFill($('#taskbar_notifications_panel'));
 }
 
-$(document).on('click', '#taskbar_notifications', function() {
+$(document).on('click', '.taskbar_widget[widget="notifications"]', function() {
 	if (typeof jawnosTaskbarEditing === 'function' && jawnosTaskbarEditing()) { return; }
 	if (typeof jawnosTaskbarPanelToggle !== 'function') { return; }
 	var open = typeof jawnosTaskbarPanelIsOpen === 'function' && jawnosTaskbarPanelIsOpen('taskbar_notifications_panel');
-	jawnosTaskbarPanelToggle('taskbar_notifications_panel', '#taskbar_notifications', jawnosNotificationsTaskbarPanelBuild);
+	jawnosTaskbarPanelToggle('taskbar_notifications_panel', $(this), jawnosNotificationsTaskbarPanelBuild);
 	if (!open) {
 		// Opening the list is how the count is cleared; the app marks it too.
 		jawnosNotificationsTaskbarMarkSeen();

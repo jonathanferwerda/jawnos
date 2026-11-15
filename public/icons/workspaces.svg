@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Workspaces">
+  <rect x="3.2" y="4.6" width="11" height="8.4" rx="1.4" fill="none" stroke="#2f6fb3" stroke-width="2"/>
+  <rect x="9.8" y="8.4" width="11" height="8.4" rx="1.4" fill="#2f6fb3" fill-opacity=".55"/>
+  <rect x="6.8" y="13.2" width="11" height="6.2" rx="1.4" fill="none" stroke="#2f6fb3" stroke-width="2"/>
+</svg>

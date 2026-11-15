@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/shell_layout.js public/js/manager/taskbar.js public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/keyboard.js public/js/manager/windows.js public/css/manager.css templates/manager.html.ep templates/pseudonyms.html.ep templates/layouts/manager.html.ep lib/JawnOS/Manager/Core1_tables_hooks.pm perl/help/topics_features.pl
+# tests-for: public/js/manager/shell_layout.js public/js/manager/shell_workspaces.js public/js/manager/taskbar.js public/js/manager/taskbar_edit.js public/js/manager/taskbar_edit/01_window_events.js public/js/manager/keyboard.js public/js/manager/windows.js public/js/manager/windows/01_storage.js public/css/manager.css templates/manager.html.ep templates/pseudonyms.html.ep templates/layouts/manager.html.ep lib/JawnOS/Manager/Core1_tables_hooks.pm public/icons/workspaces.svg perl/help/topics_features.pl
 # covers:    More than one workspace, taskbar and dock. A bar added in edit mode
 #            takes the next free edge; every bar can be dragged by the grip on
 #            its left side to an edge (locked) or into the open (floating), and
@@ -32,11 +32,15 @@ like($shell, qr/function jawnosShellLayout\(\)/, 'the layout has one reader');
 like($shell, qr/function jawnosShellSeed\(\)/, 'a first load seeds one workspace');
 like($shell, qr/workspaces: \[\s*\{ id: 'ws-main', name: 'Main', bars: \[taskbar, dock\] \}/s,
 	'with the page\'s own taskbar and dock');
-like($shell, qr/function jawnosShellWorkspaceAdd\(\)/, 'a workspace can be added');
+like($shell, qr/function jawnosShellWorkspaceAdd\(kind, extra\)/, 'a workspace can be added');
 like($shell, qr/function jawnosShellWorkspaceSet\(id\)/, 'and switched');
 like($shell, qr/function jawnosShellWorkspaceRows\(context\)/, 'the menus list the workspaces');
 like($shell, qr/act="shell_ws"/, 'with a row per workspace');
 like($shell, qr/act="shell_ws_add"/, 'and an Add workspace row');
+like($shell, qr/var jawnosShellMaxWorkspaces = 7;/, 'the switcher offers seven workspaces at most');
+like($shell, qr/layout\.workspaces\.length >= jawnosShellMaxWorkspaces/, 'the cap is enforced when one is added');
+like($shell, qr/function jawnosShellWorkspaceRemove\(id\)/, 'a workspace beyond the first can be removed');
+like($shell, qr/act="shell_ws_remove"/, 'and the menu offers it');
 like($shell, qr/jawnosTaskbarSave\('shell_layout'/, 'the layout is written as shell_layout');
 like($layout, qr/shell_layout: <%== encode_json\(eval \{ decode_json\(&subs::misc_setting\('shell_layout'\)\) \} \|\| undef\) %>/,
 	'and seeded into the page as JSON');
@@ -50,6 +54,8 @@ like($dock, qr/if \(jawnosDockEditing\(\)\) \{\s*context\.append\('<div class="t
 like($dock, qr/jawnosDockText\('dock\.add_dock', 'Add dock'\)/, 'and named on screen');
 like($events, qr/act == 'shell_add_bar'/, 'the press adds the bar kind it names');
 like($events, qr/jawnosShellBarAdd\(\$\(this\)\.attr\('kind'\) \|\| 'taskbar'\)/, 'through the shell');
+like($events, qr/act == 'shell_ws_remove'/, 'the menu\'s remove row is handled');
+like($events, qr/jawnosShellWorkspaceRemove\(ws\.id\)/, 'and removes the desk in front');
 like($shell, qr/function jawnosShellBarAdd\(kind\)/, 'the shell adds a bar');
 like($shell, qr/function jawnosShellFreeEdge\(workspace, kind\)/, 'on the next free edge');
 like($shell, qr/var edges = kind == 'taskbar' \? \['bottom', 'top'\] : jawnosShellEdges;/,
@@ -107,6 +113,11 @@ like($css, qr/\.jawnos_dock:not\(#pseudonym_home\)\[position="left"\]/,
 like($shell, qr/function jawnosShellTaskbarSync\(\)/, 'added taskbars are kept current');
 like($shell, qr/taskbarDisplayer\(windows\)/, 'each reads the same open windows');
 like($shell, qr/clone\(true\)/, 'and copies the pins and widgets with their handlers');
+like($shell, qr/data-role="icons"/, 'an added taskbar carries the start and lock slot');
+like($shell, qr/start_menu_toggle_copy/, 'and copies the start button');
+like($shell, qr/lock_session_copy/, 'and the lock');
+like($taskbar, qr/start_menu_toggle_copy:visible/, 'the menu hangs from the visible start button');
+like($css, qr/\.start_menu_toggle_copy\.start/, 'the copied start button keeps its frame');
 like($shell, qr/function jawnosShellDockSync\(\)/, 'added docks are kept current');
 like($shell, qr/row\.html\(source\.html\(\)\)/, 'from the first dock\'s faces');
 like($shell, qr/row\.find\('\[id\]'\)\.removeAttr\('id'\)/, 'without repeating its ids');
@@ -114,6 +125,38 @@ like($events, qr/jawnosShellTaskbarSync\(\)/, 'the window displayer feeds the ex
 like($dock, qr/jawnosShellDockSync\(\)/, 'the dock renderer feeds the extra docks');
 like($taskbar, qr/typeof jawnosShellApply == 'function'/, 'the legacy bar layout ends with the shell');
 like($taskbar, qr/jawnosBars\.dock == 'floating'/, 'a floating dock reserves no window space');
+
+# --- each workspace owns its windows and its piles --------------------------
+my $windows = read_file("$root/public/js/manager/windows.js");
+my $storage = read_file("$root/public/js/manager/windows/01_storage.js");
+my $space = read_file("$root/public/js/manager/shell_workspaces.js");
+like($space, qr/function jawnosWorkspaceApplyWindows/, 'switching lays out the windows of the desk it reaches');
+like($space, qr/function jawnosWorkspaceWindowApplyOne/, 'a window is laid back on its desk');
+like($space, qr/function jawnosWorkspaceWindowHere/, 'the window list asks which desk a window is on');
+like($space, qr/classList|hasClass\('jawnos_ws_away'\)/, 'a switch hides with its own class, not a minimise');
+like($space, qr/ws_visible/, 'a manually minimised window keeps its own state');
+like($space, qr/function jawnosWorkspaceStackDefault/, 'each desk gets its own default pile');
+like($windows, qr/jawnosWorkspaceWindowStack\(win\)/, 'the tiler asks the desk for the pile');
+like($windows, qr/jawnosWorkspaceWindowNew\(\$\('#/, 'a new window is tagged before it is tiled');
+like($windows, qr/\(p\.stack \|\| windowTiledDefaultStack\) !== stack/, 'a reserved slot is counted in its own desk\'s pile');
+like($shell, qr/win\.attr\('workspace', keep\)/, 'removing a desk hands its windows to the first');
+like($storage, qr/workspace: \(typeof jawnosWorkspaceActiveId/, 'the saved window record carries its desk');
+like($storage, qr/ws_visible:/, 'and the state its own minimise left it in');
+like($space, qr/function jawnosWorkspaceWindowRestore/, 'a restored window takes its desk back');
+like($storage, qr/jawnosWorkspaceWindowRestore\(window, v\)/, 'and the openers call it');
+like($storage, qr/function windowRetriever\(saved\)/, 'a room can hand its own windows to the retriever');
+like($dock, qr/jawnosWorkspaceWindowHere/, 'the dock lists only this desk\'s windows');
+
+# --- the switcher widget ----------------------------------------------------
+like($edit, qr/workspaces: \{ hint: 'Workspaces'/, 'Workspaces is a taskbar widget');
+like($edit, qr/w == 'workspaces'/, 'and builds its slot glyph');
+like($space, qr/function jawnosWorkspaceWidgetPanelBuild/, 'it opens a panel of desks');
+like($space, qr/data-workspace-add/, 'with an Add workspace row');
+like($space, qr/data-workspace-remove/, 'and a Remove this workspace row');
+like($core, qr{/js/manager/shell_workspaces\.js}, 'the window side is in the core bundle');
+ok(-e "$root/public/icons/workspaces.svg", 'the widget icon exists');
+like($css, qr/\.taskbar_widget_workspaces \.taskbar_workspaces_glyph/, 'the glyph is styled');
+like($css, qr/\.taskbar_panel button\.taskbar_panel_workspace/, 'and the panel row');
 
 # --- the first bars keep their ids and gain the shell classes ---------------
 like($page, qr/id="taskbar" class="theme_surface_soft jawnos_bar jawnos_taskbar"/,

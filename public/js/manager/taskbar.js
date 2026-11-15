@@ -524,8 +524,9 @@ function jawnosBarsApply() {
 // never taller than the room between the button and the far edge.
 function jawnosStartMenuPlace() {
 	var menu = $('#start_menu');
-	var toggle = $('#start_menu_toggle');
-	if (!menu.length || !toggle.length || !menu.is(':visible') || !toggle.is(':visible')) { return; }
+	var toggle = $('#start_menu_toggle').filter(':visible').first();
+	if (!toggle.length) { toggle = $('.start_menu_toggle_copy:visible').first(); }
+	if (!menu.length || !toggle.length || !menu.is(':visible')) { return; }
 	var t = toggle[0].getBoundingClientRect();
 	var w = $(window).width();
 	var h = $(window).height();
@@ -534,7 +535,11 @@ function jawnosStartMenuPlace() {
 	var left = ((t.left + (t.width / 2)) < (w / 2)) ? t.left : (t.right - menu_w);
 	// a menu as wide as the screen sits flush to it rather than hanging over
 	left = Math.max(0, Math.min(left, w - menu_w));
-	var below = (jawnosBars.taskbar != 'bottom');
+	// The button's own bar decides which way the menu opens; an added bar may
+	// sit on the other edge from the page's first one.
+	var anchor_bar = toggle.closest('.jawnos_bar');
+	var edge = anchor_bar.length ? (anchor_bar.attr('position') || 'bottom') : (jawnosBars.taskbar || 'bottom');
+	var below = (edge != 'bottom');
 	var room = below ? (h - t.bottom - gap - 8) : (t.top - gap - 8);
 	var place = {
 		'left': Math.round(left) + 'px',

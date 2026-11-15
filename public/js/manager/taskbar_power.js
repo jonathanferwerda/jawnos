@@ -240,10 +240,10 @@ function jawnosPowerTaskbarPanelBuild(panel) {
 	panel.append(footer);
 }
 
-$(document).on('click', '#taskbar_power', function() {
+$(document).on('click', '.taskbar_widget[widget="power"]', function() {
 	if (typeof jawnosTaskbarEditing === 'function' && jawnosTaskbarEditing()) { return; }
 	if (typeof jawnosTaskbarPanelToggle !== 'function') { return; }
-	jawnosTaskbarPanelToggle('taskbar_power_panel', '#taskbar_power', jawnosPowerTaskbarPanelBuild);
+	jawnosTaskbarPanelToggle('taskbar_power_panel', $(this), jawnosPowerTaskbarPanelBuild);
 	if (jawnosPowerTaskbarPanelOpen()) { jawnosPowerTaskbarPanelReload(); }
 });
 

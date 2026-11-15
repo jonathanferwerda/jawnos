@@ -8,9 +8,15 @@
 // nothing to poll. It leans on windowMinimizer(), the same answer the title
 // bar's minimise button gives, so the saved size and the tile state stay right.
 
-// The windows this widget put away, by timestamp. A second press restores these
-// and nothing else.
-var jawnosDesktopTaskbarHidden = [];
+// The windows this widget put away, by desk and by timestamp. A second press on
+// that desk restores these and nothing else; a desk keeps its own list.
+var jawnosDesktopTaskbarHidden = {};
+
+function jawnosDesktopTaskbarBucket() {
+	var ws = (typeof jawnosWorkspaceActiveId == 'function') ? jawnosWorkspaceActiveId() : 'ws-main';
+	if (!jawnosDesktopTaskbarHidden[ws]) { jawnosDesktopTaskbarHidden[ws] = []; }
+	return jawnosDesktopTaskbarHidden[ws];
+}
 
 // A window's timestamp is the id the window maker gave it. A window without the
 // attribute falls back to that id, so even an older one goes away.
@@ -28,27 +34,33 @@ function jawnosDesktopTaskbarWindows() {
 // Paint the widget from the desk it can see: pressed while no window is up, and
 // its title names the press that follows.
 function jawnosDesktopTaskbarSync() {
-	var widget = $('#taskbar_desktop');
-	if (!widget.length) { return; }
+	// Every bar carries a copy of the widget, and a copy has no id: paint them
+	// all so a press on an added bar's copy reads the same state.
+	var widgets = $('.taskbar_widget[widget="desktop"]');
+	if (!widgets.length) { return; }
 	var bare = jawnosDesktopTaskbarWindows().length == 0;
-	widget.attr('state', bare ? 'desktop' : 'windows')
-		.attr('aria-pressed', bare ? 'true' : 'false')
-		.attr('title', bare ? jawnosT('Show windows') : jawnosT('Show desktop'));
-	widget.find('.taskbar_desktop_text').text(jawnosT('Desktop'));
-	widget.removeAttr('hidden').show();
+	widgets.each(function () {
+		var widget = $(this);
+		widget.attr('state', bare ? 'desktop' : 'windows')
+			.attr('aria-pressed', bare ? 'true' : 'false')
+			.attr('title', bare ? jawnosT('Show windows') : jawnosT('Show desktop'));
+		widget.find('.taskbar_desktop_text').text(jawnosT('Desktop'));
+		widget.removeAttr('hidden').show();
+	});
 }
 
 // Every visible window goes away, remembering the ones this widget put away. A
 // window the person had already hidden is not added, so their own minimise
 // stands.
 function jawnosDesktopTaskbarHide() {
+	var bucket = jawnosDesktopTaskbarBucket();
 	var seen = {};
-	jawnosDesktopTaskbarHidden.forEach(function(ts) { seen[ts] = 1; });
+	bucket.forEach(function(ts) { seen[ts] = 1; });
 	jawnosDesktopTaskbarWindows().each(function() {
 		var ts = jawnosDesktopTaskbarStamp($(this));
 		if (!ts || seen[ts]) { return; }
 		seen[ts] = 1;
-		jawnosDesktopTaskbarHidden.push(ts);
+		bucket.push(ts);
 		if (typeof windowMinimizer == 'function') { windowMinimizer(ts); }
 	});
 }
@@ -57,8 +69,9 @@ function jawnosDesktopTaskbarHide() {
 // has no element and is dropped; one the person has already restored is left
 // where it is.
 function jawnosDesktopTaskbarShow() {
-	var timestamps = jawnosDesktopTaskbarHidden;
-	jawnosDesktopTaskbarHidden = [];
+	var ws = (typeof jawnosWorkspaceActiveId == 'function') ? jawnosWorkspaceActiveId() : 'ws-main';
+	var timestamps = jawnosDesktopTaskbarHidden[ws] || [];
+	jawnosDesktopTaskbarHidden[ws] = [];
 	timestamps.forEach(function(ts) {
 		var win = $('#window_' + ts);
 		if (!win.length || win.is(':visible')) { return; }
@@ -72,7 +85,7 @@ function jawnosDesktopTaskbarToggle() {
 	jawnosDesktopTaskbarSync();
 }
 
-$(document).on('click', '#taskbar_desktop', function() {
+$(document).on('click', '.taskbar_widget[widget="desktop"]', function() {
 	if (typeof jawnosTaskbarEditing == 'function' && jawnosTaskbarEditing()) { return; }
 	jawnosDesktopTaskbarToggle();
 });

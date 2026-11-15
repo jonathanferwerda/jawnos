@@ -358,12 +358,12 @@ function jawnosSoundTaskbarSetDefault(kind, id) {
 	});
 }
 
-$(document).on('click', '#taskbar_sound', function() {
+$(document).on('click', '.taskbar_widget[widget="sound"]', function() {
 	if (typeof jawnosTaskbarEditing === 'function' && jawnosTaskbarEditing()) { return; }
 	if (typeof jawnosTaskbarPanelToggle === 'function') {
 		var open = typeof jawnosTaskbarPanelIsOpen === 'function' && jawnosTaskbarPanelIsOpen('taskbar_sound_panel');
 		if (!open && (!jawnosSoundTaskbarData || !jawnosSoundTaskbarData.ok)) { jawnosSoundTaskbarLoad(); }
-		jawnosTaskbarPanelToggle('taskbar_sound_panel', '#taskbar_sound', jawnosSoundTaskbarPanelBuild);
+		jawnosTaskbarPanelToggle('taskbar_sound_panel', $(this), jawnosSoundTaskbarPanelBuild);
 		return;
 	}
 	// The frame is core, but a partial bundle should still reach the app.

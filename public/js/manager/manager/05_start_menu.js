@@ -146,6 +146,12 @@ $(document).on('click', '#start_menu_toggle', function() {
 	startMenuToggle();
 });
 
+// A start button copied into an added bar has no id; it answers the same menu.
+$(document).on('click', '.start_menu_toggle_copy', function(e) {
+	e.preventDefault();
+	startMenuToggle();
+});
+
 $(document).on('click', '.start_menu_menu', function() {
 	var menu = $(this).attr('menu');
 	localStorage.setItem('start_menu_menu', menu);
@@ -156,7 +162,7 @@ $(document).on('click', '.start_menu_menu', function() {
 $(document).on('click', '.jonathan, .start_menu_list', function() {
 	// the toggle answers for itself in its own handler; closing here too would
 	// undo what that handler has just opened
-	if ($(this).closest('#start_menu_toggle').length) { return; }
+	if ($(this).closest('#start_menu_toggle, .start_menu_toggle_copy').length) { return; }
 	// a start-menu row opening an appointment beats while the window comes up
 	if ($(this).hasClass('start_menu_list') && typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }
 	if ($('#start_menu').is(':visible')) {
@@ -261,7 +267,7 @@ function startMenuHtmlFlush() {
 $(document).on('click', function (e) {
 	var menu = $('#start_menu');
 	if (!menu.is(':visible')) { return; }
-	if ($(e.target).closest('#start_menu, #start_menu_toggle').length > 0) { return; }
+	if ($(e.target).closest('#start_menu, #start_menu_toggle, .start_menu_toggle_copy').length > 0) { return; }
 	$('#start_menu_toggle').attr('toggled', 'closed');
 	startMenuCloser(0);
 });

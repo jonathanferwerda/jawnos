@@ -79,6 +79,10 @@ function windowSaver(skip_act) {
 			free: $(v).attr('free'),
 			terminal_id: $(v).attr('data-terminal-id') || '',
 			browser_tab_id: bti,
+			// the desk the window belongs to, and the state its own minimise left
+			// it in; the switcher reads both back when the desk returns
+			workspace: (typeof jawnosWorkspaceActiveId == 'function') ? ($(v).attr('workspace') || jawnosWorkspaceActiveId()) : ($(v).attr('workspace') || ''),
+			ws_visible: $(v).hasClass('jawnos_ws_away') ? ($(v).attr('ws_visible') || 'no') : ($(v).is(':visible') ? 'yes' : 'no'),
 			data: data,
 		};
 		// NOTE: this used to serialise the whole #browser to HTML (and re-parse it)
@@ -149,12 +153,20 @@ function ticketWindowRetriever() {
 	}
 }
 
-function windowRetriever() {
-	var json_storage = storage || sessionStorage.getItem('window_storage');
-	var storage = JSON.parse(json_storage) ? JSON.parse(json_storage) : {};
+// A room recalled from the console hands its own window set here; a reload
+// hands none and the page's saved storage is read.
+function windowRetriever(saved) {
+	var json_storage = saved || sessionStorage.getItem('window_storage');
+	var storage = {};
+	try {
+		storage = (typeof json_storage == 'object' && json_storage !== null) ? json_storage : (JSON.parse(json_storage) || {});
+	}
+	catch (e) { storage = {}; }
 	var window_w = $(window).width();
 	var window_h = $(window).height();
-	ticketWindowRetriever()
+	// A room's own set is complete; only a plain reload asks the server for the
+	// tab's saved windows.
+	if (!saved) { ticketWindowRetriever(); }
 
 	// Open the saved windows in the order they held in their piles: a restore
 	// inserts each at its saved slot, so arriving in that order leaves no gaps to
@@ -245,6 +257,17 @@ function appWindowOpenerNow(i,timestamp,v) {
 	}
 	v = v || {};
 	timestamp = timestamp || jawnosWindowTimestamp();
+	// A press on an app that is open on another desk goes to that desk; a
+	// restore must not, or every saved window would move the desk in turn.
+	// Terminal, Folders and Now open another window of their own on this desk;
+	// a single-window app that is open elsewhere takes the person there.
+	var multi = (i == 'terminal' || i == 'folders' || i == 'now');
+	if (!multi && (!v || v.type != 'window') && typeof jawnosWorkspaceActiveId == 'function') {
+		var elsewhere = $('.wind').filter(function() { return $(this).attr('app') === i; }).first();
+		var here = jawnosWorkspaceActiveId();
+		var there = elsewhere.length ? (elsewhere.attr('workspace') || '') : '';
+		if (there && there != here && typeof jawnosShellWorkspaceSet == 'function') { jawnosShellWorkspaceSet(there); }
+	}
 	// a restore carries the pile and slot (or the fact that it had been dragged
 	// out of the tile) it held in the last session; hand it to windowReorganizer,
 	// which runs while the rendered window is being appended. A fresh open carries
@@ -437,6 +460,7 @@ function appWindowOpenerNow(i,timestamp,v) {
 					if (v.visible != 'yes') {
 						window.hide();
 					}
+					if (typeof jawnosWorkspaceWindowRestore == 'function') { jawnosWorkspaceWindowRestore(window, v); }
 					if (v.top >= 0 && v.left < window_w && v.top < window_h && v.left >= 0) {
 						// a tiled window's place belongs to its slot: the saved pixels are last
 						// session's step, and the bar's height may have moved since. A free or
@@ -500,6 +524,7 @@ function appWindowOpenerNow(i,timestamp,v) {
 				if (v.visible != 'yes') {
 					window.hide();
 				}
+				if (typeof jawnosWorkspaceWindowRestore == 'function') { jawnosWorkspaceWindowRestore(window, v); }
 			},
 			error: function(e) {
 				if (typeof windowTiledRelease === 'function') {

@@ -24,6 +24,9 @@ var jawnosShell = {
 
 var jawnosShellEdges = ['bottom', 'top', 'left', 'right'];
 var jawnosShellSnapDistance = 48;
+// An xfce-style switcher is readable with a handful of desks; seven is the
+// most the widget and the menu offer.
+var jawnosShellMaxWorkspaces = 7;
 
 function jawnosShellPrimaryId(kind) {
 	return kind == 'taskbar' ? 'bar-taskbar-main' : 'bar-dock-main';
@@ -94,6 +97,9 @@ function jawnosShellNormalize(layout) {
 	$.each(layout.workspaces, function (i, ws) {
 		if (!ws.id) { ws.id = 'ws-' + i + '-' + Date.now().toString(36); }
 		if (!ws.name) { ws.name = i ? ('Workspace ' + (i + 1)) : 'Main'; }
+		if (!ws.kind) { ws.kind = 'local'; }
+		if (ws.room && typeof ws.room != 'object') { delete ws.room; }
+		if (ws.peer && typeof ws.peer != 'object') { delete ws.peer; }
 		if (!Array.isArray(ws.bars)) { ws.bars = []; }
 		ws.bars = $.grep(ws.bars, function (bar) {
 			return bar && typeof bar == 'object' && bar.id && (bar.kind == 'taskbar' || bar.kind == 'dock');
@@ -232,6 +238,9 @@ function jawnosShellBarBuild(desc, workspace) {
 		el.append('<span class="taskbar_windows" data-role="windows"></span>');
 		el.append('<span class="taskbar_widgets" data-role="widgets"></span>');
 		el.append('<span class="taskbar_pins" data-role="pins"></span>');
+		// The start and lock buttons are the page's own; each added bar gets a
+		// copy so a desk is never left without a way to open an app.
+		el.append('<span class="taskbar_icons" data-role="icons"></span>');
 		el.append('<span class="taskbar_clock" data-role="clock"></span>');
 	}
 	else {
@@ -351,6 +360,9 @@ function jawnosShellApply() {
 		jawnosShellHandleEnsure(el);
 		if (found.workspace.id == active.id) { jawnosShellPlace(el, found.bar); }
 	});
+	// The switcher's own reading follows the active desk; the extra bars copy
+	// the first one's widgets, so it is painted before they are cloned.
+	if (typeof jawnosWorkspaceWidgetSync == 'function') { jawnosWorkspaceWidgetSync(); }
 	if (!jawnosShell.syncing) {
 		jawnosShellTaskbarSync();
 		jawnosShellDockSync();
@@ -379,6 +391,18 @@ function jawnosShellTaskbarSync() {
 			primary.children('.taskbar_widget').each(function () {
 				var copy = $(this).clone(true).removeAttr('id');
 				widgets.append(copy);
+			});
+			var icons = el.children('[data-role="icons"]');
+			icons.empty();
+			primary.children('#taskbar_icons').children('img').each(function () {
+				var source = $(this);
+				var copy = source.clone(true).removeAttr('id');
+				// The copies answer through their own classes; the ids stay on the
+				// page's own buttons.
+				if (this.id == 'start_menu_toggle') { copy.addClass('start_menu_toggle_copy'); }
+				if (this.id == 'lock_session') { copy.addClass('lock_session_copy'); }
+				copy.css('display', source.css('display'));
+				icons.append(copy);
 			});
 			el.children('[data-role="clock"]').html(primary.children('[data-role="clock"]').html());
 			var windows = el.children('[data-role="windows"]');
@@ -415,23 +439,39 @@ function jawnosShellDockSync() {
 }
 
 // ---- workspaces -----------------------------------------------------------
-// Each workspace holds its own bars. The desk's windows are shared for now, so
-// switching a workspace changes the bars on screen; separating the windows into
-// their workspace is the next layer this one is shaped for.
+// Each workspace is a desktop: its own bars, its own windows and its own
+// piles. This file owns the layout and the bars; shell_workspaces.js owns the
+// windows and the switcher widget.
 function jawnosShellWorkspaceRows(context) {
 	var layout = jawnosShellLayout();
 	var active = jawnosShellActiveWorkspace();
 	context.append($('<div class="taskbar_context_label"></div>').text(jawnosShellText('Workspaces')));
 	$.each(layout.workspaces, function (i, ws) {
+		var name = ws.name;
+		if (ws.kind == 'peer') { name += ' — ' + jawnosShellText('Remote'); }
+		else if (ws.kind == 'room') { name += ' — ' + jawnosShellText('Saved'); }
 		var row = $('<div class="taskbar_context_selection" act="shell_ws"></div>')
 			.attr('val', ws.id)
-			.append($('<span></span>').text(jawnosShellText(ws.name)))
+			.append($('<span></span>').text(name))
 			.append('<span class="taskbar_context_check">' + (ws.id == active.id ? '✓' : '') + '</span>');
 		context.append(row);
 	});
-	context.append('<div class="taskbar_context_selection" act="shell_ws_add">' + jawnosShellText('Add workspace') + '</div>');
+	if (layout.workspaces.length < jawnosShellMaxWorkspaces) {
+		context.append('<div class="taskbar_context_selection" act="shell_ws_add">' + jawnosShellText('Add workspace') + '</div>');
+	}
+	else {
+		context.append($('<div class="taskbar_context_label"></div>').text(jawnosShellText('Seven workspaces is the most')));
+	}
+	// The first workspace owns the page's own bars and can never go; any other
+	// one can, and its windows move to the first rather than vanish.
+	if (layout.workspaces.length > 1 && active && active.id != layout.workspaces[0].id) {
+		context.append('<div class="taskbar_context_selection" act="shell_ws_remove">' + jawnosShellText('Remove this workspace') + '</div>');
+	}
 }
 
+// Switching a desk hides the windows of the one being left and shows the ones
+// this desk had on screen. jawnosWorkspaceApplyWindows owns that pass; the bar
+// layout follows it, and the window list is rebuilt from what is now on screen.
 function jawnosShellWorkspaceSet(id) {
 	var layout = jawnosShellLayout();
 	var found = false;
@@ -439,17 +479,34 @@ function jawnosShellWorkspaceSet(id) {
 	if (!found) { return; }
 	layout.active = id;
 	jawnosShellSave();
+	if (typeof jawnosWorkspaceApplyWindows == 'function') { jawnosWorkspaceApplyWindows(); }
 	jawnosShellApply();
+	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
+	// the first dock has just rebuilt its window faces; the added ones copy it
+	if (typeof jawnosShellDockSync == 'function') { jawnosShellDockSync(); }
+	if (typeof jawnosWorkspaceWidgetSync == 'function') { jawnosWorkspaceWidgetSync(); }
 }
 
-function jawnosShellWorkspaceAdd() {
+// Add a desk. `kind` names the source a later layer will fill: a local desk, a
+// room recalled from the console, or a peer's Manager. `extra` carries its name
+// and its room/peer record. The cap is shared by the widget, the menu and this
+// function.
+function jawnosShellWorkspaceAdd(kind, extra) {
 	var layout = jawnosShellLayout();
+	if (layout.workspaces.length >= jawnosShellMaxWorkspaces) { return null; }
 	var n = layout.workspaces.length + 1;
 	var ws = {
 		id: 'ws-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6),
 		name: 'Workspace ' + n,
+		kind: kind || 'local',
 		bars: []
 	};
+	if (extra) {
+		if (extra.name) { ws.name = extra.name; }
+		if (extra.kind) { ws.kind = extra.kind; }
+		if (extra.room) { ws.room = extra.room; }
+		if (extra.peer) { ws.peer = extra.peer; }
+	}
 	ws.bars.push({ id: jawnosShellNewId('taskbar'), kind: 'taskbar', mode: 'edge', edge: 'bottom' });
 	ws.bars.push({
 		id: jawnosShellNewId('dock'), kind: 'dock', mode: 'floating',
@@ -460,7 +517,38 @@ function jawnosShellWorkspaceAdd() {
 	layout.workspaces.push(ws);
 	layout.active = ws.id;
 	jawnosShellSave();
+	if (typeof jawnosWorkspaceApplyWindows == 'function') { jawnosWorkspaceApplyWindows(); }
 	jawnosShellApply();
+	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
+	if (typeof jawnosShellDockSync == 'function') { jawnosShellDockSync(); }
+	if (typeof jawnosWorkspaceWidgetSync == 'function') { jawnosWorkspaceWidgetSync(); }
+	return ws;
+}
+
+function jawnosShellWorkspaceRemove(id) {
+	var layout = jawnosShellLayout();
+	if (layout.workspaces.length <= 1) { return; }
+	var at = -1;
+	$.each(layout.workspaces, function (i, ws) { if (ws.id == id) { at = i; } });
+	// The first desk owns the page's own bars: removing it would take the menu
+	// that adds workspaces with it.
+	if (at <= 0) { return; }
+	var going = layout.workspaces[at];
+	if ($.grep(going.bars || [], function (bar) { return bar && bar.primary; }).length) { return; }
+	var keep = layout.workspaces[0].id;
+	$('.wind').each(function () {
+		var win = $(this);
+		if (win.attr('workspace') == going.id) { win.attr('workspace', keep); }
+	});
+	layout.workspaces.splice(at, 1);
+	if (layout.active == id) { layout.active = keep; }
+	jawnosShellSave();
+	if (typeof jawnosWorkspaceApplyWindows == 'function') { jawnosWorkspaceApplyWindows(); }
+	jawnosShellApply();
+	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
+	// the first dock has just rebuilt its window faces; the added ones copy it
+	if (typeof jawnosShellDockSync == 'function') { jawnosShellDockSync(); }
+	if (typeof jawnosWorkspaceWidgetSync == 'function') { jawnosWorkspaceWidgetSync(); }
 }
 
 // ---- adding, moving and removing a bar ------------------------------------

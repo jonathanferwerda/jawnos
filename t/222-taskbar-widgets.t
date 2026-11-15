@@ -29,6 +29,8 @@ like($edit, qr/w == 'notifications'/, 'the notifications widget builds its bell'
 like($edit, qr/jawnosTaskbarWidgetItem\('notifications', 'full'\)/, 'and rides the default bar');
 like($edit, qr/desktop: \{ hint: 'Desktop'/, 'Desktop is a widget');
 like($edit, qr/w == 'desktop'/, 'the desktop widget builds its screen glyph');
+like($edit, qr/workspaces: \{ hint: 'Workspaces'/, 'Workspaces is a widget');
+like($edit, qr/w == 'workspaces'/, 'and builds its slot glyph');
 like($edit, qr/function jawnosTaskbarWidgetSet\(/, 'a widget mode can be written');
 like($edit, qr/function jawnosTaskbarWidgetToggle\(/, 'a widget can be turned on and off');
 like($edit, qr/function jawnosTaskbarWidgetMake\(/, 'a widget builds its element');
@@ -60,10 +62,11 @@ like($power, qr/!status \|\| !status\.ok \|\| !battery\)/, 'only a failed readin
 
 my $desktop = read_file("$root/public/js/manager/taskbar_desktop.js");
 like($desktop, qr/function jawnosDesktopTaskbarToggle/, 'the desktop widget toggles the desk');
-like($desktop, qr/\#taskbar_desktop/, 'it finds the built widget');
+like($desktop, qr/taskbar_widget\[widget="desktop"\]/, 'a press answers from any bar\'s copy');
 like($desktop, qr/windowMinimizer\(ts\)/, 'it puts windows away through the window manager');
 like($desktop, qr/jawnosDesktopTaskbarHidden/, 'and remembers only the ones it put away');
 like($desktop, qr/jawnosT\('Show desktop'\)/, 'its title names the press that follows');
+like($desktop, qr/function jawnosDesktopTaskbarBucket/, 'the put-away windows are kept per desk');
 ok(-e "$root/public/icons/desktop.svg", 'the desktop icon exists');
 
 my $network = read_file("$root/public/js/manager/taskbar_network.js");
@@ -131,11 +134,13 @@ like($css, qr/\.taskbar_widget\b/, 'the shared widget plate exists');
 like($css, qr/\.taskbar_widget\[mode=icon\] \.taskbar_widget_text/, 'Icon mode hides the text');
 like($css, qr/\.taskbar_network_bars/, 'the network bars have a style');
 like($css, qr/\.taskbar_widget_desktop \.taskbar_desktop_glyph/, 'the desktop glyph has a style');
+like($css, qr/\.taskbar_widget_workspaces \.taskbar_workspaces_glyph/, 'the workspace slots have a style');
 like($css, qr/\[state=desktop\].*\.taskbar_desktop_glyph i/s, 'and a bare desk fades its windows');
 like($css, qr/\[kind=ethernet\].*taskbar_network_wire/s, 'Ethernet swaps in the wire glyph');
 $core = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($core, qr{/js/manager/taskbar_network\.js}, 'the network poller is in the core bundle');
 like($core, qr{/js/manager/taskbar_desktop\.js}, 'the desktop widget is in the core bundle');
+like($core, qr{/js/manager/shell_workspaces\.js}, 'the workspace switcher is in the core bundle');
 ok(-e "$root/public/icons/network.svg", 'the add-items icon exists');
 
 # --- help -------------------------------------------------------------------
