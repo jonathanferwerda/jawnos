@@ -100,6 +100,8 @@ like( $text, qr/^#!\/usr\/bin\/perl/m, 'it is a Perl script' );
 like( $text, qr/download\.geofabrik\.de/, 'it fetches the regional extract from Geofabrik' );
 like( $text, qr/'extract', '--overwrite', '--strategy', 'complete_ways'/, 'osmium cuts the county whole' );
 like( $text, qr/'--bbox=' \. \$opt\{'bbox'\}/, 'tilemaker gets the bounding box its profile needs' );
+like( $text, qr/\$pmtiles, 'convert'/, 'and the reference converter writes the archive' );
+like( $text, qr/"\$pmtiles" verify "\$out"/, 'which is then verified, not assumed' );
 like( $text, qr{/usr/share/doc/tilemaker/examples}, 'the profile comes from the installed package' );
 like( $text, qr/apt-get install \$package/, 'a missing tool names the package that provides it' );
 like( $text, qr/basemaps_dir/, 'it stages into the store\'s basemaps directory' );

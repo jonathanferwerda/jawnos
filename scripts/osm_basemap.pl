@@ -13,14 +13,15 @@
 #
 # The chain is Geofabrik's regional extract (1 GB for Ontario, fetched once into
 # the cache and resumed if interrupted), `osmium extract` to cut the county out
-# of it, then tilemaker with its OpenMapTiles profile, which writes .pmtiles
-# directly. The result is staged in basemaps/ in the store - a build artifact
-# like releases/ and voices/, gitignored, never in the tree's history.
+# of it, then tilemaker with its OpenMapTiles profile into .mbtiles, and the
+# reference pmtiles converter to write the .pmtiles a browser can read. The
+# result is staged in basemaps/ in the store - a build artifact like releases/
+# and voices/, gitignored, never in the tree's history.
 #
-# Requires: osmium (osmium-tool), tilemaker, curl. The pmtiles CLI is optional
-# and only makes --status more detailed; this fetches it into the cache when it
-# is missing. Vector tiles are what a 3D view needs later: buildings carry their
-# height and level tags, which a picture of a map never can.
+# Requires: osmium (osmium-tool), tilemaker and curl. The pmtiles CLI is fetched
+# into the cache automatically. Vector tiles are what a 3D view needs later:
+# buildings carry their height and level tags, which a picture of a map never
+# can.
 #
 # The default bbox is the county plate measured in Travel (the widest measured
 # map that covers the house), and the default name is the county it sits in.
@@ -194,23 +195,37 @@ sub build {
 	die "osm_basemap: no cut extract at $county_pbf; run --extract first\n"
 		unless -f $county_pbf;
 	my ( $config, $process ) = profile_assets();
+	my $pmtiles = &fetch_pmtiles_cli();
+	die "osm_basemap: the pmtiles CLI is required to write a valid archive;\n"
+		. "  it could not be fetched into $cache\n"
+		unless length $pmtiles;
+	my $mbtiles = "$cache/$opt{'name'}.mbtiles";
 	make_path($stage);
-	print 'build: ', basename($county_pbf), ' -> ', $out, "\n";
+	print 'build: ', basename($county_pbf), ' -> ', basename($mbtiles), "\n";
 	system( $tilemaker,
 		'--input', $county_pbf,
-		'--output', $out,
+		'--output', $mbtiles,
 		'--config', $config,
 		'--process', $process,
 		# the OpenMapTiles profile also clips Natural Earth shapefiles, and
 		# tilemaker refuses them without a bounding box
 		'--bbox=' . $opt{'bbox'} ) == 0
 		or die "osm_basemap: tilemaker failed\n";
-	print 'build: staged ', human_size( -s $out ), "\n";
+	# tilemaker 3.0 writes .pmtiles itself, but its leaf directory carries an
+	# offset of 0, which the reference verifier and a strict reader reject. The
+	# reference converter rewrites the same tiles into a clean archive, so the
+	# archive is always made that way and then verified.
+	print 'build: ', basename($mbtiles), ' -> ', basename($out), "\n";
+	system( $pmtiles, 'convert', $mbtiles, $out ) == 0
+		or die "osm_basemap: pmtiles convert failed\n";
+	my $verdict = `"$pmtiles" verify "$out" 2>&1`;
+	die 'osm_basemap: the archive does not verify:' . "\n$verdict\n" if $? != 0;
+	print 'build: staged ', human_size( -s $out ), " and verified\n";
 	return 0;
 }
 
-# The pmtiles CLI is not needed to build: tilemaker writes .pmtiles itself. It
-# makes --status able to read the archive it just wrote.
+# The pmtiles CLI is the reference writer and verifier. It is not optional:
+# tilemaker's own .pmtiles output fails the verifier (see build()).
 sub fetch_pmtiles_cli {
 	return "$cache/pmtiles" if -x "$cache/pmtiles";
 	make_path($cache);
