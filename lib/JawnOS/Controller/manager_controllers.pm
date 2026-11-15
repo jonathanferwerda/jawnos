@@ -814,7 +814,12 @@ sub action_54010 {
 		# Its own session: a worker restart must not kill the write, and a cancel
 		# signals the whole group (sudo, perl, zstd, dd).
 		eval { POSIX::setsid() };
-		if ($psk_path) { open(STDIN, '<', $psk_path) or open(STDIN, '<', '/dev/null') }
+		if ($psk_path) {
+			# Open first, then drop the name: unlinking before the child gets here
+			# left it reading /dev/null, so every flash saw an empty password.
+			open(STDIN, '<', $psk_path) or open(STDIN, '<', '/dev/null');
+			unlink $psk_path;
+		}
 		else { open(STDIN, '<', '/dev/null') }
 		open(STDOUT, '>', $log_path);
 		open(STDERR, '>&', \*STDOUT);
@@ -822,7 +827,7 @@ sub action_54010 {
 		$ENV{'JAWNOS_FLASH_HOSTNAME'} = $hostname // '';
 		exec('sudo', '-n', $^X, $script, @args) or POSIX::_exit(127);
 	}
-	unlink $psk_path if $psk_path;
+	# The child drops the password file itself, once its stdin holds it.
 	# This request waits for the answer, so a normal flash needs no polling. If
 	# the worker dies, the session keeps writing and the status route reads on.
 	my $deadline = time + 900;
@@ -832,6 +837,15 @@ sub action_54010 {
 		last if ($job->{'state'} // '') =~ /^(?:done|failed|cancelled)$/;
 		my $reaped = waitpid($pid, POSIX::WNOHANG());
 		if ($reaped == $pid) {
+			# A provisioner that exits writes its last state just before the sudo
+			# wrapper does; give the file a moment rather than calling a clean
+			# failure "stopped before it finished".
+			my $tries = 20;
+			while ($tries-- > 0) {
+				$job = _flash_job_read($job_path);
+				last if ($job->{'state'} // '') =~ /^(?:done|failed|cancelled)$/;
+				select(undef, undef, undef, 0.1);
+			}
 			$job = _flash_job_read($job_path);
 			last if ($job->{'state'} // '') =~ /^(?:done|failed|cancelled)$/;
 			$job = { %{ $job }, state => 'failed', error => 'the flash process stopped before it finished' };

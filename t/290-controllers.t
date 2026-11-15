@@ -79,7 +79,7 @@ like($controller, qr/push \@args, \('--wifi-ssid', \$wifi_ssid\)/, 'the flash pa
 like($controller, qr/push \@args, '--wifi-psk-stdin'/, 'the password is named on stdin, not argv');
 unlike($controller, qr/'--wifi-psk',/, 'the password never reaches the argv');
 like($controller, qr/File::Temp::tempfile\('gou_flash_psk_XXXXXXXX'/, 'the password is written to a private file for stdin');
-like($controller, qr/open\(STDIN, '<', \$psk_path\)/, 'and the child reads it as its stdin');
+like($controller, qr/open\(STDIN, '<', \$psk_path\).*?unlink \$psk_path;/s, 'the child opens it before the name is removed');
 like($controller, qr/POSIX::setsid\(\)/, 'the flash runs in its own session, so a restart does not kill it');
 like($controller, qr/push \@args, \('--progress', \$job_path\)/, 'the progress file is named for the page');
 
