@@ -827,19 +827,10 @@ sub action_54010 {
 		$ENV{'JAWNOS_FLASH_HOSTNAME'} = $hostname // '';
 		exec('sudo', '-n', $^X, $script, @args) or POSIX::_exit(127);
 	}
-	# Record the session leader here, before the child has written anything: the
-	# provisioner may spend half a minute checking the image first, and the status
-	# route must be able to tell that waiting job from a dead one. The child writes
-	# the same pid on every later pass.
-	{
-		require JawnOS::Platform::Process;
-		my $started = _flash_job_read($job_path);
-		_flash_job_write({
-			%{ $started },
-			pid => $pid,
-			start_ticks => JawnOS::Platform::Process::start_time($pid),
-		}, $job_path);
-	}
+	# The child writes its own pid and start time on its first pass, before it
+	# checks anything. Writing them here instead would be a read-modify-write over
+	# the same file the child may have just finished in: a fast failure came back
+	# as "starting" again and the route then called a finished run stopped.
 	# The child drops the password file itself, once its stdin holds it.
 	# This request waits for the answer, so a normal flash needs no polling. If
 	# the worker dies, the session keeps writing and the status route reads on.

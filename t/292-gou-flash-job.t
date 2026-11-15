@@ -247,14 +247,17 @@ sub insert_token {
 	my $written = eval { $JSON->decode(read_file($progress)) } || {};
 	is($written->{'state'}, 'failed', 'and the progress file says failed');
 	like($written->{'error'}, qr/image not found/, 'with the reason the page shows');
+	ok(($written->{'pid'} // 0) > 1, 'the provisioner records its own pid');
+	ok(length($written->{'start_ticks'} // ''), 'and its start time');
 
 	my $routes = read_file(root() . '/lib/JawnOS/Routes/manager_controllers.pm');
 	like($routes, qr{54012, 'get',\s+'/manager/controllers/new/flash/status'}, 'the status route is registered');
 	like($routes, qr{54013, 'post',\s+'/manager/controllers/new/flash/cancel'}, 'the cancel route is registered');
 
 	my $controller = read_file(root() . '/lib/JawnOS/Controller/manager_controllers.pm');
-	like($controller, qr/pid => \$pid,\s*\n\s*start_ticks => JawnOS::Platform::Process::start_time\(\$pid\)/,
-		'the route records the session leader before the child can be called dead');
+	unlike($controller, qr/pid => \$pid,\s*\n\s*start_ticks/,
+		'the route does not read-modify-write the job after the fork');
+	like($provision, qr/_progress_write\('starting'/, 'the provisioner says it has started before any check');
 
 	my $js = read_file(root() . '/public/js/manager/controllers.js');
 	like($js, qr{/manager/controllers/new/flash/status}, 'the page polls the status route');

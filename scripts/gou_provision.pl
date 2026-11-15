@@ -755,6 +755,9 @@ sub _flash {
 	# never leaves the person watching a scan for a board that would be refused.
 	local $SIG{'TERM'} = sub { $CANCELLED = 1 };
 	local $SIG{'INT'} = sub { $CANCELLED = 1 };
+	# Say who is running before any check. The image hash can take half a minute,
+	# and the status route needs this pid to leave a waiting job alone.
+	_progress_write('starting', bytes => 0, rate => 0);
 	my $hostname = defined $opt{'hostname'} && length $opt{'hostname'} ? $opt{'hostname'} : $DEFAULT_HOSTNAME;
 	unless ($hostname =~ /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,61}[A-Za-z0-9])?$/) {
 		_fail(4, 'invalid hostname');
