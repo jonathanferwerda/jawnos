@@ -55,6 +55,15 @@
 	border-color: var(--line);
 }
 
+/* The SMS role request is a short label, not a square icon button. */
+.chat_shell .chat_sms_role {
+	width: auto;
+	min-width: 0;
+	padding: 0 10px;
+	font-size: 12px;
+	white-space: nowrap;
+}
+
 .chat_shell .chat_identity {
 	display: flex;
 	align-items: center;

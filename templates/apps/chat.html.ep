@@ -32,6 +32,7 @@
 			</div>
 		</div>
 		<div class="chat_head_actions">
+			<button type="button" class="chat_icon_button chat_sms_role" hint="Be the messages app" aria-label="<%= &subs::ui('Be the messages app') %>" style="display:none;"><%= &subs::ui('Be the messages app') %></button>
 			<span class="chat_connection" id="chat_connection" title="<%= &subs::ui('Connected') %>">&#9679;</span>
 		</div>
 	</div>

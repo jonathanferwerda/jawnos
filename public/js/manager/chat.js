@@ -71,7 +71,26 @@ function chatTransportOptions() {
 	updateChatSmsCount();
 	chatMethodLabel(sel, onPerson);
 	if (onLora) { setTimeout(chatLoraRefresh, 200); }
+	jawnChatSmsRole();
 }
+
+// The messages (SMS) role. Without it Android sends texts through another app,
+// and a picture message can only be handed to that app; the Chat header offers
+// the system's own role request while the role is not held.
+function jawnChatSmsRole() {
+	if (!window.JawnSms || typeof window.JawnSms.smsRole !== 'function') { return; }
+	var held = 'yes';
+	try { held = window.JawnSms.smsRole(); } catch (e) { }
+	$('#mail .chat_sms_role').toggle(held !== 'yes');
+}
+$(document).on('click', '#mail .chat_sms_role', function () {
+	if (window.JawnSms && typeof window.JawnSms.requestSms === 'function') {
+		try { window.JawnSms.requestSms(); } catch (e) { }
+	}
+});
+// The role sheet is a system activity, so the page regains focus when it
+// closes; re-check then instead of waiting for the next transport change.
+$(window).on('focus', jawnChatSmsRole);
 
 // The transport belongs to the person, not the window: a phone number is the
 // most stable key across the friend row, the ticket and the phone list, with the

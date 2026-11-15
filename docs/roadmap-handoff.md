@@ -73,7 +73,9 @@ incoming/outgoing/missed → appointment on the caller's own app; Box Office
 blacklist + two-press Block; caller-ID (Call screening) role; Voicemail-style
 "respond via message" service; ringtones (`ring.mp3` etc.) + custom sound upload;
 Known/Recent/Blocked/All panes; multi-line contacts (a second number resolves to
-the person).
+the person); and the messages role — the Chat header's **Be the messages app**
+button asks Android for `ROLE_SMS` (`JawnSms`), so SMS can be set from the app or
+Settings without an adb grant.
 
 Still to do:
 - **App owns the ringtone** — silence the system ring and play the house's, instead
@@ -82,10 +84,6 @@ Still to do:
   take a real capture.
 - **MMS end to end** — machinery is declared (klinkerapps push/transaction,
   `RECEIVE_MMS`); never observed a real MMS in or out.
-- **SMS role from Settings** — SMS had to be granted over adb (`cmd role
-  add-role-holder --user 0 android.app.role.SMS com.termux`); the user could set
-  Phone but not SMS from Settings. Re-check after the next build; `JawnRespondViaMessageService`
-  was the gate.
 - **Native halves are in** — photo/video/audio (`JawnCamera`, `DeviceService`),
   contacts (`JawnContactsBridge`) and the call log (`telephony.call_log`) come
   from the app, and the phone/camera JS drives those bridges directly. Verify the
@@ -215,7 +213,7 @@ Still to do:
 
 **Every APK change bumps `versionCode` and is published** (`perl scripts/app_build.pl`
 then `perl scripts/app_publish.pl`). The staged and published build here is
-**1314 / 0.118.316** (`releases/app_release.json`).
+**1315 / 0.118.317** (`releases/app_release.json`).
 
 Landed since this note: the notification badge (`JawnNotifyReceiver` posts jawn's
 notifications on the app's own channel), the status/nav-bar option
