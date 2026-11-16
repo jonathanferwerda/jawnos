@@ -164,7 +164,7 @@ function travelWorldAssemble(st) {
 	var out = {
 		centre: { lat: centre.lat, lon: centre.lon },
 		radius: RADIUS,
-		maps: [], buildings: [], water: [], streams: [], roads: [], trees: [],
+		maps: [], land: [], buildings: [], water: [], streams: [], roads: [], trees: [],
 		places: [], plates: [], photos: []
 	};
 
@@ -198,6 +198,31 @@ function travelWorldAssemble(st) {
 			opacity: m['guessed'] ? 0.4 : 1
 		});
 	});
+
+	// ---- land cover: colour under the town, from the same archive ----------
+	var land_colour = {
+		wood: '#cfe0bb', forest: '#cfe0bb', scrub: '#d9e6c4', heath: '#d9e6c4',
+		grass: '#dfe9cf', meadow: '#dfe9cf', park: '#d2e3bf', garden: '#d2e3bf',
+		recreation_ground: '#d2e3bf', national_park: '#d2e3bf',
+		farmland: '#eef1d8', orchard: '#eaf0d5', vineyard: '#eaf0d5', allotments: '#eaf0d5',
+		cemetery: '#dde4d6', residential: '#e8e4da', suburb: '#e8e4da',
+		neighbourhood: '#e8e4da', quarter: '#e8e4da',
+		industrial: '#e3dfe4', commercial: '#e3dfe4', retail: '#e3dfe4', railway: '#e3dfe4',
+		sand: '#f2e7cf'
+	};
+	$.each(['landcover', 'landuse', 'park'], function(i, layer) {
+		$.each(featureList(layer), function(j, f) {
+			if (!f || !f.geometry || f.geometry.type !== 'Polygon') { return; }
+			var cls = (f.properties || {})['class'] || '';
+			var colour = land_colour[cls];
+			if (!colour) { return; }
+			var pts = ring(f.geometry.coordinates[0], 40);
+			if (pts.length < 3 || !near(pts, RADIUS + 40)) { return; }
+			if (squareMetres(pts) < 80) { return; }
+			out.land.push({ p: pts, c: colour });
+		});
+	});
+	out.land = out.land.slice(0, 100);
 
 	// ---- buildings ----------------------------------------------------------
 	$.each(featureList('building'), function(i, f) {

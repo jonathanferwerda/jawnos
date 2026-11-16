@@ -24,6 +24,7 @@
 			renderer="antialias: true"
 			vr-mode-ui="enabled: false"
 			fog="type: exponential; density: 0.004; color: #dfe7d2">
+			<a-sky color="#cfe3f0"></a-sky>
 			<a-entity id="world_root"></a-entity>
 			<a-entity light="type: hemisphere; color: #ffffff; groundColor: #6b7a5a; intensity: 0.95"></a-entity>
 			<a-entity light="type: directional; color: #fff7e8; intensity: 0.7" position="60 100 40"></a-entity>

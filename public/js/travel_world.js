@@ -238,6 +238,11 @@
 			}, group);
 		});
 
+		// ---- land cover under the town -------------------------------------
+		(data.land || []).forEach(function (l) {
+			el('a-entity', { flatpoly: { points: l.p, colour: l.c, opacity: 0.9, y: 0.012 } });
+		});
+
 		// ---- water, then the streams --------------------------------------
 		(data.water || []).forEach(function (pts) {
 			el('a-entity', { flatpoly: { points: pts, colour: '#aac9dd', opacity: 0.92, y: 0.03 } });
@@ -280,7 +285,7 @@
 			if (p.name) {
 				el('a-entity', {
 					position: p.x + ' 5.6 ' + p.z,
-					facecam: '', worldlabel: { text: p.name, colour: '#ffffff', size: 0.5 }
+					facecam: '', worldlabel: { text: p.name, colour: '#ffffff', size: 0.7 }
 				});
 			}
 		});
@@ -324,14 +329,14 @@
 				el('a-entity', {
 					position: ph.x + ' 2.9 ' + ph.z,
 					facecam: '',
-					worldlabel: { text: ph.label, colour: '#ffffff', size: 0.4 }
+					worldlabel: { text: ph.label, colour: '#ffffff', size: 0.55 }
 				});
 			}
 		});
 
-		// stand back so the town is visible at once, looking north at the press
+		// stand on the pressed point, so the town is around you at once
 		var rig = document.getElementById('world_rig');
-		if (rig) { rig.setAttribute('position', '0 1.7 16'); }
+		if (rig) { rig.setAttribute('position', '0 1.7 4'); }
 	}
 
 	function ready() {

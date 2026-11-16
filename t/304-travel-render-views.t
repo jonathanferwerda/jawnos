@@ -247,10 +247,12 @@ like( $world, qr{frame\.src = '/manager/travel/world'}, 'the world runs in its o
 like( $world, qr/type: 'travel_world_build'/, 'and the descriptor is posted to it' );
 like( $world, qr/travel_world_photo/, 'a print opens the Gallery at its picture' );
 like( $world, qr/render_height/, 'the buildings\' height is read from the archive' );
+like( $world, qr/land_colour/, 'and its land cover colours the ground' );
 like( $world, qr/function travelWorldClose/, 'the view has a close' );
 
 my $world_page = read_file("$root/templates/travel/world.html.ep");
 like( $world_page, qr/<a-scene id="world_scene" embedded/, 'the frame is an A-Frame scene' );
+like( $world_page, qr/<a-sky color=/, 'and a sky above the horizon' );
 like( $world_page, qr/wasd-controls=/, 'walking is offered' );
 like( $world_page, qr{/js/aframe/aframe\.min\.js}, 'the local A-Frame build is loaded' );
 like( $world_page, qr{/js/travel_world\.js}, 'the world renderer is loaded' );
@@ -261,6 +263,7 @@ like( $renderer, qr/ExtrudeGeometry/, 'as real geometry' );
 like( $renderer, qr/registerComponent\('worldphoto'/, 'a picture is a card in the world' );
 like( $renderer, qr/Math\.PI - \(ph\.heading \* Math\.PI \/ 180\)/, 'turned by the heading the camera kept' );
 like( $renderer, qr/registerComponent\('worldmap'/, 'a measured map plate is textured by three' );
+like( $renderer, qr/data\.land/, 'the ground takes the archive\'s land cover' );
 like( $renderer, qr/registerComponent\('worldlabel'/, 'labels are canvas textures, not a font fetched from a CDN' );
 unlike( $renderer, qr/cdn\.aframe\.io/, 'and nothing is fetched from A-Frame\'s CDN' );
 
