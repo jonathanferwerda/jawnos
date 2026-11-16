@@ -24,7 +24,9 @@
 # then as a shareable tool in scripts/tools/ (the README catalog says what it
 # answers and how to run it), then as a help topic, then as a declaration in a
 # controller, a JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a
-# mention that prints the matching line itself (capped by --limit). A miss
+# mention that prints the matching line itself (capped by --limit). A name of
+# several words is also matched where the source spells it apart with spaces or
+# hyphens, so a guess written with underscores finds the phrase in prose. A miss
 # prints up to three `near` lines - the nearest names, by edit distance for a
 # typo and by shared word for a guessed name. A single
 # JavaScript or firmware declaration
@@ -238,6 +240,14 @@ my @perl_extra_files = sort grep { !$mapped{$_} }
 # evidence a name exists: mention-search would find the test's own 'no such name'
 # probe and call it a hit. Definitions in t/ stay in scope.
 my @perl_extra_mention = grep { $_ !~ m{/t/[^/]+\.t\z} } @perl_extra_files;
+
+# The files a name may be mentioned in, in one place: the literal pass and the
+# phrase pass below must read the same tree, or a guessed name and its spelling
+# disagree about where to look.
+my @mention_files = (
+	@manager_files, @domain_files, @controller_files, @route_files,
+	@perl_extra_mention, @js_files, @template_files, @embedded_files,
+);
 
 sub source_files {
 	my (%spec) = @_;
@@ -511,9 +521,7 @@ sub lookup {
 	# lines, so the agent's next call lands.
 	my $hits = 0;
 	my %declared;
-	for my $file (@manager_files, @domain_files, @controller_files, @route_files,
-		@perl_extra_mention, @js_files, @template_files, @embedded_files)
-	{
+	for my $file (@mention_files) {
 		my $text = slurp($file) // next;
 		my $n    = 0;
 		for my $line (split /\n/, $text, -1) {
@@ -525,9 +533,47 @@ sub lookup {
 		}
 		last if $hits >= $limit;
 	}
+	# A guessed name is often a phrase the source spells apart: the underscore
+	# becomes a space in prose. The pass above keys on the underscore, which the
+	# prose does not carry, so a name made of words gets a second, looser pass
+	# when the literal one found nothing.
+	$hits = phrase_mentions($name, $limit) unless $hits;
 	unless ($hits) {
 		warn "where: no $name in the tree (maps, subs, declarations, references)\n";
 		print_near($name, \%declared);
+	}
+	return $hits;
+}
+
+# When a guessed name is a phrase the source spells with a space or a hyphen,
+# match its words in order, joined by a short run of punctuation or space. The
+# order and the short gap are the point: a long line that happens to hold both
+# words far apart is not evidence, and a two-word name is not a wildcard. Only
+# names with an underscore are eligible, so a plain typo still gets its near
+# lines instead of prose.
+sub phrase_mentions {
+	my ($name, $limit) = @_;
+	return 0 unless $name =~ /_/;
+	my @word = grep { length } split /_+/, $name;
+	return 0 unless @word >= 2;
+	my $joined = join('[^A-Za-z0-9]{0,3}', map { quotemeta } @word);
+	my $re = qr/(?<![A-Za-z0-9])$joined(?![A-Za-z0-9])/i;
+
+	my $hits = 0;
+	for my $file (@mention_files) {
+		my $text = slurp($file) // next;
+		my $n    = 0;
+		for my $line (split /\n/, $text, -1) {
+			$n++;
+			# A generated line - the `our (...)` block every part repeats, a
+			# help prompt, a long JSON default - can hold the words by
+			# accident and says nothing about the concept. Prose is short.
+			next if length($line) > 500;
+			next unless $line =~ $re;
+			print '  ', rel($file), ":$n:", mention_text($line), "\n";
+			last if ++$hits >= $limit;
+		}
+		last if $hits >= $limit;
 	}
 	return $hits;
 }
@@ -1519,7 +1565,8 @@ Prints file:line for each. A name the maps do not know is searched for as a
 sub in lib/, perl/ or scripts/, then as a probe in scripts/tools/ (with its
 catalog row), then as a help topic, then as a declaration in a controller, a
 JavaScript file or a firmware sketch (jp/, jw/, jt/), then as a mention:
-file:line plus the matching line, at most --limit lines. A miss also prints up
+file:line plus the matching line, at most --limit lines; a name of several words
+is also matched where the source spells it apart. A miss also prints up
 to three `near` lines: the nearest names by edit distance (a typo) and by
 shared word (a guessed name that is not in the tree). --context N adds N
 lines after any hit, --terse prints only file:line, --topics lists every help

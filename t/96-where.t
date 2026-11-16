@@ -154,6 +154,24 @@ for my $name (qw(subs::path_name path_name)) {
 	like($cout, qr{coding_chat\.html\.ep}, 'and the page it lives in');
 }
 
+# --- a guessed name is a phrase the source spells apart ---------------------
+{
+	my ($code, $out) = where('code_sync');
+	is($code, 0, 'a two-word guess resolves');
+	like($out, qr{^  lib/JawnOS/Manager/[A-Za-z0-9_]+\.pm:\d+:.*code sync}mi,
+		'finding the spaced spelling in a comment');
+
+	(undef, $out) = where('app_gate');
+	like($out, qr{^  lib/JawnOS/Manager/[A-Za-z0-9_]+\.pm:\d+:.*app gate}mi,
+		'with the words written apart');
+	unlike($out, qr/our \(\$APP, \$ws_live_window/,
+		'and skipping the generated `our (...)` line that holds the words by accident');
+
+	(undef, $out) = where('crew_advert');
+	like($out, qr{^  perl/(?:jobs|crew)\.pl:\d+:.*crew advert}mi,
+		'and a phrase that is a job name in the source');
+}
+
 # --- a file, and the topic that covers it -----------------------------------
 {
 	my ($code, $out) = where('templates/apps/gallery.html.ep');
@@ -342,7 +360,7 @@ JS
 
 # --- a miss that is a guessed name answers with the words it shares --------
 {
-	my ($code, $out) = where('crew_advert');
+	my ($code, $out) = where('advert_crew');
 	is($code, 1, 'a name that is not in the tree is a miss');
 	like($out, qr{^  near\tadvert_get\tperl/crew\.pl:\d+$}m,
 		'the real names that share its word come first');
@@ -574,16 +592,16 @@ EP
 	delete $ENV{'JAWNOS_WHERE_LOG_OFF'};
 	local $ENV{'JAWNOS_WHERE_DB'} = $db;
 
-	where('crew_advert');
+	where('advert_crew');
 	where('xyzzy_plugh');
 
 	my $check = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
 	my $rows  = $check->selectall_arrayref('select name, context from where_calls', { Slice => {} });
 	$check->disconnect;
 	my %context = map { $_->{'name'} => JSON::PP->new->decode($_->{'context'}) } @{$rows};
-	ok(ref $context{'crew_advert'}{'near'} eq 'ARRAY',
+	ok(ref $context{'advert_crew'}{'near'} eq 'ARRAY',
 		'a miss records the leads it printed, so the audit can follow them');
-	ok((grep { $_ eq 'advert_get' } @{ $context{'crew_advert'}{'near'} }),
+	ok((grep { $_ eq 'advert_get' } @{ $context{'advert_crew'}{'near'} }),
 		'including the name that was most likely meant');
 	ok(!exists $context{'xyzzy_plugh'}{'near'},
 		'and a miss with no lead records no near key at all');
