@@ -1,6 +1,7 @@
 <h3>Schedule</h3>
 <input class="clothes_schedule" app="<%= $app %>" hint="<%= &subs::ui('Say when this routine hangs, and the Guide will read it') %>" placeholder="<%= &subs::ui('every Thursday from 3pm to 6pm until July 24 2027') %>" style="width:100%" value="<%= $cl->{'schedule'} %>">
 <div class="clothes_schedule_status<% if (defined $schedule_status && length $schedule_status) { %> clothes_schedule_ok<% } %>"><%= $schedule_status %></div>
+<div class="clothes_schedule_cards"><%= include 'apps/clothesline/schedules', cards => ($schedule_cards || []), app => $app %></div>
 <h3>Anticipatory</h3>
 <select class="clothes" app="<%= $app %>" setting="anticipatory" hint="<%= &subs::ui('Choose whether this hang joins the anticipatory head') %>">
 	<option value="default"<% if (($cl->{'anticipatory'} || 'default') eq 'default') { %> selected<% } %>><%= &subs::ui('Default') %></option>
@@ -34,20 +35,23 @@
 		<% foreach my $td ( @{$time_plinkos} ) { %>
 
 			<td style="vertical-align:top;">
+				<div class="clothes_slot_column">
 				<span class="clothes_picker" td="<%= $td->{'name'} %>" span="<%= $td->{'span'} %>" re="all" app="<%= $app %>"
 					<% if (grep { $_ eq 'all' } @{$cl->{'time_plinko'}->{$td->{'name'}}}) { %>
 						wearing="on"
 					<% } %>
 				><b>All</b></span><br>
-				<% foreach my $re ( sort { $a cmp $b } keys %{$td->{'reoccuring'}} ) { %>
+				<% my @vals = @{ $td->{'values'} || [ sort { $a cmp $b } keys %{$td->{'reoccuring'} || {}} ] }; %>
+				<% foreach my $re ( @vals ) { %>
 					<span class="clothes_picker" td="<%= $td->{'name'} %>" span="<%= $td->{'span'} %>" re="<%= $re %>" app="<%= $app %>"
 						<% if (grep { $_ eq $re } @{$cl->{'time_plinko'}->{$td->{'name'}}}) { %>
 							wearing="on"
 						<% } %>
 					>
-						<b><%= $re %></b>: <%= scalar @{$td->{'reoccuring'}->{$re}} %><br>
+						<%= $re %><br>
 					</span>
 				<% } %>
+				</div>
 			</td>
 		<% } %>
 	</tbody>
@@ -59,4 +63,9 @@
 	}
 	.clothes_schedule_status { min-height:18px; margin:4px 0 2px; font-size:12px; color:#888; }
 	.clothes_schedule_ok { color:inherit; }
+	.clothes_slot_column { max-height:160px; overflow:auto; }
+	.clothes_schedule_card { border:1px solid var(--line); border-radius:8px; margin:6px 0; padding:0 8px; }
+	.clothes_schedule_card summary { cursor:var(--jawnos-cursor-pointer, pointer); padding:6px 0; }
+	.clothes_schedule_options { font-size:12px; line-height:1.6; padding-bottom:8px; }
+	.clothes_schedule_forget { margin-top:6px; }
 </style>

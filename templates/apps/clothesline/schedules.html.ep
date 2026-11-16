@@ -1,0 +1,17 @@
+<%# One card per schedule the phrase box read: the recurrence, the days it
+    matched, the hours and minutes, and the next few dates. The Forget button
+    drops this schedule from the app's list without another model call. %>
+<% foreach my $card ( @{$cards} ) { %>
+<details class="clothes_schedule_card" index="<%= $card->{'index'} %>">
+	<summary><%= (length($card->{'text'} // '') ? $card->{'text'} : $card->{'say'}) || &subs::ui('A schedule') %></summary>
+	<div class="clothes_schedule_options">
+		<div><b><%= &subs::ui('Repeats') %></b>: <%= $card->{'plans'} %></div>
+		<div><b><%= &subs::ui('Hangs') %></b>: <%= $card->{'hours'} %></div>
+		<div><b><%= &subs::ui('Days') %></b>: <%= $card->{'count'} %><% if ($card->{'first'}) { %> (<%= $card->{'first'} %> – <%= $card->{'last'} %>)<% } %></div>
+		<% if (ref $card->{'next'} eq 'ARRAY' && @{$card->{'next'}}) { %>
+		<div><b><%= &subs::ui('Next') %></b>: <%= join(', ', @{$card->{'next'}}) %></div>
+		<% } %>
+		<button type="button" class="clothes_schedule_forget" app="<%= $app %>" index="<%= $card->{'index'} %>"><%= &subs::ui('Forget this schedule') %></button>
+	</div>
+</details>
+<% } %>

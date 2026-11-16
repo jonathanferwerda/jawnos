@@ -389,6 +389,17 @@ $(document).on('contextmenu', '.background', function(e) {
 	clotheslineMenu(item, e.clientX, e.clientY);
 });
 
+function clotheslineEdit(app) {
+	$.ajax({
+		url: '/manager/clothesline',
+		type: 'GET',
+		data: { app: app, timestamp: Date.now() },
+		success: function(response) {
+			jawnosAlert(response.html);
+		}
+	});
+}
+
 $(document).on('click', '.clothesline_menu_row', function(e) {
 	e.preventDefault();
 	var row = $(this);
@@ -398,14 +409,7 @@ $(document).on('click', '.clothesline_menu_row', function(e) {
 	var command = row.attr('command');
 	menu.remove();
 	if (command == 'edit') {
-		$.ajax({
-			url: '/manager/clothesline',
-			type: 'GET',
-			data: { app: app, timestamp: Date.now() },
-			success: function(response) {
-				jawnosAlert(response.html);
-			}
-		});
+		clotheslineEdit(app);
 	}
 	else if (command == 'remove') {
 		clotheslineSet(app, 'hidden', 1);
@@ -442,16 +446,17 @@ function clotheslineRefresh() {
 	});
 }
 
-// ---- the phrase box: the Guide reads it into days -------------------------
-// The words go to the Guide associate, which answers with the days and hours
-// the rail then matches. A phrase it cannot read comes back as its question.
+// ---- the phrase box: the schedule reader fills it in ------------------------
+// The words go to the house's own reader; only a clause it cannot know falls
+// back to the Guide. The answer is the cards and the day summary, and the rail
+// is refreshed so a newly matching pill appears at once.
 function clotheslineScheduleRead(input) {
 	var app = input.attr('app');
 	var text = $.trim(input.val() || '');
 	if (input.attr('data-sent') === text) { return; }
 	input.attr('data-sent', text);
 	var status = $('.clothes_schedule_status');
-	status.removeClass('clothes_schedule_ok').text(jawnosT('Asking the Guide…'));
+	status.removeClass('clothes_schedule_ok').text(jawnosT('Reading the schedule…'));
 	$.ajax({
 		url: '/manager/clothesline/schedule',
 		type: 'POST',
@@ -465,12 +470,14 @@ function clotheslineScheduleRead(input) {
 				status.addClass('clothes_schedule_ok').text(response['message']);
 			}
 			else {
-				status.text(jawnosT('The Guide did not answer that.'));
+				status.text(jawnosT('The schedule could not be read.'));
 			}
+			if (response['cards'] !== undefined) { $('.clothes_schedule_cards').html(response['cards']); }
+			if (response['text'] !== undefined) { input.val(response['text']); input.attr('data-sent', response['text']); }
 			if (response['ok']) { clotheslineRefresh(); }
 		},
 		error: function() {
-			status.removeClass('clothes_schedule_ok').text(jawnosT('The Guide did not answer that.'));
+			status.removeClass('clothes_schedule_ok').text(jawnosT('The schedule could not be read.'));
 		}
 	});
 }
@@ -483,6 +490,27 @@ $(document).on('keydown', '.clothes_schedule', function(e) {
 
 $(document).on('change', '.clothes_schedule', function() {
 	clotheslineScheduleRead($(this));
+});
+
+// one card's Forget: drop that schedule and redraw the cards in place
+$(document).on('click', '.clothes_schedule_forget', function(e) {
+	e.preventDefault();
+	var app = $(this).attr('app');
+	var index = $(this).attr('index');
+	$.ajax({
+		url: '/manager/clothesline/schedule',
+		type: 'POST',
+		data: { app: app, forget: 1, index: index, timestamp: Date.now() },
+		success: function(response) {
+			response = response || {};
+			if (response['cards'] !== undefined) { $('.clothes_schedule_cards').html(response['cards']); }
+			if (response['text'] !== undefined) {
+				$('.clothes_schedule').val(response['text']).attr('data-sent', response['text']);
+			}
+			$('.clothes_schedule_status').addClass('clothes_schedule_ok').text(response['message'] || '');
+			clotheslineRefresh();
+		}
+	});
 });
 
 $(document).on('change', '.clothes_hidden', function() {

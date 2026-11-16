@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_misc12.pm templates/apps/clothesline.html.ep public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js public/js/manager/clothesline/01_timeline.js
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_misc12.pm templates/apps/clothesline.html.ep templates/apps/clothesline/schedules.html.ep public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js public/js/manager/clothesline/01_timeline.js
 # covers:    The clothesline leads with the most common recent day's sequence,
 #            not the latest day: a step moved earlier or later leaves the rest
 #            in order, a step done twice is one pill at its next turn, and the
@@ -346,6 +346,72 @@ like($status, qr/\b2\b/, 'the status counts the days');
 like($status, qr/2026-12-26/, 'and names the last of them');
 like($status, qr/3pm/, 'and the first hour of the span');
 
+# --- the phrase reader: no model, no appointment history --------------------
+# The house's config carries the owner's written birthday; the sandbox config is
+# minimal, so it is set here for the "my birthday" case.
+local $subs::config = { %{ $subs::config || {} }, birthday => 'Jan. 1 2000 12pm' };
+subs::setting_setter({ app => 'mom', setting => 'birthday', value => 'aug 26 1961' });
+my $reader_now = JawnOSTest::ts(2026, 11, 16, 12, 0);
+
+my $week = subs::clothesline_schedule_parse(
+	'every weekday afternoon, sundays in the mornings, saturday all day', now => $reader_now);
+is(scalar @{ $week->{'schedules'} || [] }, 3, 'comma-separated times of day are three schedules');
+is_deeply($week->{'schedules'}[0]{'hours'}, [ 12 .. 16 ], 'the weekday card keeps its own afternoon hours');
+is_deeply($week->{'schedules'}[1]{'hours'}, [ 6 .. 11 ], 'and Sunday its own morning hours');
+is_deeply($week->{'schedules'}[2]{'hours'}, [], 'Saturday is all day');
+is_deeply($week->{'schedules'}[1]{'plans'}, [ { kind => 'weekdays', weekdays => ['sun'] } ],
+	'each schedule carries its own recurrence');
+
+my $evening = subs::clothesline_schedule_parse('every day between 4pm and 6pm', now => $reader_now);
+is_deeply($evening->{'schedules'}[0]{'hours'}, [16, 17],
+	'4pm to 6pm is the 4pm and 5pm hours, not an until-date');
+like($evening->{'schedules'}[0]{'say'}, qr/4pm/, 'and the card says the span in words');
+
+my $dinner = subs::clothesline_schedule_parse('During dinner time on Sundays', now => $reader_now);
+is_deeply($dinner->{'schedules'}[0]{'plans'}, [ { kind => 'weekdays', weekdays => ['sun'] } ],
+	'dinner on Sundays is the Sunday recurrence');
+is_deeply($dinner->{'schedules'}[0]{'hours'}, [17, 18, 19], 'dinner is the early evening hours');
+
+my $third = subs::clothesline_schedule_parse('Each third wednesday of the month all day', now => $reader_now);
+is($third->{'schedules'}[0]{'plans'}[0]{'kind'}, 'monthly_nth_weekday',
+	'the third Wednesday is its own recurrence');
+is($third->{'schedules'}[0]{'plans'}[0]{'nth'}, 3, 'the named third is kept');
+is_deeply($third->{'schedules'}[0]{'hours'}, [], 'and it hangs all day');
+
+my $mine = subs::clothesline_schedule_parse('On my birthday in the morning', now => $reader_now);
+is_deeply($mine->{'schedules'}[0]{'plans'}, [ { kind => 'annual', month => 1, day => 1 } ],
+	'my birthday reads the house birthday');
+is_deeply($mine->{'schedules'}[0]{'hours'}, [ 6 .. 11 ], 'in the morning is the morning hours');
+my $born = subs::clothesline_schedule_expand(
+	{ plans => $mine->{'schedules'}[0]{'plans'}, hours => [6] }, $reader_now);
+ok($born->{'days'}{'2027-01-01'}, 'and the birthday expands to its next date');
+
+my $mom = subs::clothesline_schedule_parse("On Mom's birthday around dinner time", now => $reader_now);
+is($mom->{'schedules'}[0]{'plans'}[0]{'kind'}, 'birthday',
+	"a named person's birthday is the birthday recurrence");
+is($mom->{'schedules'}[0]{'plans'}[0]{'person'}, 'mom', 'and the person is kept');
+
+my $half = subs::clothesline_schedule_parse('9pm on saturdays for the first half hour of the hour', now => $reader_now);
+is_deeply($half->{'schedules'}[0]{'hours'}, [21], '9pm is the nine o\'clock hour');
+is_deeply($half->{'schedules'}[0]{'minutes'}, [ 0 .. 29 ], 'and the first half hour is the first thirty minutes');
+my ($minute_day, $minute_hour, $minute) = subs::clothesline_house_day($reader_now);
+ok(subs::clothesline_schedule_wears({ schedules => [ { days => { $minute_day => 1 }, hours => [ $minute_hour ], minutes => [ $minute ] } ] }, $reader_now),
+	'a minute range is matched too');
+ok(!subs::clothesline_schedule_wears({ schedules => [ { days => { $minute_day => 1 }, hours => [ $minute_hour ], minutes => [ ($minute + 30) % 60 ] } ] }, $reader_now),
+	'and a minute outside it does not wear');
+
+my $till = subs::clothesline_schedule_parse('every thursday between 3-6pm until July 24 2027', now => $reader_now);
+is_deeply($till->{'schedules'}[0]{'hours'}, [15, 16, 17], 'a 3-6pm span runs from three to six');
+ok($till->{'schedules'}[0]{'plans'}[0]{'until'}, 'and the until date is kept');
+
+my $cards = subs::clothesline_schedule_cards({ schedules => [ {
+	text => 'x', days => { '2026-12-25' => 1 }, hours => [16, 17], minutes => [],
+	plan => { plans => [ { kind => 'annual', month => 12, day => 25 } ] } } ] });
+is($cards->[0]{'count'}, 1, 'a card counts its days');
+like($cards->[0]{'plans'}, qr/Dec 25/, 'and names the recurrence');
+like($cards->[0]{'hours'}, qr/4pm/, 'and the hours');
+
+
 # --- the wiring ------------------------------------------------------------
 my $appointment = read_file(repo_root() . '/lib/JawnOS/Domain/Appointment.pm');
 like($appointment, qr/next if defined \$r->\{'source_uuid'\}/,
@@ -417,7 +483,24 @@ like($timeline_js, qr/\.clothes_hidden/, 'the show tick hides and restores a pil
 
 my $misc12 = read_file(repo_root() . '/lib/JawnOS/Controller/manager_misc12.pm');
 like($misc12, qr/sub action_41750/, 'the phrase has a route of its own');
-like($misc12, qr/clothesline_schedule_read/, 'read by the Guide associate');
+like($misc12, qr/clothesline_schedule_read/, 'read by the house reader');
 like($misc12, qr/clothesline_schedule_status/, 'and its answer is what the editor prints');
+like($misc12, qr/clothesline_schedule_cards/, 'and the cards it read');
+like($misc12, qr/param\('forget'\)/, 'a card can be forgotten');
+
+# the slot list is the clock and the calendar, not the appointment history
+my $part32 = read_file(repo_root() . '/lib/JawnOS/Manager/Part32.pm');
+unlike($part32, qr/order by timestamp desc limit 1000/,
+	'the slot list no longer reads the appointment history');
+like($part32, qr/'values'/, 'it offers every value a slot can take');
+like($part32, qr/clothesline_hour_word/, 'with the hours in the clock words the rail matches');
+like($template, qr/\$td->\{'values'\}/, 'the editor draws every value');
+unlike($template, qr/scalar \@\{\$td->\{'reoccuring'\}->\{\$re\}\}/,
+	'and no appointment count');
+
+my $card_tpl = read_file(repo_root() . '/templates/apps/clothesline/schedules.html.ep');
+like($card_tpl, qr/clothes_schedule_card/, 'each schedule has its own card');
+like($card_tpl, qr/clothes_schedule_forget/, 'with a Forget button');
+like($card_tpl, qr/\$card->\{'count'\}/, 'and its day count');
 
 done_testing();

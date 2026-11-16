@@ -472,42 +472,28 @@ sub apply_peer_tombstones {
 	return scalar @dels;
 }
 
+# The time-slot options the editor offers. Every value a slot can take is here,
+# so an app can be scheduled on the day it is made: the list is the clock and
+# the calendar, never what the app's past appointments happen to contain.
 sub clothesline_calculator($app) {
-#	my $appts = &subs::db_select('appointments', undef, { app => $app })->hashes;
-	my $appts = &subs::db_query('select * from appointments where app = ? order by timestamp desc limit 1000', $app)->hashes;
 	my $time_plinkos = clone $gb::time_plinkos;
-
-	foreach my $appt ( @{$appts} ) {
-		# the panel's slots are the house's own words, so its counts read the
-		# same clock the rail matches them on
-		my @slot = &subs::clothesline_slot_now($appt->{'timestamp'});
-		for (my $n = 0; $n <= 8; $n++) {
-			my $ft = $slot[$n];
-			if ($n == 2) {
-				if ($ft == 0) {
-					$ft = '12am';
-				}
-				elsif ($ft >= 12) {
-					if ($ft == 12) { $ft = 24; }
-					$ft = ($ft - 12) . 'pm';
-				}
-				elsif ($slot[$n] > 0 && $slot[$n] < 13) {
-					$ft .= 'am';
-				}
-			}
-			# the month's name, the full year and the weekday's name are
-			# already in the slot
-			push @{$time_plinkos->[$n]->{'clothes'}}, { formatted => $ft, value => $slot[$n] };
-		}
-	}
+	my @slot = &subs::clothesline_slot_now(&subs::rightNow());
+	my $year = ($slot[5] && $slot[5] =~ /^\d{4}$/) ? $slot[5] : (localtime())[5] + 1900;
+	my %values = (
+		sec   => [ 0 .. 59 ],
+		min   => [ map { $_ * 5 } 0 .. 11 ],
+		hour  => [ map { &subs::clothesline_hour_word($_) } 0 .. 23 ],
+		mday  => [ 1 .. 31 ],
+		mon   => [ qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec) ],
+		year  => [ map { $year + $_ } 0 .. 9 ],
+		wday  => [ qw(Sun Mon Tue Wed Thu Fri Sat) ],
+		yday  => [ 0 .. 365 ],
+		isdst => [ 0, 1 ],
+	);
 	foreach my $tp ( @{$time_plinkos} ) {
-		foreach my $cl ( @{$tp->{'clothes'}} ) {
-			my @seen = grep { $_->{'formatted'} eq $cl->{'formatted'} } @{$tp->{'clothes'}};
-			if (scalar @seen >= 2) {
-				$tp->{'reoccuring'}->{$cl->{'formatted'}} = [] unless $tp->{'reoccuring'}->{$cl->{'formatted'}};
-				push @{$tp->{'reoccuring'}->{$cl->{'formatted'}}}, $cl;
-			}
-		}
+		my @v = @{ $values{ $tp->{'name'} } || [] };
+		$tp->{'values'} = \@v;
+		$tp->{'reoccuring'} = { map { $_ => [] } @v };
 	}
 	&subs::hang_to_dry();
 	return $time_plinkos;

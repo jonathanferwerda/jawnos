@@ -37,6 +37,7 @@ use Unicode::Normalize qw(NFC);
 
 our $device;
 our $gb;
+our $config;
 our %m;
 
 sub hang_to_dry {
@@ -191,10 +192,12 @@ sub clothesline_registered {
 			return 1 if ref $chosen eq 'ARRAY' && scalar @{$chosen};
 		}
 	}
-	# a phrase the Guide read is a registration of its own, so a running app that
+	# a phrase the house read is a registration of its own, so a running app that
 	# hangs by its words keeps its pill outside the hours the phrase names
-	my $rule = $cl->{'schedule_rule'};
-	return 1 if ref $rule eq 'HASH' && ref $rule->{'days'} eq 'HASH' && scalar keys %{$rule->{'days'}};
+	foreach my $rule ( @{ &clothesline_schedule_list($cl) } ) {
+		next unless ref $rule eq 'HASH' && ref $rule->{'days'} eq 'HASH';
+		return 1 if scalar keys %{ $rule->{'days'} };
+	}
 	return 0;
 }
 
@@ -265,16 +268,16 @@ sub clothesline_anticipation_apply {
 # plans the rest of the house already understands, then expanded here into the
 # days (and hours) the rail can match without asking a model again.
 
-# The house day and hour a moment falls on. The box keeps UTC, so the rail reads
-# the person's own clock, matching the time slots it already matches against.
+# The house day, hour and minute a moment falls on. The box keeps UTC, so the rail
+# reads the person's own clock, matching the time slots it already matches against.
 sub clothesline_house_day {
 	my ($now) = @_;
 	$now = &rightNow() unless defined $now;
 	my $restore = &clock_zone_adopt(&clock_zone_house());
 	my $key = &day_key($now);
-	my $hour = (localtime(int($now / 1000)))[2];
+	my @t = localtime(int($now / 1000));
 	$restore->() if $restore;
-	return ($key, defined $hour ? $hour + 0 : 0);
+	return ($key, defined $t[2] ? $t[2] + 0 : 0, defined $t[1] ? $t[1] + 0 : 0);
 }
 
 # '3pm' from the 24-hour clock, the same words the time-slot grid uses.
@@ -308,23 +311,42 @@ sub clothesline_schedule_expand {
 	elsif (defined $plan->{'hours'} && $plan->{'hours'} =~ /^\s*\d+\s*$/) { @raw = ( $plan->{'hours'} ); }
 	my %seen;
 	my @hours = sort { $a <=> $b } grep { defined $_ && $_ =~ /^\s*\d+\s*$/ && $_ >= 0 && $_ <= 23 && !$seen{$_ + 0}++ } @raw;
+	my @mraw = ();
+	if (ref $plan->{'minutes'} eq 'ARRAY') { @mraw = @{ $plan->{'minutes'} }; }
+	my %mseen;
+	my @minutes = sort { $a <=> $b } grep { defined $_ && $_ =~ /^\s*\d+\s*$/ && $_ >= 0 && $_ <= 59 && !$mseen{$_ + 0}++ } @mraw;
 	$restore->() if $restore;
-	return { days => \%days, hours => \@hours, ask => ($ask || '') };
+	return { days => \%days, hours => \@hours, minutes => \@minutes, ask => ($ask || '') };
 }
 
-# Does the app's phrase wear at this moment? The day must be one the plan
-# names, and the hour (when the phrase named any) must be one of them.
+# The app's schedules, newest shape first. An app scheduled before a phrase could
+# hold more than one is one schedule, read where it stands.
+sub clothesline_schedule_list {
+	my ($cl) = @_;
+	return [] unless ref $cl eq 'HASH';
+	return $cl->{'schedules'} if ref $cl->{'schedules'} eq 'ARRAY';
+	return [ $cl->{'schedule_rule'} ] if ref $cl->{'schedule_rule'} eq 'HASH';
+	return [];
+}
+
+# Does any of the app's phrases wear at this moment? A schedule's day must be one
+# it names, and its hour and minute (when it named any) must be among them.
 sub clothesline_schedule_wears {
 	my ($cl, $now) = @_;
-	return 0 unless ref $cl eq 'HASH' && ref $cl->{'schedule_rule'} eq 'HASH';
-	my $rule = $cl->{'schedule_rule'};
-	my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
-	return 0 unless scalar keys %{$days};
-	my ($day, $hour) = &clothesline_house_day($now);
-	return 0 unless $days->{$day};
-	my @hours = @{ ref $rule->{'hours'} eq 'ARRAY' ? $rule->{'hours'} : [] };
-	return 1 unless scalar @hours;
-	return (grep { $_ =~ /^\d+$/ && $_ == $hour } @hours) ? 1 : 0;
+	my $list = &clothesline_schedule_list($cl);
+	return 0 unless @{$list};
+	my ($day, $hour, $minute) = &clothesline_house_day($now);
+	foreach my $rule ( @{$list} ) {
+		next unless ref $rule eq 'HASH';
+		my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
+		next unless scalar keys %{$days} && $days->{$day};
+		my @hours = @{ ref $rule->{'hours'} eq 'ARRAY' ? $rule->{'hours'} : [] };
+		next if @hours && !grep { $_ =~ /^\d+$/ && $_ == $hour } @hours;
+		my @minutes = @{ ref $rule->{'minutes'} eq 'ARRAY' ? $rule->{'minutes'} : [] };
+		next if @minutes && !grep { $_ =~ /^\d+$/ && $_ == $minute } @minutes;
+		return 1;
+	}
+	return 0;
 }
 
 # A phrase's days are a window: once its last day has passed, the plan is read
@@ -332,32 +354,387 @@ sub clothesline_schedule_wears {
 # end and is left to expire, which is what the person asked for.
 sub clothesline_schedule_renew {
 	my ($cl, $now) = @_;
-	return 0 unless ref $cl eq 'HASH' && ref $cl->{'schedule_rule'} eq 'HASH';
-	my $rule = $cl->{'schedule_rule'};
-	my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
-	return 0 unless scalar keys %{$days};
-	return 0 unless ref $rule->{'plan'} eq 'HASH';
+	my $list = &clothesline_schedule_list($cl);
+	return 0 unless @{$list};
 	my ($today) = &clothesline_house_day($now);
-	my @keys = sort keys %{$days};
-	return 0 if $keys[-1] ge $today;
-	my $fresh = &clothesline_schedule_expand($rule->{'plan'}, $now);
-	return 0 unless scalar keys %{ $fresh->{'days'} };
-	$rule->{'days'} = $fresh->{'days'};
-	$rule->{'refreshed'} = $now;
-	return 1;
+	my $changed = 0;
+	foreach my $rule ( @{$list} ) {
+		next unless ref $rule eq 'HASH' && ref $rule->{'plan'} eq 'HASH';
+		my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
+		next unless scalar keys %{$days};
+		my @keys = sort keys %{$days};
+		next if $keys[-1] ge $today;
+		my $fresh = &clothesline_schedule_expand($rule->{'plan'}, $now);
+		next unless scalar keys %{ $fresh->{'days'} };
+		$rule->{'days'} = $fresh->{'days'};
+		$rule->{'refreshed'} = $now;
+		$changed = 1;
+	}
+	return $changed;
 }
 
-# The Assistant's read of a phrase: the plan it says, and the days and hours
-# expanded from it. Nothing here writes; the caller stores the rule.
-sub clothesline_schedule_read {
+# ---- reading a phrase without a model --------------------------------------
+# The words name the recurrence, the part of the day and the horizon; the house's
+# own recurrence plans carry the dates. The app's appointment history is never
+# consulted, so a new app can be scheduled the first time it is asked. The Guide
+# is asked only when a clause names nothing this reader knows.
+
+my %clothesline_weekday_number = (
+	sunday => 0, sun => 0, monday => 1, mon => 1, tuesday => 2, tue => 2, tues => 2,
+	wednesday => 3, wed => 3, thursday => 4, thu => 4, thur => 4, thurs => 4,
+	friday => 5, fri => 5, saturday => 6, sat => 6,
+);
+my @clothesline_weekday_short = qw(sun mon tue wed thu fri sat);
+my @clothesline_month_name = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
+my %clothesline_month = (
+	jan => 1, january => 1, feb => 2, february => 2, mar => 3, march => 3,
+	apr => 4, april => 4, may => 5, jun => 6, june => 6, jul => 7, july => 7,
+	aug => 8, august => 8, sep => 9, sept => 9, september => 9, oct => 10,
+	october => 10, nov => 11, november => 11, dec => 12, december => 12,
+);
+my $clothesline_month_re = join '|', sort { length $b <=> length $a } keys %clothesline_month;
+
+# The hours a named part of the day covers. `night` wraps midnight, so it is a
+# set, not a range. `dinner` and `supper` are the house's early evening.
+sub clothesline_day_part {
+	my $name = lc(shift // '');
+	$name =~ s/\s*(?:time|hours?)\s*$//;
+	my %part = (
+		morning   => [ 6 .. 11 ],
+		afternoon => [ 12 .. 16 ],
+		evening   => [ 17 .. 20 ],
+		dinner    => [ 17 .. 19 ],
+		supper    => [ 17 .. 19 ],
+		lunch     => [ 12, 13 ],
+		breakfast => [ 7, 8, 9 ],
+		noon      => [ 12 ],
+		midnight  => [ 0 ],
+		night     => [ 0 .. 4, 21 .. 23 ],
+	);
+	return $part{$name};
+}
+
+# The fixed dates the reader knows by name: lower-case name => [month, day].
+sub clothesline_named_days {
+	return {
+		'christmas' => [12,25], 'christmas day' => [12,25],
+		'boxing day' => [12,26],
+		'valentines' => [2,14], 'valentines day' => [2,14], "valentine's day" => [2,14],
+		'new years' => [1,1], 'new years day' => [1,1],
+		'halloween' => [10,31],
+		'canada day' => [7,1],
+		'independence day' => [7,4],
+		'remembrance day' => [11,11],
+		'groundhog day' => [2,2],
+		'april fools' => [4,1], 'april fools day' => [4,1],
+		'st patricks day' => [3,17],
+	};
+}
+
+# The house's own birthday, as [month, day].
+sub clothesline_house_birthday {
+	my ($now) = @_;
+	$now = &rightNow() unless defined $now;
+	my $born = eval { $config->{'birthday'} };
+	return undef unless defined $born && $born =~ /\S/;
+	# the config keeps a written date ("Jan. 1 2000 12pm"); its month and day
+	# are all a yearly schedule needs
+	if ($born =~ /($clothesline_month_re)\.?\s+(\d{1,2})(?:st|nd|rd|th)?/i) {
+		my $m = $clothesline_month{lc $1};
+		return [ $m, $2 + 0 ] if $m && $2 >= 1 && $2 <= 31;
+	}
+	my $ms = &resolve_when($born, $now);
+	return undef unless defined $ms;
+	my @t = localtime(int($ms / 1000));
+	return [ $t[4] + 1, $t[3] ];
+}
+
+# '4pm', '16:30' or '9' as (hour, minute). A bare number is the 24-hour clock.
+sub clothesline_clock {
+	my $text = lc(shift // '');
+	if ($text =~ /(\d{1,2})\s*:\s*(\d{2})\s*(am|pm)?/) {
+		my ($h, $m, $ap) = ($1 + 0, $2 + 0, $3);
+		$h += 12 if defined $ap && $ap eq 'pm' && $h < 12;
+		$h = 0 if defined $ap && $ap eq 'am' && $h == 12;
+		return ($h, $m) if $h <= 23 && $m <= 59;
+	}
+	if ($text =~ /(\d{1,2})\s*(am|pm)/) {
+		my ($h, $ap) = ($1 + 0, $2);
+		$h = 0 if $ap eq 'am' && $h == 12;
+		$h += 12 if $ap eq 'pm' && $h < 12;
+		return ($h, 0) if $h <= 23;
+	}
+	if ($text =~ /^\s*(\d{1,2})\s*$/) {
+		my $h = $1 + 0;
+		return ($h, 0) if $h <= 23;
+	}
+	return;
+}
+
+# Take the part of the day out of a clause. Returns the hours, the minutes, the
+# clause without them, whether any were named, and whether it said "all day".
+sub clothesline_take_time {
+	my ($text) = @_;
+	my (@hours, @minutes);
+	my $found = 0;
+	my $all_day = 0;
+	if ($text =~ s/\b(?:all|the\s+whole|whole)\s+day\b//) { $found = 1; $all_day = 1; }
+	my $part = qr/morning|afternoon|evening|night|dinner(?:\s*time)?|supper(?:\s*time)?|lunch(?:\s*time)?|breakfast|noon|midnight/;
+	my $time = qr/[0-9]{1,2}(?::[0-9]{2})?\s*(?:am|pm)?/;
+	my ($h1, $m1, $h2, $m2);
+	if ($text =~ /\b(?:between|from)\s+($time)\s*(?:and|to|until|-|–)\s*($time)\b/) {
+		my ($a, $b) = ($1, $2);
+		($h1, $m1) = &clothesline_clock($a);
+		($h2, $m2) = &clothesline_clock($b);
+		$text =~ s/\b(?:between|from)\s+\Q$a\E\s*(?:and|to|until|-|–)\s*\Q$b\E\b//;
+	}
+	elsif ($text =~ /\b($time)\s*(?:to|until|-|–)\s*($time)\b/) {
+		my ($a, $b) = ($1, $2);
+		($h1, $m1) = &clothesline_clock($a);
+		($h2, $m2) = &clothesline_clock($b);
+		$text =~ s/\b\Q$a\E\s*(?:to|until|-|–)\s*\Q$b\E\b//;
+	}
+	if (defined $h1 && defined $h2) {
+		$h1 += 12 if $h1 < 12 && $h2 >= 12 && $text !~ /\bam\b/i;
+		if ($h2 > $h1) { @hours = ($m2 ? ($h1 .. $h2) : ($h1 .. $h2 - 1)); }
+		elsif ($h2 < $h1) { @hours = ($h1 .. 23, 0 .. ($m2 ? $h2 : $h2 - 1)); }
+		else { @hours = ($h1); }
+		$found = 1;
+	}
+	if (!$found && $text =~ s/\b(?:around|about|at|by)\s+($time)\b//) {
+		my ($h, $m) = &clothesline_clock($1);
+		if (defined $h) { @hours = ($h); $found = 1; }
+	}
+	if (!$found && $text =~ s/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b//) {
+		my $cap = $1;
+		my ($h, $m) = &clothesline_clock($cap);
+		if (defined $h) { @hours = ($h); $found = 1; }
+		else { $text = " $cap $text"; }
+	}
+	if (!$found && $text =~ s/\b(?:in|during|around|about|at|on)?\s*(?:the\s+)?($part)s?\b//) {
+		my $span = &clothesline_day_part($1);
+		if ($span) { @hours = @{$span}; $found = 1; }
+	}
+	if ($text =~ s/\b(?:for\s+)?(?:the\s+)?first\s+half(?:\s*(?:of\s+)?(?:the\s+)?hour)?\b//) { @minutes = (0 .. 29); $found = 1; }
+	elsif ($text =~ s/\b(?:for\s+)?(?:the\s+)?second\s+half(?:\s*(?:of\s+)?(?:the\s+)?hour)?\b//) { @minutes = (30 .. 59); $found = 1; }
+	elsif ($text =~ s/\b(?:a\s+)?quarter\s+(?:past|after)\b//) { @minutes = (15); $found = 1; }
+	elsif ($text =~ s/\bhalf\s+past\b//) { @minutes = (30); $found = 1; }
+	elsif ($text =~ s/\b(?:for\s+)?(?:the\s+)?first\s+(\d{1,2})\s+minutes?\b//) { my $n = $1 + 0; $n = 59 if $n > 59; @minutes = (0 .. $n - 1); $found = 1; }
+	return (\@hours, \@minutes, $text, $found, $all_day);
+}
+
+# 'until July 24 2027', 'through June', 'for the next 6 weeks'.
+sub clothesline_take_horizon {
+	my ($text, $now) = @_;
+	my $until;
+	if ($text =~ s/\b(?:until|through|till|til|ending(?:\s+on)?)\s+(.+?)\s*$//) {
+		my $when = $1;
+		$until = &resolve_when($when, $now);
+		if (!defined $until && $when =~ /($clothesline_month_re)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/i) {
+			$until = timelocal(0, 0, 12, $2 + 0, $clothesline_month{lc $1} - 1, $3 - 1900) * 1000;
+		}
+	}
+	elsif ($text =~ s/\bfor\s+the\s+next\s+(\d{1,3})\s+(day|week|month|year)s?\b//) {
+		$until = &calendar_shift($now, $1 + 0, $2);
+	}
+	return ($until, $text);
+}
+
+# Take the recurrence out of a clause: [plans], the clause without it, and
+# whether a recurrence was named.
+sub clothesline_take_days {
+	my ($text, $now) = @_;
+	my @plans;
+	my $found = 0;
+	if ($text =~ s/\b(?:every|each)\s+single\s+day\b// || $text =~ s/\b(?:every\s+day|each\s+day|daily)\b//) {
+		push @plans, { kind => 'interval', interval => '1d' };
+		$found = 1;
+	}
+	if ($text =~ s/\bevery\s+other\s+(day|week|month)\b//) {
+		my $unit = $1 eq 'day' ? 'd' : $1 eq 'week' ? 'w' : 'M';
+		push @plans, { kind => 'interval', interval => "2$unit" };
+		$found = 1;
+	}
+	elsif ($text =~ s/\bevery\s+(\d+)\s+(day|week|month|year)s?\b//) {
+		my ($n, $u) = ($1, $2);
+		my $unit = $u eq 'day' ? 'd' : $u eq 'week' ? 'w' : $u eq 'month' ? 'M' : 'y';
+		push @plans, { kind => 'interval', interval => "$n$unit" };
+		$found = 1;
+	}
+	if ($text =~ s/\b(?:every\s+)?weekdays?\b//) {
+		push @plans, { kind => 'weekdays', weekdays => [qw(mon tue wed thu fri)] };
+		$found = 1;
+	}
+	if ($text =~ s/\b(?:every\s+)?weekends?\b//) {
+		push @plans, { kind => 'weekdays', weekdays => [qw(sat sun)] };
+		$found = 1;
+	}
+	if ($text =~ s/\b(?:the\s+|each\s+|every\s+)?(first|second|third|fourth|fifth|last)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s*(?:of\s+(?:the\s+|each\s+|every\s+)?month|each\s+month|every\s+month)\b//) {
+		my %nth = (first => 1, second => 2, third => 3, fourth => 4, fifth => 5, last => -1);
+		my $w = $clothesline_weekday_number{$2};
+		push @plans, { kind => 'monthly_nth_weekday', nth => $nth{$1}, weekday => $clothesline_weekday_short[$w] } if defined $w;
+		$found = 1;
+	}
+	if ($text =~ s/\b(?:every|each)\s+full\s+moon\b// || $text =~ s/\bfull\s+moon\b//) {
+		push @plans, { kind => 'full_moon' };
+		$found = 1;
+	}
+	if ($text =~ s/\b(?:on\s+)?(?:my|the\s+house(?:'s)?)\s+birthday\b//) {
+		my $day = &clothesline_house_birthday($now);
+		push @plans, { kind => 'annual', month => $day->[0], day => $day->[1] } if $day;
+		$found = 1;
+	}
+	elsif ($text =~ s/\b([a-z][a-z' -]{1,40}?)\s*'s\s+birthday\b//) {
+		my $who = $1;
+		$who =~ s/^\s*(?:on|for|my)\s+//;
+		$who =~ s/^\s+|\s+$//g;
+		push @plans, { kind => 'birthday', person => $who } if length $who;
+		$found = 1;
+	}
+	my $named = &clothesline_named_days();
+	foreach my $name ( sort { length $b <=> length $a } keys %{$named} ) {
+		while ($text =~ s/\b\Q$name\E\b//) {
+			push @plans, { kind => 'annual', month => $named->{$name}->[0], day => $named->{$name}->[1] };
+			$found = 1;
+		}
+	}
+	if ($text =~ s/\b($clothesline_month_re)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b//i) {
+		my ($m, $d) = ($clothesline_month{lc $1}, $2 + 0);
+		push @plans, { kind => 'annual', month => $m, day => $d } if $m && $d >= 1 && $d <= 31;
+		$found = 1;
+	}
+	if ($text =~ s/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?($clothesline_month_re)\b//i) {
+		my ($d, $m) = ($1 + 0, $clothesline_month{lc $2});
+		push @plans, { kind => 'annual', month => $m, day => $d } if $m && $d >= 1 && $d <= 31;
+		$found = 1;
+	}
+	if ($text =~ /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)s?\b/i) {
+		my @w;
+		while ($text =~ s/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)s?\b//i) {
+			my $w = $clothesline_weekday_number{lc $1};
+			next unless defined $w;
+			my $short = $clothesline_weekday_short[$w];
+			push @w, $short unless grep { $_ eq $short } @w;
+		}
+		if (@w) { push @plans, { kind => 'weekdays', weekdays => \@w }; $found = 1; }
+	}
+	return (\@plans, $text, $found);
+}
+
+# "from 4pm to 6pm", "at 9pm", "all day".
+sub clothesline_time_words {
+	my ($hours, $minutes) = @_;
+	my @h = @{ ref $hours eq 'ARRAY' ? $hours : [] };
+	my @m = @{ ref $minutes eq 'ARRAY' ? $minutes : [] };
+	return &ui('all day') unless @h;
+	return &ui('at') . ' ' . &clothesline_hour_word($h[0]) . ' ' . &ui('minutes') . ' ' . $m[0] . ' ' . &ui('to') . ' ' . $m[-1] if @m;
+	if (@h == 1) { return &ui('at') . ' ' . &clothesline_hour_word($h[0]); }
+	my $contig = 1;
+	for my $i ( 1 .. $#h ) { $contig = 0 if $h[$i] != $h[$i - 1] + 1; }
+	if ($contig && $h[-1] < 23) {
+		return &ui('from') . ' ' . &clothesline_hour_word($h[0]) . ' ' . &ui('to') . ' ' . &clothesline_hour_word($h[-1] + 1);
+	}
+	return join(', ', map { &clothesline_hour_word($_) } @h);
+}
+
+# The plans in the house's own words, for the editor's card and the summary.
+sub clothesline_plan_words {
+	my ($plan) = @_;
+	$plan = {} unless ref $plan eq 'HASH';
+	my $kind = $plan->{'kind'} // '';
+	if ($kind eq 'interval' && ($plan->{'interval'} // '') eq '1d') { return &ui('Every day'); }
+	if ($kind eq 'interval') { return &ui('Every') . ' ' . ($plan->{'interval'} // '?'); }
+	if ($kind eq 'weekdays') {
+		my @names = map { ucfirst $_ } @{ $plan->{'weekdays'} || [] };
+		return &ui('Every') . ' ' . join(', ', @names);
+	}
+	if ($kind eq 'monthly_nth_weekday') {
+		my %nth = (1 => 'first', 2 => 'second', 3 => 'third', 4 => 'fourth', 5 => 'fifth', -1 => 'last');
+		return ucfirst(&ui($nth{$plan->{'nth'} + 0} || 'first')) . ' ' . ucfirst($plan->{'weekday'} // '') . ' ' . &ui('of the month');
+	}
+	if ($kind eq 'annual') {
+		my $m = int($plan->{'month'} || 0);
+		my $d = int($plan->{'day'} || 0);
+		return &ui('Every') . ' ' . ($clothesline_month_name[$m - 1] || '?') . ' ' . $d if $m >= 1 && $m <= 12 && $d;
+	}
+	if ($kind eq 'birthday') { return ucfirst($plan->{'person'} // '') . ' ' . &ui('birthday'); }
+	if ($kind eq 'full_moon') { return &ui('Every full moon'); }
+	if ($kind eq 'dates') { return &ui('On a list of dates'); }
+	return &ui('A schedule');
+}
+
+sub clothesline_plans_words {
+	my ($plan) = @_;
+	my $plans = (ref $plan eq 'HASH' && ref $plan->{'plans'} eq 'ARRAY') ? $plan->{'plans'} : [];
+	return join('; ', map { &clothesline_plan_words($_) } grep { ref $_ eq 'HASH' } @{$plans});
+}
+
+sub clothesline_schedule_say {
+	my ($plans, $hours, $minutes) = @_;
+	my @bits = map { &clothesline_plan_words($_) } grep { ref $_ eq 'HASH' } @{ $plans || [] };
+	my $when = &clothesline_time_words($hours, $minutes);
+	return join(', ', @bits) . ($when && $when ne &ui('all day') ? ', ' . $when : '');
+}
+
+# One comma-separated clause into a schedule. A clause that names only a time of
+# day is a modifier on the one before it.
+sub clothesline_schedule_clause {
+	my ($clause, $now, $later, $original) = @_;
+	my $shown = (defined $original && length $original) ? $original : $clause;
+	my $rest = $clause;
+	my ($until, $after_horizon) = &clothesline_take_horizon($rest, $now);
+	$rest = $after_horizon;
+	my ($hours, $minutes, $after_time, $time_found, $all_day) = &clothesline_take_time($rest);
+	$rest = $after_time;
+	my ($plans, $left, $day_found) = &clothesline_take_days($rest, $now);
+	return (undef, 0) if !$day_found && !$time_found;
+	if (!$day_found) {
+		return ({ text => $shown, plans => [], hours => $hours, minutes => $minutes, all_day => $all_day, modifier => 1 }, 1) if $later;
+		push @{$plans}, { kind => 'interval', interval => '1d' };
+	}
+	if (defined $until) {
+		foreach my $p ( @{$plans} ) { $p->{'until'} = $until unless defined $p->{'until'}; }
+	}
+	return ({ text => $shown, plans => $plans, hours => $hours, minutes => $minutes, all_day => $all_day, say => &clothesline_schedule_say($plans, $hours, $minutes) }, 1);
+}
+
+# The whole phrase: comma-separated clauses, each its own schedule, with a
+# time-only clause merged into the one before it.
+sub clothesline_schedule_parse {
 	my ($text, %opt) = @_;
-	$text = defined $text ? "$text" : '';
-	$text =~ s/\s+/ /g;
-	$text =~ s/^\s+|\s+$//g;
-	return { ask => &ui('Say when this routine should hang.') } unless length $text;
 	my $now = $opt{'now'} || &rightNow();
-	my $model = $opt{'model'} || &setting_grabber({ app => 'mail', setting => 'help_assistant' });
-	return { ask => &ui('A schedule written in words needs the Guide model, and none is set.') } unless defined $model && length $model;
+	my @raw = grep { /\S/ } map { s/^\s+|\s+$//gr } split /\s*,\s*/, (defined $text ? "$text" : '');
+	my @clauses = map { my $c = lc $_; $c =~ s/[\x{2019}]/'/g; $c } @raw;
+	return { ask => &ui('Say when this routine should hang.') } unless @clauses;
+	my (@schedules, $unread);
+	$unread = 0;
+	for my $i ( 0 .. $#clauses ) {
+		my ($sched, $ok) = &clothesline_schedule_clause($clauses[$i], $now, $i > 0, $raw[$i]);
+		if (!$ok) { $unread++; next; }
+		if ($sched->{'modifier'}) {
+			if (!@schedules) { $unread++; next; }
+			my $prev = $schedules[-1];
+			if ($sched->{'all_day'}) { $prev->{'hours'} = []; $prev->{'minutes'} = []; }
+			else {
+				my (%h, %m);
+				$h{$_} = 1 for @{ $prev->{'hours'} || [] }, @{ $sched->{'hours'} || [] };
+				$m{$_} = 1 for @{ $prev->{'minutes'} || [] }, @{ $sched->{'minutes'} || [] };
+				$prev->{'hours'} = [ sort { $a <=> $b } keys %h ];
+				$prev->{'minutes'} = [ sort { $a <=> $b } keys %m ];
+			}
+			$prev->{'say'} = &clothesline_schedule_say($prev->{'plans'}, $prev->{'hours'}, $prev->{'minutes'});
+			next;
+		}
+		push @schedules, $sched;
+	}
+	return { ask => &ui('I could not read that schedule. Can you say it another way?') } unless @schedules;
+	return { schedules => \@schedules, unread => $unread };
+}
+
+# The Guide's read, for words the fast reader does not know. It answers with one
+# schedule per comma-separated part, each with its own hours and minutes.
+sub clothesline_schedule_model_read {
+	my ($text, $now, $model) = @_;
 	my $restore = &clock_zone_adopt(&clock_zone_house());
 	my @lt = localtime(int($now / 1000));
 	my $when = POSIX::strftime('%A, %B %d %Y, %I:%M%P', @lt);
@@ -369,7 +746,8 @@ You turn a person's plain-language schedule for a JawnOS clothesline pill into o
 It is $when now. The pill hangs when its app is in its own registered time.
 
 Reply with EXACTLY ONE JSON object and nothing else, in this shape:
-{"plans":[ ... ], "hours":[15,16,17], "say":"one short sentence in their words"}
+{"schedules":[{"text":"their words for this part","plans":[ ... ],"hours":[16,17],"minutes":[0,29],"say":"one short sentence"}]}
+One schedule for each distinct time of day; a comma-separated list of different times of day is several schedules.
 Each plan is one recurrence, in one of these shapes:
 {"kind":"weekdays","weekdays":["thu"],"until":"2027-07-24"}
 {"kind":"interval","interval":"1d","count":10} or {"kind":"interval","interval":"1M","until":"2027-06-01"}
@@ -378,62 +756,129 @@ Each plan is one recurrence, in one of these shapes:
 {"kind":"birthday","person":"mom"}
 {"kind":"full_moon","until":"2036-07-01"}
 {"kind":"dates","dates":["2026-11-26","2026-12-24"]}
-Use one plan for each distinct rule; several named days are several annual plans, or one dates plan.
-"hours" is the 24-hour clock, inclusive, of the part of the day it hangs; leave it out for all day.
-"count" is how many repeats to make. "until" is an absolute date; "until_after" is a length from the start ("6 weeks"). A date with no year means this year's or the next one that fits.
+"hours" are 24-hour clock integers (16 is 4pm), inclusive; "minutes" are 0-59 integers; leave both out for all day.
+A time of day NEVER goes in "until". "until" is only the last date the schedule runs, as an absolute date.
+"count" is how many repeats. "count" and "until" are the only ways to bound a rule.
 Add "exclude_holidays":true for "except on holidays", and "except":["2026-12-25"] for other named days.
-Common named days: New Year's Day 1/1, Valentine's Day 2/14, Canada Day 7/1, Independence Day 7/4, Halloween 10/31, Remembrance Day 11/11, Christmas Day 12/25, Boxing Day 12/26.
+Named days: New Year's Day 1/1, Valentine's Day 2/14, Canada Day 7/1, Independence Day 7/4, Halloween 10/31, Remembrance Day 11/11, Christmas Day 12/25, Boxing Day 12/26.
 Their saved birthdays: $bday_text.
 If the phrase is ambiguous, reply {"ask":"a short question"}.
 Do not write prose. Do not invent a date you are unsure of.
 TXT
 	my ($out, $err) = &evaluation_model_call_role('help_assistant', $system, $text, &ai_role_thinking_effective('help_assistant'));
 	return { ask => ($err || &ui('The Guide did not answer that.')) } unless defined $out && $out =~ /\S/;
-	my $plan = eval { decode_json $out };
-	unless (ref $plan eq 'HASH') {
-		if ($out =~ /(\{.*\})/s) { $plan = eval { decode_json $1 }; }
+	my $answer = eval { decode_json $out };
+	unless (ref $answer eq 'HASH') {
+		if ($out =~ /(\{.*\})/s) { $answer = eval { decode_json $1 }; }
 	}
-	return { ask => &ui('I could not read that schedule. Can you say it another way?') } unless ref $plan eq 'HASH';
-	return { ask => $plan->{'ask'} } if defined $plan->{'ask'} && $plan->{'ask'} =~ /\S/;
-	# a model that answered with one plan instead of a list is read as one
-	if (ref $plan->{'plans'} ne 'ARRAY') {
-		if (ref $plan->{'plan'} eq 'HASH') { $plan->{'plans'} = [ $plan->{'plan'} ]; }
-		elsif ($plan->{'kind'}) { $plan->{'plans'} = [ { %{$plan} } ]; }
+	return { ask => &ui('I could not read that schedule. Can you say it another way?') } unless ref $answer eq 'HASH';
+	return { ask => $answer->{'ask'} } if defined $answer->{'ask'} && $answer->{'ask'} =~ /\S/;
+	my $list = ref $answer->{'schedules'} eq 'ARRAY' ? $answer->{'schedules'} : [];
+	if (!@{$list} && ref $answer->{'plans'} eq 'ARRAY') { push @{$list}, $answer; }
+	my @out;
+	foreach my $s ( @{$list} ) {
+		next unless ref $s eq 'HASH';
+		my $expanded = &clothesline_schedule_expand({ plans => $s->{'plans'}, hours => $s->{'hours'}, minutes => $s->{'minutes'} }, $now);
+		next unless scalar keys %{ $expanded->{'days'} };
+		push @out, {
+			text => ($s->{'text'} // $text),
+			say => ($s->{'say'} // ''),
+			days => $expanded->{'days'},
+			hours => $expanded->{'hours'},
+			minutes => $expanded->{'minutes'},
+			plan => { plans => $s->{'plans'}, hours => $expanded->{'hours'}, minutes => $expanded->{'minutes'} },
+			made => $now,
+		};
 	}
-	my $expanded = &clothesline_schedule_expand($plan, $now);
-	return { ask => $expanded->{'ask'} || &ui('I could not find any days in that schedule. Can you say it another way?') }
-		unless scalar keys %{ $expanded->{'days'} };
-	my $say = (defined $plan->{'say'} && $plan->{'say'} =~ /\S/) ? substr($plan->{'say'}, 0, 300) : '';
-	return { rule => {
-		text => $text,
-		days => $expanded->{'days'},
-		hours => $expanded->{'hours'},
-		plan => { plans => $plan->{'plans'}, hours => $expanded->{'hours'} },
-		say => $say,
-		made => $now,
-	} };
+	return { ask => &ui('I could not find any days in that schedule. Can you say it another way?') } unless @out;
+	return { schedules => \@out };
+}
+
+# The editor's phrase: the fast reader first, the Guide only when it must be.
+# Nothing here writes; the caller stores the schedules.
+sub clothesline_schedule_read {
+	my ($text, %opt) = @_;
+	$text = defined $text ? "$text" : '';
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return { ask => &ui('Say when this routine should hang.') } unless length $text;
+	my $now = $opt{'now'} || &rightNow();
+	my $parsed = &clothesline_schedule_parse($text, now => $now);
+	my @out;
+	my $why = '';
+	if (!$parsed->{'ask'} && !$parsed->{'unread'}) {
+		foreach my $s ( @{ $parsed->{'schedules'} || [] } ) {
+			my $expanded = &clothesline_schedule_expand({ plans => $s->{'plans'}, hours => $s->{'hours'}, minutes => $s->{'minutes'} }, $now);
+			if (!scalar keys %{ $expanded->{'days'} }) { $why = $expanded->{'ask'} if !length $why; next; }
+			push @out, {
+				text => $s->{'text'},
+				say => ($s->{'say'} || ''),
+				days => $expanded->{'days'},
+				hours => $expanded->{'hours'},
+				minutes => $expanded->{'minutes'},
+				plan => { plans => $s->{'plans'}, hours => $expanded->{'hours'}, minutes => $expanded->{'minutes'} },
+				made => $now,
+			};
+		}
+		return { schedules => \@out } if @out;
+		# a phrase the reader knew but could not carry out (an unsaved birthday,
+		# say) is answered by the reader, not handed to a model that cannot know
+		return { ask => $why } if length $why;
+	}
+	my $model = $opt{'model'} || &setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	return { ask => &ui('A schedule written in words needs the Guide model, and none is set.') } unless defined $model && length $model;
+	return &clothesline_schedule_model_read($text, $now, $model);
 }
 
 # What the editor prints under the phrase box: how many days it read, the last
 # of them, and the hours it hangs. The person's own words are the field's value.
+# What the editor prints under the phrase box: each schedule's days and hours,
+# joined. The person's own words are the field's value; the cards carry the rest.
 sub clothesline_schedule_status {
 	my ($cl) = @_;
-	return '' unless ref $cl eq 'HASH' && ref $cl->{'schedule_rule'} eq 'HASH';
-	my $rule = $cl->{'schedule_rule'};
-	my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
-	my $count = scalar keys %{$days};
-	return &ui('The Guide read no days from that.') unless $count;
-	my @keys = sort keys %{$days};
-	my @hours = sort { $a <=> $b } @{ ref $rule->{'hours'} eq 'ARRAY' ? $rule->{'hours'} : [] };
-	my $span;
-	if (!@hours) { $span = &ui('all day'); }
-	elsif (scalar(@hours) == 1) { $span = &clothesline_hour_word($hours[0]); }
-	elsif ($hours[-1] - $hours[0] == $#hours) { $span = &clothesline_hour_word($hours[0]) . ' ' . &ui('to') . ' ' . &clothesline_hour_word($hours[-1]); }
-	else { $span = join(', ', map { &clothesline_hour_word($_) } @hours); }
-	my $line = &ui('Hangs on') . ' ' . $count . ' ' . ($count == 1 ? &ui('day') : &ui('days'))
-		. ' ' . &ui('through') . ' ' . $keys[-1] . ', ' . $span;
-	$line .= ' — ' . $rule->{'say'} if defined $rule->{'say'} && $rule->{'say'} =~ /\S/;
-	return $line;
+	my @lines;
+	foreach my $rule ( @{ &clothesline_schedule_list($cl) } ) {
+		next unless ref $rule eq 'HASH';
+		my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
+		my $count = scalar keys %{$days};
+		next unless $count;
+		my @keys = sort keys %{$days};
+		my @hours = sort { $a <=> $b } @{ ref $rule->{'hours'} eq 'ARRAY' ? $rule->{'hours'} : [] };
+		my @minutes = sort { $a <=> $b } @{ ref $rule->{'minutes'} eq 'ARRAY' ? $rule->{'minutes'} : [] };
+		push @lines, &ui('Hangs on') . ' ' . $count . ' ' . ($count == 1 ? &ui('day') : &ui('days'))
+			. ' ' . &ui('through') . ' ' . $keys[-1] . ', ' . &clothesline_time_words(\@hours, \@minutes);
+	}
+	return join('; ', @lines);
+}
+
+# The editor's audit: one card per schedule, with the recurrence it read, the
+# days it matches, the hours and minutes, and the next few dates.
+sub clothesline_schedule_cards {
+	my ($cl) = @_;
+	my @cards;
+	my $list = &clothesline_schedule_list($cl);
+	for my $i ( 0 .. $#$list ) {
+		my $rule = $list->[$i];
+		next unless ref $rule eq 'HASH';
+		my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
+		my @keys = sort keys %{$days};
+		my @hours = sort { $a <=> $b } @{ ref $rule->{'hours'} eq 'ARRAY' ? $rule->{'hours'} : [] };
+		my @minutes = sort { $a <=> $b } @{ ref $rule->{'minutes'} eq 'ARRAY' ? $rule->{'minutes'} : [] };
+		push @cards, {
+			index => $i,
+			text => ($rule->{'text'} // ''),
+			say => &clothesline_schedule_say(
+				(ref $rule->{'plan'} eq 'HASH' && ref $rule->{'plan'}->{'plans'} eq 'ARRAY') ? $rule->{'plan'}->{'plans'} : [],
+				\@hours, \@minutes),
+			plans => &clothesline_plans_words($rule->{'plan'}),
+			count => scalar @keys,
+			first => ($keys[0] // ''),
+			last => ($keys[-1] // ''),
+			hours => &clothesline_time_words(\@hours, \@minutes),
+			next => [ @keys[0 .. ($#keys < 7 ? $#keys : 7)] ],
+		};
+	}
+	return \@cards;
 }
 
 # ---- web measures ----------------------------------------------------------
