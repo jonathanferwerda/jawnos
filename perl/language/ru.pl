@@ -56,6 +56,7 @@ $catalog{'ru'} = {
 		'every_day' => 'Каждый день',
 		'running' => 'Выполняется',
 		'done' => 'Готово',
+		'expired' => 'Истёк',
 		'cancelled' => 'Отменено',
 		'clear_finished' => 'Очистить завершённые',
 		'add_alarm' => 'Добавить будильник',

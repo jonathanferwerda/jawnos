@@ -56,6 +56,7 @@ $catalog{'zh'} = {
 		'every_day' => '每天',
 		'running' => '运行中',
 		'done' => '完成',
+		'expired' => '已过期',
 		'cancelled' => '已取消',
 		'clear_finished' => '清除已完成',
 		'add_alarm' => '添加闹钟',

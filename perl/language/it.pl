@@ -56,6 +56,7 @@ $catalog{'it'} = {
 		'every_day' => 'Ogni giorno',
 		'running' => 'In esecuzione',
 		'done' => 'Fatto',
+		'expired' => 'Scaduto',
 		'cancelled' => 'Annullato',
 		'clear_finished' => 'Cancella completati',
 		'add_alarm' => 'Aggiungi sveglia',

@@ -56,6 +56,7 @@ $catalog{'ko'} = {
 		'every_day' => '매일',
 		'running' => '실행 중',
 		'done' => '완료',
+		'expired' => '만료됨',
 		'cancelled' => '취소됨',
 		'clear_finished' => '완료 지우기',
 		'add_alarm' => '알람 추가',

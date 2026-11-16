@@ -56,6 +56,7 @@ $catalog{'pa'} = {
 		'every_day' => 'ਹਰ ਰੋਜ਼',
 		'running' => 'ਚੱਲ ਰਿਹਾ ਹੈ',
 		'done' => 'ਪੂਰਾ ਹੋਇਆ',
+		'expired' => 'ਮਿਆਦ ਪੁੱਗੀ',
 		'cancelled' => 'ਰੱਦ',
 		'clear_finished' => 'ਪੂਰੇ ਹਟਾਓ',
 		'add_alarm' => 'ਅਲਾਰਮ ਸ਼ਾਮਲ ਕਰੋ',

@@ -410,8 +410,9 @@ sub evaluation_agent {
 		$different = &subs::measure_contrasts($app, $corr_days, $all_counts, $measures);
 		# the app's own task list: what is still open says what the app is for
 		my $tasks = eval { return decode_json(&subs::setting_grabber({ app => $app, setting => 'tasks' }) || '') } || [];
+		&subs::task_expiry_scan($app, $tasks);
 		@open = map { { task => substr($_->{'task'}, 0, 60), priority => ($_->{'priority'} || 0) + 0 } }
-			grep { ($_->{'completed'} || '') ne 'on' && $_->{'task'} } @{$tasks};
+			grep { ($_->{'completed'} || '') ne 'on' && !$_->{'expired'} && $_->{'task'} } @{$tasks};
 		@open = sort { $b->{'priority'} <=> $a->{'priority'} } @open;
 		splice(@open, 8) if scalar @open > 8;
 		# Speed is only read for a scope that is a movement (an action app); a

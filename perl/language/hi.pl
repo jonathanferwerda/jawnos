@@ -56,6 +56,7 @@ $catalog{'hi'} = {
 		'every_day' => 'हर दिन',
 		'running' => 'चल रहा है',
 		'done' => 'पूर्ण',
+		'expired' => 'समाप्त',
 		'cancelled' => 'रद्द',
 		'clear_finished' => 'पूर्ण हटाएँ',
 		'add_alarm' => 'अलार्म जोड़ें',

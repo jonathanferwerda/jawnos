@@ -56,6 +56,7 @@ $catalog{'id'} = {
 		'every_day' => 'Setiap hari',
 		'running' => 'Berjalan',
 		'done' => 'Selesai',
+		'expired' => 'Kedaluwarsa',
 		'cancelled' => 'Dibatalkan',
 		'clear_finished' => 'Hapus selesai',
 		'add_alarm' => 'Tambah alarm',

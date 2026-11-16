@@ -56,6 +56,7 @@ $catalog{'ar'} = {
 		'every_day' => 'كل يوم',
 		'running' => 'قيد التشغيل',
 		'done' => 'تم',
+		'expired' => 'منتهي الصلاحية',
 		'cancelled' => 'ملغى',
 		'clear_finished' => 'مسح المكتمل',
 		'add_alarm' => 'إضافة منبه',

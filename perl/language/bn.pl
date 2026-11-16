@@ -56,6 +56,7 @@ $catalog{'bn'} = {
 		'every_day' => 'প্রতিদিন',
 		'running' => 'চলছে',
 		'done' => 'সম্পন্ন',
+		'expired' => 'মেয়াদোত্তীর্ণ',
 		'cancelled' => 'বাতিল',
 		'clear_finished' => 'সম্পন্ন মুছুন',
 		'add_alarm' => 'অ্যালার্ম যোগ করুন',

@@ -56,6 +56,7 @@ $catalog{'ja'} = {
 		'every_day' => '毎日',
 		'running' => '実行中',
 		'done' => '完了',
+		'expired' => '期限切れ',
 		'cancelled' => 'キャンセル',
 		'clear_finished' => '完了を消去',
 		'add_alarm' => 'アラームを追加',

@@ -1,7 +1,7 @@
 <% no warnings 'uninitialized'; %>
 <div class="task_list" app="<%= $app %>" style="<% if ($parent > 0) { %>padding-left:<%= 20 x $parent %>px;<% } %>">
 	<% foreach my $task ( @{$tasks} ) { %>
-		<div class="task_item<% if ($task->{'uuid'} eq 'new') { %> task_item_new<% } %>" app="<%= $task->{'task'} %>" uuid="<%= $task->{'uuid'} %>" style="padding-top:10px;width:100%;height:<% if ($task->{'uuid'} eq 'new') { %>100px<% } else { %>45px<% } %>;border:solid;border-width:3px;border-color:var(--line);<% if ($task->{'colour'}) { %>--task-colour:<%= $task->{'colour'} %>;<% } %>">
+		<div class="task_item<% if ($task->{'uuid'} eq 'new') { %> task_item_new<% } %><% if ($task->{'completed'} eq 'expired') { %> task_item_expired<% } %>" app="<%= $task->{'task'} %>" uuid="<%= $task->{'uuid'} %>" style="padding-top:10px;width:100%;height:<% if ($task->{'uuid'} eq 'new') { %>100px<% } else { %>45px<% } %>;border:solid;border-width:3px;border-color:var(--line);<% if ($task->{'colour'}) { %>--task-colour:<%= $task->{'colour'} %>;<% } %>">
 			<input type="checkbox" <% if ($task->{'completed'} eq 'on') { %> checked<% } %> class="task_input task_checkbox" name="completed" style="float:left;vertical-align:top;">
 
 			<% if ($task->{'uuid'} ne 'new') { %>
@@ -81,8 +81,9 @@
 							</td>
 							<td>
 								<select class="task_admin_input" setting="filter">
-									<% foreach my $o ( qw/all open done/ ) { %>
-										<option value="<%= $o %>" <% if ($o eq $settings->{'tasks_filter'}) { %>selected<% } %>><%= &subs::format_name($o) %></option>
+									<% my %filter_label = ( all => &subs::lang('common.all'), open => &subs::lang('common.open'), done => &subs::lang('done'), expired => &subs::lang('expired') ); %>
+									<% foreach my $o ( qw/all open done expired/ ) { %>
+										<option value="<%= $o %>" <% if ($o eq $settings->{'tasks_filter'}) { %>selected<% } %>><%= $filter_label{$o} %></option>
 									<% } %> 
 								</select>
 							</td>

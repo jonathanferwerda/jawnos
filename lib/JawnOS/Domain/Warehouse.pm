@@ -130,6 +130,63 @@ sub task_checker {
 	return 0;
 }
 
+# A task the routine has left behind. Four or more of the app's recent runs,
+# each of which ticked every other task and none of which ticked this one, mean
+# the task is no longer part of the routine. It reads as 'expired' rather than
+# open until it is ticked again; ticking it sets last_completed, so it rejoins
+# the open order when its own renewal comes due. The status is display-only -
+# it is derived here on every read, never written back into the tasks setting.
+#
+# A run is one of the app's own stop or usual appointments. A task was checked
+# for a run when it was ticked during or after that run, or was still inside
+# its renewal interval; a task with no renewal is checked off while it is on.
+# Only runs after the task was created and after it came due can count. The
+# newest twelve runs are enough: the answer is only ever "more than three".
+sub task_expiry_scan {
+	my ($app, $tasks) = @_;
+	my @named = grep { ref $_ eq 'HASH' && ($_->{'uuid'} || '') ne '' && ($_->{'task'} || '') ne '' } @{$tasks || []};
+	return $tasks unless scalar @named > 1;
+	my $runs = &subs::db_query(
+		q{select timestamp from appointments where app = ? and type in ('stop','usual') order by timestamp desc limit 12},
+		$app
+	)->hashes;
+	my $now = &subs::rightNow();
+	foreach my $t ( @named ) {
+		my $last_completed = ($t->{'last_completed'} // 0) + 0;
+		my $renew_freq = ($t->{'renew_freq'} // 0) + 0;
+		my $completed = $t->{'completed'} || '';
+		# Done with no renewal is permanent; everything else is open now, either
+		# because its renewal has elapsed or because it was never ticked.
+		my $is_open = $completed ne 'on' || ($renew_freq > 0 && $last_completed + $renew_freq < $now);
+		next unless $is_open;
+		my $due = $last_completed > 0 ? $last_completed + $renew_freq : 0;
+		my $made = ($t->{'timestamp'} // 0) + 0;
+		my $missed = 0;
+		foreach my $run ( @{$runs} ) {
+			my $at = ($run->{'timestamp'} // 0) + 0;
+			last if $at < $due || $at < $made;
+			my $others = 1;
+			foreach my $o ( @named ) {
+				next if $o == $t;
+				my $olc = ($o->{'last_completed'} // 0) + 0;
+				my $orf = ($o->{'renew_freq'} // 0) + 0;
+				my $ochk = $olc >= $at;
+				unless ($ochk) {
+					$ochk = $orf > 0
+						? ($olc + $orf >= $at && ($o->{'completed'} || '') ne 'off')
+						: (($o->{'completed'} || '') eq 'on');
+				}
+				unless ($ochk) { $others = 0; last; }
+			}
+			last unless $others;
+			$missed++;
+			last if $missed > 3;
+		}
+		$t->{'expired'} = 1 if $missed > 3;
+	}
+	return $tasks;
+}
+
 sub task_grabber {
 	my $app = shift;
 	my $parent = shift || 0;
@@ -138,6 +195,7 @@ sub task_grabber {
 	my $tasks = decode_json $tasks_json;
 	@{$tasks} = grep { $_->{'uuid'} } @{$tasks};
 	@{$tasks} = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$tasks};
+	&subs::task_expiry_scan($app, $tasks);
 	my $totals = {};
 	foreach my $t ( @{$tasks} ) {
 		my $tsettings = &subs::settings_grabber({ app => &unformat_name($t->{'task'}) });
@@ -161,6 +219,7 @@ sub task_grabber {
 		#	$t->{'duration'} = abs $settings->{'duration'};
 		}
 		$t->{'renew_freq'} = &subs::duration_sayer($renew_freq / 1000);
+		$t->{'completed'} = 'expired' if $t->{'expired'};
 
 
 		if (my $jt = eval { return decode_json $tsettings->{'tasks'} }) {
@@ -209,6 +268,9 @@ sub task_grabber {
 	}
 	elsif ($tasks_filter eq 'open') {
 		@{$tasks} = grep { $_->{'completed'} eq 'off' } @{$tasks};
+	}
+	elsif ($tasks_filter eq 'expired') {
+		@{$tasks} = grep { $_->{'completed'} eq 'expired' } @{$tasks};
 	}
 
 	push @{$tasks}, { uuid => 'new', lock => 'locked', colour => '#' . &subs::random_colour_grabber() } unless $parent > 0;

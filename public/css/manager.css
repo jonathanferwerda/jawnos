@@ -3514,6 +3514,9 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
    and the totals - not one task's colour, so it takes the theme's own surface
    and the table inside it stays readable in either theme. */
 .task_item_new { background-color: var(--panel-2); }
+/* A task the routine has left behind: still in the list (and still tickable),
+   but dimmed so it reads as expired rather than as another open item. */
+.task_item_expired { opacity: .55; }
 /* a save dims the list while its answer is on the way; a class, so the rebuilt
    markup is styled by this sheet rather than by styles the old element carried */
 .task_list.task_list_busy { pointer-events: none; opacity: .5; filter: grayscale(1); }

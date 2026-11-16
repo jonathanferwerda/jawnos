@@ -56,6 +56,7 @@ $catalog{'es'} = {
 		'every_day' => 'Todos los días',
 		'running' => 'En marcha',
 		'done' => 'Hecho',
+		'expired' => 'Caducado',
 		'cancelled' => 'Cancelado',
 		'clear_finished' => 'Borrar terminados',
 		'add_alarm' => 'Añadir alarma',

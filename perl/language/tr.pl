@@ -56,6 +56,7 @@ $catalog{'tr'} = {
 		'every_day' => 'Her gün',
 		'running' => 'Çalışıyor',
 		'done' => 'Bitti',
+		'expired' => 'Süresi doldu',
 		'cancelled' => 'İptal edildi',
 		'clear_finished' => 'Bitmişleri temizle',
 		'add_alarm' => 'Alarm ekle',
