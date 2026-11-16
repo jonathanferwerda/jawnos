@@ -305,6 +305,28 @@ sub jg_room_pass {
 	return { %$res, handle => $h, room => $r };
 }
 
+# Applications the switch holds for this house. They arrive from people who
+# have no house identity, so this is the one signed read that names no person.
+sub jg_applications {
+	my ($c, $handle, $since) = @_;
+	my $h = &jg_slug($handle);
+	return { error => 'no house' } unless length $h;
+	my $path = "/v1/houses/$h/applications";
+	$path .= '?since=' . int($since) if defined $since && $since =~ /^\d+$/ && $since > 0;
+	return &jg_call($c, 'GET', $path, '', 1);
+}
+
+# Tell the switch what the house decided, so the applicant's token can read it.
+sub jg_application_decide {
+	my ($c, $handle, $id, $status) = @_;
+	my $h = &jg_slug($handle);
+	return { error => 'no house' } unless length $h;
+	return { error => 'no application' } unless defined $id && $id =~ /^[A-Za-z0-9_-]{4,64}$/;
+	return { error => 'bad status' } unless defined $status && $status =~ /^(?:received|approved|declined)$/;
+	return &jg_call($c, 'POST', "/v1/houses/$h/applications/$id/status",
+		$jg_json->encode({ status => $status }), 1);
+}
+
 sub jg_join {
 	my ($c, $handle, $room, $ticket) = @_;
 	my $h = &jg_slug($handle);

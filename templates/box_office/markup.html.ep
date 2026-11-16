@@ -263,6 +263,10 @@
 				<h3><%= &subs::ui('Waiting requests') %></h3>
 				<span class="bo_muted"><%= &subs::ui('Approve the ones that belong, decline or blacklist the rest.') %></span>
 			</div>
+			<div class="bo_relay_row">
+				<button type="button" class="bo_relay_check bo_small" hint="<%= &subs::ui('Fetch applications sent through the relay') %>"><%= &subs::ui('Check relay') %></button>
+				<span class="bo_relay_status"></span>
+			</div>
 			<div class="bo_table_wrap">
 				<table id="ticket_request_list" class="bo_table">
 					<thead>
@@ -282,7 +286,7 @@
 						<% foreach my $r ( @{$requests || []} ) { %>
 							<tr class="ticket_request" uuid="<%= $r->{'uuid'} %>">
 								<% my @role_keys = @{ &subs::role_keys_filter($roles, $r->{'info'}->{'roles'}) }; %>
-								<td><span class="bo_ticket_name"><%= $r->{'name'} %></span></td>
+								<td><span class="bo_ticket_name"><%= $r->{'name'} %></span><% if (($r->{'info'}->{'source'} || '') eq 'relay') { %> <span class="bo_chip"><%= &subs::ui('Relay') %></span><% } %></td>
 								<td><span class="bo_contact"><%= $r->{'info'}->{'email'} %><br><%= $r->{'info'}->{'phone'} %></span></td>
 								<td class="bo_description"><%= $r->{'info'}->{'description'} %></td>
 								<td class="bo_request_roles">

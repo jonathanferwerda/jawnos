@@ -16,6 +16,10 @@ our $master_plan = [
 		},{
 			team => 'Projects'
 		},{
+			team => 'Businesses'
+		},{
+			team => 'Homes'
+		},{
 			team => 'Quality'
 		},{
 			team => 'Customer Service'
@@ -236,6 +240,8 @@ our $master_plan = [
 			team => 'Cash Flow'
 		},{
 			team => 'Contracts'
+		},{
+			team => 'International trade'
 		},{
 			team => 'Pricing',
 			communities => [

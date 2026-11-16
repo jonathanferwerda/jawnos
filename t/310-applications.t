@@ -1,4 +1,4 @@
-# tests-for: templates/store/ticket_request.html.ep public/js/homepage.js lib/JawnOS/Controller/box_office_misc.pm t/310-applications.t
+# tests-for: templates/store/ticket_request.html.ep public/js/homepage.js lib/JawnOS/Controller/box_office_misc.pm perl/gb/07_master_plan.pl t/310-applications.t
 # covers:    The applicant side of a job request. The public ticket-request form
 #            asks what the person is applying for, when they could talk, and
 #            what they can show; the role list is offered by name only, because
@@ -85,5 +85,17 @@ is_deeply(subs::role_keys_filter($catalog, "$known,ghost"), [$known],
 	'and a comma list is read too');
 is_deeply(subs::role_keys_filter($catalog, undef), [],
 	'no answer keeps no roles');
+
+# The department picker is the whiteboard's master plan. The two nodes the
+# whiteboard showed and the tree had lost are back: the two customer kinds under
+# Offerings, and international trade under Financial/Legal.
+require "$root/perl/gb/07_master_plan.pl";
+my %hub = map { $_->{'team'} => $_ } @{$gb::master_plan};
+ok((grep { $_->{'team'} eq 'Businesses' } @{ $hub{'Offerings'}->{'clubs'} || [] }),
+	'Offerings offers to businesses');
+ok((grep { $_->{'team'} eq 'Homes' } @{ $hub{'Offerings'}->{'clubs'} || [] }),
+	'and to homes');
+ok((grep { $_->{'team'} eq 'International trade' } @{ $hub{'Financial/Legal'}->{'clubs'} || [] }),
+	'Financial/Legal carries international trade');
 
 done_testing();

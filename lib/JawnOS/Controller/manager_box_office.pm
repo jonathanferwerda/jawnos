@@ -201,6 +201,13 @@ sub action_14274 {
 	}
 	&subs::db_delete('tickets', { uuid => $uuid });
 	&subs::db_insert('tickets', $minted);
+	# A relayed application is answered on the switch too, so the applicant's
+	# token can read the decision. A switch that is away never blocks the mint.
+	my $relay_approved = &subs::relay_application_ticket($request);
+	if (length $relay_approved) {
+		my $relay_info = eval { return decode_json $request->{'information'} } || {};
+		&jg_application_decide($c, ($relay_info->{'relay_handle'} || &jg_handle(&subs::crest_record_read())), $relay_approved, 'approved');
+	}
 	&subs::db_update('tickets', { crest_uuid => $request->{'crest_uuid'} }, { uuid => $minted->{'uuid'} }) if $request->{'crest_uuid'};
 	&Websocket::send('server', { console => &Websocket::console_command('ticketList')});
 	$c->render(json => {
@@ -225,6 +232,11 @@ sub action_14300 {
 		return;
 	}
 	$log->info('ticket request declined: ' . $request->{'name'});
+	my $relay_declined = &subs::relay_application_ticket($request);
+	if (length $relay_declined) {
+		my $relay_info = eval { return decode_json $request->{'information'} } || {};
+		&jg_application_decide($c, ($relay_info->{'relay_handle'} || &jg_handle(&subs::crest_record_read())), $relay_declined, 'declined');
+	}
 	&subs::db_delete('tickets', { uuid => $uuid });
 	$c->render(json => { declined => $uuid });
 }
@@ -252,6 +264,11 @@ sub action_14316 {
 		timestamp => &subs::rightNow()
 	};
 	&ticket_blacklist_save($list);
+	my $relay_blacklisted = &subs::relay_application_ticket($request);
+	if (length $relay_blacklisted) {
+		my $relay_info = eval { return decode_json $request->{'information'} } || {};
+		&jg_application_decide($c, ($relay_info->{'relay_handle'} || &jg_handle(&subs::crest_record_read())), $relay_blacklisted, 'declined');
+	}
 	&subs::db_delete('tickets', { uuid => $uuid });
 	$c->render(json => { blacklisted => $info->{'name'} });
 }
@@ -363,6 +380,39 @@ sub action_24780 {
 		room => $room,
 		ticket => $pass->{'ticket'},
 		expires => $pass->{'expires'},
+	});
+}
+
+# POST /manager/box_office/relay
+# Pull the applications thejunderground holds for this house. Each lands as an
+# ordinary request ticket, so the desk approves or declines it with the same
+# buttons as a request typed at the public form. A duplicate is skipped.
+sub action_24781 {
+	my $c = shift;
+	unless (&ticket_desk_allowed($c)) {
+		$c->render(json => { ok => 0, error => 'denied' });
+		return;
+	}
+	my $handle = &jg_handle(&subs::crest_record_read());
+	return $c->render(json => { ok => 0, error => 'this house has no handle' }) unless length $handle;
+	my $answer = &jg_applications($c, $handle, 0);
+	if (ref $answer ne 'HASH' || $answer->{'error'}) {
+		return $c->render(json => { ok => 0, error => (ref $answer eq 'HASH' ? $answer->{'error'} : 'the relay did not answer') });
+	}
+	my $apps = ref $answer->{'applications'} eq 'ARRAY' ? $answer->{'applications'} : [];
+	my ($imported, $skipped) = (0, 0);
+	foreach my $app ( @{$apps} ) {
+		my $result = &subs::relay_application_import($app, $handle);
+		if ($result->{'imported'}) { $imported++; }
+		elsif ($result->{'skipped'}) { $skipped++; }
+	}
+	&Websocket::send('server', { console => &Websocket::console_command('boxOffice') }) if $imported;
+	$c->render(json => {
+		ok => 1,
+		house => $handle,
+		imported => $imported,
+		skipped => $skipped,
+		seen => scalar @{$apps},
 	});
 }
 

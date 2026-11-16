@@ -504,3 +504,34 @@ $(document).on('click', '.ticket_room_copy', function() {
 	catch (e) { boRoomStatus(row, jawnosT('Could not copy the pass.')); }
 	area.remove();
 });
+
+// ---- the relay -------------------------------------------------------------
+// Applications sent through thejunderground wait on the switch. Check relay
+// pulls them in as ordinary requests; the desk answers them here and the switch
+// passes the decision back to the applicant's token.
+
+$(document).on('click', '.bo_relay_check', function() {
+	var b = $(this);
+	var status = $('.bo_relay_status');
+	b.prop('disabled', true);
+	status.text(jawnosT('Checking the relay…'));
+	$.ajax({
+		url: '/manager/box_office/relay',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			b.prop('disabled', false);
+			if (!response || !response.ok) {
+				status.text((response && response.error) || jawnosT('Could not check the relay.'));
+				return;
+			}
+			status.text(jawnosT('Imported') + ' ' + (response.imported || 0) + ' · ' + jawnosT('already here') + ' ' + (response.skipped || 0));
+			if (response.imported) { boxOffice(); }
+		},
+		error: function() {
+			b.prop('disabled', false);
+			status.text(jawnosT('Could not check the relay.'));
+		}
+	});
+});

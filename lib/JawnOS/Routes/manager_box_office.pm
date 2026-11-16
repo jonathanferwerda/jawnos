@@ -15,6 +15,7 @@ sub routes {
 	# The interview room: registered on the switch, with a one-use pass for the
 	# applicant who has no house identity.
 	[24780, 'post', '/manager/box_office/room', 'action_24780'],
+	[24781, 'post', '/manager/box_office/relay', 'action_24781'],
 	);
 }
 
