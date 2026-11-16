@@ -173,13 +173,6 @@
 			}
 			var mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.7), material);
 			this.el.setObject3D('mesh', mesh);
-			// a dark backing card, so a picture reads as a print on a stand
-			var back = new THREE.Mesh(
-				new THREE.PlaneGeometry(2.56, 1.86),
-				new THREE.MeshBasicMaterial({ color: 0x1c1c1c, side: THREE.DoubleSide })
-			);
-			back.position.z = -0.03;
-			mesh.add(back);
 		}
 	});
 
@@ -334,9 +327,9 @@
 			}
 		});
 
-		// stand on the pressed point, so the town is around you at once
+		// stand a little back from the press, so the nearest print is not in your face
 		var rig = document.getElementById('world_rig');
-		if (rig) { rig.setAttribute('position', '0 1.7 4'); }
+		if (rig) { rig.setAttribute('position', '0 1.7 12'); }
 	}
 
 	function ready() {
