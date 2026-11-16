@@ -610,8 +610,8 @@ $(document).on('click', '#vacuum_app_confirm', function() {
 		data: { app: app, timestamp: timestamp },
 		success: function(response) {
 			jawnosAlert(response);
-			$('.appointment_configuration_cell[app="' + app + '"]').remove();
-			$('.wind[app="' + app + '"]').remove();
+			// Vacuum keeps the app, so its card is reloaded rather than removed.
+			configurationReloader(app);
 		}
 	});
 });

@@ -1,8 +1,9 @@
-# tests-for: lib/JawnOS/Domain/File.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/configure/04_currency_backup.js perl/help/topics_configure.pl
+# tests-for: lib/JawnOS/Domain/File.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Manager/Declarations.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/configure/04_currency_backup.js perl/help/topics_configure.pl
 # covers:    Vacuum and Delete app share one refusal: the house's own apps and a
-#            card ticked Permanent keep their rows. Vacuum refuses before it
-#            reads an appointment, unlinks a file or deletes anything, and the
-#            automatic sweep uses the same list.
+#            card ticked Permanent keep their rows. Vacuum itself clears the
+#            app's records through the ordinary delete - so files go through
+#            delete_file, not a comma split - plus the place rows that do not
+#            ride a record, and never touches a configuration table.
 
 use strict;
 use warnings;
@@ -14,7 +15,11 @@ use JawnOSTest;
 
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
-subs::preload($_) for qw(app_removal_refusal app_removal_refusal_text vacuum vacuum_app ui);
+subs::preload($_) for qw(app_removal_refusal app_removal_refusal_text vacuum ui);
+
+# The record clear is a Manager helper because it rides delete_app and
+# delete_file; Part32 loads on its own (as t/256 does).
+require(root() . '/lib/JawnOS/Manager/Part32.pm');
 
 package FakeRows;
 sub new {
@@ -27,16 +32,17 @@ sub hashes { $_[0]->{'hashes'} }
 package main;
 
 my $NOW = 1_700_000_000_000;
-my (@calls, $appts, %settings);
+my (@calls, $appts, $places, %settings);
 
-# The smallest world vacuum and vacuum_app ask for. A select of appointments
-# answers with $appts; every other statement is recorded, not run. The locals
-# only live for the call, so each case runs its code through _run.
+# The smallest world these subs ask for. Every statement and helper is
+# recorded, not run; the locals only live for the call, so each case runs its
+# code through _run.
 sub _run {
 	my $code = shift;
 	@calls = ();
 	%settings = ();
 	$appts = [];
+	$places = [];
 	local *subs::database_grabber = sub { return (undef, '/tmp/vacuum-guard.db', '') };
 	local *subs::rightNow = sub { $NOW };
 	local *subs::language = sub { 'en' };
@@ -45,17 +51,27 @@ sub _run {
 	local *subs::db_query = sub {
 		my ($sql, @bind) = @_;
 		push @calls, [ 'query', $sql, @bind ];
-		return FakeRows->new(0, $appts) if $sql =~ /^\s*select\s+\*\s+from\s+appointments/i;
 		return FakeRows->new(1);
 	};
+	local *subs::db_select = sub {
+		my ($table) = @_;
+		push @calls, [ 'select', $table ];
+		return FakeRows->new(0, $appts) if $table eq 'appointments';
+		return FakeRows->new(0, $places) if $table eq 'continent';
+		return FakeRows->new(0, []);
+	};
+	local *subs::appt_header_printer = sub { push @calls, 'header' };
+	local *subs::subprocessor = sub { push @calls, 'subprocessor' };
+	local *Manager::delete_app = sub { push @calls, [ 'delete_app', @_ ] };
+	local *Manager::deletion_registration = sub { push @calls, [ 'tombstone', @_ ] };
 	local *Websocket::console_command = sub { push @calls, [ 'console', @_ ]; return '{}' };
 	local *Websocket::send = sub { push @calls, 'send'; return 1 };
 	$code->();
 }
 
-# The delete statements the call issued, in order.
-sub _deletes {
-	return grep { ref $_ eq 'ARRAY' && $_->[0] eq 'query' && $_->[1] =~ /^\s*delete from/i } @calls;
+sub _calls_of {
+	my $kind = shift;
+	return grep { ref $_ eq 'ARRAY' && $_->[0] eq $kind } @calls;
 }
 
 sub guard_for {
@@ -92,36 +108,53 @@ like(words('permanent', 'vacuum'), qr/Permanent/, 'a Permanent card names the ti
 like(words('permanent', 'delete'), qr/Permanent/, 'the same sentence serves Delete app');
 is(words('', 'vacuum'), '', 'no refusal, no sentence');
 
-# --- the Vacuum button ----------------------------------------------------
+# --- Vacuum: records out, configuration kept -------------------------------
 
-my $answer;
-_run(sub { $answer = subs::vacuum_app('me') });
-is($answer, 'house', 'the Vacuum button refuses a house app');
-is(scalar @calls, 0, 'and touches nothing: no select, no unlink, no close');
+my $cleared;
+_run(sub {
+	$appts = [ { uuid => 'a1', server_time => $NOW }, { uuid => 'a2' } ];
+	$places = [ { uuid => 'p1', server_time => $NOW } ];
+	$cleared = Manager::vacuum_app_records('knitting', $NOW);
+});
+is($cleared, 2, 'the count is the records cleared');
 
-_run(sub { $settings{'knitting'} = 'checked'; $answer = subs::vacuum_app('knitting') });
-is($answer, 'permanent', 'the Vacuum button refuses a Permanent card');
-is(scalar @calls, 0, 'and again acts on nothing before the refusal');
+my @deletes = _calls_of('delete_app');
+is(scalar @deletes, 2, 'each record goes through the ordinary delete');
+is_deeply($deletes[0], [ 'delete_app', 'knitting', 'a1', $NOW, 'vacuum records', 1 ],
+	'with its own time, the vacuum reason and silent set');
+is_deeply($deletes[1], [ 'delete_app', 'knitting', 'a2', $NOW, 'vacuum records', 1 ],
+	'a record without a time uses the sweep time');
 
-# --- the automatic sweep --------------------------------------------------
+my @tombstones = _calls_of('tombstone');
+is(scalar @tombstones, 1, 'a place row gets its own tombstone');
+is_deeply($tombstones[0][1], { table => 'continent', app => 'knitting', uuid => 'p1', scope => 'single', server_time => $NOW },
+	'so a peer drops that row instead of pushing it back');
 
-_run(sub { subs::vacuum('knitting') });
-my @del = _deletes();
-my %tables = map { $_->[1] =~ /^\s*delete from\s+(\w+)/i ? ($1 => 1) : () } @del;
-is_deeply([ sort keys %tables ], [ sort qw(appointments cache continent mailbox model option option_category settings subcategory tickets websites websockets) ],
-	'an emptied ordinary app is swept from every app-scoped table');
-like($del[0]->[1], qr/^\s*delete from appointments/i, 'its appointments go first');
+my @queries = _calls_of('query');
+is_deeply([ map { $_->[1] } @queries ], [ 'delete from continent where app = ?' ],
+	'the place rows that do not ride a record are swept');
+my $sql = join ' ', map { $_->[1] } @queries;
+unlike($sql, qr/\b(settings|model|option|option_category|subcategory|websites|tickets|mailbox|cache|websockets)\b/,
+	'no configuration, mail or shared table is touched');
 
-_run(sub { subs::vacuum('me') });
-is(scalar(_deletes()), 0, 'the automatic sweep leaves a house app alone');
+is(scalar(grep { $_ eq 'header' } @calls), 1, 'the header is reprinted once, not once per record');
+is(scalar(grep { $_ eq 'subprocessor' } @calls), 1, 'and the centre view is redrawn once');
 
-_run(sub { $settings{'knitting'} = 'checked'; subs::vacuum('knitting') });
-is(scalar(_deletes()), 0, 'and a Permanent card');
+# --- Vacuum refuses before it reads ---------------------------------------
 
-_run(sub { $appts = [ { uuid => 'a1', app => 'knitting', file => '' } ]; subs::vacuum('knitting') });
-is(scalar(_deletes()), 0, 'an app that still has an appointment is not swept');
+my $count;
+_run(sub { $count = Manager::vacuum_app_records('me') });
+is($count, 0, 'a house app is refused');
+is(scalar @calls, 0, 'before any row is read or deleted');
 
-# --- the panels ask the one rule ------------------------------------------
+_run(sub { $settings{'knitting'} = 'checked'; $count = Manager::vacuum_app_records('knitting') });
+is($count, 0, 'a Permanent card is refused');
+is(scalar @calls, 0, 'and nothing is read either');
+
+_run(sub { $count = Manager::vacuum_app_records('') });
+is($count, 0, 'an empty app name is a no-op');
+
+# --- the old wipe and its comma splitter are gone -------------------------
 
 sub slurp {
 	my $path = shift;
@@ -130,20 +163,38 @@ sub slurp {
 	return <$fh>;
 }
 
-my $misc = slurp(root() . '/lib/JawnOS/Controller/manager_misc12.pm');
-like($misc, qr/sub action_41622 \{.{0,900}?app_removal_refusal\(/s, 'Delete app asks the shared guard');
-unlike($misc, qr/%reserved/, 'and keeps no private house-app list of its own');
+my $file = slurp(root() . '/lib/JawnOS/Domain/File.pm');
+unlike($file, qr/sub vacuum_app\b/, 'the old vacuum_app with its comma splitter is gone');
+like($file, qr/^sub vacuum \{/m, 'the automatic sweep after the last record stays');
+
+my $loader = slurp(root() . '/lib/JawnOS/Domain/Loader.pm');
+unlike($loader, qr/\bvacuum_app\b/, 'and the loader no longer offers it');
+
+my $index = slurp(root() . '/lib/JawnOS/Manager/Index.pm');
+like($index, qr/'vacuum_app_records'\s*=>\s*'JawnOS\/Manager\/Part32\.pm'/, 'the new helper is in the Manager map');
+my $decl = slurp(root() . '/lib/JawnOS/Manager/Declarations.pm');
+like($decl, qr/^sub vacuum_app_records;/m, 'and forward-declared');
+
+my $part32 = slurp(root() . '/lib/JawnOS/Manager/Part32.pm');
+like($part32, qr/sub vacuum_app_records\(.*?&delete_app\(/s, 'records ride delete_app, and so delete_file');
+like($part32, qr/sub vacuum_app_records\(.*?delete from continent/s, 'the place rows are swept after');
+unlike($part32, qr/sub vacuum_app_records\(.*?delete from (?:settings|model|option|subcategory|websites|tickets|mailbox|cache|websockets)/s,
+	'and no configuration table is deleted');
+like($part32, qr/'scope'\} eq 'vacuum'.*?vacuum_app_records/s, 'a peer applying the tombstone gets the same rule');
 
 my $configure = slurp(root() . '/lib/JawnOS/Controller/manager_configure5.pm');
-my @vacuum_text = ($configure =~ /app_removal_refusal_text\(\$refusal, 'vacuum'\)/g);
-is(scalar @vacuum_text, 2, 'the Vacuum panel and its confirm both refuse in words');
+like($configure, qr/vacuum_app_records\(\$app\)/, 'the Vacuum panel runs the record clear');
+unlike($configure, qr/scope => 'vacuum'/, 'and writes no coarse vacuum tombstone');
+like($configure, qr/Every record and the files those records name/, 'its confirm says what goes');
+like($configure, qr/keeps its settings, models, options, categories, web sources and tickets/, 'and what stays');
 
 my $js = slurp(root() . '/public/js/manager/configure/04_currency_backup.js');
-like($js, qr/body\.message/, "Delete app shows the server's refusal sentence");
-unlike($js, qr/house app and cannot be deleted/, 'and no longer guesses from the status code alone');
+like($js, qr/#vacuum_app_confirm.*?configurationReloader\(app\)/s, 'the panel reloads the card Vacuum keeps');
+unlike($js, qr/#vacuum_app_confirm.*?appointment_configuration_cell.*?remove/s, 'and no longer removes it');
 
 my $help = slurp(root() . '/perl/help/topics_configure.pl');
-like($help, qr/Vacuum, beside Delete app on a card/, 'the Configure topic describes the Vacuum button');
+like($help, qr/clears the app\\'s records/, 'the Configure topic describes the repurposed Vacuum');
+like($help, qr/keeps its settings, models, options, categories, web sources and tickets/, 'including what it keeps');
 like($help, qr/ticked Permanent: untick Permanent first/, 'and the refusal it shares with Delete app');
 
 done_testing();

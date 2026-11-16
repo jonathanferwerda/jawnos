@@ -403,8 +403,8 @@ sub action_19703 {
 		return $c->render(text => '<h1>' . &subs::format_name($app) . '</h1>
 		<h4>' . &subs::app_removal_refusal_text($refusal, 'vacuum') . '</h4>');
 	}
-	my $html = '<h2>You are about to delete</h2><h1>' . &subs::format_name($app) . '</h1>
-		<h4>This process is irreversible, unless you have backups or whatever!</h4>
+	my $html = '<h2>' . &subs::ui('You are about to empty') . '</h2><h1>' . &subs::format_name($app) . '</h1>
+		<h4>' . &subs::ui('Every record and the files those records name will be deleted. The app keeps its settings, models, options, categories, web sources and tickets. This cannot be undone.') . '</h4>
 		<img src="/images/decipherable/vacuum.png" id="vacuum_app_confirm" app="'. $app . '" class="medium_thumb">';
 
 	$c->render(text => $html );
@@ -415,16 +415,18 @@ sub action_19713 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
 	my $app = $c->param('app');
-	my $refusal = &subs::vacuum_app($app);
-	# The vacuum itself refuses a house app and one marked Permanent; the confirm
-	# panel already said so, but the tick can change between the two presses.
+	my $refusal = &subs::app_removal_refusal($app);
+	# The confirm panel already refused a house app and a Permanent card, but the
+	# tick can change between the two presses.
 	if ($refusal) {
 		return $c->render(text => '<h1>' . &subs::format_name($app) . '</h1>
 		<h4>' . &subs::app_removal_refusal_text($refusal, 'vacuum') . '</h4>');
 	}
-	&deletion_registration({ table => 'appointments', app => $app, scope => 'vacuum' });
-	my $html = '<h1>' . &subs::format_name($app) . ' is gone forever!</h1>
-	<h4>I hope you thought long and hard about it!</h4>';
+	# Records and the files they name go through the ordinary delete, one
+	# tombstone each; the app's configuration stays.
+	&vacuum_app_records($app);
+	my $html = '<h1>' . &subs::format_name($app) . '</h1>
+	<h4>' . &subs::ui('Its records and files are gone. Its settings are kept.') . '</h4>';
 	$c->render(text => $html );
 }
 

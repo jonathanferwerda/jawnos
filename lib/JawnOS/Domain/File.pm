@@ -1026,35 +1026,6 @@ sub vacuum {
 	}
 }
 
-sub vacuum_app {
-	my $app = shift;
-	# The Vacuum button and a peer applying its tombstone both land here, so the
-	# refusal lives here too, not only in the panel: '' means the vacuum ran and
-	# anything else is why it did not.
-	my $refusal = &app_removal_refusal($app);
-	return $refusal if $refusal;
-	my $timestamp = rightNow();
-	my ($db,$database,$sql) = &subs::database_grabber();
-	my $app_q = &db_query('select * from appointments where app=?',$app);
-	my $appts = $app_q->hashes;
-	foreach my $appt ( @{$appts} ) {
-		if ($appt->{'file'}) {
-			my @files = split ',', $appt->{'file'};
-			foreach my $f ( @files ) {
-				if (-e $f) {
-					&secure_unlink($f);
-				}
-			}
-		}
-	}
-	&Websocket::send('server', { console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => $timestamp });
-	sleep 1;
-	foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
-		&db_query('delete from ' . $t . ' where app=?',$app);
-	}
-	return '';
-}
-
 # The location types a device can point at a folder and archive to: one per
 # <location>_location / <location>_archive setting pair, and one folder each
 # under the archive root.

@@ -253,6 +253,38 @@ sub delete_app($app,$uuid,$server_time,$reason,$silent = 0) {
 	return { appts => $appts, status => $status };
 }
 
+# Vacuum, distinct from Delete app: clear an app's records and the files those
+# records name, and keep the app itself. Every appointment goes through the
+# ordinary delete - files through delete_file, invoice payments unwound,
+# continuation and warehouse rows, one tombstone each - and the place rows that
+# do not ride an appointment are swept after. Settings, models, options,
+# categories, web sources and tickets are the app's configuration and stay,
+# which is what separates this from Delete app. Silent, because the header and
+# window are redrawn once at the end instead of once per record.
+sub vacuum_app_records($app,$server_time = undef) {
+	return 0 unless defined $app && length $app;
+	return 0 if &subs::app_removal_refusal($app);
+	$server_time ||= &subs::rightNow();
+	my $appts = &subs::db_select('appointments', undef, { app => $app })->hashes || [];
+	foreach my $a ( @{$appts} ) {
+		&delete_app($app, $a->{'uuid'}, $a->{'server_time'} || $server_time, 'vacuum records', 1);
+	}
+	my $places = eval { &subs::db_select('continent', undef, { app => $app })->hashes } || [];
+	foreach my $p ( @{$places} ) {
+		next unless defined $p->{'uuid'} && length $p->{'uuid'};
+		&deletion_registration({ table => 'continent', app => $app, uuid => $p->{'uuid'}, scope => 'single', server_time => $p->{'server_time'} || $server_time });
+	}
+	&subs::db_query('delete from continent where app = ?', $app);
+	# One redraw for the whole clear: each delete already sent the row's removal
+	# to the open windows, so this only reprints the header and the centre view.
+	&subs::appt_header_printer({ app => $app, timestamp => &subs::rightNow() });
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&centre_view_grabber({ app => $app, timestamp => &subs::rightNow(), cached => 'no' });
+	}, { name => 'centre view' });
+	return scalar @{$appts};
+}
+
 sub invoice_payment_deleter($uuid) {
 	# called when an appointment is deleted: if it was the transaction a
 	# payment on an invoice points at, the payment is unwound - removed from
@@ -405,7 +437,7 @@ sub deletion_performer($json) {
 				&delete_app($deletion->{'app'},$deletion->{'uuid'},$deletion->{'server_time'},'deletion performer single');
 			}
 			elsif ( $deletion->{'scope'} eq 'vacuum' ) {
-				&subs::vacuum_app($deletion->{'app'});
+				&vacuum_app_records($deletion->{'app'});
 			}
 			elsif ( $deletion->{'scope'} eq 'appointments' ) {
 				# A readings-only retirement: the app's records go, its settings

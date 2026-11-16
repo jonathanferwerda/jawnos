@@ -651,6 +651,7 @@ our %SUB = (
 	'unlock_screen'                          => 'JawnOS/Manager/Part33.pm',
 	'usage_ms'                               => 'JawnOS/Manager/Part22.pm',
 	'usb_ports_grabber'                      => 'JawnOS/Manager/Part34.pm',
+	'vacuum_app_records'                     => 'JawnOS/Manager/Part32.pm',
 	'voice_lister'                           => 'JawnOS/Manager/Part08.pm',
 	'warehouse_grabber'                      => 'JawnOS/Manager/Part06.pm',
 	'warehouse_money_mirror'                 => 'JawnOS/Manager/Part07.pm',
