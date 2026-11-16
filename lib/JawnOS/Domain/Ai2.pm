@@ -343,12 +343,27 @@ sub ai_response_text {
 			grep { ref $_ eq 'HASH' && defined $_->{'text'} && !$_->{'thought'} }
 			@{ $body->{'candidates'}->[0]->{'content'}->{'parts'} };
 	}
-	return $body->{'message'}->{'content'}
-		|| $body->{'response'}
-		|| $body->{'result'}->{'response'}
-		|| $body->{'result'}->{'choices'}->[0]->{'message'}->{'content'}
-		|| $body->{'choices'}->[0]->{'message'}->{'content'}
-		|| '';
+	# The shapes differ by provider; one of them may hold the words in a small
+	# object rather than a string (some Cloudflare chat replies do). Unwrap that
+	# object rather than handing a hash reference to a caller that expects text -
+	# it used to read as HASH(0x...) in a test and in a report.
+	foreach my $v (
+		$body->{'message'}->{'content'},
+		$body->{'response'},
+		$body->{'result'}->{'response'},
+		$body->{'result'}->{'choices'}->[0]->{'message'}->{'content'},
+		$body->{'choices'}->[0]->{'message'}->{'content'},
+	) {
+		next unless defined $v;
+		if (!ref $v) { next unless length $v; return $v; }
+		next unless ref $v eq 'HASH';
+		foreach my $k (qw/text content response answer/) {
+			my $inner = $v->{$k};
+			next unless defined $inner && !ref $inner && length $inner;
+			return $inner;
+		}
+	}
+	return '';
 }
 
 # The reply split into a reasoning part and a text part, reasoning first, so a
@@ -1006,7 +1021,9 @@ sub ai_qualify_grade {
 	my @wd = map { lc } grep { defined } @{ ref $sched->{'weekdays'} eq 'ARRAY' ? $sched->{'weekdays'} : [] };
 	$check->('weekdays', scalar( grep { $_ eq 'thu' || $_ eq 'thursday' } @wd ));
 	my %hr = map { $_ + 0 => 1 } grep { defined && /^\d+$/ } @{ ref $sched->{'hours'} eq 'ARRAY' ? $sched->{'hours'} : [] };
-	$check->('hours', $hr{15} && $hr{16});
+	# "3pm to 6pm" is 15 and 16 to this house, but a model that answers with the
+	# span's ends (15 and 18) has read the words correctly; either earns the check.
+	$check->('hours', $hr{15} && ($hr{16} || $hr{18}));
 	$check->('until', defined $sched->{'until'} && $sched->{'until'} =~ /^\s*2027-07-24\s*$/);
 	my $total = 7;
 	my $score = $total - scalar @missed;
@@ -1035,6 +1052,9 @@ sub ai_model_qualify {
 	return { ok => 0, error => ($err || 'the model returned nothing') } if $err;
 	my $text = &ai_response_text($body);
 	$text = '' unless defined $text;
+	# a provider that hands back a small object instead of the words is unwrapped
+	# by ai_response_text already; this is the last guard for a stray reference
+	$text = '' if ref $text;
 	return { ok => 0, error => 'the model returned nothing readable' } unless $text =~ /\S/;
 	my $grade = &ai_qualify_grade($text);
 	return { ok => 1, model => $model, %{$grade}, answer => substr($text, 0, 800) };

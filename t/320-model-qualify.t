@@ -36,6 +36,17 @@ is_deeply($w->{'missed'}, [qw(product weekday Spanish hours)], 'and names what i
 my $fenced = "Here is the JSON:\n```json\n$perfect\n```";
 is(subs::ai_qualify_grade($fenced)->{'score'}, 7, 'a code fence around the object is tolerated');
 
+# a model that answers the span with its two ends has read it correctly
+my $span = '{"sum":40,"product":391,"weekday":"Saturday","thursday_es":"jueves",'
+	. '"schedule":{"weekdays":["thu"],"hours":[15,18],"until":"2027-07-24"}}';
+is(subs::ai_qualify_grade($span)->{'score'}, 7, '3pm to 6pm as 15 and 18 passes the hours check');
+
+# a provider that wraps the words in a small object is unwrapped, not stringified
+is(subs::ai_response_text({ message => { content => { text => 'hello' } } }), 'hello',
+	'a hash-shaped content is unwrapped to its words');
+is(subs::ai_response_text({ result => { response => { response => 'cloud' } } }), 'cloud',
+	'and so is a Cloudflare result nested one more step');
+
 my $prose = subs::ai_qualify_grade('I am sorry, I cannot answer that.');
 is($prose->{'score'}, 0, 'prose fails every check');
 like($prose->{'message'}, qr/too weak/, 'and says the model is too weak');
