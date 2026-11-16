@@ -246,6 +246,21 @@ like($agents_js, qr/function jawnosAgentOpenForget\b/, 'closing one forgets it')
 my $guide_js = source('public/js/manager/manager/01_assistant_conversation.js');
 like($guide_js, qr/jawnosAgentOpenRemember\('guide:'/, 'a spawned guide associate is remembered');
 
+# --- an icon is not a picture -----------------------------------------------
+# The menu, the taskbar and the desk draw their controls with <img>, so the drop
+# has to read the markers rather than the tag: a hint, a button, the chrome it
+# sits in or the icon classes mean "the program", and everything else is a
+# picture to look at.
+like($guide_js, qr/function assistantImageIsControl\b/, 'the drop tells an icon from a picture');
+like($guide_js, qr/\$e\.is\('\[hint\], \[title\], \[aria-label\], \[help\]'\)/, 'a control carries the words that explain it');
+like($guide_js, qr/jonathan\|draggable\|start_menu_corner\|\[\\w-\]\+_icon/, 'the icon classes are part of the program');
+unlike($guide_js, qr/little_thumb\|tiny_thumb\|medium_thumb/, 'a sizing class alone does not make a picture a control');
+like($guide_js, qr/var picture = !assistantImageIsControl\(elementLandedOn\)/, 'the tag alone no longer decides');
+like($guide_js, qr/if \(\$target\.is\('img'\) && picture\)/, 'a picture is still sent to be looked at');
+like($guide_js, qr/assistantHelpFor\(assistantPanel\(this\), elementLandedOn\)/, 'an icon falls through to the guide');
+like($guide_js, qr/function assistantAppFor\b/, 'a drop resolves the app it landed in');
+like($guide_js, qr/panel\.data\('topic', \$\(el\)\.closest\('\[help\]'\)\.attr\('help'\) \|\| assistantAppFor\(el\)\)/, 'the app supplies the help topic');
+
 my $storage_js = source('public/js/manager/windows/01_storage.js');
 like($storage_js, qr/terminal_id:\s*\$\(v\)\.attr\('data-terminal-id'\)/,
 	'a terminal window saves its id');

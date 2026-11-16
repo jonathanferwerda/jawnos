@@ -91,6 +91,12 @@ like($keyboard, qr/stop: function\(p\) \{\s*keyboardPanelSave\(\$\(this\)\);\s*\
 # --- the guide explains it ---------------------------------------------------
 like($help, qr/Drag its edge or corner to size it/, 'the agents topic explains resizing');
 like($help, qr/It opens under the top edge/, 'the agents topic says a panel opens under the top edge');
+like($help, qr/Drag the associate\\'s button onto a picture and the guide describes what it sees; drag it onto an icon or a control instead and it explains that part of the program/,
+	'the agents topic tells a picture from a piece of the program');
+like($manager, qr/onto a picture and I'll look, onto an icon or a control and I'll explain it/,
+	'the associate\'s greeting offers both gestures');
+like($template, qr/hint="Drag me onto a picture and the guide will look at it, or onto an icon or control and it will explain it"/,
+	'the anchor says which drop is which');
 like($help, qr/resized by its edge or corner, and both its place and its size are remembered/,
 	'the dock topic explains the dock panels\' size memory');
 

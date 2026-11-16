@@ -133,13 +133,52 @@ function assistantDescribeElement(el) {
 	if (hint) { bits.push('(hint: ' + hint + ')'); }
 	var label = $.trim($e.closest('label').text());
 	if (label) { bits.push('label: "' + label.slice(0, 60) + '"'); }
-	var app = $e.closest('[app]').attr('app');
+	var app = assistantAppFor(el);
 	if (app) { bits.push('app: "' + app + '"'); }
 	var win = $.trim($e.closest('.wind').find('.name_text').first().text());
 	if (win) { bits.push('window: "' + win + '"'); }
 	var text = $.trim($e.text()).slice(0, 80);
 	if (text) { bits.push('text: "' + text + '"'); }
 	return bits.join(' ');
+}
+
+// The app a control belongs to: the window or shortcut it sits in, or the app a
+// start-menu icon opens (the menu's own map, so a reworded hint or a translated
+// label cannot lose it). '' when the element names none.
+function assistantAppFor(el) {
+	var $e = $(el);
+	var app = $e.closest('[app]').attr('app') || '';
+	if (!app && typeof startMenuIconApps !== 'undefined') {
+		// the menu wraps each icon in a row, so the row itself names no app
+		var icons = $e.closest('.start_menu_item').find('img[id]');
+		icons.each(function () {
+			if (!app && startMenuIconApps[this.id]) { app = startMenuIconApps[this.id]; }
+		});
+		var id = $e.closest('[id]').attr('id') || '';
+		if (!app && id && startMenuIconApps[id]) { app = startMenuIconApps[id]; }
+	}
+	return app || '';
+}
+
+// An app icon is an <img> too, so the tag cannot tell a picture the person wants
+// looked at from a piece of the program they want explained. The program's own
+// drawings give themselves away: a hint (what the control does), a title, an
+// ARIA label, the `help` topic the Help app reads, a button around them, or the
+// menu, taskbar, desk-shortcut, window-button and icon classes they wear. A
+// plain image - a photo, a chart, a drawing - carries none of those and is
+// looked at. The `_thumb` classes are sizing only (a shop's photograph and an
+// attachment preview wear them too), so they say nothing either way.
+function assistantImageIsControl(el) {
+	var $e = $(el);
+	if (!$e.length || (el.tagName || '').toLowerCase() !== 'img') { return false; }
+	// the picture may be the control itself (an icon with a hint or a label) ...
+	if ($e.is('[hint], [title], [aria-label], [help]')) { return true; }
+	// ... or sit inside one, or in the menu, taskbar, desk or window button. An
+	// ancestor's title or aria-label alone is not enough: a folder listing's
+	// contents carry one, and a photograph inside it is still a photograph.
+	if ($e.closest('[hint], [help], button, [role="button"], #start_menu, .start_menu_item, .taskbar_pin, .desk_app, .desk_place, .window_toggle').length) { return true; }
+	var cls = (typeof el.className === 'string') ? el.className : '';
+	return /(^|\s)(jonathan|draggable|start_menu_corner|[\w-]+_icon|[\w-]+_toggle)(\s|$)/.test(cls);
 }
 
 // Dropped onto a control or a window (not a picture): ask the guide about it,
@@ -152,7 +191,7 @@ function assistantHelpFor(panel, el) {
 		return;
 	}
 	// the element may name a help topic; hand it over so the guide has the briefing
-	panel.data('topic', $(el).closest('[help]').attr('help') || '');
+	panel.data('topic', $(el).closest('[help]').attr('help') || assistantAppFor(el));
 	assistantChatAdd(panel, 'user', 'Help me with: ' + desc);
 	assistantRemember(panel, 'user', 'The person dragged me onto this element and wants help using it: ' + desc);
 	assistantGuideStep(panel, 0);
@@ -354,14 +393,15 @@ function assistantIconInitializer() {
 			}
 			if (!elementLandedOn) { elementLandedOn = stack[stack.length - 1] || document.body; }
 			var $target = $(elementLandedOn);
-      console.log('Landed on:', elementLandedOn, 'ID:', $target.attr('id'), 'Class:', $target.attr('class'));
+			// a picture is something to look at; an icon is a piece of the program,
+			// and both are <img> elements, so ask the markers rather than the tag
+			var picture = !assistantImageIsControl(elementLandedOn);
 			var base64Data;
 			// Set a maximum bound for width or height (Qwen handles 400px - 600px beautifully)
 			var maxDimension = 600; 
 			var image;
 			var audio;
-			if ($target.is('img')) {
-				console.log('this is an image');
+			if ($target.is('img') && picture) {
 				var imgElement = $target[0]; // Get raw DOM element
 				
 				var origWidth = imgElement.naturalWidth || imgElement.width;
@@ -380,10 +420,8 @@ function assistantIconInitializer() {
 				ctx.drawImage(imgElement, 0, 0, newWidth, newHeight);
 				image = canvas.toDataURL('image/png');
 				base64Data = image.split(',')[1];
-				console.log('Downsized Image Base64 ready');
 
 			} else if ($target.is('canvas')) {
-				console.log('this is a canvas');
 				var canvasElement = $target[0];
 				
 				var origWidth = canvasElement.width;
@@ -402,10 +440,8 @@ function assistantIconInitializer() {
 				ctx.drawImage(canvasElement, 0, 0, newWidth, newHeight);
 				image = tempCanvas.toDataURL('image/png');
 				base64Data = image.split(',')[1];
-				console.log('Downsized Canvas Base64 ready');
 
 			} else if ($target.is('video')) {
-				console.log('this is a video snapshot');
 				var videoElement = $target[0];
 				
 				var origWidth = videoElement.videoWidth || videoElement.width || 600;
@@ -423,7 +459,6 @@ function assistantIconInitializer() {
 				ctx.drawImage(videoElement, 0, 0, newWidth, newHeight);
 				image = canvas.toDataURL('image/png');
 				base64Data = image.split(',')[1];
-				console.log('Downsized Video Snapshot Base64 ready');
 			} else if ($target.is('audio')) {
 				audio = $target.attr('src');
 			}
@@ -432,7 +467,8 @@ function assistantIconInitializer() {
 				assistantDrop(assistantPanel(this), { image: image, base64: base64Data, audio: audio });
 			}
 			else {
-				// not a picture: ask the guide about whatever it landed on
+				// a control, a window, or an icon drawn as a picture: the person
+				// wants help with the program, not a description of its artwork
 				assistantHelpFor(assistantPanel(this), elementLandedOn);
 			}
 

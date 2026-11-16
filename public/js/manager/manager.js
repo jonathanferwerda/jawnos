@@ -534,7 +534,7 @@ function assistantOpenPanel(panel) {
 	if (!panel || !panel.length) { return $(); }
 	if (!panel.data('greeted')) {
 		panel.data('greeted', 1);
-		assistantChatAdd(panel, 'guide', "Hello — I'm the Guide's associate. Ask me something, or drag my button onto a picture and I'll take a look.");
+		assistantChatAdd(panel, 'guide', "Hello — I'm the Guide's associate. Ask me something, or drag my button: onto a picture and I'll look, onto an icon or a control and I'll explain it.");
 	}
 	if (!panel.is(':visible')) {
 		// measure behind visibility, not display: none - a hidden element has no
