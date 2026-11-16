@@ -623,6 +623,57 @@ sub remote_upgrade_marker_reapable {
 	return $up->{'busy'} ? 0 : 1;
 }
 
+# How long a blocked rail may sit before the scheduled kick touches it. This is
+# a watchdog for a rail that is trying and failing, not a pull on a timer: a
+# machine with nothing to fetch is healthy and must be left alone.
+our $sync_stall_ms = 15 * 60 * 1000;
+
+# Name the reason the rail looks blocked, or '' when it is healthy. The four
+# shapes sync_kick can repair are also the four signals here: a pull marker no
+# live process owns, an orphaned running pull, an inactive saved hub, and a
+# failed pull with no completed one after it. The last one is what catches a
+# peer that keeps refusing the row stream - the old kick only nudged, so a
+# failure/backoff cycle could repeat until someone noticed.
+sub sync_stalled {
+	my ($now) = @_;
+	$now ||= &rightNow();
+	my $cut = $now - $sync_stall_ms;
+
+	# A pull in flight is not a stall, however long it legitimately runs.
+	my $up = &remote_upgrade_lock_state();
+	return '' if $up->{'busy'};
+	if (length($up->{'value'} || '') && $up->{'age'} > $sync_stall_ms) {
+		return 'a pull marker has had no live owner for ' . int($up->{'age'} / 60000) . 'm';
+	}
+	my $orphan = &db_query(q{select count(*) as c from sync_jobs where state = 'running' and cast(updated as integer) < ?}, $cut);
+	return '' unless $orphan;
+	my $orow = $orphan->hashes->[0] || {};
+	return 'a pull job has been left running' if ($orow->{'c'} || 0) > 0;
+
+	# A saved hub the reconnector marks inactive keeps every non-server in hub
+	# mode while the live peers are never dialled.
+	my $saved = &setting_grabber({ app => '__president', setting => 'sync_hub' }) || '';
+	if ($saved) {
+		my ($hub) = grep { ($_->{'signatorial'} || '') eq $saved } @{ &db_select('remote_machines')->hashes || [] };
+		return 'the saved hub is not active' if !$hub || (($hub->{'connection'} || '') ne 'active');
+	}
+
+	# A quiet rail has no failed pull after its last good one, and is not a
+	# stall. Keep the failure window bounded too: a failure from an hour ago on
+	# a machine that has been quiet since is history, not a live block.
+	my $done = &db_query(q{select max(cast(updated as integer)) as t from sync_jobs where direction = 'pull' and state = 'done'});
+	my $fail = &db_query(q{select max(cast(updated as integer)) as t from sync_jobs where direction = 'pull' and state = 'failed'});
+	# A half-seeded database must not take the controller down: with no job
+	# history there is nothing to judge, so the watchdog stays quiet.
+	return '' unless $done && $fail;
+	my $last_done = (($done->hashes->[0] || {})->{'t'} || 0) + 0;
+	my $last_fail = (($fail->hashes->[0] || {})->{'t'} || 0) + 0;
+	return '' unless $last_fail > $last_done;
+	return '' unless $last_fail >= $cut;
+	return '' if $last_done >= $cut;
+	return 'no pull has finished for ' . int(($now - $last_done) / 60000) . 'm since a failed one';
+}
+
 # Restart a sync rail that has stalled. Three things can hold it: a pull marker
 # whose process died (cleared at once when no live owner holds it), a pull job
 # row left running by a killed fork, and a per-peer backoff after a failed pull.
@@ -636,6 +687,14 @@ sub sync_kick {
 	$opts ||= {};
 	my $now = &rightNow();
 	my @did;
+	my $stall = '';
+	# The scheduled job asks first: a quiet house is not a stalled one. The
+	# manual CLI calls without this option, so it still kicks unconditionally.
+	if ($opts->{'only_if_stalled'}) {
+		$stall = &sync_stalled($now);
+		return undef unless length $stall;
+		push @did, $stall;
+	}
 
 	my $up = &remote_upgrade_lock_state();
 	if (length($up->{'value'} || '') && &remote_upgrade_marker_reapable($up)) {

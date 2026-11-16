@@ -22,6 +22,11 @@ require "$root/lib/JawnOS/Domain/Sync.pm";
 	sub new { my ($class, $rows) = @_; bless { rows => $rows || [] }, $class }
 	sub hashes { $_[0]->{'rows'} }
 }
+{
+	package SyncQuery;
+	sub new { my ($class, $row) = @_; bless { row => $row || {} }, $class }
+	sub hashes { [ $_[0]->{'row'} ] }
+}
 
 my $now = JawnOSTest::ts(2026, 11, 5, 14, 0, 0);
 
@@ -141,8 +146,60 @@ is($job->{'group'}, 'fast', 'it runs in the fast pool');
 ok(($job->{'timeout'} || 0) >= 30, 'it has a bounded slot');
 
 my $president = read_file("$root/perl/utility_jobs.pl");
-like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s*return &subs::sync_kick\(\);/s,
-	'utility_jobs.pl wires the job to subs::sync_kick');
+like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s*return &subs::sync_kick\(\{ only_if_stalled => 1 \}\);/s,
+	'utility_jobs.pl wires the scheduled job to the gated kick');
+
+# --- the watchdog only touches a rail that looks blocked ---------------------
+# A quiet house is healthy: the kick must not become another timed pull. It
+# fires on a failed pull with no completed one since, on a dead marker, on an
+# orphaned running job, or on an inactive saved hub.
+{
+	my %s = (
+		up      => { busy => 0, value => '', age => 0 },
+		running => 0,
+		done    => $now - 5 * 60 * 1000,
+		fail    => 0,
+		hub     => '',
+		peers   => [],
+	);
+	local *subs::rightNow = sub { $now };
+	local *subs::remote_upgrade_lock_state = sub { return { %{ $s{'up'} } }; };
+	local *subs::db_query = sub {
+		my ($sql) = @_;
+		return SyncQuery->new({ c => $s{'running'} }) if $sql =~ /state = 'running'/;
+		return SyncQuery->new({ t => $s{'done'} }) if $sql =~ /state = 'done'/;
+		return SyncQuery->new({ t => $s{'fail'} }) if $sql =~ /state = 'failed'/;
+		return SyncQuery->new({});
+	};
+	local *subs::db_select = sub { StopRows->new($s{'peers'}) };
+	local *subs::setting_grabber = sub { $s{'hub'} };
+
+	is(subs::sync_stalled(), '', 'a healthy quiet rail is left alone');
+	is(subs::sync_kick({ only_if_stalled => 1 }), undef, 'the scheduled job does nothing on a quiet rail');
+
+	$s{'done'} = $now - 20 * 60 * 1000;
+	$s{'fail'} = $now - 5 * 60 * 1000;
+	like(subs::sync_stalled(), qr/no pull has finished/, 'a failed pull with no success since is a stall');
+
+	$s{'fail'} = $now - 40 * 60 * 1000;
+	is(subs::sync_stalled(), '', 'an old failure after a long-quiet rail is history');
+
+	$s{'fail'} = 0;
+	$s{'up'} = { busy => 1, value => 'running:123', age => 0 };
+	is(subs::sync_stalled(), '', 'a pull in flight is not a stall');
+
+	$s{'up'} = { busy => 0, value => 'running:999999', age => 20 * 60 * 1000 };
+	like(subs::sync_stalled(), qr/pull marker/, 'a marker no live process owns is a stall');
+
+	$s{'up'} = { busy => 0, value => '', age => 0 };
+	$s{'running'} = 1;
+	like(subs::sync_stalled(), qr/pull job has been left running/, 'an orphaned running job is a stall');
+
+	$s{'running'} = 0;
+	$s{'hub'} = 'hub';
+	$s{'peers'} = [ { signatorial => 'hub', connection => 'inactive' } ];
+	like(subs::sync_stalled(), qr/saved hub/, 'an inactive saved hub is a stall');
+}
 
 # The headless relay is a queue drain, not a pooled background chore. It was
 # cloned into the Fast pool, whose fifteen minutes swallowed its own minute;
@@ -155,6 +212,8 @@ like($president, qr/utility_relay_ungroup\(\$controls->\{\$signatorial\}\)/,
 	'the controller heals a row still in the old Fast pool');
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
+like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_stalled\b/s,
+	'the domain loader maps sync_stalled to Sync.pm');
 like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_kick\b/s,
 	'the domain loader maps sync_kick to Sync.pm');
 
@@ -166,5 +225,6 @@ unlike($script, qr/remote_machine_negotiator/, 'it does not try to build a contr
 
 my $help = read_file("$root/perl/help/topics_features.pl");
 like($help, qr/Sync kick is the sync rail/, 'the utility controller help names the job');
+like($help, qr/looks first and only acts when the rail looks blocked/, 'the help says the scheduled job checks before it kicks');
 
 done_testing();

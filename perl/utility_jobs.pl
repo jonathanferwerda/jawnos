@@ -712,11 +712,13 @@ sub utility_functions() {
 				$gb::syncing = 0;
 			};
 		};
-		# A kick for a sync that has stalled: clear a pull marker nobody owns,
-		# reap an orphaned pull job, drop an inactive hub and nudge the ordinary
-		# pass (which still stamps its own last_run). See subs::sync_kick.
+		# A kick for a sync that has stalled: the scheduled job looks first and
+		# only clears a dead marker, an orphaned pull, an inactive hub or a
+		# failed-with-no-success rail, then nudges the ordinary pass (which still
+		# stamps its own last_run). A quiet house stays quiet. See
+		# subs::sync_stalled and subs::sync_kick.
 		$gb::timeouts->{'sync_kick'}->{'subroutine'} = sub {
-			return &subs::sync_kick();
+			return &subs::sync_kick({ only_if_stalled => 1 });
 		};
 		# The headless relay: drain the queue a job or a CLI leaves (see
 		# subs::remote_relay_queue_run), so a machine with no browser can still
