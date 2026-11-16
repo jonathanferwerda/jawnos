@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js
 # covers:    The clothesline leads with the most common recent day's sequence,
 #            not the latest day: a step moved earlier or later leaves the rest
 #            in order, a step done twice is one pill at its next turn, and the
@@ -10,7 +10,10 @@
 #            the poll. Only the appointments the person starts and stops
 #            themselves are learned; a task or default step stays with its
 #            parent. The days are the ground the person is on (home, a friend's,
-#            a hotel), read on the house clock, not the box's UTC.
+#            a hotel), read on the house clock, not the box's UTC. The
+#            alphabetical tail carries only an app whose own time slots or
+#            budget say it is on now, plus a running app that has time slots
+#            of its own; an app with no registration never hangs there.
 
 use strict;
 use warnings;
@@ -201,6 +204,37 @@ my $line = subs::clothesline_line_order($head, $tail);
 is_deeply([ map { $_->{'app'} } @{$line} ], [qw(water pee breakfast coffee)],
 	'the anticipatory head keeps its order, the tail is alphabetical, and no app repeats');
 
+# --- only an own registration wears in the tail -----------------------------
+my @one_am = (0, 0, 1, 16, 'Nov', 2026, 'Mon', 319, 0);
+ok(subs::clothesline_slot_wears({ time_plinko => { hour => ['1am'] } }, \@one_am),
+	'a slot registered for this hour wears');
+ok(!subs::clothesline_slot_wears({ time_plinko => { hour => ['6am'] } }, \@one_am),
+	'a slot registered for another hour does not');
+ok(subs::clothesline_slot_wears({ time_plinko => { hour => ['all'] } }, \@one_am),
+	'an all-hours slot wears at any hour');
+ok(!subs::clothesline_slot_wears({ time_plinko => {} }, \@one_am),
+	'an app with no registration never hangs itself');
+ok(!subs::clothesline_slot_wears({}, \@one_am),
+	'and nor does a registration with no time slots at all');
+ok(!subs::clothesline_slot_wears({ time_plinko => { hour => ['1am'], wday => ['Sun'] } }, \@one_am),
+	'a multi-slot registration needs every slot to match');
+ok(subs::clothesline_slot_wears({ time_plinko => { hour => ['1am'], wday => ['Mon'] } }, \@one_am),
+	'and wears when they all do');
+ok(subs::clothesline_slot_wears({ time_plinko => { hour => ['12pm'] } }, [0, 0, 12, 16, 'Nov', 2026, 'Mon', 319, 0]),
+	'noon reads as 12pm');
+ok(subs::clothesline_slot_wears({ time_plinko => { hour => ['12am'] } }, [0, 0, 0, 16, 'Nov', 2026, 'Mon', 319, 0]),
+	'midnight reads as 12am');
+
+ok(subs::clothesline_registered({ time_plinko => { hour => ['1am'] } }),
+	'an app with a chosen time slot is registered');
+ok(!subs::clothesline_registered({ time_plinko => { hour => [] } }),
+	'but an empty slot list is no registration');
+ok(!subs::clothesline_registered({ time_plinko => {} }),
+	'and neither is an empty time_plinko');
+ok(!subs::clothesline_registered({ duration_budget => ['neglected'] }),
+	'a budget alone does not keep a running app on the line');
+ok(!subs::clothesline_registered({}), 'nor does no clothesline setting at all');
+
 # --- the wiring ------------------------------------------------------------
 my $appointment = read_file(repo_root() . '/lib/JawnOS/Domain/Appointment.pm');
 like($appointment, qr/next if defined \$r->\{'source_uuid'\}/,
@@ -217,11 +251,15 @@ like($appointment, qr/clock_zone_house/, 'the scan runs on the house clock, not 
 my $hang = read_file(repo_root() . '/lib/JawnOS/Domain/Hang.pm');
 like($hang, qr/clothesline_sequence_anticipate\(\$daily/, 'the rail hangs the anticipatory head');
 like($hang, qr/clothesline_line_order/, 'the head leads and the tail is alphabetised');
-like($hang, qr/\$cadence >= 2 \|\| \$hourly/, 'a cadence past daily reaches the tail on its day');
+like($hang, qr/clothesline_slot_wears\(\$cl, \\\@slot\)/, 'the tail asks the app\'s own registration');
+like($hang, qr/clothesline_slot_now\(\$server_time\)/, 'the registration is read through the house-clock slot');
+like($hang, qr/clock_zone_adopt/, 'the slot read adopts the house zone, not the box UTC');
+like($hang, qr/clothesline_registered\(\$cl\)/, 'a running session is read for an app with its own time slots');
+like($hang, qr/type = \? or type = \?/, 'and its running appointments are what keep it up');
+unlike($hang, qr/clothesline_daily_auto/, 'no automatic hang fills the tail');
 unlike($hang, qr/clothesline_hang_slots/, 'the per-slot repeat helper is gone');
 like($hang, qr/\$item->\{'head'\} = 1/, 'the anticipatory head is marked for the divider');
 like($hang, qr/\$item->\{'wave'\} = \$row->\{'wave'\}/, 'each anticipatory step carries its wave');
-like($hang, qr/clock_zone_text\(\$server_time/, 'the automatic hang reads the house clock, not the box clock');
 
 my $clothesline_js = read_file(repo_root() . '/public/js/manager/clothesline.js');
 like($clothesline_js, qr/headCount/, 'the rail finds where the anticipatory head ends');
@@ -230,6 +268,9 @@ like($clothesline_js, qr/clothesLinePos\['centred'\]/, 'the divider opens at the
 like($clothesline_js, qr/v\['wave'\] != clothes\[i - 1\]\['wave'\]/, 'the rail draws a soft bar between waves');
 
 # --- every press re-hangs the line, and the reply carries it ----------------
+my $part32 = read_file(repo_root() . '/lib/JawnOS/Manager/Part32.pm');
+like($part32, qr/clothesline_slot_now/, 'the Configure slots are counted on the house clock too');
+
 my $part14 = read_file(repo_root() . '/lib/JawnOS/Manager/Part14.pm');
 like($part14, qr/&subs::hang_to_dry\(\);/, 'a press re-hangs the line at once');
 like($part14, qr/\$returner->\{'clothesline'\}/, 'the reply carries the new line');

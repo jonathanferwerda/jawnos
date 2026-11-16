@@ -478,9 +478,11 @@ sub clothesline_calculator($app) {
 	my $time_plinkos = clone $gb::time_plinkos;
 
 	foreach my $appt ( @{$appts} ) {
-		my $time = localtime($appt->{'timestamp'} / 1000);
+		# the panel's slots are the house's own words, so its counts read the
+		# same clock the rail matches them on
+		my @slot = &subs::clothesline_slot_now($appt->{'timestamp'});
 		for (my $n = 0; $n <= 8; $n++) {
-			my $ft = $time->[$n];
+			my $ft = $slot[$n];
 			if ($n == 2) {
 				if ($ft == 0) {
 					$ft = '12am';
@@ -489,14 +491,13 @@ sub clothesline_calculator($app) {
 					if ($ft == 12) { $ft = 24; }
 					$ft = ($ft - 12) . 'pm';
 				}
-				elsif ($time->[$n] > 0 && $time->[$n] < 13) {
+				elsif ($slot[$n] > 0 && $slot[$n] < 13) {
 					$ft .= 'am';
 				}
 			}
-			if ($n == 4) { $ft = $time->monname; }
-			if ($n == 5) { $ft += 1900; }
-			if ($n == 6) { $ft = $time->wdayname; }
-			push @{$time_plinkos->[$n]->{'clothes'}}, { formatted => $ft, value => $time->[$n] };
+			# the month's name, the full year and the weekday's name are
+			# already in the slot
+			push @{$time_plinkos->[$n]->{'clothes'}}, { formatted => $ft, value => $slot[$n] };
 		}
 	}
 	foreach my $tp ( @{$time_plinkos} ) {

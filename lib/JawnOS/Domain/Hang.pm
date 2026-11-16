@@ -43,107 +43,46 @@ sub hang_to_dry {
 	my $server_time = &rightNow();
 	my $returner = [];
 
-	my $time_plinkos = clone $gb::time_plinkos;
 	my $cls = &db_query('select * from settings where setting = ? and device = ? and app!= ? and value is not null', 'clothesline', $device,'__president')->hashes;
 	# Every app's days and the order the day runs in. The appointment scan reads
 	# only the steps the person starts and stops themselves, so a task or a
 	# default option does not teach the line a routine of its own.
 	my $daily = &clothesline_daily_hours();
-	my $apps = $daily->{'apps'} || {};
-	my $cur_time = localtime($server_time / 1000);
-	my $cur_hour = $cur_time->[2];
-	# the scan's hours are the house's clock, so the automatic hang asks the same
-	my $local_hour = &clock_zone_text($server_time, undef, '%H');
-	$local_hour = $cur_hour unless defined $local_hour && $local_hour =~ /^\d+$/;
-	$local_hour = 0 + $local_hour;
+	# The alphabetical tail is the apps whose own hang is on now. A time slot
+	# was picked in the house's words, so the match reads the house clock: the
+	# box keeps UTC, and a slot must not open eight o'clock late.
+	my @slot = &clothesline_slot_now($server_time);
 
 	foreach my $clr ( @{$cls} ) {
 
 		my $cl = eval { return decode_json $clr->{'value'} } || {};
-		my $time = localtime($server_time / 1000);
 		my $app = &unformat_name($clr->{'app'});
 		my $settings = &settings_grabber({ app => $app });
 		my $app_data = { name => $app, app => $app, formatted_name => &format_name($app), colour => $settings->{'colour'}, dark_colour => $settings->{'dark_colour'} };
-		my $time_plinko = $cl->{'time_plinko'} || {};
-		my @schedule = split ',', ($cl->{'schedule'} // '');
-		foreach my $schedule ( @schedule ) {
-
-		}
-		my $count = scalar keys %{$cl->{'time_plinko'}};
-		my $cl_count = 0;
-
-		for (my $n = 0; $n <= 8; $n++) {
-			my $ft = $time->[$n];
-			if ($n == 2) {
-				if ($ft == 0) {
-					$ft = '12am';
-				}
-				elsif ($ft >= 12) {
-					if ($ft == 12) { $ft = 24; }
-					$ft = ($ft - 12) . 'pm';
-				}
-				elsif ($time->[$n] > 0 && $time->[$n] < 13) {
-					$ft .= 'am';
-				}
-			}
-			if ($n == 4) { $ft = $time->monname; }
-			if ($n == 5) { $ft += 1900; }
-			if ($n == 6) { $ft = $time->wdayname; }
-
-			if ($time_plinko->{$time_plinkos->[$n]->{'name'}}) {
-
-				if (grep { $_ eq $ft || $_ eq 'all' } @{$time_plinko->{$time_plinkos->[$n]->{'name'}}}) {
-					$cl_count++;
-					if ($cl_count == $count) {
-						if (!&app_hidden_now($app)) {
-							push @{$returner}, $app_data;
-						}
-
-					}
-				}
+		# a registration by date and time, or one by budget: nothing with no
+		# registration hangs itself in the tail
+		push @{$returner}, $app_data if &clothesline_slot_wears($cl, \@slot) && !&app_hidden_now($app);
+		next if grep { $_->{'app'} eq $app } @{$returner};
+		# a running session stays even outside its slots, but only while the
+		# app has time slots of its own: a line with no registration at all
+		# does not hang
+		if (&clothesline_registered($cl)) {
+			my $running_appts = &db_query('select * from appointments where app = ? and (type = ? or type = ?)', $app, 'start', 'record')->hashes;
+			if (scalar @{$running_appts}) {
+				push @{$returner}, $app_data unless &app_hidden_now($app);
+				next;
 			}
 		}
-		unless (grep { $_->{'app'} eq $app } @{$returner}) {
-			my $running_appts = &db_query('select * from appointments where app = ? and (type = ? or type = ?)',$app, 'start','record')->hashes;
-			if (scalar @{$running_appts} > 0) {
-				push @{$returner}, $app_data;
-			}
-			foreach my $circumstance( keys %{$gb::budget_modes} ) {
-				if ($cl->{$circumstance . '_budget'}) {
-					my $budget = &subs::cache_get({ app => $app, context => 'budget', subcontext => $circumstance });
-					if (grep { $budget->{'status'} eq $_ } @{$cl->{$circumstance . '_budget'}}) {
-						push @{$returner}, $app_data unless grep { $_->{'app'} eq $app } @{$returner};
-					}
+		foreach my $circumstance( keys %{$gb::budget_modes} ) {
+			if ($cl->{$circumstance . '_budget'}) {
+				my $budget = &subs::cache_get({ app => $app, context => 'budget', subcontext => $circumstance });
+				if ($budget && grep { $budget->{'status'} eq $_ } @{$cl->{$circumstance . '_budget'}}) {
+					push @{$returner}, $app_data unless &app_hidden_now($app);
+					last;
 				}
 			}
 		}
 
-
-
-	}
-	# The automatic hang: an app the person runs directly, due today, at the hour
-	# its own history keeps it. One pill per app; the order is the alphabetical
-	# tail below. A setting of `off` in `clothesline_daily_auto` turns the
-	# automatic hanging off; it is on when unset.
-	my %configured = map { &unformat_name($_->{'app'}) => 1 } @{$cls};
-	my $auto = &setting_grabber({ app => '__president', setting => 'clothesline_daily_auto' });
-	unless (defined $auto && lc($auto) eq 'off') {
-		foreach my $app ( sort keys %{$apps} ) {
-			next if $configured{$app};
-			next if $daily->{'done'} && $daily->{'done'}{$app};
-			my $routine = $apps->{$app};
-			next unless $routine->{'due'};
-			my $cadence = $routine->{'cadence'} || 1;
-			my $hourly = defined $routine->{'hour'} && $routine->{'hour'} == $local_hour && ($routine->{'hour_days'} || 0) >= 2;
-			# a weekly or longer cadence belongs on its day wherever the clock is;
-			# a daily step still waits for the hour its history keeps, so the tail
-			# is not every app the person has ever run
-			next unless $cadence >= 2 || $hourly;
-			next if grep { $_->{'app'} eq $app } @{$returner};
-			my $aset = &settings_grabber({ app => $app });
-			next if &app_hidden_now($app);
-			push @{$returner}, { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
-		}
 	}
 	# The anticipatory head: the next steps of the routine under way, in the order
 	# the person takes them, whether it begins at eight or at ten. The rest of
@@ -187,6 +126,66 @@ sub hang_to_dry {
 	&setting_setter({ app => '__president', setting => 'clothesline', value => $jreturner });
 	return 0;
 
+}
+
+# The house clock's parts in the panel's own words: a saved time slot ('9am',
+# 'Sun', 'Nov') is picked against these. The box keeps UTC, so this one read
+# adopts the house zone instead of trusting the worker's clock.
+sub clothesline_slot_now {
+	my ($server_time) = @_;
+	my @slot;
+	my $restore = &clock_zone_adopt(&clock_zone_house());
+	my $now = localtime($server_time / 1000);
+	if (ref $now) {
+		@slot = map { $now->[$_] } 0 .. 8;
+		$slot[4] = $now->monname;
+		$slot[5] = $now->[5] + 1900;
+		$slot[6] = $now->wdayname;
+	}
+	$restore->() if $restore;
+	return @slot;
+}
+
+# An app's own clothesline registration: at least one chosen time slot. A
+# running session hangs in the tail only for an app that has one; a budget is
+# a different kind of registration and does not keep a running app up.
+sub clothesline_registered {
+	my ($cl) = @_;
+	return 0 unless ref $cl eq 'HASH';
+	my $slots = $cl->{'time_plinko'};
+	return 0 unless ref $slots eq 'HASH';
+	foreach my $chosen ( values %{$slots} ) {
+		return 1 if ref $chosen eq 'ARRAY' && scalar @{$chosen};
+	}
+	return 0;
+}
+
+# Does an app's own clothesline registration wear at this moment? Every chosen
+# time slot must match, and a slot reading `all` matches any value; an app with
+# no time slots never hangs itself this way, though a budget below still can.
+sub clothesline_slot_wears {
+	my ($cl, $slot) = @_;
+	return 0 unless ref $cl eq 'HASH' && ref $slot eq 'ARRAY';
+	my $time_plinko = $cl->{'time_plinko'} || {};
+	my $count = scalar keys %{$time_plinko};
+	return 0 unless $count;
+	my $matched = 0;
+	foreach my $tp ( @{$gb::time_plinkos} ) {
+		my $chosen = $time_plinko->{$tp->{'name'}};
+		next unless ref $chosen eq 'ARRAY' && scalar @{$chosen};
+		my $ft = $slot->[$tp->{'n'}];
+		next unless defined $ft;
+		if ($tp->{'name'} eq 'hour') {
+			if ($ft == 0) { $ft = '12am'; }
+			elsif ($ft >= 12) {
+				$ft = 24 if $ft == 12;
+				$ft = ($ft - 12) . 'pm';
+			}
+			else { $ft .= 'am'; }
+		}
+		$matched++ if grep { defined $_ && ($_ eq $ft || $_ eq 'all') } @{$chosen};
+	}
+	return $matched >= $count ? 1 : 0;
 }
 
 # Order the rail: the anticipatory steps keep the order they were learned in,
