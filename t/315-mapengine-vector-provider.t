@@ -47,8 +47,9 @@ like($engine, qr/jumpTo\(\{ center: \[at\.lon, at\.lat\], zoom: at\.z \}\)/,
 	'every draw pushes the engine centre and zoom at MapLibre');
 like($engine, qr/^\s+zoom: view\.z,$/m,
 	'and the camera opens at the engine zoom, not one step off it');
-like($basemap, qr/^\s+tileSize: 256,$/m,
-	'the source is 256-px tiled, so one camera zoom is one engine zoom');
+like($engine, qr/var TILE_RATIO = 2;/, 'the backdrop is built at twice the canvas box');
+like($engine, qr/MapLibre 4\.7 wedges on that for a vector source/,
+	'and the source cannot declare 256-px tiles instead: MapLibre wedges on it');
 like($engine, qr/if \(!vectorOn\) \{\n\t\t\t\tctx\.fillStyle = '#e9edf1';\n\t\t\t\tctx\.fillRect\(0, 0, dim\.w, dim\.h\);\n\t\t\t\tdrawTiles\(o, dim\.w, dim\.h\);\n\t\t\t\}/,
 	'the raster fill and tile fetch are skipped only when the vector layer is up');
 like($engine, qr/drawMaps\(o, dim\.w, dim\.h, view\.z\);\n\t\t\tdrawLines\(o, dim\.w, dim\.h, view\.z\);\n\t\t\tdrawMarkers\(o, dim\.w, dim\.h, view\.z\);/,

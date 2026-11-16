@@ -198,10 +198,12 @@ VECTOR_OK.loads = 0;
 	ok(engine.view().z <= 17, 'clampZ cannot pass the archive\'s deepest zoom (z17)');
 
 	// a CSS-scaled canvas (Travel's width:100%;height:70vh) is matched, not
-	// stretched: the backdrop takes the same scale the browser puts on the canvas
+	// stretched: the backdrop takes the canvas's CSS scale, halved because
+	// MapLibre's 512-px world is drawn at twice the canvas box (see vectorPosition)
 	state.canvas.offsetHeight = 200;
 	engine.draw();
-	eq(box.style.transform, 'scale(1,0.5)', 'the backdrop takes the canvas\'s CSS scale');
+	eq(box.style.transform, 'scale(0.5,0.25)', 'the backdrop takes the canvas\'s CSS scale, halved for its 512-px world');
+	eq(box.style.width, (state.canvas.width * 2) + 'px', 'and is built at twice the canvas box');
 	state.canvas.offsetHeight = 400;
 	engine.draw();
 

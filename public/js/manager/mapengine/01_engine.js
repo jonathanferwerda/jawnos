@@ -483,19 +483,24 @@ window.jawnosMap = (function () {
 			var s = vector.box.style;
 			s.left = (canvas.offsetLeft || 0) + 'px';
 			s.top = (canvas.offsetTop || 0) + 'px';
-			// MapLibre is sized in the engine's own (buffer) pixels, not the
-			// canvas's CSS box: the two differ when a page scales the canvas (the
-			// Travel canvas is width:100%;height:70vh), and a backdrop drawn at
-			// the CSS size would show a different extent from the one the plates
-			// are projected into. The same scale the browser puts on the canvas
-			// is put on the backdrop, so the two line up exactly.
-			s.width = dim.w + 'px';
-			s.height = dim.h + 'px';
+			// MapLibre's world is 512 * 2^z pixels and this engine's is 256 * 2^z,
+			// so the same camera zoom draws the same tiles at twice the size. Build
+			// the backdrop at twice the canvas box and scale it by half: the ground
+			// the two cover then matches exactly, while the camera zoom (and so the
+			// tile zoom) stays the engine's - a z17 archive is asked for at z17
+			// rather than overzooming a shallower level. The source cannot declare
+			// tileSize: 256 instead; MapLibre 4.7 wedges on that for a vector source
+			// and the style never loads at all.
+			var TILE_RATIO = 2;
+			s.width = (dim.w * TILE_RATIO) + 'px';
+			s.height = (dim.h * TILE_RATIO) + 'px';
 			s.transformOrigin = '0 0';
+			// the canvas may also be scaled by the page (Travel's is width:100%),
+			// and the backdrop takes that same scale so the two line up exactly
 			var vw = canvas.offsetWidth || 0, vh = canvas.offsetHeight || 0;
-			var sx = (vw > 0 && dim.w > 0) ? vw / dim.w : 1;
-			var sy = (vh > 0 && dim.h > 0) ? vh / dim.h : 1;
-			s.transform = (sx !== 1 || sy !== 1) ? 'scale(' + sx + ',' + sy + ')' : '';
+			var sx = (vw > 0 && dim.w > 0 ? vw / dim.w : 1) / TILE_RATIO;
+			var sy = (vh > 0 && dim.h > 0 ? vh / dim.h : 1) / TILE_RATIO;
+			s.transform = 'scale(' + sx + ',' + sy + ')';
 			if (vector.map && (vector.w !== dim.w || vector.h !== dim.h)) {
 				vector.w = dim.w; vector.h = dim.h;
 				try { vector.map.resize(); } catch (e) {}

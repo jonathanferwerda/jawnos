@@ -194,11 +194,6 @@ function travelBasemapStyle(maxzoom) {
 				type: 'vector',
 				// relative to the page origin, so the archive comes from this house
 				url: 'pmtiles:///manager/travel/basemap',
-				// 256-px tiles, the convention this house's map engine already uses:
-				// with MapLibre's 512 default a camera zoom sits one step off the
-				// engine's, so the plates land on the wrong ground and a z17 archive
-				// would only be asked for at engine z18
-				tileSize: 256,
 				// read from the archive's header, so a z17 build is drawn at z17
 				// instead of overzooming a blur of z14 tiles
 				maxzoom: maxzoom
