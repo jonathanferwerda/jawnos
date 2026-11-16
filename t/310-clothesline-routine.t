@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm public/js/manager/manager/09_app_back.js
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js
 # covers:    The clothesline leads with the most common recent day's sequence,
 #            not the latest day: a step moved earlier or later leaves the rest
 #            in order, a step done twice is one pill at its next turn, and the
@@ -164,6 +164,12 @@ like($hang, qr/clothesline_sequence_anticipate\(\$daily/, 'the rail hangs the an
 like($hang, qr/clothesline_line_order/, 'the head leads and the tail is alphabetised');
 like($hang, qr/\$cadence >= 2 \|\| \$hourly/, 'a cadence past daily reaches the tail on its day');
 unlike($hang, qr/clothesline_hang_slots/, 'the per-slot repeat helper is gone');
+like($hang, qr/\$item->\{'head'\} = 1/, 'the anticipatory head is marked for the divider');
+
+my $clothesline_js = read_file(repo_root() . '/public/js/manager/clothesline.js');
+like($clothesline_js, qr/headCount/, 'the rail finds where the anticipatory head ends');
+like($clothesline_js, qr/divider/, 'the rail draws the divider there');
+like($clothesline_js, qr/clothesLinePos\['centred'\]/, 'the divider opens at the middle on the first draw');
 
 # --- every press re-hangs the line, and the reply carries it ----------------
 my $part14 = read_file(repo_root() . '/lib/JawnOS/Manager/Part14.pm');

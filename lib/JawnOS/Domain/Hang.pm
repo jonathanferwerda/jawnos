@@ -164,6 +164,9 @@ sub hang_to_dry {
 		}
 		push @head, $item;
 	}
+	# The rail draws its divider where the anticipatory steps end and the
+	# alphabetical rest begins.
+	foreach my $item ( @head ) { $item->{'head'} = 1; }
 	@{$returner} = @{ &clothesline_line_order(\@head, $returner) };
 	&subs::subprocessor(sub {
 		my %done;

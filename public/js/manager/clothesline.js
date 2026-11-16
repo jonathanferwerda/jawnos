@@ -22,6 +22,7 @@ var clothesLinePos = {
 	moving: Date.now() - 300, 
 	startMove: undefined,
 	exists: 0,
+	centred: 0,
 	bordersize: 5,
 	// whether the wheel at hand belongs to a trackpad. Seeded from the last
 	// session and settled by wheelKind() below; while it is set, the press-and-
@@ -118,6 +119,12 @@ function clotheslineHanger(clothes) {
 			widths.push(itemWidth);
 			totalWidth += itemWidth;
 		});
+		// The anticipatory steps are marked `head`; the divider sits where they
+		// end and the alphabetical rest begins. With no head or no rest there is
+		// no boundary to draw.
+		var headCount = 0;
+		while (headCount < clothes.length && clothes[headCount]['head']) { headCount++; }
+		var divider = (headCount > 0 && headCount < clothes.length) ? offsets[headCount] : undefined;
 		// Keep at least one garment on screen: however far a drag or a glide pushes
 		// the line, the row can never be scrolled off into empty space. The first
 		// tile is pinned so its left edge stays inside the right of the canvas, and
@@ -129,6 +136,13 @@ function clotheslineHanger(clothes) {
 			if (maxX < minX) { maxX = minX; }
 			if (clothesLinePos['x'] > maxX) { clothesLinePos['x'] = maxX; }
 			if (clothesLinePos['x'] < minX) { clothesLinePos['x'] = minX; }
+		}
+		// On the first draw of a page, put the divider at the middle of the view:
+		// the anticipatory steps read to its left and the alphabetical rest to its
+		// right. A later poll, a drag or a glide keeps the place the person left.
+		if (!clothesLinePos['centred'] && divider != undefined && canvas.width) {
+			clothesLinePos['x'] = (canvas.width / 2) - divider;
+			clothesLinePos['centred'] = 1;
 		}
 		// Each garment is now its own solid coloured tile, so it no longer floats
 		// over the page: a tile border wears the themed ink and the label wears
@@ -221,6 +235,17 @@ function clotheslineHanger(clothes) {
 
 			appPosition.push([bx , by , bx + bw, by + bh, v]);
 		});
+		// the rule between the anticipatory steps and the alphabetical rest
+		if (divider != undefined) {
+			var barX = divider + clothesLinePos['x'];
+			var barTop = minHeight + pad + topGap;
+			var barHeight = Math.max(8, clothesLineHeight - (pad * 2) - topGap - shadowGap);
+			ctx.save();
+			ctx.globalAlpha = 0.35;
+			ctx.fillStyle = ink;
+			ctx.fillRect(barX - 1, barTop, 2, barHeight);
+			ctx.restore();
+		}
 		ctx.restore();
 		hangingClothes = 0;
 	}
