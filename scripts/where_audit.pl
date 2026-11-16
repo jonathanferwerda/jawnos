@@ -189,7 +189,7 @@ my $findings = @misses + @wrong + @drift;
 
 if ($json) {
 	require JSON::PP;
-	print JSON::PP->new->canonical->encode({
+	print JSON::PP->new->canonical->utf8->encode({
 		days     => $days,
 		since    => $since,
 		summary  => { %summary },

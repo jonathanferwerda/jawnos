@@ -182,4 +182,28 @@ ok((grep { $_->{'name'} eq 'drifted_name' } @{ $bounded->{'drift'} }),
 	unlike($brief, qr/--topics probe/, 'and the brief does not send an agent to cover a flag');
 }
 
+# --- a context byte that is not UTF-8 does not break the JSON -------------
+{
+	my $udir = tempdir(CLEANUP => 1);
+	my $udb  = "$udir/where.db";
+	my $udbh = DBI->connect("dbi:SQLite:dbname=$udb", '', '', { RaiseError => 1, PrintError => 0 });
+	$udbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
+	$udbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
+	# A byte string with no UTF-8 flag, as where.pl used to write a caller's
+	# command line verbatim. The app decodes the report with JSON::PP->utf8, so
+	# one lone 0xC2 here turned every scheduled run into "invalid JSON".
+	$udbh->do(
+		'insert into where_calls (uuid,machine,minute,name,hit,hits,context) values (?,?,?,?,?,?,?)',
+		undef, 'u1', 'me', $minute, 'probe_name', 1, 1,
+		'{"parent":"probe ' . pack('C', 0xC2) . ' tail"}',
+	);
+	$udbh->disconnect;
+
+	my ($code, $out) = run_audit('--db', $udb, '--root', $tree, '--days', 14, '--json');
+	is($code, 0, 'the audit still runs');
+	unlike($out, qr/\xC2(?![\x80-\xBF])/, 'emitting no lone 0xC2 byte');
+	my $data = eval { decode_json($out) };
+	ok(ref $data eq 'HASH', 'and the app can decode the report as UTF-8');
+}
+
 done_testing();

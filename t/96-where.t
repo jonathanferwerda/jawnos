@@ -578,6 +578,36 @@ EP
 		'a flag row carries the pattern, so the audit can tell it from a code name');
 }
 
+# --- a raw byte in the caller's command never reaches the ledger -----------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $db  = "$dir/where.db";
+	require DBI;
+	require Encode;
+	require JSON::PP;
+	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
+	$dbh->disconnect;
+
+	local $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	delete $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	local $ENV{'JAWNOS_WHERE_DB'} = $db;
+
+	# pack, not chr: a byte string with no UTF-8 flag, the way /proc hands a
+	# command line back. One such byte in a ledger context is what made the
+	# audit's JSON malformed and every Butler run fail.
+	where('probe_' . pack('C', 0xC2) . '_name');
+
+	my $check = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	my ($name, $ctx) = $check->selectrow_array('select name, context from where_calls');
+	$check->disconnect;
+	ok(eval { JSON::PP->new->utf8->decode($ctx); 1 },
+		'the context is valid UTF-8, so the audit can encode it as JSON');
+	unlike($ctx, qr/\xC2(?![\x80-\xBF])/, 'and no lone 0xC2 byte survives');
+	ok(eval { Encode::decode('UTF-8', $name, Encode::FB_CROAK()); 1 },
+		'and so is the name column');
+}
+
 # --- a miss records the leads it printed -----------------------------------
 {
 	my $dir = tempdir(CLEANUP => 1);

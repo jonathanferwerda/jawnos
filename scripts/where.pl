@@ -1322,7 +1322,7 @@ sub where_log {
 		my $now    = time() * 1000;
 		my $minute = strftime('%Y-%m-%d %H:%M', localtime);
 		my $uuid   = sprintf('%d-%d-%d', time, $$, int(rand(1_000_000)));
-		my $safe   = $name;
+		my $safe   = text_utf8($name);
 		$safe =~ s/[\x00-\x1f]+/ /g;
 		$safe = substr($safe, 0, 200);
 		$dbh->do(
@@ -1351,6 +1351,23 @@ sub where_log {
 # it printed. near is the leads a miss offered: without them the ledger can only
 # count misses, and an audit cannot tell a wrong ranking from a name that simply
 # is not in the tree. The context column stays well inside its 2000-character cap.
+# The ledger rides the sync, and the audit turns it into JSON the app decodes as
+# UTF-8. A raw byte in a caller's command line (a stray 0xC2 left by a shell
+# prompt) used to reach the context verbatim; one such row made every audit run
+# fail with "invalid JSON". Decode the bytes once, replacing whatever is not
+# part of a UTF-8 sequence, and hand back UTF-8 bytes. A value already holding
+# characters is left alone.
+sub text_utf8 {
+	my ($text) = @_;
+	return '' unless defined $text;
+	return $text if utf8::is_utf8($text);
+	require Encode;
+	my $copy = $text;
+	return $text if eval { Encode::decode('UTF-8', $copy, Encode::FB_CROAK()) ; 1 };
+	my $decoded = Encode::decode('UTF-8', $text, Encode::FB_DEFAULT());
+	return Encode::encode('UTF-8', $decoded);
+}
+
 sub where_context {
 	my ($mode, $out_bytes, $near) = @_;
 	my $cwd = eval { getcwd() } // ($ENV{'PWD'} // '');
@@ -1384,12 +1401,12 @@ sub where_context {
 		}
 	}
 	my $context = {
-		cwd         => substr($cwd, 0, 300),
-		args        => substr(join(' ', @raw_argv), 0, 300),
-		parent      => substr($parent_cmd, 0, 300),
-		grandparent => substr($grandparent_cmd, 0, 300),
-		term        => substr($ENV{'TERM_PROGRAM'} // $ENV{'TERM'} // '', 0, 80),
-		agent       => substr($ENV{'JAWNOS_AGENT'} // '', 0, 80),
+		cwd         => substr(text_utf8($cwd), 0, 300),
+		args        => substr(text_utf8(join(' ', @raw_argv)), 0, 300),
+		parent      => substr(text_utf8($parent_cmd), 0, 300),
+		grandparent => substr(text_utf8($grandparent_cmd), 0, 300),
+		term        => substr(text_utf8($ENV{'TERM_PROGRAM'} // $ENV{'TERM'} // ''), 0, 80),
+		agent       => substr(text_utf8($ENV{'JAWNOS_AGENT'} // ''), 0, 80),
 		mode        => $mode // 'name',
 		out_bytes   => defined $out_bytes ? int($out_bytes) : 0,
 	};
