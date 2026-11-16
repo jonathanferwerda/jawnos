@@ -237,7 +237,12 @@ Manager::app->hook(before_dispatch => sub {
 	if ($privilege eq 'resident'
 		&& !&app_public_path($path)
 		&& $path ne '/manager/security/media_lock') {
-		my $roles = $c->stash('session_roles') ||= &subs::session_role_keys($c);
+		# `stash('key')` is a plain call, not an lvalue: `||=` on it dies with
+		# "Can't modify non-lvalue subroutine call" on the first resident request.
+		# Every peer rail that carried a stored resident session then answered 500,
+		# so rows stopped moving between the machines (2026-11-16).
+		my $roles = $c->stash('session_roles') || &subs::session_role_keys($c);
+		$c->stash('session_roles' => $roles);
 		my $missing = &subs::access_scope_missing($path, $privilege, $roles);
 		if (defined $missing) {
 			my $label = $missing eq 'unclassified' ? 'this surface' : ucfirst join(' ', split(/_/, $missing));

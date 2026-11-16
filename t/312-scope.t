@@ -80,6 +80,13 @@ like($hooks, qr/this pass does not include/, 'and its denial names the missing s
 my $gate_at = index($hooks, 'access_scope_missing');
 my $tier_at = index($hooks, 'tier_denied');
 ok($tier_at >= 0 && $gate_at > $tier_at, 'the scope check follows the tier check');
+# `$c->stash('key') ||= ...` parses but dies at runtime - "Can't modify
+# non-lvalue subroutine call" - on the first resident request, and every peer
+# rail that carried a stored resident session then answered 500. The roles are
+# cached through the setter form instead, so pin that no call is an lvalue.
+unlike($hooks, qr/\$c->stash\([^)]*\)\s*(?:\|\|=|(?<![=!<>~])=(?![=>~]))/,
+	'no stash() call is used as an assignment target');
+like($hooks, qr/\$c->stash\('session_roles' => \$roles\)/, 'the resident roles are cached through the setter form');
 my $layout = read_file("$root/templates/manager.html.ep");
 like($layout, qr/taskbar_identity/, 'the taskbar carries the resident identity');
 like($layout, qr/session_role_names/, 'with the roles the person is wearing');
