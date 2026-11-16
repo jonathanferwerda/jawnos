@@ -260,6 +260,7 @@ like( $renderer, qr/registerComponent\('footprint'/, 'buildings are extruded fro
 like( $renderer, qr/ExtrudeGeometry/, 'as real geometry' );
 like( $renderer, qr/registerComponent\('worldphoto'/, 'a picture is a card in the world' );
 like( $renderer, qr/Math\.PI - \(ph\.heading \* Math\.PI \/ 180\)/, 'turned by the heading the camera kept' );
+like( $renderer, qr/registerComponent\('worldmap'/, 'a measured map plate is textured by three' );
 like( $renderer, qr/registerComponent\('worldlabel'/, 'labels are canvas textures, not a font fetched from a CDN' );
 unlike( $renderer, qr/cdn\.aframe\.io/, 'and nothing is fetched from A-Frame\'s CDN' );
 

@@ -17,6 +17,7 @@
 				font: 13px sans-serif; color: #ddd; background: #0b0d10;
 			}
 		</style>
+		<script src="/js/aframe/aframe.min.js"></script>
 	</head>
 	<body>
 		<a-scene id="world_scene" embedded
@@ -33,7 +34,6 @@
 		</a-scene>
 		<div id="world_loading"><%= &subs::ui('Building the virtual world…') %></div>
 		<div id="world_hint"><%= &subs::ui('WASD to walk · drag to look · click a photo') %></div>
-		<script src="/js/aframe/aframe.min.js"></script>
 		<script src="/js/travel_world.js"></script>
 	</body>
 </html>

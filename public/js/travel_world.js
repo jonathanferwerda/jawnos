@@ -127,6 +127,37 @@
 		}
 	});
 
+	// ---- a measured map plate: a plane textured by three -------------------
+	window.AFRAME.registerComponent('worldmap', {
+		schema: {
+			url: { default: '' },
+			w: { default: 10 },
+			d: { default: 10 },
+			opacity: { default: 1 }
+		},
+		init: function () { this.build(); },
+		update: function () { this.build(); },
+		build: function () {
+			var d = this.data;
+			if (!d.url) { return; }
+			var geo = new THREE.PlaneGeometry(Math.max(1, d.w), Math.max(1, d.d));
+			geo.rotateX(-Math.PI / 2);
+			var material = new THREE.MeshBasicMaterial({
+				color: 0xffffff, transparent: true, opacity: d.opacity,
+				side: THREE.DoubleSide, depthWrite: d.opacity >= 1
+			});
+			var texture = new THREE.TextureLoader().load(d.url);
+			// a picture is not a power-of-two texture: no mipmaps, so no GL warning
+			texture.minFilter = THREE.LinearFilter;
+			texture.generateMipmaps = false;
+			material.map = texture;
+			material.needsUpdate = true;
+			var mesh = new THREE.Mesh(geo, material);
+			mesh.position.y = 0.02;
+			this.el.setObject3D('mesh', mesh);
+		}
+	});
+
 	// ---- a picture, standing where it was taken ----------------------------
 	window.AFRAME.registerComponent('worldphoto', {
 		schema: { url: { default: '' } },
@@ -135,6 +166,8 @@
 			var material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
 			if (d.url) {
 				var texture = new THREE.TextureLoader().load(d.url);
+				texture.minFilter = THREE.LinearFilter;
+				texture.generateMipmaps = false;
 				material.map = texture;
 				material.needsUpdate = true;
 			}
@@ -179,6 +212,8 @@
 	function build(data) {
 		if (built || !data) { return; }
 		built = true;
+		var loading = document.getElementById('world_loading');
+		if (loading) { loading.style.display = 'none'; }
 		var root = document.getElementById('world_root');
 		if (!root) { return; }
 		root.innerHTML = '';
@@ -191,14 +226,15 @@
 			});
 		});
 
-		// ---- the measured maps, laid flat at their true place --------------
+	// ---- the measured maps, laid flat at their true place ----------------
 		(data.maps || []).forEach(function (m) {
 			if (!m || !m.url) { return; }
 			var group = el('a-entity', { position: m.px + ' 0 ' + m.pz, rotation: '0 ' + (m.rot || 0) + ' 0' });
-			el('a-plane', {
-				width: m.w, height: m.d, rotation: '-90 0 0',
-				position: m.x + ' 0.02 ' + m.z,
-				material: 'src: ' + m.url + '; transparent: true; opacity: ' + (m.opacity || 1) + '; side: double; shader: flat'
+			// a texture loaded by three, not A-Frame's material src: the map file ends
+			// .enc, and A-Frame's texture component reads an unknown suffix as a video
+			el('a-entity', {
+				position: m.x + ' 0 ' + m.z,
+				worldmap: { url: m.url, w: m.w, d: m.d, opacity: m.opacity || 1 }
 			}, group);
 		});
 
@@ -299,6 +335,8 @@
 	}
 
 	function ready() {
+		var loading = document.getElementById('world_loading');
+		if (loading && built) { loading.style.display = 'none'; }
 		try { window.parent.postMessage({ type: 'travel_world_ready' }, location.origin); } catch (e) {}
 	}
 

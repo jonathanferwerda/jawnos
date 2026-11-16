@@ -399,7 +399,8 @@ function travelWorldFrame(st, data) {
 
 	st.listener = function(e) {
 		if (e.origin !== location.origin || !e.data || !e.data.type) { return; }
-		if (e.data.type === 'travel_world_ready') {
+		else if (e.data.type === 'travel_world_ready') {
+			travelWorldNote('');
 			if (travelWorldState !== st || !frame.contentWindow) { return; }
 			frame.contentWindow.postMessage({ type: 'travel_world_build', data: data }, location.origin);
 		}
