@@ -618,15 +618,17 @@ sub media_content_type($file, $verdict) {
 	my @parts = split /\./, $name;
 	my $ext = lc $parts[-1];
 	return $media_type_for_ext{$ext} if $media_type_for_ext{$ext};
-	return $verdict if defined $verdict && $verdict =~ m{^(?:audio|video)/};
+	return $verdict if defined $verdict && $verdict =~ m{^(?:audio|video|image)/};
 	return undef;
 }
 
-# A media response is inline, so a phone's player receives it as the track and
-# not as a download; every other file keeps render_file's attachment default.
+# A media response is inline, so a phone's player receives it as the track, an
+# <img> receives it as a picture, and a three texture may load it at all (a
+# CORS-mode image served as a download is refused); every other file keeps
+# render_file's attachment default.
 sub media_render_args($file, $verdict) {
 	my $type = &media_content_type($file, $verdict);
-	return () unless defined $type && $type =~ m{^(?:audio|video)/};
+	return () unless defined $type && $type =~ m{^(?:audio|video|image)/};
 	return (content_type => $type, content_disposition => 'inline');
 }
 
@@ -731,7 +733,7 @@ sub stream_sealed_file($c, $job, $file, $cache_control) {
 	$name = Encode::encode('UTF-8', $name) if eval { require Encode; 1 };
 
 	my $content_type = &media_content_type($file, $job->{'verdict'}) || 'application/x-download';
-	my $disposition = $content_type =~ m{^(?:audio|video)/} ? 'inline' : 'attachment';
+	my $disposition = $content_type =~ m{^(?:audio|video|image)/} ? 'inline' : 'attachment';
 	$c->res->code(200);
 	$c->res->headers->content_type($content_type);
 	$c->res->headers->content_disposition($disposition . ';filename=' . $name);

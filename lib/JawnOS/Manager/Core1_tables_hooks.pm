@@ -35,13 +35,16 @@ our %help_search_tables = (
 	option_category => [qw/name/],
 );
 
-# The MIME an <audio>/<video> element can open, from the extension first (an
-# mp4 can be either) and the sniffer's verdict second. /play and /file_open
+# The MIME an <audio>/<video>/<img> element can open, from the extension first
+# (an mp4 can be either) and the sniffer's verdict second. /play and /file_open
 # used to hand the data to render_file() without a type, and that helper
 # answers "application/x-download" with "Content-Disposition: attachment".
 # Desktop Chrome sniffs past that; Android's media stack does not - it refused
-# the track outright. Only audio/video are listed here: everything else keeps
-# the download disposition it had.
+# the track outright. Pictures have the same trouble from the other side: three
+# loads a texture in CORS mode (its ImageLoader asks for crossOrigin
+# "anonymous"), and Chromium refuses a CORS image served as a download, so the
+# virtual world's map plates and photo prints came through blank. Every other
+# file keeps the download disposition it had.
 our %media_type_for_ext = (
 	mp3 => 'audio/mpeg', m4a => 'audio/mp4', aac => 'audio/aac',
 	wav => 'audio/wav', flac => 'audio/flac', oga => 'audio/ogg',
@@ -50,6 +53,9 @@ our %media_type_for_ext = (
 	webm => 'video/webm', mov => 'video/quicktime',
 	wmv => 'video/x-ms-wmv', avi => 'video/x-msvideo',
 	mpg => 'video/mpeg', mpeg => 'video/mpeg',
+	jpg => 'image/jpeg', jpeg => 'image/jpeg', png => 'image/png',
+	gif => 'image/gif', webp => 'image/webp', avif => 'image/avif',
+	bmp => 'image/bmp', tif => 'image/tiff', tiff => 'image/tiff',
 );
 
 our %file_relay_down;
