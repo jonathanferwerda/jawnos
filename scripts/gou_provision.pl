@@ -703,11 +703,23 @@ sub _wait_for_reboot {
 # every flashed board keeps that behaviour until this runs.
 sub _pmic_poweroff {
 	my ($dev) = @_;
-	return 0 unless _command_path('fdtput') && _command_path('fdtget');
+	# Every early return says why. The first board that flashed without this
+	# reported nothing at all, and a silent gap in the flash result is the
+	# hardest kind to chase: the board is the only place the answer lives.
+	unless (_command_path('fdtput') && _command_path('fdtget')) {
+		_note('pmic: this host has no dtc tools, so the board keeps the image DTB');
+		return 0;
+	}
 	my $p1 = &_first_partition($dev);
-	return 0 unless defined $p1 && -e $p1;
+	unless (defined $p1 && -e $p1) {
+		_note('pmic: the boot partition is not visible yet (' . (defined $p1 ? $p1 : '?') . ')');
+		return 0;
+	}
 	my $mount = File::Temp::tempdir('gou-boot-XXXXXX', TMPDIR => 1, CLEANUP => 1);
-	return 0 unless system('mount', $p1, $mount) == 0;
+	unless (system('mount', $p1, $mount) == 0) {
+		_note("pmic: could not mount $p1");
+		return 0;
+	}
 	my $patched = 0;
 	my $dtb = "$mount/amlogic/meson64_odroidgou.dtb";
 	my $system = '/soc/bus@ff800000/i2c@5000/pmic@1c';
@@ -717,6 +729,10 @@ sub _pmic_poweroff {
 			system('fdtput', '-d', $dtb, $charger, 'rockchip,system-power-controller');
 		}
 		$patched = 1 if system('fdtput', $dtb, $system, 'rockchip,system-power-controller') == 0;
+		_note('pmic: fdtput refused the device tree') unless $patched;
+	}
+	else {
+		_note("pmic: no $dtb on the boot partition");
 	}
 	system('sync');
 	system('umount', $mount);

@@ -135,6 +135,7 @@ like($provision, qr/sub _pmic_poweroff/, 'the flash makes the panel able to powe
 like($provision, qr{/soc/bus\@ff800000/i2c\@5000/pmic\@1c}, 'the always-on bus PMIC gets the flag');
 like($provision, qr{/soc/bus\@ffd00000/i2c\@1c000/pmic\@20}, 'and the charger PMIC has it removed');
 like($provision, qr/push \@done, 'pmic-poweroff'/, 'reported on the board');
+like($provision, qr/pmic: this host has no dtc tools/, 'a step that cannot run says why, not nothing');
 
 # A board arrives with no password anyone knows and a card nobody has answered
 # for. The panel asks both questions before the launcher; the root pass applies
