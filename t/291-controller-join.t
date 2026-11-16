@@ -101,6 +101,21 @@ like($first_boot, qr/return 0 if -e \$path;/, 'never over a state the shell reco
 like($first_boot, qr/fullscreen => \\1/, 'fullscreen from the first start');
 like($first_boot, qr/_desktop_shell_state\(\) \? 'fullscreen'/, 'and reports what it did');
 
+# The panel guard is a oneshot the timer runs every fifteen seconds, so a pass
+# that heals nothing is the common case. The image's guard ended on a window
+# search, so it failed on every run and left the unit failed for the board's
+# whole life.
+my $guard = slurp('scripts/gou_kiosk_guard.sh');
+like($provision, qr{/usr/local/sbin/gou-kiosk-guard}, 'the flash installs the panel guard');
+like($provision, qr/gou-kiosk-guard\.timer/, 'with its timer');
+like($provision, qr/_wants_link\(\$wants, 'gou-kiosk-guard\.timer'\)/, 'enabled, so a board that lost it gets it back');
+unlike($guard, qr/exit 1/, 'no path fails the oneshot');
+like($guard, qr/^exit 0$/m, 'every path ends in success');
+like($guard, qr/--class JawnOS/, 'the window is looked for by class');
+like($guard, qr/--name '\^JawnOS\$'/, 'and by the title the shell sets');
+my $guard_syntax = system('sh', '-n', root() . '/scripts/gou_kiosk_guard.sh');
+is($guard_syntax, 0, 'the guard is valid POSIX shell');
+
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');
 

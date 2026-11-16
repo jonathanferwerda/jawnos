@@ -730,6 +730,34 @@ sub _network_manager_profile {
 # The one unit a flashed board runs before the house does: redeem the token,
 # find its card, then get out of the way. A oneshot with no token left is a
 # no-op, so it stays enabled and costs nothing after the first boot.
+# The kiosk guard: one pass every fifteen seconds that returns the panel when
+# no game owns it. It is a oneshot, so a pass with nothing to heal has to
+# succeed - the image's copy ended on a window search and failed forever.
+sub _kiosk_guard_unit {
+	return <<'UNIT';
+[Unit]
+Description=Return the JawnOS kiosk when no game or dark idle owns the panel
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gou-kiosk-guard
+UNIT
+}
+
+sub _kiosk_guard_timer {
+	return <<'UNIT';
+[Unit]
+Description=Check the kiosk every fifteen seconds
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=15s
+
+[Install]
+WantedBy=timers.target
+UNIT
+}
+
 sub _first_boot_unit {
 	return <<'UNIT';
 [Unit]
@@ -1013,6 +1041,35 @@ sub _autopopulate {
 		}
 		else {
 			$error = 'could not write the splash unit';
+		}
+	}
+	if (!length $error) {
+		# The panel's guard. Written from this tree rather than trusted to the
+		# image, which is a copy of an older card: the installer's guard failed
+		# on every run, so the timer left the unit failed for a board's whole
+		# life. The script and its two units travel together.
+		my $source = File::Basename::dirname(Cwd::abs_path($0)) . '/gou_kiosk_guard.sh';
+		my $body = -f $source ? _slurp($source) : '';
+		my $sbin = "$mount/usr/local/sbin";
+		File::Path::make_path($sbin) unless -d $sbin;
+		my $path = "$sbin/gou-kiosk-guard";
+		if (length $body && _write_file($path, $body) && chmod(0755, $path) && chown(0, 0, $path)) {
+			my $units = "$etc/systemd/system";
+			my $wants = "$units/timers.target.wants";
+			File::Path::make_path($wants) unless -d $wants;
+			my $svc = "$units/gou-kiosk-guard.service";
+			my $timer = "$units/gou-kiosk-guard.timer";
+			if (_write_file($svc, _kiosk_guard_unit()) && chmod(0644, $svc) && chown(0, 0, $svc)
+				&& _write_file($timer, _kiosk_guard_timer()) && chmod(0644, $timer) && chown(0, 0, $timer)) {
+				&_wants_link($wants, 'gou-kiosk-guard.timer');
+				push @done, 'kiosk-guard';
+			}
+			else {
+				$error = 'could not write the kiosk guard units';
+			}
+		}
+		else {
+			$error = 'could not copy the kiosk guard script';
 		}
 	}
 	if (!length $error) {
