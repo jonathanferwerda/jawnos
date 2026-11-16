@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/File.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Controller/manager_configure4.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Controller/manager_mail.pm lib/JawnOS/Controller/mail_ws.pm qa/coding_night/run.pl qa/systemd/jawnos-qa-coding.service desktop/install-wallet.sh jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jt/jt_01_globals_ble_house.ino jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jw/jw_01_globals.ino jw/jw_03_setup.ino public/js/manager/embedded/01_ota_nowme.js templates/embedded/body.html.ep lib/JawnOS/Controller/manager_mail2.pm lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Controller/manager_misc10.pm lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Controller/manager_misc11.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part10.pm
+# tests-for: lib/JawnOS/Domain/File.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Domain/Sent.pm lib/JawnOS/Domain/Doctor.pm lib/JawnOS/Manager/Part04.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part17.pm lib/JawnOS/Controller/manager_configure.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Controller/manager_configure4.pm lib/JawnOS/Controller/manager_configure5.pm lib/JawnOS/Controller/manager_embedded.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc12.pm lib/JawnOS/Controller/manager_misc14.pm lib/JawnOS/Controller/manager_mail.pm lib/JawnOS/Controller/mail_ws.pm qa/coding_night/run.pl qa/systemd/jawnos-qa-coding.service desktop/install-wallet.sh jp/alarmclock/alarmclock_02_ble_handlers_wifi_setup.ino jp/alarmclock/alarmclock_03_loop_house_inputs_jobs.ino jt/jt_01_globals_ble_house.ino jt/jt_02_lorawan_radio_gps.ino jt/jt_03_setup.ino jw/jw_01_globals.ino jw/jw_03_setup.ino public/js/manager/embedded/01_ota_nowme.js templates/embedded/body.html.ep lib/JawnOS/Controller/manager_mail2.pm lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Controller/manager_misc10.pm lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Controller/sesh_check.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/Weather.pm lib/JawnOS/Manager/Part30.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Controller/manager_misc11.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part10.pm
 # covers:    The second audit pass: file reads stay inside a root, peer proof is
 #           signed, the console channel escapes its data, and OTA needs a token.
 
@@ -201,15 +201,14 @@ like($ws, qr/\$freq =~ \/\\A\\d\{1,5\}/, 'the synth frequency is digits only');
 like($ws, qr/\$length =~ \/\\A\\d\{1,2\}/, 'the synth length is digits only');
 
 my $conf5 = source('lib/JawnOS/Controller/manager_configure5.pm');
-ok(index($conf5, q{'sqlite3 ' . &subs::shell_quote($database) . ' .tables'}) >= 0,
-	'a table probe quotes the database path');
-ok(index($conf5, q{&subs::shell_quote(".backup '$database.1.db'")}) >= 0, 'a backup operand is quoted whole');
-ok(index($conf5, "system('mkdir', '-p', \$temp_folder)") >= 0, 'the export folder is made in list form');
-ok(index($conf5, "system('touch', \$tdatabase)") >= 0, 'the export scratch file is made in list form');
-ok(index($conf5, "system('shred', '-u', \$tdatabase)") >= 0, 'the export scratch file is shredded in list form');
-ok(index($conf5, "system('rm', '-R', \$temp_folder)") >= 0, 'the export folder is removed in list form');
 my $file_domain = source('lib/JawnOS/Domain/File.pm');
 ok(index($file_domain, 'opendir(my $dh, $path)') >= 0, 'the adopt scan reads a folder in Perl, not by ls');
+my $doctor = source('lib/JawnOS/Domain/Doctor.pm');
+like($doctor, qr/shell_quote\(\$database\)/, 'the doctor quotes the database path');
+like($doctor, qr/shell_quote\(\$newdb\)/, 'and the fresh database path');
+like($doctor, qr/shell_quote\("\.backup/, 'a backup operand is quoted whole');
+like($doctor, qr/File::Temp::tempdir/, 'its scratch directory comes from File::Temp');
+like($doctor, qr/pragma integrity_check/, 'the doctor reads the database integrity');
 unlike($conf5, qr/`ls \$folder`/, 'no raw folder reaches ls');
 
 my $misc10 = source('lib/JawnOS/Controller/manager_misc10.pm');

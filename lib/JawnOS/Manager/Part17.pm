@@ -60,21 +60,34 @@ use IPC::Open2 qw(open2);
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
 sub database_vacuum_bag() {
-	my @protection = @gb::protected;
-	push @protection, keys %{$gb::known_appts};
-	my $settings = &subs::db_query('select * from settings where setting !=?', 'uuid')->hashes;
-
-	foreach my $protect ( @protection ) {
-		@{$settings} = grep { $_->{'app'} ne $protect } @{$settings};
-	}
-	my $appts = &subs::db_query('select distinct(app) from appointments')->hashes;
-	my @unique_settings;
+	# An app belongs in the bag when its settings are still here but no
+	# appointment names it. The house apps and the built-in apps are not
+	# orphans: they live on without an appointment, so their settings must not
+	# be offered. A row with no app name is not an app; the settings prune
+	# (scripts/settings_prune.pl) owns those.
+	my %protected = map { $_ => 1 } @gb::protected;
+	$protected{$_} = 1 for keys %{ $gb::known_appts || {} };
+	my $settings = &subs::db_query('select distinct(app) from settings where setting != ?', 'uuid')->hashes || [];
+	my $appts = &subs::db_query('select distinct(app) from appointments')->hashes || [];
+	# Names are stored as the bytes the app was given; the browser and the JSON
+	# round trip speak characters. Decode here, so an accented or apostrophised
+	# name comes back from the checkbox as the row it names.
+	my %has_appt = map {
+		(defined $_->{'app'} && length $_->{'app'}) ? (&subs::text_chars($_->{'app'}) => 1) : ()
+	} @{$appts};
+	# A card ticked Permanent is a promise that its settings outlive the last
+	# appointment, so it is not an orphan to offer here either.
+	my %permanent = map {
+		(defined $_->{'app'} && length $_->{'app'}) ? (&subs::text_chars($_->{'app'}) => 1) : ()
+	} @{ &subs::db_query(q{select distinct app from settings where setting = 'permanent' and value = 'checked'})->hashes || [] };
+	my (%seen, @unique_settings);
 	foreach my $s ( @{$settings} ) {
-		unless ( grep { $_->{'app'} eq $s->{'app'} } @{$appts} ) {
-			push @unique_settings, $s->{'app'} unless grep { $_ eq $s->{'app'} } @unique_settings;
-		}
+		my $app = defined $s->{'app'} ? &subs::text_chars($s->{'app'}) : undef;
+		next unless defined $app && length $app;
+		next if $protected{$app} || $permanent{$app} || $has_appt{$app} || $seen{$app}++;
+		push @unique_settings, $app;
 	}
-	return @unique_settings;
+	return sort @unique_settings;
 }
 
 # Merge one table's rows into the live database. The row source is a closure so the

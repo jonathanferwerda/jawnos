@@ -236,82 +236,132 @@ sub action_19489 {
 }
 
 # GET /manager/configure/database_vacuum
+# The list is the orphaned apps found by database_vacuum_bag. The confirm below
+# takes the settings and the rows the app left in the other tables. Names are
+# stored as the person typed them and may carry any printable character, so an
+# attribute and the visible label are both HTML-encoded here.
 sub action_19541 {
 	my $c = shift;
-	my $timestamp = $c->param('timestamp');
-	my $html = "You are about to clean up settings from the following orphaned apps<br><br>";
-
+	my $html = &subs::html_text(&subs::ui('You are about to clean up the settings and leftover data of the following orphaned apps')) . '<br><br>';
 	my @unique_settings = &database_vacuum_bag();
-
 	foreach my $us ( @unique_settings ) {
-		$html .= '<input type="checkbox" checked="checked" app="' . $us . '" class="database_vacuum_checkbox">' . &subs::format_name($us) . "<br>";
+		my $app = &subs::html_text($us);
+		$html .= '<label><input type="checkbox" checked="checked" app="' . $app . '" class="database_vacuum_checkbox"> ' . &subs::html_text(&subs::format_name($us)) . '</label><br>';
 	}
-
 	$html .= '<img src="/images/decipherable/vacuum.png" id="database_vacuum_confirm" class="medium_thumb">';
-	$html = "Your house is clean!" if scalar @unique_settings == 0;
-	$c->render(json => { html => $html });
+	$html = &subs::html_text(&subs::ui('Your house is clean!')) if scalar @unique_settings == 0;
+	$c->render(json => { html => $html, count => scalar @unique_settings });
 }
 
 # POST /manager/configure/database_vacuum_confirm
+# A selected app is cleaned only while it really has no appointments: the list
+# may have been drawn a while ago, and a new record is a reason to leave the
+# app alone. Protected and built-in apps are refused here as well as in the bag,
+# so a hand-made request cannot reach the house's own settings.
 sub action_19574 {
 	my $c = shift;
-	my $timestamp = $c->param('timestamp');
 	my $checkboxes = $c->param('checkboxes');
-	$checkboxes = eval { return decode_json $checkboxes } || [];
-	my $html = "You have cleaned:<br><br>";
-	foreach my $us ( @{$checkboxes} ) {
-		&subs::db_delete('settings', { app => $us });
-		$html .= &subs::format_name($us) . "<br>";
+	my $checked = eval { decode_json $checkboxes } || [];
+	$checked = [] unless ref $checked eq 'ARRAY';
+	my %protected = map { $_ => 1 } @gb::protected;
+	$protected{$_} = 1 for keys %{ $gb::known_appts || {} };
+	my $html = '<b>' . &subs::html_text(&subs::ui('You have cleaned:')) . '</b><br><br>';
+	my (@cleaned, @skipped, @records);
+	# One transaction: the whole selection is cleaned or none of it is. It also
+	# turns thousands of row commits into one, so the clean-up finishes inside
+	# the request.
+	my ($db) = &subs::database_grabber();
+	my $tx = ($db && $db->dbh->{AutoCommit}) ? eval { $db->dbh->begin_work; 1 } : 0;
+	my $error;
+	eval {
+		foreach my $app ( @{$checked} ) {
+			next unless defined $app && length $app;
+			$app = &subs::text_chars($app);
+			next if $protected{$app};
+			# A house app or a card ticked Permanent is not the bulk vacuum's
+			# business, whatever an older list said.
+			if (&subs::app_removal_refusal($app)) {
+				push @skipped, $app;
+				next;
+			}
+			my $left = eval { &subs::db_query('select count(*) from appointments where app = ?', $app)->hash->{'count(*)'} } || 0;
+			if ($left) {
+				push @skipped, $app;
+				next;
+			}
+			&subs::vacuum_orphan_data($app, { register_in => \@records });
+			push @cleaned, $app;
+		}
+		# One peer update for the whole selection, not one per app.
+		&subs::deletion_registration_many(\@records) if scalar @records;
+		1;
+	} or $error = $@;
+	if ($tx) {
+		if (defined $error) { eval { $db->dbh->rollback } }
+		else { eval { $db->dbh->commit } }
 	}
-
-	$html .= '
-		';
-	$c->render(json => { html => $html });
+	if (defined $error) {
+		# Nothing was cleaned: say so instead of claiming a success the
+		# rollback undid.
+		@cleaned = ();
+		my $reason = $error =~ s/\s+/ /gr;
+		$c->render(json => { html => '<b>' . &subs::html_text(&subs::ui('The vacuum stopped and nothing was changed:')) . '</b><br><br>' . &subs::html_text($reason), cleaned => 0, error => $reason });
+		return;
+	}
+	foreach my $app ( @cleaned ) {
+		$html .= &subs::html_text(&subs::format_name($app)) . '<br>';
+	}
+	$html .= '<br>' . &subs::html_text(&subs::ui('Nothing was selected.')) if scalar @cleaned == 0 && scalar @skipped == 0;
+	if (scalar @skipped) {
+		$html .= '<br>' . &subs::html_text(&subs::ui('These apps were left alone (an appointment, a house app, or Permanent):')) . '<br>';
+		$html .= &subs::html_text(&subs::format_name($_)) . '<br>' for @skipped;
+	}
+	$c->render(json => { html => $html, cleaned => scalar @cleaned, skipped => scalar @skipped });
 }
 
 # GET /manager/configure/database_doctor
+# integrity_check is the detector: count-versus-select cannot see a broken
+# index, which is the state the house's database was actually in.
 sub action_19589 {
 	my $c = shift;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $returner = { tables => [], auuid => &subs::random_string_creator(20) };
-	my $tables_command = 'sqlite3 ' . &subs::shell_quote($database) . ' .tables';
-	my $tables = `$tables_command`;
-	@{$returner->{'tables'}} = split ' ', $tables;
-
-
-	$returner->{'html'} = '<h2>You are about to perform surgery on ' . $database . '</h2>
-		<h4>This process is irreversible, unless you have backups or whatever!</h4>';
-	foreach my $table ( @{$returner->{'tables'}} ) {
-		my $counter = &subs::db_query('select count(*) from ' . $table);
-		my $count = $counter->hash->{'count(*)'};
-		$returner->{'count'}->{$table} = $count;
-		my $existing = &subs::db_query('select * from ' . $table)->hashes;
-		my $delta = ($count - scalar @{$existing});
-		my $colour = 'black';
-		my $repairable = [];
-		if ($delta != 0) {
-			$colour = 'red';
-			#if ($existing->[-1]->{'app'}) {
-				my $repairs = &subs::db_query('select distinct(app) from ' . $table)->hashes;
-				if ($table eq 'settings') {
-				#	push @{$repairs}, ({ app => 'me' }, { app => 'misc' }, { app => '__president' });
-				}
-				foreach my $a ( @{$repairs} ) {
-					my $ok = &subs::db_select($table, undef, { app => $a->{'app'} })->hashes;
-					push @{$repairable}, @{$ok};
-			#	}
-			}
-		}
-
-
-		$returner->{'html'} .= '<span style="color:' . $colour .';"><b><u style="font-size:20px;"> ' . $table . '</u> Count:</b> ' . $count . ' <b>Shows:</b> ' . scalar @{$existing} . ' <b>Delta:</b> ' . $delta;
-		if (scalar @{$repairable} > 0) {
-			$returner->{'html'} .= ' <b>Repair: </b>' . scalar @{$repairable};
-		}
-		$returner->{'html'} .= '</span><br>';
+	my $scan = &subs::doctor_scan($database);
+	$returner->{'count'} = { map { $_->{'name'} => $_->{'count'} } @{ $scan->{'tables'} || [] } };
+	$returner->{'tables'} = [ map { $_->{'name'} } @{ $scan->{'tables'} || [] } ];
+	$returner->{'integrity'} = $scan->{'integrity'};
+	$returner->{'indexes'} = $scan->{'indexes'};
+	$returner->{'data_damage'} = $scan->{'data_damage'};
+	my $html = '<h2>' . &subs::html_text(&subs::ui('Database doctor')) . '</h2>';
+	$html .= '<p>' . &subs::html_text($database) . '</p>';
+	if ($scan->{'error'}) {
+		$html .= '<p style="color:red;">' . &subs::html_text($scan->{'error'}) . '</p>';
 	}
-	$returner->{'html'} .= '
-		<img src="/images/jbuttons/doctor.png" id="database_doctor_confirm" class="medium_thumb">';
+	elsif ($scan->{'ok'}) {
+		$html .= '<p>' . &subs::html_text(&subs::ui('The database passes its integrity check; there is nothing to repair.')) . '</p>';
+	}
+	else {
+		$html .= '<p>' . &subs::html_text(&subs::ui('integrity_check reported:')) . '</p><ul>';
+		$html .= '<li>' . &subs::html_text($_) . '</li>' for @{ $scan->{'integrity'} || [] };
+		$html .= '</ul>';
+		if (my $indexes = $scan->{'indexes'}) {
+			$html .= '<p>' . &subs::html_text(&subs::ui('These indexes will be rebuilt from the table rows. No row is copied.')) . '<br><b>' . join(', ', map { &subs::html_text($_) } @{$indexes}) . '</b></p>';
+		}
+		if ($scan->{'data_damage'}) {
+			$html .= '<p>' . &subs::html_text(&subs::ui('A table cannot be read in full. The doctor will copy every readable row into a fresh database and keep a copy of the original first.')) . '</p>';
+		}
+		my @unread = grep { !$_->{'readable'} } @{ $scan->{'tables'} || [] };
+		if (scalar @unread) {
+			$html .= '<p>' . &subs::html_text(&subs::ui('Tables not fully readable:')) . '</p><ul>';
+			$html .= '<li>' . &subs::html_text($_->{'name'}) . ' - ' . (defined $_->{'count'} ? $_->{'count'} : '?') . ' / ' . (defined $_->{'scanned'} ? $_->{'scanned'} : '?') . '</li>' for @unread;
+			$html .= '</ul>';
+		}
+	}
+	if ($scan->{'cli_disagrees'}) {
+		$html .= '<p>' . &subs::html_text(&subs::ui('The installed sqlite3 command reports a different verdict. It can disagree about an expression index whose key carries a decimal number, because each SQLite version writes that key in its own form; a lookup through the index still finds the right rows. The database engine the app uses is the one that decides here.')) . '</p>';
+	}
+	$html .= '<img src="/images/jbuttons/doctor.png" id="database_doctor_confirm" class="medium_thumb">';
+	$returner->{'html'} = $html;
 	$c->render(json => $returner);
 }
 
@@ -320,77 +370,51 @@ sub action_19632 {
 	my $c = shift;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $auuid = $c->param('auuid') || &subs::random_string_creator(20);
-
-	my $returner = { tables => [], count => {} };
-	my $html = '<h2>Now repairing ' . $database . '</h2><br><h4></h4><br>';
-	&Websocket::send('server', { yellow => $html, uuid => $auuid });
-	my $download_location = &subs::home('~/.president');
-	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
-	system('mkdir', '-p', $temp_folder) unless -e $temp_folder;
-	my $ndatabase = $temp_folder . '/' . &subs::random_string_creator(21) . '.db';
-	my $tdatabase = $temp_folder . '/' . &subs::random_string_creator(20) . '.db';
-	system('touch', $tdatabase);
-	system('touch', $ndatabase);
-	my $schema_dump = 'sqlite3 ' . &subs::shell_quote($database) . q{ .schema | grep -vE 'sqlite_stat|sqlite_sequence' > } . &subs::shell_quote("$temp_folder/schema.sql");
-	`$schema_dump`;
-	my $backup_command = 'sqlite3 ' . &subs::shell_quote($database) . ' ' . &subs::shell_quote(".backup '$tdatabase'");
-	my $backup = `$backup_command`;
-
-	my $import_command = 'sqlite3 ' . &subs::shell_quote($ndatabase) . ' < ' . &subs::shell_quote("$temp_folder/schema.sql");
-	`$import_command`;
-	my $nsql = Mojo::SQLite->new('sqlite:' . $ndatabase);
-	my $ndb = $nsql->db;
-	my $tsql = Mojo::SQLite->new('sqlite:' . $tdatabase);
-	my $tdb = $tsql->db;
-	my $tables_command = 'sqlite3 ' . &subs::shell_quote($ndatabase) . ' .tables';
-	my $tables = `$tables_command`;
-	@{$returner->{'tables'}} = split ' ', $tables;
-
-	foreach my $table ( @{$returner->{'tables'}} ) {
-		my $counter = $tdb->query('select count(*) from ' . $table);
-		my $count = $counter->hash->{'count(*)'};
-		$returner->{'count'}->{$table} = $count;
-
-		my $existing = $tdb->query('select * from ' . $table)->hashes;
-		if (scalar @{$existing} != $count) {
-			my $html = '<h2>Now repairing ' . $count . ' ' . $table . '</h2><br><h4></h4><br>';
-			&Websocket::send('server', { yellow => $html, uuid => $auuid });
-
-			my $repairable = [];
-			#if ($existing->[-1]->{'app'}) {
-				my $repairs = $tdb->query('select distinct(app) from ' . $table)->hashes;
-				foreach my $a ( @{$repairs} ) {
-					my $ok = $tdb->select($table, undef, { app => $a->{'app'} })->hashes;
-					foreach my $okay ( @{$ok} ) {
-						my $check = $tdb->select($table, $okay)->hashes;
-						if (scalar @{$check} == 0) {
-							eval { $ndb->insert($table, $okay) };
-						}
-						else {
-
-						}
-
-					}
-					push @{$repairable}, @{$ok};
-				}
-			#}
-
-		}
-		else {
-			my $html = '<h2>Now inserting ' . $count . ' ' . $table . '</h2><br><h4></h4><br>';
-			&Websocket::send('server', { yellow => $html, uuid => $auuid });
-			foreach my $i ( @{$tdb->select($table, undef, {})->hashes} ) {
-				$ndb->insert($table, $i);
+	my $progress = sub {
+		my $message = shift;
+		&Websocket::send('server', {
+			yellow => '<h2>' . &subs::html_text($message) . '</h2>',
+			uuid => $auuid,
+		});
+	};
+	$progress->(&subs::ui('Now checking') . ' ' . $database);
+	my $result = &subs::doctor_repair($database, $progress);
+	my $html = '<h2>' . &subs::html_text($result->{'ok'} ? &subs::ui('The doctor has finished.') : &subs::ui('The doctor could not finish.')) . '</h2>';
+	$html .= '<p>' . &subs::html_text($result->{'message'}) . '</p>' if defined $result->{'message'} && length $result->{'message'};
+	$html .= '<p style="color:red;">' . &subs::html_text($result->{'error'}) . '</p>' if defined $result->{'error'} && length $result->{'error'};
+	if (my $reindexed = $result->{'reindexed'}) {
+		$html .= '<p>' . &subs::html_text(&subs::ui('Rebuilt indexes:')) . ' <b>' . join(', ', map { &subs::html_text($_) } @{$reindexed}) . '</b></p>' if scalar @{$reindexed};
+	}
+	if (my $salvaged = $result->{'salvaged'}) {
+		if (scalar @{$salvaged}) {
+			$html .= '<p>' . &subs::html_text(&subs::ui('Salvaged tables:')) . '</p><ul>';
+			foreach my $row ( @{$salvaged} ) {
+				$html .= '<li>' . &subs::html_text($row->{'table'}) . ' - ' . ($row->{'copied'} // 0) . ' / ' . ($row->{'before'} // 0);
+				$html .= ', ' . &subs::html_text(&subs::ui('unreadable rows:')) . ' ' . $row->{'lost'} if $row->{'lost'};
+				$html .= '</li>';
 			}
+			$html .= '</ul>';
 		}
 	}
-	my $backup_command = 'sqlite3 ' . &subs::shell_quote($ndatabase) . ' ' . &subs::shell_quote(".backup '$database'");
-	$backup = `$backup_command`;
-	system('shred', '-u', "$temp_folder/schema.sql");
-	system('shred', '-u', $tdatabase);
-	system('shred', '-u', $ndatabase);
-	system('rm', '-R', $temp_folder);
-	$c->render(json => $returner);
+	if (my $snapshot = $result->{'snapshot'}) {
+		$html .= '<p>' . &subs::html_text(&subs::ui('The original was kept at:')) . ' <code>' . &subs::html_text($snapshot) . '</code></p>';
+	}
+	my $after = $result->{'integrity_after'} || [];
+	if (scalar @{$after}) {
+		$html .= '<p>' . &subs::html_text(&subs::ui('integrity_check now says:')) . ' ';
+		$html .= (@{$after} == 1 && ($after->[0] // '') eq 'ok') ? '<b>ok</b>' : '<span style="color:red;">' . &subs::html_text(join('; ', @{$after})) . '</span>';
+		$html .= '</p>';
+	}
+	$c->render(json => {
+		html => $html,
+		ok => $result->{'ok'} ? 1 : 0,
+		message => $result->{'message'},
+		error => $result->{'error'},
+		reindexed => $result->{'reindexed'},
+		salvaged => $result->{'salvaged'},
+		snapshot => $result->{'snapshot'},
+		integrity => $after,
+	});
 }
 
 # GET /manager/configure/vacuum_app
@@ -400,12 +424,12 @@ sub action_19703 {
 	my $app = $c->param('app');
 	my $refusal = &subs::app_removal_refusal($app);
 	if ($refusal) {
-		return $c->render(text => '<h1>' . &subs::format_name($app) . '</h1>
+		return $c->render(text => '<h1>' . &subs::html_text(&subs::format_name($app)) . '</h1>
 		<h4>' . &subs::app_removal_refusal_text($refusal, 'vacuum') . '</h4>');
 	}
-	my $html = '<h2>' . &subs::ui('You are about to empty') . '</h2><h1>' . &subs::format_name($app) . '</h1>
+	my $html = '<h2>' . &subs::ui('You are about to empty') . '</h2><h1>' . &subs::html_text(&subs::format_name($app)) . '</h1>
 		<h4>' . &subs::ui('Every record and the files those records name will be deleted. The app keeps its settings, models, options, categories, web sources and tickets. This cannot be undone.') . '</h4>
-		<img src="/images/decipherable/vacuum.png" id="vacuum_app_confirm" app="'. $app . '" class="medium_thumb">';
+		<img src="/images/decipherable/vacuum.png" id="vacuum_app_confirm" app="'. &subs::html_text($app) . '" class="medium_thumb">';
 
 	$c->render(text => $html );
 }
@@ -419,13 +443,13 @@ sub action_19713 {
 	# The confirm panel already refused a house app and a Permanent card, but the
 	# tick can change between the two presses.
 	if ($refusal) {
-		return $c->render(text => '<h1>' . &subs::format_name($app) . '</h1>
+		return $c->render(text => '<h1>' . &subs::html_text(&subs::format_name($app)) . '</h1>
 		<h4>' . &subs::app_removal_refusal_text($refusal, 'vacuum') . '</h4>');
 	}
 	# Records and the files they name go through the ordinary delete, one
 	# tombstone each; the app's configuration stays.
 	&vacuum_app_records($app);
-	my $html = '<h1>' . &subs::format_name($app) . '</h1>
+	my $html = '<h1>' . &subs::html_text(&subs::format_name($app)) . '</h1>
 	<h4>' . &subs::ui('Its records and files are gone. Its settings are kept.') . '</h4>';
 	$c->render(text => $html );
 }

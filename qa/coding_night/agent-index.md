@@ -16,7 +16,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - chat (topic chat): 17 file(s), 1 route(s)
 - clock (topic clock): 6 file(s), 5 route(s)
 - clothesline (topic clothesline): 3 file(s), 3 route(s)
-- configure (topic configure): 21 file(s), 135 route(s)
+- configure (topic configure): 22 file(s), 135 route(s)
 - controller (topic controller): 5 file(s), 11 route(s)
 - controllers (topic controllers): 4 file(s), 13 route(s)
 - edit_app (no topic): 1 file(s), 2 route(s)
@@ -121,7 +121,7 @@ One route: `perl scripts/where.pl /manager/pen`.
 ## helpers
 
 662 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-2542 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+2557 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware

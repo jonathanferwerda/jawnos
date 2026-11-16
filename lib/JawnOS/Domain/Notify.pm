@@ -636,10 +636,9 @@ sub settings_deletion_blocks {
 	return 0;
 }
 
-sub deletion_registration($data) {
-	# Record one durable tombstone. It stays in sync_log until every remote
-	# machine has confirmed reading past it, so an offline machine still learns
-	# of the deletion whenever it next connects.
+# The durable (sync_log) and short-lived (remote_machines.deletions) shapes of
+# one deletion. Kept here so the single and bulk registrars cannot disagree.
+sub deletion_record_build($data) {
 	my $additional = $data->{'additional'};
 	# A file deletion must name the file it removes: a peer applies it by uuid,
 	# and without one the tombstone reached the other machines and did nothing.
@@ -658,28 +657,70 @@ sub deletion_registration($data) {
 			server_time => $server_time,
 		});
 	}
-	&subs::tombstone_writer({
+	my $record = {
 		table => $data->{'table'}, app => $data->{'app'},
 		uuid => $data->{'uuid'}, scope => $data->{'scope'},
+		initialization => &subs::rightNow(), server_time => $server_time,
+		additional => $additional,
+	};
+	if ($settings_record) {
+		$record->{'setting'} = $data->{'setting'} if defined $data->{'setting'};
+		$record->{'subsetting'} = $data->{'subsetting'} if defined $data->{'subsetting'};
+		$record->{'device'} = $data->{'device'} if defined $data->{'device'};
+	}
+	return ($record, $additional);
+}
+
+sub deletion_registration($data) {
+	# Record one durable tombstone. It stays in sync_log until every remote
+	# machine has confirmed reading past it, so an offline machine still learns
+	# of the deletion whenever it next connects.
+	my ($record, $additional) = &deletion_record_build($data);
+	&subs::tombstone_writer({
+		table => $record->{'table'}, app => $record->{'app'},
+		uuid => $record->{'uuid'}, scope => $record->{'scope'},
 		additional => $additional,
 	});
-	my $app = $data->{'app'};
-	my $uuid = $data->{'uuid'};
-	my $scope = $data->{'scope'};
-	my $table = $data->{'table'};
 	my $remote_machines = &subs::db_select('remote_machines')->hashes;
 	foreach my $rm ( @{$remote_machines} ) {
 		my $deletions = eval { return decode_json $rm->{'deletions'} } || [];
-		my $record = { table => $table, app => $app, uuid => $uuid, scope => $scope, initialization => &subs::rightNow(), server_time => $server_time, additional => $additional };
-		if ($settings_record) {
-			$record->{'setting'} = $data->{'setting'} if defined $data->{'setting'};
-			$record->{'subsetting'} = $data->{'subsetting'} if defined $data->{'subsetting'};
-			$record->{'device'} = $data->{'device'} if defined $data->{'device'};
-		}
 		push @{$deletions}, $record;
 		my $del = encode_json $deletions;
 		&subs::db_update('remote_machines', { deletions => $del }, { uuid => $rm->{'uuid'}, signatorial => $rm->{'signatorial'} });
 	}
+}
+
+# The same record for many deletions. A vacuum can remove thousands of rows; the
+# single path above re-reads and re-encodes the growing deletions list for every
+# row and every peer, which turned a three-app clean-up into a twelve-second wait
+# and would have timed out for the whole house. The durable log still gets one
+# row each, but the peers are updated once.
+sub deletion_registration_many($records) {
+	return 0 unless ref $records eq 'ARRAY' && scalar @{$records};
+	my ($db) = &subs::database_grabber();
+	# One transaction for the durable rows: a vacuum can write thousands, and a
+	# commit per row is what made the whole-house clean-up slow.
+	my $tx = ($db && $db->dbh->{AutoCommit}) ? eval { $db->dbh->begin_work; 1 } : 0;
+	my @wire;
+	foreach my $data ( @{$records} ) {
+		my ($record, $additional) = &deletion_record_build($data);
+		push @wire, $record;
+		&subs::db_insert('sync_log', {
+			server_time => &subs::rightNow(),
+			signatorial => &subs::signatorial_designer(),
+			tbl => $record->{'table'}, app => $record->{'app'},
+			uuid => $record->{'uuid'}, scope => $record->{'scope'},
+			additional => $additional,
+		});
+	}
+	eval { $db->dbh->commit } if $tx;
+	my $remote_machines = &subs::db_select('remote_machines')->hashes || [];
+	foreach my $rm ( @{$remote_machines} ) {
+		my $deletions = eval { return decode_json $rm->{'deletions'} } || [];
+		push @{$deletions}, @wire;
+		&subs::db_update('remote_machines', { deletions => encode_json $deletions }, { uuid => $rm->{'uuid'}, signatorial => $rm->{'signatorial'} });
+	}
+	return scalar @wire;
 }
 
 sub migration_already_applied($command) {

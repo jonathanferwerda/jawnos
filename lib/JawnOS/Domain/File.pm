@@ -973,6 +973,86 @@ sub music_queue_applies {
 	return 1;
 }
 
+sub vacuum_tables {
+	# The data an app leaves behind when its last appointment goes, and the bulk
+	# Vacuum's clean-up. One list, so the automatic sweep and Configure's bulk
+	# vacuum cannot drift apart. `appointments` is included: the automatic vacuum
+	# runs after the last one was deleted.
+	return qw/appointments tickets settings continent websites cache subcategory option model option_category mailbox websockets/;
+}
+
+# Delete everything an app left behind. The caller decides whether the app is
+# safe to retire (the automatic vacuum refuses house apps and a `permanent`
+# app; the bulk vacuum refuses the protected and built-in apps).
+#
+# Settings are named by (app, setting, subsetting, device) and the other synced
+# rows by uuid; the records are written once at the end so a peer cannot hand
+# any of them back on the next merge. The local tables (cache, tickets,
+# websockets and the rest of $gb::forbidden) are not on the sync rail, so they
+# need no tombstone.
+sub vacuum_orphan_data {
+	my $app = shift;
+	my $options = shift || {};
+	return 0 unless defined $app && length $app;
+	# A name from the database or a checkbox is decoded to characters before it
+	# is bound, so the bytes the row was stored with are the bytes we ask for.
+	$app = &subs::text_chars($app);
+	return 0 unless defined $app && length $app;
+	my $timestamp = rightNow();
+	my %local = map { $_ => 1 } @{ $gb::forbidden->{'tables'} || [] };
+	# A bulk caller passes one arrayref for every app it cleans, so the peers are
+	# updated once at the end instead of once per app.
+	my $collector = ref $options->{'register_in'} eq 'ARRAY' ? $options->{'register_in'} : undef;
+	&Websocket::send('server', {
+		console => &Websocket::console_command('closeButton', &subs::html_name($app)),
+		timestamp => $timestamp,
+	});
+	# Settings first, while their rows are still there to name. Only the key
+	# columns are read: a setting's value can be megabytes (a cards draw, a logo)
+	# and the vacuum never needs it. The rows are named from the same read that
+	# proves they existed, then removed with one statement per app.
+	my @records;
+	my $settings = eval {
+		&db_select('settings', ['app','setting','subsetting','device','server_time'], { app => $app })->hashes
+	} || [];
+	foreach my $s ( @{$settings} ) {
+		next unless defined $s->{'setting'} && length $s->{'setting'};
+		my %key = (
+			app => $app,
+			setting => &subs::text_chars($s->{'setting'}),
+			device => &subs::text_chars($s->{'device'}),
+		);
+		$key{'subsetting'} = &subs::text_chars($s->{'subsetting'})
+			if defined $s->{'subsetting'} && length $s->{'subsetting'};
+		push @records, { table => 'settings', %key, server_time => $timestamp };
+	}
+	&db_query('delete from settings where app = ?', $app);
+	foreach my $t ( &vacuum_tables() ) {
+		next if $t eq 'settings';
+		# A local table has no peer to tell; the delete is the whole job.
+		if ($local{$t}) {
+			&db_query('delete from ' . $t . ' where app = ?', $app);
+			next;
+		}
+		my $rows = eval { &db_select($t, ['uuid','server_time'], { app => $app })->hashes } || [];
+		foreach my $r ( @{$rows} ) {
+			next unless defined $r->{'uuid'} && length $r->{'uuid'};
+			push @records, {
+				table => $t, app => $app, uuid => $r->{'uuid'},
+				scope => 'single', server_time => $r->{'server_time'} || $timestamp,
+			};
+		}
+		&db_query('delete from ' . $t . ' where app = ?', $app);
+	}
+	if ($collector) {
+		push @{$collector}, @records;
+	}
+	else {
+		&deletion_registration_many(\@records) if scalar @records;
+	}
+	return 1;
+}
+
 # The apps the house is made of. Their rows are the house rather than one use
 # case that can end, and none is rebuilt by opening the app again: me carries
 # name, warranty and budget_alarm, __president carries ws_pa and cache_folders,
@@ -1011,19 +1091,12 @@ sub vacuum {
 	my $app = shift;
 	# A house app is never swept, and saying so costs no query.
 	return if defined $app && $house_apps{$app};
-	my ($db,$database,$sql) = &subs::database_grabber();
-	my $timestamp = rightNow();
-	my $app_q = &db_query('select * from appointments where app=?',$app);
-	my $appts = $app_q->hashes;
+	my $appts = eval { &db_query('select * from appointments where app=?',$app)->hashes } || [];
 	# Only an app with nothing left is swept, and never one a person ticked
 	# Permanent: those settings are not rebuilt by reopening it.
 	return unless scalar @{$appts} == 0;
 	return if &app_removal_refusal($app);
-	&Websocket::send('server', { console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => $timestamp });
-
-	foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
-		&db_query('delete from ' . $t . ' where app=?',$app);
-	}
+	&vacuum_orphan_data($app);
 }
 
 # The location types a device can point at a folder and archive to: one per

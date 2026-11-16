@@ -680,7 +680,9 @@ $(document).on('click', '#database_doctor', function() {
 		type: 'GET',
 		data: { timestamp: timestamp },
 		success: function(response) {
-			jawnosAlert(response.html);
+			// The uuid ties the repair's progress to this alert. Without it the
+			// websocket updates name a window that does not exist.
+			jawnosAlert(response.html, { uuid: response.auuid });
 		}
 	});
 });
@@ -693,6 +695,9 @@ $(document).on('click', '#database_doctor_confirm', function() {
 		type: 'POST',
 		data: { timestamp: timestamp, auuid: auuid },
 		success: function(response) {
+			// The repair's report replaces the confirmation, so the person sees
+			// what was rebuilt or salvaged without opening anything else.
+			if (response && response.html) { jawnosAlert(response.html, { uuid: auuid }); }
 		}
 	});
 });

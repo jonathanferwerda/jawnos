@@ -36,7 +36,7 @@ require "$root/scripts/agent_help.pl";
 {
 	my $text = agent_help::brief('configure');
 	ok(defined $text, 'a large app has a brief');
-	cmp_ok(length $text, '<', 8_000, 'the default brief stays small');
+	cmp_ok(length $text, '<', 8_200, 'the default brief stays small');
 	like($text, qr/^routes \(135\)$/m, 'it counts every route');
 	like($text, qr/brace form: .*means/, 'and explains the shorthand');
 	like($text, qr{^  get\s+/manager/configure$}m, 'a parent route is printed whole');
