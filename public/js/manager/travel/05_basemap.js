@@ -123,13 +123,19 @@ function travelBasemapWidth(base) {
 // all, which is the shallowest range the builder has ever produced.
 var TRAVEL_BASEMAP_DEFAULT_MAXZOOM = 14;
 
+// done(maxZoom, read): the second argument says whether the archive actually
+// answered. The long-press view only wants the number; the map engine also
+// needs to know a missing or unreadable archive, so it can fall back to a
+// raster provider instead of drawing an empty box.
 function travelBasemapMaxZoom(url, done) {
 	var settled = false;
+	var read = false;
 	var finish = function(z) {
 		if (settled) { return; }
 		settled = true;
 		var n = parseInt(z, 10);
-		done(isFinite(n) && n > 0 ? n : TRAVEL_BASEMAP_DEFAULT_MAXZOOM);
+		if (!(isFinite(n) && n > 0)) { read = false; }
+		done(isFinite(n) && n > 0 ? n : TRAVEL_BASEMAP_DEFAULT_MAXZOOM, read);
 	};
 	var archive;
 	try { archive = new pmtiles.PMTiles(url); } catch (e) { finish(0); return; }
@@ -138,6 +144,7 @@ function travelBasemapMaxZoom(url, done) {
 	try {
 		archive.getHeader().then(function(header) {
 			clearTimeout(timer);
+			read = !!(header && header.maxZoom);
 			finish(header && header.maxZoom);
 		}, function() {
 			clearTimeout(timer);
@@ -187,6 +194,11 @@ function travelBasemapStyle(maxzoom) {
 				type: 'vector',
 				// relative to the page origin, so the archive comes from this house
 				url: 'pmtiles:///manager/travel/basemap',
+				// 256-px tiles, the convention this house's map engine already uses:
+				// with MapLibre's 512 default a camera zoom sits one step off the
+				// engine's, so the plates land on the wrong ground and a z17 archive
+				// would only be asked for at engine z18
+				tileSize: 256,
 				// read from the archive's header, so a z17 build is drawn at z17
 				// instead of overzooming a blur of z14 tiles
 				maxzoom: maxzoom

@@ -103,6 +103,12 @@ function closeWindow(timestamp, done) {
 		}
 	}
 	if (app == 'mailbox' && typeof mailSocketClose == 'function') { mailSocketClose(); }
+	// A Travel map's vector basemap is its own GL renderer and worker; closing
+	// the window has to let go of it, or the map outlives the stage it drew on.
+	if (app == 'travel' && typeof travelMap !== 'undefined' && travelMap && typeof travelMap.destroy === 'function') {
+		try { travelMap.destroy(); } catch (e) {}
+		travelMap = null;
+	}
 	// closing the app closes its padlock in this tab as well as on the server
 	if ((app == 'gallery' || app == 'music' || app == 'folders') && typeof jawnosMediaLockdown === 'function') {
 		jawnosMediaLockdown(app, true);

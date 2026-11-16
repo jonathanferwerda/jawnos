@@ -64,13 +64,28 @@ function travelMapEngine() {
 	// where the map was left last time, so opening Travel returns to that ground
 	var saved = {};
 	try { saved = JSON.parse(canvas.getAttribute('view') || '{}') || {}; } catch (e) { saved = {}; }
-	// a fresh canvas (the window was reopened) needs a fresh engine
+	// a fresh canvas (the window was reopened) needs a fresh engine; the old one
+	// may still hold a MapLibre backdrop, so let it go before replacing it
+	if (travelMap && travelMap.canvas !== canvas && typeof travelMap.destroy === 'function') {
+		try { travelMap.destroy(); } catch (e) {}
+	}
 	travelMap = window.jawnosMap.create('travel_campus', {
 		lat: saved.lat,
 		lon: saved.lon,
 		z: (typeof saved.z === 'number') ? saved.z : 16,
 		width: function() { return $('#travel_campus').parent().width() || 640; },
-		height: function() { return Math.max(240, Math.round($(window).height() * 0.6)); }
+		height: function() { return Math.max(240, Math.round($(window).height() * 0.6)); },
+		// The house's own vector basemap shares this chunk's loader, style and
+		// archive-header reader rather than installing a second copy. The engine
+		// owns the view; MapLibre is only the ground underneath it.
+		vector: {
+			load: function(done) { travelBasemapLoad(done); },
+			register: function() { travelBasemapRegister(); },
+			maxZoom: function(url, done) { travelBasemapMaxZoom(url, done); },
+			style: function(maxzoom) { return travelBasemapStyle(maxzoom); },
+			url: '/manager/travel/basemap'
+		},
+		onStatus: function(text) { $('#travel_map_status').text(text || ''); }
 	});
 	// a tap on a place opens its appointment window; a numbered one unfolds its list
 	travelMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, travelMap.canvas); });
@@ -531,7 +546,7 @@ function travelProviderFill() {
 	if (!sel.length || sel.attr('filled') == 'yes' || !window.jawnosMap) { return; }
 	sel.attr('filled', 'yes');
 	var engines = window.jawnosMap.providers;
-	var labels = { free: 'Built in — no key needed', key: 'Needs your key', url: 'Needs a tile URL' };
+	var labels = { free: 'Built in — no key needed', key: 'Needs your key', url: 'Needs a tile URL', house: 'The house\'s own street map' };
 	var holders = {};
 	for (var key in engines) {
 		var p = engines[key];

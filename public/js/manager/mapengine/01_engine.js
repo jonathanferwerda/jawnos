@@ -33,7 +33,13 @@ window.jawnosMap = (function () {
 		// ArcGIS REST services are .../MapServer/tile/{z}/{y}/{x} — note y before x.
 		lambton: { name: 'Lambton / county GIS', url: null, max: 19, group: 'url', needs: 'url' },
 		// any other service: paste its {z}/{x}/{y} template into the box next to this picker
-		custom: { name: 'Custom URL', url: null, group: 'url', needs: 'url' }
+		custom: { name: 'Custom URL', url: null, group: 'url', needs: 'url' },
+		// The house's own vector basemap. `vector` says there is no tile template:
+		// MapLibre draws the staged PMTiles archive in a layer behind this canvas
+		// (see create()'s `vector` option), and the archive's header sets its
+		// deepest zoom. It has a picker group of its own so it reads as the house's
+		// map rather than as one more public street service.
+		house: { name: 'House street map', url: null, max: 17, credit: '© OpenStreetMap contributors', group: 'house', vector: true }
 	};
 
 	// Web Mercator, in tiles and in world pixels at a given zoom.
@@ -92,10 +98,43 @@ window.jawnosMap = (function () {
 		var customUrl = opts.customUrl || '';
 		var apiKeys = opts.keys || {};   // provider key -> the service's key
 		var ZMIN = 2, ZMAX = 21;
+		// The house's own vector basemap is drawn by MapLibre behind the canvas.
+		// `vector` holds that second renderer (null until the chosen provider is
+		// the house map), and `rasterKey` is the last raster provider chosen: the
+		// map it falls back to while the vector layer loads, or when the libraries
+		// or the archive are not installed. `opts.vector` supplies the loader and
+		// style from the page (the Travel chunk's own, so there is one loader).
+		var vector = { map: null, box: null, at: null, w: 0, h: 0, loading: false, failed: false, maxZoom: 0, token: 0 };
+		var rasterKey = providers[providerKey] && providers[providerKey].vector ? 'osm' : providerKey;
+		var statusNote = '';
+		var destroyed = false;
+
+		function isVectorKey(key) { return !!(providers[key] && providers[key].vector); }
+		function vectorReady() { return isVectorKey(providerKey) && !!vector.map; }
+		// The raster provider to draw from: the chosen one, unless the chosen one is
+		// the house map and its layer is not up yet (then the previous raster, so the
+		// first frames are a map rather than blank ground).
+		function rasterFallback() {
+			if (rasterKey && providers[rasterKey] && !providers[rasterKey].vector && rasterKey !== 'none') { return rasterKey; }
+			return 'osm';
+		}
+		function effectiveKey() {
+			if (isVectorKey(providerKey) && !vector.map) { return rasterFallback(); }
+			return providerKey;
+		}
+		function setStatus(text) {
+			statusNote = text || '';
+			if (typeof opts.onStatus === 'function') { try { opts.onStatus(statusNote); } catch (e) {} }
+		}
 		// The deepest tile zoom the selected service actually serves; a service with
 		// no stated ceiling (a pasted URL, or the offline maps only) keeps ZMAX.
 		function providerMaxZ() {
-			var p = providers[providerKey];
+			var p = providers[effectiveKey()];
+			// the vector archive's ceiling is read from its header once it is
+			// open; until then the provider row's conservative z17 is used. The
+			// style declares `tileSize: 256`, so one camera zoom is one engine zoom
+			// and the archive's deepest zoom is the engine's deepest z.
+			if (isVectorKey(providerKey) && vector.map) { return Math.max(ZMIN, Math.min(ZMAX, vector.maxZoom || (p && p.max) || ZMAX)); }
 			var m = (p && p.max) ? +p.max : ZMAX;
 			return Math.max(ZMIN, Math.min(ZMAX, m));
 		}
@@ -156,14 +195,15 @@ window.jawnosMap = (function () {
 		}
 
 		function tileUrl(z, x, y) {
-			if (providerKey === 'none') { return null; } // offline: the measured maps only
-			var p = providers[providerKey];
+			var key = effectiveKey();
+			if (key === 'none') { return null; } // offline: the measured maps only
+			var p = providers[key];
 			// a provider with no baked-in URL (Lambton, or Custom) draws from the paste box
 			var tpl = (p && p.url) ? p.url : customUrl;
 			if (!tpl) { return null; }
 			// a keyed service draws nothing until its key is given
 			if (tpl.indexOf('{key}') >= 0) {
-				var apiKey = apiKeys[providerKey] || '';
+				var apiKey = apiKeys[key] || '';
 				if (!apiKey) { return null; }
 				tpl = tpl.replace(/\{key\}/g, encodeURIComponent(apiKey));
 			}
@@ -361,18 +401,192 @@ window.jawnosMap = (function () {
 			ctx.restore();
 		}
 
+		// ---- the house's vector basemap, behind this canvas ----
+
+		function vectorDispose() {
+			vector.token++;
+			if (vector.box && vector.box.parentNode) { vector.box.parentNode.removeChild(vector.box); }
+			if (vector.map) {
+				// remove() stops the render loop, frees the GL context, drops the
+				// worker and unbinds every listener it added
+				try { vector.map.remove(); } catch (e) {}
+			}
+			vector.map = null; vector.box = null; vector.at = null;
+			vector.w = 0; vector.h = 0; vector.loading = false; vector.maxZoom = 0;
+			// the canvas was lifted above the backdrop; put it back as found
+			try { canvas.style.position = ''; canvas.style.zIndex = ''; } catch (e) {}
+		}
+
+		function vectorFail(text) {
+			vector.failed = true;
+			vector.loading = false;
+			setStatus(text || '');
+		}
+
+		// Same box as the canvas, immediately before it in the DOM and with every
+		// pointer event passing through: the engine keeps the gestures.
+		function vectorBuild() {
+			var v = opts.vector;
+			if (!v || typeof v.style !== 'function' || !canvas.parentNode) { return false; }
+			var parent = canvas.parentNode;
+			// the layer is absolutely positioned over the canvas, so the parent
+			// must be a containing block (the Travel window already is)
+			try {
+				if (window.getComputedStyle && window.getComputedStyle(parent).position === 'static') {
+					parent.style.position = 'relative';
+				}
+			} catch (e) {}
+			var dim = size();
+			var box = document.createElement('div');
+			box.className = 'jawnos_basemap_layer';
+			box.style.cssText = 'position:absolute;z-index:0;pointer-events:none;overflow:hidden;';
+			parent.insertBefore(box, canvas);
+			// a positioned box paints over in-flow content; the canvas is lifted
+			// one layer so the plates and pins still draw on top of the basemap
+			canvas.style.position = 'relative';
+			canvas.style.zIndex = '1';
+			var map;
+			try {
+				map = new window.maplibregl.Map({
+					container: box,
+					style: v.style(vector.maxZoom),
+					center: [normLon(view.lon), view.lat],
+					// the style asks for 256-px tiles, so a MapLibre camera zoom and
+					// this engine's zoom are the same ground scale and the same tile z:
+					// the plates the engine projects land on the vectors underneath,
+					// and a z17 archive is asked for at z17 rather than z18
+					zoom: view.z,
+					// the archive's deepest zoom, not the engine's: a z17 build is
+					// drawn at z17 and goes no deeper
+					maxZoom: vector.maxZoom,
+					// this is a backdrop, not a second map to learn: the engine
+					// owns pan, zoom and every click
+					interactive: false,
+					attributionControl: false,
+					pitchWithRotate: false,
+					dragRotate: false
+				});
+			} catch (e) {
+				if (box.parentNode) { box.parentNode.removeChild(box); }
+				try { canvas.style.position = ''; canvas.style.zIndex = ''; } catch (e2) {}
+				return false;
+			}
+			vector.map = map;
+			vector.box = box;
+			vector.at = null;
+			vectorPosition(dim);
+			return true;
+		}
+
+		function vectorPosition(dim) {
+			if (!vector.box) { return; }
+			var s = vector.box.style;
+			s.left = (canvas.offsetLeft || 0) + 'px';
+			s.top = (canvas.offsetTop || 0) + 'px';
+			// MapLibre is sized in the engine's own (buffer) pixels, not the
+			// canvas's CSS box: the two differ when a page scales the canvas (the
+			// Travel canvas is width:100%;height:70vh), and a backdrop drawn at
+			// the CSS size would show a different extent from the one the plates
+			// are projected into. The same scale the browser puts on the canvas
+			// is put on the backdrop, so the two line up exactly.
+			s.width = dim.w + 'px';
+			s.height = dim.h + 'px';
+			s.transformOrigin = '0 0';
+			var vw = canvas.offsetWidth || 0, vh = canvas.offsetHeight || 0;
+			var sx = (vw > 0 && dim.w > 0) ? vw / dim.w : 1;
+			var sy = (vh > 0 && dim.h > 0) ? vh / dim.h : 1;
+			s.transform = (sx !== 1 || sy !== 1) ? 'scale(' + sx + ',' + sy + ')' : '';
+			if (vector.map && (vector.w !== dim.w || vector.h !== dim.h)) {
+				vector.w = dim.w; vector.h = dim.h;
+				try { vector.map.resize(); } catch (e) {}
+			}
+		}
+
+		// The engine is the single owner of the view: every draw pushes its centre
+		// and (fractional) zoom at MapLibre, which draws the ground underneath.
+		function vectorSync(dim) {
+			if (!vector.map) { return; }
+			vectorPosition(dim);
+			var at = { lat: view.lat, lon: normLon(view.lon), z: view.z };
+			if (vector.at && vector.at.lat === at.lat && vector.at.lon === at.lon
+				&& Math.abs(vector.at.z - at.z) < 0.0001) { return; }
+			vector.at = at;
+			try { vector.map.jumpTo({ center: [at.lon, at.lat], zoom: at.z }); } catch (e) {}
+		}
+
+		// Load the libraries and the archive header, then build the layer. The
+		// page's own loader does the fetching and registering, so the long-press
+		// view and this provider share one installed copy.
+		function vectorEnsure() {
+			if (vector.map || vector.loading || vector.failed || !isVectorKey(providerKey)) { return; }
+			var v = opts.vector;
+			if (!v || typeof v.load !== 'function') {
+				vectorFail('The house\'s street map is not installed - run scripts/fetch_basemap_libs.sh');
+				return;
+			}
+			vector.loading = true;
+			var token = ++vector.token;
+			var withLibraries = function () {
+				if (token !== vector.token || !isVectorKey(providerKey)) { return; }
+				try { if (typeof v.register === 'function') { v.register(); } } catch (e) {}
+				var readMax = (typeof v.maxZoom === 'function') ? v.maxZoom : function (u, done) { done(0, true); };
+				readMax(v.url || '/manager/travel/basemap', function (maxzoom, archived) {
+					if (token !== vector.token || !isVectorKey(providerKey)) { return; }
+					// an archive that cannot be read has no header to say how deep it
+					// goes, and the layer would be a blank box
+					if (archived === false) {
+						vectorFail('The house has no street map archive yet - run perl scripts/osm_basemap.pl --all');
+						draw();
+						return;
+					}
+					vector.maxZoom = parseInt(maxzoom, 10) || (providers.house.max || ZMAX);
+					if (!vectorBuild()) {
+						vectorFail('This browser cannot draw the map here.');
+						draw();
+						return;
+					}
+					// the archive decides how deep the view may go
+					view.z = clampZ(view.z);
+					setStatus('');
+					draw();
+				});
+			};
+			// The long-press view may already have installed the pair. Loading it
+			// again would re-execute MapLibre, and the fresh build would not have
+			// the PMTiles protocol (its registration is once per page).
+			if (window.maplibregl && window.pmtiles) { vector.loading = false; withLibraries(); return; }
+			v.load(function (ok) {
+				if (token !== vector.token || !isVectorKey(providerKey)) { return; }
+				vector.loading = false;
+				if (!ok || !window.maplibregl) {
+					vectorFail('The house\'s street map is not installed - run scripts/fetch_basemap_libs.sh');
+					draw();
+					return;
+				}
+				withLibraries();
+			});
+		}
+
 		function draw() {
+			if (destroyed) { return; }
 			var dim = size();
 			var o = originFor(view, dim.w, dim.h);
+			if (isVectorKey(providerKey)) { vectorEnsure(); }
+			var vectorOn = vectorReady();
 			ctx.clearRect(0, 0, dim.w, dim.h);
-			ctx.fillStyle = '#e9edf1';
-			ctx.fillRect(0, 0, dim.w, dim.h);
-			drawTiles(o, dim.w, dim.h);
+			// the vector layer is the background: leave the canvas transparent so
+			// MapLibre shows through, and fetch no raster tile at all
+			if (!vectorOn) {
+				ctx.fillStyle = '#e9edf1';
+				ctx.fillRect(0, 0, dim.w, dim.h);
+				drawTiles(o, dim.w, dim.h);
+			}
+			else { vectorSync(dim); }
 			drawMaps(o, dim.w, dim.h, view.z);
 			drawLines(o, dim.w, dim.h, view.z);
 			drawMarkers(o, dim.w, dim.h, view.z);
-			var p = providers[providerKey];
-			var credit = (p && p.url) ? p.credit : ((p && p.needs === 'url') ? 'Custom tile service' : null);
+			var p = providers[vectorOn ? providerKey : effectiveKey()];
+			var credit = (p && (p.url || p.vector)) ? p.credit : ((p && p.needs === 'url') ? 'Custom tile service' : null);
 			if (credit) {
 				ctx.font = '11px Arial';
 				ctx.textAlign = 'right';
@@ -705,7 +919,19 @@ window.jawnosMap = (function () {
 			setProvider: function (key, url, keys) {
 				var nextUrl = (url === undefined || url === null) ? customUrl : url;
 				var nextKeys = (keys && typeof keys === 'object') ? keys : apiKeys;
-				if (key === providerKey && nextUrl === customUrl && JSON.stringify(nextKeys) === JSON.stringify(apiKeys)) { return; }
+				if (key === providerKey && nextUrl === customUrl && JSON.stringify(nextKeys) === JSON.stringify(apiKeys)) {
+					// a render after a failed vector start re-states why it fell back
+					if (isVectorKey(providerKey)) { setStatus(statusNote); }
+					return;
+				}
+				// switching away from the house map lets go of its GL context, its
+				// worker, its listeners and its box; the raster path is then exactly
+				// what every other provider already had
+				if (isVectorKey(providerKey) && key !== providerKey) { vectorDispose(); }
+				if (!isVectorKey(key)) { rasterKey = key; }
+				// choosing the house map afresh is also a retry: libraries or an
+				// archive installed since the last look may be there now
+				if (isVectorKey(key)) { vector.failed = false; setStatus(''); }
 				providerKey = key;
 				customUrl = nextUrl;
 				apiKeys = nextKeys;
@@ -716,6 +942,10 @@ window.jawnosMap = (function () {
 				tileCount = 0;
 				draw();
 			},
+			// Drop the backdrop renderer; a page closing its window (or replacing
+			// this canvas) calls this so no MapLibre map outlives its stage. A late
+			// image load or timer must not put a layer back on a torn-down engine.
+			destroy: function () { destroyed = true; vectorDispose(); setStatus(''); },
 			setMaps: function (list) {
 				maps = [];
 				(list || []).forEach(function (m) {
