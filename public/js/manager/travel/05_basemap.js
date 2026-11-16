@@ -293,19 +293,6 @@ function travelBasemapStyle(maxzoom, three_d) {
 				'fill-extrusion-opacity': 0.9
 			}
 		});
-		// a pitched view shows the horizon, so the stage above it is sky rather
-		// than the window's cream; MapLibre draws this pass behind every layer
-		style.layers.unshift({
-			id: 'sky', type: 'sky',
-			paint: {
-				'sky-color': '#bcd6e8',
-				'horizon-color': '#e7eef3',
-				'fog-color': '#e7eef3',
-				'sky-horizon-blend': 0.6,
-				'horizon-fog-blend': 0.6,
-				'atmosphere-blend': 0.6
-			}
-		});
 	}
 	return style;
 }

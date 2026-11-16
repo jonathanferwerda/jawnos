@@ -128,7 +128,6 @@ like( $basemap, qr/render_height/, 'using the height the archive carries' );
 like( $basemap, qr/style: travelBasemapStyle\(maxzoom, true\)/, 'the long-press view asks for the 3D style' );
 like( $basemap, qr/pitch: 45/, 'and opens tilted' );
 like( $basemap, qr/dragRotate: true/, 'with turning and tilting enabled' );
-like( $basemap, qr/type: 'sky'/, 'and sky above the horizon' );
 like( $basemap, qr/if \(three_d\) \{/, 'the map engine\'s backdrop stays flat: it does not ask' );
 like( $basemap, qr/maplibregl\.addProtocol\('pmtiles', protocol\.tile\)/, 'the PMTiles protocol is registered once' );
 like( $basemap, qr/if \(travelBasemapRan\[src\]\) \{ done\(\); return; \}/,
