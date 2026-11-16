@@ -194,6 +194,22 @@ function clotheslineHanger(clothes) {
 		var shadowGap = Math.min(6, Math.max(2, Math.round(clothesLineHeight * 0.14)));
 		$.each(clothes, function(i,v) {
 
+			// a soft bar where one wave of the routine ends and the next begins:
+			// the head is read as stretches of the day, not one run of pills, so
+			// the eye can find the wake-up, the lunch, the evening at a glance
+			if (i > 0 && v['head'] && clothes[i - 1]['head']
+				&& v['wave'] !== undefined && clothes[i - 1]['wave'] !== undefined
+				&& v['wave'] != clothes[i - 1]['wave']) {
+				var waveX = offsets[i] + clothesLinePos['x'];
+				var waveTop = minHeight + pad + topGap;
+				var waveHeight = Math.max(8, clothesLineHeight - (pad * 2) - topGap - shadowGap);
+				ctx.save();
+				ctx.globalAlpha = 0.18;
+				ctx.fillStyle = ink;
+				ctx.fillRect(waveX - 0.5, waveTop, 1, waveHeight);
+				ctx.restore();
+			}
+
 			v['type'] = 'clothes';
 			var clothingDrive = [];
 			$.each(appPosition, function(ie,ve) {

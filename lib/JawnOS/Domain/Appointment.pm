@@ -1324,19 +1324,150 @@ sub navigation_automation {
 # The scan also learns the order the day runs in: the sequence of appointments
 # the person starts and stops themselves, in the order they are completed.
 # `sessions` holds the recent ones, one per stretch without a long pause, and
-# `canonical` is the most common of them - the day the line anticipates from.
+# the canonical is the most common of them - the day the line anticipates from.
 # A row with a source_uuid came from a task, a default option or a default
 # model, so it is not the person's own step and never enters a sequence.
 #
-# The day count runs two months so a cadence of up to a month has room to show
-# itself; the sequence is read from the last fortnight, which is what makes it
-# the recent day rather than an old habit.
+# The history is the ground the person is on, not the calendar: stay at home and
+# the home routine is read from the home days; stay at a friend's or a hotel and
+# that place's own visits answer, however far back they are. The scan then runs
+# on the house's clock (Configure -> Me, Eastern by default) rather than the
+# box's UTC, so a routine begun at eight local reads the same wherever the
+# machine sits.
 sub clothesline_daily_hours {
-	my $days = 60;
 	my $now = &rightNow();
-	my $since = $now - ($days * 86400 * 1000);
-	my $rows = &db_query(q{select app, timestamp, type, source_uuid from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?) and coalesce(source_uuid,'') = ''}, $since, $now, 'usual', 'stop', 'start')->hashes;
-	return &clothesline_routine_scan($rows, $now, window_days => $days, session_days => 14);
+	my ($rows, $window_days, $session_days) = &clothesline_place_history($now);
+	$window_days ||= 60;
+	$session_days ||= 14;
+	my $zone = &clock_zone_house();
+	my $had = exists $ENV{'TZ'};
+	my $old = $ENV{'TZ'};
+	$ENV{'TZ'} = $zone;
+	POSIX::tzset();
+	my $scan = &clothesline_routine_scan($rows, $now, window_days => $window_days, session_days => $session_days);
+	if ($had) { $ENV{'TZ'} = $old } else { delete $ENV{'TZ'} }
+	POSIX::tzset();
+	return $scan;
+}
+
+# The ground the person is on. The last two days' fixes vote: the cell most of
+# them share is the base (home, a friend's house, a hotel), so one afternoon out
+# does not move the routine. Home is the house plate; anything else is a place
+# with its own history. With no fix new enough, the latest fix answers, then the
+# house plate.
+sub clothesline_current_place($now) {
+	$now ||= &rightNow();
+	my $since = $now - (48 * 3600 * 1000);
+	my $rows = eval {
+		&db_query(q{select latitude, longitude, timestamp from continent where latitude is not null and latitude != ? and longitude is not null and longitude != ? and cast(timestamp as integer) >= ? and cast(timestamp as integer) <= ? and not (cast(latitude as real) = 0 and cast(longitude as real) = 0) order by cast(timestamp as integer) asc}, '', '', $since, $now + (3600 * 1000))->hashes;
+	} || [];
+	my (%cell, %last, @valid);
+	foreach my $r ( @{$rows} ) {
+		my $lat = $r->{'latitude'};
+		my $lon = $r->{'longitude'};
+		next unless defined $lat && defined $lon && $lat =~ /^-?\d/ && $lon =~ /^-?\d/;
+		my $key = sprintf('%.2f,%.2f', $lat, $lon);
+		my $ts = 0 + $r->{'timestamp'};
+		$cell{$key}++;
+		$last{$key} = $ts if !defined $last{$key} || $ts > $last{$key};
+		push @valid, { lat => 0 + $lat, lon => 0 + $lon, key => $key };
+	}
+	my $place;
+	if (%cell) {
+		my ($key) = sort { $cell{$b} <=> $cell{$a} || ($last{$b} || 0) <=> ($last{$a} || 0) } keys %cell;
+		my @in = grep { $_->{'key'} eq $key } @valid;
+		my ($slat, $slon) = (0, 0);
+		foreach my $in ( @in ) { $slat += $in->{'lat'}; $slon += $in->{'lon'}; }
+		$place = { lat => $slat / scalar(@in), lon => $slon / scalar(@in) };
+	}
+	unless ($place) {
+		my $fix = eval {
+			&db_query(q{select latitude, longitude from continent where latitude is not null and latitude != ? and longitude is not null and longitude != ? order by cast(server_time as integer) desc limit 1}, '', '')->hashes->[0];
+		};
+		$place = { lat => 0 + $fix->{'latitude'}, lon => 0 + $fix->{'longitude'} } if $fix;
+	}
+	my $home = &weather_home_plate();
+	unless ($place) {
+		return { lat => $home->{'lat'}, lon => $home->{'lon'}, home => 1 } if $home && defined $home->{'lat'} && defined $home->{'lon'};
+		return undef;
+	}
+	if ($home && defined $home->{'lat'} && defined $home->{'lon'}) {
+		my $km = &weather_distance_km($place->{'lat'}, $place->{'lon'}, $home->{'lat'}, $home->{'lon'});
+		if (defined $km && $km <= 1) {
+			$place = { lat => 0 + $home->{'lat'}, lon => 0 + $home->{'lon'}, home => 1 };
+		}
+	}
+	$place->{'home'} ||= 0;
+	return $place;
+}
+
+# The appointments of the stays at the current ground. Home reads its last two
+# months; a place away reads every visit it has, so a return to the same friend
+# or hotel resumes what the line learned there, and a first visit learns from
+# the days as they happen. The stays come from the fixes near the place: a day
+# without one ends the stay. The appointments inside those stays are the whole
+# routine, outings included.
+sub clothesline_place_history($now) {
+	$now ||= &rightNow();
+	my $fallback = sub {
+		my $since = $now - (60 * 86400 * 1000);
+		return (&db_query(q{select app, timestamp, type from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?) and coalesce(source_uuid,'') = ''}, $since, $now, 'usual', 'stop', 'start')->hashes->to_array, 60, 14);
+	};
+	my $place = &clothesline_current_place($now);
+	return $fallback->() unless $place;
+	# the near-place box: a kilometre each way - the same place the person is
+	# standing on, to within a corner. Exact distance is for naming the place;
+	# a stay only needs to know a fix landed here, so the box serves and saves a
+	# haversine per fix (twenty thousand of them at home).
+	my $km = 1;
+	my $dlat = $km / 111;
+	my $dlon = $km / (111 * cos(deg2rad($place->{'lat'})) || 1);
+	my $since = $place->{'home'} ? $now - (60 * 86400 * 1000) : 0;
+	# The stays are read a day at a time: one row a day that has a fix near the
+	# place, so two months at home is sixty rows rather than twenty thousand. A
+	# day without one ends the visit, which is the same rule the fixes gave.
+	my $days = eval {
+		&db_query(q{select cast(cast(timestamp as integer) / 86400000 as integer) d, min(cast(timestamp as integer)) mn, max(cast(timestamp as integer)) mx from continent where cast(latitude as real) between ? and ? and cast(longitude as real) between ? and ? and cast(timestamp as integer) >= ? and cast(timestamp as integer) <= ? and cast(timestamp as integer) > 0 group by d order by d asc}, $place->{'lat'} - $dlat, $place->{'lat'} + $dlat, $place->{'lon'} - $dlon, $place->{'lon'} + $dlon, $since, $now + (3600 * 1000))->hashes->to_array;
+	} || [];
+	my @visits;
+	my ($start, $end, $prev_day);
+	foreach my $d ( @{$days} ) {
+		my $day = 0 + $d->{'d'};
+		my ($mn, $mx) = (0 + $d->{'mn'}, 0 + $d->{'mx'});
+		if (!defined $start || $day > $prev_day + 1) {
+			push @visits, [$start, $end] if defined $start;
+			($start, $end) = ($mn, $mx);
+		}
+		else {
+			$start = $mn if $mn < $start;
+			$end = $mx if $mx > $end;
+		}
+		$prev_day = $day;
+	}
+	push @visits, [$start, $end] if defined $start;
+	return $place->{'home'} ? $fallback->() : ([], 14, 14) unless @visits;
+	# the last fifty stays are plenty: an older visit teaches a routine the
+	# canonical day already keeps, and each adds a clause to the query below
+	@visits = @visits[-50 .. -1] if @visits > 50;
+	for my $i ( 0 .. $#visits ) {
+		$visits[$i][1] += 2 * 3600 * 1000;
+		$visits[$i][1] = $now if $i == $#visits && $visits[$i][1] < $now
+			&& ($now - $visits[$i][1]) < 24 * 3600 * 1000;
+	}
+	my $earliest = $visits[0][0];
+	my $window_days = $place->{'home'} ? 60 : int((($now - $earliest) / (86400 * 1000))) + 1;
+	my $session_days = $place->{'home'} ? 14 : $window_days;
+	my @where;
+	my @args = ('usual', 'stop', 'start', '', '');
+	foreach my $v ( @visits ) {
+		push @where, '(cast(timestamp as integer) between ? and ?)';
+		push @args, $v->[0], $v->[1];
+	}
+	my $rows = eval {
+		&db_query('select app, timestamp, type from appointments where type in (?, ?, ?) and coalesce(source_uuid, ?) = ? and (' . join(' or ', @where) . ')', @args)->hashes->to_array;
+	} || [];
+	return $place->{'home'} ? $fallback->() : ([], 14, 14) unless @{$rows};
+	return ($rows, $window_days, $session_days);
 }
 
 # The local day a moment belongs to, as an integer that steps by one each
@@ -1354,6 +1485,10 @@ sub clothesline_day_index {
 # hand it rows and a moment and see the sequence, the days and the due flags.
 sub clothesline_routine_scan {
 	my ($rows, $now, %opt) = @_;
+	# A plain arrayref is what this reads; `->hashes` hands back a
+	# Mojo::Collection, which is also array-like but is not an ARRAY, so without
+	# this the line would lead with nothing and say nothing about it.
+	$rows = eval { [ $rows->each ] } if ref $rows && ref $rows ne 'ARRAY';
 	$rows = [] unless ref $rows eq 'ARRAY';
 	$now = &rightNow() unless defined $now;
 	my $window = $opt{'window_days'} || 60;
@@ -1486,17 +1621,19 @@ sub clothesline_routine_scan {
 
 	# sessions: recent completed steps in order, split by a long pause so one
 	# morning is not joined to the next morning
-	my (@sessions, @names, $start, $prev);
+	my (@sessions, @names, @times, $start, $prev);
 	foreach my $r ( @recent_completed ) {
 		if (@names && $r->{'ms'} - $prev > $pause) {
-			push @sessions, { seq => [@names], start => $start };
+			push @sessions, { seq => [@names], times => [@times], start => $start };
 			@names = ();
+			@times = ();
 		}
 		$start = $r->{'ms'} unless @names;
 		push @names, $r->{'app'};
+		push @times, $r->{'ms'};
 		$prev = $r->{'ms'};
 	}
-	push @sessions, { seq => [@names], start => $start } if @names;
+	push @sessions, { seq => [@names], times => [@times], start => $start } if @names;
 	# the app that opens the routine most often: the line starts there, so a
 	# call or the weather checked before wake_up is not made the routine's head
 	my %start_count;
@@ -1551,26 +1688,59 @@ sub clothesline_sequence_similarity {
 # cheap and enough to tell one day's shape from another; the whole day is
 # returned, so the head can reach the evening's steps as the day goes on.
 sub clothesline_sequence_canonical {
-	my ($sessions, $start_app) = @_;
+	my ($sessions, $start_app, $wave_gap) = @_;
 	$sessions = [] unless ref $sessions eq 'ARRAY';
 	my $cap = 30;
-	my (@full, @cut);
+	my (@full, @full_times, @full_waves, @cut);
 	foreach my $session ( @{$sessions} ) {
 		next unless ref $session eq 'HASH' && ref $session->{'seq'} eq 'ARRAY';
 		my @seq = @{ $session->{'seq'} };
+		my @times = ref $session->{'times'} eq 'ARRAY' ? @{ $session->{'times'} } : ();
 		next unless @seq;
 		if (defined $start_app && length $start_app) {
 			my $at = -1;
 			for my $i ( 0 .. $#seq ) { if ($seq[$i] eq $start_app) { $at = $i; last; } }
-			@seq = @seq[$at .. $#seq] if $at >= 0;
+			if ($at > 0) {
+				@seq = @seq[$at .. $#seq];
+				@times = @times[$at .. $#times] if @times > $at;
+			}
+		}
+		# A wave is one stretch of the day: the steps run close together, then the
+		# day pauses before the next. The pause that counts is the day's own - its
+		# top fifth of gaps, kept between ten minutes and two hours - so a dense
+		# day and a sparse one each break where their routines actually change. A
+		# caller may pin the gap instead (the tests do).
+		my $gap = $wave_gap;
+		unless (defined $gap && $gap > 0) {
+			my @gaps;
+			for my $i ( 1 .. $#times ) {
+				push @gaps, $times[$i] - $times[$i - 1] if $times[$i] && $times[$i - 1];
+			}
+			if (@gaps) {
+				my @sorted = sort { $a <=> $b } @gaps;
+				$gap = $sorted[ int($#sorted * 0.8) ];
+				$gap = 10 * 60 * 1000 if $gap < 10 * 60 * 1000;
+				$gap = 120 * 60 * 1000 if $gap > 120 * 60 * 1000;
+			}
+		}
+		$gap = 90 * 60 * 1000 unless defined $gap && $gap > 0;
+		my @waves;
+		my $wave = 0;
+		for my $i ( 0 .. $#seq ) {
+			if ($i > 0 && @times > $i && @times > $i - 1
+				&& $times[$i] && $times[$i - 1]
+				&& ($times[$i] - $times[$i - 1]) > $gap) { $wave++; }
+			push @waves, $wave;
 		}
 		push @full, \@seq;
+		push @full_times, \@times;
+		push @full_waves, \@waves;
 		my @short = @seq;
 		@short = @short[0 .. $cap - 1] if @short > $cap;
 		push @cut, \@short;
 	}
-	return [] unless @full;
-	return $full[0] if @full == 1;
+	return { seq => [], times => [], waves => [] } unless @full;
+	return { seq => $full[0], times => $full_times[0], waves => $full_waves[0] } if @full == 1;
 
 	my ($best_idx, $best_score, $best_freq) = (-1, -1, -1);
 	for my $i ( 0 .. $#cut ) {
@@ -1587,7 +1757,8 @@ sub clothesline_sequence_canonical {
 			($best_idx, $best_score, $best_freq) = ($i, $score, $freq);
 		}
 	}
-	return $best_idx >= 0 ? $full[$best_idx] : [];
+	return { seq => [], times => [], waves => [] } if $best_idx < 0;
+	return { seq => $full[$best_idx], times => $full_times[$best_idx], waves => $full_waves[$best_idx] };
 }
 
 # The next steps of the routine, in the order the most common recent day keeps
@@ -1600,23 +1771,40 @@ sub clothesline_sequence_anticipate {
 	my ($scan, $now, %opt) = @_;
 	$scan = {} unless ref $scan eq 'HASH';
 	$now = &rightNow() unless defined $now;
-	my $limit = $opt{'limit'} || 8;
+	my $limit = $opt{'limit'} || 40;
 	my $sessions = ref $scan->{'sessions'} eq 'ARRAY' ? $scan->{'sessions'} : [];
 	my $canonical = $opt{'canonical'} || &clothesline_sequence_canonical($sessions, $scan->{'start_app'});
-	return [] unless ref $canonical eq 'ARRAY' && @{$canonical};
+	my $seq = ref $canonical eq 'HASH' ? $canonical->{'seq'} : $canonical;
+	my $waves = (ref $canonical eq 'HASH' && ref $canonical->{'waves'} eq 'ARRAY') ? $canonical->{'waves'} : undef;
+	return { list => [], current_wave => 0 } unless ref $seq eq 'ARRAY' && @{$seq};
 	my $done = ref $scan->{'done'} eq 'HASH' ? $scan->{'done'} : {};
 
-	my (@out, %seen, %left);
-	foreach my $app ( @{$canonical} ) {
-		# take a finished occurrence of this app off the sequence first
-		if (($left{$app} //= ($done->{$app} || 0)) > 0) { $left{$app}--; next; }
+	# which wave the last finished step sits in: the line shows that wave's
+	# remainder and the one after it, never a wave two ahead
+	my (%left, $current_wave);
+	$current_wave = 0;
+	for my $i ( 0 .. $#{$seq} ) {
+		my $app = $seq->[$i];
+		if (($left{$app} //= ($done->{$app} || 0)) > 0) {
+			$left{$app}--;
+			$current_wave = $waves->[$i] if $waves && defined $waves->[$i];
+		}
+	}
+
+	my (@out, %seen, %left2);
+	for my $i ( 0 .. $#{$seq} ) {
+		my $app = $seq->[$i];
+		if (($left2{$app} //= ($done->{$app} || 0)) > 0) { $left2{$app}--; next; }
+		my $wave = ($waves && defined $waves->[$i]) ? $waves->[$i] : 0;
+		next if $wave < $current_wave;
+		next if $wave > $current_wave + 1;
 		next if $seen{$app}++;
 		my $due = ($scan->{'apps'}{$app} && defined $scan->{'apps'}{$app}{'due'}) ? $scan->{'apps'}{$app}{'due'} : 1;
 		next unless $due;
-		push @out, $app;
+		push @out, { app => $app, wave => $wave };
 		last if @out >= $limit;
 	}
-	return \@out;
+	return { list => \@out, current_wave => $current_wave };
 }
 
 1;

@@ -52,6 +52,10 @@ sub hang_to_dry {
 	my $apps = $daily->{'apps'} || {};
 	my $cur_time = localtime($server_time / 1000);
 	my $cur_hour = $cur_time->[2];
+	# the scan's hours are the house's clock, so the automatic hang asks the same
+	my $local_hour = &clock_zone_text($server_time, undef, '%H');
+	$local_hour = $cur_hour unless defined $local_hour && $local_hour =~ /^\d+$/;
+	$local_hour = 0 + $local_hour;
 
 	foreach my $clr ( @{$cls} ) {
 
@@ -130,7 +134,7 @@ sub hang_to_dry {
 			my $routine = $apps->{$app};
 			next unless $routine->{'due'};
 			my $cadence = $routine->{'cadence'} || 1;
-			my $hourly = defined $routine->{'hour'} && $routine->{'hour'} == $cur_hour && ($routine->{'hour_days'} || 0) >= 2;
+			my $hourly = defined $routine->{'hour'} && $routine->{'hour'} == $local_hour && ($routine->{'hour_days'} || 0) >= 2;
 			# a weekly or longer cadence belongs on its day wherever the clock is;
 			# a daily step still waits for the hour its history keeps, so the tail
 			# is not every app the person has ever run
@@ -146,15 +150,17 @@ sub hang_to_dry {
 	# what belongs on the line follows alphabetically. An app in the head is not
 	# repeated in the tail, and a step the routine takes twice is one name in the
 	# head - the next time it comes round.
-	my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 8);
+	my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 40);
+	my $anticipated = $anticipation->{'list'} || [];
 	my $running = ($daily->{'current'} && $daily->{'current'}{'running'}) ? $daily->{'current'}{'running'} : undef;
 	if (defined $running && length $running) {
-		@{$anticipation} = grep { $_ ne $running } @{$anticipation};
-		unshift @{$anticipation}, $running;
+		@{$anticipated} = grep { $_->{'app'} ne $running } @{$anticipated};
+		unshift @{$anticipated}, { app => $running, wave => $anticipation->{'current_wave'} || 0 };
 	}
 	my %have = map { $_->{'app'} => $_ } @{$returner};
 	my @head;
-	foreach my $app ( @{$anticipation} ) {
+	foreach my $row ( @{$anticipated} ) {
+		my $app = $row->{'app'};
 		next unless defined $app && length $app;
 		next if &app_hidden_now($app);
 		my $item = $have{$app};
@@ -162,6 +168,7 @@ sub hang_to_dry {
 			my $aset = &settings_grabber({ app => $app });
 			$item = { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
 		}
+		$item->{'wave'} = $row->{'wave'};
 		push @head, $item;
 	}
 	# The rail draws its divider where the anticipatory steps end and the

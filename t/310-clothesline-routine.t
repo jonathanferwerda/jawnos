@@ -3,10 +3,14 @@
 #            not the latest day: a step moved earlier or later leaves the rest
 #            in order, a step done twice is one pill at its next turn, and the
 #            cadence may be every second, third, fifth ... day up to a month.
-#            A routine keeps the day it began past midnight, and every press
-#            re-hangs the line in the reply instead of waiting for the poll.
-#            Only the appointments the person starts and stops themselves are
-#            learned; a task or default step stays with its parent.
+#            The day is read as waves - a long pause between steps starts the
+#            next one - and the line shows the wave under way plus one ahead,
+#            never two. A routine keeps the day it began past midnight, and
+#            every press re-hangs the line in the reply instead of waiting for
+#            the poll. Only the appointments the person starts and stops
+#            themselves are learned; a task or default step stays with its
+#            parent. The days are the ground the person is on (home, a friend's,
+#            a hotel), read on the house clock, not the box's UTC.
 
 use strict;
 use warnings;
@@ -15,6 +19,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use Mojo::Collection;
 use JawnOSTest ();
 use RepoSource;
 
@@ -59,32 +64,78 @@ ok(!$scan->{'apps'}{'cream'}, 'a step a task or default started is left to its p
 is($scan->{'apps'}{'laundry'}{'due'}, 0, 'a Sunday habit is not due on a Monday');
 is($scan->{'start_app'}, 'wake_up', 'the routine starts at its common first step');
 
+# `->hashes` hands back a Mojo::Collection, which is array-like but is not an
+# ARRAY: the scan used to discard it as no rows, leaving the line with nothing
+my $collection = Mojo::Collection->new(
+	row('wake_up', JawnOSTest::ts(2026, 11, 16, 8, 0), 'stop'),
+	row('pee',     JawnOSTest::ts(2026, 11, 16, 8, 5), 'stop'),
+);
+my $from_collection = subs::clothesline_routine_scan($collection, $monday, window_days => 60, session_days => 14);
+ok($from_collection->{'apps'}{'wake_up'}, 'rows from ->hashes (a Mojo::Collection) are read, not discarded');
+
 # --- the most common day, not the latest one --------------------------------
 my $canonical = subs::clothesline_sequence_canonical($scan->{'sessions'}, $scan->{'start_app'});
-ok($canonical && @{$canonical}, 'a canonical day was found');
-is_deeply([ @{$canonical}[0 .. 7] ],
+ok($canonical && @{$canonical->{'seq'}}, 'a canonical day was found');
+is_deeply([ @{$canonical->{'seq'}}[0 .. 7] ],
 	[qw(wake_up pee water coffee vape dump facebook breakfast)],
 	'the majority day leads, not the reordered last two days');
-is_deeply(subs::clothesline_sequence_canonical([{ seq => [qw(phone weather wake_up pee water)] }], 'wake_up'),
+is_deeply(subs::clothesline_sequence_canonical([{ seq => [qw(phone weather wake_up pee water)] }], 'wake_up')->{'seq'},
 	[qw(wake_up pee water)], 'a step checked before the routine is not made its head');
 
 # --- a step moved earlier still leaves the rest in order --------------------
 delete $scan->{'done'};
 my $pre = subs::clothesline_sequence_anticipate($scan, $monday, limit => 8);
-is_deeply($pre, [qw(wake_up pee water coffee vape dump facebook breakfast)],
+is_deeply([ map { $_->{'app'} } @{$pre->{'list'}} ], [qw(wake_up pee water coffee vape dump facebook breakfast)],
 	'from the start, the common day leads');
 
 $scan->{'done'} = { wake_up => 1 };
 my $next = subs::clothesline_sequence_anticipate($scan, $monday, limit => 8);
-is_deeply($next, [qw(pee water coffee vape dump facebook breakfast make_up_bed)],
+is_deeply([ map { $_->{'app'} } @{$next->{'list'}} ], [qw(pee water coffee vape dump facebook breakfast make_up_bed)],
 	'after the first step: the sequence in order, one coffee and one water, and the later step still follows');
-is(scalar(grep { $_ eq 'coffee' } @{$next}), 1, 'the second coffee is not a second pill');
-is(scalar(grep { $_ eq 'water' } @{$next}), 1, 'nor is the second water');
+is(scalar(grep { $_->{'app'} eq 'coffee' } @{$next->{'list'}}), 1, 'the second coffee is not a second pill');
+is(scalar(grep { $_->{'app'} eq 'water' } @{$next->{'list'}}), 1, 'nor is the second water');
 
 $scan->{'done'} = { map { $_ => 1 } qw(wake_up pee water coffee vape dump facebook breakfast make_up_bed) };
 my $early_bed = subs::clothesline_sequence_anticipate($scan, $monday, limit => 8);
-is_deeply($early_bed, [qw(water coffee vape)],
+is_deeply([ map { $_->{'app'} } @{$early_bed->{'list'}} ], [qw(water coffee vape)],
 	'a bed made before the second coffee leaves the rest in order and does not repeat');
+
+# --- the day runs in waves, and the line shows one wave ahead ---------------
+# one session with the step times: the wake-up wave at 8, the lunch wave four
+# hours later, and the evening wave five hours after that.
+my $base = JawnOSTest::ts(2026, 11, 16, 8, 0);
+my @wt = (map { $base + ($_ * 60000) } (0, 5, 10, 15));
+push @wt, $base + (4 * 3600000), $base + (5 * 3600000);
+push @wt, $base + (10 * 3600000);
+my $wseq = [{ seq => [qw(wake_up pee water coffee lunch tea bed)], times => \@wt, start => $base }];
+my $wcanon = subs::clothesline_sequence_canonical($wseq, 'wake_up', 90 * 60 * 1000);
+is_deeply($wcanon->{'waves'}, [0, 0, 0, 0, 1, 1, 2],
+	'a long pause between steps starts a new wave');
+
+# with no gap pinned, the day's own longer breaks are the boundaries: five
+# minutes and under, then twenty and sixty, then four hours - only the last
+# is beyond the top fifth of these gaps (sixty minutes), so it alone splits
+my $ad = JawnOSTest::ts(2026, 11, 16, 8, 0);
+my @ad_t = ($ad, $ad + 5 * 60000, $ad + 10 * 60000, $ad + 15 * 60000, $ad + 35 * 60000, $ad + 95 * 60000, $ad + 335 * 60000);
+my $adcanon = subs::clothesline_sequence_canonical([{ seq => [qw(a b c d e f g)], times => \@ad_t }], undef);
+is_deeply($adcanon->{'waves'}, [0, 0, 0, 0, 0, 0, 1],
+	'the default wave gap follows the day\'s own longer breaks');
+
+my $wscan = { sessions => $wseq, start_app => 'wake_up' };
+my $wone = subs::clothesline_sequence_anticipate($wscan, $base + 60000);
+is_deeply([ map { $_->{'app'} } @{$wone->{'list'}} ], [qw(wake_up pee water coffee lunch tea)],
+	'the line shows the wave under way and the one after, never two ahead');
+is($wone->{'current_wave'}, 0, 'the wave under way is the one the last finished step sits in');
+
+$wscan->{'done'} = { wake_up => 1, pee => 1, water => 1, coffee => 1 };
+my $wtwo = subs::clothesline_sequence_anticipate($wscan, $base + 60000);
+is_deeply([ map { $_->{'app'} } @{$wtwo->{'list'}} ], [qw(lunch tea)],
+	'the finished wake-up wave leaves the lunch wave, and the evening waits');
+
+$wscan->{'done'} = { map { $_ => 1 } qw(wake_up pee water coffee lunch tea) };
+my $wthree = subs::clothesline_sequence_anticipate($wscan, $base + 60000);
+is_deeply([ map { $_->{'app'} } @{$wthree->{'list'}} ], [qw(bed)],
+	'the evening wave arrives once the lunch wave is done');
 
 # --- a cadence of any length up to a month ----------------------------------
 sub due_for {
@@ -158,6 +209,10 @@ like($appointment, qr/sub clothesline_sequence_canonical/,
 	'the most common day is what the line reads');
 like($appointment, qr/\$cadence = 30/,
 	'the cadence reaches a month');
+like($appointment, qr/sub clothesline_current_place/, 'the ground the person is on decides which days are read');
+like($appointment, qr/sub clothesline_place_history/, 'a place away is learned from all its visits, however far back');
+like($appointment, qr/foreach my \$in \( \@in \)/, 'the place averages both axes, not just the longitude');
+like($appointment, qr/clock_zone_house/, 'the scan runs on the house clock, not the box clock');
 
 my $hang = read_file(repo_root() . '/lib/JawnOS/Domain/Hang.pm');
 like($hang, qr/clothesline_sequence_anticipate\(\$daily/, 'the rail hangs the anticipatory head');
@@ -165,11 +220,14 @@ like($hang, qr/clothesline_line_order/, 'the head leads and the tail is alphabet
 like($hang, qr/\$cadence >= 2 \|\| \$hourly/, 'a cadence past daily reaches the tail on its day');
 unlike($hang, qr/clothesline_hang_slots/, 'the per-slot repeat helper is gone');
 like($hang, qr/\$item->\{'head'\} = 1/, 'the anticipatory head is marked for the divider');
+like($hang, qr/\$item->\{'wave'\} = \$row->\{'wave'\}/, 'each anticipatory step carries its wave');
+like($hang, qr/clock_zone_text\(\$server_time/, 'the automatic hang reads the house clock, not the box clock');
 
 my $clothesline_js = read_file(repo_root() . '/public/js/manager/clothesline.js');
 like($clothesline_js, qr/headCount/, 'the rail finds where the anticipatory head ends');
 like($clothesline_js, qr/divider/, 'the rail draws the divider there');
 like($clothesline_js, qr/clothesLinePos\['centred'\]/, 'the divider opens at the middle on the first draw');
+like($clothesline_js, qr/v\['wave'\] != clothes\[i - 1\]\['wave'\]/, 'the rail draws a soft bar between waves');
 
 # --- every press re-hangs the line, and the reply carries it ----------------
 my $part14 = read_file(repo_root() . '/lib/JawnOS/Manager/Part14.pm');
