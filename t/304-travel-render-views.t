@@ -120,7 +120,13 @@ like( $basemap, qr{'/js/basemap/maplibre-gl\.js'}, 'the plain build is the fallb
 like( $basemap, qr/maplibregl\.addProtocol\('pmtiles', protocol\.tile\)/, 'the PMTiles protocol is registered once' );
 like( $basemap, qr/maplibregl\.setWorkerCount\(1\)/, 'the pool is one worker' );
 like( $basemap, qr{url: 'pmtiles:///manager/travel/basemap'}, 'the archive is the house\'s own same-origin route' );
-like( $basemap, qr/maxzoom: 14/, 'the source stops at the archive\'s z14' );
+like( $basemap, qr/new pmtiles\.PMTiles\(url\)/, 'the archive header is read at open time' );
+like( $basemap, qr/archive\.getHeader\(\)\.then/, 'through the PMTiles header call' );
+like( $basemap, qr/finish\(header && header\.maxZoom\)/, 'whose maxZoom is the deepest zoom' );
+like( $basemap, qr/^var TRAVEL_BASEMAP_DEFAULT_MAXZOOM = 14;$/m, 'a readable, documented fallback of 14' );
+like( $basemap, qr/maxzoom: maxzoom/, 'the source takes the archive\'s maxzoom, not a pinned one' );
+like( $basemap, qr/maxZoom: maxzoom/, 'and the zoom control stops at the same place' );
+unlike( $basemap, qr/maxzoom: 14\b/, 'no pinned z14 survives in the style' );
 like( $basemap, qr/'source-layer': 'transportation'/, 'roads come from the transportation layer' );
 like( $basemap, qr/'source-layer': 'water'/, 'and water from the water layer' );
 like( $basemap, qr/'source-layer': 'building'/, 'buildings are drawn from the building layer' );
@@ -132,6 +138,15 @@ like( $basemap, qr/The house\\?'s street map is not installed - run scripts\/fet
 	'a missing install says how to install it' );
 like( $basemap, qr/osm_basemap\.pl --all/, 'a missing archive says how to build one' );
 like( $basemap, qr/function travelBasemapClose/, 'the view has a close' );
+like( $basemap, qr/The street map could not start - the browser blocked MapLibre\\?'s worker/,
+	'a map that errors before it draws names the cause' );
+like( $basemap, qr/Run scripts\/fetch_basemap_libs\.sh, then open it again/,
+	'and the fix, in the overlay note' );
+like( $basemap, qr/map\.on\('load', function\(\) \{/m, 'the note is dropped once the map has drawn' );
+like( $basemap, qr/if \(!noArchive\) \{ note\(''\); \}/, 'but the archive note is not overwritten by a draw' );
+like( $basemap, qr/console\.error\('Travel street map:'/, 'and the error is not swallowed: it reaches the console' );
+like( $basemap, qr/st\.watchdog = setTimeout\(/, 'a refused worker that raises no event is still caught' );
+like( $basemap, qr/clearTimeout\(st\.watchdog\)/, 'and the watchdog is let go on close' );
 like( $basemap, qr/st\.map\.remove\(\)/, 'and disposes the map on close' );
 like( $basemap, qr/st\.map\.off\('idle', st\.labels\)/, 'and lets go of its render listeners' );
 like( $basemap, qr/m\.remove\(\)/, 'and removes its DOM labels' );

@@ -115,7 +115,44 @@ function travelBasemapWidth(base) {
 	return ['interpolate', ['linear'], ['zoom'], 6, base * 0.25, 10, base * 0.5, 14, base];
 }
 
-function travelBasemapStyle() {
+// The archive's own header says how deep it was built. osm_basemap.pl cuts the
+// extract at whatever zoom it is given - 14 when this view was written, 17 for
+// the newer builds - so the deepest zoom is read from the staged archive rather
+// than pinned here, and a rebuilt archive needs no code change. The read is one
+// small range request; 14 is the fallback for an archive that cannot be read at
+// all, which is the shallowest range the builder has ever produced.
+var TRAVEL_BASEMAP_DEFAULT_MAXZOOM = 14;
+
+function travelBasemapMaxZoom(url, done) {
+	var settled = false;
+	var finish = function(z) {
+		if (settled) { return; }
+		settled = true;
+		var n = parseInt(z, 10);
+		done(isFinite(n) && n > 0 ? n : TRAVEL_BASEMAP_DEFAULT_MAXZOOM);
+	};
+	var archive;
+	try { archive = new pmtiles.PMTiles(url); } catch (e) { finish(0); return; }
+	// a header read that hangs must not leave the stage blank for ever
+	var timer = setTimeout(function() { finish(0); }, 8000);
+	try {
+		archive.getHeader().then(function(header) {
+			clearTimeout(timer);
+			finish(header && header.maxZoom);
+		}, function() {
+			clearTimeout(timer);
+			finish(0);
+		});
+	} catch (e) {
+		clearTimeout(timer);
+		finish(0);
+	}
+}
+
+function travelBasemapStyle(maxzoom) {
+	// the fallback keeps a direct caller (or a header read that failed) on the
+	// shallowest archive the builder makes
+	if (!(parseInt(maxzoom, 10) > 0)) { maxzoom = TRAVEL_BASEMAP_DEFAULT_MAXZOOM; }
 	var road = function(id, classes, colour, width, dashed) {
 		var paint = { 'line-color': colour, 'line-width': travelBasemapWidth(width) };
 		if (dashed) { paint['line-dasharray'] = [2, 1.5]; }
@@ -150,9 +187,9 @@ function travelBasemapStyle() {
 				type: 'vector',
 				// relative to the page origin, so the archive comes from this house
 				url: 'pmtiles:///manager/travel/basemap',
-				// the archive osm_basemap.pl builds is z0-z14; deeper zooms overzoom
-				// z14 rather than asking for tiles it never made
-				maxzoom: 14
+				// read from the archive's header, so a z17 build is drawn at z17
+				// instead of overzooming a blur of z14 tiles
+				maxzoom: maxzoom
 			}
 		},
 		layers: [
@@ -240,16 +277,31 @@ function travelBasemapStart(lat, lon) {
 	box.style.cssText = 'position:absolute;inset:0;background:#f6f3ec;';
 	stage.appendChild(box);
 
+	// the box exists before the header is read, so a close during that read
+	// still has a state (and a box) to let go of
+	var st = { map: null, box: box, credit: null, markers: [], labels: null, watchdog: null };
+	travelBasemapState = st;
+	travelBasemapNote(jawnosT('Opening the house\'s street map…'));
+
+	travelBasemapMaxZoom('/manager/travel/basemap', function(maxzoom) {
+		// closed, or reopened, while the header was in flight
+		if (travelBasemapState !== st) { return; }
+		travelBasemapDraw(st, centre, maxzoom);
+	});
+}
+
+function travelBasemapDraw(st, centre, maxzoom) {
+	var box = st.box, stage = box.parentNode;
 	var map;
 	try {
 		map = new maplibregl.Map({
 			container: box,
-			style: travelBasemapStyle(),
+			style: travelBasemapStyle(maxzoom),
 			center: [centre.lon, centre.lat],
-			zoom: 15,
-			// the archive stops at z14; MapLibre overzooms those tiles instead
-			// of asking for ground it never built
-			maxZoom: 17,
+			zoom: Math.min(15, maxzoom),
+			// the archive's deepest zoom is the archive's, not this file's: the
+			// zoom control stops where the tiles stop
+			maxZoom: maxzoom,
 			attributionControl: false,
 			// a small map in a window: the pitch and the compass are noise
 			pitchWithRotate: false,
@@ -257,21 +309,48 @@ function travelBasemapStart(lat, lon) {
 		});
 	} catch (e) {
 		travelBasemapNote(jawnosT('This browser cannot draw the map here.'));
-		box.parentNode.removeChild(box);
+		if (box.parentNode) { box.parentNode.removeChild(box); }
 		return;
 	}
 	travelBasemapNote('');
 
+	// A map that errors before it draws never says so by itself: the usual cause
+	// is the browser refusing MapLibre's worker (a blob: worker when only the
+	// plain build is installed, which the house CSP does not allow) and the
+	// stage just stays blank. Name the cause and the fix, and let the note go the
+	// moment the map has drawn. The raw error still reaches the console.
+	var note = function(text) { travelBasemapNote(text); };
+	var noArchive = false, drawn = false;
+	var failure = function() {
+		note(jawnosT('The street map could not start - the browser blocked MapLibre\'s worker or the library is incomplete. Run scripts/fetch_basemap_libs.sh, then open it again.'));
+	};
+	var stopWatchdog = function() {
+		if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = null; }
+	};
+	// a worker refused before any error surfaces leaves no event behind, so the
+	// stage is given a few seconds to draw before the failure is named
+	st.watchdog = setTimeout(function() { if (!drawn && !noArchive) { failure(); } }, 8000);
+
+	map.on('load', function() {
+		drawn = true;
+		stopWatchdog();
+		if (!noArchive) { note(''); }
+	});
+
 	// an archive that is not staged says how to build it, rather than leaving a
-	// blank stage: the 404 comes back through the source's tile requests
-	var noArchive = false;
+	// blank stage: the 404 comes back through the source's requests
 	map.on('error', function(e) {
-		if (noArchive) { return; }
+		try { console.error('Travel street map:', (e && e.error) || e); } catch (err) {}
+		if (noArchive || drawn) { return; }
 		var msg = (e && e.error && e.error.message) || '';
 		if (e && e.sourceId === 'basemap' && /404|fetch|No basemap/i.test(msg)) {
 			noArchive = true;
-			travelBasemapNote(jawnosT('The house has no street map archive yet - run perl scripts/osm_basemap.pl --all'));
+			stopWatchdog();
+			note(jawnosT('The house has no street map archive yet - run perl scripts/osm_basemap.pl --all'));
+			return;
 		}
+		stopWatchdog();
+		failure();
 	});
 
 	var credit = document.createElement('div');
@@ -283,7 +362,9 @@ function travelBasemapStart(lat, lon) {
 	map.on('idle', labels);
 	map.on('moveend', labels);
 
-	travelBasemapState = { map: map, box: box, credit: credit, markers: [], labels: labels };
+	st.map = map;
+	st.credit = credit;
+	st.labels = labels;
 }
 
 // Place names as DOM text: the archive has no glyph atlas and the style has no
@@ -323,6 +404,8 @@ function travelBasemapClose() {
 	var st = travelBasemapState;
 	travelBasemapState = null;
 	if (st) {
+		// the draw watchdog belongs to this open, not to the next one
+		if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = null; }
 		$.each(st.markers || [], function(i, m) { try { m.remove(); } catch (e) {} });
 		if (st.map) {
 			// remove() stops the render loop, frees the GL context and drops the
