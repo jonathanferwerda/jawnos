@@ -254,6 +254,7 @@ my $world_page = read_file("$root/templates/travel/world.html.ep");
 like( $world_page, qr/<a-scene id="world_scene" embedded/, 'the frame is an A-Frame scene' );
 like( $world_page, qr/<a-sky color=/, 'and a sky above the horizon' );
 like( $world_page, qr/fog=.*color: #cfe3f0/, 'with the haze the same colour, so the horizon blends' );
+like( $world_page, qr/rotation="-12 0 0"/, 'and the opening look a little down, so the ground is in view' );
 like( $world_page, qr/wasd-controls=/, 'walking is offered' );
 like( $world_page, qr{/js/aframe/aframe\.min\.js}, 'the local A-Frame build is loaded' );
 like( $world_page, qr{/js/travel_world\.js}, 'the world renderer is loaded' );
