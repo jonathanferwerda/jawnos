@@ -15,6 +15,25 @@ static String jh_peer_name;          // what the bridge calls this machine
 static uint32_t jh_house_seen = 0;   // last bridge message, for diagnostics
 static bool jh_state_requested = false;
 
+// Now Me's device half: the rotated authorization, the machine that holds the
+// pairing, and a clock fix. RAM only, on purpose - the authorization rotates,
+// so a stale copy on flash is worse than none: it authenticates against a
+// patience the house has already forgotten.
+//
+// The two numbers in the push look alike and are not. `offset` is the house's
+// timezone offset (Manager/Part35.pm's `timegm(@t) - timelocal(@t)`), so
+// adding it to an epoch yields a local wall clock, not an epoch the house can
+// compare. `timestamp` is the server's UTC epoch. The fix this board needs is
+// therefore the difference between that stamp and its own unsynced time(NULL),
+// taken when the push lands; time(NULL) advances at the same rate afterwards.
+#define JH_NOW_ME_AUTH_MAX 256
+#define JH_NOW_ME_HOST_MAX 96
+static portMUX_TYPE jh_now_me_mux = portMUX_INITIALIZER_UNLOCKED;
+static char jh_now_me_auth[JH_NOW_ME_AUTH_MAX] = "";
+static char jh_now_me_homebase[JH_NOW_ME_HOST_MAX] = "";
+static bool jh_clock_offset_set = false;
+static long jh_clock_offset = 0;   // seconds to add to time(NULL)
+
 static void ble_send_json(JSONVar message) {
   if (!ble_link_ready()) {
     return;
@@ -38,14 +57,20 @@ static bool ble_bridge_zlib_guard(const String &raw) {
   return true;
 }
 
-static String ble_json_type(const JSONVar &msg) {
+static String ble_json_type(JSONVar &msg) {
   if (!msg.hasOwnProperty("type")) {
     return String("");
   }
   return String((const char *)msg["type"]);
 }
 
-static String ble_json_string(const JSONVar &msg, const char *key) {
+// JSONVar::operator[] is not const (it inserts a null for a missing key), so a
+// const reference here does not call it. The compiler instead reads `msg[key]`
+// as pointer arithmetic on the key string (JSONVar's operator long() is 0 for a
+// non-number, so it becomes key[0]) and casts that char to a pointer - a
+// warning, not an error, and a lookup that returns an address near 0. Keep the
+// parameter mutable: this is a live bug the warning used to hide.
+static String ble_json_string(JSONVar &msg, const char *key) {
   if (!msg.hasOwnProperty(key)) {
     return String("");
   }
@@ -53,6 +78,77 @@ static String ble_json_string(const JSONVar &msg, const char *key) {
     return String("");
   }
   return String((const char *)msg[key]);
+}
+
+static long ble_json_long(JSONVar &msg, const char *key) {
+  if (!msg.hasOwnProperty(key)) {
+    return 0;
+  }
+  // A number read through (double) is the one cast that works on every JSONVar
+  // number; casting a String/undefined with (long) yields a garbage value on
+  // this core (the alarmclock's jint64 note).
+  if (JSON.typeof(msg[key]) != "number") {
+    return 0;
+  }
+  return (long)(double)msg[key];
+}
+
+// Copy the Now Me state out for a reader on another task. The critical section
+// covers only snprintf into fixed buffers: no allocation, so it cannot deadlock
+// or fail, and a rotating token is never read half-written.
+static void now_me_snapshot(char *auth, size_t auth_cap, char *homebase, size_t host_cap,
+                            bool *have_offset, long *offset) {
+  taskENTER_CRITICAL(&jh_now_me_mux);
+  if (auth && auth_cap) {
+    snprintf(auth, auth_cap, "%s", jh_now_me_auth);
+  }
+  if (homebase && host_cap) {
+    snprintf(homebase, host_cap, "%s", jh_now_me_homebase);
+  }
+  if (have_offset) {
+    *have_offset = jh_clock_offset_set;
+  }
+  if (offset) {
+    *offset = jh_clock_offset;
+  }
+  taskEXIT_CRITICAL(&jh_now_me_mux);
+}
+
+static void now_me_apply(JSONVar &data) {
+  String auth = ble_json_string(data, "authorization");
+  String host = ble_json_string(data, "homebase");
+  long server_ts = ble_json_long(data, "timestamp");
+  // The plausible-epoch window the alarmclock uses: a boot counter or a
+  // malformed push must not become a confident wrong hour.
+  bool clock_fixed = (server_ts > 1600000000L && server_ts < 4102444800L);
+  long device_ts = (long)time(NULL);
+  char shown_host[JH_NOW_ME_HOST_MAX];
+  long shown_offset = 0;
+
+  taskENTER_CRITICAL(&jh_now_me_mux);
+  if (auth.length()) {
+    snprintf(jh_now_me_auth, sizeof(jh_now_me_auth), "%s", auth.c_str());
+  }
+  if (host.length()) {
+    snprintf(jh_now_me_homebase, sizeof(jh_now_me_homebase), "%s", host.c_str());
+  }
+  if (clock_fixed) {
+    jh_clock_offset = server_ts - device_ts;
+    jh_clock_offset_set = true;
+  }
+  snprintf(shown_host, sizeof(shown_host), "%s", jh_now_me_homebase);
+  shown_offset = jh_clock_offset;
+  taskEXIT_CRITICAL(&jh_now_me_mux);
+
+  jh_log("[bt] now_me applied: homebase=%s auth=%u bytes offset=%ld%s",
+         shown_host[0] ? shown_host : "(none)", (unsigned)auth.length(), shown_offset,
+         jh_clock_offset_set ? "" : " (no clock fix)");
+  if (!auth.length()) {
+    jh_log("[bt] now_me had no authorization; kept the previous one");
+  }
+  if (!host.length()) {
+    jh_log("[bt] now_me had no homebase; kept the previous one");
+  }
 }
 
 // What one envelope means. Keeping this separate from bridge_handle() means the
@@ -88,9 +184,34 @@ static void bridge_dispatch(JSONVar &msg) {
     jh_log("[bt] %s", mtype.c_str());
   }
   else if (mtype == "now_me") {
-    // jt draws Now Me; the hat has nothing to draw yet, so it acknowledges by
-    // logging and leaves the payload for phase 1.
-    jh_log("[bt] now_me");
+    // The phone pushes the whole picture over the bridge: the homebase, the
+    // freshly rotated authorization, and the clock. No network is needed on
+    // this side. Stored in RAM and reported by now_me_apply().
+    JSONVar data = msg["data"];
+    if (JSON.typeof(data) == "object") {
+      now_me_apply(data);
+    }
+    else {
+      jh_log("[bt] now_me without a data object");
+    }
+  }
+  else if (mtype == "say") {
+    // The answer as words. There is no on-device TTS: this is logged for the
+    // bench, and the two audio messages below are what the wearer can hear.
+    JSONVar data = msg["data"];
+    utterance_reply_text(ble_json_string(data, "text"));
+  }
+  else if (mtype == "say_audio_ready") {
+    // The answer was rendered as one WAV on the house; pull it over WiFi. The
+    // id is the capability and the file is one-shot, so no Now Me pair rides
+    // along (perl/watch.pl's reply_audio).
+    JSONVar data = msg["data"];
+    utterance_reply_audio_ready(ble_json_string(data, "id"), ble_json_string(data, "base"));
+  }
+  else if (mtype == "say_audio") {
+    // The BLE fallback: raw PCM in sequenced base64 parts, played on `last`.
+    JSONVar data = msg["data"];
+    utterance_reply_audio(data);
   }
   else {
     // Deliberately quiet: an unknown type is not an error, and answering one

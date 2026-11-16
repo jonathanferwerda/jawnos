@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <stdarg.h>
+#include <ctype.h>
+#include <time.h>
 #include <Wire.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -49,6 +51,7 @@
 //   jh_10_voice_in.ino        PDM microphone, ring buffer, wake word
 //   jh_11_ota.ino             /device_query version report and /update
 //   jh_12_bridge.ino          the house bridge envelope and its state_request
+//   jh_13_utterance.ino       the spoken command after the wake word, and its reply
 //
 // The original void setup()/void loop() bodies live in the parts as
 // jawn_setup()/jawn_loop(). These wrappers keep main-file detection and the
@@ -96,6 +99,13 @@ void voice_in_init();
 bool wake_word_ready();
 uint32_t wake_word_fires();
 uint8_t wake_word_peak();
+size_t voice_read(int16_t *out, size_t samples);
+
+bool utterance_arm();
+bool utterance_busy();
+void utterance_reply_text(const String &text);
+void utterance_reply_audio_ready(const String &id, const String &base);
+void utterance_reply_audio(JSONVar &data);
 
 void ota_start();
 void ota_loop();

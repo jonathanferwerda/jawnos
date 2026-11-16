@@ -1,8 +1,8 @@
 // ---- voice in: the PDM microphone, the ring buffer, the wake-word hook ------
 // The XIAO ESP32S3 Sense carries a PDM microphone. I2S port 1 reads it at 16 kHz
-// mono into a FreeRTOS stream buffer; a phase-1 detector consumes that buffer
-// and, when it fires, starts a capture and a snap. Phase 0 wires the plumbing and
-// stops at the detector:
+// mono into a FreeRTOS stream buffer; the detector consumes every frame and,
+// when it fires, hands the stream to jh_13_utterance.ino, which captures the
+// question, posts it to the house, and plays the answer.
 //
 //   * wake_word_detected() runs the shared model through jt/voice_models.h.
 //   * The model and the loading code are NOT duplicated here. jt/voice_models.h,
@@ -102,19 +102,25 @@ static void voice_task(void *arg) {
       peak_rms = rms;
     }
 
+    bool armed = false;
     if (wake_word_detected(buf, n)) {
       // A tick, not a snap. What follows a wake word is the utterance the house
       // should hear, and snapping here would post one frame per false trigger
-      // into unclaimed media. The capture and its POST are the next piece;
-      // voice_read() below already hands out the PCM for them.
+      // into unclaimed media. Arming drains the tail of the phrase already in
+      // the ring and starts jh_13's consumer; the frame in hand is still part
+      // of that phrase, so it is not sent (see below).
       haptics_tick(70);
+      armed = utterance_arm();
     }
 
-    // The detector is the consumer once it exists. Until then this only fills
-    // and drops, which the report line makes visible instead of hiding.
-    size_t sent = xStreamBufferSend(jh_voice_ring, buf, n * 2, 0);
-    if (sent < n * 2) {
-      jh_voice_drops = jh_voice_drops + (uint32_t)((n * 2 - sent) / 2);
+    // When a capture was armed, this frame carried the end of the wake word and
+    // must stay out of the clip. Otherwise the ring is both the detector's
+    // backlog and the capture task's input, filled exactly as before.
+    if (!armed) {
+      size_t sent = xStreamBufferSend(jh_voice_ring, buf, n * 2, 0);
+      if (sent < n * 2) {
+        jh_voice_drops = jh_voice_drops + (uint32_t)((n * 2 - sent) / 2);
+      }
     }
 
     if (millis() - last_report >= 2000) {

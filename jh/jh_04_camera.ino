@@ -198,6 +198,12 @@ static void camera_task(void *arg) {
 // command instead of a stall. The stack is larger than the deck's house task
 // because the TLS handshake runs here.
 void camera_request_snap() {
+  if (utterance_busy()) {
+    // The clip and the camera frame both live in PSRAM; see jh_13_utterance.ino
+    // for why the two entrants refuse each other.
+    camera_set_error("utterance capture in flight");
+    return;
+  }
   if (jh_camera_busy) {
     camera_set_error("busy");
     return;
