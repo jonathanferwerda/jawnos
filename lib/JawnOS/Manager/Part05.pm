@@ -357,7 +357,10 @@ sub appointment_writer($c,$app) {
 		}
 	}
 	elsif ($app->{'type'} eq 'image' || $app->{'type'} eq 'video') {
-		my $appt = &subs::db_query('select type,file,timestamp,uuid from appointments where app = ? and timestamp <= ? and (type=? or type=?)', $app->{'app'}, $app->{'timestamp'}, 'start', 'record')->hashes->[0];
+		# The newest start/record before this write owns the file. Without the
+		# order, a late adoption joined whichever row SQLite returned first (the
+		# oldest) and inherited its timestamp.
+		my $appt = &subs::db_query('select type,file,timestamp,uuid from appointments where app = ? and timestamp <= ? and (type=? or type=?) order by timestamp desc limit 1', $app->{'app'}, $app->{'timestamp'}, 'start', 'record')->hashes->[0];
 		my $uuid = $appt->{'uuid'};
 		if ($uuid) {
 			$app->{'type'} = $appt->{'type'};

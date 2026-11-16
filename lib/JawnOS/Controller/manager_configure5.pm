@@ -651,50 +651,77 @@ sub action_41150 {
 sub action_41659 {
 	my $c = shift;
 	my $app = &subs::unformat_name($c->param('app'));
-	my $timestamp = $c->param('timestamp');
-	my $scope = $c->param('scope') || 'h';
-	my $bt = &subs::ago_calc($scope, $timestamp);
 	my $misc_settings = &misc_setting_list();
-	my $html;
-	$c->param('duty' => 'adoption');
-	my @seen_files;
-	foreach my $ms ( keys %{$misc_settings->{$device}} ) {
-		if ($ms =~ /_location$/) {
-			my $folder_name = $ms;
-			$folder_name =~ s/_location$//gi;
-			my $folder = &subs::home($misc_settings->{$device}->{$ms} . '/' . &subs::path_name($app));
 
-			my @files;
-			if (opendir(my $dh, $folder)) {
-				@files = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
-				closedir $dh;
+	# Every configured location that holds this app's folder, deduped by path.
+	my @folders;
+	my %seen_folder;
+	foreach my $ms ( sort keys %{ $misc_settings->{$device} || {} } ) {
+		next unless $ms =~ /^(.+)_location$/;
+		my $key = $1;
+		my $value = $misc_settings->{$device}->{$ms};
+		next unless defined $value && length $value;
+		my $folder = &subs::home($value . '/' . &subs::path_name($app));
+		next unless -d $folder;
+		next if $seen_folder{$folder}++;
+		push @folders, { key => $key, name => &subs::format_name($key), path => $folder };
+	}
+
+	# One query for the whole app, not one per directory entry. A row's file
+	# column is JSON (a hash or a list of them); gather the paths, thumbs,
+	# previews and original names so the scan can tell adopted from new.
+	my %known_paths;
+	my %known_names;
+	my $rows = &subs::db_query('select file from appointments where app = ? and file is not null', $app)->hashes;
+	foreach my $row ( @{$rows} ) {
+		my $decoded = eval { decode_json $row->{'file'} } || [];
+		$decoded = [$decoded] if ref $decoded eq 'HASH';
+		next unless ref $decoded eq 'ARRAY';
+		foreach my $fh ( @{$decoded} ) {
+			next unless ref $fh eq 'HASH';
+			foreach my $k ( 'f', 'thumb', 'preview' ) {
+				$known_paths{$fh->{$k}} = 1 if defined $fh->{$k} && length $fh->{$k};
 			}
+			$known_names{$fh->{'of'}} = 1 if defined $fh->{'of'} && length $fh->{'of'};
+		}
+	}
 
-			if (scalar @files > 0) {
-				$html .= '<h3>' . &subs::format_name($folder_name) . ':</h3> ' . $folder . '<br>';
-				foreach my $file ( @files ) {
-					next if grep { $_ eq $file } @seen_files;
-					push @seen_files, $file;
-					my $full_file = $folder . '/' . $file;
-					my $file_q = &subs::db_query('select * from appointments where app = ? and file like ? and file is not null', $app, '%' . $file . '%')->hashes;
-					if (scalar @{$file_q} == 0) {
-						$c->param('file' => $full_file);
-						my $job = &rock_and_roll($c);
-						if ($file =~ /\.jpg|\.png|\.bmp/) {
-							my $image = $job->{'image'};
-							$html .= '<img class="gigantic_thumb adopt_file" type="image" app="' . $app . '" timestamp="' . $job->{'timestamp'} . '" file="' . $full_file . '" src="' . $image . '">';
-						}
-						elsif ($file =~ /\.mpg|\.webm|\.mp4/) {
-							$c->param('file' => $full_file);
-							my $job = &rock_and_roll($c);
-							$html .= '<video controls loop class="gigantic_thumb adopt_file" type="video" app="' . $app . '" timestamp="' . $job->{'timestamp'} . '" file="' . $full_file . '" src="/file_open?timestamp=' . $job->{'timestamp'} . '&file=' . $full_file . '"></video>';
-						}
-					}
-				}
+	my $sections = &subs::adopt_scan_candidates(\@folders, \%known_paths, \%known_names);
+
+	my $html = '';
+	my $candidates = 0;
+	foreach my $section ( @{$sections} ) {
+		$html .= '<h3>' . xml_escape($section->{'name'}) . ':</h3> ' . xml_escape($section->{'path'}) . '<br>';
+		foreach my $candidate ( @{ $section->{'files'} || [] } ) {
+			my $path = $candidate->{'file'};
+			my $name = $candidate->{'name'};
+			my $type = $candidate->{'type'};
+			my $stamp = int(((stat($path))[9] || 0) * 1000);
+			my $file_q = &subs::url_escape_utf8($path);
+			my $app_q = &subs::url_escape_utf8($app);
+			my $file_url = xml_escape('/file_open?file=' . $file_q . '&timestamp=' . $stamp . '&app=' . $app_q);
+			my $thumb_url = xml_escape('/file_open?file=' . $file_q . '&timestamp=' . $stamp . '&app=' . $app_q . '&thumb=ya');
+			my $app_e = xml_escape($app);
+			my $name_e = xml_escape($name);
+			my $path_e = xml_escape($path);
+			$candidates++;
+			if ($type eq 'image') {
+				$html .= '<img class="gigantic_thumb adopt_file" type="image" app="' . $app_e . '" timestamp="' . $stamp . '" file="' . $path_e . '" adopted="yes" loading="lazy" decoding="async" src="' . $thumb_url . '" alt="' . $name_e . '">';
+			}
+			elsif ($type eq 'video') {
+				$html .= '<video class="gigantic_thumb adopt_file" type="video" app="' . $app_e . '" timestamp="' . $stamp . '" file="' . $path_e . '" adopted="yes" preload="metadata" poster="' . $thumb_url . '" src="' . $file_url . '"></video>';
+			}
+			else {
+				$html .= '<div class="gigantic_thumb adopt_file" type="' . xml_escape($type) . '" app="' . $app_e . '" timestamp="' . $stamp . '" file="' . $path_e . '" adopted="yes" title="' . $name_e . '"><img src="/images/decipherable/file.png" class="medium_thumb"><span>' . $name_e . '</span></div>';
 			}
 		}
 	}
-	$html .= '<br><br><img src="/images/decipherable/adopt.png" class="medium_thumb" app="' . $app . '" id="adopt_app_confirm">';
+	if ($candidates) {
+		$html .= '<br><br><img src="/images/decipherable/adopt.png" class="medium_thumb" app="' . xml_escape($app) . '" id="adopt_app_confirm" hint="Adopt">';
+	}
+	else {
+		$html .= '<div class="adopt_empty">' . xml_escape(&subs::ui('No files to adopt in this app\'s folders.')) . '</div>';
+	}
 	$c->render('text' => $html);
 }
 
@@ -702,28 +729,82 @@ sub action_41659 {
 sub action_41704 {
 	my $c = shift;
 	my $app = &subs::unformat_name($c->param('app'));
-	my $files = $c->param('files');
 	my $timestamp = $c->param('timestamp');
 
-	$files = eval {return decode_json $files } || [];
-	my $push_files = [];
-	my $upload_type;
-	foreach my $file ( @{$files} ) {
-		my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $file->{'file'}, app => $app, type => $file->{'type'}, is_thumb => 1 });
-		my $data = { server_time => $file->{'timestamp'}, f => $file->{'file'}, uuid => &subs::random_string_creator(8), type => $file->{'type'}, thumb => $destination . $asset };
-		$data = &thumbnail_creator($data);
-		push @{$push_files}, $data;
-		$upload_type = $file->{'type'};
+	my $files = eval { decode_json($c->param('files') // '') } || [];
+	$files = [$files] if ref $files eq 'HASH';
+	$files = [] unless ref $files eq 'ARRAY';
 
+	# The folders a selection may live under: <location>/<app> for every configured
+	# location, exactly where the listing looked. A file from another app's folder
+	# is not adopted by naming it here.
+	my $misc_settings = &misc_setting_list();
+	my $app_path = &subs::path_name($app);
+	my @roots;
+	foreach my $ms ( sort keys %{ $misc_settings->{$device} || {} } ) {
+		next unless $ms =~ /_location$/;
+		my $value = $misc_settings->{$device}->{$ms};
+		next unless defined $value && length $value;
+		push @roots, &subs::home($value . '/' . $app_path);
 	}
-	my $jfiles = encode_json $push_files;
+
+	# Only a real, unsealed file inside a configured root is adoptable, and the
+	# type comes from the path - never from the client's posted value.
+	my @clean;
+	my %seen;
+	foreach my $entry ( @{$files} ) {
+		next unless ref $entry eq 'HASH';
+		my $path = $entry->{'file'};
+		next unless defined $path && length $path;
+		next unless -f $path;
+		next if $path =~ /\.enc\z/i;
+		next if $seen{$path}++;
+		my $within = 0;
+		foreach my $root ( @roots ) {
+			if (&subs::path_is_within($path, $root)) { $within = 1; last; }
+		}
+		next unless $within;
+		my $type = &subs::adopt_media_type($path) or next;
+		push @clean, { file => $path, type => $type };
+	}
+
+	unless (scalar @clean) {
+		$c->render(json => { ok => 0, error => &subs::ui('Nothing was selected to adopt.') });
+		return;
+	}
+
+	my $upload_type;
+	foreach my $clean ( @clean ) {
+		if ($clean->{'type'} eq 'image') { $upload_type = 'image'; last; }
+	}
+	if (!$upload_type) {
+		foreach my $clean ( @clean ) {
+			if ($clean->{'type'} eq 'video') { $upload_type = 'video'; last; }
+		}
+	}
+	$upload_type ||= $clean[0]->{'type'};
+
+	my $push_files = [];
+	foreach my $clean ( @clean ) {
+		my $path = $clean->{'file'};
+		my $derived_type = $clean->{'type'};
+		my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $path, app => $app, type => $derived_type, is_thumb => 1 });
+		my $data = { server_time => &subs::rightNow(), f => $path, uuid => &subs::random_string_creator(8), type => $derived_type, thumb => $destination . $asset };
+		$data = &thumbnail_creator($data);
+		# A type with no renderable preview (audio, software) keeps the destination
+		# the renamer proposed even though nothing wrote it. Drop it so the row does
+		# not point at a missing file.
+		delete $data->{'thumb'} unless defined $data->{'thumb'} && length $data->{'thumb'} && -e $data->{'thumb'};
+		push @{$push_files}, $data;
+	}
+
 	&appointment_writer($c,{
 		app => $app,
-		file => $jfiles,
+		file => encode_json $push_files,
 		timestamp => $timestamp,
 		type => $upload_type
 	});
-	$c->render('text' => 'ok');
+	$c->render(json => { ok => 1 });
 	&subs::file_encrypter({ app => $app, timestamp => $timestamp, suds => &subs::session_suds($c) });
 }
 

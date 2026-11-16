@@ -654,6 +654,67 @@ sub switch_event_fresh {
 	return $fresh;
 }
 
+# The media family of a name offered by an adopt scan. The extension match is
+# anchored at the end on purpose: a sealed `x.jpg.enc` and a dotfile end in
+# neither, so a file the house already holds is not adopted a second time. The
+# sets mirror the extensions file_device_renamer routes, so a scan never offers
+# a file the renamer would send somewhere else.
+sub adopt_media_type {
+	my $name = shift;
+	return undef unless defined $name && length $name;
+	my @parts = split '/', $name;
+	my $base = $parts[-1];
+	return undef if $base =~ /^\./;
+	return undef if $base =~ /\.enc\z/i;
+	return 'image'    if $base =~ /\.(?:jpe?g|png|gif|webp|bmp|tiff?|heic|heif|xcf)\z/i;
+	return 'video'    if $base =~ /\.(?:mp4|webm|mov|m4v|mkv|avi|mpe?g)\z/i;
+	return 'audio'    if $base =~ /\.(?:mp3|m4a|flac|aiff?|aif|weba|wav|ogg|oga|opus)\z/i;
+	return 'document' if $base =~ /\.pdf\z/i;
+	return 'software';
+}
+
+# What an adopt scan would offer from the folders a person picked. Folders are
+# deduped by full path, not by basename: the App tab can point two apps at one
+# folder (Scan and Document both default to the same place), and that is one
+# folder of files. Two different folders holding same-named files are two real
+# files, so the basename is never the identity here.
+sub adopt_scan_candidates {
+	my ($folders, $known_paths, $known_names) = @_;
+	$known_paths ||= {};
+	$known_names ||= {};
+	my %seen_path;
+	my @sections;
+	foreach my $folder (@{ $folders || [] }) {
+		my $path = $folder->{'path'};
+		next unless defined $path && length $path;
+		next if $seen_path{$path}++;
+		opendir(my $dh, $path) or next;
+		my @names = sort grep { $_ ne '.' && $_ ne '..' } readdir $dh;
+		closedir $dh;
+		my @files;
+		foreach my $name (@names) {
+			next unless -f "$path/$name";
+			next if $name =~ /^\./;
+			next if $name =~ /\.enc\z/i;
+			my $type = adopt_media_type($name) or next;
+			my $file = "$path/$name";
+			# A path already in the library, or a name the library already knows
+			# whatever folder it sits in, is not offered again.
+			next if $known_paths->{$file};
+			next if $known_names->{$name};
+			push @files, { file => $file, name => $name, type => $type };
+		}
+		next unless @files;
+		push @sections, {
+			key   => $folder->{'key'},
+			name  => $folder->{'name'},
+			path  => $path,
+			files => \@files,
+		};
+	}
+	return \@sections;
+}
+
 sub file_device_renamer {
 	my $data = shift;
 	my $file = $data->{'file'};
@@ -697,37 +758,54 @@ sub file_device_renamer {
 		elsif ($type eq 'audio') {
 			$type = 'music';
 		}
-		if (my $location = &subs::setting_grabber({ app => 'misc', setting => $type . '_location', device => $device})) {
-			$destination = &subs::home($location . '/' . $app_path . '/');
-		}
+		# A destination needs a configured location. Concatenating an unset
+		# setting through undef used to build '/<app>/' at the filesystem root,
+		# which broke video thumbnails and non-thumb uploads alike.
+		my $location = &subs::setting_grabber({ app => 'misc', setting => $type . '_location', device => $device });
+		$destination = &subs::home($location . '/' . $app_path . '/') if defined $location && length $location;
 	}
 
 
 	unless ($destination) {
 		$misc_settings = &subs::misc_setting_list() unless $misc_settings;
+		my $location;
 		if ($assetual =~ /\.mp3$|\.m4a$|\.flac$|\.aiff$|\.aif$|\.weba$|\.wav$|\.ogg$|\.oga$|\.opus$/i) {
-			$destination = &subs::home($misc_settings->{$device}->{'music_location'} . '/' . $app_path . '/');
+			$location = $misc_settings->{$device}->{'music_location'};
 			$type = 'audio';
 		}
 		elsif ($assetual =~ /\.jpe?g$|\.xcf$|\.png$|\.webp$|\.heic$|\.heif$|\.bmp$|\.tiff?$|\.gif$/i) {
-			$destination = &subs::home($misc_settings->{$device}->{'photo_location'} . '/' . $app_path . '/');
+			$location = $misc_settings->{$device}->{'photo_location'};
 			$type = 'image';
 		}
 		elsif ($assetual =~ /\.mov$|\.avi$|\.webm$|\.mp4$|\.mkv$|\.m4v$/i) {
-			$destination = &subs::home($misc_settings->{$device}->{'video_location'} . '/' . $app_path . '/');
+			$location = $misc_settings->{$device}->{'video_location'};
 			$type = 'video';
 		}
 		elsif ($assetual =~ /\.pdf$/i) {
-			$destination = &subs::home($misc_settings->{$device}->{'document_location'} . '/' . $app_path . '/');
+			$location = $misc_settings->{$device}->{'document_location'};
 			$type = 'document';
 		}
 		else {
-			$destination = &subs::home($misc_settings->{$device}->{'download_location'} . '/' . $app_path . '/');
+			$location = $misc_settings->{$device}->{'download_location'};
 			$type = 'software';
 		}
+		$destination = &subs::home($location . '/' . $app_path . '/') if defined $location && length $location;
 	}
+
+	# No location anywhere: a thumbnail stays beside the file it describes, and
+	# anything else lands in the person's Downloads folder. Neither can ever be
+	# '/<app>' at the filesystem root.
+	if (!$destination) {
+		my @dir = split '/', $file;
+		pop @dir;
+		my $source_dir = join '/', @dir;
+		$destination = $is_thumb && length $source_dir ? $source_dir : &subs::home('~/Downloads/' . $app_path . '/');
+	}
+	# The thumbnail step below adds '/.thumbs/', so a source folder that arrives
+	# without a trailing slash must not produce a doubled one.
 	if ($is_thumb == 1) {
-		$destination = $destination . '.thumbs/';
+		$destination =~ s{/+$}{};
+		$destination = $destination . '/.thumbs/';
 	}
 	return ($destination,$asset,$type,$app);
 }

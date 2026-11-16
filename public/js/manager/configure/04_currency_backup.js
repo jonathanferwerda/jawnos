@@ -638,20 +638,30 @@ $(document).on('click', '#adopt_app_confirm', function() {
 	var files = [];
 	var app = $(this).attr('app');
 	var timestamp = Date.now();
-	$('.adopt_file[adopted="yes"').each(function(i,v) {
+	$('.adopt_file[adopted="yes"]').each(function(i,v) {
 		var timestamp = $(v).attr('timestamp');
 		var file = $(v).attr('file');
 		var app = $(v).attr('app');
 		var type = $(v).attr('type');
 		files.push({ app: app, type: type, file: file, timestamp: timestamp });
 	});
-	var jfiles = JSON.stringify(files);
 	$.ajax({
 		url: '/manager/configure/adopt_app_confirm',
 		type: 'POST',
-		data: { app: app, timestamp, timestamp, files: jfiles },
+		data: { app: app, timestamp: timestamp, files: JSON.stringify(files) },
 		success: function(response) {
+			var result = response;
+			if (typeof result === 'string') {
+				try { result = JSON.parse(result); } catch (e) { result = null; }
+			}
+			if (result && result.ok === 0) {
+				jawnosAlert(result.error || 'Nothing was selected to adopt.');
+				return;
+			}
 			jawnosAlertClose();
+		},
+		error: function() {
+			jawnosAlert('The adoption could not be saved.');
 		}
 	});
 });
