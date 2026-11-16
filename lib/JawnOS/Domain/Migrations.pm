@@ -688,6 +688,13 @@ sub update_database($data) {
 		# full scan of the whole position history - 116k rows and growing - on
 		# every tick. (type, signatorial, warranty) turns it into a lookup.
 		'CREATE INDEX IF NOT EXISTS idx6_continent on continent (type, signatorial, warranty)',
+		# The clothesline names the ground from the last two days of fixes and
+		# reads the stays around it from two months of them. Both queries cast
+		# continent's text columns, so neither of the indexes above can serve
+		# them and each was a full scan of the whole position history - 123k
+		# rows here and growing. The expression indexes match the casts exactly.
+		'CREATE INDEX IF NOT EXISTS idx7_continent on continent (cast(timestamp as integer))',
+		'CREATE INDEX IF NOT EXISTS idx8_continent on continent (cast(latitude as real), cast(longitude as real), cast(timestamp as integer))',
 		'CREATE INDEX idx1_security on security (level)',
 		'CREATE INDEX idx2_security on security (level,server_time)',
 		'CREATE INDEX idx1_cache on cache (app,device,context,subcontext)',

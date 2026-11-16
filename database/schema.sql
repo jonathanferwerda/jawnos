@@ -371,6 +371,8 @@ CREATE INDEX idx3_ws on websockets (app,browser_tab_id,remote_address);
 CREATE INDEX idx2_ws on websockets (browser_tab_id);
 CREATE INDEX idx1_continent on continent (app);
 CREATE INDEX idx2_continent on continent (app,uuid);
+CREATE INDEX idx7_continent on continent (cast(timestamp as integer));
+CREATE INDEX idx8_continent on continent (cast(latitude as real), cast(longitude as real), cast(timestamp as integer));
 CREATE INDEX idx1_security on security (level);
 CREATE INDEX idx2_security on security (level,server_time);
 CREATE INDEX idx1_cache on cache (app,device,context,subcontext);
