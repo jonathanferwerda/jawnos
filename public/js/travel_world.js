@@ -132,17 +132,26 @@
 	// cookie, so the file route refuses it and the image never loads. Every map
 	// plate and photo print came through blank. A plain <img> sends the cookie,
 	// and a same-origin texture needs no CORS.
+	//
+	// The URL also gets a nonce. Qt WebEngine leaves a picture wedged when an
+	// earlier consumer of the same URL let it go - the world opens straight off
+	// the long press's menu, whose previews have already asked for these
+	// pictures - and the wedged entry never fires load or error again: a fresh
+	// query string always starts clean (168 ms for a 600 KB plate). Reading a
+	// local file once more is cheap beside a blank world.
+	var image_seq = 0;
 	function imageTexture(url, done) {
 		var img = new Image();
+		var sep = url.indexOf('?') >= 0 ? '&' : '?';
 		img.onload = function () {
 			var tex = new THREE.Texture(img);
 			tex.minFilter = THREE.LinearFilter;
 			tex.generateMipmaps = false;
-		tex.needsUpdate = true;
+			tex.needsUpdate = true;
 			if (done) { done(tex); }
 		};
 		img.onerror = function () { if (done) { done(null); } };
-		img.src = url;
+		img.src = url + sep + 'world=' + (++image_seq);
 	}
 
 	// ---- a measured map plate: a plane textured by three -------------------

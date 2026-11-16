@@ -277,6 +277,7 @@ like( $renderer, qr/registerComponent\('footprint'/, 'buildings are extruded fro
 like( $renderer, qr/ExtrudeGeometry/, 'as real geometry' );
 like( $renderer, qr/rig\.setAttribute\('position', '0 3 26'\)/, 'the built world stands back the way the template does' );
 like( $renderer, qr/function imageTexture\(url, done\)/, 'a map plate and a print are textured from a plain image' );
+like( $renderer, qr/world=' \+ \(\+\+image_seq\)/, 'and each mount asks a fresh URL: Qt WebEngine wedges a reused one' );
 unlike( $renderer, qr/TextureLoader/, 'not through three\'s CORS-mode loader' );
 like( $renderer, qr/registerComponent\('worldphoto'/, 'a picture is a card in the world' );
 like( $renderer, qr/Math\.PI - \(ph\.heading \* Math\.PI \/ 180\)/, 'turned by the heading the camera kept' );
