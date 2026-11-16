@@ -128,6 +128,14 @@ like($first_boot, qr/mkfs\.ext4', '-F', '-L', \$DEFAULT_LABEL, \$target/, 'the f
 like($first_boot, qr/\$plan->\{'dev'\} = \$target;/, 'and the card, not the partition, is what gets mounted');
 like($first_boot, qr/disk => \$card->\{'disk'\}/, 'the plan carries the card, so format can aim at it');
 
+# A board whose SoC halts but whose panel PMIC keeps the rails up sits with its
+# red light on. The flag has to land on the rk818 on the always-on bus; the
+# rk817 beside it is the charger and must not hold the power-off handler.
+like($provision, qr/sub _pmic_poweroff/, 'the flash makes the panel able to power off');
+like($provision, qr{/soc/bus\@ff800000/i2c\@5000/pmic\@1c}, 'the always-on bus PMIC gets the flag');
+like($provision, qr{/soc/bus\@ffd00000/i2c\@1c000/pmic\@20}, 'and the charger PMIC has it removed');
+like($provision, qr/push \@done, 'pmic-poweroff'/, 'reported on the board');
+
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');
 

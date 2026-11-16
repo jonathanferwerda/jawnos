@@ -694,6 +694,35 @@ sub _wait_for_reboot {
 # ---------------------------------------------------------------------------
 # Autopopulate the flashed rootfs: hostname, the house WiFi, the join token.
 
+# Both rk8xx PMICs are in the device tree, and only one of them can cut the
+# power. The kernel installs pm_power_off for the node that carries
+# `rockchip,system-power-controller`, so it has to be the rk818 on the always-on
+# bus - the one holding vddcpu_a and vddao_3v3. A handler on the rk817 beside it
+# writes a charger register instead: the SoC halts, the rails stay up and the
+# board sits there with its red light on. The image's DTB carries neither, so
+# every flashed board keeps that behaviour until this runs.
+sub _pmic_poweroff {
+	my ($dev) = @_;
+	return 0 unless _command_path('fdtput') && _command_path('fdtget');
+	my $p1 = &_first_partition($dev);
+	return 0 unless defined $p1 && -e $p1;
+	my $mount = File::Temp::tempdir('gou-boot-XXXXXX', TMPDIR => 1, CLEANUP => 1);
+	return 0 unless system('mount', $p1, $mount) == 0;
+	my $patched = 0;
+	my $dtb = "$mount/amlogic/meson64_odroidgou.dtb";
+	my $system = '/soc/bus@ff800000/i2c@5000/pmic@1c';
+	my $charger = '/soc/bus@ffd00000/i2c@1c000/pmic@20';
+	if (-f $dtb) {
+		if ((_capture('fdtget', '-p', $dtb, $charger) // '') =~ /system-power-controller/) {
+			system('fdtput', '-d', $dtb, $charger, 'rockchip,system-power-controller');
+		}
+		$patched = 1 if system('fdtput', $dtb, $system, 'rockchip,system-power-controller') == 0;
+	}
+	system('sync');
+	system('umount', $mount);
+	return $patched;
+}
+
 sub _second_partition {
 	my ($dev) = @_;
 	my $out = _capture('lsblk', '-lno', 'NAME,TYPE', '--', $dev);
@@ -1201,6 +1230,11 @@ sub _flash {
 	_fail(5, $write->{'error'}) unless $write->{'ok'};
 
 	my @done;
+	if (!$opt{'dry_run'}) {
+		system('blockdev', '--rereadpt', $dev) if _command_path('blockdev');
+		system('partprobe', $dev) if _command_path('partprobe');
+		push @done, 'pmic-poweroff' if &_pmic_poweroff($dev);
+	}
 	if (!$opt{'no_autopopulate'} && !$opt{'dry_run'}) {
 		_progress_write('preparing', device => $dev, image => $image, total => $length,
 			bytes => $write->{'bytes'}, hostname => $hostname);
