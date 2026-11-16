@@ -121,6 +121,7 @@ my $rows = sub {
 
 my $sync = read_file("$root/lib/JawnOS/Domain/Sync.pm");
 like( $sync, qr/next if &subs::own_phone_number\(\$peer\);/, 'an inbound group leaves the house\'s own line out of its cc' );
+like( $sync, qr/&subs::device_call\('mms.download'/, 'the poll also asks the phone to pull any envelope nobody fetched' );
 
 # ---------------------------------------------------------------- the app page
 my $route = read_file("$root/lib/JawnOS/Routes/manager_phone.pm");

@@ -827,6 +827,12 @@ my $returner = '';
 		my $timestamp = &subs::rightNow();
 		my $c = &subs::controller_builder();
 		my $suds = &suds_grabber();
+		# A carrier sends an mms as an envelope that somebody must pull from the
+		# MMSC: the phone's push handler does it when the push reaches it, and this
+		# poll asks too, so a picture that arrived while another app held the sms
+		# role - or whose fetch failed - still lands. The fetches run in the
+		# background, so this tick may file what the last one pulled.
+		&subs::device_call('mms.download', { limit => 10 });
 		my $bridge = &subs::device_call('mms.list', { limit => 10 });
 		my $list = ($bridge && ref $bridge->{'messages'} eq 'ARRAY') ? $bridge->{'messages'} : [];
 		foreach my $m ( @{$list} ) {
