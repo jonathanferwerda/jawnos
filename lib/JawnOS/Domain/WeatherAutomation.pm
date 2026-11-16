@@ -445,13 +445,15 @@ sub weather_rule_reading_keys($rule) {
 	return [ grep { !$seen{$_}++ } @keys ];
 }
 
-sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '', $values = undef, $location = '', $rule = undef, $appointment_at = undef) {
+sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '', $values = undef, $location = '', $rule = undef, $appointment_at = undef, $stop_target = undef) {
 	return 0 unless defined $app && length $app;
 	$timestamp ||= &rightNow();
 	$warranty = '' unless defined $warranty;
 	# The appointment may be written at the moment the condition actually changed
 	# rather than the moment the house noticed (an adopted lease); the toggle is
-	# always stamped now, or an older write could win the sync back.
+	# always stamped now, or an older write could win the sync back. An adopted
+	# stop names the session it closes, which is what lets the writer apply a
+	# backdated stop instead of taking it for a replayed action.
 	my $at = (defined $appointment_at && "$appointment_at" =~ /^\d+$/) ? $appointment_at + 0 : $timestamp;
 	# The appointment the rule writes carries the reading that drove it, so the
 	# app's own record says how much rain or snow was falling when it started.
@@ -494,7 +496,7 @@ sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '',
 		}
 		return 1;
 	}
-	if (!$on && $toggle eq 'on') {
+	if (!$on && ($toggle eq 'on' || (defined $stop_target && length $stop_target))) {
 		eval {
 			&Manager::appointment_writer(undef, {
 				app => $app,
@@ -502,6 +504,7 @@ sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '',
 				type => 'stop',
 				source_uuid => $source_uuid,
 				subtype => 'measure',
+				(defined $stop_target && length $stop_target ? (uuid => $stop_target) : ()),
 				(defined $measures ? (measures => $measures) : ()),
 				(length $warranty ? (warranty => $warranty) : ()),
 			});
@@ -724,12 +727,15 @@ sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '',
 		$dry_since = undef unless $action eq 'start';
 		# A start rule with no edge in hand - the rule was replaced with a new
 		# uuid by a migration, or this machine has just taken the pass over - must
-		# still be able to stop an app it finds running. Without this the app
-		# orphaned by the old rule stays on forever, because the new rule never
-		# saw the rain start and so has no falling edge to stop it.
+		# still be able to stop an app it finds running. An open session counts even
+		# with the toggle already off: a stop that failed after turning the latch off
+		# leaves exactly that shape. Without this the app orphaned by the old rule
+		# stays on forever, because the new rule never saw the rain start.
 		my $orphan = 0;
 		if (!$matched && !$previous && !$pending && $action eq 'start' && defined $rule->{'app'} && length $rule->{'app'}) {
-			$orphan = 1 if (&subs::setting_grabber({ app => $rule->{'app'}, setting => 'toggle' }) // '') eq 'on';
+			my $toggle = &subs::setting_grabber({ app => $rule->{'app'}, setting => 'toggle' }) // '';
+			my $open = eval { &subs::open_session_uuid($rule->{'app'}) } || '';
+			$orphan = 1 if $toggle eq 'on' || length $open;
 		}
 		$adopted = 1 if $orphan;
 		# A held rule keeps its app on through one dry reading and stops it at
@@ -776,17 +782,18 @@ sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '',
 			}
 			if ($stop_now) {
 				# An adopted orphan is stopped at the reading where the condition
-				# actually cleared, not where the house finally noticed it.
-				my ($stop_at, $stop_values);
+				# actually cleared, not where the house finally noticed it, and the
+				# stop names the session it closes so the writer applies it late.
+				my ($stop_at, $stop_values, $open);
 				if ($adopted) {
-					my $open = eval { &subs::open_session_uuid($rule->{'app'}) } || '';
+					$open = eval { &subs::open_session_uuid($rule->{'app'}) } || '';
 					my $cleared = &weather_rule_cleared_at($rule, $open, $location, $now);
 					if ($cleared) {
 						$stop_at = $cleared->{'at'};
 						$stop_values = $cleared->{'values'};
 					}
 				}
-				push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'stop', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 0, $uuid, $now, $warranty, ($stop_values // $values), $location, $rule, $stop_at) };
+				push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'stop', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 0, $uuid, $now, $warranty, ($stop_values // $values), $location, $rule, $stop_at, $open) };
 				$pending = 0;
 				$dry_since = undef;
 				$adopted = 0;

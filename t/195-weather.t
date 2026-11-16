@@ -1080,7 +1080,8 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 		push @appointments, $data;
 		return $data;
 	};
-	local *subs::open_session_uuid = sub { 'run-1' };
+	my $open_uuid = 'run-1';
+	local *subs::open_session_uuid = sub { $open_uuid };
 	local *subs::random_string_creator = sub { 'stop-measure' };
 	my $session_start = $now - 7 * 3600000;
 	my $wet_at = $now - 6 * 3600000;
@@ -1109,13 +1110,28 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	my ($stop) = grep { ($_->{'type'} // '') eq 'stop' } @appointments;
 	ok($stop, 'a stop appointment is written for the app it adopted');
 	is($stop->{'timestamp'}, $dry_at, 'stamped at the reading where the condition actually cleared');
+	is($stop->{'uuid'}, 'run-1', 'and names the session it closes, so a late stop is applied');
 
-	# the same check with the app off writes nothing
-	$store{'setting|raining|toggle'} = 'off';
+	# the failed-stop shape: the latch is already off but the session is open
 	%cache = ();
 	@appointments = ();
-	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'obs-3', $now + 90 * 60000, 'loc:home') }, 0,
-		'a dry check with the app off does nothing');
+	$store{'setting|raining|toggle'} = 'off';
+	$open_uuid = 'run-1';
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'obs-3', $now + 60 * 60000, 'loc:home') }, 0,
+		'an open session with the latch off is adopted and held');
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'obs-4', $now + 90 * 60000, 'loc:home') }, 1,
+		'and the next check stops it');
+	my ($late) = grep { ($_->{'type'} // '') eq 'stop' } @appointments;
+	ok($late, 'a stop is written even though the latch was off');
+	is($late->{'uuid'}, 'run-1', 'naming the open session');
+
+	# with no session and the latch off there is nothing to adopt
+	%cache = ();
+	@appointments = ();
+	$open_uuid = '';
+	$store{'setting|raining|toggle'} = 'off';
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'obs-5', $now + 120 * 60000, 'loc:home') }, 0,
+		'a dry check with no session and the latch off does nothing');
 	is(scalar @appointments, 0, 'and writes no stop');
 }
 
