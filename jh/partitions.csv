@@ -1,0 +1,14 @@
+# JawnOS JawnHat (Seeed XIAO ESP32S3 Sense, 8 MB) partition table.
+#
+# Two 3 MB OTA slots keep the panel's /update rail working. The hat carries the
+# camera driver, the BLE stack and (phase 1) the shared wake-word model -- none
+# of the deck's fonts or LVGL -- so 3 MB per slot is generous. What is left
+# becomes a 1.875 MB FFat for config.json and, later, recorded clips.
+#
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+app0,     app,  ota_0,   0x10000,  0x300000,
+app1,     app,  ota_1,   0x310000, 0x300000,
+ffat,     data, fat,     0x610000, 0x1E0000,
+coredump, data, coredump,0x7F0000, 0x10000,
