@@ -327,9 +327,10 @@
 			}
 		});
 
-		// stand a little back from the press, so the nearest print is not in your face
+		// stand back and above the press, as the template does, so the nearest
+		// print is not in your face and the town reads in depth
 		var rig = document.getElementById('world_rig');
-		if (rig) { rig.setAttribute('position', '0 1.7 12'); }
+		if (rig) { rig.setAttribute('position', '0 3 26'); }
 	}
 
 	function ready() {

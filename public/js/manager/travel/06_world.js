@@ -109,6 +109,18 @@ function travelWorldStart(lat, lon) {
 	});
 }
 
+// The archive carries no heights: OpenMapTiles writes its untagged default
+// (3.66 m) for every building in this county, so a town of them had no relief
+// at all. A real tag is honoured; otherwise the footprint says what the
+// building is - a shed, a house, a shop, a block.
+function travelWorldBuildingHeight(tagged, area) {
+	if (isFinite(tagged) && tagged > 4.5) { return Math.min(tagged, 120); }
+	if (area < 25) { return 3; }
+	if (area < 90) { return 7; }
+	if (area < 250) { return 9.5; }
+	return 12.5;
+}
+
 // Every polygon and line the archive holds, in local metres around the press.
 function travelWorldAssemble(st) {
 	var map = st.map, centre = st.centre;
@@ -177,10 +189,15 @@ function travelWorldAssemble(st) {
 		var widthM = (bounds.se.lon - bounds.nw.lon) * MPD * cosLat;
 		var heightM = (bounds.nw.lat - bounds.se.lat) * MPD;
 		if (!(widthM > 0) || !(heightM > 0)) { return; }
-		// A county plate is a pale wash at a walker's scale, and laid over the
-		// archive it hides the ground the world is made of. Only a measured map
-		// of this neighbourhood earns a place on the ground.
-		if (Math.max(widthM, heightM) > 1500) { return; }
+		// A plate earns a place on the ground when it is a real measure of this
+		// ground. The widest are a pale wash at a walker's scale and hide the
+		// archive, so they stay out; a phone's screenshot of a neighbourhood is a
+		// plate worth laying down, and it fades with its span so the town reads
+		// on top of it. (The household's nearest plate is 1.4 by 2.9 km, so a
+		// tighter cap left the ground with no map at all.)
+		var span = Math.max(widthM, heightM);
+		if (span > 3000) { return; }
+		var fade = span <= 800 ? 1 : Math.max(0.45, 1 - (span - 800) / 4400);
 		var mid = at((bounds.nw.lat + bounds.se.lat) / 2, (bounds.nw.lon + bounds.se.lon) / 2);
 		var hp = m['home_plate'] || {};
 		var hx = parseFloat(hp['x']), hy = parseFloat(hp['y']);
@@ -199,7 +216,7 @@ function travelWorldAssemble(st) {
 			px: Math.round(plate.x * 10) / 10,
 			pz: Math.round(plate.z * 10) / 10,
 			rot: -(parseFloat(m['rotate']) || 0),
-			opacity: m['guessed'] ? 0.4 : 1
+			opacity: Math.round((m['guessed'] ? 0.4 : 1) * fade * 100) / 100
 		});
 	});
 
@@ -233,10 +250,9 @@ function travelWorldAssemble(st) {
 		if (!f || !f.geometry || f.geometry.type !== 'Polygon') { return; }
 		var pts = ring(f.geometry.coordinates[0], 40);
 		if (pts.length < 3 || !near(pts, RADIUS + 20)) { return; }
-		if (squareMetres(pts) < 4) { return; }
-		var h = parseFloat((f.properties || {})['render_height']);
-		if (!isFinite(h) || h <= 0) { h = 6; }
-		if (h > 120) { h = 120; }
+		var area = squareMetres(pts);
+		if (area < 4) { return; }
+		var h = travelWorldBuildingHeight(parseFloat((f.properties || {})['render_height']), area);
 		out.buildings.push({ p: pts, h: Math.round(h * 10) / 10 });
 	});
 	out.buildings.sort(function(a, b) {

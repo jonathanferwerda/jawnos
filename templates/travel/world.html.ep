@@ -28,8 +28,12 @@
 			<a-entity id="world_root"></a-entity>
 			<a-entity light="type: hemisphere; color: #ffffff; groundColor: #6b7a5a; intensity: 0.95"></a-entity>
 			<a-entity light="type: directional; color: #fff7e8; intensity: 0.7" position="60 100 40"></a-entity>
-			<a-entity id="world_rig" position="0 1.7 16">
-				<a-camera id="world_cam" rotation="-12 0 0" wasd-controls="acceleration: 60" look-controls="pointerLockEnabled: false"></a-camera>
+			<!-- The pitch rides on the rig: the camera primitive puts its own
+			     position and rotation back over the markup's, which left the view
+			     dead level at eye height. A plain entity carrying the camera and
+			     look-controls keeps the opening look, a little down, in view. -->
+			<a-entity id="world_rig" position="0 3 26" rotation="-18 0 0">
+				<a-entity id="world_cam" camera="fov: 68; near: 0.1; far: 900" wasd-controls="acceleration: 60" look-controls="pointerLockEnabled: false"></a-entity>
 			</a-entity>
 			<a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable; far: 250"></a-entity>
 		</a-scene>
