@@ -85,3 +85,36 @@ function jawnosNotice(opts) {
 	jawnosNoticeSchedule(card, key, ttl);
 	return card;
 }
+
+// ------------------------------------------------------------------ a press
+//
+// A notice is a door wherever it is drawn. The Notifications app's rows (and a
+// notice the desk injected) open the appointment window of the app they name,
+// so a notice is never a dead click. A notice that names no app has no window
+// of its own, so it opens Notifications instead. Scan is the one app whose
+// notice wants its own screen: the paper pool.
+function jawnosNotificationOpener(app, timestamp) {
+	app = app ? String(app) : '';
+	timestamp = parseInt(timestamp, 10) || Date.now();
+	if (app == 'scan' && typeof scanOpener === 'function') { scanOpener(); return; }
+	if (app && typeof appointmentGrabber === 'function') {
+		appointmentGrabber(app, timestamp, 'notification');
+		return;
+	}
+	if (typeof appWindowOpener === 'function') {
+		appWindowOpener(app || 'notifications', timestamp, { visible: 'yes' });
+	}
+}
+
+$(document).on('click', '.notification', function (e) {
+	if ($(e.target).closest('.notification_remove').length) { return; }
+	jawnosNotificationOpener($(this).attr('app'), $(this).attr('timestamp'));
+});
+
+// The rows are divs with a button's role, so Enter and Space press them too.
+$(document).on('keydown', '.notification, .taskbar_notifications_row', function (e) {
+	if (e.keyCode != 13 && e.keyCode != 32) { return; }
+	if ($(e.target).closest('.notification_remove').length) { return; }
+	e.preventDefault();
+	$(this).trigger('click');
+});

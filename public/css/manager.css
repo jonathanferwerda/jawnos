@@ -4178,8 +4178,10 @@ body.full_app_mode .wind.full_app_window .window_contents { padding-top:0 !impor
 	gap: 1px;
 	padding: 6px;
 	border-radius: 6px;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }
 .taskbar_panel .taskbar_notifications_row:hover { background-color: var(--line); }
+.taskbar_panel .taskbar_notifications_row:focus-visible { outline: 2px solid var(--accent, #3b7ddd); outline-offset: -2px; }
 .taskbar_panel .taskbar_notifications_row b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .taskbar_panel .taskbar_notifications_message { max-width: 100%; font-size: 11px; opacity: .72; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .taskbar_panel .taskbar_notifications_when { font-size: 10px; opacity: .55; }

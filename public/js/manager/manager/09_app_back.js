@@ -806,6 +806,29 @@ $(function () {
 	} catch (e) { }
 });
 
+/* A notice's own address: /manager?app=<name>&timestamp=<ms>. The phone's
+   notification and Configure's appointment-list window icon both ask the desk
+   for one app this way. Open the same appointment window a press on the app
+   would, then drop the parameters so a reload does not deal it again. */
+$(function () {
+	var app = '';
+	var timestamp = '';
+	try {
+		var params = new URLSearchParams(location.search);
+		app = params.get('app') || '';
+		timestamp = params.get('timestamp') || '';
+	} catch (e) { return; }
+	if (!app) { return; }
+	timestamp = parseInt(timestamp, 10) || '';
+	try {
+		var u = new URL(location.href);
+		u.searchParams.delete('app');
+		u.searchParams.delete('timestamp');
+		history.replaceState(null, '', u.pathname + (u.searchParams.toString() ? '?' + u.searchParams.toString() : ''));
+	} catch (e) { }
+	if (typeof appointmentGrabber === 'function') { appointmentGrabber(app, timestamp, 'notification'); }
+});
+
 /* The handheld's Home button is KEY_HOME (the input daemon sends it). One press
    goes back one launcher page, never straight to the top: RetroArch returns to
    Configuration, Configuration returns to the launcher, and the emulated shelf

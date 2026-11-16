@@ -16,12 +16,6 @@ function scanOpener() {
 
 $(document).on('click', '#scan_toggle', scanOpener);
 
-// The notice names the Scan app, so pressing it brings the pool forward.
-$(document).on('click', '.notification[app="scan"]', function (e) {
-	if ($(e.target).hasClass('notification_remove')) { return; }
-	scanOpener();
-});
-
 function jawnScanStatus(text) {
 	$('#scan_app .scan_app_status').text(text || '');
 }

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Scan.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Controller/manager_scan.pm lib/JawnOS/Routes/manager_scan.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Controller/manager_misc.pm templates/apps/scan.html.ep public/js/manager/scan.js public/js/manager/websocket/00_console_router.js templates/start_menu/start_menu.html.ep lib/JawnOS/Manager/Core1_tables_hooks.pm perl/help/topics_web.pl perl/help/topics_functions.pl
+# tests-for: lib/JawnOS/Domain/Scan.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Controller/manager_scan.pm lib/JawnOS/Routes/manager_scan.pm lib/JawnOS/Manager/Part06.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Controller/manager_misc.pm templates/apps/scan.html.ep public/js/manager/scan.js public/js/manager/notifications_toast.js public/js/manager/websocket/00_console_router.js templates/start_menu/start_menu.html.ep lib/JawnOS/Manager/Core1_tables_hooks.pm perl/help/topics_web.pl perl/help/topics_functions.pl
 # covers:    the Scan app's pool (unclaimed scans held for a week), the kind read
 #            off a page's text, and the wiring that puts the app on the start
 #            menu, in the rotation and in the claim route's holder list.
@@ -419,7 +419,8 @@ like($template, qr/class="scan_scanner_list"/, 'the scanners have their own list
 my $js = read_file("$root/public/js/manager/scan.js");
 like($js, qr/url: '\/manager\/scan\/capture'/, 'the buttons take a page');
 like($js, qr/holder: 'scan'/, 'filing names the Scan holder');
-like($js, qr/\.notification\[app="scan"\]/, 'the notice opens the app');
+my $notices = read_file("$root/public/js/manager/notifications_toast.js");
+like($notices, qr/app == 'scan'/, 'the notice opens the app');
 like($js, qr/url: '\/manager\/scan\/discard'/, 'a card can be thrown away');
 like($js, qr/url: '\/manager\/scan\/scanner'/, 'a scanner rule can be saved');
 like($js, qr/scan_scanner_auto/, 'Auto-scan is a switch');

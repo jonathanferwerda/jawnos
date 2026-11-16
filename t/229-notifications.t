@@ -1,4 +1,4 @@
-# tests-for: templates/apps/notifications.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
+# tests-for: templates/apps/notifications.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
 # covers:    The Notifications app (search, app filter, remove all), the in-program
 #            notice cards that replaced the browser's Notification, and the
 #            taskbar bell that counts what arrived since the list was opened.
@@ -56,6 +56,14 @@ like($template, qr/#notifications_app \.notification img\.window_icon,\s*#notifi
 like($template, qr/#notifications_app \.notification \.hover \{ line-height: 0; \}/,
 	'the picture wrapper adds no text line of its own');
 
+my $row = source('templates/notification.html.ep');
+like($row, qr/timestamp="<%=\s*\$n->\{'timestamp'\}/, 'the row carries the time its window opens at');
+like($row, qr/role="button"/, 'the row is a press');
+like($row, qr/tabindex="0"/, 'and can be reached from the keyboard');
+unlike($row, qr/onclick=/, 'it carries no click script of its own');
+like($template, qr/#notifications_app \.notification \{[^}]*cursor: var\(--jawnos-cursor-pointer/,
+	'the row looks pressable');
+
 # --- the keyboard panel it replaced -----------------------------------------
 # The app owns the list now. The bell face stays on the dock, but there is no
 # keyboard panel behind it: notifications.js opens the app from that face.
@@ -94,12 +102,17 @@ like($toast, qr/function jawnosNotice\(/, 'the house has its own notice');
 like($toast, qr/function jawnosNoticeClose\(/, 'a notice can be closed');
 like($toast, qr/jawnos_notice_by_key/, 'a notice with a key is updated in place');
 like($toast, qr/appWindowOpener\(app/, 'pressing a notice opens its app');
+like($toast, qr/function jawnosNotificationOpener\(/, 'a notice row is a door');
+like($toast, qr/appointmentGrabber\(app, timestamp, 'notification'\)/, 'and opens the app\'s appointment window');
+like($toast, qr/\$\(document\)\.on\('click', '\.notification'/, 'the list rows are presses');
+like($toast, qr/app \|\| 'notifications'/, 'a notice with no app still opens Notifications');
 like($toast, qr/role="status"/, 'the stack is a live region');
 
 my $css = source('public/css/manager.css');
 like($css, qr/#jawnos_notices\s*\{/, 'the notice stack has a style');
 like($css, qr/\.jawnos_notice\b/, 'and each card');
 like($css, qr/\.taskbar_notifications_badge/, 'the bell badge has a style');
+like($css, qr/\.taskbar_notifications_row \{[^}]*cursor: var\(--jawnos-cursor-pointer/s, 'a panel row looks pressable');
 
 # TODO: the window-icon pin was added inside .window_icon's own block
 # (public/css/manager.css:1077), so it never matches: an app window icon falls
@@ -131,14 +144,22 @@ like($widget, qr/jawnos_notifications_seen/, 'the count is kept per browser');
 like($widget, qr/function jawnosNotificationsTaskbarUnread/, 'and is the notices newer than the mark');
 like($widget, qr/jawnosTaskbarPanelToggle\('taskbar_notifications_panel'/, 'a press opens its panel');
 like($widget, qr/data-app', 'notifications'/, 'the panel opens the app');
+like($widget, qr/attr\('data-app', notice\.app/, 'a panel row names its app');
+like($widget, qr/attr\('data-timestamp', notice\.timestamp/, 'and the time its window opens at');
+like($widget, qr/jawnosNotificationOpener\(\$\(this\)\.attr\('data-app'\)/, 'a row press opens the appointment window');
 like($widget, qr/Open Notifications/, 'and says so');
 ok(-e "$root/public/icons/notifications.svg", 'the bell icon exists');
+
+my $back = source('public/js/manager/manager/09_app_back.js');
+like($back, qr/params\.get\('app'\)/, 'a manager link can name the app to deal');
+like($back, qr/appointmentGrabber\(app, timestamp, 'notification'\)/, 'and opens its appointment window');
 
 # --- help -------------------------------------------------------------------
 require "$root/perl/help.pl";
 like($help::topic{'notifications'}->{'summary'}, qr/notices/i, 'the topic names the notices');
 is($help::topic{'notifications'}->{'app'}, 'notifications', 'and belongs to the app');
 like(join(' ', @{ $help::topic{'notifications'}->{'body'} }), qr/search/i, 'the body names the search');
+like(join(' ', @{ $help::topic{'notifications'}->{'body'} }), qr/appointment window/, 'a notice opens the appointment window');
 unlike(join(' ', @{ $help::topic{'notifications'}->{'body'} }), qr/keyboard/, 'and no longer points at a keyboard panel');
 like(join(' ', @{ $help::topic{'taskbar'}->{'body'} }), qr/Notifications widget/, 'the taskbar topic names the bell');
 

@@ -87,7 +87,9 @@ function jawnosNotificationsTaskbarFill(panel) {
 		var message = String(notice.message || '');
 		if (query && (title + ' ' + message).toLowerCase().indexOf(query) < 0) { continue; }
 		shown++;
-		var row = $('<div class="taskbar_notifications_row"></div>');
+		var row = $('<div class="taskbar_notifications_row" role="button" tabindex="0"></div>')
+			.attr('data-app', notice.app || '')
+			.attr('data-timestamp', notice.timestamp || '');
 		row.append($('<b></b>').text(title || jawnosT('Notifications')));
 		if (message) { row.append($('<span class="taskbar_notifications_message"></span>').text(message)); }
 		var when = jawnosNotificationsTaskbarWhen(notice.timestamp);
@@ -137,6 +139,15 @@ $(document).on('click', '.taskbar_widget[widget="notifications"]', function() {
 
 $(document).on('input', '#taskbar_notifications_panel .taskbar_panel_search', function() {
 	jawnosNotificationsTaskbarFill($(this).closest('#taskbar_notifications_panel'));
+});
+
+// A row in the panel is a door too: the press closes the panel and opens the
+// appointment window the notice names, the same window the app's list opens.
+$(document).on('click', '#taskbar_notifications_panel .taskbar_notifications_row', function() {
+	jawnosTaskbarPanelClose();
+	if (typeof jawnosNotificationOpener === 'function') {
+		jawnosNotificationOpener($(this).attr('data-app'), $(this).attr('data-timestamp'));
+	}
 });
 
 $(function() {
