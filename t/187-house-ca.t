@@ -392,9 +392,10 @@ like($video, qr/peer_secure_url\(\$rm, \$uri\)/, 'and so does the video stream')
 }
 
 # A proven listener is cached for the full window; a failed probe is retried
-# soon, because the two-second TLS window loses a busy tailnet and a five-minute
-# negative refused the credentialed login long after the peer answered again.
+# soon, because the TLS window loses a busy tailnet and a five-minute negative
+# refused the credentialed login long after the peer answered again.
 is(subs::peer_tls_probe_ttl(45551), 300, 'a proven listener is cached for five minutes');
 is(subs::peer_tls_probe_ttl(0), 30, 'a failed probe is retried after half a minute');
+is(subs::peer_tls_probe_timeout(), 4, 'the probe waits four seconds, enough for a listener across a WAN');
 
 done_testing();

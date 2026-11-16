@@ -328,13 +328,21 @@ my %peer_tls_probe;
 # cheaper than a TLS failure on every clock hop, and it is what lets an enrolled
 # house talk to a peer that has not been issued a leaf yet.
 # How long a listener probe's answer stands. A proven leaf is stable for the
-# full five minutes. A failure is often the two-second window losing a busy
-# tailnet, and caching that for five minutes refused the credentialed login -
-# and with it the session cookie - long after the listener answered again (134
-# refusals from 2026-11-11). A negative is retried after half a minute.
+# full five minutes. A failure is often the probe window losing a busy tailnet,
+# and caching that for five minutes refused the credentialed login - and with
+# it the session cookie - long after the listener answered again (134 refusals
+# from 2026-11-11). A negative is retried after half a minute.
 sub peer_tls_probe_ttl {
 	my ($ok) = @_;
 	return $ok ? 300 : 30;
+}
+
+# How long the TLS probe waits for the listener to answer. Two seconds was a
+# LAN-sized window: the hub sits across a WAN, and its probe kept timing out
+# while the listener was up, refusing its login. Four seconds still bounds a
+# dead peer's turn (the negative is cached and retried after 30s).
+sub peer_tls_probe_timeout {
+	return 4;
 }
 
 sub peer_tls_port {
@@ -366,7 +374,7 @@ sub peer_tls_port {
 		SSL_verify_mode  => IO::Socket::SSL::SSL_VERIFY_PEER(),
 		SSL_verifycn_name => $host,
 		SSL_hostname     => $host,
-		Timeout          => 2,
+		Timeout          => &peer_tls_probe_timeout(),
 	);
 	my $ok = $sock ? 1 : 0;
 	close $sock if $sock;
