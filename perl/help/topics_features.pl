@@ -181,10 +181,12 @@ $topic{'start_menu'} = {
 $topic{'clothesline'} = {
 		title => 'The clothesline', category => 'features', app => 'clothesline',
 		controls => [ 'Set when this routine hangs', 'Choose the budgets this hang may show' ],
-		verified => '2026-11-15',
+		verified => '2026-11-16',
 		summary => 'A rail that hangs the routines belonging to this hour.',
 		body => [
 			'The clothesline runs along the top of the desktop and hangs the routines and rituals that belong at the current hour, in the order they usually happen.',
+			'The order is read from your own history, so a step you always take first sits first even when its name would fall later in the alphabet. A step you do twice in the hour — a second coffee, another glass of water — hangs twice, each at its own place in the line.',
+			'The line also learns the days. A routine kept on Sundays, or every other day, hangs only when its day comes round; an every-other-day routine stays off on the day after it ran. A habit seen over the last two weeks is enough to start anticipating it.',
 			'It can hang the ones your history shows you actually do, automatically, and each hang is configured per app: a schedule, a budget, and the time slots it belongs to.',
 			'The rail can be switched off altogether: the Show clothesline tick beside the time machine (the walkman\'s Configure) hides it and gives its band back to the view, and ticking it again hangs it at its configured height. Each app\'s own hang is still set from its Clothesline button in Configure -> App.',
 			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), soft, sandglass, glass, paper, fabric, wood or metal — sized to its own name, with the full name set in the Misc → Font face and printed in black or white (tinted with the app\'s colour) so it reads on the pane.',

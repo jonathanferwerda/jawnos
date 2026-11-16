@@ -1322,27 +1322,160 @@ sub navigation_automation {
 # enough to hang themselves, and the hour to hang them at. `hour_days` is how
 # many of the days the anchor hour was seen on, `days` how many days the app was
 # seen at all.
+#
+# `slots` is the finer grain the rail reads: the times of day the app keeps, not
+# just its busiest hour. A morning step done twice - coffee at half past, then
+# again at ten past the next hour - is two slots, so the line can hang it twice
+# in its own place; a step kept on Mondays, or every other day, carries the days
+# it was seen on, so `due` can say whether today is one of them.
 sub clothesline_daily_hours {
 	my $days = 14;
 	my $now = &rightNow();
 	my $since = $now - ($days * 86400 * 1000);
 	my $rows = &db_query('select app, timestamp from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?)', $since, $now, 'usual', 'stop')->hashes;
-	my (%hour_days, %app_days);
+	return &clothesline_routine_scan($rows, $now, window_days => $days);
+}
+
+# The local day a moment belongs to, as an integer that steps by one each
+# midnight. Local noon keeps the difference between two days exact through a
+# daylight-saving change, which a plain epoch/86400 would not.
+sub clothesline_day_index {
+	my $ms = shift;
+	my @t = localtime(int($ms / 1000));
+	my $noon = timelocal(12, 0, 0, $t[3], $t[4], $t[5]);
+	return int($noon / 86400);
+}
+
+# Read the window's appointments into the routine the clothesline paints. Pure
+# but for the clock: the query is clothesline_daily_hours' job, so a test can
+# hand it rows and a moment and see the order, the repeats and the due days.
+sub clothesline_routine_scan {
+	my ($rows, $now, %opt) = @_;
+	$rows = [] unless ref $rows eq 'ARRAY';
+	$now = &rightNow() unless defined $now;
+	my $window = $opt{'window_days'} || 14;
+	my $gap = $opt{'gap'} || 25;          # minutes that separate two slots
+	my $reach = $opt{'reach'} || 50;      # a slot never chains further than this
+	my $min_days = $opt{'min_days'} || 2; # a slot needs this many days to count
+
+	my %occurrences;
 	foreach my $r ( @{$rows} ) {
-		next unless $r->{'timestamp'};
-		my $time = localtime($r->{'timestamp'} / 1000);
-		my ($hour, $yday) = ($time->[2], $time->[7]);
-		$hour_days{$r->{'app'}}->{$hour}->{$yday} = 1;
-		$app_days{$r->{'app'}}->{$yday} = 1;
+		next unless ref $r eq 'HASH';
+		my $app = $r->{'app'};
+		my $ms = $r->{'timestamp'};
+		next unless defined $app && length $app && defined $ms && $ms =~ /^\d+(?:\.\d+)?$/ && $ms > 0;
+		my @t = localtime(int($ms / 1000));
+		push @{$occurrences{$app}}, {
+			ms => $ms + 0,
+			minute => ($t[2] * 60) + $t[1],
+			wday => $t[6],
+			day => &clothesline_day_index($ms),
+		};
 	}
+
+	my @now_t = localtime(int($now / 1000));
+	my $today = &clothesline_day_index($now);
+	my $today_wday = $now_t[6];
+
+	# The weekdays the window actually offered, up to yesterday: a Monday habit
+	# is not weakened by today's Monday not having happened yet.
+	my %offered;
+	for my $d ( ($today - $window) .. ($today - 1) ) {
+		my $wd = (($d - $today + $today_wday) % 7 + 7) % 7;
+		$offered{$wd}++;
+	}
+
 	my $out = {};
-	foreach my $app ( keys %hour_days ) {
-		my ($best, $bestc) = (undef, -1);
-		foreach my $h ( keys %{$hour_days{$app}} ) {
-			my $c = scalar keys %{$hour_days{$app}->{$h}};
-			if ($c > $bestc) { ($best, $bestc) = ($h, $c); }
+	foreach my $app ( keys %occurrences ) {
+		my @occ = @{$occurrences{$app}};
+
+		# the busiest hour, kept because the picker's idea of an app's time and
+		# any older reader still ask for it
+		my (%hour_days, %all_days);
+		foreach my $o ( @occ ) {
+			my $h = int($o->{'minute'} / 60);
+			$hour_days{$h}->{$o->{'day'}} = 1;
+			$all_days{$o->{'day'}} = 1;
 		}
-		$out->{$app} = { hour => $best, hour_days => $bestc, days => scalar keys %{$app_days{$app}} };
+		my ($best_hour, $best_days) = (undef, -1);
+		foreach my $h ( keys %hour_days ) {
+			my $c = scalar keys %{$hour_days{$h}};
+			if ($c > $best_days) { ($best_hour, $best_days) = ($h, $c); }
+		}
+
+		# cluster by minute of day. Sorted, a run stays together while no
+		# neighbour is more than `gap` from the one before and the run itself
+		# stays within `reach` of its first minute; a second coffee half an hour
+		# later is its own slot rather than a longer morning.
+		my @sorted = sort { $a->{'minute'} <=> $b->{'minute'} || $a->{'ms'} <=> $b->{'ms'} } @occ;
+		my @slots;
+		foreach my $o ( @sorted ) {
+			my $slot = $slots[-1];
+			if (!$slot || $o->{'minute'} - $slot->{'last_minute'} > $gap || $o->{'minute'} - $slot->{'first_minute'} > $reach) {
+				$slot = { first_minute => $o->{'minute'}, last_minute => $o->{'minute'}, minutes => 0, seen => 0, days => {}, weekdays => {} };
+				push @slots, $slot;
+			}
+			$slot->{'last_minute'} = $o->{'minute'};
+			$slot->{'minutes'} += $o->{'minute'};
+			$slot->{'seen'}++;
+			$slot->{'days'}->{$o->{'day'}} = 1;
+			$slot->{'weekdays'}->{$o->{'wday'}}->{$o->{'day'}} = 1;
+		}
+
+		my @regular;
+		foreach my $slot ( @slots ) {
+			my $days = scalar keys %{$slot->{'days'}};
+			next if $days < $min_days;
+			my $minute = int(($slot->{'minutes'} / $slot->{'seen'}) + 0.5);
+			my %weekdays = map { $_ => scalar keys %{$slot->{'weekdays'}->{$_}} } keys %{$slot->{'weekdays'}};
+
+			# A habit on named weekdays holds on at least two of the days it was
+			# offered and on most of them. An every-other-day habit lands on
+			# alternating days instead, so it is due on the parity its own days
+			# share - the day after it ran is the day off.
+			my $on_today = $weekdays{$today_wday} || 0;
+			my $offered_today = $offered{$today_wday} || 0;
+			my $due = 0;
+			if ($on_today >= 2 && $offered_today && ($on_today / $offered_today) >= 0.6) {
+				$due = 1;
+			}
+			elsif ($days >= 3) {
+				my @days = sort { $a <=> $b } keys %{$slot->{'days'}};
+				my @gaps = map { $days[$_] - $days[$_ - 1] } (1 .. $#days);
+				my @sorted_gaps = sort { $a <=> $b } @gaps;
+				my $median_gap = $sorted_gaps[int($#sorted_gaps / 2)];
+				if ($median_gap == 2) {
+					my %parity;
+					$parity{$_ % 2}++ for @days;
+					my $keep = (($parity{0} || 0) >= ($parity{1} || 0)) ? 0 : 1;
+					$due = 1 if (($today % 2) == $keep);
+				}
+			}
+			push @regular, {
+				minute => $minute,
+				hour => int($minute / 60),
+				days => $days,
+				due => $due,
+				weekdays => \%weekdays,
+			};
+		}
+		@regular = sort { $a->{'minute'} <=> $b->{'minute'} } @regular;
+
+		# the order key: the first regular time of the day, or the middle of what
+		# little history there is when nothing repeats often enough
+		my $order = $regular[0] ? $regular[0]->{'minute'} : undef;
+		unless (defined $order) {
+			my @mins = sort { $a <=> $b } map { $_->{'minute'} } @occ;
+			$order = $mins[int($#mins / 2)] if @mins;
+		}
+
+		$out->{$app} = {
+			hour => $best_hour,
+			hour_days => $best_days,
+			days => scalar keys %all_days,
+			minute => $order,
+			slots => \@regular,
+		};
 	}
 	return $out;
 }
