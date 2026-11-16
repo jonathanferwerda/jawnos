@@ -375,14 +375,15 @@ sub action_41568 {
 # Delete an app: every appointment through the ordinary delete (files, invoice
 # payments, continuation rows, warehouse rows, one tombstone each), then the
 # app-scoped settings/models/options/continent rows, each tombstoned so peers
-# drop their copies instead of pushing them back. Core house apps are refused.
+# drop their copies instead of pushing them back. The house's own apps and an
+# app a person ticked Permanent are refused (app_removal_refusal).
 # POST /manager/delete_whole_app
 sub action_41622 {
 	my $c = shift;
 	my $app = &subs::unformat_name($c->param('app'));
 	return $c->render(json => { ok => 0, error => 'app' }, status => 400) unless length $app;
-	my %reserved = map { $_ => 1 } qw/me misc config camera warehouse mail app sale purchase store terminal security ime people notes handbook studio music clock alarm padlock folders market budget crypto/;
-	return $c->render(json => { ok => 0, error => 'reserved' }, status => 403) if $reserved{$app};
+	my $refusal = &subs::app_removal_refusal($app);
+	return $c->render(json => { ok => 0, error => $refusal, message => &subs::app_removal_refusal_text($refusal, 'delete') }, status => 403) if $refusal;
 	# Deleting an app is destructive and reaches every machine, so it is only done
 	# from Configure and only when the person has typed the app's own name.
 	return $c->render(json => { ok => 0, error => 'confirm' }, status => 400)

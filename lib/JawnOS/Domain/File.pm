@@ -973,35 +973,73 @@ sub music_queue_applies {
 	return 1;
 }
 
+# The apps the house is made of. Their rows are the house rather than one use
+# case that can end, and none is rebuilt by opening the app again: me carries
+# name, warranty and budget_alarm, __president carries ws_pa and cache_folders,
+# music and misc their own house settings. Shared by the automatic vacuum, the
+# Vacuum button and Delete app, so all three refuse the same names.
+my %house_apps = map { $_ => 1 } qw/me misc config camera warehouse mail app sale purchase store terminal security ime people notes handbook studio music clock alarm padlock folders market budget crypto customs __president/;
+
+# Why this app may not be emptied or deleted, or '' when it may: 'house' for one
+# of the house's own apps, 'permanent' for a card a person ticked Permanent,
+# which asks for the app's settings to survive its last appointment. One answer
+# for the automatic vacuum, the Vacuum button and Delete app.
+sub app_removal_refusal {
+	my $app = shift;
+	return '' unless defined $app && length $app;
+	return 'house' if $house_apps{$app};
+	return 'permanent' if (&setting_grabber({ app => $app, setting => 'permanent' }) || '') eq 'checked';
+	return '';
+}
+
+# The sentence a panel shows for that refusal. $action is the button the person
+# pressed - 'vacuum' or 'delete' - so each panel refuses in its own words and
+# every sentence stays whole for translation.
+sub app_removal_refusal_text {
+	my ($reason, $action) = @_;
+	return '' unless defined $reason && length $reason;
+	my $delete = (($action || '') eq 'delete');
+	if ($reason eq 'house') {
+		return $delete ? &ui('This is one of the house\'s own apps, so it cannot be deleted.')
+			: &ui('This is one of the house\'s own apps, so it cannot be vacuumed.');
+	}
+	return $delete ? &ui('This app is marked Permanent. Turn Permanent off on its card first, then delete it.')
+		: &ui('This app is marked Permanent, so its settings are kept. Turn Permanent off on its card first, then vacuum it.');
+}
+
 sub vacuum {
 	my $app = shift;
-	# the house's own apps are not a use case that ends: me carries name, warranty
-	# and budget_alarm, __president carries ws_pa and cache_folders, music and misc
-	# their own house settings. None is rebuilt by opening the app again, so an
-	# expired last appointment must never take them with it
-	return if grep { $_ eq $app } qw/misc customs music __president me/;
+	# A house app is never swept, and saying so costs no query.
+	return if defined $app && $house_apps{$app};
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $timestamp = rightNow();
 	my $app_q = &db_query('select * from appointments where app=?',$app);
 	my $appts = $app_q->hashes;
-	if (scalar @{$appts} == 0 && &setting_grabber({ app => $app, setting => 'permanent' }) ne 'checked') {
-		&Websocket::send('server', { console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => $timestamp });
+	# Only an app with nothing left is swept, and never one a person ticked
+	# Permanent: those settings are not rebuilt by reopening it.
+	return unless scalar @{$appts} == 0;
+	return if &app_removal_refusal($app);
+	&Websocket::send('server', { console => &Websocket::console_command('closeButton', &subs::html_name($app)), timestamp => $timestamp });
 
-		foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
-			&db_query('delete from ' . $t . ' where app=?',$app);
-		}
+	foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
+		&db_query('delete from ' . $t . ' where app=?',$app);
 	}
 }
 
 sub vacuum_app {
 	my $app = shift;
+	# The Vacuum button and a peer applying its tombstone both land here, so the
+	# refusal lives here too, not only in the panel: '' means the vacuum ran and
+	# anything else is why it did not.
+	my $refusal = &app_removal_refusal($app);
+	return $refusal if $refusal;
 	my $timestamp = rightNow();
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $app_q = &db_query('select * from appointments where app=?',$app);
 	my $appts = $app_q->hashes;
-	foreach my $app ( @{$appts} ) {
-		if ($app->{'file'}) {
-			my @files = split ',', $app->{'file'};
+	foreach my $appt ( @{$appts} ) {
+		if ($appt->{'file'}) {
+			my @files = split ',', $appt->{'file'};
 			foreach my $f ( @files ) {
 				if (-e $f) {
 					&secure_unlink($f);
@@ -1014,7 +1052,7 @@ sub vacuum_app {
 	foreach my $t ( qw/appointments tickets settings continent websites tickets cache subcategory option model option_category mailbox websockets/) {
 		&db_query('delete from ' . $t . ' where app=?',$app);
 	}
-
+	return '';
 }
 
 # The location types a device can point at a folder and archive to: one per

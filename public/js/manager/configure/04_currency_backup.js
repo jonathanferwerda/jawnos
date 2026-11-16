@@ -573,7 +573,14 @@ $(document).on('click', '.delete_whole_app', function() {
 				$('.wind[app="' + app + '"]').remove();
 			},
 			error: function(xhr) {
-				jawnosAlertText(xhr && xhr.status == 403 ? 'That is a house app and cannot be deleted.' : 'Could not delete the app.');
+				// The house app and Permanent refusals arrive as translated sentences
+				// from app_removal_refusal_text, so the panel does not keep its own copy.
+				var body = xhr && xhr.responseJSON;
+				if (body && body.message) {
+					jawnosAlertText(body.message);
+					return;
+				}
+				jawnosAlertText('Could not delete the app.');
 			}
 		});
 	});
