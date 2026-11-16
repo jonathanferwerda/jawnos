@@ -919,7 +919,7 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	my $measures = Mojo::JSON::decode_json($start->{'measures'} // '[]');
 	my %got = map { %{$_} } @{$measures};
 	is($got{'precip_rate'}, 0.5, 'the appointment carries the precipitation rate');
-	is($got{'precip_total'}, 3.2, 'and the accumulated total');
+	ok(!exists $got{'precip_total'}, 'the running reader owns the accumulated total');
 	is($got{'temperature'}, -2, 'and the temperature the rule named');
 	ok(!exists $got{'wind_gust'}, 'it does not carry a measure the rule did not name');
 }
@@ -936,9 +936,10 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	local *subs::random_string_creator = sub { 'read-' . (++$n) };
 	local *subs::setting_grabber = sub { undef };
 	local *subs::setting_setter = sub { 1 };
-	local *subs::db_select = sub {
-		my ($table, $cols, $where) = @_;
-		return bless { rows => [ { uuid => $where->{'uuid'}, measures => $appt{ $where->{'uuid'} } } ] }, 'FakeResult';
+	local *subs::db_query = sub {
+		my ($query, @bind) = @_;
+		my @rows = map { { uuid => $_, measures => $appt{$_} } } sort keys %appt;
+		return bless { rows => \@rows }, 'FakeResult';
 	};
 	local *subs::db_update = sub {
 		my ($table, $data, $where) = @_;
@@ -974,6 +975,17 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is(scalar @{$capped}, 4, 'a long rain keeps only its newest days');
 	my @rates = map { $_->{'precip_rate'} } grep { defined $_->{'precip_rate'} } @{$capped};
 	is_deeply([ sort { $a <=> $b } @rates ], [0.6, 0.8], 'the oldest day\'s readings are the ones dropped');
+
+	# a day already kept on another session's row is updated there, not copied
+	my $day4 = $now + 3 * 86400000;
+	my ($day4_begin) = subs::period_bounds('day', $day4, 0);
+	$appt{'run-0'} = Mojo::JSON::encode_json([{ precip_total => 11.2, ts => $day4_begin + 3600000, uuid => 'older' }]);
+	my $checked = $day4_begin + 7200000;
+	is(subs::weather_app_reading_record('raining', 'run-1', { precip_total => 12.5 }, $rule, $checked, 'loc:home'), 1, 'a reading already kept for the day on another row is updated');
+	my %other = map { %{$_} } @{ Mojo::JSON::decode_json($appt{'run-0'}) };
+	is($other{'precip_total'}, 12.5, 'on the row that holds the day');
+	is($other{'ts'}, "$checked", 'at the new check');
+	ok(!(grep { defined $_->{'precip_total'} && "$_->{'precip_total'}" eq '12.5' } @{ Mojo::JSON::decode_json($appt{'run-1'}) }), 'and the new value is not copied to the open row');
 }
 
 # --- a rule that is still matched keeps its running app's reading fresh ------
@@ -1006,6 +1018,9 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 		push @appointments, $data;
 		return $data;
 	};
+	local *subs::db_query = sub {
+		return bless { rows => [ { uuid => 'run-1', measures => $appt{'run-1'} } ] }, 'FakeResult';
+	};
 	local *subs::db_select = sub {
 		my ($table, $cols, $where) = @_;
 		return bless { rows => [ { uuid => 'run-1', measures => $appt{'run-1'} } ] }, 'FakeResult';
@@ -1022,6 +1037,7 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	my %got = map { %{$_} } @{$m};
 	is(scalar @{$m}, 2, 'but its appointment takes the reading the rule is seeing');
 	is($got{'precip_rate'}, 0.4, 'the rate lands on the running session');
+	is($got{'precip_total'}, 7, 'and the day\'s accumulated total');
 	is($got{'ts'}, "$now", 'at the check');
 }
 
@@ -1064,8 +1080,25 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 		push @appointments, $data;
 		return $data;
 	};
-	local *subs::open_session_uuid = sub { '' };
+	local *subs::open_session_uuid = sub { 'run-1' };
 	local *subs::random_string_creator = sub { 'stop-measure' };
+	my $session_start = $now - 7 * 3600000;
+	my $wet_at = $now - 6 * 3600000;
+	my $dry_at = $now - 5 * 3600000;
+	local *subs::db_select = sub {
+		my ($table, $cols, $where) = @_;
+		return bless { rows => [ { timestamp => $session_start } ] }, 'FakeResult';
+	};
+	local *subs::db_query = sub {
+		return bless { rows => [
+			{ timestamp => $wet_at, measures => Mojo::JSON::encode_json([
+				{ precipitation => 'rain', precip_rate => 0.5, ts => $wet_at, location => 'loc:home' },
+			]) },
+			{ timestamp => $dry_at, measures => Mojo::JSON::encode_json([
+				{ precipitation => 'none', precip_rate => 0, ts => $dry_at, location => 'loc:home' },
+			]) },
+		] }, 'FakeResult';
+	};
 	my $dry = { precipitation => 'none', precip_rate => 0, precip_total => 23.1 };
 	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'obs-1', $now, 'loc:home') }, 0,
 		'the first dry check on a replaced rule holds its stop');
@@ -1075,6 +1108,7 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is($store{'setting|raining|toggle'}, 'off', 'and switches it off');
 	my ($stop) = grep { ($_->{'type'} // '') eq 'stop' } @appointments;
 	ok($stop, 'a stop appointment is written for the app it adopted');
+	is($stop->{'timestamp'}, $dry_at, 'stamped at the reading where the condition actually cleared');
 
 	# the same check with the app off writes nothing
 	$store{'setting|raining|toggle'} = 'off';
@@ -1085,7 +1119,7 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is(scalar @appointments, 0, 'and writes no stop');
 }
 
-# --- the rain and snow apps read precipitation as a peak ---------------------
+# --- the rain and snow apps read precipitation as a peak and a daily total ---
 {
 	my %store;
 	no warnings 'redefine';
@@ -1100,12 +1134,12 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	};
 	is(subs::weather_app_measure_defaults(), 1, 'the rain and snow apps get their measures');
 	is($store{'raining|measure_calc|precip_rate'}, 'high', 'the rate reads as its peak');
-	is($store{'raining|measure_calc|precip_total'}, 'high', 'and the total as its highest reading');
+	is($store{'raining|measure_calc|precip_total'}, 'sum', 'the total adds the days up');
 	my $raining = Mojo::JSON::decode_json($store{'raining|app_measures|'});
 	is($raining->{'precip_total'}{'unit'}, 'mm', 'the app knows the measure');
-	$store{'raining|measure_calc|precip_total'} = 'sum';
+	$store{'raining|measure_calc|precip_total'} = 'average';
 	subs::weather_app_measure_defaults();
-	is($store{'raining|measure_calc|precip_total'}, 'sum', 'a calc the person chose is left alone');
+	is($store{'raining|measure_calc|precip_total'}, 'average', 'a calc the person chose is left alone');
 }
 
 # --- the one-time rain/snow migration ----------------------------------------
@@ -1181,7 +1215,8 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	my $rules = Mojo::JSON::decode_json($store{'setting|weather_station|weather_rules'});
 	my ($rain) = grep { $_->{'app'} eq 'raining' } @{$rules};
 	is($rain->{'when'}[0]{'measure'}, 'precipitation', 'the precip_rate rule becomes the derived state');
-	ok(!(grep { $_->{'uuid'} eq 'v1-rain' } @{$rules}), 'and the v1 rule is gone');
+	is($rain->{'uuid'}, 'v1-rain', 'the replacement keeps the uuid, so its edge state survives');
+	ok(!(grep { grep { ($_->{'measure'} // '') eq 'precip_rate' } @{ $_->{'when'} || [] } } @{$rules}), 'and no precip_rate rule is left');
 	ok((grep { $_->{'uuid'} eq 'other' } @{$rules}), 'the other measurement rule stays');
 	is($store{'setting|weather_station|precip_rules'}, 'v2', 'the marker moves to v2');
 }
