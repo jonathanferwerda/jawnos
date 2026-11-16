@@ -381,13 +381,16 @@ static void ble_command(const String &raw) {
     ble_reply(String(buf));
   }
   else if (cmd.startsWith("jh.status")) {
-    char buf[224];
+    char buf[288];
     snprintf(buf, sizeof(buf),
              "{\"type\":\"status\",\"version\":\"%s\",\"uptime\":%lu,\"heap\":%u,\"psram\":%u,"
-             "\"yaw\":%.1f,\"imu\":%s,\"wifi\":%s,\"speaker\":%s}",
+             "\"yaw\":%.1f,\"imu\":%s,\"wifi\":%s,\"speaker\":%s,"
+             "\"wake\":{\"armed\":%s,\"fires\":%lu,\"peak\":%u}}",
              JAWN_FW_VERSION, (unsigned long)millis(), (unsigned)ESP.getFreeHeap(),
              (unsigned)ESP.getFreePsram(), imu_yaw_degrees(), imu_ready() ? "true" : "false",
-             (WiFi.status() == WL_CONNECTED) ? "true" : "false", audio_busy() ? "busy" : "ready");
+             (WiFi.status() == WL_CONNECTED) ? "true" : "false", audio_busy() ? "busy" : "ready",
+             wake_word_ready() ? "true" : "false", (unsigned long)wake_word_fires(),
+             (unsigned)wake_word_peak());
     ble_reply(String(buf));
   }
   else {

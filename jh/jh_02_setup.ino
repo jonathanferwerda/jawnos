@@ -12,12 +12,14 @@ void jawn_setup() {
   // the same split between a small internal heap and a large external one.
   heap_caps_malloc_extmem_enable(64);
 
-  // The power profile. 80 MHz is the lowest clock the radio and I2S run at, and
-  // the hat is idle most of the time; the runtime call is what actually moves
-  // the clock because the Arduino framework is precompiled at 240 MHz. See the
-  // note in platformio.ini. Light sleep between commands is phase 1: it cannot
-  // be entered while the BLE link is expected to answer instantly.
-  setCpuFrequencyMhz(80);
+  // The power profile. 240 MHz is not the hat's idle cost, it is the voice
+  // front-end's: the shared model runs an inference every few feature frames,
+  // and an inference that cannot finish inside its window does not fail loudly,
+  // it misses the wake word. The deck runs the same stack at 240 MHz, so that is
+  // the proven end to start from. Measure wake= on a real board, step down (160
+  // first) and re-test the phrase before going lower. The runtime call is what
+  // moves the clock: the Arduino framework is precompiled at 240.
+  setCpuFrequencyMhz(240);
   jh_log("[jh] cpu: %u MHz", (unsigned)getCpuFrequencyMhz());
 
   // config_restore() mounts FFat and falls back to defaults when the filesystem

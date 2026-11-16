@@ -4,15 +4,14 @@
 // and, when it fires, starts a capture and a snap. Phase 0 wires the plumbing and
 // stops at the detector:
 //
-//   * wake_word_detected() is the hook. It returns false today.
-//   * The model itself is NOT duplicated here. jt/hey_jawn_model.h is included
-//     through -I../jt (see platformio.ini), the same arrangement as the deck.
-//     Phase 1 should extract that header (and jt/vad_model.h) into a shared
-//     location so two boards do not depend on one board's tree.
-//   * The inference stack is real in the siblings: deck-libs/micro_features is
-//     the front-end and the platform bundles espressif__esp-tflite-micro. What
-//     is missing here is the ~120 lines of model loading and the sliding-window
-//     probability in jt/jt_15_voice_activation.ino, deliberately left for phase 1.
+//   * wake_word_detected() runs the shared model through jt/voice_models.h.
+//   * The model and the loading code are NOT duplicated here. jt/voice_models.h,
+//     hey_jawn_model.h and vad_model.h are included through -I../jt (see
+//     platformio.ini), the same arrangement as the deck. Extraction into a
+//     shared location is still owed: two boards now depend on one board's tree.
+//   * The front-end (deck-libs/micro_features) and the runtime
+//     (espressif__esp-tflite-micro) are the siblings' own, so what lives here is
+//     wiring and a latch, not a second inference stack.
 //
 // The mic pins are the Sense's onboard PDM wiring per Seeed's schematic
 // (data 41, clock 42). I have not verified them against every board revision:
@@ -24,22 +23,56 @@
 #define JH_VOICE_RING_BYTES (16 * 1024)
 #define JH_VOICE_FRAME 256          // int16 samples per I2S read
 
+// The sibling's TFLM stack: the same micro_features front-end, the same
+// interpreter, and the same model table. Reached through -I../jt, like the
+// header it replaces; pulling it in twice is safe, every model header is
+// #pragma once.
+//
+// That front-end is named directly because PlatformIO's dependency finder only
+// follows an include chain that starts in this project's own sources. voice_models.h
+// sits in jt/ behind -I../jt, which is a build flag the finder does not read, so
+// without this line the header resolves for the compiler and micro_features is
+// never linked: the deck gets away with it only because its own jt.ino includes
+// the same header from its src dir.
+#include <jawn_micro_features.h>
+#include "voice_models.h"
+
 static I2SClass jh_mic(I2S_NUM_1);
 static StreamBufferHandle_t jh_voice_ring = nullptr;
 static volatile uint32_t jh_voice_drops = 0;
 static volatile uint32_t jh_voice_frames = 0;
 static volatile bool jh_voice_alive = false;
+static bool jh_wake_latched = false;
+static volatile bool jh_wake_ready = false;
+static volatile uint32_t jh_wake_fires = 0;
 
-// The one hook phase 1 fills in. Keep the signature: a detector that reads a
-// frame at a time is what the shared model wants, and a future VAD can use the
-// same entry point.
+// The detector. voice_active_frame() reports a *state* - the sliding window
+// reads the phrase right now - and that stays true across consecutive frames, so
+// the latch is what turns 30 ms of audio into one event per utterance. Without
+// it a wake word would fire dozens of times as it is spoken.
 bool wake_word_detected(const int16_t *samples, size_t n) {
-  (void)samples;
-  (void)n;
-  // TODO(phase 1): run hey_jawn_model through the micro_features front-end and
-  // fire on the sliding-window probability cutoff. Do not fake a detector.
-  return false;
+  if (!jh_wake_ready) {
+    return false;
+  }
+  if (!voice_active_frame(samples, n)) {
+    jh_wake_latched = false;   // the phrase has passed: rearm
+    return false;
+  }
+  if (jh_wake_latched) {
+    return false;
+  }
+  jh_wake_latched = true;
+  jh_wake_fires = jh_wake_fires + 1;
+  jh_log("[voice] wake: %s", voice_mode_name);
+  return true;
 }
+
+// The house reads these through jh.status. The peak probability is the number
+// to watch when tuning the cutoff: a phrase that never climbs past ~0.4 wants a
+// lower cutoff, and a room that idles above it wants a higher one.
+bool wake_word_ready() { return jh_wake_ready; }
+uint32_t wake_word_fires() { return jh_wake_fires; }
+uint8_t wake_word_peak() { return voice_dbg_peak; }
 
 static void voice_task(void *arg) {
   (void)arg;
@@ -70,9 +103,10 @@ static void voice_task(void *arg) {
     }
 
     if (wake_word_detected(buf, n)) {
-      // Phase 1: a real detector lands here. The action is the same two calls
-      // the BLE protocol already exposes, which is why the hook is this small.
-      camera_request_snap();
+      // A tick, not a snap. What follows a wake word is the utterance the house
+      // should hear, and snapping here would post one frame per false trigger
+      // into unclaimed media. The capture and its POST are the next piece;
+      // voice_read() below already hands out the PCM for them.
       haptics_tick(70);
     }
 
@@ -84,8 +118,9 @@ static void voice_task(void *arg) {
     }
 
     if (millis() - last_report >= 2000) {
-      jh_log("[voice] rms=%u peak=%u frames=%u drops=%u", rms, peak_rms,
-             (unsigned)jh_voice_frames, (unsigned)jh_voice_drops);
+      jh_log("[voice] rms=%u peak=%u frames=%u drops=%u wake=%u model=%u", rms, peak_rms,
+             (unsigned)jh_voice_frames, (unsigned)jh_voice_drops,
+             (unsigned)jh_wake_fires, (unsigned)voice_dbg_peak);
       last_report = millis();
       peak_rms = 0;
       (void)frames;
@@ -104,8 +139,17 @@ void voice_in_init() {
     jh_log("[voice] no ring buffer");
     return;
   }
-  jh_log("[voice] model shared from jt: %u bytes (first 0x%02x); inference TODO",
-         hey_jawn_model_len, hey_jawn_model[0]);
+  // The model loads into PSRAM (32 KB tensors, 8 KB resource variables) and
+  // reports its own failure, because a hat whose microphone runs but which
+  // nothing listens to is the quietest possible bug.
+  if (!voice_models_init("hey_jawn")) {
+    jh_log("[voice] no wake model loaded; the mic runs, nothing listens");
+  }
+  else {
+    jh_wake_ready = true;
+    jh_log("[voice] wake word armed: hey_jawn, %u model bytes (first 0x%02x)",
+           hey_jawn_model_len, hey_jawn_model[0]);
+  }
   if (xTaskCreatePinnedToCore(voice_task, "jh-voice", 4096, NULL, 1, NULL, 1) != pdPASS) {
     jh_log("[voice] no task");
     return;

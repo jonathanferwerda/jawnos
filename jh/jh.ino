@@ -46,7 +46,7 @@
 //   jh_07_haptics.ino         coin vibration motor
 //   jh_08_ble_net.ino         Nordic UART BLE link and the jh.* command set
 //   jh_09_config.ino          house URL / credentials in FFat
-//   jh_10_voice_in.ino        PDM microphone, ring buffer, wake-word hook
+//   jh_10_voice_in.ino        PDM microphone, ring buffer, wake word
 //   jh_11_ota.ino             /device_query version report and /update
 //   jh_12_bridge.ino          the house bridge envelope and its state_request
 //
@@ -93,6 +93,9 @@ void config_save();
 void config_serial_loop();
 
 void voice_in_init();
+bool wake_word_ready();
+uint32_t wake_word_fires();
+uint8_t wake_word_peak();
 
 void ota_start();
 void ota_loop();
