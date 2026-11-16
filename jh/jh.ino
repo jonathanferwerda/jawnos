@@ -48,6 +48,7 @@
 //   jh_09_config.ino          house URL / credentials in FFat
 //   jh_10_voice_in.ino        PDM microphone, ring buffer, wake-word hook
 //   jh_11_ota.ino             /device_query version report and /update
+//   jh_12_bridge.ino          the house bridge envelope and its state_request
 //
 // The original void setup()/void loop() bodies live in the parts as
 // jawn_setup()/jawn_loop(). These wrappers keep main-file detection and the
@@ -82,6 +83,9 @@ void haptics_update();
 void ble_arm_start();
 void ble_loop();
 bool ble_link_up();
+
+void bridge_loop();
+static void bridge_handle(const String &raw);
 
 void config_defaults();
 void config_restore();

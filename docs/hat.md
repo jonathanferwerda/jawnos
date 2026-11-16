@@ -131,6 +131,14 @@ Everything the hat needs already exists in the tree:
 New firmware would be a fifth PlatformIO target beside `jp`, `jt` and `jw` — say `jh` — reusing `jt`'s
 skeleton rather than starting fresh.
 
+It lists in the Embedded app as it stands: the board advertises purpose byte 3, which `Ble.pm` maps to
+`microcontroller`, and `Embedded.pm` admits exactly `watch`, `teletype` and `microcontroller`. Two
+consequences are worth knowing. It appears under its model name rather than as a hat. And the house
+sends microcontrollers **uncompressed** bridge payloads, so the firmware needs no inflate — a property
+of the house, not of the protocol, so the firmware flags a zlib header loudly if that ever changes. A
+first-class `hat` purpose would be a wider change: the purpose map, both `Embedded.pm` filters, the
+worker boot list and the help topic. Not worth doing before the thing works.
+
 Because `travel/viewer` is a plain page, the hat stays hardware-independent: the same view serves this
 cap, a used pair of glasses, a phone, or anything that arrives later.
 

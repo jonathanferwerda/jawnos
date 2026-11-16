@@ -27,6 +27,7 @@ static BLECharacteristic *jh_ble_tx = nullptr;
 static bool jh_ble_radio_up = false;
 static volatile bool jh_ble_connected = false;
 static volatile bool jh_ble_notify_ready = false;
+static uint32_t jh_ble_connected_at = 0;   // when the central attached; the bridge waits on it
 static bool jh_ble_start_pending = false;
 static QueueHandle_t jh_ble_queue = nullptr;
 static String jh_ble_rx_buffer;
@@ -127,11 +128,13 @@ class JhServerCallbacks : public BLEServerCallbacks {
     (void)server;
     jh_ble_connected = true;
     jh_ble_notify_ready = false;   // until the central subscribes to TX
+    jh_ble_connected_at = millis();
     jh_log("[bt] central attached");
   }
   void onDisconnect(BLEServer *server) {
     jh_ble_connected = false;
     jh_ble_notify_ready = false;
+    jh_ble_connected_at = 0;
     // Bluedroid stops advertising when a central attaches and never resumes it
     // on its own: without this the house cannot come back after a drop until
     // the hat is rebooted (the deck's lesson).
@@ -399,15 +402,18 @@ void ble_loop() {
     jh_ble_start_pending = false;
     ble_start();
   }
+  bridge_loop();   // the state_request the bridge owes after a connect
   for (int i = 0; i < 4; i++) {
     String *msg = nullptr;
     if (!jh_ble_queue || xQueueReceive(jh_ble_queue, &msg, 0) != pdTRUE) {
       break;
     }
     if (msg) {
-      String cmd = std::move(*msg);
+      String incoming = std::move(*msg);
       delete msg;
-      ble_command(cmd);
+      // Either a bench jh.* command or a bridge envelope; bridge_handle sorts
+      // them by whether the payload opens as JSON.
+      bridge_handle(incoming);
     }
   }
 }
