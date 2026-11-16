@@ -1319,20 +1319,24 @@ sub navigation_automation {
 # The hour of the day each app most often happens at, over the recent past, in
 # one query for every app. `hour_days` is how many of the days that hour was
 # seen on, `days` how many days the app was seen at all, and `due` says whether
-# today is one of the days its own history keeps it.
+# today is one of the days its own cadence keeps it.
 #
 # The scan also learns the order the day runs in: the sequence of appointments
 # the person starts and stops themselves, in the order they are completed.
-# `sessions` holds those sequences, one per stretch without a long pause, and
-# `current` is the one under way - what the line anticipates from. A row with a
-# source_uuid came from a task, a default option or a default model, so it is
-# not the person's own step and never enters a sequence.
+# `sessions` holds the recent ones, one per stretch without a long pause, and
+# `canonical` is the most common of them - the day the line anticipates from.
+# A row with a source_uuid came from a task, a default option or a default
+# model, so it is not the person's own step and never enters a sequence.
+#
+# The day count runs two months so a cadence of up to a month has room to show
+# itself; the sequence is read from the last fortnight, which is what makes it
+# the recent day rather than an old habit.
 sub clothesline_daily_hours {
-	my $days = 14;
+	my $days = 60;
 	my $now = &rightNow();
 	my $since = $now - ($days * 86400 * 1000);
-	my $rows = &db_query('select app, timestamp, type, source_uuid from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?)', $since, $now, 'usual', 'stop', 'start')->hashes;
-	return &clothesline_routine_scan($rows, $now, window_days => $days);
+	my $rows = &db_query(q{select app, timestamp, type, source_uuid from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?) and coalesce(source_uuid,'') = ''}, $since, $now, 'usual', 'stop', 'start')->hashes;
+	return &clothesline_routine_scan($rows, $now, window_days => $days, session_days => 14);
 }
 
 # The local day a moment belongs to, as an integer that steps by one each
@@ -1352,10 +1356,12 @@ sub clothesline_routine_scan {
 	my ($rows, $now, %opt) = @_;
 	$rows = [] unless ref $rows eq 'ARRAY';
 	$now = &rightNow() unless defined $now;
-	my $window = $opt{'window_days'} || 14;
+	my $window = $opt{'window_days'} || 60;
+	my $session_days = $opt{'session_days'} || 14;
 	my $pause = $opt{'pause'} || (6 * 3600 * 1000); # a gap that ends a routine
+	my $recent_since = $now - ($session_days * 86400 * 1000);
 
-	my (@completed, @started);
+	my (@completed, @recent_completed, @started);
 	foreach my $r ( @{$rows} ) {
 		next unless ref $r eq 'HASH';
 		my $app = $r->{'app'};
@@ -1365,11 +1371,17 @@ sub clothesline_routine_scan {
 		# person's own: leave it to its parent
 		next if defined $r->{'source_uuid'} && length $r->{'source_uuid'};
 		my $type = lc($r->{'type'} || '');
-		if ($type eq 'start') { push @started, { app => $app, ms => $ms + 0 }; next; }
+		if ($type eq 'start') {
+			push @started, { app => $app, ms => $ms + 0 } if $ms >= $recent_since;
+			next;
+		}
 		next unless $type eq 'usual' || $type eq 'stop';
-		push @completed, { app => $app, ms => $ms + 0 };
+		my $row = { app => $app, ms => $ms + 0 };
+		push @completed, $row;
+		push @recent_completed, $row if $ms >= $recent_since;
 	}
 	@completed = sort { $a->{'ms'} <=> $b->{'ms'} } @completed;
+	@recent_completed = sort { $a->{'ms'} <=> $b->{'ms'} } @recent_completed;
 	@started = sort { $a->{'ms'} <=> $b->{'ms'} } @started;
 
 	my @now_t = localtime(int($now / 1000));
@@ -1385,24 +1397,27 @@ sub clothesline_routine_scan {
 
 	my (%app_days, %hour_days);
 	foreach my $r ( @completed ) {
+		$app_days{$r->{'app'}}->{&clothesline_day_index($r->{'ms'})} = 1;
+	}
+	foreach my $r ( @recent_completed ) {
 		my @t = localtime(int($r->{'ms'} / 1000));
-		my $day = &clothesline_day_index($r->{'ms'});
-		$app_days{$r->{'app'}}->{$day} = 1;
-		$hour_days{$r->{'app'}}->{$t[2]}->{$day} = 1;
+		$hour_days{$r->{'app'}}->{$t[2]}->{&clothesline_day_index($r->{'ms'})} = 1;
 	}
 	my $apps = {};
 	foreach my $app ( keys %app_days ) {
 		my ($best_hour, $best_days) = (undef, -1);
-		foreach my $h ( keys %{$hour_days{$app}} ) {
+		foreach my $h ( keys %{$hour_days{$app} || {}} ) {
 			my $c = scalar keys %{$hour_days{$app}->{$h}};
 			if ($c > $best_days) { ($best_hour, $best_days) = ($h, $c); }
 		}
 		my $days = scalar keys %{$app_days{$app}};
 		# A weekday habit is read from how often each weekday was offered: a
 		# clear split (a weekday that holds on most of its chances and one that
-		# never does) names the days it keeps. With no clear split, an alternating
-		# two-day cadence puts today on or off its turn; otherwise no day is off.
+		# never does) names the days it keeps. With no clear split, the gaps
+		# between its days give the cadence - every other day, every third, up
+		# to a month - and today is due on the phase its days share.
 		my $due = 1;
+		my $cadence = 1;
 		if ($days >= 2) {
 			my %weekdays;
 			foreach my $d ( keys %{$app_days{$app}} ) {
@@ -1416,29 +1431,40 @@ sub clothesline_routine_scan {
 				$off_wd = 1 if $ratio{$wd} <= 0.2;
 			}
 			if ($on_wd && $off_wd) {
+				$cadence = 7;
 				my $on_today = $weekdays{$today_wday} || 0;
 				$due = ($on_today >= 2 && ($ratio{$today_wday} || 0) >= 0.6) ? 1 : 0;
 			}
 			else {
 				my @days = sort { $a <=> $b } keys %{$app_days{$app}};
 				my @gaps = map { $days[$_] - $days[$_ - 1] } (1 .. $#days);
-				my @sorted_gaps = sort { $a <=> $b } @gaps;
-				my $median_gap = @sorted_gaps ? $sorted_gaps[int($#sorted_gaps / 2)] : 0;
-				if ($median_gap == 2) {
-					my %parity;
-					$parity{$_ % 2}++ for @days;
-					my $keep = (($parity{0} || 0) >= ($parity{1} || 0)) ? 0 : 1;
-					$due = (($today % 2) == $keep) ? 1 : 0;
+				my %gap_count;
+				$gap_count{$_}++ for @gaps;
+				my $best_gap = -1;
+				$cadence = 0;
+				foreach my $g ( sort { $a <=> $b } keys %gap_count ) {
+					if ($gap_count{$g} > $best_gap) { ($cadence, $best_gap) = ($g, $gap_count{$g}); }
+				}
+				$cadence = 1 if $cadence < 1;
+				$cadence = 30 if $cadence > 30;
+				if ($cadence >= 2) {
+					my %residue;
+					$residue{$_ % $cadence}++ for @days;
+					my ($keep, $best_residue) = (0, -1);
+					foreach my $res ( sort { $a <=> $b } keys %residue ) {
+						if ($residue{$res} > $best_residue) { ($keep, $best_residue) = ($res, $residue{$res}); }
+					}
+					$due = (($today % $cadence) == $keep) ? 1 : 0;
 				}
 			}
 		}
-		$apps->{$app} = { hour => $best_hour, hour_days => $best_days, days => $days, due => $due };
+		$apps->{$app} = { hour => $best_hour, hour_days => $best_days, days => $days, due => $due, cadence => $cadence };
 	}
 
-	# sessions: completed steps in order, split by a long pause so one morning is
-	# not joined to the next morning
+	# sessions: recent completed steps in order, split by a long pause so one
+	# morning is not joined to the next morning
 	my (@sessions, @names, $start, $prev);
-	foreach my $r ( @completed ) {
+	foreach my $r ( @recent_completed ) {
 		if (@names && $r->{'ms'} - $prev > $pause) {
 			push @sessions, { seq => [@names], start => $start };
 			@names = ();
@@ -1448,113 +1474,127 @@ sub clothesline_routine_scan {
 		$prev = $r->{'ms'};
 	}
 	push @sessions, { seq => [@names], start => $start } if @names;
+	# the app that opens the routine most often: the line starts there, so a
+	# call or the weather checked before wake_up is not made the routine's head
+	my %start_count;
+	foreach my $s ( @sessions ) {
+		$start_count{$s->{'seq'}[0]}++ if @{$s->{'seq'}};
+	}
+	my ($start_app, $start_best) = (undef, -1);
+	foreach my $app ( sort keys %start_count ) {
+		if ($start_count{$app} > $start_best) { ($start_app, $start_best) = ($app, $start_count{$app}); }
+	}
+
+	# what the person has already finished today, by app: the line takes those
+	# occurrences out of the canonical sequence, wherever in it they sit
+	my %done;
+	foreach my $r ( @recent_completed ) {
+		$done{$r->{'app'}}++ if &clothesline_day_index($r->{'ms'}) == $today;
+	}
 
 	# the step at hand: the latest completed step, or a start still running
 	my $last_any;
-	if (@completed) {
-		$last_any = { app => $completed[-1]{'app'}, ms => $completed[-1]{'ms'}, type => 'done' };
+	if (@recent_completed) {
+		$last_any = { app => $recent_completed[-1]{'app'}, ms => $recent_completed[-1]{'ms'}, type => 'done' };
 	}
 	if (@started && (!$last_any || $started[-1]{'ms'} >= $last_any->{'ms'})) {
 		$last_any = { app => $started[-1]{'app'}, ms => $started[-1]{'ms'}, type => 'start' };
 	}
 
-	my $current = { active => 0, seq => [], running => undef, start => undef };
+	my $current = { active => 0, running => undef, start => undef };
 	if ($last_any && ($now - $last_any->{'ms'}) <= $pause) {
 		$current->{'active'} = 1;
-		my $last_completed = @completed ? $completed[-1]{'ms'} : undef;
-		if ($last_any->{'type'} eq 'start') {
-			$current->{'running'} = $last_any->{'app'};
-			# the running step belongs to the last completed sequence only when it
-			# started without a long pause after it; otherwise it opens a new routine
-			if (@sessions && defined $last_completed && ($last_any->{'ms'} - $last_completed) <= $pause) {
-				$current->{'seq'} = [ @{$sessions[-1]{'seq'}} ];
-				$current->{'start'} = $sessions[-1]{'start'};
-			}
-		}
-		elsif (@sessions) {
-			$current->{'seq'} = [ @{$sessions[-1]{'seq'}} ];
-			$current->{'start'} = $sessions[-1]{'start'};
-		}
+		$current->{'running'} = $last_any->{'app'} if $last_any->{'type'} eq 'start';
+		$current->{'start'} = @sessions ? $sessions[-1]{'start'} : undef;
 	}
 
-	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any };
+	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any, done => \%done, start_app => $start_app };
 }
 
-# How far a prefix runs into a learned sequence, allowing the sequence to carry
-# steps the prefix skipped. Returns how many prefix steps were found and the
-# position in the sequence of the last one, so the caller can continue after it.
-sub clothesline_sequence_match {
-	my ($prefix, $seq) = @_;
-	my ($pi, $ti, $last) = (0, 0, -1);
-	while ($pi < @{$prefix}) {
-		my $found = -1;
-		for my $j ( $ti .. $#{ $seq } ) {
-			if ($seq->[$j] eq $prefix->[$pi]) { $found = $j; last; }
+# The longest run of steps two sequences share in order, which is how alike two
+# days are even when one skips a step or moves one earlier.
+sub clothesline_sequence_similarity {
+	my ($a, $b) = @_;
+	return 0 unless ref $a eq 'ARRAY' && ref $b eq 'ARRAY';
+	my ($n, $m) = (scalar @{$a}, scalar @{$b});
+	return 0 unless $n && $m;
+	my @prev = (0) x ($m + 1);
+	for my $i ( 1 .. $n ) {
+		my @cur = (0) x ($m + 1);
+		for my $j ( 1 .. $m ) {
+			$cur[$j] = ($a->[$i - 1] eq $b->[$j - 1])
+				? $prev[$j - 1] + 1
+				: ($prev[$j] >= $cur[$j - 1] ? $prev[$j] : $cur[$j - 1]);
 		}
-		last if $found < 0;
-		$last = $found;
-		$ti = $found + 1;
-		$pi++;
+		@prev = @cur;
 	}
-	return ($pi, $last);
+	return $prev[$m];
 }
 
-# The next steps of the routine under way, in the order the person takes them.
-# The routine's own sequence is one they have already completed; the prefix of
-# the current one finds where it has got to. A step that happens twice in the
-# routine is one name in the answer - the next time it comes round - so the
-# line never carries two coffee pills. A step whose day is not today is skipped
-# but the walk carries on past it.
+# The most common recent day: the session whose sequence is most like all the
+# others, with an exact shape winning a tie and the later session after that. A
+# day that moves one step is still close to the rest; a one-off day is not. Each
+# day is cut at the app that opens the routine and held to its first thirty
+# steps, which is as far as the anticipatory head can reach and keeps the
+# comparison cheap.
+sub clothesline_sequence_canonical {
+	my ($sessions, $start_app) = @_;
+	$sessions = [] unless ref $sessions eq 'ARRAY';
+	my $cap = 30;
+	my @seqs;
+	foreach my $session ( @{$sessions} ) {
+		next unless ref $session eq 'HASH' && ref $session->{'seq'} eq 'ARRAY';
+		my @seq = @{ $session->{'seq'} };
+		next unless @seq;
+		if (defined $start_app && length $start_app) {
+			my $at = -1;
+			for my $i ( 0 .. $#seq ) { if ($seq[$i] eq $start_app) { $at = $i; last; } }
+			@seq = @seq[$at .. $#seq] if $at >= 0;
+		}
+		@seq = @seq[0 .. $cap - 1] if @seq > $cap;
+		push @seqs, \@seq;
+	}
+	return [] unless @seqs;
+	return $seqs[0] if @seqs == 1;
+
+	my ($best, $best_score, $best_freq, $best_idx) = (undef, -1, -1, -1);
+	for my $i ( 0 .. $#seqs ) {
+		my $score = 0;
+		for my $j ( 0 .. $#seqs ) {
+			next if $i == $j;
+			$score += &clothesline_sequence_similarity($seqs[$i], $seqs[$j]);
+		}
+		my $shape = join("\x1f", @{$seqs[$i]});
+		my $freq = scalar grep { join("\x1f", @{$_}) eq $shape } @seqs;
+		if ($score > $best_score
+			|| ($score == $best_score && ($freq > $best_freq
+			|| ($freq == $best_freq && $i > $best_idx)))) {
+			($best, $best_score, $best_freq, $best_idx) = ($seqs[$i], $score, $freq, $i);
+		}
+	}
+	return $best || [];
+}
+
+# The next steps of the routine, in the order the most common recent day keeps
+# them. The steps already finished today are taken out of that sequence,
+# wherever they sat in it, so a bed made before the coffee does not move the
+# rest; a step done twice leaves its later occurrence to come round again. Each
+# app is named once in the answer. A step whose day is not today is skipped but
+# the walk carries on past it.
 sub clothesline_sequence_anticipate {
 	my ($scan, $now, %opt) = @_;
 	$scan = {} unless ref $scan eq 'HASH';
 	$now = &rightNow() unless defined $now;
 	my $limit = $opt{'limit'} || 8;
-	my $start_window = defined $opt{'start_window'} ? $opt{'start_window'} : 2;
 	my $sessions = ref $scan->{'sessions'} eq 'ARRAY' ? $scan->{'sessions'} : [];
-	my $current = ref $scan->{'current'} eq 'HASH' ? $scan->{'current'} : {};
+	my $canonical = $opt{'canonical'} || &clothesline_sequence_canonical($sessions, $scan->{'start_app'});
+	return [] unless ref $canonical eq 'ARRAY' && @{$canonical};
+	my $done = ref $scan->{'done'} eq 'HASH' ? $scan->{'done'} : {};
 
-	my @prefix;
-	if ($current->{'active'}) {
-		@prefix = @{ $current->{'seq'} || [] };
-		my $running = $current->{'running'};
-		push @prefix, $running if defined $running && length $running && (!@prefix || $prefix[-1] ne $running);
-	}
-	my @templates = grep { !$current->{'start'} || ($_->{'start'} || 0) != $current->{'start'} } @{$sessions};
-
-	my ($best, $best_start);
-	if (@prefix) {
-		my ($best_score, $best_idx) = (-1, -1);
-		for my $i ( 0 .. $#templates ) {
-			my ($score, $last) = &clothesline_sequence_match(\@prefix, $templates[$i]{'seq'} || []);
-			next if $score <= 0;
-			if ($score > $best_score || ($score == $best_score && $i > $best_idx)) {
-				($best, $best_start, $best_score, $best_idx) = ($templates[$i], $last + 1, $score, $i);
-			}
-		}
-	}
-	if (!$best) {
-		# nothing to match yet: the routine that usually starts around this hour
-		my @now_t = localtime(int($now / 1000));
-		my ($near, $near_gap, $near_idx) = (undef, 99, -1);
-		for my $i ( 0 .. $#templates ) {
-			my $start = $templates[$i]{'start'} || 0;
-			next unless $start;
-			my @t = localtime(int($start / 1000));
-			my $d = abs($t[2] - $now_t[2]);
-			$d = 24 - $d if $d > 12;
-			if ($d < $near_gap || ($d == $near_gap && $i > $near_idx)) {
-				($near, $near_gap, $near_idx) = ($templates[$i], $d, $i);
-			}
-		}
-		if ($near && $near_gap <= $start_window) { $best = $near; $best_start = 0; }
-	}
-	return [] unless $best;
-
-	my (@out, %seen);
-	my $seq = $best->{'seq'} || [];
-	for my $i ( $best_start .. $#{ $seq } ) {
-		my $app = $seq->[$i];
+	my (@out, %seen, %left);
+	foreach my $app ( @{$canonical} ) {
+		# take a finished occurrence of this app off the sequence first
+		if (($left{$app} //= ($done->{$app} || 0)) > 0) { $left{$app}--; next; }
 		next if $seen{$app}++;
 		my $due = ($scan->{'apps'}{$app} && defined $scan->{'apps'}{$app}{'due'}) ? $scan->{'apps'}{$app}{'due'} : 1;
 		next unless $due;

@@ -1,11 +1,10 @@
 # tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm
-# covers:    The clothesline learns the sequence the person starts and stops
-#            themselves, not a clock: a routine begun at eight or at ten puts
-#            pee before water before coffee. Steps a task, default option or
-#            default model started are left out. A step done twice is one pill
-#            in the anticipatory head and the later steps still follow, and the
-#            rest of the line is alphabetical. Weekday and every-other-day
-#            habits are due only on their own days.
+# covers:    The clothesline leads with the most common recent day's sequence,
+#            not the latest day: a step moved earlier or later leaves the rest
+#            in order, a step done twice is one pill at its next turn, and the
+#            cadence may be every second, third, fifth ... day up to a month.
+#            Only the appointments the person starts and stops themselves are
+#            learned; a task or default step stays with its parent.
 
 use strict;
 use warnings;
@@ -25,19 +24,24 @@ sub row {
 	return { app => $app, timestamp => $ms, type => $type || 'stop', source_uuid => defined $src ? $src : '' };
 }
 
-# The routine the person gave: coffee and water happen twice in it, and a step a
-# parent starts (cream) sits beside coffee but is not the person's own click.
-my @routine = qw(wake_up pee water coffee vape dump facebook breakfast water coffee vape make_up_bed);
+# The common day: coffee and water happen twice, and a bed made early or late
+# does not move the rest. The last two days are a reordered outlier, so a test
+# that picks the latest day instead of the most common one fails.
+my @common = qw(wake_up pee water coffee vape dump facebook breakfast water coffee vape make_up_bed);
+my @outlier = qw(wake_up pee coffee water vape dump facebook breakfast make_up_bed water coffee vape);
 
 my @rows;
-# eight days of the same sequence, begun at a different hour each day: the order
-# is what the line learns, not the clock
-for my $day (8 .. 15) {
+for my $day (6 .. 13) {
 	my $hour = 8 + ($day % 3);
-	for my $i (0 .. $#routine) {
-		push @rows, row($routine[$i], JawnOSTest::ts(2026, 11, $day, $hour, $i), 'stop');
-		# the cream behind the coffee: started by its parent, so not learned
+	for my $i (0 .. $#common) {
+		push @rows, row($common[$i], JawnOSTest::ts(2026, 11, $day, $hour, $i), 'stop');
 		push @rows, row('cream', JawnOSTest::ts(2026, 11, $day, $hour, $i), 'stop', 'coffee-parent');
+	}
+}
+for my $day (14 .. 15) {
+	my $hour = 8 + ($day % 3);
+	for my $i (0 .. $#outlier) {
+		push @rows, row($outlier[$i], JawnOSTest::ts(2026, 11, $day, $hour, $i), 'stop');
 	}
 }
 # a Sunday-only step, seen on two Sundays, so its day is knowable
@@ -45,47 +49,75 @@ push @rows, row('laundry', JawnOSTest::ts(2026, 11, 8,  10, 5), 'stop');
 push @rows, row('laundry', JawnOSTest::ts(2026, 11, 15, 10, 5), 'stop');
 
 my $monday = JawnOSTest::ts(2026, 11, 16, 9, 0);
-my $scan = subs::clothesline_routine_scan(\@rows, $monday, window_days => 14);
+my $scan = subs::clothesline_routine_scan(\@rows, $monday, window_days => 60, session_days => 14);
 
 # --- only the person's own steps are learned --------------------------------
 ok($scan->{'apps'}{'coffee'}, 'a step the person starts and stops is learned');
 ok(!$scan->{'apps'}{'cream'}, 'a step a task or default started is left to its parent');
 is($scan->{'apps'}{'laundry'}{'due'}, 0, 'a Sunday habit is not due on a Monday');
+is($scan->{'start_app'}, 'wake_up', 'the routine starts at its common first step');
 
-# --- the order is the sequence, independent of the hour --------------------
+# --- the most common day, not the latest one --------------------------------
+my $canonical = subs::clothesline_sequence_canonical($scan->{'sessions'}, $scan->{'start_app'});
+ok($canonical && @{$canonical}, 'a canonical day was found');
+is_deeply([ @{$canonical}[0 .. 7] ],
+	[qw(wake_up pee water coffee vape dump facebook breakfast)],
+	'the majority day leads, not the reordered last two days');
+is_deeply(subs::clothesline_sequence_canonical([{ seq => [qw(phone weather wake_up pee water)] }], 'wake_up'),
+	[qw(wake_up pee water)], 'a step checked before the routine is not made its head');
+
+# --- a step moved earlier still leaves the rest in order --------------------
+delete $scan->{'done'};
 my $pre = subs::clothesline_sequence_anticipate($scan, $monday, limit => 8);
 is_deeply($pre, [qw(wake_up pee water coffee vape dump facebook breakfast)],
-	'the routine leads from its first step, at nine in the morning as at eight');
+	'from the start, the common day leads');
 
-$scan->{'current'} = { active => 1, seq => ['wake_up'], start => 0, running => undef };
+$scan->{'done'} = { wake_up => 1 };
 my $next = subs::clothesline_sequence_anticipate($scan, $monday, limit => 8);
 is_deeply($next, [qw(pee water coffee vape dump facebook breakfast make_up_bed)],
 	'after the first step: the sequence in order, one coffee and one water, and the later step still follows');
 is(scalar(grep { $_ eq 'coffee' } @{$next}), 1, 'the second coffee is not a second pill');
 is(scalar(grep { $_ eq 'water' } @{$next}), 1, 'nor is the second water');
 
-# the same routine read on the next day has the same order
-my $tuesday = JawnOSTest::ts(2026, 11, 17, 9, 0);
-my $tuesday_scan = subs::clothesline_routine_scan(\@rows, $tuesday, window_days => 14);
-$tuesday_scan->{'current'} = { active => 1, seq => ['wake_up'], start => 0, running => undef };
-my $tuesday_next = subs::clothesline_sequence_anticipate($tuesday_scan, $tuesday, limit => 8);
-is_deeply($tuesday_next, $next, 'the day changes, the order does not');
-my $sunday_scan = subs::clothesline_routine_scan(\@rows, JawnOSTest::ts(2026, 11, 15, 15, 0), window_days => 14);
-is($sunday_scan->{'apps'}{'laundry'}{'due'}, 1, 'the Sunday habit is due on its Sunday');
+$scan->{'done'} = { map { $_ => 1 } qw(wake_up pee water coffee vape dump facebook breakfast make_up_bed) };
+my $early_bed = subs::clothesline_sequence_anticipate($scan, $monday, limit => 8);
+is_deeply($early_bed, [qw(water coffee vape)],
+	'a bed made before the second coffee leaves the rest in order and does not repeat');
 
-# --- every other day keeps its own parity -----------------------------------
-my @alternate;
-for my $d (2, 4, 6, 8, 10, 12, 14) {
-	push @alternate, row('due_today', JawnOSTest::ts(2026, 11, $d, 9, 0));
+# --- a cadence of any length up to a month ----------------------------------
+sub due_for {
+	my ($app, $days, $now) = @_;
+	my @r = map { row($app, JawnOSTest::ts(2026, 11, $_, 9, 0)) } @{$days};
+	my $s = subs::clothesline_routine_scan(\@r, $now, window_days => 60, session_days => 14);
+	return $s->{'apps'}{$app}{'due'};
 }
-for my $d (1, 3, 5, 7, 9, 11, 13, 15) {
-	push @alternate, row('off_today', JawnOSTest::ts(2026, 11, $d, 9, 0));
+sub due_on {
+	my ($app, $days, $y, $m, $d) = @_;
+	return due_for($app, $days, JawnOSTest::ts($y, $m, $d, 12, 0));
 }
-my $alternating = subs::clothesline_routine_scan(\@alternate, $monday, window_days => 14);
-is($alternating->{'apps'}{'due_today'}{'due'}, 1,
-	'an every-other-day step whose turn is today is due');
-is($alternating->{'apps'}{'off_today'}{'due'}, 0,
-	'the one that ran yesterday is the day off, not due again');
+
+# every other day: 2, 4, ... 14, so 16 is its turn and 15 is not
+is(due_on('every_2', [2, 4, 6, 8, 10, 12, 14], 2026, 11, 16), 1, 'every second day is due on its turn');
+is(due_on('every_2', [2, 4, 6, 8, 10, 12, 14], 2026, 11, 15), 0, 'and off the day between');
+
+# every third day: 1, 4, 7, 10, 13, so 16 is due and 15 is not
+is(due_on('every_3', [1, 4, 7, 10, 13], 2026, 11, 16), 1, 'every third day is due on its turn');
+is(due_on('every_3', [1, 4, 7, 10, 13], 2026, 11, 15), 0, 'and off the days between');
+
+# every fifth day: 1, 6, 11, so 16 is due and 15 is not
+is(due_on('every_5', [1, 6, 11], 2026, 11, 16), 1, 'every fifth day is due on its turn');
+is(due_on('every_5', [1, 6, 11], 2026, 11, 15), 0, 'and off the days between');
+
+# every thirtieth day, the far end of the range
+my @monthly = (
+	row('every_30', JawnOSTest::ts(2026, 10, 17, 9, 0)),
+	row('every_30', JawnOSTest::ts(2026, 11, 16, 9, 0)),
+);
+my $m30 = subs::clothesline_routine_scan(\@monthly, JawnOSTest::ts(2026, 11, 16, 12, 0), window_days => 60, session_days => 14);
+is($m30->{'apps'}{'every_30'}{'due'}, 1, 'a monthly step is due on its day');
+is($m30->{'apps'}{'every_30'}{'cadence'}, 30, 'the month is the cadence it learned');
+my $m30b = subs::clothesline_routine_scan(\@monthly, JawnOSTest::ts(2026, 11, 17, 12, 0), window_days => 60, session_days => 14);
+is($m30b->{'apps'}{'every_30'}{'due'}, 0, 'and off the rest of the month');
 
 # --- the head keeps its order, the rest follows alphabetically ---------------
 my $head = [
@@ -105,12 +137,15 @@ is_deeply([ map { $_->{'app'} } @{$line} ], [qw(water pee breakfast coffee)],
 my $appointment = read_file(repo_root() . '/lib/JawnOS/Domain/Appointment.pm');
 like($appointment, qr/next if defined \$r->\{'source_uuid'\}/,
 	'the scan leaves a spawned step out');
-like($appointment, qr/sub clothesline_sequence_anticipate/,
-	'the anticipatory walk is the learned sequence');
+like($appointment, qr/sub clothesline_sequence_canonical/,
+	'the most common day is what the line reads');
+like($appointment, qr/\$cadence = 30/,
+	'the cadence reaches a month');
 
 my $hang = read_file(repo_root() . '/lib/JawnOS/Domain/Hang.pm');
 like($hang, qr/clothesline_sequence_anticipate\(\$daily/, 'the rail hangs the anticipatory head');
 like($hang, qr/clothesline_line_order/, 'the head leads and the tail is alphabetised');
+like($hang, qr/\$cadence >= 2 \|\| \$hourly/, 'a cadence past daily reaches the tail on its day');
 unlike($hang, qr/clothesline_hang_slots/, 'the per-slot repeat helper is gone');
 
 done_testing();

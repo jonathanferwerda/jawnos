@@ -126,10 +126,15 @@ sub hang_to_dry {
 	unless (defined $auto && lc($auto) eq 'off') {
 		foreach my $app ( sort keys %{$apps} ) {
 			next if $configured{$app};
+			next if $daily->{'done'} && $daily->{'done'}{$app};
 			my $routine = $apps->{$app};
 			next unless $routine->{'due'};
-			next unless defined $routine->{'hour'} && $routine->{'hour'} == $cur_hour;
-			next unless ($routine->{'hour_days'} || 0) >= 2;
+			my $cadence = $routine->{'cadence'} || 1;
+			my $hourly = defined $routine->{'hour'} && $routine->{'hour'} == $cur_hour && ($routine->{'hour_days'} || 0) >= 2;
+			# a weekly or longer cadence belongs on its day wherever the clock is;
+			# a daily step still waits for the hour its history keeps, so the tail
+			# is not every app the person has ever run
+			next unless $cadence >= 2 || $hourly;
 			next if grep { $_->{'app'} eq $app } @{$returner};
 			my $aset = &settings_grabber({ app => $app });
 			next if &app_hidden_now($app);
@@ -143,7 +148,10 @@ sub hang_to_dry {
 	# head - the next time it comes round.
 	my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 8);
 	my $running = ($daily->{'current'} && $daily->{'current'}{'running'}) ? $daily->{'current'}{'running'} : undef;
-	unshift @{$anticipation}, $running if defined $running && length $running && !grep { $_ eq $running } @{$anticipation};
+	if (defined $running && length $running) {
+		@{$anticipation} = grep { $_ ne $running } @{$anticipation};
+		unshift @{$anticipation}, $running;
+	}
 	my %have = map { $_->{'app'} => $_ } @{$returner};
 	my @head;
 	foreach my $app ( @{$anticipation} ) {
