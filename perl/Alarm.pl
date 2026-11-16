@@ -245,12 +245,14 @@ sub alarm_clock() {
 				my $appt_data = eval { decode_json($a->{'data'} || '') } || {};
 				my $live_ring = (($a->{'subtype'} || '') eq 'phone' && ref $appt_data eq 'HASH' && $appt_data->{'live'}) ? 1 : 0;
 				if (($settings->{'notification'} && $settings->{'notification'} eq 'on') || $live_ring) {
-					# no uuid: keying on the appointment's made a start and a stop
-					# notification the same notifications row, so the second insert met
-					# the unique index and was dropped with a complaint
 					# a call rings: the app's own start sound wins, else a phone call rings
 					# (ring.mp3) and anything else keeps the house's usual ding
 					my $default_sound = (($a->{'subtype'} || '') eq 'phone') ? 'ring.mp3' : 'crystal.mp3';
+					# Every alarm worker reads the same synced row and announces it. A start
+					# and a stop share the appointment's uuid, so the event is named by its
+					# type and both stamps: still two notices, one row each on every machine.
+					my $note_event = join '|', 'appointment', $a->{'uuid'} || '', $type || '',
+						$a->{'timestamp'} || '', $a->{'stop_timestamp'} || '', $a->{'data'} || '';
 					&Manager::notification_sender({
 						app => $app,
 						role => 'all',
@@ -260,6 +262,7 @@ sub alarm_clock() {
 						sound => $default_sound,
 						silent => $live_ring ? 1 : 0,
 						title => $name,
+						dedupe => $note_event,
 					},$dot);
 				}
 				# the record setting is the kind of recording (audio/video/screen), not
@@ -406,15 +409,23 @@ sub budget_watcher() {
 
 							my $message = &subs::format_name($app) . ' is ' . $budget->{'status'} . ' for ' . $circumstance . ': ' . $budget->{'formatted_value'} . '/' . $budget->{'formatted_budgeted'};
 							if (&subs::setting_grabber({ app => $app, setting => 'notification', device => $device }) eq 'on') {
-								&Manager::notification_sender({ 
-									app => $app, 
-									role => 'all', 
-									title => &subs::format_name($app), 
-									synth => $budget->{'synth'}, 
-									words => $app, 
-									message => $message, 
+								# Every machine runs this watcher on its own ledger, but the
+								# utility grid wakes them in the same slot. Name the crossing
+								# by app, circumstance, new status and a ten-minute window: the
+								# runs agree, and the next slot (twenty minutes on) is already
+								# a new window, so a real re-crossing still speaks again.
+								my $budget_event = join '|', 'budget', $app, $circumstance,
+									$budget->{'status'} || '', int($server_time / 600000);
+								&Manager::notification_sender({
+									app => $app,
+									role => 'all',
+									title => &subs::format_name($app),
+									synth => $budget->{'synth'},
+									words => $app,
+									message => $message,
 									image => "/images/decipherable/chart.png",
-									type => 'budget'
+									type => 'budget',
+									dedupe => $budget_event,
 								},$database);
 							}
 							#&Manager::budget_autocalc({ 
@@ -458,6 +469,10 @@ sub market_cart_watcher() {
 	my $now = &subs::rightNow();
 	return 0 if $seen && ($now - $seen) < 6 * 60 * 60 * 1000;
 	&subs::setting_setter({ app => 'market', setting => 'cart_reminder_at', value => $now, device => 'all' });
+	# Every alarm worker runs this watcher, and the shared marker can lag the
+	# sync. Name the reminder by the marker (or 0 on a fresh sighting) and its
+	# own six-hour window, so the machines write one row, not one each.
+	my $cart_event = join '|', 'marketcart', $seen || 0, int($now / 21600000);
 	&Manager::notification_sender({
 		app => 'market',
 		role => 'all',
@@ -466,6 +481,7 @@ sub market_cart_watcher() {
 		synth => 'play -v .2 "| sox -n -p synth .4 pluck 392"',
 		message => 'Still holding a cart of ' . scalar(@{$cart}) . ' - check out?',
 		image => $gb::known_appts->{'market'}->{'icon'},
+		dedupe => $cart_event,
 	});
 	return 1;
 }

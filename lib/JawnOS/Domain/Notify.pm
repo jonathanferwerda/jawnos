@@ -23,6 +23,24 @@ our $device;
 our $log;
 our $logfile;
 
+# The one name a house-wide event has on every machine. A notice that every
+# device announces at once - an appointment's start or stop, a budget crossing,
+# an alarm's fire - used to be rendered with a fresh random uuid on each
+# machine, so the sync carried every copy into every list. A caller that can
+# name the event passes it as `dedupe`; each machine derives the same uuid, the
+# unique index drops the duplicate insert, and the sync keys the rest onto the
+# one row. A per-press or per-person notice passes no seed and keeps its random
+# uuid.
+sub notification_event_uuid($seed) {
+	return undef unless defined $seed && length $seed;
+	require Mojo::Util;
+	# A name or an appointment payload can carry any printable character; the
+	# digest is over bytes, so encode the copy rather than the caller's string.
+	my $bytes = $seed;
+	utf8::encode($bytes) if utf8::is_utf8($bytes);
+	return 'notevent-' . Mojo::Util::md5_sum($bytes);
+}
+
 sub notification_sender($m,$db) {
 	my $origin = &subs::format_name(&subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' })) ||&subs::shorthand_name(&subs::machine_hostname());
 
@@ -40,7 +58,15 @@ sub notification_sender($m,$db) {
 	# the uuid has to exist before the live notification is rendered: the X button
 	# carries it and the stored row is keyed by it, and they have to match. Callers
 	# that do not supply one used to land here with uuid "", so the rendered X had
-	# nothing to remove and the row could not be cleared
+	# nothing to remove and the row could not be cleared. An event-named notice
+	# (see notification_event_uuid) keeps that name; the live card is still this
+	# machine's own, so an alarm rings where it is heard, while the insert below
+	# writes the house's one row.
+	my $event_uuid;
+	unless (defined $m->{'uuid'} && length $m->{'uuid'}) {
+		$event_uuid = &notification_event_uuid($m->{'dedupe'});
+		$m->{'uuid'} = $event_uuid if $event_uuid;
+	}
 	$m->{'uuid'} ||= &subs::random_string_creator(20);
 	my $sound = $m->{'sound'} || 'ding.mp3';
 	# A silenced house keeps the notice on the screen but plays nothing.
@@ -175,15 +201,22 @@ sub notification_sender($m,$db) {
 	if (eval { $sql->db } && $sql->dsn !~ /:$/) {
 		my $db = $sql->db;
 
-		&subs::db_insert('notifications', {
-			app => $m->{'app'},
-			role => $m->{'role'} || 3,
-			title => $m->{'title'},
-			image => $m->{'image'},
-			message => $m->{'message'},
-			timestamp => $m->{'timestamp'},
-			uuid => $m->{'uuid'}
-		});
+		# An event the sync already carried here needs no second row. The live
+		# card above belongs to this machine; the stored row belongs to the house.
+		my $already = $event_uuid
+			? eval { &subs::db_query('select 1 from notifications where uuid = ? limit 1', $event_uuid)->hashes->[0] }
+			: 0;
+		unless ($already) {
+			&subs::db_insert('notifications', {
+				app => $m->{'app'},
+				role => $m->{'role'} || 3,
+				title => $m->{'title'},
+				image => $m->{'image'},
+				message => $m->{'message'},
+				timestamp => $m->{'timestamp'},
+				uuid => $m->{'uuid'}
+			});
+		}
 	}
 
 }

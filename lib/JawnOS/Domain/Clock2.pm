@@ -119,6 +119,9 @@ sub clock_alarm_ring {
 			message => $message,
 			image => '/icons/alarm.svg',
 			words => ' ',
+			# Every machine the alarm names rings the same fire; one uuid derived
+			# from the alarm and the fire keeps their notices one row after the sync.
+			dedupe => join('|', 'clockalarm', $alarm->{'uuid'} || '', $fire_at || $now),
 		);
 		if ($mobile || $silenced) { $note{'silent'} = 1; }
 		else { $note{'sound'} = $sound; $note{'synth'} = $play; }
@@ -177,6 +180,9 @@ sub clock_timer_finish {
 			message => $label . ($app ? ' - ' . &format_name($app) : '') . ' finished',
 			image => '/icons/timer.svg',
 			words => ' ',
+			# A shared timer can end on more than one machine at once; the timer's
+			# own uuid and end moment name that one event.
+			dedupe => join('|', 'clocktimer', $timer->{'uuid'} || '', $timer->{'ends_at'} || $ended),
 		);
 		if ($mobile || $silenced) { $note{'silent'} = 1; }
 		else { $note{'sound'} = $sound; $note{'synth'} = $play; }
