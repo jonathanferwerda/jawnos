@@ -73,6 +73,19 @@ like($first_boot, qr{sub _ticket_share}, 'the board shares its fresh ticket with
 like($first_boot, qr{\.local/share/jawnos}, 'at the installed shell\'s root, not only the tree');
 like($first_boot, qr{\$root/\.shots}, 'in the .shots directory that root reads');
 
+# The image carries no `hostname` binary (no inetutils). The address the board
+# gives the house came out empty, so the join named the wrong machine.
+unlike($first_boot, qr/\(\s*`hostname`/, 'the board name is not read by running a binary the image may not carry');
+like($first_boot, qr/sub _hostname \{.*?\/etc\/hostname/s, 'it reads the name systemd reads');
+like($first_boot, qr/device_hostname_better\(&_hostname\(\)/, 'and the join address is built from it');
+# The pass runs as root with HOME on the board's own account while the manager
+# runs as that account, so a root-owned log or run/ leaves the manager printing
+# one server line and dying with EACCES behind a dead panel.
+like($first_boot, qr/sub _hand_back_runtime \{/, 'the pass hands the runtime state back to the tree owner');
+like($first_boot, qr/END \{ eval \{ .*?_hand_back_runtime\(\)/s, 'on every exit path, a failed join included');
+like($first_boot, qr/^\t\tunlink \$log;$/m, 'an empty root-owned log is dropped rather than left for the manager');
+like($first_boot, qr/!\$opt\{'dry_run'\}/, 'and a dry run writes nothing');
+
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');
 

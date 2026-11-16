@@ -531,6 +531,39 @@ sub _own_by_tree {
 	}
 }
 
+# This pass runs as root with HOME pointing at the board's own account, so every
+# file the tree opens while it works lands owned by root: its log, its runtime
+# dir, the socket ledger. The manager runs as that account, and a root-owned
+# manager.log or run/ leaves it printing one server line and dying with EACCES -
+# the panel then shows a dead page on a board that booted perfectly. Hand them
+# back on every exit path, a failed join included.
+sub _hand_back_runtime {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return unless $uid && $uid != 0 && length $home;
+	# An empty log owned by root is not a log: dropping it lets the manager
+	# create its own on the first write, which it can then append to.
+	my $log = "$home/manager.log";
+	if (-f $log && -z $log && (stat($log))[4] == 0) {
+		unlink $log;
+	}
+	# A runtime dir is a tree, and its children carry the same ownership.
+	my @queue = grep { -d $_ } ("$home/jawnos/run", "$home/.president");
+	while (my $dir = shift @queue) {
+		chown $uid, $gid, $dir;
+		opendir(my $dh, $dir) or next;
+		foreach my $entry (grep { $_ ne '.' && $_ ne '..' } readdir $dh) {
+			my $path = "$dir/$entry";
+			if (-d $path && !-l $path) { push @queue, $path }
+			else { chown $uid, $gid, $path }
+		}
+		closedir $dh;
+	}
+	&_own_by_tree($log, "$home/.process_watch");
+	return 1;
+}
+
+END { eval { $< == 0 && !$opt{'dry_run'} && &_hand_back_runtime() } }
+
 sub _own_database {
 	my $database = eval { &subs::database_path() } || '';
 	return unless length $database;
@@ -601,10 +634,25 @@ sub _identity_ensure {
 # stale configured domain (an image copied from another card can carry that
 # card's domain, or loopback). The join row is how the house reaches the board
 # later, so a loopback or somebody else's name is worse than the hostname.
+# This board's own name, read where systemd reads it. The image carries no
+# `hostname` binary, and the empty result left the join address blank, so the
+# house was told about the wrong machine.
+sub _hostname {
+	my $name = '';
+	if (open(my $fh, '<', '/etc/hostname')) {
+		$name = <$fh> // '';
+		close $fh;
+	}
+	$name =~ s/^\s+|\s+$//g;
+	return $name if length $name;
+	require Sys::Hostname;
+	return Sys::Hostname::hostname() // '';
+}
+
 sub _self_address {
 	my $config = eval { &subs::config_reader() } || {};
 	my $port = $ENV{'PORT_AHOY'} || $config->{'working_port'} || $config->{'port'} || '';
-	my $host = &subs::device_hostname_better((`hostname` || ''), '', '');
+	my $host = &subs::device_hostname_better(&_hostname(), '', '');
 	if (!length $host) {
 		$host = $config->{'domain'} || '';
 		$host = '' if $host =~ /^(?:localhost|127\.|\[?::1\]?)/i;
