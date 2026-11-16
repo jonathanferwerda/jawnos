@@ -810,9 +810,12 @@ sub action_41704 {
 		push @{$push_files}, $data;
 	}
 
+	# Keep the JSON in one scalar: the list-operator form file => encode_json
+	# swallows the timestamp and type keys that follow it.
+	my $files_json = encode_json $push_files;
 	&appointment_writer($c,{
 		app => $app,
-		file => encode_json $push_files,
+		file => $files_json,
 		timestamp => $timestamp,
 		type => $upload_type
 	});

@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/File.pm lib/JawnOS/Controller/manager_configure5.pm public/js/manager/configure/04_currency_backup.js lib/JawnOS/Manager/Part05.pm
-# covers:    the adopt scan and dialog: media types, folder/file filtering, path vs name suppression, the missing-location fallback, and the listing/confirm wiring
+# covers:    the adopt scan and dialog: media types, folder/file filtering, path vs name suppression, the missing-location fallback, and the listing/confirm wiring, and what the confirm hands the writer
 
 use strict;
 use warnings;
@@ -8,6 +8,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
+use JSON::PP qw(encode_json decode_json);
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
@@ -200,6 +201,10 @@ like( $confirm, qr/adopt_media_type/, 'the type is derived from the path' );
 like( $confirm, qr/path_is_within/, 'a path is checked against a location' );
 like( $confirm, qr/\.enc/, 'a sealed file is refused' );
 ok( index($confirm, "delete \$data->{'thumb'}") >= 0, 'a thumb that was not written is dropped' );
+# `file => encode_json $push_files` is a list operator: it swallowed the
+# timestamp and type keys that followed, so the row landed with a NULL type.
+unlike( $confirm, qr/file => encode_json \$push_files/, 'the file JSON is not built as a list operator' );
+like( $confirm, qr/\$files_json = encode_json \$push_files/, 'the file JSON is built into a scalar first' );
 
 my $js = js_source('js/manager/configure.js');
 like( $js, qr/\.adopt_file\[adopted="yes"\]/, 'the confirm selector has its closing bracket' );
@@ -210,4 +215,95 @@ unlike( $js, qr/timestamp, timestamp/, 'the duplicate data key is gone' );
 my $writer = read_file("$FindBin::Bin/../lib/JawnOS/Manager/Part05.pm");
 like( $writer, qr/select type,file,timestamp,uuid from appointments.*?order by timestamp desc limit 1/s, 'adopted media joins the newest start/record' );
 
+
+# --- the confirm hands the writer the type and timestamp it computed --------
+# file => encode_json $push_files is a list operator: it swallowed the keys that
+# followed, so the row landed with a NULL type. Call the action with the writer
+# stubbed and read what it was handed.
+
+{
+	package AdoptC;
+	sub new { my ($class, $p) = @_; return bless { p => $p, out => undef }, $class }
+	sub param { my ($s, $k) = @_; return $s->{'p'}->{$k}; }
+	sub render { my ($s, $kind, $data) = @_; $s->{'out'} = $data if $kind eq 'json'; return; }
+	sub session { return undef; }
+}
+
+{
+	no strict 'refs';
+	no warnings 'once';
+
+	require "$FindBin::Bin/../lib/JawnOS/Controller/manager_configure5.pm";
+	# The domain layer is lazy and defines its subs when it loads; load it before
+	# the stubs below, or the load would overwrite them (and warn that it did).
+	&subs::preload('adopt_media_type');
+
+	my $tree = tempdir( TMPDIR => 1, CLEANUP => 1 );
+	make_path("$tree/probe");
+	write_file("$tree/probe/probe.txt", "x\n");
+	write_file("$tree/probe/probe.webp", "x\n");
+	write_file("$tree/probe/probe.enc", "x\n");
+
+	my $captured;
+	local ${'Manager::device'} = 'computer';
+	local *Manager::misc_setting_list = sub { return { computer => { document_location => $tree } } };
+	local *Manager::thumbnail_creator = sub { return $_[0] };
+	local *Manager::appointment_writer = sub { $captured = $_[1]; return $_[1] };
+	local *subs::file_device_renamer = sub {
+		my ($data) = @_;
+		my $type = $data->{'type'} // 'software';
+		return ( $tree . '/' . $data->{'app'} . '/.thumbs/', 'thumb', $type, $data->{'app'} );
+	};
+	local *subs::file_encrypter = sub { };
+	local *subs::session_suds = sub { return 'suds' };
+
+	for my $case (
+		[ 'probe.txt',  'software' ],
+		[ 'probe.webp', 'image' ],
+	) {
+		my ($name, $want) = @{$case};
+		$captured = undef;
+		my $c = AdoptC->new({
+			app       => 'probe',
+			timestamp => '1794871000000',
+			files     => encode_json([ { file => "$tree/probe/$name", type => $want } ]),
+		});
+		Manager::action_41704($c);
+
+		ok( $captured, "$name reaches appointment_writer" );
+		is( $c->{'out'}->{'ok'}, 1, "$name reports ok" );
+		is( $captured->{'type'}, $want, "$name: the derived type reaches the writer" );
+		is( $captured->{'timestamp'}, '1794871000000', "$name: the client timestamp reaches the writer" );
+		is( $captured->{'app'}, 'probe', "$name: the app reaches the writer" );
+
+		my $payload = decode_json( $captured->{'file'} );
+		is( ref $payload, 'ARRAY', "$name: file is a JSON array" );
+		is( scalar @{$payload}, 1, "$name: one file in the payload" );
+		is( $payload->[0]->{'type'}, $want, "$name: the per-file type is carried" );
+		is( $payload->[0]->{'f'}, "$tree/probe/$name", "$name: the per-file path is carried" );
+		ok( $payload->[0]->{'uuid'}, "$name: a per-file uuid is carried" );
+		ok( !exists $payload->[0]->{'thumb'}, "$name: no thumb for a preview that was never written" );
+	}
+
+	# The type is derived from the path; the posted one is never trusted.
+	$captured = undef;
+	my $posted = AdoptC->new({
+		app       => 'probe',
+		timestamp => '1794871000000',
+		files     => encode_json([ { file => "$tree/probe/probe.txt", type => 'image' } ]),
+	});
+	Manager::action_41704($posted);
+	is( $captured->{'type'}, 'software', 'a posted type does not override the path' );
+
+	# A sealed file is not adoptable, so a selection of only sealed files fails.
+	$captured = undef;
+	my $sealed = AdoptC->new({
+		app       => 'probe',
+		timestamp => '1794871000000',
+		files     => encode_json([ { file => "$tree/probe/probe.enc" } ]),
+	});
+	Manager::action_41704($sealed);
+	is( $sealed->{'out'}->{'ok'}, 0, 'a sealed-only selection is refused' );
+	ok( !defined $captured, 'a sealed-only selection writes nothing' );
+}
 done_testing();
