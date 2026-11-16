@@ -37,6 +37,10 @@ subs::preload($_) for qw(peer_secure_url peer_tls_verify peer_ca_file log_writer
 	}
 	package FakeTX;
 	sub result { return undef }
+	package FakeLog;
+	sub new { bless { errors => [] }, shift }
+	sub error { push @{$_[0]->{'errors'}}, $_[1]; }
+	sub info { }
 }
 
 # The roster lookup remote_device_connect makes for a signed login. The row it
@@ -170,7 +174,7 @@ my $row = {
 
 # (f) The peer listener is not verified though the CA is on file.
 {
-	my (@logs, $ret);
+	my (@logs, $ret, $durable);
 	my $fake;
 	my $tls = 0;
 	{
@@ -179,6 +183,8 @@ my $row = {
 		local *subs::peer_ca_file = sub { '/fixture/house-ca.pem' };
 		local *subs::peer_tls_verify = sub { $tls++; return 1 };
 		local *subs::log_writer = sub { push @logs, $_[0] };
+		local $Manager::log = FakeLog->new;
+		$durable = $Manager::log;
 		local *Mojo::UserAgent::new = sub { FakeUA->new };
 		$ret = Manager::remote_device_connect({
 			manager => 'https://10.0.0.5:45545/manager', ip => '10.0.0.5',
@@ -188,6 +194,8 @@ my $row = {
 	ok($ret->{'tls_refused'}, 'an unverified listener is refused');
 	is($tls, 0, 'the CA is not applied to a route that is not the listener');
 	like($logs[0] // '', qr/peer listener is not verified/, 'the log says which route failed');
+	like($durable->{'errors'}->[-1] // '', qr/peer connect refused for 10\.0\.0\.5 at https:\/\/10\.0\.0\.5:45545.*peer listener is not verified/,
+		'the durable log names the peer and the route, not just the reason');
 }
 
 # (g) The listener is chosen but the CA cannot be applied.

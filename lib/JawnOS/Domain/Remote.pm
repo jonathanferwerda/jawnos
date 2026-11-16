@@ -403,6 +403,23 @@ sub peer_listener_port {
 	return $ok ? $port : 0;
 }
 
+# Fill a peer row's `data` from a handshake that names the peer's database.
+# A row joined through a tunnel can carry no `data` blob, and without the path
+# the credentialed login (which sends the house key) cannot be attempted - so
+# the peer never gets the session cookie the relay needs (the hub, 2026-11-16).
+# Returns 1 when the row changed and must be persisted; a path already on the
+# row is the peer's own older word and is never overwritten here.
+sub peer_data_hydrate {
+	my ($rm, $handshake) = @_;
+	return 0 unless ref $rm eq 'HASH' && ref $handshake eq 'HASH';
+	my $database = $handshake->{'database'} // '';
+	return 0 unless length $database;
+	return 0 if ref $rm->{'data'} eq 'HASH' && length($rm->{'data'}->{'database'} // '');
+	$rm->{'data'} = {} unless ref $rm->{'data'} eq 'HASH';
+	$rm->{'data'}->{'database'} = $database;
+	return 1;
+}
+
 sub peer_secure_url {
 	my ($rm, $url) = @_;
 	return ($url, 0) unless ref $rm eq 'HASH' && defined $url && length $url;

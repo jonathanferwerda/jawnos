@@ -410,11 +410,16 @@ sub action_46107 {
 					}
 				}
 
+				# The peer that answers this handshake learns where this machine's
+				# database lives, so a row that was joined with no `data` blob can still
+				# attempt the credentialed login (see subs::peer_data_hydrate).
+				my (undef, $peer_database) = &subs::database_grabber();
 				my $json = {
 					server_time => $appt->{'server_time'},
 					app => $appt->{'app'},
 					port => $ENV{PORT_AHOY},
 					ws_port => $ENV{PORT_MSG},
+					database => $peer_database,
 					signatorial => $my_signatorial,
 					now => $now,
 					me => $c->tx->local_address,

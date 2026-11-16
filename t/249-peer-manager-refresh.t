@@ -16,10 +16,10 @@ use RepoSource;
 use JawnOSTest;
 
 # The domain layer is lazy: load the real definitions before any local stub.
-subs::preload(qw(network_interface_reporter peer_literal_addresses peer_probe_candidates
+	subs::preload(qw(network_interface_reporter peer_literal_addresses peer_probe_candidates
 	peer_literal_manager peer_live_manager peer_manager_host peer_manager_url
 	peer_presence_probe peer_manager_remember peer_on_our_lan remote_relay_routes db_update
-	peer_secure_url));
+	peer_data_hydrate peer_secure_url));
 
 # Run one assertion inside a known local network. This is the only input that
 # decides whether a peer's LAN literal is a route or a leftover.
@@ -174,5 +174,22 @@ my $remote = do {
 };
 like($remote, qr/peer_live_manager\(\$rm\).*?peer_manager_remember/s,
 	'remote_useragent_maker persists a resolved live manager');
+
+# --- a row with no data blob learns its database from the handshake ---------
+# The hub was joined through a tunnel with an empty `data`, so it had no
+# database path: the credentialed login could not be attempted, no session
+# cookie was ever stored, and every relayed change to it met the Gate.
+{
+	my $empty = { signatorial => 'hub', data => undef };
+	is(subs::peer_data_hydrate($empty, { database => '/srv/jawnos/database/jawnos.db' }), 1,
+		'a row with no data blob is filled from the handshake');
+	is($empty->{'data'}->{'database'}, '/srv/jawnos/database/jawnos.db', 'with the peer database path');
+
+	my $known = { signatorial => 'laptop', data => { database => '/old/jawnos.db', device => 'computer' } };
+	is(subs::peer_data_hydrate($known, { database => '/new/jawnos.db' }), 0,
+		'a path already on the row is left alone');
+	is($known->{'data'}->{'database'}, '/old/jawnos.db', 'and is not overwritten');
+	is(subs::peer_data_hydrate({ data => {} }, {}), 0, 'a handshake with no database changes nothing');
+}
 
 done_testing();

@@ -132,7 +132,9 @@ sub remote_device_connect($rdata) {
 		my $error = 'refused to send the house key over unverified TLS: ' . $why;
 		my $who = ($rdata->{'signatorial'} || '') ? substr($rdata->{'signatorial'}, 0, 8) : ($ip || '?');
 		&subs::log_writer('peer connect refused for ' . $who . ': ' . $why);
-		$log->error('peer connect refused: ' . $why) if $log;
+		# The in-app ring is small and racy; the durable log is what a hunt reads,
+		# so it must name the peer and the route that was tried (2026-11-16).
+		$log->error('peer connect refused for ' . $who . ' at ' . ($manager || '-') . ': ' . $why) if $log;
 		return {
 			status => &subs::ui('Refused: the house key needs a verified TLS route'),
 			tls_refused => 1,

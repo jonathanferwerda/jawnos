@@ -661,7 +661,10 @@ sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_ta
 		filename => $rm->{'data'}->{'database'},
 		timestamp => $timestamp,
 		ip => $ip,
-		password => &subs::session_suds($c),
+		# The house key is the login body. A reconnector pass has no browser session
+		# to read it from, so fall back to the machine's own key - the same fallback
+		# the session routes use - or a headless re-login can never succeed.
+		password => (&subs::session_suds($c) || &subs::suds_grabber()),
 		name => $c->session('name'),
 		browser_tab_id => $browser_tab_id,
 		browser_tab => $browser_tab,

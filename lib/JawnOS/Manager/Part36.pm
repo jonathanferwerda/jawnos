@@ -217,6 +217,13 @@ sub remote_machine_reconnector($c) {
 					}
 					else {
 						my $rj = eval { return decode_json $rm->{'res'}->body };
+						# A peer just told us where its database lives. A row joined through a
+						# tunnel can carry no `data` blob at all, and without the path the
+						# credentialed login cannot be attempted - so the row never gets the
+						# session cookie the relay needs (the hub, 2026-11-16).
+						if (&subs::peer_data_hydrate($rm, $rj)) {
+							&subs::db_update('remote_machines', { data => encode_json($rm->{'data'}) }, { signatorial => $rj->{'signatorial'} });
+						}
 						# The handshake answered JSON, but a gate-exempt route answers even to
 						# a lapsed cookie, so ask a gated but read-only route with the stored
 						# cookie too. HTML back (not the route's JSON) means the session is
@@ -225,7 +232,11 @@ sub remote_machine_reconnector($c) {
 							if (!$auth_probe_filed) { &subs::setting_setter({ app => '__president', setting => 'remote_auth_probe_timer', value => &subs::rightNow() }); $auth_probe_filed = 1; }
 							my $probe_tx = eval { $rm->{'ua'}->inactivity_timeout(10)->get($rm->{'manager'} . '/manager/configure/tunnel/list' => { Accept => 'application/json, text/html' }) };
 							my $probe_body = eval { $probe_tx->res->body } || '';
-							&remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_tab) if length $probe_body && $probe_body !~ /^\s*[\{\[]/;
+							# A row with no cookie has no session to test: log in now, or it can
+							# never acquire one (the hub, 2026-11-16).
+							&remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_tab)
+								if !length($rm->{'cookie'} || '')
+								|| (length $probe_body && $probe_body !~ /^\s*[\{\[]/);
 						}
 						next if $rj->{'signatorial'} eq $signatorial;
 						my $appt = &subs::db_query('select server_time,app from appointments order by server_time DESC LIMIT 1')->hashes->[0];
