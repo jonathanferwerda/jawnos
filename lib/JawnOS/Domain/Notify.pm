@@ -126,6 +126,10 @@ sub notification_sender($m,$db) {
 			text => $message,
 			silent => ($m->{'silent'} ? 1 : 0),
 			url => $url,
+			# The app and the moment the notice is about: a tap opens that app's
+			# own full-screen window on the phone instead of the manager desk.
+			app => $m->{'app'},
+			timestamp => $m->{'timestamp'},
 			large_icon => $image_path,
 			small_icon => ($m->{'small_icon'} || $m->{'app'} || ''),
 			vibrate => ($m->{'silent'} ? '' : '200,150,200,150'),
@@ -145,6 +149,12 @@ sub notification_sender($m,$db) {
 			my @am = ('am', 'broadcast', '-n', $notify, '-a', $notify_action,
 				'--es', 'title', $title, '--es', 'message', $message, '--es', 'tag', $id);
 			push @am, '--ez', 'silent', 'true' if $m->{'silent'};
+			# The same app, moment and address the native poster carries, so the
+			# broadcast fallback opens the same window on a build older than the
+			# bridge.
+			push @am, '--es', 'url', $url if defined $url && length $url;
+			push @am, '--es', 'app', $m->{'app'} if defined $m->{'app'} && length $m->{'app'};
+			push @am, '--es', 'timestamp', $m->{'timestamp'} if defined $m->{'timestamp'} && length $m->{'timestamp'};
 			my $bc = '';
 			my $am_ok = open(my $am_fh, '-|', @am);
 			if ($am_ok) {

@@ -48,6 +48,12 @@ like($notify, qr/\$m->\{'uuid'\} \|\|= &subs::random_string_creator\(20\)/,
 	'a notice with no event still gets its random uuid');
 like($notify, qr/unless \(defined \$m->\{'uuid'\} && length \$m->\{'uuid'\}\)/,
 	'a caller that supplies its own uuid keeps it');
+# The phone's poster gets the app and its moment, so a tap can open that app's
+# own full-screen window rather than the manager desk.
+like($notify, qr/app => \$m->\{'app'\},/, 'the phone poster names the app to open');
+like($notify, qr/timestamp => \$m->\{'timestamp'\},/, 'and the moment the notice is about');
+like($notify, qr/'--es', 'app', \$m->\{'app'\}/, 'the broadcast fallback carries the app too');
+like($notify, qr/'--es', 'timestamp', \$m->\{'timestamp'\}/, 'and its moment');
 
 # --- the loader makes it reachable by name ----------------------------------
 my $loader = source('lib/JawnOS/Domain/Loader.pm');
