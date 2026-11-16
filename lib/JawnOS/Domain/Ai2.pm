@@ -972,6 +972,92 @@ sub ai_model_test {
 	return (1, 'the model answered: ' . $shown);
 }
 
+# ---- the intelligence test ------------------------------------------------
+# A model can answer "OK" and still be useless as an agent. This one short turn
+# checks the things an agent in this house actually has to do: obey a JSON shape,
+# count, know a date, know a word in another language, and turn a schedule
+# sentence into the house's plan. It is deliberately one call, so choosing a
+# model does not cost a conversation.
+
+sub ai_qualify_prompt {
+	return 'You are being checked before this house gives you a job. Answer all of it in ONE JSON object and nothing else: '
+		. '{"sum":<17+23>,"product":<17*23>,"weekday":"<the weekday 2027-07-24 falls on>",'
+		. '"thursday_es":"<the Spanish word for Thursday>",'
+		. '"schedule":{"weekdays":[...],"hours":[...],"until":"YYYY-MM-DD"}}. '
+		. 'For "schedule", turn "every Thursday from 3pm to 6pm until 2027-07-24" into weekdays as lower-case short names, '
+		. 'hours as 24-hour clock integers, and that until date. '
+		. 'Reply with the JSON object only; no prose, no code fence.';
+}
+
+# Seven checks: two numbers, the weekday, the Spanish word and the three parts
+# of the schedule. Prose or a code fence around the object is tolerated, as it is
+# everywhere else the house reads a model answer.
+sub ai_qualify_grade {
+	my ($answer) = @_;
+	my $plan = &json_from_model($answer);
+	$plan = {} unless ref $plan eq 'HASH';
+	my @missed;
+	my $check = sub { push @missed, $_[0] unless $_[1] };
+	$check->('sum', defined $plan->{'sum'} && "$plan->{'sum'}" =~ /^\s*40\s*$/);
+	$check->('product', defined $plan->{'product'} && "$plan->{'product'}" =~ /^\s*391\s*$/);
+	$check->('weekday', defined $plan->{'weekday'} && $plan->{'weekday'} =~ /\bsat(?:urday)?\b/i);
+	$check->('Spanish', defined $plan->{'thursday_es'} && $plan->{'thursday_es'} =~ /jueves/i);
+	my $sched = ref $plan->{'schedule'} eq 'HASH' ? $plan->{'schedule'} : {};
+	my @wd = map { lc } grep { defined } @{ ref $sched->{'weekdays'} eq 'ARRAY' ? $sched->{'weekdays'} : [] };
+	$check->('weekdays', scalar( grep { $_ eq 'thu' || $_ eq 'thursday' } @wd ));
+	my %hr = map { $_ + 0 => 1 } grep { defined && /^\d+$/ } @{ ref $sched->{'hours'} eq 'ARRAY' ? $sched->{'hours'} : [] };
+	$check->('hours', $hr{15} && $hr{16});
+	$check->('until', defined $sched->{'until'} && $sched->{'until'} =~ /^\s*2027-07-24\s*$/);
+	my $total = 7;
+	my $score = $total - scalar @missed;
+	my $message = $score == $total
+		? 'all ' . $total . ' checks passed - a good fit for an agent'
+		: $score <= 2
+			? $score . '/' . $total . ' - too weak for an agent: missed ' . join(', ', @missed)
+			: $score . '/' . $total . ' - missed ' . join(', ', @missed);
+	return { score => $score, total => $total, missed => \@missed, message => $message };
+}
+
+# Run the test against one model. The answer is kept short, so a model that
+# rambles is cut down before it reaches the panel.
+sub ai_model_qualify {
+	my ($model, $role) = @_;
+	$model = '' unless defined $model;
+	$model =~ s/^\s+|\s+$//g;
+	return { ok => 0, error => 'Pick a model first.' } unless length $model;
+	my ($body, $err) = &ai_chat_raw(
+		$model,
+		[ { role => 'system', content => 'You are answering a short qualification test. Reply with exactly one JSON object.' },
+		  { role => 'user', content => &ai_qualify_prompt() } ],
+		undef,
+		$role,
+	);
+	return { ok => 0, error => ($err || 'the model returned nothing') } if $err;
+	my $text = &ai_response_text($body);
+	$text = '' unless defined $text;
+	return { ok => 0, error => 'the model returned nothing readable' } unless $text =~ /\S/;
+	my $grade = &ai_qualify_grade($text);
+	return { ok => 1, model => $model, %{$grade}, answer => substr($text, 0, 800) };
+}
+
+# The day's result for a role and model, so a panel reopens with the score and a
+# dropdown picked twice in a day does not spend a second call.
+sub ai_qualify_cached {
+	my ($role, $model) = @_;
+	return undef unless defined $role && length $role && defined $model && length $model;
+	my $hit = eval { &cache_get({ app => '__president', context => 'ai_qualify', subcontext => $role . '|' . $model }) };
+	return undef unless ref $hit eq 'HASH' && ref $hit->{'result'} eq 'HASH';
+	return undef unless ($hit->{'day'} || '') eq &day_key(&rightNow());
+	return $hit->{'result'};
+}
+
+sub ai_qualify_store {
+	my ($role, $model, $result) = @_;
+	return 0 unless ref $result eq 'HASH' && $result->{'ok'};
+	eval { &cache_set({ app => '__president', context => 'ai_qualify', subcontext => $role . '|' . $model, warranty => '1d' }, { day => &day_key(&rightNow()), result => $result }) };
+	return 1;
+}
+
 # the same wire pen_message uses, but the answer is read whole: the evaluation
 # is a report, not a conversation
 # The thinking levels the Plat panel stores: none means "let the model answer

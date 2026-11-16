@@ -393,6 +393,14 @@ my %clothesline_month = (
 	october => 10, nov => 11, november => 11, dec => 12, december => 12,
 );
 my $clothesline_month_re = join '|', sort { length $b <=> length $a } keys %clothesline_month;
+# The words a clause may leave behind and still be understood. Anything else - a
+# foreign word, or one the reader has never met - sends the whole phrase to the
+# Guide, which is the path that can read any language.
+my %clothesline_stop_word = map { $_ => 1 } qw(
+	the and or as well on at in of for from to until through every each my our me
+	house whole all day days time times around about between first second half
+	hour hours minute minutes a an is it this that then when while during plus
+);
 
 # The hours a named part of the day covers. `night` wraps midnight, so it is a
 # set, not a range. `dinner` and `supper` are the house's early evening.
@@ -688,6 +696,10 @@ sub clothesline_schedule_clause {
 	$rest = $after_time;
 	my ($plans, $left, $day_found) = &clothesline_take_days($rest, $now);
 	return (undef, 0) if !$day_found && !$time_found;
+	# words the reader did not use mean it did not understand the clause: a phrase
+	# in another language goes to the Guide whole, not half-read here
+	my @leftover = grep { length($_) > 2 && !$clothesline_stop_word{$_} } split /[^a-z']+/, lc($left // '');
+	return (undef, 0) if @leftover;
 	if (!$day_found) {
 		return ({ text => $shown, plans => [], hours => $hours, minutes => $minutes, all_day => $all_day, modifier => 1 }, 1) if $later;
 		push @{$plans}, { kind => 'interval', interval => '1d' };
@@ -762,6 +774,7 @@ A time of day NEVER goes in "until". "until" is only the last date the schedule 
 Add "exclude_holidays":true for "except on holidays", and "except":["2026-12-25"] for other named days.
 Named days: New Year's Day 1/1, Valentine's Day 2/14, Canada Day 7/1, Independence Day 7/4, Halloween 10/31, Remembrance Day 11/11, Christmas Day 12/25, Boxing Day 12/26.
 Their saved birthdays: $bday_text.
+The phrase may be written in any language. Read it as it is, and write "say" and "ask" in that same language; the JSON keys and the plan values stay as shown.
 If the phrase is ambiguous, reply {"ask":"a short question"}.
 Do not write prose. Do not invent a date you are unsure of.
 TXT
@@ -867,7 +880,7 @@ sub clothesline_schedule_cards {
 		push @cards, {
 			index => $i,
 			text => ($rule->{'text'} // ''),
-			say => &clothesline_schedule_say(
+			say => (defined $rule->{'say'} && $rule->{'say'} =~ /\S/) ? $rule->{'say'} : &clothesline_schedule_say(
 				(ref $rule->{'plan'} eq 'HASH' && ref $rule->{'plan'}->{'plans'} eq 'ARRAY') ? $rule->{'plan'}->{'plans'} : [],
 				\@hours, \@minutes),
 			plans => &clothesline_plans_words($rule->{'plan'}),

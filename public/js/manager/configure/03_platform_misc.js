@@ -63,12 +63,19 @@ $(document).on('change', '.ai_role_model', function() {
 		o.prop('disabled', o.val() !== '' && o.val() === primary);
 	});
 	if (fb.val() === primary) { fb.val(''); }
+	// A model is not trusted until it has been checked: picking one runs the
+	// intelligence test. The day's answer is cached on the manager, so a model
+	// picked again (or a panel reopened) costs nothing.
+	if (role.attr('data-qualify') == '1') {
+		if (primary) { aiQualify(role, { force: 0 }); }
+		else { role.find('.ai_qualify_badge').text(''); role.find('.ai_model_test_status').hide().text(''); }
+	}
 });
 
-// The Test button beside a model says one trivial thing to the chosen model, so
-// the answer proves the key and the model name work now - not when the agent is
-// next used. The value is read from the select, so a pick that has not finished
-// saving is still the one tested.
+// The Test button beside a model. For a language agent it runs the intelligence
+// test (a fresh run, past the day's cache); generation and vision keep their own
+// connection tests. The value is read from the select, so a pick that has not
+// finished saving is still the one tested.
 $(document).on('click', '.ai_model_test', function() {
 	var btn = $(this);
 	var role = btn.closest('.ai_role');
@@ -88,6 +95,11 @@ $(document).on('click', '.ai_model_test', function() {
 		var label = btn.text();
 		btn.prop('disabled', true).text('Testing…');
 		status.hide().text('');
+		if (role.attr('data-qualify') == '1') {
+			aiQualify(role, { force: 1 });
+			btn.prop('disabled', false).text(label);
+			return;
+		}
 		$.ajax({
 			url: '/manager/configure/ai_model_test',
 			type: 'POST',
@@ -105,6 +117,34 @@ $(document).on('click', '.ai_model_test', function() {
 		});
 	});
 });
+
+// The intelligence test: one short turn that checks format, counting, a date, a
+// word in another language and a schedule plan. The badge keeps the score; the
+// status line says what was missed.
+function aiQualify(role, opts) {
+	var model = role.find('.ai_role_model').val();
+	var status = role.find('.ai_model_test_status');
+	var badge = role.find('.ai_qualify_badge');
+	if (!model) { status.text('Pick a model first.').show(); return; }
+	status.removeClass('ai_model_test_ok').text(jawnosT('Running the intelligence test…')).show()
+		.css('color', '');
+	$.ajax({
+		url: '/manager/configure/ai_model_test',
+		type: 'POST',
+		dataType: 'json',
+		data: { model: model, setting: role.attr('setting'), qualify: 1, force: (opts && opts.force) ? 1 : 0, timestamp: Date.now() },
+		success: function(r) {
+			var ok = !!(r && r.ok);
+			var message = (r && r.message) || (r && r.error) || 'no answer';
+			status.text((ok ? '\u2713 ' : '\u2717 ') + message).show()
+				.css('color', ok ? 'var(--accent, inherit)' : '#e5484d');
+			if (ok && r.total) { badge.text(r.score + '/' + r.total); }
+		},
+		error: function() {
+			status.text('\u2717 the test could not reach the manager').show().css('color', '#e5484d');
+		}
+	});
+}
 
 // the Speech setting's Preview button: speak a test phrase in the voice chosen
 // for that device, rather than waiting for a real say_it to happen

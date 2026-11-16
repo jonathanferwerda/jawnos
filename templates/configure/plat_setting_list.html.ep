@@ -43,6 +43,9 @@
 	# Thinking row is not shown at all, so nothing on this machine can ask for
 	# a level the call would drop.
 	my $allowed_of = subs::provides('ai_role_thinking_allowed') ? sub { &subs::ai_role_thinking_allowed(@_) } : sub { 1 };
+	# What the intelligence test found the last time this model was tested on this
+	# machine today, so the panel reopens with the score and a re-pick costs nothing.
+	my $qualify_of = subs::provides('ai_qualify_cached') ? sub { &subs::ai_qualify_cached(@_) } : sub { undef };
 	# which providers can answer here at all: a key entered, or a running Ollama.
 	# The role lists below only offer these - the rest are named under them, so it
 	# is clear which of them wants a key (or a daemon). Until the tree restarts
@@ -116,7 +119,8 @@
 				: $cap eq 'video-gen' ? 'Generate a short test video; this can take a while'
 				: $cap eq 'audio'     ? 'Check the transcription model can answer'
 				: $cap eq 'vision'    ? 'Send a small test image and show what the model saw'
-				:                       'Ask this model a trivial question and show its answer';
+				:                       'Run the intelligence test on this model and show its score';
+			my $qualify = $cap eq 'chat' ? $qualify_of->($setting, $current) : undef;
 			my $thinks = ($thinking_cap && $current && $thinks_of->($current)) ? 1 : 0;
 			my $think = $thinking_of->($setting);
 			$think = 'none' unless length $think;
@@ -143,7 +147,7 @@
 				push @role_models, { value => 'local:whisper.cpp', name => 'whisper.cpp', paid => 0, group => 'This machine', caps => ['audio'] };
 			}
 		%>
-			<div class="ai_role" setting="<%= $setting %>">
+			<div class="ai_role" setting="<%= $setting %>"<% if ($cap eq 'chat') { %> data-qualify="1"<% } %>>
 				<div class="cfg-row">
 					<label><%= $label %></label>
 					<span class="cfg-inline ai_model_picker">
@@ -176,6 +180,7 @@
 						<% } %>
 					</select>
 					<button type="button" class="button ai_model_test" hint="<%= $test_hint %>">Test</button>
+					<span class="cfg-note ai_qualify_badge" style="margin:0;min-width:2.5em;text-align:center;" title="<%= &subs::ui('The intelligence test score') %>"><%= $qualify ? ($qualify->{'score'} . '/' . $qualify->{'total'}) : '' %></span>
 					<span class="cfg-note ai_model_test_status" style="margin:0;flex:1 1 100%;display:none;overflow-wrap:anywhere;"></span>
 					</span>
 				</div>

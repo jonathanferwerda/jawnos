@@ -370,13 +370,33 @@ sub action_8054 {
 	$c->render(template => 'configure/plat_setting_list');
 }
 
-# The Test button beside a model: say one trivial thing to the chosen model and
-# report its answer, so a person can tell whether the key and the model name work
-# now rather than when an agent next needs them.
+# The Test button beside a model. For a language agent it runs the intelligence
+# test and reports the score, so a model that merely answers is not mistaken for
+# one that is useful; choosing a model runs the same test (the day's answer is
+# kept, so only the first pick of a model costs a call). Generation and vision
+# keep their own connection tests.
 # POST /manager/configure/ai_model_test
 sub action_9542 {
 	my $c = shift;
-	my ($ok, $message) = &subs::ai_model_test($c->param('model'), $c->param('setting'));
+	my $model = $c->param('model') // '';
+	my $role = $c->param('setting') // '';
+	if ($c->param('qualify')) {
+		unless ($c->param('force')) {
+			my $cached = &subs::ai_qualify_cached($role, $model);
+			return $c->render(json => $cached) if $cached;
+		}
+		# a model call can take a minute; the worker answers the rest of the panel
+		&subs::render_in_subprocess($c, sub {
+			return &subs::ai_model_qualify($model, $role);
+		}, sub {
+			my ($c, $result) = @_;
+			$result ||= { ok => 0, error => 'the test did not finish' };
+			&subs::ai_qualify_store($role, $model, $result) if $result->{'ok'};
+			$c->render(json => $result);
+		});
+		return;
+	}
+	my ($ok, $message) = &subs::ai_model_test($model, $role);
 	$c->render(json => { ok => ($ok ? 1 : 0), message => $message });
 }
 
