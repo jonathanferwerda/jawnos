@@ -479,6 +479,15 @@ sub action_6419 {
 	if (($built->{'payment'}->{'method'} || '') eq 'cash' && $built->{'change'}->{'short'}) {
 		return $c->render(json => { ok => 0, error => 'cash received is less than the total', short => 1, change => $built->{'change'} });
 	}
+	# A sale made at the counter belongs to the till that is open. With no shift
+	# open the sale still records (a register that has never opened a drawer), and
+	# data.register.shift_uuid simply stays absent; the house may refuse that by
+	# turning store_shift_required on.
+	my $shift = &subs::shift_current(&subs::device_setter());
+	if (!$shift && &subs::store_shift_required() && ($built->{'payment'}->{'method'} || '') eq 'cash') {
+		return $c->render(json => { ok => 0, error => 'no till is open; open a till first' });
+	}
+	$built->{'data'}->{'register'}->{'shift_uuid'} = $shift->{'uuid'} if $shift;
 	my $minted = &subs::store_numbering_mint('invoice');
 	return $c->render(json => { ok => 0, error => ($minted && $minted->{'error'}) || 'could not allocate an invoice number' })
 		unless $minted && !$minted->{'error'} && defined $minted->{'id'};
@@ -538,6 +547,67 @@ sub action_6420 {
 	}
 	my $printer = &store_printer({ type => 'sale', uuid => $uuid, customer_app => $app });
 	$c->render(text => $c->render_to_string(%{$printer}));
+}
+
+# POST /manager/store/shift/open
+# The drawer is opened with a float and the associate working it. A person named
+# at the counter is matched to their people row so the shift can point at them; a
+# name with nobody behind it is still recorded as the associate.
+sub action_6979 {
+	my $c = shift;
+	my $associate = $c->param('associate') // '';
+	$associate =~ s/^\s+|\s+$//g;
+	my $associate_uuid = '';
+	if (length $associate) {
+		my $app = &subs::unformat_name($associate);
+		my $person = eval { &subs::db_select('people', undef, { app => $app, status => 'active' })->hashes->[0] };
+		$person ||= eval { &subs::db_select('people', undef, { name => $associate, status => 'active' })->hashes->[0] };
+		$associate_uuid = $person->{'uuid'} if ref $person eq 'HASH' && defined $person->{'uuid'} && length $person->{'uuid'};
+	}
+	my $opened = &subs::shift_open({
+		associate => $associate,
+		associate_uuid => $associate_uuid,
+		float => $c->param('float'),
+		device => &subs::device_setter(),
+	});
+	return $c->render(json => { ok => 0, error => $opened->{'error'} || 'the till could not be opened' })
+		unless $opened->{'ok'};
+	$c->render(json => {
+		ok => 1,
+		shift => $opened->{'shift'},
+		report => &subs::shift_report($opened->{'shift'}),
+	});
+}
+
+# POST /manager/store/shift/close
+# End of day: count the drawer, record the over or short, and lock the shift. The
+# report comes back with the answer so the screen can show and print it.
+sub action_6980 {
+	my $c = shift;
+	my $shift = &subs::shift_current(&subs::device_setter());
+	return $c->render(json => { ok => 0, error => 'no till is open' }) unless $shift;
+	my $closed = &subs::shift_close($shift->{'uuid'}, $c->param('counted'), $c->param('notes'));
+	return $c->render(json => { ok => 0, error => $closed->{'error'} || 'the till could not be closed' })
+		unless $closed->{'ok'};
+	$c->render(json => {
+		ok => 1,
+		shift => $closed->{'shift'},
+		report => $closed->{'report'},
+	});
+}
+
+# GET /manager/store/shift
+# What the till bar draws: the current shift, what the drawer should hold, and
+# whether the house insists on an open till for a cash sale.
+sub action_6981 {
+	my $c = shift;
+	my $shift = &subs::shift_current(&subs::device_setter());
+	$c->render(json => {
+		ok => 1,
+		shift => $shift,
+		report => $shift ? &subs::shift_report($shift) : undef,
+		required => &subs::store_shift_required(),
+	});
 }
 
 # A peer asks the numbering authority for the next document number. The hub

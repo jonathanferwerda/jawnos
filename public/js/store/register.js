@@ -21,7 +21,9 @@ var storeRegisterData = {
 	received: 0,
 	last: null,
 	receipt_html: '',
-	search_timer: null
+	search_timer: null,
+	shift: null,
+	shift_report: null
 };
 
 function storeRegisterT(text) {
@@ -254,6 +256,7 @@ function storeRegisterOpen(cx) {
 	if (shell.children().length) {
 		shell.addClass('open');
 		storeRegisterRefresh();
+		storeRegisterTillRefresh();
 		return;
 	}
 	var customer = (typeof cx === 'string') ? cx : (typeof cx_uuid === 'string' ? cx_uuid : '');
@@ -267,6 +270,7 @@ function storeRegisterOpen(cx) {
 			shell.html(response.content).addClass('open');
 			storeRegisterData.last = storeRegisterLastReceipt();
 			storeRegisterRefresh();
+			storeRegisterTillRefresh();
 		}
 	});
 }
@@ -504,6 +508,127 @@ function storeRegisterShowChange(change) {
 	$('#store_register_change').text(numeral(Math.max(change.change, 0)).format('$0.00'));
 }
 
+// ---- the till ---------------------------------------------------------------
+// A shift is opened with a float and the associate working the drawer; cash
+// sales made while it is open carry its uuid. End of day counts the drawer,
+// records over or short and locks the shift, so the next cash sale needs a new
+// one. The server owns the arithmetic; this is only the screen.
+function storeRegisterTillStatus(text) {
+	$('#store_register_till_status').text(text || '');
+}
+
+function storeRegisterTillTime(ms) {
+	var n = Number(ms);
+	if (!n || isNaN(n)) { return ''; }
+	try { return new Date(n).toLocaleString(); } catch (e) { return ''; }
+}
+
+function storeRegisterTillRefresh(done) {
+	$.getJSON('/manager/store/shift', { timestamp: Date.now() }, function(r) {
+		if (!r || !r.ok) { return; }
+		storeRegisterData.shift = r.shift || null;
+		storeRegisterData.shift_report = r.report || null;
+		storeRegisterTillRender();
+		if (typeof done === 'function') { done(r); }
+	});
+}
+
+function storeRegisterTillRender() {
+	var shift = storeRegisterData.shift;
+	$('#store_register_till_open').toggle(!shift);
+	$('#store_register_till_eod').toggle(!!shift);
+	if (!shift) {
+		$('#store_register_till_shift').text(storeRegisterT('No till open'));
+		return;
+	}
+	$('#store_register_till_shift').text(storeRegisterT('{0} · opened {1} · float {2}',
+		shift.associate || storeRegisterT('Associate'),
+		storeRegisterTillTime(shift.opened_at),
+		numeral(storeRegisterMoney(shift.float)).format('$0.00')));
+}
+
+function storeRegisterTillStart() {
+	storeRegisterPost('/manager/store/shift/open', {
+		associate: $('#store_register_till_associate').val() || '',
+		float: $('#store_register_till_float').val() || '0.00'
+	}, function(r) {
+		storeRegisterData.shift = r.shift || null;
+		storeRegisterData.shift_report = r.report || null;
+		$('#store_register_till_panel').hide();
+		storeRegisterTillStatus('');
+		storeRegisterTillRender();
+	});
+}
+
+function storeRegisterTillCounted() {
+	var report = storeRegisterData.shift_report || {};
+	var counted = storeRegisterMoney($('#store_register_till_counted').val());
+	var over = Math.round((counted - storeRegisterMoney(report.expected)) * 100) / 100;
+	$('#store_register_till_over_short').text(numeral(over).format('$0.00'));
+}
+
+function storeRegisterTillEndOfDay() {
+	storeRegisterTillRefresh(function() {
+		var report = storeRegisterData.shift_report || {};
+		var expected = storeRegisterMoney(report.expected);
+		$('#store_register_till_panel').hide();
+		$('#store_register_till_report').hide();
+		$('#store_register_till_close_panel').css('display', 'flex');
+		$('#store_register_till_expected').text(numeral(expected).format('$0.00'));
+		$('#store_register_till_counted').val(numeral(expected).format('0.00'));
+		storeRegisterTillCounted();
+	});
+}
+
+function storeRegisterTillFinish() {
+	storeRegisterPost('/manager/store/shift/close', {
+		counted: $('#store_register_till_counted').val() || '0.00',
+		notes: $('#store_register_till_notes').val() || ''
+	}, function(r) {
+		storeRegisterData.shift = null;
+		storeRegisterData.shift_report = r.report || null;
+		$('#store_register_till_close_panel').hide();
+		storeRegisterTillStatus('');
+		storeRegisterTillRender();
+		storeRegisterTillReport(r.report);
+	});
+}
+
+function storeRegisterTillReport(report) {
+	if (!report) { return; }
+	var paper = $('#store_register_till_report_paper').empty();
+	paper.append($('<h3></h3>').text(storeRegisterT('End of day')));
+	var rows = [
+		[storeRegisterT('Associate'), report.associate || ''],
+		[storeRegisterT('Opened'), storeRegisterTillTime(report.opened_at)],
+		[storeRegisterT('Closed'), storeRegisterTillTime(report.closed_at)],
+		[storeRegisterT('Float'), numeral(storeRegisterMoney(report.float)).format('$0.00')],
+		[storeRegisterT('Cash sales'), numeral(storeRegisterMoney(report.cash_sales)).format('$0.00')],
+		[storeRegisterT('Refunds'), numeral(storeRegisterMoney(report.refunds)).format('$0.00')],
+		[storeRegisterT('Expected'), numeral(storeRegisterMoney(report.expected)).format('$0.00')],
+		[storeRegisterT('Counted'), numeral(storeRegisterMoney(report.counted)).format('$0.00')],
+		[storeRegisterT('Over / short'), numeral(storeRegisterMoney(report.over_short)).format('$0.00')],
+		[storeRegisterT('Sales'), String(report.sales || 0)]
+	];
+	$.each(rows, function(i, row) {
+		var line = $('<div class="store_register_till_report_line"></div>');
+		line.append($('<span></span>').text(row[0]));
+		line.append($('<b></b>').text(row[1]));
+		paper.append(line);
+	});
+	if (report.notes) {
+		paper.append($('<p></p>').text(report.notes));
+	}
+	$('#store_register_till_report').show();
+}
+
+function storeRegisterTillPrint() {
+	var paper = $('#store_register_till_report_paper').html();
+	if (!paper) { return; }
+	$('#printer_view').html(paper).show();
+	$('#everything').hide();
+}
+
 // ---- search and add ---------------------------------------------------------
 function storeRegisterSearch() {
 	clearTimeout(storeRegisterData.search_timer);
@@ -541,6 +666,44 @@ $(document).on('click', '#store_register_close', function() {
 
 $(document).on('click', '#store_register_new', function() {
 	storeRegisterNew();
+});
+
+$(document).on('click', '#store_register_till_open', function() {
+	$('#store_register_till_close_panel').hide();
+	$('#store_register_till_panel').css('display', 'flex');
+	$('#store_register_till_associate').trigger('focus');
+});
+
+$(document).on('click', '#store_register_till_cancel', function() {
+	$('#store_register_till_panel').hide();
+});
+
+$(document).on('click', '#store_register_till_start', function() {
+	storeRegisterTillStart();
+});
+
+$(document).on('click', '#store_register_till_eod', function() {
+	storeRegisterTillEndOfDay();
+});
+
+$(document).on('click', '#store_register_till_close_cancel', function() {
+	$('#store_register_till_close_panel').hide();
+});
+
+$(document).on('input', '#store_register_till_counted', function() {
+	storeRegisterTillCounted();
+});
+
+$(document).on('click', '#store_register_till_finish', function() {
+	storeRegisterTillFinish();
+});
+
+$(document).on('click', '#store_register_till_print', function() {
+	storeRegisterTillPrint();
+});
+
+$(document).on('click', '#store_register_till_report_close', function() {
+	$('#store_register_till_report').hide();
 });
 
 $(document).on('click', '.store_register_tab', function() {
@@ -682,6 +845,7 @@ $(document).on('click', '#store_register_complete', function() {
 		$('#store_register_receipt_paper').html(storeRegisterData.receipt_html);
 		$('#store_register_receipt').show();
 		storeRegisterRefresh();
+		storeRegisterTillRefresh();
 		storeRegisterRender();
 	});
 });

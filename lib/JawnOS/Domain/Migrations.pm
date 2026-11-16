@@ -769,6 +769,28 @@ sub update_database($data) {
 		# therefore cannot create a second row for the same range.
 		'create unique index if not exists idx1_number_blocks on number_blocks (series, device, from_number)',
 		'create index if not exists idx2_number_blocks on number_blocks (series, device, used)',
+		# The Store register's drawer. A shift is opened with a float and an
+		# associate; cash sales carry its uuid in data.register.shift_uuid, and End
+		# of day counts the drawer, records over or short and locks the row.
+		'create table if not exists store_shift (
+			uuid VARCHAR(255) unique,
+			device VARCHAR(255),
+			associate VARCHAR(500),
+			associate_uuid VARCHAR(255),
+			opened_at VARCHAR(25),
+			closed_at VARCHAR(25),
+			float VARCHAR(25),
+			expected VARCHAR(25),
+			counted VARCHAR(25),
+			over_short VARCHAR(25),
+			cash_sales VARCHAR(25),
+			refunds VARCHAR(25),
+			status VARCHAR(25),
+			notes LONGTEXT,
+			server_time VARCHAR(25),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_store_shift on store_shift (device, status)',
 		# The first invoice and the first quote are 1001. next_number is the number
 		# the next allocation returns, so minting subtracts one from the advanced
 		# value (and a block subtracts its size).

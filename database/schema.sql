@@ -470,3 +470,27 @@ CREATE TABLE IF NOT EXISTS "credentials" (
 	ost VARCHAR(25)
 );
 CREATE INDEX IF NOT EXISTS idx1_credentials on credentials (app, origin);
+
+-- The Store register's drawer. A shift is opened with a float and an associate,
+-- cash sales carry its uuid in their data blob (data.register.shift_uuid), and
+-- End of day records the counted drawer and the over or short before locking it.
+-- `status` is open or closed; a closed row is history and is never reopened.
+CREATE TABLE IF NOT EXISTS store_shift (
+	uuid VARCHAR(255) unique,
+	device VARCHAR(255),
+	associate VARCHAR(500),
+	associate_uuid VARCHAR(255),
+	opened_at VARCHAR(25),
+	closed_at VARCHAR(25),
+	float VARCHAR(25),
+	expected VARCHAR(25),
+	counted VARCHAR(25),
+	over_short VARCHAR(25),
+	cash_sales VARCHAR(25),
+	refunds VARCHAR(25),
+	status VARCHAR(25),
+	notes LONGTEXT,
+	server_time VARCHAR(25),
+	ost VARCHAR(25)
+);
+CREATE INDEX IF NOT EXISTS idx1_store_shift on store_shift (device, status);

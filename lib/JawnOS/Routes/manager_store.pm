@@ -32,6 +32,9 @@ sub routes {
 	[6893, 'post', '/manager/store/attribute_delete', 'action_6893'],
 	[6901, 'post', '/manager/store/appointment_model_migration', 'action_6901'],
 	[6919, 'post', '/manager/store/appointment_model_selector', 'action_6919'],
+	[6979, 'post', '/manager/store/shift/open', 'action_6979'],
+	[6980, 'post', '/manager/store/shift/close', 'action_6980'],
+	[6981, 'get', '/manager/store/shift', 'action_6981'],
 	);
 }
 

@@ -9,6 +9,48 @@
 		</div>
 	</header>
 
+	<div id="store_register_till" class="store_register_till" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 12px;">
+		<span class="store_register_till_label"><%= &subs::ui('Till') %></span>
+		<span id="store_register_till_shift" class="store_register_till_shift"></span>
+		<button type="button" id="store_register_till_open" class="store_register_button"><%= &subs::ui('Open till') %></button>
+		<button type="button" id="store_register_till_eod" class="store_register_button" style="display:none;"><%= &subs::ui('End of day') %></button>
+		<span id="store_register_till_status" class="store_register_till_status" role="status" aria-live="polite"></span>
+	</div>
+
+	<div id="store_register_till_panel" class="store_register_till_panel" style="display:none;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 12px;">
+		<label class="store_register_till_field">
+			<span><%= &subs::ui('Associate') %></span>
+			<input type="text" id="store_register_till_associate" autocomplete="off">
+		</label>
+		<label class="store_register_till_field">
+			<span><%= &subs::ui('Float') %></span>
+			<input type="text" inputmode="decimal" id="store_register_till_float" value="0.00">
+		</label>
+		<button type="button" id="store_register_till_start" class="store_register_button"><%= &subs::ui('Start shift') %></button>
+		<button type="button" id="store_register_till_cancel" class="store_register_button"><%= &subs::ui('Cancel') %></button>
+	</div>
+
+	<div id="store_register_till_close_panel" class="store_register_till_close_panel" style="display:none;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 12px;">
+		<span><%= &subs::ui('Expected') %> <b id="store_register_till_expected">$0.00</b></span>
+		<label class="store_register_till_field">
+			<span><%= &subs::ui('Counted') %></span>
+			<input type="text" inputmode="decimal" id="store_register_till_counted" value="0.00">
+		</label>
+		<span><%= &subs::ui('Over / short') %> <b id="store_register_till_over_short">$0.00</b></span>
+		<label class="store_register_till_field">
+			<span><%= &subs::ui('Notes') %></span>
+			<input type="text" id="store_register_till_notes" autocomplete="off">
+		</label>
+		<button type="button" id="store_register_till_finish" class="store_register_button"><%= &subs::ui('End of day') %></button>
+		<button type="button" id="store_register_till_close_cancel" class="store_register_button"><%= &subs::ui('Cancel') %></button>
+	</div>
+
+	<div id="store_register_till_report" class="store_register_till_report" style="display:none;padding:6px 12px;">
+		<div id="store_register_till_report_paper" class="store_register_till_report_paper"></div>
+		<button type="button" id="store_register_till_print" class="store_register_button"><%= &subs::lang('common.print') %></button>
+		<button type="button" id="store_register_till_report_close" class="store_register_button"><%= &subs::lang('common.close') %></button>
+	</div>
+
 	<div id="store_register_tabs" class="store_register_tabs" role="tablist"></div>
 
 	<div class="store_register_body">
