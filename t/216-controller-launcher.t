@@ -77,6 +77,11 @@ like($desk, qr/if !\$c->param\('open'\) && !\$c->param\('desk'\) && &subs::devic
 # imports: encode_json without this line is a 500 at render time, and a
 # clicked-through page is the only place it used to show.
 my $page = read_file("$root/templates/apps/controller.html.ep");
+like($page, qr{/manager/controller/panel}, 'the launcher blanks the panel on idle');
+like($page, qr{screen_timeout}, 'following the configured screen timeout');
+like($page, qr{sleep_timeout}, 'and the suspend timeout');
+like($page, qr{sleep_now}, 'which asks the power route to sleep the machine');
+like($page, qr/passive: true/, 'and wakes on the first press without swallowing it');
 if ($page =~ /encode_json/) {
 	like($page, qr/<%\s*use Mojo::JSON[^%]*encode_json/, 'the page imports encode_json it uses');
 }

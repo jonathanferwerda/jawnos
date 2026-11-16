@@ -1,4 +1,52 @@
 <% use Mojo::JSON qw(encode_json); %>
+<script>
+/* The screen and suspend timeouts, run from the page that is always on the
+   glass. The panel's backlight is blanked without stopping X or the kiosk, so
+   this page keeps receiving the press that brings the light back - an `off`
+   that stopped them could never be woken by the touch it waited for.
+   Re-read every five minutes so a change in Configuration lands without a
+   reload. */
+(function () {
+	var blanked = false, slept = false, sleep = null, last = Date.now(), busy = false;
+	function touched() { last = Date.now(); if (blanked && !busy) { setBlank(false); } }
+	['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (name) {
+		document.addEventListener(name, touched, { passive: true });
+	});
+	function setBlank(on) {
+		busy = true; blanked = on;
+		fetch('/manager/controller/panel', {
+			method: 'POST', credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: 'action=' + (on ? 'blank' : 'unblank')
+		}).finally(function () { busy = false; });
+	}
+	function load() {
+		fetch('/manager/power_status', { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (s) { sleep = (s && s.config && s.config.sleep) || null; })
+			.catch(function () {});
+	}
+	function tick() {
+		if (sleep) {
+			var idle = (Date.now() - last) / 1000;
+			var screen = (sleep.screen_timeout || 0) * 60;
+			var nap = (sleep.sleep_timeout || 0) * 60;
+			if (screen > 0 && idle >= screen && !blanked && !busy) { setBlank(true); }
+			if (nap > 0 && idle >= nap && !slept) {
+				slept = true;
+				fetch('/manager/power/sleep_now', {
+					method: 'POST', credentials: 'same-origin',
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+					body: 'type=' + encodeURIComponent(sleep.sleep_type || 'suspend')
+				}).catch(function () {});
+			}
+		}
+		setTimeout(tick, 5000);
+	}
+	load(); setInterval(load, 300000); tick();
+})();
+</script>
+
 <%# The controller's home. A handheld panel is 480x854 and has no desk to lay
     windows on, so it opens on a launcher instead: eight tiles, each one press
     away from the surface it names. Leave is a panel of its own: the action asks

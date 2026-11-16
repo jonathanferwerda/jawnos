@@ -7,10 +7,15 @@
 # device's "off", and the brightness is saved first. On a boot tree without the
 # node the rail stays on: black the framebuffer and that is all a dark idle is.
 #
-#   perl scripts/jawnos_screen.pl off|on|status [--dry-run]
+#   perl scripts/jawnos_screen.pl off|on|status|blank|unblank [--dry-run]
 #
 # off:  stop kiosk/rotate/X, black /dev/fb0, backlight off, powersave at 1.0 GHz
 # on:   restore the backlight and the CPU values saved by off, start X/rotate/kiosk
+#
+# blank/unblank are the idle timeout's own pair, not `off`: nothing is stopped.
+# gou_rotate keeps presenting frames, so the panel is dark by its backlight alone
+# and the page behind it is still there to notice the press that wakes it. An
+# `off` that stopped X could never be woken by the touch it was waiting for.
 #
 # On a machine without the Gou units it does nothing and exits 3, so the
 # generic xset/backlight paths in Misc.pm still run. It is root-only for the
@@ -26,11 +31,12 @@ my $DRY = 0;
 my $ACTION = 'status';
 for my $arg (@ARGV) {
 	if ($arg eq '--dry-run') { $DRY = 1; }
-	elsif ($arg =~ /^(?:off|on|status)$/) { $ACTION = $arg; }
+	elsif ($arg =~ /^(?:off|on|status|blank|unblank)$/) { $ACTION = $arg; }
 }
 my $MARKER = "$STATE/off";
 my $CPU_FILE = "$STATE/cpu.tsv";
 my $BL_FILE = "$STATE/backlight";
+my $BLANK = "$STATE/blank";
 my $BL_BASE = $ENV{'JAWNOS_SCREEN_BACKLIGHT'} || '/sys/class/backlight';
 
 sub path {
@@ -114,7 +120,7 @@ if (!$DRY && $ACTION ne 'status' && $< != 0) {
 if ($ACTION eq 'status') {
 	my $backlight = backlight_dir();
 	my $brightness = $backlight ? slurp("$backlight/brightness") : '';
-	say_json({ ok => 1, off => (-e path($MARKER) ? 1 : 0), state => $STATE,
+	say_json({ ok => 1, off => (-e path($MARKER) ? 1 : 0), blank => (-e path($BLANK) ? 1 : 0), state => $STATE,
 		brightness => (length $brightness ? $brightness + 0 : undef) });
 	exit 0;
 }
@@ -195,6 +201,50 @@ if ($ACTION eq 'on') {
 	}
 	unlink path($MARKER);
 	say_json({ ok => 1, action => 'on' });
+	exit 0;
+}
+
+if ($ACTION eq 'blank' || $ACTION eq 'unblank') {
+	# The panel's backlight is the whole of it: the framebuffer keeps being
+	# repainted by gou_rotate, so blacking it would be undone a twentieth of a
+	# second later. The marker is what `status` and the wake path read.
+	my $backlight = backlight_dir();
+	if ($DRY) {
+		print(($ACTION eq 'blank' ? 'backlight off' : 'backlight on'), "\n");
+		print 'marker ', $BLANK, "\n";
+		exit 0;
+	}
+	if (!$backlight) {
+		say_json({ ok => 0, error => 'this panel has no backlight to turn off' });
+		exit 5;
+	}
+	make_path($STATE);
+	if ($ACTION eq 'blank') {
+		if (!-e path($BL_FILE)) {
+			spit($BL_FILE, join("\t", $backlight, slurp("$backlight/brightness"), slurp("$backlight/bl_power")) . "\n");
+		}
+		spit("$backlight/brightness", "0\n");
+		spit("$backlight/bl_power", "4\n");
+		spit($BLANK, "blank\n");
+		say_json({ ok => 1, action => 'blank', marker => $BLANK });
+		exit 0;
+	}
+	# unblank: put back exactly what the panel had, then drop the saved file so
+	# the next blank records the current values rather than this stale pair.
+	if (-e path($BL_FILE)) {
+		open(my $bl, '<', path($BL_FILE));
+		while (my $line = <$bl>) {
+			chomp $line;
+			my ($dir, $brightness, $power) = split /\t/, $line;
+			spit("$dir/brightness", "$brightness\n") if defined $brightness && length $brightness;
+			spit("$dir/bl_power", "0\n") if defined $power && length $power;
+		}
+		close $bl;
+		unlink path($BL_FILE);
+	}
+	spit("$backlight/bl_power", "0\n");
+	unlink path($BLANK);
+	say_json({ ok => 1, action => 'unblank' });
 	exit 0;
 }
 

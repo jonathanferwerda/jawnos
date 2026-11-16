@@ -18,6 +18,14 @@ my $root = repo_root();
 my $helper = "$root/scripts/jawnos_screen.pl";
 ok(-x $helper, 'the screen helper is executable');
 
+my $helper_text = read_file($helper);
+# The idle timeout must not use `off`: that stops X and the kiosk, so the press
+# that should wake the panel has nothing to reach.
+like($helper_text, qr/off\|on\|status\|blank\|unblank/, 'the idle pair is its own action');
+like($helper_text, qr/ACTION eq 'blank'/, 'blank saves what the panel had');
+like($helper_text, qr/ACTION eq 'unblank'/, 'and unblank puts it back');
+unlike($helper_text, qr/ACTION eq 'blank'\s*\?\s*1[\s\S]{0,400}systemctl/, 'without stopping the stack');
+
 # A fake sysfs root: a CPU policy node and a backlight class device, so the dry
 # run finds the nodes a CI runner does not have. The helper prefixes every
 # sysfs path with JAWNOS_SCREEN_ROOT, so both live under one root - an absolute

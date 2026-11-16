@@ -1,0 +1,20 @@
+<%# The controller's own power page. The desk's Power window draws the CPU plan,
+    the screen timeout and the suspend timeout, and none of that needs the desk
+    - so this renders the same template inside a controller window that fills
+    the panel. Before this, the Configuration tile asked the desk for
+    ?open=power, and a controller has no desk to open it in: the press landed on
+    the Manager instead of on a power page. %>
+<%= include 'controller/standalone' %>
+<style>
+	.wind[app="power"] .top_navbar { display:none !important; }
+	/* The panel is the window: a handheld has nothing to lay windows on. */
+	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
+	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; overflow:auto; }
+	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
+	/* The way back out, in the same place the other controller pages keep it. */
+	#controller_power_back { display:flex; justify-content:flex-end; padding:6px 8px 0; }
+	#controller_power_back a { font-size:13px; padding:5px 12px; border:1px solid #4a4a4a;
+		border-radius:8px; background:#3a3a3a; color:#fff; text-decoration:none; }
+</style>
+<div id="controller_power_back"><a href="/manager/controller/config"><%= &subs::ui('Configuration') %></a></div>
+<%== $contents %>

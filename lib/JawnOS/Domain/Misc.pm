@@ -192,6 +192,27 @@ sub _screen_off_run() {
 	return (1, '');
 }
 
+# The idle timeout's own pair: dark the panel without stopping anything. `off`
+# is the Leave menu's and it stops X, gou-rotate and the kiosk - nothing could
+# wake that but a reboot. This leaves the page running behind a dark backlight,
+# so the first press reaches it and it asks for the light back.
+sub panel_blank {
+	my ($on) = @_;
+	my $helper = 'scripts/jawnos_screen.pl';
+	return { ok => 0, error => 'the screen helper is missing' } unless -e $helper;
+	my $abs = Cwd::abs_path($helper) || $helper;
+	my $action = $on ? 'unblank' : 'blank';
+	my $rc = system($^X, $abs, $action);
+	# The board's manager runs as the tree's account and the backlight is root's.
+	if ($rc != 0) {
+		my $sudo = `command -v sudo 2>/dev/null`;
+		chomp $sudo;
+		$rc = system($sudo, '-n', $^X, $abs, $action) if length $sudo;
+	}
+	return { ok => 1, action => $action } if $rc == 0;
+	return { ok => 0, action => $action, error => 'the panel could not be changed' };
+}
+
 # Run one of the menu's choices. The action is a fixed word from
 # power_actions(), never the request body, and only a citizen session reaches
 # the route. --no-block hands the job to systemd and returns, so the reply

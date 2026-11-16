@@ -1123,6 +1123,32 @@ sub action_44013 {
 	$c->render(text => $website);
 }
 
+# POST /manager/controller/panel
+#
+# The idle timeout's dark, and the press that brings it back. A word from the
+# page, never a path: blank or unblank, nothing else.
+sub action_44020 {
+	my $c = shift;
+	my $on = ($c->param('action') || '') eq 'unblank' ? 1 : 0;
+	my $result = eval { &subs::panel_blank($on) } || { ok => 0, error => 'the panel could not be changed' };
+	$c->render(json => $result);
+}
+
+# GET /manager/controller/power
+#
+# The desk's Power page, rendered inside a controller window. The CPU plan and
+# the two timeouts are the same controls, reading and writing the same rows.
+sub action_44021 {
+	my $c = shift;
+	my $timestamp = $c->param('timestamp');
+	my $status = eval { &subs::power_status() } || {};
+	my $contents = $c->render_to_string(template => 'apps/power', status => $status);
+	my $website = &Manager::window_maker({
+		user_agent => $c->param('user_agent'), app => 'power', contents => $contents,
+	}, $timestamp);
+	$c->render(text => $website);
+}
+
 # POST /manager/controller/retroarch
 sub action_44014 {
 	my $c = shift;

@@ -42,6 +42,8 @@ sub routes {
 	[44017, 'get', '/manager/games/covers/status', 'action_44017'],
 	[44018, 'get', '/manager/games/launch_status', 'action_44018'],
 	[44019, 'post', '/manager/game_play', 'action_44019'],
+	[44020, 'post', '/manager/controller/panel', 'action_44020'],
+	[44021, 'get',  '/manager/controller/power', 'action_44021'],
 	);
 }
 

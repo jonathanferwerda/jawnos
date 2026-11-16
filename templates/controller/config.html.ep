@@ -37,7 +37,7 @@
 			<span class="controller_config_label"><%= &subs::ui('Wi-Fi') %></span>
 			<span class="controller_config_note"><%= &subs::ui('Join a network and turn the radio on') %></span>
 		</a>
-		<a class="controller_config_tile" href="/manager?open=power&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig">
+		<a class="controller_config_tile" href="/manager/controller/power">
 			<img class="controller_config_icon" src="<%= &subs::icon_path('logo2', '/icons/power.svg') %>" alt="">
 			<span class="controller_config_label"><%= &subs::ui('Power') %></span>
 			<span class="controller_config_note"><%= &subs::ui('Battery, CPU speed and the power plan') %></span>

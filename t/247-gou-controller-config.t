@@ -55,7 +55,7 @@ like($launcher, qr/width:80%/, 'tile icons fill 80% of their tile');
 my $config = read_file("$root/templates/controller/config.html.ep");
 for my $pair (
 	['network', 'Wi-Fi', '/manager?open=network&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig'],
-	['power', 'Power', '/manager?open=power&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig'],
+	['power', 'Power', '/manager/controller/power'],
 	['time', 'Time', '/manager/controller/time'],
 	['sound', 'Sound', '/manager?open=sound&amp;full=1&amp;back=%2Fmanager%2Fcontroller%2Fconfig'],
 	['retroarch', 'RetroArch', '/manager/controller/retroarch'],
@@ -64,6 +64,14 @@ for my $pair (
 	like($config, qr/<%= &subs::ui\('\Q$pair->[1]\E'\) %>/, "$pair->[1] is named in the on-screen words");
 }
 like($config, qr|href="/manager/controller"|, 'the sublauncher has a way back to the Launcher');
+
+# Power used to ask the desk for ?open=power, and a controller has no desk to
+# open it in: the press landed on the Manager. It is a controller page now.
+like($routes, qr{44021, 'get',\s+'/manager/controller/power'}, 'the controller has its own power page');
+like($routes, qr{44020, 'post',\s+'/manager/controller/panel'}, 'and a route for the idle dark');
+my $power_page = read_file("$root/templates/controller/power.html.ep");
+like($power_page, qr/include 'controller\/standalone'/, 'the power page stands alone on the panel');
+like($power_page, qr/\$contents/, 'drawing the desk\'s own power template');
 
 # --- the time page ------------------------------------------------------------
 my $time = read_file("$root/templates/controller/time.html.ep");
