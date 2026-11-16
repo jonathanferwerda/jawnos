@@ -1317,22 +1317,21 @@ sub navigation_automation {
 }
 
 # The hour of the day each app most often happens at, over the recent past, in
-# one query for every app. The clothesline reads in the order the day does, so
-# this gives it that order; it also names the apps whose routine is regular
-# enough to hang themselves, and the hour to hang them at. `hour_days` is how
-# many of the days the anchor hour was seen on, `days` how many days the app was
-# seen at all.
+# one query for every app. `hour_days` is how many of the days that hour was
+# seen on, `days` how many days the app was seen at all, and `due` says whether
+# today is one of the days its own history keeps it.
 #
-# `slots` is the finer grain the rail reads: the times of day the app keeps, not
-# just its busiest hour. A morning step done twice - coffee at half past, then
-# again at ten past the next hour - is two slots, so the line can hang it twice
-# in its own place; a step kept on Mondays, or every other day, carries the days
-# it was seen on, so `due` can say whether today is one of them.
+# The scan also learns the order the day runs in: the sequence of appointments
+# the person starts and stops themselves, in the order they are completed.
+# `sessions` holds those sequences, one per stretch without a long pause, and
+# `current` is the one under way - what the line anticipates from. A row with a
+# source_uuid came from a task, a default option or a default model, so it is
+# not the person's own step and never enters a sequence.
 sub clothesline_daily_hours {
 	my $days = 14;
 	my $now = &rightNow();
 	my $since = $now - ($days * 86400 * 1000);
-	my $rows = &db_query('select app, timestamp from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?)', $since, $now, 'usual', 'stop')->hashes;
+	my $rows = &db_query('select app, timestamp, type, source_uuid from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?)', $since, $now, 'usual', 'stop', 'start')->hashes;
 	return &clothesline_routine_scan($rows, $now, window_days => $days);
 }
 
@@ -1348,35 +1347,34 @@ sub clothesline_day_index {
 
 # Read the window's appointments into the routine the clothesline paints. Pure
 # but for the clock: the query is clothesline_daily_hours' job, so a test can
-# hand it rows and a moment and see the order, the repeats and the due days.
+# hand it rows and a moment and see the sequence, the days and the due flags.
 sub clothesline_routine_scan {
 	my ($rows, $now, %opt) = @_;
 	$rows = [] unless ref $rows eq 'ARRAY';
 	$now = &rightNow() unless defined $now;
 	my $window = $opt{'window_days'} || 14;
-	my $gap = $opt{'gap'} || 25;          # minutes that separate two slots
-	my $reach = $opt{'reach'} || 50;      # a slot never chains further than this
-	my $min_days = $opt{'min_days'} || 2; # a slot needs this many days to count
+	my $pause = $opt{'pause'} || (6 * 3600 * 1000); # a gap that ends a routine
 
-	my %occurrences;
+	my (@completed, @started);
 	foreach my $r ( @{$rows} ) {
 		next unless ref $r eq 'HASH';
 		my $app = $r->{'app'};
 		my $ms = $r->{'timestamp'};
 		next unless defined $app && length $app && defined $ms && $ms =~ /^\d+(?:\.\d+)?$/ && $ms > 0;
-		my @t = localtime(int($ms / 1000));
-		push @{$occurrences{$app}}, {
-			ms => $ms + 0,
-			minute => ($t[2] * 60) + $t[1],
-			wday => $t[6],
-			day => &clothesline_day_index($ms),
-		};
+		# a step a task, default option or default model started is not the
+		# person's own: leave it to its parent
+		next if defined $r->{'source_uuid'} && length $r->{'source_uuid'};
+		my $type = lc($r->{'type'} || '');
+		if ($type eq 'start') { push @started, { app => $app, ms => $ms + 0 }; next; }
+		next unless $type eq 'usual' || $type eq 'stop';
+		push @completed, { app => $app, ms => $ms + 0 };
 	}
+	@completed = sort { $a->{'ms'} <=> $b->{'ms'} } @completed;
+	@started = sort { $a->{'ms'} <=> $b->{'ms'} } @started;
 
 	my @now_t = localtime(int($now / 1000));
 	my $today = &clothesline_day_index($now);
 	my $today_wday = $now_t[6];
-
 	# The weekdays the window actually offered, up to yesterday: a Monday habit
 	# is not weakened by today's Monday not having happened yet.
 	my %offered;
@@ -1385,99 +1383,185 @@ sub clothesline_routine_scan {
 		$offered{$wd}++;
 	}
 
-	my $out = {};
-	foreach my $app ( keys %occurrences ) {
-		my @occ = @{$occurrences{$app}};
-
-		# the busiest hour, kept because the picker's idea of an app's time and
-		# any older reader still ask for it
-		my (%hour_days, %all_days);
-		foreach my $o ( @occ ) {
-			my $h = int($o->{'minute'} / 60);
-			$hour_days{$h}->{$o->{'day'}} = 1;
-			$all_days{$o->{'day'}} = 1;
-		}
+	my (%app_days, %hour_days);
+	foreach my $r ( @completed ) {
+		my @t = localtime(int($r->{'ms'} / 1000));
+		my $day = &clothesline_day_index($r->{'ms'});
+		$app_days{$r->{'app'}}->{$day} = 1;
+		$hour_days{$r->{'app'}}->{$t[2]}->{$day} = 1;
+	}
+	my $apps = {};
+	foreach my $app ( keys %app_days ) {
 		my ($best_hour, $best_days) = (undef, -1);
-		foreach my $h ( keys %hour_days ) {
-			my $c = scalar keys %{$hour_days{$h}};
+		foreach my $h ( keys %{$hour_days{$app}} ) {
+			my $c = scalar keys %{$hour_days{$app}->{$h}};
 			if ($c > $best_days) { ($best_hour, $best_days) = ($h, $c); }
 		}
-
-		# cluster by minute of day. Sorted, a run stays together while no
-		# neighbour is more than `gap` from the one before and the run itself
-		# stays within `reach` of its first minute; a second coffee half an hour
-		# later is its own slot rather than a longer morning.
-		my @sorted = sort { $a->{'minute'} <=> $b->{'minute'} || $a->{'ms'} <=> $b->{'ms'} } @occ;
-		my @slots;
-		foreach my $o ( @sorted ) {
-			my $slot = $slots[-1];
-			if (!$slot || $o->{'minute'} - $slot->{'last_minute'} > $gap || $o->{'minute'} - $slot->{'first_minute'} > $reach) {
-				$slot = { first_minute => $o->{'minute'}, last_minute => $o->{'minute'}, minutes => 0, seen => 0, days => {}, weekdays => {} };
-				push @slots, $slot;
+		my $days = scalar keys %{$app_days{$app}};
+		# A weekday habit is read from how often each weekday was offered: a
+		# clear split (a weekday that holds on most of its chances and one that
+		# never does) names the days it keeps. With no clear split, an alternating
+		# two-day cadence puts today on or off its turn; otherwise no day is off.
+		my $due = 1;
+		if ($days >= 2) {
+			my %weekdays;
+			foreach my $d ( keys %{$app_days{$app}} ) {
+				my $wd = (($d - $today + $today_wday) % 7 + 7) % 7;
+				$weekdays{$wd}++;
 			}
-			$slot->{'last_minute'} = $o->{'minute'};
-			$slot->{'minutes'} += $o->{'minute'};
-			$slot->{'seen'}++;
-			$slot->{'days'}->{$o->{'day'}} = 1;
-			$slot->{'weekdays'}->{$o->{'wday'}}->{$o->{'day'}} = 1;
-		}
-
-		my @regular;
-		foreach my $slot ( @slots ) {
-			my $days = scalar keys %{$slot->{'days'}};
-			next if $days < $min_days;
-			my $minute = int(($slot->{'minutes'} / $slot->{'seen'}) + 0.5);
-			my %weekdays = map { $_ => scalar keys %{$slot->{'weekdays'}->{$_}} } keys %{$slot->{'weekdays'}};
-
-			# A habit on named weekdays holds on at least two of the days it was
-			# offered and on most of them. An every-other-day habit lands on
-			# alternating days instead, so it is due on the parity its own days
-			# share - the day after it ran is the day off.
-			my $on_today = $weekdays{$today_wday} || 0;
-			my $offered_today = $offered{$today_wday} || 0;
-			my $due = 0;
-			if ($on_today >= 2 && $offered_today && ($on_today / $offered_today) >= 0.6) {
-				$due = 1;
+			my (%ratio, $on_wd, $off_wd);
+			foreach my $wd ( keys %offered ) {
+				$ratio{$wd} = $offered{$wd} ? (($weekdays{$wd} || 0) / $offered{$wd}) : 0;
+				$on_wd = 1 if $ratio{$wd} >= 0.6;
+				$off_wd = 1 if $ratio{$wd} <= 0.2;
 			}
-			elsif ($days >= 3) {
-				my @days = sort { $a <=> $b } keys %{$slot->{'days'}};
+			if ($on_wd && $off_wd) {
+				my $on_today = $weekdays{$today_wday} || 0;
+				$due = ($on_today >= 2 && ($ratio{$today_wday} || 0) >= 0.6) ? 1 : 0;
+			}
+			else {
+				my @days = sort { $a <=> $b } keys %{$app_days{$app}};
 				my @gaps = map { $days[$_] - $days[$_ - 1] } (1 .. $#days);
 				my @sorted_gaps = sort { $a <=> $b } @gaps;
-				my $median_gap = $sorted_gaps[int($#sorted_gaps / 2)];
+				my $median_gap = @sorted_gaps ? $sorted_gaps[int($#sorted_gaps / 2)] : 0;
 				if ($median_gap == 2) {
 					my %parity;
 					$parity{$_ % 2}++ for @days;
 					my $keep = (($parity{0} || 0) >= ($parity{1} || 0)) ? 0 : 1;
-					$due = 1 if (($today % 2) == $keep);
+					$due = (($today % 2) == $keep) ? 1 : 0;
 				}
 			}
-			push @regular, {
-				minute => $minute,
-				hour => int($minute / 60),
-				days => $days,
-				due => $due,
-				weekdays => \%weekdays,
-			};
 		}
-		@regular = sort { $a->{'minute'} <=> $b->{'minute'} } @regular;
-
-		# the order key: the first regular time of the day, or the middle of what
-		# little history there is when nothing repeats often enough
-		my $order = $regular[0] ? $regular[0]->{'minute'} : undef;
-		unless (defined $order) {
-			my @mins = sort { $a <=> $b } map { $_->{'minute'} } @occ;
-			$order = $mins[int($#mins / 2)] if @mins;
-		}
-
-		$out->{$app} = {
-			hour => $best_hour,
-			hour_days => $best_days,
-			days => scalar keys %all_days,
-			minute => $order,
-			slots => \@regular,
-		};
+		$apps->{$app} = { hour => $best_hour, hour_days => $best_days, days => $days, due => $due };
 	}
-	return $out;
+
+	# sessions: completed steps in order, split by a long pause so one morning is
+	# not joined to the next morning
+	my (@sessions, @names, $start, $prev);
+	foreach my $r ( @completed ) {
+		if (@names && $r->{'ms'} - $prev > $pause) {
+			push @sessions, { seq => [@names], start => $start };
+			@names = ();
+		}
+		$start = $r->{'ms'} unless @names;
+		push @names, $r->{'app'};
+		$prev = $r->{'ms'};
+	}
+	push @sessions, { seq => [@names], start => $start } if @names;
+
+	# the step at hand: the latest completed step, or a start still running
+	my $last_any;
+	if (@completed) {
+		$last_any = { app => $completed[-1]{'app'}, ms => $completed[-1]{'ms'}, type => 'done' };
+	}
+	if (@started && (!$last_any || $started[-1]{'ms'} >= $last_any->{'ms'})) {
+		$last_any = { app => $started[-1]{'app'}, ms => $started[-1]{'ms'}, type => 'start' };
+	}
+
+	my $current = { active => 0, seq => [], running => undef, start => undef };
+	if ($last_any && ($now - $last_any->{'ms'}) <= $pause) {
+		$current->{'active'} = 1;
+		my $last_completed = @completed ? $completed[-1]{'ms'} : undef;
+		if ($last_any->{'type'} eq 'start') {
+			$current->{'running'} = $last_any->{'app'};
+			# the running step belongs to the last completed sequence only when it
+			# started without a long pause after it; otherwise it opens a new routine
+			if (@sessions && defined $last_completed && ($last_any->{'ms'} - $last_completed) <= $pause) {
+				$current->{'seq'} = [ @{$sessions[-1]{'seq'}} ];
+				$current->{'start'} = $sessions[-1]{'start'};
+			}
+		}
+		elsif (@sessions) {
+			$current->{'seq'} = [ @{$sessions[-1]{'seq'}} ];
+			$current->{'start'} = $sessions[-1]{'start'};
+		}
+	}
+
+	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any };
+}
+
+# How far a prefix runs into a learned sequence, allowing the sequence to carry
+# steps the prefix skipped. Returns how many prefix steps were found and the
+# position in the sequence of the last one, so the caller can continue after it.
+sub clothesline_sequence_match {
+	my ($prefix, $seq) = @_;
+	my ($pi, $ti, $last) = (0, 0, -1);
+	while ($pi < @{$prefix}) {
+		my $found = -1;
+		for my $j ( $ti .. $#{ $seq } ) {
+			if ($seq->[$j] eq $prefix->[$pi]) { $found = $j; last; }
+		}
+		last if $found < 0;
+		$last = $found;
+		$ti = $found + 1;
+		$pi++;
+	}
+	return ($pi, $last);
+}
+
+# The next steps of the routine under way, in the order the person takes them.
+# The routine's own sequence is one they have already completed; the prefix of
+# the current one finds where it has got to. A step that happens twice in the
+# routine is one name in the answer - the next time it comes round - so the
+# line never carries two coffee pills. A step whose day is not today is skipped
+# but the walk carries on past it.
+sub clothesline_sequence_anticipate {
+	my ($scan, $now, %opt) = @_;
+	$scan = {} unless ref $scan eq 'HASH';
+	$now = &rightNow() unless defined $now;
+	my $limit = $opt{'limit'} || 8;
+	my $start_window = defined $opt{'start_window'} ? $opt{'start_window'} : 2;
+	my $sessions = ref $scan->{'sessions'} eq 'ARRAY' ? $scan->{'sessions'} : [];
+	my $current = ref $scan->{'current'} eq 'HASH' ? $scan->{'current'} : {};
+
+	my @prefix;
+	if ($current->{'active'}) {
+		@prefix = @{ $current->{'seq'} || [] };
+		my $running = $current->{'running'};
+		push @prefix, $running if defined $running && length $running && (!@prefix || $prefix[-1] ne $running);
+	}
+	my @templates = grep { !$current->{'start'} || ($_->{'start'} || 0) != $current->{'start'} } @{$sessions};
+
+	my ($best, $best_start);
+	if (@prefix) {
+		my ($best_score, $best_idx) = (-1, -1);
+		for my $i ( 0 .. $#templates ) {
+			my ($score, $last) = &clothesline_sequence_match(\@prefix, $templates[$i]{'seq'} || []);
+			next if $score <= 0;
+			if ($score > $best_score || ($score == $best_score && $i > $best_idx)) {
+				($best, $best_start, $best_score, $best_idx) = ($templates[$i], $last + 1, $score, $i);
+			}
+		}
+	}
+	if (!$best) {
+		# nothing to match yet: the routine that usually starts around this hour
+		my @now_t = localtime(int($now / 1000));
+		my ($near, $near_gap, $near_idx) = (undef, 99, -1);
+		for my $i ( 0 .. $#templates ) {
+			my $start = $templates[$i]{'start'} || 0;
+			next unless $start;
+			my @t = localtime(int($start / 1000));
+			my $d = abs($t[2] - $now_t[2]);
+			$d = 24 - $d if $d > 12;
+			if ($d < $near_gap || ($d == $near_gap && $i > $near_idx)) {
+				($near, $near_gap, $near_idx) = ($templates[$i], $d, $i);
+			}
+		}
+		if ($near && $near_gap <= $start_window) { $best = $near; $best_start = 0; }
+	}
+	return [] unless $best;
+
+	my (@out, %seen);
+	my $seq = $best->{'seq'} || [];
+	for my $i ( $best_start .. $#{ $seq } ) {
+		my $app = $seq->[$i];
+		next if $seen{$app}++;
+		my $due = ($scan->{'apps'}{$app} && defined $scan->{'apps'}{$app}{'due'}) ? $scan->{'apps'}{$app}{'due'} : 1;
+		next unless $due;
+		push @out, $app;
+		last if @out >= $limit;
+	}
+	return \@out;
 }
 
 1;

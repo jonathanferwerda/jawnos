@@ -45,9 +45,11 @@ sub hang_to_dry {
 
 	my $time_plinkos = clone $gb::time_plinkos;
 	my $cls = &db_query('select * from settings where setting = ? and device = ? and app!= ? and value is not null', 'clothesline', $device,'__president')->hashes;
-	# every app's day: the order it keeps, the times it repeats, and the days it
-	# is due. Read before the configured loop, which hangs its own slots from it.
+	# Every app's days and the order the day runs in. The appointment scan reads
+	# only the steps the person starts and stops themselves, so a task or a
+	# default option does not teach the line a routine of its own.
 	my $daily = &clothesline_daily_hours();
+	my $apps = $daily->{'apps'} || {};
 	my $cur_time = localtime($server_time / 1000);
 	my $cur_hour = $cur_time->[2];
 
@@ -58,9 +60,6 @@ sub hang_to_dry {
 		my $app = &unformat_name($clr->{'app'});
 		my $settings = &settings_grabber({ app => $app });
 		my $app_data = { name => $app, app => $app, formatted_name => &format_name($app), colour => $settings->{'colour'}, dark_colour => $settings->{'dark_colour'} };
-		# an app with history is ordered by the time it keeps; one never run falls
-		# to the end rather than shuffling the routines that have a time
-		$app_data->{'minute'} = $daily->{$app}->{'minute'} if $daily->{$app} && defined $daily->{$app}->{'minute'};
 		my $time_plinko = $cl->{'time_plinko'} || {};
 		my @schedule = split ',', ($cl->{'schedule'} // '');
 		foreach my $schedule ( @schedule ) {
@@ -93,10 +92,7 @@ sub hang_to_dry {
 					$cl_count++;
 					if ($cl_count == $count) {
 						if (!&app_hidden_now($app)) {
-							# this hour is the person's own choice, so hang every time
-							# the routine keeps here, in its own order, and once when
-							# the history has nothing regular to place
-							push @{$returner}, @{&clothesline_hang_slots($app_data, $daily->{$app}, $cur_hour, all => 1, fallback => 1)};
+							push @{$returner}, $app_data;
 						}
 
 					}
@@ -104,10 +100,6 @@ sub hang_to_dry {
 			}
 		}
 		unless (grep { $_->{'app'} eq $app } @{$returner}) {
-			# a running appointment or a budget that knows the app belongs to the
-			# hour itself, so it sits among this hour's steps rather than at the
-			# time the app usually keeps elsewhere
-			$app_data->{'minute'} = ($cur_hour * 60) + 30;
 			my $running_appts = &db_query('select * from appointments where app = ? and (type = ? or type = ?)',$app, 'start','record')->hashes;
 			if (scalar @{$running_appts} > 0) {
 				push @{$returner}, $app_data;
@@ -125,64 +117,46 @@ sub hang_to_dry {
 
 
 	}
-	# The day's order, and the apps regular enough to hang themselves. An app the
-	# user has never given a clothesline setting is offered at the times its own
-	# history keeps in this hour, when today is one of the days it keeps them on
-	# and the app is in its visible state. A step the routine does twice hangs
-	# twice; a Monday habit stays away on a Wednesday, and an every-other-day one
-	# keeps its own days. A setting of `off` in `clothesline_daily_auto` turns the
+	# The automatic hang: an app the person runs directly, due today, at the hour
+	# its own history keeps it. One pill per app; the order is the alphabetical
+	# tail below. A setting of `off` in `clothesline_daily_auto` turns the
 	# automatic hanging off; it is on when unset.
 	my %configured = map { &unformat_name($_->{'app'}) => 1 } @{$cls};
-	# an app another app adds on its own - a default option, or a default model -
-	# is not a thing the user clicks, so it never hangs itself (the coffee behind
-	# the cream, the lunch behind its eggs). Their parent carries the routine.
-	my $autos = &db_query(q{select distinct name from option where name is not null and name != app and lower(coalesce(def,'')) not in ('','off','false','0')
-		union
-		select distinct name from model where name is not null and name != app and lower(coalesce(def,'')) not in ('','off','false','0')})->hashes;
-	my %auto_hung = map { $_->{'name'} => 1 } @{$autos};
-	# the tasks an app carries: starting it records them as well, so they are not
-	# clicks of the user's either (the flush and wash hands behind a pee or dump)
-	my $task_rows = &db_query('select value from settings where setting = ? and value is not null', 'tasks')->hashes;
-	foreach my $tr ( @{$task_rows} ) {
-		my $list = eval { return decode_json $tr->{'value'} } || [];
-		foreach my $t ( @{$list} ) {
-			next unless $t->{'task'};
-			$auto_hung{&unformat_name($t->{'task'})} = 1;
-		}
-	}
-	# ...but a task or default the user also runs on their own is still theirs to
-	# hang: a meaningful share of an app's own appointments carry no source (they
-	# were not spawned by a parent). wash_hands is run by hand about half the time
-	# and must stay; a flush that mostly follows a pee does not.
-	my $auto_since = $server_time - (14 * 86400 * 1000);
-	my $run_rows = &db_query(q{select app, count(*) total, sum(case when source_uuid is null or source_uuid = '' then 1 else 0 end) direct from appointments where type in ('usual','stop') and timestamp >= ? group by app}, $auto_since)->hashes;
-	my %user_run;
-	foreach my $r ( @{$run_rows} ) {
-		next unless $r->{'total'};
-		$user_run{$r->{'app'}} = 1 if ($r->{'direct'} / $r->{'total'}) >= 0.25;
-	}
 	my $auto = &setting_grabber({ app => '__president', setting => 'clothesline_daily_auto' });
 	unless (defined $auto && lc($auto) eq 'off') {
-		foreach my $app ( sort keys %{$daily} ) {
+		foreach my $app ( sort keys %{$apps} ) {
 			next if $configured{$app};
-			next if $auto_hung{$app} && !$user_run{$app};
-			my $routine = $daily->{$app};
-			# only apps with a step due in this hour are worth the settings read
-			next unless grep { $_->{'due'} && defined $_->{'hour'} && $_->{'hour'} == $cur_hour } @{$routine->{'slots'} || []};
+			my $routine = $apps->{$app};
+			next unless $routine->{'due'};
+			next unless defined $routine->{'hour'} && $routine->{'hour'} == $cur_hour;
+			next unless ($routine->{'hour_days'} || 0) >= 2;
+			next if grep { $_->{'app'} eq $app } @{$returner};
 			my $aset = &settings_grabber({ app => $app });
 			next if &app_hidden_now($app);
-			push @{$returner}, @{&clothesline_hang_slots({ name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} }, $routine, $cur_hour)};
+			push @{$returner}, { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
 		}
 	}
-	# left to right, the order the day happens in. A repeated step sits at each of
-	# its own times, so the second coffee lands after the breakfast it follows and
-	# before the shower it precedes; apps with no time of their own (no history
-	# yet) fall to the end rather than shuffling those that have one.
-	@{$returner} = sort {
-		my $ma = defined $a->{'minute'} ? $a->{'minute'} : 1440;
-		my $mb = defined $b->{'minute'} ? $b->{'minute'} : 1440;
-		$ma <=> $mb || $a->{'app'} cmp $b->{'app'};
-	} @{$returner};
+	# The anticipatory head: the next steps of the routine under way, in the order
+	# the person takes them, whether it begins at eight or at ten. The rest of
+	# what belongs on the line follows alphabetically. An app in the head is not
+	# repeated in the tail, and a step the routine takes twice is one name in the
+	# head - the next time it comes round.
+	my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 8);
+	my $running = ($daily->{'current'} && $daily->{'current'}{'running'}) ? $daily->{'current'}{'running'} : undef;
+	unshift @{$anticipation}, $running if defined $running && length $running && !grep { $_ eq $running } @{$anticipation};
+	my %have = map { $_->{'app'} => $_ } @{$returner};
+	my @head;
+	foreach my $app ( @{$anticipation} ) {
+		next unless defined $app && length $app;
+		next if &app_hidden_now($app);
+		my $item = $have{$app};
+		unless ($item) {
+			my $aset = &settings_grabber({ app => $app });
+			$item = { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
+		}
+		push @head, $item;
+	}
+	@{$returner} = @{ &clothesline_line_order(\@head, $returner) };
 	&subs::subprocessor(sub {
 		my %done;
 		foreach my $clothes ( @{$returner} ) {
@@ -197,30 +171,23 @@ sub hang_to_dry {
 
 }
 
-# Put one app on the line at the times it keeps in this hour. A routine done
-# twice in the morning hangs twice, each in its own place; a configured routine
-# whose history has nothing regular in this hour still hangs once, so its
-# running appointment or budget can show. `all` ignores the due-day filter: the
-# person already chose this hour, so the line only needs the order and repeats.
-sub clothesline_hang_slots {
-	my ($app_data, $routine, $hour, %opt) = @_;
-	my $limit = $opt{'limit'} || 3;
-	my $slots = (ref $routine eq 'HASH' && ref $routine->{'slots'} eq 'ARRAY') ? $routine->{'slots'} : [];
-	my @slots = grep { defined $_->{'hour'} && $_->{'hour'} == $hour } @{$slots};
-	@slots = grep { $_->{'due'} } @slots unless $opt{'all'};
-	@slots = @slots[0 .. $limit - 1] if scalar @slots > $limit;
-	my @items;
-	foreach my $slot ( @slots ) {
-		my %item = %{$app_data};
-		$item{'minute'} = $slot->{'minute'};
-		push @items, \%item;
+# Order the rail: the anticipatory steps keep the order they were learned in,
+# and everything else follows alphabetically by its printed name. An app in the
+# head is removed from the tail, so the line never carries the same pill twice.
+sub clothesline_line_order {
+	my ($head, $tail) = @_;
+	$head = [] unless ref $head eq 'ARRAY';
+	$tail = [] unless ref $tail eq 'ARRAY';
+	my %head_app = map { $_->{'app'} => 1 } @{$head};
+	my (%seen, @rest);
+	foreach my $item ( sort {
+			lc($a->{'formatted_name'} || '') cmp lc($b->{'formatted_name'} || '')
+			|| ($a->{'app'} || '') cmp ($b->{'app'} || '')
+		} grep { ref $_ eq 'HASH' && !$head_app{$_->{'app'}} } @{$tail} ) {
+		next if $seen{$item->{'app'}}++;
+		push @rest, $item;
 	}
-	if (!@items && $opt{'fallback'}) {
-		my %item = %{$app_data};
-		$item{'minute'} = ($hour * 60) + 30;
-		push @items, \%item;
-	}
-	return \@items;
+	return [ @{$head}, @rest ];
 }
 
 # ---- web measures ----------------------------------------------------------

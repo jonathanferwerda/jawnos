@@ -182,12 +182,12 @@ $topic{'clothesline'} = {
 		title => 'The clothesline', category => 'features', app => 'clothesline',
 		controls => [ 'Set when this routine hangs', 'Choose the budgets this hang may show' ],
 		verified => '2026-11-16',
-		summary => 'A rail that hangs the routines belonging to this hour.',
+		summary => 'A rail that leads with the routine\'s next steps, then the rest of the hour.',
 		body => [
-			'The clothesline runs along the top of the desktop and hangs the routines and rituals that belong at the current hour, in the order they usually happen.',
-			'The order is read from your own history, so a step you always take first sits first even when its name would fall later in the alphabet. A step you do twice in the hour — a second coffee, another glass of water — hangs twice, each at its own place in the line.',
-			'The line also learns the days. A routine kept on Sundays, or every other day, hangs only when its day comes round; an every-other-day routine stays off on the day after it ran. A habit seen over the last two weeks is enough to start anticipating it.',
-			'It can hang the ones your history shows you actually do, automatically, and each hang is configured per app: a schedule, a budget, and the time slots it belongs to.',
+			'The clothesline runs along the top of the desktop. Its first part is the next steps of the routine you are in, in the order you usually take them; the rest of what belongs at the current hour follows alphabetically.',
+			'The order is read from the appointments you start and stop yourself, so a routine begun at eight and the same routine begun at ten put pee before water before coffee. A step a task, a default option or a default model starts stays with its parent and is not learned as your step.',
+			'A step the routine does twice is one pill at the place it next belongs — the second coffee appears after the breakfast it follows, not beside the first. The line learns the days too: a Sunday routine is not offered on a Wednesday, and an every-other-day routine waits for its turn.',
+			'It can hang the ones your history shows you actually do, automatically, at the hour its own history keeps; each hang is configured per app: a schedule, a budget, and the time slots it belongs to.',
 			'The rail can be switched off altogether: the Show clothesline tick beside the time machine (the walkman\'s Configure) hides it and gives its band back to the view, and ticking it again hangs it at its configured height. Each app\'s own hang is still set from its Clothesline button in Configure -> App.',
 			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), soft, sandglass, glass, paper, fabric, wood or metal — sized to its own name, with the full name set in the Misc → Font face and printed in black or white (tinted with the app\'s colour) so it reads on the pane.',
 			'A textured pill goes down when you press it: its lit top edge becomes an inset shade for a moment, so the tile reads pressed-in rather than sticking up. Plain, round and classic settle the same quiet pixel and inset shade as every button now, without the canvas material.'
