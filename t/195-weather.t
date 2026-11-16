@@ -14,6 +14,7 @@ use RepoSource;
 use Mojo::JSON;
 use DBI;
 use Time::Piece;
+use Time::Local qw(timegm);
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
 
@@ -193,6 +194,26 @@ is($mo->{'current'}{'glyph'}, '☁️', 'Open-Meteo maps the WMO code to a glyph
 is(scalar @{$mo->{'hourly'}}, 2, 'Open-Meteo reads the hourly arrays');
 is(scalar @{$mo->{'daily'}}, 2, 'Open-Meteo reads the daily arrays');
 is($mo->{'daily'}[0]{'high'}, 11, 'Open-Meteo reads the high');
+
+# --- a stamped hour is an instant, whichever clock wrote it ------------------
+{
+	my $utc = timegm(0, 0, 19, 16, 10, 2026) * 1000;
+	is(subs::weather_iso_epoch('2026-11-16T19:00:00Z'), $utc, 'a Z stamp is UTC');
+	is(subs::weather_iso_epoch('2026-11-16T14:00:00-05:00'), $utc, 'a negative offset is read back to the same instant');
+	is(subs::weather_iso_epoch('2026-11-17T00:00:00+05:00'), $utc, 'and a positive one too');
+	is(subs::weather_iso_epoch('2026-11-16T19:00:00.000Z'), $utc, 'fractional seconds do not hide the zone');
+	is(subs::weather_iso_epoch('2026-11-16T19:00:00'), $utc, 'a stamp with no zone keeps the house clock');
+}
+{
+	my $omos = {
+		utc_offset_seconds => -18000,
+		hourly => { time => [ '2026-11-06T11:00' ], temperature_2m => [8] },
+		current => { time => '2026-11-06T11:45' },
+	};
+	my $m = subs::weather_openmeteo_normalize($omos);
+	is($m->{'hourly'}[0]{'time'}, timegm(0, 0, 16, 6, 10, 2026) * 1000, 'Open-Meteo local hours get an epoch');
+	is($m->{'current'}{'observed_at'}, timegm(0, 45, 16, 6, 10, 2026) * 1000, 'and the current reading too');
+}
 
 # --- a cached payload without hourly periods is not trusted -------------------
 {
@@ -2395,6 +2416,8 @@ like($weather_js, qr/i < 14/, 'the script draws fourteen days');
 like($weather_js, qr/weatherDayToggle/, 'a forecast day opens its detail, and a second press hides it');
 like($weather_js, qr/weatherDayDetail/, 'the detail is built from the day and its hours');
 like($weather_js, qr/weatherHoursByDate/, 'the hourly forecast is grouped by the day it belongs to');
+like($weather_js, qr/weatherHoursNext/, 'the hourly strip starts at the hour one hour from now');
+like($weather_js, qr/weatherHourLabelAt/, 'and labels each hour in the reader\'s own clock');
 like($weather_js, qr/weatherPrecipWindows/, 'the detail names when precipitation is likely');
 like($weather_js, qr/weatherTempTrend/, 'and the warmest and coolest hours');
 like($weather_js, qr/weatherDayChart/, 'the day detail draws a small temperature chart');

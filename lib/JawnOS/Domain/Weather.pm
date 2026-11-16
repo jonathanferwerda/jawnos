@@ -58,10 +58,20 @@ sub weather_number($v) {
 
 sub weather_iso_epoch($s) {
 	return 0 unless defined $s && length $s;
-	return 0 unless $s =~ /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/;
-	my ($y, $mo, $d, $h, $mi, $sec) = ($1, $2, $3, $4, $5, $6 // 0);
+	return 0 unless $s =~ /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:\s*(Z|[+-]\d{2}:?\d{2}))?/i;
+	my ($y, $mo, $d, $h, $mi, $sec, $zone) = ($1, $2, $3, $4, $5, $6 // 0, $7);
 	my $epoch = eval { timegm($sec, $mi, $h, $d, $mo - 1, $y) };
-	return $epoch ? $epoch * 1000 : 0;
+	return 0 unless defined $epoch;
+	# A provider may stamp a reading in its own clock: Environment Canada
+	# sends UTC with `Z`, the National Weather Service an offset such as
+	# `-05:00`. Without a zone the string is the house's clock, as it has
+	# always been read. The epoch is the instant, so an hourly window can be
+	# chosen without guessing which clock the text was written in.
+	if (defined $zone && $zone =~ /^([+-])(\d{2}):?(\d{2})$/) {
+		my $offset = ($2 * 3600 + $3 * 60) * ($1 eq '-' ? -1 : 1);
+		$epoch -= $offset;
+	}
+	return $epoch * 1000;
 }
 
 sub weather_compass($deg) {
@@ -457,6 +467,11 @@ sub weather_ec_fetch($lat, $lon, $ua) {
 sub weather_openmeteo_normalize($json) {
 	my $j = ref $json eq 'HASH' ? $json : {};
 	my $cur = $j->{'current'} || {};
+	# Open-Meteo stamps the place's own clock and says how far that clock is
+	# from UTC. The epoch is what places an hour on the house's timeline.
+	my $offset_ms = (&weather_number($j->{'utc_offset_seconds'}) // 0) * 1000;
+	my $current_epoch = &weather_iso_epoch($cur->{'time'});
+	$current_epoch -= $offset_ms if $current_epoch;
 	my $current = {
 		temperature => &weather_number($cur->{'temperature_2m'}),
 		temperature_unit => 'C',
@@ -473,7 +488,7 @@ sub weather_openmeteo_normalize($json) {
 		precip => &weather_number($cur->{'precipitation'}),
 		cloud_cover => &weather_number($cur->{'cloud_cover'}),
 		is_day => $cur->{'is_day'},
-		observed_at => 0,
+		observed_at => $current_epoch || 0,
 		observed_text => $cur->{'time'} // '',
 		icon => '',
 	};
@@ -481,8 +496,10 @@ sub weather_openmeteo_normalize($json) {
 	my @times = @{ $h->{'time'} || [] };
 	my @hourly;
 	for my $i (0 .. $#times) {
+		my $epoch = &weather_iso_epoch($times[$i]);
+		$epoch -= $offset_ms if $epoch;
 		push @hourly, {
-			time => 0,
+			time => $epoch,
 			time_text => $times[$i] // '',
 			temperature => &weather_number($h->{'temperature_2m'}->[$i]),
 			condition => &weather_wmo_text($h->{'weather_code'}->[$i]),

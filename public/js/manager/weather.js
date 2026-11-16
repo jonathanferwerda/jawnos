@@ -477,14 +477,15 @@ function weatherAlertToggle(button) {
 
 function weatherHours(hours) {
 	var $w = $('.wind[app="weather"]');
-	var html = '';
-	if (!hours.length) {
+	var next = weatherHoursNext(hours || []);
+	if (!next.length) {
 		$w.find('#weather_hourly').html('<span class="weather_muted">' + weatherEsc(jawnosT('Hourly forecast is unavailable for this location.')) + '</span>');
 		return;
 	}
-	for (var i = 0; i < hours.length && i < 24; i++) {
-		var h = hours[i] || {};
-		var label = h.time_text ? weatherHourLabel(h.time_text) : weatherTime(h.time);
+	var html = '';
+	for (var i = 0; i < next.length; i++) {
+		var h = next[i] || {};
+		var label = weatherHourLabelAt(h);
 		html += '<div class="weather_hour">'
 			+ '<div>' + weatherEsc(label) + '</div>'
 			+ '<div class="weather_hour_glyph">' + weatherEsc(h.glyph || '•') + '</div>'
@@ -493,6 +494,52 @@ function weatherHours(hours) {
 			+ '</div>';
 	}
 	$w.find('#weather_hourly').html(html);
+}
+
+// The strip is a rolling window, not the provider's first day: it begins with
+// the hour a person will be in one hour from now and lists the 24 readings
+// after it. Providers stamp that hour in different clocks - Environment Canada
+// in UTC, Open-Meteo in the place's own - so the window is chosen on the epoch
+// and each label is drawn from it in the reader's clock.
+function weatherHourStart() {
+	var at = new Date(Date.now() + 3600 * 1000);
+	at.setMinutes(0, 0, 0);
+	return at.getTime();
+}
+
+function weatherHourMoment(h) {
+	var ms = h && h.time ? Number(h.time) : 0;
+	if (ms > 0) {
+		var stamped = new Date(ms);
+		if (!isNaN(stamped.getTime())) { return stamped; }
+	}
+	var text = String((h && h.time_text) || '');
+	if (!text) { return null; }
+	var parsed = new Date(text);
+	return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function weatherHourEpoch(h) {
+	var d = weatherHourMoment(h);
+	return d ? d.getTime() : 0;
+}
+
+function weatherHoursNext(hours) {
+	var start = weatherHourStart();
+	var timed = false;
+	for (var i = 0; i < hours.length; i++) {
+		if (weatherHourEpoch(hours[i])) { timed = true; break; }
+	}
+	var out = [];
+	for (var j = 0; j < hours.length && out.length < 24; j++) {
+		var h = hours[j] || {};
+		if (timed) {
+			var ms = weatherHourEpoch(h);
+			if (!ms || ms < start) { continue; }
+		}
+		out.push(h);
+	}
+	return out;
 }
 
 function weatherDays(days, hours) {
@@ -561,7 +608,7 @@ function weatherDayDetail(day, hours) {
 		for (var i = 0; i < hours.length; i++) {
 			var h = hours[i] || {};
 			var wet = weatherWet(h);
-			var time = h.time_text ? weatherHourLabel(h.time_text) : weatherTime(h.time);
+			var time = weatherHourLabelAt(h);
 			html += '<div class="weather_hour' + (wet ? ' weather_hour_wet' : '') + '">'
 				+ '<div>' + weatherEsc(time) + '</div>'
 				+ '<div class="weather_hour_glyph">' + weatherEsc(h.glyph || '•') + '</div>'
@@ -576,8 +623,8 @@ function weatherDayDetail(day, hours) {
 }
 
 // The hourly forecast is one list for the whole fortnight; the day a person
-// opened only wants its own hours. The provider's time text is the place's
-// local clock, so keep its date rather than the browser's.
+// opened only wants its own hours. The provider's time text is the date its
+// own daily periods are dated by, so keep its date rather than the browser's.
 function weatherHoursByDate(hours) {
 	var by = {};
 	for (var i = 0; i < hours.length; i++) {
@@ -627,19 +674,21 @@ function weatherPrecipWindows(hours) {
 	if (!runs.length) { return ''; }
 	var parts = [];
 	for (var j = 0; j < runs.length; j++) {
-		parts.push(weatherHourLabel(runs[j].first.time_text) + '–' + weatherHourEndLabel(runs[j].last.time_text) + ' · ' + weatherNum(runs[j].max) + '%');
+		parts.push(weatherHourLabelAt(runs[j].first) + '–' + weatherHourEnd(runs[j].last) + ' · ' + weatherNum(runs[j].max) + '%');
 	}
 	return jawnosT('Precipitation likely') + ' ' + parts.join(', ');
 }
 
 // An hour's reading covers the hour that starts with it, so the window ends
 // when the next hour begins.
-function weatherHourEndLabel(text) {
-	var m = String(text || '').match(/T(\d{2}):(\d{2})/);
-	if (!m) { return String(text || ''); }
-	var h = (parseInt(m[1], 10) + 1) % 24;
-	var suffix = h >= 12 ? 'PM' : 'AM';
-	var n = h % 12;
+function weatherHourEnd(h) {
+	var d = weatherHourMoment(h);
+	if (d) { return weatherClock(new Date(d.getTime() + 3600 * 1000)); }
+	var m = String((h && h.time_text) || '').match(/T(\d{2}):(\d{2})/);
+	if (!m) { return String((h && h.time_text) || ''); }
+	var hour = (parseInt(m[1], 10) + 1) % 24;
+	var suffix = hour >= 12 ? 'PM' : 'AM';
+	var n = hour % 12;
 	if (!n) { n = 12; }
 	return n + ':' + m[2] + ' ' + suffix;
 }
@@ -655,8 +704,8 @@ function weatherTempTrend(hours) {
 		if (!high || t > high.t) { high = { t: t, h: h }; }
 	}
 	if (!low || !high || low.t === high.t) { return ''; }
-	return jawnosT('Warmest') + ' ' + weatherHourLabel(high.h.time_text) + ' ' + weatherTemp(high.t)
-		+ ' · ' + jawnosT('Coolest') + ' ' + weatherHourLabel(low.h.time_text) + ' ' + weatherTemp(low.t);
+	return jawnosT('Warmest') + ' ' + weatherHourLabelAt(high.h) + ' ' + weatherTemp(high.t)
+		+ ' · ' + jawnosT('Coolest') + ' ' + weatherHourLabelAt(low.h) + ' ' + weatherTemp(low.t);
 }
 
 // A compact line for the day: one point an hour, so the rise and fall reads at
@@ -695,8 +744,8 @@ function weatherDayChart(hours) {
 		var right = k === hours.length - 1 ? (W - R) : x(k) + spacing / 2;
 		wet += '<rect class="weather_day_chart_wet" x="' + left + '" y="' + T + '" width="' + (right - left) + '" height="' + plotH + '"/>';
 	}
-	var first = weatherHourLabel(hours[0] && hours[0].time_text) || weatherTime(hours[0] && hours[0].time);
-	var last = weatherHourLabel(hours[hours.length - 1] && hours[hours.length - 1].time_text) || weatherTime(hours[hours.length - 1] && hours[hours.length - 1].time);
+	var first = weatherHourLabelAt(hours[0]);
+	var last = weatherHourLabelAt(hours[hours.length - 1]);
 	var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + weatherEsc(jawnosT('Hourly temperature for the day, shaded where precipitation is likely')) + '">';
 	svg += wet;
 	svg += '<line x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (T + plotH) + '" stroke="currentColor" opacity=".22"/>';
@@ -761,6 +810,27 @@ function weatherHourLabel(text) {
 	h = h % 12;
 	if (!h) { h = 12; }
 	return h + ':' + m[2] + ' ' + suffix;
+}
+
+// An hour the provider stamped with an epoch is read on the house clock, the
+// same clock the taskbar keeps, whichever clock the provider wrote it in.
+function weatherClockZone() {
+	return (typeof jawnos_clock_timezone != 'undefined' && jawnos_clock_timezone && jawnos_clock_timezone != 'local') ? jawnos_clock_timezone : undefined;
+}
+
+function weatherClock(d) {
+	try {
+		return new Intl.DateTimeFormat([], { timeZone: weatherClockZone(), hour: 'numeric', minute: '2-digit' }).format(d);
+	}
+	catch (e) {
+		return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+	}
+}
+
+function weatherHourLabelAt(h) {
+	var d = weatherHourMoment(h);
+	if (d) { return weatherClock(d); }
+	return weatherHourLabel((h && h.time_text) || '');
 }
 
 function weatherDayName(date) {
