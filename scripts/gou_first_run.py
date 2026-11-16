@@ -42,17 +42,32 @@ def card_present():
         )
     except OSError:
         return False
-    root = ""
+    root_dev = ""
     try:
         with open("/proc/mounts") as fh:
             for line in fh:
                 fields = line.split()
                 if len(fields) > 1 and fields[1] == "/":
-                    root = os.path.basename(os.path.dirname(fields[0])).rstrip("0123456789p")
+                    root_dev = os.path.basename(fields[0])
     except OSError:
         pass
+
+    def is_root_disk(name):
+        """Is this the disk the system runs from?
+
+        Asked of sysfs rather than by trimming a device name: /sys/block/mmcblk1
+        contains mmcblk1p2 and /sys/block/mmcblk0 does not, which is exactly the
+        question, and no amount of string surgery gets "mmcblk1p2 -> mmcblk1,
+        sda2 -> sda, mmcblk0 -> mmcblk0" right in one pass.
+        """
+        if not root_dev:
+            return False
+        if name == root_dev:
+            return True
+        return os.path.exists("/sys/block/%s/%s" % (name, root_dev))
+
     for name in blocks:
-        if name.startswith(root) and root:
+        if is_root_disk(name):
             continue
         try:
             with open("/sys/block/%s/device/type" % name) as fh:
@@ -61,9 +76,11 @@ def card_present():
         except OSError:
             continue
     for name in blocks:
+        if is_root_disk(name):
+            continue
         try:
             with open("/sys/block/%s/removable" % name) as fh:
-                if fh.read().strip() == "1" and not name.startswith(root or "\0"):
+                if fh.read().strip() == "1":
                     return True
         except OSError:
             continue

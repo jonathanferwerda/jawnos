@@ -142,6 +142,8 @@ like($provision, qr/push \@done, 'pmic-poweroff'/, 'reported on the board');
 my $first_run = slurp('scripts/gou_first_run.py');
 like($first_run, qr/def card_present/, 'the dialog knows when there is a card to erase');
 like($first_run, qr{/sys/block/%s/device/type}, 'by the same rule the planner uses');
+like($first_run, qr/def is_root_disk/, 'and it never offers the disk the system runs from');
+like($first_run, qr{/sys/block/%s/%s}, 'asked of sysfs, not by trimming a device name');
 like($first_run, qr/Erase the card in the slot/, 'and offers the wipe as a box that must be ticked');
 like($first_run, qr/def write_answers/, 'the answers are written for the root pass');
 like($provision, qr/gou_first_run\.py/, 'the dialog travels with the flash');
@@ -161,6 +163,15 @@ like($first_boot, qr/sub _first_run_forget_code/, 'the code leaves the disk once
 like($first_boot, qr/&_first_run_forget_code\(\) if \$report->\{'password'\} eq 'set'/,
 	'straight after chpasswd, not at the end of the pass');
 like($first_boot, qr/return unlink\(\$path\) \? 1 : 0;/, 'and a refused code keeps it, so the next boot asks again');
+# The image ships no sudo grant for the tree's account, so a password the panel
+# asked for is one sudo refuses until the grant is written.
+like($first_boot, qr/sub _grant_sudo/, 'the account is allowed to use the code');
+like($first_boot, qr{\$user ALL=\(ALL\) ALL}, 'with the one line sudoers needs');
+# A token the house cleaned up mid-write was copied as an empty file and reported
+# as filled in; the board then stopped before the card step, so a requested wipe
+# silently never happened.
+like($provision, qr/the join token at \$join is empty or not JSON/, 'an empty token fails the flash');
+like($provision, qr/JSON::PP->new->decode\(\$token\)/, 'the token is parsed before it is copied');
 
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');

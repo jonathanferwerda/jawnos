@@ -182,6 +182,26 @@ sub _first_run_done {
 # The account that owns the tree is the one a person would sudo as, so its
 # password is the one the panel asked for. chpasswd reads the pair on stdin:
 # never argv, where it would sit in `ps` for the length of the call.
+# The panel asked for a code to be this board's sudo password, so the account
+# has to be allowed to use it: the image ships without any sudo grant for the
+# tree's account. Written once, 0440, and only when absent.
+sub _grant_sudo {
+	my ($user) = @_;
+	return 0 unless $< == 0 && defined $user && $user =~ /^[A-Za-z0-9_.-]+$/;
+	my $dir = '/etc/sudoers.d';
+	return 0 unless -d $dir;
+	my $path = "$dir/90-jawn";
+	return 0 if -e $path;
+	my $ok = open(my $fh, '>', $path);
+	return 0 unless $ok;
+	print {$fh} "# The code the panel asked for on the first run is this account's sudo\n";
+	print {$fh} "# password; without this line sudo refuses it.\n";
+	print {$fh} "$user ALL=(ALL) ALL\n";
+	close $fh;
+	chmod 0440, $path;
+	return 1;
+}
+
 sub _set_account_password {
 	my ($code) = @_;
 	return 0 unless $< == 0;
@@ -950,6 +970,11 @@ my $token = &_token_read($opt{'token'});
 my $answers = &_first_run_answers();
 if (!$opt{'dry_run'} && $answers->{'code'}) {
 	$report->{'password'} = &_set_account_password($answers->{'code'}) ? 'set' : 'refused';
+	if ($report->{'password'} eq 'set') {
+		my ($uid) = &_tree_owner();
+		my $user = $uid ? (getpwuid($uid))[0] : '';
+		&_grant_sudo($user);
+	}
 	# Gone the moment it is a password. A refused code leaves the file where it
 	# is, so the next boot asks again instead of losing the person's answer.
 	&_first_run_forget_code() if $report->{'password'} eq 'set';

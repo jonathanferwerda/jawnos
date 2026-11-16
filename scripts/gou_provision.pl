@@ -1032,11 +1032,23 @@ sub _autopopulate {
 		my $dir = "$mount/home/jawn/jawnos";
 		File::Path::make_path($dir) unless -d $dir;
 		my $path = "$dir/.controller-join.json";
-		if (_write_file($path, _slurp($join))
+		# The token is read on the board as JSON, and a token file that has gone
+		# (the house cleaned it up while a twenty-minute write ran) used to be
+		# copied as an empty file and reported as filled in. The board then stopped
+		# on "the join token is not JSON" before it reached the card, so a wipe the
+		# person asked for never happened. Refuse it here, where the flash can say
+		# so, instead of shipping a board that cannot finish its first boot.
+		my $token = _slurp($join);
+		$token = '' unless defined $token;
+		my $parsed = length $token ? eval { JSON::PP->new->decode($token); 1 } : 0;
+		if (!$parsed) {
+			$error = "the join token at $join is empty or not JSON";
+		}
+		elsif (_write_file($path, $token)
 			&& chmod(0600, $path) && chown(1001, 1001, $path)) {
 			push @done, 'join-token';
 		}
-		else {
+		elsif (!length $error) {
 			$error = 'could not copy the join token';
 		}
 		# The source card's identity, config and database went in the scrub above;
