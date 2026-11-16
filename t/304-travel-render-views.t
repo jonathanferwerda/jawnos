@@ -147,6 +147,14 @@ like( $basemap, qr/if \(!noArchive\) \{ note\(''\); \}/, 'but the archive note i
 like( $basemap, qr/console\.error\('Travel street map:'/, 'and the error is not swallowed: it reaches the console' );
 like( $basemap, qr/st\.watchdog = setTimeout\(/, 'a refused worker that raises no event is still caught' );
 like( $basemap, qr/clearTimeout\(st\.watchdog\)/, 'and the watchdog is let go on close' );
+like( $basemap, qr/\}, 20000\);/, 'the watchdog waits long enough for a phone on the wireless' );
+like( $basemap, qr/map\.on\('sourcedata'/, 'and stops the moment source data arrives' );
+like( $basemap, qr/if \(!drawn && !noArchive && !dataSeen\)/, 'a map that is answering is never called a failure' );
+like( $basemap, qr/new ResizeObserver\(resize\)/, 'the map follows its box, not the page' );
+like( $basemap, qr/st\.observer\.observe\(box\)/, 'watching the stage the window gives it' );
+like( $basemap, qr/st\.observer\.disconnect\(\)/, 'and the observer is let go on close' );
+like( $basemap, qr/window\.addEventListener\('resize', resize\)/, 'a real window resize is honoured too' );
+like( $basemap, qr/window\.removeEventListener\('resize', st\.resize\)/, 'and that listener is removed on close' );
 like( $basemap, qr/st\.map\.remove\(\)/, 'and disposes the map on close' );
 like( $basemap, qr/st\.map\.off\('idle', st\.labels\)/, 'and lets go of its render listeners' );
 like( $basemap, qr/m\.remove\(\)/, 'and removes its DOM labels' );

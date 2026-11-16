@@ -320,16 +320,41 @@ function travelBasemapDraw(st, centre, maxzoom) {
 	// stage just stays blank. Name the cause and the fix, and let the note go the
 	// moment the map has drawn. The raw error still reaches the console.
 	var note = function(text) { travelBasemapNote(text); };
-	var noArchive = false, drawn = false;
+	var noArchive = false, drawn = false, dataSeen = false;
 	var failure = function() {
 		note(jawnosT('The street map could not start - the browser blocked MapLibre\'s worker or the library is incomplete. Run scripts/fetch_basemap_libs.sh, then open it again.'));
 	};
 	var stopWatchdog = function() {
 		if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = null; }
 	};
-	// a worker refused before any error surfaces leaves no event behind, so the
-	// stage is given a few seconds to draw before the failure is named
-	st.watchdog = setTimeout(function() { if (!drawn && !noArchive) { failure(); } }, 8000);
+	// A worker refused before any error surfaces leaves no event behind, so the
+	// stage is given time to draw before the failure is named. Twenty seconds,
+	// not eight: a phone on the wireless takes longer than a desktop on the
+	// wire, and a false "could not start" is worse than a late one.
+	st.watchdog = setTimeout(function() {
+		if (!drawn && !noArchive && !dataSeen) { failure(); }
+	}, 20000);
+
+	// Any source traffic at all is the worker and the archive answering, so the
+	// watchdog stops there rather than waiting for a whole first frame.
+	map.on('sourcedata', function() {
+		if (dataSeen) { return; }
+		dataSeen = true;
+		stopWatchdog();
+	});
+
+	// The windows on this panel are DOM elements dragged and sized inside the
+	// page, so the browser never fires a window resize: a map built before the
+	// window is laid out (or one resized after) keeps a stale canvas and shows a
+	// blank band. Watch the box itself.
+	var resize = function() { try { map.resize(); } catch (e) {} };
+	st.resize = resize;
+	window.addEventListener('resize', resize);
+	if (window.ResizeObserver) {
+		st.observer = new ResizeObserver(resize);
+		st.observer.observe(box);
+	}
+	resize();
 
 	map.on('load', function() {
 		drawn = true;
@@ -406,6 +431,8 @@ function travelBasemapClose() {
 	if (st) {
 		// the draw watchdog belongs to this open, not to the next one
 		if (st.watchdog) { clearTimeout(st.watchdog); st.watchdog = null; }
+		if (st.observer) { try { st.observer.disconnect(); } catch (e) {} }
+		if (st.resize) { window.removeEventListener('resize', st.resize); }
 		$.each(st.markers || [], function(i, m) { try { m.remove(); } catch (e) {} });
 		if (st.map) {
 			// remove() stops the render loop, frees the GL context and drops the
