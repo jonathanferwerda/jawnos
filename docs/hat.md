@@ -57,7 +57,7 @@ the very front of the brim — that is the longest moment arm and the first plac
 
 | Location | Carries | Rough mass |
 | --- | --- | --- |
-| Left crown pod | 1000 mAh LiPo + TP4056 charger | ~22 g |
+| Left crown pod | 1000 mAh LiPo (or 800 mAh, the largest cell Solarbotics stocks) + TP4056 charger | ~22 g |
 | Right crown pod | ESP32-S3 board, amp, IMU | ~6 g |
 | Brim front, flex tail from the right pod | camera + two mics | ~3 g |
 | Temples, inside the sweatband | bone conduction transducers | ~10 g |
@@ -71,24 +71,37 @@ cosmetically untouched.
 The bone conduction transducers must contact the temporal bone. The sweatband presses them there for
 free — the reason this build suits a cap rather than glasses.
 
-## Parts, Canadian prices
+## Parts, Canadian prices (checked 2026-11-16)
 
-Assumptions: 1.40 CAD/USD, HST at 13%, estimates rather than live quotes. DigiKey.ca ships free over
-CAD 100, so bundle the stockable parts.
+Assumptions: 1.40 CAD/USD, HST at 13%. Only the Solarbotics rows are real prices seen on a Canadian
+page. Every other figure is still an estimate, and is marked so, because digikey.ca, RobotShop,
+Amazon.ca and Lee's Electronic all refuse scripted fetches. Confirm in a browser before ordering.
 
-| Part | AliExpress | Canadian source | Notes |
-| --- | --- | --- | --- |
-| XIAO ESP32S3 Sense | 19 | 26 | DigiKey.ca, RobotShop, Creatron (Toronto) |
-| ICM-20948 breakout | 10 | 30 | genuine SparkFun ~30; clone modules fine here |
-| Bone conduction pair | 12 | — | not stocked in Canada |
-| MAX98357 I2S amp | 6 | 9 | DigiKey.ca, Creatron |
-| TP4056 charger | 3 | 5 | |
-| Coin vibration motor | 3 | 4 | Solarbotics (Calgary), Creatron |
-| 1000 mAh LiPo | 11 | 14 | RobotShop (Montreal); check the connector |
-| 2x half-size breadboard + jumpers | 8 | 12 | Creatron, Sayal, Amazon.ca — proof of concept only |
-| Wire, foam, JST, heat shrink | 10 | 15 | Sayal or Lee's if nearby |
-| **Subtotal** | **82** | **127** | |
-| **+ HST 13%** | **~93** | **~144** | varies by province |
+DigiKey.ca ships free over CAD 100, so bundle the stockable parts.
+
+**Do not use creatroninc.com.** The domain no longer belongs to the Toronto store: it now serves
+unrelated SEO spam and redirects to a subdomain. Treat any link from it as unsafe, which is why no row
+below names it as a source.
+
+| Part | AliExpress | Canadian | Seen in CA? | Notes |
+| --- | --- | --- | --- | --- |
+| XIAO ESP32S3 Sense | 19 | ~26 | **estimate** | DigiKey.ca or RobotShop; both need a real browser |
+| ICM-20948 breakout | 10 | ~30 | **estimate** | genuine SparkFun ~30; clone modules fine here |
+| Bone conduction pair | 12 | — | **not stocked** | confirmed absent from Solarbotics; AliExpress only |
+| MAX98357A amp | 6 | ~9 | **estimate** | |
+| TP4056 charger | 3 | ~5 | **estimate** | |
+| Coin vibration motor | 3 | **3.80 / 5.59** | **verified** | Solarbotics; the 3.80 one is store-only, phone to order |
+| LiPo 3.7 V, one cell | 11 (1000 mAh) | **12.99 (800 mAh) / 18.29 (1700 mAh)** | **verified** | Solarbotics; no 1000 mAh SKU exists in Canada |
+| Breadboard + jumpers | 8 | **4.50 (170-hole) / 12.60 (board + zipwire)** | **verified** | Solarbotics; 400-point solderless not confirmed |
+| Wire, foam, JST, heat shrink | 10 | ~15 | **estimate** | Sayal or Lee's if nearby |
+
+Confirmed Solarbotics (Calgary) figures, all pre-tax and in stock at the time of checking: 400 mAh
+8.79, 800 mAh 12.99, 1700 mAh 18.29, mini vibration motor 3.80, vibrating disk motor 5.59, 170-hole
+solderless breadboard 4.50, breadboard plus zipwire bundle 12.60. Several of those carry an "In Stock
+- Store Only" flag and need a phone order rather than a web checkout.
+
+What that costs: roughly CAD 95 through AliExpress, or about CAD 135 from Canadian vendors if the
+estimates hold, before tax. The unverified rows are where that number can move most.
 
 Practical: buy the Canadian-stocked parts locally and AliExpress only the bone conduction and the
 spares. Budget about CAD 100 and order two of the cheap parts.
