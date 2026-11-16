@@ -101,6 +101,20 @@ sub _config_bootstrap {
 	}
 	my ($said, $status) = &_capture(@seed);
 	print STDERR $said if length $said;
+	# The seed mints this machine's unlock code and puts it in the level-1
+	# canary, then prints it once and keeps it nowhere. local_code_suds reads it
+	# from the file beside the house, so without this line the board has no
+	# candidate key: the vault is never seeded, the box office refuses the
+	# kiosk's own ticket and the board parks at the Gate.
+	if ($said =~ /^JAWNOS_UNLOCK_CODE=([0-9]{4,12})\s*$/m) {
+		my $path = "$home/UNLOCK-CODE.txt";
+		if (open(my $fh, '>', $path)) {
+			print {$fh} "$1\n";
+			close $fh;
+			chmod 0600, $path;
+			chown $uid, $gid, $path if $< == 0;
+		}
+	}
 	unless (-e $config && -s $config > 20) {
 		# The seed could not run (an image with no setup script, a failed
 		# database build). Leave a config the tree can load; ./jawn sees no

@@ -830,7 +830,8 @@ sub _scrub_copied_machine {
 		"$tree/server/fullchain.pem", "$tree/server/privkey.pem",
 		"$tree/server/peer-fullchain.pem", "$tree/server/peer-privkey.pem",
 		"$tree/server/house-ca.key", "$tree/.shots/ticket.txt",
-		"$home/.local/share/jawnos/.shots/ticket.txt") {
+		"$home/.local/share/jawnos/.shots/ticket.txt",
+		"$home/UNLOCK-CODE.txt", "$home/unlock-code.txt") {
 		$identity = 1 if -f $path && unlink $path;
 	}
 	# The desktop shell's own config and ticket store. A copied ticket.enc wins

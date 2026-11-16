@@ -86,6 +86,13 @@ like($first_boot, qr/END \{ eval \{ .*?_hand_back_runtime\(\)/s, 'on every exit 
 like($first_boot, qr/^\t\tunlink \$log;$/m, 'an empty root-owned log is dropped rather than left for the manager');
 like($first_boot, qr/!\$opt\{'dry_run'\}/, 'and a dry run writes nothing');
 
+# The seed mints the unlock code, prints it once and keeps it nowhere. Without
+# the file beside the house there is no candidate key, the vault is never
+# seeded, and the box office refuses the kiosk's own ticket - the Gate.
+like($first_boot, qr/JAWNOS_UNLOCK_CODE=\(\[0-9\]\{4,12\}\)/, 'the unlock code the seed prints is parsed');
+like($first_boot, qr/\$home\/UNLOCK-CODE\.txt/, 'and written beside the house, where local_code_suds reads it');
+like($provision, qr/\$home\/UNLOCK-CODE\.txt/, 'the flash scrubs the source card\'s code with its identity');
+
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');
 
