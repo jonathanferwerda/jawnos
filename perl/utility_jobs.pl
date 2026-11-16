@@ -337,6 +337,16 @@ sub utility_functions() {
 					}
 				}
 			}
+			# The headless relay was cloned into the Fast pool, whose fifteen minutes
+			# swallowed its own minute: a relayed change could sit for a quarter of an
+			# hour. Return an untouched default row to the regular bin; the runtime
+			# then keeps its 60-second interval (see subs::utility_relay_ungroup).
+			if (&subs::utility_relay_ungroup($controls->{$signatorial})) {
+				# Stamp the row so this process adopts the healed copy now instead of
+				# keeping the Fast-pool pace it loaded at boot.
+				$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
+				$dirty = 1;
+			}
 			# The navigation default moved from ten minutes to four when the app's
 			# GPS service began writing fixes on its own. A row still carrying the
 			# old default with the job switched off takes the new pace; a row the

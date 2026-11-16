@@ -109,7 +109,10 @@ our $timeouts = {
 	'email_sender' => { interval => 1 * 30, toggle => 'off', timeout => 90, group => 'fast' },
 	'email_receiver' => { interval => 5 * 60, toggle => 'off', timeout => 390, group => 'fast' },
 	'tunnels' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), ip_addresses => [], network => {}, toggle => 'off', timeout => 390, group => 'fast' },
-	'remote_relay' => { interval => 60, toggle => 'on', timeout => 120, group => 'fast' },
+	# The headless relay is a queue drain, not a background chore: it keeps its
+	# own minute instead of waking with a pool (the Fast pool's fifteen minutes
+	# once held a relayed change for a quarter of an hour).
+	'remote_relay' => { interval => 60, toggle => 'on', timeout => 120 },
 	'htop' => { interval => 40, toggle => 'off', timeout => 360, group => 'fast' },
 	'git_sync' => { interval => 30 * 60, toggle => 'on', timeout => 180, group => 'slow' },
 	# Agent worktrees are scratch once their work is on the trunk; nothing else

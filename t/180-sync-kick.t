@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl perl/help/topics_features.pl scripts/sync_kick.pl
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl perl/help/topics_features.pl scripts/sync_kick.pl
 # covers:    the sync kick job clears the three things that stall a rail and nudges the ordinary pass; a dead hub is not chosen; a controller holds its automatic sync until its card is mounted
 
 use strict;
@@ -143,6 +143,16 @@ ok(($job->{'timeout'} || 0) >= 30, 'it has a bounded slot');
 my $president = read_file("$root/perl/utility_jobs.pl");
 like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s*return &subs::sync_kick\(\);/s,
 	'utility_jobs.pl wires the job to subs::sync_kick');
+
+# The headless relay is a queue drain, not a pooled background chore. It was
+# cloned into the Fast pool, whose fifteen minutes swallowed its own minute;
+# a row still carrying that default is healed on the controller's next tick.
+my $relay_job = $gb::timeouts->{'remote_relay'};
+ok(ref $relay_job eq 'HASH', 'remote_relay is a declared utility');
+is($relay_job->{'interval'}, 60, 'it keeps its own minute');
+ok(!$relay_job->{'group'}, 'and is not cloned into a batch pool');
+like($president, qr/utility_relay_ungroup\(\$controls->\{\$signatorial\}\)/,
+	'the controller heals a row still in the old Fast pool');
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/JawnOS::Domain::Sync' for qw\([^)]*\bsync_kick\b/s,

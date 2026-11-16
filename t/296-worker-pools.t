@@ -214,6 +214,23 @@ like( $gate_hooks, qr{\$path eq '/manager/configure/utility_controller/peer'}, '
 # utility_pools_apply is the one path the editor and the peer door share, so a
 # pool set for a peer is written exactly as that machine's own page writes it.
 require "$root/lib/JawnOS/Domain/Render.pm";
+
+# ---- the headless relay heals out of the Fast pool -------------------------
+# Its own interval is a minute; the old default cloned it into the Fast pool,
+# whose fifteen minutes became its pace. Only the untouched shape is healed; a
+# relay a person later moved to another pool, or gave a different pace, keeps it.
+{
+	my $stale = { remote_relay => { group => 'fast', interval => 60 } };
+	is(subs::utility_relay_ungroup($stale), 1, 'the old default relay leaves the Fast pool');
+	is($stale->{'remote_relay'}->{'group'}, '', 'and returns to the regular bin at its own minute');
+	my $moved = { remote_relay => { group => 'fast_2', interval => 60 } };
+	is(subs::utility_relay_ungroup($moved), 0, 'a relay moved to another pool is kept');
+	is($moved->{'remote_relay'}->{'group'}, 'fast_2', 'with the pool it was given');
+	my $paced = { remote_relay => { group => 'fast', interval => 120 } };
+	is(subs::utility_relay_ungroup($paced), 0, 'a relay given a different pace is kept');
+	is(subs::utility_relay_ungroup({}), 0, 'a row with no relay is left alone');
+}
+
 {
 	no warnings 'redefine';
 	my %STORED;

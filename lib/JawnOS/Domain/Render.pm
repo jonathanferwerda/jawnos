@@ -893,6 +893,22 @@ sub batch_interval {
 	return $pool ? $pool->{'seconds'} : undef;
 }
 
+# The headless relay was introduced inside the Fast pool, so its own minute was
+# swallowed by the pool's fifteen and a relayed change waited a quarter of an
+# hour for a drain. A stored row still carrying that untouched default returns
+# to the regular bin; a relay a person later moved to another pool, or gave a
+# different interval, is left alone. Idempotent: the controller calls it on
+# every tick, and it only writes when it actually changes the row.
+sub utility_relay_ungroup {
+	my ($row) = @_;
+	return 0 unless ref $row eq 'HASH' && ref $row->{'remote_relay'} eq 'HASH';
+	my $relay = $row->{'remote_relay'};
+	return 0 unless (($relay->{'group'} // '') eq 'fast');
+	return 0 unless (($relay->{'interval'} || 0) == 60);
+	$relay->{'group'} = '';
+	return 1;
+}
+
 # Store one machine's batch pools and the jobs placed in them. The panel's editor
 # and the peer door both come here, so a pool set on another machine is written
 # exactly as that machine's own page would write it. The blob keys a machine's
