@@ -17,6 +17,7 @@ var travelGlobeCss = false;
 function travelGlobeOpen(lat, lon) {
 	// one layer at a time: opening this closes the 3D model if it is up
 	if (typeof travelNear3dClose === 'function') { travelNear3dClose(); }
+	if (typeof travelWorldClose === 'function') { travelWorldClose(); }
 	if (travelGlobeState) { travelGlobeClose(); }
 	$('#travel_globe').css('display', 'flex');
 	travelGlobeStatus('');

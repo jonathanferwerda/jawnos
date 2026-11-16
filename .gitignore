@@ -97,3 +97,6 @@ public/js/cesium/
 # --- MapLibre GL JS + PMTiles installed by scripts/fetch_basemap_libs.sh ---
 # --- (the street map's offline path). Also an installed asset, not source. ---
 public/js/basemap/
+# --- A-Frame installed by scripts/fetch_aframe.sh (the virtual world). ---
+# --- It bundles its own three.js; not source, and over a megabyte. ---
+public/js/aframe/

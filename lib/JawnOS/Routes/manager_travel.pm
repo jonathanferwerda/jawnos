@@ -14,6 +14,7 @@ sub routes {
 	[33680, 'get', '/manager/travel/guess_image', 'action_33680'],
 	[33700, 'get', '/manager/travel/viewer', 'action_33700'],
 	[34017, 'get', '/manager/travel/basemap', 'action_34017'],
+	[34301, 'get', '/manager/travel/world', 'action_34301'],
 	);
 }
 

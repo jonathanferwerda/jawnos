@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title><%= &subs::ui('Virtual world') %></title>
+		<style>
+			html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d10; }
+			#world_hint {
+				position: absolute; left: 8px; bottom: 8px; z-index: 5;
+				font: 11px sans-serif; color: #fff; background: rgba(0,0,0,.55);
+				padding: 3px 7px; border-radius: 5px; pointer-events: none;
+			}
+			#world_loading {
+				position: absolute; inset: 0; z-index: 4; display: flex;
+				align-items: center; justify-content: center;
+				font: 13px sans-serif; color: #ddd; background: #0b0d10;
+			}
+		</style>
+	</head>
+	<body>
+		<a-scene id="world_scene" embedded
+			renderer="antialias: true"
+			vr-mode-ui="enabled: false"
+			fog="type: exponential; density: 0.004; color: #dfe7d2">
+			<a-entity id="world_root"></a-entity>
+			<a-entity light="type: hemisphere; color: #ffffff; groundColor: #6b7a5a; intensity: 0.95"></a-entity>
+			<a-entity light="type: directional; color: #fff7e8; intensity: 0.7" position="60 100 40"></a-entity>
+			<a-entity id="world_rig" position="0 1.7 16">
+				<a-camera id="world_cam" wasd-controls="acceleration: 60" look-controls="pointerLockEnabled: false"></a-camera>
+			</a-entity>
+			<a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable; far: 250"></a-entity>
+		</a-scene>
+		<div id="world_loading"><%= &subs::ui('Building the virtual world…') %></div>
+		<div id="world_hint"><%= &subs::ui('WASD to walk · drag to look · click a photo') %></div>
+		<script src="/js/aframe/aframe.min.js"></script>
+		<script src="/js/travel_world.js"></script>
+	</body>
+</html>

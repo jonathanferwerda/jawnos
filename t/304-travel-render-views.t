@@ -1,4 +1,4 @@
-# tests-for: templates/travel/travel.html.ep public/js/manager/travel.js public/js/manager/travel/03_near3d.js public/js/manager/travel/04_globe.js public/js/manager/travel/05_basemap.js public/js/three.min.js scripts/fetch_cesium.sh scripts/fetch_basemap_libs.sh perl/help/topics_people.pl lib/JawnOS.pm
+# tests-for: templates/travel/travel.html.ep templates/travel/world.html.ep public/js/manager/travel.js public/js/manager/travel/03_near3d.js public/js/manager/travel/04_globe.js public/js/manager/travel/05_basemap.js public/js/manager/travel/06_world.js public/js/travel_world.js public/js/three.min.js scripts/fetch_cesium.sh scripts/fetch_basemap_libs.sh scripts/fetch_aframe.sh perl/help/topics_people.pl lib/JawnOS.pm lib/JawnOS/Manager/Part25.pm lib/JawnOS/Controller/manager_travel.pm lib/JawnOS/Routes/manager_travel.pm
 # covers:    the Travel long press's menu and the four views behind it: the
 #            street preview, the three.js model of measured maps and places,
 #            the Cesium globe (local build only, no third-party script origin)
@@ -21,7 +21,8 @@ my $root = root();
 my $template = read_file("$root/templates/travel/travel.html.ep");
 for my $id (qw(travel_3d travel_3d_stage travel_3d_title travel_3d_close travel_3d_reset travel_3d_note
 		travel_globe travel_globe_stage travel_globe_title travel_globe_close travel_globe_status
-		travel_basemap travel_basemap_stage travel_basemap_title travel_basemap_close travel_basemap_note)) {
+		travel_basemap travel_basemap_stage travel_basemap_title travel_basemap_close travel_basemap_note
+		travel_world travel_world_stage travel_world_title travel_world_close travel_world_note)) {
 	like( $template, qr/id="$id"/, "the window carries #$id" );
 }
 like( $template, qr/long-press for street view, 3D, globe or the house street map/, 'the hint names the four views' );
@@ -40,6 +41,8 @@ like( $travel_js, qr/travelStreetPreview\(at\.lat, at\.lon, at\.sx, at\.sy\)/,
 like( $travel_js, qr/travelNear3dOpen\(at\.lat, at\.lon\)/, '3D model calls the three.js view' );
 like( $travel_js, qr/travelGlobeOpen\(at\.lat, at\.lon\)/, 'Globe calls the Cesium view' );
 like( $travel_js, qr/travelBasemapOpen\(at\.lat, at\.lon\)/, 'House street map calls the MapLibre view' );
+like( $travel_js, qr/jawnosT\('Virtual world'\)/, 'one row is the A-Frame world' );
+like( $travel_js, qr/travelWorldOpen\(at\.lat, at\.lon\)/, 'Virtual world calls the A-Frame view' );
 like( $travel_js, qr/'background-color': 'var\(--panel\)'/, 'the menu wears the guess menu\'s panel colour' );
 like( $travel_js, qr/border: '2px solid var\(--line\)'/, 'and its 2px line and rounded edge' );
 like( $travel_js, qr/closest\('#travel_view_menu'\)/, 'a press away folds the menu' );
@@ -228,5 +231,55 @@ like( $travel_help, qr/fetch_basemap_libs\.sh/, 'and how to install MapLibre and
 like( $travel_help, qr/osm_basemap\.pl --all/, 'and how to build the archive' );
 like( $travel_help, qr/stand up in 3D/, 'the topic says the street map\'s buildings stand up' );
 like( $travel_help, qr/pressed at a tilt/, 'and that the globe opens tilted' );
+like( $travel_help, qr/Virtual world opens the same ground in A-Frame/, 'the topic names the virtual world' );
+like( $travel_help, qr/fetch_aframe\.sh/, 'and how to install A-Frame' );
+like( $travel_help, qr/compass gave a true reading/, 'and that a print faces the way the camera did' );
+like( $travel_help, qr/Elevation is not in the map data/, 'and that the ground is flat because no terrain is staged' );
+
+# ---- the virtual world: its own frame, its own renderer -------------------
+my $world = read_file("$root/public/js/manager/travel/06_world.js");
+like( $world, qr/^function travelWorldOpen\(lat, lon\)/m, 'travelWorldOpen is the view\'s entry point' );
+like( $world, qr/querySourceFeatures\('basemap'/, 'the archive is read through MapLibre\'s loaded tiles' );
+like( $world, qr/travelBasemapStyle\(maxzoom\)/, 'the sampler draws the street map style' );
+like( $world, qr/travelAllMaps/, 'the measured maps are laid on the ground' );
+like( $world, qr/mapData\.near/, 'the places come from the viewer response' );
+like( $world, qr{frame\.src = '/manager/travel/world'}, 'the world runs in its own same-origin frame' );
+like( $world, qr/type: 'travel_world_build'/, 'and the descriptor is posted to it' );
+like( $world, qr/travel_world_photo/, 'a print opens the Gallery at its picture' );
+like( $world, qr/render_height/, 'the buildings\' height is read from the archive' );
+like( $world, qr/function travelWorldClose/, 'the view has a close' );
+
+my $world_page = read_file("$root/templates/travel/world.html.ep");
+like( $world_page, qr/<a-scene id="world_scene" embedded/, 'the frame is an A-Frame scene' );
+like( $world_page, qr/wasd-controls=/, 'walking is offered' );
+like( $world_page, qr{/js/aframe/aframe\.min\.js}, 'the local A-Frame build is loaded' );
+like( $world_page, qr{/js/travel_world\.js}, 'the world renderer is loaded' );
+
+my $renderer = read_file("$root/public/js/travel_world.js");
+like( $renderer, qr/registerComponent\('footprint'/, 'buildings are extruded from their footprint' );
+like( $renderer, qr/ExtrudeGeometry/, 'as real geometry' );
+like( $renderer, qr/registerComponent\('worldphoto'/, 'a picture is a card in the world' );
+like( $renderer, qr/Math\.PI - \(ph\.heading \* Math\.PI \/ 180\)/, 'turned by the heading the camera kept' );
+like( $renderer, qr/registerComponent\('worldlabel'/, 'labels are canvas textures, not a font fetched from a CDN' );
+unlike( $renderer, qr/cdn\.aframe\.io/, 'and nothing is fetched from A-Frame\'s CDN' );
+
+my $aframe_installer = "$root/scripts/fetch_aframe.sh";
+ok( -f $aframe_installer, 'scripts/fetch_aframe.sh exists' );
+ok( -x $aframe_installer, 'and is executable' );
+my $af_text = read_file($aframe_installer);
+like( $af_text, qr/^VERSION=1\.8\.0$/m, 'A-Frame is pinned to the exact npm version' );
+like( $af_text, qr{dist/aframe-v\$\{VERSION\}\.min\.js}, 'and unpacks the pinned browser build' );
+like( $af_text, qr{^DEST="\$ROOT/public/js/aframe"$}m, 'into the page\'s local path' );
+like( read_file("$root/.gitignore"), qr{^public/js/aframe/$}m, 'the installed world is gitignored' );
+
+# A nearby picture now carries the ground it was taken on and the direction the
+# camera kept: the world hangs it there, and the Gallery can say where it is.
+my $nearby = read_file("$root/lib/JawnOS/Manager/Part25.pm");
+like( $nearby, qr/latitude => \$near->\{'fix'\}\{'latitude'\}/, 'a nearby picture carries its fix' );
+like( $nearby, qr/qw\(heading heading_source pitch roll\)/, 'and the direction its camera kept' );
+
+my $route_rows = read_file("$root/lib/JawnOS/Routes/manager_travel.pm");
+like( $route_rows, qr{'/manager/travel/world', 'action_34301'}, 'the world page has its route' );
+like( read_file("$root/lib/JawnOS/Controller/manager_travel.pm"), qr/^sub action_34301 \{/m, 'and its action renders the page without the layout' );
 
 done_testing();

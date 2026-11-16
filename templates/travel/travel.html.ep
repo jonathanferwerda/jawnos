@@ -114,6 +114,16 @@
 		</div>
 	</div>
 
+	<div id="travel_world" style="display:none;position:absolute;inset:0;z-index:13;background:#111;flex-direction:column;">
+		<div style="flex:0 0 36px;display:flex;align-items:center;justify-content:space-between;padding:0 8px;background:rgba(255,255,255,.06);color:#fff;">
+			<span id="travel_world_title" style="font-size:12px;"><%= &subs::ui('Virtual world') %></span>
+			<button id="travel_world_close" hint="<%= &subs::ui('Close the virtual world') %>" style="font-size:18px;line-height:1;background:none;border:0;color:#fff;cursor:var(--jawnos-cursor-pointer, pointer);">✕</button>
+		</div>
+		<div id="travel_world_stage" style="position:relative;flex:1;min-height:0;background:#0b0d10;">
+			<div id="travel_world_note" style="display:none;position:absolute;inset:0;z-index:2;align-items:center;justify-content:center;padding:16px;text-align:center;color:#ddd;background:rgba(11,13,16,.85);font-size:13px;"></div>
+		</div>
+	</div>
+
 	<div id="travel_street_preview" style="display:none;position:absolute;z-index:11;width:250px;border-radius:10px;overflow:hidden;box-shadow:0 6px 22px rgba(0,0,0,.45);background:#111;cursor:var(--jawnos-cursor-pointer, pointer);">
 		<img id="travel_street_preview_img" alt="Street view preview" style="display:none;width:100%;height:126px;object-fit:cover;background:#222;">
 		<div id="travel_street_preview_text" style="font-size:11px;color:#fff;padding:5px 7px;"></div>

@@ -562,7 +562,7 @@ sub travel_nearby_items {
 		$min_lon = $lon - $dlon; $max_lon = $lon + $dlon;
 	}
 	my $fixes = &subs::db_query('select timestamp, latitude, longitude from continent where cast(latitude as real) between ? and ? and cast(longitude as real) between ? and ?', $min_lat, $max_lat, $min_lon, $max_lon)->hashes;
-	my @fix_times;
+	my @fix_rows;
 	foreach my $fix ( @{$fixes} ) {
 		if (!$boxed) {
 			my $cos = cos($lat * 3.14159265358979 / 180);
@@ -570,26 +570,32 @@ sub travel_nearby_items {
 			my $dx = (0 + $fix->{'longitude'} - $lon) * 111320 * $cos;
 			next if (($dx * $dx) + ($dy * $dy)) > ($radius * $radius);
 		}
-		push @fix_times, 0 + $fix->{'timestamp'};
+		push @fix_rows, {
+			timestamp => 0 + $fix->{'timestamp'},
+			latitude => 0 + $fix->{'latitude'},
+			longitude => 0 + $fix->{'longitude'},
+		};
 	}
-	return [] unless scalar @fix_times;
-	@fix_times = sort { $a <=> $b } @fix_times;
+	return [] unless scalar @fix_rows;
+	@fix_rows = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @fix_rows;
 
-	# the nearest fix in time, by binary search over the sorted list
-	my $nearest_gap = sub {
+	# The nearest fix in time, by binary search over the sorted list. It places the
+	# picture on the ground (the Travel world hangs it where it was taken) and is
+	# the reading the map would give it.
+	my $nearest_fix = sub {
 		my ($t) = @_;
-		my ($lo, $hi) = (0, scalar(@fix_times) - 1);
-		my $pos = scalar(@fix_times);
+		my ($lo, $hi) = (0, scalar(@fix_rows) - 1);
+		my $pos = scalar(@fix_rows);
 		while ($lo <= $hi) {
 			my $mid = int(($lo + $hi) / 2);
-			if ($fix_times[$mid] < $t) { $lo = $mid + 1; }
+			if ($fix_rows[$mid]->{'timestamp'} < $t) { $lo = $mid + 1; }
 			else { $pos = $mid; $hi = $mid - 1; }
 		}
 		my $best;
 		foreach my $i ($pos - 1, $pos) {
-			next if $i < 0 || $i > $#fix_times;
-			my $gap = abs($fix_times[$i] - $t);
-			$best = $gap if !defined($best) || $gap < $best;
+			next if $i < 0 || $i > $#fix_rows;
+			my $gap = abs($fix_rows[$i]->{'timestamp'} - $t);
+			$best = { gap => $gap, fix => $fix_rows[$i] } if !defined($best) || $gap < $best->{'gap'};
 		}
 		return $best;
 	};
@@ -607,8 +613,8 @@ sub travel_nearby_items {
 	foreach my $appt ( @{$rows} ) {
 		last if scalar @items >= $limit;
 		my $t = 0 + ($appt->{'timestamp'} || 0);
-		my $gap = $nearest_gap->($t);
-		next unless defined $gap && $gap <= $window;
+		my $near = $nearest_fix->($t);
+		next unless $near && $near->{'gap'} <= $window;
 		my $app = $appt->{'app'} || '';
 		next if &subs::app_private_now($app) && !&subs::private_reachable_now();
 		# a hidden album is never listed here, and a private row (a private project,
@@ -658,6 +664,13 @@ sub travel_nearby_items {
 				uuid => $f->{'uuid'} || '',
 				server_time => $server_time,
 				info => $f->{'info'} || {},
+				# where the picture was taken: the fix nearest it in time. The
+				# Travel world hangs the picture there, so the item carries the
+				# point rather than leaving the caller to find it again.
+				latitude => $near->{'fix'}{'latitude'},
+				longitude => $near->{'fix'}{'longitude'},
+				# the direction the camera was facing, when the picture kept one
+				(map { defined $f->{$_} ? ($_ => $f->{$_}) : () } qw(heading heading_source pitch roll)),
 			};
 		}
 	}

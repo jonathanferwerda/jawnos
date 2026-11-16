@@ -18,6 +18,7 @@ var travelNear3dLoading = false;
 function travelNear3dOpen(lat, lon) {
 	// one layer at a time: opening this closes the globe if it is up
 	if (typeof travelGlobeClose === 'function') { travelGlobeClose(); }
+	if (typeof travelWorldClose === 'function') { travelWorldClose(); }
 	if (travelNear3dState) { travelNear3dClose(); }
 	$('#travel_3d').css('display', 'flex');
 	travelNear3dNote(jawnosT('Building the 3D model…'));

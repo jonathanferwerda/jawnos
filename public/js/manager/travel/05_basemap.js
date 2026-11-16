@@ -35,6 +35,7 @@ function travelBasemapOpen(lat, lon) {
 	// one layer at a time: opening this closes the other two
 	if (typeof travelNear3dClose === 'function') { travelNear3dClose(); }
 	if (typeof travelGlobeClose === 'function') { travelGlobeClose(); }
+	if (typeof travelWorldClose === 'function') { travelWorldClose(); }
 	if (travelBasemapState) { travelBasemapClose(); }
 	$('#travel_basemap').css('display', 'flex');
 	travelBasemapNote(jawnosT('Opening the house\'s street map…'));

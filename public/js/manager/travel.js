@@ -5,6 +5,7 @@
      03_near3d.js - the long press's three.js model of the maps and places
      04_globe.js - the same ground on Cesium's globe
      05_basemap.js - the same ground on the house's own PMTiles street map
+     06_world.js - the same ground as a walkable A-Frame world, with its pictures
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var campusProxy = {};
@@ -268,7 +269,8 @@ function travelViewMenu(lat, lon, sx, sy) {
 		{ view: 'street', label: jawnosT('Photos / street view') },
 		{ view: '3d', label: jawnosT('3D model') },
 		{ view: 'globe', label: jawnosT('Globe') },
-		{ view: 'basemap', label: jawnosT('House street map') }
+		{ view: 'basemap', label: jawnosT('House street map') },
+		{ view: 'world', label: jawnosT('Virtual world') }
 	], function(i, row) {
 		$('<span class="travel_view_menu_row hover"></span>').attr('view', row.view)
 			.css({ display: 'block', padding: '4px', cursor: 'var(--jawnos-cursor-pointer, pointer)', 'border-radius': '5px' })
@@ -290,6 +292,7 @@ $(document).on('click', '.travel_view_menu_row', function() {
 	if (view == '3d' && typeof travelNear3dOpen === 'function') { travelNear3dOpen(at.lat, at.lon); return; }
 	if (view == 'globe' && typeof travelGlobeOpen === 'function') { travelGlobeOpen(at.lat, at.lon); return; }
 	if (view == 'basemap' && typeof travelBasemapOpen === 'function') { travelBasemapOpen(at.lat, at.lon); }
+	if (view == 'world' && typeof travelWorldOpen === 'function') { travelWorldOpen(at.lat, at.lon); }
 });
 
 $(document).on('mousedown touchstart', function(e) {

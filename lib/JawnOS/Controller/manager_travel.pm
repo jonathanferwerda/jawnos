@@ -688,4 +688,14 @@ sub action_34017 {
 	return;
 }
 
+# GET /manager/travel/world
+# The virtual world's own page. It is rendered into an iframe inside the Travel
+# window rather than into the panel: A-Frame brings its own three.js, styles and
+# globals, and none of that may touch the manager. The page itself is inert; the
+# parent posts the scene to it once A-Frame is loaded.
+sub action_34301 {
+	my $c = shift;
+	$c->render( template => 'travel/world', layout => undef );
+}
+
 1;
