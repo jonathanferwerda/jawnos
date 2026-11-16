@@ -152,7 +152,8 @@ like($first_boot, qr/sub _first_run_answers/, 'the pass reads the panel\'s answe
 like($first_boot, qr/sub _set_account_password/, 'the code becomes the account\'s password');
 like($first_boot, qr/chpasswd/, 'through chpasswd, on stdin');
 like($first_boot, qr/print \{\$fh\} "\$user:\$code\\n";/, 'never on argv');
-like($first_boot, qr/\$choice = 'format' if .*\$answers->\{'wipe'\}/, 'the panel\'s wipe answer is the last word');
+like($first_boot, qr/\$choice = \$answers->\{'wipe'\} \? 'format' : ''/, 'the ticked box wipes and an unticked one refuses');
+like($first_boot, qr/if \(!\$opt\{'dry_run'\} && %\{\$answers\}\)/, 'the panel outranks the token, which could not see the card');
 like($first_boot, qr/_first_run_done\(\) unless/, 'and the questions are asked once');
 my $py_ok = system('python3', '-m', 'py_compile', root() . '/scripts/gou_first_run.py');
 is($py_ok, 0, 'the dialog is valid Python');

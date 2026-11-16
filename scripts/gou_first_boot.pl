@@ -985,9 +985,13 @@ unless ($opt{'no_card'}) {
 		my $token_card = ($token->{'token'} || {})->{'card'} // '';
 		$token_card = '' unless $token_card =~ /^(adopt|format)$/;
 		my $choice = $opt{'dry_run'} ? $token_card : (&_card_choice_read() || $token_card);
-		# The panel asked with the card in front of the person: that answer
-		# is the latest word, later than the token and the page's setting.
-		$choice = 'format' if !$opt{'dry_run'} && $answers->{'wipe'};
+		# The panel asked with the card in front of the person. A ticked box is
+		# the latest word and wipes; an unticked box is a refusal, and it outranks
+		# the answer that travelled in the token, given before the flash when the
+		# card could not be seen. A hand-run --format still wins over both.
+		if (!$opt{'dry_run'} && %{$answers}) {
+			$choice = $answers->{'wipe'} ? 'format' : '';
+		}
 		my $plan = &_card_plan($chosen, { format => $opt{'format'}, choice => $choice });
 		$report->{'card'} = $plan;
 		my $prepared = undef;
