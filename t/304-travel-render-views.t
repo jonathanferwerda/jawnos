@@ -248,6 +248,7 @@ like( $world, qr/type: 'travel_world_build'/, 'and the descriptor is posted to i
 like( $world, qr/travel_world_photo/, 'a print opens the Gallery at its picture' );
 like( $world, qr/render_height/, 'the buildings\' height is read from the archive' );
 like( $world, qr/land_colour/, 'and its land cover colours the ground' );
+like( $world, qr/Math\.max\(widthM, heightM\) > 1500/, 'a county plate is skipped: the archive is the detail' );
 like( $world, qr/function travelWorldClose/, 'the view has a close' );
 
 my $world_page = read_file("$root/templates/travel/world.html.ep");

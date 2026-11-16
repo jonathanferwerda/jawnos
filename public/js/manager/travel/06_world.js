@@ -177,6 +177,10 @@ function travelWorldAssemble(st) {
 		var widthM = (bounds.se.lon - bounds.nw.lon) * MPD * cosLat;
 		var heightM = (bounds.nw.lat - bounds.se.lat) * MPD;
 		if (!(widthM > 0) || !(heightM > 0)) { return; }
+		// A county plate is a pale wash at a walker's scale, and laid over the
+		// archive it hides the ground the world is made of. Only a measured map
+		// of this neighbourhood earns a place on the ground.
+		if (Math.max(widthM, heightM) > 1500) { return; }
 		var mid = at((bounds.nw.lat + bounds.se.lat) / 2, (bounds.nw.lon + bounds.se.lon) / 2);
 		var hp = m['home_plate'] || {};
 		var hx = parseFloat(hp['x']), hy = parseFloat(hp['y']);
