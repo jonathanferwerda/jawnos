@@ -23,7 +23,8 @@ var storeRegisterData = {
 	receipt_html: '',
 	search_timer: null,
 	shift: null,
-	shift_report: null
+	shift_report: null,
+	unlock: null
 };
 
 function storeRegisterT(text) {
@@ -523,11 +524,54 @@ function storeRegisterTillTime(ms) {
 	try { return new Date(n).toLocaleString(); } catch (e) { return ''; }
 }
 
+// The passkey button is only drawn when the house has a passkey; it is hidden
+// again on a browser that cannot run WebAuthn.
+function storeRegisterPasskeyAvailable() {
+	return !!(typeof window !== 'undefined' && window.PublicKeyCredential
+		&& navigator.credentials && typeof navigator.credentials.get === 'function');
+}
+
+function storeRegisterNfcAvailable() {
+	if (typeof window === 'undefined') { return false; }
+	if ('NDEFReader' in window) { return true; }
+	return !!(window.JawnNFC && typeof window.JawnNFC.available === 'function' && window.JawnNFC.available() === 'yes');
+}
+
+function storeRegisterB64uToBytes(value) {
+	var s = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+	var pad = s.length % 4;
+	if (pad) { s += '='.repeat(4 - pad); }
+	var bin = atob(s), out = new Uint8Array(bin.length);
+	for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+	return out;
+}
+
+function storeRegisterBytesToB64u(buf) {
+	var b = new Uint8Array(buf), s = '';
+	for (var i = 0; i < b.length; i++) { s += String.fromCharCode(b[i]); }
+	return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function storeRegisterTillUnlocked() {
+	var unlock = storeRegisterData.unlock;
+	var name = (unlock && unlock.name) ? unlock.name : '';
+	$('#store_register_till_unlocked').text(name
+		? storeRegisterT('Unlocked: {0}', name)
+		: storeRegisterT('Not unlocked'));
+	$('#store_register_till_close_unlocked').text(name);
+}
+
+function storeRegisterTillButtons() {
+	$('#store_register_till_passkey, #store_register_till_close_passkey').toggle(storeRegisterPasskeyAvailable());
+	$('#store_register_till_tag_scan').toggle(storeRegisterNfcAvailable());
+}
+
 function storeRegisterTillRefresh(done) {
 	$.getJSON('/manager/store/shift', { timestamp: Date.now() }, function(r) {
 		if (!r || !r.ok) { return; }
 		storeRegisterData.shift = r.shift || null;
 		storeRegisterData.shift_report = r.report || null;
+		storeRegisterData.unlock = r.unlock || null;
 		storeRegisterTillRender();
 		if (typeof done === 'function') { done(r); }
 	});
@@ -537,6 +581,8 @@ function storeRegisterTillRender() {
 	var shift = storeRegisterData.shift;
 	$('#store_register_till_open').toggle(!shift);
 	$('#store_register_till_eod').toggle(!!shift);
+	storeRegisterTillUnlocked();
+	storeRegisterTillButtons();
 	if (!shift) {
 		$('#store_register_till_shift').text(storeRegisterT('No till open'));
 		return;
@@ -545,6 +591,125 @@ function storeRegisterTillRender() {
 		shift.associate || storeRegisterT('Associate'),
 		storeRegisterTillTime(shift.opened_at),
 		numeral(storeRegisterMoney(shift.float)).format('$0.00')));
+}
+
+function storeRegisterTillUnlock(data, statusSel, done) {
+	data = data || {};
+	data.timestamp = Date.now();
+	$(statusSel).text(storeRegisterT('Checking…'));
+	$.ajax({
+		url: '/manager/store/shift/unlock',
+		type: 'POST',
+		data: data,
+		dataType: 'json'
+	}).done(function(r) {
+		if (!r || !r.ok) {
+			$(statusSel).text((r && r.error) || storeRegisterT('That did not unlock the till.'));
+			return;
+		}
+		storeRegisterData.unlock = r.person
+			? { person_uuid: r.person.uuid, name: r.person.name, expires: r.expires }
+			: null;
+		storeRegisterTillUnlocked();
+		$(statusSel).text('');
+		if (typeof done === 'function') { done(r); }
+	}).fail(function() {
+		$(statusSel).text(storeRegisterT('That did not unlock the till.'));
+	});
+}
+
+function storeRegisterTillPinUnlock(statusSel, closing) {
+	var pin = $(closing ? '#store_register_till_close_pin' : '#store_register_till_pin').val() || '';
+	var associate = closing
+		? ((storeRegisterData.shift && storeRegisterData.shift.associate) || '')
+		: ($('#store_register_till_associate').val() || '');
+	if (!/^\d{4,8}$/.test(pin)) {
+		$(statusSel).text(storeRegisterT('A PIN is 4 to 8 digits.'));
+		return;
+	}
+	storeRegisterTillUnlock({ method: 'pin', associate: associate, secret: pin }, statusSel, function() {
+		$('#store_register_till_pin, #store_register_till_close_pin').val('');
+	});
+}
+
+function storeRegisterTillTagUnlock(secret, statusSel) {
+	storeRegisterTillUnlock({ method: 'token', secret: secret || '' }, statusSel, function() {
+		$('#store_register_till_tag_secret, #store_register_till_close_tag_secret').val('');
+	});
+}
+
+// A tap reaches the route through the manager's own NFC reader (it posts the
+// tag to /manager/nfc/read), so this waits for the shift state to name the
+// person. With no reader here, the token box is the fallback.
+function storeRegisterTillTap(statusSel) {
+	if (!storeRegisterNfcAvailable()) {
+		$(statusSel).text(storeRegisterT('No NFC reader here. Type the tag token instead.'));
+		return;
+	}
+	$(statusSel).text(storeRegisterT('Hold the tag to the phone…'));
+	if (typeof nfcListener === 'function') { nfcListener(); }
+	var tries = 0;
+	var timer = setInterval(function() {
+		tries++;
+		$.getJSON('/manager/store/shift', { timestamp: Date.now() }, function(r) {
+			if (r && r.ok && r.unlock && r.unlock.person_uuid) {
+				storeRegisterData.unlock = r.unlock;
+				storeRegisterTillUnlocked();
+				$(statusSel).text('');
+				clearInterval(timer);
+			}
+		});
+		if (tries >= 40) {
+			clearInterval(timer);
+			$(statusSel).text(storeRegisterT('No tag was read. Try again.'));
+		}
+	}, 500);
+}
+
+function storeRegisterTillPasskey(statusSel) {
+	if (!storeRegisterPasskeyAvailable()) {
+		$(statusSel).text(storeRegisterT('This browser has no passkey support.'));
+		return;
+	}
+	$(statusSel).text(storeRegisterT('Waiting for your passkey…'));
+	$.ajax({
+		url: '/manager/webauthn/login/begin',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		dataType: 'json'
+	}).done(function(r) {
+		if (!r || !r.ok) {
+			$(statusSel).text((r && r.error) || storeRegisterT('No passkey is set up.'));
+			return;
+		}
+		var pk = r.publicKey || {};
+		var options = {
+			publicKey: {
+				challenge: storeRegisterB64uToBytes(pk.challenge),
+				rpId: pk.rpId,
+				timeout: pk.timeout,
+				userVerification: pk.userVerification,
+				allowCredentials: (pk.allowCredentials || []).map(function(c) {
+					return { type: c.type, id: storeRegisterB64uToBytes(c.id), transports: c.transports };
+				})
+			}
+		};
+		navigator.credentials.get(options).then(function(cred) {
+			storeRegisterTillUnlock({
+				method: 'webauthn',
+				id: storeRegisterBytesToB64u(cred.rawId),
+				client_data: storeRegisterBytesToB64u(cred.response.clientDataJSON),
+				auth_data: storeRegisterBytesToB64u(cred.response.authenticatorData),
+				signature: storeRegisterBytesToB64u(cred.response.signature)
+			}, statusSel);
+		}).catch(function(e) {
+			$(statusSel).text((e && e.name)
+				? (e.name + ': ' + (e.message || ''))
+				: storeRegisterT('That did not unlock the till.'));
+		});
+	}).fail(function() {
+		$(statusSel).text(storeRegisterT('That did not unlock the till.'));
+	});
 }
 
 function storeRegisterTillStart() {
@@ -671,7 +836,37 @@ $(document).on('click', '#store_register_new', function() {
 $(document).on('click', '#store_register_till_open', function() {
 	$('#store_register_till_close_panel').hide();
 	$('#store_register_till_panel').css('display', 'flex');
+	storeRegisterTillUnlocked();
+	storeRegisterTillButtons();
 	$('#store_register_till_associate').trigger('focus');
+});
+
+$(document).on('click', '#store_register_till_pin_unlock', function() {
+	storeRegisterTillPinUnlock('#store_register_till_unlock_status', false);
+});
+
+$(document).on('click', '#store_register_till_tag_unlock', function() {
+	storeRegisterTillTagUnlock($('#store_register_till_tag_secret').val(), '#store_register_till_unlock_status');
+});
+
+$(document).on('click', '#store_register_till_tag_scan', function() {
+	storeRegisterTillTap('#store_register_till_unlock_status');
+});
+
+$(document).on('click', '#store_register_till_passkey', function() {
+	storeRegisterTillPasskey('#store_register_till_unlock_status');
+});
+
+$(document).on('click', '#store_register_till_close_pin_unlock', function() {
+	storeRegisterTillPinUnlock('#store_register_till_close_unlock_status', true);
+});
+
+$(document).on('click', '#store_register_till_close_tag_unlock', function() {
+	storeRegisterTillTagUnlock($('#store_register_till_close_tag_secret').val(), '#store_register_till_close_unlock_status');
+});
+
+$(document).on('click', '#store_register_till_close_passkey', function() {
+	storeRegisterTillPasskey('#store_register_till_close_unlock_status');
 });
 
 $(document).on('click', '#store_register_till_cancel', function() {
@@ -683,6 +878,7 @@ $(document).on('click', '#store_register_till_start', function() {
 });
 
 $(document).on('click', '#store_register_till_eod', function() {
+	storeRegisterTillButtons();
 	storeRegisterTillEndOfDay();
 });
 

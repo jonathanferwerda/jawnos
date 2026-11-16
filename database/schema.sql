@@ -185,8 +185,14 @@ CREATE TABLE IF NOT EXISTS people (
 	ost VARCHAR(25),
 	server_time VARCHAR(255),
 	app VARCHAR(255),
-	roles LONGTEXT
+	roles LONGTEXT,
+	pin_hash VARCHAR(255),
+	pin_salt VARCHAR(255),
+	pin_set_at VARCHAR(25),
+	till_token_hash VARCHAR(255),
+	till_token_at VARCHAR(25)
 );
+CREATE INDEX IF NOT EXISTS idx3_people on people (till_token_hash);
 CREATE TABLE IF NOT EXISTS roles (
 	uuid VARCHAR(255) unique,
 	name VARCHAR(255),
@@ -490,6 +496,8 @@ CREATE TABLE IF NOT EXISTS store_shift (
 	refunds VARCHAR(25),
 	status VARCHAR(25),
 	notes LONGTEXT,
+	closed_by VARCHAR(500),
+	closed_by_uuid VARCHAR(255),
 	server_time VARCHAR(25),
 	ost VARCHAR(25)
 );

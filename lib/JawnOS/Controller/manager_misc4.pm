@@ -201,6 +201,7 @@ sub action_12622 {
 	my $actions = {};
 	my $msg = eval { return decode_json $jmessage } || [];
 
+	my ($saw_till, $saw_other);
 	foreach my $message ( @{$msg} ) {
 		if (ref $message eq 'HASH' && defined $message->{'crest_code'}) {
 			my $result = &people_crest_import_code($c, $message->{'crest_code'});
@@ -216,6 +217,22 @@ sub action_12622 {
 			}
 			next;
 		}
+		# A till tag carries a token, not an app row. Reading it proves the person
+		# for the next fifteen minutes; the token itself is never kept.
+		if (ref $message eq 'HASH' && defined $message->{'till_token'}) {
+			my $checked = &subs::till_token_check($message->{'till_token'});
+			if ($checked->{'ok'}) {
+				&subs::till_unlock_store($c, $checked->{'person'});
+				$response->{'status'} = 'Till: ' . ($checked->{'person'}->{'name'} // '');
+				$response->{'till_person'} = $checked->{'person'};
+			}
+			else {
+				$response->{'status'} = 'Till tag refused';
+			}
+			$saw_till = 1;
+			next;
+		}
+		$saw_other = 1;
 		# A tag carries either the full row uuid (older writes) or a short `tag`
 		# (the row uuid's first twelve characters). The short form is what a
 		# 144-byte NTAG213 can hold; find the row by whichever the tag has.
@@ -317,6 +334,9 @@ sub action_12622 {
 			&subs::setting_setter({ app => $nfcs->{'app'}, setting => 'nfc', value => $jn });
 		}
 	}
+	# A till tag is a secret spent here, not a setting a peer has any use for;
+	# relaying it would hand the token to every other machine.
+	return $c->render(json => $response) if $saw_till && !$saw_other;
 	# the actions are known now, so a peer can apply exactly these; a benign read
 	# relays an empty map and acts nowhere. The map rides the relay explicitly:
 	# $c->param writes a combined copy that remote_relay_request does not read.

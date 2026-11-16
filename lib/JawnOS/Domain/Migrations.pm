@@ -103,6 +103,14 @@ sub update_database($data) {
 		# catalog itself is house data; a preset's uuid is its key so an
 		# assignment made before the list is saved still resolves.
 		'alter table people add column roles LONGTEXT',
+		# The till's proof of a person: a salted PIN hash and the hash of a tag
+		# token. Neither the PIN nor the token is ever stored.
+		'alter table people add column pin_hash VARCHAR(255)',
+		'alter table people add column pin_salt VARCHAR(255)',
+		'alter table people add column pin_set_at VARCHAR(25)',
+		'alter table people add column till_token_hash VARCHAR(255)',
+		'alter table people add column till_token_at VARCHAR(25)',
+		'create index if not exists idx3_people on people (till_token_hash)',
 		'create table if not exists roles (
 			uuid VARCHAR(255) unique,
 			name VARCHAR(255),
@@ -791,6 +799,9 @@ sub update_database($data) {
 			ost VARCHAR(25)
 		)',
 		'create index if not exists idx1_store_shift on store_shift (device, status)',
+		# Who counted and locked the drawer, when a person was unlocked to do it.
+		'alter table store_shift add column closed_by VARCHAR(500)',
+		'alter table store_shift add column closed_by_uuid VARCHAR(255)',
 		# The first invoice and the first quote are 1001. next_number is the number
 		# the next allocation returns, so minting subtracts one from the advanced
 		# value (and a block subtracts its size).

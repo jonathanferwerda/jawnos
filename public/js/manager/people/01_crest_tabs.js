@@ -339,3 +339,105 @@ $(document).on('click', '.people_person_relational', function() {
 	if (typeof relationalOpener === 'function') { relationalOpener(app); }
 	else { $('#relational_toggle').trigger('click'); }
 });
+
+
+// ---- the till's proof of a person -------------------------------------------
+// A person's card sets a PIN or writes a tag token. The tag holds the token
+// once; the people row keeps only its hash. No handler puts the PIN into a
+// status line, a URL or the console.
+function peopleTillStatus(box, text) {
+	box.find('.people_till_status').text(text || '');
+}
+
+$(document).on('click', '.people_till_pin_set', function() {
+	var box = $(this).closest('.people_person_till');
+	var uuid = box.attr('data-person-uuid') || '';
+	var pin = box.find('.people_till_pin').val() || '';
+	var confirm = box.find('.people_till_pin_confirm').val() || '';
+	if (!uuid) { peopleTillStatus(box, peopleT('No person.')); return; }
+	if (!/^\d{4,8}$/.test(pin)) { peopleTillStatus(box, peopleT('A PIN is 4 to 8 digits.')); return; }
+	if (pin !== confirm) { peopleTillStatus(box, peopleT('The two PINs do not match.')); return; }
+	peopleTillStatus(box, peopleT('Saving…'));
+	$.ajax({
+		url: '/manager/people/till/pin',
+		type: 'POST',
+		data: { uuid: uuid, pin: pin, confirm: confirm, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) {
+				box.find('.people_till_pin, .people_till_pin_confirm').val('');
+				peopleTillStatus(box, peopleT('Saved.'));
+			}
+			else {
+				peopleTillStatus(box, (response && response.error) || peopleT('Could not save.'));
+			}
+		},
+		error: function() { peopleTillStatus(box, peopleT('Could not save.')); }
+	});
+});
+
+$(document).on('click', '.people_till_tag_write', function() {
+	var box = $(this).closest('.people_person_till');
+	var uuid = box.attr('data-person-uuid') || '';
+	if (!uuid) { peopleTillStatus(box, peopleT('No person.')); return; }
+	peopleTillStatus(box, peopleT('Preparing the tag…'));
+	$.ajax({
+		url: '/manager/people/till/tag',
+		type: 'POST',
+		data: { uuid: uuid, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || !response.ok || !response.token) {
+				peopleTillStatus(box, (response && response.error) || peopleT('Could not make the tag.'));
+				return;
+			}
+			peopleTillTagWrite(box, response.token);
+		},
+		error: function() { peopleTillStatus(box, peopleT('Could not make the tag.')); }
+	});
+});
+
+async function peopleTillTagWrite(box, token) {
+	if (!window.JawnNFC || typeof nfc === 'undefined' || !nfc.ndef || typeof nfc.ndef.write !== 'function') {
+		peopleTillStatus(box, peopleT('No NFC reader here. The tag token is') + ' ' + token);
+		return;
+	}
+	if (nfc.writing) {
+		peopleTillStatus(box, peopleT('Another tag is still waiting to be written.'));
+		return;
+	}
+	nfc.writing = true;
+	peopleTillStatus(box, peopleT('Hold the tag to the phone…'));
+	var timer = null;
+	try {
+		var encoder = new TextEncoder();
+		await Promise.race([
+			nfc.ndef.write({
+				records: [{
+					recordType: 'mime',
+					mediaType: 'application/json',
+					data: encoder.encode(JSON.stringify({ till_token: token }))
+				}]
+			}),
+			new Promise(function(resolve, reject) {
+				timer = setTimeout(function() { reject(new Error('timeout')); }, 25000);
+			})
+		]);
+		nfc.lastWrite = Date.now();
+		peopleTillStatus(box, peopleT('Written to the tag.'));
+	}
+	catch (error) {
+		try { if (nfc.ndef.cancelWrite) { nfc.ndef.cancelWrite(); } } catch (e) {}
+		if (error && error.message === 'timeout') {
+			peopleTillStatus(box, peopleT('No tag found. Hold the tag to the phone and try again.'));
+		}
+		else {
+			peopleTillStatus(box, peopleT('Could not write the tag. The tag may be too small; try a larger one.'));
+		}
+	}
+	finally {
+		clearTimeout(timer);
+		nfc.writing = false;
+		if (typeof nfcListener === 'function') { nfcListener(); }
+	}
+}

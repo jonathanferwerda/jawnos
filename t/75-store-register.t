@@ -132,7 +132,7 @@ is_deeply( \@missing, [], 'every till label is written in all sixteen languages'
 
 # ------------------------------------------------------------- the template and JS
 my $register_src = read_file("$root/templates/store/register.html.ep");
-my $rendered = eval { Mojo::Template->new(vars => 1)->name('store/register.html.ep')->render($register_src, { cx => '' }) };
+my $rendered = eval { Mojo::Template->new(vars => 1)->name('store/register.html.ep')->render($register_src, { cx => '', webauthn_available => 0 }) };
 ok( defined $rendered && length $rendered, 'the register template renders' ) or diag($@);
 like( $rendered || '', qr/id="store_register_complete"/, 'a resident session gets the complete-sale control' );
 

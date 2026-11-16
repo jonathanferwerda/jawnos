@@ -81,6 +81,20 @@
 	<button class="people_person_relational" app="<%= $app %>"><%= &subs::ui('Open Relational') %></button>
 </div>
 
+<div class="people_person_till" data-person-uuid="<%= $person->{'uuid'} // '' %>">
+	<h3><%= &subs::ui('Till access') %></h3>
+	<div class="people_note"><%= &subs::ui('Set a 4 to 8 digit PIN, or write a tag, to open or close the till without typing a name.') %></div>
+	<% if ($till_pin_set) { %><div class="people_note"><%= &subs::ui('A till PIN is set. Setting a new one replaces it.') %></div><% } %>
+	<% if ($till_token_set) { %><div class="people_note"><%= &subs::ui('A till tag is set. Writing a new one replaces it.') %></div><% } %>
+	<div class="people_actions">
+		<label class="people_till_pin_field"><span><%= &subs::ui('Till PIN') %></span><input type="password" inputmode="numeric" maxlength="8" autocomplete="new-password" class="people_till_pin"></label>
+		<label class="people_till_pin_field"><span><%= &subs::ui('Confirm PIN') %></span><input type="password" inputmode="numeric" maxlength="8" autocomplete="new-password" class="people_till_pin_confirm"></label>
+		<button type="button" class="people_till_pin_set" hint="<%= &subs::ui('Set till PIN') %>"><%= &subs::ui('Set till PIN') %></button>
+		<button type="button" class="people_till_tag_write" hint="<%= &subs::ui('Write till tag') %>"><%= &subs::ui('Write till tag') %></button>
+		<span class="people_till_status" role="status" aria-live="polite"></span>
+	</div>
+</div>
+
 <% if (($c->session('privilege') || '') eq 'citizen') { %>
 <% my %held_role = map { $_ => 1 } @{ $person_roles || [] }; %>
 <div class="people_person_roles" data-person-uuid="<%= $person->{'uuid'} // '' %>">

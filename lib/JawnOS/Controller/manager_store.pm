@@ -336,6 +336,7 @@ sub action_6411 {
 	my $content = $c->render_to_string(
 		template => 'store/register',
 		cx => $cx,
+		webauthn_available => (scalar @{ &webauthn::credentials() } ? 1 : 0),
 	);
 	$c->render(json => { content => $content, cx => $cx });
 }
@@ -550,19 +551,22 @@ sub action_6420 {
 }
 
 # POST /manager/store/shift/open
-# The drawer is opened with a float and the associate working it. A person named
-# at the counter is matched to their people row so the shift can point at them; a
-# name with nobody behind it is still recorded as the associate.
+# The drawer is opened with a float and the associate working it. A person who
+# unlocked the till on this screen is the associate; a typed name is still the
+# fallback for a shop that has not set a PIN or written a tag.
 sub action_6979 {
 	my $c = shift;
+	my $unlock = &subs::till_unlock_current($c);
 	my $associate = $c->param('associate') // '';
 	$associate =~ s/^\s+|\s+$//g;
 	my $associate_uuid = '';
-	if (length $associate) {
-		my $app = &subs::unformat_name($associate);
-		my $person = eval { &subs::db_select('people', undef, { app => $app, status => 'active' })->hashes->[0] };
-		$person ||= eval { &subs::db_select('people', undef, { name => $associate, status => 'active' })->hashes->[0] };
-		$associate_uuid = $person->{'uuid'} if ref $person eq 'HASH' && defined $person->{'uuid'} && length $person->{'uuid'};
+	if ($unlock) {
+		$associate = $unlock->{'name'} // '';
+		$associate_uuid = $unlock->{'person_uuid'} // '';
+	}
+	elsif (length $associate) {
+		my $person = &subs::till_person_find($associate);
+		$associate_uuid = $person->{'uuid'} if ref $person eq 'HASH' && length($person->{'uuid'} // '');
 	}
 	my $opened = &subs::shift_open({
 		associate => $associate,
@@ -580,13 +584,32 @@ sub action_6979 {
 }
 
 # POST /manager/store/shift/close
-# End of day: count the drawer, record the over or short, and lock the shift. The
-# report comes back with the answer so the screen can show and print it.
+# End of day: count the drawer, record the over or short, and lock the shift. A
+# shift opened for a known person is closed only by that person's live unlock;
+# the closer's own name is recorded either way.
 sub action_6980 {
 	my $c = shift;
 	my $shift = &subs::shift_current(&subs::device_setter());
 	return $c->render(json => { ok => 0, error => 'no till is open' }) unless $shift;
-	my $closed = &subs::shift_close($shift->{'uuid'}, $c->param('counted'), $c->param('notes'));
+	my $unlock = &subs::till_unlock_current($c);
+	# A citizen is the house's own hand: it may count and close a till whose
+	# associate has gone home, and the report says who closed it. A resident
+	# still needs the associate's own live unlock.
+	my $override = (($c->session('privilege') || '') eq 'citizen');
+	if (length($shift->{'associate_uuid'} // '') && !$override) {
+		my $same = $unlock && ($unlock->{'person_uuid'} // '') eq $shift->{'associate_uuid'};
+		return $c->render(json => {
+			ok => 0,
+			need_unlock => 1,
+			error => 'this is ' . ($shift->{'associate'} || 'the associate') . "'s till - unlock as that person to close it",
+		}) unless $same;
+	}
+	my $closer = $unlock
+		? { name => $unlock->{'name'}, uuid => $unlock->{'person_uuid'} }
+		: $override
+		? { name => ($c->session('name') || 'the owner'), uuid => ($c->session('person_uuid') || '') }
+		: undef;
+	my $closed = &subs::shift_close($shift->{'uuid'}, $c->param('counted'), $c->param('notes'), $closer);
 	return $c->render(json => { ok => 0, error => $closed->{'error'} || 'the till could not be closed' })
 		unless $closed->{'ok'};
 	$c->render(json => {
@@ -597,8 +620,9 @@ sub action_6980 {
 }
 
 # GET /manager/store/shift
-# What the till bar draws: the current shift, what the drawer should hold, and
-# whether the house insists on an open till for a cash sale.
+# What the till bar draws: the current shift, what the drawer should hold,
+# whether the house insists on an open till for a cash sale, and the person
+# whose unlock is still live.
 sub action_6981 {
 	my $c = shift;
 	my $shift = &subs::shift_current(&subs::device_setter());
@@ -607,6 +631,65 @@ sub action_6981 {
 		shift => $shift,
 		report => $shift ? &subs::shift_report($shift) : undef,
 		required => &subs::store_shift_required(),
+		unlock => &subs::till_unlock_current($c),
+	});
+}
+
+# POST /manager/store/shift/unlock
+# The person at the drawer proves who they are before the till is opened or
+# closed. A PIN names the person it belongs to; a tag token and a passkey name
+# their own. The answer is a fifteen-minute unlock in the session, not a login.
+sub action_6982 {
+	my $c = shift;
+	my $method = lc($c->param('method') // '');
+	my $secret = $c->param('secret') // '';
+	my $checked;
+	if ($method eq 'pin') {
+		my $person = &subs::till_person_find($c->param('associate'));
+		return $c->render(json => { ok => 0, error => 'choose the person whose PIN it is' }) unless $person;
+		$checked = &subs::till_pin_check($person->{'uuid'}, $secret);
+	}
+	elsif ($method eq 'token') {
+		$checked = &subs::till_token_check($secret);
+	}
+	elsif ($method eq 'webauthn') {
+		my $id = $c->param('id') // '';
+		my $cred = &webauthn::credential_by_id($id);
+		return $c->render(json => { ok => 0, error => 'no such passkey' }) unless $cred;
+		my $cd = $c->param('client_data') // '';
+		my $jd = eval { decode_json(&webauthn::b64u_decode($cd)) } || {};
+		my $challenge = $jd->{'challenge'} // '';
+		my $payload = &webauthn::challenge_take('login', $challenge);
+		return $c->render(json => { ok => 0, error => 'the challenge expired - try again' }) unless $payload;
+		my ($res, $err) = &webauthn::verify_assertion(
+			$cred, $cd, $c->param('auth_data'), $c->param('signature'),
+			$challenge, &webauthn::origin_of($c)
+		);
+		return $c->render(json => { ok => 0, error => $err }) unless $res;
+		my $list = &webauthn::credentials();
+		foreach my $row ( @{$list} ) {
+			next unless ($row->{'id'} || '') eq $id;
+			$row->{'sign_count'} = $res->{'sign_count'};
+			$row->{'last_used'} = &subs::rightNow();
+		}
+		&webauthn::credentials_store($list);
+		my $active = eval { &subs::db_select('people', undef, { uuid => $cred->{'person_uuid'}, status => 'active' })->hash };
+		$checked = ($active && length($active->{'uuid'} // ''))
+			? { ok => 1, person => { uuid => $active->{'uuid'}, name => $active->{'name'} // '' } }
+			: { ok => 0, error => 'that passkey is not linked to an active person' };
+	}
+	else {
+		return $c->render(json => { ok => 0, error => 'choose PIN, tag or passkey' });
+	}
+	return $c->render(json => { ok => 0, error => $checked->{'error'} || 'that did not unlock the till' })
+		unless $checked->{'ok'};
+	my $unlock = &subs::till_unlock_store($c, $checked->{'person'});
+	return $c->render(json => { ok => 0, error => 'the unlock could not be kept' }) unless $unlock;
+	$c->render(json => {
+		ok => 1,
+		method => $method,
+		person => $checked->{'person'},
+		expires => $unlock->{'expires'},
 	});
 }
 

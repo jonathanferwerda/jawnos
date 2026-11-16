@@ -23,15 +23,32 @@
 			<input type="text" id="store_register_till_associate" autocomplete="off">
 		</label>
 		<label class="store_register_till_field">
+			<span><%= &subs::ui('Till PIN') %></span>
+			<input type="password" inputmode="numeric" maxlength="8" id="store_register_till_pin" autocomplete="off">
+		</label>
+		<button type="button" id="store_register_till_pin_unlock" class="store_register_button"><%= &subs::ui('Use PIN') %></button>
+		<label class="store_register_till_field">
+			<span><%= &subs::ui('Tag token') %></span>
+			<input type="text" id="store_register_till_tag_secret" autocomplete="off">
+		</label>
+		<button type="button" id="store_register_till_tag_unlock" class="store_register_button"><%= &subs::ui('Use tag token') %></button>
+		<button type="button" id="store_register_till_tag_scan" class="store_register_button"><%= &subs::ui('Tap tag') %></button>
+		<% if ($webauthn_available) { %>
+			<button type="button" id="store_register_till_passkey" class="store_register_button" style="display:none;"><%= &subs::ui('Use passkey') %></button>
+		<% } %>
+		<label class="store_register_till_field">
 			<span><%= &subs::ui('Float') %></span>
 			<input type="text" inputmode="decimal" id="store_register_till_float" value="0.00">
 		</label>
 		<button type="button" id="store_register_till_start" class="store_register_button"><%= &subs::ui('Start shift') %></button>
 		<button type="button" id="store_register_till_cancel" class="store_register_button"><%= &subs::ui('Cancel') %></button>
+		<span id="store_register_till_unlocked" class="store_register_till_unlocked" role="status" aria-live="polite"></span>
+		<span id="store_register_till_unlock_status" class="store_register_till_status" role="status" aria-live="polite"></span>
 	</div>
 
 	<div id="store_register_till_close_panel" class="store_register_till_close_panel" style="display:none;gap:10px;align-items:center;flex-wrap:wrap;padding:6px 12px;">
 		<span><%= &subs::ui('Expected') %> <b id="store_register_till_expected">$0.00</b></span>
+		<span class="store_register_till_unlocked"><%= &subs::ui('Unlocked') %> <b id="store_register_till_close_unlocked"></b></span>
 		<label class="store_register_till_field">
 			<span><%= &subs::ui('Counted') %></span>
 			<input type="text" inputmode="decimal" id="store_register_till_counted" value="0.00">
@@ -41,6 +58,20 @@
 			<span><%= &subs::ui('Notes') %></span>
 			<input type="text" id="store_register_till_notes" autocomplete="off">
 		</label>
+		<label class="store_register_till_field">
+			<span><%= &subs::ui('Till PIN') %></span>
+			<input type="password" inputmode="numeric" maxlength="8" id="store_register_till_close_pin" autocomplete="off">
+		</label>
+		<button type="button" id="store_register_till_close_pin_unlock" class="store_register_button"><%= &subs::ui('Use PIN') %></button>
+		<label class="store_register_till_field">
+			<span><%= &subs::ui('Tag token') %></span>
+			<input type="text" id="store_register_till_close_tag_secret" autocomplete="off">
+		</label>
+		<button type="button" id="store_register_till_close_tag_unlock" class="store_register_button"><%= &subs::ui('Use tag token') %></button>
+		<% if ($webauthn_available) { %>
+			<button type="button" id="store_register_till_close_passkey" class="store_register_button" style="display:none;"><%= &subs::ui('Use passkey') %></button>
+		<% } %>
+		<span id="store_register_till_close_unlock_status" class="store_register_till_status" role="status" aria-live="polite"></span>
 		<button type="button" id="store_register_till_finish" class="store_register_button"><%= &subs::ui('End of day') %></button>
 		<button type="button" id="store_register_till_close_cancel" class="store_register_button"><%= &subs::ui('Cancel') %></button>
 	</div>

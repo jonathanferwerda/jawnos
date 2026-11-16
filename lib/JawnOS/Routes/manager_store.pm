@@ -35,6 +35,7 @@ sub routes {
 	[6979, 'post', '/manager/store/shift/open', 'action_6979'],
 	[6980, 'post', '/manager/store/shift/close', 'action_6980'],
 	[6981, 'get', '/manager/store/shift', 'action_6981'],
+	[6982, 'post', '/manager/store/shift/unlock', 'action_6982'],
 	);
 }
 

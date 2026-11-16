@@ -107,7 +107,7 @@ our %DOMAIN_MODULE;
 
 	# Till shifts: the drawer a register is worked out of, opened with a float,
 	# counted at End of day.
-	$DOMAIN_MODULE{$_} = 'JawnOS::Domain::Shifts' for qw(shift_open shift_current shift_sales shift_expected shift_close shift_report store_shift_required);
+	$DOMAIN_MODULE{$_} = 'JawnOS::Domain::Shifts' for qw(shift_open shift_current shift_sales shift_expected shift_close shift_report store_shift_required till_pin_valid till_person_find till_pin_set till_pin_fail_count till_pin_check till_token_mint till_token_check till_unlock_store till_unlock_current);
 
 # True for a domain function this loader can provide. Tests use it instead of
 # `defined &subs::name`, which would be false until the module is loaded.

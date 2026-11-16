@@ -454,6 +454,8 @@ sub action_24073 {
 		email => $email,
 		main_image => &people_main_image($app),
 		peer_choices => \@peer_choices,
+		till_pin_set => (length($person->{'pin_hash'} // '') ? 1 : 0),
+		till_token_set => (length($person->{'till_token_hash'} // '') ? 1 : 0),
 	);
 	$c->render(json => { ok => 1, html => $html });
 }
@@ -800,6 +802,36 @@ sub action_24703 {
 	unless ($person) { return $c->render(json => { ok => 0, error => 'no such person' }); }
 	my $roles = &subs::person_roles_write($uuid, &subs::tax_codes_value($c->param('roles')));
 	$c->render(json => { ok => 1, roles => $roles });
+}
+
+
+# POST /manager/people/till/pin
+# Set or replace a person's till PIN. The route never reads the PIN back: it
+# hands the value to the domain helper, which writes only a salt and a hash and
+# counts wrong attempts per person. Nothing here logs the PIN.
+sub action_24704 {
+	my $c = shift;
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $uuid = $c->param('uuid') || '';
+	my $pin = $c->param('pin') // '';
+	my $confirm = $c->param('confirm');
+	$confirm = $pin unless defined $confirm;
+	return $c->render(json => { ok => 0, error => 'the two PINs do not match' }) unless $confirm eq $pin;
+	my $saved = &subs::till_pin_set($uuid, $pin);
+	return $c->render(json => { ok => 0, error => $saved->{'error'} || 'the PIN could not be saved' }) unless $saved->{'ok'};
+	$c->render(json => { ok => 1, person => $saved->{'person'} });
+}
+
+# POST /manager/people/till/tag
+# Mint a tag token. The token is returned once, for the page to write to the
+# tag; only its hash is kept, and minting another revokes this one.
+sub action_24705 {
+	my $c = shift;
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $uuid = $c->param('uuid') || '';
+	my $minted = &subs::till_token_mint($uuid);
+	return $c->render(json => { ok => 0, error => $minted->{'error'} || 'the tag token could not be made' }) unless $minted->{'ok'};
+	$c->render(json => { ok => 1, token => $minted->{'token'}, person => $minted->{'person'} });
 }
 
 

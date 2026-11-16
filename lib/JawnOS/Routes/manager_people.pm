@@ -25,6 +25,8 @@ sub routes {
 	[24701, 'post', '/manager/people/roles/save', 'action_24701'],
 	[24702, 'post', '/manager/people/roles/delete', 'action_24702'],
 	[24703, 'post', '/manager/people/person/roles', 'action_24703'],
+	[24704, 'post', '/manager/people/till/pin', 'action_24704'],
+	[24705, 'post', '/manager/people/till/tag', 'action_24705'],
 	);
 }
 
