@@ -12,7 +12,7 @@ use JawnOSTest;
 
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
-subs::preload($_) for qw(device_call);
+subs::preload($_) for qw(device_call palette_edit_steps);
 
 use MIME::Base64 ();
 
@@ -342,6 +342,49 @@ ok( !defined subs::image_bridge_normalize($png, '', 512),
 	local *subs::device_call = sub { return undef };
 	ok( !defined subs::image_bridge_montage([$png]),
 		'no bridge answer means montage falls back' );
+}
+
+# The palette's steps are what a blank box used to break: each duty now carries
+# the default the app bridge uses, so pressing a button with an empty input
+# changes the picture on a desktop instead of handing magick an empty argument.
+{
+	is_deeply( [ subs::palette_edit_steps([ { duty => 'rotate', value => '' } ]) ],
+		[ { duty => 'rotate', value => '90' } ],
+		'a blank rotate becomes the bridge default' );
+	is_deeply( [ subs::palette_edit_steps([ { duty => 'modulate', value => ' 120% ' } ]) ],
+		[ { duty => 'modulate', value => '120%' } ],
+		'a typed brightness keeps its number as a percentage' );
+	is_deeply( [ subs::palette_edit_steps([ { duty => 'level', value => 'nope' } ]) ],
+		[ { duty => 'level', value => '10%' } ],
+		'a value with no number falls back to the visible default' );
+	is_deeply( [ subs::palette_edit_steps([
+		{ duty => 'black-threshold', value => '' },
+		{ duty => 'gaussian-blur', value => '2' },
+		{ duty => 'sharpen', value => '' },
+	]) ],
+		[
+			{ duty => 'black-threshold', value => '50%' },
+			{ duty => 'gaussian-blur', value => '2' },
+			{ duty => 'sharpen', value => '2' },
+		],
+		'the level, blur and sharpen defaults are the bridge defaults' );
+
+	is_deeply( [ subs::palette_edit_steps([
+		{ duty => 'crop', value => '20x10+5+5' },
+		{ duty => 'crop', value => '' },
+		{ duty => 'crop', value => 'nonsense' },
+	]) ],
+		[ { duty => 'crop', value => '20x10+5+5' } ],
+		'only a real crop geometry is a step' );
+
+	is_deeply( [ subs::palette_edit_steps([
+		{ duty => 'save' }, { duty => 'copy' }, { duty => 'clear' },
+		{ duty => 'fill' }, { duty => 'evil; rm -rf /', value => '1' },
+	]) ],
+		[],
+		'save, copy, clear, fill and an unknown duty are never picture steps' );
+
+	is_deeply( [ subs::palette_edit_steps(undef) ], [], 'no duty list is no steps' );
 }
 
 done_testing();

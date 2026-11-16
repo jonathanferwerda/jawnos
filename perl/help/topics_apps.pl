@@ -126,16 +126,18 @@ $topic{'gallery'} = {
 	};
 $topic{'marker'} = {
 		title => 'Marker', category => 'apps', app => 'marker',
-		controls => [ 'Bring to front', 'Delete', 'Delete layer', 'Double click to rename', 'Erase with the current brush', 'Fit the drawing (0 key)', 'Gallery', 'Hide the toolbox', 'Load this drawing in the marker', 'Lower layer', 'New drawing', 'New layer', 'Pause', 'Play', 'Raise layer', 'Record', 'Redo', 'Save this drawing as a session', 'Show the toolbox', 'Show/hide', 'Start', 'Stylus (palm protection)', 'Target', 'Undo' ],
+		controls => [ 'Black level', 'Blur', 'Bring to front', 'Brightness', 'Contrast', 'Crop', 'Delete', 'Delete layer', 'Double click to rename', 'Erase with the current brush', 'Fit the drawing (0 key)', 'Gallery', 'Hide the toolbox', 'Load this drawing in the marker', 'Lower layer', 'New drawing', 'New layer', 'Pause', 'Play', 'Raise layer', 'Record', 'Redo', 'Rotate', 'Save this drawing as a session', 'Sharpen', 'Show the toolbox', 'Show/hide', 'Start', 'Stylus (palm protection)', 'Target', 'Undo' ],
 		verified => '2026-11-15',
 		summary => 'A layered paint board for drawing and annotation.',
 		body => [
-			'Marker is a layered paint board with pencil, paintbrush, spray, fill and matching erase tools, plus undo and redo, zoom and pan.',
+			'Marker is a layered paint board with pencil, paintbrush, spray, blur and fill tools, an erase toggle for the drawing brushes, plus undo and redo, zoom and pan.',
+			'The blur brush softens the pixels under it as you draw, so a stroke smears and smooths rather than adding colour.',
 			'It reads stylus pressure and ignores your palm on a tablet, and it autosaves so a refresh never loses a painting.'
 		],
 		steps => [
-			'Open Marker and pick a tool from the palette — pencil, brush, spray, fill or erase.',
+			'Open Marker and pick a tool from the palette — pencil, brush, spray, blur, fill or erase.',
 			'Add a layer for anything you want to keep separate, and name it by double-clicking.',
+			'Select a layer and use the transform row under the layer list — rotate, crop, brightness, contrast, black level, blur or sharpen — typing a number first; a crop is the rectangle you drag, and it applies when you let go.',
 			'Your work autosaves; reopen the drawing later from the marker\'s session list.'
 		],
 		related => [ 'gallery', 'studio' ]

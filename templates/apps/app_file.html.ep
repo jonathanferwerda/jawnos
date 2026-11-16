@@ -42,8 +42,7 @@
 					<img class="little_thumb palette_toggle hover" src="<%= &subs::icon_for('/images/decipherable/palette.png') %>" hint="Palette" file="<%= $f->{'file'} %>">
 					<div class="palette" style="border:solid;border-width:3px;border-radius:5px;display:none;" uuid="<%= $f->{'uuid'} %>" file="<%= $f->{'file'} %>">
 						<input class="palette_input" style="width:50px;vertical-align:top;" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="fill" src="<%= &subs::icon_for('/images/palette/fill.png') %>" hint="Fill" file="<%= $f->{'file'} %>">
-						<img class="little_thumb palette_duty" duty="rotate" src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Refresh" file="<%= $f->{'file'} %>">
+						<img class="little_thumb palette_duty" duty="rotate" src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Rotate" file="<%= $f->{'file'} %>">
 						<img class="little_thumb palette_duty" duty="crop" src="<%= &subs::icon_for('/images/palette/crop.png') %>" hint="Crop" file="<%= $f->{'file'} %>">
 						<img class="little_thumb palette_duty" duty="modulate" src="<%= &subs::icon_for('/images/palette/brightness.png') %>" hint="Brightness" file="<%= $f->{'file'} %>">
 						<img class="little_thumb palette_duty" duty="level" src="<%= &subs::icon_for('/images/palette/contrast.png') %>" hint="Contrast" file="<%= $f->{'file'} %>">

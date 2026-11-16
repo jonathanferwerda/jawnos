@@ -305,6 +305,56 @@ sub image_bridge_save {
 	return undef;
 }
 
+# The palette's steps, as the picture route runs them. A duty arrives from the
+# input box beside the palette, and a blank box used to hand magick
+# `-rotate ''` - an error that changed nothing, so most of the buttons looked
+# dead. The app bridge substitutes a default for a blank value; this is the
+# same table in Perl, so a desktop's magick pipeline and a phone's bridge make
+# the same visible edit. `fill` changed no pixel under magick (a bare -fill only
+# sets a drawing setting), so it is not a step; save, copy and clear are the
+# route's own duties and never touch the picture.
+#
+# A value is the first number typed, so "120%", " 120 " and "120" all read the
+# same, and the percentage duties say so with a % the bridge reads and magick
+# accepts. Crop carries its selection geometry instead of a number.
+my %palette_step_default = (
+	'rotate'          => [ 90,  ''  ],
+	'modulate'        => [ 110, '%' ],
+	'level'           => [ 10,  '%' ],
+	'black-threshold' => [ 50,  '%' ],
+	'gaussian-blur'   => [ 3,   ''  ],
+	'sharpen'         => [ 2,   ''  ],
+);
+
+sub palette_edit_steps {
+	my ($duties) = @_;
+	return () unless ref $duties eq 'ARRAY';
+	my @steps;
+	foreach my $d ( @{$duties} ) {
+		next unless ref $d eq 'HASH';
+		my $duty = $d->{'duty'};
+		next unless defined $duty && $duty =~ /^[a-z][a-z-]*$/;
+		next if $duty eq 'save' || $duty eq 'copy' || $duty eq 'clear';
+		my $raw = defined $d->{'value'} ? '' . $d->{'value'} : '';
+		if ($duty eq 'crop') {
+			# the selection is the value: without a geometry there is nothing
+			# to crop, and magick would fail the whole list
+			my $geo = $raw;
+			$geo =~ s/^\s+//;
+			$geo =~ s/\s+$//;
+			next unless $geo =~ /^\d+x\d+[+-]\d+[+-]\d+$/;
+			push @steps, { duty => 'crop', value => $geo };
+			next;
+		}
+		my ($default, $suffix) = @{ $palette_step_default{$duty} || [] };
+		next unless defined $default;
+		my ($number) = $raw =~ /([-+]?[0-9]*\.?[0-9]+)/;
+		$number = $default unless defined $number;
+		push @steps, { duty => $duty, value => $number . $suffix };
+	}
+	return @steps;
+}
+
 # The palette's duties are a list of per-file steps - rotate, crop, modulate,
 # level, black-threshold, gaussian-blur, sharpen - which the route used to run
 # as one `magick <file> -<duty> <value> <file>` per step. The bridge applies the

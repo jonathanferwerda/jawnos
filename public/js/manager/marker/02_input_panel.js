@@ -162,7 +162,7 @@ function markerToolSetup() {
 	// the old Marker tool is the pencil, and the old Eraser is the pencil with erase on
 	if (tool == 'marker') { tool = 'pencil'; }
 	if (tool == 'eraser') { tool = 'pencil'; erase = true; }
-	if (['pencil','brush','spray','fill','kb','sample'].indexOf(tool) == -1) { tool = 'pencil'; }
+	if (['pencil','brush','spray','blur','fill','kb','sample'].indexOf(tool) == -1) { tool = 'pencil'; }
 	localStorage.setItem('marker_tool', tool);
 	localStorage.setItem('marker_erase', erase ? 'on' : 'off');
 	$('.marker_tool[tool]').removeClass('selected');
@@ -276,6 +276,12 @@ $(document).on('click', '.marker_layer_front', function() {
 	markerLayerList();
 	markerCompose();
 	markerAutosaveSoon();
+});
+
+// the palette's transforms act on the layer selected in the list above, not on
+// the whole drawing - the number box is shared, exactly like the palette's
+$(document).on('click', '.marker_transform', function() {
+	markerLayerTransform($(this).attr('duty'), $('.marker_transform_input').val());
 });
 
 // ---- undo / redo / sessions -------------------------------------------

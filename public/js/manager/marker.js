@@ -415,6 +415,26 @@ function markerHistoryWholeLayer() {
 
 // apply a record and hand back the record that would undo this application
 function markerApplyRecord(record) {
+	if (record.kind == 'layer') {
+		// a transform record carries the canvas size with the pixels, so undo
+		// gives a rotated or cropped layer its old shape back
+		var inverse = [];
+		$.each(record.layers, function(i, snapshot) {
+			var layer = markerLayerByUuid(snapshot.uuid);
+			if (!layer) { return; }
+			inverse.push({
+				uuid: snapshot.uuid,
+				width: layer.canvas.width,
+				height: layer.canvas.height,
+				data: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height)
+			});
+			layer.canvas.width = snapshot.width;
+			layer.canvas.height = snapshot.height;
+			layer.ctx.putImageData(snapshot.data, 0, 0);
+		});
+		if (inverse.length == 0) { return undefined; }
+		return { kind: 'layer', layers: inverse };
+	}
 	if (record.kind == 'rect') {
 		var inverse = [];
 		$.each(record.layers, function(i, crop) {
@@ -438,6 +458,7 @@ function markerUndo() {
 	var inverse = markerApplyRecord(record);
 	if (inverse) { markerRedo.push(inverse); }
 	markerLayerList();
+	markerViewClamp();
 	markerCompose();
 }
 
@@ -447,6 +468,7 @@ function markerRedoStep() {
 	var inverse = markerApplyRecord(record);
 	if (inverse) { markerHistory.push(inverse); }
 	markerLayerList();
+	markerViewClamp();
 	markerCompose();
 }
 

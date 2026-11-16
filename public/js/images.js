@@ -789,8 +789,43 @@ $(document).on('click', '.detail_image', function() {
 });
 
 var palette_duties = {};
+
+// One edit request carries the whole list of steps collected for the file and
+// asks the server to run them against a fresh copy of the original - which is
+// why the list is resent rather than the last step alone. `duty` says which
+// button was pressed (save, copy and clear act on the file itself).
+function palettePost(file, duty) {
+	var image = $('.detail_image[file="' + file + '"]');
+	if (image.length == 0) { return; }
+	var detail = image.closest('.appointment_detail');
+	var duties = JSON.stringify(palette_duties[file] || []);
+	$.ajax({
+		url: '/manager/palette',
+		type: 'post',
+		data: {
+			uuid: detail.attr('uuid'),
+			type: image.attr('type'),
+			duties: duties,
+			duty: duty,
+			value: '',
+			file: file,
+			app: image.closest('.appointment').attr('app'),
+			timestamp: image.attr('timestamp')
+		},
+		success: function(response) {
+			if (response && response['image']) { image.attr('src', response['image']); }
+			if (duty != 'save' && duty != 'clear') {
+				$('.palette_duty[duty="clear"][file="' + file + '"]').show();
+				$('.palette_duty[duty="save"][file="' + file + '"]').show();
+			}
+			else {
+				palette_duties[file] = [];
+			}
+		}
+	});
+}
+
 $(document).on('click', '.palette_duty', function() {
-	var app = $(this).closest('.appointment').attr('app');
 	var uuid = $(this).closest('.appointment_detail').attr('uuid');
 	var file_uuid = $(this).closest('.palette').attr('uuid');
 	var id = uuid + '_' + file_uuid;
@@ -800,15 +835,12 @@ $(document).on('click', '.palette_duty', function() {
 	var file = $(this).attr('file');
 	var value = $('.palette_input[file="' + file + '"]').val();
 	var image = $('.detail_image[file="' + file + '"]');
-	var type = $('.detail_image[file="' + file + '"]').attr('type');
-
 	var timestamp = image.attr('timestamp');
 	var duty_watch = { duty: duty, value: value };
 	if (palette_duties[file] == undefined) {
 		palette_duties[file] = [];
 	}
 	palette_duties[file].push(duty_watch);
-	var duties = JSON.stringify(palette_duties[file]);
 	if (duty == 'clear') {
 		image.attr('src', '/file_open?file=' + file + '&timestamp=' + timestamp);
 		palette_duties[file] = [];
@@ -833,21 +865,7 @@ $(document).on('click', '.palette_duty', function() {
 		}
 	}
 	else {
-		$.ajax({
-			url: '/manager/palette',
-			type: 'post',
-			data: { uuid: uuid, type: type, duties: duties, duty: duty, value: value, file: file, app: app, timestamp: timestamp },
-			success: function(response) {
-				image.attr('src', response['image']);
-				if (duty != 'save' && duty != 'clear') {
-					$('.palette_duty[duty="clear"][file="' + file + '"]').show();
-					$('.palette_duty[duty="save"][file="' + file + '"]').show();
-				}
-				else {
-					palette_duties[file] = [];
-				}
-			}
-		});
+		palettePost(file, duty);
 	}
 });
 
@@ -857,12 +875,25 @@ $(document).on('dblclick', 'canvas[tool="crop"]', function() {
 	cropTool = [];
 });
 
+// Letting go completes the crop: it is sent like every other duty instead of
+// waiting for the next one, and the canvas steps aside for the picture the
+// server hands back.
 $(document).on('mouseout touchend mouseup', 'canvas[tool="crop"]', function() {
+	var canvas = $(this);
+	if (cropTool[0] && cropTool[1]) {
+		var image = $('.detail_image[app_uuid="' + canvas.attr('app_uuid') + '"][file_uuid="' + canvas.attr('file_uuid') + '"]');
+		canvas.hide();
+		image.show();
+		palettePost(image.attr('file'), 'crop');
+	}
 	cropTool = [];
 });
 
 $(document).on('mousemove touchmove click', 'canvas[tool="crop"]', function(m) {
 	var ct = $(this);
+	// the click that follows the release would otherwise start a new selection
+	// on the canvas we just put away
+	if (!ct.is(':visible')) { return; }
 	var x = m.originalEvent.clientX;
 	var y = m.originalEvent.clientY;
 	if (m.originalEvent.targetTouches) {
@@ -895,14 +926,23 @@ $(document).on('mousemove touchmove click', 'canvas[tool="crop"]', function(m) {
 			var owidth = dimage.width();
 			var oheight = dimage.height();
 			dimage.height(''); dimage.width('');
-			var dwidth = dimage.width();
-			var dheight = dimage.height();
+			var dwidth = dimage.width() || canvas.width;
+			var dheight = dimage.height() || canvas.height;
 			dimage.width(owidth); dimage.height(oheight);
 
-			var geo = numeral((cropTool[1][0] - cropTool[0][0]) / (canvas.width / dwidth)).format('0') + 'x'
-				+ numeral((cropTool[1][1] - cropTool[0][1]) / (canvas.height / dheight)).format('0') + '+'
-				+ numeral(cropTool[0][0] / (canvas.width / dwidth)).format('0') + '+'
-				+ numeral(cropTool[0][1] / (canvas.height / dheight)).format('0');
+			// a drag in any direction is a crop, and one that ran past the edge
+			// keeps only the part that was over the picture
+			var scale_x = canvas.width / dwidth;
+			var scale_y = canvas.height / dheight;
+			var left = Math.max(0, Math.min(canvas.width, Math.min(cropTool[0][0], cropTool[1][0])));
+			var top = Math.max(0, Math.min(canvas.height, Math.min(cropTool[0][1], cropTool[1][1])));
+			var right = Math.max(0, Math.min(canvas.width, Math.max(cropTool[0][0], cropTool[1][0])));
+			var bottom = Math.max(0, Math.min(canvas.height, Math.max(cropTool[0][1], cropTool[1][1])));
+
+			var geo = Math.max(1, Math.round((right - left) / scale_x)) + 'x'
+				+ Math.max(1, Math.round((bottom - top) / scale_y)) + '+'
+				+ Math.round(left / scale_x) + '+'
+				+ Math.round(top / scale_y);
 
 			var duty_watch = { duty: 'crop', value: geo };
 			if (palette_duties[file] == undefined) {

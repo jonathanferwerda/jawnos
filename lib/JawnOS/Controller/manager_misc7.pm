@@ -318,39 +318,42 @@ sub action_25772 {
 	my $app = $c->param('app');
 	my $timestamp = $c->param('timestamp');
 	my $duty = $c->param('duty');
-	my $value = $c->param('value');
 	my $file = $c->param('file');
-	my $type = $c->param('type');
+	my $type = $c->param('type') || '';
 	my $uuid = $c->param('uuid');
 	my $returner = {};
-	my $job = { ext => '.png' };
-	my $image;
+	my $job = { ext => 'png' };
 	my $duties = eval { return decode_json $c->param('duties') } || [];
-	my $sd = &subs::home('~/.president/') . &subs::random_string_creator() . $job->{'ext'};
+	# The palette's temp file keeps the picture's own format, so the bytes the
+	# browser is handed are the bytes it is told they are. A sealed name ends in
+	# .enc, which is not an image format, so the media suffix before it is used;
+	# a format magick cannot write falls back to PNG.
+	my $ext = defined $file ? $file : '';
+	$ext =~ s/\.enc$//i;
+	$ext = ($ext =~ /\.([A-Za-z0-9]+)$/) ? lc $1 : 'png';
+	$ext = 'jpg' if $ext eq 'jpeg';
+	$ext = 'tiff' if $ext eq 'tif';
+	$ext = 'png' unless grep { $_ eq $ext } qw(jpg png gif bmp webp tiff);
+	my $sd = &subs::home('~/.president/') . &subs::random_string_creator() . '.' . $ext;
 	if ($type eq 'snapshot') {
 	}
 	else {
 		$job = &rock_and_roll($c);
 		my $data = $job->{'data'};
-		$sd = &subs::home('~/.president/') . &subs::random_string_creator() . $job->{'ext'};
 		chomp $data;
 		write_file($sd, $data);
 
 	}
 	my $original = &subs::db_select('appointments', undef, { app => $app, uuid => $uuid })->hashes;
 	my $files = eval { return decode_json $original->[0]->{'file'} } || [];
-	my @edits;
-	foreach my $d ( @{$duties} ) {
-		$duty = $d->{'duty'};
-		$value = $d->{'value'};
-		next if grep { $_ eq $duty } qw/save copy clear/;
-		push @edits, { duty => $duty, value => $value };
-	}
+	# A blank input box is given the same default the app bridge uses, so every
+	# step works the first time it is pressed on a desktop as well as a phone.
+	my @edits = &subs::palette_edit_steps($duties);
 	# The phone has no magick: one bridge call applies the whole list. A desktop,
 	# where the bridge answers undef, keeps the per-step command it always ran.
 	if (@edits && !&subs::image_bridge_edit($sd, \@edits)) {
 		foreach my $e ( @edits ) {
-			system('magick', $sd, '-' . $e->{'duty'}, ( defined $e->{'value'} ? $e->{'value'} : '' ), $sd);
+			system('magick', $sd, '-' . $e->{'duty'}, $e->{'value'}, $sd);
 		}
 	}
 	if ($duty eq 'copy') {
@@ -429,7 +432,12 @@ sub action_25772 {
 		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	}
 	else {
-		$returner->{'image'} = 'data:' . $job->{'fd'} . ';base64,' . encode_base64 read_file($sd);
+		my $bytes = read_file($sd);
+		# The edited temp file may have been written in the picture's own format
+		# (a JPEG stays a JPEG) or re-encoded by the bridge, so the type comes
+		# from the bytes rather than from the name that was read.
+		my $mime = &subs::plaintext_verdict(substr($bytes, 0, 65536)) || $job->{'fd'} || 'image/png';
+		$returner->{'image'} = 'data:' . $mime . ';base64,' . encode_base64($bytes);
 	}
 	system('shred', '-u', $sd);
 	$c->render(json => $returner);

@@ -138,6 +138,40 @@ function markerSprayBurst(ctx, x, y) {
 	}
 }
 
+// The blur brush averages the pixels under the brush and writes them back, so a
+// stroke smears them toward each other. The patch is read wider than the brush
+// by the blur radius, so the average at the edge samples real neighbours, and
+// only the round footprint is written back.
+function markerBlurDab(ctx, x, y, size) {
+	var canvas = ctx.canvas;
+	var radius = Math.max(1, Math.round(size / 2));
+	var blur = Math.max(1, Math.min(6, Math.round(size / 8) || 1));
+	var margin = blur + 1;
+	var left = Math.max(0, Math.floor(x) - radius - margin);
+	var top = Math.max(0, Math.floor(y) - radius - margin);
+	var right = Math.min(canvas.width, Math.floor(x) + radius + margin);
+	var bottom = Math.min(canvas.height, Math.floor(y) + radius + margin);
+	var width = right - left;
+	var height = bottom - top;
+	if (width < 2 || height < 2) { return; }
+	var image = ctx.getImageData(left, top, width, height);
+	var blurred = markerBlurImage(image, blur).data;
+	var data = image.data;
+	var centre_x = x - left, centre_y = y - top;
+	for (var py = 0; py < height; py++) {
+		for (var px = 0; px < width; px++) {
+			var dx = px - centre_x, dy = py - centre_y;
+			if (dx * dx + dy * dy > radius * radius) { continue; }
+			var offset = (py * width + px) * 4;
+			data[offset] = blurred[offset];
+			data[offset + 1] = blurred[offset + 1];
+			data[offset + 2] = blurred[offset + 2];
+			data[offset + 3] = blurred[offset + 3];
+		}
+	}
+	ctx.putImageData(image, left, top);
+}
+
 function markerSprayTick() {
 	if (!markerStroke.drawing || markerStroke.tool != 'spray') {
 		markerStroke.spraying = false;
@@ -204,6 +238,261 @@ function markerFloodFill(x, y) {
 	layer.ctx.putImageData(image, 0, 0);
 	markerCompose();
 	return { x0: min_x, y0: min_y, x1: max_x + 1, y1: max_y + 1 };
+}
+
+// ---- layer transforms --------------------------------------------------
+// The picture Palette's duties, applied to the layer chosen in the layer
+// list: rotate, crop, brightness, contrast, black level, blur and sharpen. The
+// arithmetic is the app bridge's image.edit (and magick's) arithmetic, so a
+// layer edited here looks the way a picture edited in the palette does, and a
+// blank box takes the same default the palette does.
+
+var markerTransformDefaults = {
+	'rotate': 90,
+	'modulate': 110,
+	'level': 10,
+	'black-threshold': 50,
+	'gaussian-blur': 3,
+	'sharpen': 2
+};
+
+// the first number typed, so "120%", " 120" and "120" all read the same
+function markerTransformNumber(value, fallback) {
+	var match = /([-+]?[0-9]*\.?[0-9]+)/.exec(value || '');
+	if (!match) { return fallback; }
+	var number = parseFloat(match[1]);
+	return isNaN(number) ? fallback : number;
+}
+
+function markerClampIndex(index, size) {
+	if (index < 0) { return 0; }
+	if (index >= size) { return size - 1; }
+	return index;
+}
+
+function markerClampChannel(value) {
+	if (value <= 0) { return 0; }
+	if (value >= 255) { return 255; }
+	return Math.round(value);
+}
+
+// a fresh canvas for a layer, so a transform that changes the document's shape
+// replaces its pixels rather than leaving a stale, clipped one behind
+function markerLayerCanvas(layer, width, height) {
+	var canvas = document.createElement('canvas');
+	canvas.width = Math.max(1, Math.round(width));
+	canvas.height = Math.max(1, Math.round(height));
+	layer.canvas = canvas;
+	layer.ctx = canvas.getContext('2d');
+	return layer;
+}
+
+function markerLayerPixelRecord(layer) {
+	return { kind: 'rect', layers: [{
+		uuid: layer.uuid,
+		x: 0,
+		y: 0,
+		w: layer.canvas.width,
+		h: layer.canvas.height,
+		data: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height)
+	}] };
+}
+
+// a transform that changes the canvas size needs the size in its undo record:
+// a 'rect' record puts old pixels back into whatever canvas it finds
+function markerLayerCanvasRecord(layer) {
+	return { kind: 'layer', layers: [{
+		uuid: layer.uuid,
+		width: layer.canvas.width,
+		height: layer.canvas.height,
+		data: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height)
+	}] };
+}
+
+function markerLayerRotate(layer, degrees) {
+	var turn = degrees % 360;
+	if (turn < 0) { turn += 360; }
+	if (!turn) { return false; }
+	var w = layer.canvas.width, h = layer.canvas.height;
+	if (!w || !h) { return false; }
+	var radians = turn * Math.PI / 180;
+	// a turn that is not a right angle grows the canvas to fit the corners,
+	// the way magick -rotate does
+	var width = Math.round(Math.abs(w * Math.cos(radians)) + Math.abs(h * Math.sin(radians)));
+	var height = Math.round(Math.abs(w * Math.sin(radians)) + Math.abs(h * Math.cos(radians)));
+	var source = layer.canvas;
+	markerLayerCanvas(layer, width, height);
+	layer.ctx.translate(layer.canvas.width / 2, layer.canvas.height / 2);
+	layer.ctx.rotate(radians);
+	layer.ctx.drawImage(source, -w / 2, -h / 2);
+	return true;
+}
+
+// magick's crop geometry: WxH+X+Y, keeping the part that was over the layer
+function markerLayerCrop(layer, geometry) {
+	var match = /^\s*(\d+)x(\d+)([+-]\d+)([+-]\d+)\s*$/.exec(geometry || '');
+	if (!match) { return false; }
+	var width = parseInt(match[1], 10);
+	var height = parseInt(match[2], 10);
+	var left = Math.max(0, parseInt(match[3], 10));
+	var top = Math.max(0, parseInt(match[4], 10));
+	var right = Math.min(layer.canvas.width, left + width);
+	var bottom = Math.min(layer.canvas.height, top + height);
+	if (right - left < 1 || bottom - top < 1) { return false; }
+	var source = layer.canvas;
+	markerLayerCanvas(layer, right - left, bottom - top);
+	layer.ctx.drawImage(source, left, top, layer.canvas.width, layer.canvas.height, 0, 0, layer.canvas.width, layer.canvas.height);
+	return true;
+}
+
+// one horizontal or vertical box pass over RGBA bytes, with a running sum so
+// the cost does not grow with the radius
+function markerBoxPass(src, dst, width, height, radius, horizontal) {
+	var span = radius * 2 + 1;
+	var lines = horizontal ? height : width;
+	var length = horizontal ? width : height;
+	for (var line = 0; line < lines; line++) {
+		var a = 0, r = 0, g = 0, b = 0;
+		for (var k = -radius; k <= radius; k++) {
+			var index = markerClampIndex(k, length);
+			var offset = horizontal ? (line * width + index) * 4 : (index * width + line) * 4;
+			a += src[offset];
+			r += src[offset + 1];
+			g += src[offset + 2];
+			b += src[offset + 3];
+		}
+		for (var i = 0; i < length; i++) {
+			var out = horizontal ? (line * width + i) * 4 : (i * width + line) * 4;
+			dst[out] = a / span;
+			dst[out + 1] = r / span;
+			dst[out + 2] = g / span;
+			dst[out + 3] = b / span;
+			var leaving = markerClampIndex(i - radius, length);
+			var entering = markerClampIndex(i + radius + 1, length);
+			var out_offset = horizontal ? (line * width + leaving) * 4 : (leaving * width + line) * 4;
+			var in_offset = horizontal ? (line * width + entering) * 4 : (entering * width + line) * 4;
+			a += src[in_offset] - src[out_offset];
+			r += src[in_offset + 1] - src[out_offset + 1];
+			g += src[in_offset + 2] - src[out_offset + 2];
+			b += src[in_offset + 3] - src[out_offset + 3];
+		}
+	}
+}
+
+// three box passes stand in for a Gaussian, exactly as the bridge's blur does
+function markerBlurImage(image, sigma) {
+	var width = image.width, height = image.height;
+	var src = new Uint8ClampedArray(image.data);
+	var tmp = new Uint8ClampedArray(src.length);
+	var radius = Math.max(1, Math.round(sigma));
+	for (var pass = 0; pass < 3; pass++) {
+		markerBoxPass(src, tmp, width, height, radius, true);
+		markerBoxPass(tmp, src, width, height, radius, false);
+	}
+	return new ImageData(src, width, height);
+}
+
+// a 3x3 kernel whose strength follows sigma, the bridge's sharpen
+function markerSharpenImage(image, sigma) {
+	var width = image.width, height = image.height;
+	var src = image.data;
+	var dst = new Uint8ClampedArray(src.length);
+	var amount = Math.min(0.25, Math.max(0.05, sigma / 16));
+	var centre = 1 + 8 * amount;
+	var edge = -amount;
+	for (var y = 0; y < height; y++) {
+		for (var x = 0; x < width; x++) {
+			var a = 0, r = 0, g = 0, b = 0;
+			for (var dy = -1; dy <= 1; dy++) {
+				var row = markerClampIndex(y + dy, height) * width;
+				for (var dx = -1; dx <= 1; dx++) {
+					var offset = (row + markerClampIndex(x + dx, width)) * 4;
+					var weight = (dx == 0 && dy == 0) ? centre : edge;
+					a += src[offset] * weight;
+					r += src[offset + 1] * weight;
+					g += src[offset + 2] * weight;
+					b += src[offset + 3] * weight;
+				}
+			}
+			var out = (y * width + x) * 4;
+			dst[out] = markerClampChannel(a);
+			dst[out + 1] = markerClampChannel(r);
+			dst[out + 2] = markerClampChannel(g);
+			dst[out + 3] = markerClampChannel(b);
+		}
+	}
+	return new ImageData(dst, width, height);
+}
+
+// brightness (modulate), contrast (level), black level, blur and sharpen all
+// keep the canvas size; they change its pixels in place
+function markerLayerFilter(layer, duty, value) {
+	var image = layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height);
+	var data = image.data;
+	var i;
+	if (duty == 'modulate') {
+		var scale = Math.max(0, value / 100);
+		for (i = 0; i < data.length; i += 4) {
+			data[i] = markerClampChannel(data[i] * scale);
+			data[i + 1] = markerClampChannel(data[i + 1] * scale);
+			data[i + 2] = markerClampChannel(data[i + 2] * scale);
+		}
+	}
+	else if (duty == 'level') {
+		// raise the black point and keep white at white, as magick -level does
+		var black = Math.min(0.95, Math.max(0, value / 100));
+		var gain = 1 / (1 - black);
+		var offset = -black * 255 / (1 - black);
+		for (i = 0; i < data.length; i += 4) {
+			data[i] = markerClampChannel(data[i] * gain + offset);
+			data[i + 1] = markerClampChannel(data[i + 1] * gain + offset);
+			data[i + 2] = markerClampChannel(data[i + 2] * gain + offset);
+		}
+	}
+	else if (duty == 'black-threshold') {
+		var limit = Math.round(Math.min(100, Math.max(0, value)) * 255 / 100);
+		for (i = 0; i < data.length; i += 4) {
+			var luma = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
+			if (luma <= limit) {
+				data[i] = 0;
+				data[i + 1] = 0;
+				data[i + 2] = 0;
+			}
+		}
+	}
+	else if (duty == 'gaussian-blur') {
+		image = markerBlurImage(image, Math.max(1, value));
+	}
+	else if (duty == 'sharpen') {
+		image = markerSharpenImage(image, Math.max(1, value));
+	}
+	else {
+		return false;
+	}
+	layer.ctx.putImageData(image, 0, 0);
+	return true;
+}
+
+// The layer button's one entry point. The undo record is made before the edit
+// and pushed only if it landed, and a rotate or crop also carries the old
+// canvas size so undo can put the layer's shape back.
+function markerLayerTransform(duty, raw_value) {
+	var layer = markerActiveLayer();
+	if (!layer || !duty) { return; }
+	var geometry = (duty == 'rotate' || duty == 'crop');
+	var record = geometry ? markerLayerCanvasRecord(layer) : markerLayerPixelRecord(layer);
+	var value = markerTransformNumber(raw_value, markerTransformDefaults[duty]);
+	var changed = false;
+	if (duty == 'rotate') { changed = markerLayerRotate(layer, value); }
+	else if (duty == 'crop') { changed = markerLayerCrop(layer, raw_value); }
+	else { changed = markerLayerFilter(layer, duty, value); }
+	if (!changed) { return; }
+	markerHistoryPush(record);
+	markerLayerList();
+	// a rotated or cropped first layer moves the document's edge
+	markerViewClamp();
+	markerCompose();
+	markerAutosaveSoon();
 }
 
 // ---- stroke input ------------------------------------------------------
@@ -296,6 +585,16 @@ function markerDrawSegment(ctx, from, to, pressure) {
 		for (var b = 0; b <= bursts; b++) {
 			var bt = bursts == 0 ? 0 : b / bursts;
 			markerSprayBurst(ctx, from.x + (to.x - from.x) * bt, from.y + (to.y - from.y) * bt);
+		}
+	}
+	else if (tool == 'blur') {
+		var blur_size = Math.max(2, Math.round(markerStroke.size * (0.3 + 0.7 * pressure)));
+		var blur_distance = Math.sqrt((to.x - from.x) * (to.x - from.x) + (to.y - from.y) * (to.y - from.y));
+		var spacing = Math.max(1, markerStroke.size / 3);
+		var dabs = Math.max(1, Math.min(400, Math.floor(blur_distance / spacing) + 1));
+		for (var d = 0; d <= dabs; d++) {
+			var dt = dabs == 0 ? 0 : d / dabs;
+			markerBlurDab(ctx, from.x + (to.x - from.x) * dt, from.y + (to.y - from.y) * dt, blur_size);
 		}
 	}
 	ctx.globalCompositeOperation = 'source-over';

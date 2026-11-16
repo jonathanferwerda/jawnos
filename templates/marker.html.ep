@@ -19,6 +19,7 @@
 		<button class="button marker_tool" tool="pencil">Pencil</button><br>
 		<button class="button marker_tool" tool="brush">Brush</button><br>
 		<button class="button marker_tool" tool="spray">Spray</button><br>
+		<button class="button marker_tool" tool="blur" hint="Blur">Blur</button><br>
 		<button class="button marker_tool" tool="fill">Fill</button><br>
 		<button class="button marker_erase_toggle" erase="off" hint="Erase with the current brush">Erase</button><br>
 		<button class="button marker_tool" tool="kb">KB</button><br>
@@ -43,6 +44,17 @@
 				<button class="button marker_session_save hover" hint="Save this drawing as a session">Session</button>
 			</div>
 			<div id="marker_layer_list"></div>
+			<%# the palette's transforms, applied to the layer chosen in that list %>
+			<div id="marker_layer_transforms" style="border-top:solid 1px rgba(0,0,0,0.35);margin-top:3px;">
+				<input type="text" class="marker_transform_input" placeholder="<%= &subs::ui('Number') %>" style="width: 70px;"><br>
+				<img class="little_thumb marker_transform hover" duty="rotate" src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Rotate">
+				<img class="little_thumb marker_transform hover" duty="crop" src="<%= &subs::icon_for('/images/palette/crop.png') %>" hint="Crop">
+				<img class="little_thumb marker_transform hover" duty="modulate" src="<%= &subs::icon_for('/images/palette/brightness.png') %>" hint="Brightness">
+				<img class="little_thumb marker_transform hover" duty="level" src="<%= &subs::icon_for('/images/palette/contrast.png') %>" hint="Contrast">
+				<img class="little_thumb marker_transform hover" duty="black-threshold" src="<%= &subs::icon_for('/images/palette/black level.png') %>" hint="Black level">
+				<img class="little_thumb marker_transform hover" duty="gaussian-blur" src="<%= &subs::icon_for('/images/palette/blur.png') %>" hint="Blur">
+				<img class="little_thumb marker_transform hover" duty="sharpen" src="<%= &subs::icon_for('/images/palette/sharpen.png') %>" hint="Sharpen">
+			</div>
 		</div>
 		<script>var marker_layer_eye = '<%= &subs::icon_for('/images/make believe/eye.png') %>';</script>
 
