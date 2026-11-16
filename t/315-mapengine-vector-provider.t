@@ -43,13 +43,12 @@ like($engine, qr/canvas\.style\.zIndex = '1'/,
 	'the canvas is lifted so plates, pins and labels stay on top');
 
 # ---- draw() drives MapLibre from the engine's view ------------------------
-like($engine, qr/jumpTo\(\{ center: \[at\.lon, at\.lat\], zoom: at\.z \}\)/,
-	'every draw pushes the engine centre and zoom at MapLibre');
-like($engine, qr/^\s+zoom: view\.z,$/m,
-	'and the camera opens at the engine zoom, not one step off it');
-like($engine, qr/var TILE_RATIO = 2;/, 'the backdrop is built at twice the canvas box');
-like($engine, qr/MapLibre 4\.7 wedges on that for a vector source/,
-	'and the source cannot declare 256-px tiles instead: MapLibre wedges on it');
+like($engine, qr/jumpTo\(\{ center: \[at\.lon, at\.lat\], zoom: at\.z - 1 \}\)/,
+	'every draw pushes the engine centre and zoom at MapLibre, one step shallower');
+like($engine, qr/^\s+zoom: view\.z - 1,$/m,
+	'and the camera opens one step shallower: MapLibre\'s world is 512-based');
+like($engine, qr/^\s+s\.width = dim\.w \+ 'px';$/m,
+	'the backdrop is exactly the canvas box, never a doubled one');
 like($engine, qr/if \(!vectorOn\) \{\n\t\t\t\tctx\.fillStyle = '#e9edf1';\n\t\t\t\tctx\.fillRect\(0, 0, dim\.w, dim\.h\);\n\t\t\t\tdrawTiles\(o, dim\.w, dim\.h\);\n\t\t\t\}/,
 	'the raster fill and tile fetch are skipped only when the vector layer is up');
 like($engine, qr/drawMaps\(o, dim\.w, dim\.h, view\.z\);\n\t\t\tdrawLines\(o, dim\.w, dim\.h, view\.z\);\n\t\t\tdrawMarkers\(o, dim\.w, dim\.h, view\.z\);/,
@@ -64,8 +63,8 @@ like($engine, qr/vector\.maxZoom = parseInt\(maxzoom, 10\) \|\| \(providers\.hou
 	'the deepest zoom comes from the archive, not a pinned number');
 like($engine, qr/maxZoom: vector\.maxZoom,/,
 	'MapLibre is held to that ceiling');
-like($engine, qr/return Math\.max\(ZMIN, Math\.min\(ZMAX, vector\.maxZoom \|\| \(p && p\.max\) \|\| ZMAX\)\)/,
-	'and clampZ cannot zoom past what the archive holds');
+like($engine, qr/return Math\.max\(ZMIN, Math\.min\(ZMAX, \(vector\.maxZoom \|\| \(p && p\.max\) \|\| ZMAX\) \+ 1\)\)/,
+	'and clampZ stops one step past the archive\'s deepest zoom, where its deepest tiles are asked for');
 like($basemap, qr/done\(isFinite\(n\) && n > 0 \? n : TRAVEL_BASEMAP_DEFAULT_MAXZOOM, read\);/,
 	'the shared header reader also reports whether the archive answered');
 

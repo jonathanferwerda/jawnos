@@ -175,7 +175,7 @@ VECTOR_OK.loads = 0;
 	eq(layer.options.style.house.maxzoom, 17, 'and the style was built for that archive');
 	eq(layer.options.center[1], engine.view().lat, 'it opens on the engine\'s latitude');
 	eq(layer.options.center[0], engine.view().lon, 'and its longitude');
-	eq(layer.options.zoom, 14, 'MapLibre opens at the engine\'s own zoom (the source is 256-px tiled)');
+	eq(layer.options.zoom, 13, 'MapLibre opens one 512-based zoom below the engine\'s z14');
 	eq(VECTOR_OK.registered, 1, 'the PMTiles protocol is registered once');
 	eq(VECTOR_OK.loads, 0, 'an already installed MapLibre is reused, not re-executed');
 	eq(VECTOR_OK.urls[0], '/manager/travel/basemap', 'the archive header is read from the house route');
@@ -193,17 +193,16 @@ VECTOR_OK.loads = 0;
 	eq(last.center[0], 20, 'and longitude');
 	engine.setZoom(15.5);
 	const zoomed = layer.moves[layer.moves.length - 1];
-	eq(zoomed.zoom, 15.5, 'jumpTo carries the engine\'s fractional zoom unchanged');
+	eq(zoomed.zoom, 14.5, 'jumpTo carries the engine\'s fractional zoom, one step shallower');
 	engine.setZoom(19);
-	ok(engine.view().z <= 17, 'clampZ cannot pass the archive\'s deepest zoom (z17)');
+	ok(engine.view().z <= 18, 'clampZ reaches one past the archive\'s deepest zoom, so its deepest tiles are asked for');
 
 	// a CSS-scaled canvas (Travel's width:100%;height:70vh) is matched, not
-	// stretched: the backdrop takes the canvas's CSS scale, halved because
-	// MapLibre's 512-px world is drawn at twice the canvas box (see vectorPosition)
+	// stretched, and the backdrop is never larger than the canvas itself
 	state.canvas.offsetHeight = 200;
 	engine.draw();
-	eq(box.style.transform, 'scale(0.5,0.25)', 'the backdrop takes the canvas\'s CSS scale, halved for its 512-px world');
-	eq(box.style.width, (state.canvas.width * 2) + 'px', 'and is built at twice the canvas box');
+	eq(box.style.transform, 'scale(1,0.5)', 'the backdrop takes the canvas\'s CSS scale');
+	eq(box.style.width, state.canvas.width + 'px', 'and is exactly the canvas box, never doubled');
 	state.canvas.offsetHeight = 400;
 	engine.draw();
 

@@ -132,9 +132,10 @@ window.jawnosMap = (function () {
 			var p = providers[effectiveKey()];
 			// the vector archive's ceiling is read from its header once it is
 			// open; until then the provider row's conservative z17 is used. The
-			// style declares `tileSize: 256`, so one camera zoom is one engine zoom
-			// and the archive's deepest zoom is the engine's deepest z.
-			if (isVectorKey(providerKey) && vector.map) { return Math.max(ZMIN, Math.min(ZMAX, vector.maxZoom || (p && p.max) || ZMAX)); }
+			// camera runs one zoom shallower than the engine, so the engine may go
+			// one step past the archive's deepest zoom - that step is what asks for
+			// the archive's deepest tiles at all.
+			if (isVectorKey(providerKey) && vector.map) { return Math.max(ZMIN, Math.min(ZMAX, (vector.maxZoom || (p && p.max) || ZMAX) + 1)); }
 			var m = (p && p.max) ? +p.max : ZMAX;
 			return Math.max(ZMIN, Math.min(ZMAX, m));
 		}
@@ -457,10 +458,12 @@ window.jawnosMap = (function () {
 					container: box,
 					style: v.style(vector.maxZoom),
 					center: [normLon(view.lon), view.lat],
-					// the backdrop is built at twice the canvas box and scaled by half,
-					// so this zoom is the engine's own and the tiles it asks for are the
-					// engine's z: a z17 archive is drawn from z17, not overzoomed
-					zoom: view.z,
+					// MapLibre's world is 512 * 2^z pixels and this engine's is 256 * 2^z,
+					// so one zoom shallower is the same ground scale. Vector tiles
+					// re-rasterise at the size they are drawn, so the ground reads at the
+					// same detail either way, and the backdrop stays exactly the canvas
+					// box - a doubled one wedged the laptop's renderer.
+					zoom: view.z - 1,
 					// the archive's deepest zoom, not the engine's: a z17 build is
 					// drawn at z17 and goes no deeper
 					maxZoom: vector.maxZoom,
@@ -489,24 +492,24 @@ window.jawnosMap = (function () {
 			var s = vector.box.style;
 			s.left = (canvas.offsetLeft || 0) + 'px';
 			s.top = (canvas.offsetTop || 0) + 'px';
-			// MapLibre's world is 512 * 2^z pixels and this engine's is 256 * 2^z,
-			// so the same camera zoom draws the same tiles at twice the size. Build
-			// the backdrop at twice the canvas box and scale it by half: the ground
-			// the two cover then matches exactly, while the camera zoom (and so the
-			// tile zoom) stays the engine's - a z17 archive is asked for at z17
-			// rather than overzooming a shallower level. The source cannot declare
-			// tileSize: 256 instead; MapLibre 4.7 wedges on that for a vector source
-			// and the style never loads at all.
-			var TILE_RATIO = 2;
-			s.width = (dim.w * TILE_RATIO) + 'px';
-			s.height = (dim.h * TILE_RATIO) + 'px';
+			// Exactly the canvas box, never larger. An earlier version built the
+			// backdrop at twice this and scaled it by half to line MapLibre's
+			// 512-pixel world up with this engine's 256-pixel one; on a laptop's
+			// window at device pixel ratio 2 that is tens of millions of pixels a
+			// frame, and in software GL it wedged the shared renderer so hard the
+			// whole panel stopped answering. The camera is driven one zoom shallower
+			// instead (see vectorBuild/vectorSync): vector tiles re-rasterise at the
+			// size they are drawn, so the ground reads at the same detail for the
+			// same number of pixels on screen.
+			s.width = dim.w + 'px';
+			s.height = dim.h + 'px';
 			s.transformOrigin = '0 0';
 			// the canvas may also be scaled by the page (Travel's is width:100%),
 			// and the backdrop takes that same scale so the two line up exactly
 			var vw = canvas.offsetWidth || 0, vh = canvas.offsetHeight || 0;
-			var sx = (vw > 0 && dim.w > 0 ? vw / dim.w : 1) / TILE_RATIO;
-			var sy = (vh > 0 && dim.h > 0 ? vh / dim.h : 1) / TILE_RATIO;
-			s.transform = 'scale(' + sx + ',' + sy + ')';
+			var sx = (vw > 0 && dim.w > 0) ? vw / dim.w : 1;
+			var sy = (vh > 0 && dim.h > 0) ? vh / dim.h : 1;
+			s.transform = (sx !== 1 || sy !== 1) ? 'scale(' + sx + ',' + sy + ')' : '';
 			if (vector.map && (vector.w !== dim.w || vector.h !== dim.h)) {
 				vector.w = dim.w; vector.h = dim.h;
 				try { vector.map.resize(); } catch (e) {}
@@ -522,7 +525,7 @@ window.jawnosMap = (function () {
 			if (vector.at && vector.at.lat === at.lat && vector.at.lon === at.lon
 				&& Math.abs(vector.at.z - at.z) < 0.0001) { return; }
 			vector.at = at;
-			try { vector.map.jumpTo({ center: [at.lon, at.lat], zoom: at.z }); } catch (e) {}
+			try { vector.map.jumpTo({ center: [at.lon, at.lat], zoom: at.z - 1 }); } catch (e) {}
 		}
 
 		// Load the libraries and the archive header, then build the layer. The
