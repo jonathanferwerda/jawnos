@@ -91,9 +91,12 @@ sub hang_to_dry {
 	# head - the next time it comes round.
 	my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 40);
 	my $anticipated = $anticipation->{'list'} || [];
+	# The anticipate step already sets a running step at the place the routine
+	# usually stops it. Only a session the sequence does not name at all - one
+	# started out of its order, or off its day - is put at the head here, so a
+	# running app never falls off the line.
 	my $running = ($daily->{'current'} && $daily->{'current'}{'running'}) ? $daily->{'current'}{'running'} : undef;
-	if (defined $running && length $running) {
-		@{$anticipated} = grep { $_->{'app'} ne $running } @{$anticipated};
+	if (defined $running && length $running && !grep { $_->{'app'} eq $running } @{$anticipated}) {
 		unshift @{$anticipated}, { app => $running, wave => $anticipation->{'current_wave'} || 0 };
 	}
 	my %have = map { $_->{'app'} => $_ } @{$returner};

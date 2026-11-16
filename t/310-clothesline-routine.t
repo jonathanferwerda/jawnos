@@ -13,7 +13,9 @@
 #            a hotel), read on the house clock, not the box's UTC. The
 #            alphabetical tail carries only an app whose own time slots or
 #            budget say it is on now, plus a running app that has time slots
-#            of its own; an app with no registration never hangs there.
+#            of its own; an app with no registration never hangs there. A step
+#            that is running sits where the routine usually stops it, so the
+#            pill at the left is always the next one to press.
 
 use strict;
 use warnings;
@@ -204,6 +206,53 @@ my $line = subs::clothesline_line_order($head, $tail);
 is_deeply([ map { $_->{'app'} } @{$line} ], [qw(water pee breakfast coffee)],
 	'the anticipatory head keeps its order, the tail is alphabetical, and no app repeats');
 
+# --- a step that runs a while sits down where the routine stops it ----------
+# Two weeks of mornings: the wake-up opens the day and is stopped after the
+# breakfast, while the pee, the water and the coffee come and go inside it. The
+# head leads with those short steps, not with the wake-up that is in hand.
+sub long_row {
+	my ($app, $start, $mins) = @_;
+	return {
+		app => $app,
+		type => 'stop',
+		timestamp => $start,
+		stop_timestamp => $start + ($mins * 60000),
+		source_uuid => '',
+	};
+}
+my @long;
+for my $day ( 2 .. 13 ) {
+	my $base = JawnOSTest::ts(2026, 11, $day, 8, 0);
+	push @long, long_row('wake_up', $base, 90);
+	push @long, long_row('pee',     $base + (5 * 60000), 3);
+	push @long, long_row('water',   $base + (10 * 60000), 2);
+	push @long, long_row('coffee',  $base + (15 * 60000), 10);
+}
+my $lscan = subs::clothesline_routine_scan(\@long, JawnOSTest::ts(2026, 11, 16, 7, 0), window_days => 60, session_days => 14);
+is($lscan->{'apps'}{'wake_up'}{'length'}, 90 * 60000, 'a step carries the length its own stops show');
+is($lscan->{'apps'}{'coffee'}{'length'}, 10 * 60000, 'and so does a short one');
+my $lcanon = subs::clothesline_sequence_canonical($lscan->{'sessions'}, $lscan->{'start_app'});
+is_deeply($lcanon->{'seq'}, [qw(wake_up pee water coffee)], 'the day is read in the order the steps begin');
+my $quiet = subs::clothesline_sequence_anticipate($lscan, JawnOSTest::ts(2026, 11, 16, 7, 0), limit => 8, canonical => $lcanon);
+is_deeply([ map { $_->{'app'} } @{$quiet->{'list'}} ], [qw(wake_up pee water coffee)],
+	'with nothing running the day leads with its first step');
+$lscan->{'running'} = { wake_up => JawnOSTest::ts(2026, 11, 16, 8, 0) };
+my $during = subs::clothesline_sequence_anticipate($lscan, JawnOSTest::ts(2026, 11, 16, 8, 5), limit => 8, canonical => $lcanon);
+is_deeply([ map { $_->{'app'} } @{$during->{'list'}} ], [qw(pee water coffee wake_up)],
+	'a running step moves down the head to where the routine usually stops it');
+
+# --- an open session is the step in hand, a forgotten one is not ------------
+my $start_scan = subs::clothesline_routine_scan(
+	[ { app => 'wake_up', type => 'start', timestamp => JawnOSTest::ts(2026, 11, 16, 8, 0), source_uuid => '' } ],
+	JawnOSTest::ts(2026, 11, 16, 8, 30), window_days => 60, session_days => 14);
+is_deeply($start_scan->{'running'}, { wake_up => JawnOSTest::ts(2026, 11, 16, 8, 0) },
+	'an open session is read as the step running now');
+my $forgot_scan = subs::clothesline_routine_scan(
+	[ { app => 'wake_up', type => 'start', timestamp => JawnOSTest::ts(2026, 11, 16, 8, 0), source_uuid => '' } ],
+	JawnOSTest::ts(2026, 11, 16, 20, 0), window_days => 60, session_days => 14);
+ok(!exists $forgot_scan->{'running'}{'wake_up'},
+	'a session left open past the routine pause is not the step in hand');
+
 # --- only an own registration wears in the tail -----------------------------
 my @one_am = (0, 0, 1, 16, 'Nov', 2026, 'Mon', 319, 0);
 ok(subs::clothesline_slot_wears({ time_plinko => { hour => ['1am'] } }, \@one_am),
@@ -260,11 +309,17 @@ unlike($hang, qr/clothesline_daily_auto/, 'no automatic hang fills the tail');
 unlike($hang, qr/clothesline_hang_slots/, 'the per-slot repeat helper is gone');
 like($hang, qr/\$item->\{'head'\} = 1/, 'the anticipatory head is marked for the divider');
 like($hang, qr/\$item->\{'wave'\} = \$row->\{'wave'\}/, 'each anticipatory step carries its wave');
+unlike($hang, qr/\@\{\$anticipated\} = grep \{ \$_->\{'app'\} ne \$running \}/,
+	'a running step is not pulled to the head of the line');
 
 my $clothesline_js = read_file(repo_root() . '/public/js/manager/clothesline.js');
 like($clothesline_js, qr/headCount/, 'the rail finds where the anticipatory head ends');
 like($clothesline_js, qr/divider/, 'the rail draws the divider there');
-like($clothesline_js, qr/clothesLinePos\['centred'\]/, 'the divider opens at the middle on the first draw');
+unlike($clothesline_js, qr/centred/, 'the line no longer opens on the divider');
+like($clothesline_js, qr/clothesLinePos\['opened'\]/, 'the line opens at its own beginning');
+like($clothesline_js, qr/clothesLinePos\['x'\] = 0;/, 'so the first pill sits at the left of the view');
+like($clothesline_js, qr/ctx\.fillRect\(barX - 2, barTop, 4, barHeight\)/,
+	'the divider between the head and the tail is four pixels wide');
 like($clothesline_js, qr/v\['wave'\] != clothes\[i - 1\]\['wave'\]/, 'the rail draws a soft bar between waves');
 
 # --- every press re-hangs the line, and the reply carries it ----------------

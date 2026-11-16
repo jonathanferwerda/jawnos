@@ -1411,7 +1411,7 @@ sub clothesline_place_history($now) {
 	$now ||= &rightNow();
 	my $fallback = sub {
 		my $since = $now - (60 * 86400 * 1000);
-		return (&db_query(q{select app, timestamp, type from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?) and coalesce(source_uuid,'') = ''}, $since, $now, 'usual', 'stop', 'start')->hashes->to_array, 60, 14);
+		return (&db_query(q{select app, timestamp, stop_timestamp, type from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?) and coalesce(source_uuid,'') = ''}, $since, $now, 'usual', 'stop', 'start')->hashes->to_array, 60, 14);
 	};
 	my $place = &clothesline_current_place($now);
 	return $fallback->() unless $place;
@@ -1464,7 +1464,7 @@ sub clothesline_place_history($now) {
 		push @args, $v->[0], $v->[1];
 	}
 	my $rows = eval {
-		&db_query('select app, timestamp, type from appointments where type in (?, ?, ?) and coalesce(source_uuid, ?) = ? and (' . join(' or ', @where) . ')', @args)->hashes->to_array;
+		&db_query('select app, timestamp, stop_timestamp, type from appointments where type in (?, ?, ?) and coalesce(source_uuid, ?) = ? and (' . join(' or ', @where) . ')', @args)->hashes->to_array;
 	} || [];
 	return $place->{'home'} ? $fallback->() : ([], 14, 14) unless @{$rows};
 	return ($rows, $window_days, $session_days);
@@ -1497,6 +1497,7 @@ sub clothesline_routine_scan {
 	my $recent_since = $now - ($session_days * 86400 * 1000);
 
 	my (@completed, @recent_completed, @started);
+	my (%lengths, %open);
 	foreach my $r ( @{$rows} ) {
 		next unless ref $r eq 'HASH';
 		my $app = $r->{'app'};
@@ -1507,13 +1508,29 @@ sub clothesline_routine_scan {
 		next if defined $r->{'source_uuid'} && length $r->{'source_uuid'};
 		my $type = lc($r->{'type'} || '');
 		if ($type eq 'start') {
-			push @started, { app => $app, ms => $ms + 0 } if $ms >= $recent_since;
+			if ($ms >= $recent_since) {
+				push @started, { app => $app, ms => $ms + 0 };
+				# the session is still open, and still this run of the routine: the
+				# line reads where it is running. One left open past the routine's
+				# pause is a forgotten session, not a step in hand.
+				if ($ms <= $now && ($now - $ms) <= $pause
+					&& (!defined $open{$app} || $ms > $open{$app})) {
+					$open{$app} = 0 + $ms;
+				}
+			}
 			next;
 		}
 		next unless $type eq 'usual' || $type eq 'stop';
 		my $row = { app => $app, ms => $ms + 0 };
 		push @completed, $row;
 		push @recent_completed, $row if $ms >= $recent_since;
+		# how long the step usually runs: a closed row runs from its timestamp
+		# to its stop_timestamp, and that length is what puts a long step (a
+		# wake-up) where the day usually stops it
+		my $stop = $r->{'stop_timestamp'};
+		if (defined $stop && $stop =~ /^\d/ && (0 + $stop) > (0 + $ms)) {
+			push @{$lengths{$app}}, (0 + $stop) - (0 + $ms);
+		}
 	}
 	@completed = sort { $a->{'ms'} <=> $b->{'ms'} } @completed;
 	@recent_completed = sort { $a->{'ms'} <=> $b->{'ms'} } @recent_completed;
@@ -1617,6 +1634,11 @@ sub clothesline_routine_scan {
 			}
 		}
 		$apps->{$app} = { hour => $best_hour, hour_days => $best_days, days => $days, due => $due, cadence => $cadence };
+		# the middle length, so one runaway session does not stretch the step
+		if (ref $lengths{$app} eq 'ARRAY' && @{$lengths{$app}}) {
+			my @sorted = sort { $a <=> $b } @{$lengths{$app}};
+			$apps->{$app}{'length'} = $sorted[int($#sorted / 2)];
+		}
 	}
 
 	# sessions: recent completed steps in order, split by a long pause so one
@@ -1658,7 +1680,7 @@ sub clothesline_routine_scan {
 	$current->{'running'} = $last_any->{'app'} if $active && $last_any->{'type'} eq 'start';
 	$current->{'start'} = $belongs ? $last_start : undef;
 
-	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any, done => \%done, start_app => $start_app };
+	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any, done => \%done, start_app => $start_app, running => \%open };
 }
 
 # The longest run of steps two sequences share in order, which is how alike two
@@ -1776,6 +1798,7 @@ sub clothesline_sequence_anticipate {
 	my $canonical = $opt{'canonical'} || &clothesline_sequence_canonical($sessions, $scan->{'start_app'});
 	my $seq = ref $canonical eq 'HASH' ? $canonical->{'seq'} : $canonical;
 	my $waves = (ref $canonical eq 'HASH' && ref $canonical->{'waves'} eq 'ARRAY') ? $canonical->{'waves'} : undef;
+	my $canonical_times = (ref $canonical eq 'HASH' && ref $canonical->{'times'} eq 'ARRAY') ? $canonical->{'times'} : undef;
 	return { list => [], current_wave => 0 } unless ref $seq eq 'ARRAY' && @{$seq};
 	my $done = ref $scan->{'done'} eq 'HASH' ? $scan->{'done'} : {};
 
@@ -1792,6 +1815,7 @@ sub clothesline_sequence_anticipate {
 	}
 
 	my (@out, %seen, %left2);
+	my $base = ($canonical_times && defined $canonical_times->[0]) ? (0 + $canonical_times->[0]) : undef;
 	for my $i ( 0 .. $#{$seq} ) {
 		my $app = $seq->[$i];
 		if (($left2{$app} //= ($done->{$app} || 0)) > 0) { $left2{$app}--; next; }
@@ -1801,8 +1825,32 @@ sub clothesline_sequence_anticipate {
 		next if $seen{$app}++;
 		my $due = ($scan->{'apps'}{$app} && defined $scan->{'apps'}{$app}{'due'}) ? $scan->{'apps'}{$app}{'due'} : 1;
 		next unless $due;
-		push @out, { app => $app, wave => $wave };
+		my $off = (defined $base && $canonical_times && defined $canonical_times->[$i]) ? (0 + $canonical_times->[$i]) - $base : undef;
+		push @out, { app => $app, wave => $wave, off => $off };
 		last if @out >= $limit;
+	}
+
+	# A step that is running sits where the routine usually stops it, not where
+	# it starts. The wake-up runs all morning while the water and the coffee come
+	# and go, so its pill moves down past them to the point of the day it is
+	# usually stopped - the head then leads with the next press either way, and
+	# there is little walking the rail to find the pill in hand.
+	my $running = ref $scan->{'running'} eq 'HASH' ? $scan->{'running'} : {};
+	if (@out && %{$running}) {
+		my @keyed;
+		my $last = 0;
+		for my $n ( 0 .. $#out ) {
+			my $row = $out[$n];
+			my $key = $row->{'off'};
+			$key = $last unless defined $key;
+			if (exists $running->{$row->{'app'}}) {
+				my $len = $scan->{'apps'}{$row->{'app'}}{'length'};
+				$key += $len if defined $len && $len > 0;
+			}
+			$last = $key;
+			push @keyed, [ $key, $n, $row ];
+		}
+		@out = map { $_->[2] } sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @keyed;
 	}
 	return { list => \@out, current_wave => $current_wave };
 }
