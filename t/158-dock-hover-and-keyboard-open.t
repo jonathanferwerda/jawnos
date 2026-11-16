@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/keyboard.js public/js/manager/keyboard/01_side_dock.js public/js/manager/soft_keyboard.js
+# tests-for: public/js/manager/keyboard.js public/js/manager/keyboard/01_side_dock.js public/js/manager/soft_keyboard.js public/js/manager/leaderboardprinter.js
 # covers:    Opening the keyboard or calculator from the dock with no field
 #            removed the dock (body.soft_kb_open) but never raised the keys,
 #            which sat at their closed translateY(100%) until a refresh. And the
@@ -8,8 +8,11 @@
 #            tests the dock's showing box, its faces and the tucked strip. A
 #            dock with only widgets or pins used to be unreachable while its
 #            strip was the search row: an idle empty search row now opens the
-#            dock menu (a search with text or focus keeps paste), and an empty
-#            dock never hides itself, so its menu can always put a face back.
+#            dock menu (a search with text or focus keeps paste). An empty dock
+#            tucks like any other rather than sitting out full size: the strip it
+#            keeps is still the way back to the menu that puts a face in it. A
+#            touch screen has no hover, so a tap on the background now tucks the
+#            dock the way a mouse leaving it does.
 
 use strict;
 use warnings;
@@ -80,18 +83,35 @@ like($kbd, qr/if \(typeof jawnosDockReveal == 'function'\) \{ jawnosDockReveal\(
 like($shower, qr/jawnosDockFaceAlwaysOn\(kbg\)/,
 	'a dock-owned face is shown by the reveal too');
 
-# --- an empty dock keeps a way back to its menu ------------------------------
+# --- an empty dock tucks to its strip, not out full size --------------------
 like($kbd, qr/home\.toggleClass\('dock_empty', visible\.length == 0\)/,
 	'an empty dock is marked');
 like($kbd, qr/if \(icons_hidden && !search_in_dock\)/,
 	'an empty row dock stays on screen unless Hide icons was chosen');
-like($hider, qr/hasClass\('dock_empty'\)/,
-	'the hider leaves an empty dock on screen');
-like($hider, qr/'bottom': \(\(typeof jawnosDockBottomOffset == 'function'\) \? jawnosDockBottomOffset\(\) : 0\)/,
-	'and lowers it back from a tuck');
-like($dock, qr/if \(tucked && \$\('#pseudonym_home'\)\.hasClass\('dock_empty'\)\) \{ tucked = 0; \}/,
-	'a side dock does not tuck when empty');
-like($dock, qr/if \(home\.hasClass\('dock_empty'\)\) \{ home\.css\(\{ 'top': jawnosDockTopOffset\(\) \}\); return 1; \}/,
-	'a top dock does not tuck when empty');
+# The strip the tuck keeps is the search row (or the sliver) - the same target
+# that opens the dock menu and calls the row back out.
+unlike($hider, qr/hasClass\('dock_empty'\)/,
+	'the hider does not spare an empty dock');
+like($hider, qr/var diff = Math\.min\(0, pseudonymDockStrip\(\) - h\) \+ edge;/,
+	'an empty dock tucks to the same strip as any other row');
+unlike($dock, qr/if \(tucked && \$\('#pseudonym_home'\)\.hasClass\('dock_empty'\)\)/,
+	'a side dock tucks even when empty');
+unlike($dock, qr/if \(home\.hasClass\('dock_empty'\)\)/,
+	'a top dock tucks even when empty');
+
+# --- a background tap tucks the dock on a touch screen -----------------------
+like($dock, qr/function pseudonymHomeTapper\(x, y\) \{/,
+	'one handler answers a tap on the background');
+like($dock, qr/pseudonymPointerX = x;\s*pseudonymPointerY = y;/s,
+	'the tap moves the pointer away from the dock');
+like($dock, qr/if \(typeof pseudonymDockPointOnDock == 'function' && pseudonymDockPointOnDock\(x, y\)\)/,
+	'a tap on the strip still calls the row out');
+like($dock, qr/pseudonymHomeHider\(1\);/,
+	'a tap elsewhere tucks without waiting out the idle interval');
+my $leader = js_source('public/js/manager/leaderboardprinter.js');
+like($leader, qr/if \(app_clicked == 0 && device == 'mobile' && typeof pseudonymHomeTapper == 'function'\) \{[\s\S]*?pseudonymHomeTapper\(e\.clientX, e\.clientY\);/,
+	'the background tap handler hands the touch to the tapper');
+unlike($leader, qr/pseudonymHomeShower\(ph\.left \+ 3, ph\.top \+ 3\);/,
+	'the reveal is no longer hand-rolled in the background handler');
 
 done_testing();

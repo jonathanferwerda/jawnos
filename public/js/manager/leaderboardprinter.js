@@ -261,13 +261,10 @@ $(document).on('click', '.background', function (e) {
 			return false;
 		}
 	});
-	if (app_clicked == 0 && device == 'mobile'
-		&& typeof pseudonymDockPointOnDock == 'function'
-		&& pseudonymDockPointOnDock(e.clientX, e.clientY)) {
-		// only the strip the tucked dock keeps on screen calls it back: a tap on
-		// the background where the row would have been is a tap on the background
-		var ph = $('#pseudonym_home').offset();
-		pseudonymHomeShower(ph.left + 3, ph.top + 3);
+	if (app_clicked == 0 && device == 'mobile' && typeof pseudonymHomeTapper == 'function') {
+		// a finger has no hover: a tap on the dock's strip calls the row out, and
+		// a tap on the background is what tucks it away again
+		pseudonymHomeTapper(e.clientX, e.clientY);
 	}
 
 	$('.search_results').hide();

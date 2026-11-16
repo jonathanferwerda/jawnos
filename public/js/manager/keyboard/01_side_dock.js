@@ -37,8 +37,8 @@ function pseudonymSideSlide() {
 function pseudonymSideSettle(tucked) {
 	if (typeof jawnosSideDock != 'function' || !jawnosSideDock()) { return 0; }
 	if (tucked && typeof jawnosSideSearchVisible == 'function' && jawnosSideSearchVisible()) { tucked = 0; }
-	// an empty pill has no faces to tuck; keeping it out leaves its menu reachable
-	if (tucked && $('#pseudonym_home').hasClass('dock_empty')) { tucked = 0; }
+	// an empty pill tucks like any other: the sliver it keeps is still the
+	// pointer's perch, and the menu that adds a face opens from it
 	pseudonymSideTucked = tucked ? 1 : 0;
 	pseudonymSideSlide();
 	return 1;
@@ -330,6 +330,28 @@ function pseudonymHomeShower(x,y,interval) {
 }
 
 
+// A touch screen has no pointer to carry away from the dock, so a tap on the
+// background is what takes the finger off it. A tap on the strip the tucked
+// dock keeps on screen calls the row back out; a tap anywhere else is the mouse
+// leaving, and the row tucks again. The pointer is moved to the tap first so the
+// hider does not read an earlier point on the dock as still resting there.
+function pseudonymHomeTapper(x, y) {
+	if (isFinite(x) && isFinite(y)) {
+		pseudonymPointerX = x;
+		pseudonymPointerY = y;
+	}
+	if (typeof pseudonymDockPointOnDock == 'function' && pseudonymDockPointOnDock(x, y)) {
+		// only the strip the tucked dock keeps on screen calls it back: a tap on
+		// the background where the row would have been is a tap on the background
+		var ph = $('#pseudonym_home').offset();
+		pseudonymHomeShower(ph.left + 3, ph.top + 3);
+		return;
+	}
+	// a deliberate tap is the finger having left, so it does not wait out the
+	// idle interval the pointer-driven hider counts
+	pseudonymHomeHider(1);
+}
+
 // The top dock's resting place: the home slips up until only its search strip
 // stays on screen, and the icon row rides above the visible edge with it. That
 // strip is where the mouse rests to call the row back down. Answers 0 for any
@@ -341,8 +363,6 @@ function pseudonymHomeTopSettle() {
 	// past - then tuck it and let the row ride up with it. The strip it keeps is
 	// the search's row, or the sliver when the search rides elsewhere.
 	pseudonymFreeSpaceFinder();
-	// an empty dock has no row to tuck; leaving it at rest keeps its menu reachable
-	if (home.hasClass('dock_empty')) { home.css({ 'top': jawnosDockTopOffset() }); return 1; }
 	home.css({ 'top': jawnosDockTopOffset() + Math.min(0, pseudonymDockStrip() - home.outerHeight()) });
 	pseudonymFreeSpaceFinder();
 	return 1;
@@ -358,12 +378,6 @@ function pseudonymHomeHider(interval) {
 	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
 	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
 	pseudonymFreeSpaceFinder();
-	// an empty dock has nothing to tuck away; leave its background on screen so
-	// the menu can put a face back
-	if ($('#pseudonym_home').hasClass('dock_empty')) {
-		$('#pseudonym_home').css({ 'bottom': ((typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0) });
-		return;
-	}
 	// The pointer hider and the shower share one answer to "is this the dock?"
 	// The tracked pointer is the current one; mouse_position() is only the
 	// fallback before the first move (it reads window.event).

@@ -1401,9 +1401,10 @@ function pseudonymFreeSpaceFinder(type) {
 		}
 	}
 
-	// An empty dock (every face switched off) still stays on screen while the
-	// icon row is meant to be shown: its background is the only route to the
-	// menu that puts a face back. Hide it only when Hide icons was chosen.
+	// An empty dock (every face switched off) is shown as any other while the
+	// icon row is meant to be shown - it is measured here and revealed by the
+	// hider's own strip, which keeps the menu that puts a face back reachable.
+	// Hide it only when Hide icons was chosen.
 	if (icons_hidden && !search_in_dock) {
 		home.hide();
 	}
