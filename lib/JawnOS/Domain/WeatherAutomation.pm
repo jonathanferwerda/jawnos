@@ -505,9 +505,11 @@ sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '',
 
 # While a rule's app is still running, the weather that keeps it running belongs
 # on the same appointment: a start row written yesterday would otherwise leave
-# the app's bottom line with no reading for today or this week. Each check adds
-# the current reading to the open session, at most once a gap, and a long rain
-# keeps only its newest readings - the shape a movement app's speed takes.
+# the app's bottom line with no reading for today or this week. Each check reads
+# the readings already on the appointment: one whose timestamp falls in today
+# is updated in place, so a half-hourly check does not stack a value per check
+# on the panel, and a new day adds its own reading. A long rain keeps only its
+# newest readings - the shape a movement app's speed takes.
 sub weather_app_reading_record($app, $uuid, $values, $rule, $timestamp, $location = '') {
 	return 0 unless defined $app && length $app;
 	return 0 unless defined $uuid && length $uuid;
@@ -521,31 +523,46 @@ sub weather_app_reading_record($app, $uuid, $values, $rule, $timestamp, $locatio
 	my $measures = eval { decode_json($row->{'measures'} // '') } || [];
 	return 0 unless ref $measures eq 'ARRAY';
 	my $keys = &weather_rule_reading_keys($rule);
-	my $last;
-	foreach my $entry (@{$measures}) {
+	# The day this check belongs to: a reading already kept for it is the one to
+	# update, so each measure has one reading a day rather than one a check.
+	my ($day_begin, $day_end) = &subs::period_bounds('day', $timestamp, 0);
+	my (%slot, $last);
+	foreach my $i (0 .. $#{$measures}) {
+		my $entry = $measures->[$i];
 		next unless ref $entry eq 'HASH' && defined $entry->{'ts'} && "$entry->{'ts'}" =~ /^-?[0-9]+$/;
+		my $ts = $entry->{'ts'} + 0;
 		foreach my $key (@{$keys}) {
 			next unless defined $entry->{$key};
-			$last = $entry->{'ts'} + 0 if !defined $last || $entry->{'ts'} + 0 > $last;
+			$last = $ts if !defined $last || $ts > $last;
+			$slot{$key} = $i if $ts >= $day_begin && $ts < $day_end;
 			last;
 		}
 	}
 	my $gap = defined $WEATHER_MEASURE_GAP_MS ? $WEATHER_MEASURE_GAP_MS : 60000;
 	return 0 if defined $last && ($timestamp - $last) < $gap;
-	my @fresh;
+	my $changed = 0;
 	foreach my $key (@{$keys}) {
 		my $value = $values->{$key};
 		next unless defined $value && !ref $value;
 		next unless "$value" =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
-		push @fresh, {
+		if (defined $slot{$key}) {
+			my $entry = $measures->[ $slot{$key} ];
+			next if defined $entry->{$key} && "$entry->{$key}" eq "$value";
+			$entry->{$key} = $value;
+			$entry->{'ts'} = $timestamp + 0;
+			$entry->{'location'} = $location if length $location;
+			$changed = 1;
+			next;
+		}
+		push @{$measures}, {
 			$key => $value,
 			ts => $timestamp + 0,
 			uuid => &subs::random_string_creator(22),
 			(length $location ? (location => $location) : ()),
 		};
+		$changed = 1;
 	}
-	return 0 unless @fresh;
-	push @{$measures}, @fresh;
+	return 0 unless $changed;
 	# the cap: drop the oldest of these readings once there are too many
 	my $cap = defined $WEATHER_MEASURE_CAP ? $WEATHER_MEASURE_CAP : 500;
 	my @idx = grep {
@@ -594,7 +611,9 @@ sub weather_app_measure_defaults($only = undef) {
 
 # A rule acts on its rising edge. A start rule also stops its app on the falling
 # edge, which is what makes "rain -> raining" start and stop; a run rule fires
-# once and waits for the condition to clear before it can fire again.
+# once and waits for the condition to clear before it can fire again. A rule
+# that finds its app already running with no edge of its own adopts it and stops
+# it on the first dry check (after the hold), so a replaced rule cannot orphan it.
 sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '', $warranty = '', $opts = {}) {
 	$opts ||= {};
 	my $rules = &weather_measure_rules();
@@ -617,6 +636,15 @@ sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '',
 		my $action = $rule->{'action'} || 'start';
 		$pending = 0 unless $action eq 'start';
 		$dry_since = undef unless $action eq 'start';
+		# A start rule with no edge in hand - the rule was replaced with a new
+		# uuid by a migration, or this machine has just taken the pass over - must
+		# still be able to stop an app it finds running. Without this the app
+		# orphaned by the old rule stays on forever, because the new rule never
+		# saw the rain start and so has no falling edge to stop it.
+		my $orphan = 0;
+		if (!$matched && !$previous && !$pending && $action eq 'start' && defined $rule->{'app'} && length $rule->{'app'}) {
+			$orphan = 1 if (&subs::setting_grabber({ app => $rule->{'app'}, setting => 'toggle' }) // '') eq 'on';
+		}
 		# A held rule keeps its app on through one dry reading and stops it at
 		# the next check; a manual check (the person is looking) skips the hold.
 		my $hold_ms = 0;
@@ -648,7 +676,7 @@ sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '',
 			my $open = eval { &subs::open_session_uuid($rule->{'app'}) } || '';
 			&weather_app_reading_record($rule->{'app'}, $open, $values, $rule, $now, $location) if length $open;
 		}
-		elsif (!$matched && $action eq 'start' && ($previous || $pending)) {
+		elsif (!$matched && $action eq 'start' && ($previous || $pending || $orphan)) {
 			my $stop_now = 0;
 			if ($hold_ms > 0) {
 				$pending = 1;

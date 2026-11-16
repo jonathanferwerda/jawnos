@@ -22,6 +22,7 @@ require "$root/lib/JawnOS/Domain/Weather.pm";
 require "$root/lib/JawnOS/Domain/WeatherHistory.pm";
 require "$root/lib/JawnOS/Domain/Format.pm";
 require "$root/lib/JawnOS/Domain/WeatherAutomation.pm";
+require "$root/lib/JawnOS/Domain/Device2.pm";
 require "$root/lib/JawnOS/Manager/Part15.pm";
 
 # The domain layer reads its user-facing labels through subs::ui, which the real
@@ -956,14 +957,23 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is(subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.6, precip_total => 9.8 }, $rule, $now + 30000, 'loc:home'), 0, 'a second check inside the gap adds nothing');
 	is(scalar @{ Mojo::JSON::decode_json($appt{'run-1'}) }, 2, 'and leaves the session as it was');
 
-	is(subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.7, precip_total => 10.1 }, $rule, $now + 3600000, 'loc:home'), 1, 'the next check adds its reading');
-	is(scalar @{ Mojo::JSON::decode_json($appt{'run-1'}) }, 4, 'to the same appointment');
+	my $later = $now + 3600000;
+	is(subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.7, precip_total => 10.1 }, $rule, $later, 'loc:home'), 1, 'the next check updates the day\'s reading');
+	my $same = Mojo::JSON::decode_json($appt{'run-1'});
+	my %day = map { %{$_} } @{$same};
+	is(scalar @{$same}, 2, 'so the panel keeps one reading for the day');
+	is($day{'precip_rate'}, 0.7, 'the rate is the latest the day was seen');
+	is($day{'ts'}, "$later", 'and its timestamp moves with the check');
 
-	subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.8, precip_total => 10.4 }, $rule, $now + 7200000, 'loc:home');
+	my $next_day = $now + 86400000;
+	is(subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.6, precip_total => 9.8 }, $rule, $next_day, 'loc:home'), 1, 'a new day adds its own reading');
+	is(scalar @{ Mojo::JSON::decode_json($appt{'run-1'}) }, 4, 'one more reading for the new day');
+
+	subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.8, precip_total => 10.4 }, $rule, $now + 2 * 86400000, 'loc:home');
 	my $capped = Mojo::JSON::decode_json($appt{'run-1'});
-	is(scalar @{$capped}, 4, 'a long rain keeps only its newest readings');
-	my @rates = grep { defined $_->{'precip_rate'} } @{$capped};
-	is_deeply([ map { $_->{'precip_rate'} } @rates ], [0.7, 0.8], 'the oldest readings are the ones dropped');
+	is(scalar @{$capped}, 4, 'a long rain keeps only its newest days');
+	my @rates = map { $_->{'precip_rate'} } grep { defined $_->{'precip_rate'} } @{$capped};
+	is_deeply([ sort { $a <=> $b } @rates ], [0.6, 0.8], 'the oldest day\'s readings are the ones dropped');
 }
 
 # --- a rule that is still matched keeps its running app's reading fresh ------
@@ -1013,6 +1023,66 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is(scalar @{$m}, 2, 'but its appointment takes the reading the rule is seeing');
 	is($got{'precip_rate'}, 0.4, 'the rate lands on the running session');
 	is($got{'ts'}, "$now", 'at the check');
+}
+
+# --- a rule that finds its app running adopts it and stops it ---------------
+{
+	my $now = 1794020000000;
+	my $rules_json = Mojo::JSON::encode_json([{
+		uuid => 'rain-new', name => 'Rain',
+		when => [{ measure => 'precipitation', op => 'is', value => 'rain' }],
+		for_ms => 0, hold_check => 1, action => 'start', app => 'raining',
+		location => 'loc:home',
+	}]);
+	my %store = ( 'setting|raining|toggle' => 'on' );   # left on by the rule it replaced
+	my %cache;
+	my @appointments;
+	no warnings 'redefine';
+	local $gb::timeouts = { weather_observe => { interval => 1800 } };
+	local *subs::rightNow = sub { $now };
+	local *subs::cache_get = sub {
+		my ($q) = @_;
+		return $cache{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
+	};
+	local *subs::cache_set = sub {
+		my ($q, $value) = @_;
+		$cache{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') } = $value;
+		return 1;
+	};
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $rules_json if ($q->{'app'} // '') eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return $store{ 'setting|' . ($q->{'app'} // '') . '|' . ($q->{'setting'} // '') };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ 'setting|' . ($q->{'app'} // '') . '|' . ($q->{'setting'} // '') } = $q->{'value'};
+		return 1;
+	};
+	local *Manager::appointment_writer = sub {
+		my ($c, $data) = @_;
+		push @appointments, $data;
+		return $data;
+	};
+	local *subs::open_session_uuid = sub { '' };
+	local *subs::random_string_creator = sub { 'stop-measure' };
+	my $dry = { precipitation => 'none', precip_rate => 0, precip_total => 23.1 };
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'obs-1', $now, 'loc:home') }, 0,
+		'the first dry check on a replaced rule holds its stop');
+	is($store{'setting|raining|toggle'}, 'on', 'and the app stays on through the hold');
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'obs-2', $now + 30 * 60000, 'loc:home') }, 1,
+		'the next dry check stops the app it found running');
+	is($store{'setting|raining|toggle'}, 'off', 'and switches it off');
+	my ($stop) = grep { ($_->{'type'} // '') eq 'stop' } @appointments;
+	ok($stop, 'a stop appointment is written for the app it adopted');
+
+	# the same check with the app off writes nothing
+	$store{'setting|raining|toggle'} = 'off';
+	%cache = ();
+	@appointments = ();
+	is(scalar @{ subs::weather_measure_rule_evaluate($dry, [], 'obs-3', $now + 90 * 60000, 'loc:home') }, 0,
+		'a dry check with the app off does nothing');
+	is(scalar @appointments, 0, 'and writes no stop');
 }
 
 # --- the rain and snow apps read precipitation as a peak ---------------------
