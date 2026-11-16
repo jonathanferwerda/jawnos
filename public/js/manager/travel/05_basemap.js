@@ -169,7 +169,7 @@ function travelBasemapMaxZoom(url, done) {
 	}
 }
 
-function travelBasemapStyle(maxzoom) {
+function travelBasemapStyle(maxzoom, three_d) {
 	// the fallback keeps a direct caller (or a header read that failed) on the
 	// shallowest archive the builder makes
 	if (!(parseInt(maxzoom, 10) > 0)) { maxzoom = TRAVEL_BASEMAP_DEFAULT_MAXZOOM; }
@@ -197,7 +197,7 @@ function travelBasemapStyle(maxzoom) {
 		};
 	};
 
-	return {
+	var style = {
 		version: 8,
 		name: 'House street map',
 		// no glyphs and no sprite: labels are DOM text and nothing here is a
@@ -270,6 +270,44 @@ function travelBasemapStyle(maxzoom) {
 					'line-dasharray': [3, 2] } }
 		]
 	};
+
+	// The map engine's backdrop uses this same style, and there it must stay
+	// flat: a building standing up under a measured plate would hide the ground
+	// the plate is showing. Only the long-press view asks for three_d.
+	if (three_d) {
+		var at = 0;
+		for (var i = 0; i < style.layers.length; i++) {
+			if (style.layers[i].id === 'building') { at = i + 1; break; }
+		}
+		style.layers.splice(at, 0, {
+			id: 'building-3d', type: 'fill-extrusion', source: 'basemap', 'source-layer': 'building',
+			minzoom: 14,
+			paint: {
+				// the archive's OpenMapTiles profile writes render_height and
+				// render_min_height; a tile without them still gets a low solid
+				// rather than a paper cut-out
+				'fill-extrusion-height': ['to-number', ['get', 'render_height'], 6],
+				'fill-extrusion-base': ['to-number', ['get', 'render_min_height'], 0],
+				'fill-extrusion-color': ['interpolate', ['linear'], ['to-number', ['get', 'render_height'], 6],
+					0, '#e3dbcd', 8, '#ddd3c2', 20, '#d3c6b1', 60, '#c7b79e'],
+				'fill-extrusion-opacity': 0.9
+			}
+		});
+		// a pitched view shows the horizon, so the stage above it is sky rather
+		// than the window's cream; MapLibre draws this pass behind every layer
+		style.layers.unshift({
+			id: 'sky', type: 'sky',
+			paint: {
+				'sky-color': '#bcd6e8',
+				'horizon-color': '#e7eef3',
+				'fog-color': '#e7eef3',
+				'sky-horizon-blend': 0.6,
+				'horizon-fog-blend': 0.6,
+				'atmosphere-blend': 0.6
+			}
+		});
+	}
+	return style;
 }
 
 function travelBasemapStart(lat, lon) {
@@ -316,16 +354,20 @@ function travelBasemapDraw(st, centre, maxzoom) {
 	try {
 		map = new maplibregl.Map({
 			container: box,
-			style: travelBasemapStyle(maxzoom),
+			style: travelBasemapStyle(maxzoom, true),
 			center: [centre.lon, centre.lat],
 			zoom: Math.min(15, maxzoom),
 			// the archive's deepest zoom is the archive's, not this file's: the
 			// zoom control stops where the tiles stop
 			maxZoom: maxzoom,
 			attributionControl: false,
-			// a small map in a window: the pitch and the compass are noise
-			pitchWithRotate: false,
-			dragRotate: false
+			// the town has height, so the view opens tilted and the buildings
+			// stand up; the right button (or two fingers) turns and tilts it
+			pitch: 45,
+			maxPitch: 60,
+			pitchWithRotate: true,
+			dragRotate: true,
+			touchPitch: true
 		});
 	} catch (e) {
 		travelBasemapNote(jawnosT('This browser cannot draw the map here.'));

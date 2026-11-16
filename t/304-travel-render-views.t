@@ -95,6 +95,8 @@ like( $globe, qr/navigationHelpButton: false/, 'the navigation help is off' );
 like( $globe, qr/infoBox: false/, 'the info box is off' );
 like( $globe, qr/selectionIndicator: false/, 'the selection indicator is off' );
 like( $globe, qr/viewer\.camera\.flyTo/, 'the camera flies to the pressed ground' );
+like( $globe, qr/orientation: \{ heading: 0, pitch: Cesium\.Math\.toRadians\(-30\), roll: 0 \}/,
+	'and opens tilted, so the sphere reads as a sphere rather than a map' );
 like( $globe, qr/viewer\.destroy\(\)/, 'close destroys the viewer' );
 
 # ---- the installer keeps the local path fit for the loader ---------------
@@ -117,7 +119,17 @@ like( $basemap, qr{'/js/basemap/pmtiles\.js'}, 'PMTiles is injected on first use
 like( $basemap, qr{'/js/basemap/maplibre-gl-csp\.js'}, 'the CSP build of MapLibre is preferred' );
 like( $basemap, qr{maplibregl\.setWorkerUrl\('/js/basemap/maplibre-gl-csp-worker\.js'\)},
 	'its worker is a same-origin file, so MapLibre alone needs no blob worker' );
-like( $basemap, qr{'/js/basemap/maplibre-gl\.js'}, 'the plain build is the fallback' );
+like( $basemap, qr/'\/js\/basemap\/maplibre-gl\.js'/, 'the plain build is the fallback' );
+# ---- the town stands up in the long-press view, and only there -----------
+like( $basemap, qr/^function travelBasemapStyle\(maxzoom, three_d\)/m,
+	'the style knows the 3D view from the flat backdrop' );
+like( $basemap, qr/type: 'fill-extrusion'/, 'buildings are extruded' );
+like( $basemap, qr/render_height/, 'using the height the archive carries' );
+like( $basemap, qr/style: travelBasemapStyle\(maxzoom, true\)/, 'the long-press view asks for the 3D style' );
+like( $basemap, qr/pitch: 45/, 'and opens tilted' );
+like( $basemap, qr/dragRotate: true/, 'with turning and tilting enabled' );
+like( $basemap, qr/type: 'sky'/, 'and sky above the horizon' );
+like( $basemap, qr/if \(three_d\) \{/, 'the map engine\'s backdrop stays flat: it does not ask' );
 like( $basemap, qr/maplibregl\.addProtocol\('pmtiles', protocol\.tile\)/, 'the PMTiles protocol is registered once' );
 like( $basemap, qr/if \(travelBasemapRan\[src\]\) \{ done\(\); return; \}/,
 	'a library script runs once per page, not on every open' );
@@ -215,5 +227,7 @@ like( $travel_help, qr/Nothing is fetched from the open internet/, 'and that the
 like( $travel_help, qr/House street map draws the house\\?'s own vector basemap/, 'the topic names the fourth row in its on-screen words' );
 like( $travel_help, qr/fetch_basemap_libs\.sh/, 'and how to install MapLibre and PMTiles locally' );
 like( $travel_help, qr/osm_basemap\.pl --all/, 'and how to build the archive' );
+like( $travel_help, qr/stand up in 3D/, 'the topic says the street map\'s buildings stand up' );
+like( $travel_help, qr/pressed at a tilt/, 'and that the globe opens tilted' );
 
 done_testing();

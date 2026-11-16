@@ -174,10 +174,13 @@ function travelGlobeStart(lat, lon, source) {
 		}
 	}
 
-	// a neighbourhood is the useful first look; the wheel takes it out to the
-	// whole globe from there
+	// A neighbourhood is the useful first look, but a sphere seen from straight
+	// above is a map. The house's globe is the ellipsoid (World Terrain needs a
+	// Cesium ion token), so the ground itself is smooth; the tilt is what makes
+	// the view read as a sphere - the horizon and the atmosphere come into it.
 	viewer.camera.flyTo({
-		destination: Cesium.Cartesian3.fromDegrees(centre.lon, centre.lat, 1800),
+		destination: Cesium.Cartesian3.fromDegrees(centre.lon, centre.lat, 2500),
+		orientation: { heading: 0, pitch: Cesium.Math.toRadians(-30), roll: 0 },
 		duration: 1.5
 	});
 
