@@ -87,6 +87,13 @@ sub content_security_policy {
 	return join('; ',
 		"default-src 'self'",
 		"script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+		# Cesium builds each worker as a blob: module that imports the same-origin
+		# Workers/<name>.js under CESIUM_BASE_URL. Without worker-src the policy
+		# falls back to script-src, which refuses the blob, and the globe stays a
+		# black stage with three CSP violations in the console. A blob can only be
+		# made by a same-origin script, and the worker's own imports still obey
+		# script-src 'self', so no third-party origin is admitted.
+		"worker-src 'self' blob:",
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data: blob: https:",
 		"media-src 'self' data: blob: https:",

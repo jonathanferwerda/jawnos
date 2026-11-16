@@ -103,7 +103,8 @@ ok( -f $fetch, 'scripts/fetch_cesium.sh exists' );
 ok( -x $fetch, 'and is executable' );
 my $fetch_text = read_file($fetch);
 like( $fetch_text, qr/^#!\/bin\/sh/m, 'it is POSIX sh' );
-like( $fetch_text, qr/VERSION=1\.120/, 'the npm build is pinned' );
+like( $fetch_text, qr/^VERSION=1\.120\.0$/m, 'the npm build is pinned to the version string npm publishes' );
+like( $fetch_text, qr{cesium-\$\{VERSION\}\.tgz}, 'and the tarball URL is that exact version' );
 like( $fetch_text, qr{public/js/cesium}, 'it unpacks into the loader\'s local path' );
 like( $fetch_text, qr{package/Build/Cesium}, 'from the npm tarball\'s Build/Cesium' );
 like( read_file("$root/.gitignore"), qr{^public/js/cesium/$}m, 'the installed bundle is gitignored' );
@@ -115,7 +116,7 @@ like( $basemap, qr{href = '/js/basemap/maplibre-gl\.css'}, 'the stylesheet comes
 like( $basemap, qr{'/js/basemap/pmtiles\.js'}, 'PMTiles is injected on first use' );
 like( $basemap, qr{'/js/basemap/maplibre-gl-csp\.js'}, 'the CSP build of MapLibre is preferred' );
 like( $basemap, qr{maplibregl\.setWorkerUrl\('/js/basemap/maplibre-gl-csp-worker\.js'\)},
-	'its worker is a same-origin file, so worker-src blob: is not needed' );
+	'its worker is a same-origin file, so MapLibre alone needs no blob worker' );
 like( $basemap, qr{'/js/basemap/maplibre-gl\.js'}, 'the plain build is the fallback' );
 like( $basemap, qr/maplibregl\.addProtocol\('pmtiles', protocol\.tile\)/, 'the PMTiles protocol is registered once' );
 like( $basemap, qr/if \(travelBasemapRan\[src\]\) \{ done\(\); return; \}/,
@@ -192,6 +193,13 @@ like( $three_text, qr/THREE/, 'and defines the THREE global' );
 my $jawnos = read_file("$root/lib/JawnOS.pm");
 unlike( $jawnos, qr/cdn\.jsdelivr\.net/, 'the policy still names no third-party script or style origin' );
 like( $jawnos, qr/"script-src 'self' 'unsafe-inline' 'unsafe-eval'"/, 'and script-src stays the house\'s own origin' );
+# Cesium 1.120 builds every worker as a blob: module importing its same-origin
+# Workers/<name>.js. The policy had no worker-src, so script-src governed the
+# blob and refused it: the globe drew a black stage with three CSP violations.
+# The sphere is the one worker the house needs, and a blob can only be made by a
+# same-origin script whose imports still obey script-src 'self'.
+like( $jawnos, qr/"worker-src 'self' blob:"/, 'worker-src admits Cesium\'s same-origin blob worker' );
+unlike( $jawnos, qr/worker-src[^"]*https?:/, 'and admits no third-party worker origin' );
 
 # ---- the help topic says what the long press now does --------------------
 my $help = read_file("$root/perl/help/topics_people.pl");
