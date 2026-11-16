@@ -192,14 +192,16 @@ like( $three_text, qr/THREE/, 'and defines the THREE global' );
 # ---- no third-party script origin is admitted for a bonus view -----------
 my $jawnos = read_file("$root/lib/JawnOS.pm");
 unlike( $jawnos, qr/cdn\.jsdelivr\.net/, 'the policy still names no third-party script or style origin' );
-like( $jawnos, qr/"script-src 'self' 'unsafe-inline' 'unsafe-eval'"/, 'and script-src stays the house\'s own origin' );
+like( $jawnos, qr/"script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:"/, 'script-src admits Cesium\'s same-origin blob as well' );
 # Cesium 1.120 builds every worker as a blob: module importing its same-origin
-# Workers/<name>.js. The policy had no worker-src, so script-src governed the
-# blob and refused it: the globe drew a black stage with three CSP violations.
-# The sphere is the one worker the house needs, and a blob can only be made by a
-# same-origin script whose imports still obey script-src 'self'.
+# Workers/<name>.js, and the worker then loads its own code from a blob too. The
+# policy had neither directive, so script-src governed the blobs and refused
+# them: the globe drew a black stage with CSP violations in Chromium and Qt
+# WebEngine. A blob can only be made by a same-origin script whose imports still
+# obey script-src 'self'.
 like( $jawnos, qr/"worker-src 'self' blob:"/, 'worker-src admits Cesium\'s same-origin blob worker' );
-unlike( $jawnos, qr/worker-src[^"]*https?:/, 'and admits no third-party worker origin' );
+unlike( $jawnos, qr/worker-src[^"\n]*https?:/, 'and admits no third-party worker origin' );
+unlike( $jawnos, qr/script-src[^"\n]*https?:/, 'nor a third-party script origin' );
 
 # ---- the help topic says what the long press now does --------------------
 my $help = read_file("$root/perl/help/topics_people.pl");

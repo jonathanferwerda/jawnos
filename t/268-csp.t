@@ -4,10 +4,11 @@
 #           response gets it, that JSON and media do not, that a route's own
 #           policy is never overwritten, and that inline script is still
 #           executable by design (the nonce migration is the follow-up). Also
-#           worker-src: the blob module Cesium draws the globe's workers from is
-#           admitted while no third-party worker origin is. Also HSTS: one
-#           max-age value, sent only on a secure request, never over plain http
-#           and never over a value a route set itself.
+#           worker-src and script-src: the blob module Cesium draws the globe's
+#           workers from, and the blob it then loads its own code from, are
+#           admitted while no third-party origin is. Also HSTS: one max-age
+#           value, sent only on a secure request, never over plain http and never
+#           over a value a route set itself.
 
 use strict;
 use warnings;
@@ -24,7 +25,7 @@ sub source { return read_file(root() . '/' . $_[0]) }
 
 my $EXPECTED = join('; ',
 	"default-src 'self'",
-	"script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+	"script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
 	"worker-src 'self' blob:",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: blob: https:",
@@ -45,6 +46,10 @@ like(JawnOS::content_security_policy(), qr{(?:^|; )worker-src 'self' blob:(?:;|$
 	'Cesium\'s same-origin blob worker is admitted');
 unlike(JawnOS::content_security_policy(), qr/worker-src[^;]*https?:/,
 	'and no third-party worker origin is');
+like(JawnOS::content_security_policy(), qr{(?:^|; )script-src [^;]*\bblob:(?:;|$)},
+	'and the blob its worker loads its own code from is owned by the same policy');
+unlike(JawnOS::content_security_policy(), qr/script-src[^;]*https?:/,
+	'without admitting a third-party script origin');
 is(JawnOS::content_security_policy(), JawnOS::content_security_policy(),
 	'and does not change between calls');
 
