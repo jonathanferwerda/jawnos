@@ -435,7 +435,13 @@ sub setting_setter {
 	# adding a fresh app-null row. 'is' is NULL-safe - two NULLs compare equal,
 	# anything else as '=' - so every key column clears properly.
 	my $old_set = eval { &db_query('delete from settings where app is ? and setting is ? and device is ? and subsetting is ?', $app, $setting, $dev, $subsetting) };
-	&db_insert('settings', {
+	# A row a panel writes is a choice, even when the value equals a born
+	# default (navigation 'none' is the one that matters): mark it 'no' so the
+	# merge lets it replace another machine's value. A born default is 'yes';
+	# a row from an older build carries no mark and is judged by its value.
+	my $seed = $settings->{'seed'};
+	$seed = 'no' if !defined $seed && (($settings->{'source'} // '') eq 'panel');
+	my $row = {
 		app => $app,
 		timestamp => $timestamp,
 		setting => $setting,
@@ -445,7 +451,9 @@ sub setting_setter {
 		browser_tab_id => $browser_tab_id,
 		uuid => $settings->{'uuid'} || &random_string_creator(25),
 		subsetting => $subsetting
-	});
+	};
+	$row->{'seed'} = $seed if defined $seed;
+	&db_insert('settings', $row);
 	if ($setting eq 'colour') {
 		# the dark-theme face follows the colour it belongs to; a peer replay keeps
 		# whatever dark_colour row arrives with its own snapshot instead

@@ -145,7 +145,16 @@ sub setting_initializer {
 	($app,$type) = &typesetter($app);
 	my $counter = &subs::db_query('select count(*) from appointments where app=?', $app);
 	my $count = $counter->hash->{'count(*)'};
-	my $res = &db_query('select * from settings where app=? and device = ? order by server_time desc',$app,$device);
+	# Every device class's rows for the app, not only this machine's. A new
+	# device that opens an app the house already knows must adopt the value the
+	# house holds instead of writing its born default: a seeded default carries
+	# a fresh server_time and would otherwise overwrite the real value on the
+	# next sync (navigation 'none' reset walk's and driving's interval this way).
+	# Only the born bundle is read: some app settings hold multi-megabyte blobs,
+	# and none of them is a default.
+	my @seed_settings = qw/colour dark_colour worth visible permanent pos duration currency unit cost enc public warranty notification_text schedule uuid navigation/;
+	my $seed_in = join ',', ('?') x scalar @seed_settings;
+	my $res = &db_query('select * from settings where app=? and setting in (' . $seed_in . ') order by cast(server_time as integer) desc',$app,@seed_settings);
 	my $re = $res->hashes;
 
 	my $aka = &db_query('select * from settings where setting = ? and value like ?', 'aka', '%' . $app . '%')->hashes;
@@ -158,7 +167,7 @@ sub setting_initializer {
 					$o = &subs::unformat_name($o);
 					if ($o eq $app) {
 						$app = &subs::unformat_name($ak->{'app'});
-						$res = &db_query('select * from settings where app=?',$app);
+						$res = &db_query('select * from settings where app=? and setting in (' . $seed_in . ') order by cast(server_time as integer) desc',$app,@seed_settings);
 						$re = $res->hashes;
 						last;
 					}
@@ -196,15 +205,31 @@ sub setting_initializer {
 		# house row exists. When it does not, an older build's per-device row is
 		# adopted as the value instead of seeding the 'me' default over it.
 		my $house_warranty = ($s eq 'warranty');
-		my @seen = $house_warranty
-			? @{ &db_query('select * from settings where app = ? and setting = ? and device = ?', $app, 'warranty', &warranty_device())->hashes || [] }
-			: grep { $_->{'setting'} eq $s } @{$re};
+		my @seen;
+		my $adopted = 0;
+		if ($house_warranty) {
+			@seen = @{ &db_query('select * from settings where app = ? and setting = ? and device = ?', $app, 'warranty', &warranty_device())->hashes || [] };
+		}
+		else {
+			my @all_seen = grep { $_->{'setting'} eq $s } @{$re};
+			@seen = grep { (($_->{'device'} // '') eq $device) } @all_seen;
+			# This class holds none, but another class does: adopt that value
+			# instead of giving birth to a default here.
+			if (!scalar @seen && scalar @all_seen) {
+				@seen = ( $all_seen[0] );
+				$adopted = 1;
+			}
+		}
 
 		unless ( scalar @seen > 0 ) {
 			my $value = $settings->{$s};
+			my $seed = 'yes';
 			if ($house_warranty) {
-				my $legacy = &db_query('select value from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', $app, 'warranty', $device)->hashes || [];
-				$value = $legacy->[0]->{'value'} if scalar @{$legacy} && defined $legacy->[0]->{'value'} && length $legacy->[0]->{'value'};
+				my $legacy = &db_query('select * from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', $app, 'warranty')->hashes || [];
+				if (scalar @{$legacy} && defined $legacy->[0]->{'value'} && length $legacy->[0]->{'value'}) {
+					$value = $legacy->[0]->{'value'};
+					$seed = $legacy->[0]->{'seed'};
+				}
 			}
 			my $pen = {
 				app => $app,
@@ -215,13 +240,31 @@ sub setting_initializer {
 				device => ($house_warranty ? &warranty_device() : $device),
 				uuid => &random_string_creator(20)
 			};
+			$pen->{'seed'} = $seed if defined $seed;
 			&db_insert('settings', $pen);
 			$returner->{$s} = $value;
 		}
 		else {
 			my $set = $seen[0];
 			$returner->{$s} = $set->{'value'};
-			if (scalar @seen > 1) {
+			if ($adopted) {
+				# Copy the house value onto this machine's class, so the app
+				# uses it now rather than waiting for the first settings sync.
+				# Carry the mark too: adopting another machine's born default
+				# must not turn it into a choice that can overwrite a real value.
+				my $adopt = {
+					app => $app,
+					timestamp => &subs::rightNow(),
+					setting => $s,
+					value => $set->{'value'},
+					server_time => &subs::rightNow(),
+					device => $device,
+					uuid => &random_string_creator(20)
+				};
+				$adopt->{'seed'} = $set->{'seed'} if defined $set->{'seed'};
+				&db_insert('settings', $adopt);
+			}
+			elsif (scalar @seen > 1) {
 				#unshift @seen;
 				foreach my $s ( @seen ) {
 					&subs::db_delete('settings', { app => $app, uuid => $s->{'uuid'} });

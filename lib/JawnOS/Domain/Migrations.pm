@@ -672,6 +672,11 @@ sub update_database($data) {
 		'CREATE INDEX idx2_settings on settings (setting,device)',
 		'CREATE INDEX idx3_settings on settings (setting,value)',
 		'CREATE INDEX idx4_settings on settings (setting,device,value)',
+		# A row born with setting_initializer's default value is marked 'yes';
+		# a row written because somebody chose it is marked 'no'. The sync merge
+		# uses the mark, not the value, to decide whether a row may replace a
+		# value another machine holds.
+		'alter table settings add column seed VARCHAR(5)',
 		'CREATE INDEX idx2_appts on appointments (app,timestamp)',
 		'CREATE INDEX idx7_appts on appointments (timestamp,seen)',
 		'CREATE INDEX idx8_appts on appointments (timestamp, stop_timestamp, seen, stop_seen)',

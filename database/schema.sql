@@ -267,7 +267,7 @@ id INT AUTO_INCREMENT PRIMARY KEY,
 app VARCHAR(50),
 server_time VARCHAR(500),
 device VARCHAR(255)
-, browser_tab_id VARCHAR(255), uuid VARCHAR(255) unique, ost VARCHAR(25), subsetting VARCHAR(255));
+	, browser_tab_id VARCHAR(255), uuid VARCHAR(255) unique, ost VARCHAR(25), subsetting VARCHAR(255), seed VARCHAR(5));
 CREATE TABLE "subcategory" (
 			supplier VARCHAR(500),
 			app VARCHAR(500),

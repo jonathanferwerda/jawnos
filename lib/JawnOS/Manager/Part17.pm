@@ -123,6 +123,9 @@ sub merge_table_rows {
 	my $colour = $ctx->{'colour'};
 	my $merge_short = 0;
 	my %toggle_changed;
+	# One line per app is enough to explain a kept setting; a machine that
+	# joined with an empty settings table carries the whole born bundle.
+	my %kept_default;
 	# A peer on newer code can carry a column this database has not been migrated for.
 	# The insert then fails ("table X has no column named Y") and the same batch is
 	# pulled again on every tick - the column equivalent of the unknown-table skip in
@@ -323,6 +326,45 @@ sub merge_table_rows {
 										&& ($r->{'device'} // '') eq 'all') ? 1 : 0;
 									#next if $protected == 1;
 									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$cards_shared)) {
+										# A machine that has just joined the house gives birth to
+										# setting_initializer's defaults before its first settings sync -
+										# navigation 'none', an empty duration, a fresh colour. Those rows
+										# carry a fresh server_time, so newest-wins would let them replace
+										# choices made on the machines that have been here all along. A
+										# born default is not a choice: it never overwrites a value
+										# somebody chose. The reverse still heals - a real value does
+										# replace a default here even when the default is newer - so a
+										# new machine catches up without losing anyone's setting.
+										my $target_device = $house_wide ? 'all' : $device;
+										# 'yes' marks setting_initializer's born default; 'no' marks a
+										# panel write, which is a choice even when it equals a default.
+										# A row from an older build has no mark, so its value decides.
+										my $incoming_seed = (($r->{'seed'} // '') eq 'yes') ? 1 : 0;
+										my $incoming_chosen = (($r->{'seed'} // '') eq 'no') ? 1 : 0;
+										my $incoming_default = $incoming_seed ? 1
+											: $incoming_chosen ? 0
+											: ((defined $r->{'setting'} && defined $r->{'value'})
+												? &subs::setting_is_default($r->{'setting'}, $r->{'app'}, $r->{'value'}) : 0);
+										my $local_row = defined $r->{'setting'}
+											? &subs::db_query('select * from settings where app=? and setting=? and subsetting is ? and device = ? order by cast(server_time as integer) desc limit 1',
+												$r->{'app'}, $r->{'setting'}, $r->{'subsetting'}, $target_device)->hashes->[0]
+											: undef;
+										my $local_seed = (ref $local_row eq 'HASH' && ($local_row->{'seed'} // '') eq 'yes') ? 1 : 0;
+										my $local_chosen = (ref $local_row eq 'HASH' && ($local_row->{'seed'} // '') eq 'no') ? 1 : 0;
+										my $local_default = ref $local_row ne 'HASH' ? 1
+											: $local_seed ? 1
+											: $local_chosen ? 0
+											: ((defined $local_row->{'value'} && length $local_row->{'value'})
+												? &subs::setting_is_default($r->{'setting'}, $r->{'app'}, $local_row->{'value'}) : 1);
+										if ($incoming_default && ref $local_row eq 'HASH' && !$local_default) {
+											unless ($kept_default{$r->{'app'}}) {
+												&subs::log_writer('settings merge: kept ' . $r->{'app'} . ' settings over a peer default from '
+													. substr($r->{'device'} // '?', 0, 12));
+												$kept_default{$r->{'app'}} = 1;
+											}
+											next;
+										}
+										my $heal = (!$incoming_default && $local_default && ref $local_row eq 'HASH') ? 1 : 0;
 										# A row we already hold at the peer's own server_time counts as present:
 										# the write below copies the peer's server_time verbatim, so with a strict
 										# '>' the test was false again on the very next sync and every one of
@@ -337,7 +379,7 @@ sub merge_table_rows {
 												$r->{'app'}, $r->{'setting'}, $r->{'subsetting'}, $r->{'server_time'}, @device_args)->hashes :
 											&subs::db_query('select app,setting,value from settings where app=? and setting=? and server_time >= ?' . $device_clause,
 												$r->{'app'}, $r->{'setting'}, $r->{'server_time'}, @device_args)->hashes;
-										if (scalar @{$time_check} == 0) {
+										if (scalar @{$time_check} == 0 || $heal) {
 											eval {
 												&subs::setting_setter({
 													app => $r->{'app'},
@@ -347,6 +389,7 @@ sub merge_table_rows {
 													uuid => &subs::random_string_creator(20),
 													device => $house_wide ? 'all' : $device,
 													subsetting => $r->{'subsetting'},
+													seed => $r->{'seed'},
 													sync => 1
 												});
 											};

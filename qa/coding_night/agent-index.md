@@ -93,7 +93,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - roles (7): uuid, name, department, permissions, builtin, server_time, ost
 - routers (11): uuid, ip, mac, nic, name, model, manager, last_seen, timestamp, server_time, ost
 - security (7): level, credential, server_time, timestamp, database, uuid, ost
-- settings (11): setting, value, timestamp, id, app, server_time, device, browser_tab_id, uuid, ost, subsetting
+- settings (12): setting, value, timestamp, id, app, server_time, device, browser_tab_id, uuid, ost, subsetting, seed
 - staged_appointments (17): uuid, staged_time, source, app, type, timestamp, title, notes, data, device, status, server_time, ost, duration, kind, target_uuid, changes
 - store_floorplan (6): uuid, name, image, seats, server_time, ost
 - store_order (14): uuid, device, label, customer_uuid, customer_app, customer_name, tax_exemption, items, seat, status, archived_at, created, server_time, ost

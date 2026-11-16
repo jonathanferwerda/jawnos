@@ -385,17 +385,31 @@ sub name_change_pairs {
 
 sub setting_is_default {
 	my ($setting, $app, $value) = @_;
-	return 0 unless defined $value && length $value;
+	return 0 unless defined $setting && length $setting;
 	my %fixed = (
 		permanent => 'checked', cost => '0', enc => 'on',
 		public => 'off', schedule => 'once', navigation => 'none',
 	);
-	return 1 if exists $fixed{$setting} && $value eq $fixed{$setting};
+	return 1 if exists $fixed{$setting} && defined $value && $value eq $fixed{$setting};
 	# a new app is born public; `checked` and `on` are the older defaults, kept
 	# so a row written before the levels is still read as nothing anybody chose
-	return 1 if $setting eq 'visible' && ($value eq 'public' || $value eq 'checked' || $value eq 'on');
-	return 1 if $setting eq 'notification_text' && $value eq &subs::format_name($app || '');
+	return 1 if $setting eq 'visible' && defined $value && ($value eq 'public' || $value eq 'checked' || $value eq 'on');
+	return 1 if $setting eq 'notification_text' && defined $value && $value eq &subs::format_name($app || '');
+	# A new app's pos comes from typesetter: the name's own type word, or the
+	# me default. That is a born default too, so a new machine's 'idea' cannot
+	# repaint an app whose type was chosen.
+	if ($setting eq 'pos' && defined $app && length $app) {
+		my $default_pos = eval {
+			my (undef, $type) = &subs::typesetter($app, 'no');
+			return $type;
+		};
+		return 1 if defined $default_pos && defined $value && $value eq $default_pos;
+	}
 	return 0 unless grep { $_ eq $setting } qw/worth duration currency unit warranty/;
+	# A blank me-derived setting is the born default too: a device that synced
+	# no me row seeds an empty duration, worth, currency, unit or warranty, and
+	# that blank must not replace a value somebody chose.
+	return 1 unless defined $value && length $value;
 	unless (scalar keys %setting_defaults_memo) {
 		foreach my $k ( qw/worth duration currency unit warranty/ ) {
 			my $rows = &subs::db_query('select value from settings where app = ? and setting = ?', 'me', $k)->hashes;
