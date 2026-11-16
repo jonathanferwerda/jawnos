@@ -53,6 +53,16 @@ like($qt, qr/def ticket_url/, 'it reads the same stored ticket as always');
 like($qt, qr/def ticket_url\(jawn_dir=None\)/, 'and can look in the installed tree too');
 like($qt, qr/ticket_url\(settings\["jawn_dir"\]\)/, 'which is what the launcher passes it');
 like($qt, qr/def _probe_url/, 'the probe uses a real origin for the bridge');
+
+# A controller's panel has no window manager, so a fullscreen request is
+# addressed to nobody and the window keeps the 1100x820 fallback - the
+# launcher's four columns then lay out 1.25x wider than the 854x480 glass.
+like($qt, qr/def _fill_screen\(app, view\)/, 'the shell sizes itself to the screen');
+like($qt, qr/view\.resize\(screen\.size\(\)\)/, 'instead of trusting the window manager');
+like($qt, qr/elif settings\.get\("fullscreen"\):\n\s+_fill_screen\(app, view\)/,
+	'every fullscreen start goes through it');
+my $fullscreen_calls = () = $qt =~ /view\.showFullScreen\(\)/g;
+is($fullscreen_calls, 1, 'and the bare call survives only inside that helper');
 like($qt, qr/def manager_url/, 'and derives the manager URL from it');
 like($qt, qr/def landed_on_gate/, 'the Gate landing is told from a Manager load');
 like($qt, qr/url = manager or ticket/,

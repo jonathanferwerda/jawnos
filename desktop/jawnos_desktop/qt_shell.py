@@ -1132,6 +1132,25 @@ def _launch_browse(url, manager_base, mode="browse", app="", uuid=""):
         os.path.join(state_dir(), "browse.log"))
 
 
+def _fill_screen(app, view):
+    """Size the window to the screen before asking for fullscreen.
+
+    Nothing on the controller's panel is a window manager, so the fullscreen
+    request is addressed to nobody and the window keeps whatever size it was
+    given - the 1100x820 fallback, which lays the launcher's four columns 1.25x
+    wider than the 854x480 glass and shows three tiles and the top of a second
+    row. Size it ourselves; a window manager that does honour the request
+    overrides this.
+    """
+    try:
+        screen = app.primaryScreen()
+    except Exception:
+        screen = None
+    if screen is not None:
+        view.resize(screen.size())
+    view.showFullScreen()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="jawnos-qt",
@@ -1763,7 +1782,7 @@ def main(argv=None):
         if settings.get("maximized"):
             view.showMaximized()
         elif settings.get("fullscreen"):
-            view.showFullScreen()
+            _fill_screen(app, view)
         else:
             view.showNormal()
 
@@ -2270,7 +2289,7 @@ def main(argv=None):
         view.resize(800, 600)
         view.show()
     elif settings.get("fullscreen"):
-        view.showFullScreen()
+        _fill_screen(app, view)
     elif settings.get("maximized"):
         view.showMaximized()
     else:
