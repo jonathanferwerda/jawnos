@@ -189,7 +189,9 @@ unlike( $listing, qr/rock_and_roll/, 'the listing does not serve or encode whole
 unlike( $listing, qr/encode_base64/, 'the listing builds no data URI' );
 like( $listing, qr/adopt_scan_candidates/, 'the listing uses the scan helper' );
 like( $listing, qr/adopted="yes"/, 'every candidate starts selected' );
-like( $listing, qr/thumb=ya/, 'previews are lazy thumbnail requests' );
+like( $listing, qr/loading="lazy"/, 'image previews load lazily' );
+like( $listing, qr{/file_open\?file=}, 'previews come from the file route' );
+unlike( $listing, qr/thumb=ya/, 'an unimported file is not asked for a thumbnail' );
 like( $listing, qr/xml_escape/, 'markup is escaped' );
 
 ok( defined $confirm, 'the adopt confirm action is present' );

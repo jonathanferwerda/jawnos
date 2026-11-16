@@ -700,16 +700,15 @@ sub action_41659 {
 			my $file_q = &subs::url_escape_utf8($path);
 			my $app_q = &subs::url_escape_utf8($app);
 			my $file_url = xml_escape('/file_open?file=' . $file_q . '&timestamp=' . $stamp . '&app=' . $app_q);
-			my $thumb_url = xml_escape('/file_open?file=' . $file_q . '&timestamp=' . $stamp . '&app=' . $app_q . '&thumb=ya');
 			my $app_e = xml_escape($app);
 			my $name_e = xml_escape($name);
 			my $path_e = xml_escape($path);
 			$candidates++;
 			if ($type eq 'image') {
-				$html .= '<img class="gigantic_thumb adopt_file" type="image" app="' . $app_e . '" timestamp="' . $stamp . '" file="' . $path_e . '" adopted="yes" loading="lazy" decoding="async" src="' . $thumb_url . '" alt="' . $name_e . '">';
+				$html .= '<img class="gigantic_thumb adopt_file" type="image" app="' . $app_e . '" timestamp="' . $stamp . '" file="' . $path_e . '" adopted="yes" loading="lazy" decoding="async" src="' . $file_url . '" alt="' . $name_e . '">';
 			}
 			elsif ($type eq 'video') {
-				$html .= '<video class="gigantic_thumb adopt_file" type="video" app="' . $app_e . '" timestamp="' . $stamp . '" file="' . $path_e . '" adopted="yes" preload="metadata" poster="' . $thumb_url . '" src="' . $file_url . '"></video>';
+				$html .= '<video class="gigantic_thumb adopt_file" type="video" app="' . $app_e . '" timestamp="' . $stamp . '" file="' . $path_e . '" adopted="yes" preload="metadata" title="' . $name_e . '" src="' . $file_url . '"></video>';
 			}
 			else {
 				$html .= '<div class="gigantic_thumb adopt_file" type="' . xml_escape($type) . '" app="' . $app_e . '" timestamp="' . $stamp . '" file="' . $path_e . '" adopted="yes" title="' . $name_e . '"><img src="/images/decipherable/file.png" class="medium_thumb"><span>' . $name_e . '</span></div>';
