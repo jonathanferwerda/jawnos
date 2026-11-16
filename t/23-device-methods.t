@@ -42,6 +42,7 @@ my %known = map { $_ => 1 } qw(
 	sms.send
 	sms.list
 	mms.list
+	mms.download
 	telephony.call_log
 	telephony.numbers
 	contact.list
