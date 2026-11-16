@@ -658,20 +658,36 @@ sub sync_stalled {
 		return 'the saved hub is not active' if !$hub || (($hub->{'connection'} || '') ne 'active');
 	}
 
-	# A quiet rail has no failed pull after its last good one, and is not a
-	# stall. Keep the failure window bounded too: a failure from an hour ago on
-	# a machine that has been quiet since is history, not a live block.
-	my $done = &db_query(q{select max(cast(updated as integer)) as t from sync_jobs where direction = 'pull' and state = 'done'});
-	my $fail = &db_query(q{select max(cast(updated as integer)) as t from sync_jobs where direction = 'pull' and state = 'failed'});
+	# A quiet rail has no peer whose last pull failed with no completed pull
+	# after it, and is not a stall. Judge each peer on its own pair: a house-wide
+	# newest-done test let one healthy machine hide a peer that kept failing, so
+	# the scheduled kick never fired while that peer's rows never moved
+	# (2026-11-16). Keep the failure window bounded too: a failure from an hour
+	# ago on a machine that has been quiet since is history, not a live block.
+	my $jobs = &db_query(q{
+		select peer,
+		       max(case when state = 'done' then cast(updated as integer) else 0 end) as done,
+		       max(case when state = 'failed' then cast(updated as integer) else 0 end) as fail
+		  from sync_jobs
+		 where direction = 'pull' and coalesce(peer, '') <> ''
+		 group by peer
+	})->hashes || [];
+	my $blocked;
+	foreach my $job ( @{$jobs} ) {
+		my $last_done = ($job->{'done'} || 0) + 0;
+		my $last_fail = ($job->{'fail'} || 0) + 0;
+		next unless $last_fail > $last_done;
+		next unless $last_fail >= $cut;
+		next if $last_done >= $cut;
+		$blocked = $job;
+		last;
+	}
 	# A half-seeded database must not take the controller down: with no job
 	# history there is nothing to judge, so the watchdog stays quiet.
-	return '' unless $done && $fail;
-	my $last_done = (($done->hashes->[0] || {})->{'t'} || 0) + 0;
-	my $last_fail = (($fail->hashes->[0] || {})->{'t'} || 0) + 0;
-	return '' unless $last_fail > $last_done;
-	return '' unless $last_fail >= $cut;
-	return '' if $last_done >= $cut;
-	return 'no pull has finished for ' . int(($now - $last_done) / 60000) . 'm since a failed one';
+	return '' unless $blocked;
+	my $last_done = ($blocked->{'done'} || 0) + 0;
+	return 'no pull has finished for ' . int(($now - $last_done) / 60000) . 'm since a failed one'
+		. (length($blocked->{'peer'} || '') ? ' (' . substr($blocked->{'peer'}, 0, 40) . ')' : '');
 }
 
 # Restart a sync rail that has stalled. Three things can hold it: a pull marker

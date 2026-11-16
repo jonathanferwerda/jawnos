@@ -157,8 +157,7 @@ like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s
 	my %s = (
 		up      => { busy => 0, value => '', age => 0 },
 		running => 0,
-		done    => $now - 5 * 60 * 1000,
-		fail    => 0,
+		jobs    => [ { peer => 'phone', done => $now - 5 * 60 * 1000, fail => 0 } ],
 		hub     => '',
 		peers   => [],
 	);
@@ -167,8 +166,7 @@ like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s
 	local *subs::db_query = sub {
 		my ($sql) = @_;
 		return SyncQuery->new({ c => $s{'running'} }) if $sql =~ /state = 'running'/;
-		return SyncQuery->new({ t => $s{'done'} }) if $sql =~ /state = 'done'/;
-		return SyncQuery->new({ t => $s{'fail'} }) if $sql =~ /state = 'failed'/;
+		return StopRows->new($s{'jobs'}) if $sql =~ /group by peer/;
 		return SyncQuery->new({});
 	};
 	local *subs::db_select = sub { StopRows->new($s{'peers'}) };
@@ -177,14 +175,25 @@ like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s
 	is(subs::sync_stalled(), '', 'a healthy quiet rail is left alone');
 	is(subs::sync_kick({ only_if_stalled => 1 }), undef, 'the scheduled job does nothing on a quiet rail');
 
-	$s{'done'} = $now - 20 * 60 * 1000;
-	$s{'fail'} = $now - 5 * 60 * 1000;
+	$s{'jobs'} = [ { peer => 'phone', done => $now - 20 * 60 * 1000, fail => $now - 5 * 60 * 1000 } ];
 	like(subs::sync_stalled(), qr/no pull has finished/, 'a failed pull with no success since is a stall');
 
-	$s{'fail'} = $now - 40 * 60 * 1000;
+	# A second peer that is pulling fine must not hide the broken one: the
+	# house-wide newest-done test did exactly that, so the kick never fired.
+	$s{'jobs'} = [
+		{ peer => 'phone',  done => $now - 20 * 60 * 1000, fail => $now - 5 * 60 * 1000 },
+		{ peer => 'laptop', done => $now - 1 * 60 * 1000,  fail => 0 },
+	];
+	like(subs::sync_stalled(), qr/no pull has finished/, 'a healthy peer does not mask a failing one');
+	like(subs::sync_stalled(), qr/phone/, 'and the blocked peer is named in the note');
+
+	$s{'jobs'} = [ { peer => 'phone', done => $now - 5 * 60 * 1000, fail => $now - 40 * 60 * 1000 } ];
 	is(subs::sync_stalled(), '', 'an old failure after a long-quiet rail is history');
 
-	$s{'fail'} = 0;
+	$s{'jobs'} = [];
+	is(subs::sync_stalled(), '', 'a database with no job history is not judged');
+
+	$s{'jobs'} = [ { peer => 'phone', done => $now - 5 * 60 * 1000, fail => 0 } ];
 	$s{'up'} = { busy => 1, value => 'running:123', age => 0 };
 	is(subs::sync_stalled(), '', 'a pull in flight is not a stall');
 
