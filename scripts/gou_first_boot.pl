@@ -156,6 +156,16 @@ sub _first_run_answers {
 	return ref $answers eq 'HASH' ? $answers : {};
 }
 
+# The code is a password once it is set, so it must not sit on disk waiting for
+# the rest of the pass to finish: the card's answer is already in memory.
+sub _first_run_forget_code {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return 0 unless length $home;
+	my $path = "$home/.presence/gou-first-run.json";
+	return 0 unless -e $path;
+	return unlink($path) ? 1 : 0;
+}
+
 sub _first_run_done {
 	my ($uid, $gid, $home) = &_tree_owner();
 	return 0 unless length $home;
@@ -940,6 +950,9 @@ my $token = &_token_read($opt{'token'});
 my $answers = &_first_run_answers();
 if (!$opt{'dry_run'} && $answers->{'code'}) {
 	$report->{'password'} = &_set_account_password($answers->{'code'}) ? 'set' : 'refused';
+	# Gone the moment it is a password. A refused code leaves the file where it
+	# is, so the next boot asks again instead of losing the person's answer.
+	&_first_run_forget_code() if $report->{'password'} eq 'set';
 }
 
 # A board that was just flashed has no identity of its own yet (the provisioner

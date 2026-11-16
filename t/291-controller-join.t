@@ -157,6 +157,10 @@ like($first_boot, qr/if \(!\$opt\{'dry_run'\} && %\{\$answers\}\)/, 'the panel o
 like($first_boot, qr/_first_run_done\(\) unless/, 'and the questions are asked once');
 my $py_ok = system('python3', '-m', 'py_compile', root() . '/scripts/gou_first_run.py');
 is($py_ok, 0, 'the dialog is valid Python');
+like($first_boot, qr/sub _first_run_forget_code/, 'the code leaves the disk once it is a password');
+like($first_boot, qr/&_first_run_forget_code\(\) if \$report->\{'password'\} eq 'set'/,
+	'straight after chpasswd, not at the end of the pass');
+like($first_boot, qr/return unlink\(\$path\) \? 1 : 0;/, 'and a refused code keeps it, so the next boot asks again');
 
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');
