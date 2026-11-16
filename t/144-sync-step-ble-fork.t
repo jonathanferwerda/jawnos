@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Manager/Part36.pm
+# tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Ble.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part09.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Manager/Part36.pm
 # covers:    A mobile sync pass takes one table at a time, so a nine-table plan
 #            no longer merges all nine in one request and runs the gauge hot for
 #            most of a minute; and every subprocessor whose work can wait on the
@@ -41,16 +41,22 @@ my $mine = {
 	appointments => { count => 10, sum => 1000, max => 900 },
 	ai_house     => { count => 1,  sum => 100,  max => 100 },
 	ai_jobs      => { count => 0,  sum => 0,    max => 0 },
+	routers      => { count => 3,  sum => 30,   max => 30 },
+	where_calls  => { count => 5,  sum => 50,   max => 50 },
 };
 my $theirs = {
 	appointments => { count => 12, sum => 1500, max => 1200 },
 	ai_house     => { count => 2,  sum => 300,  max => 200 },
 	ai_jobs      => { count => 31, sum => 5000, max => 3000 },
+	routers      => { count => 9,  sum => 90,   max => 90 },
+	where_calls  => { count => 8,  sum => 80,   max => 80 },
 };
 my $guarded = subs::sync_plan($mine, $theirs, {}, {}, 1);
 ok( exists $guarded->{'appointments'}, 'a real divergence still triggers its table' );
 ok( !exists $guarded->{'ai_house'}, 'a carry-only table does not trigger a pull' );
 ok( !exists $guarded->{'ai_jobs'},  'and neither does the other carry-only ledger' );
+ok( !exists $guarded->{'routers'}, 'the network inventory rides, it does not take the slot' );
+ok( !exists $guarded->{'where_calls'}, 'nor does the locator ledger' );
 is_deeply( [ keys %{ subs::sync_plan_step($guarded, 1) } ], ['appointments'],
 	'the mobile cap gives its one slot to the real divergence' );
 
@@ -155,6 +161,16 @@ my $part36 = read_file("$root/lib/JawnOS/Manager/Part36.pm");
 like( $part36, qr/\$plan_pull && !\$gimme && \(&subs::device_setter\(\) eq 'mobile' \|\| \$mobile_peer\)/,
 	'a mobile pull caps the plan, and so does a pull from a mobile peer' );
 like( $part36, qr/sync_plan_step\(\$plan, 1, \$seen\)/, 'the mobile cap is one table per pass, rotated by seen_at' );
+# The planner and the puller must name one carry list: a table the planner
+# refuses to let trigger is a table the pull must still carry, or it stops
+# travelling altogether when it becomes carry-only.
+my $part09 = read_file("$root/lib/JawnOS/Manager/Part09.pm");
+like( $part09, qr/%carry = map \{ \$_ => 1 \} \@\{ &subs::sync_carry_tables\(\) \}/,
+	'the pull carries every table the planner refuses to let trigger' );
+my $carry = subs::sync_carry_tables();
+ok( (grep { $_ eq 'routers' } @{$carry}), 'the network inventory is carry-only' );
+ok( (grep { $_ eq 'where_calls' } @{$carry}), 'so is the locator ledger' );
+ok( (grep { $_ eq 'appointments' } @{$carry}) == 0, 'appointments still starts a pull' );
 
 # ---- the fork option, behaviourally ---------------------------------------
 # In a subprocessor child the default is an inline send, to keep a run of

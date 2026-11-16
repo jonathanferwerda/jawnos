@@ -8,8 +8,12 @@ snapshot remains the **full-migration / deep-gimme / v2 / archive** path.
 - The handshake (`/manager/remote_auth_test`) returns the per-table digest
   (`count`, `sum(server_time)`, `max`) and `sync_version: 3`.
 - `sync_plan` turns the digest difference into a per-table cut. A table whose
-  picture matches is not pulled; `continent`, `ai_budget`, `ai_jobs`, `ai_house`
-  and `notifications` are **carry-only** (always ride a pull, never trigger one).
+  picture matches is not pulled; the tables `sync_carry_tables` names
+  (`continent`, `ai_budget`, `ai_jobs`, `ai_house`, `notifications`,
+  `numbering`, `paired_devices`, `routers`, `scan_house`, `where_calls`,
+  `where_feedback`) are **carry-only** (always ride a pull, never trigger one,
+  so a mobile pass spends its one table slot on the person's rows, not on
+  bookkeeping).
 - `Manager::sync_rows_pull` asks `GET /manager/sync_rows` for one table at a time,
   500 rows per batch, cursor = the last rowid received. A dropped link retries the
   batch; a 4xx is the peer's answer and is not retried.

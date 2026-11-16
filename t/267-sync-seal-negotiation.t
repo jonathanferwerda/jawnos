@@ -63,8 +63,8 @@ like($part10, qr/&auth_test=yes/, 'the helper asks the signed handshake');
 like($part10, qr/\$params->\{'sync_version'\} = \$rj->\{'sync_version'\}/,
 	'and hands the row stream its version');
 like($part10, qr/\$params->\{'plan'\} = \$plan/, 'with the per-table plan');
-like($part10, qr/qw\(continent ai_budget ai_jobs ai_house notifications\)/,
-	'an empty plan still carries the always-riding streams');
+like($part10, qr/\@\{ &subs::sync_carry_tables\(\) \}/,
+	'an empty plan still carries the always-riding streams, from the one shared list');
 like($part10, qr/remote_upgrade_plan\(\$c,\$params\) if \$params->\{'handshake'\}/,
 	'only a caller that asked for the handshake pays for it');
 like(source('lib/JawnOS/Controller/manager_configure2.pm'), qr/handshake => 1/,

@@ -133,9 +133,11 @@ sub sync_rows_pull {
 	# plus the carry-only streams. Without one, this is a first/cold pull: every
 	# table from the window, as the snapshot path did. The carry-only tables have
 	# no digest trigger by design (continent is a location stream), so they must
-	# always ride along or a device's travel map stops learning where the others are.
+	# always ride along or a device's travel map stops learning where the others
+	# are - and the bookkeeping tables would never travel at all once the planner
+	# stopped letting them start a pull.
 	my $have_plan = (ref $params->{'plan'} eq 'HASH' && scalar keys %{$params->{'plan'}}) ? 1 : 0;
-	my %carry = map { $_ => 1 } qw(continent ai_budget ai_jobs ai_house notifications);
+	my %carry = map { $_ => 1 } @{ &subs::sync_carry_tables() };
 	my %fetch;
 	if (!$have_plan) {
 		$fetch{$_} = 1 for @tables;

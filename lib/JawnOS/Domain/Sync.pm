@@ -47,18 +47,27 @@ our %note_key_material;
 # once (a tiny round trip) and memoised for the life of the worker.
 our %note_standard_supported;
 
+# Streams that ride along with any planned pull but never start one. A table
+# whose rows change constantly - the phone's measures, the network inventory,
+# the locator ledger - would otherwise take the single mobile slot on every
+# pass and the person's appointments would wait behind it. `ai_house` was the
+# first of these (its own row differs from every peer's by design, 2026-11-05);
+# the bookkeeping tables joined it after a phone's pass spent six slots on them
+# and the laptop sat nine minutes behind the phone (2026-11-16). They still
+# travel: sync_rows_pull includes every carry table in a planned pull.
+sub sync_carry_tables {
+	return [ qw(
+		continent ai_budget ai_jobs ai_house notifications
+		numbering paired_devices routers scan_house where_calls where_feedback
+	) ];
+}
+
 sub sync_plan {
 	my ($mine, $theirs, $above, $seen, $bands) = @_;
 	return undef unless ref $mine eq 'HASH' && ref $theirs eq 'HASH';
 	$seen ||= {};
 	my %plan;
-	# These streams are carry-only (see docs/sync-transport.md): they ride along
-	# with any pull but never start one. Leaving them in the trigger set is not
-	# harmless - a machine's own `ai_house` row differs from every peer's by
-	# design, so it stayed divergent forever, and a capped mobile pass takes the
-	# first table in sorted order: ai_house claimed the single slot on every pass
-	# and appointments never got a turn (2026-11-05).
-	my %carry_only = map { $_ => 1 } qw(continent ai_budget ai_jobs ai_house notifications);
+	my %carry_only = map { $_ => 1 } @{ &sync_carry_tables() };
 	foreach my $t ( keys %{$theirs} ) {
 		next if $carry_only{$t};
 		my $a = $mine->{$t} || {};

@@ -112,7 +112,7 @@ sub remote_upgrade_plan($c,$params) {
 	# without one. Carry the streams that always ride a pull, so a manual sync
 	# that finds no difference still moves them and stays small.
 	unless (scalar keys %{$plan}) {
-		$plan = { map { $_ => ($rj->{'digest'}->{$_}->{'max'} || 0) } qw(continent ai_budget ai_jobs ai_house notifications) };
+		$plan = { map { $_ => ($rj->{'digest'}->{$_}->{'max'} || 0) } @{ &subs::sync_carry_tables() } };
 	}
 	$params->{'plan'} = $plan;
 	$log->info('manual pull: v3 plan ' . scalar(keys %{$plan}) . ' table(s) from ' . $signatorial) if $log;
