@@ -265,7 +265,11 @@ sub _card_candidates {
 	foreach my $disk ( @{ ($tree && ref $tree->{'blockdevices'} eq 'ARRAY') ? $tree->{'blockdevices'} : [] } ) {
 		next unless ref $disk eq 'HASH';
 		next unless ($disk->{'type'} // '') eq 'disk';
-		next unless &_truthy($disk->{'rm'});
+		# An SD card in this board's slot does not advertise itself as removable:
+		# mmcblk0 reports rm=0, exactly like the soldered eMMC, so the flag
+		# cannot tell them apart. Ask the device what it is instead; the root
+		# disk is excluded on the next line either way.
+		next unless &_truthy($disk->{'rm'}) || &_sd_card($disk->{'name'});
 		next if length $root && ($disk->{'name'} // '') eq $root;
 		next unless (($disk->{'size'} // 0) + 0) > 0;
 		my $part;
@@ -289,6 +293,21 @@ sub _card_candidates {
 	}
 	@found = sort { $b->{'size'} <=> $a->{'size'} } @found;
 	return @found;
+}
+
+# /sys/block/mmcblkN/device/type says "SD" for a card in the slot and "MMC"
+# for the eMMC. That word is the only thing that separates them on a host whose
+# card slot reports itself as fixed.
+sub _sd_card {
+	my ($name) = @_;
+	return 0 unless defined $name && $name =~ /^mmcblk\d+$/;
+	my $type = '';
+	if (open(my $fh, '<', "/sys/block/$name/device/type")) {
+		$type = <$fh> // '';
+		close $fh;
+	}
+	$type =~ s/\s+//g;
+	return $type =~ /^SD$/i ? 1 : 0;
 }
 
 sub _truthy {
@@ -332,6 +351,9 @@ sub _card_plan {
 			: 'a card with another filesystem on it'
 		),
 		dev => $card->{'dev'},
+		# The card itself, which formatting needs: a plan that names only the
+		# partition cannot tell "the 29 GB card" from "the 64 MB filesystem".
+		disk => $card->{'disk'},
 		fstype => $fs,
 		size => $card->{'size'},
 		mount => $card->{'mount'},
@@ -514,8 +536,19 @@ sub _card_adopt {
 sub _card_format {
 	my ($plan, $opts) = @_;
 	my $mount = $opts->{'mount'} || $DEFAULT_MOUNT;
-	my $rc = system('mkfs.ext4', '-F', '-L', $DEFAULT_LABEL, $plan->{'dev'});
-	return { ok => 0, error => "could not format $plan->{'dev'}" } if $rc != 0;
+	# The card itself, not one of its partitions. A card that arrives with a
+	# stray filesystem on a 64 MB partition - a camera's, or a maker's leftover -
+	# would otherwise become a 64 MB archive. Formatting the whole device also
+	# drops any partition table it carried, which is what a dedicated archive
+	# card wants.
+	my $target = (defined $plan->{'disk'} && length $plan->{'disk'}) ? $plan->{'disk'} : $plan->{'dev'};
+	my $rc = system('mkfs.ext4', '-F', '-L', $DEFAULT_LABEL, $target);
+	return { ok => 0, error => "could not format $target" } if $rc != 0;
+	# The partition table is gone; let the kernel forget the old children before
+	# the card is mounted and its UUID read.
+	system('blockdev', '--rereadpt', $target) if &_command_path('blockdev');
+	system('sleep', '1');
+	$plan->{'dev'} = $target;
 	$plan->{'fstype'} = 'ext4';
 	$plan->{'mount'} = '';
 	return &_card_adopt($plan, $opts);

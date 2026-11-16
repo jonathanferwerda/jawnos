@@ -116,6 +116,18 @@ like($guard, qr/--name '\^JawnOS\$'/, 'and by the title the shell sets');
 my $guard_syntax = system('sh', '-n', root() . '/scripts/gou_kiosk_guard.sh');
 is($guard_syntax, 0, 'the guard is valid POSIX shell');
 
+# The board's card slot reports itself as fixed (mmcblk0 rm=0), exactly like the
+# soldered eMMC, so the removable flag cannot find the archive card. And a card
+# that arrives with a stray filesystem on a small partition must be formatted as
+# a card, not as that partition, or the archive is 64 MB.
+like($first_boot, qr/sub _sd_card/, 'a card is recognised by what the device says it is');
+like($first_boot, qr{/sys/block/\$name/device/type}, 'asking sysfs, not the removable flag');
+like($first_boot, qr/_truthy\(\$disk->\{'rm'\}\) \|\| &_sd_card\(\$disk->\{'name'\}\)/,
+	'an SD-type card is a candidate even when rm=0');
+like($first_boot, qr/mkfs\.ext4', '-F', '-L', \$DEFAULT_LABEL, \$target/, 'the format is aimed at the card');
+like($first_boot, qr/\$plan->\{'dev'\} = \$target;/, 'and the card, not the partition, is what gets mounted');
+like($first_boot, qr/disk => \$card->\{'disk'\}/, 'the plan carries the card, so format can aim at it');
+
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');
 
