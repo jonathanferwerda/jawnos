@@ -181,7 +181,19 @@ function travelNear3dStart(lat, lon) {
 		return sprite;
 	}
 
-	var loader = new THREE.TextureLoader();
+	// three's texture loader asks for crossOrigin "anonymous", and Qt WebEngine
+	// never completes a CORS-mode image for this app (a CORS request carries no
+	// session cookie, so the file route refuses it): every measured plate came
+	// out blank. A plain <img> sends the cookie, and a same-origin texture needs
+	// no CORS.
+	function imageTexture(url, anisotropy) {
+		var texture = new THREE.Texture();
+		if (anisotropy) { texture.anisotropy = anisotropy; }
+		var img = new Image();
+		img.onload = function () { texture.image = img; texture.needsUpdate = true; };
+		img.src = url;
+		return texture;
+	}
 	var maps = (typeof travelAllMaps !== 'undefined' && travelAllMaps && travelAllMaps.length)
 		? travelAllMaps : ((typeof mapData !== 'undefined' && mapData && mapData.all_maps) || []);
 	var span = 0;
@@ -224,10 +236,9 @@ function travelNear3dStart(lat, lon) {
 		// lay the picture flat: image x stays east, image y (down) becomes +z
 		// (south), so no mirroring is needed
 		geometry.rotateX(-Math.PI / 2);
-		var texture = loader.load(m.file);
-		if (renderer.capabilities && renderer.capabilities.getMaxAnisotropy) {
-			texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-		}
+		var anisotropy = (renderer.capabilities && renderer.capabilities.getMaxAnisotropy)
+			? renderer.capabilities.getMaxAnisotropy() : 0;
+		var texture = imageTexture(m.file, anisotropy);
 		var guessed = !!m.guessed;
 		var material = new THREE.MeshBasicMaterial({
 			map: texture,

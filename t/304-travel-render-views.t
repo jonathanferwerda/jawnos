@@ -236,6 +236,13 @@ like( $travel_help, qr/fetch_aframe\.sh/, 'and how to install A-Frame' );
 like( $travel_help, qr/compass gave a true reading/, 'and that a print faces the way the camera did' );
 like( $travel_help, qr/Elevation is not in the map data/, 'and that the ground is flat because no terrain is staged' );
 
+# ---- a texture arrives as a plain image ----------------------------------
+# three's TextureLoader asks for crossOrigin "anonymous"; Qt WebEngine never
+# completes a CORS-mode image for this app (the request carries no session
+# cookie, so the file route refuses it), and every plate came out blank.
+like( $near3d, qr/function imageTexture\(url, anisotropy\)/, 'a measured plate is textured from a plain image' );
+unlike( $near3d, qr/TextureLoader/, 'not through three\'s CORS-mode loader' );
+
 # ---- the virtual world: its own frame, its own renderer -------------------
 my $world = read_file("$root/public/js/manager/travel/06_world.js");
 like( $world, qr/^function travelWorldOpen\(lat, lon\)/m, 'travelWorldOpen is the view\'s entry point' );
@@ -269,6 +276,8 @@ my $renderer = read_file("$root/public/js/travel_world.js");
 like( $renderer, qr/registerComponent\('footprint'/, 'buildings are extruded from their footprint' );
 like( $renderer, qr/ExtrudeGeometry/, 'as real geometry' );
 like( $renderer, qr/rig\.setAttribute\('position', '0 3 26'\)/, 'the built world stands back the way the template does' );
+like( $renderer, qr/function imageTexture\(url, done\)/, 'a map plate and a print are textured from a plain image' );
+unlike( $renderer, qr/TextureLoader/, 'not through three\'s CORS-mode loader' );
 like( $renderer, qr/registerComponent\('worldphoto'/, 'a picture is a card in the world' );
 like( $renderer, qr/Math\.PI - \(ph\.heading \* Math\.PI \/ 180\)/, 'turned by the heading the camera kept' );
 like( $renderer, qr/registerComponent\('worldmap'/, 'a measured map plate is textured by three' );

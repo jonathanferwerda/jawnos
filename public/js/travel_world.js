@@ -127,6 +127,24 @@
 		}
 	});
 
+	// three's ImageLoader asks for crossOrigin "anonymous", and Qt WebEngine never
+	// completes a CORS-mode image for this app: a CORS request carries no session
+	// cookie, so the file route refuses it and the image never loads. Every map
+	// plate and photo print came through blank. A plain <img> sends the cookie,
+	// and a same-origin texture needs no CORS.
+	function imageTexture(url, done) {
+		var img = new Image();
+		img.onload = function () {
+			var tex = new THREE.Texture(img);
+			tex.minFilter = THREE.LinearFilter;
+			tex.generateMipmaps = false;
+		tex.needsUpdate = true;
+			if (done) { done(tex); }
+		};
+		img.onerror = function () { if (done) { done(null); } };
+		img.src = url;
+	}
+
 	// ---- a measured map plate: a plane textured by three -------------------
 	window.AFRAME.registerComponent('worldmap', {
 		schema: {
@@ -146,15 +164,15 @@
 				color: 0xffffff, transparent: true, opacity: d.opacity,
 				side: THREE.DoubleSide, depthWrite: d.opacity >= 1
 			});
-			var texture = new THREE.TextureLoader().load(d.url);
-			// a picture is not a power-of-two texture: no mipmaps, so no GL warning
-			texture.minFilter = THREE.LinearFilter;
-			texture.generateMipmaps = false;
-			material.map = texture;
-			material.needsUpdate = true;
 			var mesh = new THREE.Mesh(geo, material);
 			mesh.position.y = 0.02;
 			this.el.setObject3D('mesh', mesh);
+			// the picture arrives when it arrives; the plane is already placed
+			imageTexture(d.url, function (tex) {
+				if (!tex) { return; }
+				material.map = tex;
+				material.needsUpdate = true;
+			});
 		}
 	});
 
@@ -165,11 +183,11 @@
 			var d = this.data;
 			var material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true });
 			if (d.url) {
-				var texture = new THREE.TextureLoader().load(d.url);
-				texture.minFilter = THREE.LinearFilter;
-				texture.generateMipmaps = false;
-				material.map = texture;
-				material.needsUpdate = true;
+				imageTexture(d.url, function (tex) {
+					if (!tex) { return; }
+					material.map = tex;
+					material.needsUpdate = true;
+				});
 			}
 			var mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.7), material);
 			this.el.setObject3D('mesh', mesh);
