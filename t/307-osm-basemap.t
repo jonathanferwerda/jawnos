@@ -132,6 +132,24 @@ like( $text, qr/--maxzoom=\$opt\{'maxzoom'\} needs tilemaker 3\.1\.0 or newer/,
 like( $text, qr/\$cache\/tilemaker-bin\/tilemaker/,
 	'a tilemaker built into the cache is preferred over the one in PATH' );
 
+# The default is the house's Sarnia-London corridor, not the old county plate:
+# both city centres, and so the 402 between them, must fall inside it. Read the
+# corners from the script's own default rather than restating them here.
+my ($default_bbox) = $text =~ /^\s*bbox\s*=>\s*'([^']+)'/m;
+ok( $default_bbox, 'the script has a default bbox' );
+my ($w, $s, $e, $n) = split /,/, $default_bbox // '';
+is( scalar( split /,/, $default_bbox // '' ), 4,
+	'the default bbox is minlon,minlat,maxlon,maxlat' );
+my $inside = sub {
+	my ( $lon, $lat ) = @_;
+	return defined $lon && defined $w && $w <= $lon && $lon <= $e && $s <= $lat && $lat <= $n;
+};
+ok( $inside->( -82.4066, 42.9745 ), 'Sarnia (42.9745,-82.4066) is inside the default corridor' );
+ok( $inside->( -81.2453, 42.9849 ), 'London (42.9849,-81.2453) is inside the default corridor' );
+ok( $inside->( ( -82.4066 + -81.2453 ) / 2, ( 42.9745 + 42.9849 ) / 2 ),
+	'the 402 midpoint between the cities is inside too' );
+cmp_ok( $n, '<=', 43.2, 'the north edge stops short of Lake Huron' );
+
 # ---- --status, run for real on a fixture -------------------------------
 # A stand-in pmtiles CLI keeps this test off the network: the script only runs
 # it when one is present in the cache.

@@ -3,8 +3,8 @@
 #
 # The Travel map's providers are other people's tile servers, and the measured
 # plates only cover the places someone stood. This builds a real street map of
-# the county the house lives in, from an OpenStreetMap extract, into one
-# .pmtiles archive the app serves itself at /manager/travel/basemap.
+# the house's corridor - Sarnia to London - from an OpenStreetMap extract, into
+# one .pmtiles archive the app serves itself at /manager/travel/basemap.
 #
 #   perl scripts/osm_basemap.pl --status      # what is staged, and its extent
 #   perl scripts/osm_basemap.pl --all         # download, cut, build, stage
@@ -29,8 +29,12 @@
 # level and each layer raised to the zoom asked for. The Lua processor stays as
 # the package ships it.
 #
-# The default bbox is the county plate measured in Travel (the widest measured
-# map that covers the house), and the default name is the county it sits in.
+# The default bbox is the house's corridor: Sarnia (42.9745,-82.4066) and
+# London (42.9849,-81.2453), with the 402 between them, drawn out from the two
+# city centres with a margin. The north edge sits just above the cities and the
+# west edge just past Sarnia, so the box does not spend its tiles on Lake Huron;
+# the south edge is deeper because it is all land. The default name stays the
+# county the corridor runs through.
 use strict;
 use warnings;
 use FindBin qw($RealBin);
@@ -50,7 +54,7 @@ my $MAXZOOM = 17;
 my %opt = (
 	region  => 'north-america/canada/ontario',
 	name    => 'lambton',
-	bbox    => '-82.24519,42.67353,-81.82710,43.33643',
+	bbox    => '-82.55000,42.75000,-81.10000,43.10000',
 	cache   => File::Spec->catdir( JawnOS::Platform::Paths::home(), '.cache', 'jawnos-basemap' ),
 	maxzoom => 14,
 );
