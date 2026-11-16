@@ -815,7 +815,10 @@ function weatherHourLabel(text) {
 // An hour the provider stamped with an epoch is read on the house clock, the
 // same clock the taskbar keeps, whichever clock the provider wrote it in.
 function weatherClockZone() {
-	return (typeof jawnos_clock_timezone != 'undefined' && jawnos_clock_timezone && jawnos_clock_timezone != 'local') ? jawnos_clock_timezone : undefined;
+	var zone = (typeof jawnos_clock_timezone != 'undefined' && jawnos_clock_timezone && jawnos_clock_timezone != 'local') ? jawnos_clock_timezone : '';
+	// The house's own clock defaults to Eastern when no zone is chosen, the
+	// same fallback the controller bar reads.
+	return zone || 'America/New_York';
 }
 
 function weatherClock(d) {
