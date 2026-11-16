@@ -1,6 +1,7 @@
 # The JawnHat — a displayless sensor cap for JawnOS
 
-Status: prototype. Not built yet. This is the plan, the parts, and the reasons.
+Status: phase 0 firmware is written and compiles; no board has run it. This is the plan, the parts,
+the reasons, and what the bench still has to prove.
 
 ## Why no display
 
@@ -128,8 +129,8 @@ Everything the hat needs already exists in the tree:
 - The Camera app takes unclaimed media, which is where a logged frame belongs.
 - `jt` and `jw` already carry the wake word, the mic array, the audio pipeline, BLE, and the OTA sweep.
 
-New firmware would be a fifth PlatformIO target beside `jp`, `jt` and `jw` — say `jh` — reusing `jt`'s
-skeleton rather than starting fresh.
+The firmware is a fifth PlatformIO target beside `jp`, `jt` and `jw`: `jh`, reusing `jt`'s skeleton
+rather than starting fresh. Its parts, and how far each one is proven, are listed under phase 0.
 
 It lists in the Embedded app as it stands: the board advertises purpose byte 3, which `Ble.pm` maps to
 `microcontroller`, and `Embedded.pm` admits exactly `watch`, `teletype` and `microcontroller`. Two
@@ -146,13 +147,64 @@ cap, a used pair of glasses, a phone, or anything that arrives later.
 
 ### Phase 0 — Bench proof of concept
 
-Breadboards, no cap. Prove the loop end to end: wake word, then a camera frame to JawnOS, then an
-answer, then speech in the ear. Prove IMU heading is stable on a desk.
+*Written and compiling. Not yet run: no board has booted this firmware.*
+
+Breadboards, no cap. The loop is: wake word, capture the spoken command, POST it to the house, hear the
+answer through the bone-conduction transducer.
+
+`jh/` builds clean with `pio run -j 4` — RAM 20.2%, Flash 55.5% of a 3 MB app slot — and the parts are:
+
+| Part | What it does |
+| --- | --- |
+| `jh_01_globals` | pins, config, logging, chip identity |
+| `jh_02_setup` | boot; 240 MHz, FFat, peripherals |
+| `jh_03_loop` | the housekeeping the loop owns |
+| `jh_04_camera` | `esp_camera` capture and multipart POST |
+| `jh_05_audio_out` | MAX98357 I2S to the bone-conduction pair |
+| `jh_06_imu` | ICM-20948 relative yaw |
+| `jh_07_haptics` | coin motor tick |
+| `jh_08_ble_net` | Nordic UART link and the `jh.*` commands |
+| `jh_09_config` | house URL and token in FFat |
+| `jh_10_voice_in` | PDM microphone, ring buffer, wake word |
+| `jh_11_ota` | `/device_query` version report and `/update` |
+| `jh_12_bridge` | the house bridge envelope, `now_me`, the replies |
+| `jh_13_utterance` | capture, WAV, POST, and playing the answer |
+
+#### First-boot order
+
+Read these four lines in this order. The first one absent or wrong names the layer to fix.
+
+| Line | Proves |
+| --- | --- |
+| `[voice] rms=` | the PDM pins and slot mode |
+| `[voice] wake: hey_jawn` | the phrase detector |
+| `[utter] captured ... ms` | the capture ended on silence, not on the 6 s cap |
+| `[utter] posted ... http 200` | the Now Me authorization and TLS |
+
+The house side needed no change and already exists: `POST /watch/voice` (`perl/watch.pl:173`) funnels
+into `voice_ingest`, which transcribes, answers, and replies as `say` plus either a one-shot WAV
+(`say_audio_ready`) or BLE parts (`say_audio`).
+
+#### What is unproven
+
+Everything below the compiler, named rather than implied:
+
+- The PDM pin map (data 41, clock 42) follows Seeed's schematic and has not been checked against the
+  board revision.
+- The 400 RMS silence floor is a fixed phase-0 constant, not a room calibration. A DC pedestal on the
+  microphone makes the silence test never fire — the capture then runs to its 6 s cap — or fire early.
+  If `[utter]` shows the cap, the deck's DC blocker and ambient floor
+  (`jt_15_voice_activation.ino`) are the first thing to port.
+- The TLS POST and the one-shot reply fetch have never met a live house.
+- `jh.heading` is relative yaw since boot, not a compass: there is no magnetometer.
+- `say` text is logged and not spoken. There is no on-device TTS, and a transducer plays samples.
 
 *Exit:* stand in a room, say the wake word, ask what is in front, and hear a correct answer.
 *Cost:* electronics only.
 
 ### Phase 1 — Wearable proof of concept
+
+The voice path stands from phase 0; this phase is about the body.
 
 Into the cap, split across the two pods. Measure what a breadboard hides: two-hour comfort, real
 battery life, whether the tick gives usable direction, wind noise on the brim mics.
@@ -195,8 +247,10 @@ cost.
 ## Open questions
 
 1. Camera frame rate the board can sustain while streaming.
-2. Whether wind noise on a brim mic is tolerable, or the array needs a different baffle.
-3. Whether the tick or the voice carries direction better in practice — the field trial decides.
-4. Where the GPS fix comes from: the phone, or `jt`'s receiver over BLE.
-5. Whether phase 5 is a kit, a finished product, or a small run for personal use — the answer changes
+2. Whether the 240 MHz voice profile is needed on a real board, or 160 carries the phrase with room to
+   spare. The battery figure depends on the answer.
+3. Whether wind noise on a brim mic is tolerable, or the array needs a different baffle.
+4. Whether the tick or the voice carries direction better in practice — the field trial decides.
+5. Where the GPS fix comes from: the phone, or `jt`'s receiver over BLE.
+6. Whether phase 5 is a kit, a finished product, or a small run for personal use — the answer changes
    how much certification is worth buying.
