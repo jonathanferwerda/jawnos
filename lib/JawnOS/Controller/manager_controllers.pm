@@ -681,12 +681,25 @@ sub _flash_job_view {
 	delete $view{'token_path'};
 	my $bytes = $view{'bytes'} // 0;
 	my $total = $view{'total'} // 0;
-	$view{'percent'} = $total > 0 ? int($bytes * 100 / $total) : undef;
+	my $state = defined $view{'state'} ? $view{'state'} : '';
+	# The flash is two passes over the same bytes: the write, then the read-back
+	# that proves it. A bar counting only the write reaches 100% at the halfway
+	# point and then has nothing to show for the length of the check, so the
+	# percentage and the time left are both measured across the two passes.
+	my $verifying = $state eq 'verifying' ? 1 : 0;
+	my $span = $total > 0 ? ($verifying ? $total * 2 : $total) : 0;
+	my $done = $verifying ? $total + $bytes : $bytes;
+	$view{'percent'} = $span > 0 ? int($done * 100 / $span) : undef;
 	$view{'percent'} = 100 if defined $view{'percent'} && $view{'percent'} > 100;
+	$view{'phase'} = $verifying ? 'verifying' : $state;
 	my $started = $view{'started_ms'} // 0;
 	my $updated = $view{'updated_ms'} // 0;
 	$view{'elapsed'} = ($started && $updated > $started) ? ($updated - $started) / 1000 : 0;
 	$view{'rate'} = 0 unless defined $view{'rate'};
+	# The rate is the phase's own: the read-back is faster than the write, so a
+	# figure carried over from the write would promise the wrong wait.
+	$view{'remaining'} = ($view{'rate'} > 0 && $span > $done)
+		? int(($span - $done) / $view{'rate'}) : undef;
 	$view{'ok'} = 1;
 	return \%view;
 }
@@ -776,7 +789,11 @@ sub action_54010 {
 		|| (!$running->{'pid'} && defined $running->{'started_ms'} && (_flash_now_ms() - $running->{'started_ms'}) < 5000))) {
 		unlink $token->{'path'} if $token->{'path'};
 		&_controller_join_forget($token->{'secret'}) if $token->{'secret'};
-		return $c->render(json => { ok => 0, error => 'a flash is already running' });
+		# A second press - a double tap, or a press from a panel that reopened
+		# mid-write - joins the flash that is already writing instead of replacing
+		# a live bar with an error. The token it just minted is dropped above, so
+		# one flash still has one token.
+		return $c->render(json => { ok => 1, resumed => 1, job => &_flash_job_view($running) });
 	}
 	my $script = Cwd::abs_path('scripts/gou_provision.pl');
 	unless (defined $script && length $script && -f $script) {

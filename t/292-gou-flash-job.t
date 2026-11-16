@@ -95,6 +95,15 @@ sub insert_token {
 	is($job->{'state'}, 'writing', 'and reads back');
 	my $view = Manager::_flash_job_view($job);
 	is($view->{'percent'}, 50, 'the page gets a percentage');
+	is($view->{'remaining'}, 2, 'and the time left, counting the check it has not done yet');
+	# The check is a second pass over the same bytes. A bar that counts only the
+	# write reaches 100% at the halfway point and then has nothing to show for
+	# the length of the verification.
+	my $checking = Manager::_flash_job_view({ state => 'verifying', bytes => 0, total => 1024, rate => 512 });
+	is($checking->{'percent'}, 50, 'the check starts where the write ended');
+	my $mid = Manager::_flash_job_view({ state => 'verifying', bytes => 512, total => 1024, rate => 512 });
+	is($mid->{'percent'}, 75, 'and moves through the second pass');
+	is($mid->{'remaining'}, 1, 'with the time left over that pass');
 	is($view->{'rate'}, 256, 'and the rate the writer recorded');
 	ok(!exists $view->{'token_path'}, 'the token file path is not sent to the page');
 	ok(Manager::_flash_job_active('writing'), 'writing is an active state');
@@ -284,6 +293,11 @@ sub insert_token {
 
 	my $js = read_file(root() . '/public/js/manager/controllers.js');
 	like($js, qr{/manager/controllers/new/flash/status}, 'the page polls the status route');
+	like($js, qr/job\.remaining/, 'the page shows the time left');
+	like($js, qr/function controllerFlashDuration/, 'in words a person reads');
+	like($js, qr/if \(controllerFlashTimer\) \{ return; \}/,
+		'a second press does not post a second flash');
+	like($js, qr/response\.resumed/, 'and a press that joined a running flash keeps watching');
 	like($js, qr{/manager/controllers/new/flash/cancel}, 'and offers Cancel');
 	like($js, qr/controller_flash_bar/, 'with a progress bar');
 	like($js, qr/MB\/s/, 'a rate in MB per second');

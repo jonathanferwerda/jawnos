@@ -959,6 +959,13 @@ function controllerNewFlash() {
 		},
 		dataType: 'json',
 		success: function(response) {
+			// The route answered that a flash is already writing: this press
+			// joined it. Draw where it really is and keep polling.
+			if (response && response.resumed) {
+				controllerFlashWatch();
+				controllerFlashPaint(response.job || {});
+				return;
+			}
 			if (!response || !response.ok) {
 				controllerFlashFinish({ state: 'failed', error: (response && response.error) ? String(response.error) : controllerT('The board was not flashed.') });
 				return;
@@ -1008,6 +1015,13 @@ $(document).on('click', '#controllers_flash_cancel', function() {
 	});
 });
 
+// A wait a person can read: seconds while it is short, minutes once it is not.
+function controllerFlashDuration(seconds) {
+	seconds = Math.round(seconds);
+	if (seconds >= 120) { return Math.round(seconds / 60) + ' min'; }
+	return Math.max(1, seconds) + ' s';
+}
+
 function controllerFlashBytes(bytes) {
 	var n = Number(bytes);
 	if (!isFinite(n) || n <= 0) { return '0 MB'; }
@@ -1044,6 +1058,9 @@ function controllerFlashPaint(job) {
 	if (typeof job.percent === 'number') { parts.push(controllerT('{0}%', pct)); }
 	if (job.rate) { parts.push(controllerT('{0} MB/s', (job.rate / 1048576).toFixed(1))); }
 	if (job.total) { parts.push(controllerT('{0} of {1}', controllerFlashBytes(job.bytes), controllerFlashBytes(job.total))); }
+	if (typeof job.remaining === 'number' && job.remaining > 0) {
+		parts.push(controllerT('{0} left', controllerFlashDuration(job.remaining)));
+	}
 	$('#controllers_flash_detail').text(parts.join(' · '));
 }
 
