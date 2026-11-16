@@ -781,6 +781,9 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	}]);
 	no warnings 'redefine';
 	local *subs::rightNow = sub { $now };
+	# the start appointment now carries the reading that drove it
+	local *subs::random_string_creator = sub { 'rule-measure' };
+	local *subs::open_session_uuid = sub { '' };
 	local *subs::cache_get = sub {
 		my ($q) = @_;
 		return $store{ join('|', $q->{'app'}, $q->{'context'}, $q->{'subcontext'} // '') };
@@ -918,6 +921,121 @@ is($series->[0]{'values'}{'pressure'}, '100', 'the series keeps the pressure');
 	is($got{'precip_total'}, 3.2, 'and the accumulated total');
 	is($got{'temperature'}, -2, 'and the temperature the rule named');
 	ok(!exists $got{'wind_gust'}, 'it does not carry a measure the rule did not name');
+}
+
+# --- a running app keeps the readings the rule is still seeing ---------------
+{
+	my $now = 1794020000000;
+	my $n = 0;
+	my %appt = ( 'run-1' => '[]' );
+	no warnings 'redefine';
+	local $subs::WEATHER_MEASURE_GAP_MS = 60000;
+	local $subs::WEATHER_MEASURE_CAP = 4;
+	local *subs::rightNow = sub { $now };
+	local *subs::random_string_creator = sub { 'read-' . (++$n) };
+	local *subs::setting_grabber = sub { undef };
+	local *subs::setting_setter = sub { 1 };
+	local *subs::db_select = sub {
+		my ($table, $cols, $where) = @_;
+		return bless { rows => [ { uuid => $where->{'uuid'}, measures => $appt{ $where->{'uuid'} } } ] }, 'FakeResult';
+	};
+	local *subs::db_update = sub {
+		my ($table, $data, $where) = @_;
+		$appt{ $where->{'uuid'} } = $data->{'measures'};
+		return 1;
+	};
+	my $rule = { when => [{ measure => 'precipitation', op => 'is', value => 'rain' }], action => 'start', app => 'raining' };
+	is(subs::weather_app_reading_record('raining', 'run-1', { precipitation => 'rain', precip_rate => 0.5, precip_total => 9.5 }, $rule, $now, 'loc:home'), 1, 'a running app records the reading');
+	my $m = Mojo::JSON::decode_json($appt{'run-1'});
+	my %got = map { %{$_} } @{$m};
+	is(scalar @{$m}, 2, 'the rate and the total are the readings, not the condition word');
+	is($got{'precip_rate'}, 0.5, 'the rate is kept');
+	is($got{'precip_total'}, 9.5, 'and the total');
+	is($got{'ts'}, "$now", 'stamped with the check, so today and this week count it');
+
+	is(subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.6, precip_total => 9.8 }, $rule, $now + 30000, 'loc:home'), 0, 'a second check inside the gap adds nothing');
+	is(scalar @{ Mojo::JSON::decode_json($appt{'run-1'}) }, 2, 'and leaves the session as it was');
+
+	is(subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.7, precip_total => 10.1 }, $rule, $now + 3600000, 'loc:home'), 1, 'the next check adds its reading');
+	is(scalar @{ Mojo::JSON::decode_json($appt{'run-1'}) }, 4, 'to the same appointment');
+
+	subs::weather_app_reading_record('raining', 'run-1', { precip_rate => 0.8, precip_total => 10.4 }, $rule, $now + 7200000, 'loc:home');
+	my $capped = Mojo::JSON::decode_json($appt{'run-1'});
+	is(scalar @{$capped}, 4, 'a long rain keeps only its newest readings');
+	my @rates = grep { defined $_->{'precip_rate'} } @{$capped};
+	is_deeply([ map { $_->{'precip_rate'} } @rates ], [0.7, 0.8], 'the oldest readings are the ones dropped');
+}
+
+# --- a rule that is still matched keeps its running app's reading fresh ------
+{
+	my $now = 1794020000000;
+	my $rules_json = Mojo::JSON::encode_json([{
+		uuid => 'rain-1', name => 'Rain',
+		when => [{ measure => 'precipitation', op => 'is', value => 'rain' }],
+		for_ms => 0, hold_check => 1, action => 'start', app => 'raining',
+		location => 'loc:home',
+	}]);
+	my %appt = ( 'run-1' => '[]' );
+	my @appointments;
+	no warnings 'redefine';
+	local $subs::WEATHER_MEASURE_GAP_MS = 60000;
+	local *subs::rightNow = sub { $now };
+	local *subs::random_string_creator = sub { 'read-uuid' };
+	local *subs::cache_get = sub { {} };
+	local *subs::cache_set = sub { 1 };
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $rules_json if ($q->{'app'} // '') eq 'weather_station' && $q->{'setting'} eq 'weather_rules';
+		return 'on' if ($q->{'setting'} // '') eq 'toggle';
+		return undef;
+	};
+	local *subs::setting_setter = sub { 1 };
+	local *subs::open_session_uuid = sub { 'run-1' };
+	local *Manager::appointment_writer = sub {
+		my ($c, $data) = @_;
+		push @appointments, $data;
+		return $data;
+	};
+	local *subs::db_select = sub {
+		my ($table, $cols, $where) = @_;
+		return bless { rows => [ { uuid => 'run-1', measures => $appt{'run-1'} } ] }, 'FakeResult';
+	};
+	local *subs::db_update = sub {
+		my ($table, $data, $where) = @_;
+		$appt{'run-1'} = $data->{'measures'};
+		return 1;
+	};
+	my $fired = subs::weather_measure_rule_evaluate({ precipitation => 'rain', precip_rate => 0.4, precip_total => 7 }, [], 'obs-1', $now, 'loc:home');
+	is(scalar @{$fired}, 1, 'the still-matched rule is read');
+	is(scalar @appointments, 0, 'and the app it is already running is not started again');
+	my $m = Mojo::JSON::decode_json($appt{'run-1'});
+	my %got = map { %{$_} } @{$m};
+	is(scalar @{$m}, 2, 'but its appointment takes the reading the rule is seeing');
+	is($got{'precip_rate'}, 0.4, 'the rate lands on the running session');
+	is($got{'ts'}, "$now", 'at the check');
+}
+
+# --- the rain and snow apps read precipitation as a peak ---------------------
+{
+	my %store;
+	no warnings 'redefine';
+	local *subs::setting_grabber = sub {
+		my ($q) = @_;
+		return $store{ ($q->{'app'} // '') . '|' . ($q->{'setting'} // '') . '|' . ($q->{'subsetting'} // '') };
+	};
+	local *subs::setting_setter = sub {
+		my ($q) = @_;
+		$store{ ($q->{'app'} // '') . '|' . ($q->{'setting'} // '') . '|' . ($q->{'subsetting'} // '') } = $q->{'value'};
+		return 1;
+	};
+	is(subs::weather_app_measure_defaults(), 1, 'the rain and snow apps get their measures');
+	is($store{'raining|measure_calc|precip_rate'}, 'high', 'the rate reads as its peak');
+	is($store{'raining|measure_calc|precip_total'}, 'high', 'and the total as its highest reading');
+	my $raining = Mojo::JSON::decode_json($store{'raining|app_measures|'});
+	is($raining->{'precip_total'}{'unit'}, 'mm', 'the app knows the measure');
+	$store{'raining|measure_calc|precip_total'} = 'sum';
+	subs::weather_app_measure_defaults();
+	is($store{'raining|measure_calc|precip_total'}, 'sum', 'a calc the person chose is left alone');
 }
 
 # --- the one-time rain/snow migration ----------------------------------------
@@ -1233,6 +1351,8 @@ is(subs::weather_rule_location_normalize(undef), '', 'no location is the old glo
 		push @appointments, $data;
 		return $data;
 	};
+	local *subs::random_string_creator = sub { 'rule-measure' };
+	local *subs::open_session_uuid = sub { '' };
 	my $values = { wind_gust => 25 };
 	is(scalar @{ subs::weather_measure_rule_evaluate($values, [], 'appt-1', $now, 'dev:phone') }, 0,
 		'the phone reading does not fire the cabin rule');

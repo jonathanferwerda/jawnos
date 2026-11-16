@@ -29,6 +29,12 @@ use Mojo::Util qw(md5_sum);
 
 our $log;
 
+# A weather rule keeps its app's appointment current while the condition holds:
+# one reading a check, and only the newest are kept. The observer runs about
+# half-hourly, so a minute is enough to stop a manual check doubling a reading.
+our $WEATHER_MEASURE_GAP_MS;
+our $WEATHER_MEASURE_CAP;
+
 # ---- the condition rules ----------------------------------------------------
 sub weather_automation_app() {
 	return 'weather_station';
@@ -418,6 +424,23 @@ sub weather_observation_series($app, $from, $to, $location = '') {
 }
 
 # ---- acting on a measurement rule ------------------------------------------
+# The values a rule's appointment carries: the precipitation that made it rain
+# or snow, plus every measure the rule itself names. A text condition
+# ("precipitation is rain") is a state, not a reading; the caller passes it and
+# the writer leaves it out of the numeric measures.
+sub weather_rule_reading_keys($rule) {
+	my @keys = qw(precip_rate precip_total);
+	if (ref $rule eq 'HASH') {
+		foreach my $condition (@{ $rule->{'when'} || [] }) {
+			next unless ref $condition eq 'HASH';
+			my $key = $condition->{'measure'} // '';
+			push @keys, $key if length $key;
+		}
+	}
+	my %seen;
+	return [ grep { !$seen{$_}++ } @keys ];
+}
+
 sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '', $values = undef, $location = '', $rule = undef) {
 	return 0 unless defined $app && length $app;
 	$timestamp ||= &rightNow();
@@ -426,17 +449,7 @@ sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '',
 	# app's own record says how much rain or snow was falling when it started.
 	my @measures;
 	if (ref $values eq 'HASH') {
-		my @keys = qw(precip_rate precip_total);
-		if (ref $rule eq 'HASH') {
-			foreach my $condition (@{ $rule->{'when'} || [] }) {
-				next unless ref $condition eq 'HASH';
-				my $key = $condition->{'measure'} // '';
-				push @keys, $key if length $key;
-			}
-		}
-		my %seen;
-		foreach my $key (@keys) {
-			next if $seen{$key}++;
+		foreach my $key (@{ &weather_rule_reading_keys($rule) }) {
 			next unless defined $values->{$key};
 			push @measures, {
 				$key => $values->{$key},
@@ -490,6 +503,95 @@ sub weather_rule_app_switch($app, $on, $source_uuid, $timestamp, $warranty = '',
 	return 0;
 }
 
+# While a rule's app is still running, the weather that keeps it running belongs
+# on the same appointment: a start row written yesterday would otherwise leave
+# the app's bottom line with no reading for today or this week. Each check adds
+# the current reading to the open session, at most once a gap, and a long rain
+# keeps only its newest readings - the shape a movement app's speed takes.
+sub weather_app_reading_record($app, $uuid, $values, $rule, $timestamp, $location = '') {
+	return 0 unless defined $app && length $app;
+	return 0 unless defined $uuid && length $uuid;
+	return 0 unless ref $values eq 'HASH';
+	$timestamp ||= &subs::rightNow();
+	# The app reads precipitation as a peak, not a sum of every check, and a house
+	# the migration never reached still learns the measures here.
+	&weather_app_measure_defaults($app);
+	my $row = eval { &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0] };
+	return 0 unless ref $row eq 'HASH';
+	my $measures = eval { decode_json($row->{'measures'} // '') } || [];
+	return 0 unless ref $measures eq 'ARRAY';
+	my $keys = &weather_rule_reading_keys($rule);
+	my $last;
+	foreach my $entry (@{$measures}) {
+		next unless ref $entry eq 'HASH' && defined $entry->{'ts'} && "$entry->{'ts'}" =~ /^-?[0-9]+$/;
+		foreach my $key (@{$keys}) {
+			next unless defined $entry->{$key};
+			$last = $entry->{'ts'} + 0 if !defined $last || $entry->{'ts'} + 0 > $last;
+			last;
+		}
+	}
+	my $gap = defined $WEATHER_MEASURE_GAP_MS ? $WEATHER_MEASURE_GAP_MS : 60000;
+	return 0 if defined $last && ($timestamp - $last) < $gap;
+	my @fresh;
+	foreach my $key (@{$keys}) {
+		my $value = $values->{$key};
+		next unless defined $value && !ref $value;
+		next unless "$value" =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
+		push @fresh, {
+			$key => $value,
+			ts => $timestamp + 0,
+			uuid => &subs::random_string_creator(22),
+			(length $location ? (location => $location) : ()),
+		};
+	}
+	return 0 unless @fresh;
+	push @{$measures}, @fresh;
+	# the cap: drop the oldest of these readings once there are too many
+	my $cap = defined $WEATHER_MEASURE_CAP ? $WEATHER_MEASURE_CAP : 500;
+	my @idx = grep {
+		my $entry = $measures->[$_];
+		ref $entry eq 'HASH' && (scalar grep { defined $entry->{$_} } @{$keys})
+	} 0 .. $#{$measures};
+	if (scalar @idx > $cap) {
+		my %drop;
+		$drop{$_} = 1 for @idx[0 .. (scalar(@idx) - $cap - 1)];
+		$measures = [ map { $drop{$_} ? () : $measures->[$_] } 0 .. $#{$measures} ];
+	}
+	&subs::db_update('appointments', { measures => encode_json($measures), server_time => &subs::rightNow() }, { uuid => $uuid, app => $app });
+	return 1;
+}
+
+# The rain and snow apps read their precipitation as a peak: the going rate and
+# the running total are the largest reading in the period, not a sum of every
+# check. A calc the person already chose is left alone, and the definitions ride
+# along so an app the migration never reached still knows the measures.
+sub weather_app_measure_defaults($only = undef) {
+	my $definitions = &weather_measure_definitions();
+	# Only the precipitation apps: a rule may start any app, and a wind rule's
+	# appointment carrying the rain is not a reason to teach that app rain measures.
+	my @targets = (defined $only && length $only)
+		? (grep { $_ eq $only } qw(raining snowing))
+		: qw(raining snowing);
+	foreach my $target (@targets) {
+		my @keys = qw(precipitation precip_rate precip_total);
+		push @keys, 'temperature' if $target eq 'snowing';
+		my $own = eval { decode_json(&subs::setting_grabber({ app => $target, setting => 'app_measures' }) // '') } || {};
+		my $own_changed = 0;
+		foreach my $key (@keys) {
+			next if ref $own->{$key} eq 'HASH';
+			$own->{$key} = { %{ $definitions->{$key} } };
+			$own_changed = 1;
+		}
+		&subs::setting_setter({ app => $target, setting => 'app_measures', value => encode_json $own }) if $own_changed;
+		foreach my $key (qw(precip_rate precip_total)) {
+			my $calc = &subs::setting_grabber({ app => $target, setting => 'measure_calc', subsetting => $key });
+			next if defined $calc && length $calc;
+			&subs::setting_setter({ app => $target, setting => 'measure_calc', subsetting => $key, value => 'high' });
+		}
+	}
+	return 1;
+}
+
 # A rule acts on its rising edge. A start rule also stops its app on the falling
 # edge, which is what makes "rain -> raining" start and stop; a run rule fires
 # once and waits for the condition to clear before it can fire again.
@@ -538,6 +640,13 @@ sub weather_measure_rule_evaluate($values, $series, $uuid, $now, $location = '',
 			else {
 				push @fired, { uuid => $id, name => $rule->{'name'} || '', action => 'start', app => $rule->{'app'}, ok => &weather_rule_app_switch($rule->{'app'}, 1, $uuid, $now, $warranty, $values, $location, $rule) };
 			}
+		}
+		# A running app keeps the reading the rule is still seeing: the start
+		# row says how much rain was falling when it began, and each later
+		# check adds today's reading to the same session.
+		if ($matched && $action eq 'start' && defined $rule->{'app'} && length $rule->{'app'}) {
+			my $open = eval { &subs::open_session_uuid($rule->{'app'}) } || '';
+			&weather_app_reading_record($rule->{'app'}, $open, $values, $rule, $now, $location) if length $open;
 		}
 		elsif (!$matched && $action eq 'start' && ($previous || $pending)) {
 			my $stop_now = 0;

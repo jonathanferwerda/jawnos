@@ -764,6 +764,11 @@ our %privilege_rank = (
 our %tier_rank = %privilege_rank;
 our $SPEED_MEASURE_GAP_MS = 60000;   # one reading a minute
 our $SPEED_MEASURE_CAP = 500;        # a single appointment keeps this many at most
+# A weather rule keeps its app's reading current while the condition holds: the
+# observer runs about half-hourly, so a minute stops a manual check doubling it,
+# and a long rain keeps its newest readings rather than every one.
+our $WEATHER_MEASURE_GAP_MS = 60000;
+our $WEATHER_MEASURE_CAP = 500;
 # A join request is only a short introduction: ten minutes is long enough for a
 # person to read a code out loud and type it on the other machine, and every read
 # deletes a request older than this.
