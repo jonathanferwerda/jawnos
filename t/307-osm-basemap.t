@@ -129,6 +129,8 @@ like( $text, qr/asked for z\$opt\{'maxzoom'\} but the archive stops at z\$1/,
 	'an archive that stops short of --maxzoom is refused, not staged' );
 like( $text, qr/--maxzoom=\$opt\{'maxzoom'\} needs tilemaker 3\.1\.0 or newer/,
 	'and a tilemaker too old for the zoom asked for is refused before the build' );
+like( $text, qr/\$cache\/tilemaker-bin\/tilemaker/,
+	'a tilemaker built into the cache is preferred over the one in PATH' );
 
 # ---- --status, run for real on a fixture -------------------------------
 # A stand-in pmtiles CLI keeps this test off the network: the script only runs
@@ -160,6 +162,27 @@ is( $code, 0, '--status with an archive staged exits 0' );
 like( $out, qr/basemap: lambton\.pmtiles/, 'it names the archive' );
 like( $out, qr/2 KB/, 'with its size' );
 like( $out, qr/min zoom: 6/, 'and the pmtiles CLI\'s own zoom lines' );
+
+# ---- which tilemaker: the cache build wins over PATH --------------------
+# Debian's packaged 3.0.0 cannot tile above z14, so a newer one built in the
+# cache is used when it exists; --help and --status say which one that is.
+my $tmb = "$cache/tilemaker-bin/tilemaker";
+make_path("$cache/tilemaker-bin");
+write_file( $tmb, "#!/bin/sh\necho 'tilemaker v3.2.0'\n" );
+chmod 0755, $tmb;
+( $code, $out ) = $run->( '--help', "--cache=$cache" );
+is( $code, 0, '--help exits 0' );
+like( $out, qr{^tilemaker: \Q$tmb\E$}m, '--help names the cache tilemaker when one is built' );
+unlink $tmb;
+make_path("$tmp/path");
+my $shim = "$tmp/path/tilemaker";
+write_file( $shim, "#!/bin/sh\nexit 0\n" );
+chmod 0755, $shim;
+{
+	local $ENV{'PATH'} = "$tmp/path:$ENV{'PATH'}";
+	( $code, $out ) = $run->( '--status', "--cache=$cache" );
+}
+like( $out, qr{^tilemaker: \Q$shim\E$}m, 'and falls back to PATH when the cache has none' );
 
 ( $code, $out ) = $run->( '--nonsense' );
 isnt( $code, 0, 'an unknown flag is refused' );

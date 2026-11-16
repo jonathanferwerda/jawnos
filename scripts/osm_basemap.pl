@@ -74,6 +74,8 @@ foreach my $arg ( @ARGV ) {
 	die "osm_basemap: unknown argument '$arg' (try --help)\n";
 }
 
+my $cache = $opt{'cache'};
+
 if ( $want{'help'} ) {
 	print <<'USAGE';
 perl scripts/osm_basemap.pl --status          what is staged, with its extent
@@ -86,10 +88,12 @@ perl scripts/osm_basemap.pl --build           tile the cut extract into basemaps
   --bbox=minlon,minlat,maxlon,maxlat      the ground to tile
   --maxzoom=N                             tile up to zoom N (default 14; the
                                           profile stops at 14, so raise it;
-                                          z15+ needs tilemaker 3.1.0 or newer)
+                                          z15+ needs tilemaker 3.1.0+)
   --cache=DIR                             where extracts and tools are kept
   --dry-run                               write the patched profile, tile nothing
 USAGE
+	print 'tilemaker: ', tilemaker_label(), "\n";
+	print "  lookup: $cache/tilemaker-bin/tilemaker, then PATH\n";
 	exit 0;
 }
 
@@ -99,7 +103,6 @@ die "osm_basemap: --maxzoom needs a whole number from 0 to $MAXZOOM (got '$opt{'
 	unless $opt{'maxzoom'} =~ /^\d+$/ && $opt{'maxzoom'} <= $MAXZOOM;
 
 my $stage = JawnOS::Platform::Paths::basemaps_dir( root => abs_path("$RealBin/..") );
-my $cache = $opt{'cache'};
 my $out   = "$stage/$opt{'name'}.pmtiles";
 my $slug  = $opt{'region'};
 $slug =~ s{.*/}{};
@@ -115,6 +118,22 @@ sub need_tool {
 	return $path if length $path;
 	die "osm_basemap: '$tool' is not installed.\n"
 		. "  Debian/Ubuntu: sudo apt-get install $package\n";
+}
+
+# A tilemaker built into the cache is preferred: Debian's packaged 3.0.0 is
+# compiled without FAT_TILE_INDEX and cannot write tiles above z14. The lookup
+# order is the cache binary, then PATH, and --help/--status name the one used.
+sub tilemaker_bin {
+	my $local = "$cache/tilemaker-bin/tilemaker";
+	return $local if -x $local;
+	my $path = `command -v tilemaker 2>/dev/null`;
+	$path =~ s/\s+$//;
+	return $path;
+}
+
+sub tilemaker_label {
+	my $bin = tilemaker_bin();
+	return length $bin ? $bin : 'not installed';
 }
 
 sub staged_files {
@@ -136,6 +155,7 @@ sub human_size {
 # the header and one JSON directory summary; the zoom range and tile count are
 # the two lines a person checks against what they asked for.
 sub status {
+	print 'tilemaker: ', tilemaker_label(), "\n";
 	my @files = staged_files();
 	unless ( @files ) {
 		print "basemap: nothing staged in $stage\n";
@@ -241,13 +261,14 @@ sub extract_county {
 }
 
 sub build {
-	my $tilemaker = &need_tool( 'tilemaker', 'tilemaker' );
-	# The Debian package is tilemaker 3.0.0 built without FAT_TILE_INDEX: its
-	# tile coordinates are 16-bit and its z6 offsets 8-bit ("supports up to
-	# z14" in coordinates.h), so a basezoom above 14 silently truncates them.
+	my $tilemaker = tilemaker_bin();
+	$tilemaker = &need_tool( 'tilemaker', 'tilemaker' ) unless length $tilemaker;
+	# Debian's tilemaker 3.0.0 is built without FAT_TILE_INDEX: its tile
+	# coordinates are 16-bit and its z6 offsets 8-bit ("supports up to z14"
+	# in coordinates.h), so a basezoom above 14 silently truncates them.
 	# Refuse before spending the build, not after it stages a degraded map.
 	my $help = `"$tilemaker" --help 2>&1`;
-	my ($tm_version) = $help =~ /^tilemaker\s+(\d+\.\d+\.\d+)/m;
+	my ($tm_version) = $help =~ /^tilemaker\s+v?(\d+\.\d+\.\d+)/m;
 	if ( $opt{'maxzoom'} > 14 && defined $tm_version && $tm_version < '3.1.0' ) {
 		die "osm_basemap: --maxzoom=$opt{'maxzoom'} needs tilemaker 3.1.0 or newer;\n"
 			. "  the installed $tm_version was built without FAT_TILE_INDEX and tops out at z14.\n";
