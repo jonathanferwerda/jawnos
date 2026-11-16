@@ -118,6 +118,10 @@ like( $basemap, qr{maplibregl\.setWorkerUrl\('/js/basemap/maplibre-gl-csp-worker
 	'its worker is a same-origin file, so worker-src blob: is not needed' );
 like( $basemap, qr{'/js/basemap/maplibre-gl\.js'}, 'the plain build is the fallback' );
 like( $basemap, qr/maplibregl\.addProtocol\('pmtiles', protocol\.tile\)/, 'the PMTiles protocol is registered once' );
+like( $basemap, qr/if \(travelBasemapRan\[src\]\) \{ done\(\); return; \}/,
+	'a library script runs once per page, not on every open' );
+like( $basemap, qr/travelBasemapProtocolHost === window\.maplibregl/,
+	'and a replaced MapLibre gets the protocol again instead of losing it silently' );
 like( $basemap, qr/maplibregl\.setWorkerCount\(1\)/, 'the pool is one worker' );
 like( $basemap, qr{url: 'pmtiles:///manager/travel/basemap'}, 'the archive is the house\'s own same-origin route' );
 like( $basemap, qr/new pmtiles\.PMTiles\(url\)/, 'the archive header is read at open time' );

@@ -445,16 +445,21 @@ window.jawnosMap = (function () {
 			// one layer so the plates and pins still draw on top of the basemap
 			canvas.style.position = 'relative';
 			canvas.style.zIndex = '1';
+			// Size the box BEFORE the map exists. MapLibre 4.7 built in a
+			// zero-size container never recovers: the style never finishes loading,
+			// no source is added, no error fires, and a later resize() leaves it
+			// wedged with a correctly sized canvas over nothing. Measured live.
+			vector.box = box;
+			vectorPosition(dim);
 			var map;
 			try {
 				map = new window.maplibregl.Map({
 					container: box,
 					style: v.style(vector.maxZoom),
 					center: [normLon(view.lon), view.lat],
-					// the style asks for 256-px tiles, so a MapLibre camera zoom and
-					// this engine's zoom are the same ground scale and the same tile z:
-					// the plates the engine projects land on the vectors underneath,
-					// and a z17 archive is asked for at z17 rather than z18
+					// the backdrop is built at twice the canvas box and scaled by half,
+					// so this zoom is the engine's own and the tiles it asks for are the
+					// engine's z: a z17 archive is drawn from z17, not overzoomed
 					zoom: view.z,
 					// the archive's deepest zoom, not the engine's: a z17 build is
 					// drawn at z17 and goes no deeper
@@ -472,8 +477,9 @@ window.jawnosMap = (function () {
 				return false;
 			}
 			vector.map = map;
-			vector.box = box;
 			vector.at = null;
+			// the map may have measured the box before its first layout; one more
+			// pass keeps the canvas and the backdrop the same size
 			vectorPosition(dim);
 			return true;
 		}

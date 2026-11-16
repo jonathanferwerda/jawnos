@@ -28,6 +28,8 @@ var travelBasemapState = null;
 var travelBasemapLoading = false;
 var travelBasemapCss = false;
 var travelBasemapProtocol = false;
+var travelBasemapProtocolHost = null;   // which maplibregl got the pmtiles protocol
+var travelBasemapRan = {};              // script src -> already executed
 
 function travelBasemapOpen(lat, lon) {
 	// one layer at a time: opening this closes the other two
@@ -88,10 +90,18 @@ function travelBasemapLoad(done) {
 }
 
 function travelBasemapScript(src, done) {
+	// Once per page. Appending the tag again re-executes the library, which
+	// replaces window.maplibregl with a fresh instance whose protocol registry is
+	// empty - and a later register() would then be skipped as "already done",
+	// leaving a map that asks for pmtiles:// and gets nothing back.
+	if (travelBasemapRan[src]) { done(); return; }
+	travelBasemapRan[src] = true;
 	var script = document.createElement('script');
 	script.src = src;
 	script.onload = function() { done(); };
 	script.onerror = function() {
+		// let a later open try again rather than pin the failure
+		travelBasemapRan[src] = false;
 		if (script.parentNode) { script.parentNode.removeChild(script); }
 		done();
 	};
@@ -100,10 +110,13 @@ function travelBasemapScript(src, done) {
 
 // A PMTiles reader is one protocol for the whole page: MapLibre throws on a
 // second addProtocol for the same scheme. The pool is one worker because the
-// house box has other work to do and one archive needs no more.
+// house box has other work to do and one archive needs no more. The flag
+// remembers WHICH MapLibre instance it was registered on, so a library that was
+// replaced under us gets the protocol again instead of silently losing it.
 function travelBasemapRegister() {
-	if (travelBasemapProtocol) { return; }
+	if (travelBasemapProtocol && travelBasemapProtocolHost === window.maplibregl) { return; }
 	travelBasemapProtocol = true;
+	travelBasemapProtocolHost = window.maplibregl;
 	try { maplibregl.setWorkerCount(1); } catch (e) {}
 	var protocol = new pmtiles.Protocol();
 	maplibregl.addProtocol('pmtiles', protocol.tile);
