@@ -118,7 +118,7 @@
 			<h3><%= $d %></h3>
 			<% foreach my $m ( sort keys %{$store->{$d}} ) { %>
 
-				<% unless ($m eq 'logo' || $m eq 'doc_notes' || $m eq 'receipt_message' || $m eq 'invoice_paper' || $m eq 'receipt_paper' || $m eq 'invoice_images' ) { %>
+				<% unless ($m eq 'logo' || $m eq 'doc_notes' || $m eq 'receipt_message' || $m eq 'invoice_paper' || $m eq 'receipt_paper' || $m eq 'invoice_images' || $m eq 'open_order_hours' ) { %>
 					<div class="cfg-row">
 						<label><%= &subs::format_name($m) %></label>
 						<input type="text" name="name" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $store->{$d}->{$m} %>">
@@ -141,6 +141,12 @@
 							</select>
 						</span>
 					</div>
+				<% } elsif ($m eq 'open_order_hours') { %>
+					<div class="cfg-row">
+						<label><%= &subs::ui('Archive open orders after (hours)') %></label>
+						<input type="text" inputmode="numeric" class="me_setting" device="<%= $d %>" setting="<%= $m %>" value="<%= $store->{$d}->{$m} %>" placeholder="12">
+					</div>
+					<p class="cfg-note"><%= &subs::ui('An order nobody has touched for this long is archived off the register and its table, and the record is kept. Empty means 12 hours.') %></p>
 				<% } elsif ($m eq 'doc_notes' || $m eq 'receipt_message' ) { %>
 					<div class="cfg-row">
 						<label><%= &subs::format_name($m) %></label>

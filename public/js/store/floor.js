@@ -6,6 +6,7 @@
 var storeFloorData = {
 	floor: { seats: [] },
 	orders: [],
+	images: [],
 	editing: false,
 	placing: false,
 	seat: ''
@@ -43,6 +44,7 @@ function storeFloorLoad(done) {
 		if (!r || !r.ok) { return; }
 		storeFloorData.floor = r.floor || { seats: [] };
 		storeFloorData.orders = r.orders || [];
+		storeFloorData.images = r.images || [];
 		if (storeFloorData.seat && !storeFloorSeatById(storeFloorData.seat)) {
 			storeFloorData.seat = '';
 		}
@@ -106,6 +108,7 @@ function storeFloorRender() {
 	$('#store_floor_edit').text(storeFloorData.editing ? storeFloorT('Done editing') : storeFloorT('Edit plan'));
 	$('#store_floor_edit_panel').toggle(storeFloorData.editing);
 	$('#store_floor_seat_view').toggle(!!storeFloorData.seat);
+	storeFloorRenderImages();
 
 	var layer = $('#store_floor_seats').empty();
 	$.each(floor.seats || [], function(i, seat) {
@@ -148,6 +151,52 @@ function storeFloorRenderSeatList(floor) {
 	});
 }
 
+// The pictures the house tagged Floorplan in an appointment's details. Choosing
+// one copies it into the plan as a data URI, so the plan still reads on a
+// second register even when that file never arrived there.
+function storeFloorRenderImages() {
+	var choices = $('#store_floor_image_choices').empty();
+	var images = storeFloorData.images || [];
+	$('#store_floor_marker_image').toggle(typeof window.jawnosMarkerSnapshot === 'function');
+	if (!images.length) {
+		choices.append($('<p class="store_floor_empty_small"></p>').text(storeFloorT('No picture is tagged Floorplan yet.')));
+		return;
+	}
+	$.each(images, function(i, image) {
+		if (!image || !image.file) { return; }
+		var button = $('<button type="button" class="store_floor_image_choice"></button>')
+			.attr('data-file', image.file)
+			.attr('aria-label', image.name || '');
+		button.append($('<img alt="">').attr('src', '/file_open?file=' + encodeURIComponent(image.file)));
+		button.append($('<span></span>').text(image.name || ''));
+		choices.append(button);
+	});
+}
+
+// One door for every picture that reaches the plan: the upload, a Marker
+// drawing and an attached floorplan all become a resized data URI here.
+function storeFloorUseImage(src, done) {
+	if (!src) { storeFloorStatus(storeFloorT('There is no picture to use.')); return; }
+	var image = new Image();
+	image.onload = function() {
+		// The picture is kept in the database, so it is resized here rather than
+		// stored at whatever a phone camera or a whiteboard produced.
+		var max = 1600;
+		var scale = Math.min(1, max / Math.max(image.width, image.height));
+		var canvas = document.createElement('canvas');
+		canvas.width = Math.max(1, Math.round(image.width * scale));
+		canvas.height = Math.max(1, Math.round(image.height * scale));
+		canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+		var data = canvas.toDataURL('image/jpeg', 0.82);
+		storeFloorSave({ image: data }, function() {
+			storeFloorStatus(storeFloorT('The picture is saved.'));
+			if (typeof done === 'function') { done(); }
+		});
+	};
+	image.onerror = function() { storeFloorStatus(storeFloorT('That picture could not be read.')); };
+	image.src = src;
+}
+
 function storeFloorRenderSeat() {
 	var seat = storeFloorData.seat ? storeFloorSeatById(storeFloorData.seat) : null;
 	var view = $('#store_floor_seat_view');
@@ -166,8 +215,11 @@ function storeFloorRenderSeat() {
 	}
 	else {
 		detail.append($('<div></div>').text(storeFloorT('Nobody is sitting here yet.')));
+		$('#store_floor_customer').hide();
 	}
+	$('#store_floor_seat_start').toggle(!order && !storeFloorData.editing);
 	$('#store_floor_seat_open').toggle(!!order && !storeFloorData.editing);
+	$('#store_floor_customer_open').toggle(!!order && !storeFloorData.editing);
 	$('#store_floor_seat_clear').toggle(!!order && !storeFloorData.editing);
 	$('#store_floor_seat_remove').toggle(storeFloorData.editing);
 	view.show();
@@ -188,6 +240,83 @@ function storeFloorSeatOpen(seatId, order) {
 				storeRegisterOpenOrder(r.order.id);
 			}
 		});
+	});
+}
+
+function storeFloorStartOrder() {
+	var seat = storeFloorData.seat;
+	if (!seat) { return; }
+	storeFloorPost('/manager/store/register/floor/seat', { seat: seat }, function() {
+		storeFloorLoad();
+		storeFloorStatus(storeFloorT('The order is open at the table.'));
+	});
+}
+
+// ---- a name on the table -----------------------------------------------------
+// The same search and kinds the Register offers, so a waiter can name the party
+// without leaving the floor. The order is the register order either way; this
+// only writes its customer.
+function storeFloorCustomerPanel(show) {
+	var panel = $('#store_floor_customer');
+	if (!panel.length) { return; }
+	var open = (typeof show === 'boolean') ? show : !panel.is(':visible');
+	if (open && !(storeFloorData.seat && storeFloorOrderFor(storeFloorData.seat))) { open = false; }
+	panel.toggle(open);
+	storeFloorCustomerStatus('');
+	if (open) { $('#store_floor_customer_search').trigger('focus'); }
+}
+
+function storeFloorCustomerStatus(text) {
+	var status = $('#store_floor_customer_status');
+	if (status.length) { status.text(text || ''); }
+}
+
+function storeFloorCustomerSearch() {
+	clearTimeout(storeFloorData.customer_timer);
+	var term = $.trim($('#store_floor_customer_search').val() || '');
+	var results = $('#store_floor_customer_results').empty();
+	if (term.length < 2) { return; }
+	storeFloorData.customer_timer = setTimeout(function() {
+		$.getJSON('/manager/store/register/customer_search', { search: term, timestamp: Date.now() }, function(r) {
+			if (!r || !r.ok) { return; }
+			if (!(r.customers || []).length) {
+				results.append($('<p class="store_register_empty"></p>').text(storeFloorT('Nothing matches that name. Add them below.')));
+				return;
+			}
+			$.each(r.customers, function(i, customer) {
+				results.append($('<button type="button" class="store_register_customer_result"></button>')
+					.attr('data-cx', customer.cx || '')
+					.text(customer.name || ''));
+			});
+		});
+	}, 250);
+}
+
+function storeFloorCustomerUse(cx) {
+	var order = storeFloorData.seat ? storeFloorOrderFor(storeFloorData.seat) : null;
+	if (!order || !cx) { return; }
+	storeFloorPost('/manager/store/register/customer', { id: order.id, cx: cx }, function() {
+		storeFloorCustomerPanel(false);
+		storeFloorLoad();
+	});
+}
+
+function storeFloorCustomerAdd() {
+	var order = storeFloorData.seat ? storeFloorOrderFor(storeFloorData.seat) : null;
+	if (!order) { storeFloorCustomerStatus(storeFloorT('Start an order here first.')); return; }
+	var name = $.trim($('#store_floor_customer_name').val() || '');
+	if (!name.length) { storeFloorCustomerStatus(storeFloorT('A name is needed.')); return; }
+	storeFloorCustomerStatus('');
+	storeFloorPost('/manager/store/register/customer', {
+		id: order.id,
+		name: name,
+		kind: $('#store_floor_customer_kind').val() || 'person'
+	}, function() {
+		$('#store_floor_customer_name').val('');
+		$('#store_floor_customer_search').val('');
+		$('#store_floor_customer_results').empty();
+		storeFloorCustomerPanel(false);
+		storeFloorLoad();
 	});
 }
 
@@ -274,6 +403,7 @@ $(document).on('click', '#store_floor_plan', function(e) {
 $(document).on('click', '.store_floor_seat', function(e) {
 	e.stopPropagation();
 	var id = $(this).attr('data-seat');
+	storeFloorCustomerPanel(false);
 	if (storeFloorData.editing) {
 		storeFloorData.seat = id;
 		storeFloorRender();
@@ -283,8 +413,29 @@ $(document).on('click', '.store_floor_seat', function(e) {
 });
 
 $(document).on('click', '.store_floor_seat_list_item', function() {
+	storeFloorCustomerPanel(false);
 	storeFloorData.seat = $(this).attr('data-seat') || '';
 	storeFloorRender();
+});
+
+$(document).on('click', '#store_floor_seat_start', function() {
+	storeFloorStartOrder();
+});
+
+$(document).on('click', '#store_floor_customer_open', function() {
+	storeFloorCustomerPanel();
+});
+
+$(document).on('input', '#store_floor_customer_search', function() {
+	storeFloorCustomerSearch();
+});
+
+$(document).on('click', '#store_floor_customer_results .store_register_customer_result', function() {
+	storeFloorCustomerUse($(this).attr('data-cx'));
+});
+
+$(document).on('click', '#store_floor_customer_save', function() {
+	storeFloorCustomerAdd();
 });
 
 $(document).on('click', '#store_floor_seat_open', function() {
@@ -317,24 +468,26 @@ $(document).on('change', '#store_floor_image_file', function() {
 	var field = this;
 	var reader = new FileReader();
 	reader.onload = function() {
-		var image = new Image();
-		image.onload = function() {
-			// The picture is kept in the database, so it is resized here rather
-			// than stored at whatever a phone camera produced.
-			var max = 1600;
-			var scale = Math.min(1, max / Math.max(image.width, image.height));
-			var canvas = document.createElement('canvas');
-			canvas.width = Math.max(1, Math.round(image.width * scale));
-			canvas.height = Math.max(1, Math.round(image.height * scale));
-			canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-			var data = canvas.toDataURL('image/jpeg', 0.82);
-			storeFloorSave({ image: data }, function() {
-				storeFloorStatus(storeFloorT('The picture is saved.'));
-				field.value = '';
-			});
-		};
-		image.onerror = function() { storeFloorStatus(storeFloorT('That picture could not be read.')); };
-		image.src = reader.result;
+		storeFloorUseImage(reader.result, function() { field.value = ''; });
 	};
 	reader.readAsDataURL(file);
+});
+
+$(document).on('click', '#store_floor_marker_image', function() {
+	if (typeof window.jawnosMarkerSnapshot !== 'function') {
+		storeFloorStatus(storeFloorT('Marker is not open.'));
+		return;
+	}
+	var snapshot = window.jawnosMarkerSnapshot();
+	if (!snapshot) {
+		storeFloorStatus(storeFloorT('Marker has no drawing to take.'));
+		return;
+	}
+	storeFloorUseImage(snapshot);
+});
+
+$(document).on('click', '.store_floor_image_choice', function() {
+	var file = $(this).attr('data-file');
+	if (!file) { return; }
+	storeFloorUseImage('/file_open?file=' + encodeURIComponent(file));
 });

@@ -191,6 +191,26 @@ $(document).on('click', '.delete_file', function() {
 	}
 });
 
+// The image's function tags it for the reader that wants that kind: Map,
+// Background, Diagram, Receipt, Signatorial or Floorplan (the Store's plan).
+// The route keeps one settings list per kind, so the next reader finds the
+// picture without scanning every appointment. Nothing reloads here: the row
+// keeps its place, and a function with its own panel (Map, Receipt) draws it
+// the next time the app is opened.
+$(document).on('change', '.image_function_selection', function() {
+	var select = $(this);
+	var file_uuid = select.attr('uuid');
+	var app_uuid = select.attr('app_uuid');
+	var app = select.attr('app');
+	if (!file_uuid || !app) { return; }
+	$.ajax({
+		url: '/manager/configure/image_function',
+		type: 'POST',
+		data: { app: app, app_uuid: app_uuid, file_uuid: file_uuid, func: select.val(), timestamp: Date.now() },
+		dataType: 'json'
+	});
+});
+
 $(document).on('change', '.file_information_updater', function() {
 	var a = $(this);
 	var value = a.val();

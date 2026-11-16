@@ -1304,6 +1304,27 @@ input.pi.price_edit {
 .store_floor_seat_detail { display: flex; flex-direction: column; gap: 4px; font-size: 16px; }
 .store_floor_seat_detail_total { font-weight: 700; font-size: 20px; }
 .store_floor_seat_actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.store_floor_image_choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.store_floor_image_choice {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	width: 96px;
+	padding: 4px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background-color: var(--panel);
+	color: var(--ink);
+	font-size: 12px;
+	overflow: hidden;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+.store_floor_image_choice img { width: 88px; height: 60px; object-fit: cover; border-radius: 6px; }
+.store_floor_image_choice span { max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.store_floor_empty_small { margin: 0; font-size: 13px; color: var(--ink-muted); }
+.store_floor_customer { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.store_floor_customer_new { display: flex; flex-direction: column; gap: 6px; }
 .store_floor_status { min-height: 1.2em; font-size: 14px; color: var(--ink-muted); }
 
 @media (max-width: 760px) {

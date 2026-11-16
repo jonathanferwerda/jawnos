@@ -179,6 +179,7 @@ sub image_function_sanity_check() {
 	my $maps = eval { return decode_json &subs::setting_grabber({ app => 'travel', setting => 'maps' }) } || [];
 	my $backgrounds = eval { return decode_json &subs::setting_grabber({ app => 'marker', setting => 'backgrounds' }) } || [];
 	my $diagrams = eval { return decode_json &subs::setting_grabber({ app => 'handbook', setting => 'diagrams' }) } || [];
+	my $floorplans = eval { return decode_json &subs::setting_grabber({ app => 'store', setting => 'floorplans' }) } || [];
 	foreach my $map ( @{$maps} ) {
 		unless ( -e $map->{'f'} ) {
 			@{$maps} = grep { $_->{'uuid'} ne $map->{'uuid'} } @{$maps};
@@ -197,13 +198,21 @@ sub image_function_sanity_check() {
 		}
 	}
 
+	foreach my $floorplan ( @{$floorplans} ) {
+		unless ( -e $floorplan->{'f'} ) {
+			@{$floorplans} = grep { $_->{'uuid'} ne $floorplan->{'uuid'} } @{$floorplans};
+		}
+	}
+
 	my $jmaps = encode_json $maps;
 	my $jbacks = encode_json $backgrounds;
 	my $jdiagrams = encode_json $diagrams;
+	my $jfloorplans = encode_json $floorplans;
 
 	&subs::setting_setter({ app => 'travel', setting => 'maps', value => $jmaps });
 	&subs::setting_setter({ app => 'marker', setting => 'backgrounds', value => $jbacks });
 	&subs::setting_setter({ app => 'handbook', setting => 'diagrams', value => $jdiagrams });
+	&subs::setting_setter({ app => 'store', setting => 'floorplans', value => $jfloorplans });
 }
 
 sub continent_record($c) {

@@ -207,6 +207,16 @@ function markerFlatten() {
 	return flat;
 }
 
+// A window outside Marker may take the drawing as a picture: the Store's
+// floorplan asks for one when a room is drawn here rather than uploaded. The
+// file is loaded only when Marker is opened, so the absence of this function is
+// exactly "Marker is not open". It returns '' rather than throwing when there
+// is no canvas to flatten.
+window.jawnosMarkerSnapshot = function() {
+	if (typeof markerFlatten !== 'function') { return ''; }
+	try { return markerFlatten().toDataURL('image/png'); } catch (e) { return ''; }
+};
+
 function markerZoomAt(screen_x, screen_y, factor) {
 	var scale = Math.max(0.05, Math.min(16, markerView.scale * factor));
 	if (scale == markerView.scale) { return; }

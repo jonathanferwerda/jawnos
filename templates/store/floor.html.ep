@@ -24,6 +24,11 @@
 					<span><%= &subs::ui('Picture of the room') %></span>
 					<input type="file" id="store_floor_image_file" accept="image/*">
 				</label>
+				<button type="button" id="store_floor_marker_image" class="store_register_button" style="display:none;"><%= &subs::ui('Use the Marker drawing') %></button>
+				<div class="store_floor_field">
+					<span><%= &subs::ui('Or a picture tagged Floorplan') %></span>
+					<div id="store_floor_image_choices" class="store_floor_image_choices"></div>
+				</div>
 				<label class="store_floor_field">
 					<span><%= &subs::ui('Room name') %></span>
 					<input type="text" id="store_floor_name" autocomplete="off" placeholder="<%= &subs::ui('Dining room') %>">
@@ -56,9 +61,35 @@
 				<div id="store_floor_seat_title" class="store_floor_seat_title"></div>
 				<div id="store_floor_seat_detail" class="store_floor_seat_detail"></div>
 				<div class="store_floor_seat_actions">
+					<button type="button" id="store_floor_seat_start" class="store_register_button"><%= &subs::ui('Start an order here') %></button>
 					<button type="button" id="store_floor_seat_open" class="store_register_button"><%= &subs::ui('Open the order') %></button>
+					<button type="button" id="store_floor_customer_open" class="store_register_button"><%= &subs::ui('Name this customer') %></button>
 					<button type="button" id="store_floor_seat_clear" class="store_register_button"><%= &subs::ui('Take off this table') %></button>
 					<button type="button" id="store_floor_seat_remove" class="store_register_button" style="display:none;"><%= &subs::ui('Remove this table') %></button>
+				</div>
+
+				<div id="store_floor_customer" class="store_floor_customer" style="display:none;">
+					<label class="store_floor_field">
+						<span><%= &subs::ui('Search a name') %></span>
+						<input type="search" id="store_floor_customer_search" autocomplete="off">
+					</label>
+					<div id="store_floor_customer_results" class="store_register_customer_results"></div>
+					<div class="store_floor_customer_new">
+						<label class="store_floor_field">
+							<span><%= &subs::ui('Or add them as') %></span>
+							<select id="store_floor_customer_kind">
+								<% foreach my $scons ( sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs} ) { %>
+									<option value="<%= $scons->{'sing'} %>"><%= &subs::ui(&subs::format_name($scons->{'sing'})) %></option>
+								<% } %>
+							</select>
+						</label>
+						<label class="store_floor_field">
+							<span><%= &subs::lang('common.name') %></span>
+							<input type="text" id="store_floor_customer_name" autocomplete="off">
+						</label>
+						<button type="button" id="store_floor_customer_save" class="store_register_button"><%= &subs::ui('Add and use') %></button>
+					</div>
+					<div id="store_floor_customer_status" class="store_register_customer_status" role="status" aria-live="polite"></div>
 				</div>
 			</div>
 

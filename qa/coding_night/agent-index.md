@@ -96,7 +96,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - settings (11): setting, value, timestamp, id, app, server_time, device, browser_tab_id, uuid, ost, subsetting
 - staged_appointments (17): uuid, staged_time, source, app, type, timestamp, title, notes, data, device, status, server_time, ost, duration, kind, target_uuid, changes
 - store_floorplan (6): uuid, name, image, seats, server_time, ost
-- store_order (12): uuid, device, label, customer_uuid, customer_app, customer_name, tax_exemption, items, seat, created, server_time, ost
+- store_order (14): uuid, device, label, customer_uuid, customer_app, customer_name, tax_exemption, items, seat, status, archived_at, created, server_time, ost
 - store_shift (18): uuid, device, associate, associate_uuid, opened_at, closed_at, float, expected, counted, over_short, cash_sales, refunds, status, notes, closed_by, closed_by_uuid, server_time, ost
 - subcategory (27): supplier, app, name, multi, price, timestamp, server_time, uuid, characteristics, category, cost, ost, description, discount, markup, manufacturer, def, quantity, unit, save_app, file, delay_start, delay_stop, def_month, def_day, def_hour, def_wday
 - sync_cursors (2): signatorial, cursor
@@ -121,7 +121,7 @@ One route: `perl scripts/where.pl /manager/pen`.
 ## helpers
 
 661 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-2503 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+2506 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware

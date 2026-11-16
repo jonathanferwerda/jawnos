@@ -29,6 +29,11 @@ use Mojo::JSON qw(decode_json encode_json);
 # (an upstairs, a patio) is another row with its own uuid.
 my $FLOORPLAN_UUID = 'store:floorplan';
 
+# When this worker last ran the archive sweep, so a read does not write a row on
+# every poll. It is a per-worker clock; two workers sweeping once a minute is
+# harmless because the update matches only rows still open.
+my $ORDER_SWEPT_AT = 0;
+
 # A stored order and a stored seat are JSON; these read them back into the shape
 # the routes, the printer and the browser already use. Code refs rather than
 # named subs because they are this file's plumbing, not domain helpers another
@@ -65,6 +70,9 @@ my $order_row_read = sub {
 		label => $row->{'label'} // '',
 		created => 0 + ($row->{'created'} // 0),
 		seat => $row->{'seat'} // '',
+		# A row from before status existed has no value and is still open.
+		status => length($row->{'status'} // '') ? $row->{'status'} : 'open',
+		archived_at => $row->{'archived_at'} // '',
 		customer => {
 			cx => $row->{'customer_uuid'} // '',
 			app => length($app) ? $app : 'Customer',
@@ -241,21 +249,71 @@ sub store_register_change_breakdown {
 	return \@parts;
 }
 
+# How long an untouched open order stays on the counter. Configure - Store sets
+# it per device; an empty or unreadable value is half a day, and the archive
+# sweep never accepts a zero (a zero would archive an order the moment it was
+# opened, which is not a setting a shop means).
+sub store_order_hours {
+	my $raw = &setting_grabber({ app => 'me', setting => 'open_order_hours' });
+	my $hours = int(&store_register_number($raw));
+	$hours = 12 unless $hours > 0;
+	$hours = 720 if $hours > 720;
+	return $hours;
+}
+
+# Archive the orders left untouched for longer than the house allows. Archive,
+# not delete: the row keeps who the customer was and what was on the order, and
+# the seat is freed so the table is free again. Returns the rows archived.
+sub store_order_archive_stale {
+	my ($hours, $device) = @_;
+	$hours = &store_order_hours() unless defined $hours && $hours =~ /^\d+$/ && $hours > 0;
+	$device = &device_setter() unless defined $device && length $device;
+	my $now = &rightNow();
+	my $cutoff = $now - ($hours * 3600 * 1000);
+	my $rows = eval { &db_select('store_order', undef, { device => $device })->hashes } || [];
+	my @stale = grep {
+		(ref $_ eq 'HASH')
+		&& (($_->{'status'} // '') ne 'archived')
+		&& (0 + ($_->{'created'} // 0)) > 0
+		&& (0 + ($_->{'created'} // 0)) < $cutoff
+	} @{$rows};
+	return 0 unless scalar @stale;
+	eval {
+		&db_query("update store_order set status = 'archived', archived_at = ?, seat = '', server_time = ? where device = ? and (status is null or status = '' or status = 'open') and cast(created as integer) > 0 and cast(created as integer) < ?", $now, $now, $device, $cutoff);
+	};
+	return scalar @stale;
+}
+
 sub store_register_orders {
 	my ($params) = @_;
 	$params = {} unless ref $params eq 'HASH';
 	my $device = (defined $params->{'device'} && length $params->{'device'})
 		? $params->{'device'} : &device_setter();
+	# The sweep runs on the read every window already makes, at most once a
+	# minute per worker: no timer of its own, and no write on every poll.
+	my $now = &rightNow();
+	if (!$params->{'no_sweep'} && (!$ORDER_SWEPT_AT || ($now - $ORDER_SWEPT_AT) > 60_000)) {
+		$ORDER_SWEPT_AT = $now;
+		&store_order_archive_stale(undef, $device);
+	}
 	my $rows = eval { &db_select('store_order', undef, { device => $device })->hashes } || [];
-	my @orders = grep { ref $_ eq 'HASH' && length($_->{'id'} // '') } map { $order_row_read->($_) } @{$rows};
+	my @orders = grep {
+		(ref $_ eq 'HASH') && length($_->{'id'} // '') && (($_->{'status'} // 'open') ne 'archived')
+	} map { $order_row_read->($_) } @{$rows};
 	return [ sort { $a->{'created'} <=> $b->{'created'} || $a->{'id'} cmp $b->{'id'} } @orders ];
 }
 
+# A live order by id. An archived order is invisible to the till: a tab that was
+# cleared off the counter must not come back by a stale browser tap. The second
+# argument reads it anyway, for a report or a test.
 sub store_register_order {
-	my ($id) = @_;
+	my ($id, $include_archived) = @_;
 	return undef unless defined $id && length $id;
 	my $row = eval { &db_select('store_order', undef, { uuid => $id })->hashes->[0] };
-	return $order_row_read->($row);
+	my $order = $order_row_read->($row);
+	return undef unless $order;
+	return undef if !$include_archived && (($order->{'status'} // 'open') eq 'archived');
+	return $order;
 }
 
 sub store_register_order_open {
@@ -267,8 +325,9 @@ sub store_register_order_open {
 	my $label = $params->{'label'};
 	unless (defined $label && length $label) {
 		# A fresh label per open order, so two tabs are told apart by name. The
-		# count is read from the rows, not a worker's counter, which is the point.
-		my $count = eval { &db_query('select count(*) as n from store_order where device = ?', $device)->hash->{'n'} } || 0;
+		# count is read from the rows, not a worker's counter, which is the point;
+		# archived rows are history and do not push the number up forever.
+		my $count = eval { &db_query("select count(*) as n from store_order where device = ? and (status is null or status = '' or status = 'open')", $device)->hash->{'n'} } || 0;
 		$label = &lang('common.customer') . ' ' . ($count + 1);
 	}
 	my $tax_exemption = (ref $params->{'tax_exemption'} eq 'HASH')
@@ -288,6 +347,7 @@ sub store_register_order_open {
 			tax_exemption => encode_json($tax_exemption),
 			items => '[]',
 			seat => $params->{'seat'} || '',
+			status => 'open',
 			created => $now,
 			server_time => $now,
 			ost => $now,
@@ -299,6 +359,7 @@ sub store_register_order_open {
 		label => $label,
 		created => 0 + $now,
 		seat => $params->{'seat'} || '',
+		status => 'open',
 		customer => { cx => $params->{'cx'} || '', app => $app, name => $name },
 		tax_exemption => $tax_exemption,
 		items => [],
@@ -428,6 +489,29 @@ sub store_register_order_reset {
 # picture so the plan fits any screen. The plan is one JSON value on one row:
 # placing a seat is a gesture on the same screen that shows the plan, and a
 # half-written seat list is worse than a whole saved one.
+# The pictures the house has tagged Floorplan in an appointment's details. The
+# tag is written by the image function selector, which keeps this list beside
+# the map, background, diagram, receipt and signatorial lists.
+sub store_floorplan_images {
+	my $raw = &setting_grabber({ app => 'store', setting => 'floorplans' });
+	my $list = eval { decode_json($raw // '') } || [];
+	$list = [] unless ref $list eq 'ARRAY';
+	my @out;
+	foreach my $entry ( @{$list} ) {
+		next unless ref $entry eq 'HASH';
+		my $file = $entry->{'f'} // '';
+		next unless length $file && -e $file;
+		(my $name = $file) =~ s{.*/}{};
+		push @out, {
+			file => $file,
+			uuid => $entry->{'uuid'} // '',
+			name => $entry->{'name'} || $name,
+			app => $entry->{'app'} // '',
+		};
+	}
+	return \@out;
+}
+
 sub store_floorplan {
 	my $row = eval { &db_select('store_floorplan', undef, { uuid => $FLOORPLAN_UUID })->hashes->[0] };
 	return {

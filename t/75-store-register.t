@@ -1,7 +1,8 @@
-# tests-for: lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Crest.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/Routes/manager_store.pm public/js/store/register.js public/js/store/floor.js templates/store/register.html.ep templates/store/floor.html.ep templates/store/store.html.ep public/js/store.js templates/ribbons.html.ep
+# tests-for: lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Controller/manager_configure3.pm lib/JawnOS/Domain/Crest.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/Manager/Part08.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Routes/manager_store.pm public/js/manager/manager/10_appointment_edit.js public/js/manager/marker.js public/js/store/register.js public/js/store/floor.js templates/apps/app_file.html.ep templates/configure/store_setting_list.html.ep templates/store/register.html.ep templates/store/floor.html.ep templates/store/store.html.ep public/js/store.js templates/ribbons.html.ep
 # covers:    The Store's Register is a cash till, not a customer page; an open
 #            order is a row that survives the counter, a name can be put on it,
-#            and the floorplan seats orders.
+#            stale orders are archived, and the floorplan seats orders and takes
+#            its picture from an upload, Marker or a Floorplan-tagged image.
 
 use strict;
 use warnings;
@@ -12,6 +13,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
 use File::Slurp qw(read_file);
+use Mojo::JSON qw(encode_json decode_json);
 use Mojo::Template;
 use RepoSource;
 
@@ -28,7 +30,7 @@ my $root = root();
 # checks pin the money, the independent tabs, the receipt payload and the
 # labels. The test database is a copy of the live house, so a version that has
 # not migrated it yet gets the two new tables here.
-&subs::db_query('create table if not exists store_order (uuid VARCHAR(255) unique, device VARCHAR(255), label VARCHAR(255), customer_uuid VARCHAR(255), customer_app VARCHAR(255), customer_name VARCHAR(255), tax_exemption LONGTEXT, items LONGTEXT, seat VARCHAR(255), created VARCHAR(25), server_time VARCHAR(255), ost VARCHAR(25))');
+&subs::db_query('create table if not exists store_order (uuid VARCHAR(255) unique, device VARCHAR(255), label VARCHAR(255), customer_uuid VARCHAR(255), customer_app VARCHAR(255), customer_name VARCHAR(255), tax_exemption LONGTEXT, items LONGTEXT, seat VARCHAR(255), status VARCHAR(25), archived_at VARCHAR(25), created VARCHAR(25), server_time VARCHAR(255), ost VARCHAR(25))');
 &subs::db_query('create table if not exists store_floorplan (uuid VARCHAR(255) unique, name VARCHAR(255), image LONGTEXT, seats LONGTEXT, server_time VARCHAR(255), ost VARCHAR(25))');
 
 # ------------------------------------------------------------- an anonymous order
@@ -332,12 +334,86 @@ foreach my $name (qw(store_register_order_customer store_register_order_seat sto
 	ok(&subs::provides($name), "$name is mapped in the domain loader");
 }
 
+# ---------------------------------------- stale orders leave the counter
+# An order nobody touched is archived rather than deleted: the record stays,
+# the table is freed, and the till stops showing it. Twelve hours is the default;
+# Configure - Store sets it.
+&subs::store_register_order_reset();
+my $stale = &subs::store_register_order_open({ label => 'Forgotten' });
+&subs::store_register_order_seat($stale->{'id'}, 'seat-a');
+&subs::db_update('store_order', { created => &subs::rightNow() - (13 * 3600 * 1000) }, { uuid => $stale->{'id'} });
+my $fresh = &subs::store_register_order_open();
+is(&subs::store_order_hours(), 12, 'twelve hours is the default for an untouched order');
+&subs::setting_setter({ app => 'me', setting => 'open_order_hours', value => '3' });
+is(&subs::store_order_hours(), 3, 'the house can set the hours');
+&subs::setting_setter({ app => 'me', setting => 'open_order_hours', value => '' });
+is(&subs::store_order_archive_stale(12), 1, 'one stale order is archived');
+my $remaining = &subs::store_register_orders({ no_sweep => 1 });
+is_deeply([ map { $_->{'id'} } @{$remaining} ], [ $fresh->{'id'} ], 'the fresh order stays on the counter');
+ok(!defined &subs::store_register_order($stale->{'id'}), 'the archived order is not on the till');
+my $archived_order = &subs::store_register_order($stale->{'id'}, 1);
+is($archived_order->{'status'}, 'archived', 'the record is kept and marked archived');
+is($archived_order->{'seat'}, '', 'and its table is free');
+is($archived_order->{'label'}, 'Forgotten', 'with what it was called');
+
+# --------------------------------------------- pictures tagged Floorplan
+# The image function selector keeps the list. A file that has gone is not
+# offered; one that is here is offered by name.
+my $existing_image = "$root/public/css/store.css";
+&subs::setting_setter({ app => 'store', setting => 'floorplans', value => encode_json([
+	{ f => $existing_image, uuid => 'floor-image-1', name => 'Dining room' },
+	{ f => '/no/such/room.png', uuid => 'floor-image-2' },
+]) });
+my $floor_images = &subs::store_floorplan_images();
+is(scalar @{$floor_images}, 1, 'only a picture that is here is offered');
+is($floor_images->[0]->{'name'}, 'Dining room', 'and it keeps its name');
+is($floor_images->[0]->{'file'}, $existing_image, 'with its file');
+my $app_file = read_file("$root/templates/apps/app_file.html.ep");
+like($app_file, qr/qw\/image background diagram map receipt signatorial floorplan\//,
+	'appointment details can tag an image as a floorplan');
+like($app_file, qr/image_function_selection.*app_uuid=/, 'the tag carries the appointment it belongs to');
+my $image_edit_js = read_file("$root/public/js/manager/manager/10_appointment_edit.js");
+like($image_edit_js, qr{configure/image_function},
+	'and changing it posts to the image function route');
+my $image_function = read_file("$root/lib/JawnOS/Controller/manager_configure3.pm");
+like($image_function, qr/app => 'store', setting => 'floorplans'/,
+	'the tag writes the Store floorplan list');
+my $sanity = read_file("$root/lib/JawnOS/Manager/Part13.pm");
+like($sanity, qr/app => 'store', setting => 'floorplans'/,
+	'and a picture that has gone is pruned');
+
+# ------------------------------------------------------------- the floor UI
+like($floor_template, qr/id="store_floor_marker_image"/, 'the floor can take the Marker drawing');
+like($floor_template, qr/id="store_floor_image_choices"/, 'and offers the Floorplan-tagged pictures');
+like($floor_template, qr/id="store_floor_customer_open"/, 'a table can be named without the till');
+like($floor_template, qr/id="store_floor_seat_start"/, 'and an empty table can start an order there');
+like($floor_js, qr/jawnosMarkerSnapshot/, 'the floor takes Marker\'s drawing');
+like($floor_js, qr{/file_open\?file=}, 'and an attached picture through file_open');
+like($floor_js, qr#/manager/store/register/customer'#, 'the floor names the customer through the register route');
+my $marker_js = read_file("$root/public/js/manager/marker.js");
+like($marker_js, qr/window\.jawnosMarkerSnapshot = function/, 'Marker offers its drawing to another window');
+
+# --------------------------------------------------- the setting and the sync
+my $store_settings = read_file("$root/lib/JawnOS/Manager/Part08.pm");
+like($store_settings, qr/open_order_hours/, 'the store setting list carries the archive hours');
+my $store_settings_template = read_file("$root/templates/configure/store_setting_list.html.ep");
+like($store_settings_template, qr/open_order_hours/, 'and Configure - Store shows it');
+my $synced = &subs::sync_table_list();
+ok(grep { $_ eq 'store_floorplan' } @{$synced}, 'the floorplan rides the peer sync');
+ok(grep { $_ eq 'store_order' } @{$synced}, 'and the open orders do too');
+
 # -------------------------------------------------------------- the schema
 my $schema_file = read_file("$root/database/schema.sql");
 like($schema_file, qr/CREATE TABLE IF NOT EXISTS store_order/, 'the schema has the open order table');
 like($schema_file, qr/CREATE TABLE IF NOT EXISTS store_floorplan/, 'and the floorplan table');
+like($schema_file, qr/status VARCHAR\(25\)/, 'the order carries its status');
 my $migrations_file = read_file("$root/lib/JawnOS/Domain/Migrations.pm");
 like($migrations_file, qr/create table if not exists store_order/, 'an existing house gains the order table');
 like($migrations_file, qr/create table if not exists store_floorplan/, 'and the floorplan table');
+like($migrations_file, qr/update store_order set status = 'open'/, 'and old rows read as open');
+
+foreach my $name (qw(store_order_hours store_order_archive_stale store_floorplan_images)) {
+	ok(&subs::provides($name), "$name is mapped in the domain loader");
+}
 
 done_testing();

@@ -617,6 +617,7 @@ sub action_50203 {
 		ok => 1,
 		floor => &subs::store_floorplan(),
 		orders => \@orders,
+		images => &subs::store_floorplan_images(),
 	});
 }
 

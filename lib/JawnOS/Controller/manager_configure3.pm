@@ -323,6 +323,7 @@ sub action_15000 {
 	my $diagrams = eval { return decode_json &subs::setting_grabber({ app => 'embedded', setting => 'diagrams' }) } || [];
 	my $receipts = eval { return decode_json &subs::setting_grabber({ app => 'budget', setting => 'receipts' }) } || [];
 	my $signatorials = eval { return decode_json &subs::setting_grabber({ app => 'customs', setting => 'signatorials' }) } || [];
+	my $floorplans = eval { return decode_json &subs::setting_grabber({ app => 'store', setting => 'floorplans' }) } || [];
 	unless ($function eq 'map') {
 		@{$maps} = grep { $_->{'uuid'} ne $file_uuid } @{$maps};
 	}
@@ -337,6 +338,9 @@ sub action_15000 {
 	}
 	unless ($function eq 'signatorial') {
 		@{$signatorials} = grep { $_->{'uuid'} ne $file_uuid } @{$signatorials};
+	}
+	unless ($function eq 'floorplan') {
+		@{$floorplans} = grep { $_->{'uuid'} ne $file_uuid } @{$floorplans};
 	}
 
 	foreach my $fi ( @{$files} ) {
@@ -359,6 +363,9 @@ sub action_15000 {
 			elsif ($function eq 'signatorial') {
 				push @{$signatorials}, $fi;
 			}
+			elsif ($function eq 'floorplan') {
+				push @{$floorplans}, $fi;
+			}
 		}
 	}
 
@@ -367,11 +374,13 @@ sub action_15000 {
 	my $jdiagrams = encode_json $diagrams;
 	my $jreceipts = encode_json $receipts;
 	my $jsignatorials = encode_json $signatorials;
+	my $jfloorplans = encode_json $floorplans;
 	&subs::setting_setter({ app => 'travel', setting => 'maps', value => $jmaps });
 	&subs::setting_setter({ app => 'marker', setting => 'backgrounds', value => $jbacks });
 	&subs::setting_setter({ app => 'embedded', setting => 'diagrams', value => $jdiagrams });
 	&subs::setting_setter({ app => 'budget', setting => 'receipts', value => $jreceipts });
 	&subs::setting_setter({ app => 'customs', setting => 'signatorials', value => $jsignatorials });
+	&subs::setting_setter({ app => 'store', setting => 'floorplans', value => $jfloorplans });
 	my $jfile = encode_json $files;
 	$appt->{'file'} = $jfile;
 	$appt->{'server_time'} = &subs::rightNow();

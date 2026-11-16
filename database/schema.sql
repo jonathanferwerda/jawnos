@@ -509,7 +509,9 @@ CREATE INDEX IF NOT EXISTS idx1_store_shift on store_shift (device, status);
 -- handler's memory because the manager runs a prefork pool - every tap may
 -- reach a different worker, and a worker is recycled after its 500th
 -- connection, so an in-memory order vanished between two taps. `seat` names the
--- floorplan seat the order is sitting at, when it has one.
+-- floorplan seat the order is sitting at, when it has one. `status` is open
+-- or archived: an order left untouched for the house's open_order_hours is
+-- taken off the counter (and off its table) without deleting the record.
 CREATE TABLE IF NOT EXISTS store_order (
 	uuid VARCHAR(255) unique,
 	device VARCHAR(255),
@@ -520,12 +522,15 @@ CREATE TABLE IF NOT EXISTS store_order (
 	tax_exemption LONGTEXT,
 	items LONGTEXT,
 	seat VARCHAR(255),
+	status VARCHAR(25),
+	archived_at VARCHAR(25),
 	created VARCHAR(25),
 	server_time VARCHAR(255),
 	ost VARCHAR(25)
 );
 CREATE INDEX IF NOT EXISTS idx1_store_order on store_order (device);
 CREATE INDEX IF NOT EXISTS idx2_store_order on store_order (seat);
+CREATE INDEX IF NOT EXISTS idx3_store_order on store_order (status);
 -- One seating plan for this house's Store: a picture of the room and the seats
 -- placed on it, kept as JSON so the plan moves as one value. A seat is
 -- {id, name, x, y, seats, kind}; x and y are percentages of the picture, so

@@ -812,7 +812,7 @@ sub update_database($data) {
 		# The Register's open orders. A row is an order being worked on, not a sale;
 		# it has to survive the prefork pool handing the next tap to another worker
 		# (or recycling this one), which a hash in memory did not. A seat names
-		# where on the floorplan the order is sitting.
+		# where on the floorplan the order is sitting; status is open or archived.
 		'create table if not exists store_order (
 			uuid VARCHAR(255) unique,
 			device VARCHAR(255),
@@ -823,12 +823,19 @@ sub update_database($data) {
 			tax_exemption LONGTEXT,
 			items LONGTEXT,
 			seat VARCHAR(255),
+			status VARCHAR(25),
+			archived_at VARCHAR(25),
 			created VARCHAR(25),
 			server_time VARCHAR(255),
 			ost VARCHAR(25)
 		)',
 		'create index if not exists idx1_store_order on store_order (device)',
 		'create index if not exists idx2_store_order on store_order (seat)',
+		'create index if not exists idx3_store_order on store_order (status)',
+		# A row written before status existed is still an open order.
+		'alter table store_order add column status VARCHAR(25)',
+		'alter table store_order add column archived_at VARCHAR(25)',
+		"update store_order set status = 'open' where status is null or status = ''",
 		# One seating plan: a picture of the room and the seats placed on it as one
 		# JSON value. x and y are percentages, so the plan fits any screen.
 		'create table if not exists store_floorplan (

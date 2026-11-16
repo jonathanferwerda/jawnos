@@ -23,8 +23,8 @@
 			<br><%= $f->{'file'} %><br>
 			<audio controls src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %><% if ($f->{'remote_uuid'}) { %>&remote_uuid=<%= $f->{'remote_uuid'} %><% } %>"></audio>
 		<% }  elsif ($f->{'file_type'} eq 'img') { %>
-				<select class="image_function_selection" uuid="<%= $f->{'uuid'} %>" value="<%= $f->{'function'} %>" style="vertical-align:top;">
-					<% foreach my $func ( qw/image background diagram map receipt signatorial/ ) { %>
+				<select class="image_function_selection" uuid="<%= $f->{'uuid'} %>" app="<%= $l->{'app'} %>" app_uuid="<%= $l->{'uuid'} %>" value="<%= $f->{'function'} %>" style="vertical-align:top;">
+					<% foreach my $func ( qw/image background diagram map receipt signatorial floorplan/ ) { %>
 						<option value="<%= $func %>" <% if ($func eq $f->{'function'}) { %>selected<% } %>><%= &subs::format_name($func) %></option>
 					<% } %>
 				</select>
