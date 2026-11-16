@@ -93,6 +93,14 @@ like($first_boot, qr/JAWNOS_UNLOCK_CODE=\(\[0-9\]\{4,12\}\)/, 'the unlock code t
 like($first_boot, qr/\$home\/UNLOCK-CODE\.txt/, 'and written beside the house, where local_code_suds reads it');
 like($provision, qr/\$home\/UNLOCK-CODE\.txt/, 'the flash scrubs the source card\'s code with its identity');
 
+# With no window state the shell falls back to 1100x820, and the launcher's four
+# columns then lay out 1.25x wider than this 854x480 glass: three tiles and the
+# top of a second row. The scrub takes the source card's copy with its ticket.
+like($first_boot, qr/sub _desktop_shell_state/, 'the pass seeds the kiosk window state');
+like($first_boot, qr/return 0 if -e \$path;/, 'never over a state the shell recorded itself');
+like($first_boot, qr/fullscreen => \\1/, 'fullscreen from the first start');
+like($first_boot, qr/_desktop_shell_state\(\) \? 'fullscreen'/, 'and reports what it did');
+
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');
 

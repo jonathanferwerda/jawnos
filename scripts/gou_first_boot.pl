@@ -578,6 +578,31 @@ sub _hand_back_runtime {
 
 END { eval { $< == 0 && !$opt{'dry_run'} && &_hand_back_runtime() } }
 
+# The kiosk window's own state. The desktop shell records its last window on
+# quit and, with nothing recorded, falls back to a 1100x820 window - on this
+# 854x480 panel the launcher then lays four columns into 1100 px and the person
+# sees three tiles and the top of a second row. The scrub removes the source
+# card's copy along with its ticket store, so seed the one state a board wants.
+sub _desktop_shell_state {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return 0 unless length $home;
+	my $dir = "$home/.config/jawnos";
+	my $path = "$dir/desktop.json";
+	# Whatever the shell last recorded is the person's own choice, so never
+	# overwrite it - only fill the hole a copied card leaves behind.
+	return 0 if -e $path;
+	File::Path::make_path($dir) unless -d $dir;
+	my $tmp = "$path.tmp";
+	return 0 unless open(my $out, '>', $tmp);
+	print {$out} JSON::PP->new->canonical->pretty->encode({ fullscreen => \1 });
+	close $out;
+	chmod 0600, $tmp;
+	chown $uid, $gid, $tmp if $< == 0;
+	return 0 unless rename($tmp, $path);
+	chown $uid, $gid, $dir if $< == 0;
+	return 1;
+}
+
 sub _own_database {
 	my $database = eval { &subs::database_path() } || '';
 	return unless length $database;
@@ -840,6 +865,9 @@ unless ($opt{'dry_run'}) {
 # --save puts it in .shots/ticket.txt (0600), and _ticket_share puts it where
 # the installed Qt shell reads it.
 &_kiosk_ticket() unless $opt{'dry_run'};
+# A board's shell is the whole glass from its first start; the launcher is
+# laid out for the panel, not for a 1100 px window.
+$report->{'desktop'} = &_desktop_shell_state() ? 'fullscreen' : 'kept' unless $opt{'dry_run'};
 
 if ($token->{'error'}) {
 	_fail(6, $token->{'error'});
