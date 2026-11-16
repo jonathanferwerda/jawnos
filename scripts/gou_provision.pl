@@ -762,6 +762,34 @@ sub _network_manager_profile {
 # The kiosk guard: one pass every fifteen seconds that returns the panel when
 # no game owns it. It is a oneshot, so a pass with nothing to heal has to
 # succeed - the image's copy ended on a window search and failed forever.
+# The first-run questions, on the panel, before the launcher and before the
+# root pass that applies the answers: the code that becomes this board's sudo
+# password, and the one press that lets its card be erased.
+sub _first_run_unit {
+	return <<'UNIT';
+[Unit]
+Description=First-run setup on the controller panel
+After=gou-x.service gou-rotate.service
+Wants=gou-x.service
+Before=jawnos-first-boot.service jawnos-kiosk.service
+
+[Service]
+Type=oneshot
+User=jawn
+Group=jawn
+Environment=HOME=/home/jawn
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/1001
+# A dialog that cannot draw must never hold the boot: the pass behind it sees
+# no answers and simply does nothing of its own.
+ExecStart=-/usr/bin/python3 /home/jawn/jawnos/scripts/gou_first_run.py
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
 sub _kiosk_guard_unit {
 	return <<'UNIT';
 [Unit]
@@ -792,7 +820,7 @@ sub _first_boot_unit {
 [Unit]
 Description=JawnOS first boot: the board's card and the house join
 Wants=network-online.target
-After=network-online.target gou-wifi-reset.service
+After=network-online.target gou-wifi-reset.service gou-first-run.service
 Before=jawnos.service
 
 [Service]
@@ -1026,7 +1054,7 @@ sub _autopopulate {
 		my $source_dir = File::Basename::dirname(Cwd::abs_path($0));
 		my $dir = "$mount/home/jawn/jawnos/scripts";
 		File::Path::make_path($dir) unless -d $dir;
-		for my $name (qw(gou_first_boot.pl gou_recovery.pl gou_splash.pl)) {
+		for my $name (qw(gou_first_boot.pl gou_recovery.pl gou_splash.pl gou_first_run.py)) {
 			my $source = "$source_dir/$name";
 			my $script = -f $source ? _slurp($source) : '';
 			my $path = "$dir/$name";
@@ -1037,7 +1065,8 @@ sub _autopopulate {
 				last;
 			}
 			push @done, $name eq 'gou_first_boot.pl' ? 'first-boot-script'
-				: $name eq 'gou_splash.pl' ? 'splash-script' : 'recovery-script';
+				: $name eq 'gou_splash.pl' ? 'splash-script'
+				: $name eq 'gou_first_run.py' ? 'first-run-dialog' : 'recovery-script';
 		}
 	}
 	if (!length $error) {
@@ -1070,6 +1099,19 @@ sub _autopopulate {
 		}
 		else {
 			$error = 'could not write the splash unit';
+		}
+	}
+	if (!length $error) {
+		my $units = "$etc/systemd/system";
+		my $wants = "$units/multi-user.target.wants";
+		File::Path::make_path($wants) unless -d $wants;
+		my $unit = "$units/gou-first-run.service";
+		if (_write_file($unit, _first_run_unit()) && chmod(0644, $unit) && chown(0, 0, $unit)) {
+			&_wants_link($wants, 'gou-first-run.service');
+			push @done, 'first-run-unit';
+		}
+		else {
+			$error = 'could not write the first-run unit';
 		}
 	}
 	if (!length $error) {

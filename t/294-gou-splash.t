@@ -64,7 +64,7 @@ like($provision, qr/After=gou-x\.service gou-rotate\.service/,
 	'after X and the rotation that presents it');
 unlike($provision, qr{display -window root /home/jawn/\.local/share/jawnos/desktop/icons/jawnos\.png},
 	'the tiling display(1) call is gone');
-like($provision, qr{for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl gou_splash\.pl\)\)},
+like($provision, qr{for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl gou_splash\.pl gou_first_run\.py\)\)},
 	'the flash copies the splash script onto the board');
 like($provision, qr/'splash-script'/, 'and reports it as filled in');
 

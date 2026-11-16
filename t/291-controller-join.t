@@ -55,7 +55,7 @@ like($provision, qr/\.jawnos_signatorial_id/, 'the provisioner clears the copied
 # The image is a copy of another card, so its tree may not carry the script the
 # unit calls; the provisioner copies this tree's own alongside the unit.
 like($provision, qr{could not copy \$name}, 'the board scripts are copied into the image, not assumed there');
-like($provision, qr/for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl gou_splash\.pl\)\)/, 'the board scripts the flash needs, including the splash');
+like($provision, qr/for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl gou_splash\.pl gou_first_run\.py\)\)/, 'the board scripts the flash needs, including the splash and the first-run dialog');
 like($provision, qr{/gou_first_boot\.pl}, 'from this tree\'s own scripts directory');
 like($provision, qr{/gou_splash\.pl}, 'and the splash script travels with the flash');
 # A copied desktop ticket outranks the fresh one the first boot writes, so the
@@ -135,6 +135,27 @@ like($provision, qr/sub _pmic_poweroff/, 'the flash makes the panel able to powe
 like($provision, qr{/soc/bus\@ff800000/i2c\@5000/pmic\@1c}, 'the always-on bus PMIC gets the flag');
 like($provision, qr{/soc/bus\@ffd00000/i2c\@1c000/pmic\@20}, 'and the charger PMIC has it removed');
 like($provision, qr/push \@done, 'pmic-poweroff'/, 'reported on the board');
+
+# A board arrives with no password anyone knows and a card nobody has answered
+# for. The panel asks both questions before the launcher; the root pass applies
+# them and never asks twice.
+my $first_run = slurp('scripts/gou_first_run.py');
+like($first_run, qr/def card_present/, 'the dialog knows when there is a card to erase');
+like($first_run, qr{/sys/block/%s/device/type}, 'by the same rule the planner uses');
+like($first_run, qr/Erase the card in the slot/, 'and offers the wipe as a box that must be ticked');
+like($first_run, qr/def write_answers/, 'the answers are written for the root pass');
+like($provision, qr/gou_first_run\.py/, 'the dialog travels with the flash');
+like($provision, qr/gou-first-run\.service/, 'with a unit of its own');
+like($provision, qr/After=network-online\.target gou-wifi-reset\.service gou-first-run\.service/,
+	'and the pass waits for the person to answer');
+like($first_boot, qr/sub _first_run_answers/, 'the pass reads the panel\'s answers');
+like($first_boot, qr/sub _set_account_password/, 'the code becomes the account\'s password');
+like($first_boot, qr/chpasswd/, 'through chpasswd, on stdin');
+like($first_boot, qr/print \{\$fh\} "\$user:\$code\\n";/, 'never on argv');
+like($first_boot, qr/\$choice = 'format' if .*\$answers->\{'wipe'\}/, 'the panel\'s wipe answer is the last word');
+like($first_boot, qr/_first_run_done\(\) unless/, 'and the questions are asked once');
+my $py_ok = system('python3', '-m', 'py_compile', root() . '/scripts/gou_first_run.py');
+is($py_ok, 0, 'the dialog is valid Python');
 
 my $routes = slurp('lib/JawnOS/Routes/manager_device.pm');
 like($routes, qr#\[38590, 'post', '/manager/device/join', 'action_38590'\]#, 'the join route is registered');

@@ -137,6 +137,57 @@ sub _config_bootstrap {
 	chown $uid, $gid, $config if $< == 0 && -e $config;
 }
 
+# The answers the panel collected before this pass ran: the code that becomes
+# this board's sudo password, and whether its card may be erased. Read once,
+# applied here, and never asked again - a boot whose join fails later must not
+# put the same two questions back in front of the person.
+sub _first_run_answers {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return {} unless length $home;
+	return {} if -e "$home/.presence/gou-first-run.done";
+	my $text = '';
+	if (open(my $fh, '<', "$home/.presence/gou-first-run.json")) {
+		local $/;
+		$text = <$fh> // '';
+		close $fh;
+	}
+	return {} unless length $text;
+	my $answers = eval { $JSON->decode($text) };
+	return ref $answers eq 'HASH' ? $answers : {};
+}
+
+sub _first_run_done {
+	my ($uid, $gid, $home) = &_tree_owner();
+	return 0 unless length $home;
+	my $dir = "$home/.presence";
+	File::Path::make_path($dir) unless -d $dir;
+	unlink "$dir/gou-first-run.json";
+	my $marker = "$dir/gou-first-run.done";
+	my $ok = open(my $fh, '>', $marker);
+	close $fh if $ok;
+	&_own_by_tree($marker, $dir);
+	return $ok ? 1 : 0;
+}
+
+# The account that owns the tree is the one a person would sudo as, so its
+# password is the one the panel asked for. chpasswd reads the pair on stdin:
+# never argv, where it would sit in `ps` for the length of the call.
+sub _set_account_password {
+	my ($code) = @_;
+	return 0 unless $< == 0;
+	return 0 unless defined $code && $code =~ /^\d{4,12}$/;
+	my ($uid) = &_tree_owner();
+	my $user = $uid ? (getpwuid($uid))[0] : '';
+	return 0 unless defined $user && length $user;
+	my $chpasswd = -x '/usr/bin/chpasswd' ? '/usr/bin/chpasswd'
+		: -x '/usr/sbin/chpasswd' ? '/usr/sbin/chpasswd' : '';
+	return 0 unless length $chpasswd;
+	open(my $fh, '|-', $chpasswd) or return 0;
+	print {$fh} "$user:$code\n";
+	close $fh;
+	return $? == 0 ? 1 : 0;
+}
+
 sub _board_name {
 	my $name = '';
 	if (open(my $fh, '<', '/etc/hostname')) {
@@ -884,6 +935,13 @@ my $report = { ok => 1, dry_run => ($opt{'dry_run'} ? 1 : 0) };
 
 my $token = &_token_read($opt{'token'});
 
+# The panel's two answers, applied before anything else this pass does: the
+# code that becomes the board's sudo password, and its word on the card.
+my $answers = &_first_run_answers();
+if (!$opt{'dry_run'} && $answers->{'code'}) {
+	$report->{'password'} = &_set_account_password($answers->{'code'}) ? 'set' : 'refused';
+}
+
 # A board that was just flashed has no identity of its own yet (the provisioner
 # removes the image's), and both the card's finding and the join are written
 # under it. An unflashed machine keeps the identity it has.
@@ -927,6 +985,9 @@ unless ($opt{'no_card'}) {
 		my $token_card = ($token->{'token'} || {})->{'card'} // '';
 		$token_card = '' unless $token_card =~ /^(adopt|format)$/;
 		my $choice = $opt{'dry_run'} ? $token_card : (&_card_choice_read() || $token_card);
+		# The panel asked with the card in front of the person: that answer
+		# is the latest word, later than the token and the page's setting.
+		$choice = 'format' if !$opt{'dry_run'} && $answers->{'wipe'};
 		my $plan = &_card_plan($chosen, { format => $opt{'format'}, choice => $choice });
 		$report->{'card'} = $plan;
 		my $prepared = undef;
@@ -954,6 +1015,9 @@ unless ($opt{'no_card'}) {
 		&_card_setting_clear('card_finding') unless $opt{'dry_run'};
 	}
 }
+
+# The two questions have been answered and applied; ask them once.
+&_first_run_done() unless $opt{'dry_run'};
 
 if (!$opt{'no_join'} && !$token->{'absent'} && !$token->{'error'}) {
 	if ($opt{'dry_run'}) {
