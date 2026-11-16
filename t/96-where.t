@@ -135,6 +135,25 @@ for my $name (qw(subs::path_name path_name)) {
 	is($none, 1, 'a path with no children is still a miss');
 }
 
+# --- a local agent is a concept, not a symbol --------------------------------
+{
+	my ($code, $out) = where('guide');
+	is($code, 0, 'the Guide resolves');
+	like($out, qr/^agent::guide\thelp app\t/m, 'named as the help app');
+	like($out, qr{^route\tlib/JawnOS/Routes/manager_help\.pm:\d+\tpost /manager/help/ask -> action_\d+$}m,
+		'with the route the Guide answers on');
+	like($out, qr{^subs::evaluation_model_call\tlib/JawnOS/Domain/Ai2\.pm:\d+$}m,
+		'and the shared model wire');
+	like($out, qr{^actions_prompt\tperl/help\.pl:\d+$}m,
+		'and the rules in help.pl, not just the comments that mention it');
+
+	my ($ccode, $cout) = where('coding');
+	is($ccode, 0, 'the Coding agent resolves');
+	like($cout, qr{^Manager::coding_execute\tlib/JawnOS/Manager/Part\d+\.pm:\d+$}m,
+		'with its executor');
+	like($cout, qr{coding_chat\.html\.ep}, 'and the page it lives in');
+}
+
 # --- a file, and the topic that covers it -----------------------------------
 {
 	my ($code, $out) = where('templates/apps/gallery.html.ep');
@@ -519,6 +538,28 @@ EP
 	ok($fb{'jawnosAgentsPanel'}[4], 'and the call it refers to');
 }
 
+# --- a flag lookup is recorded by its pattern, not as a bare name -----------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $db  = "$dir/where.db";
+	require DBI;
+	my $dbh = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	$dbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
+	$dbh->disconnect;
+
+	local $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	delete $ENV{'JAWNOS_WHERE_LOG_OFF'};
+	local $ENV{'JAWNOS_WHERE_DB'} = $db;
+
+	where('--topics', 'no_such_topic_anywhere');
+
+	my $check = DBI->connect("dbi:SQLite:dbname=$db", '', '', { RaiseError => 1, PrintError => 0 });
+	my ($row) = $check->selectrow_array('select name from where_calls');
+	$check->disconnect;
+	is($row, '--topics no_such_topic_anywhere',
+		'a flag row carries the pattern, so the audit can tell it from a code name');
+}
+
 # --- a miss records the leads it printed -----------------------------------
 {
 	my $dir = tempdir(CLEANUP => 1);
@@ -574,11 +615,13 @@ EP
 	is(scalar @{$rows}, 2, 'one row per invocation, not one per line');
 
 	my %context = map { $_->[0] => JSON::PP->new->decode($_->[1]) } @{$rows};
-	is($context{'--topics'}{'mode'}, 'topics', 'the topics mode is recorded');
-	is($context{'--topics'}{'out_bytes'}, length($out), 'with the bytes it printed');
-	cmp_ok($context{'--topics'}{'out_bytes'}, '>', 0, 'and the count is positive');
-	is($context{'--outline'}{'mode'}, 'outline', 'the outline mode is recorded');
-	cmp_ok($context{'--outline'}{'out_bytes'}, '>', 0, 'with its bytes too');
+	is($context{'--topics gallery'}{'mode'}, 'topics', 'the topics mode is recorded');
+	is($context{'--topics gallery'}{'out_bytes'}, length($out), 'with the bytes it printed');
+	cmp_ok($context{'--topics gallery'}{'out_bytes'}, '>', 0, 'and the count is positive');
+	is($context{'--outline templates/apps/gallery.html.ep'}{'mode'}, 'outline',
+		'the outline mode is recorded, named by the file it read');
+	cmp_ok($context{'--outline templates/apps/gallery.html.ep'}{'out_bytes'}, '>', 0,
+		'with its bytes too');
 }
 
 done_testing();

@@ -97,6 +97,11 @@ if (-f $db) {
 			$dbh->selectall_arrayref(
 				'select name, count(*) as n, max(minute) as last, context'
 				. ' from where_calls where hit = 0 and minute >= ?'
+				# A flag (`--topics`, `--tools`, `--outline`) records a row so the
+				# panel can price it, but its name is not a code name: a pattern
+				# that found no topic is not coverage the locator can add, and
+				# listing it as the top MISS taught an agent to chase `--topics`.
+				. q{ and name not like '--%'}
 				. ' group by name order by n desc, last desc limit ' . $limit,
 				{ Slice => {} }, $since);
 		} || [];

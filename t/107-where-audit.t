@@ -155,4 +155,31 @@ ok((grep { $_->{'name'} eq 'drifted_name' } @{ $bounded->{'drift'} }),
 	unlike($lbrief, qr/lead_missed offered/, 'and leaves out the one that was followed');
 }
 
+# --- a flag lookup is not a name to cover ----------------------------------
+{
+	my $fdir = tempdir(CLEANUP => 1);
+	my $fdb  = "$fdir/where.db";
+	my $fdbh = DBI->connect("dbi:SQLite:dbname=$fdb", '', '', { RaiseError => 1, PrintError => 0 });
+	$fdbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
+	$fdbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
+	$fdbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('g1','me','$minute','--topics probe',0,0)");
+	$fdbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('g2','me','$minute','real_miss',0,0)");
+	$fdbh->disconnect;
+
+	my ($code, $out) = run_audit('--db', $fdb, '--root', $tree, '--days', 14);
+	is($code, 0, 'a ledger with a flag row still exits 0');
+	like($out, qr/MISSES/ , 'the report still has its miss section');
+	like($out, qr/real_miss/, 'naming the missed code name');
+	unlike($out, qr/--topics probe/, 'but a flag pattern is not a name to cover');
+
+	my (undef, $json) = run_audit('--db', $fdb, '--root', $tree, '--days', 14, '--json');
+	my $data = decode_json($json);
+	is($data->{'summary'}{'calls'}, 2, 'the JSON still counts every lookup');
+	ok(!(grep { $_->{'name'} =~ /^--/ } @{ $data->{'misses'} }),
+		'while its misses hold only names');
+
+	my (undef, $brief) = run_audit('--db', $fdb, '--root', $tree, '--days', 14, '--prompt');
+	unlike($brief, qr/--topics probe/, 'and the brief does not send an agent to cover a flag');
+}
+
 done_testing();

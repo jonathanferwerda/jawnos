@@ -278,6 +278,9 @@ if ($list_topics) {
 	# --topics is a flag, so a pattern to filter by arrives in @ARGV. No pattern
 	# keeps the whole registry in the one-line form agents already parse.
 	my @wanted = grep { length } map { topic_token($_) } @ARGV;
+	# The ledger row for a flag names the pattern too: a bare `--topics` row cannot
+	# say what was asked, and a reader cannot tell it from a code name.
+	my $label = '--topics' . (@ARGV ? ' ' . join(' ', @ARGV) : '');
 	my $out = '';
 	my $matched = 0;
 	for my $t (@{ topics() }) {
@@ -289,11 +292,11 @@ if ($list_topics) {
 	# miss this script exists to make visible, not a quiet exit 0.
 	if (@wanted && !$matched) {
 		warn 'where: no help topic matches ', join(' ', @ARGV), "\n";
-		where_log('--topics', 0, 'topics', 0);
+		where_log($label, 0, 'topics', 0);
 		exit 1;
 	}
 	print $out;
-	where_log('--topics', ($matched ? 1 : 0), 'topics', length $out);
+	where_log($label, ($matched ? 1 : 0), 'topics', length $out);
 	exit 0;
 }
 
@@ -302,6 +305,7 @@ if ($list_tools) {
 	# name or the symptom it answers. The line is the catalog row, so listing the
 	# shelf and looking one tool up print the same words.
 	my @wanted = grep { length } map { lc($_) } @ARGV;
+	my $label = '--tools' . (@ARGV ? ' ' . join(' ', @ARGV) : '');
 	my $out = '';
 	my $matched = 0;
 	for my $path (@tool_files) {
@@ -317,11 +321,11 @@ if ($list_tools) {
 	}
 	if (@wanted && !$matched) {
 		warn 'where: no tool matches ', join(' ', @ARGV), "\n";
-		where_log('--tools', 0, 'tools', 0);
+		where_log($label, 0, 'tools', 0);
 		exit 1;
 	}
 	print $out;
-	where_log('--tools', ($matched ? 1 : 0), 'tools', length $out);
+	where_log($label, ($matched ? 1 : 0), 'tools', length $out);
 	exit 0;
 }
 
@@ -346,6 +350,31 @@ my %domain_file;
 	}
 }
 
+# --- the local agents -------------------------------------------------------
+#
+# The four local agents are words people and agents use - "where is the Guide?"
+# - but no symbol carries the name, and two of them have no help topic either.
+# A bare `guide` used to answer with the comments that mention it, which is what
+# sent an agent looking for the Guide to grep. Only the entry-point names are
+# written here; the locations are resolved by the ordinary lookup, so a moved
+# sub still prints its real line. `pen` and `evaluation` are help topics, so
+# topic_lookup answers those before this table is reached.
+my %agent_entry = (
+	guide => {
+		app   => 'help',
+		route => '/manager/help/ask',
+		names => [ 'subs::evaluation_model_call', 'actions_prompt' ],
+		note  => 'the Guide: help.pl rules, POST /manager/help/ask, the shared model wire',
+	},
+	coding => {
+		app   => 'coding',
+		names => [ 'coding_execute', 'coding_system_prompt', 'codingChatSend' ],
+		file  => 'templates/apps/coding_chat.html.ep',
+		note  => 'the Coding agent: coding.js, coding_chat.html.ep, coding_execute',
+	},
+);
+my $in_agent = 0;
+
 # --- the lookup -------------------------------------------------------------
 
 if ($outline) {
@@ -364,7 +393,7 @@ if ($outline) {
 		$ok = 1;
 	}
 	print $out;
-	where_log('--outline', $ok, 'outline', length $out);
+	where_log('--outline' . (@ARGV ? ' ' . join(' ', @ARGV) : ''), $ok, 'outline', length $out);
 	exit($ok ? 0 : 1);
 }
 
@@ -438,6 +467,12 @@ sub lookup {
 
 	my $topic = topic_lookup($name);
 	return $topic if $topic;
+
+	# A local agent's name is not a symbol and may not be a topic: answer with the
+	# entry points before the mention pass, whose hits for these words are only
+	# comments about the agent.
+	my $agent = agent_lookup($name);
+	return $agent if $agent;
 
 	my @decl;
 	for my $file (@controller_files, @perl_extra_files, @js_files, @embedded_files) {
@@ -734,6 +769,40 @@ sub topic_lookup {
 		}
 	}
 	return scalar @hits;
+}
+
+# A local agent by the word it is called by. The header names the app so an
+# agent can follow with `--tech <app>`; each entry point then prints the same
+# file:line a direct lookup would. A cycle cannot recurse: the entry-point names
+# are never agent words, and the guard keeps a future edit from making one so.
+sub agent_lookup {
+	my ($name) = @_;
+	my $entry = $agent_entry{ lc $name } or return 0;
+	return 0 if $in_agent;
+
+	print "agent::$name\t", $entry->{'app'}, " app\t", $entry->{'note'}, "\n" unless $terse;
+	my $hits = 0;
+	$in_agent = 1;
+	$hits += route_path($entry->{'route'}) if $entry->{'route'};
+	for my $raw (@{ $entry->{'names'} }) {
+		my ($sub, $hint) = normalize($raw);
+		$hits += lookup($raw, $sub, $hint);
+	}
+	$in_agent = 0;
+	if ($entry->{'file'}) {
+		my $file = "$root/" . $entry->{'file'};
+		if (-f $file) {
+			print $terse ? $entry->{'file'} . ":1\n" : "  file\t" . $entry->{'file'} . ":1\n";
+			$hits++;
+		}
+	}
+	# The header is an answer even if a symbol under it has moved, but say so:
+	# a named entry point that no longer resolves is drift in this table.
+	if (!$hits) {
+		warn "where: nothing under $name resolves; the agent entry is stale\n";
+		return 1;
+	}
+	return $hits;
 }
 
 # A shareable probe from scripts/tools/, by bare name or file name. The catalog
