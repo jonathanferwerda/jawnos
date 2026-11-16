@@ -1,5 +1,6 @@
-# tests-for: lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm perl/hooks.pl qa/installers/run.sh qa/nightly_build.sh qa/android/run.sh qa/loc_nightly.sh qa/systemd/jawnos-qa-loc.service qa/systemd/jawnos-qa-loc.timer scripts/qa_report.pl scripts/jawnos_deps.pl templates/configure/qa_panel.html.ep public/js/manager/configure/07_qa_nightly.js perl/help/topics_configure.pl
+# tests-for: lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Crypt.pm lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Routes/manager_configure2.pm perl/hooks.pl qa/installers/run.sh qa/nightly_build.sh qa/android/run.sh qa/loc_nightly.sh qa/systemd/jawnos-qa-loc.service qa/systemd/jawnos-qa-loc.timer scripts/qa_report.pl scripts/jawnos_deps.pl qa/run.pl templates/configure/qa_panel.html.ep public/js/manager/configure/07_qa_nightly.js perl/help/topics_configure.pl
 # covers:    Configure -> Plat -> QA shows the last 14 days of QA runs: the
+#           05:00 suite, the 05:30 UX loop and the 06:00 coding night, the
 #           installer check (nightly), the line count (nightly), the weekly build
 #           and the emulator run, each an accordion labelled with its cadence and
 #           a table per section. The line count also draws a trend across the
@@ -207,6 +208,24 @@ like( $emulator, qr/--kind=emulator --schedule="\$\{QA_SCHEDULE:-manual\}"/,
 	'the emulator run reports itself, with the cadence it was started on' );
 like( $emulator, qr/qa_report failed "\$\*"/, 'and reports a failure, not only a pass' );
 
+# The 05:00 suite is a job like the others: it publishes through qa_report.pl, so
+# the card cannot show the installer, build and emulator runs while the suite,
+# the UX loop and the coding night are invisible.
+my $suite_job = read_file("$root/qa/run.pl");
+like( $suite_job, qr/--kind=suite/, 'the nightly suite labels its run suite' );
+like( $suite_job, qr/--schedule=nightly/, 'on the nightly cadence' );
+like( $suite_job, qr/--title=Nightly suite/, 'with the title the card shows' );
+like( $suite_job, qr/'--table=' \. \$_/, 'a table per layer and for the budgets' );
+like( $suite_job, qr/JAWNOS_QA_ROOT/, 'the report goes to the QA root the unit names' );
+my $publishes = () = $suite_job =~ /publish_panel_report\(/g;
+is( $publishes, 2, 'and both the full run and the l0-only exit publish it' );
+like( $suite_job, qr/return 0 if .*\$opt->\{'source'\}.*'head'.*'worktree'/,
+	'a coding-night gate run (--source worktree) publishes no suite report' );
+my $guard_at = index($suite_job, "eq 'worktree'");
+my $writer_at = index($suite_job, "'--kind=suite'");
+ok( $guard_at >= 0 && $writer_at > $guard_at,
+	'the skip comes before the writer, so a default head run still publishes' );
+
 my $deps = read_file("$root/scripts/jawnos_deps.pl");
 like( $deps, qr/'report-file=s'/, 'the checker takes a report file' );
 like( $deps, qr/generated => time/, 'and the report says when it was made' );
@@ -262,8 +281,10 @@ like( $remote, qr/qa_hop_answer\(\$res, 'that machine did not answer the report 
 	'the reports hop uses it' );
 like( $remote, qr/qa_nightly_is_off/, 'Off stands the panel down as every other QA card does' );
 like( $remote, qr/sub qa_report_kinds/, 'the kinds it lists are named in one place' );
-like( $remote, qr/qw\(installers security loc build emulator\)/,
-	'and the line count is one of them' );
+like( $remote, qr/qw\(suite ux coding installers security loc build emulator\)/,
+	'the core nightly jobs come first, then the installer, audit, count, build and emulator' );
+is_deeply( [ subs::qa_coding_lanes_known() ], [ qw(notes ux security installers) ],
+	'the UX findings lane is offered in canonical order' );
 like( $remote, qr/trend => &qa_reports_trend\('loc'/, 'the card is handed the trend with the drawers' );
 
 # --- the peer lookup the QA reads share ---------------------------------------

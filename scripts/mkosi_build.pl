@@ -99,6 +99,10 @@ my @exclude = (
 	'node_modules',
 	'database/*.db', 'database/*.db-shm', 'database/*.db-wal',
 	'database/backups', 'database/.thumbs', 'database/.jawnos_signatorial_id',
+	# The runtime dir holds live sockets (run/ws) and a watcher. rsync -a as
+	# root recreates the sockets in the image and then dies failing to copy
+	# one; runtime_dir() (lib/JawnOS/Domain/Key.pm) recreates run/ on first ask.
+	'run',
 	'jt/.pio', 'jt/build', 'jw/.pio', 'jw/build', 'jp/alarmclock/.pio',
 );
 my @args = ('-a');

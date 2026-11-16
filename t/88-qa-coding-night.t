@@ -144,11 +144,12 @@ add_note($qdbh, uuid => 'n-gone',     timestamp => '3500', ost => 'deleting');
 add_note($qdbh, uuid => 'n-journal',  timestamp => '3000', category => 'journal');
 add_note($qdbh, uuid => 'n-open-old', timestamp => '2000', text => 'Older open note');
 add_note($qdbh, uuid => 'n-empty',    timestamp => '9000', text => '');
+add_note($qdbh, uuid => 'n-ux-report', timestamp => '9500', text => "# Nightly UX report: the pen\nThe UX loop judged this note; it is a report, not work.");
 $qdbh->disconnect;
 
 my $queue = CodingNight::select_notes($qdb, limit => 25);
 is_deeply([ map { $_->{'id'} } @{$queue} ], [ 'n-open-new', 'n-open-old' ],
-	'only open JawnOS notes are in the queue; completed, tombstoned, journal and empty rows are not');
+	'only open JawnOS notes are in the queue; completed, tombstoned, journal, empty and the UX report rows are not');
 is($queue->[0]->{'title'}, 'Fix the new thing', 'the title is the first line');
 is(CodingNight::select_notes($qdb, limit => 1)->[0]->{'id'}, 'n-open-new',
 	'the limit takes the newest open notes first');
@@ -174,18 +175,26 @@ my @lane_cases = (
 	[ undef,                     [ 'notes' ] ],
 	[ '',                        [ 'notes' ] ],
 	[ 'notes',                   [ 'notes' ] ],
+	[ 'ux',                      [ 'ux' ] ],
+	[ 'ux,notes',                [ 'notes', 'ux' ] ],
 	[ 'security',                [ 'security' ] ],
 	[ 'security,notes',          [ 'notes', 'security' ] ],
 	[ ' installers , security ', [ 'security', 'installers' ] ],
+	[ ' security , ux , notes ', [ 'notes', 'ux', 'security' ] ],
 	[ 'bogus,notes',             [ 'notes' ] ],
 	[ 'bogus',                   [ 'notes' ] ],
 	[ [ 'installers', 'notes', 'installers' ], [ 'notes', 'installers' ] ],
 );
+my %panel_lane = map { $_ => 1 } subs::qa_coding_lanes_known();
 for my $case (@lane_cases) {
 	my ($in, $want) = @{$case};
 	is_deeply([ QaSetting::clamp_coding_lanes($in) ], $want,
 		'QaSetting lanes for ' . (ref $in ? 'an array' : (defined $in ? "'$in'" : 'undef')));
-	is_deeply([ subs::qa_coding_lanes_clamp($in) ], $want, 'and the panel helper agrees');
+	# The panel helper is the other agent's file; compare whatever it knows so
+	# this test is green before the panel lane list adds ux, then checks it too.
+	my @panel_got  = grep { $panel_lane{$_} } QaSetting::clamp_coding_lanes($in);
+	my @panel_want = grep { $panel_lane{$_} } @{$want};
+	is_deeply(\@panel_got, \@panel_want, 'and the panel helper agrees');
 }
 
 my %lane_store;
@@ -218,6 +227,35 @@ write_file("$qa_night/reports/installers/20261106T034500Z/report.json", encode_j
 	toolchain => [],
 }));
 
+# The 05:30 UX loop's handoff: its queue names the note it judged, the verdict
+# and the action. Only a failing or warning note is coding work: `skip` means
+# the model could not judge it and `pass` means there is nothing to do. An entry
+# with no note id, and a note named twice, are not two tasks.
+make_path("$qa_night/ux");
+write_file("$qa_night/ux/queue.json", encode_json({
+	notes => [
+		{ note_id => 'n-open-new', title => 'Fix the new thing', verdict => 'fail',
+		  suggested_next_action => 'Reproduce the broken step and fix it' },
+		{ note_id => 'n-open-old', title => 'Older open note', verdict => 'pass',
+		  suggested_next_action => 'nothing to do' },
+		{ note_id => '', title => 'an orphan', verdict => 'fail',
+		  suggested_next_action => 'nothing to work' },
+		{ note_id => 'n-open-new', title => 'duplicate', verdict => 'fail',
+		  suggested_next_action => 'duplicate' },
+	],
+}));
+
+my $ux = CodingNight::ux_items($qa_night);
+is_deeply([ map { $_->{'id'} } @{$ux} ], [ 'ux:n-open-new' ],
+	'the UX queue admits only fail/warn; pass, an empty note id and a duplicate are skipped');
+like($ux->[0]->{'text'}, qr/verdict: fail/, 'the UX task names the verdict');
+like($ux->[0]->{'text'}, qr/Reproduce the broken step and fix it/,
+	'the UX task names the suggested action');
+like($ux->[0]->{'text'}, qr/note: n-open-new/, 'the UX task names the note');
+is_deeply([ map { $_->{'source'} } @{ CodingNight::ux_items($qa_night, max => 1) } ],
+	[ 'ux' ], 'the UX lane cap keeps two at most and one when asked');
+is_deeply(CodingNight::ux_items(tempdir(CLEANUP => 1)), [], 'no UX queue means no work');
+
 my $sec = CodingNight::security_items($qa_night);
 is_deeply([ map { $_->{'title'} } @{$sec} ], [ 'Security: crit', 'Security: high one' ],
 	'only new findings at or above high are queued, worst first');
@@ -229,12 +267,15 @@ is_deeply([ map { $_->{'id'} } @{ CodingNight::installer_items($qa_night) } ],
 	'only installer rows reported missing are queued');
 
 my $all_lanes = CodingNight::select_queue($qdb,
-	lanes => [ 'notes', 'security', 'installers' ], limit => 25, qa_root => $qa_night);
+	lanes => [ 'notes', 'ux', 'security', 'installers' ], limit => 25, qa_root => $qa_night);
 is_deeply([ map { $_->{'source'} } @{$all_lanes} ],
-	[ 'notes', 'notes', 'security', 'security', 'installers', 'installers' ],
-	'the queue carries the lanes in order, notes first');
+	[ 'notes', 'notes', 'ux', 'security', 'security', 'installers', 'installers' ],
+	'the queue carries the lanes in order, notes then the failing ux item');
 my $notes_only = CodingNight::select_queue($qdb, lanes => [ 'notes' ], limit => 25, qa_root => $qa_night);
 is(scalar @{$notes_only}, 2, 'notes only leaves the reports unread');
+my $ux_only = CodingNight::select_queue($qdb, lanes => [ 'ux' ], limit => 25, qa_root => $qa_night);
+is_deeply([ map { $_->{'source'} } @{$ux_only} ], [ 'ux' ],
+	'a ux-only night has no notes and no pass/skip task');
 my $sec_only = CodingNight::select_queue($qdb, lanes => [ 'security' ], limit => 25, qa_root => $qa_night);
 is_deeply([ map { $_->{'source'} } @{$sec_only} ], [ 'security', 'security' ],
 	'a security-only night has no notes');
@@ -322,6 +363,47 @@ if (length $log) {
 }
 exit(0 + ($ENV{'FAKE_RESTART_EXIT'} // 0));
 RESTART
+	# The landing queue is faked: it records the worktree's base and argv, then
+	# exits 0 (landed), 1 (refused) or 2 (no verdict) from FAKE_LAND_EXIT. The
+	# real script backs the branch up and writes the ticket.
+	write_file("$repo/scripts/land_enqueue.pl", <<'LAND');
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Cwd qw(getcwd);
+my $log = $ENV{'FAKE_LAND_LOG'} || '';
+my $wtip = `git rev-parse origin/working 2>/dev/null`;
+chomp $wtip;
+my $mb = `git merge-base HEAD origin/working 2>/dev/null`;
+chomp $mb;
+my $base = (length $wtip && $mb eq $wtip) ? 'origin/working' : 'other';
+my $marker = -f 'working-only.txt' ? 'working' : 'missing';
+my $subject = `git log -1 --pretty=%s 2>/dev/null`;
+chomp $subject;
+if (length $log) {
+	open(my $fh, '>>', $log) or die $!;
+	print $fh join("\t", 'cwd=' . getcwd(), 'argv=' . join(' ', @ARGV),
+		'base=' . $base, 'marker=' . $marker, 'subject=' . $subject), "\n";
+	close $fh;
+}
+my $exit = 0 + ($ENV{'FAKE_LAND_EXIT'} // 0);
+print $exit == 0 ? "landed\n" : $exit == 1 ? "refused: the wave was red\n" : "no verdict: the queue is busy\n";
+exit $exit;
+LAND
+	# The panel report is written by the real scripts/qa_report.pl; the fake
+	# records the argv so the test can assert the panel contract.
+	write_file("$repo/scripts/qa_report.pl", <<'PANEL');
+#!/usr/bin/perl
+use strict;
+use warnings;
+my $log = $ENV{'FAKE_QA_REPORT_LOG'} || '';
+if (length $log) {
+	open(my $fh, '>>', $log) or die $!;
+	print $fh join("\n", @ARGV), "\n";
+	close $fh;
+}
+exit(0 + ($ENV{'FAKE_QA_REPORT_EXIT'} // 0));
+PANEL
 	write_file("$repo/qa/run.pl", <<'QA');
 #!/usr/bin/perl
 use strict;
@@ -361,8 +443,16 @@ else {
 	$exit = 0 + ($ENV{'FAKE_QA_EXIT'} // 0);
 }
 # A real suite names its failing test on stdout, which is what the repair
-# prompt reads back out of the suite log.
-print "not ok 1 - t/99_fake.t\n# Failed test 'the fake suite'\n" if $exit != 0;
+# prompt reads back out of the suite log. The browser layer names a real
+# failure as FAIL/probe and also logs startup noise the repair prompt must drop.
+if ($exit != 0) {
+	print "not ok 1 - t/99_fake.t\n# Failed test 'the fake suite'\n";
+	print "FAIL l3 chromium: TypeError: cannot read properties of undefined\n";
+	print "probe: WebSocket is not defined\n";
+	print "ERROR: fuse init failed: /dev/fuse: Operation not permitted\n";
+	print "dbus: Failed to connect to socket /run/dbus/system_bus_socket\n";
+	print "No matching issuer found for certificate\n";
+}
 exit($exit);
 QA
 	write_file("$repo/qa/device_target.pl", "#!/usr/bin/perl\nexit 0;\n");
@@ -373,6 +463,15 @@ QA
 	git_ok($repo, 'remote', 'add', 'origin', $bare) or die "git remote failed";
 	git_ok($repo, 'push', '-q', '-u', 'origin', 'main') or die "git push failed";
 
+	# The night branches from origin/working, so the fixture has one: a marker
+	# commit ahead of main proves the worktree was based on the trunk.
+	git_ok($repo, 'checkout', '-q', '-b', 'working') or die "git checkout working failed";
+	write_file("$repo/working-only.txt", "the working trunk is ahead of main\n");
+	git_ok($repo, 'add', '-A') or die "git add working failed";
+	git_ok($repo, 'commit', '-q', '-m', 'working base') or die "git commit working failed";
+	git_ok($repo, 'push', '-q', '-u', 'origin', 'working') or die "git push working failed";
+	git_ok($repo, 'checkout', '-q', 'main') or die "git checkout main failed";
+
 	return { dir => $dir, repo => $repo, bare => $bare };
 }
 
@@ -382,9 +481,6 @@ sub run_runner {
 	my $pid = open(my $fh, '-|');
 	defined $pid or die "fork: $!";
 	if (!$pid) {
-		# These cases exercise the landing path; the nightly's own
-		# default is branch-only until an operator opts in.
-		$ENV{'JAWNOS_QA_AUTO_MERGE'} = '1';
 		for my $key (keys %{$env || {}}) {
 			if (defined $env->{$key}) { $ENV{$key} = $env->{$key} }
 			else { delete $ENV{$key} }
@@ -589,8 +685,18 @@ SKIP: {
 		'the repair agent was told which attempt it was');
 	like($rep_agent_log, qr/not ok 1 - t\/99_fake\.t/,
 		'the repair note carried the failing test name');
-	like(git_out($rep->{'repo'}, 'log', '-1', '--pretty=%s'), qr/^v0\.0\.2 - Fix the failing thing/,
-		'the repaired work shipped to main');
+	like($rep_agent_log, qr/FAIL l3 chromium: TypeError/,
+		'the repair note carried the real l3 failure line');
+	like($rep_agent_log, qr/probe: WebSocket is not defined/,
+		'the repair note carried the probe failure line');
+	unlike($rep_agent_log, qr/fuse init failed/,
+		'the repair note dropped fuse startup noise');
+	unlike($rep_agent_log, qr/No matching issuer/,
+		'the repair note dropped certificate noise');
+	unlike($rep_agent_log, qr/dbus: Failed to connect/,
+		'the repair note dropped dbus noise');
+	is($rep_run->{'commit'}, 'v0.0.2 - Fix the failing thing',
+		'the repaired work carries the versioned commit');
 	ok(!-d "$rep_root/work/repair01-1", 'a green worktree is cleaned up after a repair');
 	ok(!has_branch($rep->{'repo'}, 'qa/nightly-repair01-1'), 'a repaired branch is cleaned up');
 
@@ -633,7 +739,7 @@ SKIP: {
 	like($hard_md, qr/repairs: 2 \(agent exits 0, 0/,
 		'report.md says how many repairs were tried');
 
-	# -- green only after health 200 --------------------------------------
+	# -- a green night queues its branch and lands it ---------------------
 	my $green = fake_repo();
 	my ($gdb, $gdir, $gdbh) = make_db();
 	add_note($gdbh, uuid => 'green-1', timestamp => '2000',
@@ -642,22 +748,22 @@ SKIP: {
 	my $green_root = "$green->{'dir'}/qa-root";
 	my $green_agent = agent_script($green->{'dir'});
 	my ($pid, $port) = app_server($green->{'dir'});
+	my $main_before = git_out($green->{'repo'}, 'rev-parse', 'refs/heads/main');
 	my ($green_rc, $green_out) = run_runner(
 		{
 			'JAWNOS_CODING_AGENT' => "$^X $green_agent",
 			'FAKE_QA_LOG' => "$green->{'dir'}/qa.log",
-			'FAKE_RESTART_LOG' => "$green->{'dir'}/restart.log",
 			'FAKE_AGENT_LOG' => "$green->{'dir'}/agent.log",
+			'FAKE_LAND_LOG' => "$green->{'dir'}/land.log",
+			'FAKE_QA_REPORT_LOG' => "$green->{'dir'}/panel.log",
 		},
 		'--ignore-device', '--repo', $green->{'repo'}, '--root', $green_root,
 		'--db', $gdb, '--stamp', 'green01', '--limit', '2',
-		'--live-url', "http://127.0.0.1:$port",
-		'--health-url', "http://127.0.0.1:$port/manager/health",
-		'--health-wait', '3', '--ticket', '');
+		'--live-url', "http://127.0.0.1:$port", '--ticket', '');
 	kill 'KILL', $pid;
 	waitpid($pid, 0);
 
-	is($green_rc, 0, 'a green night exits 0');
+	is($green_rc, 0, 'a landed night exits 0');
 	my $green_report = report_for($green_root, 'green01');
 	ok(ref $green_report eq 'HASH', 'a green run writes a report');
 	my $run = $green_report->{'runs'}->[0] || {};
@@ -665,14 +771,10 @@ SKIP: {
 	is($run->{'branch'}, 'qa/nightly-green01-1', 'the branch naming is pinned');
 	is($run->{'worktree'}, "$green_root/work/green01-1", 'the worktree naming is pinned');
 	ok($run->{'pushed'}, 'the branch was pushed');
-	ok($run->{'merged'}, 'main fast-forwarded');
-	ok($run->{'restarted'}, 'the restart was accepted');
-	is($green_report->{'rollback_tag'}, 'nightly-pre-green01', 'the run records its pre-merge tag');
-	ok(-x "$green_root/coding/green01/rollback.sh", 'rollback.sh is written and executable');
-	ok(git_out($green->{'repo'}, 'tag', '--list', 'nightly-pre-green01') =~ /nightly-pre-green01/,
-		'the tag exists in the checkout');
-	ok($run->{'health_ok'}, 'health answered 200');
-	ok($run->{'marked_completed'}, 'only then was the note marked completed');
+	is($run->{'land_exit'}, 0, 'the landing queue exited 0');
+	ok($run->{'landed'}, 'the run records that the branch landed');
+	like($run->{'land_verdict'}, qr/landed/, 'the verdict is recorded');
+	ok($run->{'marked_completed'}, 'only after landing was the note marked completed');
 	is($run->{'layers'}, 'l0,l1,l2,l3', 'a JavaScript change added l2 and l3');
 
 	like(scalar read_file("$green->{'dir'}/qa.log"), qr/--layers l0,l1,l2,l3/,
@@ -680,59 +782,97 @@ SKIP: {
 	my $agent_log = -f "$green->{'dir'}/agent.log" ? read_file("$green->{'dir'}/agent.log") : '';
 	like($agent_log, qr/green-1\tMake the thing work\tMake the thing work\\nwith a test/,
 		'the agent got the note id, title and text in its environment');
-	like(scalar read_file("$green->{'dir'}/restart.log"), qr/--reason v0\.0\.2 - Make the thing work/,
-		'the restart carries the versioned note title');
+	my $land_log = -f "$green->{'dir'}/land.log" ? read_file("$green->{'dir'}/land.log") : '';
+	like($land_log, qr/argv=--trunk working --wait/,
+		'the branch was queued on the working trunk and waited for the verdict');
+	like($land_log, qr/base=origin\/working/, 'the worktree was based on origin/working');
+	like($land_log, qr/marker=working/, 'the working-only marker is in the worktree');
+	like($land_log, qr/cwd=\Q$green_root\E\/work\/green01-1/,
+		'the queue ran from the night\'s own worktree');
 	my $requests = -f "$green->{'dir'}/requests.log" ? read_file("$green->{'dir'}/requests.log") : '';
 	like($requests, qr/POST \/manager\/note_save .*uuid=green-1.*status=completed|POST \/manager\/note_save .*status=completed.*uuid=green-1/,
 		'the note is completed through POST /manager/note_save');
 	like($requests, qr/category=journal/, 'the nightly files a journal report note');
-	like(git_out($green->{'repo'}, 'log', '-1', '--pretty=%s'), qr/^v0\.0\.2 - Make the thing work/,
-		'main carries the versioned commit');
-	ok(!-d "$green_root/work/green01-1", 'a green worktree is cleaned up');
-	ok(!has_branch($green->{'repo'}, 'qa/nightly-green01-1'), 'a merged branch is cleaned up');
+	like($land_log, qr/subject=v0\.0\.2 - Make the thing work/,
+		'the landed commit carries the versioned note title');
+	is(git_out($green->{'repo'}, 'rev-parse', 'refs/heads/main'), $main_before,
+		'the night never moved main');
+	ok(!-d "$green_root/work/green01-1", 'a landed worktree is cleaned up');
+	ok(!has_branch($green->{'repo'}, 'qa/nightly-green01-1'), 'a landed branch is force-deleted');
+	ok(!-e "$green->{'dir'}/restart.log", 'the night did not restart the house');
 
-	# -- the same night, but health never turns 200 -----------------------
-	my $sick = fake_repo();
-	my ($kdb, $kdir, $kdbh) = make_db();
-	add_note($kdbh, uuid => 'sick-1', timestamp => '2000', text => 'A note that ships but never gets healthy');
-	$kdbh->disconnect;
-	my $sick_root = "$sick->{'dir'}/qa-root";
-	my $sick_agent = agent_script($sick->{'dir'});
-	my ($spid, $sport) = app_server($sick->{'dir'}, 'FAKE_HEALTH_STATUS' => 503);
-	my ($sick_rc) = run_runner(
+	# The panel report is written beside the run report.
+	my $panel_log = -f "$green->{'dir'}/panel.log" ? read_file("$green->{'dir'}/panel.log") : '';
+	like($panel_log, qr/--kind=coding/, 'the panel report names the coding kind');
+	like($panel_log, qr/--schedule=nightly/, 'the panel report is the nightly schedule');
+	like($panel_log, qr/--status=ok/, 'a green night reports ok');
+	like($panel_log, qr/--title=Coding nightly/, 'the panel report carries its title');
+	like($panel_log, qr/--table=Notes:\Q$green_root\E\/coding\/green01\/notes\.tsv/,
+		'the panel table points at the run\'s TSV');
+	like($panel_log, qr/--root=\Q$green_root\E/, 'the panel report uses the runner root');
+	my $tsv = -f "$green_root/coding/green01/notes.tsv"
+		? read_file("$green_root/coding/green01/notes.tsv") : '';
+	like($tsv, qr/^Note\tResult\tStatus$/m, 'the TSV has the panel columns');
+	like($tsv, qr/^Make the thing work\tgreen\tcompleted$/m, 'the TSV says the note completed');
+
+	# -- a refused landing leaves the worktree and the note open -----------
+	my $ref = fake_repo();
+	my ($rfdb, $rfdir, $rfdbh) = make_db();
+	add_note($rfdbh, uuid => 'ref-1', timestamp => '2000', text => 'A note the wave refuses');
+	$rfdbh->disconnect;
+	my $ref_root = "$ref->{'dir'}/qa-root";
+	my $ref_agent = agent_script($ref->{'dir'});
+	my $ref_head = git_out($ref->{'repo'}, 'rev-parse', 'refs/heads/main');
+	my ($ref_rc) = run_runner(
 		{
-			'JAWNOS_CODING_AGENT' => "$^X $sick_agent",
-			'FAKE_RESTART_LOG' => "$sick->{'dir'}/restart.log",
+			'JAWNOS_CODING_AGENT' => "$^X $ref_agent",
+			'FAKE_LAND_EXIT' => 1,
+			'FAKE_LAND_LOG' => "$ref->{'dir'}/land.log",
+			'FAKE_QA_REPORT_LOG' => "$ref->{'dir'}/panel.log",
 		},
-		'--ignore-device', '--repo', $sick->{'repo'}, '--root', $sick_root,
-		'--db', $kdb, '--stamp', 'sick01', '--limit', '1',
-		'--live-url', "http://127.0.0.1:$sport",
-		'--health-url', "http://127.0.0.1:$sport/manager/health",
-		'--health-wait', '1', '--ticket', '');
-	kill 'KILL', $spid;
-	waitpid($spid, 0);
+		'--ignore-device', '--repo', $ref->{'repo'}, '--root', $ref_root,
+		'--db', $rfdb, '--stamp', 'ref01', '--limit', '1',
+		'--live-url', 'http://127.0.0.1:1', '--ticket', '');
+	is($ref_rc, 1, 'a refused landing exits 1');
+	my $ref_report = report_for($ref_root, 'ref01');
+	my $ref_run = $ref_report->{'runs'}->[0] || {};
+	is($ref_run->{'status'}, 'land_refused', 'the report names the refusal');
+	is($ref_run->{'land_exit'}, 1, 'the land exit is recorded');
+	like($ref_run->{'land_verdict'}, qr/refused/, 'the coordinator\'s refusal is recorded');
+	ok(!$ref_run->{'marked_completed'}, 'a refused note is not completed');
+	is(note_status($rfdb, 'ref-1'), 'open', 'the refused note stays open');
+	ok(-d "$ref_root/work/ref01-1", 'the refused worktree is left for the fix');
+	ok(has_branch($ref->{'repo'}, 'qa/nightly-ref01-1'), 'the refused branch is left');
+	is(git_out($ref->{'repo'}, 'rev-parse', 'refs/heads/main'), $ref_head,
+		'a refusal never moves main');
+	like(scalar read_file("$ref_root/coding/ref01/failure.md"), qr/landing queue did not take/,
+		'failure.md hands the refusal over');
+	like(scalar read_file("$ref->{'dir'}/panel.log"), qr/--status=failed/,
+		'a refused night reports failed to the panel');
 
-	is($sick_rc, 1, 'a house that never answers 200 exits 1');
-	my $sick_report = report_for($sick_root, 'sick01');
-	is($sick_report->{'runs'}->[0]->{'status'}, 'health_failed', 'the report names health');
-	ok(!$sick_report->{'runs'}->[0]->{'marked_completed'}, 'the note is not completed');
-	is(note_status($kdb, 'sick-1'), 'open', 'the note stays open');
-	is($sick_report->{'runs'}->[0]->{'rolled_back'}, 'yes',
-		'a post-merge health failure rolls main back to the pre-night tag');
-	ok(!$sick_report->{'runs'}->[0]->{'rollback_health_ok'},
-		'the rollback health result is recorded honestly');
-	ok(-f "$sick_root/coding/sick01/failure.md", 'a failure.md hands the night over');
-	my $sick_requests = -f "$sick->{'dir'}/requests.log" ? read_file("$sick->{'dir'}/requests.log") : '';
-	my $sick_body = $sick_requests;
-	$sick_body =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
-	$sick_body =~ s/\+/ /g;
-	like($sick_body, qr/POST \/manager\/note_save .*status=open/,
-		'a failure note is filed with status open');
-	like($sick_body, qr/Nightly failed: A note that ships/,
-		'the failure note names the original note');
-	unlike($sick_body, qr/uuid=sick-1/,
-		'the original note is never marked completed on a failure');
-	like(scalar read_file("$sick->{'dir'}/restart.log"), qr/--reason/, 'the restart still happened (health was the gate)');
+	# -- a landing with no verdict also leaves the worktree and note -------
+	my $nov = fake_repo();
+	my ($nvdb, $nvdir, $nvdbh) = make_db();
+	add_note($nvdbh, uuid => 'nov-1', timestamp => '2000', text => 'A note the queue never answers');
+	$nvdbh->disconnect;
+	my $nov_root = "$nov->{'dir'}/qa-root";
+	my $nov_agent = agent_script($nov->{'dir'});
+	my ($nov_rc) = run_runner(
+		{
+			'JAWNOS_CODING_AGENT' => "$^X $nov_agent",
+			'FAKE_LAND_EXIT' => 2,
+			'FAKE_LAND_LOG' => "$nov->{'dir'}/land.log",
+		},
+		'--ignore-device', '--repo', $nov->{'repo'}, '--root', $nov_root,
+		'--db', $nvdb, '--stamp', 'nov01', '--limit', '1',
+		'--live-url', 'http://127.0.0.1:1', '--ticket', '');
+	is($nov_rc, 1, 'a queue with no verdict exits 1');
+	my $nov_run = (report_for($nov_root, 'nov01')->{'runs'}->[0] || {});
+	is($nov_run->{'status'}, 'land_timeout', 'the report names the missing verdict');
+	is($nov_run->{'land_exit'}, 2, 'the land exit is recorded');
+	is(note_status($nvdb, 'nov-1'), 'open', 'the note stays open');
+	ok(-d "$nov_root/work/nov01-1", 'the worktree is left');
+	ok(has_branch($nov->{'repo'}, 'qa/nightly-nov01-1'), 'the branch is left for the next verdict');
 }
 
 # --- the unit files ---------------------------------------------------------
@@ -747,6 +887,11 @@ unlike($coding_unit, qr/ProtectHome=read-only/,
 unlike($coding_unit, qr/manager_killer/,
 	'the unit never names manager_killer');
 like($coding_unit, qr/PrivateTmp=yes/, 'it still has its private tmp');
+like($coding_unit, qr/land_enqueue\.pl --trunk working --wait/,
+	'the unit comment says the night queues on working');
+unlike($coding_unit, qr/JAWNOS_QA_AUTO_MERGE/,
+	'the unit no longer opts in to merging main');
+unlike($coding_unit, qr/Landing that branch\s+on main/, 'the unit does not describe landing on main');
 
 my $qa_unit = read_file("$root/qa/systemd/jawnos-qa.service");
 like($qa_unit, qr/ProtectHome=read-only/, 'the 04:00 QA unit keeps the read-only home');
@@ -808,5 +953,17 @@ my $runner_source = read_file("$root/qa/coding_night/run.pl");
 unlike($runner_source, qr/manager_killer\.pl/,
 	'the runner never invokes manager_killer');
 like($runner_source, qr/kill 'KILL'/, 'a bound command is SIGKILLed');
+like($runner_source, qr/'origin\/working'/, 'the repo lane branches from origin/working');
+unlike($runner_source, qr/origin\/main/, 'the repo lane no longer uses origin/main');
+like($runner_source, qr/land_enqueue\.pl/, 'the green path runs scripts/land_enqueue.pl');
+like($runner_source, qr/'--trunk', 'working', '--wait'/, 'it queues on working and waits for a verdict');
+unlike($runner_source, qr/JAWNOS_QA_AUTO_MERGE/, 'the auto-merge opt-in is gone');
+unlike($runner_source, qr/HEAD:main/, 'the night never pushes main');
+unlike($runner_source, qr{scripts/restart\.pl}, 'the night never restarts the house');
+like($runner_source, qr/qa_report\.pl/, 'the run publishes a panel report');
+like($runner_source, qr/'--kind=coding'/, 'the panel report names the coding kind');
+like($runner_source, qr/'--schedule=nightly'/, 'the panel report is nightly');
+like($runner_source, qr/--table=Notes:/, 'the panel report carries the notes table');
+like($runner_source, qr/--root=\$root/, 'the panel report uses the runner root');
 
 done_testing();

@@ -966,13 +966,14 @@ sub qa_ux_model_choices {
 # What the coding night works on
 # ---------------------------------------------------------------------------
 # `__president/qa_coding_lanes`, device 'all': the sources the 06:00 night draws
-# work from. `notes` is the original queue; `security` takes the new high
+# work from. `notes` is the original queue; `ux` takes the notes the newest
+# 05:30 UX loop handed over (its queue.json); `security` takes the new high
 # findings from the nightly security audit and `installers` takes the packages
 # the installer check reports missing. qa/lib/QaSetting.pm holds the identical
 # rule for the fenced runner, and t/88 asks both. An empty choice is refused:
 # a night with no source would silently do nothing.
 
-sub qa_coding_lanes_known { return qw(notes security installers) }
+sub qa_coding_lanes_known { return qw(notes ux security installers) }
 sub qa_coding_lanes_default { return 'notes' }
 
 sub qa_coding_lanes_clamp {
@@ -1093,11 +1094,13 @@ sub qa_reports_root {
 	return &subs::home('~/jawnos-qa') . '/reports';
 }
 
-# Every kind a job can leave: the installer check, the security audit and the
-# line count (nightly), the weekly build and the emulator run (manual). The
-# order is the card's order when two runs share a stamp.
+# Every kind a job can leave: the three core nightly runs - the 05:00 suite, the
+# 05:30 UX loop and the 06:00 coding night - then the installer check, the
+# security audit and the line count (nightly), and the weekly build and the
+# emulator run (manual). The order is the card's order when two runs share a
+# stamp.
 sub qa_report_kinds {
-	return qw(installers security loc build emulator);
+	return qw(suite ux coding installers security loc build emulator);
 }
 
 sub qa_reports_list {

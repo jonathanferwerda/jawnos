@@ -275,7 +275,14 @@ if ($deleted == 0) {
 ok(wait_for_cmdline($deleted, 'President.pl'), 'the worker in the removed checkout is running');
 unlink("$gone/President.pl");
 rmdir($gone);
-my $gone_list = `$^X $script --list --cwd=$gone 2>&1`;
+# The same transient empty list as above, under the same load: retry briefly and
+# keep the assertion identical.
+my $gone_list = '';
+for (1 .. 5) {
+	$gone_list = `$^X $script --list --cwd=$gone 2>&1`;
+	last if $gone_list =~ /^\Q$deleted\E\t/m;
+	sleep 0.2;
+}
 like($gone_list, qr/^\Q$deleted\E\t/m, '--cwd still places a worker whose checkout was removed');
 kill 'KILL', $deleted;
 waitpid($deleted, 0);

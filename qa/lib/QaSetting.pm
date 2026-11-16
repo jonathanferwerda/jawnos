@@ -112,12 +112,13 @@ sub read_ux_model {
 
 # --- what the coding night works on ----------------------------------------
 # `__president/qa_coding_lanes`: a comma list of the sources the 06:00 night
-# draws work from. `notes` is the original queue; `security` takes the new
-# high findings from the nightly audit's report and `installers` takes the
-# packages the installer check reports missing. Canonical order, unknown names
-# dropped, and an empty value reads as the default (notes) - the panel refuses
-# to store an empty choice, so a night never silently has nothing to do.
-our @CODING_LANES = qw(notes security installers);
+# draws work from. `notes` is the original queue; `ux` takes the notes the
+# 05:30 UX loop could not pass, `security` takes the new high findings from the
+# nightly audit's report and `installers` takes the packages the installer check
+# reports missing. Canonical order, unknown names dropped, and an empty value
+# reads as the default (notes) - the panel refuses to store an empty choice, so
+# a night never silently has nothing to do.
+our @CODING_LANES = qw(notes ux security installers);
 
 sub coding_lanes { return @CODING_LANES }
 sub coding_lanes_default { return 'notes' }

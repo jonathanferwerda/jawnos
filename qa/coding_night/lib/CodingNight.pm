@@ -64,7 +64,10 @@ sub select_notes {
 		"coalesce(text, '') != ''",
 		"coalesce(ost, '') != 'deleting'",
 		"lower(coalesce(category, '')) = 'jawnos'",
+		# The night's own diary must never become its next task: a failure
+		# note and the 05:30 UX loop's report both live as JawnOS notes.
 		"coalesce(text, '') not like 'Nightly failed:%'",
+		"coalesce(text, '') not like '# Nightly UX report%'",
 	);
 	push @where, "lower(coalesce(status, 'open')) != 'completed'" if $cols->{'status'};
 	push @where, "lower(coalesce(completed, '')) not in ('1','on','yes','true')" if $cols->{'completed'};
@@ -101,6 +104,8 @@ sub select_notes {
 # (qa/lib/QaSetting.pm reads the same setting for this fenced runner).
 #
 #   notes       the top open JawnOS notes, exactly as before
+#   ux          the notes the newest 05:30 UX run could not pass
+#               ($QA_ROOT/ux/queue.json)
 #   security    new findings at or above `high` in the newest nightly audit's
 #               report ($QA_ROOT/reports/security/<stamp>/report.json)
 #   installers  the packages the newest installer check reports `missing`
@@ -114,7 +119,7 @@ our $LANE_ITEM_MAX = 3;
 
 our %SEVERITY_RANK = (critical => 4, high => 3, medium => 2, low => 1, info => 0);
 
-sub lane_ids { return qw(notes security installers) }
+sub lane_ids { return qw(notes ux security installers) }
 
 # The newest finished run of a kind, newest by its UTC stamp. '' when the job
 # has not run on this machine (or has not written a report yet).
@@ -147,6 +152,55 @@ sub _lanes_cap {
 	my $max = $opt->{'max'};
 	$max = $LANE_ITEM_MAX unless defined $max && $max =~ /^\d+$/;
 	return $max;
+}
+
+# The UX loop hands its work over as a queue, not as a note row: each entry
+# names the note it judged, the verdict and the action it suggests. Only a
+# `fail` or a `warn` is coding work: `skip` means the model could not judge the
+# note (often because no model is configured) and `pass` means there is nothing
+# to do, so neither may become a task. An entry with no note id cannot be
+# worked, and a note named twice is one task.
+sub ux_items {
+	my ($qa_root, %opt) = @_;
+	return [] unless defined $qa_root && length $qa_root;
+	my $doc = read_report( File::Spec->catfile($qa_root, 'ux', 'queue.json') );
+	return [] unless $doc && ref $doc->{'notes'} eq 'ARRAY';
+	my $max = _lanes_cap(\%opt);
+	my %seen;
+	my @out;
+	for my $entry ( @{ $doc->{'notes'} } ) {
+		last if @out >= $max;
+		next unless ref $entry eq 'HASH';
+		my $verdict = $entry->{'verdict'} // '';
+		next unless $verdict eq 'fail' || $verdict eq 'warn';
+		my $id = $entry->{'note_id'} // '';
+		$id =~ s/^\s+|\s+$//g;
+		next unless length $id;
+		next if $seen{$id}++;
+		my $title  = $entry->{'title'} // '';
+		my $action = $entry->{'suggested_next_action'} // '';
+		push @out, {
+			id        => 'ux:' . $id,
+			source    => 'ux',
+			title     => 'UX: ' . ($title =~ /\S/ ? $title : $id),
+			text      => join("\n",
+				'The nightly UX loop reports this note did not pass:',
+				'',
+				'- note: ' . $id,
+				'- title: ' . ($title =~ /\S/ ? $title : '(untitled)'),
+				'- verdict: ' . ($verdict =~ /\S/ ? $verdict : '(none)'),
+				'- suggested next action: ' . ($action =~ /\S/ ? $action : '(none)'),
+				'',
+				'Reproduce the note in the QA copy, fix the root cause, and add or update',
+				'the test that would have caught it. The UX loop will offer this note',
+				'again until its verdict passes.',
+			),
+			timestamp => '',
+			category  => 'ux',
+			status    => 'open',
+		};
+	}
+	return \@out;
 }
 
 sub security_items {
@@ -242,8 +296,8 @@ sub installer_items {
 	return \@out;
 }
 
-# The night's whole queue, in the order it is worked: notes first, then the
-# security findings, then the installer gaps.
+# The night's whole queue, in the order it is worked: notes, then the UX
+# handoff, the security findings and the installer gaps.
 sub select_queue {
 	my ($db, %opt) = @_;
 	my @lanes = @{ ref $opt{'lanes'} eq 'ARRAY' ? $opt{'lanes'} : [] };
@@ -253,6 +307,7 @@ sub select_queue {
 		my $notes = select_notes($db, limit => $opt{'limit'});
 		push @queue, map { { %{$_}, source => 'notes' } } @{$notes};
 	}
+	push @queue, @{ ux_items($opt{'qa_root'}, max => $opt{'lane_max'}) } if $on{'ux'};
 	push @queue, @{ security_items($opt{'qa_root'}, max => $opt{'lane_max'}) } if $on{'security'};
 	push @queue, @{ installer_items($opt{'qa_root'}, max => $opt{'lane_max'}) } if $on{'installers'};
 	return \@queue;
@@ -546,6 +601,15 @@ sub repair_summary {
 		. ', ' . $what . ' ' . (join(', ', @{ $run->{'repair_suite_exits'} || [] }) || '-') . ")\n";
 }
 
+# One line for the landing verdict the report, the failure.md and the failure
+# note share: an exit code and the coordinator's own words.
+sub land_line {
+	my ($run) = @_;
+	return 'not attempted' unless defined $run->{'land_exit'};
+	my $verdict = $run->{'land_verdict'} // '';
+	return 'exit ' . $run->{'land_exit'} . (length $verdict ? ' - ' . $verdict : '');
+}
+
 # --- the backup the night leaves behind -------------------------------------
 # A tag is the whole recovery: it is a commit id, so a reset lands on exactly
 # the tree the night started from. rollback.sh is the human path; the runner
@@ -703,23 +767,8 @@ sub report_markdown {
 		$md .= '- suite exit: ' . ($run->{'suite_exit'} // '-') . "\n";
 		$md .= repair_summary($run);
 		$md .= '- pushed: ' . ($run->{'pushed'} ? 'yes' : 'no')
-			. ' · merged: ' . ($run->{'merged'} ? 'yes' : 'no')
-			. ' · restarted: ' . ($run->{'restarted'} ? 'yes' : 'no')
-			. ' · health 200: ' . ($run->{'health_ok'} ? 'yes' : 'no')
 			. ' · note completed: ' . ($run->{'marked_completed'} ? 'yes' : 'no') . "\n";
-		$md .= '- rollback tag: `' . ($run->{'rollback_tag'} // '') . "`"
-			. ' · rolled back: ' . ($run->{'rolled_back'} // 'no');
-		if (($run->{'rolled_back'} // 'no') eq 'yes') {
-			$md .= ' · rollback restart: '
-				. (defined $run->{'rollback_restart_ok'} ? ($run->{'rollback_restart_ok'} ? 'ok' : 'FAILED') : 'not attempted')
-				. ' · rollback health 200: '
-				. (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked');
-		}
-		$md .= "\n";
-		if (($run->{'rolled_back'} // '') eq 'yes' && defined $run->{'rollback_restart_ok'} && !$run->{'rollback_restart_ok'}) {
-			$md .= "\n> **ROLLBACK RESTART FAILED.** Main was reset to `" . ($run->{'rollback_tag'} // '')
-				. "` but scripts/restart.pl refused. The live house may still be running the bad code: restart it by hand now.\n";
-		}
+		$md .= '- land: ' . land_line($run) . "\n";
 		if (($run->{'lane'} // '') eq 'app') {
 			$md .= '- jawnos fast-forwarded: ' . ($run->{'ff_jawnos'} ? 'yes' : 'no')
 				. ' · staged: ' . ($run->{'staged'} ? 'yes' : 'no')

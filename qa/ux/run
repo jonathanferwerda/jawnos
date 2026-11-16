@@ -12,6 +12,11 @@
 # The notes are seeded into a Harness copy; every attempted task runs against
 # that copy. The only write outside the QA root is --file-handbook, which posts
 # to the app's own /manager/note_save route; there is no live SQL here.
+#
+# Two halves, deliberately: the fenced child only selects notes and makes the
+# browser attempts, then writes raw.json. The parent keeps the host's loopback
+# (the fence's --net gives the child its own), so the parent does the model
+# judgement, writes the report, the panel document and the note.
 
 use strict;
 use warnings;
@@ -98,161 +103,56 @@ while (my $arg = shift @argv) {
 my $repo = abs_path("$FindBin::Bin/../..");
 die "qa/ux: no live tree at $repo\n" unless -f "$repo/perl/subroutines.pl";
 
-# The fenced half runs in a mount/PID/net namespace. The parent waits for it,
-# then (and only then) may file the summary through the live app's route - a
-# POST needs the live loopback, which the fence deliberately removes.
+# The parent reads the child's raw.json and writes the report, so both halves
+# must agree on the results directory before the fork. A hand-run with no
+# --results lands beside the panel document rather than in an unknowable
+# per-run path.
+if (!defined $opt{'results'} || !length $opt{'results'}) {
+	$opt{'results'} = qa_root(\%opt) . '/ux';
+}
+my $results = $opt{'results'};
+make_path($results);
+my $started = time;
+
+# The fenced half runs in a mount/PID/net namespace. That fence is also why the
+# judgement cannot run there: --net gives the child its own loopback, so a model
+# on the host's 127.0.0.1 is unreachable. The child only selects notes and makes
+# the browser attempts; the parent (host loopback) judges, writes the results,
+# the panel document and the note.
 if (!$opt{'fenced'} && !$ENV{'JAWNOS_QA_NS'} && !$opt{'no_namespace'}) {
 	my @cmd = ('unshare', '--user', '--map-root-user', '--mount', '--pid',
 		'--fork', '--mount-proc', '--net', '--',
-		$^X, abs_path($0), '--fenced', @original_args);
+		$^X, abs_path($0), '--fenced', @original_args, '--results', $results);
+	local $ENV{'JAWNOS_QA_UX_CHILD'} = '1';
 	my $rc = system(@cmd);
-	file_handbook_if_asked(\%opt, $repo) if $opt{'file_handbook'};
-	exit(($rc >> 8) == 0 ? 0 : ($rc >> 8));
+	my $status = $rc >> 8;
+	if ($status != 0) {
+		# No handbook filing and a failed panel: a dead night stays visible.
+		file_handbook_if_asked(\%opt, $repo, status => $status, started => $started)
+			if $opt{'file_handbook'};
+		panel_report(\%opt, $repo, status => 'failed',
+			note => "the fenced UX child exited $status; no report was written");
+		exit($status);
+	}
+	my $ok = finish_phase(\%opt, $repo, $results, $started);
+	file_handbook_if_asked(\%opt, $repo, status => ($ok ? 0 : 1), started => $started)
+		if $ok && $opt{'file_handbook'};
+	exit($ok ? 0 : 1);
 }
 
 $opt{'fenced'} = 1;
 $ENV{'JAWNOS_QA_NS'} = '1' unless $opt{'no_namespace'};
-Harness::bring_up_loopback();
 
-my $live_db = $opt{'db'} || Ux->live_db($repo);
-# Notes per night: an explicit --limit wins; otherwise the Configure -> Plat ->
-# QA setting, clamped the same way the panel's server-side check clamps it.
-$opt{'limit'} = defined $opt{'limit'}
-	? QaSetting::clamp_note_limit($opt{'limit'})
-	: QaSetting::read_note_limit($live_db);
-
-# The judgement model: an explicit --model wins; otherwise the QA setting, so a
-# model change in Configure -> Plat -> QA reaches the night without editing the
-# unit. '' stays no model, and every verdict stays skip.
-if (!length $opt{'model'}) {
-	my $configured = QaSetting::read_ux_model($live_db);
-	$opt{'model'} = $configured if length $configured;
+my $attempted = attempt_phase(\%opt, $repo, $results);
+if ($ENV{'JAWNOS_QA_UX_CHILD'}) {
+	# The forked child's work ends with raw.json; its parent judges it.
+	exit($attempted ? 0 : 1);
 }
-my $h = Harness->new(repo => $repo, root => $opt{'root'});
-$h->private_tmp();
-my $ro = $h->bind_live_read_only();
-$h->export_tree();
-$h->seed();
-$h->make_certificate();
-$h->pick_ports();
-
-my $results = $opt{'results'} || $h->results;
-make_path($results);
-my $t0 = time;
-
-print 'JawnOS UX ' . ($ENV{'JAWNOS_QA_NS'} ? '[fenced]' : '[unfenced]') . "\n";
-print 'live db: ' . $live_db . ($ro ? ' (repo mounted read-only)' : '') . "\n";
-print 'model: ' . (length $opt{'model'} ? $opt{'model'} : 'none (every judgement is skip)') . "\n";
-
-# 1. read the queue, read-only, newest first
-my $notes = Ux->select_notes($live_db, limit => $opt{'limit'}, category => 'jawnos');
-print 'notes: ' . scalar(@$notes) . ' JawnOS note(s), limit ' . $opt{'limit'} . "\n";
-
-# 2. boot the copy. The factory seed predates the category column, so the app's
-# first request runs the migrations; the notes go in after that, not before.
-my @attempts;
-my $booted = 0;
-my $seeded = 0;
-if ($opt{'ui'} && @$notes) {
-	$h->write_config(live => 1);
-	my $boot = eval { $h->boot(name => 'ux', timeout => 180) };
-	if (!$boot) {
-		print STDERR 'qa/ux: the QA instance did not boot: ' . ($@ || 'unknown') . "\n";
-	}
-	else {
-		$booted = 1;
-		$h->session();
-		$seeded = Ux->seed_notes("$h->{'tree'}/database/jawnos.db",
-			$notes, live_db => $live_db);
-		print "seeded: $seeded note(s) into the QA copy\n";
-		my $url = $h->url_for('/manager/notes');
-		my $i = 0;
-		for my $note (@$notes) {
-			$i++;
-			my $out = "$results/notes/" . ($note->{'id'} || "note-$i");
-			print "  attempt " . ($note->{'title'} || '(untitled)') . "\n";
-			my $attempt = Ux->browser_attempt(
-				url => $url, note => $note, outdir => $out);
-			push @attempts, $attempt;
-		}
-		$h->stop('ux');
-	}
-}
-elsif (!$opt{'ui'}) {
-	print "attempts: skipped (--no-ui)\n";
-}
-else {
-	print "seeded: 0 (no notes to seed)\n";
-}
-
-# 4. judge. No model means skip, never pass.
-my @entries;
-if (@$notes) {
-	my $model_call;
-	if ($opt{'model'}) {
-		my $ok = eval { require "$repo/lib/JawnOS/Domain/Ai2.pm"; 1 };
-		$model_call = \&subs::evaluation_model_call if $ok;
-	}
-	my %by_id = map { ($_->{'id'} // '') => $_ } @attempts;
-	for my $note (@$notes) {
-		my $attempt = $by_id{$note->{'id'} || ''} || {
-			steps => [], console_errors => [],
-			stuck => !$opt{'ui'} ? 'the attempt was skipped (--no-ui)'
-				: $booted ? 'no attempt was recorded'
-				: 'the QA instance was not available for an attempt',
-		};
-		my ($answers, $err);
-		if ($opt{'model'} && $model_call) {
-			($answers, $err) = Ux->model_answers(
-				model => $opt{'model'}, note => $note,
-				attempt => $attempt, model_call => $model_call);
-		}
-		my $verdicts = Ux->rubric($attempt,
-			model => $opt{'model'}, answers => $answers || {},
-			skip_reason => $err ? "the model call did not judge this note: $err"
-				: undef);
-		push @entries, {
-			%$note,
-			attempt => $attempt,
-			verdicts => $verdicts,
-			overall => Ux->overall_verdict($verdicts),
-		};
-	}
-}
-
-my $report = {
-	schema => 1,
-	generated => POSIX::strftime('%Y-%m-%dT%H:%M:%S%z', localtime),
-	source => 'qa/ux/run',
-	live_db => $live_db,
-	live_read_only => ($ro ? 1 : 0),
-	textarea => 'notes are seeded into the QA copy; only results/ and the QA root are written',
-	notes => \@entries,
-	summary => Ux->summary(\@entries, model => $opt{'model'}, limit => $opt{'limit'}),
-};
-$report->{'summary'}->{'generated'} = $report->{'generated'};
-my $written = Ux->write_results($results, $report);
-print 'report: ' . $written->{'markdown'} . "\n";
-print 'queue:  ' . $written->{'queue'} . "\n";
-
-# 5. metrics for qa/run.pl --layers l6 and the budgets
-my $seconds = time - $t0;
-if ($opt{'metrics'}) {
-	my $metrics = {
-		'l6.ux_failures' => $report->{'summary'}->{'ux_failures'},
-		'l6.notes'       => scalar @entries,
-		'l6.duration_s'  => int($seconds),
-	};
-	make_path(dirname($opt{'metrics'}));
-	open(my $fh, '>', $opt{'metrics'})
-		or die "qa/ux: $opt{'metrics'}: $!\n";
-	print $fh JSON::PP->new->canonical->pretty->encode($metrics);
-	close $fh;
-}
-
-print sprintf("done: %d note(s), %d failure(s), %.0fs\n",
-	scalar @entries, $report->{'summary'}->{'ux_failures'}, $seconds);
-exit 0;
+# A direct --no-namespace run has no parent above it.
+my $finished = $attempted && finish_phase(\%opt, $repo, $results, $started);
+file_handbook_if_asked(\%opt, $repo, status => ($finished ? 0 : 1), started => $started)
+	if $finished && $opt{'file_handbook'};
+exit($finished ? 0 : 1);
 
 # ---------------------------------------------------------------------------
 
@@ -262,7 +162,7 @@ qa/ux/run - nightly UX evaluation of the owner's JawnOS-category notes
 
   --limit N          newest N notes (default: the Notes per night setting, 3)
   --root DIR         QA root (default ~/jawnos-qa)
-  --results DIR      where the report goes (default the run's results/)
+  --results DIR      where the report goes (default <QA root>/ux)
   --metrics FILE     write l6.* metrics for qa/run.pl / budgets
   --db PATH          live database to read read-only (default <repo>/database/jawnos.db)
   --model NAME       override the QA model setting (without either: skip)
@@ -280,8 +180,253 @@ sub dirname {
 	return length $path ? $path : '.';
 }
 
+# The fenced half: read the queue, seed the copy, make one browser attempt per
+# note, and hand the raw material back through raw.json. No model and no report:
+# both need the host's loopback and the parent's process.
+sub attempt_phase {
+	my ($o, $repo, $results) = @_;
+	Harness::bring_up_loopback();
+
+	my $live_db = $o->{'db'} || Ux->live_db($repo);
+	# Notes per night: an explicit --limit wins; otherwise the Configure -> Plat
+	# -> QA setting, clamped the same way the panel's server-side check clamps it.
+	$o->{'limit'} = defined $o->{'limit'}
+		? QaSetting::clamp_note_limit($o->{'limit'})
+		: QaSetting::read_note_limit($live_db);
+
+	# The judgment model: an explicit --model wins; otherwise the QA setting, so
+	# a model change in Configure -> Plat -> QA reaches the night without editing
+	# the unit. '' stays no model, and every verdict stays skip.
+	if (!length $o->{'model'}) {
+		my $configured = QaSetting::read_ux_model($live_db);
+		$o->{'model'} = $configured if length $configured;
+	}
+
+	my $h = Harness->new(repo => $repo, root => $o->{'root'});
+	$h->private_tmp();
+	my $ro = $h->bind_live_read_only();
+	$h->export_tree();
+	$h->seed();
+	$h->make_certificate();
+	$h->pick_ports();
+
+	print 'JawnOS UX ' . ($ENV{'JAWNOS_QA_NS'} ? '[fenced]' : '[unfenced]') . "\n";
+	print 'live db: ' . $live_db . ($ro ? ' (repo mounted read-only)' : '') . "\n";
+	print 'model: ' . (length $o->{'model'} ? $o->{'model'} : 'none (every judgement is skip)') . "\n";
+
+	# 1. read the queue, read-only, newest first
+	my $notes = Ux->select_notes($live_db, limit => $o->{'limit'}, category => 'jawnos');
+	print 'notes: ' . scalar(@$notes) . ' JawnOS note(s), limit ' . $o->{'limit'} . "\n";
+
+	# 2. boot the copy. The factory seed predates the category column, so the
+	# app's first request runs the migrations; the notes go in after that, not
+	# before.
+	my @attempts;
+	my $booted = 0;
+	if ($o->{'ui'} && @$notes) {
+		$h->write_config(live => 1);
+		my $boot = eval { $h->boot(name => 'ux', timeout => 180) };
+		if (!$boot) {
+			print STDERR 'qa/ux: the QA instance did not boot: ' . ($@ || 'unknown') . "\n";
+		}
+		else {
+			$booted = 1;
+			$h->session();
+			my $seeded = Ux->seed_notes("$h->{'tree'}/database/jawnos.db",
+				$notes, live_db => $live_db);
+			print "seeded: $seeded note(s) into the QA copy\n";
+			my $url = $h->url_for('/manager/notes');
+			my $i = 0;
+			for my $note (@$notes) {
+				$i++;
+				my $out = "$results/notes/" . ($note->{'id'} || "note-$i");
+				print "  attempt " . ($note->{'title'} || '(untitled)') . "\n";
+				push @attempts, Ux->browser_attempt(
+					url => $url, note => $note, outdir => $out);
+			}
+			$h->stop('ux');
+		}
+	}
+	elsif (!$o->{'ui'}) {
+		print "attempts: skipped (--no-ui)\n";
+	}
+	else {
+		print "seeded: 0 (no notes to seed)\n";
+	}
+
+	# 3. hand back everything the parent needs to judge and describe the night.
+	my $raw = {
+		schema => 1,
+		generated => POSIX::strftime('%Y-%m-%dT%H:%M:%S%z', localtime),
+		config => {
+			live_db => $live_db,
+			live_read_only => ($ro ? 1 : 0),
+			limit => $o->{'limit'},
+			model => $o->{'model'},
+			ui => ($o->{'ui'} ? 1 : 0),
+			booted => $booted,
+		},
+		notes => $notes,
+		attempts => \@attempts,
+	};
+	return write_raw("$results/raw.json", $raw);
+}
+
+# The parent half: judge the child's raw material, write the results, the
+# metrics and the panel document. Returns 0 when it could not report, in which
+# case the panel already carries a failed night and nothing is filed.
+sub finish_phase {
+	my ($o, $repo, $results, $started) = @_;
+	my ($raw, $why) = read_raw("$results/raw.json");
+	unless ($raw) {
+		print STDERR "qa/ux: $why\n";
+		panel_report($o, $repo, status => 'failed',
+			note => "no usable raw.json: $why");
+		return 0;
+	}
+	my $cfg = ref $raw->{'config'} eq 'HASH' ? $raw->{'config'} : {};
+	my $model = defined $cfg->{'model'} ? $cfg->{'model'} : '';
+
+	# The judgement needs the app's model call, and its domain Loader. This runs
+	# in the parent, which keeps the host's loopback, so a local model answers.
+	my $model_call;
+	if (length $model) {
+		my $run_cwd = Cwd::getcwd();
+		my $ok = eval {
+			# subroutines.pl requires ./perl/gb.pl and ./perl/language.pl
+			# relative to cwd, and its BEGIN puts the tree's lib/ ahead of @INC
+			# so the domain Loader (and every subs:: helper, Ai2's included)
+			# is present. A direct require of Ai2.pm skipped the Loader and
+			# died on the first call: Undefined subroutine &subs::ai_model_paid.
+			chdir($repo) or die "chdir $repo: $!\n";
+			require './perl/subroutines.pl';
+			1;
+		};
+		my $load_err = $@;
+		chdir($run_cwd) if defined $run_cwd && length $run_cwd;
+		if ($ok) {
+			$model_call = \&subs::evaluation_model_call;
+		}
+		else {
+			print STDERR 'qa/ux: the model call is unavailable: ' . $load_err;
+			print STDERR "\n" unless $load_err =~ /\n$/;
+		}
+	}
+
+	my $report = Ux->assemble_report($raw->{'notes'}, $raw->{'attempts'},
+		model => $model,
+		model_call => $model_call,
+		limit => $cfg->{'limit'},
+		live_db => $cfg->{'live_db'},
+		live_read_only => $cfg->{'live_read_only'},
+		ui => $cfg->{'ui'},
+		booted => $cfg->{'booted'},
+		run_started => $started,
+	);
+	my $written = Ux->write_results($results, $report);
+	print 'report: ' . $written->{'markdown'} . "\n";
+	print 'queue:  ' . $written->{'queue'} . "\n";
+
+	# 5. metrics for qa/run.pl --layers l6 and the budgets
+	my $seconds = time - $started;
+	if ($o->{'metrics'}) {
+		my $metrics = {
+			'l6.ux_failures' => $report->{'summary'}->{'ux_failures'},
+			'l6.notes'       => scalar @{ $report->{'notes'} || [] },
+			'l6.duration_s'  => int($seconds),
+		};
+		make_path(dirname($o->{'metrics'}));
+		open(my $fh, '>', $o->{'metrics'})
+			or die "qa/ux: $o->{'metrics'}: $!\n";
+		print $fh JSON::PP->new->canonical->pretty->encode($metrics);
+		close $fh;
+	}
+
+	# The panel document for Configure -> Plat -> QA. `ok` is reserved for a
+	# night that finished and wrote a report in this run.
+	my $markdown = "$results/ux-report.md";
+	my $fresh = -f $markdown && (stat($markdown))[9] >= $started;
+	my $tsv = Ux->panel_table("$results/ux-panel.tsv", $report->{'notes'});
+	my $s = $report->{'summary'};
+	panel_report($o, $repo,
+		status => ($fresh ? 'ok' : 'failed'),
+		note => sprintf('%d note(s): %d pass, %d warn, %d fail, %d skip; model %s',
+			$s->{'total'} // 0,
+			$s->{'verdicts'}->{'pass'} // 0, $s->{'verdicts'}->{'warn'} // 0,
+			$s->{'verdicts'}->{'fail'} // 0, $s->{'verdicts'}->{'skip'} // 0,
+			length($model) ? $model : 'none'),
+		($tsv ? (table => $tsv) : ()),
+	);
+
+	print sprintf("done: %d note(s), %d failure(s), %.0fs\n",
+		scalar @{ $report->{'notes'} || [] }, $report->{'summary'}->{'ux_failures'}, $seconds);
+	return 1;
+}
+
+sub read_raw {
+	my ($path) = @_;
+	open(my $fh, '<', $path) or return (undef, "$path: $!");
+	local $/;
+	my $text = <$fh> // '';
+	close $fh;
+	my $raw = eval { JSON::PP->new->utf8->decode($text) };
+	return (undef, "$path is not a JSON object") unless ref $raw eq 'HASH';
+	return (undef, "$path has no notes array") unless ref $raw->{'notes'} eq 'ARRAY';
+	return (undef, "$path has no attempts array") unless ref $raw->{'attempts'} eq 'ARRAY';
+	return ($raw, undef);
+}
+
+sub write_raw {
+	my ($path, $raw) = @_;
+	my $tmp = "$path.tmp";
+	open(my $fh, '>', $tmp) or do {
+		print STDERR "qa/ux: $tmp: $!\n";
+		return 0;
+	};
+	print $fh JSON::PP->new->canonical->pretty->utf8->encode($raw);
+	close $fh;
+	unless (rename $tmp, $path) {
+		print STDERR "qa/ux: $tmp -> $path: $!\n";
+		return 0;
+	}
+	return 1;
+}
+
+# Where the panel reads its reports: the explicit --root, then the QA root the
+# environment names, then the harness default. qa_report.pl is handed the same
+# answer rather than guessing from QA_ROOT, which a fenced job may not inherit.
+sub qa_root {
+	my ($o) = @_;
+	return $o->{'root'} if defined $o->{'root'} && length $o->{'root'};
+	return $ENV{'JAWNOS_QA_ROOT'}
+		if defined $ENV{'JAWNOS_QA_ROOT'} && length $ENV{'JAWNOS_QA_ROOT'};
+	return (($ENV{'HOME'} || '') . '/jawnos-qa');
+}
+
+# One document per night for Configure -> Plat -> QA. A run that never reached
+# its own report still says so, so a dead night cannot pass for a quiet one.
+sub panel_report {
+	my ($o, $repo, %a) = @_;
+	my $script = "$repo/scripts/qa_report.pl";
+	return 0 unless -f $script;
+	my $stamp = POSIX::strftime('%Y%m%dT%H%M%SZ', gmtime);
+	my @cmd = ($^X, $script,
+		'--kind=ux', '--schedule=nightly',
+		'--status=' . ($a{'status'} || 'failed'),
+		'--title=Nightly UX',
+		'--stamp=' . $stamp,
+		'--root=' . qa_root($o),
+	);
+	push @cmd, '--note=' . $a{'note'} if defined $a{'note'} && length $a{'note'};
+	push @cmd, '--table=Notes:' . $a{'table'} if $a{'table'};
+	my $rc = system(@cmd);
+	print STDERR 'qa/ux: the panel report was not written (qa_report.pl exit '
+		. ($rc >> 8) . ")\n" if $rc;
+	return $rc == 0;
+}
+
 sub file_handbook_if_asked {
-	my ($o, $repo) = @_;
+	my ($o, $repo, %a) = @_;
 	return unless $o->{'file_handbook'};
 
 	my $dir = $o->{'results'};
@@ -291,16 +436,15 @@ sub file_handbook_if_asked {
 		print STDERR "qa/ux: --file-handbook needs --results so the summary can be found\n";
 		return;
 	}
-	my $md = "$dir/ux-report.md";
-	my $json = "$dir/report.json";
-	unless (-f $md) {
-		print STDERR "qa/ux: no $md to file\n";
+	# The child's exit status and the parent's start time, so an old file left
+	# by a night that died is never filed as this one's.
+	my ($text, $why) = Ux->handbook_report($dir,
+		status => $a{'status'}, started => $a{'started'});
+	unless (defined $text) {
+		print STDERR "qa/ux: handbook filing skipped: $why\n";
 		return;
 	}
-	open(my $fh, '<', $md) or return;
-	local $/;
-	my $text = <$fh> // '';
-	close $fh;
+	my $json = "$dir/report.json";
 
 	my $base = $o->{'live_url'};
 	unless ($base) {
@@ -323,7 +467,7 @@ sub file_handbook_if_asked {
 		}
 	}
 
-	my $category = 'jawnos';
+	my $category = 'journal';
 	my $r = eval { JSON::PP->new->utf8->decode(do {
 		open(my $j, '<', $json) or die; local $/; <$j>; }) };
 	if (ref $r eq 'HASH') {

@@ -107,6 +107,10 @@ for my $script (qw(android/build.sh android/run.sh qemu/build.sh qemu/run.sh)) {
 	# them put 446k files in the staged tree, and mkfs.ext4 ran out of inodes.
 	like($build_script, qr/'\.worktrees'/,
 		'the staged tree leaves the agent worktrees out');
+	# runtime_dir() puts live sockets in run/ws; rsync -a as root would copy
+	# them and the image build died on a socket it could not open.
+	like($build_script, qr/^\s*'run',/m,
+		'and the live runtime dir, which holds sockets rather than code');
 }
 
 done_testing();

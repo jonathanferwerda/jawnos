@@ -8,9 +8,10 @@ use FindBin;
 use lib "$FindBin::Bin/../qa/lib", "qa/lib";
 use Test::More;
 use File::Temp qw(tempdir);
-use File::Slurp qw(read_file);
+use File::Slurp qw(read_file write_file);
 use JSON::PP;
 use Ux;
+use Node;
 use Budget;
 
 # l6 is the nightly UX loop: it reads the owner's JawnOS notes, seeds a fenced
@@ -34,18 +35,63 @@ is(system($^X, '-c', "$qa/lib/Ux.pm"), 0, 'Ux.pm compiles');
 		'seed_notes refuses the live path before it touches SQL');
 }
 
+# --- node: the CDP scripts need a node with a global WebSocket ---------------
+{
+	local $ENV{'JAWNOS_NODE'} = '/tmp/qa-ux-first-node';
+	local $ENV{'HOME'} = '/tmp/qa-ux-home';
+	my @c = Node::candidates();
+	is($c[0], '/tmp/qa-ux-first-node', 'JAWNOS_NODE is the first candidate');
+	is($c[1], '/tmp/qa-ux-home/.local/opt/node/bin/node', 'the local node is next');
+	my $on_path = `command -v node 2>/dev/null`;
+	chomp $on_path if defined $on_path;
+	if (defined $on_path && length $on_path) {
+		is($c[2], $on_path, 'the PATH node is the last candidate');
+	}
+	else {
+		is(scalar @c, 2, 'with no node on PATH there are two candidates');
+	}
+}
+{
+	# A systemd unit's PATH answers /usr/bin/node (v20, no global WebSocket);
+	# the box's own node is newer. Only a box with no node at all may skip.
+	my @real = Node::candidates();
+	SKIP: {
+		skip 'no node is installed on this box; the CDP attempt cannot run', 2
+			unless @real;
+		my $node = Node::resolve();
+		ok($node, 'a node that can open a WebSocket is resolved');
+		if ($node) {
+			is(system($node->{'command'}, @{ $node->{'args'} }, '-e',
+				'process.exit(typeof WebSocket === "function" ? 0 : 1)'), 0,
+				'the resolved node passes the capability check');
+		}
+		else {
+			fail('no node candidate has a global WebSocket (set JAWNOS_NODE to a newer node)');
+		}
+	}
+}
+{
+	my $ux = read_file("$qa/lib/Ux.pm");
+	like($ux, qr/Node::resolve\(\)/, 'Ux.pm asks the shared resolver for node');
+	unlike($ux, qr/_which\(\s*'node'\s*\)/,
+		'Ux.pm no longer takes whatever node PATH answers');
+	my $ui = read_file("$qa/lib/Ui.pm");
+	like($ui, qr/Node::resolve\(\)/, 'Ui.pm asks the shared resolver for node');
+	unlike($ui, qr{'timeout',\s*'150',\s*'node'}, 'Ui.pm no longer runs bare node');
+}
+
 # --- note selection: category, newest first, limit -----------------------------
 my $sqlite = `command -v sqlite3 2>/dev/null`;
 chomp $sqlite if defined $sqlite;
 SKIP: {
-	skip 'sqlite3 is not installed', 12 unless $sqlite;
+	skip 'sqlite3 is not installed', 16 unless $sqlite;
 
 	my $dir = tempdir(CLEANUP => 1);
 	my $db = "$dir/notes.db";
 	my @sql = (
 		'create table notes (uuid varchar(255) unique, timestamp varchar(255),'
 			. ' server_time varchar(255), app varchar(255), device varchar(255),'
-			. ' text longtext, ost varchar(25), category varchar(255))',
+			. ' text longtext, ost varchar(25), category varchar(255), status varchar(255))',
 		"insert into notes (uuid,timestamp,app,text,category) values"
 			. " ('a-old','2026-10-01 09:00','notes','oldest JawnOS idea','jawnos')",
 		"insert into notes (uuid,timestamp,app,text,category) values"
@@ -58,14 +104,32 @@ SKIP: {
 			. " ('e-blank','2026-10-05 09:00','notes','no category means journal',NULL)",
 		"insert into notes (uuid,timestamp,app,text,category) values"
 			. " ('f-draft','2026-10-06 09:00','appointments','a half-typed draft',NULL)",
+		# The queue is open work: a note the nightlies filed, a finished one and
+		# a tombstone must never be selected, however new they are.
+		"insert into notes (uuid,timestamp,app,text,category,status) values"
+			. " ('g-completed','2026-10-07 09:00','notes','a finished JawnOS task','jawnos','completed')",
+		"insert into notes (uuid,timestamp,app,text,category,status,ost) values"
+			. " ('h-tombstone','2026-10-08 09:00','notes','a deleted JawnOS thought','jawnos','open','deleting')",
+		"insert into notes (uuid,timestamp,app,text,category,status) values"
+			. " ('i-failed','2026-10-09 09:00','notes','Nightly failed: the UX loop died','jawnos','open')",
+		"insert into notes (uuid,timestamp,app,text,category,status) values"
+			. " ('j-report','2026-10-10 09:00','notes','# Nightly UX report: 3 notes, 0 failures','jawnos','open')",
+		"insert into notes (uuid,timestamp,app,text,category,status) values"
+			. " ('k-open','2026-09-30 09:00','notes','an older still-open JawnOS task','jawnos','open')",
 	);
 	is(system($sqlite, $db, join(";\n", @sql) . ';'), 0, 'fixture notes are inserted');
 
 	my $all = Ux->select_notes($db, limit => 10, category => 'jawnos');
-	is(scalar @$all, 3, 'only JawnOS-category notes are selected');
-	is_deeply([ map { $_->{'id'} } @$all ], [qw(b-new c-mid a-old)],
+	is(scalar @$all, 4, 'only the four open, hand-written JawnOS notes are selected');
+	is_deeply([ map { $_->{'id'} } @$all ], [qw(b-new c-mid a-old k-open)],
 		'JawnOS notes are newest first');
 	is($all->[0]->{'title'}, 'newest JawnOS bug', 'the title is the first line');
+	is($all->[3]->{'status'}, 'open', 'the queue carries the status column');
+
+	my %selected = map { $_->{'id'} => 1 } @$all;
+	for my $gone (qw(g-completed h-tombstone i-failed j-report)) {
+		ok(!$selected{$gone}, "$gone is not a queue item");
+	}
 
 	my $two = Ux->select_notes($db, limit => 2, category => 'jawnos');
 	is(scalar @$two, 2, '--limit N keeps N notes');
@@ -203,6 +267,132 @@ SKIP: {
 		skip 'node is not installed', 1 unless $node;
 		is(system($node, '--check', "$qa/ux/attempt.js"), 0, 'the attempt.js parses');
 	}
+}
+
+# --- the filed report must be this run's -------------------------------------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $md = "$dir/ux-report.md";
+	my $json = "$dir/report.json";
+	my $started = time - 60;
+
+	write_file($json, JSON::PP->new->canonical->encode({ run_started => 1000 }));
+	write_file($md, "# Nightly UX report\nold\n");
+	utime($started - 3600, $started - 3600, $md);
+
+	my ($text, $why) = Ux->handbook_report($dir, status => 0, started => $started);
+	ok(!defined $text, 'a stale report is not filed even when the child exits 0');
+	like($why, qr/older than this run/, 'the reason names the staleness');
+
+	write_file($md, "# Nightly UX report\nnew\n");
+	($text, $why) = Ux->handbook_report($dir, status => 255, started => $started);
+	ok(!defined $text, 'a failed child files nothing');
+	like($why, qr/exited 255/, 'the reason names the child status');
+
+	($text, $why) = Ux->handbook_report($dir, status => 0, started => $started);
+	is($text, "# Nightly UX report\nnew\n", 'a fresh report from a clean child is filed');
+
+	# The report's own start time also proves freshness when mtime is unreliable.
+	utime($started - 3600, $started - 3600, $md);
+	write_file($json, JSON::PP->new->canonical->encode({ run_started => $started + 1 }));
+	($text) = Ux->handbook_report($dir, status => 0, started => $started);
+	ok(defined $text, "the report's own start time is also proof");
+}
+
+# --- the panel document -------------------------------------------------------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $entries = [ {
+		id => 'n1', title => 'Save a note', overall => 'fail',
+		verdicts => {
+			easy  => { verdict => 'warn' },
+			help  => { verdict => 'pass' },
+			works => { verdict => 'fail' },
+		},
+	} ];
+	my $path = Ux->panel_table("$dir/ux-panel.tsv", $entries);
+	ok($path && -f $path, 'the panel writes a TSV');
+	my $tsv = read_file($path);
+	like($tsv, qr/^Note\tVerdict\tOverall\n/, 'the columns are Note, Verdict, Overall');
+	like($tsv, qr/^Save a note\teasy=warn help=pass works=fail\tfail$/m,
+		'a row carries the three verdicts and the overall');
+
+	is(Ux->handbook_category({ notes => $entries }), 'journal',
+		'the UX summary is filed as a Journal note, never a JawnOS queue item');
+	is(Ux->handbook_category({}), 'journal', 'a run with no notes is a Journal note too');
+}
+
+# --- the parent assembles the judgement from the child's raw attempts --------
+{
+	my $notes = [ {
+		id => 'n1', title => 'Save a note', text => 'save it',
+		timestamp => '2026-10-01 09:00', category => 'jawnos',
+	} ];
+	my $attempts = [ {
+		id => 'n1', steps => ['notes', 'save'], console_errors => [],
+		stuck => '', probe => { title => 'Notes', noteVisible => 1 },
+	} ];
+	my @asked;
+	my $report = Ux->assemble_report($notes, $attempts,
+		model => 'test-model', limit => 3,
+		live_db => '/tmp/live.db', live_read_only => 1, run_started => 1234,
+		model_call => sub {
+			push @asked, [@_];
+			return ('{"easy":"yes","help":"yes","works":"yes"}', undef);
+		});
+	is(ref $report, 'HASH', 'assemble_report returns a report');
+	is(scalar @asked, 1, 'the injected model is asked once per note');
+	is($report->{'notes'}->[0]->{'overall'}, 'pass', 'a passing answer becomes a pass');
+	is($report->{'summary'}->{'verdicts'}->{'pass'}, 1, 'the summary counts the pass');
+	is($report->{'live_db'}, '/tmp/live.db', 'the live db is carried into the report');
+	is($report->{'run_started'}, 1234, 'the run start is carried for the stale guard');
+
+	# A model call that dies is a skip with its reason, never a pass.
+	my $died = Ux->assemble_report($notes, $attempts,
+		model => 'test-model', limit => 3,
+		model_call => sub { die "connect: Connection refused\n" });
+	is($died->{'notes'}->[0]->{'overall'}, 'skip', 'a dead model call leaves the note at skip');
+	like($died->{'notes'}->[0]->{'verdicts'}->{'works'}->{'evidence'},
+		qr/Connection refused/, 'the skip quotes the failure');
+
+	my $prose = Ux->assemble_report($notes, $attempts,
+		model => 'test-model', limit => 3,
+		model_call => sub { return ('I think it was fine.', undef) });
+	is($prose->{'notes'}->[0]->{'overall'}, 'skip', 'a non-JSON answer is a skip');
+
+	my $bare = Ux->assemble_report($notes, [], limit => 3, ui => 1, booted => 1);
+	is($bare->{'notes'}->[0]->{'overall'}, 'skip', 'no model is skip');
+	is($bare->{'notes'}->[0]->{'attempt'}->{'stuck'}, 'no attempt was recorded',
+		'the missing attempt says why');
+}
+
+# --- the runner loads the app and reports to the panel ------------------------
+{
+	my $run = read_file("$qa/ux/run");
+	unlike($run, qr{require\s+"?\$repo/lib/JawnOS/Domain/Ai2\.pm},
+		'the UX run no longer requires Ai2 behind the domain loader');
+	like($run, qr{require\s+'\./perl/subroutines\.pl'},
+		'it loads the app so every subs:: helper exists');
+	like($run, qr{chdir\(\$repo\)}, 'it chdirs to the tree for the relative perl requires');
+	like($run, qr{\\&subs::evaluation_model_call}, 'it injects the app model call');
+	like($run, qr{raw\.json}, 'the fenced child hands raw.json to the parent');
+	like($run, qr{Ux->assemble_report\(}, 'the parent assembles the judgement');
+	like($run, qr{JAWNOS_QA_UX_CHILD}, 'the child knows when its work ends at raw.json');
+	my $finish_at = index($run, 'sub finish_phase');
+	my $model_at = index($run, 'evaluation_model_call');
+	ok($finish_at >= 0 && $model_at > $finish_at,
+		'the model call lives in the parent half, not the fenced child');
+	like($run, qr{Ux->handbook_report\(},
+		'the handbook post asks whether the report is this run\'s');
+	like($run, qr{status => \$status, started => \$started},
+		'the child status and the parent start go to the guard');
+	like($run, qr{qa_report\.pl}, 'the night writes a panel report');
+	like($run, qr{'--kind=ux'}, 'the panel kind is ux');
+	like($run, qr{'--schedule=nightly'}, 'the panel schedule is nightly');
+	like($run, qr{'--status='}, 'the panel gets a status');
+	like($run, qr{'--table=Notes:'}, 'the note table is attached');
+	like($run, qr{status => 'failed'},
+		'a child that died still publishes a failed night');
 }
 
 done_testing();

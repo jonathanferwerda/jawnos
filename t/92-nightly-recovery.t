@@ -295,6 +295,20 @@ if (length $count) {
 exit 1 if $ENV{'FAKE_RESTART_FAIL_FIRST'} && $n == 1;
 exit 0 + ($ENV{'FAKE_RESTART_EXIT'} // 0);
 RESTART
+	write_file("$repo/scripts/land_enqueue.pl", <<'LAND');
+use strict;
+use warnings;
+my $log = $ENV{'FAKE_LAND_LOG'} || '';
+if (length $log) {
+	open(my $fh, '>>', $log) or die $!;
+	print $fh join(' ', @ARGV), "\n";
+	close $fh;
+}
+my $exit = 0 + ($ENV{'FAKE_LAND_EXIT'} // 0);
+print $exit == 0 ? "landed\n" : $exit == 1 ? "refused\n" : "no verdict\n";
+exit $exit;
+LAND
+	write_file("$repo/scripts/qa_report.pl", "#!/usr/bin/perl\nexit 0;\n");
 	write_file("$repo/qa/run.pl", <<'QA');
 use strict;
 use warnings;
@@ -313,6 +327,13 @@ QA
 	git_ok('-C', $repo, 'commit', '-q', '-m', 'initial') or die 'git commit failed';
 	git_ok('-C', $repo, 'remote', 'add', 'origin', $bare) or die 'git remote failed';
 	git_ok('-C', $repo, 'push', '-q', '-u', 'origin', 'main') or die 'git push failed';
+	# The night branches from origin/working, so the fixture has one.
+	git_ok('-C', $repo, 'checkout', '-q', '-b', 'working') or die 'git checkout working failed';
+	write_file("$repo/working-only.txt", "the working trunk is ahead of main\n");
+	git_ok('-C', $repo, 'add', '-A') or die 'git add working failed';
+	git_ok('-C', $repo, 'commit', '-q', '-m', 'working base') or die 'git commit working failed';
+	git_ok('-C', $repo, 'push', '-q', '-u', 'origin', 'working') or die 'git push working failed';
+	git_ok('-C', $repo, 'checkout', '-q', 'main') or die 'git checkout main failed';
 	return { dir => $dir, repo => $repo, bare => $bare };
 }
 
@@ -321,9 +342,6 @@ sub run_runner {
 	my $pid = open(my $fh, '-|');
 	defined $pid or die "fork: $!";
 	if (!$pid) {
-		# These cases exercise the landing path; the nightly's own
-		# default is branch-only until an operator opts in.
-		$ENV{'JAWNOS_QA_AUTO_MERGE'} = '1';
 		for my $key (keys %{ $env || {} }) {
 			if (defined $env->{$key}) { $ENV{$key} = $env->{$key} }
 			else { delete $ENV{$key} }
@@ -420,68 +438,22 @@ sub decode_body {
 	return $text;
 }
 
-SKIP: {
-	skip 'git is not installed', 60 unless $have_git;
-
-	# -- a post-merge failure rolls back to the exact commit ---------------
-	my $fx = fake_repo();
-	my ($db, $dbdir, $dbh) = make_db();
-	add_note($dbh, uuid => 'rb-1', timestamp => '2000',
-		text => "A note that ships but breaks the restart\nwith a test");
-	$dbh->disconnect;
-	my $qa_root = "$fx->{'dir'}/qa-root";
-	my $agent   = agent_script($fx->{'dir'});
-	my $head    = git_out("-C $fx->{'repo'} rev-parse HEAD");
-	chomp $head;
-	my ($pid, $port) = app_server($fx->{'dir'});
-	my ($rc, $out) = run_runner(
-		{
-			'JAWNOS_CODING_AGENT'       => "$^X $agent",
-			'FAKE_RESTART_COUNT'        => "$fx->{'dir'}/restart.count",
-			'FAKE_RESTART_FAIL_FIRST'   => 1,
-			'FAKE_RESTART_LOG'          => "$fx->{'dir'}/restart.log",
-		},
-		'--ignore-device', '--repo', $fx->{'repo'}, '--root', $qa_root,
-		'--db', $db, '--stamp', 'rb01', '--limit', '1',
-		'--live-url', "http://127.0.0.1:$port",
-		'--health-url', "http://127.0.0.1:$port/manager/health",
-		'--health-wait', '1', '--ticket', '');
-	kill 'KILL', $pid;
-	waitpid($pid, 0);
-
-	is($rc, 1, 'a post-merge failure exits 1');
-	my $report = report_for($qa_root, 'rb01');
-	my $run = $report->{'runs'}->[0] || {};
-	is($run->{'status'}, 'restart_failed', 'the report names the refused restart');
-	ok($run->{'merged'}, 'main had been merged');
-	is($run->{'rolled_back'}, 'yes', 'the run rolled back automatically');
-	is($run->{'rollback_tag'}, 'nightly-pre-rb01', 'the tag is recorded on the run');
-	ok($run->{'rollback_reset_ok'}, 'the reset succeeded');
-	ok($run->{'rollback_restart_ok'}, 'the rollback restart succeeded');
-	ok($run->{'rollback_health_ok'}, 'the rollback health was 200');
-	is($report->{'rollback_tag'}, 'nightly-pre-rb01', 'the report records the tag');
-	my $after_head = git_out("-C $fx->{'repo'} rev-parse HEAD");
-	chomp $after_head;
-	is($after_head, $head, 'main is back on the exact pre-run commit');
-	like(git_out("-C $fx->{'repo'} tag --list nightly-pre-rb01"), qr/nightly-pre-rb01/,
-		'the tag exists');
-	ok(-f "$qa_root/coding/rb01/failure.md", 'failure.md is written');
-	ok(-d "$qa_root/work/rb01-1", 'the worktree is left for inspection');
-	like(read_file("$qa_root/coding/rb01/failure.md"), qr/rollback tag: `nightly-pre-rb01`/,
-		'failure.md names the rollback tag');
-	like(read_file("$qa_root/coding/rb01/rollback.sh"), qr/git reset --hard/,
-		'rollback.sh carries the exact recovery');
-
-	my $requests = -f "$fx->{'dir'}/requests.log" ? read_file("$fx->{'dir'}/requests.log") : '';
-	my $body = decode_body($requests);
-	like($body, qr/Nightly failed: A note that ships/, 'the failure note names the note');
-	like($body, qr/status=open/, 'the failure note is filed with status open');
-	like($body, qr/category=jawnos/, 'the failure note is a JawnOS note');
-	unlike($body, qr/uuid=rb-1/, 'the original note is never marked completed');
-	is(note_status($db, 'rb-1'), 'open', 'the original note stays open');
-
-	# -- recover.pl reads the run and writes nothing by default ------------
-	my $run_dir = "$qa_root/coding/rb01";
+# recover.pl reads any run report, including a landing refusal, and writes
+# nothing unless asked. A repo-lane rollback no longer exists, so there is no
+# post-merge recovery case here; the app lane's release backup is above.
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $run_dir = "$dir/coding/ref01";
+	make_path($run_dir);
+	write_file("$run_dir/report.json", encode_json({
+		stamp => 'ref01', ok => 0,
+		runs => [ {
+			n => 1, status => 'land_refused', note_id => 'ref-1',
+			title => 'A refused note', branch => 'qa/nightly-ref01-1',
+			worktree => '/qa/work/ref01-1', suite_exit => 0,
+			land_exit => 1, land_verdict => 'refused: the wave was red',
+		} ],
+	}));
 	my $before_report = read_file("$run_dir/report.json");
 	my @before = sort grep { !/^\.\.?$/ } do {
 		opendir(my $dh, $run_dir) or die $!;
@@ -489,12 +461,10 @@ SKIP: {
 	};
 	my $summary = `$^X $recover --run $run_dir 2>&1`;
 	my $summary_rc = $? >> 8;
-	is($summary_rc, 0, 'recover.pl exits 0');
-	like($summary, qr/rollback tag: nightly-pre-rb01/, 'the summary names the tag');
-	like($summary, qr/status: restart_failed/, 'the summary says what failed');
-	like($summary, qr/worktree: \Q$qa_root\E\/work\/rb01-1/, 'the summary names the worktree');
+	is($summary_rc, 0, 'recover.pl exits 0 on a land refusal');
+	like($summary, qr/status: land_refused/, 'the summary names the refusal');
+	like($summary, qr/worktree: \/qa\/work\/ref01-1/, 'the summary names the worktree');
 	like($summary, qr/Next action:/, 'the summary says what to do next');
-	like($summary, qr/rolled back: yes/, 'the summary says it rolled back');
 	is(read_file("$run_dir/report.json"), $before_report,
 		'recover.pl did not rewrite the report');
 	my @after = sort grep { !/^\.\.?$/ } do {
@@ -502,18 +472,6 @@ SKIP: {
 		readdir $dh;
 	};
 	is_deeply(\@after, \@before, 'recover.pl wrote no files');
-
-	# -- recover.pl --note re-files the failure through the app route ------
-	my ($npid, $nport) = app_server($fx->{'dir'});
-	my $note_out = `$^X $recover --run $run_dir --note --live-url http://127.0.0.1:$nport --ticket '' 2>&1`;
-	my $note_rc = $? >> 8;
-	kill 'KILL', $npid;
-	waitpid($npid, 0);
-	is($note_rc, 0, 'recover.pl --note exits 0') or diag $note_out;
-	my $note_requests = -f "$fx->{'dir'}/requests.log" ? read_file("$fx->{'dir'}/requests.log") : '';
-	my $note_body = decode_body($note_requests);
-	like($note_body, qr/POST \/manager\/note_save .*status=open/, 'the re-filed note is open');
-	like($note_body, qr/Nightly failed: A note that ships/, 'the re-filed note keeps the title');
 }
 
 SKIP: {
@@ -550,6 +508,7 @@ SH
 			'JAWNOS_CODING_AGENT' => "$^X $agent",
 			'PATH'                => "$bin:" . ($ENV{'PATH'} // ''),
 			'FAKE_GIT_LOG'        => "$fx->{'dir'}/git.log",
+			'FAKE_LAND_LOG'       => "$fx->{'dir'}/land.log",
 		},
 		'--ignore-device', '--repo', $fx->{'repo'}, '--root', $qa_root,
 		'--db', $db, '--stamp', 'push01', '--limit', '1',
@@ -564,21 +523,23 @@ SH
 	my $run = $report->{'runs'}->[0] || {};
 	is($run->{'status'}, 'green', 'the note is green');
 	is($run->{'push_target'}, 'https://github.com/acme/widgets.git', 'the report names the target');
-	is($run->{'rollback_tag'}, 'nightly-pre-push01', 'it still tagged main');
+	is($run->{'land_exit'}, 0, 'the branch was handed to the landing queue');
 	my $gitlog = -f "$fx->{'dir'}/git.log" ? read_file("$fx->{'dir'}/git.log") : '';
 	like($gitlog, qr{^ls-remote https://github\.com/acme/widgets\.git$}m,
-		'the target is checked before merging');
+		'the target is checked before pushing');
 	like($gitlog, qr{^push -u https://github\.com/acme/widgets\.git qa/nightly-push01-1$}m,
 		'the branch goes to the configured target');
-	like($gitlog, qr{^push https://github\.com/acme/widgets\.git HEAD:main$}m,
-		'main is pushed with HEAD:main to the same target');
-	unlike($gitlog, qr{^push\b.*\borigin\b}m, 'nothing is pushed to origin');
+	unlike($gitlog, qr{^push https://github\.com/acme/widgets\.git HEAD:main$}m,
+		'main is never pushed');
+	unlike($gitlog, qr{^push\b.*\borigin\b}m, 'nothing is pushed to origin by the night');
+	like(read_file("$fx->{'dir'}/land.log"), qr/--trunk working --wait/,
+		'the branch is queued on working');
 }
 
 SKIP: {
 	skip 'git is not installed', 15 unless $have_git;
 
-	# -- an unreachable target fails before any merge ----------------------
+	# -- an unreachable target fails before any push ----------------------
 	my $fx = fake_repo();
 	my ($db, $dbdir, $dbh) = make_db();
 	add_note($dbh, uuid => 'reach-1', timestamp => '2000', text => 'The fork is unreachable');
@@ -624,7 +585,7 @@ SH
 	my $report = report_for($qa_root, 'reach01');
 	my $run = $report->{'runs'}->[0] || {};
 	is($run->{'status'}, 'push_target_unreachable', 'the report names the target');
-	ok(!$run->{'merged'}, 'main was not merged');
+	ok(!defined $run->{'land_exit'}, 'the landing queue was never called');
 	my $after_head = git_out("-C $fx->{'repo'} rev-parse HEAD");
 	chomp $after_head;
 	is($after_head, $head, 'main is untouched');

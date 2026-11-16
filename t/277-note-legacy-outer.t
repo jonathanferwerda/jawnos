@@ -57,7 +57,13 @@ my $fresh = _no_credentials(sub { subs::note_encrypter($secret, $plain) });
 like($fresh, qr/\AJS1:/, 'a new note names the AEAD format');
 is(_no_credentials(sub { subs::note_decrypter($secret, $fresh) }), $plain, 'and round-trips');
 my $tampered = $fresh;
-substr($tampered, int(length($tampered) / 2), 1) = 'A';
+# The seal is random, so the middle character is occasionally 'A' already; write
+# a byte that differs from the one there, or the "tamper" would change nothing
+# and this would decrypt the plain note.
+my $mid = int(length($tampered) / 2);
+my $was = substr($tampered, $mid, 1);
+substr($tampered, $mid, 1) = $was eq 'A' ? 'B' : 'A';
+isnt($tampered, $fresh, 'the tamper changed a byte');
 is(_no_credentials(sub { subs::note_decrypter($secret, $tampered) }), '',
 	'a changed byte does not come back as a note');
 

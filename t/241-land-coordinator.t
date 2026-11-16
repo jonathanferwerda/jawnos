@@ -78,8 +78,11 @@ sub git {
 sub fixture {
 	my $dir     = tempdir(CLEANUP => 1);
 	# The train must not be under /tmp (t/71 exercises the relay's /tmp refusal), so
-	# the fixture's QA root is under HOME, as the systemd unit's is.
-	my $qa      = tempdir('land-qa-XXXXXX', DIR => ($ENV{'HOME'} || '.'), CLEANUP => 1);
+	# the fixture's QA root is where the nightly unit writes: JAWNOS_QA_ROOT when it
+	# names one (the 05:00 unit mounts ProtectHome read-only and leaves only that
+	# directory writable), otherwise HOME.
+	my $qa      = tempdir('land-qa-XXXXXX',
+		DIR => ($ENV{'JAWNOS_QA_ROOT'} || $ENV{'HOME'} || '.'), CLEANUP => 1);
 	my $origin  = "$dir/origin.git";
 	my $primary = "$dir/primary";
 	my $wt1     = "$dir/work-one";

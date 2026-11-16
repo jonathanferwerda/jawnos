@@ -45,6 +45,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "qa/lib";
 use Cwd qw(abs_path);
 use JSON::PP;
+use File::Temp ();
 use POSIX ();
 use Time::HiRes qw(time);
 
@@ -162,6 +163,16 @@ if (!$want_l1 && !$want_l2 && !$want_l3 && !$want_l6
 		($ok ? 'ok' : 'FAILED'), $l0_result ? $l0_result->{'seconds'} : 0))
 		if $l0_result;
 	$say->('RESULT: ' . ($ok ? 'PASS' : 'FAIL'));
+	# This exit is still a nightly suite run: publish the verdict it reached,
+	# through the same helper the full run uses, or the card would show a night
+	# that never happened.
+	publish_panel_report(\%opt, $repo, {
+		layers        => \@layers,
+		layer_results => ($l0_result ? { l0 => $l0_result } : {}),
+		failures      => ($ok ? [] : ['l0: the regression suite failed']),
+		ok            => $ok ? 1 : 0,
+		profile       => $opt{'profile'},
+	});
 	exit($ok ? 0 : 1);
 }
 
@@ -799,6 +810,7 @@ $report{'ok'} = scalar(@{ $report{'failures'} }) ? 0 : 1;
 $report{'finished'} = time;
 
 write_report($h->results, \%report);
+publish_panel_report(\%opt, $repo, \%report, $h->results);
 
 $say->('');
 $say->('RESULT: ' . ($report{'ok'} ? 'PASS' : 'FAIL')
@@ -840,6 +852,100 @@ sub tail_lines {
 	}
 	close $fh;
 	return @keep;
+}
+
+# The QA root the panel reads, which the nightly unit names explicitly
+# (JAWNOS_QA_ROOT). It is deliberately not the run root: a rehearsal with
+# --root into a scratch directory still publishes where Configure -> Plat -> QA
+# looks for the machine's runs.
+sub qa_panel_root {
+	return $ENV{'JAWNOS_QA_ROOT'}
+		if defined $ENV{'JAWNOS_QA_ROOT'} && length $ENV{'JAWNOS_QA_ROOT'};
+	return $ENV{'QA_ROOT'} if defined $ENV{'QA_ROOT'} && length $ENV{'QA_ROOT'};
+	return (($ENV{'HOME'} || '') . '/jawnos-qa');
+}
+
+# The harness names a run YYYYmmdd-HHMMSS-N. The panel keeps a
+# YYYYmmddTHHMMSSZ stamp, which is also the directory name, so the suite sorts
+# with the other jobs. An unreadable stamp falls back to now rather than losing
+# the report.
+sub qa_panel_stamp {
+	my ($stamp) = @_;
+	return $stamp if defined $stamp && $stamp =~ /^\d{8}T\d{6}Z$/;
+	return $1 . 'T' . $2 . 'Z'
+		if defined $stamp && $stamp =~ /^(\d{8})-(\d{6})(?:-|$)/;
+	my @g = gmtime;
+	return sprintf('%04d%02d%02dT%02d%02d%02dZ',
+		$g[5] + 1900, $g[4] + 1, $g[3], $g[2], $g[1], $g[0]);
+}
+
+# One document per run for Configure -> Plat -> QA, through the writer every
+# other job uses, so the card renders the suite with no branch of its own. The
+# Layers and Budgets tables come from the finished run; a run that stopped at
+# l0 still publishes the verdict it reached. $dir is where the tables are
+# written (the run's results/), and a temporary one when there is no run yet.
+sub publish_panel_report {
+	my ($opt, $repo, $report, $dir) = @_;
+
+	# The coding night runs this suite as its gate with --source worktree. It
+	# publishes its own `coding` report; a gate run must not appear in the card
+	# as a 05:00 suite report.
+	return 0 if (($opt->{'source'} // 'head') eq 'worktree');
+
+	my $script = "$repo/scripts/qa_report.pl";
+	return 0 unless -f $script;
+
+	my $scratch;
+	if (!defined $dir || !length $dir) {
+		$scratch = File::Temp::tempdir('qa-suite-report-XXXXXX',
+			TMPDIR => 1, CLEANUP => 1);
+		$dir = $scratch;
+	}
+
+	my @tables;
+	my $layers_tsv = "$dir/layers.tsv";
+	if (open(my $fh, '>', $layers_tsv)) {
+		print $fh "Layer\tResult\tTime\n";
+		my $results = $report->{'layer_results'} || {};
+		for my $layer (sort keys %$results) {
+			my $row = $results->{$layer} || {};
+			my $result = $row->{'ok'} ? 'ok' : 'fail';
+			my $seconds = defined $row->{'seconds'}
+				? sprintf('%.0fs', $row->{'seconds'}) : '';
+			print $fh join("\t", $layer, $result, $seconds), "\n";
+		}
+		close $fh;
+		push @tables, "Layers:$layers_tsv";
+	}
+
+	my $budgets_tsv = "$dir/budgets.tsv";
+	if (@{ $report->{'budgets'} || [] } && open(my $fh, '>', $budgets_tsv)) {
+		print $fh "Metric\tValue\tVerdict\n";
+		for my $row (@{ $report->{'budgets'} }) {
+			my $value = defined $row->{'value'}
+				? sprintf('%.1f', $row->{'value'}) : '-';
+			print $fh join("\t", ($row->{'metric'} // ''),
+				$value, ($row->{'verdict'} // '')), "\n";
+		}
+		close $fh;
+		push @tables, "Budgets:$budgets_tsv";
+	}
+
+	my $note = 'profile ' . ($report->{'profile'} || $opt->{'profile'} || 'smoke')
+		. ', layers ' . join(',', @{ $report->{'layers'} || [] })
+		. ', ' . scalar(@{ $report->{'failures'} || [] }) . ' failure(s)';
+	my @cmd = ($^X, $script,
+		'--kind=suite', '--schedule=nightly',
+		'--status=' . ($report->{'ok'} ? 'ok' : 'failed'),
+		'--title=Nightly suite', "--note=$note",
+		'--stamp=' . qa_panel_stamp($report->{'stamp'}),
+		'--root=' . qa_panel_root(),
+	);
+	push @cmd, '--table=' . $_ for @tables;
+	my $rc = system(@cmd);
+	warn 'qa: qa_report.pl exited ' . ($rc >> 8)
+		. "; the suite report is still under $dir\n" if $rc;
+	return $rc == 0;
 }
 
 sub write_report {

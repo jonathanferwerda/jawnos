@@ -34,6 +34,19 @@ sub _which {
 	return (defined $p && length $p && -x $p) ? $p : undef;
 }
 
+# Node.pm is a sibling, loaded here rather than at compile time: the landing
+# guard compiles a single copied file, where `use Node` would look beside the
+# copy and fail. A missing Node.pm reads the same as no capable node.
+my $node_loaded;
+sub _node {
+	unless ($node_loaded) {
+		my $file = dirname(abs_path(__FILE__)) . '/Node.pm';
+		$node_loaded = 1 if -f $file && eval { require $file; 1 };
+	}
+	return undef unless $node_loaded;
+	return Node::resolve();
+}
+
 sub chromium { return _which('chromium') || _which('chromium-browser') || _which('google-chrome') }
 sub xvfb     { return _which('xvfb-run') }
 
@@ -60,6 +73,9 @@ sub probe {
 
 	my $chrome = chromium();
 	return { error => 'chromium is not installed', engine => 'chromium' } unless $chrome;
+	my $node = _node();
+	return { error => 'no node with a global WebSocket is installed', engine => 'chromium' }
+		unless $node;
 
 	my $port = _free_port();
 	return { error => 'no free debug port', engine => 'chromium' } unless $port;
@@ -101,7 +117,8 @@ sub probe {
 
 	my $urls_file = "$out/urls.json";
 	write_file($urls_file, JSON::PP->new->canonical->encode($urls));
-	my $rc = system('timeout', '150', 'node', _ui_dir() . "/probe.js", $port, $urls_file, $out);
+	my $rc = system('timeout', '150', $node->{'command'}, @{ $node->{'args'} },
+		_ui_dir() . "/probe.js", $port, $urls_file, $out);
 
 	kill 'KILL', -$pid;
 	waitpid($pid, 0);

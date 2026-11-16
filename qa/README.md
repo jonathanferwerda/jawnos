@@ -334,23 +334,37 @@ Output (under `--results`, normally `~/jawnos-qa/ux/`):
 ```
 ux-report.md        the human nightly report
 report.json         the same, with per-note evidence and screenshots
-queue.json          note id, title, verdict, suggested next action
+queue.json          note id, title, verdict, suggested next action (the coding handoff)
+ux-panel.tsv        the table Configure -> Plat -> QA prints for the run
 notes/<id>/         attempt.json + shots/*.webp per note
 metrics.json        l6.ux_failures, l6.notes, l6.duration_s
 ```
 
-`queue.json` is the Coding agent handoff. It is a queue, not an instruction to
-autonomously edit code: the Coding agent (`public/js/manager/coding.js`, the
-Configure → Plat → Self-healing watch) reads the same errors from
-`~/pty.log`, `manager.log` and browser fatals. Point it at `queue.json` when
-the owner wants a suggested fix turned into a patch; this loop never edits
-application code.
+The run also publishes `$QA_ROOT/reports/ux/<stamp>/` through
+`scripts/qa_report.pl` (`--kind=ux --schedule=nightly`), one row per note, so
+the night sits in Configure -> Plat -> QA beside the other jobs. A child that
+dies before writing `ux-report.md` still files a `failed` report naming its
+exit, so a crash does not look like a quiet week.
+
+`queue.json` is the Coding night handoff: the 06:00 runner's `ux` lane reads it
+(`qa/coding_night/lib/CodingNight.pm`), works the entries in that queue one at
+a time, and offers a note again until its verdict passes. It is a queue,
+not a licence to edit blindly: each entry carries the note, its verdict and a
+suggested next action, and the coding agent still reproduces the problem and
+fixes the cause. The queue is built from the owner's JawnOS notes only:
+generated notes (a `Nightly failed:` line, this loop's own `# Nightly UX
+report`, a completed note and a tombstone) are filtered out, so the loop never
+consumes its own diary, and `--limit` counts JawnOS notes rather than rows. This
+loop itself never edits application code.
 
 **The one live write.** With `--file-handbook`, `qa/ux/run` posts the summary
-through the app's own `POST /manager/note_save` route (category `jawnos`, or
-`journal` when there was nothing to evaluate). It does not write SQL. The
-post happens in the parent process, after the fenced child has exited, because
-the fence deliberately removes the live network.
+through the app's own `POST /manager/note_save` route as a **journal** note: the
+structured handoff to the coding night is `queue.json`, not the diary of the
+night, so filing it under JawnOS would make tomorrow's queue item out of
+yesterday's report. It does not write SQL. The post happens in the parent
+process, after the fenced child has exited, because the fence deliberately
+removes the live network, and the parent files only a report this run wrote: an
+old `ux-report.md` left by a night that died is never re-filed.
 
 ### Schedule it
 
@@ -390,7 +404,9 @@ The runner, one note at a time:
    `sqlite3 'file:<db>?mode=ro'`. It never writes the live database.
 3. **Fetch + worktree** - `git fetch origin`, then
    `git worktree add ~/jawnos-qa/work/<stamp>-<n> -b qa/nightly-<stamp>-<n>
-   origin/main`.
+   origin/working`. The branch starts from the working trunk, not main: main
+   moves only on a release, so a night based on it would test stale code and
+   land against the wrong tip.
 4. **Agent** - the hook below, with cwd = that worktree.
 5. **Suite** - `qa/run.pl --source worktree --root ~/jawnos-qa/nightly
    --layers l0,l1`, plus `l2,l3` when the changed file list touches
@@ -407,17 +423,24 @@ The runner, one note at a time:
    `repair_attempts`, `repair_exits` and `repair_suite_exits` (build exits in
    the app lane), and the reports print a `repairs:` line.
 7. **Green** - `scripts/version_bump.pl`, one commit
-   `v<version> - <note title>`, push the branch, `git merge --ff-only` into
-   main, push main, `scripts/restart.pl --reason ...`, require HTTP 200 from
-   `/manager/health`, then mark the note `completed` through
-   `POST /manager/note_save` (ticket-minted session) and file a Handbook
-   report note in the `journal` category. The worktree is removed afterwards.
+   `v<version> - <note title>`, push the branch to the configured push target,
+   then queue it on the working trunk with
+   `scripts/land_enqueue.pl --trunk working --wait`. Exit 0 means landed: mark
+   the note `completed` through `POST /manager/note_save` (ticket-minted
+   session), file a Handbook report note in the `journal` category, remove the
+   worktree and force-delete the branch (the coordinator rebased it, so the
+   local branch is a stale pointer). The night never merges main, pushes main
+   or restarts the house; the landing coordinator moves working and the weekly
+   promotion fast-forwards main and restarts.
 
 **Still red is a stop.** After the repair attempts the worktree stays for
 inspection, its branch is detached and deleted, the note stays open, and
 `~/jawnos-qa/coding/<stamp>/report.md` names the layer, the repair exits and the
-log. A dirty main tree is also a stop: it refuses to merge over other work. A
-non-zero agent exit on the first edit is handled the same way.
+log. A refused landing (exit 1) or no verdict (exit 2, including the 900 s
+timeout) also keeps the worktree and the branch and leaves the note open:
+`failure.md` carries the coordinator's own words (`landed`, `refused` or
+`no verdict`), so a person can repair and re-enqueue the same ticket. A non-zero
+agent exit on the first edit is handled the same way.
 
 **Two lanes.** A note that names the Android app's vocabulary - `android`,
 `apk`, `app`, `termux`, `status bar`, `navigation bar`, `soft keyboard`, `ime`,
@@ -575,13 +598,15 @@ JAWNOS_NOTE_ID=demo JAWNOS_NOTE_TITLE="a note" JAWNOS_NOTE_TEXT="the task" \
 ### What it works on
 
 `__president/qa_coding_lanes` (Configure -> Plat -> QA, "What the coding night
-works on") is a comma list of `notes`, `security` and `installers`; the default
-is `notes`, which is the queue above. `security` takes the new high findings in
-the newest `$QA_ROOT/reports/security/<stamp>/report.json`; `installers` takes
-the packages the newest installer report calls `missing`. Each report source is
-capped at two items a night, and such an item has no note row to close - the
-next report decides whether it is still there. The panel refuses an empty
-choice, so a night never silently has nothing to do.
+works on") is a comma list of `notes`, `ux`, `security` and `installers`, in
+that canonical order; the default is `notes`, which is the queue above. `ux`
+takes the notes the newest 05:30 UX run handed over in
+`$QA_ROOT/ux/queue.json`; `security` takes the new high findings in the newest
+`$QA_ROOT/reports/security/<stamp>/report.json`; `installers` takes the packages
+the newest installer report calls `missing`. Each report source is capped at
+three items a night (`$LANE_ITEM_MAX`), and such an item has no note row to
+close - the next report decides whether it is still there. The panel refuses an
+empty choice, so a night never silently has nothing to do.
 
 ### Schedule it
 
@@ -593,12 +618,13 @@ systemctl list-timers jawnos-qa-coding.timer
 ```
 
 The service is the one nightly **without** `ProtectHome=read-only`: the agent
-edits a worktree, a green night bumps/commits/merges/pushes main, and the
-restart is the master's own path. It still has `Nice`, `MemoryMax=4G`,
-`CPUQuota=300%`, `ProtectSystem=strict`, and only the checkout and the QA root
-in `ReadWritePaths`. It needs real networking (git, the agent's model, the live
-health route). It never runs `scripts/manager_killer.pl` and never asks a QA
-tree for a graceful shutdown: a bound process is SIGKILLed.
+edits a worktree, and a green night bumps, commits, pushes the branch and
+queues it on the working trunk. It still has `Nice`, `MemoryMax=4G`,
+`CPUQuota=300%`, `ProtectSystem=strict`, and only the checkout (which holds
+`.git/land-queue`) and the QA root in `ReadWritePaths`. It needs real networking
+(git, the agent's model, the queue's push to origin). It never runs
+`scripts/manager_killer.pl` and never asks a QA tree for a graceful shutdown: a
+bound process is SIGKILLed.
 
 ## Nightly
 
@@ -619,6 +645,15 @@ legitimately clamp). `qa/prune.pl --keep 14` runs first. UI (`l3`) is
 deliberately not in the nightly set while the JavaScript refactor is in flight.
 The UX loop (`l6`) has its own timer at 05:30 - do not add it to this unit, or a
 20-minute UX run can hold the route/database layers.
+
+When the run ends it publishes through `scripts/qa_report.pl --kind=suite`
+(`--schedule=nightly`), so the card shows the suite beside the other jobs: a
+`Layers` table (layer, result, time) and, when the budget pass ran, a `Budgets`
+table (metric, value, verdict). `ok` is only for a run with no failure. The
+report goes to the **QA root** the environment names (`JAWNOS_QA_ROOT`, then
+`QA_ROOT`, then `~/jawnos-qa`), not to a `--root` run directory, because that is
+where Configure -> Plat -> QA reads; point `JAWNOS_QA_ROOT` at a scratch
+directory for a rehearsal that must not appear in the card.
 
 ### Line count (02:30)
 
@@ -799,15 +834,19 @@ half-edited installer list is not judged; `QA_SOURCE=worktree` checks the
 working tree for a run before committing. Logs are in
 `$QA_ROOT/installers/<stamp>/freshness.log`; the last 14 runs are kept.
 
-Each run also writes `report.json` (what `--json` prints) and `status.txt`
-beside the log, and **Configure -> Plat -> QA -> Nightly reports** shows the last
-14 days of them, newest first, one accordion per run and a table per section.
-The card carries every QA job that reports: the nightly installer check
-(`reports/installers`, cadence `nightly`), the weekly build (`reports/build`,
-`weekly`, one row per step with its time) and the emulator run
+Every job writes `$QA_ROOT/reports/<kind>/<stamp>/report.json` and `status.txt`,
+and **Configure -> Plat -> QA -> Nightly reports** shows the last 14 days of
+them, newest first, one accordion per run and a table per section. The card
+carries every QA job that reports: the 05:00 suite (`reports/suite`, nightly; a
+Layers table and, when the budget pass ran, a Budgets table), the 05:30 UX loop
+(`reports/ux`, nightly; one row per note), the 06:00 coding night
+(`reports/coding`, nightly; one row per item), the installer check
+(`reports/installers`, nightly), the security audit (`reports/security`,
+nightly), the line count (`reports/loc`, nightly), the weekly build
+(`reports/build`, `weekly`, one row per step with its time) and the emulator run
 (`reports/emulator`, `manual`, the measurements it took). `scripts/qa_report.pl`
-writes the `report.json`/`status.txt` pair for the jobs that do not carry their
-own document, and prunes each kind to 14 days.
+writes the pair for the jobs that do not carry their own document, and prunes
+each kind to 14 days.
 The panel reads the directory on the machine that ran the job and hops there
 over the same signed rail readiness uses, so the list is the same from any
 machine - a laptop shows the QA box's own reports and nothing is copied into a
@@ -871,7 +910,7 @@ no identity file. Install the units on
 every machine that might be chosen; the unchosen ones still have the timer, they
 just skip their run.
 
-There are five nightly units. The Configure choice applies to the suite at
+The nightly units. The Configure choice applies to the suite at
 **05:00**, the UX loop at **05:30**, and the coding night at **06:00**. The
 Docker compose smoke at **04:30**, the installer package freshness at **03:45**
 and the two weekly units - the artefact build (`jawnos-qa-build.timer`, Sunday

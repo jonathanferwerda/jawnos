@@ -108,17 +108,52 @@ sub category_effective {
 	return 'journal';
 }
 
+# The columns the table actually has. A factory seed predating `status` must
+# not make the queue query fail; the coding night asks the same question.
+sub notes_columns {
+	my ($class, $db) = @_;
+	my $text = eval { $class->_sqlite($db, "select name from pragma_table_info('notes')") };
+	my $rows = (defined $text && length $text)
+		? eval { JSON::PP->new->utf8->decode($text) } : [];
+	my %cols;
+	for my $row (@{ ref $rows eq 'ARRAY' ? $rows : [] }) {
+		my $name = $row->{'name'} // '';
+		$cols{$name} = 1 if length $name;
+	}
+	return \%cols;
+}
+
 # The notes the owner filed in the JawnOS queue, newest first. `limit` is applied
 # after the category filter, so `--limit 5` means five JawnOS notes, not five
 # rows that might all be journal entries.
+#
+# The queue is the owner's open work, never the reports the nightlies file
+# about it: a generated note is not a task, a completed note is a state (not a
+# deletion), and a tombstone is gone. Since 2026-11-08 the newest JawnOS rows
+# were 15 "Nightly failed:" notes and 9 reports, so the one real open note was
+# never attempted. The three rules are the coding night's
+# (qa/coding_night/lib/CodingNight.pm).
 sub select_notes {
 	my ($class, $db, %opt) = @_;
 	my $limit = defined $opt{'limit'} ? 0 + $opt{'limit'} : 5;
 	my $want  = $opt{'category'} || 'jawnos';
 	die "Ux: no database at $db\n" unless -f $db;
 
-	my $sql = "select uuid, text, timestamp, app, category from notes"
-		. " where coalesce(text, '') != '' order by timestamp desc, rowid desc limit 300";
+	my $cols = $class->notes_columns($db);
+	my @select = qw(uuid text timestamp app category);
+	push @select, 'status' if $cols->{'status'};
+	push @select, 'ost' if $cols->{'ost'};
+	my @where = (
+		"coalesce(text, '') != ''",
+		"coalesce(text, '') not like 'Nightly failed:%'",
+		"coalesce(text, '') not like '# Nightly UX report%'",
+	);
+	push @where, "coalesce(ost, '') != 'deleting'" if $cols->{'ost'};
+	push @where, "lower(coalesce(status, 'open')) != 'completed'" if $cols->{'status'};
+
+	my $sql = 'select ' . join(', ', @select) . ' from notes'
+		. ' where ' . join(' and ', @where)
+		. ' order by timestamp desc, rowid desc limit 300';
 	my $text = $class->_sqlite($db, $sql);
 	my $rows = length($text) ? eval { JSON::PP->new->utf8->decode($text) } : [];
 	die "Ux: notes query returned unreadable JSON: $@\n" unless ref $rows eq 'ARRAY';
@@ -138,6 +173,7 @@ sub select_notes {
 			text      => $body,
 			timestamp => $row->{'timestamp'} // '',
 			category  => $category,
+			($cols->{'status'} ? (status => $row->{'status'} // '') : ()),
 		};
 		last if @out >= $limit;
 	}
@@ -196,6 +232,19 @@ sub _which {
 	return (defined $p && length $p && -x $p) ? $p : undef;
 }
 
+# Node.pm is a sibling, loaded here rather than at compile time: the landing
+# guard compiles a single copied file, where `use Node` would look beside the
+# copy and fail. A missing Node.pm reads the same as no capable node.
+my $node_loaded;
+sub _node {
+	unless ($node_loaded) {
+		my $file = dirname(abs_path(__FILE__)) . '/Node.pm';
+		$node_loaded = 1 if -f $file && eval { require $file; 1 };
+	}
+	return undef unless $node_loaded;
+	return Node::resolve();
+}
+
 # browser_attempt(url => ..., note => {...}, outdir => ...) -> attempt hash.
 # A missing Chromium or node is not a pass: the attempt records why it did not
 # run, and the rubric keeps that note at skip.
@@ -213,10 +262,10 @@ sub browser_attempt {
 
 	my $chrome = _which('chromium') || _which('chromium-browser')
 		|| _which('google-chrome');
-	my $node   = _which('node');
+	my $node   = _node();
 	return { %$empty, stuck => 'chromium is not installed; the attempt was not made' }
 		unless $chrome;
-	return { %$empty, stuck => 'node is not installed; the CDP attempt was not made' }
+	return { %$empty, stuck => 'no node with a global WebSocket is available; the CDP attempt was not made' }
 		unless $node;
 
 	my $port = _free_port()
@@ -259,7 +308,8 @@ sub browser_attempt {
 	my $script = File::Spec->catfile(dirname(__FILE__), '..', 'ux', 'attempt.js');
 	$script = File::Spec->rel2abs($script);
 	$script = $opt{'script'} if $opt{'script'};
-	my $rc = system('timeout', '120', $node, $script, $port, $url, $note_file, $outdir);
+	my $rc = system('timeout', '120', $node->{'command'}, @{ $node->{'args'} },
+		$script, $port, $url, $note_file, $outdir);
 	kill 'KILL', -$pid;
 	kill 'KILL', $pid;
 	waitpid($pid, 0);
@@ -359,7 +409,11 @@ sub model_answers {
 		. "Console errors: " . join(' / ', @{ $attempt->{'console_errors'} || [] }) . "\n"
 		. "Page title: " . ($attempt->{'probe'}->{'title'} || '') . "\n"
 		. "Note visible in the page: " . ($attempt->{'probe'}->{'noteVisible'} ? 'yes' : 'no');
-	my ($text, $err) = $call->($opt{'model'}, $system, $user);
+	$@ = '';
+	my ($text, $err) = eval { $call->($opt{'model'}, $system, $user) };
+	# A call that dies must still leave the night alive: it becomes the same
+	# skip the rubric already knows, never a dead child before write_results.
+	$err = 'the model call died: ' . $@ if length $@;
 	return (undef, $err || 'the model returned nothing') unless defined $text && length $text;
 	$text =~ s/^\s*```(?:json)?\s*//;
 	$text =~ s/\s*```\s*$//;
@@ -415,6 +469,68 @@ sub summary {
 		limit       => ($opt{'limit'} || 0),
 		generated   => _iso(),
 	};
+}
+
+# The report, assembled from what the fenced half collected: the notes, the
+# browser attempts, and the model call the parent supplies. The judgement lives
+# here, not in the child, because the fence has its own loopback and cannot
+# reach a model on the host's.
+#
+# `model_call` is injected (subs::evaluation_model_call in the night, a stub in
+# the tests). Without it, or when it errors, every verdict stays skip - never
+# pass. The attempt fallback mirrors the run's own reasons: --no-ui, a copy
+# that never booted, or a note the browser loop did not reach.
+sub assemble_report {
+	my ($class, $notes, $attempts, %opt) = @_;
+	my $model = $opt{'model'} || '';
+	my $call  = $opt{'model_call'};
+	my $skip  = ($model && !$call)
+		? 'the model call is unavailable; the judgement is skipped, never passed'
+		: undef;
+
+	my %by_id = map { ($_->{'id'} // '') => $_ } @{ $attempts || [] };
+	my @entries;
+	for my $note (@{ $notes || [] }) {
+		my $attempt = $by_id{$note->{'id'} || ''} || {
+			steps => [], console_errors => [],
+			stuck => !$opt{'ui'} ? 'the attempt was skipped (--no-ui)'
+				: $opt{'booted'} ? 'no attempt was recorded'
+				: 'the QA instance was not available for an attempt',
+		};
+		my ($answers, $err);
+		if ($model && $call) {
+			($answers, $err) = $class->model_answers(
+				model => $model, note => $note,
+				attempt => $attempt, model_call => $call);
+		}
+		my $verdicts = $class->rubric($attempt,
+			model => $model, answers => $answers || {},
+			skip_reason => $err
+				? "the model call did not judge this note: $err"
+				: $skip);
+		push @entries, {
+			%$note,
+			attempt  => $attempt,
+			verdicts => $verdicts,
+			overall  => $class->overall_verdict($verdicts),
+		};
+	}
+
+	my $report = {
+		schema => 1,
+		generated => _iso(),
+		# Epoch start, so the file's own age can prove it belongs to this run.
+		run_started => (defined $opt{'run_started'} ? $opt{'run_started'} : time),
+		source => 'qa/ux/run',
+		live_db => $opt{'live_db'} // '',
+		live_read_only => ($opt{'live_read_only'} ? 1 : 0),
+		textarea => 'notes are seeded into the QA copy; only results/ and the QA root are written',
+		notes => \@entries,
+		summary => $class->summary(\@entries,
+			model => $model, limit => $opt{'limit'}),
+	};
+	$report->{'summary'}->{'generated'} = $report->{'generated'};
+	return $report;
 }
 
 sub queue {
@@ -528,19 +644,78 @@ sub _markdown {
 # the one write allowed outside the QA root
 # ---------------------------------------------------------------------------
 
-# The summary is filed by the app's own note route, never by SQL. A note with no
-# evaluated rows is honest as a Journal entry; anything else is a JawnOS queue
-# item, which is where the Coding agent looks.
+# The summary is filed by the app's own note route, never by SQL, and it is
+# always a Journal entry: the structured handoff to the Coding night is
+# queue.json, not this note. Filing it under JawnOS made tomorrow's queue item
+# out of yesterday's report - a loop that never reached the owner's notes.
 sub handbook_category {
 	my ($class, $report) = @_;
-	return @{ $report->{'notes'} || [] } ? 'jawnos' : 'journal';
+	return 'journal';
+}
+
+# The report the parent may file, or (undef, why). The parent used to check
+# only that ux-report.md existed, so the 2026-11-08 file was re-filed every
+# night while the 05:30 child was dying before it wrote anything. A file is
+# ours only when the fenced child exited 0 AND the markdown is from this run
+# (its mtime, or the report's own start time when the clock is against us).
+sub handbook_report {
+	my ($class, $dir, %opt) = @_;
+	my $status = defined $opt{'status'} ? $opt{'status'} : 0;
+	return (undef, "the fenced run exited $status") if $status != 0;
+	my $started = (defined $opt{'started'} && $opt{'started'} > 0) ? $opt{'started'} : 0;
+
+	my $md = "$dir/ux-report.md";
+	return (undef, "no $md") unless -f $md;
+	my $mtime = (stat $md)[9];
+
+	my $own = 0;
+	my $json = "$dir/report.json";
+	if (-f $json && open(my $jf, '<', $json)) {
+		local $/;
+		my $doc = eval { JSON::PP->new->utf8->decode(<$jf>) };
+		close $jf;
+		$own = 1 if ref $doc eq 'HASH' && defined $doc->{'run_started'}
+			&& $doc->{'run_started'} >= $started;
+	}
+	unless ($own || (defined $mtime && $mtime >= $started)) {
+		my $when = defined $mtime
+			? POSIX::strftime('%Y-%m-%dT%H:%M:%S', localtime $mtime) : 'never';
+		return (undef, "$md is older than this run (modified $when)");
+	}
+
+	open(my $fh, '<', $md) or return (undef, "$md: $!");
+	local $/;
+	my $text = <$fh> // '';
+	close $fh;
+	return (undef, "$md is empty") unless length $text;
+	return ($text, undef);
+}
+
+# The table the panel prints under "Notes". The three question verdicts are
+# kept together in one cell so a reader can see which one failed.
+sub panel_table {
+	my ($class, $path, $entries) = @_;
+	open(my $fh, '>', $path) or return undef;
+	print $fh "Note\tVerdict\tOverall\n";
+	for my $entry (@{ $entries || [] }) {
+		my $v = $entry->{'verdicts'} || {};
+		my @cell = (
+			$entry->{'title'} || $entry->{'id'} || '(untitled)',
+			join(' ', map { $_ . '=' . ($v->{$_}->{'verdict'} || 'skip') } qw(easy help works)),
+			$entry->{'overall'} || 'skip',
+		);
+		s/[\t\r\n]+/ /g for @cell;
+		print $fh join("\t", @cell), "\n";
+	}
+	close $fh;
+	return $path;
 }
 
 sub file_handbook {
 	my ($class, %opt) = @_;
 	my $base = $opt{'base'} or die "Ux: file_handbook needs a live base URL\n";
 	my $text = $opt{'text'} or die "Ux: file_handbook needs text\n";
-	my $category = $opt{'category'} || 'jawnos';
+	my $category = $opt{'category'} || 'journal';
 
 	require Mojo::UserAgent;
 	my $ua = Mojo::UserAgent->new(insecure => 1, max_redirects => 5, request_timeout => 30);

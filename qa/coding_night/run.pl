@@ -12,16 +12,19 @@
 #   gate    qa/device_target.pl says this machine is the chosen one, else exit 0
 #   read    the top open JawnOS notes (mode=ro), up to the note limit
 #   fetch   git fetch, then a worktree at <root>/work/<stamp>-<n> on
-#           qa/nightly-<stamp>-<n> from origin/main
+#           qa/nightly-<stamp>-<n> from origin/working
 #   agent   the hook named by JAWNOS_CODING_AGENT or __president/qa_coding_agent,
 #           run with cwd = the worktree and JAWNOS_NOTE_ID/TITLE/TEXT in its env
 #   suite   qa/run.pl --source worktree --root <root>/nightly --layers l0,l1
 #           (+ l2,l3 when the change touches templates, JS or perl routes)
-#   green   version bump, one commit, push the branch; then, only with
-#           JAWNOS_QA_AUTO_MERGE=1, ff-only merge into main, push main,
-#           restart, require HTTP 200 from /manager/health, then mark
-#           the note completed through POST /manager/note_save and file a
-#           Handbook report note (category journal).
+#   green   version bump, one commit, push the branch to the configured push
+#           target, then queue it on the working trunk with
+#           scripts/land_enqueue.pl --trunk working --wait. Exit 0 landed:
+#           mark the note completed through POST /manager/note_save and file a
+#           Handbook report note (category journal). Exit 1 refused or 2 no
+#           verdict: the worktree and branch stay and the note stays open. It
+#           never merges main, pushes main or restarts the house; the landing
+#           coordinator moves the trunk and the weekly promotion restarts.
 #
 # A red suite goes back to the same agent in the same worktree with the failing
 # lines and a bounded tail of the log, up to --repair-attempts times (default 2).
@@ -32,8 +35,8 @@
 # the one live write is the app's own note_save route.
 #
 # Teardown never runs the manager killer and never asks a QA tree for a
-# graceful shutdown: a bound process is SIGKILLed, and a restart goes through
-# scripts/restart.pl, which is the master's own path.
+# graceful shutdown: a bound process is SIGKILLed. The coding night itself
+# never restarts the house; only the landing promotion does.
 
 use strict;
 use warnings;
@@ -87,8 +90,6 @@ my %opt = (
 	agent         => undef,
 	ticket        => undef,
 	live_url      => undef,
-	health_url    => undef,
-	health_wait   => 60,
 	suite_timeout => 3600,
 	repair_attempts => 2,
 	ignore_device => 0,
@@ -116,10 +117,10 @@ while (my $arg = shift @argv) {
 	if ($arg =~ /^--ticket=(.*)$/){ $opt{'ticket'} = $1; next }
 	if ($arg eq '--live-url')     { $opt{'live_url'} = shift @argv // ''; next }
 	if ($arg =~ /^--live-url=(.*)$/) { $opt{'live_url'} = $1; next }
-	if ($arg eq '--health-url')   { $opt{'health_url'} = shift @argv // ''; next }
-	if ($arg =~ /^--health-url=(.*)$/) { $opt{'health_url'} = $1; next }
-	if ($arg eq '--health-wait')  { $opt{'health_wait'} = shift @argv // 60; next }
-	if ($arg =~ /^--health-wait=(.*)$/) { $opt{'health_wait'} = $1; next }
+	# Accepted for older units and a hand run; the night no longer restarts
+	# the house or probes a health route, so the value is read and ignored.
+	if ($arg eq '--health-url' || $arg eq '--health-wait') { shift @argv; next }
+	if ($arg =~ /^--health-(?:url|wait)=/) { next }
 	if ($arg eq '--suite-timeout'){ $opt{'suite_timeout'} = shift @argv // 3600; next }
 	if ($arg =~ /^--suite-timeout=(.*)$/) { $opt{'suite_timeout'} = $1; next }
 	if ($arg eq '--repair-attempts') { $opt{'repair_attempts'} = shift @argv; next }
@@ -147,7 +148,10 @@ my $repo = abs_path( $opt{'repo'} ) || $opt{'repo'};
 die "qa/coding_night: no JawnOS checkout at $repo\n" unless -d "$repo/qa";
 die "qa/coding_night: $repo is not a git checkout\n" unless -d "$repo/.git";
 
-my $root = $opt{'root'} || (($ENV{'HOME'} || '') . '/jawnos-qa');
+my $root = $opt{'root'};
+$root = $ENV{'JAWNOS_QA_ROOT'} unless defined $root && length $root;
+$root = $ENV{'QA_ROOT'} unless defined $root && length $root;
+$root = (($ENV{'HOME'} || '') . '/jawnos-qa') unless defined $root && length $root;
 $root = abs_path($root) || $root;
 my $db = $opt{'db'} || "$repo/database/jawnos.db";
 my $stamp = $opt{'stamp'}
@@ -245,7 +249,6 @@ unless (flock($lock, LOCK_EX | LOCK_NB)) {
 
 my $report_dir = "$root/coding/$stamp";
 make_path($report_dir);
-my $health_url = health_url($repo, $opt{'health_url'});
 my $report = {
 	schema    => 1,
 	generated => POSIX::strftime('%Y-%m-%dT%H:%M:%S%z', localtime),
@@ -259,8 +262,6 @@ my $report = {
 	notes     => scalar(@{$queue}),
 	lanes     => [ @lanes ],
 	sources   => { map { my $lane = $_; ($lane => scalar(grep { ($_->{'source'} || 'notes') eq $lane } @{$queue})) } @lanes },
-	rollback_tag    => '',
-	rollback_script => "$report_dir/rollback.sh",
 	runs      => [],
 };
 {
@@ -300,13 +301,11 @@ for my $note ( @{$queue} ) {
 		repair_suite_exits => [],
 		layers       => 'l0,l1',
 		pushed       => 0,
-		merged       => 0,
-		restarted    => 0,
-		health_ok    => 0,
+		land_exit    => undef,
+		land_verdict => '',
+		landed       => 0,
 		marked_completed => 0,
 		handbook_filed   => 0,
-		rolled_back      => 'no',
-		rollback_tag     => '',
 		push_target      => '',
 		failure_note_filed => 0,
 	);
@@ -683,7 +682,9 @@ for my $note ( @{$queue} ) {
 		next;
 	}
 
-	# 1. fetch, then a fresh worktree from origin/main
+	# 1. fetch, then a fresh worktree from origin/working. Agents branch from
+	# the working trunk, not main: main moves only on a release, so a night
+	# based on it tests stale code and lands against the wrong tip.
 	my ($fetch_rc) = run_cmd(cmd => ['git', 'fetch', 'origin'], cwd => $repo, log => $log->('fetch'));
 	if ($fetch_rc != 0) {
 		$run{'status'} = 'fetch_failed';
@@ -692,38 +693,6 @@ for my $note ( @{$queue} ) {
 		last;
 	}
 
-	# The tag is the whole recovery: a commit id, not a moving branch. It is
-	# made before the worktree or any merge, so a failure after the merge can
-	# put main back on exactly the tree the night started from. rollback.sh is
-	# the human path beside it and refuses if the tag has gone.
-	my $tag = "nightly-pre-$stamp";
-	my ($tag_rc) = run_cmd(cmd => ['git', 'tag', $tag], cwd => $repo, log => $log->('tag'));
-	if ($tag_rc != 0) {
-		my $exists = capture($repo, 'git', 'rev-parse', '--verify', '--quiet', "refs/tags/$tag");
-		if ($exists !~ /\S/) {
-			$run{'status'} = 'tag_failed';
-			$run{'error'} = "could not tag main as $tag (exit $tag_rc); nothing was merged";
-			$failed = 1;
-			last;
-		}
-	}
-	$run{'rollback_tag'} = $tag;
-	$report->{'rollback_tag'} ||= $tag;
-	my ($rollback_path, $rollback_error) = CodingNight::write_rollback_script(
-		$report_dir,
-		tag     => $tag,
-		repo    => $repo,
-		health  => $health_url,
-		restart => 'scripts/restart.pl',
-	);
-	if (!$rollback_path) {
-		$run{'status'} = 'rollback_script_failed';
-		$run{'error'} = $rollback_error // 'rollback.sh could not be written';
-		$failed = 1;
-		last;
-	}
-	$report->{'rollback_script'} = $rollback_path;
-
 	if (-e $worktree) {
 		$run{'status'} = 'name_clash';
 		$run{'error'} = "the worktree $worktree already exists; nothing was overwritten";
@@ -731,7 +700,7 @@ for my $note ( @{$queue} ) {
 		last;
 	}
 	my ($wt_rc) = run_cmd(
-		cmd => ['git', 'worktree', 'add', $worktree, '-b', $branch, 'origin/main'],
+		cmd => ['git', 'worktree', 'add', $worktree, '-b', $branch, 'origin/working'],
 		cwd => $repo, log => $log->('worktree'));
 	if ($wt_rc != 0) {
 		$run{'status'} = 'worktree_failed';
@@ -847,20 +816,10 @@ for my $note ( @{$queue} ) {
 		next;
 	}
 
-	# The house tree has other agents' work in it on a normal day. A merge is
-	# only safe when main has nothing uncommitted to lose.
-	my $dirty = capture($repo, 'git', 'status', '--porcelain');
-	if ($dirty =~ /\S/) {
-		$run{'status'} = 'house_dirty';
-		$run{'error'} = 'the house tree has uncommitted work; not merging. The worktree and branch are left';
-		$failed = 1;
-		last;
-	}
-
-	# 4. green: the push target is checked before anything is merged. A fork
-	# named in Configure -> Dev is the authority the branch and main go to; an
-	# unreachable or unauthenticated target stops the night here, with main
-	# still untouched and the note open.
+	# 4. green: the push target is checked before anything is pushed. A fork
+	# named in Configure -> Dev receives the nightly branch; the landing queue
+	# backs it up to origin itself. An unreachable or unauthenticated target
+	# stops the night here, with the trunk untouched and the note open.
 	my $push = CodingNight::push_target($db, 'repo');
 	$run{'push_target'} = $push->{'effective'};
 	unless ($push->{'ok'}) {
@@ -875,12 +834,14 @@ for my $note ( @{$queue} ) {
 	if ($reach_rc != 0) {
 		$run{'status'} = 'push_target_unreachable';
 		$run{'error'} = 'the push target ' . $push->{'target'}
-			. " is unreachable or unauthenticated (exit $reach_rc); nothing was merged";
+			. " is unreachable or unauthenticated (exit $reach_rc); nothing was pushed";
 		$failed = 1;
 		last;
 	}
 
-	# 5. green: bump, commit, push the branch, merge, push main
+	# 5. green: bump, commit, push the branch, then queue it on the working
+	# trunk. The night never merges main, pushes main or restarts the house: the
+	# coordinator lands the branch and the weekly promotion restarts.
 	my ($bump_rc) = run_cmd(cmd => [$^X, 'scripts/version_bump.pl'], cwd => $worktree, log => $log->('bump'));
 	if ($bump_rc != 0) {
 		$run{'status'} = 'bump_failed';
@@ -911,64 +872,47 @@ for my $note ( @{$queue} ) {
 	my ($push_rc) = run_cmd(cmd => ['git', 'push', '-u', $push->{'target'}, $branch], cwd => $worktree, log => $log->('push'));
 	if ($push_rc != 0) {
 		$run{'status'} = 'push_failed';
-		$run{'error'} = "git push of $branch to " . $push->{'target'} . " failed (exit $push_rc); main was not touched";
+		$run{'error'} = "git push of $branch to " . $push->{'target'}
+			. " failed (exit $push_rc); the branch and the note stay as they were";
 		$failed = 1;
 		last;
 	}
 	$run{'pushed'} = 1;
 
-	# The branch is safe on the remote. Landing it on main (and restarting the
-	# live house) is opt-in: a note or a source file can carry a prompt
-	# injection, and an unattended push to main runs it as the house. Set
-	# JAWNOS_QA_AUTO_MERGE=1 on the unit to restore automatic landing.
-	unless (($ENV{'JAWNOS_QA_AUTO_MERGE'} || '') eq '1') {
-		$run{'status'} = 'branch_pushed';
-		$run{'merged'} = 0;
-		last;
-	}
+	# The landing queue is the contract: exit 0 landed, 1 refused, 2 no verdict.
+	# It backs the branch up to origin and waits for the coordinator in this
+	# turn. The worktree belongs to the ticket until that verdict.
+	my $land_log = $log->('land');
+	my ($land_rc) = run_cmd(
+		cmd     => [$^X, "$worktree/scripts/land_enqueue.pl", '--trunk', 'working', '--wait'],
+		cwd     => $worktree,
+		log     => $land_log,
+		timeout => 900,
+	);
+	$run{'land_exit'}    = $land_rc;
+	$run{'land_verdict'} = land_verdict($land_log);
 
-	my ($merge_rc) = run_cmd(cmd => ['git', 'merge', '--ff-only', $branch], cwd => $repo, log => $log->('merge'));
-	if ($merge_rc != 0) {
-		$run{'status'} = 'merge_failed';
-		$run{'error'} = "main did not fast-forward to $branch (exit $merge_rc); the branch is pushed and left";
+	if ($land_rc == 1) {
+		$run{'status'} = 'land_refused';
+		$run{'error'}  = 'the landing queue refused ' . $branch
+			. ($run{'land_verdict'} ? ' (' . $run{'land_verdict'} . ')' : '')
+			. '; the worktree and branch are left and the note stays open';
 		$failed = 1;
 		last;
 	}
-	$run{'merged'} = 1;
-
-	my ($push_main_rc) = run_cmd(cmd => ['git', 'push', $push->{'target'}, 'HEAD:main'], cwd => $repo, log => $log->('push-main'));
-	if ($push_main_rc != 0) {
-		$run{'status'} = 'push_main_failed';
-		$run{'error'} = 'main was merged but git push ' . $push->{'target'} . " HEAD:main failed (exit $push_main_rc)";
+	if ($land_rc != 0) {
+		$run{'status'} = 'land_timeout';
+		$run{'error'}  = 'the landing queue gave no verdict for ' . $branch
+			. ($run{'land_verdict'} ? ' (' . $run{'land_verdict'} . ')' : '')
+			. '; the worktree and branch are left and the note stays open';
 		$failed = 1;
 		last;
 	}
+	$run{'landed'} = 1;
 
-	# 6. restart through the master's own path, then health 200
-	my $reason = $subject;
-	my ($restart_rc) = run_cmd(
-		cmd => [$^X, "$repo/scripts/restart.pl", '--reason', $reason],
-		cwd => $repo, log => $log->('restart'), timeout => 300);
-	$run{'restarted'} = ($restart_rc == 0) ? 1 : 0;
-	if ($restart_rc != 0) {
-		$run{'status'} = 'restart_failed';
-		$run{'error'} = "scripts/restart.pl exited $restart_rc (see " . $log->('restart')
-			. "); the note stays open until the live house is healthy";
-		$failed = 1;
-		last;
-	}
-
-	if (!health_ok($health_url, $opt{'health_wait'})) {
-		$run{'status'} = 'health_failed';
-		$run{'error'} = "the restart was accepted but $health_url did not answer 200; the note stays open";
-		$failed = 1;
-		last;
-	}
-	$run{'health_ok'} = 1;
-
-	# 6. only now: the app's own route marks the note completed. A report-derived
-	# item (security, installers) has no note row: the next report is what says
-	# whether it is still there.
+	# The branch landed on the working trunk; the app's own route marks the note
+	# completed. A report-derived item (ux, security, installers) has no note
+	# row: the next report is what says whether it is still there.
 	if ($is_note) {
 		my $res = eval {
 			mark_note_completed(
@@ -979,7 +923,7 @@ for my $note ( @{$queue} ) {
 		};
 		if (!$res) {
 			$run{'status'} = 'mark_failed';
-			$run{'error'} = 'the code shipped but the note could not be marked completed: ' . ($@ || 'unknown');
+			$run{'error'} = 'the code landed but the note could not be marked completed: ' . ($@ || 'unknown');
 			$failed = 1;
 			last;
 		}
@@ -1006,20 +950,18 @@ for my $note ( @{$queue} ) {
 	};
 	$run{'handbook_filed'} = $filed ? 1 : 0;
 
-	# merged and healthy: the worktree has served its purpose
+	# Landed: the coordinator rebased the branch, so `git branch -d` declines;
+	# the commit is on the trunk and the local branch is a stale pointer. Remove
+	# the worktree and force-delete only this run's branch.
 	run_cmd(cmd => ['git', 'worktree', 'remove', '--force', $worktree], cwd => $repo, log => $log->('cleanup'));
-	run_cmd(cmd => ['git', 'branch', '-d', $branch], cwd => $repo, log => $log->('cleanup'));
+	run_cmd(cmd => ['git', 'branch', '-D', $branch], cwd => $repo, log => $log->('cleanup'));
 }
 
-# A failure after the merge is the one that can leave the live house broken.
-# Put main back on the tag made before the night started, restart through the
-# master's own path, and require health 200. Anything less is reported loudly.
+# A failed night is handed over in failure.md and a JawnOS note. A land refusal
+# or timeout has already left the worktree and branch for the next person; the
+# night never tries to undo a trunk it did not move.
 if ($failed && @{$report->{'runs'}}) {
 	my $failed_run = $report->{'runs'}->[-1];
-	my $status = $failed_run->{'status'} // '';
-	if ($failed_run->{'merged'} && $status =~ /^(?:push_main_failed|restart_failed|health_failed)$/) {
-		automatic_rollback($failed_run, $report_dir, $repo, $health_url, $opt{'health_wait'});
-	}
 	write_failure_md($report_dir, $report, $failed_run, $repo);
 	my $body = failure_note_text($report, $failed_run, $report_dir);
 	my $filed = eval {
@@ -1050,6 +992,42 @@ print $md_fh CodingNight::report_markdown($report) . context_md($report->{'runs'
 close $md_fh;
 
 my $green = grep { ($_->{'status'} // '') eq 'green' } @{$report->{'runs'}};
+
+# The panel reads every QA job through reports/<kind>/<stamp>. Write the same
+# shape here, with one table row per item, so the coding night sits beside the
+# other jobs instead of only in coding/<stamp>/.
+{
+	my $tsv = "$report_dir/notes.tsv";
+	if (open(my $tsv_fh, '>', $tsv)) {
+		print {$tsv_fh} "Note\tResult\tStatus\n";
+		for my $r ( @{$report->{'runs'}} ) {
+			my $note = $r->{'title'} // '';
+			$note =~ s/[\t\r\n]+/ /g;
+			my $result = $r->{'status'} // 'unknown';
+			my $status = $r->{'marked_completed'} ? 'completed'
+				: (($r->{'source'} // 'notes') eq 'notes' ? 'open' : 'report');
+			print {$tsv_fh} join("\t", $note, $result, $status), "\n";
+		}
+		close $tsv_fh;
+	}
+	else {
+		print STDERR "qa/coding_night: could not write $tsv: $!\n";
+	}
+	my @g = gmtime;
+	my $utc = sprintf('%04d%02d%02dT%02d%02d%02dZ',
+		$g[5] + 1900, $g[4] + 1, $g[3], $g[2], $g[1], $g[0]);
+	my $panel_status = $report->{'ok'} ? 'ok' : 'failed';
+	my $panel_note = scalar(@{$report->{'runs'}}) . ' item(s), ' . $green . ' green'
+		. ($report->{'ok'} ? '' : ', attention needed');
+	my ($panel_rc) = run_cmd(
+		cmd => [$^X, "$repo/scripts/qa_report.pl",
+			'--kind=coding', '--schedule=nightly', "--status=$panel_status",
+			'--title=Coding nightly', "--note=$panel_note", "--stamp=$utc",
+			"--table=Notes:$tsv", "--root=$root"],
+		cwd => $repo, log => "$report_dir/qa-report.log", timeout => 120);
+	print STDERR "qa/coding_night: scripts/qa_report.pl exited $panel_rc; the run report is still at $json_path\n"
+		if $panel_rc != 0;
+}
 print 'report: ' . $md_path . "\n";
 for my $r ( @{$report->{'runs'}} ) {
 	next unless defined $r->{'context_bytes'};
@@ -1068,19 +1046,21 @@ qa/coding_night/run.pl - the 06:00 coding nightly
 
   --dry-run         print the plan; fetch, create, push and post nothing
   --limit N         notes this night (clamped 1..25; default the QA panel setting)
-  --lanes LIST      what to work on: notes,security,installers (default the QA panel setting)
+  --lanes LIST      what to work on: notes,ux,security,installers (default the QA panel setting)
   --repo DIR        the checkout (default this file's repo)
   --root DIR        QA root (default ~/jawnos-qa)
   --db PATH         live database, read with mode=ro (default <repo>/database/jawnos.db)
   --stamp STAMP     run stamp (default YYYYmmdd-HHMMSS); names branch and worktree
   --agent LINE      the coding agent command (default JAWNOS_CODING_AGENT or the setting)
   --live-url URL    the live manager base for note_save (default config.json working_port)
-  --health-url URL  the health route (default <live>/manager/health)
   --ticket URL      box_office ticket URL (default <repo>/.shots/ticket.txt)
-  --health-wait SEC seconds to wait for HTTP 200 (default 60)
   --suite-timeout S seconds for the agent and the suite (default 3600)
   --repair-attempts N retry a red suite with the same agent (0..3; default 2)
   --ignore-device   skip qa/device_target.pl (a test or an owner's manual run)
+
+A green night pushes its branch and queues it on the working trunk
+(scripts/land_enqueue.pl --trunk working --wait); it never merges main or
+restarts the house.
 TEXT
 }
 
@@ -1149,10 +1129,10 @@ sub capture {
 }
 
 # Uncommitted work the agent left, plus any commits it made on the branch.
-# $base defaults to origin/main; the app lane passes jawnos instead.
+# $base defaults to origin/working; the app lane passes jawnos instead.
 sub changed_files {
 	my ($worktree, $base) = @_;
-	$base = 'origin/main' unless defined $base && length $base;
+	$base = 'origin/working' unless defined $base && length $base;
 	my %seen;
 	my @files;
 	for my $line (split /\n/, capture($worktree, 'git', 'status', '--porcelain', '-uall')) {
@@ -1182,7 +1162,13 @@ sub abandon_branch {
 # --- the failure path -------------------------------------------------------
 # The exact failing line, not a summary of it: a person reading failure.md can
 # paste it into a shell or a test file. A suite log is the only place that line
-# lives, so it is read here and capped.
+# lives, so it is read here and capped. The browser layers name a real failure
+# as `FAIL l3 ...` or `probe: ...`; their startup noise (fuse, dbus, the portal,
+# a certificate issuer) is dropped from both the list and the repair tail so it
+# cannot crowd the cause out. A sub, not a file-scope regex, so it is available
+# while the main loop runs above this section.
+sub browser_noise { return qr/(?:fuse init failed|No matching issuer|\bdbus\b|xdg-desktop-portal|\borg\.freedesktop\.portal\b)/i }
+
 sub failure_lines {
 	my ($path) = @_;
 	return [] unless defined $path && length $path && -f $path;
@@ -1190,12 +1176,29 @@ sub failure_lines {
 	my @lines;
 	while (my $line = <$fh>) {
 		chomp $line;
+		next if $line =~ browser_noise();
 		push @lines, $line
-			if $line =~ /^\s*(?:not\s+ok\b|#\s+Failed test|#\s+Looks like|FAILED\b|Error:)/i;
+			if $line =~ /^\s*(?:not\s+ok\b|#\s+Failed test|#\s+Looks like|FAIL\s+l\d+\b|probe:|FAILED\b|Error:)/i;
 	}
 	close $fh;
 	@lines = @lines[0 .. 19] if scalar @lines > 20;
 	return \@lines;
+}
+
+# The coordinator's last word on a ticket: `landed`, `refused` or `no verdict`.
+# It is printed to the land log; a timeout or a usage error leaves the tail.
+sub land_verdict {
+	my ($path) = @_;
+	my $tail = log_tail($path, 20);
+	my @lines = grep { /\S/ } split /\n/, $tail;
+	return '' unless @lines;
+	for my $line ( reverse @lines ) {
+		$line =~ s/^\s+|\s+$//g;
+		return $line if $line =~ /(?:landed|refused|no verdict)/i;
+	}
+	my $last = $lines[-1];
+	$last =~ s/^\s+|\s+$//g;
+	return $last;
 }
 
 # The app lane's suite is Gradle: its failures do not look like TAP. Keep the
@@ -1223,49 +1226,13 @@ sub log_tail {
 	$count = 40 unless defined $count && $count =~ /^\d+$/ && $count > 0;
 	return '' unless defined $path && length $path && -f $path;
 	open(my $fh, '<', $path) or return '';
-	my @lines = <$fh>;
+	my $noise = browser_noise();
+	my @lines = grep { !/$noise/ } <$fh>;
 	close $fh;
 	@lines = @lines[-$count .. -1] if @lines > $count;
 	my $text = join('', @lines);
 	$text = substr($text, -4096) if length($text) > 4096;
 	return $text;
-}
-
-sub automatic_rollback {
-	my ($run, $report_dir, $repo, $health_url, $health_wait) = @_;
-	my $tag = $run->{'rollback_tag'} // '';
-	return unless length $tag;
-	my $log = "$report_dir/note-" . ($run->{'n'} // '?') . "-rollback.log";
-	$run->{'rolled_back'} = 'yes';
-
-	my ($reset_rc) = run_cmd(cmd => ['git', 'reset', '--hard', $tag], cwd => $repo, log => $log);
-	$run->{'rollback_reset_ok'} = $reset_rc == 0 ? 1 : 0;
-	if ($reset_rc != 0) {
-		$run->{'rollback_restart_ok'} = 0;
-		$run->{'rollback_health_ok'} = 0;
-		$run->{'rollback_error'} = "git reset --hard $tag failed (exit $reset_rc)";
-		print STDERR "!!! ROLLBACK RESET FAILED: main is NOT on $tag (exit $reset_rc). A person must fix it by hand.\n";
-		return;
-	}
-
-	my ($restart_rc) = run_cmd(
-		cmd => [$^X, "$repo/scripts/restart.pl", '--reason',
-			"rollback to $tag (nightly " . ($run->{'status'} // 'failed') . ')'],
-		cwd => $repo, log => $log, timeout => 300);
-	$run->{'rollback_restart_ok'} = $restart_rc == 0 ? 1 : 0;
-	if ($restart_rc != 0) {
-		$run->{'rollback_health_ok'} = 0;
-		$run->{'rollback_error'} = "the rollback reset main to $tag but scripts/restart.pl exited $restart_rc";
-		print STDERR "!!! ROLLBACK RESTART FAILED: main is on $tag but scripts/restart.pl exited $restart_rc."
-			. " THE LIVE HOUSE MAY STILL RUN THE BAD CODE - RESTART IT BY HAND.\n";
-		return;
-	}
-
-	my $ok = health_ok($health_url, $health_wait);
-	$run->{'rollback_health_ok'} = $ok ? 1 : 0;
-	$run->{'rollback_health'} = $ok ? 200 : 'not 200';
-	print STDERR "!!! ROLLBACK HEALTH FAILED: main is on $tag and the restart was accepted, but $health_url is not 200.\n"
-		unless $ok;
 }
 
 # --- the agent's own account -------------------------------------------------
@@ -1317,18 +1284,11 @@ sub write_failure_md {
 	print {$fh} '- error: ' . ($run->{'error'} // '') . "\n";
 	print {$fh} '- worktree: `' . ($run->{'worktree'} // '') . "`\n";
 	print {$fh} '- branch: `' . ($run->{'branch'} // '') . "`\n";
-	print {$fh} '- rollback tag: `' . ($run->{'rollback_tag'} // '') . "`\n";
 	print {$fh} '- push target: `' . ($run->{'push_target'} // 'origin') . "`\n";
-	print {$fh} '- rolled back: ' . ($run->{'rolled_back'} // 'no');
-	if (($run->{'rolled_back'} // '') eq 'yes') {
-		print {$fh} ' (reset ' . (defined $run->{'rollback_reset_ok'} ? ($run->{'rollback_reset_ok'} ? 'ok' : 'FAILED') : '?') . ',\n'
-			. '  restart ' . (defined $run->{'rollback_restart_ok'} ? ($run->{'rollback_restart_ok'} ? 'ok' : 'FAILED') : '?') . ',\n'
-			. '  health 200 ' . (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked') . ')';
-	}
-	print {$fh} "\n";
+	print {$fh} '- land: ' . CodingNight::land_line($run) . "\n"
+		if ($run->{'lane'} // 'repo') ne 'app';
 	print {$fh} CodingNight::repair_summary($run);
 	print {$fh} '- report: `' . $dir . "/report.json`\n";
-	print {$fh} '- rollback script: `' . $dir . "/rollback.sh`\n";
 	print {$fh} '- ' . CodingContext::context_summary($run) . "\n"
 		if defined $run->{'context_bytes'};
 	if (@failing) {
@@ -1336,14 +1296,14 @@ sub write_failure_md {
 		print {$fh} "    $_\n" for @failing;
 	}
 	print {$fh} "\n## Next action\n\n";
-	if (($run->{'rolled_back'} // '') eq 'yes' && defined $run->{'rollback_restart_ok'} && !$run->{'rollback_restart_ok'}) {
-		print {$fh} "Main is on `" . ($run->{'rollback_tag'} // '') . "`, but the rollback restart was refused. Restart the house by hand now, then rerun the night.\n";
-	}
-	elsif (($run->{'rolled_back'} // '') eq 'yes') {
-		print {$fh} "Main is back on `" . ($run->{'rollback_tag'} // '') . "`. The note stays open; fix the failure and rerun.\n";
+	my $status = $run->{'status'} // '';
+	if ($status =~ /^land_(?:refused|timeout)$/) {
+		print {$fh} 'The landing queue did not take `' . ($run->{'branch'} // '') . '` ('
+			. CodingNight::land_line($run)
+			. "). The worktree and branch are left; fix or re-queue the branch, then rerun. The note stays open.\n";
 	}
 	else {
-		print {$fh} "Main was not merged by this note. Inspect the worktree, fix the failure, and rerun; the note stays open.\n";
+		print {$fh} "The branch was not landed by this note. Inspect the worktree, fix the failure, and rerun; the note stays open.\n";
 	}
 	close $fh;
 	return $path;
@@ -1359,17 +1319,12 @@ sub failure_note_text {
 	$text .= '- error: ' . ($run->{'error'} // '') . "\n";
 	$text .= '- worktree: ' . ($run->{'worktree'} // '') . "\n";
 	$text .= '- branch: ' . ($run->{'branch'} // '') . "\n";
-	$text .= '- rollback tag: ' . ($run->{'rollback_tag'} // '') . "\n";
 	$text .= '- push target: ' . ($run->{'push_target'} // 'origin') . "\n";
-	$text .= '- rolled back: ' . ($run->{'rolled_back'} // 'no');
-	if (($run->{'rolled_back'} // '') eq 'yes') {
-		$text .= ' (restart ' . (defined $run->{'rollback_restart_ok'} ? ($run->{'rollback_restart_ok'} ? 'ok' : 'FAILED') : '?')
-			. ', health 200 ' . (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked') . ')';
-	}
-	$text .= "\n- report: $dir/report.json\n";
+	$text .= '- land: ' . CodingNight::land_line($run) . "\n"
+		if ($run->{'lane'} // 'repo') ne 'app';
+	$text .= "- report: $dir/report.json\n";
 	$text .= CodingNight::repair_summary($run);
 	$text .= "- failure: $dir/failure.md\n";
-	$text .= "- rollback script: $dir/rollback.sh\n";
 	if (@failing) {
 		$text .= "\nFailing test lines:\n" . join("\n", @failing) . "\n";
 	}
@@ -1404,12 +1359,6 @@ sub live_url {
 	return default_base($repo);
 }
 
-sub health_url {
-	my ($repo, $given) = @_;
-	return $given if defined $given && length $given;
-	return default_base($repo) . '/manager/health';
-}
-
 sub ticket_url {
 	my ($repo, $given) = @_;
 	return $given if defined $given;
@@ -1420,20 +1369,6 @@ sub ticket_url {
 	close $fh;
 	$url =~ s/^\s+|\s+$//g;
 	return $url;
-}
-
-sub health_ok {
-	my ($url, $wait) = @_;
-	$wait = 60 unless defined $wait && $wait =~ /^\d+$/;
-	require HTTP::Tiny;
-	my $deadline = time + $wait;
-	while (1) {
-		my $res = HTTP::Tiny->new(verify_SSL => 0, timeout => 10)->get($url);
-		return 1 if $res->{'status'} == 200;
-		last if time >= $deadline;
-		sleep 2;
-	}
-	return 0;
 }
 
 # The one live write: the app's own route, behind the ticket-minted session.

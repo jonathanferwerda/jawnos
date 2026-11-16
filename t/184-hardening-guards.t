@@ -97,7 +97,9 @@ my $misc14 = source('lib/JawnOS/Controller/manager_misc14.pm');
 like($misc14, qr/html_text\(\$transcription\)/, 'a transcription is HTML-escaped before .html()');
 
 my $night = source('qa/coding_night/run.pl');
-like($night, qr/JAWNOS_QA_AUTO_MERGE/, 'the nightly lands on main only when opted in');
+like($night, qr/land_enqueue\.pl.*--trunk.*working/,
+	'the nightly queues its branch on the working trunk');
+unlike($night, qr/HEAD:main|merge --ff-only/, 'it never moves main itself');
 
 my $wallet = source('desktop/install-wallet.sh');
 like($wallet, qr/refusing to install/, 'a missing wallet checksum is a hard failure');
