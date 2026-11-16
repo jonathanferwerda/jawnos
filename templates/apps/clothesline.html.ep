@@ -1,5 +1,13 @@
 <h3>Schedule</h3>
-<input class="clothes" app="<%= $app %>" setting="schedule" hint="<%= &subs::ui('Set when this routine hangs') %>" style="width:100%" value="<%= $cl->{'schedule'} %>">
+<input class="clothes_schedule" app="<%= $app %>" hint="<%= &subs::ui('Say when this routine hangs, and the Guide will read it') %>" placeholder="<%= &subs::ui('every Thursday from 3pm to 6pm until July 24 2027') %>" style="width:100%" value="<%= $cl->{'schedule'} %>">
+<div class="clothes_schedule_status<% if (defined $schedule_status && length $schedule_status) { %> clothes_schedule_ok<% } %>"><%= $schedule_status %></div>
+<h3>Anticipatory</h3>
+<select class="clothes" app="<%= $app %>" setting="anticipatory" hint="<%= &subs::ui('Choose whether this hang joins the anticipatory head') %>">
+	<option value="default"<% if (($cl->{'anticipatory'} || 'default') eq 'default') { %> selected<% } %>><%= &subs::ui('Default') %></option>
+	<option value="include"<% if (($cl->{'anticipatory'} || '') eq 'include') { %> selected<% } %>><%= &subs::ui('Include in anticipatory') %></option>
+	<option value="exclude"<% if (($cl->{'anticipatory'} || '') eq 'exclude') { %> selected<% } %>><%= &subs::ui('Exclude from anticipatory') %></option>
+</select>
+<label style="display:block;margin-top:8px;cursor:var(--jawnos-cursor-pointer, pointer);"><input type="checkbox" class="clothes_hidden" app="<%= $app %>"<% unless ($cl->{'hidden'}) { %> checked<% } %>> <%= &subs::ui('Show on the clothesline') %></label>
 <h3>Budgets</h3>
 <% foreach my $bm ( keys %{$gb::budget_modes} ) { %>
 	<span style="display:inline-block;max-width:30%;">
@@ -49,4 +57,6 @@
 	.clothes_picker[wearing=on] {
 		background-color:lightgreen;
 	}
+	.clothes_schedule_status { min-height:18px; margin:4px 0 2px; font-size:12px; color:#888; }
+	.clothes_schedule_ok { color:inherit; }
 </style>

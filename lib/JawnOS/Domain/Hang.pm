@@ -52,16 +52,27 @@ sub hang_to_dry {
 	# was picked in the house's words, so the match reads the house clock: the
 	# box keeps UTC, and a slot must not open eight o'clock late.
 	my @slot = &clothesline_slot_now($server_time);
+	# The person's own say over the anticipatory head, and the apps they took off
+	# the line altogether, gathered as the rows are read.
+	my (%say, %hidden, %renew);
 
 	foreach my $clr ( @{$cls} ) {
 
 		my $cl = eval { return decode_json $clr->{'value'} } || {};
 		my $app = &unformat_name($clr->{'app'});
+		$say{$app} = $cl->{'anticipatory'} if defined $cl->{'anticipatory'} && $cl->{'anticipatory'} =~ /\S/;
+		if ($cl->{'hidden'}) {
+			$hidden{$app} = 1;
+			next;
+		}
+		# A phrase whose days have run out is read again from the plan it was made
+		# from: the dates are the plan's own, so this costs no model call.
+		$renew{$app} = $cl if &clothesline_schedule_renew($cl, $server_time);
 		my $settings = &settings_grabber({ app => $app });
 		my $app_data = { name => $app, app => $app, formatted_name => &format_name($app), colour => $settings->{'colour'}, dark_colour => $settings->{'dark_colour'} };
 		# a registration by date and time, or one by budget: nothing with no
 		# registration hangs itself in the tail
-		push @{$returner}, $app_data if &clothesline_slot_wears($cl, \@slot) && !&app_hidden_now($app);
+		push @{$returner}, $app_data if (&clothesline_slot_wears($cl, \@slot) || &clothesline_schedule_wears($cl, $server_time)) && !&app_hidden_now($app);
 		next if grep { $_->{'app'} eq $app } @{$returner};
 		# a running session stays even outside its slots, but only while the
 		# app has time slots of its own: a line with no registration at all
@@ -84,6 +95,10 @@ sub hang_to_dry {
 		}
 
 	}
+	# a renewed phrase is saved once, after every row has been read
+	foreach my $app ( sort keys %renew ) {
+		&setting_setter({ app => $app, setting => 'clothesline', value => encode_json $renew{$app} });
+	}
 	# The anticipatory head: the next steps of the routine under way, in the order
 	# the person takes them, whether it begins at eight or at ten. The rest of
 	# what belongs on the line follows alphabetically. An app in the head is not
@@ -104,6 +119,7 @@ sub hang_to_dry {
 	foreach my $row ( @{$anticipated} ) {
 		my $app = $row->{'app'};
 		next unless defined $app && length $app;
+		next if $hidden{$app};
 		next if &app_hidden_now($app);
 		my $item = $have{$app};
 		unless ($item) {
@@ -113,6 +129,20 @@ sub hang_to_dry {
 		$item->{'wave'} = $row->{'wave'};
 		push @head, $item;
 	}
+	# The person's own say over the head: an app they excluded leaves it, and one
+	# they included joins the front even when the routine has not learned it.
+	my ($kept, $included) = &clothesline_anticipation_apply(\@head, \%say);
+	my @lead;
+	foreach my $app ( @{$included} ) {
+		next if $hidden{$app} || &app_hidden_now($app);
+		my $item = $have{$app};
+		unless ($item) {
+			my $aset = &settings_grabber({ app => $app });
+			$item = { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
+		}
+		push @lead, $item;
+	}
+	@head = (@lead, @{$kept});
 	# The rail draws its divider where the anticipatory steps end and the
 	# alphabetical rest begins.
 	foreach my $item ( @head ) { $item->{'head'} = 1; }
@@ -156,10 +186,15 @@ sub clothesline_registered {
 	my ($cl) = @_;
 	return 0 unless ref $cl eq 'HASH';
 	my $slots = $cl->{'time_plinko'};
-	return 0 unless ref $slots eq 'HASH';
-	foreach my $chosen ( values %{$slots} ) {
-		return 1 if ref $chosen eq 'ARRAY' && scalar @{$chosen};
+	if (ref $slots eq 'HASH') {
+		foreach my $chosen ( values %{$slots} ) {
+			return 1 if ref $chosen eq 'ARRAY' && scalar @{$chosen};
+		}
 	}
+	# a phrase the Guide read is a registration of its own, so a running app that
+	# hangs by its words keeps its pill outside the hours the phrase names
+	my $rule = $cl->{'schedule_rule'};
+	return 1 if ref $rule eq 'HASH' && ref $rule->{'days'} eq 'HASH' && scalar keys %{$rule->{'days'}};
 	return 0;
 }
 
@@ -208,6 +243,197 @@ sub clothesline_line_order {
 		push @rest, $item;
 	}
 	return [ @{$head}, @rest ];
+}
+
+# The person's own say over the anticipatory head. $say maps an app to its
+# clothesline setting: 'exclude' takes it out of the learned sequence, 'include'
+# names it for the front even when the routine has not learned it, and anything
+# else (or no entry) is the routine's own decision. Returns the kept head and the
+# included apps the head does not already carry, in name order.
+sub clothesline_anticipation_apply {
+	my ($head, $say) = @_;
+	$head = [] unless ref $head eq 'ARRAY';
+	$say = {} unless ref $say eq 'HASH';
+	my @kept = grep { ($say->{$_->{'app'}} || '') ne 'exclude' } grep { ref $_ eq 'HASH' } @{$head};
+	my %in = map { $_->{'app'} => 1 } @kept;
+	my @included = grep { ($say->{$_} || '') eq 'include' && !$in{$_} } sort keys %{$say};
+	return (\@kept, \@included);
+}
+
+# ---- a schedule written in words -------------------------------------------
+# The editor's phrase is read by the Guide associate into the same recurrence
+# plans the rest of the house already understands, then expanded here into the
+# days (and hours) the rail can match without asking a model again.
+
+# The house day and hour a moment falls on. The box keeps UTC, so the rail reads
+# the person's own clock, matching the time slots it already matches against.
+sub clothesline_house_day {
+	my ($now) = @_;
+	$now = &rightNow() unless defined $now;
+	my $restore = &clock_zone_adopt(&clock_zone_house());
+	my $key = &day_key($now);
+	my $hour = (localtime(int($now / 1000)))[2];
+	$restore->() if $restore;
+	return ($key, defined $hour ? $hour + 0 : 0);
+}
+
+# '3pm' from the 24-hour clock, the same words the time-slot grid uses.
+sub clothesline_hour_word {
+	my $h = int(shift || 0);
+	return '12am' if $h == 0;
+	return (($h > 12 ? $h - 12 : $h) . ($h >= 12 ? 'pm' : 'am'));
+}
+
+# Every day the plan names, from the top of today onward, keyed YYYY-MM-DD, and
+# the hours of the day it hangs. A plan is read from the day before today so
+# today's own occurrence is included; a bounded plan stops at its own end.
+sub clothesline_schedule_expand {
+	my ($plan, $now) = @_;
+	$now = &rightNow() unless defined $now;
+	$plan = {} unless ref $plan eq 'HASH';
+	my $plans = ref $plan->{'plans'} eq 'ARRAY' ? $plan->{'plans'} : [];
+	my $restore = &clock_zone_adopt(&clock_zone_house());
+	my @lt = localtime(int($now / 1000));
+	my $start = timelocal(0, 0, 0, $lt[3], $lt[4], $lt[5]) * 1000 - 1;
+	my $horizon = &calendar_shift($start, 50, 'year');
+	my (%days, $ask);
+	foreach my $one ( @{$plans} ) {
+		next unless ref $one eq 'HASH';
+		my ($dates, $until, $why) = &recurrence_expand($one, $start, max => 500, default_until => $horizon);
+		if (defined $why && length $why) { $ask = $why unless defined $ask && length $ask; next; }
+		$days{ &day_key($_) } = 1 for @{$dates || []};
+	}
+	my @raw = ();
+	if (ref $plan->{'hours'} eq 'ARRAY') { @raw = @{ $plan->{'hours'} }; }
+	elsif (defined $plan->{'hours'} && $plan->{'hours'} =~ /^\s*\d+\s*$/) { @raw = ( $plan->{'hours'} ); }
+	my %seen;
+	my @hours = sort { $a <=> $b } grep { defined $_ && $_ =~ /^\s*\d+\s*$/ && $_ >= 0 && $_ <= 23 && !$seen{$_ + 0}++ } @raw;
+	$restore->() if $restore;
+	return { days => \%days, hours => \@hours, ask => ($ask || '') };
+}
+
+# Does the app's phrase wear at this moment? The day must be one the plan
+# names, and the hour (when the phrase named any) must be one of them.
+sub clothesline_schedule_wears {
+	my ($cl, $now) = @_;
+	return 0 unless ref $cl eq 'HASH' && ref $cl->{'schedule_rule'} eq 'HASH';
+	my $rule = $cl->{'schedule_rule'};
+	my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
+	return 0 unless scalar keys %{$days};
+	my ($day, $hour) = &clothesline_house_day($now);
+	return 0 unless $days->{$day};
+	my @hours = @{ ref $rule->{'hours'} eq 'ARRAY' ? $rule->{'hours'} : [] };
+	return 1 unless scalar @hours;
+	return (grep { $_ =~ /^\d+$/ && $_ == $hour } @hours) ? 1 : 0;
+}
+
+# A phrase's days are a window: once its last day has passed, the plan is read
+# again from today. A bounded plan (an explicit until) yields no days after its
+# end and is left to expire, which is what the person asked for.
+sub clothesline_schedule_renew {
+	my ($cl, $now) = @_;
+	return 0 unless ref $cl eq 'HASH' && ref $cl->{'schedule_rule'} eq 'HASH';
+	my $rule = $cl->{'schedule_rule'};
+	my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
+	return 0 unless scalar keys %{$days};
+	return 0 unless ref $rule->{'plan'} eq 'HASH';
+	my ($today) = &clothesline_house_day($now);
+	my @keys = sort keys %{$days};
+	return 0 if $keys[-1] ge $today;
+	my $fresh = &clothesline_schedule_expand($rule->{'plan'}, $now);
+	return 0 unless scalar keys %{ $fresh->{'days'} };
+	$rule->{'days'} = $fresh->{'days'};
+	$rule->{'refreshed'} = $now;
+	return 1;
+}
+
+# The Assistant's read of a phrase: the plan it says, and the days and hours
+# expanded from it. Nothing here writes; the caller stores the rule.
+sub clothesline_schedule_read {
+	my ($text, %opt) = @_;
+	$text = defined $text ? "$text" : '';
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return { ask => &ui('Say when this routine should hang.') } unless length $text;
+	my $now = $opt{'now'} || &rightNow();
+	my $model = $opt{'model'} || &setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	return { ask => &ui('A schedule written in words needs the Guide model, and none is set.') } unless defined $model && length $model;
+	my $restore = &clock_zone_adopt(&clock_zone_house());
+	my @lt = localtime(int($now / 1000));
+	my $when = POSIX::strftime('%A, %B %d %Y, %I:%M%P', @lt);
+	$restore->() if $restore;
+	my %bday = eval { %{ &birthday_directory() || {} } };
+	my $bday_text = join('; ', map { $_ . ' = ' . $bday{$_} } sort keys %bday) || '(none saved)';
+	my $system = <<"TXT";
+You turn a person's plain-language schedule for a JawnOS clothesline pill into one JSON object.
+It is $when now. The pill hangs when its app is in its own registered time.
+
+Reply with EXACTLY ONE JSON object and nothing else, in this shape:
+{"plans":[ ... ], "hours":[15,16,17], "say":"one short sentence in their words"}
+Each plan is one recurrence, in one of these shapes:
+{"kind":"weekdays","weekdays":["thu"],"until":"2027-07-24"}
+{"kind":"interval","interval":"1d","count":10} or {"kind":"interval","interval":"1M","until":"2027-06-01"}
+{"kind":"monthly_nth_weekday","nth":3,"weekday":"sat","count":12}
+{"kind":"annual","month":2,"day":14}
+{"kind":"birthday","person":"mom"}
+{"kind":"full_moon","until":"2036-07-01"}
+{"kind":"dates","dates":["2026-11-26","2026-12-24"]}
+Use one plan for each distinct rule; several named days are several annual plans, or one dates plan.
+"hours" is the 24-hour clock, inclusive, of the part of the day it hangs; leave it out for all day.
+"count" is how many repeats to make. "until" is an absolute date; "until_after" is a length from the start ("6 weeks"). A date with no year means this year's or the next one that fits.
+Add "exclude_holidays":true for "except on holidays", and "except":["2026-12-25"] for other named days.
+Common named days: New Year's Day 1/1, Valentine's Day 2/14, Canada Day 7/1, Independence Day 7/4, Halloween 10/31, Remembrance Day 11/11, Christmas Day 12/25, Boxing Day 12/26.
+Their saved birthdays: $bday_text.
+If the phrase is ambiguous, reply {"ask":"a short question"}.
+Do not write prose. Do not invent a date you are unsure of.
+TXT
+	my ($out, $err) = &evaluation_model_call_role('help_assistant', $system, $text, &ai_role_thinking_effective('help_assistant'));
+	return { ask => ($err || &ui('The Guide did not answer that.')) } unless defined $out && $out =~ /\S/;
+	my $plan = eval { decode_json $out };
+	unless (ref $plan eq 'HASH') {
+		if ($out =~ /(\{.*\})/s) { $plan = eval { decode_json $1 }; }
+	}
+	return { ask => &ui('I could not read that schedule. Can you say it another way?') } unless ref $plan eq 'HASH';
+	return { ask => $plan->{'ask'} } if defined $plan->{'ask'} && $plan->{'ask'} =~ /\S/;
+	# a model that answered with one plan instead of a list is read as one
+	if (ref $plan->{'plans'} ne 'ARRAY') {
+		if (ref $plan->{'plan'} eq 'HASH') { $plan->{'plans'} = [ $plan->{'plan'} ]; }
+		elsif ($plan->{'kind'}) { $plan->{'plans'} = [ { %{$plan} } ]; }
+	}
+	my $expanded = &clothesline_schedule_expand($plan, $now);
+	return { ask => $expanded->{'ask'} || &ui('I could not find any days in that schedule. Can you say it another way?') }
+		unless scalar keys %{ $expanded->{'days'} };
+	my $say = (defined $plan->{'say'} && $plan->{'say'} =~ /\S/) ? substr($plan->{'say'}, 0, 300) : '';
+	return { rule => {
+		text => $text,
+		days => $expanded->{'days'},
+		hours => $expanded->{'hours'},
+		plan => { plans => $plan->{'plans'}, hours => $expanded->{'hours'} },
+		say => $say,
+		made => $now,
+	} };
+}
+
+# What the editor prints under the phrase box: how many days it read, the last
+# of them, and the hours it hangs. The person's own words are the field's value.
+sub clothesline_schedule_status {
+	my ($cl) = @_;
+	return '' unless ref $cl eq 'HASH' && ref $cl->{'schedule_rule'} eq 'HASH';
+	my $rule = $cl->{'schedule_rule'};
+	my $days = ref $rule->{'days'} eq 'HASH' ? $rule->{'days'} : {};
+	my $count = scalar keys %{$days};
+	return &ui('The Guide read no days from that.') unless $count;
+	my @keys = sort keys %{$days};
+	my @hours = sort { $a <=> $b } @{ ref $rule->{'hours'} eq 'ARRAY' ? $rule->{'hours'} : [] };
+	my $span;
+	if (!@hours) { $span = &ui('all day'); }
+	elsif (scalar(@hours) == 1) { $span = &clothesline_hour_word($hours[0]); }
+	elsif ($hours[-1] - $hours[0] == $#hours) { $span = &clothesline_hour_word($hours[0]) . ' ' . &ui('to') . ' ' . &clothesline_hour_word($hours[-1]); }
+	else { $span = join(', ', map { &clothesline_hour_word($_) } @hours); }
+	my $line = &ui('Hangs on') . ' ' . $count . ' ' . ($count == 1 ? &ui('day') : &ui('days'))
+		. ' ' . &ui('through') . ' ' . $keys[-1] . ', ' . $span;
+	$line .= ' — ' . $rule->{'say'} if defined $rule->{'say'} && $rule->{'say'} =~ /\S/;
+	return $line;
 }
 
 # ---- web measures ----------------------------------------------------------

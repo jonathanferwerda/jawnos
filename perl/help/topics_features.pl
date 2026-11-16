@@ -180,7 +180,7 @@ $topic{'start_menu'} = {
 	};
 $topic{'clothesline'} = {
 		title => 'The clothesline', category => 'features', app => 'clothesline',
-		controls => [ 'Set when this routine hangs', 'Choose the budgets this hang may show' ],
+		controls => [ 'Say when this routine hangs, and the Guide will read it', 'Choose the budgets this hang may show', 'Choose whether this hang joins the anticipatory head' ],
 		verified => '2026-11-16',
 		summary => 'A rail that leads with the routine\'s next steps, then the rest of the hour.',
 		body => [
@@ -192,6 +192,8 @@ $topic{'clothesline'} = {
 			'The line reads the day on the house clock, not the machine\'s UTC, so a morning begun at eight reads as the morning wherever the computer sits and in whatever timezone you travel.',
 			'Every start, stop, usual, complete, picture or scan re-hangs the line at once; it does not wait for the rail\'s next poll.',
 			'Each hang is configured per app: a schedule, a budget, and the time slots it belongs to. Only a registered app hangs in the rest, by a time slot that is on now or by a budget it may show; a running app keeps its pill outside its own slots, but only while it has slots to keep.',
+			'Right-press a pill for its own small menu. Edit opens the hang\'s editor: its budgets, its time slots, the anticipatory select and the Show on the clothesline tick. Remove takes the pill off the line for good; its editor (the Clothesline button in Configure -> App) carries the tick that puts it back. Bump moves the pill between the anticipatory head and the alphabetical rest: a pill in the head is excluded from it, and a pill in the rest is included in it. The anticipatory select in the editor says the same thing by name: Default lets the routine decide, Include puts the pill at the front of the head, and Exclude leaves it to the rest.',
+			'The Schedule box in the editor takes a phrase, read by the Guide associate. It understands named days, a weekday and an hour span, and a span that ends: "on Christmas and Boxing Day, as well as Valentine\'s Day, all day", "every Thursday from 3pm to 6pm until July 24 2027", or "each full moon for the whole day until July 1 2036". The box prints what the Guide read — the number of days, the last of them and the hours — and asks a question when the phrase is ambiguous. The words are read once into days and hours, so the line keeps matching them without another model call; the time slots below still work alongside the phrase, and clearing the box clears the phrase.',
 			'The rail can be switched off altogether: the Show clothesline tick beside the time machine (the walkman\'s Configure) hides it and gives its band back to the view, and ticking it again hangs it at its configured height. Each app\'s own hang is still set from its Clothesline button in Configure -> App.',
 			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), soft, sandglass, glass, paper, fabric, wood or metal — sized to its own name, with the full name set in the Misc → Font face and printed in black or white (tinted with the app\'s colour) so it reads on the pane.',
 			'A textured pill goes down when you press it: its lit top edge becomes an inset shade for a moment, so the tile reads pressed-in rather than sticking up. Plain, round and classic settle the same quiet pixel and inset shade as every button now, without the canvas material.'

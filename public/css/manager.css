@@ -3207,6 +3207,15 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 .folders_context .folders_context_selection { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: var(--jawnos-cursor-pointer, pointer); }
 .folders_context .folders_context_selection:hover { background: var(--panel); }
 .folders_context .folders_context_selection img { height: 16px; width: 16px; max-width: 16px; object-fit: contain; }
+/* the rail's own right-press menu: a garment's Edit, Remove and Bump */
+.clothesline_menu {
+	position: fixed; z-index: 60000 !important; overflow: hidden; padding: 3px 0;
+	min-width: 150px; border: 1px solid var(--line); border-radius: 8px;
+	background: var(--panel-2); box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
+	font-size: 14px !important;
+}
+.clothesline_menu .clothesline_menu_row { padding: 5px 12px; cursor: var(--jawnos-cursor-pointer, pointer); }
+.clothesline_menu .clothesline_menu_row:hover { background: var(--panel); }
 .folders_drag_helper { opacity: .85; z-index: 999999 !important; }
 .folders_drag_count {
 	position: absolute; top: -6px; right: -6px; min-width: 20px; padding: 1px 5px;

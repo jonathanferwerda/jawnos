@@ -424,7 +424,7 @@ sub action_41731 {
 	my $account = &subs::unformat_name($c->param('account'));
 	my $time_plinkos = &clothesline_calculator($app);
 	my $cl = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'clothesline' })} || {};
-	my $html = $c->render_to_string(template => 'apps/clothesline', app => $app, cl => $cl , time_plinkos => $time_plinkos );
+	my $html = $c->render_to_string(template => 'apps/clothesline', app => $app, cl => $cl , time_plinkos => $time_plinkos, schedule_status => &subs::clothesline_schedule_status($cl) );
 	&subs::hang_to_dry();
 	$c->render(json => { html => $html});
 }
@@ -445,6 +445,49 @@ sub action_41744 {
 	&subs::setting_setter({ app => $app, setting => 'clothesline', value => $jcl });
 	&subs::hang_to_dry();
 	$c->render(json => $cl);
+}
+
+# POST /manager/clothesline/schedule
+# The phrase beside the time slots goes to the Guide associate, which reads it
+# into the house's recurrence plans. The plan is expanded here, so the rail can
+# match a day and an hour without another model call, and a phrase that cannot
+# be read yet comes back as the Guide's own question.
+sub action_41750 {
+	my $c = shift;
+	my $app = $c->param('app');
+	my $text = $c->param('text') // '';
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	my $cl = eval { decode_json &subs::setting_grabber({ app => $app, setting => 'clothesline' }) } || {};
+	# the words are kept whether or not they can be read, so a question can be
+	# answered by editing the same phrase
+	$cl->{'schedule'} = $text;
+	unless (length $text) {
+		delete $cl->{'schedule_rule'};
+		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json $cl });
+		&subs::hang_to_dry();
+		return $c->render(json => { ok => 1, message => '' });
+	}
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
+	unless (defined $model && length $model) {
+		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json $cl });
+		return $c->render(json => { ok => 0, ask => &subs::ui('A schedule written in words needs the Guide model, and none is set.') });
+	}
+	&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json $cl });
+	&subs::render_in_subprocess($c, sub {
+		return &subs::clothesline_schedule_read($text);
+	}, sub {
+		my ($c, $read) = @_;
+		$read ||= {};
+		if (defined $read->{'ask'} && $read->{'ask'} =~ /\S/) {
+			$c->render(json => { ok => 0, ask => $read->{'ask'} });
+			return;
+		}
+		$cl->{'schedule_rule'} = $read->{'rule'};
+		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json $cl });
+		&subs::hang_to_dry();
+		$c->render(json => { ok => 1, message => &subs::clothesline_schedule_status($cl) });
+	});
 }
 
 # GET /manager/volume_control

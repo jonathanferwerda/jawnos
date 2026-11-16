@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_misc12.pm templates/apps/clothesline.html.ep public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js public/js/manager/clothesline/01_timeline.js
 # covers:    The clothesline leads with the most common recent day's sequence,
 #            not the latest day: a step moved earlier or later leaves the rest
 #            in order, a step done twice is one pill at its next turn, and the
@@ -284,6 +284,68 @@ ok(!subs::clothesline_registered({ duration_budget => ['neglected'] }),
 	'a budget alone does not keep a running app on the line');
 ok(!subs::clothesline_registered({}), 'nor does no clothesline setting at all');
 
+# --- the person's own say over the anticipatory head -------------------------
+my $head = [
+	{ app => 'coffee', formatted_name => 'Coffee' },
+	{ app => 'water',  formatted_name => 'Water' },
+];
+my ($kept, $included) = subs::clothesline_anticipation_apply($head,
+	{ coffee => 'exclude', laundry => 'include', water => 'default' });
+is_deeply([ map { $_->{'app'} } @{$kept} ], ['water'],
+	'an excluded step leaves the anticipatory head');
+is_deeply($included, ['laundry'],
+	'an included app the routine has not learned is named for the front');
+my ($all, $none) = subs::clothesline_anticipation_apply($head, {});
+is_deeply([ map { $_->{'app'} } @{$all} ], [qw(coffee water)],
+	'with no say the learned head is untouched');
+is_deeply($none, [], 'and nothing is added to it');
+
+# --- a phrase the Guide read is a registration of its own -------------------
+ok(subs::clothesline_registered({ schedule_rule => { days => { '2026-12-25' => 1 } } }),
+	'a phrase read by the Guide registers the app');
+ok(!subs::clothesline_registered({ schedule_rule => { days => {} } }),
+	'an empty phrase is no registration');
+
+# --- the phrase's days and hours --------------------------------------------
+my $yule = subs::clothesline_schedule_expand(
+	{ plans => [ { kind => 'annual', month => 12, day => 25 }, { kind => 'annual', month => 12, day => 26 } ], hours => [15, 16, 17] },
+	JawnOSTest::ts(2026, 12, 20, 18, 0));
+ok($yule->{'days'}{'2026-12-25'}, 'Christmas is one of the phrase\'s days');
+ok($yule->{'days'}{'2026-12-26'}, 'Boxing Day too');
+is_deeply($yule->{'hours'}, [15, 16, 17], 'and the hour span is kept');
+my $all_day = subs::clothesline_schedule_expand(
+	{ plans => [ { kind => 'annual', month => 2, day => 14 } ] }, JawnOSTest::ts(2026, 2, 1, 18, 0));
+is_deeply($all_day->{'hours'}, [], 'a phrase that names no hours hangs all day');
+ok($all_day->{'days'}{'2026-02-14'}, 'and its day is named');
+
+# --- the day and hour the phrase matches ------------------------------------
+my $yule_moment = JawnOSTest::ts(2026, 12, 25, 20, 0);
+my ($yule_day, $yule_hour) = subs::clothesline_house_day($yule_moment);
+ok(subs::clothesline_schedule_wears({ schedule_rule => { days => { $yule_day => 1 }, hours => [ $yule_hour ] } }, $yule_moment),
+	'a phrase wears on its day, in its hours');
+ok(!subs::clothesline_schedule_wears({ schedule_rule => { days => { $yule_day => 1 }, hours => [ ($yule_hour + 1) % 24 ] } }, $yule_moment),
+	'but not outside them');
+ok(!subs::clothesline_schedule_wears({ schedule_rule => { days => { '1900-01-01' => 1 } } }, $yule_moment),
+	'and not on a day it does not name');
+ok(subs::clothesline_schedule_wears({ schedule_rule => { days => { $yule_day => 1 }, hours => [] } }, $yule_moment),
+	'a day with no hours hangs all day');
+
+# --- a phrase past its window is read again from its own plan ---------------
+my $stale = { schedule_rule => { days => { '2020-12-25' => 1 }, plan => { plans => [ { kind => 'annual', month => 12, day => 25 } ] } } };
+ok(subs::clothesline_schedule_renew($stale, JawnOSTest::ts(2026, 12, 20, 18, 0)),
+	'a phrase whose last day has passed is read again');
+ok($stale->{'schedule_rule'}{'days'}{'2026-12-25'}, 'and its next day is back');
+my $done = { schedule_rule => { days => { '2020-12-25' => 1 },
+	plan => { plans => [ { kind => 'annual', month => 12, day => 25, until => '2021-01-01' } ] } } };
+ok(!subs::clothesline_schedule_renew($done, JawnOSTest::ts(2026, 12, 20, 18, 0)),
+	'a phrase that named its end is left to expire');
+
+my $status = subs::clothesline_schedule_status({ schedule_rule => {
+	days => { '2026-12-25' => 1, '2026-12-26' => 1 }, hours => [15, 16, 17] } });
+like($status, qr/\b2\b/, 'the status counts the days');
+like($status, qr/2026-12-26/, 'and names the last of them');
+like($status, qr/3pm/, 'and the first hour of the span');
+
 # --- the wiring ------------------------------------------------------------
 my $appointment = read_file(repo_root() . '/lib/JawnOS/Domain/Appointment.pm');
 like($appointment, qr/next if defined \$r->\{'source_uuid'\}/,
@@ -298,6 +360,11 @@ like($appointment, qr/foreach my \$in \( \@in \)/, 'the place averages both axes
 like($appointment, qr/clock_zone_house/, 'the scan runs on the house clock, not the box clock');
 
 my $hang = read_file(repo_root() . '/lib/JawnOS/Domain/Hang.pm');
+like($hang, qr/clothesline_schedule_wears\(\$cl, \$server_time\)/,
+	'the tail asks the phrase as well as the slots');
+like($hang, qr/if \(\$cl->\{'hidden'\}\)/, 'a removed pill never hangs');
+like($hang, qr/clothesline_anticipation_apply/, 'the head honours the anticipatory say');
+like($hang, qr/clothesline_schedule_renew\(\$cl, \$server_time\)/, 'an expired phrase is read again');
 like($hang, qr/clothesline_sequence_anticipate\(\$daily/, 'the rail hangs the anticipatory head');
 like($hang, qr/clothesline_line_order/, 'the head leads and the tail is alphabetised');
 like($hang, qr/clothesline_slot_wears\(\$cl, \\\@slot\)/, 'the tail asks the app\'s own registration');
@@ -332,5 +399,25 @@ like($part14, qr/\$returner->\{'clothesline'\}/, 'the reply carries the new line
 like($part14, qr/console_command\('calculator'\)/, 'the other managers are told to refresh');
 my $app_back = read_file(repo_root() . '/public/js/manager/manager/09_app_back.js');
 like($app_back, qr/response\['clothesline'\]/, 'the pressing page redraws the rail from the reply');
+
+# --- the editor and the right-press menu ------------------------------------
+my $template = read_file(repo_root() . '/templates/apps/clothesline.html.ep');
+like($template, qr/setting="anticipatory"/, 'the editor carries the anticipatory select');
+like($template, qr/class="clothes_schedule"/, 'and the phrase box');
+like($template, qr/class="clothes_hidden"/, 'and the show-on-the-clothesline tick');
+like($template, qr/schedule_status/, 'the editor prints what the Guide read');
+
+my $timeline_js = read_file(repo_root() . '/public/js/manager/clothesline/01_timeline.js');
+like($timeline_js, qr/clothesline_menu_row/, 'a right-press builds the rail menu');
+like($timeline_js, qr/command == 'edit'/, 'with Edit');
+like($timeline_js, qr/command == 'remove'/, 'Remove');
+like($timeline_js, qr/command == 'bump'/, 'and Bump');
+like($timeline_js, qr/manager\/clothesline\/schedule/, 'the phrase box asks the Guide');
+like($timeline_js, qr/\.clothes_hidden/, 'the show tick hides and restores a pill');
+
+my $misc12 = read_file(repo_root() . '/lib/JawnOS/Controller/manager_misc12.pm');
+like($misc12, qr/sub action_41750/, 'the phrase has a route of its own');
+like($misc12, qr/clothesline_schedule_read/, 'read by the Guide associate');
+like($misc12, qr/clothesline_schedule_status/, 'and its answer is what the editor prints');
 
 done_testing();

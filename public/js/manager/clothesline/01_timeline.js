@@ -301,6 +301,7 @@ $(document).on('change', '.clothes', function() {
 		type: 'POST',
 		data: data,
 		success: function(response) {
+			clotheslineRefresh();
 		}
 	});
 });
@@ -341,6 +342,149 @@ $(document).on('click', '.clothes_picker', function() {
 		type: 'POST',
 		data: { setting: setting, value: value, app: app, timestamp: timestamp, is_json: 'yes' },
 		success: function(response) {
+			clotheslineRefresh();
 		}
 	});
+});
+
+// ---- the rail's own menu ---------------------------------------------------
+// A right-press on a garment is about that pill: open its editor, take it off
+// the line, or move it between the anticipatory head and the alphabetical rest.
+function clotheslineGemAt(x, y) {
+	var found;
+	$.each(appPosition, function(i, o) {
+		if (!o || !o[4] || o[4]['type'] != 'clothes') { return true; }
+		if (o[0] < x && o[2] > x && o[1] < y && o[3] > y) { found = o[4]; return false; }
+		return true;
+	});
+	return found;
+}
+
+function clotheslineMenuRow(menu, command, label) {
+	$('<div class="clothesline_menu_row"></div>').attr('command', command).text(label).appendTo(menu);
+}
+
+function clotheslineMenu(item, px, py) {
+	$('.clothesline_menu').remove();
+	var menu = $('<div class="clothesline_menu"></div>')
+		.attr('app', item['app'])
+		.attr('head', item['head'] ? 1 : 0);
+	clotheslineMenuRow(menu, 'edit', jawnosT('Edit'));
+	clotheslineMenuRow(menu, 'remove', jawnosT('Remove'));
+	clotheslineMenuRow(menu, 'bump', jawnosT('Bump'));
+	$('body').append(menu);
+	var margin = 6;
+	var left = Math.min(px, $(window).width() - menu.outerWidth() - margin);
+	var top = Math.min(py, $(window).height() - menu.outerHeight() - margin);
+	menu.css({ left: Math.max(margin, left), top: Math.max(margin, top) });
+}
+
+$(document).on('contextmenu', '.background', function(e) {
+	var y = numeral(e.clientY + $(document).scrollTop()).value();
+	if (y < clothesLinePos['minHeight'] || y > clothesLinePos['maxHeight']) { return; }
+	var x = e.clientX - numeral($(this).css('left')).value();
+	var item = clotheslineGemAt(x, y);
+	if (!item) { return; }
+	e.preventDefault();
+	clotheslineMenu(item, e.clientX, e.clientY);
+});
+
+$(document).on('click', '.clothesline_menu_row', function(e) {
+	e.preventDefault();
+	var row = $(this);
+	var menu = row.closest('.clothesline_menu');
+	var app = menu.attr('app');
+	var head = menu.attr('head') == '1';
+	var command = row.attr('command');
+	menu.remove();
+	if (command == 'edit') {
+		$.ajax({
+			url: '/manager/clothesline',
+			type: 'GET',
+			data: { app: app, timestamp: Date.now() },
+			success: function(response) {
+				jawnosAlert(response.html);
+			}
+		});
+	}
+	else if (command == 'remove') {
+		clotheslineSet(app, 'hidden', 1);
+	}
+	else if (command == 'bump') {
+		clotheslineSet(app, 'anticipatory', head ? 'exclude' : 'include');
+	}
+});
+
+$(document).on('click', function() { $('.clothesline_menu').remove(); });
+$(document).on('contextmenu', function(e) {
+	// the right-press that opens the menu is the same event: only a press away
+	// from the rail puts it away
+	if (!$(e.target).closest('.background').length) { $('.clothesline_menu').remove(); }
+});
+
+function clotheslineSet(app, setting, value) {
+	$.ajax({
+		url: '/manager/clothesline',
+		type: 'POST',
+		data: { app: app, setting: setting, value: value, timestamp: Date.now() },
+		success: function() { clotheslineRefresh(); }
+	});
+}
+
+function clotheslineRefresh() {
+	$.ajax({
+		url: '/manager/clothesline_rail',
+		type: 'GET',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			if (response && response['clothesline']) { clotheslineHanger(response['clothesline']); }
+		}
+	});
+}
+
+// ---- the phrase box: the Guide reads it into days -------------------------
+// The words go to the Guide associate, which answers with the days and hours
+// the rail then matches. A phrase it cannot read comes back as its question.
+function clotheslineScheduleRead(input) {
+	var app = input.attr('app');
+	var text = $.trim(input.val() || '');
+	if (input.attr('data-sent') === text) { return; }
+	input.attr('data-sent', text);
+	var status = $('.clothes_schedule_status');
+	status.removeClass('clothes_schedule_ok').text(jawnosT('Asking the Guide…'));
+	$.ajax({
+		url: '/manager/clothesline/schedule',
+		type: 'POST',
+		data: { app: app, text: text, timestamp: Date.now() },
+		success: function(response) {
+			response = response || {};
+			if (response['ask']) {
+				status.removeClass('clothes_schedule_ok').text(response['ask']);
+			}
+			else if (response['message'] !== undefined) {
+				status.addClass('clothes_schedule_ok').text(response['message']);
+			}
+			else {
+				status.text(jawnosT('The Guide did not answer that.'));
+			}
+			if (response['ok']) { clotheslineRefresh(); }
+		},
+		error: function() {
+			status.removeClass('clothes_schedule_ok').text(jawnosT('The Guide did not answer that.'));
+		}
+	});
+}
+
+$(document).on('keydown', '.clothes_schedule', function(e) {
+	if (e.key != 'Enter') { return; }
+	e.preventDefault();
+	clotheslineScheduleRead($(this));
+});
+
+$(document).on('change', '.clothes_schedule', function() {
+	clotheslineScheduleRead($(this));
+});
+
+$(document).on('change', '.clothes_hidden', function() {
+	clotheslineSet($(this).attr('app'), 'hidden', $(this).is(':checked') ? 1 : 0);
 });
