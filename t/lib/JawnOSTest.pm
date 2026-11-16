@@ -355,6 +355,15 @@ sub _setup {
 			or die "JawnOSTest: symlink lib: $!\n";
 	}
 	mkdir "$SANDBOX/database" or die "JawnOSTest: mkdir database: $!\n";
+	# A worktree has no live database (it is gitignored), so the sandbox has to
+	# build its own from the factory seed or the shipped schema. database_bootstrap
+	# resolves both from the sandbox's install dir, so link them beside the copy.
+	for my $seed (qw(initial.enc schema.sql)) {
+		my $source = "$ROOT/database/$seed";
+		next unless -e $source;
+		symlink($source, "$SANDBOX/database/$seed")
+			or die "JawnOSTest: symlink database/$seed: $!\n";
+	}
 	mkdir "$SANDBOX/.president" or die "JawnOSTest: mkdir .president: $!\n";
 
 	# Only what boot reads: device, language, logfile. The logfile is absolute
