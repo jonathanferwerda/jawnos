@@ -257,6 +257,33 @@ subs::preload($_) for qw(
 	ok($fake->{'jar'} && ref($fake->{'jar'}) eq 'FakeJar', 'and the stored session is restored afterwards');
 }
 
+# ... and it must be sent at all when the row holds no cookie. Requiring one
+# deadlocked a peer that had none: no handshake, so no plan, so no pull, so
+# never a login to store the cookie (the hub, 2026-11-16).
+{
+	my ($fake, $got);
+	{
+		no warnings 'redefine';
+		local $subs::config = { domain => 'jawnos.test' };
+		local *subs::remote_machine_tunnel_processor = sub { $_[0] };
+		local *subs::peer_live_manager = sub { $_[0]->{'manager'} };
+		local *subs::peer_secure_url = sub { ($_[1], 0) };
+		local *subs::peer_tls_verify = sub { 1 };
+		local *subs::signatorial_designer = sub { 'self-sig' };
+		local *Mojo::UserAgent::new = sub { $fake = FakeUA->new };
+		$got = subs::remote_useragent_maker({
+			auth_test => 'yes',
+			rm => {
+				manager => 'https://10.0.0.5:45545', ip => '10.0.0.5', port => '45545',
+				signatorial => 'ab' x 16,
+			},
+		});
+	}
+	ok($fake->{'gets'} && scalar @{$fake->{'gets'}}, 'a peer with no stored cookie still gets the handshake');
+	like($fake->{'gets'}->[-1], qr|/manager/remote_auth_test\?|, 'on the signed handshake route');
+	ok($got->{'res'}, 'and its answer is handed back for the plan');
+}
+
 # --- a verified helper agent reaches the request unmodified -----------------
 # Render::destination_relay used to call ->insecure(1) on the agent the helper
 # returned, so a peer with a house-CA leaf was downgraded for the hand-off.

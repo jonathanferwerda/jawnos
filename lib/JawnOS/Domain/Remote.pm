@@ -327,6 +327,16 @@ my %peer_tls_probe;
 # the CA; 0 otherwise. A short TCP probe, cached for five minutes per host, is
 # cheaper than a TLS failure on every clock hop, and it is what lets an enrolled
 # house talk to a peer that has not been issued a leaf yet.
+# How long a listener probe's answer stands. A proven leaf is stable for the
+# full five minutes. A failure is often the two-second window losing a busy
+# tailnet, and caching that for five minutes refused the credentialed login -
+# and with it the session cookie - long after the listener answered again (134
+# refusals from 2026-11-11). A negative is retried after half a minute.
+sub peer_tls_probe_ttl {
+	my ($ok) = @_;
+	return $ok ? 300 : 30;
+}
+
 sub peer_tls_port {
 	my ($rm, $opts) = @_;
 	$opts ||= {};
@@ -338,7 +348,7 @@ sub peer_tls_port {
 	my $key = $host . ':' . $port;
 	my $now = time;
 	if (my $cached = $peer_tls_probe{$key}) {
-		return $cached->[1] if $now - $cached->[0] < 300;
+		return $cached->[1] if $now - $cached->[0] < &peer_tls_probe_ttl($cached->[1]);
 	}
 	# The listener is worth dialling only when its leaf proves this address. A
 	# LAN address that moved (DHCP) leaves the leaf naming the old one, and then
@@ -588,49 +598,6 @@ sub remote_useragent_maker($data) {
 		$rm->{'ua'} = $ua;
 		$rm->{'ua'}->inactivity_timeout(3000);
 		$rm->{'ua'}->insecure(1) unless $manager_verified;
-		my $domain = $config->{'domain'} || $ip;
-		if ($auth_test eq 'yes' || $data->{'chip_chyea'}) {
-			my $url = $rm->{'manager'} . '/manager/remote_auth_test?signatorial=' . &subs::signatorial_designer() . '&auth_test=' . $auth_test;
-			if ($data->{'chip_chyea'}) {
-				$rm->{'ua'}->inactivity_timeout(2);
-				$url .= '&chip_chyea=' . $data->{'chip_chyea'};
-			}
-			$url .= '&domain=' . $config->{'domain'};
-			if ($auth_test eq 'yes' && defined $data->{'since'}) {
-				$url .= '&since=' . int($data->{'since'});
-			}
-			if ($auth_test eq 'yes' && ref $data->{'digest'} eq 'HASH') {
-				my %cuts = map { $_ => ($data->{'digest'}->{$_}->{'max'} || 0) } keys %{$data->{'digest'}};
-				$url .= '&cuts=' . Mojo::Util::url_escape(&subs::sync_map_encode(\%cuts));
-			}
-			$url .= '&tombstone_cursor=' . int($data->{'tombstone_cursor'} || 0) if $auth_test eq 'yes';
-			# The handshake is a cheap route that must answer quickly. The UA's other
-			# timeout (3000s) exists so a snapshot pull can wait on a peer building a
-			# large export; inheriting it here meant one stuck peer froze the whole
-			# reconnector for fifty minutes, and every later peer in the roster waited
-			# behind it. Bound this one request and put the long timeout back for the
-			# requests that need it.
-			my $long_timeout = $rm->{'ua'}->inactivity_timeout;
-			# The signed handshake needs no session: the route is gate-exempt and
-			# authenticates the caller by its peer key. A stored session cookie can be
-			# a lapsed or denial session, and the gate can refuse it before the route's
-			# signature check (a 500 page). That read as "the peer is offline", so
-			# every machine stopped pulling a peer whose rows had plainly moved - the
-			# tablet's new appointments did not reach the others. Send the handshake
-			# on an empty jar and restore the stored session for the gated calls that
-			# follow (the auth probe and the relay).
-			my $held_jar = $rm->{'ua'}->cookie_jar;
-			$rm->{'ua'}->cookie_jar(Mojo::UserAgent::CookieJar->new);
-			$rm->{'ua'}->inactivity_timeout(15);
-			my $res = eval { return $rm->{'ua'}->get($url => {Accept => '*/*'} => 'Content!')->result };
-			$rm->{'ua'}->cookie_jar($held_jar);
-			$rm->{'ua'}->inactivity_timeout($long_timeout);
-			if (eval { $res->is_success }) {
-				$rm->{'res'} = $res;
-			} else {
-				$rm->{'ua'} = undef;
-			}
-		}
 	}
 	else {
 		# No stored session. The signed rail is what authenticates a peer request
@@ -641,6 +608,52 @@ sub remote_useragent_maker($data) {
 		$rm->{'ua'} = $ua;
 		$rm->{'ua'}->insecure(1) unless $manager_verified;
 		$rm->{'ua'}->inactivity_timeout(60);
+	}
+	# The signed handshake needs no session: the route is gate-exempt and
+	# authenticates the caller by its peer key. It must also run when the row
+	# holds no cookie at all. Requiring one deadlocked a peer that had none -
+	# the handshake is the proof the reconnector plans from, and the login that
+	# would have stored a cookie is only reached after that proof, so the peer
+	# was called offline on every tick and never logged in again (the hub,
+	# 2026-11-16).
+	if (($auth_test eq 'yes' || $data->{'chip_chyea'}) && $rm->{'ua'}) {
+		my $url = $rm->{'manager'} . '/manager/remote_auth_test?signatorial=' . &subs::signatorial_designer() . '&auth_test=' . $auth_test;
+		if ($data->{'chip_chyea'}) {
+			$rm->{'ua'}->inactivity_timeout(2);
+			$url .= '&chip_chyea=' . $data->{'chip_chyea'};
+		}
+		$url .= '&domain=' . $config->{'domain'};
+		if ($auth_test eq 'yes' && defined $data->{'since'}) {
+			$url .= '&since=' . int($data->{'since'});
+		}
+		if ($auth_test eq 'yes' && ref $data->{'digest'} eq 'HASH') {
+			my %cuts = map { $_ => ($data->{'digest'}->{$_}->{'max'} || 0) } keys %{$data->{'digest'}};
+			$url .= '&cuts=' . Mojo::Util::url_escape(&subs::sync_map_encode(\%cuts));
+		}
+		$url .= '&tombstone_cursor=' . int($data->{'tombstone_cursor'} || 0) if $auth_test eq 'yes';
+		# The handshake is a cheap route that must answer quickly. The UA's other
+		# timeout (3000s) exists so a snapshot pull can wait on a peer building a
+		# large export; inheriting it here meant one stuck peer froze the whole
+		# reconnector for fifty minutes, and every later peer in the roster waited
+		# behind it. Bound this one request and put the long timeout back for the
+		# requests that need it.
+		my $long_timeout = $rm->{'ua'}->inactivity_timeout;
+		# A stored session cookie can be a lapsed or denial session, and the gate
+		# can refuse it before the route's signature check (a denial page). That
+		# read as "the peer is offline", so every machine stopped pulling a peer
+		# whose rows had plainly moved. Send the handshake on an empty jar and
+		# restore the stored session for the gated calls that follow.
+		my $held_jar = $rm->{'ua'}->cookie_jar;
+		$rm->{'ua'}->cookie_jar(Mojo::UserAgent::CookieJar->new);
+		$rm->{'ua'}->inactivity_timeout(15);
+		my $res = eval { return $rm->{'ua'}->get($url => {Accept => '*/*'} => 'Content!')->result };
+		$rm->{'ua'}->cookie_jar($held_jar);
+		$rm->{'ua'}->inactivity_timeout($long_timeout);
+		if (eval { $res->is_success }) {
+			$rm->{'res'} = $res;
+		} else {
+			$rm->{'ua'} = undef;
+		}
 	}
 	# A reconnector pass is a probe, not a pull: one silent peer must not hold
 	# the utility slot with the pull-sized inactivity bound. The snapshot pull
