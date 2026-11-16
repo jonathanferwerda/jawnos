@@ -1384,11 +1384,34 @@ sub clothesline_routine_scan {
 	@recent_completed = sort { $a->{'ms'} <=> $b->{'ms'} } @recent_completed;
 	@started = sort { $a->{'ms'} <=> $b->{'ms'} } @started;
 
-	my @now_t = localtime(int($now / 1000));
-	my $today = &clothesline_day_index($now);
-	my $today_wday = $now_t[6];
-	# The weekdays the window actually offered, up to yesterday: a Monday habit
-	# is not weakened by today's Monday not having happened yet.
+	# The step at hand, and the run of the routine it belongs to. The routine
+	# keeps the day it began, so one that runs past midnight is still that day's
+	# routine - the steps already taken do not come round again when the clock
+	# turns.
+	my $last_any;
+	if (@recent_completed) {
+		$last_any = { app => $recent_completed[-1]{'app'}, ms => $recent_completed[-1]{'ms'}, type => 'done' };
+	}
+	if (@started && (!$last_any || $started[-1]{'ms'} >= $last_any->{'ms'})) {
+		$last_any = { app => $started[-1]{'app'}, ms => $started[-1]{'ms'}, type => 'start' };
+	}
+	my $active = ($last_any && ($now - $last_any->{'ms'}) <= $pause) ? 1 : 0;
+	my $last_start = @recent_completed ? $recent_completed[-1]{'ms'} : undef;
+	for (my $i = $#recent_completed; $i > 0; $i--) {
+		last if $recent_completed[$i]{'ms'} - $recent_completed[$i-1]{'ms'} > $pause;
+		$last_start = $recent_completed[$i-1]{'ms'};
+	}
+	my $belongs = 0;
+	if ($active && defined $last_start) {
+		if ($last_any->{'type'} ne 'start') { $belongs = 1; }
+		elsif (@recent_completed && ($last_any->{'ms'} - $recent_completed[-1]{'ms'}) <= $pause) { $belongs = 1; }
+	}
+	my $anchor_ms = $belongs ? $last_start : $now;
+	my $today = &clothesline_day_index($anchor_ms);
+	my @day_t = localtime(int($anchor_ms / 1000));
+	my $today_wday = $day_t[6];
+	# The weekdays the window actually offered, up to the routine's own day: a
+	# Monday habit is not weakened by the Monday not having happened yet.
 	my %offered;
 	for my $d ( ($today - $window) .. ($today - 1) ) {
 		my $wd = (($d - $today + $today_wday) % 7 + 7) % 7;
@@ -1485,28 +1508,18 @@ sub clothesline_routine_scan {
 		if ($start_count{$app} > $start_best) { ($start_app, $start_best) = ($app, $start_count{$app}); }
 	}
 
-	# what the person has already finished today, by app: the line takes those
-	# occurrences out of the canonical sequence, wherever in it they sit
+	# what this run of the routine has already finished, by app: the line takes
+	# those occurrences out of the canonical sequence, wherever in it they sit
 	my %done;
-	foreach my $r ( @recent_completed ) {
-		$done{$r->{'app'}}++ if &clothesline_day_index($r->{'ms'}) == $today;
+	if ($belongs) {
+		foreach my $r ( @recent_completed ) {
+			$done{$r->{'app'}}++ if $r->{'ms'} >= $last_start;
+		}
 	}
 
-	# the step at hand: the latest completed step, or a start still running
-	my $last_any;
-	if (@recent_completed) {
-		$last_any = { app => $recent_completed[-1]{'app'}, ms => $recent_completed[-1]{'ms'}, type => 'done' };
-	}
-	if (@started && (!$last_any || $started[-1]{'ms'} >= $last_any->{'ms'})) {
-		$last_any = { app => $started[-1]{'app'}, ms => $started[-1]{'ms'}, type => 'start' };
-	}
-
-	my $current = { active => 0, running => undef, start => undef };
-	if ($last_any && ($now - $last_any->{'ms'}) <= $pause) {
-		$current->{'active'} = 1;
-		$current->{'running'} = $last_any->{'app'} if $last_any->{'type'} eq 'start';
-		$current->{'start'} = @sessions ? $sessions[-1]{'start'} : undef;
-	}
+	my $current = { active => $active, running => undef, start => undef };
+	$current->{'running'} = $last_any->{'app'} if $active && $last_any->{'type'} eq 'start';
+	$current->{'start'} = $belongs ? $last_start : undef;
 
 	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any, done => \%done, start_app => $start_app };
 }
@@ -1533,15 +1546,15 @@ sub clothesline_sequence_similarity {
 
 # The most common recent day: the session whose sequence is most like all the
 # others, with an exact shape winning a tie and the later session after that. A
-# day that moves one step is still close to the rest; a one-off day is not. Each
-# day is cut at the app that opens the routine and held to its first thirty
-# steps, which is as far as the anticipatory head can reach and keeps the
-# comparison cheap.
+# day that moves one step is still close to the rest; a one-off day is not. The
+# comparison looks at the first thirty steps after the routine's start, which is
+# cheap and enough to tell one day's shape from another; the whole day is
+# returned, so the head can reach the evening's steps as the day goes on.
 sub clothesline_sequence_canonical {
 	my ($sessions, $start_app) = @_;
 	$sessions = [] unless ref $sessions eq 'ARRAY';
 	my $cap = 30;
-	my @seqs;
+	my (@full, @cut);
 	foreach my $session ( @{$sessions} ) {
 		next unless ref $session eq 'HASH' && ref $session->{'seq'} eq 'ARRAY';
 		my @seq = @{ $session->{'seq'} };
@@ -1551,28 +1564,30 @@ sub clothesline_sequence_canonical {
 			for my $i ( 0 .. $#seq ) { if ($seq[$i] eq $start_app) { $at = $i; last; } }
 			@seq = @seq[$at .. $#seq] if $at >= 0;
 		}
-		@seq = @seq[0 .. $cap - 1] if @seq > $cap;
-		push @seqs, \@seq;
+		push @full, \@seq;
+		my @short = @seq;
+		@short = @short[0 .. $cap - 1] if @short > $cap;
+		push @cut, \@short;
 	}
-	return [] unless @seqs;
-	return $seqs[0] if @seqs == 1;
+	return [] unless @full;
+	return $full[0] if @full == 1;
 
-	my ($best, $best_score, $best_freq, $best_idx) = (undef, -1, -1, -1);
-	for my $i ( 0 .. $#seqs ) {
+	my ($best_idx, $best_score, $best_freq) = (-1, -1, -1);
+	for my $i ( 0 .. $#cut ) {
 		my $score = 0;
-		for my $j ( 0 .. $#seqs ) {
+		for my $j ( 0 .. $#cut ) {
 			next if $i == $j;
-			$score += &clothesline_sequence_similarity($seqs[$i], $seqs[$j]);
+			$score += &clothesline_sequence_similarity($cut[$i], $cut[$j]);
 		}
-		my $shape = join("\x1f", @{$seqs[$i]});
-		my $freq = scalar grep { join("\x1f", @{$_}) eq $shape } @seqs;
+		my $shape = join("\x1f", @{$cut[$i]});
+		my $freq = scalar grep { join("\x1f", @{$_}) eq $shape } @cut;
 		if ($score > $best_score
 			|| ($score == $best_score && ($freq > $best_freq
 			|| ($freq == $best_freq && $i > $best_idx)))) {
-			($best, $best_score, $best_freq, $best_idx) = ($seqs[$i], $score, $freq, $i);
+			($best_idx, $best_score, $best_freq) = ($i, $score, $freq);
 		}
 	}
-	return $best || [];
+	return $best_idx >= 0 ? $full[$best_idx] : [];
 }
 
 # The next steps of the routine, in the order the most common recent day keeps

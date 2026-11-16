@@ -1163,6 +1163,12 @@ elsif ($type eq 'delay') {
 		}, { name => 'reset file encrypt' });
 	}
 	&subs::appointment_theme_push() if ($theme_movement =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/);
+	# The steps just written change what the clothesline anticipates, so hang it
+	# now instead of leaving the rail for its next poll. The page that pressed
+	# gets the new line in the reply; the others are told to refresh.
+	&subs::hang_to_dry();
+	$returner->{'clothesline'} = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
+	&Websocket::send('server', { console => &Websocket::console_command('calculator') });
 	$seg->('tail');
 	$log->info('reset segments ' . ($type // '?') . ' ' . $app . ': ' . join(' ', @seg_times));
 	return $returner;

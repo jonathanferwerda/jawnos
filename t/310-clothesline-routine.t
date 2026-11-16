@@ -1,8 +1,10 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm public/js/manager/manager/09_app_back.js
 # covers:    The clothesline leads with the most common recent day's sequence,
 #            not the latest day: a step moved earlier or later leaves the rest
 #            in order, a step done twice is one pill at its next turn, and the
 #            cadence may be every second, third, fifth ... day up to a month.
+#            A routine keeps the day it began past midnight, and every press
+#            re-hangs the line in the reply instead of waiting for the poll.
 #            Only the appointments the person starts and stops themselves are
 #            learned; a task or default step stays with its parent.
 
@@ -119,6 +121,21 @@ is($m30->{'apps'}{'every_30'}{'cadence'}, 30, 'the month is the cadence it learn
 my $m30b = subs::clothesline_routine_scan(\@monthly, JawnOSTest::ts(2026, 11, 17, 12, 0), window_days => 60, session_days => 14);
 is($m30b->{'apps'}{'every_30'}{'due'}, 0, 'and off the rest of the month');
 
+# --- the routine keeps its own day past midnight ----------------------------
+my @night = (
+	row('wake_up', JawnOSTest::ts(2026, 11, 15, 14, 0)),
+	row('pee',     JawnOSTest::ts(2026, 11, 15, 14, 5)),
+	row('lunch',   JawnOSTest::ts(2026, 11, 15, 18, 0)),
+	row('dinner',  JawnOSTest::ts(2026, 11, 15, 23, 0)),
+	row('bed',     JawnOSTest::ts(2026, 11, 16, 2, 0)),
+);
+my $night = subs::clothesline_routine_scan(\@night, JawnOSTest::ts(2026, 11, 16, 3, 0), window_days => 60, session_days => 14);
+is($night->{'done'}{'wake_up'}, 1, 'the morning is still finished after midnight');
+is($night->{'done'}{'dinner'}, 1, 'the evening steps are finished too');
+is($night->{'current'}{'active'}, 1, 'the routine is still under way');
+my $next_morning = subs::clothesline_routine_scan(\@night, JawnOSTest::ts(2026, 11, 16, 15, 0), window_days => 60, session_days => 14);
+ok(!$next_morning->{'done'}{'wake_up'}, 'a new morning starts with nothing finished');
+
 # --- the head keeps its order, the rest follows alphabetically ---------------
 my $head = [
 	{ app => 'water', formatted_name => 'Water' },
@@ -147,5 +164,13 @@ like($hang, qr/clothesline_sequence_anticipate\(\$daily/, 'the rail hangs the an
 like($hang, qr/clothesline_line_order/, 'the head leads and the tail is alphabetised');
 like($hang, qr/\$cadence >= 2 \|\| \$hourly/, 'a cadence past daily reaches the tail on its day');
 unlike($hang, qr/clothesline_hang_slots/, 'the per-slot repeat helper is gone');
+
+# --- every press re-hangs the line, and the reply carries it ----------------
+my $part14 = read_file(repo_root() . '/lib/JawnOS/Manager/Part14.pm');
+like($part14, qr/&subs::hang_to_dry\(\);/, 'a press re-hangs the line at once');
+like($part14, qr/\$returner->\{'clothesline'\}/, 'the reply carries the new line');
+like($part14, qr/console_command\('calculator'\)/, 'the other managers are told to refresh');
+my $app_back = read_file(repo_root() . '/public/js/manager/manager/09_app_back.js');
+like($app_back, qr/response\['clothesline'\]/, 'the pressing page redraws the rail from the reply');
 
 done_testing();

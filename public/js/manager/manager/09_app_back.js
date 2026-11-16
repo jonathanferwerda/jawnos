@@ -203,6 +203,16 @@ function appointmentResetDrain(key) {
 			if (response && response['header'] && typeof jawnosHeaderApply === 'function') {
 				jawnosHeaderApply(item.data.app, response['header'], response['server_time']);
 			}
+			// The reply carries the line the press just changed, so the rail is
+			// redrawn at once instead of waiting for the next poll. The height is
+			// held to the rail's band, or to nothing when the line has emptied.
+			if (response && response['clothesline'] && typeof clotheslineHanger === 'function') {
+				if (typeof clotheslineEnabled != 'undefined' && typeof clothesLineBaseHeight != 'undefined') {
+					clothesLineHeight = (clotheslineEnabled && response['clothesline'].length) ? clothesLineBaseHeight : 0;
+				}
+				clotheslineHanger(response['clothesline']);
+				if (typeof deskPosition === 'function') { deskPosition(); }
+			}
 			appointmentResetDrain(key);
 			if (item.done) { item.done(response); }
 		},
