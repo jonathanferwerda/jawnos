@@ -256,7 +256,8 @@ function storeRegisterOpen(cx) {
 	var shell = $('#register_app');
 	if (shell.children().length) {
 		shell.addClass('open');
-		storeRegisterRefresh();
+		storeRegisterRefresh(storeRegisterData.pending || undefined);
+		storeRegisterData.pending = '';
 		storeRegisterTillRefresh();
 		return;
 	}
@@ -270,7 +271,8 @@ function storeRegisterOpen(cx) {
 			if (!response || !response.content) { return; }
 			shell.html(response.content).addClass('open');
 			storeRegisterData.last = storeRegisterLastReceipt();
-			storeRegisterRefresh();
+			storeRegisterRefresh(storeRegisterData.pending || undefined);
+			storeRegisterData.pending = '';
 			storeRegisterTillRefresh();
 		}
 	});
@@ -288,6 +290,21 @@ function storeRegisterLastReceipt() {
 	} catch (e) { return null; }
 }
 
+// Which tab the person was on. The orders are rows now, so closing the register
+// (or a worker being recycled between two taps) no longer loses them; the tab
+// is remembered too, so reopening lands where they left off instead of on
+// whichever order happens to be first.
+function storeRegisterActiveStored() {
+	try { return localStorage.getItem('store_register_active') || ''; } catch (e) { return ''; }
+}
+
+function storeRegisterActiveRemember(id) {
+	try {
+		if (id) { localStorage.setItem('store_register_active', id); }
+		else { localStorage.removeItem('store_register_active'); }
+	} catch (e) {}
+}
+
 function storeRegisterRefresh(active) {
 	$.getJSON('/manager/store/register/state', { timestamp: Date.now() }, function(r) {
 		if (!r || !r.ok) { return; }
@@ -300,8 +317,12 @@ function storeRegisterRefresh(active) {
 			storeRegisterData.active = active;
 		}
 		if (!storeRegisterOrderById(storeRegisterData.active)) {
-			storeRegisterData.active = storeRegisterData.orders.length ? storeRegisterData.orders[0].id : '';
+			var stored = storeRegisterActiveStored();
+			storeRegisterData.active = storeRegisterOrderById(stored)
+				? stored
+				: (storeRegisterData.orders.length ? storeRegisterData.orders[0].id : '');
 		}
+		storeRegisterActiveRemember(storeRegisterData.active);
 		if (!storeRegisterData.orders.length) {
 			storeRegisterNew(false);
 			return;
@@ -352,7 +373,16 @@ function storeRegisterApply(r) {
 	}
 	if (!replaced) { storeRegisterData.orders.push(order); }
 	storeRegisterData.active = order.id;
+	storeRegisterActiveRemember(order.id);
 	storeRegisterRender();
+}
+
+// Open the register on one order, not just the first one. The floor uses it to
+// hand a table's order to the till.
+function storeRegisterOpenOrder(id) {
+	storeRegisterData.pending = id || '';
+	if (id) { storeRegisterActiveRemember(id); }
+	storeRegisterOpen();
 }
 
 function storeRegisterPost(url, data, done) {
@@ -507,6 +537,74 @@ function storeRegisterRenderPay() {
 function storeRegisterShowChange(change) {
 	if (!change) { return; }
 	$('#store_register_change').text(numeral(Math.max(change.change, 0)).format('$0.00'));
+}
+
+// ---- a name on the order ----------------------------------------------------
+// A walk-in stays "Customer". The panel either picks a name the house already
+// knows or writes a new one as the kind the person is - a person, a corporation,
+// a vendor, an institution and the rest of the constructs - which is the same
+// settings row every other window reads.
+function storeRegisterCustomerPanel(show) {
+	var panel = $('#store_register_customer_panel');
+	if (!panel.length) { return; }
+	var open = (typeof show === 'boolean') ? show : !panel.is(':visible');
+	panel.toggle(open);
+	storeRegisterCustomerStatus('');
+	if (open) { $('#store_register_customer_search').trigger('focus'); }
+}
+
+function storeRegisterCustomerStatus(text) {
+	var status = $('#store_register_customer_status');
+	if (status.length) { status.text(text || ''); }
+}
+
+function storeRegisterCustomerSearch() {
+	clearTimeout(storeRegisterData.customer_timer);
+	var term = $.trim($('#store_register_customer_search').val() || '');
+	var results = $('#store_register_customer_results').empty();
+	if (term.length < 2) { return; }
+	storeRegisterData.customer_timer = setTimeout(function() {
+		$.getJSON('/manager/store/register/customer_search', { search: term, timestamp: Date.now() }, function(r) {
+			if (!r || !r.ok) { return; }
+			if (!(r.customers || []).length) {
+				results.append($('<p class="store_register_empty"></p>').text(storeRegisterT('Nothing matches that name. Add them below.')));
+				return;
+			}
+			$.each(r.customers, function(i, customer) {
+				results.append($('<button type="button" class="store_register_customer_result"></button>')
+					.attr('data-cx', customer.cx || '')
+					.text(customer.name || ''));
+			});
+		});
+	}, 250);
+}
+
+function storeRegisterCustomerUse(cx) {
+	var order = storeRegisterActive();
+	if (!order || !cx) { return; }
+	storeRegisterPost('/manager/store/register/customer', { id: order.id, cx: cx }, function(r) {
+		storeRegisterCustomerPanel(false);
+		storeRegisterApply(r);
+	});
+}
+
+function storeRegisterCustomerAdd() {
+	var order = storeRegisterActive();
+	if (!order) { storeRegisterCustomerStatus(storeRegisterT('There is no open order.')); return; }
+	var name = $.trim($('#store_register_customer_new_name').val() || '');
+	if (!name.length) { storeRegisterCustomerStatus(storeRegisterT('A name is needed.')); return; }
+	storeRegisterCustomerStatus('');
+	storeRegisterPost('/manager/store/register/customer', {
+		id: order.id,
+		name: name,
+		kind: $('#store_register_customer_kind').val() || 'person'
+	}, function(r) {
+		$('#store_register_customer_new_name').val('');
+		$('#store_register_customer_search').val('');
+		$('#store_register_customer_results').empty();
+		storeRegisterCustomerPanel(false);
+		storeRegisterApply(r);
+	});
 }
 
 // ---- the till ---------------------------------------------------------------
@@ -833,6 +931,28 @@ $(document).on('click', '#store_register_new', function() {
 	storeRegisterNew();
 });
 
+$(document).on('click', '#store_register_customer_open', function() {
+	storeRegisterCustomerPanel();
+});
+
+$(document).on('input', '#store_register_customer_search', function() {
+	storeRegisterCustomerSearch();
+});
+
+$(document).on('click', '.store_register_customer_result', function() {
+	storeRegisterCustomerUse($(this).attr('data-cx'));
+});
+
+$(document).on('click', '#store_register_customer_save', function() {
+	storeRegisterCustomerAdd();
+});
+
+// Back to the floor: the till steps aside so the tables are in reach again.
+$(document).on('click', '#store_register_floor', function() {
+	storeRegisterClose();
+	if (typeof storeFloorOpen === 'function') { storeFloorOpen(); }
+});
+
 $(document).on('click', '#store_register_till_open', function() {
 	$('#store_register_till_close_panel').hide();
 	$('#store_register_till_panel').css('display', 'flex');
@@ -906,8 +1026,10 @@ $(document).on('click', '.store_register_tab', function() {
 	var id = $(this).attr('data-order');
 	if (!id) { return; }
 	storeRegisterData.active = id;
+	storeRegisterActiveRemember(id);
 	storeRegisterData.received = 0;
 	storeRegisterData.payment = 'cash';
+	storeRegisterCustomerPanel(false);
 	storeRegisterRender();
 });
 

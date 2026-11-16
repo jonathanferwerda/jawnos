@@ -1,5 +1,7 @@
-# tests-for: lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Crest.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/Routes/manager_store.pm public/js/store/register.js templates/store/register.html.ep public/js/store.js templates/store/store.html.ep templates/ribbons.html.ep
-# covers:    The Store's Register is a cash till, not a customer page.
+# tests-for: lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Crest.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/Routes/manager_store.pm public/js/store/register.js public/js/store/floor.js templates/store/register.html.ep templates/store/floor.html.ep templates/store/store.html.ep public/js/store.js templates/ribbons.html.ep
+# covers:    The Store's Register is a cash till, not a customer page; an open
+#            order is a row that survives the counter, a name can be put on it,
+#            and the floorplan seats orders.
 
 use strict;
 use warnings;
@@ -22,9 +24,12 @@ binmode Test::More->builder->failure_output, ':encoding(UTF-8)';
 my $root = root();
 
 # The Store's Register is a cash till, not a customer page. A walk-in has no
-# account: the order is kept in the manager's memory, and only a paid order is
-# written as a sale. These checks pin the money, the independent tabs, the
-# receipt payload and the labels; nothing here touches the live database.
+# account: the order is a row, and only a paid order is written as a sale. These
+# checks pin the money, the independent tabs, the receipt payload and the
+# labels. The test database is a copy of the live house, so a version that has
+# not migrated it yet gets the two new tables here.
+&subs::db_query('create table if not exists store_order (uuid VARCHAR(255) unique, device VARCHAR(255), label VARCHAR(255), customer_uuid VARCHAR(255), customer_app VARCHAR(255), customer_name VARCHAR(255), tax_exemption LONGTEXT, items LONGTEXT, seat VARCHAR(255), created VARCHAR(25), server_time VARCHAR(255), ost VARCHAR(25))');
+&subs::db_query('create table if not exists store_floorplan (uuid VARCHAR(255) unique, name VARCHAR(255), image LONGTEXT, seats LONGTEXT, server_time VARCHAR(255), ost VARCHAR(25))');
 
 # ------------------------------------------------------------- an anonymous order
 &subs::store_register_order_reset();
@@ -33,7 +38,7 @@ is( $order->{'customer'}->{'app'}, 'Customer', 'a walk-in is simply Customer' );
 ok( length($order->{'id'} || ''), 'the order has its own id so nobody has to be known' );
 
 &subs::store_register_order_add($order->{'id'}, { item => 'widget', name => 'Widget', price => 10, quantity => 1 });
-&subs::store_register_order_add($order->{'id'}, { item => 'gizmo',  name => 'Gizmo',  price => 5,  quantity => 2 });
+$order = &subs::store_register_order_add($order->{'id'}, { item => 'gizmo',  name => 'Gizmo',  price => 5,  quantity => 2 });
 
 is( scalar @{$order->{'items'}}, 2, 'two different items make two lines' );
 
@@ -47,10 +52,35 @@ is( $totals->{'quantity'}, 3, 'multiple units are counted, not just lines' );
 # Adding the same item at the same price is more units on one line; a different
 # price stays its own line so a discount on one unit is not smeared over all.
 &subs::store_register_order_add($order->{'id'}, { item => 'widget', name => 'Widget', price => 10, quantity => 1 });
+$order = &subs::store_register_order($order->{'id'});
 is( scalar @{$order->{'items'}}, 2, 'the same item at the same price is one line' );
 is( $order->{'items'}->[0]->{'quantity'}, 2, 'and its quantity went up' );
-&subs::store_register_order_quantity($order->{'id'}, $order->{'items'}->[0]->{'line'}, 1);
+$order = &subs::store_register_order_quantity($order->{'id'}, $order->{'items'}->[0]->{'line'}, 1);
 is( $order->{'items'}->[0]->{'quantity'}, 1, 'a quantity can be typed back down' );
+
+# A saved order is a row, so a reader that never saw the write (another worker,
+# a reopened register) still finds the same lines.
+my $reread = &subs::store_register_order($order->{'id'});
+is( scalar @{$reread->{'items'}}, 2, 'the order reads back from the database' );
+is( $reread->{'items'}->[1]->{'name'}, 'Gizmo', 'with its own lines intact' );
+
+# A name on the walk-in: the order keeps who the customer is, and the next read
+# agrees, so the sale is written against them.
+my $named = &subs::store_register_order_customer($order->{'id'}, {
+	cx => 'cx-named', app => 'jane_smith', name => 'Jane Smith',
+	tax_exemption => { exempt => 0, id => '', country => 'CA', codes => [] },
+});
+is( $named->{'customer'}->{'name'}, 'Jane Smith', 'a named customer is on the order' );
+my $named_again = &subs::store_register_order($order->{'id'});
+is( $named_again->{'customer'}->{'app'}, 'jane_smith', 'and the name survives the read' );
+is( $named_again->{'customer'}->{'cx'}, 'cx-named', 'the customer uuid is kept too' );
+
+# A seat is where the order sits, not a second copy of it.
+my $seated = &subs::store_register_order_seat($order->{'id'}, 'seat-1');
+is( $seated->{'seat'}, 'seat-1', 'an order can be sat at a seat' );
+is( &subs::store_register_order($order->{'id'})->{'seat'}, 'seat-1', 'and the seat reads back' );
+&subs::store_register_order_seat($order->{'id'}, '');
+is( &subs::store_register_order($order->{'id'})->{'seat'}, '', 'taking it off the floor keeps the order' );
 
 # ------------------------------------------------------------------- cash change
 my $exact = &subs::store_register_change(22.60, 22.60);
@@ -83,7 +113,7 @@ is( sprintf('%.2f', $sum), '27.40', 'the pieces add up to the change' );
 my $first  = &subs::store_register_order_open();
 my $second = &subs::store_register_order_open();
 &subs::store_register_order_add($first->{'id'},  { item => 'a', name => 'A', price => 3, quantity => 1 });
-&subs::store_register_order_add($second->{'id'}, { item => 'b', name => 'B', price => 7, quantity => 2 });
+$second = &subs::store_register_order_add($second->{'id'}, { item => 'b', name => 'B', price => 7, quantity => 2 });
 
 my $second_before = &subs::store_register_totals($second->{'items'}, 1.13)->{'total'};
 ok( &subs::store_register_order_cancel($first->{'id'}), 'the first order is given up' );
@@ -232,5 +262,82 @@ like($store_js, qr/\$\('#store_register_bottom_open'\)\.show\(\)/,
 	'clearing the customer brings the bottom Register back');
 like($js, qr/#store_register_open, #store_register_bottom_open/,
 	'both Register buttons open the same till');
+
+# ---------------------------------------------------------------- the floorplan
+# A seating plan is a picture and the seats placed on it; a seat is where an
+# order sits, and an order is still the register's own row.
+&subs::db_query("delete from store_floorplan where uuid = 'store:floorplan'");
+my $empty_plan = &subs::store_floorplan();
+is(scalar @{ $empty_plan->{'seats'} }, 0, 'a house with no plan has no seats');
+
+&subs::store_floorplan_save({ name => 'Dining room', seats => [] });
+my $named_plan = &subs::store_floorplan();
+is($named_plan->{'name'}, 'Dining room', 'the room can be named');
+
+my $crowded = &subs::store_floorplan_save({ seats => [
+	{ id => 'seat-a', name => 'Table 1', x => 10, y => 20, seats => 4, kind => 'table' },
+	{ id => 'seat-a', name => 'Duplicate', x => 30, y => 30, seats => 2, kind => 'table' },
+	{ id => 'seat-b', name => 'Window', x => 150, y => -5, seats => 99, kind => 'sofa' },
+] });
+is(scalar @{ $crowded->{'seats'} }, 2, 'a seat id is kept once');
+is($crowded->{'seats'}->[0]->{'name'}, 'Table 1', 'a seat keeps its name');
+is($crowded->{'seats'}->[1]->{'x'}, 0, 'a seat placed off the picture is pulled back onto it');
+is($crowded->{'seats'}->[1]->{'y'}, 0, 'on both axes');
+is($crowded->{'seats'}->[1]->{'kind'}, 'table', 'an unknown kind reads as a table');
+is($crowded->{'seats'}->[1]->{'seats'}, 99, 'and covers stay within 99');
+is(scalar @{ &subs::store_floorplan()->{'seats'} }, 2, 'the seats read back from the database');
+is(&subs::store_floorplan()->{'name'}, 'Dining room', 'and the room keeps its name');
+
+# A seat holds the order, so the same order is at the table and at the till.
+my $floor_order = &subs::store_register_order_open({ label => 'Table 1', seat => 'seat-a' });
+&subs::store_register_order_add($floor_order->{'id'}, { item => 'a', name => 'A', price => 4, quantity => 1 });
+my @on_floor = grep { ($_->{'seat'} || '') eq 'seat-a' } @{ &subs::store_register_orders() };
+is(scalar @on_floor, 1, 'a seated order is on the floor');
+is($on_floor[0]->{'id'}, $floor_order->{'id'}, 'and it is the same order the till sees');
+
+# Changing the picture does not erase the tables placed on it.
+&subs::store_floorplan_save({ image => 'data:image/jpeg;base64,AAAA' });
+is(&subs::store_floorplan()->{'image'}, 'data:image/jpeg;base64,AAAA', 'the picture is stored');
+is(scalar @{ &subs::store_floorplan()->{'seats'} }, 2, 'and the seats stay on the plan');
+
+# The browser asks the routes that exist, and the page carries the panel.
+my $floor_js = js_source('js/store/floor.js');
+like($floor_js, qr{/manager/store/register/floor/seat}, 'the floor asks the seat route');
+like($floor_js, qr{/manager/store/register/floor/plan}, 'and saves the plan');
+my $floor_template = read_file("$root/templates/store/floor.html.ep");
+like($floor_template, qr/id="store_floor_plan"/, 'the panel has a place for the room');
+like($floor_template, qr/id="store_floor_image_file"/, 'and a field for its picture');
+like($floor_template, qr/id="store_floor_seat_name"/, 'and a name for a table');
+like($store_page, qr/include 'store\/floor'/, 'the Store page carries the floor panel');
+
+# A walk-in can be named from the register.
+my $register_template = read_file("$root/templates/store/register.html.ep");
+like($register_template, qr/id="store_register_customer_open"/, 'the order offers Name this customer');
+like($register_template, qr/id="store_register_customer_kind"/, 'with a kind to add them as');
+like($register_template, qr/id="store_register_customer_new_name"/, 'and a name field');
+like($js, qr#/manager/store/register/customer'#, 'the register posts the name to its route');
+like($js, qr#/manager/store/register/customer_search'#, 'and searches the house names');
+
+# Reopening the register lands on the tab last used, not on whichever is first.
+like($js, qr/store_register_active/, 'the register remembers the active tab');
+
+# The route table and the domain loader name the new helpers.
+my $routes = read_file("$root/lib/JawnOS/Routes/manager_store.pm");
+like($routes, qr{/manager/store/register/customer_search'.*action_50201}, 'the name search is routed');
+like($routes, qr{/manager/store/register/customer'.*action_50202}, 'a name is written by a route');
+like($routes, qr{/manager/store/register/floor'.*action_50203}, 'the floor is read by a route');
+like($routes, qr{/manager/store/register/floor/plan'.*action_50204}, 'the plan is saved by a route');
+like($routes, qr{/manager/store/register/floor/seat'.*action_50205}, 'a seat is sat by a route');
+foreach my $name (qw(store_register_order_customer store_register_order_seat store_floorplan store_floorplan_save)) {
+	ok(&subs::provides($name), "$name is mapped in the domain loader");
+}
+
+# -------------------------------------------------------------- the schema
+my $schema_file = read_file("$root/database/schema.sql");
+like($schema_file, qr/CREATE TABLE IF NOT EXISTS store_order/, 'the schema has the open order table');
+like($schema_file, qr/CREATE TABLE IF NOT EXISTS store_floorplan/, 'and the floorplan table');
+my $migrations_file = read_file("$root/lib/JawnOS/Domain/Migrations.pm");
+like($migrations_file, qr/create table if not exists store_order/, 'an existing house gains the order table');
+like($migrations_file, qr/create table if not exists store_floorplan/, 'and the floorplan table');
 
 done_testing();

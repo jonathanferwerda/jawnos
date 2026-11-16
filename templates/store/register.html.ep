@@ -4,6 +4,7 @@
 		<h2 class="store_register_title"><%= &subs::lang('common.register') %></h2>
 		<div class="store_register_header_actions">
 			<button type="button" id="store_register_last_receipt" class="store_register_button" style="display:none;"><%= &subs::lang('common.receipt') %></button>
+			<button type="button" id="store_register_floor" class="store_register_button" hint="<%= &subs::ui('Floor') %>"><%= &subs::ui('Floor') %></button>
 			<button type="button" id="store_register_new" class="store_register_button"><%= &subs::lang('store.new_order') %></button>
 			<button type="button" id="store_register_close" class="store_register_button store_register_close"><%= &subs::lang('common.close') %></button>
 		</div>
@@ -96,6 +97,31 @@
 					</label>
 					<input type="text" id="store_register_tax_exemption" class="store_register_exemption_id" placeholder="<%= &subs::ui('Exemption ID') %>" style="display:none;">
 				</div>
+				<button type="button" id="store_register_customer_open" class="store_register_button" hint="<%= &subs::ui('Name this customer') %>"><%= &subs::ui('Name this customer') %></button>
+			</div>
+
+			<div id="store_register_customer_panel" class="store_register_customer_panel" style="display:none;">
+				<label class="store_register_customer_field">
+					<span><%= &subs::ui('Search a name') %></span>
+					<input type="search" id="store_register_customer_search" autocomplete="off">
+				</label>
+				<div id="store_register_customer_results" class="store_register_customer_results"></div>
+				<div class="store_register_customer_new">
+					<label class="store_register_customer_field">
+						<span><%= &subs::ui('Or add them as') %></span>
+						<select id="store_register_customer_kind">
+							<% foreach my $scons ( sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs} ) { %>
+								<option value="<%= $scons->{'sing'} %>"><%= &subs::ui(&subs::format_name($scons->{'sing'})) %></option>
+							<% } %>
+						</select>
+					</label>
+					<label class="store_register_customer_field">
+						<span><%= &subs::lang('common.name') %></span>
+						<input type="text" id="store_register_customer_new_name" autocomplete="off">
+					</label>
+					<button type="button" id="store_register_customer_save" class="store_register_button"><%= &subs::ui('Add and use') %></button>
+				</div>
+				<div id="store_register_customer_status" class="store_register_customer_status" role="status" aria-live="polite"></div>
 			</div>
 
 			<div id="store_register_items" class="store_register_items"></div>

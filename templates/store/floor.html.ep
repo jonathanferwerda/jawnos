@@ -1,0 +1,68 @@
+<% no warnings 'uninitialized'; %>
+<div id="store_floor" class="store_floor" role="dialog" aria-modal="true" aria-label="<%= &subs::ui('Floor') %>">
+	<header class="store_floor_header">
+		<h2 class="store_floor_title"><%= &subs::ui('Floor') %></h2>
+		<div class="store_floor_header_actions">
+			<span id="store_floor_name_label" class="store_floor_name"></span>
+			<button type="button" id="store_floor_edit" class="store_register_button"><%= &subs::ui('Edit plan') %></button>
+			<button type="button" id="store_floor_close" class="store_register_button"><%= &subs::lang('common.close') %></button>
+		</div>
+	</header>
+
+	<div class="store_floor_body">
+		<div id="store_floor_plan" class="store_floor_plan">
+			<div id="store_floor_canvas" class="store_floor_canvas">
+				<img id="store_floor_image" class="store_floor_image" alt="">
+				<div id="store_floor_seats" class="store_floor_seats"></div>
+			</div>
+			<p id="store_floor_empty" class="store_floor_empty"><%= &subs::ui('Add a picture of the room, then place the tables on it.') %></p>
+		</div>
+
+		<aside class="store_floor_side">
+			<div id="store_floor_edit_panel" class="store_floor_edit_panel" style="display:none;">
+				<label class="store_floor_field">
+					<span><%= &subs::ui('Picture of the room') %></span>
+					<input type="file" id="store_floor_image_file" accept="image/*">
+				</label>
+				<label class="store_floor_field">
+					<span><%= &subs::ui('Room name') %></span>
+					<input type="text" id="store_floor_name" autocomplete="off" placeholder="<%= &subs::ui('Dining room') %>">
+				</label>
+				<div class="store_floor_seat_form">
+					<label class="store_floor_field">
+						<span><%= &subs::ui('Table name') %></span>
+						<input type="text" id="store_floor_seat_name" autocomplete="off" placeholder="<%= &subs::ui('Table 1') %>">
+					</label>
+					<label class="store_floor_field">
+						<span><%= &subs::ui('Seats') %></span>
+						<input type="text" inputmode="numeric" id="store_floor_seat_covers" value="4">
+					</label>
+					<label class="store_floor_field">
+						<span><%= &subs::ui('Kind') %></span>
+						<select id="store_floor_seat_kind">
+							<option value="table"><%= &subs::ui('Table') %></option>
+							<option value="seat"><%= &subs::ui('Seat') %></option>
+							<option value="booth"><%= &subs::ui('Booth') %></option>
+							<option value="bar"><%= &subs::ui('Bar') %></option>
+							<option value="stage"><%= &subs::ui('Stage') %></option>
+						</select>
+					</label>
+					<button type="button" id="store_floor_seat_place" class="store_register_button"><%= &subs::ui('Tap the room to place it') %></button>
+				</div>
+				<div id="store_floor_seat_list" class="store_floor_seat_list"></div>
+			</div>
+
+			<div id="store_floor_seat_view" class="store_floor_seat_view" style="display:none;">
+				<div id="store_floor_seat_title" class="store_floor_seat_title"></div>
+				<div id="store_floor_seat_detail" class="store_floor_seat_detail"></div>
+				<div class="store_floor_seat_actions">
+					<button type="button" id="store_floor_seat_open" class="store_register_button"><%= &subs::ui('Open the order') %></button>
+					<button type="button" id="store_floor_seat_clear" class="store_register_button"><%= &subs::ui('Take off this table') %></button>
+					<button type="button" id="store_floor_seat_remove" class="store_register_button" style="display:none;"><%= &subs::ui('Remove this table') %></button>
+				</div>
+			</div>
+
+			<div id="store_floor_status" class="store_floor_status" role="status" aria-live="polite"></div>
+		</aside>
+	</div>
+</div>

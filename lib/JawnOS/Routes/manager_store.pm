@@ -36,6 +36,11 @@ sub routes {
 	[6980, 'post', '/manager/store/shift/close', 'action_6980'],
 	[6981, 'get', '/manager/store/shift', 'action_6981'],
 	[6982, 'post', '/manager/store/shift/unlock', 'action_6982'],
+	[50201, 'get', '/manager/store/register/customer_search', 'action_50201'],
+	[50202, 'post', '/manager/store/register/customer', 'action_50202'],
+	[50203, 'get', '/manager/store/register/floor', 'action_50203'],
+	[50204, 'post', '/manager/store/register/floor/plan', 'action_50204'],
+	[50205, 'post', '/manager/store/register/floor/seat', 'action_50205'],
 	);
 }
 

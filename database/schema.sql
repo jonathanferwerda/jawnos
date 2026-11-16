@@ -504,3 +504,37 @@ CREATE TABLE IF NOT EXISTS store_shift (
 	ost VARCHAR(25)
 );
 CREATE INDEX IF NOT EXISTS idx1_store_shift on store_shift (device, status);
+-- The Register's open orders. A row is an order the counter is working on, not
+-- a sale: only a paid order becomes an appointment. It is a row rather than a
+-- handler's memory because the manager runs a prefork pool - every tap may
+-- reach a different worker, and a worker is recycled after its 500th
+-- connection, so an in-memory order vanished between two taps. `seat` names the
+-- floorplan seat the order is sitting at, when it has one.
+CREATE TABLE IF NOT EXISTS store_order (
+	uuid VARCHAR(255) unique,
+	device VARCHAR(255),
+	label VARCHAR(255),
+	customer_uuid VARCHAR(255),
+	customer_app VARCHAR(255),
+	customer_name VARCHAR(255),
+	tax_exemption LONGTEXT,
+	items LONGTEXT,
+	seat VARCHAR(255),
+	created VARCHAR(25),
+	server_time VARCHAR(255),
+	ost VARCHAR(25)
+);
+CREATE INDEX IF NOT EXISTS idx1_store_order on store_order (device);
+CREATE INDEX IF NOT EXISTS idx2_store_order on store_order (seat);
+-- One seating plan for this house's Store: a picture of the room and the seats
+-- placed on it, kept as JSON so the plan moves as one value. A seat is
+-- {id, name, x, y, seats, kind}; x and y are percentages of the picture, so
+-- the same plan reads the same at any size on any screen.
+CREATE TABLE IF NOT EXISTS store_floorplan (
+	uuid VARCHAR(255) unique,
+	name VARCHAR(255),
+	image LONGTEXT,
+	seats LONGTEXT,
+	server_time VARCHAR(255),
+	ost VARCHAR(25)
+);

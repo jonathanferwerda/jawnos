@@ -381,6 +381,7 @@ sub action_6413 {
 		name => $customer->{'name'},
 		tax_exemption => $customer->{'tax_exemption'},
 	});
+	return $c->render(json => { ok => 0, error => 'the order could not be opened' }) unless $order;
 	$c->render(json => &store_register_payload($order));
 }
 
@@ -419,13 +420,14 @@ sub action_6415 {
 	my $id = $c->param('id');
 	my $order = &subs::store_register_order($id);
 	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
-	&subs::store_register_order_add($id, {
+	$order = &subs::store_register_order_add($id, {
 		item => $c->param('item'),
 		name => $c->param('name'),
 		price => $c->param('price'),
 		quantity => $c->param('quantity') || 1,
 		tax_codes => $c->param('tax_codes'),
 	});
+	return $c->render(json => { ok => 0, error => 'the order could not be saved' }) unless $order;
 	$c->render(json => &store_register_payload($order));
 }
 
@@ -435,7 +437,8 @@ sub action_6416 {
 	my $id = $c->param('id');
 	my $order = &subs::store_register_order($id);
 	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
-	&subs::store_register_order_quantity($id, $c->param('line'), $c->param('quantity'));
+	$order = &subs::store_register_order_quantity($id, $c->param('line'), $c->param('quantity'));
+	return $c->render(json => { ok => 0, error => 'the order could not be saved' }) unless $order;
 	$c->render(json => &store_register_payload($order));
 }
 
@@ -445,7 +448,8 @@ sub action_6417 {
 	my $id = $c->param('id');
 	my $order = &subs::store_register_order($id);
 	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
-	&subs::store_register_order_remove($id, $c->param('line'));
+	$order = &subs::store_register_order_remove($id, $c->param('line'));
+	return $c->render(json => { ok => 0, error => 'the order could not be saved' }) unless $order;
 	$c->render(json => &store_register_payload($order));
 }
 
@@ -532,6 +536,152 @@ sub action_6419 {
 		},
 		receipt => $receipt,
 	});
+}
+
+# GET /manager/store/register/customer_search
+# Names the house already knows, for the order in front of the counter. A
+# customer is an app with a uuid settings row - the same row a person,
+# corporation, vendor or institution is - so this searches every construct, not
+# a separate customer table.
+sub action_50201 {
+	my $c = shift;
+	my $search = &subs::unformat_name($c->param('search') || '');
+	return $c->render(json => { ok => 1, customers => [] }) if length($search) < 2;
+	my $rows = eval {
+		&subs::db_query("select distinct app, value from settings where setting = 'uuid' and app like ? and app <> 'me' order by app limit 30", '%' . $search . '%')->hashes;
+	} || [];
+	my (%seen, @out);
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} || '';
+		my $cx = $row->{'value'} || '';
+		next unless length $app && length $cx && !$seen{$app}++;
+		push @out, { cx => $cx, app => $app, name => &subs::format_name($app) };
+	}
+	$c->render(json => { ok => 1, customers => \@out });
+}
+
+# POST /manager/store/register/customer
+# Put a name on the order. An existing customer is named by their uuid (cx); a
+# new one is a name and a kind, and the same settings row every construct has is
+# written, so People, Configure and the rest of the house see them at once. A
+# name that is already in use is refused rather than written twice: search finds
+# the one that exists.
+sub action_50202 {
+	my $c = shift;
+	no warnings 'once';
+	my $id = $c->param('id');
+	my $order = &subs::store_register_order($id);
+	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
+	my $cx = $c->param('cx') || '';
+	unless (length $cx) {
+		my $name = &subs::unformat_name($c->param('name') || '');
+		return $c->render(json => { ok => 0, error => 'a name is needed' }) unless length $name;
+		return $c->render(json => { ok => 0, error => 'that name is too long' }) if length($name) > 100;
+		my $kind = $c->param('kind') || 'person';
+		my %known = map { $_->{'sing'} => 1 } values %{$gb::social_constructs};
+		$kind = 'person' unless $known{$kind};
+		my $exists = &subs::db_query('select 1 from settings where app = ? limit 1', $name)->hashes->[0];
+		return $c->render(json => { ok => 0, error => 'that name is already in use; search for it instead' }) if $exists;
+		my $now = &subs::rightNow();
+		&subs::setting_initializer($name, $now);
+		&subs::setting_setter({ app => $name, setting => 'pos', value => $kind, timestamp => $now });
+		&people_link_sync() if $kind eq 'person';
+		$cx = &subs::setting_grabber({ app => $name, setting => 'uuid' }) || '';
+		return $c->render(json => { ok => 0, error => 'the customer could not be written' }) unless length $cx;
+	}
+	my $customer = &store_register_customer_for($cx);
+	return $c->render(json => { ok => 0, error => 'that customer is not known' })
+		unless ($customer->{'cx'} // '') eq $cx;
+	# A tab is known by what identifies the order: the table when it is on the
+	# floor, otherwise the customer's name. A walk-in keeps its Customer <n>.
+	$customer->{'label'} = $customer->{'name'} unless length($order->{'seat'} // '');
+	$order = &subs::store_register_order_customer($id, $customer);
+	return $c->render(json => { ok => 0, error => 'the order could not be saved' }) unless $order;
+	$c->render(json => &store_register_payload($order));
+}
+
+# GET /manager/store/register/floor
+# The floor and the open orders in one answer: a seat is taken when an order
+# names it, and the browser draws both from this.
+sub action_50203 {
+	my $c = shift;
+	my $settings = &subs::store_tax_settings();
+	my @orders;
+	foreach my $order ( @{ &subs::store_register_orders() } ) {
+		push @orders, {
+			%{$order},
+			totals => &subs::store_register_totals($order->{'items'}, $settings),
+		};
+	}
+	$c->render(json => {
+		ok => 1,
+		floor => &subs::store_floorplan(),
+		orders => \@orders,
+	});
+}
+
+# POST /manager/store/register/floor/plan
+# Save the room: the picture and the seats the editor placed on it. The picture
+# is a data URI, resized by the editor before it is sent; a bigger one is
+# refused rather than copied into every peer's snapshot.
+sub action_50204 {
+	my $c = shift;
+	my $params = {};
+	if (defined $c->param('name')) {
+		$params->{'name'} = $c->param('name');
+	}
+	if (defined $c->param('image')) {
+		my $image = $c->param('image') || '';
+		return $c->render(json => { ok => 0, error => 'that picture is too large' }) if length($image) > 6_000_000;
+		$params->{'image'} = $image;
+	}
+	if (defined $c->param('seats')) {
+		my $seats = eval { decode_json($c->param('seats')) };
+		return $c->render(json => { ok => 0, error => 'the seats could not be read' }) unless ref $seats eq 'ARRAY';
+		$params->{'seats'} = $seats;
+	}
+	my $floor = &subs::store_floorplan_save($params);
+	return $c->render(json => { ok => 0, error => 'the floor could not be saved' }) unless $floor;
+	$c->render(json => { ok => 1, floor => $floor });
+}
+
+# POST /manager/store/register/floor/seat
+# Sit an order at a seat, or take it off the floor. With no order named, one is
+# opened first: a waiter taps an empty table and starts the order there, and the
+# next tap on that table is the same order.
+sub action_50205 {
+	my $c = shift;
+	my $seat = $c->param('seat') || '';
+	my $floor = &subs::store_floorplan();
+	my ($found) = grep { ($_->{'id'} // '') eq $seat } @{ $floor->{'seats'} || [] };
+	return $c->render(json => { ok => 0, error => 'no such seat' }) if length $seat && !$found;
+	my $id = $c->param('id') || '';
+	my $order = length $id ? &subs::store_register_order($id) : undef;
+	if (length $seat) {
+		# A table holds one order. A tap that names no order on a taken table
+		# answers with the order already there; naming another order at a taken
+		# table is refused rather than writing a second order onto one seat.
+		my ($taken) = grep { ($_->{'seat'} || '') eq $seat } @{ &subs::store_register_orders() };
+		if ($taken && (!$order || ($taken->{'id'} || '') ne ($order->{'id'} || ''))) {
+			return $c->render(json => { ok => 0, error => 'that table already has an order' }) if $order;
+			$order = $taken;
+		}
+	}
+	unless ($order) {
+		my $customer = &store_register_customer_for($c->param('cx') || '');
+		$order = &subs::store_register_order_open({
+			cx => $customer->{'cx'},
+			app => $customer->{'app'},
+			name => $customer->{'name'},
+			tax_exemption => $customer->{'tax_exemption'},
+			label => ($found ? ($found->{'name'} || '') : ''),
+			seat => $seat,
+		});
+		return $c->render(json => { ok => 0, error => 'the order could not be opened' }) unless $order;
+	}
+	$order = &subs::store_register_order_seat($order->{'id'}, $seat);
+	return $c->render(json => { ok => 0, error => 'the order could not be saved' }) unless $order;
+	$c->render(json => &store_register_payload($order));
 }
 
 # GET /manager/store/register/receipt

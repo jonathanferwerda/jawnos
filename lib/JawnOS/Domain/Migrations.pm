@@ -809,6 +809,36 @@ sub update_database($data) {
 		# Who counted and locked the drawer, when a person was unlocked to do it.
 		'alter table store_shift add column closed_by VARCHAR(500)',
 		'alter table store_shift add column closed_by_uuid VARCHAR(255)',
+		# The Register's open orders. A row is an order being worked on, not a sale;
+		# it has to survive the prefork pool handing the next tap to another worker
+		# (or recycling this one), which a hash in memory did not. A seat names
+		# where on the floorplan the order is sitting.
+		'create table if not exists store_order (
+			uuid VARCHAR(255) unique,
+			device VARCHAR(255),
+			label VARCHAR(255),
+			customer_uuid VARCHAR(255),
+			customer_app VARCHAR(255),
+			customer_name VARCHAR(255),
+			tax_exemption LONGTEXT,
+			items LONGTEXT,
+			seat VARCHAR(255),
+			created VARCHAR(25),
+			server_time VARCHAR(255),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_store_order on store_order (device)',
+		'create index if not exists idx2_store_order on store_order (seat)',
+		# One seating plan: a picture of the room and the seats placed on it as one
+		# JSON value. x and y are percentages, so the plan fits any screen.
+		'create table if not exists store_floorplan (
+			uuid VARCHAR(255) unique,
+			name VARCHAR(255),
+			image LONGTEXT,
+			seats LONGTEXT,
+			server_time VARCHAR(255),
+			ost VARCHAR(25)
+		)',
 		# The first invoice and the first quote are 1001. next_number is the number
 		# the next allocation returns, so minting subtracts one from the advanced
 		# value (and a block subtracts its size).

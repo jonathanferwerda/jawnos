@@ -64,6 +64,10 @@
 				<img src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" alt="">
 				<span><%= &subs::lang('common.register') %></span>
 			</button>
+			<button type="button" id="store_floor_open" class="store_text_button store_register_open_button" hint="<%= &subs::ui('Floor') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/register.png') %>" alt="">
+				<span><%= &subs::ui('Floor') %></span>
+			</button>
 		</div>
 	</header>
 	<div class="store_panes">
@@ -137,6 +141,7 @@
 <% } %>
 
 <div id="register_app" class="store_register_app"></div>
+<%= include 'store/floor' %>
 </div>
 
 <div id="image_viewer"></div>

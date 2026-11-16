@@ -4,11 +4,18 @@ package subs;
 # with no account - the sale is written against the app "Customer" - so the
 # register never depends on a person existing in the customer table.
 #
-# Open orders live in this worker's memory, keyed by their own id: several
-# customers can stand at the counter at once, each tab independent, and giving
-# one up (Cancel order / Void) is a delete here, not a sale. Finalising an
-# order builds the sale document the printer and the customer journal already
-# understand (data -> numbers, payments, register.items).
+# Open orders are rows, keyed by their own id: several customers can stand at
+# the counter at once, each tab independent, and giving one up (Cancel order /
+# Void) is a delete, not a sale. They are rows rather than this worker's memory
+# because the manager is a prefork pool - a tap may reach any worker and a
+# worker is recycled after 500 connections - so an order kept in a hash vanished
+# between one tap and the next. Finalising an order builds the sale document the
+# printer and the customer journal already understand (data -> numbers,
+# payments, register.items).
+#
+# The floorplan is the same idea for a room: a picture with named seats placed
+# on it, and a seat is where an open order sits. A waiter taps a table, the
+# order opens at the till, and the next tap is against the same order.
 #
 # Loaded on demand by lib/JawnOS/Domain/Loader.pm.
 use strict;
@@ -18,8 +25,106 @@ use utf8;
 use POSIX ();
 use Mojo::JSON qw(decode_json encode_json);
 
-our %REGISTER_ORDERS;
-our $REGISTER_ORDER_SEQ = 0;
+# The single seating plan row: a house has one room for now, and a later plan
+# (an upstairs, a patio) is another row with its own uuid.
+my $FLOORPLAN_UUID = 'store:floorplan';
+
+# A stored order and a stored seat are JSON; these read them back into the shape
+# the routes, the printer and the browser already use. Code refs rather than
+# named subs because they are this file's plumbing, not domain helpers another
+# module calls by name.
+my $order_items_decode = sub {
+	my ($raw) = @_;
+	my $items = eval { decode_json($raw // '') };
+	$items = [] unless ref $items eq 'ARRAY';
+	my @lines;
+	foreach my $line ( @{$items} ) {
+		next unless ref $line eq 'HASH';
+		push @lines, {
+			line => $line->{'line'} // '',
+			item => $line->{'item'} // '',
+			name => $line->{'name'} // '',
+			price => &store_register_number($line->{'price'}),
+			quantity => &store_register_number($line->{'quantity'}),
+			tax_codes => &tax_codes_value($line->{'tax_codes'}),
+		};
+	}
+	return \@lines;
+};
+
+my $order_row_read = sub {
+	my ($row) = @_;
+	return undef unless ref $row eq 'HASH';
+	my $exemption = eval { decode_json($row->{'tax_exemption'} // '') };
+	$exemption = { exempt => 0, id => '', country => '', codes => [] }
+		unless ref $exemption eq 'HASH';
+	my $app = $row->{'customer_app'} // '';
+	my $name = $row->{'customer_name'} // '';
+	return {
+		id => $row->{'uuid'} // '',
+		label => $row->{'label'} // '',
+		created => 0 + ($row->{'created'} // 0),
+		seat => $row->{'seat'} // '',
+		customer => {
+			cx => $row->{'customer_uuid'} // '',
+			app => length($app) ? $app : 'Customer',
+			name => length($name) ? $name : &lang('common.customer'),
+		},
+		tax_exemption => $exemption,
+		items => $order_items_decode->($row->{'items'}),
+	};
+};
+
+# Saving is always the whole order: the row is small, and a partial write is how
+# a line and its quantity come to disagree.
+my $order_row_write = sub {
+	my ($order) = @_;
+	return 0 unless ref $order eq 'HASH' && length($order->{'id'} // '');
+	my $customer = ref $order->{'customer'} eq 'HASH' ? $order->{'customer'} : {};
+	my $written = eval {
+		&db_update('store_order', {
+			label => $order->{'label'} // '',
+			customer_uuid => $customer->{'cx'} // '',
+			customer_app => $customer->{'app'} // '',
+			customer_name => $customer->{'name'} // '',
+			tax_exemption => encode_json($order->{'tax_exemption'} || {}),
+			items => encode_json($order->{'items'} || []),
+			seat => $order->{'seat'} // '',
+			server_time => &rightNow(),
+		}, { uuid => $order->{'id'} });
+	};
+	return $written ? 1 : 0;
+};
+
+my $floor_seats_clean = sub {
+	my ($raw) = @_;
+	my $list = ref $raw eq 'ARRAY' ? $raw : eval { decode_json($raw // '') };
+	$list = [] unless ref $list eq 'ARRAY';
+	my (@seats, %seen);
+	foreach my $seat ( @{$list} ) {
+		next unless ref $seat eq 'HASH';
+		my $id = $seat->{'id'} // '';
+		next unless length $id && !$seen{$id}++;
+		my $x = &store_register_number($seat->{'x'});
+		my $y = &store_register_number($seat->{'y'});
+		$x = 0 if $x < 0 || $x > 100;
+		$y = 0 if $y < 0 || $y > 100;
+		my $covers = int(&store_register_number($seat->{'seats'}));
+		$covers = 1 if $covers < 1;
+		$covers = 99 if $covers > 99;
+		my $kind = $seat->{'kind'} // '';
+		$kind = 'table' unless $kind =~ /^(?:table|seat|booth|bar|stage)$/;
+		push @seats, {
+			id => $id,
+			name => substr(($seat->{'name'} // ''), 0, 60),
+			x => $x,
+			y => $y,
+			seats => $covers,
+			kind => $kind,
+		};
+	}
+	return \@seats;
+};
 
 # What the house may be paid with. These are stored values, never labels; the
 # label is chosen with store_register_payment_label so a screen can translate
@@ -137,42 +242,67 @@ sub store_register_change_breakdown {
 }
 
 sub store_register_orders {
-	return [ sort { $a->{'created'} <=> $b->{'created'} || $a->{'id'} cmp $b->{'id'} }
-		values %REGISTER_ORDERS ];
+	my ($params) = @_;
+	$params = {} unless ref $params eq 'HASH';
+	my $device = (defined $params->{'device'} && length $params->{'device'})
+		? $params->{'device'} : &device_setter();
+	my $rows = eval { &db_select('store_order', undef, { device => $device })->hashes } || [];
+	my @orders = grep { ref $_ eq 'HASH' && length($_->{'id'} // '') } map { $order_row_read->($_) } @{$rows};
+	return [ sort { $a->{'created'} <=> $b->{'created'} || $a->{'id'} cmp $b->{'id'} } @orders ];
 }
 
 sub store_register_order {
 	my ($id) = @_;
 	return undef unless defined $id && length $id;
-	return $REGISTER_ORDERS{$id};
+	my $row = eval { &db_select('store_order', undef, { uuid => $id })->hashes->[0] };
+	return $order_row_read->($row);
 }
 
 sub store_register_order_open {
 	my ($params) = @_;
 	$params = {} unless ref $params eq 'HASH';
-	$REGISTER_ORDER_SEQ++;
+	my $device = (defined $params->{'device'} && length $params->{'device'})
+		? $params->{'device'} : &device_setter();
 	my $id = &random_string_creator(24);
 	my $label = $params->{'label'};
 	unless (defined $label && length $label) {
-		$label = &lang('common.customer') . ' ' . $REGISTER_ORDER_SEQ;
+		# A fresh label per open order, so two tabs are told apart by name. The
+		# count is read from the rows, not a worker's counter, which is the point.
+		my $count = eval { &db_query('select count(*) as n from store_order where device = ?', $device)->hash->{'n'} } || 0;
+		$label = &lang('common.customer') . ' ' . ($count + 1);
 	}
 	my $tax_exemption = (ref $params->{'tax_exemption'} eq 'HASH')
 		? $params->{'tax_exemption'}
 		: { exempt => 0, id => '', country => '', codes => [] };
-	my $order = {
+	my $app = ($params->{'app'} && length $params->{'app'}) ? $params->{'app'} : 'Customer';
+	my $name = ($params->{'name'} && length $params->{'name'}) ? $params->{'name'} : &lang('common.customer');
+	my $now = &rightNow();
+	my $written = eval {
+		&db_insert('store_order', {
+			uuid => $id,
+			device => $device,
+			label => $label,
+			customer_uuid => $params->{'cx'} || '',
+			customer_app => $app,
+			customer_name => $name,
+			tax_exemption => encode_json($tax_exemption),
+			items => '[]',
+			seat => $params->{'seat'} || '',
+			created => $now,
+			server_time => $now,
+			ost => $now,
+		});
+	};
+	return undef unless $written;
+	return {
 		id => $id,
 		label => $label,
-		created => &rightNow(),
-		customer => {
-			cx => $params->{'cx'} || '',
-			app => ($params->{'app'} && length $params->{'app'}) ? $params->{'app'} : 'Customer',
-			name => ($params->{'name'} && length $params->{'name'}) ? $params->{'name'} : &lang('common.customer'),
-		},
+		created => 0 + $now,
+		seat => $params->{'seat'} || '',
+		customer => { cx => $params->{'cx'} || '', app => $app, name => $name },
 		tax_exemption => $tax_exemption,
 		items => [],
 	};
-	$REGISTER_ORDERS{$id} = $order;
-	return $order;
 }
 
 sub store_register_order_line {
@@ -183,6 +313,35 @@ sub store_register_order_line {
 		return $line if ($line->{'line'} || '') eq $line_id;
 	}
 	return undef;
+}
+
+# A customer of their own, written onto the order. The caller names the app (a
+# person, a corporation, a vendor, ...); an empty app means the walk-in again.
+sub store_register_order_customer {
+	my ($id, $params) = @_;
+	my $order = &store_register_order($id);
+	return undef unless $order;
+	$params = {} unless ref $params eq 'HASH';
+	my $app = ($params->{'app'} && length $params->{'app'}) ? $params->{'app'} : 'Customer';
+	$order->{'customer'} = {
+		cx => $params->{'cx'} || '',
+		app => $app,
+		name => ($params->{'name'} && length $params->{'name'}) ? $params->{'name'} : &format_name($app),
+	};
+	$order->{'tax_exemption'} = $params->{'tax_exemption'}
+		if ref $params->{'tax_exemption'} eq 'HASH';
+	$order->{'label'} = $params->{'label'} if defined $params->{'label'} && length $params->{'label'};
+	return $order_row_write->($order) ? $order : undef;
+}
+
+# The seat an order is sitting at. An empty seat puts it back on the counter
+# (the tab stays); the order is never deleted by a seat change.
+sub store_register_order_seat {
+	my ($id, $seat) = @_;
+	my $order = &store_register_order($id);
+	return undef unless $order;
+	$order->{'seat'} = defined $seat ? "$seat" : '';
+	return $order_row_write->($order) ? $order : undef;
 }
 
 sub store_register_order_add {
@@ -204,7 +363,7 @@ sub store_register_order_add {
 	foreach my $line ( @{$order->{'items'}} ) {
 		if (($line->{'item'} || '') eq $app && $line->{'price'} == $price) {
 			$line->{'quantity'} += $quantity;
-			return $order;
+			return $order_row_write->($order) ? $order : undef;
 		}
 	}
 	push @{$order->{'items'}}, {
@@ -215,7 +374,7 @@ sub store_register_order_add {
 		quantity => $quantity,
 		tax_codes => &tax_codes_value($item->{'tax_codes'}),
 	};
-	return $order;
+	return $order_row_write->($order) ? $order : undef;
 }
 
 sub store_register_order_quantity {
@@ -227,10 +386,11 @@ sub store_register_order_quantity {
 	my $qty = &store_register_number($quantity);
 	if ($qty <= 0) {
 		@{$order->{'items'}} = grep { ($_->{'line'} || '') ne $line_id } @{$order->{'items'}};
-		return $order;
 	}
-	$line->{'quantity'} = $qty;
-	return $order;
+	else {
+		$line->{'quantity'} = $qty;
+	}
+	return $order_row_write->($order) ? $order : undef;
 }
 
 sub store_register_order_remove {
@@ -238,22 +398,69 @@ sub store_register_order_remove {
 	my $order = &store_register_order($id);
 	return undef unless $order;
 	@{$order->{'items'}} = grep { ($_->{'line'} || '') ne ($line_id || '') } @{$order->{'items'}};
-	return $order;
+	return $order_row_write->($order) ? $order : undef;
 }
 
 # Giving up an order records nothing: no appointment, no stock movement. This
 # is the customer who walked out.
 sub store_register_order_cancel {
 	my ($id) = @_;
-	return 0 unless defined $id && length $id && exists $REGISTER_ORDERS{$id};
-	delete $REGISTER_ORDERS{$id};
+	return 0 unless defined $id && length $id;
+	my $row = eval { &db_select('store_order', undef, { uuid => $id })->hashes->[0] };
+	return 0 unless $row;
+	eval { &db_delete('store_order', { uuid => $id }) };
 	return 1;
 }
 
+# Drop this device's open orders. A shop that closes the register expecting a
+# clean counter asks for it; a test uses it for that same clean counter.
 sub store_register_order_reset {
-	%REGISTER_ORDERS = ();
-	$REGISTER_ORDER_SEQ = 0;
+	my ($params) = @_;
+	$params = {} unless ref $params eq 'HASH';
+	my $device = (defined $params->{'device'} && length $params->{'device'})
+		? $params->{'device'} : &device_setter();
+	eval { &db_delete('store_order', { device => $device }) };
 	return 1;
+}
+
+# ---- the floor plan ---------------------------------------------------------
+# One picture of the room and the seats placed on it, in percentages of the
+# picture so the plan fits any screen. The plan is one JSON value on one row:
+# placing a seat is a gesture on the same screen that shows the plan, and a
+# half-written seat list is worse than a whole saved one.
+sub store_floorplan {
+	my $row = eval { &db_select('store_floorplan', undef, { uuid => $FLOORPLAN_UUID })->hashes->[0] };
+	return {
+		uuid => $FLOORPLAN_UUID,
+		name => $row ? ($row->{'name'} // '') : '',
+		image => $row ? ($row->{'image'} // '') : '',
+		seats => $floor_seats_clean->($row ? $row->{'seats'} : '[]'),
+	};
+}
+
+# Save the picture and the seats. A seat list is replaced whole; leaving the
+# `seats` key out keeps what is stored, so changing the picture does not erase
+# the tables on it.
+sub store_floorplan_save {
+	my ($params) = @_;
+	$params = {} unless ref $params eq 'HASH';
+	my $plan = &store_floorplan();
+	$plan->{'name'} = substr("$params->{'name'}", 0, 120) if exists $params->{'name'};
+	$plan->{'image'} = "$params->{'image'}" if exists $params->{'image'};
+	$plan->{'seats'} = $floor_seats_clean->($params->{'seats'}) if exists $params->{'seats'};
+	my $now = &rightNow();
+	my $row = {
+		name => $plan->{'name'},
+		image => $plan->{'image'},
+		seats => encode_json($plan->{'seats'}),
+		server_time => $now,
+	};
+	my $existing = eval { &db_select('store_floorplan', undef, { uuid => $FLOORPLAN_UUID })->hashes->[0] };
+	my $written = $existing
+		? eval { &db_update('store_floorplan', { %{$row} }, { uuid => $FLOORPLAN_UUID }) }
+		: eval { &db_insert('store_floorplan', { %{$row}, uuid => $FLOORPLAN_UUID, ost => $now }) };
+	return undef unless $written;
+	return &store_floorplan();
 }
 
 # The sale document. It is deliberately shaped like a quote/invoice data blob:
