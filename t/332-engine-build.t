@@ -1,0 +1,157 @@
+# tests-for: scripts/build_engine.pl engine/
+# covers:    P1 (docs/studio-audio-roadmap.md): the engine is optional, so its build script must say
+#            "missing" rather than fail, must name a missing toolchain instead of a shell error, and
+#            must stage a binary that runs the null device and passes the crate's own tests.
+
+use strict;
+use warnings;
+
+use Cwd qw(abs_path);
+use File::Copy qw(copy);
+use File::Path qw(make_path);
+use File::Spec;
+use File::Temp qw(tempdir);
+use FindBin;
+use IO::Select;
+use IPC::Open3 qw(open3);
+use Symbol qw(gensym);
+use Test::More;
+
+my $root   = abs_path("$FindBin::Bin/..");
+my $script = "$root/scripts/build_engine.pl";
+
+# Run a command, capturing both streams. The third handle must be a real glob
+# (an undef lexical reads as false, which makes open3 merge stderr and never
+# create it), and both pipes are drained together so a chatty child cannot fill
+# one and block.
+sub capture {
+	my @cmd = @_;
+	my $err = gensym;
+	my $pid = open3( my $in, my $out, $err, @cmd );
+	close $in;
+	my $select = IO::Select->new( $out, $err );
+	my $stdout = '';
+	my $stderr = '';
+	while ( $select->count ) {
+		my @ready = $select->can_read(60);
+		last unless @ready;
+		for my $handle (@ready) {
+			my $read = sysread( $handle, my $chunk, 65536 );
+			if ( !defined $read || $read == 0 ) { $select->remove($handle); next }
+			if ( fileno($handle) == fileno($out) ) { $stdout .= $chunk }
+			else { $stderr .= $chunk }
+		}
+	}
+	close $out;
+	close $err;
+	waitpid( $pid, 0 );
+	return ( $? >> 8, $stdout, $stderr );
+}
+
+# Run a copy of the script under its own root: the script resolves the
+# repository from its own path, so a tempdir copy can be asked both ways
+# without ever staging into the checkout.
+sub run_in {
+	my ( $dir, @args ) = @_;
+	return capture( $^X, "$dir/scripts/build_engine.pl", @args );
+}
+
+sub fixture {
+	my $dir = tempdir( CLEANUP => 1 );
+	make_path( "$dir/scripts", "$dir/engine", "$dir/perl/audio" );
+	copy( $script, "$dir/scripts/build_engine.pl" ) or die "copy: $!";
+	open( my $man, '>', "$dir/engine/Cargo.toml" ) or die "$dir/engine/Cargo.toml: $!";
+	print {$man} "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n";
+	close $man;
+	return $dir;
+}
+
+# A scratch copy of the real crate, never the checkout's own target/.
+sub copy_tree {
+	my ( $from, $to ) = @_;
+	make_path($to);
+	opendir( my $dh, $from ) or die "$from: $!";
+	my @names = sort grep { $_ ne '.' && $_ ne '..' && $_ ne 'target' } readdir $dh;
+	closedir $dh;
+	foreach my $name (@names) {
+		my $src = "$from/$name";
+		my $dst = "$to/$name";
+		if ( -d $src ) { copy_tree( $src, $dst ); next }
+		next unless -f $src;
+		copy( $src, $dst ) or die "$src: $!";
+	}
+	return 1;
+}
+
+sub cargo_available {
+	my $pid = open( my $fh, '-|', 'cargo', '--version' );
+	return 0 unless $pid;
+	<$fh>;
+	close $fh;
+	return $? == 0 ? 1 : 0;
+}
+
+# --- --check, both ways ------------------------------------------------------
+{
+	my $dir = fixture();
+	my ( $status, $out ) = run_in( $dir, '--check' );
+	is( $status, 1, '--check says the engine is missing when it is not staged' );
+	like( $out, qr/^missing: .*jawn-audio/m, 'and names the path it expects' );
+	ok( !-e "$dir/perl/audio/jawn-audio", '--check builds nothing' );
+
+	open( my $stage, '>', "$dir/perl/audio/jawn-audio" ) or die $!;
+	print {$stage} "#!/bin/sh\nexit 0\n";
+	close $stage;
+	chmod( 0755, "$dir/perl/audio/jawn-audio" );
+
+	( $status, $out ) = run_in( $dir, '--check' );
+	is( $status, 0, '--check accepts a staged binary' );
+	like( $out, qr/^built: /m, 'and reports it as built' );
+}
+
+# --- no toolchain is an ordinary answer, not a shell error -------------------
+{
+	my $dir  = fixture();
+	my $gone = File::Spec->catfile( $dir, 'no-such-cargo' );
+	my ( $status, $out, $err );
+	{
+		local $ENV{'CARGO'} = $gone;
+		( $status, $out, $err ) = run_in($dir);
+	}
+	isnt( $status, 0, 'a build with no toolchain fails' );
+	like( $out . $err, qr/no cargo/, 'and says the engine is optional' );
+	ok( !-e "$dir/perl/audio/jawn-audio", 'and stages nothing' );
+}
+
+# --- the real crate builds, stages and runs ---------------------------------
+SKIP: {
+	skip 'no cargo toolchain on this machine', 7 unless cargo_available();
+
+	my $dir  = fixture();
+	my $ware = tempdir( CLEANUP => 1 );
+	copy_tree( "$root/engine", "$dir/engine" );
+	local $ENV{'CARGO_TARGET_DIR'} = $ware;
+
+	my ( $status, $out, $err ) = run_in($dir);
+	is( $status, 0, 'the engine builds' ) or diag( $out . $err );
+	ok( -x "$dir/perl/audio/jawn-audio", 'and the binary is staged executable' );
+	like( $out, qr/^built: /m, 'and the script says where' );
+
+	my $bin = "$dir/perl/audio/jawn-audio";
+	my ( $ran, $text, $prose ) = capture(
+		$bin, '--run', '--seconds', '0.1', '--rate', '48000', '--frames', '64',
+		'--tone', '440', '--json'
+	);
+	is( $ran, 0, 'the null device runs' ) or diag($prose);
+	like( $text, qr/"device":"null"/, 'and names the null device' );
+	like( $text, qr/"blocks":75/, 'and counts its blocks' );
+
+	# The crate's own tests are the only guard on the graph and the header, so
+	# the suite runs them too rather than trusting a manual `cargo test`.
+	my ( $tcode, $ttext, $terr ) = capture(
+		'cargo', 'test', '--offline', '--manifest-path', "$dir/engine/Cargo.toml"
+	);
+	is( $tcode, 0, q{the crate's own tests pass} ) or diag( $ttext . $terr );
+}
+
+done_testing();

@@ -3,7 +3,10 @@
 > **Entry point:** `docs/roadmap.md`. This plan is **proposed, not started**; P0 is the gate that
 > decides whether the rest is worth building. It is not on this season's critical path.
 
-**Status:** proposal, 2026-11-17. No code written. P0 (measure) is the next action.
+**Status:** P1 skeleton is in the tree (`engine/`, `scripts/build_engine.pl`, `t/332`): the
+protocol header, the lock-free parameter path, the block graph and a null device, 31 Rust tests
+and a suite that builds and runs them. No device backend yet, and **P0 — measuring the laptop and
+`table` with the UM2 — is still the gate**.
 **The converter:** a **Behringer UM2** on `table.jonathanferwerda.com` — the preferred clock master.
 **Related:** `docs/reception.md` (the audio gateway the engine must not duplicate),
 `docs/platform-roadmap.md` (CoreAudio/WASAPI — the same device seam), `docs/roadmap.md` (Perl stays
@@ -407,6 +410,10 @@ An `engine/` Cargo workspace and the `jawn-audio` binary: open the UM2, pass 2 i
 report xruns and the measured round trip on a Unix socket under `~/.president/`.
 `scripts/build_engine.pl` mirrors `build_sco.pl` (build, `--check`, no compiler → no engine); the
 binary is gitignored beside `perl/sco/sco_helper`.
+
+**In the tree already:** the crate, the CLI and the null device (`engine/`, 31 tests), the build and
+staging script, and `t/332`, which builds the crate, runs it, and runs its tests. What P1 still owes
+is the real device behind the same `Device` trait — and the measurement that decides 64 or 128 frames.
 
 **Gate:** ≤ 5 ms round trip at 64 frames on `table`, zero xruns over 10 minutes with the house running
 its own JawnOS, and a null backend that runs in the suite.

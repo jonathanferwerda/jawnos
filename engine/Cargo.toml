@@ -1,0 +1,19 @@
+[package]
+name = "jawn-audio"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "The JawnOS audio engine: a fixed-block graph and the session protocol, with a null device for machines without a sound card"
+publish = false
+
+[lib]
+name = "jawn_audio"
+path = "src/lib.rs"
+
+[[bin]]
+name = "jawn-audio"
+path = "src/main.rs"
+
+# Its own workspace root: engine/ must build without dragging the repository's
+# tree into a Cargo workspace, and without being one itself (docs/studio-audio-roadmap.md).
+[workspace]
