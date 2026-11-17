@@ -366,10 +366,22 @@ fn a_second_engine_on_the_same_socket_refuses_to_steal_it() {
         "stderr: {text}"
     );
 
-    // The first engine is still the one answering.
-    let mut stream = UnixStream::connect(&server.socket).expect("still listening");
-    stream.write_all(b"{\"cmd\":\"status\"}\n").expect("send");
-    let mut reply = String::new();
-    BufReader::new(&stream).read_line(&mut reply).expect("read");
-    assert!(reply.contains("\"ok\":true"), "reply: {reply}");
+    // The first engine is still the one answering. The guard's own probe
+    // connection may still be counted as the one client for a moment, so ask
+    // again rather than racing it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut stream = UnixStream::connect(&server.socket).expect("still listening");
+        stream.write_all(b"{\"cmd\":\"status\"}\n").expect("send");
+        let mut reply = String::new();
+        BufReader::new(&stream).read_line(&mut reply).expect("read");
+        if reply.contains("\"ok\":true") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the first engine stopped answering: {reply}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
