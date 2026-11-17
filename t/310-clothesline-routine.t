@@ -559,11 +559,11 @@ is($runup_rows->[2]{'wave'}, 1, 'and joins that routine, not the one an hour ear
 my $tie = { apps => {
 	wake_up => { hour => 10 }, noon_a => { hour => 12 }, noon_b => { hour => 12 }, late => { hour => 17 },
 	yogurt => { hour => 11, due => 1, recent_days => 9 } } };
-my $trow = [ { app => 'wake_up', wave => 0 }, { app => 'noon_b', wave => 2 },
-	{ app => 'late', wave => 2 }, { app => 'noon_a', wave => 1 } ];
+my $trow = [ { app => 'wake_up', wave => 0 }, { app => 'noon_a', wave => 1 },
+	{ app => 'noon_b', wave => 2 }, { app => 'late', wave => 2 } ];
 my $tie_rows = subs::clothesline_anticipatory_habits($trow, $tie);
 is($tie_rows->[1]{'app'}, 'yogurt', 'the habit still sits by the noon steps');
-is($tie_rows->[1]{'wave'}, 2, 'and joins the routine the day reaches first');
+is($tie_rows->[1]{'wave'}, 1, 'and joins the routine the day reaches first');
 is(subs::clothesline_anticipatory_wave_name(3), 'Night', 'the small hours are the night');
 is(subs::clothesline_anticipatory_wave_name(undef), 'Routine', 'a wave with no clock is a routine');
 
