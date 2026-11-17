@@ -543,6 +543,16 @@ is_deeply([ map { $_->{'app'} } @{$placed_rows} ], [qw(wake_up sleep yogurt lunc
 	'a habit sits beside the hour it happens, not at the end of the order');
 is_deeply([ map { $_->{'wave'} } @{$placed_rows} ], [0, 1, 2, 2, 3],
 	'and takes the routine of the step beside it');
+
+# a habit in the hour before another routine is that routine's run-up: the
+# eleven o'clock yogurt belongs with the noon lunch, not the eleven o'clock steps
+my $runup = { apps => {
+	wake_up => { hour => 10 }, wash => { hour => 11 }, lunch => { hour => 12 },
+	yogurt => { hour => 11, due => 1, recent_days => 9 } } };
+my $rrow = [ { app => 'wake_up', wave => 0 }, { app => 'wash', wave => 0 }, { app => 'lunch', wave => 1 } ];
+my $runup_rows = subs::clothesline_anticipatory_habits($rrow, $runup);
+is($runup_rows->[2]{'app'}, 'yogurt', 'the habit sits just before the routine it leads into');
+is($runup_rows->[2]{'wave'}, 1, 'and joins that routine, not the one an hour earlier');
 is(subs::clothesline_anticipatory_wave_name(3), 'Night', 'the small hours are the night');
 is(subs::clothesline_anticipatory_wave_name(undef), 'Routine', 'a wave with no clock is a routine');
 

@@ -528,6 +528,19 @@ sub clothesline_anticipatory_habits {
 				($at, $best) = ($i, $gap);
 			}
 		}
+		# A habit in the hour before another routine is that routine's run-up: the
+		# eleven o'clock yogurt belongs with the noon lunch, not with the ten
+		# o'clock steps it is numerically nearest. Between two routines, the one it
+		# leads into wins.
+		for my $i ( 0 .. $#out ) {
+			my $row = $apps->{ $out[$i]{'app'} };
+			my $hour = ref $row eq 'HASH' ? $row->{'hour'} : undef;
+			next unless defined $hour && $hour =~ /^\d+$/;
+			next unless (0 + $hour) > $new->{'hour'} && ((0 + $hour) - $new->{'hour'}) <= 1;
+			next if ($out[$i]{'wave'} || 0) == ($out[$at]{'wave'} || 0);
+			$at = $i;
+			last;
+		}
 		# a habit earlier than the step it sits beside goes before it
 		my $wave = 0;
 		if (@out) {
