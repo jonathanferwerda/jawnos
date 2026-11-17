@@ -206,6 +206,11 @@ sub sync_plan_step {
 	# pass and every other table would wait forever. Rotate by the oldest
 	# reconciled picture instead (`seen_at`), so each divergent table gets its
 	# turn. A plan with no history keeps the stable alphabetical order.
+	#
+	# `warehouse` is the exception: it changes rarely and the person expects the
+	# stock to move as soon as it does, so when it is in the plan it takes the
+	# slot ahead of the rotation. It leaves the plan as soon as it is reconciled,
+	# so the appointment stream resumes on the next pass.
 	my ($plan, $max, $seen) = @_;
 	return {} unless ref $plan eq 'HASH';
 	return $plan unless defined $max && $max > 0;
@@ -214,7 +219,12 @@ sub sync_plan_step {
 		my $k = ($t eq 'settings') ? 'settings_durable' : $t;
 		return (ref $seen eq 'HASH' && ref $seen->{$k} eq 'HASH') ? ($seen->{$k}->{'seen_at'} || 0) : 0;
 	};
-	my @tables = sort { $stamp->($a) <=> $stamp->($b) || $a cmp $b } keys %{$plan};
+	my %rank = ( warehouse => 0 );
+	my @tables = sort {
+		($rank{$a} // 1) <=> ($rank{$b} // 1)
+			|| $stamp->($a) <=> $stamp->($b)
+			|| $a cmp $b
+	} keys %{$plan};
 	return $plan if @tables <= $max;
 	my %step;
 	$step{$_} = $plan->{$_} for @tables[0 .. $max - 1];

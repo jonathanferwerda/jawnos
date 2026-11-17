@@ -91,6 +91,23 @@ my $settings_rotation = subs::sync_plan_step(
 );
 is_deeply( [ keys %{$settings_rotation} ], ['settings'],
 	'settings rotate through their durable seen_at' );
+# Warehouse changes are the person's stock and are expected on the other
+# machines as soon as they happen, so it goes ahead of the rotation whenever it
+# is divergent. It leaves the plan once reconciled, so nothing is starved.
+my $warehouse_priority = subs::sync_plan_step(
+	{ appointments => 0, warehouse => 0 },
+	1,
+	{ appointments => { seen_at => 1 }, warehouse => { seen_at => 200 } },
+);
+is_deeply( [ keys %{$warehouse_priority} ], ['warehouse'],
+	'warehouse takes the cap slot ahead of the rotation' );
+my $warehouse_settled = subs::sync_plan_step(
+	{ appointments => 0 },
+	1,
+	{ appointments => { seen_at => 1 } },
+);
+is_deeply( [ keys %{$warehouse_settled} ], ['appointments'],
+	'and the rotation resumes once warehouse is out of the plan' );
 
 # A pull may claim `full` only when we hold every row the peer's band map
 # names. A peer that is merely behind does not make the pull incomplete (that

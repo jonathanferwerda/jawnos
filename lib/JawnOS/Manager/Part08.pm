@@ -911,11 +911,17 @@ sub voice_lister {
 # One encrypted batch of a table's rows: the wire unit of the v3 sync rail. The
 # cursor is the last rowid the caller already has, so a dropped tunnel costs the
 # batch, not the pull; the total is sent with the first batch for progress.
+#
+# 2000 is the route's own ceiling. At 500, a large settings table (the Table's
+# 58k rows) was 118 round trips, and one lost batch aborted the read and left
+# the baseline stale - so the next pass asked for the whole table again, and the
+# cycle repeated every few minutes (2026-11-17). Four times fewer requests let
+# the whole read finish and the baseline move on.
 sub sync_rows_batch {
 	my ($remote, $signatorial, $secret, $table, $cut, $after, $range) = @_;
 	my $url = $remote->{'manager'} . '/manager/sync_rows?signatorial=' . $signatorial
 		. '&table=' . Mojo::Util::url_escape($table)
-		. '&limit=500&seal=js1';
+		. '&limit=2000&seal=js1';
 	if (ref $range eq 'HASH' && defined $range->{'from'} && defined $range->{'to'}) {
 		$url .= '&from=' . int($range->{'from'}) . '&to=' . int($range->{'to'});
 	}

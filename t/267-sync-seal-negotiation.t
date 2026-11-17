@@ -26,7 +26,7 @@ isnt(subs::decrypter_strict('other-key', $old), 'legacy payload', 'and not under
 
 # --- a new puller asks for JS1 in the signed query --------------------------
 my $part08 = source('lib/JawnOS/Manager/Part08.pm');
-like($part08, qr/&limit=500&seal=js1/, 'a row batch asks for the AEAD seal');
+like($part08, qr/&limit=2000&seal=js1/, 'a row batch asks for the AEAD seal, at the route\'s largest batch');
 like($part08, qr/&band=' \. int\(\$band\) \. '&seal=js1/, 'a bucket map asks for it too');
 
 # --- the donor seals to what the puller names -------------------------------
