@@ -1,10 +1,9 @@
 /* refresh-probe.js - explain a WebUI reload, across a long run.
  *
- * Served by the app (public/js/probe/). Normally the manager layout includes it
- * only when the browser asks for it with ?probe=1 or already carries the cookie
- * this file sets; during the current reload investigation it is the default,
- * and ?probe=0 opts a browser out. That is the whole point of living here
- * rather than in the console:
+ * Served by the app (public/js/probe/). The manager layout includes it only
+ * when the browser asks for it with ?probe=1 or already carries the cookie this
+ * file sets; a normal page load never loads it, and ?probe=0 opts a browser
+ * back out. That is the whole point of living here rather than in the console:
  * a reload (the event being measured) wipes a pasted script, but the next page
  * loads this file again from the cookie.
  *

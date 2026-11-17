@@ -36,8 +36,8 @@ like($src, qr/probe_endpoint/, 'the collector endpoint is installable per device
 like($src, qr/probe_device/, 'and so is the device label');
 like($src, qr/setInterval\(heartbeat, 60000\)/, 'it sends a heartbeat over a long run');
 like($src, qr/document\.cookie = COOKIE/, 'it renews the cookie that reloads it');
-like($src, qr/window\.jawnos_probe_endpoint/, 'the injected collector is the default');
-like($src, qr/window\.jawnos_probe_host/, 'so is the injected host name');
+like($src, qr/window\.jawnos_probe_endpoint/, 'a collector can still be injected explicitly');
+like($src, qr/window\.jawnos_probe_host/, 'and so can the device host name');
 # A fixed 40-character tail of the URL was the user agent for every socket, so
 # a report could not say which app kept failing. The app and the origin name
 # it without recording the query (which carries the session token).
@@ -54,11 +54,20 @@ SKIP: {
 }
 
 my $layout_src = decode('UTF-8', do { local $/; open(my $fh, '<', $layout) or die "$layout: $!"; <$fh> });
-like($layout_src, qr{/js/probe/refresh-probe\.js}, 'the layout includes the probe');
-like($layout_src, qr{jawnos_probe_endpoint}, 'it injects the collector endpoint');
-like($layout_src, qr{jawnos_probe_host}, 'and the device host name');
-like($layout_src, qr{\$probe_default}, 'the temporary default is a named switch');
+like($layout_src, qr{/js/probe/refresh-probe\.js}, 'the layout can include the probe');
+like($layout_src, qr{jawnos_probe_host}, 'it injects the device host name');
+# The probe is a developer tool. It was default-on for a reload investigation,
+# and every house page then posted to a hardcoded dev collector whose
+# certificate the browser does not trust: the handshake failed with
+# ERR_CERT_AUTHORITY_INVALID (-202) on a timer. Off by default, and no endpoint
+# baked in, is the fix; a developer still opts in with ?probe=1.
+like($layout_src, qr{\$probe_default = 0\b}, 'the probe is off unless a browser asks for it');
+like($layout_src, qr{\$probe_param eq '0'}, 'the query parameter is what gates it');
 like($layout_src, qr{jawnos_probe=0}, '?probe=0 records a lasting opt-out');
+unlike($layout_src, qr{window\.jawnos_probe_endpoint\s*=},
+	'a normal load is not pointed at a collector endpoint');
+unlike($layout_src, qr{dev\.jonathanferwerda\.com},
+	'no developer host is baked into the layout');
 
 # Reading the source is not enough: a bad if/elsif split across separate
 # <% %> tags is valid text and invalid Perl (it broke the manager page on

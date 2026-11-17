@@ -265,25 +265,28 @@
 	<% for my $script (&subs::js_script_urls('public/js/manager/jp.js')) { %>
 		<script src="<%= $script %>?string=<%= $string %>"></script>
 	<% } %>
-	<%# Temporary (2026-11-14): the probe is the default while we chase the
-	     random reloads. It is included on every manager page; set
-	     $probe_default to 0 and open ?probe=0 once per browser to end the
-	     window. The endpoint is the collector on dev, and the host name makes
+	<%# Developer tool, off by default: the refresh probe explains a WebUI
+	     reload across a long run, so only a browser that asks for it with
+	     ?probe=1 (and so carries its cookie afterwards) loads it. A normal
+	     page load, desktop or phone, must issue no probe request at all.
+	     The collector endpoint is installed per device with ?probe_endpoint=
+	     and is deliberately not baked in here: a dev host is not this
+	     machine and its certificate is not trusted, so a default would fail
+	     the TLS handshake on every house device. The host name still makes
 	     each device's records distinguishable (the Android trees report
 	     "localhost", so the script falls back to its user-agent guess there). %>
 	<% my $probe_param   = $c->param('probe'); %>
 	<% my $probe_cookie  = $c->cookie('jawnos_probe'); %>
-	<% my $probe_default = 1; %>
+	<% my $probe_default = 0; %>
 	<% my $probe_on; %>
 	<%# one tag: an if/elsif chain split across separate tags is not valid
 	     Perl once the template is compiled; splitting it broke the manager
 	     page on 2026-11-14 with a syntax error near elsif. %>
 	<% if (defined $probe_param) { $probe_on = ($probe_param eq '0') ? 0 : 1; }
 	   elsif (defined $probe_cookie && $probe_cookie eq '0') { $probe_on = 0; }
-	   else { $probe_on = ($probe_default || defined $probe_cookie) ? 1 : 0; } %>
+	   else { $probe_on = ($probe_default || (defined $probe_cookie && $probe_cookie eq '1')) ? 1 : 0; } %>
 	<% if ($probe_on) { %>
 		<script>
-			window.jawnos_probe_endpoint = 'https://dev.jonathanferwerda.com:45997/event';
 			window.jawnos_probe_host = '<%= &subs::machine_hostname() %>';
 		</script>
 		<script src="/js/probe/refresh-probe.js?string=<%= $string %>"></script>
