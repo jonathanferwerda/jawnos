@@ -1351,17 +1351,6 @@ sub clothesline_daily_hours {
 	}
 	$window_days ||= 60;
 	$session_days ||= 14;
-	# The rail and the settings dialog are drawn on a screen anyone can see: an
-	# app the house keeps private, and a caller's number, are not steps here.
-	my %off;
-	foreach my $r ( @{ $rows || [] } ) {
-		next unless ref $r eq 'HASH';
-		my $app = $r->{'app'};
-		next unless defined $app && length $app;
-		next if exists $off{$app};
-		$off{$app} = &clothesline_app_off_line($app) ? 1 : 0;
-	}
-	$rows = [ grep { ref $_ ne 'HASH' || !$off{ $_->{'app'} // '' } } @{$rows} ] if grep { $off{$_} } keys %off;
 	my $zone = &clock_zone_house();
 	my $had = exists $ENV{'TZ'};
 	my $old = $ENV{'TZ'};
@@ -1370,6 +1359,42 @@ sub clothesline_daily_hours {
 	my $scan = &clothesline_routine_scan($rows, $now, window_days => $window_days, session_days => $session_days);
 	if ($had) { $ENV{'TZ'} = $old } else { delete $ENV{'TZ'} }
 	POSIX::tzset();
+	# The rail and the settings dialog are drawn on a screen anyone can see: an
+	# app the house keeps private, and a caller's number, are not steps here. The
+	# check runs on the steps the routine actually offers (the recent sessions),
+	# not on every app in two months of history - the week asks for seven days,
+	# and a lookup per app per day was the dialog's whole wait.
+	my %off;
+	foreach my $s ( @{ $scan->{'sessions'} || [] } ) {
+		next unless ref $s eq 'HASH' && ref $s->{'seq'} eq 'ARRAY';
+		foreach my $app ( @{ $s->{'seq'} } ) {
+			next unless defined $app && length $app;
+			next if exists $off{$app};
+			$off{$app} = &clothesline_app_off_line($app) ? 1 : 0;
+		}
+	}
+	my %skip = map { $_ => 1 } grep { $off{$_} } keys %off;
+	if (%skip) {
+		foreach my $s ( @{ $scan->{'sessions'} || [] } ) {
+			next unless ref $s eq 'HASH' && ref $s->{'seq'} eq 'ARRAY';
+			my (@seq, @times);
+			for my $i ( 0 .. $#{$s->{'seq'}} ) {
+				my $app = $s->{'seq'}[$i];
+				next if defined $app && $skip{$app};
+				push @seq, $app;
+				push @times, $s->{'times'}[$i] if ref $s->{'times'} eq 'ARRAY' && defined $s->{'times'}[$i];
+			}
+			$s->{'seq'} = \@seq;
+			$s->{'times'} = \@times if ref $s->{'times'} eq 'ARRAY';
+		}
+		$scan->{'sessions'} = [ grep { ref $_ eq 'HASH' && @{ $_->{'seq'} || [] } } @{ $scan->{'sessions'} } ];
+		foreach my $app ( keys %skip ) {
+			delete $scan->{'apps'}{$app} if ref $scan->{'apps'} eq 'HASH';
+			delete $scan->{'done'}{$app} if ref $scan->{'done'} eq 'HASH';
+			delete $scan->{'running'}{$app} if ref $scan->{'running'} eq 'HASH';
+		}
+		$scan->{'start_app'} = undef if defined $scan->{'start_app'} && $skip{ $scan->{'start_app'} };
+	}
 	return $scan;
 }
 

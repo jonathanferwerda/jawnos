@@ -619,6 +619,16 @@ $quiet = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 16, 12, 0),
 ok(!$quiet->{'apps'}{'hush'}, 'a private step never reaches the routine');
 ok($quiet->{'apps'}{'coffee'}, 'and the public steps still do');
 
+# a private app is not a habit either, however often it happens
+subs::setting_setter({ app => 'hush', setting => 'visible', value => 'private', device => 'all' });
+subs::visibility_cache_clear();
+my $hush_scan = { apps => {
+	soap => { hour => 7, due => 1, recent_days => 12 },
+	hush => { hour => 9, due => 1, recent_days => 12 } } };
+my $hush_rows = subs::clothesline_anticipatory_habits([ { app => 'soap', wave => 0 } ], $hush_scan);
+is_deeply([ map { $_->{'app'} } @{$hush_rows} ], [qw(soap)],
+	'a private step the routine missed is not put back');
+
 # a day curated before the app was made private must not carry it now
 my $today_key = subs::day_key(subs::rightNow());
 subs::clothesline_anticipatory_save({ days => { $today_key => [ 'coffee', 'secret_thing' ] } });

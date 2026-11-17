@@ -509,6 +509,9 @@ sub clothesline_anticipatory_habits {
 		next unless $row->{'due'};
 		next unless defined $row->{'hour'} && $row->{'hour'} =~ /^\d+$/;
 		next unless ($row->{'recent_days'} || 0) >= 5;
+		# the line is a public surface: a private app and a caller's number are not
+		# habits, however often they happen
+		next if &clothesline_app_off_line($app);
 		push @add, { app => $app, hour => (0 + $row->{'hour'}) };
 	}
 	return [ @{$rows} ] unless @add;
