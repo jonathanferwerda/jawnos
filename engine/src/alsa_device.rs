@@ -173,6 +173,101 @@ pub fn run_playback(
     })
 }
 
+/// What one real-device capture produced: the shape ALSA granted, and the
+/// frames that actually reached the caller's sink.
+#[derive(Debug, Clone)]
+pub struct CaptureReport {
+    pub rate: u32,
+    pub period: usize,
+    pub buffer: usize,
+    pub channels: usize,
+    pub frames: u64,
+    pub xruns: usize,
+}
+
+/// Capture `seconds` of the input, handing each block to `sink` as interleaved
+/// S16 samples. The sink does the writing, so this module stays about the
+/// device and the take's WAV layout stays in `wav` (docs/studio-audio-roadmap.md
+/// §7, P2).
+///
+/// The final block is short when the requested duration is not a whole number
+/// of periods: the take is exactly `seconds`, not padded to the block size.
+/// Answer "can this device be opened for capture?" and close it again.
+///
+/// `--record` asks this before it creates the output file, so a take that
+/// cannot start never truncates a path the caller already named. Opening twice
+/// costs a millisecond and saves an existing take; the real open follows.
+pub fn check_capture(device: &str, rate: u32, period: usize, buffer: usize) -> Result<(), String> {
+    let stream = open(device, Direction::Capture, rate, period, buffer)?;
+    let _ = stream.pcm.drop();
+    Ok(())
+}
+
+pub fn run_capture<F>(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    seconds: f64,
+    mut sink: F,
+) -> Result<CaptureReport, String>
+where
+    F: FnMut(&[i16]) -> Result<(), String>,
+{
+    let stream = open(device, Direction::Capture, rate, period, buffer)?;
+    let io = stream
+        .pcm
+        .io_i16()
+        .map_err(|error| format!("{device}: S16 stream: {error}"))?;
+
+    // Capture starts when read is called, but starting it explicitly makes the
+    // first frame's position unambiguous and matches the loopback path.
+    stream
+        .pcm
+        .start()
+        .map_err(|error| format!("{device}: start capture: {error}"))?;
+
+    let frames = stream.period.max(1);
+    let total = (seconds.max(0.0) * stream.rate as f64).round() as u64;
+    let mut remaining = total;
+    let mut captured = 0u64;
+    let mut xruns = 0usize;
+    let mut block = vec![0i16; frames * CHANNELS as usize];
+
+    while remaining > 0 {
+        let want = remaining.min(frames as u64) as usize;
+        let slice = &mut block[..want * CHANNELS as usize];
+        match io.readi(slice) {
+            Ok(0) => break,
+            Ok(got) => {
+                let got = got.min(want);
+                sink(&slice[..got * CHANNELS as usize])
+                    .map_err(|error| format!("{device}: write take: {error}"))?;
+                captured += got as u64;
+                remaining -= got as u64;
+            }
+            Err(error) => {
+                let message = format!("{error}");
+                match stream.pcm.try_recover(error, true) {
+                    Ok(()) => xruns += 1,
+                    Err(_) => return Err(format!("{device}: capture: {message}")),
+                }
+            }
+        }
+    }
+
+    let _ = stream.pcm.drop();
+
+    Ok(CaptureReport {
+        rate: stream.rate,
+        period: frames,
+        buffer: stream.buffer,
+        channels: CHANNELS as usize,
+        frames: captured,
+        xruns,
+    })
+}
+
 /// Write one click and find it again. Capture starts first; playback starts a
 /// moment later, so `precision_samples` is the period ALSA granted, not a
 /// claim of sample alignment.

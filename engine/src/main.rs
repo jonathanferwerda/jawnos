@@ -10,8 +10,15 @@ use std::process::ExitCode;
 use jawn_audio::{
     backends::{self, BackendKind, RunReport},
     decode, encode_datagram, loopback, mix_mono_into_stereo, peak, Codec, Device, Header,
-    NullDevice, Strip, HEADER_LEN,
+    NullDevice, Strip, WavWriter, HEADER_LEN,
 };
+
+/// A take is the interface's own shape: stereo at the sample rate in the
+/// header. `--channels` is a `--run` option and is not silently reused here.
+const RECORD_CHANNELS: usize = 2;
+/// `--record` without `--seconds`: long enough to be a take, short enough to
+/// not surprise someone who forgot the flag.
+const RECORD_SECONDS: f64 = 5.0;
 
 const USAGE: &str = "\
 jawn-audio — the JawnOS audio engine
@@ -21,6 +28,7 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --selftest                   run a block through the graph and protocol
   jawn-audio --run [options]              run a device for a while and report
   jawn-audio --loopback [options]         measure the round trip through a patch cable
+  jawn-audio --record --out FILE.wav      record a take to a 16-bit WAV
   jawn-audio --version                    print the version
   jawn-audio --help                       this text
 
@@ -33,6 +41,18 @@ jawn-audio — the JawnOS audio engine
   --rate HZ       sample rate (default 48000)
   --channels N    channels per frame (default 2)
   --tone HZ       emit a sine instead of silence
+  --json          one JSON line instead of prose
+
+--record options:
+  --out FILE.wav  where to write the take (required)
+  --backend N     null (default), alsa, pipewire or jack
+  --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
+  --period N      block/period size in frames (default 64)
+  --buffer N      buffer size in frames (default 256)
+  --seconds S     how long to record, in seconds (default 5)
+  --rate HZ       sample rate (default 48000)
+  --start-at S    the take's start sample on the transport (default 0)
+  --tone HZ       with the null backend, record a sine instead of silence
   --json          one JSON line instead of prose
 
 --loopback options:
@@ -53,6 +73,7 @@ enum Mode {
     Backends,
     Run,
     Loopback,
+    Record,
     SelfTest,
     Version,
     Help,
@@ -68,6 +89,9 @@ struct Options {
     buffer: usize,
     channels: usize,
     tone: Option<f32>,
+    out: Option<String>,
+    start_at: u64,
+    seconds_given: bool,
     json: bool,
 }
 
@@ -92,6 +116,9 @@ fn run() -> Result<ExitCode, String> {
         buffer: 256,
         channels: 2,
         tone: None,
+        out: None,
+        start_at: 0,
+        seconds_given: false,
         json: false,
     };
 
@@ -102,6 +129,7 @@ fn run() -> Result<ExitCode, String> {
             "--backends" => options.mode = Mode::Backends,
             "--run" => options.mode = Mode::Run,
             "--loopback" => options.mode = Mode::Loopback,
+            "--record" => options.mode = Mode::Record,
             "--selftest" => options.mode = Mode::SelfTest,
             "--version" | "-V" => options.mode = Mode::Version,
             "--help" | "-h" => options.mode = Mode::Help,
@@ -130,6 +158,7 @@ fn run() -> Result<ExitCode, String> {
                 options.seconds = raw
                     .parse()
                     .map_err(|_| format!("--seconds wants a number, not `{raw}`"))?;
+                options.seconds_given = true;
             }
             "--rate" => {
                 let raw = value(&mut args, "--rate")?;
@@ -149,6 +178,13 @@ fn run() -> Result<ExitCode, String> {
                     raw.parse()
                         .map_err(|_| format!("--tone wants a frequency, not `{raw}`"))?,
                 );
+            }
+            "--out" => options.out = Some(value(&mut args, "--out")?),
+            "--start-at" => {
+                let raw = value(&mut args, "--start-at")?;
+                options.start_at = raw
+                    .parse()
+                    .map_err(|_| format!("--start-at wants a sample count, not `{raw}`"))?;
             }
             other => return Err(format!("unknown option `{other}` (try --help)")),
         }
@@ -195,6 +231,7 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Mode::Loopback => run_loopback(&options),
+        Mode::Record => run_record(&options),
     }
 }
 
@@ -374,6 +411,304 @@ fn run_loopback(options: &Options) -> Result<ExitCode, String> {
         println!("{}", report.prose());
     }
     Ok(ExitCode::from(if report.ok { 0 } else { 1 }))
+}
+
+/// What one `--record` produced, in the exact key order the JSON contract
+/// names. A failed take keeps the same shape with `frames` at zero, so a caller
+/// parses one struct either way.
+struct TakeReport {
+    ok: bool,
+    path: String,
+    backend: &'static str,
+    device: String,
+    rate: u32,
+    frames: u64,
+    channels: usize,
+    start_sample: u64,
+    xruns: usize,
+    error: String,
+}
+
+impl TakeReport {
+    fn success(
+        path: String,
+        backend: &'static str,
+        device: String,
+        rate: u32,
+        frames: u64,
+        start_sample: u64,
+        xruns: usize,
+    ) -> Self {
+        TakeReport {
+            ok: true,
+            path,
+            backend,
+            device,
+            rate,
+            frames,
+            channels: RECORD_CHANNELS,
+            start_sample,
+            xruns,
+            error: String::new(),
+        }
+    }
+
+    fn failure(
+        path: String,
+        backend: &'static str,
+        device: String,
+        rate: u32,
+        start_sample: u64,
+        error: String,
+    ) -> Self {
+        TakeReport {
+            ok: false,
+            path,
+            backend,
+            device,
+            rate,
+            frames: 0,
+            channels: RECORD_CHANNELS,
+            start_sample,
+            xruns: 0,
+            error,
+        }
+    }
+
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"error\":\"{}\"}}",
+            self.ok,
+            loopback::json_escape(&self.path),
+            loopback::json_escape(self.backend),
+            loopback::json_escape(&self.device),
+            self.rate,
+            self.frames,
+            self.channels,
+            self.start_sample,
+            self.xruns,
+            loopback::json_escape(&self.error)
+        )
+    }
+
+    fn prose(&self) -> String {
+        let seconds = if self.rate == 0 {
+            0.0
+        } else {
+            self.frames as f64 / self.rate as f64
+        };
+        format!(
+            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, xruns {}",
+            self.path,
+            self.frames,
+            self.rate,
+            self.channels,
+            seconds,
+            self.backend,
+            self.device,
+            self.start_sample,
+            self.xruns
+        )
+    }
+}
+
+fn validate_record(options: &Options) -> Result<(), String> {
+    if options.out.is_none() {
+        return Err("--record needs --out FILE.wav".to_string());
+    }
+    validate_block(options.frames, options.buffer)?;
+    if options.rate == 0 {
+        return Err("--rate must be at least 1".to_string());
+    }
+    if options.channels != RECORD_CHANNELS {
+        return Err(format!(
+            "--record writes stereo; --channels must be {RECORD_CHANNELS}"
+        ));
+    }
+    if options.seconds < 0.0 {
+        return Err("--seconds cannot be negative".to_string());
+    }
+    Ok(())
+}
+
+fn run_record(options: &Options) -> Result<ExitCode, String> {
+    validate_record(options)?;
+    let path = options.out.clone().expect("validated --out");
+    let device = options.backend.device_name(options.device.as_deref());
+
+    match record_take(options, &path, &device) {
+        Ok(report) => {
+            if options.json {
+                println!("{}", report.to_json());
+            } else {
+                println!("{}", report.prose());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => {
+            let report = TakeReport::failure(
+                path,
+                options.backend.name(),
+                device,
+                options.rate,
+                options.start_at,
+                error.clone(),
+            );
+            if options.json {
+                println!("{}", report.to_json());
+            } else {
+                eprintln!("record failed: {error}");
+            }
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+/// Create the take, stream the backend into it, and finish it. Any runtime
+/// failure removes the partial file: a short take is only left behind when the
+/// process is killed, where the per-block sizes still make it a valid WAV.
+fn record_take(options: &Options, path: &str, device: &str) -> Result<TakeReport, String> {
+    // Answer "can this build/backend record?" before opening the output: a
+    // backend that cannot run must not truncate a file the user named.
+    record_support(options)?;
+
+    let seconds = if options.seconds_given {
+        options.seconds
+    } else {
+        RECORD_SECONDS
+    };
+    // Open and close the device before the file. A busy or missing device then
+    // fails without truncating a path the caller named; the real open follows
+    // inside the recording run.
+    if matches!(options.backend, BackendKind::Alsa | BackendKind::PipeWire) {
+        #[cfg(feature = "alsa")]
+        jawn_audio::alsa_device::check_capture(
+            device,
+            options.rate,
+            options.frames,
+            options.buffer,
+        )
+        .map_err(|error| format!("cannot record: {error}"))?;
+    }
+
+    let mut writer = WavWriter::create(path, options.rate, RECORD_CHANNELS as u16, options.frames)
+        .map_err(|error| format!("cannot write {path}: {error}"))?;
+
+    let outcome = match options.backend {
+        BackendKind::Null => record_null(options, seconds, &mut writer),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            record_alsa(device, options, seconds, &mut writer)
+        }
+        BackendKind::Jack => Err(
+            "--record has no JACK capture backend yet; use --backend alsa or null".to_string(),
+        ),
+    };
+
+    match outcome {
+        Ok((rate, xruns)) => match writer.finish() {
+            Ok(frames) => Ok(TakeReport::success(
+                path.to_string(),
+                options.backend.name(),
+                device.to_string(),
+                rate,
+                frames,
+                options.start_at,
+                xruns,
+            )),
+            Err(error) => {
+                let _ = std::fs::remove_file(path);
+                Err(format!("cannot finish {path}: {error}"))
+            }
+        },
+        Err(error) => {
+            drop(writer);
+            let _ = std::fs::remove_file(path);
+            Err(error)
+        }
+    }
+}
+
+fn record_support(options: &Options) -> Result<(), String> {
+    match options.backend {
+        BackendKind::Null => Ok(()),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            if cfg!(feature = "alsa") {
+                Ok(())
+            } else {
+                Err(
+                    "this build has no ALSA/PipeWire backend; rebuild with --features alsa"
+                        .to_string(),
+                )
+            }
+        }
+        BackendKind::Jack => Err(
+            "--record has no JACK capture backend yet; use --backend alsa or null".to_string(),
+        ),
+    }
+}
+
+/// The null take: silence, or a sine, through the same block loop as hardware.
+/// The frame buffer is allocated once; each block is sliced to the frames that
+/// remain, so the take is exactly `--seconds` even when it is not a whole
+/// number of periods.
+fn record_null(
+    options: &Options,
+    seconds: f64,
+    writer: &mut WavWriter,
+) -> Result<(u32, usize), String> {
+    let mut device = NullDevice::new(options.rate, options.frames, RECORD_CHANNELS);
+    if let Some(hz) = options.tone {
+        device = device.with_tone(hz);
+    }
+
+    let total = (seconds.max(0.0) * options.rate as f64).round() as u64;
+    let mut block = vec![0.0f32; options.frames * RECORD_CHANNELS];
+    let mut remaining = total;
+    while remaining > 0 {
+        device
+            .process(&mut block)
+            .map_err(|error| format!("device: {error:?}"))?;
+        let frames = remaining.min(options.frames as u64) as usize;
+        writer
+            .write_f32(&block[..frames * RECORD_CHANNELS])
+            .map_err(|error| format!("write take: {error}"))?;
+        remaining -= frames as u64;
+    }
+    Ok((options.rate, 0))
+}
+
+#[cfg(feature = "alsa")]
+fn record_alsa(
+    device: &str,
+    options: &Options,
+    seconds: f64,
+    writer: &mut WavWriter,
+) -> Result<(u32, usize), String> {
+    let report = jawn_audio::alsa_device::run_capture(
+        device,
+        options.rate,
+        options.frames,
+        options.buffer,
+        seconds,
+        |block| writer.write_i16(block).map_err(|error| error.to_string()),
+    )?;
+    // ALSA may grant a rate other than the one requested; the samples are at
+    // the granted rate, so the header and the report must say that rate.
+    writer
+        .set_rate(report.rate)
+        .map_err(|error| format!("cannot set the take rate: {error}"))?;
+    Ok((report.rate, report.xruns))
+}
+
+#[cfg(not(feature = "alsa"))]
+fn record_alsa(
+    device: &str,
+    options: &Options,
+    seconds: f64,
+    writer: &mut WavWriter,
+) -> Result<(u32, usize), String> {
+    let _ = (device, options, seconds, writer);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
 fn self_test() -> Result<(), String> {

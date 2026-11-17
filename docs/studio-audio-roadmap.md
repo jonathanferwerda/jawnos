@@ -114,6 +114,34 @@ Still unmeasured: **the browser's own round trip**. The 52 ms above is the floor
 page is that plus Chromium's audio service and, for takes, `MediaRecorder`. The Studio picker exists
 so that number can be collected in the same table.
 
+### Can it go lower? — 2026-11-17
+
+| Period / buffer | Period granted | Round trip |
+|---|---|---|
+| 32 / 128 | 48 | 132 samples — 2.75 ms |
+| 32 / 256 | 48 | 133 samples — 2.77 ms |
+| 64 / 256 | 64 | 131 samples — 2.73 ms |
+| 128 / 512 | 128 | 182 samples — 3.79 ms |
+
+A 32-frame request is answered with a **48-sample period** — exactly one 1 ms USB frame at 48 kHz —
+and the round trip does not move. Halving the buffer buys nothing because the transfer granularity,
+not the software, is the floor. So:
+
+- **JACK cannot beat this.** It drives the same ALSA device. Its value is a single callback
+  (sample-exact timing, removing the one-period uncertainty) and a standard graph for several apps
+  at once, not a smaller number.
+- **A custom engine cannot beat it either.** It would still reach the device through ALSA or USB, and
+  the PCM2902 is full-speed: 1 ms frames plus its own ADC and DAC.
+- **The only way down is a different interface** — USB high-speed (125 µs microframes) or PCIe. That
+  is a hardware purchase, not a phase.
+
+Exclusive mode now exists on `table` as
+`~/.config/wireplumber/wireplumber.conf.d/51-jawnos-studio-card.conf`, which disables the card's
+nodes so PipeWire never opens them (suspending the sink and source was not enough). Deleting the
+file and restarting WirePlumber gives the card back, which is what `manage` off will do. Until the
+engine runs there as a service, the interface is silent on that machine — that is the trade the
+switch exists to make explicit.
+
 Already in the tree, and the engine composes with each rather than replacing it blind:
 
 - **`Sound`** (`templates/apps/sound.html.ep`, `public/js/manager/sound.js`, six routes under

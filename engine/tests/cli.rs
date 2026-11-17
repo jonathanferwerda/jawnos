@@ -201,3 +201,212 @@ fn a_failed_loopback_is_exit_one_and_says_why() {
     assert!(text.contains("\"ms\":null"), "stdout: {text}");
     assert!(text.contains("alsa"), "stdout: {text}");
 }
+
+// --- --record ---------------------------------------------------------------
+
+use std::fs;
+use std::path::PathBuf;
+
+/// A take path under the system temp directory, removed however the test ends.
+struct TempTake {
+    path: PathBuf,
+}
+
+impl TempTake {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "jawn-audio-take-{}-{name}.wav",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        TempTake { path }
+    }
+
+    fn text(&self) -> &str {
+        self.path.to_str().expect("temp path is UTF-8")
+    }
+}
+
+impl Drop for TempTake {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn u16_at(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn u32_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
+}
+
+#[test]
+fn record_null_writes_a_stereo_48k_take_and_its_contract() {
+    let take = TempTake::new("contract");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--rate", "48000", "--period", "64",
+        "--out", take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.trim().lines().count(), 1, "stdout: {text}");
+    assert!(text.contains("\"ok\":true"), "stdout: {text}");
+    assert!(
+        text.contains(&format!("\"path\":\"{}\"", take.text())),
+        "stdout: {text}"
+    );
+    assert!(text.contains("\"backend\":\"null\""), "stdout: {text}");
+    assert!(text.contains("\"device\":\"null\""), "stdout: {text}");
+    assert_eq!(json_number(&text, "rate"), 48_000.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "frames"), 4_800.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "channels"), 2.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "start_sample"), 0.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "xruns"), 0.0, "stdout: {text}");
+    assert!(text.contains("\"error\":\"\""), "stdout: {text}");
+    let expected = format!(
+        "{{\"ok\":true,\"path\":\"{}\",\"backend\":\"null\",\"device\":\"null\",\"rate\":48000,\"frames\":4800,\"channels\":2,\"start_sample\":0,\"xruns\":0,\"error\":\"\"}}",
+        take.text()
+    );
+    assert_eq!(text.trim(), expected, "the JSON line is the contract");
+
+    let bytes = fs::read(&take.path).expect("read the take");
+    assert_eq!(&bytes[0..4], b"RIFF");
+    assert_eq!(&bytes[8..12], b"WAVE");
+    assert_eq!(&bytes[36..40], b"data");
+    assert_eq!(u16_at(&bytes, 22), 2, "channels");
+    assert_eq!(u32_at(&bytes, 24), 48_000, "rate");
+    assert_eq!(u16_at(&bytes, 34), 16, "bits");
+    assert_eq!(u32_at(&bytes, 40) as usize / 4, 4_800, "frames");
+    assert_eq!(bytes.len(), 44 + 4_800 * 4);
+}
+
+#[test]
+fn record_writes_the_last_partial_block_exactly() {
+    // 0.1 s is 4800 frames: 37 full 128-frame blocks and a 64-frame tail.
+    let take = TempTake::new("partial");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--rate", "48000", "--period", "128",
+        "--buffer", "512", "--out", take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = fs::read(&take.path).expect("read the take");
+    assert_eq!(u32_at(&bytes, 40) as usize / 4, 4_800, "frames");
+    assert_eq!(bytes.len(), 44 + 4_800 * 4);
+}
+
+#[test]
+fn a_take_that_cannot_be_written_fails_without_a_success_line() {
+    let missing = std::env::temp_dir().join(format!(
+        "jawn-audio-no-such-directory-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&missing);
+    let path = missing.join("take.wav");
+    let out = run(&[
+        "--record",
+        "--backend",
+        "null",
+        "--seconds",
+        "0.1",
+        "--out",
+        path.to_str().expect("temp path is UTF-8"),
+        "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("\"ok\":false"), "stdout: {text}");
+    assert!(!text.contains("\"ok\":true"), "stdout: {text}");
+    assert!(!path.exists(), "a failed take left a file behind");
+}
+
+#[test]
+fn the_transport_stamp_is_the_requested_start_sample() {
+    let take = TempTake::new("start-at");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--start-at", "96000", "--out",
+        take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "start_sample"), 96_000.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "frames"), 4_800.0, "stdout: {text}");
+}
+
+#[test]
+fn a_take_that_cannot_open_its_device_does_not_touch_the_file() {
+    let take = TempTake::new("busy-device");
+    fs::write(&take.path, b"keep me").expect("seed the file");
+
+    let out = run(&[
+        "--record", "--backend", "alsa", "--device", "hw:99,9",
+        "--seconds", "0.1", "--out", take.text(), "--json",
+    ]);
+
+    assert_eq!(out.status.code(), Some(1), "a device that cannot open fails");
+    assert_eq!(
+        fs::read(&take.path).expect("read the file back"),
+        b"keep me",
+        "an existing take must survive a failed start"
+    );
+}
+
+#[test]
+fn record_without_an_out_path_is_a_usage_error() {
+    let out = run(&["--record", "--backend", "null", "--seconds", "0.1"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--out"), "stderr: {stderr}");
+}
+
+#[test]
+fn record_refuses_to_pretend_a_take_is_not_stereo() {
+    let take = TempTake::new("mono");
+    let out = run(&[
+        "--record", "--backend", "null", "--channels", "1", "--out", take.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("stereo"), "stderr: {stderr}");
+    assert!(!take.path.exists(), "a refused take created a file");
+}
+
+#[test]
+fn record_null_can_write_a_tone() {
+    let take = TempTake::new("tone");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--tone", "440", "--out",
+        take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = fs::read(&take.path).expect("read the take");
+    let data = &bytes[44..];
+    assert_eq!(data.len(), 4_800 * 4, "stereo samples");
+    assert!(
+        data.chunks_exact(2)
+            .any(|sample| i16::from_le_bytes([sample[0], sample[1]]) != 0),
+        "the take was silent despite --tone"
+    );
+}

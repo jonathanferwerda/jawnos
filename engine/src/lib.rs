@@ -17,6 +17,7 @@ pub mod loopback;
 pub mod params;
 pub mod proto;
 pub mod session;
+pub mod wav;
 
 #[cfg(feature = "alsa")]
 pub mod alsa_device;
@@ -33,3 +34,4 @@ pub use proto::{
     HEADER_LEN, VERSION,
 };
 pub use session::{align, elect, Candidate, ClockOffset, NodeId};
+pub use wav::{to_i16, WavError, WavWriter, HEADER_LEN as WAV_HEADER_LEN};
