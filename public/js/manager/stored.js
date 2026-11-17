@@ -313,6 +313,13 @@ function jawnosStoreFold(source, seed) {
 		else if (key.match(/_(note|notes|ago|duration)$/)) {
 			put('app_data', key, value, key);
 		}
+		else if (/^\d+$/.test(key)) {
+			// An old snapshot once iterated a string into numeric keys, one
+			// character per index. They belong to no family and must never seed;
+			// drop them from the live store so the Sys panel and the debrief stop
+			// carrying them.
+			if (!source) { try { localStorage.removeItem(key); } catch (e) {} }
+		}
 		else if (source) {
 			if (seed && localStorage.getItem(key) !== null) { continue; }
 			try { localStorage.setItem(key, value); } catch (e) {}

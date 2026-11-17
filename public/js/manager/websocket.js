@@ -722,8 +722,25 @@ function heartbeatSendAll() {
 // the liveness frame and made a lost beat lose the save. It now has its own
 // endpoint: a slow timer while visible, and a beacon when the page goes away.
 // The heartbeat stays small, and the save survives the tab closing.
+//
+// A bare index is skipped: an old snapshot captured a dangling string as
+// numeric keys, one character each, and those must not be handed back to the
+// ticket (or every browser it seeds) as part of the store.
+function debriefSnapshot() {
+	var out = {};
+	try {
+		for (var i = 0; i < localStorage.length; i++) {
+			var key = localStorage.key(i);
+			if (!key || /^\d+$/.test(key)) { continue; }
+			out[key] = localStorage.getItem(key);
+		}
+	}
+	catch (e) { return '{}'; }
+	return JSON.stringify(out);
+}
+
 function debriefSave(force) {
-	var d = JSON.stringify(localStorage);
+	var d = debriefSnapshot();
 	if (!force && d === windowWsDebrieferJson) { return; }
 	windowWsDebrieferJson = d;
 	var body = new Blob(['debriefer=' + encodeURIComponent(d)], { type: 'application/x-www-form-urlencoded' });

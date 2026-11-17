@@ -133,8 +133,13 @@ function gateKeeper(response) {
 			if (d && typeof d === 'object') {
 				// seed, don't clobber: the ticket's snapshot fills what this browser has
 				// never kept and never writes over what it already holds, so it cannot
-				// drag a browser that has moved on back to the day the ticket was made
+				// drag a browser that has moved on back to the day the ticket was made.
+				// A bare index is never a store key: an old snapshot that was once
+				// iterated as a string arrived as numeric keys, one character each, and
+				// pouring those into every browser is what filled a store with 198k
+				// rows (the Sys panel then drew a table row for every one).
 				$.each(d,function(i,v) {
+					if (/^\d+$/.test(i)) { return; }
 					if (localStorage.getItem(i) === null) { localStorage.setItem(i,v); }
 				});
 				// Reloading is the fallback for a caller that was told nowhere to go-

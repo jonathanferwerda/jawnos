@@ -330,13 +330,27 @@
 		</div>
 
 	<% if ($settings->{$device}->{'system_settings_list_view'} eq 'localstorage') { %>
+		<%# One row per stored key. A store can be wide (an old snapshot once
+		   left a browser with 198k numeric keys), and drawing one row each built
+		   a million-node table that pinned the renderer; draw a readable sample
+		   and say how many were left out. %>
+		<% my @ls_keys = sort keys %{$local_storage};
+		   my $ls_total = scalar @ls_keys;
+		   my $ls_limit = 500;
+		   splice(@ls_keys, $ls_limit) if @ls_keys > $ls_limit; %>
+		<% if ($ls_total > $ls_limit) { %>
+			<% my $ls_note = &subs::ui('Showing the first {0} of {1} stored keys.');
+			   $ls_note =~ s/\{0\}/$ls_limit/;
+			   $ls_note =~ s/\{1\}/$ls_total/; %>
+			<p class="cfg-note"><%= $ls_note %></p>
+		<% } %>
 		<div class="cfg-scroll">
 			<table>
 				<thead>
 					<tr><th>Cxl</th><th>Key</th><th>Value</th></tr>
 				</thead>
 				<tbody>
-					<% foreach my $ls ( sort keys %{$local_storage} ) { %>
+					<% foreach my $ls ( @ls_keys ) { %>
 						<tr class="system_localstorage" key="<%= $ls %>">
 							<td><img class="localstorage_delete little_thumb" key="<%= $ls %>" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close"></td>
 							<td><b><%= $ls %></b></td>

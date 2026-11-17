@@ -403,6 +403,24 @@ sub debrief_store {
 	my ($ticket_uuid, $json) = @_;
 	return 0 unless defined $ticket_uuid && length $ticket_uuid;
 	return 0 unless defined $json && length $json;
+	# A store snapshot is a hash of named keys. An old client once captured a
+	# string as numeric keys, one character each; those cannot seed a browser and
+	# made the Sys panel draw a row per key (198k of them). Drop them here too,
+	# and keep a snapshot that is absurdly wide from being stored at all.
+	my $d = eval { decode_json $json };
+	if (ref $d eq 'HASH') {
+		my @drop = grep { /^\d+$/ } keys %{$d};
+		delete @{$d}{@drop} if @drop;
+		my @keys = sort keys %{$d};
+		if (@keys > 5000) {
+			delete @{$d}{@keys[5000 .. $#keys]};
+		}
+		$json = encode_json $d;
+	}
+	else {
+		# never a snapshot the gate can seed; keep the ticket clean and small
+		$json = '{}';
+	}
 	return 0 if length($json) > 8 * 1024 * 1024;
 	my $updated = &subs::db_update('tickets', { debriefer => $json }, { uuid => $ticket_uuid });
 	return ($updated && $updated->rows) ? 1 : 0;
