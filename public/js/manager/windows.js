@@ -139,6 +139,37 @@ function jawnosTaskbarWindowOrderTiles(tiles) {
 	return tiles;
 }
 
+// A cheap fingerprint of what the bar would draw, built from attributes and
+// text only: no icon clone, no serialised HTML, no computed style. The view
+// poll calls taskbarDisplayer every few seconds and a desk that has not moved
+// must not pay for a rebuild it will throw away; on a full desk the old stamp
+// was the same work as the paint (a clone and an outerHTML per window), and
+// with two dozen open windows that one poll took most of a core.
+function jawnosTaskbarCheapStamp() {
+	var parts = [];
+	parts.push('order:' + ((typeof jawnosBars != 'undefined' && jawnosBars.window_order) ? jawnosBars.window_order.join(',') : ''));
+	$('.wind').each(function(i,v) {
+		if (typeof jawnosWorkspaceWindowHere == 'function' && !jawnosWorkspaceWindowHere(this)) { return; }
+		var el = $(v);
+		var icon = el.find('.window_icon').first();
+		parts.push('w' + [ jawnosTaskbarWindowKey(v), jawnosTaskbarWindowSeq(v),
+			el.attr('app') || '', el.attr('timestamp') || '',
+			el.attr('data-terminal-id') || '', el.attr('data-window-id') || '',
+			el.attr('data-dialog-id') || '', el.find('.name_text').first().text(),
+			icon.attr('src') || '', icon.attr('class') || '', icon.attr('style') || '',
+			icon.attr('hint') || '', icon.text() || '' ].join('\u0001'));
+	});
+	$('.dialog_box').each(function(i,v) {
+		if ($(v).is('[hidden]')) { return; }
+		var el = $(v);
+		var title = el.attr('data-dialog-title') || el.find('.jawnos_dialog_title, .folders_dialog_title').first().text() || 'Dialog';
+		parts.push('d' + [ el.attr('data-dialog-id') || '', title,
+			el.attr('data-dialog-icon') || '/images/decipherable/windows.png',
+			jawnosTaskbarWindowSeq(v) ].join('\u0001'));
+	});
+	return parts.join('\u0002');
+}
+
 // The taskbar's window list: one button per open window, in the order the
 // windows were opened - oldest on the left, newest on the right - until the
 // person drags a tile somewhere else. A dragged order is kept (the misc setting
@@ -152,11 +183,15 @@ function taskbarDisplayer(destination) {
 		destination = '#taskbar_windows';
 	}
 	if ($(destination).length == 0) { return; }
+	var cheap = jawnosTaskbarCheapStamp();
+	if ($(destination).attr('data-taskbar-cheap') === cheap) {
+		appointment_chron();
+		return;
+	}
 	var tiles = [];
 	var timestamp = Date.now();
 	$('.wind').each(function(i,v) {
 		if (typeof jawnosWorkspaceWindowHere == 'function' && !jawnosWorkspaceWindowHere(this)) { return; }
-		var z = numeral($(v).css('z-index')).value();
 		var icon = $(v).find('.window_icon');
 		var formatted_name = $(v).find('.name_text').text();
 		var new_icon = icon.clone();
@@ -177,7 +212,7 @@ function taskbarDisplayer(destination) {
 		new_icon.removeClass('window_icon');
 		new_icon.addClass('window_toggle_icon little_thumb');
 
-		tiles.push({ z: z, key: jawnosTaskbarWindowKey(v), seq: jawnosTaskbarWindowSeq(v), index: tiles.length, html: new_icon.wrap('<span/>').parent().html() });
+		tiles.push({ key: jawnosTaskbarWindowKey(v), seq: jawnosTaskbarWindowSeq(v), index: tiles.length, html: new_icon.wrap('<span/>').parent().html() });
 
 		new_icon.show();
 	});
@@ -195,7 +230,7 @@ function taskbarDisplayer(destination) {
 		var icon = $('<img class="window_toggle_icon little_thumb">').attr('src', icon_src)
 			.attr('app', 'dialog').attr('formatted_name', title)
 			.attr('data-dialog-id', dialog_id);
-		tiles.push({ z: numeral($(v).css('z-index')).value(), key: jawnosTaskbarWindowKey(v), seq: jawnosTaskbarWindowSeq(v), index: tiles.length, html: icon.wrap('<span/>').parent().html() });
+		tiles.push({ key: jawnosTaskbarWindowKey(v), seq: jawnosTaskbarWindowSeq(v), index: tiles.length, html: icon.wrap('<span/>').parent().html() });
 	});
 	// The dragged order when there is one, otherwise the order the windows were
 	// opened in (see jawnosTaskbarWindowOrderTiles).
@@ -212,10 +247,14 @@ function taskbarDisplayer(destination) {
 	// order, names, icons or dialogs) really changed; the state pass below still
 	// runs from jawnosTaskbarPinsRefresh on every call.
 	if ($(destination).attr('data-taskbar-stamp') === stamp) {
+		$(destination).attr('data-taskbar-cheap', cheap);
 		appointment_chron();
 		return;
 	}
 	$(destination).attr('data-taskbar-stamp', stamp);
+	// A dialog gets its id and sequence in the build above; re-read the cheap
+	// fingerprint so the next poll does not see those one-time writes as a change.
+	$(destination).attr('data-taskbar-cheap', jawnosTaskbarCheapStamp());
 	$(destination).html(html);
 	$(destination).find('.window_toggle_name').remove();
 	$(destination).find('.window_toggle_icon').each(function(i,v) {

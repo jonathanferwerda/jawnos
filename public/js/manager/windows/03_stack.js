@@ -457,32 +457,36 @@ function windowDimensionSetter(w) {
 	}
 }
 
+// Place one background layer, writing only what actually changed. The view
+// poll calls the adjuster every few seconds; re-assigning the same width and
+// left still marks style dirty, and the next :visible or computed-style read
+// turns that into a full layout of a desk that has not moved.
+function windowBackgroundPlace(el, width, left, fixed) {
+	if (!el) { return; }
+	if (el.style.width !== width) { el.style.width = width; }
+	if (el.style.left !== left) { el.style.left = left; }
+	if (fixed && el.style.position !== 'fixed') { el.style.position = 'fixed'; }
+}
+
 function windowBackgroundAdjuster(data) {
 	if (!data) { data = {}; }
-	var background_set = $('#background, #desk_layer');
-	background_set.css({ 'width': '100%', 'left': '0px' });
-	$('.background').css({ 'width': '100%', 'left': '0px' });
-	var leftFree = 1;
-	var rightFree = 1;
-	if ($('.wind[view="left"]:visible').length > 0) {
-		leftFree = 0;
-	}
-	if ($('.wind[view="right"]:visible').length > 0) {
-		rightFree = 0;
-	}
-	if (leftFree != rightFree) {
-		var half = $(window).width() / 2;
-		var layout = localStorage.getItem('layout');
-		if (leftFree == 1) {
-			$('#background').css({ 'width': half, 'left': '0%', 'position': 'fixed' });
-			$('#desk_layer').css({ 'width': half, 'left': '0%', 'position': 'fixed' });
-			$('#' + layout).css({ 'width': half, 'left': '0%', 'position': 'fixed' });
-		}
-		else if (rightFree == 1) {
-			$('#background').css({ 'width': half, 'left': half, 'position': 'fixed' });
-			$('#desk_layer').css({ 'width': half, 'left': half, 'position': 'fixed' });
-			$('#' + layout).css({ 'width': half, 'left': half, 'position': 'fixed' });
-		}
+	// Ask the edge windows first: the old selector read :visible on every window
+	// before it looked at the attribute, so the poll forced a reflow per window
+	// even when nothing sat at an edge.
+	var leftFree = $('.wind[view="left"]').filter(':visible').length > 0 ? 0 : 1;
+	var rightFree = $('.wind[view="right"]').filter(':visible').length > 0 ? 0 : 1;
+	var layout = localStorage.getItem('layout') || '';
+	var layout_el = layout ? document.getElementById(layout) : null;
+	var full = (leftFree == rightFree) ? 1 : 0;
+	var half = full ? 0 : ($(window).width() / 2);
+	var width = full ? '100%' : (half + 'px');
+	var left = full ? '0px' : ((leftFree == 1) ? '0%' : (half + 'px'));
+	windowBackgroundPlace(document.getElementById('background'), width, left, !full);
+	windowBackgroundPlace(document.getElementById('desk_layer'), width, left, !full);
+	windowBackgroundPlace(layout_el, width, left, !full);
+	var backgrounds = document.querySelectorAll('.background');
+	for (var i = 0; i < backgrounds.length; i++) {
+		windowBackgroundPlace(backgrounds[i], '100%', '0px', 0);
 	}
 	if (data['caller'] != 'calculator') {
 		calculator();

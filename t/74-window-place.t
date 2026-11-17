@@ -1029,4 +1029,18 @@ JS
 	is($rc, 0, 'an anchored window does not take a slot in the tile');
 }
 
+# --- the view poll must not rebuild an idle taskbar -------------------------
+# calculator() (the appointment poll) calls windowBackgroundAdjuster every few
+# seconds, and that calls taskbarDisplayer. The old stamp cloned and serialised
+# every window icon just to learn that nothing had changed; with a desk of two
+# dozen windows one poll took hundreds of milliseconds, and opening another app
+# pushed the renderer to a pinned core.
+like($windows, qr/function jawnosTaskbarCheapStamp\(/, 'the bar pre-paints from a cheap fingerprint');
+like($windows, qr/data-taskbar-cheap/, 'kept on the bar itself');
+like($windows, qr/attr\('data-taskbar-cheap'\) === cheap/, 'so an unchanged desk skips the rebuild');
+unlike($windows, qr/var z = numeral\(\$\(v\)\.css\('z-index'\)\)/, 'the tile build reads no computed z-index');
+like($stack, qr/function windowBackgroundPlace\(/, 'a background layer is written only when it moves');
+like($stack, qr/\$\('\.wind\[view="left"\]'\)\.filter\(':visible'\)/, 'the edge test filters only the windows that take an edge');
+unlike($stack, qr/\.wind\[view="left"\]:visible/, 'not every window on the desk');
+
 done_testing();
