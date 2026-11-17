@@ -553,7 +553,6 @@ sub clothesline_anticipatory_habits {
 			next unless defined $hour && $hour =~ /^\d+$/;
 			next unless (0 + $hour) > $new->{'hour'} && ((0 + $hour) - $new->{'hour'}) <= 1;
 			my $wave = $out[$i]{'wave'} || 0;
-			next if $at < scalar @out && $wave == ($out[$at]{'wave'} || 0);
 			my $key = [ (0 + $hour) - $new->{'hour'}, $wave_first{$wave} // 99, $i ];
 			$runup = [ $key, $i ] if !$runup || ($key->[0] <=> $runup->[0][0]) < 0
 				|| (($key->[0] <=> $runup->[0][0]) == 0 && (($key->[1] <=> $runup->[0][1]) < 0
