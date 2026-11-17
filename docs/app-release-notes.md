@@ -5,6 +5,27 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-17 — the alarm face stays until it is answered
+
+- **A ring no longer times out.** The five-minute guard is gone: the alarm
+  sounds, and its face stays in front of the phone, until Dismiss or Snooze.
+  The Clock window's ring card follows the same rule and comes down only when
+  the server confirms the answer, so a failed Dismiss no longer pretends the
+  alarm is over.
+- **Home cannot hide the ringing face.** Pressing Home or opening another app
+  while the alarm is still sounding brings the alarm screen back. A screen that
+  is off is left off, and a face that has been answered never returns.
+- **Volume down is a snooze.** A hand can quiet a ringing alarm in the dark
+  without finding the screen. A Math or NFC gate still stands in the way, just
+  as it does for the tap.
+- **A snooze is visible in the Clock app.** The sleeping alarm's row wears a
+  Snoozed badge, its countdown names the next chime, and a Dismiss button sits
+  in the row, so the snooze can be called off as soon as the app is open.
+- **A missed Dismiss cannot leave the phone ringing.** While an alarm sounds,
+  the app watches the house's own ring record and stops when it says the ring
+  is over, even if the dismiss broadcast was frozen or lost. A dismiss also
+  cannot re-arm the moment that just ended.
+
 ## 2026-11-15 — the house rings, and pictures arrive
 
 - **The Phone app's ringtone is the house's.** A new Ringtone pane (Ring, Chime,

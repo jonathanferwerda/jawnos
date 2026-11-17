@@ -22,6 +22,7 @@ $catalog{'tr'} = {
 		'world_clock' => 'Dünya Saati',
 		'time_machine' => 'Zaman makinesi',
 		'snooze' => 'Ertele',
+		'snoozed' => 'Ertelendi',
 		'dismiss' => 'Yoksay',
 		'play_mode' => 'Oyun modu',
 		'none' => 'Hiçbiri',

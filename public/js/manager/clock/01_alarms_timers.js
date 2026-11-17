@@ -24,6 +24,19 @@ $(document).on('click', '.clock_alarm_skip', function (e) {
 	});
 });
 
+// A snoozed alarm is answered from its own row, without unfolding it: the same
+// Dismiss the ring card carries, so a snooze can be called off from the Clock
+// app as soon as the person opens it.
+$(document).on('click', '.clock_alarm_dismiss', function (e) {
+	e.stopPropagation();
+	var row = $(this).closest('.clock_alarm');
+	var button = $(this).prop('disabled', true);
+	jawnosClockPost('/manager/clock/alarm', { action: 'dismiss', uuid: row.attr('data-uuid') }, function (state) {
+		if (state && state.ok !== 0) { jawnosClockToast(jawnosT('Dismissed')); }
+		jawnosClockRefresh(true);
+	}, function () { button.prop('disabled', false); });
+});
+
 $(document).on('click', '.clock_day', function () {
 	var row = $(this).closest('.clock_alarm');
 	if ($(this).attr('data-once') == 'yes') {
@@ -199,7 +212,8 @@ function jawnosClockNextRefresh() {
 	$('.clock_app .clock_alarm_next').each(function () {
 		var next = parseInt($(this).attr('data-next'), 10) || 0;
 		if (!next) { $(this).text(''); return; }
-		$(this).text(jawnosClockNextText(next));
+		var snoozed = $(this).closest('.clock_alarm').hasClass('snoozed');
+		$(this).text((snoozed ? jawnosT('snoozed') + ' · ' : '') + jawnosClockNextText(next));
 	});
 }
 

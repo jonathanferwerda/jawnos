@@ -31,12 +31,14 @@
 			<div class="clock_alarm_list">
 				<% foreach my $alarm ( @{$alarms} ) { %>
 					<% my $is_on = $alarm->{'enabled'} ? 1 : 0; %>
+					<% my $is_snoozed = ($alarm->{'snooze_until'} && $alarm->{'snooze_until'} > $now) ? 1 : 0; %>
 					<% my %on_machine = map { $_ => 1 } @{ $alarm->{'machines'} || [] }; %>
-					<div class="clock_alarm<%= $is_on ? '' : ' off' %>" data-uuid="<%= $alarm->{'uuid'} %>" data-enabled="<%= $is_on %>">
+					<div class="clock_alarm<%= $is_on ? '' : ' off' %><%= $is_snoozed ? ' snoozed' : '' %>" data-uuid="<%= $alarm->{'uuid'} %>" data-enabled="<%= $is_on %>">
 						<div class="clock_alarm_head" role="button" tabindex="0" aria-expanded="false">
 							<button type="button" class="clock_alarm_caret" tabindex="-1" aria-hidden="true"></button>
 							<span class="clock_alarm_head_time"><%= sprintf('%02d:%02d', $alarm->{'hour'}, $alarm->{'minute'}) %></span>
 							<span class="clock_alarm_head_label"><%= $alarm->{'label'} %></span>
+							<% if ($is_snoozed) { %><span class="clock_alarm_snoozed"><%= &subs::lang('snoozed') %></span><% } %>
 							<span class="clock_alarm_head_devices">
 								<% foreach my $m ( @{$machines} ) { %>
 									<% next unless $on_machine{$m->{'value'}}; %>
@@ -45,6 +47,7 @@
 									<span class="clock_machine_pill<%= $ack_time ne '' ? ' confirmed' : '' %>" data-machine="<%= $m->{'value'} %>"<% if ($ack_time ne '') { %> title="<%= &subs::lang('delivered') %> <%= $ack_time %>"<% } %>><%= $m->{'label'} %><%= $ack_time ne '' ? ' ✓' : '' %></span>
 								<% } %>
 							</span>
+							<button type="button" class="clock_alarm_dismiss" hint="<%= &subs::lang('dismiss') %>"><%= &subs::lang('dismiss') %></button>
 							<label class="clock_switch" hint="<%= &subs::lang('alarm') %>"><input type="checkbox" class="clock_alarm_enabled"<%= $is_on ? ' checked' : '' %>></label>
 						</div>
 						<div class="clock_alarm_body">

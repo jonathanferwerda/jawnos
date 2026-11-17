@@ -22,6 +22,7 @@ $catalog{'pt'} = {
 		'world_clock' => 'Relógio mundial',
 		'time_machine' => 'Máquina do tempo',
 		'snooze' => 'Soneca',
+		'snoozed' => 'Adiado',
 		'dismiss' => 'Dispensar',
 		'play_mode' => 'Modo de jogo',
 		'none' => 'Nenhum',

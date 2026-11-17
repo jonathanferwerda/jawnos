@@ -22,6 +22,7 @@ $catalog{'ja'} = {
 		'world_clock' => '世界時計',
 		'time_machine' => 'タイムマシン',
 		'snooze' => 'スヌーズ',
+		'snoozed' => 'スヌーズ中',
 		'dismiss' => '解除',
 		'play_mode' => 'プレイモード',
 		'none' => 'なし',

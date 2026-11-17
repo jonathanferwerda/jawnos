@@ -3,9 +3,9 @@
 // Manager window on the machine, so a stored claim let only the first window
 // draw the ring - usually not the one in front of the person. Each window now
 // keeps its own short guard against the two notices (this machine's ring and a
-// peer's) describing the same alarm.
+// peer's) describing the same alarm. The card itself has no timeout: it stays
+// until the shared row says the alarm was answered or deleted.
 var jawnosClockRingSeen = {};
-var jawnosClockRingGuardTimer = null;
 function jawnosClockRingClaim(uuid) {
 	var now = Date.now();
 	if (jawnosClockRingSeen[uuid] && now - jawnosClockRingSeen[uuid] < 15000) { return false; }
@@ -92,12 +92,7 @@ function jawnosClockMathReset(card) {
 
 function jawnosClockShowRing(payload) {
 	jawnosClockRingingCurrent = payload;
-	// The server's ring guard is five minutes. A card shown from a peer's
-	// notice can outlive the shared row's ringing flag for a moment, so the
-	// card takes itself down when that guard has run out even if no state
-	// poll answers.
 	payload.ring_at = payload.fired_at || payload.at || Date.now();
-	jawnosClockRingGuardArm();
 	var card = jawnosClockRingCard();
 	card.find('.clock_ring_label').text(payload.label || jawnosT('alarm'));
 	card.find('.clock_ring_time').text(jawnosClockTime(payload.hour, payload.minute) + (payload.app ? ' · ' + String(payload.app).replace(/_/g, ' ') : ''));
@@ -127,23 +122,7 @@ function jawnosClockAlarmRing(payload) {
 	if (!jawnosClockRingingCurrent) { jawnosClockShowRing(jawnosClockRinging.shift()); }
 }
 
-function jawnosClockRingGuardArm() {
-	if (jawnosClockRingGuardTimer) { clearTimeout(jawnosClockRingGuardTimer); }
-	var current = jawnosClockRingingCurrent;
-	var at = current && current.ring_at ? current.ring_at : 0;
-	var left = at ? 300000 - (Date.now() - at) : 300000;
-	if (left < 1000) { left = 1000; }
-	jawnosClockRingGuardTimer = setTimeout(function () {
-		jawnosClockRingGuardTimer = null;
-		if (jawnosClockRingingCurrent) { jawnosClockAlarmStop(); }
-	}, left);
-}
-
 function jawnosClockAlarmStop() {
-	if (jawnosClockRingGuardTimer) {
-		clearTimeout(jawnosClockRingGuardTimer);
-		jawnosClockRingGuardTimer = null;
-	}
 	jawnosClockRingingCurrent = null;
 	var card = $('#clock_ring_overlay');
 	if (card.length) {
@@ -185,19 +164,21 @@ $(document).on('keydown', '.clock_ring_math_input', function (e) {
 $(document).on('click', '.clock_ring_dismiss', function () {
 	if (!jawnosClockRingingCurrent) { return; }
 	var payload = jawnosClockRingingCurrent;
-	jawnosClockPost('/manager/clock/alarm', { action: 'dismiss', uuid: payload.uuid }, function () {
-		jawnosClockAlarmStop();
-	});
-	jawnosClockAlarmStop();
+	var button = $(this).prop('disabled', true);
+	// The card comes down only when the server confirms the answer. A request
+	// that failed used to hide the card anyway and leave the phone ringing.
+	jawnosClockPost('/manager/clock/alarm', { action: 'dismiss', uuid: payload.uuid }, function (state) {
+		if (state && state.ok !== 0) { jawnosClockAlarmStop(); }
+	}, function () { button.prop('disabled', false); });
 });
 
 $(document).on('click', '.clock_ring_snooze', function () {
 	if (!jawnosClockRingingCurrent) { return; }
 	var payload = jawnosClockRingingCurrent;
-	jawnosClockPost('/manager/clock/alarm', { action: 'snooze', uuid: payload.uuid, minutes: jawnosClockSnoozeValue(payload.snooze) }, function () {
-		jawnosClockAlarmStop();
-	});
-	jawnosClockAlarmStop();
+	var button = $(this).prop('disabled', true);
+	jawnosClockPost('/manager/clock/alarm', { action: 'snooze', uuid: payload.uuid, minutes: jawnosClockSnoozeValue(payload.snooze) }, function (state) {
+		if (state && state.ok !== 0) { jawnosClockAlarmStop(); }
+	}, function () { button.prop('disabled', false); });
 });
 
 function jawnosClockTimerDone(payload) {

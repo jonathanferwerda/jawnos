@@ -54,14 +54,18 @@ sub clock_tick {
 			my $targeted = &clock_alarm_targets_me($alarm);
 			my $ring = ref $rings->{$uuid} eq 'HASH' ? $rings->{$uuid} : undef;
 
-			# Already sounding on this machine: repeat a chime, and stop when the
-			# ring guard runs out or a dismiss/snooze reached the shared row.
+			# Already sounding on this machine: repeat a chime, and stop when a
+			# dismiss/snooze reached the shared row (or, for a ring with a guard,
+			# when that guard runs out). An alarm has no guard now, so it keeps
+			# sounding until it is actually answered.
 			if ($ring && $ring->{'ringing'}) {
 				my $elapsed = $now - ($ring->{'started'} || $now);
 				my $long = &clock_sound_is_long($alarm->{'sound'});
 				my $stop_at = $alarm->{'stop_at'} || 0;
+				my $guard = &clock_alarm_ring_length($alarm);
+				my $expired = $guard > 0 && $elapsed >= $guard;
 				my $stopped = !$targeted || !$alarm->{'ringing'} || ($stop_at != ($ring->{'base'} || 0));
-				if ($stopped || $elapsed >= &clock_alarm_ring_length($alarm)) {
+				if ($stopped || $expired) {
 					# Restore the sink even for a chime: a chime has no player to
 					# kill, but the ring still raised the machine's volume.
 					push @actions, [ 'stop_sound', $uuid ];
@@ -71,7 +75,7 @@ sub clock_tick {
 					$changed = 1;
 					# Only the machine whose guard has run out clears the shared
 					# flag, so a peer that started a moment later is not cut short.
-					if ($alarm->{'ringing'} && $elapsed >= &clock_alarm_ring_length($alarm)) {
+					if ($alarm->{'ringing'} && $expired) {
 						$alarm->{'ringing'} = 0;
 						$alarm->{'ring_started'} = 0;
 						$alarm->{'ring_last'} = 0;

@@ -22,6 +22,7 @@ $catalog{'ar'} = {
 		'world_clock' => 'ساعة عالمية',
 		'time_machine' => 'آلة الزمن',
 		'snooze' => 'غفوة',
+		'snoozed' => 'مؤجل',
 		'dismiss' => 'تجاهل',
 		'play_mode' => 'وضع اللعب',
 		'none' => 'لا شيء',

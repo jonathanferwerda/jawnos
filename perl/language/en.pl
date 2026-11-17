@@ -22,6 +22,7 @@ $catalog{'en'} = {
 		'world_clock' => 'World Clock',
 		'time_machine' => 'Time machine',
 		'snooze' => 'Snooze',
+		'snoozed' => 'Snoozed',
 		'dismiss' => 'Dismiss',
 		'play_mode' => 'Play mode',
 		'none' => 'None',

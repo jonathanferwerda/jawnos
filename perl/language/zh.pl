@@ -22,6 +22,7 @@ $catalog{'zh'} = {
 		'world_clock' => '世界时钟',
 		'time_machine' => '时间机器',
 		'snooze' => '稍后提醒',
+		'snoozed' => '已稍后提醒',
 		'dismiss' => '关闭',
 		'play_mode' => '播放模式',
 		'none' => '无',

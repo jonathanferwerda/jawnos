@@ -20,6 +20,13 @@
 	.clock_empty { opacity:.6; font-size:13px; padding:14px 4px; text-align:center; }
 	.clock_alarm { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:0; margin-bottom:9px; background:var(--panel); overflow:hidden; }
 	.clock_alarm.off { opacity:.58; }
+	.clock_alarm.snoozed { border-color:#2f8f6d; box-shadow:0 0 0 2px rgba(47,143,109,.2); }
+	.clock_alarm_snoozed { flex:0 0 auto; font-size:10px; line-height:1.4; padding:1px 7px; border-radius:999px; font-weight:700;
+		color:#fff; background-color:#2f8f6d; white-space:nowrap; }
+	.clock_alarm_dismiss { display:none; flex:0 0 auto; font:inherit; font-size:11px; padding:3px 9px; cursor:var(--jawnos-cursor-pointer, pointer);
+		color:inherit; border:1px solid var(--line); border-radius:999px; background:transparent; }
+	.clock_alarm_dismiss:hover { background:var(--line); }
+	.clock_alarm.snoozed .clock_alarm_dismiss, .clock_alarm.ringing .clock_alarm_dismiss { display:inline-block; }
 	.clock_alarm_head { display:flex; align-items:center; gap:8px; min-width:0; padding:8px 10px; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.clock_alarm_head:hover { background:var(--line); }
 	.clock_alarm_caret { flex:0 0 auto; width:14px; height:14px; padding:0; border:none; background:transparent; color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); font-size:0; line-height:0; }
@@ -132,6 +139,7 @@
 		.clock_tab span { display:none; }
 		.clock_tab img { width:24px; height:24px; }
 		.clock_alarm_extra { grid-template-columns:1fr; }
+		.clock_alarm.snoozed .clock_alarm_head_devices { display:none; }
 		.clock_sw_display { font-size:36px; }
 	}
 </style>

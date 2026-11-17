@@ -22,6 +22,7 @@ $catalog{'id'} = {
 		'world_clock' => 'Jam Dunia',
 		'time_machine' => 'Mesin waktu',
 		'snooze' => 'Tunda',
+		'snoozed' => 'Ditunda',
 		'dismiss' => 'Abaikan',
 		'play_mode' => 'Mode main',
 		'none' => 'Tidak ada',

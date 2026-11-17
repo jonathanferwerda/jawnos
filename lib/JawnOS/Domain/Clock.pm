@@ -83,8 +83,8 @@ sub clock_write_device_alarm {
 			volume => int($next_alarm->{'volume'} || 70),
 			ramp => int($next_alarm->{'ramp'} || 0),
 			# Every alarm sound repeats now: a long recording loops at the alarm's
-			# volume, a chime loops on the alarm channel. Dismiss/Snooze, or the
-			# five-minute guard, is what ends it.
+			# volume, a chime loops on the alarm channel. Dismiss or Snooze is
+			# what ends it; a ring has no timeout.
 			loop => 1,
 			snooze => int($next_alarm->{'snooze'} || 5),
 			play => ($next_alarm->{'play'} || ''),
@@ -111,8 +111,9 @@ sub clock_device_ring {
 	return 0 unless $alarm;
 	return 0 if eval { &subs::silence_active() };
 	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
-	# The phone plays this itself, on the alarm channel: a chime repeats until
-	# Dismiss, and a long track plays once at the alarm's own volume.
+	# The phone plays this itself, on the alarm channel: the chosen sound loops
+	# until Dismiss or Snooze. A ring has no timeout, so the person hears the
+	# alarm they set rather than a ring that quietly gave up.
 	&clock_device_broadcast(&app_action('JAWN_CLOCK_RING'),
 		uuid => ($alarm->{'uuid'} || ''),
 		label => ($alarm->{'label'} || ''),
@@ -392,19 +393,22 @@ sub clock_next_wake {
 		my $candidate;
 		if ($a->{'ringing'}) {
 			# A chime repeats every fifteen seconds; a long track plays once and
-			# only needs a wake at the guard to clear the ring state. The machine's
-			# own ring record says when it last sounded, since the shared row is
-			# not rewritten on every repetition.
+			# only needs a wake when its guard runs out. The machine's own ring
+			# record says when it last sounded, since the shared row is not
+			# rewritten on every repetition. A ring with no guard (zero) wakes
+			# once a minute, so a stop that reached no other machine is still
+			# noticed here.
 			my $ring = ref $rings eq 'HASH' ? $rings->{ $a->{'uuid'} } : undef;
 			my $started = (ref $ring eq 'HASH' && $ring->{'started'}) ? $ring->{'started'} : ($a->{'ring_started'} || $now);
 			my $last = (ref $ring eq 'HASH' && $ring->{'last'}) ? $ring->{'last'} : ($a->{'ring_last'} || $now);
-			my $end = $started + &clock_alarm_ring_length($a);
+			my $guard = &clock_alarm_ring_length($a);
+			my $end = $guard > 0 ? $started + $guard : 0;
 			if (&clock_sound_is_long($a->{'sound'})) {
-				$candidate = $end;
+				$candidate = $end || ($now + 60000);
 			}
 			else {
 				$candidate = $last + 15000;
-				$candidate = $end if $end < $candidate;
+				$candidate = $end if $end && $end < $candidate;
 			}
 			$candidate = $now + 1000 if $candidate <= $now;
 			$next = $candidate if $candidate && (!$next || $candidate < $next);
@@ -787,13 +791,15 @@ sub clock_alarm_volume_at {
 	return sprintf('%.2f', $level);
 }
 
-# A long-form track loops until Dismiss, Snooze or the five-minute guard. The
-# old reading played a recording once and left the person asleep after it ended;
-# `repeat` makes the operating-system player carry the alarm the same way a
-# phone's alarm channel does. The pid file still lets Dismiss stop it.
+# How long one ring may last before the house gives up on it. Zero means no
+# limit: an alarm is an appointment the person made, so it rings - and its face
+# stays on the phone - until Dismiss or Snooze answers it. The old five-minute
+# guard closed the card and stopped the sound while the person was still half
+# awake, which is the bug this replaces. A long-form track still loops through
+# the operating-system player and its pid file still lets Dismiss stop it.
 sub clock_alarm_ring_length {
 	my $alarm = shift;
-	return 300000;
+	return 0;
 }
 
 # The command the OS player runs for this alarm. A long track is played once,

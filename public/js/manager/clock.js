@@ -247,24 +247,29 @@ function jawnosClockApplyState(state) {
 // window opened (or reloaded) while an alarm is still sounding shows the card
 // again, and one dismissed on another screen closes here too. Every machine
 // draws the card, not only the one carrying the sound: the answer is a shared
-// edit, so any open Manager window can end the ring everywhere.
+// edit, so any open Manager window can end the ring everywhere. The card has no
+// timeout of its own: it stays until the shared row says the alarm was Snoozed,
+// Dismissed or deleted, which is the promise the person made when they set it.
 function jawnosClockSyncRinging(state) {
 	var alarms = state.alarms || [];
 	var ringing = $.grep(alarms, function (a) { return a.ringing; });
 	if (jawnosClockRingingCurrent) {
 		var current = jawnosClockRingingCurrent;
 		var same = $.grep(alarms, function (a) { return a.uuid == current.uuid; });
-		// A relayed notice can arrive before the shared row does. Keep the card
-		// until its own guard runs out rather than closing it on an empty poll.
-		if (!same.length) { return; }
+		// A relayed notice can arrive before the shared row does. Give it a minute
+		// to meet its row; a row that never arrives was a deleted alarm.
+		if (!same.length) {
+			if (!current.missing_at) { current.missing_at = Date.now(); return; }
+			if (Date.now() - current.missing_at < 60000) { return; }
+			jawnosClockAlarmStop(); return;
+		}
+		current.missing_at = 0;
 		var a = same[0];
 		var at = parseInt(current.ring_at || current.fired_at || 0, 10) || 0;
 		var stopAt = parseInt(a.stop_at || 0, 10) || 0;
 		// A peer's notice can arrive before the shared row has caught up with
-		// the ring. Only a stop at or after this ring - or the five-minute
-		// guard running out - takes the card down early.
+		// the ring. Only a stop at or after this ring takes the card down.
 		if (stopAt && at && stopAt >= at) { jawnosClockAlarmStop(); return; }
-		if (!a.ringing && at && (Date.now() - at) > 300000) { jawnosClockAlarmStop(); return; }
 		if (!a.ringing && !at) { jawnosClockAlarmStop(); return; }
 		return;
 	}
@@ -486,15 +491,19 @@ function jawnosClockAlarmHtml(alarm, state) {
 	var days = alarm.days || [];
 	var has_days = days.length > 0;
 	var enabled = alarm.enabled ? 1 : 0;
+	var snooze_until = parseInt(alarm.snooze_until || 0, 10) || 0;
+	var snoozed = snooze_until > jawnosClockNow();
 	var open = (jawnosClockOpenAlarm && jawnosClockOpenAlarm == alarm.uuid) ? ' open' : '';
 	var letters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 	var html = '';
-	html += '<div class="clock_alarm' + (enabled ? '' : ' off') + open + '" data-uuid="' + jawnosClockEsc(alarm.uuid) + '" data-enabled="' + enabled + '">';
+	html += '<div class="clock_alarm' + (enabled ? '' : ' off') + (snoozed ? ' snoozed' : '') + open + '" data-uuid="' + jawnosClockEsc(alarm.uuid) + '" data-enabled="' + enabled + '">';
 	html += '<div class="clock_alarm_head" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">';
 	html += '<button type="button" class="clock_alarm_caret" tabindex="-1" aria-hidden="true"></button>';
 	html += '<span class="clock_alarm_head_time">' + jawnosClockTime(alarm.hour, alarm.minute) + '</span>';
 	html += '<span class="clock_alarm_head_label">' + jawnosClockEsc(alarm.label) + '</span>';
+	if (snoozed) { html += '<span class="clock_alarm_snoozed">' + jawnosClockEsc(jawnosT('snoozed')) + '</span>'; }
 	html += '<span class="clock_alarm_head_devices">' + jawnosClockAlarmHeadDevicesHtml(alarm, state) + '</span>';
+	html += '<button type="button" class="clock_alarm_dismiss" hint="' + jawnosClockEsc(jawnosT('dismiss')) + '">' + jawnosClockEsc(jawnosT('dismiss')) + '</button>';
 	html += '<label class="clock_switch" hint="' + jawnosClockEsc(jawnosT('alarm')) + '"><input type="checkbox" class="clock_alarm_enabled"' + (enabled ? ' checked' : '') + '></label>';
 	html += '</div>';
 	html += '<div class="clock_alarm_body">';
@@ -693,13 +702,13 @@ $(document).on('click', '.clock_alarm_preview', function () {
 });
 
 $(document).on('click', '.clock_alarm_head', function (e) {
-	if ($(e.target).closest('.clock_switch').length) { return; }
+	if ($(e.target).closest('.clock_switch, .clock_alarm_dismiss').length) { return; }
 	jawnosClockAlarmToggle($(this).closest('.clock_alarm'));
 });
 
 $(document).on('keydown', '.clock_alarm_head', function (e) {
 	if (e.key != 'Enter' && e.key != ' ') { return; }
-	if ($(e.target).closest('.clock_switch').length) { return; }
+	if ($(e.target).closest('.clock_switch, .clock_alarm_dismiss').length) { return; }
 	e.preventDefault();
 	jawnosClockAlarmToggle($(this).closest('.clock_alarm'));
 });

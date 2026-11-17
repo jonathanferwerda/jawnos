@@ -22,6 +22,7 @@ $catalog{'bn'} = {
 		'world_clock' => 'বিশ্ব ঘড়ি',
 		'time_machine' => 'টাইম মেশিন',
 		'snooze' => 'স্নুজ',
+		'snoozed' => 'স্নুজ করা হয়েছে',
 		'dismiss' => 'খারিজ',
 		'play_mode' => 'খেলার মোড',
 		'none' => 'কোনওটি নয়',

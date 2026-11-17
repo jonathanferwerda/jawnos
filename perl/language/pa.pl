@@ -22,6 +22,7 @@ $catalog{'pa'} = {
 		'world_clock' => 'ਵਿਸ਼ਵ ਘੜੀ',
 		'time_machine' => 'ਟਾਈਮ ਮਸ਼ੀਨ',
 		'snooze' => 'ਸਨੂਜ਼',
+		'snoozed' => 'ਸਨੂਜ਼ ਕੀਤਾ',
 		'dismiss' => 'ਖਾਰਜ ਕਰੋ',
 		'play_mode' => 'ਖੇਡ ਮੋਡ',
 		'none' => 'ਕੋਈ ਨਹੀਂ',

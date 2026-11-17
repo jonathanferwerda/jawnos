@@ -22,6 +22,7 @@ $catalog{'de'} = {
 		'world_clock' => 'Weltzeituhr',
 		'time_machine' => 'Zeitmaschine',
 		'snooze' => 'Schlummern',
+		'snoozed' => 'Geschlummert',
 		'dismiss' => 'Verwerfen',
 		'play_mode' => 'Spielmodus',
 		'none' => 'Keine',

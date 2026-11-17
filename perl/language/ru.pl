@@ -22,6 +22,7 @@ $catalog{'ru'} = {
 		'world_clock' => 'Мировые часы',
 		'time_machine' => 'Машина времени',
 		'snooze' => 'Отложить',
+		'snoozed' => 'Отложено',
 		'dismiss' => 'Отклонить',
 		'play_mode' => 'Режим игры',
 		'none' => 'Нет',

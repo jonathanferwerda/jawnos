@@ -22,6 +22,7 @@ $catalog{'ko'} = {
 		'world_clock' => '세계 시계',
 		'time_machine' => '타임머신',
 		'snooze' => '다시 알림',
+		'snoozed' => '다시 알림됨',
 		'dismiss' => '해제',
 		'play_mode' => '플레이 모드',
 		'none' => '없음',

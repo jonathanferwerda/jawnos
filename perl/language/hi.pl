@@ -22,6 +22,7 @@ $catalog{'hi'} = {
 		'world_clock' => 'विश्व घड़ी',
 		'time_machine' => 'समय मशीन',
 		'snooze' => 'स्नूज़',
+		'snoozed' => 'स्नूज़ किया गया',
 		'dismiss' => 'खारिज करें',
 		'play_mode' => 'खेल मोड',
 		'none' => 'कोई नहीं',
