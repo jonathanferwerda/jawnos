@@ -15,7 +15,7 @@
 		<div class="clothes_day_phases">
 			<% foreach my $phase ( @{ $day->{'phases'} } ) { %>
 			<div class="clothes_day_phase" phase="<%= $phase->{'key'} %>">
-				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% } %></h5>
+				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% if (defined $phase->{'hour_last'} && $phase->{'hour_last'} != $phase->{'hour'}) { %>&ndash;<%= &subs::clothesline_hour_word($phase->{'hour_last'}) %><% } %><% } %></h5>
 				<ul class="clothes_day_items">
 					<% foreach my $app ( @{ $phase->{'apps'} } ) { %>
 					<li class="clothes_day_item" app="<%= $app %>"><span><%= &subs::format_name($app) %></span> <button type="button" class="clothes_day_drop" title="<%= &subs::ui('Drop') %>">×</button></li>
@@ -27,7 +27,7 @@
 		<div class="clothes_day_learned" style="display:none;">
 			<% foreach my $phase ( @{ $day->{'learned_phases'} } ) { %>
 			<div class="clothes_day_phase" phase="<%= $phase->{'key'} %>">
-				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% } %></h5>
+				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% if (defined $phase->{'hour_last'} && $phase->{'hour_last'} != $phase->{'hour'}) { %>&ndash;<%= &subs::clothesline_hour_word($phase->{'hour_last'}) %><% } %><% } %></h5>
 				<ul class="clothes_day_items">
 					<% foreach my $app ( @{ $phase->{'apps'} } ) { %>
 					<li class="clothes_day_item" app="<%= $app %>"><span><%= &subs::format_name($app) %></span> <button type="button" class="clothes_day_drop" title="<%= &subs::ui('Drop') %>">×</button></li>
@@ -37,6 +37,14 @@
 			<% } %>
 		</div>
 		<div class="clothes_day_tools">
+			<select class="clothes_day_section" title="<%= &subs::ui('Put the new pill in') %>">
+				<% foreach my $phase ( @{ $day->{'phases'} } ) { %>
+				<option value="<%= $phase->{'key'} %>"><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% } %></option>
+				<% } %>
+				<% if (!grep { $_->{'key'} eq 'more' } @{ $day->{'phases'} }) { %>
+				<option value="more"><%= &subs::ui('Added') %></option>
+				<% } %>
+			</select>
 			<div class="clothes_day_find_box">
 				<input type="text" class="clothes_day_find" autocomplete="off" placeholder="<%= &subs::ui('Find an appointment to add') %>">
 				<ul class="clothes_day_find_list" style="display:none;"></ul>
@@ -62,6 +70,7 @@
 	.clothes_day_items { list-style:none; margin:0; padding:0; }
 	.clothes_day_item { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:2px 0; }
 	.clothes_day_tools { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+	.clothes_day_section { max-width:150px; }
 	.clothes_day_find_box { position:relative; flex:1 1 100%; }
 	.clothes_day_find { width:100%; box-sizing:border-box; }
 	.clothes_day_find_list {

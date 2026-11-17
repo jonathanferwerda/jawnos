@@ -169,9 +169,16 @@ sub hang_to_dry {
 		# The day's own list wins when the person curated this day in the
 		# anticipatory settings: it is exactly those pills, in their order.
 		my ($today) = &clothesline_house_day($server_time);
-		if (ref $anticipatory->{'days'}{$today} eq 'ARRAY') {
+		my $day = $anticipatory->{'days'}{$today};
+		my ($day_apps, $day_sections) = (undef, {});
+		if (ref $day eq 'ARRAY') { $day_apps = $day; }
+		elsif (ref $day eq 'HASH' && ref $day->{'apps'} eq 'ARRAY') {
+			$day_apps = $day->{'apps'};
+			$day_sections = $day->{'sections'} if ref $day->{'sections'} eq 'HASH';
+		}
+		if ($day_apps) {
 			my @manual;
-			foreach my $app ( @{ $anticipatory->{'days'}{$today} } ) {
+			foreach my $app ( @{$day_apps} ) {
 				next unless defined $app && length $app;
 				next if $hidden{$app} || &app_hidden_now($app);
 				my $item = $have{$app};
@@ -179,7 +186,10 @@ sub hang_to_dry {
 					my $aset = &settings_grabber({ app => $app });
 					$item = { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
 				}
-				$item->{'wave'} = 0;
+				# the routine the person put it in is where the rail draws its own
+				# divider, so a curated day keeps the sections it was written in
+				my $section = $day_sections->{$app};
+				$item->{'wave'} = (defined $section && $section =~ /^w(\d+)$/) ? (0 + $1) : 0;
 				push @manual, $item;
 			}
 			@head = @manual;
@@ -313,11 +323,26 @@ sub clothesline_anticipatory_save {
 	if (ref $payload->{'days'} eq 'HASH') {
 		foreach my $date ( keys %{ $payload->{'days'} } ) {
 			next unless $date =~ /^\d{4}-\d{2}-\d{2}$/;
-			my $list = $payload->{'days'}{$date};
-			if (!defined $list) { delete $s->{'days'}{$date}; next; }
+			my $day = $payload->{'days'}{$date};
+			if (!defined $day) { delete $s->{'days'}{$date}; next; }
+			# A day is its pills in order; a pill the person put in a routine
+			# outright also keeps that routine, which is what the dialog's section
+			# picker stores. The older shape (a plain list) is still read.
+			my ($list, $sections) = (undef, {});
+			if (ref $day eq 'ARRAY') { $list = $day; }
+			elsif (ref $day eq 'HASH' && ref $day->{'apps'} eq 'ARRAY') {
+				$list = $day->{'apps'};
+				$sections = $day->{'sections'} if ref $day->{'sections'} eq 'HASH';
+			}
 			next unless ref $list eq 'ARRAY';
 			my %seen;
-			$s->{'days'}{$date} = [ grep { defined $_ && length $_ && !$seen{$_}++ } map { "$_" } @{$list} ];
+			my @keep = grep { defined $_ && length $_ && !$seen{$_}++ } map { "$_" } @{$list};
+			my %kept;
+			foreach my $app ( @keep ) {
+				my $key = $sections->{$app};
+				$kept{$app} = "$key" if defined $key && $key =~ /^(?:w\d+|more)$/;
+			}
+			$s->{'days'}{$date} = %kept ? { apps => \@keep, sections => \%kept } : \@keep;
 		}
 	}
 	&setting_setter({ app => '__president', setting => 'clothesline_anticipatory', value => encode_json $s });
@@ -373,11 +398,22 @@ sub clothesline_anticipatory_week {
 		my $morning = timelocal(0, 0, 9, $d[3], $d[4], $d[5]) * 1000;
 		my $key = &day_key($morning);
 		my $daily = &clothesline_daily_hours($morning, history => $history);
-		# The whole day, not the head: every wave the routine keeps.
+		# The whole day, not the head: every routine the day keeps, and every habit
+		# the one day the routine was read from happened to leave out.
 		my $ant = &clothesline_sequence_anticipate($daily, $morning, limit => 400, all_waves => 1);
-		my @rows = grep { ref $_ eq 'HASH' && defined $_->{'app'} && length $_->{'app'} } @{ $ant->{'list'} || [] };
+		my @rows = @{ &clothesline_anticipatory_habits(
+			[ grep { ref $_ eq 'HASH' && defined $_->{'app'} && length $_->{'app'} } @{ $ant->{'list'} || [] } ],
+			$daily) };
 		my @learned = map { $_->{'app'} } @rows;
-		my $override = ref $s->{'days'}{$key} eq 'ARRAY' ? $s->{'days'}{$key} : undef;
+		# A day the person curated is its own pills in their order, each in the
+		# routine they put it in; the older shape (a plain list) still reads.
+		my $day_value = $s->{'days'}{$key};
+		my ($override, $sections) = (undef, {});
+		if (ref $day_value eq 'ARRAY') { $override = $day_value; }
+		elsif (ref $day_value eq 'HASH' && ref $day_value->{'apps'} eq 'ARRAY') {
+			$override = $day_value->{'apps'};
+			$sections = $day_value->{'sections'} if ref $day_value->{'sections'} eq 'HASH';
+		}
 		my @apps = grep { defined $_ && length $_ } ($override ? @{$override} : @learned);
 		push @week, {
 			key => $key,
@@ -385,7 +421,7 @@ sub clothesline_anticipatory_week {
 			today => ($key eq $today ? 1 : 0),
 			learned => \@learned,
 			apps => \@apps,
-			phases => &clothesline_anticipatory_phases(\@apps, \@rows, $daily),
+			phases => &clothesline_anticipatory_phases(\@apps, \@rows, $daily, $sections),
 			learned_phases => &clothesline_anticipatory_phases(\@learned, \@rows, $daily),
 			override => ($override ? 1 : 0),
 		};
@@ -394,49 +430,90 @@ sub clothesline_anticipatory_week {
 	return \@week;
 }
 
-# A day's pills grouped by the wave each belongs to, so the settings dialog can
+# A day's pills grouped into the routines it runs, so the settings dialog can
 # show the morning, the midday, the afternoon and the evening as their own
-# sections. A wave is named for its first step's usual hour. A pill the routine
-# does not name - one the person added, or one the learned day no longer
-# carries - goes in a last section of its own, so a curated day never loses one.
+# sections. The section a pill sits in is the one the person put it in, else the
+# one the routine learned it in, else the day's own last section - so a curated
+# day never loses a pill. The sections are ordered by the time of day their
+# pills usually happen, not by where the pauses happened to fall.
 sub clothesline_anticipatory_phases {
-	my ($list, $rows, $scan) = @_;
+	my ($list, $rows, $scan, $sections) = @_;
 	$list = [] unless ref $list eq 'ARRAY';
 	$rows = [] unless ref $rows eq 'ARRAY';
+	$sections = {} unless ref $sections eq 'HASH';
 	my $apps = (ref $scan eq 'HASH' && ref $scan->{'apps'} eq 'HASH') ? $scan->{'apps'} : {};
-	my (%wave_of, %hour_of);
+	my %wave_of;
 	for my $r ( @{$rows} ) {
 		next unless ref $r eq 'HASH' && defined $r->{'app'} && length $r->{'app'};
-		my $w = $r->{'wave'} || 0;
-		$wave_of{$r->{'app'}} = $w unless defined $wave_of{$r->{'app'}};
-		next if defined $hour_of{$w};
-		my $row_apps = $apps->{ $r->{'app'} };
-		my $h = ref $row_apps eq 'HASH' ? $row_apps->{'hour'} : undef;
-		$hour_of{$w} = $h if defined $h && $h =~ /^\d+$/;
+		$wave_of{$r->{'app'}} = $r->{'wave'} || 0 unless defined $wave_of{$r->{'app'}};
 	}
 	my (@phases, %slot);
 	for my $app ( @{$list} ) {
 		next unless defined $app && length $app;
-		my $w = $wave_of{$app};
-		my $at;
-		if (defined $w) {
-			unless ($slot{$w}) {
-				push @phases, { key => "w$w", wave => $w, hour => $hour_of{$w},
-					label => &clothesline_anticipatory_wave_name($hour_of{$w}), apps => [] };
-				$slot{$w} = $phases[-1];
-			}
-			$at = $slot{$w};
+		my $key = $sections->{$app};
+		$key = (defined $wave_of{$app} ? 'w' . $wave_of{$app} : 'more')
+			unless defined $key && length $key;
+		unless ($slot{$key}) {
+			$slot{$key} = { key => $key, wave => ($key =~ /^w(\d+)$/ ? (0 + $1) : 99), apps => [], hours => [] };
+			push @phases, $slot{$key};
 		}
-		else {
-			unless ($slot{'more'}) {
-				push @phases, { key => 'more', wave => 99, label => 'Added', apps => [] };
-				$slot{'more'} = $phases[-1];
-			}
-			$at = $slot{'more'};
-		}
-		push @{$at->{'apps'}}, $app;
+		push @{$slot{$key}{'apps'}}, $app;
+		my $row = $apps->{$app};
+		my $hour = ref $row eq 'HASH' ? $row->{'hour'} : undef;
+		push @{$slot{$key}{'hours'}}, (0 + $hour) if defined $hour && $hour =~ /^\d+$/;
 	}
-	return [ sort { $a->{'wave'} <=> $b->{'wave'} } @phases ];
+	for my $phase ( @phases ) {
+		my @hours = sort { $a <=> $b } @{$phase->{'hours'}};
+		$phase->{'hour'} = $hours[0];
+		$phase->{'hour_last'} = $hours[-1];
+		$phase->{'label'} = $phase->{'key'} eq 'more' ? 'Added' : &clothesline_anticipatory_wave_name($phase->{'hour'});
+	}
+	return [ sort {
+		(defined $a->{'hour'} ? $a->{'hour'} : 99) <=> (defined $b->{'hour'} ? $b->{'hour'} : 99)
+			|| $a->{'wave'} <=> $b->{'wave'}
+			|| $a->{'key'} cmp $b->{'key'}
+	} @phases ];
+}
+
+# The habits one day's shape leaves out. The routine is read from the one day
+# most like the others, so a step that happens most days but not on that day is
+# invisible - the yogurt at noon the chosen day happened to miss. A habit is a
+# step the person starts and stops themselves, due today, and seen on five of
+# the last fourteen days - most days, not every other week. It is placed by its
+# own hour, in the routine of the step it falls before, so the day still reads
+# in its own order.
+sub clothesline_anticipatory_habits {
+	my ($rows, $scan) = @_;
+	$rows = [] unless ref $rows eq 'ARRAY';
+	my $apps = (ref $scan eq 'HASH' && ref $scan->{'apps'} eq 'HASH') ? $scan->{'apps'} : {};
+	my %have = map { $_->{'app'} => 1 } grep { ref $_ eq 'HASH' && defined $_->{'app'} } @{$rows};
+	my @add;
+	foreach my $app ( sort keys %{$apps} ) {
+		next if $have{$app};
+		my $row = $apps->{$app};
+		next unless ref $row eq 'HASH';
+		next unless $row->{'due'};
+		next unless defined $row->{'hour'} && $row->{'hour'} =~ /^\d+$/;
+		next unless ($row->{'recent_days'} || 0) >= 5;
+		push @add, { app => $app, hour => (0 + $row->{'hour'}) };
+	}
+	return [ @{$rows} ] unless @add;
+	my @out = @{$rows};
+	foreach my $new ( sort { $a->{'hour'} <=> $b->{'hour'} || $a->{'app'} cmp $b->{'app'} } @add ) {
+		my $at = scalar @out;
+		for my $i ( 0 .. $#out ) {
+			my $row = $apps->{ $out[$i]{'app'} };
+			my $hour = ref $row eq 'HASH' ? $row->{'hour'} : undef;
+			next unless defined $hour && $hour =~ /^\d+$/;
+			if ($hour > $new->{'hour'}) { $at = $i; last; }
+		}
+		my $wave = 0;
+		if (@out) {
+			$wave = $at < scalar @out ? ($out[$at]{'wave'} || 0) : ($out[-1]{'wave'} || 0);
+		}
+		splice @out, $at, 0, { app => $new->{'app'}, wave => $wave };
+	}
+	return \@out;
 }
 
 # The word a wave is called by, from the hour its first step usually happens.

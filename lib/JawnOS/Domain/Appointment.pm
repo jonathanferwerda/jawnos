@@ -1582,13 +1582,14 @@ sub clothesline_routine_scan {
 		$offered{$wd}++;
 	}
 
-	my (%app_days, %hour_days);
+	my (%app_days, %hour_days, %recent_days);
 	foreach my $r ( @completed ) {
 		$app_days{$r->{'app'}}->{&clothesline_day_index($r->{'ms'})} = 1;
 	}
 	foreach my $r ( @recent_completed ) {
 		my @t = localtime(int($r->{'ms'} / 1000));
 		$hour_days{$r->{'app'}}->{$t[2]}->{&clothesline_day_index($r->{'ms'})} = 1;
+		$recent_days{$r->{'app'}}->{&clothesline_day_index($r->{'ms'})} = 1;
 	}
 	my $apps = {};
 	foreach my $app ( keys %app_days ) {
@@ -1645,7 +1646,11 @@ sub clothesline_routine_scan {
 				}
 			}
 		}
-		$apps->{$app} = { hour => $best_hour, hour_days => $best_days, days => $days, due => $due, cadence => $cadence };
+		# how many of the last two weeks the step happened on, which is what tells
+		# a habit apart from a thing done once in a while
+		$apps->{$app} = { hour => $best_hour, hour_days => $best_days, days => $days,
+			recent_days => scalar keys %{ $recent_days{$app} || {} },
+			due => $due, cadence => $cadence };
 		# the middle length, so one runaway session does not stretch the step
 		if (ref $lengths{$app} eq 'ARRAY' && @{$lengths{$app}}) {
 			my @sorted = sort { $a <=> $b } @{$lengths{$app}};
@@ -1819,7 +1824,11 @@ sub clothesline_sequence_anticipate {
 	my $done = ref $scan->{'done'} eq 'HASH' ? $scan->{'done'} : {};
 
 	# which wave the last finished step sits in: the line shows that wave's
-	# remainder and the one after it, never a wave two ahead
+	# remainder and the one after it, never a wave two ahead. The day moves by
+	# the order the person takes it in, not by the hour on the clock: a routine
+	# begun late still leads from where it began, and the clock never carries the
+	# line past a step that was not finished. The wave's own usual hour is only a
+	# name for the settings dialog, never a rule for the head.
 	my (%left, $current_wave);
 	$current_wave = 0;
 	if (!$all) {
@@ -1829,31 +1838,6 @@ sub clothesline_sequence_anticipate {
 				$left{$app}--;
 				$current_wave = $waves->[$i] if $waves && defined $waves->[$i];
 			}
-		}
-	}
-
-	# The day moves on with the clock as well as with the steps. Once an hour of
-	# the day has come, its routine is the one to read from, even if the steps
-	# before it were never finished: at four in the afternoon the rail leads with
-	# the afternoon and the evening, not with the morning's leftovers. The wave
-	# the last finished step sits in stays the floor, so this only carries the
-	# line forward - it never takes back a step the person already took.
-	if (!$all) {
-		my $hour = $opt{'clock_hour'};
-		if (!defined $hour) {
-			my $restore = &clock_zone_adopt(&clock_zone_house());
-			my @t = localtime(int($now / 1000));
-			$hour = $t[2];
-			$restore->() if $restore;
-		}
-		my %seen_w;
-		for my $i ( 0 .. $#{$seq} ) {
-			my $w = ($waves && defined $waves->[$i]) ? $waves->[$i] : 0;
-			next if $seen_w{$w};
-			my $row = ref $scan->{'apps'} eq 'HASH' ? $scan->{'apps'}{ $seq->[$i] } : undef;
-			next unless ref $row eq 'HASH' && defined $row->{'hour'} && $row->{'hour'} =~ /^\d+$/;
-			$seen_w{$w} = 1;
-			$current_wave = $w if $row->{'hour'} <= $hour && $w > $current_wave;
 		}
 	}
 

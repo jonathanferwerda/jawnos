@@ -499,11 +499,24 @@ $(document).on('keydown', '.clothes_day_find', function(e) {
 	}
 });
 
+// Where a new pill goes: the routine the picker names. A day with no pills at
+// all still has the last section to grow.
+function clotheslineDaySection(card, key) {
+	var phases = card.find('.clothes_day_phases');
+	var found = key ? phases.find('.clothes_day_phase[phase="' + key + '"]') : $();
+	if (found.length) { return found.find('.clothes_day_items').first(); }
+	if (key == 'more') { return clotheslineDayMoreSection(card); }
+	var last = phases.find('.clothes_day_phase').last();
+	if (last.length) { return last.find('.clothes_day_items').first(); }
+	return clotheslineDayMoreSection(card);
+}
+
 $(document).on('click', '.clothes_day_find_match', function(e) {
 	e.preventDefault();
 	var row = $(this);
 	var card = row.closest('.clothes_day_card');
-	clotheslineDayMoreSection(card).append(clotheslineDayItem(row.attr('app'), row.attr('name')));
+	clotheslineDaySection(card, card.find('.clothes_day_section').val())
+		.append(clotheslineDayItem(row.attr('app'), row.attr('name')));
 	card.attr('data-touched', '1').removeAttr('data-reset');
 	card.find('.clothes_day_find').val('');
 	card.find('.clothes_day_find_list').empty().hide();
@@ -537,11 +550,20 @@ $(document).on('click', '#clothes_settings_save', function() {
 		if (card.attr('data-touched') != '1') { return; }
 		var date = card.attr('date');
 		if (card.attr('data-reset') == '1') { days[date] = null; return; }
+		// the pills in the order the day shows them, each with the routine it was
+		// put in, so the section survives the save
 		var apps = [];
-		card.find('.clothes_day_phases .clothes_day_item').each(function() {
-			apps.push($(this).attr('app'));
+		var sections = {};
+		card.find('.clothes_day_phases .clothes_day_phase').each(function() {
+			var phase = $(this).attr('phase');
+			$(this).find('.clothes_day_item').each(function() {
+				var app = $(this).attr('app');
+				if (!app) { return; }
+				apps.push(app);
+				sections[app] = phase;
+			});
 		});
-		days[date] = apps;
+		days[date] = { apps: apps, sections: sections };
 	});
 	var payload = {
 		on: $('#clothes_anticipatory_on').is(':checked') ? 1 : 0,

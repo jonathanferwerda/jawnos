@@ -5,9 +5,8 @@
 #            cadence may be every second, third, fifth ... day up to a month.
 #            The day is read as waves - a long pause between steps starts the
 #            next one - and the line shows the wave under way plus one ahead,
-#            never two. The clock carries the wave on as well: once an hour of
-#            the day has come its routine leads, so an afternoon reads the
-#            afternoon and the evening, and a finished step is never taken back. A routine keeps the day it began past midnight, and
+#            never two, and the head moves by the order the person takes the day
+#            in, never by the hour on the clock. A routine keeps the day it began past midnight, and
 #            every press re-hangs the line in the reply instead of waiting for
 #            the poll. Only the appointments the person starts and stops
 #            themselves are learned; a task or default step stays with its
@@ -19,8 +18,11 @@
 #            that is running sits where the routine usually stops it, so the
 #            pill at the left is always the next one to press. The settings
 #            dialog walks the whole week: each day drawn as the routines it
-#            runs, with a typed find box to add a pill and Reset to learned to
-#            put the day back, and the near two months read once for all seven.
+#            runs, read in the order of the day and named for the hours their
+#            pills happen, with the habits the one learned day missed put back
+#            by their hour, a typed find box and a routine picker to add a pill,
+#            Reset to learned to put the day back, and the near two months read
+#            once for all seven.
 
 use strict;
 use warnings;
@@ -146,23 +148,6 @@ $wscan->{'done'} = { map { $_ => 1 } qw(wake_up pee water coffee lunch tea) };
 my $wthree = subs::clothesline_sequence_anticipate($wscan, $base + 60000);
 is_deeply([ map { $_->{'app'} } @{$wthree->{'list'}} ], [qw(bed)],
 	'the evening wave arrives once the lunch wave is done');
-
-# the day moves on with the clock, not only with the finished steps: at nine the
-# wake-up routine leads, at three in the afternoon the lunch routine does, even
-# though nothing was finished that morning
-my $cseq = [{ seq => [qw(wake_up lunch tea bed)],
-	times => [ $base, $base + (4 * 3600000), $base + (5 * 3600000), $base + (10 * 3600000) ] }];
-my $cscan = { sessions => $cseq, start_app => 'wake_up',
-	apps => { wake_up => { hour => 8 }, lunch => { hour => 13 }, tea => { hour => 14 }, bed => { hour => 22 } } };
-my $c9 = subs::clothesline_sequence_anticipate($cscan, $base + 60000, clock_hour => 9);
-is($c9->{'current_wave'}, 0, 'the morning hour reads the morning routine');
-my $c15 = subs::clothesline_sequence_anticipate($cscan, $base + 60000, clock_hour => 15);
-is($c15->{'current_wave'}, 1, 'the afternoon hour has moved the line on to the lunch routine');
-is_deeply([ map { $_->{'app'} } @{$c15->{'list'}} ], [qw(lunch tea bed)],
-	'so the afternoon and the evening are what the rail leads with');
-$cscan->{'done'} = { wake_up => 1, lunch => 1, tea => 1, bed => 1 };
-my $c9_done = subs::clothesline_sequence_anticipate($cscan, $base + 60000, clock_hour => 9);
-is($c9_done->{'current_wave'}, 2, 'a finished step is never taken back when the clock is behind it');
 
 my $wall = subs::clothesline_sequence_anticipate($wscan, $base + 60000, all_waves => 1);
 is_deeply([ map { $_->{'app'} } @{$wall->{'list'}} ], [qw(wake_up pee water coffee lunch tea bed)],
@@ -457,6 +442,16 @@ is($saved->{'on_reset'}, 0, 'the press switch is stored');
 is_deeply($saved->{'days'}{'2026-11-16'}, [ 'coffee', 'water' ], 'a curated day is stored in order');
 ok(!exists $saved->{'days'}{'2026-11-17'}, 'a null day returns to the learned routine');
 
+subs::clothesline_anticipatory_save({ days => { '2026-11-18' => {
+	apps => [ 'coffee', 'yogurt', 'banana' ],
+	sections => { banana => 'w2', yogurt => 'w1', coffee => 'nonsense' } } } });
+my $placed_day = subs::clothesline_anticipatory_settings()->{'days'}{'2026-11-18'};
+is_deeply($placed_day->{'apps'}, [qw(coffee yogurt banana)],
+	'a day keeps its pills in the order the dialog showed them');
+is($placed_day->{'sections'}{'banana'}, 'w2', 'and the routine each pill was put in');
+is($placed_day->{'sections'}{'yogurt'}, 'w1', 'for every pill that was placed');
+ok(!exists $placed_day->{'sections'}{'coffee'}, 'a section that is not one is dropped');
+
 my $week = subs::clothesline_anticipatory_week();
 is(scalar @{$week}, 7, 'the dialog walks seven days');
 like($week->[0]{'key'}, qr/^\d{4}-\d{2}-\d{2}$/, 'each day carries its date');
@@ -477,14 +472,49 @@ my $prows = [
 my $phases = subs::clothesline_anticipatory_phases(
 	[qw(soap coffee lunch dinner guitar)], $prows, $pscan);
 is_deeply([ map { $_->{'label'} } @{$phases} ], [qw(Morning Midday Evening Added)],
-	'each wave is named for the hour its first step happens');
+	'each routine is named for the hour its first pill happens');
 is_deeply([ map { $_->{'apps'} } @{$phases} ], [ [qw(soap coffee)], ['lunch'], ['dinner'], ['guitar'] ],
-	'a pill no wave names keeps its own last section');
+	'a pill no routine names keeps its own last section');
+is_deeply([ map { $_->{'hour'} } @{$phases} ], [7, 13, 19, undef],
+	'each routine carries the first hour of its pills');
+is($phases->[2]{'hour_last'}, 19, 'and the last hour, so a routine can say its span');
 my $curated = subs::clothesline_anticipatory_phases([qw(lunch soap)], $prows, $pscan);
 is_deeply([ map { $_->{'apps'} } @{$curated} ], [ ['soap'], ['lunch'] ],
 	'a curated day keeps its own pills, each in its routine');
 my $only = subs::clothesline_anticipatory_phases([qw(guitar)], $prows, $pscan);
 is($only->[0]{'key'}, 'more', 'a day of added pills only is one section');
+
+# The pauses that end a routine can fall out of clock order - a day that opens
+# with dinner and reaches the morning later. The dialog still reads the day the
+# way it is lived.
+my $late = [ { app => 'dinner', wave => 0 }, { app => 'soap', wave => 1 }, { app => 'lunch', wave => 2 } ];
+my $sorted = subs::clothesline_anticipatory_phases([qw(dinner soap lunch)], $late, $pscan);
+is_deeply([ map { $_->{'apps'} } @{$sorted} ], [ ['soap'], ['lunch'], ['dinner'] ],
+	'the routines are sorted by the time of day, not by where the pause fell');
+
+# A pill the person put in a routine is in that routine, whatever the day learned.
+my $placed = subs::clothesline_anticipatory_phases([qw(soap guitar)], $prows, $pscan, { guitar => 'w1' });
+is_deeply([ map { $_->{'apps'} } @{$placed} ], [ ['soap'], ['guitar'] ],
+	'a pill the person put in a routine stays there');
+is($placed->[1]{'key'}, 'w1', 'and keeps that routine, not the day\'s last section');
+my $moved = subs::clothesline_anticipatory_phases([qw(lunch)], $prows, $pscan, { lunch => 'more' });
+is($moved->[0]{'key'}, 'more', 'a pill moved to the added section says so');
+
+# --- the habits the one day read can leave out ------------------------------
+# the routine comes from the day most like the others, so a step done most days
+# but not on that day would otherwise never show
+my $hscan = { apps => {
+	soap => { hour => 7, due => 1, recent_days => 12 },
+	lunch => { hour => 13, due => 1, recent_days => 12 },
+	yogurt => { hour => 12, due => 1, recent_days => 9 },
+	rare => { hour => 12, due => 1, recent_days => 4 },
+	off_today => { hour => 12, due => 0, recent_days => 9 } } };
+my $hrows = [ { app => 'soap', wave => 0 }, { app => 'lunch', wave => 1 } ];
+my $merged = subs::clothesline_anticipatory_habits($hrows, $hscan);
+is_deeply([ map { $_->{'app'} } @{$merged} ], [qw(soap yogurt lunch)],
+	'a habit the chosen day missed is put back by its hour');
+is_deeply([ map { $_->{'wave'} } @{$merged} ], [0, 1, 1],
+	'in the routine of the step it falls before');
 is(subs::clothesline_anticipatory_wave_name(3), 'Night', 'the small hours are the night');
 is(subs::clothesline_anticipatory_wave_name(undef), 'Routine', 'a wave with no clock is a routine');
 
@@ -531,6 +561,7 @@ like($hang, qr/phases => &clothesline_anticipatory_phases/,
 my $settings_ep = read_file(repo_root() . '/templates/apps/clothesline/settings.html.ep');
 like($settings_ep, qr/class="clothes_day_find"/, 'the add box is typed into, not a list of every app a day');
 like($settings_ep, qr/id="clothes_apps"/, 'the whole app list is carried once for the dialog');
+like($settings_ep, qr/class="clothes_day_section"/, 'each day offers the routine a new pill joins');
 unlike($settings_ep, qr/class="clothes_day_add"/, 'no day card carries the whole list its own');
 like($hang, qr/clothesline_schedule_wears\(\$cl, \$server_time\)/,
 	'the tail asks the phrase as well as the slots');
@@ -587,7 +618,8 @@ like($timeline_js, qr/command == 'bump'/, 'and Bump');
 like($timeline_js, qr/manager\/clothesline\/schedule/, 'the phrase box asks the Guide');
 like($timeline_js, qr/\.clothes_hidden/, 'the show tick hides and restores a pill');
 like($timeline_js, qr/clothes_day_find_match/, 'a match in the find box adds its pill');
-like($timeline_js, qr/clothes_day_phases \.clothes_day_item/, 'a day saves the pills its routines show');
+like($timeline_js, qr/sections\[app\] = phase/, 'a day saves the routine each pill was put in');
+like($timeline_js, qr/clothes_day_section/, 'the picker chooses the routine a new pill joins');
 like($timeline_js, qr/clothes_day_learned'\)\.html\(\)/, 'Reset to learned restores the routines, not a flat list');
 
 my $misc12 = read_file(repo_root() . '/lib/JawnOS/Controller/manager_misc12.pm');
