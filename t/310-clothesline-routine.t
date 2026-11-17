@@ -837,5 +837,6 @@ ok(index($hang, 'sequence => \@apps') >= 0, 'a curated day hands its own order t
 like($hang, qr/force_due => 1/, 'and keeps a pill the learned cadence would skip');
 like($hang, qr/if \(\$day_apps && !\$reused && \$daily\)/,
 	'a reused head keeps the list already hung');
+like($hang, qr/\$curated_running/, 'a step started again is put back in a curated head');
 
 done_testing();

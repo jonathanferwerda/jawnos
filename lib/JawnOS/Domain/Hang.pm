@@ -239,8 +239,17 @@ sub hang_to_dry {
 				keep => \@keep,
 				force_due => 1,
 				next_wave => ($anticipatory->{'next_wave'} ? 1 : 0));
+			my $curated_list = $curated->{'list'} || [];
+			# A step started again after the routine had already taken it is
+			# subtracted as done and has no occurrence left in the curated list;
+			# put the running step at the head anyway, where the routine usually
+			# stops it, so the pill in hand is never left in the tail.
+			my $curated_running = ($daily->{'current'} && $daily->{'current'}{'running'}) ? $daily->{'current'}{'running'} : undef;
+			if (defined $curated_running && length $curated_running && !grep { $_->{'app'} eq $curated_running } @{$curated_list}) {
+				unshift @{$curated_list}, { app => $curated_running, wave => ($curated->{'current_wave'} || 0) };
+			}
 			my @manual;
-			foreach my $row ( @{ $curated->{'list'} || [] } ) {
+			foreach my $row ( @{$curated_list} ) {
 				my $app = $row->{'app'};
 				next unless defined $app && length $app;
 				my $item = $have{$app};
