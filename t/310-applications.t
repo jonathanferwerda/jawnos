@@ -67,6 +67,10 @@ like($action, qr/substr\(\$interview, 0, 300\)/, 'the interview answer is capped
 like($action, qr/\$info->\{'trial'\} = \$trial if length \$trial/,
 	'an empty trial answer is left out');
 like($action, qr/substr\(\$trial, 0, 1000\)/, 'the trial answer is capped at 1000');
+like($action, qr/information => encode_json\(\$info\)/,
+	'the request encodes its information as one value, in parentheses');
+unlike($action, qr/information => encode_json \$info,/,
+	'and not as a bare list operator that would swallow the crest uuid');
 
 my $filter_at = index($action, 'role_keys_filter');
 my $blacklist_at = index($action, 'ticket_blacklist_match');

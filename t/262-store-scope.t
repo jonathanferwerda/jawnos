@@ -43,6 +43,10 @@ like($store, qr/my \$customer_app = &subs::printer_customer_app\(/,
 	'print derives the customer app from the document');
 like($store, qr/&& !&subs::guest_browser_session/,
 	'and only a house session may override it');
+like($move_block, qr/data => encode_json\(\$od\)/,
+	'quote/move wraps the invoice data in parentheses so the columns after it are kept');
+unlike($move_block, qr/data => encode_json \$od,/,
+	'and does not leave the bare call that swallowed the status and server time');
 
 # --- an unknown customer token scopes nothing -------------------------------
 my $now = &subs::rightNow();

@@ -471,7 +471,7 @@ sub action_6143 {
 		$od->{'numbers'} = {} unless ref $od->{'numbers'} eq 'HASH';
 		$od->{'numbers'}->{'balance'} = 0;
 		&subs::db_update('appointments', {
-			data => encode_json $od,
+			data => encode_json($od),
 			status => 'superseded',
 			server_time => $now,
 		}, { uuid => $old->{'uuid'}, app => $app });

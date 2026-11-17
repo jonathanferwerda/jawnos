@@ -186,7 +186,7 @@ sub action_14132 {
 			privilege => 'guest',
 			browser_tab_id => $browser_tab_id,
 			ip => $c->tx->remote_address,
-			information => encode_json $info,
+			information => encode_json($info),
 			crest_uuid => $crest_for_request,
 		};
 		if ($policy->{'issue_guest_on_request'}) {

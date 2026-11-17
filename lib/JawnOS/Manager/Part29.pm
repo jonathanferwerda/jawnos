@@ -170,7 +170,7 @@ sub guide_stage_change($target, $changes, $summary) {
 		app => $target->{'app'}, type => ($target->{'type'} || 'usual'),
 		timestamp => (exists $changes->{'timestamp'} ? $changes->{'timestamp'} : $target->{'timestamp'}),
 		title => $summary, notes => '', data => '',
-		changes => encode_json $changes,
+		changes => encode_json($changes),
 		duration => (exists $changes->{'duration'} ? $changes->{'duration'} : ($target->{'duration'} || '')),
 		device => &subs::device_setter(), status => 'pending'
 	});

@@ -11,6 +11,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Temp qw(tempdir);
 use File::Slurp qw(read_file write_file);
+use Mojo::JSON qw(decode_json);
 use JawnOSTest;
 require(root() . '/lib/JawnOS/Manager/Part29.pm');
 
@@ -131,5 +132,27 @@ my $audit = source('scripts/security_audit.pl');
 like($audit, qr/perl\.shell\.terminal_name/, 'the audit names terminal_name as a non-quoter');
 like($audit, qr/perl\.eval\.command/, 'the audit names the leading-& eval');
 like($audit, qr/perl\.shell\.am_broadcast/, 'the audit names am broadcast');
+
+# --- a staged change keeps every field the promote step reads ---------------
+# encode_json is a list operator that reads only its first argument, so a bare
+# `changes => encode_json $changes,` drops the keys after it: the row lands
+# without its duration, device and status, and promote filters on that status.
+my $guide_target = {
+	uuid => 'target-1', app => 'probe_app', type => 'usual',
+	timestamp => 1_760_000_000_000, duration => 60
+};
+my $staged = Manager::guide_stage_change($guide_target, { title => 'a new title', duration => 30 }, 'change the title');
+ok($staged->{'staged'}, 'the guide stages a change and names the row');
+my $staged_row = &subs::db_query('select * from staged_appointments where uuid = ?', $staged->{'staged'})->hash || {};
+is($staged_row->{'status'}, 'pending', 'the staged change is pending, the state promote picks up');
+is($staged_row->{'duration'}, 30, 'the row carries the new duration, not the target duration');
+ok(length $staged_row->{'device'}, 'the row names the device that staged it');
+is($staged_row->{'kind'}, 'update', 'the row says it changes an existing appointment');
+is($staged_row->{'target_uuid'}, 'target-1', 'and names the appointment it changes');
+my $staged_changes = eval { decode_json($staged_row->{'changes'}) };
+is(ref $staged_changes, 'HASH', 'the changes column decodes to a hash of fields');
+my $staged_fields = ref $staged_changes eq 'HASH' ? $staged_changes : {};
+is($staged_fields->{'title'}, 'a new title', 'the change carries the new title');
+is($staged_fields->{'duration'}, 30, 'and the new duration');
 
 done_testing();

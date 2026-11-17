@@ -1,5 +1,5 @@
-# tests-for: perl/watch.pl perl/Music.pl lib/JawnOS/Controller/box_office_misc.pm public/js/gate.js lib/JawnOS/Controller/manager_configure2.pm
-# covers:    Request data never reaches a shell or eval sink.
+# tests-for: lib/JawnOS/Controller/store_misc.pm lib/JawnOS/Manager/Part29.pm perl/watch.pl perl/Music.pl lib/JawnOS/Controller/box_office_misc.pm public/js/gate.js lib/JawnOS/Controller/manager_configure2.pm
+# covers:    Request data never reaches a shell or eval sink, and a value handed to encode_json keeps the keys that follow it.
 
 use strict;
 use warnings;
@@ -64,4 +64,60 @@ like($conf, qr/"timeout \$timeout ping -c 1 " \. &subs::shell_quote\(\$ip_addres
 like($conf, qr/\Q[0-9., ]+\E/,
 	'ping accepts only address/range/list characters');
 
+
+# --- a value handed to encode_json keeps the keys that follow it ------------
+# Mojo::JSON's encode_json has no prototype, so `key => encode_json $x,` is a
+# list operator that reads only its first argument: every key after it is
+# dropped from the hash and never written. The call is parenthesised instead.
+# lib/JawnOS/Manager/Part31.pm:791 records the first time this bit the house -
+# a relay quietly lost its uuid - so the shape is guarded here, not just fixed.
+
+sub bare_encode_json_calls {
+	my @found;
+	for my $rel (@_) {
+		open(my $fh, '<', "$root/$rel") or next;
+		my @lines = <$fh>;
+		close $fh;
+		chomp @lines;
+		for my $i (0 .. $#lines) {
+			my $line = $lines[$i];
+			next if $line =~ /^\s*#/;
+			my $hit = 0;
+			if ($line =~ /=>\s*encode_json\s+\$[^,]+,\s*$/) {
+				# A trailing comma is harmless when the next line closes the
+				# hash; it is the list operator only when a key follows.
+				my $next = '';
+				for my $j ($i + 1 .. $#lines) {
+					next unless $lines[$j] =~ /\S/;
+					$next = $lines[$j];
+					last;
+				}
+				$hit = 1 unless $next =~ /^\s*[\}\]\)]/;
+			}
+			$hit = 1 if $line =~ /=>\s*encode_json\s+\$[^,]+,\s*[A-Za-z_'"]+\s*=>/;
+			push @found, "$rel:" . ($i + 1) . ": $line" if $hit;
+		}
+	}
+	return @found;
+}
+
+my @clean_layers = map { s{^\Q$root/\E}{}r } (
+	glob("$root/lib/JawnOS/Controller/*.pm"),
+	glob("$root/lib/JawnOS/Manager/*.pm"),
+	glob("$root/lib/JawnOS/*.pm"),
+	glob("$root/perl/*.pl")
+);
+my @bare = bare_encode_json_calls(@clean_layers);
+is_deeply(\@bare, [], 'no route or manager call hands a bare value to encode_json with keys after it')
+	or diag(join "\n", @bare);
+
+# The domain layer still carries the shape. Joining the scan above is the test
+# that will prove each of these fixed.
+TODO: {
+	local $TODO = 'domain layer: a bare encode_json call drops the keys that follow it';
+	my @domain = map { s{^\Q$root/\E}{}r } glob("$root/lib/JawnOS/Domain/*.pm");
+	my @domain_bare = bare_encode_json_calls(@domain);
+	is_deeply(\@domain_bare, [], 'the domain layer hands encode_json one value too')
+		or diag(join "\n", @domain_bare);
+}
 done_testing();
