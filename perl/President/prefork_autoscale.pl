@@ -43,6 +43,7 @@ sub prefork_autoscale {
 	my $dir = &subs::home('~/.president/busy/' . $pool);
 	eval { mkdir $dir unless -d $dir; };
 	my $parent = $$;
+	my $started = &prefork_parent_start($parent);
 	my $pid = fork();
 	unless (defined $pid) {
 		$log->error('autoscale: cannot fork: ' . $!);
@@ -66,7 +67,7 @@ sub prefork_autoscale {
 		# Twice a second: a burst should be wider before the next request
 		# arrives, not a second later.
 		select(undef, undef, undef, 0.5);
-		last unless kill 0, $parent;
+		last unless &prefork_parent_alive($parent, started => $started);
 		# The manager's own children are its workers plus this supervisor. Reading
 		# them every tick keeps `$current` in step with the pool a signal burst
 		# really produced; where the platform cannot tell (no /proc, a just-forked
@@ -91,8 +92,10 @@ sub prefork_autoscale {
 			}
 			closedir $dh;
 		}
-		if ($busy >= $live) { $high++ } else { $high = 0 }
-		if ($high >= $grow_after && $live < $max) {
+		# A pool nobody can see is not a busy pool: `busy >= live` was also
+		# true for 0 >= 0, so an unreadable pool grew and logged every tick.
+		if ($live && $busy >= $live) { $high++ } else { $high = 0 }
+		if ($high >= $grow_after && $live && $live < $max) {
 			my $add = $grow_by;
 			$add = $max - $live if $live + $add > $max;
 			kill 'TTIN', $parent for 1 .. $add;
@@ -113,6 +116,42 @@ sub prefork_autoscale {
 		}
 	}
 	POSIX::_exit(0);
+}
+
+# Is the manager that forked this supervisor still the same process? A PID is
+# only a number: once the manager dies the kernel hands it out again, and
+# `kill 0` then reports a live manager that is really an unrelated process -
+# two supervisors outlived a restart that way and kept raising a pool no one
+# owned. Reparenting is the first evidence (an orphan's parent becomes init),
+# and the start time captured at fork is the second (a reused PID cannot share
+# it). `live_start` is read here unless a caller passes one; undef means the
+# platform cannot tell, and then the kill check is all that is left.
+sub prefork_parent_alive {
+	my ($parent, %opt) = @_;
+	return 0 unless defined $parent && $parent =~ /^[0-9]+$/;
+	my $ppid = exists $opt{'ppid'} ? $opt{'ppid'} : getppid();
+	return 0 unless $ppid == $parent;
+	my $started = $opt{'started'};
+	my $now = exists $opt{'live_start'} ? $opt{'live_start'} : &prefork_parent_start($parent);
+	return 0 if defined $started && defined $now && $started ne $now;
+	return 1 if kill 0, $parent;
+	return 0;
+}
+
+# A process's start time (field 22 of /proc/<pid>/stat). Two samples that differ
+# mean the PID now names a different process. undef where /proc is absent, so
+# the caller falls back to the reparenting check alone.
+sub prefork_parent_start {
+	my ($pid) = @_;
+	return undef unless defined $pid && $pid =~ /^[0-9]+$/;
+	open(my $fh, '<', "/proc/$pid/stat") or return undef;
+	my $line = <$fh>;
+	close $fh;
+	return undef unless defined $line;
+	# the command name is parenthesised and may itself hold spaces
+	$line =~ s/^.*\)\s+// or return undef;
+	my @field = split /\s+/, $line;
+	return $field[19];
 }
 
 # How many workers the manager actually has. It lists its direct children in one

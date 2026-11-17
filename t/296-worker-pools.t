@@ -2,7 +2,8 @@
 # covers:    the worker pools behind Configure -> Sys -> Workers: the device
 #           defaults, the min/max range read from the settings table (with
 #           config.json and the old main_workers keys as fallbacks), the save
-#           path that keeps min <= max, and the single call each server makes.
+#           path that keeps min <= max, the supervisor's retirement when its
+#           manager is gone, and the single call each server makes.
 
 use strict;
 use warnings;
@@ -137,6 +138,41 @@ like( $src, qr/pool => \$pool,/, 'and is told which pool it watches' );
 my $autoscale = read_file("$root/perl/President/prefork_autoscale.pl");
 like( $autoscale, qr/my \$dir = &subs::home\('~\/\.president\/busy\/' \. \$pool\);/, 'each pool has its own busy-marker folder' );
 like( $autoscale, qr/\$0 = 'jawn autoscale ' \. \$pool;/, 'the supervisor names its pool in the process list' );
+
+# ---- an orphaned supervisor retires ----------------------------------------
+# A restart stranded two supervisors under PID 1. `kill 0` said their manager
+# was alive because its PID had been handed to an unrelated process, and with
+# no children left to read (live = 0) the busy test `0 >= 0` grew a pool
+# nobody owned - twice a second, for nearly three hours.
+like( $autoscale, qr/last unless &prefork_parent_alive\(\$parent, started => \$started\)/,
+	'the supervisor retires when its manager is not the same process' );
+like( $autoscale, qr/if \(\$live && \$busy >= \$live\) \{ \$high\+\+ \}/,
+	'zero live workers is never read as a busy pool' );
+like( $autoscale, qr/if \(\$high >= \$grow_after && \$live && \$live < \$max\)/,
+	'and growing needs a positive live count before it fires TTIN' );
+
+subtest 'the manager liveness check survives PID reuse' => sub {
+	require Mojo::Server::Prefork;
+	require "$root/perl/President/prefork_autoscale.pl";
+
+	is( President::prefork_parent_alive($$, ppid => $$), 1, 'the live manager is still the manager' );
+	is( President::prefork_parent_alive($$, ppid => 1), 0, 'a supervisor reparented to init is an orphan' );
+	is( President::prefork_parent_alive($$, ppid => $$, started => '100', live_start => '200'), 0,
+		'a reused PID with a different start time is a different process' );
+	is( President::prefork_parent_alive($$, ppid => $$, started => '100', live_start => '100'), 1,
+		'the same start time is the same process' );
+	is( President::prefork_parent_alive($$, ppid => $$, live_start => undef), 1,
+		'without /proc the reparenting check alone still keeps a live manager' );
+	is( President::prefork_parent_alive(undef), 0, 'no manager PID is not a live manager' );
+	is( President::prefork_parent_alive('not-a-pid'), 0, 'and neither is a word' );
+
+	SKIP: {
+		skip 'no /proc on this platform', 2 unless -d '/proc';
+		my $start = President::prefork_parent_start($$);
+		like( $start, qr/^\d+$/, 'the start time is field 22 of the manager stat line' );
+		is( President::prefork_parent_start('99999999'), undef, 'a PID that is gone has no start time' );
+	}
+};
 
 my $calendar = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
 like( $calendar, qr/my \$dir = &home\('~\/\.president\/busy\/' \. \$pool\);/, 'the worker marker follows the same pool folder' );
