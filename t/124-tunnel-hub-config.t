@@ -17,18 +17,37 @@ use JawnOSTest;
 package FakeResult;
 sub new { my ($class, @rows) = @_; return bless { rows => \@rows }, $class }
 sub hashes { return $_[0]->{'rows'} }
+
+# A stand-in user agent that records the form the checker posts, so the test can
+# read the alive body itself instead of trusting the source to build it.
+package FakeUA;
+sub new { return bless {}, shift }
+sub inactivity_timeout { return $_[0] }
+sub post {
+	my ($self, $url, $kind, $form) = @_;
+	$main::posted = { url => $url, kind => $kind, form => $form };
+	return FakeTx->new();
+}
+package FakeTx;
+sub new { return bless {}, shift }
+sub result { return undef }
 package main;
 
+our $posted;
 my $devices = [];
 my @started;
+my $active_tunnels = [];
+my $network = { 'tailscale0' => { ip => '10.9.0.1', neigh => [] } };
 
 {
 	no warnings 'redefine';
 	no warnings 'prototype';
 	*subs::device_lister = sub { return $devices };
 	*subs::device_setter = sub { return 'computer' };
+	my $ua = FakeUA->new;
 	*subs::db_select = sub {
 		my ($table) = @_;
+		return FakeResult->new(@{$active_tunnels}) if $table eq 'tunnels';
 		return FakeResult->new() unless $table eq 'remote_machines';
 		return FakeResult->new(
 			{ signatorial => 'hubsig', manager => 'https://hub.example:45545', device => 'server', server_time => 200 },
@@ -36,7 +55,16 @@ my @started;
 		);
 	};
 	*subs::tunnel_starter = sub { push @started, shift };
+	*subs::tunnel_stopper = sub { return 1 };
 	*subs::rightNow = sub { return 1000 };
+	*subs::db_update = sub { return 1 };
+	*subs::network_interface_reporter = sub { return $network };
+	*subs::signatorial_designer = sub { return 'designer-sig' };
+	*subs::remote_useragent_maker = sub {
+		return { manager => 'https://hub.example:45545', ip => 'hub.example', ua => $ua };
+	};
+	*Tunnel::alive_age = sub { return undef };
+	*Tunnel::alive_ports = sub { return undef };
 	*Websocket::send = sub { return 1 };
 }
 
@@ -73,5 +101,46 @@ $subs::config = {};
 $devices = [ { address => { tailscale0 => { neigh => [] } } } ];
 $run->();
 is(scalar @started, 0, 'no config hub and no neighbour starts nothing');
+
+# The alive POST is the whole sync, not just the network map. `encode_json` has
+# no prototype, so in `network => encode_json $ref, interval => ...` the call
+# eats the `interval` and `tunnel` pairs that follow it: the hub receives the
+# signatorial and the network map but never the interval or the tunnel batch it
+# asked for. Assert the posted body, not the source, so the regression is caught
+# wherever the hash is built.
+$active_tunnels = [ {
+	signatorial => 'hubsig',
+	direction => 'in',
+	batch_uuid => 'batch-1',
+	process_id => $$,
+	failures => 0,
+	in_port => 45545,
+	status => 'active',
+	uuid => 'tun-1',
+} ];
+my $expected_batch = { %{ $active_tunnels->[0] } };
+$devices = [ { address => { tailscale0 => { neigh => [] } } } ];
+$subs::config = { 'tunnel_hub' => 'https://hub.example:45545' };
+$posted = undef;
+{
+	# the checker only POSTs while the tunnel's holder is alive, and it asks
+	# `ps -p <pid> -o cmd=` - so the process title is our own
+	local $0 = 'Manager.pl';
+	$run->();
+}
+ok($posted, 'the checker POSTs the alive body to the hub');
+is($posted->{'url'}, 'https://hub.example:45545/manager/tunnel/alive', 'the alive POST targets the hub');
+is($posted->{'kind'}, 'form', 'the alive body is posted as a form');
+my $form = $posted->{'form'} || {};
+ok(exists $form->{'network'}, 'the body carries the network map');
+ok(exists $form->{'interval'}, 'the body carries the interval the hub asked for');
+ok(exists $form->{'tunnel'}, 'the body carries the tunnel batch');
+is($form->{'interval'} // '', 30, 'the interval is the checker interval');
+is_deeply(
+	(exists $form->{'network'} ? eval { Mojo::JSON::decode_json($form->{'network'}) } : undef),
+	$network, 'the network map decodes back');
+is_deeply(
+	(exists $form->{'tunnel'} ? eval { Mojo::JSON::decode_json($form->{'tunnel'}) } : undef),
+	[ $expected_batch ], 'the tunnel batch decodes back');
 
 done_testing();

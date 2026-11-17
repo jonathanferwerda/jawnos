@@ -70,8 +70,42 @@ like($conf, qr/\Q[0-9., ]+\E/,
 # list operator that reads only its first argument: every key after it is
 # dropped from the hash and never written. The call is parenthesised instead.
 # lib/JawnOS/Manager/Part31.pm:791 records the first time this bit the house -
-# a relay quietly lost its uuid - so the shape is guarded here, not just fixed.
+# a relay quietly lost its uuid - so the shape is guarded, not just fixed.
 
+# How deep the brackets are after $text, ignoring anything quoted.
+sub bracket_depth {
+	my ($text) = @_;
+	my ($depth, $quote) = (0, undef);
+	for my $ch (split //, $text) {
+		if (defined $quote) { $quote = undef if $ch eq $quote; next; }
+		if ($ch eq q{'} || $ch eq q{"}) { $quote = $ch; next; }
+		$depth++ if $ch =~ /[\(\[\{]/;
+		$depth-- if $ch =~ /[\)\]\}]/;
+	}
+	return $depth;
+}
+
+# True when the call's argument list ends before the comma on this line: a
+# closer that was opened before the call comes back. `eval { return
+# encode_json $x } || undef,` closes the eval block, not the argument list, so
+# it is not this bug. `encode_json &subs::f(),` and `encode_json [ $file ],`
+# close only their own brackets and stay in the list.
+sub call_leaves_the_list {
+	my ($line, $at) = @_;
+	my $start = bracket_depth(substr($line, 0, $at));
+	my ($depth, $quote) = ($start, undef);
+	for my $ch (split //, substr($line, $at + length 'encode_json')) {
+		if (defined $quote) { $quote = undef if $ch eq $quote; next; }
+		if ($ch eq q{'} || $ch eq q{"}) { $quote = $ch; next; }
+		return 0 if $ch eq q{,} && $depth == $start;   # this comma ends the element
+		$depth++ if $ch =~ /[\(\[\{]/;
+		if ($ch =~ /[\)\]\}]/) { $depth--; return 1 if $depth < $start; }
+	}
+	return 0;
+}
+
+# Every source line that hands a bare value to encode_json with another element
+# after it in the same list, as file:line: line.
 sub bare_encode_json_calls {
 	my @found;
 	for my $rel (@_) {
@@ -82,10 +116,14 @@ sub bare_encode_json_calls {
 		for my $i (0 .. $#lines) {
 			my $line = $lines[$i];
 			next if $line =~ /^\s*#/;
+			next unless $line =~ /=>\s*encode_json\s/;      # a hash key, bare call
+			next if $line =~ /=>\s*encode_json\s*\(/;       # already parenthesised
+			my $at = index($line, 'encode_json');
+			next if call_leaves_the_list($line, $at);
 			my $hit = 0;
-			if ($line =~ /=>\s*encode_json\s+\$[^,]+,\s*$/) {
+			if ($line =~ /,\s*$/) {
 				# A trailing comma is harmless when the next line closes the
-				# hash; it is the list operator only when a key follows.
+				# list; it is this bug only when another key follows.
 				my $next = '';
 				for my $j ($i + 1 .. $#lines) {
 					next unless $lines[$j] =~ /\S/;
@@ -94,30 +132,24 @@ sub bare_encode_json_calls {
 				}
 				$hit = 1 unless $next =~ /^\s*[\}\]\)]/;
 			}
-			$hit = 1 if $line =~ /=>\s*encode_json\s+\$[^,]+,\s*[A-Za-z_'"]+\s*=>/;
+			# The same list written on one line: a key follows the comma.
+			$hit = 1 if $line =~ /=>\s*encode_json\s+[^,]+,\s*[A-Za-z_'"]+\s*=>/;
 			push @found, "$rel:" . ($i + 1) . ": $line" if $hit;
 		}
 	}
 	return @found;
 }
 
-my @clean_layers = map { s{^\Q$root/\E}{}r } (
+my @sources = map { s{^\Q$root/\E}{}r } (
 	glob("$root/lib/JawnOS/Controller/*.pm"),
 	glob("$root/lib/JawnOS/Manager/*.pm"),
+	glob("$root/lib/JawnOS/Domain/*.pm"),
 	glob("$root/lib/JawnOS/*.pm"),
-	glob("$root/perl/*.pl")
+	glob("$root/perl/*.pl"),
+	glob("$root/scripts/*.pl")
 );
-my @bare = bare_encode_json_calls(@clean_layers);
-is_deeply(\@bare, [], 'no route or manager call hands a bare value to encode_json with keys after it')
+my @bare = bare_encode_json_calls(@sources);
+is_deeply(\@bare, [], 'no Perl source hands a bare value to encode_json with keys after it')
 	or diag(join "\n", @bare);
 
-# The domain layer still carries the shape. Joining the scan above is the test
-# that will prove each of these fixed.
-TODO: {
-	local $TODO = 'domain layer: a bare encode_json call drops the keys that follow it';
-	my @domain = map { s{^\Q$root/\E}{}r } glob("$root/lib/JawnOS/Domain/*.pm");
-	my @domain_bare = bare_encode_json_calls(@domain);
-	is_deeply(\@domain_bare, [], 'the domain layer hands encode_json one value too')
-		or diag(join "\n", @domain_bare);
-}
 done_testing();

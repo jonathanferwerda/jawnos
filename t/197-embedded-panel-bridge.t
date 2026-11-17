@@ -20,6 +20,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
 use RepoSource;
+use JawnOSTest;
 
 my $root = repo_root();
 my $read = sub { scalar read_file("$root/$_[0]") };
@@ -128,5 +129,36 @@ my $ble = $read->('lib/JawnOS/Domain/Ble.pm');
 ok(index($ble, q{model => ($chip->{'model'} || $od->{'__specs'}->{'model'} || '')}) >= 0,
 	'and a bridge-only device row carries it');
 
-done_testing();
+# --- the self row keeps every column beside its address -------------------
+# `encode_json` has no prototype, so it is a list operator: in `address =>
+# encode_json $address, protocol => ...` it takes the whole tail of the hash
+# and silently drops every column after the address. A self row that lost its
+# uuid is the identity-less device AGENTS.md says breaks the panel after a
+# cross-machine restore, so drive the real insert against the sandbox database
+# and read the row back.
+subs::preload($_) for qw(ensure_self_device machine_hostname network_interface_reporter log_writer);
+{
+	my $hostname = 'encode-json-sweep-probe';
+	local $ENV{'PORT_AHOY'} = '45545';
+	local *subs::machine_hostname = sub { return $hostname };
+	local *subs::network_interface_reporter = sub { return { eth0 => '10.0.0.5' } };
+	local *subs::log_writer = sub { return 1 };
 
+	my $self = &subs::ensure_self_device();
+	ok($self, 'ensure_self_device files this machine its own row');
+	my $row = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
+	ok($row, 'and the row can be read back from devices');
+	if ($row) {
+		ok(length($row->{'uuid'}), 'the row carries its identity uuid');
+		cmp_ok(length($row->{'uuid'} // ''), '==', 25,
+			'the uuid is the insert\'s 25-character identity, not db_insert\'s 15-character fallback');
+		is($row->{'protocol'}, 'https', 'its protocol survived beside the address');
+		is($row->{'port'}, '45545', 'so did the port it listens on');
+		ok(length($row->{'server_time'}), 'and its server_time');
+		ok(length($row->{'timestamp'}), 'and its timestamp');
+		ok(length($row->{'president'}), 'and the database it belongs to');
+		is($row->{'chip_ids'}, '[]', 'and its chip_ids list');
+	}
+}
+
+done_testing();

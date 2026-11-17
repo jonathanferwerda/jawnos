@@ -435,7 +435,7 @@ sub refresh_self_address {
 		&subs::db_update(
 			'devices',
 			{
-				address     => encode_json $address,
+				address     => encode_json($address),
 				timestamp   => &subs::rightNow(),
 				server_time => &subs::rightNow(),
 			},
@@ -462,7 +462,7 @@ sub ensure_self_device {
 		timestamp => &subs::rightNow(),
 		hostname => $hostname,
 		uname => $uname,
-		address => encode_json $address,
+		address => encode_json($address),
 		protocol => 'https',
 		port => $ENV{PORT_AHOY},
 		server_time => &subs::rightNow(),

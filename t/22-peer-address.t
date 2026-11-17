@@ -9,6 +9,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use RepoSource;
 use JawnOSTest;
+use Mojo::JSON qw(decode_json encode_json);
 
 # The address reporter is lazy: load the real definition before a local stub,
 # or the module load replaces the stub mid-test.
@@ -324,5 +325,100 @@ for my $file (qw(
 	like($text, qr/remote_machine_mirror_row/, "$file prunes a mirror payload");
 }
 like($manager_source, qr/remote_machine_data_view/, 'the handshake stores only the data fields a peer reads');
+
+
+# A beacon's update hash carries more than one key, and encode_json is a Perl
+# list operator with no prototype: `network => encode_json $net, server_time
+# => ...` handed every following pair to encode_json, which took only its first
+# argument. The peer this machine had just accepted never recorded that it was
+# connected and the freshness marker never moved. Drive the real sub against
+# the sandbox row and read the columns back.
+subs::preload(qw(signature_verify signatorial_designer lan_presence_reply lan_presence_wake));
+{
+	my $sig = 'encode-json-peer-sig';
+	my $peer_ip = '192.168.1.77';
+	subs::db_delete('remote_machines', { signatorial => $sig });
+	subs::db_insert('remote_machines', {
+		uuid        => 'encode-json-peer-uuid',
+		signatorial => $sig,
+		pubkey      => "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----\n",
+		ip          => '192.168.1.99',
+		port        => 45545,
+		manager     => 'https://192.168.1.99:45545',
+		network     => '{"lan":{"ip":"192.168.1.99","port":45545}}',
+		status      => 'idle',
+		connection  => 'idle',
+		tunnel      => 'no',
+	});
+	my $msg = {
+		type        => 'jawnos-lan',
+		signatorial => $sig,
+		hostname    => 'peer',
+		device      => 'computer',
+		port        => 45545,
+		ts          => CORE::time(),
+		sig         => 'test-signature',
+		nics        => "eth0|$peer_ip|aa:bb:cc:dd:ee:ff",
+	};
+	my $before = subs::rightNow();
+	{
+		no warnings qw(redefine once);
+		local *subs::network_interface_reporter = sub { return { eth0 => { ip => '192.168.1.50' } } };
+		local *subs::signature_verify = sub { return 1 };
+		local *subs::signatorial_designer = sub { return q{this-machine-sig} };
+		local *subs::lan_presence_reply = sub { return };
+		local *subs::lan_presence_wake = sub { return };
+		local *Websocket::send = sub { return };
+		subs::lan_presence_accept($msg, $peer_ip);
+	}
+	my $row = subs::db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0] || {};
+	is($row->{'status'}, 'connected',
+		'an accepted beacon records that the peer is connected');
+	is($row->{'connection'}, 'active',
+		'an accepted beacon records the connection as active');
+	ok(length($row->{'server_time'} // ''),
+		'an accepted beacon records when the peer was seen');
+	cmp_ok($row->{'server_time'} // 0, '>=', $before,
+		'and that server time is this call, not a stale row');
+	my $map = eval { decode_json($row->{'network'} // '') } || {};
+	is($map->{'lan'}->{'ip'}, $peer_ip,
+		'the accepted beacon still stores the peer LAN map');
+}
+
+# The same trap sat in the device refresh: the address JSON swallowed
+# `timestamp` and `server_time`, so a card showed a new address with no time.
+{
+	my $hostname = `hostname`;
+	chomp $hostname;
+	subs::db_delete('devices', { hostname => $hostname });
+	subs::db_insert('devices', {
+		uuid     => 'encode-json-device-uuid',
+		hostname => $hostname,
+		address  => encode_json({ eth0 => { nic => 'eth0', ip => '192.168.1.50', neigh => [] } }),
+	});
+	my $before = subs::rightNow();
+	my $changed = subs::lan_presence_note_device(
+		{
+			signatorial => 'encode-json-device-peer',
+			device      => 'mobile',
+			name        => 'Phone',
+			hostname    => 'phone',
+		},
+		'192.168.1.77', 'aa:bb:cc:dd:ee:ff', 45545,
+	);
+	ok($changed, 'a beacon from a peer on our LAN updates this machine devices row');
+	my $row = subs::db_select('devices', undef, { uuid => 'encode-json-device-uuid' })->hashes->[0] || {};
+	ok(length($row->{'timestamp'} // ''),
+		'the device refresh records when the address was seen');
+	cmp_ok($row->{'timestamp'} // 0, '>=', $before,
+		'and that timestamp is this refresh, not a stale row');
+	ok(length($row->{'server_time'} // ''),
+		'the device refresh keeps its server time');
+	my $map = eval { decode_json($row->{'address'} // '') } || {};
+	is($map->{'eth0'}->{'neigh'}->[0]->{'ip'}, '192.168.1.77',
+		'the refreshed address map still carries the peer');
+	is($map->{'eth0'}->{'neigh'}->[0]->{'signatorial'}, 'encode-json-device-peer',
+		'and the signatorial that identifies it');
+}
 
 done_testing();

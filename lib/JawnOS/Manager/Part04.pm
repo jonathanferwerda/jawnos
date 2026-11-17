@@ -208,7 +208,7 @@ sub rock_and_roll($c) {
 		my $writer = {
 			timestamp => $timestamp,
 			app => &subs::unformat_name($mag->{'title'}) || $app,
-			file => encode_json [ $file ],
+			file => encode_json([ $file ]),
 			uuid => $mag->{'uuid'},
 			type => 'file'
 		};

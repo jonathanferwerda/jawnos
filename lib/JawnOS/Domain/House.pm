@@ -1192,7 +1192,7 @@ sub lan_presence_accept {
 	}
 	my $update = {
 		ip          => $peer_ip,
-		network     => encode_json $net,
+		network     => encode_json($net),
 		server_time => $now,
 		status      => 'connected',
 		connection  => 'active',
@@ -1317,7 +1317,7 @@ sub lan_presence_note_device {
 	$address->{$nic}->{'neigh'} = $neigh;
 	my $now = &rightNow();
 	my $where = $me->{'uuid'} ? { uuid => $me->{'uuid'} } : { hostname => $hostname };
-	&db_update('devices', { address => encode_json $address, timestamp => $now, server_time => $now }, $where);
+	&db_update('devices', { address => encode_json($address), timestamp => $now, server_time => $now }, $where);
 	return 1;
 }
 

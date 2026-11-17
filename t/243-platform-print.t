@@ -1,8 +1,10 @@
-# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Domain/Printer.pm lib/JawnOS/Manager/Part02.pm
+# tests-for: lib/JawnOS/Platform/Print.pm lib/JawnOS/Domain/Printer2.pm lib/JawnOS/Domain/Printer.pm lib/JawnOS/Manager/Part02.pm lib/JawnOS/Domain/Folders.pm
 # covers:    the print seam: the lpstat/ippfind/lpinfo/scanimage argv and bounds
 #            against fixtures, the IPP port probe, the ink reply, the safe
 #            answers for a machine with no print stack, and the domain call
-#            sites that now ask the seam.
+#            sites that now ask the seam. Also the two encode_json call sites
+#            that dropped the rest of their hash: the mDNS sync's timestamp and
+#            folders_entry_trim's server_time.
 
 use strict;
 use warnings;
@@ -14,6 +16,8 @@ use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 use Test::More;
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
+use JawnOSTest;
+use Mojo::JSON qw(decode_json encode_json);
 
 use JawnOS::Platform::Print qw(
 	available unsupported printers discover probe add_queue send ink
@@ -480,5 +484,54 @@ unlike($printer, qr/\bipptool\b/, 'Printer no longer builds the ipptool read');
 my $part02 = read_file("$root/lib/JawnOS/Manager/Part02.pm");
 like($part02, qr/JawnOS::Platform::Print::scan_argv\b/, 'the scan command comes from the seam');
 unlike($part02, qr/scanimage --format/, 'Part02 no longer builds the scanimage string');
+
+# --- the mDNS sync records when the address was learned ----------------------
+# `key => encode_json $x, other => $y` is the bug the house fixes by
+# parenthesising (the bare call is a list operator, so it eats the rest of the
+# hash). Here that dropped `timestamp`, so a refreshed device row said where the
+# machine was and never when it was learned. Drive the real sync against the
+# sandbox row and read it back.
+require JawnOS::Domain::Printer;   # package subs: load it before stubbing its subs
+require JawnOS::Domain::Edt;
+{
+	my $host = 'mdns-sync-test.invalid';
+	my $seed = { eth0 => { ip => '192.168.1.10' } };
+	&subs::db_insert('devices', {
+		hostname => $host, address => encode_json($seed), timestamp => 1, server_time => 1,
+	});
+	my $before = &subs::rightNow();
+	{
+		no warnings 'redefine';
+		local *subs::machine_hostname = sub { return $host };
+		local *subs::router_discover = sub { return 1 };
+		local *subs::network_interface_reporter = sub { return { eth0 => { ip => '192.168.1.10' } } };
+		local *subs::mdns_devices = sub { return { by_ip => {}, by_mac => {}, by_chip => {} } };
+		local *subs::mdns_printers = sub {
+			return { by_ip => { '192.168.1.50' => { ip => '192.168.1.50', name => 'Officejet', model => 'Pro' } }, by_mac => {} };
+		};
+		eval { &subs::device_mdns_sync() };
+	}
+	my $row = &subs::db_select('devices', undef, { hostname => $host })->hashes->[0];
+	ok($row, 'the seeded device row is still there');
+	my $stamp = $row->{'timestamp'} // '';
+	ok(length($stamp) && $stamp >= $before,
+		'the sync stamps the row with when the address was learned');
+	ok(length($row->{'server_time'} // ''), 'and with its sync time');
+	my $address = eval { decode_json($row->{'address'} // '') } || {};
+	is($address->{'eth0'}{'ip'}, '192.168.1.10', 'the address map decodes back intact');
+	is(($address->{'eth0'}{'neigh'} || [])->[0]{'ip'}, '192.168.1.50',
+		'with the printer mDNS found folded in');
+}
+
+# --- folders_entry_trim's server_time is part of the same write --------------
+# Folders.pm was claimed by no test and folders_entry_trim needs a real row plus
+# settings to drive, so this one is pinned at the source: the bare form is a
+# list operator that eats `server_time => &rightNow()` and leaves the update
+# with only the column, so the entry's freshness marker is not the trim's own.
+my $folders = read_file("$root/lib/JawnOS/Domain/Folders.pm");
+like($folders, qr/\$column\s*=>\s*encode_json\(\$blob\),\s*server_time\s*=>\s*&rightNow\(\)/,
+	'folders_entry_trim keeps its server_time in the same hash');
+unlike($folders, qr/\$column\s*=>\s*encode_json\s+\$blob/,
+	'and the bare encode_json form that swallows it is gone');
 
 done_testing();

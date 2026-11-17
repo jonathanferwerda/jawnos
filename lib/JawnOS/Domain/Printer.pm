@@ -204,7 +204,7 @@ sub device_mdns_sync {
 	my $mdns_changed = &mdns_merge_address($address);
 	return unless $mdns_changed || $net_changed;
 	my $now = &rightNow();
-	&subs::db_update('devices', { address => encode_json $address, timestamp => $now, server_time => $now }, { hostname => $hostname });
+	&subs::db_update('devices', { address => encode_json($address), timestamp => $now, server_time => $now }, { hostname => $hostname });
 	# A machine that just joined a network repaints an open Dev panel at once; the
 	# peer beacons handle their own rows in lan_presence_accept.
 	eval { &Websocket::send('server', { console => &Websocket::console_command('deviceLister')}) } if $net_changed;

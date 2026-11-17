@@ -99,7 +99,7 @@ sub folders_entry_trim {
 				$touched = &folders_entry_trim_in($blob, \%wanted);
 			}
 			next unless $touched;
-			&db_update($table, { $column => encode_json $blob, server_time => &rightNow() }, { rowid => $row->{'rowid'} });
+			&db_update($table, { $column => encode_json($blob), server_time => &rightNow() }, { rowid => $row->{'rowid'} });
 			$trimmed += $touched;
 		}
 	}

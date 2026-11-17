@@ -316,7 +316,7 @@ sub tunnel_checker {
 							# reaching a NAT'd peer all to line up).
 							my $form_data = {
 								signatorial => &subs::signatorial_designer(),
-								network => encode_json &subs::network_interface_reporter(),
+								network => encode_json(&subs::network_interface_reporter()),
 								interval => $data->{'interval'},
 								tunnel => encode_json \@batch
 							};
