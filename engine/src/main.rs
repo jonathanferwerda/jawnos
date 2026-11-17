@@ -3,19 +3,24 @@
 //! The null device is still the default, so every mode runs on a machine with
 //! no sound card. `--backends` says which optional backends this build carries,
 //! and `--loopback` measures the patch-cable round trip when one does
-//! (docs/studio-audio-roadmap.md P1).
+//! (docs/studio-audio-roadmap.md P1). `--serve` is the control socket the
+//! manager drives: one flat JSON object per line, one client at a time
+//! (docs/studio-audio-roadmap.md P2).
 
+mod socket;
+
+use std::path::Path;
 use std::process::ExitCode;
 
 use jawn_audio::{
     backends::{self, BackendKind, RunReport},
-    decode, encode_datagram, loopback, mix_mono_into_stereo, peak, Codec, Device, Header,
-    NullDevice, Strip, WavWriter, HEADER_LEN,
+    decode, encode_datagram, loopback, mix_mono_into_stereo, peak, to_i16, Codec, Device,
+    DiskWriter, Header, NullDevice, Strip, HEADER_LEN,
 };
 
 /// A take is the interface's own shape: stereo at the sample rate in the
 /// header. `--channels` is a `--run` option and is not silently reused here.
-const RECORD_CHANNELS: usize = 2;
+pub(crate) const RECORD_CHANNELS: usize = 2;
 /// `--record` without `--seconds`: long enough to be a take, short enough to
 /// not surprise someone who forgot the flag.
 const RECORD_SECONDS: f64 = 5.0;
@@ -29,6 +34,7 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --run [options]              run a device for a while and report
   jawn-audio --loopback [options]         measure the round trip through a patch cable
   jawn-audio --record --out FILE.wav      record a take to a 16-bit WAV
+  jawn-audio --serve [options]            arm and place takes over a Unix socket
   jawn-audio --version                    print the version
   jawn-audio --help                       this text
 
@@ -63,6 +69,16 @@ jawn-audio — the JawnOS audio engine
   --rate HZ       sample rate (default 48000)
   --json          one JSON line instead of prose
 
+--serve options:
+  --socket PATH   control socket (default $JAWNOS_AUDIO_SOCKET, else
+                  $HOME/.president/audio.sock)
+  --backend N     null (default), alsa, pipewire or jack
+  --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
+  --period N      block/period size in frames (default 64)
+  --buffer N      buffer size in frames (default 256)
+  --rate HZ       sample rate (default 48000)
+
+--serve speaks one flat JSON object per line: record, status, stop, quit.
 The null backend needs no sound card. ALSA and JACK exist only in a build with
 --features alsa and/or --features jack; pipewire uses the ALSA `default` PCM.
 A loopback needs the interface's output patched into its input.";
@@ -74,6 +90,7 @@ enum Mode {
     Run,
     Loopback,
     Record,
+    Serve,
     SelfTest,
     Version,
     Help,
@@ -90,6 +107,7 @@ struct Options {
     channels: usize,
     tone: Option<f32>,
     out: Option<String>,
+    socket: Option<String>,
     start_at: u64,
     seconds_given: bool,
     json: bool,
@@ -117,6 +135,7 @@ fn run() -> Result<ExitCode, String> {
         channels: 2,
         tone: None,
         out: None,
+        socket: None,
         start_at: 0,
         seconds_given: false,
         json: false,
@@ -130,6 +149,7 @@ fn run() -> Result<ExitCode, String> {
             "--run" => options.mode = Mode::Run,
             "--loopback" => options.mode = Mode::Loopback,
             "--record" => options.mode = Mode::Record,
+            "--serve" => options.mode = Mode::Serve,
             "--selftest" => options.mode = Mode::SelfTest,
             "--version" | "-V" => options.mode = Mode::Version,
             "--help" | "-h" => options.mode = Mode::Help,
@@ -180,6 +200,7 @@ fn run() -> Result<ExitCode, String> {
                 );
             }
             "--out" => options.out = Some(value(&mut args, "--out")?),
+            "--socket" => options.socket = Some(value(&mut args, "--socket")?),
             "--start-at" => {
                 let raw = value(&mut args, "--start-at")?;
                 options.start_at = raw
@@ -232,6 +253,7 @@ fn run() -> Result<ExitCode, String> {
         }
         Mode::Loopback => run_loopback(&options),
         Mode::Record => run_record(&options),
+        Mode::Serve => run_serve(&options),
     }
 }
 
@@ -413,9 +435,32 @@ fn run_loopback(options: &Options) -> Result<ExitCode, String> {
     Ok(ExitCode::from(if report.ok { 0 } else { 1 }))
 }
 
+fn run_serve(options: &Options) -> Result<ExitCode, String> {
+    validate_serve(options)?;
+    let socket = socket::default_path(options.socket.as_deref())?;
+    let device = options.backend.device_name(options.device.as_deref());
+    // A server that cannot bind is a runtime failure, not a usage error: exit 1
+    // tells a supervisor to try again, while 2 would mean the arguments are bad.
+    let outcome = socket::serve(socket::Config {
+        backend: options.backend,
+        device,
+        rate: options.rate,
+        period: options.frames,
+        buffer: options.buffer,
+        socket,
+    });
+    match outcome {
+        Ok(code) => Ok(code),
+        Err(error) => {
+            eprintln!("jawn-audio: {error}");
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
 /// What one `--record` produced, in the exact key order the JSON contract
-/// names. A failed take keeps the same shape with `frames` at zero, so a caller
-/// parses one struct either way.
+/// names. A failed take keeps the same shape with `frames` and `dropped` at
+/// zero, so a caller parses one struct either way.
 struct TakeReport {
     ok: bool,
     path: String,
@@ -423,6 +468,7 @@ struct TakeReport {
     device: String,
     rate: u32,
     frames: u64,
+    dropped: u64,
     channels: usize,
     start_sample: u64,
     xruns: usize,
@@ -436,6 +482,7 @@ impl TakeReport {
         device: String,
         rate: u32,
         frames: u64,
+        dropped: u64,
         start_sample: u64,
         xruns: usize,
     ) -> Self {
@@ -446,6 +493,7 @@ impl TakeReport {
             device,
             rate,
             frames,
+            dropped,
             channels: RECORD_CHANNELS,
             start_sample,
             xruns,
@@ -468,6 +516,7 @@ impl TakeReport {
             device,
             rate,
             frames: 0,
+            dropped: 0,
             channels: RECORD_CHANNELS,
             start_sample,
             xruns: 0,
@@ -477,13 +526,14 @@ impl TakeReport {
 
     fn to_json(&self) -> String {
         format!(
-            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"error\":\"{}\"}}",
+            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"error\":\"{}\"}}",
             self.ok,
             loopback::json_escape(&self.path),
             loopback::json_escape(self.backend),
             loopback::json_escape(&self.device),
             self.rate,
             self.frames,
+            self.dropped,
             self.channels,
             self.start_sample,
             self.xruns,
@@ -498,7 +548,7 @@ impl TakeReport {
             self.frames as f64 / self.rate as f64
         };
         format!(
-            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, xruns {}",
+            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, dropped {}, xruns {}",
             self.path,
             self.frames,
             self.rate,
@@ -507,6 +557,7 @@ impl TakeReport {
             self.backend,
             self.device,
             self.start_sample,
+            self.dropped,
             self.xruns
         )
     }
@@ -529,6 +580,69 @@ fn validate_record(options: &Options) -> Result<(), String> {
         return Err("--seconds cannot be negative".to_string());
     }
     Ok(())
+}
+
+fn validate_serve(options: &Options) -> Result<(), String> {
+    validate_block(options.frames, options.buffer)?;
+    if options.rate == 0 {
+        return Err("--rate must be at least 1".to_string());
+    }
+    // A backend that cannot capture is a configuration mistake, so say it at
+    // startup rather than when the first take is armed.
+    record_support(options.backend)
+}
+
+/// Frames a take of `seconds` holds, rounded once so the queue size and the
+/// recording loop agree exactly on where the take ends.
+pub(crate) fn take_frames(seconds: f64, rate: u32) -> u64 {
+    (seconds.max(0.0) * rate as f64).round() as u64
+}
+
+/// How many blocks the disk queue may hold between the audio side and its
+/// writer thread.
+///
+/// Hardware is paced by the device, so the queue stays shallow: a few periods
+/// cover a scheduling hiccup, and a disk that stalls past that must drop rather
+/// than stall the capture loop past its deadline.
+pub(crate) const HARDWARE_QUEUE_BLOCKS: usize = 8;
+
+/// The most the null backend's whole-take queue may hold. The cap keeps a very
+/// long `--seconds` from asking for an unbounded allocation; past it the disk
+/// sets the pace and any drop is counted, never hidden.
+const NULL_QUEUE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The blocks a take will push: `frames` split into `period`-sized blocks, the
+/// last one short.
+pub(crate) fn take_blocks(frames: u64, period: usize) -> usize {
+    let period = period.max(1) as u64;
+    let blocks = frames / period + u64::from(frames % period != 0);
+    usize::try_from(blocks).unwrap_or(usize::MAX)
+}
+
+/// A queue sized for the whole take, bounded by [`NULL_QUEUE_BYTES`].
+pub(crate) fn null_queue_blocks(blocks: usize, period: usize, channels: usize) -> usize {
+    let block_bytes = period
+        .max(1)
+        .saturating_mul(channels.max(1))
+        .saturating_mul(2);
+    let cap = (NULL_QUEUE_BYTES / block_bytes).max(1);
+    blocks.clamp(1, cap)
+}
+
+/// The queue a take gets. The null backend produces faster than real time, so
+/// a shallow queue would drop most of a take before the writer thread had a
+/// chance to drain it: its queue is the whole take. Hardware keeps the shallow
+/// queue above.
+pub(crate) fn queue_blocks(
+    backend: BackendKind,
+    frames: u64,
+    period: usize,
+    channels: usize,
+) -> usize {
+    match backend {
+        BackendKind::Null => null_queue_blocks(take_blocks(frames, period), period, channels),
+        BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => HARDWARE_QUEUE_BLOCKS,
+    }
 }
 
 fn run_record(options: &Options) -> Result<ExitCode, String> {
@@ -567,10 +681,13 @@ fn run_record(options: &Options) -> Result<ExitCode, String> {
 /// Create the take, stream the backend into it, and finish it. Any runtime
 /// failure removes the partial file: a short take is only left behind when the
 /// process is killed, where the per-block sizes still make it a valid WAV.
+///
+/// The samples never go to disk on this thread. Every block is handed to a
+/// [`DiskWriter`], whose writer thread owns the WAV (docs: `engine/src/disk.rs`).
 fn record_take(options: &Options, path: &str, device: &str) -> Result<TakeReport, String> {
     // Answer "can this build/backend record?" before opening the output: a
     // backend that cannot run must not truncate a file the user named.
-    record_support(options)?;
+    record_support(options.backend)?;
 
     let seconds = if options.seconds_given {
         options.seconds
@@ -580,56 +697,80 @@ fn record_take(options: &Options, path: &str, device: &str) -> Result<TakeReport
     // Open and close the device before the file. A busy or missing device then
     // fails without truncating a path the caller named; the real open follows
     // inside the recording run.
-    if matches!(options.backend, BackendKind::Alsa | BackendKind::PipeWire) {
-        #[cfg(feature = "alsa")]
-        jawn_audio::alsa_device::check_capture(
-            device,
-            options.rate,
-            options.frames,
-            options.buffer,
-        )
-        .map_err(|error| format!("cannot record: {error}"))?;
-    }
+    probe_capture(
+        options.backend,
+        device,
+        options.rate,
+        options.frames,
+        options.buffer,
+    )?;
 
-    let mut writer = WavWriter::create(path, options.rate, RECORD_CHANNELS as u16, options.frames)
-        .map_err(|error| format!("cannot write {path}: {error}"))?;
+    let frames = take_frames(seconds, options.rate);
+    let queue = queue_blocks(options.backend, frames, options.frames, RECORD_CHANNELS);
+    let mut disk = DiskWriter::spawn(
+        Path::new(path),
+        options.rate,
+        RECORD_CHANNELS as u16,
+        options.frames,
+        queue,
+    )
+    .map_err(|error| format!("cannot write {path}: {error}"))?;
 
     let outcome = match options.backend {
-        BackendKind::Null => record_null(options, seconds, &mut writer),
+        BackendKind::Null => record_null(options, seconds, &mut disk),
         BackendKind::Alsa | BackendKind::PipeWire => {
-            record_alsa(device, options, seconds, &mut writer)
+            record_alsa(device, options, seconds, &mut disk)
         }
         BackendKind::Jack => Err(
-            "--record has no JACK capture backend yet; use --backend alsa or null".to_string(),
+            "no JACK capture backend yet; use --backend alsa or null".to_string(),
         ),
     };
 
     match outcome {
-        Ok((rate, xruns)) => match writer.finish() {
-            Ok(frames) => Ok(TakeReport::success(
-                path.to_string(),
-                options.backend.name(),
-                device.to_string(),
-                rate,
-                frames,
-                options.start_at,
-                xruns,
-            )),
-            Err(error) => {
-                let _ = std::fs::remove_file(path);
-                Err(format!("cannot finish {path}: {error}"))
+        Ok((rate, xruns)) => {
+            // Read the count before `finish`, which consumes the handle.
+            let dropped = disk.dropped_frames();
+            match disk.finish() {
+                Ok(frames) => {
+                    if rate != options.rate {
+                        // The samples are at the rate the backend granted, so
+                        // the header must say that rate too. The writer thread
+                        // owned the file until `finish`, hence the correction
+                        // afterwards.
+                        if let Err(error) = rewrite_rate(Path::new(path), rate) {
+                            let _ = std::fs::remove_file(path);
+                            return Err(error);
+                        }
+                    }
+                    Ok(TakeReport::success(
+                        path.to_string(),
+                        options.backend.name(),
+                        device.to_string(),
+                        rate,
+                        frames,
+                        dropped,
+                        options.start_at,
+                        xruns,
+                    ))
+                }
+                Err(error) => {
+                    let _ = std::fs::remove_file(path);
+                    Err(format!("cannot finish {path}: {error}"))
+                }
             }
-        },
+        }
         Err(error) => {
-            drop(writer);
+            // Join the writer thread before the file goes, so no block is
+            // written to a file this thread has just unlinked.
+            let _ = disk.finish();
             let _ = std::fs::remove_file(path);
             Err(error)
         }
     }
 }
 
-fn record_support(options: &Options) -> Result<(), String> {
-    match options.backend {
+pub(crate) fn record_support(backend: BackendKind) -> Result<(), String> {
+    match backend {
         BackendKind::Null => Ok(()),
         BackendKind::Alsa | BackendKind::PipeWire => {
             if cfg!(feature = "alsa") {
@@ -642,9 +783,63 @@ fn record_support(options: &Options) -> Result<(), String> {
             }
         }
         BackendKind::Jack => Err(
-            "--record has no JACK capture backend yet; use --backend alsa or null".to_string(),
+            "no JACK capture backend yet; use --backend alsa or null".to_string(),
         ),
     }
+}
+
+/// Open and close the capture device without touching the output file, so a
+/// busy or missing device fails before a path is truncated.
+pub(crate) fn probe_capture(
+    backend: BackendKind,
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+) -> Result<(), String> {
+    match backend {
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            capture_probe(device, rate, period, buffer)
+        }
+        BackendKind::Null | BackendKind::Jack => Ok(()),
+    }
+}
+
+#[cfg(feature = "alsa")]
+fn capture_probe(device: &str, rate: u32, period: usize, buffer: usize) -> Result<(), String> {
+    jawn_audio::alsa_device::check_capture(device, rate, period, buffer)
+        .map_err(|error| format!("cannot record: {error}"))
+}
+
+#[cfg(not(feature = "alsa"))]
+fn capture_probe(device: &str, rate: u32, period: usize, buffer: usize) -> Result<(), String> {
+    let _ = (device, rate, period, buffer);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
+}
+
+/// Point the header at the rate a backend actually granted.
+///
+/// `DiskWriter` owns the file until it finishes, so the correction is made on
+/// the closed file, at the same two offsets `WavWriter::set_rate` writes.
+pub(crate) fn rewrite_rate(path: &Path, rate: u32) -> Result<(), String> {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let byte_rate = u64::from(rate) * RECORD_CHANNELS as u64 * 2;
+    if rate == 0 || byte_rate > u64::from(u32::MAX) {
+        return Err(format!("{rate} Hz does not fit a WAV header"));
+    }
+    let fail =
+        |error: std::io::Error| format!("cannot set the take rate in {}: {error}", path.display());
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(fail)?;
+    file.seek(SeekFrom::Start(24)).map_err(fail)?;
+    file.write_all(&rate.to_le_bytes()).map_err(fail)?;
+    file.seek(SeekFrom::Start(28)).map_err(fail)?;
+    file.write_all(&(byte_rate as u32).to_le_bytes()).map_err(fail)?;
+    file.flush().map_err(fail)?;
+    Ok(())
 }
 
 /// The null take: silence, or a sine, through the same block loop as hardware.
@@ -654,24 +849,29 @@ fn record_support(options: &Options) -> Result<(), String> {
 fn record_null(
     options: &Options,
     seconds: f64,
-    writer: &mut WavWriter,
+    disk: &mut DiskWriter,
 ) -> Result<(u32, usize), String> {
     let mut device = NullDevice::new(options.rate, options.frames, RECORD_CHANNELS);
     if let Some(hz) = options.tone {
         device = device.with_tone(hz);
     }
 
-    let total = (seconds.max(0.0) * options.rate as f64).round() as u64;
+    let total = take_frames(seconds, options.rate);
     let mut block = vec![0.0f32; options.frames * RECORD_CHANNELS];
+    let mut pcm = vec![0i16; options.frames * RECORD_CHANNELS];
     let mut remaining = total;
     while remaining > 0 {
         device
             .process(&mut block)
             .map_err(|error| format!("device: {error:?}"))?;
         let frames = remaining.min(options.frames as u64) as usize;
-        writer
-            .write_f32(&block[..frames * RECORD_CHANNELS])
-            .map_err(|error| format!("write take: {error}"))?;
+        let samples = frames * RECORD_CHANNELS;
+        for (out, sample) in pcm[..samples].iter_mut().zip(&block[..samples]) {
+            *out = to_i16(*sample);
+        }
+        // Never blocks; the queue is sized for the whole take, so a drop here
+        // means the cap was reached and is counted in the report.
+        disk.push(&pcm[..samples]);
         remaining -= frames as u64;
     }
     Ok((options.rate, 0))
@@ -682,7 +882,7 @@ fn record_alsa(
     device: &str,
     options: &Options,
     seconds: f64,
-    writer: &mut WavWriter,
+    disk: &mut DiskWriter,
 ) -> Result<(u32, usize), String> {
     let report = jawn_audio::alsa_device::run_capture(
         device,
@@ -690,13 +890,14 @@ fn record_alsa(
         options.frames,
         options.buffer,
         seconds,
-        |block| writer.write_i16(block).map_err(|error| error.to_string()),
+        |block| {
+            disk.push(block);
+            Ok(())
+        },
     )?;
     // ALSA may grant a rate other than the one requested; the samples are at
-    // the granted rate, so the header and the report must say that rate.
-    writer
-        .set_rate(report.rate)
-        .map_err(|error| format!("cannot set the take rate: {error}"))?;
+    // the granted rate, so the header and the report must say that rate. The
+    // header is corrected by `record_take` once the writer has closed the file.
     Ok((report.rate, report.xruns))
 }
 
@@ -705,9 +906,9 @@ fn record_alsa(
     device: &str,
     options: &Options,
     seconds: f64,
-    writer: &mut WavWriter,
+    disk: &mut DiskWriter,
 ) -> Result<(u32, usize), String> {
-    let _ = (device, options, seconds, writer);
+    let _ = (device, options, seconds, disk);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
@@ -755,4 +956,49 @@ fn self_test() -> Result<(), String> {
 
     println!("selftest: header ok, graph ok, left {left:.4} right {right:.4}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_null_queue_holds_the_whole_take() {
+        // 0.2 s at 48 kHz in 64-frame blocks is 150 blocks. Every one has to
+        // fit, or a loop that runs faster than real time drops the take.
+        let frames = take_frames(0.2, 48_000);
+        assert_eq!(frames, 9_600);
+        assert_eq!(take_blocks(frames, 64), 150);
+        assert_eq!(
+            queue_blocks(BackendKind::Null, frames, 64, RECORD_CHANNELS),
+            150
+        );
+    }
+
+    #[test]
+    fn the_null_queue_is_capped_so_a_long_take_cannot_ask_for_the_world() {
+        let frames = take_frames(3_600.0, 48_000);
+        let blocks = take_blocks(frames, 64);
+        let queue = queue_blocks(BackendKind::Null, frames, 64, RECORD_CHANNELS);
+        assert!(queue < blocks, "the cap must bite: {queue} of {blocks}");
+        assert_eq!(queue, NULL_QUEUE_BYTES / (64 * 2 * 2));
+    }
+
+    #[test]
+    fn hardware_gets_a_shallow_queue() {
+        // Hardware is paced by the device; a deep queue would only hide a
+        // stalled disk until the take ended.
+        let queue = queue_blocks(BackendKind::Alsa, 480_000, 64, RECORD_CHANNELS);
+        assert_eq!(queue, HARDWARE_QUEUE_BLOCKS);
+    }
+
+    #[test]
+    fn an_empty_take_still_gets_a_queue_with_room() {
+        assert_eq!(take_blocks(0, 64), 0);
+        assert_eq!(
+            queue_blocks(BackendKind::Null, 0, 64, RECORD_CHANNELS),
+            1,
+            "a queue of zero blocks is refused before the file is created"
+        );
+    }
 }

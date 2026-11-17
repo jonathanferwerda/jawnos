@@ -221,7 +221,7 @@ impl WavWriter {
                 self.scratch[index * 2] = bytes[0];
                 self.scratch[index * 2 + 1] = bytes[1];
             }
-            self.write_scratch(take)?;
+            self.write_scratch(take, true)?;
             done += take;
         }
         Ok(())
@@ -230,6 +230,34 @@ impl WavWriter {
     /// Append interleaved 16-bit samples exactly as a capture backend produced
     /// them, so a hardware take is not quantised twice.
     pub fn write_i16(&mut self, block: &[i16]) -> Result<(), WavError> {
+        self.write_i16_blocks(block, true)
+    }
+
+    /// Append interleaved 16-bit samples without rewriting the header sizes.
+    ///
+    /// This is the batching form for a writer thread ([`crate::disk`]): the
+    /// samples reach the file, but the header keeps describing whatever the
+    /// last [`WavWriter::sync`] covered. A take killed in between is still a
+    /// valid WAV of an older, shorter prefix — its sizes never promise samples
+    /// that are not on disk — and the unwritten tail is ignored by parsers.
+    /// [`WavWriter::finish`] always syncs first, so a clean take is exact.
+    ///
+    /// The sizes are stale until [`WavWriter::sync`]; do not expose this to a
+    /// caller that may be killed and expects every frame counted.
+    pub fn write_i16_unsynced(&mut self, block: &[i16]) -> Result<(), WavError> {
+        self.write_i16_blocks(block, false)
+    }
+
+    /// Rewrite the RIFF and `data` sizes for the frames written so far, then
+    /// leave the cursor at the end of the samples.
+    ///
+    /// Only needed when using [`WavWriter::write_i16_unsynced`]; the ordinary
+    /// write methods already sync after every block.
+    pub fn sync(&mut self) -> Result<(), WavError> {
+        self.sync_sizes()
+    }
+
+    fn write_i16_blocks(&mut self, block: &[i16], sync: bool) -> Result<(), WavError> {
         let channels = usize::from(self.channels);
         if block.len() % channels != 0 {
             return Err(WavError::BadBlock {
@@ -247,16 +275,19 @@ impl WavWriter {
                 self.scratch[index * 2] = bytes[0];
                 self.scratch[index * 2 + 1] = bytes[1];
             }
-            self.write_scratch(take)?;
+            self.write_scratch(take, sync)?;
             done += take;
         }
         Ok(())
     }
 
-    fn write_scratch(&mut self, samples: usize) -> Result<(), WavError> {
+    fn write_scratch(&mut self, samples: usize, sync: bool) -> Result<(), WavError> {
         self.file.write_all(&self.scratch[..samples * 2])?;
         self.frames += (samples / usize::from(self.channels)) as u64;
-        self.sync_sizes()
+        if sync {
+            self.sync_sizes()?;
+        }
+        Ok(())
     }
 
     fn data_len(&self) -> Result<u32, WavError> {

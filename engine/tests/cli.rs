@@ -270,12 +270,13 @@ fn record_null_writes_a_stereo_48k_take_and_its_contract() {
     assert!(text.contains("\"device\":\"null\""), "stdout: {text}");
     assert_eq!(json_number(&text, "rate"), 48_000.0, "stdout: {text}");
     assert_eq!(json_number(&text, "frames"), 4_800.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "dropped"), 0.0, "stdout: {text}");
     assert_eq!(json_number(&text, "channels"), 2.0, "stdout: {text}");
     assert_eq!(json_number(&text, "start_sample"), 0.0, "stdout: {text}");
     assert_eq!(json_number(&text, "xruns"), 0.0, "stdout: {text}");
     assert!(text.contains("\"error\":\"\""), "stdout: {text}");
     let expected = format!(
-        "{{\"ok\":true,\"path\":\"{}\",\"backend\":\"null\",\"device\":\"null\",\"rate\":48000,\"frames\":4800,\"channels\":2,\"start_sample\":0,\"xruns\":0,\"error\":\"\"}}",
+        "{{\"ok\":true,\"path\":\"{}\",\"backend\":\"null\",\"device\":\"null\",\"rate\":48000,\"frames\":4800,\"dropped\":0,\"channels\":2,\"start_sample\":0,\"xruns\":0,\"error\":\"\"}}",
         take.text()
     );
     assert_eq!(text.trim(), expected, "the JSON line is the contract");
