@@ -5,16 +5,18 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
-## 2026-11-17 — the alarm face stays until it is answered
+## 2026-11-17 — the alarm face stays until it is answered, with a five-minute backstop
 
-- **A ring no longer times out.** The five-minute guard is gone: the alarm
-  sounds, and its face stays in front of the phone, until Dismiss or Snooze.
-  The Clock window's ring card follows the same rule and comes down only when
-  the server confirms the answer, so a failed Dismiss no longer pretends the
-  alarm is over.
+- **A ring stays until it is answered, or five minutes.** Dismiss or Snooze ends
+  it at once, and an alarm nobody answers now stops after five minutes instead
+  of sounding all day. Its face stays in front of the phone for that whole
+  time. The Clock window's ring card follows the same rule and comes down only
+  when the server confirms the answer or its own five-minute guard runs out, so
+  a failed Dismiss no longer pretends the alarm is over.
 - **Home cannot hide the ringing face.** Pressing Home or opening another app
   while the alarm is still sounding brings the alarm screen back. A screen that
-  is off is left off, and a face that has been answered never returns.
+  is off is left off, and a face that has been answered (or timed out) never
+  returns.
 - **Volume down is a snooze.** A hand can quiet a ringing alarm in the dark
   without finding the screen. A Math or NFC gate still stands in the way, just
   as it does for the tap.

@@ -83,8 +83,8 @@ sub clock_write_device_alarm {
 			volume => int($next_alarm->{'volume'} || 70),
 			ramp => int($next_alarm->{'ramp'} || 0),
 			# Every alarm sound repeats now: a long recording loops at the alarm's
-			# volume, a chime loops on the alarm channel. Dismiss or Snooze is
-			# what ends it; a ring has no timeout.
+			# volume, a chime loops on the alarm channel. Dismiss, Snooze or the
+			# five-minute guard is what ends it.
 			loop => 1,
 			snooze => int($next_alarm->{'snooze'} || 5),
 			play => ($next_alarm->{'play'} || ''),
@@ -112,8 +112,8 @@ sub clock_device_ring {
 	return 0 if eval { &subs::silence_active() };
 	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
 	# The phone plays this itself, on the alarm channel: the chosen sound loops
-	# until Dismiss or Snooze. A ring has no timeout, so the person hears the
-	# alarm they set rather than a ring that quietly gave up.
+	# until Dismiss, Snooze or the five-minute guard, so a ring that nobody
+	# answers still falls silent rather than sounding all day.
 	&clock_device_broadcast(&app_action('JAWN_CLOCK_RING'),
 		uuid => ($alarm->{'uuid'} || ''),
 		label => ($alarm->{'label'} || ''),
@@ -791,15 +791,16 @@ sub clock_alarm_volume_at {
 	return sprintf('%.2f', $level);
 }
 
-# How long one ring may last before the house gives up on it. Zero means no
-# limit: an alarm is an appointment the person made, so it rings - and its face
-# stays on the phone - until Dismiss or Snooze answers it. The old five-minute
-# guard closed the card and stopped the sound while the person was still half
-# awake, which is the bug this replaces. A long-form track still loops through
-# the operating-system player and its pid file still lets Dismiss stop it.
+# How long one ring may last before the house gives up on it. Five minutes is
+# the backstop for an alarm nobody answers: the sound stops and the card and the
+# phone's face come down, so a forgotten alarm cannot ring all day. Dismiss or
+# Snooze still ends it at once, and the face stays until one of those or this
+# guard. Zero means no limit, which the wake search still understands. A
+# long-form track loops through the operating-system player and its pid file
+# lets Dismiss stop it.
 sub clock_alarm_ring_length {
 	my $alarm = shift;
-	return 0;
+	return 300000;
 }
 
 # The command the OS player runs for this alarm. A long track is played once,

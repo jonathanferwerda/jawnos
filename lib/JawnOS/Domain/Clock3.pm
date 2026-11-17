@@ -55,9 +55,8 @@ sub clock_tick {
 			my $ring = ref $rings->{$uuid} eq 'HASH' ? $rings->{$uuid} : undef;
 
 			# Already sounding on this machine: repeat a chime, and stop when a
-			# dismiss/snooze reached the shared row (or, for a ring with a guard,
-			# when that guard runs out). An alarm has no guard now, so it keeps
-			# sounding until it is actually answered.
+			# dismiss/snooze reached the shared row or the five-minute guard runs
+			# out. The guard is the backstop for an alarm nobody answers.
 			if ($ring && $ring->{'ringing'}) {
 				my $elapsed = $now - ($ring->{'started'} || $now);
 				my $long = &clock_sound_is_long($alarm->{'sound'});

@@ -45,14 +45,14 @@ like($clock, qr/var ringing = \$\.grep\(alarms, function \(a\) \{ return a\.ring
 like($clock, qr/stopAt && at && stopAt >= at/,
 	'only a stop at or after this ring closes a card from a stale shared row');
 
-# --- a ring has no timeout: only Snooze or Dismiss ends it ----------------------
-is(subs::clock_alarm_ring_length({}), 0, 'the house sets no ring guard');
-unlike($ring, qr/jawnosClockRingGuardTimer/,
-	'the card no longer arms a guard of its own');
-unlike($clock, qr/Date\.now\(\) - at\) > 300000/,
-	'the state poll no longer closes a card on a five-minute fallback');
+# --- the five-minute guard stops a ring nobody answers -------------------------
+is(subs::clock_alarm_ring_length({}), 300000, 'the house stops an unanswered ring after five minutes');
+like($ring, qr/function jawnosClockRingGuardArm\(\)/,
+	'the card carries its own five-minute guard');
+like($ring, qr/300000 - \(Date\.now\(\) - at\)/,
+	'and measures it from this ring, not from whenever the card was drawn');
 like($tick, qr/my \$expired = \$guard > 0 && \$elapsed >= \$guard;/,
-	'a ring with no guard is never expired by the firing loop');
+	'the firing loop expires a ringing alarm at its guard');
 like($ring, qr/if \(state && state\.ok !== 0\) \{ jawnosClockAlarmStop\(\); \}/,
 	'the card comes down only after the server confirms the answer');
 

@@ -247,9 +247,9 @@ function jawnosClockApplyState(state) {
 // window opened (or reloaded) while an alarm is still sounding shows the card
 // again, and one dismissed on another screen closes here too. Every machine
 // draws the card, not only the one carrying the sound: the answer is a shared
-// edit, so any open Manager window can end the ring everywhere. The card has no
-// timeout of its own: it stays until the shared row says the alarm was Snoozed,
-// Dismissed or deleted, which is the promise the person made when they set it.
+// edit, so any open Manager window can end the ring everywhere. The card follows
+// the house's five-minute ring: it stays until the shared row says the alarm was
+// Snoozed or Dismissed, and its own guard takes it down if the row never says.
 function jawnosClockSyncRinging(state) {
 	var alarms = state.alarms || [];
 	var ringing = $.grep(alarms, function (a) { return a.ringing; });
@@ -268,7 +268,8 @@ function jawnosClockSyncRinging(state) {
 		var at = parseInt(current.ring_at || current.fired_at || 0, 10) || 0;
 		var stopAt = parseInt(a.stop_at || 0, 10) || 0;
 		// A peer's notice can arrive before the shared row has caught up with
-		// the ring. Only a stop at or after this ring takes the card down.
+		// the ring. Only a stop at or after this ring takes the card down;
+		// otherwise the card's own five-minute guard ends an unanswered ring.
 		if (stopAt && at && stopAt >= at) { jawnosClockAlarmStop(); return; }
 		if (!a.ringing && !at) { jawnosClockAlarmStop(); return; }
 		return;
