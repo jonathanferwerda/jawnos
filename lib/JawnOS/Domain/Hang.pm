@@ -513,6 +513,17 @@ sub clothesline_anticipatory_habits {
 	}
 	return [ @{$rows} ] unless @add;
 	my @out = @{$rows};
+	# the hour each routine starts at, so two routines that both carry a noon step
+	# are told apart by which one the day reaches first
+	my %wave_first;
+	foreach my $row ( @out ) {
+		my $r = $apps->{ $row->{'app'} };
+		my $hour = ref $r eq 'HASH' ? $r->{'hour'} : undef;
+		next unless defined $hour && $hour =~ /^\d+$/;
+		my $wave = $row->{'wave'} || 0;
+		$wave_first{$wave} = (0 + $hour)
+			if !defined $wave_first{$wave} || (0 + $hour) < $wave_first{$wave};
+	}
 	foreach my $new ( sort { $a->{'hour'} <=> $b->{'hour'} || $a->{'app'} cmp $b->{'app'} } @add ) {
 		# The step it happens beside, not the next one down the order: the day's
 		# order can wander (a 2am step at its end), so a noon habit placed by the
@@ -524,7 +535,10 @@ sub clothesline_anticipatory_habits {
 			my $hour = ref $row eq 'HASH' ? $row->{'hour'} : undef;
 			next unless defined $hour && $hour =~ /^\d+$/;
 			my $gap = abs((0 + $hour) - $new->{'hour'});
-			if (!defined $best || $gap < $best || ($gap == $best && (0 + $hour) > $new->{'hour'})) {
+			# an equal gap goes to the routine the day reaches first
+			my $first = $wave_first{$out[$i]{'wave'} || 0} // 99;
+			my $kept = ($at < scalar @out) ? ($wave_first{$out[$at]{'wave'} || 0} // 99) : 99;
+			if (!defined $best || $gap < $best || ($gap == $best && $first < $kept)) {
 				($at, $best) = ($i, $gap);
 			}
 		}
@@ -532,15 +546,20 @@ sub clothesline_anticipatory_habits {
 		# eleven o'clock yogurt belongs with the noon lunch, not with the ten
 		# o'clock steps it is numerically nearest. Between two routines, the one it
 		# leads into wins.
+		my $runup;
 		for my $i ( 0 .. $#out ) {
 			my $row = $apps->{ $out[$i]{'app'} };
 			my $hour = ref $row eq 'HASH' ? $row->{'hour'} : undef;
 			next unless defined $hour && $hour =~ /^\d+$/;
 			next unless (0 + $hour) > $new->{'hour'} && ((0 + $hour) - $new->{'hour'}) <= 1;
-			next if ($out[$i]{'wave'} || 0) == ($out[$at]{'wave'} || 0);
-			$at = $i;
-			last;
+			my $wave = $out[$i]{'wave'} || 0;
+			next if $at < scalar @out && $wave == ($out[$at]{'wave'} || 0);
+			my $key = [ (0 + $hour) - $new->{'hour'}, $wave_first{$wave} // 99, $i ];
+			$runup = [ $key, $i ] if !$runup || ($key->[0] <=> $runup->[0][0]) < 0
+				|| (($key->[0] <=> $runup->[0][0]) == 0 && (($key->[1] <=> $runup->[0][1]) < 0
+					|| (($key->[1] <=> $runup->[0][1]) == 0 && ($key->[2] <=> $runup->[0][2]) < 0)));
 		}
+		$at = $runup->[1] if $runup;
 		# a habit earlier than the step it sits beside goes before it
 		my $wave = 0;
 		if (@out) {
