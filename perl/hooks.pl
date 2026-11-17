@@ -693,6 +693,8 @@ Manager::app->hook(after_render => sub  {
 		# Work outside a request (a background sub, a worker between jobs) must
 		# not inherit the screen a previous request spoke for.
 		$subs::request_device_uuid = '';
+		$subs::appointment_source = '';
+		%subs::clothesline_number_cache = ();
 		&subs::visibility_cache_clear();
 	});
 

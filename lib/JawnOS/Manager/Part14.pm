@@ -148,6 +148,10 @@ sub manager_reset($c) {
 	my $capture_machine = $c->param('remote_signatorial') || '';
 	my $capture_here = ($capture_machine eq '' || $capture_machine eq &subs::signatorial_designer()) ? 1 : 0;
 	my $source = $c->param('source');
+	# What this request writes is the person's own step: a press on the rail or on
+	# a window's button. db_insert stamps each row with this, so the clothesline
+	# can tell the person's steps from a task's checkbox or a default option.
+	$subs::appointment_source = (defined $source && length $source) ? $source : 'press';
 	my $measure_is_open = $c->param('measure_is_open');
 	my $usual_duration = $init->{'duration'};
 	if ($locking_status eq 'on') {

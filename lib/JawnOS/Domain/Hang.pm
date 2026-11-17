@@ -359,7 +359,7 @@ sub clothesline_anticipatory_apps {
 		my $app = $r->{'app'};
 		next unless defined $app && length $app;
 		next if $seen{$app}++;
-		next if eval { &app_hidden_now($app) };
+		next if eval { &clothesline_app_off_line($app) };
 		push @apps, { app => $app, name => &format_name($app) };
 	}
 	# an app with a clothesline setting but no appointment yet is still a pill
@@ -367,7 +367,7 @@ sub clothesline_anticipatory_apps {
 	foreach my $r ( @{$clothes} ) {
 		my $app = &unformat_name($r->{'app'});
 		next unless length $app && !$seen{$app}++;
-		next if eval { &app_hidden_now($app) };
+		next if eval { &clothesline_app_off_line($app) };
 		push @apps, { app => $app, name => &format_name($app) };
 	}
 	@apps = sort { lc($a->{'name'}) cmp lc($b->{'name'}) || $a->{'app'} cmp $b->{'app'} } @apps;
@@ -414,7 +414,8 @@ sub clothesline_anticipatory_week {
 			$override = $day_value->{'apps'};
 			$sections = $day_value->{'sections'} if ref $day_value->{'sections'} eq 'HASH';
 		}
-		my @apps = grep { defined $_ && length $_ } ($override ? @{$override} : @learned);
+		# a day curated before the house kept an app private must not carry it now
+		my @apps = grep { defined $_ && length $_ && !&clothesline_app_off_line($_) } ($override ? @{$override} : @learned);
 		push @week, {
 			key => $key,
 			label => POSIX::strftime('%A, %B %d', @d),

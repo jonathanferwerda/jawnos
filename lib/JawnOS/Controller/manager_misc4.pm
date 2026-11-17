@@ -324,7 +324,9 @@ sub action_12622 {
 								app => $nfcs->{'app'},
 								type => $type,
 								timestamp => $timestamp,
-								uuid => $target
+								uuid => $target,
+								# the tag is the person's own hand, like a press
+								source => 'nfc'
 							});
 						}
 					}

@@ -378,6 +378,9 @@ sub source_appt_writer {
 		type => $type,
 		duration => $duration || 1000,
 		source_uuid => $uuid,
+		# A default model or option is the parent's step, not the person's own:
+		# the clothesline leaves it out however the parent was started.
+		source => 'default',
 		unit => $data->{'unit'} || $m->{'unit'},
 		quantity => ($data->{'quantity'} || $m->{'quantity'}),
 		project => $data->{'project'} || $m->{'project'},

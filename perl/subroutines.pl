@@ -715,6 +715,11 @@ our (%app_visibility_cache, %app_visibility_own_cache, %app_visibility_rank_cach
 	%visibility_graph_links, %visibility_graph_uuid_app);
 our $visibility_graph_ready = 0;
 our $request_device_uuid = '';
+# What started the appointments of the request being served: a press, an NFC
+# tag, a task's checkbox, a default option or a schedule's repeat. Cleared after
+# every dispatch, so a worker between jobs carries none of it. The clothesline
+# learns a step only when the person themselves started or stopped it.
+our $appointment_source = '';
 our %private_revealed_cache;
 
 

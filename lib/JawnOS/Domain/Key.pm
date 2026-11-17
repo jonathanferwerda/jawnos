@@ -740,6 +740,14 @@ sub db_insert {
 	if ($table eq 'appointments' && !defined $data->{'app_uuid'} && defined $data->{'app'} && length $data->{'app'}) {
 		$data->{'app_uuid'} = &construct_uuid($data->{'app'});
 	}
+	# What started this appointment, so the clothesline can tell the person's own
+	# step from a task's checkbox or a default option. Stamped only when the row
+	# does not carry its own answer: a synced row keeps the origin it was written
+	# with.
+	if ($table eq 'appointments' && defined $subs::appointment_source && length $subs::appointment_source
+		&& (!defined $data->{'source'} || !length $data->{'source'})) {
+		$data->{'source'} = $subs::appointment_source;
+	}
 	$data->{'ost'} = $data->{'ost'} || &rightNow();
 	$data->{'server_time'} = $data->{'server_time'} ? $data->{'server_time'} : $data->{'ost'};
 	$data->{'uuid'} = &random_string_creator(15) unless $data->{'uuid'};
@@ -841,6 +849,10 @@ sub db_update {
 	my $data = shift;
 	my $params = shift;
 	%setting_memo = () if ($table // '') eq 'settings';
+	# A stop or a cancel passes the request's own source, which on a plain press
+	# is empty. An empty value is not an answer: keep the origin the row was
+	# written with rather than erasing it.
+	delete $data->{'source'} if ($table // '') eq 'appointments' && !defined $data->{'source'};
 	my ($db,$database,$sql) = &database_grabber();
 	$data->{'server_time'} = &subs::rightNow() unless $data->{'server_time'};
 	&db_cache_updater($table, $params);

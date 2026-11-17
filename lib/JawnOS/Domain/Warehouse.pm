@@ -377,6 +377,8 @@ sub task_writer {
 					quantity => $task->{'occurences'},
 					duration => (abs $duration),
 					source_uuid => $running_appt->{'uuid'},
+					# a task's checkbox is not a step the person picked on the rail
+					source => 'task',
 					project => $data->{'project'},
 					account => $data->{'account'},
 					movement => $data->{'movement'},

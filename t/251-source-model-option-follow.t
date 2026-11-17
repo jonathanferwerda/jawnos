@@ -32,7 +32,7 @@ my $sql = Mojo::SQLite->new('sqlite:' . $dbfile);
 my $db  = $sql->db;
 $db->query('create table appointments (
 	app text, uuid text, type text, timestamp text, server_time text,
-	source_uuid text, model text, options text, seen text, stop_seen text,
+	source_uuid text, source text, model text, options text, seen text, stop_seen text,
 	stop_timestamp text, duration text, app_uuid text, ost text,
 	unit text, quantity text, project text, manufacturer text,
 	device text, warranty text, pos text
@@ -164,6 +164,7 @@ $gb::database_holder = {
 	is(int($cream->{'stop_timestamp'}), $now - 300_000, 'and ending with it');
 	is(int($cream->{'duration'}), -300_000, 'over the parent duration');
 	is( $cream->{'source_uuid'}, $tea, 'linked to the parent' );
+	is( $cream->{'source'}, 'default', 'and says an option, not the person, started it' );
 
 	# The child's app key is unformatted: an option named `Cream Test` writes the
 	# existing `cream_test` app, and the recursion check looks there too.

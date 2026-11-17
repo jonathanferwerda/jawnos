@@ -1351,6 +1351,17 @@ sub clothesline_daily_hours {
 	}
 	$window_days ||= 60;
 	$session_days ||= 14;
+	# The rail and the settings dialog are drawn on a screen anyone can see: an
+	# app the house keeps private, and a caller's number, are not steps here.
+	my %off;
+	foreach my $r ( @{ $rows || [] } ) {
+		next unless ref $r eq 'HASH';
+		my $app = $r->{'app'};
+		next unless defined $app && length $app;
+		next if exists $off{$app};
+		$off{$app} = &clothesline_app_off_line($app) ? 1 : 0;
+	}
+	$rows = [ grep { ref $_ ne 'HASH' || !$off{ $_->{'app'} // '' } } @{$rows} ] if grep { $off{$_} } keys %off;
 	my $zone = &clock_zone_house();
 	my $had = exists $ENV{'TZ'};
 	my $old = $ENV{'TZ'};
@@ -1360,6 +1371,35 @@ sub clothesline_daily_hours {
 	if ($had) { $ENV{'TZ'} = $old } else { delete $ENV{'TZ'} }
 	POSIX::tzset();
 	return $scan;
+}
+
+# A phone number filed as its own app. The house files every unknown caller that
+# way, and a spam caller is not a routine step. The number is the app's own name
+# and its own phone row, so a named contact who has a number is never taken for
+# one. The list is one query and is cleared after each request.
+our %clothesline_number_cache;
+sub clothesline_number_app {
+	my ($app) = @_;
+	return 0 unless defined $app && length $app;
+	return 0 unless $app =~ /\A\d+\z/;
+	unless (%clothesline_number_cache) {
+		my $rows = eval { &db_query(q{select app from settings where setting = 'phone'})->hashes } || [];
+		foreach my $r ( @{$rows} ) {
+			next unless ref $r eq 'HASH' && defined $r->{'app'} && length $r->{'app'};
+			$clothesline_number_cache{$r->{'app'}} = 1;
+		}
+	}
+	return $clothesline_number_cache{$app} ? 1 : 0;
+}
+
+# Whether an app belongs on the clothesline at all. The rail is drawn on a screen
+# anyone can see, and the settings dialog is part of it, so an app the house
+# keeps private never appears; nor does a caller's number.
+sub clothesline_app_off_line {
+	my ($app) = @_;
+	return 1 unless defined $app && length $app;
+	return 1 if &app_hidden_now($app);
+	return &clothesline_number_app($app);
 }
 
 # The ground the person is on. The last two days' fixes vote: the cell most of
@@ -1423,7 +1463,7 @@ sub clothesline_place_history($now) {
 	$now ||= &rightNow();
 	my $fallback = sub {
 		my $since = $now - (60 * 86400 * 1000);
-		return (&db_query(q{select app, timestamp, stop_timestamp, type from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?) and coalesce(source_uuid,'') = ''}, $since, $now, 'usual', 'stop', 'start')->hashes->to_array, 60, 14);
+		return (&db_query(q{select app, timestamp, stop_timestamp, type, source, source_uuid from appointments where timestamp >= ? and timestamp <= ? and type in (?, ?, ?) and (coalesce(source,'') in ('press','nfc') or (coalesce(source,'') = '' and coalesce(source_uuid,'') = ''))}, $since, $now, 'usual', 'stop', 'start')->hashes->to_array, 60, 14);
 	};
 	my $place = &clothesline_current_place($now);
 	return $fallback->() unless $place;
@@ -1470,13 +1510,13 @@ sub clothesline_place_history($now) {
 	my $window_days = $place->{'home'} ? 60 : int((($now - $earliest) / (86400 * 1000))) + 1;
 	my $session_days = $place->{'home'} ? 14 : $window_days;
 	my @where;
-	my @args = ('usual', 'stop', 'start', '', '');
+	my @args = ('usual', 'stop', 'start');
 	foreach my $v ( @visits ) {
 		push @where, '(cast(timestamp as integer) between ? and ?)';
 		push @args, $v->[0], $v->[1];
 	}
 	my $rows = eval {
-		&db_query('select app, timestamp, stop_timestamp, type from appointments where type in (?, ?, ?) and coalesce(source_uuid, ?) = ? and (' . join(' or ', @where) . ')', @args)->hashes->to_array;
+		&db_query(q{select app, timestamp, stop_timestamp, type, source, source_uuid from appointments where type in (?, ?, ?) and (coalesce(source,'') in ('press','nfc') or (coalesce(source,'') = '' and coalesce(source_uuid,'') = '')) and (} . join(' or ', @where) . ')', @args)->hashes->to_array;
 	} || [];
 	return $place->{'home'} ? $fallback->() : ([], 14, 14) unless @{$rows};
 	return ($rows, $window_days, $session_days);
@@ -1515,9 +1555,15 @@ sub clothesline_routine_scan {
 		my $app = $r->{'app'};
 		my $ms = $r->{'timestamp'};
 		next unless defined $app && length $app && defined $ms && $ms =~ /^\d+(?:\.\d+)?$/ && $ms > 0;
-		# a step a task, default option or default model started is not the
-		# person's own: leave it to its parent
-		next if defined $r->{'source_uuid'} && length $r->{'source_uuid'};
+		# A step the person started or stopped themselves is the routine's own: a
+		# press on the rail or a tag, even when it is a child of a session they
+		# pressed (the banana taken with lunch). A default option, a task's
+		# checkbox or a schedule's repeat belongs to whatever started it. A row
+		# written before the source was kept answers by whether it has a parent.
+		my $origin = lc($r->{'source'} // '');
+		if ($origin ne 'press' && $origin ne 'nfc') {
+			next if defined $r->{'source_uuid'} && length $r->{'source_uuid'};
+		}
 		my $type = lc($r->{'type'} || '');
 		if ($type eq 'start') {
 			if ($ms >= $recent_since) {

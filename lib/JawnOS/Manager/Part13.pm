@@ -438,6 +438,8 @@ sub schedule_maker($c,$schedule,$timestamp) {
 			duration => $duration,
 			stop_timestamp => $c->param('duration') =~ /[a-zA-Z0-9]/ ? $next + abs($duration) : undef,
 			source_uuid => $base_uuid,
+			# a schedule's repeat is the schedule's, not a fresh step of its own
+			source => 'schedule',
 			uuid => $uuid
 		});
 	}

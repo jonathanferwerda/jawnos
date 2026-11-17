@@ -534,6 +534,66 @@ is(subs::clothesline_anticipatory_wave_name(3), 'Night', 'the small hours are th
 is(subs::clothesline_anticipatory_wave_name(undef), 'Routine', 'a wave with no clock is a routine');
 
 # the week reads the near two months once, and can be handed that history
+# --- what started a step ----------------------------------------------------
+# a press or a tag is the person's own step, even as a child of a session they
+# pressed (the banana taken with lunch); a task's checkbox, a default option and
+# a schedule's repeat belong to whatever started them
+my @origin_rows = (
+	{ app => 'lunch', timestamp => JawnOSTest::ts(2026, 11, 15, 12, 0), type => 'stop', source => 'press' },
+	{ app => 'banana', timestamp => JawnOSTest::ts(2026, 11, 15, 12, 1), type => 'stop', source => 'press', source_uuid => 'lunch-parent' },
+	{ app => 'milk', timestamp => JawnOSTest::ts(2026, 11, 15, 12, 2), type => 'stop', source => 'default', source_uuid => 'tea-parent' },
+	{ app => 'brushing_hair', timestamp => JawnOSTest::ts(2026, 11, 15, 12, 3), type => 'usual', source => 'task', source_uuid => 'task-parent' },
+	{ app => 'repeat', timestamp => JawnOSTest::ts(2026, 11, 15, 12, 4), type => 'stop', source => 'schedule', source_uuid => 'base' },
+	{ app => 'tagged', timestamp => JawnOSTest::ts(2026, 11, 15, 12, 5), type => 'stop', source => 'nfc' },
+	{ app => 'legacy_child', timestamp => JawnOSTest::ts(2026, 11, 15, 12, 6), type => 'stop', source_uuid => 'old-parent' },
+);
+my $oscan = subs::clothesline_routine_scan(\@origin_rows, JawnOSTest::ts(2026, 11, 15, 13, 0),
+	window_days => 60, session_days => 14);
+ok($oscan->{'apps'}{'lunch'}, 'a pressed step is learned');
+ok($oscan->{'apps'}{'banana'}, 'and a child the person pressed is their own step too');
+ok($oscan->{'apps'}{'tagged'}, 'a tag is the person\'s hand as well');
+ok(!$oscan->{'apps'}{'milk'}, 'a default option is not the person\'s step');
+ok(!$oscan->{'apps'}{'brushing_hair'}, 'nor is a task\'s checkbox');
+ok(!$oscan->{'apps'}{'repeat'}, 'nor a schedule\'s repeat');
+ok(!$oscan->{'apps'}{'legacy_child'}, 'a child with no origin still belongs to its parent');
+
+# --- what never belongs on the line ----------------------------------------
+# a caller's number is filed as its own app; a named contact with a number is a
+# person. The list is read once per request, so this seeds it before the first
+# question.
+subs::setting_setter({ app => '9052885933', setting => 'phone', value => '9052885933' });
+subs::setting_setter({ app => 'matt_olson', setting => 'phone', value => '12268862001' });
+%subs::clothesline_number_cache = ();
+is(subs::clothesline_number_app('9052885933'), 1, 'a number filed as its own app is a caller');
+is(subs::clothesline_number_app('28849'), 0, 'a number the house never filed is not one');
+is(subs::clothesline_number_app('matt_olson'), 0, 'a named contact with a number is a person');
+
+subs::setting_setter({ app => 'secret_thing', setting => 'visible', value => 'private', device => 'all' });
+subs::visibility_cache_clear();
+is(subs::clothesline_app_off_line('secret_thing'), 1, 'a private app is never on the line');
+is(subs::clothesline_app_off_line('coffee'), 0, 'a public app still is');
+is(subs::clothesline_app_off_line('9052885933'), 1, 'and neither is a spam caller');
+
+my $quiet = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 16, 12, 0),
+	history => [ [ row('hush', JawnOSTest::ts(2026, 11, 15, 9, 0), 'stop'),
+		row('coffee', JawnOSTest::ts(2026, 11, 15, 9, 5), 'stop') ], 60, 14 ]);
+subs::setting_setter({ app => 'hush', setting => 'visible', value => 'private', device => 'all' });
+subs::visibility_cache_clear();
+$quiet = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 16, 12, 0),
+	history => [ [ row('hush', JawnOSTest::ts(2026, 11, 15, 9, 0), 'stop'),
+		row('coffee', JawnOSTest::ts(2026, 11, 15, 9, 5), 'stop') ], 60, 14 ]);
+ok(!$quiet->{'apps'}{'hush'}, 'a private step never reaches the routine');
+ok($quiet->{'apps'}{'coffee'}, 'and the public steps still do');
+
+# a day curated before the app was made private must not carry it now
+my $today_key = subs::day_key(subs::rightNow());
+subs::clothesline_anticipatory_save({ days => { $today_key => [ 'coffee', 'secret_thing' ] } });
+my ($today_card) = grep { $_->{'key'} eq $today_key } @{ subs::clothesline_anticipatory_week() };
+ok($today_card, 'the week carries today');
+ok(!grep { $_ eq 'secret_thing' } @{ $today_card->{'apps'} }, 'a curated private app is left out of the day');
+ok(grep { $_ eq 'coffee' } @{ $today_card->{'apps'} }, 'and the public one is kept');
+subs::clothesline_anticipatory_save({ days => { $today_key => undef } });
+
 my $handed = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 16, 12, 0),
 	history => [ [ row('handed_app', JawnOSTest::ts(2026, 11, 15, 9, 0)) ], 60, 14 ]);
 ok($handed->{'apps'}{'handed_app'}, 'the history handed in is the one the day reads');
