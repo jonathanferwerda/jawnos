@@ -315,6 +315,8 @@ sub clothesline_schedule_expand {
 	if (ref $plan->{'minutes'} eq 'ARRAY') { @mraw = @{ $plan->{'minutes'} }; }
 	my %mseen;
 	my @minutes = sort { $a <=> $b } grep { defined $_ && $_ =~ /^\s*\d+\s*$/ && $_ >= 0 && $_ <= 59 && !$mseen{$_ + 0}++ } @mraw;
+	# a model that lists every minute is saying the whole hour, not a minute range
+	@minutes = () if scalar(@minutes) == 60 && $minutes[0] == 0 && $minutes[-1] == 59;
 	$restore->() if $restore;
 	return { days => \%days, hours => \@hours, minutes => \@minutes, ask => ($ask || '') };
 }
@@ -634,6 +636,7 @@ sub clothesline_time_words {
 	my ($hours, $minutes) = @_;
 	my @h = @{ ref $hours eq 'ARRAY' ? $hours : [] };
 	my @m = @{ ref $minutes eq 'ARRAY' ? $minutes : [] };
+	@m = () if scalar(@m) == 60 && $m[0] == 0 && $m[-1] == 59;
 	return &ui('all day') unless @h;
 	return &ui('at') . ' ' . &clothesline_hour_word($h[0]) . ' ' . &ui('minutes') . ' ' . $m[0] . ' ' . &ui('to') . ' ' . $m[-1] if @m;
 	if (@h == 1) { return &ui('at') . ' ' . &clothesline_hour_word($h[0]); }
@@ -768,7 +771,7 @@ Each plan is one recurrence, in one of these shapes:
 {"kind":"birthday","person":"mom"}
 {"kind":"full_moon","until":"2036-07-01"}
 {"kind":"dates","dates":["2026-11-26","2026-12-24"]}
-"hours" are 24-hour clock integers (16 is 4pm), inclusive; "minutes" are 0-59 integers; leave both out for all day.
+"hours" are 24-hour clock integers (16 is 4pm), inclusive; "minutes" are 0-59 integers, only for part of an hour ("the first half hour" is 0-29); leave both out for all day.
 A time of day NEVER goes in "until". "until" is only the last date the schedule runs, as an absolute date.
 "count" is how many repeats. "count" and "until" are the only ways to bound a rule.
 Add "exclude_holidays":true for "except on holidays", and "except":["2026-12-25"] for other named days.

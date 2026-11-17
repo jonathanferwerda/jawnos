@@ -400,6 +400,12 @@ ok(subs::clothesline_schedule_wears({ schedules => [ { days => { $minute_day => 
 ok(!subs::clothesline_schedule_wears({ schedules => [ { days => { $minute_day => 1 }, hours => [ $minute_hour ], minutes => [ ($minute + 30) % 60 ] } ] }, $reader_now),
 	'and a minute outside it does not wear');
 
+# a model that lists every minute means the whole hour, not a minute range
+my $whole_hour = subs::clothesline_schedule_expand(
+	{ plans => [ { kind => 'weekdays', weekdays => ['sun'] } ], hours => [9, 10, 11], minutes => [ 0 .. 59 ] }, $reader_now);
+is_deeply($whole_hour->{'minutes'}, [], 'a full minute range is no minute restriction');
+is_deeply($whole_hour->{'hours'}, [9, 10, 11], 'and the clock hours are kept');
+
 my $till = subs::clothesline_schedule_parse('every thursday between 3-6pm until July 24 2027', now => $reader_now);
 is_deeply($till->{'schedules'}[0]{'hours'}, [15, 16, 17], 'a 3-6pm span runs from three to six');
 ok($till->{'schedules'}[0]{'plans'}[0]{'until'}, 'and the until date is kept');
