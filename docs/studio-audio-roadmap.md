@@ -50,7 +50,7 @@ Measured sources and sinks, and what already exists in the tree.
 
 | Class | Source / sink | Shape | Latency floor | For |
 |---|---|---|---|---|
-| **A — the converter** | Behringer UM2 on `table`: 2 in / 2 out, USB class-compliant, **48 kHz / 16-bit**, a mic input and an instrument input | 48 k, 2 ch | **64/256 frames, 0 xruns measured** (§2); the round trip still needs a loopback | guitar, mics, monitors — the one class that gets the near-zero promise |
+| **A — the converter** | Behringer UM2 on `table`: 2 in / 2 out, USB class-compliant, **48 kHz / 16-bit**, a mic input and an instrument input | 48 k, 2 ch | **2.7 ms round trip at 64/256, measured** (§2) | guitar, mics, monitors — the one class that gets the near-zero promise |
 | **B — the machine's own mic** | the laptop/table microphone, through PipeWire | 48 k after resampling, 1 ch | 20–60 ms | scratch vocals, room, talking to the house |
 | **C — the phone** | the app's capture (Oboe) or `getUserMedia` | 48 k, Opus 10 ms | 15–40 ms on the LAN or tailnet | a microphone where you are; a monitor in your pocket |
 | **D — the T-Deck** | TDM microphone, 16 kHz, clip-based today (`jt/jt_16_voice_capture.ino`) | 16 k → 48 k | 40–100 ms, and clips only | a room mic, voice notes, a satchel recorder |
@@ -80,6 +80,39 @@ measurement already decides the block size.
 
 **The verdict: the machine holding the interface takes raw ALSA at 64 frames; every other machine
 stays a PipeWire client at 128.** That is the number D9 was waiting for.
+
+### The round trip, with the patch cable — 2026-11-17
+
+A cable from the interface's headphone output to its 1/4" instrument input (phantom off, instrument
+gain ~40%, headphone ~35%) lets the engine send one click and time its return. `jawn-audio --loopback
+--backend … --json` reports samples and its own uncertainty; capture and playback are unlinked on
+ALSA, so that uncertainty is one period, stated rather than hidden.
+
+| Path | Period / buffer | Round trip | Runs |
+|---|---|---|---|
+| **raw ALSA** `hw:1,0` | 64 / 256 | **130, 132, 134 samples — 2.71–2.79 ms** | 3 |
+| raw ALSA | 128 / 512 | 182 samples — 3.79 ms | 2 |
+| raw ALSA | 256 / 1024 | 182 samples — 3.79 ms | 1 |
+| PipeWire (ALSA plugin) | default | **2549 samples — 53.1 ms** | 1 |
+| PipeWire | `PIPEWIRE_LATENCY=64/48000` | 2485 samples — 51.8 ms | 1 |
+
+**Raw ALSA is about nineteen times faster than the PipeWire path, and the requested quantum does not
+move PipeWire at all** — the plugin's own buffering dominates, which is why "native but still on
+PipeWire" would not have been worth the work. The 64-frame result also repeats to within four
+samples, so it is a measurement and not a lucky run.
+
+Two operational facts came out of this and they matter for the `manage` switch:
+
+- **PipeWire does not release the card when its sink and source are suspended.** Raw ALSA answered
+  `EBUSY` until WirePlumber and PipeWire were stopped; the exclusive mode therefore needs a
+  WirePlumber rule that does not open this card at all, not a suspend.
+- **The click returns on channel 1** (the instrument input) at about 0.004 of full scale, while a
+  silent input reads 0.0000. That fixed a threshold that had been 20 dB above the signal, and it is
+  why a loopback now names the peak it saw when it fails.
+
+Still unmeasured: **the browser's own round trip**. The 52 ms above is the floor it inherits, so the
+page is that plus Chromium's audio service and, for takes, `MediaRecorder`. The Studio picker exists
+so that number can be collected in the same table.
 
 Already in the tree, and the engine composes with each rather than replacing it blind:
 
@@ -170,7 +203,7 @@ can cross in one or two frames (~3 ms).
 | D6 | **48 kHz inside, always.** 44.1 k material and 16 kHz devices are resampled at the edge, once. | The UM2 cannot do 44.1, the handset is already 48 k, and a second rate buys nothing. |
 | D7 | **Latency is compensated, never hidden.** Each node declares its buffer and rate; the engine places every take by that number. | This is what lets a 30 ms phone mic be a multitrack source. |
 | D8 | **PCM on a wired LAN, Opus for the phone and Wi-Fi.** | PCM is free on a gigabit; Opus at 10 ms frames keeps a phone's uplink honest. Chosen per peer and stream. |
-| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The machine holding the interface uses raw ALSA at 64 frames; every other machine stays a PipeWire client at 128.** | Measured on `table` (§2): raw ALSA held 64/256 for 180 s duplex with no xruns, while PipeWire lost 6–9 client buffers per 85 s at quantum 64 and was clean at 128. Exclusive ownership costs that one machine its ordinary mixer, so it is opt-in per machine, and `manage` off gives it back. |
+| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The machine holding the interface uses raw ALSA at 64 frames; every other machine stays a PipeWire client at 128.** | Measured on `table` (§2): raw ALSA held 64/256 for 180 s duplex with no xruns and the patch cable times its round trip at 2.7 ms, against 52 ms through PipeWire. Exclusive ownership costs that one machine its ordinary mixer, and PipeWire only frees the card when it is stopped, so `manage` needs a WirePlumber rule rather than a suspend. |
 | D10 | **Zones are declared-latency nodes, not promises.** An amp node is a speaker, never a booth. | Keeps the low-latency path honest; a zone with a 60 ms buffer is correct, not a failure. |
 | D11 | **Graceful fallback, always.** No engine → today's WebAudio and PipeWire paths, unchanged. | A machine that cannot build it is a machine with the audio it has now. |
 | D12 | **The engine is a node, not a silo.** The handset's `jawn_call_in` / `jawn_prompt`, the Music player and the browser's own inputs are sources. | One graph for the house, not a fourth stack beside PipeWire, WebRTC and Sco. |
@@ -453,6 +486,11 @@ backend must fill a 64-frame block across two USB frames.
 
 **Gate:** ≤ 5 ms round trip at 64 frames on `table`, zero xruns over 10 minutes with the house running
 its own JawnOS, and a null backend that runs in the suite.
+
+**Met on `table` (2026-11-17):** the engine measured **2.71–2.79 ms** at 64/256 through the patch
+cable, with 180 s of duplex at zero xruns. The one caveat is the method: the streams are unlinked, so
+each number carries one period (±1.33 ms) of start-boundary uncertainty. JACK would remove it by
+construction.
 
 ### P2 — Studio's graph in the engine (2–3 weeks)
 
