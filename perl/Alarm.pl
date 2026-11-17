@@ -56,6 +56,9 @@ sub alarm_clock() {
 		# change which appointment owns the desktop theme, so the manager is told
 		# once, after every row in the pass has been written
 		my $theme_movement = 0;
+		# a start announced in this pass whose stop was already due gets one more
+		# pass at once, so a short window still shows both ends
+		my $retry_stop = 0;
 		my $next_moment = $last_moment + (2 * 1000);
 		my $query = &subs::db_query('select * from appointments where (timestamp <= ? and seen is null) or ((type = ? or type = ? or type = ? or type=? or type = ?) and stop_timestamp is not null and stop_timestamp <= ? and stop_seen is null ) order by timestamp',
 			$next_moment, 'start','record','video','audio','screen',$next_moment);
@@ -120,6 +123,14 @@ sub alarm_clock() {
 			my $t1 = ($timestamp - $t);
 			foreach my $a ( @{$alarm} ) {
 #				&subs::db_query('update appointments set seen = ? where uuid=?', 'yes',$a->{'uuid'});
+				# A start that has never been announced is announced before its own stop
+				# is applied, even when a short window makes both due in the same pass.
+				# Without this the stop branch below wins and the start never reaches
+				# the screen (nor its notification) at all.
+				my $unannounced_start = (($a->{'type'} eq 'start' || $a->{'type'} eq 'record')
+					&& ($a->{'seen'} || '') ne 'yes'
+					&& ($a->{'timestamp'} || 0) <= $timestamp) ? 1 : 0;
+				$retry_stop = 1 if $unannounced_start && $a->{'stop_timestamp'} && $a->{'stop_timestamp'} <= $timestamp;
 				# a duty is a child of the appointment, not the appointment: marking the
 				# parent seen here consumed its own alarm, so a 14:00 picture silenced a
 				# 15:00 start. The duties/next_duty rewrite above owns the duty's state
@@ -127,7 +138,7 @@ sub alarm_clock() {
 			#	&subs::cache_delete({ app => $a->{'app'}, context => 'template' });
 				my $type = $a->{'type'};
 
-				if ($a->{'stop_timestamp'} && $a->{'stop_timestamp'} <= $timestamp && grep { $a->{'type'} eq $_ } qw/start video audio screen record/) {
+				if (!$unannounced_start && $a->{'stop_timestamp'} && $a->{'stop_timestamp'} <= $timestamp && grep { $a->{'type'} eq $_ } qw/start video audio screen record/) {
 					$theme_movement = 1;
 
 					if ($a->{'type'} eq 'start' || $a->{'type'} eq 'record') {
@@ -286,6 +297,13 @@ sub alarm_clock() {
 		my $next_data = &subs::next_appointment_time({ now => $last_moment });
 		my $next_time = $next_data->{'next_time'};
 		$next_run = $next_data->{'next_run'};
+		# A stop that came due with an unannounced start was left for this pass;
+		# wake again in the usual two seconds rather than waiting for the next
+		# appointment, which next_appointment_time may put days away.
+		if ($retry_stop) {
+			$next_time = 0;
+			$next_run = $last_moment;
+		}
 		# the clock app's own alarms and timers may be the next thing due, even
 		# when no appointment is waiting
 		$next_run = $clock_next if $clock_next && (!$next_run || $clock_next < $next_run);

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/manager/09_app_back.js public/js/manager/manager/07_timeshift.js
+# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/manager/09_app_back.js public/js/manager/manager/07_timeshift.js perl/Alarm.pl
 # covers:    a live stop uses a duration the person typed, schedules a future stop for one longer than the session, ignores one the window restored; a backdated stop still uses its duration; editing a closed row's duration moves its stop
 
 use strict;
@@ -208,6 +208,40 @@ like($app_back, qr/appointmentResetSend\(app, type, data,/, 'managerReset sends 
 like($app_back, qr/timeout: 20000/, 'a press the server never answers cannot hold the queue forever');
 my $reset_urls = () = $app_back =~ /url: '\/manager\/reset'/g;
 is($reset_urls, 1, 'there is one reset request, inside the queue');
+
+# --- a short future start: the start is announced before its own stop --------
+# A start set a few seconds ahead with a length that ends before the Alarm's
+# next pass arrives with both ends already due. The stop branch used to win,
+# so the start was never announced (no start notice, no start toggle) and the
+# appointment appeared to have been stopped from a start it never entered.
+my $alarm = read_file("$root/perl/Alarm.pl");
+my ($unannounced) = $alarm =~ /(my \$unannounced_start = .*?;)/s;
+ok($unannounced, 'the alarm names a start that has not been announced');
+like($unannounced, qr/\(\$a->\{'seen'\} \|\| ''\) ne 'yes'/, 'by its unseen row');
+like($unannounced, qr/\(\$a->\{'timestamp'\} \|\| 0\) <= \$timestamp/, 'whose start is already due');
+like($alarm, qr/if \(!\$unannounced_start && \$a->\{'stop_timestamp'\}/,
+	'and keeps the stop branch from taking it first');
+like($alarm, qr/my \$retry_stop = 0;/, 'the pass starts with no retry');
+like($alarm, qr/\$retry_stop = 1 if \$unannounced_start && \$a->\{'stop_timestamp'\} && \$a->\{'stop_timestamp'\} <= \$timestamp;/,
+	'a due stop asks for another pass');
+like($alarm, qr/if \(\$retry_stop\) \{\s*\$next_time = 0;\s*\$next_run = \$last_moment;/s,
+	'and that pass wakes at once');
+
+# The same decision, run for real: both ends due, the start is unseen.
+sub alarm_choice {
+	my ($type, $seen, $start, $stop, $now) = @_;
+	my $unannounced = (($type eq 'start' || $type eq 'record')
+		&& ($seen || '') ne 'yes' && $start <= $now) ? 1 : 0;
+	return 'start' if $unannounced;
+	return 'stop' if $stop && $stop <= $now;
+	return 'start' if $type eq 'start' || $type eq 'record';
+	return 'none';
+}
+my $short_now = time() * 1000;
+is(alarm_choice('start', '', $short_now - 10000, $short_now - 1000, $short_now), 'start',
+	'a start and its stop both due: the start is announced first');
+is(alarm_choice('start', 'yes', $short_now - 10000, $short_now - 1000, $short_now), 'stop',
+	'the next pass then applies the stop');
 
 # The reply must release the queue before the slow post-press UI work runs:
 # continent_record and the header repaint used to hold the next press for
