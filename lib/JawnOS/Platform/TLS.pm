@@ -86,4 +86,28 @@ CNF
 	return { cert => $cert, key => $key, created => 1 };
 }
 
+# Whether a certificate is the fresh-install placeholder this module writes. A
+# machine that joined a house before its leaf was installed as both pairs can
+# still serve the placeholder from fullchain.pem while its house-CA leaf sits in
+# the peer pair; the app refuses the placeholder (ERR_CERT_AUTHORITY_INVALID), so
+# President.pl asks this and presents the leaf on the main listener too. Only a
+# self-signed CN=jawnos-local is the placeholder: a real certificate names the
+# machine and is signed by someone else.
+sub is_bootstrap_cert {
+	my ($cert, %opt) = @_;
+	return 0 unless defined $cert && length $cert && -s $cert;
+	my $openssl = $opt{'openssl'} || &openssl();
+	return 0 unless $openssl;
+	open(my $fh, '-|', $openssl, 'x509', '-in', $cert, '-noout', '-subject', '-issuer') or return 0;
+	my $text = do { local $/; <$fh> };
+	close $fh;
+	return 0 unless defined $text && length $text;
+	my ($subject) = $text =~ /^(subject=.*)$/m;
+	my ($issuer)  = $text =~ /^(issuer=.*)$/m;
+	return 0 unless defined $subject && defined $issuer;
+	return 0 unless $subject =~ /\bCN\s*=\s*jawnos-local\b/i;
+	return 0 unless $issuer =~ /\bCN\s*=\s*jawnos-local\b/i;
+	return 1;
+}
+
 1;

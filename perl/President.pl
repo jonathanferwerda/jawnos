@@ -503,6 +503,18 @@ sub manager_starter() {
 	if (-e "$server_dir/fullchain.pem" && -e "$server_dir/privkey.pem") {
 		$certs = "?cert=$server_dir/fullchain.pem&key=$server_dir/privkey.pem";
 	}
+	# The placeholder above lets a fresh install bind; it is not an identity. A
+	# machine that joined before its leaf was installed as both pairs still has it
+	# in fullchain.pem while the house-CA leaf sits in the peer pair, so the app
+	# refuses every main-listener window (ERR_CERT_AUTHORITY_INVALID) - the phone
+	# and the tablet could not be opened by Go. The leaf covers the machine's fqdn
+	# and its LAN/tailnet addresses, and its chain carries the CA every enrolled
+	# machine trusts, so present it on the main listener too.
+	my $bootstrap_main = $peer_certs ne '' && eval {
+		require JawnOS::Platform::TLS;
+		JawnOS::Platform::TLS::is_bootstrap_cert("$server_dir/fullchain.pem");
+	};
+	$certs = $peer_certs if $bootstrap_main;
 	# The door a board dials presents the house-CA leaf when there is one: its
 	# SAN carries the LAN address the device used, which the public wildcard
 	# certificate cannot. The dock, main, alarm and teletype doors keep $certs
