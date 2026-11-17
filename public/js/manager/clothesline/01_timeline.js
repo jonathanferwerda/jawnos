@@ -445,15 +445,68 @@ function clotheslineDayItem(app, name) {
 	return li;
 }
 
-$(document).on('click', '.clothes_day_add_btn', function() {
+// A pill added by hand belongs to no wave the routine knows, so it goes in the
+// day's own last section, which the card grows only when it needs one.
+function clotheslineDayMoreSection(card) {
+	var phases = card.find('.clothes_day_phases');
+	var more = phases.find('.clothes_day_phase[phase="more"]');
+	if (!more.length) {
+		more = $('<div class="clothes_day_phase" phase="more"></div>')
+			.append($('<h5></h5>').text(jawnosT('Added')))
+			.append('<ul class="clothes_day_items"></ul>')
+			.appendTo(phases);
+	}
+	return more.find('.clothes_day_items');
+}
+
+// The find box narrows the whole app list to what the letters match, in the
+// printed name or the app's own, and leaves out the pills the day already has.
+function clotheslineFindMatches(card, text) {
+	var list = card.find('.clothes_day_find_list').empty();
+	var needle = $.trim(text || '').toLowerCase();
+	if (needle.length < 2) { list.hide(); return; }
+	var have = {};
+	card.find('.clothes_day_phases .clothes_day_item').each(function() {
+		have[$(this).attr('app')] = 1;
+	});
+	var shown = 0;
+	$('#clothes_apps option').each(function() {
+		var o = $(this);
+		var app = o.val();
+		if (!app || have[app]) { return true; }
+		if (o.text().toLowerCase().indexOf(needle) < 0 && app.toLowerCase().indexOf(needle) < 0) { return true; }
+		$('<li class="clothes_day_find_match"></li>').attr('app', app)
+			.attr('name', o.text()).text(o.text()).appendTo(list);
+		shown++;
+		return shown < 12;
+	});
+	if (shown) { list.show(); } else { list.hide(); }
+}
+
+$(document).on('input', '.clothes_day_find', function() {
+	clotheslineFindMatches($(this).closest('.clothes_day_card'), this.value);
+});
+
+$(document).on('keydown', '.clothes_day_find', function(e) {
 	var card = $(this).closest('.clothes_day_card');
-	var pick = card.find('.clothes_day_add');
-	var app = pick.val();
-	if (!app) { return; }
-	if (card.find('.clothes_day_item[app="' + app + '"]').length) { return; }
-	var name = pick.find('option:selected').text();
-	card.find('.clothes_day_items').append(clotheslineDayItem(app, name));
+	if (e.key == 'Escape') {
+		$(this).val('');
+		card.find('.clothes_day_find_list').empty().hide();
+	}
+	else if (e.key == 'Enter') {
+		e.preventDefault();
+		card.find('.clothes_day_find_match').first().click();
+	}
+});
+
+$(document).on('click', '.clothes_day_find_match', function(e) {
+	e.preventDefault();
+	var row = $(this);
+	var card = row.closest('.clothes_day_card');
+	clotheslineDayMoreSection(card).append(clotheslineDayItem(row.attr('app'), row.attr('name')));
 	card.attr('data-touched', '1').removeAttr('data-reset');
+	card.find('.clothes_day_find').val('');
+	card.find('.clothes_day_find_list').empty().hide();
 });
 
 $(document).on('click', '.clothes_day_drop', function() {
@@ -462,13 +515,13 @@ $(document).on('click', '.clothes_day_drop', function() {
 	card.attr('data-touched', '1').removeAttr('data-reset');
 });
 
+// Reset puts the day back to the routine the line learned, routines and all:
+// the card carries that markup hidden, so the sections keep their own names.
 $(document).on('click', '.clothes_day_reset', function() {
 	var card = $(this).closest('.clothes_day_card');
-	var list = card.find('.clothes_day_items').empty();
-	card.find('.clothes_day_learned option').each(function() {
-		var o = $(this);
-		list.append(clotheslineDayItem(o.val(), o.text()));
-	});
+	var learned = card.find('.clothes_day_learned').html();
+	if (typeof learned == 'string') { card.find('.clothes_day_phases').html(learned); }
+	card.find('.clothes_day_find_list').empty().hide();
 	card.attr('data-touched', '1').attr('data-reset', '1');
 });
 
@@ -485,7 +538,7 @@ $(document).on('click', '#clothes_settings_save', function() {
 		var date = card.attr('date');
 		if (card.attr('data-reset') == '1') { days[date] = null; return; }
 		var apps = [];
-		card.find('.clothes_day_item').each(function() {
+		card.find('.clothes_day_phases .clothes_day_item').each(function() {
 			apps.push($(this).attr('app'));
 		});
 		days[date] = apps;
@@ -509,6 +562,11 @@ $(document).on('click', '#clothes_settings_save', function() {
 	});
 });
 
+$(document).on('click', function(e) {
+	if (!$(e.target).closest('.clothes_day_find_box').length) {
+		$('.clothes_day_find_list').empty().hide();
+	}
+});
 $(document).on('click', function() { $('.clothesline_menu').remove(); });
 $(document).on('contextmenu', function(e) {
 	// the right-press that opens the menu is the same event: only a press away

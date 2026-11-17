@@ -2,30 +2,47 @@
 <label class="clothes_anticipatory_toggle"><input type="checkbox" id="clothes_anticipatory_on"<% if ($settings->{'on'}) { %> checked<% } %>> <%= &subs::ui('Show the anticipatory head') %></label>
 <label class="clothes_anticipatory_toggle"><input type="checkbox" id="clothes_anticipatory_next"<% if ($settings->{'next_wave'}) { %> checked<% } %>> <%= &subs::ui("Include the next routine's pills") %></label>
 <label class="clothes_anticipatory_toggle"><input type="checkbox" id="clothes_anticipatory_reset"<% if ($settings->{'on_reset'}) { %> checked<% } %>> <%= &subs::ui('Recompute on every press') %></label>
-<p class="cfg-note"><%= &subs::ui('The week below is this week. Drop a pill from a day, or add one; a day you change keeps that list until you reset it to the learned routine.') %></p>
+<p class="cfg-note"><%= &subs::ui('The week below is this week, drawn as the routines each day runs - the morning, the midday, the afternoon and the evening. Drop a pill from a routine, or add one; a day you change keeps that list until you reset it to the learned routine.') %></p>
+<select id="clothes_apps" multiple style="display:none;">
+	<% foreach my $a ( @{$apps} ) { %>
+	<option value="<%= $a->{'app'} %>"><%= $a->{'name'} %></option>
+	<% } %>
+</select>
 <div class="clothes_week">
 	<% foreach my $day ( @{$week} ) { %>
 	<div class="clothes_day_card" date="<%= $day->{'key'} %>" data-touched="0">
 		<h4><%= $day->{'label'} %><% if ($day->{'today'}) { %> — <%= &subs::ui('today') %><% } %></h4>
-		<ul class="clothes_day_items">
-			<% foreach my $app ( @{$day->{'apps'}} ) { %>
-			<li class="clothes_day_item" app="<%= $app %>"><span><%= &subs::format_name($app) %></span> <button type="button" class="clothes_day_drop" title="<%= &subs::ui('Drop') %>">×</button></li>
+		<div class="clothes_day_phases">
+			<% foreach my $phase ( @{ $day->{'phases'} } ) { %>
+			<div class="clothes_day_phase" phase="<%= $phase->{'key'} %>">
+				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% } %></h5>
+				<ul class="clothes_day_items">
+					<% foreach my $app ( @{ $phase->{'apps'} } ) { %>
+					<li class="clothes_day_item" app="<%= $app %>"><span><%= &subs::format_name($app) %></span> <button type="button" class="clothes_day_drop" title="<%= &subs::ui('Drop') %>">×</button></li>
+					<% } %>
+				</ul>
+			</div>
 			<% } %>
-		</ul>
+		</div>
+		<div class="clothes_day_learned" style="display:none;">
+			<% foreach my $phase ( @{ $day->{'learned_phases'} } ) { %>
+			<div class="clothes_day_phase" phase="<%= $phase->{'key'} %>">
+				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% } %></h5>
+				<ul class="clothes_day_items">
+					<% foreach my $app ( @{ $phase->{'apps'} } ) { %>
+					<li class="clothes_day_item" app="<%= $app %>"><span><%= &subs::format_name($app) %></span> <button type="button" class="clothes_day_drop" title="<%= &subs::ui('Drop') %>">×</button></li>
+					<% } %>
+				</ul>
+			</div>
+			<% } %>
+		</div>
 		<div class="clothes_day_tools">
-			<select class="clothes_day_add">
-				<% foreach my $a ( @{$apps} ) { %>
-				<option value="<%= $a->{'app'} %>"><%= $a->{'name'} %></option>
-				<% } %>
-			</select>
-			<button type="button" class="clothes_day_add_btn"><%= &subs::ui('Add') %></button>
+			<div class="clothes_day_find_box">
+				<input type="text" class="clothes_day_find" autocomplete="off" placeholder="<%= &subs::ui('Find an appointment to add') %>">
+				<ul class="clothes_day_find_list" style="display:none;"></ul>
+			</div>
 			<button type="button" class="clothes_day_reset"><%= &subs::ui('Reset to learned') %></button>
 		</div>
-		<select multiple class="clothes_day_learned" style="display:none;">
-			<% foreach my $app ( @{$day->{'learned'}} ) { %>
-			<option value="<%= $app %>" selected><%= &subs::format_name($app) %></option>
-			<% } %>
-		</select>
 	</div>
 	<% } %>
 </div>
@@ -39,9 +56,21 @@
 	.clothes_week { display:flex; flex-wrap:wrap; gap:8px; }
 	.clothes_day_card { flex:1 1 260px; border:1px solid var(--line); border-radius:8px; padding:8px; }
 	.clothes_day_card h4 { margin:0 0 6px; }
-	.clothes_day_items { list-style:none; margin:0 0 6px; padding:0; max-height:160px; overflow:auto; }
+	.clothes_day_phases { max-height:260px; overflow:auto; }
+	.clothes_day_phase { margin:0 0 6px; }
+	.clothes_day_phase h5 { margin:0 0 2px; font-size:12px; opacity:.75; font-weight:600; }
+	.clothes_day_items { list-style:none; margin:0; padding:0; }
 	.clothes_day_item { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:2px 0; }
 	.clothes_day_tools { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
-	.clothes_day_add { max-width:150px; }
+	.clothes_day_find_box { position:relative; flex:1 1 100%; }
+	.clothes_day_find { width:100%; box-sizing:border-box; }
+	.clothes_day_find_list {
+		position:absolute; left:0; right:0; top:100%; z-index:20; overflow:auto;
+		max-height:180px; margin:2px 0 0; padding:3px 0; list-style:none;
+		border:1px solid var(--line); border-radius:8px; background:var(--panel-2);
+		box-shadow:0 8px 24px rgba(0, 0, 0, .3);
+	}
+	.clothes_day_find_match { padding:4px 10px; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.clothes_day_find_match:hover { background:var(--panel); }
 	.clothes_settings_actions { margin-top:10px; display:flex; gap:8px; }
 </style>

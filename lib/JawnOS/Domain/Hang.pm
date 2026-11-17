@@ -350,7 +350,10 @@ sub clothesline_anticipatory_apps {
 }
 
 # The current week, Monday first: the learned head for each day, and the
-# person's own list where they curated one. The dialog walks these.
+# person's own list where they curated one. The dialog walks these. A day is
+# shown as the waves the routine keeps - the morning, the midday, the
+# afternoon, the evening - so the whole day is there to curate, not only the
+# wave the head happens to be on now.
 sub clothesline_anticipatory_week {
 	my ($now) = @_;
 	$now = &rightNow() unless defined $now;
@@ -360,30 +363,92 @@ sub clothesline_anticipatory_week {
 	my $today = &day_key($now);
 	my $start = timelocal(0, 0, 0, $lt[3], $lt[4], $lt[5]) * 1000;
 	my $monday = $start - ((($lt[6] + 6) % 7) * 86400 * 1000);
+	# The near two months are read once for the whole week: a scan a day would
+	# read the same history seven times, and that read was the dialog's wait.
+	my $history = [ &clothesline_place_history($now) ];
 	my @week;
 	for my $i ( 0 .. 6 ) {
 		my $day_ms = &calendar_shift($monday, $i, 'day');
 		my @d = localtime(int($day_ms / 1000));
 		my $morning = timelocal(0, 0, 9, $d[3], $d[4], $d[5]) * 1000;
 		my $key = &day_key($morning);
-		my $daily = &clothesline_daily_hours($morning);
-		my $ant = &clothesline_sequence_anticipate($daily, $morning, limit => 40);
-		my $wave = $ant->{'current_wave'} || 0;
-		my @learned = map { $_->{'app'} }
-			grep { defined $_->{'app'} && ($s->{'next_wave'} || ($_->{'wave'} || 0) <= $wave) }
-			@{ $ant->{'list'} || [] };
+		my $daily = &clothesline_daily_hours($morning, history => $history);
+		# The whole day, not the head: every wave the routine keeps.
+		my $ant = &clothesline_sequence_anticipate($daily, $morning, limit => 400, all_waves => 1);
+		my @rows = grep { ref $_ eq 'HASH' && defined $_->{'app'} && length $_->{'app'} } @{ $ant->{'list'} || [] };
+		my @learned = map { $_->{'app'} } @rows;
 		my $override = ref $s->{'days'}{$key} eq 'ARRAY' ? $s->{'days'}{$key} : undef;
+		my @apps = grep { defined $_ && length $_ } ($override ? @{$override} : @learned);
 		push @week, {
 			key => $key,
 			label => POSIX::strftime('%A, %B %d', @d),
 			today => ($key eq $today ? 1 : 0),
 			learned => \@learned,
-			apps => ($override ? [ @{$override} ] : [ @learned ]),
+			apps => \@apps,
+			phases => &clothesline_anticipatory_phases(\@apps, \@rows, $daily),
+			learned_phases => &clothesline_anticipatory_phases(\@learned, \@rows, $daily),
 			override => ($override ? 1 : 0),
 		};
 	}
 	$restore->() if $restore;
 	return \@week;
+}
+
+# A day's pills grouped by the wave each belongs to, so the settings dialog can
+# show the morning, the midday, the afternoon and the evening as their own
+# sections. A wave is named for its first step's usual hour. A pill the routine
+# does not name - one the person added, or one the learned day no longer
+# carries - goes in a last section of its own, so a curated day never loses one.
+sub clothesline_anticipatory_phases {
+	my ($list, $rows, $scan) = @_;
+	$list = [] unless ref $list eq 'ARRAY';
+	$rows = [] unless ref $rows eq 'ARRAY';
+	my $apps = (ref $scan eq 'HASH' && ref $scan->{'apps'} eq 'HASH') ? $scan->{'apps'} : {};
+	my (%wave_of, %hour_of);
+	for my $r ( @{$rows} ) {
+		next unless ref $r eq 'HASH' && defined $r->{'app'} && length $r->{'app'};
+		my $w = $r->{'wave'} || 0;
+		$wave_of{$r->{'app'}} = $w unless defined $wave_of{$r->{'app'}};
+		next if defined $hour_of{$w};
+		my $row_apps = $apps->{ $r->{'app'} };
+		my $h = ref $row_apps eq 'HASH' ? $row_apps->{'hour'} : undef;
+		$hour_of{$w} = $h if defined $h && $h =~ /^\d+$/;
+	}
+	my (@phases, %slot);
+	for my $app ( @{$list} ) {
+		next unless defined $app && length $app;
+		my $w = $wave_of{$app};
+		my $at;
+		if (defined $w) {
+			unless ($slot{$w}) {
+				push @phases, { key => "w$w", wave => $w, hour => $hour_of{$w},
+					label => &clothesline_anticipatory_wave_name($hour_of{$w}), apps => [] };
+				$slot{$w} = $phases[-1];
+			}
+			$at = $slot{$w};
+		}
+		else {
+			unless ($slot{'more'}) {
+				push @phases, { key => 'more', wave => 99, label => 'Added', apps => [] };
+				$slot{'more'} = $phases[-1];
+			}
+			$at = $slot{'more'};
+		}
+		push @{$at->{'apps'}}, $app;
+	}
+	return [ sort { $a->{'wave'} <=> $b->{'wave'} } @phases ];
+}
+
+# The word a wave is called by, from the hour its first step usually happens.
+# English here, so a test can name it; the dialog translates it.
+sub clothesline_anticipatory_wave_name {
+	my ($hour) = @_;
+	return 'Routine' unless defined $hour && $hour =~ /^\d+$/;
+	return 'Morning' if $hour >= 5 && $hour < 11;
+	return 'Midday' if $hour >= 11 && $hour < 14;
+	return 'Afternoon' if $hour >= 14 && $hour < 17;
+	return 'Evening' if $hour >= 17 && $hour < 22;
+	return 'Night';
 }
 
 # The person's own say over the anticipatory head. $say maps an app to its

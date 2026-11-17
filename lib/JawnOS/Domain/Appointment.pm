@@ -1336,9 +1336,19 @@ sub navigation_automation {
 # machine sits.
 sub clothesline_daily_hours {
 	# A caller may ask for another day's routine (the anticipatory settings walk
-	# this week); with no moment the present is read, as it always was.
+	# this week); with no moment the present is read, as it always was. It may
+	# also hand in the history it already read: the week walk asks for seven
+	# days, and reading the near two months seven times was the dialog's whole
+	# wait.
 	my $now = shift || &rightNow();
-	my ($rows, $window_days, $session_days) = &clothesline_place_history($now);
+	my %opt = @_;
+	my ($rows, $window_days, $session_days);
+	if (ref $opt{'history'} eq 'ARRAY') {
+		($rows, $window_days, $session_days) = @{ $opt{'history'} };
+	}
+	else {
+		($rows, $window_days, $session_days) = &clothesline_place_history($now);
+	}
 	$window_days ||= 60;
 	$session_days ||= 14;
 	my $zone = &clock_zone_house();
@@ -1796,6 +1806,10 @@ sub clothesline_sequence_anticipate {
 	$scan = {} unless ref $scan eq 'HASH';
 	$now = &rightNow() unless defined $now;
 	my $limit = $opt{'limit'} || 40;
+	# A caller may ask for the whole day rather than the head (the anticipatory
+	# settings walk this week): every wave, and nothing taken out for what is
+	# already done, so the afternoon and the evening are there to curate too.
+	my $all = $opt{'all_waves'} ? 1 : 0;
 	my $sessions = ref $scan->{'sessions'} eq 'ARRAY' ? $scan->{'sessions'} : [];
 	my $canonical = $opt{'canonical'} || &clothesline_sequence_canonical($sessions, $scan->{'start_app'});
 	my $seq = ref $canonical eq 'HASH' ? $canonical->{'seq'} : $canonical;
@@ -1808,11 +1822,38 @@ sub clothesline_sequence_anticipate {
 	# remainder and the one after it, never a wave two ahead
 	my (%left, $current_wave);
 	$current_wave = 0;
-	for my $i ( 0 .. $#{$seq} ) {
-		my $app = $seq->[$i];
-		if (($left{$app} //= ($done->{$app} || 0)) > 0) {
-			$left{$app}--;
-			$current_wave = $waves->[$i] if $waves && defined $waves->[$i];
+	if (!$all) {
+		for my $i ( 0 .. $#{$seq} ) {
+			my $app = $seq->[$i];
+			if (($left{$app} //= ($done->{$app} || 0)) > 0) {
+				$left{$app}--;
+				$current_wave = $waves->[$i] if $waves && defined $waves->[$i];
+			}
+		}
+	}
+
+	# The day moves on with the clock as well as with the steps. Once an hour of
+	# the day has come, its routine is the one to read from, even if the steps
+	# before it were never finished: at four in the afternoon the rail leads with
+	# the afternoon and the evening, not with the morning's leftovers. The wave
+	# the last finished step sits in stays the floor, so this only carries the
+	# line forward - it never takes back a step the person already took.
+	if (!$all) {
+		my $hour = $opt{'clock_hour'};
+		if (!defined $hour) {
+			my $restore = &clock_zone_adopt(&clock_zone_house());
+			my @t = localtime(int($now / 1000));
+			$hour = $t[2];
+			$restore->() if $restore;
+		}
+		my %seen_w;
+		for my $i ( 0 .. $#{$seq} ) {
+			my $w = ($waves && defined $waves->[$i]) ? $waves->[$i] : 0;
+			next if $seen_w{$w};
+			my $row = ref $scan->{'apps'} eq 'HASH' ? $scan->{'apps'}{ $seq->[$i] } : undef;
+			next unless ref $row eq 'HASH' && defined $row->{'hour'} && $row->{'hour'} =~ /^\d+$/;
+			$seen_w{$w} = 1;
+			$current_wave = $w if $row->{'hour'} <= $hour && $w > $current_wave;
 		}
 	}
 
@@ -1820,10 +1861,12 @@ sub clothesline_sequence_anticipate {
 	my $base = ($canonical_times && defined $canonical_times->[0]) ? (0 + $canonical_times->[0]) : undef;
 	for my $i ( 0 .. $#{$seq} ) {
 		my $app = $seq->[$i];
-		if (($left2{$app} //= ($done->{$app} || 0)) > 0) { $left2{$app}--; next; }
+		if (!$all && ($left2{$app} //= ($done->{$app} || 0)) > 0) { $left2{$app}--; next; }
 		my $wave = ($waves && defined $waves->[$i]) ? $waves->[$i] : 0;
-		next if $wave < $current_wave;
-		next if $wave > $current_wave + 1;
+		if (!$all) {
+			next if $wave < $current_wave;
+			next if $wave > $current_wave + 1;
+		}
 		next if $seen{$app}++;
 		my $due = ($scan->{'apps'}{$app} && defined $scan->{'apps'}{$app}{'due'}) ? $scan->{'apps'}{$app}{'due'} : 1;
 		next unless $due;
