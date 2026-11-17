@@ -211,4 +211,32 @@ is(setting_rows('errand2', 'navigation')->[0]->{'value'}, 'none',
 	is($mobile->[0]->{'seed'}, 'yes', 'and marked as a born default, not a choice');
 }
 
+# The clothesline's house rows pass the protected `__president` gate: the rail
+# and the head are one line every machine reads. Every other __president row
+# stays local.
+&subs::setting_setter({ app => '__president', setting => 'clothesline_anticipatory', value => 'local',
+	device => 'all', server_time => '1000', sync => 1 });
+&merge_settings_row({
+	app => '__president', setting => 'clothesline_anticipatory', value => '{"on":1}', device => 'all',
+	server_time => '2000', timestamp => '2000', uuid => 'peer-clothes-head',
+});
+is(setting_rows('__president', 'clothesline_anticipatory', 'all')->[0]->{'value'}, '{"on":1}',
+	'a house-wide clothesline head lands on a protected app');
+&subs::setting_setter({ app => '__president', setting => 'clothesline', value => 'local-rail',
+	device => 'all', server_time => '1000', sync => 1 });
+&merge_settings_row({
+	app => '__president', setting => 'clothesline', value => 'peer-rail', device => 'all',
+	server_time => '2000', timestamp => '2000', uuid => 'peer-clothes-rail',
+});
+is(setting_rows('__president', 'clothesline', 'all')->[0]->{'value'}, 'peer-rail',
+	'and so does the rail');
+&subs::setting_setter({ app => '__president', setting => 'agent_registry', value => 'local',
+	device => 'all', server_time => '1000', sync => 1 });
+&merge_settings_row({
+	app => '__president', setting => 'agent_registry', value => 'peer', device => 'all',
+	server_time => '2000', timestamp => '2000', uuid => 'peer-agent',
+});
+is(setting_rows('__president', 'agent_registry', 'all')->[0]->{'value'}, 'local',
+	'the other protected __president rows stay local');
+
 done_testing();

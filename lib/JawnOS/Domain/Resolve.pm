@@ -440,7 +440,7 @@ sub ghost_times_for {
 	return $cache->{'times'} if $cache && &rightNow() - $cache->{'at'} < 300000;
 	my @out = &usual_times_for($app);
 	if (!@out) {
-		my $cl = eval { return decode_json &setting_grabber({ app => $app, setting => 'clothesline' }) } || {};
+		my $cl = eval { return decode_json &clothesline_app_setting($app) } || {};
 		foreach my $h ( @{ $cl->{'time_plinko'}->{'hour'} || [] } ) {
 			my $hh = &hour_from_words($h);
 			push @out, [ $hh, 0 ] if defined $hh;

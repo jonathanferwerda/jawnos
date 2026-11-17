@@ -631,6 +631,7 @@ sub durable_settings_where {
 	# peer that was otherwise live. Including it makes every Now Me rotate the
 	# digest and the peers pull the new row on the next tick.
 	return "(app not in ($app_list) or device = 'all' or (app = 'cards' and setting in ('mode','variant')))"
+		. " and not (app = '__president' and setting = 'clothesline')"
 		. " and setting not in ('open_tabs','scrollTop','jopen','dimensions','utility_controller','remote_connect_timer','remote_upgrade','remote_backup_lock','remote_auth_probe_timer','ws_pa','chip_chyea','settings_sync_timer','remote_sync_state','log','schema_version','toggle','ci','errors','email_config')"
 		. " and setting not like 'remote\\_%' escape '\\'";
 }

@@ -1886,13 +1886,30 @@ sub clothesline_sequence_anticipate {
 	# settings walk this week): every wave, and nothing taken out for what is
 	# already done, so the afternoon and the evening are there to curate too.
 	my $all = $opt{'all_waves'} ? 1 : 0;
+	# A curated day hands its own order in. The done subtraction and the wave
+	# limit below are the same ones the learned order uses, so the head still
+	# advances through a planned day instead of freezing on its first pill.
 	my $sessions = ref $scan->{'sessions'} eq 'ARRAY' ? $scan->{'sessions'} : [];
-	my $canonical = $opt{'canonical'} || &clothesline_sequence_canonical($sessions, $scan->{'start_app'});
-	my $seq = ref $canonical eq 'HASH' ? $canonical->{'seq'} : $canonical;
-	my $waves = (ref $canonical eq 'HASH' && ref $canonical->{'waves'} eq 'ARRAY') ? $canonical->{'waves'} : undef;
-	my $canonical_times = (ref $canonical eq 'HASH' && ref $canonical->{'times'} eq 'ARRAY') ? $canonical->{'times'} : undef;
+	my ($seq, $waves, $canonical_times);
+	if (ref $opt{'sequence'} eq 'ARRAY') {
+		$seq = $opt{'sequence'};
+		$waves = ref $opt{'waves'} eq 'ARRAY' ? $opt{'waves'} : [ (0) x scalar @{$seq} ];
+		$canonical_times = $opt{'times'};
+	}
+	else {
+		my $canonical = $opt{'canonical'} || &clothesline_sequence_canonical($sessions, $scan->{'start_app'});
+		$seq = ref $canonical eq 'HASH' ? $canonical->{'seq'} : $canonical;
+		$waves = (ref $canonical eq 'HASH' && ref $canonical->{'waves'} eq 'ARRAY') ? $canonical->{'waves'} : undef;
+		$canonical_times = (ref $canonical eq 'HASH' && ref $canonical->{'times'} eq 'ARRAY') ? $canonical->{'times'} : undef;
+	}
 	return { list => [], current_wave => 0 } unless ref $seq eq 'ARRAY' && @{$seq};
 	my $done = ref $scan->{'done'} eq 'HASH' ? $scan->{'done'} : {};
+	# A pill the person added by hand belongs to no routine, so it is not left
+	# behind when the wave limit moves on.
+	my %keep = map { $_ => 1 } grep { defined $_ && length $_ } @{ $opt{'keep'} || [] };
+	# `next_wave` off keeps the routine under way only; the default lets the one
+	# after it ride along, as the rail always has.
+	my $next_wave = (defined $opt{'next_wave'}) ? ($opt{'next_wave'} ? 1 : 0) : 1;
 
 	# which wave the last finished step sits in: the line shows that wave's
 	# remainder and the one after it, never a wave two ahead. The day moves by
@@ -1919,12 +1936,12 @@ sub clothesline_sequence_anticipate {
 		if (!$all && ($left2{$app} //= ($done->{$app} || 0)) > 0) { $left2{$app}--; next; }
 		my $wave = ($waves && defined $waves->[$i]) ? $waves->[$i] : 0;
 		if (!$all) {
-			next if $wave < $current_wave;
-			next if $wave > $current_wave + 1;
+			next if $wave < $current_wave && !$keep{$app};
+			next if $wave > $current_wave + $next_wave && !$keep{$app};
 		}
 		next if $seen{$app}++;
 		my $due = ($scan->{'apps'}{$app} && defined $scan->{'apps'}{$app}{'due'}) ? $scan->{'apps'}{$app}{'due'} : 1;
-		next unless $due;
+		next unless $due || $opt{'force_due'};
 		my $off = (defined $base && $canonical_times && defined $canonical_times->[$i]) ? (0 + $canonical_times->[$i]) - $base : undef;
 		push @out, { app => $app, wave => $wave, off => $off };
 		last if @out >= $limit;

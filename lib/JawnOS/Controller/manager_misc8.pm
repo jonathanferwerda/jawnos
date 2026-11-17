@@ -492,7 +492,7 @@ sub action_26928 {
 # GET /manager/home_status
 sub action_27089 {
 	my $c = shift;
-	my $clothesline = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
+	my $clothesline = eval { decode_json &subs::clothesline_house_setting('__president', 'clothesline') } || [];
 	my (@running, %seen);
 	foreach my $item (ref $clothesline eq 'ARRAY' ? @{$clothesline} : ()) {
 		next unless ref $item eq 'HASH';

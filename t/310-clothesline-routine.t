@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_misc12.pm templates/apps/clothesline.html.ep templates/apps/clothesline/schedules.html.ep templates/apps/clothesline/settings.html.ep public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js public/js/manager/clothesline/01_timeline.js
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Domain/Backup.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Controller/manager_misc8.pm lib/JawnOS/Controller/manager_misc12.pm templates/apps/clothesline.html.ep templates/apps/clothesline/schedules.html.ep templates/apps/clothesline/settings.html.ep public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js public/js/manager/clothesline/01_timeline.js
 # covers:    The clothesline leads with the most common recent day's sequence,
 #            not the latest day: a step moved earlier or later leaves the rest
 #            in order, a step done twice is one pill at its next turn, and the
@@ -37,6 +37,7 @@ use RepoSource;
 
 require JawnOS::Domain::Appointment;
 require JawnOS::Domain::Hang;
+require JawnOS::Domain::Backup;
 
 sub row {
 	my ($app, $ms, $type, $src) = @_;
@@ -154,6 +155,29 @@ is_deeply([ map { $_->{'app'} } @{$wall->{'list'}} ], [qw(wake_up pee water coff
 	'the whole day can be asked for: every wave, nothing taken out for what is done');
 is_deeply([ map { $_->{'wave'} } @{$wall->{'list'}} ], [0, 0, 0, 0, 1, 1, 2],
 	'and each step still knows the wave it belongs to');
+
+# --- a curated day hands in its own order, and still advances ---------------
+# The person put lunch first, then the morning; the coffee is already taken, and
+# the tea is not due today by the learned cadence. The day keeps its order, the
+# done step leaves, and the pill the person placed stays.
+my $cscan = { done => { coffee => 1 }, running => {},
+	apps => { lunch => { due => 1 }, coffee => { due => 1 }, water => { due => 1 }, tea => { due => 0 } } };
+my $cday = subs::clothesline_sequence_anticipate($cscan, $base + 60000,
+	limit => 10, sequence => [qw(lunch coffee water tea)], waves => [ 1, 0, 0, 1 ], force_due => 1);
+is_deeply([ map { $_->{'app'} } @{$cday->{'list'}} ], [qw(lunch water tea)],
+	'a curated day keeps its order and leaves the step already taken');
+is_deeply([ map { $_->{'wave'} } @{$cday->{'list'}} ], [1, 0, 1],
+	'and each step keeps the routine it was put in');
+my $cnow = subs::clothesline_sequence_anticipate($cscan, $base + 60000,
+	limit => 10, sequence => [qw(lunch coffee water tea)], waves => [ 1, 0, 0, 1 ],
+	force_due => 1, next_wave => 0);
+is_deeply([ map { $_->{'app'} } @{$cnow->{'list'}} ], [qw(water)],
+	'with the next routine off, only the routine under way remains');
+my $ckeep = subs::clothesline_sequence_anticipate($cscan, $base + 60000,
+	limit => 10, sequence => [qw(lunch coffee water tea guitar)], waves => [ 1, 0, 0, 1, 0 ],
+	force_due => 1, keep => ['guitar'], next_wave => 0);
+is(scalar(grep { $_->{'app'} eq 'guitar' } @{$ckeep->{'list'}}), 1,
+	'a hand-added pill is not left behind by the wave limit');
 
 # --- a cadence of any length up to a month ----------------------------------
 sub due_for {
@@ -451,6 +475,26 @@ is_deeply($placed_day->{'apps'}, [qw(coffee yogurt banana)],
 is($placed_day->{'sections'}{'banana'}, 'w2', 'and the routine each pill was put in');
 is($placed_day->{'sections'}{'yogurt'}, 'w1', 'for every pill that was placed');
 ok(!exists $placed_day->{'sections'}{'coffee'}, 'a section that is not one is dropped');
+
+# --- the head's settings and the line belong to the House -------------------
+my $house_head = subs::setting_grabber({ app => '__president', setting => 'clothesline_anticipatory', device => 'all' });
+ok(defined $house_head && length $house_head, 'the switches and days are saved on the House row');
+ok(!defined subs::setting_grabber({ app => '__president', setting => 'clothesline_anticipatory' }),
+	'and not on this device\'s own row');
+
+subs::setting_setter({ app => 'soap', setting => 'clothesline', value => '{"hidden":"1"}',
+	device => 'mobile', server_time => 100 });
+subs::setting_setter({ app => 'soap', setting => 'clothesline', value => '{"hidden":"0"}',
+	device => 'computer', server_time => 200 });
+is(subs::clothesline_app_setting('soap'), '{"hidden":"0"}',
+	'with no House row, the newest per-device copy is the one the line reads');
+subs::setting_setter({ app => 'soap', setting => 'clothesline', value => '{"hidden":"all"}',
+	device => 'all', server_time => 50 });
+is(subs::clothesline_app_setting('soap'), '{"hidden":"all"}',
+	'the House row wins over a newer per-device copy');
+subs::setting_setter({ app => '__president', setting => 'clothesline', value => 'house-rail', device => 'all' });
+is(subs::clothesline_house_setting('__president', 'clothesline'), 'house-rail',
+	'the rail reads the House row');
 
 my $week = subs::clothesline_anticipatory_week();
 is(scalar @{$week}, 7, 'the dialog walks seven days');
@@ -775,5 +819,23 @@ my $card_tpl = read_file(repo_root() . '/templates/apps/clothesline/schedules.ht
 like($card_tpl, qr/clothes_schedule_card/, 'each schedule has its own card');
 like($card_tpl, qr/clothes_schedule_forget/, 'with a Forget button');
 like($card_tpl, qr/\$card->\{'count'\}/, 'and its day count');
+
+# The rail is a cache, not a trigger: a house-wide rail must not make every
+# machine pull the settings table on each five-minute hang.
+like(subs::durable_settings_where(), qr/not \(app = '__president' and setting = 'clothesline'\)/,
+	'the rail cache never starts a sync pull');
+
+my $misc6 = read_file(repo_root() . '/lib/JawnOS/Controller/manager_misc6.pm');
+like($misc6, qr/clothesline_house_setting\('__president', 'clothesline'\)/,
+	'the desk and rail routes read the House line');
+my $misc8 = read_file(repo_root() . '/lib/JawnOS/Controller/manager_misc8.pm');
+like($misc8, qr/clothesline_house_setting/,
+	'and so does the home status');
+like($misc12, qr/clothesline_app_setting/, 'an app hang is read through the House row');
+like($misc12, qr/device => 'all'/, 'and saved to it');
+ok(index($hang, 'sequence => \@apps') >= 0, 'a curated day hands its own order to the advance');
+like($hang, qr/force_due => 1/, 'and keeps a pill the learned cadence would skip');
+like($hang, qr/if \(\$day_apps && !\$reused && \$daily\)/,
+	'a reused head keeps the list already hung');
 
 done_testing();

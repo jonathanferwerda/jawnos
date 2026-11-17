@@ -1174,7 +1174,7 @@ elsif ($type eq 'delay') {
 	# still follows the press, the anticipatory part waits for its own update.
 	my $anticipatory = &subs::clothesline_anticipatory_settings();
 	&subs::hang_to_dry(reuse_head => ($anticipatory->{'on_reset'} ? 0 : 1));
-	$returner->{'clothesline'} = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
+	$returner->{'clothesline'} = eval { return decode_json &subs::clothesline_house_setting('__president', 'clothesline') } || [];
 	&Websocket::send('server', { console => &Websocket::console_command('calculator') });
 	$seg->('tail');
 	$log->info('reset segments ' . ($type // '?') . ' ' . $app . ': ' . join(' ', @seg_times));

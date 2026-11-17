@@ -40,6 +40,34 @@ our $gb;
 our $config;
 our %m;
 
+# The clothesline is the House's line, not this device's. The rail, the
+# anticipatory head and each app's hang live on the House row (`device='all'`),
+# so a machine whose clothesline utility is off still reads the line another
+# machine hung. Older builds kept a copy per device; those rows are the fallback
+# until the House row is written, so an upgrade does not lose the line.
+sub clothesline_house_setting {
+	my ($app, $setting) = @_;
+	my $house = eval { &setting_grabber({ app => $app, setting => $setting, device => 'all' }) };
+	return $house if defined $house && length $house;
+	return eval { &setting_grabber({ app => $app, setting => $setting }) } || '';
+}
+
+# One app's hang as the House keeps it: the `all` row wins, otherwise the newest
+# of the per-device copies, so a hang set on the phone is the one the laptop
+# reads before either has saved the House row.
+sub clothesline_app_setting {
+	my ($app) = @_;
+	return '' unless defined $app && length $app;
+	my $row = eval {
+		&db_query(
+			"select value from settings where setting = 'clothesline' and app = ? and value is not null"
+			. " order by case when device = 'all' then 1 else 0 end desc, cast(server_time as integer) desc limit 1",
+			$app
+		)->hashes->[0]
+	};
+	return (defined $row && defined $row->{'value'}) ? $row->{'value'} : '';
+}
+
 sub hang_to_dry {
 	my %opt = @_;
 	my $server_time = &rightNow();
@@ -49,19 +77,28 @@ sub hang_to_dry {
 	# per-day lists they curated. Read once, used by the head below.
 	my $anticipatory = &clothesline_anticipatory_settings();
 
-	my $cls = &db_query('select * from settings where setting = ? and device = ? and app!= ? and value is not null', 'clothesline', $device,'__president')->hashes;
+	# The line is the House's: every app's hang is one row every machine reads,
+	# whichever device wrote it. The `all` row wins; otherwise the newest copy,
+	# so the phone's hang is on the laptop's line before either saved the House
+	# row. A per-device row is the fallback from before the line was shared.
+	my $cls = &db_query(
+		"select * from settings where setting = 'clothesline' and app != '__president' and value is not null"
+		. " order by case when device = 'all' then 1 else 0 end desc, cast(server_time as integer) desc"
+	)->hashes;
 	# The alphabetical tail is the apps whose own hang is on now. A time slot
 	# was picked in the house's words, so the match reads the house clock: the
 	# box keeps UTC, and a slot must not open eight o'clock late.
 	my @slot = &clothesline_slot_now($server_time);
 	# The person's own say over the anticipatory head, and the apps they took off
 	# the line altogether, gathered as the rows are read.
-	my (%say, %hidden, %renew);
+	my (%say, %hidden, %renew, %seen_row);
 
 	foreach my $clr ( @{$cls} ) {
 
 		my $cl = eval { return decode_json $clr->{'value'} } || {};
 		my $app = &unformat_name($clr->{'app'});
+		# one row per app, the House row or the newest copy; the query orders them
+		next if $seen_row{$app}++;
 		$say{$app} = $cl->{'anticipatory'} if defined $cl->{'anticipatory'} && $cl->{'anticipatory'} =~ /\S/;
 		if ($cl->{'hidden'}) {
 			$hidden{$app} = 1;
@@ -99,7 +136,7 @@ sub hang_to_dry {
 	}
 	# a renewed phrase is saved once, after every row has been read
 	foreach my $app ( sort keys %renew ) {
-		&setting_setter({ app => $app, setting => 'clothesline', value => encode_json $renew{$app} });
+		&setting_setter({ app => $app, setting => 'clothesline', value => encode_json($renew{$app}), device => 'all' });
 	}
 	# The anticipatory head: the next steps of the routine under way, in the order
 	# the person takes them, whether it begins at eight or at ten. The rest of
@@ -107,25 +144,25 @@ sub hang_to_dry {
 	# repeated in the tail, and a step the routine takes twice is one name in the
 	# head - the next time it comes round.
 	my $anticipated = [];
+	my ($daily, $reused);
+	$reused = 0;
 	if ($anticipatory->{'on'}) {
 		# A press can reuse the head already hung (the person asked that a press
 		# not recompute it), so a routine scan only runs when it is wanted.
 		if ($opt{'reuse_head'}) {
-			my $stored = eval { decode_json &setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
-			$anticipated = [ map { { app => $_->{'app'}, wave => 0 } }
+			my $stored = eval { decode_json &clothesline_house_setting('__president', 'clothesline') } || [];
+			$anticipated = [ map { { app => $_->{'app'}, wave => (defined $_->{'wave'} ? $_->{'wave'} : 0) } }
 				grep { ref $_ eq 'HASH' && $_->{'head'} && defined $_->{'app'} && length $_->{'app'} } @{$stored} ];
+			$reused = @{$anticipated} ? 1 : 0;
 		}
 		if (!@{$anticipated}) {
 			# Every app's days and the order the day runs in. The appointment scan
 			# reads only the steps the person starts and stops themselves, so a task
 			# or a default option does not teach the line a routine of its own.
-			my $daily = &clothesline_daily_hours();
-			my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 40);
+			$daily = &clothesline_daily_hours();
+			my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 40,
+				next_wave => ($anticipatory->{'next_wave'} ? 1 : 0));
 			$anticipated = $anticipation->{'list'} || [];
-			if (!$anticipatory->{'next_wave'}) {
-				my $wave = $anticipation->{'current_wave'} || 0;
-				$anticipated = [ grep { ($_->{'wave'} || 0) <= $wave } @{$anticipated} ];
-			}
 			# The anticipate step already sets a running step at the place the
 			# routine usually stops it. Only a session the sequence does not name at
 			# all - one started out of its order, or off its day - is put at the head
@@ -167,7 +204,11 @@ sub hang_to_dry {
 		}
 		@head = (@lead, @{$kept});
 		# The day's own list wins when the person curated this day in the
-		# anticipatory settings: it is exactly those pills, in their order.
+		# anticipatory settings: it is those pills, in their order, but the head
+		# still advances through them. The same sequence call subtracts a step
+		# already taken, keeps the wave limit, and leaves a hand-added pill in
+		# place, so a planned day does not freeze while the person takes it. A
+		# press told to reuse the head keeps the list already hung.
 		my ($today) = &clothesline_house_day($server_time);
 		my $day = $anticipatory->{'days'}{$today};
 		my ($day_apps, $day_sections) = (undef, {});
@@ -176,20 +217,38 @@ sub hang_to_dry {
 			$day_apps = $day->{'apps'};
 			$day_sections = $day->{'sections'} if ref $day->{'sections'} eq 'HASH';
 		}
-		if ($day_apps) {
-			my @manual;
+		if ($day_apps && !$reused && $daily) {
+			my (@apps, @waves, @keep);
+			my %once;
 			foreach my $app ( @{$day_apps} ) {
 				next unless defined $app && length $app;
+				next if $once{$app}++;
 				next if $hidden{$app} || &app_hidden_now($app);
+				# the routine the person put it in is where the rail draws its own
+				# divider, so a curated day keeps the sections it was written in
+				my $section = $day_sections->{$app};
+				my $wave = (defined $section && $section =~ /^w(\d+)$/) ? (0 + $1) : 0;
+				push @keep, $app if defined $section && $section eq 'more';
+				push @apps, $app;
+				push @waves, $wave;
+			}
+			my $curated = &clothesline_sequence_anticipate($daily, $server_time,
+				limit => 40,
+				sequence => \@apps,
+				waves => \@waves,
+				keep => \@keep,
+				force_due => 1,
+				next_wave => ($anticipatory->{'next_wave'} ? 1 : 0));
+			my @manual;
+			foreach my $row ( @{ $curated->{'list'} || [] } ) {
+				my $app = $row->{'app'};
+				next unless defined $app && length $app;
 				my $item = $have{$app};
 				unless ($item) {
 					my $aset = &settings_grabber({ app => $app });
 					$item = { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
 				}
-				# the routine the person put it in is where the rail draws its own
-				# divider, so a curated day keeps the sections it was written in
-				my $section = $day_sections->{$app};
-				$item->{'wave'} = (defined $section && $section =~ /^w(\d+)$/) ? (0 + $1) : 0;
+				$item->{'wave'} = $row->{'wave'};
 				push @manual, $item;
 			}
 			@head = @manual;
@@ -208,7 +267,14 @@ sub hang_to_dry {
 		}
 	}, { name => 'clothesline centreview cacher' });
 	my $jreturner = encode_json $returner;
-	&setting_setter({ app => '__president', setting => 'clothesline', value => $jreturner });
+	# The rail is a cache of the line and belongs to the House too, so a device
+	# whose clothesline utility is off still reads the line another machine hung.
+	# Skip an identical write: this runs every five minutes and a changed stamp
+	# would be nothing but churn.
+	my $previous = eval { &setting_grabber({ app => '__president', setting => 'clothesline', device => 'all' }) };
+	unless (defined $previous && $previous eq $jreturner) {
+		&setting_setter({ app => '__president', setting => 'clothesline', value => $jreturner, device => 'all' });
+	}
 	return 0;
 
 }
@@ -305,8 +371,45 @@ sub clothesline_line_order {
 # per-day lists the person curated for this week. Every switch defaults on, so
 # an install that never opened the dialog behaves exactly as it did.
 sub clothesline_anticipatory_settings {
-	my $raw = eval { &setting_grabber({ app => '__president', setting => 'clothesline_anticipatory' }) };
-	my $s = (defined $raw && $raw =~ /\S/) ? (eval { decode_json $raw } || {}) : {};
+	# The head's switches and curated days are the House's: every machine reads
+	# the same row, so a day planned on the phone is the day the laptop leads
+	# with, and a machine whose clothesline utility is off still reads it.
+	my $house = eval { &setting_grabber({ app => '__president', setting => 'clothesline_anticipatory', device => 'all' }) };
+	my $s;
+	if (defined $house && $house =~ /\S/) {
+		$s = eval { decode_json $house } || {};
+	}
+	else {
+		# Upgrade: the copies older builds kept per device are merged once into
+		# the House row - the switches from the newest copy, and every day from
+		# the newest copy that has it, so no curated day is lost.
+		my $rows = eval { &db_query("select value, server_time from settings where setting = 'clothesline_anticipatory' and value is not null")->hashes } || [];
+		my @parsed;
+		foreach my $r ( @{$rows} ) {
+			my $v = eval { decode_json $r->{'value'} } || {};
+			next unless ref $v eq 'HASH';
+			push @parsed, [ (0 + ($r->{'server_time'} || 0)), $v ];
+		}
+		@parsed = sort { $b->[0] <=> $a->[0] } @parsed;
+		$s = {};
+		if (@parsed) {
+			my $newest = $parsed[0][1];
+			foreach my $key ( qw/on next_wave on_reset/ ) {
+				$s->{$key} = $newest->{$key} if defined $newest->{$key};
+			}
+			my %days;
+			foreach my $p ( @parsed ) {
+				my $d = $p->[1]{'days'};
+				next unless ref $d eq 'HASH';
+				foreach my $date ( keys %{$d} ) {
+					next if exists $days{$date};
+					$days{$date} = $d->{$date};
+				}
+			}
+			$s->{'days'} = \%days;
+			&setting_setter({ app => '__president', setting => 'clothesline_anticipatory', value => encode_json($s), device => 'all' });
+		}
+	}
 	$s = {} unless ref $s eq 'HASH';
 	foreach my $key ( qw/on next_wave on_reset/ ) { $s->{$key} = 1 unless defined $s->{$key}; }
 	$s->{'days'} = {} unless ref $s->{'days'} eq 'HASH';
@@ -345,7 +448,7 @@ sub clothesline_anticipatory_save {
 			$s->{'days'}{$date} = %kept ? { apps => \@keep, sections => \%kept } : \@keep;
 		}
 	}
-	&setting_setter({ app => '__president', setting => 'clothesline_anticipatory', value => encode_json $s });
+	&setting_setter({ app => '__president', setting => 'clothesline_anticipatory', value => encode_json($s), device => 'all' });
 	return 1;
 }
 

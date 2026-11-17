@@ -701,7 +701,7 @@ sub action_25183 {
 		}
 	}
 	$appts->{'__specs'}->{'pseudonyms'} = &pseudonym_maker('viewer','');
-	my $clothesline = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
+	my $clothesline = eval { return decode_json &subs::clothesline_house_setting('__president', 'clothesline') } || [];
 	if (($c->param('background_images') || '') eq 'on') {
 		$appts->{'__specs'}->{'backgrounds'} = eval { return decode_json &subs::setting_grabber({ app => 'marker', setting => 'backgrounds' }) } || [];
 		$appts->{'__specs'}->{'background'} = $appts->{'__specs'}->{'backgrounds'}->[rand(scalar @{$appts->{'__specs'}->{'backgrounds'}})];
@@ -721,7 +721,7 @@ sub action_25183 {
 # GET /manager/clothesline_rail
 sub action_25345 {
 	my $c = shift;
-	my $clothesline = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
+	my $clothesline = eval { return decode_json &subs::clothesline_house_setting('__president', 'clothesline') } || [];
 	my %payload = ( clothesline => $clothesline, timestamp => &subs::rightNow() );
 	if (($c->param('background_images') || '') eq 'on') {
 		my $backgrounds = eval { return decode_json &subs::setting_grabber({ app => 'marker', setting => 'backgrounds' }) } || [];

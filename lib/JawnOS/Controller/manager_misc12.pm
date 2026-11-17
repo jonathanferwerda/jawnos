@@ -424,7 +424,7 @@ sub action_41731 {
 	my $project = &subs::unformat_name($c->param('project'));
 	my $account = &subs::unformat_name($c->param('account'));
 	my $time_plinkos = &clothesline_calculator($app);
-	my $cl = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'clothesline' })} || {};
+	my $cl = eval { return decode_json &subs::clothesline_app_setting($app) } || {};
 	my $html = $c->render_to_string(template => 'apps/clothesline', app => $app, cl => $cl , time_plinkos => $time_plinkos, schedule_status => &subs::clothesline_schedule_status($cl), schedule_cards => &subs::clothesline_schedule_cards($cl) );
 	&subs::hang_to_dry();
 	$c->render(json => { html => $html});
@@ -440,10 +440,10 @@ sub action_41744 {
 	if ($c->param('is_json')) {
 		$value = eval { return decode_json $value } || [];
 	}
-	my $cl = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'clothesline' })} || {};
+	my $cl = eval { return decode_json &subs::clothesline_app_setting($app) } || {};
 	$cl->{$setting} = $value;
 	my $jcl = encode_json $cl;
-	&subs::setting_setter({ app => $app, setting => 'clothesline', value => $jcl });
+	&subs::setting_setter({ app => $app, setting => 'clothesline', value => $jcl, device => 'all' });
 	&subs::hang_to_dry();
 	$c->render(json => $cl);
 }
@@ -459,7 +459,7 @@ sub action_41750 {
 	my $text = $c->param('text') // '';
 	$text =~ s/\s+/ /g;
 	$text =~ s/^\s+|\s+$//g;
-	my $cl = eval { decode_json &subs::setting_grabber({ app => $app, setting => 'clothesline' }) } || {};
+	my $cl = eval { decode_json &subs::clothesline_app_setting($app) } || {};
 	my $render_cards = sub { $c->render_to_string(template => 'apps/clothesline/schedules', cards => &subs::clothesline_schedule_cards($cl), app => $app) };
 	if ($c->param('forget')) {
 		my $index = $c->param('index') // '';
@@ -468,7 +468,7 @@ sub action_41750 {
 		$cl->{'schedules'} = $list;
 		delete $cl->{'schedule_rule'};
 		$cl->{'schedule'} = join(', ', map { $_->{'text'} } grep { ref $_ eq 'HASH' && length($_->{'text'} // '') } @{$list});
-		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json $cl });
+		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json($cl), device => 'all' });
 		&subs::hang_to_dry();
 		return $c->render(json => { ok => 1, message => &subs::clothesline_schedule_status($cl), text => $cl->{'schedule'}, cards => $render_cards->() });
 	}
@@ -478,11 +478,11 @@ sub action_41750 {
 	unless (length $text) {
 		delete $cl->{'schedule_rule'};
 		$cl->{'schedules'} = [];
-		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json $cl });
+		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json($cl), device => 'all' });
 		&subs::hang_to_dry();
 		return $c->render(json => { ok => 1, message => '', text => '', cards => '' });
 	}
-	&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json $cl });
+	&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json($cl), device => 'all' });
 	&subs::render_in_subprocess($c, sub {
 		return &subs::clothesline_schedule_read($text);
 	}, sub {
@@ -494,7 +494,7 @@ sub action_41750 {
 		}
 		$cl->{'schedules'} = $read->{'schedules'};
 		delete $cl->{'schedule_rule'};
-		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json $cl });
+		&subs::setting_setter({ app => $app, setting => 'clothesline', value => encode_json($cl), device => 'all' });
 		&subs::hang_to_dry();
 		$c->render(json => { ok => 1, message => &subs::clothesline_schedule_status($cl), text => $cl->{'schedule'}, cards => $render_cards->() });
 	});

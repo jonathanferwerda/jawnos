@@ -332,13 +332,20 @@ sub merge_table_rows {
 									# protected app (`__president` and `utility_controller` included).
 									my $cards_setting = (($r->{'app'} // '') eq 'cards') ? ($r->{'setting'} // '') : '';
 									my $cards_shared = $cards_setting =~ /^(?:mode|variant|day|week|month|year|free|cycle|spread|all)$/ ? 1 : 0;
+									# The clothesline is one line for the House. Its rail, head switches
+									# and every app's hang are written on the house row; let those
+									# through even though `__president` is protected, while the rest of
+									# `__president` stays local.
+									my $clothesline_shared = ((($r->{'setting'} // '') eq 'clothesline'
+										|| ($r->{'setting'} // '') eq 'clothesline_anticipatory')
+										&& ($r->{'device'} // '') eq 'all') ? 1 : 0;
 									# A draw list lives on the house row (`device = 'all'`); keep it one on
 									# arrival so cards_list reads it. Mode and variant are per-device and
 									# join this device's class as usual.
-									my $house_wide = ($cards_shared && $cards_setting =~ /^(?:day|week|month|year|free|cycle|spread|all)$/
-										&& ($r->{'device'} // '') eq 'all') ? 1 : 0;
+									my $house_wide = ($clothesline_shared || ($cards_shared && $cards_setting =~ /^(?:day|week|month|year|free|cycle|spread|all)$/
+										&& ($r->{'device'} // '') eq 'all')) ? 1 : 0;
 									#next if $protected == 1;
-									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$cards_shared)) {
+									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || ($protected == 1 && !$cards_shared && !$clothesline_shared)) {
 										# A machine that has just joined the house gives birth to
 										# setting_initializer's defaults before its first settings sync -
 										# navigation 'none', an empty duration, a fresh colour. Those rows
