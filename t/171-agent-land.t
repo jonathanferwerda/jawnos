@@ -198,6 +198,12 @@ die "fixture repo is not isolated: $fixture_top\n" unless $trc == 0 && defined $
 	write_file("$primary/scripts/version_bump.pl", $BUMP);
 	write_file("$primary/scripts/restart.pl",   $arg{'restart'} // $RESTART);
 	write_file("$primary/scripts/agent_land.pl", read_file($real));
+	# The lander asks the picker which tests observe the change; only the test
+	# that skips the suite needs it, and an absent picker must still run everything.
+	if ($arg{'picker'}) {
+		write_file("$primary/scripts/tests_for.pl",
+			read_file("$FindBin::Bin/../scripts/tests_for.pl"));
+	}
 	# Only the tests that land a firmware change need the board files; without
 	# them the lander skips the firmware step, which is what every other fixture
 	# here relies on.
@@ -332,6 +338,34 @@ subtest 'a dirty primary checkout refuses before pushing' => sub {
 };
 
 # --- the landing itself ---------------------------------------------------
+
+subtest 'a docs-only landing skips the suite' => sub {
+	my $f = fixture(picker => 1);
+	make_path("$f->{'wt'}/docs");
+	commit_in_worktree($f, 'docs/roadmap.md', "# roadmap\n", 'v0.1.1 - write the roadmap');
+
+	my ($rc, $out) = land($f);
+	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	like($out, qr/no test observes this change/, 'it says why the suite is skipped');
+	ok(!-e "$f->{'marker'}/suite", 'no suite ran');
+
+	my (undef, $subject) = git($f->{'primary'}, 'log', '-1', '--format=%s', 'origin/main');
+	is($subject, 'v0.1.2 - write the roadmap', 'the prose still landed and bumped');
+	like(read_file("$f->{'marker'}/hook"), qr/JAWNOS_SUITE_ALREADY_RUN=1/,
+		'and the hook was told not to repeat the skipped suite');
+};
+
+subtest 'a change the picker cannot map still runs the suite' => sub {
+	my $f = fixture(picker => 1);
+	make_path("$f->{'wt'}/lib");
+	commit_in_worktree($f, 'lib/Thing.pm', "package Thing; 1;\n", 'v0.1.1 - add a module');
+
+	my ($rc, $out) = land($f);
+	is($rc, 0, 'the landing exits cleanly') or diag($out);
+	like(read_file("$f->{'marker'}/suite"), qr/--jobs 2/,
+		'the suite ran, because the picker only narrowed a no-op');
+	unlike($out, qr/skipping the suite/, 'the fast path did not trigger');
+};
 
 subtest 'a clean branch lands, bumps, pushes and updates the primary' => sub {
 	my $f = fixture();

@@ -43,7 +43,9 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   and the Android SDK index still offer what we install, and fetches a newer build-tools/NDK.
   `missing` fails; `STRICT=1` also fails `outdated`.
 - **Tests:** while iterating `perl scripts/tests_for.pl --staged --run`; before a commit
-  `perl scripts/run_tests.pl`. Never bare `prove -l t`.
+  `perl scripts/run_tests.pl`. Never bare `prove -l t`. Next to that, `tests_for.pl <paths>` answers
+  "which tests observe this?" — **`docs/`, a `.md` and `LICENSE` observe nothing**, so a docs or
+  roadmap change runs no test at all (it prints "no test needs to run for this change").
 - Master plumbing, verify manifest, restart record, socket rules: `docs/AGENTS-restart.md`.
 
 
@@ -105,6 +107,9 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
   While iterating run `perl scripts/tests_for.pl --staged --run`; before the commit run
   `perl scripts/run_tests.pl` (never bare `prove -l t`). A defect you do not fix gets a `TODO` test
   naming the file and line — never a test asserting the broken behaviour. The pre-push hook runs the suite.
+  **Prose is not a behaviour change:** a change that only touches `docs/`, a `.md` file or `LICENSE`
+  ships no test, and a landing whose changed paths are all prose skips the suite (`agent_land.pl` and
+  the queue both ask `tests_for.pl`). Any path the picker cannot map still runs the full suite.
 - **A file no test claims is debt.** `t/99-untested.t` lists every tracked source file no `tests-for:`
   claims; a new one fails the push. Its `%owed` list may shrink — remove an entry when its test lands.
 - **A new Manager helper goes in the map in the same change** — its name in
@@ -118,6 +123,7 @@ The Zed panel keeps every byte it is shown; zram + earlyoom only slow the crash.
 - **Land once, wait, then repair or stop.** Commit in the worktree, queue it with
   `scripts/land_enqueue.pl --trunk working --wait`, read the verdict. Repair a refused `rebase`,
   `suite` or `commit` once, re-enqueue; report. Second refusal stops `--keep` for work that
-  continues or a handoff. The commit identity: `docs/AGENTS-concurrency.md`.
+  continues or a handoff. A docs/roadmap-only landing skips the suite, so prose costs no test time.
+  The commit identity: `docs/AGENTS-concurrency.md`.
 
 ---

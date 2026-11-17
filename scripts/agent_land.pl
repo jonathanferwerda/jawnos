@@ -14,8 +14,9 @@
 #
 # It takes a lock shared through the git common dir (so every worktree of this
 # repo contends for it), rebases the branch onto origin/main, resolves the shared
-# VERSION hunk in trunk's favour, runs the suite ONCE (the pre-push hook is told
-# not to repeat it), bumps VERSION on the rebased tip, rewrites that subject to
+# VERSION hunk in trunk's favour, runs the suite ONCE (skipped when no test
+# observes the change - docs and roadmaps - and the pre-push hook is told not to
+# repeat it either way), bumps VERSION on the rebased tip, rewrites that subject to
 # v<new> - <summary>, pushes fast-forward only, fast-forwards the *primary*
 # checkout (the master does not pull on restart) and restarts, so the dev server
 # is always on what was just landed.
@@ -226,7 +227,8 @@ if ($opt{'dry'}) {
 	say_step("would lock $lock_path");
 	say_step("would fetch origin and rebase $branch onto origin/$opt{'trunk'}");
 	say_step('would refresh the generated agent index and baked protocols on the rebased tree');
-	say_step("would run: $^X scripts/run_tests.pl --jobs $opt{'jobs'}");
+	say_step("would run: $^X scripts/run_tests.pl --jobs $opt{'jobs'}"
+		. ' (skipped when no test observes the change)');
 	say_step("would bump VERSION, rewrite the tip subject, and push HEAD:refs/heads/$opt{'trunk'}");
 	say_step("would bump the firmware version of every board this landing changed");
 	say_step("would fast-forward the primary checkout at $primary");
@@ -349,36 +351,62 @@ refresh_generated();
 
 # --- the suite is the gate ------------------------------------------------
 
+# A change no test observes - docs, roadmaps, prose - has nothing to run: the
+# picker says so, and the suite's couple of minutes are not a ritual. Only its
+# "nothing" is trusted. A path it cannot map, a missing picker or a reply it does
+# not understand all run the full suite, so this can spare a no-op but never a
+# code change. The rebase already happened, so the paths are the ones landing.
+sub no_test_observes_change {
+	my (undef, $names) = git('diff', '--name-only', '--no-renames', "origin/$opt{'trunk'}..HEAD");
+	my @paths = grep { length } split /\n/, ($names // '');
+	return 0 unless @paths && -f 'scripts/tests_for.pl';
+
+	my ($rc, $out) = capture($^X, 'scripts/tests_for.pl', '--files', @paths, '--json');
+	my ($line) = ($out // '') =~ /(\{[^\n]*\})/;
+	my $sel = $line ? eval { JSON::PP->new->decode($line) } : undef;
+	return 0 unless $rc == 0 && ref $sel eq 'HASH';
+	return 0 if $sel->{'full'};
+	return @{ $sel->{'tests'} || [] } ? 0 : 1;
+}
+
+my $untested = no_test_observes_change();
+
 # The trunk in the primary checkout must not move while the suite runs: the gate
 # holds the lock, so no other agent can be landing, and a move is a fixture
-# commit from a test. Record it, then check it after the suite.
-my (undef, $trunk_before) = git('-C', $primary, 'rev-parse', "refs/heads/$opt{'trunk'}");
-$trunk_before = '' unless defined $trunk_before;
-
-say_step("running the suite (--jobs $opt{'jobs'})");
-my ($src, $sout) = capture($^X, 'scripts/run_tests.pl', '--jobs', $opt{'jobs'});
-if ($src != 0) {
-	print STDERR $sout unless length $sout > 20000;
-	refuse('the suite failed; fix it and land again', 'suite');
+# commit from a test. Record it, then check it after the suite. A skipped suite
+# cannot move anything, so the check is part of the suite branch.
+if ($untested) {
+	say_step('no test observes this change (docs/prose only); skipping the suite');
 }
-if (repo_is_bare()) {
-	heal_bare();
-	refuse('the suite left the repository bare (core.bare=true). It has been reset to '
-		. 'false and nothing was pushed - this is the test-corruption bug, not this branch. '
-		. 'Report it, and land again once it is fixed.', 'suite_bare');
-}
+else {
+	my (undef, $trunk_before) = git('-C', $primary, 'rev-parse', "refs/heads/$opt{'trunk'}");
+	$trunk_before = '' unless defined $trunk_before;
 
-my (undef, $trunk_after) = git('-C', $primary, 'rev-parse', "refs/heads/$opt{'trunk'}");
-$trunk_after = '' unless defined $trunk_after;
-if (length $trunk_before && length $trunk_after && $trunk_after ne $trunk_before) {
-	my (undef, $who) = capture('git', '-C', $primary, 'log', '-1', '--format=%ae %ce', $trunk_after);
-	if (($who // '') =~ /\@example\.(?:invalid|test)\b|\@jawnos\.invalid\b/) {
-		git('-C', $primary, 'reset', '--mixed', $trunk_before);
-		refuse("the suite moved $opt{'trunk'} in the primary checkout to a fixture commit "
-			. "($trunk_before -> $trunk_after). It has been put back; nothing was pushed.", 'suite_moved');
+	say_step("running the suite (--jobs $opt{'jobs'})");
+	my ($src, $sout) = capture($^X, 'scripts/run_tests.pl', '--jobs', $opt{'jobs'});
+	if ($src != 0) {
+		print STDERR $sout unless length $sout > 20000;
+		refuse('the suite failed; fix it and land again', 'suite');
 	}
-	refuse("$opt{'trunk'} moved in the primary checkout during the suite "
-		. "($trunk_before -> $trunk_after); nothing was pushed. Commit or revert it by hand, then land again.", 'suite_moved');
+	if (repo_is_bare()) {
+		heal_bare();
+		refuse('the suite left the repository bare (core.bare=true). It has been reset to '
+			. 'false and nothing was pushed - this is the test-corruption bug, not this branch. '
+			. 'Report it, and land again once it is fixed.', 'suite_bare');
+	}
+
+	my (undef, $trunk_after) = git('-C', $primary, 'rev-parse', "refs/heads/$opt{'trunk'}");
+	$trunk_after = '' unless defined $trunk_after;
+	if (length $trunk_before && length $trunk_after && $trunk_after ne $trunk_before) {
+		my (undef, $who) = capture('git', '-C', $primary, 'log', '-1', '--format=%ae %ce', $trunk_after);
+		if (($who // '') =~ /\@example\.(?:invalid|test)\b|\@jawnos\.invalid\b/) {
+			git('-C', $primary, 'reset', '--mixed', $trunk_before);
+			refuse("the suite moved $opt{'trunk'} in the primary checkout to a fixture commit "
+				. "($trunk_before -> $trunk_after). It has been put back; nothing was pushed.", 'suite_moved');
+		}
+		refuse("$opt{'trunk'} moved in the primary checkout during the suite "
+			. "($trunk_before -> $trunk_after); nothing was pushed. Commit or revert it by hand, then land again.", 'suite_moved');
+	}
 }
 
 # --- bump, rewrite the tip subject ---------------------------------------
@@ -422,9 +450,10 @@ unlink $msg_path;
 # --- push, then move the primary checkout ---------------------------------
 
 say_step("pushing HEAD:refs/heads/$opt{'trunk'}");
-# The suite just ran above, under the landing lock. Tell the pre-push hook, or it
-# runs it a second time - which doubles every landing and flakes the timing tests
-# at the hook's default parallelism.
+# The suite is the landing's business, not the hook's: it either ran above under
+# the landing lock or was deliberately skipped because no test observes the
+# change. Either way the hook must not run it again - doubling every landing and
+# flaking the timing tests at the hook's default parallelism.
 $ENV{'JAWNOS_SUITE_ALREADY_RUN'} = 1;
 my ($pusc, $puso) = git('push', 'origin', "HEAD:refs/heads/$opt{'trunk'}");
 delete $ENV{'JAWNOS_SUITE_ALREADY_RUN'};

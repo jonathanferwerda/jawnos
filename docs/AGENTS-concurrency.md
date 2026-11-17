@@ -108,7 +108,9 @@ bare-repo guard. The path is only how the script is found; it still works on the
    names the file.
 5. Run the suite **once** (`--jobs 2` by default) and export `JAWNOS_SUITE_ALREADY_RUN=1`
    for the push, so the pre-push hook does not run it a second time. A failure refuses the landing;
-   nothing is pushed.
+   nothing is pushed. **A change no test observes — `docs/`, a `.md`, `LICENSE` — skips the suite**:
+   `tests_for.pl` answers "nothing", and the queue's `--suite-scope auto` treats a prose-only wave the
+   same way. A path the picker cannot map still runs everything, so the fast path only spares prose.
 6. Bump `VERSION`, rewrite the tip subject to `v<new> - <summary>` (an existing prefix is replaced,
    never stacked), amend. The body is preserved.
 7. `git push origin HEAD:refs/heads/main` — fast-forward only, and the lock is why it stays one. The
