@@ -257,6 +257,7 @@ sub doctor_salvage_table {
 	$old_count = eval { $ndb->query('select count(*) from old.' . $ident)->arrays->[0]->[0] } unless defined $old_count;
 	my $known_count = defined $old_count;
 	my $lost = 0;
+	my $truncated = 0;
 
 	# A single statement first, over the table's own b-tree. NOT INDEXED keeps a
 	# broken index out of the read: a corrupt index can make a plain `select *`
@@ -294,8 +295,16 @@ sub doctor_salvage_table {
 				last if $bounds && defined $bounds->[0];
 			}
 		}
-		&doctor_salvage_range($ndb, $ident, $bounds->[0], $bounds->[1], \$lost)
+		# A damaged page can make sqlite report a min/max rowid that belongs
+		# to no row of the table (a broken leaf answered 408890 for a table
+		# of 500 rows). A range the engine cannot read is split in two, so a
+		# bogus bound costs one visit per rowid and the repair never ends.
+		# The walk carries a budget; spending it marks the table truncated
+		# instead of letting the repair hang.
+		my $budget = { left => 20_000 };
+		&doctor_salvage_range($ndb, $ident, $bounds->[0], $bounds->[1], \$lost, $budget)
 			if $bounds && defined $bounds->[0] && defined $bounds->[1];
+		$truncated = 1 if $budget->{'left'} <= 0;
 	};
 	my $after = $count->();
 	push @{$report}, {
@@ -303,13 +312,21 @@ sub doctor_salvage_table {
 		before => $old_count,
 		copied => $after - $before,
 		lost => $lost,
+		($truncated ? (truncated => 1) : ()),
 	};
 	return;
 }
 
 sub doctor_salvage_range {
-	my ($ndb, $ident, $lo, $hi, $lost) = @_;
+	my ($ndb, $ident, $lo, $hi, $lost, $budget) = @_;
+	$budget ||= { left => 20_000 };
 	return unless defined $lo && defined $hi && $lo <= $hi;
+	# A range that cannot be read splits in two, so an engine that refuses
+	# every width costs one visit per rowid. The budget keeps a bound the
+	# damage invented from becoming a hang; the caller marks the table
+	# truncated when it is spent.
+	return if $budget->{'left'} <= 0;
+	$budget->{'left'}--;
 	# Reading the rowids first is the cheap proof that the range's pages can be
 	# read at all; NOT INDEXED keeps a broken index out of that read. A range
 	# that cannot be read is split instead of copied.
@@ -328,8 +345,8 @@ sub doctor_salvage_range {
 		return;
 	}
 	my $mid = int(($lo + $hi) / 2);
-	&doctor_salvage_range($ndb, $ident, $lo, $mid, $lost);
-	&doctor_salvage_range($ndb, $ident, $mid + 1, $hi, $lost);
+	&doctor_salvage_range($ndb, $ident, $lo, $mid, $lost, $budget);
+	&doctor_salvage_range($ndb, $ident, $mid + 1, $hi, $lost, $budget);
 	return;
 }
 

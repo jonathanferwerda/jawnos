@@ -7,6 +7,8 @@
 #            detects damage with integrity_check, rebuilds a named index without
 #            copying a row, and salvages a table whose page cannot be read into a
 #            fresh database while keeping a copy of the original.
+#            A rowid range the engine cannot read is walked under a budget, so a
+#            bound invented by a damaged page cannot keep the repair running.
 
 use strict;
 use warnings;
@@ -278,6 +280,20 @@ SKIP: {
 	my $fresh = Mojo::SQLite->new('sqlite:' . $cpath);
 	my $check = $fresh->db->query('pragma integrity_check')->arrays->[0][0];
 	is($check, 'ok', 'the replaced database passes its integrity check');
+}
+
+# A range the engine refuses at every width costs one visit per rowid, so a
+# min/max rowid invented by a damaged page used to keep the repair running for
+# hours (a broken leaf answered 408890 for a table of 500 rows). The walk
+# carries a budget; this pins that it is spent rather than followed forever.
+{
+	my $unitpath = "$dir/walk.db";
+	my ($usql, $udb) = build_database($unitpath, $live_schema);
+	my $lost = 0;
+	my $budget = { left => 25 };
+	&subs::doctor_salvage_range($udb, 'no_such_table', 1, 10_000_000, \$lost, $budget);
+	is($budget->{'left'}, 0, 'a rowid walk that cannot read its range spends its budget');
+	ok($lost > 0, 'and counts the rows it could not reach');
 }
 
 done_testing();
