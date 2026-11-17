@@ -62,6 +62,7 @@ like($notify, qr/app_visibility_value\(\$app\) eq 'private'/, 'private appointme
 like($notify, qr/sub notification_device_choices\(\)/, 'the picker can list the house machines');
 like($notify, qr/notification_devices/, 'the sender reads the chosen chime machines');
 like($notify, qr/\$chime_here/, 'and only the chosen machine plays the sound');
+like($notify, qr/my \$device_type = &subs::device_setter\(\);/, 'a chosen device type also answers yes');
 like($notify, qr/my %latest;/, 'the enabled list is the union of every device');
 like(source('lib/JawnOS/Domain/Loader.pm'), qr/notification_device_choices/,
 	'the machine list is mapped in the domain loader');
@@ -73,6 +74,9 @@ like($panel, qr/setting="budget_notification_types"/, 'and the type picker');
 like($panel, qr/All selected announces every status/, 'and says what all-selected means');
 like($panel, qr/setting="notification_devices"/, 'the panel carries the chime-device picker');
 like($panel, qr/Every device/, 'with an every-device choice');
+like($panel, qr/\@gb::device_types/, 'the chime picker offers the house device types');
+like($panel, qr/'controller'/, 'including controller');
+like($panel, qr/Device types/, 'in their own group');
 like(source('templates/configure/appointment_list.html.ep'),
 	qr/include 'configure\/app_notification', a => \$a, settings => \$appts->\{\$a\}->\{'setting'\}/,
 	'Configure draws the same panel');

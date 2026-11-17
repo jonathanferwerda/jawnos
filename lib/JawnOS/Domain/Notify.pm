@@ -91,7 +91,8 @@ sub notification_sender($m,$db) {
 		my $chime_list = eval { decode_json($chime_raw) };
 		if (ref $chime_list eq 'ARRAY') {
 			my $signatorial = &subs::signatorial_designer();
-			$chime_here = grep { defined $_ && ($_ eq 'all' || $_ eq $signatorial) } @{$chime_list} ? 1 : 0;
+			my $device_type = &subs::device_setter();
+			$chime_here = grep { defined $_ && ($_ eq 'all' || $_ eq $signatorial || $_ eq $device_type) } @{$chime_list} ? 1 : 0;
 		}
 	}
 	if ($m->{'update'} || $silenced || $m->{'silent'} || !$chime_here) {

@@ -48,6 +48,11 @@
 	my $chime = $json_list->(&subs::setting_grabber({ app => $a, setting => 'notification_devices', device => 'all' }));
 	my %chime_on = $chime ? map { $_ => 1 } @{$chime} : ( all => 1 );
 	my $device_choices = eval { &subs::notification_device_choices() } || [];
+	# A device type is the broader answer to the same question: every computer,
+	# every phone, every server. @gb::device_types is the house's own short list;
+	# controller is a type the Controller app uses and is not in it.
+	my %seen_type;
+	my @chime_types = grep { !$seen_type{$_}++ } ( @gb::device_types, 'controller' );
 	my %type_word = (
 		occurences => 'occurrences', duration => 'duration',
 		total => 'total', quantity => 'quantity',
@@ -128,11 +133,18 @@
 	<h4><%= &subs::ui('Chime on') %></h4>
 	<div class="cfg-row">
 		<label><%= &subs::ui('Devices to chime through') %></label>
-		<select app="<%= $a %>" setting="notification_devices" class="configure_input app_notification_devices" multiple size="<%= $rows_for->(scalar(@{$device_choices}) + 1) %>" hint="<%= &subs::ui('Choose the devices that play this appointment\'s notification sound') %>">
+		<select app="<%= $a %>" setting="notification_devices" class="configure_input app_notification_devices" multiple size="<%= $rows_for->(scalar(@{$device_choices}) + scalar(@chime_types) + 1) %>" hint="<%= &subs::ui('Choose the devices that play this appointment\'s notification sound') %>">
 			<option value="all" <% if (!$chime || $chime_on{'all'}) { %>selected<% } %>><%= &subs::ui('Every device') %></option>
-			<% foreach my $device ( @{$device_choices} ) { %>
-				<option value="<%= $device->{'signatorial'} %>" <% if ($chime_on{$device->{'signatorial'}}) { %>selected<% } %>><%= $device->{'name'} %><% if ($device->{'self'}) { %> (<%= &subs::ui('this device') %>)<% } %></option>
-			<% } %>
+			<optgroup label="<%= &subs::ui('Device types') %>">
+				<% foreach my $type ( @chime_types ) { %>
+					<option value="<%= $type %>" <% if ($chime_on{$type}) { %>selected<% } %>><%= &subs::format_name($type) %></option>
+				<% } %>
+			</optgroup>
+			<optgroup label="<%= &subs::ui('Machines') %>">
+				<% foreach my $device ( @{$device_choices} ) { %>
+					<option value="<%= $device->{'signatorial'} %>" <% if ($chime_on{$device->{'signatorial'}}) { %>selected<% } %>><%= $device->{'name'} %><% if ($device->{'self'}) { %> (<%= &subs::ui('this device') %>)<% } %></option>
+				<% } %>
+			</optgroup>
 		</select>
 	</div>
 	<div class="cfg-note"><%= &subs::ui('Only the chosen devices play the sound and post the phone notification. The notice still appears in this list.') %></div>
