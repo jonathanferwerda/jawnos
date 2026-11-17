@@ -780,10 +780,10 @@ Do not write prose. Do not invent a date you are unsure of.
 TXT
 	my ($out, $err) = &evaluation_model_call_role('help_assistant', $system, $text, &ai_role_thinking_effective('help_assistant'));
 	return { ask => ($err || &ui('The Guide did not answer that.')) } unless defined $out && $out =~ /\S/;
-	my $answer = eval { decode_json $out };
-	unless (ref $answer eq 'HASH') {
-		if ($out =~ /(\{.*\})/s) { $answer = eval { decode_json $1 }; }
-	}
+	# A model writes Perl characters and decode_json wants UTF-8 bytes, so one
+	# accent in a French or Spanish sentence made the whole answer unreadable.
+	# json_from_model encodes first and also tolerates a code fence or prose.
+	my $answer = &json_from_model($out);
 	return { ask => &ui('I could not read that schedule. Can you say it another way?') } unless ref $answer eq 'HASH';
 	return { ask => $answer->{'ask'} } if defined $answer->{'ask'} && $answer->{'ask'} =~ /\S/;
 	my $list = ref $answer->{'schedules'} eq 'ARRAY' ? $answer->{'schedules'} : [];

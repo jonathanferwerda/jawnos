@@ -79,6 +79,13 @@ my $hang = read_file(repo_root() . '/lib/JawnOS/Domain/Hang.pm');
 like($hang, qr/The phrase may be written in any language/,
 	'the Guide fallback is told the phrase may be in any language');
 like($hang, qr/clothesline_stop_word/, 'a clause with words the reader did not use goes to the Guide');
+like($hang, qr/json_from_model\(\$out\)/,
+	'the Guide answer is read by the UTF-8-safe reader, not a raw decode');
+
+# a French or Spanish sentence carries accents; the reader must decode them
+my $accented = subs::json_from_model('{"schedules":[{"text":"tous les jeudis \u00e0 15h","say":"chaque jeudi \u00e0 15h","hours":[15]}]}');
+ok(ref $accented eq 'HASH' && ($accented->{'schedules'}->[0]{'say'} // '') =~ /jeudi/,
+	'an accented answer is read, not thrown away');
 
 my $configure = read_file(repo_root() . '/lib/JawnOS/Controller/manager_configure.pm');
 like($configure, qr/ai_model_qualify/, 'the Test route runs the intelligence test');
