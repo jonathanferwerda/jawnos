@@ -182,7 +182,7 @@ is($repo->{total}{code}, $sum{code}, 'total code is the sum of the languages');
 is($rows[0]{language}, 'Perl', 'Perl is the largest language');
 
 my %present = map { $_->{language} => 1 } @rows;
-my @expected = ("Perl", "JavaScript", "CSS", "Python", "Shell", "SQL", "Batch", "C/C++ (Arduino)", "Perl (Mojo templates)", "C/C++ header");
+my @expected = ("Perl", "JavaScript", "CSS", "Python", "Shell", "SQL", "Batch", "C/C++ (Arduino)", "Perl (Mojo templates)", "C/C++ header", "Rust");
 ok($present{$_}, "the repo has $_") for @expected;
 
 is_deeply($repo->{not_counted}{unknown}, [],

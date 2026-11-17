@@ -51,6 +51,7 @@ my %LANGUAGE = (
 	c   => 'C',
 	h   => 'C/C++ header',
 	sh  => 'Shell',
+	rs  => 'Rust',
 	sql => 'SQL',
 	ps1 => 'PowerShell',
 	iss => 'Inno Setup',
@@ -70,6 +71,7 @@ my %STYLE = (
 	'C/C++ (Arduino)'       => 'c',
 	'Python'                => 'python',
 	'Shell'                 => 'hash',
+	'Rust'                  => 'c',
 	'SQL'                   => 'sql',
 	'PowerShell'            => 'hash',
 	'Inno Setup'            => 'iss',
@@ -128,6 +130,7 @@ my %NONCODE = (
 	# configuration and packaging metadata
 	json => 'config', yml => 'config', yaml => 'config', ini => 'config',
 	conf => 'config', service => 'config', timer => 'config',
+	toml => 'config', lock => 'config',
 	network => 'config', preset => 'config', in => 'config',
 	desktop => 'config', xml => 'config', gitignore => 'config',
 	dockerignore => 'config', example => 'config', env => 'config',
