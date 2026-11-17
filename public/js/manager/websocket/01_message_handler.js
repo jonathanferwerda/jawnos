@@ -304,40 +304,6 @@ function wsMessageDispatch(raw) {
 			s.html(data['content']);
 			appointment_chron();
 		}
-		else if ( data['type'] == 'gallery_images' ) {
-
-			var count = 0;
-			for (var n = data['last_send']; n <= data['total_files']; n++) {
-
-				images[n] = data['images'][count];
-				count++;
-			}
-			if (typeof galleryTargetUuid !== 'undefined' && galleryTargetUuid != '') {
-				var chosen = -1;
-				for (var n = 0; n < images.length; n++) {
-					if (images[n] && images[n]['uuid'] == galleryTargetUuid) { chosen = n; break; }
-				}
-				if (chosen > -1) {
-					image_number = chosen;
-					galleryTargetUuid = '';
-					imageDiscover();
-				}
-				else {
-					var target = data['count'];
-					if (images[target]) {
-						image_number = target;
-						imageDiscover();
-					}
-				}
-			}
-			else {
-				var target = data['count'];
-				if (images[target]) {
-					image_number = target;
-					imageDiscover();
-				}
-			}
-		}
 		else if ( data['alert'] ) {
 
 			if ((!$('#alert').attr('uuid') || $('#alert').attr('uuid') == data['uuid']) && !$('#alert').is('[hidden]')) {

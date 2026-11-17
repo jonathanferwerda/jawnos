@@ -36,6 +36,12 @@ my $handler = source('public/js/manager/websocket/01_message_handler.js');
 like($handler, qr/jawnosConsoleRun\(data\['console'\]\)/, 'the message handler routes the console frame');
 unlike($handler, qr/eval\(data\[/, 'the frame is never evaluated');
 
+# The gallery_images frame and its sender were removed in v0.1.1114; the
+# handler outlived the frame and would walk a gallery nothing can trigger.
+unlike($handler, qr/gallery_images/, 'no dead gallery_images frame is handled');
+like($handler, qr/data\['type'\] == 'html'/, 'the neighbouring html frame is still routed');
+like($handler, qr/else if \( data\['alert'\] \)/, 'and the alert frame still follows it');
+
 my $websocket = source('perl/Websocket.pl');
 like($websocket, qr/sub console_command\s*\{/, 'the server builds command objects');
 
