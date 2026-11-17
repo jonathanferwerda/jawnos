@@ -42,6 +42,12 @@
 		push @types, grep { !$offered{$_}++ } @{$chosen_types};
 	}
 	my %type_on = $chosen_types ? map { $_ => 1 } @{$chosen_types} : ();
+	# The chime devices are one answer for the house, so they live on the
+	# device "all" row rather than in the per-device hash the caller handed in.
+	# Missing means every machine, which is what the house did before the picker.
+	my $chime = $json_list->(&subs::setting_grabber({ app => $a, setting => 'notification_devices', device => 'all' }));
+	my %chime_on = $chime ? map { $_ => 1 } @{$chime} : ( all => 1 );
+	my $device_choices = eval { &subs::notification_device_choices() } || [];
 	my %type_word = (
 		occurences => 'occurrences', duration => 'duration',
 		total => 'total', quantity => 'quantity',
@@ -119,6 +125,17 @@
 			<div class="cfg-note"><%= &subs::ui('All selected announces every type. Clearing one silences it.') %></div>
 		<% } %>
 	<% } %>
+	<h4><%= &subs::ui('Chime on') %></h4>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Devices to chime through') %></label>
+		<select app="<%= $a %>" setting="notification_devices" class="configure_input app_notification_devices" multiple size="<%= $rows_for->(scalar(@{$device_choices}) + 1) %>" hint="<%= &subs::ui('Choose the devices that play this appointment\'s notification sound') %>">
+			<option value="all" <% if (!$chime || $chime_on{'all'}) { %>selected<% } %>><%= &subs::ui('Every device') %></option>
+			<% foreach my $device ( @{$device_choices} ) { %>
+				<option value="<%= $device->{'signatorial'} %>" <% if ($chime_on{$device->{'signatorial'}}) { %>selected<% } %>><%= $device->{'name'} %><% if ($device->{'self'}) { %> (<%= &subs::ui('this device') %>)<% } %></option>
+			<% } %>
+		</select>
+	</div>
+	<div class="cfg-note"><%= &subs::ui('Only the chosen devices play the sound and post the phone notification. The notice still appears in this list.') %></div>
 	<%# your own sound: the file lands beside the shipped ones, so it
 	    appears in all four selects above (and on every other app's) %>
 	<div class="cfg-row">

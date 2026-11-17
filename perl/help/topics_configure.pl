@@ -7,7 +7,7 @@ our %topic;
 $topic{'configure'} = {
 		'title' => 'Configure', category => 'apps', app => 'configure',
 		templates => [ 'templates/configure/configure.html.ep', 'templates/configure/me_setting_list.html.ep', 'templates/configure/store_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/configure/app_notification.html.ep', 'templates/configure/misc_setting_list.html.ep', 'templates/configure/device_lister.html.ep', 'templates/configure/device_lister/body.html.ep', 'templates/configure/device_lister/join_house.html.ep', 'templates/configure/plat_setting_list.html.ep', 'templates/configure/qa_panel.html.ep', 'templates/configure/map_setting_list.html.ep', 'templates/configure/dns_clients.html.ep', 'templates/configure/restore_list.html.ep', 'public/js/manager/configure.js', 'public/js/manager/configure/02_remote_devices.js', 'public/js/manager/configure/07_qa_nightly.js' ],
-		controls => [ 'Add sound', 'Adopt', 'Clothesline', 'Choose the budget statuses that announce', 'Choose the budget types that announce', 'Dark theme colour', 'Delete', 'Delete app', 'Doctor', 'Home', 'Lock', 'Mirror', 'Run the audit now', 'Theme while running', 'Unlock', 'Vacuum', 'Window' ],
+		controls => [ 'Add sound', 'Adopt', 'Clothesline', 'Choose the budget statuses that announce', 'Choose the budget types that announce', 'Choose the devices that play this appointment\'s notification sound', 'Dark theme colour', 'Delete', 'Delete app', 'Doctor', 'Home', 'Lock', 'Mirror', 'Run the audit now', 'Theme while running', 'Unlock', 'Vacuum', 'Window' ],
 		verified => '2026-11-17',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [

@@ -81,7 +81,20 @@ sub notification_sender($m,$db) {
 	my $silenced = eval { &subs::sound_muted_for('notification', $app) } || 0;
 	my $sound_file = $m->{'settings'}->{$m->{'type'} . '_notification_sound'} || './public/sounds/notifications/' . $sound;
 	my $words = $m->{'words'} || $m->{'message'} || $m->{'settings'}->{$m->{'type'} ? $m->{'type'} . '_notification_text' : 'notification_text'};
-	if ($m->{'update'} || $silenced || $m->{'silent'}) {
+	# Which machines may play this appointment's chime: a house-wide list of
+	# signatorials, or "all". A missing or unreadable list keeps the old answer,
+	# every machine. The card is still drawn everywhere; this gates the sound and
+	# the phone's own notification, not the record in the house list.
+	my $chime_here = 1;
+	my $chime_raw = eval { &subs::setting_grabber({ app => $app, setting => 'notification_devices', device => 'all' }) };
+	if (defined $chime_raw && length $chime_raw) {
+		my $chime_list = eval { decode_json($chime_raw) };
+		if (ref $chime_list eq 'ARRAY') {
+			my $signatorial = &subs::signatorial_designer();
+			$chime_here = grep { defined $_ && ($_ eq 'all' || $_ eq $signatorial) } @{$chime_list} ? 1 : 0;
+		}
+	}
+	if ($m->{'update'} || $silenced || $m->{'silent'} || !$chime_here) {
 		# an update only changes a card already on screen; silence, or the
 		# caller already sounds this (the phone's alarm channel), must not play
 		# a second sound over it
@@ -119,7 +132,7 @@ sub notification_sender($m,$db) {
 		}
 	}
 	$image =~ s/ /\\ /gi;
-	if ($device eq 'mobile') {
+	if ($device eq 'mobile' && $chime_here) {
 		# An update must land on the same Android notification the first press
 		# built; the event uuid is that handle.
 		# The event uuid is the handle a later reading updates: the same id makes
@@ -220,7 +233,7 @@ sub notification_sender($m,$db) {
 
 	}
 	foreach my $embedded (qw/ watch teletype /) {
-		next if $m->{'update'};
+		next if $m->{'update'} || !$chime_here;
 		my $watch = &subs::device_lister($m->{'timestamp'},$embedded);
 		if (eval {$watch->{'ip'}}) {
 
@@ -797,28 +810,36 @@ sub migration_already_applied($command) {
 }
 
 # The apps the Notifications panel may offer, and the ones already switched on
-# for this machine. One query names the app universe and the notification rows;
-# a row is resolved the way a reader resolves a shared setting: this device
-# first, then the house (all), then the person (me), and the newest of equals
-# wins. Full settings are loaded only for the enabled apps, which are the few.
+# on any device. One query names the app universe and one reads every
+# notification row; the newest row for an app and a device decides that device,
+# and the union of the devices that said on is the appointment's entry. Full
+# settings are loaded only for the enabled apps, which are the few.
 sub notification_appointments() {
-	my $device = &subs::device_setter();
 	my $universe = eval {
 		return &subs::db_query("select distinct app from settings where setting in ('visible','pos','mab') and app is not null and app != '' and substr(app,1,2) <> '__' order by app")->hashes;
 	} || [];
 	my $notes = eval {
 		return &subs::db_query("select app, device, value, server_time from settings where setting = 'notification' and app is not null and app != '' order by cast(server_time as integer) desc")->hashes;
 	} || [];
-	my %on;
+	# The list is the union of every device, not just the one asking: an
+	# appointment announcing on the phone belongs here when it is read on the
+	# laptop. The newest row for one app and one device is the one that counts,
+	# and only its "on" puts that device in the entry.
+	my %latest;
 	foreach my $row ( @{$notes} ) {
 		my $app = $row->{'app'};
 		next unless defined $app && length $app;
-		my $dev = $row->{'device'} // '';
-		my $rank = $dev eq $device ? 3 : $dev eq 'all' ? 2 : $dev eq 'me' ? 1 : 0;
-		# The rows are newest first, so an equal rank keeps the one seen first.
-		next if exists $on{$app} && $on{$app}->{'rank'} >= $rank;
-		$on{$app} = { rank => $rank, value => $row->{'value'} };
+		my $key = $app . "\x1f" . ($row->{'device'} // '');
+		next if exists $latest{$key};
+		$latest{$key} = $row->{'value'};
 	}
+	my %on;
+	foreach my $key ( keys %latest ) {
+		next unless (($latest{$key} // '') eq 'on');
+		my ($app, $dev) = split /\x1f/, $key, 2;
+		push @{$on{$app}}, $dev if defined $dev && length $dev;
+	}
+	$on{$_} = [ sort @{$on{$_}} ] for keys %on;
 	my %protected = map { $_ => 1 } @gb::protected;
 	my (%seen, @enabled, @candidates);
 	foreach my $row ( @{$universe} ) {
@@ -829,11 +850,12 @@ sub notification_appointments() {
 		# panel should offer or announce.
 		next if &subs::app_visibility_value($app) eq 'private';
 		my $formatted = &subs::format_name($app);
-		my $enabled = ($on{$app} && ($on{$app}->{'value'} // '') eq 'on') ? 1 : 0;
+		my $enabled = $on{$app} ? 1 : 0;
 		if ($enabled) {
 			push @enabled, {
 				app => $app,
 				formatted_name => $formatted,
+				devices => $on{$app},
 				settings => &subs::settings_grabber({ app => $app, benign => 1 }),
 			};
 		}
@@ -847,15 +869,39 @@ sub notification_appointments() {
 	# only where the names come from.
 	foreach my $app ( sort keys %on ) {
 		next if $seen{$app}++;
-		next unless ($on{$app}->{'value'} // '') eq 'on';
 		next if &subs::app_visibility_value($app) eq 'private';
 		push @enabled, {
 			app => $app,
 			formatted_name => &subs::format_name($app),
+			devices => $on{$app},
 			settings => &subs::settings_grabber({ app => $app, benign => 1 }),
 		};
 	}
 	return { enabled => \@enabled, candidates => \@candidates };
+}
+
+# The machines the Appointments view may offer as places for a chime. A
+# signatorial is the machine's own name, so it survives a rename; the hostname is
+# only its label here. The machine asking is included even when the roster has
+# not written it yet.
+sub notification_device_choices() {
+	my $self = &subs::signatorial_designer();
+	my $rows = eval {
+		return &subs::db_query("select signatorial, hostname, name from remote_machines where signatorial is not null and signatorial != '' order by hostname, name")->hashes;
+	} || [];
+	my (%seen, @out);
+	foreach my $row ( @{$rows} ) {
+		my $sig = $row->{'signatorial'} // next;
+		next if $seen{$sig}++;
+		my $name = $row->{'hostname'} || $row->{'name'} || substr($sig, 0, 8);
+		push @out, { signatorial => $sig, name => $name, self => ($sig eq $self ? 1 : 0) };
+	}
+	unless ($seen{$self}) {
+		my $name = &subs::setting_grabber({ app => 'me', setting => 'computer_name' })
+			|| &subs::machine_hostname() || 'this device';
+		push @out, { signatorial => $self, name => $name, self => 1 };
+	}
+	return \@out;
 }
 
 1;

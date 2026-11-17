@@ -54,8 +54,13 @@
 #notifications_app .notifications_app_note { min-height: 1.3em; opacity: .72; font-size: 13px; }
 #notifications_app .notifications_app_appt_add { flex: 0 0 auto; width: 100%; box-sizing: border-box; padding: 7px 10px; font: inherit; font-size: 14px; color: inherit; background-color: var(--panel); border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .45); }
 #notifications_app .notifications_app_appt_list { display: flex; flex-direction: column; gap: 10px; }
-#notifications_app .notifications_app_appt_card { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); background-color: var(--panel-2, rgba(127,127,127,.06)); overflow-wrap: anywhere; }
-#notifications_app .notifications_app_appt_head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+#notifications_app .notifications_app_appt_card { flex: 0 0 auto; display: block; padding: 10px 12px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .6); background-color: var(--panel-2, rgba(127,127,127,.06)); overflow-wrap: anywhere; }
+#notifications_app .notifications_app_appt_head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; cursor: var(--jawnos-cursor-pointer, pointer); list-style: none; }
+#notifications_app .notifications_app_appt_head::-webkit-details-marker { display: none; }
+#notifications_app .notifications_app_appt_head::before { content: "\25B8"; flex: 0 0 auto; opacity: .7; }
+#notifications_app .notifications_app_appt_card[open] > .notifications_app_appt_head::before { content: "\25BE"; }
+#notifications_app .notifications_app_appt_devices { font-size: 12px; opacity: .65; }
+#notifications_app .notifications_app_appt_body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 #notifications_app .notifications_app_appt_off { flex: 0 0 auto; font: inherit; font-size: 12px; padding: 4px 10px; cursor: var(--jawnos-cursor-pointer, pointer); color: inherit; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .4); background-color: var(--panel); }
 #notifications_app .notifications_app_appt_off:hover { border-color: var(--accent-line, var(--line)); }
 #notifications_app .notifications_app_appt_off[disabled] { opacity: .45; cursor: var(--jawnos-cursor-default, default); }
@@ -96,13 +101,17 @@
 			<% foreach my $entry ( @{$appt_enabled} ) { %>
 				<% next unless $entry && defined $entry->{'app'} && $entry->{'app'} ne ''; %>
 				<% my $app = $entry->{'app'}; my $settings = $entry->{'settings'} || {}; %>
-				<div class="notifications_app_appt_card" data-app="<%= $app %>">
-					<div class="notifications_app_appt_head">
+				<% my @devices = @{ $entry->{'devices'} || [] }; %>
+				<details class="notifications_app_appt_card" data-app="<%= $app %>">
+					<summary class="notifications_app_appt_head">
 						<b><%= defined $entry->{'formatted_name'} && $entry->{'formatted_name'} ne '' ? $entry->{'formatted_name'} : &subs::format_name($app) %></b>
-						<button type="button" class="notifications_app_appt_off" data-app="<%= $app %>" hint="<%= &subs::ui('Stop this appointment from announcing notifications') %>"><%= &subs::ui('Turn off notifications') %></button>
+						<span class="notifications_app_appt_devices"><%= &subs::ui('Announcing on') %> <%= join ', ', map { &subs::format_name($_) } @devices %></span>
+					</summary>
+					<div class="notifications_app_appt_body">
+						<button type="button" class="notifications_app_appt_off" data-app="<%= $app %>" data-devices="<%= join ',', @devices %>" hint="<%= &subs::ui('Stop this appointment from announcing notifications') %>"><%= &subs::ui('Turn off notifications') %></button>
+						<%= include 'configure/app_notification', a => $app, settings => $settings %>
 					</div>
-					<%= include 'configure/app_notification', a => $app, settings => $settings %>
-				</div>
+				</details>
 			<% } %>
 		</div>
 	</div>

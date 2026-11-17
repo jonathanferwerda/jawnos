@@ -2,7 +2,9 @@
 # covers:    A budget notice that only changed its reading rewrites the card it
 #            already has; a new appointment or a new period speaks afresh. The
 #            two per-app pickers say which statuses and which budget types may
-#            announce. The Notifications app's Appointments view reuses the same
+#            announce. The Notifications app lists appointments announcing on any
+#            device, each as an accordion, and a Chime on picker chooses the
+#            machines that play the sound. The Appointments view reuses the same
 #            Configure panel to switch appointments on.
 
 use strict;
@@ -57,12 +59,20 @@ like($notify, qr/only_alert_once/, 'the phone updates its own notification witho
 like($notify, qr/&subs::db_update\('notifications'/, 'the stored row is rewritten, not duplicated');
 like($notify, qr/sub notification_appointments\(\)/, 'the app asks for the enabled appointments');
 like($notify, qr/app_visibility_value\(\$app\) eq 'private'/, 'private appointments are never offered');
+like($notify, qr/sub notification_device_choices\(\)/, 'the picker can list the house machines');
+like($notify, qr/notification_devices/, 'the sender reads the chosen chime machines');
+like($notify, qr/\$chime_here/, 'and only the chosen machine plays the sound');
+like($notify, qr/my %latest;/, 'the enabled list is the union of every device');
+like(source('lib/JawnOS/Domain/Loader.pm'), qr/notification_device_choices/,
+	'the machine list is mapped in the domain loader');
 
 # --- the shared Configure panel and the app view ----------------------------
 my $panel = source('templates/configure/app_notification.html.ep');
 like($panel, qr/setting="budget_notification_statuses"/, 'the panel carries the status picker');
 like($panel, qr/setting="budget_notification_types"/, 'and the type picker');
 like($panel, qr/All selected announces every status/, 'and says what all-selected means');
+like($panel, qr/setting="notification_devices"/, 'the panel carries the chime-device picker');
+like($panel, qr/Every device/, 'with an every-device choice');
 like(source('templates/configure/appointment_list.html.ep'),
 	qr/include 'configure\/app_notification', a => \$a, settings => \$appts->\{\$a\}->\{'setting'\}/,
 	'Configure draws the same panel');
@@ -73,12 +83,18 @@ like($apps, qr/data-notifications-view="appointments"/, 'and an Appointments vie
 like($apps, qr/id="notifications_app_appt_add"/, 'with an input to add an appointment');
 like($apps, qr/include 'configure\/app_notification'/, 'and the same panel per enabled appointment');
 like($apps, qr/flex: 0 0 auto/, 'rows cannot be squeezed unreadable by a long list');
+like($apps, qr/<details class="notifications_app_appt_card"/, 'each appointment is an accordion');
+like($apps, qr/data-devices=/, 'and carries the devices that announce it');
+like($apps, qr/Announcing on/, 'the summary says where it announces');
 
 my $js = source('public/js/manager/notifications.js');
 like($js, qr/setting: 'notification'/, 'adding an appointment switches its notification on');
 like($js, qr/settingSetter/, 'through the shared setting writer');
+like($js, qr/data-devices/, 'turning one off clears every device that announced it');
 
 like(source('lib/JawnOS/Controller/manager_misc6.pm'),
 	qr/notification_appointments\(\)/, 'the app hands the view the enabled appointments');
+like(source('lib/JawnOS/Controller/manager_configure4.pm'),
+	qr/notification_devices/, 'the chime choice is saved as a house-wide setting');
 
 done_testing();

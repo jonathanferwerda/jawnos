@@ -145,7 +145,15 @@ $(document).on('click', '.notifications_app_appt_off', function() {
 	if (!app || button.prop('disabled')) { return; }
 	button.prop('disabled', true);
 	notificationsAppApptNote('');
-	Promise.resolve(settingSetter({ app: app, setting: 'notification', value: 'off' }))
+	// The entry is a union of every device that announces, so turning it off
+	// clears each of those rows, not only the one this browser happens to be on.
+	var devices = String(button.attr('data-devices') || '').split(',').filter(function (device) {
+		return device !== '';
+	});
+	var writes = devices.length ? devices.map(function (device) {
+		return settingSetter({ app: app, setting: 'notification', device: device, value: 'off' });
+	}) : [ settingSetter({ app: app, setting: 'notification', value: 'off' }) ];
+	Promise.all(writes.map(function (write) { return Promise.resolve(write); }))
 		.then(function() {
 			notificationsAppApptRefresh();
 		}, function() {
