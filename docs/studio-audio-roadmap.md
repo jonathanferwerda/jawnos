@@ -1,0 +1,546 @@
+# Studio audio engine — a native engine and the house patchbay
+
+> **Entry point:** `docs/roadmap.md`. This plan is **proposed, not started**; P0 is the gate that
+> decides whether the rest is worth building. It is not on this season's critical path.
+
+**Status:** proposal, 2026-11-17. No code written. P0 (measure) is the next action.
+**The converter:** a **Behringer UM2** on `table.jonathanferwerda.com` — the preferred clock master.
+**Related:** `docs/reception.md` (the audio gateway the engine must not duplicate),
+`docs/platform-roadmap.md` (CoreAudio/WASAPI — the same device seam), `docs/roadmap.md` (Perl stays
+the server), `docs/docker.md` (what the container deliberately lacks).
+
+---
+
+## 1. Charter
+
+> Give the house one native audio process per machine that owns its sound card, mixes and records at
+> a fixed small buffer, and shares one sample clock with every other machine and device — so a take
+> made on the phone, the laptop and the table lines up sample-for-sample, and monitoring through the
+> audio interface is played, not perceived.
+
+Two jobs, one engine:
+
+1. **The studio.** An interface, a guitar, a click, and a take that is in time. This is the part
+   that has to feel like Cubase or Kristal with ASIO.
+2. **The house patchbay.** Every input and output in the house — interface, built-in mics, phones,
+   the T-Deck, the watch, the reception handset, the Music player, future amplifier nodes — in one
+   routing table that JawnOS owns, instead of pavucontrol per machine.
+
+What that buys, in order:
+
+1. **Monitoring you can play to** through the interface: a fixed few milliseconds, wired.
+2. **Takes that are in time**, wherever they were played, because every source carries a declared
+   latency and the engine compensates for it.
+3. **One place to route the house's sound**, on any device, saved as a plan.
+4. **One audio stack** — Studio, the reception call, video timelines, zone playback and plain file
+   work share the engine instead of three pipelines and a desktop mixer.
+
+---
+
+## 2. The house's audio, as it is
+
+Measured sources and sinks, and what already exists in the tree.
+
+| Class | Source / sink | Shape | Latency floor | For |
+|---|---|---|---|---|
+| **A — the converter** | Behringer UM2 on `table`: 2 in / 2 out, USB class-compliant, **48 kHz / 16-bit**, a mic input and an instrument input | 48 k, 2 ch | **3–6 ms** round trip at 64 frames (P0 measures it) | guitar, mics, monitors — the one class that gets the near-zero promise |
+| **B — the machine's own mic** | the laptop/table microphone, through PipeWire | 48 k after resampling, 1 ch | 20–60 ms | scratch vocals, room, talking to the house |
+| **C — the phone** | the app's capture (Oboe) or `getUserMedia` | 48 k, Opus 10 ms | 15–40 ms on the LAN or tailnet | a microphone where you are; a monitor in your pocket |
+| **D — the T-Deck** | TDM microphone, 16 kHz, clip-based today (`jt/jt_16_voice_capture.ino`) | 16 k → 48 k | 40–100 ms, and clips only | a room mic, voice notes, a satchel recorder |
+| **E — the watch** | 16 kHz mono WAV from FFat, pulled per house node (`jw/jw_10_playback.ino`) | 16 k → 48 k | 100 ms+ | a zone, or dictation — never a tracking source |
+| **F — a future amp node** | ESP32 + I2S amp | 48 k, 1–2 ch out | 30–80 ms by design | house zones |
+
+Already in the tree, and the engine composes with each rather than replacing it blind:
+
+- **`Sound`** (`templates/apps/sound.html.ep`, `public/js/manager/sound.js`, six routes under
+  `/manager/sound`) already lists outputs and inputs, sets the default, and drives volume and mute
+  through `JawnOS::Platform::Audio` — `pactl`, then `wpctl`, then `amixer`.
+- **`Power`** has the switch this plan copies: `POST /manager/power/manage`
+  (`lib/JawnOS/Controller/manager_power.pm:101`) applies a saved **plan** when the house is put in
+  charge. Audio needs exactly that shape, not a new one.
+- **Music** already streams a track to another machine as PCM or Opus and measures the receiver's
+  lag (`perl/Music/02_remote_audio_stream.pl:49`,
+  `perl/Music/01_remote_audio_receiver.pl:264`). That is a *stream*, not a session; the engine adds
+  the session, and can take the player as a source.
+- **The reception handset** exposes `jawn_call_in` / `jawn_prompt` as real nodes
+  (`lib/JawnOS/Sco/Mixer.pm:39`), so a call is routable and recordable like anything else.
+- **The firmware discovers ports over mDNS** with the TXT keys `arm`, `coms`, `bestow`
+  (`jw/jw_07_house_audio.ino:111`). A device can find the engine the same way with one more key.
+- **48 kHz is already the house's rate** — the handset says so outright
+  (`lib/JawnOS/Sco/Mixer.pm:320`) and Music defaults to it. The UM2 being 48 kHz-only makes that a
+  policy rather than a coincidence.
+
+---
+
+## 3. Why the browser cannot be fixed
+
+This is architecture, not opinion. Four costs stack in the current path:
+
+| Cost | Where | Why it cannot be tuned away |
+|---|---|---|
+| Device buffer | `studioLatencyHint` (`public/js/manager/studio.js:111`) | `latencyHint` is a **request**. Chromium picks the real buffer in its audio service, after the OS mixer — and after PipeWire, which has its own quantum. |
+| Capture | `MediaRecorder` (`public/js/manager/studio/05_inputs.js:346`) | `start()` is called with no timeslice, so the take is a blob that arrives at `stop`. Its start is a wall-clock event, not a sample position. |
+| Alignment | `studioRecordOffset` (`public/js/manager/studio/03_editing.js:1`) | The code already subtracts a *measured* latency so an overdub does not land late. Right idea, wrong transport: an estimate nudging a recording whose true start is unknown. |
+| Round trip | the app's own probe (`public/js/manager/studio.js:421`) | Monitoring leaves the graph, crosses the audio service and the OS mixer and comes back. |
+| The owner | Qt WebEngine (desktop) / Chromium | The browser holds the device handle. No JavaScript gets exclusive access to it. |
+
+The lesson from Cubase and Kristal is exactly this: the win came from owning the device (ASIO), not
+from a better mixer. That is a process-boundary change, and nothing inside the page substitutes for
+it. So **the engine's round trip *is* the monitoring path** here — the one number this whole
+project is judged on.
+
+Playback is the part already done right: takes are scheduled on the `AudioContext` clock
+(`public/js/manager/studio/01_transport.js:140`), which is why playback is stable and recording is
+not. The probe at `studio.js:421` is the first asset P0 reuses.
+
+---
+
+## 4. What "near zero" means, per class
+
+"Zero" is not achievable, and it is the wrong target. Three separate problems wear the word:
+
+- **Monitoring latency** — what the player hears back. It must be **small** (class A: ≤ 5 ms wired)
+  because it is what fingers key off.
+- **Capture alignment** — where the take lands on the timeline. It must be **exact** (±1 sample),
+  even for a source that is 60 ms late. A constant delay is not a problem; an unknown one is.
+- **Drift** — two crystals differ by 50–200 ppm, which is 2.6–10 ms a minute. It must be
+  **compensated** by resampling every input to one master clock.
+
+So the promise is deliberately uneven:
+
+| Class | Monitoring promise | Alignment promise |
+|---|---|---|
+| A — the interface | **≤ 5 ms** wired, 64 frames | ±1 sample |
+| B — a built-in mic | none; not a monitoring path | ±1 sample |
+| C — the phone | none over Wi-Fi; ≤ 20 ms on a wire/tailnet | ±1 sample, compensated |
+| D, E — T-Deck, watch | none | ±1 sample, for clips |
+| F — amp nodes | none, by design (a zone, not a booth) | not applicable |
+
+That is what makes the phone usable as a multitrack microphone even at 30 ms: you hear yourself late
+but the take is placed exactly where you played it. The engine's job is to *know* the delay, not to
+pretend it is not there.
+
+The network floor, measured against what Music already does: the remote path runs PCM at a 30 ms
+pacat buffer (`perl/Music/01_remote_audio_receiver.pl:264`) with an 80 ms latency base
+(`perl/Music/04_music_websockets.pl:220`), because it carries a *stream*. On a LAN the same samples
+can cross in one or two frames (~3 ms).
+
+---
+
+## 5. Decisions
+
+| # | Decision | Why |
+|---|---|---|
+| D1 | **A native helper, not a server rewrite.** A Rust binary, built per machine, optional. | Follows `perl/sco/sco_helper` and `scripts/build_sco.pl`: the one part that must live outside Perl, absent where it cannot be built. Consistent with "Perl stays the server" (`docs/roadmap.md`). |
+| D2 | **Perl keeps every record; the engine keeps every sample.** Players, plans, takes, clips and settings stay in SQLite and the routes. | The engine is replaceable and crashable. Nothing durable lives only in its memory. |
+| D3 | **One engine per machine, opt-in.** Spawned when a session arms, asleep when it does not. | A 64-frame engine wakes 750×/s — the opposite of the battery target. It must cost nothing when idle. |
+| D4 | **Audio over UDP directly; control over the existing websocket.** | The ws path already authenticates peers (`peer_verify` + `signatorial`, as `/manager/music/stream` does). Datagrams carry samples; a TCP hop is a jitter source by definition. |
+| D5 | **The converter machine is the preferred clock master, chosen by election.** One master per session; every take is stamped with its sample position. | The UM2's word clock is the only clock in the house that matters while it is up, and `table` will not always be up (D13). |
+| D6 | **48 kHz inside, always.** 44.1 k material and 16 kHz devices are resampled at the edge, once. | The UM2 cannot do 44.1, the handset is already 48 k, and a second rate buys nothing. |
+| D7 | **Latency is compensated, never hidden.** Each node declares its buffer and rate; the engine places every take by that number. | This is what lets a 30 ms phone mic be a multitrack source. |
+| D8 | **PCM on a wired LAN, Opus for the phone and Wi-Fi.** | PCM is free on a gigabit; Opus at 10 ms frames keeps a phone's uplink honest. Chosen per peer and stream. |
+| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The engine is a PipeWire client by default**, claiming a device exclusively only if P1 proves a material gain. | The ask: no pavucontrol. Exclusive ALSA would silence Music, calls and alerts on that machine to buy a millisecond; a fixed quantum keeps the house audible. Turning `manage` off gives the machine back either way. |
+| D10 | **Zones are declared-latency nodes, not promises.** An amp node is a speaker, never a booth. | Keeps the low-latency path honest; a zone with a 60 ms buffer is correct, not a failure. |
+| D11 | **Graceful fallback, always.** No engine → today's WebAudio and PipeWire paths, unchanged. | A machine that cannot build it is a machine with the audio it has now. |
+| D12 | **The engine is a node, not a silo.** The handset's `jawn_call_in` / `jawn_prompt`, the Music player and the browser's own inputs are sources. | One graph for the house, not a fourth stack beside PipeWire, WebRTC and Sco. |
+| D13 | **The master is a role, not a machine.** A session elects it; the converter machine wins when it is present. | `table` will go down. The plan must survive that without a schema change (§12). |
+| D14 | **Every node records to local disk first; the shared timeline is metadata.** | An outage then costs alignment, never audio. |
+| D15 | **A lone node runs a session of one** and reconciles on import. | The phone or the laptop away from the house is a first-class case, not an error. |
+
+---
+
+## 6. Why Rust, and what would change it
+
+Owning the device is the decision (D1); the language is a consequence of it. For this component Rust
+is the right choice, for three reasons:
+
+- **It removes the failure modes this code actually has.** Real-time audio breaks on an allocation
+  or a lock inside the callback, and on a race between the control thread and the sample thread.
+  Rust makes both compile-time problems. A codebase maintained largely by agents gains more from
+  that than a human one does, because the compiler is a reviewer that never gets tired.
+- **One device API for every platform already planned.** `cpal` covers ALSA, JACK, PipeWire,
+  CoreAudio, WASAPI and Android behind one trait — the same seam `docs/platform-roadmap.md` P2/P3
+  opens, written once.
+- **The crates are small and boring.** `cpal` (device), `rtrb`/`ringbuf` (the lock-free parameter
+  path), `rubato` (the resampler D6 requires), `symphonia` (decode), and the `pipewire`/`jack`
+  bindings where a backend needs them. No framework to adopt and no runtime to explain.
+
+What it costs, honestly:
+
+- **A second toolchain on every machine**, and a Cargo step inside the APK's Gradle build. Paid once
+  per machine, and it is real friction on a phone.
+- **Not for the UI** (web/Qt stays), **not for video** (ffmpeg), **not for the plumbing** (Perl).
+- **If this ever becomes a VST/AU host**, C++ and JUCE own that ecosystem. "No VST host" is worth
+  keeping precisely because it keeps that door shut.
+
+The alternative is **C** — what `perl/sco/sco_helper` already is: no new toolchain, and the DSP here
+is not hard. It loses on exactly the point above: an agent-written C audio thread is where a
+use-after-free becomes a buzz that appears once a second. Go and C# are out; a garbage collector on a
+1.33 ms deadline is a design argument, not a tuning problem.
+
+---
+
+## 7. Target topology
+
+```mermaid
+flowchart TD
+    subgraph table["table — clock master, holds the UM2"]
+        UM2["Behringer UM2, 2 in / 2 out, 48 kHz"]
+        ENG1["jawn-audio, 64-frame graph + patchbay"]
+        UM2 <--> ENG1
+    end
+
+    subgraph laptop["laptop — control surface"]
+        UI["Studio and Sound pages"]
+        ENG2["jawn-audio"]
+        UI -. "routes, knobs, transport" .-> ENG1
+    end
+
+    subgraph phone["phone — mic and monitor"]
+        APP["app capture, Oboe"]
+        ENG3["jawn-audio"]
+        APP --> ENG3
+    end
+
+    subgraph deck["T-Deck and watch"]
+        MIC["16 kHz TDM mic"]
+        WSPK["16 kHz playback"]
+    end
+
+    subgraph zones["future amp nodes"]
+        AMP["ESP32 + I2S amp"]
+    end
+
+    subgraph srv["house server"]
+        MGR["Manager worker, routes, SQLite, the plan"]
+        MGR -. "spawn, plan, node registry" .-> ENG1
+        UI -. "ws control" .-> MGR
+    end
+
+    ENG1 <==> ENG2
+    ENG1 <==> ENG3
+    MIC --> ENG1
+    ENG1 --> WSPK
+    ENG1 --> AMP
+```
+
+Heavy edges are UDP — PCM on a wired LAN, Opus to a phone or a zone. Dotted edges are websocket
+control. The browser becomes a **control surface and a picture**, never a sample path. PipeWire remains the
+plumbing for machines without the engine, for the Bluetooth handset and for anything third-party;
+on an engine machine it runs at a fixed low quantum as the engine's backend, so it stays in the path
+and stays out of the way.
+
+---
+
+## 8. The patchbay
+
+The routing model the house gets, and the reason the engine is not just Studio's mixer.
+
+- **Source** — anything that makes samples: UM2 ch 1/2, a built-in mic, a phone, the T-Deck, a
+  Music player, a peer's output, `jawn_call_in`.
+- **Bus** — a named mix: a Studio track, the click, a monitor mix, `house`, a zone feed. Buses can
+  feed buses (a send), with a depth limit so a loop is impossible.
+- **Sink** — the interface's outputs, a machine's speakers, a phone, an amp node, the watch.
+- **Route** — source → bus (gain, pan, mute) and bus → sink (gain, delay). Saved as a **plan**, the
+  same shape Power saves.
+
+Rules that keep it honest:
+
+1. **The plan is declarative and lives in the DB.** Machines joining, sleeping or leaving reconcile
+   against it; nothing restarts audio to apply a change.
+2. **Only the clock master executes hardware routes.** A route edited on the laptop is delegated to
+   `table`'s engine, so there is one graph touching the UM2.
+3. **Every node declares itself**: rate, channels, direction, buffer, class (A–F). The matrix shows
+   the declared latency beside the route, so a zone never gets mistaken for a booth.
+4. **A route is not a recording.** Recording a bus is a take, and a take is a Studio row; the
+   patchbay can create one but does not own it.
+
+This is the answer to item 5: one table, on any device, for every input and output in the house.
+
+---
+
+## 9. Who owns the mixer
+
+The Sound app grows from "default device, volume, mute" into the mixer, in the shape Power and Network already use (both carry a `manage` post):
+
+- **`POST /manager/sound/manage`** — the master switch, beside the management line. On: the engine
+  owns the routing on this machine and Sound is the only mixer. Off: the machine is handed back to
+  the ordinary PipeWire defaults and pavucontrol, with nothing left behind. `power_manage_set` is the model
+  (`lib/JawnOS/Controller/manager_power.pm:101`).
+- **A saved audio plan**, applied on boot and on `manage` on — Power's `apply` again.
+- **The matrix**, under Sound: sources, buses and sinks as a grid, with a route's declared latency
+  and level on the cell.
+- **A node inspector**: what is present, what is armed, what is streaming, xruns and each node's
+  buffer. This is the page that replaces `pavucontrol` and `pw-top`.
+- **The house level** stays exactly as it is (`Sound`/`Quiet`/`Mute`/`Silence`, app profiles); it is
+  a policy over the matrix, not a second mixer.
+
+The two-tier rule for the routes: a read is a plain `/manager/sound` page; every write is a `post`
+under the prefix, as the other apps do. A new control label gets its key in `language.pl` for all
+sixteen languages in the same change, and the help topic is updated with it.
+
+Bypassing pavucontrol has a cost that must be stated plainly: **a machine in managed mode loses
+arbitrary third-party mixer control.** That is the point, and it is exactly why the switch must be a
+visible toggle that can be turned off, not a setting applied once and forgotten.
+
+---
+
+## 10. The protocol, in outline
+
+One small fixed header per datagram, then the payload:
+
+```
+magic | version | session | stream | seq | master_sample | codec | flags | payload
+```
+
+- `session` is issued by the manager when a session arms, so a stale peer cannot join.
+- `stream` names one input, bus or zone feed: `um2-in1`, `ch3-in`, `house`, `click`.
+- `seq` detects loss and reordering; `master_sample` is the position of the **first** sample, so the
+  receiver places it on the timeline without trusting arrival time.
+- `codec` is `pcm_s16`, `pcm_s24`, `opus10` (10 ms) or `pcm16k` (a 16 kHz device, resampled here).
+- Authentication comes from the existing peer handshake (house CA + `peer_verify`); every datagram
+  carries a short MAC. Never an open UDP port.
+
+Node discovery reuses what the firmware already does: one more mDNS TXT key, `audio`, beside `arm`,
+`coms` and `bestow` (`jw/jw_07_house_audio.ino:111`), and the node registry the house server keeps.
+
+Loss policy differs per stream, and that is a feature: an **input** stream conceals (repeat, fade),
+because a missing guitar sample is better than a gap; a **bus or zone** stream drops stale audio
+rather than playing late — the rule the Music receiver already applies
+(`perl/Music/02_remote_audio_stream.pl:205`).
+
+---
+
+## 11. The secondary devices
+
+### The phone as a microphone
+
+The app is a Termux fork that already supervises jawnos and already owns call audio
+(`JawnInCallService`). The microphone path belongs in the app's Java layer, not the web page:
+
+1. A foreground service holding an `AudioRecord` on **AAudio/Oboe** with
+   `PERFORMANCE_MODE_LOW_LATENCY` (exclusive where the device allows), 48 kHz mono.
+2. 10 ms Opus frames over the same UDP protocol, addressed by a **mic lease** the manager issues.
+3. `getUserMedia` stays the fallback — it is what works today, and what P0 measures against.
+
+### The T-Deck
+
+It already has a 4-slot TDM microphone at 16 kHz (`jt/jt_01_globals_ble_house.ino:45`). Two things
+matter and both are already learned in the firmware:
+
+- **Never write flash while capturing.** `jt_16_voice_capture.ino:4` records the whole clip into
+  PSRAM because a flash program stalls the CPU with the cache off, the I2S DMA overruns, and the
+  result is a buzz. A streaming path must keep that rule or repeat the bug.
+- **16 kHz is a clip source.** It is resampled to 48 k and placed by its declared latency; it is a
+  room mic and a voice recorder, not a booth.
+
+### The watch
+
+16 kHz mono WAV from FFat, played through the codec (`jw_10_playback.ino`). It is a **zone sink** and
+a dictation device. Its house-node list is already the discovery path.
+
+### Future amplifier nodes
+
+An ESP32 with an I2S amp is a zone: 48 kHz, 30–80 ms buffer, discovered by mDNS, fed by a bus. It
+must be able to sleep and idle to zero, and a sleeping zone is simply unrouted — the same rule the
+engine itself follows (D3).
+
+The app rule stands: any APK change bumps `versionCode`/`versionName` and is built and published in
+the same change (`~/jawnos-app/termux-app/AGENTS.md`).
+
+---
+
+## 12. When the house is not all there
+
+`table` is always on, but it will reboot, sleep and occasionally be down; the laptop and the phone
+will sometimes be on their own. The plan is only real if it says what happens then, so **the master
+is a role, not a machine.**
+
+**A session elects its master.** Candidates are the armed nodes with a local converter. Preference:
+the machine holding the interface, then the node with the most inputs, then the node that started
+the session, then the smallest round trip. The choice is written into the session, so every node
+agrees on who is counting.
+
+**Everything records locally before it goes anywhere.** Each node writes its own take to disk as it
+records; the shared timeline is metadata, not the cargo. A master that dies mid-take then costs the
+*alignment*, never the performance. On reconnect the manager imports the take and places it by its
+stamped position. This is the cheapest resilience in the plan and the first thing worth building.
+
+**A lone machine is a session of one.** No peers, no election: the engine records against its own
+clock, stamps the session and its boot id, and the house reconciles on import. A phone that was out
+of the house all afternoon is a take with a session mark, not a lost file.
+
+The ladder, in the order it is tried:
+
+| Rung | State | Behaviour |
+|---|---|---|
+| 1 | a master and peers | the full session: shared clock, compensated takes |
+| 2 | peers, no master | election runs; if nobody can be master, rung 3 |
+| 3 | one engine, alone | a local session, reconciled when the house returns |
+| 4 | no engine | today's WebAudio path, unchanged |
+
+Nothing on rung 3 or 4 may lose audio. A take that exists is a take that can be placed later; a take
+that was streamed and never written is gone. That is why rung 3 is not optional.
+
+---
+
+## 13. Phases
+
+Each phase has one gate. A gate that fails is a finding, not a setback: it changes the phase after
+it.
+
+### P0 — Measure before building (2–3 days)
+
+Instrument what Studio does *now*, on the laptop and on `table` with the UM2 plugged in: capture-to-
+graph latency, output latency, `MediaRecorder` start error against the click, and take alignment on
+playback. Then measure the same round trip with a throwaway ALSA player at 64 frames, so the
+interface's floor is known before any Rust exists. Reuse the probe at `studio.js:421`.
+
+**Gate:** a table of measured numbers for both machines, and a target the native path must beat by
+at least 4×. If the browser is already at 12 ms on this hardware, the engine's case is weaker and
+this doc says so. If the UM2 cannot hold 64 frames on `table` without xruns, that is the finding and
+P1 changes shape.
+
+### P1 — The engine skeleton (1 week, spike)
+
+An `engine/` Cargo workspace and the `jawn-audio` binary: open the UM2, pass 2 in / 2 out through,
+report xruns and the measured round trip on a Unix socket under `~/.president/`.
+`scripts/build_engine.pl` mirrors `build_sco.pl` (build, `--check`, no compiler → no engine); the
+binary is gitignored beside `perl/sco/sco_helper`.
+
+**Gate:** ≤ 5 ms round trip at 64 frames on `table`, zero xruns over 10 minutes with the house running
+its own JawnOS, and a null backend that runs in the suite.
+
+### P2 — Studio's graph in the engine (2–3 weeks)
+
+Channels, gain/pan, the tone stack, the pedal inserts, the click, the transport, and takes written as
+WAV/FLAC on disk (the DB keeps the take row as today). The page keeps the waveform canvas and the
+knobs and calls the engine; `JawnOS::Audio::Engine` is the Perl-side client.
+
+**Gate:** a four-track take through the UM2 lands within **±1 sample** of the click on playback, and
+an A/B against the current path is indistinguishable except for latency.
+
+### P3 — Peers on one clock (2 weeks)
+
+Engine-to-engine over UDP: `table` as master, one peer, one shared transport. Offset and drift
+estimated from timestamped datagrams, inputs resampled to the master. This is where the hard problem
+lives.
+
+**Gate:** two machines, ten minutes, drift **< 1 sample** without an audible correction, LAN
+monitoring **< 15 ms**.
+
+### P4 — Sources that are late (2 weeks)
+
+The uplink proper, with compensation: the phone (C) and the T-Deck (D) become channels on the master,
+each placed by its declared latency, so a take played 30 ms late is recorded in time. Each peer
+writes its own take locally first (D14), so the master places it rather than owning it.
+
+**Gate:** guitar through the UM2 and voice on the phone in one session, both in time with the click,
+both on the same take, ten minutes without a lost take. Then the same with a T-Deck clip.
+
+### P5 — Sound owns the mixer (2 weeks)
+
+The `manage` switch, the saved audio plan, the matrix and the node inspector (§9), driving the
+engine on `table` and plain PipeWire elsewhere. The engine's streams and quantum are fixed, so
+pavucontrol has nothing to fight over and nothing to break.
+
+**Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
+streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
+turning `manage` off returns the machine to today's behaviour with nothing stranded.
+
+### P6 — Zones (2 weeks)
+
+Amp nodes (F) and the watch (E) as declared-latency sinks on their own bus, discovered over mDNS,
+with sleep and idle-to-zero.
+
+**Gate:** one room plays the house bus from an amp node with a stable buffer and no drift, the node
+sleeps when it is unrouted, and the same bus reaches the watch without a second configuration.
+
+### P7 — Picture and general audio (open-ended, last)
+
+The timeline gains video: ffmpeg decodes to the engine's clock, the preview is a native surface (or
+the canvas), renders go back through ffmpeg. Also the boring wins: format conversion, normalisation,
+a render queue, a level meter that is true. No codec is written here.
+
+**Gate:** a two-camera take with a clean audio master exported end-to-end, picture within one frame
+of the timeline.
+
+### P8 — Other platforms
+
+CoreAudio and WASAPI behind the same device trait — the seam `docs/platform-roadmap.md` P2/P3 opens.
+Deliberately last: one excellent Linux engine beats three mediocre ones.
+
+---
+
+## 14. What would make this not work
+
+Stated before the work, so the answer is not found late.
+
+1. **`table` cannot hold 64 frames with the house running.** Then the interface machine moves, or the
+   promise becomes "≤ 10 ms, measured", which is still several times today. Not fatal; P0 finds it.
+2. **PipeWire cannot be tuned below ~10 ms, and exclusive ownership breaks the rest of the machine.**
+   Then choose: one studio-only machine, or ~10 ms everywhere. Both are usable answers.
+3. **Cross-machine alignment cannot reach ±1 sample without audible artifacts.** Then remote
+   multitrack drops to "align by markers on import" — less elegant, still useful, and rung 3 already
+   builds the machinery for it.
+4. **The second language costs more than it returns.** Then the same design lands in C, where
+   `sco_helper` already lives, and nobody has to learn anything.
+
+Each of these is answerable in P0 and P1, before the expensive work. That is the point of the gates.
+
+---
+
+## 15. Risks
+
+| Risk | Why it bites | Mitigation |
+|---|---|---|
+| **Clock drift** | The whole remote-multitrack promise; two crystals never agree. | Estimate offset *and* drift from the first datagrams; resample every input to the master; stamp takes with master positions. Design it in P1, not P4. |
+| **An outage mid-take** | `table` is the house's audio source; a reboot, a sleep or a crash is silence everywhere. | D13–D15: the master is a role, every node records locally first, and a lone node runs a session of one that reconciles on import. Power still has to know a machine is carrying audio before it sleeps it. |
+| **USB audio xruns on a busy 4-core box** | Its own JawnOS, Wi-Fi and the suite all preempt a 1.33 ms deadline. | Direct port, not a hub; `rtprio`/`memlock` limits for the engine; report xruns rather than glitching silently; P0 measures this box first. |
+| **Power vs. latency** | 750 wakeups/s contradicts the idle target in `docs/roadmap.md`. | Opt-in and arming-scoped; the engine exits when the session ends; report energy per armed hour. |
+| **Bluetooth monitoring** | 150–300 ms whatever the engine does. | Refuse it for monitoring and say so; `docs/reception.md` already knows the 2.4 GHz/Bluetooth interference story. |
+| **The 16 kHz devices** | Resampling a T-Deck or watch path to 48 k is not transparent; treating it as a booth would be a lie. | Class it as a clip/zone source, declare the rate in the matrix, and never promise monitoring on it. |
+| **Exclusive device ownership** | Claiming the UM2 costs the machine its ordinary mixer; a user can feel trapped. | The `manage` switch is visible and reversible in one press, exactly like Power's; the handback is tested. |
+| **Security of the uplink** | An open UDP port on the house LAN is a microphone for anyone. | Session keys from the peer handshake, a per-datagram MAC, lease expiry; never a house-wide open port. |
+| **CI cannot hear** | A suite with no sound card. | Null backend plus a deterministic clock; unit-test the graph, the patchbay and the sync maths against fixtures. Every behaviour change gets its `t/` file with `# tests-for:`. |
+| **The engine becomes a server** | Scope creep into playback libraries, transcode queues, a second DB. | D2: Perl keeps every record; video stays ffmpeg. |
+| **Duplicating reception** | Two audio stacks fighting over PipeWire. | D12: the handset is a node on the engine, never a second gateway. |
+
+---
+
+## 16. Non-goals
+
+- No rewrite of Studio's or Sound's UI; the canvas, waveform and knobs stay, they just stop making
+  sound.
+- No VST/AU host. Pedals stay the house's own effects; an insert can be an external process later.
+- No video codec, no NLE feature race. Picture follows the audio clock, nothing more.
+- No engine in the Docker image — a container has no sound card, and `docs/docker.md` already lists
+  what it deliberately lacks.
+- No engine on machines that only listen; the browser receiver path stays.
+- No promise of low latency on a 16 kHz device, a Bluetooth headset, or a zone.
+
+## 17. Open questions
+
+1. **How far does PipeWire get us?** D9 makes it the default, so the question is whether a fixed
+   64-frame quantum delivers on `table`, or whether exclusive ALSA wins by enough to silence the
+   machine. Measure both in P1; do not guess.
+2. **What does `table` do when it sleeps?** §12 survives the outage; Power still has to know a
+   machine is carrying audio before it sleeps it.
+3. **Where does the transport live** when the browser is only a view — `table`'s engine, or the
+   session's clock master even when the UI is elsewhere?
+4. **One engine per machine or per user?** A shared box with two people in Studio needs two graphs.
+5. **f32 or f64 internally?** f64 is the house's habit in Perl; f32 is what the hardware and the SIMD
+   want. Decide at P2 and write it down.
+6. **How much of Music's remote path moves onto the engine?** The stream is good; the session is
+   better. Answer at P5, not before.
+
+## 18. First week, concretely
+
+1. P0 instrumentation on the laptop: `performance.now()` around `getUserMedia`, `ctx.baseLatency` +
+   `ctx.outputLatency`, `MediaRecorder` start error against the click, take alignment on replay — the
+   probe at `studio.js:421` already does the round trip.
+2. The same measurement on `table` with the UM2, plus a bare ALSA `aplay`/`arecord` loop at 64
+   frames to find the interface's floor and its xrun behaviour on that box.
+3. A short baseline section with the numbers and the machine each came from.
+4. `cargo new engine --bin jawn-audio` and a null backend that runs in the suite, so P1 starts from a
+   green test rather than a device.

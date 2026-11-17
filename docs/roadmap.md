@@ -73,6 +73,7 @@ bundled, or one worker is a measured bottleneck. Not because the code is Perl.
 | `docs/AGENTS-roadmap.md` | **active** | deferred operational items |
 | `docs/migration-roadmap.md` | **paused** | per-worker port reference; §3 baseline is stale |
 | `docs/infrastructure-roadmap.md` | **active but off-path** | hub/VPS/tailnet move |
+| `docs/studio-audio-roadmap.md` | **proposed** | the native audio engine and the house patchbay |
 | `docs/it-strip-roadmap.md` | **deferred** | the USB strip idea |
 | `docs/platform-p0.md`, `docs/platform-go-no-go.md` | **historical** | the measured P0 record |
 
