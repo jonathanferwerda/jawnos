@@ -12,6 +12,7 @@ pub mod device;
 pub mod graph;
 pub mod params;
 pub mod proto;
+pub mod session;
 
 pub use device::{Device, DeviceError, NullDevice};
 pub use graph::{mix_mono_into_stereo, peak, GraphError, Strip};
@@ -20,3 +21,4 @@ pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,
     HEADER_LEN, VERSION,
 };
+pub use session::{align, elect, Candidate, ClockOffset, NodeId};

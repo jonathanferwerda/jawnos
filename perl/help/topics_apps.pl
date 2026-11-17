@@ -152,6 +152,7 @@ $topic{'studio'} = {
 		body => [
 			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
 			'The knobs and pedal backdrops follow the selected icon set, so the mixer wears the same finish as the rest of the desk.',
+			'The Latency row shows what the browser reports for this session: the total output figure, its base and output parts in milliseconds, and the sample rate in hertz.',
 			'It works with the same library as Music, so recorded and imported tracks sit together.',
 			'A channel\'s input is a plug you choose: a microphone or camera, another window, screen share, or the Synth — pick Synth and what you play records through the channel\'s tone stack and pedals like any other source.',
 			'A synth panel sits at the top of the window (Hide tucks it away): pick a sound and play its keys right there, then record it by setting a channel\'s input to Synth.'

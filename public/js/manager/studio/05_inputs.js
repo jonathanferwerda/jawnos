@@ -358,6 +358,15 @@ function studioStartTake(ch, looping, at) {
 		take.track.src = take.src;
 		studioTakeRequestBuffer(take);
 	};
+	// Measurement only: stamp the request and the recorder's own start so the
+	// take (and studioAudioReport) carries how long the browser took to begin.
+	var recStartAt = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+	take.recStartAt = recStartAt;
+	recorder.onstart = function() {
+		var now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+		take.recorderStartDelayMs = now - recStartAt;
+		studioAudio.recorderStartDelayMs = take.recorderStartDelayMs;
+	};
 	media.rec[ir] = recorder;
 	recorder.start();
 	console.log('studio: recording channel ' + ch + ' take ' + ir + ' at ' + take.startTime.toFixed(3) + 's');

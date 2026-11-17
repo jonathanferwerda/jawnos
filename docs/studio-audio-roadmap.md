@@ -1,12 +1,16 @@
 # Studio audio engine — a native engine and the house patchbay
 
-> **Entry point:** `docs/roadmap.md`. This plan is **proposed, not started**; P0 is the gate that
-> decides whether the rest is worth building. It is not on this season's critical path.
+> **Entry point:** `docs/roadmap.md`. This plan is **under way**: P0's device half is measured and
+> P1's skeleton is built, while the network phases are not started. It is not on this season's
+> critical path.
 
-**Status:** P1 skeleton is in the tree (`engine/`, `scripts/build_engine.pl`, `t/332`): the
-protocol header, the lock-free parameter path, the block graph and a null device, 31 Rust tests
-and a suite that builds and runs them. No device backend yet, and **P0 — measuring the laptop and
-`table` with the UM2 — is still the gate**.
+**Status:** measured and scaffolded, 2026-11-17. P0's device half is answered on `table` (§2): raw
+ALSA holds 64 frames for three minutes; PipeWire does not hold quantum 64. The P1 skeleton is in the
+tree (`engine/`, `scripts/build_engine.pl`, `t/332`) with the datagram header, the lock-free parameter
+path, the block graph, a null device, master election and clock alignment — 40 Rust tests. The
+routing plan's shape and validation are `lib/JawnOS/Audio/Plan.pm` (`t/334`), and Studio reports the
+browser's own numbers through `window.studioAudioReport()` (`t/333`).
+**Still missing:** a real device backend, the laptop's browser numbers, and every network phase.
 **The converter:** a **Behringer UM2** on `table.jonathanferwerda.com` — the preferred clock master.
 **Related:** `docs/reception.md` (the audio gateway the engine must not duplicate),
 `docs/platform-roadmap.md` (CoreAudio/WASAPI — the same device seam), `docs/roadmap.md` (Perl stays
@@ -46,12 +50,36 @@ Measured sources and sinks, and what already exists in the tree.
 
 | Class | Source / sink | Shape | Latency floor | For |
 |---|---|---|---|---|
-| **A — the converter** | Behringer UM2 on `table`: 2 in / 2 out, USB class-compliant, **48 kHz / 16-bit**, a mic input and an instrument input | 48 k, 2 ch | **3–6 ms** round trip at 64 frames (P0 measures it) | guitar, mics, monitors — the one class that gets the near-zero promise |
+| **A — the converter** | Behringer UM2 on `table`: 2 in / 2 out, USB class-compliant, **48 kHz / 16-bit**, a mic input and an instrument input | 48 k, 2 ch | **64/256 frames, 0 xruns measured** (§2); the round trip still needs a loopback | guitar, mics, monitors — the one class that gets the near-zero promise |
 | **B — the machine's own mic** | the laptop/table microphone, through PipeWire | 48 k after resampling, 1 ch | 20–60 ms | scratch vocals, room, talking to the house |
 | **C — the phone** | the app's capture (Oboe) or `getUserMedia` | 48 k, Opus 10 ms | 15–40 ms on the LAN or tailnet | a microphone where you are; a monitor in your pocket |
 | **D — the T-Deck** | TDM microphone, 16 kHz, clip-based today (`jt/jt_16_voice_capture.ino`) | 16 k → 48 k | 40–100 ms, and clips only | a room mic, voice notes, a satchel recorder |
 | **E — the watch** | 16 kHz mono WAV from FFat, pulled per house node (`jw/jw_10_playback.ino`) | 16 k → 48 k | 100 ms+ | a zone, or dictation — never a tracking source |
 | **F — a future amp node** | ESP32 + I2S amp | 48 k, 1–2 ch out | 30–80 ms by design | house zones |
+
+### Measured on `table` with the UM2 — 2026-11-17
+
+The interface enumerates as a **Texas Instruments PCM2902** (`08bb:2902`), not a Behringer id, on a
+**root USB port at full speed (12 Mbit/s)**. Its 1 ms USB frames are the floor: ALSA will not grant a
+period below 48 samples, and PipeWire drives the device in 48-sample periods under a 64-frame quantum.
+
+| Path | Period / buffer | Run | Result |
+|---|---|---|---|
+| raw ALSA `hw:1,0`, capture + silent playback | 64 / 256 (1.33 / 5.33 ms) | **180 s duplex** | **0 overruns, 0 underruns** |
+| raw ALSA, capture | 128 / 512 | 10 s | 0 |
+| PipeWire, `PIPEWIRE_LATENCY=64/48000` | quantum 64 | 85 s, three runs | **6–9 client xruns per run** (the ALSA node itself reported 0) |
+| PipeWire, quantum 128 | 128 | 85 s | **0** |
+| PipeWire, default | 1024 (21.3 ms) | 85 s | 0 |
+
+The machine reported 48 kHz everywhere and **no latency at all**: PipeWire's `Latency` and
+`ProcessLatency` and `pactl` all report 0 for this device. A true input-to-output figure still needs
+a loopback cable or an acoustic path, so what is proven here is *stability at 64 frames*, not a round
+trip. The client xruns at quantum 64 may be the 48-frame period mismatch or scheduler jitter from 39
+`President.pl` workers on four cores; that was not isolated, and it does not need to be — the
+measurement already decides the block size.
+
+**The verdict: the machine holding the interface takes raw ALSA at 64 frames; every other machine
+stays a PipeWire client at 128.** That is the number D9 was waiting for.
 
 Already in the tree, and the engine composes with each rather than replacing it blind:
 
@@ -142,7 +170,7 @@ can cross in one or two frames (~3 ms).
 | D6 | **48 kHz inside, always.** 44.1 k material and 16 kHz devices are resampled at the edge, once. | The UM2 cannot do 44.1, the handset is already 48 k, and a second rate buys nothing. |
 | D7 | **Latency is compensated, never hidden.** Each node declares its buffer and rate; the engine places every take by that number. | This is what lets a 30 ms phone mic be a multitrack source. |
 | D8 | **PCM on a wired LAN, Opus for the phone and Wi-Fi.** | PCM is free on a gigabit; Opus at 10 ms frames keeps a phone's uplink honest. Chosen per peer and stream. |
-| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The engine is a PipeWire client by default**, claiming a device exclusively only if P1 proves a material gain. | The ask: no pavucontrol. Exclusive ALSA would silence Music, calls and alerts on that machine to buy a millisecond; a fixed quantum keeps the house audible. Turning `manage` off gives the machine back either way. |
+| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The machine holding the interface uses raw ALSA at 64 frames; every other machine stays a PipeWire client at 128.** | Measured on `table` (§2): raw ALSA held 64/256 for 180 s duplex with no xruns, while PipeWire lost 6–9 client buffers per 85 s at quantum 64 and was clean at 128. Exclusive ownership costs that one machine its ordinary mixer, so it is opt-in per machine, and `manage` off gives it back. |
 | D10 | **Zones are declared-latency nodes, not promises.** An amp node is a speaker, never a booth. | Keeps the low-latency path honest; a zone with a 60 ms buffer is correct, not a failure. |
 | D11 | **Graceful fallback, always.** No engine → today's WebAudio and PipeWire paths, unchanged. | A machine that cannot build it is a machine with the audio it has now. |
 | D12 | **The engine is a node, not a silo.** The handset's `jawn_call_in` / `jawn_prompt`, the Music player and the browser's own inputs are sources. | One graph for the house, not a fourth stack beside PipeWire, WebRTC and Sco. |
@@ -359,10 +387,12 @@ the same change (`~/jawnos-app/termux-app/AGENTS.md`).
 will sometimes be on their own. The plan is only real if it says what happens then, so **the master
 is a role, not a machine.**
 
-**A session elects its master.** Candidates are the armed nodes with a local converter. Preference:
-the machine holding the interface, then the node with the most inputs, then the node that started
-the session, then the smallest round trip. The choice is written into the session, so every node
-agrees on who is counting.
+**A session elects its master.** Candidates are the armed nodes; a node holding the converter wins
+the first rung, so the interface machine leads, but a session of laptops still elects one rather
+than refusing to run. Preference: the interface, then the most inputs, then the node that started
+the session, then the smallest round trip, then the smallest node id — a tiebreak that exists only
+so every node computes the same answer. The choice is written into the session, so every node agrees
+on who is counting (`engine/src/session.rs`).
 
 **Everything records locally before it goes anywhere.** Each node writes its own take to disk as it
 records; the shared timeline is metadata, not the cargo. A master that dies mid-take then costs the
@@ -392,7 +422,7 @@ that was streamed and never written is gone. That is why rung 3 is not optional.
 Each phase has one gate. A gate that fails is a finding, not a setback: it changes the phase after
 it.
 
-### P0 — Measure before building (2–3 days)
+### P0 — Measure before building (2–3 days) — **device half measured on `table`; laptop pending**
 
 Instrument what Studio does *now*, on the laptop and on `table` with the UM2 plugged in: capture-to-
 graph latency, output latency, `MediaRecorder` start error against the click, and take alignment on
@@ -404,16 +434,22 @@ at least 4×. If the browser is already at 12 ms on this hardware, the engine's 
 this doc says so. If the UM2 cannot hold 64 frames on `table` without xruns, that is the finding and
 P1 changes shape.
 
-### P1 — The engine skeleton (1 week, spike)
+**Result (2026-11-17):** the device half is in §2 — 64/256 held duplex for 180 s on raw ALSA, and
+PipeWire could not hold quantum 64. The instrumentation is in Studio
+(`window.studioAudioReport()`); the laptop's numbers are owed, and come from running the probe on the
+machine where Studio is used.
+
+### P1 — The engine skeleton (1 week, spike) — **skeleton built; device backend next**
 
 An `engine/` Cargo workspace and the `jawn-audio` binary: open the UM2, pass 2 in / 2 out through,
 report xruns and the measured round trip on a Unix socket under `~/.president/`.
 `scripts/build_engine.pl` mirrors `build_sco.pl` (build, `--check`, no compiler → no engine); the
 binary is gitignored beside `perl/sco/sco_helper`.
 
-**In the tree already:** the crate, the CLI and the null device (`engine/`, 31 tests), the build and
-staging script, and `t/332`, which builds the crate, runs it, and runs its tests. What P1 still owes
-is the real device behind the same `Device` trait — and the measurement that decides 64 or 128 frames.
+**In the tree:** the crate, the CLI, the null device, the datagram header, master election and clock
+alignment (`engine/`, 40 tests), the build and staging script, and `t/332`. **Still owed:** the real
+device behind the same `Device` trait — and the PCM2902 accepts only 48-sample periods, so the
+backend must fill a 64-frame block across two USB frames.
 
 **Gate:** ≤ 5 ms round trip at 64 frames on `table`, zero xruns over 10 minutes with the house running
 its own JawnOS, and a null backend that runs in the suite.
@@ -528,9 +564,9 @@ Each of these is answerable in P0 and P1, before the expensive work. That is the
 
 ## 17. Open questions
 
-1. **How far does PipeWire get us?** D9 makes it the default, so the question is whether a fixed
-   64-frame quantum delivers on `table`, or whether exclusive ALSA wins by enough to silence the
-   machine. Measure both in P1; do not guess.
+1. ~~How far does PipeWire get us?~~ **Settled by measurement (§2):** raw ALSA held 64 frames
+   cleanly; PipeWire at quantum 64 did not, and was clean at 128. The open part is not speed but
+   scope — which machines get the exclusive path, and how `manage` off hands one back.
 2. **What does `table` do when it sleeps?** §12 survives the outage; Power still has to know a
    machine is carrying audio before it sleeps it.
 3. **Where does the transport live** when the browser is only a view — `table`'s engine, or the

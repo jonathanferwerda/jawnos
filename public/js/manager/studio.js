@@ -409,12 +409,50 @@ function studioUpdateLatencyInfo() {
 	if (!ctx) { el.text('engine idle'); return; }
 	var ch = studioSelectedChannel;
 	var m = mixer[ch] && mixer[ch].media;
-	var parts = ['output ' + Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000) + ' ms'];
+	var base = ctx.baseLatency || 0;
+	var out = ctx.outputLatency || 0;
+	var parts = ['output ' + Math.round((base + out) * 1000) + ' ms (' + studioAudioLabel('base') + ' ' + Math.round(base * 1000) + ' · ' + studioAudioLabel('out') + ' ' + Math.round(out * 1000) + ')'];
+	if (ctx.sampleRate) { parts.push(studioAudioLabel('rate') + ' ' + ctx.sampleRate + ' Hz'); }
 	if (m && m.latency > 0) { parts.push('input ' + Math.round(m.latency * 1000) + ' ms'); }
 	parts.push('offset ' + Math.round(studioRecordOffset(ch) * 1000) + ' ms');
 	parts.push('hint ' + studioLatencyHint());
 	el.text(parts.join(' · '));
 }
+
+// A translated word for the latency readout; translate.js may not be loaded in
+// every shell, so fall back to the English text.
+function studioAudioLabel(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+// One plain object describing what the browser actually gave this studio, so
+// the WebAudio path can be measured before a native engine replaces it. Read
+// only: it never builds a context or changes the graph.
+function studioAudioReport() {
+	var ctx = studioAudio.ctx || null;
+	var probe = studioAudio.probe || null;
+	var delay = (studioAudio.recorderStartDelayMs === undefined) ? null : studioAudio.recorderStartDelayMs;
+	return {
+		userAgent: (typeof navigator !== 'undefined') ? navigator.userAgent : null,
+		state: ctx ? ctx.state : null,
+		sampleRate: ctx ? ctx.sampleRate : null,
+		sampleRateAsked: studioSampleRate(),
+		latencyHintAsked: studioLatencyHint(),
+		baseLatency: (ctx && typeof ctx.baseLatency === 'number') ? ctx.baseLatency : null,
+		outputLatency: (ctx && typeof ctx.outputLatency === 'number') ? ctx.outputLatency : null,
+		roundTrip: probe ? {
+			seconds: probe.seconds,
+			ms: probe.ms,
+			measured: 'output + air + input',
+			echoes: probe.echoes,
+			of: probe.of,
+			at: probe.at
+		} : null,
+		recorderStartDelayMs: delay,
+		capturedAt: new Date().toISOString()
+	};
+}
+window.studioAudioReport = studioAudioReport;
 
 // ---- round-trip latency meter ----------------------------------------------
 // Plays a few clicks out of the speakers and times the echo on the microphone
@@ -540,6 +578,15 @@ async function studioLatencyMeter() {
 		return;
 	}
 	delays.sort(function (a, b) { return a - b; });
-	out.text(Math.round(delays[Math.floor(delays.length / 2)] * 1000) + ' ms (' + delays.length + '/3 echoes)');
+	var median = delays[Math.floor(delays.length / 2)];
+	studioAudio.probe = {
+		seconds: median,
+		ms: Math.round(median * 1000),
+		echoes: delays.length,
+		of: 3,
+		at: new Date().toISOString()
+	};
+	out.text(Math.round(median * 1000) + ' ms (' + delays.length + '/3 echoes)');
+	console.log(JSON.stringify(studioAudioReport()));
 }
 
