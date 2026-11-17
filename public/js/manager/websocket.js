@@ -142,7 +142,8 @@ function websocketRetryClear() {
 
 // One paced retry per failed socket, never a loop. Visible, the delay starts at
 // a second and doubles to half a minute; hidden, it starts long and doubles to
-// the cap. A visible wake resets the count and rebuilds at once.
+// the cap. Only a socket that actually answers clears the count (wsOpener); a
+// retry reopens the sockets that are down and leaves the healthy ones alone.
 function websocketRetryLater(wasAlive) {
 	if (wsRetryTimer) { return; }
 	wsRetryFailures = Math.min((wsRetryFailures || 0) + 1, 8);
@@ -160,15 +161,38 @@ function websocketRetryLater(wasAlive) {
 	}
 	wsRetryTimer = setTimeout(function() {
 		wsRetryTimer = 0;
-		if (document.hidden) { websocketRebuild(); }
-		else { websocketWake(1); }
+		websocketRetryNow();
 	}, delay);
 }
 
-// The page is back: rebuild the sockets at once, restart the heartbeats, and
-// put the status check on duty again. `force` is every foreground signal; a
-// real visibilitychange also forces it because a socket that slept still reads
-// readyState 1 and sends into the void.
+// Retry only the sockets that are actually down. The timer used to call a forced
+// wake, which cleared the very failure count it had just earned and rebuilt every
+// healthy socket beside the dead one: one refused handshake became a full
+// teardown every second, and the probe caught that handshake storm in bursts of
+// up to nineteen rebuilds. A successful open clears the count (wsOpener); nothing
+// on this path may reset it, or the backoff restarts at one second forever.
+function websocketRetryNow() {
+	var down = 0;
+	Object.keys(ws).forEach(function(app) {
+		var socket = ws[app];
+		// A handshake still in flight is the watchdog's to time out; only a
+		// socket that has actually closed is retried here.
+		if (socket && (socket.readyState == 1 || socket.readyState == 0)) { return; }
+		// websocketStart skips a handle whose status is not 'alive', so a socket
+		// that never opened must be dropped, not retried in place.
+		clearInterval(heartbeat[app]);
+		delete heartbeat[app];
+		delete ws[app];
+		down++;
+	});
+	if (down) { websocketStart(); }
+}
+
+// The page is back: rebuild when a socket is gone or nothing has answered for
+// two beats, restart the heartbeats, and put the status check on duty again.
+// `force` comes from a real absence (pageHiddenAt) or from a caller that has
+// already established the sockets are dead; it is not every foreground signal,
+// because a focus while the page stayed visible cannot have missed frames.
 function websocketWake(force) {
 	windowVisible = 1;
 	if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, stayingAliveInterval); }
@@ -198,10 +222,14 @@ function websocketWake(force) {
 // A wake does not always show up as visibilitychange: a locked phone can come
 // back through the bfcache as pageshow, through focus, through the page
 // lifecycle's resume, or through the app's own coming-to-front signal. Any one
-// of them is the first sign of life, so any one may carry the rebuild.
+// of them is the first sign of life, so any one may carry the rebuild - but only
+// when there is a reason. A focus on a page that never went hidden proves
+// nothing is missing, and forcing a teardown there closed every socket each
+// time the window was clicked back into (the probe measured about one such
+// teardown every two minutes on an idle desktop).
 function websocketFront() {
 	if (document.hidden) { return; }
-	websocketWake(1);
+	websocketWakeIfNeeded();
 }
 
 // The cheaper wake: only rebuild when there is a reason to (a dead socket, a

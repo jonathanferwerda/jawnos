@@ -12,10 +12,13 @@ use RepoSource;
 
 # A phone that slept comes back with sockets that still read readyState 1 and
 # send into the void. The only honest answer is a fresh handshake, so a page
-# that becomes visible reconnects at once and drops any backoff it earned while
-# hidden. Hidden, the battery rule stands: one paced retry per failed socket,
-# never a poll. The controller panel is drawn from a snapshot, so it asks for a
-# beat on open rather than waiting for the next scheduled one.
+# that became hidden and comes back reconnects at once and drops any backoff it
+# earned while hidden. A foreground signal on a page that never went hidden is a
+# check, not a teardown: the sockets that are still answering are kept. Hidden,
+# the battery rule stands: one paced retry per failed socket, never a poll, and
+# the retry reopens only the socket that is down rather than clearing its own
+# backoff with a forced wake. The controller panel is drawn from a snapshot, so
+# it asks for a beat on open rather than waiting for the next scheduled one.
 
 my $root = repo_root();
 my $ws   = js_source('public/js/manager/websocket.js');
@@ -34,20 +37,20 @@ like($ws, qr/^var wsHiddenReconnectMax = 300000;/m,
 like($ws, qr/^var wsRetryTimer = 0;/m, 'there is one retry timer');
 like($ws, qr/^var wsRetryFailures = 0;/m, 'the failure count is tracked for the backoff');
 
-# --- visible: every foreground signal reconnects at once ---------------------
+# --- visible: every foreground signal asks for a check ----------------------
 
-like($ws, qr/function websocketFront\(\) \{\s*if \(document\.hidden\) \{ return; \}\s*websocketWake\(1\);\s*\}/s,
-	'a front signal forces the wake');
+like($ws, qr/function websocketFront\(\) \{\s*if \(document\.hidden\) \{ return; \}\s*websocketWakeIfNeeded\(\);\s*\}/s,
+	'a front signal asks for a check instead of forcing a teardown');
 like($ws, qr/function unlockScreen\(\) \{.*?if \(typeof websocketFront === 'function'\) \{ websocketFront\(\); \}/s,
 	'a screen unlock is a coming-to-front signal too');
 like($ws, qr/document\.addEventListener\('visibilitychange'.*?else \{\s*websocketFront\(\);\s*\}/s,
-	'visibilitychange -> visible forces the rebuild');
+	'visibilitychange -> visible asks for a check');
 like($ws, qr/document\.addEventListener\('resume', websocketFront\);/,
-	'the page lifecycle resume forces the rebuild');
+	'the page lifecycle resume asks for a check');
 like($ws, qr/window\.addEventListener\('focus', websocketFront\);/,
-	'focus forces the rebuild');
+	'focus asks for a check');
 like($ws, qr/window\.addEventListener\('pageshow', function\(event\) \{.*?event\.persisted\) \{ websocketFront\(\); \}/s,
-	'a bfcache pageshow forces the rebuild');
+	'a bfcache pageshow asks for a check');
 like($ws, qr/document\.addEventListener\('jawnos:visible', websocketFront\);/,
 	'the app can announce coming to the front');
 like($ws, qr/document\.addEventListener\('jawnos:foreground', websocketFront\);/,
@@ -63,6 +66,10 @@ like($ws, qr/document\.addEventListener\('pointerdown', websocketWakeIfNeeded, \
 like($ws, qr/function websocketWake\(force\) \{.*?websocketRetryClear\(\);.*?if \(force \|\| away > 0 \|\| websocketLooksDead\(\)\) \{\s*websocketRebuild\(\);/s,
 	'a visible wake clears the backoff and rebuilds now');
 
+# the cheap wake still rebuilds when the sockets really are gone
+like($ws, qr/function websocketWakeIfNeeded\(\) \{.*?if \(wsRetryTimer \|\| pageHiddenAt \|\| websocketLooksDead\(\) \|\| !wsStatusInterval\) \{ websocketWake\(1\); \}/s,
+	'a pending retry, a hidden absence, or a silent socket still rebuilds');
+
 # --- hidden: the long backoff, and no poll ----------------------------------
 
 like($ws, qr/function websocketRetryLater\(wasAlive\) \{.*?if \(document\.hidden \|\| windowVisible != 1\) \{.*?if \(wasAlive && wsRetryFailures <= wsFastRetryCount\)/s,
@@ -76,8 +83,16 @@ like($ws, qr/if \(ws\[app\] === this\) \{ websocketRetryLater\(wasAlive\); \}/,
 	'a socket that closes on its own schedules the paced retry');
 like($ws, qr/function wsOpener\(event,app,origin\) \{.*?wsRetryFailures = 0;/s,
 	'a socket that answers clears the failure count');
-like($ws, qr/if \(document\.hidden\) \{\s*websocketRebuild\(\);\s*\}\s*else \{\s*websocketWake\(1\);/s,
-	'the retry rebuilds while hidden and wakes at once once visible');
+like($ws, qr/wsRetryTimer = setTimeout\(function\(\) \{\s*wsRetryTimer = 0;\s*websocketRetryNow\(\);\s*\}, delay\);/s,
+	'the paced retry reopens only the sockets that are down');
+my ($retry_now) = $ws =~ /(function websocketRetryNow\(\) \{.*?\n\})/s;
+ok($retry_now, 'the targeted retry has a body a test can read');
+like($retry_now, qr/if \(down\) \{ websocketStart\(\); \}/,
+	'the retry restarts the dead sockets, not the healthy ones');
+like($retry_now, qr/readyState == 1 \|\| socket\.readyState == 0/,
+	'a handshake still in flight is left to the watchdog');
+unlike($retry_now, qr/websocketWake|websocketRebuild|websocketRetryClear/,
+	'the retry never resets the backoff it just earned');
 like($ws, qr/if \(document\.hidden\) \{.*?clearInterval\(wsStatusInterval\);.*?Object\.keys\(heartbeat\).*?delete heartbeat\[app\];/s,
 	'hidden still stops the status beat and the heartbeats');
 unlike($ws, qr/setInterval\(\s*websocket(?:Wake|Front|Retry)/,
