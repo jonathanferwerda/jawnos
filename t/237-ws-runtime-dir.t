@@ -42,6 +42,29 @@ like($ws, qr/subs::ws_watcher_path\(\)/, 'Websocket.pl asks for the runtime watc
 my $boot = read_file("$FindBin::Bin/../lib/JawnOS/Manager/Core2_worker_boot.pm");
 unlike($boot, qr/\$gb::tmp_dir\s*\.\s*'\/ws/, 'the worker boot no longer builds ws paths from tmp_dir');
 like($boot, qr/subs::ws_dir\(\)/, 'the worker boot asks for the runtime ws dir');
+unlike($boot, qr/^\s*`/m, 'the worker boot never shells out for a socket path');
+
+# Retiring an app's listener is the one place the boot file removes a socket
+# file. It must never fork a shell, never hand the loop an undefined id, and
+# never take down a listener a permanent app or a live tab still owns.
+my ($close) = $boot =~ /(sub websocket_close\(\$app\) \{.*?\n\t\})/s;
+ok($close, 'the worker boot defines websocket_close');
+like($close, qr/return if JawnOS::Transport::tcp\(\);/,
+	'one shared TCP listener is never retired per app');
+like($close, qr/return if grep \{ \$app eq \$_ \} \@\{ \$gb::ws_apps \|\| \[\] \};/,
+	'a permanent app keeps its listener');
+like($close, qr/return if \$gb::ws->\{\$app\} && keys %\{ \$gb::ws->\{\$app\} \};/,
+	'an app a tab still holds keeps its listener');
+like($close, qr/my \$id = delete \$ws_server->\{\$app\};/,
+	'the listener id leaves the table once');
+like($close, qr/Mojo::IOLoop->remove\(\$id\) if defined \$id;/,
+	'an absent id is never handed to the loop');
+like($close, qr/unlink \$file/,
+	'the socket file is removed without a shell');
+unlike($close, qr/\$app = \$app;/,
+	'the no-op assignment is gone');
+unlike($close, qr/`rm/,
+	'no backtick rm');
 
 my $misc = read_file("$FindBin::Bin/../lib/JawnOS/Controller/manager_misc12.pm");
 unlike($misc, qr{\.president/ws_watcher}, 'the manager read no longer names ~/.president');

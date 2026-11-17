@@ -155,8 +155,8 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 			$args = JawnOS::Transport::server_args('ws') or return undef;
 		}
 		else {
+			# ws_dir makes the folder on first ask; no shell is needed for it
 			my $folder = &subs::ws_dir();
-			`mkdir -p $folder` unless -e $folder;
 			$file = $folder . '/' . &subs::path_name($app);
 			# a reused descriptor wins over a real bind in Mojo's listen(), and the
 			# pre-fork server put this path in MOJO_REUSE from the loader's own
@@ -239,10 +239,9 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 	my $mailws_listener = sub {
 		my $args = JawnOS::Transport::server_args('mailws', path => $mailfile) or return;
 		if (!JawnOS::Transport::tcp()) {
-			# the loader no longer binds the per-app sockets (a fork child must),
-			# so this process makes the folder rather than finding it made
-			my $ws_folder = &subs::ws_dir();
-			`mkdir -p $ws_folder` unless -d $ws_folder;
+			# ws_dir made the folder when $mailfile was built above; the loader no
+			# longer binds the per-app sockets (a fork child must), so clear the
+			# stale path before this process binds it
 			unlink $mailfile if -e $mailfile;
 		}
 		$mailws_server = eval { Mojo::IOLoop->server($args => sub ($loop,$stream,$id) {
@@ -301,19 +300,21 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 		my $is_running = defined Mojo::IOLoop->acceptor($mailws_server) ? 1 : 0;
 		if (!$is_running) { $mailws_listener->(); }
 	});
+	# The last tab for an app has gone: retire that app's own listener and its
+	# socket file. The permanent apps keep theirs for the worker's life (the
+	# five-second rebind would only recreate them), and on TCP every app shares
+	# one listener, so there is nothing per-app to retire.
 	sub websocket_close($app) {
-		return if JawnOS::Transport::tcp();   # one shared listener serves every app
-		$app = $app;
-		unless (grep { $app eq $_ } @{$gb::ws_apps}) {
-			if (scalar keys %{$gb::ws->{$app}} == 0) {
-				Mojo::IOLoop->remove($ws_server->{$app});
-				my $folder = &subs::ws_dir();
-				my $file = $folder . '/' . &subs::path_name($app);
-				`rm -R $file` if -e $file;
-				delete $ws_server->{$app};
-			}
-
+		return if JawnOS::Transport::tcp();
+		return if grep { $app eq $_ } @{ $gb::ws_apps || [] };
+		return if $gb::ws->{$app} && keys %{ $gb::ws->{$app} };
+		my $id = delete $ws_server->{$app};
+		Mojo::IOLoop->remove($id) if defined $id;
+		my $file = &subs::ws_dir() . '/' . &subs::path_name($app);
+		if (-e $file) {
+			unlink $file or $log->warn("websocket_close: could not remove $file: $!");
 		}
+		return;
 	}
 }
 
