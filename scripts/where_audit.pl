@@ -95,14 +95,23 @@ if (-f $db) {
 		}
 		my $miss_rows = eval {
 			$dbh->selectall_arrayref(
-				'select name, count(*) as n, max(minute) as last, context'
+				'select name, n, last, context from ('
+				. ' select name, count(*) as n, max(minute) as last, min(context) as context'
 				. ' from where_calls where hit = 0 and minute >= ?'
 				# A flag (`--topics`, `--tools`, `--outline`) records a row so the
 				# panel can price it, but its name is not a code name: a pattern
 				# that found no topic is not coverage the locator can add, and
 				# listing it as the top MISS taught an agent to chase `--topics`.
 				. q{ and name not like '--%'}
-				. ' group by name order by n desc, last desc limit ' . $limit,
+				. ' group by name'
+				. ') m'
+				# A miss the locator answered later is no longer a gap: keep the name
+				# only when nothing has hit it since its last miss. A hit in the same
+				# minute counts, because a ledger row is keyed to the minute and the
+				# two calls inside it cannot be ordered.
+				. ' where not exists (select 1 from where_calls h'
+				. ' where h.name = m.name and h.hit > 0 and h.minute >= m.last)'
+				. ' order by n desc, last desc limit ' . $limit,
 				{ Slice => {} }, $since);
 		} || [];
 		@misses = @{$miss_rows};

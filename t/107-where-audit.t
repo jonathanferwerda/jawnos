@@ -206,4 +206,37 @@ ok((grep { $_->{'name'} eq 'drifted_name' } @{ $bounded->{'drift'} }),
 	ok(ref $data eq 'HASH', 'and the app can decode the report as UTF-8');
 }
 
+
+# --- a miss the locator answered later stops being a gap -------------------
+{
+	my $rdir = tempdir(CLEANUP => 1);
+	my $rdb  = "$rdir/where.db";
+	my $rdbh = DBI->connect("dbi:SQLite:dbname=$rdb", '', '', { RaiseError => 1, PrintError => 0 });
+	$rdbh->do('create table where_calls (uuid text, machine text, minute text, name text, hit int, hits int, context text, ost text, server_time text)');
+	$rdbh->do('create table where_feedback (uuid text, call_uuid text, machine text, minute text, name text, verdict text, selected text, found text, note text, ost text, server_time text)');
+	my $later = strftime('%Y-%m-%d %H:%M', localtime(time + 60));
+	$rdbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('r1','me',?,'resolved_name',0,0)", undef, $minute);
+	$rdbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('r2','me',?,'resolved_name',1,2)", undef, $later);
+	$rdbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('r3','me',?,'stale_name',1,1)", undef, $minute);
+	$rdbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('r4','me',?,'stale_name',0,0)", undef, $later);
+	$rdbh->do("insert into where_calls (uuid,machine,minute,name,hit,hits) values ('r5','me',?,'only_miss',0,0)", undef, $minute);
+	$rdbh->disconnect;
+
+	my ($code, $out) = run_audit('--db', $rdb, '--root', $tree, '--days', 14);
+	is($code, 0, 'the report still exits 0');
+	unlike($out, qr/resolved_name/, 'a name with a later hit is no longer a miss');
+	like($out, qr/stale_name/, 'a name that missed again after its hit is still one');
+	like($out, qr/only_miss/, 'and so is a name that never hit');
+
+	my (undef, $json) = run_audit('--db', $rdb, '--root', $tree, '--days', 14, '--json');
+	my $data = decode_json($json);
+	my @names = map { $_->{'name'} } @{ $data->{'misses'} };
+	ok(!(grep { $_ eq 'resolved_name' } @names), 'the JSON drops the resolved name');
+	ok((grep { $_ eq 'stale_name' } @names), 'and keeps the one that missed again');
+	ok((grep { $_ eq 'only_miss' } @names), 'and the one that never hit');
+
+	my (undef, $brief) = run_audit('--db', $rdb, '--root', $tree, '--days', 14, '--prompt');
+	unlike($brief, qr/resolved_name/, 'and the brief does not send an agent to cover it');
+}
+
 done_testing();
