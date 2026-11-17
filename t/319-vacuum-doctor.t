@@ -289,11 +289,45 @@ SKIP: {
 {
 	my $unitpath = "$dir/walk.db";
 	my ($usql, $udb) = build_database($unitpath, $live_schema);
+	# The walk below asks for a table the engine does not have on purpose,
+	# so the refusal it prints for every width is expected, not a failure.
+	eval { $udb->dbh->{PrintError} = 0 };
 	my $lost = 0;
 	my $budget = { left => 25 };
 	&subs::doctor_salvage_range($udb, 'no_such_table', 1, 10_000_000, \$lost, $budget);
 	is($budget->{'left'}, 0, 'a rowid walk that cannot read its range spends its budget');
 	ok($lost > 0, 'and counts the rows it could not reach');
+}
+
+# A repair that ran out of its rowid budget keeps the rows it reached, so the
+# report has to say the table was not walked to the end - otherwise a truncated
+# salvage reads as a complete one and the person never opens the kept original.
+{
+	subs::preload(qw(doctor_repair));
+	my $c = VacuumTestController->new;
+	{
+		no warnings 'redefine';
+		local *subs::doctor_repair = sub {
+			return {
+				ok => 1,
+				salvaged => [ { table => 't', before => 500, copied => 480, lost => 3, truncated => 1 } ],
+			};
+		};
+		Manager::action_19632($c);
+	}
+	my $html = $c->{rendered}{json}{html};
+	like($html, qr/<b>t<\/b>|t - 480 \/ 500/, 'the salvaged table is reported with the rows it kept');
+	like($html, qr/stopped early/, 'and says the repair stopped before the end of the table');
+
+	my $whole = VacuumTestController->new;
+	{
+		no warnings 'redefine';
+		local *subs::doctor_repair = sub {
+			return { ok => 1, salvaged => [ { table => 't', before => 500, copied => 500, lost => 0 } ] };
+		};
+		Manager::action_19632($whole);
+	}
+	unlike($whole->{rendered}{json}{html}, qr/stopped early/, 'a repair that reached the end does not say it stopped');
 }
 
 done_testing();

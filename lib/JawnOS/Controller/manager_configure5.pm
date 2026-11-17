@@ -391,6 +391,7 @@ sub action_19632 {
 			foreach my $row ( @{$salvaged} ) {
 				$html .= '<li>' . &subs::html_text($row->{'table'}) . ' - ' . ($row->{'copied'} // 0) . ' / ' . ($row->{'before'} // 0);
 				$html .= ', ' . &subs::html_text(&subs::ui('unreadable rows:')) . ' ' . $row->{'lost'} if $row->{'lost'};
+				$html .= ', ' . &subs::html_text(&subs::ui('the repair stopped early - the rest is only in the original')) if $row->{'truncated'};
 				$html .= '</li>';
 			}
 			$html .= '</ul>';
