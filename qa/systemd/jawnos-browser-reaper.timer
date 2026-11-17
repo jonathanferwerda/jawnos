@@ -1,0 +1,14 @@
+[Unit]
+Description=Hourly JawnOS stale headless browser reaper
+
+[Timer]
+# Hourly, a few minutes past the hour and spread by up to five: the leak this
+# bounds burned ~0.8 cores for 26 hours before anyone noticed, so an hour is
+# plenty and the delay is only there to keep it off the top of the hour.
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=jawnos-browser-reaper.service
+
+[Install]
+WantedBy=timers.target

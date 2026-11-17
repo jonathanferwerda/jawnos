@@ -1,0 +1,31 @@
+[Unit]
+Description=JawnOS stale headless browser reaper
+Documentation=file:/home/jawn/jawnos/qa/README.md
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+# Hourly. The reaper reads /proc and signals only headless Chromium trees whose
+# CDP launcher is gone and which have no client; it writes nothing and opens no
+# sockets. The default is orphan-only; qa/README.md documents the rules.
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/stale_browser_reaper.pl
+
+# A /proc scan is a few milliseconds; a stuck tree costs up to --grace (5s).
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=64M
+CPUQuota=25%
+ProtectSystem=strict
+ProtectHome=read-only
+NoNewPrivileges=yes
+# No PrivateTmp: the profile paths the browsers carry are real paths under /tmp,
+# and a private tmp would make a future check of one silently wrong.
+IPAddressDeny=any
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

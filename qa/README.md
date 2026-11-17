@@ -26,6 +26,7 @@ perl qa/run.pl --no-namespace      # read the warning first
 perl qa/run.pl --layers l0         # just the old regression suite
 perl qa/docker/smoke.sh            # nightly Docker image smoke (loopback, testing only)
 STRICT=1 perl qa/installers/run.sh # nightly package freshness; STRICT also fails outdated
+perl scripts/stale_browser_reaper.pl --dry-run  # headless browsers a dead launcher left behind
 perl qa/budget.pl <metrics.json>   # judge one device file on its own
 ```
 
@@ -689,6 +690,39 @@ A rehearsal writes into a scratch root and touches nothing the panel reads:
 ```sh
 QA_ROOT=/tmp/qa-loc STAMP=20260101T000000Z qa/loc_nightly.sh
 ```
+
+### Stale browser reaper (hourly)
+
+`qa/lib/Ui.pm` starts a headless Chromium in its own session and kills the
+process group when a probe ends. When the launcher dies first, the browser is
+reparented to init and its GPU child never stops: in 2026-11 four such trees ran
+26 hours and held ~0.8 of eight cores with no CDP client ever connected.
+`scripts/stale_browser_reaper.pl` bounds that:
+
+```sh
+sudo cp qa/systemd/jawnos-browser-reaper.service qa/systemd/jawnos-browser-reaper.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-browser-reaper.timer
+systemctl list-timers jawnos-browser-reaper.timer
+```
+
+It scans `/proc`, and a candidate must be a browser **parent**: `--headless`,
+`--user-data-dir` and `--remote-debugging-port`, with no `--type=` (that excludes
+the GPU, renderer and zygote children). It then reaps only when all of these
+hold: the parent is orphaned (`ppid` 1), it is older than `--min-age` (600s), and
+its debug port has no ESTABLISHED connection. `--max-age` (default 0, disabled)
+is the one exception: setting it also reaps a browser whose live launcher has
+held it that long with no client, still only with no client connected. It is off
+by default so the scheduled run only touches trees nothing owns; pass it by hand
+to sweep a wedged launcher. Headed browsers, Qt WebEngine and the desktop app
+carry none of the three flags and are never candidates.
+
+The whole process group is signalled (`TERM`, then `KILL` after `--grace`, 5s),
+because the browser is a session leader and its children live in that group. A
+pid whose `/proc` command line or start time changed since the scan is skipped,
+so pid reuse cannot redirect a signal. `--dry-run` reports and kills nothing;
+either way the script exits 0 with one summary line. The timer runs hourly at a
+random offset of up to five minutes.
 
 ### Security audit (04:45)
 
