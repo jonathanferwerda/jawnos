@@ -698,4 +698,60 @@ sub action_34301 {
 	$c->render( template => 'travel/world', layout => undef );
 }
 
+# POST /manager/travel/libs_install?what=cesium|basemap|aframe|all
+# Three views need a library the tree does not ship, and the note that says so
+# named a terminal command. A phone has no terminal, so the note carries an
+# Install button instead: the house runs that script on itself and answers with
+# what it said. Only these three scripts can be asked for, by name.
+my %travel_libs_script = (
+	cesium  => 'fetch_cesium.sh',
+	basemap => 'fetch_basemap_libs.sh',
+	aframe  => 'fetch_aframe.sh',
+);
+
+sub action_34302 {
+	my $c = shift;
+	my $what = lc( $c->param('what') // '' );
+	my @want = $what eq 'all' ? sort keys %travel_libs_script : ( $what );
+	unless ( @want && !grep { !$travel_libs_script{$_} } @want ) {
+		$c->res->code(400);
+		return $c->render( json => { ok => 0, error => 'unknown library' } );
+	}
+	# the scripts find the tree themselves (dirname $0/..), and every boot path
+	# has chdir'd to the tree, so the path is relative to cwd
+	$c->inactivity_timeout(300);
+	my @done;
+	my $tail = '';
+	foreach my $name (@want) {
+		my $script = 'scripts/' . $travel_libs_script{$name};
+		unless ( -f $script ) {
+			return $c->render( json => { ok => 0, what => $name, output => $tail,
+			                             error => $script . ' is missing' } );
+		}
+		my $output = '';
+		if ( open(my $fh, '-|', 'sh', $script) ) {
+			local $/;
+			$output = <$fh> // '';
+			close $fh;
+		}
+		my $code = $? ? ( $? >> 8 ) : 0;
+		$tail = &travel_libs_output_tail($output);
+		unless ( $code == 0 ) {
+			return $c->render( json => { ok => 0, what => $name, output => $tail,
+			                             error => $travel_libs_script{$name} . " exited $code" } );
+		}
+		push @done, $name;
+	}
+	return $c->render( json => { ok => 1, what => join(',', @done), output => $tail } );
+}
+
+# The last few lines a script printed: enough for a person to see it worked, and
+# for a failure to say why, without carrying a build log into a phone's page.
+sub travel_libs_output_tail {
+	my ($text) = @_;
+	my @lines = grep { /\S/ } split /\n/, ( $text // '' );
+	splice( @lines, 0, @lines - 6 ) if @lines > 6;
+	return join( "\n", @lines );
+}
+
 1;

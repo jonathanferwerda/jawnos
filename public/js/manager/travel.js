@@ -6,6 +6,7 @@
      04_globe.js - the same ground on Cesium's globe
      05_basemap.js - the same ground on the house's own PMTiles street map
      06_world.js - the same ground as a walkable A-Frame world, with its pictures
+     07_libs.js - installing a view's library from the note that names it
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var campusProxy = {};

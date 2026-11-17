@@ -32,17 +32,20 @@ function travelGlobeOpen(lat, lon) {
 		// the person may have closed the layer while Cesium was in flight
 		if (!$('#travel_globe').is(':visible')) { return; }
 		if (source == 'failed') {
-			travelGlobeStatus(jawnosT('CesiumJS is not installed on this machine — run scripts/fetch_cesium.sh, then open the globe again.'));
+			travelGlobeStatus(jawnosT('CesiumJS is not installed on this machine — run scripts/fetch_cesium.sh, then open the globe again.'), 'cesium');
 			return;
 		}
 		travelGlobeStart(lat, lon, source);
 	});
 }
 
-function travelGlobeStatus(text) {
+function travelGlobeStatus(text, lib) {
 	var line = $('#travel_globe_status');
-	if (text) { line.text(text).css('display', 'block'); }
-	else { line.text('').hide(); }
+	if (text) {
+		line.empty().css('display', 'block').append($('<span>').text(text));
+		if (lib) { travelLibInstallButton(line, lib); }
+	}
+	else { line.empty().hide(); }
 }
 
 // The local build only. CESIUM_BASE_URL is what tells the build where its

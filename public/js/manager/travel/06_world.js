@@ -22,10 +22,13 @@
 var travelWorldState = null;
 var travelWorldLoading = false;
 
-function travelWorldNote(text) {
+function travelWorldNote(text, lib) {
 	var note = $('#travel_world_note');
-	if (text) { note.text(text).css('display', 'flex'); }
-	else { note.text('').hide(); }
+	if (text) {
+		note.empty().css('display', 'flex').append($('<span>').text(text));
+		if (lib) { travelLibInstallButton(note, lib); }
+	}
+	else { note.empty().hide(); }
 }
 
 function travelWorldOpen(lat, lon) {
@@ -46,7 +49,7 @@ function travelWorldOpen(lat, lon) {
 		travelWorldLoading = false;
 		if (!$('#travel_world').is(':visible')) { return; }
 		if (!ok) {
-			travelWorldNote(jawnosT('The house\'s street map is not installed - run scripts/fetch_basemap_libs.sh'));
+			travelWorldNote(jawnosT('The house\'s street map is not installed - run scripts/fetch_basemap_libs.sh'), 'basemap');
 			return;
 		}
 		travelWorldStart(lat, lon);
@@ -450,7 +453,7 @@ function travelWorldFrame(st, data) {
 			frame.contentWindow.postMessage({ type: 'travel_world_build', data: data }, location.origin);
 		}
 		else if (e.data.type === 'travel_world_missing') {
-			travelWorldNote(jawnosT('A-Frame is not installed - run scripts/fetch_aframe.sh, then open the virtual world again.'));
+			travelWorldNote(jawnosT('A-Frame is not installed - run scripts/fetch_aframe.sh, then open the virtual world again.'), 'aframe');
 			if (frame.parentNode) { frame.parentNode.removeChild(frame); }
 			st.frame = null;
 		}

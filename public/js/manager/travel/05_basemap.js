@@ -50,17 +50,20 @@ function travelBasemapOpen(lat, lon) {
 		// the person may have closed the layer while the libraries were in flight
 		if (!$('#travel_basemap').is(':visible')) { return; }
 		if (!ok) {
-			travelBasemapNote(jawnosT('The house\'s street map is not installed - run scripts/fetch_basemap_libs.sh'));
+			travelBasemapNote(jawnosT('The house\'s street map is not installed - run scripts/fetch_basemap_libs.sh'), 'basemap');
 			return;
 		}
 		travelBasemapStart(lat, lon);
 	});
 }
 
-function travelBasemapNote(text) {
+function travelBasemapNote(text, lib) {
 	var note = $('#travel_basemap_note');
-	if (text) { note.text(text).css('display', 'flex'); }
-	else { note.text('').hide(); }
+	if (text) {
+		note.empty().css('display', 'flex').append($('<span>').text(text));
+		if (lib) { travelLibInstallButton(note, lib); }
+	}
+	else { note.empty().hide(); }
 }
 
 // The local build only, the same rule the globe follows. The stylesheet is
@@ -306,7 +309,7 @@ function travelBasemapStart(lat, lon) {
 	var old = document.getElementById('travel_basemap_map');
 	if (old && old.parentNode) { old.parentNode.removeChild(old); }
 	if (!window.maplibregl || !window.pmtiles) {
-		travelBasemapNote(jawnosT('The house\'s street map is not installed - run scripts/fetch_basemap_libs.sh'));
+		travelBasemapNote(jawnosT('The house\'s street map is not installed - run scripts/fetch_basemap_libs.sh'), 'basemap');
 		return;
 	}
 	if (typeof travelNear3dWebgl === 'function' && !travelNear3dWebgl()) {

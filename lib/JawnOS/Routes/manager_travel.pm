@@ -15,6 +15,7 @@ sub routes {
 	[33700, 'get', '/manager/travel/viewer', 'action_33700'],
 	[34017, 'get', '/manager/travel/basemap', 'action_34017'],
 	[34301, 'get', '/manager/travel/world', 'action_34301'],
+	[34302, 'post', '/manager/travel/libs_install', 'action_34302'],
 	);
 }
 

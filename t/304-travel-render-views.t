@@ -1,4 +1,4 @@
-# tests-for: templates/travel/travel.html.ep templates/travel/world.html.ep public/js/manager/travel.js public/js/manager/travel/03_near3d.js public/js/manager/travel/04_globe.js public/js/manager/travel/05_basemap.js public/js/manager/travel/06_world.js public/js/travel_world.js public/js/three.min.js scripts/fetch_cesium.sh scripts/fetch_basemap_libs.sh scripts/fetch_aframe.sh perl/help/topics_people.pl lib/JawnOS.pm lib/JawnOS/Manager/Part25.pm lib/JawnOS/Controller/manager_travel.pm lib/JawnOS/Routes/manager_travel.pm
+# tests-for: templates/travel/travel.html.ep templates/travel/world.html.ep public/js/manager/travel.js public/js/manager/travel/03_near3d.js public/js/manager/travel/04_globe.js public/js/manager/travel/05_basemap.js public/js/manager/travel/06_world.js public/js/manager/travel/07_libs.js public/js/travel_world.js public/js/three.min.js scripts/fetch_cesium.sh scripts/fetch_basemap_libs.sh scripts/fetch_aframe.sh perl/help/topics_people.pl lib/JawnOS.pm lib/JawnOS/Manager/Part25.pm lib/JawnOS/Controller/manager_travel.pm lib/JawnOS/Routes/manager_travel.pm
 # covers:    the Travel long press's menu and the four views behind it: the
 #            street preview, the three.js model of measured maps and places,
 #            the Cesium globe (local build only, no third-party script origin)
@@ -304,5 +304,20 @@ like( $nearby, qr/qw\(heading heading_source pitch roll\)/, 'and the direction i
 my $route_rows = read_file("$root/lib/JawnOS/Routes/manager_travel.pm");
 like( $route_rows, qr{'/manager/travel/world', 'action_34301'}, 'the world page has its route' );
 like( read_file("$root/lib/JawnOS/Controller/manager_travel.pm"), qr/^sub action_34301 \{/m, 'and its action renders the page without the layout' );
+
+# ---- installing a view's library from the note that names it --------------
+my $libs_js = read_file("$root/public/js/manager/travel/07_libs.js");
+like( $libs_js, qr{url: '/manager/travel/libs_install'}, 'the note\'s Install asks the house' );
+like( $libs_js, qr/function travelLibInstallButton/, 'and a note carries the button' );
+like( $libs_js, qr/data: \{ what: lib \}/, 'for the one library that is missing' );
+like( $libs_js, qr/Installed - open it again/, 'it says the install is done' );
+like( $route_rows, qr{'/manager/travel/libs_install', 'action_34302'}, 'the install route exists' );
+my $travel_ctrl = read_file("$root/lib/JawnOS/Controller/manager_travel.pm");
+like( $travel_ctrl, qr/^sub action_34302 \{/m, 'and its action runs the script' );
+like( $travel_ctrl, qr/'fetch_cesium\.sh'/, 'Cesium\'s fetch script is one of them' );
+like( $travel_ctrl, qr/unless \( \@want && !grep \{ !\$travel_libs_script/, 'only the three named scripts can be asked for' );
+like( $travel_ctrl, qr/inactivity_timeout\(300\)/, 'a download over a phone\'s connection gets time to finish' );
+like( $travel_help, qr/the house runs the script for you/, 'the guide says the button installs it' );
+like( $travel_help, qr/the only way from a phone/, 'and why a phone needs the button' );
 
 done_testing();
