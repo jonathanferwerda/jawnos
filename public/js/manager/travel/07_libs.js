@@ -33,7 +33,7 @@ function travelLibInstall(lib, button) {
 function travelLibInstallButton(note, lib) {
 	return $('<button type="button"></button>')
 		.attr('style', 'margin-left:8px;padding:2px 10px;font:inherit;border-radius:6px;'
-			+ 'border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer;')
+			+ 'border:1px solid currentColor;background:transparent;color:inherit;cursor:var(--jawnos-cursor-pointer, pointer);')
 		.text(jawnosT('Install'))
 		.on('click', function () { travelLibInstall(lib, this); })
 		.appendTo(note);
