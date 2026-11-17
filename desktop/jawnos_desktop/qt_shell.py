@@ -1324,6 +1324,12 @@ def main(argv=None):
             if event.key() == Qt.Key.Key_F11:
                 self._toggle_fullscreen()
                 return
+            if event.key() == Qt.Key.Key_F5:
+                # a page left wedged by a reload mid-action (an update restarts
+                # jawn and the shell reloads the view) comes back with F5; the
+                # only other way out was quitting the app and starting again
+                self.reload()
+                return
             super().keyPressEvent(event)
 
         def _toggle_fullscreen(self):
@@ -1916,6 +1922,20 @@ def main(argv=None):
 
     icon_path = os.path.join(DESKTOP_DIR, "icons", "jawnos.png")
 
+    def reload_view():
+        """Reload the Manager page in place.
+
+        The view can be left wedged: the shell restarts jawn when an update
+        lands and then reloads the page, and a reload that arrives while the
+        page is busy leaves an idle renderer and nothing on screen. Reloading
+        from here brings it back in a second, where the only other way out was
+        quitting the app and starting it again.
+        """
+        try:
+            view.reload()
+        except Exception as exc:
+            sys.stderr.write("jawnos-qt: reload failed: %s\n" % exc)
+
     def make_tray():
         try:
             if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -1929,6 +1949,7 @@ def main(argv=None):
         for label, callback in (
             ("Control panel", show_panel),
             ("Show JawnOS", show_window),
+            ("Reload view", reload_view),
             ("Start jawn", lambda: call_core(lambda: core.start_all(
                 settings["jawn_dir"], settings.get("ble_with_jawn", True)))),
             ("Stop jawn", lambda: call_core(lambda: core.stop_all(

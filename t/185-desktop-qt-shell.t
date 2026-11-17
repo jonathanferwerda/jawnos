@@ -444,6 +444,12 @@ like($session, qr/the Qt WebEngine view could not start/,
 	'and reports a failed Qt shell instead of silently dropping to nothing');
 like($qt, qr/from \.qt_panel import ControlPanel/, 'the shell loads the Qt panel');
 like($qt, qr/\("Control panel", show_panel\)/, 'the tray opens it');
+# A view can be left wedged - an update restarts jawn and the shell reloads the
+# page, and a reload that lands mid-action leaves an idle renderer and nothing
+# on screen. The tray and F5 bring it back; quitting the app was the only way.
+like($qt, qr/\("Reload view", reload_view\)/, 'the tray reloads the page in place');
+like($qt, qr/def reload_view\(\):/, 'and the shell has one way to do it');
+like($qt, qr/Key_F5[\s\S]{0,400}?self\.reload\(\)/, 'F5 reloads a view left wedged, without quitting');
 like($qt, qr/admin_opener\["open"\] = show_panel/, 'and the page admin icon does too');
 like($panel, qr/class ControlPanel/, 'the panel is a Qt dialog');
 like($panel, qr/theme\.PANEL_CSS/, 'it carries the desktop\'s shared look');
