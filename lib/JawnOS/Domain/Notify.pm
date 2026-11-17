@@ -68,14 +68,23 @@ sub notification_sender($m,$db) {
 		$m->{'uuid'} = $event_uuid if $event_uuid;
 	}
 	$m->{'uuid'} ||= &subs::random_string_creator(20);
+	# An update is the same notice with a new reading. It keeps the row's own
+	# timestamp: the taskbar counts a notice as new by it, and a fresh stamp
+	# would make old news unread.
+	my $update_row;
+	if ($m->{'update'}) {
+		$update_row = eval { &subs::db_query('select * from notifications where uuid = ? limit 1', $m->{'uuid'})->hashes->[0] };
+		$m->{'timestamp'} = $update_row->{'timestamp'} if $update_row && defined $update_row->{'timestamp'} && length $update_row->{'timestamp'};
+	}
 	my $sound = $m->{'sound'} || 'ding.mp3';
 	# A silenced house keeps the notice on the screen but plays nothing.
 	my $silenced = eval { &subs::sound_muted_for('notification', $app) } || 0;
 	my $sound_file = $m->{'settings'}->{$m->{'type'} . '_notification_sound'} || './public/sounds/notifications/' . $sound;
 	my $words = $m->{'words'} || $m->{'message'} || $m->{'settings'}->{$m->{'type'} ? $m->{'type'} . '_notification_text' : 'notification_text'};
-	if ($silenced || $m->{'silent'}) {
-		# silence, or the caller already sounds this (the phone's alarm channel);
-		# the notification must not play a second sound over it
+	if ($m->{'update'} || $silenced || $m->{'silent'}) {
+		# an update only changes a card already on screen; silence, or the
+		# caller already sounds this (the phone's alarm channel), must not play
+		# a second sound over it
 	}
 	elsif ($m->{'synth'}) {
 		&subs::subprocessor(sub {
@@ -111,7 +120,11 @@ sub notification_sender($m,$db) {
 	}
 	$image =~ s/ /\\ /gi;
 	if ($device eq 'mobile') {
-		my $id = &subs::random_string_creator();
+		# An update must land on the same Android notification the first press
+		# built; the event uuid is that handle.
+		# The event uuid is the handle a later reading updates: the same id makes
+		# Android replace its own notification instead of stacking a second one.
+		my $id = $m->{'uuid'};
 		my $url = 'https://127.0.0.1:' . $ENV{PORT_AHOY} . '/manager?app=' . $m->{'app'} . '&timestamp=' . $m->{'timestamp'};
 		# The app posts it (JawnNotifyReceiver), so the badge lands on the app's
 		# own launcher icon. Native first: the app builds and posts it through the
@@ -124,7 +137,7 @@ sub notification_sender($m,$db) {
 			id => $id,
 			title => $title,
 			text => $message,
-			silent => ($m->{'silent'} ? 1 : 0),
+			silent => (($m->{'update'} || $m->{'silent'}) ? 1 : 0),
 			url => $url,
 			# The app and the moment the notice is about: a tap opens that app's
 			# own full-screen window on the phone instead of the manager desk.
@@ -132,13 +145,16 @@ sub notification_sender($m,$db) {
 			timestamp => $m->{'timestamp'},
 			large_icon => $image_path,
 			small_icon => ($m->{'small_icon'} || $m->{'app'} || ''),
-			vibrate => ($m->{'silent'} ? '' : '200,150,200,150'),
+			vibrate => (($m->{'update'} || $m->{'silent'}) ? '' : '200,150,200,150'),
 			actions => $m->{'actions'},
 			progress => $m->{'progress'},
 			group => $m->{'group'},
 			color => $m->{'color'},
 			ongoing => ($m->{'ongoing'} ? 1 : 0),
 		);
+		# Android replaces the notification whose id it has seen; asking for it
+		# only once keeps an update from sounding or buzzing again.
+		$nargs{'only_alert_once'} = 1 if $m->{'update'};
 		delete $nargs{$_} for grep { !defined $nargs{$_} } keys %nargs;
 		my $posted = &subs::device_call('notification.post', \%nargs);
 		unless ($posted) {
@@ -148,7 +164,7 @@ sub notification_sender($m,$db) {
 			# be parsed by a shell.
 			my @am = ('am', 'broadcast', '-n', $notify, '-a', $notify_action,
 				'--es', 'title', $title, '--es', 'message', $message, '--es', 'tag', $id);
-			push @am, '--ez', 'silent', 'true' if $m->{'silent'};
+			push @am, '--ez', 'silent', 'true' if ($m->{'silent'} || $m->{'update'});
 			# The same app, moment and address the native poster carries, so the
 			# broadcast fallback opens the same window on a build older than the
 			# bridge.
@@ -173,20 +189,38 @@ sub notification_sender($m,$db) {
 			template => 'notification',
 		);
 		if ($m->{'role'} ne '0') {
-			&Websocket::send('server', {
-				app => $m->{'app'},
-				type => 'notification',
-				title => $m->{'title'},
-				role => $m->{'role'} || 'guest',
-				message => $m->{'message'},
-				icon => $m->{'image'},
-				timestamp => $m->{'timestamp'},
-				html => $content
-			});
+			if ($m->{'update'}) {
+				# The row is already on the desk: replace it by the same uuid rather
+				# than prepending a second copy.
+				&Websocket::send('server', {
+					type => 'notification_update',
+					uuid => $m->{'uuid'},
+					app => $m->{'app'},
+					title => $m->{'title'},
+					message => $m->{'message'},
+					icon => $m->{'image'},
+					timestamp => $m->{'timestamp'},
+					html => $content
+				});
+			}
+			else {
+				&Websocket::send('server', {
+					app => $m->{'app'},
+					type => 'notification',
+					uuid => $m->{'uuid'},
+					title => $m->{'title'},
+					role => $m->{'role'} || 'guest',
+					message => $m->{'message'},
+					icon => $m->{'image'},
+					timestamp => $m->{'timestamp'},
+					html => $content
+				});
+			}
 		}
 
 	}
 	foreach my $embedded (qw/ watch teletype /) {
+		next if $m->{'update'};
 		my $watch = &subs::device_lister($m->{'timestamp'},$embedded);
 		if (eval {$watch->{'ip'}}) {
 
@@ -211,21 +245,36 @@ sub notification_sender($m,$db) {
 	if (eval { $sql->db } && $sql->dsn !~ /:$/) {
 		my $db = $sql->db;
 
-		# An event the sync already carried here needs no second row. The live
-		# card above belongs to this machine; the stored row belongs to the house.
-		my $already = $event_uuid
-			? eval { &subs::db_query('select 1 from notifications where uuid = ? limit 1', $event_uuid)->hashes->[0] }
-			: 0;
-		unless ($already) {
-			&subs::db_insert('notifications', {
+		if ($m->{'update'}) {
+			# No new row: this notice already exists and only its reading moved.
+			# server_time advances so the sync carries the edit; timestamp stays
+			# put (see above).
+			&subs::db_update('notifications', {
 				app => $m->{'app'},
 				role => $m->{'role'} || 3,
 				title => $m->{'title'},
 				image => $m->{'image'},
 				message => $m->{'message'},
-				timestamp => $m->{'timestamp'},
-				uuid => $m->{'uuid'}
-			});
+				server_time => &subs::rightNow(),
+			}, { uuid => $m->{'uuid'} }) if $update_row;
+		}
+		else {
+			# An event the sync already carried here needs no second row. The live
+			# card above belongs to this machine; the stored row belongs to the house.
+			my $already = $event_uuid
+				? eval { &subs::db_query('select 1 from notifications where uuid = ? limit 1', $event_uuid)->hashes->[0] }
+				: 0;
+			unless ($already) {
+				&subs::db_insert('notifications', {
+					app => $m->{'app'},
+					role => $m->{'role'} || 3,
+					title => $m->{'title'},
+					image => $m->{'image'},
+					message => $m->{'message'},
+					timestamp => $m->{'timestamp'},
+					uuid => $m->{'uuid'}
+				});
+			}
 		}
 	}
 
@@ -745,6 +794,68 @@ sub migration_already_applied($command) {
 		return &subs::db_query('select 1 from sqlite_master where type=? and name=?', 'index', $1)->hashes->[0] ? 0 : 1;
 	}
 	return 0;
+}
+
+# The apps the Notifications panel may offer, and the ones already switched on
+# for this machine. One query names the app universe and the notification rows;
+# a row is resolved the way a reader resolves a shared setting: this device
+# first, then the house (all), then the person (me), and the newest of equals
+# wins. Full settings are loaded only for the enabled apps, which are the few.
+sub notification_appointments() {
+	my $device = &subs::device_setter();
+	my $universe = eval {
+		return &subs::db_query("select distinct app from settings where setting in ('visible','pos','mab') and app is not null and app != '' and substr(app,1,2) <> '__' order by app")->hashes;
+	} || [];
+	my $notes = eval {
+		return &subs::db_query("select app, device, value, server_time from settings where setting = 'notification' and app is not null and app != '' order by cast(server_time as integer) desc")->hashes;
+	} || [];
+	my %on;
+	foreach my $row ( @{$notes} ) {
+		my $app = $row->{'app'};
+		next unless defined $app && length $app;
+		my $dev = $row->{'device'} // '';
+		my $rank = $dev eq $device ? 3 : $dev eq 'all' ? 2 : $dev eq 'me' ? 1 : 0;
+		# The rows are newest first, so an equal rank keeps the one seen first.
+		next if exists $on{$app} && $on{$app}->{'rank'} >= $rank;
+		$on{$app} = { rank => $rank, value => $row->{'value'} };
+	}
+	my %protected = map { $_ => 1 } @gb::protected;
+	my (%seen, @enabled, @candidates);
+	foreach my $row ( @{$universe} ) {
+		my $app = $row->{'app'};
+		next unless defined $app && length $app;
+		next if $seen{$app}++;
+		# A private app is the house's own machinery, never an appointment the
+		# panel should offer or announce.
+		next if &subs::app_visibility_value($app) eq 'private';
+		my $formatted = &subs::format_name($app);
+		my $enabled = ($on{$app} && ($on{$app}->{'value'} // '') eq 'on') ? 1 : 0;
+		if ($enabled) {
+			push @enabled, {
+				app => $app,
+				formatted_name => $formatted,
+				settings => &subs::settings_grabber({ app => $app, benign => 1 }),
+			};
+		}
+		# An app already announcing is listed above, not offered again below.
+		next if $enabled;
+		next if $protected{$app};
+		push @candidates, { app => $app, formatted_name => $formatted };
+	}
+	# An app with no visible/pos/mab row still belongs in the list when this
+	# machine already announces it: the setting is the fact, the universe is
+	# only where the names come from.
+	foreach my $app ( sort keys %on ) {
+		next if $seen{$app}++;
+		next unless ($on{$app}->{'value'} // '') eq 'on';
+		next if &subs::app_visibility_value($app) eq 'private';
+		push @enabled, {
+			app => $app,
+			formatted_name => &subs::format_name($app),
+			settings => &subs::settings_grabber({ app => $app, benign => 1 }),
+		};
+	}
+	return { enabled => \@enabled, candidates => \@candidates };
 }
 
 1;

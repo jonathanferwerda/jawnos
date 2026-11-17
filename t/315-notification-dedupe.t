@@ -65,11 +65,11 @@ my $alarm = source('perl/Alarm.pl');
 like($alarm, qr/my \$note_event = join '\|', 'appointment', \$a->\{'uuid'\} \|\| '', \$type \|\| '',/,
 	'an appointment notice is named by its row, its type and its stamps');
 like($alarm, qr/dedupe => \$note_event,/, 'and the sender is given that name');
-like($alarm, qr/my \$budget_event = join '\|', 'budget', \$app, \$circumstance,/,
-	'a budget crossing is named by app and circumstance');
-like($alarm, qr/int\(\$server_time \/ 600000\)/,
-	'with a ten-minute window, so the grid slot agrees and the next is new');
+like($alarm, qr/my \$budget_event = join '\|', 'budget', \$app, \$circumstance, \$window_start, \$signature;/,
+	'a budget crossing is named by its period and the appointments behind it');
 like($alarm, qr/dedupe => \$budget_event,/, 'and the sender is given that name');
+like($alarm, qr/\(\$already \? \(update => 1\) : \(\)\)/,
+	'an event already on the list is updated instead of announced again');
 like($alarm, qr/my \$cart_event = join '\|', 'marketcart', \$seen \|\| 0, int\(\$now \/ 21600000\);/,
 	'the cart reminder is named by its shared marker and six-hour window');
 like($alarm, qr/dedupe => \$cart_event,/, 'and the sender is given that name');

@@ -378,7 +378,7 @@ sub action_19033 {
 	$setting_data->{'device'} = 'all' if $setting eq 'theme' || $setting eq 'warranty' || $setting eq 'relationship' || $setting eq 'silence' || $setting eq 'sound_profile';
 	$setting_data->{'value'} = &subs::relationship_normalize($setting_data->{'value'}) if $setting eq 'relationship';
 	&subs::setting_setter($setting_data);
-	if (($source || '') eq 'people') {
+	if (($source || '') eq 'people' || ($source || '') eq 'notifications') {
 		$c->render(json => { ok => 1, app => $app, setting => $setting, value => $setting_data->{'value'} });
 		return;
 	}

@@ -103,6 +103,7 @@ sub action_22696 {
 sub action_22699 {
 	my $c = shift;
 	my $notifications = &notification_grabber({});
+	$notifications->{'appointment_settings'} = &subs::notification_appointments();
 	my $content = $c->render_to_string(template => 'apps/notifications', notifications => $notifications);
 	my $contents = &window_maker({
 		user_agent => $c->param('user_agent'),

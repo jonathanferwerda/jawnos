@@ -86,6 +86,25 @@ function jawnosNotice(opts) {
 	return card;
 }
 
+// A notice that is already on screen and only its reading moved is changed in
+// place. An unknown key creates nothing: the card belongs to the event that
+// first announced it, and an update must never turn into a brand-new one.
+function jawnosNoticeUpdate(key, opts) {
+	if (key === undefined || key === null) { return false; }
+	var card = jawnos_notice_by_key[String(key)];
+	if (!card || !card.length) { return false; }
+	opts = opts || {};
+	if (opts.title !== undefined) { card.find('.jawnos_notice_title').text(opts.title || ''); }
+	if (opts.message !== undefined) { card.find('.jawnos_notice_body').text(opts.message || '').toggle(!!opts.message); }
+	if (opts.icon !== undefined) {
+		var path = opts.icon ? String(opts.icon) : '';
+		var img = card.find('.jawnos_notice_icon');
+		if (path) { img.attr('src', path).show(); } else { img.hide().removeAttr('src'); }
+	}
+	if (opts.app !== undefined) { card.attr('data-notice-app', opts.app ? String(opts.app) : ''); }
+	return true;
+}
+
 // ------------------------------------------------------------------ a press
 //
 // A notice is a door wherever it is drawn. The Notifications app's rows (and a

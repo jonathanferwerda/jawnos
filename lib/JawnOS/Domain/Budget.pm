@@ -591,6 +591,42 @@ sub father_time($data) {
 	return ($bt,$temp_timestamp);
 }
 
+# The budget types an app actually carries, read off its "budget" setting: each
+# entry is [<=][>=]<amount><measure>/<scope> or a fixed level. The four base
+# readings come first (the order the app offers them), then the app's own
+# measures by name, so a picker is stable between renders.
+sub budget_notification_types($settings) {
+	my $value = ref $settings eq 'HASH' ? ($settings->{'budget'} // '') : ($settings // '');
+	# A length written the many ways people write one (1.90h, 10h 5m, 105m).
+	# A bare number stays occurences, so only a unit the time reader knows makes
+	# the entry a duration rather than a measure whose name happens to be a unit.
+	my $time = qr/^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s|days?|d|weeks?|wks?|w|months?|mos?|mo|years?|yrs?|y)\s*(?:[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s|days?|d|weeks?|wks?|w|months?|mos?|mo|years?|yrs?|y)\s*)*$/i;
+	my (%seen, @measures);
+	foreach my $entry (split /,/, $value) {
+		my $e = $entry;
+		$e =~ s/^\s+|\s+$//g;
+		next unless length $e;
+		# Which way the goal runs is not part of what it measures.
+		$e =~ s/^<=//;
+		$e =~ s/^>=//;
+		my ($body) = split '/', $e, 2;
+		$body =~ s/^\s+|\s+$//g;
+		next unless length $body;
+		my $type;
+		if ($body =~ /^\$/) { $type = 'total'; }
+		elsif ($body =~ $time) { $type = 'duration'; }
+		elsif ($body =~ /^[0-9.\-]+\s*quantity$/i) { $type = 'quantity'; }
+		elsif ($body =~ /^[0-9.\-]+\s*([A-Za-z][A-Za-z0-9_-]*)$/) { $type = $1; }
+		elsif ($body =~ /^[0-9.\-]+$/) { $type = 'occurences'; }
+		next unless defined $type;
+		next if $seen{$type}++;
+		push @measures, $type if $type !~ /^(?:occurences|duration|total|quantity)$/;
+	}
+	my @order = grep { $seen{$_} } qw(occurences duration total quantity);
+	push @order, sort @measures;
+	return \@order;
+}
+
 sub budget_status_maker($returner) {
 	# a target of nothing - a period only just opened, or a budget of zero - has
 	# nothing to fall behind: the value is read as on track, rather than the

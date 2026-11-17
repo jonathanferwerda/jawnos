@@ -1,4 +1,4 @@
-# tests-for: templates/apps/notifications.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
+# tests-for: templates/apps/notifications.html.ep templates/configure/app_notification.html.ep public/js/manager/notifications.js public/js/manager/notifications_toast.js public/js/manager/taskbar_notifications.js public/js/manager/websocket/01_message_handler.js public/js/manager/manager/09_app_back.js lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Routes/manager_misc6.pm lib/JawnOS/Manager/Part33.pm lib/JawnOS/Manager/Part12.pm perl/gb/02_labels_and_collectives.pl templates/start_menu/start_menu.html.ep public/js/manager/keyboard/02_music_and_handlers.js perl/help/topics_apps.pl perl/help/topics_features.pl public/css/manager.css public/icons/notifications.svg
 # covers:    The Notifications app (search, app filter, remove all), the in-program
 #            notice cards that replaced the browser's Notification, and the
 #            taskbar bell that counts what arrived since the list was opened.
@@ -41,6 +41,22 @@ like($template, qr/id="notifications_app_filter"/, 'an app filter');
 like($template, qr/scope="all"/, 'and Remove all');
 like($template, qr/notifications->\{'content'\}/, 'the first page is drawn on the server');
 like($template, qr/&subs::ui\('Search notifications'\)/, 'its labels are translatable sentences');
+# Two views share the window: the list is Main, and Appointments carries the
+# same per-app panel Configure uses.
+like($template, qr/data-notifications-view="main"/, 'the notice list is the Main view');
+like($template, qr/data-notifications-view="appointments"/, 'and Appointments is a second view');
+like($template, qr/notifications_app_tabs[^}]*overflow-x:\s*(?:auto|scroll)/s, 'the view strip scrolls sideways');
+like($template, qr/id="notifications_app_appt_add"/, 'the appointments view has an add input');
+like($template, qr/include 'configure\/app_notification'/, 'and draws the shared notification panel');
+like($template, qr/id="notifications_app_appt_candidates"/, 'with a datalist of the appointments it may add');
+like($template, qr/#notifications_app \.notification \{[^}]*flex:\s*0 0 auto/s,
+	'a long list cannot squeeze its rows unreadable');
+
+my $panel = source('templates/configure/app_notification.html.ep');
+like($panel, qr/app_notification_configurator/, 'the shared panel names itself');
+like($panel, qr/setting="budget_notification_statuses"/, 'it carries the status picker');
+like($panel, qr/setting="budget_notification_types"/, 'and the type picker');
+like($panel, qr/app_notification_sound_upload/, 'and the custom sound upload');
 
 # A notification is a float beside the text, so each line next to the picture is
 # shortened. The picture must fit in the title's line and that line must clear
@@ -127,7 +143,7 @@ TODO: {
 }
 
 my $ws = source('public/js/manager/websocket/01_message_handler.js');
-like($ws, qr/jawnosNotice\(\{ title: data\['title'\]/, 'a live notification becomes a house card');
+like($ws, qr/jawnosNotice\(\{ key: data\['uuid'\], title: data\['title'\]/, 'a live notification becomes a house card, keyed by its event');
 unlike($ws, qr/new Notification\(/, 'and the browser notification is gone');
 
 my $configure = source('public/js/manager/configure.js');
@@ -162,5 +178,10 @@ like(join(' ', @{ $help::topic{'notifications'}->{'body'} }), qr/search/i, 'the 
 like(join(' ', @{ $help::topic{'notifications'}->{'body'} }), qr/appointment window/, 'a notice opens the appointment window');
 unlike(join(' ', @{ $help::topic{'notifications'}->{'body'} }), qr/keyboard/, 'and no longer points at a keyboard panel');
 like(join(' ', @{ $help::topic{'taskbar'}->{'body'} }), qr/Notifications widget/, 'the taskbar topic names the bell');
+
+my $app_js = source('public/js/manager/notifications.js');
+like($app_js, qr/data-notifications-view/, 'the tabs switch a view');
+like($app_js, qr/setting: 'notification'/, 'the add input switches an appointment on');
+like($app_js, qr/jawnos_notification_appt_by_name/, 'and resolves the typed name to its app');
 
 done_testing();

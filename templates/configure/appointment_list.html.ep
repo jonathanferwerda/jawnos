@@ -266,36 +266,7 @@
 											<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a, controls => 0 %>
 										<% } %>
 									<% } elsif ($b eq 'notifications') { %>
-										<div class="app_notification_configurator" app="<%= $a %>">
-											<h4><%= &subs::lang('alarm_for_future_appointments') %></h4>
-											<div class="cfg-row">
-												<label><%= &subs::ui('Set a Clock alarm for future appointments') %></label>
-												<span app="<%= $a %>"><input type="checkbox" app="<%= $a %>" setting="alarm" class="configure_input" value="on" <% if ($appts->{$a}->{'setting'}->{'alarm'} eq 'on') { %> checked="checked" <% } %>></span>
-											</div>
-											<div class="cfg-note" style="margin-bottom:10px;"><%= &subs::ui('A future appointment with this on adds its time to the Clock as an alarm, linked back to this appointment.') %></div>
-											<% foreach my $when ( ('','start_','stop_','budget_')) { %>
-												<h4><%= &subs::format_name($when || 'default') %></h4>
-												<select class="app_notification_sound_selector configure_input" setting="<%= $when %>notification_sound" when="<%= $when %>" app="<%= $a %>">
-													<option value="">(default)</option>
-													<% foreach my $sound ( sort split /\n/, `ls ./public/sounds/notifications/*.mp3 2>/dev/null` ) { %>
-														<% 
-															my @fs = split '/', $sound;
-															my @t = split '\.', $fs[-1];
-														%>
-														<option value="<%= $sound %>" <% if ($sound eq $appts->{$a}->{'setting'}->{$when . 'notification_sound'}) { %>selected<% } %>><%= &subs::format_name($t[0]) %></option>
-													<% } %>
-												</select>
-
-												<textarea app="<%= $a %>" setting="<%= $when %>notification_text" class="configure_input"  style="height: 60px; width: 97%;" type="text" value="<%= $appts->{$a}->{'setting'}->{$when . 'notification_text'} %>" placeholder="<%= &subs::format_name($when . 'text') %>"><%= $appts->{$a}->{'setting'}->{$when . 'notification_text'} %></textarea>
-											<% } %>
-											<%# your own sound: the file lands beside the shipped ones, so it
-											    appears in all four selects above (and on every other app's) %>
-											<div class="cfg-row">
-												<label>Add your own sound</label>
-												<input type="file" class="app_notification_sound_upload" app="<%= $a %>" accept="audio/*" hint="Add sound">
-												<span class="app_notification_sound_status" app="<%= $a %>"></span>
-											</div>
-										</div>
+										<%= include 'configure/app_notification', a => $a, settings => $appts->{$a}->{'setting'} %>
 									<% } elsif ($b eq 'measures') { %>
 										<div class="app_measures_configurator" app="<%= $a %>">
 											<%= include 'configure/app_measures', settings => $appts->{$a}->{'setting'}, a => $a %>

@@ -115,13 +115,35 @@ function wsMessageDispatch(raw) {
 			// the browser's only sometimes, and it cannot be themed, searched or
 			// reached from the taskbar.
 			if (typeof jawnosNotice === 'function') {
-				jawnosNotice({ title: data['title'], message: data['message'], app: data['app'], icon: data['icon'] });
+				jawnosNotice({ key: data['uuid'], title: data['title'], message: data['message'], app: data['app'], icon: data['icon'] });
 			}
 			if (typeof jawnosNotificationsTaskbarLoad === 'function') { jawnosNotificationsTaskbarLoad(); }
 			if ($('#notifications').is(':visible')) {
 				$('#notifications').prepend(data['html']);
 				appointment_chron();
 			}
+		}
+		else if (data['type'] == 'notification_update') {
+			// The same notice with a new reading: replace the row in place by its
+			// uuid rather than prepending a second one. Match by the attribute and
+			// filter, not an escaped selector, because a uuid may carry any
+			// printable character.
+			var updateUuid = data['uuid'] ? String(data['uuid']) : '';
+			var updateRow = updateUuid ? $('.notification').filter(function () {
+				return $(this).attr('uuid') === updateUuid;
+			}) : $();
+			if (updateRow.length) {
+				if (data['html']) {
+					updateRow.first().replaceWith(data['html']);
+				}
+				else {
+					updateRow.first().find('b').first().text(data['title'] || '');
+				}
+			}
+			if (typeof jawnosNoticeUpdate === 'function') {
+				jawnosNoticeUpdate(updateUuid, { title: data['title'], message: data['message'], app: data['app'], icon: data['icon'] });
+			}
+			if (typeof jawnosNotificationsTaskbarLoad === 'function') { jawnosNotificationsTaskbarLoad(); }
 		}
 		else if (data['type'] == 'stayingAlive') {
 			// The Controller is the Network app's tab now; keep whatever the

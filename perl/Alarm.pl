@@ -374,6 +374,25 @@ sub alarm_haircut() {
 	eval { $dber->query('PRAGMA optimize;'); };
 }
 
+# A budget notification filter is a JSON array written by Configure's multiple
+# select. Absent or unparseable means "all" (a house before the picker had no
+# such row); an explicit [] means "none", so a cleared picker stays silent.
+sub budget_notification_filter {
+	my ($raw, $normalize) = @_;
+	return undef unless defined $raw;
+	my $list = eval { decode_json $raw };
+	return undef unless ref $list eq 'ARRAY';
+	return [ map {
+		my $value = "$_";
+		if ($normalize) {
+			$value = lc $value;
+			$value =~ s/[^a-z0-9]+/_/g;
+			$value =~ s/^_+|_+$//g;
+		}
+		$value;
+	} grep { defined $_ && !ref $_ } @{$list} ];
+}
+
 sub budget_watcher() {
 	my ($db,$database,$sql) = &subs::database_grabber('memory');
 	unless (&subs::setting_grabber({ app => 'me', setting => 'budget_alarm', device => $device }) eq 'on') { return 0; }
@@ -386,7 +405,19 @@ sub budget_watcher() {
 		my @buds = split /,/, $b->{'value'};
 		my $scope;
 		$settings->{$app} = &subs::settings_grabber({ app => $app }) unless $settings->{$app};
-		foreach my $circumstance ( keys %{$gb::budget_modes} ) {
+		# Every budget the app carries announces: the base readings, its special
+		# budgets and its own measures, the same set budget_runner lights.
+		my $special = eval { decode_json($settings->{$app}->{'special_budgets'} // '[]') } || [];
+		my $measures = eval { decode_json($settings->{$app}->{'app_measures'} // '{}') } || {};
+		my @budget_modes = ( (ref $special eq 'ARRAY' ? @{$special} : ()), keys %{$gb::budget_modes}, (ref $measures eq 'HASH' ? keys %{$measures} : ()) );
+		my %seen_mode;
+		@budget_modes = grep { !$seen_mode{$_}++ } @budget_modes;
+		# The pickers default to all; an emptied picker is explicitly [] and
+		# announces nothing. Statuses are stored as keys ("burnt_out") while the
+		# row's text says "burnt out", so both sides are normalised.
+		my $status_filter = &budget_notification_filter($settings->{$app}->{'budget_notification_statuses'}, 1);
+		my $type_filter = &budget_notification_filter($settings->{$app}->{'budget_notification_types'}, 0);
+		foreach my $circumstance ( @budget_modes ) {
 			my $cache_budget = &subs::cache_get({ app => $app, context => 'budget', subcontext => $circumstance });
 			if ($cache_budget->{'scope'}) {
 				$scope = $cache_budget->{'scope'};
@@ -409,7 +440,11 @@ sub budget_watcher() {
 						&subs::cache_delete({ app => $app, context => 'template' });
 						&subs::cache_set({ app => $app, context => 'budget', subcontext => $circumstance }, $budget);
 
-						if ($cache_budget->{'status'} ne $budget->{'status'}) {
+						my $status_changed = ($cache_budget->{'status'} ne $budget->{'status'});
+						# A reading that moved is news too, but only an existing card is
+						# rewritten: the first announcement is still the crossing.
+						my $value_changed = (($cache_budget->{'formatted_value'} // '') ne ($budget->{'formatted_value'} // ''));
+						if ($status_changed) {
 							my $websockets = &subs::db_query('select * from websockets where app = ? and windows like ? and server_time > ? and windows is not null order by timestamp DESC',
 								'tab', '%app":"' . $app . '%', $server_time - 5000)->hashes;
 							if (scalar @{$websockets} > 0) {
@@ -424,27 +459,61 @@ sub budget_watcher() {
 								&Websocket::send('tab', $msg);
 								&Manager::centre_view_grabber({ app => &subs::unformat_name($app), timestamp => &subs::rightNow(), cached => 'no' });
 							}
-
+						}
+						if ($status_changed || $value_changed) {
 							my $message = &subs::format_name($app) . ' is ' . $budget->{'status'} . ' for ' . $circumstance . ': ' . $budget->{'formatted_value'} . '/' . $budget->{'formatted_budgeted'};
-							if (&subs::setting_grabber({ app => $app, setting => 'notification', device => $device }) eq 'on') {
-								# Every machine runs this watcher on its own ledger, but the
-								# utility grid wakes them in the same slot. Name the crossing
-								# by app, circumstance, new status and a ten-minute window: the
-								# runs agree, and the next slot (twenty minutes on) is already
-								# a new window, so a real re-crossing still speaks again.
-								my $budget_event = join '|', 'budget', $app, $circumstance,
-									$budget->{'status'} || '', int($server_time / 600000);
-								&Manager::notification_sender({
-									app => $app,
-									role => 'all',
-									title => &subs::format_name($app),
-									synth => $budget->{'synth'},
-									words => $app,
-									message => $message,
-									image => "/images/decipherable/chart.png",
-									type => 'budget',
-									dedupe => $budget_event,
-								},$database);
+							my $status_key = $budget->{'status'} || '';
+							$status_key = lc $status_key;
+							$status_key =~ s/[^a-z0-9]+/_/g;
+							$status_key =~ s/^_+|_+$//g;
+							# The light above is the app's own; only the announcement obeys
+							# the per-app pickers.
+							my $announce = ($status_filter && !grep { $_ eq $status_key } @{$status_filter}) ? 0 : 1;
+							$announce = 0 if $type_filter && !grep { $_ eq $circumstance } @{$type_filter};
+							if ($announce && &subs::setting_grabber({ app => $app, setting => 'notification', device => $device }) eq 'on') {
+								# The window the reading is for: a crossing keeps its name in a
+								# period and the next period is a new notice.
+								my $window_start = eval { (&subs::father_time({
+									scope => $budget->{'scope_name'},
+									ts => 'this',
+									lock => ($settings->{$app}->{'s_lock'} || 'off'),
+									timestamp => $server_time,
+								}))[0] };
+								$window_start = $server_time - ($budget->{'duration'} || 86400000) unless defined $window_start;
+								# The appointments behind the reading, in one query and a fixed
+								# order. While none of them is added or edited the signature
+								# holds, so the event keeps its name and the old card is updated;
+								# a changed row (or a new period) speaks afresh.
+								my $signature = '';
+								foreach my $row ( @{ (eval { &subs::db_query(
+									'select uuid, timestamp, server_time, duration, quantity, type from appointments '
+									. 'where app = ? and (cast(timestamp as integer) >= cast(? as integer) '
+									. 'or (cast(timestamp as integer) + abs(cast(coalesce(duration,0) as real))) > cast(? as integer)) '
+									. 'order by uuid',
+									$app, $window_start, $window_start
+								)->hashes }) || [] } ) {
+									$signature .= join("\x1f", map { defined $row->{$_} ? $row->{$_} : '' } qw(uuid timestamp server_time duration quantity type)) . "\n";
+								}
+								my $budget_event = join '|', 'budget', $app, $circumstance, $window_start, $signature;
+								my $event_uuid = &subs::notification_event_uuid($budget_event);
+								# The sync may have carried this event here already: then it is
+								# the same card with a new reading, not a new notice.
+								my $already = eval { &subs::db_query('select 1 from notifications where uuid = ? limit 1', $event_uuid)->hashes->[0] } || 0;
+								if ($already || $status_changed) {
+									&Manager::notification_sender({
+										app => $app,
+										role => 'all',
+										title => &subs::format_name($app),
+										synth => $budget->{'synth'},
+										words => $app,
+										message => $message,
+										image => "/images/decipherable/chart.png",
+										type => 'budget',
+										uuid => $event_uuid,
+										dedupe => $budget_event,
+										($already ? (update => 1) : ()),
+									},$database);
+								}
 							}
 							#&Manager::budget_autocalc({ 
 							#	app => $app, 

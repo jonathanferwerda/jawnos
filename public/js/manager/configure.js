@@ -531,21 +531,33 @@ $(document).on('change', '.configure_input', function(e) {
 	if (e.attr('multiple')) {
 		value = JSON.stringify(value);
 	}
+	// The same controls also sit in the Notifications app's Appointments view,
+	// which has no appointment card to redraw: it names itself so the answer
+	// comes back as JSON rather than as a display.
+	var data = { app: app, timestamp: timestamp, setting: setting, value: value };
+	if (e.closest('#notifications_app').length) {
+		data.source = 'notifications';
+	}
 	$.ajax({
 		url: '/manager/configure',
 		type: 'POST',
-		data: { app: app, timestamp: timestamp, setting: setting, value: value },
+		data: data,
 		success: function(response) {
 			// a rename into a name the house already knows answers with a conflict,
 			// not with a display: the panel asks which value keeps the name. This is
 			// also the only path a phone takes - its keyboard has no Enter, just a
 			// Next that blurs the field, so the change event is what fires there
 			if (response && response.conflict) { nameConflictPanel(response); return; }
-			display.html(response);
-			localStorage.removeItem('manager_search_cache');
+			// only Configure draws an appointment card beside these inputs
+			if (display.length) {
+				display.html(response);
+				localStorage.removeItem('manager_search_cache');
+			}
 			// the theme select lives in the app's head, not in an ability panel
-			if (setting != 'theme') {
+			if (setting != 'theme' && button.length) {
 				button.find('.ability_label').html('<b>' + button.attr('formatted_setting') + ':</b> ' + value.slice(0,20));
+			}
+			if (e.closest('#configuration_container').length) {
 				configurationGrabber({ app: app, setting: [setting] });
 			}
 		}

@@ -1,0 +1,129 @@
+<% use Mojo::JSON qw/decode_json/; %>
+<% no warnings 'uninitialized'; %>
+<%
+	# The Notifications ability, shared by Configure's App panel and the
+	# Notifications app's Appointments view. The caller owns the surrounding
+	# .app_configure_input wrapper and hands in the app's flat settings hash, so
+	# every control here reads and writes through the generic .configure_input
+	# handler (its app + setting attributes) and nothing here knows which page it
+	# is drawn on.
+	$settings ||= {};
+
+	# A filter is a JSON array written by the generic handler's multiple-select
+	# serialisation. Absent or unparseable means "all"; an explicit [] means
+	# "none", so a cleared picker stays silent instead of falling back to all.
+	my $json_list = sub {
+		my $raw = shift;
+		return undef unless defined $raw;
+		my $list = ref $raw eq 'ARRAY' ? $raw : eval { decode_json $raw };
+		return undef unless ref $list eq 'ARRAY';
+		return [ grep { !ref $_ } @{$list} ];
+	};
+
+	# Statuses in announce order. The stash's $a is a lexical (the app name), so a
+	# sort block would sort the app name, not the statuses (see packaging.html.ep);
+	# a padded numeric prefix lets a plain string sort carry the `n` order.
+	my @statuses = map { substr($_, 3) }
+		sort map { sprintf('%03d', $gb::budget_statuses->{$_}->{'n'} // 99) . $_ }
+		keys %{$gb::budget_statuses || {}};
+	my $chosen_statuses = $json_list->($settings->{'budget_notification_statuses'});
+	my %status_on = $chosen_statuses ? map { $_ => 1 } @{$chosen_statuses} : ();
+
+	# The types come from the budgets the app actually carries. A helper that is
+	# absent yet, or a house with no budget at all, falls back to the four base
+	# readings; a saved type that has since lost its budget is still offered so it
+	# can be cleared.
+	my $types = eval { &subs::budget_notification_types($settings) };
+	$types = [qw(occurences duration total quantity)] unless ref $types eq 'ARRAY';
+	my @types = @{$types};
+	my $chosen_types = $json_list->($settings->{'budget_notification_types'});
+	if ($chosen_types) {
+		my %offered = map { $_ => 1 } @types;
+		push @types, grep { !$offered{$_}++ } @{$chosen_types};
+	}
+	my %type_on = $chosen_types ? map { $_ => 1 } @{$chosen_types} : ();
+	my %type_word = (
+		occurences => 'occurrences', duration => 'duration',
+		total => 'total', quantity => 'quantity',
+	);
+	my $type_label = sub {
+		my $type = shift;
+		return &subs::ui($type_word{$type}) if $type_word{$type};
+		return &subs::format_name($type);
+	};
+	# a picker shows between two and eight rows however many it offers
+	my $rows_for = sub { my $n = shift; return $n < 2 ? 2 : ($n > 8 ? 8 : $n) };
+%>
+<style>
+/* This block is drawn inside Configure (where .cfg-row comes from the panel) and
+   inside the Notifications app (which has no #configure around it), so it carries
+   the few rules it needs itself, all scoped to its own class. */
+.app_notification_configurator h4 { font-size:15px; margin:14px 0 6px; }
+.app_notification_configurator .cfg-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:7px 0; }
+.app_notification_configurator .cfg-row > label { flex:0 0 auto; min-width:150px; font-size:13px; opacity:.85; }
+.app_notification_configurator .cfg-note { opacity:.75; font-size:12.5px; line-height:1.4; margin:0 0 10px; }
+.app_notification_configurator > select,
+.app_notification_configurator > textarea { display:block; max-width:100%; margin:4px 0; box-sizing:border-box; }
+.app_notification_configurator .cfg-row > select,
+.app_notification_configurator .cfg-row > input:not([type=checkbox]):not([type=file]) { flex:1 1 220px; min-width:0; max-width:100%; box-sizing:border-box; padding:7px 9px; }
+.app_notification_configurator select[multiple] { width:100%; min-height:120px; }
+@media (max-width:560px) {
+	.app_notification_configurator .cfg-row { flex-direction:column; align-items:stretch; }
+	.app_notification_configurator .cfg-row > label { min-width:0; }
+	.app_notification_configurator .cfg-row > select,
+	.app_notification_configurator .cfg-row > input:not([type=checkbox]):not([type=file]) { flex:0 0 auto; width:100%; }
+}
+</style>
+<div class="app_notification_configurator" app="<%= $a %>">
+	<h4><%= &subs::lang('alarm_for_future_appointments') %></h4>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Set a Clock alarm for future appointments') %></label>
+		<span app="<%= $a %>"><input type="checkbox" app="<%= $a %>" setting="alarm" class="configure_input" value="on" <% if ($settings->{'alarm'} eq 'on') { %> checked="checked" <% } %>></span>
+	</div>
+	<div class="cfg-note" style="margin-bottom:10px;"><%= &subs::ui('A future appointment with this on adds its time to the Clock as an alarm, linked back to this appointment.') %></div>
+	<% foreach my $when ( ('','start_','stop_','budget_')) { %>
+		<h4><%= &subs::format_name($when || 'default') %></h4>
+		<select class="app_notification_sound_selector configure_input" setting="<%= $when %>notification_sound" when="<%= $when %>" app="<%= $a %>">
+			<option value="">(default)</option>
+			<% foreach my $sound ( sort split /\n/, `ls ./public/sounds/notifications/*.mp3 2>/dev/null` ) { %>
+				<% 
+					my @fs = split '/', $sound;
+					my @t = split '\.', $fs[-1];
+				%>
+				<option value="<%= $sound %>" <% if ($sound eq $settings->{$when . 'notification_sound'}) { %>selected<% } %>><%= &subs::format_name($t[0]) %></option>
+			<% } %>
+		</select>
+
+		<textarea app="<%= $a %>" setting="<%= $when %>notification_text" class="configure_input"  style="height: 60px; width: 97%;" type="text" value="<%= $settings->{$when . 'notification_text'} %>" placeholder="<%= &subs::format_name($when . 'text') %>"><%= $settings->{$when . 'notification_text'} %></textarea>
+		<% if ($when eq 'budget_') { %>
+			<%# Which budget readings announce. Both pickers are plain multiple
+			    selects: the generic handler writes the picked values as a JSON
+			    array, and all-selected is stored as nothing at all. %>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Budget statuses to announce') %></label>
+				<select app="<%= $a %>" setting="budget_notification_statuses" class="configure_input app_notification_budget_statuses" multiple size="<%= $rows_for->(scalar @statuses) %>" hint="<%= &subs::ui('Choose the budget statuses that announce') %>">
+					<% foreach my $status (@statuses) { %>
+						<option value="<%= $status %>" <% if (!$chosen_statuses || $status_on{$status}) { %>selected<% } %>><%= &subs::format_name($status) %></option>
+					<% } %>
+				</select>
+			</div>
+			<div class="cfg-note"><%= &subs::ui('All selected announces every status. Clearing one silences it.') %></div>
+			<div class="cfg-row">
+				<label><%= &subs::ui('Budget types to announce') %></label>
+				<select app="<%= $a %>" setting="budget_notification_types" class="configure_input app_notification_budget_types" multiple size="<%= $rows_for->(scalar @types) %>" hint="<%= &subs::ui('Choose the budget types that announce') %>">
+					<% foreach my $type (@types) { %>
+						<option value="<%= $type %>" <% if (!$chosen_types || $type_on{$type}) { %>selected<% } %>><%= $type_label->($type) %></option>
+					<% } %>
+				</select>
+			</div>
+			<div class="cfg-note"><%= &subs::ui('All selected announces every type. Clearing one silences it.') %></div>
+		<% } %>
+	<% } %>
+	<%# your own sound: the file lands beside the shipped ones, so it
+	    appears in all four selects above (and on every other app's) %>
+	<div class="cfg-row">
+		<label>Add your own sound</label>
+		<input type="file" class="app_notification_sound_upload" app="<%= $a %>" accept="audio/*" hint="Add sound">
+		<span class="app_notification_sound_status" app="<%= $a %>"></span>
+	</div>
+</div>

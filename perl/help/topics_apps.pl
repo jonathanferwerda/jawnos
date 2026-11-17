@@ -358,19 +358,22 @@ $topic{'power'} = {
 
 $topic{'notifications'} = {
 		title => 'Notifications', category => 'apps', app => 'notifications',
-		templates => [ 'templates/apps/notifications.html.ep', 'public/js/manager/notifications.js', 'public/js/manager/notifications_toast.js', 'public/js/manager/taskbar_notifications.js', 'templates/notification.html.ep' ],
-		controls => [ 'Type to filter the list', 'Show only one app in the list', 'Clear every notice the filter shows', 'Remove this notice' ],
+		templates => [ 'templates/apps/notifications.html.ep', 'templates/configure/app_notification.html.ep', 'public/js/manager/notifications.js', 'public/js/manager/notifications_toast.js', 'public/js/manager/taskbar_notifications.js', 'templates/notification.html.ep' ],
+		controls => [ 'Type to filter the list', 'Show only one app in the list', 'Clear every notice the filter shows', 'Remove this notice', 'Choose the budget statuses that announce', 'Choose the budget types that announce', 'Type an appointment name and press Enter to let it announce notifications', 'Stop this appointment from announcing notifications' ],
 		verified => '2026-11-16',
 		summary => 'The house\'s notices, with a search and an app filter, and the taskbar bell.',
 		body => [
 			'Notifications lists what the house has told you, newest first: a payment, an alarm, a request to pair, a plan that was applied, and anything else an app announces. Each row names its app and its time, and its X removes that notice. Press a row to open that app\'s appointment window.',
 			'The search box filters the list as you type, and the app picker narrows it to one app. Remove all clears the filtered list.',
+			'Two views share the window. Main is the list above. Appointments lists every appointment that currently announces notifications, with the same panel Configure shows: its alarm, its sound and text for default, start, stop and budget, and two pickers for the budget statuses and budget types that may announce. The input at the top adds an appointment that is public or dangerous; private appointments are never offered. Turn off notifications stops an appointment from announcing without opening Configure.',
+			'A budget notice is a card, not a stream: while the appointments behind the reading have not changed, a moved number rewrites the same card instead of arriving again. A new appointment or a new budget period is a new notice.',
 			'A notice also rises as a small card in the top-right corner of the desk while you work, with its title and line. Press the card to open the app it came from, press its X to dismiss it, or let it fade after a few seconds; hovering a card holds it. This is the house\'s own card, not the browser\'s notification, so it follows the theme and can always be seen.',
 			'The taskbar can carry a Notifications widget: a bell with a count of what has arrived since the list was last opened. A press opens a small panel with the newest notices and a search box; press a notice there to open its appointment window, and Open Notifications at the foot opens this app. The count clears when the panel or the app is opened, and it is kept per browser. Add items -> Widgets puts the bell on the bar or takes it off, its right-click menu chooses Icon, Icon and status, or Disabled.',
 		],
 		steps => [
 			'Open Notifications from the start menu, or press the bell widget in the taskbar and then Open Notifications.',
 			'Type in the search box to narrow the list; choose an app to show only its notices.',
+			'Switch to Appointments to see and change what announces; type an appointment into the add box and press Enter to let it announce, or press Turn off notifications to stop one.',
 			'Press a notice, or a row in the bell\'s panel, to open that app\'s appointment window; press its X to remove it, or Remove all to clear the filtered list.',
 			'Press a rising notice card to open the app it came from, or its X to dismiss it.',
 			'Add the Notifications widget under the taskbar\'s Add items -> Widgets; its count clears when you open the list.',
