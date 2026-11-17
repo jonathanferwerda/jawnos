@@ -477,7 +477,22 @@ is_deeply([ map { $_->{'apps'} } @{$phases} ], [ [qw(soap coffee)], ['lunch'], [
 	'a pill no routine names keeps its own last section');
 is_deeply([ map { $_->{'hour'} } @{$phases} ], [7, 13, 19, undef],
 	'each routine carries the first hour of its pills');
-is($phases->[2]{'hour_last'}, 19, 'and the last hour, so a routine can say its span');
+# a routine is named for the hour most of its pills happen, not the first one's:
+# a single 2am step must not name the morning the night
+my $early = { apps => { come => { hour => 2 }, soap => { hour => 7 }, coffee => { hour => 8 },
+	water => { hour => 9 }, tea => { hour => 9 } } };
+my $mixed = subs::clothesline_anticipatory_phases([qw(come soap coffee water tea)],
+	[ map { { app => $_, wave => 0 } } qw(come soap coffee water tea) ], $early);
+is($mixed->[0]{'hour'}, 9, 'a routine takes the hour most of its pills happen');
+is($mixed->[0]{'label'}, 'Morning', 'so one odd step does not move it to the night');
+
+# the day runs into the small hours: one in the morning ends the day, it does
+# not open it
+my $nscan = { apps => { sleep => { hour => 2 }, soap => { hour => 7 } } };
+my $night = subs::clothesline_anticipatory_phases([qw(sleep soap)],
+	[ { app => 'sleep', wave => 0 }, { app => 'soap', wave => 1 } ], $nscan);
+is_deeply([ map { $_->{'apps'} } @{$night} ], [ ['soap'], ['sleep'] ],
+	'the small hours sort after the morning rather than before it');
 my $curated = subs::clothesline_anticipatory_phases([qw(lunch soap)], $prows, $pscan);
 is_deeply([ map { $_->{'apps'} } @{$curated} ], [ ['soap'], ['lunch'] ],
 	'a curated day keeps its own pills, each in its routine');

@@ -15,7 +15,7 @@
 		<div class="clothes_day_phases">
 			<% foreach my $phase ( @{ $day->{'phases'} } ) { %>
 			<div class="clothes_day_phase" phase="<%= $phase->{'key'} %>">
-				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% if (defined $phase->{'hour_last'} && $phase->{'hour_last'} != $phase->{'hour'}) { %>&ndash;<%= &subs::clothesline_hour_word($phase->{'hour_last'}) %><% } %><% } %></h5>
+				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% } %></h5>
 				<ul class="clothes_day_items">
 					<% foreach my $app ( @{ $phase->{'apps'} } ) { %>
 					<li class="clothes_day_item" app="<%= $app %>"><span><%= &subs::format_name($app) %></span> <button type="button" class="clothes_day_drop" title="<%= &subs::ui('Drop') %>">×</button></li>
@@ -27,7 +27,7 @@
 		<div class="clothes_day_learned" style="display:none;">
 			<% foreach my $phase ( @{ $day->{'learned_phases'} } ) { %>
 			<div class="clothes_day_phase" phase="<%= $phase->{'key'} %>">
-				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% if (defined $phase->{'hour_last'} && $phase->{'hour_last'} != $phase->{'hour'}) { %>&ndash;<%= &subs::clothesline_hour_word($phase->{'hour_last'}) %><% } %><% } %></h5>
+				<h5><%= &subs::ui($phase->{'label'}) %><% if (defined $phase->{'hour'}) { %> &middot; <%= &subs::clothesline_hour_word($phase->{'hour'}) %><% } %></h5>
 				<ul class="clothes_day_items">
 					<% foreach my $app ( @{ $phase->{'apps'} } ) { %>
 					<li class="clothes_day_item" app="<%= $app %>"><span><%= &subs::format_name($app) %></span> <button type="button" class="clothes_day_drop" title="<%= &subs::ui('Drop') %>">×</button></li>

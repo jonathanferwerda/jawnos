@@ -462,14 +462,27 @@ sub clothesline_anticipatory_phases {
 		my $hour = ref $row eq 'HASH' ? $row->{'hour'} : undef;
 		push @{$slot{$key}{'hours'}}, (0 + $hour) if defined $hour && $hour =~ /^\d+$/;
 	}
+	# The routine's hour is the hour most of its pills happen, not the first
+	# one's: a single 2am step must not name a morning routine the night. A tie
+	# goes to the earlier hour.
 	for my $phase ( @phases ) {
-		my @hours = sort { $a <=> $b } @{$phase->{'hours'}};
-		$phase->{'hour'} = $hours[0];
-		$phase->{'hour_last'} = $hours[-1];
+		my %count;
+		$count{$_}++ for @{$phase->{'hours'}};
+		my $best = -1;
+		foreach my $hour ( sort { $a <=> $b } keys %count ) {
+			if ($count{$hour} > $best) { ($phase->{'hour'}, $best) = (0 + $hour, $count{$hour}); }
+		}
 		$phase->{'label'} = $phase->{'key'} eq 'more' ? 'Added' : &clothesline_anticipatory_wave_name($phase->{'hour'});
 	}
+	# the day runs from the morning into the small hours, so one in the morning
+	# sorts after eleven at night rather than before the day it ends
+	my $clock = sub {
+		my $hour = shift;
+		return 99 unless defined $hour;
+		return $hour < 5 ? $hour + 24 : $hour;
+	};
 	return [ sort {
-		(defined $a->{'hour'} ? $a->{'hour'} : 99) <=> (defined $b->{'hour'} ? $b->{'hour'} : 99)
+		$clock->($a->{'hour'}) <=> $clock->($b->{'hour'})
 			|| $a->{'wave'} <=> $b->{'wave'}
 			|| $a->{'key'} cmp $b->{'key'}
 	} @phases ];
