@@ -256,6 +256,21 @@ sub stop_target_row {
 	return ($row && $row->{'uuid'}) ? $row : undef;
 }
 
+# The length of the session a stop would close right now: the time since the
+# oldest open start/record. The duration line under an appointment's own field
+# reads this while a session is running, so the person sees the length the Stop
+# press will save instead of the app's usual length. When more than one session
+# is open, this is the one the stop fallback closes (the oldest), so the line and
+# the press agree.
+sub running_session_duration {
+	my ($app, $now) = @_;
+	return undef unless $app;
+	$now = &rightNow() unless defined $now;
+	my $row = &stop_target_row($app, undef, $now);
+	return undef unless $row && defined $row->{'timestamp'};
+	return (0 + $now) - (0 + $row->{'timestamp'});
+}
+
 # A queued replay can deliver the same start twice a fraction of a second apart
 # (a toggle replayed after a sleep, say). The start branch used to mint a fresh
 # uuid every time, so the stop closed the row it named and the twin stayed open

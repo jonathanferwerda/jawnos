@@ -96,14 +96,24 @@ sub action_45297 {
 
 	my $duration_spec = $c->param('duration') // '';
 	my $duration_default = 0;
+	my $duration_running = 0;
 	my $duration_ms;
 	if ($duration_spec !~ /\S/ && $is_transaction) {
 		$duration_ms = 5000;
 		$duration_default = 1;
 	}
 	elsif ($duration_spec !~ /\S/) {
-		$duration_spec = $settings->{'duration'} // '';
-		$duration_default = 1;
+		# a running session's own length, the one a stop would save; only when
+		# the person has not typed a length of their own
+		my $running_ms = &subs::running_session_duration($app, &subs::rightNow());
+		if (defined $running_ms) {
+			$duration_ms = $running_ms;
+			$duration_running = 1;
+		}
+		else {
+			$duration_spec = $settings->{'duration'} // '';
+			$duration_default = 1;
+		}
 	}
 	$duration_ms = ($duration_spec =~ /\S/) ? &duration_read($duration_spec) : $duration_ms;
 
@@ -153,9 +163,12 @@ sub action_45297 {
 			read => (defined $warranty_ms ? 1 : 0),
 		},
 		duration => {
-			text => defined $duration_ms ? &subs::duration_sayer(abs($duration_ms) / 1000) : &subs::ui('none'),
+			text => defined $duration_ms
+				? ($duration_running ? &subs::ui('Running') . ': ' : '') . &subs::duration_sayer(abs($duration_ms) / 1000)
+				: &subs::ui('none'),
 			milliseconds => $duration_ms,
 			default => $duration_default,
+			running => $duration_running,
 			read => (defined $duration_ms ? 1 : 0),
 		},
 		schedule => $schedule,
