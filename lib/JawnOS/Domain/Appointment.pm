@@ -1335,7 +1335,9 @@ sub navigation_automation {
 # box's UTC, so a routine begun at eight local reads the same wherever the
 # machine sits.
 sub clothesline_daily_hours {
-	my $now = &rightNow();
+	# A caller may ask for another day's routine (the anticipatory settings walk
+	# this week); with no moment the present is read, as it always was.
+	my $now = shift || &rightNow();
 	my ($rows, $window_days, $session_days) = &clothesline_place_history($now);
 	$window_days ||= 60;
 	$session_days ||= 14;

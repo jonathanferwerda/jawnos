@@ -1165,8 +1165,11 @@ elsif ($type eq 'delay') {
 	&subs::appointment_theme_push() if ($theme_movement =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/);
 	# The steps just written change what the clothesline anticipates, so hang it
 	# now instead of leaving the rail for its next poll. The page that pressed
-	# gets the new line in the reply; the others are told to refresh.
-	&subs::hang_to_dry();
+	# gets the new line in the reply; the others are told to refresh. A person who
+	# turned off the recompute-on-every-press switch keeps the head already hung: the tail
+	# still follows the press, the anticipatory part waits for its own update.
+	my $anticipatory = &subs::clothesline_anticipatory_settings();
+	&subs::hang_to_dry(reuse_head => ($anticipatory->{'on_reset'} ? 0 : 1));
 	$returner->{'clothesline'} = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
 	&Websocket::send('server', { console => &Websocket::console_command('calculator') });
 	$seg->('tail');

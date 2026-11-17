@@ -500,6 +500,32 @@ sub action_41750 {
 	});
 }
 
+# GET /manager/clothesline/settings
+# The anticipatory settings, from the rail's own right-press menu: the three
+# switches and this week's days, each with the pills that populate it.
+sub action_41751 {
+	my $c = shift;
+	my $html = $c->render_to_string(
+		template => 'apps/clothesline/settings',
+		settings => &subs::clothesline_anticipatory_settings(),
+		week => &subs::clothesline_anticipatory_week(),
+		apps => &subs::clothesline_anticipatory_apps(),
+	);
+	$c->render(json => { html => $html });
+}
+
+# POST /manager/clothesline/settings
+# The dialog's Save: the three switches and only the days the person touched
+# (a null day returns it to the learned routine). The rail is re-hung at once.
+sub action_41752 {
+	my $c = shift;
+	my $value = $c->param('value') // '';
+	my $payload = eval { decode_json $value } || {};
+	my $ok = &subs::clothesline_anticipatory_save($payload);
+	&subs::hang_to_dry();
+	$c->render(json => { ok => ($ok ? 1 : 0) });
+}
+
 # GET /manager/volume_control
 sub action_41801 {
 	my $c = shift;

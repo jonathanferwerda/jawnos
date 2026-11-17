@@ -372,6 +372,7 @@ function clotheslineMenu(item, px, py) {
 	clotheslineMenuRow(menu, 'edit', jawnosT('Edit'));
 	clotheslineMenuRow(menu, 'remove', jawnosT('Remove'));
 	clotheslineMenuRow(menu, 'bump', jawnosT('Bump'));
+	clotheslineMenuRow(menu, 'settings', jawnosT('Settings'));
 	$('body').append(menu);
 	var margin = 6;
 	var left = Math.min(px, $(window).width() - menu.outerWidth() - margin);
@@ -417,6 +418,95 @@ $(document).on('click', '.clothesline_menu_row', function(e) {
 	else if (command == 'bump') {
 		clotheslineSet(app, 'anticipatory', head ? 'exclude' : 'include');
 	}
+	else if (command == 'settings') {
+		clotheslineSettings();
+	}
+});
+
+// The anticipatory settings: three switches and this week's days, each with the
+// pills that populate it. A day the person changes keeps its own list; a reset
+// returns it to the learned routine.
+function clotheslineSettings() {
+	$.ajax({
+		url: '/manager/clothesline/settings',
+		type: 'GET',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			jawnosAlert(response.html);
+		}
+	});
+}
+
+function clotheslineDayItem(app, name) {
+	var li = $('<li class="clothes_day_item"></li>').attr('app', app);
+	$('<span></span>').text(name).appendTo(li);
+	$('<button type="button" class="clothes_day_drop"></button>')
+		.attr('title', jawnosT('Drop')).text('\u00d7').appendTo(li);
+	return li;
+}
+
+$(document).on('click', '.clothes_day_add_btn', function() {
+	var card = $(this).closest('.clothes_day_card');
+	var pick = card.find('.clothes_day_add');
+	var app = pick.val();
+	if (!app) { return; }
+	if (card.find('.clothes_day_item[app="' + app + '"]').length) { return; }
+	var name = pick.find('option:selected').text();
+	card.find('.clothes_day_items').append(clotheslineDayItem(app, name));
+	card.attr('data-touched', '1').removeAttr('data-reset');
+});
+
+$(document).on('click', '.clothes_day_drop', function() {
+	var card = $(this).closest('.clothes_day_card');
+	$(this).closest('.clothes_day_item').remove();
+	card.attr('data-touched', '1').removeAttr('data-reset');
+});
+
+$(document).on('click', '.clothes_day_reset', function() {
+	var card = $(this).closest('.clothes_day_card');
+	var list = card.find('.clothes_day_items').empty();
+	card.find('.clothes_day_learned option').each(function() {
+		var o = $(this);
+		list.append(clotheslineDayItem(o.val(), o.text()));
+	});
+	card.attr('data-touched', '1').attr('data-reset', '1');
+});
+
+$(document).on('click', '.clothes_settings_close', function() {
+	if (typeof jawnosAlertClose == 'function') { jawnosAlertClose(); }
+});
+
+$(document).on('click', '#clothes_settings_save', function() {
+	var btn = $(this);
+	var days = {};
+	$('.clothes_day_card').each(function() {
+		var card = $(this);
+		if (card.attr('data-touched') != '1') { return; }
+		var date = card.attr('date');
+		if (card.attr('data-reset') == '1') { days[date] = null; return; }
+		var apps = [];
+		card.find('.clothes_day_item').each(function() {
+			apps.push($(this).attr('app'));
+		});
+		days[date] = apps;
+	});
+	var payload = {
+		on: $('#clothes_anticipatory_on').is(':checked') ? 1 : 0,
+		next_wave: $('#clothes_anticipatory_next').is(':checked') ? 1 : 0,
+		on_reset: $('#clothes_anticipatory_reset').is(':checked') ? 1 : 0,
+		days: days
+	};
+	btn.prop('disabled', true);
+	$.ajax({
+		url: '/manager/clothesline/settings',
+		type: 'POST',
+		data: { value: JSON.stringify(payload), timestamp: Date.now() },
+		success: function() {
+			if (typeof jawnosAlertClose == 'function') { jawnosAlertClose(); }
+			clotheslineRefresh();
+		},
+		complete: function() { btn.prop('disabled', false); }
+	});
 });
 
 $(document).on('click', function() { $('.clothesline_menu').remove(); });

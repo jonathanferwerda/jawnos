@@ -19,6 +19,8 @@ sub routes {
 	[41731, 'get', '/manager/clothesline', 'action_41731'],
 	[41744, 'post', '/manager/clothesline', 'action_41744'],
 	[41750, 'post', '/manager/clothesline/schedule', 'action_41750'],
+	[41751, 'get', '/manager/clothesline/settings', 'action_41751'],
+	[41752, 'post', '/manager/clothesline/settings', 'action_41752'],
 	[41801, 'get', '/manager/volume_control', 'action_41801'],
 	[41877, 'post', '/manager/calculate', 'action_41877'],
 	[41893, 'get', '/manager/keyboard/convert', 'action_41893'],

@@ -41,14 +41,15 @@ our $config;
 our %m;
 
 sub hang_to_dry {
+	my %opt = @_;
 	my $server_time = &rightNow();
 	my $returner = [];
+	# The person's own settings for the anticipatory head: on or off, whether the
+	# next routine's pills ride along, whether a press recomputes it, and the
+	# per-day lists they curated. Read once, used by the head below.
+	my $anticipatory = &clothesline_anticipatory_settings();
 
 	my $cls = &db_query('select * from settings where setting = ? and device = ? and app!= ? and value is not null', 'clothesline', $device,'__president')->hashes;
-	# Every app's days and the order the day runs in. The appointment scan reads
-	# only the steps the person starts and stops themselves, so a task or a
-	# default option does not teach the line a routine of its own.
-	my $daily = &clothesline_daily_hours();
 	# The alphabetical tail is the apps whose own hang is on now. A time slot
 	# was picked in the house's words, so the match reads the house clock: the
 	# box keeps UTC, and a slot must not open eight o'clock late.
@@ -105,15 +106,35 @@ sub hang_to_dry {
 	# what belongs on the line follows alphabetically. An app in the head is not
 	# repeated in the tail, and a step the routine takes twice is one name in the
 	# head - the next time it comes round.
-	my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 40);
-	my $anticipated = $anticipation->{'list'} || [];
-	# The anticipate step already sets a running step at the place the routine
-	# usually stops it. Only a session the sequence does not name at all - one
-	# started out of its order, or off its day - is put at the head here, so a
-	# running app never falls off the line.
-	my $running = ($daily->{'current'} && $daily->{'current'}{'running'}) ? $daily->{'current'}{'running'} : undef;
-	if (defined $running && length $running && !grep { $_->{'app'} eq $running } @{$anticipated}) {
-		unshift @{$anticipated}, { app => $running, wave => $anticipation->{'current_wave'} || 0 };
+	my $anticipated = [];
+	if ($anticipatory->{'on'}) {
+		# A press can reuse the head already hung (the person asked that a press
+		# not recompute it), so a routine scan only runs when it is wanted.
+		if ($opt{'reuse_head'}) {
+			my $stored = eval { decode_json &setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
+			$anticipated = [ map { { app => $_->{'app'}, wave => 0 } }
+				grep { ref $_ eq 'HASH' && $_->{'head'} && defined $_->{'app'} && length $_->{'app'} } @{$stored} ];
+		}
+		if (!@{$anticipated}) {
+			# Every app's days and the order the day runs in. The appointment scan
+			# reads only the steps the person starts and stops themselves, so a task
+			# or a default option does not teach the line a routine of its own.
+			my $daily = &clothesline_daily_hours();
+			my $anticipation = &clothesline_sequence_anticipate($daily, $server_time, limit => 40);
+			$anticipated = $anticipation->{'list'} || [];
+			if (!$anticipatory->{'next_wave'}) {
+				my $wave = $anticipation->{'current_wave'} || 0;
+				$anticipated = [ grep { ($_->{'wave'} || 0) <= $wave } @{$anticipated} ];
+			}
+			# The anticipate step already sets a running step at the place the
+			# routine usually stops it. Only a session the sequence does not name at
+			# all - one started out of its order, or off its day - is put at the head
+			# here, so a running app never falls off the line.
+			my $running = ($daily->{'current'} && $daily->{'current'}{'running'}) ? $daily->{'current'}{'running'} : undef;
+			if (defined $running && length $running && !grep { $_->{'app'} eq $running } @{$anticipated}) {
+				unshift @{$anticipated}, { app => $running, wave => ($anticipation->{'current_wave'} || 0) };
+			}
+		}
 	}
 	my %have = map { $_->{'app'} => $_ } @{$returner};
 	my @head;
@@ -130,20 +151,40 @@ sub hang_to_dry {
 		$item->{'wave'} = $row->{'wave'};
 		push @head, $item;
 	}
-	# The person's own say over the head: an app they excluded leaves it, and one
-	# they included joins the front even when the routine has not learned it.
-	my ($kept, $included) = &clothesline_anticipation_apply(\@head, \%say);
-	my @lead;
-	foreach my $app ( @{$included} ) {
-		next if $hidden{$app} || &app_hidden_now($app);
-		my $item = $have{$app};
-		unless ($item) {
-			my $aset = &settings_grabber({ app => $app });
-			$item = { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
+	if ($anticipatory->{'on'}) {
+		# The person's own say over the head: an app they excluded leaves it, and
+		# one they included joins the front even when the routine has not learned it.
+		my ($kept, $included) = &clothesline_anticipation_apply(\@head, \%say);
+		my @lead;
+		foreach my $app ( @{$included} ) {
+			next if $hidden{$app} || &app_hidden_now($app);
+			my $item = $have{$app};
+			unless ($item) {
+				my $aset = &settings_grabber({ app => $app });
+				$item = { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
+			}
+			push @lead, $item;
 		}
-		push @lead, $item;
+		@head = (@lead, @{$kept});
+		# The day's own list wins when the person curated this day in the
+		# anticipatory settings: it is exactly those pills, in their order.
+		my ($today) = &clothesline_house_day($server_time);
+		if (ref $anticipatory->{'days'}{$today} eq 'ARRAY') {
+			my @manual;
+			foreach my $app ( @{ $anticipatory->{'days'}{$today} } ) {
+				next unless defined $app && length $app;
+				next if $hidden{$app} || &app_hidden_now($app);
+				my $item = $have{$app};
+				unless ($item) {
+					my $aset = &settings_grabber({ app => $app });
+					$item = { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
+				}
+				$item->{'wave'} = 0;
+				push @manual, $item;
+			}
+			@head = @manual;
+		}
 	}
-	@head = (@lead, @{$kept});
 	# The rail draws its divider where the anticipatory steps end and the
 	# alphabetical rest begins.
 	foreach my $item ( @head ) { $item->{'head'} = 1; }
@@ -246,6 +287,103 @@ sub clothesline_line_order {
 		push @rest, $item;
 	}
 	return [ @{$head}, @rest ];
+}
+
+# ---- the anticipatory settings ---------------------------------------------
+# The context menu's Settings dialog owns the head: whether it shows at all,
+# whether the next routine rides along, whether a press recomputes it, and the
+# per-day lists the person curated for this week. Every switch defaults on, so
+# an install that never opened the dialog behaves exactly as it did.
+sub clothesline_anticipatory_settings {
+	my $raw = eval { &setting_grabber({ app => '__president', setting => 'clothesline_anticipatory' }) };
+	my $s = (defined $raw && $raw =~ /\S/) ? (eval { decode_json $raw } || {}) : {};
+	$s = {} unless ref $s eq 'HASH';
+	foreach my $key ( qw/on next_wave on_reset/ ) { $s->{$key} = 1 unless defined $s->{$key}; }
+	$s->{'days'} = {} unless ref $s->{'days'} eq 'HASH';
+	return $s;
+}
+
+sub clothesline_anticipatory_save {
+	my ($payload) = @_;
+	return 0 unless ref $payload eq 'HASH';
+	my $s = &clothesline_anticipatory_settings();
+	foreach my $key ( qw/on next_wave on_reset/ ) {
+		$s->{$key} = $payload->{$key} ? 1 : 0 if exists $payload->{$key};
+	}
+	if (ref $payload->{'days'} eq 'HASH') {
+		foreach my $date ( keys %{ $payload->{'days'} } ) {
+			next unless $date =~ /^\d{4}-\d{2}-\d{2}$/;
+			my $list = $payload->{'days'}{$date};
+			if (!defined $list) { delete $s->{'days'}{$date}; next; }
+			next unless ref $list eq 'ARRAY';
+			my %seen;
+			$s->{'days'}{$date} = [ grep { defined $_ && length $_ && !$seen{$_}++ } map { "$_" } @{$list} ];
+		}
+	}
+	&setting_setter({ app => '__president', setting => 'clothesline_anticipatory', value => encode_json $s });
+	return 1;
+}
+
+# The apps the dialog may put in a day: every app the appointment log knows,
+# under its printed name, minus the ones the rail already keeps off the desk.
+sub clothesline_anticipatory_apps {
+	my $rows = eval { &db_query("select distinct app from appointments where app is not null and app != '' order by app")->hashes } || [];
+	my %seen;
+	my @apps;
+	foreach my $r ( @{$rows} ) {
+		my $app = $r->{'app'};
+		next unless defined $app && length $app;
+		next if $seen{$app}++;
+		next if eval { &app_hidden_now($app) };
+		push @apps, { app => $app, name => &format_name($app) };
+	}
+	# an app with a clothesline setting but no appointment yet is still a pill
+	my $clothes = eval { &db_query("select distinct app from settings where setting = 'clothesline' and app != ? and value is not null", '__president')->hashes } || [];
+	foreach my $r ( @{$clothes} ) {
+		my $app = &unformat_name($r->{'app'});
+		next unless length $app && !$seen{$app}++;
+		next if eval { &app_hidden_now($app) };
+		push @apps, { app => $app, name => &format_name($app) };
+	}
+	@apps = sort { lc($a->{'name'}) cmp lc($b->{'name'}) || $a->{'app'} cmp $b->{'app'} } @apps;
+	return \@apps;
+}
+
+# The current week, Monday first: the learned head for each day, and the
+# person's own list where they curated one. The dialog walks these.
+sub clothesline_anticipatory_week {
+	my ($now) = @_;
+	$now = &rightNow() unless defined $now;
+	my $s = &clothesline_anticipatory_settings();
+	my $restore = &clock_zone_adopt(&clock_zone_house());
+	my @lt = localtime(int($now / 1000));
+	my $today = &day_key($now);
+	my $start = timelocal(0, 0, 0, $lt[3], $lt[4], $lt[5]) * 1000;
+	my $monday = $start - ((($lt[6] + 6) % 7) * 86400 * 1000);
+	my @week;
+	for my $i ( 0 .. 6 ) {
+		my $day_ms = &calendar_shift($monday, $i, 'day');
+		my @d = localtime(int($day_ms / 1000));
+		my $morning = timelocal(0, 0, 9, $d[3], $d[4], $d[5]) * 1000;
+		my $key = &day_key($morning);
+		my $daily = &clothesline_daily_hours($morning);
+		my $ant = &clothesline_sequence_anticipate($daily, $morning, limit => 40);
+		my $wave = $ant->{'current_wave'} || 0;
+		my @learned = map { $_->{'app'} }
+			grep { defined $_->{'app'} && ($s->{'next_wave'} || ($_->{'wave'} || 0) <= $wave) }
+			@{ $ant->{'list'} || [] };
+		my $override = ref $s->{'days'}{$key} eq 'ARRAY' ? $s->{'days'}{$key} : undef;
+		push @week, {
+			key => $key,
+			label => POSIX::strftime('%A, %B %d', @d),
+			today => ($key eq $today ? 1 : 0),
+			learned => \@learned,
+			apps => ($override ? [ @{$override} ] : [ @learned ]),
+			override => ($override ? 1 : 0),
+		};
+	}
+	$restore->() if $restore;
+	return \@week;
 }
 
 # The person's own say over the anticipatory head. $say maps an app to its

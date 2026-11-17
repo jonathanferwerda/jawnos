@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_misc12.pm templates/apps/clothesline.html.ep templates/apps/clothesline/schedules.html.ep public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js public/js/manager/clothesline/01_timeline.js
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Hang.pm lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Controller/manager_misc12.pm templates/apps/clothesline.html.ep templates/apps/clothesline/schedules.html.ep templates/apps/clothesline/settings.html.ep public/js/manager/manager/09_app_back.js public/js/manager/clothesline.js public/js/manager/clothesline/01_timeline.js
 # covers:    The clothesline leads with the most common recent day's sequence,
 #            not the latest day: a step moved earlier or later leaves the rest
 #            in order, a step done twice is one pill at its next turn, and the
@@ -411,6 +411,30 @@ my $ends = subs::clothesline_schedule_expand(
 	{ plans => [ { kind => 'weekdays', weekdays => ['sun'] } ], hours => [9, 12] }, $reader_now);
 is_deeply($ends->{'hours'}, [9, 10, 11], 'a span answered as 9 and 12 covers 9, 10 and 11');
 
+# --- the anticipatory settings ---------------------------------------------
+my $as = subs::clothesline_anticipatory_settings();
+is($as->{'on'}, 1, 'the anticipatory head is on by default');
+is($as->{'next_wave'}, 1, 'the next routine rides along by default');
+is($as->{'on_reset'}, 1, 'a press recomputes the head by default');
+is_deeply($as->{'days'}, {}, 'with no curated day');
+
+subs::clothesline_anticipatory_save({
+	on => 0, next_wave => 0, on_reset => 0,
+	days => { '2026-11-16' => [ 'coffee', 'water' ], '2026-11-17' => undef },
+});
+my $saved = subs::clothesline_anticipatory_settings();
+is($saved->{'on'}, 0, 'the head switch is stored');
+is($saved->{'next_wave'}, 0, 'the next-routine switch is stored');
+is($saved->{'on_reset'}, 0, 'the press switch is stored');
+is_deeply($saved->{'days'}{'2026-11-16'}, [ 'coffee', 'water' ], 'a curated day is stored in order');
+ok(!exists $saved->{'days'}{'2026-11-17'}, 'a null day returns to the learned routine');
+
+my $week = subs::clothesline_anticipatory_week();
+is(scalar @{$week}, 7, 'the dialog walks seven days');
+like($week->[0]{'key'}, qr/^\d{4}-\d{2}-\d{2}$/, 'each day carries its date');
+ok(ref $week->[0]{'learned'} eq 'ARRAY', 'and the learned list it would show');
+ok(ref $week->[0]{'apps'} eq 'ARRAY', 'and the list the person would edit');
+
 my $till = subs::clothesline_schedule_parse('every thursday between 3-6pm until July 24 2027', now => $reader_now);
 is_deeply($till->{'schedules'}[0]{'hours'}, [15, 16, 17], 'a 3-6pm span runs from three to six');
 ok($till->{'schedules'}[0]{'plans'}[0]{'until'}, 'and the until date is kept');
@@ -471,7 +495,7 @@ my $part32 = read_file(repo_root() . '/lib/JawnOS/Manager/Part32.pm');
 like($part32, qr/clothesline_slot_now/, 'the Configure slots are counted on the house clock too');
 
 my $part14 = read_file(repo_root() . '/lib/JawnOS/Manager/Part14.pm');
-like($part14, qr/&subs::hang_to_dry\(\);/, 'a press re-hangs the line at once');
+like($part14, qr/&subs::hang_to_dry\(reuse_head =>/, 'a press re-hangs the line at once');
 like($part14, qr/\$returner->\{'clothesline'\}/, 'the reply carries the new line');
 like($part14, qr/console_command\('calculator'\)/, 'the other managers are told to refresh');
 my $app_back = read_file(repo_root() . '/public/js/manager/manager/09_app_back.js');
@@ -498,6 +522,19 @@ like($misc12, qr/clothesline_schedule_read/, 'read by the house reader');
 like($misc12, qr/clothesline_schedule_status/, 'and its answer is what the editor prints');
 like($misc12, qr/clothesline_schedule_cards/, 'and the cards it read');
 like($misc12, qr/param\('forget'\)/, 'a card can be forgotten');
+like($misc12, qr/sub action_41751/, 'the anticipatory settings have a dialog route');
+like($misc12, qr/sub action_41752/, 'and a save route');
+
+my $settings_tpl = read_file(repo_root() . '/templates/apps/clothesline/settings.html.ep');
+like($settings_tpl, qr/clothes_anticipatory_on/, 'the dialog carries the head switch');
+like($settings_tpl, qr/clothes_anticipatory_next/, 'the next-routine switch');
+like($settings_tpl, qr/clothes_anticipatory_reset/, 'the press switch');
+like($settings_tpl, qr/clothes_day_card/, 'and a card per day of the week');
+like($settings_tpl, qr/clothes_day_learned/, 'each keeping the learned list for a reset');
+like($timeline_js, qr/clotheslineSettings/, 'the right-press menu opens it');
+like($timeline_js, qr/clothes_day_add_btn/, 'and a day can be added to');
+like($timeline_js, qr/clothes_day_drop/, 'or dropped from');
+like($timeline_js, qr/clothes_settings_save/, 'and saved');
 
 # the slot list is the clock and the calendar, not the appointment history
 my $part32 = read_file(repo_root() . '/lib/JawnOS/Manager/Part32.pm');
