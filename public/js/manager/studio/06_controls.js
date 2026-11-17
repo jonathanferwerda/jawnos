@@ -1,3 +1,5 @@
+$(document).on('change', '#studio_latency_backend', function () { studioLatencyMeasure(); });
+
 async function studioStop() {
 	var wasRecording = (mixer['time']['status'] == 'record');
 	// a stop during the count-in cancels the take that never started

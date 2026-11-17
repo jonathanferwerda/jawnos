@@ -62,6 +62,7 @@ use Sereal::Decoder qw(decode_sereal);
 use Minion;
 
 use IPC::Open2 qw(open2);
+use IPC::Open3 qw(open3);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
@@ -1162,6 +1163,76 @@ sub action_44014 {
 	$answer = { ok => 0, error => 'The setting could not be changed.' } unless ref $answer eq 'HASH';
 	$answer->{'settings'} = eval { &subs::retroarch_settings() } || { ok => 0 };
 	$c->render(json => $answer);
+}
+
+# POST /manager/studio/latency
+#
+# The backend picker beside Studio's round-trip meter. `javascript` is the
+# browser's own probe and is deliberately refused here (400): the page calls
+# studioLatencyMeter() for it, so this route must never start a process for a
+# path the browser already measures. The native names run the staged engine
+# once, with a fixed argv and a hard timeout.
+sub action_44022 {
+	my $c = shift;
+	my ($status, $data) = &studio_latency_engine($c->param('backend'));
+	$c->render(json => $data, status => $status);
+}
+
+my %studio_latency_backend = map { $_ => 1 } qw(alsa pipewire jack javascript);
+
+# Run the engine for one validated backend and return [status, payload]. Only
+# the backend name reaches argv, and it is checked against the four-name list
+# first; nothing else from the request is passed and no shell is involved.
+sub studio_latency_engine {
+	my ($backend) = @_;
+	$backend = '' unless defined $backend;
+	return (400, { ok => 0, error => 'choose a backend: alsa, pipewire or jack' })
+		unless $studio_latency_backend{$backend};
+	return (400, { ok => 0, error => 'javascript is measured in the browser' })
+		if $backend eq 'javascript';
+
+	my $engine = $ENV{JAWNOS_AUDIO_ENGINE} || 'perl/audio/jawn-audio';
+	return (503, { ok => 0, error => 'the audio engine is not built on this machine' })
+		unless -f $engine && -x $engine;
+
+	my @argv = ($engine, '--loopback', '--backend', $backend, '--json');
+	my ($in, $out, $pid);
+	open(my $devnull, '>', '/dev/null') or
+		return (502, { ok => 0, error => 'the audio engine did not start' });
+	$pid = eval { open3($in, $out, $devnull, @argv) };
+	close $devnull;
+	return (502, { ok => 0, error => 'the audio engine did not start' }) unless $pid;
+	close $in if defined $in;
+
+	my $json = '';
+	my $timed_out = 0;
+	my $read = eval {
+		local $SIG{ALRM} = sub { die "timeout\n" };
+		alarm 10;
+		local $/;
+		$json = <$out>;
+		alarm 0;
+		1;
+	};
+	alarm 0;
+	unless ($read) {
+		$timed_out = 1 if $@ && $@ =~ /^timeout/;
+		kill 'KILL', $pid;
+		waitpid($pid, 0);
+		close $out;
+		return (504, { ok => 0, error => 'the audio engine took too long' }) if $timed_out;
+		return (502, { ok => 0, error => 'the audio engine did not answer' });
+	}
+	close $out;
+	waitpid($pid, 0);
+
+	# One JSON object is the whole contract; anything else is a failure, never
+	# a number the page could display as a measurement.
+	my $data = eval { decode_json($json // '') };
+	return (502, { ok => 0, error => 'the audio engine did not return a measurement' })
+		unless ref $data eq 'HASH';
+
+	return (200, $data);
 }
 
 1;

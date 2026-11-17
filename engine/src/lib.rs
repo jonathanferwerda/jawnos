@@ -6,16 +6,27 @@
 //! allocates. A null device makes all of it runnable on a machine with no audio
 //! at all, which is how the suite exercises the real code (docs/studio-audio-roadmap.md).
 //!
-//! No crate here needs the network or a toolchain beyond `cargo`.
+//! Real hardware is an opt-in feature (`alsa`, `jack`), so the crate has no
+//! default dependency and the suite builds anywhere. The patch-cable loopback
+//! reports the monitoring round trip and its honest precision.
 
+pub mod backends;
 pub mod device;
 pub mod graph;
+pub mod loopback;
 pub mod params;
 pub mod proto;
 pub mod session;
 
+#[cfg(feature = "alsa")]
+pub mod alsa_device;
+#[cfg(feature = "jack")]
+pub mod jack_device;
+
+pub use backends::{availability, Availability, BackendKind, RunReport};
 pub use device::{Device, DeviceError, NullDevice};
 pub use graph::{mix_mono_into_stereo, peak, GraphError, Strip};
+pub use loopback::LoopbackReport;
 pub use params::Param;
 pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,

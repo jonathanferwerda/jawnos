@@ -6,9 +6,16 @@
 # browser's WebAudio path (docs/studio-audio-roadmap.md). The source is tracked;
 # the staged binary is not.
 #
-#   perl scripts/build_engine.pl           # build and stage
-#   perl scripts/build_engine.pl --check   # report whether it is staged
-#   perl scripts/build_engine.pl --debug   # build without --release
+#   perl scripts/build_engine.pl                  # device backends if possible
+#   perl scripts/build_engine.pl --features alsa  # exactly these features
+#   perl scripts/build_engine.pl --check          # report whether it is staged
+#   perl scripts/build_engine.pl --debug          # build without --release
+#
+# The default feature set is `alsa,jack`. A build that cannot find the headers
+# or library for one of them is not fatal: the script retries with no features,
+# and says plainly that the staged binary has no device backend. That keeps a
+# machine without libjack or ALSA development files on the null device rather
+# than without an engine.
 #
 # $ENV{CARGO} names the toolchain (default `cargo` on PATH), and
 # $ENV{CARGO_TARGET_DIR} is honoured so a test can build into a scratch folder.
@@ -25,6 +32,17 @@ my $manifest = "$root/engine/Cargo.toml";
 my $out      = "$root/perl/audio/jawn-audio";
 my $check    = grep { $_ eq '--check' } @ARGV;
 my $debug    = grep { $_ eq '--debug' } @ARGV;
+
+# `--features LIST` overrides the default; an empty list asks for no features.
+my $features;
+for ( my $i = 0; $i < @ARGV; $i++ ) {
+	if ( $ARGV[$i] eq '--features' ) {
+		die "--features wants a list, e.g. --features alsa,jack\n"
+			unless defined $ARGV[ $i + 1 ];
+		$features = $ARGV[ ++$i ];
+	}
+}
+my $build_features = defined $features ? $features : 'alsa,jack';
 
 if ($check) {
 	if ( -x $out ) {
@@ -60,15 +78,29 @@ my $target = ( defined $ENV{'CARGO_TARGET_DIR'} && length $ENV{'CARGO_TARGET_DIR
 	: File::Spec->catdir( $root, 'engine', 'target' );
 my $profile = $debug ? 'debug' : 'release';
 
-my @cmd = ( $cargo, 'build', '--manifest-path', $manifest );
-push @cmd, '--release' unless $debug;
-print "+ @cmd\n";
-system(@cmd) == 0 or die "cargo build failed\n";
+my @base = ( $cargo, 'build', '--manifest-path', $manifest );
+push @base, '--release' unless $debug;
 
-my $built = File::Spec->catfile( $target, $profile, 'jawn-audio' );
-die "cargo reported success but $built is missing\n" unless -x $built;
+my @cmd = @base;
+push @cmd, ( '--features', $build_features ) if length $build_features;
+print "+ @cmd\n";
+my $built = system(@cmd) == 0;
+
+if ( !$built && length $build_features ) {
+	print "note: the device build failed with features `$build_features`;\n";
+	print "note: retrying with no features so the engine still runs the null device\n";
+	@cmd = @base;
+	print "+ @cmd\n";
+	$built = system(@cmd) == 0;
+	print "note: no device backend in the staged binary (null only)\n" if $built;
+}
+
+die "cargo build failed\n" unless $built;
+
+my $binary = File::Spec->catfile( $target, $profile, 'jawn-audio' );
+die "cargo reported success but $binary is missing\n" unless -x $binary;
 
 make_path( File::Spec->catdir( $root, 'perl', 'audio' ) );
-copy( $built, $out ) or die "cannot stage $out: $!\n";
+copy( $binary, $out ) or die "cannot stage $out: $!\n";
 chmod( 0755, $out );
 print "built: $out\n";

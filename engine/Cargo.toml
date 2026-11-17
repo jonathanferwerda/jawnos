@@ -14,6 +14,19 @@ path = "src/lib.rs"
 name = "jawn-audio"
 path = "src/main.rs"
 
+# Device backends are optional so the suite, and every machine that cannot
+# build against ALSA or JACK, still gets the null device and the protocol.
+# `--features alsa`, `--features jack`, or both, add the real hardware seam
+# (docs/studio-audio-roadmap.md P1).
+[features]
+default = []
+alsa = ["dep:alsa"]
+jack = ["dep:jack"]
+
+[dependencies]
+alsa = { version = "0.9", optional = true }
+jack = { version = "0.13", optional = true }
+
 # Its own workspace root: engine/ must build without dragging the repository's
 # tree into a Cargo workspace, and without being one itself (docs/studio-audio-roadmap.md).
 [workspace]

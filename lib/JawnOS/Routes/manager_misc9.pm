@@ -44,6 +44,7 @@ sub routes {
 	[44019, 'post', '/manager/game_play', 'action_44019'],
 	[44020, 'post', '/manager/controller/panel', 'action_44020'],
 	[44021, 'get',  '/manager/controller/power', 'action_44021'],
+	[44022, 'post', '/manager/studio/latency', 'action_44022'],
 	);
 }
 

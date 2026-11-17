@@ -590,3 +590,36 @@ async function studioLatencyMeter() {
 	console.log(JSON.stringify(studioAudioReport()));
 }
 
+
+// ---- the backend picker ----------------------------------------------------
+// Four names, matching the select beside the meter and the route's own list.
+// `javascript` stays in the page, so its number is the browser probe; the native
+// names are measured by the engine behind POST /manager/studio/latency.
+var studioLatencyBackends = [ 'javascript', 'alsa', 'pipewire', 'jack' ];
+
+function studioLatencyMeasure() {
+	var out = $('#studio_latency_result');
+	if (!out.length) { return; }
+	var backend = $('#studio_latency_backend').val() || 'javascript';
+	if (studioLatencyBackends.indexOf(backend) < 0) { backend = 'javascript'; }
+	if (backend === 'javascript') { return studioLatencyMeter(); }
+
+	out.text(studioAudioLabel('measuring') + '\u2026');
+	$.ajax({
+		url: '/manager/studio/latency',
+		type: 'POST',
+		data: { backend: backend },
+		dataType: 'json',
+		success: function (data) {
+			if (data && data.ok === true && typeof data.ms === 'number') {
+				out.text(backend + ' ' + data.ms + ' ms' + (data.device ? ' (' + data.device + ')' : ''));
+				return;
+			}
+			out.text(backend + ': ' + ((data && data.error) ? data.error : studioAudioLabel('the audio engine did not answer')));
+		},
+		error: function (xhr) {
+			var data = xhr && xhr.responseJSON;
+			out.text(backend + ': ' + ((data && data.error) ? data.error : studioAudioLabel('the audio engine did not answer')));
+		}
+	});
+}
