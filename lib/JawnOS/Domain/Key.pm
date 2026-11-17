@@ -308,6 +308,49 @@ sub ws_dir {
 	return $dir;
 }
 
+# One relay socket for every app is the default: a path per app names every open
+# window on disk (run/ws/lunch, run/ws/measures), while the frame already names
+# its app for the receiver. This is the one place that decides; a config that
+# says ws_single_socket false keeps the per-app shape, and JAWNOS_WS_PER_APP=1
+# forces it for an A/B run without editing the config.
+	our $ws_single_memo;
+sub ws_single_socket {
+	return 0 if ($ENV{'JAWNOS_WS_PER_APP'} || '') eq '1';
+	return $ws_single_memo if defined $ws_single_memo;
+	# Read the file rather than config_reader(): a config read can log a missing
+	# key, the log writes a row, and that row's notice comes back through
+	# Websocket::send -> ws_socket_path -> here. A settings test with no house
+	# config hit that loop and never finished.
+	my $config = {};
+	my $file = eval { &subs::config_path() };
+	if (defined $file && length $file && -r $file) {
+		my $raw = eval {
+			local $/;
+			open(my $fh, '<', $file) or die "$file: $!";
+			my $text = <$fh>;
+			close $fh;
+			$text;
+		};
+		if (defined $raw && length $raw) {
+			my $parsed = eval { require Mojo::JSON; Mojo::JSON::decode_json($raw) };
+			$config = $parsed if $parsed && ref $parsed eq 'HASH';
+		}
+	}
+	return $ws_single_memo
+		= (exists $config->{'ws_single_socket'} && !$config->{'ws_single_socket'}) ? 0 : 1;
+}
+
+# The one path both halves use: the worker binds it, every sender connects to
+# it, the rebind probe tests it and the retire path removes it. Asking here
+# instead of concatenating the raw app name keeps all four in agreement (the
+# client used to build run/ws/<app> beside a server that bound run/ws/path_name).
+sub ws_socket_path {
+	my ($app) = @_;
+	$app = 'general' unless defined $app && length $app;
+	my $name = &subs::ws_single_socket() ? 'ws' : &subs::path_name($app);
+	return &subs::ws_dir() . '/' . $name;
+}
+
 sub ws_watcher_path { return &subs::runtime_dir() . '/ws_watcher' }
 
 # The pre-run/ code kept the per-app sockets and the watcher under $gb::tmp_dir

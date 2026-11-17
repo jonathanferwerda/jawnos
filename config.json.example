@@ -12,6 +12,7 @@
 	"open_browser": "yes",
 	"ws_port": "3001",
 	"ws_multiplex": false,
+	"ws_single_socket": true,
 	"main_workers": 0,
 	"main_workers_max": 0,
 	"domain": "example.com",

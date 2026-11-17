@@ -95,7 +95,7 @@ sub send() {
 		}
 		$wsm->{'token'} = JawnOS::Transport::token() if JawnOS::Transport::tcp();
 
-		my $file = &subs::ws_dir() . '/' . $app;
+		my $file = &subs::ws_socket_path($app);
 		# Report whether the frame actually went. The worker can be between
 		# restarts, and a device command that treats a dropped frame as delivered
 		# skips its HTTP fallback, so the relay never moves while the Manager says

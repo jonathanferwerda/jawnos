@@ -122,6 +122,29 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 	# bound again. (See ws_server_socket: it also clears this path from
 	# MOJO_REUSE, which is what made the reuse win over a real bind.)
 	my $ws_binder_pid = $$;
+
+	# The per-app files from the old shape outlive their worker (a socket path
+	# stays after the process). Once one socket carries every app, any other
+	# socket file under run/ws is stale and still names a window, so remove the
+	# ones that no longer answer; a worker draining an older build keeps its path
+	# until it exits.
+	my $ws_single_tidy = sub {
+		return 0 unless &subs::ws_single_socket() && !JawnOS::Transport::tcp();
+		my $dir = &subs::ws_dir();
+		opendir(my $dh, $dir) or return 0;
+		my $did = 0;
+		for my $entry ( sort readdir $dh ) {
+			next if $entry eq '.' || $entry eq '..' || $entry eq 'ws' || $entry eq 'mailws';
+			my $path = "$dir/$entry";
+			next unless -S $path;
+			my $probe = eval { JawnOS::Transport::client_unix_socket($path) };
+			if ($probe) { close $probe; next; }
+			$did = 1 if unlink $path;
+		}
+		closedir $dh;
+		return $did;
+	};
+
 	my $ws_bind_all = sub {
 		my ($check) = @_;
 		# On TCP one port carries every app (the payload names its app), so there
@@ -132,8 +155,23 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 			$ws_server->{'__tcp'} = &ws_server_socket({ app => 'ws' });
 			return;
 		}
+		# Native, one socket: bind once, probe once, and clear the stale per-app
+		# paths beside it. The frame names its app, so the listener needs no name.
+		if (&subs::ws_single_socket()) {
+			my $server = $ws_server->{'__single'};
+			unless ($server && defined Mojo::IOLoop->acceptor($server)) {
+				my $file = &subs::ws_socket_path('ws');
+				if ($check && -e $file) {
+					my $probe = JawnOS::Transport::client_unix_socket($file);
+					if ($probe) { close $probe; $ws_single_tidy->(); return; }
+				}
+				$ws_server->{'__single'} = &ws_server_socket({ app => 'ws' });
+			}
+			$ws_single_tidy->();
+			return;
+		}
 		foreach my $ws ( @{$gb::ws_apps} ) {
-			my $file = &subs::ws_dir() . '/' . &subs::path_name($ws);
+			my $file = &subs::ws_socket_path($ws);
 			if ($check && -e $file) {
 				my $probe = JawnOS::Transport::client_unix_socket($file);
 				if ($probe) { close $probe; next; }
@@ -155,9 +193,8 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 			$args = JawnOS::Transport::server_args('ws') or return undef;
 		}
 		else {
-			# ws_dir makes the folder on first ask; no shell is needed for it
-			my $folder = &subs::ws_dir();
-			$file = $folder . '/' . &subs::path_name($app);
+			# the one place the path is named, for both shapes
+			$file = &subs::ws_socket_path($app);
 			# a reused descriptor wins over a real bind in Mojo's listen(), and the
 			# pre-fork server put this path in MOJO_REUSE from the loader's own
 			# listeners; drop it so the bind really creates the path
@@ -220,16 +257,20 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 		return $server;
 	}
 
-	# One accessor for the per-app listener: native binds one path per app, TCP
-	# binds one shared port (the payload names the app). A caller that only has
-	# its app name asks here instead of touching $ws_server directly.
+	# One accessor for the relay listener: native binds one path per app or one
+	# path for every app (the payload names it), and TCP binds one shared port.
 	sub ws_server_ensure($app) {
-		return $ws_server->{$app} if $ws_server->{$app};
 		if (JawnOS::Transport::tcp()) {
 			my $server = $ws_server->{'__tcp'};
 			return $server if $server && defined Mojo::IOLoop->acceptor($server);
 			return $ws_server->{'__tcp'} = &ws_server_socket({ app => 'ws' });
 		}
+		if (&subs::ws_single_socket()) {
+			my $server = $ws_server->{'__single'};
+			return $server if $server && defined Mojo::IOLoop->acceptor($server);
+			return $ws_server->{'__single'} = &ws_server_socket({ app => 'ws' });
+		}
+		return $ws_server->{$app} if $ws_server->{$app};
 		return $ws_server->{$app} = &ws_server_socket({ app => $app });
 	}
 
@@ -302,15 +343,16 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 	});
 	# The last tab for an app has gone: retire that app's own listener and its
 	# socket file. The permanent apps keep theirs for the worker's life (the
-	# five-second rebind would only recreate them), and on TCP every app shares
-	# one listener, so there is nothing per-app to retire.
+	# five-second rebind would only recreate them), and a shared listener (TCP, or
+	# the one native socket) has nothing per-app to retire.
 	sub websocket_close($app) {
 		return if JawnOS::Transport::tcp();
+		return if &subs::ws_single_socket();
 		return if grep { $app eq $_ } @{ $gb::ws_apps || [] };
 		return if $gb::ws->{$app} && keys %{ $gb::ws->{$app} };
 		my $id = delete $ws_server->{$app};
 		Mojo::IOLoop->remove($id) if defined $id;
-		my $file = &subs::ws_dir() . '/' . &subs::path_name($app);
+		my $file = &subs::ws_socket_path($app);
 		if (-e $file) {
 			unlink $file or $log->warn("websocket_close: could not remove $file: $!");
 		}
