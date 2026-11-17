@@ -514,16 +514,27 @@ sub clothesline_anticipatory_habits {
 	return [ @{$rows} ] unless @add;
 	my @out = @{$rows};
 	foreach my $new ( sort { $a->{'hour'} <=> $b->{'hour'} || $a->{'app'} cmp $b->{'app'} } @add ) {
-		my $at = scalar @out;
+		# The step it happens beside, not the next one down the order: the day's
+		# order can wander (a 2am step at its end), so a noon habit placed by the
+		# first later hour landed in the evening. The nearest hour is the routine
+		# it belongs to.
+		my ($at, $best) = (scalar @out, undef);
 		for my $i ( 0 .. $#out ) {
 			my $row = $apps->{ $out[$i]{'app'} };
 			my $hour = ref $row eq 'HASH' ? $row->{'hour'} : undef;
 			next unless defined $hour && $hour =~ /^\d+$/;
-			if ($hour > $new->{'hour'}) { $at = $i; last; }
+			my $gap = abs((0 + $hour) - $new->{'hour'});
+			if (!defined $best || $gap < $best || ($gap == $best && (0 + $hour) > $new->{'hour'})) {
+				($at, $best) = ($i, $gap);
+			}
 		}
+		# a habit earlier than the step it sits beside goes before it
 		my $wave = 0;
 		if (@out) {
-			$wave = $at < scalar @out ? ($out[$at]{'wave'} || 0) : ($out[-1]{'wave'} || 0);
+			my $row = $apps->{ $out[$at]{'app'} };
+			my $hour = ref $row eq 'HASH' ? $row->{'hour'} : undef;
+			$at++ if defined $hour && $hour =~ /^\d+$/ && (0 + $hour) < $new->{'hour'};
+			$wave = $out[ $at < scalar @out ? $at : scalar @out - 1 ]{'wave'} || 0;
 		}
 		splice @out, $at, 0, { app => $new->{'app'}, wave => $wave };
 	}

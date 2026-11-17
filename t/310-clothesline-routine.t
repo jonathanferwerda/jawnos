@@ -529,7 +529,20 @@ my $merged = subs::clothesline_anticipatory_habits($hrows, $hscan);
 is_deeply([ map { $_->{'app'} } @{$merged} ], [qw(soap yogurt lunch)],
 	'a habit the chosen day missed is put back by its hour');
 is_deeply([ map { $_->{'wave'} } @{$merged} ], [0, 1, 1],
-	'in the routine of the step it falls before');
+	'in the routine of the step it sits beside');
+
+# the day's order can wander - a 2am step sits at its end - so a habit is placed
+# by the hour it happens, not by the next step down the order
+my $wander = { apps => {
+	wake_up => { hour => 8 }, sleep => { hour => 2 }, lunch => { hour => 12 },
+	dinner => { hour => 18 }, yogurt => { hour => 11, due => 1, recent_days => 9 } } };
+my $wrow = [ { app => 'wake_up', wave => 0 }, { app => 'sleep', wave => 1 },
+	{ app => 'lunch', wave => 2 }, { app => 'dinner', wave => 3 } ];
+my $placed_rows = subs::clothesline_anticipatory_habits($wrow, $wander);
+is_deeply([ map { $_->{'app'} } @{$placed_rows} ], [qw(wake_up sleep yogurt lunch dinner)],
+	'a habit sits beside the hour it happens, not at the end of the order');
+is_deeply([ map { $_->{'wave'} } @{$placed_rows} ], [0, 1, 2, 2, 3],
+	'and takes the routine of the step beside it');
 is(subs::clothesline_anticipatory_wave_name(3), 'Night', 'the small hours are the night');
 is(subs::clothesline_anticipatory_wave_name(undef), 'Routine', 'a wave with no clock is a routine');
 
