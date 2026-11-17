@@ -73,10 +73,25 @@ function jawnosButtonBorderColour() {
 }
 
 // ---- canvas material tiles ------------------------------------------------
+// One tile per material and ink, kept for the life of the page. The rail is
+// repainted whole on every appointment poll - one pill per garment, every few
+// seconds - so a tile is looked up, never rebuilt: a material with no tile of
+// its own (soft's pane carries its own breath of light; plain, round and classic
+// wear no material) is answered before any canvas exists, and a miss is kept too
+// so asking again is free. The materials the builder below makes a tile for are
+// the ones named here; a material added to one belongs in the other, and
+// t/321-texture-tile-cache.t pins the two together.
 var jawnosTextureTiles = {};
+var jawnosTextureTileKinds = { sandglass: 1, glass: 1, paper: 1, fabric: 1, wood: 1, metal: 1 };
 function jawnosTextureTile(kind, dark) {
 	var key = kind + (dark ? ':dark' : ':light');
-	if (jawnosTextureTiles[key]) { return jawnosTextureTiles[key]; }
+	if (key in jawnosTextureTiles) { return jawnosTextureTiles[key]; }
+	if (!jawnosTextureTileKinds[kind]) {
+		// a canvas built only to be thrown away is a node (and its memory) the
+		// page never got back before the next GC - one per pill, forever
+		jawnosTextureTiles[key] = null;
+		return null;
+	}
 	var c = document.createElement('canvas');
 	var x;
 	var img;
