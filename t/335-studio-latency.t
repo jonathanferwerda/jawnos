@@ -10,18 +10,23 @@ use lib "$FindBin::Bin/lib", "$FindBin::Bin/../qa/lib", "t/lib", "$FindBin::Bin/
 use Test::More;
 use File::Slurp qw(read_file);
 use File::Temp qw(tempdir);
-use RepoSource qw(repo_root);
-use Probe;
+use Cwd qw(abs_path);
 
-my $root = repo_root();
+# FindBin, not t/lib's RepoSource or qa/lib's Probe: the pre-push guard
+# materialises a new test into a scratch directory and runs `perl -c` there, so
+# anything reached through a relative @INC entry cannot load and the push is
+# refused for the hook's environment rather than for the code.
+my $root = abs_path("$FindBin::Bin/..");
 
 # --- the route is registered and its action exists (the t/58 shape) ----------
-my $routes = Probe::routes($root);
-my ($route) = grep {
-	lc($_->{'method'}) eq 'post' && $_->{'path'} eq '/manager/studio/latency'
-} @$routes;
-ok($route, 'POST /manager/studio/latency is registered');
-is($route->{'action'}, 'action_44022', 'and it names its action') if $route;
+# The route table is plain text rows, so the shape is asserted where it lives
+# rather than through a parser the guard cannot load.
+my $route_text = join '', map { read_file($_) } sort glob("$root/lib/JawnOS/Routes/*.pm");
+like(
+	$route_text,
+	qr/\[\s*44022\s*,\s*'post'\s*,\s*'\/manager\/studio\/latency'\s*,\s*'action_44022'\s*\]/,
+	'POST /manager/studio/latency is registered with its action'
+);
 
 require "$root/lib/JawnOS/Controller/manager_misc9.pm";
 ok(Manager->can('action_44022'), 'the controller defines action_44022');
