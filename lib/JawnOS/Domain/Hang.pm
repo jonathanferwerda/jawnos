@@ -311,6 +311,9 @@ sub clothesline_schedule_expand {
 	elsif (defined $plan->{'hours'} && $plan->{'hours'} =~ /^\s*\d+\s*$/) { @raw = ( $plan->{'hours'} ); }
 	my %seen;
 	my @hours = sort { $a <=> $b } grep { defined $_ && $_ =~ /^\s*\d+\s*$/ && $_ >= 0 && $_ <= 23 && !$seen{$_ + 0}++ } @raw;
+	# a model that answers a span with its two ends ("9am to 12pm" -> 9 and 12)
+	# means the hours between them; the end hour is the boundary, not covered
+	@hours = ( $hours[0] .. $hours[1] - 1 ) if scalar(@hours) == 2 && $hours[1] - $hours[0] > 1;
 	my @mraw = ();
 	if (ref $plan->{'minutes'} eq 'ARRAY') { @mraw = @{ $plan->{'minutes'} }; }
 	my %mseen;
@@ -771,7 +774,7 @@ Each plan is one recurrence, in one of these shapes:
 {"kind":"birthday","person":"mom"}
 {"kind":"full_moon","until":"2036-07-01"}
 {"kind":"dates","dates":["2026-11-26","2026-12-24"]}
-"hours" are 24-hour clock integers (16 is 4pm), inclusive; "minutes" are 0-59 integers, only for part of an hour ("the first half hour" is 0-29); leave both out for all day.
+"hours" are 24-hour clock integers: a span's end hour is the boundary, not covered ("9am to 12pm" is [9,10,11]); "minutes" are 0-59 integers, only for part of an hour ("the first half hour" is 0-29); leave both out for all day.
 A time of day NEVER goes in "until". "until" is only the last date the schedule runs, as an absolute date.
 "count" is how many repeats. "count" and "until" are the only ways to bound a rule.
 Add "exclude_holidays":true for "except on holidays", and "except":["2026-12-25"] for other named days.

@@ -406,6 +406,11 @@ my $whole_hour = subs::clothesline_schedule_expand(
 is_deeply($whole_hour->{'minutes'}, [], 'a full minute range is no minute restriction');
 is_deeply($whole_hour->{'hours'}, [9, 10, 11], 'and the clock hours are kept');
 
+# a model that answers a span with its two ends means the hours between them
+my $ends = subs::clothesline_schedule_expand(
+	{ plans => [ { kind => 'weekdays', weekdays => ['sun'] } ], hours => [9, 12] }, $reader_now);
+is_deeply($ends->{'hours'}, [9, 10, 11], 'a span answered as 9 and 12 covers 9, 10 and 11');
+
 my $till = subs::clothesline_schedule_parse('every thursday between 3-6pm until July 24 2027', now => $reader_now);
 is_deeply($till->{'schedules'}[0]{'hours'}, [15, 16, 17], 'a 3-6pm span runs from three to six');
 ok($till->{'schedules'}[0]{'plans'}[0]{'until'}, 'and the until date is kept');
