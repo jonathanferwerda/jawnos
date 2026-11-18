@@ -20,6 +20,12 @@ use Test::More;
 
 my $real = "$FindBin::Bin/../scripts/agent_land.pl";
 
+# The lander derives its default job count from the box's cores (reserving two
+# of them). Ask the same helper so this file pins that it uses the shared
+# default, not a number that drifts away from it.
+require "$FindBin::Bin/../scripts/land_lib.pl";
+my $JOBS = LandQueue::suite_jobs();
+
 # The suite, the bump and the restart are fakes: the lander's job is the order
 # and the bookkeeping around them, and running the real suite here would recurse
 # into this test. Each fake records its argv in AGENT_LAND_TEST_DIR, outside the
@@ -290,7 +296,7 @@ subtest 'a dry run reports the plan and touches nothing' => sub {
 
 	my ($rc, $out) = land($f, '--dry-run');
 	is($rc, 0, 'the dry run exits cleanly');
-	like($out, qr/would run: .*run_tests\.pl --jobs 2/, 'it names the suite and the shared job cap');
+	like($out, qr/would run: .*run_tests\.pl --jobs $JOBS\b/, 'it names the suite and the core-aware job count');
 	like($out, qr/would back up agent\/task to origin\/agent\/task/,
 		'it backs the branch up before it waits for the gate');
 	like($out, qr/would fast-forward the primary checkout/, 'and the primary checkout step');
@@ -331,7 +337,7 @@ subtest 'a failing suite refuses the landing' => sub {
 	like($out, qr/the suite failed/, 'and says the suite failed');
 	like($out, qr/t\/999-fixture\.t/, 'and names the test file that failed');
 	like($out, qr/line 42/, 'and the line inside it');
-	like(read_file("$f->{'marker'}/suite"), qr/--jobs 2/, 'the suite really ran first');
+	like(read_file("$f->{'marker'}/suite"), qr/--jobs $JOBS\b/, 'the suite really ran first');
 	ok(!-e "$f->{'marker'}/restart", 'nothing restarted');
 
 	my (undef, $origin) = git($f->{'primary'}, 'rev-parse', 'origin/main');
@@ -378,7 +384,7 @@ subtest 'a change the picker cannot map still runs the suite' => sub {
 
 	my ($rc, $out) = land($f);
 	is($rc, 0, 'the landing exits cleanly') or diag($out);
-	like(read_file("$f->{'marker'}/suite"), qr/--jobs 2/,
+	like(read_file("$f->{'marker'}/suite"), qr/--jobs $JOBS\b/,
 		'the suite ran, because the picker only narrowed a no-op');
 	unlike($out, qr/skipping the suite/, 'the fast path did not trigger');
 };
@@ -390,7 +396,7 @@ subtest 'a clean branch lands, bumps, pushes and updates the primary' => sub {
 	my ($rc, $out) = land($f);
 	is($rc, 0, 'the landing exits cleanly') or diag($out);
 
-	like(read_file("$f->{'marker'}/suite"), qr/--jobs 2/, 'the suite ran with the shared job cap');
+	like(read_file("$f->{'marker'}/suite"), qr/--jobs $JOBS\b/, 'the suite ran with the core-aware job count');
 
 	my (undef, $subject) = git($f->{'primary'}, 'log', '-1', '--format=%s', 'origin/main');
 	is($subject, 'v0.1.2 - add a note', 'the pushed subject carries the bumped version');

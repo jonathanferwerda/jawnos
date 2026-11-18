@@ -893,22 +893,52 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 	my $wservice = read_file("$real/scripts/systemd/jawnos-land-warden.service");
 	my $wtimer   = read_file("$real/scripts/systemd/jawnos-land-warden.timer");
 	like($service, qr{^Type=oneshot}m, 'the drain is a oneshot');
-	like($service, qr{ExecStart=.*land_coordinator\.pl --train-size 6 --jobs 4},
-		'it runs the coordinator with the wave and job caps');
+	like($service, qr{ExecStart=.*land_coordinator\.pl --train-size 6 --trunk working},
+		'it runs the coordinator with the wave cap and the default job count');
+	unlike($service, qr/^ExecStart=.*--jobs/m,
+		'it leaves the suite job count to the core-aware default');
 	like($service, qr{^TimeoutStartSec=4h}m, 'a wave may serve several branches');
 	like($service, qr{^Environment=JAWNOS_QA_ROOT=}m, 'the unit pins the QA root for the train');
 	like($timer, qr{^Unit=jawnos-land-coordinator\.service}m, 'the timer fires the service');
 	like($timer, qr{OnUnitActiveSec=60s}, 'and re-arms a minute after the drain ends');
-	like($wservice, qr/ExecStart=.*land_warden\.pl --once --max 1 --jobs 2/,
-		'the warden runs one ticket with the shared job cap');
-	like($wservice, qr/CPUQuota=200%/, 'and is capped on the shared box');
+	like($wservice, qr/ExecStart=.*land_warden\.pl --once --max 1 --trunk working/,
+		'the warden runs one ticket with the default job count');
+	unlike($wservice, qr/^ExecStart=.*--jobs/m,
+		'and leaves the suite job count to the core-aware default');
+	like($wservice, qr/CPUQuota=600%/, 'and may use six cores on the shared box');
 	like($wtimer, qr/OnUnitActiveSec=15min/, 'the warden timer ticks every fifteen minutes');
 	my $pservice = read_file("$real/scripts/systemd/jawnos-land-promote.service");
 	my $ptimer   = read_file("$real/scripts/systemd/jawnos-land-promote.timer");
-	like($pservice, qr/ExecStart=.*land_promote\.pl --once --jobs 2/, 'the promoter runs the suite gate');
+	like($pservice, qr/^ExecStart=.*land_promote\.pl --once$/m, 'the promoter runs the suite gate');
+	unlike($pservice, qr/^ExecStart=.*--jobs/m,
+		'and leaves the suite job count to the core-aware default');
 	like($ptimer, qr/OnCalendar=Mon 04:00:00/, 'the promotion is the weekly release by default');
 	like($service, qr/--trunk working --no-apply/, 'the coordinator lands to working without touching main');
 	unlike($service, qr/^ExecStart=.*--promote-now/m, 'a drain does not release by itself');
+};
+
+subtest 'the suite job count leaves two cores for the rest of the box' => sub {
+	require "$real/scripts/land_lib.pl";
+	my $jobs = LandQueue::suite_jobs();
+	cmp_ok($jobs, '>=', 2, 'never fewer than two jobs');
+	cmp_ok($jobs, '<=', 8, 'never more than the hard cap');
+
+	my $cores;
+	for my $probe (['nproc'], ['getconf', '_NPROCESSORS_ONLN'], ['sysctl', '-n', 'hw.ncpu']) {
+		open(my $fh, '-|', @$probe) or next;
+		my $out = <$fh>;
+		close $fh;
+		next unless defined $out && $out =~ /^\s*(\d+)\s*$/ && $1 > 0;
+		$cores = $1;
+		last;
+	}
+	SKIP: {
+		skip 'no core count on this box', 1 unless defined $cores;
+		my $want = $cores - 2;
+		$want = 2 if $want < 2;
+		$want = 8 if $want > 8;
+		is($jobs, $want, "it is cores - 2, capped at 8 (cores=$cores)");
+	}
 };
 
 subtest 'the suite failure summary names the test file and line' => sub {

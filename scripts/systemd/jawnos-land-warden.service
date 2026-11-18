@@ -11,11 +11,13 @@ WorkingDirectory=/home/jawn/jawnos
 Environment=HOME=/home/jawn
 Environment=JAWNOS_QA_ROOT=/home/jawn/jawnos-qa
 # One ticket and one suite at a time. The warden holds land-warden.lock, so a
-# manual run and the timer cannot both rescue the same ticket.
-ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_warden.pl --once --max 1 --jobs 2 --trunk working
+# manual run and the timer cannot both rescue the same ticket. The suite job
+# count is the lander's core-aware default (six on this 8-core box); the CPU
+# quota matches it while leaving two cores to the coordinator and the editor.
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_warden.pl --once --max 1 --trunk working
 # The suite is the slow part, and it shares the box with the coordinator.
 Nice=10
-CPUQuota=200%
+CPUQuota=600%
 TimeoutStartSec=2h
 StandardOutput=journal
 StandardError=journal

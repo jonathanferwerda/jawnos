@@ -3,7 +3,7 @@
 # Drain the landing queue in waves.
 #
 #   perl scripts/land_coordinator.pl --drain
-#   perl scripts/land_coordinator.pl --once --train-size 4 --jobs 4
+#   perl scripts/land_coordinator.pl --once --train-size 4 --jobs 6
 #   perl scripts/land_coordinator.pl --dry-run
 #
 # One coordinator per checkout (the lock is in the git common dir). It takes the
@@ -43,7 +43,7 @@ require "$FindBin::Bin/land_lib.pl";
 my %opt = (
 	'trunk'         => 'main',
 	'train_size'    => 1,
-	'jobs'          => 4,
+	'jobs'          => LandQueue::suite_jobs(),
 	'suite_retries' => 1,
 	'suite_scope'   => 'auto',
 	'restart'       => 1,
@@ -690,7 +690,7 @@ sub usage {
 	my ($code) = @_;
 	print STDERR <<'USAGE';
 land_coordinator.pl - drain the landing queue in waves
-  perl scripts/land_coordinator.pl [--train-size 1] [--jobs 4] [--once]
+  perl scripts/land_coordinator.pl [--train-size 1] [--jobs 6] [--once]
                                    [--suite-retries 1] [--suite-scope auto|full]
                                    [--no-restart] [--no-apply] [--promote-now]
                                    [--trunk main] [--wait 0] [--dry-run]

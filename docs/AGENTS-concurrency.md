@@ -16,7 +16,8 @@ every landing touches:
   so the number belongs to the push, not to the branch.
 - **The suite** is this box's cores. `scripts/run_tests.pl` defaults to `min(8, cores)`; ten agents
   doing that at once is 80 processes on 8 cores. The lander holds its own lock across the suite, so
-  only one lands at a time, and it defaults to `--jobs 2`.
+  only one lands at a time, and it defaults to `min(8, max(2, cores - 2))` — six jobs here, leaving
+  two cores for the editor, the dev server and an agent still iterating.
 - **The master** is one process on one checkout. `scripts/restart.pl` is a global mutex with a
   150-second wait for a verdict; ten agents asking at once queue, time out and report failures for
   work that was fine. Only the lander restarts.
@@ -106,7 +107,8 @@ bare-repo guard. The path is only how the script is found; it still works on the
 4. `git fetch origin`, then rebase onto `origin/main`. A `VERSION`-only conflict is taken from the
    trunk (the bump below moves it past trunk's number); any other conflict aborts the rebase and
    names the file.
-5. Run the suite **once** (`--jobs 2` by default) and export `JAWNOS_SUITE_ALREADY_RUN=1`
+5. Run the suite **once** (`--jobs 6` here by default: the landers reserve two cores, capped at 8)
+   and export `JAWNOS_SUITE_ALREADY_RUN=1`
    for the push, so the pre-push hook does not run it a second time. A failure refuses the landing;
    nothing is pushed. **A change no test observes — `docs/`, a `.md`, `LICENSE` — skips the suite**:
    `tests_for.pl` answers "nothing", and the queue's `--suite-scope auto` treats a prose-only wave the

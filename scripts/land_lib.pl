@@ -315,6 +315,37 @@ sub changed_files {
 	return grep { length } split /\n/, $out;
 }
 
+# The suite's job count for a landing. run_tests.pl clamps a count to the box's
+# cores, but those cores are shared with the dev server, the editor and often
+# another agent, so a landing leaves two of them alone: min(8, max(2, cores - 2))
+# is six jobs on this 8-core box, where the old fixed defaults asked for four
+# (the coordinator) and two (agent_land, warden, promote). --jobs still
+# overrides it, and a box whose core count cannot be probed gets four.
+sub suite_jobs {
+	my $cores = cores();
+	return 4 unless defined $cores;
+	my $jobs = $cores - 2;
+	$jobs = 2 if $jobs < 2;
+	$jobs = 8 if $jobs > 8;
+	return $jobs;
+}
+
+sub cores {
+	my @probes = (
+		['nproc'],
+		['getconf', '_NPROCESSORS_ONLN'],
+		['sysctl', '-n', 'hw.ncpu'],
+	);
+	for my $probe (@probes) {
+		open(my $fh, '-|', @$probe) or next;
+		my $out = <$fh>;
+		close $fh;
+		next unless defined $out && $out =~ /^\s*(\d+)\s*$/;
+		return $1 if $1 > 0;
+	}
+	return undef;
+}
+
 # Which test failed, and where. run_tests_fork prints a `--- <file> failed`
 # block whose `not ok` lines are followed by `#   at <file> line <n>`; prove
 # prints the same `not ok` lines without the block. A refusal that says only

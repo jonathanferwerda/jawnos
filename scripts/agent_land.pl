@@ -34,8 +34,11 @@
 #                                               wave (scripts/land_coordinator.pl)
 #   perl scripts/agent_land.pl --json           one machine-readable result on
 #                                               stdout; progress stays on stderr
-#   perl scripts/agent_land.pl --jobs 4         suite job count (default 2:
-#                                               other agents share the cores)
+#   perl scripts/agent_land.pl --jobs 6         suite job count (default:
+#                                               min(8, max(2, cores - 2)) -
+#                                               six here, so two cores stay
+#                                               with the editor and any other
+#                                               agent still working)
 #   perl scripts/agent_land.pl --wait 60        seconds for the gate (default
 #                                               300; the branch is pushed to
 #                                               origin before the wait starts,
@@ -82,7 +85,7 @@ require "$FindBin::Bin/land_lib.pl";
 
 my %opt = (
 	'trunk'         => 'main',
-	'jobs'          => 2,
+	'jobs'          => LandQueue::suite_jobs(),
 	'wait'          => 300,
 	'restart'       => 1,
 	'remove'        => 1,
@@ -622,7 +625,7 @@ sub usage {
 	my ($code) = @_;
 	print STDERR <<'USAGE';
 agent_land.pl - land one agent's branch onto the trunk, once, behind a lock
-  perl scripts/agent_land.pl [--branch B] [--trunk main] [--jobs 2] [--wait 300]
+  perl scripts/agent_land.pl [--branch B] [--trunk main] [--jobs 6] [--wait 300]
                              [--dry-run] [--no-restart] [--defer-restart]
                              [--json] [--keep] [--reason TEXT]
 USAGE

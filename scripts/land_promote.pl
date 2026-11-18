@@ -4,7 +4,7 @@
 #
 #   perl scripts/land_promote.pl --once
 #   perl scripts/land_promote.pl --once --dry-run
-#   perl scripts/land_promote.pl --once --jobs 2
+#   perl scripts/land_promote.pl --once --jobs 6
 #
 # The working branch is the coordinator's trunk: agents land their tickets
 # there, tested. main is the stable branch the app runs. This job takes the land
@@ -34,7 +34,7 @@ require "$FindBin::Bin/land_lib.pl";
 my %opt = (
 	'trunk'   => 'working',
 	'main'    => 'main',
-	'jobs'    => 2,
+	'jobs'    => LandQueue::suite_jobs(),
 	'timeout' => 1800,
 	'restart' => 1,
 	'once'    => 0,
@@ -266,7 +266,7 @@ sub usage {
 	print STDERR <<'USAGE';
 land_promote.pl - test working and fast-forward main to it
   perl scripts/land_promote.pl [--once] [--trunk working] [--main main]
-                               [--jobs 2] [--timeout 1800] [--no-restart]
+                               [--jobs 6] [--timeout 1800] [--no-restart]
                                [--dry-run]
   The working branch is the coordinator's trunk. This job holds the land lock,
   promotes a tip the queue recorded as tested without repeating the suite, and

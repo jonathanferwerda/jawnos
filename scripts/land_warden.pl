@@ -5,7 +5,7 @@
 #   perl scripts/land_warden.pl --once
 #   perl scripts/land_warden.pl --once --dry-run
 #   perl scripts/land_warden.pl --ticket 00000001
-#   perl scripts/land_warden.pl --once --max 1 --jobs 2
+#   perl scripts/land_warden.pl --once --max 1 --jobs 6
 #
 # The coordinator is the traffic controller; this is the warden for the tickets
 # it refuses. For each refused ticket it:
@@ -37,7 +37,7 @@ require "$FindBin::Bin/land_lib.pl";
 my %opt = (
 	'ticket' => undef,
 	'max'    => 1,
-	'jobs'   => 2,
+	'jobs'   => LandQueue::suite_jobs(),
 	'timeout' => 1800,
 	'report' => undef,
 	'trunk'  => 'main',
@@ -552,7 +552,7 @@ sub usage {
 	print STDERR <<'USAGE';
 land_warden.pl - rescue a refused ticket into a worktree
   perl scripts/land_warden.pl [--once] [--ticket ID] [--max 1]
-                              [--jobs 2] [--timeout 1800]
+                              [--jobs 6] [--timeout 1800]
                               [--report DIR] [--trunk main] [--retry] [--dry-run]
   Runs on the authority, where the queue is. It leaves the owner's branch and
   the primary checkout alone; its worktrees live under $JAWNOS_QA_ROOT/warden.
