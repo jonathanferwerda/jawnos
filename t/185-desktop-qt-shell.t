@@ -72,6 +72,18 @@ my $gatecheck = `cd "$root" && PYTHONPATH=desktop python3 -c 'from jawnos_deskto
 like($gatecheck, qr/^True False False\s*$/m,
 	'a Gate title on the Manager host is the Gate; other titles and hosts are not');
 
+# A lapsed session reloads the page mid-run (02_settings_ajax_hidden.js), so
+# the Gate hand-over is not a launch-only step; the count only stops a refused
+# ticket from looping the view.
+like($qt, qr/def gate_ticket_due/, 'the Gate hand-over is decided on every load');
+unlike($qt, qr/ticket_tried/, 'no first-load-only flag blocks a later lapse');
+like($qt, qr/if on_manager and not gate:.*?gate_retry\["attempts"\] = 0/s,
+	'a Manager page that loads clears the Gate episode');
+
+my $gateretry = `cd "$root" && PYTHONPATH=desktop python3 -c 'from jawnos_desktop.qt_shell import gate_ticket_due as d; print(d(0,"ticket",True,False), d(2,"ticket",True,False), d(3,"ticket",True,False), d(0,"",True,False), d(0,"ticket",False,False), d(0,"ticket",True,True))' 2>&1`;
+like($gateretry, qr/^True True False False False False\s*$/m,
+	'the ticket is offered until the episode is spent, and never without a ticket, off the Gate, or while the ticket loads');
+
 like($entry, qr/JAWNOS_DESKTOP_ENGINE/, 'the engine can still be chosen by environment');
 like($entry, qr/--engine/, 'and by flag');
 like($entry, qr/name in \("", "auto", "default", "qt"\)/,

@@ -10,11 +10,13 @@ the session bar are Qt WebEngine too; there is no GTK/WebKitGTK fallback.
 The login is the same ticket the desktop has always used: loading the ticket URL
 mints the cookie and redirects to the Manager, and the profile keeps that
 cookie across launches. A launch tries the Manager first - a profile that still
-holds the cookie opens straight in - and hands over to the ticket only when the
-Manager answers with the Gate. The first run also copies the old WebKit
-shell's page layout out of its per-origin SQLite store, and the window
-geometry comes from ``~/.config/jawnos/desktop.json``, saved back on close. A
-certificate error is
+holds the cookie opens straight in - and any finished load that is the Gate
+hands over to the ticket, not only the first one: a lapsed session reloads the
+page mid-run (public/js/universal/02_settings_ajax_hidden.js), so the view
+signs itself back in. A refused ticket stops after a few tries rather than
+looping. The first run also copies the old WebKit shell's page layout out of
+its per-origin SQLite store, and the window geometry comes from
+``~/.config/jawnos/desktop.json``, saved back on close. A certificate error is
 accepted only for this install's own certificates (the leaf in
 ``server/fullchain.pem`` and, on a joined machine, ``server/house-ca.pem``); an
 unrelated certificate stays rejected.
@@ -289,6 +291,24 @@ def landed_on_gate(url, title, manager):
     if base and not (path == base or path.startswith(base + "/")):
         return False
     return str(title or "").strip().lower() == "gate"
+
+
+# How many times one Gate episode may hand over to the saved ticket. A ticket
+# that is refused must leave the Gate in view instead of loading the ticket
+# page forever, and a relaunch would start the same count at zero.
+GATE_RETRY_LIMIT = 3
+
+
+def gate_ticket_due(attempts, ticket, gate, login_pending):
+    """Whether this finished load should load the saved login ticket.
+
+    The Gate can appear long after launch - a repeated 401 reloads the page
+    (public/js/universal/02_settings_ajax_hidden.js) - so the hand-over is
+    asked on every load, not once per launch. ``attempts`` counts one Gate
+    episode; a Manager page that loads clears it for the next lapse.
+    """
+    return (bool(ticket) and bool(gate) and not login_pending
+            and int(attempts) < GATE_RETRY_LIMIT)
 
 
 def profile_dir():
@@ -1799,10 +1819,10 @@ def main(argv=None):
     manager = None if (args.url or args.probe) else manager_url(settings["jawn_dir"], ticket)
     manager_base = manager or args.url or ""
     # A profile that still holds the session cookie opens the Manager directly;
-    # the ticket is only loaded when that Manager answers with the Gate. Loading
-    # the ticket first flashed its splash on every launch and self-restart.
+    # the ticket is loaded whenever a finished load is the Gate - at launch, or
+    # when a lapse mid-run reloads the page - so the view signs itself back in.
     login_pending = False
-    ticket_tried = False
+    gate_retry = {"attempts": 0}
     kick = None
     host = port = None
     if manager:
@@ -2230,7 +2250,7 @@ def main(argv=None):
     page.loadStarted.connect(lambda: nav_guard.start(LOAD_TIMEOUT_MS))
 
     def on_load(_ok):
-        nonlocal login_pending, migration_pending, ticket_tried
+        nonlocal login_pending, migration_pending
         nav_guard.stop()
         if nav.pop("drawing_error", False):
             # the dark page finished drawing: the retry armed beside it is the
@@ -2261,12 +2281,13 @@ def main(argv=None):
         nav["retry"] = None
         retry_timer.stop()
         load_failures["n"] = 0
-        if (ticket and not ticket_tried and not login_pending
-                and landed_on_gate(view.url().toString(), view.title(), manager)):
+        gate = landed_on_gate(view.url().toString(), view.title(), manager)
+        if gate_ticket_due(gate_retry["attempts"], ticket, gate, login_pending):
             # The Manager answered with the Gate: the saved ticket mints a
-            # session, so open it once and land back on the Manager. A refused
-            # or missing ticket leaves the Gate in view rather than looping.
-            ticket_tried = True
+            # session, so open it and land back on the Manager. This is not a
+            # launch-only step - a lapsed session reloads the page mid-run too
+            # - and the count keeps a refused ticket from looping.
+            gate_retry["attempts"] += 1
             login_pending = True
             view.setUrl(QUrl(ticket))
             return
@@ -2280,6 +2301,10 @@ def main(argv=None):
         current = urlparse(view.url().toString())
         on_manager = (manager and current.hostname == host
                       and (current.port or 443) == port)
+        if on_manager and not gate:
+            # A Manager page that loaded proves the session was minted again,
+            # so the next lapse starts a fresh Gate episode.
+            gate_retry["attempts"] = 0
         if migration_pending and on_manager:
             migration_pending = False
             _path, data = webkit_localstorage(host, port)
