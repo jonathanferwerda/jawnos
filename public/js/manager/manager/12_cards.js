@@ -51,6 +51,9 @@ var blackjackState = null;
 var blackjackSaveTimer = null;
 var blackjackFitObserver = null;
 var blackjackResizeBound = false;
+var tarotFitObserver = null;
+var tarotResizeBound = false;
+var cardsMode = '';
 
 // ---- shared helpers --------------------------------------------------------
 
@@ -78,6 +81,7 @@ function cardsShowSpread(names) {
 	}
 	$('#deck_spread').html(html).show();
 	$('#deck_card').hide();
+	tarotFit();
 }
 
 function cardsShowSingle(src, title) {
@@ -85,6 +89,7 @@ function cardsShowSingle(src, title) {
 	if (src) { $('#deck_card').attr('src', src).show(); }
 	if (title) { $('#card_title').html(cardsEscape(title)).show(); }
 	$('#card_description').hide();
+	tarotFit();
 }
 
 // ---- choosing a deck -------------------------------------------------------
@@ -133,18 +138,20 @@ function cardsShowVariant(variant, save) {
 	else if (known === 'spider') { spiderEnsure(); }
 	else if (known === 'mahjong') { mahjongEnsure(); }
 	else if (known === 'blackjack') { blackjackEnsure(); }
-	else if (known === 'tarot') { cardPicker(); }
+	else if (known === 'tarot') { cardPicker(); tarotEnsure(); }
 }
 
 function cardsInit() {
 	var root = cardsRoot();
 	if (!root) { return; }
 	var variant = root.getAttribute('data-variant') || '';
+	var enabled = $('.cards_mode[status="enabled"]', root).attr('mode');
+	cardsMode = enabled || '';
 	if (variant === 'solitaire') { solitaireEnsure(); }
 	else if (variant === 'spider') { spiderEnsure(); }
 	else if (variant === 'mahjong') { mahjongEnsure(); }
 	else if (variant === 'blackjack') { blackjackEnsure(); }
-	else if (variant === 'tarot') { cardPicker(); }
+	else if (variant === 'tarot') { cardPicker(); tarotEnsure(); }
 }
 
 // ---- playing cards ---------------------------------------------------------
@@ -809,9 +816,9 @@ function solitaireLoadState() {
 function solitaireEnsure() {
 	var $root = $('#cards_solitaire');
 	if (!$root.length) { return; }
-	if (typeof jawnosGameSessionStart === 'function') {
-		jawnosGameSessionStart('Solitaire', cardsGameScreen('cards_solitaire'));
-	}
+	// Opening the deck does not start a play appointment: the person may be
+	// looking, or about to switch to another deck. The first touch on the pane
+	// starts it (the pointerdown binding at the bottom).
 	if (!solitaireState) {
 		solitaireState = solitaireLoadState();
 		if (!solitaireState) {
@@ -1414,9 +1421,7 @@ function spiderLoadState() {
 function spiderEnsure() {
 	var $root = $('#cards_spider');
 	if (!$root.length) { return; }
-	if (typeof jawnosGameSessionStart === 'function') {
-		jawnosGameSessionStart('Spider Solitaire', cardsGameScreen('cards_spider'));
-	}
+	// The first touch starts the play appointment, not the open.
 	if (!spiderState) {
 		spiderState = spiderLoadState();
 		if (!spiderState) { spiderState = spiderNewDeal(1); }
@@ -1827,9 +1832,7 @@ function mahjongNewGame() {
 
 function mahjongEnsure() {
 	if (!$('#cards_mahjong').length) { return; }
-	if (typeof jawnosGameSessionStart === 'function') {
-		jawnosGameSessionStart('Mahjong', cardsGameScreen('cards_mahjong'));
-	}
+	// The first touch starts the play appointment, not the open.
 	if (!mahjongState) { mahjongNewGame(); }
 	else { mahjongRender(); }
 	if (!mahjongResizeBound) {
@@ -2107,9 +2110,7 @@ function blackjackNewBank(bank) {
 
 function blackjackEnsure() {
 	if (!$('#cards_blackjack').length) { return; }
-	if (typeof jawnosGameSessionStart === 'function') {
-		jawnosGameSessionStart('Blackjack', cardsGameScreen('cards_blackjack'));
-	}
+	// The first touch starts the play appointment, not the open.
 	if (!blackjackState) {
 		var bank = parseFloat($('#cards_blackjack').attr('data-bank'));
 		if (isNaN(bank)) { bank = BJ_BANK_START; }
@@ -2134,6 +2135,88 @@ function blackjackEnsure() {
 	}
 }
 
+// ---- tarot: the picture fills the stage -----------------------------------
+
+// The deck files are only a few hundred pixels wide, so shrinking from their
+// own size leaves a maximised window mostly felt. Fit the picture - or the
+// three-card spread - to the stage instead, keeping the picture's own shape.
+function tarotFitPlan(availW, availH, count, ratio) {
+	count = Math.max(1, count || 1);
+	ratio = (ratio > 0) ? ratio : 220 / 331;
+	var gap = (count > 1) ? Math.max(8, Math.min(22, availW * 0.016)) : 0;
+	var maxW = (availW - gap * (count - 1)) / count;
+	var w = Math.min(maxW, availH * ratio);
+	if (!(w > 0)) { w = 1; }
+	w = Math.floor(w);
+	return { w: w, h: Math.floor(w / ratio), gap: Math.round(gap) };
+}
+
+function tarotSize(img, w, h) {
+	// The box is the exact picture size, so the gold hairline and the shadow
+	// stay on the card rather than around an empty letterbox.
+	img.style.maxWidth = 'none';
+	img.style.maxHeight = 'none';
+	img.style.width = w + 'px';
+	img.style.height = h + 'px';
+}
+
+function tarotWatch(img) {
+	if (!img || img.complete) { return; }
+	$(img).off('load.tarotfit').one('load.tarotfit', tarotFit);
+}
+
+function tarotFit() {
+	var art = document.querySelector('#cards .tarot_art');
+	if (!art) { return; }
+	var availW = art.clientWidth;
+	var availH = art.clientHeight;
+	if (availW < 40 || availH < 60) { return; }
+	var spread = document.getElementById('deck_spread');
+	var single = document.getElementById('deck_card');
+	var ratio = 0;
+	if (spread && spread.style.display !== 'none') {
+		var cards = spread.querySelectorAll('img');
+		if (cards.length) {
+			if (cards[0].naturalWidth && cards[0].naturalHeight) {
+				ratio = cards[0].naturalWidth / cards[0].naturalHeight;
+			}
+			var plan = tarotFitPlan(availW, availH, cards.length, ratio);
+			$(spread).css('gap', plan.gap + 'px');
+			for (var i = 0; i < cards.length; i++) {
+				tarotSize(cards[i], plan.w, plan.h);
+				tarotWatch(cards[i]);
+			}
+		}
+	}
+	if (single && single.style.display !== 'none') {
+		if (single.naturalWidth && single.naturalHeight) {
+			ratio = single.naturalWidth / single.naturalHeight;
+		}
+		var one = tarotFitPlan(availW, availH, 1, ratio);
+		tarotSize(single, one.w, one.h);
+		tarotWatch(single);
+	}
+}
+
+function tarotEnsure() {
+	if (!$('#deck_card').length) { return; }
+	if (!tarotResizeBound) {
+		tarotResizeBound = true;
+		window.addEventListener('resize', tarotFit);
+	}
+	if (typeof ResizeObserver === 'function') {
+		var art = document.querySelector('#cards .tarot_art');
+		if (art) {
+			if (!tarotFitObserver) {
+				tarotFitObserver = new ResizeObserver(function() { tarotFit(); });
+			}
+			tarotFitObserver.disconnect();
+			tarotFitObserver.observe(art);
+		}
+	}
+	tarotFit();
+}
+
 // ---- tarot: the deck picker ------------------------------------------------
 
 var cardsInterval = null;
@@ -2144,14 +2227,13 @@ function cardPicker(newCard) {
 	$.ajax({
 		url: '/manager/card_picker',
 		type: 'GET',
-		data: { timestamp: timestamp, new_card: newCard },
+		data: { timestamp: timestamp, new_card: newCard, mode: cardsMode },
 		success: function(response) {
 			if (response.cards && response.cards.length) {
 				cardsShowSpread(response.cards);
 			}
 			else if (response.stream) {
 				cardsShowSingle(response.stream, null);
-				$('#deck_card').css('height', 'auto');
 			}
 			else {
 				cardsShowSingle(cardsCardUrl(response.filename), null);
@@ -2203,14 +2285,17 @@ if (typeof jQuery !== 'undefined') {
 
 	$(document).on('click', '#cards .cards_mode', function() {
 		var mode = $(this).attr('mode');
+		cardsMode = mode;
 		$('#cards .cards_mode').attr('status', 'disabled');
 		$(this).attr('status', 'enabled');
 		if (typeof settingSetter === 'function') {
 			settingSetter({ app: 'cards', setting: 'mode', value: mode });
 		}
 		clearInterval(cardsInterval);
+		// Draw in the mode just chosen, so one press shows the day's card (or a
+		// free/cycle draw) instead of waiting for a second press.
 		if (mode === 'cycle') {
-			cardPicker();
+			cardPicker('new');
 			cardsInterval = setInterval(function() {
 				if ($('#cards .cards_mode[mode="cycle"]').attr('status') === 'enabled' && $('#deck_card').is(':visible')) {
 					cardPicker('new');
@@ -2221,7 +2306,8 @@ if (typeof jQuery !== 'undefined') {
 			}, 180000);
 		}
 		else {
-			cardPicker();
+			// The whole deck is a browsing rail, not a draw.
+			cardPicker(mode === 'all' ? undefined : 'new');
 		}
 	});
 

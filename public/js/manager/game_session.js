@@ -3,7 +3,7 @@
 // resumed on the next touch within five minutes. The page is the source of the
 // touches here, so the clock lives in the page rather than in a /run file.
 //
-// A game calls jawnosGameSessionStart(name, screen) when it opens, and on its
+// A game calls jawnosGameSessionStart(name, screen) when play begins and on its
 // controls; the screen callback answers whether the game is still on screen.
 // Controls after that are heartbeat; the 30s timer posts a pause, and leaving
 // (the game's window closes, the page hides, or the caller stops it) posts a

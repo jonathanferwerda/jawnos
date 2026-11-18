@@ -54,10 +54,15 @@ like($game_map, qr/Solitaire.*Mahjong.*Blackjack/, 'the card games have play ses
 like($game_map, qr/spider: 'Spider Solitaire'/, 'spider is logged as Spider Solitaire');
 unlike($game_map, qr/tarot/i, 'tarot does not');
 like($cards_js, qr/jawnosGameSessionStart\(game/, 'a card touch starts the appointment');
-like($cards_js, qr/jawnosGameSessionStart\('Solitaire'/, 'opening Solitaire starts a session');
-like($cards_js, qr/jawnosGameSessionStart\('Spider Solitaire'/, 'opening Spider starts one');
-like($cards_js, qr/jawnosGameSessionStart\('Mahjong'/, 'opening Mahjong starts one');
-like($cards_js, qr/jawnosGameSessionStart\('Blackjack'/, 'and Blackjack');
+like($cards_js, qr/pointerdown', '#cards_solitaire, #cards_spider, #cards_mahjong, #cards_blackjack'/,
+	'a touch on any of the four tables starts one');
+foreach my $ensure ([ 'solitaireEnsure', 'Solitaire' ], [ 'spiderEnsure', 'Spider' ],
+	[ 'mahjongEnsure', 'Mahjong' ], [ 'blackjackEnsure', 'Blackjack' ]) {
+	my ($body) = $cards_js =~ /(function $ensure->[0]\b.*?\n\})/s;
+	ok($body, "$ensure->[0] exists");
+	unlike($body // '', qr/jawnosGameSessionStart/,
+		"opening $ensure->[1] records no play until the person touches the table");
+}
 like($cards_js, qr/if \(running && !next\) \{ jawnosGameSessionPause\(\); \}/,
 	'Tarot and the chooser pause the running game instead of ending it');
 like($cards_js, qr/else if \(running && running !== next\) \{ jawnosGameSessionStop\(\); \}/,

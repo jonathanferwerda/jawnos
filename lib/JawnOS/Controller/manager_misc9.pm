@@ -366,7 +366,12 @@ sub action_28170 {
 	my $new_card = $c->param('new_card');
 	my $tree = &subs::inventory_grabber();
 
-	my $mode = &subs::setting_grabber({ app => 'cards', setting => 'mode' });
+	# The mode bar sends the mode it just chose, so the reply does not depend on
+	# that choice's setting write having landed first; the Deal button and a
+	# touch on the card pass no mode and read the stored one.
+	my $mode = $c->param('mode');
+	$mode = &subs::setting_grabber({ app => 'cards', setting => 'mode' })
+		unless defined $mode && length $mode;
 
 
 	my $history = [];

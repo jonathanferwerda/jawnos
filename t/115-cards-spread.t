@@ -76,6 +76,15 @@ unlike($controller, qr/card_spread_stream/, 'no montage is built for the spread'
 unlike($controller, qr/&subs::terminal_name/, 'a deck file name is not shell-escaped on the way into a URL');
 like($controller, qr/&subs::cards_list\(/, 'a draw list comes from the house list');
 like($controller, qr/&subs::cards_list_write\(/, 'and a draw writes it back to the house row');
+# Choosing a mode draws it on the first press: the bar sends the mode it just
+# picked instead of relying on that choice's setting write having landed.
+like($controller, qr/my \$mode = \$c->param\('mode'\);/, 'the deal route reads the chosen mode');
+like($js, qr/cardsMode = mode;/, 'the mode bar remembers the chosen mode');
+like($js, qr/new_card: newCard, mode: cardsMode/, 'and the deal asks for it');
+like($js, qr/cardPicker\(mode === 'all' \? undefined : 'new'\)/,
+	'a mode change draws that mode at once');
+like($js, qr/cardPicker\('new'\);\n\t\t\tcardsInterval = setInterval/,
+	'Cycle draws as soon as it is chosen');
 
 # A template is compiled strictly with the stash keys it is given, so a render
 # that leaves one out is a 500 on that route, not a missing value. The deal

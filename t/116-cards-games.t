@@ -78,7 +78,10 @@ like($js, qr/e\.clientX - solitaireDrag\.grabX/, 'the drag ghost follows the gra
 like($js, qr/solitaireDrag\.ghost\.addClass\('ok'\)/, 'the drag highlight marks the ghost when the drop is valid');
 like($js, qr/spiderSaveState\(\)/, 'the spider table is saved');
 like($js, qr/spiderLoadState\(\)/, 'and read back on the next open');
-like($js, qr/jawnosGameSessionStart\('Spider Solitaire'/, 'opening Spider starts a play session');
+my ($spider_ensure) = $js =~ /(function spiderEnsure\b.*?\n\})/s;
+unlike($spider_ensure // '', qr/jawnosGameSessionStart/,
+	'opening Spider records no play; the first touch starts the session');
+like($js, qr/pointerdown', '#cards_solitaire/, 'a touch on the table starts the session');
 unlike($js, qr/on\('dblclick'/, 'not from a dblclick on the node the redraw replaced');
 my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
 print $fh <<'JS';
@@ -106,6 +109,19 @@ function blank() {
 // ---- solitaire deal ----
 eq(ctx.cardsCardUrl('the fool.png'), '/images/cards/the%20fool.png',
 	'a deck name with a space is percent-encoded');
+// ---- the tarot picture fits the stage ----
+var ratio = 220 / 331;
+var tall = ctx.tarotFitPlan(400, 600, 1, ratio);
+eq(tall.w, Math.floor(600 * ratio), 'a single card fills the stage height');
+eq(tall.h, Math.floor(tall.w / ratio), 'and keeps the deck file shape');
+var narrow = ctx.tarotFitPlan(300, 800, 1, ratio);
+eq(narrow.w, 300, 'a narrow stage limits the card by its width');
+ok(narrow.h <= 800, 'and the card still fits the height');
+var spread = ctx.tarotFitPlan(900, 500, 3, ratio);
+ok(spread.w * 3 + spread.gap * 2 <= 900, 'three cards and their gaps fit the width');
+eq(spread.h, Math.floor(spread.w / ratio), 'the spread cards keep their shape');
+var big = ctx.tarotFitPlan(1200, 900, 1, ratio);
+ok(big.w > 220, 'a maximised window shows a card larger than the deck file');
 // ---- the drag keeps the grab point ----
 var grab = ctx.solitaireGrabOffset({ left: 100, top: 200 }, 124, 236);
 eq(grab.x, 24, 'a grabbed card keeps its horizontal grab point');
