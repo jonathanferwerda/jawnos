@@ -146,14 +146,15 @@ $topic{'marker'} = {
 $topic{'studio'} = {
 		title => 'Studio', category => 'apps', app => 'studio',
 		templates => [ 'templates/studio/studio.html.ep', 'templates/studio/markup.html.ep', 'templates/studio/song_select.html.ep', 'templates/studio/plug_selection.html.ep', 'public/js/manager/studio.js' ],
-		controls => [ 'Mix this track against the others', 'Pick a song from the library Music uses', 'Use this microphone or camera on the channel', 'Put another window or a screen share on the channel', 'Patch this app into the channel', 'Measure the round trip through this browser or a native audio backend' ],
+		controls => [ 'Mix this track against the others', 'Pick a song from the library Music uses', 'Use this microphone or camera on the channel', 'Put another window or a screen share on the channel', 'Patch this app into the channel', 'Measure the round trip through this browser or a native audio backend', 'Arm a take on the audio engine', 'End the engine take and close its file', 'How many tracks the engine take records' ],
 		summary => 'A multitrack audio studio with takes and a pedalboard.',
-		verified => '2026-11-15',
+		verified => '2026-11-17',
 		body => [
 			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
 			'The knobs and pedal backdrops follow the selected icon set, so the mixer wears the same finish as the rest of the desk.',
 			'The Latency row shows what the browser reports for this session: the total output figure, its base and output parts in milliseconds, and the sample rate in hertz.',
 			'The Round trip row\'s backend picker chooses who measures: this browser plays a few clicks through the speakers and times the echo on the microphone, while ALSA, PipeWire or JACK asks the audio engine on this machine and shows its number, or its error when there is no device.',
+			'An Engine take block sits under Round trip: Start take and Stop take drive the native audio engine instead of the browser, reading Seconds, one to eight Tracks, Inputs (channel numbers in a comma list) and Inserts (tone, distortion, delay, compressor or reverb, in a comma list). One row per track shows the take\'s state, its frames and its dropped count, with Gain (0 to 4) and Pan (-1 to 1) sliders that move that track\'s strip while it records; whatever the engine answers is shown as it sent it.',
 			'It works with the same library as Music, so recorded and imported tracks sit together.',
 			'A channel\'s input is a plug you choose: a microphone or camera, another window, screen share, or the Synth — pick Synth and what you play records through the channel\'s tone stack and pedals like any other source.',
 			'A synth panel sits at the top of the window (Hide tucks it away): pick a sound and play its keys right there, then record it by setting a channel\'s input to Synth.'

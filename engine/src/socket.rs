@@ -1,7 +1,8 @@
 //! The control socket: one JSON object per line, in and out.
 //!
-//! The Perl manager arms a take (`record`), watches it (`status`), moves the
-//! running strip's knobs (`param`) and ends it (`stop`) over a Unix socket, so
+//! The Perl manager arms a take (`record`) or plays takes back (`play`),
+//! watches it (`status`), moves a running strip's knobs (`param`) and ends it
+//! (`stop`) over a Unix socket, so
 //! the wire format here is deliberately dumb:
 //! one object per line, values that are strings, numbers, booleans, null,
 //! arrays, or (for a take's `tracks` plan) one object per track, and no crates
@@ -48,7 +49,7 @@ use std::time::Duration;
 
 use jawn_audio::{
     to_i16, BackendKind, Channel, Device, DiskWriter, InsertKind, Mixer, NullDevice, ParamName,
-    ParamQueue,
+    ParamQueue, PlayTrack, Playback,
 };
 
 use crate::{take_frames, MAX_CHANNELS, MAX_TRACKS, TAKE_CHANNELS};
@@ -109,6 +110,7 @@ pub(crate) fn serve(config: Config) -> Result<ExitCode, String> {
     let mut server = Server {
         config,
         current: None,
+        playback: None,
         next_take: 1,
     };
     let outcome = server.run(listener);
@@ -165,8 +167,12 @@ fn bind(path: &Path) -> Result<UnixListener, String> {
 struct Server {
     config: Config,
     /// The most recent take. It stays after the worker ends, so `status` can
-    /// report the final state until the next `record`.
+    /// report the final state until the next `record` or `play`.
     current: Option<Running>,
+    /// The most recent playback, kept after it ends for the same reason. A
+    /// take and a playback never run together (no overdub yet), so at most one
+    /// of these is ever in a running state.
+    playback: Option<PlaySession>,
     next_take: u64,
 }
 
@@ -259,6 +265,9 @@ impl Server {
                         if let Some(running) = &mut self.current {
                             running.finish();
                         }
+                        if let Some(session) = &mut self.playback {
+                            session.finish();
+                        }
                         let _ = send(&mut client.stream, &reply);
                         return Ok(true);
                     }
@@ -278,6 +287,7 @@ impl Server {
         };
         match command {
             "record" => Action::Reply(self.record(&object)),
+            "play" => Action::Reply(self.play(&object)),
             "param" => Action::Reply(self.param(&object)),
             "status" => Action::Reply(self.status_line()),
             "stop" => Action::Reply(self.stop_line()),
@@ -359,6 +369,13 @@ impl Server {
     }
 
     fn record(&mut self, object: &Object) -> String {
+        // Playing and recording share the transport, and an overdub is not
+        // part of this step: say so rather than mixing a take into a playback.
+        if let Some(session) = &self.playback {
+            if session.is_playing() {
+                return error_line("a playback is running; stop it before recording a take");
+            }
+        }
         let path = match get(object, "out") {
             Some(Value::Str(path)) => path.clone(),
             _ => return error_line("record needs \"out\": an absolute path"),
@@ -503,6 +520,11 @@ impl Server {
         if let Some(mut previous) = self.current.take() {
             previous.finish();
         }
+        // A playback that has already ended is only a status line now; the
+        // new take replaces it. (A running one was refused above.)
+        if let Some(mut previous) = self.playback.take() {
+            previous.finish();
+        }
 
         let take = self.next_take;
         self.next_take += 1;
@@ -574,7 +596,151 @@ impl Server {
         )
     }
 
+    /// `{"cmd":"play","files":["/abs/a.wav"],"start_at":0}`: play takes back
+    /// through their strips.
+    ///
+    /// Every file is decoded on this thread before the reply, so a missing or
+    /// unplayable file is a refusal rather than a `playing` that turns into
+    /// `failed` a moment later. The strips are the defaults the wire has no
+    /// knobs for yet: unity trim, centre pan, no inserts.
+    fn play(&mut self, object: &Object) -> String {
+        let files = match get(object, "files") {
+            Some(Value::Arr(values)) if !values.is_empty() => {
+                let mut paths = Vec::with_capacity(values.len());
+                for value in values {
+                    match value {
+                        Value::Str(path) if Path::new(path).is_absolute() => {
+                            paths.push(path.clone())
+                        }
+                        Value::Str(_) => {
+                            return error_line(
+                                "play needs every \"files\" entry to be an absolute path",
+                            )
+                        }
+                        _ => return error_line("\"files\" must be an array of WAV paths"),
+                    }
+                }
+                paths
+            }
+            Some(Value::Arr(_)) => {
+                return error_line("play needs at least one file in \"files\"")
+            }
+            _ => {
+                return error_line("play needs \"files\": an array of absolute WAV paths")
+            }
+        };
+        let start_at = match get(object, "start_at") {
+            None | Some(Value::Null) => 0,
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && *value >= 0.0
+                    && value.fract() == 0.0
+                    && *value <= u64::MAX as f64 =>
+            {
+                *value as u64
+            }
+            _ => return error_line("\"start_at\" must be a whole, non-negative sample count"),
+        };
+
+        // One transport: a take being recorded and a playback cannot overlap.
+        if let Some(running) = &self.current {
+            if running.is_recording() {
+                return error_line("a take is recording; stop it before playing");
+            }
+        }
+        if let Some(session) = &self.playback {
+            if session.is_playing() {
+                return error_line("a playback is already running");
+            }
+        }
+        if let Err(error) = crate::play_support(self.config.backend) {
+            return error_line(&error);
+        }
+
+        let mut tracks = Vec::with_capacity(files.len());
+        for path in &files {
+            match PlayTrack::from_wav(path.clone(), 1.0, 0.0, Vec::new()) {
+                Ok(track) => tracks.push(track),
+                Err(error) => return error_line(&error),
+            }
+        }
+        // The strips themselves are built on the worker, because an insert is
+        // not `Send`; this check is everything the reply needs from them.
+        let (rate, longest) = match jawn_audio::playback::check_tracks(&tracks) {
+            Ok(shape) => shape,
+            Err(error) => return error_line(&error),
+        };
+        match crate::probe_playback(
+            self.config.backend,
+            &self.config.device,
+            rate,
+            self.config.period,
+            self.config.buffer,
+        ) {
+            Ok(granted) if granted != rate => {
+                return error_line(&format!(
+                    "the device granted {granted} Hz, but the files are {rate} Hz; they would play at the wrong pitch"
+                ))
+            }
+            Ok(_) => {}
+            Err(error) => return error_line(&error),
+        }
+        let total = longest.saturating_sub(start_at);
+        if total == 0 {
+            // Nothing to render is not a playback: answer with the final state
+            // instead of starting a worker that is already finished.
+            if let Some(mut previous) = self.playback.take() {
+                previous.finish();
+            }
+            return format!(
+                "{{\"ok\":true,\"state\":\"done\",\"files\":{},\"frames\":0}}",
+                files.len()
+            );
+        }
+
+        // Join whatever ended earlier: a finished take or an earlier playback
+        // is a status line, not a thread to leave detached.
+        if let Some(mut previous) = self.current.take() {
+            previous.finish();
+        }
+        if let Some(mut previous) = self.playback.take() {
+            previous.finish();
+        }
+
+        let status = Arc::new(Mutex::new(PlayStatus {
+            state: State::Playing,
+            files: files.len(),
+            frames: 0,
+            error: String::new(),
+        }));
+        let stop = Arc::new(AtomicBool::new(false));
+        let spawned = {
+            let status = Arc::clone(&status);
+            let stop = Arc::clone(&stop);
+            let config = self.config.clone();
+            thread::Builder::new()
+                .name("jawn-audio-play".to_string())
+                .spawn(move || run_playback(config, tracks, start_at, status, stop))
+        };
+        let handle = match spawned {
+            Ok(handle) => handle,
+            Err(error) => return error_line(&format!("cannot start the playback thread: {error}")),
+        };
+        self.playback = Some(PlaySession {
+            status,
+            stop,
+            handle: Some(handle),
+        });
+        format!(
+            "{{\"ok\":true,\"state\":\"playing\",\"files\":{}}}",
+            files.len()
+        )
+    }
+
     fn status_line(&self) -> String {
+        if let Some(session) = &self.playback {
+            return session.line();
+        }
         match &self.current {
             Some(running) => running.line(),
             None => idle_line(),
@@ -582,6 +748,12 @@ impl Server {
     }
 
     fn stop_line(&mut self) -> String {
+        if let Some(session) = &mut self.playback {
+            // Joining the worker before answering makes `frames` the frames
+            // that were actually rendered, not a guess about a running loop.
+            session.finish();
+            return session.line();
+        }
         match &mut self.current {
             Some(running) => {
                 // Signals the worker and joins it: the disk writer has closed
@@ -648,6 +820,7 @@ fn send(stream: &mut UnixStream, line: &str) -> bool {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Recording,
+    Playing,
     Done,
     Failed,
 }
@@ -656,6 +829,7 @@ impl State {
     fn name(self) -> &'static str {
         match self {
             State::Recording => "recording",
+            State::Playing => "playing",
             State::Done => "done",
             State::Failed => "failed",
         }
@@ -959,6 +1133,218 @@ impl Running {
             jawn_audio::loopback::json_escape(&status.error)
         )
     }
+}
+
+/// What `status` reads for a playback: its state and the frames rendered.
+#[derive(Clone)]
+struct PlayStatus {
+    state: State,
+    files: usize,
+    frames: u64,
+    error: String,
+}
+
+/// The server's handle to one playback's worker thread.
+struct PlaySession {
+    status: Arc<Mutex<PlayStatus>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl PlaySession {
+    fn snapshot(&self) -> PlayStatus {
+        self.status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn is_playing(&self) -> bool {
+        self.snapshot().state == State::Playing
+    }
+
+    /// Signal the worker and wait for it. When this returns `frames` is the
+    /// number of frames the loop actually rendered.
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let joined = match self.handle.take() {
+            Some(handle) => handle.join(),
+            None => Ok(()),
+        };
+        if joined.is_err() {
+            let mut status = self
+                .status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if status.state == State::Playing {
+                status.state = State::Failed;
+                status.error = "the playback thread panicked".to_string();
+            }
+        }
+    }
+
+    fn line(&self) -> String {
+        let status = self.snapshot();
+        if status.state == State::Failed {
+            format!(
+                "{{\"ok\":false,\"state\":\"failed\",\"files\":{},\"frames\":{},\"error\":\"{}\"}}",
+                status.files,
+                status.frames,
+                jawn_audio::loopback::json_escape(&status.error)
+            )
+        } else {
+            format!(
+                "{{\"ok\":true,\"state\":\"{}\",\"files\":{},\"frames\":{}}}",
+                status.state.name(),
+                status.files,
+                status.frames
+            )
+        }
+    }
+}
+
+/// Update what `status` reads while a playback runs.
+fn note_play_progress(status: &Arc<Mutex<PlayStatus>>, frames: u64) {
+    let mut current = status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    current.frames = frames;
+}
+
+/// The playback's worker: render every frame, then say how it ended. A stop is
+/// the caller's choice, not a failure, exactly as it is for a take.
+fn run_playback(
+    config: Config,
+    tracks: Vec<PlayTrack>,
+    start_at: u64,
+    status: Arc<Mutex<PlayStatus>>,
+    stop: Arc<AtomicBool>,
+) {
+    // Build the strips here, on the playback thread, so a chain never moves
+    // between threads. The control thread already checked the shape.
+    let mut playback = match Playback::new(tracks, start_at) {
+        Ok(playback) => playback,
+        Err(error) => {
+            let mut current = status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            current.state = State::Failed;
+            current.error = error;
+            return;
+        }
+    };
+    let outcome = match config.backend {
+        BackendKind::Null => play_null_stream(config.period, &mut playback, &status, &stop),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            play_hardware(&config, &mut playback, &status, &stop)
+        }
+        // `play` already refused a backend that cannot play; name it if a
+        // future caller reaches the worker another way.
+        BackendKind::Jack => Err(crate::play_support_message()),
+    };
+    let was_stopped = stop.load(Ordering::SeqCst);
+    let mut current = status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match outcome {
+        Ok(frames) => {
+            current.frames = frames;
+            if current.state == State::Playing {
+                current.state = State::Done;
+            }
+        }
+        Err(_) if was_stopped => current.state = State::Done,
+        Err(error) => {
+            current.state = State::Failed;
+            current.error = error;
+        }
+    }
+}
+
+/// The null playback: no card to pace it, so every block is rendered as fast as
+/// the CPU will and `status` is updated once per block.
+fn play_null_stream(
+    period: usize,
+    playback: &mut Playback,
+    status: &Arc<Mutex<PlayStatus>>,
+    stop: &AtomicBool,
+) -> Result<u64, String> {
+    let rate = playback.rate();
+    playback.prepare(rate, period)?;
+    let mut out = vec![0.0f32; period * 2];
+    while playback.remaining() > 0 {
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        let frames = playback.remaining().min(period as u64) as usize;
+        playback.render(&mut out[..frames * 2])?;
+        note_play_progress(status, playback.position());
+        // Yielding does not pace the audio; it lets a client polling `status`
+        // run between blocks, which a tight loop would starve.
+        std::thread::yield_now();
+    }
+    Ok(playback.position())
+}
+
+#[cfg(feature = "alsa")]
+struct PlaySink<'a> {
+    playback: &'a mut Playback,
+    status: &'a Arc<Mutex<PlayStatus>>,
+    stop: &'a AtomicBool,
+}
+
+#[cfg(feature = "alsa")]
+impl jawn_audio::playback::RenderSource for PlaySink<'_> {
+    fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
+        self.playback.prepare(rate, period)
+    }
+
+    fn block(&mut self, out: &mut [f32]) -> Result<(), String> {
+        // The sink is the only place a stop can reach the device loop.
+        if self.stop.load(Ordering::SeqCst) {
+            return Err("stopped".to_string());
+        }
+        self.playback.render(out)?;
+        note_play_progress(self.status, self.playback.position());
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alsa")]
+fn play_hardware(
+    config: &Config,
+    playback: &mut Playback,
+    status: &Arc<Mutex<PlayStatus>>,
+    stop: &AtomicBool,
+) -> Result<u64, String> {
+    let rate = playback.rate();
+    let total = playback.total_frames();
+    let sink = PlaySink {
+        playback,
+        status,
+        stop,
+    };
+    let report = jawn_audio::alsa_device::run_file_playback(
+        &config.device,
+        rate,
+        config.period,
+        config.buffer,
+        total,
+        sink,
+    )
+    .map_err(|error| format!("cannot play: {error}"))?;
+    Ok(report.frames)
+}
+
+#[cfg(not(feature = "alsa"))]
+fn play_hardware(
+    config: &Config,
+    playback: &mut Playback,
+    status: &Arc<Mutex<PlayStatus>>,
+    stop: &AtomicBool,
+) -> Result<u64, String> {
+    let _ = (config, playback, status, stop);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
 /// What a capture produced besides its frames.

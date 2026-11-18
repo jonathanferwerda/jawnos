@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use jawn_audio::{
     backends::{self, BackendKind, RunReport},
     decode, encode_datagram, loopback, mix_mono_into_stereo, peak, to_i16, Channel, Codec, Device,
-    DiskWriter, Header, InsertKind, Mixer, NullDevice, Strip, HEADER_LEN,
+    DiskWriter, Header, InsertKind, Mixer, NullDevice, PlayTrack, Playback, Strip, HEADER_LEN,
 };
 
 /// Every track's WAV is stereo: the strip's panned output. `--channels` is the
@@ -39,6 +39,7 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --run [options]              run a device for a while and report
   jawn-audio --loopback [options]         measure the round trip through a patch cable
   jawn-audio --record --out FILE.wav      record a take to a 16-bit WAV
+  jawn-audio --play --file A.wav          play takes back through their strips
   jawn-audio --serve [options]            arm and place takes over a Unix socket
   jawn-audio --version                    print the version
   jawn-audio --help                       this text
@@ -88,6 +89,29 @@ jawn-audio — the JawnOS audio engine
   \"tracks\":[{\"path\":...,\"input\":N,\"frames\":N,\"dropped\":N},...]. A
   one-track take keeps its historical shape and omits \"tracks\".
 
+--play options:
+  --file FILE.wav   a take to play; repeat the flag, one strip per file
+  --backend N       null (default), alsa, pipewire or jack
+  --device NAME     ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
+  --period N        block/period size in frames (default 64; --frames is an alias)
+  --buffer N        buffer size in frames (default 256)
+  --seconds S       stop after S seconds (default: every file to its end)
+  --start-at SAMPLE skip this many frames of every file (default 0)
+  --gain N          channel trim, linear (default 1.0)
+  --pan N           channel pan, -1 left .. 1 right (default 0, centre)
+  --insert NAME     an insert, repeatable in chain order:
+                    tone, distortion, delay, compressor or reverb
+  --json            accepted for symmetry: --play always prints its JSON line
+
+  Every file gets its own strip and the strips are summed into the stereo
+  output. Files share one timeline: playback starts at frame 0 of each (or at
+  --start-at), so takes cut from the same transport stay lined up. They must
+  share a sample rate; the rate comes from the files, not --rate. A 16-bit
+  PCM WAV of one or two channels is playable; anything else is refused by
+  name. As with --record, --gain 2:0.5, --pan 2:-1 and --insert 1:delay apply
+  to one 1-based file, and an unprefixed knob applies to every file. The null
+  backend plays as fast as it can; ALSA is paced by the card.
+
 --loopback options:
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
@@ -124,6 +148,7 @@ enum Mode {
     Run,
     Loopback,
     Record,
+    Play,
     Serve,
     SelfTest,
     Version,
@@ -155,6 +180,8 @@ struct Options {
     gains: Vec<(usize, f32)>,
     pans: Vec<(usize, f32)>,
     inserts: Vec<InsertSpec>,
+    /// `--file` in the order given; one strip per file for `--play`.
+    files: Vec<String>,
     tracks: usize,
     /// The device channels a take records, in track order. Empty means the
     /// default `0..tracks`; `--inputs` fills it.
@@ -195,6 +222,7 @@ fn run() -> Result<ExitCode, String> {
         gains: Vec::new(),
         pans: Vec::new(),
         inserts: Vec::new(),
+        files: Vec::new(),
         tracks: 1,
         inputs: Vec::new(),
         inputs_given: false,
@@ -212,6 +240,8 @@ fn run() -> Result<ExitCode, String> {
             "--run" => options.mode = Mode::Run,
             "--loopback" => options.mode = Mode::Loopback,
             "--record" => options.mode = Mode::Record,
+            "--play" => options.mode = Mode::Play,
+            "--file" => options.files.push(value(&mut args, "--file")?),
             "--serve" => options.mode = Mode::Serve,
             "--selftest" => options.mode = Mode::SelfTest,
             "--version" | "-V" => options.mode = Mode::Version,
@@ -328,18 +358,18 @@ fn run() -> Result<ExitCode, String> {
     // that has them today; say so instead of accepting a knob that does
     // nothing. `--channel` keeps its old shape outside `--record` (it was
     // always accepted there) so this is not a regression for an existing call.
-    if options.mode != Mode::Record
+    let strips = matches!(options.mode, Mode::Record | Mode::Play);
+    if !strips
         && (options.gain != 1.0
             || options.pan != 0.0
             || !options.gains.is_empty()
             || !options.pans.is_empty()
-            || !options.inserts.is_empty()
-            || options.tracks != 1
-            || options.inputs_given)
+            || !options.inserts.is_empty())
     {
-        return Err(
-            "--tracks, --inputs, --gain, --pan and --insert apply only to --record".to_string(),
-        );
+        return Err("--gain, --pan and --insert apply only to --record and --play".to_string());
+    }
+    if options.mode != Mode::Record && (options.tracks != 1 || options.inputs_given) {
+        return Err("--tracks and --inputs apply only to --record".to_string());
     }
 
     match options.mode {
@@ -384,6 +414,7 @@ fn run() -> Result<ExitCode, String> {
         }
         Mode::Loopback => run_loopback(&options),
         Mode::Record => run_record(&options),
+        Mode::Play => run_play(&options),
         Mode::Serve => run_serve(&options),
     }
 }
@@ -1008,6 +1039,279 @@ fn first_track_path(options: &Options, out: &str) -> String {
         .ok()
         .and_then(|plans| plans.into_iter().next().map(|plan| plan.path))
         .unwrap_or_else(|| out.to_string())
+}
+
+/// What one `--play` produced. The key order is the JSON contract; a failed
+/// playback keeps the same shape so a caller parses one struct either way.
+struct PlayReport {
+    ok: bool,
+    backend: &'static str,
+    files: usize,
+    frames: u64,
+    rate: u32,
+    seconds: f64,
+    xruns: usize,
+    error: String,
+}
+
+impl PlayReport {
+    fn success(backend: &'static str, files: usize, frames: u64, rate: u32, xruns: usize) -> Self {
+        let seconds = if rate == 0 {
+            0.0
+        } else {
+            frames as f64 / f64::from(rate)
+        };
+        PlayReport {
+            ok: true,
+            backend,
+            files,
+            frames,
+            rate,
+            seconds,
+            xruns,
+            error: String::new(),
+        }
+    }
+
+    /// A playback that never started has no rate and no frames; the file count
+    /// is still what the caller asked for, so the line is recognisably about
+    /// that request.
+    fn failure(backend: &'static str, files: usize, error: String) -> Self {
+        PlayReport {
+            ok: false,
+            backend,
+            files,
+            frames: 0,
+            rate: 0,
+            seconds: 0.0,
+            xruns: 0,
+            error,
+        }
+    }
+
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"ok\":{},\"backend\":\"{}\",\"files\":{},\"frames\":{},\"rate\":{},\"seconds\":{:.3},\"xruns\":{},\"error\":\"{}\"}}",
+            self.ok,
+            loopback::json_escape(self.backend),
+            self.files,
+            self.frames,
+            self.rate,
+            self.seconds,
+            self.xruns,
+            loopback::json_escape(&self.error)
+        )
+    }
+}
+
+fn run_play(options: &Options) -> Result<ExitCode, String> {
+    validate_play(options)?;
+    // `--play` has one output contract: the JSON line, success or failure. A
+    // caller that arms a playback is a program, not a person reading prose.
+    match play_files(options) {
+        Ok(report) => {
+            println!("{}", report.to_json());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => {
+            let report = PlayReport::failure(options.backend.name(), options.files.len(), error);
+            println!("{}", report.to_json());
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+fn validate_play(options: &Options) -> Result<(), String> {
+    if options.files.is_empty() {
+        return Err("--play needs at least one --file FILE.wav".to_string());
+    }
+    validate_block(options.frames, options.buffer)?;
+    validate_channel(options)?;
+    if options.seconds < 0.0 {
+        return Err("--seconds cannot be negative".to_string());
+    }
+    // A `N:` prefix is 1-based and ranges over the files, exactly as it ranges
+    // over a take's tracks in `--record`.
+    let files = options.files.len();
+    for spec in &options.inserts {
+        if let Some(file) = spec.track {
+            if file < 1 || file > files {
+                return Err(format!(
+                    "--insert names file {file}, but --play has {files} file(s) (1..={files})"
+                ));
+            }
+        }
+    }
+    for (flag, targets) in [("--gain", &options.gains), ("--pan", &options.pans)] {
+        for (file, _) in targets {
+            if *file < 1 || *file > files {
+                return Err(format!(
+                    "{flag} names file {file}, but --play has {files} file(s) (1..={files})"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The inserts that apply to one 1-based file, in chain order.
+fn inserts_for(options: &Options, file: usize) -> Vec<InsertKind> {
+    options
+        .inserts
+        .iter()
+        .filter(|spec| spec.track.is_none() || spec.track == Some(file))
+        .map(|spec| spec.kind)
+        .collect()
+}
+
+fn play_files(options: &Options) -> Result<PlayReport, String> {
+    let mut tracks = Vec::with_capacity(options.files.len());
+    for (index, path) in options.files.iter().enumerate() {
+        let file = index + 1;
+        tracks.push(PlayTrack::from_wav(
+            path.clone(),
+            track_gain(options, file),
+            track_pan(options, file),
+            inserts_for(options, file),
+        )?);
+    }
+    let mut playback = Playback::new(tracks, options.start_at)?;
+    let rate = playback.rate();
+    if options.seconds_given {
+        playback.limit(take_frames(options.seconds, rate));
+    }
+    let device = options.backend.device_name(options.device.as_deref());
+    let (frames, xruns) = match options.backend {
+        BackendKind::Null => play_null(&mut playback, options)?,
+        BackendKind::Alsa | BackendKind::PipeWire => play_alsa(&device, &mut playback, options)?,
+        BackendKind::Jack => return Err(play_support_message()),
+    };
+    Ok(PlayReport::success(
+        options.backend.name(),
+        options.files.len(),
+        frames,
+        rate,
+        xruns,
+    ))
+}
+
+/// The null backend has no card to pace it, so it renders every block as fast
+/// as the CPU will and reports what it rendered.
+fn play_null(playback: &mut Playback, options: &Options) -> Result<(u64, usize), String> {
+    playback.prepare(playback.rate(), options.frames)?;
+    let mut out = vec![0.0f32; options.frames * 2];
+    while playback.remaining() > 0 {
+        let frames = playback.remaining().min(options.frames as u64) as usize;
+        playback.render(&mut out[..frames * 2])?;
+    }
+    Ok((playback.position(), 0))
+}
+
+#[cfg(feature = "alsa")]
+fn play_alsa(
+    device: &str,
+    playback: &mut Playback,
+    options: &Options,
+) -> Result<(u64, usize), String> {
+    let rate = playback.rate();
+    let total = playback.total_frames();
+    let sink = FileSink { playback };
+    let report = jawn_audio::alsa_device::run_file_playback(
+        device,
+        rate,
+        options.frames,
+        options.buffer,
+        total,
+        sink,
+    )?;
+    Ok((report.frames, report.xruns))
+}
+
+#[cfg(not(feature = "alsa"))]
+fn play_alsa(
+    device: &str,
+    playback: &mut Playback,
+    options: &Options,
+) -> Result<(u64, usize), String> {
+    let _ = (device, playback, options);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
+}
+
+#[cfg(feature = "alsa")]
+struct FileSink<'a> {
+    playback: &'a mut Playback,
+}
+
+#[cfg(feature = "alsa")]
+impl jawn_audio::playback::RenderSource for FileSink<'_> {
+    fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
+        self.playback.prepare(rate, period)
+    }
+
+    fn block(&mut self, out: &mut [f32]) -> Result<(), String> {
+        self.playback.render(out)
+    }
+}
+
+/// A backend that cannot play files says so before a worker is started.
+pub(crate) fn play_support(backend: BackendKind) -> Result<(), String> {
+    match backend {
+        BackendKind::Null => Ok(()),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            if cfg!(feature = "alsa") {
+                Ok(())
+            } else {
+                Err(
+                    "this build has no ALSA/PipeWire backend; rebuild with --features alsa"
+                        .to_string(),
+                )
+            }
+        }
+        BackendKind::Jack => Err(play_support_message()),
+    }
+}
+
+fn play_support_message() -> String {
+    "no JACK file playback yet; use --backend alsa or null".to_string()
+}
+
+/// Open and close the playback device without starting the stream, so the
+/// socket can refuse a busy card instead of answering `playing` and failing a
+/// block later. Returns the rate the device granted.
+pub(crate) fn probe_playback(
+    backend: BackendKind,
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+) -> Result<u32, String> {
+    match backend {
+        BackendKind::Alsa | BackendKind::PipeWire => playback_probe(device, rate, period, buffer),
+        // The null device runs at whatever rate the files carry.
+        BackendKind::Null | BackendKind::Jack => Ok(rate),
+    }
+}
+
+#[cfg(feature = "alsa")]
+fn playback_probe(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+) -> Result<u32, String> {
+    jawn_audio::alsa_device::check_playback(device, rate, period, buffer)
+        .map_err(|error| format!("cannot play: {error}"))
+}
+
+#[cfg(not(feature = "alsa"))]
+fn playback_probe(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+) -> Result<u32, String> {
+    let _ = (device, rate, period, buffer);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
 fn validate_serve(options: &Options) -> Result<(), String> {

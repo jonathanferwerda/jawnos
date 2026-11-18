@@ -1233,10 +1233,13 @@ my %studio_latency_backend = map { $_ => 1 } qw(alsa pipewire jack javascript);
 # POST /manager/studio/take
 #
 # Studio's transport for the engine's control socket: start a take, ask how it
-# is going, or stop it. A take's name is the server's, not the browser's: the
-# request carries a length and a start position only, so no parameter can name
-# a path, reach a shell or reach an argv. `status` and `stop` relay whatever the
-# engine says, including "not running", because either is a usable answer.
+# is going, move one strip knob, or stop it. A take's name is the server's, not
+# the browser's: the request carries a length and a start position only, so no
+# parameter can name a path, reach a shell or reach an argv. `status`, `stop` and
+# `param` relay whatever the engine says, including "not running" and "no take
+# is running", because either is a usable answer. A `param`'s name is checked
+# against the engine's knob list first, so a typo is this route's 400 and never
+# a line on the socket.
 sub action_44023 {
 	my $c = shift;
 	require JawnOS::Audio::Engine;
@@ -1252,8 +1255,19 @@ sub action_44023 {
 		$c->render(json => &JawnOS::Audio::Engine::audio_engine_stop());
 		return;
 	}
+	if ($action eq 'param') {
+		my ($error, $track, $name, $value) = &studio_take_param(
+			$c->param('track'), $c->param('name'), $c->param('value'),
+		);
+		if (defined $error) {
+			$c->render(json => { ok => 0, error => $error }, status => 400);
+			return;
+		}
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_param($track, $name, $value));
+		return;
+	}
 	unless ($action eq 'start') {
-		$c->render(json => { ok => 0, error => 'choose an action: start, stop or status' }, status => 400);
+		$c->render(json => { ok => 0, error => 'choose an action: start, stop or status, or param' }, status => 400);
 		return;
 	}
 
@@ -1330,6 +1344,47 @@ sub studio_take_path {
 our %studio_take_inserts = map { $_ => 1 } qw(tone distortion delay compressor reverb);
 our $studio_take_tracks_max = 32;
 our $studio_take_input_max  = 31;
+
+# The strip knobs the engine's socket accepts (engine/src/socket.rs). Checking
+# them here makes a typo this route's 400 rather than a line the engine has to
+# refuse; the engine still clamps the value and still answers "no take is
+# running" when one is not, and that answer is relayed unchanged.
+our %studio_take_params = map { $_ => 1 } qw(
+	gain pan
+	tone.bass tone.mid tone.treble
+	distortion.drive
+	delay.time delay.feedback delay.mix
+	compressor.threshold compressor.attack compressor.mix
+	reverb.mix reverb.volume
+);
+
+# Validate one `param` request and return (error, track, name, value). An
+# undefined error means the values are ready for the engine. Only the names
+# above pass, the track is 0-based and inside the engine's track bound, and the
+# value is a finite decimal: the exponent form is accepted, a NaN or an
+# infinity is not (the engine's own rule). Nothing here can name a path.
+sub studio_take_param {
+	my ($track, $name, $value) = @_;
+
+	return ('track must be a whole number, 0 or more')
+		unless defined $track && $track =~ /\A\s*\+?(\d+)\s*\z/;
+	$track = $1 + 0;
+	return ('track must be a whole number, 0 or more')
+		unless $track < $studio_take_tracks_max;
+
+	$name = '' unless defined $name;
+	return ("no such parameter: $name") unless $studio_take_params{$name};
+
+	return ('value must be a finite number')
+		unless defined $value
+			&& $value =~ /\A\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*\z/;
+	$value += 0;
+	# NaN fails the first test and an infinity the second (x - x is NaN).
+	return ('value must be a finite number')
+		unless $value == $value && ($value - $value) == 0;
+
+	return (undef, $track, $name, $value);
+}
 
 # Validate the request's three optional plan fields and answer with the engine's
 # per-track array, or with the sentence that refuses them. The array form is

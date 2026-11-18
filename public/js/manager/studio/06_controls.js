@@ -1,5 +1,14 @@
 $(document).on('change', '#studio_latency_backend', function () { studioLatencyMeasure(); });
 
+// The engine take panel beside the latency readout: two buttons and one knob
+// per strip. The functions live in studio.js; these bind them to the markup.
+$(document).on('click', '#studio_engine_start', function () { studioEngineStart(); });
+$(document).on('click', '#studio_engine_stop', function () { studioEngineStop(); });
+$(document).on('change', '.studio_engine_gain, .studio_engine_pan', function () {
+	var name = $(this).hasClass('studio_engine_gain') ? 'gain' : 'pan';
+	studioEngineParam($(this).attr('data-track'), name, $(this).val());
+});
+
 async function studioStop() {
 	var wasRecording = (mixer['time']['status'] == 'record');
 	// a stop during the count-in cancels the take that never started
@@ -490,6 +499,7 @@ $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', fu
 		controls.hide();
 		mixer.hide();
 		studioUpdateLatencyInfo();
+		studioEngineStatus();
 	}
 });
 

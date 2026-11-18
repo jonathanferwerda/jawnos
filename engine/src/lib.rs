@@ -18,10 +18,12 @@ pub mod graph;
 pub mod loopback;
 pub mod mixer;
 pub mod params;
+pub mod playback;
 pub mod proto;
 pub mod reverb;
 pub mod session;
 pub mod wav;
+pub mod wav_read;
 
 #[cfg(feature = "alsa")]
 pub mod alsa_device;
@@ -35,6 +37,7 @@ pub use effect::{Channel, Compressor, Delay, Distortion, Effect, InsertKind, Ton
 pub use graph::{mix_mono_into_stereo, peak, GraphError, Strip};
 pub use loopback::LoopbackReport;
 pub use mixer::{Mixer, ParamName, ParamQueue, Track};
+pub use playback::{PlayTrack, Playback};
 pub use params::Param;
 pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,
@@ -42,3 +45,4 @@ pub use proto::{
 };
 pub use session::{align, elect, Candidate, ClockOffset, NodeId};
 pub use wav::{to_i16, WavError, WavWriter, HEADER_LEN as WAV_HEADER_LEN};
+pub use wav_read::{read_wav, WavAudio, WavReadError};

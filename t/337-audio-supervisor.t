@@ -1,5 +1,8 @@
 # tests-for: perl/Audio.pl
-# covers:    the audio supervisor: a quick-exit engine is restarted on a growing
+# covers:    the audio supervisor: a live engine found on its socket at start is
+#            adopted (no child, no second engine, --check 0) and replaced only
+#            once it stops answering, a stale socket file is removed and an
+#            engine started, a quick-exit engine is restarted on a growing
 #            backoff with the count and last exit in the status file, a live
 #            engine makes --check 0 and --status name it, a second supervisor
 #            refuses the lock without touching the first, and a missing binary
@@ -12,8 +15,10 @@ use FindBin;
 use Cwd qw(abs_path);
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
+use IO::Socket::UNIX;
 use JSON::PP ();
 use POSIX ();
+use Socket qw(SOCK_STREAM);
 use Test::More;
 use Time::HiRes qw(sleep time);
 
@@ -126,6 +131,53 @@ sub run_cli {
 	close $err;
 	waitpid($pid, 0);
 	return ($? >> 8, $stdout, $stderr);
+}
+
+# A stand-in for the real engine: it binds the control socket and answers each
+# command with an ok object, so the supervisor's status probe sees a live
+# engine. Like the engine it exits on quit and unlinks its socket; a KILL from
+# the test leaves the socket file behind, which is the stale case.
+sub start_fake_engine {
+	my ($path, $ready) = @_;
+	my $pid = fork();
+	die "fork: $!" unless defined $pid;
+	if (!$pid) {
+		my $listener = IO::Socket::UNIX->new(
+			Local  => $path,
+			Type   => SOCK_STREAM,
+			Listen => 5,
+		) or POSIX::_exit(1);
+		open(my $fh, '>', $ready) or POSIX::_exit(1);
+		print {$fh} "$$\n";
+		close $fh;
+		while (my $client = $listener->accept) {
+			$client->autoflush(1);
+			my $line = <$client>;
+			my $cmd = '';
+			if (defined $line) {
+				my $obj = eval { JSON::PP->new->decode($line) };
+				$cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+			}
+			if ($cmd eq 'quit') {
+				print {$client} qq({"ok":true}\n);
+				close $client;
+				last;
+			}
+			print {$client} qq({"ok":true,"take":0,"state":"idle"}\n);
+			close $client;
+		}
+		close $listener;
+		unlink $path;
+		POSIX::_exit(0);
+	}
+	push @children, $pid;
+	return $pid;
+}
+
+sub reap_child {
+	my ($pid) = @_;
+	return 0 unless defined $pid;
+	return waitpid($pid, POSIX::WNOHANG()) == $pid ? 1 : 0;
 }
 
 # --- a crashing engine is restarted on a growing backoff ----------------------
@@ -328,6 +380,165 @@ ENGINE
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'a supervisor with no engine still stops cleanly');
 	ok(!-e $status, 'and removes the status file');
+}
+
+# --- a live engine already on the socket is adopted, not duplicated ----------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	my $mark = "$dir/engine.pid";
+	local $ENV{AUDIO_TEST_ENGINE_MARK} = $mark;
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/engine", <<'ENGINE');
+my $mark = $ENV{AUDIO_TEST_ENGINE_MARK} || '';
+open(my $fh, '>', $mark) or exit 7;
+print {$fh} "$$\n";
+close $fh;
+sleep 600;
+ENGINE
+
+	my $sockpath = "$dir/adopt.sock";
+	my $fake = start_fake_engine($sockpath, "$dir/fake.ready");
+	ok(wait_for(sub { -s "$dir/fake.ready" }, 5), 'the fake engine is listening');
+
+	my $status = "$home/.president/audio.json";
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => ['--backend', 'null', '--socket', $sockpath],
+	);
+
+	my $s = wait_for(sub {
+		my $data = read_status($status);
+		return 0 unless $data && $data->{'adopted'};
+		return $data;
+	}, 10);
+	ok($s, 'the supervisor adopts the engine already on the socket');
+	ok(!defined $s->{'pid'}, 'an adopted engine puts no child pid in the status file') if $s;
+	is($s->{'socket'}, $sockpath, 'the adopted status names the socket') if $s;
+	ok($s->{'adopted_since'}, 'the adopted status says when adoption began') if $s;
+
+	my ($check_code, undef, $check_err) = run_cli('--check');
+	is($check_code, 0, '--check is 0 while an adopted engine answers') or diag($check_err);
+
+	my ($status_code, $status_out) = run_cli('--status');
+	is($status_code, 0, '--status exits 0 for an adopted engine');
+	my $printed = eval { JSON::PP->new->decode($status_out) };
+	ok(ref $printed eq 'HASH' && $printed->{'adopted'}, '--status prints adopted: true');
+
+	# Longer than one poll: an adopted engine must suppress the spawn entirely.
+	sleep 2;
+	ok(!-e $mark, 'the supervisor did not run the engine binary while adopted');
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'SIGTERM stops an adopting supervisor 0');
+	ok(!-e $status, 'the status file is gone after the clean stop');
+	ok(wait_for(sub { reap_child($fake) }, 10), 'the adopted engine was asked to quit');
+}
+
+# --- when the adopted engine stops answering, the supervisor takes over ------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	my $mark = "$dir/engine.pid";
+	local $ENV{AUDIO_TEST_ENGINE_MARK} = $mark;
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/engine", <<'ENGINE');
+my $mark = $ENV{AUDIO_TEST_ENGINE_MARK} || '';
+open(my $fh, '>', $mark) or exit 7;
+print {$fh} "$$\n";
+close $fh;
+sleep 600;
+ENGINE
+
+	my $sockpath = "$dir/takeover.sock";
+	my $fake = start_fake_engine($sockpath, "$dir/fake.ready");
+	ok(wait_for(sub { -s "$dir/fake.ready" }, 5), 'the fake engine is listening');
+
+	my $status = "$home/.president/audio.json";
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => ['--backend', 'null', '--socket', $sockpath],
+	);
+
+	my $adopted = wait_for(sub {
+		my $data = read_status($status);
+		return 0 unless $data && $data->{'adopted'};
+		return $data;
+	}, 10);
+	ok($adopted, 'the supervisor adopts the fake engine first');
+
+	kill 'KILL', $fake;
+	waitpid($fake, 0);
+
+	my $s = wait_for(sub {
+		my $data = read_status($status);
+		return 0 unless $data && defined $data->{'pid'} && -s $mark;
+		return $data;
+	}, 15);
+	ok($s, 'the supervisor starts its own engine after the adopted one dies');
+	ok(!$s->{'adopted'}, 'the status file no longer says adopted') if $s;
+	my $engine_pid = read_text($mark);
+	$engine_pid =~ s/\s+//g;
+	push @children, 0 + $engine_pid if length $engine_pid;
+	is($s->{'pid'}, 0 + $engine_pid, 'and names the child it started') if $s;
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the taking-over supervisor stops cleanly');
+	ok(!-e $status, 'and removes the status file');
+	ok(!kill(0, 0 + $engine_pid), 'the engine it started goes with it');
+}
+
+# --- a stale socket file is removed and an engine is started -----------------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	my $mark = "$dir/engine.pid";
+	local $ENV{AUDIO_TEST_ENGINE_MARK} = $mark;
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/engine", <<'ENGINE');
+my $mark = $ENV{AUDIO_TEST_ENGINE_MARK} || '';
+open(my $fh, '>', $mark) or exit 7;
+print {$fh} "$$\n";
+close $fh;
+sleep 600;
+ENGINE
+
+	my $sockpath = "$dir/stale.sock";
+	my $orphan = IO::Socket::UNIX->new(
+		Local  => $sockpath,
+		Type   => SOCK_STREAM,
+		Listen => 5,
+	) or die "cannot make a stale socket: $!";
+	close $orphan;
+	ok(-S $sockpath, 'the test left a socket file with no listener');
+
+	my $status = "$home/.president/audio.json";
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => ['--backend', 'null', '--socket', $sockpath],
+	);
+
+	my $s = wait_for(sub {
+		my $data = read_status($status);
+		return 0 unless $data && defined $data->{'pid'} && -s $mark;
+		return $data;
+	}, 10);
+	ok($s, 'a stale socket does not stop the supervisor from starting an engine');
+	ok(!$s->{'adopted'}, 'nothing was adopted from a socket that does not answer') if $s;
+	ok(wait_for(sub { !-S $sockpath }, 5), 'the stale socket file was removed');
+
+	my $engine_pid = read_text($mark);
+	$engine_pid =~ s/\s+//g;
+	push @children, 0 + $engine_pid if length $engine_pid;
+	is($s->{'pid'}, 0 + $engine_pid, 'the status file names the engine it started') if $s;
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the supervisor over a stale socket stops cleanly');
+	ok(!-e $status, 'and removes the status file');
+	ok(!kill(0, 0 + $engine_pid), 'its engine child is gone with it');
 }
 
 done_testing();

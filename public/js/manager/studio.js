@@ -623,3 +623,191 @@ function studioLatencyMeasure() {
 		}
 	});
 }
+
+// ---- the engine take panel -------------------------------------------------
+// The panel beside the latency readout speaks to the native engine through
+// POST /manager/studio/take; the WebAudio graph above is not involved. A take
+// is armed with a length and a track plan, read back with `status` every 750 ms
+// while it records, and each strip's gain/pan slider sends one `param`.
+// A number the engine did not report is shown as an em dash, never guessed.
+
+var studioEngineTimer = 0;
+
+function studioEngineAnswer(data) {
+	if (!data || typeof data !== 'object') {
+		return { ok: false, error: studioAudioLabel('the audio engine did not answer') };
+	}
+	return data;
+}
+
+function studioEngineShowError(text) {
+	var el = $('#studio_engine_error');
+	if (el.length) { el.text(text || ''); }
+}
+
+function studioEngineFailed(xhr) {
+	var data = xhr && xhr.responseJSON;
+	studioEnginePollStop();
+	studioEngineShowError((data && data.error) ? data.error : studioAudioLabel('the audio engine did not answer'));
+}
+
+function studioEnginePollStart() {
+	if (studioEngineTimer) { return; }
+	studioEngineTimer = setInterval(studioEngineStatus, 750);
+}
+
+function studioEnginePollStop() {
+	if (studioEngineTimer) { clearInterval(studioEngineTimer); studioEngineTimer = 0; }
+}
+
+// The engine puts one track's fields at the top level and adds a `tracks` array
+// only when a take has more than one, so a one-track take still gets a row.
+function studioEngineStrips(data) {
+	if (Array.isArray(data.tracks) && data.tracks.length) { return data.tracks; }
+	if (typeof data.frames === 'number' || typeof data.dropped === 'number') { return [ data ]; }
+	return [];
+}
+
+function studioEngineNumber(value) {
+	return (typeof value === 'number' && isFinite(value)) ? String(value) : '\u2014';
+}
+
+function studioEngineRow(index) {
+	var row = $('<div class="studio_engine_strip"></div>').attr('data-track', index).css({ margin: '2px 0' });
+	var slider = { width: '80px', 'vertical-align': 'middle' };
+	row.append($('<span class="studio_engine_state"></span>').css({ 'margin-right': '8px' }));
+	row.append($('<span class="studio_engine_frames"></span>').css({ 'margin-right': '8px' }));
+	row.append($('<span class="studio_engine_dropped"></span>').css({ 'margin-right': '8px' }));
+	row.append($('<label></label>').append($('<span></span>').text(studioAudioLabel('Gain') + ' ')).append(
+		$('<input type="range" class="studio_engine_gain" min="0" max="4" step="0.01">')
+			.attr('data-track', index).css(slider)
+	));
+	row.append($('<label></label>').css({ 'margin-left': '8px' }).append($('<span></span>').text(studioAudioLabel('Pan') + ' ')).append(
+		$('<input type="range" class="studio_engine_pan" min="-1" max="1" step="0.01">')
+			.attr('data-track', index).css(slider)
+	));
+	return row;
+}
+
+function studioEngineRender(data) {
+	var box = $('#studio_engine_strips');
+	if (!box.length) { return; }
+	var strips = studioEngineStrips(data);
+	var state = (typeof data.state === 'string') ? data.state : '';
+
+	box.children('.studio_engine_strip').slice(strips.length).remove();
+
+	for (var i = 0; i < strips.length; i++) {
+		var track = strips[i] || {};
+		var row = box.children('.studio_engine_strip').eq(i);
+		if (!row.length) { row = studioEngineRow(i); box.append(row); }
+		row.attr('data-track', i);
+		row.find('.studio_engine_state').text(state || '\u2014');
+		row.find('.studio_engine_frames').text(studioAudioLabel('frames') + ' ' + studioEngineNumber(track.frames));
+		row.find('.studio_engine_dropped').text(studioAudioLabel('dropped') + ' ' + studioEngineNumber(track.dropped));
+		var gain = row.find('.studio_engine_gain').show();
+		var pan = row.find('.studio_engine_pan').show();
+		// A slider being dragged keeps its own position until it is let go.
+		if (!gain.is(':focus') && typeof track.gain === 'number') { gain.val(track.gain); }
+		if (!pan.is(':focus') && typeof track.pan === 'number') { pan.val(track.pan); }
+	}
+
+	if (!strips.length) {
+		// Idle, or a take that has not reported a track yet: the state alone.
+		var only = box.children('.studio_engine_strip').eq(0);
+		if (!only.length) { only = studioEngineRow(0); box.append(only); }
+		only.find('.studio_engine_state').text(state || '\u2014');
+		only.find('.studio_engine_frames').text('');
+		only.find('.studio_engine_dropped').text('');
+		only.find('.studio_engine_gain, .studio_engine_pan').hide();
+	}
+}
+
+function studioEngineStatus() {
+	if (!$('#studio_engine_panel').length) { studioEnginePollStop(); return; }
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: { action: 'status' },
+		dataType: 'json',
+		success: function (data) {
+			data = studioEngineAnswer(data);
+			if (data.ok !== true) {
+				studioEnginePollStop();
+				// The frames we last drew belong to a take we can no longer read.
+				jQuery('#studio_engine_strips').empty();
+				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
+				return;
+			}
+			if (typeof data.error === 'string' && data.error.length) { studioEngineShowError(data.error); }
+			studioEngineRender(data);
+			if (data.state === 'recording') { studioEnginePollStart(); }
+			else { studioEnginePollStop(); }
+		},
+		error: studioEngineFailed
+	});
+}
+
+function studioEngineStart() {
+	studioEngineShowError('');
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: {
+			action: 'start',
+			seconds: $('#studio_engine_seconds').val(),
+			tracks: $('#studio_engine_tracks').val(),
+			inputs: $('#studio_engine_inputs').val(),
+			inserts: $('#studio_engine_inserts').val()
+		},
+		dataType: 'json',
+		success: function (data) {
+			data = studioEngineAnswer(data);
+			if (data.ok !== true) {
+				studioEnginePollStop();
+				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
+				return;
+			}
+			studioEngineRender(data);
+			studioEnginePollStart();
+			studioEngineStatus();
+		},
+		error: studioEngineFailed
+	});
+}
+
+function studioEngineStop() {
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: { action: 'stop' },
+		dataType: 'json',
+		success: function (data) {
+			studioEnginePollStop();
+			data = studioEngineAnswer(data);
+			if (data.ok !== true) {
+				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
+				return;
+			}
+			if (typeof data.error === 'string' && data.error.length) { studioEngineShowError(data.error); }
+			studioEngineRender(data);
+		},
+		error: studioEngineFailed
+	});
+}
+
+function studioEngineParam(track, name, value) {
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: { action: 'param', track: track, name: name, value: value },
+		dataType: 'json',
+		success: function (data) {
+			data = studioEngineAnswer(data);
+			if (data.ok !== true) {
+				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
+			}
+		},
+		error: studioEngineFailed
+	});
+}

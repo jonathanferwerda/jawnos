@@ -830,3 +830,177 @@ fn record_null_can_write_a_tone() {
         "the take was silent despite --tone"
     );
 }
+
+// --- --play -----------------------------------------------------------------
+
+/// A take the engine recorded, for playback to read. `--record --backend null`
+/// is the fixture: the null take is valid 48 kHz stereo silence, and the test
+/// does not depend on any sound card.
+fn record_for_playback(name: &str, seconds: &str) -> TempTake {
+    let take = TempTake::new(name);
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", seconds, "--out", take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "recording the fixture failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    take
+}
+
+#[test]
+fn play_null_prints_the_contract_and_the_seconds_cap() {
+    let take = record_for_playback("play-contract", "0.2");
+    // No --json: the play mode's report is the JSON line either way.
+    let out = run(&[
+        "--play", "--file", take.text(), "--seconds", "0.1", "--backend", "null",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.trim().lines().count(), 1, "stdout: {text}");
+    let expected = "{\"ok\":true,\"backend\":\"null\",\"files\":1,\"frames\":4800,\"rate\":48000,\"seconds\":0.100,\"xruns\":0,\"error\":\"\"}";
+    assert_eq!(text.trim(), expected, "the JSON line is the contract");
+}
+
+#[test]
+fn play_without_seconds_plays_every_frame() {
+    let take = record_for_playback("play-whole", "0.2");
+    let out = run(&[
+        "--play", "--file", take.text(), "--backend", "null", "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "frames"), 9_600.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "files"), 1.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "rate"), 48_000.0, "stdout: {text}");
+}
+
+#[test]
+fn play_accepts_json_as_a_no_op() {
+    let take = record_for_playback("play-json", "0.1");
+    let plain = run(&["--play", "--file", take.text(), "--backend", "null"]);
+    let flagged = run(&[
+        "--play", "--file", take.text(), "--backend", "null", "--json",
+    ]);
+    assert!(plain.status.success() && flagged.status.success());
+    assert_eq!(plain.stdout, flagged.stdout, "--json is the same line");
+}
+
+#[test]
+fn play_start_at_skips_frames_of_every_file() {
+    let take = record_for_playback("play-start", "0.2");
+    let out = run(&[
+        "--play", "--file", take.text(), "--start-at", "4800", "--backend", "null", "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "frames"), 4_800.0, "stdout: {text}");
+}
+
+#[test]
+fn play_a_missing_file_is_exit_one_with_ok_false() {
+    let missing = std::env::temp_dir().join(format!(
+        "jawn-audio-no-such-take-{}.wav",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&missing);
+    let out = run(&[
+        "--play",
+        "--file",
+        missing.to_str().expect("temp path is UTF-8"),
+        "--backend",
+        "null",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("\"ok\":false"), "stdout: {text}");
+    assert_eq!(json_number(&text, "frames"), 0.0, "stdout: {text}");
+    assert!(
+        text.contains(missing.to_str().expect("temp path is UTF-8")),
+        "the refusal names the file: {text}"
+    );
+}
+
+#[test]
+fn play_gain_pan_and_insert_target_a_one_based_file() {
+    let first = record_for_playback("play-target-1", "0.1");
+    let second = record_for_playback("play-target-2", "0.1");
+
+    let out = run(&[
+        "--play",
+        "--file",
+        first.text(),
+        "--file",
+        second.text(),
+        "--gain",
+        "2:0.5",
+        "--pan",
+        "2:-1",
+        "--insert",
+        "1:delay",
+        "--backend",
+        "null",
+        "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "a 2: target on two files must run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "files"), 2.0, "stdout: {text}");
+
+    // The same prefix on a file the playback does not have is a usage error.
+    let out = run(&[
+        "--play", "--file", first.text(), "--gain", "2:0.5", "--backend", "null",
+    ]);
+    assert_eq!(out.status.code(), Some(2), "there is only one file");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("file 2"),
+        "the refusal names the file"
+    );
+
+    let out = run(&[
+        "--play", "--file", first.text(), "--file", second.text(), "--insert", "3:delay",
+        "--backend", "null",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn play_refuses_the_record_only_shape_flags() {
+    let take = record_for_playback("play-tracks", "0.1");
+    let out = run(&[
+        "--play", "--file", take.text(), "--tracks", "2", "--backend", "null",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("only to --record"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn play_needs_a_file() {
+    let out = run(&["--play", "--backend", "null"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--file"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

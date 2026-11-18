@@ -130,8 +130,8 @@ sub audio_engine_command {
 	return $decoded;
 }
 
-# The four commands, in the engine's spelling. Absent values are left out
-# rather than sent as null, so the engine's own default is the one that runs.
+# The commands, in the engine's spelling. Absent values are left out rather
+# than sent as null, so the engine's own default is the one that runs.
 #
 # `$extra` is the optional take plan: `tracks` is either the historical count
 # or the engine's per-track array of objects, and `inputs` is the parallel
@@ -151,6 +151,20 @@ sub audio_engine_record {
 		}
 	}
 	return audio_engine_command($request);
+}
+
+# One strip knob of a running take: `{"cmd":"param","track":0,"name":"gain",
+# "value":0.5}`. The route validates the name and the numbers; this only
+# speaks the line, so the engine's clamping and its "no take is running"
+# refusal are the answers a caller relays.
+sub audio_engine_param {
+	my ($track, $name, $value) = @_;
+	return audio_engine_command({
+		cmd   => 'param',
+		track => $track,
+		name  => $name,
+		value => $value,
+	});
 }
 
 sub audio_engine_status {

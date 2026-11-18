@@ -198,6 +198,111 @@ pub fn run_playback(
     })
 }
 
+/// What a file-backed playback produced: the shape ALSA granted and the
+/// frames the source supplied.
+#[derive(Debug, Clone)]
+pub struct PlaybackReport {
+    pub rate: u32,
+    pub period: usize,
+    pub buffer: usize,
+    pub channels: usize,
+    pub frames: u64,
+    pub xruns: usize,
+}
+
+/// Answer "can this device be opened for playback?", with the rate it granted,
+/// and close it again. The socket asks before it answers `playing`, so a busy
+/// device is a refusal rather than a status that fails a moment later.
+pub fn check_playback(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+) -> Result<u32, String> {
+    let stream = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    let granted = stream.rate;
+    let _ = stream.pcm.drop();
+    Ok(granted)
+}
+
+/// Play `total_frames` stereo frames from `source` through `device`.
+///
+/// The device is always asked for two channels, because a playback block is
+/// the summed stereo output of the strips. The rate is the files' rate: a card
+/// that grants another one would pitch-shift every take, so it is refused
+/// rather than reported and played.
+pub fn run_file_playback<S: crate::playback::RenderSource>(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    total_frames: u64,
+    mut source: S,
+) -> Result<PlaybackReport, String> {
+    let stream = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    if stream.rate != rate {
+        return Err(format!(
+            "{device}: asked for {rate} Hz, the device granted {} Hz; the takes would play at the wrong pitch",
+            stream.rate
+        ));
+    }
+    let channels = stream.channels;
+    let io = stream
+        .pcm
+        .io_i16()
+        .map_err(|error| format!("{device}: S16 stream: {error}"))?;
+
+    let frames = stream.period.max(1);
+    // The source sizes its scratch from the granted shape before the first
+    // block; after this it must not allocate.
+    source.prepared(stream.rate, frames)?;
+
+    let mut remaining = total_frames;
+    let mut played = 0u64;
+    let mut xruns = 0usize;
+    let mut block = vec![0.0f32; frames * channels];
+    let mut pcm = vec![0i16; frames * channels];
+
+    while remaining > 0 {
+        let want = remaining.min(frames as u64) as usize;
+        let samples = want * channels;
+        source.block(&mut block[..samples])?;
+        for (out, sample) in pcm[..samples].iter_mut().zip(&block[..samples]) {
+            *out = to_i16(*sample);
+        }
+
+        // `writei` counts frames; a partial write is normal near the end of a
+        // block, and an underrun is recovered and counted like `--run` does.
+        let mut written = 0usize;
+        while written < samples {
+            match io.writei(&pcm[written..samples]) {
+                Ok(0) => break,
+                Ok(count) => written += count * channels,
+                Err(error) => {
+                    let message = format!("{error}");
+                    match stream.pcm.try_recover(error, true) {
+                        Ok(()) => xruns += 1,
+                        Err(_) => return Err(format!("{device}: write: {message}")),
+                    }
+                }
+            }
+        }
+        played += want as u64;
+        remaining -= want as u64;
+    }
+
+    let _ = stream.pcm.drain();
+
+    Ok(PlaybackReport {
+        rate: stream.rate,
+        period: frames,
+        buffer: stream.buffer,
+        channels,
+        frames: played,
+        xruns,
+    })
+}
+
 /// What one real-device capture produced: the shape ALSA granted, and the
 /// frames that actually reached the caller's sink.
 #[derive(Debug, Clone)]

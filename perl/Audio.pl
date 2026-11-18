@@ -13,8 +13,18 @@
 # it beside Sco.pl and Reception.pl later; until then it is run by hand, in the
 # foreground, exactly like those two.
 #
-# The four decisions that matter:
+# The five decisions that matter:
 #
+#   adopt    a supervisor killed with SIGKILL leaves its engine behind, still
+#            holding ~/.president/audio.sock. Before spawning, a `status`
+#            command is sent over that socket: if it answers ok:true the engine
+#            is live and is adopted instead of starting a second one. A bare
+#            connect proves only that something listens; the command proves it
+#            speaks this protocol and is healthy. The status file then names no
+#            child pid and says adopted true, and the socket is polled. The
+#            supervisor spawns its own engine only once the adopted one stops
+#            answering. A socket file with nothing behind it is a stale crash
+#            remnant: it is removed and an engine is started as usual.
 #   lock     an flock on ~/.president/audio.lock. A second supervisor says one
 #            sentence and exits 1 instead of starting a second engine on the
 #            same socket. flock is held by the kernel for the life of the open
@@ -45,6 +55,7 @@ use File::Basename qw(dirname);
 use File::Path qw(make_path);
 use JSON::PP ();
 use POSIX ();
+use Socket qw(SOCK_STREAM);
 use Time::HiRes qw(sleep time);
 
 # The ladder, and the two slow paths. A one-second poll is fast enough to notice
@@ -54,6 +65,10 @@ my $LONG_RUN       = 30;
 my $MISSING_RETRY  = 30;
 my $STOP_GRACE     = 5;
 my $POLL           = 0.25;
+# A live engine answers in microseconds; one second is long enough to tell a
+# healthy engine from a wedged one without making a crash take long to notice.
+my $PROBE_TIMEOUT  = 1;
+my $ADOPT_POLL     = 1;
 
 my $script     = abs_path(__FILE__) // __FILE__;
 my $script_dir = dirname($script);
@@ -93,6 +108,12 @@ Keeps this machine's one audio engine (perl/audio/jawn-audio --serve) running.
 It restarts the engine when it exits, at 1, 2, 5, 10 and then 30 second
 intervals, and refuses to run beside a second supervisor.
 
+On start it adopts a live engine left on the socket by a killed supervisor
+(a `status` command over that socket must answer with "ok": true) instead of
+starting a second one, and starts its own only after the adopted engine stops
+answering. A socket file with nothing behind it is removed and replaced. A
+clean stop asks an adopted engine to quit, so no engine is left behind.
+
 Options:
   --backend NAME   audio backend: null, alsa, pipewire or jack (default alsa)
   --device NAME    ALSA PCM name (default hw:1,0)
@@ -101,7 +122,8 @@ Options:
   --socket PATH    control socket (default ~/.president/audio.sock)
   --binary PATH    engine binary (default perl/audio/jawn-audio under this tree)
   --status         print ~/.president/audio.json and exit
-  --check          exit 0 while the supervisor and its child are alive, 1 otherwise
+  --check          exit 0 while the supervisor and its engine are alive,
+                   1 otherwise (an adopted engine counts while it answers)
   --help           this text
 
 Config, highest precedence first: these flags, then JAWNOS_AUDIO_SOCKET,
@@ -109,10 +131,11 @@ JAWNOS_AUDIO_BINARY, JAWNOS_AUDIO_BACKEND, JAWNOS_AUDIO_DEVICE,
 JAWNOS_AUDIO_PERIOD and JAWNOS_AUDIO_BUFFER, then the defaults above.
 
 The status file is written while the supervisor runs and removed on a clean
-stop. Its keys are: pid (the engine child, null while it is down),
-supervisor_pid, socket, binary, backend, device, period, buffer, started_at,
-engine_started_at, restarts, last_exit, consecutive_restarts, backoff and
-updated_at.
+stop. Its keys are: pid (the engine child, null while it is down or while an
+engine is adopted), adopted (true while an engine found at start is answering),
+adopted_since (when that adoption began), supervisor_pid, socket, binary,
+backend, device, period, buffer, started_at, engine_started_at, restarts,
+last_exit, consecutive_restarts, backoff and updated_at.
 USAGE
 }
 
@@ -120,6 +143,61 @@ sub fatal {
 	my ($message) = @_;
 	print STDERR "audio supervisor: $message\n";
 	exit 2;
+}
+
+# --- engine probe ---------------------------------------------------------------
+
+# One request, one reply, both bounded. A bare connect would prove only that
+# something listens; a stale or wedged socket can pass that. Asking for status
+# proves the peer speaks the engine's line protocol and still answers. A
+# timeout, a closed connection and a reply that is not an ok object are all the
+# same answer here: no live engine.
+sub engine_command {
+	my ($path, $request) = @_;
+	return undef unless defined $path && length $path && -S $path;
+	require IO::Socket::UNIX;
+	require IO::Select;
+	my $socket = eval {
+		IO::Socket::UNIX->new(
+			Type    => SOCK_STREAM,
+			Peer    => $path,
+			Timeout => $PROBE_TIMEOUT,
+		)
+	};
+	return undef unless $socket;
+	$socket->autoflush(1);
+
+	my $line = eval { JSON::PP->new->canonical->encode($request) };
+	unless (defined $line && length $line) {
+		close $socket;
+		return undef;
+	}
+	unless (eval { $socket->print($line . "\n") }) {
+		close $socket;
+		return undef;
+	}
+
+	my $reply;
+	my $select = IO::Select->new($socket);
+	if ($select->can_read($PROBE_TIMEOUT)) {
+		local $/ = "\n";
+		$reply = <$socket>;
+	}
+	close $socket;
+	return undef unless defined $reply && length $reply;
+
+	my $data = eval { JSON::PP->new->decode($reply) };
+	return ref $data eq 'HASH' ? $data : undef;
+}
+
+# The socket is a live engine only when its status answer is ok. The engine's
+# idle status is {"ok":true,"take":0,"state":"idle"}, so an ok object is also
+# the engine's own way of saying it is ready for another command.
+sub engine_answers {
+	my ($path) = @_;
+	my $reply = engine_command($path, { cmd => 'status' });
+	return 0 unless $reply && $reply->{'ok'};
+	return $reply;
 }
 
 # --- command line -------------------------------------------------------------
@@ -196,10 +274,15 @@ if ($mode eq 'status') {
 
 if ($mode eq 'check') {
 	my $data = read_status() or exit 1;
-	# The supervisor must be the one that wrote the file, and its child must
-	# still exist. The socket is not consulted: a healthy engine that has not
-	# bound yet (or a fake one in a test) is still a running child.
-	exit((pid_alive($data->{'supervisor_pid'}) && pid_alive($data->{'pid'})) ? 0 : 1);
+	# The supervisor must be the one that wrote the file. An adopted engine has
+	# no child pid, so liveness there is the socket's answer rather than a kill.
+	exit 1 unless pid_alive($data->{'supervisor_pid'});
+	if ($data->{'adopted'}) {
+		my $path = $data->{'socket'};
+		$path = $socket unless defined $path && length $path;
+		exit(engine_answers($path) ? 0 : 1);
+	}
+	exit(pid_alive($data->{'pid'}) ? 0 : 1);
 }
 
 # --- one supervisor per machine ----------------------------------------------
@@ -230,10 +313,15 @@ my $last_exit;
 my $missing_said          = 0;
 my $stop                  = 0;
 my $next_start            = 0;
+my $adopted;
+my $adopted_since;
+my $next_probe            = 0;
 
 sub write_status {
 	my $data = {
 		pid                  => $child_pid,
+		adopted              => $adopted ? JSON::PP::true : JSON::PP::false,
+		adopted_since        => defined $adopted_since ? int($adopted_since) : undef,
 		supervisor_pid       => $supervisor_pid,
 		socket               => $socket,
 		binary               => $binary,
@@ -341,9 +429,44 @@ sub stop_supervisor {
 		}
 		$child_pid = undef;
 	}
+	elsif ($adopted) {
+		# The adopted engine is not our child, so it cannot be reaped and must
+		# be asked to leave. It is the engine this supervisor now owns; a clean
+		# stop should not leave one detached behind.
+		engine_command($socket, { cmd => 'quit' });
+		my $deadline = time + $STOP_GRACE;
+		while (time < $deadline) {
+			last unless engine_answers($socket);
+			sleep 0.05;
+		}
+		if (engine_answers($socket)) {
+			print STDERR "audio supervisor: the adopted engine at $socket did not stop\n";
+		}
+	}
 	unlink $status_path;
 	print "audio supervisor: stopped\n";
 	exit 0;
+}
+
+# --- adopt a live engine on start ---------------------------------------------
+
+# Run before the signal handlers are installed: a TERM during this first probe
+# must not be mistaken for a dead engine and unlink a socket that is still
+# serving. A stale file is the only thing removed here.
+if (-S $socket) {
+	if (engine_answers($socket)) {
+		$adopted       = 1;
+		$adopted_since = time;
+		$next_probe    = time + $ADOPT_POLL;
+		print "audio supervisor: adopting the engine already serving $socket"
+			. " instead of starting a second one\n";
+	}
+	elsif (unlink $socket) {
+		print "audio supervisor: removed the stale socket $socket\n";
+	}
+	else {
+		print STDERR "audio supervisor: cannot remove the stale socket $socket: $!\n";
+	}
 }
 
 # --- supervise ----------------------------------------------------------------
@@ -356,6 +479,28 @@ print "audio supervisor: supervising $socket (binary $binary, backend $backend,"
 	. " device $device, ${period}/${buffer})\n";
 
 while (!$stop) {
+	if ($adopted) {
+		if (time >= $next_probe) {
+			if (engine_answers($socket)) {
+				$next_probe = time + $ADOPT_POLL;
+			}
+			else {
+				# A signal may have interrupted the probe; do not turn that
+				# into a takeover on the way out.
+				last if $stop;
+				print "audio supervisor: the adopted engine at $socket stopped answering;"
+					. " starting our own\n";
+				$adopted       = 0;
+				$adopted_since = undef;
+				$next_start    = 0;
+				write_status();
+			}
+		}
+		if ($adopted) {
+			sleep $POLL;
+			next;
+		}
+	}
 	if (defined $child_pid) {
 		my $got = waitpid($child_pid, POSIX::WNOHANG());
 		if ($got == $child_pid) {

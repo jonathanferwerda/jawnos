@@ -127,6 +127,26 @@ impl Conversation {
         }
     }
 
+    /// `status` until a playback has rendered at least one frame (or ended).
+    fn wait_for_play_frames(&mut self) -> String {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let status = self.ask("{\"cmd\":\"status\"}");
+            assert!(status.contains("\"ok\":true"), "status: {status}");
+            if status.contains("\"state\":\"done\"")
+                || (status.contains("\"state\":\"playing\"")
+                    && json_number(&status, "frames") > 0.0)
+            {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the playback never produced a frame: {status}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// `status` until the take has produced at least one frame.
     fn wait_for_frames(&mut self) -> String {
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -797,4 +817,193 @@ fn a_second_engine_on_the_same_socket_refuses_to_steal_it() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+// --- play -------------------------------------------------------------------
+
+/// A silent stereo 48 kHz WAV, written directly: playback should not depend on
+/// how fast this machine records, only on the file's shape.
+fn write_silent_wav(path: &Path, frames: u32) {
+    let data_len = frames * 4;
+    let mut bytes = Vec::with_capacity(44 + data_len as usize);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&48_000u32.to_le_bytes());
+    bytes.extend_from_slice(&(48_000u32 * 4).to_le_bytes());
+    bytes.extend_from_slice(&4u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    bytes.resize(44 + data_len as usize, 0);
+    fs::write(path, bytes).expect("write the silent WAV");
+}
+
+#[test]
+fn the_socket_plays_then_reports_and_stops() {
+    let server = Server::start("play");
+    let mut client = server.connect();
+
+    // A take first, so the playback reads a file the engine itself wrote.
+    let take = TempFile::new("play-source");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    let status = client.wait_for_done();
+    assert!(status.contains("\"state\":\"done\""), "status: {status}");
+
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"play\",\"files\":[\"{}\"]}}",
+        take.text()
+    ));
+    assert_eq!(reply, "{\"ok\":true,\"state\":\"playing\",\"files\":1}");
+
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"ok\":true"), "status: {status}");
+    assert!(status.contains("\"files\":1"), "status: {status}");
+    // The null backend runs as fast as it can, so the reply may arrive after
+    // the last block; both answers are the contract, idle is not.
+    assert!(
+        status.contains("\"state\":\"playing\"") || status.contains("\"state\":\"done\""),
+        "status: {status}"
+    );
+    if status.contains("\"state\":\"done\"") {
+        assert_eq!(json_number(&status, "frames"), 4_800.0, "status: {status}");
+    }
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"ok\":true"), "stop: {stopped}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    assert!(stopped.contains("\"files\":1"), "stop: {stopped}");
+    let frames = json_number(&stopped, "frames");
+    assert!(frames > 0.0 && frames <= 4_800.0, "stop: {stopped}");
+
+    // A path the engine cannot read or should not accept is refused before a
+    // worker starts.
+    let reply = client.ask("{\"cmd\":\"play\",\"files\":[\"relative.wav\"]}");
+    assert!(reply.contains("\"ok\":false"), "relative: {reply}");
+    assert!(reply.contains("absolute"), "relative: {reply}");
+
+    let missing = std::env::temp_dir().join(format!(
+        "jawn-audio-socket-missing-{}.wav",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&missing);
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"play\",\"files\":[\"{}\"]}}",
+        missing.display()
+    ));
+    assert!(reply.contains("\"ok\":false"), "missing: {reply}");
+    assert!(
+        reply.contains("cannot read"),
+        "the refusal names the failure: {reply}"
+    );
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_playback_and_a_recording_refuse_each_other() {
+    let server = Server::start("play-exclusive");
+    let mut client = server.connect();
+
+    // Four long silent files: enough material that the playback thread is
+    // certainly still rendering while the next commands arrive.
+    let long = TempFile::new("play-long");
+    write_silent_wav(&long.path, 48_000 * 30);
+    let files = format!(
+        "\"{0}\",\"{0}\",\"{0}\",\"{0}\"",
+        long.text()
+    );
+
+    let reply = client.ask(&format!("{{\"cmd\":\"play\",\"files\":[{files}]}}"));
+    assert_eq!(reply, "{\"ok\":true,\"state\":\"playing\",\"files\":4}");
+
+    // A second playback is refused while one runs.
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"play\",\"files\":[\"{}\"]}}",
+        long.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "second play: {reply}");
+    assert!(
+        reply.contains("playback is already running"),
+        "second play: {reply}"
+    );
+
+    // Recording while playing is out of scope: say so, and create no file.
+    let while_playing = TempFile::new("while-playing");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1}}",
+        while_playing.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "record during play: {reply}");
+    assert!(
+        reply.contains("a playback is running"),
+        "record during play: {reply}"
+    );
+    assert!(
+        !while_playing.path.exists(),
+        "a refused record must not create a file"
+    );
+
+    // Let the playback reach the first block before stopping it, so the stop
+    // has frames to report rather than a race with the thread's start.
+    let status = client.wait_for_play_frames();
+    assert!(status.contains("\"files\":4"), "status: {status}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop play: {stopped}");
+    assert!(stopped.contains("\"files\":4"), "stop play: {stopped}");
+    let played = json_number(&stopped, "frames");
+    assert!(played > 0.0, "stop play: {stopped}");
+
+    // The other direction: a take is recording, so a playback is refused.
+    let long_take = TempFile::new("long-record");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300}}",
+        long_take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"play\",\"files\":[\"{}\"]}}",
+        long.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "play during record: {reply}");
+    assert!(
+        reply.contains("a take is recording"),
+        "play during record: {reply}"
+    );
+    // Wait for the take to reach disk before stopping it, so `frames` is not a
+    // race with the worker thread's start.
+    client.wait_for_frames();
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop record: {stopped}");
+    let frames = json_number(&stopped, "frames");
+    assert!(frames > 0.0, "stop record kept its frames: {stopped}");
+    assert_wav(&long_take.path, frames as u64);
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
 }
