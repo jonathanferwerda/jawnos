@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Games.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm templates/apps/games.html.ep perl/help/topics_people.pl lib/JawnOS/Domain/Loader.pm
+# tests-for: lib/JawnOS/Domain/Games.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm templates/apps/games.html.ep perl/help/topics_people.pl lib/JawnOS/Domain/Loader.pm perl/hooks.pl
 # covers:    the shared games library. One machine's ~/roms is the catalogue:
 #            what a peer reads, what one game's pull carries (the folder, not a
 #            bare file, and its cover), the pack and its refusal rules, and the
@@ -146,5 +146,12 @@ like($help, qr/read from the server first and then the other machines/, 'and the
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/for qw\(.*\bgame_pull\b.*\)/, 'the loader carries game_pull');
 like($loader, qr/for qw\(.*\bpeer_candidates\b.*\)/, 'and peer_candidates');
+
+# The app gate answers a sessionless request with the Gate page. A peer reading
+# a shelf, or asking for one game, has no session on the machine that holds it,
+# and the catalogue read that page as a peer with no games.
+my $hooks = read_file("$root/perl/hooks.pl");
+like($hooks, qr{\$path eq '/manager/games/peer_library'}, 'the gate steps aside for the catalogue');
+like($hooks, qr{\$path eq '/manager/games/serve'}, 'and for one game');
 
 done_testing();

@@ -493,6 +493,14 @@ Manager::app->hook(before_dispatch => sub {
 		# job reports as "the archive machine answered 200" and the folder never
 		# synced (the phone, 2026-11-10).
 		$path =~ m{^/manager/folders/cloud/(?:space|probe|receive|discard|register|unregister|delete)$} ||
+		# the games rail: a machine reads a peer's shelf and asks for one game.
+		# Both routes require and verify the caller's own peer signature against
+		# the roster (peer_verify, no trust-on-first-contact), and a machine that
+		# asks for a game has no session on the machine that holds it. Without
+		# these entries the answer was the Gate page, which the catalogue read as
+		# a peer with no games.
+		$path eq '/manager/games/peer_library' ||
+		$path eq '/manager/games/serve' ||
 		# the code-sync rail: rsync_pack serves the code tree and rsync_unpack
 		# receives one. Both require a pinned peer key (peer_verify, no
 		# trust-on-first-contact) and only accept the jawnos folder with the
