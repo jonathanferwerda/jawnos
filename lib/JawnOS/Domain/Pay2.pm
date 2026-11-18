@@ -927,7 +927,13 @@ sub clock_preview_play {
 sub clock_device_broadcast {
 	my ($action, %extra) = @_;
 	return 0 unless &device_setter() eq 'mobile';
-	my $command = 'am broadcast -a ' . $action;
+	# `am` run by an app UID defaults to user -2 (USER_ALL), which Android
+	# refuses without INTERACT_ACROSS_USERS. The house lives in the phone's own
+	# user, and the uid names it (u0_a369 -> 0). Without this the ring, sync,
+	# dismiss and timer broadcasts all die with a SecurityException, leaving
+	# only the app's own exact wake.
+	my $user = int($< / 100000);
+	my $command = 'am broadcast --user ' . $user . ' -a ' . $action;
 	if (defined $extra{'at'} && "$extra{'at'}" =~ /^\d+$/ && $extra{'at'} > 0) {
 		$command .= ' --el at ' . int($extra{'at'});
 	}

@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/clock.js public/js/manager/clock/01_alarms_timers.js public/js/manager/clock/02_stopwatch_world_ring.js lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Domain/Clock3.pm lib/JawnOS/Controller/manager_clock.pm templates/apps/clock/body.html.ep templates/apps/clock/style.html.ep
+# tests-for: public/js/manager/clock.js public/js/manager/clock/01_alarms_timers.js public/js/manager/clock/02_stopwatch_world_ring.js lib/JawnOS/Domain/Clock.pm lib/JawnOS/Domain/Clock2.pm lib/JawnOS/Domain/Clock3.pm lib/JawnOS/Domain/Pay2.pm lib/JawnOS/Controller/manager_clock.pm templates/apps/clock/body.html.ep templates/apps/clock/style.html.ep
 # covers:    The ring card belongs to every open Manager window, and a ring on one machine reaches the others; a ring stays until it is answered; a snoozed alarm shows its next chime and a Dismiss in the Clock app...
 
 use strict;
@@ -26,6 +26,7 @@ my $ring = read_file("$root/public/js/manager/clock/02_stopwatch_world_ring.js")
 my $clock2 = read_file("$root/lib/JawnOS/Domain/Clock2.pm");
 my $tick = read_file("$root/lib/JawnOS/Domain/Clock3.pm");
 my $route = read_file("$root/lib/JawnOS/Controller/manager_clock.pm");
+my $pay2 = read_file("$root/lib/JawnOS/Domain/Pay2.pm");
 my $body = read_file("$root/templates/apps/clock/body.html.ep");
 my $style = read_file("$root/templates/apps/clock/style.html.ep");
 
@@ -83,6 +84,15 @@ like($route, qr/&subs::clock_alarm_cmd\(\$alarm, \$at, \$now\);/,
 	'a ring notice draws the same card through the standard ring payload');
 like($route, qr/my \$everywhere = \(\$action eq 'stop_all' \|\| \$action eq 'dismiss' \|\| \$action eq 'snooze'\);/,
 	'dismiss and snooze reach every machine showing the card, not only the ringers');
+
+# --- the phone's broadcasts name the user they run as ---------------------------
+# `am` started by an app UID defaults to user -2 (USER_ALL), which Android
+# refuses without INTERACT_ACROSS_USERS: the ring, sync and dismiss broadcasts
+# were dropped with a SecurityException and only the exact wake survived.
+like($pay2, qr/am broadcast --user /,
+	'the phone broadcast names a user instead of defaulting to all users');
+like($pay2, qr/my \$user = int\(\$< \/ 100000\);/,
+	'and takes it from the app uid (u0_a369 -> 0), not a fixed number');
 
 # --- the scripts still parse ---------------------------------------------------
 my $node = `command -v node 2>/dev/null`;
