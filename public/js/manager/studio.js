@@ -250,8 +250,9 @@ function studioSetInsert(ch, name, on) {
 	studioApplyPedals();
 	studioRebuildInserts(ch);
 	studioUpdateFxBadges();
-	// keep every rack view of this channel in step with the engine
+	// keep every rack view and every pedal lamp in step with the engine
 	if (typeof studioRackRender === 'function') { studioRackRender(ch); }
+	if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
 }
 
 function studioApplyChannel(ch) {

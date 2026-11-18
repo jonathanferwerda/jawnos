@@ -946,6 +946,10 @@ var studioEffectAliases = {
 	Delayed: 'delay',
 	reverb: 'reverb',
 	reverb2: 'reverb',
+	// The old Jtune artwork had no implementation: a saved "Jtune" was a
+	// pass-through. It is the autotune pedal now, so the artwork does something;
+	// studioRetriever restores a legacy string as autotune switched off.
+	Jtune: 'autotune',
 	flanger: 'flanger',
 	fuzz: 'fuzz',
 	amp: 'amp',

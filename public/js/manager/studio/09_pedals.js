@@ -27,6 +27,7 @@ function studioRackRow(ch, ins) {
 	else {
 		row.find('.studio_rack_bypass').text(studioLayoutText('On')).attr('aria-pressed', 'false');
 	}
+	row.find('.studio_rack_led').attr('aria-pressed', ins.bypassed ? 'false' : 'true');
 
 	var controls = row.find('.studio_rack_controls');
 	if (spec && spec['controls']) {
@@ -78,6 +79,7 @@ function studioRackRender(ch) {
 function studioRackRenderAll() {
 	$.each(studioAudio.channels, function (ch) { studioRackRender(ch); });
 	studioPaletteLabel();
+	studioUpdatePedalLamps();
 }
 
 function studioRackReorder(ch) {
@@ -123,6 +125,56 @@ function studioSetInsertBypass(ch, name, on) {
 	else { ins.bypassed = !!on; }
 	studioUpdateFxBadges();
 	studioRackRender(ch);
+	studioUpdatePedalLamps();
+	studioSaver();
+}
+
+// ---- the lamps -------------------------------------------------------------
+//
+// Every tile wears the same lamp: green when the effect is on for the selected
+// track, dark red when it is bypassed or not in that track's chain. The insert
+// is the state; the lamp only reads it, so the rack's own footswitch and the
+// lamp can never disagree.
+function studioPedalInsert(ch, name) {
+	var direct = studioRackFind(ch, name);
+	if (direct) { return direct; }
+	var c = studioAudio.channels[ch];
+	if (!c) { return null; }
+	var kind = studioEffectKind(name);
+	var found = null;
+	c.inserts.forEach(function (ins) {
+		if (!found && studioEffectKind(ins.name) === kind) { found = ins; }
+	});
+	return found;
+}
+
+function studioUpdatePedalLamps() {
+	var ch = studioPaletteChannel();
+	// the shelf and the palette's text tiles
+	$('#pedalboard .pedal').each(function () {
+		var tile = $(this);
+		var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
+		var ins = studioPedalInsert(ch, name);
+		var on = !!(ins && !ins.bypassed);
+		tile.find('.studio_pedal_led').attr('aria-pressed', on ? 'true' : 'false');
+		tile.find('.studio_pedal_foot').attr('aria-pressed', on ? 'true' : 'false')
+			.text(studioLayoutText(on ? 'On' : 'Off'));
+	});
+	// every track's rack row, whether or not it is the selected track
+	$('.studio_rack_row').each(function () {
+		var row = $(this);
+		var ins = studioRackFind(row.attr('channel'), row.attr('insert'));
+		row.find('.studio_rack_led').attr('aria-pressed', (ins && !ins.bypassed) ? 'true' : 'false');
+	});
+}
+
+// The lamp is the footswitch: absent means switch it on in this track's rack,
+// present means bypass it in place exactly as the rack row does.
+function studioTogglePedal(ch, name) {
+	var ins = studioPedalInsert(ch, name);
+	if (!ins) { studioSetInsert(ch, name, true); }
+	else { studioSetInsertBypass(ch, ins.name, !ins.bypassed); }
+	studioUpdatePedalLamps();
 	studioSaver();
 }
 
@@ -167,7 +219,7 @@ $(document).on('click', '#studio_palette_add', function () { studioPaletteAdd();
 
 // The palette follows the selected strip or track panel. The selection handler
 // itself is in 03_editing.js; this runs after it in bundle order.
-$(document).on('click', '.channel, .studio_track_panel', function () { studioPaletteLabel(); });
+$(document).on('click', '.channel, .studio_track_panel', function () { studioPaletteLabel(); studioUpdatePedalLamps(); });
 
 // ---- rack actions ----------------------------------------------------------
 
@@ -176,6 +228,27 @@ $(document).on('click', '.studio_rack_bypass', function () {
 	var ins = studioRackFind(row.attr('channel'), row.attr('insert'));
 	if (!ins) { return; }
 	studioSetInsertBypass(row.attr('channel'), row.attr('insert'), !ins.bypassed);
+});
+
+// The lamp toggles the same state as the footswitch: a rack row's lamp is its
+// bypass, and a shelf or palette tile's lamp is its insert on the selected
+// track (adding it first when the track does not have it yet).
+$(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedalboard .studio_pedal_foot', function (e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var target = $(this);
+	var row = target.closest('.studio_rack_row');
+	if (row.length) {
+		var ins = studioRackFind(row.attr('channel'), row.attr('insert'));
+		if (!ins) { return; }
+		studioSetInsertBypass(row.attr('channel'), row.attr('insert'), !ins.bypassed);
+		return;
+	}
+	var tile = target.closest('.pedal');
+	if (!tile.length) { return; }
+	var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
+	if (!name) { return; }
+	studioTogglePedal(studioPaletteChannel(), name);
 });
 
 $(document).on('click', '.studio_rack_up', function () {

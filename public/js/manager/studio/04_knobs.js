@@ -250,6 +250,13 @@ $(document).on('click', '.button_control', function() {
 		b.attr('status', 'depressed');
 		b.attr('src', jawnosStudioButtonIcon('depressed', colour));
 	}
+	// A shelf pedal's artwork button is its footswitch too: it switches the
+	// effect on the selected track, exactly as the pedal's lamp does.
+	var tile = b.closest('.pedal');
+	if (tile.length && typeof studioTogglePedal === 'function') {
+		var effect = tile.attr('data-effect');
+		if (effect) { studioTogglePedal(studioPaletteChannel(), effect); }
+	}
 	studioSaver();
 });
 
@@ -448,6 +455,14 @@ function studioRetriever() {
 				// per insert (name, footswitch, controls), in chain order.
 				var name = (typeof entry === 'string') ? entry : (entry && entry.name);
 				if (!name) { return; }
+				// A legacy "Jtune" string was artwork with no implementation, so it
+				// never processed anything. Restore it as Autotune switched off; its
+				// lamp then says off and the person can switch it on deliberately.
+				if (typeof entry === 'string' && name === 'Jtune') {
+					studioSetInsert(i, 'autotune', true);
+					rack_restore.push({ ch: i, name: 'autotune', record: { name: 'autotune', on: false } });
+					return;
+				}
 				studioSetInsert(i, name, true);
 				if (entry && typeof entry === 'object') {
 					rack_restore.push({ ch: i, name: name, record: entry });

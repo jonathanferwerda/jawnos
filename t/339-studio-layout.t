@@ -104,6 +104,51 @@ like($style, qr/#studio_controls\s*\{[^}]*right:\s*0/s,
 like($markup, qr/id="studio_pedalboard_close"/, 'the pedalboard has a close control');
 like($layout, qr/'#studio_pedalboard_close'[\s\S]*pedalboard'\)\.hide/, 'the close control hides the pedalboard');
 
+# --- the pedalboard is a docked row, not an overlay -------------------------
+like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_pedalboard_close"/,
+	'the close control sits in the dock\'s own bar');
+like($markup, qr/id="studio_pedalboard_pedals"/, 'the tiles live in their own scroller');
+like($style, qr/#pedalboard\s*\{[^}]*position:\s*relative/s, 'the pedalboard is docked, not absolute');
+unlike($style, qr/#pedalboard\s*\{[^}]*position:\s*absolute/s, 'the overlay positioning is gone');
+like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*position:\s*static/s, 'the flex row is static inside the dock');
+like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*display:\s*flex/s, 'the tiles are a flex row');
+like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*overflow-x:\s*auto/s, 'the row scrolls sideways');
+like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*overflow-y:\s*hidden/s, 'the row never scrolls vertically');
+like($style, qr/\.pedal\s*\{[^}]*flex:\s*0 0 auto/s, 'a tile keeps its width in the row');
+like($style, qr/\.pedal\s*\{[^}]*position:\s*relative/s, 'a tile is positioned in the row');
+like($style, qr/\.pedal\s*\{[^}]*left:\s*auto/s, 'the fixed left offset is gone');
+like($style, qr/\.pedal\s*\{[^}]*height:\s*187px/s, 'every tile is 187px tall');
+like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork fits inside the tile');
+unlike($markup, qr/count\s*\*\s*175/, 'no tile is placed by counted pixels');
+
+# --- overflow is contained, never painted over -----------------------------
+like($style, qr/\.studio_grid > div\s*\{[^}]*min-height:\s*0/s, 'every docked panel may shrink');
+like($style, qr/\.studio_grid > div\s*\{[^}]*overflow:\s*auto/s, 'every docked panel scrolls its own content');
+like($style, qr/#studio_mixer_strips\s*\{[^}]*min-height:\s*0/s, 'the strips block may shrink');
+like($style, qr/#studio_viewer\s*\{[^}]*min-height:\s*0/s, 'the track area may shrink');
+like($markup, qr/id="studio_mixer_strips"[\s\S]*id="studio_master_rack"[\s\S]*id="studio_transport_panel"/,
+	'the master rack is the last child of the strips row');
+like($style, qr/\.studio_master_rack\s*\{[^}]*flex:\s*0 0 \d+px/s, 'the master rack is a compact strip');
+like($style, qr/\.studio_master_rack\s*\{[^}]*overflow:\s*auto/s, 'the master rack scrolls in place');
+
+# --- Arrange is one button for the DAW-informed arrangement ----------------
+like($markup, qr/id="studio_arrange"[^>]*hint="[^"]*Arrange the panels/,
+	'the Arrange control names its preset');
+like($layout, qr/var studioArrangeWide = \{[\s\S]*?order: \['transport', 'tracks', 'synth', 'mixer'\]/,
+	'the wide preset runs transport, timeline, synth, console');
+like($layout, qr/var studioArrangeWide = \{[\s\S]*?span: \{ transport: 2, tracks: 2, synth: 1, mixer: 1 \}/,
+	'the transport and timeline span the window, the synth and console share the foot');
+like($layout, qr/var studioArrangeCompact = \{[\s\S]*?order: \['transport', 'tracks', 'mixer', 'synth'\]/,
+	'the compact preset stacks the panels');
+like($layout, qr/var studioArrangeCompact = \{[\s\S]*?span: \{ transport: 2, tracks: 2, mixer: 2, synth: 2 \}/,
+	'the compact preset gives every panel the full width');
+like($layout, qr/function studioApplyArrange\(persist\)/, 'one function applies a preset');
+like($layout, qr/\$\(document\)\.on\('click', '#studio_arrange'/, 'the button applies the preset');
+like($layout, qr/if \(!any_saved\) \{[\s\S]*?studioApplyArrange\(true\)/,
+	'a first open with no saved order starts from the preset');
+like($layout, qr/if \(studioPanelElement\(name\)\.hasClass\('studio_panel_floating'\)\) \{[\s\S]*?studioDockPanel\(name, false\)/,
+	'Arrange brings a floated panel home');
+
 # --- the Studio window opens at a desk size and stays inside itself --------
 like($maker, qr/%app_default_size\s*=\s*\(\s*studio\s*=>\s*\{\s*width\s*=>\s*1000,\s*height\s*=>\s*760/,
 	'Studio asks the window helper for a 1000x760 default');
@@ -201,6 +246,9 @@ like($help, qr/full-screen button - behind the app icon/, 'the help names the sh
 
 # --- the help topic names the new controls ----------------------------------
 like($help, qr/'Add a track, up to 32'/, 'help names Add track and its cap');
+like($help, qr/Arrange the panels/, 'help names the Arrange control');
+like($help, qr/Every docked panel is its own scroll box/, 'help explains the no-overflow rule');
+like($help, qr/the master rack is the strips\\' last strip on the right/, 'help puts the master strip at the far right');
 like($help, qr/Show automation for this track/, 'help names the automation toggle');
 like($help, qr/Delete this track/, 'help names the per-track delete');
 like($help, qr/Hide the channel strips/, 'help names the strip hide toggle');

@@ -45,6 +45,7 @@ like($fx, qr/\breverb2\s*:\s*'reverb'/, 'reverb2 is still an alias of reverb');
 like($fx, qr/\bCompressionX\s*:\s*'compressor'/, 'CompressionX still maps to compressor');
 like($fx, qr/\bDistorjawn\s*:\s*'distortion'/, 'Distorjawn still maps to distortion');
 like($fx, qr/\bDelayed\s*:\s*'delay'/, 'Delayed still maps to delay');
+like($fx, qr/\bJtune\s*:\s*'autotune'/, 'Jtune is now the autotune pedal');
 like($js, qr/function studioInsert\(ctx, name\)[\s\S]*?\n\}/,
 	'studioInsert() is the one dispatcher');
 like($js, qr/var build = studioEffectBuilder\(name\);/, 'studioInsert delegates to the builder table');
@@ -110,6 +111,12 @@ like($knobs, qr/rack_restore\.push\(\{ ch: i, name: name, record: entry \}\);/,
 	'a restored rack waits for its own control values');
 like($knobs, qr/studioSetInsert\(i, name, true\)/, 'the stored order is rebuilt insert by insert');
 
+# A legacy "Jtune" was artwork with no implementation, so it is restored as
+# autotune switched off rather than as a live effect it never was.
+like($knobs, qr/typeof entry === 'string' && name === 'Jtune'/, 'a legacy Jtune string is recognised');
+like($knobs, qr/studioSetInsert\(i, 'autotune', true\);/, 'it is restored as the autotune insert');
+like($knobs, qr/record: \{ name: 'autotune', on: false \}/, 'the restored insert starts bypassed');
+
 # --- the master rack -------------------------------------------------------
 my ($master_list) = $studio =~ /master\s*=>\s*\[(.*?)\n\t\]/s;
 ok(defined $master_list, 'the studio data carries the master rack');
@@ -149,7 +156,36 @@ like($layout, qr/studioSetInsert\(ch, name, !\(channel && channel\.insertByName\
 	'dropping a shelf pedal still adds or removes it');
 like($layout, qr/studioSelectedChannel = ch;/, 'FX selects the track the palette adds to');
 
-# --- the help topic names the new controls and describes them -------------
+# --- the lamp on every pedal -------------------------------------------------
+like($markup, qr/class="studio_pedal_led" role="button" aria-pressed="false"/,
+	'a shelf pedal carries a lamp that starts dark');
+like($markup, qr/class="studio_rack_led studio_pedal_led"/, 'a rack row carries the same lamp');
+like($markup, qr/class="pedal pedal_text"[\s\S]*class="studio_pedal_led"/,
+	'a palette text tile carries the lamp too');
+like($rack, qr/function studioUpdatePedalLamps\(\)/, 'one function paints every lamp');
+like($rack, qr/ins\.bypassed \? 'false' : 'true'/, 'a rack lamp reads the insert\'s bypass');
+like($rack, qr/var ins = studioPedalInsert\(ch, name\);/, 'a tile reads the selected track\'s insert');
+like($rack, qr/if \(!ins\) \{ studioSetInsert\(ch, name, true\); \}/,
+	'an absent effect is switched on from its lamp');
+like($rack, qr/studioSetInsertBypass\(ch, ins\.name, !ins\.bypassed\);/,
+	'clicking the lamp bypasses exactly as the rack does');
+like($rack, qr/studioUpdatePedalLamps\(\);\n\tstudioSaver\(\);/, 'the footswitch repaints the lamps');
+like($rack, qr/#pedalboard \.studio_pedal_led/, 'the shelf lamps are clickable');
+like($rack, qr/'\.studio_rack_led,/, 'the rack lamps are clickable');
+like($knobs, qr/studioTogglePedal\(studioPaletteChannel\(\), effect\);/,
+	'a shelf footswitch toggles the same insert as its lamp');
+like($style, qr/\.studio_pedal_led\s*\{[^}]*border-radius:\s*50%/s, 'the lamp is round');
+like($style, qr/\.studio_pedal_led\[aria-pressed="true"\]\s*\{[^}]*background:\s*#39d353/s,
+	'green is the on state');
+like($style, qr/\.studio_pedal_led\s*\{[^}]*background:\s*#6b1111/s, 'dark red is the off state');
+
+# --- every tile is one height -----------------------------------------------
+like($style, qr/\.pedal\s*\{[^}]*height:\s*187px/s, 'an artwork pedal is 187px tall');
+like($style, qr/\.pedal_text\s*\{/, 'a palette tile is styled from the same box');
+like($markup, qr/class="pedal pedal_text"/, 'the palette\'s text tiles are pedal tiles');
+like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork is contained, not cropped');
+
+# --- the help topic speaks in the pedalboard's words ------------------------
 # every new label is in the Studio topic's own controls list, which is what
 # scripts/help_audit.pl checks against the on-screen hints
 my ($controls) = $help =~ /\$topic\{'studio'\} = \{([\s\S]*?)\n\t\};/;
@@ -169,13 +205,20 @@ for my $label (
 	'Choose the reverb model',
 	'Master effects, after every track',
 	'Turn this mastering effect on or off',
+	'Arrange the panels',
+	'Turn this pedal on or off for this track',
 ) {
 	like($controls // '', qr/\Q$label\E/, "the help topic's controls list names $label");
 }
 like($help, qr/Reverb has five models/, 'the help explains the reverb models');
 like($help, qr/footswitch bypasses the insert/, 'the help explains bypassing');
 like($help, qr/Drag a row by its handle/, 'the help explains reordering');
-like($help, qr/The master rack sits under the channel strips/, 'the help explains the master rack');
+like($help, qr/The master rack is the last of the channel strips, at their far right/,
+	'the help puts the master rack at the far right of the strips');
+like($help, qr/Every pedal tile wears a small lamp/, 'the help explains the lamp');
+like($help, qr/The Jtune pedal is the old artwork for Autotune/, 'the help explains Jtune');
+like($help, qr/loads as Autotune switched off/, 'the help explains the legacy migration');
+like($help, qr/Every tile is the same height/, 'the help says every tile is one height');
 
 # --- the rack knobs reach the native engine -------------------------------
 # docs/studio-effects.md, "The control path": the browser maps 0..100 to the

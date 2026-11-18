@@ -355,13 +355,14 @@ function studioRevealPedal(name) {
 	}
 	if (!pedal.length) { return; }
 	var board = $('#pedalboard');
+	var scroller = $('#studio_pedalboard_pedals');
 	if (!board.is(':visible')) {
 		board.show();
 		var z = numeral($('#studio_viewer').closest('.wind').css('z-index')).value() || 0;
 		board.css({ 'z-index': (z + 100) });
 	}
-	var left = pedal.position().left + board.scrollLeft() - 40;
-	board.stop().animate({ scrollLeft: Math.max(0, left) }, 200);
+	var left = pedal.position().left + scroller.scrollLeft() - 40;
+	scroller.stop().animate({ scrollLeft: Math.max(0, left) }, 200);
 	pedal.addClass('pedal_revealed');
 	clearTimeout(studioRevealPedal.timer);
 	studioRevealPedal.timer = setTimeout(function () { pedal.removeClass('pedal_revealed'); }, 1600);

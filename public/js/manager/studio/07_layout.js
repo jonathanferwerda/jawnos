@@ -84,6 +84,45 @@ var studioPanelSpan = { synth: 1, tracks: 1, mixer: 1, transport: 1 };
 var STUDIO_PANEL_MIN_SPAN = 1;
 var STUDIO_PANEL_MAX_SPAN = 2;
 
+// ---- the Arrange preset ----------------------------------------------------
+//
+// A DAW reads top to bottom: the transport spans the window, the timeline is
+// the main area under it, the instrument sits on the left and the mixing
+// console on the right at the foot, with the master strip at the far right of
+// the channel strips. A narrow window stacks every panel instead, because two
+// columns of faders stop being readable. Arrange is only a default: the drag,
+// float, Dock and Narrow/Wide controls still work and still persist.
+var studioArrangeWide = {
+	order: ['transport', 'tracks', 'synth', 'mixer'],
+	span: { transport: 2, tracks: 2, synth: 1, mixer: 1 }
+};
+var studioArrangeCompact = {
+	order: ['transport', 'tracks', 'mixer', 'synth'],
+	span: { transport: 2, tracks: 2, mixer: 2, synth: 2 }
+};
+
+function studioArrangePreset() {
+	var width = $('#studio').width() || $(window).width() || 0;
+	return (width && width < 720) ? studioArrangeCompact : studioArrangeWide;
+}
+
+function studioApplyArrange(persist) {
+	var preset = studioArrangePreset();
+	studioPanelOrder = preset.order.slice();
+	$.each(studioPanelNames, function (i, name) {
+		studioPanelSpan[name] = preset.span[name] || STUDIO_PANEL_MIN_SPAN;
+		// Arrange brings a floated panel home before it applies the preset.
+		if (studioPanelElement(name).hasClass('studio_panel_floating')) {
+			studioDockPanel(name, false);
+		}
+	});
+	studioApplyPanelOrder();
+	$.each(studioPanelNames, function (i, name) { studioApplyPanelSpan(name); });
+	if (persist) { studioPersistPanelOrder(); }
+}
+
+$(document).on('click', '#studio_arrange', function () { studioApplyArrange(true); });
+
 function studioPanelOrderIndex(name) {
 	for (var i = 0; i < studioPanelOrder.length; i++) {
 		if (studioPanelOrder[i] == name) { return i; }
@@ -247,6 +286,7 @@ function studioDockPanel(name, persist) {
 
 function studioApplyPanelPositions() {
 	var saved = {};
+	var any_saved = false;
 	$.each(studioPanelSelectors, function (name) {
 		var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_position_' + name] : undefined;
 		if (!raw) { return; }
@@ -254,8 +294,16 @@ function studioApplyPanelPositions() {
 		try { position = JSON.parse(raw); } catch (e) { return; }
 		if (!position) { return; }
 		saved[name] = position;
+		any_saved = true;
 		if (typeof position.span == 'number') { studioPanelSpan[name] = position.span; }
 	});
+
+	// A first open has no saved arrangement, so the DAW-informed preset is what
+	// it starts from. Once anything is saved the user's own packing wins.
+	if (!any_saved) {
+		studioApplyArrange(true);
+		return;
+	}
 
 	// Rebuild the shared order from whatever each panel saved, keeping the
 	// default order for a panel that has never been moved (and as the tie-break).
@@ -722,6 +770,7 @@ function studioRemoveTrack(ch, quiet) {
 	}
 	studioTakesChanged();
 	studioUpdateTrackCount();
+	if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
 	if (!quiet) {
 		studioSaveTrackCount();
 		studioSaver();
