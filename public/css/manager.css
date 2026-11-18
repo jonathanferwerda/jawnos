@@ -1271,6 +1271,17 @@ body[data-window-effects="maximum"] {
 	72% { transform: scale(calc(1 - .002 * var(--je-bounce)), calc(1 - .008 * var(--je-bounce))); }
 	100% { transform: scale(1, 1); }
 }
+/* An already-open press is a raise, not a new window: the existing window
+   gives a short head-shake instead of a preview. It is the same one-shot class
+   machinery as the rest, so the level's --je-time/--je-wobble/--je-bounce
+   scale it and the off level removes it. */
+@keyframes jawnos_window_jiggle {
+	0% { transform: rotate(0deg) scale(1); }
+	24% { transform: rotate(calc(-.5deg * var(--je-wobble))) scale(calc(1 + .012 * var(--je-bounce))); }
+	52% { transform: rotate(calc(.38deg * var(--je-wobble))) scale(calc(1 - .004 * var(--je-bounce))); }
+	76% { transform: rotate(calc(-.16deg * var(--je-wobble))) scale(calc(1 + .004 * var(--je-bounce))); }
+	100% { transform: rotate(0deg) scale(1); }
+}
 /* The physics writes the drag transform inline; this only gives it the hanging
    point at the title bar and a compositing hint while it is in the hand. */
 .wind.jawnos_wobbling { transform-origin: 50% 0%; will-change: transform; }
@@ -1279,11 +1290,13 @@ body[data-window-effects="maximum"] {
 .wind.jawnos_effect_out { animation: jawnos_window_bounce_out calc(190ms * var(--je-time)) ease-in; transform-origin: 50% 60%; will-change: transform, opacity; }
 .wind.jawnos_effect_lock { animation: jawnos_window_lock calc(260ms * var(--je-time)) ease-out; transform-origin: 50% 10%; will-change: transform; }
 .wind.jawnos_effect_snap { animation: jawnos_window_snap calc(280ms * var(--je-time)) cubic-bezier(.2,.9,.25,1.2); transform-origin: 50% 0%; will-change: transform; }
+.wind.jawnos_effect_jiggle { animation: jawnos_window_jiggle calc(240ms * var(--je-time)) cubic-bezier(.2,.9,.25,1.1); transform-origin: 50% 50%; will-change: transform; }
 @media (prefers-reduced-motion: reduce) {
 	/* the one-shots finish at once and their animationend still closes a
 	   minimise; the drag physics is skipped in JS, not here */
 	.wind.jawnos_effect_stretch, .wind.jawnos_effect_in,
-	.wind.jawnos_effect_out, .wind.jawnos_effect_lock, .wind.jawnos_effect_snap {
+	.wind.jawnos_effect_out, .wind.jawnos_effect_lock, .wind.jawnos_effect_snap,
+	.wind.jawnos_effect_jiggle {
 		animation-duration: 1ms;
 	}
 }

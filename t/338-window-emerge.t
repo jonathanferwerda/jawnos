@@ -42,6 +42,8 @@ like($board, qr/jawnosWindowOriginFromPoint[\s\S]{0,1600}appointmentGrabber\(o\[
 	'the canvas pill records its rectangle and preview before the opener');
 like($board, qr/jawnosWindowOriginFromPoint[\s\S]{0,1600}jawnosWindowEmergeGhostStart\(origin\)/,
 	'the canvas starts the preview from the hit path');
+like($board, qr/jawnosWindowEmergeOpen\(origin_app\)/,
+	'but not when the app already has a window on the desk');
 like($lazy, qr/jawnosWindowOriginFromElement\(target\[0\], app\); \}\s*target\.trigger\('click'\)/,
 	'the lazy replay stamps the origin again before the click');
 
@@ -103,6 +105,9 @@ like($layout, qr/var jawnos_app_colours = .*app_colour_map\(\[ sort keys %\{\$gb
 like($contrast, qr/sub app_colour_map \{/, 'the domain builds the colour map in one read');
 like($contrast, qr/&contrast_ink\(\$light\)/, 'the map uses the real contrast ink');
 like($loader, qr/app_colour_map/, 'the domain map registers app_colour_map');
+like($layout, qr/var jawnos_app_places = .*app_window_places/, 'the layout seeds pinned window places');
+like($emerge, qr/function jawnosWindowEmergeAppPlace\(/, 'the ghost reads a pinned place');
+like($emerge, qr/function jawnosWindowEmergePlaceRect\(/, 'and scales it like windowPlaceRestore');
 
 # --- played in a bare context ------------------------------------------------
 my $node = `command -v node 2>/dev/null`;
@@ -269,6 +274,7 @@ function wrap(el) {
 	};
 }
 const handlers = {};
+const winds = [];
 const startMenuIcons = {};
 const created = [];
 const body = makeElement('BODY');
@@ -286,6 +292,9 @@ const sandboxDocument = {
 };
 function $(x) {
 	if (x && x.jquery) { return x; }
+	if (x === '.wind') {
+		return { each: function (fn) { winds.forEach(function (el, i) { fn.call(el, i, el); }); } };
+	}
 	if (x === sandboxDocument) {
 		return { length: 1, on: function (ev, fn) { handlers[ev] = fn; } };
 	}
@@ -299,6 +308,7 @@ let level = 'medium';
 let viewWidth = 1200;
 let viewHeight = 900;
 let rootZoom = 1;
+let phone = false;
 const cssVars = { '--navbar_h': '36px', '--window_border': '3px', '--window_radius': '12px' };
 
 const sandbox = {
@@ -313,6 +323,7 @@ const sandbox = {
 	jawnosWindowEffectsOn: function () { return effects_on; },
 	jawnosWindowEffectsLevel: function () { return level; },
 	jawnos_app_colours: {},
+	jawnos_app_places: {},
 	jawnosBars: { navbar: 36, border: 3 },
 	windowTileDefaultWidth: 480,
 	windowTileDefaultHeight: 640,
@@ -323,6 +334,7 @@ const sandbox = {
 	windowTiledAnchor: function () { return { left: 0, top: 40 }; },
 	windowNextTileSlot: function () { return 0; },
 	windowTopLimit: function () { return 40; },
+	windowPhoneChecker: function () { return phone; },
 	windowViewport: function () { return { width: viewWidth, height: viewHeight }; },
 	getComputedStyle: function () {
 		return {
@@ -408,6 +420,7 @@ check('maximum is longer and overshoots more', maximum.duration > medium.duratio
 const saved_anchor = sandbox.windowTiledAnchor;
 const saved_slot = sandbox.windowNextTileSlot;
 const saved_bars = sandbox.jawnosBars;
+const saved_top_limit = sandbox.windowTopLimit;
 sandbox.windowTiledAnchor = function () { return { left: 10, top: 55 }; };
 sandbox.windowNextTileSlot = function () { return 2; };
 sandbox.jawnosBars = { navbar: 44, border: 4 };
@@ -469,9 +482,69 @@ sandbox.jawnosWindowEmergeGhostCancel(zoom_ghost);
 advance(5000);
 rootZoom = 1;
 
+// a pinned window's saved place: windowPlaceRestore's scale, edge keeping and
+// 240x160 floors, then the same viewport clamp
+sandbox.jawnos_app_places = {
+	clock: { left: 100, top: 80, width: 500, height: 600, vw: 1000, vh: 1000 }
+};
+viewWidth = 500;
+viewHeight = 500;
+const pinned = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('a pinned place is scaled onto this screen',
+	pinned.left === 50 && pinned.top === 40 && pinned.width === 250 && pinned.height === 300);
+sandbox.jawnos_app_places = {
+	clock: { left: 600, top: 700, width: 300, height: 200, vw: 1000, vh: 1000 }
+};
+const pinned_right = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('a place near the right and bottom keeps those edges',
+	pinned_right.left === 160 && pinned_right.top === 240
+	&& pinned_right.width === 240 && pinned_right.height === 160);
+sandbox.jawnos_app_places = {
+	clock: { left: 0, top: 0, width: 100, height: 100, vw: 1000, vh: 1000 }
+};
+const pinned_floor = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('a tiny saved box keeps the 240x160 floors',
+	pinned_floor.width === 240 && pinned_floor.height === 160);
+sandbox.jawnos_app_places = {};
+sandbox.windowNextTileSlot = function () { return 0; };
+const unpinned = sandbox.jawnosWindowEmergePredict({ app: 'notes' });
+check('an app with no place still cascades',
+	unpinned.left === 0 && unpinned.top === 54
+	&& unpinned.width === 480 && unpinned.height === 446);
+
+// a phone's pile steps by the bar's outer height less its border; the count is
+// the windows already on the desk plus presses still in flight
+phone = true;
+viewWidth = 412;
+viewHeight = 915;
+sandbox.windowTopLimit = function () { return 0; };
+sandbox.windowTiledAnchor = function () { return { left: 0, top: 0 }; };
+sandbox.jawnosBars = { navbar: 44, border: 2 };
+winds.length = 0;
+sandbox.windowTiledPending = {};
+const phone_0 = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+winds.push(new El('one'));
+const phone_1 = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+winds.push(new El('two'));
+const phone_2 = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('a phone preview still uses the layout viewport',
+	phone_0.width === 412 && phone_0.height === 652);
+check('the phone pile steps by vAdvance',
+	phone_0.top === 0 && phone_1.top === 42 && phone_2.top === 84);
+winds.length = 1;
+sandbox.windowTiledPending = { pending: { stack: '0', at: Date.now(), slot: 0 } };
+const phone_pending = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('a press still waiting for its window takes the next step',
+	phone_pending.top === 84);
+phone = false;
+winds.length = 0;
+sandbox.windowTiledPending = {};
+sandbox.jawnos_app_places = {};
+
 sandbox.windowTiledAnchor = saved_anchor;
 sandbox.windowNextTileSlot = saved_slot;
 sandbox.jawnosBars = saved_bars;
+sandbox.windowTopLimit = saved_top_limit;
 viewWidth = 1200;
 viewHeight = 900;
 

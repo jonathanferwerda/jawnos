@@ -2,7 +2,8 @@
 # covers:    A colour is the light face of an appointment and dark_colour the dark one. An app born
 #            on a dark desktop stored that cut's own step as its colour, so a later light theme painted
 #            its plates near-black. The light face now comes back from the dark cut's pair.
-#            The press-time preview's app_colour_map carries the same pair and ink.
+#            The press-time preview's app_colour_map carries the same pair and ink,
+#            and app_window_places returns a pinned window's saved box.
 
 use strict;
 use warnings;
@@ -73,6 +74,12 @@ $add->('warwick_appt', 'colour', '#394658');
 $add->('warwick_appt', 'dark_colour', '#374456');
 $add->('free_appt', 'uuid', 'u-free');
 $add->('free_appt', 'colour', '#dba0c4');
+$add->('pinned_appt', 'place', 'lock');
+$add->('pinned_appt', 'dimensions', '{"left":40,"top":50,"width":500,"height":600,"vw":1366,"vh":703}');
+$add->('tiled_appt', 'place', 'tile');
+$add->('tiled_appt', 'dimensions', '{"left":10,"top":20,"width":400,"height":500,"vw":1366,"vh":703}');
+$add->('broken_appt', 'place', 'lock');
+$add->('broken_appt', 'dimensions', 'not json');
 
 my $warwick = &subs::settings_grabber({ app => 'warwick_appt' });
 is( $warwick->{'colour'}, '#a7b8d0',
@@ -109,6 +116,17 @@ is( $colour_map->{'free_appt'}->{'colour'}, '#dba0c4',
 	'a light appointment keeps its colour in the preview map' );
 is( $colour_map->{'free_appt'}->{'dark'}, &subs::dark_colour_for('#dba0c4'),
 	'and its derived dark face' );
+
+# --- pinned places ----------------------------------------------------------
+my $places = &subs::app_window_places();
+is( $places->{'pinned_appt'}->{'left'}, 40, 'a pinned window place keeps its left' );
+is( $places->{'pinned_appt'}->{'top'}, 50, 'and its top' );
+is( $places->{'pinned_appt'}->{'width'}, 500, 'and its width' );
+is( $places->{'pinned_appt'}->{'height'}, 600, 'and its height' );
+is( $places->{'pinned_appt'}->{'vw'}, 1366, 'with the screen it was saved on' );
+is( $places->{'pinned_appt'}->{'vh'}, 703, 'on both axes' );
+ok( !exists $places->{'tiled_appt'}, 'a tiled window is not in the roster' );
+ok( !exists $places->{'broken_appt'}, 'a pinned window with no readable box is left out' );
 
 # --- the appointment viewer reads the same pair -----------------------------
 my $root = root();

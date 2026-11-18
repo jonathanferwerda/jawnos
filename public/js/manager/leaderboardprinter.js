@@ -284,8 +284,11 @@ $(document).on('click', '.background', function (e) {
 						}
 					);
 					// the canvas knows the pill right here, before the opener asks
-					// for the window, so the preview can start at once
-					if (origin && typeof jawnosWindowEmergeGhostStart == 'function') {
+					// for the window, so the preview can start at once - unless the
+					// app is already on the desk, where the press raises that window
+					// and windowTiledPress answers with its jiggle instead
+					if (origin && typeof jawnosWindowEmergeGhostStart == 'function'
+						&& !(typeof jawnosWindowEmergeOpen == 'function' && jawnosWindowEmergeOpen(origin_app))) {
 						jawnosWindowEmergeGhostStart(origin);
 					}
 				}

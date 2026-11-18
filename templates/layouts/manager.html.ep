@@ -163,6 +163,11 @@
 			// bar's colour; windows/06_emerge.js applies this pair exactly. Built
 			// from the settings rows the real window reads (see app_colour_map).
 			var jawnos_app_colours = <%== encode_json(&subs::app_colour_map([ sort keys %{$gb::known_appts} ])) %>;
+			// Pinned window places, so the press-time preview can open at the saved
+			// box instead of the cascade slot. windows/06_emerge.js scales it the
+			// same way windowPlaceRestore does; an empty roster falls back to the
+			// cascade and the retarget still fixes the real rectangle.
+			var jawnos_app_places = <%== encode_json(&subs::app_window_places()) %>;
 			// the core bundle is only what every window needs; an app's scripts are
 			// loaded on first open (lazy.js asks /js/manager/app.js for these lists)
 			var jawnos_app_scripts = <%== encode_json(\%Manager::manager_app_scripts) %>;

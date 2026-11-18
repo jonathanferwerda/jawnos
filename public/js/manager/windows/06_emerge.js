@@ -408,6 +408,58 @@ function jawnosWindowEmergeAppColour(app) {
 	return info;
 }
 
+// A pinned window's saved place, seeded by the layout's jawnos_app_places map
+// (subs::app_window_places). The box is in the saved screen's pixels; the
+// caller rescales it exactly as windowPlaceRestore does.
+function jawnosWindowEmergeAppPlace(app) {
+	if (!app) { return null; }
+	var map = null;
+	try {
+		if (typeof jawnos_app_places != 'undefined') { map = jawnos_app_places; }
+		else if (typeof window != 'undefined') { map = window.jawnos_app_places; }
+	}
+	catch (e) {}
+	if (!map || !map[app]) { return null; }
+	var place = map[app];
+	if (!place || !(place.width > 0) || !(place.height > 0) || !(place.vw > 0) || !(place.vh > 0)) { return null; }
+	return place;
+}
+
+// windowPlaceRestore's rescale, in layout pixels: keep the edge the window was
+// nearest (right or bottom), scale by the smaller of the two screen ratios,
+// and never go below 240x160. The exact clamp in jawnosWindowEmergePredict
+// applies windowFit afterwards, as it does to the real window.
+function jawnosWindowEmergePlaceRect(place, view) {
+	if (!place || !view) { return null; }
+	var saved_w = jawnosEmergeNumber(place.vw, 0);
+	var saved_h = jawnosEmergeNumber(place.vh, 0);
+	var now_w = jawnosEmergeNumber(view.width, 0);
+	var now_h = jawnosEmergeNumber(view.height, 0);
+	var left = jawnosEmergeNumber(place.left, 0);
+	var top = jawnosEmergeNumber(place.top, 0);
+	var width = jawnosEmergeNumber(place.width, 0);
+	var height = jawnosEmergeNumber(place.height, 0);
+	if (!saved_w || !saved_h || !now_w || !now_h || !width || !height) { return null; }
+	// a place saved on this exact screen is used as it stands
+	if (Math.abs(saved_w - now_w) < 8 && Math.abs(saved_h - now_h) < 8) {
+		return { left: left, top: top, width: width, height: height };
+	}
+	var scale = Math.min(now_w / saved_w, now_h / saved_h);
+	if (!isFinite(scale) || scale <= 0) { return null; }
+	var from_right = saved_w - (left + width);
+	var from_bottom = saved_h - (top + height);
+	var new_w = Math.max(240, Math.round(width * scale));
+	var new_h = Math.max(160, Math.round(height * scale));
+	var new_left = (from_right < left) ? (now_w - from_right - new_w) : (left * scale);
+	var new_top = (from_bottom < top) ? (now_h - from_bottom - new_h) : (top * scale);
+	return {
+		left: Math.max(0, Math.round(new_left)),
+		top: Math.max(0, Math.round(new_top)),
+		width: new_w,
+		height: new_h
+	};
+}
+
 // The small set of skeleton bodies. The app name is all the press has, so the
 // map is the whole rule; an unknown app keeps the neutral generic body.
 var jawnosWindowEmergeArchetypes = {
@@ -428,6 +480,45 @@ function jawnosWindowEmergeArchetype(app) {
 		if (jawnosWindowEmergeArchetypes[kind].indexOf(app) >= 0) { return kind; }
 	}
 	return 'generic';
+}
+
+// The step a phone's cascade has already taken: every window on this desk,
+// plus presses whose windows have not landed yet. windowReorganizer uses the
+// same count (winCount) and the bar's outer height less its border.
+function jawnosWindowEmergePhoneSlot(stack) {
+	stack = stack || '0';
+	var count = 0;
+	try {
+		if (typeof $ == 'function') {
+			$('.wind').each(function () {
+				if (typeof jawnosWorkspaceWindowHere == 'function' && !jawnosWorkspaceWindowHere(this)) { return; }
+				count++;
+			});
+		}
+		else if (typeof document != 'undefined' && document.querySelectorAll) {
+			var winds = document.querySelectorAll('.wind');
+			for (var i = 0; i < winds.length; i++) {
+				if (typeof jawnosWorkspaceWindowHere == 'function' && !jawnosWorkspaceWindowHere(winds[i])) { continue; }
+				count++;
+			}
+		}
+	}
+	catch (e) {}
+	try {
+		if (typeof windowTiledPending != 'undefined' && windowTiledPending) {
+			var now = Date.now();
+			for (var stamp in windowTiledPending) {
+				if (!windowTiledPending.hasOwnProperty(stamp)) { continue; }
+				var pending = windowTiledPending[stamp];
+				if (!pending) { continue; }
+				if ((pending.stack || stack) !== stack) { continue; }
+				if (now - (pending.at || 0) > 20000) { continue; }
+				count++;
+			}
+		}
+	}
+	catch (e) {}
+	return count;
 }
 
 // The frame a fresh window is about to take: the standard 480x640 at the slot
@@ -474,16 +565,34 @@ function jawnosWindowEmergePredict(origin, near) {
 		if (pending && (pending.stack || stack) === stack && pending.slot >= 0) { slot = pending.slot; }
 	}
 
-	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) {
+	var phone = (typeof windowPhoneChecker == 'function' && windowPhoneChecker());
+
+	// A pinned window opens at the place it was pinned to, not in the cascade.
+	// A phone ignores the saved place (Part22 only pre-dimensions a non-phone).
+	if (!phone) {
+		var saved_place = jawnosWindowEmergeAppPlace(origin.app);
+		if (saved_place) {
+			var saved_rect = jawnosWindowEmergePlaceRect(saved_place, view);
+			if (saved_rect) {
+				left = saved_rect.left;
+				top = saved_rect.top;
+				width = saved_rect.width;
+				height = saved_rect.height;
+				placed = true;
+			}
+		}
+	}
+
+	if (!placed && phone) {
 		// the real window is width:100% / height:71.28% in the same layout pixels
-		// windowViewport reports; its top is the pile's top limit
+		// windowViewport reports; its top steps down the pile like the desk
 		width = view.width;
 		height = Math.round(view.height * 0.7128);
 		left = 0;
-		top = topLimit + slot * step;
+		top = topLimit + jawnosWindowEmergePhoneSlot(stack) * step;
 		placed = true;
 	}
-	else if (typeof windowTiledAnchor == 'function') {
+	else if (!placed && typeof windowTiledAnchor == 'function') {
 		var anchor = windowTiledAnchor(stack) || { left: 0, top: topLimit };
 		left = jawnosEmergeNumber(anchor.left, 0) + slot * across;
 		top = jawnosEmergeNumber(anchor.top, topLimit) + slot * step;

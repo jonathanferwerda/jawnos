@@ -52,10 +52,10 @@ like($effects, qr/function jawnosWindowMotionAllowed\(\)/, 'the physics asks red
 like($effects, qr/jawnosWindowEmergeCancel\(el\)/, 'a one-shot motion cancels an emerge sheet too');
 
 # --- the motions are transform-only classes ---------------------------------
-foreach my $name (qw(stretch bounce_in bounce_out lock snap)) {
+foreach my $name (qw(stretch bounce_in bounce_out lock snap jiggle)) {
 	like($css, qr/\@keyframes jawnos_window_$name \{/, "manager.css defines $name");
 }
-foreach my $class (qw(stretch in out lock snap)) {
+foreach my $class (qw(stretch in out lock snap jiggle)) {
 	like($css, qr/\.wind\.jawnos_effect_$class \{ animation:/, "the $class class plays a keyframe");
 }
 like($css, qr/\.wind\.jawnos_wobbling \{ transform-origin: 50% 0%/, 'the drag hangs from the title bar');
@@ -75,6 +75,11 @@ unlike($css, qr/\.wind\.jawnos_effect_[a-z_]+ \{[^}]*\b(left|top|width|height):/
 # --- every action the person asked for is hooked ----------------------------
 like($fit, qr/function windowMaximizer.*?jawnosWindowEffect\(win, 'stretch'\)/s, 'maximize stretches');
 like($fit, qr/function windowHalfski.*?jawnosWindowEffect\(win, 'stretch'\)/s, 'a half snap stretches');
+like($index, qr/function windowTiledPress\(win\).*?jawnosWindowEffect\(win, 'jiggle'\)/s,
+	'an already-open press jiggles the window it raises');
+like($css, qr/\.wind\.jawnos_effect_jiggle \{[^}]*animation: jawnos_window_jiggle calc\([^)]*var\(--je-time\)/s,
+	'and the jiggle is a level-timed one-shot');
+like($effects, qr/jawnos_effect_jiggle/, 'the jiggle is cleaned up with the other one-shots');
 like($fit, qr/function windowRestore\(.*?jawnosWindowEffect\(win, 'in'\)/s, 'restore bounces in');
 like($fit, qr/function windowMinimizer.*?jawnosWindowMinimizeOut\(win\)/s, 'minimize bounces out');
 like($fit, qr/function windowRestorer.*?jawnosWindowRestoreIn\(win\)/s, 'the tile toggle bounces in');

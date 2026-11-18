@@ -1157,6 +1157,10 @@ function windowTiledBump(win) {
 }
 
 function windowTiledPress(win) {
+	// an already-open press is a raise, not a new window: a short jiggle is
+	// the answer the desk gives it, and no preview is drawn (06_emerge's ghost
+	// is guarded by jawnosWindowEmergeOpen)
+	if (typeof jawnosWindowEffect === 'function') { jawnosWindowEffect(win, 'jiggle'); }
 	if (typeof windowTiledBump === 'function' && windowTiledBump(win)) { return; }
 	topLevelNow($(win));
 }

@@ -862,6 +862,60 @@ sub settings_grabber {
 	return $returner;
 }
 
+# Pinned window places in one read, for the press-time preview. A window with
+# place=lock keeps the box saved in dimensions; windowPlaceRestore rescales it
+# from the screen it was saved on (vw/vh). This reads the same row preference
+# the window does: this device, then the person's own (Me/signatorial), then a
+# house-wide ('all') row, then the newest row any device holds. The map is
+# app -> { left, top, width, height, vw, vh }.
+sub app_window_places {
+	my $dev = &device_setter();
+	my $sig = &signatorial_designer();
+	my %rank = ( 'all' => 2 );
+	$rank{$dev} = 4 if defined $dev && length $dev;
+	$rank{$sig} = 3 if defined $sig && length $sig && $sig ne $dev;
+	my %pick;
+	my $rows = eval {
+		&db_query("select app, device, setting, value, server_time from settings where setting in (?, ?) and value is not null and value != ''", 'place', 'dimensions')->hashes
+	} || [];
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'};
+		my $setting = $row->{'setting'};
+		my $value = $row->{'value'};
+		next unless defined $app && length $app && defined $value && length $value;
+		next unless $setting eq 'place' || $setting eq 'dimensions';
+		my $key = $app . "\0" . $setting;
+		my $r = $rank{ $row->{'device'} // '' } || 1;
+		my $time = 0 + ($row->{'server_time'} // 0);
+		my $seen = $pick{$key};
+		if (!$seen || $r > $seen->{'rank'} || ($r == $seen->{'rank'} && $time >= $seen->{'time'})) {
+			$pick{$key} = { rank => $r, time => $time, value => $value, device => ($row->{'device'} // '') };
+		}
+	}
+	my %map;
+	foreach my $key ( keys %pick ) {
+		my ($app, $setting) = split /\0/, $key, 2;
+		next unless $setting eq 'place';
+		my $place = $pick{ $app . "\0" . 'place' };
+		next unless $place && ($place->{'value'} // '') eq 'lock';
+		my $dims = $pick{ $app . "\0" . 'dimensions' };
+		next unless $dims && defined $dims->{'value'} && length $dims->{'value'};
+		# a place and a box from different device classes are not one
+		# window's saved place; leave it to the cascade
+		next unless ($place->{'device'} // '') eq ($dims->{'device'} // '');
+		my $d = eval { &decode_json($dims->{'value'}) } || {};
+		next unless ref $d eq 'HASH';
+		my %box = ( left => 0, top => 0 );
+		foreach my $k ( qw(left top width height vw vh) ) {
+			next unless defined $d->{$k} && $d->{$k} =~ /^-?\d+(?:\.\d+)?$/;
+			$box{$k} = 0 + $d->{$k};
+		}
+		next unless $box{'width'} > 0 && $box{'height'} > 0 && $box{'vw'} > 0 && $box{'vh'} > 0;
+		$map{$app} = \%box;
+	}
+	return \%map;
+}
+
 sub setting_deleter {
 	%setting_memo = ();
 	my $setting = shift;
