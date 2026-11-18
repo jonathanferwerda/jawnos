@@ -385,7 +385,31 @@ sub describe_wait {
 	return "status $raw";
 }
 
+# The picker's choice, if a manager has written one: the supervisor's startup
+# file carries `backend` and `device` beside the plan. A flag on the command
+# line still wins, so a hand-run supervisor can be pinned to one device; the
+# manager's picker is the normal path (it starts with JawnOS, with no flags).
+sub plan_config {
+	return undef unless -s $plan;
+	open(my $fh, '<', $plan) or return undef;
+	local $/;
+	my $raw = <$fh>;
+	close $fh;
+	my $doc = eval { JSON::PP->new->decode($raw) };
+	return undef unless ref $doc eq 'HASH';
+	my $backend = $doc->{'backend'};
+	my $device  = $doc->{'device'};
+	return undef unless defined $backend && $backend =~ /\A(?:alsa|pipewire|null)\z/;
+	return undef unless defined $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/;
+	return { backend => $backend, device => $device };
+}
+
 sub spawn_engine {
+	my $chosen = plan_config();
+	if ($chosen) {
+		$backend = $chosen->{'backend'} unless defined $given{'backend'};
+		$device  = $chosen->{'device'}  unless defined $given{'device'};
+	}
 	my $pid = fork();
 	unless (defined $pid) {
 		warn "audio supervisor: cannot fork: $!\n";

@@ -20,6 +20,60 @@ function soundPatchNodeIds() {
 }
 
 function soundPatchNote(text) { $('#sound_patch_note').text(text || ''); }
+// The picker's choices come from the manager as `devices` (ALSA cards, then
+// PipeWire and null) and `engine_device` (the saved choice). The running
+// engine's backend/device is `engine`; a difference means the engine still
+// has the old device and Apply will restart it.
+function soundPatchDeviceValue(choice) {
+	return (choice && choice.backend ? choice.backend : '') + '|'
+		+ (choice && choice.device ? choice.device : '');
+}
+
+function soundPatchDeviceRender() {
+	var select = $('#sound_engine_device');
+	if (!select.length) { return; }
+	var devices = (soundAudio && soundAudio.devices) || [];
+	var saved = (soundAudio && soundAudio.engine_device) || {};
+	var running = (soundAudio && soundAudio.engine) || {};
+	select.empty();
+	$.each(devices, function(i, device) {
+		var value = device.id || (device.backend + '|' + device.device);
+		select.append($('<option></option>').attr('value', value)
+			.text(device.name || device.id || device.device));
+	});
+	var chosen = saved.backend ? soundPatchDeviceValue(saved)
+		: (running.backend ? soundPatchDeviceValue(running) : '');
+	if (chosen) { select.val(chosen); }
+	var note = '';
+	if (running.backend && saved.backend
+		&& (running.backend !== saved.backend || running.device !== saved.device)) {
+		note = jawnosT('The engine is on') + ' ' + (running.device || running.backend)
+			+ '; ' + jawnosT('apply to switch');
+	}
+	$('#sound_engine_device_note').text(note);
+}
+
+function soundPatchDeviceApply() {
+	var value = $('#sound_engine_device').val() || '';
+	var parts = value.split('|');
+	if (parts.length != 2 || !parts[0] || !parts[1]) { return; }
+	$.ajax({
+		url: '/manager/sound/device',
+		type: 'POST',
+		data: { backend: parts[0], device: parts[1] },
+		success: function(result) {
+			result = result || {};
+			if (!result.ok) {
+				soundPatchNote(result.error || jawnosT('The engine device could not be saved'));
+				return;
+			}
+			soundPatchNote(jawnosT('Device saved; the engine is restarting'));
+			setTimeout(soundPatchLoad, 1500);
+		},
+		error: function() { soundPatchNote(jawnosT('The engine device could not be saved')); }
+	});
+}
+
 
 function soundPatchSelect(ids, value) {
 	var select = $('<select></select>');
@@ -185,11 +239,15 @@ function soundPatchRender(audio) {
 		var silent = (engine.silent && engine.silent.length) || 0;
 		if (silent) { state += ' \u00b7 ' + silent + ' ' + jawnosT('silent'); }
 		if (engine.machine) { state += ' \u00b7 ' + engine.machine; }
+		if (engine.backend) {
+			state += ' \u00b7 ' + engine.backend + ' ' + (engine.device || '');
+		}
 	}
 	else {
 		state = jawnosT('The engine is running, but this plan is not patched');
 	}
 	$('#sound_engine_state').text(state);
+	soundPatchDeviceRender();
 }
 
 function soundPatchLoad() {

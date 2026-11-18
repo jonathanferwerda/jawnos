@@ -701,4 +701,80 @@ ENGINE
 	ok(!-e $status, 'and removes the status file');
 }
 
+# --- the picker's device and backend reach the engine ------------------------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	local $ENV{JAWNOS_AUDIO_MACHINE} = 'picker-table';
+	delete $ENV{JAWNOS_AUDIO_BACKEND};
+	delete $ENV{JAWNOS_AUDIO_DEVICE};
+
+	my $plan = "$dir/audio-plan.json";
+	open(my $pfh, '>', $plan) or die "plan: $!";
+	print {$pfh} '{"manage":0,"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]},"backend":"null","device":"hw:9,9"}';
+	close $pfh;
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+
+	my $args_log = "$dir/args.log";
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/arg-engine", <<'ENGINE');
+use Socket qw(SOCK_STREAM);
+use JSON::PP ();
+use IO::Socket::UNIX;
+open(my $log, '>>', $ENV{'AUDIO_TEST_ARGS'}) or exit 1;
+print {$log} join(' ', @ARGV), "\n";
+close $log;
+my %arg;
+for (my $i = 0; $i < @ARGV; $i++) {
+	$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
+}
+my $listener = IO::Socket::UNIX->new(
+	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+) or exit 1;
+while (my $client = $listener->accept) {
+	$client->autoflush(1);
+	my $line = <$client>;
+	my $obj = eval { JSON::PP->new->decode($line) };
+	my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+	if ($cmd eq 'quit') {
+		print {$client} "{\"ok\":true}\n";
+		close $client;
+		last;
+	}
+	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"idle\",\"backend\":\"null\",\"device\":\"hw:9,9\"}\n";
+	close $client;
+}
+close $listener;
+unlink $arg{'--socket'};
+ENGINE
+	local $ENV{AUDIO_TEST_ARGS} = $args_log;
+
+	my $sup = start_supervisor(
+		args => ['--socket', "$dir/audio.sock"],
+		log  => "$dir/supervisor.log",
+	);
+	my $saw = wait_for(sub {
+		return 0 unless -s $args_log;
+		my $raw = read_text($args_log);
+		return $raw =~ /--backend null --device hw:9,9/;
+	}, 10);
+	ok($saw, 'the supervisor opens the picker device, not its own default')
+		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
+
+	# The supervisor writes status once before it spawns (with its own defaults)
+	# and again after, so wait for the device rather than the first file.
+	my $s = wait_for(sub {
+		my $got = read_status("$home/.president/audio.json");
+		return 0 unless $got;
+		return $got->{'device'} eq 'hw:9,9' ? $got : 0;
+	}, 10);
+	ok($s, 'the status names the picker device') or diag('status: ' . read_text("$home/.president/audio.json"));
+	is($s->{'backend'}, 'null', 'and the picker backend') if $s;
+	like($s->{'pid'} // '', qr/\A[1-9][0-9]*\z/, 'with the engine pid') if $s;
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the picker supervisor stops cleanly');
+}
+
 done_testing();

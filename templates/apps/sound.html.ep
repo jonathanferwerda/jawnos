@@ -39,6 +39,8 @@
 #sound .sound_profile_app { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
 #sound .sound_profile_add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
 #sound .sound_patch_manage { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 8px; }
+#sound .sound_patch_device { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
+#sound .sound_patch_device select { max-width: 280px; }
 #sound .sound_patch_group { margin: 10px 0; }
 #sound .sound_patch_group h4 { margin: 0 0 4px; font-size: 15px; }
 #sound .sound_patch_node { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
@@ -64,6 +66,13 @@
 			<div class="sound_patch_manage">
 				<label><input type="checkbox" id="sound_manage" hint="<%= &subs::ui('Let the audio engine own this machine\'s inputs and outputs') %>"> <%= &subs::ui('The engine owns this machine\'s audio') %></label>
 				<span class="sound_level_now" id="sound_engine_state"></span>
+			</div>
+
+			<div class="sound_patch_device">
+				<label for="sound_engine_device"><%= &subs::ui('Engine device') %></label>
+				<select id="sound_engine_device" hint="<%= &subs::ui('Choose the audio interface the engine opens') %>"></select>
+				<button type="button" id="sound_engine_device_apply" hint="<%= &subs::ui('Use this device and restart the engine') %>"><%= &subs::ui('Use this device') %></button>
+				<span class="sound_level_now" id="sound_engine_device_note"></span>
 			</div>
 			<div class="sound_note" id="sound_patch_note"></div>
 			<div id="sound_patch_matrix"></div>

@@ -26,9 +26,11 @@ engine's state, frames, xruns and silent nodes. A fader moves the running patch
 without re-arming it (`param` target `patch`); a node may name the machine it
 live on, so one central plan can describe several machines. The manager writes
 `~/.president/audio-plan.json` and the supervisor passes it to a fresh engine, so
-a reboot comes back routed. President starts the supervisor when the engine
-binary is staged, so the switch needs no terminal work. What is still network
-work: another machine's engine is not driven yet (P3), so the switch applies to
+a reboot comes back routed. A machine with more than one interface picks the one
+the engine opens in the same section (**Engine device**), stored beside the plan
+in the startup file so the next spawn opens it. President starts the supervisor
+when the engine binary is staged, so the switch needs no terminal work. What is
+still network work: another machine's engine is not driven yet (P3), so the switch applies to
 the engine on the server.
 
 **Where a guitar stands, 2026-11-17.** Everything below the browser works: capture at 2.7 ms on

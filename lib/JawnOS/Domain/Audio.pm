@@ -55,6 +55,82 @@ sub audio_manage_read {
 	return (defined $raw && $raw =~ /^(?:1|on|true|yes)$/i) ? 1 : 0;
 }
 
+# The backends the engine can open, and the default device for each. The
+# picker stores the pair in the supervisor's startup file, not in a house
+# setting: the interface is a fact about this machine, and the file is local
+# to it.
+our %audio_backend_ok = map { $_ => 1 } qw(alsa pipewire null);
+our %audio_backend_device = (
+	alsa     => 'hw:1,0',
+	pipewire => 'default',
+	null     => 'null',
+);
+
+sub _audio_engine_boot_read {
+	require JawnOS::Audio::Engine;
+	my $path = JawnOS::Audio::Engine::audio_engine_plan_path();
+	return { path => $path, doc => undef }
+		unless defined $path && length $path && -s $path;
+	open my $fh, '<', $path or return { path => $path, doc => undef };
+	local $/;
+	my $raw = <$fh>;
+	close $fh;
+	my $doc = eval { decode_json($raw) };
+	return { path => $path, doc => ref $doc eq 'HASH' ? $doc : undef };
+}
+
+# The engine device the supervisor will use on its next start. The startup
+# file is the source of truth once the picker has written one; a machine that
+# has never chosen falls back to the same ALSA default the supervisor uses.
+sub audio_engine_device_read {
+	my $boot = &_audio_engine_boot_read();
+	my $doc = $boot->{doc} || {};
+	my $backend = $doc->{backend};
+	$backend = 'alsa' unless defined $backend && $audio_backend_ok{$backend};
+	my $device = $doc->{device};
+	$device = $audio_backend_device{$backend}
+		unless defined $device && length $device;
+	return { backend => $backend, device => $device };
+}
+
+# The ALSA cards this machine has, plus the PipeWire and null choices. A card's
+# first PCM is `hw:N,0`; the name is the /proc/asound/cards description. A test
+# can point JAWNOS_ASOUND_CARDS at a fixture; a machine with no card file still
+# gets the PipeWire and null choices.
+sub audio_engine_devices {
+	my @devices = &_audio_alsa_devices();
+	push @devices, {
+		id => 'pipewire|default', backend => 'pipewire', device => 'default',
+		name => 'PipeWire default',
+	};
+	push @devices, {
+		id => 'null|null', backend => 'null', device => 'null',
+		name => 'No device (null)',
+	};
+	return \@devices;
+}
+
+sub _audio_alsa_devices {
+	my $path = $ENV{JAWNOS_ASOUND_CARDS} || '/proc/asound/cards';
+	my @devices;
+	open my $fh, '<', $path or return @devices;
+	while (my $line = <$fh>) {
+		next unless $line =~ /^\s*(\d+)\s+\[([^\]]*)\]:\s*(\S+)\s*-\s*(.*)$/;
+		my ($index, $short, $driver, $long) = ($1, $2, $3, $4);
+		$short =~ s/\s+\z//;
+		$long =~ s/\s+\z//;
+		my $name = length $long ? $long : (length $short ? $short : "Card $index");
+		push @devices, {
+			id => "alsa|hw:$index,0",
+			backend => 'alsa',
+			device => "hw:$index,0",
+			name => "$name (hw:$index,0)",
+		};
+	}
+	close $fh;
+	return @devices;
+}
+
 # The plan's shape, the switch, and what the engine on this machine says. The
 # engine is optional: `engine_available` is false on a machine that has none,
 # and the page says so rather than drawing a switch that does nothing.
@@ -77,6 +153,8 @@ sub audio_plan_status {
 		manage           => &audio_manage_read(),
 		engine_available => $available,
 		engine           => $engine,
+		devices          => &audio_engine_devices(),
+		engine_device    => &audio_engine_device_read(),
 		machine          => (eval { Sys::Hostname::hostname() } || ''),
 	};
 }
@@ -99,7 +177,8 @@ sub audio_plan_write {
 		device  => 'all',
 		value   => encode_json($clean),
 	});
-	&_audio_plan_boot_write(&audio_manage_read(), $clean);
+	my $choice = &audio_engine_device_read();
+	&_audio_plan_boot_write(&audio_manage_read(), $clean, $choice->{backend}, $choice->{device});
 
 	# Saving is durable whether or not the engine is up; applying is the second
 	# answer, and it is reported rather than allowed to undo the save.
@@ -121,13 +200,14 @@ sub audio_plan_apply {
 }
 
 # The engine's startup copy, written beside the socket the supervisor reads:
-# `{"manage":0|1,"plan":{...}}`. The setting on the house row is the source of
-# truth; this file exists only so a fresh engine can arm the saved plan without
+# `{"manage":0|1,"plan":{...},"backend":"alsa","device":"hw:1,0"}`. The
+# setting on the house row is the source of truth for the plan; this file exists
+# so a fresh engine can arm the saved plan and open the chosen interface without
 # a running manager to ask. It is written atomically - a temp file renamed over
 # the target - so a crash mid-write cannot leave a torn JSON object for the next
 # boot, and the directory is made if the install has never run the engine.
 sub _audio_plan_boot_write {
-	my ($manage, $plan) = @_;
+	my ($manage, $plan, $backend, $device) = @_;
 	require JawnOS::Audio::Engine;
 	require File::Basename;
 	require File::Path;
@@ -139,7 +219,13 @@ sub _audio_plan_boot_write {
 	my $dir = File::Basename::dirname($path);
 	eval { File::Path::make_path($dir) };
 
-	my $json = encode_json({ manage => $manage ? 1 : 0, plan => $plan });
+	my $doc = { manage => $manage ? 1 : 0, plan => $plan };
+	if (defined $backend && $audio_backend_ok{$backend}
+		&& defined $device && length $device) {
+		$doc->{backend} = $backend;
+		$doc->{device} = $device;
+	}
+	my $json = encode_json($doc);
 	my $tmp  = "$path.tmp.$$";
 	my $wrote = eval {
 		open my $fh, '>', $tmp or die "open: $!";
@@ -156,6 +242,35 @@ sub _audio_plan_boot_write {
 	return { ok => 1, path => $path };
 }
 
+# Choose the interface the engine opens. The pair goes into the supervisor's
+# startup file, so a restart uses it; while the engine is up, `quit` makes the
+# supervisor restart it with the new choice (the supervisor reads the file at
+# every spawn). A machine with no engine still saves the choice for later.
+sub audio_engine_device_write {
+	my ($backend, $device) = @_;
+	$backend = '' if !defined $backend || ref $backend;
+	$device  = '' if !defined $device || ref $device;
+	return { ok => 0, error => 'choose an audio backend: alsa, pipewire or null' }
+		unless $audio_backend_ok{$backend};
+	return { ok => 0, error => 'choose a device for the backend' }
+		unless length $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/;
+
+	my $plan   = &audio_plan_read();
+	my $manage = &audio_manage_read();
+	my $written = &_audio_plan_boot_write($manage, $plan, $backend, $device);
+	return { ok => 0, error => $written->{error} } unless $written->{ok};
+
+	require JawnOS::Audio::Engine;
+	my $applied;
+	if ($manage) {
+		my $available = eval { JawnOS::Audio::Engine::audio_engine_available() } ? 1 : 0;
+		$applied = $available
+			? JawnOS::Audio::Engine::audio_engine_quit()
+			: { ok => 1, skipped => 1, error => '' };
+	}
+	return { ok => 1, backend => $backend, device => $device, applied => $applied };
+}
+
 # The master switch. On applies the saved plan now; off stops the engine's
 # patch and hands the outputs back. The plan itself is never removed.
 sub audio_manage_set {
@@ -167,7 +282,8 @@ sub audio_manage_set {
 		device  => 'all',
 		value   => $want ? '1' : '0',
 	});
-	&_audio_plan_boot_write($want, &audio_plan_read());
+	my $choice = &audio_engine_device_read();
+	&_audio_plan_boot_write($want, &audio_plan_read(), $choice->{backend}, $choice->{device});
 
 	require JawnOS::Audio::Engine;
 	my $answer;

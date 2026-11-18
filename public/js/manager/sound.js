@@ -310,6 +310,9 @@ function soundBind() {
 	window_box.on('change', '#sound_manage', function() {
 		soundPatchManage(this.checked);
 	});
+	window_box.on('click', '#sound_engine_device_apply', function() {
+		soundPatchDeviceApply();
+	});
 	window_box.on('click', '#sound_patch_save', function() {
 		soundPatchSave();
 	});
