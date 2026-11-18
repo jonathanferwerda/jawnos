@@ -184,6 +184,21 @@
 		<% } %>
 	</div>
 	<p class="cfg-note"><%= &subs::ui('Corner Radius rounds every surface: window frames and their title bars, inputs, dropdowns, textareas, buttons, checkboxes, and the desk\'s panels and cards. 0 is square and 28 is the softest; a theme carries its own corner, and Follow theme returns to it.') %></p>
+	<%# Window effects: one per-device level. 'on' is the old switch's value and
+	    reads as medium; anything unrecognised falls back to medium. %>
+	<% my $effects_stored = &subs::setting_grabber({ app => 'misc', setting => 'window_effects', device => $dev }) || ''; %>
+	<% my $effects_level = ($effects_stored eq 'on' || $effects_stored eq '') ? 'medium' : $effects_stored; %>
+	<% $effects_level = 'medium' unless grep { $_ eq $effects_level } qw(off light medium maximum); %>
+	<div class="cfg-row">
+		<label><b><%= &subs::ui('Window Effects') %></b></label>
+		<select class="misc_setting" setting="window_effects" device="<%= $dev %>">
+			<option value="off" <% if ($effects_level eq 'off') { %>selected="selected"<% } %>><%= &subs::ui('Off') %></option>
+			<option value="light" <% if ($effects_level eq 'light') { %>selected="selected"<% } %>><%= &subs::ui('Light') %></option>
+			<option value="medium" <% if ($effects_level eq 'medium') { %>selected="selected"<% } %>><%= &subs::ui('Medium') %></option>
+			<option value="maximum" <% if ($effects_level eq 'maximum') { %>selected="selected"<% } %>><%= &subs::ui('Maximum') %></option>
+		</select>
+	</div>
+	<p class="cfg-note"><%= &subs::ui('How strongly windows move: the lean while a window is dragged, the stretch into a half or the whole screen, the bounce as it leaves or returns, and the kick when it is pinned. Off is a still desk; Maximum is the full jiggle.') %></p>
 	<div class="cfg-row">
 		<label><b>Texture</b></label>
 		<% my $current_texture = $active_theme
@@ -421,8 +436,6 @@
 				[ 'button_border', 'Button Border', 'range', 0, 8, 1, 1 ],
 				# the frame's colour, on its own: blank follows the theme (--line)
 				[ 'window_border_colour', 'Window Border Colour', 'colour' ],
-				# the desk's transient window motions: lean, stretch, bounce, pin kick
-				[ 'window_effects', &subs::ui('Window Effects'), [ 'on', 'off' ] ],
 				# the colour of the edge on those same pressed surfaces and the rail
 				[ 'button_border_colour', 'Button Border Colour', 'colour' ],
 				[ 'clothesline_height', 'Clothesline Height', 'range', 20, 120, 4, 40 ],

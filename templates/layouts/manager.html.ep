@@ -87,6 +87,9 @@
 			<% $corner_misc = 28 if $corner_misc > 28; %>
 			<% my $theme_bundle = &subs::active_theme_bundle(); %>
 			<% my $corner_theme_now = length($theme_bundle->{'slug'}) ? &subs::corner_radius() . 'px' : ''; %>
+			<% my $window_effects_level = &subs::misc_setting('window_effects') || ''; %>
+			<% $window_effects_level = 'medium' if $window_effects_level eq '' || $window_effects_level eq 'on'; %>
+			<% $window_effects_level = 'medium' unless grep { $_ eq $window_effects_level } qw(off light medium maximum); %>
 			// where the dock and the taskbar live, which of the two the search rides
 			// in, which end of the bar the start button takes, and the clock's own
 			// face: the misc settings, seeded here so the bars are laid out right
@@ -101,8 +104,8 @@
 				dock_windows: '<%= &subs::misc_setting('dock_windows') || 'on' %>',
 				taskbar_height: '<%= &subs::misc_setting('taskbar_height') || 44 %>',
 				navbar_height: '<%= &subs::misc_setting('navbar_height') || 36 %>',
-				// the window motions: on unless this device turned them off
-				window_effects: '<%= &subs::misc_setting('window_effects') || 'on' %>',
+				// the window motions: off, light, medium (the default) or maximum
+				window_effects: '<%= $window_effects_level %>',
 				// a border width whose 0 is meaningful: seed it empty when unset so the
 				// script's own default (3) applies, rather than turning 0 into 3
 				window_border: '<%= &subs::misc_setting('window_border') // '' %>',
@@ -199,7 +202,7 @@
 <% my ($manager_bg, $manager_appt_theme) = &subs::active_manager_background(); %>
 <% my $theme_dark = &subs::theme_is_dark(); %>
   <% my $body_class = join ' ', grep { length } (($theme_dark ? 'dark_theme' : ''), ((&Manager::fingerprint_available() && &Manager::padlock_request_is_local($c)) ? '' : 'no_local_fingerprint')); %>
-  <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>" data-icon-set="<%= &subs::icon_set() %>" data-cursor-set="<%= &subs::cursor_set() %>" data-theme-sig="<%= &subs::theme_signature() %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
+  <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>" data-icon-set="<%= &subs::icon_set() %>" data-cursor-set="<%= &subs::cursor_set() %>" data-theme-sig="<%= &subs::theme_signature() %>" data-window-effects="<%= $window_effects_level %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
   <% my $title_font = $theme_bundle->{'font'} || &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
   <style>
     :root { --jawnos-font: <%= $title_font %>; --corner_radius: <%= $corner_misc %>px;<% if (length $corner_theme_now) { %> --jawnos-corner: <%= $corner_theme_now %>;<% } %> }

@@ -5,6 +5,7 @@
      03_stack.js  - stacker, close, z-order, everythingMoves, dimension setter, background, drawer
      04_act.js  - appActSync, the act panel open/close message the beat no longer carries
      05_effects.js - wobble, stretch and bounce, on the Misc Window Effects switch
+     06_emerge.js  - a new window pouring out of the control that opened it
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 
@@ -443,6 +444,9 @@ function windowMaker(response, fragment) {
 	var matches = 0;
 	var locked = 'no';
 	var carry_on = 0;
+	// only a window appended by this call pours out of a control; a re-render
+	// or a restore keeps the place and the manners it already had
+	var made = 0;
 	try {
 		// One native pass over the windows instead of a jQuery wrap per node.
 		var winds = document.querySelectorAll('.wind');
@@ -508,6 +512,7 @@ function windowMaker(response, fragment) {
 		
 		if (matches == 0 && response != "null") {
 			$('#browser').append('' + response + '');
+			made = 1;
 			// The desk the window belongs to, and its pile, are set before the
 			// reorganizer lays it into a slot.
 			if (typeof jawnosWorkspaceWindowNew == 'function') { jawnosWorkspaceWindowNew($('#' + window_id)); }
@@ -647,6 +652,7 @@ function windowMaker(response, fragment) {
 	// give the reserved one back
 	windowTiledRelease(timestamp);
 	windowDimensionSetter($('#' + window_id));
+	if (made && typeof jawnosWindowEmerge === 'function') { jawnosWindowEmerge($('#' + window_id)); }
 	return window_id;
 }
 
@@ -1516,9 +1522,11 @@ function windowTiledPreview(win, at, home, from, group) {
 	windowTiledDragLeave(win, at, home, from, group);
 	var ww = $(window).width();
 	var edge = (at.x < (ww / 10)) ? 'left' : ((at.x > (ww - (ww / 10))) ? 'right' : '');
-	if (edge) {
+	if (edge && !(group && group.length)) {
 		// the edge owns the drop: draw the half it will take, which is the box
-		// windowHalfski applies on release
+		// windowHalfski applies on release. A drag carrying its pile keeps the
+		// pile, so the edge does not own that drop (the same rule 02_fit.js's
+		// drag stop applies).
 		if (typeof windowHalfRect == 'function') {
 			var half = windowHalfRect(edge);
 			box.attr('snap', 'half').css({

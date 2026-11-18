@@ -1212,63 +1212,70 @@ img.window_icon { height:22px !important; width:auto !important; max-width:none 
 body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35); }
 
 /* ---- window effects -------------------------------------------------------
-   The old compositor's manners, kept in transforms: a window leans while its
-   title bar is in the hand, stretches into a half or the whole screen, bounces
-   as it leaves or comes back, and gives a small kick when it is pinned. Only
+   The old compositor's manners, kept in transforms: a dragged window leans and
+   lags like a soft sheet, a half or maximized window stretches into its new
+   size, a minimizing or returning window bounces, and a pinned one kicks. Only
    transform and opacity are touched, so layout, the saved geometry and the drag
-   maths never see an effect. Misc -> Window Effects turns the whole set off;
-   the classes are added and removed by windows/05_effects.js. */
-@keyframes jawnos_window_wobble {
-	0%, 100% { transform: rotate(0deg) skewX(0deg); }
-	22% { transform: rotate(-0.5deg) skewX(-0.6deg); }
-	50% { transform: rotate(0deg) skewX(0deg); }
-	78% { transform: rotate(0.5deg) skewX(0.6deg); }
+   maths never see an effect. Misc -> Window Effects sets the whole set's level;
+   the classes are added and removed by windows/05_effects.js, and the body's
+   data-window-effects attribute scales the keyframes below. */
+body, body[data-window-effects="medium"] {
+	--je-wobble: 1;
+	--je-stretch: 1;
+	--je-bounce: 1;
+	--je-time: 1;
 }
-@keyframes jawnos_window_settle {
-	0% { transform: rotate(0deg) scale(1); }
-	38% { transform: rotate(-0.35deg) scale(1.012); }
-	70% { transform: rotate(0.22deg) scale(0.996); }
-	100% { transform: rotate(0deg) scale(1); }
+body[data-window-effects="light"] {
+	--je-wobble: .5;
+	--je-stretch: .55;
+	--je-bounce: .55;
+	--je-time: .85;
+}
+body[data-window-effects="maximum"] {
+	--je-wobble: 1.9;
+	--je-stretch: 1.7;
+	--je-bounce: 1.8;
+	--je-time: 1.2;
 }
 @keyframes jawnos_window_stretch {
-	0% { transform: scale(0.93, 0.96); }
-	55% { transform: scale(1.022, 1.012); }
-	82% { transform: scale(0.997, 0.999); }
+	0% { transform: scale(calc(1 - .07 * var(--je-stretch)), calc(1 - .04 * var(--je-stretch))); }
+	55% { transform: scale(calc(1 + .022 * var(--je-stretch)), calc(1 + .012 * var(--je-stretch))); }
+	82% { transform: scale(calc(1 - .003 * var(--je-stretch)), calc(1 - .001 * var(--je-stretch))); }
 	100% { transform: scale(1, 1); }
 }
 @keyframes jawnos_window_bounce_in {
-	0% { transform: scale(0.9, 0.92); }
-	58% { transform: scale(1.028, 1.02); }
-	82% { transform: scale(0.994, 0.997); }
+	0% { transform: scale(calc(1 - .1 * var(--je-bounce)), calc(1 - .08 * var(--je-bounce))); }
+	58% { transform: scale(calc(1 + .028 * var(--je-bounce)), calc(1 + .02 * var(--je-bounce))); }
+	82% { transform: scale(calc(1 - .006 * var(--je-bounce)), calc(1 - .003 * var(--je-bounce))); }
 	100% { transform: scale(1, 1); }
 }
 @keyframes jawnos_window_bounce_out {
 	0% { transform: scale(1, 1); opacity: 1; }
-	55% { transform: scale(0.94, 0.9); opacity: .9; }
-	100% { transform: scale(0.8, 0.72); opacity: 0; }
+	55% { transform: scale(calc(1 - .06 * var(--je-bounce)), calc(1 - .1 * var(--je-bounce))); opacity: .9; }
+	100% { transform: scale(calc(1 - .2 * var(--je-bounce)), calc(1 - .28 * var(--je-bounce))); opacity: 0; }
 }
 @keyframes jawnos_window_lock {
 	0% { transform: scale(1) rotate(0deg); }
-	35% { transform: scale(1.032) rotate(-0.4deg); }
-	68% { transform: scale(0.994) rotate(0.24deg); }
+	35% { transform: scale(calc(1 + .032 * var(--je-bounce))) rotate(calc(-.4deg * var(--je-wobble))); }
+	68% { transform: scale(calc(1 - .006 * var(--je-bounce))) rotate(calc(.24deg * var(--je-wobble))); }
 	100% { transform: scale(1) rotate(0deg); }
 }
-.wind.jawnos_effect_wobble { animation: jawnos_window_wobble 420ms ease-in-out infinite; transform-origin: 50% 10%; will-change: transform; }
-.wind.jawnos_effect_settle { animation: jawnos_window_settle 280ms ease-out; transform-origin: 50% 10%; will-change: transform; }
-.wind.jawnos_effect_stretch { animation: jawnos_window_stretch 300ms cubic-bezier(.2,.9,.25,1.2); transform-origin: 50% 50%; will-change: transform; }
-.wind.jawnos_effect_in { animation: jawnos_window_bounce_in 320ms cubic-bezier(.2,.9,.25,1.2); transform-origin: 50% 60%; will-change: transform; }
-.wind.jawnos_effect_out { animation: jawnos_window_bounce_out 190ms ease-in; transform-origin: 50% 60%; will-change: transform, opacity; }
-.wind.jawnos_effect_lock { animation: jawnos_window_lock 260ms ease-out; transform-origin: 50% 10%; will-change: transform; }
+/* The physics writes the drag transform inline; this only gives it the hanging
+   point at the title bar and a compositing hint while it is in the hand. */
+.wind.jawnos_wobbling { transform-origin: 50% 0%; will-change: transform; }
+.wind.jawnos_effect_stretch { animation: jawnos_window_stretch calc(300ms * var(--je-time)) cubic-bezier(.2,.9,.25,1.2); transform-origin: 50% 50%; will-change: transform; }
+.wind.jawnos_effect_in { animation: jawnos_window_bounce_in calc(320ms * var(--je-time)) cubic-bezier(.2,.9,.25,1.2); transform-origin: 50% 60%; will-change: transform; }
+.wind.jawnos_effect_out { animation: jawnos_window_bounce_out calc(190ms * var(--je-time)) ease-in; transform-origin: 50% 60%; will-change: transform, opacity; }
+.wind.jawnos_effect_lock { animation: jawnos_window_lock calc(260ms * var(--je-time)) ease-out; transform-origin: 50% 10%; will-change: transform; }
 @media (prefers-reduced-motion: reduce) {
-	/* the lean is the one endless motion, so it stops rather than racing at a
-	   millisecond; the one-shots finish at once and their animationend still
-	   closes a minimise */
-	.wind.jawnos_effect_wobble { animation: none; }
-	.wind.jawnos_effect_settle, .wind.jawnos_effect_stretch,
-	.wind.jawnos_effect_in, .wind.jawnos_effect_out, .wind.jawnos_effect_lock {
+	/* the one-shots finish at once and their animationend still closes a
+	   minimise; the drag physics is skipped in JS, not here */
+	.wind.jawnos_effect_stretch, .wind.jawnos_effect_in,
+	.wind.jawnos_effect_out, .wind.jawnos_effect_lock {
 		animation-duration: 1ms;
 	}
 }
+
 /* Inside a window every surface that asked for the panel surface gets the
    window's own colour instead, so an app or an appointment does not dissolve
    into the desktop behind it. --panel-2 and --line keep the theme's contrast
@@ -4391,3 +4398,34 @@ body.dark_theme .jawnos_taskbar:not(#taskbar) { background-image: linear-gradien
 .jawnos_dock:not(#pseudonym_home)[position="top"][align="left"] { left: 8px; right: auto; transform: none; }
 .jawnos_dock:not(#pseudonym_home)[position="bottom"][align="right"],
 .jawnos_dock:not(#pseudonym_home)[position="top"][align="right"] { left: auto; right: 8px; transform: none; }
+
+/* ---- window emerge -------------------------------------------------------
+   A new window pours out of the control that opened it: a fixed sheet, worn by
+   no window, starts as the pressed pill or icon and stretches to the window's
+   final rectangle while the real window fades in on its own geometry. The
+   sheet has no content, so stretching it never squashes the window's text;
+   only transform and opacity animate, so the motion stays on the compositor.
+   windows/06_emerge.js positions it inline each time and removes it when the
+   motion ends. The z-index sits above the windows and the start menu but below
+   #window_tile_preview, which is a drag hint rather than a window. */
+.jawnos_emerge_sheet {
+	position: fixed;
+	z-index: 2147482890;
+	pointer-events: none;
+	box-sizing: border-box;
+	border-radius: var(--window_radius, var(--jawnos-corner, 12px));
+	background: var(--window, var(--panel));
+	background-image: linear-gradient(rgba(255,255,255,.10), rgba(0,0,0,.04));
+	box-shadow: 0 10px 28px rgba(0,0,0,.18);
+	transform-origin: 50% 50%;
+	will-change: transform, opacity;
+}
+body.dark_theme .jawnos_emerge_sheet {
+	box-shadow: 0 12px 32px rgba(0,0,0,.5);
+}
+/* The scripted motion already stands down for a reduced-motion desk; this is
+   the belt and braces for a sheet that was already in flight when the setting
+   changed. */
+@media (prefers-reduced-motion: reduce) {
+	.jawnos_emerge_sheet { display: none; }
+}

@@ -293,6 +293,7 @@ function windowDraggable(win) {
 			// the exception stopped the window being moved at all.
 			drag: function(p,ui) {
 				if (typeof markerDragger === 'function') { markerDragger(p.target.id,'drag'); }
+				if (typeof jawnosWindowWobbleMove == 'function') { jawnosWindowWobbleMove(win, p.pageX, p.pageY); }
 				// the windows below the held one in its pile move with it, keeping the
 				// cascade's own spacing, so the pile travels whole
 				if (dragGroup.length && dragFromTile) {

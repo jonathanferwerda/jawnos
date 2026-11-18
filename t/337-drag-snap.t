@@ -1,7 +1,9 @@
-# tests-for: public/js/manager/windows/02_fit.js public/js/manager/windows.js public/css/manager.css
+# tests-for: public/js/manager/windows/02_fit.js public/js/manager/windows.js public/js/manager/windows/03_stack.js public/css/manager.css
 # covers:    a drag to either edge draws the half the window will take, from one
 #            shared geometry, and a window dragged out of a half (or a maximize)
 #            is re-anchored so it stays under the pointer instead of trailing it.
+#            A snap's stretch is a transform, so the box the view is read from is
+#            the window's style position, not the transformed rect.
 
 use strict;
 use warnings;
@@ -16,6 +18,7 @@ use RepoSource;
 my $root = repo_root();
 my $fit     = read_file("$root/public/js/manager/windows/02_fit.js");
 my $windows = read_file("$root/public/js/manager/windows.js");
+my $stack   = read_file("$root/public/js/manager/windows/03_stack.js");
 my $css     = read_file("$root/public/css/manager.css");
 
 # --- one geometry for the snap and its highlight ----------------------------
@@ -135,6 +138,119 @@ JS
 	my $rc = $? >> 8;
 	diag($out) if $rc;
 	is($rc, 0, 'windowHalfRect draws the box the window will take');
+}
+
+# --- an effect's transform cannot change the view a window wears ------------
+# The snap's stretch is a scale, and offset() is the transformed rect: its first
+# frame read an 800-wide half as a shifted free window, so windowDimensionSetter
+# wrote the half box over free_dimensions and the drag out of a half had nothing
+# left to restore. The view is classified on the style box, which no transform
+# touches.
+like($stack, qr/var off = w\.offset\(\);/, 'the setter still reads the live offset');
+like($stack, qr/if \(!off\) \{ return; \}/, 'a hidden window has no box to measure and keeps its view');
+like($stack, qr/var top = parseFloat\(w\.css\('top'\)\);/, 'the top is the style position');
+like($stack, qr/var left = parseFloat\(w\.css\('left'\)\);/, 'and the left is too');
+like($stack, qr/if \(isNaN\(top\)\) \{ top = off\.top; \}/, 'a style position that is not a length falls back to offset');
+like($stack, qr/if \(isNaN\(left\)\) \{ left = off\.left; \}/, 'both edges fall back');
+
+# --- the classification, played against a stretched box --------------------
+SKIP: {
+	skip 'node is needed to play the dimension setter', 1 unless $node && -x $node;
+
+	my ($sfh, $setter_harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $sfh <<'JS';
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+
+// 1600 wide: a half is 800 at 0 or 800, its foot under an empty header.
+const windowStub = { width: 1600, height: 1000 };
+
+function El(attrs, style, offset) {
+	this.length = 1;
+	this.attrs = attrs || {};
+	this.style = style || {};
+	this.off = offset;
+}
+El.prototype.attr = function (k, v) {
+	if (v === undefined) { return this.attrs[k]; }
+	this.attrs[k] = v;
+	return this;
+};
+El.prototype.css = function (k) {
+	return (this.style[k] === undefined) ? '' : String(this.style[k]);
+};
+El.prototype.width = function () { return parseFloat(this.style.width) || 0; };
+El.prototype.height = function () { return parseFloat(this.style.height) || 0; };
+El.prototype.offset = function () { return this.off; };
+
+function chain() {
+	return { on: function () { return this; }, width: function () { return 0; }, height: function () { return 0; } };
+}
+function $(sel) {
+	if (sel === windowStub) {
+		return { on: function () { return this; }, width: function () { return windowStub.width; }, height: function () { return windowStub.height; } };
+	}
+	return chain();
+}
+
+const sandbox = {
+	window: windowStub,
+	document: {},
+	$: $,
+	JSON: JSON,
+	Math: Math,
+	Date: Date,
+	console: console,
+	windowPhoneChecker: function () { return false; },
+	reservedSpots: { header: 0 },
+	clothesLinePos: { exists: 0 },
+	clothesLineHeight: 0
+};
+vm.createContext(sandbox);
+vm.runInContext(source, sandbox);
+
+let failures = 0;
+function eq(name, got, want) {
+	if (got === want) { console.log('ok - ' + name); }
+	else { failures++; console.log('not ok - ' + name + ': ' + got + ' != ' + want); }
+}
+
+// scale(.93,.96) around the middle: the half's 0/44 box measures as 28/60.
+let w = new El({ view: 'left', free_dimensions: '{"width":480,"height":640}' },
+	{ left: '0px', top: '44px', width: '800px', height: '798px' }, { left: 28, top: 60 });
+sandbox.windowDimensionSetter(w);
+eq('a stretched left half stays the left half', w.attrs.view, 'left');
+eq('and its last free box is not overwritten', w.attrs.free_dimensions, '{"width":480,"height":640}');
+
+w = new El({ view: 'right' },
+	{ left: '800px', top: '44px', width: '800px', height: '798px' }, { left: 828, top: 60 });
+sandbox.windowDimensionSetter(w);
+eq('a stretched right half stays the right half', w.attrs.view, 'right');
+
+// a free window is recorded from its style box, not the transformed rect
+w = new El({ view: '' },
+	{ left: '200px', top: '100px', width: '480px', height: '640px' }, { left: 228, top: 116 });
+sandbox.windowDimensionSetter(w);
+eq('a free window is measured by its style box', w.attrs.free_dimensions,
+	'{"width":480,"height":640,"top":100,"left":200,"vw":1600,"vh":1000}');
+
+// a hidden window has no offset at all: it keeps the view and the box it has
+w = new El({ view: 'left', free_dimensions: '{"width":480,"height":640}' },
+	{ left: '0px', top: '44px', width: '800px', height: '798px' }, undefined);
+sandbox.windowDimensionSetter(w);
+eq('a hidden window keeps its view', w.attrs.view, 'left');
+eq('and its saved box', w.attrs.free_dimensions, '{"width":480,"height":640}');
+
+process.exit(failures ? 1 : 0);
+JS
+	close $sfh;
+
+	my $setter_out = `$node "$setter_harness" "$root/public/js/manager/windows/03_stack.js" 2>&1`;
+	my $setter_rc = $? >> 8;
+	diag($setter_out) if $setter_rc;
+	is($setter_rc, 0, 'a transform does not change the half a window wears');
 }
 
 done_testing();

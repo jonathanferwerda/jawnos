@@ -257,6 +257,25 @@ $(document).on('click', '.background', function (e) {
 			else if (typeof jawnosClickMagnify == 'function') {
 				jawnosClickMagnify(document.getElementById(printer), magnify_rect, 0.5, (o[4] && o[4]['type'] == 'clothes') ? 4 : 0, magnify_radius);
 			}
+			// The pill is canvas paint, not an element, so this is where the
+			// press can say which rectangle the window should pour out of. The
+			// press point is in viewport units; the stored box is in the
+			// canvas's own, so the zoom ratio puts the size in those units.
+			if (typeof jawnosWindowOriginFromPoint == 'function') {
+				var origin_canvas = document.getElementById(printer);
+				if (origin_canvas && origin_canvas.getBoundingClientRect) {
+					var origin_box = origin_canvas.getBoundingClientRect();
+					var origin_zoom = (origin_canvas.offsetWidth ? origin_box.width / origin_canvas.offsetWidth : 1) || 1;
+					jawnosWindowOriginFromPoint(
+						e.clientX,
+						e.clientY,
+						(magnify_rect[2] - magnify_rect[0]) * origin_zoom,
+						(magnify_rect[3] - magnify_rect[1]) * origin_zoom,
+						magnify_radius * origin_zoom,
+						(o[4] && o[4]['name']) || ''
+					);
+				}
+			}
 			appointmentGrabber(o[4]['name'],timestamp);
 			return false;
 		}

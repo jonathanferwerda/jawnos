@@ -1,7 +1,8 @@
 # tests-for: public/js/manager/windows/05_effects.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js public/js/manager/windows.js public/js/manager/taskbar_edit.js public/css/manager.css templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep public/js/manager/taskbar/01_inputs.js perl/help/topics_configure.pl
-# covers:    the desk's window effects - a lean while dragging, a stretch into
-#            the half or the whole screen, a bounce out and back, and a kick on
-#            the pin - all transient transform classes behind one Misc switch.
+# covers:    the desk's window effects - a soft-sheet lean while dragging, a
+#            stretch into the half or the whole screen, a bounce out and back,
+#            and a kick on the pin - with one per-device level (off, light,
+#            medium, maximum) setting their amplitude.
 
 use strict;
 use warnings;
@@ -25,30 +26,42 @@ my $layout   = read_file("$root/templates/layouts/manager.html.ep");
 my $inputs   = read_file("$root/public/js/manager/taskbar/01_inputs.js");
 my $help     = read_file("$root/perl/help/topics_configure.pl");
 
-# --- one switch, seeded for this device -------------------------------------
-like($misc, qr/\[ 'window_effects', &subs::ui\('Window Effects'\), \[ 'on', 'off' \] \]/,
-	'Misc carries the Window Effects switch');
-like($layout, qr/window_effects: '<%= &subs::misc_setting\('window_effects'\) \|\| 'on' %>'/,
-	'the manager seeds it for this device, on unless turned off');
+# --- one level, visible in Misc ---------------------------------------------
+like($misc, qr/setting="window_effects" device="<%= \$dev %>"/,
+	'Misc carries a Window Effects control in the device section');
+like($misc, qr/value="off".*?value="light".*?value="medium".*?value="maximum"/s,
+	'the four levels are offered in order');
+unlike($misc, qr/\[ 'window_effects',/, 'the old Bars on/off entry is gone');
+like($layout, qr/window_effects: '<%= \$window_effects_level %>'/,
+	'the manager seeds the normalised level for this device');
+like($layout, qr/data-window-effects="<%= \$window_effects_level %>"/,
+	'and stamps it on the body for the CSS amplitudes');
 like($inputs, qr/setting == 'window_effects'.*?jawnosWindowEffectsSet/,
-	'the panel switch reaches the live desk');
-like($help, qr/Window Effects turns the desk\\?'s window motions on or off/,
-	'the Configure help names the switch and what it does');
+	'the panel control reaches the live desk');
+like($help, qr/Light, Medium or Maximum/, 'the Configure help names the levels');
+like($help, qr/Medium is the default/, 'and the default');
 
-# --- the manifest names the new part ----------------------------------------
+# --- the manifest names the effects part ------------------------------------
 like($index, qr/05_effects\.js/, 'windows.js names its effects part');
-like($effects, qr/function jawnosWindowEffectsOn\(\)/, 'the switch has one reader');
-like($effects, qr/\['window_effects'\] === 'off'/, 'only the stored off turns the effects off');
+like($effects, qr/function jawnosWindowEffectsLevel\(\)/, 'one reader for the level');
+like($effects, qr/function jawnosWindowEffectScale\(\)/, 'one amplitude reader');
 like($effects, qr/function jawnosWindowEffectsSet\(value\)/, 'and one live setter');
+like($effects, qr/raw === 'off'/, 'only off stops the effects');
+like($effects, qr/function jawnosWindowMotionAllowed\(\)/, 'the physics asks reduced-motion first');
+like($effects, qr/jawnosWindowEmergeCancel\(el\)/, 'a one-shot motion cancels an emerge sheet too');
 
 # --- the motions are transform-only classes ---------------------------------
-foreach my $name (qw(wobble settle stretch bounce_in bounce_out lock)) {
+foreach my $name (qw(stretch bounce_in bounce_out lock)) {
 	like($css, qr/\@keyframes jawnos_window_$name \{/, "manager.css defines $name");
 }
-foreach my $class (qw(wobble settle stretch in out lock)) {
+foreach my $class (qw(stretch in out lock)) {
 	like($css, qr/\.wind\.jawnos_effect_$class \{ animation:/, "the $class class plays a keyframe");
 }
-like($css, qr/prefers-reduced-motion: reduce/, 'reduced motion shortens every effect');
+like($css, qr/\.wind\.jawnos_wobbling \{ transform-origin: 50% 0%/, 'the drag hangs from the title bar');
+like($css, qr/body\[data-window-effects="light"\]/, 'the light level has its own amplitudes');
+like($css, qr/body\[data-window-effects="maximum"\]/, 'so does maximum');
+like($css, qr/var\(--je-(?:wobble|stretch|bounce|time)\)/, 'the keyframes read the level variables');
+like($css, qr/prefers-reduced-motion: reduce/, 'reduced motion shortens every one-shot');
 unlike($css, qr/\.wind\.jawnos_effect_[a-z_]+ \{[^}]*\b(left|top|width|height):/s,
 	'no effect writes layout geometry');
 
@@ -60,7 +73,8 @@ like($fit, qr/function windowMinimizer.*?jawnosWindowMinimizeOut\(win\)/s, 'mini
 like($fit, qr/function windowRestorer.*?jawnosWindowRestoreIn\(win\)/s, 'the tile toggle bounces in');
 like($fit, qr/function windowRestorer.*?jawnosWindowMinimizeOut\(win\)/s, 'and bounces out on its own hide');
 like($fit, qr/jawnosWindowWobbleStart\(win\)/, 'a drag starts the lean');
-like($fit, qr/jawnosWindowWobbleStop\(win\)/, 'and the drop settles it');
+like($fit, qr/jawnosWindowWobbleMove\(win, p\.pageX, p\.pageY\)/, 'each drag event feeds the spring');
+like($fit, qr/jawnosWindowWobbleStop\(win\)/, 'and the drop lets it settle');
 like($fit, qr/jawnosWindowEffect\(win, 'lock'\)/, 'the pin gives the window a kick');
 like($index, qr/jawnosWindowRestoreIn\(tw\)/, 'a named window shown from the bar bounces in');
 like($index, qr/jawnosWindowMinimizeOut\(tw\)/, 'and one hidden from the bar bounces out');
@@ -70,7 +84,7 @@ like($edit_bar, qr/jawnosWindowEffectLeaving\(win\)/, 'the editable bar does too
 like($fit, qr/function windowMinimizer.*?jawnosWindowRestoreIn\(win\)/s, 'the desktop bar widget bounces a window back in');
 like($stack, qr/function topWindow.*?jawnosWindowEffectLeaving\(v\)/s, 'a leaving window is no longer the front');
 
-# --- the switch and the hide/restore race, played in a bare context ---------
+# --- the levels, the physics and the hide/restore race ---------------------
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
 SKIP: {
@@ -84,9 +98,13 @@ const vm = require('vm');
 
 let now = 0;
 let seq = 0;
+let rafSeq = 0;
 const timers = {};
+const rafs = {};
 function fakeSetTimeout(fn, ms) { const id = ++seq; timers[id] = { fn, at: now + (ms || 0) }; return id; }
 function fakeClearTimeout(id) { delete timers[id]; }
+function fakeRaf(fn) { const id = ++rafSeq; rafs[id] = fn; return id; }
+function fakeCancelRaf(id) { delete rafs[id]; }
 function advance(ms) {
 	now += ms;
 	let due;
@@ -95,11 +113,21 @@ function advance(ms) {
 		due.forEach((id) => { const t = timers[id]; delete timers[id]; t.fn(); });
 	} while (due.length);
 }
+function pump(frames) {
+	for (let i = 0; i < frames; i++) {
+		const ids = Object.keys(rafs);
+		if (!ids.length) { break; }
+		now += 16;
+		ids.forEach((id) => { const fn = rafs[id]; delete rafs[id]; fn(now); });
+	}
+}
 
 function Win(id) {
 	this.id = id;
 	this.classes = {};
+	this.style = {};
 	this.offsetWidth = 100;
+	this.parentNode = {};
 	this.hidden = false;
 	this.listeners = {};
 }
@@ -139,8 +167,14 @@ function $(sel) {
 }
 
 let adjuster = 0;
+const bodyAttrs = {};
 const sandbox = {
-	$, setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout,
+	$,
+	setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout,
+	requestAnimationFrame: fakeRaf, cancelAnimationFrame: fakeCancelRaf,
+	performance: { now: function () { return now; } },
+	window: { matchMedia: function () { return { matches: false }; } },
+	document: { body: { setAttribute: function (k, v) { bodyAttrs[k] = v; } } },
 	jawnos_bar_settings: { window_effects: 'on' },
 	windowBackgroundAdjuster: function () { adjuster++; },
 	console
@@ -157,28 +191,50 @@ function check(name, cond) {
 const w = new Win('window_1');
 windows.push(w);
 
-check('effects default on', sandbox.jawnosWindowEffectsOn() === true);
+check('the old on value reads as medium', sandbox.jawnosWindowEffectsLevel() === 'medium');
+check('and is on', sandbox.jawnosWindowEffectsOn() === true);
+check('the seed stamps the body', bodyAttrs['data-window-effects'] === 'medium');
+
+sandbox.jawnosWindowEffectsSet('light');
+check('light is a level', sandbox.jawnosWindowEffectsLevel() === 'light');
+check('light halves the amplitude', sandbox.jawnosWindowEffectScale() === 0.5);
+check('and reaches the body', bodyAttrs['data-window-effects'] === 'light');
+
+sandbox.jawnosWindowEffectsSet('maximum');
+check('maximum is a level', sandbox.jawnosWindowEffectsLevel() === 'maximum');
+check('maximum raises the amplitude', sandbox.jawnosWindowEffectScale() === 1.9);
+check('and reaches the body', bodyAttrs['data-window-effects'] === 'maximum');
 
 // the switch reaches the live desk and stops what is running
 sandbox.jawnosWindowEffect(w, 'stretch');
 check('the effect adds its class', w.classes['jawnos_effect_stretch'] === 1);
 sandbox.jawnosWindowEffectsSet('off');
-check('the stored off turns effects off', sandbox.jawnosWindowEffectsOn() === false);
+check('off stops the effects', sandbox.jawnosWindowEffectsOn() === false);
 check('turning off clears the classes', !w.classes['jawnos_effect_stretch']);
 check('an off desk does not animate', sandbox.jawnosWindowMinimizeOut(w) === false && !w.classes['jawnos_effect_out']);
 sandbox.jawnosWindowEffectsSet('on');
-check('the switch comes back on', sandbox.jawnosWindowEffectsOn() === true);
+check('the old on value comes back as medium', sandbox.jawnosWindowEffectsLevel() === 'medium');
 
 // one effect cleans itself up after its motion
 sandbox.jawnosWindowEffect(w, 'stretch');
 advance(1000);
 check('the effect class does not outlive the motion', !w.classes['jawnos_effect_stretch']);
 
-// the lean lasts only while held, then settles
-sandbox.jawnosWindowWobbleStart(w);
-check('a held title bar leans', w.classes['jawnos_effect_wobble'] === 1);
-sandbox.jawnosWindowWobbleStop(w);
-check('the drop stops the lean and settles', !w.classes['jawnos_effect_wobble'] && w.classes['jawnos_effect_settle'] === 1);
+// the lean is a spring: a rightward move shears the foot back, and the drop settles
+const phys = new Win('window_phys');
+windows.push(phys);
+sandbox.jawnosWindowWobbleStart(phys);
+check('the drag adds the hanging class', phys.classes['jawnos_wobbling'] === 1);
+sandbox.jawnosWindowWobbleMove(phys, 10, 10);
+sandbox.jawnosWindowWobbleMove(phys, 80, 10);
+check('moving right sets a negative shear', phys.jawnosWobble.targetShear < 0);
+pump(3);
+check('the frame writes a shear', /skewX\(-/.test(phys.style.transform));
+sandbox.jawnosWindowWobbleStop(phys);
+pump(240);
+check('the window settles and clears its transform', phys.style.transform === '');
+check('and gives the class back', !phys.classes['jawnos_wobbling']);
+check('and the state is gone', !phys.jawnosWobble);
 
 // minimizing out hides when the animation ends
 const out = new Win('window_2');
@@ -203,7 +259,7 @@ advance(1000);
 check('and never vanishes after it comes back', back.hidden === false);
 check('so the desk was not adjusted by a stale hide', adjuster === 1);
 
-// turning the switch off mid-minimize still finishes the hide
+// turning the level off mid-minimize still finishes the hide
 const falling = new Win('window_4');
 windows.push(falling);
 sandbox.jawnosWindowMinimizeOut(falling);
@@ -218,7 +274,7 @@ JS
 	my $out = `$node "$harness" "$root/public/js/manager/windows/05_effects.js" 2>&1`;
 	my $rc = $? >> 8;
 	diag($out) if $rc;
-	is($rc, 0, 'the effects play, clean up and cancel a hide on restore');
+	is($rc, 0, 'the levels, the physics and the hide/restore race all play');
 }
 
 # --- and the file parses ----------------------------------------------------

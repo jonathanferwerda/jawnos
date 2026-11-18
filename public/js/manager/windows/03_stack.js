@@ -429,8 +429,17 @@ function windowDimensionSetter(w) {
 		var app = w.attr('app');
 		var height = w.height();
 		var width = w.width();
-		var top = w.offset().top;
-		var left = w.offset().left;
+		// A window's box is its own style position, not offset(): an effect
+		// animates a transform, and offset() is the transformed rect - the first
+		// frame of the snap's stretch read a half as a narrow, shifted free window,
+		// so the half box was saved over free_dimensions. A hidden window has no
+		// offset (jQuery returns undefined) and keeps the view it wears.
+		var off = w.offset();
+		if (!off) { return; }
+		var top = parseFloat(w.css('top'));
+		var left = parseFloat(w.css('left'));
+		if (isNaN(top)) { top = off.top; }
+		if (isNaN(left)) { left = off.left; }
 		var right = (left + width);
 		// The screen the place was saved on travels with it, so the same place can
 		// be rescaled onto a smaller or larger one.

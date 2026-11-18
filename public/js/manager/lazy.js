@@ -141,7 +141,12 @@ $(document).on('click', function (e) {
 		var target = jawnosToggleTarget(el, hit.token);
 		jawnos_toggle_replay = true;
 		try {
-			if (target.length) { target.trigger('click'); }
+			if (target.length) {
+				// the chunk may have taken a while; the pressed icon is still the
+				// right source for the window's motion, so stamp it again now
+				if (typeof jawnosWindowOriginFromElement == 'function') { jawnosWindowOriginFromElement(target[0], app); }
+				target.trigger('click');
+			}
 			else if (typeof appWindowOpener === 'function') { appWindowOpener(app, Date.now(), { visible: 'yes' }); }
 		}
 		finally { jawnos_toggle_replay = false; }
