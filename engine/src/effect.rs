@@ -10,12 +10,32 @@
 //!
 //! The shapes follow `public/js/manager/studio.js`. Only the distortion curve
 //! is the web formula verbatim; everything else is the same role and controls,
-//! not a claim of a sample-identical copy (see each type's docs).
+//! not a claim of a sample-identical copy (see each type's docs). The pedals
+//! added for the Studio effects contract — flanger, fuzz, amp, limiter,
+//! autotune, equalizer and the maximizer the master rack borrows — live in the
+//! `effect/` submodules; each one documents its own approximation and its own
+//! natural units.
 
 use std::f64::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
 use crate::graph::{mix_mono_into_stereo_with_gains, pan_coefficients, GraphError, Strip};
 use crate::reverb::Reverb;
+
+mod amp;
+mod autotune;
+mod equalizer;
+mod flanger;
+mod fuzz;
+mod limiter;
+mod maximizer;
+
+pub use amp::Amp;
+pub use autotune::Autotune;
+pub use equalizer::Equalizer;
+pub use flanger::Flanger;
+pub use fuzz::Fuzz;
+pub use limiter::Limiter;
+pub use maximizer::Maximizer;
 
 /// How long a control takes to travel most of the way to a new value.
 const SMOOTH_SECONDS: f32 = 0.02;
@@ -185,6 +205,20 @@ fn lowpass(rate: f64, hz: f64) -> (f64, f64, f64, f64, f64, f64) {
     let b0 = (1.0 - cs) / 2.0;
     let b1 = 1.0 - cs;
     let b2 = (1.0 - cs) / 2.0;
+    let a0 = 1.0 + alpha;
+    let a1 = -2.0 * cs;
+    let a2 = 1.0 - alpha;
+    (b0, b1, b2, a0, a1, a2)
+}
+
+/// RBJ highpass, Q selectable, used by the amp's cabinets.
+fn highpass(rate: f64, hz: f64, q: f64) -> (f64, f64, f64, f64, f64, f64) {
+    let w = 2.0 * PI * clamp_hz(rate, hz) / rate;
+    let (sn, cs) = w.sin_cos();
+    let alpha = sn / (2.0 * q.max(0.01));
+    let b0 = (1.0 + cs) / 2.0;
+    let b1 = -(1.0 + cs);
+    let b2 = (1.0 + cs) / 2.0;
     let a0 = 1.0 + alpha;
     let a1 = -2.0 * cs;
     let a2 = 1.0 - alpha;
@@ -516,7 +550,7 @@ impl Effect for Delay {
                 }
                 true
             }
-            "mix" => {
+            "mix" | "vol" => {
                 if usable {
                     self.target_wet = value.clamp(0.0, 1.0);
                 }
@@ -628,7 +662,7 @@ impl Effect for Compressor {
     fn set(&mut self, name: &str, value: f32) -> bool {
         let usable = value.is_finite();
         match name {
-            "threshold" => {
+            "threshold" | "thresh" => {
                 if usable {
                     self.threshold_db = value.clamp(-100.0, 0.0);
                 }
@@ -637,6 +671,28 @@ impl Effect for Compressor {
             "attack" => {
                 if usable {
                     self.attack_s = value.clamp(0.000_1, 1.0);
+                }
+                true
+            }
+            // The browser exposes these three as knobs; without these arms the
+            // control path would send a parameter the engine silently refuses.
+            // They are block-rate controls, like the threshold: the gain
+            // reduction itself is still smoothed by attack and release.
+            "ratio" => {
+                if usable {
+                    self.ratio = value.clamp(1.0, 20.0);
+                }
+                true
+            }
+            "release" => {
+                if usable {
+                    self.release_s = value.clamp(0.01, 1.0);
+                }
+                true
+            }
+            "knee" => {
+                if usable {
+                    self.knee_db = value.clamp(0.0, 24.0);
                 }
                 true
             }
@@ -657,6 +713,12 @@ impl Effect for Compressor {
 
 /// The inserts `--insert` accepts, with the WebAudio defaults each pedal is
 /// built with until a control path moves its knobs.
+///
+/// The `master_` names (`master_comp`, `master_eq`, `master_reverb`,
+/// `master_maximizer`, `master_limiter`) parse to the same implementations as
+/// their channel counterparts: the prefix says where the insert belongs, not
+/// what it does. [`Mixer`](crate::mixer::Mixer) owns the master rack that uses
+/// them; this enum only selects the implementation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InsertKind {
     Tone,
@@ -664,6 +726,13 @@ pub enum InsertKind {
     Delay,
     Compressor,
     Reverb,
+    Flanger,
+    Fuzz,
+    Amp,
+    Limiter,
+    Autotune,
+    Equalizer,
+    Maximizer,
 }
 
 impl InsertKind {
@@ -672,8 +741,15 @@ impl InsertKind {
             "tone" => Some(InsertKind::Tone),
             "distortion" => Some(InsertKind::Distortion),
             "delay" => Some(InsertKind::Delay),
-            "compressor" => Some(InsertKind::Compressor),
-            "reverb" | "reverb2" => Some(InsertKind::Reverb),
+            "compressor" | "master_comp" => Some(InsertKind::Compressor),
+            "reverb" | "reverb2" | "master_reverb" => Some(InsertKind::Reverb),
+            "flanger" => Some(InsertKind::Flanger),
+            "fuzz" => Some(InsertKind::Fuzz),
+            "amp" => Some(InsertKind::Amp),
+            "limiter" | "master_limiter" => Some(InsertKind::Limiter),
+            "autotune" => Some(InsertKind::Autotune),
+            "equalizer" | "master_eq" => Some(InsertKind::Equalizer),
+            "maximizer" | "master_maximizer" => Some(InsertKind::Maximizer),
             _ => None,
         }
     }
@@ -685,13 +761,24 @@ impl InsertKind {
             InsertKind::Delay => "delay",
             InsertKind::Compressor => "compressor",
             InsertKind::Reverb => "reverb",
+            InsertKind::Flanger => "flanger",
+            InsertKind::Fuzz => "fuzz",
+            InsertKind::Amp => "amp",
+            InsertKind::Limiter => "limiter",
+            InsertKind::Autotune => "autotune",
+            InsertKind::Equalizer => "equalizer",
+            InsertKind::Maximizer => "maximizer",
         }
     }
 
     /// Build the pedal at its web defaults: a flat tone stack (the knobs at
     /// 50), Distorjawn at drive 50, Delayed at 0.525 s / 0.27 / 0.4,
     /// CompressionX at −25 dB / 0.1 s attack / 0.5 mix, and `reverb2` at
-    /// mix 35 / volume 35.
+    /// mix 35 / volume 35. The new pedals start where the browser's pedals
+    /// start: flanger 1.05 Hz / 0.6 depth / 0.225 feedback / 0.5 mix, fuzz
+    /// 0.65 gain / 0.45 tone / 0.6 level, amp 0.5 gain (0 dB) / flat tone /
+    /// Combo 1x12, limiter −3 dBFS / 0.2 s, autotune 0.4 speed / full amount /
+    /// C major, equalizer flat, and maximizer −0.8 dBFS / 0.2 loudness.
     pub fn build(self) -> Box<dyn Effect> {
         match self {
             InsertKind::Tone => Box::new(ToneStack::new(0.0, 0.0, 0.0)),
@@ -699,8 +786,23 @@ impl InsertKind {
             InsertKind::Delay => Box::new(Delay::new(0.525, 0.27, 0.4)),
             InsertKind::Compressor => Box::new(Compressor::new(-25.0, 12.0, 0.1, 0.25, 30.0, 0.5)),
             InsertKind::Reverb => Box::new(Reverb::new()),
+            InsertKind::Flanger => Box::new(Flanger::new(1.05, 0.6, 0.225, 0.5)),
+            InsertKind::Fuzz => Box::new(Fuzz::new(0.65, 0.45, 0.6)),
+            InsertKind::Amp => Box::new(Amp::new(0.5, 0.0, 0.0, 0.0, 0)),
+            InsertKind::Limiter => Box::new(Limiter::new(-3.0, 0.2)),
+            InsertKind::Autotune => Box::new(Autotune::new(0.4, 1.0, 0, 0)),
+            InsertKind::Equalizer => Box::new(Equalizer::new(0.0, 0.0, 0.0)),
+            InsertKind::Maximizer => Box::new(Maximizer::new(-0.8, 0.2)),
         }
     }
+}
+
+/// One insert in a rack. The effect is never removed when it is bypassed:
+/// the footswitch is a flag here, so the controls and the chain position stay
+/// exactly where the player left them.
+struct InsertSlot {
+    effect: Box<dyn Effect>,
+    bypassed: bool,
 }
 
 /// One channel strip: trim, the inserts in order, then the equal-power pan.
@@ -712,7 +814,7 @@ impl InsertKind {
 /// through the same strip.
 pub struct Channel {
     strip: Strip,
-    inserts: Vec<Box<dyn Effect>>,
+    inserts: Vec<InsertSlot>,
     scratch: Vec<f32>,
 }
 
@@ -772,9 +874,9 @@ impl Channel {
                     Some(pair) => pair,
                     None => return false,
                 };
-                for effect in &mut self.inserts {
-                    if effect.name() == prefix {
-                        return effect.set(knob, value);
+                for slot in &mut self.inserts {
+                    if slot.effect.name() == prefix {
+                        return slot.effect.set(knob, value);
                     }
                 }
                 false
@@ -784,15 +886,32 @@ impl Channel {
 
     /// Add one insert at the end of the chain.
     pub fn push(&mut self, effect: Box<dyn Effect>) {
-        self.inserts.push(effect);
+        self.inserts.push(InsertSlot {
+            effect,
+            bypassed: false,
+        });
+    }
+
+    /// Bypass or restore the first insert whose [`name`](Effect::name) is
+    /// `prefix`. The insert stays in the chain and keeps its controls; a
+    /// bypassed insert is simply not run. Returns false when no such insert is
+    /// in the rack.
+    pub fn bypass(&mut self, prefix: &str, bypassed: bool) -> bool {
+        for slot in &mut self.inserts {
+            if slot.effect.name() == prefix {
+                slot.bypassed = bypassed;
+                return true;
+            }
+        }
+        false
     }
 
     /// Size the scratch buffer and every insert. Allocation happens here and
     /// nowhere else.
     pub fn prepare(&mut self, rate: u32, max_frames: usize) {
         self.scratch = vec![0.0; max_frames];
-        for effect in &mut self.inserts {
-            effect.prepare(rate, max_frames);
+        for slot in &mut self.inserts {
+            slot.effect.prepare(rate, max_frames);
         }
     }
 
@@ -818,8 +937,10 @@ impl Channel {
         for sample in scratch.iter_mut() {
             *sample *= gain;
         }
-        for effect in &mut self.inserts {
-            effect.process(scratch);
+        for slot in &mut self.inserts {
+            if !slot.bypassed {
+                slot.effect.process(scratch);
+            }
         }
         // Gain was applied before the inserts; the output only needs the pan.
         let (left, right) = pan_coefficients(self.strip.pan.get());
@@ -828,16 +949,17 @@ impl Channel {
     }
 
     pub fn reset(&mut self) {
-        for effect in &mut self.inserts {
-            effect.reset();
+        for slot in &mut self.inserts {
+            slot.effect.reset();
         }
     }
 
-    /// The chain order, for a take report: `tone,distortion`.
+    /// The chain order, for a take report: `tone,distortion`. Bypassed inserts
+    /// are still in the rack, so they are still named.
     pub fn insert_names(&self) -> String {
         let mut names: Vec<&str> = Vec::with_capacity(self.inserts.len());
-        for effect in &self.inserts {
-            names.push(effect.name());
+        for slot in &self.inserts {
+            names.push(slot.effect.name());
         }
         names.join(",")
     }
@@ -866,6 +988,13 @@ mod tests {
             Box::new(Distortion::new(80.0)),
             Box::new(Delay::new(0.25, 0.5, 0.8)),
             Box::new(Compressor::new(-30.0, 4.0, 0.01, 0.2, 6.0, 1.0)),
+            Box::new(Flanger::new(0.5, 0.8, 0.4, 0.7)),
+            Box::new(Fuzz::new(0.8, 0.5, 0.7)),
+            Box::new(Amp::new(0.8, 6.0, -3.0, 3.0, 1)),
+            Box::new(Limiter::new(-3.0, 0.1)),
+            Box::new(Autotune::new(1.0, 1.0, 0, 0)),
+            Box::new(Equalizer::new(6.0, -6.0, 3.0)),
+            Box::new(Maximizer::new(-3.0, 0.5)),
         ];
         for effect in &mut effects {
             effect.prepare(RATE, 256);
@@ -886,6 +1015,13 @@ mod tests {
             Box::new(Distortion::new(100.0)),
             Box::new(Delay::new(0.1, 0.9, 1.0)),
             Box::new(Compressor::new(-40.0, 20.0, 0.001, 0.05, 0.0, 1.0)),
+            Box::new(Flanger::new(5.0, 1.0, 0.9, 1.0)),
+            Box::new(Fuzz::new(1.0, 1.0, 1.0)),
+            Box::new(Amp::new(1.0, 12.0, 12.0, 12.0, 3)),
+            Box::new(Limiter::new(-12.0, 0.001)),
+            Box::new(Autotune::new(1.0, 1.0, 0, 0)),
+            Box::new(Equalizer::new(15.0, 15.0, 15.0)),
+            Box::new(Maximizer::new(-12.0, 1.0)),
         ];
         for effect in &mut effects {
             effect.prepare(RATE, 256);
@@ -995,6 +1131,90 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_compressor_ratio_release_and_knee_move_the_reduction() {
+        // A constant input keeps the detector steady, so the reduction is a
+        // property of the knobs rather than of a sine's phase.
+        let loud = vec![0.8f32; 4096];
+
+        let mut gentle = Compressor::new(-30.0, 2.0, 0.001, 0.1, 0.0, 1.0);
+        gentle.prepare(RATE, 4096);
+        let mut block = loud.clone();
+        gentle.process(&mut block);
+        let gentle_reduction = gentle.reduction_db;
+
+        let mut hard = Compressor::new(-30.0, 2.0, 0.001, 0.1, 0.0, 1.0);
+        assert!(hard.set("ratio", 20.0));
+        hard.prepare(RATE, 4096);
+        let mut block = loud.clone();
+        hard.process(&mut block);
+        assert!(
+            hard.reduction_db > gentle_reduction + 3.0,
+            "ratio 20 reduced {} dB, ratio 2 only {} dB",
+            hard.reduction_db,
+            gentle_reduction
+        );
+
+        // A wide soft knee changes the reduction around the threshold.
+        let steady = vec![0.1f32; 4096];
+        let mut hard_knee = Compressor::new(-25.0, 4.0, 0.001, 0.1, 0.0, 1.0);
+        hard_knee.prepare(RATE, 4096);
+        let mut block = steady.clone();
+        hard_knee.process(&mut block);
+
+        let mut soft_knee = Compressor::new(-25.0, 4.0, 0.001, 0.1, 0.0, 1.0);
+        assert!(soft_knee.set("knee", 24.0));
+        soft_knee.prepare(RATE, 4096);
+        let mut block = steady.clone();
+        soft_knee.process(&mut block);
+        assert!(
+            (soft_knee.reduction_db - hard_knee.reduction_db).abs() > 0.25,
+            "the knee did not change the reduction: {} against {}",
+            soft_knee.reduction_db,
+            hard_knee.reduction_db
+        );
+
+        // After a loud burst, a fast release lets go of the gain; a slow one
+        // holds it. Both start from the same reduction.
+        let mut fast = Compressor::new(-30.0, 20.0, 0.001, 0.1, 0.0, 1.0);
+        assert!(fast.set("release", 0.01));
+        fast.prepare(RATE, 4096);
+        let mut block = loud.clone();
+        fast.process(&mut block);
+        let held = fast.reduction_db;
+        let mut silent = vec![0.0f32; 1024];
+        fast.process(&mut silent);
+        let fast_after = fast.reduction_db;
+
+        let mut slow = Compressor::new(-30.0, 20.0, 0.001, 0.1, 0.0, 1.0);
+        assert!(slow.set("release", 1.0));
+        slow.prepare(RATE, 4096);
+        let mut block = loud.clone();
+        slow.process(&mut block);
+        slow.process(&mut silent);
+        let slow_after = slow.reduction_db;
+
+        assert!(
+            fast_after < held * 0.5,
+            "the fast release held {fast_after} dB of {held}"
+        );
+        assert!(
+            slow_after > fast_after * 2.0,
+            "the slow release let go too quickly: {slow_after} against {fast_after}"
+        );
+    }
+
+    #[test]
+    fn a_non_finite_compressor_knob_is_ignored() {
+        let mut compressor = Compressor::new(-25.0, 12.0, 0.1, 0.25, 6.0, 0.5);
+        assert!(compressor.set("ratio", f32::NAN));
+        assert_eq!(compressor.ratio, 12.0, "NaN moved the ratio");
+        assert!(compressor.set("release", f32::NAN));
+        assert_eq!(compressor.release_s, 0.25, "NaN moved the release");
+        assert!(compressor.set("knee", f32::NAN));
+        assert_eq!(compressor.knee_db, 6.0, "NaN moved the knee");
+    }
+
     fn reset_matches_the_first_run(mut effect: Box<dyn Effect>) {
         effect.prepare(RATE, 512);
         let input = sine(440.0, 0.4, 512);
@@ -1018,6 +1238,13 @@ mod tests {
         reset_matches_the_first_run(Box::new(Distortion::new(60.0)));
         reset_matches_the_first_run(Box::new(Delay::new(0.05, 0.4, 0.5)));
         reset_matches_the_first_run(Box::new(Compressor::new(-25.0, 8.0, 0.01, 0.1, 6.0, 0.7)));
+        reset_matches_the_first_run(Box::new(Flanger::new(0.7, 0.7, 0.4, 0.6)));
+        reset_matches_the_first_run(Box::new(Fuzz::new(0.8, 0.4, 0.6)));
+        reset_matches_the_first_run(Box::new(Amp::new(0.6, 3.0, -3.0, 6.0, 2)));
+        reset_matches_the_first_run(Box::new(Limiter::new(-6.0, 0.1)));
+        reset_matches_the_first_run(Box::new(Autotune::new(1.0, 1.0, 0, 0)));
+        reset_matches_the_first_run(Box::new(Equalizer::new(3.0, -3.0, 6.0)));
+        reset_matches_the_first_run(Box::new(Maximizer::new(-3.0, 0.6)));
     }
 
     /// Test-only effects with a non-commuting pair of operations, so the order
@@ -1102,19 +1329,70 @@ mod tests {
         assert!(!delay.set("wet", 0.1));
 
         let mut compressor = Compressor::new(-25.0, 12.0, 0.1, 0.25, 30.0, 0.5);
-        for name in ["threshold", "attack", "mix"] {
+        for name in ["threshold", "thresh", "attack", "ratio", "release", "knee", "mix"] {
             assert!(
                 compressor.set(name, -10.0),
                 "compressor.{name} was not recognised"
             );
         }
-        assert!(!compressor.set("ratio", 1.0));
+        assert!(!compressor.set("drive", 1.0));
 
         let mut reverb = crate::reverb::Reverb::new();
-        for name in ["mix", "volume"] {
+        for name in ["mix", "volume", "model"] {
             assert!(reverb.set(name, 0.2), "reverb.{name} was not recognised");
         }
         assert!(!reverb.set("wet", 0.2));
+
+        let mut flanger = Flanger::new(0.3, 0.5, 0.3, 0.5);
+        for name in ["rate", "depth", "feedback", "mix"] {
+            assert!(flanger.set(name, 0.3), "flanger.{name} was not recognised");
+        }
+        assert!(!flanger.set("time", 0.3));
+
+        let mut fuzz = Fuzz::new(0.5, 0.5, 0.5);
+        for name in ["gain", "tone", "level"] {
+            assert!(fuzz.set(name, 0.3), "fuzz.{name} was not recognised");
+        }
+        assert!(!fuzz.set("drive", 0.3));
+
+        let mut amp = Amp::new(0.5, 0.0, 0.0, 0.0, 0);
+        for name in ["gain", "bass", "mid", "treble", "cabinet"] {
+            assert!(amp.set(name, 0.3), "amp.{name} was not recognised");
+        }
+        assert!(!amp.set("presence", 0.3));
+
+        let mut limiter = Limiter::new(-1.0, 0.2);
+        for name in ["ceiling", "release"] {
+            assert!(limiter.set(name, -3.0), "limiter.{name} was not recognised");
+        }
+        assert!(!limiter.set("threshold", -3.0));
+
+        let mut autotune = Autotune::new(0.5, 1.0, 0, 0);
+        for name in ["speed", "amount", "key", "scale"] {
+            assert!(
+                autotune.set(name, 1.0),
+                "autotune.{name} was not recognised"
+            );
+        }
+        assert!(!autotune.set("thresh", 1.0));
+
+        let mut equalizer = Equalizer::new(0.0, 0.0, 0.0);
+        for name in ["low", "mid", "high"] {
+            assert!(
+                equalizer.set(name, 3.0),
+                "equalizer.{name} was not recognised"
+            );
+        }
+        assert!(!equalizer.set("bass", 3.0));
+
+        let mut maximizer = Maximizer::new(-1.0, 0.3);
+        for name in ["ceiling", "loudness"] {
+            assert!(
+                maximizer.set(name, 0.5),
+                "maximizer.{name} was not recognised"
+            );
+        }
+        assert!(!maximizer.set("release", 0.1));
     }
 
     #[test]
@@ -1146,6 +1424,19 @@ mod tests {
         assert_eq!(compressor.threshold_db, 0.0);
         assert_eq!(compressor.attack_s, 1.0);
         assert_eq!(compressor.target_mix, 1.0);
+
+        compressor.set("ratio", 100.0);
+        assert_eq!(compressor.ratio, 20.0);
+        compressor.set("ratio", 0.0);
+        assert_eq!(compressor.ratio, 1.0);
+        compressor.set("release", 0.000_1);
+        assert_eq!(compressor.release_s, 0.01);
+        compressor.set("release", 10.0);
+        assert_eq!(compressor.release_s, 1.0);
+        compressor.set("knee", 100.0);
+        assert_eq!(compressor.knee_db, 24.0);
+        compressor.set("knee", -1.0);
+        assert_eq!(compressor.knee_db, 0.0);
 
         let mut reverb = crate::reverb::Reverb::new();
         reverb.set("mix", 10.0);
@@ -1213,6 +1504,29 @@ mod tests {
     }
 
     #[test]
+    fn a_bypassed_channel_insert_is_transparent() {
+        let input = sine(220.0, 0.3, 256);
+
+        let mut plain = Channel::new(1.0, 0.0);
+        plain.prepare(RATE, 256);
+        let mut plain_out = vec![0.0f32; 512];
+        plain.process(&input, &mut plain_out).expect("process");
+
+        let mut channel = Channel::new(1.0, 0.0);
+        channel.push(InsertKind::Distortion.build());
+        assert!(channel.bypass("distortion", true));
+        channel.prepare(RATE, 256);
+        let mut out = vec![0.0f32; 512];
+        channel.process(&input, &mut out).expect("process");
+        assert_eq!(out, plain_out, "a bypassed insert was not transparent");
+
+        assert!(channel.bypass("distortion", false));
+        channel.process(&input, &mut out).expect("process");
+        assert_ne!(out, plain_out, "restoring the insert changed nothing");
+        assert!(!channel.bypass("flanger", true));
+    }
+
+    #[test]
     fn insert_kinds_parse_and_report_their_names() {
         for (word, kind) in [
             ("tone", InsertKind::Tone),
@@ -1220,6 +1534,13 @@ mod tests {
             ("delay", InsertKind::Delay),
             ("compressor", InsertKind::Compressor),
             ("reverb", InsertKind::Reverb),
+            ("flanger", InsertKind::Flanger),
+            ("fuzz", InsertKind::Fuzz),
+            ("amp", InsertKind::Amp),
+            ("limiter", InsertKind::Limiter),
+            ("autotune", InsertKind::Autotune),
+            ("equalizer", InsertKind::Equalizer),
+            ("maximizer", InsertKind::Maximizer),
         ] {
             assert_eq!(InsertKind::parse(word), Some(kind));
             assert_eq!(kind.name(), word);
@@ -1227,6 +1548,18 @@ mod tests {
         // The web calls it `reverb2`; the report uses the engine's name.
         assert_eq!(InsertKind::parse("reverb2"), Some(InsertKind::Reverb));
         assert_eq!(InsertKind::Reverb.name(), "reverb");
-        assert_eq!(InsertKind::parse("flanger"), None);
+        // The master prefix selects the same implementation; placement is the
+        // caller's business, so the canonical name has no prefix.
+        for (word, kind) in [
+            ("master_comp", InsertKind::Compressor),
+            ("master_eq", InsertKind::Equalizer),
+            ("master_reverb", InsertKind::Reverb),
+            ("master_maximizer", InsertKind::Maximizer),
+            ("master_limiter", InsertKind::Limiter),
+        ] {
+            assert_eq!(InsertKind::parse(word), Some(kind), "{word}");
+        }
+        assert_eq!(InsertKind::Maximizer.name(), "maximizer");
+        assert_eq!(InsertKind::parse("banana"), None);
     }
 }

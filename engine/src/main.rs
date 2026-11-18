@@ -82,7 +82,8 @@ jawn-audio — the JawnOS audio engine
   --pan N         channel pan, -1 left .. 1 right (default 0, centre)
   --channel N     which input a one-track take records (default input 0)
   --insert NAME   an insert, repeatable in chain order:
-                  tone, distortion, delay, compressor or reverb
+                  tone, distortion, delay, compressor, reverb, flanger, fuzz,
+                  amp, limiter, autotune, equalizer or maximizer
                   (reverb2 is accepted as the web's name; default none)
   --tone HZ       with the null backend, record a sine instead of silence
   --monitor FILE.wav
@@ -96,7 +97,9 @@ jawn-audio — the JawnOS audio engine
                   pan for monitor file N, or every file (default 0, centre)
   --monitor-insert [N:]NAME
                   an insert on monitor file N (or every file), repeatable
-                  in chain order: tone, distortion, delay, compressor, reverb
+                  in chain order: tone, distortion, delay, compressor,
+                  reverb, flanger, fuzz, amp, limiter, autotune, equalizer
+                  or maximizer
   --align-samples N
                   start the monitor N samples before the take's --start-at;
                   use a measured capture offset (clamped so it never starts
@@ -144,7 +147,8 @@ jawn-audio — the JawnOS audio engine
   --gain N          channel trim, linear (default 1.0)
   --pan N           channel pan, -1 left .. 1 right (default 0, centre)
   --insert NAME     an insert, repeatable in chain order:
-                    tone, distortion, delay, compressor or reverb
+                    tone, distortion, delay, compressor, reverb, flanger,
+                    fuzz, amp, limiter, autotune, equalizer or maximizer
   --json            accepted for symmetry: --play always prints its JSON line
 
   Every file gets its own strip and the strips are summed into the stereo
@@ -163,7 +167,8 @@ jawn-audio — the JawnOS audio engine
   --gain N        channel trim, linear (default 1.0)
   --pan N         channel pan, -1 left .. 1 right (default 0, centre)
   --insert NAME   an insert, repeatable in chain order:
-                  tone, distortion, delay, compressor or reverb
+                  tone, distortion, delay, compressor, reverb, flanger, fuzz,
+                  amp, limiter, autotune, equalizer or maximizer
   --period N      block/period size in frames (default 64; --frames is an alias)
   --buffer N      buffer size in frames (default 256)
   --seconds S     stop after S seconds (default: until SIGINT/SIGTERM)
@@ -441,7 +446,7 @@ fn run() -> Result<ExitCode, String> {
                 let (file, text) = split_target(&raw);
                 let kind = InsertKind::parse(text).ok_or_else(|| {
                     format!(
-                        "unknown insert `{text}` (want tone, distortion, delay, compressor or reverb)"
+                        "unknown insert `{text}` (want tone, distortion, delay, compressor, reverb, flanger, fuzz, amp, limiter, autotune, equalizer or maximizer)"
                     )
                 })?;
                 options.monitor_inserts.push(InsertSpec { track: file, kind });
@@ -605,7 +610,7 @@ fn run() -> Result<ExitCode, String> {
     // parse time does not have to guess the mode.
     if let Some(word) = options.invalid_inserts.first() {
         let message = format!(
-            "unknown insert `{word}` (want tone, distortion, delay, compressor or reverb)"
+            "unknown insert `{word}` (want tone, distortion, delay, compressor, reverb, flanger, fuzz, amp, limiter, autotune, equalizer or maximizer)"
         );
         if options.mode == Mode::Listen {
             let device = options.backend.device_name(options.device.as_deref());

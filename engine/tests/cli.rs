@@ -528,7 +528,7 @@ fn an_unknown_insert_is_a_usage_error() {
     let take = TempTake::new("unknown-insert");
     let out = run(&[
         "--record", "--backend", "null", "--seconds", "0.1", "--out", take.text(),
-        "--insert", "flanger",
+        "--insert", "theremin",
     ]);
     assert_eq!(out.status.code(), Some(2));
     let text = String::from_utf8_lossy(&out.stderr);
@@ -1250,14 +1250,14 @@ fn listen_on_null_reports_the_contract_and_the_frame_count() {
 #[test]
 fn listen_with_a_bad_insert_is_a_runtime_failure() {
     let out = run(&[
-        "--listen", "--backend", "null", "--seconds", "0.1", "--insert", "flanger",
+        "--listen", "--backend", "null", "--seconds", "0.1", "--insert", "theremin",
     ]);
     assert_eq!(out.status.code(), Some(1));
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(text.trim().lines().count(), 1, "stdout: {text}");
     assert!(text.contains("\"ok\":false"), "stdout: {text}");
     assert!(text.contains("unknown insert"), "stdout: {text}");
-    assert!(text.contains("flanger"), "stdout: {text}");
+    assert!(text.contains("theremin"), "stdout: {text}");
     assert_eq!(json_number(&text, "frames"), 0.0, "stdout: {text}");
 }
 

@@ -6,7 +6,10 @@
 //! fixed seed, which is what makes the delta test exact.
 
 use jawn_audio::effect::Effect;
-use jawn_audio::reverb::{Reverb, DECAY, MIX_DEFAULT, NAME, PARTITION, SECONDS, VOLUME_DEFAULT};
+use jawn_audio::reverb::{
+    Reverb, DECAY, DEFAULT_MODEL, MIX_DEFAULT, MODEL_NAMES, MODEL_SECONDS, NAME, PARTITION,
+    VOLUME_DEFAULT,
+};
 
 const RATE: u32 = 48_000;
 
@@ -38,9 +41,13 @@ fn it_is_the_web_reverbs_impulse_with_the_web_knobs() {
     let mut reverb = prepared();
     assert_eq!(reverb.name(), NAME);
     assert_eq!(NAME, "reverb");
+    assert_eq!(reverb.model_name(), MODEL_NAMES[DEFAULT_MODEL]);
 
     let ir = reverb.impulse();
-    assert_eq!(ir.len(), (RATE as f32 * SECONDS) as usize);
+    assert_eq!(
+        ir.len(),
+        (RATE as f32 * MODEL_SECONDS[DEFAULT_MODEL]).round() as usize
+    );
     assert!(ir.iter().all(|sample| sample.is_finite()));
     // The generated noise decays by (1 - t)^2.6 and is then normalized, so the
     // last second is thousands of times quieter than the first, never louder.
@@ -65,6 +72,17 @@ fn it_is_the_web_reverbs_impulse_with_the_web_knobs() {
     assert!((reverb.wet_gain() - 0.9).abs() < 1e-6);
     assert_eq!(VOLUME_DEFAULT, 0.35);
     assert_eq!(DECAY, 2.6);
+
+    // A model switch is applied at the next block boundary and swaps the
+    // whole tail, with no re-preparation by the caller.
+    assert!(reverb.set("model", 4.0));
+    let mut boundary = vec![0.0f32; PARTITION];
+    reverb.process(&mut boundary);
+    assert_eq!(reverb.model_name(), "Cave");
+    assert_eq!(
+        reverb.impulse().len(),
+        (RATE as f32 * MODEL_SECONDS[4]).round() as usize
+    );
 }
 
 #[test]

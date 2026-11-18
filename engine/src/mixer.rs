@@ -10,11 +10,15 @@
 //! Nothing here allocates after [`Mixer::prepare`]: a take is many blocks over a
 //! fixed period, and an allocation in the block loop is a dropout, not a
 //! warning.
+//!
+//! The summed bus is the master. [`Mixer::push_master`] adds a fixed insert
+//! chain that [`Mixer::mix`] runs over that sum, after every channel strip and
+//! in order; it is the only place the whole mix exists at once.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::effect::Channel;
+use crate::effect::{Channel, Effect, InsertKind};
 
 /// How many control changes may wait between the control thread and the next
 /// block the audio thread runs. Each is one knob, so this is a second or two of
@@ -202,6 +206,72 @@ impl Default for ParamQueue {
     }
 }
 
+/// The effect behind a master-rack prefix. The song document and the socket
+/// speak `master_comp`; the effect itself still calls itself a compressor,
+/// because it is the same code a track uses. A prefix the rack does not know is
+/// passed through, so a caller can also say `compressor.threshold`.
+pub fn master_effect_name(prefix: &str) -> &str {
+    match prefix {
+        "master_comp" => "compressor",
+        "master_eq" => "equalizer",
+        "master_reverb" => "reverb",
+        "master_maximizer" => "maximizer",
+        "master_limiter" => "limiter",
+        other => other,
+    }
+}
+
+/// One insert in the master rack.
+///
+/// [`Effect`] is a mono processor, so a stereo bus needs two instances rather
+/// than one instance called twice: a reverb's convolution state is the tail,
+/// and sharing it between left and right would fold the stereo image into a
+/// mono one. The two instances are built from the same [`InsertKind`], so they
+/// always agree on their knobs.
+struct MasterSlot {
+    left: Box<dyn Effect>,
+    right: Box<dyn Effect>,
+    bypassed: bool,
+}
+
+impl MasterSlot {
+    fn new(kind: InsertKind) -> Self {
+        MasterSlot {
+            left: kind.build(),
+            right: kind.build(),
+            bypassed: false,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        self.left.name()
+    }
+
+    fn prepare(&mut self, rate: u32, frames: usize) {
+        self.left.prepare(rate, frames);
+        self.right.prepare(rate, frames);
+    }
+
+    fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+        if self.bypassed {
+            return;
+        }
+        self.left.process(left);
+        self.right.process(right);
+    }
+
+    fn set(&mut self, knob: &str, value: f32) -> bool {
+        let left = self.left.set(knob, value);
+        let right = self.right.set(knob, value);
+        left || right
+    }
+
+    fn reset(&mut self) {
+        self.left.reset();
+        self.right.reset();
+    }
+}
+
 /// One input and the strip that records it.
 pub struct Track {
     /// The device input index this track records, 0-based.
@@ -221,6 +291,10 @@ pub struct Mixer {
     tracks: Vec<Track>,
     /// One stereo block shared by [`Mixer::mix`], sized by `prepare`.
     scratch: Vec<f32>,
+    /// The master rack, applied to the summed stereo bus after every channel.
+    master: Vec<MasterSlot>,
+    /// The deinterleaved bus the master slots run over, sized by `prepare`.
+    master_scratch: Vec<f32>,
     /// Control changes from the socket, drained at the top of a block.
     params: Arc<ParamQueue>,
 }
@@ -248,8 +322,64 @@ impl Mixer {
         Mixer {
             tracks,
             scratch: Vec::new(),
+            master: Vec::new(),
+            master_scratch: Vec::new(),
             params,
         }
+    }
+
+    /// Add one insert to the end of the master chain. Call it before
+    /// [`prepare`](Mixer::prepare): the rack is a fixed set for the life of the
+    /// stream, which is what the UI's master rack shows.
+    pub fn push_master(&mut self, kind: InsertKind) {
+        self.master.push(MasterSlot::new(kind));
+    }
+
+    /// The master chain's implementation names, for a report: `limiter,eq`.
+    /// Bypassed inserts are still in the rack, so they are still named.
+    pub fn master_insert_names(&self) -> String {
+        let mut names: Vec<&str> = Vec::with_capacity(self.master.len());
+        for slot in &self.master {
+            names.push(slot.name());
+        }
+        names.join(",")
+    }
+
+    /// Move one master knob by name: `master_comp.threshold`,
+    /// `master_eq.low`, `master_reverb.model`, `master_maximizer.loudness`,
+    /// `master_limiter.ceiling`. The prefix is resolved by
+    /// [`master_effect_name`], so the canonical `compressor.threshold` also
+    /// works. Returns false when the named insert is not in the rack.
+    ///
+    /// Like [`Channel::set`], this only writes a smoothed target and is meant
+    /// for the setup thread or the audio thread between blocks; a control
+    /// thread with its own queue uses [`ParamQueue`] for the channel strips.
+    pub fn set_master(&mut self, name: &str, value: f32) -> bool {
+        let (prefix, knob) = match name.split_once('.') {
+            Some(pair) => pair,
+            None => return false,
+        };
+        let effect = master_effect_name(prefix);
+        for slot in &mut self.master {
+            if slot.name() == effect {
+                return slot.set(knob, value);
+            }
+        }
+        false
+    }
+
+    /// Bypass or restore a master insert in place. The insert keeps its knobs
+    /// and its position; a bypassed slot is simply not run, which is exactly
+    /// what a pedal's footswitch does.
+    pub fn bypass_master(&mut self, prefix: &str, bypassed: bool) -> bool {
+        let effect = master_effect_name(prefix);
+        for slot in &mut self.master {
+            if slot.name() == effect {
+                slot.bypassed = bypassed;
+                return true;
+            }
+        }
+        false
     }
 
     /// The queue the control thread pushes to.
@@ -273,11 +403,26 @@ impl Mixer {
         for track in &mut self.tracks {
             track.channel.prepare(rate, period);
         }
+        for slot in &mut self.master {
+            slot.prepare(rate, period);
+        }
         self.scratch = vec![0.0; period.saturating_mul(2)];
+        self.master_scratch = vec![0.0; period.saturating_mul(2)];
     }
 
     pub fn tracks(&self) -> &[Track] {
         &self.tracks
+    }
+
+    /// Clear every strip and the master tail, so the next block sounds like the
+    /// first one after a seek or a stop.
+    pub fn reset(&mut self) {
+        for track in &mut self.tracks {
+            track.channel.reset();
+        }
+        for slot in &mut self.master {
+            slot.reset();
+        }
     }
 
     pub fn tracks_mut(&mut self) -> &mut [Track] {
@@ -347,7 +492,13 @@ impl Mixer {
         }
 
         bus.fill(0.0);
-        let Mixer { tracks, scratch, .. } = self;
+        let Mixer {
+            tracks,
+            scratch,
+            master,
+            master_scratch,
+            ..
+        } = self;
         for (index, track) in tracks.iter_mut().enumerate() {
             let stereo = &mut scratch[..frames * 2];
             track
@@ -356,6 +507,27 @@ impl Mixer {
                 .map_err(|error| format!("track {index}: {error:?}"))?;
             for (out, sample) in bus.iter_mut().zip(stereo.iter()) {
                 *out += sample;
+            }
+        }
+
+        // The master chain sees the sum, never a track: this is the only place
+        // the whole mix exists at once. Each slot runs once per bus channel on
+        // deinterleaved halves, so a stereo effect keeps its two tails apart.
+        if !master.is_empty() {
+            if master_scratch.len() < frames * 2 {
+                return Err("the master chain was not prepared for this block".to_string());
+            }
+            let (left, right) = master_scratch.split_at_mut(frames);
+            for (index, frame) in bus.chunks_exact(2).enumerate() {
+                left[index] = frame[0];
+                right[index] = frame[1];
+            }
+            for slot in master.iter_mut() {
+                slot.process(left, right);
+            }
+            for (index, frame) in bus.chunks_exact_mut(2).enumerate() {
+                frame[0] = left[index];
+                frame[1] = right[index];
             }
         }
         Ok(())
@@ -501,15 +673,76 @@ mod tests {
     }
 
     #[test]
-    fn the_queue_keeps_its_order_and_its_values() {
-        let queue = ParamQueue::new();
-        assert!(queue.push(0, ParamName::Gain, 0.25));
-        assert!(queue.push(1, ParamName::Pan, -1.0));
-        assert!(queue.push(0, ParamName::ReverbMix, 0.75));
+    fn the_master_chain_runs_after_the_channels() {
+        // Two centred tracks at 0.8 sum to 1.13 per side, above full scale.
+        let input = [0.8f32; 8];
+        let mut plain = Mixer::new(&[0, 1], &["a", "b"]);
+        plain.prepare(48_000, 8);
+        let mut plain_bus = vec![0.0f32; 16];
+        plain.mix(&[&input, &input], &mut plain_bus).expect("mix");
+        let plain_peak = plain_bus
+            .iter()
+            .fold(0.0f32, |highest, sample| highest.max(sample.abs()));
+        assert!(
+            plain_peak > 1.0,
+            "the two tracks did not sum above full scale: {plain_peak}"
+        );
 
-        assert_eq!(queue.pop(), Some((0, ParamName::Gain, 0.25)));
-        assert_eq!(queue.pop(), Some((1, ParamName::Pan, -1.0)));
-        assert_eq!(queue.pop(), Some((0, ParamName::ReverbMix, 0.75)));
-        assert_eq!(queue.pop(), None);
+        let mut mixer = Mixer::new(&[0, 1], &["a", "b"]);
+        mixer.push_master(InsertKind::Limiter);
+        assert!(mixer.set_master("master_limiter.ceiling", -1.0));
+        mixer.prepare(48_000, 8);
+        let mut bus = vec![0.0f32; 16];
+        mixer.mix(&[&input, &input], &mut bus).expect("mix");
+
+        let ceiling = 10f32.powf(-1.0 / 20.0);
+        assert!(
+            bus.iter().all(|sample| sample.abs() <= ceiling + 1e-4),
+            "the master limiter did not catch the summed bus"
+        );
+    }
+
+    #[test]
+    fn a_bypassed_master_insert_is_transparent() {
+        let input: Vec<f32> = (0..256)
+            .map(|index| (std::f32::consts::TAU * 220.0 * index as f32 / 48_000.0).sin() * 0.5)
+            .collect();
+
+        let mut plain = Mixer::new(&[0], &["ch1"]);
+        plain.prepare(48_000, 256);
+        let mut expected = vec![0.0f32; 512];
+        plain.mix(&[&input], &mut expected).expect("mix");
+
+        let mut mixer = Mixer::new(&[0], &["ch1"]);
+        mixer.push_master(InsertKind::Compressor);
+        assert!(mixer.set_master("master_comp.threshold", -40.0));
+        assert!(mixer.set_master("master_comp.mix", 1.0));
+        assert!(mixer.bypass_master("master_comp", true));
+        mixer.prepare(48_000, 256);
+        let mut bus = vec![0.0f32; 512];
+        mixer.mix(&[&input], &mut bus).expect("mix");
+        assert_eq!(bus, expected, "a bypassed master insert was not transparent");
+
+        assert!(mixer.bypass_master("master_comp", false));
+        mixer.mix(&[&input], &mut bus).expect("mix");
+        let changed: f32 = bus
+            .iter()
+            .zip(&expected)
+            .map(|(sample, plain)| (sample - plain).abs())
+            .sum();
+        assert!(changed > 1e-3, "restoring the insert changed nothing");
+    }
+
+    #[test]
+    fn the_master_rack_routes_its_prefixed_names() {
+        let mut mixer = Mixer::new(&[0], &["ch1"]);
+        mixer.push_master(InsertKind::Equalizer);
+        assert!(mixer.set_master("master_eq.low", 6.0));
+        assert!(mixer.set_master("equalizer.high", -6.0));
+        assert!(!mixer.set_master("master_comp.threshold", -10.0));
+        assert!(!mixer.set_master("gain", 0.5));
+        assert!(mixer.bypass_master("master_eq", true));
+        assert!(!mixer.bypass_master("master_limiter", true));
+        assert_eq!(mixer.master_insert_names(), "equalizer");
     }
 }

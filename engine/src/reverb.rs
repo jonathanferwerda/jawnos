@@ -1,4 +1,4 @@
-//! The `reverb2` pedal: the web's impulse, convolved without adding latency.
+//! The `reverb` pedal: five generated tails, convolved without adding latency.
 //!
 //! `studioInsert(ctx, 'reverb2')` is a `ConvolverNode` over
 //! `studioImpulse(ctx, 2.4, 2.6)` — 2.4 s of uniform noise under a
@@ -7,6 +7,21 @@
 //! sound; a Freeverb or a Schroeder network would be a different reverb, so
 //! this is honest convolution, only arranged so the engine's own fixed block
 //! does not become a block of delay.
+//!
+//! The contract adds five models: Room (0.8 s), Spring (1.8 s), Plate (2.2 s),
+//! Hall (3.4 s) and Cave (6.0 s). Each is the same generated noise reshaped — a
+//! decay, a low/high cut and, for Spring, a pair of combs that give it the
+//! metallic ring — which keeps them the same kind of sound as the web's
+//! generated impulse rather than importing sampled rooms. The numbers are in
+//! [`MODEL_SECONDS`] and the names in [`MODEL_NAMES`]; the order is shared with
+//! the browser.
+//!
+//! Every model's impulse and its partition spectra are built in `prepare`, so
+//! `set("model", ...)` only swaps an index at the next 1024-sample boundary:
+//! no allocation and no FFT work on the audio thread. The bank costs about
+//! 18 MB at 48 kHz (the six-second Cave alone is 4.6 MB of spectra), against
+//! 4.2 MB for the old single tail. That memory is the price of a model switch
+//! that cannot glitch, and it is paid once per prepared reverb.
 //!
 //! # Why there is no latency
 //!
@@ -61,10 +76,28 @@ use crate::effect::Effect;
 /// The name the take report and the chain order use.
 pub const NAME: &str = "reverb";
 
-/// The web's impulse length in seconds: `studioImpulse(ctx, 2.4, 2.6)`.
+/// The five models, in the order both implementations must agree on.
+pub const MODEL_NAMES: [&str; 5] = ["Room", "Spring", "Plate", "Hall", "Cave"];
+
+/// Each model's tail length in seconds, from `docs/studio-effects.md`.
+pub const MODEL_SECONDS: [f32; 5] = [0.8, 1.8, 2.2, 3.4, 6.0];
+
+/// Plate: the closest model to the old 2.4 s diffuse impulse, so an old song
+/// loads with the character it had rather than a much shorter room.
+pub const DEFAULT_MODEL: usize = 2;
+
+const MODEL_COUNT: usize = MODEL_NAMES.len();
+
+/// The envelope's exponent per model. A larger value decays faster: Room is
+/// short and tight, Cave is long enough that its low-mid energy needs a gentler
+/// slope to stay audible beneath the length.
+const MODEL_DECAY: [f32; MODEL_COUNT] = [3.4, 2.2, 2.6, 2.4, 2.9];
+
+/// The reference shape the web generator was written for; the model table
+/// reuses the same generator with its own length and decay.
 pub const SECONDS: f32 = 2.4;
 
-/// The exponential decay applied across the impulse.
+/// The exponential decay applied across the reference impulse.
 pub const DECAY: f32 = 2.6;
 
 /// The partition length in samples: 21.3 ms at 48 kHz, and the FFT's size is
@@ -258,7 +291,9 @@ impl XorShift32 {
 /// `studioImpulse(rate, seconds, decay)` as written in `studio.js`, for one
 /// channel: uniform noise times `(1 - i/length)^decay`.
 fn studio_impulse(rate: u32, seconds: f32, decay: f32) -> Vec<f32> {
-    let length = ((f64::from(rate) * f64::from(seconds)).floor() as usize).max(1);
+    // Round rather than floor: 1.8 as an f32 is a hair under 1.8, and the
+    // contract's model lengths are written as whole sample counts at 48 kHz.
+    let length = ((f64::from(rate) * f64::from(seconds)).round() as usize).max(1);
     let mut rng = XorShift32::new(RNG_SEED);
     let mut impulse = Vec::with_capacity(length);
     for index in 0..length {
@@ -292,6 +327,126 @@ fn normalization_scale(impulse: &[f32], rate: u32) -> f32 {
     scale * (rate.max(1) as f32 / GAIN_CALIBRATION_RATE)
 }
 
+/// A one-pole lowpass coefficient for shaping a generated impulse at setup
+/// time. These filters run once per model in `prepare`, never per block.
+fn shape_coefficient(rate: f64, hz: f64) -> f64 {
+    let rate = rate.max(1.0);
+    1.0 - (-std::f64::consts::TAU * hz.clamp(10.0, rate * 0.45) / rate).exp()
+}
+
+fn lowpass_shape(impulse: &mut [f32], rate: f64, hz: f64) {
+    let coefficient = shape_coefficient(rate, hz);
+    let mut state = 0.0f64;
+    for sample in impulse {
+        let value = f64::from(*sample);
+        state += coefficient * (value - state);
+        *sample = state as f32;
+    }
+}
+
+fn highpass_shape(impulse: &mut [f32], rate: f64, hz: f64) {
+    let coefficient = shape_coefficient(rate, hz);
+    let mut state = 0.0f64;
+    for sample in impulse {
+        let value = f64::from(*sample);
+        state += coefficient * (value - state);
+        *sample = (value - state) as f32;
+    }
+}
+
+/// Add a scaled low band, up to `+6 dB` at DC when `gain` is 1.
+fn low_boost_shape(impulse: &mut [f32], rate: f64, hz: f64, gain: f64) {
+    let coefficient = shape_coefficient(rate, hz);
+    let mut state = 0.0f64;
+    for sample in impulse {
+        let value = f64::from(*sample);
+        state += coefficient * (value - state);
+        *sample = (value + gain * state) as f32;
+    }
+}
+
+/// Add a scaled high band, a bright shelf with no low-end change.
+fn high_boost_shape(impulse: &mut [f32], rate: f64, hz: f64, gain: f64) {
+    let coefficient = shape_coefficient(rate, hz);
+    let mut state = 0.0f64;
+    for sample in impulse {
+        let value = f64::from(*sample);
+        state += coefficient * (value - state);
+        *sample = (value + gain * (value - state)) as f32;
+    }
+}
+
+/// A feed-forward comb: the delayed copy gives the tail a metallic ring. The
+/// gain stays below one, so the shape cannot run away.
+fn comb_shape(impulse: &mut [f32], delay: usize, gain: f32) {
+    if delay == 0 || delay >= impulse.len() {
+        return;
+    }
+    for index in delay..impulse.len() {
+        impulse[index] += gain * impulse[index - delay];
+    }
+}
+
+/// A handful of discrete early reflections, which is what makes a small room
+/// sound like a room rather than a short plate.
+fn early_reflections(impulse: &mut [f32], rate: f64, taps: &[(f32, f32)]) {
+    for &(seconds, gain) in taps {
+        let delay = (rate * f64::from(seconds)) as usize;
+        if delay == 0 || delay >= impulse.len() {
+            continue;
+        }
+        for index in delay..impulse.len() {
+            impulse[index] += gain * impulse[index - delay];
+        }
+    }
+}
+
+/// The generated impulse for one model, before the convolver's normalization.
+///
+/// The base is the same `studioImpulse` noise as the browser, then one of five
+/// shapes: Room is cut low and given early reflections; Spring is narrowed to a
+/// bright band and run through two combs; Plate is dense and bright with no
+/// pre-delay; Hall has a dark 4.5 kHz top; Cave is darker still and low-mid
+/// heavy. None of these shapes adds a pre-delay, so a note's reverb starts with
+/// the note.
+fn model_impulse(rate: u32, model: usize) -> Vec<f32> {
+    let model = model.min(MODEL_COUNT - 1);
+    let rate_hz = rate.max(1);
+    let rate = f64::from(rate_hz);
+    let mut impulse = studio_impulse(rate_hz, MODEL_SECONDS[model], MODEL_DECAY[model]);
+    match model {
+        0 => {
+            highpass_shape(&mut impulse, rate, 200.0);
+            early_reflections(
+                &mut impulse,
+                rate,
+                &[(0.003, 0.8), (0.007, -0.55), (0.013, 0.4), (0.023, -0.3)],
+            );
+        }
+        1 => {
+            highpass_shape(&mut impulse, rate, 400.0);
+            lowpass_shape(&mut impulse, rate, 6_000.0);
+            high_boost_shape(&mut impulse, rate, 2_000.0, 0.5);
+            comb_shape(&mut impulse, (rate * 0.0037) as usize, 0.65);
+            comb_shape(&mut impulse, (rate * 0.0059) as usize, 0.45);
+        }
+        2 => {
+            highpass_shape(&mut impulse, rate, 120.0);
+            high_boost_shape(&mut impulse, rate, 1_500.0, 0.35);
+        }
+        3 => {
+            highpass_shape(&mut impulse, rate, 90.0);
+            lowpass_shape(&mut impulse, rate, 4_500.0);
+        }
+        _ => {
+            highpass_shape(&mut impulse, rate, 60.0);
+            lowpass_shape(&mut impulse, rate, 2_500.0);
+            low_boost_shape(&mut impulse, rate, 150.0, 0.8);
+        }
+    }
+    impulse
+}
+
 /// The fraction of the remaining distance a one-pole covers across one block.
 fn one_pole_block(seconds: f32, rate: u32, frames: usize) -> f64 {
     if seconds <= 0.0 || rate == 0 || frames == 0 {
@@ -310,17 +465,19 @@ fn one_pole_block(seconds: f32, rate: u32, frames: usize) -> f64 {
 /// block, so a moved knob cannot click and the output does not depend on how the
 /// host chops its calls.
 pub struct Reverb {
-    /// The effective impulse: generated, then scaled as the browser scales it.
-    impulse: Vec<f32>,
-    /// Length of `impulse`, kept so `prepare` does not re-derive it.
-    ir_len: usize,
-    /// Partition 0, reversed, so each output sample is one contiguous dot
-    /// product with `buf[r + 1 .. r + 1 + PARTITION]`.
-    head_rev: Vec<f32>,
-    /// FFTs of partitions 1..`partitions`, each a zero-padded 2048-point window.
+    /// Every model's effective impulse, so `impulse()` answers for the model
+    /// that is actually convolving. About 2.7 MB of the bank at 48 kHz.
+    impulses: Vec<Vec<f32>>,
+    /// Each model's first partition, reversed, contiguous:
+    /// `model * PARTITION .. (model + 1) * PARTITION`.
+    heads: Vec<f32>,
+    /// All models' spectra, packed: `spectra_at[model] + partition * FFT_LEN`.
     spectra: Vec<Cpx>,
-    /// The frequency-domain delay line: the last `partitions - 1` two-block
-    /// input windows, indexed by `block % ring_len`.
+    spectra_at: [usize; MODEL_COUNT],
+    partition_counts: [usize; MODEL_COUNT],
+    /// The frequency-domain delay line: the last `ring_len` two-block input
+    /// windows, indexed by `block % ring_len`. The ring is model-independent
+    /// because it holds input, not tail.
     windows: Vec<Cpx>,
     /// `[previous block | current block]` — the direct head's window and the
     /// next forward FFT's input.
@@ -334,6 +491,8 @@ pub struct Reverb {
     fft: Fft,
     partitions: usize,
     ring_len: usize,
+    model: usize,
+    target_model: usize,
     /// Position inside the current 1024-sample block.
     phase: usize,
     /// How many input blocks have been completed; indexes the window ring.
@@ -351,15 +510,16 @@ pub struct Reverb {
 
 impl Reverb {
     /// The web defaults: `mix` at 35 and `volume` at 35, which the page reaches
-    /// through `setters['mix'](35)`.
+    /// through `setters['mix'](35)`, and the Plate model.
     pub fn new() -> Self {
         let wet = MIX_DEFAULT * WET_SCALE;
         let dry = 1.0 - MIX_DEFAULT * DRY_SCALE;
         Reverb {
-            impulse: Vec::new(),
-            ir_len: 0,
-            head_rev: Vec::new(),
+            impulses: Vec::new(),
+            heads: Vec::new(),
             spectra: Vec::new(),
+            spectra_at: [0; MODEL_COUNT],
+            partition_counts: [2; MODEL_COUNT],
             windows: Vec::new(),
             buf: Vec::new(),
             acc: Vec::new(),
@@ -368,6 +528,8 @@ impl Reverb {
             fft: Fft::new(FFT_LEN),
             partitions: 0,
             ring_len: 0,
+            model: DEFAULT_MODEL,
+            target_model: DEFAULT_MODEL,
             phase: 0,
             finished_blocks: 0,
             prepared: false,
@@ -379,6 +541,26 @@ impl Reverb {
             dry,
             smooth: 1.0,
         }
+    }
+
+    /// Select a model, quantised from the slider. The switch happens at the
+    /// next 1024-sample boundary, so the bank is pre-built and this method only
+    /// writes a target: it allocates nothing and does no FFT work.
+    pub fn set_model(&mut self, value: f32) {
+        if !value.is_finite() {
+            return;
+        }
+        self.target_model = (value.round() as i32).clamp(0, MODEL_COUNT as i32 - 1) as usize;
+    }
+
+    /// The model whose tail is convolving now.
+    pub fn model(&self) -> usize {
+        self.model
+    }
+
+    /// The name of the current model, for a take report or a test.
+    pub fn model_name(&self) -> &'static str {
+        MODEL_NAMES[self.model.min(MODEL_COUNT - 1)]
     }
 
     /// Set the wet/dry mix, a normalised 0..1 version of the page's 0..100 knob:
@@ -409,9 +591,13 @@ impl Reverb {
     }
 
     /// The impulse the wet path actually convolves with: `studioImpulse`'s noise
-    /// and decay times the convolver's normalization. Empty before `prepare`.
+    /// and decay, the model's shaping and the convolver's normalization. Empty
+    /// before `prepare`.
     pub fn impulse(&self) -> &[f32] {
-        &self.impulse
+        self.impulses
+            .get(self.model)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// The wet gain the knobs currently ask for, before block smoothing.
@@ -422,6 +608,21 @@ impl Reverb {
     /// The dry gain the mix knob currently asks for, before block smoothing.
     pub fn dry_gain(&self) -> f32 {
         self.target_dry
+    }
+
+    /// Swap in the target model at the block edge. The input history in
+    /// `windows` is model-independent, so the new tail takes over the same
+    /// performance; only the block already assembled with the old model's
+    /// spectra is dropped. A 21 ms seam is preferable to keeping every model's
+    /// running state alive at once.
+    fn sync_model(&mut self) {
+        if !self.prepared || self.target_model == self.model {
+            return;
+        }
+        self.model = self.target_model;
+        self.partitions = self.partition_counts[self.model];
+        self.acc.fill(Cpx::ZERO);
+        self.out_part.fill(0.0);
     }
 
     /// Move the smoothed gains one block toward their targets. Called at the
@@ -468,10 +669,12 @@ impl Reverb {
             *value = Cpx::ZERO;
         }
         let next = finished + 1;
+        let spectra_at = self.spectra_at[self.model];
         for partition in 1..self.partitions {
             // Partition `k` multiplies the window ending at block `next - k`.
             let window_slot = (next + ring_len - (partition % ring_len)) % ring_len;
-            let h = &self.spectra[partition * n..(partition + 1) * n];
+            let base = spectra_at + partition * n;
+            let h = &self.spectra[base..base + n];
             let w = &self.windows[window_slot * n..(window_slot + 1) * n];
             let acc = &mut self.acc[..n];
             for index in 0..n {
@@ -505,44 +708,66 @@ impl Effect for Reverb {
         let rate = rate.max(1);
         self.fft = Fft::new(FFT_LEN);
 
-        self.impulse = studio_impulse(rate, SECONDS, DECAY);
-        let scale = normalization_scale(&self.impulse, rate);
-        for sample in &mut self.impulse {
-            *sample *= scale;
+        // Build every model here, on the setup thread, where an allocation and
+        // a few hundred FFTs are allowed. `set("model", ...)` then swaps an
+        // index at a block boundary: no allocation and no impulse generation on
+        // the audio thread.
+        let mut impulses: Vec<Vec<f32>> = Vec::with_capacity(MODEL_COUNT);
+        let mut partition_counts = [2usize; MODEL_COUNT];
+        let mut total_partitions = 0usize;
+        for model in 0..MODEL_COUNT {
+            let mut impulse = model_impulse(rate, model);
+            let scale = normalization_scale(&impulse, rate);
+            for sample in &mut impulse {
+                *sample *= scale;
+            }
+            partition_counts[model] = ((impulse.len() + PARTITION - 1) / PARTITION).max(2);
+            total_partitions += partition_counts[model];
+            impulses.push(impulse);
         }
-        self.ir_len = self.impulse.len();
-        // A very low rate makes an impulse shorter than one partition; the ring
-        // is still sized for at least one partition past the head.
-        self.partitions = ((self.ir_len + PARTITION - 1) / PARTITION).max(2);
-        self.ring_len = self.partitions - 1;
 
-        self.head_rev = vec![0.0; PARTITION];
-        for (index, sample) in self.impulse.iter().take(PARTITION).enumerate() {
-            self.head_rev[PARTITION - 1 - index] = *sample;
-        }
-
-        self.spectra = vec![Cpx::ZERO; self.partitions * FFT_LEN];
+        let mut spectra = vec![Cpx::ZERO; total_partitions * FFT_LEN];
+        let mut heads = vec![0.0; MODEL_COUNT * PARTITION];
+        let mut spectra_at = [0usize; MODEL_COUNT];
         let mut work = vec![Cpx::ZERO; FFT_LEN];
-        for partition in 1..self.partitions {
-            for value in work.iter_mut() {
-                *value = Cpx::ZERO;
+        let mut offset = 0usize;
+        for model in 0..MODEL_COUNT {
+            spectra_at[model] = offset;
+            let impulse = &impulses[model];
+            for (index, sample) in impulse.iter().take(PARTITION).enumerate() {
+                heads[model * PARTITION + PARTITION - 1 - index] = *sample;
             }
-            let start = partition * PARTITION;
-            let end = (start + PARTITION).min(self.ir_len);
-            for index in start..end {
-                work[index - start].re = self.impulse[index];
+            for partition in 1..partition_counts[model] {
+                work.fill(Cpx::ZERO);
+                let start = partition * PARTITION;
+                let end = (start + PARTITION).min(impulse.len());
+                for index in start..end {
+                    work[index - start].re = impulse[index];
+                }
+                self.fft.run(&mut work, false);
+                let base = offset + partition * FFT_LEN;
+                spectra[base..base + FFT_LEN].copy_from_slice(&work);
             }
-            self.fft.run(&mut work, false);
-            let base = partition * FFT_LEN;
-            self.spectra[base..base + FFT_LEN].copy_from_slice(&work);
+            offset += partition_counts[model] * FFT_LEN;
         }
 
+        self.impulses = impulses;
+        self.heads = heads;
+        self.spectra = spectra;
+        self.spectra_at = spectra_at;
+        self.partition_counts = partition_counts;
+        // The ring holds input windows, not tails, so one ring sized for the
+        // longest model serves every model. It is still indexed by `ring_len`
+        // below, which keeps the wrap arithmetic valid for a shorter model.
+        self.ring_len = partition_counts.iter().copied().max().unwrap_or(2) - 1;
         self.windows = vec![Cpx::ZERO; self.ring_len * FFT_LEN];
         self.acc = vec![Cpx::ZERO; FFT_LEN];
         self.scratch = vec![Cpx::ZERO; FFT_LEN];
         self.buf = vec![0.0; 2 * PARTITION];
         self.out_part = vec![0.0; PARTITION];
 
+        self.model = self.target_model.min(MODEL_COUNT - 1);
+        self.partitions = self.partition_counts[self.model];
         self.smooth = one_pole_block(SMOOTH_SECONDS, rate, PARTITION) as f32;
         self.prepared = true;
         self.reset();
@@ -552,13 +777,14 @@ impl Effect for Reverb {
         if !self.prepared
             || self.buf.len() < 2 * PARTITION
             || self.out_part.len() < PARTITION
-            || self.head_rev.len() < PARTITION
+            || self.heads.len() < MODEL_COUNT * PARTITION
         {
             return;
         }
 
         for sample in block.iter_mut() {
             if self.phase == 0 {
+                self.sync_model();
                 self.move_gains();
             }
 
@@ -567,14 +793,11 @@ impl Effect for Reverb {
 
             // Partition 0, in the time domain: every tap up to and including the
             // current sample, which is why no block of latency is added.
+            let head = self.model * PARTITION;
             let start = self.phase + 1;
             let mut direct = 0.0f32;
-            for (tap, value) in self
-                .head_rev
-                .iter()
-                .zip(&self.buf[start..start + PARTITION])
-            {
-                direct += tap * value;
+            for tap in 0..PARTITION {
+                direct += self.heads[head + tap] * self.buf[start + tap];
             }
 
             let wet_part = direct + self.out_part[self.phase];
@@ -596,6 +819,10 @@ impl Effect for Reverb {
         self.out_part.fill(0.0);
         self.phase = 0;
         self.finished_blocks = 0;
+        if self.prepared {
+            self.model = self.target_model.min(MODEL_COUNT - 1);
+            self.partitions = self.partition_counts[self.model];
+        }
         // Snap the smoothed gains so the next block sounds like the first one.
         self.wet = self.target_wet;
         self.dry = self.target_dry;
@@ -613,6 +840,10 @@ impl Effect for Reverb {
             }
             "volume" => {
                 self.set_volume(value);
+                true
+            }
+            "model" => {
+                self.set_model(value);
                 true
             }
             _ => false,
@@ -697,6 +928,59 @@ mod tests {
         let silent = vec![0.0f32; 1_000];
         let scale = normalization_scale(&silent, 48_000);
         assert!(scale.is_finite() && scale > 0.0);
+    }
+
+    #[test]
+    fn the_default_model_is_plate_and_every_model_keeps_its_length() {
+        let rate = 48_000;
+        let mut reverb = Reverb::new();
+        assert_eq!(reverb.model_name(), "Plate");
+        reverb.prepare(rate, 1024);
+        assert_eq!(reverb.model(), DEFAULT_MODEL);
+
+        // Each process call is one whole 1024-sample block, so the model switch
+        // is applied at its first sample and silence stays silent.
+        for (model, seconds) in MODEL_SECONDS.iter().enumerate() {
+            reverb.set("model", model as f32);
+            let mut block = vec![0.0f32; 1024];
+            reverb.process(&mut block);
+            assert_eq!(reverb.model(), model);
+            assert_eq!(reverb.model_name(), MODEL_NAMES[model]);
+            assert_eq!(reverb.impulse().len(), (rate as f32 * seconds) as usize);
+            assert_eq!(reverb.partitions, reverb.partition_counts[model]);
+            assert!(block.iter().all(|sample| *sample == 0.0));
+        }
+    }
+
+    #[test]
+    fn the_model_knob_clamps_and_ignores_junk() {
+        let mut reverb = Reverb::new();
+        reverb.prepare(48_000, 64);
+        assert!(reverb.set("model", 99.0));
+        assert_eq!(reverb.target_model, 4);
+        assert!(reverb.set("model", -5.0));
+        assert_eq!(reverb.target_model, 0);
+        assert!(reverb.set("model", f32::NAN));
+        assert_eq!(reverb.target_model, 0, "NaN moved the model");
+        assert!(!reverb.set("wet", 1.0));
+    }
+
+    #[test]
+    fn reset_returns_to_the_first_run() {
+        let rate = 48_000;
+        let input: Vec<f32> = (0..2_048)
+            .map(|index| {
+                (std::f32::consts::TAU * 220.0 * index as f32 / rate as f32).sin() * 0.3
+            })
+            .collect();
+        let mut reverb = Reverb::new();
+        reverb.prepare(rate, 2_048);
+        let mut first = input.clone();
+        reverb.process(&mut first);
+        reverb.reset();
+        let mut second = input.clone();
+        reverb.process(&mut second);
+        assert_eq!(first, second);
     }
 
     #[test]

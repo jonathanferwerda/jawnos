@@ -872,12 +872,12 @@ fn an_unknown_insert_is_refused_before_a_file_exists() {
     let take = TempFile::new("bad-insert");
 
     let reply = client.ask(&format!(
-        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.05,\"tracks\":[{{\"input\":0,\"inserts\":[\"tone\",\"flanger\"]}}]}}",
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.05,\"tracks\":[{{\"input\":0,\"inserts\":[\"tone\",\"theremin\"]}}]}}",
         take.text()
     ));
     assert!(reply.contains("\"ok\":false"), "unknown insert: {reply}");
     assert!(
-        reply.contains("no such insert: flanger"),
+        reply.contains("no such insert: theremin"),
         "unknown insert: {reply}"
     );
     assert!(
