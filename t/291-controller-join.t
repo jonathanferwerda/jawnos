@@ -55,7 +55,7 @@ like($provision, qr/\.jawnos_signatorial_id/, 'the provisioner clears the copied
 # The image is a copy of another card, so its tree may not carry the script the
 # unit calls; the provisioner copies this tree's own alongside the unit.
 like($provision, qr{could not copy \$name}, 'the board scripts are copied into the image, not assumed there');
-like($provision, qr/for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl gou_splash\.pl gou_first_run\.py\)\)/, 'the board scripts the flash needs, including the splash and the first-run dialog');
+like($provision, qr/for my \$name \(qw\(gou_first_boot\.pl gou_recovery\.pl gou_splash\.pl gou_first_run\.py jawnos_game_openssl\.pl\)\)/, 'the board scripts the flash needs, including the splash, the first-run dialog and the OpenSSL helper');
 like($provision, qr{/gou_first_boot\.pl}, 'from this tree\'s own scripts directory');
 like($provision, qr{/gou_splash\.pl}, 'and the splash script travels with the flash');
 # A copied desktop ticket outranks the fresh one the first boot writes, so the
@@ -138,6 +138,15 @@ like($wifi, qr/0bda/, 'and finds the combo adapter by its USB id');
 like($wifi, qr/wait_link && exit 0/, 'a board whose wlan0 is up does nothing');
 my $wifi_syntax = system('sh', '-n', root() . '/scripts/gou_wifi_reset.sh');
 is($wifi_syntax, 0, 'the WiFi guard is valid POSIX shell');
+
+# A fresh card already has the emulators, so nobody presses "Install emulators"
+# and the install helper cannot be the only caller of the OpenSSL compat step.
+like($provision, qr/sub _openssl_compat_unit/, 'the flash generates the OpenSSL compat unit');
+like($provision, qr/gou-openssl-compat\.service/, 'and enables it at boot');
+like($provision, qr{ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/jawnos_game_openssl\.pl},
+	'which runs the compat helper');
+like($provision, qr/jawnos_game_openssl\.pl/, 'the helper travels with the flash');
+like($provision, qr/_wants_link\(\$wants, 'gou-openssl-compat\.service'\)/, 'with a wants link');
 
 # The board's card slot reports itself as fixed (mmcblk0 rm=0), exactly like the
 # soldered eMMC, so the removable flag cannot find the archive card. And a card

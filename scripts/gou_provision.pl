@@ -879,6 +879,31 @@ WantedBy=timers.target
 UNIT
 }
 
+# A flashed card may carry a RetroArch built against an OpenSSL newer than its
+# openssl package. The games installer stages the needed sonames privately, but
+# a card that already has the emulators never runs that install. This oneshot
+# runs the same helper once at boot, before the manager, so a fresh flash starts
+# with a working frontend. It is idempotent: with the layer present it only
+# verifies the loader and the binary.
+sub _openssl_compat_unit {
+	return <<'UNIT';
+[Unit]
+Description=Give RetroArch the OpenSSL its build needs
+After=network-online.target
+Wants=network-online.target
+Before=jawnos.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/jawnos_game_openssl.pl
+StandardOutput=null
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
 sub _first_boot_unit {
 	return <<'UNIT';
 [Unit]
@@ -1130,7 +1155,7 @@ sub _autopopulate {
 		my $source_dir = File::Basename::dirname(Cwd::abs_path($0));
 		my $dir = "$mount/home/jawn/jawnos/scripts";
 		File::Path::make_path($dir) unless -d $dir;
-		for my $name (qw(gou_first_boot.pl gou_recovery.pl gou_splash.pl gou_first_run.py)) {
+		for my $name (qw(gou_first_boot.pl gou_recovery.pl gou_splash.pl gou_first_run.py jawnos_game_openssl.pl)) {
 			my $source = "$source_dir/$name";
 			my $script = -f $source ? _slurp($source) : '';
 			my $path = "$dir/$name";
@@ -1142,7 +1167,8 @@ sub _autopopulate {
 			}
 			push @done, $name eq 'gou_first_boot.pl' ? 'first-boot-script'
 				: $name eq 'gou_splash.pl' ? 'splash-script'
-				: $name eq 'gou_first_run.py' ? 'first-run-dialog' : 'recovery-script';
+				: $name eq 'gou_first_run.py' ? 'first-run-dialog'
+				: $name eq 'jawnos_game_openssl.pl' ? 'openssl-script' : 'recovery-script';
 		}
 	}
 	if (!length $error) {
@@ -1249,6 +1275,23 @@ sub _autopopulate {
 		}
 		else {
 			$error = 'could not copy the WiFi guard script';
+		}
+	}
+	if (!length $error) {
+		# The emulator's private OpenSSL layer is applied once, before the
+		# manager starts. A card that was flashed with the emulators already in
+		# place never presses "Install emulators", so the install helper cannot be
+		# the only caller.
+		my $units = "$etc/systemd/system";
+		my $wants = "$units/multi-user.target.wants";
+		File::Path::make_path($wants) unless -d $wants;
+		my $unit = "$units/gou-openssl-compat.service";
+		if (_write_file($unit, _openssl_compat_unit()) && chmod(0644, $unit) && chown(0, 0, $unit)) {
+			&_wants_link($wants, 'gou-openssl-compat.service');
+			push @done, 'openssl-compat-unit';
+		}
+		else {
+			$error = 'could not write the OpenSSL compat unit';
 		}
 	}
 	if (!length $error) {
