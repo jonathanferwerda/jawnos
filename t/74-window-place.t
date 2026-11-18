@@ -85,11 +85,19 @@ like($windows, qr/windowTiledCascadePlace\(null, reserve_geom\)/,
 	'as does the press\'s own reservation, with the same window and bar step');
 like($windows, qr/at\.left \+ Math\.round\(width \* windowStackAcross\)/,
 	'a full pile starts a new one, half a window across');
-like($fit, qr/var piled = !windowPhoneChecker\(\)[\s\S]{0,140}windowTiledSlot\(win\) >= 0/,
-	'a piled window is not squeezed to fit the desk');
+like($fit, qr/var piled = \(typeof windowTiledSlot == 'function' && windowTiledSlot\(win\) >= 0\)[\s\S]{0,140}win\.attr\('deck'\) !== undefined/,
+	'a piled window, on a desk or in a phone deck, is not squeezed to fit');
 like($fit, qr/if \(!piled && winTop \+ win\.height\(\) > viewH\)/,
 	'while a free or pinned one still is');
 like($windows, qr/function windowTiledLeave\(win, float\)/, 'a window can leave the tile');
+like($stack, qr/function windowDeckOf\(win\)/, 'a phone window carries the deck it sits in');
+like($stack, qr/function windowStacker\(app, raise\)[\s\S]{0,1200}windowDeckOf\(el\) === deck/,
+	'a walk stays inside the deck it was made in, and brings it forward');
+like($stack, qr/decks\.forEach\(function \(d\) \{ y\[d\] = windowTopLimit\(\); \}\)/,
+	'and every deck cascades from the desk\'s top');
+like($stack, qr/function windowPhoneCascadePlace\(geom\)/,
+	'a full phone deck starts a fresh cascade over the top, on the same x');
+like($windows, qr/windowPhoneCascadePlace\(\)[\s\S]{0,200}win\.attr\('deck'/, 'which the open takes');
 like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');
 like($windows, qr/function windowTiledJoinOrLeave\(win, at, home, from, group\)/, 'a drop either joins a pile, starts one, or leaves');
 like($windows, qr/function windowTiledInsertSlot\(at, skip, stack\)/, 'the dragged title bar names the slot in the pile under it');

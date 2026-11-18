@@ -634,7 +634,14 @@ function jawnosWindowEmergePredict(origin, near) {
 		width = view.width;
 		height = Math.round(view.height * 0.7128);
 		left = 0;
-		top = topLimit + jawnosWindowEmergePhoneSlot(stack) * step;
+		if (typeof windowPhoneCascadePlace == 'function') {
+			// the deck the window will join, and its step in that deck's cascade
+			var phone_plan = windowPhoneCascadePlace({ height: height, step: step });
+			top = jawnosEmergeNumber(phone_plan.top, topLimit) + phone_plan.slot * step;
+		}
+		else {
+			top = topLimit + jawnosWindowEmergePhoneSlot(stack) * step;
+		}
 		placed = true;
 	}
 	else if (!placed && press_pending && typeof windowTiledAnchor == 'function') {

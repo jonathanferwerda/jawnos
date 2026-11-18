@@ -767,11 +767,11 @@ function windowFit(win) {
 		win.height(wanted);
 		win.removeAttr('fit_shrunk').removeAttr('fit_height');
 	}
-	// A window in a pile is not squeezed to fit the desk: the cascade stops short
-	// of that, and a pile that would cover it starts a new one
-	// (windowTiledCascadeFull). A free or pinned window still fits, and a phone
-	// keeps its own fit until its pile decides where a new deck starts.
-	var piled = !windowPhoneChecker() && typeof windowTiledSlot == 'function' && windowTiledSlot(win) >= 0;
+	// A window in a pile or a phone's deck is not squeezed to fit the desk: the
+	// cascade stops short of that, and a full pile or deck starts a new one. A
+	// free or pinned window still fits.
+	var piled = (typeof windowTiledSlot == 'function' && windowTiledSlot(win) >= 0)
+		|| (windowPhoneChecker() && win.attr('deck') !== undefined);
 	if (!piled && winTop + win.height() > viewH) {
 		if (win.attr('fit_shrunk') != 'yes') {
 			win.attr('fit_height', win.height()).attr('fit_shrunk', 'yes');

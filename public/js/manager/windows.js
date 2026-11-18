@@ -1775,15 +1775,24 @@ function windowReorganizer(window_id) {
 				win.show();
 			}
 			else {
-				var temp_placement = ( vAdvance * winCount ) + startingV;
-				win.css({'top': temp_placement });
-
-				if (temp_placement > ($(window).height() - 100)) {
-					thisWinTop = Number(numeral(win.css('top')).format());
-					fullYCount = winCount;
-					win.css({ 'top': thisWinTop - (vAdvance * fullYCount) + startingV });
+				// a phone cascades into decks: the deck in front until it would show less
+				// than a third of a window, then a fresh cascade over the top of it
+				if (typeof windowPhoneCascadePlace == 'function' && win.attr('deck') === undefined) {
+					var deck_plan = windowPhoneCascadePlace();
+					win.attr('deck', String(deck_plan.deck));
+					windowDeckTouch[deck_plan.deck] = Date.now();
+					win.css({ 'top': deck_plan.top });
 				}
+				else {
+					var temp_placement = ( vAdvance * winCount ) + startingV;
+					win.css({'top': temp_placement });
 
+					if (temp_placement > ($(window).height() - 100)) {
+						thisWinTop = Number(numeral(win.css('top')).format());
+						fullYCount = winCount;
+						win.css({ 'top': thisWinTop - (vAdvance * fullYCount) + startingV });
+					}
+				}
 			}
 		}
 		// a restore can leave a gap until every saved window has arrived

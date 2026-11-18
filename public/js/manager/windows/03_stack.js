@@ -29,46 +29,106 @@ function windowStacker(app, raise) {
 	if (app) {
 		var target = $('.wind[app="' + app + '"]').get(0);
 		if (!target || order.length < 2) { return; }
-		// the top of the pile is the front window - the one wearing the highest
-		// z-index, which is the last in the order below
-		var front = order[order.length - 1];
-		var rest = order.filter(function (el) { return el !== front; });
+		// the walk stays inside the deck the press was made in, and brings that
+		// deck forward; the other decks keep their own order
+		var deck = windowDeckOf(target);
+		var inside = order.filter(function (el) { return windowDeckOf(el) === deck; });
+		var front = inside[inside.length - 1];
 		if (raise) {
-			// a press that is not the pile's walk - a tap on a window's body, or the
-			// end of a drag - lifts that window to the top of the pile and leaves the
-			// rest in order, rather than the walk's front-to-foot rotation
-			order = order.filter(function (el) { return el !== target; }).concat([target]);
+			// a press that is not the walk - a tap on a window's body, or the end of
+			// a drag - lifts that window to the top of its deck and leaves the rest
+			inside = inside.filter(function (el) { return el !== target; }).concat([target]);
 		} else if (target === front) {
-			// a tap on the top of the pile walks it down to the bottom of the stack
-			order = [front].concat(rest);
+			// a tap on the top of the deck walks it down to the bottom of that deck
+			inside = [front].concat(inside.filter(function (el) { return el !== front; }));
 		} else {
-			// a tap lower down lifts it to the top of the pile and drops the old
-			// top to the bottom of the stack
-			order = [front].concat(rest.filter(function (el) { return el !== target; }), [target]);
+			// a tap lower down lifts it to the top of the deck and drops the old top
+			inside = [front].concat(inside.filter(function (el) { return el !== target && el !== front; }), [target]);
 		}
-		// z climbs with the order, so the last in the order is the front
-		$(order).each(function (slot) { $(this).css({ 'z-index': top_level_now + slot + 1 }); });
-		top_level_now = top_level_now + order.length;
+		order = order.filter(function (el) { return windowDeckOf(el) !== deck; }).concat(inside);
+		windowDeckTouch[deck] = Date.now();
 	}
 
-	// re-cascade the pile by that order: a closed window leaves no gap. Step each
-	// window down by the height of the bar above it - not one measured step for
-	// the whole pile - so the bars sit flush even when their heights differ (a
-	// single step against a bar of another height leaves a gap, or an overlap).
-	// Then pull it up by the bar's own border, so this bar's foot and the next
-	// window's frame land on one another and read as a single line, not two.
-	var y = windowTopLimit();
+	// decks from the back to the front, each in its own order, so a walk cannot
+	// pull one deck's windows through another's
+	var decks = [];
+	$(order).each(function () { var d = windowDeckOf(this); if (decks.indexOf(d) < 0) { decks.push(d); } });
+	decks.sort(function (a, b) {
+		var ta = windowDeckTouch[a] || (1000 + a), tb = windowDeckTouch[b] || (1000 + b);
+		if (ta !== tb) { return ta - tb; }
+		return a - b;
+	});
+	var stacked = [];
+	decks.forEach(function (d) {
+		$(order).each(function () { if (windowDeckOf(this) === d) { stacked.push(this); } });
+	});
+	$(stacked).each(function (slot) { $(this).css({ 'z-index': top_level_now + slot + 1 }); });
+	top_level_now = top_level_now + stacked.length;
+	order = stacked;
+
+	// re-cascade each deck from the desk's top: a closed window leaves no gap,
+	// and a fresh deck starts over the first one. Step each window down by the
+	// height of the bar above it - measured, not a fixed step - so the bars sit
+	// flush even when their heights differ; then pull it up by the bar's own
+	// border, so this bar's foot and the next window's frame read as one line.
+	var y = {};
+	decks.forEach(function (d) { y[d] = windowTopLimit(); });
 	$(order).each(function () {
 		var win = $(this);
-		win.css({ 'top': y });
+		var d = windowDeckOf(this);
+		win.css({ 'top': y[d] });
 		var bar = win.find('.top_navbar');
 		var border = parseFloat(bar.css('border-top-width')) || 0;
-		y = y + (bar.outerHeight() || 40) - border;
+		y[d] = y[d] + (bar.outerHeight() || 40) - border;
 	});
 
 	// raise the new front through topLevelNow so its frame ring and the taskbar
 	// pins follow the order
 	if (app) { topLevelNow($(order[order.length - 1])); }
+}
+// A phone's cascade is a deck. A deck holds until its next window would show
+// less than a third of itself; the window after that starts a fresh cascade over
+// the top of the last one, on the same x. The deck is a number on the window,
+// the deck worked in most recently is the front one, and a walk stays inside the
+// deck it was made in and brings that deck forward.
+var windowDeckTouch = {};
+
+function windowDeckOf(win) {
+	var deck = parseInt($(win).attr('deck'), 10);
+	return isNaN(deck) ? 0 : deck;
+}
+
+function windowDeckFront() {
+	var best = null, best_rank = -Infinity;
+	$('.wind').filter(':visible').each(function () {
+		var deck = windowDeckOf(this);
+		var rank = windowDeckTouch[deck] || (1000 + deck);
+		if (best === null || rank > best_rank || (rank === best_rank && deck > best)) { best = deck; best_rank = rank; }
+	});
+	return best === null ? 0 : best;
+}
+
+// The deck and the step a window opening now would take. `geom` lets the press
+// preview ask before the window exists.
+function windowPhoneCascadePlace(geom) {
+	var height = (geom && geom.height) || Math.round(windowViewport().height * 0.7128);
+	var step = geom && geom.step ? geom.step : 0;
+	if (!(step > 0)) {
+		var bar = $('.wind').first().find('.top_navbar');
+		step = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
+	}
+	if (!(step > 0)) { step = 40; }
+	var limit = (1 - windowStackVisible) * height;
+	var decks = {};
+	$('.wind').filter(':visible').each(function () {
+		if (this.getAttribute && this.getAttribute('deck') === null) { return; }
+		var deck = windowDeckOf(this);
+		decks[deck] = (decks[deck] || 0) + 1;
+	});
+	var front = windowDeckFront();
+	var count = decks[front] || 0;
+	if (count * step <= limit) { return { deck: front, slot: count, top: windowTopLimit() }; }
+	return { deck: front + 1, slot: 0, top: windowTopLimit() };
 }
 
 function windowRefresher(app) {
