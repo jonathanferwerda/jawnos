@@ -98,6 +98,11 @@ my %VENDOR = (
 	'public/js/moment.js'                    => 'Moment.js',
 	'public/js/numeral.min.js'               => 'Numeral.js (minified)',
 	'public/css/jquery-ui.css'               => 'jQuery UI theme',
+	'public/js/dos/js-dos.js'                => 'js-dos 8.3.0',
+	'public/js/dos/js-dos.css'               => 'js-dos 8.3.0 theme',
+	'public/js/dos/emulators/emulators.js'   => 'js-dos emulators 8.2.1',
+	'public/js/dos/emulators/wdosbox.js'     => 'js-dos DOSBox 8.2.1',
+	'public/js/dos/emulators/wlibzip.js'     => 'js-dos libzip 8.2.1',
 	'jw/fonts/clock_font_72.c'               => 'generated bitmap: clock font',
 	'jt/Latin_Hiragana_24.h'                 => 'generated bitmap: Latin/Hiragana font',
 	'jt/NotoSansBold15.h'                    => 'generated bitmap: Noto Sans Bold 15',
@@ -140,6 +145,7 @@ my %NONCODE = (
 	# images, audio and the vendored bitmap font format
 	svg => 'assets', png => 'assets', jpg => 'assets', webp => 'assets',
 	mp3 => 'assets', vlw => 'assets', xcf => 'assets', ico => 'assets',
+	wasm => 'assets',
 	# the boot splash theme (its .script is not a shell script)
 	plymouth => 'theme', script => 'theme',
 	# data the app reads, not code it runs

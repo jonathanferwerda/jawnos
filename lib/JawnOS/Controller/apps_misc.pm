@@ -134,7 +134,9 @@ sub action_27049 {
 	# The start menu template reads the device from the stash (the manager
 	# layout normally sets it); this route is public, so set it here too.
 	$c->stash(device => &subs::device_setter());
-	my $menu = &start_menu_maker($c);
+	# This lists apps the native home's JawnOS row can open; the games
+	# shelf's rows are not apps, so the scan is not asked for here.
+	my $menu = &start_menu_maker($c, { dos_games => [] });
 	my $html = $menu->{'html'} || '';
 	# The handful of icons whose id is not <app>_toggle: the ticket maker is
 	# Box Office, budget has a bare id, the gallery wears image_toggle, the

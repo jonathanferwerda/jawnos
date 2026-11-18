@@ -182,6 +182,12 @@ sub startup {
 	$self->static->classes->[0]   = 'Manager';
 	$self->renderer->classes->[0] = 'Manager';
 
+	# The browser DOS player is WebAssembly. Mojolicious' type table has no
+	# entry for it, and a streamed compile needs the wasm type, so a browser
+	# would otherwise fetch the 1.5 MB emulator as octets and compile it the
+	# slow way.
+	$self->types->type(wasm => 'application/wasm');
+
 	require JawnOS::Routes;
 	JawnOS::Routes->register($self, $r);
 

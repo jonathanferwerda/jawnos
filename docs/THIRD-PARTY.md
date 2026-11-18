@@ -51,6 +51,7 @@ runtime archives carry their own licences (see 2.15).
 | 2.13 | Moment.js 2.29.4 | https://momentjs.com | **MIT** | `public/js/moment.js` |
 | 2.14 | JawnOS Android host app | https://github.com/jonathanferwerda/termux-app (fork of `termux/termux-app`) | **GPL-3.0-only** | `releases/jawnos-app-*.apk` (blob store) |
 | 2.15 | JawnOS runtime archives | built from `termux/termux-packages` recipes | **mixed** (GPL-3.0, GPL-2.0, LGPL-2.1+, MIT, BSD, Apache-2.0, Artistic-1.0, public domain) | `releases/jawnrt-*.zip` (blob store) |
+| 2.19 | js-dos 8.3.0 and emulators 8.2.1 (DOSBox in WebAssembly) | https://github.com/caiiiycuk/js-dos (tag `v8.3.0`); https://github.com/caiiiycuk/emulators (8.2.1) | **GPL-2.0** | `public/js/dos/` (bundled, unmodified) |
 
 ### 2.1 Piper TTS engine
 
@@ -123,6 +124,27 @@ upstream): `Final_Frontier_28.h`, `Latin_Hiragana_24.h` and
 Copyright (c) Bodmer; the text travels with the sketch as
 `jt/TFT_eSPI-LICENSE.txt`. The headers' own comments name only the vlw-to-array
 tool, which is why they looked unattributed.
+### 2.19 js-dos
+
+`public/js/dos/` carries the browser DOS player used by the games shelf on a
+desktop or a phone. The files are the unmodified js-dos 8.3.0 distribution and
+the emulators 8.2.1 modules it loads (`wdosbox`, `wlibzip`); the game itself is
+never part of the bundle.
+
+- **js-dos** is Copyright Alexander Guryanov and is licensed **GPL-2.0**
+  (`package.json`: `"license": "GPL-2.0"`). Release: tag `v8.3.0` at
+  https://github.com/caiiiycuk/js-dos.
+- **emulators** is the same author's WebAssembly DOSBox build, also
+  **GPL-2.0**; js-dos 8.3.0 declares `emulators` 8.2.1. Release:
+  https://github.com/caiiiycuk/emulators.
+- The full GPL-2.0 text travels beside the files as
+  `public/js/dos/COPYING`; `public/js/dos/SOURCE.txt` names the upstream
+  versions and is the source offer for the binaries. This repository already
+  carries the same licence at `docs/licenses/runtime/GPL-2.0.txt`.
+- The files are fetched into the tree from the npm/CDN distribution and are
+  not edited. `t/233-games-library.t` pins their names and the player's
+  options, and `t/99-untested.t` treats the folder as vendored code.
+
 ### 2.9–2.13 JavaScript libraries
 
 These are loaded by `templates/layouts/manager.html.ep:13,205-209`; the gate,
@@ -218,7 +240,7 @@ Every archive built by `scripts/runtime_zip.pl` copies
 runtime is a stripped Termux prefix with no `share/doc` of its own. The notice
 there names each component and the text to read.
 
-### 2.16 First-party assets recorded for review
+### 2.18 First-party assets recorded for review
 
 These are JawnOS's own works (BSD-2), listed because they are the assets most
 often mistaken for third-party material:

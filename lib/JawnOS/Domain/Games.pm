@@ -130,4 +130,59 @@ sub game_emulator_present {
 	return defined &JawnOS::Games::retroarch_binary() ? 1 : 0;
 }
 
+# Whether this card is one the browser player can start at all. The route asks
+# before it draws a player, so a crafted id gets the note, not an empty canvas.
+sub game_browser_runnable {
+	require JawnOS::Games;
+	return &JawnOS::Games::browser_runnable($_[0]);
+}
+
+sub game_browser_bundle {
+	require JawnOS::Games;
+	my ($id, $cache_dir) = @_;
+	my $game = &game_by_id($id);
+	return { ok => 0, error => 'That game is not in the library.' } unless ref $game eq 'HASH';
+	$cache_dir = &subs::home('~/.cache/jawnos/dos-bundles')
+		unless defined $cache_dir && length $cache_dir;
+	return &JawnOS::Games::browser_bundle($game, $cache_dir);
+}
+
+# What a desk or a phone puts in the start menu's games shelf: one entry per
+# card the browser can actually run. The handheld runs the shelf natively, so
+# it is not offered a second launcher for the same file. The scan is cached for
+# a minute and keyed on the ROM folders' mtimes, because the start menu is
+# opened far more often than the games change.
+my ($MENU_ENTRIES, $MENU_KEY, $MENU_AT);
+
+sub game_menu_entries {
+	my $device = &subs::device_setter() || '';
+	return [] unless $device eq 'computer' || $device eq 'mobile';
+	require JawnOS::Games;
+	my $root = &game_root();
+	my @root_stat = stat($root);
+	my @dos_stat = stat("$root/dos");
+	my $key = join ':', $root, ($root_stat[9] // 0), ($dos_stat[9] // 0);
+	return $MENU_ENTRIES
+		if ref $MENU_ENTRIES eq 'ARRAY' && defined $MENU_KEY
+			&& $MENU_KEY eq $key && defined $MENU_AT && time - $MENU_AT < 60;
+	# Keep the art index current, so a row's cover is one small file read and
+	# not a tree walk behind every icon.
+	my $library = &JawnOS::Games::scan($root, { art_index => 1 });
+	my @entries;
+	foreach my $game (@{ $library->{'games'} || [] }) {
+		next unless &JawnOS::Games::browser_runnable($game);
+		push @entries, {
+			id => $game->{'id'},
+			title => $game->{'title'},
+			system => $game->{'system'},
+			system_label => $game->{'system_label'},
+			art => (defined $game->{'art'} && length $game->{'art'}) ? 1 : 0,
+		};
+	}
+	$MENU_ENTRIES = \@entries;
+	$MENU_KEY = $key;
+	$MENU_AT = time;
+	return $MENU_ENTRIES;
+}
+
 1;

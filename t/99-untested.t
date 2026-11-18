@@ -63,6 +63,7 @@ sub untested {
 # assert, and a test here would only pin somebody else's library.
 my @no_behaviour = (
 	qr{^public/js/(?:jquery-ui|jquery\.ui\.touch-punch|moment|numeral)},
+	qr{^public/js/dos/},
 	qr{^scripts/gallery/},
 	qr{\.(?:sh|py|mjs|json)$},
 );

@@ -1049,6 +1049,55 @@ sub action_44019 {
 	$c->render(json => $answer);
 }
 
+# GET /manager/games/play
+# A desk or a phone has no DOSBox of its own, so a DOS card opens the same game
+# in js-dos: DOSBox compiled for the browser. The page is a window of its own,
+# and only the card's id travels; the bundle route re-finds that id in the
+# library. The native shelf remains the handheld's way in, so this is offered
+# on the two devices that do not have one.
+sub action_44024 {
+	my $c = shift;
+	my $game = eval { &subs::game_by_id($c->param('id') // '') };
+	my $timestamp = $c->param('timestamp');
+	unless (ref $game eq 'HASH' && &subs::game_browser_runnable($game)) {
+		my $contents = '<div style="padding:22px;line-height:1.5;max-width:640px;">'
+			. &subs::ui('That game cannot run in this browser.')
+			. '</div>';
+		my $website = &Manager::window_maker({
+			user_agent => $c->param('user_agent'), app => 'dos',
+			window_name => 'DOS', title => 'DOS', contents => $contents,
+		}, $timestamp);
+		$c->render(text => $website);
+		return;
+	}
+	my $contents = $c->render_to_string(template => 'apps/games/player', game => $game);
+	my $website = &Manager::window_maker({
+		user_agent => $c->param('user_agent'), app => 'dos',
+		window_name => $game->{'title'}, title => $game->{'title'}, contents => $contents,
+	}, $timestamp);
+	$c->render(text => $website);
+}
+
+# GET /manager/games/dos_bundle
+# The game's own folder as a js-dos bundle: a zip whose .jsdos/dosbox.conf
+# mounts C: and runs the card. The id is the only request value, and it is
+# re-found in the library before any path is used; the bundle itself is built
+# under the person's cache and served from there.
+sub action_44025 {
+	my $c = shift;
+	my $bundle = eval { &subs::game_browser_bundle($c->param('id') // '') };
+	unless (ref $bundle eq 'HASH' && $bundle->{'ok'}
+		&& defined $bundle->{'path'} && length $bundle->{'path'} && -f $bundle->{'path'}) {
+		my $error = (ref $bundle eq 'HASH' && defined $bundle->{'error'} && length $bundle->{'error'})
+			? $bundle->{'error'} : 'The game bundle could not be made.';
+		$c->render(text => $error, status => 404);
+		return;
+	}
+	$c->res->headers->content_type('application/zip');
+	$c->res->headers->cache_control('private, max-age=0');
+	$c->reply->file($bundle->{'path'});
+}
+
 # GET /manager/controller/config
 # The Configuration tile used to open the house's Configure app, which is a desk
 # of settings a handheld cannot comfortably use. It opens this sublauncher

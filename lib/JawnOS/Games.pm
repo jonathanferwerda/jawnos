@@ -14,6 +14,7 @@ use strict;
 use warnings;
 use utf8;
 use Digest::SHA qw(sha1_hex);
+use File::Path qw(make_path);
 use JSON::PP ();
 
 our %SYSTEM = (
@@ -522,6 +523,203 @@ sub find {
 		return $game if $game->{'id'} eq $id;
 	}
 	return undef;
+}
+
+# ---- the browser player -----------------------------------------------------
+#
+# The handheld runs a DOS game in the real DOSBox (the `dos` system above). A
+# desk or a phone has no DOSBox installed, so the same card runs in js-dos:
+# DOSBox compiled to WebAssembly, kept in public/js/dos. It is handed the
+# game's own folder as a js-dos bundle - a zip with .jsdos/dosbox.conf and the
+# files - so the browser sees the same programme the handheld mounts.
+
+# A .exe, .com or .bat can be started by name; a .conf carries its own autoexec
+# and is the way a game with arguments or a CD image is filed. Everything else
+# the scan accepts (a .zip, a disc image on its own) names no programme to run,
+# so it has no browser entry.
+our @BROWSER_EXTENSION = qw(conf exe com bat);
+
+sub browser_runnable {
+	my ($game) = @_;
+	return 0 unless ref $game eq 'HASH';
+	return 0 unless defined $game->{'system'} && $game->{'system'} eq 'dos';
+	my ($base) = ($game->{'file'} // '') =~ m{([^/]+)$};
+	my ($suffix) = (defined $base ? $base : '') =~ /\.([^.]+)$/;
+	return 0 unless defined $suffix;
+	my %accept = map { $_ => 1 } @BROWSER_EXTENSION;
+	return $accept{lc $suffix} ? 1 : 0;
+}
+
+# The bundle is built once and read many times: a page of cards may be opened
+# again and again, and re-zipping a game folder per press is wasted work. The
+# cache file's name carries a hash of every member's name, size and mtime, so a
+# changed file is a new bundle and the old one is removed.
+our $BUNDLE_VERSION = 1;
+our $BUNDLE_MAX_BYTES = 128 * 1024 * 1024;
+
+sub bundle_cache_dir {
+	my ($dir) = @_;
+	return $dir if defined $dir && length $dir;
+	my $forced = $ENV{'JAWNOS_DOS_BUNDLE_DIR'};
+	return $forced if defined $forced && length $forced;
+	my $home = $ENV{'HOME'};
+	$home = '/home/jawn' unless defined $home && length $home;
+	return "$home/.cache/jawnos/dos-bundles";
+}
+
+my %BUNDLE_SKIP_DIR = map { $_ => 1 } qw(
+	media images boxart gamelists downloaded_images _info manuals videos
+);
+
+# Everything in the game's own folder, relative to it, because DOSBox mounts
+# that folder as C:. A symlink is not followed: a bundle must not reach out of
+# the ROM tree, and a DOS game has no use for one.
+sub _bundle_collect {
+	my ($dir, $prefix, $out, $bytes) = @_;
+	opendir(my $dh, $dir) or return;
+	foreach my $name (sort readdir $dh) {
+		next if $name eq '.' || $name eq '..';
+		# The scan ignores dot entries, and .jsdos is ours to generate.
+		next if $name =~ /^\./;
+		my $path = "$dir/$name";
+		my $relative = length $prefix ? "$prefix/$name" : $name;
+		next if -l $path;
+		if (-d $path) {
+			next if $BUNDLE_SKIP_DIR{$name};
+			_bundle_collect($path, $relative, $out, $bytes);
+			next;
+		}
+		next unless -f $path;
+		my @stat = stat($path);
+		next unless @stat;
+		$$bytes += $stat[7];
+		push @{$out}, { name => $relative, path => $path, size => $stat[7], mtime => $stat[9] };
+	}
+	closedir $dh;
+	return $out;
+}
+
+sub _bundle_signature {
+	my ($members) = @_;
+	return join ';', map { $_->{'name'} . ':' . $_->{'size'} . ':' . $_->{'mtime'} } @{$members};
+}
+
+# The DOSBox configuration the browser bundle starts from. A .conf is itself a
+# DOSBox configuration, and it is what the handheld's -conf launch uses, so it
+# is passed through untouched; a loose programme gets a small config whose
+# autoexec mounts the folder and runs the file.
+sub bundle_config {
+	my ($game) = @_;
+	my $file = $game->{'file'} // '';
+	my ($base) = $file =~ m{([^/]+)$};
+	$base = '' unless defined $base;
+	my ($suffix) = $base =~ /\.([^.]+)$/;
+	$suffix = lc($suffix // '');
+	if ($suffix eq 'conf') {
+		return undef unless -f $file;
+		open(my $fh, '<', $file) or return undef;
+		binmode $fh;
+		local $/;
+		my $text = <$fh>;
+		close $fh;
+		return (defined $text && length $text) ? $text : undef;
+	}
+	# A name with a space is quoted so DOSBox reads it as one argument, and a
+	# batch file is CALLed so an exit at its end does not leave the autoexec.
+	my $run = ($base =~ /\s/) ? '"' . $base . '"' : $base;
+	$run = 'CALL ' . $run if $suffix eq 'bat';
+	return "[sdl]\n"
+		. "autolock=false\n"
+		. "fullscreen=false\n"
+		. "output=surface\n"
+		. "\n[dosbox]\n"
+		. "machine=svga_s3\n"
+		. "memsize=16\n"
+		. "\n[cpu]\n"
+		. "core=auto\n"
+		. "cputype=auto\n"
+		. "cycles=auto\n"
+		. "\n[mixer]\n"
+		. "nosound=false\n"
+		. "rate=44100\n"
+		. "blocksize=1024\n"
+		. "\n[render]\n"
+		. "aspect=true\n"
+		. "scaler=none\n"
+		. "\n[autoexec]\n"
+		. "\@echo off\n"
+		. "mount c .\n"
+		. "c:\n"
+		. "$run\n";
+}
+
+# A zip with one member per file. IO::Compress::Zip is core Perl, so a device
+# needs no extra module to make a bundle.
+sub _bundle_write {
+	my ($path, $config, $members) = @_;
+	require IO::Compress::Zip;
+	my $zip = IO::Compress::Zip->new($path, Name => '.jsdos/dosbox.conf', AutoClose => 1)
+		or return 0;
+	$zip->print($config) or return 0;
+	foreach my $member (@{$members}) {
+		$zip->newStream(Name => $member->{'name'}) or return 0;
+		open(my $fh, '<', $member->{'path'}) or return 0;
+		binmode $fh;
+		my $buffer;
+		while (read($fh, $buffer, 65536)) {
+			$zip->print($buffer) or do { close $fh; return 0 };
+		}
+		close $fh;
+	}
+	$zip->close() or return 0;
+	return 1;
+}
+
+# Build (or reuse) the js-dos bundle for one card. The answer names the file on
+# disk, never a request value; the route serves that file and nothing else.
+sub browser_bundle {
+	my ($game, $cache_dir) = @_;
+	return { ok => 0, error => 'That game cannot run in the browser.' }
+		unless browser_runnable($game);
+	my $file = $game->{'file'} // '';
+	return { ok => 0, error => 'The game file is missing.' } unless -f $file;
+	my ($dir) = $file =~ m{^(.*)/[^/]+$};
+	$dir = $file unless defined $dir;
+	return { ok => 0, error => 'The game folder is missing.' } unless -d $dir;
+	my @members;
+	my $bytes = 0;
+	_bundle_collect($dir, '', \@members, \$bytes);
+	return { ok => 0, error => 'The game folder is empty.' } unless @members;
+	return { ok => 0, error => 'This game is too large for the browser player.' }
+		if $bytes > $BUNDLE_MAX_BYTES;
+	my $config = bundle_config($game);
+	return { ok => 0, error => 'The game config could not be read.' } unless defined $config;
+	my $key = sha1_hex(join "\n", $BUNDLE_VERSION, $game->{'id'} // '', $config, _bundle_signature(\@members));
+	my $cache = bundle_cache_dir($cache_dir);
+	make_path($cache) unless -d $cache;
+	my $path = "$cache/" . ($game->{'id'} // 'unknown') . "-$key.jsdos";
+	return { ok => 1, path => $path, size => (-s $path) } if -f $path && -s $path;
+	my $tmp = "$path.tmp.$$";
+	unless (_bundle_write($tmp, $config, \@members)) {
+		unlink $tmp;
+		return { ok => 0, error => 'The browser bundle could not be written.' };
+	}
+	unless (rename $tmp, $path) {
+		unlink $tmp;
+		return { ok => 0, error => 'The browser bundle could not be saved.' };
+	}
+	# One bundle per card: a replaced game leaves its old bundle behind only
+	# until the next play, and a game deleted from the shelf stops being built.
+	# A month-old bundle is dropped on the next build, so a removed game's
+	# folder does not sit in the cache forever.
+	my $prefix = $cache . '/' . ($game->{'id'} // 'unknown') . '-';
+	foreach my $old (glob("$cache/*.jsdos")) {
+		next if $old eq $path;
+		my @stat = stat($old);
+		next unless index($old, $prefix) == 0 || (@stat && time - $stat[9] > 30 * 24 * 60 * 60);
+		unlink $old;
+	}
+	return { ok => 1, path => $path, size => (-s $path) };
 }
 
 1;

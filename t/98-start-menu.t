@@ -77,4 +77,14 @@ like($menu_js, qr/\.start_menu_toggle_copy/, 'a start button copied into an adde
 like($menu_js, qr/closest\('#start_menu_toggle, \.start_menu_toggle_copy'\)/,
 	'a press on the copy is not mistaken for an outside press');
 
+# A desk and a phone have no DOSBox, so the games shelf carries the browser
+# player's rows. The handheld keeps its native shelf, and the server sends an
+# empty list there.
+like($template, qr/dos_game_toggle/, 'the games shelf draws a row per DOS game');
+like($template, qr/data-game="<%= \$dos_game->\{'id'\} %>"/,
+	'the row carries the card id the player route resolves');
+like($template, qr/manager\/games\/art\?id=/, 'and the card picture when the shelf has one');
+like($menu_js, qr/\.dos_game_toggle/, 'a row press is the player opener');
+like($menu_js, qr{url: '/manager/games/play'}, 'which asks the player route for the window');
+
 done_testing();

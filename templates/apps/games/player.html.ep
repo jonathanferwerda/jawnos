@@ -1,0 +1,88 @@
+<% use Mojo::JSON qw(encode_json); %>
+<%# A DOS card on a desk or a phone. Neither has DOSBox installed, so the game
+    runs in js-dos: DOSBox compiled to WebAssembly, kept in public/js/dos. The
+    page asks the bundle route for this card's own folder, which arrives as a
+    zip with a .jsdos/dosbox.conf that mounts C: and runs the programme. The
+    handheld keeps the native shelf; this page is its browser counterpart. %>
+<style>
+	#games_dos_player { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; background:#000; }
+	#games_dos_bar { flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:4px 8px;
+		background:#222; color:#f4f4f4; font-size:13px; line-height:1.3; }
+	#games_dos_title { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	#games_dos_close { flex:0 0 auto; font:inherit; font-size:13px; padding:3px 10px;
+		border:1px solid #4a4a4a; border-radius:8px; background:#3a3a3a; color:#fff;
+		cursor:var(--jawnos-cursor-pointer, pointer); }
+	#games_dos_close:hover { border-color:var(--accent, #4a90d9); }
+	#dos_player { flex:1 1 auto; min-height:0; width:100%; background:#000; position:relative; }
+	#dos_player .jsdos-rso { width:100% !important; height:100% !important; }
+	#games_dos_note { flex:0 0 auto; padding:0 8px; color:#f4f4f4; background:#222; font-size:12px; line-height:1.4; }
+	#games_dos_note:empty { display:none; }
+</style>
+<div id="games_dos_player" data-game="<%= $game->{'id'} %>">
+	<div id="games_dos_bar">
+		<span id="games_dos_title"><%= $game->{'title'} %></span>
+		<button type="button" id="games_dos_close" hint="<%= &subs::ui('Close the game') %>"><%= &subs::ui('Close') %></button>
+	</div>
+	<div id="dos_player" aria-label="<%= $game->{'title'} %>"></div>
+	<div id="games_dos_note" aria-live="polite"></div>
+</div>
+<script>
+(function () {
+	var root = document.getElementById('games_dos_player');
+	var target = document.getElementById('dos_player');
+	var note = document.getElementById('games_dos_note');
+	var game = <%== encode_json($game->{'id'}) %>;
+	var url = '/manager/games/dos_bundle?id=' + encodeURIComponent(game);
+	var couldNotStart = <%== encode_json(&subs::ui('The DOS player could not start.')) %>;
+	var didNotLoad = <%== encode_json(&subs::ui('The DOS player did not load.')) %>;
+
+	function say(text) { if (note) { note.textContent = text || ''; } }
+
+	// Closing the window is how the game ends; closeWindow takes down the
+	// window, the canvas and the emulator's worker with it.
+	var closer = document.getElementById('games_dos_close');
+	if (closer) {
+		closer.addEventListener('click', function () {
+			var wind = root && root.closest ? root.closest('.wind') : null;
+			if (wind && typeof closeWindow === 'function') {
+				closeWindow(wind.getAttribute('timestamp'));
+				return;
+			}
+			window.history.back();
+		});
+	}
+
+	function boot() {
+		if (typeof Dos !== 'function') { say(didNotLoad); return; }
+		try {
+			Dos(target, {
+				url: url,
+				pathPrefix: '/js/dos/emulators/',
+				theme: 'dark',
+				backend: 'dosbox',
+				// A card is one press: no pre-run play button, no cloud key and
+				// no network, so the game starts itself and stays local.
+				autoStart: true,
+				noCloud: true,
+				noNetworking: true,
+				mouseCapture: false
+			});
+		}
+		catch (e) { say(couldNotStart); }
+	}
+
+	if (!document.querySelector('link[data-jawnos-dos]')) {
+		var link = document.createElement('link');
+		link.rel = 'stylesheet';
+		link.href = '/js/dos/js-dos.css';
+		link.setAttribute('data-jawnos-dos', '1');
+		document.head.appendChild(link);
+	}
+	if (typeof Dos === 'function') { boot(); return; }
+	var script = document.createElement('script');
+	script.src = '/js/dos/js-dos.js';
+	script.onload = boot;
+	script.onerror = function () { say(didNotLoad); };
+	document.head.appendChild(script);
+})();
+</script>

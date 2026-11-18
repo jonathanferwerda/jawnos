@@ -609,8 +609,12 @@ sub start_menu_hidden_apps {
 	return grep { &subs::app_hidden_now($_) } @apps;
 }
 
-sub start_menu_maker($c) {
+sub start_menu_maker($c, $opts) {
 	my $returner = {};
+	# A caller may already have the games shelf's rows (or deliberately not
+	# want them); the public app-list route does, because the rows are games
+	# and not apps it can open.
+	$opts = {} unless ref $opts eq 'HASH';
 	my $menu = $c->param('menu') // '';
 	$menu = '' unless $menu =~ /^(?:app|run|up|exp|view)$/;
 	# A new install opens on the System page (the water-drop tab), which is the
@@ -629,7 +633,8 @@ sub start_menu_maker($c) {
 		padlock => &subs::db_select('security', ['level'], { level => 'padlock' })->hashes,
 		menu => $menu,
 		recent => &start_menu_recent(),
-		hidden_apps => [ &start_menu_hidden_apps() ]
+		hidden_apps => [ &start_menu_hidden_apps() ],
+		dos_games => (exists $opts->{'dos_games'} ? $opts->{'dos_games'} : &subs::game_menu_entries())
 	);
 	# Static files carry no Cache-Control, so browsers cached the icons
 	# heuristically and kept showing stale ones. Version the local images

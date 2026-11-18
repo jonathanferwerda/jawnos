@@ -1,0 +1,23 @@
+js-dos 8.3.0 and the emulators 8.2.1 it loads
+=============================================
+
+The files in this folder are js-dos, a DOSBox frontend for the browser, and
+the emulators package it loads. They are redistributed unmodified under the
+GNU General Public License, version 2 (see COPYING in this folder).
+
+  js-dos       https://github.com/caiiiycuk/js-dos        (tag v8.3.0)
+  emulators    https://github.com/caiiiycuk/emulators     (version 8.2.1)
+
+The vendored files are:
+
+  js-dos.js
+  js-dos.css
+  emulators/emulators.js
+  emulators/wdosbox.js
+  emulators/wdosbox.wasm
+  emulators/wlibzip.js
+  emulators/wlibzip.wasm
+
+The complete corresponding source is the upstream release named above. It is
+also reachable from this repository's third-party notices at
+docs/THIRD-PARTY.md, which carries the same source offer.

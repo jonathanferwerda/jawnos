@@ -508,7 +508,8 @@ sub action_13070 {
 		advertise_watching => $advertise_watching,
 		padlock => $padlock,
 		header => $header,
-		menu => 'running'
+		menu => 'running',
+		dos_games => &subs::game_menu_entries()
 	);
 }
 

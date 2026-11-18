@@ -538,4 +538,23 @@ $(document).on('click', '#browser_toggle', function() {
 	}
 });
 
-
+// A DOS card in the games shelf opens the browser player: a desk and a phone
+// have no DOSBox of their own, so the same game runs in js-dos. The row press
+// is recorded by the list itself; windowMaker replaces an earlier player
+// window rather than stacking a second one.
+$(document).on('click', '.dos_game_toggle', function () {
+	var id = $(this).attr('data-game');
+	if (!id) { return; }
+	$.ajax({
+		url: '/manager/games/play',
+		type: 'GET',
+		data: { id: id, timestamp: Date.now() },
+		success: function (response) {
+			if (typeof windowMaker === 'function') { windowMaker(response); }
+		},
+		error: function () {
+			var said = (typeof jawnosT === 'function') ? jawnosT('The game could not be opened.') : 'The game could not be opened.';
+			if (typeof jawnosAlertText === 'function') { jawnosAlertText(said); }
+		}
+	});
+});

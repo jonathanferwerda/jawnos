@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Games.pm lib/JawnOS/Domain/Games.pm lib/JawnOS/Domain/Loader.pm scripts/jawnos_game_install.pl scripts/jawnos_dosbox.pl scripts/jawnos_game_launch.pl lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm templates/apps/games.html.ep perl/help/topics_people.pl
+# tests-for: lib/JawnOS/Games.pm lib/JawnOS/Domain/Games.pm lib/JawnOS/Domain/Loader.pm scripts/jawnos_game_install.pl scripts/jawnos_dosbox.pl scripts/jawnos_game_launch.pl lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm templates/apps/games.html.ep templates/apps/games/player.html.ep templates/start_menu/start_menu.html.ep templates/manager.html.ep public/js/manager/manager/05_start_menu.js lib/JawnOS/Manager/Part11.pm lib/JawnOS/Controller/manager_misc4.pm lib/JawnOS.pm perl/help/topics_people.pl perl/help/topics_features.pl
 # covers:    The emulated shelf: the ROM scan under ~/roms, the system table and
 #            package list, the two install actions, the launch helper that gives
 #            the emulator the panel and Home, and the page that draws the cards.
@@ -193,6 +193,8 @@ for my $row (
 	[44015, 'post', '/manager/games/emulator', 'action_44015'],
 	[44016, 'post', '/manager/games/covers', 'action_44016'],
 	[44017, 'get', '/manager/games/covers/status', 'action_44017'],
+	[44024, 'get', '/manager/games/play', 'action_44024'],
+	[44025, 'get', '/manager/games/dos_bundle', 'action_44025'],
 ) {
 	my ($id, $verb, $path, $action) = @{$row};
 	like($routes, qr/\[\s*$id\s*,\s*'$verb'\s*,\s*'\Q$path\E'\s*,\s*'$action'\s*\]/,
@@ -298,5 +300,113 @@ like($launch, qr/\@\{ \$runner->\{'args'\} \/\/ \['-b', '-e'\] \}/, 'a standalon
 # --- the cover module ---------------------------------------------------------
 like(read_file("$root/lib/JawnOS/RomCovers.pm"), qr/sub best_match/, 'the cover matcher is a pure module');
 like(read_file("$root/scripts/rom_covers.pl"), qr/JawnOS::RomCovers/, 'the helper uses it');
+
+
+# --- the browser player -------------------------------------------------------
+# A desk and a phone have no DOSBox, so a DOS card also runs inside the page.
+# It is the same folder the handheld mounts: a js-dos bundle is a zip with
+# .jsdos/dosbox.conf and the game's files.
+my $browser = tempdir(CLEANUP => 1);
+make_path("$browser/dos/TESTGAME");
+write_file("$browser/dos/TESTGAME/GAME.EXE", 'exe');
+write_file("$browser/dos/TESTGAME/DATA.DAT", 'data');
+write_file("$browser/dos/TESTGAME/RUN.conf", "[autoexec]\nmount c .\nc:\nGAME.EXE\n");
+write_file("$browser/dos/ARCHIVE.ZIP", 'zip');
+my $browser_library = JawnOS::Games::scan($browser);
+my ($exe_card) = grep { $_->{'title'} eq 'GAME' } @{ $browser_library->{'games'} };
+my ($conf_card) = grep { $_->{'title'} eq 'RUN' } @{ $browser_library->{'games'} };
+my ($zip_card) = grep { $_->{'title'} eq 'ARCHIVE' } @{ $browser_library->{'games'} };
+ok(JawnOS::Games::browser_runnable($exe_card), 'a DOS programme can run in the browser');
+ok(JawnOS::Games::browser_runnable($conf_card), 'and so can a DOS config');
+ok(!JawnOS::Games::browser_runnable($zip_card), 'a zip names no programme to run');
+my ($snes_card) = grep { $_->{'system'} eq 'snes' } @{ $library->{'games'} };
+ok(!JawnOS::Games::browser_runnable($snes_card), 'a console ROM is not a browser game');
+
+like(JawnOS::Games::bundle_config($exe_card), qr/^mount c \.$/m,
+	'the generated config mounts the game folder as C:');
+like(JawnOS::Games::bundle_config($exe_card), qr/^GAME\.EXE$/m,
+	'and runs the card by name');
+like(JawnOS::Games::bundle_config($conf_card), qr/^mount c \.$/m,
+	'a .conf is passed through as the DOSBox config');
+
+my $cache = "$browser/cache";
+my $bundle = JawnOS::Games::browser_bundle($exe_card, $cache);
+ok($bundle->{'ok'}, 'a DOS card builds a browser bundle');
+ok(defined $bundle->{'path'} && -f $bundle->{'path'}, 'the bundle is a file on disk');
+my %member;
+{
+	require IO::Uncompress::Unzip;
+	my $zip = IO::Uncompress::Unzip->new($bundle->{'path'})
+		or die $IO::Uncompress::Unzip::UnzipError;
+	do {
+		my $name = $zip->getHeaderInfo->{'Name'};
+		local $/;
+		$member{$name} = <$zip>;
+	} while ($zip->nextStream);
+}
+ok(exists $member{'.jsdos/dosbox.conf'}, 'the bundle carries the config js-dos requires');
+is($member{'GAME.EXE'}, 'exe', 'and the programme itself');
+is($member{'DATA.DAT'}, 'data', 'and the files beside it');
+
+my $again = JawnOS::Games::browser_bundle($exe_card, $cache);
+is($again->{'path'}, $bundle->{'path'}, 'a second press reuses the bundle');
+write_file("$browser/dos/TESTGAME/DATA.DAT", 'data changed');
+my $changed = JawnOS::Games::browser_bundle($exe_card, $cache);
+isnt($changed->{'path'}, $bundle->{'path'}, 'a changed game file builds a fresh bundle');
+ok(!-f $bundle->{'path'}, 'and the stale bundle is removed');
+
+for my $asset (qw(
+	public/js/dos/js-dos.js public/js/dos/js-dos.css
+	public/js/dos/emulators/emulators.js public/js/dos/emulators/wdosbox.js
+	public/js/dos/emulators/wdosbox.wasm public/js/dos/emulators/wlibzip.js
+	public/js/dos/emulators/wlibzip.wasm public/js/dos/COPYING public/js/dos/SOURCE.txt
+)) {
+	ok(-s "$root/$asset", "$asset is vendored");
+}
+
+my $player = read_file("$root/templates/apps/games/player.html.ep");
+like($player, qr/autoStart:\s*true/, 'the player starts the game without a second press');
+like($player, qr/noCloud:\s*true/, 'and asks for no cloud key');
+like($player, qr/noNetworking:\s*true/, 'and makes no network calls');
+like($player, qr|pathPrefix:\s*'/js/dos/emulators/'|, 'the emulator is the vendored copy');
+like($player, qr{/manager/games/dos_bundle\?id=}, 'the game comes from the bundle route');
+like($player, qr/closeWindow/, 'Close ends the window');
+
+like($controller, qr/sub action_44024\b/, 'the player page has an action');
+like($controller, qr/sub action_44025\b/, 'and the bundle has one');
+like($controller, qr/game_browser_runnable/, 'the player asks the domain what can run');
+like($controller, qr/game_browser_bundle/, 'the bundle route goes through the domain');
+like(read_file("$root/lib/JawnOS.pm"), qr/type\(wasm => 'application\/wasm'\)/,
+	'a wasm asset is served as wasm');
+
+my $menu = read_file("$root/templates/start_menu/start_menu.html.ep");
+like($menu, qr/dos_game_toggle/, 'the games shelf carries a row per DOS game');
+like($menu, qr/data-game="<%= \$dos_game->\{'id'\} %>"/, 'the row carries the card id');
+my $menu_js = read_file("$root/public/js/manager/manager/05_start_menu.js");
+like($menu_js, qr/\.dos_game_toggle/, 'the row opens the browser player');
+like($menu_js, qr{/manager/games/play}, 'through the player route');
+like(read_file("$root/lib/JawnOS/Manager/Part11.pm"),
+	qr/dos_games => \(exists \$opts->\{'dos_games'\} \? \$opts->\{'dos_games'\} : &subs::game_menu_entries\(\)\)/,
+	'the menu maker hands the list to the template');
+like(read_file("$root/lib/JawnOS/Controller/apps_misc.pm"),
+	qr/start_menu_maker\(\$c, \{ dos_games => \[\] \}\)/,
+	'the public app list does not ask for the games shelf');
+like(read_file("$root/templates/manager.html.ep"),
+	qr/dos_games => \(\$c->stash\('dos_games'\)/,
+	'the pre-rendered menu carries it too');
+
+my $domain_src = read_file("$root/lib/JawnOS/Domain/Games.pm");
+like($domain_src, qr/sub game_menu_entries/, 'the domain exposes the games-shelf rows');
+like($domain_src, qr/sub game_browser_bundle/, 'and the browser bundle');
+like($domain_src, qr/sub game_browser_runnable/, 'and the runnable test the player asks');
+like(read_file("$root/lib/JawnOS/Domain/Loader.pm"),
+	qr/'JawnOS::Domain::Games' for qw\([^)]*game_browser_runnable[^)]*game_browser_bundle[^)]*game_menu_entries/,
+	'the loader registers them');
+
+like($help, qr/browser player/, 'the Guide describes the browser player');
+like(read_file("$root/perl/help/topics_features.pl"),
+	qr/DOS game the browser can run/, 'and the start menu topic names its rows');
+like(read_file("$root/docs/THIRD-PARTY.md"), qr/js-dos 8\.3\.0/,
+	'the vendored player is in the third-party notices');
 
 done_testing();
