@@ -40,8 +40,19 @@ if (-e "$dir/moved") {
 	system('git', '-C', $p, '-c', 'user.email=qa-test@example.invalid',
 		'-c', 'user.name=qa-test', 'commit', '--allow-empty', '-q', '-m', 'initial');
 }
+if (-e "$dir/fail") {
+	# The shape run_tests_fork prints: a per-file row, then the failure block
+	# with the assertion and the test's own line.
+	print "t/999-fixture.t                  FAIL     10 ms\n";
+	print "--- t/999-fixture.t failed\n";
+	print "  not ok 3 - the fixture fails\n";
+	print "  #   Failed test 'the fixture fails'\n";
+	print "  #   at t/999-fixture.t line 42.\n";
+	print "Result: FAIL (1 test file(s))\n";
+	exit 1;
+}
 print "suite ran\n";
-exit(-e "$dir/fail" ? 1 : 0);
+exit 0;
 PL
 
 my $BUMP = <<'PL';
@@ -195,6 +206,9 @@ die "fixture repo is not isolated: $fixture_top\n" unless $trc == 0 && defined $
 	write_file("$primary/README",               "base\n");
 	write_file("$primary/.gitignore",           ".shots/\n");
 	write_file("$primary/scripts/run_tests.pl", $SUITE);
+	# The lander reads the suite's failure summary from its neighbour.
+	write_file("$primary/scripts/land_lib.pl",
+		read_file("$FindBin::Bin/../scripts/land_lib.pl"));
 	write_file("$primary/scripts/version_bump.pl", $BUMP);
 	write_file("$primary/scripts/restart.pl",   $arg{'restart'} // $RESTART);
 	write_file("$primary/scripts/agent_land.pl", read_file($real));
@@ -315,6 +329,8 @@ subtest 'a failing suite refuses the landing' => sub {
 	my ($rc, $out) = land($f);
 	is($rc, 1, 'the lander refuses');
 	like($out, qr/the suite failed/, 'and says the suite failed');
+	like($out, qr/t\/999-fixture\.t/, 'and names the test file that failed');
+	like($out, qr/line 42/, 'and the line inside it');
 	like(read_file("$f->{'marker'}/suite"), qr/--jobs 2/, 'the suite really ran first');
 	ok(!-e "$f->{'marker'}/restart", 'nothing restarted');
 
@@ -618,6 +634,19 @@ subtest '--json puts a refusal on stdout and keeps progress on stderr' => sub {
 	is($j->{'code'}, 1, 'with the refusal exit code');
 	is($j->{'reason_class'}, 'dirty_worktree', 'and a machine-readable reason');
 	like($j->{'message'}, qr/uncommitted work/, 'that still names the work');
+};
+
+subtest '--json names the failing test file and line' => sub {
+	my $f = fixture();
+	commit_in_worktree($f, 'note.txt', "a\n", 'add a note');
+	write_file("$f->{'marker'}/fail", "1\n");
+
+	my ($rc, $out) = land($f, '--json');
+	is($rc, 1, 'the lander refuses');
+	my $j = json_out($out);
+	is($j->{'reason_class'}, 'suite', 'the JSON says the suite refused it');
+	like($j->{'message'}, qr/t\/999-fixture\.t/, 'the message names the test file');
+	like($j->{'message'}, qr/line 42/, 'and the line inside it');
 };
 
 subtest 'a timed-out restart verdict checks the version the tree booted' => sub {

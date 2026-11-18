@@ -69,11 +69,16 @@ use warnings;
 use Cwd qw(abs_path);
 use Fcntl qw(:flock);
 use File::Temp qw(tempfile);
+use FindBin ();
 use Getopt::Long qw(GetOptions);
 use IO::Handle ();
 use IPC::Open3 qw(open3);
 use JSON::PP ();
 use Symbol qw(gensym);
+
+# The suite's failure summary lives beside the queue's copy, so both landers
+# name the failing test the same way.
+require "$FindBin::Bin/land_lib.pl";
 
 my %opt = (
 	'trunk'         => 'main',
@@ -385,8 +390,12 @@ else {
 	say_step("running the suite (--jobs $opt{'jobs'})");
 	my ($src, $sout) = capture($^X, 'scripts/run_tests.pl', '--jobs', $opt{'jobs'});
 	if ($src != 0) {
+		# Print the whole output when it is sane to do so, but name the failing
+		# test and its line either way: an agent that sees only "the suite
+		# failed" has to re-run the suite to find what this run already knew.
 		print STDERR $sout unless length $sout > 20000;
-		refuse('the suite failed; fix it and land again', 'suite');
+		my $why = LandQueue::suite_failure_summary($sout);
+		refuse("$why; fix it and land again", 'suite');
 	}
 	if (repo_is_bare()) {
 		heal_bare();

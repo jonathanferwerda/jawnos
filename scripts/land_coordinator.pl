@@ -287,7 +287,7 @@ sub run_wave {
 	my $suite_ms = int((time - $suite_start) * 1000);
 
 	if (!$sok) {
-		my $tail = failure_tail($sout);
+		my $tail = LandQueue::suite_failure_summary($sout);
 		if (@$wave > 1) {
 			requeue($dir, $wave, 0);
 			cleanup_train($root, $tmp, $parent);
@@ -533,14 +533,6 @@ sub suite_scope {
 	return ('paths', \@tests);
 }
 
-sub failure_tail {
-	my ($out) = @_;
-	my @lines = grep { /\S/ } split /\n/, ($out // '');
-	return 'the suite failed (no output)' unless @lines;
-	my @fail = grep { /not ok|FAILED|Result: FAIL|tests failed/i } @lines;
-	my @pick = @fail ? @fail : @lines[(@lines > 12 ? -12 : 0) .. $#lines];
-	return join("\n", @lines > 40 ? @pick[0 .. ($#pick > 19 ? 19 : $#pick)] : @pick);
-}
 
 # --- state -----------------------------------------------------------------
 

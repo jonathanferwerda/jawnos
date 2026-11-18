@@ -35,7 +35,17 @@ open(my $cwd_fh, '>>', "$dir/cwd") or die $!;
 print $cwd_fh getcwd(), "\n";
 close $cwd_fh;
 # The train worktree is the cwd, so a branch that adds BREAK makes this red.
-exit(-e 'BREAK' ? 1 : 0);
+if (-e 'BREAK') {
+	# run_tests_fork's shape: the failing file, the assertion, and its line.
+	print "t/999-fixture.t                  FAIL     10 ms\n";
+	print "--- t/999-fixture.t failed\n";
+	print "  not ok 1 - the fixture breaks\n";
+	print "  #   Failed test 'the fixture breaks'\n";
+	print "  #   at t/999-fixture.t line 7.\n";
+	print "Result: FAIL (1 test file(s))\n";
+	exit 1;
+}
+exit 0;
 PL
 
 my $RESTART = <<'PL';
@@ -334,6 +344,10 @@ subtest 'a red wave splits and lands the branches that pass' => sub {
 	my (undef, $s1) = status($f, '--branch', 'agent/one');
 	is($s1->{'ticket'}{'state'}, 'refused', 'the breaking ticket is refused');
 	is($s1->{'ticket'}{'result'}{'reason_class'}, 'suite', 'and names the suite');
+	like($s1->{'ticket'}{'result'}{'message'}, qr/t\/999-fixture\.t/,
+		'the ticket names the test file that failed');
+	like($s1->{'ticket'}{'result'}{'message'}, qr/line 7/,
+		'and the line inside it');
 	my (undef, $s2) = status($f, '--branch', 'agent/two');
 	is($s2->{'ticket'}{'state'}, 'landed', 'the good ticket is landed');
 };
@@ -895,6 +909,44 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 	like($ptimer, qr/OnCalendar=Mon 04:00:00/, 'the promotion is the weekly release by default');
 	like($service, qr/--trunk working --no-apply/, 'the coordinator lands to working without touching main');
 	unlike($service, qr/^ExecStart=.*--promote-now/m, 'a drain does not release by itself');
+};
+
+subtest 'the suite failure summary names the test file and line' => sub {
+	require "$real/scripts/land_lib.pl";
+
+	my $fork = join("\n",
+		't/01-one.t                       FAIL    10 ms',
+		'--- t/01-one.t failed',
+		'  not ok 3 - the first thing',
+		'  #   at t/01-one.t line 42.',
+		'  not ok 4 - the second thing',
+		'  #   at t/01-one.t line 51.',
+		'',
+		'--- t/02-two.t failed',
+		'  (no output; the child exited 3 before printing TAP)',
+		'Result: FAIL (2 test file(s))',
+	);
+	my $summary = LandQueue::suite_failure_summary($fork);
+	like($summary, qr/^the suite failed: /, 'it says the suite failed');
+	like($summary, qr{t/01-one\.t: not ok 3 - the first thing \(at t/01-one\.t line 42\) \(\+1 more\)},
+		'it names the first assertion and its line, with the count');
+	like($summary, qr{t/02-two\.t: failed with no assertions},
+		'and a file that died before printing TAP');
+
+	# prove has no `--- failed` block; the test's own start line is what keeps
+	# a helper's `at` line attributed to the test that called it.
+	my $prove = join("\n",
+		't/03-three.t .. ',
+		'not ok 1 - boom',
+		'#   at t/lib/helper.pm line 9.',
+		'Result: FAIL',
+	);
+	$summary = LandQueue::suite_failure_summary($prove);
+	like($summary, qr{t/03-three\.t: not ok 1 - boom \(at t/lib/helper\.pm line 9\)},
+		'prove attributes a helper line to the test that called it');
+
+	is(LandQueue::suite_failure_summary(''),
+		'the suite failed (no output)', 'empty output says so');
 };
 
 done_testing();

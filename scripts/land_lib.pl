@@ -315,6 +315,124 @@ sub changed_files {
 	return grep { length } split /\n/, $out;
 }
 
+# Which test failed, and where. run_tests_fork prints a `--- <file> failed`
+# block whose `not ok` lines are followed by `#   at <file> line <n>`; prove
+# prints the same `not ok` lines without the block. A refusal that says only
+# "the suite failed" makes the agent read the whole output to find the file, so
+# this names each failing test file and the assertion's own line, and caps a
+# broken helper that fails every test at a readable list.
+#
+# Returns an arrayref of { test, assertions => [ { number, description, file,
+# line } ] }, in the order the tests failed.
+sub suite_failures {
+	my ($out) = @_;
+	my @lines = split /\n/, ($out // '');
+	my (@order, %by, $current);
+	my $ensure = sub {
+		my ($test) = @_;
+		$test = 'unknown test' unless defined $test && length $test;
+		return $by{$test} if $by{$test};
+		$by{$test} = { test => $test, assertions => [] };
+		push @order, $by{$test};
+		return $by{$test};
+	};
+
+	for my $i (0 .. $#lines) {
+		my $line = $lines[$i];
+		if ($line =~ /^---\s+(\S+)\s+failed\s*$/) {
+			$current = $1;
+			$ensure->($current);
+			next;
+		}
+		# The fork engine's per-file row: `t/01-names.t  FAIL  123 ms`.
+		if ($line =~ /^(\S+\.t)\s+FAIL\b/) {
+			$ensure->($1);
+			next;
+		}
+		# prove names the test as it starts it: `t/01-names.t .. `. It has no
+		# `--- failed` block, so this is what keeps a failure whose `at` line is
+		# a helper attributed to the test that called it.
+		if ($line =~ /^(\S+\.t)\s+\.\.(?:\s|$)/) {
+			$current = $1;
+			$ensure->($current);
+			next;
+		}
+		next unless $line =~ /^\s*not ok\b/;
+		next if $line =~ /#\s*TODO\b/i;
+
+		my ($number) = $line =~ /^\s*not ok\s+(\d+)/;
+		my ($description) = $line =~ /^\s*not ok\s+\d+\s*(?:-\s*)?(.*)$/;
+		$description = defined $description ? $description : '';
+		$description =~ s/\s+$//;
+
+		# The diagnostic Test::More prints right after the assertion. The
+		# excerpt indents every line, so allow the leading spaces.
+		my ($file, $line_no);
+		for my $j ($i + 1 .. ($i + 4 > $#lines ? $#lines : $i + 4)) {
+			next unless $lines[$j] =~ /^\s*#\s+at\s+(\S+)\s+line\s+(\d+)/;
+			($file, $line_no) = ($1, $2);
+			last;
+		}
+
+		my $test = defined $current && length $current ? $current
+			: defined $file && length $file ? $file
+			: 'unknown test';
+		push @{ $ensure->($test)->{'assertions'} }, {
+			number      => $number,
+			description => $description,
+			file        => $file,
+			line        => $line_no,
+		};
+	}
+
+	return \@order;
+}
+
+# A one-line-ish answer for a refusal or a ticket result: the failing files, the
+# first assertion in each with its line, and a count when a test fails more than
+# once. Falls back to the failure-looking lines when the output is not one of the
+# two shapes this understands - better than an empty verdict.
+sub suite_failure_summary {
+	my ($out) = @_;
+	my $failures = suite_failures($out);
+
+	if (!@$failures) {
+		my @lines = grep { /\S/ } split /\n/, ($out // '');
+		return 'the suite failed (no output)' unless @lines;
+		my @fail = grep { /not ok|FAILED|Failed test|Result: FAIL|tests failed/i } @lines;
+		my @pick = @fail ? @fail : @lines[(@lines > 12 ? -12 : 0) .. $#lines];
+		@pick = @pick[0 .. 19] if @pick > 20;
+		return "the suite failed:\n" . join("\n", @pick);
+	}
+
+	my @parts;
+	for my $f (@$failures) {
+		last if @parts >= 6;
+		my $a = $f->{'assertions'}[0];
+		if (!$a) {
+			push @parts, "$f->{'test'}: failed with no assertions";
+			next;
+		}
+		my $description = $a->{'description'} // '';
+		$description =~ s/\s+/ /g;
+		$description = substr($description, 0, 100) . '...' if length $description > 100;
+		my $what = 'not ok' . (defined $a->{'number'} ? " $a->{'number'}" : '')
+			. (length $description ? " - $description" : '');
+		my $where = defined $a->{'line'}
+			? ' (at ' . ($a->{'file'} // $f->{'test'}) . " line $a->{'line'})"
+			: '';
+		my $more = @{ $f->{'assertions'} } > 1
+			? ' (+' . (@{ $f->{'assertions'} } - 1) . ' more)'
+			: '';
+		push @parts, "$f->{'test'}: $what$where$more";
+	}
+
+	my $extra = @$failures > @parts
+		? '; ' . (@$failures - @parts) . ' more test file(s)'
+		: '';
+	return 'the suite failed: ' . join('; ', @parts) . $extra;
+}
+
 sub event {
 	my ($dir, $entry) = @_;
 	$entry->{'at'} = time unless defined $entry->{'at'};
