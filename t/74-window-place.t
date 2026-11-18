@@ -81,8 +81,8 @@ like($windows, qr/function windowTiledCascadePlace\(win, geom\)/,
 	'the pile and slot a window lands in is one answer, for the window and its preview');
 like($windows, qr/windowTiledCascadePlace\(win\)[\s\S]{0,400}tileStack = cascade_at\.stack/,
 	'and the open takes it');
-like($windows, qr/windowTiledCascadePlace\(null, null\)/,
-	'as does the press\'s own reservation');
+like($windows, qr/windowTiledCascadePlace\(null, reserve_geom\)/,
+	'as does the press\'s own reservation, with the same window and bar step');
 like($windows, qr/at\.left \+ Math\.round\(width \* windowStackAcross\)/,
 	'a full pile starts a new one, half a window across');
 like($fit, qr/var piled = !windowPhoneChecker\(\)[\s\S]{0,140}windowTiledSlot\(win\) >= 0/,

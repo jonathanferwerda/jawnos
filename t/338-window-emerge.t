@@ -127,6 +127,10 @@ like($emerge, qr/function jawnosWindowEmergeGhostCancel\(/, 'the preview can be 
 like($emerge, qr/function jawnosWindowEmergePredict\(/, 'the frame is predicted from the cascade');
 like($emerge, qr/windowTiledCascadePlace\(null, \{ width: width, height: height, step: step \}\)/,
 	'and it asks the placement itself, so a full pile\'s new pile is predicted too');
+like($emerge, qr/press_pending\.stack \|\| stack/,
+	'while a press\'s own reservation is where the window lands, pile and all');
+like($emerge, qr/\.start_menu_item, \.taskbar_pin, \.window_toggle, \.manager_search_result/,
+	'a search result row is a control like any other, so its window pours out of it');
 like($emerge, qr/function jawnosWindowEmergeAppColour\(/, 'the real app colour is read, not guessed');
 like($emerge, qr/function jawnosWindowEmergeArchetype\(/, 'an app chooses a skeleton archetype');
 like($emerge, qr/function jawnosWindowEmergeSkeleton\(/, 'the skeleton body is built');

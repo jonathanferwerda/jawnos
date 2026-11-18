@@ -197,7 +197,7 @@ function jawnosWindowOriginApp(el) {
 	if (el.id && typeof startMenuIconApps != 'undefined' && startMenuIconApps[el.id]) {
 		return startMenuIconApps[el.id];
 	}
-	var host = (el.closest ? el.closest('.window_toggle, .taskbar_pin, .start_menu_item, .app') : null);
+	var host = (el.closest ? el.closest('.window_toggle, .taskbar_pin, .start_menu_item, .app, .manager_search_result') : null);
 	if (host) {
 		var host_app = (host.getAttribute && host.getAttribute('app')) || '';
 		if (host_app) { return host_app; }
@@ -598,11 +598,16 @@ function jawnosWindowEmergePredict(origin, near) {
 	var slot = (typeof windowNextTileSlot == 'function') ? (windowNextTileSlot(stack) || 0) : 0;
 
 	// A lazy replay or a bespoke opener may already have reserved this press's
-	// slot. Count the press being predicted instead of handing it a later one.
+	// slot. The window lands there, so the picture has to be drawn there too -
+	// including the pile the reservation chose, which may not be the default one.
+	var press_pending = null;
 	if (origin.app && typeof windowTiledPendingApp != 'undefined' && typeof windowTiledPending != 'undefined') {
 		var stamp = windowTiledPendingApp[origin.app];
 		var pending = stamp && windowTiledPending[stamp];
-		if (pending && (pending.stack || stack) === stack && pending.slot >= 0) { slot = pending.slot; }
+		if (pending && pending.slot >= 0) {
+			press_pending = pending;
+			if ((pending.stack || stack) === stack) { slot = pending.slot; }
+		}
 	}
 
 	var phone = (typeof windowPhoneChecker == 'function' && windowPhoneChecker());
@@ -630,6 +635,13 @@ function jawnosWindowEmergePredict(origin, near) {
 		height = Math.round(view.height * 0.7128);
 		left = 0;
 		top = topLimit + jawnosWindowEmergePhoneSlot(stack) * step;
+		placed = true;
+	}
+	else if (!placed && press_pending && typeof windowTiledAnchor == 'function') {
+		// the reservation is where the window will land, whatever pile it chose
+		var press_anchor = windowTiledAnchor(press_pending.stack || stack) || { left: 0, top: topLimit };
+		left = jawnosEmergeNumber(press_anchor.left, 0) + press_pending.slot * across;
+		top = jawnosEmergeNumber(press_anchor.top, topLimit) + press_pending.slot * step;
 		placed = true;
 	}
 	else if (!placed && typeof windowTiledCascadePlace == 'function') {
@@ -2052,7 +2064,7 @@ function jawnosWindowEmergeControl(el, opts) {
 	if (el.closest && el.closest('.wind')) { return null; }
 	var host = null;
 	if (el.id && typeof startMenuIconApps != 'undefined' && startMenuIconApps[el.id]) { host = el; }
-	if (!host && el.closest) { host = el.closest('.start_menu_item, .taskbar_pin, .window_toggle'); }
+	if (!host && el.closest) { host = el.closest('.start_menu_item, .taskbar_pin, .window_toggle, .manager_search_result'); }
 	if (!host && el.closest) { host = el.closest('#app_switcher .app'); }
 	if (!host) { return null; }
 	var app = jawnosWindowOriginApp(host) || jawnosWindowOriginApp(el);

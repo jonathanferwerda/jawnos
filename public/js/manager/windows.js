@@ -874,9 +874,20 @@ function windowTiledReserve(timestamp, app) {
 		return;
 	}
 	var stack = (typeof jawnosWorkspaceStackDefault == 'function') ? jawnosWorkspaceStackDefault() : windowTiledDefaultStack;
-	// the pile and the slot this press will take, asked the same way the window's
-	// placement and its press preview ask it
-	var reserve_at = windowTiledCascadePlace(null, null);
+	// the pile and the slot this press will take, asked with the same window and
+	// bar step the press preview measures, so the three of them agree
+	var reserve_bar = 36;
+	var reserve_border = 3;
+	if (typeof jawnosBars != 'undefined' && jawnosBars) {
+		if (jawnosBars.navbar !== undefined && jawnosBars.navbar !== null) { reserve_bar = parseFloat(jawnosBars.navbar) || reserve_bar; }
+		if (jawnosBars.border !== undefined && jawnosBars.border !== null) { reserve_border = parseFloat(jawnosBars.border) || reserve_border; }
+	}
+	var reserve_geom = {
+		width: (typeof windowTileDefaultWidth == 'number' && windowTileDefaultWidth > 0) ? windowTileDefaultWidth : 480,
+		height: (typeof windowTileDefaultHeight == 'number' && windowTileDefaultHeight > 0) ? windowTileDefaultHeight : 640,
+		step: Math.max(20, reserve_bar - reserve_border)
+	};
+	var reserve_at = windowTiledCascadePlace(null, reserve_geom);
 	windowTiledPending[timestamp] = { slot: reserve_at.slot, at: Date.now(), app: app, stack: reserve_at.stack };
 	windowTiledPendingApp[app] = String(timestamp);
 }
