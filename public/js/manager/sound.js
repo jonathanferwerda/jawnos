@@ -1,6 +1,7 @@
 /* [[js-split]]
    sound.js is part 1. The rest live in sound/ in name order:
      01_patchbay.js  - the house plan: node and route editor, the manage switch, save and load
+     02_sections.js  - the section pills: one section at a time, remembered per browser
    /js/manager/bundle.js and the app chunk concatenate the index and these parts.
    [[/js-split]] */
 // The Sound app: the machine's output and input devices, the default speaker
@@ -30,6 +31,7 @@ function soundOpener(timestamp) {
 			if (!response) { return; }
 			windowMaker(response.window || response);
 			soundBind();
+			soundSectionRestore();
 			soundPatchLoad();
 			soundBrowserRefresh().then(soundLoad);
 		}
@@ -273,6 +275,9 @@ function soundBind() {
 	var window_box = $('.wind[app="sound"]');
 	if (!window_box.length || window_box.data('sound_bound')) { return; }
 	window_box.data('sound_bound', 1);
+	window_box.on('click', '.sound_section_pill', function() {
+		soundSectionShow($(this).attr('data-section'), true);
+	});
 	window_box.on('input', '#sound_output_volume', function() {
 		$('#sound_output_volume_value').text($(this).val() + '%');
 	});

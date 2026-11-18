@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sound.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm lib/JawnOS/Routes.pm templates/apps/sound.html.ep templates/apps/sound/media.html.ep public/js/manager/sound.js public/js/manager/taskbar_sound.js public/icons/sound.svg templates/start_menu/start_menu.html.ep public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm public/js/manager/windows/01_storage.js public/js/manager/taskbar_edit.js perl/language.pl perl/help/topics_apps.pl perl/help/topics_features.pl perl/gb/02_labels_and_collectives.pl
+# tests-for: lib/JawnOS/Domain/Sound.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm lib/JawnOS/Routes.pm templates/apps/sound.html.ep templates/apps/sound/media.html.ep public/js/manager/sound.js public/js/manager/sound/02_sections.js public/js/manager/taskbar_sound.js public/icons/sound.svg templates/start_menu/start_menu.html.ep public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm public/js/manager/windows/01_storage.js public/js/manager/taskbar_edit.js perl/language.pl perl/help/topics_apps.pl perl/help/topics_features.pl perl/gb/02_labels_and_collectives.pl
 # covers:    The Sound app: pactl/wpctl/amixer/the Android bridge readings, the
 #            validated writers and the default-device choice, plus the route,
 #            start-menu, taskbar-widget, lazy-chunk, translation and help wiring.
@@ -562,6 +562,24 @@ write_file($log, '');
 	like($template, qr/sound_section_head[^>]*><h3><%= &subs::ui\('IO'\)/, 'IO is a headed section');
 	like($template, qr/sound_section_head[^>]*><h3><%= &subs::lang\('sound_profiles'\)/, 'Profiles is a headed section');
 	like($template, qr/sound_profiles_body.*sound_level_section.*id="sound_level"/s, 'the Level sits inside Profiles');
+	like($template, qr/class="sound_section_tabs" role="tablist"/, 'the sections sit behind a row of pills');
+	like($template, qr/\.sound_section_tabs \{[^}]*overflow-x: scroll/, 'the pills scroll sideways');
+	like($template, qr/#sound \.sound_section \{[^}]*display: none/, 'only the active section is shown');
+	like($template, qr/\.sound_section\.is-active \{[^}]*display: flex/, 'and it fills the window');
+	like($template, qr/\.sound_section_body \{[^}]*overflow: auto/, 'the section body scrolls');
+	like($template, qr/class="sound_section_pill is-active"[^>]*data-section="patchbay"/, 'Patchbay has the active pill');
+	like($template, qr/class="sound_section_pill"[^>]*data-section="io"/, 'IO has a pill');
+	like($template, qr/class="sound_section_pill"[^>]*data-section="profiles"/, 'Profiles has a pill');
+	like($template, qr/id="sound_section_patchbay"[^>]*data-section="patchbay"/, 'the Patchbay section is named for its pill');
+	like($template, qr/id="sound_section_io"[^>]*data-section="io"/, 'so is IO');
+	like($template, qr/id="sound_section_profiles"[^>]*data-section="profiles"/, 'so is Profiles');
+
+	my $sections_js = read_file("$root/public/js/manager/sound/02_sections.js");
+	like($sections_js, qr/function soundSectionShow\(/, 'the pills are switched in one place');
+	like($sections_js, qr/localStorage\.setItem\(soundSectionKey, name\)/, 'the chosen section is remembered');
+	like($sections_js, qr/localStorage\.getItem\(soundSectionKey\)/, 'and read back on open');
+	like(read_file("$root/public/js/manager/sound.js"), qr/soundSectionRestore\(\);/, 'opening Sound restores it');
+	like(read_file("$root/public/js/manager/sound.js"), qr/'\.sound_section_pill', function\(\)/, 'a pill press switches the section');
 
 	no warnings 'redefine';
 	*subs::lang = sub { $_ [0] };
@@ -613,6 +631,7 @@ write_file($log, '');
 	like(join(' ', @{ $topic->{body} }), qr/walkboy/i,
 		'the topic says walkboy is still the media picker');
 	like(join(' ', @{ $topic->{body} }), qr/house level/, 'the topic explains the house level');
+	like(join(' ', @{ $topic->{body} }), qr/one section at a time/, 'the topic explains the pills');
 
 	my $taskbar = $help::topic{'taskbar'};
 	like(join(' ', @{ $taskbar->{body} }), qr/Sound shows/, 'the taskbar topic lists Sound');

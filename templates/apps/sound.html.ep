@@ -6,13 +6,17 @@
 <% my $input_volume = defined $input->{'volume'} ? $input->{'volume'} : 0; %>
 <% my $input_supported = (ref($status) eq 'HASH' && exists $status->{'input_supported'}) ? $status->{'input_supported'} : 1; %>
 <style>
-#sound { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow: auto; font-size: 16px; }
+#sound { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow: hidden; font-size: 16px; }
 #sound .sound_note { min-height: 1.2em; opacity: .78; }
 #sound .sound_columns { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
-#sound .sound_section { flex: 1 1 100%; min-width: 0; padding: 0; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); overflow: hidden; }
+#sound .sound_section { flex: 1 1 100%; min-width: 0; padding: 0; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); overflow: hidden; display: none; }
 #sound .sound_section_head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2, var(--panel)); }
+#sound .sound_section_tabs { display: flex; gap: 8px; flex: 0 0 auto; overflow-x: scroll; overflow-y: hidden; padding-bottom: 4px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+#sound .sound_section_pill { flex: 0 0 auto; padding: 5px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: pointer; white-space: nowrap; opacity: .85; }
+#sound .sound_section_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; opacity: 1; }
+#sound .sound_section.is-active { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 #sound .sound_section_head h3 { margin: 0; font-size: 16px; }
-#sound .sound_section_body { padding: 12px 16px; }
+#sound .sound_section_body { padding: 12px 16px; flex: 1 1 auto; min-height: 0; overflow: auto; }
 #sound .sound_subsection { flex: 1 1 300px; min-width: 0; }
 #sound .sound_subsection h4 { margin: 0 0 8px; font-size: 15px; }
 #sound .sound_profiles_body > .sound_subsection + .sound_subsection { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -56,10 +60,15 @@
 </style>
 <div id="sound" app="sound">
 	<div class="sound_note" id="sound_note"></div>
+	<div class="sound_section_tabs" role="tablist" aria-label="<%= &subs::ui('Sound sections') %>">
+		<button type="button" class="sound_section_pill is-active" role="tab" data-section="patchbay" aria-selected="true" aria-controls="sound_section_patchbay" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Patchbay') %></button>
+		<button type="button" class="sound_section_pill" role="tab" data-section="io" aria-selected="false" aria-controls="sound_section_io" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('IO') %></button>
+		<button type="button" class="sound_section_pill" role="tab" data-section="profiles" aria-selected="false" aria-controls="sound_section_profiles" hint="<%= &subs::ui('Show this section') %>"><%= &subs::lang('sound_profiles') %></button>
+	</div>
 % my $level = (ref($status) eq 'HASH' && $status->{'level'}) ? $status->{'level'} : 'sound';
 % my $house_level = (ref($status) eq 'HASH' && $status->{'house_level'}) ? $status->{'house_level'} : $level;
 % my $app_choices = (ref($status) eq 'HASH' && ref($status->{'apps'}) eq 'ARRAY') ? $status->{'apps'} : [];
-	<section class="sound_section sound_patchbay_section">
+	<section id="sound_section_patchbay" class="sound_section sound_patchbay_section is-active" data-section="patchbay" role="tabpanel">
 		<div class="sound_section_head"><h3><%= &subs::ui('Patchbay') %></h3></div>
 		<div class="sound_section_body">
 			<p class="sound_level_hint"><%= &subs::ui('One routing table for every input and output in the house. A source makes samples, a bus mixes them, and a sink plays them. The switch lets this machine\'s engine own the audio, so the plan is what is heard.') %></p>
@@ -109,7 +118,7 @@
 			<button type="button" class="sound_patch_save" id="sound_patch_save" hint="<%= &subs::ui('Save the plan for the whole house') %>"><%= &subs::ui('Save plan') %></button>
 		</div>
 	</section>
-	<section class="sound_section sound_io_section">
+	<section id="sound_section_io" class="sound_section sound_io_section" data-section="io" role="tabpanel">
 		<div class="sound_section_head"><h3><%= &subs::ui('IO') %></h3></div>
 		<div class="sound_section_body">
 			<div class="sound_columns">
@@ -171,7 +180,7 @@
 			</div>
 		</div>
 	</section>
-	<section class="sound_section sound_profiles_section">
+	<section id="sound_section_profiles" class="sound_section sound_profiles_section" data-section="profiles" role="tabpanel">
 		<div class="sound_section_head"><h3><%= &subs::lang('sound_profiles') %></h3></div>
 		<div class="sound_section_body sound_profiles_body">
 			<div class="sound_subsection sound_level_section">
