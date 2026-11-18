@@ -13,6 +13,7 @@
 pub mod backends;
 pub mod device;
 pub mod disk;
+pub mod effect;
 pub mod graph;
 pub mod loopback;
 pub mod params;
@@ -28,6 +29,7 @@ pub mod jack_device;
 pub use backends::{availability, Availability, BackendKind, RunReport};
 pub use device::{Device, DeviceError, NullDevice};
 pub use disk::DiskWriter;
+pub use effect::{Channel, Compressor, Delay, Distortion, Effect, InsertKind, ToneStack};
 pub use graph::{mix_mono_into_stereo, peak, GraphError, Strip};
 pub use loopback::LoopbackReport;
 pub use params::Param;

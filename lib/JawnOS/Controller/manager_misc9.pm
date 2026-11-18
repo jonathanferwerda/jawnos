@@ -36,6 +36,7 @@ use List::Util qw(shuffle);
 use Data::Dumper;
 use Mojo::Util qw/md5_sum html_unescape xml_escape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use File::Find;
+use File::Spec ();
 use File::Slurp;
 use File::Type;
 use File::Copy;
@@ -1179,6 +1180,131 @@ sub action_44022 {
 }
 
 my %studio_latency_backend = map { $_ => 1 } qw(alsa pipewire jack javascript);
+
+# POST /manager/studio/take
+#
+# Studio's transport for the engine's control socket: start a take, ask how it
+# is going, or stop it. A take's name is the server's, not the browser's: the
+# request carries a length and a start position only, so no parameter can name
+# a path, reach a shell or reach an argv. `status` and `stop` relay whatever the
+# engine says, including "not running", because either is a usable answer.
+sub action_44023 {
+	my $c = shift;
+	require JawnOS::Audio::Engine;
+
+	my $action = $c->param('action');
+	$action = '' unless defined $action;
+
+	if ($action eq 'status') {
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_status());
+		return;
+	}
+	if ($action eq 'stop') {
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_stop());
+		return;
+	}
+	unless ($action eq 'start') {
+		$c->render(json => { ok => 0, error => 'choose an action: start, stop or status' }, status => 400);
+		return;
+	}
+
+	my ($status, $answer) = &studio_take_start($c->param('seconds'), $c->param('start_at'));
+	$c->render(json => $answer, status => $status);
+	return;
+}
+
+our $studio_take_seconds_default = 10;
+our $studio_take_seconds_min     = 1;
+our $studio_take_seconds_max     = 3600;
+
+# A malformed length is the default rather than a refusal: the engine's own
+# default is ten seconds, and a page that sends "10s" means ten. The clamp is
+# the whole validation the engine needs.
+sub studio_take_seconds {
+	my ($value) = @_;
+	$value = $studio_take_seconds_default
+		unless defined $value && $value =~ /\A\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*\z/;
+	$value += 0;
+	return $studio_take_seconds_min if $value < $studio_take_seconds_min;
+	return $studio_take_seconds_max if $value > $studio_take_seconds_max;
+	return $value;
+}
+
+# A start position is a whole, non-negative sample count. The engine holds it
+# in a u64; a Perl NV is exact to 2^53, and a larger claim cannot be a real
+# position on any house device, so it falls back to zero like a malformed one.
+sub studio_take_start_at {
+	my ($value) = @_;
+	return 0 unless defined $value && $value =~ /\A\s*\+?(\d+)\s*\z/;
+	$value = $1 + 0;
+	return 0 if $value <= 0;
+	return 0 if $value > 9_007_199_254_740_991;
+	return int($value);
+}
+
+# The machine's recording folder, resolved the way every other recording path
+# is (misc/rec_location, then `~`), and made absolute because the engine refuses
+# a relative `out`. An unset or unusable setting is the empty string, which the
+# route turns into one clear refusal.
+sub studio_take_folder {
+	my $folder = eval { &subs::setting_grabber({ app => 'misc', setting => 'rec_location' }) };
+	return '' unless defined $folder && !ref $folder && length $folder;
+	my $dir = eval { &subs::home($folder) };
+	$dir = $folder unless defined $dir && length $dir;
+	unless (File::Spec->file_name_is_absolute($dir)) {
+		require JawnOS::Platform::Paths;
+		my $home = JawnOS::Platform::Paths::home();
+		$dir = File::Spec->catdir($home, $dir) if defined $home && length $home;
+	}
+	return $dir;
+}
+
+# `studio-take-<epoch>-<n>.wav`, with n the first free number in that second.
+# The engine writes the file, so the name is settled before the command and
+# never comes from the request.
+sub studio_take_path {
+	my ($folder, $epoch) = @_;
+	$epoch = time() unless defined $epoch;
+	my $take = 1;
+	$take++ while -e File::Spec->catfile($folder, "studio-take-$epoch-$take.wav");
+	return File::Spec->catfile($folder, "studio-take-$epoch-$take.wav");
+}
+
+# Resolve, arm and send one take. The folder is made server-side because the
+# disk writer does not create parents; the engine is checked first so a machine
+# without one does not leave an empty directory behind.
+sub studio_take_start {
+	my ($seconds, $start_at) = @_;
+	$seconds  = &studio_take_seconds($seconds);
+	$start_at = &studio_take_start_at($start_at);
+
+	my $folder = &studio_take_folder();
+	return (503, { ok => 0, error => 'no recording folder is set on this machine' })
+		unless length $folder;
+
+	require JawnOS::Audio::Engine;
+	return (503, { ok => 0, error => $JawnOS::Audio::Engine::audio_engine_not_running })
+		unless &JawnOS::Audio::Engine::audio_engine_available();
+
+	require File::Path;
+	my $ready = eval { File::Path::make_path($folder); 1 };
+	return (503, { ok => 0, error => 'the recording folder could not be created' })
+		unless $ready && -d $folder;
+
+	my $path = &studio_take_path($folder);
+	my $answer = &JawnOS::Audio::Engine::audio_engine_record($path, $seconds, $start_at);
+	$answer = { ok => 0, error => 'the audio engine did not answer' }
+		unless ref $answer eq 'HASH';
+
+	# The probe above can race an engine that exits between the two connections.
+	# The client says the same sentence when a connect fails, so the route still
+	# answers "not running" rather than a 200 carrying a server fault.
+	return (503, $answer)
+		if !$answer->{'ok'} && ($answer->{'error'} // '') eq $JawnOS::Audio::Engine::audio_engine_not_running;
+
+	$answer->{'path'} = $path if $answer->{'ok'} && !exists $answer->{'path'};
+	return (200, $answer);
+}
 
 # Run the engine for one validated backend and return [status, payload]. Only
 # the backend name reaches argv, and it is checked against the four-name list

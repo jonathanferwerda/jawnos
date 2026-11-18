@@ -675,6 +675,29 @@ fn capture_null(
 }
 
 #[cfg(feature = "alsa")]
+struct ServeSink<'a> {
+    disk: &'a mut DiskWriter,
+    status: &'a Arc<Mutex<Status>>,
+    stop: &'a AtomicBool,
+    pushed: u64,
+}
+
+#[cfg(feature = "alsa")]
+impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
+    fn block(&mut self, block: &[i16]) -> Result<(), String> {
+        // The sink is the only place a stop can reach a device loop that owns
+        // the read: ending the sink ends the capture.
+        if self.stop.load(Ordering::SeqCst) {
+            return Err("stopped".to_string());
+        }
+        self.disk.push(block);
+        self.pushed += (block.len() / RECORD_CHANNELS) as u64;
+        note_progress(self.status, self.pushed, self.disk.dropped_frames());
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alsa")]
 fn capture_hardware(
     config: &Config,
     seconds: f64,
@@ -682,24 +705,19 @@ fn capture_hardware(
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
 ) -> Result<Captured, String> {
-    let mut pushed = 0u64;
+    let sink = ServeSink {
+        disk,
+        status,
+        stop,
+        pushed: 0,
+    };
     let report = jawn_audio::alsa_device::run_capture(
         &config.device,
         config.rate,
         config.period,
         config.buffer,
         seconds,
-        |block| {
-            // The sink is the only place a stop can reach a device loop that
-            // owns the read: ending the sink ends the capture.
-            if stop.load(Ordering::SeqCst) {
-                return Err("stopped".to_string());
-            }
-            disk.push(block);
-            pushed += (block.len() / RECORD_CHANNELS) as u64;
-            note_progress(status, pushed, disk.dropped_frames());
-            Ok(())
-        },
+        sink,
     )
     .map_err(|error| format!("cannot record: {error}"))?;
     Ok(Captured {

@@ -203,22 +203,36 @@ pub fn check_capture(device: &str, rate: u32, period: usize, buffer: usize) -> R
     Ok(())
 }
 
-pub fn run_capture<F>(
+/// What a capture does with the blocks it reads, and a chance to size its
+/// buffers against the shape ALSA granted. `prepared` runs once, after the
+/// device opens and before the first read, so a channel can allocate its
+/// scratch and delay lines at the real rate rather than guessing.
+pub trait CaptureSink {
+    fn prepared(&mut self, _rate: u32, _period: usize) -> Result<(), String> {
+        Ok(())
+    }
+    /// One interleaved stereo block, already the device's own i16 samples.
+    fn block(&mut self, block: &[i16]) -> Result<(), String>;
+}
+
+pub fn run_capture<S: CaptureSink>(
     device: &str,
     rate: u32,
     period: usize,
     buffer: usize,
     seconds: f64,
-    mut sink: F,
-) -> Result<CaptureReport, String>
-where
-    F: FnMut(&[i16]) -> Result<(), String>,
-{
+    mut sink: S,
+) -> Result<CaptureReport, String> {
     let stream = open(device, Direction::Capture, rate, period, buffer)?;
     let io = stream
         .pcm
         .io_i16()
         .map_err(|error| format!("{device}: S16 stream: {error}"))?;
+
+    let frames = stream.period.max(1);
+    // Let the sink size itself from the granted shape before the first read:
+    // this is setup, not the audio path.
+    sink.prepared(stream.rate, frames)?;
 
     // Capture starts when read is called, but starting it explicitly makes the
     // first frame's position unambiguous and matches the loopback path.
@@ -227,7 +241,6 @@ where
         .start()
         .map_err(|error| format!("{device}: start capture: {error}"))?;
 
-    let frames = stream.period.max(1);
     let total = (seconds.max(0.0) * stream.rate as f64).round() as u64;
     let mut remaining = total;
     let mut captured = 0u64;
@@ -241,7 +254,7 @@ where
             Ok(0) => break,
             Ok(got) => {
                 let got = got.min(want);
-                sink(&slice[..got * CHANNELS as usize])
+                sink.block(&slice[..got * CHANNELS as usize])
                     .map_err(|error| format!("{device}: write take: {error}"))?;
                 captured += got as u64;
                 remaining -= got as u64;

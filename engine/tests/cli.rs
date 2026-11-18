@@ -276,7 +276,7 @@ fn record_null_writes_a_stereo_48k_take_and_its_contract() {
     assert_eq!(json_number(&text, "xruns"), 0.0, "stdout: {text}");
     assert!(text.contains("\"error\":\"\""), "stdout: {text}");
     let expected = format!(
-        "{{\"ok\":true,\"path\":\"{}\",\"backend\":\"null\",\"device\":\"null\",\"rate\":48000,\"frames\":4800,\"dropped\":0,\"channels\":2,\"start_sample\":0,\"xruns\":0,\"error\":\"\"}}",
+        "{{\"ok\":true,\"path\":\"{}\",\"backend\":\"null\",\"device\":\"null\",\"rate\":48000,\"frames\":4800,\"dropped\":0,\"channels\":2,\"start_sample\":0,\"xruns\":0,\"inserts\":\"\",\"error\":\"\"}}",
         take.text()
     );
     assert_eq!(text.trim(), expected, "the JSON line is the contract");
@@ -371,6 +371,22 @@ fn a_take_that_cannot_open_its_device_does_not_touch_the_file() {
 }
 
 #[test]
+fn a_take_records_one_input_of_an_interface() {
+    let take = TempTake::new("input-one");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--channel", "1",
+        "--out", take.text(), "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "channel 1 is a valid input");
+
+    let bad = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--channel", "2",
+        "--out", take.text(), "--json",
+    ]);
+    assert_eq!(bad.status.code(), Some(2), "there are only two inputs");
+}
+
+#[test]
 fn record_without_an_out_path_is_a_usage_error() {
     let out = run(&["--record", "--backend", "null", "--seconds", "0.1"]);
     assert_eq!(out.status.code(), Some(2));
@@ -388,6 +404,78 @@ fn record_refuses_to_pretend_a_take_is_not_stereo() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("stereo"), "stderr: {stderr}");
     assert!(!take.path.exists(), "a refused take created a file");
+}
+
+#[test]
+fn record_reports_the_insert_chain_in_order() {
+    let take = TempTake::new("inserts");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.05", "--out", take.text(),
+        "--insert", "tone", "--insert", "distortion", "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("\"inserts\":\"tone,distortion\""),
+        "stdout: {text}"
+    );
+}
+
+#[test]
+fn record_gain_and_pan_reach_the_take() {
+    // A 440 Hz sine at full scale, halved and panned hard left: the left
+    // channel is 0.5, the right is the pan's silent edge.
+    let take = TempTake::new("gain-pan");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--tone", "440",
+        "--gain", "0.5", "--pan", "-1", "--out", take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = fs::read(&take.path).expect("read the take");
+    let data = &bytes[44..];
+    let mut left_peak = 0i32;
+    let mut right_peak = 0i32;
+    for frame in data.chunks_exact(4) {
+        let left = i16::from_le_bytes([frame[0], frame[1]]) as i32;
+        let right = i16::from_le_bytes([frame[2], frame[3]]) as i32;
+        left_peak = left_peak.max(left.abs());
+        right_peak = right_peak.max(right.abs());
+    }
+    let full = i16::MAX as i32;
+    assert!(
+        (left_peak - full / 2).abs() < full / 50,
+        "left peak {left_peak} was not half scale"
+    );
+    assert!(right_peak < full / 100, "right peak {right_peak} was not silent");
+}
+
+#[test]
+fn an_unknown_insert_is_a_usage_error() {
+    let take = TempTake::new("unknown-insert");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--out", take.text(),
+        "--insert", "reverb2",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("unknown insert"), "stderr: {text}");
+    assert!(!take.path.exists(), "a refused take created a file");
+}
+
+#[test]
+fn channel_flags_outside_record_are_refused() {
+    let out = run(&["--run", "--seconds", "0.1", "--gain", "2"]);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("only to --record"), "stderr: {text}");
 }
 
 #[test]

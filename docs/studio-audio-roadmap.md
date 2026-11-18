@@ -322,6 +322,35 @@ plumbing for machines without the engine, for the Bluetooth handset and for anyt
 on an engine machine it runs at a fixed low quantum as the engine's backend, so it stays in the path
 and stays out of the way.
 
+### The pedalboard, in the engine
+
+Studio's channel is `trim -> bass -> mid -> treble -> inserts -> record`. The engine now carries
+that as one strip: gain before the inserts, the inserts in the order they were given, and the
+equal-power pan at the stereo output. The tone stack is an insert rather than a fixed stage, so a
+channel with no pedals is exactly a wire — which is what makes the strip testable and what lets a
+take be compared with the browser without three filters of phase always in the way.
+
+| Web stage | Engine | What it honestly is |
+|---|---|---|
+| `bass` / `mid` / `treble` | `ToneStack` | The same three biquads (220 Hz shelf, 1 kHz peak, 3.5 kHz shelf), designed in f64 and smoothed. |
+| `Distorjawn` | `Distortion` | The same `studioDistortionCurve` expression, 4x oversampled into a 4.5 kHz lowpass. Chromium's oversampling filters are implementation-defined, so the shape is the same and the samples are not. |
+| `Delayed` | `Delay` | A rewrite of the same line: 2 s, feedback, 0.7 dry, the same three knobs. |
+| `CompressionX` | `Compressor` | A rewrite. Chromium's `DynamicsCompressor` is not a published algorithm; this is a standard feed-forward, soft-knee compressor with the same threshold, attack and mix controls and the same job. **No lookahead** — lookahead is latency, and this plan does not add latency silently. |
+| `reverb2` | not yet | A 2.4 s generated impulse through a convolver is partitioned FFT convolution. It is its own piece of work, not a filter with a long tail. |
+| `JawnSynth` | not an effect | It is a generator, not a stage: its output replaces the chain. Putting it in an insert list would mean a strip that can be fed from nowhere. |
+
+A strip is **one input**, which is Studio's own model: an interface's two inputs are a mic and an
+instrument, not a stereo pair, and summing them would put a vocal inside a guitar. `--channel 0|1`
+picks the input a take records, and `--record` writes the strip's panned stereo output. A true
+stereo take, and a mixer of several channels, are the next slices — not something to fake by
+averaging two sources.
+
+Every effect is prepared once — the delay line, the channel's scratch block, the filter
+coefficients — and after that only reads and writes memory it already owns. Controls move through
+one-pole smoothing (once per block for the tone stack and the drive, per sample for delay time and
+compressor gain), because a coefficient or a delay length that steps at a block edge is a click,
+and a click printed into a take cannot be taken back out.
+
 ---
 
 ## 8. The patchbay

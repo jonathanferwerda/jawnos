@@ -13,6 +13,10 @@ use crate::params::Param;
 pub enum GraphError {
     /// The output block was not `input.len() * 2` samples long.
     BadBlock { expected: usize, found: usize },
+    /// A channel was handed more frames than [`crate::effect::Channel::prepare`]
+    /// sized it for. Growing the scratch buffer here would allocate on the
+    /// audio thread, so the block is refused instead.
+    BlockTooLong { max_frames: usize, found: usize },
 }
 
 /// One channel strip's contribution: a gain and a pan position in
@@ -34,12 +38,19 @@ impl Strip {
 
     /// The left and right gains this strip contributes right now.
     pub fn coefficients(&self) -> (f32, f32) {
-        let pan = self.pan.get().clamp(-1.0, 1.0);
+        let (left, right) = pan_coefficients(self.pan.get());
         let gain = self.gain.get();
-        // -1 -> 0 rad, 0 -> π/4, 1 -> π/2: an equal-power sweep.
-        let angle = (pan + 1.0) * FRAC_PI_4;
-        (gain * angle.cos(), gain * angle.sin())
+        (gain * left, gain * right)
     }
+}
+
+/// The equal-power left and right gains for a pan position alone, without a
+/// strip gain. A channel applies its trim to the mono signal before the
+/// inserts, so the output needs the pan and not the gain a second time.
+pub(crate) fn pan_coefficients(pan: f32) -> (f32, f32) {
+    // -1 -> 0 rad, 0 -> π/4, 1 -> π/2: an equal-power sweep.
+    let angle = (pan.clamp(-1.0, 1.0) + 1.0) * FRAC_PI_4;
+    (angle.cos(), angle.sin())
 }
 
 /// Add one mono block into an interleaved stereo bus. `out` must be exactly
@@ -50,13 +61,25 @@ pub fn mix_mono_into_stereo(
     input: &[f32],
     strip: &Strip,
 ) -> Result<(), GraphError> {
+    let (left_gain, right_gain) = strip.coefficients();
+    mix_mono_into_stereo_with_gains(out, input, left_gain, right_gain)
+}
+
+/// Add one mono block into an interleaved stereo bus with explicit left and
+/// right gains. The caller owns the gain split; [`mix_mono_into_stereo`] is the
+/// `Strip`-shaped wrapper.
+pub(crate) fn mix_mono_into_stereo_with_gains(
+    out: &mut [f32],
+    input: &[f32],
+    left_gain: f32,
+    right_gain: f32,
+) -> Result<(), GraphError> {
     if out.len() != input.len() * 2 {
         return Err(GraphError::BadBlock {
             expected: input.len() * 2,
             found: out.len(),
         });
     }
-    let (left_gain, right_gain) = strip.coefficients();
     for (frame, sample) in input.iter().enumerate() {
         out[frame * 2] += sample * left_gain;
         out[frame * 2 + 1] += sample * right_gain;

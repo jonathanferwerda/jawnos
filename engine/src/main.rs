@@ -14,8 +14,8 @@ use std::process::ExitCode;
 
 use jawn_audio::{
     backends::{self, BackendKind, RunReport},
-    decode, encode_datagram, loopback, mix_mono_into_stereo, peak, to_i16, Codec, Device,
-    DiskWriter, Header, NullDevice, Strip, HEADER_LEN,
+    decode, encode_datagram, loopback, mix_mono_into_stereo, peak, to_i16, Channel, Codec, Device,
+    DiskWriter, Header, InsertKind, NullDevice, Strip, HEADER_LEN,
 };
 
 /// A take is the interface's own shape: stereo at the sample rate in the
@@ -58,6 +58,11 @@ jawn-audio — the JawnOS audio engine
   --seconds S     how long to record, in seconds (default 5)
   --rate HZ       sample rate (default 48000)
   --start-at S    the take's start sample on the transport (default 0)
+  --gain N        channel trim, linear (default 1.0)
+  --pan N         channel pan, -1 left .. 1 right (default 0, centre)
+  --channel N     which input the strip records (0 or 1, default 0)
+  --insert NAME   an insert, repeatable in chain order:
+                  tone, distortion, delay or compressor (default none)
   --tone HZ       with the null backend, record a sine instead of silence
   --json          one JSON line instead of prose
 
@@ -109,6 +114,10 @@ struct Options {
     out: Option<String>,
     socket: Option<String>,
     start_at: u64,
+    gain: f32,
+    pan: f32,
+    inserts: Vec<InsertKind>,
+    input: usize,
     seconds_given: bool,
     json: bool,
 }
@@ -137,6 +146,10 @@ fn run() -> Result<ExitCode, String> {
         out: None,
         socket: None,
         start_at: 0,
+        gain: 1.0,
+        pan: 0.0,
+        inserts: Vec::new(),
+        input: 0,
         seconds_given: false,
         json: false,
     };
@@ -207,8 +220,42 @@ fn run() -> Result<ExitCode, String> {
                     .parse()
                     .map_err(|_| format!("--start-at wants a sample count, not `{raw}`"))?;
             }
+            "--gain" => {
+                let raw = value(&mut args, "--gain")?;
+                options.gain = raw
+                    .parse()
+                    .map_err(|_| format!("--gain wants a multiplier, not `{raw}`"))?;
+            }
+            "--channel" => {
+                let raw = value(&mut args, "--channel")?;
+                options.input = raw
+                    .parse()
+                    .map_err(|_| format!("--channel wants 0 or 1, not `{raw}`"))?;
+            }
+            "--pan" => {
+                let raw = value(&mut args, "--pan")?;
+                options.pan = raw
+                    .parse()
+                    .map_err(|_| format!("--pan wants -1, 0 or 1, not `{raw}`"))?;
+            }
+            "--insert" => {
+                let raw = value(&mut args, "--insert")?;
+                options.inserts.push(InsertKind::parse(&raw).ok_or_else(|| {
+                    format!(
+                        "unknown insert `{raw}` (want tone, distortion, delay or compressor)"
+                    )
+                })?);
+            }
             other => return Err(format!("unknown option `{other}` (try --help)")),
         }
+    }
+
+    // These three describe a channel, and `--record` is the only mode that has
+    // one today; say so instead of accepting a knob that does nothing.
+    if options.mode != Mode::Record
+        && (options.gain != 1.0 || options.pan != 0.0 || !options.inserts.is_empty())
+    {
+        return Err("--gain, --pan and --insert apply only to --record".to_string());
     }
 
     match options.mode {
@@ -472,6 +519,7 @@ struct TakeReport {
     channels: usize,
     start_sample: u64,
     xruns: usize,
+    inserts: String,
     error: String,
 }
 
@@ -485,6 +533,7 @@ impl TakeReport {
         dropped: u64,
         start_sample: u64,
         xruns: usize,
+        inserts: String,
     ) -> Self {
         TakeReport {
             ok: true,
@@ -497,6 +546,7 @@ impl TakeReport {
             channels: RECORD_CHANNELS,
             start_sample,
             xruns,
+            inserts,
             error: String::new(),
         }
     }
@@ -507,6 +557,7 @@ impl TakeReport {
         device: String,
         rate: u32,
         start_sample: u64,
+        inserts: String,
         error: String,
     ) -> Self {
         TakeReport {
@@ -520,13 +571,14 @@ impl TakeReport {
             channels: RECORD_CHANNELS,
             start_sample,
             xruns: 0,
+            inserts,
             error,
         }
     }
 
     fn to_json(&self) -> String {
         format!(
-            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"error\":\"{}\"}}",
+            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
             self.ok,
             loopback::json_escape(&self.path),
             loopback::json_escape(self.backend),
@@ -537,6 +589,7 @@ impl TakeReport {
             self.channels,
             self.start_sample,
             self.xruns,
+            loopback::json_escape(&self.inserts),
             loopback::json_escape(&self.error)
         )
     }
@@ -547,8 +600,13 @@ impl TakeReport {
         } else {
             self.frames as f64 / self.rate as f64
         };
+        let inserts = if self.inserts.is_empty() {
+            "none"
+        } else {
+            self.inserts.as_str()
+        };
         format!(
-            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, dropped {}, xruns {}",
+            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, dropped {}, xruns {}, inserts {}",
             self.path,
             self.frames,
             self.rate,
@@ -558,7 +616,8 @@ impl TakeReport {
             self.device,
             self.start_sample,
             self.dropped,
-            self.xruns
+            self.xruns,
+            inserts
         )
     }
 }
@@ -571,6 +630,9 @@ fn validate_record(options: &Options) -> Result<(), String> {
     if options.rate == 0 {
         return Err("--rate must be at least 1".to_string());
     }
+    if options.input > 1 {
+        return Err("--channel must be 0 or 1".to_string());
+    }
     if options.channels != RECORD_CHANNELS {
         return Err(format!(
             "--record writes stereo; --channels must be {RECORD_CHANNELS}"
@@ -579,7 +641,38 @@ fn validate_record(options: &Options) -> Result<(), String> {
     if options.seconds < 0.0 {
         return Err("--seconds cannot be negative".to_string());
     }
+    validate_channel(options)?;
     Ok(())
+}
+
+fn validate_channel(options: &Options) -> Result<(), String> {
+    if !options.gain.is_finite() {
+        return Err("--gain must be a finite number".to_string());
+    }
+    if !options.pan.is_finite() {
+        return Err("--pan must be a finite number".to_string());
+    }
+    Ok(())
+}
+
+/// The take's channel: trim, the inserts in the order they were given, pan.
+fn channel_for(options: &Options) -> Channel {
+    let mut channel = Channel::new(options.gain, options.pan.clamp(-1.0, 1.0));
+    for kind in &options.inserts {
+        channel.push(kind.build());
+    }
+    channel
+}
+
+/// The chain order for the take report, e.g. `tone,distortion` or an empty
+/// string when the take was a wire.
+fn insert_list(options: &Options) -> String {
+    options
+        .inserts
+        .iter()
+        .map(|kind| kind.name())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn validate_serve(options: &Options) -> Result<(), String> {
@@ -666,6 +759,7 @@ fn run_record(options: &Options) -> Result<ExitCode, String> {
                 device,
                 options.rate,
                 options.start_at,
+                insert_list(options),
                 error.clone(),
             );
             if options.json {
@@ -751,6 +845,7 @@ fn record_take(options: &Options, path: &str, device: &str) -> Result<TakeReport
                         dropped,
                         options.start_at,
                         xruns,
+                        insert_list(options),
                     ))
                 }
                 Err(error) => {
@@ -851,22 +946,30 @@ fn record_null(
     seconds: f64,
     disk: &mut DiskWriter,
 ) -> Result<(u32, usize), String> {
-    let mut device = NullDevice::new(options.rate, options.frames, RECORD_CHANNELS);
+    // The null backend is the source's mono shape; the channel makes the take
+    // stereo, exactly as a live mono input reaches the web's recorder.
+    let mut device = NullDevice::new(options.rate, options.frames, 1);
     if let Some(hz) = options.tone {
         device = device.with_tone(hz);
     }
+    let mut channel = channel_for(options);
+    channel.prepare(options.rate, options.frames);
 
     let total = take_frames(seconds, options.rate);
-    let mut block = vec![0.0f32; options.frames * RECORD_CHANNELS];
+    let mut mono = vec![0.0f32; options.frames];
+    let mut stereo = vec![0.0f32; options.frames * RECORD_CHANNELS];
     let mut pcm = vec![0i16; options.frames * RECORD_CHANNELS];
     let mut remaining = total;
     while remaining > 0 {
         device
-            .process(&mut block)
+            .process(&mut mono)
             .map_err(|error| format!("device: {error:?}"))?;
         let frames = remaining.min(options.frames as u64) as usize;
         let samples = frames * RECORD_CHANNELS;
-        for (out, sample) in pcm[..samples].iter_mut().zip(&block[..samples]) {
+        channel
+            .process(&mono[..frames], &mut stereo[..samples])
+            .map_err(|error| format!("channel: {error:?}"))?;
+        for (out, sample) in pcm[..samples].iter_mut().zip(&stereo[..samples]) {
             *out = to_i16(*sample);
         }
         // Never blocks; the queue is sized for the whole take, so a drop here
@@ -877,6 +980,50 @@ fn record_null(
     Ok((options.rate, 0))
 }
 
+/// The hardware take's channel: downmix each interleaved stereo block to mono,
+/// run the strip, write the stereo result. Every buffer is sized once in
+/// [`CaptureSink::prepared`] from the shape ALSA granted.
+#[cfg(feature = "alsa")]
+struct TakeChannel<'a> {
+    channel: Channel,
+    input: usize,
+    mono: Vec<f32>,
+    stereo: Vec<f32>,
+    pcm: Vec<i16>,
+    disk: &'a mut DiskWriter,
+}
+
+#[cfg(feature = "alsa")]
+impl jawn_audio::alsa_device::CaptureSink for TakeChannel<'_> {
+    fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
+        self.channel.prepare(rate, period);
+        self.mono = vec![0.0; period];
+        self.stereo = vec![0.0; period * RECORD_CHANNELS];
+        self.pcm = vec![0i16; period * RECORD_CHANNELS];
+        Ok(())
+    }
+
+    fn block(&mut self, block: &[i16]) -> Result<(), String> {
+        let frames = (block.len() / RECORD_CHANNELS).min(self.mono.len());
+        // One input per channel strip, not the sum of two: a mic on input 0 and
+        // an instrument on input 1 are different sources, and averaging them
+        // mixes a vocal into a guitar. `--channel` picks the one this take is.
+        let offset = self.input.min(1);
+        for frame in 0..frames {
+            self.mono[frame] = f32::from(block[frame * 2 + offset]) / 32_768.0;
+        }
+        let samples = frames * RECORD_CHANNELS;
+        self.channel
+            .process(&self.mono[..frames], &mut self.stereo[..samples])
+            .map_err(|error| format!("channel: {error:?}"))?;
+        for (out, sample) in self.pcm[..samples].iter_mut().zip(&self.stereo[..samples]) {
+            *out = to_i16(*sample);
+        }
+        self.disk.push(&self.pcm[..samples]);
+        Ok(())
+    }
+}
+
 #[cfg(feature = "alsa")]
 fn record_alsa(
     device: &str,
@@ -884,16 +1031,21 @@ fn record_alsa(
     seconds: f64,
     disk: &mut DiskWriter,
 ) -> Result<(u32, usize), String> {
+    let sink = TakeChannel {
+        channel: channel_for(options),
+        input: options.input,
+        mono: Vec::new(),
+        stereo: Vec::new(),
+        pcm: Vec::new(),
+        disk,
+    };
     let report = jawn_audio::alsa_device::run_capture(
         device,
         options.rate,
         options.frames,
         options.buffer,
         seconds,
-        |block| {
-            disk.push(block);
-            Ok(())
-        },
+        sink,
     )?;
     // ALSA may grant a rate other than the one requested; the samples are at
     // the granted rate, so the header and the report must say that rate. The
