@@ -128,10 +128,12 @@ sub job_slow_loops {
 		# A session whose machine died leaves a row open - a Gou battery, a
 		# killed browser, a manager that was down. Close it at its last heartbeat.
 		{ name => 'session housekeeping', first => 30, every => 60, run => sub { &subs::session_housekeeping_tick(); } },
-		# The cable changed: apply the plan saved for the source now in use. The
-		# tick is idempotent (the applied row makes it a no-op) so a machine on
-		# mains pays one battery read per minute and no sysfs write.
-		{ name => 'power watch', first => 25, every => 60, run => sub { &subs::power_plan_tick(); } },
+		# The cable changed: apply the plan saved for the source now in use. Ten
+		# seconds is short enough that plugging in a laptop feels immediate; the
+		# tick is idempotent (the applied row makes it a no-op) so a machine in a
+		# steady state pays a battery read and no sysfs write. The competing-daemon
+		# probe inside it rides a slower minute clock.
+		{ name => 'power watch', first => 5, every => 10, run => sub { &subs::power_plan_tick(); } },
 		# The network changed or a new boot reset it: keep the saved addressing
 		# profile applied. The applied row makes the minute tick a no-op while the
 		# live network already matches, and turning management off skips it.

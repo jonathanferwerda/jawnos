@@ -126,6 +126,28 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	is($state->{'boot'}, 'boot-one', 'the applied state records the boot');
 }
 
+# --- a live write follows the cable, and keeps a limit it is not naming ------
+{
+	# The taskbar panel sends `live` and only a plan. On battery it must edit the
+	# battery card, keeping the limit the panel never showed; on mains it must
+	# edit the mains card even if the panel was built before the cable changed.
+	my $saved = subs::power_plan_set('live', 'balanced');
+	ok($saved->{'ok'}, 'a live source is accepted');
+	is($saved->{'config'}{'battery'}{'plan'}, 'balanced', 'on battery it edits the battery card');
+	is($saved->{'config'}{'battery'}{'limit'}, 85, 'and keeps the limit it did not name');
+	ok($saved->{'applied'}{'dry_run'}, 'it applies at once because that source is live');
+	write_file("$sys/class/power_supply/AC/online", "1\n");
+	my $mains = subs::power_plan_set('live', 'performance');
+	is($mains->{'config'}{'ac'}{'plan'}, 'performance', 'on mains it edits the mains card');
+	is($mains->{'config'}{'ac'}{'limit'}, 100, 'keeping the mains limit');
+	is($mains->{'config'}{'battery'}{'plan'}, 'balanced', 'the other card is untouched');
+	write_file("$sys/class/power_supply/AC/online", "0\n");
+	# The rest of the file expects the battery performance/85 pair and a
+	# balanced mains plan.
+	subs::power_plan_set('ac', 'balanced', 100);
+	subs::power_plan_set('battery', 'performance', 85);
+}
+
 # --- the source switch is idempotent ---------------------------------------
 {
 	unlink "$scratch/state.json" if -e "$scratch/state.json";
@@ -179,8 +201,23 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	is(subs::power_plan_tick()->{'skipped'}, 'already applied', 'the tick is idempotent again');
 }
 
+# --- the daemon probe rides a slower clock than the cable ------------------
+{
+	local $subs::power_manager_probed_at = time;
+	my $probes = 0;
+	my $real = \&subs::power_manager;
+	*subs::power_manager = sub { $probes++; return { ok => 1, supported => 1, units => [] }; };
+	subs::power_plan_tick();
+	is($probes, 0, 'a ten-second tick does not run the daemon probe');
+	$subs::power_manager_probed_at = time - 61;
+	subs::power_plan_tick();
+	is($probes, 1, 'the probe runs again on its minute clock');
+	*subs::power_manager = $real;
+}
+
 # --- the watch re-asserts management ----------------------------------------
 {
+	local $subs::power_manager_probed_at = 0;
 	my $real_manager = \&subs::power_manager;
 	*subs::power_manager = sub { return { ok => 1, supported => 1, units => ['auto-cpufreq'] }; };
 	my $taken = subs::power_plan_tick();
@@ -189,6 +226,7 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 
 	# Auto deliberately leaves a competing daemon alone.
 	subs::power_plan_set('battery', 'auto', 85);
+	$subs::power_manager_probed_at = 0;
 	*subs::power_manager = sub { return { ok => 1, supported => 1, units => ['auto-cpufreq'] }; };
 	my $auto_tick = subs::power_plan_tick();
 	is($auto_tick->{'skipped'}, 'already applied', 'Auto still leaves the daemon alone');
@@ -496,6 +534,9 @@ SH
 	like($taskbar_js, qr/Power is managed by the system/, 'the taskbar panel says when the system manages');
 	like($power_js, qr/took over from/, 'the app names the daemon JawnOS took over from');
 	like($taskbar_js, qr/took over from/, 'the taskbar panel names it too');
+	like($taskbar_js, qr/source:\s*'live'/, 'the panel writes the source the machine is on now');
+	like($taskbar_js, qr/plan == 'performance'\) \{ data\.limit = 100; \}/,
+		'and lifts the speed limit when Performance is chosen there');
 }
 
 # --- a gauge that has not learned its counter -------------------------------
@@ -590,6 +631,7 @@ SH
 
 	my $jobs = read_file("$root/perl/jobs.pl");
 	like($jobs, qr/name => 'power watch'/, 'the slow loop carries the source switch');
+	like($jobs, qr/name => 'power watch'[^\n]*every => 10\b/, 'the cable is watched every ten seconds');
 	like($jobs, qr/&subs::power_plan_tick\(\)/, 'and calls the domain helper');
 	like($jobs, qr/sub job_slow_loops \{.*?eval \{ &subs::power_plan_tick\(\); \};.*?my \@slow_loops/s,
 		'the plan is taken back at once when the slow worker starts');

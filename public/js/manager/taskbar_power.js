@@ -11,7 +11,8 @@
 // the app. Its contents are rebuilt on every open from the cached reading and
 // again when a fresh /manager/power_status lands. A profile write asks for the
 // status again instead of trusting its own answer, because saving a plan also
-// applies it when that source is live.
+// applies it when that source is live; the write names the live source rather
+// than the one the panel was built from.
 var jawnosPowerTaskbarData = null;
 // True while a plan write is in flight: a poll must not rebuild the panel and
 // hand back enabled buttons mid-request.
@@ -176,6 +177,8 @@ function jawnosPowerTaskbarPanelBattery(panel) {
 
 // The app keeps a plan for ac and one for battery; this edits the one for the
 // source the machine is on now, and preserves that source's saved CPU limit.
+// Performance is the exception: the panel has no limit control, so it asks for
+// the whole clock range instead of silently keeping a 70% cap.
 function jawnosPowerTaskbarPanelProfile(panel) {
 	var status = jawnosPowerTaskbarData;
 	var live = !!(status && status.ok && status.source);
@@ -258,9 +261,11 @@ $(document).on('click', '#taskbar_power_panel [data-power-plan]', function() {
 	}
 	var plan = button.attr('data-power-plan') || '';
 	if (!plan) { return; }
-	var source = String(status.source);
-	// Keep the limit the app saved for this source; only the plan changes.
-	var limit = ((status.config || {})[source] || {}).limit;
+	// `live` is resolved on the server at the moment of the write, so a press
+	// just after the cable changes cannot edit the source the machine has left.
+	// A missing limit keeps the source's saved cap; Performance lifts it.
+	var data = { source: 'live', plan: plan };
+	if (plan == 'performance') { data.limit = 100; }
 	jawnosPowerTaskbarPanelBusy = true;
 	panel.find('[data-power-plan]').prop('disabled', true);
 	jawnosPowerTaskbarPanelNote(jawnosT('Saving…'));
@@ -268,7 +273,7 @@ $(document).on('click', '#taskbar_power_panel [data-power-plan]', function() {
 		url: '/manager/power/plan',
 		type: 'POST',
 		dataType: 'json',
-		data: { source: source, plan: plan, limit: limit }
+		data: data
 	}).done(function(response) {
 		jawnosPowerTaskbarPanelBusy = false;
 		// Re-enable before the reload so a failed reading cannot strand them.

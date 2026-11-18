@@ -19,6 +19,11 @@ use Mojo::JSON qw(decode_json encode_json);
 
 our $power_status_memo;
 
+# The cable is read on every power-watch tick; the competing-daemon probe costs
+# a helper run, so it rides a minute clock of its own. A plug-in is noticed on
+# the next ten-second tick, and a daemon that started by itself within a minute.
+our $power_manager_probed_at;
+
 # The sleep and display choices. Values are stored in minutes; 0 is Never.
 # Each is a closed set, so a request value never reaches the helper unchecked.
 our @power_screen_timeouts = (0, 1, 2, 5, 10, 15, 30);
@@ -747,12 +752,23 @@ sub power_apply_plan {
 	return \%result;
 }
 
+# Save one source's plan. `live` resolves to the source the machine is on now,
+# so a panel built from a reading a minute old cannot edit the source the cable
+# has already left. A caller that names no limit (the taskbar panel has no
+# speed-limit control) keeps that source's saved cap instead of resetting it.
 sub power_plan_set {
 	my ($source, $plan, $limit) = @_;
-	return { ok => 0, error => 'unknown source' } unless defined $source && ($source eq 'ac' || $source eq 'battery');
+	if (!defined $source || !length $source || $source eq 'live') {
+		my $battery = &power_battery_read();
+		$source = (!$battery->{'present'} || $battery->{'ac'}) ? 'ac' : 'battery';
+	}
+	return { ok => 0, error => 'unknown source' } unless $source eq 'ac' || $source eq 'battery';
 	return { ok => 0, error => 'unknown plan' } unless &power_plan_valid($plan);
 	my $config = &power_config();
-	$config->{$source} = { plan => $plan, limit => &power_limit_round($limit) };
+	my $entry = ref $config->{$source} eq 'HASH' ? $config->{$source} : {};
+	$limit = $entry->{'limit'} unless defined $limit && length $limit;
+	$limit = &power_limit_round($limit);
+	$config->{$source} = { plan => $plan, limit => $limit };
 	$config = &power_config_save($config);
 	my $status = &power_status();
 	my $applied;
@@ -905,18 +921,20 @@ sub power_sleep_now {
 
 # The slow loop's turn: when the cable changes, the plan saved for that source
 # is applied once. The saved "last applied" row is what makes this idempotent -
-# every poll after the first is a no-op, so a 30-second tick cannot rewrite sysfs
-# forever.
+# every poll after the first is a no-op, so the ten-second tick cannot rewrite
+# sysfs forever.
 #
 # That row survives a reboot, but the kernel's own governor does not, so a row
 # from an earlier boot is not evidence that the machine still holds the plan.
 # When the boot id changes, take the saved plan back once even with automatic
 # switching off: a reboot is not a plan switch. The same-boot dedupe below still
-# keeps the minute tick from rewriting sysfs.
+# keeps the ten-second tick from rewriting sysfs.
 #
 # The takeover is a plain stop, so a daemon can return without a cable change.
 # A real plan is re-applied when a competing daemon is running again, which both
 # stops it and restores the CPU it may have changed; Auto still leaves it alone.
+# The probe costs a helper run, so it rides a minute clock while the battery is
+# read every ten seconds.
 sub power_plan_tick {
 	my $config = &power_config();
 	return { ok => 1, skipped => 'system managed' } unless $config->{'manage'};
@@ -931,10 +949,13 @@ sub power_plan_tick {
 	my $boot = &power_boot_id();
 	return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'})
 		if length $boot && (($last->{'boot'} // '') ne $boot);
-	my $manager = &power_manager();
-	my $active = ref $manager eq 'HASH' && ref $manager->{'units'} eq 'ARRAY' ? $manager->{'units'} : [];
-	return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'})
-		if @{$active} && $wanted->{'plan'} ne 'auto';
+	if (!defined $power_manager_probed_at || time - $power_manager_probed_at >= 60) {
+		$power_manager_probed_at = time;
+		my $manager = &power_manager();
+		my $active = ref $manager eq 'HASH' && ref $manager->{'units'} eq 'ARRAY' ? $manager->{'units'} : [];
+		return &power_apply_plan($source, $wanted->{'plan'}, $wanted->{'limit'})
+			if @{$active} && $wanted->{'plan'} ne 'auto';
+	}
 	return { ok => 1, skipped => 'auto is off' } unless $config->{'auto'};
 	return { ok => 1, skipped => 'already applied' }
 		if $last->{'ok'} && ($last->{'source'} || '') eq $source
