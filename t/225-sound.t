@@ -555,6 +555,10 @@ write_file($log, '');
 	like($template, qr/class="sound_default"/, 'device rows carry Set default');
 	like($template, qr/id="sound_level"/, 'it has the house level');
 	like($template, qr/id="sound_profiles_list"/, 'and the per-app profiles');
+	like($template, qr/sound_section_head[^>]*><h3><%= &subs::ui\('Patchbay'\)/, 'Patchbay is a headed section');
+	like($template, qr/sound_section_head[^>]*><h3><%= &subs::ui\('IO'\)/, 'IO is a headed section');
+	like($template, qr/sound_section_head[^>]*><h3><%= &subs::lang\('sound_profiles'\)/, 'Profiles is a headed section');
+	like($template, qr/sound_profiles_body.*sound_level_section.*id="sound_level"/s, 'the Level sits inside Profiles');
 
 	no warnings 'redefine';
 	*subs::lang = sub { $_ [0] };

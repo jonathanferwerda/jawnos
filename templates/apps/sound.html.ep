@@ -9,8 +9,13 @@
 #sound { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow: auto; font-size: 16px; }
 #sound .sound_note { min-height: 1.2em; opacity: .78; }
 #sound .sound_columns { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
-#sound .sound_section { flex: 1 1 300px; min-width: 0; padding: 12px 16px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); }
-#sound .sound_section h3 { margin: 0 0 8px; font-size: 18px; }
+#sound .sound_section { flex: 1 1 100%; min-width: 0; padding: 0; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); overflow: hidden; }
+#sound .sound_section_head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2, var(--panel)); }
+#sound .sound_section_head h3 { margin: 0; font-size: 16px; }
+#sound .sound_section_body { padding: 12px 16px; }
+#sound .sound_subsection { flex: 1 1 300px; min-width: 0; }
+#sound .sound_subsection h4 { margin: 0 0 8px; font-size: 15px; }
+#sound .sound_profiles_body > .sound_subsection + .sound_subsection { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 #sound .sound_media_section { flex: 1 1 100%; }
 #sound .sound_media_row { display:flex; align-items:center; gap:8px; }
 #sound .sound_media_row img { width:28px; height:28px; object-fit:contain; }
@@ -33,7 +38,6 @@
 #sound .sound_profile_row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 #sound .sound_profile_app { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
 #sound .sound_profile_add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
-#sound .sound_patchbay_section { flex: 1 1 100%; }
 #sound .sound_patch_manage { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 8px; }
 #sound .sound_patch_group { margin: 10px 0; }
 #sound .sound_patch_group h4 { margin: 0 0 4px; font-size: 15px; }
@@ -53,133 +57,145 @@
 % my $level = (ref($status) eq 'HASH' && $status->{'level'}) ? $status->{'level'} : 'sound';
 % my $house_level = (ref($status) eq 'HASH' && $status->{'house_level'}) ? $status->{'house_level'} : $level;
 % my $app_choices = (ref($status) eq 'HASH' && ref($status->{'apps'}) eq 'ARRAY') ? $status->{'apps'} : [];
-	<section class="sound_section sound_level_section">
-		<h3><%= &subs::lang('sound_level') %></h3>
-		<div class="sound_level_row">
-			<select id="sound_level" hint="<%= &subs::ui('Set the house level: Sound, Quiet, Mute or Silence') %>">
-% foreach my $opt ( grep { $_ ne 'passive' } @subs::SOUND_LEVELS ) {
-				<option value="<%= $opt %>"<% if ($level eq $opt) { %> selected="selected"<% } %>><%= &subs::sound_level_label($opt) %></option>
-% }
-			</select>
-			<span class="sound_level_now"><%= &subs::ui('The house is at') %> <b id="sound_house_level"><%= &subs::sound_level_label($house_level) %></b></span>
+	<section class="sound_section sound_patchbay_section">
+		<div class="sound_section_head"><h3><%= &subs::ui('Patchbay') %></h3></div>
+		<div class="sound_section_body">
+			<p class="sound_level_hint"><%= &subs::ui('One routing table for every input and output in the house. A source makes samples, a bus mixes them, and a sink plays them. The switch lets this machine\'s engine own the audio, so the plan is what is heard.') %></p>
+			<div class="sound_patch_manage">
+				<label><input type="checkbox" id="sound_manage" hint="<%= &subs::ui('Let the audio engine own this machine\'s inputs and outputs') %>"> <%= &subs::ui('The engine owns this machine\'s audio') %></label>
+				<span class="sound_level_now" id="sound_engine_state"></span>
+			</div>
+			<div class="sound_note" id="sound_patch_note"></div>
+			<div id="sound_patch_matrix"></div>
+			<div class="sound_patch_add">
+				<input type="text" id="sound_source_id" placeholder="<%= &subs::ui('source name') %>">
+				<select id="sound_source_kind">
+					<option value="input">input</option>
+					<option value="player">player</option>
+					<option value="peer">peer</option>
+					<option value="handset">handset</option>
+					<option value="device">device</option>
+				</select>
+				<input type="number" id="sound_source_channel" min="0" value="0" hint="<%= &subs::ui('device input channel') %>">
+				<input type="text" id="sound_source_machine" placeholder="<%= &subs::ui('machine') %>" hint="<%= &subs::ui('The machine this source runs on; leave blank for this machine') %>">
+				<button type="button" id="sound_source_add"><%= &subs::ui('Add source') %></button>
+				<input type="text" id="sound_sink_id" placeholder="<%= &subs::ui('sink name') %>">
+				<select id="sound_sink_kind">
+					<option value="interface">interface</option>
+					<option value="speakers">speakers</option>
+					<option value="zone">zone</option>
+					<option value="peer">peer</option>
+				</select>
+				<input type="number" id="sound_sink_channel" min="0" value="0" hint="<%= &subs::ui('device output channel') %>">
+				<input type="text" id="sound_sink_machine" placeholder="<%= &subs::ui('machine') %>" hint="<%= &subs::ui('The machine this sink plays on; leave blank for this machine') %>">
+				<button type="button" id="sound_sink_add"><%= &subs::ui('Add sink') %></button>
+				<input type="text" id="sound_bus_id" placeholder="<%= &subs::ui('bus name') %>">
+				<button type="button" id="sound_bus_add"><%= &subs::ui('Add bus') %></button>
+			</div>
+			<div class="sound_patch_add">
+				<select id="sound_route_from" hint="<%= &subs::ui('where the samples come from') %>"></select>
+				<select id="sound_route_to" hint="<%= &subs::ui('where they go') %>"></select>
+				<button type="button" id="sound_route_add"><%= &subs::ui('Add route') %></button>
+			</div>
+			<button type="button" class="sound_patch_save" id="sound_patch_save" hint="<%= &subs::ui('Save the plan for the whole house') %>"><%= &subs::ui('Save plan') %></button>
 		</div>
-		<p class="sound_level_hint"><%= &subs::ui('Sound is normal. Quiet softens the non-essential sounds. Mute silences media, speech and notifications but leaves alarms and a ringing call. Silence takes everything, alarms included, and sends every call to the receptionist.') %></p>
 	</section>
-	<section class="sound_section sound_profiles_section">
-		<h3><%= &subs::lang('sound_profiles') %></h3>
-		<p class="sound_level_hint"><%= &subs::ui('An app\'s own profile wins for its sounds while one of its appointments runs. Passive inherits the house level, and the most recently started running app with a profile takes the house.') %></p>
-		<div id="sound_profiles_list"></div>
-		<div class="sound_profile_add">
-			<input type="text" id="sound_profile_app" list="sound_profile_apps" placeholder="<%= &subs::lang('sound_add_profile') %>">
-			<datalist id="sound_profile_apps">
-% foreach my $name ( @{$app_choices} ) {
-				<option value="<%= $name %>"></option>
-% }
-			</datalist>
-			<select id="sound_profile_new_level">
-% foreach my $opt ( @subs::SOUND_LEVELS ) {
-				<option value="<%= $opt %>"><%= &subs::sound_level_label($opt) %></option>
-% }
-			</select>
-			<button type="button" id="sound_profile_add"><%= &subs::ui('Save') %></button>
-		</div>
-	</section>
-	<div class="sound_columns">
-		<section class="sound_section" data-kind="output">
-			<h3><%= &subs::lang('sound_output') %></h3>
-			<div class="sound_browser"><%= &subs::lang('sound_speaker') %>: <span id="sound_browser_output">—</span></div>
-			<div class="sound_devices" id="sound_output_list">
+	<section class="sound_section sound_io_section">
+		<div class="sound_section_head"><h3><%= &subs::ui('IO') %></h3></div>
+		<div class="sound_section_body">
+			<div class="sound_columns">
+				<section class="sound_subsection" data-kind="output">
+					<h4><%= &subs::lang('sound_output') %></h4>
+					<div class="sound_browser"><%= &subs::lang('sound_speaker') %>: <span id="sound_browser_output">—</span></div>
+					<div class="sound_devices" id="sound_output_list">
 % foreach my $device (@{$outputs}) {
-				<div class="sound_device" data-kind="output" data-id="<%= $device->{'id'} %>"<% if ($device->{'default'}) { %> data-default="1"<% } %>>
-					<span class="sound_device_name"><%= $device->{'name'} || $device->{'id'} %></span>
-					<span class="sound_device_level"><%= $device->{'volume'} %>%</span>
+						<div class="sound_device" data-kind="output" data-id="<%= $device->{'id'} %>"<% if ($device->{'default'}) { %> data-default="1"<% } %>>
+							<span class="sound_device_name"><%= $device->{'name'} || $device->{'id'} %></span>
+							<span class="sound_device_level"><%= $device->{'volume'} %>%</span>
 % if ($device->{'default'}) {
-					<span class="sound_badge"><%= &subs::lang('sound_default') %></span>
+							<span class="sound_badge"><%= &subs::lang('sound_default') %></span>
 % } else {
-					<button type="button" class="sound_default" data-kind="output" hint="<%= &subs::ui('Make this output the default speaker') %>" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
+							<button type="button" class="sound_default" data-kind="output" hint="<%= &subs::ui('Make this output the default speaker') %>" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
 % }
-				</div>
+						</div>
 % }
 % if (!@{$outputs}) {
-				<p class="sound_empty"><%= &subs::lang('sound_no_devices') %></p>
+						<p class="sound_empty"><%= &subs::lang('sound_no_devices') %></p>
 % }
-			</div>
-			<div class="sound_control">
-				<label><%= &subs::lang('sound_volume') %>
-					<input type="range" id="sound_output_volume" hint="<%= &subs::ui('Drag to set the default speaker volume') %>" min="0" max="100" step="1" value="<%= $output_volume %>"<% if (!$output->{'id'}) { %> disabled<% } %>>
-					<span id="sound_output_volume_value"><%= $output_volume %>%</span>
-				</label>
-				<button type="button" id="sound_output_mute" hint="<%= &subs::ui('Mute the default speaker') %>" data-kind="output"<% if (!$output->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
-			</div>
-		</section>
-		<section class="sound_section" data-kind="input"<% if (!$input_supported) { %> data-unsupported="1"<% } %>>
-			<h3><%= &subs::lang('sound_input') %></h3>
-			<div class="sound_browser"><%= &subs::lang('sound_microphone') %>: <span id="sound_browser_input">—</span></div>
-			<div class="sound_devices" id="sound_input_list">
+					</div>
+					<div class="sound_control">
+						<label><%= &subs::lang('sound_volume') %>
+							<input type="range" id="sound_output_volume" hint="<%= &subs::ui('Drag to set the default speaker volume') %>" min="0" max="100" step="1" value="<%= $output_volume %>"<% if (!$output->{'id'}) { %> disabled<% } %>>
+							<span id="sound_output_volume_value"><%= $output_volume %>%</span>
+						</label>
+						<button type="button" id="sound_output_mute" hint="<%= &subs::ui('Mute the default speaker') %>" data-kind="output"<% if (!$output->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
+					</div>
+				</section>
+				<section class="sound_subsection" data-kind="input"<% if (!$input_supported) { %> data-unsupported="1"<% } %>>
+					<h4><%= &subs::lang('sound_input') %></h4>
+					<div class="sound_browser"><%= &subs::lang('sound_microphone') %>: <span id="sound_browser_input">—</span></div>
+					<div class="sound_devices" id="sound_input_list">
 % foreach my $device (@{$inputs}) {
-				<div class="sound_device" data-kind="input" data-id="<%= $device->{'id'} %>"<% if ($device->{'default'}) { %> data-default="1"<% } %>>
-					<span class="sound_device_name"><%= $device->{'name'} || $device->{'id'} %></span>
-					<span class="sound_device_level"><%= $device->{'volume'} %>%</span>
+						<div class="sound_device" data-kind="input" data-id="<%= $device->{'id'} %>"<% if ($device->{'default'}) { %> data-default="1"<% } %>>
+							<span class="sound_device_name"><%= $device->{'name'} || $device->{'id'} %></span>
+							<span class="sound_device_level"><%= $device->{'volume'} %>%</span>
 % if ($device->{'default'}) {
-					<span class="sound_badge"><%= &subs::lang('sound_default') %></span>
+							<span class="sound_badge"><%= &subs::lang('sound_default') %></span>
 % } else {
-					<button type="button" class="sound_default" data-kind="input" hint="<%= &subs::ui('Make this input the default microphone') %>" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
+							<button type="button" class="sound_default" data-kind="input" hint="<%= &subs::ui('Make this input the default microphone') %>" data-id="<%= $device->{'id'} %>"><%= &subs::lang('sound_set_default') %></button>
 % }
-				</div>
+						</div>
 % }
 % if (!@{$inputs}) {
-				<p class="sound_empty" id="sound_input_empty"><%= &subs::lang('sound_not_available') %></p>
+						<p class="sound_empty" id="sound_input_empty"><%= &subs::lang('sound_not_available') %></p>
 % }
+					</div>
+					<div class="sound_control">
+						<label><%= &subs::lang('sound_volume') %>
+							<input type="range" id="sound_input_volume" hint="<%= &subs::ui('Drag to set the default microphone volume, when the mixer exposes it') %>" min="0" max="100" step="1" value="<%= $input_volume %>"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>>
+							<span id="sound_input_volume_value"><%= $input_volume %>%</span>
+						</label>
+						<button type="button" id="sound_input_mute" hint="<%= &subs::ui('Mute the default microphone') %>" data-kind="input"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
+					</div>
+				</section>
+				<%= include 'apps/sound/media' %>
 			</div>
-			<div class="sound_control">
-				<label><%= &subs::lang('sound_volume') %>
-					<input type="range" id="sound_input_volume" hint="<%= &subs::ui('Drag to set the default microphone volume, when the mixer exposes it') %>" min="0" max="100" step="1" value="<%= $input_volume %>"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>>
-					<span id="sound_input_volume_value"><%= $input_volume %>%</span>
-				</label>
-				<button type="button" id="sound_input_mute" hint="<%= &subs::ui('Mute the default microphone') %>" data-kind="input"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
+		</div>
+	</section>
+	<section class="sound_section sound_profiles_section">
+		<div class="sound_section_head"><h3><%= &subs::lang('sound_profiles') %></h3></div>
+		<div class="sound_section_body sound_profiles_body">
+			<div class="sound_subsection sound_level_section">
+				<h4><%= &subs::lang('sound_level') %></h4>
+				<div class="sound_level_row">
+					<select id="sound_level" hint="<%= &subs::ui('Set the house level: Sound, Quiet, Mute or Silence') %>">
+% foreach my $opt ( grep { $_ ne 'passive' } @subs::SOUND_LEVELS ) {
+						<option value="<%= $opt %>"<% if ($level eq $opt) { %> selected="selected"<% } %>><%= &subs::sound_level_label($opt) %></option>
+% }
+					</select>
+					<span class="sound_level_now"><%= &subs::ui('The house is at') %> <b id="sound_house_level"><%= &subs::sound_level_label($house_level) %></b></span>
+				</div>
+				<p class="sound_level_hint"><%= &subs::ui('Sound is normal. Quiet softens the non-essential sounds. Mute silences media, speech and notifications but leaves alarms and a ringing call. Silence takes everything, alarms included, and sends every call to the receptionist.') %></p>
 			</div>
-		</section>
-		<%= include 'apps/sound/media' %>
-	</div>
-	<section class="sound_section sound_patchbay_section">
-		<h3><%= &subs::ui('House patchbay') %></h3>
-		<p class="sound_level_hint"><%= &subs::ui('One routing table for every input and output in the house. A source makes samples, a bus mixes them, and a sink plays them. The switch lets this machine\'s engine own the audio, so the plan is what is heard.') %></p>
-		<div class="sound_patch_manage">
-			<label><input type="checkbox" id="sound_manage" hint="<%= &subs::ui('Let the audio engine own this machine\'s inputs and outputs') %>"> <%= &subs::ui('The engine owns this machine\'s audio') %></label>
-			<span class="sound_level_now" id="sound_engine_state"></span>
+			<div class="sound_subsection">
+				<h4><%= &subs::ui('App profiles') %></h4>
+				<p class="sound_level_hint"><%= &subs::ui('An app\'s own profile wins for its sounds while one of its appointments runs. Passive inherits the house level, and the most recently started running app with a profile takes the house.') %></p>
+				<div id="sound_profiles_list"></div>
+				<div class="sound_profile_add">
+					<input type="text" id="sound_profile_app" list="sound_profile_apps" placeholder="<%= &subs::lang('sound_add_profile') %>">
+					<datalist id="sound_profile_apps">
+% foreach my $name ( @{$app_choices} ) {
+						<option value="<%= $name %>"></option>
+% }
+					</datalist>
+					<select id="sound_profile_new_level">
+% foreach my $opt ( @subs::SOUND_LEVELS ) {
+						<option value="<%= $opt %>"><%= &subs::sound_level_label($opt) %></option>
+% }
+					</select>
+					<button type="button" id="sound_profile_add"><%= &subs::ui('Save') %></button>
+				</div>
+			</div>
 		</div>
-		<div class="sound_note" id="sound_patch_note"></div>
-		<div id="sound_patch_matrix"></div>
-		<div class="sound_patch_add">
-			<input type="text" id="sound_source_id" placeholder="<%= &subs::ui('source name') %>">
-			<select id="sound_source_kind">
-				<option value="input">input</option>
-				<option value="player">player</option>
-				<option value="peer">peer</option>
-				<option value="handset">handset</option>
-				<option value="device">device</option>
-			</select>
-			<input type="number" id="sound_source_channel" min="0" value="0" hint="<%= &subs::ui('device input channel') %>">
-			<input type="text" id="sound_source_machine" placeholder="<%= &subs::ui('machine') %>" hint="<%= &subs::ui('The machine this source runs on; leave blank for this machine') %>">
-			<button type="button" id="sound_source_add"><%= &subs::ui('Add source') %></button>
-			<input type="text" id="sound_sink_id" placeholder="<%= &subs::ui('sink name') %>">
-			<select id="sound_sink_kind">
-				<option value="interface">interface</option>
-				<option value="speakers">speakers</option>
-				<option value="zone">zone</option>
-				<option value="peer">peer</option>
-			</select>
-			<input type="number" id="sound_sink_channel" min="0" value="0" hint="<%= &subs::ui('device output channel') %>">
-			<input type="text" id="sound_sink_machine" placeholder="<%= &subs::ui('machine') %>" hint="<%= &subs::ui('The machine this sink plays on; leave blank for this machine') %>">
-			<button type="button" id="sound_sink_add"><%= &subs::ui('Add sink') %></button>
-			<input type="text" id="sound_bus_id" placeholder="<%= &subs::ui('bus name') %>">
-			<button type="button" id="sound_bus_add"><%= &subs::ui('Add bus') %></button>
-		</div>
-		<div class="sound_patch_add">
-			<select id="sound_route_from" hint="<%= &subs::ui('where the samples come from') %>"></select>
-			<select id="sound_route_to" hint="<%= &subs::ui('where they go') %>"></select>
-			<button type="button" id="sound_route_add"><%= &subs::ui('Add route') %></button>
-		</div>
-		<button type="button" class="sound_patch_save" id="sound_patch_save" hint="<%= &subs::ui('Save the plan for the whole house') %>"><%= &subs::ui('Save plan') %></button>
 	</section>
 </div>

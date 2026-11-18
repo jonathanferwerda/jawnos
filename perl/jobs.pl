@@ -518,7 +518,21 @@ sub job_utility_functions {
 	Mojo::IOLoop->start;
 }
 
+# The house audio engine's supervisor (perl/Audio.pl). The engine is optional:
+# the supervisor owns its one child, restarts it on a backoff ladder, and a
+# machine with no staged binary waits at its 30s cap rather than spinning. It
+# is a resident loop, so it is started from President as a real child.
+sub job_audio_supervisor {
+	$ENV{PURPOSE} = 'audio';
+	# Audio.pl parses @ARGV at file scope; the master's own arguments belong
+	# to ./jawn, so the supervisor gets none of them and uses its defaults
+	# (alsa, hw:1,0, 64/256, ~/.president/audio.sock and audio-plan.json).
+	local @ARGV = ();
+	require './perl/Audio.pl';
+}
+
 %JOB = (
+	'audio supervisor' => \&job_audio_supervisor,
 	'app release sync' => \&job_app_release_sync,
 	'slow loops' => \&job_slow_loops,
 	'utility functions' => \&job_utility_functions,

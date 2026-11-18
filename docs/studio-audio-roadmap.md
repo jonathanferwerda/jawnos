@@ -24,10 +24,12 @@ row), read and saved from Sound's House patchbay, and applied only while its
 master switch is on. The matrix shows each sink's declared latency and the
 engine's state, frames, xruns and silent nodes. A fader moves the running patch
 without re-arming it (`param` target `patch`); a node may name the machine it
-lives on, so one central plan can describe several machines. The manager writes
+live on, so one central plan can describe several machines. The manager writes
 `~/.president/audio-plan.json` and the supervisor passes it to a fresh engine, so
-a reboot comes back routed. What is still network work: another machine's engine
-is not driven yet (P3), so the switch applies to the engine on the server.
+a reboot comes back routed. President starts the supervisor when the engine
+binary is staged, so the switch needs no terminal work. What is still network
+work: another machine's engine is not driven yet (P3), so the switch applies to
+the engine on the server.
 
 **Where a guitar stands, 2026-11-17.** Everything below the browser works: capture at 2.7 ms on
 `table`, one to N tracks, the inserts, playback through the strips, overdub with a measured start
@@ -613,9 +615,10 @@ and exit 0. Config is flags, then `JAWNOS_AUDIO_*`, then defaults (alsa, `hw:1,0
 the engine stays optional.
 
 It is deliberately **not** started by a web request: a request that spawns it leaves a daemon no
-worker owns and no restart stops. The worker tree starts it beside `Sco.pl` and `Reception.pl`
-later; until then it runs by hand. P3 assumes it exists — two machines on one clock both need an
-engine that is up.
+worker owns and no restart stops. **President starts it** beside `Sco.pl` and `Reception.pl` when the
+engine binary is staged, as a real child (`jobs::job_audio_supervisor`, `fork => 1`); a machine with
+no binary starts no supervisor and pays nothing. P3 assumes it exists — two machines on one clock both
+need an engine that is up.
 
 **Gate:** ≤ 5 ms round trip at 64 frames on `table`, zero xruns over 10 minutes with the house running
 its own JawnOS, and a null backend that runs in the suite.

@@ -896,6 +896,14 @@ sub manager_starter() {
 			}, { name => 'Phone Reception' });
 		}
 	}
+	# The house audio engine's one supervisor. The engine binary is staged per
+	# machine; a machine without it pays nothing. Started here, not from a web
+	# request, so the master owns it and a restart stops it. `fork => 1` keeps a
+	# resident loop out of the master's own process.
+	if (-x './perl/audio/jawn-audio') {
+		&subs::subprocessor(\&jobs::job_audio_supervisor,
+			{ name => 'audio supervisor', fork => 1 });
+	}
 	my $f_status = read_file($status_file);
 	my $socket_watch = &socket_watch($dump_dir . '/memory');
 	if (-e $status_file) {

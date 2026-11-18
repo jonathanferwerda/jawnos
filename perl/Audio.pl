@@ -9,9 +9,9 @@
 # owner: one supervisor per machine, one child per supervisor.
 #
 # It is deliberately NOT started by a web request. A request that forks a daemon
-# leaves a process no worker owns and no restart stops. The worker tree starts
-# it beside Sco.pl and Reception.pl later; until then it is run by hand, in the
-# foreground, exactly like those two.
+# leaves a process no worker owns and no restart stops. President starts it
+# beside Sco.pl and Reception.pl when the engine binary is staged, as a real
+# child (`fork => 1`), so the master owns it and a restart stops it.
 #
 # The five decisions that matter:
 #

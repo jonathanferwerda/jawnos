@@ -14,8 +14,8 @@
     attribute is on for the picked device of each kind and off for the rest,
     and the global .media_picker handler writes the pick through stored.js.
 
-<section class="sound_section sound_media_section" id="sound_media_section">
-	<h3><%= &subs::ui('Media devices') %></h3>
+<section class="sound_subsection sound_media_section" id="sound_media_section">
+	<h4><%= &subs::ui('Media devices') %></h4>
 	<div class="sound_browser"><%= &subs::ui('The inputs and outputs this browser uses for recordings and calls') %></div>
 	<div class="sound_devices" id="sound_media_list"><p class="sound_empty"><%= &subs::ui('Reading the browser devices...') %></p></div>
 	<div class="sound_browser"><%= &subs::ui('One device of each kind is on; the recordings and calls that start from this browser use those picks.') %></div>
