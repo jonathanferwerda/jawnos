@@ -7,6 +7,9 @@
      05_inputs.js  - jog wheel, record/arm/jack/cord, channel select, input grabber, take start/stop
      06_controls.js  - play/stop/time, loop punch-out, transport tick, save/load/import, name/mark/config
      07_layout.js  - per-track panels, hide toggles, floating panels, add/delete tracks, automation
+     08_effects.js  - the insert builders (the browser side of docs/studio-effects.md)
+     09_pedals.js  - the per-track rack: palette, order, footswitch, remove
+     10_master.js  - the mastering chain after the mix, its UI and its song state
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var mixer = {};
@@ -50,7 +53,7 @@ function jawnosStudioButtonIcon(state, colour) {
 // The live input can be monitored through the pedals into the speakers when the
 // song asks for it (headphones only — an open mic plus speakers will howl).
 
-var studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
+var studioAudio = { ctx: null, master: null, masterAnalyser: null, masterChain: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
 var studioSelectedChannel = 1;
 
 function studioContext() {
@@ -68,7 +71,19 @@ function studioContext() {
 		studioAudio.master = ctx.createGain();
 		studioAudio.masterAnalyser = ctx.createAnalyser();
 		studioAudio.masterAnalyser.fftSize = 2048;
-		studioAudio.master.connect(studioAudio.masterAnalyser);
+		// The mastering rack sits on the mixer's bus: after every channel sum,
+		// before the analyser that feeds the destination. It is a fixed chain
+		// with its own footswitches, so a bypass never rewires the window.
+		var rack = null;
+		try { rack = studioMasterChain(ctx); } catch (e) { rack = null; }
+		studioAudio.masterChain = rack;
+		if (rack) {
+			studioAudio.master.connect(rack.input);
+			rack.output.connect(studioAudio.masterAnalyser);
+		}
+		else {
+			studioAudio.master.connect(studioAudio.masterAnalyser);
+		}
 		studioAudio.masterAnalyser.connect(ctx.destination);
 		if (!studioAudio.sources) { studioAudio.sources = []; }
 	}
@@ -123,116 +138,27 @@ function studioLatencyHint() {
 function studioRebuildWindow(setting, value) {
 	studioFlushSources();
 	if (studioAudio.ctx) { try { studioAudio.ctx.close(); } catch (e) {} }
-	studioAudio = { ctx: null, master: null, masterAnalyser: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
+	studioAudio = { ctx: null, master: null, masterAnalyser: null, masterChain: null, channels: {}, sources: [], lookahead: 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
 	setTimeout(function () {
 		studioInit({ settings: [{ setting: setting, value: value }] });
 	}, 500);
 }
 
 // ---- effect factories ------------------------------------------------------
-
-function studioDistortionCurve(amount) {
-	var n = 44100;
-	var curve = new Float32Array(n);
-	var deg = Math.PI / 180;
-	for (var i = 0; i < n; i++) {
-		var x = (i * 2) / n - 1;
-		curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + (amount * Math.abs(x)));
-	}
-	return curve;
-}
-
-function studioImpulse(ctx, seconds, decay) {
-	var rate = ctx.sampleRate;
-	var length = Math.max(1, Math.floor(rate * seconds));
-	var impulse = ctx.createBuffer(2, length, rate);
-	for (var c = 0; c < 2; c++) {
-		var data = impulse.getChannelData(c);
-		for (var i = 0; i < length; i++) {
-			data[i] = (Math.random() * 2 - 1) * Math.pow(1 - (i / length), decay);
-		}
-	}
-	return impulse;
-}
-
-// Returns { name, input, output, set(control, rawValue) }. Raw values are the
-// 0..100 knob slider values.
+// The builders live in studio/08_effects.js; this is the dispatcher the rest of
+// the window calls. Every contract name resolves to a builder there, and an
+// unknown name is a plain pass-through so a stale song still loads.
 function studioInsert(ctx, name) {
+	var build = studioEffectBuilder(name);
+	if (build) { return build(ctx, name); }
 	var input = ctx.createGain();
 	var output = ctx.createGain();
-	var setters = {};
-	var api = { name: name, input: input, output: output, set: function (control, value) {
-		if (setters[control]) { setters[control](studioKnobNumber(value, 50)); }
-	} };
-
-	if (name == 'CompressionX') {
-		var comp = ctx.createDynamicsCompressor();
-		var wet = ctx.createGain();
-		var dry = ctx.createGain();
-		input.connect(comp).connect(wet).connect(output);
-		input.connect(dry).connect(output);
-		setters['thresh'] = function (v) { comp.threshold.value = -v / 2; };
-		setters['attack'] = function (v) { comp.attack.value = Math.max(0.001, v / 500); };
-		setters['mix'] = function (v) { wet.gain.value = v / 100; dry.gain.value = 1 - (v / 100); };
-	}
-	else if (name == 'Distorjawn') {
-		var shaper = ctx.createWaveShaper();
-		var lp = ctx.createBiquadFilter();
-		lp.type = 'lowpass';
-		lp.frequency.value = 4500;
-		input.connect(shaper).connect(lp).connect(output);
-		setters['gain'] = function (v) { shaper.curve = studioDistortionCurve((v / 100) * 100); shaper.oversample = '4x'; };
-	}
-	else if (name == 'Delayed') {
-		var delay = ctx.createDelay(2.0);
-		var feedback = ctx.createGain();
-		var dwet = ctx.createGain();
-		var ddry = ctx.createGain();
-		input.connect(ddry).connect(output);
-		input.connect(delay).connect(dwet).connect(output);
-		delay.connect(feedback).connect(delay);
-		ddry.gain.value = 0.7;
-		setters['time'] = function (v) { delay.delayTime.value = (v / 100) * 1.5; };
-		setters['feedback'] = function (v) { feedback.gain.value = (v / 100) * 0.9; };
-		setters['vol'] = function (v) { dwet.gain.value = v / 100; };
-		setters['time'](35); setters['feedback'](30); setters['vol'](40);
-	}
-	else if (name == 'reverb2') {
-		var convolver = ctx.createConvolver();
-		convolver.buffer = studioImpulse(ctx, 2.4, 2.6);
-		var rwet = ctx.createGain();
-		var rdry = ctx.createGain();
-		input.connect(rdry).connect(output);
-		input.connect(convolver).connect(rwet).connect(output);
-		rdry.gain.value = 0.8;
-		setters['mix'] = function (v) { rwet.gain.value = (v / 100) * 0.9; rdry.gain.value = 1 - (v / 100) * 0.4; };
-		setters['volume'] = function (v) { rwet.gain.value = (v / 100) * 0.9; };
-		setters['mix'](35);
-	}
-	else if (name == 'JawnSynth' && window.jawnosSynth && typeof window.jawnosSynth.outputNode === 'function') {
-		// A generator pedal: the synth's output replaces the chain from here, so a
-		// channel carrying this pedal records whatever the synth plays. Its knobs are
-		// the synth's controls - each 0..100 slider mapped to a patch parameter.
-		var synth = window.jawnosSynth;
-		if (synth.context() !== ctx) { synth.attach(ctx, ctx.destination); }
-		var src = synth.outputNode();
-		if (src) {
-			src.connect(output);
-			api.destroy = function () { try { src.disconnect(output); } catch (e) {} };
-		}
-		var synthMap = {
-			cutoff: 'filter.cutoff', reso: 'filter.q', attack: 'amp.a',
-			release: 'amp.r', detune: 'osc2.detune', lfo: 'lfo.rate', level: 'drive'
-		};
-		Object.keys(synthMap).forEach(function (control) {
-			setters[control] = function (v) { synth.set(synthMap[control], synth.knob(synthMap[control], v)); };
-		});
-	}
-	else {
-		input.connect(output);
-	}
-
-	return api;
+	input.connect(output);
+	return {
+		name: name, input: input, output: output, bypassed: false, values: {},
+		set: function (control, value) { this.values[control] = value; },
+		setBypass: function (on) { this.bypassed = !!on; }
+	};
 }
 
 function studioChannelEngine(ch) {
@@ -290,12 +216,18 @@ function studioRebuildInserts(ch) {
 }
 
 function studioApplyPedals() {
-	$('.knob_control').each(function (i, v) {
+	// The shelf's pedals are global: a knob on the artwork pushes its value to
+	// every insert of that kind, however it was named when it was added (the
+	// shelf says reverb2, the palette says reverb).
+	$('.knob_control, .studio_pedal_model').each(function (i, v) {
 		var channel = $(v).attr('channel');
 		var control = $(v).attr('control');
-		if (/^[0-9]+$/.test(channel)) { return; }
+		if (!channel || !control || /^[0-9]+$/.test(channel)) { return; }
+		var kind = studioEffectKind(channel);
 		$.each(studioAudio.channels, function (ch, c) {
-			if (c.insertByName[channel]) { c.insertByName[channel].set(control, $(v).val()); }
+			$.each(c.insertByName, function (name, ins) {
+				if (studioEffectKind(name) === kind) { ins.set(control, $(v).val()); }
+			});
 		});
 	});
 }
@@ -318,6 +250,8 @@ function studioSetInsert(ch, name, on) {
 	studioApplyPedals();
 	studioRebuildInserts(ch);
 	studioUpdateFxBadges();
+	// keep every rack view of this channel in step with the engine
+	if (typeof studioRackRender === 'function') { studioRackRender(ch); }
 }
 
 function studioApplyChannel(ch) {

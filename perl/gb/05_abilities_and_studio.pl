@@ -172,5 +172,104 @@ our $studio = {
 		},{
 			control => 'lfo', colour => 'pink', left => '68%', top => '58%', width => '24%'
 		}]
-	}]
+	}],
+	# The shared effect contract (docs/studio-effects.md). `effects` is what the
+	# rack palette offers and what the browser's studioInsert() builds; `master`
+	# is the fixed chain after the mix. A control with `options` is a dropdown,
+	# the rest are 0..100 sliders. Keep these names and their order in step with
+	# engine/src/effect.rs, or the palette offers a pedal the engine ignores.
+	effects => {
+		reverb => { label => 'Reverb', controls => [
+			{ control => 'mix', label => 'Mix' },
+			{ control => 'volume', label => 'Volume' },
+			{ control => 'model', label => 'Model', options => [ qw(Room Spring Plate Hall Cave) ] }
+		] },
+		flanger => { label => 'Flanger', controls => [
+			{ control => 'rate', label => 'Rate' },
+			{ control => 'depth', label => 'Depth' },
+			{ control => 'feedback', label => 'Feedback' },
+			{ control => 'mix', label => 'Mix' }
+		] },
+		fuzz => { label => 'Fuzz', controls => [
+			{ control => 'gain', label => 'Gain' },
+			{ control => 'tone', label => 'Tone' },
+			{ control => 'level', label => 'Level' }
+		] },
+		amp => { label => 'Amp', controls => [
+			{ control => 'gain', label => 'Gain' },
+			{ control => 'bass', label => 'Bass' },
+			{ control => 'mid', label => 'Mid' },
+			{ control => 'treble', label => 'Treble' },
+			# 0 Combo (1x12), 1 Open (2x12), 2 Closed (4x12), 3 Tweed (4x10)
+			{ control => 'cabinet', label => 'Cabinet', options => [ qw(Combo Open Closed Tweed) ] }
+		] },
+		limiter => { label => 'Limiter', controls => [
+			{ control => 'ceiling', label => 'Ceiling' },
+			{ control => 'release', label => 'Release' }
+		] },
+		autotune => { label => 'Autotune', controls => [
+			{ control => 'speed', label => 'Speed' },
+			{ control => 'amount', label => 'Amount' },
+			{ control => 'key', label => 'Key', options => [ qw(C C# D D# E F F# G G# A A# B) ] },
+			# 0 Major, 1 Minor, 2 Chromatic, 3 Pentatonic
+			{ control => 'scale', label => 'Scale', options => [ qw(Major Minor Chromatic Pentatonic) ] }
+		] },
+		equalizer => { label => 'Equaliser', controls => [
+			{ control => 'low', label => 'Low' },
+			{ control => 'mid', label => 'Mid' },
+			{ control => 'high', label => 'High' }
+		] },
+		tone => { label => 'Tone', controls => [
+			{ control => 'bass', label => 'Bass' },
+			{ control => 'mid', label => 'Mid' },
+			{ control => 'treble', label => 'Treble' },
+			{ control => 'gain', label => 'Gain' }
+		] },
+		distortion => { label => 'Distortion', controls => [
+			{ control => 'drive', label => 'Drive' }
+		] },
+		delay => { label => 'Delay', controls => [
+			{ control => 'time', label => 'Time' },
+			{ control => 'feedback', label => 'Feedback' },
+			{ control => 'vol', label => 'Volume' }
+		] },
+		compressor => { label => 'Compressor', controls => [
+			{ control => 'thresh', label => 'Threshold' },
+			{ control => 'attack', label => 'Attack' },
+			{ control => 'ratio', label => 'Ratio' },
+			{ control => 'release', label => 'Release' },
+			{ control => 'knee', label => 'Knee' },
+			{ control => 'mix', label => 'Mix' }
+		] }
+	},
+	# The order the Add list offers them.
+	palette => [ qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor) ],
+	# The order of the reverb model dropdown; both implementations agree.
+	reverb_models => [ qw(Room Spring Plate Hall Cave) ],
+	# The fixed mastering chain: after every channel, before the destination.
+	master => [
+		{ name => 'master_comp', label => 'Compressor', controls => [
+			{ control => 'thresh', label => 'Threshold' },
+			{ control => 'attack', label => 'Attack' },
+			{ control => 'mix', label => 'Mix' }
+		] },
+		{ name => 'master_eq', label => 'Equaliser', controls => [
+			{ control => 'low', label => 'Low' },
+			{ control => 'mid', label => 'Mid' },
+			{ control => 'high', label => 'High' }
+		] },
+		{ name => 'master_reverb', label => 'Reverb', controls => [
+			{ control => 'mix', label => 'Mix' },
+			{ control => 'model', label => 'Model', options => [ qw(Room Spring Plate Hall Cave) ] },
+			{ control => 'volume', label => 'Volume' }
+		] },
+		{ name => 'master_maximizer', label => 'Maximiser', controls => [
+			{ control => 'ceiling', label => 'Ceiling' },
+			{ control => 'loudness', label => 'Loudness' }
+		] },
+		{ name => 'master_limiter', label => 'Limiter', controls => [
+			{ control => 'ceiling', label => 'Ceiling' },
+			{ control => 'release', label => 'Release' }
+		] }
+	]
 };

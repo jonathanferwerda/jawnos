@@ -342,9 +342,17 @@ $(document).on('click', '.channel_fx_pedal', function () {
 });
 
 // Bring an inserted pedal's controls into view: open the pedalboard, scroll it
-// to the pedal and flag it, so a channel badge leads you to its settings.
+// to the pedal and flag it, so a channel badge leads you to its settings. A
+// palette effect can be the same kind under another name (reverb vs reverb2),
+// so a miss falls back to the shelf pedal of that kind.
 function studioRevealPedal(name) {
 	var pedal = $('#pedal_' + name);
+	if (!pedal.length) {
+		$('#pedalboard .pedal').each(function () {
+			var id = String($(this).attr('id') || '').replace(/^pedal_/, '');
+			if (studioEffectKind(id) === studioEffectKind(name)) { pedal = $(this); return false; }
+		});
+	}
 	if (!pedal.length) { return; }
 	var board = $('#pedalboard');
 	if (!board.is(':visible')) {

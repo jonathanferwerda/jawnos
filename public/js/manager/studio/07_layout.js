@@ -494,7 +494,9 @@ function studioBindChannelDrop(node) {
 			var ch = m ? m[1] : $(this).attr('channel');
 			if (!name || !ch) { return; }
 			var channel = studioAudio.channels[ch];
+			studioSelectedChannel = ch;
 			studioSetInsert(ch, name, !(channel && channel.insertByName[name]));
+			studioPaletteLabel();
 			studioSaver();
 		}
 	});
@@ -558,6 +560,7 @@ function studioResetChannelMarkup(node, ch) {
 	node.find('.armed').attr('state', 'off').text('O');
 	node.find('.channel_volume').val(1);
 	node.find('.channel_fx').empty().removeClass('studio_fx_open');
+	node.find('.studio_channel_rack').empty();
 	node.find('.studio_channel_information').text('');
 	node.find('.knob_control').val(50);
 	node.find('.knob').css('transform', '');
@@ -761,9 +764,15 @@ $(document).on('click', '.studio_track_automation', function () {
 
 $(document).on('click', '.studio_track_fx', function () {
 	var ch = $(this).attr('channel');
+	studioSelectedChannel = ch;
 	var badge = $('.channel_fx[channel="' + ch + '"]');
-	badge.toggleClass('studio_fx_open');
-	if (badge.hasClass('studio_fx_open') && !$('#pedalboard').is(':visible')) {
+	var open = !badge.hasClass('studio_fx_open');
+	badge.toggleClass('studio_fx_open', open);
+	// FX shows this track's chain in the panel; the shelf stays where it was.
+	$('#studio_track_row_' + ch).toggleClass('studio_fx_open', open);
+	studioRackRender(ch);
+	studioPaletteLabel();
+	if (open && !$('#pedalboard').is(':visible')) {
 		$('#pedalboard').show();
 		var z = numeral($('#studio_viewer').closest('.wind').css('z-index')).value() || 0;
 		$('#pedalboard').css({ 'z-index': (z + 100) });

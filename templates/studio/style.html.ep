@@ -344,6 +344,25 @@
 	.studio_layout_bar button {
 		font-size: 12px;
 	}
+	/* the effect palette: add any contract effect to the selected track */
+	.studio_effect_palette {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-left: 6px;
+	}
+	.studio_effect_palette select {
+		font-size: 12px;
+		max-width: 150px;
+	}
+	.studio_palette_label,
+	.studio_palette_channel {
+		font-size: 12px;
+		opacity: .7;
+	}
+	.studio_rack_template {
+		display: none;
+	}
 	.studio_track_count {
 		font-size: 12px;
 		opacity: .7;
@@ -495,6 +514,110 @@
 	}
 	.studio_track_panel .channel_fx.studio_fx_open {
 		display: block;
+	}
+	/* A track's rack is the ordered chain itself: FX opens it under the panel. */
+	.studio_channel_rack {
+		display: none;
+		margin-top: 2px;
+		font-size: 11px;
+		max-height: 260px;
+		overflow-y: auto;
+	}
+	.studio_track.studio_fx_open .studio_channel_rack {
+		display: block;
+	}
+	.studio_rack_row {
+		border: 1px solid rgba(4, 50, 95, .25);
+		border-radius: 4px;
+		padding: 2px;
+		margin-bottom: 2px;
+		background: rgba(255, 255, 255, .45);
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 2px;
+	}
+	.studio_rack_row.studio_rack_off {
+		opacity: .45;
+	}
+	.studio_rack_handle {
+		cursor: var(--jawnos-cursor-grab, grab);
+		padding: 0 2px;
+	}
+	.studio_rack_name {
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-weight: bold;
+	}
+	.studio_rack_row button {
+		font-size: 10px;
+		padding: 0 3px;
+	}
+	.studio_rack_controls {
+		flex: 1 1 100%;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2px 6px;
+	}
+	.studio_rack_control {
+		display: flex;
+		flex-direction: column;
+		font-size: 9px;
+	}
+	.studio_rack_control input[type=range] {
+		width: 64px;
+	}
+	.studio_rack_control select {
+		max-width: 90px;
+		font-size: 10px;
+	}
+	.channel_fx_pedal.studio_fx_bypassed,
+	.channel_fx_text.studio_fx_bypassed {
+		opacity: .45;
+		text-decoration: line-through;
+	}
+	/* The mastering chain: one rack on the mixer's own bus. */
+	.studio_master_rack {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		padding: 4px;
+		border-top: 1px solid rgba(0, 0, 0, .15);
+		align-items: flex-start;
+	}
+	.studio_master_title {
+		flex: 0 0 100%;
+		font-size: 12px;
+	}
+	.studio_master_effect {
+		border: 1px solid rgba(4, 50, 95, .25);
+		border-radius: 4px;
+		padding: 2px 4px;
+		background: rgba(255, 255, 255, .4);
+		font-size: 11px;
+	}
+	.studio_master_effect.studio_master_on {
+		background: rgba(255, 210, 30, .25);
+		border-color: #b8860b;
+	}
+	.studio_master_toggle {
+		font-size: 11px;
+	}
+	.studio_master_controls {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2px 6px;
+	}
+	.studio_master_label {
+		display: flex;
+		flex-direction: column;
+		font-size: 9px;
+	}
+	.studio_master_label input[type=range] {
+		width: 64px;
 	}
 	.studio_track_body {
 		position: relative;

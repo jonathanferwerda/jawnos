@@ -310,8 +310,23 @@ function studioUpdateFxBadges() {
 		var holder = $('.channel_fx[channel="' + ch + '"]');
 		holder.empty();
 		c.inserts.forEach(function (ins) {
-			var src = $('.pedal_background[hint="' + ins.name + '"]').attr('src') || '';
-			$('<img class="channel_fx_pedal">').attr('src', src).attr('hint', ins.name).appendTo(holder);
+			// The shelf's artwork is keyed by its pedal name, which may be the old
+			// alias of the contract name (reverb2 for reverb), so match the kind.
+			var kind = studioEffectKind(ins.name);
+			var src = $('.pedal_background').filter(function () {
+				return studioEffectKind($(this).attr('hint')) === kind;
+			}).attr('src') || '';
+			if (src) {
+				$('<img class="channel_fx_pedal">').attr('src', src).attr('hint', ins.name)
+					.toggleClass('studio_fx_bypassed', !!ins.bypassed).appendTo(holder);
+				return;
+			}
+			// An effect with no artwork is a text tile, so the badge still names it.
+			var spec = studioEffectSpec(ins.name);
+			$('<span class="channel_fx_text"></span>')
+				.text(spec && spec['label'] ? studioLayoutText(spec['label']) : ins.name)
+				.toggleClass('studio_fx_bypassed', !!ins.bypassed)
+				.appendTo(holder);
 		});
 	});
 }

@@ -1,0 +1,180 @@
+# tests-for: public/js/manager/studio.js public/js/manager/studio/02_canvas.js public/js/manager/studio/04_knobs.js public/js/manager/studio/07_layout.js public/js/manager/studio/08_effects.js public/js/manager/studio/09_pedals.js public/js/manager/studio/10_master.js templates/studio/markup.html.ep templates/studio/style.html.ep perl/gb/05_abilities_and_studio.pl perl/help/topics_apps.pl t/345-studio-effects.t
+# covers:    The browser side of docs/studio-effects.md: every contract name is in
+#            the palette and built by studioInsert, reverb has its five models on
+#            a dropdown, a track's rack is ordered/bypassed/removed rather than
+#            added and dropped, and the master rack is a fixed chain between the
+#            mixer bus and the destination, saved with the song's admin.
+
+use strict;
+use warnings;
+
+use FindBin;
+use lib "$FindBin::Bin/lib", "t/lib";
+use Test::More;
+use File::Slurp qw(read_file);
+use RepoSource qw(repo_root);
+
+my $root = repo_root();
+my $js     = read_file("$root/public/js/manager/studio.js");
+my $canvas = read_file("$root/public/js/manager/studio/02_canvas.js");
+my $knobs  = read_file("$root/public/js/manager/studio/04_knobs.js");
+my $layout = read_file("$root/public/js/manager/studio/07_layout.js");
+my $fx     = read_file("$root/public/js/manager/studio/08_effects.js");
+my $rack   = read_file("$root/public/js/manager/studio/09_pedals.js");
+my $master = read_file("$root/public/js/manager/studio/10_master.js");
+my $markup = read_file("$root/templates/studio/markup.html.ep");
+my $style  = read_file("$root/templates/studio/style.html.ep");
+my $studio = read_file("$root/perl/gb/05_abilities_and_studio.pl");
+my $help   = read_file("$root/perl/help/topics_apps.pl");
+
+# The contract's channel insert names (docs/studio-effects.md, "Insert kinds").
+my @contract = qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor);
+
+# --- the palette and the builders agree ------------------------------------
+my ($palette) = $studio =~ /palette\s*=>\s*\[\s*qw\(([^)]*)\)\s*\]/s;
+ok(defined $palette && length $palette, 'the studio data carries a palette list');
+my %palette = map { $_ => 1 } split ' ', ($palette // '');
+for my $name (@contract) {
+	ok($palette{$name}, "the palette offers the contract effect $name");
+	like($fx, qr/\b\Q$name\E\b\s*:\s*'/, "studioInsert's alias table names $name");
+}
+
+# The legacy names stay accepted, and reverb2 is the alias of reverb, so old
+# songs still load and the shelf pedal still reaches the same implementation.
+like($fx, qr/\breverb2\s*:\s*'reverb'/, 'reverb2 is still an alias of reverb');
+like($fx, qr/\bCompressionX\s*:\s*'compressor'/, 'CompressionX still maps to compressor');
+like($fx, qr/\bDistorjawn\s*:\s*'distortion'/, 'Distorjawn still maps to distortion');
+like($fx, qr/\bDelayed\s*:\s*'delay'/, 'Delayed still maps to delay');
+like($js, qr/function studioInsert\(ctx, name\)[\s\S]*?\n\}/,
+	'studioInsert() is the one dispatcher');
+like($js, qr/var build = studioEffectBuilder\(name\);/, 'studioInsert delegates to the builder table');
+like($js, qr/input\.connect\(output\);/, 'an unknown name is a pass-through, not a dead channel');
+
+# Every builder returns the shape the rest of the window calls.
+for my $builder (qw(studioEffectReverb studioEffectFlanger studioEffectFuzz studioEffectAmp
+                    studioEffectLimiter studioEffectAutotune studioEffectEqualizer
+                    studioEffectCompressor studioEffectDistortion studioEffectDelay)) {
+	like($fx, qr/^function \Q$builder\E\(ctx, name\)/m, "$builder takes a context and a name");
+}
+like($fx, qr/fx\.set = function \(control, value\)/, 'the shell defines set(control, value)');
+like($fx, qr/fx\.setBypass = function \(on\)/, 'the shell defines setBypass(on)');
+like($fx, qr/fx\.bypassed = !!on;/, 'the shell records the bypassed state');
+like($fx, qr/fx\.dry\.gain\.value = fx\.bypassed \? 1 : 0;/, 'bypass opens the dry path in place');
+like($fx, qr/fx\.wet\.gain\.value = fx\.bypassed \? 0 : 1;/, 'bypass closes the wet path in place');
+
+# --- reverb: five models, one dropdown -------------------------------------
+for my $model (qw(Room Spring Plate Hall Cave)) {
+	like($fx, qr/name:\s*'\Q$model\E'/, "the reverb shapes carry the $model model");
+	like($studio, qr/\b\Q$model\E\b/, "the studio data names the $model model");
+}
+like($fx, qr/studioReverbModel\(value\)/, 'the model is quantised to a whole number');
+like($fx, qr/fx\.setters\['model'\] = function \(v\) \{[\s\S]*?studioReverbImpulse\(ctx, m\)/,
+	'set(model) rebuilds the impulse');
+like($markup, qr/class="studio_pedal_model"[^>]*channel="<%= \$ch %>"[^>]*control="model"/,
+	'the reverb shelf pedal carries the model dropdown');
+like($markup, qr/reverb_models/, 'the dropdown lists the models from the studio data');
+like($knobs, qr/studioApplyPedals\(\);[\s\S]*studioRackRenderAll\(\);/,
+	'a model change is pushed through the insert setters');
+like($rack, qr/'\.studio_pedal_model'/, 'the shelf model dropdown is wired to the rack');
+
+# --- the rack: add, order, bypass, remove ----------------------------------
+like($markup, qr/id="studio_palette_effect"/, 'the palette has an effect list');
+like($markup, qr/id="studio_palette_add"/, 'the palette has an Add button');
+like($markup, qr/class="studio_channel_rack"[^>]*channel="<%= \$ch %>"/,
+	'every track panel has its own rack');
+like($markup, qr/id="studio_rack_template"/, 'the rack row template is in the markup');
+
+like($rack, qr/function studioRackReorder\(ch\)/, 'a dragged order is read back');
+like($rack, qr/holder\.sortable\(\{/, 'the rack is a sortable list');
+like($rack, qr/function studioRackMove\(ch, name, delta\)/, 'the Up/Down buttons move an insert');
+like($rack, qr/function studioSetInsertBypass\(ch, name, on\)/, 'the footswitch has its own path');
+like($rack, qr/if \(ins\.setBypass\) \{ ins\.setBypass\(on\); \}/,
+	'the footswitch bypasses the insert in place');
+like($rack, qr/if \(ins && next\.indexOf\(ins\) === -1\)/,
+	'a dragged order only keeps inserts the channel still has');
+like($rack, qr/studioSetInsert\(ch, name, false\);/, 'X removes the insert');
+
+like($rack, qr/'\.studio_rack_bypass'/, 'the rack wires the footswitch');
+like($rack, qr/'\.studio_rack_up'/, 'the rack wires Up');
+like($rack, qr/'\.studio_rack_down'/, 'the rack wires Down');
+like($rack, qr/'\.studio_rack_remove'/, 'the rack wires X');
+
+# --- the song keeps the order and the on/off state -------------------------
+like($knobs, qr/song\[ch\]\['fx'\] = c\.inserts\.map\(function\(ins\) \{/,
+	'the song stores one record per insert');
+like($knobs, qr/return \{ name: ins\.name, on: !ins\.bypassed, controls: controls \};/,
+	'each record carries its name, its footswitch and its controls');
+like($knobs, qr/\(typeof entry === 'string'\) \? entry : \(entry && entry\.name\)/,
+	'an old fx array of names still loads');
+like($knobs, qr/rack_restore\.push\(\{ ch: i, name: name, record: entry \}\);/,
+	'a restored rack waits for its own control values');
+like($knobs, qr/studioSetInsert\(i, name, true\)/, 'the stored order is rebuilt insert by insert');
+
+# --- the master rack -------------------------------------------------------
+my ($master_list) = $studio =~ /master\s*=>\s*\[(.*?)\n\t\]/s;
+ok(defined $master_list, 'the studio data carries the master rack');
+for my $name (qw(master_comp master_eq master_reverb master_maximizer master_limiter)) {
+	like($master_list // '', qr/name\s*=>\s*'\Q$name\E'/, "the master rack names $name");
+	like($fx, qr/\b\Q$name\E\b\s*:\s*'/, "the builder table maps $name to an implementation");
+}
+like($master, qr/var studioMasterOrder = \[ 'master_comp', 'master_eq', 'master_reverb', 'master_maximizer', 'master_limiter' \];/,
+	'the master chain order is fixed');
+like($master, qr/function studioMasterChain\(ctx\)/, 'studioMasterChain builds the fixed chain');
+like($master, qr/node\.connect\(ins\.input\);\s*\n\s*node = ins\.output;/,
+	'each master insert is wired after the one before it');
+like($js, qr/studioAudio\.master\.connect\(rack\.input\);/, 'the mixer bus enters the master rack');
+like($js, qr/rack\.output\.connect\(studioAudio\.masterAnalyser\);/, 'the rack feeds the destination through the analyser');
+like($js, qr/masterChain: null/, 'the studio audio state owns the master chain');
+like($markup, qr/id="studio_master_rack"/, 'the master rack is in the mixer panel');
+like($markup, qr/class="studio_master_toggle hover"[^>]*effect="<%= \$m->\{'name'\} %>"/,
+	'each master effect has its footswitch');
+like($style, qr/\.studio_master_rack \{/, 'the master rack is styled with the mixer');
+
+# off until the song asks for it, and saved in admin
+like($master, qr/chain\.inserts\.forEach\(function \(ins\) \{ if \(ins\.setBypass\) \{ ins\.setBypass\(true\); \} \}\);/,
+	'every master effect starts bypassed');
+like($knobs, qr/tracks: tracks, master: studioMasterSave\(\)/, 'the master rack is saved in admin');
+like($knobs, qr/var master_records = mixer\['admin'\] && mixer\['admin'\]\['master'\]/,
+	'the master rack is read back from admin');
+like($knobs, qr/studioMasterRestore\(master_records\)/,
+	'the master rack is restored from admin');
+like($master, qr/function studioMasterSave\(\)/, 'studioMasterSave collects the rack');
+like($master, qr/function studioMasterRestore\(records\)/, 'studioMasterRestore applies it');
+
+# --- the shelf still works and text tiles reach the rack -------------------
+like($canvas, qr/studioEffectKind\(\$\(this\)\.attr\('hint'\)\) === kind/,
+	'a badge finds the shelf pedal by effect kind');
+like($canvas, qr/channel_fx_text/, 'an effect with no artwork gets a text tile');
+like($layout, qr/studioSetInsert\(ch, name, !\(channel && channel\.insertByName\[name\]\)\);/,
+	'dropping a shelf pedal still adds or removes it');
+like($layout, qr/studioSelectedChannel = ch;/, 'FX selects the track the palette adds to');
+
+# --- the help topic names the new controls and describes them -------------
+# every new label is in the Studio topic's own controls list, which is what
+# scripts/help_audit.pl checks against the on-screen hints
+my ($controls) = $help =~ /\$topic\{'studio'\} = \{([\s\S]*?)\n\t\};/;
+ok(defined $controls, 'the studio help topic was found');
+$controls = '' unless defined $controls;
+$controls =~ s/\\'/'/g;
+for my $label (
+	'Choose an effect to add to this track\'s rack',
+	'Add the chosen effect to this track\'s rack',
+	'The track the palette adds to',
+	'The effects in this track\'s chain, in order',
+	'Drag to reorder this effect',
+	'Bypass this effect without removing it',
+	'Move this effect earlier in the chain',
+	'Move this effect later in the chain',
+	'Remove this effect from the chain',
+	'Choose the reverb model',
+	'Master effects, after every track',
+	'Turn this mastering effect on or off',
+) {
+	like($controls // '', qr/\Q$label\E/, "the help topic's controls list names $label");
+}
+like($help, qr/Reverb has five models/, 'the help explains the reverb models');
+like($help, qr/footswitch bypasses the insert/, 'the help explains bypassing');
+like($help, qr/Drag a row by its handle/, 'the help explains reordering');
+like($help, qr/The master rack sits under the channel strips/, 'the help explains the master rack');
+
+done_testing();

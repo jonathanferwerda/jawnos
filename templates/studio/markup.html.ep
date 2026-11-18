@@ -1,4 +1,9 @@
+<% use Mojo::JSON; %>
 <div id="studio" uuid="<%= $last_song->{'uuid'} %>" name="<%= $last_song->{'name'} %>">
+	<%# The effect contract (names, labels, controls) is data, not markup, so the rack
+	   and the master rack build the same controls the palette offers. %>
+	<script>window.jawnos_studio_effects = <%== Mojo::JSON::encode_json($gb::studio->{'effects'}) %>;
+	window.jawnos_studio_master = <%== Mojo::JSON::encode_json($gb::studio->{'master'}) %>;</script>
 	<audio id="metronome" autoplay style="display:none;"></audio>
 	<div id="studio_plug_select_container" style="position:fixed;display:none;background-color:lightgreen;z-index:50009;border:solid;border-radius:4px;"></div>
 	<div id="pedalboard" style="display:none;">
@@ -16,9 +21,35 @@
 				<% foreach my $b ( @{$p->{'buttons'}} ) { %>
 					<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;"  flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" src="<%= $button_icon->('depressed', $b->{'colour'}) %>">
 				<% } %>
+				<%# The reverb family's model is a whole-number choice, not a knob: the
+				   pedal is the shelf's reverb, so its dropdown pushes a model to every
+				   reverb in the rack, and each insert can still keep its own. %>
+				<% if ($p->{'name'} eq 'reverb2') { %>
+					<select class="studio_pedal_model" channel="<%= $ch %>" control="model" hint="<%= &subs::ui('Choose the reverb model') %>" style="position:absolute;left:7%;top:60%;width:86%;box-sizing:border-box;font-size:11px;">
+						<% my $mi = 0; %>
+						<% foreach my $model ( @{$gb::studio->{'reverb_models'}} ) { %>
+							<option value="<%= $mi %>"<%= $mi == 2 ? ' selected' : '' %>><%= &subs::ui($model) %></option>
+							<% $mi++; %>
+						<% } %>
+					</select>
+				<% } %>
 			</span>
 			<% $count++; %>
 		<% } %>
+	</div>
+	<%# One row of a track's rack. The rack clones this, so every action keeps a
+	   fixed on-screen label: the footswitch bypasses in place, the arrows
+	   reorder for touch, and X removes the insert. %>
+	<div id="studio_rack_template" class="studio_rack_template" aria-hidden="true">
+		<div class="studio_rack_row">
+			<span class="studio_rack_handle" hint="<%= &subs::ui('Drag to reorder this effect') %>">=</span>
+			<span class="studio_rack_name"></span>
+			<button class="studio_rack_bypass hover" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
+			<button class="studio_rack_up hover" hint="<%= &subs::ui('Move this effect earlier in the chain') %>"><%= &subs::ui('Up') %></button>
+			<button class="studio_rack_down hover" hint="<%= &subs::ui('Move this effect later in the chain') %>"><%= &subs::ui('Down') %></button>
+			<button class="studio_rack_remove hover" hint="<%= &subs::ui('Remove this effect from the chain') %>"><%= &subs::ui('X') %></button>
+			<span class="studio_rack_controls"></span>
+		</div>
 	</div>
 	<div id="studio_layout_bar" class="studio_layout_bar">
 		<button id="studio_add_track" class="hover" title="<%= &subs::ui('Add a track, up to 32') %>" hint="<%= &subs::ui('Add a track, up to 32') %>"><%= &subs::ui('Add track') %></button>
@@ -30,6 +61,16 @@
 		<button class="studio_hide_toggle hover" data-panel="tracks" data-setting="hide_tracks" data-hide-label="Hide tracks" data-show-label="Show tracks" aria-pressed="false" hint="<%= &subs::ui('Hide the track listing') %>"><%= &subs::ui('Hide tracks') %></button>
 		<button class="studio_float_toggle hover" data-panel="tracks" hint="<%= &subs::ui('Float the track listing') %>"><%= &subs::ui('Float tracks') %></button>
 		<button class="studio_float_toggle hover" data-panel="synth" hint="<%= &subs::ui('Float the synth') %>"><%= &subs::ui('Float synth') %></button>
+		<span id="studio_effect_palette" class="studio_effect_palette">
+			<label for="studio_palette_effect" class="studio_palette_label"><%= &subs::ui('Effect') %></label>
+			<select id="studio_palette_effect" hint="<%= &subs::ui('Choose an effect to add to this track\'s rack') %>">
+				<% foreach my $name ( @{$gb::studio->{'palette'}} ) { %>
+					<option value="<%= $name %>"><%= &subs::ui($gb::studio->{'effects'}->{$name}->{'label'}) %></option>
+				<% } %>
+			</select>
+			<button id="studio_palette_add" class="hover" hint="<%= &subs::ui('Add the chosen effect to this track\'s rack') %>"><%= &subs::ui('Add') %></button>
+			<span id="studio_palette_channel" class="studio_palette_channel" hint="<%= &subs::ui('The track the palette adds to') %>"></span>
+		</span>
 	</div>
 	<div id="studio_grid" class="studio_grid">
 	<div id="studio_synth" class="studio_synth_panel">
@@ -98,6 +139,7 @@
 							<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
 							<span class="channel_fx" channel="<%= $ch %>" hint="<%= &subs::ui('Inserted pedals (drag a pedal here)') %>"></span>
 						</div>
+						<div class="studio_channel_rack" channel="<%= $ch %>" hint="<%= &subs::ui('The effects in this track\'s chain, in order') %>"></div>
 					</div>
 					<div class="studio_track_body">
 						<canvas class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="<%= &subs::ui('Drag to move a clip, its edges to trim, double-click to cut, select + Delete to remove') %>"></canvas>
@@ -131,6 +173,35 @@
 					<img class="tiny_thumb jack studio_cord hover" hint="Cord" src="<%= &subs::icon_for('/images/studio/cord.png') %>" channel="<%= $ch %>">
 					<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="output"></div>
 				</span>
+			<% } %>
+		</div>
+		<%# The mastering chain is one rack on the mixer's bus, not a pedal on a
+		   track: each block is a footswitch and its own controls. %>
+		<div id="studio_master_rack" class="studio_master_rack" hint="<%= &subs::ui('Master effects, after every track') %>">
+			<b class="studio_master_title"><%= &subs::ui('Master') %></b>
+			<% foreach my $m ( @{$gb::studio->{'master'}} ) { %>
+				<div class="studio_master_effect" effect="<%= $m->{'name'} %>">
+					<button class="studio_master_toggle hover" effect="<%= $m->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Turn this mastering effect on or off') %>"><%= &subs::ui($m->{'label'}) %></button>
+					<span class="studio_master_controls">
+						<% foreach my $c ( @{$m->{'controls'}} ) { %>
+							<% if ($c->{'options'}) { %>
+								<label class="studio_master_label"><%= &subs::ui($c->{'label'}) %>
+									<select class="studio_master_control" effect="<%= $m->{'name'} %>" control="<%= $c->{'control'} %>" hint="<%= &subs::ui('Choose the reverb model') %>">
+										<% my $oi = 0; %>
+										<% foreach my $o ( @{$c->{'options'}} ) { %>
+											<option value="<%= $oi %>"<%= $oi == 2 ? ' selected' : '' %>><%= &subs::ui($o) %></option>
+											<% $oi++; %>
+										<% } %>
+									</select>
+								</label>
+							<% } else { %>
+								<label class="studio_master_label"><%= &subs::ui($c->{'label'}) %>
+									<input type="range" min="0" max="100" value="50" class="studio_master_control" effect="<%= $m->{'name'} %>" control="<%= $c->{'control'} %>">
+								</label>
+							<% } %>
+						<% } %>
+					</span>
+				</div>
 			<% } %>
 		</div>
 	</div>

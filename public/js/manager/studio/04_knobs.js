@@ -27,9 +27,9 @@ function studioInit(data) {
 				settings: response.settings,
 				automations: {}
 			};
-			// fresh channel graphs, but keep the shared AudioContext
+			// fresh channel graphs, but keep the shared AudioContext and its master rack
 			studioFlushSources();
-			studioAudio = { ctx: studioAudio.ctx, master: studioAudio.master, masterAnalyser: studioAudio.masterAnalyser, channels: {}, sources: [], lookahead: studioAudio.lookahead || 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
+			studioAudio = { ctx: studioAudio.ctx, master: studioAudio.master, masterAnalyser: studioAudio.masterAnalyser, masterChain: studioAudio.masterChain, channels: {}, sources: [], lookahead: studioAudio.lookahead || 0.12, chunk: 1.0, playSeg: null, schedSeg: null, clickSeg: null };
 			studioSelectedTake = null;
 			studioTakeDrag = null;
 			studioSongCache = null;
@@ -70,6 +70,8 @@ function studioInit(data) {
 			}
 			studioApplyPedals();
 			studioUpdateFxBadges();
+			studioRackRenderAll();
+			studioMasterApply();
 			studioApplyCapture();
 			// the always-visible synth panel builds its own grid/presets/keys
 			$(document).trigger('jawnos_synth_panel');
@@ -313,7 +315,7 @@ function studioSaver() {
 	var name = $('#studio').attr('name');
 	var uuid = $('#studio').attr('uuid');
 
-	$('.knob_control, .channel_volume').each(function(i,v) {
+	$('.knob_control, .channel_volume, .studio_pedal_model').each(function(i,v) {
 		var channel = $(v).attr('channel');
 		var control = $(v).attr('control');
 		var value = $(v).val();
@@ -352,10 +354,16 @@ function studioSaver() {
 		}
 	});
 
-	// per-channel insert rack (which pedals are in the chain, in order)
+	// per-channel insert rack: the chain in order, each insert's footswitch and
+	// the values its controls hold. The order and the on/off state are the song's;
+	// the old shape (an array of names) still loads via studioRetriever.
 	$.each(studioAudio.channels, function(ch, c) {
 		if (song[ch] == undefined) { song[ch] = {}; }
-		song[ch]['fx'] = c.inserts.map(function(ins) { return ins.name; });
+		song[ch]['fx'] = c.inserts.map(function(ins) {
+			var controls = {};
+			$.each(ins.values || {}, function(control, value) { controls[control] = value; });
+			return { name: ins.name, on: !ins.bypassed, controls: controls };
+		});
 	});
 
 	// recorded takes: metadata only, the audio blobs are uploaded by studioSave
@@ -379,13 +387,14 @@ function studioSaver() {
 	$('#studio_viewer .studio_track').each(function() { tracks.push($(this).attr('data-channel')); });
 	song['admin'] = { time: mixer['time'], name: name, uuid: uuid, loop: sl, video_toggle: video_toggle,
 		metronome: mixer['time']['metronome'], bpm: mixer['time']['bpm'], sig: mixer['time']['sig'],
-		tracks: tracks, settings: { channel_count: String(tracks.length || 1) } };
+		tracks: tracks, master: studioMasterSave(), settings: { channel_count: String(tracks.length || 1) } };
 	studioSongStore(song);
 	return song;
 }
 
 function studioRetriever() {
 	var song = studioSongCache || JSON.parse(localStorage.getItem('studio') || '{}');
+	var rack_restore = [];
 	// A saved song may carry more tracks than the window currently shows, but a
 	// new song (no uuid) must not inherit the previous song's rows from the cache.
 	var current_uuid = String($('#studio').attr('uuid') || '');
@@ -434,12 +443,41 @@ function studioRetriever() {
 		var c = studioChannelEngine(i);
 		if (c) {
 			c.inserts.slice().forEach(function(ins) { studioSetInsert(i, ins.name, false); });
-			(v['fx'] || []).forEach(function(name) { studioSetInsert(i, name, true); });
+			(v['fx'] || []).forEach(function(entry) {
+				// An old song stored just the pedal names; a new one stores a record
+				// per insert (name, footswitch, controls), in chain order.
+				var name = (typeof entry === 'string') ? entry : (entry && entry.name);
+				if (!name) { return; }
+				studioSetInsert(i, name, true);
+				if (entry && typeof entry === 'object') {
+					rack_restore.push({ ch: i, name: name, record: entry });
+				}
+			});
 		}
 		studioApplyChannel(i);
 	});
 
 	studioApplyPedals();
+	// A rack's own values win over the shelf's global pedals, so they are pushed
+	// in last: the shelf is a macro, the stored rack is the song.
+	rack_restore.forEach(function(item) {
+		var ins = studioRackFind(item.ch, item.name);
+		if (!ins) { return; }
+		$.each(item.record.controls || {}, function(control, value) { ins.set(control, value); });
+		if (ins.setBypass) { ins.setBypass(item.record.on === false); }
+	});
+	studioRackRenderAll();
+	var master_records = mixer['admin'] && mixer['admin']['master'];
+	if (master_records && master_records.length) {
+		studioMasterRestore(master_records);
+	}
+	else {
+		// An older song has no master rack: start from every effect off rather
+		// than inherit the previous song's switches.
+		studioMasterRestore(studioMasterNames().map(function(name) {
+			return { name: name, on: false };
+		}));
+	}
 
 	var met = $('#studio_metronome');
 	if (mixer['time'] && mixer['time']['metronome'] == 'yes') {
