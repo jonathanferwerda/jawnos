@@ -854,6 +854,12 @@ function jawnosWindowEmergeGhostCancel(ghost) {
 		clearTimeout(ghost.pourTimer);
 		ghost.pourTimer = null;
 	}
+	if (ghost.retargetAnims) {
+		for (var r = 0; r < ghost.retargetAnims.length; r++) {
+			try { ghost.retargetAnims[r].cancel(); } catch (e) {}
+		}
+		ghost.retargetAnims = null;
+	}
 	if (ghost.retargetAnim) {
 		try { ghost.retargetAnim.cancel(); } catch (e) {}
 		ghost.retargetAnim = null;
@@ -1744,20 +1750,23 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 		try { ghost.openAnim.playbackRate = Math.max(1, growth_left / duration); } catch (e) {}
 	}
 
+	// The preview holds its own frame while the real window fades in underneath
+	// it, and only then goes: two half-transparent layers over the desk let it
+	// show through, which reads as the window blinking clear at the handoff.
 	var fade = function () {
-		if (el.animate) {
-			ghost.retargetAnim = el.animate([
-				{ opacity: 1, offset: 0 },
-				{ opacity: 0, offset: 1 }
-			], {
-				duration: duration,
-				easing: 'ease-out',
-				fill: 'both'
-			});
-		}
-		else {
-			el.style.opacity = '0';
-		}
+		if (!el.animate) { el.style.opacity = '0'; return null; }
+		var anim = el.animate([
+			{ opacity: 1, offset: 0 },
+			{ opacity: 1, offset: 0.7, easing: 'ease-out' },
+			{ opacity: 0, offset: 1 }
+		], {
+			duration: duration,
+			fill: 'both'
+		});
+		ghost.retargetAnims = ghost.retargetAnims || [];
+		ghost.retargetAnims.push(anim);
+		ghost.retargetAnim = anim;
+		return anim;
 	};
 
 	if (ride || !off_target) {
@@ -1780,14 +1789,18 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 		el.style.transformOrigin = '0 0';
 		el.style.transform = start_t;
 		if (el.animate) {
-			ghost.retargetAnim = el.animate([
-				{ transform: start_t, opacity: 1, offset: 0 },
-				{ transform: end_t, opacity: 0, offset: 1 }
+			var move = el.animate([
+				{ transform: start_t, offset: 0 },
+				{ transform: end_t, offset: 1 }
 			], {
 				duration: duration,
 				easing: 'ease-out',
 				fill: 'both'
 			});
+			ghost.retargetAnims = ghost.retargetAnims || [];
+			ghost.retargetAnims.push(move);
+			ghost.retargetAnim = move;
+			fade();
 		}
 		else {
 			el.style.transform = end_t;

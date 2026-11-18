@@ -114,6 +114,8 @@ like($emerge, qr/if \(typeof jawnosDockWindowsSettle == 'function'\) \{ jawnosDo
 	'so the dock\'s postponed row is laid out with its motion live');
 like($emerge, qr/duration: jawnosWindowEmergeGrowTime\(shape\)/,
 	'the preview growth runs for the device\'s measured pace');
+like($emerge, qr/\{ opacity: 1, offset: 0 \},\s*\{ opacity: 1, offset: 0\.7, easing: 'ease-out' \},\s*\{ opacity: 0, offset: 1 \}/,
+	'the preview holds its frame until the window behind it is opaque');
 like($emerge, qr/function jawnosWindowEmergeGrowTime\(shape\)[\s\S]{0,400}Math\.max\(shape\.ghost, Math\.round\(shape\.ghost \* 3\)\)/,
 	'with the level\'s own tail until an open has been measured');
 like($emerge, qr/jawnosWindowEmergeLatencyRecord\(Date\.now\(\) - ghost\.at\)/,
@@ -808,8 +810,11 @@ const retarget_end = 'translate(' + (12 - ghost.to.left) + 'px, ' + (44 - ghost.
 check('the preview is retargeted on its own growth, not snapped',
 	grow.keys.length === 2 && grow.keys[1].transform === retarget_end
 	&& grow.cancelled === 0
-	&& retarget.keys.length === 2 && retarget.keys[1].opacity === 0
-	&& retarget.keys[0].opacity === 1);
+	&& retarget.keys.length === 3
+	&& retarget.keys[0].opacity === 1 && retarget.keys[1].opacity === 1
+	&& retarget.keys[2].opacity === 0);
+check('and it holds its frame until the window behind it is opaque',
+	retarget.keys[1].offset === 0.7);
 check('the growth is sped up to arrive with the cross-fade', grow.playbackRate > 1);
 check('the retarget keeps the predicted box and maps it to the real window',
 	ghost.el.style.left === ghost.to.left + 'px'
@@ -863,9 +868,10 @@ check('a window on the predicted frame takes the preview over',
 	sandbox.jawnosWindowEmerge(seated_win) === true);
 const seated_retarget = seated_el.animations[seated_el.animations.length - 1];
 check('the preview is faded off its own frame instead of being moved again',
-	seated_retarget.keys.length === 2
+	seated_retarget.keys.length === 3
 	&& seated_retarget.keys[0].transform === undefined
-	&& seated_retarget.keys[1].opacity === 0
+	&& seated_retarget.keys[1].opacity === 1
+	&& seated_retarget.keys[2].opacity === 0
 	&& seated_el.style.transform === seated_grow);
 check('and the cross-fade is the short one', seated_retarget.options.duration === 160);
 advance(1000);
@@ -882,11 +888,13 @@ const late_win = new El('clock');
 late_win.rect = { left: 40, top: 80, width: 500, height: 660 };
 check('a late window still retargets the preview', sandbox.jawnosWindowEmerge(late_win) === true);
 const late_grow = late_el.animations[0];
-const late_retarget = late_el.animations[late_el.animations.length - 1];
+const late_retarget = late_el.animations[late_el.animations.length - 2];
 check('the finished growth is put down', late_grow.cancelled === 1);
 check('and the retarget plays only the distance to the window',
 	late_retarget.keys[1].transform === 'translate(' + (40 - late.to.left) + 'px, ' + (80 - late.to.top) + 'px) scale(' + (500 / late.to.width) + ', ' + (660 / late.to.height) + ')'
 	&& late_retarget.options.duration === 220);
+check('with the hold-and-go fade beside it',
+	late_el.animations[late_el.animations.length - 1].keys.length === 3);
 advance(1000);
 check('and the late preview is put away', late_el.parentNode === null);
 
