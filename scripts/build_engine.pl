@@ -25,6 +25,7 @@ use warnings;
 use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Spec;
+use File::Temp qw(tempfile);
 use FindBin;
 
 my $root     = File::Spec->rel2abs("$FindBin::Bin/..");
@@ -110,7 +111,18 @@ die "cargo build failed\n" unless $built;
 my $binary = File::Spec->catfile( $target, $profile, 'jawn-audio' );
 die "cargo reported success but $binary is missing\n" unless -x $binary;
 
-make_path( File::Spec->catdir( $root, 'perl', 'audio' ) );
-copy( $binary, $out ) or die "cannot stage $out: $!\n";
-chmod( 0755, $out );
+my $audio_dir = File::Spec->catdir( $root, 'perl', 'audio' );
+make_path($audio_dir);
+
+# A running engine holds its own image on disk, so writing straight into $out
+# fails with ETXTBSY. Stage into a temp file in the same directory and rename
+# it over the destination: rename swaps the inode, the process that is already
+# running keeps the old binary, and the next spawn gets the new one.
+my ( $tmp_fh, $tmp ) = tempfile( 'jawn-audio.XXXXXX', DIR => $audio_dir, UNLINK => 0 );
+close $tmp_fh;
+if ( !copy( $binary, $tmp ) || !chmod( 0755, $tmp ) || !rename( $tmp, $out ) ) {
+	my $err = $!;
+	unlink $tmp if -e $tmp;
+	die "cannot stage $out: $err\n";
+}
 print "built: $out\n";

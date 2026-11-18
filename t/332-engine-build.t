@@ -7,6 +7,8 @@ use strict;
 use warnings;
 
 use Cwd qw(abs_path);
+use Errno qw(ETXTBSY);
+use Fcntl qw(O_WRONLY);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Spec;
@@ -66,6 +68,45 @@ sub fixture {
 	return $dir;
 }
 
+# A cargo stand-in: it never compiles anything. `--version` answers, and
+# `build` drops a runnable shell script where cargo would put the binary, so a
+# test can exercise staging without paying for a real Rust build.
+sub fake_cargo {
+	my ($dir) = @_;
+	my $path = "$dir/fake-cargo";
+	open( my $fh, '>', $path ) or die "$path: $!";
+	print {$fh} <<'SH';
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+	echo "cargo 0.0.0 (fake)"
+	exit 0
+fi
+if [ "$1" = "test" ]; then
+	exit 0
+fi
+if [ "$1" = "build" ]; then
+	profile=debug
+	for arg in "$@"; do
+		[ "$arg" = "--release" ] && profile=release
+	done
+	if [ -z "$CARGO_TARGET_DIR" ]; then
+		echo "fake cargo: CARGO_TARGET_DIR is unset" >&2
+		exit 1
+	fi
+	mkdir -p "$CARGO_TARGET_DIR/$profile" || exit 1
+	bin="$CARGO_TARGET_DIR/$profile/jawn-audio"
+	printf '#!/bin/sh\necho "fake-engine-%s"\n' "$profile" > "$bin" || exit 1
+	chmod 0755 "$bin" || exit 1
+	exit 0
+fi
+echo "fake cargo: unsupported: $*" >&2
+exit 1
+SH
+	close $fh;
+	chmod( 0755, $path ) or die "chmod $path: $!";
+	return $path;
+}
+
 # A scratch copy of the real crate, never the checkout's own target/.
 sub copy_tree {
 	my ( $from, $to ) = @_;
@@ -121,6 +162,92 @@ sub cargo_available {
 	isnt( $status, 0, 'a build with no toolchain fails' );
 	like( $out . $err, qr/no cargo/, 'and says the engine is optional' );
 	ok( !-e "$dir/perl/audio/jawn-audio", 'and stages nothing' );
+}
+
+# --- --debug stages the unoptimised profile ---------------------------------
+{
+	my $dir   = fixture();
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	local $ENV{'CARGO'}            = $cargo;
+	local $ENV{'CARGO_TARGET_DIR'} = $ware;
+
+	my ( $status, $stdout, $stderr ) = run_in( $dir, '--debug' );
+	is( $status, 0, '--debug builds' ) or diag( $stdout . $stderr );
+	ok( -x "$dir/perl/audio/jawn-audio", 'and stages a binary' );
+	like( $stdout, qr/^built: /m, 'and says built: with the path' );
+
+	my ( $ran, $text ) = capture("$dir/perl/audio/jawn-audio");
+	is( $ran, 0, 'the staged binary runs' );
+	like( $text, qr/fake-engine-debug/, 'and came from the debug profile' );
+}
+
+# --- staging over a running engine ------------------------------------------
+{
+	my $dir   = fixture();
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	my $out   = "$dir/perl/audio/jawn-audio";
+
+	# A real executable, not a shell script: exec'ing a script does not hold
+	# the image's write lock, and ETXTBSY (the bug that hit `table`) needs an
+	# executing image. sleep is tiny and everywhere; perl is the fallback.
+	my $live = -x '/bin/sleep'   ? '/bin/sleep'
+	         : -x '/usr/bin/sleep' ? '/usr/bin/sleep'
+	         :                       $^X;
+	copy( $live, $out ) or die "copy $live: $!";
+	chmod( 0755, $out ) or die "chmod $out: $!";
+	my $before = ( stat $out )[1];
+
+	my $pid = fork();
+	die "fork: $!" unless defined $pid;
+	if ( !$pid ) {
+		my @args = $live eq $^X ? ( '-e', 'select undef, undef, undef, 5' ) : ('5');
+		exec { $out } $out, @args;
+		exit 127;
+	}
+
+	# The image is executing exactly when open-for-write returns ETXTBSY, which
+	# is the condition the old copy() died on.
+	my $locked = 0;
+	for ( 1 .. 200 ) {
+		if ( sysopen( my $fh, $out, O_WRONLY ) ) {
+			close $fh;
+			select( undef, undef, undef, 0.01 );
+			next;
+		}
+		$locked = $! == ETXTBSY ? 1 : 0;
+		last;
+	}
+
+	SKIP: {
+		skip 'could not get the destination executing here', 7 unless $locked;
+
+		local $ENV{'CARGO'}            = $cargo;
+		local $ENV{'CARGO_TARGET_DIR'} = $ware;
+		my ( $status, $stdout, $stderr ) = run_in($dir);
+		is( $status, 0, 'staging over a running engine succeeds' )
+			or diag( $stdout . $stderr );
+		like( $stdout, qr/^built: .*jawn-audio/m, 'and still prints built: with the path' );
+
+		my @staged = stat $out;
+		is( $staged[2] & 07777, 0755, 'the staged binary keeps mode 0755' );
+		isnt( $staged[1], $before, 'and is a new inode, not an in-place rewrite' );
+		ok( -x $out, 'and is executable' );
+
+		my ( $ran, $text ) = capture($out);
+		is( $ran, 0, 'and runs' );
+		like( $text, qr/fake-engine-release/, 'as the newly staged release build' );
+	}
+
+	kill 'TERM', $pid;
+	waitpid( $pid, 0 );
+
+	# The temp is consumed by the rename, never left beside the binary.
+	opendir( my $dh, "$dir/perl/audio" ) or die "$dir/perl/audio: $!";
+	my @left = sort grep { $_ ne '.' && $_ ne '..' } readdir $dh;
+	closedir $dh;
+	is_deeply( \@left, ['jawn-audio'], 'and leaves no temp file behind' );
 }
 
 # --- the real crate builds, stages and runs ---------------------------------
