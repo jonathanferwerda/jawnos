@@ -12,7 +12,7 @@
 #sound .sound_section { flex: 1 1 100%; min-width: 0; padding: 0; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .8); overflow: hidden; display: none; }
 #sound .sound_section_head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2, var(--panel)); }
 #sound .sound_section_tabs { display: flex; gap: 8px; flex: 0 0 auto; overflow-x: scroll; overflow-y: hidden; padding-bottom: 4px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
-#sound .sound_section_pill { flex: 0 0 auto; padding: 5px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: pointer; white-space: nowrap; opacity: .85; }
+#sound .sound_section_pill { flex: 0 0 auto; padding: 5px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2, var(--panel)); color: inherit; font: inherit; cursor: var(--jawnos-cursor-pointer, pointer); white-space: nowrap; opacity: .85; }
 #sound .sound_section_pill.is-active { background: var(--accent, #3b7ddd); border-color: var(--accent, #3b7ddd); color: #fff; opacity: 1; }
 #sound .sound_section.is-active { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 #sound .sound_section_head h3 { margin: 0; font-size: 16px; }
