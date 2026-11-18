@@ -11,6 +11,20 @@ path, the block graph, a null device, master election and clock alignment — 40
 routing plan's shape and validation are `lib/JawnOS/Audio/Plan.pm` (`t/334`), and Studio reports the
 browser's own numbers through `window.studioAudioReport()` (`t/333`).
 **Still missing:** a real device backend, the laptop's browser numbers, and every network phase.
+
+**Where a guitar stands, 2026-11-17.** Everything below the browser works: capture at 2.7 ms on
+`table`, one to N tracks, the inserts, playback through the strips, overdub with a measured start
+offset, a control socket and a supervisor. What is still missing for *hearing* an input is the
+**live monitoring path** — input → its strip → the interface's outputs — and a machine with the
+engine built and running. On `table` the WirePlumber rule hands the card to the engine, so the
+browser cannot see it at all; until the engine monitors, a guitar plugged into the interface is
+silent by design, not by fault. The instrument input is **channel 1** (the mic is 0), and the
+patch cable used for the latency measurements still occupies it unless it has been unplugged.
+
+**The panel layout, as it was meant.** The four panels should *pack*: a panel claims the span it
+needs and the others reflow around it (CSS grid auto-flow with spans, or a masonry of columns),
+rather than a fixed 2×2 where the transport always owns a quarter of the desk. The dock/float and
+persistence underneath already support it; what changes is how the docked cells are arranged.
 **The converter:** a **Behringer UM2** on `table.jonathanferwerda.com` — the preferred clock master.
 **Related:** `docs/reception.md` (the audio gateway the engine must not duplicate),
 `docs/platform-roadmap.md` (CoreAudio/WASAPI — the same device seam), `docs/roadmap.md` (Perl stays
