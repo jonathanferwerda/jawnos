@@ -126,11 +126,12 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	is($state->{'boot'}, 'boot-one', 'the applied state records the boot');
 }
 
-# --- a live write follows the cable, and keeps a limit it is not naming ------
+# --- a live write follows the cable, and keeps the half it is not naming -----
 {
-	# The taskbar panel sends `live` and only a plan. On battery it must edit the
-	# battery card, keeping the limit the panel never showed; on mains it must
-	# edit the mains card even if the panel was built before the cable changed.
+	# The taskbar panel sends `live` with one of the pair: a plan press keeps the
+	# saved limit, a stepper press keeps the saved plan. On battery each must edit
+	# the battery card; on mains the mains card, even if the panel was built
+	# before the cable changed.
 	my $saved = subs::power_plan_set('live', 'balanced');
 	ok($saved->{'ok'}, 'a live source is accepted');
 	is($saved->{'config'}{'battery'}{'plan'}, 'balanced', 'on battery it edits the battery card');
@@ -142,6 +143,13 @@ write_file("$sys/class/power_supply/AC/online", "0\n");
 	is($mains->{'config'}{'ac'}{'limit'}, 100, 'keeping the mains limit');
 	is($mains->{'config'}{'battery'}{'plan'}, 'balanced', 'the other card is untouched');
 	write_file("$sys/class/power_supply/AC/online", "0\n");
+	my $capped = subs::power_plan_set('live', undef, 65);
+	is($capped->{'config'}{'battery'}{'plan'}, 'balanced', 'a limit-only write keeps the battery plan');
+	is($capped->{'config'}{'battery'}{'limit'}, 65, 'and changes the limit');
+	ok($capped->{'applied'}{'dry_run'}, 'applying it at once on the live source');
+	is($capped->{'config'}{'ac'}{'plan'}, 'performance', 'the other card stays as it was');
+	my $bad = subs::power_plan_set('battery', 'turbo');
+	is($bad->{'ok'}, 0, 'an explicitly named unknown plan is still refused');
 	# The rest of the file expects the battery performance/85 pair and a
 	# balanced mains plan.
 	subs::power_plan_set('ac', 'balanced', 100);
@@ -535,8 +543,12 @@ SH
 	like($power_js, qr/took over from/, 'the app names the daemon JawnOS took over from');
 	like($taskbar_js, qr/took over from/, 'the taskbar panel names it too');
 	like($taskbar_js, qr/source:\s*'live'/, 'the panel writes the source the machine is on now');
-	like($taskbar_js, qr/plan == 'performance'\) \{ data\.limit = 100; \}/,
-		'and lifts the speed limit when Performance is chosen there');
+	like($taskbar_js, qr/data-power-limit-step/, 'the panel carries a CPU speed stepper');
+	like($taskbar_js, qr/jawnosT\('CPU speed'\)/, 'its label is the core CPU speed word');
+	like($taskbar_js, qr/data: \{ source: 'live', limit: limit \}/, 'a step saves a limit without replacing the plan');
+	unlike($taskbar_js, qr/data\.limit = 100/, 'a Performance press no longer forces full speed');
+	my $css = read_file("$root/public/css/manager.css");
+	like($css, qr/\.taskbar_power_step/, 'the stepper has its own compact buttons');
 }
 
 # --- a gauge that has not learned its counter -------------------------------

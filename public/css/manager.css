@@ -4265,6 +4265,8 @@ body.dark_theme .inventory_details {
 .taskbar_panel_row .taskbar_panel_label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .taskbar_panel_row .taskbar_panel_value { flex: 0 0 44px; text-align: right; font-variant-numeric: tabular-nums; opacity: .85; }
 .taskbar_panel input[type=range] { flex: 1 1 auto; min-width: 0; }
+#taskbar_power_panel .taskbar_power_step { flex: 0 0 auto; min-width: 26px; padding: 2px 7px; line-height: 1.2; }
+#taskbar_power_panel .taskbar_power_limit .taskbar_panel_value { flex: 0 0 40px; }
 .taskbar_panel button {
 	flex: 0 0 auto;
 	font: inherit;

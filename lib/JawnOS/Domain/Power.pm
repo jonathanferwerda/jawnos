@@ -752,10 +752,11 @@ sub power_apply_plan {
 	return \%result;
 }
 
-# Save one source's plan. `live` resolves to the source the machine is on now,
-# so a panel built from a reading a minute old cannot edit the source the cable
-# has already left. A caller that names no limit (the taskbar panel has no
-# speed-limit control) keeps that source's saved cap instead of resetting it.
+# Save one source's plan and speed limit. `live` resolves to the source the
+# machine is on now, so a panel built from a reading a minute old cannot edit
+# the source the cable has already left. A caller may name only one of the two
+# (the taskbar panel sets the plan and the limit with separate presses); the
+# other is kept as that source has it.
 sub power_plan_set {
 	my ($source, $plan, $limit) = @_;
 	if (!defined $source || !length $source || $source eq 'live') {
@@ -763,9 +764,11 @@ sub power_plan_set {
 		$source = (!$battery->{'present'} || $battery->{'ac'}) ? 'ac' : 'battery';
 	}
 	return { ok => 0, error => 'unknown source' } unless $source eq 'ac' || $source eq 'battery';
-	return { ok => 0, error => 'unknown plan' } unless &power_plan_valid($plan);
 	my $config = &power_config();
 	my $entry = ref $config->{$source} eq 'HASH' ? $config->{$source} : {};
+	$plan = &power_plan_valid($entry->{'plan'}) ? $entry->{'plan'} : 'balanced'
+		unless defined $plan && length $plan;
+	return { ok => 0, error => 'unknown plan' } unless &power_plan_valid($plan);
 	$limit = $entry->{'limit'} unless defined $limit && length $limit;
 	$limit = &power_limit_round($limit);
 	$config->{$source} = { plan => $plan, limit => $limit };

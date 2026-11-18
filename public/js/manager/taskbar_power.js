@@ -176,15 +176,17 @@ function jawnosPowerTaskbarPanelBattery(panel) {
 }
 
 // The app keeps a plan for ac and one for battery; this edits the one for the
-// source the machine is on now, and preserves that source's saved CPU limit.
-// Performance is the exception: the panel has no limit control, so it asks for
-// the whole clock range instead of silently keeping a 70% cap.
+// source the machine is on now. The CPU speed limit is its own row, so a plan
+// press keeps that source's saved cap and a step keeps its saved plan.
 function jawnosPowerTaskbarPanelProfile(panel) {
 	var status = jawnosPowerTaskbarData;
 	var live = !!(status && status.ok && status.source);
 	var source = live ? String(status.source) : '';
 	var entry = (live && (status.config || {})[source]) || {};
 	var current = entry.plan || 'balanced';
+	var limit = parseInt(entry.limit, 10);
+	if (isNaN(limit)) { limit = source == 'battery' ? 70 : 100; }
+	limit = Math.max(25, Math.min(100, limit));
 	var section = $('<div class="taskbar_panel_section"></div>');
 	section.append($('<h4></h4>').text(jawnosT('Power profile')));
 	if (source == 'ac') {
@@ -227,6 +229,30 @@ function jawnosPowerTaskbarPanelProfile(panel) {
 		if (!managing) { button.prop('disabled', true); }
 		section.append(button);
 	}
+	// The speed limit steps in the same 5% units as the app's slider. It writes
+	// the source the server is on at the moment of the press, keeping the plan;
+	// a machine with no cpufreq control has no row to offer.
+	var cpu = (status && status.cpu) || {};
+	if (live && cpu.supported) {
+		var limit_row = $('<div class="taskbar_panel_row taskbar_power_limit"></div>');
+		limit_row.append($('<span class="taskbar_panel_label"></span>').text(jawnosT('CPU speed')));
+		var down = $('<button type="button" class="taskbar_power_step"></button>')
+			.attr('data-power-limit-step', '-5')
+			.attr('aria-label', jawnosT('Slower'))
+			.text('−');
+		var shown = $('<span class="taskbar_panel_value taskbar_power_limit_value"></span>')
+			.attr('title', jawnosT('Caps the clock inside the chosen plan'))
+			.text(limit + '%');
+		var up = $('<button type="button" class="taskbar_power_step"></button>')
+			.attr('data-power-limit-step', '5')
+			.attr('aria-label', jawnosT('Faster'))
+			.text('+');
+		if (!managing) { down.prop('disabled', true); up.prop('disabled', true); }
+		if (limit <= 25) { down.prop('disabled', true); }
+		if (limit >= 100) { up.prop('disabled', true); }
+		limit_row.append(down, shown, up);
+		section.append(limit_row);
+	}
 	section.append($('<p class="taskbar_panel_note"></p>').attr('data-power-note', '1'));
 	panel.append(section);
 }
@@ -263,11 +289,10 @@ $(document).on('click', '#taskbar_power_panel [data-power-plan]', function() {
 	if (!plan) { return; }
 	// `live` is resolved on the server at the moment of the write, so a press
 	// just after the cable changes cannot edit the source the machine has left.
-	// A missing limit keeps the source's saved cap; Performance lifts it.
+	// The limit is a separate row: a plan press keeps that source's saved cap.
 	var data = { source: 'live', plan: plan };
-	if (plan == 'performance') { data.limit = 100; }
 	jawnosPowerTaskbarPanelBusy = true;
-	panel.find('[data-power-plan]').prop('disabled', true);
+	panel.find('[data-power-plan], [data-power-limit-step]').prop('disabled', true);
 	jawnosPowerTaskbarPanelNote(jawnosT('Saving…'));
 	$.ajax({
 		url: '/manager/power/plan',
@@ -277,7 +302,7 @@ $(document).on('click', '#taskbar_power_panel [data-power-plan]', function() {
 	}).done(function(response) {
 		jawnosPowerTaskbarPanelBusy = false;
 		// Re-enable before the reload so a failed reading cannot strand them.
-		panel.find('[data-power-plan]').prop('disabled', false);
+		panel.find('[data-power-plan], [data-power-limit-step]').prop('disabled', false);
 		if (response && response.ok) {
 			jawnosPowerTaskbarPanelNote('');
 			jawnosPowerTaskbarPanelReload();
@@ -286,7 +311,42 @@ $(document).on('click', '#taskbar_power_panel [data-power-plan]', function() {
 		jawnosPowerTaskbarPanelNote((response && response.error) || jawnosT('The power profile could not be saved.'));
 	}).fail(function(xhr) {
 		jawnosPowerTaskbarPanelBusy = false;
-		panel.find('[data-power-plan]').prop('disabled', false);
+		panel.find('[data-power-plan], [data-power-limit-step]').prop('disabled', false);
+		jawnosPowerTaskbarPanelNote(jawnosT('The request failed.') + ' (' + xhr.status + ')');
+	});
+});
+
+$(document).on('click', '#taskbar_power_panel [data-power-limit-step]', function() {
+	var button = $(this);
+	var panel = button.closest('#taskbar_power_panel');
+	if (jawnosPowerTaskbarPanelBusy) { return; }
+	var shown = parseInt(button.closest('.taskbar_power_limit').find('.taskbar_power_limit_value').text(), 10);
+	var step = parseInt(button.attr('data-power-limit-step'), 10);
+	if (isNaN(shown) || isNaN(step)) { return; }
+	var limit = Math.max(25, Math.min(100, shown + step));
+	if (limit == shown) { return; }
+	// A limit-only write keeps the source's saved plan; `live` resolves the
+	// source at the moment of the press.
+	jawnosPowerTaskbarPanelBusy = true;
+	panel.find('[data-power-plan], [data-power-limit-step]').prop('disabled', true);
+	jawnosPowerTaskbarPanelNote(jawnosT('Saving…'));
+	$.ajax({
+		url: '/manager/power/plan',
+		type: 'POST',
+		dataType: 'json',
+		data: { source: 'live', limit: limit }
+	}).done(function(response) {
+		jawnosPowerTaskbarPanelBusy = false;
+		panel.find('[data-power-plan], [data-power-limit-step]').prop('disabled', false);
+		if (response && response.ok) {
+			jawnosPowerTaskbarPanelNote('');
+			jawnosPowerTaskbarPanelReload();
+			return;
+		}
+		jawnosPowerTaskbarPanelNote((response && response.error) || jawnosT('The CPU speed limit could not be saved.'));
+	}).fail(function(xhr) {
+		jawnosPowerTaskbarPanelBusy = false;
+		panel.find('[data-power-plan], [data-power-limit-step]').prop('disabled', false);
 		jawnosPowerTaskbarPanelNote(jawnosT('The request failed.') + ' (' + xhr.status + ')');
 	});
 });
