@@ -13,7 +13,9 @@ cookie across launches. A launch tries the Manager first - a profile that still
 holds the cookie opens straight in - and any finished load that is the Gate
 hands over to the ticket, not only the first one: a lapsed session reloads the
 page mid-run (public/js/universal/02_settings_ajax_hidden.js), so the view
-signs itself back in. A refused ticket stops after a few tries rather than
+signs itself back in. A refused ticket gives way to the tree's .shots ticket
+(a rotation writes the new one there) and the winner is stored back, so a
+stale keyring ticket heals itself; after a few tries it stops rather than
 looping. The first run also copies the old WebKit shell's page layout out of
 its per-origin SQLite store, and the window geometry comes from
 ``~/.config/jawnos/desktop.json``, saved back on close. A certificate error is
@@ -224,34 +226,66 @@ def prepare_wayland_env():
 # the same login the WebKit shell uses, without importing GTK
 # --------------------------------------------------------------------------
 
-def ticket_url(jawn_dir=None):
-    """The stored login ticket, if any (keyring, Fernet file, or .shots).
-
-    The installed tree is checked too: a packaged desktop lives under
-    ~/.local/share/jawnos, whose ROOT_DIR is not the working tree the board's
-    first boot writes its ticket into. Pass jawn_dir so a fresh board finds it.
-    """
-    try:
-        from . import secrets
-        stored = secrets.load()
-        if stored:
-            return stored
-    except Exception:
-        pass
-    path = os.path.join(ROOT_DIR, ".shots", "ticket.txt")
+def _ticket_from(path):
     try:
         with open(path, "r", encoding="utf-8") as fh:
             return fh.read().strip() or None
     except OSError:
-        pass
+        return None
+
+
+def stored_ticket():
+    """The ticket this desktop keeps in its own store (keyring or Fernet)."""
+    try:
+        from . import secrets
+        return secrets.load() or None
+    except Exception:
+        return None
+
+
+def tree_ticket(jawn_dir=None):
+    """The ticket a running tree wrote to .shots, if any.
+
+    The installed desktop's own ROOT_DIR is checked first: a packaged desktop
+    lives under ~/.local/share/jawnos, whose .shots is not the working tree the
+    board's first boot writes its ticket into. Pass jawn_dir so a fresh board
+    finds it.
+    """
+    found = _ticket_from(os.path.join(ROOT_DIR, ".shots", "ticket.txt"))
+    if found:
+        return found
     if jawn_dir:
-        path = os.path.join(jawn_dir, ".shots", "ticket.txt")
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                return fh.read().strip() or None
-        except OSError:
-            pass
+        return _ticket_from(os.path.join(jawn_dir, ".shots", "ticket.txt"))
     return None
+
+
+def ticket_url(jawn_dir=None):
+    """The stored login ticket, if any (keyring, Fernet file, or .shots)."""
+    return stored_ticket() or tree_ticket(jawn_dir)
+
+
+def ticket_candidates(jawn_dir=None):
+    """The tickets one launch may try, best first, without duplicates.
+
+    ``app_ticket.pl`` rotates the old row and writes the new URL into the
+    tree's .shots; a desktop that still holds the rotated one in its keyring
+    would show the denial page on every launch. Keeping the tree's ticket as a
+    second candidate lets the view heal itself when the first is refused.
+    """
+    candidates = []
+    for ticket in (stored_ticket(), tree_ticket(jawn_dir)):
+        if ticket and ticket not in candidates:
+            candidates.append(ticket)
+    return candidates
+
+
+def store_ticket(url):
+    """Persist a ticket that just proved itself, so the next launch is clean."""
+    try:
+        from . import secrets
+        return secrets.store(url)
+    except Exception as exc:
+        return False, str(exc)
 
 
 def manager_url(jawn_dir, ticket=None):
@@ -309,6 +343,19 @@ def gate_ticket_due(attempts, ticket, gate, login_pending):
     """
     return (bool(ticket) and bool(gate) and not login_pending
             and int(attempts) < GATE_RETRY_LIMIT)
+
+
+def gate_ticket_choice(attempts, candidates):
+    """The ticket the next Gate hand-over should load, or None when spent.
+
+    The first hand-over loads the first candidate; if the Gate comes back that
+    ticket was refused, so the next candidate is tried. ``GATE_RETRY_LIMIT``
+    still bounds one episode, so a refused set cannot loop the view.
+    """
+    candidates = [ticket for ticket in (candidates or []) if ticket]
+    if not candidates or int(attempts) >= GATE_RETRY_LIMIT:
+        return None
+    return candidates[min(int(attempts), len(candidates) - 1)]
 
 
 def profile_dir():
@@ -1815,13 +1862,22 @@ def main(argv=None):
     _allow_fullscreen(page, view, qt, restore_window)
 
     # ---- the launcher URL, and the bridge installation --------------------
+    # A rotation leaves the old ticket in the keyring and writes the new one
+    # into the tree's .shots. Keep both: the Gate hand-over tries the stored
+    # ticket first, then the tree's, and stores whichever actually signs in.
     ticket = None if (args.url or args.probe) else ticket_url(settings["jawn_dir"])
+    candidate_tickets = [] if (args.url or args.probe) else ticket_candidates(settings["jawn_dir"])
+    if candidate_tickets:
+        ticket = candidate_tickets[0]
+    ticket_used = None
+    stored_ticket_now = None if (args.url or args.probe) else stored_ticket()
     manager = None if (args.url or args.probe) else manager_url(settings["jawn_dir"], ticket)
     manager_base = manager or args.url or ""
     # A profile that still holds the session cookie opens the Manager directly;
     # the ticket is loaded whenever a finished load is the Gate - at launch, or
     # when a lapse mid-run reloads the page - so the view signs itself back in.
     login_pending = False
+    ticket_just_loaded = False
     gate_retry = {"attempts": 0}
     kick = None
     host = port = None
@@ -2251,6 +2307,8 @@ def main(argv=None):
 
     def on_load(_ok):
         nonlocal login_pending, migration_pending
+        nonlocal ticket, ticket_used, candidate_tickets, stored_ticket_now
+        nonlocal ticket_just_loaded
         nav_guard.stop()
         if nav.pop("drawing_error", False):
             # the dark page finished drawing: the retry armed beside it is the
@@ -2287,7 +2345,13 @@ def main(argv=None):
             # session, so open it and land back on the Manager. This is not a
             # launch-only step - a lapsed session reloads the page mid-run too
             # - and the count keeps a refused ticket from looping.
+            # A Gate that comes back after a ticket means that ticket was
+            # refused (a rotated app ticket still in the keyring). Try the
+            # tree's ticket next, and persist whichever one works.
             gate_retry["attempts"] += 1
+            ticket = gate_ticket_choice(gate_retry["attempts"] - 1, candidate_tickets) or ticket
+            ticket_used = ticket
+            ticket_just_loaded = False
             login_pending = True
             view.setUrl(QUrl(ticket))
             return
@@ -2296,6 +2360,7 @@ def main(argv=None):
             # same 1.5 s the WebKit shell allows, then load the Manager on the
             # ticket's own host (where the cookie is scoped).
             login_pending = False
+            ticket_just_loaded = True
             QTimer.singleShot(1500, lambda: view.setUrl(QUrl(manager)))
             return
         current = urlparse(view.url().toString())
@@ -2303,7 +2368,17 @@ def main(argv=None):
                       and (current.port or 443) == port)
         if on_manager and not gate:
             # A Manager page that loaded proves the session was minted again,
-            # so the next lapse starts a fresh Gate episode.
+            # so the next lapse starts a fresh Gate episode. If the session was
+            # won by a ticket - and that ticket is not the one already stored -
+            # keep it: the next launch then starts clean instead of meeting the
+            # rotated ticket again.
+            if ticket_just_loaded and ticket_used and ticket_used != stored_ticket_now:
+                stored_ticket_now = ticket_used
+                candidate_tickets = [ticket_used] + [
+                    t for t in candidate_tickets if t != ticket_used]
+                ticket = ticket_used
+                call_core(lambda t=ticket_used: store_ticket(t))
+            ticket_just_loaded = False
             gate_retry["attempts"] = 0
         if migration_pending and on_manager:
             migration_pending = False

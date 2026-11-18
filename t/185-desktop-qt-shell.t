@@ -84,6 +84,33 @@ my $gateretry = `cd "$root" && PYTHONPATH=desktop python3 -c 'from jawnos_deskto
 like($gateretry, qr/^True True False False False False\s*$/m,
 	'the ticket is offered until the episode is spent, and never without a ticket, off the Gate, or while the ticket loads');
 
+# A rotation (app_ticket.pl) leaves the rotated URL in the keyring and writes
+# the new one into the tree's .shots. The shell tries the stored ticket first,
+# then the tree's, and stores whichever actually signs in.
+like($qt, qr/def ticket_candidates/, 'the stored and tree tickets are both candidates');
+like($qt, qr/def store_ticket/, 'a ticket that signs in is stored back');
+like($qt, qr/def gate_ticket_choice/, 'the next hand-over picks the next candidate');
+like($qt, qr/ticket_just_loaded and ticket_used and ticket_used != stored_ticket_now/,
+	'a Manager load after a winning ticket persists it when it differs from the stored one');
+
+my $ticketchoice = `cd "$root" && PYTHONPATH=desktop python3 -c 'from jawnos_desktop.qt_shell import gate_ticket_choice as c; print(c(0,["a","b"]), c(1,["a","b"]), c(2,["a","b"]), c(3,["a","b"]), c(0,[]))' 2>&1`;
+like($ticketchoice, qr/^a b b None None\s*$/m,
+	'the stored ticket first, a refused one gives way to the tree ticket, and the limit still ends the episode');
+
+my $ticketcands = `cd "$root" && PYTHONPATH=desktop python3 -c '
+import jawnos_desktop.qt_shell as q
+q.stored_ticket = lambda: "https://h/box_office/OLD"
+q.tree_ticket = lambda jawn_dir=None: "https://h/box_office/NEW"
+print("c1=" + ",".join(t.rsplit("/", 1)[-1] for t in q.ticket_candidates("/x")))
+q.tree_ticket = lambda jawn_dir=None: "https://h/box_office/OLD"
+print("c2=" + ",".join(t.rsplit("/", 1)[-1] for t in q.ticket_candidates("/x")))
+q.stored_ticket = lambda: None
+q.tree_ticket = lambda jawn_dir=None: "https://h/box_office/NEW"
+print("c3=" + q.ticket_url("/x").rsplit("/", 1)[-1])
+' 2>&1`;
+like($ticketcands, qr/\Ac1=OLD,NEW\nc2=OLD\nc3=NEW\n?\z/,
+	'the stored ticket comes first, duplicates collapse, and the tree ticket is the fallback');
+
 like($entry, qr/JAWNOS_DESKTOP_ENGINE/, 'the engine can still be chosen by environment');
 like($entry, qr/--engine/, 'and by flag');
 like($entry, qr/name in \("", "auto", "default", "qt"\)/,
