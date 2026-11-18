@@ -155,6 +155,7 @@ sub rock_and_roll($c) {
 		# second uri_decode corrupts any name containing a literal %xx sequence
 		# (100%20.mp3 -> 100 .mp3), which is exactly how a track failed to open.
 		$file = $c->param('track') unless $file;
+		my $on_demand_entry;
 		if (!$file) {
 			if ($c->param('appt_uuid') && $c->param('file_uuid') && $c->param('app')) {
 				my $appt = &subs::db_select('appointments', undef, { uuid => $c->param('appt_uuid'), app => $c->param('app') })->hashes->[0];
@@ -162,8 +163,22 @@ sub rock_and_roll($c) {
 				foreach my $f ( @{$files} ) {
 					if ($f->{'uuid'} eq $c->param('file_uuid')) {
 						$file = $f->{'f'};
+						$on_demand_entry = $f;
 					}
 				}
+			}
+		}
+		# A file this machine did not keep (files on demand) is fetched from the
+		# machine that has it, once, and kept here: a picture opened twice should
+		# cost one fetch. The appointment entry carries the source; a request that
+		# names only the path (the Gallery, the music shelf) reads it back from the
+		# cache row the merge wrote. media_fetch_on_demand asks the server first,
+		# then the machine the row came from, then the other peers, and gives up
+		# quietly.
+		if (length $file && !-e $file) {
+			my $source = ref $on_demand_entry eq 'HASH' ? $on_demand_entry : &subs::files_cache_source($file);
+			if (ref $source eq 'HASH' && defined $source->{'remote_f'} && length $source->{'remote_f'}) {
+				eval { &subs::media_fetch_on_demand($file, $source) };
 			}
 		}
 		my @ext = split /\./, $file;

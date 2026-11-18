@@ -562,6 +562,27 @@
 		<p class="cfg-note">The drive this machine archives to, out of the folders in config.json. Blank means it is not an archive.</p>
 		</details>
 
+		<%# A board with a small disk keeps the row and not the bytes: the file is
+		    fetched the first time it is opened and kept, and the sweep below gives
+		    that space back once the disk passes the mark. The switch is this
+		    device's own; unset reads as on for a controller. %>
+		<% my $fod_stored = &subs::setting_grabber({ app => 'misc', setting => 'files_on_demand', device => $dt }) || ''; %>
+		<% my $fod_on = $fod_stored eq 'on' ? 1 : $fod_stored eq 'off' ? 0 : ($dt eq 'controller' ? 1 : 0); %>
+		<% my $fod_mark = &subs::setting_grabber({ app => 'misc', setting => 'files_cache_full_percent', device => $dt }) || ''; %>
+		<% $fod_mark = ($fod_mark =~ /^\s*(\d{1,3})\s*$/) ? $1 : 80; %>
+		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-files-on-demand">
+			<summary><%= &subs::ui('Files on demand') %></summary>
+			<div class="cfg-row">
+				<label><input type="checkbox" class="misc_setting" setting="files_on_demand" device="<%= $dt %>"<% if ($fod_on) { %> checked<% } %>> <b><%= &subs::ui('Keep only the files I open') %></b></label>
+			</div>
+			<p class="cfg-note"><%= &subs::ui('A file an appointment names is not copied here when records sync; it is fetched the first time you open it, from the server first and then the other machines. The record keeps its reference, so nothing is lost. A controller starts with this on.') %></p>
+			<div class="cfg-row">
+				<label><b><%= &subs::ui('Remove those copies past') %></b></label>
+				<input type="number" min="50" max="95" step="1" class="misc_setting" setting="files_cache_full_percent" device="<%= $dt %>" value="<%= $fod_mark %>"> %
+			</div>
+			<p class="cfg-note"><%= &subs::ui('When the disk holding your files passes this much full, the copies this machine fetched are removed again, longest-unread first, until it is ten points under. Files written here are never removed. 50 to 95; 80 by default.') %></p>
+		</details>
+
 		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-colours">
 			<summary><%= &subs::lang('configure.colours') %></summary>
 			<div class="cfg-actions" style="flex-wrap:wrap;gap:8px;">

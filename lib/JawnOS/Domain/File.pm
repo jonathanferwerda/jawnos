@@ -203,7 +203,203 @@ sub media_entry_measure {
 	return $entry;
 }
 
-sub file_encrypter {
+# --- files on demand ---------------------------------------------------------
+#
+# An appointment's `file` column is JSON of references (a path, a size, a
+# manifest), never the bytes. The bytes live on disk and, until this switch, a
+# sync merge copied every referenced file the moment its row arrived
+# (merge_table_rows). On a board whose root filesystem is 6.4 GB that is the
+# wrong trade: a house with 32 GB of photos and recordings would fill it on the
+# first pull.
+#
+# With the switch on, the row is kept and the file is not fetched. The entry
+# keeps the copy's path on the machine that has it (`remote_f`) and that
+# machine's signatorial (`remote_peer`), so the first time the person opens the
+# file it is fetched once, kept (a photo read twice should cost one fetch), and
+# remembered in the cache table. The sweep below gives the space back when the
+# disk passes the mark, and the entry still names where the bytes live.
+#
+# The switch is this machine's own (Configure -> Misc, per device). Unset reads
+# as on for a controller and off for everything else: it is a statement about
+# this disk, not about the house.
+sub files_on_demand {
+	my $set = &subs::misc_setting('files_on_demand');
+	return 1 if defined $set && length $set && $set eq 'on';
+	return 0 if defined $set && length $set && $set eq 'off';
+	return (&subs::device_setter() // '') eq 'controller' ? 1 : 0;
+}
+
+# The percentage past which the copies this machine fetched are removed again.
+# Held between 50 and 95: below 50 a disk would be swept while it is still
+# half empty, and above 95 the sweep would start after the disk is full.
+sub files_pressure_percent {
+	my $set = &subs::misc_setting('files_cache_full_percent');
+	return 80 unless defined $set && $set =~ /^\s*(\d{1,3})\s*$/;
+	my $pct = $1 + 0;
+	return 50 if $pct < 50;
+	return 95 if $pct > 95;
+	return $pct;
+}
+
+# The path is the cache row's uuid: one row per file, so the sweep never has to
+# read every appointment to find what it may take back, and the row also names
+# the machine that has the bytes. That second half matters because a request for
+# a picture often names only its path (`/file_open?file=...`, which is how the
+# Gallery and the music shelf ask), so the appointment entry is not in hand: the
+# row is what tells the read where the copy lives. The cache table is
+# machine-local, so neither half rides the sync.
+#
+# A fetch updates server_time (the sweep reads it as last use). A merge that
+# keeps the reference and not the bytes writes the row too, so the first open
+# need not find the appointment first.
+sub files_cache_note {
+	my ($path, $remote_f, $remote_peer) = @_;
+	return 0 unless defined $path && length $path;
+	my $now = &subs::rightNow();
+	my $data;
+	if (defined $remote_f && length $remote_f) {
+		$data = &encode_json({
+			remote_f => $remote_f,
+			remote_peer => ($remote_peer // ''),
+		});
+	}
+	else {
+		# A fetch only moves the last-use time; the source it was fetched from
+		# is still what a later open needs, so it is kept, not blanked.
+		my $existing = &subs::db_select('cache', ['data'], { context => 'files_on_demand', uuid => $path })->hash;
+		$data = $existing->{'data'}
+			if ref $existing eq 'HASH' && defined $existing->{'data'} && length $existing->{'data'};
+	}
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'files_on_demand', $path);
+	&subs::db_insert('cache', {
+		uuid => $path,
+		context => 'files_on_demand',
+		app => '__president',
+		timestamp => $now,
+		server_time => $now,
+		data => $data,
+	});
+	return 1;
+}
+
+# Where a file this machine does not have can be fetched from, for a request
+# that names only the path. '' when this machine never had it on demand.
+sub files_cache_source {
+	my ($path) = @_;
+	return undef unless defined $path && length $path;
+	my $row = &subs::db_select('cache', undef, { context => 'files_on_demand', uuid => $path })->hash;
+	return undef unless ref $row eq 'HASH' && defined $row->{'data'} && length $row->{'data'};
+	my $parsed = eval { &decode_json($row->{'data'}) };
+	return undef unless ref $parsed eq 'HASH';
+	return undef unless defined $parsed->{'remote_f'} && length $parsed->{'remote_f'};
+	return $parsed;
+}
+
+sub files_cache_forget {
+	my ($path) = @_;
+	return 0 unless defined $path && length $path;
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'files_on_demand', $path);
+	return 1;
+}
+
+# Give the disk back when it passes the mark: the copies this machine fetched
+# go oldest first, until it is ten points under. Only files this machine pulled
+# on demand are touched - a file written here is the person's own - and the
+# appointment keeps its reference, so a later open fetches it again.
+sub files_pressure_sweep {
+	my ($opts) = @_;
+	$opts ||= {};
+	return { skipped => 'off' } unless $opts->{'force'} || &files_on_demand();
+	my $percent = defined $opts->{'percent'} ? $opts->{'percent'} + 0 : &files_pressure_percent();
+	my $space = eval { &subs::cloud_sync_free_space($opts->{'root'} // &subs::home('~')) } || {};
+	return { skipped => 'no disk', error => ($space->{'error'} // '') } unless ($space->{'status'} // '') eq 'ok';
+	my $total = $space->{'total_bytes'} || 0;
+	return { skipped => 'no disk' } unless $total > 0;
+	my $used = (($space->{'used_bytes'} || 0) / $total) * 100;
+	return { skipped => 'under the mark', percent => $used, mark => $percent } if $used < $percent;
+	my $target = $percent > 60 ? $percent - 10 : 50;
+	my $used_bytes = $space->{'used_bytes'} || 0;
+	my $used_pct = ($used_bytes / $total) * 100;
+	my $freed = 0;
+	my @gone;
+	my $rows = &subs::db_query("select uuid from cache where context = ? order by cast(server_time as integer) asc", 'files_on_demand')->hashes || [];
+	foreach my $row ( @{$rows} ) {
+		my $path = $row->{'uuid'} // '';
+		next unless length $path;
+		# The row stays after its copy is gone: it is also where the read is
+		# told which machine has the bytes, and a file with no copy here costs
+		# nothing to skip.
+		next unless -f $path;
+		last if $used_pct < $target;
+		my $size = -s $path || 0;
+		unlink $path;
+		next if -e $path;
+		$freed += $size;
+		$used_bytes -= $size;
+		$used_pct = $used_bytes > 0 ? ($used_bytes / $total) * 100 : 0;
+		push @gone, $path;
+	}
+	return { freed => $freed, removed => scalar @gone, paths => \@gone, mark => $percent, target => $target };
+}
+
+# Ask the machines that may hold a file for it, in the order the house trusts:
+# the server, then the machine the row was merged from, then every other peer
+# that is up. The first real answer is written where the appointment expects it.
+# A refusal ("no", "none", "not found"), a stub or an error is not an answer:
+# the next peer is asked, and when none has it the caller reports it absent.
+# The request carries `remoted=yes`, so the peer answers this read instead of
+# handing it on again.
+sub media_fetch_on_demand {
+	my ($path, $entry) = @_;
+	return 0 unless defined $path && length $path;
+	$entry = {} unless ref $entry eq 'HASH';
+	my $want = $entry->{'remote_f'};
+	return 0 unless defined $want && length $want;
+	my $remembered = $entry->{'remote_peer'} // '';
+	my @rows = @{ &subs::db_query("select uuid, signatorial, device from remote_machines where connection = 'active'")->hashes || [] };
+	my %seen;
+	my @candidates;
+	foreach my $row (@rows) {
+		next unless ($row->{'device'} // '') eq 'server';
+		push @candidates, $row;
+		$seen{ $row->{'signatorial'} // '' }++;
+	}
+	foreach my $row (@rows) {
+		next unless length $remembered && ($row->{'signatorial'} // '') eq $remembered;
+		next if $seen{ $row->{'signatorial'} // '' };
+		push @candidates, $row;
+		$seen{ $row->{'signatorial'} // '' }++;
+	}
+	foreach my $row (@rows) {
+		next if $seen{ $row->{'signatorial'} // '' };
+		push @candidates, $row;
+		$seen{ $row->{'signatorial'} // '' }++;
+	}
+	return 0 unless @candidates;
+	my $dir = $path;
+	$dir =~ s{/[^/]+$}{};
+	if (length $dir && !-d $dir) { eval { File::Path::make_path($dir); 1 } }
+	foreach my $row (@candidates) {
+		my $agent = eval { &subs::remote_agent_for($row->{'uuid'}) } || {};
+		next if $agent->{'error'} || !$agent->{'manager'};
+		my $url = $agent->{'manager'} . '/file_open?as_is=yes&remoted=yes&subprocess=yes&file=' . &subs::url_escape($want);
+		my $res = eval {
+			$agent->{'ua'}->inactivity_timeout(6)->request_timeout(20)->connect_timeout(4)
+				->get($url)->result
+		};
+		next unless $res && $res->is_success;
+		my $bytes = &synced_file_payload($res->body, $path);
+		next unless defined $bytes && length $bytes;
+		my $temp = $path . '.part.' . $$ . '.' . int(rand(1_000_000));
+		my $wrote = eval { &write_file($temp, $bytes); 1 };
+		unless ($wrote && rename($temp, $path)) { unlink $temp; next; }
+		&files_cache_note($path);
+		return 1;
+	}
+	return 0;
+}
+
+	sub file_encrypter {
 	my $data = shift;
 
 	my $app = $data->{'app'};

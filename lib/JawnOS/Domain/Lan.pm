@@ -475,6 +475,19 @@ sub lan_presence_listen {
 
 sub remote_machine_negotiator {
 	my $data = shift;
+	# A machine that keeps what it fetches has to give some of it back. The
+	# sweep looks at the disk holding the person's files and, past the mark set
+	# in Misc, removes the copies this machine pulled on demand, oldest first.
+	# It runs before the card hold below, because a board that is not syncing
+	# can still run out of room from what it already fetched.
+	if (&subs::files_on_demand()) {
+		my $swept = eval { &subs::files_pressure_sweep() };
+		if (ref $swept eq 'HASH' && (($swept->{'removed'} // 0) > 0)) {
+			&subs::log_writer('files on demand: removed ' . $swept->{'removed'}
+				. ' fetched file(s), ' . ($swept->{'freed'} // 0) . ' bytes, the disk was past '
+				. ($swept->{'mark'} // '') . '%');
+		}
+	}
 	# A controller holds its automatic sync until its card is mounted. The card
 	# is the archive, so a pull before it is ready writes the house's
 	# appointments and files to the eMMC instead. The reason is logged once per

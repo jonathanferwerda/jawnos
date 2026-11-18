@@ -31,4 +31,14 @@ ok( index($src, 'eval { write_file($dest,$fd) }') >= 0,
 ok( index($src, 'my $file_data = $configuration->{\'remote\'}->{\'ua\'}->get($url)->result;') < 0,
 	'the unguarded fetch is gone' );
 
+# A machine set to files on demand keeps the reference and not the bytes: the
+# eager copy above is skipped, and the entry names where the file lives so the
+# first open can fetch it (t/341 covers the other half).
+ok( index($src, 'if (&subs::files_on_demand()) {') >= 0,
+	'a machine set to files on demand has its own branch');
+ok( index($src, "\$fi->{'remote_f'} = \$file;") >= 0,
+	'and keeps the path on the machine that has the file');
+ok( index($src, "\$fi->{'remote_peer'} = (") >= 0,
+	'and that machine\'s name');
+
 done_testing();

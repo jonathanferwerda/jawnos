@@ -541,6 +541,21 @@ sub merge_table_rows {
 											# old unchecked decode) is not a local copy: fetch over it, so a
 											# later merge can heal what the bug wrote.
 											unless (-e $dest && !&subs::file_sentinel_stub($dest)) {
+												# Files on demand: keep the reference and not the bytes. The
+												# entry names the path on the machine that has it, so the
+												# first open can fetch it (media_fetch_on_demand) and the
+												# sweep can take it back when the disk fills.
+												if (&subs::files_on_demand()) {
+													$fi->{$file_type} = $dest;
+													$fi->{'remote_f'} = $file;
+													$fi->{'remote_peer'} = ($configuration->{'remote'}->{'signatorial'} // '');
+													$fi->{'remote_at'} = &subs::rightNow();
+													# The local path is the cache row, so a request that names
+													# only the path (the Gallery's, the music shelf's) can still
+													# find out which machine has the bytes.
+													&subs::files_cache_note($dest, $file, $fi->{'remote_peer'});
+													next;
+												}
 												`mkdir -p $destination`;
 												$destination = $destination . $asset;
 												if ($configuration->{'remote'}) {
