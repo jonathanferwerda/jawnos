@@ -98,6 +98,9 @@ forces the software path.
   a missed BeginFrame; they do **not** see compositor-thread time, so a smooth
   main thread over a starved GPU still reads as 60 fps. `longTaskMs` and
   `loafStyleLayoutMs` are what separate those cases.
+- `--settle` (default 1 s) is the pause after `loadFinished` before sampling.
+  Raise it for the live Manager, which keeps opening its saved windows after the
+  page loads; measuring that burst is not measuring the desk.
 - One 1.5 s window is a sample, not a verdict: the same property can cost
   nothing on a warm run and drop a dozen frames while the box is busy. `--repeat 3`
   keeps each scenario's worst run (worst p95, then worst late%) instead of a

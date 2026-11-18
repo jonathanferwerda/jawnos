@@ -108,6 +108,10 @@ def parse_args(argv):
     parser.add_argument("--no-sandbox", action="store_true",
                         help="add Chromium's --no-sandbox (containers without the setuid helper)")
     parser.add_argument("--hidden", action="store_true", help="do not show the window")
+    parser.add_argument("--settle", type=float, default=1.0, metavar="SECONDS",
+                        help="let a real page settle after load before the first "
+                             "scenario (default 1); the Manager keeps opening its "
+                             "saved windows after loadFinished")
     parser.add_argument("--timeout", type=float, default=150.0,
                         help="seconds before the whole run gives up (default 150)")
     parser.add_argument("--scenario-timeout", type=float, default=20.0,
@@ -328,7 +332,7 @@ def main(argv=None):
     def begin(renderer):
         text = str(renderer)
         state["meta"]["gpu"] = "none (software path)" if text == "none" else text
-        QTimer.singleShot(250, start_next)
+        QTimer.singleShot(int(max(0.0, args.settle) * 1000), start_next)
 
     page.loadFinished.connect(loaded)
     if args.url:

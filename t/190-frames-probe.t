@@ -39,6 +39,7 @@ like($js, qr/"busy"/, 'the main-thread stall control exists');
 like($py, qr/from jawnos_desktop import gpu/, "the probe uses the shell's own graphics setup");
 like($py, qr/gpu\.prepare_env\(os\.environ\)/, 'including the qt.env escape hatches');
 like($py, qr/--software/, 'and can ask for the software path CI has');
+like($py, qr/--settle/, 'and lets a real page finish opening its windows first');
 like($py, qr/certificateError/, "accepts the house's certificate");
 like($py, qr/"engine": "qtwebengine"/, 'the report names the engine');
 
