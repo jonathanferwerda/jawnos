@@ -1228,14 +1228,26 @@ function jawnosEmergePreviewCapture(win) {
 	return true;
 }
 
-// The page's own rules, with body/html/:root moved onto the preview's wrapper:
-// the shadow root has no body, and the theme lives on the real one. Scoping the
-// selectors is what lets the page's stylesheet cross the boundary at all.
+// The page's own rules, with body moved onto the preview's wrapper: the shadow
+// root has no body, so scoping is what lets the page's stylesheet cross the
+// boundary at all. Rules that dress only html/:root are dropped instead of
+// copied: the theme's palette reaches the preview by inheritance from the real
+// root (jawnosApplyInk writes it on body), and a local copy of the stylesheet's
+// light defaults would pin every preview to the light theme wherever the desk
+// actually is.
 function jawnosEmergePreviewSelector(text) {
-	return String(text || '')
-		.replace(/\bbody\b/g, '.' + JAWNOS_EMERGE_PREVIEW_SCOPE)
-		.replace(/\bhtml\b/g, '.' + JAWNOS_EMERGE_PREVIEW_SCOPE)
-		.replace(/:root\b/g, '.' + JAWNOS_EMERGE_PREVIEW_SCOPE);
+	var parts = String(text || '').split(',');
+	var out = [];
+	for (var i = 0; i < parts.length; i++) {
+		var part = parts[i].replace(/\s+/g, ' ').trim();
+		if (!part) { continue; }
+		var root_only = /(^|[\s>+~])(:root|html)(?=$|[\s.:#\[>+~])/i.test(part);
+		if (root_only && !/\bbody\b/i.test(part)) { continue; }
+		part = part.replace(/(^|[\s>+~])(?::root|html)(?=$|[\s.:#\[>+~])/gi, '$1');
+		part = part.replace(/\bbody\b/gi, '.' + JAWNOS_EMERGE_PREVIEW_SCOPE).replace(/\s+/g, ' ').trim();
+		if (part) { out.push(part); }
+	}
+	return out.length ? out.join(', ') : null;
 }
 
 function jawnosEmergePreviewRules(rules, out) {
@@ -1243,7 +1255,8 @@ function jawnosEmergePreviewRules(rules, out) {
 		var rule = rules[i];
 		try {
 			if (rule.selectorText !== undefined && rule.style) {
-				out.push(jawnosEmergePreviewSelector(rule.selectorText) + '{' + rule.style.cssText + '}');
+				var scoped = jawnosEmergePreviewSelector(rule.selectorText);
+				if (scoped) { out.push(scoped + '{' + rule.style.cssText + '}'); }
 			}
 			else if (rule.cssRules && rule.type === 4) {
 				out.push('@media ' + rule.media.mediaText + '{');
@@ -1323,7 +1336,27 @@ function jawnosEmergePreviewBuild(origin, host) {
 	if (document.body && document.body.className) { classes += ' ' + document.body.className; }
 	if (document.documentElement && document.documentElement.className) { classes += ' ' + document.documentElement.className; }
 	scope.className = classes;
+	// the body's state attributes as well (data-appt-theme, data-window-effects,
+	// data-icon-set): the rules answer to them, and the desk's state is live
+	var body_attrs = (document.body && document.body.getAttributeNames) ? document.body.getAttributeNames() : [];
+	for (var b = 0; b < body_attrs.length; b++) {
+		var body_attr = body_attrs[b];
+		if (body_attr == 'class' || body_attr == 'style' || body_attr == 'id') { continue; }
+		if (scope.setAttribute) { scope.setAttribute(body_attr, document.body.getAttribute(body_attr)); }
+	}
 	scope.appendChild(node);
+	// The bar wears the app's own colour and the appointment tint, re-read now:
+	// the captured copy could be from before either of them changed.
+	var bar = scope.querySelector ? scope.querySelector('.top_navbar') : null;
+	var app_colour = jawnosWindowEmergeAppColour(origin.app);
+	if (bar && bar.style && app_colour) {
+		if (app_colour.colour) { bar.style.backgroundColor = app_colour.colour; }
+		if (app_colour.ink) { bar.style.color = app_colour.ink; }
+		if (bar.style.setProperty) {
+			bar.style.setProperty('--appt-dark', app_colour.dark || '');
+			bar.style.setProperty('--appt-dark-ink', app_colour.dark_ink || '');
+		}
+	}
 	if (style) { style.textContent = built.css; }
 	var shadow = null;
 	try { shadow = host.attachShadow({ mode: 'closed' }); } catch (e) { return false; }

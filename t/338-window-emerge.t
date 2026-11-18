@@ -1108,8 +1108,10 @@ advance(5000);
 // --- the app's own window as the preview ------------------------------------
 check('a body rule is scoped to the preview',
 	sandbox.jawnosEmergePreviewSelector('body.dark_theme .wind .x') === '.jawnos_emerge_scope.dark_theme .wind .x');
-check('and so is :root',
-	sandbox.jawnosEmergePreviewSelector(':root { --x: 1; }') === '.jawnos_emerge_scope { --x: 1; }');
+check('a page-level palette is left to the live root, never copied',
+	sandbox.jawnosEmergePreviewSelector(':root') === null);
+check('and a list keeps only the parts a preview has',
+	sandbox.jawnosEmergePreviewSelector('html, body') === '.jawnos_emerge_scope');
 const dirty = makeElement('DIV', 'wind');
 const dirty_script = makeElement('SCRIPT');
 dirty_script.setAttribute('src', '/x.js');
@@ -1182,6 +1184,9 @@ like($emerge, qr/JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge'/,
 	'and the copies are kept on the device');
 like($emerge, qr/jawnosEmergePreviewSelector/, 'the page\'s rules are scoped to the preview');
 like($emerge, qr/jawnosEmergePreviewSanitize/, 'while nothing live is carried in with it');
+like($emerge, qr/document\.body\.getAttributeNames/, 'the body\'s live state attributes ride the preview');
+like($emerge, qr/var app_colour = jawnosWindowEmergeAppColour\(origin\.app\);\s*if \(bar && bar\.style && app_colour\)/,
+	'and its title bar is repainted from the live app colour');
 like($emerge, qr/requestIdleCallback\(drafted, \{ timeout: 1200 \}\)/,
 	'the copy is taken once the desk is idle, not in the open\'s last frame');
 
