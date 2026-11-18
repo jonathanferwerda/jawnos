@@ -1,4 +1,4 @@
-# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js
+# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js lib/JawnOS/Manager/Part11.pm
 # covers:    the running list lists open sessions only, Internet is the one web entry
 #            point, and every catalog-driven app label reads as a capitalised name
 
@@ -10,6 +10,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use DBI;
 use File::Slurp qw(read_file);
+use Mojo::Template;
 use JawnOSTest;
 
 # The running list is built straight in the template. It used to take every
@@ -86,5 +87,32 @@ like($template, qr/data-game="<%= \$dos_game->\{'id'\} %>"/,
 like($template, qr/manager\/games\/art\?id=/, 'and the card picture when the shelf has one');
 like($menu_js, qr/\.dos_game_toggle/, 'a row press is the player opener');
 like($menu_js, qr{url: '/manager/games/play'}, 'which asks the player route for the window');
+
+# The template is rendered with `vars => 1`, so every name it uses has to be a
+# key in the stash the caller passes; a missing one fails compilation and the
+# route answers 500. /apps/start put the device in its stash, but the JSON
+# route (/manager/start_menu) did not, and every refresh of its menu failed.
+# Read the maker's own call so the test follows the names it actually hands in.
+my $part11 = read_file(root() . '/lib/JawnOS/Manager/Part11.pm');
+my ($maker_args) = $part11 =~ /render_to_string\(\s*template => 'start_menu\/start_menu',\s*(.*?)\n\t\);/s;
+ok(defined $maker_args, 'the maker\'s start-menu render is readable');
+my @stash_names = $maker_args =~ /(?:^|,)\s*(\w+)\s*=>/g;
+ok(grep({ $_ eq 'device' } @stash_names), 'the maker hands the template a device');
+
+my %stash = map {
+	$_ => ($_ eq 'menu' ? 'app' : $_ eq 'device' ? 'computer' : ($_ eq 'config' || $_ eq 'parking_lot') ? {} : [])
+} @stash_names;
+local $SIG{'__WARN__'} = sub { };
+my $mt = Mojo::Template->new(
+	auto_escape => 1,
+	vars => 1,
+	# The renderer defines these in the template namespace; the early return
+	# makes this a compile check, not an attempt to run the menu.
+	prepend => 'sub _C { } sub include { } my $self = my $c = _C; return "compiled";'
+);
+my $rendered = eval { $mt->render($template, \%stash) };
+my $error = ref $rendered ? "$rendered" : ($@ // '');
+unlike($error, qr/Global symbol "\$(\w+)"/,
+	'every name the template uses is in the stash the maker passes');
 
 done_testing();

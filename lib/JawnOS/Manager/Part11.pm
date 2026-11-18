@@ -626,8 +626,15 @@ sub start_menu_maker($c, $opts) {
 
 	# Opening the System view is what asks the levels loop for quick passes.
 	&subs::levels_fast_request() if $menu eq 'view';
+	# The template declares its variables from the stash (`vars => 1`), so a
+	# name it uses must be handed in: a missing one is a compile error, not an
+	# empty value. The manager page puts the device in its stash; this render is
+	# its own request, and the JSON route that calls it has none.
+	my $device = $c->stash('device');
+	$device = &subs::device_setter() unless defined $device && length $device;
 	my $html = $c->render_to_string(
 		template => 'start_menu/start_menu',
+		device => $device,
 		parking_lot => &parking_lot_grabber($c),
 		config => &subs::config_reader(),
 		padlock => &subs::db_select('security', ['level'], { level => 'padlock' })->hashes,
