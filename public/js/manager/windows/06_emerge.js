@@ -1202,13 +1202,56 @@ function jawnosWindowEmergeGhostWatch(ghost) {
 	catch (e) { ghost.observer = null; }
 }
 
+// How much of the press-time growth is still to run: 0 when there is none (an
+// engine without animations) or when it has already arrived. The number is in
+// the animation's own clock, which is what playbackRate scales.
+function jawnosWindowEmergeGrowthLeft(ghost) {
+	if (!ghost || !ghost.openAnim) { return 0; }
+	try {
+		var anim = ghost.openAnim;
+		if (!anim.effect || !anim.effect.getTiming || typeof anim.currentTime != 'number') { return 0; }
+		var whole = parseFloat(anim.effect.getTiming().duration);
+		if (!isFinite(whole) || whole <= 0) { return 0; }
+		return Math.max(0, whole - anim.currentTime);
+	}
+	catch (e) { return 0; }
+}
+
+// Write the window's own frame into the growth's last keyframe, so the preview
+// carries on from where it is towards the window on the clock it already has.
+// Re-basing the transform instead restarts the ease midway, and the stretch the
+// tail was covering gets travelled a second time - the little redo at the end.
+function jawnosWindowEmergeGrowthRetarget(ghost, end_t) {
+	var anim = ghost && ghost.openAnim;
+	if (!anim || !anim.effect || !anim.effect.getKeyframes || !anim.effect.setKeyframes) { return false; }
+	try {
+		var keys = anim.effect.getKeyframes();
+		if (!keys || keys.length < 2) { return false; }
+		var next = [];
+		for (var i = 0; i < keys.length; i++) {
+			var key = keys[i];
+			var offset = (typeof key.offset == 'number') ? key.offset : key.computedOffset;
+			var entry = {};
+			if (typeof offset == 'number') { entry.offset = offset; }
+			if (key.transform !== undefined && key.transform !== null) { entry.transform = key.transform; }
+			if (key.opacity !== undefined && key.opacity !== null) { entry.opacity = key.opacity; }
+			next.push(entry);
+		}
+		next[next.length - 1].transform = end_t;
+		anim.effect.setKeyframes(next);
+		return true;
+	}
+	catch (e) { return false; }
+}
+
 // When the real window lands: if it sits where the preview is growing into,
 // let that growth finish and fade the preview off it. Anywhere else (a pinned
-// place or a slow slot), take the preview from where it has reached and
-// retarget it to the window's own rectangle. The real window is never moved to
-// the ghost: the ghost comes to the window. The motion starts at once, from the
-// box the preview has reached - a hold at the start read as a pause part way
-// through whenever a press moved before its window landed.
+// place or a slow slot), retarget the growth's own end so it arrives on the
+// window, or - once the growth is over - take the box back and play the rest.
+// The real window is never moved to the ghost: the ghost comes to the window.
+// The motion starts at once, from the box the preview has reached - a hold at
+// the start read as a pause part way through whenever a press moved before its
+// window landed.
 function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	if (!ghost || !ghost.el || !win_el) { return false; }
 	var level = jawnosWindowEmergeLevel();
@@ -1254,10 +1297,44 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 		|| Math.abs(through.width - base.width) > 0.5
 		|| Math.abs(through.height - base.height) > 0.5;
 	var duration = off_target ? shape.retarget : Math.min(shape.retarget, 160);
+	var end_t = 'translate(' + (through.left - base.left) + 'px, ' + (through.top - base.top) + 'px) scale(' + (through.width / base.width) + ', ' + (through.height / base.height) + ')';
 
-	if (off_target) {
-		// The preview's box is at the predicted frame; the retarget owns it from
-		// here, so the growth and its fallback transform must go.
+	// A window that lands while the growth is still running - a phone opens
+	// locally in a few hundred ms - is not a reason to start the stretch again.
+	// The window's frame is written into the growth's own last keyframe, so the
+	// preview keeps its path and its clock and only speeds up enough to arrive by
+	// the time the cross-fade ends. The stretch is travelled once, forwards.
+	var growth_left = jawnosWindowEmergeGrowthLeft(ghost);
+	var ride = growth_left > 0 && (!off_target || jawnosWindowEmergeGrowthRetarget(ghost, end_t));
+	if (ride && growth_left > duration) {
+		try { ghost.openAnim.playbackRate = Math.max(1, growth_left / duration); } catch (e) {}
+	}
+
+	var fade = function () {
+		if (el.animate) {
+			ghost.retargetAnim = el.animate([
+				{ opacity: 1, offset: 0 },
+				{ opacity: 0, offset: 1 }
+			], {
+				duration: duration,
+				easing: 'ease-out',
+				fill: 'both'
+			});
+		}
+		else {
+			el.style.opacity = '0';
+		}
+	};
+
+	if (ride || !off_target) {
+		// The growth owns the motion; the preview only fades off it.
+		fade();
+	}
+	else {
+		// The growth has finished (or an engine cannot retarget it), and the
+		// window is somewhere else: take the box back and play the rest from
+		// where the preview has reached. Nothing is replayed here - the growth is
+		// over, so this is only the distance to the real frame.
 		if (ghost.openAnim) {
 			try { ghost.openAnim.cancel(); } catch (e) {}
 			ghost.openAnim = null;
@@ -1266,7 +1343,6 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 		el.style.transformOrigin = '';
 		jawnosEmergeBoxStyle(el, base);
 		var start_t = 'translate(' + (from.left - base.left) + 'px, ' + (from.top - base.top) + 'px) scale(' + (from.width / base.width) + ', ' + (from.height / base.height) + ')';
-		var end_t = 'translate(' + (through.left - base.left) + 'px, ' + (through.top - base.top) + 'px) scale(' + (through.width / base.width) + ', ' + (through.height / base.height) + ')';
 		el.style.transformOrigin = '0 0';
 		el.style.transform = start_t;
 		if (el.animate) {
@@ -1281,36 +1357,6 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 		}
 		else {
 			el.style.transform = end_t;
-			el.style.opacity = '0';
-		}
-	}
-	else {
-		// The window landed on the frame the preview is growing into: keep the
-		// growth, let it cover whatever tail is left in the cross-fade's own
-		// time, and fade the preview off it. The last few pixels are travelled
-		// once, forwards, instead of being played again.
-		if (ghost.openAnim && ghost.openAnim.effect && ghost.openAnim.effect.getTiming
-			&& typeof ghost.openAnim.currentTime == 'number') {
-			try {
-				var whole = parseFloat(ghost.openAnim.effect.getTiming().duration);
-				var left_ms = whole - ghost.openAnim.currentTime;
-				if (isFinite(whole) && isFinite(left_ms) && whole > 0 && left_ms > duration) {
-					ghost.openAnim.playbackRate = Math.max(1, left_ms / duration);
-				}
-			}
-			catch (e) {}
-		}
-		if (el.animate) {
-			ghost.retargetAnim = el.animate([
-				{ opacity: 1, offset: 0 },
-				{ opacity: 0, offset: 1 }
-			], {
-				duration: duration,
-				easing: 'ease-out',
-				fill: 'both'
-			});
-		}
-		else {
 			el.style.opacity = '0';
 		}
 	}

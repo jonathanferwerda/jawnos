@@ -293,9 +293,17 @@ function makeElement(tag, className) {
 		},
 		animate: function (keys, options) {
 			const a = {
-				owner: this, keys: keys, options: options, cancelled: 0,
+				owner: this, keys: keys.slice(), options: options, cancelled: 0,
+				// the growth is still running when a fast window lands: the retarget
+				// reads its clock and can rewrite its end keyframe
+				currentTime: 0,
 				finished: { then: function () {} },
 				cancel: function () { this.cancelled = 1; }
+			};
+			a.effect = {
+				getTiming: function () { return { duration: options.duration }; },
+				getKeyframes: function () { return a.keys.map(function (k) { return Object.assign({}, k); }); },
+				setKeyframes: function (next) { a.keys = next.slice(); }
 			};
 			this.animations.push(a);
 			// A ghost's box follows its final key, so the retarget reads the
@@ -787,11 +795,14 @@ check('the real window fades in exactly once',
 	win.animations.length === 1 && !('transform' in win.animations[0].keys[0])
 	&& !('transform' in win.animations[0].keys[1]));
 const retarget = ghost.el.animations[ghost.el.animations.length - 1];
+const grow = ghost.el.animations[0];
 const retarget_end = 'translate(' + (12 - ghost.to.left) + 'px, ' + (44 - ghost.to.top) + 'px) scale(' + (480 / ghost.to.width) + ', ' + (640 / ghost.to.height) + ')';
-check('the preview is retargeted, not snapped',
-	retarget.keys.length === 2 && retarget.keys[1].transform === retarget_end
-	&& retarget.keys[1].opacity === 0
+check('the preview is retargeted on its own growth, not snapped',
+	grow.keys.length === 2 && grow.keys[1].transform === retarget_end
+	&& grow.cancelled === 0
+	&& retarget.keys.length === 2 && retarget.keys[1].opacity === 0
 	&& retarget.keys[0].opacity === 1);
+check('the growth is sped up to arrive with the cross-fade', grow.playbackRate > 1);
 check('the retarget keeps the predicted box and maps it to the real window',
 	ghost.el.style.left === ghost.to.left + 'px'
 	&& ghost.el.style.width === ghost.to.width + 'px'
@@ -819,7 +830,7 @@ enter_win.rect = { left: 12, top: 44, width: 472.8, height: 630.4 };
 check('a window mid-enter still hands over its layout box',
 	sandbox.jawnosWindowEmerge(enter_win) === true);
 const enter_end = 'translate(' + (12 - scaled_ghost.to.left) + 'px, ' + (44 - scaled_ghost.to.top) + 'px) scale(' + (480 / scaled_ghost.to.width) + ', ' + (640 / scaled_ghost.to.height) + ')';
-const enter_target = scaled_ghost.el.animations[scaled_ghost.el.animations.length - 1].keys[1];
+const enter_target = scaled_ghost.el.animations[0].keys[1];
 check('the retarget lands on 480x640, not the 0.985 rect',
 	enter_target.transform === enter_end
 	&& scaled_ghost.el.style.width === '480px' && scaled_ghost.el.style.height === '640px');
@@ -851,6 +862,25 @@ check('the preview is faded off its own frame instead of being moved again',
 check('and the cross-fade is the short one', seated_retarget.options.duration === 160);
 advance(1000);
 check('the seated preview is put away', seated_el.parentNode === null);
+
+// A window that lands after the growth has finished has nothing left to ride:
+// the retarget takes the box back and covers only the distance to the window.
+level = 'medium';
+press(press_icon);
+const late = sandbox.jawnosWindowEmergeGhost;
+const late_el = late.el;
+late.openAnim.currentTime = late.openAnim.options.duration;
+const late_win = new El('clock');
+late_win.rect = { left: 40, top: 80, width: 500, height: 660 };
+check('a late window still retargets the preview', sandbox.jawnosWindowEmerge(late_win) === true);
+const late_grow = late_el.animations[0];
+const late_retarget = late_el.animations[late_el.animations.length - 1];
+check('the finished growth is put down', late_grow.cancelled === 1);
+check('and the retarget plays only the distance to the window',
+	late_retarget.keys[1].transform === 'translate(' + (40 - late.to.left) + 'px, ' + (80 - late.to.top) + 'px) scale(' + (500 / late.to.width) + ', ' + (660 / late.to.height) + ')'
+	&& late_retarget.options.duration === 220);
+advance(1000);
+check('and the late preview is put away', late_el.parentNode === null);
 
 // --- a press that opens nothing is put away ---------------------------------
 level = 'medium';
