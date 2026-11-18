@@ -62,3 +62,45 @@ Expect no `warn qtwebengine`, and `results/ui/qtwebengine.json` with the real
 `xvfb-run` and `python3` with **PySide6 Qt WebEngine**. It sets
 `QT_QPA_PLATFORMTHEME=generic` so a GTK desktop cannot pull `libgtk` into the
 probe process.
+
+# Frame probe — is the view actually smooth?
+
+`frames.py` measures the real Qt WebEngine view instead of guessing at it. It
+loads a page in the desktop engine, samples `requestAnimationFrame` intervals,
+and reports per scenario: the display's cadence (the median interval), p50/p95/
+p99 and the longest frame, frames later than 1.5 cadences, frames dropped
+against that cadence, Long Task time and — where the engine has it — Long
+Animation Frame time in style/layout. `frames.js` is the page side; it is also
+pasteable into the running Manager's console (`jawnosFrames.run('idle')`).
+
+```sh
+python3 qa/ui/frames.py                                   # the real card
+python3 qa/ui/frames.py --url https://127.0.0.1:3001/manager
+python3 qa/ui/frames.py --scenario idle,scrollpage
+python3 qa/ui/frames.py --software --no-sandbox           # headless CI, under xvfb
+python3 qa/ui/frames.py --video /tmp/clip.mp4             # adds the video scenario
+```
+
+The graphics environment is the shell's own: the driver asks
+`jawnos_desktop.gpu.prepare_env`, so `~/.config/jawnos/qt.env` and the real
+environment apply, and the report names the renderer that painted. `--software`
+forces the software path.
+
+## Reading it
+
+- `idle` is the floor: its `periodMs` is what the display is really doing. A
+  measured scenario passes `busy` only if it is worse than `idle` on both p95 and
+  late% — otherwise the run exits 1.
+- `transform`, `opacity` are compositor work; `shadow`, `border`, `width`,
+  `blur` are main-thread work. They are animated across a 36-tile grid because a
+  single box is cheap enough that every property looks free.
+- rAF intervals are main-thread frame production. They see a stalled thread and
+  a missed BeginFrame; they do **not** see compositor-thread time, so a smooth
+  main thread over a starved GPU still reads as 60 fps. `longTaskMs` and
+  `loafStyleLayoutMs` are what separate those cases.
+- One 1.5 s window is a sample, not a verdict: the same property can cost
+  nothing on a warm run and drop a dozen frames while the box is busy. `--repeat 3`
+  keeps each scenario's worst run (worst p95, then worst late%) instead of a
+  flattering average; use it before believing a difference.
+- `--url` + `scrollpage` is the honest test of a real page; the built-in grid
+  answers "how much does this property cost", not "is the Manager smooth".
