@@ -23,6 +23,37 @@ our $device;
 our $log;
 our $logfile;
 
+# The machines to ask for something, in the order the house trusts: the server
+# first, then the machine a record came from, then every other peer that is up.
+# A machine never asks itself. Rows of remote_machines, deduped by signatorial.
+#
+# Two callers share this order - a file fetched on demand, and the shared games
+# library - so a peer that holds both is asked in the same place either way.
+sub peer_candidates {
+	my ($prefer) = @_;
+	my $self = &subs::signatorial_designer() // '';
+	my @rows = grep { ($_->{'signatorial'} // '') ne $self }
+		@{ &subs::db_query("select uuid, signatorial, device, hostname, connection from remote_machines where connection = 'active'")->hashes || [] };
+	my (%seen, @out);
+	foreach my $row (@rows) {
+		next unless ($row->{'device'} // '') eq 'server';
+		next if $seen{ $row->{'signatorial'} // '' }++;
+		push @out, $row;
+	}
+	if (defined $prefer && length $prefer) {
+		foreach my $row (@rows) {
+			next unless ($row->{'signatorial'} // '') eq $prefer;
+			next if $seen{ $row->{'signatorial'} // '' }++;
+			push @out, $row;
+		}
+	}
+	foreach my $row (@rows) {
+		next if $seen{ $row->{'signatorial'} // '' }++;
+		push @out, $row;
+	}
+	return \@out;
+}
+
 sub remote_relay_request($c, $extra_params = {}) {
 	unless (($c->param('remoted') || '') eq 'yes') {
 		my $remote_uuid = $c->param('remote_uuid') || $extra_params->{'remote_uuid'};

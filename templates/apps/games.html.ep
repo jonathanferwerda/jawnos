@@ -87,6 +87,19 @@
 	.game_title { font-size:11px; font-weight:600; line-height:1.2; overflow:hidden; text-overflow:ellipsis; }
 	.game_system { font-size:10px; opacity:.7; line-height:1.1; }
 	.games_empty { grid-column:1 / -1; font-size:12px; line-height:1.4; opacity:.8; padding:8px; }
+	/* The house's shelf: what another machine has and this one does not. A dashed
+	   card says it is not here yet; Get copies that one folder over. */
+	#games_house { grid-column:1 / -1; display:flex; flex-direction:column; gap:6px; }
+	#games_house[hidden] { display:none; }
+	.games_house_title { margin:8px 0 0; font-size:12px; font-weight:600; opacity:.85; }
+	#games_house_grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); gap:8px; }
+	.house_card { display:flex; flex-direction:column; gap:4px; min-width:0; padding:6px;
+		border:1px dashed #5a5a5a; border-radius:10px; background:#333333; color:#ffffff; }
+	.house_card[hidden] { display:none; }
+	.house_card:hover { border-color:var(--accent, #4a90d9); }
+	.house_get { font:inherit; font-size:11px; line-height:1.2; padding:3px 8px; border:1px solid var(--accent, #4a90d9);
+		border-radius:6px; background:#2e2e2e; color:#ffffff; cursor:var(--jawnos-cursor-pointer, pointer); }
+	.house_get:disabled { opacity:.5; cursor:var(--jawnos-cursor-default, default); }
 </style>
 <div id="games_shell">
 % if ($mode eq 'launcher') {
@@ -162,6 +175,10 @@
 			<span class="game_system"><%= $game->{'system_label'} %></span>
 		</button>
 % }
+		<div id="games_house" hidden>
+			<h3 class="games_house_title"><%= &subs::ui('From the house') %></h3>
+			<div id="games_house_grid"></div>
+		</div>
 	</div>
 % }
 </div>
@@ -187,6 +204,7 @@
 	var fetchingCovers = <%== encode_json(&subs::ui('Fetching covers')) %>;
 	var busy = false;
 	var reloaded = false;
+	var currentFilter = '';
 
 	function say(text) { if (note) { note.textContent = text || ''; } }
 	function coversSay(text) { if (coversNote) { coversNote.textContent = text || ''; } }
@@ -205,9 +223,17 @@
 	   cards, and Controls follows the choice into its query. */
 	function applyFilter(system) {
 		var i;
+		currentFilter = system || '';
 		for (i = 0; i < cards.length; i++) {
 			var own = cards[i].getAttribute('data-system') || '';
 			cards[i].hidden = !!system && own !== system;
+		}
+		/* The house's cards are drawn after this runs, so they are found by
+		   class each time rather than captured once. */
+		var offered = document.querySelectorAll('.house_card');
+		for (i = 0; i < offered.length; i++) {
+			var theirs = offered[i].getAttribute('data-system') || '';
+			offered[i].hidden = !!system && theirs !== system;
 		}
 		for (i = 0; i < filters.length; i++) {
 			var on = (filters[i].getAttribute('data-filter') || 'all') === (system || 'all');
@@ -355,6 +381,90 @@
 	if (roms) { roms.addEventListener('click', function () { start('roms'); }); }
 	poll();
 	setInterval(poll, 2500);
+
+	/* The house's shelf. A machine that has a game this one does not offers it
+	   here, cover and all, and Get copies that one folder onto this machine.
+	   The section stays out of the way when nothing is offered or no machine
+	   answers, so a board with no peers looks exactly as it did. */
+	var house = document.getElementById('games_house');
+	var houseGrid = document.getElementById('games_house_grid');
+	var have = {};
+	for (var hc = 0; hc < cards.length; hc++) { have[cards[hc].getAttribute('data-game')] = 1; }
+	function houseSize(bytes) {
+		bytes = bytes || 0;
+		if (bytes >= 1073741824) { return (Math.round(bytes / 107374182.4) / 10) + ' GB'; }
+		if (bytes >= 1048576) { return Math.round(bytes / 1048576) + ' MB'; }
+		return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+	}
+	function houseCard(game) {
+		var card = document.createElement('div');
+		card.className = 'house_card';
+		card.setAttribute('data-system', game.system || '');
+		var art = document.createElement('span');
+		art.className = 'game_art';
+		if (game.art) {
+			var img = document.createElement('img');
+			img.src = game.art;
+			img.alt = '';
+			img.loading = 'lazy';
+			art.appendChild(img);
+		}
+		else {
+			var blank = document.createElement('span');
+			blank.className = 'game_art_blank';
+			blank.textContent = game.system_label || game.system || '';
+			art.appendChild(blank);
+		}
+		card.appendChild(art);
+		var title = document.createElement('span');
+		title.className = 'game_title';
+		title.textContent = game.title || '';
+		card.appendChild(title);
+		var line = document.createElement('span');
+		line.className = 'game_system';
+		line.textContent = (game.system_label || game.system || '') + ' · '
+			+ (game.hostname || 'the house') + ' · ' + houseSize(game.size);
+		card.appendChild(line);
+		var get = document.createElement('button');
+		get.type = 'button';
+		get.className = 'house_get';
+		get.textContent = <%== encode_json(&subs::ui('Get')) %>;
+		get.addEventListener('click', function () {
+			get.disabled = true;
+			say(<%== encode_json(&subs::ui('Copying')) %> + '…');
+			post('/manager/games/pull', { signatorial: game.signatorial || '', id: game.id })
+				.then(function (answer) {
+					if (!answer || !answer.ok) {
+						say((answer && answer.error) || failed);
+						get.disabled = false;
+						return;
+					}
+					say(<%== encode_json(&subs::ui('Copied. Reloading the shelf.')) %>);
+					setTimeout(function () { location.reload(); }, 700);
+				})
+				.catch(function () { say(failed); get.disabled = false; });
+		});
+		card.appendChild(get);
+		return card;
+	}
+	if (house && houseGrid) {
+		fetch('/manager/games/house', { credentials: 'same-origin' })
+			.then(function (answer) { return answer.json(); })
+			.then(function (list) {
+				list = list || {};
+				var offered = list.games || [];
+				var shown = 0;
+				for (var i = 0; i < offered.length; i++) {
+					var game = offered[i];
+					if (!game || !game.id || have[game.id]) { continue; }
+					houseGrid.appendChild(houseCard(game));
+					shown++;
+				}
+				house.hidden = shown === 0;
+				applyFilter(currentFilter);
+			})
+			.catch(function () { });
+	}
 })();
 </script>
 % }

@@ -48,6 +48,10 @@ sub routes {
 	[44023, 'post', '/manager/studio/take', 'action_44023'],
 	[44024, 'get', '/manager/games/play', 'action_44024'],
 	[44025, 'get', '/manager/games/dos_bundle', 'action_44025'],
+	[44026, 'get', '/manager/games/peer_library', 'action_44026'],
+	[44027, 'get', '/manager/games/serve', 'action_44027'],
+	[44028, 'get', '/manager/games/house', 'action_44028'],
+	[44029, 'post', '/manager/games/pull', 'action_44029'],
 	);
 }
 

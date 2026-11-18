@@ -118,11 +118,31 @@ like($open, qr/\$on_demand_entry = \$f;/, 'the appointment entry goes with the r
 my $file_pm = read_file("$root/lib/JawnOS/Domain/File.pm");
 my ($fetch) = $file_pm =~ /(sub media_fetch_on_demand\b.*?\n\})/s;
 ok($fetch, 'media_fetch_on_demand exists');
-my $server_at = index($fetch, "eq 'server'");
-my $peer_at = index($fetch, 'length $remembered &&');
-my $rest_at = index($fetch, 'return 0 unless @candidates;');
-ok($server_at >= 0 && $peer_at > $server_at && $rest_at > $peer_at,
-	'the server is asked first, then the machine the row came from, then the rest');
+like($fetch, qr/\@\{ &subs::peer_candidates\(\$remembered\) \}/,
+	'the order comes from the one shared helper');
+
+# --- the order: server, then the row's machine, then the rest -----------------
+{
+	subs::db_query('delete from remote_machines');
+	my $now = subs::rightNow();
+	for my $row (
+		[ 'u-comp', 'sig-comp', 'computer', 'Laptop' ],
+		[ 'u-serv', 'sig-serv', 'server',   'hub' ],
+		[ 'u-tab',  'sig-tab',  'mobile',   'Tablet' ],
+	) {
+		subs::db_insert('remote_machines', {
+			uuid => $row->[0], signatorial => $row->[1], device => $row->[2],
+			hostname => $row->[3], connection => 'active',
+			timestamp => $now, server_time => $now,
+		});
+	}
+	is(join(',', map { $_->{'signatorial'} } @{ subs::peer_candidates('sig-tab') }),
+		'sig-serv,sig-tab,sig-comp',
+		'the server is asked first, then the machine the record came from, then the rest');
+	is(join(',', map { $_->{'signatorial'} } @{ subs::peer_candidates() }),
+		'sig-serv,sig-comp,sig-tab', 'with no preference, the server is still first');
+	subs::db_query('delete from remote_machines');
+}
 like($fetch, qr/remoted=yes/, 'a peer answers the read instead of handing it on again');
 like($fetch, qr/&synced_file_payload\(\$res->body, \$path\)/,
 	'and the body goes through the sentinel-aware check');

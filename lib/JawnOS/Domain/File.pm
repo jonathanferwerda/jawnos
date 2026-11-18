@@ -356,25 +356,9 @@ sub media_fetch_on_demand {
 	my $want = $entry->{'remote_f'};
 	return 0 unless defined $want && length $want;
 	my $remembered = $entry->{'remote_peer'} // '';
-	my @rows = @{ &subs::db_query("select uuid, signatorial, device from remote_machines where connection = 'active'")->hashes || [] };
-	my %seen;
-	my @candidates;
-	foreach my $row (@rows) {
-		next unless ($row->{'device'} // '') eq 'server';
-		push @candidates, $row;
-		$seen{ $row->{'signatorial'} // '' }++;
-	}
-	foreach my $row (@rows) {
-		next unless length $remembered && ($row->{'signatorial'} // '') eq $remembered;
-		next if $seen{ $row->{'signatorial'} // '' };
-		push @candidates, $row;
-		$seen{ $row->{'signatorial'} // '' }++;
-	}
-	foreach my $row (@rows) {
-		next if $seen{ $row->{'signatorial'} // '' };
-		push @candidates, $row;
-		$seen{ $row->{'signatorial'} // '' }++;
-	}
+	# Server first, then the machine the row came from, then the rest: one order
+	# for the whole house, shared with the games library (peer_candidates).
+	my @candidates = @{ &subs::peer_candidates($remembered) };
 	return 0 unless @candidates;
 	my $dir = $path;
 	$dir =~ s{/[^/]+$}{};

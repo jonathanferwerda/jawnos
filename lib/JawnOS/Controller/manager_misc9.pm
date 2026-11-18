@@ -1538,4 +1538,67 @@ sub studio_latency_engine {
 	return (200, $data);
 }
 
+# GET /manager/games/peer_library
+# The catalogue a peer reads: this machine's own shelf, with the covers inline so
+# a card on the asking machine is never blank. The peer signature is the proof;
+# a browser cookie never satisfies it, and a machine that is not in the house
+# gets nothing.
+sub action_44026 {
+	my $c = shift;
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
+		$c->rendered(403);
+		return;
+	}
+	$c->render(json => eval { &subs::game_peer_catalogue() } || { ok => 0, games => [] });
+}
+
+# GET /manager/games/serve
+# One game, packed, for a peer that asked for it. The id is the only thing the
+# request carries; the members come from this machine's scan. The pack is a file
+# beside the response and is removed when the response finishes, so a pull does
+# not leave a tar behind on the board.
+sub action_44027 {
+	my $c = shift;
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'trusted')) {
+		$c->rendered(403);
+		return;
+	}
+	my $tmp = ($gb::tmp_dir || '/tmp') . '/game-serve-' . $$ . '-' . &subs::random_string_creator(8) . '.tgz';
+	my $packed = eval { &subs::game_serve_tar($c->param('id') // '', $tmp) } || {};
+	unless ($packed->{'ok'}) {
+		unlink $tmp;
+		$c->render(json => { ok => 0, error => ($packed->{'error'} // 'the game could not be packed') });
+		return;
+	}
+	my $size = -s $tmp || 0;
+	$c->on(finish => sub { unlink $tmp });
+	$c->res->headers->content_type('application/x-gtar');
+	$c->res->headers->content_length($size);
+	$c->res->content->asset(Mojo::Asset::File->new(path => $tmp));
+	$c->rendered(200);
+}
+
+# GET /manager/games/house
+# The catalogue every reachable machine offers, server first, for the Games page.
+# A peer that is asleep is skipped rather than waited on, so the shelf still
+# draws; the section fills in when an answer arrives.
+sub action_44028 {
+	my $c = shift;
+	$c->render(json => eval { &subs::game_house_library() } || { ok => 0, hosts => [], games => [] });
+}
+
+# POST /manager/games/pull
+# Copy one game from one machine into this machine's own shelf. The peer answers
+# the pack; nothing is asked of the record sync.
+sub action_44029 {
+	my $c = shift;
+	my $said = eval { &subs::game_pull($c->param('signatorial') // '', $c->param('id') // '') }
+		|| { ok => 0, error => &subs::ui('That did not work.') };
+	$c->render(json => $said);
+}
+
 1;
