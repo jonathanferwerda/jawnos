@@ -216,6 +216,10 @@ const GLYPHS = {
 	window_restore: '<path d="M10 5.5h5.5a2 2 0 0 1 2 2V13" fill="none" stroke="{G}" stroke-width="2" stroke-linecap="round"/><rect x="6" y="9" width="9.5" height="9.5" rx="1.6" fill="none" stroke="{G}" stroke-width="2"/>',
 	window_maximize: '<rect x="5.5" y="5.5" width="13" height="13" rx="1.8" fill="none" stroke="{G}" stroke-width="2"/>',
 	window_close: '<path d="M6.8 6.8 17.2 17.2M17.2 6.8 6.8 17.2" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/>',
+	// the whole glass: a double-headed diagonal arrow goes out to it, and a pair
+	// of arrows pointing at each other comes back from the top right corner
+	window_full_viewport: '<path d="M6.5 17.5 17.5 6.5" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/><path d="M12.4 5.4h6.2v6.2" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.6 18.6H5.4v-6.2" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
+	window_full_viewport_exit: '<path d="M19.5 4.5 14 10" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/><path d="M14 5.6V10h4.4" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 19.5 10 14" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/><path d="M10 18.4V14H5.6" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
 	// --- the paperwork family: the store's documents are asked for by their
 	// own names, and a bill, a discount and a return each want a shape of
 	// their own rather than borrowing one ---
@@ -483,6 +487,8 @@ const ICONS = {
 	'restore': 'window_restore',
 	'maximize': 'window_maximize',
 	'close': 'window_close',
+	'fullview': 'window_full_viewport',
+	'fullview_exit': 'window_full_viewport_exit',
 	// the appointment row's three group buttons
 	'extra': 'extra',
 	'connect': 'connect',

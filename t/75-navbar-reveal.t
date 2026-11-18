@@ -10,11 +10,11 @@ use Test::More;
 use File::Slurp qw(read_file);
 use RepoSource;
 
-# Six buttons and a title in one bar left the title a sliver. Help and the pin
-# now live behind the app icon: the bar shows the name and the four window
-# controls, and the two quiet controls are revealed on a press of the icon. The
-# name is what pushes them to the right edge, so a title is clipped rather than
-# overlapped.
+# Six buttons and a title left the title a sliver. Help, the pin and full
+# screen now live behind the app icon: the bar shows the name and the four
+# window controls, and the three quiet controls are revealed on a press of the
+# icon. The name is what pushes them to the right edge, so a title is clipped
+# rather than overlapped.
 #
 # The first cut of this shipped the comment that described it *inside the Perl
 # string*, which became a text node in the flex row - an anonymous item 460px
@@ -29,9 +29,10 @@ my $back = read_file("$root/public/js/manager/manager/09_app_back.js");
 my $css = read_file("$root/public/css/manager.css");
 my $help = help_source();
 
-# --- the two quiet controls live behind the icon ---------------------------
-like($maker, qr/class="navbar_reveal">' \. \$navbar_agent_control \. \$navbar_place_control/, 
-	'Help and the pin are in the revealed group');
+# --- the three quiet controls live behind the icon -------------------------
+like($maker, qr/class="navbar_reveal">' \. \$navbar_agent_control \. \$navbar_place_control \. \$navbar_fullview_control/, 
+	'Help, the pin and full screen are in the revealed group');
+like($maker, qr/_fullview_button window_action fullview_button/, 'full screen is a window control beside the pin');
 like($maker, qr/revealed="no"/, 'a bar starts with the group put away');
 like($maker, qr/onclick="navbarReveal\(this\)"/, 'the app icon reveals it');
 like($fit, qr/function navbarReveal\(el\)/, 'there is one toggle for it');
@@ -61,5 +62,6 @@ like($back, qr/closest\('\.navbar_buttons, \.navbar_reveal, \.window_icon_holder
 
 # --- and the help says so -------------------------------------------------
 like($help, qr/The pin is the map-pin button in the title bar/, 'the Windows topic describes the pin');
+like($help, qr/Full screen is the two diagonal arrows/, 'the Windows topic describes full screen');
 
 done_testing();

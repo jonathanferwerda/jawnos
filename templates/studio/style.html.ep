@@ -332,19 +332,6 @@
 	@media (min-width: 640px) {
 		.wind[app="studio"] { z-index: 39999 !important; }
 	}
-	/* A doubled maximize control asks for the whole viewport, above the dock and
-	   the taskbar (39997/39998). The class is the explicit state; removing it
-	   gives the window back the geometry saved on the way in. */
-	.wind[app="studio"].window_full_viewport {
-		position: fixed !important;
-		left: 0 !important;
-		top: 0 !important;
-		width: 100% !important;
-		height: 100% !important;
-		inset: 0 !important;
-		z-index: 40000 !important;
-	}
-
 	/* ---- layout bar, per-track panels and floating panels ------------------ */
 	.studio_layout_bar {
 		display: flex;

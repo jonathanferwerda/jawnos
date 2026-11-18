@@ -646,6 +646,11 @@ sub window_maker($type,$timestamp) {
 	# behind the app icon (see .navbar_reveal) so a narrow window keeps its room
 	# for the name instead of a row of six buttons.
 	my $navbar_place_control = '<button id="window_' . $timestamp . '_place" class="' . $html_name . '_place_button window_action place_button" status="' . ($place_locked ? 'on' : 'off') . '" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Keep this window here (press again to let it tile like any other)})) . '">' . $window_control->('place', '&#128204;') . '</button>';
+	# The whole-glass control sits beside the pin: it fills the screen over the
+	# taskbar and dock and puts the title bar away, so the way back cannot live
+	# in the bar. The corner button below takes over while it is on.
+	my $navbar_fullview_control = '<button id="window_' . $timestamp . '_fullview" class="' . $html_name . '_fullview_button window_action fullview_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Full screen - fill the whole screen over the taskbar and dock})) . '">' . $window_control->('fullview', '&#10530;') . '</button>';
+	my $window_fullview_exit = '<button id="window_' . $timestamp . '_fullview_exit" class="' . $html_name . '_fullview_exit_button window_fullview_exit fullview_exit_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Leave full screen})) . '">' . $window_control->('fullview_exit', '&#10529;') . '</button>';
 	if (!$settings->{'colour'} || $settings->{'colour'} !~ /^#/) {
 		$settings->{'colour'} = '#' . &subs::random_colour_grabber();
 		&subs::setting_setter({ app => $app, setting => 'colour', value => $settings->{'colour'} });
@@ -679,7 +684,7 @@ sub window_maker($type,$timestamp) {
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" revealed="no" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
 				';" app="' . $app_attr .'">
 					<span class="window_icon_holder">' . $main_image . '</span>
-					<span class="navbar_reveal">' . $navbar_agent_control . $navbar_place_control . '</span>
+					<span class="navbar_reveal">' . $navbar_agent_control . $navbar_place_control . $navbar_fullview_control . '</span>
 				<span class="appointment_name">
 					<span class="appointment_name_marks">
 						<img class="medium_thumb unlock droppable" app="' . $app_attr . '" style="display:none;" src="/images/make believe/lock.png">
@@ -695,6 +700,7 @@ sub window_maker($type,$timestamp) {
 					<button id="window_' . $timestamp . '_close" class="' . $html_name . '_close_button window_action close_button" timestamp="' . $timestamp . '" app="' . $app_attr . '">' . $window_control->('close', 'X') . '</button>
 				</span>
 			</div>
+			' . $window_fullview_exit . '
 			<div id="window_drawer_' . $timestamp . '" class="window_drawer" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';position:absolute;top:calc(var(--navbar_h, 36px) - 2px);background-color:' . $window_colour . ';width:100%;display:none;height:calc(100% - var(--navbar_h, 36px) + 2px);overflow:scroll;">
 			<img src="/images/make believe/space.png" style="position:absolute;left:30%;height:24px;width:30%;" class="window_drawer_closer hover">
 			<div id="window_drawer_contents_' . $timestamp . '" class="window_drawer_contents" style="padding-top:20px;background-color:var(--window, var(--panel));">' . $drawer . '</div></div>

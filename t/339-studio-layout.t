@@ -1,12 +1,11 @@
-# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/windows.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
+# tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
 # covers:    The Studio layout: a compact panel beside every track with its five
 #            controls, four remembered hide toggles, a Dock control and pointer
 #            drag/resize handlers, a four-cell docking grid with area swaps, a
 #            channel-strips panel that scrolls its faders into reach, a jog wheel
 #            in the transport's button row, a dynamic track list with Add track /
-#            a twice-pressed Delete, a full-viewport double-press for the window,
-#            and a help topic that names them. Structure only; pixels are not
-#            asserted here.
+#            a twice-pressed Delete, and a help topic that names them.
+#            Structure only; pixels are not asserted here.
 
 use strict;
 use warnings;
@@ -34,6 +33,7 @@ my $knobs  = slurp("$root/public/js/manager/studio/04_knobs.js");
 my $ctrl   = slurp("$root/public/js/manager/studio/06_controls.js");
 my $layout = slurp("$root/public/js/manager/studio/07_layout.js");
 my $winjs  = slurp("$root/public/js/manager/windows.js");
+my $fitjs  = slurp("$root/public/js/manager/windows/02_fit.js");
 my $maker  = slurp("$root/lib/JawnOS/Manager/Part22.pm");
 my $help   = slurp("$root/perl/help/topics_apps.pl");
 
@@ -176,17 +176,11 @@ like($style, qr/\.studio_transport_row\s*\{[^}]*display:\s*flex/s,
 unlike($style, qr/#studio_jog_wheel\s*\{[^}]*right:/s,
 	'the wheel no longer hangs off the panel\'s right edge');
 
-# --- maximize fills the viewport, and a second double-press restores it -----
-like($winjs, qr/studioWindowFullSelector = '[^']*maximize_button[^']*restore_button'/,
-	'the maximize and the restore control it becomes both carry the gesture');
-like($winjs, qr/\$\(document\)\.on\('dblclick', studioWindowFullSelector/,
-	'a double-press on the maximize control is bound');
-like($winjs, qr/window_full_viewport/, 'the full-viewport state is named');
-like($winjs, qr/window-full-viewport-box/, 'the previous box is saved for the restore');
-like($style, qr/\.wind\[app="studio"\]\.window_full_viewport\s*\{[^}]*inset:\s*0 !important/s,
-	'the full-viewport state fills the screen');
-like($style, qr/\.window_full_viewport\s*\{[^}]*z-index:\s*40000 !important/s,
-	'the full-viewport state covers the dock and taskbar');
+# --- full screen is the window's shared control, not a Studio gesture -------
+unlike($winjs, qr/studioWindowFullSelector/, 'no double-press is bound to the maximize control');
+unlike($style, qr/window_full_viewport/, 'Studio keeps no full-viewport rule of its own');
+like($fitjs, qr/windowFullViewportEnter/, 'the window keeps its own full-view control');
+like($help, qr/full-screen button - behind the app icon/, 'the help names the shared full-screen button');
 
 # --- the help topic names the new controls ----------------------------------
 like($help, qr/'Add a track, up to 32'/, 'help names Add track and its cap');

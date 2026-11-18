@@ -155,6 +155,55 @@ function windowRestore(timestamp,app) {
 	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'in'); }
 }
 
+// ---------------------------------------------------------------- the whole glass
+//
+// A window can be given the whole screen, over the dock and the taskbar, with
+// its own title bar put away. The button lives beside the pin, in the title
+// bar; because that bar is hidden while the window fills the screen, the way
+// back waits in the very top right corner and shows itself when the pointer
+// reaches it. The box the window leaves is kept on the element, so leaving
+// puts it back exactly where it was, whether it had been tiled or maximised.
+function jawnosWindowFullViewportBox(win) {
+	return {
+		left: win.css('left'),
+		top: win.css('top'),
+		width: win.css('width'),
+		height: win.css('height')
+	};
+}
+
+function windowFullViewportEnter(win) {
+	win = $(win);
+	if (!win.length || win.hasClass('window_full_viewport')) { return; }
+	win.data('window-full-viewport-box', jawnosWindowFullViewportBox(win));
+	win.addClass('window_full_viewport');
+	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
+}
+
+function windowFullViewportLeave(win) {
+	win = $(win);
+	if (!win.length || !win.hasClass('window_full_viewport')) { return; }
+	var box = win.data('window-full-viewport-box');
+	win.removeClass('window_full_viewport').removeData('window-full-viewport-box');
+	if (box) {
+		win.css({ 'position': 'fixed', 'left': box.left, 'top': box.top, 'width': box.width, 'height': box.height });
+		windowDimensionSetter(win);
+	}
+	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
+}
+
+$(document).on('click', '.fullview_button', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	windowFullViewportEnter($(this).closest('.wind'));
+});
+
+$(document).on('click', '.fullview_exit_button', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	windowFullViewportLeave($(this).closest('.wind'));
+});
+
 function windowRestorer(timestamp,app) {
 	var win = $('#window_' + timestamp);
 	if (app) {
@@ -572,6 +621,9 @@ function windowViewport() {
 
 function windowFit(win) {
 	if (win.length == 0) { return; }
+	// the whole glass already is the viewport, and a clamp here would write a
+	// fit_height the way back would inherit
+	if (win.hasClass('window_full_viewport')) { return; }
 	var view = windowViewport();
 	var viewW = view.width;
 	var viewH = view.height;
