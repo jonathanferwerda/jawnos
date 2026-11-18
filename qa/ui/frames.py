@@ -30,6 +30,7 @@ import os
 import socket
 import sys
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FRAMES_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frames.js")
@@ -144,6 +145,22 @@ def scenarios_in_js():
         return []
 
 
+def redact_url(url):
+    """A ticket URL carries the session token; never capture it in a report.
+
+    The token is the whole credential: a probe that prints the URL it failed to
+    load puts a live ticket into a terminal, a log and a pasted report. Only the
+    scheme and host survive, which is all a report needs.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "<unparsable url>"
+    if not parts.netloc:
+        return url if not parts.query else parts.scheme + ":"
+    return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+
+
 def format_row(row):
     name = str(row.get("scenario", "?"))[:11]
     if row.get("skipped") or row.get("error"):
@@ -207,6 +224,12 @@ def report(rows, meta, args):
     print("engine: qtwebengine   machine: %s   window: %dx%d   gpu: %s" % (
         meta.get("machine", "?"), width, height, meta.get("gpu", "?")), flush=True)
     print("graphics: %s" % meta.get("graphics", "?"), flush=True)
+    page_info = meta.get("page") or {}
+    if page_info:
+        print("page: %s%s | %s nodes | %s scrollable | load %s" % (
+            page_info.get("host", "?"), page_info.get("path", ""),
+            page_info.get("nodes", "?"), page_info.get("scrollables", "?"),
+            "ok" if meta.get("loadOk") else "FAILED"), flush=True)
     print("%-11s %5s %6s %6s %6s %6s %6s %6s %6s %7s %8s" % (
         "scenario", "frames", "fps", "p50", "p95", "p99", "max", "late%", "drops",
         "taskms", "loafms"), flush=True)
@@ -270,7 +293,9 @@ def main(argv=None):
             "gpu": state["meta"].get("gpu"),
             "graphics": graphics,
             "window": list(args.size),
-            "url": args.url or "about:blank (built-in bench)",
+            "url": redact_url(args.url) if args.url else "about:blank (built-in bench)",
+            "page": state["meta"].get("page"),
+            "loadOk": state["meta"].get("loadOk"),
             "scenarios": rows,
             "verdict": verdict(rows),
         }
@@ -320,9 +345,16 @@ def main(argv=None):
         page.runJavaScript("window.__jfResult || ''", got)
 
     def loaded(ok):
+        state["meta"]["loadOk"] = bool(ok)
+        state["meta"]["loads"] = state["meta"].get("loads", 0) + 1
         if not ok and args.url:
-            print("frames: the page did not load: %s" % args.url, file=sys.stderr)
+            print("frames: the page reported a failed load: %s" % redact_url(args.url),
+                  file=sys.stderr)
         page.runJavaScript(probe)
+        if state.get("started"):
+            # A redirect or a late frame can finish twice; measure once.
+            return
+        state["started"] = True
 
         def go():
             page.runJavaScript("jawnosFrames.renderer()", begin)
@@ -332,7 +364,28 @@ def main(argv=None):
     def begin(renderer):
         text = str(renderer)
         state["meta"]["gpu"] = "none (software path)" if text == "none" else text
-        QTimer.singleShot(int(max(0.0, args.settle) * 1000), start_next)
+        QTimer.singleShot(int(max(0.0, args.settle) * 1000), sample_page)
+
+    def sample_page():
+        """What was actually loaded: a report must not claim a page it guessed."""
+        page.runJavaScript(
+            "JSON.stringify({title: document.title.slice(0, 60),"
+            " host: location.host,"
+            " path: location.pathname.split('/').slice(0, 2).join('/'),"
+            " nodes: document.querySelectorAll('*').length,"
+            " scrollables: (function () { var n = 0; var e = document.querySelectorAll("
+            "'div,main,section,article,ul,ol,pre,textarea');"
+            " for (var i = 0; i < e.length; i++) {"
+            " if (e[i].scrollHeight > e[i].clientHeight + 20 && e[i].clientHeight > 60) { n++; } }"
+            " return n; })()})",
+            got_page)
+
+    def got_page(value):
+        try:
+            state["meta"]["page"] = json.loads(str(value or "{}"))
+        except ValueError:
+            state["meta"]["page"] = {}
+        start_next()
 
     page.loadFinished.connect(loaded)
     if args.url:

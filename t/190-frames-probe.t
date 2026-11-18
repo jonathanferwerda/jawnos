@@ -40,6 +40,15 @@ like($py, qr/from jawnos_desktop import gpu/, "the probe uses the shell's own gr
 like($py, qr/gpu\.prepare_env\(os\.environ\)/, 'including the qt.env escape hatches');
 like($py, qr/--software/, 'and can ask for the software path CI has');
 like($py, qr/--settle/, 'and lets a real page finish opening its windows first');
+like($py, qr/def redact_url/, 'a ticket URL is redacted before it reaches a report');
+like($js, qr/the page does not scroll/,
+	'a page with no scroll range is reported, not measured as smooth');
+
+# The token is the credential: it must not survive into the report, a log or a
+# paste. The ticket's path goes too -- only the host is a report's business.
+my $redact = qx{cd "$root" && python3 -c 'import sys; sys.path.insert(0, "qa/ui"); import frames; print(frames.redact_url("https://h:3000/box_office/abc?s=SECRET"))' 2>&1};
+is($redact, "https://h:3000\n", 'the ticket token and path do not survive redaction')
+	or diag($redact);
 like($py, qr/certificateError/, "accepts the house's certificate");
 like($py, qr/"engine": "qtwebengine"/, 'the report names the engine');
 

@@ -104,11 +104,11 @@
   /* The largest scroller on the page: whatever a person would actually drag. */
   function pickScroller() {
     var best = null, bestArea = 0;
-    var elements = document.querySelectorAll("div,main,section,article,ul,ol");
+    var elements = document.querySelectorAll("div,main,section,article,ul,ol,pre,textarea");
     for (var i = 0; i < elements.length; i++) {
       var el = elements[i];
       if (el.closest("#jp-bench")) { continue; }
-      if (el.scrollHeight <= el.clientHeight + 48 || el.clientHeight < 120) { continue; }
+      if (el.scrollHeight <= el.clientHeight + 20 || el.clientHeight < 60) { continue; }
       var area = el.clientHeight * Math.max(el.clientWidth, 1);
       if (area > bestArea) { bestArea = area; best = el; }
     }
@@ -230,9 +230,15 @@
       host.style.display = "none";
       var scroller = pickScroller();
       var range = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      if (range < 20) {
+        // The Manager's desk is a canvas of windows: nothing on it scrolls. A
+        // zero-range scroll measured as 60 fps is the probe lying, so say so.
+        return { skipped: "the page does not scroll (largest range " + range + "px)" };
+      }
       return {
         frame: function (t) { scroller.scrollTop = Math.round((t / opts.ms) * range); },
-        target: (scroller.tagName || "?") + (scroller.id ? "#" + scroller.id : "")
+        target: (scroller.tagName || "?") + (scroller.id ? "#" + scroller.id : ""),
+        range: range
       };
     }
 
@@ -310,6 +316,7 @@
       out.height = window.innerHeight;
       out.dpr = window.devicePixelRatio;
       if (setup.target) { out.target = setup.target; }
+      if (setup.range) { out.range = setup.range; }
       out.longTasks = seen.longTasks.length;
       out.longTaskMs = Math.round(seen.longTasks.reduce(function (a, v) { return a + v; }, 0));
       if (seen.animationFrames.length) {

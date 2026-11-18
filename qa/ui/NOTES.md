@@ -98,6 +98,13 @@ forces the software path.
   a missed BeginFrame; they do **not** see compositor-thread time, so a smooth
   main thread over a starved GPU still reads as 60 fps. `longTaskMs` and
   `loafStyleLayoutMs` are what separate those cases.
+- The `page:` line says what was actually loaded -- host, path prefix, node
+  count, how many elements scroll, and whether `loadFinished` said ok. A
+  `scrollpage` on a page with no scroll range is reported as skipped: the
+  Manager's desk is a canvas of windows, and a zero-range scroll at 60 fps would
+  be the probe lying.
+- The report redacts the URL to scheme and host: a ticket URL's query is the
+  session token.
 - `--settle` (default 1 s) is the pause after `loadFinished` before sampling.
   Raise it for the live Manager, which keeps opening its saved windows after the
   page loads; measuring that burst is not measuring the desk.
