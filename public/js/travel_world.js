@@ -17,6 +17,9 @@
 	}
 	var THREE = window.AFRAME.THREE;
 	var built = false;
+	// the moment a print was opened: a tap on a print is a press on the print,
+	// and must not also be read as a step forward
+	var last_photo_click = 0;
 
 	// ---- extruded building footprints ------------------------------------
 	window.AFRAME.registerComponent('footprint', {
@@ -143,9 +146,12 @@
 	};
 	window.AFRAME.registerComponent('worldwalk', {
 		schema: {
-			speed: { default: 6 },   // metres a second
-			run: { default: 2.2 },   // Shift multiplies it
-			radius: { default: 0 }   // 0 leaves the fence open
+			speed: { default: 7 },          // metres a second
+			acceleration: { default: 45 },  // metres a second squared: full speed in about a sixth of a second
+			run: { default: 2.2 },          // Shift multiplies the speed
+			step: { default: 9 },           // metres a double-tap moves you
+			dashSpeed: { default: 24 },     // and how fast it crosses them
+			radius: { default: 0 }          // 0 leaves the fence open
 		},
 		init: function () {
 			var self = this;
@@ -155,6 +161,10 @@
 			this.right = new THREE.Vector3();
 			this.up = new THREE.Vector3(0, 1, 0);
 			this.want = new THREE.Vector3();
+			this.dashDir = new THREE.Vector3(0, 0, -1);
+			this.dashLeft = 0;
+			this.lastTap = 0;
+			this.touchStepAt = 0;
 			// the height the rig was built at is the eye's height for good
 			this.eye = this.el.object3D.position.y;
 			this.onKeyDown = function (e) {
@@ -172,14 +182,75 @@
 				self.running = !!e.shiftKey;
 			};
 			this.onBlur = function () { self.keys = {}; };
+			// A phone has no keys, so a double-tap is a step: the same distance
+			// every time, whatever the frame rate or the size of the finger. A
+			// drag to look is not a tap, and a tap that opened a print is not one
+			// either - the print is what the person asked for.
+			this.onTouchStart = function (e) {
+				if (!e.touches || e.touches.length !== 1) { self.tap = null; return; }
+				var t = e.touches[0];
+				self.tap = { x: t.clientX, y: t.clientY, at: Date.now() };
+			};
+			this.onTouchEnd = function (e) {
+				var tap = self.tap;
+				self.tap = null;
+				if (!tap || !e.changedTouches || !e.changedTouches.length) { return; }
+				var t = e.changedTouches[0];
+				if (Math.abs(t.clientX - tap.x) + Math.abs(t.clientY - tap.y) > 12) { return; }
+				if (Date.now() - tap.at > 500) { return; }
+				self.tapStep();
+			};
+			this.tapStep = function () {
+				var now = Date.now();
+				if (now - last_photo_click < 700) { return; }
+				if (now - self.lastTap < 320) {
+					self.lastTap = 0;
+					self.touchStepAt = now;
+					self.dash();
+					return;
+				}
+				self.lastTap = now;
+			};
+			// a mouse reaches the same step as a double-click
+			this.onDoubleClick = function () {
+				if (Date.now() - last_photo_click < 700) { return; }
+				if (Date.now() - self.touchStepAt < 500) { return; }   // a phone's tap already stepped
+				self.dash();
+			};
 			window.addEventListener('keydown', this.onKeyDown);
 			window.addEventListener('keyup', this.onKeyUp);
 			window.addEventListener('blur', this.onBlur);
+			window.addEventListener('touchstart', this.onTouchStart, { passive: true });
+			window.addEventListener('touchend', this.onTouchEnd, { passive: true });
+			window.addEventListener('dblclick', this.onDoubleClick);
 		},
 		remove: function () {
 			window.removeEventListener('keydown', this.onKeyDown);
 			window.removeEventListener('keyup', this.onKeyUp);
 			window.removeEventListener('blur', this.onBlur);
+			window.removeEventListener('touchstart', this.onTouchStart);
+			window.removeEventListener('touchend', this.onTouchEnd);
+			window.removeEventListener('dblclick', this.onDoubleClick);
+		},
+		// one step forward: a fixed distance along the look, spent over a glide
+		dash: function () {
+			if (!(+this.data.step > 0)) { return; }
+			var cam = this.el.sceneEl && this.el.sceneEl.camera;
+			this.dashDir.set(0, 0, -1);
+			if (cam && typeof cam.getWorldDirection === 'function') { cam.getWorldDirection(this.dashDir); }
+			this.dashDir.y = 0;
+			if (this.dashDir.lengthSq() < 1e-6) { this.dashDir.set(0, 0, -1); }
+			this.dashDir.normalize();
+			this.dashLeft = +this.data.step;
+		},
+		// velocity moves toward the wanted one by at most `room` this frame, so
+		// the acceleration is the one the schema states, not the frame rate's
+		speedTo: function (target, room) {
+			var dx = target.x - this.velocity.x;
+			var dz = target.z - this.velocity.z;
+			var len = Math.sqrt(dx * dx + dz * dz);
+			if (len <= room || len === 0) { this.velocity.set(target.x, 0, target.z); return; }
+			this.velocity.set(this.velocity.x + (dx / len) * room, 0, this.velocity.z + (dz / len) * room);
 		},
 		tick: function (time, delta) {
 			var dt = Math.min(delta, 100) / 1000;
@@ -202,11 +273,18 @@
 			if (this.want.lengthSq() > 0) {
 				this.want.normalize().multiplyScalar(this.data.speed * (this.running ? this.data.run : 1));
 			}
-			// a short ease either way, so a step starts and stops rather than snaps
-			this.velocity.lerp(this.want, 1 - Math.exp(-dt / 0.12));
+			// the acceleration is stated, so a key answers at once and stops as
+			// sharply as it starts rather than easing in over half a second
+			this.speedTo(this.want, this.data.acceleration * (this.want.lengthSq() ? 1 : 2) * dt);
 			this.velocity.y = 0;
 			p.x += this.velocity.x * dt;
 			p.z += this.velocity.z * dt;
+			if (this.dashLeft > 0) {
+				var step = Math.min(this.dashLeft, this.data.dashSpeed * dt);
+				p.x += this.dashDir.x * step;
+				p.z += this.dashDir.z * step;
+				this.dashLeft -= step;
+			}
 			// nothing here writes the height but this line, and it always writes
 			// the eye back: a look down, a drag or a stray transform cannot leave
 			// the walker under the ground
@@ -462,6 +540,7 @@
 				worldphoto: { url: ph.url }
 			});
 			card.addEventListener('click', function () {
+				last_photo_click = Date.now();
 				try { window.parent.postMessage({ type: 'travel_world_photo', f: ph.f }, location.origin); } catch (e) {}
 			});
 			if (ph.label) {
@@ -484,9 +563,23 @@
 		}
 	}
 
+	// The opening look is a little down, and it has to be the camera's own pitch:
+	// a pitched rig turns the yaw about a tilted axis, so the horizon leans
+	// further the more the person looks around - a head tipped to one side.
+	// look-controls keeps its pitch in an object of its own (there is no markup
+	// for a starting angle), so the angle is set there and the camera stays
+	// upright underneath. The scene is level if that object ever moves.
+	function lookDown(degrees) {
+		var cam = document.getElementById('world_cam');
+		var look = cam && cam.components && cam.components['look-controls'];
+		if (!look || !look.pitchObject || !look.pitchObject.rotation) { return; }
+		look.pitchObject.rotation.x = degrees * Math.PI / 180;
+	}
+
 	function ready() {
 		var loading = document.getElementById('world_loading');
 		if (loading && built) { loading.style.display = 'none'; }
+		lookDown(-18);
 		try { window.parent.postMessage({ type: 'travel_world_ready' }, location.origin); } catch (e) {}
 	}
 
