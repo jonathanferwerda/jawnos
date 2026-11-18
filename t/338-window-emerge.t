@@ -48,8 +48,8 @@ like($lazy, qr/jawnosWindowOriginFromElement\(target\[0\], app\); \}\s*target\.t
 	'the lazy replay stamps the origin again before the click');
 like($emerge, qr/jawnosWindowEmergeRaise\(jawnosWindowEmergeControl\(el, \{ reopen: true \}\)\)/,
 	'a press for an app already on the desk is answered as a raise');
-like($emerge, qr/function jawnosWindowEmergeRaise\(control\)[\s\S]{0,700}windowTiledPress\(win\)/,
-	'which goes through windowTiledPress, the one path that jiggles');
+like($emerge, qr/function jawnosWindowEmergeRaise\(control\)[\s\S]{0,700}jawnosWindowEffect\(win, 'jiggle'\)[\s\S]{0,200}windowTiledPress\(win\)/,
+	'which raises through windowTiledPress and jiggles the window it raised');
 like($emerge, qr/el\.closest\('\.window_toggle'\)\) && jawnosWindowEmergeRaise/,
 	'a taskbar tile is left to its own raise/minimise');
 

@@ -287,9 +287,15 @@ $(document).on('click', '.background', function (e) {
 					// for the window, so the preview can start at once - unless the
 					// app is already on the desk, where the press raises that window
 					// and windowTiledPress answers with its jiggle instead
-					if (origin && typeof jawnosWindowEmergeGhostStart == 'function'
-						&& !(typeof jawnosWindowEmergeOpen == 'function' && jawnosWindowEmergeOpen(origin_app))) {
-						jawnosWindowEmergeGhostStart(origin);
+					if (origin && typeof jawnosWindowEmergeGhostStart == 'function') {
+						if (typeof jawnosWindowEmergeOpen == 'function' && jawnosWindowEmergeOpen(origin_app)) {
+							// already on the desk: the press raises that window and the
+							// desk answers with its jiggle - no preview for a second one
+							if (typeof jawnosWindowEmergeRaise == 'function') { jawnosWindowEmergeRaise({ app: origin_app }); }
+						}
+						else {
+							jawnosWindowEmergeGhostStart(origin);
+						}
 					}
 				}
 			}

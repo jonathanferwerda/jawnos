@@ -75,8 +75,10 @@ unlike($css, qr/\.wind\.jawnos_effect_[a-z_]+ \{[^}]*\b(left|top|width|height):/
 # --- every action the person asked for is hooked ----------------------------
 like($fit, qr/function windowMaximizer.*?jawnosWindowEffect\(win, 'stretch'\)/s, 'maximize stretches');
 like($fit, qr/function windowHalfski.*?jawnosWindowEffect\(win, 'stretch'\)/s, 'a half snap stretches');
-like($index, qr/function windowTiledPress\(win\).*?jawnosWindowEffect\(win, 'jiggle'\)/s,
-	'an already-open press jiggles the window it raises');
+like($index, qr/if \(open\) \{\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(typeof jawnosWindowEffect === 'function'\) \{ jawnosWindowEffect\(open, 'jiggle'\); \}[\s\S]{0,200}windowTiledPress\(open\)/,
+	'an opener asked for an app already on the desk jiggles the window it raises');
+unlike($index, qr/function windowTiledPress\(win\) \{[^}]*jawnosWindowEffect/s,
+	'but a press on a window\'s own body only raises - no jiggle per click');
 like($css, qr/\.wind\.jawnos_effect_jiggle \{[^}]*animation: jawnos_window_jiggle calc\([^)]*var\(--je-time\)/s,
 	'and the jiggle is a level-timed one-shot');
 like($effects, qr/jawnos_effect_jiggle/, 'the jiggle is cleaned up with the other one-shots');

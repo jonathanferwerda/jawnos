@@ -858,6 +858,10 @@ function windowTiledReserve(timestamp, app) {
 		}
 	});
 	if (open) {
+		// the opener was asked for an app already on the desk: the press answers
+		// on the existing window with a raise and the desk's jiggle, never a
+		// second window
+		if (typeof jawnosWindowEffect === 'function') { jawnosWindowEffect(open, 'jiggle'); }
 		if (typeof windowTiledPress === 'function') { windowTiledPress(open); }
 		return;
 	}
@@ -1157,10 +1161,10 @@ function windowTiledBump(win) {
 }
 
 function windowTiledPress(win) {
-	// an already-open press is a raise, not a new window: a short jiggle is
-	// the answer the desk gives it, and no preview is drawn (06_emerge's ghost
-	// is guarded by jawnosWindowEmergeOpen)
-	if (typeof jawnosWindowEffect === 'function') { jawnosWindowEffect(win, 'jiggle'); }
+	// A press only raises. The jiggle belongs to the control that was pressed -
+	// a clothesline pill, a taskbar pin, a start-menu icon (windowTiledReserve
+	// and 06_emerge's jawnosWindowEmergeRaise) - because this function also
+	// answers a press on a window's own body, and that must not jiggle.
 	if (typeof windowTiledBump === 'function' && windowTiledBump(win)) { return; }
 	topLevelNow($(win));
 }

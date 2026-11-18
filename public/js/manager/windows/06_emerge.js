@@ -1186,8 +1186,9 @@ function jawnosWindowEmergeRaise(control) {
 	for (var i = 0; i < winds.length; i++) {
 		var win = winds[i];
 		if (!win || !win.getAttribute || win.getAttribute('app') !== control.app) { continue; }
+		// the raise is windowTiledPress's job; the jiggle is the press's
+		if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'jiggle'); }
 		if (typeof windowTiledPress == 'function') { windowTiledPress(win); }
-		else if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'jiggle'); }
 		return true;
 	}
 	return false;

@@ -104,6 +104,14 @@ function jawnosWindowEffect(win, name) {
 	win = $(win);
 	if (!win.length || !jawnosWindowEffectsOn()) { return; }
 	var el = win[0];
+	// A control press arrives twice - the pointerdown that starts the preview,
+	// then the click that opens or raises - and one press wears one jiggle.
+	// Anything inside a window is a raise only, so it never reaches here.
+	if (name === 'jiggle') {
+		var stamp = (typeof performance != 'undefined' && performance.now) ? performance.now() : Date.now();
+		if (stamp - (el.jawnosJiggleAt || 0) < 500) { return; }
+		el.jawnosJiggleAt = stamp;
+	}
 	jawnosWindowEffectCancel(el);
 	// a reflow between removing and adding restarts the same keyframes, so
 	// pressing the pin twice in a row still kicks twice
