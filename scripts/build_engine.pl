@@ -86,13 +86,23 @@ push @cmd, ( '--features', $build_features ) if length $build_features;
 print "+ @cmd\n";
 my $built = system(@cmd) == 0;
 
-if ( !$built && length $build_features ) {
+# A machine with libasound but no libjack is the normal case (the house's
+# audio interfaces do not need JACK at all), so drop features one at a time
+# before giving up: ALSA alone still records, monitors and plays. Falling
+# straight from `alsa,jack` to nothing would stage a silent engine on exactly
+# the machine that has the interface plugged in.
+for my $fallback ( 'alsa', '' ) {
+	last if $built;
+	next if length $fallback && $fallback eq $build_features;
 	print "note: the device build failed with features `$build_features`;\n";
-	print "note: retrying with no features so the engine still runs the null device\n";
+	print "note: retrying with " . ( length $fallback ? "features `$fallback`" : 'no features' ) . "\n";
 	@cmd = @base;
+	push @cmd, ( '--features', $fallback ) if length $fallback;
 	print "+ @cmd\n";
 	$built = system(@cmd) == 0;
-	print "note: no device backend in the staged binary (null only)\n" if $built;
+	print "note: no device backend in the staged binary (null only)\n"
+		if $built && !length $fallback;
+	$build_features = $fallback if $built;
 }
 
 die "cargo build failed\n" unless $built;

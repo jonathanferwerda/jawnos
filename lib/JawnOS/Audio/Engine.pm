@@ -157,14 +157,34 @@ sub audio_engine_record {
 # "value":0.5}`. The route validates the name and the numbers; this only
 # speaks the line, so the engine's clamping and its "no take is running"
 # refusal are the answers a caller relays.
+#
+# A live listen has no track: its knobs are addressed with
+# `"target":"listen"`, so the optional fourth argument switches the addressing
+# and leaves the three-argument call every existing caller makes alone.
 sub audio_engine_param {
-	my ($track, $name, $value) = @_;
-	return audio_engine_command({
-		cmd   => 'param',
-		track => $track,
-		name  => $name,
-		value => $value,
-	});
+	my ($track, $name, $value, $target) = @_;
+	my $request = { cmd => 'param', name => $name, value => $value };
+	if (defined $target && length $target) {
+		$request->{'target'} = $target;
+	}
+	else {
+		$request->{'track'} = $track;
+	}
+	return audio_engine_command($request);
+}
+
+# Live monitoring on one input: `{"cmd":"listen","channel":1,"gain":0.8,
+# "pan":0,"inserts":["tone"]}`. The channel is an input number the route has
+# already narrowed to 0 (microphone) or 1 (instrument); no device name is
+# carried. The engine answers `state:"listening"`, and `stop` ends it.
+sub audio_engine_listen {
+	my ($channel, $gain, $pan, $inserts) = @_;
+	my $request = { cmd => 'listen' };
+	$request->{'channel'} = $channel if defined $channel;
+	$request->{'gain'} = $gain if defined $gain;
+	$request->{'pan'} = $pan if defined $pan;
+	$request->{'inserts'} = $inserts if ref $inserts eq 'ARRAY';
+	return audio_engine_command($request);
 }
 
 sub audio_engine_status {

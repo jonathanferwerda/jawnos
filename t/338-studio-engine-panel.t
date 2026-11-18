@@ -2,8 +2,10 @@
 # covers:    Studio's Engine take panel - POST /manager/studio/take action=param
 #            relays one strip knob per name class through a live Unix socket,
 #            refuses an unknown name, a bad number and a bad track with a 400
-#            and nothing on the wire, relays status, and the markup, the two
-#            scripts and the help topic carry the panel.
+#            and nothing on the wire, relays status, starting and stopping a
+#            live listen with a validated input, gain and insert chain, and the
+#            one knob addressed to `listen`; the markup, the scripts and the
+#            help topic carry the panel.
 
 use strict;
 use warnings;
@@ -258,6 +260,94 @@ my @names = qw(
 	is(request_count($log), 1, 'and the request did reach the socket');
 }
 
+# --- live listening: start, stop and its one knob ---------------------------
+{
+	my ($path, $log) = start_mock(replies => {
+		listen => '{"ok":true,"state":"listening","channel":1,"gain":0.8,"pan":0,"frames":0,"error":""}',
+		status => '{"ok":true,"state":"listening","channel":1,"frames":2048,"dropped":0,"error":""}',
+		stop   => '{"ok":true,"state":"done","frames":2048,"error":""}',
+		param  => '{"ok":true,"target":"listen","name":"gain","frames":2048}',
+	});
+	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
+
+	my $before = request_count($log);
+	my $started = run_take(action => 'listen_start', channel => '1', gain => '0.8', inserts => 'tone');
+	is($started->{'status'}, 200, 'listen_start is 200');
+	is($started->{'json'}{'state'}, 'listening', 'and relays the engine state');
+	is(request_count($log), $before + 1, 'listen_start sends exactly one line');
+	my $request = (logged_requests($log))[-1];
+	is($request->{'cmd'}, 'listen', 'it is a listen command');
+	is($request->{'channel'}, 1, 'the channel is numeric');
+	is($request->{'gain'}, 0.8, 'the gain is numeric');
+	is($request->{'pan'}, 0, 'pan defaults to zero');
+	is_deeply($request->{'inserts'}, ['tone'], 'the insert chain is the take whitelist');
+
+	my $mic = run_take(action => 'listen_start', channel => '0', gain => '0.5');
+	is($mic->{'status'}, 200, 'channel zero is the microphone');
+	is((logged_requests($log))[-1]{'channel'}, 0, 'and travels as zero');
+
+	my $loud = run_take(action => 'listen_start', channel => '0', gain => '9');
+	is($loud->{'status'}, 200, 'a gain above the range is accepted');
+	is((logged_requests($log))[-1]{'gain'}, 4, 'and clamped to four');
+	run_take(action => 'listen_start', channel => '0', gain => '-2');
+	is((logged_requests($log))[-1]{'gain'}, 0, 'a negative gain is clamped to zero');
+	run_take(action => 'listen_start', channel => '0');
+	is((logged_requests($log))[-1]{'gain'}, 0.8, 'a missing gain takes the default');
+
+	my $unchanged = request_count($log);
+	for my $channel ('2', '-1', 'mic', '', undef) {
+		my $fake = run_take(action => 'listen_start', channel => $channel, gain => '0.5');
+		is($fake->{'status'}, 400, 'channel ' . (defined $channel ? "'$channel'" : '(missing)') . ' is a 400');
+		like($fake->{'json'}{'error'}, qr/channel must be 0/, 'and names the two inputs');
+	}
+	for my $bad_gain ('abc', 'NaN', 'Inf', '1e999') {
+		my $fake = run_take(action => 'listen_start', channel => '0', gain => $bad_gain);
+		is($fake->{'status'}, 400, "gain '$bad_gain' is a 400");
+		like($fake->{'json'}{'error'}, qr/gain must be a finite number/, 'and names the rule');
+	}
+	my $bad_insert = run_take(action => 'listen_start', channel => '0', gain => '0.5', inserts => 'tone,flanger');
+	is($bad_insert->{'status'}, 400, 'an unknown insert is a 400');
+	like($bad_insert->{'json'}{'error'}, qr/no such insert: flanger/, 'and names the insert');
+	is(request_count($log), $unchanged, 'a refused listen never reaches the engine');
+
+	my $stop = run_take(action => 'listen_stop');
+	is($stop->{'status'}, 200, 'listen_stop is 200');
+	is((logged_requests($log))[-1]{'cmd'}, 'stop', 'and sends stop');
+
+	my $knob = run_take(action => 'param', target => 'listen', name => 'gain', value => '0.25');
+	is($knob->{'status'}, 200, 'a listen knob is 200');
+	$request = (logged_requests($log))[-1];
+	is($request->{'cmd'}, 'param', 'it is a param command');
+	is($request->{'target'}, 'listen', 'addressed to listen');
+	is($request->{'name'}, 'gain', 'with the knob name');
+	is($request->{'value'}, 0.25, 'and a number');
+	ok(!exists $request->{'track'}, 'a listen knob carries no track');
+
+	my $effect = run_take(action => 'param', target => 'listen', name => 'delay.mix', value => '0.5');
+	is($effect->{'status'}, 200, 'an effect parameter is accepted');
+
+	my $count = request_count($log);
+	for my $bad (qw(flanger Gain tonemix '')) {
+		my $fake = run_take(action => 'param', target => 'listen', name => $bad, value => '0.5');
+		is($fake->{'status'}, 400, "the listen name '$bad' is a 400");
+		like($fake->{'json'}{'error'}, qr/no such parameter/, 'and names the parameter');
+	}
+	for my $bad_value ('NaN', 'Inf', 'x') {
+		my $fake = run_take(action => 'param', target => 'listen', name => 'gain', value => $bad_value);
+		is($fake->{'status'}, 400, "the listen value '$bad_value' is a 400");
+	}
+	is(request_count($log), $count, 'a refused listen knob never reaches the engine');
+
+	# The client wrapper is the same one the route relays through.
+	my $direct = JawnOS::Audio::Engine::audio_engine_listen(1, 0.4, -0.2, [qw(tone delay)]);
+	is($direct->{'ok'}, 1, 'the client wrapper speaks listen');
+	my $direct_request = (logged_requests($log))[-1];
+	is($direct_request->{'channel'}, 1, 'with the input number');
+	is($direct_request->{'gain'}, 0.4, 'and the gain');
+	is($direct_request->{'pan'}, -0.2, 'and the pan');
+	is_deeply($direct_request->{'inserts'}, [qw(tone delay)], 'and the chain');
+}
+
 # --- no engine is an answer too, and validation happens first ----------------
 {
 	local $ENV{JAWNOS_AUDIO_SOCKET} = tempdir(CLEANUP => 1) . '/absent.sock';
@@ -283,6 +373,15 @@ like($markup, qr/id="studio_engine_seconds" value="10"/, 'seconds default to ten
 like($markup, qr/for my \$n \(1 \.\. 8\)/, 'the tracks picker offers one to eight');
 like($markup, qr/&subs::ui\('Start take'\)/, 'the Start take button is translatable');
 like($markup, qr/&subs::ui\('Stop take'\)/, 'the Stop take button is translatable');
+for my $id (qw(studio_listen_toggle studio_listen_input studio_listen_gain
+	studio_listen_state studio_listen_input_text studio_listen_frames)) {
+	like($markup, qr/id="$id"/, "the markup carries #$id");
+}
+like($markup, qr/&subs::ui\('Listen'\)/, 'the Listen button is translatable');
+like($markup, qr/<option value="0">/, 'the input picker offers channel zero');
+like($markup, qr/<option value="1">/, 'and channel one');
+like($markup, qr/id="studio_listen_gain"[^>]*min="0"[^>]*max="4"/,
+	'the listen gain spans zero to four');
 
 # --- the panel's scripts ------------------------------------------------------
 my $studio_js = read_file("$root/public/js/manager/studio.js");
@@ -304,6 +403,14 @@ like($controls_js, qr/\.studio_engine_gain, \.studio_engine_pan/,
 	'both strip sliders are bound');
 like($controls_js, qr/studioEngineParam\(\$\(this\)\.attr\('data-track'\)/,
 	'a slider sends its own track');
+like($controls_js, qr/'#studio_listen_toggle'/, 'Listen is bound in the controls part');
+like($controls_js, qr/'#studio_listen_input'/, 'the input picker is bound');
+like($controls_js, qr/'#studio_listen_gain'/, 'the listen gain slider is bound');
+like($controls_js, qr/action: 'listen_start'/, 'Listen starts the engine monitor');
+like($controls_js, qr/action: 'listen_stop'/, 'and stops it');
+like($controls_js, qr/target: 'listen'/, 'the gain is a param addressed to listen');
+like($controls_js, qr/setInterval\(studioListenStatus, 750\)/,
+	'listen status is polled while it runs');
 
 # --- the help topic speaks in the panel's words ------------------------------
 require "$root/perl/help.pl";
@@ -315,5 +422,8 @@ like($body, qr/Start take/, 'and its Start take control');
 like($body, qr/Stop take/, 'and its Stop take control');
 like($body, qr/Gain/, 'and the strip knob');
 like($body, qr/Pan/, 'and its partner');
+like($body, qr/Listen, below those controls, starts live monitoring/, 'help names the Listen control');
+like($body, qr/input 1 for the instrument/, 'help says input 1 is the instrument');
+like($body, qr/Only one capture is available/, 'help says listening and recording exclude each other');
 
 done_testing();

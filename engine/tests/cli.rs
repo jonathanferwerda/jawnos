@@ -1221,3 +1221,66 @@ fn play_needs_a_file() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+// --- listen -----------------------------------------------------------------
+
+#[test]
+fn listen_on_null_reports_the_contract_and_the_frame_count() {
+    let out = run(&[
+        "--listen", "--backend", "null", "--seconds", "0.1", "--channel", "1", "--gain", "0.5",
+        "--insert", "tone",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.trim().lines().count(), 1, "stdout: {text}");
+    assert!(text.contains("\"ok\":true"), "stdout: {text}");
+    assert!(text.contains("\"backend\":\"null\""), "stdout: {text}");
+    assert!(text.contains("\"device\":\"null\""), "stdout: {text}");
+    assert_eq!(json_number(&text, "channel"), 1.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "frames"), 4_800.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "rate"), 48_000.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "xruns"), 0.0, "stdout: {text}");
+    assert!(text.contains("\"error\":\"\""), "stdout: {text}");
+}
+
+#[test]
+fn listen_with_a_bad_insert_is_a_runtime_failure() {
+    let out = run(&[
+        "--listen", "--backend", "null", "--seconds", "0.1", "--insert", "flanger",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.trim().lines().count(), 1, "stdout: {text}");
+    assert!(text.contains("\"ok\":false"), "stdout: {text}");
+    assert!(text.contains("unknown insert"), "stdout: {text}");
+    assert!(text.contains("flanger"), "stdout: {text}");
+    assert_eq!(json_number(&text, "frames"), 0.0, "stdout: {text}");
+}
+
+#[test]
+fn listen_off_the_device_is_a_usage_error() {
+    let out = run(&[
+        "--listen", "--backend", "null", "--seconds", "0.1", "--channel", "2",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--channel 2"), "stderr: {stderr}");
+}
+
+#[test]
+fn listen_with_a_tone_still_reports_the_same_contract() {
+    let out = run(&[
+        "--listen", "--backend", "null", "--tone", "440", "--seconds", "0.05", "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "frames"), 2_400.0, "stdout: {text}");
+}

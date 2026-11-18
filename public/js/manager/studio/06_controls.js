@@ -9,6 +9,15 @@ $(document).on('change', '.studio_engine_gain, .studio_engine_pan', function () 
 	studioEngineParam($(this).attr('data-track'), name, $(this).val());
 });
 
+// The Listen control in the same panel: live monitoring, not a recording. The
+// engine allows one capture at a time, so listening and a take exclude each
+// other; its gain is a `param` addressed to `listen`.
+$(document).on('click', '#studio_listen_toggle', function () { studioListenToggle(); });
+$(document).on('change', '#studio_listen_input', function () {
+	if (studioListenActive) { studioListenStart(); }
+});
+$(document).on('change', '#studio_listen_gain', function () { studioListenParam($(this).val()); });
+
 async function studioStop() {
 	var wasRecording = (mixer['time']['status'] == 'record');
 	// a stop during the count-in cancels the take that never started
@@ -606,3 +615,161 @@ window.jawnosMediaSources.studioChannels = function () {
 	});
 	return out;
 };
+
+// ---- live listening --------------------------------------------------------
+// The Listen toggle starts the engine's monitoring mode and Stop listen ends it.
+// A listen is not a take: it carries an input number (0 microphone, 1
+// instrument), a gain, and the Inserts box's chain. While it runs, status is
+// polled so the row keeps showing the engine's state, input and frame count.
+
+var studioListenTimer = 0;
+var studioListenActive = false;
+
+function studioListenText(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+function studioListenInputText(channel) {
+	return (Number(channel) === 1) ? studioListenText('Instrument') : studioListenText('Microphone');
+}
+
+function studioListenSetActive(active) {
+	studioListenActive = !!active;
+	var button = $('#studio_listen_toggle');
+	if (!button.length) { return; }
+	button.attr('aria-pressed', studioListenActive ? 'true' : 'false');
+	button.text(studioListenActive ? studioListenText('Listening') : studioListenText('Listen'));
+}
+
+function studioListenRender(data) {
+	data = data || {};
+	var state = (typeof data.state == 'string' && data.state.length) ? data.state : '\u2014';
+	$('#studio_listen_state').text(studioListenText('State') + ' ' + state);
+	var channel = (typeof data.channel == 'number') ? data.channel : $('#studio_listen_input').val();
+	$('#studio_listen_input_text').text(studioListenText('Input') + ' ' + studioListenInputText(channel));
+	var frames = (typeof data.frames == 'number' && isFinite(data.frames))
+		? String(data.frames) : '\u2014';
+	$('#studio_listen_frames').text(studioListenText('Frames') + ' ' + frames);
+}
+
+function studioListenPollStart() {
+	if (studioListenTimer) { return; }
+	studioListenTimer = setInterval(studioListenStatus, 750);
+}
+
+function studioListenPollStop() {
+	if (studioListenTimer) { clearInterval(studioListenTimer); studioListenTimer = 0; }
+}
+
+function studioListenStatus() {
+	if (!$('#studio_listen_toggle').length) { studioListenPollStop(); return; }
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: { action: 'status' },
+		dataType: 'json',
+		success: function (data) {
+			data = studioEngineAnswer(data);
+			if (data.ok !== true) {
+				studioListenPollStop();
+				studioListenSetActive(false);
+				studioListenShowError(data.error || studioListenText('the audio engine did not answer'));
+				return;
+			}
+			if (data.state === 'listening') {
+				studioListenSetActive(true);
+				studioListenRender(data);
+				studioListenPollStart();
+			} else {
+				studioListenPollStop();
+				studioListenSetActive(false);
+				studioListenRender(data);
+			}
+		},
+		error: studioListenFailed
+	});
+}
+
+function studioListenShowError(text) {
+	var el = $('#studio_engine_error');
+	if (el.length) { el.text(text || ''); }
+}
+
+function studioListenFailed(xhr) {
+	var data = xhr && xhr.responseJSON;
+	studioListenPollStop();
+	studioListenSetActive(false);
+	studioListenShowError((data && data.error) ? data.error : studioListenText('the audio engine did not answer'));
+}
+
+function studioListenStart() {
+	studioListenShowError('');
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: {
+			action: 'listen_start',
+			channel: $('#studio_listen_input').val(),
+			gain: $('#studio_listen_gain').val(),
+			inserts: $('#studio_engine_inserts').val()
+		},
+		dataType: 'json',
+		success: function (data) {
+			data = studioEngineAnswer(data);
+			if (data.ok !== true) {
+				studioListenSetActive(false);
+				studioListenShowError(data.error || studioListenText('the audio engine did not answer'));
+				studioListenRender(data);
+				return;
+			}
+			studioListenSetActive(true);
+			studioListenRender(data);
+			studioListenPollStart();
+		},
+		error: studioListenFailed
+	});
+}
+
+function studioListenStop() {
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: { action: 'listen_stop' },
+		dataType: 'json',
+		success: function (data) {
+			studioListenPollStop();
+			studioListenSetActive(false);
+			data = studioEngineAnswer(data);
+			if (data.ok !== true) {
+				studioListenShowError(data.error || studioListenText('the audio engine did not answer'));
+				return;
+			}
+			studioListenRender(data);
+		},
+		error: studioListenFailed
+	});
+}
+
+function studioListenToggle() {
+	if (studioListenActive) { studioListenStop(); }
+	else { studioListenStart(); }
+}
+
+function studioListenParam(value) {
+	if (!studioListenActive) { return; }
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: { action: 'param', target: 'listen', name: 'gain', value: value },
+		dataType: 'json',
+		success: function (data) {
+			data = studioEngineAnswer(data);
+			if (data.ok !== true) {
+				studioListenShowError(data.error || studioListenText('the audio engine did not answer'));
+				return;
+			}
+			studioListenRender(data);
+		},
+		error: studioListenFailed
+	});
+}

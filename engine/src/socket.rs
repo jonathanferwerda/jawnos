@@ -63,6 +63,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use jawn_audio::{
+    listen::{self, ListenPlan, ListenStrip},
     monitor_start, to_i16, BackendKind, Channel, Device, DiskWriter, InsertKind, Mixer,
     MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback,
 };
@@ -126,6 +127,7 @@ pub(crate) fn serve(config: Config) -> Result<ExitCode, String> {
         config,
         current: None,
         playback: None,
+        listen: None,
         next_take: 1,
     };
     let outcome = server.run(listener);
@@ -188,6 +190,10 @@ struct Server {
     /// take and a playback may run together (overdub), so both fields can be
     /// live; only one take and one playback can, at most.
     playback: Option<PlaySession>,
+    /// The most recent listen, kept after it ends for the same reason a take is.
+    /// A take and a listen cannot both hold the capture stream, so at most one
+    /// of `current` and `listen` can be live.
+    listen: Option<ListenSession>,
     next_take: u64,
 }
 
@@ -284,10 +290,16 @@ impl Server {
                         if let Some(session) = &self.playback {
                             session.stop.store(true, Ordering::SeqCst);
                         }
+                        if let Some(session) = &self.listen {
+                            session.stop.store(true, Ordering::SeqCst);
+                        }
                         if let Some(running) = &mut self.current {
                             running.finish();
                         }
                         if let Some(session) = &mut self.playback {
+                            session.finish();
+                        }
+                        if let Some(session) = &mut self.listen {
                             session.finish();
                         }
                         let _ = send(&mut client.stream, &reply);
@@ -310,6 +322,7 @@ impl Server {
         match command {
             "record" => Action::Reply(self.record(&object)),
             "play" => Action::Reply(self.play(&object)),
+            "listen" => Action::Reply(self.listen(&object)),
             "param" => Action::Reply(self.param(&object)),
             "status" => Action::Reply(self.status_line()),
             "stop" => Action::Reply(self.stop_line()),
@@ -332,7 +345,8 @@ impl Server {
             None | Some(Value::Null) => self.param_take(object),
             Some(Value::Str(target)) if target == "take" => self.param_take(object),
             Some(Value::Str(target)) if target == "monitor" => self.param_monitor(object),
-            _ => error_line("\"target\" must be \"take\" or \"monitor\""),
+            Some(Value::Str(target)) if target == "listen" => self.param_listen(object),
+            _ => error_line("\"target\" must be \"take\", \"monitor\" or \"listen\""),
         }
     }
 
@@ -459,7 +473,192 @@ impl Server {
         )
     }
 
+
+    /// The same knobs, addressed to the listen strip: `"target":"listen"`.
+    /// One strip, so `track` is not part of the contract; a name the strip's
+    /// chain does not have is refused exactly as it is for a take.
+    fn param_listen(&mut self, object: &Object) -> String {
+        let name = match get(object, "name") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => return error_line("param needs \"name\": a parameter name"),
+        };
+        let value = match get(object, "value") {
+            Some(Value::Num(value)) if value.is_finite() => *value as f32,
+            _ => return error_line("\"value\" must be a finite number"),
+        };
+        let parameter = match ParamName::parse(name) {
+            Some(parameter) => parameter,
+            None => return error_line(&format!("no such parameter: {name}")),
+        };
+        let session = match &self.listen {
+            Some(session) if session.is_listening() => session,
+            _ => return error_line("no listen is running"),
+        };
+        if let Some(insert) = parameter.insert() {
+            let present = session
+                .snapshot()
+                .inserts
+                .split(',')
+                .any(|entry| entry == insert);
+            if !present {
+                return error_line(&format!("no such parameter: {name}"));
+            }
+        }
+        if !session.params.push(0, parameter, value) {
+            return error_line("the parameter queue is full; try again next block");
+        }
+        let mut status = session
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match parameter {
+            ParamName::Gain => status.gain = Channel::clamp_gain(value),
+            ParamName::Pan => status.pan = Channel::clamp_pan(value),
+            _ => {}
+        }
+        format!(
+            "{{\"ok\":true,\"target\":\"listen\",\"name\":\"{}\"}}",
+            jawn_audio::loopback::json_escape(name)
+        )
+    }
+
+    /// `{"cmd":"listen","channel":1,"gain":0.8,"pan":0,"inserts":["tone"]}`:
+    /// monitor one input through one strip until `stop`.
+    ///
+    /// The strip lives on the worker thread (an insert is not `Send`), so the
+    /// reply means "running"; `status` reports the frames it has rendered and
+    /// the gain, pan and inserts it was armed with. A `param` moves those
+    /// values at the next block, through the same [`ParamQueue`] a take uses.
+    fn listen(&mut self, object: &Object) -> String {
+        // One capture stream, one owner: a take cannot also feed the monitor
+        // yet. Sharing one capture between listen and record is the next step.
+        if let Some(running) = &self.current {
+            if running.is_recording() {
+                return error_line(
+                    "a take is recording; one capture stream cannot record and listen at once. Sharing one capture between listen and record is the next step",
+                );
+            }
+        }
+        if let Some(session) = &self.listen {
+            if session.is_listening() {
+                return error_line("listen is already running");
+            }
+        }
+        if let Some(session) = &self.playback {
+            if session.is_playing() {
+                return error_line(
+                    "a playback is already using the outputs; stop it before listening",
+                );
+            }
+        }
+
+        let channel = match get(object, "channel") {
+            None | Some(Value::Null) => 0,
+            Some(Value::Num(value))
+                if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 =>
+            {
+                *value as usize
+            }
+            _ => return error_line("\"channel\" must be a whole, non-negative input number"),
+        };
+        if channel >= self.config.channels {
+            return error_line(&format!(
+                "listen channel {channel} is outside the {}-channel device: restart the engine with a larger --channels",
+                self.config.channels
+            ));
+        }
+        let gain = match get(object, "gain") {
+            None | Some(Value::Null) => 1.0,
+            Some(Value::Num(value)) if value.is_finite() => Channel::clamp_gain(*value as f32),
+            _ => return error_line("\"gain\" must be a finite number"),
+        };
+        let pan = match get(object, "pan") {
+            None | Some(Value::Null) => 0.0,
+            Some(Value::Num(value)) if value.is_finite() => Channel::clamp_pan(*value as f32),
+            _ => return error_line("\"pan\" must be a finite number"),
+        };
+        let inserts = match get(object, "inserts") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Arr(names)) => {
+                let mut inserts = Vec::with_capacity(names.len());
+                for name in names {
+                    let word = match name {
+                        Value::Str(word) => word.as_str(),
+                        _ => return error_line("\"inserts\" must hold insert names"),
+                    };
+                    match InsertKind::parse(word) {
+                        Some(kind) => inserts.push(kind),
+                        None => return error_line(&format!("no such insert: {word}")),
+                    }
+                }
+                inserts
+            }
+            _ => return error_line("\"inserts\" must be an array of insert names"),
+        };
+        if let Err(error) = crate::listen_support(self.config.backend) {
+            return error_line(&error);
+        }
+
+        // Join a finished listener before replacing it, so a sequence of
+        // listens does not leave detached threads behind.
+        if let Some(mut previous) = self.listen.take() {
+            previous.finish();
+        }
+
+        let plan = ListenPlan {
+            channel,
+            gain,
+            pan,
+            inserts,
+        };
+        let inserts_text = plan.insert_list();
+        let status = Arc::new(Mutex::new(ListenStatus {
+            state: State::Listening,
+            channel,
+            frames: 0,
+            gain,
+            pan,
+            inserts: inserts_text,
+            error: String::new(),
+        }));
+        let stop = Arc::new(AtomicBool::new(false));
+        // The queue exists before the worker does: the strip is built on the
+        // listen thread, but `param` must be able to push as soon as this
+        // command answers.
+        let params = Arc::new(ParamQueue::new());
+        let spawned = {
+            let status = Arc::clone(&status);
+            let stop = Arc::clone(&stop);
+            let params = Arc::clone(&params);
+            let config = self.config.clone();
+            thread::Builder::new()
+                .name("jawn-audio-listen".to_string())
+                .spawn(move || run_listen_worker(config, plan, status, stop, params))
+        };
+        match spawned {
+            Ok(handle) => {
+                self.listen = Some(ListenSession {
+                    status,
+                    stop,
+                    handle: Some(handle),
+                    params,
+                });
+                format!("{{\"ok\":true,\"state\":\"listening\",\"channel\":{channel}}}")
+            }
+            Err(error) => error_line(&format!("cannot start the listen thread: {error}")),
+        }
+    }
+
     fn record(&mut self, object: &Object) -> String {
+        // One capture stream, one owner: a take cannot also feed the monitor
+        // yet. Sharing one capture between listen and record is the next step.
+        if let Some(session) = &self.listen {
+            if session.is_listening() {
+                return error_line(
+                    "listen is monitoring the inputs; a take cannot share the capture stream yet. Sharing one capture between listen and record is the next step",
+                );
+            }
+        }
         // The monitoring bus, if this take is an overdub. Parsed first so a
         // malformed list is a refusal whether or not a take is already running.
         let monitor = match parse_monitor(get(object, "monitor")) {
@@ -872,6 +1071,13 @@ impl Server {
     /// `failed` a moment later. The strips are the defaults the wire has no
     /// knobs for yet: unity trim, centre pan, no inserts.
     fn play(&mut self, object: &Object) -> String {
+        if let Some(session) = &self.listen {
+            if session.is_listening() {
+                return error_line(
+                    "listen is using the capture and playback streams; stop it before starting a playback",
+                );
+            }
+        }
         let files = match get(object, "files") {
             Some(Value::Arr(values)) if !values.is_empty() => {
                 let mut paths = Vec::with_capacity(values.len());
@@ -1018,13 +1224,20 @@ impl Server {
             .filter(|running| running.is_recording())
         {
             running.line_with_play(self.playback.as_ref())
+        } else if let Some(session) = self
+            .listen
+            .as_ref()
+            .filter(|session| session.is_listening())
+        {
+            session.line()
         } else if let Some(session) = &self.playback {
             session.line()
+        } else if let Some(running) = &self.current {
+            running.line()
+        } else if let Some(session) = &self.listen {
+            session.line()
         } else {
-            match &self.current {
-                Some(running) => running.line(),
-                None => idle_line(),
-            }
+            idle_line()
         };
         // The configuration describes the process, not the take, so every
         // state carries it: a supervisor compares these with its own flags to
@@ -1038,6 +1251,11 @@ impl Server {
             .as_ref()
             .map(Running::is_recording)
             .unwrap_or(false);
+        let was_listening = self
+            .listen
+            .as_ref()
+            .map(ListenSession::is_listening)
+            .unwrap_or(false);
         // Signal every worker before joining any: a join waits for a loop that
         // has already been told to stop, so neither worker can hold the other
         // past its block.
@@ -1047,6 +1265,9 @@ impl Server {
         if let Some(session) = &self.playback {
             session.stop.store(true, Ordering::SeqCst);
         }
+        if let Some(session) = &self.listen {
+            session.stop.store(true, Ordering::SeqCst);
+        }
         // Joining before answering makes `frames` and `monitor_frames` what was
         // actually produced, not a guess about a running loop.
         if let Some(running) = &mut self.current {
@@ -1054,6 +1275,14 @@ impl Server {
         }
         if let Some(session) = &mut self.playback {
             session.finish();
+        }
+        if let Some(session) = &mut self.listen {
+            session.finish();
+        }
+        if was_listening {
+            if let Some(session) = &self.listen {
+                return session.line();
+            }
         }
         if was_recording {
             if let Some(running) = &self.current {
@@ -1065,7 +1294,10 @@ impl Server {
         }
         match &self.current {
             Some(running) => running.line(),
-            None => idle_line(),
+            None => match &self.listen {
+                Some(session) => session.line(),
+                None => idle_line(),
+            },
         }
     }
 }
@@ -1148,6 +1380,7 @@ fn send(stream: &mut UnixStream, line: &str) -> bool {
 enum State {
     Recording,
     Playing,
+    Listening,
     Done,
     Failed,
 }
@@ -1157,6 +1390,7 @@ impl State {
         match self {
             State::Recording => "recording",
             State::Playing => "playing",
+            State::Listening => "listening",
             State::Done => "done",
             State::Failed => "failed",
         }
@@ -1660,6 +1894,214 @@ impl PlaySession {
             )
         }
     }
+}
+
+
+/// What `status` reads for a listen: its state, the frames it has rendered and
+/// the strip it was armed with.
+#[derive(Clone)]
+struct ListenStatus {
+    state: State,
+    channel: usize,
+    frames: u64,
+    gain: f32,
+    pan: f32,
+    inserts: String,
+    error: String,
+}
+
+/// The server's handle to one listen's worker thread.
+struct ListenSession {
+    status: Arc<Mutex<ListenStatus>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+    /// The control ring the strip drains at the top of every block.
+    params: Arc<ParamQueue>,
+}
+
+impl ListenSession {
+    fn snapshot(&self) -> ListenStatus {
+        self.status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn is_listening(&self) -> bool {
+        self.snapshot().state == State::Listening
+    }
+
+    /// Signal the worker and wait for it. When this returns the device loops
+    /// have stopped and the frames are final.
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let joined = match self.handle.take() {
+            Some(handle) => handle.join(),
+            None => Ok(()),
+        };
+        if joined.is_err() {
+            let mut status = self
+                .status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if status.state == State::Listening {
+                status.state = State::Failed;
+                status.error = "the listen thread panicked".to_string();
+            }
+        }
+    }
+
+    fn line(&self) -> String {
+        let status = self.snapshot();
+        let ok = status.state != State::Failed;
+        format!(
+            "{{\"ok\":{},\"state\":\"{}\",\"channel\":{},\"frames\":{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
+            ok,
+            status.state.name(),
+            status.channel,
+            status.frames,
+            status.gain,
+            status.pan,
+            jawn_audio::loopback::json_escape(&status.inserts),
+            jawn_audio::loopback::json_escape(&status.error)
+        )
+    }
+}
+
+/// The listener's worker: build the strip on this thread (an insert is not
+/// `Send`), then read and write until `stop` or a device error.
+fn run_listen_worker(
+    config: Config,
+    plan: ListenPlan,
+    status: Arc<Mutex<ListenStatus>>,
+    stop: Arc<AtomicBool>,
+    params: Arc<ParamQueue>,
+) {
+    let mut strip = ListenStrip::new(
+        plan.channel,
+        plan.gain,
+        plan.pan,
+        &plan.inserts,
+        Some(Arc::clone(&params)),
+    );
+    let outcome = match config.backend {
+        BackendKind::Null => listen_null(&mut strip, &config, &status, &stop),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            listen_hardware(&config, &mut strip, &status, &stop)
+        }
+        BackendKind::Jack => Err(crate::listen_support_message()),
+    };
+    let was_stopped = stop.load(Ordering::SeqCst);
+    let mut current = status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match outcome {
+        Ok(frames) => {
+            current.frames = frames;
+            if current.state == State::Listening {
+                current.state = State::Done;
+            }
+        }
+        // A stop is the caller's choice, not a failure.
+        Err(_) if was_stopped => current.state = State::Done,
+        Err(error) => {
+            current.state = State::Failed;
+            current.error = error;
+        }
+    }
+}
+
+/// The null listen: silence through the same strip, as fast as the CPU allows.
+/// `progress` keeps `status`'s frame count moving while the client watches.
+fn listen_null(
+    strip: &mut ListenStrip,
+    config: &Config,
+    status: &Arc<Mutex<ListenStatus>>,
+    stop: &AtomicBool,
+) -> Result<u64, String> {
+    let run = listen::run_null(
+        strip,
+        config.rate,
+        config.period,
+        config.channels,
+        None,
+        None,
+        stop,
+        |frames| {
+            let mut current = status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            current.frames = frames;
+        },
+    )?;
+    Ok(run.frames)
+}
+
+#[cfg(feature = "alsa")]
+struct SocketListenSink<'a> {
+    strip: &'a mut ListenStrip,
+    status: &'a Arc<Mutex<ListenStatus>>,
+    /// Device channels per frame, learned in `prepared`.
+    channels: usize,
+    frames: u64,
+}
+
+#[cfg(feature = "alsa")]
+impl listen::ListenSink for SocketListenSink<'_> {
+    fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
+        self.channels = channels;
+        self.strip.prepare(rate, period);
+        Ok(())
+    }
+
+    fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
+        let frames = self.strip.process_i16(input, self.channels, output)?;
+        self.frames += frames as u64;
+        let mut current = self
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        current.frames = self.frames;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alsa")]
+fn listen_hardware(
+    config: &Config,
+    strip: &mut ListenStrip,
+    status: &Arc<Mutex<ListenStatus>>,
+    stop: &AtomicBool,
+) -> Result<u64, String> {
+    let sink = SocketListenSink {
+        strip,
+        status,
+        channels: config.channels,
+        frames: 0,
+    };
+    let run = jawn_audio::alsa_device::run_listen(
+        &config.device,
+        config.rate,
+        config.period,
+        config.buffer,
+        config.channels,
+        None,
+        stop,
+        sink,
+    )
+    .map_err(|error| format!("cannot listen: {error}"))?;
+    Ok(run.frames)
+}
+
+#[cfg(not(feature = "alsa"))]
+fn listen_hardware(
+    config: &Config,
+    strip: &mut ListenStrip,
+    status: &Arc<Mutex<ListenStatus>>,
+    stop: &AtomicBool,
+) -> Result<u64, String> {
+    let _ = (config, strip, status, stop);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
 /// Update what `status` reads while a playback runs.

@@ -1256,6 +1256,20 @@ sub action_44023 {
 		return;
 	}
 	if ($action eq 'param') {
+		my $target = $c->param('target');
+		if (defined $target && $target eq 'listen') {
+			my ($error, $name, $value) = &studio_listen_param(
+				$c->param('name'), $c->param('value'),
+			);
+			if (defined $error) {
+				$c->render(json => { ok => 0, error => $error }, status => 400);
+				return;
+			}
+			$c->render(json => &JawnOS::Audio::Engine::audio_engine_param(
+				undef, $name, $value, 'listen',
+			));
+			return;
+		}
 		my ($error, $track, $name, $value) = &studio_take_param(
 			$c->param('track'), $c->param('name'), $c->param('value'),
 		);
@@ -1266,8 +1280,22 @@ sub action_44023 {
 		$c->render(json => &JawnOS::Audio::Engine::audio_engine_param($track, $name, $value));
 		return;
 	}
+	if ($action eq 'listen_start') {
+		my ($status, $answer) = &studio_listen_start(
+			$c->param('channel'),
+			$c->param('gain'),
+			$c->param('pan'),
+			$c->param('inserts'),
+		);
+		$c->render(json => $answer, status => $status);
+		return;
+	}
+	if ($action eq 'listen_stop') {
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_stop());
+		return;
+	}
 	unless ($action eq 'start') {
-		$c->render(json => { ok => 0, error => 'choose an action: start, stop or status, or param' }, status => 400);
+		$c->render(json => { ok => 0, error => 'choose an action: start, stop or status, listen_start or listen_stop, or param' }, status => 400);
 		return;
 	}
 
@@ -1384,6 +1412,90 @@ sub studio_take_param {
 		unless $value == $value && ($value - $value) == 0;
 
 	return (undef, $track, $name, $value);
+}
+
+# --- live listening ----------------------------------------------------------
+# A listen is not a take: it names an input number (0 microphone, 1 instrument),
+# a gain and pan, and the same five inserts a take can build. The browser never
+# names a device or a file; the engine is already pointed at the box's inputs.
+
+our $studio_listen_gain_default = 0.8;
+our $studio_listen_gain_max     = 4;
+our $studio_listen_pan_max      = 1;
+
+# A finite decimal in the engine's own spelling; undef means it is not one.
+sub studio_listen_number {
+	my ($value) = @_;
+	return undef
+		unless defined $value
+			&& $value =~ /\A\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*\z/;
+	$value += 0;
+	return undef unless $value == $value && ($value - $value) == 0;
+	return $value;
+}
+
+sub studio_listen_clamp {
+	my ($value, $low, $high) = @_;
+	return $low if $value < $low;
+	return $high if $value > $high;
+	return $value;
+}
+
+# Validate one `listen` request and return [status, engine answer]. A missing
+# gain takes the page's own default; a non-number is refused here so nothing bad
+# reaches the socket. Extra gain is clamped rather than refused.
+sub studio_listen_start {
+	my ($channel, $gain, $pan, $inserts) = @_;
+
+	$channel = '' unless defined $channel;
+	return (400, { ok => 0, error => 'channel must be 0 (microphone) or 1 (instrument)' })
+		unless $channel =~ /\A\s*[01]\s*\z/;
+	$channel += 0;
+
+	my $gain_value = $studio_listen_gain_default;
+	if (defined $gain && length $gain) {
+		$gain_value = &studio_listen_number($gain);
+		return (400, { ok => 0, error => 'gain must be a finite number' })
+			unless defined $gain_value;
+	}
+	$gain_value = &studio_listen_clamp($gain_value, 0, $studio_listen_gain_max);
+
+	my $pan_value = 0;
+	if (defined $pan && length $pan) {
+		$pan_value = &studio_listen_number($pan);
+		return (400, { ok => 0, error => 'pan must be a finite number' })
+			unless defined $pan_value;
+		$pan_value = &studio_listen_clamp($pan_value, -$studio_listen_pan_max, $studio_listen_pan_max);
+	}
+
+	my @list;
+	if (defined $inserts && length $inserts) {
+		for my $part (split /,/, $inserts) {
+			$part =~ s/\A\s+|\s+\z//g;
+			next unless length $part;
+			return (400, { ok => 0, error => "no such insert: $part" })
+				unless $studio_take_inserts{$part};
+			push @list, $part;
+		}
+	}
+
+	require JawnOS::Audio::Engine;
+	my $answer = &JawnOS::Audio::Engine::audio_engine_listen(
+		$channel, $gain_value, $pan_value, \@list,
+	);
+	$answer = { ok => 0, error => 'the audio engine did not answer' }
+		unless ref $answer eq 'HASH';
+	return (200, $answer);
+}
+
+# One listen knob: gain, pan or an effect parameter from the take's whitelist.
+sub studio_listen_param {
+	my ($name, $value) = @_;
+	$name = '' unless defined $name;
+	return ("no such parameter: $name") unless $studio_take_params{$name};
+	my $number = &studio_listen_number($value);
+	return ('value must be a finite number') unless defined $number;
+	return (undef, $name, $number);
 }
 
 # Validate the request's three optional plan fields and answer with the engine's

@@ -7,6 +7,7 @@
 //! (docs/studio-audio-roadmap.md §2, P1).
 
 use std::f32::consts::TAU;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use alsa::pcm::{Access, Format, HwParams, State, PCM};
 use alsa::{Direction, ValueOr};
@@ -432,6 +433,144 @@ pub fn run_capture<S: CaptureSink>(
         buffer: stream.buffer,
         channels,
         frames: captured,
+        xruns,
+    })
+}
+
+/// Monitor one input on the outputs: open capture and playback on the same
+/// device, read one block, hand it to `sink`, write the stereo result.
+///
+/// The capture stream is the clock. The two streams are unlinked, as the
+/// loopback's are, so the output's latency is the block it was read from plus
+/// the playback buffer, not a sample-exact promise. `total` is the run's frame
+/// count; `None` runs until `stop` is set, checked between blocks.
+///
+/// `capture_channels` is the interface's input width; the output is always
+/// stereo, because the strip's pan has two sides to put the signal in.
+pub fn run_listen<S: crate::listen::ListenSink>(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    capture_channels: usize,
+    total: Option<u64>,
+    stop: &AtomicBool,
+    mut sink: S,
+) -> Result<crate::listen::ListenRun, String> {
+    if capture_channels == 0 {
+        return Err("a capture needs at least one channel".to_string());
+    }
+    let capture = open(
+        device,
+        Direction::Capture,
+        rate,
+        period,
+        buffer,
+        capture_channels as u32,
+    )?;
+    let playback = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    if capture.rate != playback.rate {
+        return Err(format!(
+            "{device}: capture runs at {} Hz but playback at {} Hz; monitoring needs one clock",
+            capture.rate, playback.rate
+        ));
+    }
+
+    let rate = capture.rate;
+    let channels = capture.channels;
+    let frames = capture.period.max(1);
+    // Size the strip against the shape the device granted, before the first
+    // block; after this the sink only reads and writes memory it owns.
+    sink.prepared(rate, frames, channels)?;
+
+    let capture_io = capture
+        .pcm
+        .io_i16()
+        .map_err(|error| format!("{device}: capture stream: {error}"))?;
+    let playback_io = playback
+        .pcm
+        .io_i16()
+        .map_err(|error| format!("{device}: playback stream: {error}"))?;
+
+    // Capture starts first: playback auto-starts on its first write, so the
+    // first block has somewhere to go.
+    capture
+        .pcm
+        .start()
+        .map_err(|error| format!("{device}: start capture: {error}"))?;
+
+    let mut input = vec![0i16; frames * channels];
+    let mut output = vec![0i16; frames * 2];
+    let mut remaining = total;
+    let mut played = 0u64;
+    let mut xruns = 0usize;
+
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        let want = match remaining {
+            Some(0) => break,
+            Some(left) => left.min(frames as u64) as usize,
+            None => frames,
+        };
+
+        let got = match capture_io.readi(&mut input[..want * channels]) {
+            Ok(0) => break,
+            Ok(got) => got.min(want),
+            Err(error) => {
+                let message = format!("{error}");
+                match capture.pcm.try_recover(error, true) {
+                    Ok(()) => {
+                        xruns += 1;
+                        continue;
+                    }
+                    Err(_) => return Err(format!("{device}: capture: {message}")),
+                }
+            }
+        };
+        if got == 0 {
+            break;
+        }
+
+        sink.block(&input[..got * channels], &mut output[..got * 2])?;
+
+        // `writei` counts frames; a partial write is normal near the end of a
+        // block, and an underrun is recovered and counted like `--run` does.
+        let samples = got * 2;
+        let mut written = 0usize;
+        while written < samples {
+            match playback_io.writei(&output[written..samples]) {
+                Ok(0) => break,
+                Ok(count) => written += count * 2,
+                Err(error) => {
+                    let message = format!("{error}");
+                    match playback.pcm.try_recover(error, true) {
+                        Ok(()) => xruns += 1,
+                        Err(_) => return Err(format!("{device}: playback: {message}")),
+                    }
+                }
+            }
+        }
+
+        played += got as u64;
+        if let Some(left) = remaining.as_mut() {
+            *left = left.saturating_sub(got as u64);
+        }
+    }
+
+    // Let the last buffered block reach the device; a drain timeout is not a
+    // failure of the run itself.
+    let _ = playback.pcm.drain();
+    let _ = playback.pcm.drop();
+    let _ = capture.pcm.drop();
+
+    Ok(crate::listen::ListenRun {
+        rate,
+        period: frames,
+        buffer: capture.buffer,
+        channels,
+        frames: played,
         xruns,
     })
 }

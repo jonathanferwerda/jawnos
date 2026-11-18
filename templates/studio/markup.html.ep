@@ -39,6 +39,7 @@
 			<button id="studio_synth_hide" class="hover" data-setting="hide_synth" hint="<%= &subs::ui('Collapse the synth panel') %>">Hide</button>
 			<button id="studio_synth_show" class="hover" data-setting="hide_synth" hint="<%= &subs::ui('Show the synth panel') %>" style="display:none;">Synth</button>
 			<button class="studio_dock hover" data-panel="synth" hint="<%= &subs::ui('Dock the synth') %>"><%= &subs::ui('Dock') %></button>
+			<button class="studio_span_toggle hover" data-panel="synth" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="synth" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
 		<div class="studio_synth_body">
@@ -76,6 +77,7 @@
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="tracks" hint="<%= &subs::ui('Drag to move the track listing') %>"><%= &subs::ui('Tracks') %></span>
 			<button class="studio_dock hover" data-panel="tracks" hint="<%= &subs::ui('Dock the tracks') %>"><%= &subs::ui('Dock') %></button>
+			<button class="studio_span_toggle hover" data-panel="tracks" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="tracks" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
 		<div id="studio_viewer" channel_count="<%= $channel_count %>" data-max-tracks="<%= $max_tracks %>">
@@ -110,6 +112,7 @@
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="mixer" hint="<%= &subs::ui('Drag to move the channel strips') %>"><%= &subs::ui('Channels') %></span>
 			<button class="studio_dock hover" data-panel="mixer" hint="<%= &subs::ui('Dock the channel strips') %>"><%= &subs::ui('Dock') %></button>
+			<button class="studio_span_toggle hover" data-panel="mixer" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="mixer" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
 		<div id="studio_mixer_strips">
@@ -135,6 +138,7 @@
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="transport" hint="<%= &subs::ui('Drag to move the transport') %>"><%= &subs::ui('Transport') %></span>
 			<button class="studio_dock hover" data-panel="transport" hint="<%= &subs::ui('Dock the transport') %>"><%= &subs::ui('Dock') %></button>
+			<button class="studio_span_toggle hover" data-panel="transport" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="transport" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
 		<span id="studio_controls">
@@ -326,6 +330,15 @@
 							<label><%= &subs::ui('Tracks') %> <select id="studio_engine_tracks" hint="<%= &subs::ui('How many tracks the engine take records') %>"><% for my $n (1 .. 8) { %><option value="<%= $n %>"><%= $n %></option><% } %></select></label>
 							<label><%= &subs::ui('Inputs') %> <input id="studio_engine_inputs" size="8" placeholder="0,1"></label>
 							<label><%= &subs::ui('Inserts') %> <input id="studio_engine_inserts" size="12" placeholder="tone,delay"></label>
+							<hr>
+							<button id="studio_listen_toggle" aria-pressed="false" hint="<%= &subs::ui('Start or stop live monitoring on the engine') %>"><%= &subs::ui('Listen') %></button>
+							<label><%= &subs::ui('Listen input') %> <select id="studio_listen_input" hint="<%= &subs::ui('Choose microphone (0) or instrument (1) for live monitoring') %>"><option value="0"><%= &subs::ui('0 - microphone') %></option><option value="1"><%= &subs::ui('1 - instrument') %></option></select></label>
+							<label><%= &subs::ui('Listen gain') %> <input id="studio_listen_gain" type="range" min="0" max="4" step="0.01" value="0.8"></label>
+							<div id="studio_listen_status" style="font-size:12px;">
+								<span id="studio_listen_state">&mdash;</span>
+								<span id="studio_listen_input_text"></span>
+								<span id="studio_listen_frames"></span>
+							</div>
 							<div id="studio_engine_error" style="font-size:12px;"></div>
 							<div id="studio_engine_strips"></div>
 						</td>

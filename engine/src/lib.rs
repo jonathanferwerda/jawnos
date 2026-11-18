@@ -15,6 +15,7 @@ pub mod device;
 pub mod disk;
 pub mod effect;
 pub mod graph;
+pub mod listen;
 pub mod loopback;
 pub mod mixer;
 pub mod params;

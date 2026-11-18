@@ -147,6 +147,25 @@ impl Conversation {
         }
     }
 
+
+    /// `status` until the listener has rendered at least one frame.
+    fn wait_for_listen_frames(&mut self) -> String {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let status = self.ask("{\"cmd\":\"status\"}");
+            assert!(status.contains("\"ok\":true"), "status: {status}");
+            if status.contains("\"state\":\"listening\"") && json_number(&status, "frames") > 0.0
+            {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the listener never produced a frame: {status}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// `status` until the take has produced at least one frame.
     fn wait_for_frames(&mut self) -> String {
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -1393,6 +1412,142 @@ fn a_monitor_at_another_rate_is_refused_without_a_take() {
     let status = client.wait_for_done();
     assert!(status.contains("\"state\":\"done\""), "status: {status}");
     assert_wav(&take.path, 4_800);
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+// --- listen -----------------------------------------------------------------
+
+#[test]
+fn listen_reports_status_takes_params_and_stops() {
+    let server = Server::start("listen");
+    let mut client = server.connect();
+
+    let reply = client.ask(
+        "{\"cmd\":\"listen\",\"channel\":1,\"gain\":0.8,\"pan\":0,\"inserts\":[\"tone\"]}",
+    );
+    assert_eq!(reply, "{\"ok\":true,\"state\":\"listening\",\"channel\":1}");
+
+    let status = client.wait_for_listen_frames();
+    assert!(status.contains("\"state\":\"listening\""), "status: {status}");
+    assert_eq!(json_number(&status, "channel"), 1.0, "status: {status}");
+    assert_eq!(json_number(&status, "gain"), 0.8, "status: {status}");
+    assert_eq!(json_number(&status, "pan"), 0.0, "status: {status}");
+    assert!(status.contains("\"inserts\":\"tone\""), "status: {status}");
+    assert!(json_number(&status, "frames") > 0.0, "status: {status}");
+
+    // `param` moves the listen strip, and status mirrors it.
+    let reply = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"listen\",\"name\":\"gain\",\"value\":0.5}",
+    );
+    assert_eq!(reply, "{\"ok\":true,\"target\":\"listen\",\"name\":\"gain\"}");
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert_eq!(json_number(&status, "gain"), 0.5, "status: {status}");
+
+    let reply = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"listen\",\"name\":\"pan\",\"value\":-1}",
+    );
+    assert!(reply.contains("\"ok\":true"), "pan: {reply}");
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert_eq!(json_number(&status, "pan"), -1.0, "status: {status}");
+
+    // An insert that is in the chain takes its own knob...
+    let reply = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"listen\",\"name\":\"tone.bass\",\"value\":6}",
+    );
+    assert!(reply.contains("\"ok\":true"), "tone.bass: {reply}");
+    // ...and one that is not is refused, as it is for a take.
+    let reply = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"listen\",\"name\":\"delay.mix\",\"value\":0.5}",
+    );
+    assert!(reply.contains("\"ok\":false"), "delay.mix: {reply}");
+    assert!(reply.contains("no such parameter: delay.mix"), "{reply}");
+
+    // A stop joins the loop and answers with the final line.
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"ok\":true"), "stop: {stopped}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    assert_eq!(json_number(&stopped, "channel"), 1.0, "stop: {stopped}");
+    assert_eq!(json_number(&stopped, "gain"), 0.5, "stop: {stopped}");
+    assert_eq!(json_number(&stopped, "pan"), -1.0, "stop: {stopped}");
+    assert!(json_number(&stopped, "frames") > 0.0, "stop: {stopped}");
+
+    // A finished listener is a status line, not a running strip.
+    let reply = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"listen\",\"name\":\"gain\",\"value\":0.5}",
+    );
+    assert!(reply.contains("\"ok\":false"), "after stop: {reply}");
+    assert!(reply.contains("no listen is running"), "after stop: {reply}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn listen_and_record_refuse_each_other() {
+    let server = Server::start("listen-record");
+    let mut client = server.connect();
+
+    let reply = client.ask("{\"cmd\":\"listen\",\"channel\":1}");
+    assert_eq!(reply, "{\"ok\":true,\"state\":\"listening\",\"channel\":1}");
+    client.wait_for_listen_frames();
+
+    let take = TempFile::new("listen-refused");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "record while listen: {reply}");
+    assert!(reply.contains("capture"), "record while listen: {reply}");
+    assert!(reply.contains("next step"), "record while listen: {reply}");
+    assert!(!take.path.exists(), "a refused take must not create a file");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop listen: {stopped}");
+
+    // With the listener stopped, a take runs.
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    let status = client.wait_for_done();
+    assert!(status.contains("\"state\":\"done\""), "status: {status}");
+
+    // A long take holds the capture: listen is refused with the same reason.
+    let long = TempFile::new("listen-long");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300}}",
+        long.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "long record: {reply}");
+    client.wait_for_frames();
+
+    let reply = client.ask("{\"cmd\":\"listen\",\"channel\":1}");
+    assert!(reply.contains("\"ok\":false"), "listen while record: {reply}");
+    assert!(reply.contains("capture"), "listen while record: {reply}");
+    assert!(reply.contains("next step"), "listen while record: {reply}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop take: {stopped}");
+    let frames = json_number(&stopped, "frames");
+    assert!(frames > 0.0, "stop kept the frames it had: {stopped}");
+    assert_wav(&long.path, frames as u64);
 
     let reply = client.ask("{\"cmd\":\"quit\"}");
     assert_eq!(reply, "{\"ok\":true}");

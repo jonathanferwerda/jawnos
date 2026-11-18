@@ -70,30 +70,54 @@ function studioApplyHideSettings() {
 	});
 }
 
-// ---- floating panels -------------------------------------------------------
+// ---- packing panels --------------------------------------------------------
+//
+// The four docked panels share one grid and no panel owns a cell. Its place is
+// its persisted order (the grid's auto-placement order) and its width is the
+// number of columns it spans. Dropping a docked panel onto another inserts it
+// before that panel, and the ones after it reflow into the gaps. A floated panel
+// leaves the grid but keeps its order and span, so Dock puts it back in place.
 
-// The four docked panels live in #studio_grid's named cells. A panel keeps its
-// area while floated, so Dock can send it home; dropping one docked panel on
-// another swaps their areas instead of restacking them.
-var studioPanelDefaultArea = {
-	synth: 'synth',
-	tracks: 'tracks',
-	mixer: 'mixer',
-	transport: 'transport'
-};
+var studioPanelNames = ['synth', 'tracks', 'mixer', 'transport'];
+var studioPanelOrder = studioPanelNames.slice();
+var studioPanelSpan = { synth: 1, tracks: 1, mixer: 1, transport: 1 };
+var STUDIO_PANEL_MIN_SPAN = 1;
+var STUDIO_PANEL_MAX_SPAN = 2;
 
-function studioPanelArea(name) {
-	var panel = studioPanelElement(name);
-	return panel.attr('data-studio-area') || studioPanelDefaultArea[name] || name;
+function studioPanelOrderIndex(name) {
+	for (var i = 0; i < studioPanelOrder.length; i++) {
+		if (studioPanelOrder[i] == name) { return i; }
+	}
+	return studioPanelOrder.length;
 }
 
-function studioApplyPanelArea(name, area, persist) {
+function studioPanelSpanValue(name) {
+	var span = parseInt(studioPanelSpan[name], 10);
+	return (span == STUDIO_PANEL_MAX_SPAN) ? STUDIO_PANEL_MAX_SPAN : STUDIO_PANEL_MIN_SPAN;
+}
+
+// `order` is how the grid's auto-placement sees a panel; the DOM itself is left
+// alone, so docking a float does not have to shuffle its neighbours' nodes.
+function studioApplyPanelOrder() {
+	$.each(studioPanelNames, function (i, name) {
+		var panel = studioPanelElement(name);
+		if (!panel.length) { return; }
+		var index = studioPanelOrderIndex(name);
+		panel.attr('data-studio-order', index).css('order', index);
+	});
+}
+
+function studioApplyPanelSpan(name) {
 	var panel = studioPanelElement(name);
-	if (!panel.length || !area) { return; }
-	panel.attr('data-studio-area', area).css('grid-area', area);
-	if (persist) {
-		studioPersistPanelPosition(name, { docked: true, area: area });
-	}
+	if (!panel.length) { return; }
+	var span = studioPanelSpanValue(name);
+	panel.attr('data-studio-span', span).css('grid-column', 'span ' + span);
+	var wide = span > STUDIO_PANEL_MIN_SPAN;
+	$('.studio_span_toggle[data-panel="' + name + '"]').each(function () {
+		var button = $(this);
+		button.attr('aria-pressed', wide ? 'true' : 'false');
+		button.text(studioLayoutText(wide ? 'Narrow' : 'Wide'));
+	});
 }
 
 function studioPersistPanelPosition(name, value) {
@@ -122,11 +146,12 @@ function studioPanelBox(panel) {
 	};
 }
 
-// A float keeps the cell it came from, so a reload followed by Dock does not
-// silently send a swapped panel back to its default cell.
+// A float keeps the order and span it came from, so a reload followed by Dock
+// does not silently send a reordered panel back to its default place.
 function studioFloatState(name, panel) {
 	var state = studioPanelBox(panel);
-	state.area = studioPanelArea(name);
+	state.order = studioPanelOrderIndex(name);
+	state.span = studioPanelSpanValue(name);
 	return state;
 }
 
@@ -181,7 +206,6 @@ function studioFloatPanel(name, position, persist) {
 	}
 	if (position && typeof position.left == 'number' && typeof position.top == 'number') {
 		var current = studioPanelSize(panel);
-		if (position.area) { studioApplyPanelArea(name, position.area, false); }
 		var placed = studioClampPanelBox(panel, position.left, position.top,
 			typeof position.width == 'number' ? position.width : current.width,
 			typeof position.height == 'number' ? position.height : current.height);
@@ -210,20 +234,44 @@ function studioDockPanel(name, persist) {
 		else { $(parent).append(panel); }
 	}
 	else { $('#studio_grid').append(panel); }
-	studioApplyPanelArea(name, studioPanelArea(name), false);
+	studioApplyPanelOrder();
+	studioApplyPanelSpan(name);
 	if (persist !== false) {
-		studioPersistPanelPosition(name, { docked: true, area: studioPanelArea(name) });
+		studioPersistPanelPosition(name, {
+			docked: true,
+			order: studioPanelOrderIndex(name),
+			span: studioPanelSpanValue(name)
+		});
 	}
 }
 
 function studioApplyPanelPositions() {
+	var saved = {};
 	$.each(studioPanelSelectors, function (name) {
 		var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_position_' + name] : undefined;
 		if (!raw) { return; }
 		var position = null;
 		try { position = JSON.parse(raw); } catch (e) { return; }
 		if (!position) { return; }
-		if (position.area) { studioApplyPanelArea(name, position.area, false); }
+		saved[name] = position;
+		if (typeof position.span == 'number') { studioPanelSpan[name] = position.span; }
+	});
+
+	// Rebuild the shared order from whatever each panel saved, keeping the
+	// default order for a panel that has never been moved (and as the tie-break).
+	var defaultIndex = {};
+	$.each(studioPanelNames, function (i, name) { defaultIndex[name] = i; });
+	studioPanelOrder = studioPanelNames.slice().sort(function (a, b) {
+		var oa = (saved[a] && typeof saved[a].order == 'number') ? saved[a].order : defaultIndex[a];
+		var ob = (saved[b] && typeof saved[b].order == 'number') ? saved[b].order : defaultIndex[b];
+		return (oa - ob) || (defaultIndex[a] - defaultIndex[b]);
+	});
+
+	studioApplyPanelOrder();
+	$.each(studioPanelNames, function (i, name) { studioApplyPanelSpan(name); });
+	$.each(studioPanelNames, function (i, name) {
+		var position = saved[name];
+		if (!position) { return; }
 		if (position.docked) { studioDockPanel(name, false); }
 		else if (typeof position.left == 'number' && typeof position.top == 'number') {
 			studioFloatPanel(name, position, false);
@@ -258,7 +306,8 @@ function studioApplyLayoutSettings() {
 // ---- drag, resize and the docked grid --------------------------------------
 
 // The docked panel under the pointer, if any. Used on pointerup: a docked panel
-// dropped on another cell swaps with it; dropped anywhere else it stays a float.
+// dropped on another inserts itself before that panel; dropped anywhere else it
+// stays a float.
 function studioDockedPanelUnder(name, original) {
 	if (!original) { return null; }
 	var target = null;
@@ -277,13 +326,29 @@ function studioDockedPanelUnder(name, original) {
 	return target;
 }
 
-function studioSwapDockedPanels(name, target) {
-	var from = studioPanelArea(name);
-	var to = studioPanelArea(target);
-	if (!from || !to || from == to) { return; }
+// Insert a dropped panel before the one it landed on and let the rest reflow.
+// The saved order is the whole arrangement, not just the moved panel's place.
+function studioReorderDockedPanel(name, target) {
+	var from = studioPanelOrderIndex(name);
+	studioPanelOrder.splice(from, 1);
+	var to = studioPanelOrderIndex(target);
+	studioPanelOrder.splice(to, 0, name);
 	studioDockPanel(name, false);
-	studioApplyPanelArea(name, to, true);
-	studioApplyPanelArea(target, from, true);
+	studioApplyPanelOrder();
+	studioPersistPanelOrder();
+}
+
+// Persist order and span for every panel. A floated panel keeps its box, and its
+// saved order/span so Dock returns it to the packed place it left.
+function studioPersistPanelOrder() {
+	$.each(studioPanelNames, function (i, name) {
+		var panel = studioPanelElement(name);
+		if (!panel.length) { return; }
+		var value = panel.hasClass('studio_panel_floating')
+			? studioFloatState(name, panel)
+			: { docked: true, order: studioPanelOrderIndex(name), span: studioPanelSpanValue(name) };
+		studioPersistPanelPosition(name, value);
+	});
 }
 
 // A pointer drag moves a floating panel; pressing the handle on a docked panel
@@ -369,7 +434,7 @@ $(document).on('pointerup pointercancel', function (e) {
 	drag.panel.removeClass('studio_panel_dragging');
 	if (!drag.wasFloating && e.type == 'pointerup') {
 		var target = studioDockedPanelUnder(drag.name, e.originalEvent);
-		if (target) { studioSwapDockedPanels(drag.name, target); return; }
+		if (target) { studioReorderDockedPanel(drag.name, target); return; }
 	}
 	studioPersistPanelPosition(drag.name, studioFloatState(drag.name, drag.panel));
 });
@@ -385,6 +450,22 @@ $(document).on('click', '.studio_float_toggle', function () {
 	var panel = studioPanelElement(name);
 	if (panel.hasClass('studio_panel_floating')) { studioDockPanel(name); }
 	else { studioFloatPanel(name, null, true); }
+});
+
+// The width control cycles a docked panel between one and two columns. A float is
+// sized by its own box, so the control is hidden while it floats.
+$(document).on('click', '.studio_span_toggle', function () {
+	var name = $(this).attr('data-panel');
+	var panel = studioPanelElement(name);
+	if (!panel.length || panel.hasClass('studio_panel_floating')) { return; }
+	studioPanelSpan[name] = (studioPanelSpanValue(name) >= STUDIO_PANEL_MAX_SPAN)
+		? STUDIO_PANEL_MIN_SPAN : STUDIO_PANEL_MAX_SPAN;
+	studioApplyPanelSpan(name);
+	studioPersistPanelPosition(name, {
+		docked: true,
+		order: studioPanelOrderIndex(name),
+		span: studioPanelSpanValue(name)
+	});
 });
 
 $(document).on('click', '.studio_dock', function () {

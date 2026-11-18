@@ -18,6 +18,7 @@ use std::thread;
 use jawn_audio::{
     backends::{self, BackendKind, RunReport},
     decode, encode_datagram, loopback, mix_mono_into_stereo, monitor_start, peak, to_i16, Channel,
+    listen::{self, ListenPlan, ListenReport, ListenStrip},
     Codec, Device, DiskWriter, Header, InsertKind, Mixer, MonitorSpec, NullDevice, PlayTrack,
     Playback, Strip, HEADER_LEN,
 };
@@ -46,6 +47,7 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --record --out FILE.wav --play --file A.wav
                                           overdub: record while A.wav plays back
   jawn-audio --play --file A.wav          play takes back through their strips
+  jawn-audio --listen [options]           monitor one input through a strip
   jawn-audio --serve [options]            arm and place takes over a Unix socket
   jawn-audio --version                    print the version
   jawn-audio --help                       this text
@@ -152,6 +154,29 @@ jawn-audio — the JawnOS audio engine
   to one 1-based file, and an unprefixed knob applies to every file. The null
   backend plays as fast as it can; ALSA is paced by the card.
 
+--listen options:
+  --backend N     null (default), alsa, pipewire or jack
+  --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
+  --channel N     which input to monitor (default 0; the instrument is 1)
+  --gain N        channel trim, linear (default 1.0)
+  --pan N         channel pan, -1 left .. 1 right (default 0, centre)
+  --insert NAME   an insert, repeatable in chain order:
+                  tone, distortion, delay, compressor or reverb
+  --period N      block/period size in frames (default 64; --frames is an alias)
+  --buffer N      buffer size in frames (default 256)
+  --seconds S     stop after S seconds (default: until SIGINT/SIGTERM)
+  --rate HZ       sample rate (default 48000)
+  --channels N    capture channels to ask the device for (default 2, 1..=32)
+  --tone HZ       with the null backend, generate this sine as the input
+  --json          accepted for symmetry: --listen always prints its JSON line
+
+  One capture stream, one mono block, one strip: --channel selects the input,
+  the trim runs before the inserts and the equal-power pan after them, and the
+  stereo pair goes to the outputs. A device error is one JSON line and exit 1.
+  A SIGINT or SIGTERM stops both streams cleanly, prints the same line and
+  exits 0. A take cannot record while listening, and listen is refused while a
+  take records: sharing one capture between listen and record is the next step.
+
 --loopback options:
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
@@ -177,7 +202,11 @@ quit. `record` takes \"out\", \"seconds\", \"start_at\", \"tracks\" and \"inputs
 played to the outputs while the take records (an overdub; the monitor never
 enters the take). `play` may run beside a recording's monitor, and `record`
 may start over a running playback. Two takes at once, and two playbacks at
-once, are refused. One `stop` ends and joins both roles, and `status` reports
+once, are refused. `listen` opens capture on \"channel\" and plays it through
+one strip (\"gain\", \"pan\", \"inserts\"); `status` reports it as \"listening\"
+with \"frames\" and the strip, and `param` addresses it with
+\"target\":\"listen\". A take and a listen refuse each other while both need the
+capture stream. One `stop` ends and joins every running role, and `status` reports
 the take's state with \"playing\", \"monitor_frames\" and the monitor strips
 beside it. `start_at` is the take's stamp; the monitor starts that many
 samples minus the capture offset given by \"align_samples\" or measured by
@@ -200,6 +229,7 @@ enum Mode {
     Loopback,
     Record,
     Play,
+    Listen,
     Serve,
     SelfTest,
     Version,
@@ -231,6 +261,10 @@ struct Options {
     gains: Vec<(usize, f32)>,
     pans: Vec<(usize, f32)>,
     inserts: Vec<InsertSpec>,
+    /// `--insert` words the engine does not know. `--listen` reports one as a
+    /// runtime failure (exit 1); every other mode keeps the historical usage
+    /// error (exit 2). The mode is not known until the whole line is read.
+    invalid_inserts: Vec<String>,
     /// `--file` in the order given; one strip per file for `--play`.
     files: Vec<String>,
     /// `--monitor`/`--monitor-file` in the order given, or `--file` when
@@ -294,6 +328,7 @@ fn run() -> Result<ExitCode, String> {
         gains: Vec::new(),
         pans: Vec::new(),
         inserts: Vec::new(),
+        invalid_inserts: Vec::new(),
         files: Vec::new(),
         monitor: Vec::new(),
         monitor_gain: 1.0,
@@ -329,6 +364,7 @@ fn run() -> Result<ExitCode, String> {
                 options.mode = Mode::Play;
                 options.play_flag = true;
             }
+            "--listen" => options.mode = Mode::Listen,
             "--file" => options.files.push(value(&mut args, "--file")?),
             "--monitor" | "--monitor-file" => {
                 options.monitor.push(value(&mut args, &arg)?)
@@ -474,12 +510,10 @@ fn run() -> Result<ExitCode, String> {
             "--insert" => {
                 let raw = value(&mut args, "--insert")?;
                 let (track, text) = split_target(&raw);
-                let kind = InsertKind::parse(text).ok_or_else(|| {
-                    format!(
-                        "unknown insert `{text}` (want tone, distortion, delay, compressor or reverb)"
-                    )
-                })?;
-                options.inserts.push(InsertSpec { track, kind });
+                match InsertKind::parse(text) {
+                    Some(kind) => options.inserts.push(InsertSpec { track, kind }),
+                    None => options.invalid_inserts.push(text.to_string()),
+                }
             }
             other => return Err(format!("unknown option `{other}` (try --help)")),
         }
@@ -507,11 +541,33 @@ fn run() -> Result<ExitCode, String> {
         options.mode = Mode::Record;
     }
 
+    // An unknown insert is a usage error everywhere except `--listen`, whose
+    // one contract is the JSON line. Reporting it now means the word added at
+    // parse time does not have to guess the mode.
+    if let Some(word) = options.invalid_inserts.first() {
+        let message = format!(
+            "unknown insert `{word}` (want tone, distortion, delay, compressor or reverb)"
+        );
+        if options.mode == Mode::Listen {
+            let device = options.backend.device_name(options.device.as_deref());
+            let report = ListenReport::failure(
+                options.backend.name(),
+                device,
+                options.input,
+                options.rate,
+                message,
+            );
+            println!("{}", report.to_json());
+            return Ok(ExitCode::from(1));
+        }
+        return Err(message);
+    }
+
     // These knobs describe a take's tracks, and `--record` is the only mode
     // that has them today; say so instead of accepting a knob that does
     // nothing. `--channel` keeps its old shape outside `--record` (it was
     // always accepted there) so this is not a regression for an existing call.
-    let strips = matches!(options.mode, Mode::Record | Mode::Play);
+    let strips = matches!(options.mode, Mode::Record | Mode::Play | Mode::Listen);
     if !strips
         && (options.gain != 1.0
             || options.pan != 0.0
@@ -582,6 +638,7 @@ fn run() -> Result<ExitCode, String> {
         Mode::Loopback => run_loopback(&options),
         Mode::Record => run_record(&options),
         Mode::Play => run_play(&options),
+        Mode::Listen => run_listen(&options),
         Mode::Serve => run_serve(&options),
     }
 }
@@ -1570,6 +1627,161 @@ fn inserts_for(options: &Options, file: usize) -> Vec<InsertKind> {
         .collect()
 }
 
+/// `--listen`'s inserts. One strip, so an `N:` prefix cannot name anything.
+fn listen_inserts(options: &Options) -> Result<Vec<InsertKind>, String> {
+    let mut inserts = Vec::with_capacity(options.inserts.len());
+    for spec in &options.inserts {
+        if spec.track.is_some() {
+            return Err("--listen has one strip; --insert cannot name a track".to_string());
+        }
+        inserts.push(spec.kind);
+    }
+    Ok(inserts)
+}
+
+fn validate_listen(options: &Options) -> Result<Vec<InsertKind>, String> {
+    validate_block(options.frames, options.buffer)?;
+    if options.rate == 0 {
+        return Err("--rate must be at least 1".to_string());
+    }
+    validate_channels(options)?;
+    if options.seconds < 0.0 {
+        return Err("--seconds cannot be negative".to_string());
+    }
+    if options.input >= options.channels {
+        return Err(format!(
+            "--channel {} is outside the {}-channel device",
+            options.input, options.channels
+        ));
+    }
+    listen_inserts(options)
+}
+
+/// `--listen`: one input through one strip to the outputs, until `--seconds`
+/// or a signal. It always prints its JSON line, success or failure, exactly as
+/// `--play` does.
+fn run_listen(options: &Options) -> Result<ExitCode, String> {
+    let inserts = validate_listen(options)?;
+    let device = options.backend.device_name(options.device.as_deref());
+    let plan = ListenPlan {
+        channel: options.input,
+        gain: Channel::clamp_gain(options.gain),
+        pan: Channel::clamp_pan(options.pan),
+        inserts,
+    };
+    let stop = signals::install();
+    let total = if options.seconds_given {
+        Some(take_frames(options.seconds, options.rate))
+    } else {
+        None
+    };
+    match listen_run(options, &device, &plan, total, stop) {
+        Ok(run) => {
+            let report = ListenReport::success(
+                options.backend.name(),
+                device,
+                plan.channel,
+                run.frames,
+                run.rate,
+                run.xruns,
+            );
+            println!("{}", report.to_json());
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => {
+            let report = ListenReport::failure(
+                options.backend.name(),
+                device,
+                plan.channel,
+                options.rate,
+                error,
+            );
+            println!("{}", report.to_json());
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+fn listen_run(
+    options: &Options,
+    device: &str,
+    plan: &ListenPlan,
+    total: Option<u64>,
+    stop: &AtomicBool,
+) -> Result<listen::ListenRun, String> {
+    let mut strip = ListenStrip::new(plan.channel, plan.gain, plan.pan, &plan.inserts, None);
+    match options.backend {
+        BackendKind::Null => listen::run_null(
+            &mut strip,
+            options.rate,
+            options.frames,
+            options.channels,
+            total,
+            options.tone,
+            stop,
+            |_| {},
+        ),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            listen_alsa(device, options, &mut strip, total, stop)
+        }
+        BackendKind::Jack => Err(listen_support_message()),
+    }
+}
+
+#[cfg(feature = "alsa")]
+fn listen_alsa(
+    device: &str,
+    options: &Options,
+    strip: &mut ListenStrip,
+    total: Option<u64>,
+    stop: &AtomicBool,
+) -> Result<listen::ListenRun, String> {
+    let sink = CliListenSink { strip, channels: 0 };
+    jawn_audio::alsa_device::run_listen(
+        device,
+        options.rate,
+        options.frames,
+        options.buffer,
+        options.channels,
+        total,
+        stop,
+        sink,
+    )
+}
+
+#[cfg(not(feature = "alsa"))]
+fn listen_alsa(
+    device: &str,
+    options: &Options,
+    strip: &mut ListenStrip,
+    total: Option<u64>,
+    stop: &AtomicBool,
+) -> Result<listen::ListenRun, String> {
+    let _ = (device, options, strip, total, stop);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
+}
+
+#[cfg(feature = "alsa")]
+struct CliListenSink<'a> {
+    strip: &'a mut ListenStrip,
+    /// Device channels per frame, learned in `prepared`.
+    channels: usize,
+}
+
+#[cfg(feature = "alsa")]
+impl listen::ListenSink for CliListenSink<'_> {
+    fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
+        self.channels = channels;
+        self.strip.prepare(rate, period);
+        Ok(())
+    }
+
+    fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
+        self.strip.process_i16(input, self.channels, output)?;
+        Ok(())
+    }
+}
+
 fn play_files(options: &Options) -> Result<PlayReport, String> {
     let mut tracks = Vec::with_capacity(options.files.len());
     for (index, path) in options.files.iter().enumerate() {
@@ -1768,6 +1980,28 @@ pub(crate) fn play_support(backend: BackendKind) -> Result<(), String> {
 
 fn play_support_message() -> String {
     "no JACK file playback yet; use --backend alsa or null".to_string()
+}
+
+/// A backend that cannot monitor an input says so before a worker is started.
+pub(crate) fn listen_support(backend: BackendKind) -> Result<(), String> {
+    match backend {
+        BackendKind::Null => Ok(()),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            if cfg!(feature = "alsa") {
+                Ok(())
+            } else {
+                Err(
+                    "this build has no ALSA/PipeWire backend; rebuild with --features alsa"
+                        .to_string(),
+                )
+            }
+        }
+        BackendKind::Jack => Err(listen_support_message()),
+    }
+}
+
+fn listen_support_message() -> String {
+    "no JACK monitoring path yet; use --backend alsa or null".to_string()
 }
 
 /// Open and close the playback device without starting the stream, so the
@@ -2510,6 +2744,49 @@ fn self_test() -> Result<(), String> {
 
     println!("selftest: header ok, graph ok, left {left:.4} right {right:.4}");
     Ok(())
+}
+
+/// SIGINT/SIGTERM for a run with no `--seconds`.
+///
+/// The handler only sets an `AtomicBool`; the listen loop checks it between
+/// blocks, so both streams are dropped in order and the report is printed
+/// rather than the process dying mid-period. `signal` is declared directly
+/// because the crate deliberately has no dependency beyond the audio backend.
+#[cfg(unix)]
+mod signals {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static STOP: AtomicBool = AtomicBool::new(false);
+
+    extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+    }
+
+    extern "C" fn on_signal(_: i32) {
+        STOP.store(true, Ordering::SeqCst);
+    }
+
+    /// Install the handlers once and return the flag the loop reads.
+    pub fn install() -> &'static AtomicBool {
+        const SIGINT: i32 = 2;
+        const SIGTERM: i32 = 15;
+        unsafe {
+            signal(SIGINT, on_signal as extern "C" fn(i32) as usize);
+            signal(SIGTERM, on_signal as extern "C" fn(i32) as usize);
+        }
+        &STOP
+    }
+}
+
+#[cfg(not(unix))]
+mod signals {
+    use std::sync::atomic::AtomicBool;
+
+    static STOP: AtomicBool = AtomicBool::new(false);
+
+    pub fn install() -> &'static AtomicBool {
+        &STOP
+    }
 }
 
 #[cfg(test)]

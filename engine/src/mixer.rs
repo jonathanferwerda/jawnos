@@ -180,7 +180,7 @@ impl ParamQueue {
         true
     }
 
-    fn pop(&self) -> Option<(usize, ParamName, f32)> {
+    pub(crate) fn pop(&self) -> Option<(usize, ParamName, f32)> {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
         if head == tail {

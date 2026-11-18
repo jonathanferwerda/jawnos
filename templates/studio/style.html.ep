@@ -237,17 +237,15 @@
 		overflow-y: auto;
 		background-color: lightblue;
 	}
-	/* The four docked panels are cells: synth and tracks on the first row,
-	   channels and transport on the second, so the transport sits beside the
-	   strips instead of under them. A panel dropped on another cell swaps grid
-	   areas (07_layout.js); a floated panel leaves the grid. */
+	/* The four docked panels pack into one grid: every panel is one column wide
+	   by default, auto-flow dense fills the gaps, and a two-column span is the
+	   only widening. Nothing owns a named cell, so the transport fits beside the
+	   strips. A floated panel leaves the grid (07_layout.js). */
 	.studio_grid {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-		grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-		grid-template-areas:
-			"synth tracks"
-			"mixer transport";
+		grid-auto-flow: dense;
+		grid-auto-rows: minmax(0, 1fr);
 		gap: 6px;
 		flex: 1 1 auto;
 		min-height: 0;
@@ -255,8 +253,12 @@
 		box-sizing: border-box;
 		overflow: hidden;
 	}
+	.studio_grid > div {
+		grid-column: span 1;
+		min-width: 0;
+		min-height: 0;
+	}
 	#studio_mixer {
-		grid-area: mixer;
 		min-width: 0;
 		min-height: 0;
 		width: 100%;
@@ -285,7 +287,6 @@
 		min-height: 180px;
 	}
 	#studio_transport_panel {
-		grid-area: transport;
 		position: relative;
 		min-width: 0;
 		min-height: 0;
@@ -321,7 +322,6 @@
 		font-size: 32px;
 	}
 	#studio_synth {
-		grid-area: synth;
 		min-width: 0;
 		min-height: 0;
 		overflow: auto;
@@ -350,7 +350,6 @@
 		padding: 0 4px;
 	}
 	#studio_tracks_panel {
-		grid-area: tracks;
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
@@ -382,6 +381,13 @@
 	}
 	.studio_panel_floating .studio_dock {
 		display: inline-block;
+	}
+	/* the width toggle belongs to a docked panel; a float is sized by its box */
+	.studio_span_toggle {
+		font-size: 12px;
+	}
+	.studio_panel_floating .studio_span_toggle {
+		display: none;
 	}
 	.studio_panel_floating {
 		position: absolute !important;

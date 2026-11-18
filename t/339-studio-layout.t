@@ -1,11 +1,11 @@
 # tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/windows.js public/js/manager/windows/02_fit.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
 # covers:    The Studio layout: a compact panel beside every track with its five
 #            controls, four remembered hide toggles, a Dock control and pointer
-#            drag/resize handlers, a four-cell docking grid with area swaps, a
-#            channel-strips panel that scrolls its faders into reach, a jog wheel
-#            in the transport's button row, a dynamic track list with Add track /
-#            a twice-pressed Delete, and a help topic that names them.
-#            Structure only; pixels are not asserted here.
+#            drag/resize handlers, a packing grid where an ordered panel can span
+#            one or two columns, a channel-strips panel that scrolls its faders
+#            into reach, a jog wheel in the transport's button row, a dynamic
+#            track list with Add track / a twice-pressed Delete, and a help topic
+#            that names them. Structure only; pixels are not asserted here.
 
 use strict;
 use warnings;
@@ -130,21 +130,38 @@ like($layout, qr/studioFloatPanel\(name, position, false\)/,
 like($layout, qr/\$\(window\)\.on\('resize'[\s\S]*studioClampPanelPosition/,
 	'a resize re-clamps floating panels');
 
-# --- the docked grid, scrolling strips, resize grip and jog wheel row ------
+# --- the packing grid, scrolling strips, resize grip and jog wheel row -----
 like($markup, qr/id="studio_grid"/, 'the four docked panels share a grid container');
-like($style, qr/grid-template-areas:\s*\n?\s*"synth tracks"\s*\n?\s*"mixer transport"/s,
-	'the grid puts synth and tracks above the strips and transport');
-like($style, qr/#studio_mixer\s*\{[^}]*grid-area:\s*mixer/s,
-	'the channel strips own the mixer cell');
-like($style, qr/#studio_transport_panel\s*\{[^}]*grid-area:\s*transport/s,
-	'the transport owns the cell beside the strips');
+like($style, qr/grid-auto-flow:\s*dense/, 'auto-flow dense packs the panels into the gaps');
+like($style, qr/grid-column:\s*span/, 'a panel is sized by a column span');
+like($style, qr/grid-auto-rows:\s*minmax\(0,\s*1fr\)/, 'the implicit rows share the desk height');
+unlike($style, qr/grid-template-areas/, 'the grid has no fixed named cells');
+unlike($style, qr/#studio_mixer\s*\{[^}]*grid-area:/s,
+	'the channel strips are not pinned to a fixed cell');
+unlike($style, qr/#studio_transport_panel\s*\{[^}]*grid-area:/s,
+	'the transport is not pinned to a fixed cell');
 like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-y:\s*auto/s,
 	'the strips panel scrolls vertically so every fader is reachable');
 like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-x:\s*auto/s,
 	'many strips still scroll sideways');
-like($layout, qr/studioSwapDockedPanels/, 'a docked panel dropped on another swaps cells');
-like($layout, qr/studioApplyPanelArea\(/, 'a panel carries its grid area');
-like($layout, qr/docked: true, area: area/, 'a docked panel saves its cell');
+like($layout, qr/studioReorderDockedPanel/, 'a docked panel dropped on another is inserted before it');
+like($layout, qr/studioPanelOrder\.splice\(to, 0, name\)/, 'the dropped panel moves into the target position');
+like($layout, qr/function studioApplyPanelOrder/, 'the shared order is applied to the grid items');
+like($layout, qr/order:\s*studioPanelOrderIndex\(name\)/, 'a docked panel saves its order');
+
+# --- the width control gives a docked panel a second column ----------------
+for my $panel (qw(synth mixer transport tracks)) {
+	like($markup, qr/class="studio_span_toggle hover" data-panel="$panel"/,
+		"$panel has a Narrow/Wide control");
+}
+like($markup, qr/&subs::ui\('Wide'\)/, 'the width control starts in its translatable narrow state');
+like($layout, qr/studioApplyPanelSpan/, 'one function applies a panel span');
+like($layout, qr/studioPanelSpan\[name\] = \(studioPanelSpanValue\(name\) >= STUDIO_PANEL_MAX_SPAN\)/,
+	'the control cycles one and two columns');
+like($layout, qr/grid-column', 'span ' \+ span/, 'the span reaches the grid');
+like($layout, qr/span:\s*studioPanelSpanValue\(name\)/, 'the span is persisted with the order');
+like($style, qr/\.studio_panel_floating \.studio_span_toggle\s*\{\s*display:\s*none/s,
+	'a floated panel hides the width control');
 
 # --- drag moves both axes and keeps the box ---------------------------------
 like($layout, qr/left: clamped\.left \+ 'px', top: clamped\.top \+ 'px'/,
@@ -193,6 +210,9 @@ like($help, qr/Dock the tracks/, 'help names the Dock control');
 like($help, qr/Close the pedalboard/, 'help names the pedalboard close');
 like($help, qr/Every track has a compact panel/, 'help describes the per-track panel');
 like($help, qr/Drag to resize this panel/, 'help names the floated panel resize grip');
+like($help, qr/pack into a two-column grid/, 'help describes the packing grid');
+like($help, qr/Narrow\/Wide control/, 'help names the width control');
+like($help, qr/Drop a dragged docked panel/, 'help describes dropping a docked panel');
 like($help, qr/sits beside the strips/, 'help describes the transport beside the strips');
 like($help, qr/jog wheel shares the transport/, 'help describes the jog wheel in the button row');
 
