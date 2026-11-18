@@ -185,6 +185,11 @@ sub packages_backend_argv {
 	if ($name eq 'apt') {
 		my $query = $tools->{'dpkg-query'} || $tools->{'dpkg'} || '';
 		return [ $query, '-W', '-f=${binary:Package}\t${Version}\t${Installed-Size}\n' ] if $action eq 'list';
+		# One named package, in the same three fields the list uses, so the
+		# caller can parse either answer with packages_parse_installed. The
+		# caller has already validated $arg; it is still never a shell word.
+		return [ $query, '-W', '-f=${binary:Package}\t${Version}\t${Installed-Size}\n', $arg ]
+			if $action eq 'installed_version' && defined $arg && length $arg;
 		if ($action eq 'outdated') {
 			my $apt = $tools->{'apt'};
 			return [ $apt, 'list', '--upgradable' ] if $apt;
@@ -202,6 +207,8 @@ sub packages_backend_argv {
 	if ($name eq 'pacman' || $name eq 'aur') {
 		return [ $tool, '-Qm' ] if $name eq 'aur' && $action eq 'list';
 		return [ $tool, '-Q' ] if $action eq 'list';
+		return [ $tool, '-Q', $arg ]
+			if $name eq 'pacman' && $action eq 'installed_version' && defined $arg && length $arg;
 		return [ $tool, $name eq 'aur' ? '-Qua' : '-Qu' ] if $action eq 'outdated';
 		return [ $tool, '-Ss', $arg ] if $action eq 'search';
 		return [ $tool, '-S', '--noconfirm', $arg ] if $action eq 'install';
@@ -329,7 +336,362 @@ sub packages_status {
 	}
 
 	$out->{'restart_needed'} = &packages_restart_needed($opts) ? 1 : 0;
+	$out->{'openssl_compat'} = &packages_openssl_compat($opts);
 	return $out;
+}
+
+# ---- the local OpenSSL layer ------------------------------------------------
+#
+# Some handsets run an emulator built against an OpenSSL newer than the one the
+# distribution packages. On the ODROID Go Ultra (Arch ARM) RetroArch 1.22 needs
+# libssl/libcrypto soname 4 while openssl is 3.6: the game installer stages
+# those two libraries privately under /opt/openssl4 and points the loader at
+# them, so the system package is never replaced. A full `pacman -Syu` installs
+# OpenSSL 4 system-wide and makes that private layer redundant, but the app had
+# no way to see it - an upgrade would leave stale files and a stale ld.so.conf.
+#
+# The convention, shared with the installer script: a directory /opt/openssl<N>
+# with usr/lib/libssl.so.<N>, usr/lib/libcrypto.so.<N>, a manifest
+# jawnos-compat.json and /etc/ld.so.conf.d/openssl<N>.conf. The manifest is the
+# ownership proof: a directory without one was not created by this system and
+# is never reported or removed.
+
+my $packages_openssl_soname_pattern = qr/^lib(?:ssl|crypto)\.so\.\d+(?:\.\d+)*$/;
+
+# The roots to look in. A test names one directory outright; a machine is
+# scanned under /opt only, so an unrelated openssl4 tree elsewhere is ignored.
+sub packages_openssl_compat_dirs {
+	my ($opts) = @_;
+	$opts ||= {};
+	foreach my $explicit (
+		$ENV{'JAWNOS_OPENSSL_COMPAT_DIR'},
+		$opts->{'compat_dir'},
+	) {
+		next unless defined $explicit && length $explicit && -d $explicit;
+		return ($explicit);
+	}
+	my $base = $ENV{'JAWNOS_OPENSSL_COMPAT_ROOT'};
+	$base = $opts->{'compat_root'} unless defined $base && length $base;
+	$base = '/opt' unless defined $base && length $base;
+	opendir(my $dh, $base) or return ();
+	my @dirs = map { File::Spec->catdir($base, $_) }
+		sort grep { /^openssl\d+$/ && -d File::Spec->catdir($base, $_) } readdir($dh);
+	closedir($dh);
+	return @dirs;
+}
+
+# One manifest, as a layer. A document that is not a hash, or that names no
+# soname this convention can own, is not a layer: it is somebody else's file.
+sub packages_openssl_compat_layer {
+	my ($dir) = @_;
+	my $manifest = File::Spec->catfile($dir, 'jawnos-compat.json');
+	return undef unless -f $manifest;
+	open(my $fh, '<', $manifest) or return undef;
+	local $/;
+	my $text = <$fh>;
+	close($fh);
+	my $data = &packages_json($text);
+	return undef unless ref $data eq 'HASH';
+	my @sonames = grep { defined $_ && $_ =~ $packages_openssl_soname_pattern }
+		@{ ref $data->{'sonames'} eq 'ARRAY' ? $data->{'sonames'} : [] };
+	return undef unless @sonames;
+	my ($major) = $sonames[0] =~ /\.so\.(\d+)/;
+	return {
+		dir     => $dir,
+		sonames => \@sonames,
+		major   => $major,
+		source  => defined $data->{'source'} ? $data->{'source'} : '',
+		binary  => defined $data->{'binary'} ? $data->{'binary'} : '',
+	};
+}
+
+# Read-only: what private OpenSSL layers this system created, and which openssl
+# the package manager has. Nothing is written here, so the status route and the
+# page may call it on every read.
+sub packages_openssl_compat {
+	my ($opts) = @_;
+	$opts ||= {};
+	my @layers = grep { defined $_ } map { &packages_openssl_compat_layer($_) }
+		&packages_openssl_compat_dirs($opts);
+
+	my $out = { present => 0, layers => [], system_version => '' };
+	return $out unless @layers;
+
+	# The version is only asked for when there is a layer to explain: a machine
+	# with none pays no extra subprocess for a status read.
+	my $version = '';
+	my $det = $opts->{'detect'} || &packages_detect($opts);
+	my $backend = &packages_backend(undef, { %$opts, detect => $det });
+	if ($backend && ($backend->{'name'} eq 'pacman' || $backend->{'name'} eq 'apt')) {
+		my ($good) = &packages_validate_name('openssl', $backend->{'name'});
+		my $raw = $good ? &packages_backend_argv($backend, 'installed_version', 'openssl') : undef;
+		if (defined $raw) {
+			my $res = &packages_run({
+				%$opts,
+				quiet     => 1,
+				max_lines => 0,
+				argv      => &packages_command({ %$opts, elevated => 0 }, @$raw),
+			});
+			if ($res->{'ok'}) {
+				my ($rows) = &packages_parse_installed($backend, $res->{'lines'});
+				foreach my $row (@{ $rows || [] }) {
+					next unless $row->{'name'} eq 'openssl';
+					$version = $row->{'version'};
+					last;
+				}
+			}
+		}
+	}
+	$version = '' unless defined $version;
+	$version =~ s/^\d+://;                 # an Arch epoch is not part of the version
+	my ($dotted) = $version =~ /(\d+(?:\.\d+)*)/;
+	$version = defined $dotted ? $dotted : '';
+
+	foreach my $layer (@layers) {
+		my $major = $layer->{'major'};
+		my $note = "A private OpenSSL $major library layer for RetroArch is installed at $layer->{'dir'}";
+		$note .= "; this machine's openssl package is $version" if length $version;
+		$note .= '. Upgrading openssl installs its libraries system-wide and replaces this layer.';
+		$layer->{'note'} = $note;
+	}
+
+	$out->{'present'} = 1;
+	$out->{'layers'} = \@layers;
+	$out->{'system_version'} = $version;
+	$out->{'note'} = $layers[0]->{'note'};
+	return $out;
+}
+
+# The ld.so.conf the convention names for a layer, unless a test names one.
+sub packages_openssl_compat_ldconf {
+	my ($dir) = @_;
+	return $ENV{'JAWNOS_OPENSSL_LDCONF'}
+		if defined $ENV{'JAWNOS_OPENSSL_LDCONF'} && length $ENV{'JAWNOS_OPENSSL_LDCONF'};
+	my $base = File::Basename::basename($dir);
+	my ($number) = $base =~ /^openssl(\d+)$/;
+	return undef unless defined $number;
+	return File::Spec->catfile('/etc/ld.so.conf.d', "openssl$number.conf");
+}
+
+# What the layer may own, and nothing else: a soname in its own usr/lib, its
+# manifest, the ld.so.conf the convention names, and its own three directories.
+# The manifest is editable, so every path it can name is checked before an argv
+# is built; a corrupted manifest cannot point the removal at /usr/lib.
+sub packages_openssl_compat_owned_path {
+	my ($path, $dir, $kind) = @_;
+	return 0 unless defined $path && length $path;
+	return 0 unless defined $dir && length $dir;
+	return 0 unless File::Basename::basename($dir) =~ /^openssl\d+$/;
+	my $canon = File::Spec->canonpath($path);
+	$kind = '' unless defined $kind;
+
+	if ($kind eq 'manifest') {
+		return $canon eq File::Spec->canonpath(File::Spec->catfile($dir, 'jawnos-compat.json')) ? 1 : 0;
+	}
+	if ($kind eq 'conf') {
+		my $name = File::Basename::basename($canon);
+		return 0 unless $name =~ /^openssl\d+\.conf$/;
+		my $explicit = $ENV{'JAWNOS_OPENSSL_LDCONF'};
+		if (defined $explicit && length $explicit) {
+			return $canon eq File::Spec->canonpath($explicit) ? 1 : 0;
+		}
+		return File::Spec->canonpath(File::Basename::dirname($canon)) eq '/etc/ld.so.conf.d' ? 1 : 0;
+	}
+	if ($kind eq 'dir') {
+		my $libdir = File::Spec->catdir($dir, 'usr', 'lib');
+		foreach my $allowed ($dir, File::Spec->catdir($dir, 'usr'), $libdir) {
+			return 1 if $canon eq File::Spec->canonpath($allowed);
+		}
+		return 0;
+	}
+
+	my $name = File::Basename::basename($canon);
+	return 0 unless $name =~ $packages_openssl_soname_pattern;
+	return 0 unless File::Spec->canonpath(File::Basename::dirname($canon))
+		eq File::Spec->canonpath(File::Spec->catdir($dir, 'usr', 'lib'));
+	return 1;
+}
+
+# Remove only what a manifest says this system created. Every path is validated
+# against the layer first, every soname is checked with `pacman -Qo`, and one
+# `sudo -n` probe runs before the first removal so a refused password leaves the
+# layer untouched. The removals and ldconfig are argv lists through
+# packages_command, the same escalation the upgrade uses; the injected runner is
+# never asked here, because this decides what may go, not what the manager says.
+sub packages_openssl_compat_clear {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $compat = &packages_openssl_compat($opts);
+	return {
+		ok      => 1,
+		removed => [],
+		present => 0,
+		note    => 'no private OpenSSL layer is installed on this machine',
+	} unless $compat->{'present'};
+
+	my $pacman = $ENV{'JAWNOS_OPENSSL_PACMAN'};
+	unless (defined $pacman && length $pacman && -x $pacman) {
+		my $det = $opts->{'detect'} || &packages_detect($opts);
+		$pacman = $det->{'tools'}->{'pacman'}
+			if ref $det->{'tools'} eq 'HASH' && defined $det->{'tools'}->{'pacman'};
+	}
+
+	my (@remove, @layers);
+	foreach my $layer (@{ $compat->{'layers'} }) {
+		my $dir = $layer->{'dir'};
+		my $libdir = File::Spec->catdir($dir, 'usr', 'lib');
+
+		foreach my $soname (@{ $layer->{'sonames'} }) {
+			my $path = File::Spec->catfile($libdir, $soname);
+			unless (&packages_openssl_compat_owned_path($path, $dir)) {
+				return {
+					ok => 0, removed => [], present => 1,
+					error => "the manifest names a path the layer does not own ($path)",
+				};
+			}
+			next unless -e $path;
+			if (defined $pacman && length $pacman && -x $pacman) {
+				my $owned = &packages_capture([ $pacman, '-Qo', $path ], 30);
+				if (($owned->{'status'} // 1) == 0) {
+					return {
+						ok      => 0,
+						removed => [],
+						present => 1,
+						error   => "$path is owned by a package, so the private layer was left in place",
+					};
+				}
+			}
+			push @remove, $path;
+		}
+
+		my $manifest = File::Spec->catfile($dir, 'jawnos-compat.json');
+		unless (&packages_openssl_compat_owned_path($manifest, $dir, 'manifest')) {
+			return {
+				ok => 0, removed => [], present => 1,
+				error => "the manifest path is not inside the layer ($manifest)",
+			};
+		}
+		push @remove, $manifest if -f $manifest;
+
+		my $conf = &packages_openssl_compat_ldconf($dir);
+		if (defined $conf && -f $conf) {
+			unless (&packages_openssl_compat_owned_path($conf, $dir, 'conf')) {
+				return {
+					ok => 0, removed => [], present => 1,
+					error => "the loader configuration is not one this layer may own ($conf)",
+				};
+			}
+			open(my $fh, '<', $conf);
+			local $/;
+			my $body = $fh ? <$fh> : '';
+			close($fh) if $fh;
+			# On a machine the convention derives the file, so it is removed
+			# only when it really points at this layer. A test names the file
+			# itself and it is taken as the layer's.
+			my $names_layer = defined $ENV{'JAWNOS_OPENSSL_LDCONF'}
+				|| (defined $body && index($body, $libdir) >= 0);
+			push @remove, $conf if $names_layer;
+		}
+
+		foreach my $d ($libdir, File::Spec->catdir($dir, 'usr'), $dir) {
+			unless (&packages_openssl_compat_owned_path($d, $dir, 'dir')) {
+				return {
+					ok => 0, removed => [], present => 1,
+					error => "the layer directory is not one this layer may own ($d)",
+				};
+			}
+		}
+		push @layers, [ $dir, $libdir ];
+	}
+
+	# `sudo -n` never prompts, so a refused password is known before the first
+	# argv runs. The probe is the same escalation every other write uses.
+	my $true = &packages_tool('true');
+	$true = '/bin/true' unless defined $true && length $true;
+	my $probe = &packages_capture(&packages_command({ %$opts, elevated => 1 }, $true), 30);
+	unless (($probe->{'status'} // 1) == 0) {
+		return {
+			ok         => 0,
+			needs_root => 1,
+			removed    => [],
+			present    => 1,
+			error      => 'this needs root, and sudo -n was refused (no password prompt is shown)',
+		};
+	}
+
+	my $rm = &packages_tool('rm');
+	$rm = '/bin/rm' unless defined $rm && length $rm;
+	my @removed;
+	foreach my $path (@remove) {
+		my $res = &packages_capture(
+			&packages_command({ %$opts, elevated => 1 }, $rm, '-f', '--', $path), 60);
+		unless (($res->{'status'} // 1) == 0) {
+			return {
+				ok => 0, removed => \@removed, present => 1,
+				error => "$path could not be removed: "
+					. (($res->{'output'} // '') || 'the command failed'),
+			};
+		}
+		push @removed, $path;
+	}
+
+	my $rmdir = &packages_tool('rmdir');
+	$rmdir = '/bin/rmdir' unless defined $rmdir && length $rmdir;
+	foreach my $pair (@layers) {
+		my ($dir, $libdir) = @$pair;
+		foreach my $d ($libdir, File::Spec->catdir($dir, 'usr'), $dir) {
+			# A directory is only empty when every file the manifest names is
+			# gone; a file it does not name keeps the tree, on purpose.
+			&packages_capture(&packages_command({ %$opts, elevated => 1 }, $rmdir, '--', $d), 30);
+		}
+	}
+
+	my $ldconfig = $ENV{'JAWNOS_OPENSSL_LDCONFIG'};
+	unless (defined $ldconfig && length $ldconfig) {
+		my $found = &packages_tool('ldconfig');
+		$ldconfig = defined $found ? $found : '';
+	}
+	my $ldconfig_state = 'not run';
+	if (length $ldconfig && -x $ldconfig) {
+		my $res = &packages_capture(
+			&packages_command({ %$opts, elevated => 1 }, $ldconfig), 30);
+		$ldconfig_state = ($res->{'status'} // 1) == 0 ? 'ran' : 'failed';
+	}
+
+	return {
+		ok       => 1,
+		removed  => \@removed,
+		present  => 0,
+		ldconfig => $ldconfig_state,
+		note     => 'the private OpenSSL layer was removed; openssl now comes from the package manager',
+	};
+}
+
+# Called after a write that may have installed a system openssl. A layer is only
+# removed when the upgrade stayed successful and the installed openssl now has
+# the same major the layer supplied (or the manager's own output says it
+# installed openssl). A failed upgrade leaves the layer exactly as it was.
+sub packages_openssl_compat_after_upgrade {
+	my ($opts, $answer) = @_;
+	return $answer unless ref $answer eq 'HASH' && $answer->{'ok'};
+	my $compat = &packages_openssl_compat($opts);
+	return $answer unless $compat->{'present'};
+	my $layer = $compat->{'layers'}->[0];
+	my $major = $layer->{'major'};
+	my ($current) = ($compat->{'system_version'} // '') =~ /^(\d+)/;
+	my $mentions = ($answer->{'output'} // '') =~ /\b(?:upgrading|installing|reinstalling)\s+openssl\b|\bopenssl-\d/i;
+	unless ((defined $current && defined $major && $current >= $major) || $mentions) {
+		$answer->{'openssl_compat'} = {
+			ok      => 1,
+			kept    => 1,
+			removed => [],
+			present => 1,
+			note    => "the private OpenSSL $major layer was left in place: the installed openssl does not provide it yet",
+		};
+		return $answer;
+	}
+	$answer->{'openssl_compat'} = &packages_openssl_compat_clear($opts);
+	return $answer;
 }
 
 # ---- argv ------------------------------------------------------------------
@@ -995,7 +1357,12 @@ sub packages_upgrade {
 		%$opts,
 		work => sub {
 			my $argv = &packages_command({ %$opts, elevated => $backend->{'elevated'} }, @$raw);
-			return &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 1);
+			my $answer = &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 1);
+			# A full upgrade of an Arch box installs the distribution's openssl,
+			# which makes the private layer redundant. A failed upgrade keeps it.
+			return &packages_openssl_compat_after_upgrade($opts, $answer)
+				if $backend->{'name'} eq 'pacman' || $backend->{'name'} eq 'apt';
+			return $answer;
 		},
 	});
 }
@@ -1021,7 +1388,13 @@ sub packages_single_action {
 		%$opts,
 		work => sub {
 			my $argv = &packages_command({ %$opts, elevated => $backend->{'elevated'} }, @$raw);
-			return &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 1, $name, $note);
+			my $answer = &packages_finish($opts, &packages_run({ %$opts, argv => $argv }), 1, $name, $note);
+			# Installing or upgrading openssl by name is the other way the system
+			# gets an openssl that makes the private layer redundant.
+			return &packages_openssl_compat_after_upgrade($opts, $answer)
+				if $action eq 'install' && $name eq 'openssl'
+					&& ($backend->{'name'} eq 'pacman' || $backend->{'name'} eq 'apt');
+			return $answer;
 		},
 	});
 }

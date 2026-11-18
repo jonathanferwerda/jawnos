@@ -8,6 +8,10 @@
 <% my $restart = $info->{'restart_needed'} ? 1 : 0; %>
 <% my $backends = ref($info->{'backends'}) eq 'ARRAY' ? $info->{'backends'} : []; %>
 <% my $primary = $backends->[0] || {}; %>
+<% my $compat = ref($info->{'openssl_compat'}) eq 'HASH' ? $info->{'openssl_compat'} : {}; %>
+<% my $compat_layers = ref($compat->{'layers'}) eq 'ARRAY' ? $compat->{'layers'} : []; %>
+<% my $compat_first = ref($compat_layers->[0]) eq 'HASH' ? $compat_layers->[0] : {}; %>
+<% my $compat_present = $compat->{'present'} && length($compat_first->{'dir'} || '') ? 1 : 0; %>
 <style>
 #packages { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; font-size: 16px; }
 #packages .packages_head { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: baseline; }
@@ -34,6 +38,8 @@
 #packages .packages_empty { opacity: .7; padding: 6px 0; }
 #packages .packages_more { opacity: .7; padding: 6px 0; font-size: 14px; }
 #packages .packages_capped { opacity: .7; font-size: 14px; }
+#packages .packages_compat { font-size: 14px; opacity: .78; }
+#packages .packages_compat code { font-size: 13px; }
 </style>
 <div id="packages" app="packages">
 	<div class="packages_head">
@@ -67,6 +73,16 @@
 	</div>
 % }
 	<div class="packages_line" id="packages_status_line"><%= &subs::ui('Reading the machine...') %></div>
+	<div class="packages_line packages_compat" id="packages_openssl_note" data-dir="<%= $compat_first->{'dir'} || '' %>" data-version="<%= $compat->{'system_version'} || '' %>" data-major="<%= $compat_first->{'major'} || '' %>"<%= $compat_present ? '' : ' style="display:none;"' %>>
+% if ($compat_present) {
+		<%= &subs::ui('A private OpenSSL library layer for RetroArch is installed at') %>
+		<code><%= $compat_first->{'dir'} %></code>.
+% if (length($compat->{'system_version'} || '')) {
+		<%= &subs::ui('This machine\'s openssl package is') %> <%= $compat->{'system_version'} %>.
+% }
+		<%= &subs::ui('Upgrading openssl installs its libraries system-wide and replaces this layer.') %>
+% }
+	</div>
 % if ($kind eq 'runtime') {
 	<div class="packages_readonly" id="packages_runtime_note">
 		<p><%= &subs::ui('This device runs a prebuilt runtime, not a package manager. The software here ships with the app, and the app updates it together with the app itself.') %></p>

@@ -12,6 +12,7 @@ use FindBin qw($Bin);
 use lib "$Bin/lib", "t/lib";
 use Test::More;
 use File::Temp qw(tempdir);
+use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 
 my $root = "$Bin/..";
@@ -415,6 +416,235 @@ my $status = subs::packages_status(action_opts(\%APT, $version_runner));
 is($status->{'manager_version'}, '2.9.14', 'the status reports the manager version');
 is($status->{'kind'}, 'apt', 'and its kind');
 
+# ---- the private OpenSSL layer --------------------------------------------
+#
+# The ODROID Go Ultra runs RetroArch built against OpenSSL 4 while the
+# distribution packages 3.6. The installer stages libssl/libcrypto 4 under
+# /opt/openssl4 with a manifest and an ld.so.conf, and the app has to see the
+# layer, name it, and remove only what the manifest owns when an upgrade makes
+# it redundant. Every path below is a temp directory and every binary a fake;
+# no pacman, ldconfig or real /opt entry is touched.
+
+my @COMPAT_ENV = qw(JAWNOS_OPENSSL_COMPAT_DIR JAWNOS_OPENSSL_COMPAT_ROOT
+	JAWNOS_OPENSSL_LDCONF JAWNOS_OPENSSL_LDCONFIG JAWNOS_OPENSSL_PACMAN);
+
+sub compat_env {
+	my (%set) = @_;
+	delete $ENV{$_} for @COMPAT_ENV;
+	$ENV{$_} = $set{$_} for keys %set;
+	return;
+}
+
+sub fake_binary {
+	my ($path, $body) = @_;
+	write_file($path, "#!/bin/sh\n$body\n");
+	chmod 0755, $path;
+	return $path;
+}
+
+sub make_compat_layer {
+	my ($base) = @_;
+	my $dir = "$base/openssl4";
+	make_path("$dir/usr/lib");
+	my $lib = "$dir/usr/lib";
+	write_file("$lib/libssl.so.4", "ssl\n");
+	write_file("$lib/libcrypto.so.4", "crypto\n");
+	write_file("$lib/libssl.so.99", "not named by the manifest\n");
+	write_file("$dir/jawnos-compat.json",
+		'{"sonames":["libssl.so.4","libcrypto.so.4"],'
+		. '"source":"openssl-4.1.0-1-aarch64.pkg.tar.xz",'
+		. '"binary":"/usr/bin/retroarch","created":1790000000}');
+	my $conf = "$base/openssl4.conf";
+	write_file($conf, "$lib\n");
+	return ($dir, $lib, $conf);
+}
+
+my $orig_path = $ENV{'PATH'};
+
+# The manager user is not root, so the clear must go through sudo -n like the
+# upgrade does. This tool map has no sudo entry, leaving the lookup to PATH,
+# where each scenario puts a fake: one that logs its argv and runs it, or one
+# that refuses the way sudo does without a password.
+my %ARCH_NO_SUDO = %ARCH;
+delete $ARCH_NO_SUDO{'sudo'};
+
+sub fake_sudo {
+	my ($base, $log) = @_;
+	my $bin = "$base/bin";
+	make_path($bin);
+	fake_binary("$bin/sudo",
+		"printf '%s\\n' \"\$*\" >> '$log'\nif [ \"\$1\" = \"-n\" ]; then shift; fi\nexec \"\$@\"");
+	return $bin;
+}
+
+sub fake_sudo_refuse {
+	my ($base, $log) = @_;
+	my $bin = "$base/bin";
+	make_path($bin);
+	fake_binary("$bin/sudo",
+		"printf '%s\\n' \"\$*\" >> '$log'\necho 'sudo: a password is required' >&2\nexit 1");
+	return $bin;
+}
+
+{
+	local %ENV = %ENV;
+
+	# Absent: no manifest anywhere the convention would look.
+	compat_env(JAWNOS_OPENSSL_COMPAT_ROOT => $tmp);
+	my $absent = subs::packages_openssl_compat(action_opts(\%ARCH, recording_runner()));
+	is($absent->{'present'}, 0, 'a directory without a manifest is not a layer');
+	is_deeply($absent->{'layers'}, [], 'and no layer is reported');
+
+	# Present: a temp /opt/openssl4 with the manifest the installer writes.
+	my $base = tempdir(CLEANUP => 1);
+	my ($dir, $lib, $conf) = make_compat_layer($base);
+	compat_env(JAWNOS_OPENSSL_COMPAT_DIR => $dir);
+	my $openssl_runner = sub {
+		my @argv = @_;
+		return { status => 0, output => "openssl 3.6.5-1\n" } if grep { $_ eq 'openssl' } @argv;
+		return { status => 0, output => '' };
+	};
+	my $compat = subs::packages_openssl_compat(action_opts(\%ARCH, $openssl_runner));
+	is($compat->{'present'}, 1, 'a manifest makes the layer visible');
+	is(scalar @{ $compat->{'layers'} }, 1, 'one layer is reported');
+	is_deeply($compat->{'layers'}->[0]->{'sonames'}, [qw(libssl.so.4 libcrypto.so.4)],
+		'only the sonames the manifest owns are reported');
+	is($compat->{'system_version'}, '3.6.5', 'the installed openssl version is read');
+	like($compat->{'layers'}->[0]->{'note'}, qr/\Q$dir\E/, 'the note names the layer path');
+	like($compat->{'layers'}->[0]->{'note'}, qr/3\.6\.5/, 'and the system openssl version');
+
+	# The status route's JSON comes from packages_status, so the layer travels
+	# with it without the controller adding anything.
+	my $compat_status = subs::packages_status(action_opts(\%ARCH, $openssl_runner));
+	is(ref $compat_status->{'openssl_compat'}, 'HASH', 'the status carries the layer read');
+	is($compat_status->{'openssl_compat'}->{'present'}, 1, 'and the layer is present in it');
+
+	# Clear: the manifest's sonames and conf go through sudo -n, and a file it
+	# does not name stays.
+	my $ldconfig_ran = "$base/ldconfig.ran";
+	my $ldconfig = fake_binary("$base/ldconfig", "echo ran > '$ldconfig_ran'");
+	my $pacman = fake_binary("$base/pacman", 'exit 1');
+	my $sudo_log = "$base/sudo.log";
+	my $sudo_bin = fake_sudo($base, $sudo_log);
+	$ENV{'PATH'} = "$sudo_bin:$orig_path";
+	compat_env(
+		JAWNOS_OPENSSL_COMPAT_DIR => $dir,
+		JAWNOS_OPENSSL_LDCONF    => $conf,
+		JAWNOS_OPENSSL_LDCONFIG  => $ldconfig,
+		JAWNOS_OPENSSL_PACMAN    => $pacman,
+	);
+	my $clear = subs::packages_openssl_compat_clear(action_opts(\%ARCH_NO_SUDO, recording_runner()));
+	is($clear->{'ok'}, 1, 'a manifest-owned layer is cleared');
+	ok(!-e "$lib/libssl.so.4", 'libssl.so.4 is removed');
+	ok(!-e "$lib/libcrypto.so.4", 'libcrypto.so.4 is removed');
+	ok(-e "$lib/libssl.so.99", 'a soname the manifest does not name is left alone');
+	ok(!-e "$dir/jawnos-compat.json", 'the manifest is removed');
+	ok(!-e $conf, 'the ld.so.conf the convention names is removed');
+	ok(-e $lib, 'the directory stays while a file the manifest does not name is inside');
+	ok(-e $ldconfig_ran, 'ldconfig is run after the removal');
+	is($clear->{'ldconfig'}, 'ran', 'and its run is reported');
+	my $elevated = read_file($sudo_log);
+	like($elevated, qr{-f -- \Q$lib/libssl.so.4\E}, 'the soname removal is one elevated argv');
+	like($elevated, qr{-f -- \Q$lib/libcrypto.so.4\E}, 'and so is the other soname');
+	like($elevated, qr/\Q$ldconfig\E/, 'ldconfig runs through the same sudo -n path');
+	like($elevated, qr{rmdir -- \Q$lib\E}, 'the empty directories are removed the same way');
+	my $again = subs::packages_openssl_compat_clear(action_opts(\%ARCH_NO_SUDO, recording_runner()));
+	is($again->{'ok'}, 1, 'a second clear is a no-op');
+	is_deeply($again->{'removed'}, [], 'that removes nothing');
+
+	# A file a package owns is never deleted; the whole clear is refused.
+	my $owned_base = tempdir(CLEANUP => 1);
+	my ($owned_dir, $owned_lib, $owned_conf) = make_compat_layer($owned_base);
+	my $owned_list = "$owned_base/owned.txt";
+	write_file($owned_list, "$owned_lib/libcrypto.so.4\n");
+	my $owned_marker = "$owned_base/ldconfig.ran";
+	my $owned_ldconfig = fake_binary("$owned_base/ldconfig", "echo ran > '$owned_marker'");
+	my $owned_pacman = fake_binary("$owned_base/pacman",
+		"grep -qxF \"\$2\" '$owned_list' 2>/dev/null");
+	my $owned_sudo = fake_sudo_refuse($owned_base, "$owned_base/sudo.log");
+	$ENV{'PATH'} = "$owned_sudo:$orig_path";
+	compat_env(
+		JAWNOS_OPENSSL_COMPAT_DIR => $owned_dir,
+		JAWNOS_OPENSSL_LDCONF    => $owned_conf,
+		JAWNOS_OPENSSL_LDCONFIG  => $owned_ldconfig,
+		JAWNOS_OPENSSL_PACMAN    => $owned_pacman,
+	);
+	my $refused = subs::packages_openssl_compat_clear(action_opts(\%ARCH_NO_SUDO, recording_runner()));
+	is($refused->{'ok'}, 0, 'a file a package owns refuses the clear');
+	like($refused->{'error'}, qr/owned by a package/, 'and says why in words');
+	ok(-e "$owned_lib/libssl.so.4" && -e "$owned_lib/libcrypto.so.4", 'nothing at all was removed');
+	ok(-e "$owned_dir/jawnos-compat.json", 'the manifest is still there');
+	ok(!-e $owned_marker, 'ldconfig did not run');
+
+	# A refused sudo removes nothing and says so in the app's own words.
+	my $root_base = tempdir(CLEANUP => 1);
+	my ($root_dir, $root_lib, $root_conf) = make_compat_layer($root_base);
+	my $root_marker = "$root_base/ldconfig.ran";
+	my $root_log = "$root_base/sudo.log";
+	my $root_sudo = fake_sudo_refuse($root_base, $root_log);
+	$ENV{'PATH'} = "$root_sudo:$orig_path";
+	compat_env(
+		JAWNOS_OPENSSL_COMPAT_DIR => $root_dir,
+		JAWNOS_OPENSSL_LDCONF    => $root_conf,
+		JAWNOS_OPENSSL_LDCONFIG  => fake_binary("$root_base/ldconfig", "echo ran > '$root_marker'"),
+		JAWNOS_OPENSSL_PACMAN    => fake_binary("$root_base/pacman", 'exit 1'),
+	);
+	my $no_root = subs::packages_openssl_compat_clear(action_opts(\%ARCH_NO_SUDO, recording_runner()));
+	is($no_root->{'ok'}, 0, 'a refused sudo -n stops the clear');
+	is($no_root->{'error'},
+		'this needs root, and sudo -n was refused (no password prompt is shown)',
+		'with the sudo wording every other write uses');
+	ok(-e "$root_lib/libssl.so.4" && -e "$root_lib/libcrypto.so.4", 'nothing at all was removed');
+	ok(-e "$root_dir/jawnos-compat.json", 'the manifest is still there');
+	ok(!-e $root_marker, 'ldconfig did not run');
+	my $root_tried = read_file($root_log);
+	unlike($root_tried, qr/\brm\b|ldconfig|rmdir/, 'and no removal argv was built');
+
+	# A successful upgrade replaces the layer; a failed one leaves it alone.
+	my $up_base = tempdir(CLEANUP => 1);
+	my ($up_dir, $up_lib, $up_conf) = make_compat_layer($up_base);
+	my $up_ldconfig = fake_binary("$up_base/ldconfig", 'exit 0');
+	my $up_pacman = fake_binary("$up_base/pacman", 'exit 1');
+	my $up_log = "$up_base/sudo.log";
+	my $up_sudo = fake_sudo($up_base, $up_log);
+	$ENV{'PATH'} = "$up_sudo:$orig_path";
+	compat_env(
+		JAWNOS_OPENSSL_COMPAT_DIR => $up_dir,
+		JAWNOS_OPENSSL_LDCONF    => $up_conf,
+		JAWNOS_OPENSSL_LDCONFIG  => $up_ldconfig,
+		JAWNOS_OPENSSL_PACMAN    => $up_pacman,
+	);
+	my $up_runner = sub {
+		my @argv = @_;
+		return { status => 0, output => "openssl 4.1.0-1\n" } if grep { $_ eq '-Q' } @argv;
+		return { status => 0, output => '' };
+	};
+	my $upgrade = subs::packages_upgrade(action_opts(\%ARCH_NO_SUDO, $up_runner));
+	is($upgrade->{'ok'}, 1, 'the upgrade succeeds');
+	is(ref $upgrade->{'openssl_compat'}, 'HASH', 'its answer carries the layer result');
+	is($upgrade->{'openssl_compat'}->{'ok'}, 1, 'and the now-redundant layer was cleared');
+	ok(!-e "$up_dir/jawnos-compat.json", 'the manifest is gone with the layer');
+	like(read_file($up_log), qr{-f -- \Q$up_lib/libssl.so.4\E}, 'the upgrade clear used the elevated argv');
+
+	my $fail_base = tempdir(CLEANUP => 1);
+	my ($fail_dir, $fail_lib, $fail_conf) = make_compat_layer($fail_base);
+	my $fail_log = "$fail_base/sudo.log";
+	my $fail_sudo = fake_sudo_refuse($fail_base, $fail_log);
+	$ENV{'PATH'} = "$fail_sudo:$orig_path";
+	compat_env(
+		JAWNOS_OPENSSL_COMPAT_DIR => $fail_dir,
+		JAWNOS_OPENSSL_LDCONF    => $fail_conf,
+		JAWNOS_OPENSSL_LDCONFIG  => fake_binary("$fail_base/ldconfig", 'exit 0'),
+		JAWNOS_OPENSSL_PACMAN    => fake_binary("$fail_base/pacman", 'exit 1'),
+	);
+	my $fail_runner = sub { return { status => 1, output => "error: failed to commit transaction\n" }; };
+	my $failed = subs::packages_upgrade(action_opts(\%ARCH_NO_SUDO, $fail_runner));
+	is($failed->{'ok'}, 0, 'a failed upgrade is reported as failed');
+	ok(-e "$fail_dir/jawnos-compat.json", 'and the private layer is left exactly as it was');
+	ok(!exists $failed->{'openssl_compat'}, 'with no clear attempted');
+	ok(!-e $fail_log, 'and sudo was never asked');
+}
+
 # ---- the session gates -----------------------------------------------------
 #
 # The controller's gate helpers are the whole refusal path; a fake controller
@@ -532,5 +762,17 @@ like($template, qr/id="packages_backend"/, 'the page offers the backend selector
 like($template, qr/prebuilt runtime/, 'the runtime case explains itself');
 like($loader, qr/\bpackages_purge\b/, 'the purge helper is in the domain loader');
 like(read_file("$root/perl/help/topics_apps.pl"), qr/app => 'packages'/, 'the help topic names the app');
+
+# The local OpenSSL layer is a note on the page, a read on the status route and
+# a domain pair the loader maps; each has to stay wired to the others.
+like($loader, qr/\bpackages_openssl_compat\b/, 'the domain loader maps the layer read');
+like($loader, qr/\bpackages_openssl_compat_clear\b/, 'and the layer clear');
+like(read_file("$root/lib/JawnOS/Controller/manager_packages.pm"), qr/subs::packages_status/,
+	'the status route answers the domain status, which carries the layer');
+like($template, qr/id="packages_openssl_note"/, 'the page carries the layer note');
+like($js, qr/function packagesRenderCompat/, 'the chunk renders the layer note');
+like($js, qr#/manager/packages/status#, 'and reads it from the status route');
+like(read_file("$root/perl/help/topics_apps.pl"), qr/private library layer/,
+	'the help topic explains the layer in the on-screen words');
 
 done_testing();

@@ -91,6 +91,14 @@ function packagesHumanSize(kilobytes) {
 function packagesLoad() {
 	packagesNote(jawnosT('Reading the installed and outdated lists...'));
 	$.ajax({
+		url: '/manager/packages/status',
+		type: 'GET',
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.openssl_compat) { packagesRenderCompat(response.openssl_compat); }
+		}
+	});
+	$.ajax({
 		url: '/manager/packages/list',
 		type: 'GET',
 		data: { backend: packagesBackend() },
@@ -115,6 +123,29 @@ function packagesLoad() {
 			$('#packages_outdated').html('<div class="packages_empty">' + jawnosT('The outdated list could not be read.') + '</div>');
 		}
 	});
+}
+
+// The private OpenSSL layer a game installer staged for RetroArch: a note, not
+// a control. It names the directory and the system openssl, and says that an
+// upgrade replaces it. After an upgrade the server's answer carries the clear
+// result, so the note disappears in the same window instead of on the next open.
+function packagesRenderCompat(compat) {
+	var note = $('#packages_openssl_note');
+	if (!note.length) { return; }
+	compat = compat || {};
+	var layers = (compat.layers && compat.layers.length) ? compat.layers : [];
+	if (!compat.present || !layers.length) {
+		note.hide().empty().removeAttr('data-dir');
+		return;
+	}
+	var layer = layers[0] || {};
+	var html = jawnosT('A private OpenSSL library layer for RetroArch is installed at')
+		+ ' <code>' + packagesEscape(layer.dir || '') + '</code>.';
+	if (compat.system_version) {
+		html += ' ' + jawnosT('This machine\'s openssl package is') + ' ' + packagesEscape(compat.system_version) + '.';
+	}
+	html += ' ' + jawnosT('Upgrading openssl installs its libraries system-wide and replaces this layer.');
+	note.attr('data-dir', layer.dir || '').attr('data-version', compat.system_version || '').html(html).show();
 }
 
 function packagesRenderInstalled(response) {
@@ -254,6 +285,7 @@ function packagesAnswer(response) {
 	if (response.restart_needed) {
 		$('#packages_restart').text(jawnosT('A restart is needed so the running system uses the new packages.')).show();
 	}
+	if (response.openssl_compat) { packagesRenderCompat(response.openssl_compat); }
 	if (response.ok) { packagesLoad(); }
 }
 
