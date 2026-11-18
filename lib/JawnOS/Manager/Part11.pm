@@ -609,7 +609,7 @@ sub start_menu_hidden_apps {
 	return grep { &subs::app_hidden_now($_) } @apps;
 }
 
-sub start_menu_maker($c, $opts) {
+sub start_menu_maker($c, $opts = undef) {
 	my $returner = {};
 	# A caller may already have the games shelf's rows (or deliberately not
 	# want them); the public app-list route does, because the rows are games

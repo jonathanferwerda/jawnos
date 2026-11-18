@@ -115,4 +115,41 @@ my $error = ref $rendered ? "$rendered" : ($@ // '');
 unlike($error, qr/Global symbol "\$(\w+)"/,
 	'every name the template uses is in the stash the maker passes');
 
+# The JSON route calls the maker with only the controller; the games rows are
+# the maker's job there. The signature used to make that second argument
+# mandatory, so the authenticated route died before the template was reached
+# with "Too few arguments for subroutine 'Manager::start_menu_maker'". Call it
+# the way the route does and keep every other read a stub.
+require(root() . '/lib/JawnOS/Manager/Part11.pm');
+{ package FakeStartMenuC;
+	sub param { return undef }
+	sub stash { return undef }
+	sub render_to_string {
+		my ($self, %args) = @_;
+		$self->{'args'} = \%args;
+		return '<div id="start_menu"></div>';
+	}
+}
+{ package FakeStartMenuRows;
+	sub new { return bless { rows => [] }, shift }
+	sub hashes { return $_[0]->{'rows'} }
+}
+my $c = bless {}, 'FakeStartMenuC';
+my $menu = do {
+	no warnings 'redefine';
+	local *help::welcome_seen = sub { 1 };
+	local *Manager::parking_lot_grabber = sub { {} };
+	local *Manager::start_menu_recent = sub { [] };
+	local *Manager::start_menu_hidden_apps = sub { [] };
+	local *subs::config_reader = sub { {} };
+	local *subs::db_select = sub { FakeStartMenuRows->new };
+	local *subs::game_menu_entries = sub { [] };
+	local *subs::rightNow = sub { 123 };
+	local *subs::icon_set = sub { undef };
+	eval { Manager::start_menu_maker($c) };
+};
+is($@, '', 'the maker runs when its caller passes only the controller');
+ok(ref $menu eq 'HASH' && ($menu->{'menu'} // '') eq 'app', 'and returns the app menu');
+is($c->{'args'}->{'device'}, 'computer', 'with the config device the template needs');
+
 done_testing();
