@@ -14,6 +14,7 @@ use JawnOSTest;
 use File::Path qw(make_path);
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
+use Digest::SHA qw(sha256_hex);
 use JSON::PP ();
 use POSIX ();
 
@@ -281,6 +282,42 @@ sub insert_token {
 	# secret and the manager reads it, so a root 0600 file is a job nobody can see.
 	is(sprintf('%04o', (stat($progress))[2] & 07777), '0644', 'the progress file is readable by the manager');
 	like($provision, qr/chmod 0644, \$tmp/, 'and the writer sets that mode itself');
+
+	# An empty staging directory is answered, not guessed at: a flash that names
+	# no image and finds none says so before it looks for a board.
+	my $empty = "$dry/gou-empty";
+	make_path($empty);
+	my $nowhere = "$dry/provision-nowhere.json";
+	{
+		local $ENV{'JAWNOS_GOU_IMAGE_DIR'} = $empty;
+		system($^X, root() . '/scripts/gou_provision.pl',
+			'--flash', '--dry-run', '--progress', $nowhere);
+	}
+	my $none = eval { $JSON->decode(read_file($nowhere)) } || {};
+	like($none->{'error'}, qr/no gou-emmc-\*\.img\.zst in/, 'an empty staging directory is refused by name');
+
+	# The staged images are pruned as they are replaced, so a flash that names
+	# none writes the newest one in the directory instead of a constant filename
+	# that has since been deleted (the New-controller panel sends no image). The
+	# newer image carries a wrong sha256 sibling, so the failure names the check
+	# only the newest one reaches.
+	my $staged = "$dry/gou-staged";
+	make_path($staged);
+	for my $name (qw(gou-emmc-0.1.3000.img.zst gou-emmc-0.1.4000.img.zst)) {
+		write_file("$staged/$name", "$name\n");
+		write_file("$staged/$name.sha256", sha256_hex("$name\n") . "  $name\n");
+	}
+	write_file("$staged/gou-emmc-0.1.4000.img.zst.sha256", ('0' x 64) . "\n");
+	utime(1_600_000_000, 1_600_000_000, "$staged/gou-emmc-0.1.3000.img.zst");
+	utime(1_700_000_000, 1_700_000_000, "$staged/gou-emmc-0.1.4000.img.zst");
+	my $picked = "$dry/provision-picked.json";
+	{
+		local $ENV{'JAWNOS_GOU_IMAGE_DIR'} = $staged;
+		system($^X, root() . '/scripts/gou_provision.pl',
+			'--flash', '--dry-run', '--device', '/dev/null', '--progress', $picked);
+	}
+	my $chosen = eval { $JSON->decode(read_file($picked)) } || {};
+	like($chosen->{'error'}, qr/sha256 does not match/, 'a flash that names no image writes the newest staged one');
 
 	my $routes = read_file(root() . '/lib/JawnOS/Routes/manager_controllers.pm');
 	like($routes, qr{54012, 'get',\s+'/manager/controllers/new/flash/status'}, 'the status route is registered');

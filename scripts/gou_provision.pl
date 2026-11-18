@@ -9,7 +9,8 @@
 #   --scan                       list candidate devices as JSON
 #   --flash                      write the image to the one candidate
 #   --device PATH                name the block device instead of finding one
-#   --image PATH                 default /home/jawn/gou/gou-emmc-0.1.2807.img.zst
+#   --image PATH                 default the newest gou-emmc-*.img.zst in
+#                                /home/jawn/gou (JAWNOS_GOU_IMAGE_DIR moves it)
 #   --wifi-ssid S --wifi-psk P   write a NetworkManager profile
 #   --wifi-psk-stdin             read the password from stdin instead of argv
 #   --hostname NAME              default 'gou'
@@ -41,7 +42,12 @@ use Time::HiRes ();
 # The ODROID Go Ultra's eMMC as the USB gadget presents it: 15,634,268,160
 # bytes. A device with any other size is a different disk and is refused.
 my $EMMC_SIZE = 30_535_680;
-my $DEFAULT_IMAGE = '/home/jawn/gou/gou-emmc-0.1.2807.img.zst';
+# The staged eMMC images. The directory is pruned as a build is replaced, so the
+# flash names the newest one there instead of a constant filename: a fixed name
+# is a file that has been deleted by the time the button is pressed, and the
+# New-controller panel sends no image at all.
+my $IMAGE_DIR = (defined $ENV{'JAWNOS_GOU_IMAGE_DIR'} && length $ENV{'JAWNOS_GOU_IMAGE_DIR'})
+	? $ENV{'JAWNOS_GOU_IMAGE_DIR'} : '/home/jawn/gou';
 # The recovery card image. It is copied onto the flashed rootfs, so a board
 # always carries the way back even when the card in its slot is formatted.
 my $DEFAULT_RECOVERY = '/home/jawn/gou/sdcard_recovery.img';
@@ -254,6 +260,14 @@ sub _fresh_machine_id {
 
 # ---------------------------------------------------------------------------
 # sysfs: the device's own answer, never a guess from lsblk.
+
+# The image to write when the caller names none: the newest staged one. Only a
+# finished build is staged, so its mtime is the build's order.
+sub _default_image {
+	my @staged = sort { (stat($b))[9] <=> (stat($a))[9] } glob("$IMAGE_DIR/gou-emmc-*.img.zst");
+	return $staged[0] if @staged;
+	return '';
+}
 
 sub _block_names {
 	opendir my $dh, '/sys/block' or return ();
@@ -1245,9 +1259,9 @@ sub _flash {
 		$join = undef;
 	}
 
-	my $image = defined $opt{'image'} && length $opt{'image'} ? $opt{'image'} : $DEFAULT_IMAGE;
-	unless (-f $image) {
-		_fail(4, "image not found: $image");
+	my $image = (defined $opt{'image'} && length $opt{'image'}) ? $opt{'image'} : _default_image();
+	unless (length $image && -f $image) {
+		_fail(4, 'image not found: ' . (length $image ? $image : "no gou-emmc-*.img.zst in $IMAGE_DIR"));
 	}
 	my $length = _uncompressed_length($image);
 	# The hash of a multi-gigabyte image takes a while and comes before the first
