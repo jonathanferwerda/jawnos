@@ -1,9 +1,11 @@
 # tests-for: public/js/manager/windows/05_effects.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js public/js/manager/windows.js public/js/manager/taskbar_edit.js public/css/manager.css templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep public/js/manager/taskbar/01_inputs.js perl/help/topics_configure.pl
 # covers:    the desk's window effects - a soft-sheet lean while dragging, a
-#            stretch into the half or the whole screen, a bounce out and back,
-#            a settle from the top edge when the clothesline snaps a window, and
-#            a kick on the pin - with one per-device level (off, light, medium,
-#            maximum) setting their amplitude.
+#            stretch into the half or the whole screen, a bounce out and back
+#            (into the window's own tile when it has one), a settle from the
+#            top edge when the clothesline snaps a window, a kick on the pin,
+#            and a close that fades, crumbles or bursts before the teardown -
+#            with one per-device level (off, light, medium, maximum) setting
+#            their amplitude.
 
 use strict;
 use warnings;
@@ -101,6 +103,63 @@ like($edit_bar, qr/jawnosWindowEffectLeaving\(win\)/, 'the editable bar does too
 like($fit, qr/function windowMinimizer.*?jawnosWindowRestoreIn\(win\)/s, 'the desktop bar widget bounces a window back in');
 like($stack, qr/function topWindow.*?jawnosWindowEffectLeaving\(v\)/s, 'a leaving window is no longer the front');
 
+# --- into the control, and out of it ----------------------------------------
+like($effects, qr/function jawnosWindowEffectControl\(win\)/,
+	'the effects part finds the control a window answers for');
+like($effects, qr/function jawnosWindowEffectControlShown\(node\)/,
+	'and asks whether that control has a box on screen');
+like($effects, qr/if \(cx < 0 \|\| cy < 0 \|\| cx > vw \|\| cy > vh\)/,
+	'a control off the viewport - an autohide tile - is no control at all');
+like($effects, qr/function jawnosWindowEffectAim\(win\)/,
+	'the offset and the size are measured from the two rects');
+like($effects, qr/setProperty\('--je-out-x'.*?setProperty\('--je-out-y'.*?setProperty\('--je-in-y'.*?setProperty\('--je-out-sx'.*?setProperty\('--je-out-sy'/s,
+	'and written on the window for the keyframes');
+like($effects, qr/function jawnosWindowEffectToControl\(win, name\)/,
+	'one aimed one-shot measures before the class and marks the window after it');
+like($effects, qr/jawnosWindowEffectToControl\(win, 'out'\)/, 'minimizing aims at the control');
+like($effects, qr/jawnosWindowEffectToControl\(win, 'in'\)/, 'restoring comes out of it');
+like($effects, qr/jawnos_effect_control/, 'the marker is cleaned up with the other one-shots');
+like($css, qr/\@keyframes jawnos_window_into_control \{.*?var\(--je-out-x.*?var\(--je-out-sx.*?\}/s,
+	'the out motion travels to the control and shrinks to its size');
+like($css, qr/\@keyframes jawnos_window_from_control \{.*?var\(--je-out-x.*?var\(--je-in-y.*?var\(--je-out-sx/s,
+	'the in motion starts at the control');
+like($css, qr/\.wind\.jawnos_effect_in\.jawnos_effect_control \{[^}]*transform-origin: 50% 0%/s,
+	'the in motion still hangs from the title bar');
+like($css, qr/--je-travel:/, 'the level sets how far a window travels');
+like($css, qr/--je-collapse:/, 'and how far it shrinks');
+like($css, qr/body\[data-window-effects="light"\] \{[^}]*--je-travel: \.5[^}]*\}/s,
+	'light travels half the way');
+like($css, qr/body\[data-window-effects="maximum"\] \{[^}]*--je-travel: 1\.35[^}]*\}/s,
+	'maximum overshoots the control');
+like($css, qr/prefers-reduced-motion: reduce\) \{[\s\S]*\.wind\.jawnos_effect_in\.jawnos_effect_control[\s\S]*?animation-duration: 1ms/,
+	'reduced motion still finishes the control motions at once');
+
+# --- the close --------------------------------------------------------------
+like($effects, qr/function jawnosWindowCloseEffect\(win, done\)/, 'one entry point for the close motion');
+like($effects, qr/'close_fade' : \(\(level === 'maximum'\) \? 'close_burst' : 'close_crumble'\)/,
+	'light fades, medium crumbles, maximum bursts');
+like($effects, qr/function jawnosWindowCloseShards\(el, rect, level\)/, 'the pieces are cut from the window rect');
+like($effects, qr/if \(name !== 'close_fade'[\s\S]*?jawnosWindowCloseShards\(el, rect, level\)/,
+	'light fades with no pieces at all');
+like($effects, qr/setTimeout\(finish, 450\)/, 'the bookkeeping waits at most 450 ms');
+like($effects, qr/if \(this\.jawnosCloseEnd\) \{ this\.jawnosCloseEnd\(\); \}/,
+	'turning the effects off finishes a close already playing');
+foreach my $name (qw(close_fade close_crumble close_burst shard shard_burst flash)) {
+	like($css, qr/\@keyframes jawnos_window_$name \{/, "manager.css defines the $name keyframes");
+}
+foreach my $class (qw(close_fade close_crumble close_burst)) {
+	like($css, qr/\.wind\.jawnos_effect_$class \{ animation:/, "the $class class plays a keyframe");
+}
+like($css, qr/\.jawnos_close_shards \{ pointer-events: none; \}/, 'the shard overlay cannot swallow a press');
+like($css, qr/\.jawnos_close_shard \{[^}]*pointer-events: none/s, 'nor can a shard');
+like($css, qr/\.jawnos_close_flash \{[^}]*pointer-events: none/s, 'nor the flash');
+like($stack, qr/function windowCloseTearDown\(timestamp, win, done\) \{.*?\$\('#window_' \+ timestamp \)\.remove\(\);/s,
+	'the removal lives in the teardown the close hands the motion');
+like($stack, qr/function closeWindow\(timestamp, done\) \{.*?jawnosWindowCloseEffect\(win, tearDown\)[\s\S]{0,40}?tearDown\(\);\s*\}/s,
+	'the close motion plays first, and effects off tears down at once');
+like($stack, qr/if \(win\.length && win\[0\]\.jawnosCloseToken\)/, 'a second close waits for the one in flight');
+like($stack, qr/jawnosCloseWaits/, 'and its caller is called when the first finishes');
+
 # --- the levels, the physics and the hide/restore race ---------------------
 my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
@@ -142,12 +201,16 @@ function pump(frames) {
 function Win(id) {
 	this.id = id;
 	this.classes = {};
-	this.style = {};
+	this.style = { setProperty: function (k, v) { this[k] = v; } };
 	this.offsetWidth = 100;
 	this.parentNode = {};
 	this.hidden = false;
 	this.listeners = {};
+	this.attrs = {};
+	this.rect = { left: 0, top: 0, width: 0, height: 0 };
 }
+Win.prototype.getAttribute = function (k) { return this.attrs[k] === undefined ? null : this.attrs[k]; };
+Win.prototype.getBoundingClientRect = function () { return this.rect; };
 Win.prototype.addEventListener = function (type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); };
 Win.prototype.removeEventListener = function (type, fn) {
 	const a = this.listeners[type] || [];
@@ -166,11 +229,29 @@ function wrap(el) {
 		0: el,
 		addClass: function (c) { c.split(/\s+/).forEach((x) => { if (x) { el.classes[x] = 1; } }); return this; },
 		removeClass: function (c) { c.split(/\s+/).forEach((x) => { delete el.classes[x]; }); return this; },
+		css: function () { return '1000'; },
 		hide: function () { el.hidden = true; return this; }
 	};
 }
 
 const windows = [];
+const controls = [];
+
+// A tile or pin: the effects part asks it for its app and its box.
+function Control(app, rect) {
+	this.attrs = { app: app };
+	this.rect = rect;
+}
+Control.prototype.getAttribute = function (k) { return this.attrs[k] === undefined ? null : this.attrs[k]; };
+Control.prototype.getBoundingClientRect = function () { return this.rect; };
+
+function rowSet(rows) {
+	const j = { length: rows.length };
+	rows.forEach((r, i) => { j[i] = r; });
+	j.each = function (fn) { rows.forEach((r, i) => fn.call(r, i, r)); return j; };
+	return j;
+}
+
 function $(sel) {
 	if (sel && sel.jquery) { return sel; }
 	if (sel instanceof Win) { return wrap(sel); }
@@ -180,18 +261,38 @@ function $(sel) {
 		j.each = function (fn) { windows.forEach((w, i) => fn.call(w, i, w)); return j; };
 		return j;
 	}
-	return { length: 0 };
+	if (sel === '.window_toggle') { return rowSet(controls); }
+	if (sel === '.taskbar_pin') { return rowSet([]); }
+	return { length: 0, each: function () { return this; } };
 }
 
 let adjuster = 0;
 const bodyAttrs = {};
+// The close builds its shard overlay on the body; a bare node is all it needs.
+function FakeNode(tag) {
+	this.tagName = tag;
+	this.children = [];
+	this.attrs = {};
+	this.style = { setProperty: function (k, v) { this[k] = v; } };
+	this.parentNode = null;
+}
+FakeNode.prototype.setAttribute = function (k, v) { this.attrs[k] = v; };
+FakeNode.prototype.appendChild = function (n) { n.parentNode = this; this.children.push(n); return n; };
+FakeNode.prototype.removeChild = function (n) {
+	const i = this.children.indexOf(n);
+	if (i >= 0) { this.children.splice(i, 1); }
+	n.parentNode = null;
+	return n;
+};
+const fakeBody = new FakeNode('body');
+fakeBody.setAttribute = function (k, v) { bodyAttrs[k] = v; };
 const sandbox = {
 	$,
 	setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout,
 	requestAnimationFrame: fakeRaf, cancelAnimationFrame: fakeCancelRaf,
 	performance: { now: function () { return now; } },
-	window: { matchMedia: function () { return { matches: false }; } },
-	document: { body: { setAttribute: function (k, v) { bodyAttrs[k] = v; } } },
+	window: { matchMedia: function () { return { matches: false }; }, innerWidth: 1000, innerHeight: 800 },
+	document: { body: fakeBody, createElement: function (tag) { return new FakeNode(tag); } },
 	jawnos_bar_settings: { window_effects: 'on' },
 	windowBackgroundAdjuster: function () { adjuster++; },
 	console
@@ -293,6 +394,93 @@ sandbox.jawnosWindowMinimizeOut(falling);
 sandbox.jawnosWindowEffectsSet('off');
 check('the switch finishes a hide already in flight', falling.hidden === true);
 check('and its adjustment still lands', adjuster === 2);
+
+// --- into the control, and out of it ---------------------------------------
+// a 400x300 window at (100,100) and a 40x40 tile at (10,600)
+sandbox.jawnosWindowEffectsSet('on');
+const aimed = new Win('window_aim');
+aimed.rect = { left: 100, top: 100, width: 400, height: 300 };
+aimed.offsetWidth = 400;
+aimed.attrs.app = 'gallery';
+windows.push(aimed);
+controls.push(new Control('gallery', { left: 10, top: 600, width: 40, height: 40 }));
+check('a minimising window plays its out motion', sandbox.jawnosWindowMinimizeOut(aimed) === true);
+check('and wears the control marker', aimed.classes['jawnos_effect_control'] === 1);
+check('the travel to the tile is written on the window',
+	aimed.style['--je-out-x'] === '-270.0px' && aimed.style['--je-out-y'] === '370.0px');
+check('so is the size it shrinks to',
+	aimed.style['--je-out-sx'] === '0.1000' && aimed.style['--je-out-sy'] === '0.1333');
+check('and the title-bar offset the in motion starts from', aimed.style['--je-in-y'] === '500.0px');
+aimed.fire('animationend');
+sandbox.jawnosWindowRestoreIn(aimed);
+check('a restored window comes out of the control',
+	aimed.classes['jawnos_effect_in'] === 1 && aimed.classes['jawnos_effect_control'] === 1);
+aimed.fire('animationend');
+
+// an autohidden tile past the edge is no control: the centre bounce stays
+const tucked = new Win('window_tucked');
+tucked.rect = { left: 100, top: 100, width: 400, height: 300 };
+tucked.offsetWidth = 400;
+tucked.attrs.app = 'gallery';
+windows.push(tucked);
+controls.length = 0;
+controls.push(new Control('gallery', { left: -200, top: 600, width: 40, height: 40 }));
+sandbox.jawnosWindowMinimizeOut(tucked);
+check('a tile off the viewport does not pull the window after it', tucked.classes['jawnos_effect_control'] === undefined);
+check('but the centre bounce is still there', tucked.classes['jawnos_effect_out'] === 1);
+tucked.fire('animationend');
+
+// --- the close --------------------------------------------------------------
+sandbox.jawnosWindowEffectsSet('medium');
+function boxed(win) { win.rect = { left: 100, top: 100, width: 400, height: 300 }; win.offsetWidth = 400; }
+
+const medium_close = new Win('window_close_medium');
+boxed(medium_close);
+windows.push(medium_close);
+let medium_done = 0;
+check('a medium close plays', sandbox.jawnosWindowCloseEffect(medium_close, function () { medium_done++; }) === true);
+check('it crumbles', medium_close.classes['jawnos_effect_close_crumble'] === 1);
+check('into a small handful of shards',
+	fakeBody.children.length === 1 && fakeBody.children[0].className === 'jawnos_close_shards'
+	&& fakeBody.children[0].children.length === 7);
+medium_close.fire('animationend');
+check('and the teardown runs when the motion ends', medium_done === 1);
+check('the shards go with the window', fakeBody.children.length === 0);
+check('and the class is given back', medium_close.classes['jawnos_effect_close_crumble'] === undefined);
+
+sandbox.jawnosWindowEffectsSet('light');
+const light_close = new Win('window_close_light');
+boxed(light_close);
+windows.push(light_close);
+let light_done = 0;
+sandbox.jawnosWindowCloseEffect(light_close, function () { light_done++; });
+check('light only fades', light_close.classes['jawnos_effect_close_fade'] === 1);
+check('with no shards', fakeBody.children.length === 0);
+advance(500);
+check('and the ceiling still tears it down', light_done === 1);
+
+sandbox.jawnosWindowEffectsSet('maximum');
+const burst_close = new Win('window_close_burst');
+boxed(burst_close);
+windows.push(burst_close);
+let burst_done = 0;
+sandbox.jawnosWindowCloseEffect(burst_close, function () { burst_done++; });
+check('maximum bursts', burst_close.classes['jawnos_effect_close_burst'] === 1);
+check('with every shard and a flash',
+	fakeBody.children.length === 1 && fakeBody.children[0].children.length === 9);
+check('the flash is one of them',
+	fakeBody.children[0].children[8].className === 'jawnos_close_flash');
+sandbox.jawnosWindowEffectsSet('off');
+check('switching the effects off finishes a close in flight', burst_done === 1);
+check('and clears its shards', fakeBody.children.length === 0);
+
+sandbox.jawnosWindowEffectsSet('on');
+sandbox.window.matchMedia = function () { return { matches: true }; };
+check('reduced motion tears the window down at once',
+	sandbox.jawnosWindowCloseEffect(burst_close, function () {}) === false);
+sandbox.window.matchMedia = function () { return { matches: false }; };
+check('a window with no box is torn down at once too',
+	sandbox.jawnosWindowCloseEffect(new Win('window_hidden'), function () {}) === false);
 
 process.exit(failures ? 1 : 0);
 JS

@@ -82,9 +82,12 @@ function windowRefresher(app) {
 	}
 }
 
-function closeWindow(timestamp, done) {
+// The teardown is everything the close did before there was a motion: the app's
+// own shutdown, the window's removal, and the bookkeeping the server and the
+// desk keep. closeWindow() plays the level's farewell first and hands it this,
+// or runs it at once when the desk wants no motion.
+function windowCloseTearDown(timestamp, win, done) {
 
-	var win = $('#window_' + timestamp);
 	win.find('.window_script').remove();
 	var app = win.attr('app');
 	if (app == 'twirl') {
@@ -159,6 +162,23 @@ function closeWindow(timestamp, done) {
 	// a phone layers its windows on one another, so the layers left behind
 	// want re-parking against the smaller count
 	if (windowPhoneChecker()) { windowStacker(); }
+}
+
+// A close is a farewell and then the teardown. The motion belongs to the
+// effects level; with it off (or reduced motion) nothing is delayed and the
+// window goes at once, exactly as before.
+function closeWindow(timestamp, done) {
+	var win = $('#window_' + timestamp);
+	// a close already playing owns this window: a second request must not tear
+	// it down twice, so it waits for the first one to finish
+	if (win.length && win[0].jawnosCloseToken) {
+		if (typeof done == 'function') { (win[0].jawnosCloseWaits = win[0].jawnosCloseWaits || []).push(done); }
+		return;
+	}
+	var tearDown = function() { windowCloseTearDown(timestamp, win, done); };
+	if (!(typeof jawnosWindowCloseEffect == 'function' && jawnosWindowCloseEffect(win, tearDown))) {
+		tearDown();
+	}
 }
 
 $(document).on('click', '.wind', function(e) {
