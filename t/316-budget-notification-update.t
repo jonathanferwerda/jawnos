@@ -15,6 +15,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib", "$FindBin::Bin/../lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use JawnOSTest;
 
 my $root = "$FindBin::Bin/..";
 sub source { my $text = read_file("$root/$_[0]"); return defined $text ? $text : ''; }
@@ -34,6 +35,31 @@ is_deeply(subs::budget_notification_types({ budget => '10quantity/day' }), [ 'qu
 is_deeply(subs::budget_notification_types({ budget => '' }), [],
 	'an app with no budget offers no type');
 
+# --- one name for one crossing, on every machine ---------------------------
+# The watcher runs on each device a second or two apart. The name has to come
+# out the same on all of them, or the sync stacks a row from each; only the
+# period may change it, and only the status may make it a new notice.
+my $crossing = {
+	app => 'toothbrushing', circumstance => 'occurences', status => 'accomplished',
+	scope => 'day', duration => 86_400_000,
+};
+my $at = ts(2026, 11, 17, 18, 44, 4);
+is(subs::budget_event_name({ %$crossing, timestamp => $at }),
+	subs::budget_event_name({ %$crossing, timestamp => $at + 2_500 }),
+	'the same crossing names the same event on a machine that ran seconds later');
+isnt(subs::budget_event_name({ %$crossing, timestamp => $at, status => 'burnt out' }),
+	subs::budget_event_name({ %$crossing, timestamp => $at }),
+	'a new status is a new notice');
+isnt(subs::budget_event_name({ %$crossing, timestamp => $at + 86_400_000 }),
+	subs::budget_event_name({ %$crossing, timestamp => $at }),
+	'the next day is a new period and a new notice');
+is(subs::budget_event_name({ %$crossing, timestamp => $at, scope => 'week', duration => 604_800_000 }),
+	subs::budget_event_name({ %$crossing, timestamp => $at + 2 * 86_400_000, scope => 'week', duration => 604_800_000 }),
+	'a week budget keeps one name through the week');
+like(subs::budget_event_name({ %$crossing, timestamp => $at }),
+	qr/^budget\|toothbrushing\|occurences\|accomplished\|\d+$/,
+	'the name reads app, type, status and period');
+
 # --- the watcher rewrites instead of announcing again -----------------------
 my $alarm = source('perl/Alarm.pl');
 like($alarm, qr/sub budget_notification_filter\b/, 'the pickers have one reader');
@@ -42,8 +68,10 @@ like($alarm, qr/budget_notification_types/, 'the type picker is read by the watc
 like($alarm, qr/my \$status_changed = \(\$cache_budget->\{'status'\} ne \$budget->\{'status'\}\);/,
 	'a status crossing is named');
 like($alarm, qr/my \$value_changed = /, 'and so is a reading that moved without one');
-like($alarm, qr/my \$budget_event = join '\|', 'budget', \$app, \$circumstance, \$window_start, \$signature;/,
-	'the event is named by the period and the appointments behind it');
+like($alarm, qr/my \$budget_event = &subs::budget_event_name\(\{/,
+	'the event is named by the app, its type, its status and the period');
+unlike($alarm, qr/my \$signature = ''/, 'not by a digest of the rows this machine holds');
+unlike($alarm, qr/\$window_start = \$server_time - /, 'nor by a window ending at this pass');
 unlike($alarm, qr/int\(\$server_time \/ 600000\)/,
 	'not by a ten-minute grid slot, which made each pass a new notice');
 like($alarm, qr/\(\$already \? \(update => 1\) : \(\)\)/,

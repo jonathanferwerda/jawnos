@@ -627,6 +627,30 @@ sub budget_notification_types($settings) {
 	return \@order;
 }
 
+# The name a budget crossing carries on every machine. The window is read off
+# the calendar whatever the budget's own lock says: an unlocked budget's window
+# ends at the instant its watcher pass ran, and each device's pass is seconds
+# away from the others, so the same crossing was named differently everywhere
+# and the sync stacked a row from each. The period, the type and the status are
+# the same answer on every machine; the next period is a new name, which is what
+# makes it a fresh notice.
+sub budget_event_name($data) {
+	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	my $status = $data->{'status'} // '';
+	$status = lc $status;
+	$status =~ s/[^a-z0-9]+/_/g;
+	$status =~ s/^_+|_+$//g;
+	my $duration = $data->{'duration'} || 86_400_000;
+	my $window_start = eval { (&subs::father_time({
+		scope => $data->{'scope'},
+		ts => 'this',
+		lock => 'on',
+		timestamp => $timestamp,
+	}))[0] };
+	$window_start = int($timestamp / $duration) * $duration unless defined $window_start;
+	return join '|', 'budget', ($data->{'app'} // ''), ($data->{'circumstance'} // ''), $status, $window_start;
+}
+
 sub budget_status_maker($returner) {
 	# a target of nothing - a period only just opened, or a budget of zero - has
 	# nothing to fall behind: the value is read as on track, rather than the

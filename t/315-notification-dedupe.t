@@ -59,14 +59,18 @@ like($notify, qr/'--es', 'timestamp', \$m->\{'timestamp'\}/, 'and its moment');
 my $loader = source('lib/JawnOS/Domain/Loader.pm');
 like($loader, qr/JawnOS::Domain::Notify' for qw\(notification_sender notification_event_uuid /,
 	'the new helper is in the domain loader map');
+like($loader, qr/JawnOS::Domain::Budget' for qw\(.*budget_event_name/,
+	'and so is the budget event name');
 
 # --- the house-wide announcers name their events ---------------------------
 my $alarm = source('perl/Alarm.pl');
 like($alarm, qr/my \$note_event = join '\|', 'appointment', \$a->\{'uuid'\} \|\| '', \$type \|\| '',/,
 	'an appointment notice is named by its row, its type and its stamps');
 like($alarm, qr/dedupe => \$note_event,/, 'and the sender is given that name');
-like($alarm, qr/my \$budget_event = join '\|', 'budget', \$app, \$circumstance, \$window_start, \$signature;/,
-	'a budget crossing is named by its period and the appointments behind it');
+like($alarm, qr/&subs::budget_event_name\(\{/, 'a budget crossing asks the domain for its house name');
+like($alarm, qr/status => \$budget->\{'status'\},/, 'the name carries the status, so a new state speaks');
+unlike($alarm, qr/my \$signature = ''/, 'and no per-machine appointment digest');
+unlike($alarm, qr/\$server_time - \(\$budget->\{'duration'\}/, 'nor a window that ends at this pass');
 like($alarm, qr/dedupe => \$budget_event,/, 'and the sender is given that name');
 like($alarm, qr/\(\$already \? \(update => 1\) : \(\)\)/,
 	'an event already on the list is updated instead of announced again');

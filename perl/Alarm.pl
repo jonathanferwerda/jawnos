@@ -475,30 +475,18 @@ sub budget_watcher() {
 							my $announce = ($status_filter && !grep { $_ eq $status_key } @{$status_filter}) ? 0 : 1;
 							$announce = 0 if $type_filter && !grep { $_ eq $circumstance } @{$type_filter};
 							if ($announce && &subs::setting_grabber({ app => $app, setting => 'notification', device => $device }) eq 'on') {
-								# The window the reading is for: a crossing keeps its name in a
-								# period and the next period is a new notice.
-								my $window_start = eval { (&subs::father_time({
+								# The crossing's name, shared by the whole house: app, budget type,
+								# status and the calendar period it falls in. The instant the pass
+								# ran is not in it - see subs::budget_event_name - so every device
+								# names one crossing, and the next period speaks afresh.
+								my $budget_event = &subs::budget_event_name({
+									app => $app,
+									circumstance => $circumstance,
+									status => $budget->{'status'},
 									scope => $budget->{'scope_name'},
-									ts => 'this',
-									lock => ($settings->{$app}->{'s_lock'} || 'off'),
+									duration => $budget->{'duration'},
 									timestamp => $server_time,
-								}))[0] };
-								$window_start = $server_time - ($budget->{'duration'} || 86400000) unless defined $window_start;
-								# The appointments behind the reading, in one query and a fixed
-								# order. While none of them is added or edited the signature
-								# holds, so the event keeps its name and the old card is updated;
-								# a changed row (or a new period) speaks afresh.
-								my $signature = '';
-								foreach my $row ( @{ (eval { &subs::db_query(
-									'select uuid, timestamp, server_time, duration, quantity, type from appointments '
-									. 'where app = ? and (cast(timestamp as integer) >= cast(? as integer) '
-									. 'or (cast(timestamp as integer) + abs(cast(coalesce(duration,0) as real))) > cast(? as integer)) '
-									. 'order by uuid',
-									$app, $window_start, $window_start
-								)->hashes }) || [] } ) {
-									$signature .= join("\x1f", map { defined $row->{$_} ? $row->{$_} : '' } qw(uuid timestamp server_time duration quantity type)) . "\n";
-								}
-								my $budget_event = join '|', 'budget', $app, $circumstance, $window_start, $signature;
+								});
 								my $event_uuid = &subs::notification_event_uuid($budget_event);
 								# The sync may have carried this event here already: then it is
 								# the same card with a new reading, not a new notice.
