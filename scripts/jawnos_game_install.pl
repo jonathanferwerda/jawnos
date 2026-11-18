@@ -53,6 +53,18 @@ sub finish {
 	exit($state eq 'done' ? 0 : 1);
 }
 
+# One child's stdout, so a helper's JSON does not land in the status channel.
+sub run_capture {
+	my (@command) = @_;
+	open(my $pipe, '-|', @command) or return (127, '');
+	local $/;
+	my $out = <$pipe>;
+	$out = '' unless defined $out;
+	close $pipe;
+	my $code = $?;
+	return ($code == -1 ? 127 : $code >> 8, $out);
+}
+
 write_status();
 
 if ($WHAT eq 'emulators') {
@@ -80,6 +92,29 @@ if ($WHAT eq 'emulators') {
 		}
 		write_status();
 	}
+	# The packaged RetroArch is linked against OpenSSL 4 while this image's
+	# openssl package provides 3.6, so the frontend refuses to start until the
+	# newer sonames are visible. The helper stages only those two libraries
+	# under /opt and leaves the system's OpenSSL alone; whatever it reports,
+	# the rest of the install carries on.
+	$STATUS{'note'} = 'Checking the OpenSSL RetroArch needs.';
+	write_status();
+	my $compat = { ok => 0, error => 'The OpenSSL helper is missing.' };
+	my $openssl_script = "$FindBin::Bin/jawnos_game_openssl.pl";
+	if (-f $openssl_script) {
+		my ($compat_rc, $compat_out) = run_capture($^X, $openssl_script);
+		my $parsed = eval { $JSON->decode($compat_out) };
+		$compat = $parsed if ref $parsed eq 'HASH';
+		$compat->{'ok'} = 0 if $compat_rc != 0 && $compat->{'ok'};
+	}
+	$STATUS{'openssl'} = $compat;
+	if (!$compat->{'ok'}) {
+		push @{ $STATUS{'failed'} }, 'openssl-compat';
+	}
+	elsif (($compat->{'state'} // '') eq 'staged') {
+		push @{ $STATUS{'done'} }, 'openssl' . ($compat->{'major'} // '');
+	}
+	write_status();
 	# RetroArch's default output is a "default" device this image never
 	# configured; pin it to the panel's card once.
 	my $config_dir = '/home/jawn/.config/retroarch';
@@ -180,6 +215,12 @@ if ($WHAT eq 'emulators') {
 		. join(', ', @{ $STATUS{'failed'} }) . '.'
 		if @{ $STATUS{'failed'} };
 	$note .= ' ' . scalar(@copied) . ' cores copied from the emmc.' if @copied;
+	if (!$compat->{'ok'}) {
+		$note .= ' RetroArch still needs an OpenSSL this image does not carry.';
+	}
+	elsif (($compat->{'state'} // '') eq 'staged') {
+		$note .= ' The OpenSSL ' . $compat->{'major'} . ' RetroArch needs was staged.';
+	}
 	finish('done', $note);
 }
 
