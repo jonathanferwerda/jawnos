@@ -652,6 +652,12 @@ function windowMaker(response, fragment) {
 	// give the reserved one back
 	windowTiledRelease(timestamp);
 	windowDimensionSetter($('#' + window_id));
+	// A preview dismissed while this window was on its way (a click on it, or the
+	// same control pressed again) cancels the window too: the press meant "never
+	// mind", not a delayed open. Taken back before the emerge motion would show it.
+	if (made && typeof jawnosWindowEmergeDismissed === 'function' && jawnosWindowEmergeDismissed($('#' + window_id))) {
+		return window_id;
+	}
 	if (made && typeof jawnosWindowEmerge === 'function') { jawnosWindowEmerge($('#' + window_id)); }
 	return window_id;
 }

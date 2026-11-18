@@ -4935,6 +4935,7 @@ body[data-window-effects="off"] .jawnos_emerge_ghost { display: none !important;
 	.jawnos_emerge_ghost { display: none; }
 }
 
+
 /* ---- shell motion: the start menu and the bars -------------------------
    The same Misc -> Window Effects level that scales the windows' own motions
    sets how far the shell's chrome moves: the start menu unfolds out of the
@@ -5034,4 +5035,15 @@ body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[positio
 	body #pseudonym_home[position=bottom],
 	body #pseudonym_home[position=left],
 	body #pseudonym_home[position=right] { transition: none !important; }
+}
+
+/* While it waits for its window the preview is the one live control on the desk:
+   it takes the pointer, and a click on it takes the pending open back. The
+   tradeoff is that the predicted frame is not click-through for those moments -
+   a click there dismisses the preview instead of reaching the desk underneath.
+   The class comes off at retarget (windows/06_emerge.js), so the cross-fade is
+   click-through again. */
+.jawnos_emerge_ghost.jawnos_emerge_waiting {
+	pointer-events: auto;
+	cursor: var(--jawnos-cursor-pointer, pointer);
 }

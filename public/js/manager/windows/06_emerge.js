@@ -33,12 +33,27 @@ var JAWNOS_EMERGE_TTL = 10000;
 var JAWNOS_EMERGE_FALLBACK = 1500;
 var JAWNOS_EMERGE_MAX_ORIGINS = 16;
 // The preview outlives a slow round trip, but a press that opens nothing must
-// not leave a window-shaped ghost standing on the desk.
+// not leave a window-shaped ghost standing on the desk. A preview whose window
+// is still on its way is held rather than expired (see
+// jawnosWindowEmergeGhostExpire); the absolute ceiling keeps a leaked
+// reservation from leaving one forever.
 var JAWNOS_EMERGE_GHOST_TTL = 3000;
+var JAWNOS_EMERGE_GHOST_MAX = 30000;
+// How long a dismissal is remembered while the window it cancelled is still on
+// its way. A reservation carries its own timestamp, so this only bounds the
+// app-keyed fallback an opener with no reservation leaves behind.
+var JAWNOS_EMERGE_DISMISS_TTL = 30000;
 
 var jawnosWindowOrigins = {};
 var jawnosWindowOriginLast = null;
 var jawnosWindowEmergeGhost = null;
+// Windows the person took back before they painted: keyed by the reservation's
+// timestamp when there is one, otherwise by app. The landing window is hidden
+// and closed instead of shown.
+var jawnosWindowEmergeDismissals = {};
+// The click that belongs to a dismissing press, so the opener is not asked a
+// second time.
+var jawnosWindowEmergeClickBlock = null;
 
 // One place for the level's manners: a light desk only hints at the flow, the
 // maximum lets it travel and overshoot. `travel` is how far the sheet's centre
@@ -822,6 +837,175 @@ function jawnosWindowEmergeGhostCancel(ghost) {
 	ghost.win = null;
 }
 
+// The preview is held while a window for its app is still on its way. The press
+// that opened it reserved a slot (windowTiledReserve) before the server was
+// asked, so the reservation is the honest "still loading" signal: an app-less
+// press, or one that opened nothing, has none and keeps the old short TTL.
+function jawnosWindowEmergeGhostPending(ghost) {
+	if (!ghost || !ghost.app) { return false; }
+	try {
+		if (typeof windowTiledPendingApp == 'undefined' || !windowTiledPendingApp) { return false; }
+		return !!windowTiledPendingApp[ghost.app];
+	}
+	catch (e) { return false; }
+}
+
+// The old ceiling hid the preview before a slow app could paint, leaving a blank
+// desk between the press and the window. While the open is still in flight the
+// preview stands where it is; the motion is untouched, only its lifetime grows.
+function jawnosWindowEmergeGhostExpire(ghost) {
+	if (!ghost || jawnosWindowEmergeGhost !== ghost) { return; }
+	ghost.timer = null;
+	ghost.waited = (ghost.waited || 0) + JAWNOS_EMERGE_GHOST_TTL;
+	if (ghost.waited < JAWNOS_EMERGE_GHOST_MAX && jawnosWindowEmergeGhostPending(ghost)) {
+		ghost.timer = setTimeout(function () { jawnosWindowEmergeGhostExpire(ghost); }, JAWNOS_EMERGE_GHOST_TTL);
+		return;
+	}
+	jawnosWindowEmergeGhostCancel(ghost);
+}
+
+// Is this node the preview, or inside it? A press on the ghost is a dismissal,
+// not a press on the desk underneath.
+function jawnosWindowEmergeGhostHolds(ghost, el) {
+	if (!ghost || !ghost.el || !el || el.nodeType !== 1) { return false; }
+	var node = ghost.el;
+	if (el === node) { return true; }
+	if (node.contains && node.contains(el)) { return true; }
+	var parent = el.parentNode;
+	while (parent) {
+		if (parent === node) { return true; }
+		parent = parent.parentNode;
+	}
+	return false;
+}
+
+// The waiting preview is the one live control on the desk: it takes the pointer
+// so a press on it can be a dismissal. The class comes off at retarget, so the
+// cross-fade is click-through again.
+function jawnosWindowEmergeGhostWaiting(el) {
+	if (!el) { return; }
+	if (el.classList && el.classList.add) { el.classList.add('jawnos_emerge_waiting'); return; }
+	if (String(el.className || '').indexOf('jawnos_emerge_waiting') < 0) { el.className = (el.className ? el.className + ' ' : '') + 'jawnos_emerge_waiting'; }
+}
+
+function jawnosWindowEmergeGhostPassThrough(el) {
+	if (!el) { return; }
+	if (el.classList && el.classList.remove) { el.classList.remove('jawnos_emerge_waiting'); return; }
+	el.className = String(el.className || '').replace(/(^|\s)jawnos_emerge_waiting(?=\s|$)/g, '').replace(/^\s+|\s+$/g, '');
+}
+
+function jawnosWindowEmergeDismissedPrune(now) {
+	var stamp = (now === undefined) ? Date.now() : now;
+	for (var key in jawnosWindowEmergeDismissals) {
+		if (!jawnosWindowEmergeDismissals.hasOwnProperty(key)) { continue; }
+		var record = jawnosWindowEmergeDismissals[key];
+		if (!record || stamp - record.at > JAWNOS_EMERGE_DISMISS_TTL) { delete jawnosWindowEmergeDismissals[key]; }
+	}
+}
+
+// Take back the open the preview was waiting for. The opener may already be on
+// the server round trip, so this records which landing to cancel rather than
+// pretending the request never happened. The reservation's timestamp identifies
+// the exact window; an opener with no reservation falls back to its app.
+function jawnosWindowEmergeDismiss(ghost) {
+	if (ghost === undefined) { ghost = jawnosWindowEmergeGhost; }
+	if (!ghost) { return false; }
+	var app = ghost.app || '';
+	var stamp = '';
+	try {
+		if (app && typeof windowTiledPendingApp != 'undefined' && windowTiledPendingApp && windowTiledPendingApp[app]) {
+			stamp = String(windowTiledPendingApp[app]);
+		}
+	}
+	catch (e) {}
+	var now = Date.now();
+	jawnosWindowEmergeDismissedPrune(now);
+	var key = stamp || (app ? ('app:' + app) : '');
+	if (key) {
+		jawnosWindowEmergeDismissals[key] = { app: app, stamp: stamp, at: now };
+	}
+	jawnosWindowEmergeGhostCancel(ghost);
+	return true;
+}
+
+// Put a landed window away instead of letting it appear after its preview was
+// dismissed. closeWindow is the desk's own teardown (taskbar tile, server
+// record, websocket), so the cancelled open leaves nothing behind; a page
+// without it still keeps the window off the screen.
+function jawnosWindowEmergeTakeBack($win, el) {
+	if (el && el.jawnosEmergeGhost) { jawnosWindowEmergeCancel(el); }
+	var stamp = ($win && typeof $win.attr == 'function') ? ($win.attr('timestamp') || '') : '';
+	if (stamp && typeof closeWindow == 'function') {
+		closeWindow(stamp);
+		return true;
+	}
+	if ($win && typeof $win.hide == 'function') { $win.hide(); }
+	else if (el && el.parentNode) { el.parentNode.removeChild(el); }
+	return true;
+}
+
+// The handoff: did this landing answer a dismissed preview? Returns true when
+// the window was taken back, so windowMaker can skip the emerge motion.
+function jawnosWindowEmergeDismissed(win) {
+	if (!win) { return false; }
+	var $win = (typeof $ == 'function') ? $(win) : null;
+	var el = ($win && $win.length) ? $win[0] : ((win.nodeType === 1) ? win : null);
+	if (!el) { return false; }
+	var app = '';
+	var stamp = '';
+	try {
+		if ($win && typeof $win.attr == 'function') {
+			app = $win.attr('app') || '';
+			stamp = $win.attr('timestamp') || '';
+		}
+		if (!app && el.getAttribute) { app = el.getAttribute('app') || ''; }
+		if (!stamp && el.getAttribute) { stamp = el.getAttribute('timestamp') || ''; }
+	}
+	catch (e) {}
+	var key = '';
+	var record = null;
+	if (stamp && jawnosWindowEmergeDismissals[String(stamp)]) {
+		key = String(stamp);
+		record = jawnosWindowEmergeDismissals[key];
+	}
+	else if (app && jawnosWindowEmergeDismissals['app:' + app]) {
+		key = 'app:' + app;
+		record = jawnosWindowEmergeDismissals[key];
+	}
+	if (!record) { return false; }
+	if (record.app && app && record.app !== app) { return false; }
+	if (record.stamp && stamp && String(record.stamp) !== String(stamp)) { return false; }
+	delete jawnosWindowEmergeDismissals[key];
+	jawnosWindowEmergeTakeBack($win, el);
+	return true;
+}
+
+// A press that dismisses must not hand its click to the opener: the same
+// control pressed again would otherwise ask for the window all over again. The
+// capture listener stops the event before it reaches the control (inline
+// onClick, a delegated start-menu row, or the canvas) and before the opener's
+// own handler runs.
+function jawnosWindowEmergeBlockNextClick(app) {
+	if (!app || typeof setTimeout != 'function') { return; }
+	var token = { app: app, at: Date.now() };
+	jawnosWindowEmergeClickBlock = token;
+	setTimeout(function () {
+		if (jawnosWindowEmergeClickBlock === token) { jawnosWindowEmergeClickBlock = null; }
+	}, 700);
+}
+
+function jawnosWindowEmergeSwallowClick(e) {
+	var token = jawnosWindowEmergeClickBlock;
+	if (!token || !e || !e.target || e.target.nodeType !== 1) { return false; }
+	var control = jawnosWindowEmergeControl(e.target);
+	if (!control || control.app !== token.app) { return false; }
+	jawnosWindowEmergeClickBlock = null;
+	if (e.preventDefault) { e.preventDefault(); }
+	if (e.stopImmediatePropagation) { e.stopImmediatePropagation(); }
+	else if (e.stopPropagation) { e.stopPropagation(); }
+	return true;
+}
+
 // The press-time preview. It is created inside pointerdown, so the desktop has
 // already answered before the app's chunk or the server is asked. The chrome
 // fades in as the box grows readable, then the preview holds at the predicted
@@ -843,6 +1027,7 @@ function jawnosWindowEmergeGhostStart(origin) {
 	var el = jawnosEmergeElement('div', 'jawnos_emerge_ghost');
 	if (!el) { return null; }
 	el.setAttribute('aria-hidden', 'true');
+	jawnosWindowEmergeGhostWaiting(el);
 	jawnosEmergeBoxStyle(el, from);
 
 	var chrome = jawnosWindowEmergeChrome(origin);
@@ -851,9 +1036,22 @@ function jawnosWindowEmergeGhostStart(origin) {
 		el.appendChild(chrome);
 	}
 
-	var ghost = { el: el, chrome: chrome, app: origin.app || '', origin: origin, to: to, timer: null, openAnim: null, chromeAnim: null, win: null };
+	var ghost = { el: el, chrome: chrome, app: origin.app || '', origin: origin, to: to, timer: null, openAnim: null, chromeAnim: null, win: null, waited: 0 };
 	document.body.appendChild(el);
 	jawnosWindowEmergeGhost = ghost;
+
+	// The waiting preview takes the pointer so a press on it can be a dismissal;
+	// the class is removed at retarget, so the cross-fade is click-through again.
+	if (el.addEventListener) {
+		el.addEventListener('click', function (e) {
+			// a queued click can land after the window has taken the frame
+			if (ghost.win) { return; }
+			if (e && e.preventDefault) { e.preventDefault(); }
+			if (e && e.stopImmediatePropagation) { e.stopImmediatePropagation(); }
+			else if (e && e.stopPropagation) { e.stopPropagation(); }
+			jawnosWindowEmergeDismiss(ghost);
+		});
+	}
 
 	if (el.animate) {
 		ghost.openAnim = el.animate([
@@ -884,9 +1082,9 @@ function jawnosWindowEmergeGhostStart(origin) {
 		chrome.style.opacity = '1';
 	}
 
-	// A window may be slow; three seconds of a window-shaped ghost is already
-	// long enough to look like a leak.
-	ghost.timer = setTimeout(function () { jawnosWindowEmergeGhostCancel(ghost); }, JAWNOS_EMERGE_GHOST_TTL);
+	// A window may be slow; while its reservation is live the preview stands
+	// rather than leave a blank desk (jawnosWindowEmergeGhostExpire).
+	ghost.timer = setTimeout(function () { jawnosWindowEmergeGhostExpire(ghost); }, JAWNOS_EMERGE_GHOST_TTL);
 	jawnosWindowEmergeGhostWatch(ghost);
 	return ghost;
 }
@@ -925,6 +1123,8 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	var level = jawnosWindowEmergeLevel();
 	var shape = jawnosWindowEmergeShape[level] || jawnosWindowEmergeShape.medium;
 	var el = ghost.el;
+	// the real window is here: stop taking clicks for a dismissal
+	jawnosWindowEmergeGhostPassThrough(el);
 
 	// read where it actually is before cancelling the fill: an animation mid
 	// flight has a real box, not the predicted one
@@ -1038,6 +1238,12 @@ function jawnosWindowEmergeCancel(el) {
 	if (el.jawnosEmergeWindowAnim) {
 		try { el.jawnosEmergeWindowAnim.cancel(); } catch (e) {}
 		el.jawnosEmergeWindowAnim = null;
+	}
+	// a half snap writes its transform from the release corner; clear it when
+	// the motion is put down so the next drag or effect starts from the default
+	if (el.jawnosHalfSnapOrigin) {
+		el.style.transformOrigin = '';
+		el.jawnosHalfSnapOrigin = false;
 	}
 	var ghost = el.jawnosEmergeGhost;
 	el.jawnosEmergeGhost = null;
@@ -1194,6 +1400,14 @@ function jawnosWindowEmergeRaise(control) {
 	return false;
 }
 
+// The click that belongs to a dismissing press never reaches the opener: the
+// same control pressed again means "never mind", and the inline onClick (or a
+// delegated start-menu row) would otherwise ask for the window all over again.
+// A capture listener sees the event before the target, so it can stop it.
+if (typeof document != 'undefined' && document.addEventListener) {
+	document.addEventListener('click', function (e) { jawnosWindowEmergeSwallowClick(e); }, true);
+}
+
 // A press records its control here: pointerdown catches the ordinary press
 // before the menu closes or the tile re-renders. A canvas is skipped because
 // its own press handler knows which pill was hit and records that rectangle (and
@@ -1207,10 +1421,27 @@ function jawnosWindowEmergeRaise(control) {
 		if (!e || (e.button != null && e.button !== 0)) { return; }
 		var el = e.target;
 		if (!el || el.nodeType !== 1) { return; }
+		var waiting = jawnosWindowEmergeGhost;
+		// A press on the preview itself belongs to the preview: the click that
+		// follows dismisses it. Returning here keeps the press from being read as
+		// one on the desk underneath, and from being recorded as an origin.
+		if (waiting && !waiting.win && jawnosWindowEmergeGhostHolds(waiting, el)) { return; }
+		if (el.tagName == 'CANVAS') {
+			// the canvas painter records its own pill and starts the preview
+			jawnosWindowEmergeGhostCancel();
+			return;
+		}
+		var control = jawnosWindowEmergeControl(el);
+		// The same control pressed again, before its window has painted, takes
+		// the open back. The click that belongs to this press is swallowed, so
+		// the opener is never asked a second time.
+		if (waiting && !waiting.win && waiting.app && control && control.app === waiting.app) {
+			jawnosWindowEmergeBlockNextClick(waiting.app);
+			jawnosWindowEmergeDismiss(waiting);
+			return;
+		}
 		// a new press replaces whatever the last one was still showing
 		jawnosWindowEmergeGhostCancel();
-		if (el.tagName == 'CANVAS') { return; }
-		var control = jawnosWindowEmergeControl(el);
 		if (control) {
 			var origin = jawnosWindowOriginFromElement(control.el, control.app);
 			if (origin) { jawnosWindowEmergeGhostStart(origin); }

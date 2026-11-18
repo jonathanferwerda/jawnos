@@ -1,11 +1,14 @@
-# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows/02_fit.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
 # covers:    a new window pours out of the control that opened it - the press
 #            records a viewport rectangle and richer app metadata, pointerdown
 #            draws the chrome preview at once, windowMaker hands the real
 #            rectangle over, and the preview is retargeted or put away. The
 #            preview wears the app's real saved colour/ink and a skeleton body
 #            chosen by archetype, and the prediction follows the placer's
-#            geometry. Also the pile preview exception for a drag.
+#            geometry. A preview outlives a slow window, a press on it (or on
+#            the control again) takes the pending open back, and a half snap
+#            grows out of the frame the drag was released with. Also the pile
+#            preview exception for a drag.
 
 use strict;
 use warnings;
@@ -19,6 +22,7 @@ use RepoSource;
 
 my $root   = repo_root();
 my $emerge = read_file("$root/public/js/manager/windows/06_emerge.js");
+my $fit    = read_file("$root/public/js/manager/windows/02_fit.js");
 my $index  = read_file("$root/public/js/manager/windows.js");
 my $board  = read_file("$root/public/js/manager/leaderboardprinter.js");
 my $lazy   = read_file("$root/public/js/manager/lazy.js");
@@ -34,6 +38,8 @@ like($index, qr/var made = 0;/, 'windowMaker counts only a window it appended');
 like($index, qr/made = 1;/, 'the append marks the window as made');
 like($index, qr/if \(made && typeof jawnosWindowEmerge === 'function'\) \{ jawnosWindowEmerge\(\$\('#' \+ window_id\)\); \}/,
 	'and the motion is handed the finished window');
+like($index, qr/if \(made && typeof jawnosWindowEmergeDismissed === 'function' && jawnosWindowEmergeDismissed\(\$\('#' \+ window_id\)\)\)/,
+	'and a window whose preview was dismissed is taken back before it shows');
 like($index, qr/if \(edge && !\(group && group\.length\)\)/,
 	'a drag carrying its pile does not draw the half preview');
 
@@ -82,6 +88,10 @@ like($emerge, qr/bar\.setAttribute\('data-appt-tint', 'yes'\)/,
 	'the ghost bar carries the real data-appt-tint hook');
 like($css, qr/body\[data-window-effects="off"\] \.jawnos_emerge_ghost \{ display: none !important; \}/,
 	'turning the effects off hides a preview already in flight');
+like($css, qr/\.jawnos_emerge_ghost\.jawnos_emerge_waiting\s*\{[^}]*pointer-events:\s*auto/s,
+	'the waiting preview is the only state that takes the pointer');
+like($css, qr/\.jawnos_emerge_ghost\.jawnos_emerge_waiting\s*\{[^}]*cursor:\s*var\(--jawnos-cursor-pointer, pointer\)/s,
+	'and asks the desk\'s pointer cursor, not a hard-coded one');
 like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*\.jawnos_emerge_ghost \{ display: none; \}\s*\}/s,
 	'reduced motion hides the preview too');
 ok(index($css, '.jawnos_emerge_ghost') > index($css, '.jawnos_emerge_sheet'),
@@ -114,6 +124,36 @@ like($loader, qr/app_colour_map/, 'the domain map registers app_colour_map');
 like($layout, qr/var jawnos_app_places = .*app_window_places/, 'the layout seeds pinned window places');
 like($emerge, qr/function jawnosWindowEmergeAppPlace\(/, 'the ghost reads a pinned place');
 like($emerge, qr/function jawnosWindowEmergePlaceRect\(/, 'and scales it like windowPlaceRestore');
+
+# --- the preview outlives a slow app ------------------------------------------
+like($emerge, qr/function jawnosWindowEmergeGhostPending\(/, 'a preview can see that its window is still on its way');
+like($emerge, qr/windowTiledPendingApp\[ghost\.app\]/, 'from the reservation the press made before the server');
+like($emerge, qr/function jawnosWindowEmergeGhostExpire\(/, 'and is held instead of expiring');
+like($emerge, qr/ghost\.waited < JAWNOS_EMERGE_GHOST_MAX/, 'with an absolute ceiling, so a leaked reservation cannot leave it forever');
+unlike($emerge, qr/ghost\.timer = setTimeout\(function \(\) \{ jawnosWindowEmergeGhostCancel\(ghost\); \}, JAWNOS_EMERGE_GHOST_TTL\)/,
+	'the old short timer no longer tears it down unconditionally');
+
+# --- a dismissed preview takes the pending open back -------------------------
+like($emerge, qr/function jawnosWindowEmergeDismiss\(ghost\)/, 'a dismissal records the open to cancel');
+like($emerge, qr/jawnosWindowEmergeDismissals\[key\] = \{ app: app, stamp: stamp, at: now \};/, 'keyed by the reservation timestamp');
+like($emerge, qr/function jawnosWindowEmergeDismissed\(win\)/, 'the landing window is checked against it');
+like($emerge, qr/function jawnosWindowEmergeTakeBack\(/, 'and taken back through the desk teardown');
+like($emerge, qr/if \(stamp && typeof closeWindow == 'function'\) \{/, 'closeWindow removes the window and its server record');
+like($emerge, qr/function jawnosWindowEmergeBlockNextClick\(/, 'the dismissing press blocks its own click');
+like($emerge, qr/document\.addEventListener\('click', function \(e\) \{ jawnosWindowEmergeSwallowClick\(e\); \}, true\);/, 'in the capture phase, before the opener sees it');
+like($emerge, qr/addEventListener\('click', function \(e\) \{/, 'the waiting preview listens for its own click');
+like($emerge, qr/jawnosWindowEmergeGhostPassThrough\(el\);/, 'and goes click-through again at retarget');
+
+# --- the half snap grows out of the release point ----------------------------
+like($fit, qr/function jawnosWindowHalfSnap\(win, before\)/, 'the half snap has a motion of its own');
+like($fit, qr/var before = null;[\s\S]{0,220}?getBoundingClientRect/, 'the release frame is measured before the box changes');
+like($fit, qr/jawnosWindowHalfSnap\(win, before\)/, 'and handed to that motion');
+like($fit, qr/transformOrigin = '0 0'/, 'the final half maps back onto the release rect from its corner');
+like($fit, qr/translate\(' \+ jawnosHalfRound\(dx\) \+ 'px, ' \+ jawnosHalfRound\(dy\) \+ 'px\) scale\(' \+ jawnosHalfRound\(sx\)/, 'it travels and stretches from that frame');
+like($fit, qr/if \(jawnosWindowEmergeLevel\(\) == 'off'\) \{ return false; \}/, 'the off level gets no half motion');
+like($fit, qr/jawnosWindowEmergeReduced\(\)\) \{ return false; \}/, 'and neither does a reduced-motion desk');
+unlike($fit, qr/if \(to && typeof jawnosWindowEffect == 'function'\) \{ jawnosWindowEffect\(win, 'stretch'\); \}/,
+	'the half no longer plays the plain in-place stretch');
 
 # --- played in a bare context ------------------------------------------------
 my $node = `command -v node 2>/dev/null`;
@@ -238,6 +278,10 @@ function makeElement(tag, className) {
 		getClientRects: function () { return [this.getBoundingClientRect()]; },
 		querySelector: function (sel) { return findDescendant(this, sel); },
 		closest: function (sel) { return closestMatch(this, sel); },
+		listeners: {},
+		addEventListener: function (type, fn) {
+			(this.listeners[type] = this.listeners[type] || []).push(fn);
+		},
 		animate: function (keys, options) {
 			const a = {
 				owner: this, keys: keys, options: options, cancelled: 0,
@@ -360,6 +404,10 @@ function check(name, cond) {
 function press(el) {
 	if (!handlers.pointerdown) { throw new Error('the press handler was not installed'); }
 	handlers.pointerdown({ button: 0, target: el });
+}
+function fire(el, type, ev) {
+	const list = (el && el.listeners && el.listeners[type]) || [];
+	list.slice().forEach(function (fn) { fn(ev || {}); });
 }
 function startIcon(id, app, src, hint, left, top, w, h) {
 	const img = makeElement('IMG');
@@ -632,7 +680,7 @@ press(press_icon);
 const ghost = sandbox.jawnosWindowEmergeGhost;
 check('pointerdown creates the preview at once', !!ghost && ghost.el.parentNode === body);
 check('the preview is the body-level ghost',
-	!!ghost && ghost.el.className === 'jawnos_emerge_ghost');
+	!!ghost && hasClass(ghost.el, 'jawnos_emerge_ghost') && hasClass(ghost.el, 'jawnos_emerge_waiting'));
 check('it starts at the pressed control',
 	!!ghost && ghost.el.animations[0].keys[0].left === '10px'
 	&& ghost.el.animations[0].keys[0].top === '20px'
@@ -753,6 +801,86 @@ const idle_el = idle.el;
 advance(3100);
 check('the unsent preview is put away by its TTL',
 	idle_el.parentNode === null && sandbox.jawnosWindowEmergeGhost === null);
+
+// --- a slow app keeps the preview standing ----------------------------------
+level = 'medium';
+sandbox.windowTiledPendingApp = { clock: 'slow-stamp' };
+sandbox.windowTiledPending = { 'slow-stamp': { at: Date.now(), app: 'clock', stack: '0', slot: 0 } };
+press(press_icon);
+const slow = sandbox.jawnosWindowEmergeGhost;
+const slow_el = slow.el;
+advance(3100);
+check('a preview whose window is still loading outlives the old TTL',
+	slow_el.parentNode === body && sandbox.jawnosWindowEmergeGhost === slow);
+advance(3100);
+check('and is held for another beat while the open is still in flight',
+	slow_el.parentNode === body && sandbox.jawnosWindowEmergeGhost === slow);
+const slow_win = new El('clock');
+slow_win.setAttribute('timestamp', 'slow-stamp');
+slow_win.rect = { left: 12, top: 44, width: 480, height: 640 };
+check('the slow window still takes the preview', sandbox.jawnosWindowEmerge(slow_win) === true);
+advance(1000);
+check('and the preview leaves when the window does', slow_el.parentNode === null);
+sandbox.windowTiledPendingApp = {};
+sandbox.windowTiledPending = {};
+
+// --- a dismissed preview takes its pending window back ----------------------
+level = 'medium';
+sandbox.windowTiledPendingApp = { clock: 'cancel-stamp' };
+sandbox.windowTiledPending = { 'cancel-stamp': { at: Date.now(), app: 'clock', stack: '0', slot: 0 } };
+press(press_icon);
+const cancel_ghost = sandbox.jawnosWindowEmergeGhost;
+const cancel_el = cancel_ghost.el;
+check('a waiting preview takes the pointer, so it can be dismissed',
+	!!cancel_ghost && hasClass(cancel_ghost.el, 'jawnos_emerge_waiting'));
+let ghost_prevented = 0;
+fire(cancel_ghost.el, 'click', {
+	preventDefault: function () { ghost_prevented = 1; },
+	stopImmediatePropagation: function () { ghost_prevented = 1; }
+});
+check('clicking the preview itself dismisses it',
+	cancel_el.parentNode === null && sandbox.jawnosWindowEmergeGhost === null && ghost_prevented === 1);
+check('and the open it was waiting for is remembered',
+	!!sandbox.jawnosWindowEmergeDismissals['cancel-stamp']);
+const cancelled_win = new El('clock');
+cancelled_win.setAttribute('timestamp', 'cancel-stamp');
+cancelled_win.rect = { left: 12, top: 44, width: 480, height: 640 };
+let closed = [];
+sandbox.closeWindow = function (stamp) { closed.push(stamp); };
+check('the window that lands after the dismissal is taken back',
+	sandbox.jawnosWindowEmergeDismissed(cancelled_win) === true);
+check('and closed through the desk teardown, not shown',
+	closed.length === 1 && closed[0] === 'cancel-stamp');
+check('the dismissal is spent once', sandbox.jawnosWindowEmergeDismissed(cancelled_win) === false);
+delete sandbox.closeWindow;
+
+// the same control pressed again is the other dismissal
+sandbox.windowTiledPendingApp = { clock: 'again-stamp' };
+sandbox.windowTiledPending = { 'again-stamp': { at: Date.now(), app: 'clock', stack: '0', slot: 0 } };
+press(press_icon);
+check('a fresh preview waits once more', !!sandbox.jawnosWindowEmergeGhost);
+press(press_icon);
+check('pressing the same control again puts the preview away',
+	sandbox.jawnosWindowEmergeGhost === null);
+check('and remembers its in-flight window',
+	!!sandbox.jawnosWindowEmergeDismissals['again-stamp']);
+let swallowed = 0;
+sandbox.jawnosWindowEmergeSwallowClick({
+	target: press_icon,
+	preventDefault: function () {},
+	stopImmediatePropagation: function () { swallowed = 1; }
+});
+check('the dismissing press\'s own click never reaches the opener', swallowed === 1);
+const repress_win = new El('clock');
+repress_win.setAttribute('timestamp', 'again-stamp');
+repress_win.rect = { left: 12, top: 44, width: 480, height: 640 };
+let again_closed = 0;
+sandbox.closeWindow = function () { again_closed++; };
+check('the second press\'s window is taken back too',
+	sandbox.jawnosWindowEmergeDismissed(repress_win) === true && again_closed === 1);
+delete sandbox.closeWindow;
+sandbox.windowTiledPendingApp = {};
+sandbox.windowTiledPending = {};
 
 // --- off, reduced motion and the effects switch -----------------------------
 level = 'off';

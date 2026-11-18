@@ -82,6 +82,14 @@ function windowHalfski(win,side) {
 		else if (mouse.x < (ww / 10) || side == 'left') { to = 'left'; }
 		if (to) {
 			var box = windowHalfRect(to);
+			// The frame the hand let go of, measured before the box changes: the
+			// half grows out of this rectangle rather than resizing in place.
+			var before = null;
+			var el = win[0];
+			if (el && el.getBoundingClientRect) {
+				var measured = el.getBoundingClientRect();
+				if (measured && measured.width && measured.height) { before = measured; }
+			}
 			win.css({
 				'position':'fixed',
 				'height': box.height,
@@ -89,10 +97,81 @@ function windowHalfski(win,side) {
 				'left': (to == 'right') ? '50%' : '0%',
 				'top': box.top
 			});
+			windowDimensionSetter(win);
+			// The CSS box above is already the final half; the motion is a
+			// transform only, so free_dimensions and the half highlight see it.
+			if (typeof jawnosWindowHalfSnap == 'function') { jawnosWindowHalfSnap(win, before); }
+			return;
 		}
 		windowDimensionSetter(win);
-		if (to && typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
 	}
+}
+
+// The half snap grows out of the frame the window was dropped with. The CSS box
+// is already the half, so a transform maps that half back onto the release
+// rectangle and settles to identity: the window travels and stretches from
+// where the hand let go instead of resizing where it stood. Only transform
+// animates and the layout box is never written, so free_dimensions keeps the
+// exact pre-snap width/height the drag-out restores, and the final box is the
+// half to the pixel.
+function jawnosWindowHalfSnap(win, before) {
+	if (!win || !win.length || !before || !(before.width > 0) || !(before.height > 0)) { return false; }
+	// the off level and a reduced-motion desk get the half with no motion at all
+	if (typeof jawnosWindowEmergeLevel == 'function') {
+		if (jawnosWindowEmergeLevel() == 'off') { return false; }
+	}
+	else if (typeof jawnosWindowEffectsOn == 'function' && !jawnosWindowEffectsOn()) {
+		return false;
+	}
+	if (typeof jawnosWindowEmergeReduced == 'function' && jawnosWindowEmergeReduced()) { return false; }
+	var el = win[0];
+	if (!el || typeof el.animate != 'function' || !el.getBoundingClientRect) {
+		if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
+		return false;
+	}
+	// a wobble transform would be inside the measured box; the snap replaces it
+	if (typeof jawnosWindowEffectCancel == 'function') { jawnosWindowEffectCancel(el); }
+	var after = el.getBoundingClientRect();
+	if (!after || !after.width || !after.height) { return false; }
+	// the rect is display-zoomed; a transform is written in the root's units
+	var zoom = (typeof jawnosWindowEmergeZoom == 'function') ? jawnosWindowEmergeZoom(null, after) : 1;
+	if (!(zoom > 0)) { zoom = 1; }
+	var sx = before.width / after.width;
+	var sy = before.height / after.height;
+	var dx = (before.left - after.left) / zoom;
+	var dy = (before.top - after.top) / zoom;
+	if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5
+		&& Math.abs(sx - 1) < 0.005 && Math.abs(sy - 1) < 0.005) { return false; }
+	var level = (typeof jawnosWindowEmergeLevel == 'function') ? jawnosWindowEmergeLevel() : 'medium';
+	var shape = (typeof jawnosWindowEmergeShape != 'undefined' && jawnosWindowEmergeShape[level])
+		? jawnosWindowEmergeShape[level] : { retarget: 220 };
+	var duration = Math.max(120, Math.round(shape.retarget || 220));
+	el.style.transformOrigin = '0 0';
+	el.jawnosHalfSnapOrigin = true;
+	var anim = el.animate([
+		{ transform: 'translate(' + jawnosHalfRound(dx) + 'px, ' + jawnosHalfRound(dy) + 'px) scale(' + jawnosHalfRound(sx) + ', ' + jawnosHalfRound(sy) + ')' },
+		{ transform: 'translate(0px, 0px) scale(1, 1)' }
+	], {
+		duration: duration,
+		easing: 'cubic-bezier(.2,.85,.25,1)',
+		fill: 'both'
+	});
+	// the emerge teardown owns the one-shot animation slot, so a drag or a
+	// minimize cancels this the same way it cancels a window still pouring out
+	el.jawnosEmergeWindowAnim = anim;
+	var finish = function () {
+		if (el.jawnosHalfSnapOrigin) {
+			el.style.transformOrigin = '';
+			el.jawnosHalfSnapOrigin = false;
+		}
+	};
+	anim.onfinish = finish;
+	anim.oncancel = finish;
+	return true;
+}
+
+function jawnosHalfRound(value) {
+	return Math.round(value * 1000) / 1000;
 }
 
 $(document).on('click', '.maximize_button', function() {
