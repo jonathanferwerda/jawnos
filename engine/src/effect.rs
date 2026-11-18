@@ -15,6 +15,7 @@
 use std::f64::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
 use crate::graph::{mix_mono_into_stereo_with_gains, pan_coefficients, GraphError, Strip};
+use crate::reverb::Reverb;
 
 /// How long a control takes to travel most of the way to a new value.
 const SMOOTH_SECONDS: f32 = 0.02;
@@ -28,6 +29,18 @@ pub trait Effect {
     fn process(&mut self, block: &mut [f32]);
     /// Clear the running state so the next block sounds like the first one.
     fn reset(&mut self);
+    /// Move one of this effect's knobs. The name is the suffix the control
+    /// path uses without the effect prefix (`drive`, not `distortion.drive`).
+    ///
+    /// Returns true when the name belongs to this effect, whether or not the
+    /// value was usable: the caller has already recognised the parameter, and a
+    /// non-finite value is ignored rather than turned into NaN. The value is
+    /// clamped here, so a control thread cannot put the effect out of range.
+    /// This only writes the smoothed target: it allocates nothing, takes no
+    /// lock and cannot panic, because the audio thread calls it between blocks.
+    fn set(&mut self, _name: &str, _value: f32) -> bool {
+        false
+    }
     /// The name the take report and the chain order use.
     fn name(&self) -> &'static str;
 }
@@ -193,6 +206,8 @@ impl ToneStack {
     pub const BASS_HZ: f32 = 220.0;
     pub const MID_HZ: f32 = 1_000.0;
     pub const TREBLE_HZ: f32 = 3_500.0;
+    /// The knobs stop at ±12 dB, Studio's range.
+    pub const MAX_DB: f32 = 12.0;
 
     /// Gains in dB, the same ±12 dB range Studio's three knobs cover.
     pub fn new(bass_db: f32, mid_db: f32, treble_db: f32) -> Self {
@@ -275,6 +290,19 @@ impl Effect for ToneStack {
         }
     }
 
+    fn set(&mut self, name: &str, value: f32) -> bool {
+        let band = match name {
+            "bass" => 0,
+            "mid" => 1,
+            "treble" => 2,
+            _ => return false,
+        };
+        if value.is_finite() {
+            self.target_db[band] = value.clamp(-Self::MAX_DB, Self::MAX_DB);
+        }
+        true
+    }
+
     fn name(&self) -> &'static str {
         "tone"
     }
@@ -313,7 +341,9 @@ impl Distortion {
 
     /// Move the drive knob; the next blocks walk to it over 10 ms.
     pub fn set_drive(&mut self, drive: f32) {
-        self.target_amount = drive.clamp(0.0, 100.0);
+        if drive.is_finite() {
+            self.target_amount = drive.clamp(0.0, 100.0);
+        }
     }
 
     #[inline]
@@ -356,6 +386,14 @@ impl Effect for Distortion {
         self.lowpass.reset();
     }
 
+    fn set(&mut self, name: &str, value: f32) -> bool {
+        if name != "drive" {
+            return false;
+        }
+        self.set_drive(value);
+        true
+    }
+
     fn name(&self) -> &'static str {
         "distortion"
     }
@@ -383,10 +421,14 @@ pub struct Delay {
 impl Delay {
     pub const DRY: f32 = 0.7;
     pub const MAX_SECONDS: f32 = 2.0;
+    /// The `time` knob stops at 1.5 s; the line itself is 2 s long.
+    pub const MAX_TIME: f32 = 1.5;
+    /// The `feedback` knob stops short of unity, so the line cannot run away.
+    pub const MAX_FEEDBACK: f32 = 0.9;
 
     pub fn new(time_seconds: f32, feedback: f32, wet: f32) -> Self {
-        let time = time_seconds.clamp(0.0, 1.5);
-        let feedback = feedback.clamp(0.0, 0.9);
+        let time = time_seconds.clamp(0.0, Self::MAX_TIME);
+        let feedback = feedback.clamp(0.0, Self::MAX_FEEDBACK);
         let wet = wet.clamp(0.0, 1.0);
         Delay {
             rate: 48_000,
@@ -402,9 +444,12 @@ impl Delay {
         }
     }
 
-    pub fn set(&mut self, time_seconds: f32, feedback: f32, wet: f32) {
-        self.target_time = time_seconds.clamp(0.0, 1.5);
-        self.target_feedback = feedback.clamp(0.0, 0.9);
+    /// Move all three knobs at once. Named access for a control path goes
+    /// through [`Effect::set`] (`time`, `feedback`, `mix`), which this is the
+    /// bulk form of.
+    pub fn set_knobs(&mut self, time_seconds: f32, feedback: f32, wet: f32) {
+        self.target_time = time_seconds.clamp(0.0, Self::MAX_TIME);
+        self.target_feedback = feedback.clamp(0.0, Self::MAX_FEEDBACK);
         self.target_wet = wet.clamp(0.0, 1.0);
     }
 }
@@ -454,6 +499,31 @@ impl Effect for Delay {
     fn reset(&mut self) {
         self.buffer.fill(0.0);
         self.write = 0;
+    }
+
+    fn set(&mut self, name: &str, value: f32) -> bool {
+        let usable = value.is_finite();
+        match name {
+            "time" => {
+                if usable {
+                    self.target_time = value.clamp(0.0, Self::MAX_TIME);
+                }
+                true
+            }
+            "feedback" => {
+                if usable {
+                    self.target_feedback = value.clamp(0.0, Self::MAX_FEEDBACK);
+                }
+                true
+            }
+            "mix" => {
+                if usable {
+                    self.target_wet = value.clamp(0.0, 1.0);
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -555,6 +625,31 @@ impl Effect for Compressor {
         self.mix = self.target_mix;
     }
 
+    fn set(&mut self, name: &str, value: f32) -> bool {
+        let usable = value.is_finite();
+        match name {
+            "threshold" => {
+                if usable {
+                    self.threshold_db = value.clamp(-100.0, 0.0);
+                }
+                true
+            }
+            "attack" => {
+                if usable {
+                    self.attack_s = value.clamp(0.000_1, 1.0);
+                }
+                true
+            }
+            "mix" => {
+                if usable {
+                    self.target_mix = value.clamp(0.0, 1.0);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn name(&self) -> &'static str {
         "compressor"
     }
@@ -568,6 +663,7 @@ pub enum InsertKind {
     Distortion,
     Delay,
     Compressor,
+    Reverb,
 }
 
 impl InsertKind {
@@ -577,6 +673,7 @@ impl InsertKind {
             "distortion" => Some(InsertKind::Distortion),
             "delay" => Some(InsertKind::Delay),
             "compressor" => Some(InsertKind::Compressor),
+            "reverb" | "reverb2" => Some(InsertKind::Reverb),
             _ => None,
         }
     }
@@ -587,18 +684,21 @@ impl InsertKind {
             InsertKind::Distortion => "distortion",
             InsertKind::Delay => "delay",
             InsertKind::Compressor => "compressor",
+            InsertKind::Reverb => "reverb",
         }
     }
 
     /// Build the pedal at its web defaults: a flat tone stack (the knobs at
-    /// 50), Distorjawn at drive 50, Delayed at 0.525 s / 0.27 / 0.4, and
-    /// CompressionX at −25 dB / 0.1 s attack / 0.5 mix.
+    /// 50), Distorjawn at drive 50, Delayed at 0.525 s / 0.27 / 0.4,
+    /// CompressionX at −25 dB / 0.1 s attack / 0.5 mix, and `reverb2` at
+    /// mix 35 / volume 35.
     pub fn build(self) -> Box<dyn Effect> {
         match self {
             InsertKind::Tone => Box::new(ToneStack::new(0.0, 0.0, 0.0)),
             InsertKind::Distortion => Box::new(Distortion::new(50.0)),
             InsertKind::Delay => Box::new(Delay::new(0.525, 0.27, 0.4)),
             InsertKind::Compressor => Box::new(Compressor::new(-25.0, 12.0, 0.1, 0.25, 30.0, 0.5)),
+            InsertKind::Reverb => Box::new(Reverb::new()),
         }
     }
 }
@@ -617,11 +717,68 @@ pub struct Channel {
 }
 
 impl Channel {
+    /// The `gain` knob stops at +12 dB, a recording trim rather than a fader.
+    pub const MAX_GAIN: f32 = 4.0;
+
     pub fn new(gain: f32, pan: f32) -> Self {
         Channel {
             strip: Strip::new(gain, pan),
             inserts: Vec::new(),
             scratch: Vec::new(),
+        }
+    }
+
+    /// The trim the strip reads at its next block.
+    pub fn gain(&self) -> f32 {
+        self.strip.gain.get()
+    }
+
+    /// The pan the strip reads at its next block, -1 left ..= 1 right.
+    pub fn pan(&self) -> f32 {
+        self.strip.pan.get()
+    }
+
+    /// Clamp a gain the way [`set`](Channel::set) does, for a caller that keeps
+    /// a copy of the strip (the control socket's `status`).
+    pub fn clamp_gain(value: f32) -> f32 {
+        value.clamp(0.0, Self::MAX_GAIN)
+    }
+
+    /// Clamp a pan the way [`set`](Channel::set) does.
+    pub fn clamp_pan(value: f32) -> f32 {
+        value.clamp(-1.0, 1.0)
+    }
+
+    /// Move one knob by name. `gain` and `pan` are the strip's own; anything
+    /// with a `prefix.` names the first insert whose [`name`](Effect::name)
+    /// is that prefix and moves its knob (`delay.mix`). The effect clamps the
+    /// value. Returns false for a name this strip does not have.
+    pub fn set(&mut self, name: &str, value: f32) -> bool {
+        match name {
+            "gain" => {
+                if value.is_finite() {
+                    self.strip.gain.set(Self::clamp_gain(value));
+                }
+                true
+            }
+            "pan" => {
+                if value.is_finite() {
+                    self.strip.pan.set(Self::clamp_pan(value));
+                }
+                true
+            }
+            _ => {
+                let (prefix, knob) = match name.split_once('.') {
+                    Some(pair) => pair,
+                    None => return false,
+                };
+                for effect in &mut self.inserts {
+                    if effect.name() == prefix {
+                        return effect.set(knob, value);
+                    }
+                }
+                false
+            }
         }
     }
 
@@ -926,16 +1083,150 @@ mod tests {
     }
 
     #[test]
+    fn every_documented_parameter_is_recognised_and_junk_is_not() {
+        let mut tone = ToneStack::new(0.0, 0.0, 0.0);
+        for name in ["bass", "mid", "treble"] {
+            assert!(tone.set(name, 1.0), "tone.{name} was not recognised");
+        }
+        assert!(!tone.set("drive", 1.0));
+        assert!(!tone.set("basss", 1.0));
+
+        let mut distortion = Distortion::new(50.0);
+        assert!(distortion.set("drive", 10.0));
+        assert!(!distortion.set("amount", 10.0));
+
+        let mut delay = Delay::new(0.5, 0.2, 0.4);
+        for name in ["time", "feedback", "mix"] {
+            assert!(delay.set(name, 0.1), "delay.{name} was not recognised");
+        }
+        assert!(!delay.set("wet", 0.1));
+
+        let mut compressor = Compressor::new(-25.0, 12.0, 0.1, 0.25, 30.0, 0.5);
+        for name in ["threshold", "attack", "mix"] {
+            assert!(
+                compressor.set(name, -10.0),
+                "compressor.{name} was not recognised"
+            );
+        }
+        assert!(!compressor.set("ratio", 1.0));
+
+        let mut reverb = crate::reverb::Reverb::new();
+        for name in ["mix", "volume"] {
+            assert!(reverb.set(name, 0.2), "reverb.{name} was not recognised");
+        }
+        assert!(!reverb.set("wet", 0.2));
+    }
+
+    #[test]
+    fn every_parameter_clamps_to_its_knob_range() {
+        let mut tone = ToneStack::new(0.0, 0.0, 0.0);
+        tone.set("bass", 100.0);
+        tone.set("mid", -100.0);
+        assert_eq!(tone.target_db[0], ToneStack::MAX_DB);
+        assert_eq!(tone.target_db[1], -ToneStack::MAX_DB);
+
+        let mut distortion = Distortion::new(50.0);
+        distortion.set("drive", 1_000.0);
+        assert_eq!(distortion.target_amount, 100.0);
+        distortion.set("drive", -1.0);
+        assert_eq!(distortion.target_amount, 0.0);
+
+        let mut delay = Delay::new(0.0, 0.0, 0.0);
+        delay.set("time", 10.0);
+        delay.set("feedback", 10.0);
+        delay.set("mix", -1.0);
+        assert_eq!(delay.target_time, Delay::MAX_TIME);
+        assert_eq!(delay.target_feedback, Delay::MAX_FEEDBACK);
+        assert_eq!(delay.target_wet, 0.0);
+
+        let mut compressor = Compressor::new(-25.0, 12.0, 0.1, 0.25, 30.0, 0.5);
+        compressor.set("threshold", 20.0);
+        compressor.set("attack", 10.0);
+        compressor.set("mix", 10.0);
+        assert_eq!(compressor.threshold_db, 0.0);
+        assert_eq!(compressor.attack_s, 1.0);
+        assert_eq!(compressor.target_mix, 1.0);
+
+        let mut reverb = crate::reverb::Reverb::new();
+        reverb.set("mix", 10.0);
+        assert!((reverb.wet_gain() - 0.9).abs() < 1e-6);
+        assert!((reverb.dry_gain() - 0.6).abs() < 1e-6);
+        reverb.set("volume", -1.0);
+        assert_eq!(reverb.wet_gain(), 0.0);
+    }
+
+    #[test]
+    fn a_non_finite_value_is_ignored_but_still_recognised() {
+        let mut delay = Delay::new(0.5, 0.2, 0.4);
+        assert!(delay.set("time", f32::NAN));
+        assert_eq!(delay.target_time, 0.5, "NaN moved a knob");
+
+        let mut channel = Channel::new(1.0, 0.0);
+        assert!(channel.set("gain", f32::INFINITY));
+        assert_eq!(channel.gain(), 1.0, "infinity moved the trim");
+    }
+
+    #[test]
+    fn the_channel_recognises_its_own_knobs_and_its_inserts() {
+        let mut channel = Channel::new(1.0, 0.0);
+        assert!(channel.set("gain", 0.5));
+        assert!(channel.set("pan", -0.5));
+        assert!(!channel.set("bass", 1.0));
+        assert!(!channel.set("nonsense", 1.0));
+        assert!(
+            !channel.set("delay.mix", 1.0),
+            "a delay that is not in the chain cannot take a knob"
+        );
+
+        channel.push(InsertKind::Delay.build());
+        assert!(channel.set("delay.mix", 1.0));
+        assert!(channel.set("delay.time", 0.1));
+        assert!(!channel.set("delay.drive", 1.0));
+        assert!(!channel.set("tone.bass", 1.0));
+
+        assert!(channel.set("gain", 9.0));
+        assert!(channel.set("pan", -9.0));
+        assert_eq!(channel.gain(), Channel::MAX_GAIN);
+        assert_eq!(channel.pan(), -1.0);
+    }
+
+    #[test]
+    fn a_parameter_after_reset_still_applies() {
+        let mut channel = Channel::new(1.0, 0.0);
+        channel.push(InsertKind::Delay.build());
+        channel.prepare(RATE, 8);
+        channel.reset();
+
+        assert!(channel.set("gain", 0.5));
+        assert!(channel.set("delay.mix", 0.0));
+        let input = vec![1.0f32; 8];
+        let mut stereo = vec![0.0f32; 16];
+        channel.process(&input, &mut stereo).expect("process");
+
+        // Trim 0.5, then the delay's 0.7 dry (the line is still empty), centred.
+        let expected = 0.5 * Delay::DRY * std::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (stereo[0] - expected).abs() < 1e-6,
+            "left was {} not {expected}",
+            stereo[0]
+        );
+    }
+
+    #[test]
     fn insert_kinds_parse_and_report_their_names() {
         for (word, kind) in [
             ("tone", InsertKind::Tone),
             ("distortion", InsertKind::Distortion),
             ("delay", InsertKind::Delay),
             ("compressor", InsertKind::Compressor),
+            ("reverb", InsertKind::Reverb),
         ] {
             assert_eq!(InsertKind::parse(word), Some(kind));
             assert_eq!(kind.name(), word);
         }
-        assert_eq!(InsertKind::parse("reverb2"), None);
+        // The web calls it `reverb2`; the report uses the engine's name.
+        assert_eq!(InsertKind::parse("reverb2"), Some(InsertKind::Reverb));
+        assert_eq!(InsertKind::Reverb.name(), "reverb");
+        assert_eq!(InsertKind::parse("flanger"), None);
     }
 }

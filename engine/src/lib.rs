@@ -16,8 +16,10 @@ pub mod disk;
 pub mod effect;
 pub mod graph;
 pub mod loopback;
+pub mod mixer;
 pub mod params;
 pub mod proto;
+pub mod reverb;
 pub mod session;
 pub mod wav;
 
@@ -32,6 +34,7 @@ pub use disk::DiskWriter;
 pub use effect::{Channel, Compressor, Delay, Distortion, Effect, InsertKind, ToneStack};
 pub use graph::{mix_mono_into_stereo, peak, GraphError, Strip};
 pub use loopback::LoopbackReport;
+pub use mixer::{Mixer, ParamName, ParamQueue, Track};
 pub use params::Param;
 pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,

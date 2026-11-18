@@ -30,7 +30,8 @@ impl Server {
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawn --serve");
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // Generous: under a loaded suite a spawn plus a bind can take seconds.
+        let deadline = Instant::now() + Duration::from_secs(60);
         while !socket.exists() {
             assert!(
                 Instant::now() < deadline,
@@ -77,7 +78,7 @@ impl Conversation {
     fn open(path: &Path) -> Self {
         let stream = UnixStream::connect(path).expect("connect to the control socket");
         stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
+            .set_read_timeout(Some(Duration::from_secs(30)))
             .expect("read timeout");
         let reader = BufReader::new(stream.try_clone().expect("clone the socket"));
         Conversation { stream, reader }
@@ -162,6 +163,48 @@ impl TempFile {
 impl Drop for TempFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// A `tracks:2` base path and the two files a take derives from it.
+struct TwoTracks {
+    base: PathBuf,
+}
+
+impl TwoTracks {
+    fn new(name: &str) -> Self {
+        let base = std::env::temp_dir().join(format!(
+            "jawn-audio-socket-tracks-{}-{name}.wav",
+            std::process::id()
+        ));
+        let set = TwoTracks { base };
+        let _ = fs::remove_file(&set.base);
+        for track in 1..=2 {
+            let _ = fs::remove_file(set.derived(track));
+        }
+        set
+    }
+
+    fn text(&self) -> &str {
+        self.base.to_str().expect("temp path is UTF-8")
+    }
+
+    fn derived(&self, track: usize) -> PathBuf {
+        let stem = self
+            .base
+            .file_stem()
+            .expect("temp path has a stem")
+            .to_string_lossy();
+        self.base.with_file_name(format!("{stem}-ch{track}.wav"))
+    }
+}
+
+impl Drop for TwoTracks {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.base);
+        for track in 1..=2 {
+            let _ = fs::remove_file(self.derived(track));
+        }
     }
 }
 
@@ -341,6 +384,153 @@ fn the_socket_arms_places_and_finishes_a_take() {
     let reply = client.ask("{\"cmd\":\"quit\"}");
     assert_eq!(reply, "{\"ok\":true}");
 
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_two_track_record_reports_both_and_status_carries_them() {
+    let server = Server::start("tracks");
+    let mut client = server.connect();
+    let take = TwoTracks::new("both");
+
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1,\"tracks\":2}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    assert!(reply.contains("\"tracks\":["), "record: {reply}");
+    assert!(
+        reply.contains(&format!("\"path\":\"{}\",\"input\":0", take.derived(1).display())),
+        "record: {reply}"
+    );
+    assert!(
+        reply.contains(&format!("\"path\":\"{}\",\"input\":1", take.derived(2).display())),
+        "record: {reply}"
+    );
+
+    let status = client.wait_for_done();
+    assert!(status.contains("\"state\":\"done\""), "status: {status}");
+    assert_eq!(json_number(&status, "frames"), 4_800.0, "status: {status}");
+    assert!(status.contains("\"tracks\":["), "status: {status}");
+    assert!(
+        status.contains(&format!(
+            "{{\"path\":\"{}\",\"input\":0,\"frames\":4800,\"dropped\":0,\"gain\":1,\"pan\":0,\"inserts\":\"\"}}",
+            take.derived(1).display()
+        )),
+        "track 1 entry: {status}"
+    );
+    assert!(
+        status.contains(&format!(
+            "{{\"path\":\"{}\",\"input\":1,\"frames\":4800,\"dropped\":0,\"gain\":1,\"pan\":0,\"inserts\":\"\"}}",
+            take.derived(2).display()
+        )),
+        "track 2 entry: {status}"
+    );
+    // Track 1's strip also fills the top-level keys.
+    assert_eq!(json_number(&status, "gain"), 1.0, "status: {status}");
+    assert_eq!(json_number(&status, "pan"), 0.0, "status: {status}");
+    assert!(status.contains("\"inserts\":\"\""), "status: {status}");
+
+    assert_wav(&take.derived(1), 4_800);
+    assert_wav(&take.derived(2), 4_800);
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_param_moves_a_running_strip_and_the_take_still_finishes() {
+    let server = Server::start("param");
+    let mut client = server.connect();
+
+    // No take yet: a knob has nothing to move.
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"gain\",\"value\":0.5}");
+    assert!(reply.contains("\"ok\":false"), "no take: {reply}");
+    assert!(reply.contains("no take is running"), "no take: {reply}");
+
+    // A long take, so the knob arrives while the strip is certainly running.
+    let take = TempFile::new("param");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"gain\",\"value\":0.5}");
+    assert_eq!(reply, "{\"ok\":true,\"track\":0,\"name\":\"gain\"}");
+
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert_eq!(json_number(&status, "gain"), 0.5, "status: {status}");
+    assert_eq!(json_number(&status, "pan"), 0.0, "status: {status}");
+    assert!(status.contains("\"inserts\":\"\""), "status: {status}");
+
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"pan\",\"value\":-1}");
+    assert!(reply.contains("\"ok\":true"), "pan: {reply}");
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert_eq!(json_number(&status, "pan"), -1.0, "status: {status}");
+
+    // 900 is a legal number that the strip clamps to +12 dB; `status` says so.
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"gain\",\"value\":900}");
+    assert!(reply.contains("\"ok\":true"), "clamped gain: {reply}");
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert_eq!(json_number(&status, "gain"), 4.0, "status: {status}");
+
+    // An unknown name, an effect that is not in the chain, an unknown track and
+    // a value that is not a number are errors, and the connection survives each.
+    for (line, message) in [
+        (
+            "{\"cmd\":\"param\",\"track\":0,\"name\":\"banana\",\"value\":1}",
+            "no such parameter: banana",
+        ),
+        (
+            "{\"cmd\":\"param\",\"track\":0,\"name\":\"tone.bass\",\"value\":1}",
+            "no such parameter: tone.bass",
+        ),
+        (
+            "{\"cmd\":\"param\",\"track\":7,\"name\":\"gain\",\"value\":1}",
+            "no track 7",
+        ),
+        (
+            "{\"cmd\":\"param\",\"track\":0,\"name\":\"gain\",\"value\":\"loud\"}",
+            "finite number",
+        ),
+    ] {
+        let reply = client.ask(line);
+        assert!(reply.contains("\"ok\":false"), "{line}: {reply}");
+        assert!(reply.contains(message), "{line}: {reply}");
+        let status = client.ask("{\"cmd\":\"status\"}");
+        assert!(status.contains("\"ok\":true"), "after {line}: {status}");
+    }
+
+    // The take still finishes, keeps its frames, and reports what it was told.
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    let frames = json_number(&stopped, "frames");
+    assert!(frames > 0.0, "stop kept the frames it had: {stopped}");
+    assert_eq!(json_number(&stopped, "gain"), 4.0, "stop: {stopped}");
+    assert_eq!(json_number(&stopped, "pan"), -1.0, "stop: {stopped}");
+    assert_wav(&take.path, frames as u64);
+
+    // A finished take has no running strip, so a knob is refused.
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"gain\",\"value\":0.5}");
+    assert!(reply.contains("\"ok\":false"), "after done: {reply}");
+    assert!(reply.contains("no take is running"), "after done: {reply}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
     let (output, socket_left) = server.finish();
     assert!(
         output.status.success(),

@@ -336,7 +336,7 @@ take be compared with the browser without three filters of phase always in the w
 | `Distorjawn` | `Distortion` | The same `studioDistortionCurve` expression, 4x oversampled into a 4.5 kHz lowpass. Chromium's oversampling filters are implementation-defined, so the shape is the same and the samples are not. |
 | `Delayed` | `Delay` | A rewrite of the same line: 2 s, feedback, 0.7 dry, the same three knobs. |
 | `CompressionX` | `Compressor` | A rewrite. Chromium's `DynamicsCompressor` is not a published algorithm; this is a standard feed-forward, soft-knee compressor with the same threshold, attack and mix controls and the same job. **No lookahead** — lookahead is latency, and this plan does not add latency silently. |
-| `reverb2` | not yet | A 2.4 s generated impulse through a convolver is partitioned FFT convolution. It is its own piece of work, not a filter with a long tail. |
+| `reverb2` | `Reverb` | The same generated 2.4 s impulse (same noise, envelope, decay and length; seeded, and mono where the page builds two independent channels), normalized the way `ConvolverNode.normalize` normalizes it. Convolved with **no added latency**: the first 1024-tap partition is a direct time-domain FIR, the rest is an overlap-save partitioned FFT. |
 | `JawnSynth` | not an effect | It is a generator, not a stage: its output replaces the chain. Putting it in an insert list would mean a strip that can be fed from nowhere. |
 
 A strip is **one input**, which is Studio's own model: an interface's two inputs are a mic and an
@@ -350,6 +350,22 @@ coefficients — and after that only reads and writes memory it already owns. Co
 one-pole smoothing (once per block for the tone stack and the drive, per sample for delay time and
 compressor gain), because a coefficient or a delay length that steps at a block edge is a click,
 and a click printed into a take cannot be taken back out.
+
+`reverb2` is the one pedal that is not a filter: the impulse *is* the sound, so a Freeverb or a
+Schroeder network would be a different reverb and not a port. `Reverb` (`engine/src/reverb.rs`)
+convolves the generated impulse itself, split so the strip adds no latency. The first 1024 taps run
+as a direct time-domain FIR on the samples that have just arrived; the remaining ~112 partitions run
+through an overlap-save partitioned FFT, whose 2048-point windows are the last two input blocks —
+both already in the past by the time their output block is due — so output sample `n` depends on
+input `<= n` only. The tests hold that line: a delta's response is the impulse sample for sample
+with no shift, silence in is exactly silence out, and a 64-frame stream is bit-identical to one long
+call because the partition schedule follows the sample count, not the call sizes. The price is the
+direct head, 1024 multiply-adds per sample, the cost of zero latency at this partition size; the
+whole convolver measures at about 6–8% of one core per channel at 48 kHz in release, and holds ~4 MB
+of spectra per instance for the 2.4 s tail. The page's `Math.random` cannot be reproduced, so the
+noise is seeded — the envelope, length and level are the page's, the bytes are not. `InsertKind`
+accepts `reverb` (and the web's `reverb2`) and builds the type in a chain; its knobs move through
+`Channel::set`, so a take can arm it from the CLI and a running take can move its mix and volume.
 
 ---
 

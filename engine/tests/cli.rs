@@ -233,6 +233,54 @@ impl Drop for TempTake {
     }
 }
 
+/// A `--tracks 2` base path: the two files the take derives from it are removed
+/// with it, whether the test passes or not.
+struct TempTracks {
+    base: PathBuf,
+}
+
+impl TempTracks {
+    fn new(name: &str) -> Self {
+        let base = std::env::temp_dir().join(format!(
+            "jawn-audio-tracks-{}-{name}.wav",
+            std::process::id()
+        ));
+        let tracks = TempTracks { base };
+        let _ = fs::remove_file(tracks.base());
+        for track in 1..=2 {
+            let _ = fs::remove_file(tracks.derived(track));
+        }
+        tracks
+    }
+
+    fn base(&self) -> &std::path::Path {
+        &self.base
+    }
+
+    fn text(&self) -> &str {
+        self.base.to_str().expect("temp path is UTF-8")
+    }
+
+    /// The path the engine writes for 1-based `track`.
+    fn derived(&self, track: usize) -> PathBuf {
+        let stem = self
+            .base
+            .file_stem()
+            .expect("temp path has a stem")
+            .to_string_lossy();
+        self.base.with_file_name(format!("{stem}-ch{track}.wav"))
+    }
+}
+
+impl Drop for TempTracks {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.base);
+        for track in 1..=2 {
+            let _ = fs::remove_file(self.derived(track));
+        }
+    }
+}
+
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
 }
@@ -462,7 +510,7 @@ fn an_unknown_insert_is_a_usage_error() {
     let take = TempTake::new("unknown-insert");
     let out = run(&[
         "--record", "--backend", "null", "--seconds", "0.1", "--out", take.text(),
-        "--insert", "reverb2",
+        "--insert", "flanger",
     ]);
     assert_eq!(out.status.code(), Some(2));
     let text = String::from_utf8_lossy(&out.stderr);
@@ -471,11 +519,137 @@ fn an_unknown_insert_is_a_usage_error() {
 }
 
 #[test]
+fn record_accepts_reverb_under_either_name_and_reports_it() {
+    for (index, name) in ["reverb", "reverb2"].iter().enumerate() {
+        let take = TempTake::new(&format!("reverb-{index}"));
+        let out = run(&[
+            "--record", "--backend", "null", "--seconds", "0.05", "--out", take.text(),
+            "--insert", name, "--json",
+        ]);
+        assert!(
+            out.status.success(),
+            "--insert {name} was refused: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains("\"inserts\":\"reverb\""),
+            "--insert {name} did not reach the report: {text}"
+        );
+        assert_eq!(json_number(&text, "frames"), 2_400.0, "stdout: {text}");
+        assert_eq!(json_number(&text, "dropped"), 0.0, "stdout: {text}");
+    }
+}
+
+#[test]
 fn channel_flags_outside_record_are_refused() {
     let out = run(&["--run", "--seconds", "0.1", "--gain", "2"]);
     assert_eq!(out.status.code(), Some(2));
     let text = String::from_utf8_lossy(&out.stderr);
     assert!(text.contains("only to --record"), "stderr: {text}");
+}
+
+#[test]
+fn record_two_tracks_writes_one_wav_per_input() {
+    let takes = TempTracks::new("two");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--rate", "48000", "--tracks", "2",
+        "--start-at", "96000", "--out", takes.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.trim().lines().count(), 1, "stdout: {text}");
+    assert!(text.contains("\"ok\":true"), "stdout: {text}");
+    // Both files share the take's transport stamp.
+    assert_eq!(json_number(&text, "start_sample"), 96_000.0, "stdout: {text}");
+
+    let first = takes.derived(1);
+    let second = takes.derived(2);
+    let first_text = first.to_str().expect("UTF-8 path");
+    let second_text = second.to_str().expect("UTF-8 path");
+    // The top-level contract describes track 1; the array names both files and
+    // which input each one records.
+    assert!(
+        text.contains(&format!("\"path\":\"{first_text}\"")) &&
+            text.contains(&format!("\"path\":\"{second_text}\"")),
+        "both paths belong in the report: {text}"
+    );
+    assert!(text.contains("\"tracks\":["), "stdout: {text}");
+    assert!(
+        text.contains(&format!(
+            "{{\"path\":\"{first_text}\",\"input\":0,\"frames\":4800,\"dropped\":0}}"
+        )),
+        "track 1 entry: {text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "{{\"path\":\"{second_text}\",\"input\":1,\"frames\":4800,\"dropped\":0}}"
+        )),
+        "track 2 entry: {text}"
+    );
+
+    assert!(first.exists(), "track 1 file missing");
+    assert!(second.exists(), "track 2 file missing");
+    let first_bytes = fs::read(&first).expect("read track 1");
+    let second_bytes = fs::read(&second).expect("read track 2");
+    assert_eq!(u32_at(&first_bytes, 40) as usize / 4, 4_800, "track 1 frames");
+    assert_eq!(u32_at(&second_bytes, 40) as usize / 4, 4_800, "track 2 frames");
+    assert_eq!(first_bytes.len(), 44 + 4_800 * 4);
+    assert_eq!(second_bytes.len(), 44 + 4_800 * 4);
+}
+
+#[test]
+fn three_tracks_is_a_usage_error() {
+    let take = TempTake::new("three-tracks");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--tracks", "3", "--out",
+        take.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--tracks"), "stderr: {stderr}");
+    assert!(!take.path.exists(), "a refused take created a file");
+}
+
+#[test]
+fn a_track_prefixed_insert_applies_to_that_track_only() {
+    let takes = TempTracks::new("insert-one");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--tone", "440", "--tracks", "2",
+        "--insert", "1:delay", "--out", takes.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Track 1 carries the delay; track 2 is still a wire.
+    assert!(text.contains("\"inserts\":\"delay\""), "stdout: {text}");
+
+    let first = fs::read(takes.derived(1)).expect("read track 1");
+    let second = fs::read(takes.derived(2)).expect("read track 2");
+    assert_ne!(
+        first, second,
+        "a prefix that applied to both tracks cannot explain different audio"
+    );
+}
+
+#[test]
+fn an_insert_naming_a_missing_track_is_a_usage_error() {
+    let take = TempTake::new("insert-missing-track");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--tracks", "2", "--out",
+        take.text(), "--insert", "3:delay",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("track 3"), "stderr: {stderr}");
+    assert!(!take.path.exists(), "a refused take created a file");
 }
 
 #[test]

@@ -1,7 +1,8 @@
 //! The control socket: one flat JSON object per line, in and out.
 //!
-//! The Perl manager arms a take (`record`), watches it (`status`) and ends it
-//! (`stop`) over a Unix socket, so the wire format here is deliberately dumb:
+//! The Perl manager arms a take (`record`), watches it (`status`), moves the
+//! running strip's knobs (`param`) and ends it (`stop`) over a Unix socket, so
+//! the wire format here is deliberately dumb:
 //! one object per line, values that are only strings, numbers, booleans or
 //! null, and no crates — the parser below is the whole of it. That keeps the
 //! engine's dependency set at "the audio backend, and nothing else"
@@ -44,7 +45,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use jawn_audio::{to_i16, BackendKind, Device, DiskWriter, NullDevice};
+use jawn_audio::{
+    to_i16, BackendKind, Channel, Device, DiskWriter, Mixer, NullDevice, ParamName, ParamQueue,
+};
 
 use crate::{take_frames, RECORD_CHANNELS};
 
@@ -268,11 +271,84 @@ impl Server {
         };
         match command {
             "record" => Action::Reply(self.record(&object)),
+            "param" => Action::Reply(self.param(&object)),
             "status" => Action::Reply(self.status_line()),
             "stop" => Action::Reply(self.stop_line()),
             "quit" => Action::Quit("{\"ok\":true}".to_string()),
             _ => Action::Reply(error_line("unknown command")),
         }
+    }
+
+    /// `{"cmd":"param","track":0,"name":"gain","value":0.5}`: move one
+    /// knob of a running take's strip.
+    ///
+    /// The command moves the strip at its next block, so the answer means
+    /// "queued", not "heard". The effect clamps the value (see
+    /// [`Channel::set`]); the socket rejects only what is not a parameter at
+    /// all. The knob mirror in `status` is updated here, because the strip
+    /// itself lives on the take thread and nothing else writes these values.
+    fn param(&mut self, object: &Object) -> String {
+        let running = match &self.current {
+            Some(running) if running.is_recording() => running,
+            _ => return error_line("no take is running"),
+        };
+        let track = match get(object, "track") {
+            Some(Value::Num(value))
+                if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 => *value as usize,
+            _ => return error_line("param needs \"track\": a 0-based track number"),
+        };
+        let name = match get(object, "name") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => return error_line("param needs \"name\": a parameter name"),
+        };
+        // A finite number only: a NaN or an infinity has no knob position, and
+        // the effects refuse one rather than smoothing toward it.
+        let value = match get(object, "value") {
+            Some(Value::Num(value)) if value.is_finite() => *value as f32,
+            _ => return error_line("\"value\" must be a finite number"),
+        };
+
+        let snapshot = running.snapshot();
+        let count = snapshot.tracks.len();
+        if track >= count {
+            return error_line(&format!("no track {track} (the take has {count})"));
+        }
+        let parameter = match ParamName::parse(name) {
+            Some(parameter) => parameter,
+            None => return error_line(&format!("no such parameter: {name}")),
+        };
+        if let Some(insert) = parameter.insert() {
+            let present = snapshot.tracks[track]
+                .inserts
+                .split(',')
+                .any(|entry| entry == insert);
+            if !present {
+                return error_line(&format!("no such parameter: {name}"));
+            }
+        }
+
+        if !running.params.push(track, parameter, value) {
+            return error_line("the parameter queue is full; try again next block");
+        }
+        if matches!(parameter, ParamName::Gain | ParamName::Pan) {
+            let mut status = running
+                .status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = status.tracks.get_mut(track) {
+                match parameter {
+                    ParamName::Gain => entry.gain = Channel::clamp_gain(value),
+                    ParamName::Pan => entry.pan = Channel::clamp_pan(value),
+                    _ => {}
+                }
+            }
+        }
+
+        format!(
+            "{{\"ok\":true,\"track\":{},\"name\":\"{}\"}}",
+            track,
+            jawn_audio::loopback::json_escape(name)
+        )
     }
 
     fn record(&mut self, object: &Object) -> String {
@@ -300,6 +376,15 @@ impl Server {
             }
             _ => return error_line("\"start_at\" must be a whole, non-negative sample count"),
         };
+        let tracks = match get(object, "tracks") {
+            None | Some(Value::Null) => 1usize,
+            Some(Value::Num(value))
+                if value.is_finite() && (*value == 1.0 || *value == 2.0) =>
+            {
+                *value as usize
+            }
+            _ => return error_line("\"tracks\" must be 1 or 2"),
+        };
         if let Some(running) = &self.current {
             if running.is_recording() {
                 return error_line("a take is already running");
@@ -321,6 +406,13 @@ impl Server {
             return error_line(&error);
         }
 
+        // One WAV per track: a one-track take keeps `out` exactly; two tracks
+        // split the stem into `-ch1`/`-ch2`. Both files share one start_sample,
+        // because one take is one position on the transport.
+        let paths = match crate::take_paths(&path, tracks) {
+            Ok(paths) => paths,
+            Err(error) => return error_line(&error),
+        };
         let frames = take_frames(seconds, self.config.rate);
         let queue = crate::queue_blocks(
             self.config.backend,
@@ -328,16 +420,29 @@ impl Server {
             self.config.period,
             RECORD_CHANNELS,
         );
-        let disk = match DiskWriter::spawn(
-            Path::new(&path),
-            self.config.rate,
-            RECORD_CHANNELS as u16,
-            self.config.period,
-            queue,
-        ) {
-            Ok(disk) => disk,
-            Err(error) => return error_line(&format!("cannot write {path}: {error}")),
-        };
+        let mut disks: Vec<DiskWriter> = Vec::with_capacity(paths.len());
+        for (index, track_path) in paths.iter().enumerate() {
+            match DiskWriter::spawn(
+                Path::new(track_path),
+                self.config.rate,
+                RECORD_CHANNELS as u16,
+                self.config.period,
+                queue,
+            ) {
+                Ok(disk) => disks.push(disk),
+                Err(error) => {
+                    for disk in disks {
+                        let _ = disk.finish();
+                    }
+                    for spawned in &paths[..index] {
+                        let _ = fs::remove_file(spawned);
+                    }
+                    return error_line(&format!("cannot write {track_path}: {error}"));
+                }
+            }
+        }
+
+        let inputs: Vec<usize> = (0..tracks).collect();
 
         // Join a finished worker before replacing it, so a stream of takes does
         // not leave detached threads behind.
@@ -347,31 +452,55 @@ impl Server {
 
         let take = self.next_take;
         self.next_take += 1;
+        // A serve take starts as a wire: gain 1, centred, no inserts, until a
+        // `param` moves it. The values here are the knobs `status` reports and
+        // only this thread changes them, so the mirror is the truth.
+        let track_status: Vec<TrackStatus> = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| TrackStatus {
+                path: path.clone(),
+                input: inputs[index],
+                frames: 0,
+                dropped: 0,
+                gain: 1.0,
+                pan: 0.0,
+                inserts: String::new(),
+            })
+            .collect();
         let shared = Arc::new(Mutex::new(Status {
             take,
             state: State::Recording,
-            path: path.clone(),
+            path: paths[0].clone(),
             frames: 0,
             dropped: 0,
             start_sample: start_at,
             xruns: 0,
+            tracks: track_status.clone(),
             error: String::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
+        // The queue exists before the worker does: the take thread builds the
+        // strips (they need not be `Send`), but the socket must be able to push
+        // to them as soon as `record` answers.
+        let params = Arc::new(ParamQueue::new());
 
         let spawned = {
             let shared = Arc::clone(&shared);
             let stop = Arc::clone(&stop);
+            let params = Arc::clone(&params);
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-take".to_string())
-                .spawn(move || run_take(config, seconds, disk, shared, stop))
+                .spawn(move || run_take(config, seconds, disks, tracks, shared, stop, params))
         };
         let handle = match spawned {
             Ok(handle) => handle,
             Err(error) => {
-                // No worker, no take: do not leave a WAV nobody will finish.
-                let _ = fs::remove_file(&path);
+                // No worker, no take: do not leave WAVs nobody will finish.
+                for track_path in &paths {
+                    let _ = fs::remove_file(track_path);
+                }
                 return error_line(&format!("cannot start the take thread: {error}"));
             }
         };
@@ -380,9 +509,11 @@ impl Server {
             status: shared,
             stop,
             handle: Some(handle),
+            params,
         });
         format!(
-            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"start_sample\":{start_at}}}"
+            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"start_sample\":{start_at}{}}}",
+            tracks_json(&track_status)
         )
     }
 
@@ -475,6 +606,20 @@ impl State {
 }
 
 #[derive(Clone)]
+struct TrackStatus {
+    path: String,
+    input: usize,
+    frames: u64,
+    dropped: u64,
+    /// The strip's trim, mirrored from the last `param` this socket accepted.
+    gain: f32,
+    /// -1 left ..= 1 right.
+    pan: f32,
+    /// The chain order, e.g. `tone,reverb`; empty for a wire.
+    inserts: String,
+}
+
+#[derive(Clone)]
 struct Status {
     take: u64,
     state: State,
@@ -483,7 +628,34 @@ struct Status {
     dropped: u64,
     start_sample: u64,
     xruns: usize,
+    /// One entry per track; track 1's also fills the top-level fields.
+    tracks: Vec<TrackStatus>,
     error: String,
+}
+
+/// The `tracks` array for a take. A one-track take keeps its historical line
+/// and omits the array; a two-track take carries both files so a caller can
+/// find the second one without guessing the naming scheme.
+fn tracks_json(tracks: &[TrackStatus]) -> String {
+    if tracks.len() <= 1 {
+        return String::new();
+    }
+    let entries: Vec<String> = tracks
+        .iter()
+        .map(|track| {
+            format!(
+                "{{\"path\":\"{}\",\"input\":{},\"frames\":{},\"dropped\":{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\"}}",
+                jawn_audio::loopback::json_escape(&track.path),
+                track.input,
+                track.frames,
+                track.dropped,
+                track.gain,
+                track.pan,
+                jawn_audio::loopback::json_escape(&track.inserts)
+            )
+        })
+        .collect();
+    format!(",\"tracks\":[{}]", entries.join(","))
 }
 
 /// The server's handle to one take's worker thread.
@@ -491,6 +663,9 @@ struct Running {
     status: Arc<Mutex<Status>>,
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
+    /// The same ring the take's mixer drains. Kept so `param` can push after
+    /// the worker owns the strips.
+    params: Arc<ParamQueue>,
 }
 
 impl Running {
@@ -530,8 +705,11 @@ impl Running {
 
     fn line(&self) -> String {
         let status = self.snapshot();
+        // Track 1's strip fills the top-level fields, as `path` and `frames`
+        // already do; every track's own values are in `tracks`.
+        let first = status.tracks.first();
         format!(
-            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"start_sample\":{},\"xruns\":{},\"error\":\"{}\"}}",
+            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"start_sample\":{},\"xruns\":{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
             status.take,
             status.state.name(),
             jawn_audio::loopback::json_escape(&status.path),
@@ -539,6 +717,10 @@ impl Running {
             status.dropped,
             status.start_sample,
             status.xruns,
+            tracks_json(&status.tracks),
+            first.map(|track| track.gain).unwrap_or(1.0),
+            first.map(|track| track.pan).unwrap_or(0.0),
+            jawn_audio::loopback::json_escape(first.map(|track| track.inserts.as_str()).unwrap_or("")),
             jawn_audio::loopback::json_escape(&status.error)
         )
     }
@@ -550,81 +732,122 @@ struct Captured {
     xruns: usize,
 }
 
-/// The take's worker: capture, hand every block to the disk writer, then say
-/// how it ended.
+/// The take's worker: capture, hand every block to each track's writer, then
+/// say how it ended. `stop` has already joined every writer before the status
+/// is final.
 fn run_take(
     config: Config,
     seconds: f64,
-    mut disk: DiskWriter,
+    mut disks: Vec<DiskWriter>,
+    tracks: usize,
     status: Arc<Mutex<Status>>,
     stop: Arc<AtomicBool>,
+    params: Arc<ParamQueue>,
 ) {
+    // Build the mixer here, on the take's thread, so it is never moved between
+    // threads. Its control ring is the one the socket already holds.
+    let inputs: Vec<usize> = (0..tracks).collect();
+    let labels: Vec<String> = (1..=tracks).map(|track| format!("ch{track}")).collect();
+    let label_refs: Vec<&str> = labels.iter().map(|label| label.as_str()).collect();
+    let mut mixer = Mixer::with_queue(&inputs, &label_refs, Arc::clone(&params));
     let outcome = match config.backend {
-        BackendKind::Null => capture_null(&config, seconds, &mut disk, &status, &stop),
+        BackendKind::Null => {
+            capture_null(&config, seconds, &mut disks, &mut mixer, &status, &stop)
+        }
         BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => {
-            capture_hardware(&config, seconds, &mut disk, &status, &stop)
+            capture_hardware(&config, seconds, &mut disks, &mut mixer, &status, &stop)
         }
     };
     // A stop is the caller's choice, not a failure: the take ends where it was
     // asked to, with a finished header.
     let was_stopped = stop.load(Ordering::SeqCst);
     let produced = frames_so_far(&status);
-    let dropped = disk.dropped_frames();
-    let finished = disk.finish();
+    // Read every count before `finish`, which consumes each handle.
+    let dropped: Vec<u64> = disks.iter().map(|disk| disk.dropped_frames()).collect();
+
+    let mut finished = Vec::with_capacity(disks.len());
+    for disk in disks {
+        finished.push(disk.finish());
+    }
 
     let mut current = status
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    current.dropped = dropped;
-    let path = current.path.clone();
-    match finished {
-        Ok(frames) => {
-            current.frames = frames;
-            match outcome {
-                Ok(captured) => {
-                    current.xruns = captured.xruns;
-                    if captured.rate != config.rate {
-                        // The samples are at the granted rate; the header must
-                        // say so, and only the worker knows the granted rate.
-                        if let Err(error) = crate::rewrite_rate(Path::new(&path), captured.rate) {
-                            current.state = State::Failed;
-                            current.error = error;
-                            return;
-                        }
-                    }
-                    current.state = State::Done;
+    current.dropped = dropped.first().copied().unwrap_or(0);
+    for (index, track) in current.tracks.iter_mut().enumerate() {
+        track.dropped = dropped.get(index).copied().unwrap_or(0);
+    }
+
+    let (capture_rate, capture_xruns, capture_error) = match outcome {
+        Ok(captured) => (Some(captured.rate), captured.xruns, None),
+        Err(_) if was_stopped => (None, 0, None),
+        Err(error) => (None, 0, Some(error)),
+    };
+    let mut failure = capture_error;
+    for (index, result) in finished.into_iter().enumerate() {
+        match result {
+            Ok(frames) => {
+                if let Some(track) = current.tracks.get_mut(index) {
+                    track.frames = frames;
                 }
-                Err(_) if was_stopped => current.state = State::Done,
-                Err(error) => {
-                    current.state = State::Failed;
-                    current.error = error;
-                    // An empty failed take is not a take; a partial one is kept
-                    // for the manager to decide about.
-                    if produced == 0 {
-                        let _ = fs::remove_file(&path);
+                if failure.is_none() {
+                    if let Some(rate) = capture_rate {
+                        if rate != config.rate {
+                            // The samples are at the granted rate; the header
+                            // must say so, and only the worker knows it.
+                            let path = match current.tracks.get(index) {
+                                Some(track) => track.path.clone(),
+                                None => continue,
+                            };
+                            if let Err(error) = crate::rewrite_rate(Path::new(&path), rate) {
+                                failure = Some(error);
+                            }
+                        }
                     }
                 }
             }
+            Err(error) => {
+                if failure.is_none() {
+                    failure = Some(format!("cannot finish the take: {error}"));
+                }
+            }
         }
-        Err(error) => {
+    }
+
+    current.frames = current.tracks.first().map(|track| track.frames).unwrap_or(0);
+    current.xruns = capture_xruns;
+    match failure {
+        None => current.state = State::Done,
+        Some(error) => {
             current.state = State::Failed;
-            current.error = format!("cannot finish the take: {error}");
+            current.error = error;
+            // An empty failed take is not a take; a partial one is kept for the
+            // manager to decide about.
             if produced == 0 {
-                let _ = fs::remove_file(&path);
+                for track in &current.tracks {
+                    let _ = fs::remove_file(&track.path);
+                }
             }
         }
     }
 }
 
 /// Update what `status` reads while a take runs: frames captured so far and
-/// frames dropped so far. The lock is uncontended and held for two field
-/// writes, so this never blocks the capture loop in practice.
-fn note_progress(status: &Arc<Mutex<Status>>, frames: u64, dropped: u64) {
+/// each track's dropped count. The lock is uncontended and held for a handful
+/// of field writes, so this never blocks the capture loop in practice.
+fn note_progress(status: &Arc<Mutex<Status>>, frames: u64, disks: &[DiskWriter]) {
     let mut current = status
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     current.frames = frames;
-    current.dropped = dropped;
+    current.dropped = disks.first().map(|disk| disk.dropped_frames()).unwrap_or(0);
+    for (index, track) in current.tracks.iter_mut().enumerate() {
+        track.frames = frames;
+        track.dropped = disks
+            .get(index)
+            .map(|disk| disk.dropped_frames())
+            .unwrap_or(0);
+    }
 }
 
 /// The frames the worker has handed to disk so far.
@@ -641,13 +864,24 @@ fn frames_so_far(status: &Arc<Mutex<Status>>) -> u64 {
 fn capture_null(
     config: &Config,
     seconds: f64,
-    disk: &mut DiskWriter,
+    disks: &mut [DiskWriter],
+    mixer: &mut Mixer,
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
 ) -> Result<Captured, String> {
-    let mut device = NullDevice::new(config.rate, config.period, RECORD_CHANNELS);
+    let track_count = mixer.tracks().len();
+    if disks.len() != track_count {
+        return Err(format!(
+            "{track_count} track(s) but {} disk writer(s)",
+            disks.len()
+        ));
+    }
+    let mut device = NullDevice::new(config.rate, config.period, track_count);
+    mixer.prepare(config.rate, config.period);
     let total = take_frames(seconds, config.rate);
-    let mut block = vec![0.0f32; config.period * RECORD_CHANNELS];
+    let mut source = vec![0.0f32; config.period * track_count];
+    let mut mono = vec![0.0f32; config.period];
+    let mut stereo = vec![0.0f32; config.period * RECORD_CHANNELS];
     let mut pcm = vec![0i16; config.period * RECORD_CHANNELS];
     let mut remaining = total;
     let mut pushed = 0u64;
@@ -656,16 +890,24 @@ fn capture_null(
             break;
         }
         device
-            .process(&mut block)
+            .process(&mut source)
             .map_err(|error| format!("device: {error:?}"))?;
         let frames = remaining.min(config.period as u64) as usize;
         let samples = frames * RECORD_CHANNELS;
-        for (out, sample) in pcm[..samples].iter_mut().zip(&block[..samples]) {
-            *out = to_i16(*sample);
+        for track in 0..track_count {
+            for frame in 0..frames {
+                mono[frame] = source[frame * track_count + track];
+            }
+            mixer
+                .process(track, &mono[..frames], &mut stereo[..samples])
+                .map_err(|error| format!("track {track}: {error}"))?;
+            for (out, sample) in pcm[..samples].iter_mut().zip(&stereo[..samples]) {
+                *out = to_i16(*sample);
+            }
+            disks[track].push(&pcm[..samples]);
         }
-        disk.push(&pcm[..samples]);
         pushed += frames as u64;
-        note_progress(status, pushed, disk.dropped_frames());
+        note_progress(status, pushed, disks);
         remaining -= frames as u64;
     }
     Ok(Captured {
@@ -676,23 +918,56 @@ fn capture_null(
 
 #[cfg(feature = "alsa")]
 struct ServeSink<'a> {
-    disk: &'a mut DiskWriter,
+    mixer: &'a mut Mixer,
+    disks: &'a mut [DiskWriter],
     status: &'a Arc<Mutex<Status>>,
     stop: &'a AtomicBool,
     pushed: u64,
+    mono: Vec<f32>,
+    stereo: Vec<f32>,
+    pcm: Vec<i16>,
 }
 
 #[cfg(feature = "alsa")]
 impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
+    fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
+        self.mixer.prepare(rate, period);
+        self.mono = vec![0.0; period];
+        self.stereo = vec![0.0; period * RECORD_CHANNELS];
+        self.pcm = vec![0i16; period * RECORD_CHANNELS];
+        Ok(())
+    }
+
     fn block(&mut self, block: &[i16]) -> Result<(), String> {
         // The sink is the only place a stop can reach a device loop that owns
         // the read: ending the sink ends the capture.
         if self.stop.load(Ordering::SeqCst) {
             return Err("stopped".to_string());
         }
-        self.disk.push(block);
-        self.pushed += (block.len() / RECORD_CHANNELS) as u64;
-        note_progress(self.status, self.pushed, self.disk.dropped_frames());
+        let frames = (block.len() / RECORD_CHANNELS).min(self.mono.len());
+        let track_count = self.mixer.tracks().len();
+        if self.disks.len() != track_count {
+            return Err(format!(
+                "{track_count} track(s) but {} disk writer(s)",
+                self.disks.len()
+            ));
+        }
+        let samples = frames * RECORD_CHANNELS;
+        for track in 0..track_count {
+            let input = self.mixer.tracks()[track].input.min(1);
+            for frame in 0..frames {
+                self.mono[frame] = f32::from(block[frame * RECORD_CHANNELS + input]) / 32_768.0;
+            }
+            self.mixer
+                .process(track, &self.mono[..frames], &mut self.stereo[..samples])
+                .map_err(|error| format!("track {track}: {error}"))?;
+            for (out, sample) in self.pcm[..samples].iter_mut().zip(&self.stereo[..samples]) {
+                *out = to_i16(*sample);
+            }
+            self.disks[track].push(&self.pcm[..samples]);
+        }
+        self.pushed += frames as u64;
+        note_progress(self.status, self.pushed, self.disks);
         Ok(())
     }
 }
@@ -701,15 +976,20 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
 fn capture_hardware(
     config: &Config,
     seconds: f64,
-    disk: &mut DiskWriter,
+    disks: &mut [DiskWriter],
+    mixer: &mut Mixer,
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
 ) -> Result<Captured, String> {
     let sink = ServeSink {
-        disk,
+        mixer,
+        disks,
         status,
         stop,
         pushed: 0,
+        mono: Vec::new(),
+        stereo: Vec::new(),
+        pcm: Vec::new(),
     };
     let report = jawn_audio::alsa_device::run_capture(
         &config.device,
@@ -730,11 +1010,12 @@ fn capture_hardware(
 fn capture_hardware(
     config: &Config,
     seconds: f64,
-    disk: &mut DiskWriter,
+    disks: &mut [DiskWriter],
+    mixer: &mut Mixer,
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
 ) -> Result<Captured, String> {
-    let _ = (config, seconds, disk, status, stop);
+    let _ = (config, seconds, disks, mixer, status, stop);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
