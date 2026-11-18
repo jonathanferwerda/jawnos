@@ -1202,12 +1202,13 @@ function jawnosWindowEmergeGhostWatch(ghost) {
 	catch (e) { ghost.observer = null; }
 }
 
-// When the real window lands: take the preview where it has reached, retarget
-// it to the window's own rectangle (a pinned place or a slow slot can differ
-// from the prediction), and cross-fade the two. The real window is never moved
-// to the ghost: the ghost comes to the window. The motion starts at once, from
-// the box the preview has reached - a hold at the start read as a pause part
-// way through whenever a press moved before its window landed.
+// When the real window lands: if it sits where the preview is growing into,
+// let that growth finish and fade the preview off it. Anywhere else (a pinned
+// place or a slow slot), take the preview from where it has reached and
+// retarget it to the window's own rectangle. The real window is never moved to
+// the ghost: the ghost comes to the window. The motion starts at once, from the
+// box the preview has reached - a hold at the start read as a pause part way
+// through whenever a press moved before its window landed.
 function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	if (!ghost || !ghost.el || !win_el) { return false; }
 	var level = jawnosWindowEmergeLevel();
@@ -1219,14 +1220,6 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	// read where it actually is before cancelling the fill: an animation mid
 	// flight has a real box, not the predicted one
 	var current = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-	if (ghost.openAnim) {
-		try { ghost.openAnim.cancel(); } catch (e) {}
-		ghost.openAnim = null;
-	}
-	// the growth was a transform over a box already at the predicted frame;
-	// the retarget owns the box from here, so the fallback transform must go
-	el.style.transform = '';
-	el.style.transformOrigin = '';
 	if (ghost.chromeAnim) {
 		try { ghost.chromeAnim.cancel(); } catch (e) {}
 		ghost.chromeAnim = null;
@@ -1245,39 +1238,81 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	var through = jawnosWindowEmergeCssRect(to, zoom);
 	// a measured window rectangle carries no radius; keep the window's own
 	if (!to.radius) { through.radius = jawnosWindowEmergeRadius(); }
-	var moved = Math.abs(through.left - from.left) > 0.5
-		|| Math.abs(through.top - from.top) > 0.5
-		|| Math.abs(through.width - from.width) > 0.5
-		|| Math.abs(through.height - from.height) > 0.5;
-	var duration = moved ? shape.retarget : Math.min(shape.retarget, 160);
 
 	// The preview's box has stayed at the predicted frame since the press (the
-	// growth was a transform from the control onto it). Retarget by animating
-	// that same transform to the one that maps the predicted box onto the real
-	// window, so the chrome never reflows and the retarget rides the compositor
-	// with the growth.
+	// growth is a transform from the control onto it), so the frame it is headed
+	// for is the predicted one - not wherever the growth has reached. A window
+	// that lands on that frame while the long tail is still running is on the
+	// same move; re-basing the transform there would replay the last stretch as
+	// a second little move at the very end of the animation.
 	var base = ghost.to || { left: from.left, top: from.top, width: from.width, height: from.height };
 	if (!(base.width > 0) || !(base.height > 0)) {
 		base = { left: from.left, top: from.top, width: from.width, height: from.height };
 	}
-	jawnosEmergeBoxStyle(el, base);
-	var start_t = 'translate(' + (from.left - base.left) + 'px, ' + (from.top - base.top) + 'px) scale(' + (from.width / base.width) + ', ' + (from.height / base.height) + ')';
-	var end_t = 'translate(' + (through.left - base.left) + 'px, ' + (through.top - base.top) + 'px) scale(' + (through.width / base.width) + ', ' + (through.height / base.height) + ')';
-	el.style.transformOrigin = '0 0';
-	el.style.transform = start_t;
-	if (el.animate) {
-		ghost.retargetAnim = el.animate([
-			{ transform: start_t, opacity: 1, offset: 0 },
-			{ transform: end_t, opacity: 0, offset: 1 }
-		], {
-			duration: duration,
-			easing: 'ease-out',
-			fill: 'both'
-		});
+	var off_target = Math.abs(through.left - base.left) > 0.5
+		|| Math.abs(through.top - base.top) > 0.5
+		|| Math.abs(through.width - base.width) > 0.5
+		|| Math.abs(through.height - base.height) > 0.5;
+	var duration = off_target ? shape.retarget : Math.min(shape.retarget, 160);
+
+	if (off_target) {
+		// The preview's box is at the predicted frame; the retarget owns it from
+		// here, so the growth and its fallback transform must go.
+		if (ghost.openAnim) {
+			try { ghost.openAnim.cancel(); } catch (e) {}
+			ghost.openAnim = null;
+		}
+		el.style.transform = '';
+		el.style.transformOrigin = '';
+		jawnosEmergeBoxStyle(el, base);
+		var start_t = 'translate(' + (from.left - base.left) + 'px, ' + (from.top - base.top) + 'px) scale(' + (from.width / base.width) + ', ' + (from.height / base.height) + ')';
+		var end_t = 'translate(' + (through.left - base.left) + 'px, ' + (through.top - base.top) + 'px) scale(' + (through.width / base.width) + ', ' + (through.height / base.height) + ')';
+		el.style.transformOrigin = '0 0';
+		el.style.transform = start_t;
+		if (el.animate) {
+			ghost.retargetAnim = el.animate([
+				{ transform: start_t, opacity: 1, offset: 0 },
+				{ transform: end_t, opacity: 0, offset: 1 }
+			], {
+				duration: duration,
+				easing: 'ease-out',
+				fill: 'both'
+			});
+		}
+		else {
+			el.style.transform = end_t;
+			el.style.opacity = '0';
+		}
 	}
 	else {
-		el.style.transform = end_t;
-		el.style.opacity = '0';
+		// The window landed on the frame the preview is growing into: keep the
+		// growth, let it cover whatever tail is left in the cross-fade's own
+		// time, and fade the preview off it. The last few pixels are travelled
+		// once, forwards, instead of being played again.
+		if (ghost.openAnim && ghost.openAnim.effect && ghost.openAnim.effect.getTiming
+			&& typeof ghost.openAnim.currentTime == 'number') {
+			try {
+				var whole = parseFloat(ghost.openAnim.effect.getTiming().duration);
+				var left_ms = whole - ghost.openAnim.currentTime;
+				if (isFinite(whole) && isFinite(left_ms) && whole > 0 && left_ms > duration) {
+					ghost.openAnim.playbackRate = Math.max(1, left_ms / duration);
+				}
+			}
+			catch (e) {}
+		}
+		if (el.animate) {
+			ghost.retargetAnim = el.animate([
+				{ opacity: 1, offset: 0 },
+				{ opacity: 0, offset: 1 }
+			], {
+				duration: duration,
+				easing: 'ease-out',
+				fill: 'both'
+			});
+		}
+		else {
+			el.style.opacity = '0';
+		}
 	}
 
 	// The real window fades in over the same beat: no snap, and no moment when

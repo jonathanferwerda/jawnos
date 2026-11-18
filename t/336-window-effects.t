@@ -88,7 +88,7 @@ like($fit, qr/function windowRestore\(.*?jawnosWindowEffect\(win, 'in'\)/s, 'res
 like($fit, qr/function windowMinimizer.*?jawnosWindowMinimizeOut\(win\)/s, 'minimize bounces out');
 like($fit, qr/function windowRestorer.*?jawnosWindowRestoreIn\(win\)/s, 'the tile toggle bounces in');
 like($fit, qr/function windowRestorer.*?jawnosWindowMinimizeOut\(win\)/s, 'and bounces out on its own hide');
-like($fit, qr/jawnosWindowWobbleStart\(win\)/, 'a drag starts the lean');
+like($fit, qr/jawnosWindowWobbleStart\(win, dragGroup\)/, 'a drag starts the lean, and the pile below it leans too');
 like($fit, qr/jawnosWindowWobbleMove\(win, p\.pageX, p\.pageY\)/, 'each drag event feeds the spring');
 like($fit, qr/jawnosWindowWobbleStop\(win\)/, 'and the drop lets it settle');
 like($fit, qr/else if \(d\.y < windowTopLimit\(\) \+ 10\).*?var was = parseFloat\(pd\.css\('top'\)\);.*?pd\.css\(\{ 'top': ok \}\);.*?if \(Math\.abs\(was - ok\) > 0\.5 && typeof jawnosWindowEffect == 'function'\) \{\s*jawnosWindowEffect\(pd, 'snap'\);\s*\}/s,
@@ -361,17 +361,23 @@ sandbox.jawnosWindowEffectsSet('on');
 
 // the lean is a spring: a rightward move shears the foot back, and the drop settles
 const phys = new Win('window_phys');
+const below = new Win('window_below');
 windows.push(phys);
-sandbox.jawnosWindowWobbleStart(phys);
+windows.push(below);
+sandbox.jawnosWindowWobbleStart(phys, [{ el: below }]);
 check('the drag adds the hanging class', phys.classes['jawnos_wobbling'] === 1);
+check('and the card it carries wears it too', below.classes['jawnos_wobbling'] === 1);
 sandbox.jawnosWindowWobbleMove(phys, 10, 10);
 sandbox.jawnosWindowWobbleMove(phys, 80, 10);
 check('moving right sets a negative shear', phys.jawnosWobble.targetShear < 0);
 pump(3);
 check('the frame writes a shear', /skewX\(-/.test(phys.style.transform));
+check('and the whole pile leans on that one frame',
+	below.style.transform === phys.style.transform && below.style.transform !== '');
 sandbox.jawnosWindowWobbleStop(phys);
 pump(240);
 check('the window settles and clears its transform', phys.style.transform === '');
+check('and so does the card it carried', below.style.transform === '' && !below.classes['jawnos_wobbling']);
 check('and gives the class back', !phys.classes['jawnos_wobbling']);
 check('and the state is gone', !phys.jawnosWobble);
 

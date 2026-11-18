@@ -453,7 +453,7 @@ function windowDraggable(win) {
 					win.find('.restore_button').hide();
 					windowDimensionSetter(win);
 				}
-				if (typeof jawnosWindowWobbleStart == 'function') { jawnosWindowWobbleStart(win); }
+				if (typeof jawnosWindowWobbleStart == 'function') { jawnosWindowWobbleStart(win, dragGroup); }
 				dragFromTile = {
 					left: parseFloat(win.css('left')) || 0,
 					top: parseFloat(win.css('top')) || 0,

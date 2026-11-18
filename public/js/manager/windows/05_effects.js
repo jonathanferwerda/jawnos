@@ -81,6 +81,16 @@ function jawnosWindowPhysicsCancel(win) {
 	if (!el) { return; }
 	var state = el.jawnosWobble;
 	if (state && state.raf && typeof cancelAnimationFrame == 'function') { cancelAnimationFrame(state.raf); }
+	// the pile the dragged window carried leans with it; putting the lean down
+	// has to put the cards' down too, or one keeps a transform nothing owns
+	if (state && state.followers) {
+		for (var i = 0; i < state.followers.length; i++) {
+			var follow = state.followers[i];
+			if (!follow) { continue; }
+			if (follow.style) { follow.style.transform = ''; }
+			$(follow).removeClass('jawnos_wobbling');
+		}
+	}
 	el.jawnosWobble = null;
 	el.style.transform = '';
 	$(el).removeClass('jawnos_wobbling');
@@ -211,14 +221,21 @@ function jawnosWindowWobbleFrame(el) {
 		state.targetShear = 0; state.targetYaw = 0; state.targetPitch = 0;
 	}
 	var transform = jawnosWindowWobbleStep(state, dt, jawnosWindowEffectScale());
+	// The pile below the card in the hand leans on the same frame: the pointer's
+	// speed is one value, and a second loop per card would only multiply the
+	// work on a desk that is already busy.
+	if (state.followers) {
+		for (var i = 0; i < state.followers.length; i++) {
+			var follow = state.followers[i];
+			if (follow && follow.style && follow.parentNode) { follow.style.transform = transform || ''; }
+		}
+	}
 	if (transform) {
 		el.style.transform = transform;
 	}
 	else if (!state.dragging) {
-		el.style.transform = '';
-		$(el).removeClass('jawnos_wobbling');
-		state.raf = 0;
-		el.jawnosWobble = null;
+		// settled: the whole pile puts its lean down together
+		jawnosWindowPhysicsCancel(el);
 		return;
 	}
 	else {
@@ -227,7 +244,7 @@ function jawnosWindowWobbleFrame(el) {
 	state.raf = requestAnimationFrame(function() { jawnosWindowWobbleFrame(el); });
 }
 
-function jawnosWindowWobbleStart(win) {
+function jawnosWindowWobbleStart(win, followers) {
 	win = $(win);
 	if (!win.length || !jawnosWindowMotionAllowed()) { return; }
 	var el = win[0];
@@ -240,6 +257,19 @@ function jawnosWindowWobbleStart(win) {
 	state.yaw = state.yawV = 0;
 	state.pitch = state.pitchV = 0;
 	state.targetShear = state.targetYaw = state.targetPitch = 0;
+	// The cards the drag carries (a pile's windows below the held one) lean with
+	// it, so a cascade does not come apart while it travels. They are given the
+	// same pivot as the held card, so the whole pile turns as one sheet.
+	state.followers = [];
+	if (followers) {
+		for (var i = 0; i < followers.length; i++) {
+			var follow = followers[i];
+			var node = (follow && follow.nodeType === 1) ? follow : (follow && follow.el ? follow.el : null);
+			if (!node || node === el) { continue; }
+			state.followers.push(node);
+			$(node).addClass('jawnos_wobbling');
+		}
+	}
 	win.addClass('jawnos_wobbling');
 	if (typeof requestAnimationFrame == 'function') {
 		state.raf = requestAnimationFrame(function() { jawnosWindowWobbleFrame(el); });

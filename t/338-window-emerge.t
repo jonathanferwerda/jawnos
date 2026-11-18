@@ -826,6 +826,32 @@ check('the retarget lands on 480x640, not the 0.985 rect',
 advance(1000);
 check('the mid-enter preview is put away', scaled_ghost_el.parentNode === null);
 
+// A window that lands on the predicted frame while the growth's long tail is
+// still running is on the same move: re-basing the transform would replay the
+// last few pixels as a second little move at the very end.
+level = 'medium';
+press(press_icon);
+const seated = sandbox.jawnosWindowEmergeGhost;
+const seated_el = seated.el;
+const seated_grow = seated_el.style.transform;
+const seated_win = new El('clock');
+seated_win.style.left = seated.to.left + 'px';
+seated_win.style.top = seated.to.top + 'px';
+seated_win.style.width = seated.to.width + 'px';
+seated_win.style.height = seated.to.height + 'px';
+seated_win.rect = { left: seated.to.left, top: seated.to.top, width: seated.to.width, height: seated.to.height };
+check('a window on the predicted frame takes the preview over',
+	sandbox.jawnosWindowEmerge(seated_win) === true);
+const seated_retarget = seated_el.animations[seated_el.animations.length - 1];
+check('the preview is faded off its own frame instead of being moved again',
+	seated_retarget.keys.length === 2
+	&& seated_retarget.keys[0].transform === undefined
+	&& seated_retarget.keys[1].opacity === 0
+	&& seated_el.style.transform === seated_grow);
+check('and the cross-fade is the short one', seated_retarget.options.duration === 160);
+advance(1000);
+check('the seated preview is put away', seated_el.parentNode === null);
+
 // --- a press that opens nothing is put away ---------------------------------
 level = 'medium';
 press(press_icon);
