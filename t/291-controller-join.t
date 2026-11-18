@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_device.pm lib/JawnOS/Routes/manager_device.pm lib/JawnOS/Controller/manager_controllers.pm lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Loader.pm scripts/gou_first_boot.pl scripts/gou_provision.pl public/js/manager/controllers.js templates/controllers/body.html.ep
+# tests-for: lib/JawnOS/Controller/manager_device.pm lib/JawnOS/Routes/manager_device.pm lib/JawnOS/Controller/manager_controllers.pm lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Loader.pm scripts/gou_first_boot.pl scripts/gou_provision.pl scripts/gou_wifi_reset.sh public/js/manager/controllers.js templates/controllers/body.html.ep
 # covers:    The join token New writes into a board's image: minted by the press,
 #            redeemed once by the board's first boot, and the card rules that boot
 #            applies before it syncs.
@@ -124,6 +124,20 @@ like($guard, qr/--class JawnOS/, 'the window is looked for by class');
 like($guard, qr/--name '\^JawnOS\$'/, 'and by the title the shell sets');
 my $guard_syntax = system('sh', '-n', root() . '/scripts/gou_kiosk_guard.sh');
 is($guard_syntax, 0, 'the guard is valid POSIX shell');
+
+# The Realtek 8821CU combo adapter misses the USB enumeration after a warm
+# reboot. The live card learned the reset by hand; the flash has to carry it, and
+# a timer has to retry it, or every reimaged board loses the fix.
+my $wifi = slurp('scripts/gou_wifi_reset.sh');
+like($provision, qr{/usr/local/sbin/gou-wifi-reset}, 'the flash installs the WiFi guard');
+like($provision, qr/gou-wifi-reset\.service/, 'with a boot service');
+like($provision, qr/gou-wifi-reset\.timer/, 'and a timer that retries it');
+like($provision, qr/_wants_link\(\$timer_wants, 'gou-wifi-reset\.timer'\)/, 'enabled, so a board that lost it gets it back');
+like($wifi, qr/rtw88_8821cu/, 'the guard reloads the adapter driver');
+like($wifi, qr/0bda/, 'and finds the combo adapter by its USB id');
+like($wifi, qr/wait_link && exit 0/, 'a board whose wlan0 is up does nothing');
+my $wifi_syntax = system('sh', '-n', root() . '/scripts/gou_wifi_reset.sh');
+is($wifi_syntax, 0, 'the WiFi guard is valid POSIX shell');
 
 # The board's card slot reports itself as fixed (mmcblk0 rm=0), exactly like the
 # soldered eMMC, so the removable flag cannot find the archive card. And a card

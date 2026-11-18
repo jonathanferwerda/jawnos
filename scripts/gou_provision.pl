@@ -845,6 +845,40 @@ WantedBy=timers.target
 UNIT
 }
 
+# The 8821CU combo adapter can fail to enumerate after a warm reboot. The boot
+# service is the first attempt; the timer repeats it, because a board whose
+# adapter appeared and then vanished (or whose first pass ran too early) has no
+# other way back without a hand on the power switch.
+sub _wifi_reset_unit {
+	return <<'UNIT';
+[Unit]
+Description=Reset the ODROID USB WiFi adapter if it did not enumerate
+After=NetworkManager.service bluetooth.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gou-wifi-reset
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+sub _wifi_reset_timer {
+	return <<'UNIT';
+[Unit]
+Description=Retry the WiFi adapter reset while wlan0 is missing
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=60s
+
+[Install]
+WantedBy=timers.target
+UNIT
+}
+
 sub _first_boot_unit {
 	return <<'UNIT';
 [Unit]
@@ -1183,6 +1217,38 @@ sub _autopopulate {
 		}
 		else {
 			$error = 'could not copy the kiosk guard script';
+		}
+	}
+	if (!length $error) {
+		# The Realtek 8821CU combo adapter can miss the USB enumeration after a
+		# warm reboot, leaving a board with no wlan0 and no way back but a hard
+		# power-cycle. The script and its units travel with the flash, so a
+		# reimaged card keeps the recovery the live card learned the hard way.
+		my $source = File::Basename::dirname(Cwd::abs_path($0)) . '/gou_wifi_reset.sh';
+		my $body = -f $source ? _slurp($source) : '';
+		my $sbin = "$mount/usr/local/sbin";
+		File::Path::make_path($sbin) unless -d $sbin;
+		my $path = "$sbin/gou-wifi-reset";
+		if (length $body && _write_file($path, $body) && chmod(0755, $path) && chown(0, 0, $path)) {
+			my $units = "$etc/systemd/system";
+			my $boot_wants = "$units/multi-user.target.wants";
+			my $timer_wants = "$units/timers.target.wants";
+			File::Path::make_path($boot_wants) unless -d $boot_wants;
+			File::Path::make_path($timer_wants) unless -d $timer_wants;
+			my $svc = "$units/gou-wifi-reset.service";
+			my $timer = "$units/gou-wifi-reset.timer";
+			if (_write_file($svc, _wifi_reset_unit()) && chmod(0644, $svc) && chown(0, 0, $svc)
+				&& _write_file($timer, _wifi_reset_timer()) && chmod(0644, $timer) && chown(0, 0, $timer)) {
+				&_wants_link($boot_wants, 'gou-wifi-reset.service');
+				&_wants_link($timer_wants, 'gou-wifi-reset.timer');
+				push @done, 'wifi-guard';
+			}
+			else {
+				$error = 'could not write the WiFi guard units';
+			}
+		}
+		else {
+			$error = 'could not copy the WiFi guard script';
 		}
 	}
 	if (!length $error) {

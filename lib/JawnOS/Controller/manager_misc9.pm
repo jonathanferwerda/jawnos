@@ -1696,11 +1696,50 @@ sub action_44027 {
 
 # GET /manager/games/house
 # The catalogue every reachable machine offers, server first, for the Games page.
-# A peer that is asleep is skipped rather than waited on, so the shelf still
-# draws; the section fills in when an answer arrives.
+# The peers are asked in parallel and each one has a short leash: a board whose
+# Wi-Fi is down must still start a local game, and a page load that waits on a
+# sleeping peer would hold a request worker while the launch waits behind it.
+# The section fills in when the answers arrive, and a peer that never answers is
+# simply absent.
 sub action_44028 {
 	my $c = shift;
-	$c->render(json => eval { &subs::game_house_library() } || { ok => 0, hosts => [], games => [] });
+	my $requests = eval { &subs::game_house_requests() } || [];
+	my (@promises, @uas, %answer);
+	for my $index (0 .. $#{ $requests }) {
+		my $request = $requests->[$index];
+		my $ua = $request->{'ua'};
+		next unless $ua;
+		push @uas, $ua;
+		my $promise = eval { $ua->get_p($request->{'url'}) };
+		next unless $promise;
+		push @promises, $promise->then(sub {
+			my ($tx) = @_;
+			my $res = $tx->result;
+			return unless $res && $res->is_success;
+			my $parsed = eval { decode_json($res->body) };
+			return unless ref $parsed eq 'HASH' && ref $parsed->{'games'} eq 'ARRAY';
+			$answer{$index} = {
+				row => $request->{'row'},
+				hostname => $parsed->{'hostname'},
+				games => $parsed->{'games'},
+			};
+		})->catch(sub { undef });
+	}
+	unless (@promises) {
+		$c->render(json => { ok => 1, hosts => [], games => [] });
+		return;
+	}
+	my $collect = sub {
+		my @ordered = map { $answer{$_} } grep { defined $answer{$_} } 0 .. $#{ $requests };
+		return &subs::game_house_merge(\@ordered);
+	};
+	Mojo::Promise->all(@promises)->then(sub {
+		$c->render(json => $collect->());
+	})->catch(sub {
+		$c->render(json => $collect->());
+	});
+	$c->render_later;
+	&subs::request_busy_release($c);
 }
 
 # POST /manager/games/pull

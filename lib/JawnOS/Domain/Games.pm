@@ -374,32 +374,75 @@ sub game_unpack {
 	return { ok => 1, root => $root, system => $top };
 }
 
-# The catalogue every reachable machine offers, server first. A machine that is
-# asleep is skipped quietly: a library that waits on a dead peer is worse than
-# a shorter list.
-sub game_house_library {
-	my (@hosts, @games, %seen);
+# The peers a house catalogue asks, server first. Each row carries the user agent
+# that proves this machine, already leashed: a machine that is asleep must answer
+# in seconds, not hold the page while the shelf waits on it. The web route asks
+# these in parallel; game_house_library is the synchronous form for callers with
+# no request loop (a helper or a probe).
+our $GAME_PEER_CONNECT_TIMEOUT = 2;
+our $GAME_PEER_INACTIVITY_TIMEOUT = 4;
+our $GAME_PEER_REQUEST_TIMEOUT = 6;
+our $GAME_PEER_MAX_BYTES = 16 * 1024 * 1024;
+
+sub game_house_requests {
 	my $self = &subs::signatorial_designer() // '';
+	my @requests;
 	foreach my $row (@{ &subs::peer_candidates() }) {
 		my $agent = eval { &subs::remote_agent_for($row->{'uuid'}) } || {};
 		next if $agent->{'error'} || !$agent->{'manager'};
-		my $url = $agent->{'manager'} . '/manager/games/peer_library?signatorial=' . url_escape($self);
-		my $res = eval {
-			$agent->{'ua'}->inactivity_timeout(5)->request_timeout(15)->connect_timeout(3)
-				->max_response_size(16 * 1024 * 1024)->get($url)->result
+		my $ua = $agent->{'ua'};
+		next unless $ua;
+		$ua = $ua->connect_timeout($GAME_PEER_CONNECT_TIMEOUT)
+			->inactivity_timeout($GAME_PEER_INACTIVITY_TIMEOUT)
+			->request_timeout($GAME_PEER_REQUEST_TIMEOUT)
+			->max_response_size($GAME_PEER_MAX_BYTES);
+		push @requests, {
+			row => $row,
+			ua => $ua,
+			url => $agent->{'manager'} . '/manager/games/peer_library?signatorial=' . url_escape($self),
 		};
-		next unless $res && $res->is_success;
-		my $parsed = eval { decode_json($res->body) };
-		next unless ref $parsed eq 'HASH' && ref $parsed->{'games'} eq 'ARRAY';
-		my $host = $parsed->{'hostname'} // $row->{'hostname'} // '';
+	}
+	return \@requests;
+}
+
+# Merge the catalogues that answered, in the house's order, so a game two machines
+# hold is offered once and by the machine asked first. Each answer is the parsed
+# peer_library body with the row it came from.
+sub game_house_merge {
+	my ($answers) = @_;
+	my (@hosts, @games, %seen);
+	foreach my $answer (@{ $answers || [] }) {
+		next unless ref $answer eq 'HASH';
+		my $row = ref $answer->{'row'} eq 'HASH' ? $answer->{'row'} : {};
+		my $host = (defined $answer->{'hostname'} && length $answer->{'hostname'})
+			? $answer->{'hostname'} : ($row->{'hostname'} // '');
 		push @hosts, { signatorial => $row->{'signatorial'}, hostname => $host };
-		foreach my $game (@{ $parsed->{'games'} }) {
+		foreach my $game (@{ $answer->{'games'} || [] }) {
 			next unless ref $game eq 'HASH' && defined $game->{'id'} && $game->{'id'} =~ /^[0-9a-f]{40}$/;
 			next if $seen{ $game->{'id'} }++;
 			push @games, { %{$game}, signatorial => $row->{'signatorial'}, hostname => $host };
 		}
 	}
 	return { ok => 1, hosts => \@hosts, games => \@games };
+}
+
+# The catalogue every reachable machine offers, server first. A machine that is
+# asleep is skipped quietly: a library that waits on a dead peer is worse than
+# a shorter list.
+sub game_house_library {
+	my @answers;
+	foreach my $request (@{ &game_house_requests() }) {
+		my $res = eval { $request->{'ua'}->get($request->{'url'})->result };
+		next unless $res && $res->is_success;
+		my $parsed = eval { decode_json($res->body) };
+		next unless ref $parsed eq 'HASH' && ref $parsed->{'games'} eq 'ARRAY';
+		push @answers, {
+			row => $request->{'row'},
+			hostname => $parsed->{'hostname'},
+			games => $parsed->{'games'},
+		};
+	}
+	return &game_house_merge(\@answers);
 }
 
 # Pull one game from one machine into this machine's shelf. The pack is written

@@ -76,6 +76,32 @@ my $scratch = tempdir(CLEANUP => 1);
 	unlike(Mojo::JSON::encode_json($catalogue), qr{\Q$scratch\E}, 'no path leaves the machine');
 }
 
+# --- the house's catalogue is merged in the order it asks --------------------
+{
+	my $first = 'a' x 40;
+	my $second = 'b' x 40;
+	my $house = subs::game_house_merge([
+		{
+			row => { signatorial => 'server', hostname => 'hub' },
+			hostname => 'Server',
+			games => [ { id => $first, title => 'First', system => 'gb' } ],
+		},
+		{
+			row => { signatorial => 'peer', hostname => 'Laptop' },
+			games => [
+				{ id => $first, title => 'Duplicate', system => 'gb' },
+				{ id => $second, title => 'Second', system => 'gb' },
+			],
+		},
+	]);
+	is(scalar @{ $house->{'hosts'} }, 2, 'each machine that answered is named');
+	is($house->{'hosts'}[1]{'hostname'}, 'Laptop', 'a peer with no hostname in its body falls back to the row');
+	is(scalar @{ $house->{'games'} }, 2, 'a game two machines hold is offered once');
+	is($house->{'games'}[0]{'title'}, 'First', 'the machine asked first wins the game');
+	is($house->{'games'}[1]{'signatorial'}, 'peer', 'and each game names the machine it came from');
+	unlike(Mojo::JSON::encode_json($house), qr{\Q$scratch\E}, 'no path leaves the merge');
+}
+
 # --- a pack and its unpack ---------------------------------------------------
 {
 	my $from = "$scratch/from";
@@ -126,6 +152,13 @@ like($controller, qr/sub action_44026/, 'the catalogue action exists');
 like($controller, qr/sub action_44027/, 'the serve action exists');
 like($controller, qr/sub action_44028/, 'the house action exists');
 like($controller, qr/sub action_44029/, 'the pull action exists');
+my ($house_action) = $controller =~ /(sub action_44028\b.*?\n\})/s;
+ok($house_action, 'the house action is readable');
+like($house_action, qr/render_later/, 'the house catalogue does not hold the request open while a peer answers');
+like($house_action, qr/get_p/, 'each peer is asked on its own promise');
+like($house_action, qr/Mojo::Promise->all/, 'the answer is collected when every peer has settled');
+like($house_action, qr/game_house_merge/, 'and the merge is the domain\'s own');
+unlike($house_action, qr/game_house_library/, 'the blocking form is not used in the request');
 like($controller, qr/&subs::peer_verify\(\$c, \$rm\)/,
 	'the peer routes are gated by the peer signature');
 like($controller, qr/\$c->on\(finish => sub \{ unlink \$tmp \}\)/,
@@ -145,7 +178,15 @@ like($help, qr/read from the server first and then the other machines/, 'and the
 
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 like($loader, qr/for qw\(.*\bgame_pull\b.*\)/, 'the loader carries game_pull');
+like($loader, qr/for qw\(.*\bgame_house_requests\b.*\)/, 'and game_house_requests');
+like($loader, qr/for qw\(.*\bgame_house_merge\b.*\)/, 'and game_house_merge');
 like($loader, qr/for qw\(.*\bpeer_candidates\b.*\)/, 'and peer_candidates');
+
+my $games_domain = read_file("$root/lib/JawnOS/Domain/Games.pm");
+like($games_domain, qr/\$GAME_PEER_CONNECT_TIMEOUT = 2;/, 'a sleeping peer is given two seconds to connect');
+like($games_domain, qr/\$GAME_PEER_REQUEST_TIMEOUT = 6;/, 'and six seconds to answer');
+like($games_domain, qr/sub game_house_requests/, 'the peers a house catalogue asks are built in one place');
+like($games_domain, qr/sub game_house_merge/, 'and the merged answer in another');
 
 # The app gate answers a sessionless request with the Gate page. A peer reading
 # a shelf, or asking for one game, has no session on the machine that holds it,
