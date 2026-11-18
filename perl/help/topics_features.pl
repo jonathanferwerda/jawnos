@@ -60,9 +60,10 @@ $topic{'voice'} = {
 $topic{'windows'} = {
 		title => 'Windows', category => 'features',
 		summary => 'Open, stack, move, resize, snap, pin and minimise.',
-		verified => '2026-11-17',
+		verified => '2026-11-18',
 		body => [
 			'Everything that opens opens in a window. Windows stack in the order you last touched them, drag by their title bar, resize by their edge, and minimise to a small bar. A tiled desk is made of piles: each pile is a cascade of windows with the one at its foot in front, and a desk can hold as many piles as it has room for.',
+			'An app opens into a picture of its window before the window is there: the preview grows out of the press wearing the app\'s last window - the same title bar and buttons, the same colours and layout - and the real window takes over where it lands. It is a picture, so nothing in it can be pressed, typed into or played.',
 			'The title bar of the window in front is drawn at full strength, and the other windows\' title bars are greyed, so before you type it is plain which window will receive the keys.',
 			'The title bar shows the app\'s icon and name and the four window controls: minimise, restore, maximise and close. Press the app\'s icon to bring out the three quiet controls beside it - Help (the question mark, or the page agent on the Internet window), the pin and full screen - and press it again to put them away; a press anywhere else does the same. They sit behind the icon so a narrow window keeps its room for the title instead of a row of seven buttons.',
 			'Full screen is the two diagonal arrows: press it and the window takes the whole screen, over the taskbar and dock, with its title bar put away. Move the pointer to the very top right corner of the screen and the leave-full-screen button appears there - two arrows pointing at each other; press it and the window returns to the size and place it had. Every window carries it, not just one app.',

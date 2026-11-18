@@ -55,8 +55,16 @@ var jawnosWindowEmergeGhost = null;
 var jawnosWindowEmergeRunning = 0;
 function jawnosWindowEmergeBusy() { return jawnosWindowEmergeRunning > 0; }
 function jawnosWindowEmergeBegin() { jawnosWindowEmergeRunning++; }
-function jawnosWindowEmergeEnd() {
+function jawnosWindowEmergeEnd(el) {
 	if (jawnosWindowEmergeRunning > 0) { jawnosWindowEmergeRunning--; }
+	// The window has settled: its own markup is the next press's picture. Taken
+	// once the desk is idle, so the clone never lands in the animation's last
+	// frame or in the person's next press.
+	if (el && typeof jawnosEmergePreviewCapture == 'function') {
+		var drafted = function () { jawnosEmergePreviewCapture(el); };
+		if (typeof requestIdleCallback == 'function') { requestIdleCallback(drafted, { timeout: 1200 }); }
+		else { setTimeout(drafted, 300); }
+	}
 	if (jawnosWindowEmergeRunning > 0) { return; }
 	if (typeof jawnosDockWindowsSettle == 'function') { jawnosDockWindowsSettle(1); }
 }
@@ -1058,6 +1066,293 @@ function jawnosWindowEmergeSwallowClick(e) {
 	return true;
 }
 
+// ---- the app's own window as the preview ------------------------------------
+// A press should show the window it is about to open, not a neutral skeleton:
+// the app's own title bar and buttons, its colours and its layout. The last
+// settled window of each app is cloned - stripped of anything live - and offered
+// to the next press. It is drawn in a shadow root, so its ids can never answer a
+// document lookup meant for the real window, and the page's own rules are
+// carried in scoped to the preview, so it wears the current theme rather than
+// the one it was captured in. The last copy of each app is kept in IndexedDB, so
+// a reload still opens into a real-looking preview.
+var JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge';
+var JAWNOS_EMERGE_PREVIEW_STORE = 'windows';
+var JAWNOS_EMERGE_PREVIEW_APPS = 8;
+var JAWNOS_EMERGE_PREVIEW_BYTES = 300000;
+var jawnosEmergePreviews = {};
+var jawnosEmergePreviewDb = null;
+var jawnosEmergePreviewSheetCache = null;
+var JAWNOS_EMERGE_PREVIEW_SCOPE = 'jawnos_emerge_scope';
+
+function jawnosEmergePreviewIdb() {
+	if (jawnosEmergePreviewDb) { return Promise.resolve(jawnosEmergePreviewDb); }
+	if (typeof indexedDB == 'undefined' || !indexedDB) { return Promise.reject(new Error('no indexeddb')); }
+	return new Promise(function (res, rej) {
+		var request = indexedDB.open(JAWNOS_EMERGE_PREVIEW_DB, 1);
+		request.onupgradeneeded = function () {
+			request.result.createObjectStore(JAWNOS_EMERGE_PREVIEW_STORE, { keyPath: 'app' });
+		};
+		request.onsuccess = function () { jawnosEmergePreviewDb = request.result; res(request.result); };
+		request.onerror = function () { rej(request.error); };
+	});
+}
+
+function jawnosEmergePreviewAll() {
+	return jawnosEmergePreviewIdb().then(function (db) {
+		return new Promise(function (res, rej) {
+			var query = db.transaction(JAWNOS_EMERGE_PREVIEW_STORE, 'readonly').objectStore(JAWNOS_EMERGE_PREVIEW_STORE).getAll();
+			query.onsuccess = function () { res(query.result || []); };
+			query.onerror = function () { rej(query.error); };
+		});
+	});
+}
+
+// One copy per app, and the oldest go first: a preview from a month ago is not
+// worth the space, and the desk's own memory only ever holds the last one.
+function jawnosEmergePreviewPrune() {
+	return jawnosEmergePreviewIdb().then(function (db) {
+		return new Promise(function (res) {
+			var tx = db.transaction(JAWNOS_EMERGE_PREVIEW_STORE, 'readwrite');
+			var store = tx.objectStore(JAWNOS_EMERGE_PREVIEW_STORE);
+			var query = store.getAll();
+			query.onsuccess = function () {
+				var rows = (query.result || []).sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
+				for (var i = JAWNOS_EMERGE_PREVIEW_APPS; i < rows.length; i++) {
+					try { store.delete(rows[i].app); } catch (e) {}
+				}
+				res();
+			};
+			query.onerror = function () { res(); };
+		});
+	});
+}
+
+function jawnosEmergePreviewSave(record) {
+	return jawnosEmergePreviewIdb().then(function (db) {
+		return new Promise(function (res, rej) {
+			var tx = db.transaction(JAWNOS_EMERGE_PREVIEW_STORE, 'readwrite');
+			tx.objectStore(JAWNOS_EMERGE_PREVIEW_STORE).put(record);
+			tx.oncomplete = function () { res(); };
+			tx.onerror = function () { rej(tx.error); };
+		});
+	});
+}
+
+function jawnosEmergePreviewParse(html) {
+	if (!html || typeof document == 'undefined' || !document.createElement) { return null; }
+	try {
+		var box = document.createElement('div');
+		box.innerHTML = html;
+		var node = box.firstElementChild;
+		if (!node && box.children && box.children.length) { node = box.children[0]; }
+		return node || null;
+	}
+	catch (e) { return null; }
+}
+
+// A reload should not start the previews over. Read once, at idle, and keep the
+// parsed node so a press never pays for a parse.
+function jawnosEmergePreviewLoad() {
+	jawnosEmergePreviewAll().then(function (rows) {
+		for (var i = 0; i < rows.length; i++) {
+			var row = rows[i];
+			if (!row || !row.app || !row.html || jawnosEmergePreviews[row.app]) { continue; }
+			var node = jawnosEmergePreviewParse(row.html);
+			if (node) { jawnosEmergePreviews[row.app] = { node: node, html: row.html, at: row.at || 0 }; }
+		}
+	}).then(null, function () {});
+}
+
+// Nothing live belongs in a picture: no scripts, no handlers, no sound and no
+// second page loading behind the preview.
+function jawnosEmergePreviewSanitize(node) {
+	if (!node || node.nodeType !== 1) { return node; }
+	var children = node.children || [];
+	for (var i = children.length - 1; i >= 0; i--) {
+		var child = children[i];
+		if (!child) { continue; }
+		var tag = String(child.tagName || '').toUpperCase();
+		if (tag == 'SCRIPT' || tag == 'NOSCRIPT') {
+			if (node.removeChild) { node.removeChild(child); }
+			continue;
+		}
+		var names = child.getAttributeNames ? (child.getAttributeNames() || []) : [];
+		for (var n = 0; n < names.length; n++) {
+			var name = names[n];
+			if (/^on/i.test(name)) { child.removeAttribute(name); }
+		}
+		if (tag == 'VIDEO' || tag == 'AUDIO' || tag == 'IFRAME' || tag == 'OBJECT' || tag == 'EMBED') {
+			if (child.removeAttribute) {
+				child.removeAttribute('src');
+				child.removeAttribute('data');
+				child.removeAttribute('autoplay');
+			}
+		}
+		jawnosEmergePreviewSanitize(child);
+	}
+	return node;
+}
+
+// Keep the app's settled window as the next press's picture. The clone is taken
+// after the open's motion is over, so the copy never competes with the frame it
+// is made from.
+function jawnosEmergePreviewCapture(win) {
+	if (typeof document == 'undefined' || !document.body) { return false; }
+	if (typeof jawnosWindowEffectsOn == 'function' && !jawnosWindowEffectsOn()) { return false; }
+	if (typeof jawnosWindowEmergeLevel == 'function' && jawnosWindowEmergeLevel() == 'off') { return false; }
+	win = $(win)[0];
+	if (!win || win.nodeType !== 1 || !win.parentNode) { return false; }
+	if (win.getClientRects && !win.getClientRects().length) { return false; }
+	var app = win.getAttribute ? (win.getAttribute('app') || '') : '';
+	if (!app) { return false; }
+	var node = null;
+	try { node = win.cloneNode(true); } catch (e) { node = null; }
+	if (!node) { return false; }
+	jawnosEmergePreviewSanitize(node);
+	var html = '';
+	try { html = node.outerHTML || ''; } catch (e) { html = ''; }
+	var at = Date.now();
+	jawnosEmergePreviews[app] = { node: node, html: html, at: at };
+	// memory keeps the last few, like the store does
+	var apps = [];
+	for (var key in jawnosEmergePreviews) {
+		if (jawnosEmergePreviews.hasOwnProperty(key)) { apps.push(key); }
+	}
+	if (apps.length > JAWNOS_EMERGE_PREVIEW_APPS) {
+		apps.sort(function (a, b) { return (jawnosEmergePreviews[a].at || 0) - (jawnosEmergePreviews[b].at || 0); });
+		for (var drop = 0; drop < apps.length - JAWNOS_EMERGE_PREVIEW_APPS; drop++) { delete jawnosEmergePreviews[apps[drop]]; }
+	}
+	if (html && html.length <= JAWNOS_EMERGE_PREVIEW_BYTES) {
+		jawnosEmergePreviewSave({ app: app, html: html, at: at }).then(jawnosEmergePreviewPrune, function () {});
+	}
+	return true;
+}
+
+// The page's own rules, with body/html/:root moved onto the preview's wrapper:
+// the shadow root has no body, and the theme lives on the real one. Scoping the
+// selectors is what lets the page's stylesheet cross the boundary at all.
+function jawnosEmergePreviewSelector(text) {
+	return String(text || '')
+		.replace(/\bbody\b/g, '.' + JAWNOS_EMERGE_PREVIEW_SCOPE)
+		.replace(/\bhtml\b/g, '.' + JAWNOS_EMERGE_PREVIEW_SCOPE)
+		.replace(/:root\b/g, '.' + JAWNOS_EMERGE_PREVIEW_SCOPE);
+}
+
+function jawnosEmergePreviewRules(rules, out) {
+	for (var i = 0; i < rules.length; i++) {
+		var rule = rules[i];
+		try {
+			if (rule.selectorText !== undefined && rule.style) {
+				out.push(jawnosEmergePreviewSelector(rule.selectorText) + '{' + rule.style.cssText + '}');
+			}
+			else if (rule.cssRules && rule.type === 4) {
+				out.push('@media ' + rule.media.mediaText + '{');
+				jawnosEmergePreviewRules(rule.cssRules, out);
+				out.push('}');
+			}
+			else if (rule.cssRules && rule.type === 12) {
+				out.push('@supports ' + rule.conditionText + '{');
+				jawnosEmergePreviewRules(rule.cssRules, out);
+				out.push('}');
+			}
+			else if (rule.cssText) {
+				out.push(rule.cssText);
+			}
+		}
+		catch (e) {}
+	}
+	return out;
+}
+
+function jawnosEmergePreviewCss() {
+	var out = [];
+	try {
+		var sheets = (typeof document != 'undefined' && document.styleSheets) ? document.styleSheets : [];
+		for (var i = 0; i < sheets.length; i++) {
+			var rules = null;
+			try { rules = sheets[i].cssRules; } catch (e) { rules = null; }
+			if (rules) { jawnosEmergePreviewRules(rules, out); }
+		}
+	}
+	catch (e) {}
+	// The preview is a picture: nothing in it takes a press, and the window's own
+	// saved geometry gives way to the ghost's box.
+	out.push('.' + JAWNOS_EMERGE_PREVIEW_SCOPE + ',.' + JAWNOS_EMERGE_PREVIEW_SCOPE + ' *{pointer-events:none!important}');
+	out.push('.' + JAWNOS_EMERGE_PREVIEW_SCOPE + ' .wind{position:absolute!important;left:0!important;top:0!important;right:auto!important;bottom:auto!important;margin:0!important;width:100%!important;height:100%!important;transform:none!important;border-radius:0!important;box-shadow:none!important}');
+	return out.join('\n');
+}
+
+// Built once: serialising every rule is not something a press should pay for.
+function jawnosEmergePreviewSheet() {
+	if (jawnosEmergePreviewSheetCache) { return jawnosEmergePreviewSheetCache; }
+	var css = jawnosEmergePreviewCss();
+	var sheet = null;
+	try {
+		if (typeof CSSStyleSheet == 'function' && CSSStyleSheet.prototype && CSSStyleSheet.prototype.replaceSync) {
+			sheet = new CSSStyleSheet();
+			sheet.replaceSync(css);
+		}
+	}
+	catch (e) { sheet = null; }
+	jawnosEmergePreviewSheetCache = { sheet: sheet, css: css };
+	return jawnosEmergePreviewSheetCache;
+}
+
+// Draw the app's last window into the ghost. Answers false when there is no
+// snapshot, so the caller falls back to the drawn chrome and skeleton. Nothing
+// is created after the shadow is attached: a failure there would leave the host
+// with an empty shadow, and the fallback would be light DOM it hides.
+function jawnosEmergePreviewBuild(origin, host) {
+	origin = origin || {};
+	if (!host || !host.attachShadow || !origin.app) { return false; }
+	var snapshot = jawnosEmergePreviews[origin.app];
+	if (!snapshot || !snapshot.node) { return false; }
+	var node = null;
+	var scope = null;
+	var built = null;
+	var style = null;
+	try {
+		node = snapshot.node.cloneNode(true);
+		scope = document.createElement('div');
+		style = document.createElement('style');
+		built = jawnosEmergePreviewSheet();
+	}
+	catch (e) { return false; }
+	if (!node || !scope || !built) { return false; }
+	var classes = JAWNOS_EMERGE_PREVIEW_SCOPE;
+	if (document.body && document.body.className) { classes += ' ' + document.body.className; }
+	if (document.documentElement && document.documentElement.className) { classes += ' ' + document.documentElement.className; }
+	scope.className = classes;
+	scope.appendChild(node);
+	if (style) { style.textContent = built.css; }
+	var shadow = null;
+	try { shadow = host.attachShadow({ mode: 'closed' }); } catch (e) { return false; }
+	if (!shadow) { return false; }
+	var adopted = false;
+	if (built.sheet && 'adoptedStyleSheets' in shadow) {
+		try { shadow.adoptedStyleSheets = [built.sheet]; adopted = shadow.adoptedStyleSheets && shadow.adoptedStyleSheets.length > 0; }
+		catch (e) { adopted = false; }
+	}
+	if (!adopted && style) { shadow.appendChild(style); }
+	shadow.appendChild(scope);
+	return true;
+}
+
+// Warm the two things a press must not pay for: the scoped stylesheet and the
+// snapshots kept from the last run. Both are idle work - the sheet is serialised
+// once and the stored windows are parsed once.
+(function () {
+	if (typeof document == 'undefined' || !document.addEventListener) { return; }
+	document.addEventListener('DOMContentLoaded', function () {
+		var warm = function () {
+			try { jawnosEmergePreviewSheet(); } catch (e) {}
+			try { jawnosEmergePreviewLoad(); } catch (e) {}
+		};
+		if (typeof requestIdleCallback == 'function') { requestIdleCallback(function () { warm(); }, { timeout: 4000 }); }
+		else { setTimeout(warm, 1500); }
+	});
+})();
+
 // The press-time preview. It is created inside pointerdown, so the desktop has
 // already answered before the app's chunk or the server is asked. The chrome
 // fades in as the box grows readable, then the preview holds at the predicted
@@ -1161,7 +1456,10 @@ function jawnosWindowEmergeGhostStart(origin) {
 	el.style.transform = grow_from;
 	jawnosEmergeBoxStyle(el, to);
 
-	var chrome = jawnosWindowEmergeChrome(origin);
+	var chrome = null;
+	// The app's own last window, when the desk has one: its title bar and buttons,
+	// its colours and its layout, instead of the drawn chrome and skeleton.
+	if (!jawnosEmergePreviewBuild(origin, el)) { chrome = jawnosWindowEmergeChrome(origin); }
 	if (chrome) {
 		chrome.style.opacity = '0';
 		el.appendChild(chrome);
@@ -1447,7 +1745,7 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	ghost.win = win_el;
 	win_el.jawnosEmergeGhost = ghost;
 	jawnosWindowEmergeBegin();
-	var finish = function () { jawnosWindowEmergeCancel(win_el); jawnosWindowEmergeEnd(); };
+	var finish = function () { jawnosWindowEmergeCancel(win_el); jawnosWindowEmergeEnd(win_el); };
 	if (win_el.jawnosEmergeWindowAnim && win_el.jawnosEmergeWindowAnim.finished
 		&& win_el.jawnosEmergeWindowAnim.finished.then) {
 		win_el.jawnosEmergeWindowAnim.finished.then(finish, finish);
@@ -1587,7 +1885,7 @@ function jawnosWindowEmerge(win, origin) {
 		});
 
 		jawnosWindowEmergeBegin();
-		var finish = function () { jawnosWindowEmergeCancel(el); jawnosWindowEmergeEnd(); };
+		var finish = function () { jawnosWindowEmergeCancel(el); jawnosWindowEmergeEnd(el); };
 		if (sheet.jawnosEmergeSheetAnim.finished && sheet.jawnosEmergeSheetAnim.finished.then) {
 			sheet.jawnosEmergeSheetAnim.finished.then(finish, finish);
 		}

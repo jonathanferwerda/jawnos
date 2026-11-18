@@ -107,8 +107,8 @@ like($emerge, qr/function jawnosWindowEmerge\(win, origin\)/, 'the motion takes 
 like($emerge, qr/function jawnosWindowEmergeGhostStart\(origin\)/, 'the press can start a preview');
 like($emerge, qr/function jawnosWindowEmergeGhostRetarget\(/, 'the preview is retargeted to the real frame');
 like($emerge, qr/function jawnosWindowEmergeBusy\(\)/, 'a motion in flight is answered for the dock');
-like($emerge, qr/function jawnosWindowEmergeEnd\(\)/, 'and its settle is reported');
-like($emerge, qr/jawnosWindowEmergeBegin\(\);\s*var finish = function \(\) \{ jawnosWindowEmergeCancel\([^)]*\); jawnosWindowEmergeEnd\(\); \};/,
+like($emerge, qr/function jawnosWindowEmergeEnd\(el\)/, 'and its settle is reported, with the window it landed');
+like($emerge, qr/jawnosWindowEmergeBegin\(\);\s*var finish = function \(\) \{ jawnosWindowEmergeCancel\([^)]*\); jawnosWindowEmergeEnd\([^)]*\); \};/,
 	'both motions end through it');
 like($emerge, qr/if \(typeof jawnosDockWindowsSettle == 'function'\) \{ jawnosDockWindowsSettle\(1\); \}/,
 	'so the dock\'s postponed row is laid out with its motion live');
@@ -284,6 +284,8 @@ function makeElement(tag, className) {
 			if (child) { child.parentNode = null; }
 		},
 		setAttribute: function (k, v) { this.attributes[k] = String(v); if (k === 'id') { this.id = String(v); } },
+		removeAttribute: function (k) { delete this.attributes[k]; },
+		getAttributeNames: function () { return Object.keys(this.attributes); },
 		getAttribute: function (k) {
 			if (this.attributes[k] !== undefined) { return this.attributes[k]; }
 			if (this[k] !== undefined) { return this[k]; }
@@ -1103,6 +1105,32 @@ effects_on = true;
 sandbox.jawnosWindowEmergeGhostCancel();
 advance(5000);
 
+// --- the app's own window as the preview ------------------------------------
+check('a body rule is scoped to the preview',
+	sandbox.jawnosEmergePreviewSelector('body.dark_theme .wind .x') === '.jawnos_emerge_scope.dark_theme .wind .x');
+check('and so is :root',
+	sandbox.jawnosEmergePreviewSelector(':root { --x: 1; }') === '.jawnos_emerge_scope { --x: 1; }');
+const dirty = makeElement('DIV', 'wind');
+const dirty_script = makeElement('SCRIPT');
+dirty_script.setAttribute('src', '/x.js');
+const dirty_video = makeElement('VIDEO');
+dirty_video.setAttribute('src', '/v.mp4');
+dirty_video.setAttribute('autoplay', 'autoplay');
+const dirty_button = makeElement('BUTTON');
+dirty_button.setAttribute('onclick', 'evil()');
+dirty_button.setAttribute('hint', 'Close');
+dirty.appendChild(dirty_script);
+dirty.appendChild(dirty_video);
+dirty.appendChild(dirty_button);
+sandbox.jawnosEmergePreviewSanitize(dirty);
+check('a preview keeps no script', dirty.children.indexOf(dirty_script) < 0);
+check('no media starts behind it',
+	dirty_video.getAttribute('src') === null && dirty_video.getAttribute('autoplay') === null);
+check('no handler survives', dirty_button.getAttribute('onclick') === null);
+check('but the app\'s own attributes do', dirty_button.getAttribute('hint') === 'Close');
+check('with no snapshot the ghost keeps the drawn chrome',
+	sandbox.jawnosEmergePreviewBuild({ app: 'clock' }, makeElement('DIV')) === false);
+
 // --- the growth is sized to how fast this desk opens windows ----------------
 // A phone that answers in half a second should not be given the level's 840ms
 // tail: the window would land with most of it left and the retarget would have
@@ -1141,6 +1169,21 @@ JS
 	diag($out) if $rc;
 	is($rc, 0, 'the emerge captures, previews, retargets, scales by level and cleans up');
 }
+
+like($emerge, qr/function jawnosEmergePreviewCapture\(win\)/,
+	'the app\'s settled window is kept as the next press\'s picture');
+like($emerge, qr/function jawnosEmergePreviewBuild\(origin, host\)/,
+	'and drawn into the ghost instead of the drawn chrome');
+like($emerge, qr/if \(!jawnosEmergePreviewBuild\(origin, el\)\) \{ chrome = jawnosWindowEmergeChrome\(origin\); \}/,
+	'the drawn chrome is only the fallback');
+like($emerge, qr/attachShadow\(\{ mode: 'closed' \}\)/,
+	'in its own id space, so it cannot answer a lookup meant for the real window');
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge'/,
+	'and the copies are kept on the device');
+like($emerge, qr/jawnosEmergePreviewSelector/, 'the page\'s rules are scoped to the preview');
+like($emerge, qr/jawnosEmergePreviewSanitize/, 'while nothing live is carried in with it');
+like($emerge, qr/requestIdleCallback\(drafted, \{ timeout: 1200 \}\)/,
+	'the copy is taken once the desk is idle, not in the open\'s last frame');
 
 # --- and every touched script parses ----------------------------------------
 if ($node && -x $node) {
