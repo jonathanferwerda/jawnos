@@ -3,8 +3,13 @@ function windowMinimizer(timestamp,app) {
 	if (app) {
 		win = $('.wind[app="' + app + '"]');
 	}
-	if (win.is(':visible')) { 
-		win.hide();
+	if (win.is(':visible')) {
+		// the effect owns the hide while it plays, so the size the taskbar keeps is
+		// read while the window still has one (a 50% width reads as 50 on a hidden
+		// element, which is not the size to come back to); with effects off the
+		// hide happens here, as it always did
+		var effecting = (typeof jawnosWindowMinimizeOut == 'function') && jawnosWindowMinimizeOut(win);
+		if (!effecting) { win.hide(); }
 		win.attr('view', 'minimized');
 		var tnh = win.height();
 		var tnw = win.width();
@@ -21,6 +26,7 @@ function windowMinimizer(timestamp,app) {
 		var tnh = jawnosWindowSizeGet(timestamp, 'h');
 		var tnw = jawnosWindowSizeGet(timestamp, 'w');
 		$('#window_' + timestamp).css({'height': tnh, 'width': tnw });
+		if (typeof jawnosWindowRestoreIn == 'function') { jawnosWindowRestoreIn(win); }
 	}
 	windowDimensionSetter(win);
 	// the window that steps forward or away from the front owns the keyboard cue
@@ -56,7 +62,9 @@ function windowHalfski(win,side) {
 			if (dock.length) { foot = Math.min(foot, dock.offset().top); }
 		}
 		var height = foot - ok;
+		var snapped = false;
 		if (mouse.x > (ww - (ww / 10)) || side == 'right') {
+			snapped = true;
 
 			win.css({ 
 				'position':'fixed', 
@@ -67,6 +75,7 @@ function windowHalfski(win,side) {
 			});
 		}
 		else if (mouse.x < (ww / 10) || side == 'left') {
+			snapped = true;
 			win.css({ 
 				'position':'fixed', 
 				'height': height, 
@@ -76,6 +85,7 @@ function windowHalfski(win,side) {
 			});
 		}
 		windowDimensionSetter(win);
+		if (snapped && typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
 	}
 }
 
@@ -116,6 +126,7 @@ function windowMaximizer(timestamp, app) {
 	}
 	$('#window_contents_' + timestamp ).css({ 'width': '100%' });
 	windowDimensionSetter($('#window_' + timestamp ));
+	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
 }
 
 function windowRestore(timestamp,app) {
@@ -135,6 +146,7 @@ function windowRestore(timestamp,app) {
 		}
 	}
 	windowDimensionSetter(win);
+	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'in'); }
 }
 
 function windowRestorer(timestamp,app) {
@@ -142,7 +154,7 @@ function windowRestorer(timestamp,app) {
 	if (app) {
 		win = $('.wind[app="' + app + '"]');
 	}
-	if (!win.is(':visible')) {
+	if (!win.is(':visible') || (typeof jawnosWindowEffectLeaving == 'function' && jawnosWindowEffectLeaving(win))) {
 		if (win.length == 0) {
 			if ($('.wind[app="' + app + '"]').length == 0) {
 				appointmentGrabber(app);
@@ -156,9 +168,11 @@ function windowRestorer(timestamp,app) {
 			win.show();
 		}
 		win.attr('visible', 'yes');
+		if (typeof jawnosWindowRestoreIn == 'function') { jawnosWindowRestoreIn(win); }
 	}
 	else {
-		win.hide();
+		// the taskbar tile's own toggle hides through here too
+		if (!(typeof jawnosWindowMinimizeOut == 'function' && jawnosWindowMinimizeOut(win))) { win.hide(); }
 		win.attr('visible', 'no');
 	}
 	windowDimensionSetter(win);
@@ -245,6 +259,7 @@ function windowDraggable(win) {
 					win.find('.restore_button').hide();
 					windowDimensionSetter(win);
 				}
+				if (typeof jawnosWindowWobbleStart == 'function') { jawnosWindowWobbleStart(win); }
 				dragFromTile = {
 					left: parseFloat(win.css('left')) || 0,
 					top: parseFloat(win.css('top')) || 0,
@@ -277,6 +292,7 @@ function windowDraggable(win) {
 				var d = mouse_position();
 				var data = JSON.stringify(d);
 				var now = Date.now();
+				if (typeof jawnosWindowWobbleStop == 'function') { jawnosWindowWobbleStop(win); }
 				var halfski = windowHalfski(win);
 				$('#marker_targeting').hide();
 				if (halfski == 'ya') {
@@ -428,6 +444,7 @@ $(document).on('click', '.place_button', function(e) {
 		// windows below it close the slot it held
 		if (typeof windowTiledLeave === 'function') { windowTiledLeave(win, false); }
 	}
+	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'lock'); }
 });
 
 

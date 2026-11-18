@@ -4,6 +4,7 @@
      02_fit.js  - minimise/restore/move, draggable, viewport/fit, phone check
      03_stack.js  - stacker, close, z-order, everythingMoves, dimension setter, background, drawer
      04_act.js  - appActSync, the act panel open/close message the beat no longer carries
+     05_effects.js - wobble, stretch and bounce, on the Misc Window Effects switch
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 
@@ -357,8 +358,9 @@ $(document).on('click', '.window_toggle', function() {
 			? $('.wind[data-terminal-id="' + terminal_id + '"]')
 			: $('.wind[data-window-id="' + window_id + '"]');
 		if (!tw.length) { return; }
-		if (!tw.is(':visible')) {
+		if (!tw.is(':visible') || (typeof jawnosWindowEffectLeaving == 'function' && jawnosWindowEffectLeaving(tw))) {
 			tw.show().attr('visible', 'yes');
+			if (typeof jawnosWindowRestoreIn == 'function') { jawnosWindowRestoreIn(tw); }
 			topLevelNow(tw);
 			return;
 		}
@@ -368,7 +370,9 @@ $(document).on('click', '.window_toggle', function() {
 			if (z >= topz) { topz = z; topmost = this; }
 		});
 		if (topmost === tw.get(0)) {
-			tw.hide().attr('view', 'minimized');
+			// the effect owns the hide when it is on
+			if (!(typeof jawnosWindowMinimizeOut == 'function' && jawnosWindowMinimizeOut(tw))) { tw.hide(); }
+			tw.attr('view', 'minimized');
 		}
 		else {
 			topLevelNow(tw);
@@ -378,7 +382,7 @@ $(document).on('click', '.window_toggle', function() {
 	var win = $('.wind[app="' + app + '"]');
 	// a button on the taskbar answers for its window: a minimized one comes
 	// back, the top one steps down, and any other rises
-	if (!win.is(':visible')) {
+	if (!win.is(':visible') || (typeof jawnosWindowEffectLeaving == 'function' && jawnosWindowEffectLeaving(win))) {
 		windowRestorer(timestamp,app);
 		return;
 	}

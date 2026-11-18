@@ -101,6 +101,8 @@
 				dock_windows: '<%= &subs::misc_setting('dock_windows') || 'on' %>',
 				taskbar_height: '<%= &subs::misc_setting('taskbar_height') || 44 %>',
 				navbar_height: '<%= &subs::misc_setting('navbar_height') || 36 %>',
+				// the window motions: on unless this device turned them off
+				window_effects: '<%= &subs::misc_setting('window_effects') || 'on' %>',
 				// a border width whose 0 is meaningful: seed it empty when unset so the
 				// script's own default (3) applies, rather than turning 0 into 3
 				window_border: '<%= &subs::misc_setting('window_border') // '' %>',

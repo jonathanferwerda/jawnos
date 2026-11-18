@@ -94,6 +94,7 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'button_border_colour') { jawnosButtonBorderColourApply($(this).val()); return; }
 	else if (setting == 'texture') { if (typeof jawnosTextureApply == 'function') { jawnosTextureApply($(this).val()); } return; }
 	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }
+	else if (setting == 'window_effects') { if (typeof jawnosWindowEffectsSet == 'function') { jawnosWindowEffectsSet($(this).val()); } return; }
 	else if (setting == 'corner_radius') { jawnosCornerApply($(this).val(), false); return; }
 	else if (setting == 'corner_override') { jawnosCornerApply($(this).val(), true); return; }
 	else if (setting == 'start_menu_icon') {

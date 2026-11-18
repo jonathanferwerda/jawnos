@@ -146,7 +146,7 @@ function jawnosTaskbarPinPress(pin) {
 			return;
 		}
 		// the button should be parked here already; this is a safety net
-		if (!win.is(':visible')) { windowRestorer(timestamp, app); }
+		if (!win.is(':visible') || (typeof jawnosWindowEffectLeaving == 'function' && jawnosWindowEffectLeaving(win))) { windowRestorer(timestamp, app); }
 		else if (app == topWindow()) { windowMinimizer(timestamp, app); }
 		else { topLevelNow(win); }
 		return;

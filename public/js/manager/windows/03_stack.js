@@ -397,7 +397,10 @@ function topWindow(apper) {
 	var zindex = 0;
 	$('.wind').each(function(i,v) {
 		var app = $(v).attr('app');
-		if (app != apper && $(v).css('z-index') > zindex && $(v).is(':visible')) {
+		// a window playing its out motion is no longer the front: the next press
+		// should raise what remains, not this one on its way out
+		if (app != apper && $(v).css('z-index') > zindex && $(v).is(':visible')
+			&& !(typeof jawnosWindowEffectLeaving == 'function' && jawnosWindowEffectLeaving(v))) {
 			zindex = $(v).css('z-index');
 			windows.push(app);
 		}

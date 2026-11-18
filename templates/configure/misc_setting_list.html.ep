@@ -421,6 +421,8 @@
 				[ 'button_border', 'Button Border', 'range', 0, 8, 1, 1 ],
 				# the frame's colour, on its own: blank follows the theme (--line)
 				[ 'window_border_colour', 'Window Border Colour', 'colour' ],
+				# the desk's transient window motions: lean, stretch, bounce, pin kick
+				[ 'window_effects', &subs::ui('Window Effects'), [ 'on', 'off' ] ],
 				# the colour of the edge on those same pressed surfaces and the rail
 				[ 'button_border_colour', 'Button Border Colour', 'colour' ],
 				[ 'clothesline_height', 'Clothesline Height', 'range', 20, 120, 4, 40 ],
