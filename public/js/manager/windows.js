@@ -892,6 +892,24 @@ function windowTiledRelease(timestamp) {
 // window was placed with.
 var windowTileAcrossStep = 50;
 
+// How much of a window a pile must leave showing. A cascade covers one bar more
+// of every window it holds, so a pile that would show less than this share of
+// the window it is taking is full: the next one starts a pile of its own rather
+// than every window in the pile being squeezed shorter to fit the desk.
+var windowStackVisible = 0.3;
+// Where a new pile stands: half a window across from the one that filled.
+var windowStackAcross = 0.5;
+
+function windowTiledCascadeFull(win, slot) {
+	if (!(slot > 0)) { return false; }
+	win = $(win);
+	var bar = win.find('.top_navbar');
+	var step = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
+	var height = win.outerHeight() || 0;
+	if (!(height > 0) || !(step > 0)) { return false; }
+	return (slot * step) > ((1 - windowStackVisible) * height);
+}
+
 // A window being restored after a reload carries the tile slot (or the fact that
 // it had been dragged out of the tile) it held in the last session.
 // appWindowOpenerNow hands it over just before the window is rendered, and
@@ -1703,6 +1721,19 @@ function windowReorganizer(window_id) {
 						tileCount = parseInt(restored.tile, 10);
 					}
 					if (isNaN(tileCount) || tileCount < 0) { tileCount = windowNextTileSlot(tileStack); }
+					// A pile that would leave less than a third of this window showing is
+					// full: it starts a pile of its own, half a window across, rather
+					// than every window being squeezed to fit the desk.
+					if (windowTiledCascadeFull(win, tileCount)) {
+						var filled_at = windowTiledAnchor(tileStack);
+						var filled_view = windowViewport();
+						var filled_width = win.width() || 480;
+						var filled_left = Math.max(0, Math.min(filled_view.width - filled_width, filled_at.left + Math.round(filled_width * windowStackAcross)));
+						tileStack = windowTiledNewStack();
+						win.attr('stack', tileStack);
+						win.attr('stack_at', filled_left + ',' + filled_at.top);
+						tileCount = 0;
+					}
 					windowTiledInsertAt(win, tileCount, tileStack);
 				}
 				else {
