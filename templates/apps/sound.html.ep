@@ -33,6 +33,20 @@
 #sound .sound_profile_row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 #sound .sound_profile_app { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
 #sound .sound_profile_add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+#sound .sound_patchbay_section { flex: 1 1 100%; }
+#sound .sound_patch_manage { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 8px; }
+#sound .sound_patch_group { margin: 10px 0; }
+#sound .sound_patch_group h4 { margin: 0 0 4px; font-size: 15px; }
+#sound .sound_patch_node { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+#sound .sound_patch_node_id { flex: 1 1 130px; min-width: 0; overflow-wrap: anywhere; }
+#sound .sound_patch_node_kind { opacity: .78; font-size: 13px; }
+#sound .sound_patch_routes { width: 100%; border-collapse: collapse; font-size: 14px; }
+#sound .sound_patch_routes th, #sound .sound_patch_routes td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+#sound .sound_patch_routes select { max-width: 150px; }
+#sound .sound_patch_routes input[type=range] { width: 90px; }
+#sound .sound_patch_add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+#sound .sound_patch_add input[type=text], #sound .sound_patch_add input[type=number] { width: 110px; }
+#sound .sound_patch_save { margin-top: 10px; }
 </style>
 <div id="sound" app="sound">
 	<div class="sound_note" id="sound_note"></div>
@@ -127,4 +141,45 @@
 		</section>
 		<%= include 'apps/sound/media' %>
 	</div>
+	<section class="sound_section sound_patchbay_section">
+		<h3><%= &subs::ui('House patchbay') %></h3>
+		<p class="sound_level_hint"><%= &subs::ui('One routing table for every input and output in the house. A source makes samples, a bus mixes them, and a sink plays them. The switch lets this machine\'s engine own the audio, so the plan is what is heard.') %></p>
+		<div class="sound_patch_manage">
+			<label><input type="checkbox" id="sound_manage" hint="<%= &subs::ui('Let the audio engine own this machine\'s inputs and outputs') %>"> <%= &subs::ui('The engine owns this machine\'s audio') %></label>
+			<span class="sound_level_now" id="sound_engine_state"></span>
+		</div>
+		<div class="sound_note" id="sound_patch_note"></div>
+		<div id="sound_patch_matrix"></div>
+		<div class="sound_patch_add">
+			<input type="text" id="sound_source_id" placeholder="<%= &subs::ui('source name') %>">
+			<select id="sound_source_kind">
+				<option value="input">input</option>
+				<option value="player">player</option>
+				<option value="peer">peer</option>
+				<option value="handset">handset</option>
+				<option value="device">device</option>
+			</select>
+			<input type="number" id="sound_source_channel" min="0" value="0" hint="<%= &subs::ui('device input channel') %>">
+			<input type="text" id="sound_source_machine" placeholder="<%= &subs::ui('machine') %>" hint="<%= &subs::ui('The machine this source runs on; leave blank for this machine') %>">
+			<button type="button" id="sound_source_add"><%= &subs::ui('Add source') %></button>
+			<input type="text" id="sound_sink_id" placeholder="<%= &subs::ui('sink name') %>">
+			<select id="sound_sink_kind">
+				<option value="interface">interface</option>
+				<option value="speakers">speakers</option>
+				<option value="zone">zone</option>
+				<option value="peer">peer</option>
+			</select>
+			<input type="number" id="sound_sink_channel" min="0" value="0" hint="<%= &subs::ui('device output channel') %>">
+			<input type="text" id="sound_sink_machine" placeholder="<%= &subs::ui('machine') %>" hint="<%= &subs::ui('The machine this sink plays on; leave blank for this machine') %>">
+			<button type="button" id="sound_sink_add"><%= &subs::ui('Add sink') %></button>
+			<input type="text" id="sound_bus_id" placeholder="<%= &subs::ui('bus name') %>">
+			<button type="button" id="sound_bus_add"><%= &subs::ui('Add bus') %></button>
+		</div>
+		<div class="sound_patch_add">
+			<select id="sound_route_from" hint="<%= &subs::ui('where the samples come from') %>"></select>
+			<select id="sound_route_to" hint="<%= &subs::ui('where they go') %>"></select>
+			<button type="button" id="sound_route_add"><%= &subs::ui('Add route') %></button>
+		</div>
+		<button type="button" class="sound_patch_save" id="sound_patch_save" hint="<%= &subs::ui('Save the plan for the whole house') %>"><%= &subs::ui('Save plan') %></button>
+	</section>
 </div>

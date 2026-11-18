@@ -45,6 +45,76 @@ sub route {
 	);
 }
 
+# --- the device channel a node binds to --------------------------------------
+{
+	# A plan written before the engine could bind a node meant channel 0; the
+	# read path keeps that meaning and the write path accepts a whole, non-
+	# negative index.
+	my $old = normalize({
+		sources => [ source('gtr') ],
+		buses   => [],
+		sinks   => [ sink('um2') ],
+		routes  => [],
+	});
+	is($old->{sources}[0]{channel}, 0, 'a node with no channel is channel 0');
+	is($old->{sinks}[0]{channel}, 0, 'and so is a sink');
+
+	my $given = normalize({
+		sources => [ source('gtr', channel => 1) ],
+		buses   => [],
+		sinks   => [ sink('um2', channel => 2) ],
+		routes  => [],
+	});
+	is($given->{sources}[0]{channel}, 1, 'a source keeps its channel');
+	is($given->{sinks}[0]{channel}, 2, 'a sink keeps its channel');
+
+	ok( valid({ sources => [ source('gtr', channel => 1) ], buses => [], sinks => [], routes => [] }),
+		'a whole, non-negative channel is valid');
+	ok( !valid({ sources => [ source('gtr', channel => -1) ], buses => [], sinks => [], routes => [] }),
+		'a negative channel is refused');
+	ok( !valid({ sources => [ source('gtr', channel => 1.5) ], buses => [], sinks => [], routes => [] }),
+		'a fractional channel is refused');
+}
+
+# --- a node's machine is optional --------------------------------------------
+{
+	my $plain = normalize({
+		sources => [ source('gtr') ],
+		buses   => [],
+		sinks   => [ sink('um2') ],
+		routes  => [],
+	});
+	is($plain->{sources}[0]{machine}, '', 'a node with no machine is this machine');
+	is($plain->{sinks}[0]{machine}, '', 'and so is a sink');
+
+	my $given = normalize({
+		sources => [ source('gtr', machine => 'table') ],
+		buses   => [],
+		sinks   => [ sink('um2', machine => 'laptop') ],
+		routes  => [],
+	});
+	is($given->{sources}[0]{machine}, 'table', 'a source keeps its machine');
+	is($given->{sinks}[0]{machine}, 'laptop', 'a sink keeps its machine');
+
+	ok( valid({ sources => [ source('gtr', machine => 'table') ], buses => [], sinks => [], routes => [] }),
+		'a text machine is valid');
+	ok( !valid({ sources => [ source('gtr', machine => { name => 'table' }) ], buses => [], sinks => [], routes => [] }),
+		'a machine that is a ref is refused');
+}
+
+# --- a route's mute is a fact, not a word --------------------------------
+{
+	ok( valid({ sources => [ source('gtr') ], buses => [], sinks => [ sink('um2') ],
+		routes => [ route('gtr', 'um2', mute => 1) ] }),
+		'a numeric mute of 1 is valid');
+	ok( valid({ sources => [ source('gtr') ], buses => [], sinks => [ sink('um2') ],
+		routes => [ route('gtr', 'um2', mute => 0) ] }),
+		'a numeric mute of 0 is valid');
+	ok( !valid({ sources => [ source('gtr') ], buses => [], sinks => [ sink('um2') ],
+		routes => [ route('gtr', 'um2', mute => 'yes') ] }),
+		'a mute that is a word is refused, because the engine cannot run it');
+}
+
 # --- the write path refuses what the read path would repair ------------------
 {
 	my $raw = {

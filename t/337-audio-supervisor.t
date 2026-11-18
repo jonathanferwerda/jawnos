@@ -7,8 +7,11 @@
 #            engine makes --check 0 and --status name it, an adopted engine
 #            whose backend/device differ from the flags is flagged and named
 #            but still adopted, a second supervisor
-#            refuses the lock without touching the first, and a missing binary
-#            is reported once while the supervisor keeps waiting.
+#            refuses the lock without touching the first, a missing binary
+#            is reported once while the supervisor keeps waiting, and the
+#            saved-plan path and machine name (from the flags, then the
+#            environment, then the host name and $state_dir) reach the status
+#            file.
 
 use strict;
 use warnings;
@@ -614,6 +617,88 @@ ENGINE
 	is($code, 0, 'the supervisor over a stale socket stops cleanly');
 	ok(!-e $status, 'and removes the status file');
 	ok(!kill(0, 0 + $engine_pid), 'its engine child is gone with it');
+}
+
+# --- the saved-plan path and machine name reach the status file --------------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	local $ENV{JAWNOS_AUDIO_BINARY} = "$dir/no-such-engine";
+
+	my $status = "$home/.president/audio.json";
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => [
+			'--backend', 'null',
+			'--socket',  "$dir/audio.sock",
+			'--plan',    "$dir/plan.json",
+			'--machine', 'table',
+		],
+	);
+
+	my $s = wait_status($status, 5);
+	ok($s, 'the supervisor writes status with a saved plan path');
+	is($s->{'plan'}, "$dir/plan.json", 'the status file names the saved plan') if $s;
+	is($s->{'machine'}, 'table', 'the status file names the machine') if $s;
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the supervisor with a plan path stops cleanly');
+	ok(!-e $status, 'and removes the status file');
+}
+
+# --- the environment supplies the plan and machine defaults ------------------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	local $ENV{JAWNOS_AUDIO_BINARY} = "$dir/no-such-engine";
+	local $ENV{JAWNOS_AUDIO_PLAN}    = "$dir/from-env.json";
+	local $ENV{JAWNOS_AUDIO_MACHINE} = 'env-table';
+
+	my $status = "$home/.president/audio.json";
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => ['--backend', 'null', '--socket', "$dir/audio.sock"],
+	);
+
+	my $s = wait_status($status, 5);
+	ok($s, 'the supervisor writes status from the environment');
+	is($s->{'plan'}, "$dir/from-env.json", 'JAWNOS_AUDIO_PLAN supplies the plan path') if $s;
+	is($s->{'machine'}, 'env-table', 'JAWNOS_AUDIO_MACHINE supplies the machine name') if $s;
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the environment-driven supervisor stops cleanly');
+	ok(!-e $status, 'and removes the status file');
+}
+
+# --- the machine name defaults to this host and the plan to $state_dir ---------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	local $ENV{JAWNOS_AUDIO_BINARY} = "$dir/no-such-engine";
+	delete $ENV{JAWNOS_AUDIO_MACHINE};
+
+	my $status = "$home/.president/audio.json";
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => ['--backend', 'null', '--socket', "$dir/audio.sock"],
+	);
+
+	my $s = wait_status($status, 5);
+	ok($s, 'the supervisor writes status with no machine flag');
+	ok(defined $s->{'machine'} && length $s->{'machine'},
+		'the machine defaults to a host name') if $s;
+	is($s->{'plan'}, "$home/.president/audio-plan.json",
+		'the plan defaults to $state_dir/audio-plan.json') if $s;
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the default-plan supervisor stops cleanly');
+	ok(!-e $status, 'and removes the status file');
 }
 
 done_testing();

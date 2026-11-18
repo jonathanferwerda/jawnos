@@ -114,12 +114,20 @@ sub _audio_plan_node {
 	my ($entry, $id, $kind) = @_;
 	my $label = _audio_plan_text($entry->{label});
 	$label = $id unless defined $label;
+	# Which device channel the node binds to on the machine that runs it: an
+	# input index for a source, the first channel of a stereo pair for a sink.
+	# A missing value is channel 0, which is what every plan written before the
+	# engine could bind one meant.
+	my $channel = _audio_plan_number($entry->{channel});
+	$channel = defined $channel && $channel >= 0 ? int($channel) : 0;
 	return {
 		id         => $id,
 		label      => $label,
 		kind       => $kind,
+		machine    => _audio_plan_text($entry->{machine}) || '',
 		rate       => _audio_plan_count($entry->{rate}, $audio_plan_default_rate),
 		channels   => _audio_plan_count($entry->{channels}, 1),
+		channel    => $channel,
 		latency_ms => _audio_plan_nonnegative($entry->{latency_ms}, 0),
 	};
 }
@@ -292,6 +300,9 @@ sub _audio_plan_valid_node {
 	if (exists $entry->{label}) {
 		return 0 if ref $entry->{label};
 	}
+	if (exists $entry->{machine}) {
+		return 0 if ref $entry->{machine};
+	}
 	if (exists $entry->{rate}) {
 		my $number = _audio_plan_number($entry->{rate});
 		return 0 unless defined $number && int($number) == $number && $number > 0;
@@ -299,6 +310,10 @@ sub _audio_plan_valid_node {
 	if (exists $entry->{channels}) {
 		my $number = _audio_plan_number($entry->{channels});
 		return 0 unless defined $number && int($number) == $number && $number > 0;
+	}
+	if (exists $entry->{channel}) {
+		my $number = _audio_plan_number($entry->{channel});
+		return 0 unless defined $number && int($number) == $number && $number >= 0;
 	}
 	if (exists $entry->{latency_ms}) {
 		my $number = _audio_plan_number($entry->{latency_ms});
@@ -360,7 +375,14 @@ sub audio_plan_valid {
 			return 0 unless defined $delay && $delay >= 0;
 		}
 		if (exists $entry->{mute}) {
-			return 0 if ref $entry->{mute} && !blessed($entry->{mute});
+			my $mute = $entry->{mute};
+			if (ref $mute) {
+				return 0 unless blessed($mute);
+			}
+			else {
+				my $number = _audio_plan_number($mute);
+				return 0 unless defined $number && ($number == 0 || $number == 1);
+			}
 		}
 
 		push @{ $edges{$from} }, $to;

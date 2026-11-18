@@ -599,14 +599,20 @@ fn status_carries_the_configuration_serve_was_given() {
         assert_eq!(json_number(status, "period"), 128.0, "period: {status}");
         assert_eq!(json_number(status, "buffer"), 512.0, "buffer: {status}");
         assert_eq!(json_number(status, "device_channels"), 4.0, "device_channels: {status}");
-        // These fields are the tail of the object, so the values the served
-        // process was started with are unambiguous even where the take line
-        // already carries `channels` for granted capture width.
+        // These fields sit together at the object's tail, so the values the
+        // served process was started with are unambiguous even where the take
+        // line already carries `channels` for granted capture width. The boot
+        // restore adds `machine` and `plan`/`plan_error` after them.
         assert!(
-            status.ends_with(
-                "\"backend\":\"null\",\"device\":\"null\",\"rate\":44100,\"period\":128,\"buffer\":512,\"device_channels\":4}"
+            status.contains(
+                "\"backend\":\"null\",\"device\":\"null\",\"rate\":44100,\"period\":128,\"buffer\":512,\"device_channels\":4"
             ),
             "config tail: {status}"
+        );
+        assert!(status.contains("\"machine\":"), "machine: {status}");
+        assert!(
+            status.contains("\"plan\":") || status.contains("\"plan_error\":"),
+            "boot plan: {status}"
         );
     };
 
@@ -1412,6 +1418,204 @@ fn a_monitor_at_another_rate_is_refused_without_a_take() {
     let status = client.wait_for_done();
     assert!(status.contains("\"state\":\"done\""), "status: {status}");
     assert_wav(&take.path, 4_800);
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+// --- patch ------------------------------------------------------------------
+
+#[test]
+fn patch_runs_a_plan_and_reports_its_shape() {
+    let server = Server::start("patch");
+    let mut client = server.connect();
+
+    // Channel 0 is real, `phone` is a peer this machine cannot bind, and the
+    // plan routes both into the house bus.
+    let plan = "{\"sources\":[{\"id\":\"in0\",\"kind\":\"input\",\"channel\":0},{\"id\":\"phone\",\"kind\":\"peer\"}],\"buses\":[{\"id\":\"house\"}],\"sinks\":[{\"id\":\"out\",\"kind\":\"interface\"}],\"routes\":[{\"from\":\"in0\",\"to\":\"house\"},{\"from\":\"phone\",\"to\":\"house\"},{\"from\":\"house\",\"to\":\"out\"}]}";
+    let reply = client.ask(&format!("{{\"cmd\":\"patch\",\"plan\":{plan}}}"));
+    assert!(reply.contains("\"ok\":true"), "patch: {reply}");
+    assert!(reply.contains("\"state\":\"patching\""), "patch: {reply}");
+    assert!(reply.contains("\"sources\":2"), "patch: {reply}");
+    assert!(reply.contains("\"bound_sources\":1"), "patch: {reply}");
+    assert!(reply.contains("\"silent\":[\"phone\"]"), "patch: {reply}");
+
+    // The null loop runs until stop, so status has frames and the plan's shape.
+    std::thread::sleep(Duration::from_millis(20));
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"state\":\"patching\""), "status: {status}");
+    assert!(json_number(&status, "frames") > 0.0, "status: {status}");
+    assert!(status.contains("\"buses\":1"), "status: {status}");
+
+    // One capture and one set of outputs: a listen is refused while patching.
+    let reply = client.ask("{\"cmd\":\"listen\",\"channel\":0}");
+    assert!(reply.contains("\"ok\":false"), "listen: {reply}");
+    assert!(reply.contains("patchbay"), "listen: {reply}");
+
+    let unpatched = client.ask("{\"cmd\":\"unpatch\"}");
+    assert!(unpatched.contains("\"state\":\"done\""), "unpatch: {unpatched}");
+    assert!(json_number(&unpatched, "frames") > 0.0, "unpatch: {unpatched}");
+
+    // A second patch, and the transport's one stop joins it too.
+    let reply = client.ask(&format!("{{\"cmd\":\"patch\",\"plan\":{plan}}}"));
+    assert!(reply.contains("\"ok\":true"), "second patch: {reply}");
+    std::thread::sleep(Duration::from_millis(20));
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+
+    // A plan whose route names an undeclared node is refused, not run.
+    let reply = client.ask(
+        "{\"cmd\":\"patch\",\"plan\":{\"sources\":[],\"buses\":[],\"sinks\":[],\"routes\":[{\"from\":\"a\",\"to\":\"b\"}]}}",
+    );
+    assert!(reply.contains("\"ok\":false"), "bad plan: {reply}");
+    assert!(reply.contains("does not declare"), "bad plan: {reply}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn patch_params_move_a_live_route_and_refuse_a_muted_one() {
+    let server = Server::start("patch-param");
+    let mut client = server.connect();
+
+    // Route 0 is muted, route 1 is the live bus -> sink send.
+    let plan = "{\"sources\":[{\"id\":\"in0\",\"kind\":\"input\",\"channel\":0}],\"buses\":[{\"id\":\"house\"}],\"sinks\":[{\"id\":\"out\",\"kind\":\"interface\"}],\"routes\":[{\"from\":\"in0\",\"to\":\"house\",\"mute\":1},{\"from\":\"house\",\"to\":\"out\",\"gain\":1,\"pan\":0}]}";
+    let reply = client.ask(&format!("{{\"cmd\":\"patch\",\"plan\":{plan}}}"));
+    assert!(reply.contains("\"ok\":true"), "patch: {reply}");
+
+    // A muted route is refused in one sentence.
+    let reply = client.ask("{\"cmd\":\"param\",\"target\":\"patch\",\"route\":0,\"name\":\"gain\",\"value\":0.5}");
+    assert!(reply.contains("\"ok\":false"), "muted route: {reply}");
+    assert!(reply.contains("muted"), "muted route: {reply}");
+
+    // A live route moves.
+    let reply = client.ask("{\"cmd\":\"param\",\"target\":\"patch\",\"route\":1,\"name\":\"gain\",\"value\":0.5}");
+    assert_eq!(reply, "{\"ok\":true,\"target\":\"patch\",\"route\":1,\"name\":\"gain\"}");
+
+    // A bad name is refused.
+    let reply = client.ask("{\"cmd\":\"param\",\"target\":\"patch\",\"route\":1,\"name\":\"tone.bass\",\"value\":1}");
+    assert!(reply.contains("\"ok\":false"), "bad name: {reply}");
+    assert!(reply.contains("no such parameter"), "bad name: {reply}");
+
+    // An out-of-range route is refused.
+    let reply = client.ask("{\"cmd\":\"param\",\"target\":\"patch\",\"route\":7,\"name\":\"gain\",\"value\":1}");
+    assert!(reply.contains("\"ok\":false"), "bad route: {reply}");
+
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"state\":\"patching\""), "status: {status}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+// --- boot restore -----------------------------------------------------------
+
+fn serve_plan_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "jawn-audio-serve-plan-{}-{name}.json",
+        std::process::id()
+    ))
+}
+
+#[test]
+fn serve_restores_a_managed_plan_at_boot() {
+    let plan = serve_plan_path("managed");
+    fs::write(
+        &plan,
+        r#"{"manage":true,"plan":{"sources":[{"id":"in0","kind":"input","channel":0}],"buses":[{"id":"house"}],"sinks":[{"id":"out","kind":"interface"}],"routes":[{"from":"in0","to":"house"},{"from":"house","to":"out"}]}}"#,
+    )
+    .expect("write the plan");
+    let server = Server::start_with(
+        "serve-plan-managed",
+        &["--plan", plan.to_str().expect("path"), "--machine", "table"],
+    );
+    let mut client = server.connect();
+    let status = client.ask("{\"cmd\":\"status\"}");
+    let _ = fs::remove_file(&plan);
+    assert!(status.contains("\"machine\":\"table\""), "status: {status}");
+    assert!(status.contains("\"plan\":"), "status: {status}");
+    assert!(status.contains("\"state\":\"patching\""), "status: {status}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn serve_with_manage_off_does_not_patch() {
+    let plan = serve_plan_path("off");
+    fs::write(&plan, r#"{"manage":false,"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]}}"#)
+        .expect("write the plan");
+    let server = Server::start_with(
+        "serve-plan-off",
+        &["--plan", plan.to_str().expect("path"), "--machine", "table"],
+    );
+    let mut client = server.connect();
+    let status = client.ask("{\"cmd\":\"status\"}");
+    let _ = fs::remove_file(&plan);
+    assert!(status.contains("\"machine\":\"table\""), "status: {status}");
+    assert!(status.contains("\"plan_error\":"), "status: {status}");
+    assert!(status.contains("manage is off"), "status: {status}");
+    assert!(!status.contains("\"state\":\"patching\""), "status: {status}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn serve_with_a_malformed_plan_still_serves() {
+    let plan = serve_plan_path("malformed");
+    fs::write(&plan, "not json at all").expect("write the plan");
+    let server = Server::start_with(
+        "serve-plan-malformed",
+        &["--plan", plan.to_str().expect("path"), "--machine", "table"],
+    );
+    let mut client = server.connect();
+    let status = client.ask("{\"cmd\":\"status\"}");
+    let _ = fs::remove_file(&plan);
+    assert!(status.contains("\"machine\":\"table\""), "status: {status}");
+    assert!(status.contains("\"plan_error\":"), "status: {status}");
+    assert!(!status.contains("\"state\":\"patching\""), "status: {status}");
 
     let reply = client.ask("{\"cmd\":\"quit\"}");
     assert_eq!(reply, "{\"ok\":true}");

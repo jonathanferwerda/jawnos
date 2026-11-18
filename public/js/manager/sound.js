@@ -1,3 +1,8 @@
+/* [[js-split]]
+   sound.js is part 1. The rest live in sound/ in name order:
+     01_patchbay.js  - the house plan: node and route editor, the manage switch, save and load
+   /js/manager/bundle.js and the app chunk concatenate the index and these parts.
+   [[/js-split]] */
 // The Sound app: the machine's output and input devices, the default speaker
 // and microphone, and the volume and mute of the default output. The server's
 // device ids are the controllable devices; the browser's enumerateDevices()
@@ -25,6 +30,7 @@ function soundOpener(timestamp) {
 			if (!response) { return; }
 			windowMaker(response.window || response);
 			soundBind();
+			soundPatchLoad();
 			soundBrowserRefresh().then(soundLoad);
 		}
 	});
@@ -300,6 +306,52 @@ function soundBind() {
 		if (!app) { return; }
 		soundSetProfile(app, $('#sound_profile_new_level').val());
 		$('#sound_profile_app').val('');
+	});
+	window_box.on('change', '#sound_manage', function() {
+		soundPatchManage(this.checked);
+	});
+	window_box.on('click', '#sound_patch_save', function() {
+		soundPatchSave();
+	});
+	window_box.on('click', '#sound_source_add', function() {
+		var id = ($('#sound_source_id').val() || '').replace(/^\s+|\s+$/g, '');
+		var channel = parseInt($('#sound_source_channel').val(), 10);
+		var machine = ($('#sound_source_machine').val() || '').replace(/^\s+|\s+$/g, '');
+		soundPatchAddNode('sources', id, {
+			id: id, label: id, kind: $('#sound_source_kind').val() || 'input',
+			channel: isNaN(channel) || channel < 0 ? 0 : channel,
+			machine: machine,
+			rate: 48000, channels: 1, latency_ms: 0
+		});
+		$('#sound_source_id').val('');
+	});
+	window_box.on('click', '#sound_sink_add', function() {
+		var id = ($('#sound_sink_id').val() || '').replace(/^\s+|\s+$/g, '');
+		var channel = parseInt($('#sound_sink_channel').val(), 10);
+		var machine = ($('#sound_sink_machine').val() || '').replace(/^\s+|\s+$/g, '');
+		soundPatchAddNode('sinks', id, {
+			id: id, label: id, kind: $('#sound_sink_kind').val() || 'interface',
+			channel: isNaN(channel) || channel < 0 ? 0 : channel,
+			machine: machine,
+			rate: 48000, channels: 2, latency_ms: 0
+		});
+		$('#sound_sink_id').val('');
+	});
+	window_box.on('click', '#sound_bus_add', function() {
+		var id = ($('#sound_bus_id').val() || '').replace(/^\s+|\s+$/g, '');
+		soundPatchAddNode('buses', id, { id: id, label: id });
+		$('#sound_bus_id').val('');
+	});
+	window_box.on('click', '#sound_route_add', function() {
+		var from = $('#sound_route_from').val();
+		var to = $('#sound_route_to').val();
+		if (!from || !to || from == to) {
+			soundPatchNote(jawnosT('A route needs two different nodes'));
+			return;
+		}
+		soundPlan.routes = soundPlan.routes || [];
+		soundPlan.routes.push({ from: from, to: to, gain: 1, pan: 0, mute: 0, delay_ms: 0 });
+		soundPatchRender();
 	});
 	if (soundTimer) { clearInterval(soundTimer); }
 	soundTimer = setInterval(function() {

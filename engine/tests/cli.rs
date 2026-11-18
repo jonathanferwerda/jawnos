@@ -1284,3 +1284,143 @@ fn listen_with_a_tone_still_reports_the_same_contract() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert_eq!(json_number(&text, "frames"), 2_400.0, "stdout: {text}");
 }
+
+// --- patch ------------------------------------------------------------------
+
+#[test]
+fn patch_on_null_runs_a_plan_and_reports_its_shape() {
+    let path = std::env::temp_dir().join(format!(
+        "jawn-audio-patch-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        r#"{
+            "sources":[{"id":"in0","kind":"input","channel":0},{"id":"phone","kind":"peer"}],
+            "buses":[{"id":"house"}],
+            "sinks":[{"id":"out","kind":"interface"}],
+            "routes":[
+                {"from":"in0","to":"house"},
+                {"from":"phone","to":"house"},
+                {"from":"house","to":"out"}
+            ]
+        }"#,
+    )
+    .expect("write the plan");
+
+    let out = run(&[
+        "--patch",
+        "--plan",
+        path.to_str().expect("path"),
+        "--backend",
+        "null",
+        "--seconds",
+        "0.1",
+        "--json",
+    ]);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.trim().lines().count(), 1, "stdout: {text}");
+    assert!(text.contains("\"ok\":true"), "stdout: {text}");
+    assert_eq!(json_number(&text, "frames"), 4_800.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "sources"), 2.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "bound_sources"), 1.0, "stdout: {text}");
+    assert!(text.contains("\"silent\":[\"phone\"]"), "stdout: {text}");
+}
+
+#[test]
+fn patch_without_a_plan_is_a_usage_error() {
+    let out = run(&["--patch", "--backend", "null"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--plan"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_plan_outside_patch_is_a_usage_error() {
+    let out = run(&["--listen", "--plan", "/tmp/plan.json"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--plan"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_bad_plan_is_a_runtime_failure() {
+    let path = std::env::temp_dir().join(format!(
+        "jawn-audio-bad-patch-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        r#"{"sources":[],"buses":[],"sinks":[],"routes":[{"from":"a","to":"b"}]}"#,
+    )
+    .expect("write the plan");
+    let out = run(&[
+        "--patch",
+        "--plan",
+        path.to_str().expect("path"),
+        "--backend",
+        "null",
+        "--seconds",
+        "0.1",
+        "--json",
+    ]);
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("\"ok\":false"), "stdout: {text}");
+    assert!(text.contains("does not declare"), "stdout: {text}");
+}
+
+#[test]
+fn patch_delegates_a_source_named_for_another_machine() {
+    let path = std::env::temp_dir().join(format!(
+        "jawn-audio-delegated-patch-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        r#"{
+            "sources":[{"id":"mic","kind":"input","channel":0,"machine":"laptop"}],
+            "buses":[{"id":"house"}],
+            "sinks":[{"id":"out","kind":"interface"}],
+            "routes":[{"from":"mic","to":"house"},{"from":"house","to":"out"}]
+        }"#,
+    )
+    .expect("write the plan");
+    let out = run(&[
+        "--patch",
+        "--plan",
+        path.to_str().expect("path"),
+        "--machine",
+        "table",
+        "--backend",
+        "null",
+        "--seconds",
+        "0.1",
+        "--json",
+    ]);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("\"ok\":true"), "stdout: {text}");
+    assert_eq!(json_number(&text, "bound_sources"), 0.0, "stdout: {text}");
+    assert!(text.contains("\"silent\":[\"mic\"]"), "stdout: {text}");
+}
+
+#[test]
+fn a_machine_outside_patch_or_serve_is_a_usage_error() {
+    let out = run(&["--listen", "--machine", "table"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--machine"), "stderr: {stderr}");
+}

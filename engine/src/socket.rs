@@ -68,6 +68,8 @@ use jawn_audio::{
     MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback,
 };
 
+use crate::patchbay::{PatchSummary, Patchbay};
+
 use crate::{alignment_json, take_frames, Alignment, MAX_CHANNELS, MAX_TRACKS, TAKE_CHANNELS};
 
 /// How long a take runs when the command does not say.
@@ -99,6 +101,10 @@ pub(crate) struct Config {
     /// The capture channel count a take asks the device for.
     pub channels: usize,
     pub socket: PathBuf,
+    /// The saved-plan wrapper a `--serve` restores from, if any.
+    pub plan: Option<PathBuf>,
+    /// Which machine this engine serves; a node delegated elsewhere is silent.
+    pub machine: String,
 }
 
 /// `--socket`, else `$JAWNOS_AUDIO_SOCKET`, else `$HOME/.president/audio.sock`.
@@ -120,16 +126,31 @@ pub(crate) fn default_path(flag: Option<&str>) -> Result<PathBuf, String> {
     }
 }
 
+/// `--plan`, else `$JAWNOS_AUDIO_PLAN`, else `$HOME/.president/audio-plan.json`.
+/// A missing `HOME` and no flag/env means no saved plan to restore; `None` is
+/// the only case where the engine serves with no boot-restore report at all.
+pub(crate) fn default_plan_path(flag: Option<&str>) -> Option<PathBuf> {
+    if let Some(path) = flag {
+        return Some(PathBuf::from(path));
+    }
+    if let Ok(path) = std::env::var("JAWNOS_AUDIO_PLAN") {
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() => {
+            Some(PathBuf::from(home).join(".president/audio-plan.json"))
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn serve(config: Config) -> Result<ExitCode, String> {
     let path = config.socket.clone();
     let listener = bind(&path)?;
-    let mut server = Server {
-        config,
-        current: None,
-        playback: None,
-        listen: None,
-        next_take: 1,
-    };
+    let mut server = Server::new(config);
+    server.boot_restore();
     let outcome = server.run(listener);
     // A clean exit unlinks the socket. A crash leaves it behind, and the next
     // start unlinks that stale path before it binds.
@@ -194,10 +215,159 @@ struct Server {
     /// A take and a listen cannot both hold the capture stream, so at most one
     /// of `current` and `listen` can be live.
     listen: Option<ListenSession>,
+    /// The house patchbay. It owns both the capture and the outputs, so it
+    /// cannot share a machine with a take, a playback or a listen.
+    patch: Option<PatchSession>,
     next_take: u64,
+    /// What the boot restore did with the saved plan, reported on every status
+    /// line as `plan` or `plan_error` beside `machine`.
+    boot: BootPlan,
+}
+
+/// The boot-restore outcome, in the shape `status` reports it.
+enum BootPlan {
+    Armed(PatchSummary),
+    Error(String),
 }
 
 impl Server {
+    fn new(config: Config) -> Self {
+        Server {
+            config,
+            current: None,
+            playback: None,
+            listen: None,
+            patch: None,
+            next_take: 1,
+            boot: BootPlan::Error("no audio plan file configured".to_string()),
+        }
+    }
+
+    /// Restore the saved plan at startup. The server always starts and serves;
+    /// this only records what happened (and arms the patch when `manage` is
+    /// true and the plan compiles).
+    fn boot_restore(&mut self) {
+        let plan_path = match self.config.plan.clone() {
+            Some(path) => path,
+            None => return,
+        };
+        let text = match fs::read_to_string(&plan_path) {
+            Ok(text) => text,
+            Err(_) => {
+                self.boot =
+                    BootPlan::Error(format!("no audio plan at {}", plan_path.display()));
+                return;
+            }
+        };
+        let object = match parse_object(text.trim()) {
+            Ok(object) => object,
+            Err(error) => {
+                self.boot = BootPlan::Error(format!("{}: {error}", plan_path.display()));
+                return;
+            }
+        };
+        let manage = match get(&object, "manage") {
+            Some(Value::Bool(value)) => *value,
+            Some(Value::Num(value)) if *value == 1.0 => true,
+            Some(Value::Num(value)) if *value == 0.0 => false,
+            None | Some(Value::Null) => false,
+            Some(_) => {
+                self.boot = BootPlan::Error(format!(
+                    "{}: \"manage\" must be true or false",
+                    plan_path.display()
+                ));
+                return;
+            }
+        };
+        if !manage {
+            self.boot = BootPlan::Error(format!("{}: manage is off", plan_path.display()));
+            return;
+        }
+        let plan = match get(&object, "plan") {
+            Some(Value::Obj(plan)) => plan,
+            _ => {
+                self.boot = BootPlan::Error(format!(
+                    "{}: the saved plan has no \"plan\" object",
+                    plan_path.display()
+                ));
+                return;
+            }
+        };
+        let patchbay = match Patchbay::from_object(plan, self.config.channels, &self.config.machine) {
+            Ok(patchbay) => patchbay,
+            Err(error) => {
+                self.boot = BootPlan::Error(format!("{}: {error}", plan_path.display()));
+                return;
+            }
+        };
+        match self.start_patch_worker(patchbay) {
+            Ok(summary) => self.boot = BootPlan::Armed(summary),
+            Err(error) => {
+                self.boot = BootPlan::Error(format!("{}: {error}", plan_path.display()));
+            }
+        }
+    }
+
+    /// Spawn the patch worker and store its handle, queue and per-route liveness.
+    /// Returns the summary the caller reports in its reply.
+    fn start_patch_worker(&mut self, patchbay: Patchbay) -> Result<PatchSummary, String> {
+        let summary = patchbay.summary().clone();
+        let params = patchbay.params();
+        let executable = (0..patchbay.route_count())
+            .map(|route| patchbay.route_live(route))
+            .collect();
+        let status = Arc::new(Mutex::new(PatchStatus {
+            state: State::Patching,
+            frames: 0,
+            xruns: 0,
+            summary: summary.clone(),
+            error: String::new(),
+        }));
+        let stop = Arc::new(AtomicBool::new(false));
+        let spawned = {
+            let status = Arc::clone(&status);
+            let stop = Arc::clone(&stop);
+            let config = self.config.clone();
+            thread::Builder::new()
+                .name("jawn-audio-patch".to_string())
+                .spawn(move || run_patch_worker(config, patchbay, status, stop))
+        };
+        match spawned {
+            Ok(handle) => {
+                self.patch = Some(PatchSession {
+                    status,
+                    stop,
+                    handle: Some(handle),
+                    params,
+                    executable,
+                });
+                Ok(summary)
+            }
+            Err(error) => Err(format!("cannot start the patch thread: {error}")),
+        }
+    }
+
+    /// Append `machine` and the boot-restore outcome (`plan` or `plan_error`) to
+    /// a status object, without changing any key already present.
+    fn add_boot(&self, line: String) -> String {
+        let head = match line.strip_suffix('}') {
+            Some(head) => head,
+            None => return line,
+        };
+        match &self.boot {
+            BootPlan::Armed(summary) => format!(
+                "{head},\"machine\":\"{}\",\"plan\":{{{}}}}}",
+                jawn_audio::loopback::json_escape(&self.config.machine),
+                summary.json()
+            ),
+            BootPlan::Error(message) => format!(
+                "{head},\"machine\":\"{}\",\"plan_error\":\"{}\"}}",
+                jawn_audio::loopback::json_escape(&self.config.machine),
+                jawn_audio::loopback::json_escape(message)
+            ),
+        }
+    }
+
     fn run(&mut self, listener: UnixListener) -> Result<(), String> {
         loop {
             // Block while idle; `serve_one` switches to non-blocking so it can
@@ -293,6 +463,9 @@ impl Server {
                         if let Some(session) = &self.listen {
                             session.stop.store(true, Ordering::SeqCst);
                         }
+                        if let Some(session) = &self.patch {
+                            session.stop.store(true, Ordering::SeqCst);
+                        }
                         if let Some(running) = &mut self.current {
                             running.finish();
                         }
@@ -300,6 +473,9 @@ impl Server {
                             session.finish();
                         }
                         if let Some(session) = &mut self.listen {
+                            session.finish();
+                        }
+                        if let Some(session) = &mut self.patch {
                             session.finish();
                         }
                         let _ = send(&mut client.stream, &reply);
@@ -323,6 +499,8 @@ impl Server {
             "record" => Action::Reply(self.record(&object)),
             "play" => Action::Reply(self.play(&object)),
             "listen" => Action::Reply(self.listen(&object)),
+            "patch" => Action::Reply(self.patch(&object)),
+            "unpatch" => Action::Reply(self.unpatch_line()),
             "param" => Action::Reply(self.param(&object)),
             "status" => Action::Reply(self.status_line()),
             "stop" => Action::Reply(self.stop_line()),
@@ -346,7 +524,8 @@ impl Server {
             Some(Value::Str(target)) if target == "take" => self.param_take(object),
             Some(Value::Str(target)) if target == "monitor" => self.param_monitor(object),
             Some(Value::Str(target)) if target == "listen" => self.param_listen(object),
-            _ => error_line("\"target\" must be \"take\", \"monitor\" or \"listen\""),
+            Some(Value::Str(target)) if target == "patch" => self.param_patch(object),
+            _ => error_line("\"target\" must be \"take\", \"monitor\", \"listen\" or \"patch\""),
         }
     }
 
@@ -522,6 +701,55 @@ impl Server {
         )
     }
 
+    /// The same two knobs, addressed to a patch route: `"target":"patch"`.
+    /// `route` is the 0-based index in the plan's `routes` array; only gain and
+    /// pan are live, a muted route is refused, and the change is queued for the
+    /// next block (see [`ParamQueue`]).
+    fn param_patch(&mut self, object: &Object) -> String {
+        let route = match get(object, "route") {
+            Some(Value::Num(value))
+                if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 =>
+            {
+                *value as usize
+            }
+            _ => return error_line("param needs \"route\": a 0-based route number"),
+        };
+        let name = match get(object, "name") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => return error_line("param needs \"name\": a parameter name"),
+        };
+        let value = match get(object, "value") {
+            Some(Value::Num(value)) if value.is_finite() => *value as f32,
+            _ => return error_line("\"value\" must be a finite number"),
+        };
+        let session = match &self.patch {
+            Some(session) if session.is_patching() => session,
+            _ => return error_line("no patch is running"),
+        };
+        if route >= session.executable.len() {
+            return error_line(&format!(
+                "no route {route} (the plan has {})",
+                session.executable.len()
+            ));
+        }
+        if !session.executable[route] {
+            return error_line(&format!("route {route} is muted"));
+        }
+        let parameter = match ParamName::parse(name) {
+            Some(ParamName::Gain) => ParamName::Gain,
+            Some(ParamName::Pan) => ParamName::Pan,
+            _ => return error_line(&format!("no such parameter: {name}")),
+        };
+        if !session.params.push(route, parameter, value) {
+            return error_line("the parameter queue is full; try again next block");
+        }
+        format!(
+            "{{\"ok\":true,\"target\":\"patch\",\"route\":{},\"name\":\"{}\"}}",
+            route,
+            jawn_audio::loopback::json_escape(name)
+        )
+    }
+
     /// `{"cmd":"listen","channel":1,"gain":0.8,"pan":0,"inserts":["tone"]}`:
     /// monitor one input through one strip until `stop`.
     ///
@@ -542,6 +770,13 @@ impl Server {
         if let Some(session) = &self.listen {
             if session.is_listening() {
                 return error_line("listen is already running");
+            }
+        }
+        if let Some(session) = &self.patch {
+            if session.is_patching() {
+                return error_line(
+                    "the patchbay is using the capture and the outputs; stop the patch before listening",
+                );
             }
         }
         if let Some(session) = &self.playback {
@@ -649,6 +884,62 @@ impl Server {
         }
     }
 
+    /// `{"cmd":"patch","plan":{...}}`: run the house patchbay from the saved
+    /// plan until `stop`.
+    ///
+    /// The patchbay owns both the capture and the outputs, so it refuses while a
+    /// take records, a playback plays or a listen monitors. A second `patch`
+    /// replaces the first: the old graph is joined before the new one opens the
+    /// device, so the reply describes a graph that is actually running.
+    fn patch(&mut self, object: &Object) -> String {
+        if let Some(running) = &self.current {
+            if running.is_recording() {
+                return error_line(
+                    "a take is recording; the patchbay needs the capture and the outputs. Stop the take before patching",
+                );
+            }
+        }
+        if let Some(session) = &self.listen {
+            if session.is_listening() {
+                return error_line(
+                    "listen is monitoring the inputs; the patchbay needs the capture and the outputs. Stop the listen before patching",
+                );
+            }
+        }
+        if let Some(session) = &self.playback {
+            if session.is_playing() {
+                return error_line(
+                    "a playback is using the outputs; the patchbay needs them. Stop the playback before patching",
+                );
+            }
+        }
+
+        let plan = match get(object, "plan") {
+            Some(Value::Obj(plan)) => plan,
+            _ => return error_line("patch needs \"plan\": the saved sources, buses, sinks and routes"),
+        };
+        let patchbay = match Patchbay::from_object(plan, self.config.channels, &self.config.machine)
+        {
+            Ok(patchbay) => patchbay,
+            Err(error) => return error_line(&error),
+        };
+        if let Err(error) = crate::listen_support(self.config.backend) {
+            return error_line(&error);
+        }
+
+        // Join a finished patch before replacing it, so a sequence of plans
+        // does not leave detached threads behind.
+        if let Some(mut previous) = self.patch.take() {
+            previous.finish();
+        }
+
+        let summary = match self.start_patch_worker(patchbay) {
+            Ok(summary) => summary,
+            Err(error) => return error_line(&error),
+        };
+        format!("{{\"ok\":true,\"state\":\"patching\",{}}}", summary.json())
+    }
+
     fn record(&mut self, object: &Object) -> String {
         // One capture stream, one owner: a take cannot also feed the monitor
         // yet. Sharing one capture between listen and record is the next step.
@@ -656,6 +947,13 @@ impl Server {
             if session.is_listening() {
                 return error_line(
                     "listen is monitoring the inputs; a take cannot share the capture stream yet. Sharing one capture between listen and record is the next step",
+                );
+            }
+        }
+        if let Some(session) = &self.patch {
+            if session.is_patching() {
+                return error_line(
+                    "the patchbay is using the capture and the outputs; stop the patch before recording. Sharing one capture between a patch and a take is the next step",
                 );
             }
         }
@@ -1078,6 +1376,13 @@ impl Server {
                 );
             }
         }
+        if let Some(session) = &self.patch {
+            if session.is_patching() {
+                return error_line(
+                    "the patchbay is using the outputs; stop the patch before starting a playback",
+                );
+            }
+        }
         let files = match get(object, "files") {
             Some(Value::Arr(values)) if !values.is_empty() => {
                 let mut paths = Vec::with_capacity(values.len());
@@ -1225,6 +1530,12 @@ impl Server {
         {
             running.line_with_play(self.playback.as_ref())
         } else if let Some(session) = self
+            .patch
+            .as_ref()
+            .filter(|session| session.is_patching())
+        {
+            session.line()
+        } else if let Some(session) = self
             .listen
             .as_ref()
             .filter(|session| session.is_listening())
@@ -1234,6 +1545,8 @@ impl Server {
             session.line()
         } else if let Some(running) = &self.current {
             running.line()
+        } else if let Some(session) = &self.patch {
+            session.line()
         } else if let Some(session) = &self.listen {
             session.line()
         } else {
@@ -1241,8 +1554,34 @@ impl Server {
         };
         // The configuration describes the process, not the take, so every
         // state carries it: a supervisor compares these with its own flags to
-        // tell whether the engine it adopted is the one it asked for.
-        add_config(line, &self.config)
+        // tell whether the engine it adopted is the one it asked for. The
+        // boot restore adds `machine` and `plan`/`plan_error` on top.
+        self.add_boot(add_config(line, &self.config))
+    }
+
+    /// `{"cmd":"unpatch"}`: end the patchbay and nothing else.
+    ///
+    /// `stop` is the transport's one stop and joins every role; the mixer
+    /// switch's off is narrower, because a take or a listen is someone else's
+    /// work and turning the mixer off must not end it.
+    fn unpatch_line(&mut self) -> String {
+        let was_patching = self
+            .patch
+            .as_ref()
+            .map(PatchSession::is_patching)
+            .unwrap_or(false);
+        if let Some(session) = &self.patch {
+            session.stop.store(true, Ordering::SeqCst);
+        }
+        if let Some(session) = &mut self.patch {
+            session.finish();
+        }
+        if was_patching {
+            if let Some(session) = &self.patch {
+                return session.line();
+            }
+        }
+        idle_line()
     }
 
     fn stop_line(&mut self) -> String {
@@ -1256,6 +1595,11 @@ impl Server {
             .as_ref()
             .map(ListenSession::is_listening)
             .unwrap_or(false);
+        let was_patching = self
+            .patch
+            .as_ref()
+            .map(PatchSession::is_patching)
+            .unwrap_or(false);
         // Signal every worker before joining any: a join waits for a loop that
         // has already been told to stop, so neither worker can hold the other
         // past its block.
@@ -1268,6 +1612,9 @@ impl Server {
         if let Some(session) = &self.listen {
             session.stop.store(true, Ordering::SeqCst);
         }
+        if let Some(session) = &self.patch {
+            session.stop.store(true, Ordering::SeqCst);
+        }
         // Joining before answering makes `frames` and `monitor_frames` what was
         // actually produced, not a guess about a running loop.
         if let Some(running) = &mut self.current {
@@ -1278,6 +1625,14 @@ impl Server {
         }
         if let Some(session) = &mut self.listen {
             session.finish();
+        }
+        if let Some(session) = &mut self.patch {
+            session.finish();
+        }
+        if was_patching {
+            if let Some(session) = &self.patch {
+                return session.line();
+            }
         }
         if was_listening {
             if let Some(session) = &self.listen {
@@ -1294,9 +1649,12 @@ impl Server {
         }
         match &self.current {
             Some(running) => running.line(),
-            None => match &self.listen {
+            None => match &self.patch {
                 Some(session) => session.line(),
-                None => idle_line(),
+                None => match &self.listen {
+                    Some(session) => session.line(),
+                    None => idle_line(),
+                },
             },
         }
     }
@@ -1381,6 +1739,7 @@ enum State {
     Recording,
     Playing,
     Listening,
+    Patching,
     Done,
     Failed,
 }
@@ -1391,6 +1750,7 @@ impl State {
             State::Recording => "recording",
             State::Playing => "playing",
             State::Listening => "listening",
+            State::Patching => "patching",
             State::Done => "done",
             State::Failed => "failed",
         }
@@ -2035,6 +2395,212 @@ fn listen_null(
         },
     )?;
     Ok(run.frames)
+}
+
+/// What `status` reads for the patchbay: its state, the frames it has rendered
+/// and the plan's shape (including the nodes this machine cannot bind).
+#[derive(Clone)]
+struct PatchStatus {
+    state: State,
+    frames: u64,
+    xruns: usize,
+    summary: PatchSummary,
+    error: String,
+}
+
+/// The server's handle to one patchbay's worker thread.
+struct PatchSession {
+    status: Arc<Mutex<PatchStatus>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+    /// The shared control ring the socket pushes `param` changes to; the
+    /// patchbay drains it at the top of each block.
+    params: Arc<ParamQueue>,
+    /// One flag per route (plan order): whether it has a live strip and can
+    /// take a gain/pan change.
+    executable: Vec<bool>,
+}
+
+impl PatchSession {
+    fn snapshot(&self) -> PatchStatus {
+        self.status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn is_patching(&self) -> bool {
+        self.snapshot().state == State::Patching
+    }
+
+    /// Signal the worker and wait for it. When this returns the device loop
+    /// has stopped and the frame count is final.
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let joined = match self.handle.take() {
+            Some(handle) => handle.join(),
+            None => Ok(()),
+        };
+        if joined.is_err() {
+            let mut status = self
+                .status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if status.state == State::Patching {
+                status.state = State::Failed;
+                status.error = "the patch thread panicked".to_string();
+            }
+        }
+    }
+
+    fn line(&self) -> String {
+        let status = self.snapshot();
+        let ok = status.state != State::Failed;
+        format!(
+            "{{\"ok\":{},\"state\":\"{}\",\"frames\":{},\"xruns\":{},{},\"error\":\"{}\"}}",
+            ok,
+            status.state.name(),
+            status.frames,
+            status.xruns,
+            status.summary.json(),
+            jawn_audio::loopback::json_escape(&status.error)
+        )
+    }
+}
+
+/// The patchbay's worker: compile happened on the control thread, so this only
+/// opens the device and runs blocks until `stop` or a device error.
+fn run_patch_worker(
+    config: Config,
+    mut patchbay: Patchbay,
+    status: Arc<Mutex<PatchStatus>>,
+    stop: Arc<AtomicBool>,
+) {
+    let outcome: Result<(u64, usize), String> = match config.backend {
+        BackendKind::Null => patch_null(&mut patchbay, &config, &status, &stop),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            patch_hardware(&config, patchbay, &status, &stop)
+        }
+        BackendKind::Jack => Err(crate::listen_support_message()),
+    };
+    let was_stopped = stop.load(Ordering::SeqCst);
+    let mut current = status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match outcome {
+        Ok((frames, xruns)) => {
+            current.frames = frames;
+            current.xruns = xruns;
+            if current.state == State::Patching {
+                current.state = State::Done;
+            }
+        }
+        // A stop is the caller's choice, not a failure.
+        Err(_) if was_stopped => current.state = State::Done,
+        Err(error) => {
+            current.state = State::Failed;
+            current.error = error;
+        }
+    }
+}
+
+fn patch_null(
+    patchbay: &mut Patchbay,
+    config: &Config,
+    status: &Arc<Mutex<PatchStatus>>,
+    stop: &AtomicBool,
+) -> Result<(u64, usize), String> {
+    let frames = crate::patchbay::run_null(
+        patchbay,
+        config.rate,
+        config.period,
+        config.channels,
+        None,
+        None,
+        stop,
+        |frames| {
+            let mut current = status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            current.frames = frames;
+        },
+    )?;
+    Ok((frames, 0))
+}
+
+#[cfg(feature = "alsa")]
+struct SocketPatchSink<'a> {
+    patchbay: Patchbay,
+    status: &'a Arc<Mutex<PatchStatus>>,
+    /// Device channels per frame, learned in `prepared`.
+    channels: usize,
+    frames: u64,
+}
+
+#[cfg(feature = "alsa")]
+impl listen::ListenSink for SocketPatchSink<'_> {
+	fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
+		self.channels = channels;
+		self.patchbay.prepared(rate, period, channels)?;
+		// The device may have granted fewer channels than the process was
+		// configured for; a source that lost its channel is silent now, and
+		// `status` should say so rather than repeat the compile-time shape.
+		let mut current = self
+			.status
+			.lock()
+			.unwrap_or_else(|poisoned| poisoned.into_inner());
+		current.summary = self.patchbay.summary().clone();
+		Ok(())
+	}
+
+    fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
+        self.patchbay.block(input, output)?;
+        self.frames += (input.len() / self.channels) as u64;
+        let mut current = self
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        current.frames = self.frames;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alsa")]
+fn patch_hardware(
+    config: &Config,
+    patchbay: Patchbay,
+    status: &Arc<Mutex<PatchStatus>>,
+    stop: &AtomicBool,
+) -> Result<(u64, usize), String> {
+    let sink = SocketPatchSink {
+        patchbay,
+        status,
+        channels: config.channels,
+        frames: 0,
+    };
+    let run = jawn_audio::alsa_device::run_listen(
+        &config.device,
+        config.rate,
+        config.period,
+        config.buffer,
+        config.channels,
+        None,
+        stop,
+        sink,
+    )
+    .map_err(|error| format!("cannot patch: {error}"))?;
+    Ok((run.frames, run.xruns))
+}
+
+#[cfg(not(feature = "alsa"))]
+fn patch_hardware(
+    config: &Config,
+    patchbay: Patchbay,
+    status: &Arc<Mutex<PatchStatus>>,
+    stop: &AtomicBool,
+) -> Result<(u64, usize), String> {
+    let _ = (config, patchbay, status, stop);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
 #[cfg(feature = "alsa")]

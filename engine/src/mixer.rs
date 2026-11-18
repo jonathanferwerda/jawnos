@@ -150,6 +150,7 @@ fn unpack(packed: u64) -> Option<(usize, ParamName, f32)> {
 /// panics when the ring is full — [`push`](ParamQueue::push) tells the control
 /// thread instead, so a knob turned faster than the block rate is bounded by
 /// the block rate rather than by a lock.
+#[derive(Debug)]
 pub struct ParamQueue {
     slots: [AtomicU64; PARAM_QUEUE_LEN],
     /// The consumer's read position.
@@ -180,7 +181,10 @@ impl ParamQueue {
         true
     }
 
-    pub(crate) fn pop(&self) -> Option<(usize, ParamName, f32)> {
+    /// Pop one change. The audio thread calls this at the top of a block; the
+    /// patchbay (a consumer in the binary crate) drains its own shared queue
+    /// through this, exactly as [`Mixer::apply_pending`] does inside this crate.
+    pub fn pop(&self) -> Option<(usize, ParamName, f32)> {
         let head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Acquire);
         if head == tail {

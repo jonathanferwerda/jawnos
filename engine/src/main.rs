@@ -7,6 +7,7 @@
 //! manager drives: one JSON object per line, one client at a time
 //! (docs/studio-audio-roadmap.md P2).
 
+mod patchbay;
 mod socket;
 
 use std::path::{Path, PathBuf};
@@ -48,6 +49,7 @@ jawn-audio — the JawnOS audio engine
                                           overdub: record while A.wav plays back
   jawn-audio --play --file A.wav          play takes back through their strips
   jawn-audio --listen [options]           monitor one input through a strip
+  jawn-audio --patch --plan FILE          run the house patchbay from a saved plan
   jawn-audio --serve [options]            arm and place takes over a Unix socket
   jawn-audio --version                    print the version
   jawn-audio --help                       this text
@@ -177,6 +179,28 @@ jawn-audio — the JawnOS audio engine
   exits 0. A take cannot record while listening, and listen is refused while a
   take records: sharing one capture between listen and record is the next step.
 
+--patch options:
+  --plan FILE     the saved plan to run (required), one JSON object with
+                  sources, buses, sinks and routes
+  --machine NAME  which machine this engine is (default: --machine, then
+                  $JAWNOS_AUDIO_MACHINE, then $HOSTNAME, then \"local\")
+  --backend N     null (default), alsa, pipewire or jack
+  --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
+  --period N      block/period size in frames (default 64; --frames is an alias)
+  --buffer N      buffer size in frames (default 256)
+  --seconds S     stop after S seconds (default: until SIGINT/SIGTERM)
+  --rate HZ       sample rate (default 48000)
+  --channels N    capture channels to ask the device for (default 2, 1..=32)
+  --tone HZ       with the null backend, generate this sine as the input
+  --json          one JSON line instead of prose
+
+  The plan is docs/studio-audio-roadmap.md §8. A source is an input channel,
+  a bus is a stereo sum, a sink is the output pair, and a route is an edge
+  with gain and pan. A node this machine cannot bind (a peer, a phone, a zone)
+  is reported in \"silent\" and contributes nothing; a route delay, a gain or
+  pan outside its range, an unknown endpoint and a bus loop are refused. The
+  graph is compiled before the device opens: the block loop allocates nothing.
+
 --loopback options:
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
@@ -188,6 +212,10 @@ jawn-audio — the JawnOS audio engine
 --serve options:
   --socket PATH   control socket (default $JAWNOS_AUDIO_SOCKET, else
                   $HOME/.president/audio.sock)
+  --plan FILE     the saved-plan wrapper to restore at startup (default
+                  $JAWNOS_AUDIO_PLAN, else $HOME/.president/audio-plan.json);
+                  a missing file, manage false, or an invalid plan still serves
+  --machine NAME  which machine this engine serves (same precedence as --patch)
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64)
@@ -195,8 +223,11 @@ jawn-audio — the JawnOS audio engine
   --rate HZ       sample rate (default 48000)
   --channels N    capture channels a take asks for (default 2, 1..=32)
 
---serve speaks one JSON object per line: record, param, status, stop,
-quit. `record` takes \"out\", \"seconds\", \"start_at\", \"tracks\" and \"inputs\";
+--serve speaks one JSON object per line: record, play, listen, patch,
+unpatch, param, status, stop, quit. `patch` takes `plan`, the saved sources,
+buses, sinks and routes, and runs the house mixer until `unpatch` or `stop`;
+`status` reports its shape, the frames it has rendered and the nodes this
+machine cannot bind. `record` takes \"out\", \"seconds\", \"start_at\", \"tracks\" and \"inputs\";
 \"monitor\" is an array of absolute WAV paths, or of objects
 {\"file\":\"/abs/a.wav\",\"gain\":0.8,\"pan\":-0.2,\"inserts\":[\"tone\"]},
 played to the outputs while the take records (an overdub; the monitor never
@@ -230,6 +261,7 @@ enum Mode {
     Record,
     Play,
     Listen,
+    Patch,
     Serve,
     SelfTest,
     Version,
@@ -255,6 +287,15 @@ struct Options {
     tone: Option<f32>,
     out: Option<String>,
     socket: Option<String>,
+    /// `--plan`: the saved plan a `--patch` run applies, or the saved-plan
+    /// wrapper a `--serve` restores from.
+    plan: Option<String>,
+    /// Which machine this engine serves, resolved from `--machine`, then
+    /// `$JAWNOS_AUDIO_MACHINE`, then `$HOSTNAME`, then `"local"`.
+    machine: String,
+    /// Whether `--machine` was given on the command line (so it can be refused
+    /// outside `--patch`/`--serve`).
+    machine_given: bool,
     start_at: u64,
     gain: f32,
     pan: f32,
@@ -322,6 +363,9 @@ fn run() -> Result<ExitCode, String> {
         tone: None,
         out: None,
         socket: None,
+        plan: None,
+        machine: String::new(),
+        machine_given: false,
         start_at: 0,
         gain: 1.0,
         pan: 0.0,
@@ -365,6 +409,7 @@ fn run() -> Result<ExitCode, String> {
                 options.play_flag = true;
             }
             "--listen" => options.mode = Mode::Listen,
+            "--patch" => options.mode = Mode::Patch,
             "--file" => options.files.push(value(&mut args, "--file")?),
             "--monitor" | "--monitor-file" => {
                 options.monitor.push(value(&mut args, &arg)?)
@@ -461,6 +506,11 @@ fn run() -> Result<ExitCode, String> {
             }
             "--out" => options.out = Some(value(&mut args, "--out")?),
             "--socket" => options.socket = Some(value(&mut args, "--socket")?),
+            "--plan" => options.plan = Some(value(&mut args, "--plan")?),
+            "--machine" => {
+                options.machine = value(&mut args, "--machine")?;
+                options.machine_given = true;
+            }
             "--start-at" => {
                 let raw = value(&mut args, "--start-at")?;
                 options.start_at = raw
@@ -518,6 +568,15 @@ fn run() -> Result<ExitCode, String> {
             other => return Err(format!("unknown option `{other}` (try --help)")),
         }
     }
+
+    // The machine is resolved once, from the flag, then the environment, then
+    // the hostname, then "local". It is only used by `--patch` and `--serve`,
+    // but the default is harmless for every other mode.
+    options.machine = resolve_machine(if options.machine_given {
+        Some(options.machine.as_str())
+    } else {
+        None
+    });
 
     // `--record` together with `--play` is an overdub, not two modes: the
     // take is the capture and the files are the monitoring bus. `--monitor`
@@ -594,6 +653,15 @@ fn run() -> Result<ExitCode, String> {
     if options.mode != Mode::Record && (options.align_samples.is_some() || options.calibrate) {
         return Err("--align-samples and --calibrate apply only to --record".to_string());
     }
+    if options.mode == Mode::Patch && options.plan.is_none() {
+        return Err("--patch needs --plan FILE: the saved plan to run".to_string());
+    }
+    if !matches!(options.mode, Mode::Patch | Mode::Serve) && options.plan.is_some() {
+        return Err("--plan applies only to --patch and --serve".to_string());
+    }
+    if options.machine_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
+        return Err("--machine applies only to --patch and --serve".to_string());
+    }
 
     match options.mode {
         Mode::Help => {
@@ -639,6 +707,7 @@ fn run() -> Result<ExitCode, String> {
         Mode::Record => run_record(&options),
         Mode::Play => run_play(&options),
         Mode::Listen => run_listen(&options),
+        Mode::Patch => run_patch(&options),
         Mode::Serve => run_serve(&options),
     }
 }
@@ -653,6 +722,27 @@ fn yes_no(value: bool) -> &'static str {
 
 fn value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
     args.next().ok_or_else(|| format!("{flag} wants a value"))
+}
+
+/// The engine's machine, highest precedence first: `--machine`, then
+/// `$JAWNOS_AUDIO_MACHINE`, then `$HOSTNAME`, then `"local"`.
+fn resolve_machine(flag: Option<&str>) -> String {
+    if let Some(name) = flag {
+        if !name.is_empty() {
+            return name.to_string();
+        }
+    }
+    if let Ok(name) = std::env::var("JAWNOS_AUDIO_MACHINE") {
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    if let Ok(name) = std::env::var("HOSTNAME") {
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    "local".to_string()
 }
 
 /// `--inputs 0,1,2` -> the device channels that become tracks, in track order.
@@ -868,6 +958,7 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
     validate_serve(options)?;
     let socket = socket::default_path(options.socket.as_deref())?;
     let device = options.backend.device_name(options.device.as_deref());
+    let plan = socket::default_plan_path(options.plan.as_deref());
     // A server that cannot bind is a runtime failure, not a usage error: exit 1
     // tells a supervisor to try again, while 2 would mean the arguments are bad.
     let outcome = socket::serve(socket::Config {
@@ -878,6 +969,8 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
         buffer: options.buffer,
         channels: options.channels,
         socket,
+        plan,
+        machine: options.machine.clone(),
     });
     match outcome {
         Ok(code) => Ok(code),
@@ -1758,6 +1851,192 @@ fn listen_alsa(
     stop: &AtomicBool,
 ) -> Result<listen::ListenRun, String> {
     let _ = (device, options, strip, total, stop);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
+}
+
+/// What a patch run produced, in the shape the report needs.
+struct PatchRun {
+    frames: u64,
+    rate: u32,
+    xruns: usize,
+}
+
+fn run_patch(options: &Options) -> Result<ExitCode, String> {
+    let path = options
+        .plan
+        .as_ref()
+        .ok_or_else(|| "--patch needs --plan FILE".to_string())?;
+    let device = options.backend.device_name(options.device.as_deref());
+    // A plan the caller named is runtime input, like a monitor WAV: a missing
+    // file or a malformed plan is one report line and exit 1, not a usage error.
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            return Ok(patch_failure(
+                options.backend.name(),
+                &device,
+                &format!("cannot read the plan {path}: {error}"),
+                options.json,
+            ))
+        }
+    };
+    let object = match socket::parse_object(text.trim()) {
+        Ok(object) => object,
+        Err(error) => {
+            return Ok(patch_failure(
+                options.backend.name(),
+                &device,
+                &format!("{path}: {error}"),
+                options.json,
+            ))
+        }
+    };
+    let mut patchbay =
+        match patchbay::Patchbay::from_object(&object, options.channels, &options.machine) {
+        Ok(patchbay) => patchbay,
+        Err(error) => {
+            return Ok(patch_failure(
+                options.backend.name(),
+                &device,
+                &format!("{path}: {error}"),
+                options.json,
+            ))
+        }
+    };
+    // The summary is taken before the ALSA arm moves the graph to the device
+    // loop, and it is what the report says either way.
+    let summary = patchbay.summary().clone();
+    let stop = signals::install();
+    let total = if options.seconds_given {
+        Some(take_frames(options.seconds, options.rate))
+    } else {
+        None
+    };
+
+    let outcome = match options.backend {
+        BackendKind::Null => patchbay::run_null(
+            &mut patchbay,
+            options.rate,
+            options.frames,
+            options.channels,
+            total,
+            options.tone,
+            &stop,
+            |_| {},
+        )
+        .map(|frames| PatchRun {
+            frames,
+            rate: options.rate,
+            xruns: 0,
+        }),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            patch_alsa(&device, options, patchbay, total, &stop)
+        }
+        BackendKind::Jack => Err(listen_support_message()),
+    };
+
+    match outcome {
+        Ok(run) => {
+            if options.json {
+                println!(
+                    "{{\"ok\":true,\"state\":\"done\",\"backend\":\"{}\",\"device\":\"{}\",\"frames\":{},\"rate\":{},\"xruns\":{},{}}}",
+                    options.backend.name(),
+                    jawn_audio::loopback::json_escape(&device),
+                    run.frames,
+                    run.rate,
+                    run.xruns,
+                    summary.json()
+                );
+            }
+            else {
+                println!(
+                    "patched {} ({}) at {} Hz: {} frames, {} xrun(s); {} source(s), {} bus(es), {} sink(s), {} route(s)",
+                    options.backend.name(),
+                    device,
+                    run.rate,
+                    run.frames,
+                    run.xruns,
+                    summary.sources,
+                    summary.buses,
+                    summary.sinks,
+                    summary.routes
+                );
+                if !summary.silent.is_empty() {
+                    println!(
+                        "note: declared here but not bindable on this machine: {}",
+                        summary.silent.join(", ")
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => {
+            if options.json {
+                println!(
+                    "{{\"ok\":false,\"state\":\"failed\",\"backend\":\"{}\",\"device\":\"{}\",\"error\":\"{}\",{}}}",
+                    options.backend.name(),
+                    jawn_audio::loopback::json_escape(&device),
+                    jawn_audio::loopback::json_escape(&error),
+                    summary.json()
+                );
+            }
+            else {
+                eprintln!("jawn-audio: patch: {error}");
+            }
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+fn patch_failure(backend: &str, device: &str, error: &str, json: bool) -> ExitCode {
+    if json {
+        println!(
+            "{{\"ok\":false,\"state\":\"failed\",\"backend\":\"{}\",\"device\":\"{}\",\"error\":\"{}\"}}",
+            backend,
+            jawn_audio::loopback::json_escape(device),
+            jawn_audio::loopback::json_escape(error)
+        );
+    }
+    else {
+        eprintln!("jawn-audio: patch: {error}");
+    }
+    ExitCode::from(1)
+}
+
+#[cfg(feature = "alsa")]
+fn patch_alsa(
+    device: &str,
+    options: &Options,
+    patchbay: patchbay::Patchbay,
+    total: Option<u64>,
+    stop: &AtomicBool,
+) -> Result<PatchRun, String> {
+    let run = jawn_audio::alsa_device::run_listen(
+        device,
+        options.rate,
+        options.frames,
+        options.buffer,
+        options.channels,
+        total,
+        stop,
+        patchbay,
+    )?;
+    Ok(PatchRun {
+        frames: run.frames,
+        rate: run.rate,
+        xruns: run.xruns,
+    })
+}
+
+#[cfg(not(feature = "alsa"))]
+fn patch_alsa(
+    device: &str,
+    options: &Options,
+    patchbay: patchbay::Patchbay,
+    total: Option<u64>,
+    stop: &AtomicBool,
+) -> Result<PatchRun, String> {
+    let _ = (device, options, patchbay, total, stop);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 

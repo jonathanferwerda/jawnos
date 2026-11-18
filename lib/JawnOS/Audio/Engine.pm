@@ -45,6 +45,20 @@ sub audio_engine_socket {
 	return File::Spec->catfile('.president', 'audio.sock');
 }
 
+# `$JAWNOS_AUDIO_PLAN`, else the engine's own default under the user's data
+# dir. The engine reads the same two for its startup plan, so a supervisor can
+# point both at one temporary path without a second convention. It mirrors
+# `audio_engine_socket` and never shells out.
+sub audio_engine_plan_path {
+	my $override = $ENV{JAWNOS_AUDIO_PLAN};
+	return $override if defined $override && length $override;
+	require JawnOS::Platform::Paths;
+	my $home = JawnOS::Platform::Paths::home();
+	return File::Spec->catfile($home, '.president', 'audio-plan.json')
+		if defined $home && length $home;
+	return File::Spec->catfile('.president', 'audio-plan.json');
+}
+
 # The staged engine under the tree, resolved from this file rather than from the
 # process's working directory: a worker, a probe and a test all run from
 # different places. The binary is optional; `available` below is about the
@@ -185,6 +199,38 @@ sub audio_engine_listen {
 	$request->{'pan'} = $pan if defined $pan;
 	$request->{'inserts'} = $inserts if ref $inserts eq 'ARRAY';
 	return audio_engine_command($request);
+}
+
+# The house patchbay: `{"cmd":"patch","plan":{...}}`. The plan is the saved
+# object `JawnOS::Audio::Plan` normalises, and the engine compiles it before it
+# opens the device. The answer is `state:"patching"` with the plan's shape and
+# the nodes this machine cannot bind; a bad plan is the engine's refusal.
+sub audio_engine_patch {
+	my ($plan) = @_;
+	return { ok => 0, error => 'a patch needs one plan object' }
+		unless ref $plan eq 'HASH';
+	return audio_engine_command({ cmd => 'patch', plan => $plan });
+}
+
+# One live fader of the running patch: `{"cmd":"param","target":"patch",
+# "route":0,"name":"gain","value":0.5}`. The route number is the 0-based
+# index in the plan's `routes` array, and a muted route is refused by the
+# engine. The route validates the name and the numbers; this only speaks the
+# line, so the engine's clamping and its refusal are the answers a caller
+# relays. It is separate from `audio_engine_param`, whose track/listen knobs
+# keep their existing callers unchanged.
+sub audio_engine_patch_param {
+	my ($route, $name, $value) = @_;
+	return audio_engine_command({
+		cmd => 'param', target => 'patch', route => $route,
+		name => $name, value => $value,
+	});
+}
+
+# `unpatch` ends the patchbay and nothing else: the mixer switch's off must not
+# stop a take or a listen that happens to be sharing the engine.
+sub audio_engine_unpatch {
+	return audio_engine_command({ cmd => 'unpatch' });
 }
 
 sub audio_engine_status {

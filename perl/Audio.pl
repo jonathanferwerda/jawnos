@@ -56,6 +56,7 @@ use File::Path qw(make_path);
 use JSON::PP ();
 use POSIX ();
 use Socket qw(SOCK_STREAM);
+use Sys::Hostname ();
 use Time::HiRes qw(sleep time);
 
 # The ladder, and the two slow paths. A one-second poll is fast enough to notice
@@ -80,6 +81,14 @@ sub home_dir {
 	my $passwd = eval { (getpwuid($<))[7] };
 	return $passwd if defined $passwd && length $passwd;
 	return '.';
+}
+
+# This machine's name, from the core Sys::Hostname rather than a shell-out, so
+# a supervisor started with no --machine still names the host it owns.
+sub host_name {
+	my $name = eval { Sys::Hostname::hostname() };
+	return $name if defined $name && length $name;
+	return 'local';
 }
 
 my $home        = home_dir();
@@ -121,6 +130,9 @@ Options:
   --buffer N       buffer size in frames (default 256)
   --socket PATH    control socket (default ~/.president/audio.sock)
   --binary PATH    engine binary (default perl/audio/jawn-audio under this tree)
+  --plan PATH      the saved-plan wrapper the engine restores from at startup
+                   (default ~/.president/audio-plan.json)
+  --machine NAME   which machine this supervisor owns (default the host name)
   --status         print ~/.president/audio.json and exit
   --check          exit 0 while the supervisor and its engine are alive,
                    1 otherwise (an adopted engine counts while it answers)
@@ -128,14 +140,16 @@ Options:
 
 Config, highest precedence first: these flags, then JAWNOS_AUDIO_SOCKET,
 JAWNOS_AUDIO_BINARY, JAWNOS_AUDIO_BACKEND, JAWNOS_AUDIO_DEVICE,
-JAWNOS_AUDIO_PERIOD and JAWNOS_AUDIO_BUFFER, then the defaults above.
+JAWNOS_AUDIO_PERIOD, JAWNOS_AUDIO_BUFFER, JAWNOS_AUDIO_PLAN and
+JAWNOS_AUDIO_MACHINE, then the defaults above.
 
 The status file is written while the supervisor runs and removed on a clean
 stop. Its keys are: pid (the engine child, null while it is down or while an
 engine is adopted), adopted (true while an engine found at start is answering),
 adopted_since (when that adoption began), supervisor_pid, socket, binary,
-backend, device, period, buffer, started_at, engine_started_at, restarts,
-last_exit, consecutive_restarts, backoff and updated_at.
+backend, device, period, buffer, plan, machine, started_at,
+engine_started_at, restarts, last_exit, consecutive_restarts, backoff and
+updated_at.
 USAGE
 }
 
@@ -213,12 +227,12 @@ while (@argv) {
 	}
 	elsif ($arg eq '--status') { $mode = 'status' }
 	elsif ($arg eq '--check')  { $mode = 'check' }
-	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer)$/) {
+	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine)$/) {
 		my $name = $1;
 		fatal("--$name needs a value") unless @argv;
 		$given{$name} = shift @argv;
 	}
-	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer)=(.*)$/s) {
+	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine)=(.*)$/s) {
 		$given{$1} = $2;
 	}
 	else {
@@ -232,6 +246,8 @@ my $backend = pick($given{'backend'}, 'JAWNOS_AUDIO_BACKEND', 'alsa');
 my $device  = pick($given{'device'},  'JAWNOS_AUDIO_DEVICE',  'hw:1,0');
 my $period  = pick($given{'period'},  'JAWNOS_AUDIO_PERIOD',  '64');
 my $buffer  = pick($given{'buffer'},  'JAWNOS_AUDIO_BUFFER',  '256');
+my $plan    = pick($given{'plan'},    'JAWNOS_AUDIO_PLAN',    "$state_dir/audio-plan.json");
+my $machine = pick($given{'machine'}, 'JAWNOS_AUDIO_MACHINE', host_name());
 
 fatal('--socket wants a path') unless length $socket;
 fatal('--binary wants a path') unless length $binary;
@@ -241,6 +257,8 @@ fatal('--period wants a positive whole number of frames')
 	unless $period =~ /\A[1-9][0-9]*\z/;
 fatal('--buffer wants a positive whole number of frames')
 	unless $buffer =~ /\A[1-9][0-9]*\z/;
+fatal('--plan wants a path') unless length $plan;
+fatal('--machine wants a name') unless length $machine;
 
 # --- status and check ---------------------------------------------------------
 
@@ -333,6 +351,8 @@ sub write_status {
 		device               => $device,
 		period               => 0 + $period,
 		buffer               => 0 + $buffer,
+		plan                 => $plan,
+		machine              => $machine,
 		started_at           => int($supervisor_start),
 		engine_started_at    => defined $child_started ? int($child_started) : undef,
 		restarts             => $restarts,
@@ -379,7 +399,9 @@ sub spawn_engine {
 			'--device',  $device,
 			'--period',  $period,
 			'--buffer',  $buffer,
-			'--socket',  $socket
+			'--socket',  $socket,
+			'--plan',    $plan,
+			'--machine', $machine
 			or do {
 				print STDERR "audio supervisor: cannot run $binary: $!\n";
 				POSIX::_exit(127);

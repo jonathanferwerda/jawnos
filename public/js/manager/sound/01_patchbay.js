@@ -1,0 +1,262 @@
+// ---- the house patchbay -----------------------------------------------------
+// The plan is one document for the whole house (docs/studio-audio-roadmap.md
+// §8). The page edits it in memory and saves it whole; the engine on the
+// machine that holds the interface compiles it. A node this machine cannot
+// bind (a peer, a zone) stays in the plan and simply contributes nothing here.
+
+var soundPlan = { sources: [], buses: [], sinks: [], routes: [] };
+var soundAudio = null;
+var soundPatchFaderTimers = {};
+var soundPatchFaderErrorShown = false;
+
+function soundPatchNodeIds() {
+	var ids = [];
+	$.each(['sources', 'buses', 'sinks'], function(i, kind) {
+		$.each(soundPlan[kind] || [], function(j, node) {
+			if (node && node.id && $.inArray(node.id, ids) < 0) { ids.push(node.id); }
+		});
+	});
+	return ids;
+}
+
+function soundPatchNote(text) { $('#sound_patch_note').text(text || ''); }
+
+function soundPatchSelect(ids, value) {
+	var select = $('<select></select>');
+	$.each(ids, function(i, id) { select.append($('<option></option>').attr('value', id).text(id)); });
+	if (value) { select.val(value); }
+	return select;
+}
+
+// A live fader trims the running patch without re-arming it. The slider's
+// `input` updates the local route at once, then this debounces one POST per
+// route+name (120 ms) so a drag is a handful of engine commands, not one per
+// pixel. A muted route never posts, and a failure shows at most one note.
+function soundPatchFader(routeIndex, name, value) {
+	if (!soundAudio || !soundAudio.manage || !soundAudio.engine_available) { return; }
+	var key = routeIndex + ':' + name;
+	if (soundPatchFaderTimers[key]) { clearTimeout(soundPatchFaderTimers[key]); }
+	soundPatchFaderTimers[key] = setTimeout(function() {
+		$.ajax({
+			url: '/manager/sound/param',
+			type: 'POST',
+			data: { route: routeIndex, name: name, value: value },
+			success: function(result) {
+				result = result || {};
+				if (result.ok) { soundPatchFaderErrorShown = false; }
+				else if (!soundPatchFaderErrorShown) {
+					soundPatchFaderErrorShown = true;
+					soundPatchNote(result.error || jawnosT('The fader could not be set'));
+				}
+			},
+			error: function() {
+				if (!soundPatchFaderErrorShown) {
+					soundPatchFaderErrorShown = true;
+					soundPatchNote(jawnosT('The fader could not be set'));
+				}
+			}
+		});
+	}, 120);
+}
+
+function soundPatchNodeRow(kind, node, index, latency) {
+	var row = $('<div class="sound_patch_node"></div>');
+	row.append($('<span class="sound_patch_node_id"></span>').text(node.label || node.id || ''));
+	var facts = (node.kind || '') + (node.channel ? ' ch' + node.channel : '');
+	if (node.machine) { facts += ' @ ' + node.machine; }
+	if (latency) { facts += ' \u00b7 ' + latency + ' ms'; }
+	row.append($('<span class="sound_patch_node_kind"></span>').text(facts));
+	var remove = $('<button type="button"></button>').text(jawnosT('Remove'));
+	remove.on('click', function() {
+		soundPlan[kind].splice(index, 1);
+		soundPlan.routes = $.grep(soundPlan.routes || [], function(route) {
+			return route.from != node.id && route.to != node.id;
+		});
+		soundPatchRender();
+	});
+	row.append(remove);
+	return row;
+}
+
+function soundPatchGroup(kind, title, latency) {
+	var box = $('<div class="sound_patch_group"></div>');
+	box.append($('<h4></h4>').text(title));
+	var list = soundPlan[kind] || [];
+	if (!list.length) { box.append($('<p class="sound_empty"></p>').text(jawnosT('none yet'))); }
+	$.each(list, function(index, node) {
+		box.append(soundPatchNodeRow(kind, node, index,
+			kind == 'sinks' && latency ? latency[node.id] : 0));
+	});
+	return box;
+}
+
+function soundPatchRouteRow(route, index, ids) {
+	var row = $('<tr></tr>');
+	var from = soundPatchSelect(ids, route.from);
+	from.on('change', function() { route.from = $(this).val(); });
+	var to = soundPatchSelect(ids, route.to);
+	to.on('change', function() { route.to = $(this).val(); });
+	var gain = $('<input type="range" min="0" max="1" step="0.01">').val(route.gain == null ? 1 : route.gain);
+	gain.on('input', function() {
+		route.gain = parseFloat(this.value);
+		if (!route.mute) { soundPatchFader(index, 'gain', route.gain); }
+	});
+	var pan = $('<input type="range" min="-1" max="1" step="0.01">').val(route.pan == null ? 0 : route.pan);
+	pan.on('input', function() {
+		route.pan = parseFloat(this.value);
+		if (!route.mute) { soundPatchFader(index, 'pan', route.pan); }
+	});
+	var mute = $('<input type="checkbox">').prop('checked', !!route.mute);
+	mute.on('change', function() { route.mute = this.checked ? 1 : 0; });
+	var remove = $('<button type="button"></button>').text(jawnosT('Remove'));
+	remove.on('click', function() { soundPlan.routes.splice(index, 1); soundPatchRender(); });
+	row.append($('<td></td>').append(from));
+	row.append($('<td></td>').append(to));
+	row.append($('<td></td>').append(gain));
+	row.append($('<td></td>').append(pan));
+	row.append($('<td></td>').append(mute));
+	row.append($('<td></td>').append(remove));
+	return row;
+}
+
+function soundPatchRender(audio) {
+	if (audio) {
+		soundAudio = audio;
+		if (audio.plan) { soundPlan = audio.plan; }
+		var machine = audio.machine || '';
+		$('#sound_source_machine').val(machine);
+		$('#sound_sink_machine').val(machine);
+	}
+	var box = $('#sound_patch_matrix');
+	if (!box.length) { return; }
+	box.empty();
+	var latency = (soundAudio && soundAudio.latency) || {};
+	box.append(soundPatchGroup('sources', jawnosT('Sources')));
+	box.append(soundPatchGroup('buses', jawnosT('Buses')));
+	box.append(soundPatchGroup('sinks', jawnosT('Sinks'), latency));
+
+	var ids = soundPatchNodeIds();
+	var table = $('<table class="sound_patch_routes"></table>');
+	var head = $('<tr></tr>');
+	$.each([jawnosT('From'), jawnosT('To'), jawnosT('Gain'), jawnosT('Pan'), jawnosT('Mute'), ''], function(i, label) {
+		head.append($('<th></th>').text(label));
+	});
+	table.append(head);
+	$.each(soundPlan.routes || [], function(index, route) {
+		table.append(soundPatchRouteRow(route, index, ids));
+	});
+	box.append(table);
+
+	$('#sound_route_from').empty();
+	$('#sound_route_to').empty();
+	$.each(ids, function(i, id) {
+		$('#sound_route_from').append($('<option></option>').attr('value', id).text(id));
+		$('#sound_route_to').append($('<option></option>').attr('value', id).text(id));
+	});
+
+	$('#sound_manage').prop('checked', !!(soundAudio && soundAudio.manage));
+	var engine = (soundAudio && soundAudio.engine) || null;
+	var state = '';
+	if (!soundAudio || !soundAudio.manage) {
+		state = jawnosT('The engine does not own this machine');
+	}
+	else if (!soundAudio.engine_available) {
+		state = jawnosT('The engine is not running on this machine');
+	}
+	else if (engine && engine.state) {
+		var stateWord = engine.state;
+		if (stateWord == 'patching') { stateWord = jawnosT('patching'); }
+		else if (stateWord == 'idle') { stateWord = jawnosT('idle'); }
+		else if (stateWord == 'done') { stateWord = jawnosT('done'); }
+		state = jawnosT('The engine is') + ' ' + stateWord + ' \u2014 '
+			+ (parseInt(engine.frames, 10) || 0) + ' ' + jawnosT('frames');
+		if (engine.xruns != null) {
+			state += ' \u00b7 ' + (parseInt(engine.xruns, 10) || 0) + ' ' + jawnosT('xruns');
+		}
+		if (engine.rate != null && engine.period != null) {
+			state += ' \u00b7 ' + engine.rate + ' Hz / ' + engine.period;
+		}
+		else if (engine.rate != null) {
+			state += ' \u00b7 ' + engine.rate + ' Hz';
+		}
+		else if (engine.period != null) {
+			state += ' \u00b7 ' + jawnosT('period') + ' ' + engine.period;
+		}
+		var silent = (engine.silent && engine.silent.length) || 0;
+		if (silent) { state += ' \u00b7 ' + silent + ' ' + jawnosT('silent'); }
+		if (engine.machine) { state += ' \u00b7 ' + engine.machine; }
+	}
+	else {
+		state = jawnosT('The engine is running, but this plan is not patched');
+	}
+	$('#sound_engine_state').text(state);
+}
+
+function soundPatchLoad() {
+	if (!$('.wind[app="sound"]').length) { return; }
+	$.ajax({
+		url: '/manager/sound/plan',
+		type: 'GET',
+		cache: false,
+		success: soundPatchRender,
+		error: function() { soundPatchNote(jawnosT('The plan could not be read')); }
+	});
+}
+
+function soundPatchSave() {
+	$.ajax({
+		url: '/manager/sound/plan',
+		type: 'POST',
+		data: { plan: JSON.stringify(soundPlan) },
+		success: function(result) {
+			result = result || {};
+			if (result.plan) { soundPlan = result.plan; }
+			soundPatchRender();
+			if (!result.ok) {
+				soundPatchNote(result.error || jawnosT('The plan could not be saved'));
+				return;
+			}
+			var applied = result.applied;
+			if (applied && applied.ok) {
+				soundPatchNote(jawnosT('Saved; the engine is running the plan'));
+			}
+			else if (applied && applied.skipped) {
+				soundPatchNote(jawnosT('Saved; the engine does not own this machine'));
+			}
+			else if (applied && applied.error) {
+				soundPatchNote(jawnosT('Saved, but the engine did not apply it:') + ' ' + applied.error);
+			}
+			else {
+				soundPatchNote(jawnosT('Saved'));
+			}
+			soundPatchLoad();
+		},
+		error: function() { soundPatchNote(jawnosT('The plan could not be saved')); }
+	});
+}
+
+function soundPatchManage(on) {
+	$.ajax({
+		url: '/manager/sound/manage',
+		type: 'POST',
+		data: { manage: on ? 1 : 0 },
+		success: function(result) {
+			result = result || {};
+			var applied = result.applied;
+			soundPatchNote(applied && applied.error ? applied.error : '');
+			soundPatchLoad();
+		},
+		error: function() { soundPatchNote(jawnosT('The switch could not be saved')); }
+	});
+}
+
+function soundPatchAddNode(kind, id, node) {
+	if (!id) { soundPatchNote(jawnosT('A node needs a name')); return; }
+	if ($.inArray(id, soundPatchNodeIds()) >= 0) {
+		soundPatchNote(jawnosT('That name is already in the plan'));
+		return;
+	}
+	soundPlan[kind] = soundPlan[kind] || [];
+	soundPlan[kind].push(node);
+	soundPatchRender();
+}

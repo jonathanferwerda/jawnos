@@ -460,6 +460,10 @@ write_file($log, '');
 	like($routes, qr{/manager/sound/default}, 'the default route exists');
 	like($routes, qr{/manager/sound/level}, 'the house-level route exists');
 	like($routes, qr{/manager/sound/profile}, 'the per-app profile route exists');
+	like($routes, qr{\[\s*53030\s*,\s*'post'\s*,\s*'/manager/sound/plan'}, 'the plan save route exists');
+	like($routes, qr{\[\s*53031\s*,\s*'get'\s*,\s*'/manager/sound/plan'}, 'the plan read route exists');
+	like($routes, qr{\[\s*53032\s*,\s*'post'\s*,\s*'/manager/sound/manage'}, 'the mixer switch route exists');
+	like($routes, qr{\[\s*53033\s*,\s*'post'\s*,\s*'/manager/sound/param'}, 'the live-fader route exists');
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_sound.pm");
 	like($controller, qr/^sub action_53020\b/m, 'the window action exists');
@@ -471,6 +475,13 @@ write_file($log, '');
 	like($controller, qr/&subs::sound_default\(/, 'the default action calls the domain');
 	like($controller, qr/&subs::sound_house_level_write\(/, 'the level action calls the domain');
 	like($controller, qr/&subs::sound_app_level_write\(/, 'the profile action calls the domain');
+	like($controller, qr/^sub action_53030\b/m, 'the plan save action exists');
+	like($controller, qr/^sub action_53031\b/m, 'the plan read action exists');
+	like($controller, qr/^sub action_53032\b/m, 'the mixer switch action exists');
+	like($controller, qr/^sub action_53033\b/m, 'the live-fader action exists');
+	like($controller, qr/audio_engine_patch_param\(/, 'the live-fader action calls the engine wrapper');
+	like($controller, qr/&subs::audio_plan_write\(/, 'the plan save action calls the domain');
+	like($controller, qr/&subs::audio_manage_set\(/, 'the switch action calls the domain');
 	like($controller, qr/template => 'apps\/sound'/, 'the window renders the Sound template');
 
 	my $names = read_file("$root/lib/JawnOS/Routes.pm");

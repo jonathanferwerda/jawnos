@@ -10,9 +10,15 @@ package Manager;
 # The four sound levels live here too: the house level is a setting, and one
 # app's profile is the same setting on that app's row, so the widget and the
 # window save through these routes and read the same resolved answer.
+#
+# The house patchbay's plan is one setting too (Domain::Audio); the window reads
+# it with the page and saves it through /manager/sound/plan, while the taskbar's
+# status poll stays free of the engine's socket.
 use strict;
 use warnings;
 use utf8;
+
+use Mojo::JSON qw(decode_json);
 
 # The device reading plus the levels the house resolves from it. One shape, so
 # the widget's poll and the window's render never disagree.
@@ -99,6 +105,63 @@ sub action_53026 {
 	my $c = shift;
 	eval { &subs::sound_app_level_write($c->param('app'), $c->param('level')) };
 	$c->render(json => &sound_reading());
+}
+
+# POST /manager/sound/plan - save the house's routing plan
+sub action_53030 {
+	my $c = shift;
+	my $raw = $c->param('plan');
+	my $plan = (defined $raw && length $raw) ? eval { decode_json($raw) } : undef;
+	my $result = eval { &subs::audio_plan_write($plan) };
+	$c->render(json => $result || { ok => 0, error => 'the plan could not be saved' });
+}
+
+# GET /manager/sound/plan - the saved plan, the switch and the engine's answer
+sub action_53031 {
+	my $c = shift;
+	$c->render(json => eval { &subs::audio_plan_status() }
+		|| { plan => { sources => [], buses => [], sinks => [], routes => [] }, manage => 0, engine_available => 0 });
+}
+
+# POST /manager/sound/manage - the master switch beside the management line
+sub action_53032 {
+	my $c = shift;
+	my $on = ($c->param('manage') || '') =~ /^(?:1|yes|on|true)$/i ? 1 : 0;
+	my $result = eval { &subs::audio_manage_set($on) };
+	$c->render(json => $result || { ok => 0, error => 'the switch could not be saved' });
+}
+
+# POST /manager/sound/param - one live fader on the running patch. The route
+# number is the 0-based index in the plan's routes array; the engine clamps the
+# value and refuses a muted route, so its answer is what the page shows.
+sub action_53033 {
+	my $c = shift;
+	my $route = $c->param('route');
+	my $name  = $c->param('name');
+	my $value = $c->param('value');
+
+	my $error;
+	if (!defined $route || $route !~ /\A\d+\z/) {
+		$error = 'a route number is a whole, non-negative index';
+	}
+	elsif (!defined $name || ($name ne 'gain' && $name ne 'pan')) {
+		$error = 'a patch fader is named gain or pan';
+	}
+	elsif (!defined $value
+		|| $value !~ /\A[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\z/) {
+		$error = 'a fader value is a finite number';
+	}
+
+	if ($error) {
+		$c->render(json => { ok => 0, error => $error });
+		return;
+	}
+
+	require JawnOS::Audio::Engine;
+	my $result = eval {
+		JawnOS::Audio::Engine::audio_engine_patch_param($route + 0, $name, $value + 0);
+	};
+	$c->render(json => $result || { ok => 0, error => 'the fader could not be set' });
 }
 
 1;

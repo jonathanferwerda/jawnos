@@ -7,10 +7,27 @@
 **Status:** measured and scaffolded, 2026-11-17. P0's device half is answered on `table` (§2): raw
 ALSA holds 64 frames for three minutes; PipeWire does not hold quantum 64. The P1 skeleton is in the
 tree (`engine/`, `scripts/build_engine.pl`, `t/332`) with the datagram header, the lock-free parameter
-path, the block graph, a null device, master election and clock alignment — 40 Rust tests. The
+path, the block graph, a null device, master election and clock alignment. The
 routing plan's shape and validation are `lib/JawnOS/Audio/Plan.pm` (`t/334`), and Studio reports the
 browser's own numbers through `window.studioAudioReport()` (`t/333`).
-**Still missing:** a real device backend, the laptop's browser numbers, and every network phase.
+**Still missing:** the laptop's browser numbers, and every network phase.
+
+**The patchbay, 2026-11-18.** The saved plan now runs. `engine/src/patchbay.rs`
+compiles `sources`, `buses`, `sinks` and `routes` into a stereo graph and runs it
+on the device, with `--patch --plan FILE` on the command line and
+`{"cmd":"patch","plan":{...}}` on the control socket. A node this machine
+cannot bind (a peer, a phone, a zone, or another machine's node) is reported in
+`silent` and contributes nothing; a route delay, an unknown endpoint, an
+out-of-range gain or pan and a bus loop are refused before the device opens. The
+plan is stored once for the house (`Domain::Audio`, a setting on the `all` device
+row), read and saved from Sound's House patchbay, and applied only while its
+master switch is on. The matrix shows each sink's declared latency and the
+engine's state, frames, xruns and silent nodes. A fader moves the running patch
+without re-arming it (`param` target `patch`); a node may name the machine it
+lives on, so one central plan can describe several machines. The manager writes
+`~/.president/audio-plan.json` and the supervisor passes it to a fresh engine, so
+a reboot comes back routed. What is still network work: another machine's engine
+is not driven yet (P3), so the switch applies to the engine on the server.
 
 **Where a guitar stands, 2026-11-17.** Everything below the browser works: capture at 2.7 ms on
 `table`, one to N tracks, the inserts, playback through the strips, overdub with a measured start
@@ -647,11 +664,18 @@ writes its own take locally first (D14), so the master places it rather than own
 **Gate:** guitar through the UM2 and voice on the phone in one session, both in time with the click,
 both on the same take, ten minutes without a lost take. Then the same with a T-Deck clip.
 
-### P5 — Sound owns the mixer (2 weeks)
+### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree, hardware routing next**
 
 The `manage` switch, the saved audio plan, the matrix and the node inspector (§9), driving the
 engine on `table` and plain PipeWire elsewhere. The engine's streams and quantum are fixed, so
 pavucontrol has nothing to fight over and nothing to break.
+
+**In the tree (2026-11-18):** the plan store (`Domain::Audio`), the `manage` switch, the Sound matrix
+and node inspector (state, frames, xruns, declared latency, silent nodes), the engine's
+`patch`/`unpatch` and live fader `param`, and the supervisor's boot restore (the manager writes
+`~/.president/audio-plan.json`; a fresh engine arms it when `manage` is on). **Still owed:** delegation
+of a route to a peer machine's engine (P3), and a per-machine `manage` setting (the switch is
+house-wide today).
 
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;
