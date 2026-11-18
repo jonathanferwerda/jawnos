@@ -369,6 +369,10 @@ function studioLoad(uuid) {
 
 			mixer['time']['duration'] = studioKnobNumber(response.song && response.song.duration, 0) || 0;
 
+			// a loaded song owns its track list; build any rows it needs and drop
+			// the ones the previous song left behind
+			studioSyncTrackList(response.studio);
+
 			// Rebuild each channel's takes from the saved metadata so they play
 			// back and can be re-saved.
 			$.each(response.studio, function(i,v) {

@@ -6,6 +6,7 @@
      04_knobs.js  - studioInit, knobs and wheel, song save/retrieve
      05_inputs.js  - jog wheel, record/arm/jack/cord, channel select, input grabber, take start/stop
      06_controls.js  - play/stop/time, loop punch-out, transport tick, save/load/import, name/mark/config
+     07_layout.js  - per-track panels, hide toggles, floating panels, add/delete tracks, automation
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var mixer = {};

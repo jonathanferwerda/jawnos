@@ -38,16 +38,18 @@
 //!
 //! # Overdub
 //!
-//! A take and a playback are independent: `record` may carry `monitor`, a
-//! list of files played to the outputs while the take captures, and `play` may
-//! start while a take records. The capture thread owns the capture device and
-//! its [`DiskWriter`]s; the playback thread owns a second device handle and
-//! renders only to the outputs, so the monitoring bus can never reach the take.
-//! Both are aligned by the take's `start_at` stamp, not by a measured offset:
-//! the player is assumed to begin at the take's first sample. One `stop`
-//! signals both before joining either, and `status` reports the take's state
-//! with `playing` and `monitor_frames` beside it. Two takes at once, or two
-//! playbacks at once, are still refused.
+//! A take and a playback are independent: `record` may carry `monitor`, an
+//! array of paths or per-file strips played to the outputs while the take
+//! captures, and `play` may start while a take records. The capture thread owns
+//! the capture device and its [`DiskWriter`]s; the playback thread owns a second
+//! device handle and renders only to the outputs, so the monitoring bus can
+//! never reach the take. The monitor starts `align_samples` before the take's
+//! `start_at` (`"align_samples"`, or a measurement from `"calibrate":true`),
+//! clamped at sample 0; with neither, nothing is shifted and `align_from` says
+//! `none`. That is a start correction, not a drift model. One `stop` signals
+//! both before joining either, and `status` reports the take's state with
+//! `playing`, `monitor_frames`, the alignment and the monitor strips beside it.
+//! Two takes at once, or two playbacks at once, are still refused.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -61,11 +63,11 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use jawn_audio::{
-    to_i16, BackendKind, Channel, Device, DiskWriter, InsertKind, Mixer, NullDevice, ParamName,
-    ParamQueue, PlayTrack, Playback,
+    monitor_start, to_i16, BackendKind, Channel, Device, DiskWriter, InsertKind, Mixer,
+    MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback,
 };
 
-use crate::{take_frames, MAX_CHANNELS, MAX_TRACKS, TAKE_CHANNELS};
+use crate::{alignment_json, take_frames, Alignment, MAX_CHANNELS, MAX_TRACKS, TAKE_CHANNELS};
 
 /// How long a take runs when the command does not say.
 const DEFAULT_SECONDS: f64 = 10.0;
@@ -317,14 +319,24 @@ impl Server {
     }
 
     /// `{"cmd":"param","track":0,"name":"gain","value":0.5}`: move one
-    /// knob of a running take's strip.
+    /// knob of a running take's strip, or of a monitor strip when
+    /// `"target":"monitor"` is given.
     ///
     /// The command moves the strip at its next block, so the answer means
     /// "queued", not "heard". The effect clamps the value (see
     /// [`Channel::set`]); the socket rejects only what is not a parameter at
     /// all. The knob mirror in `status` is updated here, because the strip
-    /// itself lives on the take thread and nothing else writes these values.
+    /// itself lives on the worker thread and nothing else writes these values.
     fn param(&mut self, object: &Object) -> String {
+        match get(object, "target") {
+            None | Some(Value::Null) => self.param_take(object),
+            Some(Value::Str(target)) if target == "take" => self.param_take(object),
+            Some(Value::Str(target)) if target == "monitor" => self.param_monitor(object),
+            _ => error_line("\"target\" must be \"take\" or \"monitor\""),
+        }
+    }
+
+    fn param_take(&mut self, object: &Object) -> String {
         let running = match &self.current {
             Some(running) if running.is_recording() => running,
             _ => return error_line("no take is running"),
@@ -388,32 +400,71 @@ impl Server {
         )
     }
 
+    /// The same knobs, addressed to a monitor strip: `"target":"monitor"`.
+    /// The monitor's own queue is what its playback drains at the top of a
+    /// block, so a gain change never touches the take's strip.
+    fn param_monitor(&mut self, object: &Object) -> String {
+        let track = match get(object, "track") {
+            Some(Value::Num(value))
+                if value.is_finite() && *value >= 0.0 && value.fract() == 0.0 => *value as usize,
+            _ => return error_line("param needs \"track\": a 0-based monitor file number"),
+        };
+        let name = match get(object, "name") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => return error_line("param needs \"name\": a parameter name"),
+        };
+        let value = match get(object, "value") {
+            Some(Value::Num(value)) if value.is_finite() => *value as f32,
+            _ => return error_line("\"value\" must be a finite number"),
+        };
+        let parameter = match ParamName::parse(name) {
+            Some(parameter) => parameter,
+            None => return error_line(&format!("no such parameter: {name}")),
+        };
+        let session = match self.playback.as_mut() {
+            Some(session) if !session.strips.is_empty() && session.is_playing() => session,
+            _ => return error_line("no monitor is running"),
+        };
+        let count = session.strips.len();
+        if track >= count {
+            return error_line(&format!(
+                "no monitor file {track} (the monitor has {count})"
+            ));
+        }
+        if let Some(insert) = parameter.insert() {
+            let present = session.strips[track]
+                .inserts
+                .iter()
+                .any(|kind| kind.name() == insert);
+            if !present {
+                return error_line(&format!("no such parameter: {name}"));
+            }
+        }
+        let queue = match &session.params {
+            Some(queue) => Arc::clone(queue),
+            None => return error_line("no monitor is running"),
+        };
+        if !queue.push(track, parameter, value) {
+            return error_line("the parameter queue is full; try again next block");
+        }
+        match parameter {
+            ParamName::Gain => session.strips[track].gain = Channel::clamp_gain(value),
+            ParamName::Pan => session.strips[track].pan = Channel::clamp_pan(value),
+            _ => {}
+        }
+        format!(
+            "{{\"ok\":true,\"target\":\"monitor\",\"track\":{},\"name\":\"{}\"}}",
+            track,
+            jawn_audio::loopback::json_escape(name)
+        )
+    }
+
     fn record(&mut self, object: &Object) -> String {
         // The monitoring bus, if this take is an overdub. Parsed first so a
         // malformed list is a refusal whether or not a take is already running.
-        let monitor = match get(object, "monitor") {
-            None | Some(Value::Null) => Vec::new(),
-            Some(Value::Arr(values)) if values.is_empty() => {
-                return error_line("record \"monitor\" needs at least one absolute WAV path")
-            }
-            Some(Value::Arr(values)) => {
-                let mut paths = Vec::with_capacity(values.len());
-                for value in values {
-                    match value {
-                        Value::Str(path) if Path::new(path).is_absolute() => {
-                            paths.push(path.clone())
-                        }
-                        Value::Str(_) => {
-                            return error_line(
-                                "record needs every \"monitor\" entry to be an absolute path",
-                            )
-                        }
-                        _ => return error_line("\"monitor\" must be an array of WAV paths"),
-                    }
-                }
-                paths
-            }
-            _ => return error_line("\"monitor\" must be an array of WAV paths"),
+        let monitor = match parse_monitor(get(object, "monitor")) {
+            Ok(monitor) => monitor,
+            Err(error) => return error_line(&error),
         };
         // One playback at a time: a take over the monitor it names is the
         // point, but a second monitor cannot join a playback already running.
@@ -447,6 +498,23 @@ impl Server {
                 *value as u64
             }
             _ => return error_line("\"start_at\" must be a whole, non-negative sample count"),
+        };
+        let align_samples = match get(object, "align_samples") {
+            None | Some(Value::Null) => None,
+            Some(Value::Num(value))
+                if value.is_finite()
+                    && *value >= 0.0
+                    && value.fract() == 0.0
+                    && *value <= u64::MAX as f64 =>
+            {
+                Some(*value as u64)
+            }
+            _ => return error_line("\"align_samples\" must be a whole, non-negative sample count"),
+        };
+        let calibrate = match get(object, "calibrate") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(value)) => *value,
+            _ => return error_line("\"calibrate\" must be true or false"),
         };
         // Two shapes for `tracks`: the historical count (`"tracks":2`, one
         // wire per input) and the plan the page arms, one object per track.
@@ -532,8 +600,13 @@ impl Server {
         // the person thought was their earlier take. The strips are built on
         // the playback thread, because an insert is not `Send`.
         let mut monitor_tracks: Vec<PlayTrack> = Vec::with_capacity(monitor.len());
-        for monitor_path in &monitor {
-            match PlayTrack::from_wav(monitor_path.clone(), 1.0, 0.0, Vec::new()) {
+        for spec in &monitor {
+            match PlayTrack::from_wav(
+                spec.path.clone(),
+                spec.gain,
+                spec.pan,
+                spec.inserts.clone(),
+            ) {
                 Ok(track) => monitor_tracks.push(track),
                 Err(error) => return error_line(&error),
             }
@@ -569,6 +642,27 @@ impl Server {
                 Err(error) => return error_line(&error),
             }
         }
+
+        // The capture offset is resolved before any file exists. An explicit
+        // `align_samples` wins, `calibrate` runs the patch-cable measurement
+        // once, and neither means no shift. This corrects the start; drift
+        // over a long take is still unmeasured.
+        let alignment = if monitor_tracks.is_empty() {
+            match align_samples {
+                Some(samples) => Alignment::given(samples),
+                None => Alignment::none(),
+            }
+        } else {
+            crate::resolve_alignment(
+                self.config.backend,
+                &self.config.device,
+                self.config.rate,
+                self.config.period,
+                self.config.buffer,
+                align_samples,
+                calibrate,
+            )
+        };
 
         // One WAV per track: a one-track take keeps `out` exactly; more tracks
         // split the stem into `-ch1`/`-ch2`/... All files share one
@@ -649,6 +743,8 @@ impl Server {
             channels,
             start_sample: start_at,
             xruns: 0,
+            align_samples: alignment.samples,
+            align_from: alignment.from,
             tracks: track_status.clone(),
             error: String::new(),
         }));
@@ -672,19 +768,35 @@ impl Server {
                 error: String::new(),
             }));
             let monitor_stop = Arc::new(AtomicBool::new(false));
+            let monitor_params = Arc::new(ParamQueue::new());
+            let monitor_at = monitor_start(start_at, alignment.samples);
+            let strips = monitor.clone();
             let spawned = {
                 let status = Arc::clone(&status);
                 let stop = Arc::clone(&monitor_stop);
+                let params = Arc::clone(&monitor_params);
                 let config = self.config.clone();
                 thread::Builder::new()
                     .name("jawn-audio-monitor".to_string())
-                    .spawn(move || run_playback(config, monitor_tracks, start_at, status, stop))
+                    .spawn(move || {
+                        run_playback(
+                            config,
+                            monitor_tracks,
+                            monitor_at,
+                            status,
+                            stop,
+                            Some(params),
+                        )
+                    })
             };
             match spawned {
                 Ok(handle) => Some(PlaySession {
                     status,
                     stop: monitor_stop,
                     handle: Some(handle),
+                    strips,
+                    params: Some(monitor_params),
+                    align: Some(alignment),
                 }),
                 Err(error) => {
                     for disk in disks {
@@ -736,14 +848,19 @@ impl Server {
             handle: Some(handle),
             params,
         });
-        let monitor_json = if monitor.is_empty() {
+        let monitor_part = if monitor.is_empty() {
             String::new()
         } else {
-            format!(",\"playing\":{},\"monitor_frames\":0", monitor.len())
+            format!(
+                ",\"playing\":{},\"monitor_frames\":0{}",
+                monitor.len(),
+                jawn_audio::playback::monitor_json(&monitor)
+            )
         };
         format!(
-            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at}{}{monitor_json}}}",
-            tracks_json(&track_status)
+            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at}{}{monitor_part}{}}}",
+            tracks_json(&track_status),
+            alignment_json(alignment)
         )
     }
 
@@ -871,7 +988,7 @@ impl Server {
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-play".to_string())
-                .spawn(move || run_playback(config, tracks, start_at, status, stop))
+                .spawn(move || run_playback(config, tracks, start_at, status, stop, None))
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -881,6 +998,9 @@ impl Server {
             status,
             stop,
             handle: Some(handle),
+            strips: Vec::new(),
+            params: None,
+            align: None,
         });
         format!(
             "{{\"ok\":true,\"state\":\"playing\",\"files\":{}}}",
@@ -1114,6 +1234,99 @@ fn parse_inputs(object: &Object, tracks: usize) -> Result<Vec<usize>, String> {
     Ok(inputs)
 }
 
+/// The `monitor` field: either the historical array of absolute paths, or an
+/// array of objects with their own strip (`file`, `gain`, `pan`, `inserts`).
+/// Both shapes may be mixed in one array; the position is the 1-based file
+/// number `param` addresses.
+fn parse_monitor(value: Option<&Value>) -> Result<Vec<MonitorSpec>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Arr(values)) if values.is_empty() => {
+            Err("record \"monitor\" needs at least one absolute WAV path".to_string())
+        }
+        Some(Value::Arr(values)) => values.iter().map(monitor_spec).collect(),
+        _ => Err(
+            "\"monitor\" must be an array of WAV paths or monitor objects".to_string(),
+        ),
+    }
+}
+
+/// One monitor entry: a bare path, or an object whose missing knobs default to
+/// a wire. The file must be absolute, exactly as a bare path must be.
+fn monitor_spec(value: &Value) -> Result<MonitorSpec, String> {
+    match value {
+        Value::Str(path) => {
+            if !Path::new(path).is_absolute() {
+                return Err(
+                    "record needs every \"monitor\" entry to be an absolute path".to_string(),
+                );
+            }
+            Ok(MonitorSpec::wire(path.clone()))
+        }
+        Value::Obj(fields) => {
+            let path = match get(fields, "file") {
+                Some(Value::Str(path)) => path.clone(),
+                _ => {
+                    return Err(
+                        "a monitor object needs \"file\": an absolute WAV path".to_string()
+                    )
+                }
+            };
+            if !Path::new(&path).is_absolute() {
+                return Err(
+                    "record needs every \"monitor\" entry to be an absolute path".to_string(),
+                );
+            }
+            let gain = match get(fields, "gain") {
+                None | Some(Value::Null) => 1.0,
+                Some(Value::Num(value)) if value.is_finite() => {
+                    Channel::clamp_gain(*value as f32)
+                }
+                _ => return Err("a monitor \"gain\" must be a finite number".to_string()),
+            };
+            let pan = match get(fields, "pan") {
+                None | Some(Value::Null) => 0.0,
+                Some(Value::Num(value)) if value.is_finite() => {
+                    Channel::clamp_pan(*value as f32)
+                }
+                _ => return Err("a monitor \"pan\" must be a finite number".to_string()),
+            };
+            let inserts = match get(fields, "inserts") {
+                None | Some(Value::Null) => Vec::new(),
+                Some(Value::Arr(names)) => {
+                    let mut inserts = Vec::with_capacity(names.len());
+                    for name in names {
+                        let word = match name {
+                            Value::Str(word) => word.as_str(),
+                            _ => {
+                                return Err(
+                                    "a monitor \"inserts\" must hold insert names".to_string()
+                                )
+                            }
+                        };
+                        let kind = InsertKind::parse(word)
+                            .ok_or_else(|| format!("no such insert: {word}"))?;
+                        inserts.push(kind);
+                    }
+                    inserts
+                }
+                _ => {
+                    return Err(
+                        "a monitor \"inserts\" must be an array of insert names".to_string()
+                    )
+                }
+            };
+            Ok(MonitorSpec {
+                path,
+                gain,
+                pan,
+                inserts,
+            })
+        }
+        _ => Err("\"monitor\" must hold WAV paths or monitor objects".to_string()),
+    }
+}
+
 /// The array form: one object per track. Every insert is parsed here, before
 /// any file is created, and a name the engine does not have is refused by
 /// name.
@@ -1243,6 +1456,9 @@ struct Status {
     channels: usize,
     start_sample: u64,
     xruns: usize,
+    /// The capture offset applied to this take's monitor, and its source.
+    align_samples: u64,
+    align_from: &'static str,
     /// One entry per track; track 1's also fills the top-level fields.
     tracks: Vec<TrackStatus>,
     error: String,
@@ -1335,14 +1551,20 @@ impl Running {
             Some(session) => {
                 let played = session.snapshot();
                 format!(
-                    ",\"playing\":{},\"monitor_frames\":{}",
-                    played.files, played.frames
+                    ",\"playing\":{},\"monitor_frames\":{}{}",
+                    played.files,
+                    played.frames,
+                    jawn_audio::playback::monitor_json(&session.strips)
                 )
             }
             None => String::new(),
         };
+        let alignment = alignment_json(Alignment {
+            samples: status.align_samples,
+            from: status.align_from,
+        });
         format!(
-            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
+            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
             status.take,
             status.state.name(),
             jawn_audio::loopback::json_escape(&status.path),
@@ -1353,6 +1575,7 @@ impl Running {
             status.xruns,
             tracks_json(&status.tracks),
             monitor,
+            alignment,
             first.map(|track| track.gain).unwrap_or(1.0),
             first.map(|track| track.pan).unwrap_or(0.0),
             jawn_audio::loopback::json_escape(first.map(|track| track.inserts.as_str()).unwrap_or("")),
@@ -1375,6 +1598,14 @@ struct PlaySession {
     status: Arc<Mutex<PlayStatus>>,
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
+    /// The monitor's strips, empty for a plain `play`. `status` reports them
+    /// and `param` addresses them.
+    strips: Vec<MonitorSpec>,
+    /// The control ring for those strips; `None` for a plain playback.
+    params: Option<Arc<ParamQueue>>,
+    /// The take's alignment, so an overdub's status keeps reporting where its
+    /// monitor was placed after the take ends. `None` for a plain playback.
+    align: Option<Alignment>,
 }
 
 impl PlaySession {
@@ -1411,16 +1642,18 @@ impl PlaySession {
 
     fn line(&self) -> String {
         let status = self.snapshot();
+        let monitor = jawn_audio::playback::monitor_json(&self.strips);
+        let align = self.align.map(alignment_json).unwrap_or_default();
         if status.state == State::Failed {
             format!(
-                "{{\"ok\":false,\"state\":\"failed\",\"files\":{},\"frames\":{},\"error\":\"{}\"}}",
+                "{{\"ok\":false,\"state\":\"failed\",\"files\":{},\"frames\":{}{monitor}{align},\"error\":\"{}\"}}",
                 status.files,
                 status.frames,
                 jawn_audio::loopback::json_escape(&status.error)
             )
         } else {
             format!(
-                "{{\"ok\":true,\"state\":\"{}\",\"files\":{},\"frames\":{}}}",
+                "{{\"ok\":true,\"state\":\"{}\",\"files\":{},\"frames\":{}{monitor}{align}}}",
                 status.state.name(),
                 status.files,
                 status.frames
@@ -1445,10 +1678,17 @@ fn run_playback(
     start_at: u64,
     status: Arc<Mutex<PlayStatus>>,
     stop: Arc<AtomicBool>,
+    params: Option<Arc<ParamQueue>>,
 ) {
     // Build the strips here, on the playback thread, so a chain never moves
-    // between threads. The control thread already checked the shape.
-    let mut playback = match Playback::new(tracks, start_at) {
+    // between threads. The control thread already checked the shape. A
+    // monitor's control ring is the one `param` pushes to; a plain playback
+    // has no live knobs yet.
+    let built = match params {
+        Some(params) => Playback::with_queue(tracks, start_at, params),
+        None => Playback::new(tracks, start_at),
+    };
+    let mut playback = match built {
         Ok(playback) => playback,
         Err(error) => {
             let mut current = status

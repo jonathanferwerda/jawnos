@@ -61,7 +61,8 @@ function studioInit(data) {
 				});
 			}
 
-			var channel_count = numeral(response.settings['channel_count']).value() || 4;
+			var channel_count = numeral(response.settings['channel_count']).value() || 1;
+			channel_count = Math.max(1, Math.min(32, channel_count));
 			for (var ch = 1; ch <= channel_count; ch++) {
 				studioChannelEngine(ch);
 				studioApplyChannel(ch);
@@ -72,24 +73,13 @@ function studioInit(data) {
 			studioApplyCapture();
 			// the always-visible synth panel builds its own grid/presets/keys
 			$(document).trigger('jawnos_synth_panel');
+			studioApplyLayoutSettings();
 			studioApplyMonitor();
 			studioUpdateLatencyInfo();
 
 			// pedals are dragged from the pedalboard onto a channel strip
 			$('.pedal_background').draggable({ helper: 'clone', revert: 'invalid', scroll: false, zIndex: 60000 });
-			$('.channel').droppable({
-				accept: '.pedal_background',
-				tolerance: 'pointer',
-				drop: function(event, ui) {
-					var name = ui.draggable.attr('hint');
-					var m = ($(this).attr('class') || '').match(/channel_(\d+)/);
-					if (!name || !m) { return; }
-					var ch = m[1];
-					var c = studioAudio.channels[ch];
-					studioSetInsert(ch, name, !(c && c.insertByName[name]));
-					studioSaver();
-				}
-			});
+			studioBindChannelDrop($('.channel, .studio_track_panel'));
 
 			studioRetriever();
 			studioUpdateKnobHints();
@@ -314,6 +304,11 @@ function studioSongSet(song) {
 }
 
 function studioSaver() {
+	// Adding a track clones markup and resets its controls; those changes are not
+	// a user edit, so do not write a half-built song over the live one.
+	if (typeof studioLayoutQuiet != 'undefined' && studioLayoutQuiet) {
+		return studioSongCache || {};
+	}
 	var song = {};
 	var name = $('#studio').attr('name');
 	var uuid = $('#studio').attr('uuid');
@@ -334,6 +329,18 @@ function studioSaver() {
 		var control = $(v).attr('control');
 		if (song[channel] == undefined) { song[channel] = {}; }
 		song[channel][control] = { state: $(v).attr('state'), text: $(v).text() };
+	});
+	$('.studio_track_name').each(function(i,v) {
+		var channel = $(v).attr('channel');
+		if (!/^[0-9]+$/.test(channel)) { return; }
+		if (song[channel] == undefined) { song[channel] = {}; }
+		song[channel]['name'] = $(v).val();
+	});
+	$('.studio_track_automation').each(function(i,v) {
+		var channel = $(v).attr('channel');
+		if (!/^[0-9]+$/.test(channel)) { return; }
+		if (song[channel] == undefined) { song[channel] = {}; }
+		song[channel]['automation_view'] = $(v).attr('aria-pressed') == 'true' ? 1 : 0;
 	});
 	$('.studio_channel_information').each(function(inf,sci) {
 		var text = $(sci).text();
@@ -368,14 +375,24 @@ function studioSaver() {
 
 	var sl = $('#studio_loop').attr('enabled');
 	var video_toggle = $('#studio_video_toggle').attr('toggled');
+	var tracks = [];
+	$('#studio_viewer .studio_track').each(function() { tracks.push($(this).attr('data-channel')); });
 	song['admin'] = { time: mixer['time'], name: name, uuid: uuid, loop: sl, video_toggle: video_toggle,
-		metronome: mixer['time']['metronome'], bpm: mixer['time']['bpm'], sig: mixer['time']['sig'] };
+		metronome: mixer['time']['metronome'], bpm: mixer['time']['bpm'], sig: mixer['time']['sig'],
+		tracks: tracks, settings: { channel_count: String(tracks.length || 1) } };
 	studioSongStore(song);
 	return song;
 }
 
 function studioRetriever() {
 	var song = studioSongCache || JSON.parse(localStorage.getItem('studio') || '{}');
+	// A saved song may carry more tracks than the window currently shows, but a
+	// new song (no uuid) must not inherit the previous song's rows from the cache.
+	var current_uuid = String($('#studio').attr('uuid') || '');
+	var saved_uuid = (song['admin'] && song['admin']['uuid']) ? String(song['admin']['uuid']) : '';
+	if (current_uuid && (!saved_uuid || saved_uuid == current_uuid)) {
+		studioEnsureTracksForSong(song);
+	}
 
 	$.each(song, function(i,v) {
 		if (i == 'admin') {
@@ -396,6 +413,14 @@ function studioRetriever() {
 		$.each(v, function(n,w) {
 			if (n == 'plugs' || n == 'mixer' || n == 'fx') { return; }
 			mixer[i][n] = w;
+			if (n == 'name') {
+				$('.studio_track_name[channel="' + i + '"]').val(w);
+			}
+			if (n == 'automation_view') {
+				var on = (w == 1 || w == '1' || w === true);
+				$('.studio_track_automation[channel="' + i + '"]').attr('aria-pressed', on ? 'true' : 'false');
+				$('#studio_track_row_' + i).toggleClass('studio_track_automation_on', on);
+			}
 			if (n == 'armed') {
 				$('[channel="' + i + '"][control="armed"]').attr('state', w.state).text(w.text);
 				if (w.state == 'rec') { studioInputStreamGrabber(i, 'rec'); }

@@ -146,13 +146,17 @@ $topic{'marker'} = {
 $topic{'studio'} = {
 		title => 'Studio', category => 'apps', app => 'studio',
 		templates => [ 'templates/studio/studio.html.ep', 'templates/studio/markup.html.ep', 'templates/studio/song_select.html.ep', 'templates/studio/plug_selection.html.ep', 'public/js/manager/studio.js' ],
-		controls => [ 'Mix this track against the others', 'Pick a song from the library Music uses', 'Use this microphone or camera on the channel', 'Put another window or a screen share on the channel', 'Patch this app into the channel', 'Measure the round trip through this browser or a native audio backend', 'Arm a take on the audio engine', 'End the engine take and close its file', 'How many tracks the engine take records' ],
+		controls => [ 'Mix this track against the others', 'Pick a song from the library Music uses', 'Use this microphone or camera on the channel', 'Put another window or a screen share on the channel', 'Patch this app into the channel', 'Measure the round trip through this browser or a native audio backend', 'Arm a take on the audio engine', 'End the engine take and close its file', 'How many tracks the engine take records', 'Off, record, play or loop', 'Rename this track', 'Show this track\'s pedals', 'Show automation for this track', 'Delete this track', 'Add a track, up to 32', 'Hide the channel strips', 'Hide the transport', 'Hide the track listing', 'Collapse the synth panel', 'Float the channel strips', 'Float the transport', 'Float the track listing', 'Float the synth', 'Dock the synth', 'Dock the channel strips', 'Dock the transport', 'Dock the tracks', 'Close the pedalboard' ],
 		summary => 'A multitrack audio studio with takes and a pedalboard.',
 		verified => '2026-11-17',
 		body => [
 			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
 			'The knobs and pedal backdrops follow the selected icon set, so the mixer wears the same finish as the rest of the desk.',
-			'The Latency row shows what the browser reports for this session: the total output figure, its base and output parts in milliseconds, and the sample rate in hertz.',
+			'Every track has a compact panel on its left, inside the row: the arm button cycles Off, Record, Play and Loop, the slider sets that track against the others, FX opens the track\'s inserted pedals, Auto opens its automation lane, the name is editable, and Delete removes the track. These controls stay even when the channel strips are hidden, so a narrow window loses width rather than the controls.',
+			'A song starts with one track. Add track adds another up to 32, the engine\'s own limit; Delete asks twice before it removes a track. Loading a saved song brings back the tracks it was saved with.',
+			'The layout bar hides the channel strips, the transport and the track listing independently, and the synth keeps its own Hide. Hiding never stops the take, the metronome or the keys that edit a take, and the choice is remembered on the next visit.',
+			'The synth, the channel strips, the transport and the track listing can each be floated: drag a panel by its handle to put it anywhere over the Studio window, and press Dock to return it to its place. Each panel remembers where it was left.',
+			'The pedalboard opens from the burger button and closes from its Close button. The Latency row shows what the browser reports for this session: the total output figure, its base and output parts in milliseconds, and the sample rate in hertz.',
 			'The Round trip row\'s backend picker chooses who measures: this browser plays a few clicks through the speakers and times the echo on the microphone, while ALSA, PipeWire or JACK asks the audio engine on this machine and shows its number, or its error when there is no device.',
 			'An Engine take block sits under Round trip: Start take and Stop take drive the native audio engine instead of the browser, reading Seconds, one to eight Tracks, Inputs (channel numbers in a comma list) and Inserts (tone, distortion, delay, compressor or reverb, in a comma list). One row per track shows the take\'s state, its frames and its dropped count, with Gain (0 to 4) and Pan (-1 to 1) sliders that move that track\'s strip while it records; whatever the engine answers is shown as it sent it.',
 			'It works with the same library as Music, so recorded and imported tracks sit together.',
@@ -160,9 +164,10 @@ $topic{'studio'} = {
 			'A synth panel sits at the top of the window (Hide tucks it away): pick a sound and play its keys right there, then record it by setting a channel\'s input to Synth.'
 		],
 		steps => [
-			'Open Studio and add a track per instrument or take.',
+			'Open Studio and add a track per instrument or take; rename it in its panel and press Delete twice to remove it.',
 			'Record or drop a clip onto a track; drag its edges to trim and overlap to crossfade.',
-			'Route a pedalboard onto a channel to shape its sound, then mix the tracks together.'
+			'Route a pedalboard onto a channel to shape its sound, then mix the tracks together.',
+			'Hide or float the channel strips, transport, tracks or synth when the window is small; Dock brings a panel back.'
 		],
 		related => [ 'music', 'synth' ]
 	};

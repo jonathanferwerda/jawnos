@@ -605,11 +605,21 @@ inserts reach the take rather than being flattened to a wire.
 **Gate:** a four-track take through the UM2 lands within **±1 sample** of the click on playback, and
 an A/B against the current path is indistinguishable except for latency.
 
+**Overdub alignment:** the monitor starts before the take by a capture offset the engine measures
+with the patch cable (`--loopback`, surface here as `--calibrate` or `align_samples`), not by the
+take's stamp alone. That is a **start correction**: it places the monitor's first sample where the
+performance will be captured, and is clamped so it never starts before sample 0. It is not a drift
+model — a device whose clock runs slightly fast or slow over a long take is still unmeasured, and a
+device that starts late by a different amount each time is not predicted. With no measurement the
+take reports `align_from: "none"` and shifts nothing rather than guessing.
+
 ### P3 — Peers on one clock (2 weeks)
 
 Engine-to-engine over UDP: `table` as master, one peer, one shared transport. Offset and drift
 estimated from timestamped datagrams, inputs resampled to the master. This is where the hard problem
-lives.
+lives. The drift estimate here is a session-long measurement between two clocks; it is not the same
+thing as P2's local overdub alignment, which measures one start offset through the patch cable and
+does not track how the offset moves during a take.
 
 **Gate:** two machines, ten minutes, drift **< 1 sample** without an audible correction, LAN
 monitoring **< 15 ms**.

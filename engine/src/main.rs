@@ -17,8 +17,9 @@ use std::thread;
 
 use jawn_audio::{
     backends::{self, BackendKind, RunReport},
-    decode, encode_datagram, loopback, mix_mono_into_stereo, peak, to_i16, Channel, Codec, Device,
-    DiskWriter, Header, InsertKind, Mixer, NullDevice, PlayTrack, Playback, Strip, HEADER_LEN,
+    decode, encode_datagram, loopback, mix_mono_into_stereo, monitor_start, peak, to_i16, Channel,
+    Codec, Device, DiskWriter, Header, InsertKind, Mixer, MonitorSpec, NullDevice, PlayTrack,
+    Playback, Strip, HEADER_LEN,
 };
 
 /// Every track's WAV is stereo: the strip's panned output. `--channels` is the
@@ -83,6 +84,21 @@ jawn-audio — the JawnOS audio engine
   --monitor FILE.wav
                   play FILE.wav to the outputs while this take records;
                   repeatable (--play --file FILE.wav is the same thing)
+  --monitor-file FILE.wav
+                  the same monitor bus, spelled for per-file knobs
+  --monitor-gain [N:]G
+                  trim for monitor file N (1-based), or every file
+  --monitor-pan [N:]P
+                  pan for monitor file N, or every file (default 0, centre)
+  --monitor-insert [N:]NAME
+                  an insert on monitor file N (or every file), repeatable
+                  in chain order: tone, distortion, delay, compressor, reverb
+  --align-samples N
+                  start the monitor N samples before the take's --start-at;
+                  use a measured capture offset (clamped so it never starts
+                  before sample 0)
+  --calibrate     measure that offset once with the patch cable before the
+                  take; a failed or zero measurement shifts nothing
   --json          one JSON line instead of prose
 
   Every track writes its own stereo WAV: --out take.wav becomes take-ch1.wav,
@@ -101,12 +117,17 @@ jawn-audio — the JawnOS audio engine
   the inputs while the named files play to the outputs. The monitor is a
   separate playback on its own device handle; it is never summed into the
   take, which stays the input through its strip. The monitor files must share
-  the take's rate, and both start at the take's --start-at sample: alignment
-  is by that stamp, not by a measured offset, so the player is assumed to
-  begin at the take's first sample. A take reports
-  \"playing\":N,\"monitor_frames\":M when a monitor ran (plus
-  \"monitor_error\" if the player failed after the take started). Two takes at
-  once are still refused; so are two playbacks.
+  the take's rate. Each monitor file gets its own strip: the unprefixed
+  --monitor-gain/--monitor-pan/--monitor-insert apply to every file and an
+  N: prefix to one 1-based file. The monitor starts at the take's --start-at
+  sample minus the capture offset: --align-samples gives that offset, or
+  --calibrate measures the patch-cable round trip once before the take. With
+  neither, nothing is shifted. A take reports
+  \"playing\":N,\"monitor_frames\":M and
+  \"align_samples\":N,\"align_from\":\"measured|given|none\" when a monitor
+  ran (plus \"monitor_error\" if the player failed after the take started).
+  The offset is a start correction; drift over a long take is not measured.
+  Two takes at once are still refused; so are two playbacks.
 
 --play options:
   --file FILE.wav   a take to play; repeat the flag, one strip per file
@@ -151,13 +172,17 @@ jawn-audio — the JawnOS audio engine
 
 --serve speaks one JSON object per line: record, param, status, stop,
 quit. `record` takes \"out\", \"seconds\", \"start_at\", \"tracks\" and \"inputs\";
-\"monitor\" is an array of absolute WAV paths played to the outputs while the
-take records (an overdub; the monitor never enters the take). `play` may run
-beside a recording's monitor, and `record` may start over a running playback.
-Two takes at once, and two playbacks at once, are refused. One `stop` ends and
-joins both roles, and `status` reports the take's state with \"playing\" and
-\"monitor_frames\" beside it. `start_at` is the take's stamp and the monitor's
-start sample: alignment is by that stamp, not a measured offset.
+\"monitor\" is an array of absolute WAV paths, or of objects
+{\"file\":\"/abs/a.wav\",\"gain\":0.8,\"pan\":-0.2,\"inserts\":[\"tone\"]},
+played to the outputs while the take records (an overdub; the monitor never
+enters the take). `play` may run beside a recording's monitor, and `record`
+may start over a running playback. Two takes at once, and two playbacks at
+once, are refused. One `stop` ends and joins both roles, and `status` reports
+the take's state with \"playing\", \"monitor_frames\" and the monitor strips
+beside it. `start_at` is the take's stamp; the monitor starts that many
+samples minus the capture offset given by \"align_samples\" or measured by
+\"calibrate\":true before the take. `param` addresses the take's tracks with
+\"track\", or a monitor strip with \"target\":\"monitor\".
 `tracks` is a count (one wire per input) or an array of per-track objects
 {\"input\":N,\"gain\":G,\"pan\":P,\"inserts\":[NAMES]}, which arms that track's
 real chain. `param` moves one knob of a running take's strip and answers when
@@ -208,9 +233,23 @@ struct Options {
     inserts: Vec<InsertSpec>,
     /// `--file` in the order given; one strip per file for `--play`.
     files: Vec<String>,
-    /// `--monitor` in the order given, or `--file` when `--play` accompanies
-    /// `--record`: the takes played to the outputs while a new one records.
+    /// `--monitor`/`--monitor-file` in the order given, or `--file` when
+    /// `--play` accompanies `--record`: the takes played to the outputs while
+    /// a new one records.
     monitor: Vec<String>,
+    /// `--monitor-gain`: the unprefixed trim for every monitor file, and the
+    /// 1-based per-file overrides in the order given.
+    monitor_gain: f32,
+    monitor_gains: Vec<(usize, f32)>,
+    /// `--monitor-pan`, the same shape.
+    monitor_pan: f32,
+    monitor_pans: Vec<(usize, f32)>,
+    /// `--monitor-insert`: one file, or every file when unprefixed.
+    monitor_inserts: Vec<InsertSpec>,
+    /// `--align-samples`: a measured or manual capture offset.
+    align_samples: Option<u64>,
+    /// `--calibrate`: measure the offset with the patch cable before the take.
+    calibrate: bool,
     /// Which mode flags the command line actually carried. `--record --play`
     /// together is an overdub, so the two flags cannot be one enum field.
     record_flag: bool,
@@ -257,6 +296,13 @@ fn run() -> Result<ExitCode, String> {
         inserts: Vec::new(),
         files: Vec::new(),
         monitor: Vec::new(),
+        monitor_gain: 1.0,
+        monitor_gains: Vec::new(),
+        monitor_pan: 0.0,
+        monitor_pans: Vec::new(),
+        monitor_inserts: Vec::new(),
+        align_samples: None,
+        calibrate: false,
         record_flag: false,
         play_flag: false,
         tracks: 1,
@@ -284,7 +330,49 @@ fn run() -> Result<ExitCode, String> {
                 options.play_flag = true;
             }
             "--file" => options.files.push(value(&mut args, "--file")?),
-            "--monitor" => options.monitor.push(value(&mut args, "--monitor")?),
+            "--monitor" | "--monitor-file" => {
+                options.monitor.push(value(&mut args, &arg)?)
+            }
+            "--monitor-gain" => {
+                let raw = value(&mut args, "--monitor-gain")?;
+                let (file, text) = split_target(&raw);
+                let gain: f32 = text
+                    .parse()
+                    .map_err(|_| format!("--monitor-gain wants a multiplier, not `{raw}`"))?;
+                match file {
+                    Some(file) => options.monitor_gains.push((file, gain)),
+                    None => options.monitor_gain = gain,
+                }
+            }
+            "--monitor-pan" => {
+                let raw = value(&mut args, "--monitor-pan")?;
+                let (file, text) = split_target(&raw);
+                let pan: f32 = text
+                    .parse()
+                    .map_err(|_| format!("--monitor-pan wants -1, 0 or 1, not `{raw}`"))?;
+                match file {
+                    Some(file) => options.monitor_pans.push((file, pan)),
+                    None => options.monitor_pan = pan,
+                }
+            }
+            "--monitor-insert" => {
+                let raw = value(&mut args, "--monitor-insert")?;
+                let (file, text) = split_target(&raw);
+                let kind = InsertKind::parse(text).ok_or_else(|| {
+                    format!(
+                        "unknown insert `{text}` (want tone, distortion, delay, compressor or reverb)"
+                    )
+                })?;
+                options.monitor_inserts.push(InsertSpec { track: file, kind });
+            }
+            "--align-samples" => {
+                let raw = value(&mut args, "--align-samples")?;
+                options.align_samples = Some(
+                    raw.parse()
+                        .map_err(|_| format!("--align-samples wants a sample count, not `{raw}`"))?,
+                );
+            }
+            "--calibrate" => options.calibrate = true,
             "--serve" => options.mode = Mode::Serve,
             "--selftest" => options.mode = Mode::SelfTest,
             "--version" | "-V" => options.mode = Mode::Version,
@@ -435,6 +523,20 @@ fn run() -> Result<ExitCode, String> {
     }
     if options.mode != Mode::Record && (options.tracks != 1 || options.inputs_given) {
         return Err("--tracks and --inputs apply only to --record".to_string());
+    }
+    let monitor_knobs = options.monitor_gain != 1.0
+        || options.monitor_pan != 0.0
+        || !options.monitor_gains.is_empty()
+        || !options.monitor_pans.is_empty()
+        || !options.monitor_inserts.is_empty();
+    if options.mode != Mode::Record && monitor_knobs {
+        return Err(
+            "--monitor-gain, --monitor-pan and --monitor-insert apply only to --record"
+                .to_string(),
+        );
+    }
+    if options.mode != Mode::Record && (options.align_samples.is_some() || options.calibrate) {
+        return Err("--align-samples and --calibrate apply only to --record".to_string());
     }
 
     match options.mode {
@@ -737,6 +839,83 @@ struct TakeTrack {
     dropped: u64,
 }
 
+/// The capture offset an overdub's monitor is started early by, and where the
+/// number came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Alignment {
+    /// Samples of round trip the monitor starts before the take's stamp.
+    pub samples: u64,
+    /// `measured`, `given` or `none`; a guess is never one of them.
+    pub from: &'static str,
+}
+
+impl Alignment {
+    pub(crate) fn none() -> Self {
+        Alignment {
+            samples: 0,
+            from: "none",
+        }
+    }
+
+    pub(crate) fn given(samples: u64) -> Self {
+        Alignment {
+            samples,
+            from: "given",
+        }
+    }
+
+    /// What the command line already knows without measuring: an explicit
+    /// `--align-samples`, else none. `--calibrate` is resolved later, once the
+    /// device is known.
+    fn hint(options: &Options) -> Self {
+        match options.align_samples {
+            Some(samples) => Alignment::given(samples),
+            None => Alignment::none(),
+        }
+    }
+}
+
+/// The `align_samples`/`align_from` pair every take status carries.
+pub(crate) fn alignment_json(align: Alignment) -> String {
+    format!(
+        ",\"align_samples\":{},\"align_from\":\"{}\"",
+        align.samples, align.from
+    )
+}
+
+/// Resolve the take's capture offset. An explicit number is a measurement the
+/// caller already made (or chose by hand) and wins; otherwise `calibrate` runs
+/// the patch-cable loopback once and uses its samples. A failed or zero
+/// measurement is not shifted by: it reports `none`.
+///
+/// The null backend has no signal path, so calibration there returns
+/// `LoopbackReport::null` (zero samples) and this reports `none` — a
+/// deterministic refusal to invent a number, not a fake measurement.
+pub(crate) fn resolve_alignment(
+    backend: BackendKind,
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    given: Option<u64>,
+    calibrate: bool,
+) -> Alignment {
+    if let Some(samples) = given {
+        return Alignment::given(samples);
+    }
+    if !calibrate {
+        return Alignment::none();
+    }
+    let report = loopback::measure(backend, device, rate, period, buffer);
+    match report.samples {
+        Some(samples) if report.ok && samples > 0 => Alignment {
+            samples,
+            from: "measured",
+        },
+        _ => Alignment::none(),
+    }
+}
+
 /// What one `--record` produced, in the exact key order the JSON contract
 /// names. A failed take keeps the same shape with `frames` and `dropped` at
 /// zero, so a caller parses one struct either way.
@@ -758,6 +937,8 @@ struct TakeReport {
     monitor_files: usize,
     monitor_frames: u64,
     monitor_error: String,
+    /// The capture offset applied to the monitor, and where it came from.
+    align: Alignment,
     error: String,
 }
 
@@ -774,6 +955,7 @@ impl TakeReport {
         monitor_files: usize,
         monitor_frames: u64,
         monitor_error: String,
+        align: Alignment,
     ) -> Self {
         // The top-level fields describe track 1, as they did before a take
         // could carry more than one; the `tracks` array carries the rest.
@@ -796,6 +978,7 @@ impl TakeReport {
             monitor_files,
             monitor_frames,
             monitor_error,
+            align,
             error: String::new(),
         }
     }
@@ -808,6 +991,7 @@ impl TakeReport {
         channels: usize,
         start_sample: u64,
         inserts: String,
+        align: Alignment,
         error: String,
     ) -> Self {
         TakeReport {
@@ -826,6 +1010,7 @@ impl TakeReport {
             monitor_files: 0,
             monitor_frames: 0,
             monitor_error: String::new(),
+            align,
             error,
         }
     }
@@ -866,8 +1051,12 @@ impl TakeReport {
         } else {
             String::new()
         };
+        let alignment = format!(
+            ",\"align_samples\":{},\"align_from\":\"{}\"",
+            self.align.samples, self.align.from
+        );
         format!(
-            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"inserts\":\"{}\"{}{},\"error\":\"{}\"}}",
+            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"inserts\":\"{}\"{}{}{},\"error\":\"{}\"}}",
             self.ok,
             loopback::json_escape(&self.path),
             loopback::json_escape(self.backend),
@@ -881,6 +1070,7 @@ impl TakeReport {
             loopback::json_escape(&self.inserts),
             tracks,
             monitor,
+            alignment,
             loopback::json_escape(&self.error)
         )
     }
@@ -924,7 +1114,7 @@ impl TakeReport {
             String::new()
         };
         format!(
-            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, dropped {}, xruns {}, inserts {}{}{}",
+            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, dropped {}, xruns {}, inserts {}{}{}, alignment {} samples ({})",
             self.path,
             self.frames,
             self.rate,
@@ -937,7 +1127,9 @@ impl TakeReport {
             self.xruns,
             inserts,
             tracks,
-            monitor
+            monitor,
+            self.align.samples,
+            self.align.from
         )
     }
 }
@@ -1001,6 +1193,61 @@ fn validate_record(options: &Options) -> Result<(), String> {
     }
     validate_channel(options)?;
     validate_targets(options)?;
+    validate_monitor(options)?;
+    Ok(())
+}
+
+/// The monitor's own knobs: 1-based file numbers in the monitor's order, and
+/// no knob without a file to apply it to. Checked after `--record --play`
+/// has merged `--file` into the monitor, so the numbering is final.
+fn validate_monitor(options: &Options) -> Result<(), String> {
+    let files = options.monitor.len();
+    if files == 0 {
+        if options.monitor_gain != 1.0
+            || options.monitor_pan != 0.0
+            || !options.monitor_gains.is_empty()
+            || !options.monitor_pans.is_empty()
+            || !options.monitor_inserts.is_empty()
+        {
+            return Err(
+                "--monitor-gain, --monitor-pan and --monitor-insert need a --monitor-file"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
+    if !options.monitor_gain.is_finite()
+        || options.monitor_gains.iter().any(|(_, gain)| !gain.is_finite())
+    {
+        return Err("--monitor-gain must be a finite number".to_string());
+    }
+    if !options.monitor_pan.is_finite()
+        || options.monitor_pans.iter().any(|(_, pan)| !pan.is_finite())
+    {
+        return Err("--monitor-pan must be a finite number".to_string());
+    }
+    let in_range = |file: usize| file >= 1 && file <= files;
+    for spec in &options.monitor_inserts {
+        if let Some(file) = spec.track {
+            if !in_range(file) {
+                return Err(format!(
+                    "--monitor-insert names file {file}, but the monitor has {files} file(s) (1..={files})"
+                ));
+            }
+        }
+    }
+    for (flag, files_named) in [
+        ("--monitor-gain", &options.monitor_gains),
+        ("--monitor-pan", &options.monitor_pans),
+    ] {
+        for (file, _) in files_named {
+            if !in_range(*file) {
+                return Err(format!(
+                    "{flag} names file {file}, but the monitor has {files} file(s) (1..={files})"
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1084,6 +1331,55 @@ fn insert_list(options: &Options, track: usize) -> String {
         .map(|spec| spec.kind.name())
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// One monitor file's gain: an `N:value` for this file overrides the
+/// unprefixed value, exactly as a take's track knobs do.
+fn monitor_gain_for(options: &Options, file: usize) -> f32 {
+    options
+        .monitor_gains
+        .iter()
+        .rev()
+        .find(|(number, _)| *number == file)
+        .map(|(_, gain)| Channel::clamp_gain(*gain))
+        .unwrap_or_else(|| Channel::clamp_gain(options.monitor_gain))
+}
+
+fn monitor_pan_for(options: &Options, file: usize) -> f32 {
+    options
+        .monitor_pans
+        .iter()
+        .rev()
+        .find(|(number, _)| *number == file)
+        .map(|(_, pan)| Channel::clamp_pan(*pan))
+        .unwrap_or_else(|| Channel::clamp_pan(options.monitor_pan))
+}
+
+fn monitor_inserts_for(options: &Options, file: usize) -> Vec<InsertKind> {
+    options
+        .monitor_inserts
+        .iter()
+        .filter(|spec| spec.track.is_none() || spec.track == Some(file))
+        .map(|spec| spec.kind)
+        .collect()
+}
+
+/// The monitor files and the strip each plays through, in the order given.
+fn monitor_specs(options: &Options) -> Vec<MonitorSpec> {
+    options
+        .monitor
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let file = index + 1;
+            MonitorSpec {
+                path: path.clone(),
+                gain: monitor_gain_for(options, file),
+                pan: monitor_pan_for(options, file),
+                inserts: monitor_inserts_for(options, file),
+            }
+        })
+        .collect()
 }
 
 /// One output file and the input that feeds it.
@@ -1367,11 +1663,11 @@ impl jawn_audio::playback::RenderSource for FileSink<'_> {
 /// outputs, on a device handle of its own.
 ///
 /// Nothing here touches a [`DiskWriter`] or the capture device, which is what
-/// keeps the monitor out of the recording. `start_at` is the take's stamp, so
-/// the alignment is by that stamp and not by a measured offset: the player is
-/// assumed to begin at the take's first sample, and a clock that drifts (or a
-/// device that starts late) is not corrected. `stop` ends the bus when the take
-/// does; the two threads never wait on one another.
+/// keeps the monitor out of the recording. `start_at` is where the monitor
+/// begins: the take's stamp minus the measured capture offset
+/// ([`monitor_start`]), never before sample zero. The offset corrects the
+/// start; a clock that drifts over a long take is still not corrected. `stop`
+/// ends the bus when the take does; the two threads never wait on one another.
 fn run_monitor(
     backend: BackendKind,
     device: &str,
@@ -1600,6 +1896,7 @@ fn run_record(options: &Options) -> Result<ExitCode, String> {
                 options.channels,
                 options.start_at,
                 insert_list(options, 1),
+                Alignment::hint(options),
                 error.clone(),
             );
             if options.json {
@@ -1661,11 +1958,17 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
     // exists: a missing file or a busy output is a refusal, not a take that
     // records silence the person thought they would hear. Its strips are built
     // on the playback thread, because an insert is not `Send`.
-    let mut monitor_tracks: Vec<PlayTrack> = Vec::with_capacity(options.monitor.len());
-    for path in &options.monitor {
+    let monitor_plans = monitor_specs(options);
+    let mut monitor_tracks: Vec<PlayTrack> = Vec::with_capacity(monitor_plans.len());
+    for spec in &monitor_plans {
         monitor_tracks.push(
-            PlayTrack::from_wav(path.clone(), 1.0, 0.0, Vec::new())
-                .map_err(|error| format!("monitor: {error}"))?,
+            PlayTrack::from_wav(
+                spec.path.clone(),
+                spec.gain,
+                spec.pan,
+                spec.inserts.clone(),
+            )
+            .map_err(|error| format!("monitor: {error}"))?,
         );
     }
     if !monitor_tracks.is_empty() {
@@ -1691,6 +1994,24 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
             ));
         }
     }
+
+    // The capture offset is resolved before any file exists: an explicit
+    // number wins, `--calibrate` measures once through the patch cable, and
+    // neither means no shift. This is a start correction only; drift over a
+    // long take is not measured here.
+    let alignment = if monitor_tracks.is_empty() {
+        Alignment::hint(options)
+    } else {
+        resolve_alignment(
+            options.backend,
+            device,
+            options.rate,
+            options.frames,
+            options.buffer,
+            options.align_samples,
+            options.calibrate,
+        )
+    };
 
     // One writer per track. Each spawn creates its WAV before any audio, so a
     // bad path fails here; a failure on a later track joins the writers already
@@ -1728,9 +2049,10 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
 
     // Two threads and two device handles: this one captures the take, the
     // monitor renders to the outputs. Neither waits on the other; the monitor
-    // never touches the take's writers, so it cannot enter the recording. Both
-    // are aligned by the take's `start_at` stamp rather than a measured
-    // offset: the player is assumed to begin at the take's first sample.
+    // never touches the take's writers, so it cannot enter the recording. The
+    // monitor starts `alignment.samples` before the take's stamp, so the
+    // monitored sound reaches the capture at the stamp it was played for; with
+    // no measurement the start is the stamp itself.
     let monitor_stop = Arc::new(AtomicBool::new(false));
     let monitor = if monitor_tracks.is_empty() {
         None
@@ -1742,7 +2064,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
             let rate = options.rate;
             let period = options.frames;
             let buffer = options.buffer;
-            let start_at = options.start_at;
+            let start_at = monitor_start(options.start_at, alignment.samples);
             thread::Builder::new()
                 .name("jawn-audio-monitor".to_string())
                 .spawn(move || {
@@ -1870,6 +2192,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
         options.monitor.len(),
         monitor_frames,
         monitor_error,
+        alignment,
     ))
 }
 
@@ -2192,6 +2515,47 @@ fn self_test() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_explicit_alignment_is_given_and_a_null_calibration_shifts_nothing() {
+        let given = resolve_alignment(
+            BackendKind::Null,
+            "null",
+            48_000,
+            64,
+            256,
+            Some(96),
+            false,
+        );
+        assert_eq!(given, Alignment::given(96));
+        // A given number wins even when calibrate was also asked for.
+        assert_eq!(
+            resolve_alignment(BackendKind::Null, "null", 48_000, 64, 256, Some(12), true),
+            Alignment::given(12)
+        );
+        // The null backend has no signal path: calibration reports none, never
+        // a guessed number.
+        assert_eq!(
+            resolve_alignment(BackendKind::Null, "null", 48_000, 64, 256, None, true),
+            Alignment::none()
+        );
+        assert_eq!(
+            resolve_alignment(BackendKind::Null, "null", 48_000, 64, 256, None, false),
+            Alignment::none()
+        );
+    }
+
+    #[test]
+    fn alignment_json_names_the_source() {
+        assert_eq!(
+            alignment_json(Alignment::given(480)),
+            ",\"align_samples\":480,\"align_from\":\"given\""
+        );
+        assert_eq!(
+            alignment_json(Alignment::none()),
+            ",\"align_samples\":0,\"align_from\":\"none\""
+        );
+    }
 
     #[test]
     fn the_null_queue_holds_the_whole_take() {

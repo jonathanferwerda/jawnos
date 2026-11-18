@@ -2,6 +2,7 @@
 	<audio id="metronome" autoplay style="display:none;"></audio>
 	<div id="studio_plug_select_container" style="position:fixed;display:none;background-color:lightgreen;z-index:50009;border:solid;border-radius:4px;"></div>
 	<div id="pedalboard" style="display:none;">
+		<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
 		<% my $count = 0; %>
 		<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
 			<span id="pedal_<%= $p->{'name'} %>" class="pedal" style="left:<%= $count * 175 %>px;">
@@ -19,12 +20,24 @@
 			<% $count++; %>
 		<% } %>
 	</div>
+	<div id="studio_layout_bar" class="studio_layout_bar">
+		<button id="studio_add_track" class="hover" title="<%= &subs::ui('Add a track, up to 32') %>" hint="<%= &subs::ui('Add a track, up to 32') %>"><%= &subs::ui('Add track') %></button>
+		<span id="studio_track_count" class="studio_track_count"></span>
+		<button class="studio_hide_toggle hover" data-panel="mixer" data-setting="hide_channel_strips" data-hide-label="Hide strips" data-show-label="Show strips" aria-pressed="false" hint="<%= &subs::ui('Hide the channel strips') %>"><%= &subs::ui('Hide strips') %></button>
+		<button class="studio_float_toggle hover" data-panel="mixer" hint="<%= &subs::ui('Float the channel strips') %>"><%= &subs::ui('Float strips') %></button>
+		<button class="studio_hide_toggle hover" data-panel="transport" data-setting="hide_transport" data-hide-label="Hide transport" data-show-label="Show transport" aria-pressed="false" hint="<%= &subs::ui('Hide the transport') %>"><%= &subs::ui('Hide transport') %></button>
+		<button class="studio_float_toggle hover" data-panel="transport" hint="<%= &subs::ui('Float the transport') %>"><%= &subs::ui('Float transport') %></button>
+		<button class="studio_hide_toggle hover" data-panel="tracks" data-setting="hide_tracks" data-hide-label="Hide tracks" data-show-label="Show tracks" aria-pressed="false" hint="<%= &subs::ui('Hide the track listing') %>"><%= &subs::ui('Hide tracks') %></button>
+		<button class="studio_float_toggle hover" data-panel="tracks" hint="<%= &subs::ui('Float the track listing') %>"><%= &subs::ui('Float tracks') %></button>
+		<button class="studio_float_toggle hover" data-panel="synth" hint="<%= &subs::ui('Float the synth') %>"><%= &subs::ui('Float synth') %></button>
+	</div>
 	<div id="studio_synth" class="studio_synth_panel">
 		<div class="studio_synth_bar">
-			<b class="hover" hint="The JawnOS synth, always here">Synth</b>
+			<b class="hover studio_drag_handle" data-studio-drag="synth" hint="<%= &subs::ui('Drag to move the synth') %>">Synth</b>
 			<select class="studio_synth_select synth_preset" hint="Choose a synth sound"></select>
-			<button id="studio_synth_hide" class="hover" hint="Collapse the synth panel">Hide</button>
-			<button id="studio_synth_show" class="hover" hint="Show the synth panel" style="display:none;">Synth</button>
+			<button id="studio_synth_hide" class="hover" data-setting="hide_synth" hint="<%= &subs::ui('Collapse the synth panel') %>">Hide</button>
+			<button id="studio_synth_show" class="hover" data-setting="hide_synth" hint="<%= &subs::ui('Show the synth panel') %>" style="display:none;">Synth</button>
+			<button class="studio_dock hover" data-panel="synth" hint="<%= &subs::ui('Dock the synth') %>"><%= &subs::ui('Dock') %></button>
 		</div>
 		<div class="studio_synth_body">
 			<div class="studio_synth_keys synth_keys"></div>
@@ -57,35 +70,68 @@
 		.studio_synth_knob input[type=range] { width: 60px; }
 		.studio_synth_note { opacity: .55; font-size: 12px; }
 	</style>
-	<div id="studio_viewer" style="height:200px;" channel_count="<%= $channel_count %>">
-		<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
-			<canvas style="width:95%;height:calc(90% / <%= $channel_count + 1 %>);border:solid;" class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="Drag to move a clip, its edges to trim, double-click to cut, select + Delete to remove">track name <%= $ch %></canvas>
-		<% } %>
+	<div id="studio_tracks_panel" class="studio_panel">
+		<div class="studio_panel_bar">
+			<span class="studio_drag_handle" data-studio-drag="tracks" hint="<%= &subs::ui('Drag to move the track listing') %>"><%= &subs::ui('Tracks') %></span>
+			<button class="studio_dock hover" data-panel="tracks" hint="<%= &subs::ui('Dock the tracks') %>"><%= &subs::ui('Dock') %></button>
+		</div>
+		<div id="studio_viewer" channel_count="<%= $channel_count %>" data-max-tracks="<%= $max_tracks %>">
+			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
+				<div class="studio_track" data-channel="<%= $ch %>" id="studio_track_row_<%= $ch %>">
+					<div class="studio_track_panel" channel="<%= $ch %>" hint="<%= &subs::ui('This track') %>">
+						<div class="studio_track_line">
+							<button class="armed studio_track_arm" channel="<%= $ch %>" control="armed" state="off" hint="<%= &subs::ui('Off, record, play or loop') %>">O</button>
+							<input class="studio_track_name" channel="<%= $ch %>" value="<%= &subs::ui('Track') %> <%= $ch %>" hint="<%= &subs::ui('Rename this track') %>">
+						</div>
+						<div class="studio_track_line">
+							<input type="range" min="0" max="100" value="1" channel="<%= $ch %>" control="volume" class="channel_volume studio_track_volume" hint="<%= &subs::ui('Mix this track against the others') %>">
+							<button class="studio_track_fx hover" channel="<%= $ch %>" hint="<%= &subs::ui('Show this track\'s pedals') %>"><%= &subs::ui('FX') %></button>
+							<button class="studio_track_automation hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Show automation for this track') %>"><%= &subs::ui('Auto') %></button>
+							<button class="studio_track_delete hover" channel="<%= $ch %>" armed="no" hint="<%= &subs::ui('Delete this track') %>"><%= &subs::ui('Delete') %></button>
+						</div>
+						<div class="studio_track_line studio_track_metre_line">
+							<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
+							<span class="channel_fx" channel="<%= $ch %>" hint="<%= &subs::ui('Inserted pedals (drag a pedal here)') %>"></span>
+						</div>
+					</div>
+					<div class="studio_track_body">
+						<canvas class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="<%= &subs::ui('Drag to move a clip, its edges to trim, double-click to cut, select + Delete to remove') %>"></canvas>
+						<div class="studio_track_automation_lane" aria-hidden="true"><%= &subs::ui('Automation') %></div>
+					</div>
+				</div>
+			<% } %>
+		</div>
+		<div id="studio_track_container"></div>
 	</div>
-	<div id="studio_mixer">
-		<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
-			<span class="channel channel_<%= $ch %>">
-				<img class="tiny_thumb jack studio_jack hover" hint="Jack" src="<%= &subs::icon_for('/images/studio/jack.png') %>" channel="<%= $ch %>">
-				<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="input"></div>
+	<div id="studio_mixer" class="studio_panel">
+		<div class="studio_panel_bar">
+			<span class="studio_drag_handle" data-studio-drag="mixer" hint="<%= &subs::ui('Drag to move the channel strips') %>"><%= &subs::ui('Channels') %></span>
+			<button class="studio_dock hover" data-panel="mixer" hint="<%= &subs::ui('Dock the channel strips') %>"><%= &subs::ui('Dock') %></button>
+		</div>
+		<div id="studio_mixer_strips">
+			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
+				<span class="channel channel_<%= $ch %>">
+					<img class="tiny_thumb jack studio_jack hover" hint="Jack" src="<%= &subs::icon_for('/images/studio/jack.png') %>" channel="<%= $ch %>">
+					<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="input"></div>
 
-				<% foreach my $k ( grep { $_->{'placement'} eq 'channel' } @{$gb::studio->{'knobs'}}) { %>
-					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-					<img class="knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
-					<span class="to_sound" channel="<%= $ch %>" >
-						<img class="cord draggable" hint="Cord" style="display:none;" control="input" channel="<%= $ch %>" src="<%= &subs::icon_for('/images/studio/cord.png') %>">
-					</span>
-				<% } %>
-				<img class="tiny_thumb jack studio_cord hover" hint="Cord" src="<%= &subs::icon_for('/images/studio/cord.png') %>" channel="<%= $ch %>">
-				<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="output"></div>
-				<button class="armed" channel="<%= $ch %>" control="armed" state="off">O</button>
-				<span class="channel_fx" channel="<%= $ch %>" hint="Inserted pedals (drag a pedal here)"></span>
-				<span class="channel_fader">
-					<canvas class="channel_volume_metre channel_volume_metre_<%= $ch %>" id="channel_volume_metre_<%= $ch %>"></canvas>
-					<input height="50" channel="<%= $ch %>" type="range" min="0" max="100" control="volume" hint="<%= &subs::ui('Mix this track against the others') %>" class="channel_volume channel_volume_<%= $ch %>" value="1">
+					<% foreach my $k ( grep { $_->{'placement'} eq 'channel' } @{$gb::studio->{'knobs'}}) { %>
+						<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
+						<img class="knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
+						<span class="to_sound" channel="<%= $ch %>" >
+							<img class="cord draggable" hint="Cord" style="display:none;" control="input" channel="<%= $ch %>" src="<%= &subs::icon_for('/images/studio/cord.png') %>">
+						</span>
+					<% } %>
+					<img class="tiny_thumb jack studio_cord hover" hint="Cord" src="<%= &subs::icon_for('/images/studio/cord.png') %>" channel="<%= $ch %>">
+					<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="output"></div>
 				</span>
-
-			</span>
-		<% } %>
+			<% } %>
+		</div>
+	</div>
+	<div id="studio_transport_panel" class="studio_panel">
+		<div class="studio_panel_bar">
+			<span class="studio_drag_handle" data-studio-drag="transport" hint="<%= &subs::ui('Drag to move the transport') %>"><%= &subs::ui('Transport') %></span>
+			<button class="studio_dock hover" data-panel="transport" hint="<%= &subs::ui('Dock the transport') %>"><%= &subs::ui('Dock') %></button>
+		</div>
 		<span id="studio_controls">
 			<span style="left:2px;top:50px;position:absolute;">
 
@@ -138,8 +184,8 @@
 			<span class="jog_wheel_centre" style="width:5px;height:5px;"></span>
 		</span>
 	</div>
-	<div id="studio_track_container"></div>
-	<div id="studio_config" style="display:none; width:100%;background-color:var(--panel);">
+</div>
+<div id="studio_config" style="display:none; width:100%;background-color:var(--panel);">
 		<h1>Configure</h1>
 
 		<div id="song_controls" style="">
@@ -159,7 +205,7 @@
 				<tbody>
 					<tr>
 						<td>Channels</td>
-						<td><input class="studio_config" setting="channel_count" value="<%= $settings->{'channel_count'} || 4 %>" restart="yes"></td>
+						<td><input class="studio_config" setting="channel_count" value="<%= $settings->{'channel_count'} || 1 %>" restart="yes" hint="<%= &subs::ui('Tracks to open; Add track changes this live, 1 to 32') %>"></td>
 					</tr>
 					<tr>
 						<td>Record offset (ms)<br><span style="font-size:12px;">shifts new takes earlier to cancel input latency</span></td>
@@ -283,5 +329,4 @@
 						
 		</div>
 	</div>
-</div>
 

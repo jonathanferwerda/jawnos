@@ -327,9 +327,11 @@ fn record_null_writes_a_stereo_48k_take_and_its_contract() {
     assert_eq!(json_number(&text, "channels"), 2.0, "stdout: {text}");
     assert_eq!(json_number(&text, "start_sample"), 0.0, "stdout: {text}");
     assert_eq!(json_number(&text, "xruns"), 0.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "align_samples"), 0.0, "stdout: {text}");
+    assert!(text.contains("\"align_from\":\"none\""), "stdout: {text}");
     assert!(text.contains("\"error\":\"\""), "stdout: {text}");
     let expected = format!(
-        "{{\"ok\":true,\"path\":\"{}\",\"backend\":\"null\",\"device\":\"null\",\"rate\":48000,\"frames\":4800,\"dropped\":0,\"channels\":2,\"start_sample\":0,\"xruns\":0,\"inserts\":\"\",\"error\":\"\"}}",
+        "{{\"ok\":true,\"path\":\"{}\",\"backend\":\"null\",\"device\":\"null\",\"rate\":48000,\"frames\":4800,\"dropped\":0,\"channels\":2,\"start_sample\":0,\"xruns\":0,\"inserts\":\"\",\"align_samples\":0,\"align_from\":\"none\",\"error\":\"\"}}",
         take.text()
     );
     assert_eq!(text.trim(), expected, "the JSON line is the contract");
@@ -964,6 +966,85 @@ fn a_monitor_at_another_rate_is_refused_before_the_take_exists() {
     assert!(text.contains("\"ok\":false"), "stdout: {text}");
     assert!(text.contains("44100"), "the refusal names the rate: {text}");
     assert!(text.contains("48000"), "the refusal names the take's rate: {text}");
+    assert!(!take.path.exists(), "a refused take created a file");
+}
+
+#[test]
+fn a_given_alignment_is_reported_and_a_null_calibration_reports_none() {
+    let monitor = TempTake::new("align-monitor");
+    write_silent_wav_at(&monitor.path, 48_000, 4_800);
+    let take = TempTake::new("align-take");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--start-at", "2400",
+        "--align-samples", "480", "--monitor", monitor.text(), "--out", take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "align_samples"), 480.0, "stdout: {text}");
+    assert!(text.contains("\"align_from\":\"given\""), "stdout: {text}");
+    assert_eq!(json_number(&text, "start_sample"), 2_400.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "playing"), 1.0, "stdout: {text}");
+
+    // The null backend has no patch cable to measure, so calibration must
+    // not invent an offset: it says `none`, deterministically.
+    let calibrated = TempTake::new("align-calibrate");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--calibrate", "--monitor",
+        monitor.text(), "--out", calibrated.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "align_samples"), 0.0, "stdout: {text}");
+    assert!(text.contains("\"align_from\":\"none\""), "stdout: {text}");
+}
+
+#[test]
+fn monitor_files_take_their_own_knobs() {
+    let first = TempTake::new("monitor-file-a");
+    let second = TempTake::new("monitor-file-b");
+    write_silent_wav_at(&first.path, 48_000, 4_800);
+    write_silent_wav_at(&second.path, 48_000, 4_800);
+    let take = TempTake::new("monitor-file-take");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.3", "--monitor-file", first.text(),
+        "--monitor-file", second.text(), "--monitor-gain", "1:0.5", "--monitor-gain", "2:0.8",
+        "--monitor-pan", "1:-1", "--monitor-pan", "2:1", "--monitor-insert", "1:tone",
+        "--monitor-insert", "2:delay", "--out", take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "playing"), 2.0, "stdout: {text}");
+    assert!(
+        json_number(&text, "monitor_frames") > 0.0,
+        "the monitor ran: {text}"
+    );
+}
+
+#[test]
+fn a_monitor_knob_naming_a_missing_file_is_a_usage_error() {
+    let first = TempTake::new("monitor-one-file");
+    write_silent_wav_at(&first.path, 48_000, 480);
+    let take = TempTake::new("monitor-bad-target");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--monitor-file", first.text(),
+        "--monitor-gain", "2:0.5", "--out", take.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("--monitor-gain"), "stderr: {text}");
+    assert!(text.contains("2"), "stderr: {text}");
     assert!(!take.path.exists(), "a refused take created a file");
 }
 

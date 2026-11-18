@@ -327,12 +327,13 @@ $(document).on('keydown', function (e) {
 
 // ---- pedal / channel selection ---------------------------------------------
 
-$(document).on('click', '.channel', function (e) {
+$(document).on('click', '.channel, .studio_track_panel', function (e) {
 	if ($(e.target).is('input, button, img, canvas, video, .armed')) { return; }
-	$('.channel').removeClass('selected_channel');
+	$('.channel, .studio_track_panel').removeClass('selected_channel');
 	$(this).addClass('selected_channel');
 	var ch = ($(this).attr('class') || '').match(/channel_(\d+)/);
 	if (ch) { studioSelectedChannel = ch[1]; }
+	else if ($(this).attr('channel')) { studioSelectedChannel = $(this).attr('channel'); }
 });
 
 $(document).on('click', '.channel_fx_pedal', function () {
@@ -360,7 +361,7 @@ function studioRevealPedal(name) {
 
 $(document).on('click', '#studio_new', function() {
 	$('#studio').attr('uuid','').attr('name','');
-	studioInit({ uuid: 'new', settings: [{ 'setting': 'last_song', 'value': 'new' }] });
+	studioInit({ uuid: 'new', settings: [ { 'setting': 'last_song', 'value': 'new' }, { 'setting': 'channel_count', 'value': '1' } ] });
 	$('#studio_song_select').val('none');
 });
 

@@ -795,7 +795,11 @@ var windowTileDefaultHeight = 640;
 
 function windowTiledSizeReset(win) {
 	win = $(win);
-	win.css({ 'width': windowTileDefaultWidth + 'px', 'height': windowTileDefaultHeight + 'px' });
+	// An app may open at its own pair (Studio does); the standard 480x640 is
+	// still the fallback, so every other window joins at the same size as before.
+	var width = parseFloat(win.attr('default_width')) || windowTileDefaultWidth;
+	var height = parseFloat(win.attr('default_height')) || windowTileDefaultHeight;
+	win.css({ 'width': width + 'px', 'height': height + 'px' });
 	win.removeAttr('free_dimensions').removeAttr('fit_height').removeAttr('fit_shrunk');
 	win.attr('view', '');
 	win.find('.maximize_button').show();

@@ -1103,6 +1103,149 @@ fn an_overdub_reports_both_roles_and_one_stop_joins_both() {
 }
 
 #[test]
+fn an_overdub_reports_its_alignment_and_each_monitor_strip() {
+    let server = Server::start("overdub-strips");
+    let mut client = server.connect();
+
+    let first = TempFile::new("strips-a");
+    let second = TempFile::new("strips-b");
+    write_silent_wav(&first.path, 4_800);
+    write_silent_wav(&second.path, 4_800);
+    let take = TempFile::new("strips-take");
+
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300,\"start_at\":1000,\"align_samples\":100,\"monitor\":[{{\"file\":\"{}\",\"gain\":0.8,\"pan\":-0.2,\"inserts\":[\"tone\"]}},\"{}\"]}}",
+        take.text(),
+        first.text(),
+        second.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    assert!(reply.contains("\"playing\":2"), "record: {reply}");
+    assert!(
+        reply.contains("\"align_samples\":100"),
+        "record: {reply}"
+    );
+    assert!(reply.contains("\"align_from\":\"given\""), "record: {reply}");
+    assert!(reply.contains("\"monitor\":["), "record: {reply}");
+
+    let status = client.wait_for_monitor_frames(2_400);
+    assert!(status.contains("\"state\":\"recording\""), "status: {status}");
+    assert!(status.contains("\"align_samples\":100"), "status: {status}");
+    assert!(status.contains("\"align_from\":\"given\""), "status: {status}");
+    assert!(status.contains(&format!("\"file\":\"{}\"", first.text())), "status: {status}");
+    assert!(status.contains("\"gain\":0.8"), "status: {status}");
+    assert!(status.contains("\"pan\":-0.2"), "status: {status}");
+    assert!(status.contains("\"inserts\":[\"tone\"]"), "status: {status}");
+    assert!(status.contains(&format!("\"file\":\"{}\"", second.text())), "status: {status}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    // The take keeps its alignment after the monitor ends.
+    assert!(stopped.contains("\"align_from\":\"given\""), "stop: {stopped}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_param_moves_a_monitor_strip_and_not_the_take() {
+    let server = Server::start("monitor-param");
+    let mut client = server.connect();
+
+    let monitor = TempFile::new("monitor-param-file");
+    write_silent_wav(&monitor.path, 48_000 * 300);
+    let take = TempFile::new("monitor-param-take");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300,\"monitor\":[{{\"file\":\"{}\",\"gain\":1,\"pan\":0,\"inserts\":[\"tone\"]}}]}}",
+        take.text(),
+        monitor.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    client.wait_for_frames();
+
+    let reply = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"monitor\",\"track\":0,\"name\":\"gain\",\"value\":0.5}",
+    );
+    assert_eq!(
+        reply,
+        "{\"ok\":true,\"target\":\"monitor\",\"track\":0,\"name\":\"gain\"}"
+    );
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"monitor\":["), "status: {status}");
+    assert!(status.contains("\"gain\":0.5"), "status: {status}");
+    // The take's own strip is untouched: its top-level gain is still 1.
+    assert!(status.contains(",\"gain\":1,\"pan\":0,"), "status: {status}");
+
+    // An effect knob on the monitor follows the insert it names; one that is
+    // not in the chain is refused exactly as it is for a take track.
+    let reply = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"monitor\",\"track\":0,\"name\":\"tone.bass\",\"value\":3}",
+    );
+    assert_eq!(
+        reply,
+        "{\"ok\":true,\"target\":\"monitor\",\"track\":0,\"name\":\"tone.bass\"}"
+    );
+    let reply = client.ask(
+        "{\"cmd\":\"param\",\"target\":\"monitor\",\"track\":0,\"name\":\"delay.mix\",\"value\":0.5}",
+    );
+    assert!(reply.contains("\"ok\":false"), "missing insert: {reply}");
+
+    // The existing `track` form still moves the recording track.
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"gain\",\"value\":0.25}");
+    assert_eq!(reply, "{\"ok\":true,\"track\":0,\"name\":\"gain\"}");
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains(",\"gain\":0.25,\"pan\":0,"), "status: {status}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"ok\":true"), "stop: {stopped}");
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_socket_calibration_without_a_cable_reports_none() {
+    let server = Server::start("calibrate-none");
+    let mut client = server.connect();
+
+    let monitor = TempFile::new("calibrate-monitor");
+    write_silent_wav(&monitor.path, 4_800);
+    let take = TempFile::new("calibrate-take");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1,\"calibrate\":true,\"monitor\":[\"{}\"]}}",
+        take.text(),
+        monitor.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    // The null backend cannot measure a cable; it must not fake a number.
+    assert!(reply.contains("\"align_samples\":0"), "record: {reply}");
+    assert!(reply.contains("\"align_from\":\"none\""), "record: {reply}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
 fn play_is_accepted_while_a_take_records() {
     let server = Server::start("play-beside");
     let mut client = server.connect();

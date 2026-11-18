@@ -16,8 +16,10 @@
 //! been recorded from the same transport, and `--start-at` skips the same
 //! number of frames in every one of them.
 
+use std::sync::Arc;
+
 use crate::effect::{Channel, InsertKind};
-use crate::mixer::Mixer;
+use crate::mixer::{Mixer, ParamQueue};
 use crate::wav_read::{read_wav, WavAudio};
 
 /// One file and the strip it plays through.
@@ -67,6 +69,86 @@ impl PlayTrack {
             inserts,
         }
     }
+}
+
+/// One monitor file and the strip it plays through.
+///
+/// The monitor bus is a playback like any other, so a monitor file is a
+/// [`PlayTrack`] with its own gain, pan and inserts rather than a bare wire.
+/// Keeping the plan separate from the decoded samples lets the socket answer
+/// `status` with what the caller armed before the playback thread exists.
+#[derive(Clone, Debug)]
+pub struct MonitorSpec {
+    /// The absolute path the caller named.
+    pub path: String,
+    /// Trim before the inserts.
+    pub gain: f32,
+    /// -1 left ..= 1 right, after the inserts.
+    pub pan: f32,
+    /// The insert chain, in the order the caller gave it.
+    pub inserts: Vec<InsertKind>,
+}
+
+impl MonitorSpec {
+    /// A bare wire: unity trim, centre pan, no inserts. This is what the
+    /// historical list of monitor paths arms.
+    pub fn wire(path: impl Into<String>) -> Self {
+        MonitorSpec {
+            path: path.into(),
+            gain: 1.0,
+            pan: 0.0,
+            inserts: Vec::new(),
+        }
+    }
+
+    /// The chain order `status` reports, e.g. `tone,delay`.
+    pub fn insert_list(&self) -> String {
+        self.inserts
+            .iter()
+            .map(|kind| kind.name())
+            .collect::<Vec<&str>>()
+            .join(",")
+    }
+}
+
+/// The `monitor` array `status` carries, e.g.
+/// `,"monitor":[{"file":"/a.wav","gain":1,"pan":0,"inserts":[]}]`.
+///
+/// Empty for a playback that is not a monitor, so appending the result cannot
+/// add a key no caller asked for.
+pub fn monitor_json(specs: &[MonitorSpec]) -> String {
+    if specs.is_empty() {
+        return String::new();
+    }
+    let entries: Vec<String> = specs
+        .iter()
+        .map(|spec| {
+            let inserts: Vec<String> = spec
+                .inserts
+                .iter()
+                .map(|kind| format!("\"{}\"", kind.name()))
+                .collect();
+            format!(
+                "{{\"file\":\"{}\",\"gain\":{},\"pan\":{},\"inserts\":[{}]}}",
+                crate::loopback::json_escape(&spec.path),
+                spec.gain,
+                spec.pan,
+                inserts.join(",")
+            )
+        })
+        .collect();
+    format!(",\"monitor\":[{}]", entries.join(","))
+}
+
+/// Where the monitor starts, given the take's stamp and the measured capture
+/// offset.
+///
+/// The monitor is started *earlier* by the round trip the capture will add, so
+/// the sound the person hears while playing lands at the take's first sample.
+/// A take at sample 0 cannot start earlier, so the result is clamped at zero;
+/// the correction is a start offset, never a negative position.
+pub fn monitor_start(take_start: u64, align_samples: u64) -> u64 {
+    take_start.saturating_sub(align_samples)
 }
 
 /// A running playback: the sources, their strips, and where on the shared
@@ -121,13 +203,24 @@ impl Playback {
     /// sample rate: resampling here would silently change the material, and
     /// the takes this engine records are all one rate.
     pub fn new(tracks: Vec<PlayTrack>, start_at: u64) -> Result<Self, String> {
+        Self::with_queue(tracks, start_at, Arc::new(ParamQueue::new()))
+    }
+
+    /// The same, with a control queue the socket already holds, so a `param`
+    /// can move a monitor strip while it plays. A plain playback gets a queue
+    /// nobody writes to.
+    pub fn with_queue(
+        tracks: Vec<PlayTrack>,
+        start_at: u64,
+        params: Arc<ParamQueue>,
+    ) -> Result<Self, String> {
         let (rate, longest) = check_tracks(&tracks)?;
         let total_frames = longest.saturating_sub(start_at);
 
         let inputs: Vec<usize> = (0..tracks.len()).collect();
         let labels: Vec<String> = (1..=tracks.len()).map(|file| format!("f{file}")).collect();
         let label_refs: Vec<&str> = labels.iter().map(|label| label.as_str()).collect();
-        let mut mixer = Mixer::new(&inputs, &label_refs);
+        let mut mixer = Mixer::with_queue(&inputs, &label_refs, params);
         for (index, track) in tracks.iter().enumerate() {
             let mut channel = Channel::new(track.gain, track.pan.clamp(-1.0, 1.0));
             for kind in &track.inserts {
@@ -370,6 +463,70 @@ mod tests {
         assert!(error.contains("a.wav"), "{error}");
         assert!(error.contains("b.wav"), "{error}");
         assert!(error.contains("44100"), "{error}");
+    }
+
+    #[test]
+    fn a_monitor_starts_before_the_take_by_the_measured_offset() {
+        // File frame 5 is the first loud one. A take stamped at frame 10 with
+        // an 8-sample offset starts the monitor at frame 2, so the first
+        // rendered block begins on file frame 2 (silent) and reaches the loud
+        // frame 3 frames later.
+        let mut source = track("a.wav", 0.0, 1.0, -1.0);
+        source.samples = vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let start = monitor_start(10, 8);
+        assert_eq!(start, 2);
+        let mut playback = Playback::new(vec![source], start).expect("playback");
+        playback.prepare(48_000, 4).expect("prepare");
+        let mut out = vec![0.0f32; 8];
+        playback.render(&mut out).expect("render");
+        // Frames 2, 3 and 4 are silent; frame 5 is the loud one, so the third
+        // rendered frame is the first audible sample.
+        assert_eq!(&out[0..6], &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert!((out[6] - 1.0).abs() < 1e-6, "{out:?}");
+        assert!(out[7].abs() < 1e-6, "hard left leaves the right silent: {out:?}");
+    }
+
+    #[test]
+    fn an_alignment_never_starts_before_sample_zero() {
+        assert_eq!(monitor_start(0, 96), 0);
+        assert_eq!(monitor_start(40, 96), 0);
+        assert_eq!(monitor_start(96, 96), 0);
+        assert_eq!(monitor_start(100, 96), 4);
+    }
+
+    #[test]
+    fn two_monitor_files_run_their_own_gain_and_pan() {
+        // A at unity hard left, B at half trim hard right: the same sum the
+        // recording path makes, because both use one `Channel` per file.
+        let mut a = track("a.wav", 1.0, 1.0, -1.0);
+        a.samples = vec![1.0; 4];
+        let mut b = track("b.wav", 0.5, 0.5, 1.0);
+        b.samples = vec![0.5; 4];
+        let mut playback = Playback::new(vec![a, b], 0).expect("playback");
+        playback.prepare(48_000, 4).expect("prepare");
+        let mut out = vec![0.0f32; 8];
+        playback.render(&mut out).expect("render");
+        for frame in out.chunks_exact(2) {
+            assert!((frame[0] - 1.0).abs() < 1e-6, "left: {out:?}");
+            assert!((frame[1] - 0.25).abs() < 1e-6, "right: {out:?}");
+        }
+    }
+
+    #[test]
+    fn a_monitor_spec_names_its_strip() {
+        use crate::effect::InsertKind;
+        let spec = MonitorSpec::wire("/a.wav");
+        assert_eq!(spec.gain, 1.0);
+        assert_eq!(spec.pan, 0.0);
+        assert!(spec.inserts.is_empty());
+        assert_eq!(spec.insert_list(), "");
+        let spec = MonitorSpec {
+            path: "/b.wav".to_string(),
+            gain: 0.8,
+            pan: -0.2,
+            inserts: vec![InsertKind::Tone, InsertKind::Delay],
+        };
+        assert_eq!(spec.insert_list(), "tone,delay");
     }
 
     #[test]

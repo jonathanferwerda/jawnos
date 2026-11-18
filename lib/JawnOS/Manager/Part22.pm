@@ -662,9 +662,18 @@ sub window_maker($type,$timestamp) {
 	# person has sized for themselves keeps its own dimensions.
 	my $default_width = 480;
 	my $default_height = 640;
+	# Studio is a mixing desk, not a one-column appointment: it opens wide enough
+	# for the synth, the strips and the transport together. windowFit on the
+	# client still clamps either number to the viewport, and a pinned window's
+	# saved dimensions win over this default.
+	my %app_default_size = ( studio => { width => 1000, height => 760 } );
+	if ($app_default_size{$app}) {
+		$default_width = $app_default_size{$app}->{'width'};
+		$default_height = $app_default_size{$app}->{'height'};
+	}
 
 	my $display =
-		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . $place_screen . '  style="background-color:var(--window, var(--panel));
+		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . $place_screen . ' default_width="' . $default_width . '" default_height="' . $default_height . '"  style="background-color:var(--window, var(--panel));
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || $default_width) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || $default_height) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" revealed="no" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .

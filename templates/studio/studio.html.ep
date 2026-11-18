@@ -16,7 +16,10 @@
 	};
 %>
 <script>window.jawnos_studio_button_icons = <%== encode_json \%jawnos_button_icons %>;</script>
-<%# the viewer and the style block both size the tracks by the channel count %>
-<% my $channel_count = $settings->{'channel_count'} || 4; %>
-<%= include 'studio/markup', button_icon => $button_icon, channel_count => $channel_count %>
-<%= include 'studio/style', channel_count => $channel_count %>
+<%# The song's own channel count wins, then the app setting. A new song starts
+   with one track; Add track raises it, up to the engine's 32. %>
+<% my $channel_count = $settings->{'channel_count'} || 1; %>
+<% $channel_count = 1 if $channel_count < 1; %>
+<% $channel_count = 32 if $channel_count > 32; %>
+<%= include 'studio/markup', button_icon => $button_icon, channel_count => $channel_count, max_tracks => 32 %>
+<%= include 'studio/style', channel_count => $channel_count, max_tracks => 32 %>

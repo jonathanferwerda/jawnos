@@ -32,18 +32,25 @@
 	#studio_controls {
 		position:absolute;
 		padding-left:5px;
+		left:0;
+		right:130px;
+		top:0;
+		bottom:0;
+		width:auto;
 	}
 	#studio_track_container {
-		position:absolute;
-		right: -130px;
-		width: 130px;
-		overflow:scroll;
-		top:0px;
-		height: 100%;
+		/* the hidden media elements live inside the track area, a clipped 1px box:
+		   they must never paint on the window (or the desk) beside it */
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
 	}
 	.track {
 		width: 100%;
-		height: calc(100% / <%= $channel_count %>);
+		height: 100%;
 		cursor: var(--jawnos-cursor-grab, grab);
 	}
 	.channel_fx {
@@ -194,43 +201,278 @@
 	.channel > * {
 		flex: none;
 	}
-	<% for (my $ch = 0; $ch <= $channel_count; $ch++) { %>
-		.channel_<%= $ch %> {
-
-		}
-		.knob_control[channel=<%= $ch %>] {
-			left: <%= 45 * $ch %>px;
-		}
-	<% } %>
+	<%# The channel controls are per track now, so no per-channel rule is needed. %>
 	#studio {
 		height:100%;
 		width:100%;
 		border-width: 10px;
 		border-radius: 10px;
 		border: solid;
+		position: relative;
+		box-sizing: border-box;
+		min-width: 380px;
+		overflow-x: hidden;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
 	}
 	#studio_viewer {
-		height: 30%;
+		flex: 1 1 auto;
+		min-height: 120px;
 		width: 100%;
+		overflow-x: hidden;
+		overflow-y: auto;
 		background-color: lightblue;
 	}
 	#studio_mixer {
-		height: 70%;
+		flex: 0 0 30%;
+		min-height: 140px;
 		width: 100%;
 		background-color: tan;
-	}	
-	#studio_controls {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	#studio_mixer_strips {
+		display: flex;
+		flex-direction: row;
+		align-items: stretch;
+		gap: 4px;
+		padding: 4px;
+		box-sizing: border-box;
+		overflow-x: auto;
+		overflow-y: hidden;
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+	#studio_mixer_strips .channel {
+		flex: 0 0 44px;
+		height: auto;
+		min-height: 180px;
+	}
+	#studio_transport_panel {
+		position: relative;
+		flex: 0 0 300px;
+		min-height: 260px;
 		width: 100%;
+		/* the transport and its video previews scroll inside the window; nothing
+		   in this panel may paint below it */
+		overflow: auto;
 	}
 	#studio_jog_wheel {
-		right: 40px;
+		right: 10px;
 		position:absolute;
 		bottom: 10px;
 		height: 110px;
 		width: 110px;
 		border-radius: 50%;
 	}
+	.jog_wheel_frame {
+		position: absolute;
+		right: 0;
+		bottom: 0;
+		width: 130px;
+		height: 130px;
+	}
 	#studio_time_display {
 		font-size: 32px;
+	}
+	#studio_synth {
+		flex: 0 0 auto;
+		overflow: hidden;
+	}
+	/* Studio is a desk-wide app. The dock and the taskbar sit at 39997/39998;
+	   raising the Studio window above them keeps the transport clickable at
+	   800x600 without taking the desk's start menu or power menu with it. */
+	@media (min-width: 640px) {
+		.wind[app="studio"] { z-index: 39999 !important; }
+	}
+
+	/* ---- layout bar, per-track panels and floating panels ------------------ */
+	.studio_layout_bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 4px;
+		flex: 0 0 auto;
+	}
+	.studio_layout_bar button {
+		font-size: 12px;
+	}
+	.studio_track_count {
+		font-size: 12px;
+		opacity: .7;
+		padding: 0 4px;
+	}
+	#studio_tracks_panel {
+		display: flex;
+		flex-direction: column;
+		flex: 1 1 220px;
+		min-height: 160px;
+		position: relative;
+		overflow: hidden;
+	}
+	.studio_panel_bar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 2px 4px;
+		flex: 0 0 auto;
+		background: rgba(0, 0, 0, 0.08);
+		position: relative;
+		z-index: 2;
+	}
+	.studio_drag_handle {
+		cursor: var(--jawnos-cursor-grab, grab);
+		touch-action: none;
+		user-select: none;
+		font-weight: bold;
+	}
+	.studio_panel_bar .studio_drag_handle {
+		font-size: 12px;
+	}
+	.studio_dock {
+		display: none;
+	}
+	.studio_panel_floating .studio_dock {
+		display: inline-block;
+	}
+	.studio_panel_floating {
+		position: absolute !important;
+		z-index: 70000;
+		background: var(--panel, #eee);
+		border: 2px solid var(--line, #333);
+		border-radius: 8px;
+		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+		max-width: 96%;
+		max-height: 92%;
+		overflow: auto;
+	}
+	.studio_panel_dragging {
+		opacity: .92;
+		cursor: var(--jawnos-cursor-grabbing, grabbing);
+	}
+	.studio_track {
+		display: flex;
+		align-items: stretch;
+		gap: 4px;
+		min-height: 64px;
+		border-bottom: 1px solid rgba(0, 0, 0, .12);
+	}
+	.studio_track_panel {
+		flex: 0 0 150px;
+		width: 150px;
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 2px 4px;
+		background: rgba(255, 255, 255, .35);
+		min-width: 0;
+		cursor: var(--jawnos-cursor-pointer, pointer);
+	}
+	.studio_track_panel.selected_channel {
+		box-shadow: inset 0 0 0 3px #8ab4f8;
+	}
+	.studio_track_line {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		min-width: 0;
+	}
+	.studio_track_line > * {
+		flex: none;
+	}
+	.studio_track_arm {
+		min-width: 22px;
+	}
+	.studio_track_name {
+		flex: 1 1 auto !important;
+		min-width: 0;
+		width: 100%;
+		font-size: 12px;
+		border: solid 1px var(--line, #999);
+		border-radius: 3px;
+		background: var(--panel, #fff);
+		color: inherit;
+	}
+	.studio_track_fx,
+	.studio_track_automation,
+	.studio_track_delete {
+		font-size: 11px;
+		padding: 1px 4px;
+	}
+	.studio_track_automation[aria-pressed="true"] {
+		background: #ffd21e;
+	}
+	.studio_track_panel .channel_volume {
+		position: relative;
+		width: 80px;
+		height: 18px;
+		writing-mode: horizontal-tb;
+		direction: ltr;
+		background-image: none;
+		border-radius: 9px;
+		flex: 0 0 80px !important;
+	}
+	.studio_track_panel .channel_volume_metre {
+		position: relative;
+		left: 0;
+		top: 0;
+		width: 80px;
+		height: 6px;
+	}
+	.studio_track_panel .channel_fx {
+		display: none;
+		max-height: 34px;
+	}
+	.studio_track_panel .channel_fx.studio_fx_open {
+		display: block;
+	}
+	.studio_track_body {
+		position: relative;
+		flex: 1 1 auto;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.studio_track_body .track {
+		flex: 1 1 auto;
+		min-height: 55px;
+		width: 100%;
+		height: 100%;
+		box-sizing: border-box;
+	}
+	.studio_track_automation_lane {
+		display: none;
+		height: 26px;
+		padding: 2px 5px;
+		font-size: 11px;
+		box-sizing: border-box;
+		background: rgba(4, 50, 95, .12);
+		border-top: 1px dashed rgba(4, 50, 95, .5);
+	}
+	.studio_track.studio_track_automation_on .studio_track_automation_lane {
+		display: block;
+	}
+	#studio_pedalboard_close {
+		position: absolute;
+		right: 6px;
+		top: 4px;
+		z-index: 60001;
+	}
+	@media (max-width: 800px) {
+		.studio_track_panel {
+			flex-basis: 118px;
+			width: 118px;
+		}
+		.studio_track_panel .channel_volume {
+			width: 56px;
+			flex-basis: 56px !important;
+		}
+		#studio_transport_panel {
+			flex-basis: 300px;
+		}
 	}
 </style>
