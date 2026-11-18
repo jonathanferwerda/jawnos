@@ -177,4 +177,74 @@ like($help, qr/footswitch bypasses the insert/, 'the help explains bypassing');
 like($help, qr/Drag a row by its handle/, 'the help explains reordering');
 like($help, qr/The master rack sits under the channel strips/, 'the help explains the master rack');
 
+# --- the rack knobs reach the native engine -------------------------------
+# docs/studio-effects.md, "The control path": the browser maps 0..100 to the
+# effect's own units and posts that, and only while the engine is the path.
+like($fx, qr/function studioEffectNatural\(kind, control, value\)/,
+	'one function turns a knob into the contract\'s natural units');
+like($fx, qr/case 'compressor\.attack':[\s\S]*?return 1 \+ amount \* 199;/,
+	'compressor.attack maps to 1..200 ms');
+like($fx, qr/case 'compressor\.release':[\s\S]*?return 50 \+ amount \* 950;/,
+	'compressor.release maps to 50..1000 ms');
+like($fx, qr/case 'limiter\.release':[\s\S]*?return 10 \+ amount \* 490;/,
+	'limiter.release maps to 10..500 ms');
+like($fx, qr/case 'equalizer\.low':[\s\S]*?return -12 \+ amount \* 24;/,
+	'the equalizer bands map to -12..+12 dB');
+like($fx, qr/case 'limiter\.ceiling':[\s\S]*?return -24 \+ amount \* 24;/,
+	'a limiter ceiling maps to -24..0 dB');
+like($fx, qr/studioEffectIndices = \{[\s\S]*?'amp\.cabinet': 3[\s\S]*?'autotune\.key': 11/,
+	'whole-number controls travel as their index');
+like($fx, qr/function studioEngineInsertParam\(ch, insertName, control, value\)/,
+	'a track knob has one engine sender');
+like($fx, qr/function studioEngineMasterParam\(insertName, control, value\)/,
+	'a master knob has its own sender');
+like($fx, qr/target: 'master'/,
+	'the master sender addresses target master');
+like($fx, qr/studioEffectNatural\(kind, control, value\)/,
+	'a sender maps the slider before it posts');
+like($fx, qr/\}, 150\);/,
+	'a knob POST is debounced like the patchbay faders');
+like($fx, qr/function studioEngineIsPath\(\)/,
+	'one function decides whether the engine is the path');
+like($fx, qr/studioEngineRecording[\s\S]*?studioListenActive/,
+	'an engine take or a live listen arms the send');
+like($fx, qr/if \(!studioEngineIsPath\(\)\) \{ return; \}/,
+	'the browser graph is not double-sent to');
+like($rack, qr/studioEngineInsertParam\(ch, name, control, value\);/,
+	'a track rack knob posts after it moves');
+like($master, qr/studioEngineMasterParam\(name, control, value\);/,
+	'a master rack knob posts after it moves');
+like($js, qr/var studioEngineRecording = false;/,
+	'the engine take panel owns the armed flag');
+like($js, qr/studioEngineRecording = \(data\.state === 'recording'\);/,
+	'the flag follows the engine status');
+
+# --- the take arms each rack and the master list --------------------------
+like($js, qr/function studioEngineTrackPlan\(\)/,
+	'the take builds its per-track plan from the racks');
+like($js, qr/studioAudio\.channels\[index \+ 1\]/,
+	'channel ch is engine track ch-1');
+like($js, qr/if \(!ins \|\| ins\.bypassed\) \{ return; \}/,
+	'only the enabled inserts are armed');
+like($js, qr/inserts\.push\(studioEffectKind\(ins\.name\)\);/,
+	'a rack insert travels under its canonical engine name');
+like($js, qr/function studioEngineMasterList\(\)/,
+	'the take collects the enabled master effects');
+like($js, qr/studioMasterSave\(\)/,
+	'the list comes from the page\'s own master rack');
+like($js, qr/mixer\['admin'\] && mixer\['admin'\]\['master'\]/,
+	'the song\'s saved master state is the fallback');
+like($js, qr/record\['on'\]/,
+	'only a switched-on master effect is sent');
+like($js, qr/tracks_json: JSON\.stringify\(plan\)/,
+	'the per-track plan travels as tracks_json');
+like($js, qr/master_json: JSON\.stringify\(master\)/,
+	'the master list travels as master_json');
+like($fx, qr/function studioEngineMasterBypass\(insertName, bypassed\)/,
+	'a master footswitch has its own sender');
+like($fx, qr/name: insertName \+ '\.bypass'/,
+	'the bypass is the master_* .bypass pseudo-control');
+like($master, qr/studioEngineMasterBypass\(name, !on\);/,
+	'the master toggle posts its bypass change');
+
 done_testing();

@@ -165,8 +165,6 @@ pub struct Playback {
     position: u64,
     /// One mono block per track, reused by every [`Playback::render`].
     voices: Vec<Vec<f32>>,
-    /// One stereo block per track, the strip's output before the sum.
-    stereos: Vec<Vec<f32>>,
 }
 
 /// Validate the file set without building strips, and return its rate and its
@@ -237,7 +235,6 @@ impl Playback {
             total_frames,
             position: 0,
             voices: Vec::new(),
-            stereos: Vec::new(),
         })
     }
 
@@ -282,8 +279,29 @@ impl Playback {
         }
         self.mixer.prepare(rate, period);
         self.voices = vec![vec![0.0; period]; self.tracks.len()];
-        self.stereos = vec![vec![0.0; period * 2]; self.tracks.len()];
         Ok(())
+    }
+
+    /// Add the master inserts a take armed, in the contract's order. Call it
+    /// before [`prepare`](Playback::prepare): the rack is fixed for the life of
+    /// the playback, and a bypass moves an insert in place without rebuilding
+    /// the bus (the same rule a track's pedalboard follows).
+    pub fn arm_master(&mut self, kinds: &[InsertKind]) {
+        for kind in kinds {
+            self.mixer.push_master(*kind);
+        }
+    }
+
+    /// Bypass or restore an armed master insert. False means the rack does not
+    /// hold that effect: an effect switched on after the take started has no
+    /// slot in this playback, and only the next take can arm it.
+    pub fn bypass_master(&mut self, prefix: &str, bypassed: bool) -> bool {
+        self.mixer.bypass_master(prefix, bypassed)
+    }
+
+    /// Move one armed master knob, in the control path's units.
+    pub fn set_master(&mut self, name: &str, value: f32) -> bool {
+        self.mixer.set_master(name, value)
     }
 
     /// Render the next stereo block into `out`, which holds whole interleaved
@@ -327,16 +345,14 @@ impl Playback {
             }
         }
 
-        out.fill(0.0);
-        for index in 0..self.tracks.len() {
-            let stereo = &mut self.stereos[index][..frames * 2];
-            self.mixer
-                .process(index, &self.voices[index][..frames], stereo)
-                .map_err(|error| format!("file {} ({index}): {error}", self.tracks[index].path))?;
-            for (mixed, sample) in out.iter_mut().zip(stereo.iter()) {
-                *mixed += sample;
-            }
-        }
+        // The mixer sums the strips and then runs the master rack over the
+        // bus, so a monitor hears the same mastering chain the page shows.
+        // `mix_with` takes the voices by index: no temporary slice of
+        // references is built on the audio thread.
+        let voices = &self.voices;
+        self.mixer
+            .mix_with(out, |index| &voices[index][..frames])
+            .map_err(|error| format!("playback: {error}"))?;
         self.position += frames as u64;
         Ok(())
     }
@@ -527,6 +543,52 @@ mod tests {
             inserts: vec![InsertKind::Tone, InsertKind::Delay],
         };
         assert_eq!(spec.insert_list(), "tone,delay");
+    }
+
+    #[test]
+    fn a_master_limiter_runs_over_the_monitored_bus() {
+        let mut source = track("a.wav", 0.8, 1.0, 0.0);
+        source.samples = vec![0.8; 4096 * 4];
+        let mut playback = Playback::new(vec![source], 0).expect("playback");
+        playback.arm_master(&[InsertKind::Limiter]);
+        assert!(playback.set_master("master_limiter.ceiling", -6.0));
+        playback.prepare(48_000, 4096).expect("prepare");
+
+        let mut out = vec![0.0f32; 8192];
+        for _ in 0..4 {
+            playback.render(&mut out).expect("render");
+        }
+        let ceiling = 10f32.powf(-6.0 / 20.0);
+        assert!(
+            out.iter().all(|sample| sample.abs() <= ceiling + 2e-2),
+            "the master limiter did not catch the monitored bus: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_bypassed_master_insert_is_transparent_on_the_monitor() {
+        let source = || {
+            let mut source = track("a.wav", 0.8, 1.0, 0.0);
+            source.samples = vec![0.8; 64];
+            source
+        };
+
+        let mut plain = Playback::new(vec![source()], 0).expect("playback");
+        plain.prepare(48_000, 64).expect("prepare");
+        let mut expected = vec![0.0f32; 128];
+        plain.render(&mut expected).expect("render");
+
+        let mut playback = Playback::new(vec![source()], 0).expect("playback");
+        playback.arm_master(&[InsertKind::Limiter]);
+        assert!(playback.set_master("master_limiter.ceiling", -6.0));
+        assert!(playback.bypass_master("master_limiter", true));
+        playback.prepare(48_000, 64).expect("prepare");
+        let mut out = vec![0.0f32; 128];
+        playback.render(&mut out).expect("render");
+        assert_eq!(out, expected, "a bypassed master insert was not transparent");
+
+        assert!(playback.bypass_master("master_limiter", false), "armed slot");
+        assert!(!playback.bypass_master("master_comp", true), "unarmed slot");
     }
 
     #[test]

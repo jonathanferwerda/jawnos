@@ -65,7 +65,7 @@ use std::time::Duration;
 use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
     monitor_start, to_i16, BackendKind, Channel, Device, DiskWriter, InsertKind, Mixer,
-    MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback,
+    MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback, MASTER_ORDER,
 };
 
 use crate::patchbay::{PatchSummary, Patchbay};
@@ -228,6 +228,24 @@ struct Server {
 enum BootPlan {
     Armed(PatchSummary),
     Error(String),
+}
+
+/// Validate one take or listen parameter against the strip's armed chain.
+///
+/// The name must parse (which rejects an unknown control) and, when it names an
+/// insert, that insert must be in the chain `status` reports. A `master_*`
+/// address is the master rack's, never a track's, so it is refused here.
+fn chain_parameter(name: &str, has_insert: impl Fn(&str) -> bool) -> Result<ParamName, String> {
+    let parameter = ParamName::parse(name).ok_or_else(|| format!("no such parameter: {name}"))?;
+    if parameter.master() {
+        return Err(format!("no such parameter: {name}"));
+    }
+    if let Some(insert) = parameter.insert() {
+        if !has_insert(insert) {
+            return Err(format!("no such parameter: {name}"));
+        }
+    }
+    Ok(parameter)
 }
 
 impl Server {
@@ -524,8 +542,9 @@ impl Server {
             Some(Value::Str(target)) if target == "take" => self.param_take(object),
             Some(Value::Str(target)) if target == "monitor" => self.param_monitor(object),
             Some(Value::Str(target)) if target == "listen" => self.param_listen(object),
+            Some(Value::Str(target)) if target == "master" => self.param_master(object),
             Some(Value::Str(target)) if target == "patch" => self.param_patch(object),
-            _ => error_line("\"target\" must be \"take\", \"monitor\", \"listen\" or \"patch\""),
+            _ => error_line("\"target\" must be \"take\", \"monitor\", \"listen\", \"master\" or \"patch\""),
         }
     }
 
@@ -555,19 +574,15 @@ impl Server {
         if track >= count {
             return error_line(&format!("no track {track} (the take has {count})"));
         }
-        let parameter = match ParamName::parse(name) {
-            Some(parameter) => parameter,
-            None => return error_line(&format!("no such parameter: {name}")),
-        };
-        if let Some(insert) = parameter.insert() {
-            let present = snapshot.tracks[track]
+        let parameter = match chain_parameter(name, |insert| {
+            snapshot.tracks[track]
                 .inserts
                 .split(',')
-                .any(|entry| entry == insert);
-            if !present {
-                return error_line(&format!("no such parameter: {name}"));
-            }
-        }
+                .any(|entry| entry == insert)
+        }) {
+            Ok(parameter) => parameter,
+            Err(error) => return error_line(&error),
+        };
 
         if !running.params.push(track, parameter, value) {
             return error_line("the parameter queue is full; try again next block");
@@ -610,10 +625,9 @@ impl Server {
             Some(Value::Num(value)) if value.is_finite() => *value as f32,
             _ => return error_line("\"value\" must be a finite number"),
         };
-        let parameter = match ParamName::parse(name) {
-            Some(parameter) => parameter,
-            None => return error_line(&format!("no such parameter: {name}")),
-        };
+        if ParamName::parse(name).is_none() {
+            return error_line(&format!("no such parameter: {name}"));
+        }
         let session = match self.playback.as_mut() {
             Some(session) if !session.strips.is_empty() && session.is_playing() => session,
             _ => return error_line("no monitor is running"),
@@ -624,15 +638,15 @@ impl Server {
                 "no monitor file {track} (the monitor has {count})"
             ));
         }
-        if let Some(insert) = parameter.insert() {
-            let present = session.strips[track]
+        let parameter = match chain_parameter(name, |insert| {
+            session.strips[track]
                 .inserts
                 .iter()
-                .any(|kind| kind.name() == insert);
-            if !present {
-                return error_line(&format!("no such parameter: {name}"));
-            }
-        }
+                .any(|kind| kind.name() == insert)
+        }) {
+            Ok(parameter) => parameter,
+            Err(error) => return error_line(&error),
+        };
         let queue = match &session.params {
             Some(queue) => Arc::clone(queue),
             None => return error_line("no monitor is running"),
@@ -665,24 +679,20 @@ impl Server {
             Some(Value::Num(value)) if value.is_finite() => *value as f32,
             _ => return error_line("\"value\" must be a finite number"),
         };
-        let parameter = match ParamName::parse(name) {
-            Some(parameter) => parameter,
-            None => return error_line(&format!("no such parameter: {name}")),
-        };
         let session = match &self.listen {
             Some(session) if session.is_listening() => session,
             _ => return error_line("no listen is running"),
         };
-        if let Some(insert) = parameter.insert() {
-            let present = session
+        let parameter = match chain_parameter(name, |insert| {
+            session
                 .snapshot()
                 .inserts
                 .split(',')
-                .any(|entry| entry == insert);
-            if !present {
-                return error_line(&format!("no such parameter: {name}"));
-            }
-        }
+                .any(|entry| entry == insert)
+        }) {
+            Ok(parameter) => parameter,
+            Err(error) => return error_line(&error),
+        };
         if !session.params.push(0, parameter, value) {
             return error_line("the parameter queue is full; try again next block");
         }
@@ -697,6 +707,73 @@ impl Server {
         }
         format!(
             "{{\"ok\":true,\"target\":\"listen\",\"name\":\"{}\"}}",
+            jawn_audio::loopback::json_escape(name)
+        )
+    }
+
+    /// One master-rack knob: `{"cmd":"param","target":"master",
+    /// "name":"master_comp.thresh","value":-20}`. The rack is not a track, so
+    /// the address carries no `track`; the queue's master bit routes it to the
+    /// master slots at the next block.
+    ///
+    /// The name must be a `master_*` prefix for one of the five effects the
+    /// rack holds, and a control that effect owns (or `.bypass` for the
+    /// footswitch). The rack is fixed, so this is the whole "is it in the
+    /// chain" check; a name for a track insert is refused rather than quietly
+    /// aimed at the bus.
+    ///
+    /// The rack itself is armed by `record` from the names the page sent with
+    /// the take. An effect switched on after the take started has no slot in
+    /// that playback: its param is queued and ignored, and the next take is
+    /// where it is heard. The help topic says so; nothing here pretends to add
+    /// a slot to a running bus.
+    fn param_master(&mut self, object: &Object) -> String {
+        let name = match get(object, "name") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => return error_line("param needs \"name\": a parameter name"),
+        };
+        let value = match get(object, "value") {
+            Some(Value::Num(value)) if value.is_finite() => *value as f32,
+            _ => return error_line("\"value\" must be a finite number"),
+        };
+        let parameter = match ParamName::parse(name) {
+            Some(parameter) if parameter.master() && parameter.master_capable() => parameter,
+            _ => return error_line(&format!("no such parameter: {name}")),
+        };
+
+        // The master is the bus the monitor plays through, so a live monitor's
+        // queue comes first: a take's own mixer records each strip before the
+        // bus and never runs `mix`. A take without a monitor falls back to its
+        // queue, where the rack is armed but only the next monitor hears it.
+        let mut queue = None;
+        if let Some(session) = &self.playback {
+            if session.is_playing() {
+                queue = session.params.as_ref().map(Arc::clone);
+            }
+        }
+        if queue.is_none() {
+            if let Some(running) = &self.current {
+                if running.is_recording() {
+                    queue = Some(Arc::clone(&running.params));
+                }
+            }
+        }
+        if queue.is_none() {
+            if let Some(session) = &self.listen {
+                if session.is_listening() {
+                    queue = Some(Arc::clone(&session.params));
+                }
+            }
+        }
+        let queue = match queue {
+            Some(queue) => queue,
+            None => return error_line("no audio session is running"),
+        };
+        if !queue.push_master(parameter, value) {
+            return error_line("the parameter queue is full; try again next block");
+        }
+        format!(
+            "{{\"ok\":true,\"target\":\"master\",\"name\":\"{}\"}}",
             jawn_audio::loopback::json_escape(name)
         )
     }
@@ -1052,6 +1129,10 @@ impl Server {
                 ))
             }
         };
+        let master = match parse_master(get(object, "master")) {
+            Ok(master) => master,
+            Err(error) => return error_line(&error),
+        };
         let tracks = plans.len();
         if tracks > self.config.channels {
             return error_line(&format!(
@@ -1268,6 +1349,7 @@ impl Server {
             let monitor_params = Arc::new(ParamQueue::new());
             let monitor_at = monitor_start(start_at, alignment.samples);
             let strips = monitor.clone();
+            let monitor_master = master.clone();
             let spawned = {
                 let status = Arc::clone(&status);
                 let stop = Arc::clone(&monitor_stop);
@@ -1283,6 +1365,7 @@ impl Server {
                             status,
                             stop,
                             Some(params),
+                            monitor_master,
                         )
                     })
             };
@@ -1317,7 +1400,9 @@ impl Server {
             let plans = plans.clone();
             thread::Builder::new()
                 .name("jawn-audio-take".to_string())
-                .spawn(move || run_take(config, seconds, disks, plans, shared, stop, params))
+                .spawn(move || {
+                    run_take(config, seconds, disks, plans, shared, stop, params, master)
+                })
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -1499,7 +1584,9 @@ impl Server {
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-play".to_string())
-                .spawn(move || run_playback(config, tracks, start_at, status, stop, None))
+                .spawn(move || {
+                    run_playback(config, tracks, start_at, status, stop, None, Vec::new())
+                })
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -1919,6 +2006,42 @@ fn monitor_spec(value: &Value) -> Result<MonitorSpec, String> {
         }
         _ => Err("\"monitor\" must hold WAV paths or monitor objects".to_string()),
     }
+}
+
+/// The take's master rack: an array of `master_*` names, in any order. The
+/// engine builds the effects the page switched on in [`MASTER_ORDER`], not in
+/// the order they arrived, so the bus is the house's chain whatever the page
+/// happens to list. A name the rack does not hold, or a duplicate, is refused
+/// before any file or thread exists.
+fn parse_master(value: Option<&Value>) -> Result<Vec<InsertKind>, String> {
+    let names = match value {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Arr(names)) => names,
+        _ => return Err("\"master\" must be an array of master insert names".to_string()),
+    };
+    let mut wanted = [false; MASTER_ORDER.len()];
+    for name in names {
+        let word = match name {
+            Value::Str(word) => word.as_str(),
+            _ => return Err("\"master\" must hold master insert names".to_string()),
+        };
+        let kind = InsertKind::parse(word)
+            .filter(|kind| kind.master_prefix().is_some())
+            .ok_or_else(|| format!("no such master insert: {word}"))?;
+        let slot = MASTER_ORDER
+            .iter()
+            .position(|candidate| *candidate == kind)
+            .expect("MASTER_ORDER holds every master kind");
+        if wanted[slot] {
+            return Err(format!("duplicate master insert: {word}"));
+        }
+        wanted[slot] = true;
+    }
+    Ok(MASTER_ORDER
+        .iter()
+        .zip(wanted)
+        .filter_map(|(kind, on)| if on { Some(*kind) } else { None })
+        .collect())
 }
 
 /// The array form: one object per track. Every insert is parsed here, before
@@ -2687,6 +2810,7 @@ fn run_playback(
     status: Arc<Mutex<PlayStatus>>,
     stop: Arc<AtomicBool>,
     params: Option<Arc<ParamQueue>>,
+    master: Vec<InsertKind>,
 ) {
     // Build the strips here, on the playback thread, so a chain never moves
     // between threads. The control thread already checked the shape. A
@@ -2697,7 +2821,12 @@ fn run_playback(
         None => Playback::new(tracks, start_at),
     };
     let mut playback = match built {
-        Ok(playback) => playback,
+        Ok(mut playback) => {
+            // The master rack is armed before the device is opened, so the
+            // first monitored block already has the page's mastering chain.
+            playback.arm_master(&master);
+            playback
+        }
         Err(error) => {
             let mut current = status
                 .lock()
@@ -2838,6 +2967,7 @@ fn run_take(
     status: Arc<Mutex<Status>>,
     stop: Arc<AtomicBool>,
     params: Arc<ParamQueue>,
+    master: Vec<InsertKind>,
 ) {
     // Build the mixer here, on the take's thread, so it is never moved between
     // threads. Its control ring is the one the socket already holds. The
@@ -2847,6 +2977,12 @@ fn run_take(
     let labels: Vec<String> = (1..=plans.len()).map(|track| format!("ch{track}")).collect();
     let label_refs: Vec<&str> = labels.iter().map(|label| label.as_str()).collect();
     let mut mixer = Mixer::with_queue(&inputs, &label_refs, Arc::clone(&params));
+    // The take records each strip before the bus, so the master rack is armed
+    // for the take's own queue too; the monitored mix is the monitor's
+    // playback, which arms the same list on its thread.
+    for kind in &master {
+        mixer.push_master(*kind);
+    }
     for (index, track) in mixer.tracks_mut().iter_mut().enumerate() {
         let plan = &plans[index];
         let mut channel = Channel::new(plan.gain, plan.pan);
@@ -3666,4 +3802,197 @@ break"}"#).is_err());
         assert!(parse_object(r#"{"a":1,}"#).is_err());
         assert!(parse_object("{\"a\":1}").is_ok(), "a good object parses");
     }
+    fn socket_server() -> Server {
+        Server::new(Config {
+            backend: BackendKind::Null,
+            device: "null".to_string(),
+            rate: 48_000,
+            period: 4096,
+            buffer: 2,
+            channels: 1,
+            socket: PathBuf::from("/tmp/jawn-audio-test.sock"),
+            plan: None,
+            machine: "test".to_string(),
+        })
+    }
+
+    fn take_status(inserts: &str) -> Status {
+        Status {
+            take: 1,
+            state: State::Recording,
+            path: "/tmp/take.wav".to_string(),
+            frames: 0,
+            dropped: 0,
+            channels: 1,
+            start_sample: 0,
+            xruns: 0,
+            align_samples: 0,
+            align_from: "none",
+            tracks: vec![TrackStatus {
+                path: "/tmp/take.wav".to_string(),
+                input: 0,
+                frames: 0,
+                dropped: 0,
+                gain: 1.0,
+                pan: 0.0,
+                inserts: inserts.to_string(),
+            }],
+            error: String::new(),
+        }
+    }
+
+    fn running(status: Status, params: Arc<ParamQueue>) -> Running {
+        Running {
+            status: Arc::new(Mutex::new(status)),
+            stop: Arc::new(AtomicBool::new(false)),
+            handle: None,
+            params,
+        }
+    }
+
+    fn reply(action: Action) -> String {
+        match action {
+            Action::Reply(line) => line,
+            Action::Quit(_) => panic!("expected a param reply"),
+        }
+    }
+
+    #[test]
+    fn a_socket_parameter_reaches_a_new_insert_and_refuses_an_unknown_control() {
+        let mut server = socket_server();
+        let params = Arc::new(ParamQueue::new());
+        server.current = Some(running(take_status("limiter"), Arc::clone(&params)));
+
+        // An unknown control of a known effect is a refusal, not a clamp onto
+        // the nearest knob.
+        let line = reply(server.handle(
+            r#"{"cmd":"param","track":0,"name":"limiter.wobble","value":-6}"#,
+        ));
+        assert!(line.contains("no such parameter"), "{line}");
+
+        // An insert the take was not armed with is refused the same way.
+        let line = reply(server.handle(
+            r#"{"cmd":"param","track":0,"name":"flanger.rate","value":2}"#,
+        ));
+        assert!(line.contains("no such parameter"), "{line}");
+
+        // A real control of the armed insert is queued, and the strip applies
+        // it at its next block: the block above the new ceiling is caught.
+        let line = reply(server.handle(
+            r#"{"cmd":"param","track":0,"name":"limiter.ceiling","value":-6}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+
+        let mut mixer = Mixer::with_queue(&[0], &["ch1"], Arc::clone(&params));
+        mixer.tracks_mut()[0]
+            .channel
+            .push(InsertKind::Limiter.build());
+        mixer.prepare(48_000, 4096);
+        let mono = vec![0.8f32; 4096];
+        let mut stereo = vec![0.0f32; 8192];
+        for _ in 0..4 {
+            mixer.process(0, &mono, &mut stereo).expect("process");
+        }
+        let ceiling = 10f32.powf(-6.0 / 20.0);
+        assert!(
+            stereo.iter().all(|sample| sample.abs() <= ceiling + 1e-3),
+            "the queued ceiling did not reach the limiter"
+        );
+    }
+
+    #[test]
+    fn a_master_parameter_is_addressed_to_the_master_rack() {
+        let mut server = socket_server();
+        let params = Arc::new(ParamQueue::new());
+        server.current = Some(running(take_status("limiter"), Arc::clone(&params)));
+
+        for bad in ["master_comp.wobble", "flanger.rate"] {
+            let line = reply(server.handle(&format!(
+                r#"{{"cmd":"param","target":"master","name":"{bad}","value":-6}}"#
+            )));
+            assert!(line.contains("no such parameter"), "{bad}: {line}");
+        }
+
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"master","name":"master_limiter.ceiling","value":-6}"#,
+        ));
+        assert!(line.contains("\"target\":\"master\""), "{line}");
+
+        let mut mixer = Mixer::with_queue(&[0], &["ch1"], Arc::clone(&params));
+        mixer.push_master(InsertKind::Limiter);
+        mixer.prepare(48_000, 4096);
+        let mono = vec![0.8f32; 4096];
+        let mut bus = vec![0.0f32; 8192];
+        for _ in 0..4 {
+            mixer.mix(&[&mono], &mut bus).expect("mix");
+        }
+        let ceiling = 10f32.powf(-6.0 / 20.0);
+        assert!(
+            bus.iter().all(|sample| sample.abs() <= ceiling + 2e-2),
+            "the master ceiling did not reach the bus"
+        );
+
+        // The footswitch moves the armed insert in place; bypassed, the bus is
+        // the plain sum again. An insert that was never armed has no slot.
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"master","name":"master_limiter.bypass","value":1}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        mixer.mix(&[&mono], &mut bus).expect("mix");
+        let plain = 0.8 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (bus[0] - plain).abs() < 1e-3,
+            "a bypassed master was not transparent: {}",
+            bus[0]
+        );
+
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"master","name":"master_limiter.bypass","value":0}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        mixer.mix(&[&mono], &mut bus).expect("mix");
+        assert!(
+            bus.iter().all(|sample| sample.abs() <= ceiling + 2e-2),
+            "restoring the master insert did not limit again"
+        );
+    }
+
+    #[test]
+    fn a_per_track_plan_arms_each_chain_differently() {
+        let object = parse_object(
+            r#"{"tracks":[{"input":0,"inserts":["tone","delay"]},{"input":1,"inserts":["flanger","amp"]}]}"#,
+        )
+        .expect("parse");
+        let values = match get(&object, "tracks") {
+            Some(Value::Arr(values)) => values,
+            other => panic!("tracks is not an array: {other:?}"),
+        };
+        let plans = track_plans(values).expect("plan");
+        assert_eq!(plans[0].input, 0);
+        assert_eq!(plans[0].inserts, vec![InsertKind::Tone, InsertKind::Delay]);
+        assert_eq!(plans[1].input, 1);
+        assert_eq!(plans[1].inserts, vec![InsertKind::Flanger, InsertKind::Amp]);
+    }
+
+    #[test]
+    fn a_master_plan_is_ordered_by_the_contract_and_refuses_duplicates() {
+        let object = parse_object(
+            r#"{"master":["master_limiter","master_comp","master_reverb"]}"#,
+        )
+        .expect("parse");
+        let master = parse_master(get(&object, "master")).expect("master");
+        assert_eq!(
+            master,
+            vec![InsertKind::Compressor, InsertKind::Reverb, InsertKind::Limiter],
+            "the rack is built in the house's order"
+        );
+
+        let duplicate = parse_object(r#"{"master":["master_comp","master_comp"]}"#).expect("parse");
+        assert!(parse_master(get(&duplicate, "master")).is_err());
+        let wrong = parse_object(r#"{"master":["flanger"]}"#).expect("parse");
+        assert!(parse_master(get(&wrong, "master")).is_err());
+        let wrong_shape = parse_object(r#"{"master":"master_comp"}"#).expect("parse");
+        assert!(parse_master(get(&wrong_shape, "master")).is_err());
+    }
+
 }

@@ -345,11 +345,66 @@ sub run_take {
 		map { { input => $_, inserts => ['reverb'] } } 0 .. 2
 	], 'inputs default to 0..tracks-1 and inserts reach every track');
 
+	# The page's per-track plan wins over the scalar fields: each rack is its
+	# own chain, and the old global `inserts` box does not overwrite it.
+	my $tracks_json = encode_json([
+		{ input => 0, inserts => [qw(tone delay)] },
+		{ input => 1, inserts => [qw(flanger)] },
+	]);
+	my $per_track = run_take(
+		seconds => '5', tracks => '1', inputs => '0', inserts => 'reverb',
+		tracks_json => $tracks_json,
+	);
+	is($per_track->{'status'}, 200, 'a per-track plan is accepted');
+	is_deeply($calls[-1][3]{'tracks'}, [
+		{ input => 0, inserts => [qw(tone delay)] },
+		{ input => 1, inserts => [qw(flanger)] },
+	], 'tracks_json is preferred and passed through unchanged');
+	ok(!exists $calls[-1][3]{'master'}, 'a take without a master list sends none');
+
+	# The master rack the page switched on travels in the contract's names.
+	my $master = run_take(
+		seconds => '5', tracks_json => $tracks_json,
+		master_json => encode_json([qw(master_comp master_limiter)]),
+	);
+	is($master->{'status'}, 200, 'a master list is accepted');
+	is_deeply($calls[-1][3]{'master'}, [qw(master_comp master_limiter)],
+		'the enabled master inserts are forwarded');
+
+	# A per-track plan has the same bounds and names as the scalar shape.
+	my $before_json = scalar @calls;
+	for my $case (
+		[ 'not json',              qr/JSON array/ ],
+		[ encode_json({}),         qr/JSON array/ ],
+		[ encode_json([]),         qr/between 1 and 32/ ],
+		[ encode_json([{ input => 32, inserts => [] }]), qr/input between 0 and 31/ ],
+		[ encode_json([{ input => 0, inserts => ['wobble'] }]), qr/no such insert: wobble/ ],
+		[ encode_json([{ input => 0 }, { input => 0 }]), qr/names input 0 twice/ ],
+	) {
+		my ($plan, $error) = @$case;
+		my $bad = run_take(tracks_json => $plan);
+		is($bad->{'status'}, 400, 'a bad per-track plan is a 400');
+		like($bad->{'json'}{'error'}, $error, 'and the refusal names the rule');
+	}
+	is(scalar @calls, $before_json, 'no bad per-track plan reaches the engine');
+
+	for my $case (
+		[ 'not json', qr/JSON array/ ],
+		[ encode_json(['wobble']), qr/no such master insert: wobble/ ],
+		[ encode_json([qw(master_comp master_comp)]), qr/duplicate master insert/ ],
+	) {
+		my ($plan, $error) = @$case;
+		my $bad = run_take(master_json => $plan);
+		is($bad->{'status'}, 400, 'a bad master list is a 400');
+		like($bad->{'json'}{'error'}, $error, 'and names the master rule');
+	}
+	is(scalar @calls, $before_json, 'no bad master list reaches the engine');
+
 	# A name the engine cannot build is refused here, before any command.
 	my $before = scalar @calls;
-	my $unknown = run_take(inserts => 'tone,flanger');
+	my $unknown = run_take(inserts => 'tone,wobble');
 	is($unknown->{'status'}, 400, 'an unknown insert is a 400');
-	like($unknown->{'json'}{'error'}, qr/no such insert: flanger/,
+	like($unknown->{'json'}{'error'}, qr/no such insert: wobble/,
 		'and names the insert the engine does not have');
 	is(scalar @calls, $before, 'nothing is sent to the engine');
 

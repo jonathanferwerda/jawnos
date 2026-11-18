@@ -393,14 +393,14 @@
 						<td colspan="2" style="padding-top:14px;"><b><%= &subs::ui('Engine take') %></b><br><span style="font-size:12px;"><%= &subs::ui('records on the native audio engine, beside the browser transport; the browser audio path is left alone') %></span></td>
 					</tr>
 					<tr>
-						<td><%= &subs::ui('Start, stop and the strip') %><br><span style="font-size:12px;"><%= &subs::ui('seconds; one to eight tracks; inputs and inserts as comma lists; gain goes 0 to 4 and pan -1 to 1') %></span></td>
+						<td><%= &subs::ui('Start, stop and the strip') %><br><span style="font-size:12px;"><%= &subs::ui('seconds; one to eight tracks; inputs as a comma list; each track records through its own rack; gain goes 0 to 4 and pan -1 to 1') %></span></td>
 						<td id="studio_engine_panel">
 							<button id="studio_engine_start" hint="<%= &subs::ui('Arm a take on the audio engine') %>"><%= &subs::ui('Start take') %></button>
 							<button id="studio_engine_stop" hint="<%= &subs::ui('End the engine take and close its file') %>"><%= &subs::ui('Stop take') %></button>
 							<label><%= &subs::ui('Seconds') %> <input id="studio_engine_seconds" value="10" size="4"></label>
 							<label><%= &subs::ui('Tracks') %> <select id="studio_engine_tracks" hint="<%= &subs::ui('How many tracks the engine take records') %>"><% for my $n (1 .. 8) { %><option value="<%= $n %>"><%= $n %></option><% } %></select></label>
 							<label><%= &subs::ui('Inputs') %> <input id="studio_engine_inputs" size="8" placeholder="0,1"></label>
-							<label><%= &subs::ui('Inserts') %> <input id="studio_engine_inserts" size="12" placeholder="tone,delay"></label>
+							<label><%= &subs::ui('Listen inserts') %> <input id="studio_engine_inserts" size="12" placeholder="tone,delay"></label>
 							<hr>
 							<button id="studio_listen_toggle" aria-pressed="false" hint="<%= &subs::ui('Start or stop live monitoring on the engine') %>"><%= &subs::ui('Listen') %></button>
 							<label><%= &subs::ui('Listen input') %> <select id="studio_listen_input" hint="<%= &subs::ui('Choose microphone (0) or instrument (1) for live monitoring') %>"><option value="0"><%= &subs::ui('0 - microphone') %></option><option value="1"><%= &subs::ui('1 - instrument') %></option></select></label>

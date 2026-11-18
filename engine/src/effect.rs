@@ -232,6 +232,10 @@ pub struct ToneStack {
     rate: u32,
     target_db: [f32; 3],
     current_db: [f32; 3],
+    /// The pedal's own output level: the browser's `tone` insert has a Gain
+    /// knob, and the contract lists it with the three bands. Unity is 1.0.
+    target_gain: f32,
+    gain: f32,
     bands: [Biquad; 3],
     designed: bool,
 }
@@ -249,6 +253,8 @@ impl ToneStack {
             rate: 48_000,
             target_db: [bass_db, mid_db, treble_db],
             current_db: [bass_db, mid_db, treble_db],
+            target_gain: 1.0,
+            gain: 1.0,
             bands: [Biquad::identity(); 3],
             designed: false,
         }
@@ -283,6 +289,7 @@ impl Effect for ToneStack {
     fn prepare(&mut self, rate: u32, _max_frames: usize) {
         self.rate = rate.max(1);
         self.current_db = self.target_db;
+        self.gain = self.target_gain;
         self.design();
         self.reset();
     }
@@ -291,6 +298,10 @@ impl Effect for ToneStack {
         if !self.designed {
             return;
         }
+        let gain_alpha = one_pole_block(SMOOTH_SECONDS, self.rate, block.len());
+        self.gain = (f64::from(self.gain)
+            + f64::from(self.target_gain - self.gain) * gain_alpha) as f32;
+        let level = self.gain;
         // One control step per block: coefficients are nonlinear in gain, so
         // moving the control in bounded steps is what keeps the filter stable.
         let alpha = one_pole_block(SMOOTH_SECONDS, self.rate, block.len());
@@ -315,6 +326,7 @@ impl Effect for ToneStack {
             for band in &mut self.bands {
                 *sample = band.process(*sample);
             }
+            *sample *= level;
         }
     }
 
@@ -322,9 +334,16 @@ impl Effect for ToneStack {
         for band in &mut self.bands {
             band.reset();
         }
+        self.gain = self.target_gain;
     }
 
     fn set(&mut self, name: &str, value: f32) -> bool {
+        if name == "gain" {
+            if value.is_finite() {
+                self.target_gain = value.clamp(0.0, 2.0);
+            }
+            return true;
+        }
         let band = match name {
             "bass" => 0,
             "mid" => 1,
@@ -771,6 +790,111 @@ impl InsertKind {
         }
     }
 
+    /// The controls this effect's `set` accepts, in the order the control
+    /// path numbers them. This is the one control list: [`ParamName::parse`]
+    /// and the socket's validation both read it, so a new knob is one row here
+    /// rather than a new enum variant and a second parser.
+    ///
+    /// The spelling is the contract's (`docs/studio-effects.md`): `thresh`, not
+    /// `threshold`, and `vol` for the delay's wet level. Aliases are accepted
+    /// by [`control_index`](InsertKind::control_index) but never listed.
+    pub const fn controls(self) -> &'static [&'static str] {
+        match self {
+            InsertKind::Tone => &["bass", "mid", "treble", "gain"],
+            InsertKind::Distortion => &["drive"],
+            InsertKind::Delay => &["time", "feedback", "vol"],
+            InsertKind::Compressor => &["thresh", "attack", "ratio", "release", "knee", "mix"],
+            InsertKind::Reverb => &["mix", "volume", "model"],
+            InsertKind::Flanger => &["rate", "depth", "feedback", "mix"],
+            InsertKind::Fuzz => &["gain", "tone", "level"],
+            InsertKind::Amp => &["gain", "bass", "mid", "treble", "cabinet"],
+            InsertKind::Limiter => &["ceiling", "release"],
+            InsertKind::Autotune => &["speed", "amount", "key", "scale"],
+            InsertKind::Equalizer => &["low", "mid", "high"],
+            InsertKind::Maximizer => &["ceiling", "loudness"],
+        }
+    }
+
+    /// The master rack's prefix for an implementation, for the five effects the
+    /// rack holds. `None` for an effect the rack does not build.
+    pub const fn master_prefix(self) -> Option<&'static str> {
+        match self {
+            InsertKind::Compressor => Some("master_comp"),
+            InsertKind::Equalizer => Some("master_eq"),
+            InsertKind::Reverb => Some("master_reverb"),
+            InsertKind::Maximizer => Some("master_maximizer"),
+            InsertKind::Limiter => Some("master_limiter"),
+            _ => None,
+        }
+    }
+
+    /// The index of `control` in [`controls`](InsertKind::controls), accepting
+    /// the two historical spellings the old wire used. `None` is an unknown
+    /// control, which the socket refuses.
+    pub fn control_index(self, control: &str) -> Option<u8> {
+        if let Some(index) = self.controls().iter().position(|name| *name == control) {
+            return Some(index as u8);
+        }
+        let canonical = match (self, control) {
+            (InsertKind::Compressor, "threshold") => "thresh",
+            (InsertKind::Delay, "mix") => "vol",
+            _ => return None,
+        };
+        self.controls()
+            .iter()
+            .position(|name| *name == canonical)
+            .map(|index| index as u8)
+    }
+
+    /// The control path speaks the contract's units; an effect's internal knob
+    /// may be on another scale. Only the millisecond controls differ: the
+    /// engine's compressor and limiter hold seconds, the wire says ms.
+    /// Everything else already is its natural unit (dB, Hz, 0..1, an index).
+    pub fn native_value(self, control: &str, value: f32) -> f32 {
+        match (self, control) {
+            (InsertKind::Compressor, "attack" | "release")
+            | (InsertKind::Limiter, "release") => value / 1000.0,
+            _ => value,
+        }
+    }
+
+    /// The compact code the parameter word stores. 0 is reserved for the
+    /// strip's own gain/pan, so a kind never shares a code with the strip.
+    pub const fn code(self) -> u8 {
+        match self {
+            InsertKind::Tone => 1,
+            InsertKind::Distortion => 2,
+            InsertKind::Delay => 3,
+            InsertKind::Compressor => 4,
+            InsertKind::Reverb => 5,
+            InsertKind::Flanger => 6,
+            InsertKind::Fuzz => 7,
+            InsertKind::Amp => 8,
+            InsertKind::Limiter => 9,
+            InsertKind::Autotune => 10,
+            InsertKind::Equalizer => 11,
+            InsertKind::Maximizer => 12,
+        }
+    }
+
+    pub const fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            1 => InsertKind::Tone,
+            2 => InsertKind::Distortion,
+            3 => InsertKind::Delay,
+            4 => InsertKind::Compressor,
+            5 => InsertKind::Reverb,
+            6 => InsertKind::Flanger,
+            7 => InsertKind::Fuzz,
+            8 => InsertKind::Amp,
+            9 => InsertKind::Limiter,
+            10 => InsertKind::Autotune,
+            11 => InsertKind::Equalizer,
+            12 => InsertKind::Maximizer,
+            _ => return None,
+        })
+    }
+
     /// Build the pedal at its web defaults: a flat tone stack (the knobs at
     /// 50), Distorjawn at drive 50, Delayed at 0.525 s / 0.27 / 0.4,
     /// CompressionX at −25 dB / 0.1 s attack / 0.5 mix, and `reverb2` at
@@ -853,8 +977,10 @@ impl Channel {
 
     /// Move one knob by name. `gain` and `pan` are the strip's own; anything
     /// with a `prefix.` names the first insert whose [`name`](Effect::name)
-    /// is that prefix and moves its knob (`delay.mix`). The effect clamps the
-    /// value. Returns false for a name this strip does not have.
+    /// is that prefix and moves its knob (`delay.mix`). The value is in the
+    /// control path's units, so the millisecond knobs are converted before the
+    /// effect sees them; the effect clamps. Returns false for a name this strip
+    /// does not have.
     pub fn set(&mut self, name: &str, value: f32) -> bool {
         match name {
             "gain" => {
@@ -874,14 +1000,25 @@ impl Channel {
                     Some(pair) => pair,
                     None => return false,
                 };
-                for slot in &mut self.inserts {
-                    if slot.effect.name() == prefix {
-                        return slot.effect.set(knob, value);
-                    }
-                }
-                false
+                let kind = match InsertKind::parse(prefix) {
+                    Some(kind) => kind,
+                    None => return false,
+                };
+                self.set_insert(kind.name(), knob, kind.native_value(knob, value))
             }
         }
+    }
+
+    /// Move one insert's knob by the effect's own prefix. The address has
+    /// already been parsed into a kind and a control, so this does no string
+    /// construction and stays usable from the audio thread between blocks.
+    pub fn set_insert(&mut self, prefix: &str, knob: &str, value: f32) -> bool {
+        for slot in &mut self.inserts {
+            if slot.effect.name() == prefix {
+                return slot.effect.set(knob, value);
+            }
+        }
+        false
     }
 
     /// Add one insert at the end of the chain.

@@ -29,6 +29,139 @@ function studioEffectClamp(value, low, high) {
 	return Math.max(low, Math.min(high, n));
 }
 
+// ---- the contract's natural units -----------------------------------------
+// docs/studio-effects.md, "Numbering that both sides must share". One function
+// turns a 0..100 slider (or a whole index from a dropdown) into the effect's
+// own units: dB, milliseconds, hertz, a 0..1 amount. The engine POST and the
+// WebAudio setters both read it, so a range cannot change on one side only.
+var studioEffectIndices = {
+	'reverb.model': 4,
+	'amp.cabinet': 3,
+	'autotune.key': 11,
+	'autotune.scale': 3
+};
+
+function studioEffectNatural(kind, control, value) {
+	var key = studioEffectKind(kind) + '.' + control;
+	if (studioEffectIndices[key] !== undefined) {
+		return Math.round(studioEffectClamp(value, 0, studioEffectIndices[key]));
+	}
+	var amount = studioEffectClamp(value, 0, 100) / 100;
+	switch (key) {
+		case 'equalizer.low':
+		case 'equalizer.mid':
+		case 'equalizer.high':
+		case 'amp.bass':
+		case 'amp.mid':
+		case 'amp.treble':
+		case 'tone.bass':
+		case 'tone.mid':
+		case 'tone.treble':
+			return -12 + amount * 24;
+		case 'limiter.ceiling':
+		case 'maximizer.ceiling':
+			return -24 + amount * 24;
+		case 'limiter.release':
+			return 10 + amount * 490;
+		case 'compressor.thresh':
+			return -60 + amount * 60;
+		case 'compressor.attack':
+			return 1 + amount * 199;
+		case 'compressor.ratio':
+			return 1 + amount * 19;
+		case 'compressor.release':
+			return 50 + amount * 950;
+		case 'compressor.knee':
+			return amount * 24;
+		case 'flanger.rate':
+			return 0.05 + amount * 4.95;
+		case 'flanger.feedback':
+		case 'delay.feedback':
+			return amount * 0.9;
+		case 'delay.time':
+			return amount * 1.5;
+		case 'tone.gain':
+			return amount * 2;
+		default:
+			return amount;
+	}
+}
+
+// ---- the engine's control path ---------------------------------------------
+// The native engine is the path that is playing only while an engine take is
+// recording or a live listen is running. The browser's graph stays
+// authoritative otherwise, so a knob is never sent twice for one movement.
+function studioEngineIsPath() {
+	return (typeof studioEngineRecording !== 'undefined' && studioEngineRecording)
+		|| (typeof studioListenActive !== 'undefined' && studioListenActive);
+}
+
+var studioEngineParamTimers = {};
+var studioEngineParamErrorShown = false;
+
+// One POST per knob per 150 ms, like the patchbay faders: a drag is a handful
+// of engine commands, not one per pixel.
+function studioEngineParamPost(data, key) {
+	if (!studioEngineIsPath()) { return; }
+	if (studioEngineParamTimers[key]) { clearTimeout(studioEngineParamTimers[key]); }
+	studioEngineParamTimers[key] = setTimeout(function () {
+		$.ajax({
+			url: '/manager/studio/take',
+			type: 'POST',
+			data: data,
+			dataType: 'json',
+			success: function (answer) {
+				answer = (typeof studioEngineAnswer === 'function') ? studioEngineAnswer(answer) : (answer || {});
+				if (answer.ok === true) { studioEngineParamErrorShown = false; return; }
+				if (!studioEngineParamErrorShown && typeof studioEngineShowError === 'function') {
+					studioEngineParamErrorShown = true;
+					studioEngineShowError(answer.error || studioEffectText('the audio engine did not answer'));
+				}
+			},
+			error: function () {
+				if (!studioEngineParamErrorShown && typeof studioEngineShowError === 'function') {
+					studioEngineParamErrorShown = true;
+					studioEngineShowError(studioEffectText('the audio engine did not answer'));
+				}
+			}
+		});
+	}, 150);
+}
+
+// One knob of a track's insert: the track is the 0-based engine track, the
+// name is the effect's canonical prefix, and the value is the contract's units.
+function studioEngineInsertParam(ch, insertName, control, value) {
+	var track = Math.max(0, (parseInt(ch, 10) || 1) - 1);
+	var kind = studioEffectKind(insertName);
+	var name = kind + '.' + control;
+	studioEngineParamPost(
+		{ action: 'param', track: track, name: name, value: studioEffectNatural(kind, control, value) },
+		'take:' + track + ':' + name
+	);
+}
+
+// The master rack is its own address: `master_comp` is the wire prefix the
+// contract names, and the effect is the same implementation a track uses.
+function studioEngineMasterParam(insertName, control, value) {
+	var kind = studioEffectKind(insertName);
+	var name = insertName + '.' + control;
+	studioEngineParamPost(
+		{ action: 'param', target: 'master', name: name, value: studioEffectNatural(kind, control, value) },
+		'master:' + name
+	);
+}
+
+// The master rack's footswitch. The value is the bypass flag (1 bypassed,
+// 0 heard), not a knob: only an effect the take armed has a slot to move, so
+// switching on an effect that was off when the take began waits for the next
+// take (the help topic says so).
+function studioEngineMasterBypass(insertName, bypassed) {
+	studioEngineParamPost(
+		{ action: 'param', target: 'master', name: insertName + '.bypass', value: bypassed ? 1 : 0 },
+		'master:' + insertName + ':bypass'
+	);
+}
+
 // The shell every builder hangs its nodes from.
 function studioEffectShell(ctx, name) {
 	var fx = {
@@ -137,10 +270,12 @@ function studioEffectReverb(ctx, name) {
 	var convolver = ctx.createConvolver();
 	var wet = ctx.createGain();
 	var dry = ctx.createGain();
-	var mix = 35, volume = 50;
+	// Natural units, as the contract sends them. The `* 2` keeps the browser's
+	// own volume centring at slider 50 (the engine clamps to 0..1).
+	var mix = 0.35, volume = 0.5;
 	var apply = function () {
-		wet.gain.value = (mix / 100) * 0.9 * (volume / 50);
-		dry.gain.value = 1 - (mix / 100) * 0.6;
+		wet.gain.value = mix * 0.9 * volume * 2;
+		dry.gain.value = 1 - mix * 0.6;
 	};
 	fx.input.connect(convolver).connect(wet).connect(fx.wet);
 	fx.input.connect(dry).connect(fx.wet);
@@ -151,12 +286,12 @@ function studioEffectReverb(ctx, name) {
 		fx.modelValue = m;
 		convolver.buffer = studioReverbImpulse(ctx, m);
 	};
-	fx.setters['mix'] = function (v) { mix = v; apply(); };
-	fx.setters['volume'] = function (v) { volume = v; apply(); };
+	fx.setters['mix'] = function (v) { mix = studioEffectNatural(fx.name, 'mix', v); apply(); };
+	fx.setters['volume'] = function (v) { volume = studioEffectNatural(fx.name, 'volume', v); apply(); };
 	// The old reverb2 defaults: a little room on the signal, then its level.
 	fx.set('model', 2);
-	fx.set('mix', mix);
-	fx.set('volume', volume);
+	fx.set('mix', 35);
+	fx.set('volume', 50);
 	return fx;
 }
 
@@ -178,10 +313,14 @@ function studioEffectFlanger(ctx, name) {
 	delay.connect(wet).connect(fx.wet);
 	fx.input.connect(dry).connect(fx.wet);
 	try { lfo.start(0); } catch (e) {}
-	fx.setters['rate'] = function (v) { lfo.frequency.value = 0.05 + (v / 100) * 5; };
-	fx.setters['depth'] = function (v) { depth.gain.value = (v / 100) * 0.006; };
-	fx.setters['feedback'] = function (v) { feedback.gain.value = Math.min(0.9, (v / 100) * 0.9); };
-	fx.setters['mix'] = function (v) { wet.gain.value = v / 100; dry.gain.value = 1 - (v / 100) * 0.5; };
+	fx.setters['rate'] = function (v) { lfo.frequency.value = studioEffectNatural(fx.name, 'rate', v); };
+	fx.setters['depth'] = function (v) { depth.gain.value = studioEffectNatural(fx.name, 'depth', v) * 0.006; };
+	fx.setters['feedback'] = function (v) { feedback.gain.value = studioEffectNatural(fx.name, 'feedback', v); };
+	fx.setters['mix'] = function (v) {
+		var n = studioEffectNatural(fx.name, 'mix', v);
+		wet.gain.value = n;
+		dry.gain.value = 1 - n * 0.5;
+	};
 	fx.destroy = function () { try { lfo.stop(); } catch (e) {} };
 	fx.set('rate', 20);
 	fx.set('depth', 60);
@@ -227,9 +366,9 @@ function studioEffectFuzz(ctx, name) {
 	tone.frequency.value = 3000;
 	var level = ctx.createGain();
 	fx.input.connect(shaper).connect(tone).connect(level).connect(fx.wet);
-	fx.setters['gain'] = function (v) { shaper.curve = studioFuzzCurve(v / 100); };
-	fx.setters['tone'] = function (v) { tone.frequency.value = 500 + (v / 100) * 7500; };
-	fx.setters['level'] = function (v) { level.gain.value = (v / 100) * 1.2; };
+	fx.setters['gain'] = function (v) { shaper.curve = studioFuzzCurve(studioEffectNatural(fx.name, 'gain', v)); };
+	fx.setters['tone'] = function (v) { tone.frequency.value = 500 + studioEffectNatural(fx.name, 'tone', v) * 7500; };
+	fx.setters['level'] = function (v) { level.gain.value = studioEffectNatural(fx.name, 'level', v) * 1.2; };
 	fx.set('gain', 65);
 	fx.set('tone', 45);
 	fx.set('level', 60);
@@ -243,7 +382,7 @@ function studioEffectDistortion(ctx, name) {
 	lp.type = 'lowpass';
 	lp.frequency.value = 4500;
 	fx.input.connect(shaper).connect(lp).connect(fx.wet);
-	var drive = function (v) { shaper.curve = studioDistortionCurve((v / 100) * 100); shaper.oversample = '4x'; };
+	var drive = function (v) { shaper.curve = studioDistortionCurve(studioEffectNatural(fx.name, 'drive', v) * 100); shaper.oversample = '4x'; };
 	// The shelf pedal's knob is called gain; the contract calls it drive.
 	fx.setters['drive'] = drive;
 	fx.setters['gain'] = drive;
@@ -288,14 +427,14 @@ function studioEffectAmp(ctx, name) {
 		.connect(hp).connect(presence).connect(lp).connect(level).connect(fx.wet);
 	fx.setters['gain'] = function (v) {
 		// -15 dB to +15 dB around the shaper, which saturates as it is pushed
-		pre.gain.value = Math.pow(10, ((v - 50) / 50 * 15) / 20);
+		pre.gain.value = Math.pow(10, ((studioEffectNatural(fx.name, 'gain', v) - 0.5) * 2 * 15) / 20);
 	};
-	var shelf = function (filter, v) { filter.gain.value = (v - 50) / 50 * 12; };
-	fx.setters['bass'] = function (v) { shelf(bass, v); };
-	fx.setters['mid'] = function (v) { shelf(mid, v); };
-	fx.setters['treble'] = function (v) { shelf(treble, v); };
+	var shelf = function (filter, control, v) { filter.gain.value = studioEffectNatural(fx.name, control, v); };
+	fx.setters['bass'] = function (v) { shelf(bass, 'bass', v); };
+	fx.setters['mid'] = function (v) { shelf(mid, 'mid', v); };
+	fx.setters['treble'] = function (v) { shelf(treble, 'treble', v); };
 	fx.setters['cabinet'] = function (v) {
-		var cab = studioAmpCabinets[Math.max(0, Math.min(3, Math.round(v)))] || studioAmpCabinets[0];
+		var cab = studioAmpCabinets[studioEffectNatural(fx.name, 'cabinet', v)] || studioAmpCabinets[0];
 		hp.frequency.value = cab.highpass;
 		presence.frequency.value = cab.presence;
 		presence.gain.value = cab.presenceGain;
@@ -320,8 +459,8 @@ function studioEffectLimiter(ctx, name) {
 	comp.attack.value = 0.002;
 	fx.input.connect(comp).connect(fx.wet);
 	// The slider is the ceiling, so a higher slider limits less and plays louder.
-	fx.setters['ceiling'] = function (v) { comp.threshold.value = -24 + (v / 100) * 24; };
-	fx.setters['release'] = function (v) { comp.release.value = 0.01 + (v / 100) * 0.49; };
+	fx.setters['ceiling'] = function (v) { comp.threshold.value = studioEffectNatural(fx.name, 'ceiling', v); };
+	fx.setters['release'] = function (v) { comp.release.value = studioEffectNatural(fx.name, 'release', v) / 1000; };
 	fx.set('ceiling', 85);
 	fx.set('release', 40);
 	return fx;
@@ -352,13 +491,13 @@ function studioEffectMaximizer(ctx, name) {
 	var ceiling = 0.9;
 	fx.input.connect(comp).connect(makeup).connect(clip).connect(fx.wet);
 	fx.setters['ceiling'] = function (v) {
-		var ceiling_db = -24 + (v / 100) * 24;
+		var ceiling_db = studioEffectNatural(fx.name, 'ceiling', v);
 		ceiling = Math.pow(10, ceiling_db / 20);
 		comp.threshold.value = ceiling_db;
 		clip.curve = studioMaximizerCurve(ceiling);
 	};
 	fx.setters['loudness'] = function (v) {
-		makeup.gain.value = Math.pow(10, ((v / 100) * 12) / 20);
+		makeup.gain.value = Math.pow(10, (studioEffectNatural(fx.name, 'loudness', v) * 12) / 20);
 	};
 	fx.set('ceiling', 90);
 	fx.set('loudness', 20);
@@ -380,9 +519,9 @@ function studioEffectEqualizer(ctx, name) {
 	high.type = 'highshelf';
 	high.frequency.value = 4000;
 	fx.input.connect(low).connect(mid).connect(high).connect(fx.wet);
-	fx.setters['low'] = function (v) { low.gain.value = (v - 50) / 50 * 12; };
-	fx.setters['mid'] = function (v) { mid.gain.value = (v - 50) / 50 * 12; };
-	fx.setters['high'] = function (v) { high.gain.value = (v - 50) / 50 * 12; };
+	fx.setters['low'] = function (v) { low.gain.value = studioEffectNatural(fx.name, 'low', v); };
+	fx.setters['mid'] = function (v) { mid.gain.value = studioEffectNatural(fx.name, 'mid', v); };
+	fx.setters['high'] = function (v) { high.gain.value = studioEffectNatural(fx.name, 'high', v); };
 	fx.set('low', 50);
 	fx.set('mid', 50);
 	fx.set('high', 50);
@@ -396,12 +535,16 @@ function studioEffectCompressor(ctx, name) {
 	var dry = ctx.createGain();
 	fx.input.connect(comp).connect(wet).connect(fx.wet);
 	fx.input.connect(dry).connect(fx.wet);
-	fx.setters['thresh'] = function (v) { comp.threshold.value = -60 + (v / 100) * 60; };
-	fx.setters['attack'] = function (v) { comp.attack.value = Math.max(0.001, v / 500); };
-	fx.setters['ratio'] = function (v) { comp.ratio.value = 1 + (v / 100) * 19; };
-	fx.setters['release'] = function (v) { comp.release.value = 0.05 + (v / 100) * 0.95; };
-	fx.setters['knee'] = function (v) { comp.knee.value = (v / 100) * 24; };
-	fx.setters['mix'] = function (v) { wet.gain.value = v / 100; dry.gain.value = 1 - v / 100; };
+	fx.setters['thresh'] = function (v) { comp.threshold.value = studioEffectNatural(fx.name, 'thresh', v); };
+	fx.setters['attack'] = function (v) { comp.attack.value = Math.max(0.001, studioEffectNatural(fx.name, 'attack', v) / 1000); };
+	fx.setters['ratio'] = function (v) { comp.ratio.value = studioEffectNatural(fx.name, 'ratio', v); };
+	fx.setters['release'] = function (v) { comp.release.value = studioEffectNatural(fx.name, 'release', v) / 1000; };
+	fx.setters['knee'] = function (v) { comp.knee.value = studioEffectNatural(fx.name, 'knee', v); };
+	fx.setters['mix'] = function (v) {
+		var n = studioEffectNatural(fx.name, 'mix', v);
+		wet.gain.value = n;
+		dry.gain.value = 1 - n;
+	};
 	fx.set('thresh', 50);
 	fx.set('attack', 20);
 	fx.set('ratio', 50);
@@ -421,9 +564,9 @@ function studioEffectDelay(ctx, name) {
 	fx.input.connect(delay).connect(wet).connect(fx.wet);
 	delay.connect(feedback).connect(delay);
 	dry.gain.value = 0.7;
-	fx.setters['time'] = function (v) { delay.delayTime.value = (v / 100) * 1.5; };
-	fx.setters['feedback'] = function (v) { feedback.gain.value = (v / 100) * 0.9; };
-	fx.setters['vol'] = function (v) { wet.gain.value = v / 100; };
+	fx.setters['time'] = function (v) { delay.delayTime.value = studioEffectNatural(fx.name, 'time', v); };
+	fx.setters['feedback'] = function (v) { feedback.gain.value = studioEffectNatural(fx.name, 'feedback', v); };
+	fx.setters['vol'] = function (v) { wet.gain.value = studioEffectNatural(fx.name, 'vol', v); };
 	fx.set('time', 35);
 	fx.set('feedback', 30);
 	fx.set('vol', 40);
@@ -444,10 +587,10 @@ function studioEffectTone(ctx, name) {
 	treble.type = 'highshelf';
 	treble.frequency.value = 3500;
 	fx.input.connect(gain).connect(bass).connect(mid).connect(treble).connect(fx.wet);
-	fx.setters['gain'] = function (v) { gain.gain.value = v / 50; };
-	fx.setters['bass'] = function (v) { bass.gain.value = (v - 50) / 50 * 12; };
-	fx.setters['mid'] = function (v) { mid.gain.value = (v - 50) / 50 * 12; };
-	fx.setters['treble'] = function (v) { treble.gain.value = (v - 50) / 50 * 12; };
+	fx.setters['gain'] = function (v) { gain.gain.value = studioEffectNatural(fx.name, 'gain', v); };
+	fx.setters['bass'] = function (v) { bass.gain.value = studioEffectNatural(fx.name, 'bass', v); };
+	fx.setters['mid'] = function (v) { mid.gain.value = studioEffectNatural(fx.name, 'mid', v); };
+	fx.setters['treble'] = function (v) { treble.gain.value = studioEffectNatural(fx.name, 'treble', v); };
 	fx.set('gain', 50);
 	fx.set('bass', 50);
 	fx.set('mid', 50);
@@ -474,11 +617,11 @@ var studioAutotuneScales = [
 ];
 
 function studioAutotuneKey(value) {
-	return Math.max(0, Math.min(11, Math.round(studioEffectClamp(value, 0, 0) / 100 * 11)));
+	return studioEffectNatural('autotune', 'key', value);
 }
 
 function studioAutotuneScale(value) {
-	return Math.max(0, Math.min(3, Math.round(studioEffectClamp(value, 0, 0) / 100 * 3)));
+	return studioEffectNatural('autotune', 'scale', value);
 }
 
 // The nearest scale tone to a detected frequency, as a frequency again.
@@ -630,9 +773,9 @@ function studioAutotuneBlock(state, event, settings) {
 	}
 	if (inputPeriod > 0) {
 		// speed is how fast the correction glides, one pole per block
-		var glide = 0.05 + (settings.speed / 100) * 0.9;
+		var glide = 0.05 + settings.speed * 0.9;
 		state.period += (inputPeriod - state.period) * glide;
-		var wanted = inputPeriod + (targetPeriod - inputPeriod) * (settings.amount / 100);
+		var wanted = inputPeriod + (targetPeriod - inputPeriod) * settings.amount;
 		state.target += (wanted - state.target) * glide;
 	}
 	var period = state.period > 0 ? state.period : 128;
@@ -709,9 +852,9 @@ function studioAutotuneRamp(ctx, fx, settings) {
 		var hz = studioAutotunePitch(data, ctx.sampleRate, corr);
 		var target = studioAutotuneTarget(hz, settings.key, settings.scale);
 		var desired = (hz > 0 && target > 0) ? target / hz : 1;
-		desired = 1 + (desired - 1) * (settings.amount / 100);
+		desired = 1 + (desired - 1) * settings.amount;
 		desired = Math.max(0.5, Math.min(2, desired));
-		ratio += (desired - ratio) * (0.1 + (settings.speed / 100) * 0.8);
+		ratio += (desired - ratio) * (0.1 + settings.speed * 0.8);
 		while (next < ctx.currentTime + 0.3) {
 			var to = flip ? db : da;
 			var toGain = flip ? gb : ga;
@@ -737,9 +880,9 @@ function studioAutotuneRamp(ctx, fx, settings) {
 
 function studioEffectAutotune(ctx, name) {
 	var fx = studioEffectShell(ctx, name || 'autotune');
-	var settings = { speed: 40, amount: 100, key: 0, scale: 0 };
-	fx.setters['speed'] = function (v) { settings.speed = v; };
-	fx.setters['amount'] = function (v) { settings.amount = v; };
+	var settings = { speed: 0.4, amount: 1, key: 0, scale: 0 };
+	fx.setters['speed'] = function (v) { settings.speed = studioEffectNatural(fx.name, 'speed', v); };
+	fx.setters['amount'] = function (v) { settings.amount = studioEffectNatural(fx.name, 'amount', v); };
 	fx.setters['key'] = function (v) { settings.key = studioAutotuneKey(v); };
 	fx.setters['scale'] = function (v) { settings.scale = studioAutotuneScale(v); };
 	var maker = ctx.createScriptProcessor || ctx.createJavaScriptNode;

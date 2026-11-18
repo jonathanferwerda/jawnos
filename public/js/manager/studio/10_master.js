@@ -84,6 +84,8 @@ function studioMasterSet(name, control, value) {
 	var ins = studioMasterFind(name);
 	if (!ins) { return; }
 	ins.set(control, value);
+	// A master knob is its own address: `master_comp.thresh`, not a track.
+	studioEngineMasterParam(name, control, value);
 	studioMasterRender();
 	studioSaver();
 }
@@ -92,6 +94,9 @@ function studioMasterToggle(name, on) {
 	var ins = studioMasterFind(name);
 	if (!ins) { return; }
 	if (ins.setBypass) { ins.setBypass(!on); }
+	// The engine keeps the insert in the rack and flips its bypass between
+	// blocks; an effect that was off when the take began has no slot yet.
+	studioEngineMasterBypass(name, !on);
 	studioMasterRender();
 	studioSaver();
 }

@@ -567,6 +567,10 @@ function studioLatencyMeasure() {
 // A number the engine did not report is shown as an em dash, never guessed.
 
 var studioEngineTimer = 0;
+// True while an engine take is recording. The rack knobs post to the engine
+// only while it is the path that is playing; the browser graph stays the path
+// when this is false and live listening is off.
+var studioEngineRecording = false;
 
 function studioEngineAnswer(data) {
 	if (!data || typeof data !== 'object') {
@@ -583,6 +587,7 @@ function studioEngineShowError(text) {
 function studioEngineFailed(xhr) {
 	var data = xhr && xhr.responseJSON;
 	studioEnginePollStop();
+	studioEngineRecording = false;
 	studioEngineShowError((data && data.error) ? data.error : studioAudioLabel('the audio engine did not answer'));
 }
 
@@ -675,34 +680,97 @@ function studioEngineStatus() {
 				return;
 			}
 			if (typeof data.error === 'string' && data.error.length) { studioEngineShowError(data.error); }
+			studioEngineRecording = (data.state === 'recording');
 			studioEngineRender(data);
-			if (data.state === 'recording') { studioEnginePollStart(); }
+			if (studioEngineRecording) { studioEnginePollStart(); }
 			else { studioEnginePollStop(); }
 		},
 		error: studioEngineFailed
 	});
 }
 
+// The engine take arms each track's own rack now, not one global chain:
+// channel `ch` is engine track `ch-1`, its input comes from the Inputs list
+// (defaulting to the track's own number), and only the enabled (unbypassed)
+// inserts travel. The array is the engine's own per-track plan shape.
+function studioEngineInputList() {
+	var text = String($('#studio_engine_inputs').val() || '').replace(/^\s+|\s+$/g, '');
+	if (!text.length) { return []; }
+	return text.split(',').map(function (part) {
+		part = part.replace(/^\s+|\s+$/g, '');
+		// A valid channel goes as a number; a typo stays a string so the route
+		// refuses it instead of silently recording the wrong input.
+		return /^\+?\d+$/.test(part) ? parseInt(part, 10) : part;
+	});
+}
+
+function studioEngineTrackPlan() {
+	var count = parseInt($('#studio_engine_tracks').val(), 10);
+	if (!(count >= 1)) { count = 1; }
+	var inputs = studioEngineInputList();
+	var plan = [];
+	for (var index = 0; index < count; index++) {
+		var channel = studioAudio.channels[index + 1];
+		var inserts = [];
+		if (channel && channel.inserts) {
+			channel.inserts.forEach(function (ins) {
+				if (!ins || ins.bypassed) { return; }
+				inserts.push(studioEffectKind(ins.name));
+			});
+		}
+		plan.push({
+			input: (index < inputs.length ? inputs[index] : index),
+			inserts: inserts
+		});
+	}
+	return plan;
+}
+
+// The enabled master effects the page has now; the engine builds them in the
+// contract's order whatever order this list is in. A master switched on after
+// the take started is not in that take's rack (see the engine's `master` note).
+function studioEngineMasterList() {
+	var records = (typeof studioMasterSave === 'function') ? studioMasterSave() : [];
+	// Before the browser graph exists, the song's admin still holds the rack's
+	// on/off state, so a take can arm what the song says was on.
+	if (!records.length && mixer['admin'] && mixer['admin']['master']) {
+		records = mixer['admin']['master'];
+	}
+	return records.filter(function (record) {
+		return record && record['on'];
+	}).map(function (record) {
+		return record['name'];
+	});
+}
+
 function studioEngineStart() {
 	studioEngineShowError('');
+	var plan = studioEngineTrackPlan();
+	var master = studioEngineMasterList();
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',
 		data: {
 			action: 'start',
 			seconds: $('#studio_engine_seconds').val(),
+			// The scalar fields stay for an older route; a route that knows
+			// tracks_json ignores them and uses each track's own chain.
 			tracks: $('#studio_engine_tracks').val(),
 			inputs: $('#studio_engine_inputs').val(),
-			inserts: $('#studio_engine_inserts').val()
+			inserts: $('#studio_engine_inserts').val(),
+			tracks_json: JSON.stringify(plan),
+			master_json: JSON.stringify(master)
 		},
 		dataType: 'json',
 		success: function (data) {
 			data = studioEngineAnswer(data);
 			if (data.ok !== true) {
 				studioEnginePollStop();
+				studioEngineRecording = false;
 				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
 				return;
 			}
+			studioEngineRecording = true;
 			studioEngineRender(data);
 			studioEnginePollStart();
 			studioEngineStatus();
@@ -719,6 +787,7 @@ function studioEngineStop() {
 		dataType: 'json',
 		success: function (data) {
 			studioEnginePollStop();
+			studioEngineRecording = false;
 			data = studioEngineAnswer(data);
 			if (data.ok !== true) {
 				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));

@@ -208,9 +208,27 @@ my @names = qw(
 	my $tiny_request = (logged_requests($log))[-1];
 	is($tiny_request->{'value'}, 0.001, 'and reaches the engine as 0.001');
 
-	# --- an unknown name is refused here, not by the engine -----------------
+	# An insert and control the old whitelist never named now has the
+	# contract's shape, so the route forwards it and the engine decides.
+	my $new_insert = run_take(action => 'param', track => '0', name => 'flanger.rate', value => '1.4');
+	is($new_insert->{'status'}, 200, 'a new insert control is accepted');
+	my $new_request = (logged_requests($log))[-1];
+	is($new_request->{'name'}, 'flanger.rate', 'and keeps the engine spelling');
+	is($new_request->{'value'}, 1.4, 'with its natural-unit value');
+
+	# The master rack is a separate address: no track, `target: master`.
+	my $master = run_take(action => 'param', target => 'master', name => 'master_comp.thresh', value => '-20');
+	is($master->{'status'}, 200, 'a master knob is accepted');
+	my $master_request = (logged_requests($log))[-1];
+	is($master_request->{'cmd'}, 'param', 'it is a param command');
+	is($master_request->{'target'}, 'master', 'addressed to master');
+	is($master_request->{'name'}, 'master_comp.thresh', 'with the master prefix');
+	is($master_request->{'value'}, -20, 'and a number');
+	ok(!exists $master_request->{'track'}, 'a master knob carries no track');
+
+	# --- a name outside the contract's shape is refused here ----------------
 	my $unchanged = request_count($log);
-	for my $bad (qw(flanger Gain volume tone.air '')) {
+	for my $bad (qw(flanger Gain volume tone_air tone. .mix)) {
 		my $fake = run_take(action => 'param', track => '0', name => $bad, value => '0.5');
 		is($fake->{'status'}, 400, "the name '$bad' is a 400");
 		ok(!$fake->{'json'}{'ok'}, 'with ok false');
@@ -305,9 +323,9 @@ my @names = qw(
 		is($fake->{'status'}, 400, "gain '$bad_gain' is a 400");
 		like($fake->{'json'}{'error'}, qr/gain must be a finite number/, 'and names the rule');
 	}
-	my $bad_insert = run_take(action => 'listen_start', channel => '0', gain => '0.5', inserts => 'tone,flanger');
+	my $bad_insert = run_take(action => 'listen_start', channel => '0', gain => '0.5', inserts => 'tone,wobble');
 	is($bad_insert->{'status'}, 400, 'an unknown insert is a 400');
-	like($bad_insert->{'json'}{'error'}, qr/no such insert: flanger/, 'and names the insert');
+	like($bad_insert->{'json'}{'error'}, qr/no such insert: wobble/, 'and names the insert');
 	is(request_count($log), $unchanged, 'a refused listen never reaches the engine');
 
 	my $stop = run_take(action => 'listen_stop');

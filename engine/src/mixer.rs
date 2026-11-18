@@ -27,123 +27,224 @@ pub const PARAM_QUEUE_LEN: usize = 64;
 
 /// A parameter the control path can name, in the engine's own vocabulary.
 ///
-/// The names are the ones the socket speaks, split at the effect prefix so the
-/// audio side does not have to parse strings. [`insert`](ParamName::insert) is
-/// what a controller checks before sending: an effect parameter is only real
-/// when that effect is in the track's chain.
+/// An address is one 16-bit word: a master-rack bit, a 7-bit
+/// [`InsertKind`] code, and the index of a control in
+/// [`InsertKind::controls`]. The strip's own `gain` and `pan` use kind 0, so
+/// every knob the socket can speak fits without a variant per effect. The
+/// control list is the only table: [`parse`](ParamName::parse) and the socket
+/// read it, and a new knob is one row rather than another enum arm.
+///
+/// `Copy`, `Eq` and 16 bits wide, so [`ParamQueue`] can pack it into the same
+/// `u64` slot as the track and value and the audio thread never sees a string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ParamName {
-    Gain = 1,
-    Pan,
-    ToneBass,
-    ToneMid,
-    ToneTreble,
-    DistortionDrive,
-    DelayTime,
-    DelayFeedback,
-    DelayMix,
-    CompressorThreshold,
-    CompressorAttack,
-    CompressorMix,
-    ReverbMix,
-    ReverbVolume,
-}
+pub struct ParamName(u16);
+
+const MASTER_BIT: u16 = 0x8000;
+const KIND_SHIFT: u16 = 8;
+const CONTROL_MASK: u16 = 0xFF;
+/// Kind 0 is the channel strip itself, not an insert.
+const STRIP_KIND: u8 = 0;
+/// `master_<name>.bypass` is the master rack's footswitch, not an effect knob:
+/// it is a pseudo-control that only a master address may name.
+const BYPASS_CONTROL: u8 = 0xFF;
 
 impl ParamName {
-    /// The socket's name, e.g. `reverb.mix`.
+    /// The historical names, kept so existing callers and tests name the same
+    /// knobs. They are the same `u16` the parser builds.
+    #[allow(non_upper_case_globals)]
+    pub const Gain: Self = Self::strip(0);
+    #[allow(non_upper_case_globals)]
+    pub const Pan: Self = Self::strip(1);
+    #[allow(non_upper_case_globals)]
+    pub const ToneBass: Self = Self::from_insert(InsertKind::Tone, 0);
+    #[allow(non_upper_case_globals)]
+    pub const ToneMid: Self = Self::from_insert(InsertKind::Tone, 1);
+    #[allow(non_upper_case_globals)]
+    pub const ToneTreble: Self = Self::from_insert(InsertKind::Tone, 2);
+    #[allow(non_upper_case_globals)]
+    pub const DistortionDrive: Self = Self::from_insert(InsertKind::Distortion, 0);
+    #[allow(non_upper_case_globals)]
+    pub const DelayTime: Self = Self::from_insert(InsertKind::Delay, 0);
+    #[allow(non_upper_case_globals)]
+    pub const DelayFeedback: Self = Self::from_insert(InsertKind::Delay, 1);
+    #[allow(non_upper_case_globals)]
+    pub const DelayMix: Self = Self::from_insert(InsertKind::Delay, 2);
+    #[allow(non_upper_case_globals)]
+    pub const CompressorThreshold: Self = Self::from_insert(InsertKind::Compressor, 0);
+    #[allow(non_upper_case_globals)]
+    pub const CompressorAttack: Self = Self::from_insert(InsertKind::Compressor, 1);
+    #[allow(non_upper_case_globals)]
+    pub const CompressorMix: Self = Self::from_insert(InsertKind::Compressor, 5);
+    #[allow(non_upper_case_globals)]
+    pub const ReverbMix: Self = Self::from_insert(InsertKind::Reverb, 0);
+    #[allow(non_upper_case_globals)]
+    pub const ReverbVolume: Self = Self::from_insert(InsertKind::Reverb, 1);
+
+    const fn strip(control: u8) -> Self {
+        Self(((STRIP_KIND as u16) << KIND_SHIFT) | control as u16)
+    }
+
+    const fn from_insert(kind: InsertKind, control: u8) -> Self {
+        Self(((kind.code() as u16) << KIND_SHIFT) | control as u16)
+    }
+
+    /// The socket's name, e.g. `reverb.mix`, `amp.cabinet` or
+    /// `master_comp.thresh`. The control must be in
+    /// [`InsertKind::controls`] (the historical `compressor.threshold` and
+    /// `delay.mix` spellings are aliases); anything else is `None`, which is
+    /// how an unknown control is refused rather than silently ignored.
     pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "gain" => Self::Gain,
-            "pan" => Self::Pan,
-            "tone.bass" => Self::ToneBass,
-            "tone.mid" => Self::ToneMid,
-            "tone.treble" => Self::ToneTreble,
-            "distortion.drive" => Self::DistortionDrive,
-            "delay.time" => Self::DelayTime,
-            "delay.feedback" => Self::DelayFeedback,
-            "delay.mix" => Self::DelayMix,
-            "compressor.threshold" => Self::CompressorThreshold,
-            "compressor.attack" => Self::CompressorAttack,
-            "compressor.mix" => Self::CompressorMix,
-            "reverb.mix" => Self::ReverbMix,
-            "reverb.volume" => Self::ReverbVolume,
-            _ => return None,
-        })
+        match name {
+            "gain" => return Some(Self::Gain),
+            "pan" => return Some(Self::Pan),
+            _ => {}
+        }
+        let (prefix, control) = name.split_once('.')?;
+        let kind = InsertKind::parse(prefix)?;
+        let master = prefix.starts_with("master_");
+        if master && control == "bypass" {
+            return Some(Self::new(true, kind, BYPASS_CONTROL));
+        }
+        let control = kind.control_index(control)?;
+        Some(Self::new(master, kind, control))
     }
 
-    /// The name [`Channel::set`] expects.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Gain => "gain",
-            Self::Pan => "pan",
-            Self::ToneBass => "tone.bass",
-            Self::ToneMid => "tone.mid",
-            Self::ToneTreble => "tone.treble",
-            Self::DistortionDrive => "distortion.drive",
-            Self::DelayTime => "delay.time",
-            Self::DelayFeedback => "delay.feedback",
-            Self::DelayMix => "delay.mix",
-            Self::CompressorThreshold => "compressor.threshold",
-            Self::CompressorAttack => "compressor.attack",
-            Self::CompressorMix => "compressor.mix",
-            Self::ReverbMix => "reverb.mix",
-            Self::ReverbVolume => "reverb.volume",
+    const fn new(master: bool, kind: InsertKind, control: u8) -> Self {
+        let master = if master { MASTER_BIT } else { 0 };
+        Self(master | ((kind.code() as u16) << KIND_SHIFT) | control as u16)
+    }
+
+    fn from_bits(bits: u16) -> Option<Self> {
+        let master = bits & MASTER_BIT != 0;
+        let kind_code = ((bits >> KIND_SHIFT) & 0x7F) as u8;
+        let control = (bits & CONTROL_MASK) as usize;
+        if kind_code == STRIP_KIND {
+            return if !master && control < 2 {
+                Some(Self(bits))
+            } else {
+                None
+            };
+        }
+        let kind = InsertKind::from_code(kind_code)?;
+        if master && control == usize::from(BYPASS_CONTROL) {
+            return Some(Self(bits));
+        }
+        if control >= kind.controls().len() {
+            return None;
+        }
+        Some(Self(bits))
+    }
+
+    /// The raw word the queue stores.
+    pub fn bits(self) -> u16 {
+        self.0
+    }
+
+    /// True for the master rack's fixed chain, false for a track strip.
+    pub fn master(self) -> bool {
+        self.0 & MASTER_BIT != 0
+    }
+
+    /// True for the master rack's footswitch pseudo-control.
+    pub fn bypass(self) -> bool {
+        self.master() && (self.0 & CONTROL_MASK) == u16::from(BYPASS_CONTROL)
+    }
+
+    /// The same address on the other bus.
+    pub fn with_master(self, master: bool) -> Self {
+        if master {
+            Self(self.0 | MASTER_BIT)
+        } else {
+            Self(self.0 & !MASTER_BIT)
         }
     }
 
-    /// The insert that owns an effect parameter; `None` for the strip's own
-    /// gain and pan.
+    /// The insert behind the address. `None` is the strip's own gain/pan.
+    pub fn insert_kind(self) -> Option<InsertKind> {
+        let code = ((self.0 >> KIND_SHIFT) & 0x7F) as u8;
+        if code == STRIP_KIND {
+            return None;
+        }
+        InsertKind::from_code(code)
+    }
+
+    /// The prefix a chain or the master rack resolves: `flanger`, `amp`, or
+    /// `master_comp` for a master address. `None` is the strip itself.
     pub fn insert(self) -> Option<&'static str> {
-        match self {
-            Self::Gain | Self::Pan => None,
-            Self::ToneBass | Self::ToneMid | Self::ToneTreble => Some("tone"),
-            Self::DistortionDrive => Some("distortion"),
-            Self::DelayTime | Self::DelayFeedback | Self::DelayMix => Some("delay"),
-            Self::CompressorThreshold | Self::CompressorAttack | Self::CompressorMix => {
-                Some("compressor")
+        let kind = self.insert_kind()?;
+        Some(if self.master() {
+            kind.master_prefix().unwrap_or_else(|| kind.name())
+        } else {
+            kind.name()
+        })
+    }
+
+    /// The control's name as the effect's `set` expects it (`drive`), or
+    /// `gain`/`pan` for the strip.
+    pub fn control(self) -> &'static str {
+        if self.bypass() {
+            return "bypass";
+        }
+        match self.insert_kind() {
+            Some(kind) => kind.controls()
+                .get((self.0 & CONTROL_MASK) as usize)
+                .copied()
+                .unwrap_or(""),
+            None => {
+                if self.0 & CONTROL_MASK == 0 {
+                    "gain"
+                } else {
+                    "pan"
+                }
             }
-            Self::ReverbMix | Self::ReverbVolume => Some("reverb"),
         }
     }
 
-    fn code(self) -> u8 {
-        self as u8
+    /// True when the master rack can build this effect. A `master_*` name that
+    /// maps to an effect the rack does not hold is refused.
+    pub fn master_capable(self) -> bool {
+        self.insert_kind()
+            .map(|kind| kind.master_prefix().is_some())
+            .unwrap_or(false)
     }
 
-    fn from_code(code: u8) -> Option<Self> {
-        Some(match code {
-            1 => Self::Gain,
-            2 => Self::Pan,
-            3 => Self::ToneBass,
-            4 => Self::ToneMid,
-            5 => Self::ToneTreble,
-            6 => Self::DistortionDrive,
-            7 => Self::DelayTime,
-            8 => Self::DelayFeedback,
-            9 => Self::DelayMix,
-            10 => Self::CompressorThreshold,
-            11 => Self::CompressorAttack,
-            12 => Self::CompressorMix,
-            13 => Self::ReverbMix,
-            14 => Self::ReverbVolume,
-            _ => return None,
-        })
+    /// The wire value in the effect's internal units. The contract sends
+    /// milliseconds for the compressor and limiter time controls; the effects
+    /// hold seconds.
+    pub fn native_value(self, value: f32) -> f32 {
+        self.insert_kind()
+            .map(|kind| kind.native_value(self.control(), value))
+            .unwrap_or(value)
+    }
+
+    /// Apply this address to one channel strip. The mixer's take strips and the
+    /// listen strip share this, so both send an insert knob the same way and a
+    /// master address (which is not a track) is refused.
+    pub fn apply_to(self, channel: &mut Channel, value: f32) -> bool {
+        if self.master() {
+            return false;
+        }
+        match self.insert_kind() {
+            Some(kind) => channel.set_insert(kind.name(), self.control(), self.native_value(value)),
+            None => channel.set(self.control(), self.native_value(value)),
+        }
     }
 }
 
-/// One control change, packed into 56 bits so it can sit in one atomic slot:
-/// 8 bits of name, 16 of track, 32 of the value's IEEE bits.
+/// One control change, packed into all 64 bits of one atomic slot: 16 bits of
+/// name, 16 of track, 32 of the value's IEEE bits. The master address lives in
+/// the name's top bit, so the same ring carries a master knob and a track knob
+/// without a second queue or a lock.
 fn pack(track: usize, name: ParamName, value: f32) -> u64 {
-    u64::from(name.code())
-        | ((track as u64 & 0xFFFF) << 8)
-        | (u64::from(value.to_bits()) << 24)
+    u64::from(name.bits())
+        | ((track as u64 & 0xFFFF) << 16)
+        | (u64::from(value.to_bits()) << 32)
 }
 
 fn unpack(packed: u64) -> Option<(usize, ParamName, f32)> {
-    let name = ParamName::from_code((packed & 0xFF) as u8)?;
-    let track = ((packed >> 8) & 0xFFFF) as usize;
-    let value = f32::from_bits((packed >> 24) as u32);
+    let name = ParamName::from_bits((packed & 0xFFFF) as u16)?;
+    let track = ((packed >> 16) & 0xFFFF) as usize;
+    let value = f32::from_bits((packed >> 32) as u32);
     Some((track, name, value))
 }
 
@@ -185,6 +286,13 @@ impl ParamQueue {
         true
     }
 
+    /// Queue one master-rack change. The master flag rides in the name, so this
+    /// is the same lock-free ring a track knob uses; the audio thread tells the
+    /// two apart at the top of a block.
+    pub fn push_master(&self, name: ParamName, value: f32) -> bool {
+        self.push(0, name.with_master(true), value)
+    }
+
     /// Pop one change. The audio thread calls this at the top of a block; the
     /// patchbay (a consumer in the binary crate) drains its own shared queue
     /// through this, exactly as [`Mixer::apply_pending`] does inside this crate.
@@ -220,6 +328,17 @@ pub fn master_effect_name(prefix: &str) -> &str {
         other => other,
     }
 }
+
+/// The contract's mastering order. The page and the engine both build the
+/// rack in this order, whatever order the names arrived in; it is the house's
+/// chain, not a per-song list (`docs/studio-effects.md`, "Master rack").
+pub const MASTER_ORDER: [InsertKind; 5] = [
+    InsertKind::Compressor,
+    InsertKind::Equalizer,
+    InsertKind::Reverb,
+    InsertKind::Maximizer,
+    InsertKind::Limiter,
+];
 
 /// One insert in the master rack.
 ///
@@ -264,6 +383,13 @@ impl MasterSlot {
         let left = self.left.set(knob, value);
         let right = self.right.set(knob, value);
         left || right
+    }
+
+    /// The master rack's footswitch: the insert stays where it is and keeps its
+    /// knobs, exactly as a pedal's bypass does on a track.
+    fn set_bypass(&mut self, bypassed: bool) -> bool {
+        self.bypassed = bypassed;
+        true
     }
 
     fn reset(&mut self) {
@@ -360,6 +486,10 @@ impl Mixer {
             None => return false,
         };
         let effect = master_effect_name(prefix);
+        let value = match InsertKind::parse(prefix) {
+            Some(kind) => kind.native_value(knob, value),
+            None => value,
+        };
         for slot in &mut self.master {
             if slot.name() == effect {
                 return slot.set(knob, value);
@@ -391,10 +521,34 @@ impl Mixer {
     /// param that arrived between blocks is heard at this block's edge.
     pub fn apply_pending(&mut self) {
         while let Some((index, name, value)) = self.params.pop() {
+            if name.master() {
+                self.apply_master(name, value);
+                continue;
+            }
             if let Some(track) = self.tracks.get_mut(index) {
-                track.channel.set(name.as_str(), value);
+                name.apply_to(&mut track.channel, value);
             }
         }
+    }
+
+    /// One master-rack knob, applied between blocks. Returns false when the
+    /// rack does not hold that effect; the control path has already refused an
+    /// unknown control, so a false here is a rack that is not armed.
+    fn apply_master(&mut self, name: ParamName, value: f32) -> bool {
+        let prefix = match name.insert() {
+            Some(prefix) => prefix,
+            None => return false,
+        };
+        let effect = master_effect_name(prefix);
+        for slot in &mut self.master {
+            if slot.name() == effect {
+                if name.bypass() {
+                    return slot.set_bypass(value >= 0.5);
+                }
+                return slot.set(name.control(), name.native_value(value));
+            }
+        }
+        false
     }
 
     /// Size every strip, and the shared mix block, for `period` frames. This is
@@ -459,6 +613,24 @@ impl Mixer {
     /// mismatched frame counts and a bus longer than the prepared period are
     /// errors rather than silence pretending to be a mix.
     pub fn mix(&mut self, inputs: &[&[f32]], bus: &mut [f32]) -> Result<(), String> {
+        let track_count = self.tracks.len();
+        if inputs.len() < track_count {
+            return Err(format!(
+                "mix needs one input per track: {track_count} tracks, {} inputs",
+                inputs.len()
+            ));
+        }
+        self.mix_with(bus, |index| inputs[index])
+    }
+
+    /// The same sum, with a caller-owned block provider instead of a slice of
+    /// slices. A playback keeps its blocks in its own `Vec<Vec<f32>>`; this lets
+    /// it hand them over by index without building a temporary slice of
+    /// references on the audio thread.
+    pub fn mix_with<'a, F>(&mut self, bus: &mut [f32], input: F) -> Result<(), String>
+    where
+        F: Fn(usize) -> &'a [f32],
+    {
         self.apply_pending();
         if bus.len() % 2 != 0 {
             return Err(format!(
@@ -468,12 +640,6 @@ impl Mixer {
         }
         let frames = bus.len() / 2;
         let track_count = self.tracks.len();
-        if inputs.len() < track_count {
-            return Err(format!(
-                "mix needs one input per track: {track_count} tracks, {} inputs",
-                inputs.len()
-            ));
-        }
         if frames > self.scratch.len() / 2 {
             return Err(format!(
                 "a {frames}-frame mix block is longer than the prepared {} frames",
@@ -482,11 +648,11 @@ impl Mixer {
         }
         // Validate every input before the bus is touched, so a bad call leaves
         // the caller's buffer as it found it.
-        for (index, input) in inputs.iter().take(track_count).enumerate() {
-            if input.len() != frames {
+        for index in 0..track_count {
+            if input(index).len() != frames {
                 return Err(format!(
                     "track {index} input has {} frames, the bus has {frames}",
-                    input.len()
+                    input(index).len()
                 ));
             }
         }
@@ -503,7 +669,7 @@ impl Mixer {
             let stereo = &mut scratch[..frames * 2];
             track
                 .channel
-                .process(inputs[index], stereo)
+                .process(input(index), stereo)
                 .map_err(|error| format!("track {index}: {error:?}"))?;
             for (out, sample) in bus.iter_mut().zip(stereo.iter()) {
                 *out += sample;
@@ -583,37 +749,77 @@ mod tests {
     }
 
     #[test]
-    fn every_parameter_name_parses_and_names_its_insert() {
-        for (text, name, insert) in [
-            ("gain", ParamName::Gain, None),
-            ("pan", ParamName::Pan, None),
-            ("tone.bass", ParamName::ToneBass, Some("tone")),
-            ("tone.mid", ParamName::ToneMid, Some("tone")),
-            ("tone.treble", ParamName::ToneTreble, Some("tone")),
-            ("distortion.drive", ParamName::DistortionDrive, Some("distortion")),
-            ("delay.time", ParamName::DelayTime, Some("delay")),
-            ("delay.feedback", ParamName::DelayFeedback, Some("delay")),
-            ("delay.mix", ParamName::DelayMix, Some("delay")),
-            (
-                "compressor.threshold",
-                ParamName::CompressorThreshold,
-                Some("compressor"),
-            ),
-            (
-                "compressor.attack",
-                ParamName::CompressorAttack,
-                Some("compressor"),
-            ),
-            ("compressor.mix", ParamName::CompressorMix, Some("compressor")),
-            ("reverb.mix", ParamName::ReverbMix, Some("reverb")),
-            ("reverb.volume", ParamName::ReverbVolume, Some("reverb")),
+    fn every_control_of_every_insert_parses_and_names_its_insert() {
+        for kind in [
+            InsertKind::Tone,
+            InsertKind::Distortion,
+            InsertKind::Delay,
+            InsertKind::Compressor,
+            InsertKind::Reverb,
+            InsertKind::Flanger,
+            InsertKind::Fuzz,
+            InsertKind::Amp,
+            InsertKind::Limiter,
+            InsertKind::Autotune,
+            InsertKind::Equalizer,
+            InsertKind::Maximizer,
         ] {
-            assert_eq!(ParamName::parse(text), Some(name), "{text}");
-            assert_eq!(name.as_str(), text);
-            assert_eq!(name.insert(), insert, "{text}");
+            for control in kind.controls() {
+                let text = format!("{}.{}", kind.name(), control);
+                let name = ParamName::parse(&text).unwrap_or_else(|| panic!("{text}"));
+                assert_eq!(name.insert_kind(), Some(kind), "{text}");
+                assert_eq!(name.insert(), Some(kind.name()), "{text}");
+                assert_eq!(name.control(), *control, "{text}");
+                assert!(!name.master(), "{text}");
+            }
         }
+        assert_eq!(ParamName::parse("gain"), Some(ParamName::Gain));
+        assert_eq!(ParamName::parse("pan"), Some(ParamName::Pan));
+        // The old spellings still parse to the same control.
+        assert_eq!(
+            ParamName::parse("compressor.threshold"),
+            Some(ParamName::CompressorThreshold)
+        );
+        assert_eq!(ParamName::parse("delay.mix"), Some(ParamName::DelayMix));
+        // An unknown control is refused, not clamped onto a neighbour.
+        assert_eq!(ParamName::parse("flanger.wobble"), None);
+        assert_eq!(ParamName::parse("amp.volume"), None);
         assert_eq!(ParamName::parse("banana"), None);
         assert_eq!(ParamName::parse("delay"), None);
+    }
+
+    #[test]
+    fn a_master_name_carries_the_master_flag_and_the_rack_prefix() {
+        let name = ParamName::parse("master_comp.thresh").expect("master_comp.thresh");
+        assert!(name.master());
+        assert!(name.master_capable());
+        assert_eq!(name.insert(), Some("master_comp"));
+        assert_eq!(name.control(), "thresh");
+        assert_eq!(name.with_master(false).insert(), Some("compressor"));
+
+        assert!(ParamName::parse("master_limiter.release").expect("release").master());
+        assert_eq!(ParamName::parse("master_comp.wobble"), None);
+
+        let bypass = ParamName::parse("master_comp.bypass").expect("bypass");
+        assert!(bypass.master());
+        assert!(bypass.bypass());
+        assert!(bypass.master_capable());
+        assert_eq!(bypass.control(), "bypass");
+        assert_eq!(bypass.insert(), Some("master_comp"));
+        assert_eq!(ParamName::parse("compressor.bypass"), None);
+
+        assert!(!ParamName::Gain.master());
+        assert!(!ParamName::Gain.master_capable());
+    }
+
+    #[test]
+    fn the_wire_milliseconds_reach_the_effect_as_seconds() {
+        let attack = ParamName::parse("compressor.attack").expect("attack");
+        assert!((attack.native_value(100.0) - 0.1).abs() < 1e-6);
+        let release = ParamName::parse("compressor.release").expect("release");
+        assert!((release.native_value(500.0) - 0.5).abs() < 1e-6);
+        let ceiling = ParamName::parse("limiter.ceiling").expect("ceiling");
+        assert_eq!(ceiling.native_value(-6.0), -6.0);
     }
 
     #[test]
@@ -699,6 +905,27 @@ mod tests {
         assert!(
             bus.iter().all(|sample| sample.abs() <= ceiling + 1e-4),
             "the master limiter did not catch the summed bus"
+        );
+    }
+
+    #[test]
+    fn a_master_parameter_reaches_the_rack_through_the_queue() {
+        let input = [0.8f32; 4096];
+        let mut mixer = Mixer::new(&[0], &["ch1"]);
+        mixer.push_master(InsertKind::Limiter);
+        mixer.prepare(48_000, 4096);
+        let name = ParamName::parse("master_limiter.ceiling").expect("ceiling");
+        assert!(name.master());
+        assert!(mixer.params().push_master(name, -6.0));
+
+        let mut bus = vec![0.0f32; 8192];
+        for _ in 0..4 {
+            mixer.mix(&[&input], &mut bus).expect("mix");
+        }
+        let ceiling = 10f32.powf(-6.0 / 20.0);
+        assert!(
+            bus.iter().all(|sample| sample.abs() <= ceiling + 1e-3),
+            "the queued master ceiling did not reach the bus: {bus:?}"
         );
     }
 

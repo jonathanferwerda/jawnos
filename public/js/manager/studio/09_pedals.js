@@ -130,6 +130,9 @@ function studioInsertControl(ch, name, control, value) {
 	var ins = studioRackFind(ch, name);
 	if (!ins) { return; }
 	ins.set(control, value);
+	// The engine hears the same knob in the contract's units, but only while
+	// it is the path that is playing (see studioEngineInsertParam).
+	studioEngineInsertParam(ch, name, control, value);
 	studioSaver();
 }
 

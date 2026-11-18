@@ -119,7 +119,7 @@ impl ListenStrip {
         };
         while let Some((index, name, value)) = params.pop() {
             if index == 0 {
-                self.channel.set(name.as_str(), value);
+                name.apply_to(&mut self.channel, value);
             }
         }
     }

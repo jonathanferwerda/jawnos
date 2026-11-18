@@ -104,3 +104,32 @@ the insert belongs.
 5. **A pedal is toggled, not removed.** Clicking a pedal's footswitch bypasses
    it in place; the insert stays in the rack and keeps its controls. Removing is
    a separate action.
+
+## The control path
+
+The page moves a knob; the engine hears it. Three addresses, one vocabulary:
+
+```
+POST /manager/studio/take  { action: "param", track: N,
+                             name: "<insert>.<control>", value: V }
+POST /manager/studio/take  { action: "param", target: "master",
+                             name: "master_comp.thresh", value: V }
+POST /manager/studio/take  { action: "param", target: "listen",
+                             name: "<insert>.<control>", value: V }
+```
+
+`V` is in the effect's own units, not the slider's: the dB ranges, the
+millisecond and hertz ranges and the 0..1 mixes above. The browser does the
+0..100 mapping before it sends — the same mapping it applies to its own
+`AudioParam`s — so the engine never has to guess which scale a number is on.
+Whole-number controls (`reverb.model`, `amp.cabinet`, `autotune.key`,
+`autotune.scale`) travel as their index.
+
+The engine accepts `<insert>.<control>` only when that insert is in the armed
+chain and that control belongs to it. Anything else is a refusal on the socket,
+never a silent no-op. The master rack is a separate address because it is not a
+track; `master_*` names resolve to the same effect implementations.
+
+A change is forwarded only while the engine is the path that is actually
+playing (a take is armed, or live monitoring is on). The browser's own graph
+stays authoritative when it is; a knob is not sent twice for one movement.

@@ -1237,9 +1237,9 @@ my %studio_latency_backend = map { $_ => 1 } qw(alsa pipewire jack javascript);
 # the browser's: the request carries a length and a start position only, so no
 # parameter can name a path, reach a shell or reach an argv. `status`, `stop` and
 # `param` relay whatever the engine says, including "not running" and "no take
-# is running", because either is a usable answer. A `param`'s name is checked
-# against the engine's knob list first, so a typo is this route's 400 and never
-# a line on the socket.
+# is running", because either is a usable answer. A `param`'s name must have the
+# contract's shape (`<insert>.<control>`, or `gain`/`pan`); whether that insert
+# is armed and that control exists is the engine's answer, relayed unchanged.
 sub action_44023 {
 	my $c = shift;
 	require JawnOS::Audio::Engine;
@@ -1267,6 +1267,19 @@ sub action_44023 {
 			}
 			$c->render(json => &JawnOS::Audio::Engine::audio_engine_param(
 				undef, $name, $value, 'listen',
+			));
+			return;
+		}
+		if (defined $target && $target eq 'master') {
+			my ($error, $name, $value) = &studio_master_param(
+				$c->param('name'), $c->param('value'),
+			);
+			if (defined $error) {
+				$c->render(json => { ok => 0, error => $error }, status => 400);
+				return;
+			}
+			$c->render(json => &JawnOS::Audio::Engine::audio_engine_param(
+				undef, $name, $value, 'master',
 			));
 			return;
 		}
@@ -1305,6 +1318,8 @@ sub action_44023 {
 		$c->param('tracks'),
 		$c->param('inputs'),
 		$c->param('inserts'),
+		$c->param('tracks_json'),
+		$c->param('master_json'),
 	);
 	$c->render(json => $answer, status => $status);
 	return;
@@ -1367,30 +1382,41 @@ sub studio_take_path {
 	return File::Spec->catfile($folder, "studio-take-$epoch-$take.wav");
 }
 
-# The five inserts the engine can build. `reverb2` is the web's alias for
-# reverb and is not a sixth name; the page sends the engine's spelling.
-our %studio_take_inserts = map { $_ => 1 } qw(tone distortion delay compressor reverb);
+# The inserts the engine can build. `reverb2` is the web's alias for reverb and
+# is not a second name; the page sends the engine's spelling. The engine's
+# `InsertKind` is still the authority: this list only refuses a chain the socket
+# could never build, before the engine is dialled.
+our %studio_take_inserts = map { $_ => 1 } qw(
+	tone distortion delay compressor reverb flanger fuzz amp limiter
+	autotune equalizer maximizer
+);
+# The five effects the native master rack can build, in the contract's order.
+# A take names the ones it wants; the engine builds them in this order whatever
+# order the page sent.
+our %studio_take_master_inserts = map { $_ => 1 } qw(
+	master_comp master_eq master_reverb master_maximizer master_limiter
+);
 our $studio_take_tracks_max = 32;
 our $studio_take_input_max  = 31;
 
-# The strip knobs the engine's socket accepts (engine/src/socket.rs). Checking
-# them here makes a typo this route's 400 rather than a line the engine has to
-# refuse; the engine still clamps the value and still answers "no take is
-# running" when one is not, and that answer is relayed unchanged.
-our %studio_take_params = map { $_ => 1 } qw(
-	gain pan
-	tone.bass tone.mid tone.treble
-	distortion.drive
-	delay.time delay.feedback delay.mix
-	compressor.threshold compressor.attack compressor.mix
-	reverb.mix reverb.volume
-);
+# The documented parameter shape (`docs/studio-effects.md`, "The control
+# path"): `<insert>.<control>` in lowercase, plus the strip's own `gain` and
+# `pan`. The engine is the authority on whether that insert is in the armed
+# chain and that control belongs to it; checking the shape here still turns a
+# mistyped key into this route's 400 instead of a line the engine has to refuse.
+sub studio_param_shape {
+	my ($name) = @_;
+	$name = '' unless defined $name;
+	return 1 if $name eq 'gain' || $name eq 'pan';
+	return $name =~ /\A[a-z0-9_]+\.[a-z0-9_]+\z/ ? 1 : 0;
+}
 
 # Validate one `param` request and return (error, track, name, value). An
-# undefined error means the values are ready for the engine. Only the names
-# above pass, the track is 0-based and inside the engine's track bound, and the
-# value is a finite decimal: the exponent form is accepted, a NaN or an
-# infinity is not (the engine's own rule). Nothing here can name a path.
+# undefined error means the values are ready for the engine. The name must have
+# the contract's shape, the track is 0-based and inside the engine's track
+# bound, and the value is a finite decimal: the exponent form is accepted, a
+# NaN or an infinity is not (the engine's own rule). Nothing here can name a
+# path.
 sub studio_take_param {
 	my ($track, $name, $value) = @_;
 
@@ -1401,7 +1427,7 @@ sub studio_take_param {
 		unless $track < $studio_take_tracks_max;
 
 	$name = '' unless defined $name;
-	return ("no such parameter: $name") unless $studio_take_params{$name};
+	return ("no such parameter: $name") unless &studio_param_shape($name);
 
 	return ('value must be a finite number')
 		unless defined $value
@@ -1488,23 +1514,108 @@ sub studio_listen_start {
 	return (200, $answer);
 }
 
-# One listen knob: gain, pan or an effect parameter from the take's whitelist.
+# One listen knob: gain, pan or any `<insert>.<control>` the engine's armed
+# listen strip can name. The shape is checked here; the engine refuses a control
+# the effect does not have.
 sub studio_listen_param {
 	my ($name, $value) = @_;
 	$name = '' unless defined $name;
-	return ("no such parameter: $name") unless $studio_take_params{$name};
+	return ("no such parameter: $name") unless &studio_param_shape($name);
 	my $number = &studio_listen_number($value);
 	return ('value must be a finite number') unless defined $number;
 	return (undef, $name, $number);
 }
 
-# Validate the request's three optional plan fields and answer with the engine's
-# per-track array, or with the sentence that refuses them. The array form is
-# always used when any field is present: a numeric `tracks` cannot carry
-# inserts, and the page arms each track's input and chain together. Nothing
-# here names a path.
+# One master-rack knob. The rack is not a track, so there is no track to check;
+# the contract's master names are `master_comp`, `master_eq`, `master_reverb`,
+# `master_maximizer` and `master_limiter`, and the engine refuses a prefix the
+# rack does not hold. The shape check still keeps a typo off the socket.
+sub studio_master_param {
+	my ($name, $value) = @_;
+	$name = '' unless defined $name;
+	return ("no such parameter: $name")
+		unless &studio_param_shape($name) && $name =~ /\Amaster_[a-z0-9_]+\./;
+	my $number = &studio_listen_number($value);
+	return ('value must be a finite number') unless defined $number;
+	return (undef, $name, $number);
+}
+
+# The page's per-track plan, as a JSON array of `{ input, inserts }`. The
+# engine accepts that shape directly, so this only refuses what it could not
+# build: an input outside 0..31, an insert the engine does not have, a duplicate
+# input, or more tracks than the engine takes. When this field is present it
+# wins: the scalar `tracks`/`inputs`/`inserts` fields describe the older page's
+# one global chain and are ignored here.
+sub studio_take_json_plan {
+	my ($tracks_json) = @_;
+	my $decoded = eval { decode_json($tracks_json) };
+	return ('tracks_json must be a JSON array of tracks', undef)
+		unless ref $decoded eq 'ARRAY';
+	return ('tracks_json must name between 1 and 32 tracks', undef)
+		unless @$decoded >= 1 && @$decoded <= $studio_take_tracks_max;
+
+	my (@plan, %seen_input);
+	for my $index (0 .. $#$decoded) {
+		my $entry = $decoded->[$index];
+		my $label = 'tracks_json track ' . ($index + 1);
+		return ("$label must be an object", undef) unless ref $entry eq 'HASH';
+
+		my $input = $entry->{'input'};
+		return ("$label needs an input between 0 and 31", undef)
+			unless defined $input && !ref $input && $input =~ /\A\+?\d+\z/
+				&& $input <= $studio_take_input_max;
+		$input += 0;
+		return ("$label names input $input twice", undef) if $seen_input{$input}++;
+
+		my $inserts = $entry->{'inserts'};
+		$inserts = [] unless defined $inserts;
+		return ("$label inserts must be an array", undef)
+			unless ref $inserts eq 'ARRAY';
+		my @chain;
+		for my $name (@$inserts) {
+			return ("$label inserts must hold insert names", undef)
+				unless defined $name && !ref $name;
+			return ("no such insert: $name", undef)
+				unless $studio_take_inserts{$name};
+			push @chain, $name;
+		}
+		push @plan, { input => $input, inserts => \@chain };
+	}
+	return (undef, \@plan);
+}
+
+# The take's master rack: a JSON array of the master effects the page switched
+# on. The engine builds them in the contract's order. A name outside the five,
+# a duplicate or a non-array is refused here; the engine refuses the same
+# shapes, but this keeps the sentence a 400 rather than a socket line.
+sub studio_master_plan {
+	my ($master_json) = @_;
+	return (undef, []) unless defined $master_json && length $master_json;
+	my $decoded = eval { decode_json($master_json) };
+	return ('master_json must be a JSON array of master insert names', undef)
+		unless ref $decoded eq 'ARRAY';
+	my (@names, %seen);
+	for my $name (@$decoded) {
+		return ('master_json must hold master insert names', undef)
+			unless defined $name && !ref $name;
+		return ("no such master insert: $name", undef)
+			unless $studio_take_master_inserts{$name};
+		return ("duplicate master insert: $name", undef) if $seen{$name}++;
+		push @names, $name;
+	}
+	return (undef, \@names);
+}
+
+# Validate the request's optional plan fields and answer with the engine's
+# per-track array, or with the sentence that refuses them. A `tracks_json`
+# plan wins; otherwise the older scalar fields are used unchanged, so a page
+# that has not learned the per-track shape still works. Nothing here names a
+# path.
 sub studio_take_plan {
-	my ($tracks, $inputs, $inserts) = @_;
+	my ($tracks, $inputs, $inserts, $tracks_json) = @_;
+
+	return &studio_take_json_plan($tracks_json)
+		if defined $tracks_json && length $tracks_json;
 
 	my $count;
 	if (defined $tracks && length $tracks) {
@@ -1558,12 +1669,14 @@ sub studio_take_plan {
 # disk writer does not create parents; the engine is checked first so a machine
 # without one does not leave an empty directory behind.
 sub studio_take_start {
-	my ($seconds, $start_at, $tracks, $inputs, $inserts) = @_;
+	my ($seconds, $start_at, $tracks, $inputs, $inserts, $tracks_json, $master_json) = @_;
 	$seconds  = &studio_take_seconds($seconds);
 	$start_at = &studio_take_start_at($start_at);
 
-	my ($plan_error, $plan) = &studio_take_plan($tracks, $inputs, $inserts);
+	my ($plan_error, $plan) = &studio_take_plan($tracks, $inputs, $inserts, $tracks_json);
 	return (400, { ok => 0, error => $plan_error }) if defined $plan_error;
+	my ($master_error, $master) = &studio_master_plan($master_json);
+	return (400, { ok => 0, error => $master_error }) if defined $master_error;
 
 	my $folder = &studio_take_folder();
 	return (503, { ok => 0, error => 'no recording folder is set on this machine' })
@@ -1579,8 +1692,11 @@ sub studio_take_start {
 		unless $ready && -d $folder;
 
 	my $path = &studio_take_path($folder);
+	my $extra;
+	$extra->{'tracks'} = $plan if $plan;
+	$extra->{'master'} = $master if @$master;
 	my $answer = &JawnOS::Audio::Engine::audio_engine_record(
-		$path, $seconds, $start_at, $plan ? { tracks => $plan } : undef,
+		$path, $seconds, $start_at, $extra,
 	);
 	$answer = { ok => 0, error => 'the audio engine did not answer' }
 		unless ref $answer eq 'HASH';
