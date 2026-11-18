@@ -321,6 +321,11 @@ my $expense = read_file("$root/templates/apps/transaction/expense.html.ep");
 like($expense, qr/purchase_input taxes/, 'the transaction has a tax picker');
 my $transaction_js = read_file("$root/public/js/manager/transaction.js");
 like($transaction_js, qr/transactionTaxRate/, 'the transaction JS computes the line rate');
+like($transaction_js, qr/amount = taxable \/ rate;/, 'a typed total fills the pre-tax subtotal into the amount');
+like($transaction_js, qr/if \(inclusive && rate > 1\) \{ transactionTaxExclusive\(iq\); \}/,
+	'a typed total reads the line as tax-exclusive');
+like($transaction_js, qr/function transactionTaxExclusive/,
+	'and does it for the line only, without rewriting the app default');
 my $item = read_file("$root/templates/store/item.html.ep");
 like($item, qr/tax_codes/, 'the Store item has its own tax codes');
 my $register = read_file("$root/templates/store/register.html.ep");

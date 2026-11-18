@@ -213,9 +213,10 @@ function transactionTaxRate(line) {
 	return 1 + (percent / 100);
 }
 
-// The Amount field is gross when "Price includes tax" is on and net when it is
-// off, so the button's label decides the arithmetic. On a gross amount the tax
-// is the portion inside it; on a net amount it is added.
+// A typed Amount is gross when "Price includes tax" is on and net when it is
+// off, so the button's label decides that arithmetic. On a gross amount the tax
+// is the portion inside it; on a net amount it is added. A typed Total is
+// always gross and is handled separately below.
 function transactionTaxApply(amount, rate, inclusive, aux) {
 	if (!(rate > 0)) { rate = 1; }
 	if (inclusive) {
@@ -224,6 +225,16 @@ function transactionTaxApply(amount, rate, inclusive, aux) {
 	}
 	var net_tax = amount * (rate - 1);
 	return { tax: net_tax, total: amount + net_tax + aux };
+}
+
+// The total is the figure paid, so the amount beside it is the pre-tax
+// subtotal and the line no longer reads its amount as gross. Turning the
+// button off by hand keeps this one line's reading without writing a new
+// default for the app.
+function transactionTaxExclusive(line) {
+	var button = line.find('.purchase_config[config="tax"]');
+	if (button.attr('enabled') != 'on') { return; }
+	button.attr('enabled', 'off').css({ 'background-color': 'lightgrey' });
 }
 
 // Recompute a line from its Amount field and its own rate, used when the rate
@@ -337,9 +348,12 @@ $(document).on('change', '.purchase_input', function() {
 	if (e.hasClass('total')) {
 		total = total * multiplier;
 		total_in.val(numeral(total).format('0.00'));
+		// the total already holds the tax, so the amount is the subtotal before
+		// it; that is the amount the line then adds its tax to
+		if (inclusive && rate > 1) { transactionTaxExclusive(iq); }
 		var taxable = total - aux;
-		tax = taxable - (taxable / rate);
-		amount = inclusive ? taxable : (taxable / rate);
+		amount = taxable / rate;
+		tax = taxable - amount;
 		amount_in.val(numeral(amount).format('0.00'));
 		tax_in.val(numeral(tax).format('0.00'));
 	}
@@ -386,6 +400,47 @@ $(document).on('change', '.purchase_input', function() {
 
 });
 
+// The suggestion list is fixed to the viewport so a window's own scroll cannot
+// clip it, but a fixed box does not move with its field by itself: the page, a
+// window, and the phone's keyboard can each move one without the other. The
+// list is therefore re-seated on its field after every scroll or resize, and a
+// field taken off the screen takes its list with it.
+function transactionAutocompleteSeat(input, ac) {
+	if (!input || !input.length || !ac || !ac.length) { return; }
+	var rect = input[0].getBoundingClientRect();
+	var list_top = rect.top - ac.outerHeight() - 3;
+	if (list_top < 8) { list_top = rect.bottom + 3; }
+	ac.css({ 'top': list_top, 'left': rect.left, 'width': input.outerWidth() });
+}
+
+function transactionAutocompleteFollow() {
+	$('.transaction_autocomplete').each(function() {
+		var ac = $(this);
+		if (!ac.is(':visible')) { return; }
+		var uuid = ac.attr('follow_uuid');
+		if (!uuid) { return; }
+		var input = ac.closest('.app_details').find('.purchase_input[temp_uuid="' + uuid + '"]');
+		if (!input.length) { ac.html('').hide(); return; }
+		var rect = input[0].getBoundingClientRect();
+		var vv = window.visualViewport;
+		var visible_top = vv ? vv.offsetTop : 0;
+		var visible_bottom = visible_top + (vv ? vv.height : window.innerHeight);
+		if (rect.bottom < visible_top || rect.top > visible_bottom) {
+			ac.html('').hide();
+			return;
+		}
+		transactionAutocompleteSeat(input, ac);
+	});
+}
+
+// capture, because a window's inner scroll does not bubble to the document
+document.addEventListener('scroll', transactionAutocompleteFollow, true);
+window.addEventListener('resize', transactionAutocompleteFollow);
+if (window.visualViewport) {
+	window.visualViewport.addEventListener('scroll', transactionAutocompleteFollow);
+	window.visualViewport.addEventListener('resize', transactionAutocompleteFollow);
+}
+
 $(document).on('keyup click', '.purchase_input', function() {
 	var me = $(this);
 	var value = me.val();
@@ -401,28 +456,25 @@ $(document).on('keyup click', '.purchase_input', function() {
 			type: 'GET',
 			data: { attribute: attribute, value: value, app: app },
 			success: function(response) {
-				var offset = me.offset();
+				var ac = ad.find('.transaction_autocomplete');
 				var random = Math.random();
 				var now = Date.now();
-				var width = me.width();
 				var html = '';
+				var shown = 0;
 				$.each(response, function(i,v) {
 					if (v.unformatted != '') {
+						shown++;
 						html += '<div class="autocomplete_item hover" style="height:30px;" uuid="' + random + '" formatted="' + v.formatted + '" value="' + v.unformatted + '">' + v.formatted + '</div>';
 					}
 				});
-				var ac = ad.find('.transaction_autocomplete');
+				if (!shown) { ac.html('').hide(); return; }
 				ac.html(html).show();
 				ac.attr('attribute', attribute);
 				ac.attr('timestamp', now);
-				ac.height(30 * response.length);
-				// the list is fixed to the viewport, so measure the input the same
-				// way; above the field normally, below it when there is no room
-				var rect = me[0].getBoundingClientRect();
-				var list_top = rect.top - ac.height() - 3;
-				if (list_top < 8) { list_top = rect.bottom + 3; }
-				ac.css({ 'top': list_top, 'left': rect.left, 'width': width });
+				ac.attr('follow_uuid', random);
+				ac.height(30 * shown);
 				me.attr('temp_uuid', random);
+				transactionAutocompleteSeat(me, ac);
 			}
 		});
 	}
