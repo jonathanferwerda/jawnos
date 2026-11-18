@@ -826,6 +826,11 @@ sub _join {
 	my ($token) = @_;
 	require Mojo::UserAgent;
 	require Mojo::JSON;
+	# The reader hands back { path, token => {...}, house => {...} }. The join used
+	# to read secret and name off the wrapper, which holds neither: every token
+	# went to the house as an empty secret and was refused as "no token", so no
+	# board had ever joined from its token.
+	my $payload = ref $token->{'token'} eq 'HASH' ? $token->{'token'} : {};
 	my $house = ref $token->{'house'} eq 'HASH' ? $token->{'house'} : {};
 	my $manager = $house->{'manager'} // '';
 	my ($scheme, $host, $port) = $manager =~ m{^(https?)://(\[[^\]]+\]|[^/:]+)(?::(\d+))?};
@@ -859,10 +864,10 @@ sub _join {
 	return { ok => 0, error => 'this machine has no peer key' } unless length $pubkey;
 	my $res = eval {
 		$ua->post($url => form => {
-			secret => $token->{'secret'},
+			secret => $payload->{'secret'},
 			signatorial => &subs::signatorial_designer() || '',
 			pubkey => $pubkey,
-			name => $token->{'hostname'} || $token->{'name'} || 'Controller',
+			name => $payload->{'hostname'} || $payload->{'name'} || 'Controller',
 			# The board is a controller, whatever the tree's device class says
 			# before the config seed has been read.
 			device => 'controller',

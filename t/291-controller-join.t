@@ -78,6 +78,15 @@ like($first_boot, qr{\$root/\.shots}, 'in the .shots directory that root reads')
 unlike($first_boot, qr/\(\s*`hostname`/, 'the board name is not read by running a binary the image may not carry');
 like($first_boot, qr/sub _hostname \{.*?\/etc\/hostname/s, 'it reads the name systemd reads');
 like($first_boot, qr/device_hostname_better\(&_hostname\(\)/, 'and the join address is built from it');
+# The reader hands back { path, token => {...}, house => {...} }. The join read
+# secret and name off the wrapper, which holds neither, so every token reached
+# the house as an empty secret and was refused as "no token": no board had ever
+# joined from its token, the flashed ones included (2026-11-18).
+like($first_boot, qr/my \$payload = ref \$token->\{'token'\} eq 'HASH' \? \$token->\{'token'\} : \{\};/,
+	'the join reads the token payload, not the wrapper');
+like($first_boot, qr/secret => \$payload->\{'secret'\}/, 'and sends the payload' . "'" . 's secret');
+like($first_boot, qr/name => \$payload->\{'hostname'\} \|\| \$payload->\{'name'\}/, 'and the payload' . "'" . 's name');
+unlike($first_boot, qr/secret => \$token->\{'secret'\}/, 'never the wrapper, which holds no secret');
 # The pass runs as root with HOME on the board's own account while the manager
 # runs as that account, so a root-owned log or run/ leaves the manager printing
 # one server line and dying with EACCES behind a dead panel.
