@@ -3,7 +3,9 @@
 #            shared geometry, and a window dragged out of a half (or a maximize)
 #            is re-anchored so it stays under the pointer instead of trailing it.
 #            A snap's stretch is a transform, so the box the view is read from is
-#            the window's style position, not the transformed rect.
+#            the window's style position, not the transformed rect. The band that
+#            owns a drop is a short reach in from the edge, not a share of the
+#            desk, and the highlight and the drop ask the same helper.
 
 use strict;
 use warnings;
@@ -24,6 +26,13 @@ my $css     = read_file("$root/public/css/manager.css");
 # --- one geometry for the snap and its highlight ----------------------------
 like($fit, qr/function windowHalfRect\(side\)/, 'the half box is one helper');
 like($fit, qr/var box = windowHalfRect\(to\);/, 'windowHalfski applies that box');
+like($fit, qr/function windowHalfEdgeAt\(x\)/, 'the band that owns a drop is one helper');
+like($fit, qr/var to = side \|\| windowHalfEdgeAt\(mouse\.x\)/, 'the drop asks the band');
+like($fit, qr/var edge = windowHalfEdgeAt\(d\.x\) !== ''/, 'the drag stop asks the band');
+like($windows, qr/windowHalfEdgeAt\(at\.x\)/, 'the highlight asks that same band');
+like($fit, qr/var JAWNOS_HALF_EDGE = 32;/, 'the band is a short reach in from the edge');
+unlike($fit, qr{ww \) / 10}, 'not a share of the desk (fit)');
+unlike($windows, qr{ww \) / 10}, 'not a share of the desk (preview)');
 like($windows, qr/var half = windowHalfRect\(edge\);/, 'the drag preview draws that same box');
 like($windows, qr/box\.attr\('snap', 'half'\)/, 'marked so the highlight can read differently');
 like($css, qr/#window_tile_preview\[snap="half"\] \{/, 'the half highlight is its own style');
@@ -116,6 +125,19 @@ r = sandbox.windowHalfRect('right');
 eq('the right half starts at the middle', r.left, 960);
 eq('the right half is half the desk wide', r.width, 960);
 eq('and knows its side', r.side, 'right');
+
+// the band that turns a drop into the half: a short reach, so moving a window
+// toward a side to sit nearer it is not read as asking for half the screen
+eq('the band is a short reach in from the edge', sandbox.JAWNOS_HALF_EDGE, 32);
+eq('the left edge is the left band', sandbox.windowHalfEdgeAt(8), 'left');
+eq('a hand near the left edge is still the band', sandbox.windowHalfEdgeAt(30), 'left');
+eq('a hand just inside the band is not', sandbox.windowHalfEdgeAt(33), '');
+eq('a tenth of the desk in is not the band', sandbox.windowHalfEdgeAt(192), '');
+eq('the middle is not the band', sandbox.windowHalfEdgeAt(960), '');
+eq('a tenth in from the right is not the band', sandbox.windowHalfEdgeAt(1728), '');
+eq('the right edge is the right band', sandbox.windowHalfEdgeAt(1912), 'right');
+eq('a hand 33 in from the right is not', sandbox.windowHalfEdgeAt(1887), '');
+eq('a phone or a missing point is no band', sandbox.windowHalfEdgeAt(null), '');
 
 bottom = 50;
 r = sandbox.windowHalfRect('left');

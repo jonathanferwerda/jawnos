@@ -69,6 +69,22 @@ function windowHalfRect(side) {
 	};
 }
 
+// The band at either edge that owns a drop as the half snap. It is a short
+// reach in from the edge itself - not a share of the desk - so a window moved
+// toward a side to sit nearer it is not snapped in half by accident. The
+// highlight (windows.js windowTiledPreview), the drop (windowHalfski) and the
+// drag stop all ask this, so what is drawn is what happens.
+var JAWNOS_HALF_EDGE = 32;
+
+function windowHalfEdgeAt(x) {
+	if (typeof x != 'number' || !isFinite(x)) { return ''; }
+	var ww = $(window).width();
+	if (!ww) { return ''; }
+	if (x <= JAWNOS_HALF_EDGE) { return 'left'; }
+	if (x >= ww - JAWNOS_HALF_EDGE) { return 'right'; }
+	return '';
+}
+
 function windowHalfski(win,side) {
 
 	var mouse = { x: null, y: null };
@@ -76,10 +92,7 @@ function windowHalfski(win,side) {
 		mouse = mouse_position();
 	}
 	if (!windowPhoneChecker()) {
-		var ww = $(window).width();
-		var to = '';
-		if (mouse.x > (ww - (ww / 10)) || side == 'right') { to = 'right'; }
-		else if (mouse.x < (ww / 10) || side == 'left') { to = 'left'; }
+		var to = side || windowHalfEdgeAt(mouse.x);
 		if (to) {
 			var box = windowHalfRect(to);
 			// The frame the hand let go of, measured before the box changes: the
@@ -481,7 +494,7 @@ function windowDraggable(win) {
 				// edge is the half snap, which owns the window's place and takes it out
 				// of the tile; a drag carrying the windows below it is a pile move, so
 				// the edge keeps its hands off it.
-				var edge = d.x < ($(window).width() / 10) || d.x > ($(window).width() - ($(window).width() / 10));
+				var edge = windowHalfEdgeAt(d.x) !== '';
 				var moved = dragFrom && (Math.abs(p.pageX - dragFrom.x) > 4 || Math.abs(p.pageY - dragFrom.y) > 4);
 				if (!windowPhoneChecker() && moved) {
 					if (edge && !dragGroup.length) {

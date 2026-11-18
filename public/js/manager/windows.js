@@ -1538,8 +1538,7 @@ function windowTiledPreview(win, at, home, from, group) {
 	if (from === undefined) { from = (windowTiledSlot(win) >= 0) ? windowTiledStackId(win) : null; }
 	// the drag takes the window out of its pile as soon as it is away from it
 	windowTiledDragLeave(win, at, home, from, group);
-	var ww = $(window).width();
-	var edge = (at.x < (ww / 10)) ? 'left' : ((at.x > (ww - (ww / 10))) ? 'right' : '');
+	var edge = (typeof windowHalfEdgeAt == 'function') ? windowHalfEdgeAt(at.x) : '';
 	if (edge && !(group && group.length)) {
 		// the edge owns the drop: draw the half it will take, which is the box
 		// windowHalfski applies on release. A drag carrying its pile keeps the
