@@ -47,6 +47,10 @@ var JAWNOS_EMERGE_DISMISS_TTL = 30000;
 var jawnosWindowOrigins = {};
 var jawnosWindowOriginLast = null;
 var jawnosWindowEmergeGhost = null;
+// True from a press until it is released. A preview must not take the pointer
+// while the press that made it is still down, or the click that opens the
+// window lands on the preview and dismisses the open it was waiting for.
+var jawnosWindowEmergePointerDown = false;
 // Windows the person took back before they painted: keyed by the reservation's
 // timestamp when there is one, otherwise by app. The landing window is hidden
 // and closed instead of shown.
@@ -888,6 +892,28 @@ function jawnosWindowEmergeGhostWaiting(el) {
 	if (String(el.className || '').indexOf('jawnos_emerge_waiting') < 0) { el.className = (el.className ? el.className + ' ' : '') + 'jawnos_emerge_waiting'; }
 }
 
+// The waiting preview takes the pointer so a press on it can be a dismissal -
+// but only once it has arrived (poured), the press that started it is over, and
+// its own click has passed. Arming earlier swallows the click that opens the
+// window, which is the one click this preview must never eat.
+function jawnosWindowEmergeGhostArm(ghost) {
+	if (!ghost || !ghost.el || ghost.win || ghost.armed) { return false; }
+	if (jawnosWindowEmergePointerDown) { return false; }
+	if (Date.now() - (ghost.at || 0) < 250) {
+		if (!ghost.armTimer && typeof setTimeout == 'function') {
+			ghost.armTimer = setTimeout(function () {
+				ghost.armTimer = null;
+				jawnosWindowEmergeGhostArm(ghost);
+			}, 260);
+		}
+		return false;
+	}
+	if (!ghost.poured) { return false; }
+	ghost.armed = true;
+	jawnosWindowEmergeGhostWaiting(ghost.el);
+	return true;
+}
+
 function jawnosWindowEmergeGhostPassThrough(el) {
 	if (!el) { return; }
 	if (el.classList && el.classList.remove) { el.classList.remove('jawnos_emerge_waiting'); return; }
@@ -1027,7 +1053,9 @@ function jawnosWindowEmergeGhostStart(origin) {
 	var el = jawnosEmergeElement('div', 'jawnos_emerge_ghost');
 	if (!el) { return null; }
 	el.setAttribute('aria-hidden', 'true');
-	jawnosWindowEmergeGhostWaiting(el);
+	// It does not take the pointer yet: it is still the control's own rectangle
+	// and the press that started it has not clicked. jawnosWindowEmergeGhostArm
+	// hands it the pointer once it has poured and the press is over.
 	jawnosEmergeBoxStyle(el, from);
 
 	var chrome = jawnosWindowEmergeChrome(origin);
@@ -1036,7 +1064,7 @@ function jawnosWindowEmergeGhostStart(origin) {
 		el.appendChild(chrome);
 	}
 
-	var ghost = { el: el, chrome: chrome, app: origin.app || '', origin: origin, to: to, timer: null, openAnim: null, chromeAnim: null, win: null, waited: 0 };
+	var ghost = { el: el, chrome: chrome, app: origin.app || '', origin: origin, to: to, timer: null, openAnim: null, chromeAnim: null, win: null, waited: 0, at: Date.now(), poured: !el.animate, armed: false, armTimer: null };
 	document.body.appendChild(el);
 	jawnosWindowEmergeGhost = ghost;
 
@@ -1065,6 +1093,15 @@ function jawnosWindowEmergeGhostStart(origin) {
 	}
 	else {
 		jawnosEmergeBoxStyle(el, to);
+	}
+
+	// the preview has arrived when its box has finished growing out of the
+	// control; only then is a press on it a dismissal
+	if (ghost.openAnim && ghost.openAnim.finished && ghost.openAnim.finished.then) {
+		ghost.openAnim.finished.then(function () {
+			ghost.poured = true;
+			jawnosWindowEmergeGhostArm(ghost);
+		}, function () {});
 	}
 
 	if (chrome && chrome.animate) {
@@ -1421,6 +1458,7 @@ if (typeof document != 'undefined' && document.addEventListener) {
 		if (!e || (e.button != null && e.button !== 0)) { return; }
 		var el = e.target;
 		if (!el || el.nodeType !== 1) { return; }
+		jawnosWindowEmergePointerDown = true;
 		var waiting = jawnosWindowEmergeGhost;
 		// A press on the preview itself belongs to the preview: the click that
 		// follows dismisses it. Returning here keeps the press from being read as
@@ -1457,4 +1495,24 @@ if (typeof document != 'undefined' && document.addEventListener) {
 		if (host) { el = host; }
 		jawnosWindowOriginFromElement(el);
 	});
+	// The release ends the press. The preview takes the pointer a moment later,
+	// never before this press's own click has gone by: the preview's predicted
+	// frame can sit over the control that started it, and a click caught there
+	// would dismiss the very open it is waiting for.
+	var release = function () {
+		jawnosWindowEmergePointerDown = false;
+		var ghost = jawnosWindowEmergeGhost;
+		if (!ghost || ghost.win) { return; }
+		if (ghost.releaseTimer) { clearTimeout(ghost.releaseTimer); }
+		ghost.releaseTimer = setTimeout(function () {
+			ghost.releaseTimer = null;
+			jawnosWindowEmergeGhostArm(ghost);
+		}, 220);
+	};
+	if (document.addEventListener) {
+		document.addEventListener('pointerup', release, true);
+		document.addEventListener('mouseup', release, true);
+		document.addEventListener('touchend', release, true);
+		document.addEventListener('touchcancel', release, true);
+	}
 })();

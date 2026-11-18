@@ -677,10 +677,13 @@ sandbox.jawnos_app_colours = {
 };
 const press_icon = startIcon('clock_toggle', 'clock', '/images/clock.png', 'Clock');
 press(press_icon);
+check('the press itself is recorded until it is released', sandbox.jawnosWindowEmergePointerDown === true);
 const ghost = sandbox.jawnosWindowEmergeGhost;
 check('pointerdown creates the preview at once', !!ghost && ghost.el.parentNode === body);
 check('the preview is the body-level ghost',
-	!!ghost && hasClass(ghost.el, 'jawnos_emerge_ghost') && hasClass(ghost.el, 'jawnos_emerge_waiting'));
+	!!ghost && hasClass(ghost.el, 'jawnos_emerge_ghost'));
+check('and it takes no pointer while it pours out of the control',
+	!!ghost && !hasClass(ghost.el, 'jawnos_emerge_waiting'));
 check('it starts at the pressed control',
 	!!ghost && ghost.el.animations[0].keys[0].left === '10px'
 	&& ghost.el.animations[0].keys[0].top === '20px'
@@ -831,8 +834,17 @@ sandbox.windowTiledPending = { 'cancel-stamp': { at: Date.now(), app: 'clock', s
 press(press_icon);
 const cancel_ghost = sandbox.jawnosWindowEmergeGhost;
 const cancel_el = cancel_ghost.el;
+// It takes the pointer only once it has arrived and the press is over: arming
+// while it still sits on its control swallows the click that opens the window.
+cancel_ghost.at = 0;
+sandbox.jawnosWindowEmergePointerDown = false;
+check('a preview still pouring out of the control takes no pointer',
+	!!cancel_ghost && sandbox.jawnosWindowEmergeGhostArm(cancel_ghost) === false
+	&& !hasClass(cancel_ghost.el, 'jawnos_emerge_waiting'));
+cancel_ghost.poured = true;
 check('a waiting preview takes the pointer, so it can be dismissed',
-	!!cancel_ghost && hasClass(cancel_ghost.el, 'jawnos_emerge_waiting'));
+	sandbox.jawnosWindowEmergeGhostArm(cancel_ghost) === true
+	&& hasClass(cancel_ghost.el, 'jawnos_emerge_waiting'));
 let ghost_prevented = 0;
 fire(cancel_ghost.el, 'click', {
 	preventDefault: function () { ghost_prevented = 1; },
