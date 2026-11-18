@@ -260,6 +260,12 @@ like( $world, qr/land_colour/, 'and its land cover colours the ground' );
 like( $world, qr/span > 3000/, 'only the widest plates are skipped: the archive is the detail' );
 like( $world, qr/Math\.max\(0\.45, 1 - \(span - 800\)/, 'and a wide plate fades, so the town still reads on it' );
 like( $world, qr/function travelWorldClose/, 'the view has a close' );
+like( $world, qr/x: \(longitude - centre\.lon\)/, 'x grows east' );
+like( $world, qr/z: -\(latitude - centre\.lat\)/, 'and z grows south, so north is -z' );
+like( $world, qr/function travelWorldGround\(out\)/, 'the archive is painted into a ground texture' );
+like( $world, qr/image top is north/, 'with the picture north-up, as the street map is' );
+like( $world, qr/canvas\.toDataURL\('image\/jpeg'/, 'and handed on as a picture' );
+like( $world, qr/out\.ground = travelWorldGround\(out\)/, 'the descriptor carries it, drawn once the ground is collected' );
 
 my $world_page = read_file("$root/templates/travel/world.html.ep");
 like( $world_page, qr/<a-scene id="world_scene" embedded/, 'the frame is an A-Frame scene' );
@@ -268,7 +274,10 @@ like( $world_page, qr/fog=.*color: #cfe3f0/, 'with the haze the same colour, so 
 like( $world_page, qr/id="world_rig" position="0 3 26" rotation="-18 0 0"/, 'the opening look is a little down and back, so the town is in view' );
 unlike( $world_page, qr{<a-camera}m, 'the pitch rides on the rig: an a-camera puts its own rotation back' );
 like( $world_page, qr/id="world_cam" camera=/, 'the camera is an entity carrying the camera component' );
-like( $world_page, qr/wasd-controls=/, 'walking is offered' );
+unlike( $world_page, qr/wasd-controls="/, 'walking is not A-Frame\'s wasd-controls: it moves whichever entity carries it' );
+like( $world_page, qr/worldwalk="speed: 6"/, 'the rig walks instead' );
+like( $world_page, qr/look-controls="pointerLockEnabled: false"/, 'while looking stays on the camera' );
+like( $world_page, qr/WASD or arrow keys to walk/, 'and the hint names both hands' );
 like( $world_page, qr{/js/aframe/aframe\.min\.js}, 'the local A-Frame build is loaded' );
 like( $world_page, qr{/js/travel_world\.js}, 'the world renderer is loaded' );
 
@@ -276,13 +285,19 @@ my $renderer = read_file("$root/public/js/travel_world.js");
 like( $renderer, qr/registerComponent\('footprint'/, 'buildings are extruded from their footprint' );
 like( $renderer, qr/ExtrudeGeometry/, 'as real geometry' );
 like( $renderer, qr/rig\.setAttribute\('position', '0 3 26'\)/, 'the built world stands back the way the template does' );
-like( $renderer, qr/function imageTexture\(url, done\)/, 'a map plate and a print are textured from a plain image' );
+like( $renderer, qr/function imageTexture\(url, done, smooth\)/, 'a map plate and a print are textured from a plain image' );
 like( $renderer, qr/world=' \+ \(\+\+image_seq\)/, 'and each mount asks a fresh URL: Qt WebEngine wedges a reused one' );
 unlike( $renderer, qr/TextureLoader/, 'not through three\'s CORS-mode loader' );
 like( $renderer, qr/registerComponent\('worldphoto'/, 'a picture is a card in the world' );
 like( $renderer, qr/Math\.PI - \(ph\.heading \* Math\.PI \/ 180\)/, 'turned by the heading the camera kept' );
 like( $renderer, qr/registerComponent\('worldmap'/, 'a measured map plate is textured by three' );
 like( $renderer, qr/data\.land/, 'the ground takes the archive\'s land cover' );
+like( $renderer, qr/registerComponent\('worldwalk'/, 'the walk is the rig\'s own component' );
+like( $renderer, qr/ArrowUp: 'forward'/, 'the arrow keys are the same four steps as W A S D' );
+like( $renderer, qr/this\.velocity\.y = 0/, 'it never carries a vertical speed' );
+like( $renderer, qr/p\.y = this\.eye;/, 'and puts the eye\'s height back every frame, so no walk goes underground' );
+like( $renderer, qr/data\.ground && data\.ground\.url/, 'the painted ground is laid under the world' );
+like( $renderer, qr/rig\.setAttribute\('worldwalk', 'radius'/, 'the walk stops at the edge of the ground the archive covers' );
 like( $renderer, qr/registerComponent\('worldlabel'/, 'labels are canvas textures, not a font fetched from a CDN' );
 unlike( $renderer, qr/cdn\.aframe\.io/, 'and nothing is fetched from A-Frame\'s CDN' );
 

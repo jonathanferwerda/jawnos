@@ -127,6 +127,98 @@
 		}
 	});
 
+	// ---- walking: the rig moves in the ground plane, and only there ----------
+	// A-Frame's wasd-controls moves whichever entity carries it and takes its
+	// direction from that entity's own rotation, so on the camera the library
+	// decides what pitch means - and a look down there is a step into the ground
+	// the moment that changes. The rig walks instead: forward, back and sideways
+	// only, its height put back every frame, and a fence at the edge of the
+	// ground the archive actually covers. The arrow keys are the same four steps
+	// as W A S D, so either hand finds them and neither ever changes altitude.
+	var WALK_KEYS = {
+		KeyW: 'forward', ArrowUp: 'forward',
+		KeyS: 'back', ArrowDown: 'back',
+		KeyA: 'left', ArrowLeft: 'left',
+		KeyD: 'right', ArrowRight: 'right'
+	};
+	window.AFRAME.registerComponent('worldwalk', {
+		schema: {
+			speed: { default: 6 },   // metres a second
+			run: { default: 2.2 },   // Shift multiplies it
+			radius: { default: 0 }   // 0 leaves the fence open
+		},
+		init: function () {
+			var self = this;
+			this.keys = {};
+			this.velocity = new THREE.Vector3();
+			this.forward = new THREE.Vector3();
+			this.right = new THREE.Vector3();
+			this.up = new THREE.Vector3(0, 1, 0);
+			this.want = new THREE.Vector3();
+			// the height the rig was built at is the eye's height for good
+			this.eye = this.el.object3D.position.y;
+			this.onKeyDown = function (e) {
+				var step = WALK_KEYS[e.code];
+				if (!step) { return; }
+				self.keys[step] = true;
+				self.running = !!e.shiftKey;
+				// an arrow key would otherwise scroll the frame
+				e.preventDefault();
+			};
+			this.onKeyUp = function (e) {
+				var step = WALK_KEYS[e.code];
+				if (!step) { return; }
+				self.keys[step] = false;
+				self.running = !!e.shiftKey;
+			};
+			this.onBlur = function () { self.keys = {}; };
+			window.addEventListener('keydown', this.onKeyDown);
+			window.addEventListener('keyup', this.onKeyUp);
+			window.addEventListener('blur', this.onBlur);
+		},
+		remove: function () {
+			window.removeEventListener('keydown', this.onKeyDown);
+			window.removeEventListener('keyup', this.onKeyUp);
+			window.removeEventListener('blur', this.onBlur);
+		},
+		tick: function (time, delta) {
+			var dt = Math.min(delta, 100) / 1000;
+			if (!(dt > 0)) { return; }
+			var p = this.el.object3D.position;
+			// where the eye looks, flattened: pitch is never walked along
+			var cam = this.el.sceneEl && this.el.sceneEl.camera;
+			this.forward.set(0, 0, -1);
+			if (cam && typeof cam.getWorldDirection === 'function') { cam.getWorldDirection(this.forward); }
+			this.forward.y = 0;
+			if (this.forward.lengthSq() < 1e-6) { this.forward.set(0, 0, -1); }
+			this.forward.normalize();
+			this.right.copy(this.forward).cross(this.up);
+			var k = this.keys;
+			this.want.set(0, 0, 0);
+			if (k.forward) { this.want.add(this.forward); }
+			if (k.back) { this.want.sub(this.forward); }
+			if (k.right) { this.want.add(this.right); }
+			if (k.left) { this.want.sub(this.right); }
+			if (this.want.lengthSq() > 0) {
+				this.want.normalize().multiplyScalar(this.data.speed * (this.running ? this.data.run : 1));
+			}
+			// a short ease either way, so a step starts and stops rather than snaps
+			this.velocity.lerp(this.want, 1 - Math.exp(-dt / 0.12));
+			this.velocity.y = 0;
+			p.x += this.velocity.x * dt;
+			p.z += this.velocity.z * dt;
+			// nothing here writes the height but this line, and it always writes
+			// the eye back: a look down, a drag or a stray transform cannot leave
+			// the walker under the ground
+			p.y = this.eye;
+			var radius = +this.data.radius || 0;
+			if (radius > 0) {
+				var away = Math.sqrt(p.x * p.x + p.z * p.z);
+				if (away > radius) { p.x *= radius / away; p.z *= radius / away; }
+			}
+		}
+	});
+
 	// three's ImageLoader asks for crossOrigin "anonymous", and Qt WebEngine never
 	// completes a CORS-mode image for this app: a CORS request carries no session
 	// cookie, so the file route refuses it and the image never loads. Every map
@@ -139,19 +231,30 @@
 	// pictures - and the wedged entry never fires load or error again: a fresh
 	// query string always starts clean (168 ms for a 600 KB plate). Reading a
 	// local file once more is cheap beside a blank world.
+	// `smooth` is for a picture seen edge-on and far away - the ground - where a
+	// linear-filtered texture without mipmaps shimmers as the walker moves.
 	var image_seq = 0;
-	function imageTexture(url, done) {
+	function imageTexture(url, done, smooth) {
 		var img = new Image();
-		var sep = url.indexOf('?') >= 0 ? '&' : '?';
+		// a data URL is already fresh, and has no query string to add a nonce to
+		var nonce = url.indexOf('data:') === 0 ? ''
+			: (url.indexOf('?') >= 0 ? '&' : '?') + 'world=' + (++image_seq);
 		img.onload = function () {
 			var tex = new THREE.Texture(img);
-			tex.minFilter = THREE.LinearFilter;
-			tex.generateMipmaps = false;
+			if (smooth) {
+				tex.minFilter = THREE.LinearMipmapLinearFilter;
+				tex.magFilter = THREE.LinearFilter;
+				tex.anisotropy = 4;
+			}
+			else {
+				tex.minFilter = THREE.LinearFilter;
+				tex.generateMipmaps = false;
+			}
 			tex.needsUpdate = true;
 			if (done) { done(tex); }
 		};
 		img.onerror = function () { if (done) { done(null); } };
-		img.src = url + sep + 'world=' + (++image_seq);
+		img.src = url + nonce;
 	}
 
 	// ---- a measured map plate: a plane textured by three -------------------
@@ -160,7 +263,12 @@
 			url: { default: '' },
 			w: { default: 10 },
 			d: { default: 10 },
-			opacity: { default: 1 }
+			opacity: { default: 1 },
+			// the colour the plane wears until its picture arrives (and if it
+			// never does): the ground passes the colour of the plane it lies on
+			colour: { default: '#ffffff' },
+			y: { default: 0.02 },
+			smooth: { default: false }
 		},
 		init: function () { this.build(); },
 		update: function () { this.build(); },
@@ -170,18 +278,18 @@
 			var geo = new THREE.PlaneGeometry(Math.max(1, d.w), Math.max(1, d.d));
 			geo.rotateX(-Math.PI / 2);
 			var material = new THREE.MeshBasicMaterial({
-				color: 0xffffff, transparent: true, opacity: d.opacity,
+				color: d.colour, transparent: true, opacity: d.opacity,
 				side: THREE.DoubleSide, depthWrite: d.opacity >= 1
 			});
 			var mesh = new THREE.Mesh(geo, material);
-			mesh.position.y = 0.02;
+			mesh.position.y = d.y;
 			this.el.setObject3D('mesh', mesh);
 			// the picture arrives when it arrives; the plane is already placed
 			imageTexture(d.url, function (tex) {
 				if (!tex) { return; }
 				material.map = tex;
 				material.needsUpdate = true;
-			});
+			}, d.smooth);
 		}
 	});
 
@@ -244,6 +352,17 @@
 				width: 700, height: 700, rotation: '-90 0 0', position: '0 0 0',
 				material: 'color: #e2e8d8; shader: flat'
 			});
+			// the archive's own map painted into one picture: the streets, the
+			// water, the land use and the building footprints, so the ground
+			// reads as the place and not as a colour with pieces on it
+			if (data.ground && data.ground.url) {
+				el('a-entity', {
+					worldmap: {
+						url: data.ground.url, w: data.ground.w, d: data.ground.d,
+						opacity: 1, colour: '#e2e8d8', y: 0.008, smooth: true
+					}
+				});
+			}
 		});
 
 	// ---- the measured maps, laid flat at their true place ----------------
@@ -357,7 +476,12 @@
 		// stand back and above the press, as the template does, so the nearest
 		// print is not in your face and the town reads in depth
 		var rig = document.getElementById('world_rig');
-		if (rig) { rig.setAttribute('position', '0 3 26'); }
+		if (rig) {
+			rig.setAttribute('position', '0 3 26');
+			// the walk stops at the edge of the ground the archive covers: past
+			// it there is no map, so a step there would be a step into nothing
+			if (data.radius > 0) { rig.setAttribute('worldwalk', 'radius', +data.radius); }
+		}
 	}
 
 	function ready() {

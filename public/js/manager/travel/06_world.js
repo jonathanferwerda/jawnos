@@ -124,6 +124,88 @@ function travelWorldBuildingHeight(tagged, area) {
 	return 12.5;
 }
 
+// ---- the ground as one picture ---------------------------------------------
+// The ground was a flat colour with the archive's roads, water and buildings
+// standing on it. Painting the same measurements into one texture gives it a map
+// to stand on too: land use, water, streets at their own class widths, and the
+// buildings' footprints under the walls. Nothing is inferred that the archive
+// does not hold, so this is the measured town drawn twice - once flat, once
+// standing up - and not an aerial picture the house has never seen.
+function travelWorldGround(out) {
+	var SIZE = 2048;
+	var span = (out.radius + 30) * 2;
+	if (!out.land.length && !out.water.length && !out.roads.length && !out.buildings.length) { return null; }
+	var canvas = document.createElement('canvas');
+	canvas.width = SIZE;
+	canvas.height = SIZE;
+	var ctx = canvas.getContext('2d');
+	if (!ctx) { return null; }
+	var k = SIZE / span;   // pixels a metre
+	var px = function (x) { return (x + span / 2) * k; };
+	var py = function (z) { return (z + span / 2) * k; };
+	// image top is north: z runs south, and a canvas y runs down
+	var path = function (pts) {
+		ctx.beginPath();
+		for (var i = 0; i < pts.length; i++) {
+			if (i) { ctx.lineTo(px(pts[i][0]), py(pts[i][1])); }
+			else { ctx.moveTo(px(pts[i][0]), py(pts[i][1])); }
+		}
+		ctx.closePath();
+	};
+	// a road as the world draws it: a segment through its middle, at its own
+	// width, turned by the angle the three.js entity is turned by
+	var segment = function (s, width, colour) {
+		var a = -(parseFloat(s.rot) || 0) * Math.PI / 180;
+		var half = (parseFloat(s.len) || 0) / 2;
+		var dx = Math.cos(a) * half;
+		var dz = Math.sin(a) * half;
+		ctx.strokeStyle = colour;
+		ctx.lineWidth = Math.max(1, width * k);
+		ctx.lineCap = 'round';
+		ctx.beginPath();
+		ctx.moveTo(px(s.x - dx), py(s.z - dz));
+		ctx.lineTo(px(s.x + dx), py(s.z + dz));
+		ctx.stroke();
+	};
+
+	// the colour of the plane it lies on, so its square edge never shows
+	ctx.fillStyle = '#e2e8d8';
+	ctx.fillRect(0, 0, SIZE, SIZE);
+
+	$.each(out.land, function (i, l) {
+		path(l.p);
+		ctx.fillStyle = l.c;
+		ctx.fill();
+	});
+	$.each(out.water, function (i, pts) {
+		path(pts);
+		ctx.fillStyle = '#aac9dd';
+		ctx.fill();
+	});
+	$.each(out.streams, function (i, st) { segment(st, st.w, '#aac9dd'); });
+	// a muted casing under every street, then the street itself: the same order
+	// the street map draws, so a town reads as a network rather than as ribbons
+	$.each(out.roads, function (i, r) {
+		if (r.c === '#e3d8c0') { return; }   // a track wears no casing
+		segment(r, r.w + 1.6, '#d8d2c6');
+	});
+	$.each(out.roads, function (i, r) { segment(r, r.w, r.c); });
+	// the footprints under the walls that stand on them
+	$.each(out.buildings, function (i, b) {
+		path(b.p);
+		ctx.fillStyle = '#ded6c8';
+		ctx.fill();
+		ctx.strokeStyle = 'rgba(150,140,120,0.55)';
+		ctx.lineWidth = Math.max(1, 0.4 * k);
+		ctx.stroke();
+	});
+	return {
+		url: canvas.toDataURL('image/jpeg', 0.82),
+		w: Math.round(span * 10) / 10,
+		d: Math.round(span * 10) / 10
+	};
+}
+
 // Every polygon and line the archive holds, in local metres around the press.
 function travelWorldAssemble(st) {
 	var map = st.map, centre = st.centre;
@@ -180,7 +262,7 @@ function travelWorldAssemble(st) {
 		centre: { lat: centre.lat, lon: centre.lon },
 		radius: RADIUS,
 		maps: [], land: [], buildings: [], water: [], streams: [], roads: [], trees: [],
-		places: [], plates: [], photos: []
+		places: [], plates: [], photos: [], ground: null
 	};
 
 	// ---- the measured maps, exactly as the 3D model lays them down ----------
@@ -396,6 +478,11 @@ function travelWorldAssemble(st) {
 	// ---- the pictures taken here, each with its fix and its direction -------
 	var finish = function() {
 		if (travelWorldState !== st) { return; }
+		// painting the ground is the last step: a canvas that cannot be read (a
+		// browser out of memory) must leave the world with its flat ground, not
+		// leave the person with no world at all
+		try { out.ground = travelWorldGround(out); }
+		catch (e) { out.ground = null; }
 		travelWorldFrame(st, out);
 	};
 	if (!out.buildings.length && !out.water.length && !out.roads.length) {
