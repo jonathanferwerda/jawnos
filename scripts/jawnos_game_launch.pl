@@ -47,12 +47,20 @@ my ($child, $interrupted, $home_pressed, $started_at);
 
 sub log_open {
 	make_path($CACHE) unless -d $CACHE;
+	# The helper runs as root, so a cache it creates here would be root-only. The
+	# log is the one place a failed launch explains itself, and it is meant for the
+	# person: hand the directory and the file over, and make both readable.
+	my (undef, undef, $uid, $gid) = getpwnam($PERSON);
+	if (defined $uid && defined $gid) {
+		chown($uid, $gid, $CACHE);
+		chmod 0755, $CACHE;
+	}
 	open($LOGFH, '>>', $LOG) or return;
 	my $previous = select($LOGFH);
 	$| = 1;
 	select($previous);
-	my (undef, undef, $uid, $gid) = getpwnam($PERSON);
 	chown($uid, $gid, $LOG) if defined $uid && defined $gid;
+	chmod 0644, $LOG;
 	my @old = sort glob("$CACHE/game-launch-*.log");
 	while (@old > 5) {
 		my $gone = shift @old;

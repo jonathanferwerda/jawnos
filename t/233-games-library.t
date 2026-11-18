@@ -153,6 +153,9 @@ like($launch, qr/JawnOS::Games::runner_by_id/, 'the runner is the same one the r
 like($launch, qr/--appendconfig/, 'the game gets the config that names the card');
 like($launch, qr/sub kiosk_active/, 'the restore waits for the kiosk, not just starts it');
 like($launch, qr/game-launch-/, 'a launch writes one log file of its own');
+like($launch, qr/chown\(\$uid, \$gid, \$CACHE\)/, 'the launch cache is handed to the person, not left root-only');
+like($launch, qr/chmod 0755, \$CACHE/, 'and is readable');
+like($launch, qr/chmod 0644, \$LOG/, 'so the log a failed launch names can be read');
 like($launch, qr/open\(STDERR, '>&', \$LOGFH\)/, 'the emulator\'s own words go to that log');
 like($launch, qr/sub log_tail/, 'and a launch that dies keeps its last words');
 like($launch, qr/The emulator stopped at once/, 'an emulator that exits at once reports why instead of ending silently');
