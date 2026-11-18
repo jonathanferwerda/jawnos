@@ -106,6 +106,12 @@ like($emerge, qr/function jawnosWindowEmergeCssRect\(/, 'a zoomed rectangle is p
 like($emerge, qr/function jawnosWindowEmerge\(win, origin\)/, 'the motion takes the window and an origin');
 like($emerge, qr/function jawnosWindowEmergeGhostStart\(origin\)/, 'the press can start a preview');
 like($emerge, qr/function jawnosWindowEmergeGhostRetarget\(/, 'the preview is retargeted to the real frame');
+like($emerge, qr/function jawnosWindowEmergeBusy\(\)/, 'a motion in flight is answered for the dock');
+like($emerge, qr/function jawnosWindowEmergeEnd\(\)/, 'and its settle is reported');
+like($emerge, qr/jawnosWindowEmergeBegin\(\);\s*var finish = function \(\) \{ jawnosWindowEmergeCancel\([^)]*\); jawnosWindowEmergeEnd\(\); \};/,
+	'both motions end through it');
+like($emerge, qr/if \(typeof jawnosDockWindowsSettle == 'function'\) \{ jawnosDockWindowsSettle\(1\); \}/,
+	'so the dock\'s postponed row is laid out with its motion live');
 like($emerge, qr/duration: Math\.max\(shape\.ghost, Math\.round\(shape\.ghost \* 3\)\)/,
 	'the preview growth keeps a long tail, so a slow window is never a dead stop');
 like($emerge, qr/ghost\.pourTimer = setTimeout\(/, 'the pointer is still handed over on the level\'s own beat');

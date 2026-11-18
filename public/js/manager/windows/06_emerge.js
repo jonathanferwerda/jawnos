@@ -48,6 +48,18 @@ var JAWNOS_EMERGE_DISMISS_TTL = 30000;
 var jawnosWindowOrigins = {};
 var jawnosWindowOriginLast = null;
 var jawnosWindowEmergeGhost = null;
+// The dock's row rebuilds as a window lands, and a layout pass or a transition
+// in the window's own beat is what froze the motion part way through. The dock
+// asks here whether a motion is in flight and waits for the last one to settle
+// before it lays the row out and animates the new face.
+var jawnosWindowEmergeRunning = 0;
+function jawnosWindowEmergeBusy() { return jawnosWindowEmergeRunning > 0; }
+function jawnosWindowEmergeBegin() { jawnosWindowEmergeRunning++; }
+function jawnosWindowEmergeEnd() {
+	if (jawnosWindowEmergeRunning > 0) { jawnosWindowEmergeRunning--; }
+	if (jawnosWindowEmergeRunning > 0) { return; }
+	if (typeof jawnosDockWindowsSettle == 'function') { jawnosDockWindowsSettle(1); }
+}
 // True from a press until it is released. A preview must not take the pointer
 // while the press that made it is still down, or the click that opens the
 // window lands on the preview and dismisses the open it was waiting for.
@@ -1286,7 +1298,8 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 
 	ghost.win = win_el;
 	win_el.jawnosEmergeGhost = ghost;
-	var finish = function () { jawnosWindowEmergeCancel(win_el); };
+	jawnosWindowEmergeBegin();
+	var finish = function () { jawnosWindowEmergeCancel(win_el); jawnosWindowEmergeEnd(); };
 	if (win_el.jawnosEmergeWindowAnim && win_el.jawnosEmergeWindowAnim.finished
 		&& win_el.jawnosEmergeWindowAnim.finished.then) {
 		win_el.jawnosEmergeWindowAnim.finished.then(finish, finish);
@@ -1425,7 +1438,8 @@ function jawnosWindowEmerge(win, origin) {
 			fill: 'both'
 		});
 
-		var finish = function () { jawnosWindowEmergeCancel(el); };
+		jawnosWindowEmergeBegin();
+		var finish = function () { jawnosWindowEmergeCancel(el); jawnosWindowEmergeEnd(); };
 		if (sheet.jawnosEmergeSheetAnim.finished && sheet.jawnosEmergeSheetAnim.finished.then) {
 			sheet.jawnosEmergeSheetAnim.finished.then(finish, finish);
 		}

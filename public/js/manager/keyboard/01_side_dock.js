@@ -415,6 +415,13 @@ function pseudonymHomeHider(interval) {
 	}
 
 	interval = interval || pseudonymHIntervals;
+	// A window is still landing: its own motion owns the frame, and the tuck's
+	// layout move in that beat is what froze it part way through. The dock's
+	// settle runs this tuck once the motion has settled.
+	if (typeof jawnosWindowEmergeBusy == 'function' && jawnosWindowEmergeBusy()) {
+		jawnosDockHidePending = interval;
+		return;
+	}
 	if (Date.now() >= pseudonymIntervals + interval && was == 0) {
 		if (dock_side) {
 			// the pill slips off its own edge, keeping the strip the pointer rests

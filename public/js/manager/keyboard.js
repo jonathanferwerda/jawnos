@@ -469,44 +469,90 @@ function jawnosDockWindowFaces() {
 	});
 }
 var jawnosDockWindowStamp = null;
-function jawnosDockWindowsRender() {
+// A row rebuild is a layout pass, and a face taking its tucked place is a
+// transition. Either in the same beat as the window that caused the rebuild is
+// what froze the window part way through its motion, so the rebuild waits for
+// the window to land and then lays the row out on a quiet frame.
+var jawnosDockWindowWaiting = 0;
+var jawnosDockWindowTimer = 0;
+// A tuck the window's own motion postponed; pseudonymHomeHider runs it when the
+// motion settles.
+var jawnosDockHidePending = 0;
+function jawnosDockWindowsStamp(faces) {
+	return $.map(faces, function(f) { return f.key + '\u0001' + f.hint + '\u0001' + f.src; }).join('\u0002');
+}
+function jawnosDockWindowsBuild(quiet) {
 	var bar = $('#pseudonym_bar');
 	if (!bar.length) { return; }
 	var faces = jawnosDockWindowFaces();
-	var stamp = $.map(faces, function(f) { return f.key + '\u0001' + f.hint + '\u0001' + f.src; }).join('\u0002');
-	if (stamp !== jawnosDockWindowStamp) {
-		jawnosDockWindowStamp = stamp;
-		// A window landing adds its face to the row. That rebuild must not play
-		// the tuck/reveal motion: the icon would read as animating itself hidden
-		// while the window is still opening, and the extra work lands in the
-		// same beat as the window's own motion. Place it quietly; the next
-		// pointer-driven tuck or reveal animates as usual.
-		var home = $('#pseudonym_home');
-		home.addClass('dock_quiet');
-		bar.children('.dock_window_face').remove();
-		$.each(faces, function(i, f) {
-			var src = f.src || '/images/decipherable/gear.png';
-			var icon = $('<img class="ps bar pseudonym keyboard hover theme_surface dock_window">').attr({
-				'hint': f.hint || '',
-				'src': src,
-				'jawnos_icon': src,
-				'id': 'dock_window_' + encodeURIComponent(f.key) + '_toggle',
-				'dock_window_key': f.key,
-				'dock_window_app': f.app || '',
-				'toggle': 'window:' + f.key
-			});
-			if (f.dialog) { icon.attr('dock_window_dialog', f.dialog); }
-			if (f.terminal) { icon.attr('dock_window_terminal', f.terminal); }
-			if (f.window) { icon.attr('dock_window_window', f.window); }
-			icon.css('background-color', 'var(--panel-2)');
-			bar.append($('<div class="draggable_icon dock_window_face"></div>').append(icon));
+	jawnosDockWindowStamp = jawnosDockWindowsStamp(faces);
+	// A quiet pass places every face without the tuck/reveal motion: the icon
+	// would read as animating itself hidden while nothing asked it to move.
+	var home = $('#pseudonym_home');
+	if (quiet) { home.addClass('dock_quiet'); }
+	bar.children('.dock_window_face').remove();
+	$.each(faces, function(i, f) {
+		var src = f.src || '/images/decipherable/gear.png';
+		var icon = $('<img class="ps bar pseudonym keyboard hover theme_surface dock_window">').attr({
+			'hint': f.hint || '',
+			'src': src,
+			'jawnos_icon': src,
+			'id': 'dock_window_' + encodeURIComponent(f.key) + '_toggle',
+			'dock_window_key': f.key,
+			'dock_window_app': f.app || '',
+			'toggle': 'window:' + f.key
 		});
-		jawnosDockOrderApply();
-		if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
-		setTimeout(function () { home.removeClass('dock_quiet'); }, 0);
+		if (f.dialog) { icon.attr('dock_window_dialog', f.dialog); }
+		if (f.terminal) { icon.attr('dock_window_terminal', f.terminal); }
+		if (f.window) { icon.attr('dock_window_window', f.window); }
+		icon.css('background-color', 'var(--panel-2)');
+		bar.append($('<div class="draggable_icon dock_window_face"></div>').append(icon));
+	});
+	jawnosDockOrderApply();
+	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+	if (quiet) { setTimeout(function () { home.removeClass('dock_quiet'); }, 0); }
+}
+function jawnosDockWindowsRender() {
+	var bar = $('#pseudonym_bar');
+	if (!bar.length) { return; }
+	if (jawnosDockWindowsStamp(jawnosDockWindowFaces()) !== jawnosDockWindowStamp) {
+		// The window that added the face is built in this same task and pours
+		// into its place at the end of it, so the rebuild waits one turn: by then
+		// the motion is in flight and the row is laid out when it has settled.
+		jawnosDockWindowWaiting = 1;
+		if (!jawnosDockWindowTimer) {
+			jawnosDockWindowTimer = setTimeout(jawnosDockWindowsLanded, 0);
+			// The motion's own ceiling is a few hundred ms; one that never reports
+			// back must not leave the row stale for good.
+			setTimeout(function () {
+				if (jawnosDockWindowWaiting && !(typeof jawnosWindowEmergeBusy == 'function' && jawnosWindowEmergeBusy())) {
+					jawnosDockWindowsSettle(0);
+				}
+			}, 2000);
+		}
 	}
 	jawnosDockWindowsState();
 	if (typeof jawnosShellDockSync == 'function') { jawnosShellDockSync(); }
+}
+function jawnosDockWindowsLanded() {
+	jawnosDockWindowTimer = 0;
+	if (typeof jawnosWindowEmergeBusy == 'function' && jawnosWindowEmergeBusy()) { return; }
+	jawnosDockWindowsSettle(0);
+}
+// `animate` is set by a window's motion settling: the row is then built with
+// its transitions live, so the new face takes its place after the window has
+// landed rather than in the window's own beat.
+function jawnosDockWindowsSettle(animate) {
+	if (jawnosDockWindowTimer) { clearTimeout(jawnosDockWindowTimer); jawnosDockWindowTimer = 0; }
+	var hide = jawnosDockHidePending;
+	jawnosDockHidePending = 0;
+	if (jawnosDockWindowWaiting) {
+		jawnosDockWindowWaiting = 0;
+		jawnosDockWindowsBuild(!animate);
+	}
+	// The tuck the motion postponed: the row is in place now, so it plays with
+	// the icon riding it, exactly as a pointer-driven tuck would.
+	if (hide && typeof pseudonymHomeHider == 'function') { pseudonymHomeHider(hide); }
 }
 function jawnosDockWindowsState() {
 	var bar = $('#pseudonym_bar');

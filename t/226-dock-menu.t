@@ -125,8 +125,17 @@ like($dock, qr/if \(\$\(this\)\.hasClass\('dock_window'\)\)/, 'the press handler
 like($dock, qr/jawnosDockWindowsRender\(\)/, 'the window faces can be rebuilt');
 like($dock, qr/!t\.terminal && !t\.window && !t\.dialog && t\.app && jawnosDockAppHas\(t\.app\)/,
 	'a pinned app\'s own window is left to its pin');
-like($dock, qr/home\.addClass\('dock_quiet'\)/, 'a window landing lays the row out without motion');
+like($dock, qr/home\.addClass\('dock_quiet'\)/, 'a rebuild places the row without motion');
 like($dock, qr/home\.removeClass\('dock_quiet'\)/, 'and arms the motion again after that pass');
+like($dock, qr/function jawnosDockWindowsSettle\(animate\)/,
+	'a window\'s motion settles the row it postponed');
+like($dock, qr/if \(typeof jawnosWindowEmergeBusy == 'function' && jawnosWindowEmergeBusy\(\)\) \{\s*return; \}/,
+	'the rebuild waits for a window that is still landing');
+my $side = js_source('public/js/manager/keyboard/01_side_dock.js');
+like($side, qr/if \(typeof jawnosWindowEmergeBusy == 'function' && jawnosWindowEmergeBusy\(\)\)/,
+	'and so does the tuck');
+like($side, qr/jawnosDockHidePending = interval;/,
+	'which is remembered for the settle that runs it');
 like($css, qr/#pseudonym_home\.dock_quiet[\s\S]{0,220}transition: none !important/,
 	'the quiet pass none-rates the dock and its faces');
 like($css, qr/\.pseudonym\.dock_window\[state=active\]/,
