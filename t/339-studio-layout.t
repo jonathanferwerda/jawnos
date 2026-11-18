@@ -149,6 +149,45 @@ like($layout, qr/if \(!any_saved\) \{[\s\S]*?studioApplyArrange\(true\)/,
 like($layout, qr/if \(studioPanelElement\(name\)\.hasClass\('studio_panel_floating'\)\) \{[\s\S]*?studioDockPanel\(name, false\)/,
 	'Arrange brings a floated panel home');
 
+# --- arranged mode is an explicit DAW grid, left by any manual move --------
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/s,
+	'the arranged rows are auto, a dominant timeline, then auto');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?"transport transport transport"[\s\S]*?"tracks tracks synth"[\s\S]*?"mixer mixer mixer"/s,
+	'the wide areas run transport, tracks beside the synth, then the console');
+like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*grid-area:\s*transport !important/s,
+	'the transport owns the top area');
+like($style, qr/#studio_grid\.studio_arranged > #studio_tracks_panel\s*\{[^}]*grid-area:\s*tracks !important/s,
+	'the timeline owns the middle area');
+like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*grid-area:\s*mixer !important/s,
+	'the console owns the bottom area');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) minmax\(0,\s*45%\)/s,
+	'the console row is capped at 45% of the grid');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?overflow-y:\s*auto/s,
+	'a very short arranged window scrolls the grid instead of clipping an area');
+like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*max-height:\s*140px/s,
+	'the console keeps its compact auto height');
+like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*height:\s*\d+px/s,
+	'the transport keeps only its own height');
+like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
+	'the compact arranged grid is one column');
+like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto auto/s,
+	'the compact rows are transport, timeline, console, synth');
+like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?"transport"[\s\S]*?"tracks"[\s\S]*?"mixer"[\s\S]*?"synth"/s,
+	'the compact areas stack in that order');
+like($layout, qr/function studioSetArranged\(on, persist\)/, 'one function enters and leaves the mode');
+like($layout, qr/function studioExitArrange\(persist\)/, 'leaving the mode has its own helper');
+like($layout, qr/studioExitArrange\(true\);\n\tstudioFloatPanel\(name\);/, 'a drag leaves the mode');
+like($layout, qr/studioExitArrange\(true\);\n\tstudioDockPanel\(\$\(this\)\.attr\('data-panel'\)\);/, 'a Dock leaves the mode');
+like($layout, qr/studioExitArrange\(true\);\n\tstudioPanelSpan\[name\]/, 'a width change leaves the mode');
+like($layout, qr/function studioReorderDockedPanel\(name, target\) \{\n\tstudioExitArrange\(true\);/, 'a re-order leaves the mode');
+like($layout, qr/studioExitArrange\(true\);\n\tif \(panel\.hasClass\('studio_panel_floating'\)\)/, 'the float control leaves the mode');
+like($layout, qr/mixer\.settings\['studio_panel_arranged'\] = on \? 'yes' : 'no'/, 'the mode is remembered as a setting');
+like($layout, qr/var arranged = String\([\s\S]*?studio_panel_arranged[\s\S]*?== 'yes'/, 'a reopen follows the remembered mode');
+like($layout, qr/if \(arranged && !\$\('\.studio_panel_floating'\)\.length\)/, 'a saved float hands the grid back');
+like($layout, qr/toggleClass\('studio_arranged_compact', studioIsNarrow\(\)\)/, 'a resize re-evaluates the compact mode');
+like($help, qr/Arrange is a mode, not a lock/, 'help says Arrange is a mode that manual moves leave');
+like($help, qr/the track timeline takes the large middle with the synth beside it/, 'help describes the arranged areas');
+
 # --- the Studio window opens at a desk size and stays inside itself --------
 like($maker, qr/%app_default_size\s*=\s*\(\s*studio\s*=>\s*\{\s*width\s*=>\s*1000,\s*height\s*=>\s*760/,
 	'Studio asks the window helper for a 1000x760 default');
@@ -180,11 +219,14 @@ like($markup, qr/id="studio_grid"/, 'the four docked panels share a grid contain
 like($style, qr/grid-auto-flow:\s*dense/, 'auto-flow dense packs the panels into the gaps');
 like($style, qr/grid-column:\s*span/, 'a panel is sized by a column span');
 like($style, qr/grid-auto-rows:\s*minmax\(0,\s*1fr\)/, 'the implicit rows share the desk height');
-unlike($style, qr/grid-template-areas/, 'the grid has no fixed named cells');
-unlike($style, qr/#studio_mixer\s*\{[^}]*grid-area:/s,
-	'the channel strips are not pinned to a fixed cell');
-unlike($style, qr/#studio_transport_panel\s*\{[^}]*grid-area:/s,
-	'the transport is not pinned to a fixed cell');
+unlike($style, qr/\.studio_grid\s*\{[^}]*grid-template-areas/s,
+	'the manual grid still has no fixed named cells');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[^}]*grid-template-areas/s,
+	'the arranged grid names its cells');
+unlike($style, qr/^\s*#studio_mixer\s*\{[^}]*grid-area:/ms,
+	'the channel strips are not pinned to a fixed cell by their own rule');
+unlike($style, qr/^\s*#studio_transport_panel\s*\{[^}]*grid-area:/ms,
+	'the transport is not pinned to a fixed cell by its own rule');
 like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-y:\s*auto/s,
 	'the strips panel scrolls vertically so every fader is reachable');
 like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-x:\s*auto/s,

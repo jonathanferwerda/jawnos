@@ -343,6 +343,72 @@
 		min-height: 0;
 		overflow: auto;
 	}
+	/* ---- arranged mode ------------------------------------------------------
+	   Arrange gives the grid its explicit DAW areas: the transport keeps only
+	   its own height, the timeline takes the flexible middle with the synth
+	   beside it, and the console gets a compact band at the foot. The placement
+	   is `!important` so the manual order/span inline styles (kept for when
+	   arranged mode ends) cannot override the named areas. 07_layout.js removes
+	   .studio_arranged the moment a panel is moved, floated, docked, widened or
+	   re-ordered, and the manual packing takes over again. */
+	#studio_grid.studio_arranged {
+		grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+		/* the console is an auto row whose own height is capped at 140px; the
+		   row never grows past 45% of the grid, so it cannot eat the timeline */
+		grid-template-rows: auto minmax(0, 1fr) minmax(0, 45%);
+		grid-template-areas:
+			"transport transport transport"
+			"tracks tracks synth"
+			"mixer mixer mixer";
+		grid-auto-flow: row;
+		/* a very short window scrolls the whole arranged grid rather than
+		   clipping an area; each panel still scrolls inside itself */
+		overflow-y: auto;
+	}
+	#studio_grid.studio_arranged > #studio_transport_panel {
+		grid-area: transport !important;
+		height: 124px;
+	}
+	#studio_grid.studio_arranged > #studio_tracks_panel {
+		grid-area: tracks !important;
+	}
+	#studio_grid.studio_arranged > #studio_synth {
+		grid-area: synth !important;
+	}
+	#studio_grid.studio_arranged > #studio_mixer {
+		grid-area: mixer !important;
+		height: auto;
+		max-height: 140px;
+	}
+	/* A phone-width window stacks the same areas: transport, dominant timeline,
+	   a compact console, then the synth. The fixed auto-row heights are small so
+	   a short window still leaves the timeline room; every panel scrolls. */
+	#studio_grid.studio_arranged_compact {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: auto minmax(0, 1fr) auto auto;
+		grid-template-areas:
+			"transport"
+			"tracks"
+			"mixer"
+			"synth";
+		grid-auto-flow: row;
+		overflow-y: auto;
+	}
+	#studio_grid.studio_arranged_compact > #studio_transport_panel {
+		grid-area: transport !important;
+		height: 92px;
+	}
+	#studio_grid.studio_arranged_compact > #studio_tracks_panel {
+		grid-area: tracks !important;
+	}
+	#studio_grid.studio_arranged_compact > #studio_mixer {
+		grid-area: mixer !important;
+		height: 104px;
+	}
+	#studio_grid.studio_arranged_compact > #studio_synth {
+		grid-area: synth !important;
+		height: 104px;
+	}
 	#studio_mixer {
 		min-width: 0;
 		min-height: 0;

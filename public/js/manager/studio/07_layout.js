@@ -86,12 +86,13 @@ var STUDIO_PANEL_MAX_SPAN = 2;
 
 // ---- the Arrange preset ----------------------------------------------------
 //
-// A DAW reads top to bottom: the transport spans the window, the timeline is
-// the main area under it, the instrument sits on the left and the mixing
-// console on the right at the foot, with the master strip at the far right of
-// the channel strips. A narrow window stacks every panel instead, because two
-// columns of faders stop being readable. Arrange is only a default: the drag,
-// float, Dock and Narrow/Wide controls still work and still persist.
+// A DAW reads top to bottom: the transport keeps its own height across the
+// top, the timeline takes the flexible middle with the synth beside it, and
+// the console gets a compact band at the foot with the master strip at its far
+// right. A narrow window stacks the same areas in one column. The arrangement
+// is a mode on the grid (the stylesheet's named areas, see style.html.ep); the
+// order/span values below are the manual packing it falls back to the moment
+// the person moves a panel.
 var studioArrangeWide = {
 	order: ['transport', 'tracks', 'synth', 'mixer'],
 	span: { transport: 2, tracks: 2, synth: 1, mixer: 1 }
@@ -101,9 +102,38 @@ var studioArrangeCompact = {
 	span: { transport: 2, tracks: 2, mixer: 2, synth: 2 }
 };
 
-function studioArrangePreset() {
+function studioIsNarrow() {
 	var width = $('#studio').width() || $(window).width() || 0;
-	return (width && width < 720) ? studioArrangeCompact : studioArrangeWide;
+	return !!(width && width < 720);
+}
+
+function studioArrangePreset() {
+	return studioIsNarrow() ? studioArrangeCompact : studioArrangeWide;
+}
+
+// Arrange is a mode on the grid itself: the stylesheet's named areas replace
+// the manual order/span placement. The manual values stay on the panels (and
+// in the saved settings) for the moment the mode ends, so leaving it never
+// loses the packing the person had.
+function studioSetArranged(on, persist) {
+	var grid = $('#studio_grid');
+	if (!grid.length) { return; }
+	grid.toggleClass('studio_arranged', !!on);
+	grid.toggleClass('studio_arranged_compact', !!on && studioIsNarrow());
+	mixer = mixer || {};
+	mixer.settings = mixer.settings || {};
+	mixer.settings['studio_panel_arranged'] = on ? 'yes' : 'no';
+	if (persist !== false) {
+		studioSaveSettings([{ setting: 'studio_panel_arranged', value: on ? 'yes' : 'no' }]);
+	}
+}
+
+// A manual gesture takes the window out of the arranged grid and back to the
+// packing rules it was using before. Idempotent, so every entry point can call
+// it: a drag, float, Dock, Narrow/Wide or a dropped panel order.
+function studioExitArrange(persist) {
+	if (!$('#studio_grid').hasClass('studio_arranged')) { return; }
+	studioSetArranged(false, persist !== false);
 }
 
 function studioApplyArrange(persist) {
@@ -118,10 +148,19 @@ function studioApplyArrange(persist) {
 	});
 	studioApplyPanelOrder();
 	$.each(studioPanelNames, function (i, name) { studioApplyPanelSpan(name); });
+	studioSetArranged(true, persist);
 	if (persist) { studioPersistPanelOrder(); }
 }
 
 $(document).on('click', '#studio_arrange', function () { studioApplyArrange(true); });
+
+// The compact areas follow the Studio window, not the desk: the app is a
+// floating window, so the desk's viewport width says nothing about it.
+$(window).on('resize', function () {
+	if ($('#studio_grid').hasClass('studio_arranged')) {
+		$('#studio_grid').toggleClass('studio_arranged_compact', studioIsNarrow());
+	}
+});
 
 function studioPanelOrderIndex(name) {
 	for (var i = 0; i < studioPanelOrder.length; i++) {
@@ -287,6 +326,7 @@ function studioDockPanel(name, persist) {
 function studioApplyPanelPositions() {
 	var saved = {};
 	var any_saved = false;
+	var arranged = String((mixer && mixer.settings) ? mixer.settings['studio_panel_arranged'] : '') == 'yes';
 	$.each(studioPanelSelectors, function (name) {
 		var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_position_' + name] : undefined;
 		if (!raw) { return; }
@@ -325,6 +365,10 @@ function studioApplyPanelPositions() {
 			studioFloatPanel(name, position, false);
 		}
 	});
+
+	// A saved float is manual packing; otherwise the remembered mode decides.
+	if (arranged && !$('.studio_panel_floating').length) { studioSetArranged(true, false); }
+	else { studioSetArranged(false, false); }
 }
 
 // A window can be smaller than the desk it was floated on; pull a saved panel
@@ -377,6 +421,7 @@ function studioDockedPanelUnder(name, original) {
 // Insert a dropped panel before the one it landed on and let the rest reflow.
 // The saved order is the whole arrangement, not just the moved panel's place.
 function studioReorderDockedPanel(name, target) {
+	studioExitArrange(true);
 	var from = studioPanelOrderIndex(name);
 	studioPanelOrder.splice(from, 1);
 	var to = studioPanelOrderIndex(target);
@@ -407,6 +452,9 @@ $(document).on('pointerdown', '.studio_drag_handle', function (e) {
 	var panel = studioPanelElement(name);
 	if (!panel.length) { return; }
 	var wasFloating = panel.hasClass('studio_panel_floating');
+	// Grabbing a panel is a manual action: the arranged areas let go first, so
+	// the drag begins from the panel's packing place.
+	studioExitArrange(true);
 	studioFloatPanel(name);
 	var rect = panel[0].getBoundingClientRect();
 	studioPanelDrag = {
@@ -426,6 +474,7 @@ $(document).on('pointerdown', '.studio_resize_handle', function (e) {
 	var name = $(this).attr('data-studio-resize');
 	var panel = studioPanelElement(name);
 	if (!panel.length || !panel.hasClass('studio_panel_floating')) { return; }
+	studioExitArrange(true);
 	var rect = panel[0].getBoundingClientRect();
 	studioPanelResize = {
 		name: name,
@@ -496,6 +545,7 @@ $(document).on('click', '.studio_hide_toggle', function () {
 $(document).on('click', '.studio_float_toggle', function () {
 	var name = $(this).attr('data-panel');
 	var panel = studioPanelElement(name);
+	studioExitArrange(true);
 	if (panel.hasClass('studio_panel_floating')) { studioDockPanel(name); }
 	else { studioFloatPanel(name, null, true); }
 });
@@ -506,6 +556,7 @@ $(document).on('click', '.studio_span_toggle', function () {
 	var name = $(this).attr('data-panel');
 	var panel = studioPanelElement(name);
 	if (!panel.length || panel.hasClass('studio_panel_floating')) { return; }
+	studioExitArrange(true);
 	studioPanelSpan[name] = (studioPanelSpanValue(name) >= STUDIO_PANEL_MAX_SPAN)
 		? STUDIO_PANEL_MIN_SPAN : STUDIO_PANEL_MAX_SPAN;
 	studioApplyPanelSpan(name);
@@ -517,6 +568,7 @@ $(document).on('click', '.studio_span_toggle', function () {
 });
 
 $(document).on('click', '.studio_dock', function () {
+	studioExitArrange(true);
 	studioDockPanel($(this).attr('data-panel'));
 });
 
