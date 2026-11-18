@@ -98,6 +98,11 @@ forces the software path.
   a missed BeginFrame; they do **not** see compositor-thread time, so a smooth
   main thread over a starved GPU still reads as 60 fps. `longTaskMs` and
   `loafStyleLayoutMs` are what separate those cases.
+- `drag` drives the app's own soft-sheet drag rather than a copy of it, so it
+  needs the app's code: `--inject public/js/jquery.js --inject
+  public/js/manager/windows/05_effects.js --effects medium`. It reports
+  `transformWrites`, the frames the spring actually wrote -- 0 means reduced
+  motion or effects off, and a clean 60 fps would then mean nothing.
 - The `page:` line says what was actually loaded -- host, path prefix, node
   count, how many elements scroll, and whether `loadFinished` said ok. A
   `scrollpage` on a page with no scroll range is reported as skipped: the

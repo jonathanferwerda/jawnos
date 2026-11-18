@@ -102,6 +102,12 @@ def parse_args(argv):
     parser.add_argument("--scenario", action="append", metavar="LIST",
                         help="comma-separated scenarios (repeatable); --list shows them")
     parser.add_argument("--video", help="a media file the 'video' scenario plays")
+    parser.add_argument("--inject", action="append", default=[], metavar="FILE",
+                        help="a script to load into the page before measuring (repeatable); "
+                             "'drag' needs the app's own "
+                             "public/js/manager/windows/05_effects.js and jQuery")
+    parser.add_argument("--effects", choices=["off", "light", "medium", "maximum"],
+                        help="the window effects level the injected app code reads")
     parser.add_argument("--out", default="-", help="write the JSON report here ('-' is stdout)")
     parser.add_argument("--size", type=parse_size, default=(1280, 800), metavar="WxH")
     parser.add_argument("--software", action="store_true",
@@ -130,6 +136,9 @@ def parse_args(argv):
     if args.video and "video" not in names:
         names.append("video")
     args.scenarios = names
+    # --inject is already a list (action="append"); keep one spelling for the
+    # rest of the file, where a typo here is a Qt-slot exception and a timeout.
+    args.injects = list(args.inject or [])
     return args
 
 
@@ -358,6 +367,18 @@ def main(argv=None):
             print("frames: the page reported a failed load: %s" % redact_url(args.url),
                   file=sys.stderr)
         page.runJavaScript(probe)
+        if args.effects:
+            page.runJavaScript(
+                "(window.jawnos_bar_settings = window.jawnos_bar_settings || {})"
+                ".window_effects = %s" % json.dumps(args.effects))
+        for path in args.injects:
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    text = handle.read()
+            except OSError as exc:
+                print("frames: cannot read %s: %s" % (path, exc), file=sys.stderr)
+                continue
+            page.runJavaScript(text)
         if state.get("started"):
             # A redirect or a late frame can finish twice; measure once.
             return

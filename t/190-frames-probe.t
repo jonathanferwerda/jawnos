@@ -33,6 +33,8 @@ like($js, qr/UNMASKED_RENDERER_WEBGL/, 'the report names the renderer that paint
 like($js, qr/"scroll"/, 'a scroll scenario exists');
 like($js, qr/"scrollpage"/, 'and one that scrolls the loaded page itself');
 like($js, qr/"busy"/, 'the main-thread stall control exists');
+like($js, qr/transformWrites/, 'the drag reports how many frames the spring wrote');
+like($py, qr/--inject/, "and can load the app's own window-effects code");
 
 # The driver side: the shell's own graphics setup, so a number describes the
 # machine as JawnOS runs it rather than a probe's private idea of it.
@@ -61,13 +63,15 @@ my $have_qt = system("python3 -c 'import PySide6.QtWebEngineWidgets' >/dev/null 
 my $have_xvfb = system('command -v xvfb-run >/dev/null 2>&1') == 0;
 
 SKIP: {
-	skip 'PySide6 Qt WebEngine is not installed here', 6 unless $have_qt;
-	skip 'xvfb-run is not installed here', 6 unless $have_xvfb;
+	skip 'PySide6 Qt WebEngine is not installed here', 8 unless $have_qt;
+	skip 'xvfb-run is not installed here', 8 unless $have_xvfb;
 
 	my $tmp = tempdir(CLEANUP => 1);
 	my $out = "$tmp/frames.json";
 	my $run = `cd "$root" && timeout 180 xvfb-run -a python3 qa/ui/frames.py \\
-		--software --no-sandbox --size 800x600 --scenario idle,busy \\
+		--software --no-sandbox --size 800x600 --scenario idle,busy,drag \\
+		--effects medium --inject public/js/jquery.js \\
+		--inject public/js/manager/windows/05_effects.js \\
 		--out "$out" 2>&1`;
 	my $code = $? >> 8;
 
@@ -85,6 +89,9 @@ SKIP: {
 	ok(($by{busy}{latePct} || 0) > ($by{idle}{latePct} || 0),
 		'and more of its frames are late');
 	ok(length($report->{gpu} || ''), 'the report says which renderer painted');
+	ok(($by{drag}{frames} || 0) > 20, 'the drag recorded frames');
+	ok(($by{drag}{transformWrites} || 0) > 20,
+		'and the spring wrote a transform on them, so the drag really ran');
 }
 
 done_testing();

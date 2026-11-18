@@ -33,7 +33,7 @@
   if (window.jawnosFrames) { return; }
 
   var SCENARIOS = ["idle", "scroll", "scrollpage", "transform", "opacity",
-                   "shadow", "border", "width", "blur", "video", "busy"];
+                   "shadow", "border", "width", "blur", "drag", "video", "busy"];
   var TILES = 36;
 
   var CSS = [
@@ -56,7 +56,11 @@
     "#jp-grid.jp-shadow .jp-tile{animation:jp-shadow 1.2s linear infinite alternate}",
     "#jp-grid.jp-border .jp-tile{animation:jp-border 1.2s linear infinite alternate}",
     "#jp-grid.jp-width .jp-tile{animation:jp-width 1.2s linear infinite alternate}",
-    "#jp-grid.jp-blur{animation:jp-blur 1.2s linear infinite alternate}"
+    "#jp-grid.jp-blur{animation:jp-blur 1.2s linear infinite alternate}",
+    /* manager.css:1276 -- a dragged window is a composited layer all along */
+    "#jp-wind{position:absolute;left:180px;top:120px;width:520px;height:340px;",
+    "box-sizing:border-box;padding:10px;background:#1b262c;border:1px solid #37474f;",
+    "color:#b0bec5;font:14px sans-serif;will-change:transform}"
   ].join("");
 
   function bench() {
@@ -249,6 +253,42 @@
       return { done: function () { board.className = ""; } };
     }
 
+    if (name === "drag") {
+      // The app's own soft-sheet drag (public/js/manager/windows/05_effects.js),
+      // not a copy of it: the driver injects that file, and this drives the
+      // spring the way pointermove does. A window dragged by the hand is the one
+      // motion whose every frame is written by JS, so it is the one a busy main
+      // thread can freeze -- CSS one-shots keep running through a long task.
+      if (typeof jawnosWindowWobbleStart !== "function") {
+        return { skipped: "window effects not loaded (--inject public/js/manager/windows/05_effects.js)" };
+      }
+      var wind = document.getElementById("jp-wind");
+      if (!wind) {
+        wind = document.createElement("div");
+        wind.id = "jp-wind";
+        wind.textContent = "dragged window";
+        host.appendChild(wind);
+      }
+      jawnosWindowWobbleStart(wind);
+      // Count the frames the spring actually wrote: 0 means reduced motion or
+      // the effects were off, and a clean 60 fps would then mean nothing.
+      var writes = 0, last = "";
+      return {
+        frame: function (t) {
+          jawnosWindowWobbleMove(wind, 180 + 320 * Math.sin(t * 0.004),
+                                 120 + 90 * Math.cos(t * 0.003));
+          var now = (wind.style && wind.style.transform) || "";
+          if (now && now !== last) { writes++; }
+          last = now;
+        },
+        stats: function () { return { transformWrites: writes }; },
+        done: function () {
+          jawnosWindowWobbleStop(wind);
+          if (wind.parentNode) { wind.parentNode.removeChild(wind); }
+        }
+      };
+    }
+
     if (name === "video") {
       if (!opts.videoSrc) { return { skipped: "video needs --video <file>" }; }
       var player = document.createElement("video");
@@ -317,6 +357,10 @@
       out.dpr = window.devicePixelRatio;
       if (setup.target) { out.target = setup.target; }
       if (setup.range) { out.range = setup.range; }
+      if (setup.stats) {
+        var stats = setup.stats() || {};
+        for (var key in stats) { if (Object.prototype.hasOwnProperty.call(stats, key)) { out[key] = stats[key]; } }
+      }
       out.longTasks = seen.longTasks.length;
       out.longTaskMs = Math.round(seen.longTasks.reduce(function (a, v) { return a + v; }, 0));
       if (seen.animationFrames.length) {
