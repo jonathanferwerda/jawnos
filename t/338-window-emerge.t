@@ -112,8 +112,14 @@ like($emerge, qr/jawnosWindowEmergeBegin\(\);\s*var finish = function \(\) \{ ja
 	'both motions end through it');
 like($emerge, qr/if \(typeof jawnosDockWindowsSettle == 'function'\) \{ jawnosDockWindowsSettle\(1\); \}/,
 	'so the dock\'s postponed row is laid out with its motion live');
-like($emerge, qr/duration: Math\.max\(shape\.ghost, Math\.round\(shape\.ghost \* 3\)\)/,
-	'the preview growth keeps a long tail, so a slow window is never a dead stop');
+like($emerge, qr/duration: jawnosWindowEmergeGrowTime\(shape\)/,
+	'the preview growth runs for the device\'s measured pace');
+like($emerge, qr/function jawnosWindowEmergeGrowTime\(shape\)[\s\S]{0,400}Math\.max\(shape\.ghost, Math\.round\(shape\.ghost \* 3\)\)/,
+	'with the level\'s own tail until an open has been measured');
+like($emerge, qr/jawnosWindowEmergeLatencyRecord\(Date\.now\(\) - ghost\.at\)/,
+	'and the pace is learned from the press to the landing');
+like($emerge, qr/JSON\.parse\(localStorage\.getItem\(JAWNOS_EMERGE_LATENCY_KEY/,
+	'kept on the device, so a reload does not start the estimate over');
 like($emerge, qr/ghost\.pourTimer = setTimeout\(/, 'the pointer is still handed over on the level\'s own beat');
 like($emerge, qr/function jawnosWindowEmergeGhostCancel\(/, 'the preview can be put away');
 like($emerge, qr/function jawnosWindowEmergePredict\(/, 'the frame is predicted from the cascade');
@@ -1096,6 +1102,36 @@ effects_on = true;
 
 sandbox.jawnosWindowEmergeGhostCancel();
 advance(5000);
+
+// --- the growth is sized to how fast this desk opens windows ----------------
+// A phone that answers in half a second should not be given the level's 840ms
+// tail: the window would land with most of it left and the retarget would have
+// to squeeze it into the cross-fade. The last few opens set the pace.
+const saved_pace = {};
+sandbox.localStorage = {
+	getItem: function (k) { return saved_pace[k] === undefined ? null : saved_pace[k]; },
+	setItem: function (k, v) { saved_pace[k] = String(v); }
+};
+const shapes = sandbox.jawnosWindowEmergeShape;
+const paced_medium = Math.round(600 * 1.08);
+sandbox.jawnosWindowEmergeLatencyRecord(600);
+check('one measured open sizes the next growth',
+	sandbox.jawnosWindowEmergeGrowTime(shapes.medium) === paced_medium);
+check('and the pace is kept on the device', /600/.test(saved_pace.jawnos_emerge_latency || ''));
+sandbox.jawnosWindowEmergeLatencyRecord(580);
+sandbox.jawnosWindowEmergeLatencyRecord(4000);
+check('one slow first open does not drag the estimate',
+	sandbox.jawnosWindowEmergeGrowTime(shapes.medium) === paced_medium);
+check('the level keeps its own floor',
+	sandbox.jawnosWindowEmergeGrowTime(shapes.light) >= shapes.light.ghost);
+check('and a wild pace cannot stretch forever',
+	sandbox.jawnosWindowEmergeGrowTime(shapes.medium) <= 2000);
+level = 'medium';
+press(press_icon);
+const paced = sandbox.jawnosWindowEmergeGhost;
+check('the preview is given that time',
+	!!paced && paced.el.animations[0].options.duration === paced_medium);
+
 process.exit(failures ? 1 : 0);
 JS
 	close $fh;

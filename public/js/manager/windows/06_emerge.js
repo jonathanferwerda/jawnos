@@ -1062,6 +1062,69 @@ function jawnosWindowEmergeSwallowClick(e) {
 // already answered before the app's chunk or the server is asked. The chrome
 // fades in as the box grows readable, then the preview holds at the predicted
 // frame until the real window lands (or the TTL puts it away).
+// How long a window takes to arrive on this desk. The preview's growth is sized
+// to it: the level's fixed tail stood still on a slow server and was squeezed
+// into the cross-fade on a fast one, and both read as choppy. The last few opens
+// are kept and the median is used, so one heavy first open - a lazy app's chunk
+// - does not slow every preview after it. The samples are stored on the device,
+// so a reload does not start the estimate over.
+var JAWNOS_EMERGE_LATENCY_SAMPLES = 5;
+var JAWNOS_EMERGE_LATENCY_KEY = 'jawnos_emerge_latency';
+var jawnosWindowEmergeLatencies = null;
+
+function jawnosWindowEmergeLatencyStore() {
+	if (jawnosWindowEmergeLatencies) { return jawnosWindowEmergeLatencies; }
+	jawnosWindowEmergeLatencies = [];
+	try {
+		if (typeof localStorage != 'undefined' && localStorage) {
+			var saved = JSON.parse(localStorage.getItem(JAWNOS_EMERGE_LATENCY_KEY) || '[]');
+			if (saved && saved.length) {
+				for (var i = 0; i < saved.length && i < JAWNOS_EMERGE_LATENCY_SAMPLES; i++) {
+					var ms = parseFloat(saved[i]);
+					if (isFinite(ms) && ms >= 40 && ms <= 10000) { jawnosWindowEmergeLatencies.push(ms); }
+				}
+			}
+		}
+	}
+	catch (e) {}
+	return jawnosWindowEmergeLatencies;
+}
+
+function jawnosWindowEmergeLatencyRecord(ms) {
+	ms = parseFloat(ms);
+	// a press answered by a window already on the desk is not an open
+	if (!isFinite(ms) || ms < 40 || ms > 10000) { return; }
+	var samples = jawnosWindowEmergeLatencyStore();
+	samples.push(ms);
+	while (samples.length > JAWNOS_EMERGE_LATENCY_SAMPLES) { samples.shift(); }
+	try {
+		if (typeof localStorage != 'undefined' && localStorage) {
+			localStorage.setItem(JAWNOS_EMERGE_LATENCY_KEY, JSON.stringify(samples));
+		}
+	}
+	catch (e) {}
+}
+
+function jawnosWindowEmergeLatencyMedian() {
+	var samples = jawnosWindowEmergeLatencyStore();
+	if (!samples.length) { return 0; }
+	var sorted = samples.slice().sort(function (a, b) { return a - b; });
+	var mid = Math.floor(sorted.length / 2);
+	return (sorted.length % 2) ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// The growth's own duration: the level's beat until the desk has measured an
+// open, then the device's own pace with a short overshoot, so the box is still
+// moving when its window lands - neither standing at the frame nor rushing the
+// tail into the cross-fade.
+function jawnosWindowEmergeGrowTime(shape) {
+	shape = shape || jawnosWindowEmergeShape[jawnosWindowEmergeLevel()] || jawnosWindowEmergeShape.medium;
+	var base = Math.max(shape.ghost, Math.round(shape.ghost * 3));
+	var pace = jawnosWindowEmergeLatencyMedian();
+	if (!(pace > 0)) { return base; }
+	return Math.max(shape.ghost, Math.min(2000, Math.round(pace * 1.08)));
+}
+
 function jawnosWindowEmergeGhostStart(origin) {
 	if (!origin) { return null; }
 	if (typeof jawnosWindowEffectsOn == 'function' && !jawnosWindowEffectsOn()) { return null; }
@@ -1122,17 +1185,18 @@ function jawnosWindowEmergeGhostStart(origin) {
 	}
 
 	if (el.animate) {
-		// The growth runs longer than the level's `ghost` beat: a remote server
-		// can keep a window a third to half a second behind a local one, and a
-		// preview that reaches its frame and then stands still reads as a pause
-		// in the animation. The same ease still covers most of the distance
-		// quickly; the long tail keeps the box moving until the window lands,
-		// where the retarget takes it the rest of the way.
+		// The growth runs for the device's measured pace when there is one: a
+		// remote server can keep a window a third to half a second behind a local
+		// one, and a preview that reaches its frame and then stands still reads as
+		// a pause in the animation - while a fixed tail on a fast desk is still
+		// running when the window lands and has to be squeezed into the
+		// cross-fade. The same ease covers most of the distance quickly; what is
+		// left is the tail the retarget takes the rest of the way.
 		ghost.openAnim = el.animate([
 			{ transform: grow_from, offset: 0 },
 			{ transform: 'none', offset: 1 }
 		], {
-			duration: Math.max(shape.ghost, Math.round(shape.ghost * 3)),
+			duration: jawnosWindowEmergeGrowTime(shape),
 			easing: 'cubic-bezier(.2,.85,.25,1)',
 			fill: 'both'
 		});
@@ -1257,6 +1321,9 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	var level = jawnosWindowEmergeLevel();
 	var shape = jawnosWindowEmergeShape[level] || jawnosWindowEmergeShape.medium;
 	var el = ghost.el;
+	// the desk has now seen one window arrive behind its preview: remember how
+	// long it took, so the next growth is sized to this device's own pace
+	if (ghost.at) { jawnosWindowEmergeLatencyRecord(Date.now() - ghost.at); }
 	// the real window is here: stop taking clicks for a dismissal
 	jawnosWindowEmergeGhostPassThrough(el);
 
