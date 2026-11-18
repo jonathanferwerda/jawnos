@@ -874,7 +874,10 @@ function windowTiledReserve(timestamp, app) {
 		return;
 	}
 	var stack = (typeof jawnosWorkspaceStackDefault == 'function') ? jawnosWorkspaceStackDefault() : windowTiledDefaultStack;
-	windowTiledPending[timestamp] = { slot: windowNextTileSlot(stack), at: Date.now(), app: app, stack: stack };
+	// the pile and the slot this press will take, asked the same way the window's
+	// placement and its press preview ask it
+	var reserve_at = windowTiledCascadePlace(null, null);
+	windowTiledPending[timestamp] = { slot: reserve_at.slot, at: Date.now(), app: app, stack: reserve_at.stack };
 	windowTiledPendingApp[app] = String(timestamp);
 }
 
@@ -900,14 +903,35 @@ var windowStackVisible = 0.3;
 // Where a new pile stands: half a window across from the one that filled.
 var windowStackAcross = 0.5;
 
-function windowTiledCascadeFull(win, slot) {
-	if (!(slot > 0)) { return false; }
-	win = $(win);
-	var bar = win.find('.top_navbar');
-	var step = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
-	var height = win.outerHeight() || 0;
-	if (!(height > 0) || !(step > 0)) { return false; }
-	return (slot * step) > ((1 - windowStackVisible) * height);
+// Where a window opening now lands: the right-most pile that still shows a third
+// of its window, so a cascade fills one pile before starting the next. When they
+// are all full a new pile begins half a window to its right. The press preview
+// asks the same question with `geom` (a window's size and bar step) before the
+// window exists, so the picture lands where the window will.
+function windowTiledCascadePlace(win, geom) {
+	win = (win && win.jquery) ? win : $(win);
+	var width = (geom && geom.width) || (win.length ? win.width() : 0) || 480;
+	var height = (geom && geom.height) || (win.length ? win.outerHeight() : 0) || 640;
+	var step = geom && geom.step ? geom.step : 0;
+	if (!(step > 0)) {
+		var bar = win.find('.top_navbar');
+		step = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
+	}
+	if (!(step > 0)) { step = 40; }
+	var limit = (1 - windowStackVisible) * height;
+	var ids = windowTiledStackIds();
+	if (!ids.length) { ids = [windowTiledDefaultStack]; }
+	ids.sort(function (a, b) { return windowTiledAnchor(b).left - windowTiledAnchor(a).left; });
+	for (var i = 0; i < ids.length; i++) {
+		var slot = windowNextTileSlot(ids[i]);
+		if (slot * step <= limit) {
+			return { stack: ids[i], slot: slot, anchor: windowTiledAnchor(ids[i]) };
+		}
+	}
+	var at = windowTiledAnchor(ids[0]);
+	var view = windowViewport();
+	var left = Math.max(0, Math.min(view.width - width, at.left + Math.round(width * windowStackAcross)));
+	return { stack: windowTiledNewStack(), slot: 0, anchor: { left: left, top: at.top } };
 }
 
 // A window being restored after a reload carries the tile slot (or the fact that
@@ -1720,19 +1744,17 @@ function windowReorganizer(window_id) {
 					else if (restored && restored.tile !== undefined && restored.tile !== null && restored.tile !== '') {
 						tileCount = parseInt(restored.tile, 10);
 					}
-					if (isNaN(tileCount) || tileCount < 0) { tileCount = windowNextTileSlot(tileStack); }
-					// A pile that would leave less than a third of this window showing is
-					// full: it starts a pile of its own, half a window across, rather
-					// than every window being squeezed to fit the desk.
-					if (windowTiledCascadeFull(win, tileCount)) {
-						var filled_at = windowTiledAnchor(tileStack);
-						var filled_view = windowViewport();
-						var filled_width = win.width() || 480;
-						var filled_left = Math.max(0, Math.min(filled_view.width - filled_width, filled_at.left + Math.round(filled_width * windowStackAcross)));
-						tileStack = windowTiledNewStack();
-						win.attr('stack', tileStack);
-						win.attr('stack_at', filled_left + ',' + filled_at.top);
-						tileCount = 0;
+					if (isNaN(tileCount) || tileCount < 0) {
+						// the right-most pile with room, or a new one half a window across:
+						// the same answer the press preview computed, so the window lands
+						// where its picture already grew
+						var cascade_at = windowTiledCascadePlace(win);
+						tileCount = cascade_at.slot;
+						tileStack = cascade_at.stack;
+						if (tileStack !== windowTiledDefaultStack) {
+							win.attr('stack', tileStack);
+							win.attr('stack_at', cascade_at.anchor.left + ',' + cascade_at.anchor.top);
+						}
 					}
 					windowTiledInsertAt(win, tileCount, tileStack);
 				}

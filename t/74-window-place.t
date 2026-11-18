@@ -77,8 +77,13 @@ like($windows, qr/function windowTiledGapClose\(win\) \{\n\tif \(windowPhoneChec
 	'the gap closer leaves a phone to its own pile');
 like($windows, qr/slot \* windowTileAcrossStep/, 'a window is placed with the tile across step');
 like($windows, qr/var windowStackVisible = 0\.3/, 'a pile must leave a third of a window showing');
-like($windows, qr/function windowTiledCascadeFull\(win, slot\)/, 'and says when it is full');
-like($windows, qr/windowTiledCascadeFull\(win, tileCount\)[\s\S]{0,700}windowTiledNewStack\(\)[\s\S]{0,200}stack_at/,
+like($windows, qr/function windowTiledCascadePlace\(win, geom\)/,
+	'the pile and slot a window lands in is one answer, for the window and its preview');
+like($windows, qr/windowTiledCascadePlace\(win\)[\s\S]{0,400}tileStack = cascade_at\.stack/,
+	'and the open takes it');
+like($windows, qr/windowTiledCascadePlace\(null, null\)/,
+	'as does the press\'s own reservation');
+like($windows, qr/at\.left \+ Math\.round\(width \* windowStackAcross\)/,
 	'a full pile starts a new one, half a window across');
 like($fit, qr/var piled = !windowPhoneChecker\(\)[\s\S]{0,140}windowTiledSlot\(win\) >= 0/,
 	'a piled window is not squeezed to fit the desk');

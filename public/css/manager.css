@@ -1387,7 +1387,9 @@ body[data-window-effects="maximum"] {
 .jawnos_close_flash {
 	position: absolute;
 	left: 0; top: 0; right: 0; bottom: 0;
-	background: #fff;
+	/* the window's own surface, so an explosion on a dark desk does not throw a
+	   white light out of the window it is taking away */
+	background: var(--window, var(--panel, #f7f7f7));
 	opacity: 0;
 	pointer-events: none;
 	animation: jawnos_window_flash calc(90ms * var(--je-time)) ease-out;

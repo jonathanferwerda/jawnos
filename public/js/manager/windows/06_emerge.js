@@ -632,6 +632,14 @@ function jawnosWindowEmergePredict(origin, near) {
 		top = topLimit + jawnosWindowEmergePhoneSlot(stack) * step;
 		placed = true;
 	}
+	else if (!placed && typeof windowTiledCascadePlace == 'function') {
+		// the same answer the placement itself takes: the right-most pile with
+		// room, or a fresh one half a window across
+		var next_place = windowTiledCascadePlace(null, { width: width, height: height, step: step });
+		left = jawnosEmergeNumber(next_place.anchor.left, 0) + next_place.slot * across;
+		top = jawnosEmergeNumber(next_place.anchor.top, topLimit) + next_place.slot * step;
+		placed = true;
+	}
 	else if (!placed && typeof windowTiledAnchor == 'function') {
 		var anchor = windowTiledAnchor(stack) || { left: 0, top: topLimit };
 		left = jawnosEmergeNumber(anchor.left, 0) + slot * across;

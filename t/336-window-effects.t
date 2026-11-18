@@ -162,6 +162,8 @@ like($css, qr/animation: jawnos_window_flash calc\(90ms/, 'and so does the flash
 like($css, qr/\.jawnos_close_shards \{ pointer-events: none; \}/, 'the shard overlay cannot swallow a press');
 like($css, qr/\.jawnos_close_shard \{[^}]*pointer-events: none/s, 'nor can a shard');
 like($css, qr/\.jawnos_close_flash \{[^}]*pointer-events: none/s, 'nor the flash');
+like($css, qr/\.jawnos_close_flash \{[^}]*background: var\(--window, var\(--panel/s,
+	'the flash is the window\'s own surface, not a white light on a dark desk');
 like($stack, qr/function windowCloseTearDown\(timestamp, win, done\) \{.*?\$\('#window_' \+ timestamp \)\.remove\(\);/s,
 	'the removal lives in the teardown the close hands the motion');
 like($stack, qr/function closeWindow\(timestamp, done\) \{.*?jawnosWindowCloseEffect\(win, tearDown\)[\s\S]{0,40}?tearDown\(\);\s*\}/s,

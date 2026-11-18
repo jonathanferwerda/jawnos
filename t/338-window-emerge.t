@@ -125,6 +125,8 @@ like($emerge, qr/JSON\.parse\(localStorage\.getItem\(JAWNOS_EMERGE_LATENCY_KEY/,
 like($emerge, qr/ghost\.pourTimer = setTimeout\(/, 'the pointer is still handed over on the level\'s own beat');
 like($emerge, qr/function jawnosWindowEmergeGhostCancel\(/, 'the preview can be put away');
 like($emerge, qr/function jawnosWindowEmergePredict\(/, 'the frame is predicted from the cascade');
+like($emerge, qr/windowTiledCascadePlace\(null, \{ width: width, height: height, step: step \}\)/,
+	'and it asks the placement itself, so a full pile\'s new pile is predicted too');
 like($emerge, qr/function jawnosWindowEmergeAppColour\(/, 'the real app colour is read, not guessed');
 like($emerge, qr/function jawnosWindowEmergeArchetype\(/, 'an app chooses a skeleton archetype');
 like($emerge, qr/function jawnosWindowEmergeSkeleton\(/, 'the skeleton body is built');
