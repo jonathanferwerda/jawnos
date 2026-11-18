@@ -170,6 +170,10 @@ like($stack, qr/if \(win\.length && win\[0\]\.jawnosCloseToken\)/, 'a second clo
 like($stack, qr/windowTiledCloseSlot\(win\)/,
 	'the pile reorients at the press, so the next close lands on the next window');
 like($stack, qr/jawnosCloseWaits/, 'and its caller is called when the first finishes');
+my $capture_at = index($stack, 'jawnosEmergePreviewCapture(win)');
+my $close_at = index($stack, 'jawnosWindowCloseEffect(win, tearDown)');
+ok($capture_at >= 0 && $close_at > $capture_at,
+	'the view a window is closed on is kept as the next preview, before the farewell');
 
 # --- the levels, the physics and the hide/restore race ---------------------
 my $node = `command -v node 2>/dev/null`;

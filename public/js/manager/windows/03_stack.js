@@ -176,6 +176,10 @@ function closeWindow(timestamp, done) {
 		return;
 	}
 	var tearDown = function() { windowCloseTearDown(timestamp, win, done); };
+	// The view it is being closed on is the next press's picture - the jopen, the
+	// budget light, the arrangement it was left in. Taken before the farewell, or
+	// the copy would wear the closing state.
+	if (typeof jawnosEmergePreviewCapture == 'function') { jawnosEmergePreviewCapture(win); }
 	// the pile reorients now, not when the farewell ends: the next window is in
 	// this one's place while the motion still plays, so a run of closes from the
 	// same spot lands on the next window each time

@@ -1133,6 +1133,39 @@ check('but the app\'s own attributes do', dirty_button.getAttribute('hint') === 
 check('with no snapshot the ghost keeps the drawn chrome',
 	sandbox.jawnosEmergePreviewBuild({ app: 'clock' }, makeElement('DIV')) === false);
 
+// the idle sweep refreshes an open window, oldest picture first, one per tick
+const sweep_notes = new El('notes');
+const sweep_weather = new El('weather');
+sweep_notes.app = 'notes';
+sweep_weather.app = 'weather';
+sweep_notes.parentNode = body;
+sweep_weather.parentNode = body;
+sweep_notes.cloneNode = function () {
+	const c = makeElement('DIV', 'wind');
+	c.app = 'notes';
+	c.outerHTML = '<div class="wind" app="notes"></div>';
+	return c;
+};
+sweep_weather.cloneNode = function () {
+	const c = makeElement('DIV', 'wind');
+	c.app = 'weather';
+	c.outerHTML = '<div class="wind" app="weather"></div>';
+	return c;
+};
+const sweep_saved_qsa = sandboxDocument.querySelectorAll;
+sandboxDocument.querySelectorAll = function (sel) { return sel === '.wind' ? [sweep_notes, sweep_weather] : []; };
+sandbox.jawnosEmergePreviews = { weather: { node: makeElement('DIV'), at: Date.now() - 5000 } };
+const sweep_weather_at = sandbox.jawnosEmergePreviews.weather.at;
+check('the sweep takes a picture of the oldest open window',
+	sandbox.jawnosEmergePreviewSweep() === true && !!sandbox.jawnosEmergePreviews.notes);
+check('and leaves the newer one for its turn',
+	sandbox.jawnosEmergePreviews.weather.at === sweep_weather_at);
+check('the next sweep takes the other one',
+	sandbox.jawnosEmergePreviewSweep() === true
+	&& sandbox.jawnosEmergePreviews.weather.at > sweep_weather_at);
+sandboxDocument.querySelectorAll = sweep_saved_qsa;
+sandbox.jawnosEmergePreviews = {};
+
 // --- the growth is sized to how fast this desk opens windows ----------------
 // A phone that answers in half a second should not be given the level's 840ms
 // tail: the window would land with most of it left and the retarget would have
@@ -1184,6 +1217,11 @@ like($emerge, qr/JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge'/,
 	'and the copies are kept on the device');
 like($emerge, qr/jawnosEmergePreviewSelector/, 'the page\'s rules are scoped to the preview');
 like($emerge, qr/jawnosEmergePreviewSanitize/, 'while nothing live is carried in with it');
+like($emerge, qr/function jawnosEmergePreviewSweep\(\)/,
+	'an open window is re-pictured by the idle sweep');
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_SWEEP = 20000/, 'once every twenty seconds, one window at a time');
+like($emerge, qr/requestIdleCallback\(jawnosEmergePreviewSweep, \{ timeout: 4000 \}\)/,
+	'as idle work, so it never competes with a press');
 like($emerge, qr/document\.body\.getAttributeNames/, 'the body\'s live state attributes ride the preview');
 like($emerge, qr/var app_colour = jawnosWindowEmergeAppColour\(origin\.app\);\s*if \(bar && bar\.style && app_colour\)/,
 	'and its title bar is repainted from the live app colour');

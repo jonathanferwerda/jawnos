@@ -1371,6 +1371,41 @@ function jawnosEmergePreviewBuild(origin, host) {
 	return true;
 }
 
+// The picture can go stale while a window is open - a jopen, the budget light,
+// a rearranged list. Closing the window is the moment that matters most: that is
+// the view the person last saw, so closeWindow takes the copy before the
+// farewell starts. One open window is also refreshed per idle sweep, for the
+// windows that go away some other way (a reload, the server's own close).
+var JAWNOS_EMERGE_PREVIEW_SWEEP = 20000;
+
+function jawnosEmergePreviewSweep() {
+	if (typeof document == 'undefined' || !document.querySelectorAll) { return false; }
+	if (typeof jawnosWindowEffectsOn == 'function' && !jawnosWindowEffectsOn()) { return false; }
+	var winds = document.querySelectorAll('.wind');
+	if (!winds || !winds.length) { return false; }
+	// the oldest picture first, so every open app is reached in turn
+	var pick = null;
+	var oldest = 0;
+	for (var i = 0; i < winds.length; i++) {
+		var win = winds[i];
+		if (!win || !win.getAttribute) { continue; }
+		var app = win.getAttribute('app') || '';
+		if (!app) { continue; }
+		if (win.getClientRects && !win.getClientRects().length) { continue; }
+		var at = jawnosEmergePreviews[app] ? (jawnosEmergePreviews[app].at || 0) : 0;
+		if (!pick || at < oldest) { pick = win; oldest = at; }
+	}
+	return pick ? jawnosEmergePreviewCapture(pick) : false;
+}
+
+function jawnosEmergePreviewSweepStart() {
+	if (typeof setInterval != 'function') { return; }
+	setInterval(function () {
+		if (typeof requestIdleCallback == 'function') { requestIdleCallback(jawnosEmergePreviewSweep, { timeout: 4000 }); }
+		else { jawnosEmergePreviewSweep(); }
+	}, JAWNOS_EMERGE_PREVIEW_SWEEP);
+}
+
 // Warm the two things a press must not pay for: the scoped stylesheet and the
 // snapshots kept from the last run. Both are idle work - the sheet is serialised
 // once and the stored windows are parsed once.
@@ -1380,6 +1415,7 @@ function jawnosEmergePreviewBuild(origin, host) {
 		var warm = function () {
 			try { jawnosEmergePreviewSheet(); } catch (e) {}
 			try { jawnosEmergePreviewLoad(); } catch (e) {}
+			try { jawnosEmergePreviewSweepStart(); } catch (e) {}
 		};
 		if (typeof requestIdleCallback == 'function') { requestIdleCallback(function () { warm(); }, { timeout: 4000 }); }
 		else { setTimeout(warm, 1500); }
