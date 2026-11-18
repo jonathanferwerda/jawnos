@@ -11,9 +11,9 @@ WorkingDirectory=/home/jawn/jawnos
 Environment=HOME=/home/jawn
 Environment=JAWNOS_QA_ROOT=/home/jawn/jawnos-qa
 # One promotion at a time, and never while the working coordinator is integrating
-# a wave: the job takes the same land lock. The suite job count is the lander's
-# core-aware default (six on this 8-core box); the CPU quota matches it.
-ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_promote.pl --once
+# a wave: the job takes the same land lock. The suite job count matches the
+# landers' core-aware default (six on this 8-core box) and the CPU quota.
+ExecStart=/usr/bin/perl /home/jawn/jawnos/scripts/land_promote.pl --once --jobs 6
 # The full suite is the gate; it shares the box with the coordinator and warden.
 Nice=5
 CPUQuota=600%

@@ -893,25 +893,19 @@ subtest 'the systemd units run the coordinator and point the timer at it' => sub
 	my $wservice = read_file("$real/scripts/systemd/jawnos-land-warden.service");
 	my $wtimer   = read_file("$real/scripts/systemd/jawnos-land-warden.timer");
 	like($service, qr{^Type=oneshot}m, 'the drain is a oneshot');
-	like($service, qr{ExecStart=.*land_coordinator\.pl --train-size 6 --trunk working},
-		'it runs the coordinator with the wave cap and the default job count');
-	unlike($service, qr/^ExecStart=.*--jobs/m,
-		'it leaves the suite job count to the core-aware default');
+	like($service, qr{ExecStart=.*land_coordinator\.pl --train-size 6 --jobs 6 --trunk working},
+		'it runs the coordinator with the wave and job caps');
 	like($service, qr{^TimeoutStartSec=4h}m, 'a wave may serve several branches');
 	like($service, qr{^Environment=JAWNOS_QA_ROOT=}m, 'the unit pins the QA root for the train');
 	like($timer, qr{^Unit=jawnos-land-coordinator\.service}m, 'the timer fires the service');
 	like($timer, qr{OnUnitActiveSec=60s}, 'and re-arms a minute after the drain ends');
-	like($wservice, qr/ExecStart=.*land_warden\.pl --once --max 1 --trunk working/,
-		'the warden runs one ticket with the default job count');
-	unlike($wservice, qr/^ExecStart=.*--jobs/m,
-		'and leaves the suite job count to the core-aware default');
+	like($wservice, qr/ExecStart=.*land_warden\.pl --once --max 1 --jobs 6 --trunk working/,
+		'the warden runs one ticket with the same job cap');
 	like($wservice, qr/CPUQuota=600%/, 'and may use six cores on the shared box');
 	like($wtimer, qr/OnUnitActiveSec=15min/, 'the warden timer ticks every fifteen minutes');
 	my $pservice = read_file("$real/scripts/systemd/jawnos-land-promote.service");
 	my $ptimer   = read_file("$real/scripts/systemd/jawnos-land-promote.timer");
-	like($pservice, qr/^ExecStart=.*land_promote\.pl --once$/m, 'the promoter runs the suite gate');
-	unlike($pservice, qr/^ExecStart=.*--jobs/m,
-		'and leaves the suite job count to the core-aware default');
+	like($pservice, qr/^ExecStart=.*land_promote\.pl --once --jobs 6$/m, 'the promoter runs the suite gate');
 	like($ptimer, qr/OnCalendar=Mon 04:00:00/, 'the promotion is the weekly release by default');
 	like($service, qr/--trunk working --no-apply/, 'the coordinator lands to working without touching main');
 	unlike($service, qr/^ExecStart=.*--promote-now/m, 'a drain does not release by itself');
