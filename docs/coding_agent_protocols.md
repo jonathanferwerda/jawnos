@@ -53,10 +53,12 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 Branch from `origin/working` and queue it with `scripts/land_enqueue.pl --trunk working --wait`
 — sole agent or not: agents never land on `main`. `main` moves only through the promoter
-(`scripts/land_promote.pl`); `scripts/agent_land.pl`, which pushes `main` directly and bypasses
-`working`, is the owner's emergency route, not an agent's shortcut, and the pre-push hook
-refuses a `main` push that neither of those tools marked. The primary-checkout recipe is
-the human owner's. Never push or restart by hand. Doc: `docs/AGENTS-concurrency.md`.
+(`scripts/land_promote.pl`); `perl ~/jawnos/scripts/agent_land.pl` — the primary checkout's copy,
+not the worktree's — pushes `main` directly and bypasses `working`, so it is the owner's emergency
+route, not an agent's shortcut. Sole agent? The worktree rule still holds: only the landing method
+changes, and that lander's lock guards both. The pre-push hook refuses a `main` push that neither
+tool marked; the primary-checkout recipe is the human owner's. Never push or restart by hand.
+Doc: `docs/AGENTS-concurrency.md`.
 
 
 ## Crash-resilient agent work
