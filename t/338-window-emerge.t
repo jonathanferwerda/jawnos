@@ -1257,9 +1257,13 @@ like($emerge, qr/attachShadow\(\{ mode: 'closed' \}\)/,
 	'in its own id space, so it cannot answer a lookup meant for the real window');
 like($emerge, qr/JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge'/,
 	'and the copies are kept on the device');
-like($emerge, qr/JAWNOS_EMERGE_PREVIEW_APPS = 24/,
-	'the cache holds a desk of apps, not a handful of slots');
-like($emerge, qr/JAWNOS_EMERGE_PREVIEW_MEMORY = 4000000/,
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_APPS = 32/,
+	'the cache holds the desk\'s apps, a day\'s use with room to spare');
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_BUDGET = 52428800/,
+	'and the store is capped at the fifty megabytes asked for');
+like($emerge, qr/if \(i < JAWNOS_EMERGE_PREVIEW_APPS && held <= JAWNOS_EMERGE_PREVIEW_BUDGET\) \{ continue; \}/,
+	'whose oldest copies go first when it is reached');
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_MEMORY = 8000000/,
 	'budgeted by the markup it keeps in memory');
 like($emerge, qr/JAWNOS_EMERGE_PREVIEW_IMAGE = 8000/,
 	'with embedded photographs left out of the picture');

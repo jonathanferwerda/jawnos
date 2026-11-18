@@ -1083,12 +1083,23 @@ function jawnosWindowEmergeSwallowClick(e) {
 // a reload still opens into a real-looking preview.
 var JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge';
 var JAWNOS_EMERGE_PREVIEW_STORE = 'windows';
-var JAWNOS_EMERGE_PREVIEW_APPS = 24;
+// How much the cache holds. It is per app, not per window: the desk writes a
+// median of 192 appointment records a day (512 days of appointments.server_time;
+// the mean, 234, is pulled up by import days), and a day's work is spread over
+// the desk's ~30 apps - so thirty-two slots are a day's apps with the room the
+// twenty percent asks for, and more entries than the desk has apps would never
+// be used.
+var JAWNOS_EMERGE_PREVIEW_APPS = 32;
+// One window: a gallery with its photographs trimmed is ~40KB and a heavy app a
+// couple of hundred, so 1.5MB is a whole window of any of them.
 var JAWNOS_EMERGE_PREVIEW_BYTES = 1500000;
-// The parsed copies live in memory for the session; a big app's markup is many
-// times its own length once parsed, so the map is budgeted by the HTML it keeps
-// rather than only by the count.
-var JAWNOS_EMERGE_PREVIEW_MEMORY = 4000000;
+// The store on the device, across every app: the fifty megabytes asked for. The
+// oldest go first when it is reached.
+var JAWNOS_EMERGE_PREVIEW_BUDGET = 52428800;
+// The parsed copies live in memory for the session; a parsed DOM costs several
+// times its markup, so the hot set is budgeted by the markup it keeps rather
+// than by the store's disk allowance.
+var JAWNOS_EMERGE_PREVIEW_MEMORY = 8000000;
 // A photograph embedded in the markup is no part of what a preview is for, and
 // one of them can be most of an app's window: the box stays, the picture does
 // not.
@@ -1123,7 +1134,9 @@ function jawnosEmergePreviewAll() {
 }
 
 // One copy per app, and the oldest go first: a preview from a month ago is not
-// worth the space, and the desk's own memory only ever holds the last one.
+// worth the space, and the desk's own memory only ever holds the last one. The
+// fifty megabytes are the whole store, so the sweep is by held bytes as well as
+// by count.
 function jawnosEmergePreviewPrune() {
 	return jawnosEmergePreviewIdb().then(function (db) {
 		return new Promise(function (res) {
@@ -1132,7 +1145,10 @@ function jawnosEmergePreviewPrune() {
 			var query = store.getAll();
 			query.onsuccess = function () {
 				var rows = (query.result || []).sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
-				for (var i = JAWNOS_EMERGE_PREVIEW_APPS; i < rows.length; i++) {
+				var held = 0;
+				for (var i = 0; i < rows.length; i++) {
+					held += ((rows[i].html || '').length);
+					if (i < JAWNOS_EMERGE_PREVIEW_APPS && held <= JAWNOS_EMERGE_PREVIEW_BUDGET) { continue; }
 					try { store.delete(rows[i].app); } catch (e) {}
 				}
 				res();
