@@ -93,6 +93,7 @@ sub sessions {
 	my $uuid = $rows->[0]->{'uuid'};
 	is( $rows->[0]->{'type'}, 'start', 'running' );
 	is( int( $rows->[0]->{'timestamp'} ), $base, 'it starts at the launch' );
+	ok( (int( $rows->[0]->{'warranty'} ) > $NOW ), 'and it carries a warranty ahead of now' );
 
 	# no touch for over 30 seconds: a pause at the last control
 	$NOW = $base + 60_000;
@@ -158,6 +159,7 @@ sub sessions {
 	is( $browsed->[0]->{'type'}, 'start', 'running' );
 	is( $browsed->[0]->{'project'}, 'Solitaire', 'named for its game' );
 	is( $browsed->[0]->{'source'}, 'browser_game', 'and marked as the browser’s' );
+	ok( (int( $browsed->[0]->{'warranty'} ) > $NOW ), 'with a warranty the culler can retire it by' );
 	my $browser_uuid = $browsed->[0]->{'uuid'};
 
 	my $browser_row = &subs::db_query('select * from appointments where uuid = ?', $browser_uuid)->hash;

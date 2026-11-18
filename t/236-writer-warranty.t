@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Loader.pm scripts/warranty_backfill.pl
-# covers:    a row written by appointment_writer carries its warranty, project and pos from the moment it is inserted, not from a later refresh that omits them; and the backfill that gives rows already born without one their app's warranty
+# tests-for: lib/JawnOS/Manager/Part05.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Loader.pm perl/Alarm.pl scripts/warranty_backfill.pl
+# covers:    a row written by appointment_writer carries its warranty, project and pos from the moment it is inserted, not from a later refresh that omits them; the backfill that gives rows already born without one their app's warranty; and the culler that must not treat a missing warranty as an expired one
 
 use strict;
 use warnings;
@@ -91,5 +91,14 @@ my @updates;
 my $script = read_file("$root/scripts/warranty_backfill.pl");
 like($script, qr/appointment_warranty_backfill\(\$apply\)/, 'the script runs the shared backfill');
 like($script, qr/\(\s*grep \{ \$_ eq '--apply' \} \@ARGV\s*\)/, 'and reads --apply as one grep');
+
+# ------------------------------------------------------------ the culler
+# A writer and the culler must agree on what an empty warranty means. A row
+# with none (NULL), a blank one, or a value that is not a number casts to 0;
+# reading that as expired deleted the row on the first pass. Only a positive
+# warranty that has fallen behind now is expired.
+my $alarm = read_file("$root/perl/Alarm.pl");
+like($alarm, qr/cast\(warranty as integer\) > 0 and cast\(warranty as integer\) < cast\(\? as integer\)/,
+	'the appointment cull takes only a positive warranty that has fallen behind now');
 
 done_testing();

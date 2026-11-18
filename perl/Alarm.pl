@@ -328,7 +328,11 @@ sub alarm_haircut() {
 		&Websocket::send('server', $msg);
 	}
 
-	my $warranty_query = &subs::db_query('select * from appointments where cast(warranty as integer) < cast(? as integer)',$timestamp);
+	# Only a warranty that is a real moment ahead can expire. A row with none
+	# (NULL), a blank one, or a value that is not a number casts to 0 - it is
+	# unwarranted, not expired, and must not be culled the moment it is written
+	# (the app history reads the same way, see name_change_history).
+	my $warranty_query = &subs::db_query('select * from appointments where cast(warranty as integer) > 0 and cast(warranty as integer) < cast(? as integer)',$timestamp);
 	my $haircut = $warranty_query->hashes;
 
 	foreach my $h ( @{$haircut} ) {

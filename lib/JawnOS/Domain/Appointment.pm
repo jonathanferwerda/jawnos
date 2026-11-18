@@ -666,6 +666,14 @@ sub game_play_appointment_tick {
 	}
 	my $settings = &settings_grabber({ app => $app });
 	my $uuid = &random_string_creator(90);
+	# The first run of an app takes its born settings - the warranty included -
+	# from the house's `me` defaults; later runs read the row it adopted. This is
+	# the initializer appointment_writer uses. A spec that does not resolve to a
+	# moment ahead of now falls back to the writer's -10y rather than the row's
+	# own stamp, which the next cull would take as already expired.
+	my $init = &setting_initializer($app, $new_start);
+	my $warranty = &ago_calc(($init->{'warranty'} || '-10y'), $now);
+	$warranty = &ago_calc('-10y', $now) unless defined $warranty && $warranty =~ /^\d{12,}$/ && $warranty > $now;
 	my $row = {
 		app => $app,
 		uuid => $uuid,
@@ -677,6 +685,7 @@ sub game_play_appointment_tick {
 		seen => 'yes',
 		project => length $title ? $title : $settings->{'t_project'},
 		pos => $settings->{'pos'},
+		warranty => $warranty,
 	};
 	&db_insert('appointments', $row);
 	&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $new_start });
@@ -915,6 +924,13 @@ sub browser_game_play {
 
 	my $settings = &settings_grabber({ app => 'games' });
 	my $uuid = &random_string_creator(90);
+	# The play record carries the app's born warranty like any other appointment
+	# (see game_play_appointment_tick): the first run adopts the `me` default,
+	# and a spec that does not resolve to a moment ahead of now takes the
+	# writer's -10y.
+	my $init = &setting_initializer('games', $new_start);
+	my $warranty = &ago_calc(($init->{'warranty'} || '-10y'), $now);
+	$warranty = &ago_calc('-10y', $now) unless defined $warranty && $warranty =~ /^\d{12,}$/ && $warranty > $now;
 	my $row = {
 		app => 'games',
 		uuid => $uuid,
@@ -926,6 +942,7 @@ sub browser_game_play {
 		seen => 'yes',
 		project => $game,
 		pos => $settings->{'pos'},
+		warranty => $warranty,
 	};
 	&db_insert('appointments', $row);
 	&browser_game_option_attach($uuid, $game, $new_start, $now);
