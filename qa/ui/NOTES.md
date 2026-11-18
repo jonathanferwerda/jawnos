@@ -105,6 +105,9 @@ forces the software path.
   be the probe lying.
 - The report redacts the URL to scheme and host: a ticket URL's query is the
   session token.
+- `--hidden` is for DOM checks only: Chromium pauses the animation clock for an
+  occluded page, so a hidden run reads as "no result" or an artificially smooth
+  one. The probe says so instead of reporting it.
 - `--settle` (default 1 s) is the pause after `loadFinished` before sampling.
   Raise it for the live Manager, which keeps opening its saved windows after the
   page loads; measuring that burst is not measuring the desk.

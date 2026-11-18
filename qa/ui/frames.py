@@ -244,6 +244,13 @@ def main(argv=None):
         print(", ".join(scenarios_in_js()))
         return 0
 
+    if args.hidden:
+        # Chromium pauses the animation clock for an occluded page, so a hidden
+        # window reads as "no result" or an artificially smooth run. Measured on
+        # a real window by mistake once; say it instead of reporting it.
+        print("frames: --hidden throttles the animation clock; these numbers are "
+              "not the real view", file=sys.stderr)
+
     graphics = apply_graphics(args.software)
     flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
     if args.no_sandbox and "--no-sandbox" not in flags:

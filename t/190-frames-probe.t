@@ -41,6 +41,7 @@ like($py, qr/gpu\.prepare_env\(os\.environ\)/, 'including the qt.env escape hatc
 like($py, qr/--software/, 'and can ask for the software path CI has');
 like($py, qr/--settle/, 'and lets a real page finish opening its windows first');
 like($py, qr/def redact_url/, 'a ticket URL is redacted before it reaches a report');
+like($py, qr/--hidden throttles/, 'and a hidden window is called out, not measured');
 like($js, qr/the page does not scroll/,
 	'a page with no scroll range is reported, not measured as smooth');
 
