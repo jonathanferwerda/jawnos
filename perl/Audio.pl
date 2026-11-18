@@ -315,6 +315,8 @@ my $stop                  = 0;
 my $next_start            = 0;
 my $adopted;
 my $adopted_since;
+my $adopted_mismatch;
+my $adopted_note;
 my $next_probe            = 0;
 
 sub write_status {
@@ -322,6 +324,8 @@ sub write_status {
 		pid                  => $child_pid,
 		adopted              => $adopted ? JSON::PP::true : JSON::PP::false,
 		adopted_since        => defined $adopted_since ? int($adopted_since) : undef,
+		adopted_mismatch     => $adopted_mismatch ? JSON::PP::true : JSON::PP::false,
+		adopted_note         => $adopted_note,
 		supervisor_pid       => $supervisor_pid,
 		socket               => $socket,
 		binary               => $binary,
@@ -454,12 +458,34 @@ sub stop_supervisor {
 # must not be mistaken for a dead engine and unlink a socket that is still
 # serving. A stale file is the only thing removed here.
 if (-S $socket) {
-	if (engine_answers($socket)) {
-		$adopted       = 1;
-		$adopted_since = time;
-		$next_probe    = time + $ADOPT_POLL;
-		print "audio supervisor: adopting the engine already serving $socket"
-			. " instead of starting a second one\n";
+	if (my $engine = engine_answers($socket)) {
+		$adopted          = 1;
+		$adopted_since    = time;
+		$adopted_mismatch = 0;
+		$adopted_note     = undef;
+		$next_probe       = time + $ADOPT_POLL;
+		my $engine_backend = $engine->{'backend'};
+		my $engine_device  = $engine->{'device'};
+		# An engine too old to report its configuration cannot be judged, so it
+		# is adopted exactly as before rather than accused of a mismatch.
+		# The device only matters when the engine actually opens one: a null-backend
+		# engine reports `device: "null"`, and comparing that with a configured
+		# `hw:1,0` would flag a mismatch that cannot matter.
+		my $device_differs = defined $engine_device && $engine_backend ne 'null'
+			&& $engine_device ne $device;
+		if (defined $engine_backend && defined $engine_device
+			&& ($engine_backend ne $backend || $device_differs)) {
+			$adopted_mismatch = 1;
+			$adopted_note = "adopted engine is backend $engine_backend on device $engine_device;"
+				. " this supervisor is configured for backend $backend on device $device";
+			print "audio supervisor: adopting the engine already serving $socket although it runs"
+				. " backend $engine_backend on device $engine_device, not the configured"
+				. " backend $backend on device $device\n";
+		}
+		else {
+			print "audio supervisor: adopting the engine already serving $socket"
+				. " instead of starting a second one\n";
+		}
 	}
 	elsif (unlink $socket) {
 		print "audio supervisor: removed the stale socket $socket\n";
@@ -490,9 +516,11 @@ while (!$stop) {
 				last if $stop;
 				print "audio supervisor: the adopted engine at $socket stopped answering;"
 					. " starting our own\n";
-				$adopted       = 0;
-				$adopted_since = undef;
-				$next_start    = 0;
+				$adopted          = 0;
+				$adopted_since    = undef;
+				$adopted_mismatch = 0;
+				$adopted_note     = undef;
+				$next_start       = 0;
 				write_status();
 			}
 		}

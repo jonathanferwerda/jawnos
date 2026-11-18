@@ -4,7 +4,9 @@
 #            once it stops answering, a stale socket file is removed and an
 #            engine started, a quick-exit engine is restarted on a growing
 #            backoff with the count and last exit in the status file, a live
-#            engine makes --check 0 and --status name it, a second supervisor
+#            engine makes --check 0 and --status name it, an adopted engine
+#            whose backend/device differ from the flags is flagged and named
+#            but still adopted, a second supervisor
 #            refuses the lock without touching the first, and a missing binary
 #            is reported once while the supervisor keeps waiting.
 
@@ -135,10 +137,14 @@ sub run_cli {
 
 # A stand-in for the real engine: it binds the control socket and answers each
 # command with an ok object, so the supervisor's status probe sees a live
-# engine. Like the engine it exits on quit and unlinks its socket; a KILL from
-# the test leaves the socket file behind, which is the stale case.
+# engine. `backend`/`device` shape the configuration it reports, which is what
+# the supervisor compares with its own flags. Like the engine it exits on quit
+# and unlinks its socket; a KILL from the test leaves the socket file behind,
+# which is the stale case.
 sub start_fake_engine {
-	my ($path, $ready) = @_;
+	my ($path, $ready, %opt) = @_;
+	my $backend = defined $opt{'backend'} ? $opt{'backend'} : 'null';
+	my $device  = defined $opt{'device'}  ? $opt{'device'}  : 'hw:1,0';
 	my $pid = fork();
 	die "fork: $!" unless defined $pid;
 	if (!$pid) {
@@ -163,7 +169,7 @@ sub start_fake_engine {
 				close $client;
 				last;
 			}
-			print {$client} qq({"ok":true,"take":0,"state":"idle"}\n);
+			print {$client} qq({"ok":true,"take":0,"state":"idle","backend":"$backend","device":"$device"}\n);
 			close $client;
 		}
 		close $listener;
@@ -417,6 +423,8 @@ ENGINE
 	ok(!defined $s->{'pid'}, 'an adopted engine puts no child pid in the status file') if $s;
 	is($s->{'socket'}, $sockpath, 'the adopted status names the socket') if $s;
 	ok($s->{'adopted_since'}, 'the adopted status says when adoption began') if $s;
+	ok(!$s->{'adopted_mismatch'}, 'a matching backend and device are not flagged') if $s;
+	ok(!defined $s->{'adopted_note'}, 'a matching engine carries no mismatch note') if $s;
 
 	my ($check_code, undef, $check_err) = run_cli('--check');
 	is($check_code, 0, '--check is 0 while an adopted engine answers') or diag($check_err);
@@ -436,6 +444,69 @@ ENGINE
 	ok(wait_for(sub { reap_child($fake) }, 10), 'the adopted engine was asked to quit');
 }
 
+# --- an adopted engine configured differently is flagged, not refused -------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	my $mark = "$dir/engine.pid";
+	local $ENV{AUDIO_TEST_ENGINE_MARK} = $mark;
+	# If the supervisor refused the mismatch and spawned this, the mark would
+	# appear; the test asserts it never does.
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/engine", <<'ENGINE');
+my $mark = $ENV{AUDIO_TEST_ENGINE_MARK} || '';
+open(my $fh, '>', $mark) or exit 7;
+print {$fh} "$$\n";
+close $fh;
+sleep 600;
+ENGINE
+
+	my $sockpath = "$dir/mismatch.sock";
+	my $fake = start_fake_engine($sockpath, "$dir/fake.ready",
+		backend => 'alsa', device => 'hw:7,0');
+	ok(wait_for(sub { -s "$dir/fake.ready" }, 5), 'the mismatched fake engine is listening');
+
+	my $status = "$home/.president/audio.json";
+	my $log    = "$dir/supervisor.log";
+	my $sup = start_supervisor(
+		log  => $log,
+		args => ['--backend', 'null', '--device', 'hw:1,0', '--socket', $sockpath],
+	);
+
+	my $s = wait_for(sub {
+		my $data = read_status($status);
+		return 0 unless $data && $data->{'adopted'};
+		return $data;
+	}, 10);
+	ok($s, 'a mismatched engine is still adopted: the engine holds the card');
+	ok($s->{'adopted_mismatch'}, 'the status file flags the mismatch') if $s;
+	like($s->{'adopted_note'}, qr/backend alsa on device hw:7,0/,
+		'the note names the engine that was adopted') if $s;
+	like($s->{'adopted_note'}, qr/backend null on device hw:1,0/,
+		'and the configuration this supervisor expects') if $s;
+	ok(!defined $s->{'pid'}, 'a mismatched adoption still puts no child pid in the status file') if $s;
+
+	# Longer than one poll: a mismatch must not turn into a spawn.
+	sleep 2;
+	ok(!-e $mark, 'the supervisor did not start its own engine on a mismatch');
+
+	my ($check_code) = run_cli('--check');
+	is($check_code, 0, '--check is 0 for the mismatched engine it adopted');
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'SIGTERM stops the mismatched-adoption supervisor 0');
+	ok(!-e $status, 'the status file is gone after the clean stop');
+	ok(wait_for(sub { reap_child($fake) }, 10), 'the mismatched engine was asked to quit');
+
+	# Read the log after the exit: stdout to a file is buffered until then.
+	my $text = read_text($log);
+	my @said = grep { /adopting the engine already serving/ } split /\n/, $text;
+	is(scalar @said, 1, 'the mismatch is one sentence at startup, not a trace');
+	like($said[0], qr/hw:7,0/, 'and the sentence names the engine device') if @said;
+	like($said[0], qr/hw:1,0/, 'and the configured device') if @said;
+}
+
 # --- when the adopted engine stops answering, the supervisor takes over ------
 {
 	my $dir  = tempdir(CLEANUP => 1);
@@ -453,7 +524,8 @@ sleep 600;
 ENGINE
 
 	my $sockpath = "$dir/takeover.sock";
-	my $fake = start_fake_engine($sockpath, "$dir/fake.ready");
+	my $fake = start_fake_engine($sockpath, "$dir/fake.ready",
+		backend => 'alsa', device => 'hw:7,0');
 	ok(wait_for(sub { -s "$dir/fake.ready" }, 5), 'the fake engine is listening');
 
 	my $status = "$home/.president/audio.json";
@@ -468,6 +540,7 @@ ENGINE
 		return $data;
 	}, 10);
 	ok($adopted, 'the supervisor adopts the fake engine first');
+	ok($adopted->{'adopted_mismatch'}, 'the fake engine differs from the flags') if $adopted;
 
 	kill 'KILL', $fake;
 	waitpid($fake, 0);
@@ -479,6 +552,8 @@ ENGINE
 	}, 15);
 	ok($s, 'the supervisor starts its own engine after the adopted one dies');
 	ok(!$s->{'adopted'}, 'the status file no longer says adopted') if $s;
+	ok(!$s->{'adopted_mismatch'}, 'taking over its own engine clears the mismatch flag') if $s;
+	ok(!defined $s->{'adopted_note'}, 'and clears the mismatch note') if $s;
 	my $engine_pid = read_text($mark);
 	$engine_pid =~ s/\s+//g;
 	push @children, 0 + $engine_pid if length $engine_pid;

@@ -11,6 +11,9 @@ mod socket;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
 
 use jawn_audio::{
     backends::{self, BackendKind, RunReport},
@@ -39,6 +42,8 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --run [options]              run a device for a while and report
   jawn-audio --loopback [options]         measure the round trip through a patch cable
   jawn-audio --record --out FILE.wav      record a take to a 16-bit WAV
+  jawn-audio --record --out FILE.wav --play --file A.wav
+                                          overdub: record while A.wav plays back
   jawn-audio --play --file A.wav          play takes back through their strips
   jawn-audio --serve [options]            arm and place takes over a Unix socket
   jawn-audio --version                    print the version
@@ -75,6 +80,9 @@ jawn-audio — the JawnOS audio engine
                   tone, distortion, delay, compressor or reverb
                   (reverb2 is accepted as the web's name; default none)
   --tone HZ       with the null backend, record a sine instead of silence
+  --monitor FILE.wav
+                  play FILE.wav to the outputs while this take records;
+                  repeatable (--play --file FILE.wav is the same thing)
   --json          one JSON line instead of prose
 
   Every track writes its own stereo WAV: --out take.wav becomes take-ch1.wav,
@@ -88,6 +96,17 @@ jawn-audio — the JawnOS audio engine
   count the device granted; a multi-track take adds
   \"tracks\":[{\"path\":...,\"input\":N,\"frames\":N,\"dropped\":N},...]. A
   one-track take keeps its historical shape and omits \"tracks\".
+
+  --monitor (or --play together with --file) is an overdub: the take captures
+  the inputs while the named files play to the outputs. The monitor is a
+  separate playback on its own device handle; it is never summed into the
+  take, which stays the input through its strip. The monitor files must share
+  the take's rate, and both start at the take's --start-at sample: alignment
+  is by that stamp, not by a measured offset, so the player is assumed to
+  begin at the take's first sample. A take reports
+  \"playing\":N,\"monitor_frames\":M when a monitor ran (plus
+  \"monitor_error\" if the player failed after the take started). Two takes at
+  once are still refused; so are two playbacks.
 
 --play options:
   --file FILE.wav   a take to play; repeat the flag, one strip per file
@@ -132,6 +151,13 @@ jawn-audio — the JawnOS audio engine
 
 --serve speaks one JSON object per line: record, param, status, stop,
 quit. `record` takes \"out\", \"seconds\", \"start_at\", \"tracks\" and \"inputs\";
+\"monitor\" is an array of absolute WAV paths played to the outputs while the
+take records (an overdub; the monitor never enters the take). `play` may run
+beside a recording's monitor, and `record` may start over a running playback.
+Two takes at once, and two playbacks at once, are refused. One `stop` ends and
+joins both roles, and `status` reports the take's state with \"playing\" and
+\"monitor_frames\" beside it. `start_at` is the take's stamp and the monitor's
+start sample: alignment is by that stamp, not a measured offset.
 `tracks` is a count (one wire per input) or an array of per-track objects
 {\"input\":N,\"gain\":G,\"pan\":P,\"inserts\":[NAMES]}, which arms that track's
 real chain. `param` moves one knob of a running take's strip and answers when
@@ -182,6 +208,13 @@ struct Options {
     inserts: Vec<InsertSpec>,
     /// `--file` in the order given; one strip per file for `--play`.
     files: Vec<String>,
+    /// `--monitor` in the order given, or `--file` when `--play` accompanies
+    /// `--record`: the takes played to the outputs while a new one records.
+    monitor: Vec<String>,
+    /// Which mode flags the command line actually carried. `--record --play`
+    /// together is an overdub, so the two flags cannot be one enum field.
+    record_flag: bool,
+    play_flag: bool,
     tracks: usize,
     /// The device channels a take records, in track order. Empty means the
     /// default `0..tracks`; `--inputs` fills it.
@@ -223,6 +256,9 @@ fn run() -> Result<ExitCode, String> {
         pans: Vec::new(),
         inserts: Vec::new(),
         files: Vec::new(),
+        monitor: Vec::new(),
+        record_flag: false,
+        play_flag: false,
         tracks: 1,
         inputs: Vec::new(),
         inputs_given: false,
@@ -239,9 +275,16 @@ fn run() -> Result<ExitCode, String> {
             "--backends" => options.mode = Mode::Backends,
             "--run" => options.mode = Mode::Run,
             "--loopback" => options.mode = Mode::Loopback,
-            "--record" => options.mode = Mode::Record,
-            "--play" => options.mode = Mode::Play,
+            "--record" => {
+                options.mode = Mode::Record;
+                options.record_flag = true;
+            }
+            "--play" => {
+                options.mode = Mode::Play;
+                options.play_flag = true;
+            }
             "--file" => options.files.push(value(&mut args, "--file")?),
+            "--monitor" => options.monitor.push(value(&mut args, "--monitor")?),
             "--serve" => options.mode = Mode::Serve,
             "--selftest" => options.mode = Mode::SelfTest,
             "--version" | "-V" => options.mode = Mode::Version,
@@ -352,6 +395,28 @@ fn run() -> Result<ExitCode, String> {
             }
             other => return Err(format!("unknown option `{other}` (try --help)")),
         }
+    }
+
+    // `--record` together with `--play` is an overdub, not two modes: the
+    // take is the capture and the files are the monitoring bus. `--monitor`
+    // names the same bus without the extra flag. Reconciled here, after the
+    // whole command line (and therefore after every `--file`) is read.
+    if options.record_flag && options.play_flag {
+        if options.files.is_empty() && options.monitor.is_empty() {
+            return Err(
+                "--play with --record needs at least one --file FILE.wav to monitor".to_string(),
+            );
+        }
+        options.mode = Mode::Record;
+        options.monitor.append(&mut options.files);
+    } else if !options.monitor.is_empty() {
+        if !options.record_flag {
+            return Err(
+                "--monitor plays earlier takes while a new one records; pass --record --out FILE.wav"
+                    .to_string(),
+            );
+        }
+        options.mode = Mode::Record;
     }
 
     // These knobs describe a take's tracks, and `--record` is the only mode
@@ -688,6 +753,11 @@ struct TakeReport {
     xruns: usize,
     inserts: String,
     tracks: Vec<TakeTrack>,
+    /// How many monitor files played while this take recorded (0 = no
+    /// overdub), how far the player got, and why it stopped early, if it did.
+    monitor_files: usize,
+    monitor_frames: u64,
+    monitor_error: String,
     error: String,
 }
 
@@ -701,6 +771,9 @@ impl TakeReport {
         start_sample: u64,
         xruns: usize,
         inserts: String,
+        monitor_files: usize,
+        monitor_frames: u64,
+        monitor_error: String,
     ) -> Self {
         // The top-level fields describe track 1, as they did before a take
         // could carry more than one; the `tracks` array carries the rest.
@@ -720,6 +793,9 @@ impl TakeReport {
             xruns,
             inserts,
             tracks,
+            monitor_files,
+            monitor_frames,
+            monitor_error,
             error: String::new(),
         }
     }
@@ -747,6 +823,9 @@ impl TakeReport {
             xruns: 0,
             inserts,
             tracks: Vec::new(),
+            monitor_files: 0,
+            monitor_frames: 0,
+            monitor_error: String::new(),
             error,
         }
     }
@@ -772,8 +851,23 @@ impl TakeReport {
         } else {
             String::new()
         };
+        let monitor = if self.monitor_files > 0 {
+            let mut part = format!(
+                ",\"playing\":{},\"monitor_frames\":{}",
+                self.monitor_files, self.monitor_frames
+            );
+            if !self.monitor_error.is_empty() {
+                part.push_str(&format!(
+                    ",\"monitor_error\":\"{}\"",
+                    loopback::json_escape(&self.monitor_error)
+                ));
+            }
+            part
+        } else {
+            String::new()
+        };
         format!(
-            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"inserts\":\"{}\"{},\"error\":\"{}\"}}",
+            "{{\"ok\":{},\"path\":\"{}\",\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{},\"inserts\":\"{}\"{}{},\"error\":\"{}\"}}",
             self.ok,
             loopback::json_escape(&self.path),
             loopback::json_escape(self.backend),
@@ -786,6 +880,7 @@ impl TakeReport {
             self.xruns,
             loopback::json_escape(&self.inserts),
             tracks,
+            monitor,
             loopback::json_escape(&self.error)
         )
     }
@@ -814,8 +909,22 @@ impl TakeReport {
         } else {
             String::new()
         };
+        let monitor = if self.monitor_files > 0 {
+            match self.monitor_error.is_empty() {
+                true => format!(
+                    ", monitoring {} file(s) ({} frames)",
+                    self.monitor_files, self.monitor_frames
+                ),
+                false => format!(
+                    ", monitoring {} file(s) ({} frames, {}), the take is complete",
+                    self.monitor_files, self.monitor_frames, self.monitor_error
+                ),
+            }
+        } else {
+            String::new()
+        };
         format!(
-            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, dropped {}, xruns {}, inserts {}{}",
+            "take {}: {} frames at {} Hz, {} channels ({:.3} s), backend {}, device {}, start_sample {}, dropped {}, xruns {}, inserts {}{}{}",
             self.path,
             self.frames,
             self.rate,
@@ -827,7 +936,8 @@ impl TakeReport {
             self.dropped,
             self.xruns,
             inserts,
-            tracks
+            tracks,
+            monitor
         )
     }
 }
@@ -1253,6 +1363,95 @@ impl jawn_audio::playback::RenderSource for FileSink<'_> {
     }
 }
 
+/// The overdub's monitoring bus: the earlier takes through plain strips to the
+/// outputs, on a device handle of its own.
+///
+/// Nothing here touches a [`DiskWriter`] or the capture device, which is what
+/// keeps the monitor out of the recording. `start_at` is the take's stamp, so
+/// the alignment is by that stamp and not by a measured offset: the player is
+/// assumed to begin at the take's first sample, and a clock that drifts (or a
+/// device that starts late) is not corrected. `stop` ends the bus when the take
+/// does; the two threads never wait on one another.
+fn run_monitor(
+    backend: BackendKind,
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    tracks: Vec<PlayTrack>,
+    start_at: u64,
+    stop: Arc<AtomicBool>,
+) -> Result<(u64, usize), String> {
+    let mut playback = Playback::new(tracks, start_at)?;
+    match backend {
+        BackendKind::Null => {
+            playback.prepare(rate, period)?;
+            let mut out = vec![0.0f32; period * 2];
+            while playback.remaining() > 0 && !stop.load(Ordering::SeqCst) {
+                let frames = playback.remaining().min(period as u64) as usize;
+                playback.render(&mut out[..frames * 2])?;
+            }
+            Ok((playback.position(), 0))
+        }
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            monitor_hardware(device, rate, period, buffer, &mut playback, &stop)
+        }
+        BackendKind::Jack => Err(play_support_message()),
+    }
+}
+
+#[cfg(feature = "alsa")]
+fn monitor_hardware(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    playback: &mut Playback,
+    stop: &AtomicBool,
+) -> Result<(u64, usize), String> {
+    let total = playback.total_frames();
+    let sink = MonitorSink { playback, stop };
+    match jawn_audio::alsa_device::run_file_playback(device, rate, period, buffer, total, sink) {
+        Ok(report) => Ok((report.frames, report.xruns)),
+        // A stop is the take ending, not a monitor failure.
+        Err(_) if stop.load(Ordering::SeqCst) => Ok((playback.position(), 0)),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(feature = "alsa"))]
+fn monitor_hardware(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    playback: &mut Playback,
+    stop: &AtomicBool,
+) -> Result<(u64, usize), String> {
+    let _ = (device, rate, period, buffer, playback, stop);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
+}
+
+#[cfg(feature = "alsa")]
+struct MonitorSink<'a> {
+    playback: &'a mut Playback,
+    stop: &'a AtomicBool,
+}
+
+#[cfg(feature = "alsa")]
+impl jawn_audio::playback::RenderSource for MonitorSink<'_> {
+    fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
+        self.playback.prepare(rate, period)
+    }
+
+    fn block(&mut self, out: &mut [f32]) -> Result<(), String> {
+        if self.stop.load(Ordering::SeqCst) {
+            return Err("stopped".to_string());
+        }
+        self.playback.render(out)
+    }
+}
+
 /// A backend that cannot play files says so before a worker is started.
 pub(crate) fn play_support(backend: BackendKind) -> Result<(), String> {
     match backend {
@@ -1458,6 +1657,41 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
     let frames = take_frames(seconds, options.rate);
     let queue = queue_blocks(options.backend, frames, options.frames, TAKE_CHANNELS);
 
+    // The monitoring bus is decoded here and probed separately, before any WAV
+    // exists: a missing file or a busy output is a refusal, not a take that
+    // records silence the person thought they would hear. Its strips are built
+    // on the playback thread, because an insert is not `Send`.
+    let mut monitor_tracks: Vec<PlayTrack> = Vec::with_capacity(options.monitor.len());
+    for path in &options.monitor {
+        monitor_tracks.push(
+            PlayTrack::from_wav(path.clone(), 1.0, 0.0, Vec::new())
+                .map_err(|error| format!("monitor: {error}"))?,
+        );
+    }
+    if !monitor_tracks.is_empty() {
+        play_support(options.backend)?;
+        let (monitor_rate, _) = jawn_audio::playback::check_tracks(&monitor_tracks)?;
+        if monitor_rate != options.rate {
+            return Err(format!(
+                "the monitor is {monitor_rate} Hz but the take records at {} Hz; the monitor must share the take's rate or it would play at the wrong pitch",
+                options.rate
+            ));
+        }
+        let playback_rate = probe_playback(
+            options.backend,
+            device,
+            options.rate,
+            options.frames,
+            options.buffer,
+        )?;
+        if playback_rate != options.rate {
+            return Err(format!(
+                "the device granted {playback_rate} Hz for the monitor, but the take records at {} Hz",
+                options.rate
+            ));
+        }
+    }
+
     // One writer per track. Each spawn creates its WAV before any audio, so a
     // bad path fails here; a failure on a later track joins the writers already
     // started and removes only the files they created.
@@ -1492,6 +1726,54 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
         track.channel = channel_for(options, index + 1);
     }
 
+    // Two threads and two device handles: this one captures the take, the
+    // monitor renders to the outputs. Neither waits on the other; the monitor
+    // never touches the take's writers, so it cannot enter the recording. Both
+    // are aligned by the take's `start_at` stamp rather than a measured
+    // offset: the player is assumed to begin at the take's first sample.
+    let monitor_stop = Arc::new(AtomicBool::new(false));
+    let monitor = if monitor_tracks.is_empty() {
+        None
+    } else {
+        let spawned = {
+            let stop = Arc::clone(&monitor_stop);
+            let device = device.to_string();
+            let backend = options.backend;
+            let rate = options.rate;
+            let period = options.frames;
+            let buffer = options.buffer;
+            let start_at = options.start_at;
+            thread::Builder::new()
+                .name("jawn-audio-monitor".to_string())
+                .spawn(move || {
+                    run_monitor(
+                        backend,
+                        &device,
+                        rate,
+                        period,
+                        buffer,
+                        monitor_tracks,
+                        start_at,
+                        stop,
+                    )
+                })
+        };
+        match spawned {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                // No monitor, no overdub: finish the writers and remove the
+                // take files nobody will fill.
+                for disk in disks {
+                    let _ = disk.finish();
+                }
+                for plan in &plans {
+                    let _ = std::fs::remove_file(&plan.path);
+                }
+                return Err(format!("cannot start the monitor thread: {error}"));
+            }
+        }
+    };
+
     let outcome = match options.backend {
         BackendKind::Null => record_null(options, seconds, &mut disks, &mut mixer),
         BackendKind::Alsa | BackendKind::PipeWire => {
@@ -1500,6 +1782,19 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
         BackendKind::Jack => Err(
             "no JACK capture backend yet; use --backend alsa or null".to_string(),
         ),
+    };
+
+    // The take decides when the monitoring bus ends: silence the player, then
+    // join it, so `monitor_frames` is what was played rather than a guess. A
+    // monitor failure does not discard the take; it is reported beside it.
+    monitor_stop.store(true, Ordering::SeqCst);
+    let (monitor_frames, monitor_error) = match monitor {
+        None => (0, String::new()),
+        Some(handle) => match handle.join() {
+            Ok(Ok((frames, _xruns))) => (frames, String::new()),
+            Ok(Err(error)) => (0, error),
+            Err(_) => (0, "the monitor thread panicked".to_string()),
+        },
     };
 
     let (rate, xruns) = match outcome {
@@ -1572,6 +1867,9 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
         options.start_at,
         xruns,
         insert_list(options, 1),
+        options.monitor.len(),
+        monitor_frames,
+        monitor_error,
     ))
 }
 

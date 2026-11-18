@@ -35,6 +35,19 @@
 //! the answer describes a closed WAV rather than a guess about one still being
 //! written. A take keeps running if its client hangs up; the next client can
 //! ask `status` or `stop` it.
+//!
+//! # Overdub
+//!
+//! A take and a playback are independent: `record` may carry `monitor`, a
+//! list of files played to the outputs while the take captures, and `play` may
+//! start while a take records. The capture thread owns the capture device and
+//! its [`DiskWriter`]s; the playback thread owns a second device handle and
+//! renders only to the outputs, so the monitoring bus can never reach the take.
+//! Both are aligned by the take's `start_at` stamp, not by a measured offset:
+//! the player is assumed to begin at the take's first sample. One `stop`
+//! signals both before joining either, and `status` reports the take's state
+//! with `playing` and `monitor_frames` beside it. Two takes at once, or two
+//! playbacks at once, are still refused.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -170,8 +183,8 @@ struct Server {
     /// report the final state until the next `record` or `play`.
     current: Option<Running>,
     /// The most recent playback, kept after it ends for the same reason. A
-    /// take and a playback never run together (no overdub yet), so at most one
-    /// of these is ever in a running state.
+    /// take and a playback may run together (overdub), so both fields can be
+    /// live; only one take and one playback can, at most.
     playback: Option<PlaySession>,
     next_take: u64,
 }
@@ -259,9 +272,16 @@ impl Server {
                         }
                     }
                     Action::Quit(reply) => {
-                        // Finish the take before the process goes, so the WAV
-                        // the caller armed is closed rather than left as a
-                        // prefix. A quit is still answered exactly as promised.
+                        // Finish both workers before the process goes, so the
+                        // WAV the caller armed is closed and the monitor loop
+                        // has stopped rather than being killed mid-block. A
+                        // quit is still answered exactly as promised.
+                        if let Some(running) = &self.current {
+                            running.stop.store(true, Ordering::SeqCst);
+                        }
+                        if let Some(session) = &self.playback {
+                            session.stop.store(true, Ordering::SeqCst);
+                        }
                         if let Some(running) = &mut self.current {
                             running.finish();
                         }
@@ -369,11 +389,39 @@ impl Server {
     }
 
     fn record(&mut self, object: &Object) -> String {
-        // Playing and recording share the transport, and an overdub is not
-        // part of this step: say so rather than mixing a take into a playback.
-        if let Some(session) = &self.playback {
-            if session.is_playing() {
-                return error_line("a playback is running; stop it before recording a take");
+        // The monitoring bus, if this take is an overdub. Parsed first so a
+        // malformed list is a refusal whether or not a take is already running.
+        let monitor = match get(object, "monitor") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Arr(values)) if values.is_empty() => {
+                return error_line("record \"monitor\" needs at least one absolute WAV path")
+            }
+            Some(Value::Arr(values)) => {
+                let mut paths = Vec::with_capacity(values.len());
+                for value in values {
+                    match value {
+                        Value::Str(path) if Path::new(path).is_absolute() => {
+                            paths.push(path.clone())
+                        }
+                        Value::Str(_) => {
+                            return error_line(
+                                "record needs every \"monitor\" entry to be an absolute path",
+                            )
+                        }
+                        _ => return error_line("\"monitor\" must be an array of WAV paths"),
+                    }
+                }
+                paths
+            }
+            _ => return error_line("\"monitor\" must be an array of WAV paths"),
+        };
+        // One playback at a time: a take over the monitor it names is the
+        // point, but a second monitor cannot join a playback already running.
+        if !monitor.is_empty() {
+            if let Some(session) = &self.playback {
+                if session.is_playing() {
+                    return error_line("a playback is already running");
+                }
             }
         }
         let path = match get(object, "out") {
@@ -479,6 +527,49 @@ impl Server {
             Err(error) => return error_line(&error),
         };
 
+        // The monitor is decoded here, before any WAV exists, so a missing
+        // file is a refusal rather than a take that records under a silence
+        // the person thought was their earlier take. The strips are built on
+        // the playback thread, because an insert is not `Send`.
+        let mut monitor_tracks: Vec<PlayTrack> = Vec::with_capacity(monitor.len());
+        for monitor_path in &monitor {
+            match PlayTrack::from_wav(monitor_path.clone(), 1.0, 0.0, Vec::new()) {
+                Ok(track) => monitor_tracks.push(track),
+                Err(error) => return error_line(&error),
+            }
+        }
+        if !monitor_tracks.is_empty() {
+            if let Err(error) = crate::play_support(self.config.backend) {
+                return error_line(&error);
+            }
+            match jawn_audio::playback::check_tracks(&monitor_tracks) {
+                Ok((rate, _)) if rate == self.config.rate => {}
+                Ok((rate, _)) => {
+                    return error_line(&format!(
+                        "the monitor is {rate} Hz but the take records at {} Hz; the monitor must share the take's rate or it would play at the wrong pitch",
+                        self.config.rate
+                    ))
+                }
+                Err(error) => return error_line(&error),
+            }
+            match crate::probe_playback(
+                self.config.backend,
+                &self.config.device,
+                self.config.rate,
+                self.config.period,
+                self.config.buffer,
+            ) {
+                Ok(granted) if granted == self.config.rate => {}
+                Ok(granted) => {
+                    return error_line(&format!(
+                        "the device granted {granted} Hz for the monitor, but the take records at {} Hz",
+                        self.config.rate
+                    ))
+                }
+                Err(error) => return error_line(&error),
+            }
+        }
+
         // One WAV per track: a one-track take keeps `out` exactly; more tracks
         // split the stem into `-ch1`/`-ch2`/... All files share one
         // start_sample, because one take is one position on the transport.
@@ -516,14 +607,18 @@ impl Server {
         }
 
         // Join a finished worker before replacing it, so a stream of takes does
-        // not leave detached threads behind.
+        // not leave detached threads behind. A take that is still recording was
+        // refused above.
         if let Some(mut previous) = self.current.take() {
             previous.finish();
         }
-        // A playback that has already ended is only a status line now; the
-        // new take replaces it. (A running one was refused above.)
-        if let Some(mut previous) = self.playback.take() {
-            previous.finish();
+        // A playback that has already ended is only a status line now; a
+        // running one keeps playing, because a take over a monitor is the
+        // point. (A monitor requested over a running playback was refused.)
+        if self.playback.as_ref().map(PlaySession::is_playing) != Some(true) {
+            if let Some(mut previous) = self.playback.take() {
+                previous.finish();
+            }
         }
 
         let take = self.next_take;
@@ -563,6 +658,48 @@ impl Server {
         // to them as soon as `record` answers.
         let params = Arc::new(ParamQueue::new());
 
+        // The monitoring bus: its own thread and its own device handle, fed by
+        // `Playback` and never by the capture loop. Started before the take so
+        // a player that cannot start is still a refusal rather than a take that
+        // records without the monitor the caller asked for.
+        let mut monitor_session = if monitor_tracks.is_empty() {
+            None
+        } else {
+            let status = Arc::new(Mutex::new(PlayStatus {
+                state: State::Playing,
+                files: monitor_tracks.len(),
+                frames: 0,
+                error: String::new(),
+            }));
+            let monitor_stop = Arc::new(AtomicBool::new(false));
+            let spawned = {
+                let status = Arc::clone(&status);
+                let stop = Arc::clone(&monitor_stop);
+                let config = self.config.clone();
+                thread::Builder::new()
+                    .name("jawn-audio-monitor".to_string())
+                    .spawn(move || run_playback(config, monitor_tracks, start_at, status, stop))
+            };
+            match spawned {
+                Ok(handle) => Some(PlaySession {
+                    status,
+                    stop: monitor_stop,
+                    handle: Some(handle),
+                }),
+                Err(error) => {
+                    for disk in disks {
+                        let _ = disk.finish();
+                    }
+                    for track_path in &paths {
+                        let _ = fs::remove_file(track_path);
+                    }
+                    return error_line(&format!(
+                        "cannot start the monitor thread: {error}"
+                    ));
+                }
+            }
+        };
+
         let spawned = {
             let shared = Arc::clone(&shared);
             let stop = Arc::clone(&stop);
@@ -576,7 +713,11 @@ impl Server {
         let handle = match spawned {
             Ok(handle) => handle,
             Err(error) => {
-                // No worker, no take: do not leave WAVs nobody will finish.
+                // No worker, no take: stop the monitor and do not leave WAVs
+                // nobody will finish.
+                if let Some(mut session) = monitor_session.take() {
+                    session.finish();
+                }
                 for track_path in &paths {
                     let _ = fs::remove_file(track_path);
                 }
@@ -584,14 +725,24 @@ impl Server {
             }
         };
 
+        // A take with no monitor leaves a running playback alone; a monitor
+        // replaces whatever finished session was kept as a status line.
+        if let Some(session) = monitor_session {
+            self.playback = Some(session);
+        }
         self.current = Some(Running {
             status: shared,
             stop,
             handle: Some(handle),
             params,
         });
+        let monitor_json = if monitor.is_empty() {
+            String::new()
+        } else {
+            format!(",\"playing\":{},\"monitor_frames\":0", monitor.len())
+        };
         format!(
-            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at}{}}}",
+            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at}{}{monitor_json}}}",
             tracks_json(&track_status)
         )
     }
@@ -642,12 +793,9 @@ impl Server {
             _ => return error_line("\"start_at\" must be a whole, non-negative sample count"),
         };
 
-        // One transport: a take being recorded and a playback cannot overlap.
-        if let Some(running) = &self.current {
-            if running.is_recording() {
-                return error_line("a take is recording; stop it before playing");
-            }
-        }
+        // Playback may join a take that is recording: that is the overdub the
+        // monitor bus and the Studio transport ask for. Only a second playback
+        // is refused.
         if let Some(session) = &self.playback {
             if session.is_playing() {
                 return error_line("a playback is already running");
@@ -699,9 +847,12 @@ impl Server {
         }
 
         // Join whatever ended earlier: a finished take or an earlier playback
-        // is a status line, not a thread to leave detached.
-        if let Some(mut previous) = self.current.take() {
-            previous.finish();
+        // is a status line, not a thread to leave detached. A take that is
+        // recording is left alone and keeps capturing beside this playback.
+        if self.current.as_ref().map(Running::is_recording) != Some(true) {
+            if let Some(mut previous) = self.current.take() {
+                previous.finish();
+            }
         }
         if let Some(mut previous) = self.playback.take() {
             previous.finish();
@@ -738,6 +889,57 @@ impl Server {
     }
 
     fn status_line(&self) -> String {
+        // A take that is recording is the transport, so its line leads and the
+        // monitor reports beside it. A finished take stays a status line and an
+        // independent playback keeps its historical shape.
+        let line = if let Some(running) = self
+            .current
+            .as_ref()
+            .filter(|running| running.is_recording())
+        {
+            running.line_with_play(self.playback.as_ref())
+        } else if let Some(session) = &self.playback {
+            session.line()
+        } else {
+            match &self.current {
+                Some(running) => running.line(),
+                None => idle_line(),
+            }
+        };
+        // The configuration describes the process, not the take, so every
+        // state carries it: a supervisor compares these with its own flags to
+        // tell whether the engine it adopted is the one it asked for.
+        add_config(line, &self.config)
+    }
+
+    fn stop_line(&mut self) -> String {
+        let was_recording = self
+            .current
+            .as_ref()
+            .map(Running::is_recording)
+            .unwrap_or(false);
+        // Signal every worker before joining any: a join waits for a loop that
+        // has already been told to stop, so neither worker can hold the other
+        // past its block.
+        if let Some(running) = &self.current {
+            running.stop.store(true, Ordering::SeqCst);
+        }
+        if let Some(session) = &self.playback {
+            session.stop.store(true, Ordering::SeqCst);
+        }
+        // Joining before answering makes `frames` and `monitor_frames` what was
+        // actually produced, not a guess about a running loop.
+        if let Some(running) = &mut self.current {
+            running.finish();
+        }
+        if let Some(session) = &mut self.playback {
+            session.finish();
+        }
+        if was_recording {
+            if let Some(running) = &self.current {
+                return running.line_with_play(self.playback.as_ref());
+            }
+        }
         if let Some(session) = &self.playback {
             return session.line();
         }
@@ -746,28 +948,33 @@ impl Server {
             None => idle_line(),
         }
     }
-
-    fn stop_line(&mut self) -> String {
-        if let Some(session) = &mut self.playback {
-            // Joining the worker before answering makes `frames` the frames
-            // that were actually rendered, not a guess about a running loop.
-            session.finish();
-            return session.line();
-        }
-        match &mut self.current {
-            Some(running) => {
-                // Signals the worker and joins it: the disk writer has closed
-                // the WAV before this returns, so `frames` is what is on disk.
-                running.finish();
-                running.line()
-            }
-            None => idle_line(),
-        }
-    }
 }
 
 fn idle_line() -> String {
-    "{\"ok\":true,\"take\":0,\"state\":\"idle\"}".to_string()
+	"{\"ok\":true,\"take\":0,\"state\":\"idle\"}".to_string()
+}
+
+/// Append the configuration the engine actually serves with to a status
+/// object. The existing keys keep their order and meaning; these six are added
+/// at the end, so every state answers the same question. A recording line
+/// already has a `channels` key for the take's granted capture channels; the
+/// configured capture width is `device_channels`, not `channels`: a recording
+/// line already carries `channels` for the take's granted width, and two keys of
+/// the same name meaning different things is how a page reads the wrong one.
+fn add_config(line: String, config: &Config) -> String {
+    let head = match line.strip_suffix('}') {
+        Some(head) => head,
+        None => return line,
+    };
+    format!(
+        "{head},\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"period\":{},\"buffer\":{},\"device_channels\":{}}}",
+        config.backend.name(),
+        jawn_audio::loopback::json_escape(&config.device),
+        config.rate,
+        config.period,
+        config.buffer,
+        config.channels
+    )
 }
 
 fn error_line(error: &str) -> String {
@@ -1112,12 +1319,30 @@ impl Running {
     }
 
     fn line(&self) -> String {
+        self.line_with_play(None)
+    }
+
+    /// The take's line with the monitoring role beside it. `playing` is how many
+    /// files the monitor holds (not whether it is still running) and
+    /// `monitor_frames` is what it rendered, so a finished monitor is still
+    /// visible while its take remains the state being reported.
+    fn line_with_play(&self, play: Option<&PlaySession>) -> String {
         let status = self.snapshot();
         // Track 1's strip fills the top-level fields, as `path` and `frames`
         // already do; every track's own values are in `tracks`.
         let first = status.tracks.first();
+        let monitor = match play {
+            Some(session) => {
+                let played = session.snapshot();
+                format!(
+                    ",\"playing\":{},\"monitor_frames\":{}",
+                    played.files, played.frames
+                )
+            }
+            None => String::new(),
+        };
         format!(
-            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
+            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
             status.take,
             status.state.name(),
             jawn_audio::loopback::json_escape(&status.path),
@@ -1127,6 +1352,7 @@ impl Running {
             status.start_sample,
             status.xruns,
             tracks_json(&status.tracks),
+            monitor,
             first.map(|track| track.gain).unwrap_or(1.0),
             first.map(|track| track.pan).unwrap_or(0.0),
             jawn_audio::loopback::json_escape(first.map(|track| track.inserts.as_str()).unwrap_or("")),

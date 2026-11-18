@@ -163,6 +163,27 @@ impl Conversation {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+
+    /// `status` until the take reports at least `frames` monitored frames, so a
+    /// test reads a monitor that has actually run instead of racing its start.
+    fn wait_for_monitor_frames(&mut self, frames: u64) -> String {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let status = self.ask("{\"cmd\":\"status\"}");
+            assert!(status.contains("\"ok\":true"), "status: {status}");
+            if status.contains("\"state\":\"recording\"")
+                && status.contains("\"monitor_frames\"")
+                && json_number(&status, "monitor_frames") >= frames as f64
+            {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the monitor never reached {frames} frames: {status}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
 }
 
 /// A take or socket path under the system temp directory, removed however the
@@ -534,6 +555,88 @@ fn eight_tracks_over_the_socket_report_every_track() {
 }
 
 #[test]
+fn status_carries_the_configuration_serve_was_given() {
+    // Six values that are not all defaults: the process reports the ones it
+    // was actually started with, in every state, so a supervisor can compare
+    // them with its own flags.
+    let server = Server::start_with(
+        "config",
+        &[
+            "--rate", "44100", "--period", "128", "--buffer", "512", "--channels", "4",
+        ],
+    );
+    let mut client = server.connect();
+
+    let assert_config = |status: &str| {
+        assert!(
+            status.contains("\"backend\":\"null\""),
+            "backend: {status}"
+        );
+        assert!(
+            status.contains("\"device\":\"null\""),
+            "device: {status}"
+        );
+        assert_eq!(json_number(status, "rate"), 44_100.0, "rate: {status}");
+        assert_eq!(json_number(status, "period"), 128.0, "period: {status}");
+        assert_eq!(json_number(status, "buffer"), 512.0, "buffer: {status}");
+        assert_eq!(json_number(status, "device_channels"), 4.0, "device_channels: {status}");
+        // These fields are the tail of the object, so the values the served
+        // process was started with are unambiguous even where the take line
+        // already carries `channels` for granted capture width.
+        assert!(
+            status.ends_with(
+                "\"backend\":\"null\",\"device\":\"null\",\"rate\":44100,\"period\":128,\"buffer\":512,\"device_channels\":4}"
+            ),
+            "config tail: {status}"
+        );
+    };
+
+    let idle = client.ask("{\"cmd\":\"status\"}");
+    assert!(idle.contains("\"state\":\"idle\""), "status: {idle}");
+    assert_config(&idle);
+
+    let take = TempFile::new("config-take");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":20}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    let recording = client.wait_for_frames();
+    assert!(
+        recording.contains("\"state\":\"recording\""),
+        "status: {recording}"
+    );
+    assert_config(&recording);
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+
+    // A playback line is its own shape; it carries the same configuration.
+    let play = TempFile::new("config-play");
+    write_silent_wav_at(&play.path, 44_100, 4_410);
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"play\",\"files\":[\"{}\"]}}",
+        play.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "play: {reply}");
+    let playing = client.ask("{\"cmd\":\"status\"}");
+    assert!(
+        playing.contains("\"state\":\"playing\"") || playing.contains("\"state\":\"done\""),
+        "status: {playing}"
+    );
+    assert_config(&playing);
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
 fn a_take_that_does_not_fit_the_device_is_refused_before_any_file() {
     let server = Server::start("too-many");
     let mut client = server.connect();
@@ -821,9 +924,14 @@ fn a_second_engine_on_the_same_socket_refuses_to_steal_it() {
 
 // --- play -------------------------------------------------------------------
 
-/// A silent stereo 48 kHz WAV, written directly: playback should not depend on
+/// A silent stereo WAV, written directly: playback should not depend on
 /// how fast this machine records, only on the file's shape.
 fn write_silent_wav(path: &Path, frames: u32) {
+    write_silent_wav_at(path, 48_000, frames);
+}
+
+/// The same at an arbitrary rate, for the monitor-shape refusals.
+fn write_silent_wav_at(path: &Path, rate: u32, frames: u32) {
     let data_len = frames * 4;
     let mut bytes = Vec::with_capacity(44 + data_len as usize);
     bytes.extend_from_slice(b"RIFF");
@@ -832,8 +940,8 @@ fn write_silent_wav(path: &Path, frames: u32) {
     bytes.extend_from_slice(&16u32.to_le_bytes());
     bytes.extend_from_slice(&1u16.to_le_bytes());
     bytes.extend_from_slice(&2u16.to_le_bytes());
-    bytes.extend_from_slice(&48_000u32.to_le_bytes());
-    bytes.extend_from_slice(&(48_000u32 * 4).to_le_bytes());
+    bytes.extend_from_slice(&rate.to_le_bytes());
+    bytes.extend_from_slice(&(rate * 4).to_le_bytes());
     bytes.extend_from_slice(&4u16.to_le_bytes());
     bytes.extend_from_slice(&16u16.to_le_bytes());
     bytes.extend_from_slice(b"data");
@@ -875,6 +983,9 @@ fn the_socket_plays_then_reports_and_stops() {
     if status.contains("\"state\":\"done\"") {
         assert_eq!(json_number(&status, "frames"), 4_800.0, "status: {status}");
     }
+    // Let the playback reach a block before stopping it, so the stop has
+    // frames to report rather than racing the worker's start.
+    client.wait_for_play_frames();
 
     let stopped = client.ask("{\"cmd\":\"stop\"}");
     assert!(stopped.contains("\"ok\":true"), "stop: {stopped}");
@@ -916,23 +1027,143 @@ fn the_socket_plays_then_reports_and_stops() {
 }
 
 #[test]
-fn a_playback_and_a_recording_refuse_each_other() {
-    let server = Server::start("play-exclusive");
+fn an_overdub_reports_both_roles_and_one_stop_joins_both() {
+    let server = Server::start("overdub");
+    let mut client = server.connect();
+
+    // A short silent monitor beside a long take, so the take is still recording
+    // when the monitor has already run to its end.
+    let monitor = TempFile::new("overdub-monitor");
+    write_silent_wav(&monitor.path, 2_400);
+    let take = TempFile::new("overdub-take");
+
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300,\"monitor\":[\"{}\"]}}",
+        take.text(),
+        monitor.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    assert!(reply.contains("\"state\":\"recording\""), "record: {reply}");
+    assert!(reply.contains("\"playing\":1"), "record: {reply}");
+    assert!(
+        reply.contains("\"monitor_frames\":0"),
+        "the monitor starts at zero: {reply}"
+    );
+
+    // Two takes at once are still impossible, and a refused take creates no
+    // file.
+    let other = TempFile::new("overdub-refused");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1}}",
+        other.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "second record: {reply}");
+    assert!(
+        reply.contains("a take is already running"),
+        "second record: {reply}"
+    );
+    assert!(!other.path.exists(), "a refused take created a file");
+
+    // `status` leads with the take and reports the monitor beside it, even
+    // after the monitor has reached the end of its file.
+    let status = client.wait_for_monitor_frames(2_400);
+    assert!(status.contains("\"state\":\"recording\""), "status: {status}");
+    assert!(status.contains("\"playing\":1"), "status: {status}");
+    assert_eq!(
+        json_number(&status, "monitor_frames"),
+        2_400.0,
+        "status: {status}"
+    );
+
+    // One stop ends and joins both roles.
+    let status = client.wait_for_frames();
+    assert!(status.contains("\"state\":\"recording\""), "status: {status}");
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"ok\":true"), "stop: {stopped}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    assert!(stopped.contains("\"playing\":1"), "stop: {stopped}");
+    let frames = json_number(&stopped, "frames");
+    assert!(frames > 0.0, "stop kept the take's frames: {stopped}");
+    assert_eq!(
+        json_number(&stopped, "monitor_frames"),
+        2_400.0,
+        "stop: {stopped}"
+    );
+    assert_wav(&take.path, frames as u64);
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn play_is_accepted_while_a_take_records() {
+    let server = Server::start("play-beside");
+    let mut client = server.connect();
+
+    let take = TempFile::new("play-beside-take");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    client.wait_for_frames();
+
+    let monitor = TempFile::new("play-beside-monitor");
+    write_silent_wav(&monitor.path, 2_400);
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"play\",\"files\":[\"{}\"]}}",
+        monitor.text()
+    ));
+    assert_eq!(reply, "{\"ok\":true,\"state\":\"playing\",\"files\":1}");
+
+    let status = client.wait_for_monitor_frames(2_400);
+    assert!(status.contains("\"state\":\"recording\""), "status: {status}");
+    assert!(status.contains("\"playing\":1"), "status: {status}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    assert!(stopped.contains("\"playing\":1"), "stop: {stopped}");
+    let frames = json_number(&stopped, "frames");
+    assert!(frames > 0.0, "stop kept the take's frames: {stopped}");
+    assert_eq!(
+        json_number(&stopped, "monitor_frames"),
+        2_400.0,
+        "stop: {stopped}"
+    );
+    assert_wav(&take.path, frames as u64);
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn record_is_accepted_while_a_playback_runs_and_two_playbacks_still_refuse() {
+    let server = Server::start("record-over");
     let mut client = server.connect();
 
     // Four long silent files: enough material that the playback thread is
-    // certainly still rendering while the next commands arrive.
-    let long = TempFile::new("play-long");
+    // likely still rendering while the next commands arrive.
+    let long = TempFile::new("record-over-long");
     write_silent_wav(&long.path, 48_000 * 30);
-    let files = format!(
-        "\"{0}\",\"{0}\",\"{0}\",\"{0}\"",
-        long.text()
-    );
-
+    let files = format!("\"{0}\",\"{0}\",\"{0}\",\"{0}\"", long.text());
     let reply = client.ask(&format!("{{\"cmd\":\"play\",\"files\":[{files}]}}"));
     assert_eq!(reply, "{\"ok\":true,\"state\":\"playing\",\"files\":4}");
 
-    // A second playback is refused while one runs.
+    // Two playbacks at once are still refused.
     let reply = client.ask(&format!(
         "{{\"cmd\":\"play\",\"files\":[\"{}\"]}}",
         long.text()
@@ -943,59 +1174,82 @@ fn a_playback_and_a_recording_refuse_each_other() {
         "second play: {reply}"
     );
 
-    // Recording while playing is out of scope: say so, and create no file.
-    let while_playing = TempFile::new("while-playing");
-    let reply = client.ask(&format!(
-        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1}}",
-        while_playing.text()
-    ));
-    assert!(reply.contains("\"ok\":false"), "record during play: {reply}");
-    assert!(
-        reply.contains("a playback is running"),
-        "record during play: {reply}"
-    );
-    assert!(
-        !while_playing.path.exists(),
-        "a refused record must not create a file"
-    );
-
-    // Let the playback reach the first block before stopping it, so the stop
-    // has frames to report rather than a race with the thread's start.
-    let status = client.wait_for_play_frames();
-    assert!(status.contains("\"files\":4"), "status: {status}");
-
-    let stopped = client.ask("{\"cmd\":\"stop\"}");
-    assert!(stopped.contains("\"state\":\"done\""), "stop play: {stopped}");
-    assert!(stopped.contains("\"files\":4"), "stop play: {stopped}");
-    let played = json_number(&stopped, "frames");
-    assert!(played > 0.0, "stop play: {stopped}");
-
-    // The other direction: a take is recording, so a playback is refused.
-    let long_take = TempFile::new("long-record");
+    // Recording over the running playback is the overdub, and the take keeps
+    // the playback alive rather than joining it.
+    let take = TempFile::new("record-over-take");
     let reply = client.ask(&format!(
         "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300}}",
-        long_take.text()
+        take.text()
     ));
-    assert!(reply.contains("\"ok\":true"), "record: {reply}");
-
-    let reply = client.ask(&format!(
-        "{{\"cmd\":\"play\",\"files\":[\"{}\"]}}",
-        long.text()
-    ));
-    assert!(reply.contains("\"ok\":false"), "play during record: {reply}");
+    assert!(reply.contains("\"ok\":true"), "record during play: {reply}");
     assert!(
-        reply.contains("a take is recording"),
-        "play during record: {reply}"
+        reply.contains("\"state\":\"recording\""),
+        "record during play: {reply}"
     );
+
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"state\":\"recording\""), "status: {status}");
+    assert!(status.contains("\"playing\":4"), "status: {status}");
     // Wait for the take to reach disk before stopping it, so `frames` is not a
     // race with the worker thread's start.
     client.wait_for_frames();
 
     let stopped = client.ask("{\"cmd\":\"stop\"}");
-    assert!(stopped.contains("\"state\":\"done\""), "stop record: {stopped}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    assert!(stopped.contains("\"playing\":4"), "stop: {stopped}");
     let frames = json_number(&stopped, "frames");
-    assert!(frames > 0.0, "stop record kept its frames: {stopped}");
-    assert_wav(&long_take.path, frames as u64);
+    assert!(frames > 0.0, "stop kept the take's frames: {stopped}");
+    assert!(
+        json_number(&stopped, "monitor_frames") > 0.0,
+        "stop kept the monitor's frames: {stopped}"
+    );
+    assert_wav(&take.path, frames as u64);
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_monitor_at_another_rate_is_refused_without_a_take() {
+    let server = Server::start("monitor-rate");
+    let mut client = server.connect();
+
+    let monitor = TempFile::new("monitor-rate-44k");
+    write_silent_wav_at(&monitor.path, 44_100, 441);
+    let take = TempFile::new("monitor-rate-take");
+
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1,\"monitor\":[\"{}\"]}}",
+        take.text(),
+        monitor.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "monitor rate: {reply}");
+    assert!(reply.contains("44100"), "monitor rate: {reply}");
+    assert!(reply.contains("48000"), "monitor rate: {reply}");
+    assert!(
+        !take.path.exists(),
+        "a refused overdub created the take file"
+    );
+
+    // The connection survives, and a monitor at the take's rate still runs.
+    let good = TempFile::new("monitor-rate-good");
+    write_silent_wav(&good.path, 480);
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1,\"monitor\":[\"{}\"]}}",
+        take.text(),
+        good.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "good monitor: {reply}");
+    let status = client.wait_for_done();
+    assert!(status.contains("\"state\":\"done\""), "status: {status}");
+    assert_wav(&take.path, 4_800);
 
     let reply = client.ask("{\"cmd\":\"quit\"}");
     assert_eq!(reply, "{\"ok\":true}");

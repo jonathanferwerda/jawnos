@@ -831,6 +831,142 @@ fn record_null_can_write_a_tone() {
     );
 }
 
+// --- overdub: --record with a monitor ---------------------------------------
+
+/// The loudest sample on each channel of a 16-bit stereo take.
+fn stereo_peaks(path: &std::path::Path) -> (i32, i32) {
+    let bytes = fs::read(path).expect("read the take");
+    let data = &bytes[44..];
+    let mut left = 0i32;
+    let mut right = 0i32;
+    for frame in data.chunks_exact(4) {
+        left = left.max(i16::from_le_bytes([frame[0], frame[1]]).unsigned_abs() as i32);
+        right = right.max(i16::from_le_bytes([frame[2], frame[3]]).unsigned_abs() as i32);
+    }
+    (left, right)
+}
+
+/// A silent 16-bit stereo WAV at an arbitrary rate, for the refusals that are
+/// about the monitor's shape rather than its samples.
+fn write_silent_wav_at(path: &std::path::Path, rate: u32, frames: u32) {
+    let data_len = frames * 4;
+    let mut bytes = Vec::with_capacity(44 + data_len as usize);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&rate.to_le_bytes());
+    bytes.extend_from_slice(&(rate * 4).to_le_bytes());
+    bytes.extend_from_slice(&4u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    bytes.resize(44 + data_len as usize, 0);
+    fs::write(path, bytes).expect("write the silent WAV");
+}
+
+#[test]
+fn a_monitor_plays_beside_the_take_and_never_enters_it() {
+    // The earlier take is silence; the new take records a 440 Hz sine. If the
+    // monitor were summed into the capture, the take would be a mix of the two.
+    let monitor = record_for_playback("overdub-silent", "0.05");
+    let take = TempTake::new("overdub-tone");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.2", "--tone", "440",
+        "--monitor", monitor.text(), "--out", take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "frames"), 9_600.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "playing"), 1.0, "stdout: {text}");
+    assert!(
+        json_number(&text, "monitor_frames") > 0.0,
+        "the monitor was not reported: {text}"
+    );
+    assert!(
+        !text.contains("monitor_error"),
+        "the monitor failed: {text}"
+    );
+
+    let (left, right) = stereo_peaks(&take.path);
+    assert!(
+        left > i16::MAX as i32 / 10,
+        "the take lost its input: peaks ({left}, {right})"
+    );
+}
+
+#[test]
+fn a_loud_monitor_stays_out_of_a_silent_take() {
+    // The monitor is loud and the capture is silent: any energy in the take
+    // would be the monitoring bus leaking into the recording.
+    let loud = TempTake::new("overdub-loud");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.05", "--tone", "440", "--out",
+        loud.text(), "--json",
+    ]);
+    assert!(out.status.success(), "the loud fixture failed");
+
+    let take = TempTake::new("overdub-silent-take");
+    // `--play --file` is the other spelling of `--monitor`.
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--play", "--file",
+        loud.text(), "--out", take.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "playing"), 1.0, "stdout: {text}");
+    assert_eq!(stereo_peaks(&take.path), (0, 0), "the monitor entered the take");
+}
+
+#[test]
+fn record_play_without_a_file_is_a_usage_error() {
+    let take = TempTake::new("overdub-no-file");
+    let out = run(&[
+        "--record", "--play", "--backend", "null", "--seconds", "0.1", "--out", take.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("--file"), "stderr: {text}");
+    assert!(!take.path.exists(), "a refused take created a file");
+}
+
+#[test]
+fn monitor_without_record_is_a_usage_error() {
+    let fixture = TempTake::new("monitor-no-record");
+    write_silent_wav_at(&fixture.path, 48_000, 480);
+    let out = run(&["--monitor", fixture.text(), "--backend", "null"]);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("--monitor"), "stderr: {text}");
+}
+
+#[test]
+fn a_monitor_at_another_rate_is_refused_before_the_take_exists() {
+    let monitor = TempTake::new("monitor-44k");
+    write_silent_wav_at(&monitor.path, 44_100, 441);
+    let take = TempTake::new("overdub-wrong-rate");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--monitor", monitor.text(),
+        "--out", take.text(), "--json",
+    ]);
+    assert_eq!(out.status.code(), Some(1), "the take must not run");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("\"ok\":false"), "stdout: {text}");
+    assert!(text.contains("44100"), "the refusal names the rate: {text}");
+    assert!(text.contains("48000"), "the refusal names the take's rate: {text}");
+    assert!(!take.path.exists(), "a refused take created a file");
+}
+
 // --- --play -----------------------------------------------------------------
 
 /// A take the engine recorded, for playback to read. `--record --backend null`

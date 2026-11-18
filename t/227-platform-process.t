@@ -120,7 +120,7 @@ SKIP: {
 # kill(0) still sees a child that has exited and not been reaped; running() must
 # not. That distinction is why the guard and the reaper ask different questions.
 SKIP: {
-	skip 'needs /proc to read a zombie state', 4 unless $linux;
+	skip 'needs /proc to read a zombie state', 6 unless $linux;
 	my $pid = fork();
 	die "fork: $!" unless defined $pid;
 	POSIX::_exit(0) if !$pid;
@@ -132,7 +132,18 @@ SKIP: {
 	ok(pid_exists($pid), 'kill 0 still sees the zombie');
 	ok(!running($pid), 'running is false for a zombie');
 	ok(!same_process($pid, start_time($pid)), 'a zombie is not a live process');
-	waitpid($pid, 0);
+	# Reap it from inside the state read. running() used to ask kill(0) first,
+	# so a pid reaped between that probe and the read came back "running" for a
+	# process that was already gone - the ~200ms flake in the live-tree block
+	# under load. Reaping is final, so the state read first settles it.
+	{
+		local *JawnOS::Platform::Process::state = sub {
+			waitpid($pid, POSIX::WNOHANG());
+			return '';
+		};
+		ok(!running($pid), 'a pid reaped inside the probe is not running');
+	}
+	is(pid_exists($pid), 0, 'and the reap really happened');
 }
 
 # ------------------------------------------------------------ a reaped pid
@@ -350,7 +361,7 @@ SKIP: {
 	my $grand = <$rd>;
 	close $rd;
 	chomp $grand if defined $grand;
-	ok(defined $grand && $grand =~ /^[0-9]+$/, 'the child reports its own child');
+	ok(defined $grand && $grand =~ /^[0-9]+$/ && $grand > 0, 'the child reports its own child');
 	my $found = tree($child);
 	ok(ref $found eq 'ARRAY' && grep({ $_ == ($grand || 0) } @{$found}),
 		'the ppid closure finds the grandchild');
@@ -358,8 +369,9 @@ SKIP: {
 	waitpid($child, 0);
 	# SIGKILL is instant; being reaped is not. The grandchild is reparented when its
 	# parent dies, so a loaded box can take seconds to notice - the 5s this waited
-	# for failed a --jobs 2 pass at load 6. The assertion is about the kill tree,
-	# not the scheduler.
+	# for failed a --jobs 2 pass at load 6. running() reads the state before
+	# kill(0), so a pid reaped mid-probe is no longer mistaken for live; the 20s
+	# bound is only for a tree that was genuinely not killed.
 	my $deadline = time + 20;
 	while (time < $deadline && running($grand)) {
 		sleep 0.02;

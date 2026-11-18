@@ -170,15 +170,29 @@ sub pid_exists {
 
 # Exists and is not a zombie. This is the right test for a supervisor: a killed
 # child is not working just because its pid answers.
+#
+# Read the state before asking kill(0), not after. With the existence probe
+# first, a process reaped between the two questions left an unreadable state,
+# which is not a zombie letter, and a pid that was already gone came back
+# "running": the ~200ms flake in t/227's kill-tree block under load. Reaping is
+# final, so the state read first settles it.
 sub running {
 	my ($pid) = @_;
+	# pid 0 addresses the caller's own process group, so `kill(0, 0)` answers
+	# yes for it: a value that cannot name a process is not a running one.
+	return 0 unless defined $pid && $pid =~ /\A[0-9]+\z/ && $pid > 0;
 	# Windows has no zombie state to detect: a pid is in the snapshot and
 	# answers CIM, or it is gone. Nothing lingers the way a POSIX zombie does.
 	return pid_exists($pid) if $^O eq 'MSWin32';
-	return 0 unless pid_exists($pid);
+	return 0 unless _is_pid($pid);
 	my $state = state($pid);
-	return 0 if $state eq 'Z' || $state eq 'X' || $state eq 'x';
-	return 1;
+	if ($state ne '') {
+		return 0 if $state eq 'Z' || $state eq 'X' || $state eq 'x';
+		return 1;
+	}
+	# No state to read. A platform without /proc still has kill(0) as its
+	# liveness answer; a pid reaped before this probe does not answer it.
+	return pid_exists($pid) ? 1 : 0;
 }
 
 # /proc/<pid>/stat's start time (field 22). It identifies the process rather
