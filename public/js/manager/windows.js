@@ -944,6 +944,21 @@ function windowTiledGapClose(win) {
 	windowTiledStepUp(slot, windowTiledStackId(win));
 }
 
+// A close takes the window out of its pile at the press, before the farewell
+// plays, so the windows below step into its place at once and a second press
+// lands on the next window instead of waiting out the motion. The window keeps
+// no slot, so the teardown's windowTiledGapClose finds nothing left to close.
+// A phone re-parks its pile after the removal and takes none of this.
+function windowTiledCloseSlot(win) {
+	if (windowPhoneChecker()) { return; }
+	win = $(win);
+	var slot = windowTiledSlot(win);
+	if (slot < 0) { return; }
+	var stack = windowTiledStackId(win);
+	win.removeAttr('tile').removeAttr('stack').removeAttr('stack_at');
+	windowTiledStepUp(slot, stack);
+}
+
 // A window dragged out of a stack leaves the tile: it floats where it was put,
 // and the windows below it close the slot it held. `float` marks it free (a drag
 // does; pinning takes it out of the tile without making it free), so a reload

@@ -252,10 +252,17 @@ function jawnosClockNavOpen() {
 	if (!nav.length) { return; }
 	nav.addClass('open').show();
 	jawnosClockNavPlace();
+	if (typeof jawnosWidgetPanelUnfold == 'function') {
+		jawnosWidgetPanelUnfold(nav, nav.attr('data-below') == '1');
+	}
 }
 
 function jawnosClockNavClose() {
-	$('#clock_nav').removeClass('open').hide();
+	var nav = $('#clock_nav');
+	var el = nav[0];
+	if (el && el.jawnosWidgetPanelEnd) { nav.off('animationend', el.jawnosWidgetPanelEnd); el.jawnosWidgetPanelEnd = null; }
+	if (el && el.jawnosWidgetPanelTimer) { clearTimeout(el.jawnosWidgetPanelTimer); el.jawnosWidgetPanelTimer = null; }
+	nav.removeClass('open jawnos_widget_panel_in').hide();
 }
 
 function jawnosClockNavToggle() {
@@ -299,6 +306,7 @@ function jawnosClockNavPlace() {
 		nav.css('max-height', Math.round(max_height2) + 'px');
 	}
 	nav.css(place);
+	nav.attr('data-below', below ? 1 : 0);
 }
 
 $(document).on('click', '#taskbar_clock', function (e) {

@@ -176,6 +176,10 @@ function closeWindow(timestamp, done) {
 		return;
 	}
 	var tearDown = function() { windowCloseTearDown(timestamp, win, done); };
+	// the pile reorients now, not when the farewell ends: the next window is in
+	// this one's place while the motion still plays, so a run of closes from the
+	// same spot lands on the next window each time
+	if (typeof windowTiledCloseSlot == 'function') { windowTiledCloseSlot(win); }
 	if (!(typeof jawnosWindowCloseEffect == 'function' && jawnosWindowCloseEffect(win, tearDown))) {
 		tearDown();
 	}

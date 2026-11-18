@@ -96,6 +96,12 @@ like($core, qr{/js/manager/taskbar_panel\.js}, 'the panel frame is in the core b
 like($css, qr/\.taskbar_panel\.open\s*\{\s*display:\s*flex/, 'the panel is shown by its open class');
 like($css, qr/\.taskbar_panel \.taskbar_panel_device/, 'a device row has a style');
 like($css, qr/\.taskbar_panel \.taskbar_panel_footer/, 'and so does the footer');
+like($panel, qr/function jawnosWidgetPanelUnfold/, 'a widget panel unfolds from the widget it answers');
+like($panel, qr/jawnosWindowMotionAllowed/, 'only when the desk wants motion');
+like($panel, qr/panel\.attr\('data-below', below \? 1 : 0\)/, 'the unfold origin follows the bar edge');
+like($css, qr/\.taskbar_panel\.jawnos_widget_panel_in,[\s\S]{0,80}#clock_nav\.jawnos_widget_panel_in/, 'the taskbar and clock panels share the unfold');
+like($css, qr/\@keyframes jawnos_widget_panel_in/, 'with the shell\'s own keyframes');
+like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,400}jawnos_widget_panel_in[\s\S]{0,80}animation: none/s, 'reduced motion puts the unfold away');
 
 like($sound, qr/jawnosTaskbarPanelToggle\('taskbar_sound_panel'/, 'the sound widget opens its panel');
 like($sound, qr/\.on\('wheel'/, 'a wheel over the sound widget is heard');

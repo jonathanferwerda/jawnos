@@ -4633,7 +4633,7 @@ body.dark_theme .jawnos_emerge_sheet {
 	border-radius: var(--window_radius, var(--jawnos-corner, 12px));
 	background: var(--window, var(--panel));
 	box-shadow: 0 18px 44px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.12);
-	will-change: left, top, width, height, opacity;
+	will-change: left, top, width, height, transform, opacity;
 }
 /* the frame is an overlay, as .wind::after is: it must not take layout room
    from the title bar, or the ghost's content would sit a border-width inside
@@ -4998,6 +4998,22 @@ body[data-window-effects="maximum"] {
 	100% { opacity: 0; transform: translateY(calc(var(--jm-menu-dy, -6px) * var(--jm-menu-lift, 1))) scale(var(--jm-menu-scale, .93)); }
 }
 
+/* A taskbar or dock widget's panel unfolds from the widget it answers, on the
+   same level's pace and scale as the start menu. taskbar_panel.js sets the
+   origin and direction on the panel (--jw-*) from the bar's edge; the clock's
+   menu wears the same class. An off or reduced-motion desk gets no class. */
+.taskbar_panel.jawnos_widget_panel_in,
+#clock_nav.jawnos_widget_panel_in {
+	transform-origin: var(--jw-origin-x, 100%) var(--jw-origin-y, 100%);
+	animation: jawnos_widget_panel_in var(--jm-menu-open, 165ms) cubic-bezier(.2,.9,.25,1.15);
+	will-change: transform, opacity;
+}
+@keyframes jawnos_widget_panel_in {
+	0% { opacity: 0; transform: translateY(calc(var(--jw-dy, 6px) * var(--jm-menu-lift, 1))) scale(var(--jm-menu-scale, .93)); }
+	55% { opacity: 1; }
+	100% { opacity: 1; transform: none; }
+}
+
 /* The bars slide at the level's pace, in the direction of their edge: the
    taskbar's autohide tuck is a transform along its own edge, and a row dock
    loses itself under (or above) the edge by its own offset. The ready class is
@@ -5040,6 +5056,8 @@ body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[positio
 @media (prefers-reduced-motion: reduce) {
 	#start_menu.jawnos_menu_unfold { animation: none; }
 	#start_menu.jawnos_menu_fold { animation: none; opacity: 0; }
+	.taskbar_panel.jawnos_widget_panel_in,
+	#clock_nav.jawnos_widget_panel_in { animation: none; }
 	/* the level rules above carry a class and an attribute; the ask for no
 	   motion is not a matter of who wrote last */
 	body #taskbar[autohide=on],

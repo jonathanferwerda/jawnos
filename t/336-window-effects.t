@@ -167,6 +167,8 @@ like($stack, qr/function windowCloseTearDown\(timestamp, win, done\) \{.*?\$\('#
 like($stack, qr/function closeWindow\(timestamp, done\) \{.*?jawnosWindowCloseEffect\(win, tearDown\)[\s\S]{0,40}?tearDown\(\);\s*\}/s,
 	'the close motion plays first, and effects off tears down at once');
 like($stack, qr/if \(win\.length && win\[0\]\.jawnosCloseToken\)/, 'a second close waits for the one in flight');
+like($stack, qr/windowTiledCloseSlot\(win\)/,
+	'the pile reorients at the press, so the next close lands on the next window');
 like($stack, qr/jawnosCloseWaits/, 'and its caller is called when the first finishes');
 
 # --- the levels, the physics and the hide/restore race ---------------------

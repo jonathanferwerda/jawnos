@@ -19,11 +19,12 @@
 // A press path that never produced a ghost (an effects level that is off, a
 // reduced-motion desk, or an opener that is not one of the four named controls)
 // keeps the older fallback: a plain sheet stretched from the control to the
-// window while the window fades in. Either way only the real window's opacity
-// and a tiny scale animate - its text is never squashed - and WebGL is not
-// used. The ghost does animate its own box (left/top/width/height) while it
-// grows, because a scaled chrome would distort the icon, the name and the
-// controls; it is one fixed element for a few hundred milliseconds.
+// window while the window fades in. Either way only opacity and a transform
+// animate - text is never squashed by a resize, and WebGL is not used. The
+// ghost is laid out at its predicted frame and grown by a transform back onto
+// the pressed control, so the growth rides the compositor and keeps moving
+// while a slow window's markup is built; it is one fixed element for a few
+// hundred milliseconds.
 
 // A press is good for a while: a lazy app's chunk, a server round trip and a
 // pile relayout all happen between the press and the window. An app-less press
@@ -829,6 +830,10 @@ function jawnosWindowEmergeGhostCancel(ghost) {
 		try { ghost.openAnim.cancel(); } catch (e) {}
 		ghost.openAnim = null;
 	}
+	if (ghost.pourTimer) {
+		clearTimeout(ghost.pourTimer);
+		ghost.pourTimer = null;
+	}
 	if (ghost.retargetAnim) {
 		try { ghost.retargetAnim.cancel(); } catch (e) {}
 		ghost.retargetAnim = null;
@@ -1065,7 +1070,21 @@ function jawnosWindowEmergeGhostStart(origin) {
 	// It does not take the pointer yet: it is still the control's own rectangle
 	// and the press that started it has not clicked. jawnosWindowEmergeGhostArm
 	// hands it the pointer once it has poured and the press is over.
-	jawnosEmergeBoxStyle(el, from);
+	//
+	// The box is laid out at its predicted frame from the start and the growth
+	// is a transform back onto the pressed control. A left/top/width/height
+	// animation is a layout animation: it freezes whenever the main thread is
+	// busy (a slow window's own insertion is exactly that), which read as the
+	// preview pausing two-thirds through. A transform rides the compositor and
+	// keeps moving while the window is built.
+	var grow_dx = from.left - to.left;
+	var grow_dy = from.top - to.top;
+	var grow_sx = (to.width > 0) ? (from.width / to.width) : 1;
+	var grow_sy = (to.height > 0) ? (from.height / to.height) : 1;
+	var grow_from = 'translate(' + grow_dx + 'px, ' + grow_dy + 'px) scale(' + grow_sx + ', ' + grow_sy + ')';
+	el.style.transformOrigin = '0 0';
+	el.style.transform = grow_from;
+	jawnosEmergeBoxStyle(el, to);
 
 	var chrome = jawnosWindowEmergeChrome(origin);
 	if (chrome) {
@@ -1073,7 +1092,7 @@ function jawnosWindowEmergeGhostStart(origin) {
 		el.appendChild(chrome);
 	}
 
-	var ghost = { el: el, chrome: chrome, app: origin.app || '', origin: origin, to: to, timer: null, openAnim: null, chromeAnim: null, win: null, waited: 0, at: Date.now(), poured: !el.animate, armed: false, armTimer: null };
+	var ghost = { el: el, chrome: chrome, app: origin.app || '', origin: origin, to: to, timer: null, openAnim: null, chromeAnim: null, win: null, waited: 0, at: Date.now(), poured: !el.animate, armed: false, armTimer: null, pourTimer: null };
 	document.body.appendChild(el);
 	jawnosWindowEmergeGhost = ghost;
 
@@ -1091,26 +1110,37 @@ function jawnosWindowEmergeGhostStart(origin) {
 	}
 
 	if (el.animate) {
+		// The growth runs longer than the level's `ghost` beat: a remote server
+		// can keep a window a third to half a second behind a local one, and a
+		// preview that reaches its frame and then stands still reads as a pause
+		// in the animation. The same ease still covers most of the distance
+		// quickly; the long tail keeps the box moving until the window lands,
+		// where the retarget takes it the rest of the way.
 		ghost.openAnim = el.animate([
-			{ left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px', borderRadius: from.radius + 'px', offset: 0 },
-			{ left: to.left + 'px', top: to.top + 'px', width: to.width + 'px', height: to.height + 'px', borderRadius: to.radius + 'px', offset: 1 }
+			{ transform: grow_from, offset: 0 },
+			{ transform: 'none', offset: 1 }
 		], {
-			duration: shape.ghost,
+			duration: Math.max(shape.ghost, Math.round(shape.ghost * 3)),
 			easing: 'cubic-bezier(.2,.85,.25,1)',
 			fill: 'both'
 		});
 	}
 	else {
+		el.style.transform = '';
+		el.style.transformOrigin = '';
 		jawnosEmergeBoxStyle(el, to);
 	}
 
-	// the preview has arrived when its box has finished growing out of the
-	// control; only then is a press on it a dismissal
-	if (ghost.openAnim && ghost.openAnim.finished && ghost.openAnim.finished.then) {
-		ghost.openAnim.finished.then(function () {
+	// The preview has poured once its box has had the level's own beat to grow
+	// out of the control; only then is a press on it a dismissal. This rides a
+	// timer, not the animation's finish, so the longer tail above does not keep
+	// the preview from taking the pointer.
+	if (el.animate) {
+		ghost.pourTimer = setTimeout(function () {
+			ghost.pourTimer = null;
 			ghost.poured = true;
 			jawnosWindowEmergeGhostArm(ghost);
-		}, function () {});
+		}, shape.ghost);
 	}
 
 	if (chrome && chrome.animate) {
@@ -1181,6 +1211,10 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 		try { ghost.openAnim.cancel(); } catch (e) {}
 		ghost.openAnim = null;
 	}
+	// the growth was a transform over a box already at the predicted frame;
+	// the retarget owns the box from here, so the fallback transform must go
+	el.style.transform = '';
+	el.style.transformOrigin = '';
 	if (ghost.chromeAnim) {
 		try { ghost.chromeAnim.cancel(); } catch (e) {}
 		ghost.chromeAnim = null;
@@ -1205,11 +1239,24 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 		|| Math.abs(through.height - from.height) > 0.5;
 	var duration = moved ? shape.retarget : Math.min(shape.retarget, 160);
 
-	jawnosEmergeBoxStyle(el, from);
+	// The preview's box has stayed at the predicted frame since the press (the
+	// growth was a transform from the control onto it). Retarget by animating
+	// that same transform to the one that maps the predicted box onto the real
+	// window, so the chrome never reflows and the retarget rides the compositor
+	// with the growth.
+	var base = ghost.to || { left: from.left, top: from.top, width: from.width, height: from.height };
+	if (!(base.width > 0) || !(base.height > 0)) {
+		base = { left: from.left, top: from.top, width: from.width, height: from.height };
+	}
+	jawnosEmergeBoxStyle(el, base);
+	var start_t = 'translate(' + (from.left - base.left) + 'px, ' + (from.top - base.top) + 'px) scale(' + (from.width / base.width) + ', ' + (from.height / base.height) + ')';
+	var end_t = 'translate(' + (through.left - base.left) + 'px, ' + (through.top - base.top) + 'px) scale(' + (through.width / base.width) + ', ' + (through.height / base.height) + ')';
+	el.style.transformOrigin = '0 0';
+	el.style.transform = start_t;
 	if (el.animate) {
 		ghost.retargetAnim = el.animate([
-			{ left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px', borderRadius: from.radius + 'px', opacity: 1, offset: 0 },
-			{ left: through.left + 'px', top: through.top + 'px', width: through.width + 'px', height: through.height + 'px', borderRadius: through.radius + 'px', opacity: 0, offset: 1 }
+			{ transform: start_t, opacity: 1, offset: 0 },
+			{ transform: end_t, opacity: 0, offset: 1 }
 		], {
 			duration: duration,
 			easing: 'ease-out',
@@ -1217,16 +1264,19 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 		});
 	}
 	else {
-		jawnosEmergeBoxStyle(el, through);
+		el.style.transform = end_t;
 		el.style.opacity = '0';
 	}
 
 	// The real window fades in over the same beat: no snap, and no moment when
-	// both are opaque enough to read as a double frame.
+	// both are opaque enough to read as a double frame. It fades only - a scale
+	// here would move its own edges (a 0.985 scale is ~5px at the foot of a
+	// phone window) while the preview is landing on the layout rect, which reads
+	// as the prediction sitting a few pixels high before the window catches up.
 	if (win_el.animate) {
 		win_el.jawnosEmergeWindowAnim = win_el.animate([
-			{ opacity: 0, transform: 'scale(0.985)', offset: 0 },
-			{ opacity: 1, transform: 'scale(1)', offset: 1 }
+			{ opacity: 0, offset: 0 },
+			{ opacity: 1, offset: 1 }
 		], {
 			duration: Math.max(140, duration),
 			easing: 'ease-out',
@@ -1267,8 +1317,8 @@ function jawnosWindowEmergeKeyframes(from, to, level) {
 			{ transform: 'translate(' + jawnosEmergeRound(dx) + 'px, ' + jawnosEmergeRound(dy) + 'px) scale(' + sx + ', ' + sy + ')', opacity: 0, offset: 1 }
 		],
 		window: [
-			{ opacity: 0, transform: 'scale(0.985)', offset: 0 },
-			{ opacity: 1, transform: 'scale(1)', offset: 1 }
+			{ opacity: 0, offset: 0 },
+			{ opacity: 1, offset: 1 }
 		]
 	};
 }

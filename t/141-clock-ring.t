@@ -38,6 +38,12 @@ like($ring, qr/var jawnosClockRingSeen = \{\};/,
 like($ring, qr/jawnosClockRingSeen\[uuid\]/,
 	'the per-window map still suppresses a duplicate notice for one alarm');
 
+# --- the clock's taskbar menu unfolds like a widget panel ----------------------
+like($ring, qr/function jawnosClockNavOpen\(\)[\s\S]{0,400}jawnosWidgetPanelUnfold\(nav/,
+	'the clock menu unfolds from its widget');
+like($ring, qr/nav\.attr\('data-below', below \? 1 : 0\)/,
+	'and from the bar edge it hangs on');
+
 # --- every machine draws the card, and stale rows do not close it --------------
 unlike($clock, qr/jawnosClockTargetsMe/,
 	'the ring backstop no longer asks whether this machine carries the alarm');

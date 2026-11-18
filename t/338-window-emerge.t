@@ -106,6 +106,9 @@ like($emerge, qr/function jawnosWindowEmergeCssRect\(/, 'a zoomed rectangle is p
 like($emerge, qr/function jawnosWindowEmerge\(win, origin\)/, 'the motion takes the window and an origin');
 like($emerge, qr/function jawnosWindowEmergeGhostStart\(origin\)/, 'the press can start a preview');
 like($emerge, qr/function jawnosWindowEmergeGhostRetarget\(/, 'the preview is retargeted to the real frame');
+like($emerge, qr/duration: Math\.max\(shape\.ghost, Math\.round\(shape\.ghost \* 3\)\)/,
+	'the preview growth keeps a long tail, so a slow window is never a dead stop');
+like($emerge, qr/ghost\.pourTimer = setTimeout\(/, 'the pointer is still handed over on the level\'s own beat');
 like($emerge, qr/function jawnosWindowEmergeGhostCancel\(/, 'the preview can be put away');
 like($emerge, qr/function jawnosWindowEmergePredict\(/, 'the frame is predicted from the cascade');
 like($emerge, qr/function jawnosWindowEmergeAppColour\(/, 'the real app colour is read, not guessed');
@@ -484,7 +487,8 @@ check('the overshoot frame travels 72% of 360x35',
 check('the sheet lands exactly on the window rect',
 	medium.sheet[2].transform === 'translate(360px, 35px) scale(5, 10)');
 check('the window starts invisible and ends natural',
-	medium.window[0].opacity === 0 && medium.window[1].opacity === 1);
+	medium.window[0].opacity === 0 && medium.window[1].opacity === 1
+	&& !('transform' in medium.window[0]) && !('transform' in medium.window[1]));
 const light = sandbox.jawnosWindowEmergeKeyframes(
 	{ left: 100, top: 200, width: 80, height: 30 }, to, 'light');
 const maximum = sandbox.jawnosWindowEmergeKeyframes(
@@ -551,11 +555,11 @@ rootZoom = 1.25;
 const zoom_icon = startIcon('clock_toggle', 'clock', '/images/clock.png', 'Clock', 125, 250, 100, 50);
 press(zoom_icon);
 const zoom_ghost = sandbox.jawnosWindowEmergeGhost;
+const zoom_grow = 'translate(' + (100 - zoom_ghost.to.left) + 'px, ' + (200 - zoom_ghost.to.top) + 'px) scale(' + (80 / zoom_ghost.to.width) + ', ' + (40 / zoom_ghost.to.height) + ')';
 check('a zoomed press rectangle is put into layout units',
-	!!zoom_ghost && zoom_ghost.el.animations[0].keys[0].left === '100px'
-	&& zoom_ghost.el.animations[0].keys[0].top === '200px'
-	&& zoom_ghost.el.animations[0].keys[0].width === '80px'
-	&& zoom_ghost.el.animations[0].keys[0].height === '40px');
+	!!zoom_ghost && zoom_ghost.el.animations[0].keys[0].transform === zoom_grow
+	&& zoom_ghost.el.style.transformOrigin === '0 0'
+	&& zoom_ghost.el.style.width === zoom_ghost.to.width + 'px');
 sandbox.jawnosWindowEmergeGhostCancel(zoom_ghost);
 advance(5000);
 rootZoom = 1;
@@ -695,17 +699,18 @@ check('the preview is the body-level ghost',
 	!!ghost && hasClass(ghost.el, 'jawnos_emerge_ghost'));
 check('and it takes no pointer while it pours out of the control',
 	!!ghost && !hasClass(ghost.el, 'jawnos_emerge_waiting'));
+const grow_expected = 'translate(' + (10 - ghost.to.left) + 'px, ' + (20 - ghost.to.top) + 'px) scale(' + (40 / ghost.to.width) + ', ' + (40 / ghost.to.height) + ')';
 check('it starts at the pressed control',
-	!!ghost && ghost.el.animations[0].keys[0].left === '10px'
-	&& ghost.el.animations[0].keys[0].top === '20px'
-	&& ghost.el.animations[0].keys[0].width === '40px');
-check('and grows to the predicted cascade frame',
-	!!ghost && ghost.el.animations[0].keys[1].left === '0px'
-	&& ghost.el.animations[0].keys[1].top === '40px'
-	&& ghost.el.animations[0].keys[1].width === '480px'
-	&& ghost.el.animations[0].keys[1].height === '640px');
+	!!ghost && ghost.el.animations[0].keys[0].transform === grow_expected
+	&& ghost.el.style.transformOrigin === '0 0');
+check('and is laid out at the predicted cascade frame',
+	!!ghost && ghost.el.style.left === ghost.to.left + 'px'
+	&& ghost.el.style.top === ghost.to.top + 'px'
+	&& ghost.el.style.width === ghost.to.width + 'px'
+	&& ghost.el.style.height === ghost.to.height + 'px'
+	&& ghost.el.animations[0].keys[1].transform === 'none');
 check('the preview growth follows the medium level',
-	!!ghost && ghost.el.animations[0].options.duration === 280);
+	!!ghost && ghost.el.animations[0].options.duration === 840);
 const chrome = !!ghost && findClass(ghost.el, 'jawnos_emerge_chrome');
 check('the preview already wears a window chrome', !!chrome);
 const bar = !!chrome && findClass(chrome, 'jawnos_emerge_bar');
@@ -772,12 +777,19 @@ check('an unknown app gets the neutral generic body',
 const win = new El('clock');
 win.rect = { left: 12, top: 44, width: 480, height: 640 };
 check('the window takes the preview', sandbox.jawnosWindowEmerge(win) === true);
-check('the real window fades in exactly once', win.animations.length === 1);
+check('the real window fades in exactly once',
+	win.animations.length === 1 && !('transform' in win.animations[0].keys[0])
+	&& !('transform' in win.animations[0].keys[1]));
 const retarget = ghost.el.animations[ghost.el.animations.length - 1];
+const retarget_end = 'translate(' + (12 - ghost.to.left) + 'px, ' + (44 - ghost.to.top) + 'px) scale(' + (480 / ghost.to.width) + ', ' + (640 / ghost.to.height) + ')';
 check('the preview is retargeted, not snapped',
-	retarget.keys.length === 2 && retarget.keys[1].left === '12px'
-	&& retarget.keys[1].top === '44px' && retarget.keys[1].width === '480px'
+	retarget.keys.length === 2 && retarget.keys[1].transform === retarget_end
+	&& retarget.keys[1].opacity === 0
 	&& retarget.keys[0].opacity === 1);
+check('the retarget keeps the predicted box and maps it to the real window',
+	ghost.el.style.left === ghost.to.left + 'px'
+	&& ghost.el.style.width === ghost.to.width + 'px'
+	&& ghost.el.style.transformOrigin === '0 0');
 check('the retarget follows the medium level', retarget.options.duration === 220);
 check('the real window is faded over the same beat', win.animations[0].options.duration === 220);
 const ghost_el = ghost.el;
@@ -800,10 +812,11 @@ enter_win.style.height = '640px';
 enter_win.rect = { left: 12, top: 44, width: 472.8, height: 630.4 };
 check('a window mid-enter still hands over its layout box',
 	sandbox.jawnosWindowEmerge(enter_win) === true);
+const enter_end = 'translate(' + (12 - scaled_ghost.to.left) + 'px, ' + (44 - scaled_ghost.to.top) + 'px) scale(' + (480 / scaled_ghost.to.width) + ', ' + (640 / scaled_ghost.to.height) + ')';
 const enter_target = scaled_ghost.el.animations[scaled_ghost.el.animations.length - 1].keys[1];
 check('the retarget lands on 480x640, not the 0.985 rect',
-	enter_target.left === '12px' && enter_target.top === '44px'
-	&& enter_target.width === '480px' && enter_target.height === '640px');
+	enter_target.transform === enter_end
+	&& scaled_ghost.el.style.width === '480px' && scaled_ghost.el.style.height === '640px');
 advance(1000);
 check('the mid-enter preview is put away', scaled_ghost_el.parentNode === null);
 
@@ -932,7 +945,7 @@ Object.keys(scales).forEach(function (name) {
 	const scaled = sandbox.jawnosWindowEmergeGhost;
 	const scaled_el = scaled.el;
 	check(name + ' scales the preview growth',
-		!!scaled && scaled.el.animations[0].options.duration === scales[name].ghost);
+		!!scaled && scaled.el.animations[0].options.duration === scales[name].ghost * 3);
 	const scaled_win = new El('clock');
 	scaled_win.rect = { left: 16, top: 48, width: 480, height: 640 };
 	sandbox.jawnosWindowEmerge(scaled_win);

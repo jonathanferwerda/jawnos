@@ -55,6 +55,43 @@ function jawnosTaskbarPanelPlace(panel, anchor_selector) {
 		place['top'] = 'auto';
 	}
 	panel.css(place);
+	// the unfold needs the edge the panel grew from; keep the answer on the
+	// panel so the open path does not have to measure the bars again
+	panel.attr('data-below', below ? 1 : 0);
+}
+
+// A widget's panel unfolds from the widget it answers, on the same level's
+// pace and scale as the start menu. The clock's menu (#clock_nav) is not a
+// .taskbar_panel but wears the same class, so both animate together. An off or
+// reduced-motion desk gets no class at all and keeps the plain show.
+function jawnosWidgetPanelUnfold(panel, below) {
+	panel = $(panel);
+	if (!panel.length) { return; }
+	var el = panel[0];
+	if (typeof jawnosWindowMotionAllowed != 'function' || !jawnosWindowMotionAllowed()) {
+		panel.removeClass('jawnos_widget_panel_in');
+		return;
+	}
+	el.style.setProperty('--jw-origin-x', '100%');
+	el.style.setProperty('--jw-origin-y', below ? '0%' : '100%');
+	el.style.setProperty('--jw-dy', below ? '-6px' : '6px');
+	if (el.jawnosWidgetPanelEnd) { panel.off('animationend', el.jawnosWidgetPanelEnd); el.jawnosWidgetPanelEnd = null; }
+	if (el.jawnosWidgetPanelTimer) { clearTimeout(el.jawnosWidgetPanelTimer); el.jawnosWidgetPanelTimer = null; }
+	panel.removeClass('jawnos_widget_panel_in');
+	void el.offsetWidth;   // a re-open must start the keyframes again
+	panel.addClass('jawnos_widget_panel_in');
+	var finish = function (ev) {
+		if (ev && ev.target !== el) { return; }
+		if (el.jawnosWidgetPanelTimer) { clearTimeout(el.jawnosWidgetPanelTimer); el.jawnosWidgetPanelTimer = null; }
+		panel.off('animationend', finish);
+		el.jawnosWidgetPanelEnd = null;
+		panel.removeClass('jawnos_widget_panel_in');
+	};
+	el.jawnosWidgetPanelEnd = finish;
+	panel.on('animationend', finish);
+	// a throttled tab may never send animationend; the ceiling is longer than
+	// any level's open
+	el.jawnosWidgetPanelTimer = setTimeout(function () { finish(); }, 600);
 }
 
 function jawnosTaskbarPanelIsOpen(id) {
@@ -68,11 +105,16 @@ function jawnosTaskbarPanelOpen(id, anchor_selector, build) {
 	panel.addClass('open').show();
 	jawnosTaskbarPanelOpenId = id;
 	jawnosTaskbarPanelPlace(panel, anchor_selector);
+	jawnosWidgetPanelUnfold(panel, panel.attr('data-below') == '1');
 }
 
 function jawnosTaskbarPanelClose() {
 	if (!jawnosTaskbarPanelOpenId) { return; }
-	$('#' + jawnosTaskbarPanelOpenId).removeClass('open').hide();
+	var panel = $('#' + jawnosTaskbarPanelOpenId);
+	var el = panel[0];
+	if (el && el.jawnosWidgetPanelEnd) { panel.off('animationend', el.jawnosWidgetPanelEnd); el.jawnosWidgetPanelEnd = null; }
+	if (el && el.jawnosWidgetPanelTimer) { clearTimeout(el.jawnosWidgetPanelTimer); el.jawnosWidgetPanelTimer = null; }
+	panel.removeClass('open jawnos_widget_panel_in').hide();
 	jawnosTaskbarPanelOpenId = null;
 }
 

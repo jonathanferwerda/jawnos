@@ -70,6 +70,9 @@ like($windows, qr/windowPlaceRestore\(\$\('#' \+ window_id\)\)/, 'the open path 
 # the windows in whatever order their responses arrive: a slot kept on the window
 # is what lets the stack act on the right windows either way.
 like($stack, qr/windowTiledGapClose\(win\)/, 'closing a window steps the tiled windows below it up');
+like($stack, qr/windowTiledCloseSlot\(win\)/, 'and it does so when the close is pressed, before the farewell plays');
+like($windows, qr/function windowTiledCloseSlot\(win\)[\s\S]{0,600}win\.removeAttr\('tile'\)[\s\S]{0,200}windowTiledStepUp\(slot, stack\)/,
+	'the press-time closer drops the slot and steps the pile up');
 like($windows, qr/function windowTiledGapClose\(win\) \{\n\tif \(windowPhoneChecker\(\)\) \{ return; \}/,
 	'the gap closer leaves a phone to its own pile');
 like($windows, qr/slot \* windowTileAcrossStep/, 'a window is placed with the tile across step');
@@ -522,6 +525,21 @@ eq(closed[1].style.left, '50px', 'and keeps its step across');
 eq(closed[3].style.top, 80, 'the window below steps up one bar');
 eq(closed[3].style.left, 100, 'and across one step');
 eq(closed[3].attr('tile'), '2', 'and its slot comes down with it');
+
+// The same close, but taken at the press: the window gives up its slot at once,
+// so the next close in the same spot lands on the window that stepped up, and
+// the teardown has nothing left to close.
+let closing = desk([
+	{ id: 'window_a', top: 0, left: 0 },
+	{ id: 'window_b', top: 40, left: 50 },
+	{ id: 'window_c', top: 80, left: 100 },
+	{ id: 'window_d', top: 120, left: 150 }
+]);
+ctx.windowTiledCloseSlot('#window_c');
+eq(closing[3].style.top, 80, 'the press steps the window below up at once');
+eq(closing[2].attr('tile'), undefined, 'the closing window gives up its slot');
+ctx.windowTiledGapClose('#window_c');
+eq(closing[3].style.top, 80, 'the teardown finds no slot left to close');
 
 let pinned_closed = desk([
 	{ id: 'window_a', pinned: true, top: 20, left: 20 },
