@@ -354,13 +354,8 @@ function studioRevealPedal(name) {
 		});
 	}
 	if (!pedal.length) { return; }
-	var board = $('#pedalboard');
 	var scroller = $('#studio_pedalboard_pedals');
-	if (!board.is(':visible')) {
-		board.show();
-		var z = numeral($('#studio_viewer').closest('.wind').css('z-index')).value() || 0;
-		board.css({ 'z-index': (z + 100) });
-	}
+	studioPedalboardOpen(true);
 	var left = pedal.position().left + scroller.scrollLeft() - 40;
 	scroller.stop().animate({ scrollLeft: Math.max(0, left) }, 200);
 	pedal.addClass('pedal_revealed');
@@ -374,19 +369,20 @@ $(document).on('click', '#studio_new', function() {
 	$('#studio_song_select').val('none');
 });
 
-$(document).on('click', '#pedalboard_hamburger', function() {
-	var pd = $('#pedalboard');
+// One path for the Pedals button, the transport's old burger, the FX button and
+// a channel badge: the sheet's visibility and its button stay in step.
+function studioPedalboardOpen(show) {
+	var board = $('#pedalboard');
+	if (show === undefined) { show = !board.is(':visible'); }
+	show = !!show;
+	if (show) { board.show(); }
+	else { board.hide(); }
+	$('#studio_pedals').attr('aria-pressed', show ? 'true' : 'false');
+	return show;
+}
 
-	if (pd.is(':visible')) {
-		pd.hide();
-	}
-	else {
-		pd.show();
-		// keep the tray above the mixer (the old code did string maths on the
-		// window's z-index, which produced values like "auto10")
-		var z = numeral($('#studio_viewer').closest('.wind').css('z-index')).value() || 0;
-		pd.css({ 'z-index': (z + 100) });
-	}
+$(document).on('click', '#studio_pedals, #pedalboard_hamburger', function () {
+	studioPedalboardOpen();
 });
 
 $(document).on('click', '#studio_toggle', function() {

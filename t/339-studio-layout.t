@@ -100,16 +100,27 @@ like($style, qr/#studio_mixer_strips[\s\S]*overflow-x: auto/, 'the strips scroll
 like($style, qr/#studio_controls\s*\{[^}]*right:\s*0/s,
 	'the transport controls use the panel width instead of reserving a wheel rail');
 
-# --- the pedalboard can be closed -------------------------------------------
+# --- the pedalboard is a bottom sheet, opened from the layout bar ----------
 like($markup, qr/id="studio_pedalboard_close"/, 'the pedalboard has a close control');
-like($layout, qr/'#studio_pedalboard_close'[\s\S]*pedalboard'\)\.hide/, 'the close control hides the pedalboard');
-
-# --- the pedalboard is a docked row, not an overlay -------------------------
+like($edit, qr/function studioPedalboardOpen\(show\)/, 'one open/close path serves every control');
+like($edit, qr/\$\('#studio_pedals'\)\.attr\('aria-pressed'/, 'the Pedals button follows the sheet');
+like($edit, qr/'#studio_pedals, #pedalboard_hamburger'/, 'the Pedals button and the old burger both toggle it');
+like($layout, qr/'#studio_pedalboard_close'[\s\S]*studioPedalboardOpen\(false\)/, 'the close control hides the sheet');
+like($layout, qr/if \(open\) \{ studioPedalboardOpen\(true\); \}/, 'FX opens the sheet through the same path');
+like($edit, qr/studioPedalboardOpen\(true\);[\s\S]*scroller\.scrollLeft/, 'a channel badge opens the sheet and scrolls to the pedal');
+like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_pedals"[^>]*hint="[^"]*Open or close the pedalboard/,
+	'the Pedals button sits in the layout bar');
+like($markup, qr/id="studio_pedals"[^>]*aria-pressed="false"/, 'the Pedals button starts closed');
+like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_config_toggle"[\s\S]*id="studio_loop"[\s\S]*id="studio_grid"/,
+	'Configure and Loop moved into the layout bar');
+like($markup, qr/top:190px[\s\S]*id="pedalboard_hamburger"/, 'the old burger stays in the transport');
+like($style, qr/#pedalboard\s*\{[^}]*position:\s*absolute/s, 'the pedalboard is a sheet, not a flex row');
+like($style, qr/#pedalboard\s*\{[^}]*left:\s*0[^}]*right:\s*0[^}]*bottom:\s*0/s, 'the sheet pins to the window foot');
+like($style, qr/#pedalboard\s*\{[^}]*z-index:\s*70002/s, 'the sheet floats above the panels and floats');
+like($style, qr/#pedalboard\s*\{[^}]*background-color:\s*#3c200c/s, 'the sheet is opaque');
 like($markup, qr/class="studio_pedalboard_bar"[\s\S]*id="studio_pedalboard_close"/,
-	'the close control sits in the dock\'s own bar');
+	'the close control sits in the sheet\'s own bar');
 like($markup, qr/id="studio_pedalboard_pedals"/, 'the tiles live in their own scroller');
-like($style, qr/#pedalboard\s*\{[^}]*position:\s*relative/s, 'the pedalboard is docked, not absolute');
-unlike($style, qr/#pedalboard\s*\{[^}]*position:\s*absolute/s, 'the overlay positioning is gone');
 like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*position:\s*static/s, 'the flex row is static inside the dock');
 like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*display:\s*flex/s, 'the tiles are a flex row');
 like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*overflow:\s*auto/s, 'the row scrolls sideways and, only if it must, down');
@@ -302,6 +313,9 @@ like($help, qr/Hide the transport/, 'help names the transport hide toggle');
 like($help, qr/Hide the track listing/, 'help names the track hide toggle');
 like($help, qr/Dock the tracks/, 'help names the Dock control');
 like($help, qr/Close the pedalboard/, 'help names the pedalboard close');
+like($help, qr/Open or close the pedalboard/, 'help names the Pedals button');
+like($help, qr/The Pedals button in the layout bar opens the pedalboard as a 170px sheet/,
+	'help describes the sheet over the console');
 like($help, qr/Every track has a compact panel/, 'help describes the per-track panel');
 like($help, qr/Drag to resize this panel/, 'help names the floated panel resize grip');
 like($help, qr/pack into a two-column grid/, 'help describes the packing grid');

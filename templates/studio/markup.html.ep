@@ -16,8 +16,9 @@
 	<%# Jtune is artwork for the same effect, but Autotune keeps its own text tile:
 	   either lamp switches the same insert, so both read the one state. %>
 	<% delete $shelf_has{'autotune'}; %>
-	<%# The pedalboard is a docked row at the foot of the window, not an overlay:
-	   its own bar carries Close, and the tiles scroll sideways inside it. %>
+	<%# The pedalboard is a bottom sheet over the foot of the window: it floats
+	   above the console instead of taking a grid row, its own bar carries
+	   Close, and the tiles scroll inside it. %>
 	<div id="pedalboard" style="display:none;">
 		<div class="studio_pedalboard_bar">
 			<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
@@ -83,6 +84,12 @@
 		   the timeline under it, the synth left and the console right at the
 		   foot. On a narrow window every panel stacks instead. %>
 		<button id="studio_arrange" class="hover" hint="<%= &subs::ui('Arrange the panels') %>"><%= &subs::ui('Arrange') %></button>
+		<%# Always in reach, whatever the transport's height: it opens the bottom
+		   sheet, and Configure and Loop live here too so a short transport does
+		   not hide them. The transport keeps its burger for the old layout. %>
+		<button id="studio_pedals" class="hover" aria-pressed="false" hint="<%= &subs::ui('Open or close the pedalboard') %>"><%= &subs::ui('Pedals') %></button>
+		<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
+		<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Loop" class="little_thumb hover" id="studio_loop">
 		<button class="studio_hide_toggle hover" data-panel="mixer" data-setting="hide_channel_strips" data-hide-label="Hide strips" data-show-label="Show strips" aria-pressed="false" hint="<%= &subs::ui('Hide the channel strips') %>"><%= &subs::ui('Hide strips') %></button>
 		<button class="studio_float_toggle hover" data-panel="mixer" hint="<%= &subs::ui('Float the channel strips') %>"><%= &subs::ui('Float strips') %></button>
 		<button class="studio_hide_toggle hover" data-panel="transport" data-setting="hide_transport" data-hide-label="Hide transport" data-show-label="Show transport" aria-pressed="false" hint="<%= &subs::ui('Hide the transport') %>"><%= &subs::ui('Hide transport') %></button>
@@ -273,8 +280,6 @@
 			<span style="left:2px;top:190px;position:absolute;">
 				<img class="little_thumb hover video_toggle" hint="Camera" id="studio_video_toggle" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
 				<img class="little_thumb hover" hint="Pedalboard" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" id="pedalboard_hamburger">
-				<img class="little_thumb hover" hint="Configure" src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" id="studio_config_toggle">
-				<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Loop" class="little_thumb hover" id="studio_loop">
 			</span>
 			<span style="left:2px;top:240px;position:absolute;">
 				<span id="studio_time_display">

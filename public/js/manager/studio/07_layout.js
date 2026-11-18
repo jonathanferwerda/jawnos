@@ -577,7 +577,7 @@ $(document).on('click', '#studio_synth_hide', function () { studioSetPanelHidden
 $(document).on('click', '#studio_synth_show', function () { studioSetPanelHidden('synth', false, true); });
 
 $(document).on('click', '#studio_pedalboard_close', function () {
-	$('#pedalboard').hide();
+	studioPedalboardOpen(false);
 });
 
 // ---- the dynamic track list ------------------------------------------------
@@ -873,9 +873,5 @@ $(document).on('click', '.studio_track_fx', function () {
 	$('#studio_track_row_' + ch).toggleClass('studio_fx_open', open);
 	studioRackRender(ch);
 	studioPaletteLabel();
-	if (open && !$('#pedalboard').is(':visible')) {
-		$('#pedalboard').show();
-		var z = numeral($('#studio_viewer').closest('.wind').css('z-index')).value() || 0;
-		$('#pedalboard').css({ 'z-index': (z + 100) });
-	}
+	if (open) { studioPedalboardOpen(true); }
 });

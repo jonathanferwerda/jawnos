@@ -15,19 +15,21 @@
 		background: brown;
 		overflow: hidden;
 	}
-	/* The pedalboard is a docked row at the foot of the window, never an overlay:
-	   its own bar holds Close and the tiles scroll sideways in the row below it. */
+	/* The pedalboard is a bottom sheet over the console, not a grid row: opening
+	   it never shrinks the arranged timeline and it cannot be pushed off the
+	   window. Its own bar holds Close and the tiles scroll inside it. */
 	#pedalboard {
-		position: relative;
-		order: 3;
-		flex: 0 0 auto;
-		min-height: 0;
-		/* the bar (20px) plus the 140px tiles and a thin scrollbar: 170px, so
-		   the arranged grid still keeps its timeline on a 600px-tall window */
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 70002;
+		/* the bar (20px) plus the 140px tiles and a thin scrollbar: 170px */
 		max-height: 170px;
 		overflow: hidden;
-		background-color: rgba(60, 32, 12, 0.97);
+		background-color: #3c200c;
 		border-top: 3px solid #2a1608;
+		box-shadow: 0 -6px 18px rgba(0, 0, 0, .45);
 		box-sizing: border-box;
 	}
 	.studio_pedalboard_bar {
