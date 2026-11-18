@@ -163,7 +163,7 @@ like($markup, qr/class="studio_rack_led studio_pedal_led"/, 'a rack row carries 
 like($markup, qr/class="pedal pedal_text"[\s\S]*class="studio_pedal_led"/,
 	'a palette text tile carries the lamp too');
 like($rack, qr/function studioUpdatePedalLamps\(\)/, 'one function paints every lamp');
-like($rack, qr/ins\.bypassed \? 'false' : 'true'/, 'a rack lamp reads the insert\'s bypass');
+like($rack, qr/var on = !ins\.bypassed;\n\trow\.find\('\.studio_rack_led'\)\.attr\(\{\n\t\t'aria-pressed': on \? 'true' : 'false'/, 'a rack lamp reads the insert\'s bypass');
 like($rack, qr/var ins = studioPedalInsert\(ch, name\);/, 'a tile reads the selected track\'s insert');
 like($rack, qr/if \(!ins\) \{ studioSetInsert\(ch, name, true\); \}/,
 	'an absent effect is switched on from its lamp');
@@ -174,15 +174,32 @@ like($rack, qr/#pedalboard \.studio_pedal_led/, 'the shelf lamps are clickable')
 like($rack, qr/'\.studio_rack_led,/, 'the rack lamps are clickable');
 like($knobs, qr/studioTogglePedal\(studioPaletteChannel\(\), effect\);/,
 	'a shelf footswitch toggles the same insert as its lamp');
+like($style, qr/\.studio_pedal_led\s*\{[^}]*width:\s*14px/s, 'the lamp is 14px wide');
+like($style, qr/\.studio_pedal_led\s*\{[^}]*height:\s*14px/s, 'the lamp is 14px tall');
 like($style, qr/\.studio_pedal_led\s*\{[^}]*border-radius:\s*50%/s, 'the lamp is round');
-like($style, qr/\.studio_pedal_led\[aria-pressed="true"\]\s*\{[^}]*background:\s*#39d353/s,
-	'green is the on state');
-like($style, qr/\.studio_pedal_led\s*\{[^}]*background:\s*#6b1111/s, 'dark red is the off state');
+like($style, qr/\.studio_pedal_led\[aria-pressed="true"\]\s*\{[^}]*background:\s*#35e05a/s,
+	'bright green is the on state');
+like($style, qr/\.studio_pedal_led\[aria-pressed="true"\]\s*\{[^}]*box-shadow:\s*0 0 10px #35e05a/s,
+	'the on lamp carries a soft glow');
+like($style, qr/\.studio_pedal_led\s*\{[^}]*background:\s*#5a1010/s, 'dark red is the off state');
+like($style, qr/\.studio_pedal_led\s*\{[^}]*0 0 0 1px rgba\(255, 255, 255, \.3\)/s,
+	'the off lamp keeps a pale ring so it stays visible');
+like($style, qr/\.studio_rack_off \.studio_rack_led\s*\{\s*opacity:\s*1/s,
+	'a bypassed row does not dim its lamp');
+like($rack, qr/function studioPedalLampLabel\(on\)/, 'the lamp label names its state');
+like($rack, qr/studioLayoutText\(on \? 'On for this track' : 'Off for this track'\)/,
+	'the label says On or Off for this track');
+like($rack, qr/title: studioPedalLampLabel\(on\)/, 'a rack lamp sets its browser title');
+like($rack, qr/hint: studioPedalLampLabel\(on\)/, 'a rack lamp sets the house hint too');
+like($rack, qr/title: label,[\s\S]*?hint: label/s, 'a shelf lamp sets title and hint from its state');
+like($markup, qr/class="studio_pedal_led" role="button" aria-pressed="false" title="[^"]*Off for this track/,
+	'a shelf lamp starts with an Off title');
 
 # --- every tile is one height -----------------------------------------------
-like($style, qr/\.pedal\s*\{[^}]*height:\s*187px/s, 'an artwork pedal is 187px tall');
+like($style, qr/\.pedal\s*\{[^}]*height:\s*140px/s, 'an artwork pedal is 140px tall');
 like($style, qr/\.pedal_text\s*\{/, 'a palette tile is styled from the same box');
 like($markup, qr/class="pedal pedal_text"/, 'the palette\'s text tiles are pedal tiles');
+like($markup, qr/delete \$shelf_has\{'autotune'\}/, 'Autotune keeps its own text tile even though Jtune shares its effect');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork is contained, not cropped');
 
 # --- the help topic speaks in the pedalboard's words ------------------------

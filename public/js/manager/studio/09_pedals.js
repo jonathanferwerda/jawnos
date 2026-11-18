@@ -27,7 +27,12 @@ function studioRackRow(ch, ins) {
 	else {
 		row.find('.studio_rack_bypass').text(studioLayoutText('On')).attr('aria-pressed', 'false');
 	}
-	row.find('.studio_rack_led').attr('aria-pressed', ins.bypassed ? 'false' : 'true');
+	var on = !ins.bypassed;
+	row.find('.studio_rack_led').attr({
+		'aria-pressed': on ? 'true' : 'false',
+		title: studioPedalLampLabel(on),
+		hint: studioPedalLampLabel(on)
+	});
 
 	var controls = row.find('.studio_rack_controls');
 	if (spec && spec['controls']) {
@@ -148,6 +153,11 @@ function studioPedalInsert(ch, name) {
 	return found;
 }
 
+// The lamp's label says the state in words, not just the colour.
+function studioPedalLampLabel(on) {
+	return studioLayoutText(on ? 'On for this track' : 'Off for this track');
+}
+
 function studioUpdatePedalLamps() {
 	var ch = studioPaletteChannel();
 	// the shelf and the palette's text tiles
@@ -156,7 +166,12 @@ function studioUpdatePedalLamps() {
 		var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
 		var ins = studioPedalInsert(ch, name);
 		var on = !!(ins && !ins.bypassed);
-		tile.find('.studio_pedal_led').attr('aria-pressed', on ? 'true' : 'false');
+		var label = studioPedalLampLabel(on);
+		tile.find('.studio_pedal_led').attr({
+			'aria-pressed': on ? 'true' : 'false',
+			title: label,
+			hint: label
+		});
 		tile.find('.studio_pedal_foot').attr('aria-pressed', on ? 'true' : 'false')
 			.text(studioLayoutText(on ? 'On' : 'Off'));
 	});
@@ -164,7 +179,13 @@ function studioUpdatePedalLamps() {
 	$('.studio_rack_row').each(function () {
 		var row = $(this);
 		var ins = studioRackFind(row.attr('channel'), row.attr('insert'));
-		row.find('.studio_rack_led').attr('aria-pressed', (ins && !ins.bypassed) ? 'true' : 'false');
+		var on = !!(ins && !ins.bypassed);
+		var label = studioPedalLampLabel(on);
+		row.find('.studio_rack_led').attr({
+			'aria-pressed': on ? 'true' : 'false',
+			title: label,
+			hint: label
+		});
 	});
 }
 

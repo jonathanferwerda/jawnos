@@ -26,7 +26,7 @@
 		<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
 			<span id="pedal_<%= $p->{'name'} %>" class="pedal" data-effect="<%= $p->{'name'} %>">
 				<% my $ch = $p->{'name'}; %>
-				<span class="studio_pedal_led" role="button" aria-pressed="false" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
+				<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
 				<img class="pedal_background" hint="<%= $p->{'name'} %>" src="<%= &subs::icon_for('/images/studio/' . $p->{'image'} . '.png') %>">
 				<% foreach my $k ( @{$p->{'knobs'}} ) { %>
 					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
@@ -51,10 +51,10 @@
 			</span>
 		<% } %>
 			<%# Palette effects with no artwork of their own are text tiles at the same
-			   187px height, so every tile in the row lines up. %>
+			   140px height, so every tile in the row lines up. %>
 			<% foreach my $name ( @{$gb::studio->{'palette'}} ) { next if $shelf_has{$name}; %>
 				<span id="pedal_<%= $name %>" class="pedal pedal_text" data-effect="<%= $name %>">
-					<span class="studio_pedal_led" role="button" aria-pressed="false" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
+					<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
 					<b class="studio_pedal_name"><%= &subs::ui($gb::studio->{'effects'}->{$name}->{'label'}) %></b>
 					<button class="studio_pedal_foot hover" effect="<%= $name %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
 				</span>
@@ -67,7 +67,7 @@
 	<div id="studio_rack_template" class="studio_rack_template" aria-hidden="true">
 		<div class="studio_rack_row">
 			<span class="studio_rack_handle" hint="<%= &subs::ui('Drag to reorder this effect') %>">=</span>
-			<span class="studio_rack_led studio_pedal_led" role="button" aria-pressed="false" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
+			<span class="studio_rack_led studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
 			<span class="studio_rack_name"></span>
 			<button class="studio_rack_bypass hover" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
 			<button class="studio_rack_up hover" hint="<%= &subs::ui('Move this effect earlier in the chain') %>"><%= &subs::ui('Up') %></button>

@@ -112,12 +112,14 @@ like($style, qr/#pedalboard\s*\{[^}]*position:\s*relative/s, 'the pedalboard is 
 unlike($style, qr/#pedalboard\s*\{[^}]*position:\s*absolute/s, 'the overlay positioning is gone');
 like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*position:\s*static/s, 'the flex row is static inside the dock');
 like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*display:\s*flex/s, 'the tiles are a flex row');
-like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*overflow-x:\s*auto/s, 'the row scrolls sideways');
-like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*overflow-y:\s*hidden/s, 'the row never scrolls vertically');
+like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*overflow:\s*auto/s, 'the row scrolls sideways and, only if it must, down');
+like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*scrollbar-width:\s*thin/s, 'the scrollbar is thin enough for the tile budget');
 like($style, qr/\.pedal\s*\{[^}]*flex:\s*0 0 auto/s, 'a tile keeps its width in the row');
 like($style, qr/\.pedal\s*\{[^}]*position:\s*relative/s, 'a tile is positioned in the row');
 like($style, qr/\.pedal\s*\{[^}]*left:\s*auto/s, 'the fixed left offset is gone');
-like($style, qr/\.pedal\s*\{[^}]*height:\s*187px/s, 'every tile is 187px tall');
+like($style, qr/\.pedal\s*\{[^}]*height:\s*140px/s, 'every tile is 140px tall');
+like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*170px/s, 'the dock fits a 600px-tall window');
+like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*max-height:\s*150px/s, 'the tile row keeps within the dock');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork fits inside the tile');
 unlike($markup, qr/count\s*\*\s*175/, 'no tile is placed by counted pixels');
 
@@ -160,14 +162,16 @@ like($style, qr/#studio_grid\.studio_arranged > #studio_tracks_panel\s*\{[^}]*gr
 	'the timeline owns the middle area');
 like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*grid-area:\s*mixer !important/s,
 	'the console owns the bottom area');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) minmax\(0,\s*45%\)/s,
-	'the console row is capped at 45% of the grid');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/s,
+	'the console row is auto rather than eating the timeline');
 like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?overflow-y:\s*auto/s,
 	'a very short arranged window scrolls the grid instead of clipping an area');
-like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*max-height:\s*140px/s,
+like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*max-height:\s*132px/s,
 	'the console keeps its compact auto height');
-like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*height:\s*\d+px/s,
-	'the transport keeps only its own height');
+like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*height:\s*96px/s,
+	'the transport takes 96px, not a whole equal row');
+like($style, qr/#studio_grid\.studio_arranged_compact > #studio_transport_panel\s*\{[^}]*height:\s*88px/s,
+	'the compact transport is shorter still');
 like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
 	'the compact arranged grid is one column');
 like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto auto/s,
