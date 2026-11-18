@@ -239,7 +239,7 @@ die "fixture repo is not isolated: $fixture_top\n" unless $trc == 0 && defined $
 	make_path("$primary/.git-hooks");
 	write_file("$primary/.git-hooks/pre-push", <<'SH');
 #!/bin/sh
-printf 'HOOK-RAN JAWNOS_SUITE_ALREADY_RUN=%s\n' "${JAWNOS_SUITE_ALREADY_RUN:-unset}" >> "$AGENT_LAND_TEST_DIR/hook"
+printf 'HOOK-RAN JAWNOS_SUITE_ALREADY_RUN=%s JAWNOS_OWNER_HAND_LAND=%s\n' "${JAWNOS_SUITE_ALREADY_RUN:-unset}" "${JAWNOS_OWNER_HAND_LAND:-unset}" >> "$AGENT_LAND_TEST_DIR/hook"
 exit 0
 SH
 	chmod 0755, "$primary/.git-hooks/pre-push" or die "chmod hook: $!";
@@ -414,6 +414,8 @@ subtest 'a clean branch lands, bumps, pushes and updates the primary' => sub {
 		'the restart names the landed version');
 	like(read_file("$f->{'marker'}/hook"), qr/HOOK-RAN JAWNOS_SUITE_ALREADY_RUN=1/,
 		'the push reaches the hook and tells it the suite already ran');
+	like(read_file("$f->{'marker'}/hook"), qr/JAWNOS_OWNER_HAND_LAND=1/,
+		"and marks the push as the owner's hand-land, so the main rule lets it through");
 	like($out, qr/backing up agent\/task to origin\/agent\/task/,
 		'the branch is backed up to origin before the gate is taken');
 	my ($brev) = git($f->{'origin'}, 'rev-parse', '--verify', 'refs/heads/agent/task');

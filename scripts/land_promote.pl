@@ -214,6 +214,9 @@ exit 0;
 sub push_tested {
 	my ($cwd, $spec) = @_;
 	local $ENV{'JAWNOS_SUITE_ALREADY_RUN'} = 1;
+	# The pre-push hook lets only the promoter (and agent_land.pl, the owner's
+	# hand-land) move main; name ourselves so it does not refuse the release.
+	local $ENV{'JAWNOS_LAND_PROMOTE'} = 1;
 	return git_in($cwd, 'push', 'origin', $spec);
 }
 

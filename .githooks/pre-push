@@ -55,6 +55,32 @@ if [ "${PERL_ENV_OK:-1}" -ne 0 ] || [ -z "${PERL:-}" ]; then
 	exit 1
 fi
 
+# --- main moves only through the promoter, or the owner's hand-land ---
+# The refs are read once, because two passes need them. A stray
+# `git push origin HEAD:main`, or a queue or caller that defaulted to main, is
+# how v0.1.3290 put a second commit on the stable branch and broke the
+# fast-forward promotion. The push that owns the move says so:
+# land_promote.pl sets JAWNOS_LAND_PROMOTE, and agent_land.pl (the owner's
+# hand-land) sets JAWNOS_OWNER_HAND_LAND. Everything else queues to working and
+# lets the promoter release it.
+pushrefs=$(cat)
+main_blocked=0
+while read local_ref local_sha remote_ref remote_sha; do
+	case "$remote_ref" in
+		refs/heads/main)
+			if [ "${JAWNOS_LAND_PROMOTE:-0}" != 1 ] && [ "${JAWNOS_OWNER_HAND_LAND:-0}" != 1 ]; then
+				printf 'pre-push: refs/heads/main is the stable branch; only land_promote.pl moves it (or the owner uses agent_land.pl). Queue to working instead.\n' >&2
+				main_blocked=1
+			fi
+			;;
+	esac
+done <<EOF
+$pushrefs
+EOF
+if [ "$main_blocked" -ne 0 ]; then
+	exit 1
+fi
+
 # --- the code in this push must parse (scripts/verify_change.pl) ---
 verdict=0
 if [ -f scripts/verify_change.pl ]; then
@@ -71,7 +97,9 @@ if [ -f scripts/verify_change.pl ]; then
 			printf '%s\n' "$out"
 			verdict=1
 		fi
-	done
+	done <<EOF
+$pushrefs
+EOF
 fi
 if [ "$verdict" -ne 0 ]; then
 	printf '\nverify_change: this push failed the guard (above) - either the code does not parse, or this machine cannot compile it. Fix it, or push with --no-verify.\n'

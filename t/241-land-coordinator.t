@@ -255,6 +255,18 @@ sub lines {
 
 # --- one wave, one suite, one restart --------------------------------------
 
+# --- the tools name the trunk they move ----------------------------------------
+# The warden used to rely on land_enqueue's default (main), so a rescued green
+# ticket could be enqueued onto the stable branch; and main moved by hand is
+# how v0.1.3290 diverged. The hook refuses an unmarked main push, so these are
+# the markers it accepts.
+my $warden_src = read_file("$real/scripts/land_warden.pl");
+my $promote_src = read_file("$real/scripts/land_promote.pl");
+like($warden_src, qr/'--trunk',\s*\$opt\{'trunk'\}/,
+	'the warden hands its own trunk to the enqueue, not the default');
+like($promote_src, qr/JAWNOS_LAND_PROMOTE/,
+	'the promoter marks its main push for the hook');
+
 subtest 'two branches land in one wave, with one suite and one restart' => sub {
 	my $f = fixture();
 	commit_file($f->{'wt1'}, 'one.txt', "one\n", 'one: add a branch');

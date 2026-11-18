@@ -151,8 +151,13 @@ sub run_hook {
 	push @env, defined $opt{perl5lib} ? "PERL5LIB=" . &sq($opt{perl5lib}) : 'env -u PERL5LIB';
 	push @env, 'PATH=' . &sq($path) if defined $path;
 	push @env, 'JAWNOS_SUITE_ALREADY_RUN=1' if $opt{already_run};
+	# A push to main is refused without the marker the tool that owns the move
+	# sets; these cases are about the rest of the hook, so name the promoter.
+	push @env, 'JAWNOS_LAND_PROMOTE=1' unless $opt{no_main_marker};
+	push @env, 'JAWNOS_OWNER_HAND_LAND=1' if $opt{owner_marker};
 
-	my $line = qq{"refs/heads/main $tip refs/heads/main $base"};
+	my $ref = $opt{remote_ref} // 'refs/heads/main';
+	my $line = qq{"$ref $tip $ref $base"};
 	my $out = `cd @{[ &sq($repo) ]} && printf '%s\\n' $line | @env /bin/sh .githooks/pre-push origin https://example.invalid/repo.git 2>&1`;
 	return ($? >> 8, $out);
 }
@@ -240,5 +245,31 @@ like($out, qr/blocking \(not passing\)/, 'and says it is a block, not a pass');
 );
 isnt($code, 0, 'a push without scripts/perl_env.sh is blocked');
 like($out, qr/perl_env\.sh is missing/, 'the line names the missing helper');
+
+# 8. main moves only through the promoter, or the owner's hand-land
+($code, $out) = &run_hook(
+	home => tempdir(CLEANUP => 1),
+	probe => "1;\n",
+	no_main_marker => 1,
+);
+isnt($code, 0, 'a push to main without the promoter or owner marker is refused');
+like($out, qr/stable branch/, 'the refusal names the stable branch');
+like($out, qr/Queue to working/, 'and sends the work to working');
+($code, $out) = &run_hook(
+	home => tempdir(CLEANUP => 1),
+	probe => "1;\n",
+	no_main_marker => 1,
+	owner_marker => 1,
+);
+is($code, 0, "the owner's hand-land marker lets main move") or diag($out);
+
+# 9. a branch push is untouched by the main rule
+($code, $out) = &run_hook(
+	home => tempdir(CLEANUP => 1),
+	probe => "1;\n",
+	no_main_marker => 1,
+	remote_ref => 'refs/heads/agent/one',
+);
+is($code, 0, 'an agent branch push needs no marker') or diag($out);
 
 done_testing();

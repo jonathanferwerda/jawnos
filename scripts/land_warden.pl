@@ -314,6 +314,7 @@ sub finish_branch {
 
 	my ($erc, $eout) = LandQueue::run_in($wt,
 		$^X, "$wt/scripts/land_enqueue.pl",
+		'--trunk', $opt{'trunk'},
 		'--branch', $wbranch,
 		'--agent', 'warden',
 		'--reason', "warden rescue of ticket $id",

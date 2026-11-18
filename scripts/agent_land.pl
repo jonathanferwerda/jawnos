@@ -467,7 +467,11 @@ say_step("pushing HEAD:refs/heads/$opt{'trunk'}");
 # change. Either way the hook must not run it again - doubling every landing and
 # flaking the timing tests at the hook's default parallelism.
 $ENV{'JAWNOS_SUITE_ALREADY_RUN'} = 1;
+# This is the owner's hand-land: the pre-push hook refuses a push to main that
+# does not carry the promoter's marker or this one.
+$ENV{'JAWNOS_OWNER_HAND_LAND'} = 1;
 my ($pusc, $puso) = git('push', 'origin', "HEAD:refs/heads/$opt{'trunk'}");
+delete $ENV{'JAWNOS_OWNER_HAND_LAND'};
 delete $ENV{'JAWNOS_SUITE_ALREADY_RUN'};
 refuse("the push was refused (rebase and land again):\n$puso", 'push') if $pusc != 0;
 
