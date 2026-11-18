@@ -1151,7 +1151,7 @@ function jawnosWindowEmergeOpen(app) {
 	return false;
 }
 
-function jawnosWindowEmergeControl(el) {
+function jawnosWindowEmergeControl(el, opts) {
 	if (!el || el.nodeType !== 1 || el.tagName == 'CANVAS') { return null; }
 	if (el.closest && el.closest('.wind')) { return null; }
 	var host = null;
@@ -1166,9 +1166,31 @@ function jawnosWindowEmergeControl(el) {
 	}
 	if (!app) { return null; }
 	// the window is already here: the press raises or restores it, and the
-	// preview would promise a second window that never comes
-	if (jawnosWindowEmergeOpen(app)) { return null; }
+	// preview would promise a second window that never comes. A caller that
+	// wants to answer that press itself asks for it with opts.reopen
+	if (jawnosWindowEmergeOpen(app)) {
+		return (opts && opts.reopen) ? { el: host, app: app, open: true } : null;
+	}
 	return { el: host, app: app };
+}
+
+// Every opener does not pass through windowTiledPress, which is where a raise
+// gets its jiggle: a start menu icon with its own opener (music, network, help),
+// a pin, or the switcher would answer an already-open press with nothing at
+// all. The desk answers here instead, once, for all of them - raise the window
+// it already has and give it the same jiggle. A taskbar tile is left out: its
+// own click already minds raise and minimise.
+function jawnosWindowEmergeRaise(control) {
+	if (!control || !control.app || typeof document == 'undefined' || !document.querySelectorAll) { return false; }
+	var winds = document.querySelectorAll('.wind');
+	for (var i = 0; i < winds.length; i++) {
+		var win = winds[i];
+		if (!win || !win.getAttribute || win.getAttribute('app') !== control.app) { continue; }
+		if (typeof windowTiledPress == 'function') { windowTiledPress(win); }
+		else if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'jiggle'); }
+		return true;
+	}
+	return false;
 }
 
 // A press records its control here: pointerdown catches the ordinary press
@@ -1191,6 +1213,12 @@ function jawnosWindowEmergeControl(el) {
 		if (control) {
 			var origin = jawnosWindowOriginFromElement(control.el, control.app);
 			if (origin) { jawnosWindowEmergeGhostStart(origin); }
+			return;
+		}
+		// the app is already on the desk: raise its window with the desk's jiggle
+		// rather than leave the press unanswered, and record no origin - a window
+		// that later opens must not fly in from a control pressed for a raise
+		if (!(el.closest && el.closest('.window_toggle')) && jawnosWindowEmergeRaise(jawnosWindowEmergeControl(el, { reopen: true }))) {
 			return;
 		}
 		var host = (el.closest ? el.closest('.start_menu_item, .taskbar_pin, .window_toggle') : null);

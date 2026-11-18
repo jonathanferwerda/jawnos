@@ -46,6 +46,12 @@ like($board, qr/jawnosWindowEmergeOpen\(origin_app\)/,
 	'but not when the app already has a window on the desk');
 like($lazy, qr/jawnosWindowOriginFromElement\(target\[0\], app\); \}\s*target\.trigger\('click'\)/,
 	'the lazy replay stamps the origin again before the click');
+like($emerge, qr/jawnosWindowEmergeRaise\(jawnosWindowEmergeControl\(el, \{ reopen: true \}\)\)/,
+	'a press for an app already on the desk is answered as a raise');
+like($emerge, qr/function jawnosWindowEmergeRaise\(control\)[\s\S]{0,700}windowTiledPress\(win\)/,
+	'which goes through windowTiledPress, the one path that jiggles');
+like($emerge, qr/el\.closest\('\.window_toggle'\)\) && jawnosWindowEmergeRaise/,
+	'a taskbar tile is left to its own raise/minimise');
 
 # --- the sheet and its constraints -------------------------------------------
 like($css, qr/\.jawnos_emerge_sheet\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*2147482890[^}]*pointer-events:\s*none/s,
@@ -391,6 +397,30 @@ sandbox.jawnosWindowOriginFromPoint(0, 0, 20, 20, 10, '', 0);
 check('an app-less press answers a fresh window', !!sandbox.jawnosWindowOriginTake('anything', 1000));
 sandbox.jawnosWindowOriginFromPoint(0, 0, 20, 20, 10, '', 0);
 check('but never a late one', sandbox.jawnosWindowOriginTake('anything', 3000) === null);
+
+// --- an already-open press is a raise, not a preview ------------------------
+const reopen_wind = El('clock');
+reopen_wind.setAttribute('app', 'clock');
+const reopen_icon = startIcon('clock_toggle', 'clock', '/clock.png', 'Clock');
+const reopen_raised = [];
+sandbox.windowTiledPress = function (win) { reopen_raised.push(win); };
+const reopen_saved_qsa = sandboxDocument.querySelectorAll;
+sandboxDocument.querySelectorAll = function (sel) { return sel === '.wind' ? [reopen_wind] : []; };
+delete sandbox.jawnosWindowOrigins['clock'];
+press(reopen_icon);
+check('an already-open control raises the window on the desk',
+	reopen_raised.length === 1 && reopen_raised[0] === reopen_wind);
+check('and draws no preview for it', !sandbox.jawnosWindowEmergeGhost);
+check('and records no origin for a later open', !sandbox.jawnosWindowOrigins['clock']);
+
+const reopen_tile = makeElement('SPAN', 'window_toggle');
+reopen_tile.setAttribute('app', 'clock');
+reopen_raised.length = 0;
+press(reopen_tile);
+check('a taskbar tile press is left to its own raise/minimise', reopen_raised.length === 0);
+
+delete sandbox.windowTiledPress;
+sandboxDocument.querySelectorAll = reopen_saved_qsa;
 
 const to = { left: 300, top: 100, width: 400, height: 300 };
 const shrunk = sandbox.jawnosWindowEmergeCssRect(
