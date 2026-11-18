@@ -1781,7 +1781,7 @@ function windowReorganizer(window_id) {
 					var deck_plan = windowPhoneCascadePlace();
 					win.attr('deck', String(deck_plan.deck));
 					windowDeckTouch[deck_plan.deck] = Date.now();
-					win.css({ 'top': deck_plan.top });
+					win.css({ 'top': deck_plan.top + deck_plan.slot * vAdvance });
 				}
 				else {
 					var temp_placement = ( vAdvance * winCount ) + startingV;

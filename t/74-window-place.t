@@ -98,6 +98,8 @@ like($stack, qr/decks\.forEach\(function \(d\) \{ y\[d\] = windowTopLimit\(\); \
 like($stack, qr/function windowPhoneCascadePlace\(geom\)/,
 	'a full phone deck starts a fresh cascade over the top, on the same x');
 like($windows, qr/windowPhoneCascadePlace\(\)[\s\S]{0,200}win\.attr\('deck'/, 'which the open takes');
+like($windows, qr/deck_plan\.top \+ deck_plan\.slot \* vAdvance/,
+	'and it lands at its own step in the deck, not at the deck\'s top');
 like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');
 like($windows, qr/function windowTiledJoinOrLeave\(win, at, home, from, group\)/, 'a drop either joins a pile, starts one, or leaves');
 like($windows, qr/function windowTiledInsertSlot\(at, skip, stack\)/, 'the dragged title bar names the slot in the pile under it');
