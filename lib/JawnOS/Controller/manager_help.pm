@@ -737,7 +737,7 @@ sub action_37610 {
 	my @poses = sort keys %{$gb::pos};
 	my $system = 'You check one JawnOS appointment\'s part of speech. An appointment logs one kind of activity; its "pos" (part of speech) is what sort of thing it is, and "mab" (might also be) names a second reading when the name is ambiguous. The valid pos values are: '
 		. join(', ', @poses) . '. Given the app\'s name and any description, reply with EXACTLY ONE JSON object and nothing else: {"pos":"<a valid pos>"} to correct it, or {"pos":"' . $pos . '","keep":true} when the current one already fits. Add "mab":"<a valid pos>" only if a second reading clearly applies.';
-	my $user = 'App: ' . $app . '\nCurrent pos: ' . $pos . '\nCurrent mab: ' . $mab . ($description ? ('\nDescription: ' . $description) : '');
+	my $user = 'App: ' . $app . "\nCurrent pos: " . $pos . "\nCurrent mab: " . $mab . ($description ? ("\nDescription: " . $description) : '');
 	my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $user, &subs::ai_role_thinking_effective('help_assistant'));
 	my $action;
 	if ($text) { $action = eval { decode_json $text }; }

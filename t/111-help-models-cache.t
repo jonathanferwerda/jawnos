@@ -12,8 +12,22 @@ use JawnOSTest;
 
 # The domain layer is lazy: load the real definition before the local stubs.
 subs::preload('help_model_list');
+require(root() . '/lib/JawnOS/Controller/manager_help.pm');
 
 my @calls;
+
+# The review route's controller shape: param reads the request, render keeps
+# the JSON reply so the test can see what the route answered.
+{
+	package ReviewTestController;
+	sub new { my ($class, %args) = @_; return bless { %args, rendered => undef }, $class }
+	sub param { return $_[0]->{'param'}->{ $_[1] } }
+	sub render {
+		my ($self, %args) = @_;
+		$self->{'rendered'} = $args{'json'};
+		return 1;
+	}
+}
 
 # A cached list is the whole answer: no provider is touched.
 {
@@ -55,6 +69,44 @@ my @calls;
 	local *subs::cloudflare_model_list = sub { return [ { name => 'cf' } ] };
 	my $list = &subs::help_model_list();
 	is_deeply($list, [ { name => 'cf' } ], 'a provider with no answer becomes an empty list');
+}
+
+# The review prompt is built as lines. It joined its fields with a literal
+# backslash-n (a single-quoted '\n'), so the model saw one long line. The
+# request is what is under test; the answer is stubbed.
+{
+	my $got_user;
+	no warnings 'once', 'redefine';
+	local $gb::known_appts = {};
+	local *subs::setting_grabber = sub {
+		my ($args) = @_;
+		my $setting = ($args && $args->{'setting'}) || '';
+		return '[]'    if $setting eq 'guide_reviewed';
+		return 'model' if $setting eq 'help_assistant';
+		return '';
+	};
+	local *subs::settings_grabber = sub { return { pos => 'media', mab => '' } };
+	local *subs::ai_role_thinking_effective = sub { return '' };
+	local *subs::evaluation_model_call_role = sub {
+		$got_user = $_[2];
+		return ('{"pos":"media","keep":true}', undef);
+	};
+	local *subs::setting_setter = sub { return 1 };
+
+	my $app = &subs::unformat_name('the_tonight_show');
+	foreach my $case (
+		[ '',               qr/\AApp: \Q$app\E\nCurrent pos: media\nCurrent mab: \z/ ],
+		[ 'late night talk', qr/\AApp: \Q$app\E\nCurrent pos: media\nCurrent mab: \nDescription: late night talk\z/ ],
+	) {
+		my ($description, $want) = @{$case};
+		my $c = ReviewTestController->new(
+			param => { app => 'the_tonight_show', description => $description },
+		);
+		Manager::action_37610($c);
+		like($got_user, $want, 'the review prompt is built as real lines');
+		unlike($got_user, qr/\\n/, 'no literal backslash-n reaches the model');
+		is($c->{'rendered'}->{'reviewed'}, 1, 'the review answered and marked the app');
+	}
 }
 
 done_testing();
