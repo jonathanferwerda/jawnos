@@ -357,9 +357,13 @@ $(document).on('contextmenu', '.desk_app', function(e) {
 });
 
 // ---- the wallpaper ---------------------------------------------------------
+// The theme's surfaces live on the body (the layout's inline style and
+// jawnosApplyInk both write them there), so the wallpaper reads them from the
+// body. The :root values are only the light defaults before a theme exists; a
+// dark theme used to paint its wallpaper from those and lose its own shade.
 function deskStyleValue(name, fallback) {
 	var value = '';
-	try { value = getComputedStyle(document.documentElement).getPropertyValue(name) || ''; }
+	try { value = getComputedStyle(document.body).getPropertyValue(name) || ''; }
 	catch (e) { value = ''; }
 	value = String(value).replace(/^\s+|\s+$/g, '');
 	return value || fallback;

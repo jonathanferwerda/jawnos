@@ -284,6 +284,29 @@ function jawnosApplyInk(accentOverride, keepExisting) {
 		setTimeout(jawnosReloadIcons, 80);
 	}
 }
+// The layout's canvas is painted from the theme's computed colours, not styled by
+// CSS: the desk wallpaper, the timeline's rows and the leaderboard's cells are
+// drawn once, so a live theme change has to repaint the canvas in front or the
+// desk keeps the room it left while only the CSS chrome crosses over. Repainting
+// a canvas never re-opens a window - the windows read --window/--panel from the
+// body and follow by CSS - so Music keeps playing and Configure keeps its place.
+function jawnosThemeLayoutRepaint() {
+	if (typeof graphicalize === 'function' && typeof response !== 'undefined' && response && response.appts) {
+		graphicalize();
+		return;
+	}
+	// A theme push can land before the first poll, when the layout printers have no
+	// payload. The desk wallpaper is the one canvas that can repaint on its own,
+	// and it re-hangs the clothesline that its clearRect took with it. Only while
+	// the desk is the layout in front: deskPrinter shows its own canvas.
+	var layout = '';
+	try { layout = localStorage.getItem('layout') || ''; } catch (e) { layout = ''; }
+	if (layout === 'desk' && typeof deskPrinter === 'function') {
+		deskPrinter();
+		if (typeof clotheslineHanger === 'function') { clotheslineHanger(typeof wardrobe === 'undefined' ? [] : wardrobe); }
+		if (typeof deskPosition === 'function') { deskPosition(); }
+	}
+}
 // Paint the manager for a new theme. `appt` marks that a running appointment's
 // theme (not the Misc system theme) is in charge, so a later Misc change does
 // not paint over it. Deriving the panel/ink variables from the new background
@@ -298,6 +321,7 @@ function jawnosThemeApply(bg, appt) {
 	// one and becoming a no-op.
 	document.body.removeAttribute('data-theme-sig');
 	jawnosApplyInk();
+	jawnosThemeLayoutRepaint();
 }
 // The cursor set is CSS-only: the sheet carries every set's role -> image
 // mapping, and the body's data-cursor-set picks one. A theme push moves the
@@ -387,6 +411,9 @@ function jawnosThemeBundleApply(bundle, appt) {
 	window.jawnos_theme_suppress_icon_reload = true;
 	jawnosApplyInk(bundle.accent || '');
 	window.jawnos_theme_suppress_icon_reload = false;
+	// the layout canvas is painted from those computed variables, not from CSS:
+	// repaint it or the wallpaper and the drawn rows stay in the old theme
+	jawnosThemeLayoutRepaint();
 	if ('icon_set' in bundle) { document.body.setAttribute('data-icon-set', bundle.icon_set || ''); }
 	if ('cursor_set' in bundle) { jawnosCursorApply(bundle.cursor_set || ''); }
 	if (typeof bundle.cursor_css === 'string') { jawnosCursorCssApply(bundle.cursor_css); }

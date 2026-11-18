@@ -1,4 +1,4 @@
-# tests-for: public/js/universal/05_theme_ink_icon_swap.js
+# tests-for: public/js/universal/05_theme_ink_icon_swap.js public/js/manager/desk.js
 # covers:    A real theme change repaints the desk in place: the icon swap and the start-menu/taskbar chrome follow the new dressing, but no app window is re-opened, so Music keeps playing and Configure keeps its place.
 
 use strict;
@@ -67,5 +67,36 @@ like($js, qr/jawnosApplyInk\(\s*bundle\.accent\s*\|\|\s*['"]{2}\s*\)/,
 	'the ink pass still repaints the live variables');
 like($js, qr/setTimeout\(\s*jawnosReloadIcons\s*,\s*60\s*\)/,
 	'a real theme change still asks for the icon/chrome refresh');
+
+# --- the layout canvas follows the theme as well ----------------------------
+# The wallpaper and the drawn rows are painted from the theme's computed colours,
+# not styled by CSS. Without a repaint the desk keeps the old room while the CSS
+# chrome crosses over: starting an appointment changed the buttons and left the
+# background (and the desk's drawn surface) exactly as it was.
+
+my $desk = js_source('public/js/manager/desk.js');
+
+like($js, qr/function\s+jawnosThemeLayoutRepaint\s*\(/,
+	'a live theme change has one place that repaints the layout canvas');
+my ($repaint_body) = $js =~ /function\s+jawnosThemeLayoutRepaint\s*\(\s*\)\s*\{(.*?)\n\}/s;
+ok(defined $repaint_body && length $repaint_body, 'the layout repaint body is found');
+like($repaint_body // '', qr/graphicalize\s*\(/,
+	'the poll\'s own layout painter is reused when a payload is in hand');
+like($repaint_body // '', qr/deskPrinter\s*\(\s*\)/,
+	'the desk wallpaper can repaint before the first poll');
+like($repaint_body // '', qr/clotheslineHanger\s*\(/,
+	'the rail is re-hung after the wallpaper clears it');
+unlike($repaint_body // '', qr/appWindowOpener|appointmentGrabber/,
+	'the repaint re-opens no window');
+like($js, qr/jawnosApplyInk\(\);\s*\n\s*jawnosThemeLayoutRepaint\(\);/,
+	'a Misc paint (jawnosThemeApply) repaints the layout');
+like($js, qr/window\.jawnos_theme_suppress_icon_reload\s*=\s*false;\s*\n(?:\s*\/\/[^\n]*\n)*\s*jawnosThemeLayoutRepaint\(\);/,
+	'a theme bundle push repaints the layout');
+
+# --- the wallpaper reads the theme's values, not the light defaults --------
+like($desk, qr/getComputedStyle\(document\.body\)\.getPropertyValue/,
+	'the wallpaper reads its surfaces from the body, where a theme writes them');
+unlike($desk, qr/getComputedStyle\(document\.documentElement\)\.getPropertyValue/,
+	'and not from :root, whose values are only the light defaults');
 
 done_testing();
