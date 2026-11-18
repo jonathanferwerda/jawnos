@@ -125,6 +125,10 @@ like($dock, qr/if \(\$\(this\)\.hasClass\('dock_window'\)\)/, 'the press handler
 like($dock, qr/jawnosDockWindowsRender\(\)/, 'the window faces can be rebuilt');
 like($dock, qr/!t\.terminal && !t\.window && !t\.dialog && t\.app && jawnosDockAppHas\(t\.app\)/,
 	'a pinned app\'s own window is left to its pin');
+like($dock, qr/home\.addClass\('dock_quiet'\)/, 'a window landing lays the row out without motion');
+like($dock, qr/home\.removeClass\('dock_quiet'\)/, 'and arms the motion again after that pass');
+like($css, qr/#pseudonym_home\.dock_quiet[\s\S]{0,220}transition: none !important/,
+	'the quiet pass none-rates the dock and its faces');
 like($css, qr/\.pseudonym\.dock_window\[state=active\]/,
 	'an active window face is marked');
 like($css, qr/\.pseudonym\.dock_window\[state=minimized\]/,

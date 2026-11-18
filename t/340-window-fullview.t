@@ -73,6 +73,11 @@ like($fit, qr/if \(win\.hasClass\('window_full_viewport'\)\) \{ return; \}/,
 	'a viewport fit leaves the full glass alone');
 like($fit, qr/\$\(document\)\.on\('click', '\.fullview_button'/, 'the title-bar control enters full screen');
 like($fit, qr/\$\(document\)\.on\('click', '\.fullview_exit_button'/, 'the corner control leaves it');
+like($fit, qr/function windowFullViewportEnter\(win\) \{[\s\S]{0,500}jawnosLauncherShell/, 'a launcher shell cannot enter full screen');
+like($css, qr/body\.jawnos_launcher_shell \.fullview_button,[\s\S]{0,400}body\.full_app_mode \.fullview_button[\s\S]{0,200}display: none !important/s,
+	'a launcher shell hides the full-screen control');
+like($css, qr/body\.jawnos_launcher_shell \.window_fullview_exit/,
+	'and the corner way back');
 
 # --- the single-click maximize owns the double no longer -------------------
 unlike($windows, qr/studioWindowFullSelector/, 'no window binds a full-screen double-press');

@@ -702,6 +702,26 @@ $(document).on('click','.edit_app',function() {
    not deal a second one. Some apps answer with a window envelope (gallery's
    window, embedded's html) because their route carries more than the markup;
    both are unwrapped first. */
+// A launcher shell is a whole-screen surface: the phone's home and the
+// handheld's controller and games pages. An app it opens is the whole glass
+// already, so the full-screen control has nothing to fill; the controller's
+// tiles pass full=1, but a phone launcher may not, so the shell itself makes
+// the open full.
+function jawnosLauncherShell() {
+	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) { return true; }
+	try {
+		var back = new URLSearchParams(location.search).get('back') || '';
+		if (/^\/manager\/(?:controller|games)(?:[\/?]|$)/.test(back)) { return true; }
+	} catch (e) {}
+	var path = location.pathname.replace(/\/+$/, '');
+	return /^\/manager\/(?:controller|games)(?:\/|$)/.test(path);
+}
+$(function () {
+	if (typeof jawnosLauncherShell == 'function' && jawnosLauncherShell() && document.body) {
+		document.body.classList.add('jawnos_launcher_shell');
+	}
+});
+
 $(function () {
 	var open = '';
 	var full = '';
@@ -739,7 +759,7 @@ $(function () {
 				if (typeof windowMaker === 'function' && html) { id = windowMaker(html); }
 				/* A launcher press is the whole screen: no desk, no taskbar, no
 				   title bar. The Manager desk is reached from its own button. */
-				if (full && id) {
+				if ((full || jawnosLauncherShell()) && id) {
 					document.body.classList.add('full_app_mode');
 					var el = document.getElementById(id);
 					if (el) { el.classList.add('full_app_window'); }

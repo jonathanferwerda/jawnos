@@ -297,6 +297,9 @@ function jawnosWindowFullViewportBox(win) {
 function windowFullViewportEnter(win) {
 	win = $(win);
 	if (!win.length || win.hasClass('window_full_viewport')) { return; }
+	// A launcher shell already fills the glass; the control is hidden there and
+	// a script or a queued press must not put it back over the app.
+	if (typeof jawnosLauncherShell == 'function' && jawnosLauncherShell()) { return; }
 	win.data('window-full-viewport-box', jawnosWindowFullViewportBox(win));
 	win.addClass('window_full_viewport');
 	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }

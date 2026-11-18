@@ -476,6 +476,13 @@ function jawnosDockWindowsRender() {
 	var stamp = $.map(faces, function(f) { return f.key + '\u0001' + f.hint + '\u0001' + f.src; }).join('\u0002');
 	if (stamp !== jawnosDockWindowStamp) {
 		jawnosDockWindowStamp = stamp;
+		// A window landing adds its face to the row. That rebuild must not play
+		// the tuck/reveal motion: the icon would read as animating itself hidden
+		// while the window is still opening, and the extra work lands in the
+		// same beat as the window's own motion. Place it quietly; the next
+		// pointer-driven tuck or reveal animates as usual.
+		var home = $('#pseudonym_home');
+		home.addClass('dock_quiet');
 		bar.children('.dock_window_face').remove();
 		$.each(faces, function(i, f) {
 			var src = f.src || '/images/decipherable/gear.png';
@@ -496,6 +503,7 @@ function jawnosDockWindowsRender() {
 		});
 		jawnosDockOrderApply();
 		if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+		setTimeout(function () { home.removeClass('dock_quiet'); }, 0);
 	}
 	jawnosDockWindowsState();
 	if (typeof jawnosShellDockSync == 'function') { jawnosShellDockSync(); }

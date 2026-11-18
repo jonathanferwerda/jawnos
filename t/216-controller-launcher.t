@@ -135,6 +135,15 @@ like($storage_js, qr/full: \$\(v\)\.hasClass\('full_app_window'\)/, 'a saved win
 like($storage_js, qr/if \(v\.full && window && window\.length\)/, 'a restore puts the whole-screen mode back');
 like($stack_js, qr/document\.body\.classList\.remove\('full_app_mode'\)/, 'closing the last app gives the desk back');
 like($desk_js, qr/full_app_mode/, 'a launcher press marks a full-screen app');
+like($desk_js, qr/function jawnosLauncherShell\(\)/, 'the launcher shell is named');
+like($desk_js, qr/if \(\(full \|\| jawnosLauncherShell\(\)\) && id\)/,
+	'a phone or controller launcher makes its app full even without ?full=1');
+like($desk_js, qr/classList\.add\('jawnos_launcher_shell'\)/, 'the shell marks the body');
+my $launcher_css = read_file("$root/public/css/manager.css");
+like($launcher_css, qr/body\.jawnos_launcher_shell \.fullview_button/,
+	'the full-screen control is hidden on a launcher shell');
+like($launcher_css, qr/body\.jawnos_launcher_shell \.window_fullview_exit/,
+	'and its corner way back');
 like($page, qr/id="controller_battery"/, 'the launcher has a battery button');
 like($page, qr/id="controller_clock"/, 'the launcher has a clock to the right of Manager');
 like($page, qr/Intl\.DateTimeFormat/, 'the clock formats in the house time zone');
