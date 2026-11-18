@@ -1043,4 +1043,22 @@ like($stack, qr/function windowBackgroundPlace\(/, 'a background layer is writte
 like($stack, qr/\$\('\.wind\[view="left"\]'\)\.filter\(':visible'\)/, 'the edge test filters only the windows that take an edge');
 unlike($stack, qr/\.wind\[view="left"\]:visible/, 'not every window on the desk');
 
+# --- a snapped window leaves the desk its free half ------------------------
+# Every other printer canvas is reset to the whole desk, while the layers that
+# give way to a half window are placed from the free edge. The timeline is the
+# current layout canvas and draws at #background's width; resetting it to the
+# whole desk left it full width with a half-width drawing, so a snapped window
+# stretched the timeline.
+like($stack, qr/if \(backgrounds\[i\] === background_el \|\| backgrounds\[i\] === desk_el \|\| backgrounds\[i\] === layout_el\) \{ continue; \}/,
+	'the edge-free layers are left out of the whole-desk reset');
+like($stack, qr/windowBackgroundPlace\(layout_el, width, left, !full\);/, 'the current layout (the timeline) takes the free half too');
+
+# --- a half window gives its old size back when dragged out ----------------
+# free_dimensions is the last free box, untouched while a window wears left or
+# right; the drag start applies it again, the way a maximized window is restored,
+# before windowDimensionSetter can record the half box in its place.
+like($fit, qr/var snapped = win\.attr\('view'\);/, 'the drag start reads the view it picked the window up in');
+like($fit, qr/\(snapped == 'max' \|\| snapped == 'left' \|\| snapped == 'right'\) && win\.attr\('free_dimensions'\)/,
+	'a maximized or half-window drag restores the last free size');
+
 done_testing();

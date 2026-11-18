@@ -481,13 +481,20 @@ function windowBackgroundAdjuster(data) {
 	var half = full ? 0 : ($(window).width() / 2);
 	var width = full ? '100%' : (half + 'px');
 	var left = full ? '0px' : ((leftFree == 1) ? '0%' : (half + 'px'));
-	windowBackgroundPlace(document.getElementById('background'), width, left, !full);
-	windowBackgroundPlace(document.getElementById('desk_layer'), width, left, !full);
-	windowBackgroundPlace(layout_el, width, left, !full);
+	// Every other printer canvas fills the desk. The layers that give way to a
+	// snapped window are placed below - the timeline is the current layout canvas,
+	// and it draws at #background's width - so they are left out of this reset;
+	// writing them here and putting them back would dirty the desk on every poll.
+	var background_el = document.getElementById('background');
+	var desk_el = document.getElementById('desk_layer');
 	var backgrounds = document.querySelectorAll('.background');
 	for (var i = 0; i < backgrounds.length; i++) {
+		if (backgrounds[i] === background_el || backgrounds[i] === desk_el || backgrounds[i] === layout_el) { continue; }
 		windowBackgroundPlace(backgrounds[i], '100%', '0px', 0);
 	}
+	windowBackgroundPlace(background_el, width, left, !full);
+	windowBackgroundPlace(desk_el, width, left, !full);
+	windowBackgroundPlace(layout_el, width, left, !full);
 	if (data['caller'] != 'calculator') {
 		calculator();
 	}

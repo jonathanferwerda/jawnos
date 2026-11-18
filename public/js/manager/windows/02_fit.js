@@ -229,7 +229,12 @@ function windowDraggable(win) {
 					dragGroup.sort(function(a, b) { return a.top - b.top; });
 				}
 				windows[p.target.id] = Date.now();
-				if (win.attr('view') == 'max' && win.attr('free_dimensions')) {
+				// A window wearing a snapped view is a whole-screen shape; dragging it
+				// gives back the size it had before it was snapped, under the pointer,
+				// so it can leave the edge at the size the person knew. Dropped on an
+				// edge, windowHalfski snaps it again; anywhere else it stays free.
+				var snapped = win.attr('view');
+				if ((snapped == 'max' || snapped == 'left' || snapped == 'right') && win.attr('free_dimensions')) {
 					var d = JSON.parse(win.attr('free_dimensions'));
 					var top = win.css('top');
 					var mouse = mouse_position();
