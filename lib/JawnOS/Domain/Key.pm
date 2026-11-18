@@ -467,6 +467,10 @@ sub padlock_seed_default {
 	# things without a fresh print. The old house-wide secret is cleared too.
 	&subs::db_query('delete from cache where context = ?', 'media_unlock');
 	&subs::db_query('delete from settings where setting = ? and app in (?,?,?)', 'combo_unlock', 'gallery', 'music', 'folders');
+	# A controller's panel is the only way in. It has no paired phone, passkey
+	# or browser at boot, so seeding the house gate would lock the person out of
+	# the panel; a computer, phone or server still starts gated.
+	return if &subs::device_setter() eq 'controller';
 	return if (&subs::setting_grabber({ app => '__president', setting => 'padlock_gate_initialized' }) || '') eq 'yes';
 	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
 	my $paired = &subs::db_select('paired_devices', undef, { status => 'active' })->hashes->[0];

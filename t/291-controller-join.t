@@ -158,6 +158,9 @@ like($first_boot, qr/print \{\$fh\} "\$user:\$code\\n";/, 'never on argv');
 like($first_boot, qr/\$choice = \$answers->\{'wipe'\} \? 'format' : ''/, 'the ticked box wipes and an unticked one refuses');
 like($first_boot, qr/if \(!\$opt\{'dry_run'\} && %\{\$answers\}\)/, 'the panel outranks the token, which could not see the card');
 like($first_boot, qr/_first_run_done\(\) unless/, 'and the questions are asked once');
+like($first_boot, qr/&_first_run_done\(\) unless \$opt\{'dry_run'\} \|\| !\$password_ok;.*?if \(\$token->\{'error'\}\)/s,
+	'the questions are marked done before a bad token can stop the pass');
+
 my $py_ok = system('python3', '-m', 'py_compile', root() . '/scripts/gou_first_run.py');
 is($py_ok, 0, 'the dialog is valid Python');
 like($first_boot, qr/sub _first_run_forget_code/, 'the code leaves the disk once it is a password');
@@ -416,6 +419,18 @@ my $emmc = '{"name":"mmcblk1","type":"disk","size":15634268160,"rm":false,"fstyp
 my $sd_ext4 = '{"name":"mmcblk0","type":"disk","size":63864569856,"rm":true,"fstype":null,"children":[{"name":"mmcblk0p1","type":"part","size":63864553472,"fstype":"ext4","mountpoint":null}]}';
 my $sd_exfat = '{"name":"mmcblk0","type":"disk","size":63864569856,"rm":true,"fstype":null,"children":[{"name":"mmcblk0p1","type":"part","size":63864553472,"fstype":"exfat","mountpoint":"/media/jawn/CARD"}]}';
 my $sd_blank = '{"name":"mmcblk0","type":"disk","size":63864569856,"rm":true,"fstype":null,"children":[{"name":"mmcblk0p1","type":"part","size":63864553472,"fstype":null,"mountpoint":null}]}';
+
+# A flash that found no token still leaves the file behind, empty. That is no
+# token, not a broken one: the board can finish its own setup and, above all,
+# must not put the first-run questions back on every boot.
+{
+	my $empty = "$dry/empty-token.json";
+	open(my $fh, '>', $empty) or die "$empty: $!";
+	close $fh;
+	my $said = &run_first_boot($emmc, '--token', $empty);
+	is($said->{'token'}, 'none', 'an empty join token file is no token');
+	is($said->{'ok'}, 1, 'and the rest of the first boot still runs');
+}
 
 {
 	my $said = &run_first_boot($emmc . ',' . $sd_ext4);

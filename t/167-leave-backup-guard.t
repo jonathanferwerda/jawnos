@@ -110,5 +110,7 @@ like($part30, qr/sub app_schema_ensure \{.*?return unless &subs::database_grabbe
 my $key = read_file("$root/lib/JawnOS/Domain/Key.pm");
 like($key, qr/sub padlock_seed_default \{.*?return unless &subs::database_grabber\(\);/s,
 	'the boot padlock seed leaves a house with no database alone, so its gate can be served');
+like($key, qr/sub padlock_seed_default \{.*?return if &subs::device_setter\(\) eq 'controller';/s,
+	'a controller does not seed the house gate on boot');
 
 done_testing();

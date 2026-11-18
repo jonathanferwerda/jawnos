@@ -278,6 +278,10 @@ sub _token_read {
 	$path = $DEFAULT_TOKEN unless defined $path && length $path;
 	my $file = &subs::home($path);
 	return { absent => 1, path => $file } unless -f $file;
+	# A provisioner that found no token still writes the file, empty. Treat
+	# that as no token rather than a broken one: the board is not joined, but
+	# the boot can finish its own setup instead of failing on every start.
+	return { absent => 1, path => $file } unless -s $file;
 	my $raw = '';
 	if (open(my $fh, '<', $file)) {
 		local $/;
@@ -980,6 +984,13 @@ if (!$opt{'dry_run'} && $answers->{'code'}) {
 	&_first_run_forget_code() if $report->{'password'} eq 'set';
 }
 
+# The questions have been answered and applied; ask them once, before a bad
+# join token or an unready card can stop the pass. A refused code is the one
+# exception: the next boot asks again rather than losing the person's answer.
+my $answered = %{$answers} ? 1 : 0;
+my $password_ok = !$answered || !$answers->{'code'} || (($report->{'password'} // '') eq 'set');
+&_first_run_done() unless $opt{'dry_run'} || !$password_ok;
+
 # A board that was just flashed has no identity of its own yet (the provisioner
 # removes the image's), and both the card's finding and the join are written
 # under it. An unflashed machine keeps the identity it has.
@@ -1057,9 +1068,6 @@ unless ($opt{'no_card'}) {
 		&_card_setting_clear('card_finding') unless $opt{'dry_run'};
 	}
 }
-
-# The two questions have been answered and applied; ask them once.
-&_first_run_done() unless $opt{'dry_run'};
 
 if (!$opt{'no_join'} && !$token->{'absent'} && !$token->{'error'}) {
 	if ($opt{'dry_run'}) {
