@@ -96,6 +96,78 @@ function jawnosTaskbarHeight() {
 function jawnosTaskbarEdge(edge) {
 	return (jawnosBars.taskbar == edge) ? jawnosTaskbarHeight() : 0;
 }
+
+// ---- the top line ----------------------------------------------------------
+// headerHeight is the line the desk's printers start below. A taskbar standing
+// on the top edge owns its own height there - the height it takes when it is
+// called out, never the sliver an autohide bar leaves on screen while it rests,
+// because the band must not sit where the bar lands when the pointer reaches
+// for it. A dock on the top edge owns the box it reaches down over the desk: its
+// search strip while it rests tucked, its whole row once the pointer calls it
+// back. Whichever reaches further is the line.
+
+// The box a top dock reaches to, in page pixels. Read from the inline `top` the
+// side dock writes, not from the rendered box: a dock caught mid-move (or one
+// whose box the browser has not laid out yet) would hand back a line that is
+// only half the answer.
+function jawnosTopDockReach() {
+	if (typeof jawnosDockTop != 'function' || !jawnosDockTop()) { return 0; }
+	var home = document.getElementById('pseudonym_home');
+	if (!home) { return 0; }
+	var height = home.offsetHeight || 0;
+	if (!(height > 0)) { return 0; }
+	var top = parseFloat(home.style.top);
+	if (!isFinite(top)) { top = parseFloat(jawnosDockTopOffset()); }
+	if (!isFinite(top)) { return 0; }
+	return Math.max(0, Math.round(top + height));
+}
+
+// Pure: the deeper of the two top bars, both measured from the page's top. A
+// bar that is not on an edge measures 0 and claims nothing.
+function jawnosTopBarLine(bar, dock) {
+	bar = Math.round(+bar || 0);
+	dock = Math.round(+dock || 0);
+	return Math.max(0, bar, dock);
+}
+
+// Repaint the desk when the line moves. A redraw, never a transform: the
+// printers hit-test the canvas's own box against clothesLinePos, so a picture
+// slid by a transform would leave the ink sitting where its clicks are not.
+function jawnosTopBarRedraw() {
+	if (typeof graphicalize == 'function' && typeof response != 'undefined' && response && response.appts) {
+		graphicalize();
+		return;
+	}
+	if (typeof clotheslineHanger == 'function' && typeof wardrobe != 'undefined' && wardrobe) {
+		clotheslineHanger(wardrobe);
+	}
+}
+
+var jawnosTopBarLineBusy = false;
+// Re-measure the line and let the clothesline give way to a bar that has just
+// arrived, or take the room back when it tucks away. The comparison is the
+// whole cost when nothing moved, so a reveal's mousemove can call this freely.
+function jawnosTopBarLineApply() {
+	if (jawnosTopBarLineBusy || typeof headerHeight == 'undefined') { return 0; }
+	var next = jawnosTopBarLine(jawnosTaskbarEdge('top'), jawnosTopDockReach());
+	if (next === headerHeight) { return 0; }
+	jawnosTopBarLineBusy = true;
+	headerHeight = next;
+	jawnosTopBarRedraw();
+	jawnosTopBarLineBusy = false;
+	return next;
+}
+
+// The dock's tuck and its reveal both write the home's inline style, so that
+// attribute is the one place both pass through - watching it keeps this file
+// out of the side dock's own code.
+function jawnosTopBarWatch() {
+	if (typeof MutationObserver != 'function') { return; }
+	var home = document.getElementById('pseudonym_home');
+	if (!home || home.jawnosTopBarWatcher) { return; }
+	home.jawnosTopBarWatcher = new MutationObserver(function () { jawnosTopBarLineApply(); });
+	home.jawnosTopBarWatcher.observe(home, { attributes: true, attributeFilter: ['style'] });
+}
 // The window title bar's thickness: the CSS variable the navbar scales against
 // and every open window's per-window geometry reads. A slider previews it live.
 function jawnosWindowNavbarApply(px) {
@@ -226,11 +298,13 @@ function jawnosSideSearchShow(show) {
 		home.removeClass('search_open');
 	}
 }
-// The dock hangs at the very top of the page - below only a top taskbar, which
-// headerHeight carries - and clears the taskbar when the two share the bottom
-// one.
+// The dock hangs at the very top of the page - below only the top taskbar -
+// and clears the taskbar when the two share the bottom one. It reads the bar's
+// own edge, not headerHeight: headerHeight also carries the dock's own box (see
+// jawnosTopBarLine), and anchoring the dock on that would make it chase the
+// room it reserves and walk down the screen a little on every settle.
 function jawnosDockTopOffset() {
-	return (typeof headerHeight != 'undefined') ? headerHeight : 0;
+	return jawnosTaskbarEdge('top');
 }
 function jawnosDockBottomOffset() {
 	return jawnosTaskbarEdge('bottom');
@@ -457,18 +531,21 @@ function jawnosBarsApply() {
 	}
 	jawnosTopIconsApply();
 
+	var root = document.documentElement.style;
+	// The bar's height is a misc setting: the property has to be on the root
+	// before anything measures the bar, or the first pass measures the default
+	// 44px bar and hands the desk a line that a taller bar then covers. A top
+	// bar's own edge is measured below, after this.
+	root.setProperty('--taskbar_h', Math.max(24, jawnosBars.height) + 'px');
+
 	// a taskbar on the top edge pushes the whole page down: the line the printers
 	// draw, the clothesline under it and the rows below all measure from
-	// headerHeight, so shifting it once moves them together. With no band above
-	// the clothesline any more, that offset is the bar's own height.
+	// headerHeight, so shifting it once moves them together. A top dock rests
+	// over the same rows, so its box is part of the same line (jawnosTopBarLine).
 	if (typeof headerHeight != 'undefined') {
-		headerHeight = jawnosTaskbarEdge('top');
+		headerHeight = jawnosTopBarLine(jawnosTaskbarEdge('top'), jawnosTopDockReach());
 	}
 
-	var root = document.documentElement.style;
-	// the bar's height is a misc setting: the CSS reads this property for the
-	// bar's own height and for everything that sizes itself against it
-	root.setProperty('--taskbar_h', Math.max(24, jawnosBars.height) + 'px');
 	// the window title bar's height rides the same way: the navbar's own CSS and
 	// the per-window geometry window_maker writes both measure against it
 	root.setProperty('--navbar_h', Math.max(28, jawnosBars.navbar) + 'px');
@@ -507,6 +584,10 @@ function jawnosBarsApply() {
 	// edge takes the plain sizing, which the settle runs itself when it takes
 	var settled = (typeof pseudonymHomeTopSettle == 'function') && pseudonymHomeTopSettle();
 	if (!settled && typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+	// the settle above may have moved the dock's box; the line follows it, and
+	// the dock's own moves are watched from here on
+	jawnosTopBarWatch();
+	jawnosTopBarLineApply();
 	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
 	// a menu that is up follows its button when the bars move it
 	jawnosStartMenuPlace();
@@ -560,6 +641,18 @@ function jawnosStartMenuPlace() {
 $(window).on('resize', function () {
 	jawnosStartMenuPlace();
 	jawnosTopIconsSideApply();
+	// a narrower screen can re-wrap the dock's row, which moves the line it
+	// reaches to
+	jawnosTopBarLineApply();
+});
+
+// The bars slide into their places only once the desk has settled: the first
+// layout must not animate the dock out from under its own starting place, so
+// the class that turns the transitions on is hung after that pass has landed.
+$(document).ready(function () {
+	setTimeout(function () {
+		if (document.body) { document.body.classList.add('jawnos_shell_ready'); }
+	}, 80);
 });
 
 // The icons the top-right corner used to wear alone: while the taskbar stands

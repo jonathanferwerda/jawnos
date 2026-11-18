@@ -755,6 +755,13 @@ like($clothesline_js, qr/ctx\.fillRect\(barX - 2, barTop, 4, barHeight\)/,
 	'the divider between the head and the tail is four pixels wide');
 like($clothesline_js, qr/v\['wave'\] != clothes\[i - 1\]\['wave'\]/, 'the rail draws a soft bar between waves');
 
+# The band starts on headerHeight, so the room taskbar.js reserves for a top bar
+# (a taskbar's own height, a top dock's box) moves the line without the band ever
+# drawing under it. The press test reads the same two figures back.
+like($clothesline_js, qr/var minHeight = headerHeight;/, 'the band starts on the desk\'s top line');
+like($clothesline_js, qr/y <= clothesLinePos\['maxHeight'\] && y >= clothesLinePos\['minHeight'\]/,
+	'and a press is judged against the band it was drawn in');
+
 # --- every press re-hangs the line, and the reply carries it ----------------
 my $part32 = read_file(repo_root() . '/lib/JawnOS/Manager/Part32.pm');
 like($part32, qr/clothesline_slot_now/, 'the Configure slots are counted on the house clock too');

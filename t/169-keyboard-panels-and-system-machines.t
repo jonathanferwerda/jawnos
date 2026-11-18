@@ -42,7 +42,7 @@ like($menu, qr/\$\(document\)\.on\('click', '\.remote_control_open'/,
 like($menu, qr/appWindowOpener\('network'/, 'it opens the Network app');
 like($menu, qr/networkTabShow\('remote', true\)/, 'on its Remote Machines tab');
 like($menu, qr/network_remote_toggle/, 'and expands that machine\'s accordion');
-like($menu, qr/if \(\$\('\#start_menu'\)\.is\(':visible'\)\) \{ startMenuToggle\(\); \}/,
+like($menu, qr/if \(jawnosStartMenuOpen\(\)\) \{ startMenuToggle\(\); \}/,
 	'the press puts the start menu away');
 
 # The levels tiles are ordered by name, then address, so a peer or a board does

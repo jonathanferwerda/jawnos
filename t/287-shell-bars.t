@@ -12,6 +12,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use File::Temp qw(tempfile);
 use RepoSource;
 
 my $root = repo_root();
@@ -195,6 +196,73 @@ like($events, qr/on\('contextmenu', '\.jawnos_taskbar'/, 'an added taskbar opens
 like($dock, qr/on\('contextmenu', '\.jawnos_dock'/, 'an added dock opens the dock menu');
 like($dock, qr/on\('contextmenu', '\.pseudonym_bar \.pseudonym'/, 'and so does a copied face');
 like($core, qr{/js/manager/shell_layout\.js}, 'the shell layer is in the core bundle');
+
+# --- the desk's top line keeps a revealed bar off the clothesline -----------
+# A top taskbar's height has to be on the root before headerHeight is measured;
+# the first pass otherwise measures the default 44px bar and hands the desk a
+# line a taller bar covers when the pointer calls it out.
+like($taskbar, qr/function jawnosTopBarLine\(bar, dock\)/,
+	'the top line is one pure measurement');
+like($taskbar, qr/headerHeight = jawnosTopBarLine\(jawnosTaskbarEdge\('top'\), jawnosTopDockReach\(\)\)/,
+	'the bars apply it from the taskbar edge and the dock\'s box');
+ok(index($taskbar, "root.setProperty('--taskbar_h'") < index($taskbar, 'headerHeight = jawnosTopBarLine('),
+	'the bar height reaches the CSS before the line is measured');
+like($taskbar, qr/function jawnosTopDockReach\(\)[\s\S]{0,600}home\.style\.top/,
+	'the dock reach reads the offset it is going to, not a box caught mid-move');
+like($taskbar, qr/function jawnosTopBarRedraw\(\)[\s\S]{0,400}graphicalize\(\)/,
+	'a moved line redraws the desk instead of sliding the canvas');
+like($taskbar, qr/function jawnosTopBarLineApply\(\)[\s\S]{0,500}if \(next === headerHeight\) \{ return 0; \}/,
+	'and nothing is repainted when the line has not moved');
+like($taskbar, qr/function jawnosDockTopOffset\(\) \{\s*return jawnosTaskbarEdge\('top'\);\s*\}/,
+	'the dock hangs from the bar edge, not from the room it reserves');
+like($taskbar, qr/new MutationObserver/, 'the dock\'s own tuck and reveal are watched');
+like($taskbar, qr/body\.classList\.add\('jawnos_shell_ready'\)/,
+	'the bar slide is armed only after the first layout');
+
+like($css, qr/body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #taskbar\[autohide=on\]\s*\{[^}]*transition: transform var\(--jm-bar-time/s,
+	'the autohide bar slides at the level\'s own pace');
+like($css, qr/body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #pseudonym_home\[position=bottom\]\s*\{[^}]*transition: bottom var\(--jm-bar-time/s,
+	'and a bottom dock slides into its tuck, in its own direction');
+like($css, qr/body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #pseudonym_home\[position=left\],\s*body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #pseudonym_home\[position=right\]\s*\{[^}]*transition: left var\(--jm-bar-time/s,
+	'and a side dock slides at the same pace as its faces');
+unlike($css, qr/#pseudonym_home\[position=top\][^{]*\{[^}]*transition: top/s,
+	'a top dock is not given a top transition (its finder reads that offset back)');
+like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,500}#taskbar\[autohide=on\][\s\S]{0,120}transition: none !important/s,
+	'reduced motion takes the bar slide away');
+
+my $node = `command -v node 2>/dev/null`;
+chomp $node if defined $node;
+SKIP: {
+	skip 'node is needed to play the top-line measurement', 1 unless $node && -x $node;
+
+	my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $fh <<'JS';
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[2], 'utf8');
+const m = src.match(/function jawnosTopBarLine\(bar, dock\) \{[\s\S]*?\n\}/);
+if (!m) { console.log('missing helper'); process.exit(2); }
+eval(m[0]);
+const cases = [
+	[[44, 0], 44],      // a top taskbar alone
+	[[60, 0], 60],      // a taller bar is not capped at the default
+	[[44, 171], 171],   // a revealed top dock reaches further
+	[[0, 0], 0],        // no top furniture claims nothing
+	[[0, 91], 91],      // a tucked dock keeps its search strip over the desk
+	[[44, -10], 44],    // a negative measurement cannot pull the line up
+	[[], 0]             // a missing measurement is no claim
+];
+let bad = 0;
+for (const [args, want] of cases) {
+	const got = jawnosTopBarLine.apply(null, args);
+	if (got !== want) { bad++; console.log('FAIL', JSON.stringify(args), got, '!=', want); }
+}
+console.log(bad ? 'bad' : 'ok');
+process.exit(bad ? 1 : 0);
+JS
+	close $fh;
+	my $out = `$node $harness $root/public/js/manager/taskbar.js 2>&1`;
+	is($? >> 8, 0, 'the line is the deeper of the taskbar and the dock, never negative');
+}
 
 # --- the help topic is in the on-screen words -------------------------------
 require "$root/perl/help.pl";

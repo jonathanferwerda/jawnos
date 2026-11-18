@@ -165,7 +165,7 @@ $(document).on('click', '.jonathan, .start_menu_list', function() {
 	if ($(this).closest('#start_menu_toggle, .start_menu_toggle_copy').length) { return; }
 	// a start-menu row opening an appointment beats while the window comes up
 	if ($(this).hasClass('start_menu_list') && typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }
-	if ($('#start_menu').is(':visible')) {
+	if (jawnosStartMenuOpen()) {
 		startMenuToggle();
 	}
 });
@@ -176,7 +176,7 @@ $(document).on('click', '.jonathan, .start_menu_list', function() {
 // peer by its signatorial, which the panel resolves like a uuid or an ip.
 $(document).on('click', '.remote_control_open', function() {
 	var machine = $(this).attr('machine') || '';
-	if ($('#start_menu').is(':visible')) { startMenuToggle(); }
+	if (jawnosStartMenuOpen()) { startMenuToggle(); }
 	if (typeof appWindowOpener === 'function') { appWindowOpener('network', Date.now(), { visible: 'yes' }); }
 	// The panel opened with a machine is that row's accordion. A fresh window
 	// renders after the opener, so retry once for the tab and the row.
@@ -198,7 +198,7 @@ function startMenuToggle(data) {
 	var start_menu = $('#start_menu');
 	var menu = localStorage.getItem('start_menu_menu') || '';
 	clearTimeout(startMenuTimeout);
-	if ((st.attr('toggled') == 'open' || start_menu.is(':visible')) && !source) {
+	if (jawnosStartMenuOpen(start_menu) && !source) {
 		startMenuCloser(0);
 		st.attr('toggled', 'closed');
 		if (focused_input.is(':visible')) {
@@ -254,6 +254,7 @@ function startMenuRender(html, st) {
 	if (typeof mailDotPaint == 'function') { mailDotPaint(); }
 	if (typeof ticketDotPaint == 'function') { ticketDotPaint(); }
 	st.attr('toggled', 'open');
+	jawnosStartMenuUnfold($('#start_menu'), st);
 }
 
 // The recent list has changed under the menu; the kept markup carries the old
@@ -266,7 +267,7 @@ function startMenuHtmlFlush() {
 // away.
 $(document).on('click', function (e) {
 	var menu = $('#start_menu');
-	if (!menu.is(':visible')) { return; }
+	if (!jawnosStartMenuOpen(menu)) { return; }
 	if ($(e.target).closest('#start_menu, #start_menu_toggle, .start_menu_toggle_copy').length > 0) { return; }
 	$('#start_menu_toggle').attr('toggled', 'closed');
 	startMenuCloser(0);
@@ -472,6 +473,131 @@ $(document).on('click', '.start_menu_category', function () {
 // the menu ships inside the page as well as over the socket, so do it once at load
 $(function () { startMenuListify(); });
 
+// ---- the panel's own motion -------------------------------------------------
+// The menu is placed by taskbar.js and its markup is the server's; the only
+// thing added here is the unfold. A desk with the effects off, or one that asked
+// for reduced motion, never gets the class - it shows and hides as it always
+// did. Every motion is a transform and an opacity on the panel, so nothing in
+// the layout or the placement maths sees it.
+
+// Longer than any level's open or fold; a ceiling, not the duration. The class
+// must not outlive its animation (a throttled tab may never fire animationend).
+var jawnosMenuMotionCeiling = 500;
+
+function jawnosStartMenuMotionOn() {
+	return (typeof jawnosWindowMotionAllowed == 'function') && jawnosWindowMotionAllowed();
+}
+
+// Open means visible and not already folding: a panel caught mid-fold is on its
+// way out, so a press on the toggle is a fresh open, not another close.
+function jawnosStartMenuOpen(menu) {
+	menu = (menu && menu.length) ? menu : $('#start_menu');
+	return menu.is(':visible') && !menu.hasClass('jawnos_menu_fold');
+}
+
+// Pure: which way the panel unfolds and from where, in its own box. `below` is
+// true when it hangs under its button - a top bar, or the corner above a bottom
+// one - so a top bar unfolds downward from the panel's top edge and a bottom bar
+// upward from its foot. `x` is the button's centre as a fraction of the panel's
+// width; the origin is clamped inside the panel so a button past its edge still
+// reads as the corner it came from.
+function jawnosStartMenuOrigin(below, x) {
+	x = (x === null || x === undefined || !isFinite(x)) ? 0 : x;
+	x = Math.max(0, Math.min(1, x));
+	return {
+		x: Math.round(x * 100),
+		y: below ? 0 : 100,
+		dy: below ? -6 : 6
+	};
+}
+
+// The button the panel answered: the primary one when it is on screen, the copy
+// an added bar carries otherwise (taskbar.js places the menu from the same pair).
+function jawnosStartMenuToggleFor(menu) {
+	var toggle = $('#start_menu_toggle').filter(':visible').first();
+	if (!toggle.length) { toggle = $('.start_menu_toggle_copy:visible').first(); }
+	return toggle;
+}
+
+function jawnosStartMenuMotionCancel(menu) {
+	var el = menu && menu[0];
+	if (!el) { return; }
+	if (el.jawnosMenuTimer) { clearTimeout(el.jawnosMenuTimer); el.jawnosMenuTimer = null; }
+	menu.removeClass('jawnos_menu_unfold jawnos_menu_fold');
+	if (el.inert) { el.inert = false; }
+}
+
+// Hang the unfold's origin on the panel itself: which edge faces the button and
+// how far across it the button sits. Read from the boxes the placer has just
+// written, so it follows a menu that hangs over a bottom bar versus under a top
+// one without asking the placer anything.
+function jawnosStartMenuOriginApply(menu, toggle) {
+	if (!menu.length || !toggle.length) { return; }
+	var m = menu[0].getBoundingClientRect();
+	var t = toggle[0].getBoundingClientRect();
+	if (!(m.width > 0) || !(m.height > 0)) { return; }
+	var below = m.top >= (t.top + (t.height / 2));
+	var origin = jawnosStartMenuOrigin(below, ((t.left + (t.width / 2)) - m.left) / m.width);
+	var style = menu[0].style;
+	style.setProperty('--jm-origin-x', origin.x + '%');
+	style.setProperty('--jm-origin-y', origin.y + '%');
+	style.setProperty('--jm-menu-dy', origin.dy + 'px');
+}
+
+// The panel unfolding out of its button. Called after the render has shown and
+// placed it, so the first frame is the open size at the open place: the click
+// target is there from the first frame, the motion only paints it in.
+function jawnosStartMenuUnfold(menu, st) {
+	menu = (menu && menu.length) ? menu : $('#start_menu');
+	if (!menu.length) { return; }
+	jawnosStartMenuMotionCancel(menu);
+	if (!jawnosStartMenuMotionOn()) { return; }
+	var toggle = (st && st.length) ? st.filter(':visible').first() : $();
+	if (!toggle.length) { toggle = jawnosStartMenuToggleFor(menu); }
+	jawnosStartMenuOriginApply(menu, toggle);
+	var el = menu[0];
+	void el.offsetWidth;   // a re-open must start the keyframes again
+	menu.addClass('jawnos_menu_unfold');
+	el.jawnosMenuTimer = setTimeout(function () {
+		el.jawnosMenuTimer = null;
+		menu.removeClass('jawnos_menu_unfold');
+	}, jawnosMenuMotionCeiling);
+}
+
+// The fast reverse. The panel takes no pointer while it leaves, so a press can
+// never land on a menu that is already going, and it is hidden at the end - a
+// closed menu is as unfocusable as it was before there was any motion.
+function jawnosStartMenuFold(menu, st) {
+	menu = (menu && menu.length) ? menu : $('#start_menu');
+	if (!menu.length) { return; }
+	if (!menu.is(':visible')) { jawnosStartMenuMotionCancel(menu); menu.hide(); return; }
+	jawnosStartMenuMotionCancel(menu);
+	if (!jawnosStartMenuMotionOn()) { menu.hide(); return; }
+	var toggle = (st && st.length) ? st.filter(':visible').first() : $();
+	if (!toggle.length) { toggle = jawnosStartMenuToggleFor(menu); }
+	jawnosStartMenuOriginApply(menu, toggle);
+	var el = menu[0];
+	var done = false;
+	var finish = function () {
+		if (done) { return; }
+		done = true;
+		if (el.jawnosMenuTimer) { clearTimeout(el.jawnosMenuTimer); el.jawnosMenuTimer = null; }
+		menu.off('animationend', onend);
+		menu.removeClass('jawnos_menu_fold');
+		menu.hide();
+		el.inert = false;
+	};
+	var onend = function (ev) {
+		// a child's own animation bubbles; only the panel's fold ends the close
+		if (ev.target !== el) { return; }
+		finish();
+	};
+	if (el.inert !== undefined) { el.inert = true; }
+	menu.addClass('jawnos_menu_fold');
+	menu.on('animationend', onend);
+	el.jawnosMenuTimer = setTimeout(finish, jawnosMenuMotionCeiling);
+}
+
 function startMenuCloser(wait) {
 	clearTimeout(startMenuTimeout);
 	startMenuTimeout = setTimeout(function() {
@@ -485,7 +611,7 @@ function startMenuCloser(wait) {
 			if (wait == 0 || !((m.x > left && m.x < (left + width)) && (m.y > top && m.y < (top + height)))) {
 				var st = $('#start_menu_toggle');
 				st.attr('toggled', 'closed');
-				start_menu.hide();
+				jawnosStartMenuFold(start_menu, st);
 			}
 			else {
 				startMenuCloser(7000);

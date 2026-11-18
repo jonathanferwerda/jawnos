@@ -1,4 +1,4 @@
-# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js lib/JawnOS/Manager/Part11.pm
+# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js public/css/manager.css lib/JawnOS/Manager/Part11.pm
 # covers:    the running list lists open sessions only, Internet is the one web entry
 #            point, and every catalog-driven app label reads as a capitalised name
 
@@ -10,6 +10,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use DBI;
 use File::Slurp qw(read_file);
+use File::Temp qw(tempfile);
 use Mojo::Template;
 use JawnOSTest;
 
@@ -21,6 +22,7 @@ use JawnOSTest;
 # copy. Nothing here touches the live database.
 
 my $template = read_file(root() . '/templates/start_menu/start_menu.html.ep');
+my $root = root();
 
 # The Web app is a component of Internet now; the start menu offers Internet
 # alone, so two icons cannot open the same pages from different places.
@@ -99,6 +101,66 @@ for my $key (@lang_hints) {
 like($menu_js, qr/\.start_menu_toggle_copy/, 'a start button copied into an added bar answers');
 like($menu_js, qr/closest\('#start_menu_toggle, \.start_menu_toggle_copy'\)/,
 	'a press on the copy is not mistaken for an outside press');
+
+# --- the panel unfolds out of its button ------------------------------------
+# The motion is the same four-level scale the windows wear; the gate is the
+# shared one, so off and reduced motion write no class at all and keep the old
+# plain show/hide.
+my $css = read_file(root() . '/public/css/manager.css');
+like($menu_js, qr/jawnosWindowMotionAllowed/, 'the menu motion obeys the shared level and reduced-motion gate');
+like($menu_js, qr/jawnosStartMenuUnfold\(\$\('#start_menu'\), st\)/,
+	'the render unfolds the panel it has just shown and placed');
+like($menu_js, qr/function jawnosStartMenuOrigin\(below, x\)/, 'the unfold origin is one pure geometry');
+like($menu_js, qr/jawnosStartMenuFold\(start_menu, st\)/,
+	'the closer folds the panel rather than hiding it outright');
+like($menu_js, qr/function jawnosStartMenuFold[\s\S]{0,1200}menu\.hide\(\)/,
+	'and hides it when the fold ends, so a closed menu is unfocusable again');
+like($css, qr/#start_menu\.jawnos_menu_unfold\s*\{[^}]*transform-origin: var\(--jm-origin-x[^}]*animation: jawnos_menu_unfold/s,
+	'the panel unfolds from the corner facing its button');
+like($css, qr/#start_menu\.jawnos_menu_fold\s*\{[^}]*pointer-events: none/s,
+	'a closing panel takes no pointer');
+like($css, qr/\@keyframes jawnos_menu_fold\s*\{/, 'the close has its own reverse keyframes');
+for my $level (qw(light medium maximum)) {
+	like($css, qr/body\[data-window-effects="$level"\]\s*\{[^}]*--jm-menu-scale:/s,
+		"the $level level sets the unfold's size");
+}
+like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*#start_menu\.jawnos_menu_unfold \{ animation: none; \}/s,
+	'reduced motion takes the unfold away even mid-flight');
+
+my $node = `command -v node 2>/dev/null`;
+chomp $node if defined $node;
+SKIP: {
+	skip 'node is needed to play the menu geometry', 1 unless $node && -x $node;
+
+	my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $fh <<'JS';
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[2], 'utf8');
+const m = src.match(/function jawnosStartMenuOrigin\(below, x\) \{[\s\S]*?\n\}/);
+if (!m) { console.log('missing helper'); process.exit(2); }
+eval(m[0]);
+const cases = [
+	[[true, 0.5], { x: 50, y: 0, dy: -6 }],    // hangs under a top bar's button
+	[[false, 0.5], { x: 50, y: 100, dy: 6 }],   // stands over a bottom bar's button
+	[[true, -1], { x: 0, y: 0, dy: -6 }],       // a button past the left edge
+	[[true, 2], { x: 100, y: 0, dy: -6 }],      // a button past the right edge
+	[[false, null], { x: 0, y: 100, dy: 6 }]    // no button line is the left corner
+];
+let bad = 0;
+for (const [args, want] of cases) {
+	const got = jawnosStartMenuOrigin.apply(null, args);
+	if (!got || got.x !== want.x || got.y !== want.y || got.dy !== want.dy) {
+		bad++;
+		console.log('FAIL', JSON.stringify(args), JSON.stringify(got));
+	}
+}
+console.log(bad ? 'bad' : 'ok');
+process.exit(bad ? 1 : 0);
+JS
+	close $fh;
+	my $out = `$node $harness $root/public/js/manager/manager/05_start_menu.js 2>&1`;
+	is($? >> 8, 0, 'the unfold runs down from a top bar and up from a bottom one, inside the panel');
+}
 
 # A desk and a phone have no DOSBox, so the games shelf carries the browser
 # player's rows. The handheld keeps its native shelf, and the server sends an

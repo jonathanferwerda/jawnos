@@ -4888,3 +4888,104 @@ body[data-window-effects="off"] .jawnos_emerge_ghost { display: none !important;
 @media (prefers-reduced-motion: reduce) {
 	.jawnos_emerge_ghost { display: none; }
 }
+
+/* ---- shell motion: the start menu and the bars -------------------------
+   The same Misc -> Window Effects level that scales the windows' own motions
+   sets how far the shell's chrome moves: the start menu unfolds out of the
+   corner of the button that opened it, the autohide taskbar slides off its
+   edge, and the dock slides into its tuck. off writes none of the classes (the
+   JS gate is jawnosWindowMotionAllowed), so those desks keep exactly the
+   show/hide they had; reduced motion is honoured here as well as there.
+   Everything below is a transform, an opacity or an offset the bar already
+   moves by, so no layout or hit test ever sees the motion. */
+body, body[data-window-effects="medium"] {
+	--jm-menu-scale: .93;
+	--jm-menu-lift: 1;
+	--jm-menu-open: 165ms;
+	--jm-menu-close: 110ms;
+	--jm-bar-time: 180ms;
+}
+body[data-window-effects="light"] {
+	--jm-menu-scale: .97;
+	--jm-menu-lift: .55;
+	--jm-menu-open: 120ms;
+	--jm-menu-close: 85ms;
+	--jm-bar-time: 130ms;
+}
+body[data-window-effects="maximum"] {
+	--jm-menu-scale: .86;
+	--jm-menu-lift: 1.7;
+	--jm-menu-open: 210ms;
+	--jm-menu-close: 140ms;
+	--jm-bar-time: 240ms;
+}
+
+/* The panel unfolds from the edge facing its button: --jm-origin-y is 0 for a
+   menu hanging under a top bar's button and 100 for one standing above a
+   bottom bar's, and --jm-origin-x is the button's own line across the panel.
+   --jm-menu-dy carries the direction of that edge and the level scales how far
+   the panel travels, so a top bar unfolds downward and a bottom bar upward. */
+#start_menu.jawnos_menu_unfold {
+	transform-origin: var(--jm-origin-x, 0%) var(--jm-origin-y, 0%);
+	animation: jawnos_menu_unfold var(--jm-menu-open, 165ms) cubic-bezier(.2,.9,.25,1.15);
+	will-change: transform, opacity;
+}
+@keyframes jawnos_menu_unfold {
+	0% { opacity: 0; transform: translateY(calc(var(--jm-menu-dy, -6px) * var(--jm-menu-lift, 1))) scale(var(--jm-menu-scale, .93)); }
+	55% { opacity: 1; }
+	100% { opacity: 1; transform: none; }
+}
+/* The close is the reverse and shorter, so the menu does not feel laggy. The
+   panel takes no pointer while it is on its way out; it is hidden when the
+   motion ends, so a closed menu is as unfocusable as it was without one. */
+#start_menu.jawnos_menu_fold {
+	transform-origin: var(--jm-origin-x, 0%) var(--jm-origin-y, 0%);
+	animation: jawnos_menu_fold var(--jm-menu-close, 110ms) ease-in forwards;
+	pointer-events: none;
+	will-change: transform, opacity;
+}
+@keyframes jawnos_menu_fold {
+	0% { opacity: 1; transform: none; }
+	100% { opacity: 0; transform: translateY(calc(var(--jm-menu-dy, -6px) * var(--jm-menu-lift, 1))) scale(var(--jm-menu-scale, .93)); }
+}
+
+/* The bars slide at the level's pace, in the direction of their edge: the
+   taskbar's autohide tuck is a transform along its own edge, and a bottom
+   dock loses itself under the edge by its own offset. A top dock is left as a
+   direct move on purpose - its finder reads the home's `top` back to place the
+   icon row, so a transition there would hand the row the place it is leaving.
+   The ready class is hung only after the first layout has settled (taskbar.js),
+   so a fresh page does not animate the dock out from under its resting place. */
+body.jawnos_shell_ready:not([data-window-effects="off"]) #taskbar[autohide=on] {
+	transition: transform var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1);
+}
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=bottom] {
+	transition: bottom var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1);
+}
+/* A side dock already slides out of its edge; at a level above off it takes the
+   level's pace, and the faces riding the pill take the same one so the row does
+   not come apart from its own backing. */
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=left],
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=right] {
+	transition: left var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1),
+		right var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1),
+		background-color .25s ease, border-color .25s ease, box-shadow .25s ease;
+}
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=left] .pseudonym,
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=right] .pseudonym,
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=left] #search_toggle,
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=right] #search_toggle {
+	transition: border-color .15s ease, transform .12s ease,
+		left var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	#start_menu.jawnos_menu_unfold { animation: none; }
+	#start_menu.jawnos_menu_fold { animation: none; opacity: 0; }
+	/* the level rules above carry a class and an attribute; the ask for no
+	   motion is not a matter of who wrote last */
+	body #taskbar[autohide=on],
+	body #pseudonym_home[position=bottom],
+	body #pseudonym_home[position=left],
+	body #pseudonym_home[position=right] { transition: none !important; }
+}
