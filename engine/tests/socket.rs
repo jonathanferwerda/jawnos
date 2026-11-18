@@ -18,6 +18,11 @@ struct Server {
 
 impl Server {
     fn start(name: &str) -> Self {
+        Self::start_with(name, &[])
+    }
+
+    /// The same, with extra `--serve` arguments such as `--channels 8`.
+    fn start_with(name: &str, extra: &[&str]) -> Self {
         let socket = std::env::temp_dir().join(format!(
             "jawn-audio-sock-{}-{name}.sock",
             std::process::id()
@@ -26,6 +31,7 @@ impl Server {
         let child = Command::new(env!("CARGO_BIN_EXE_jawn-audio"))
             .args(["--serve", "--backend", "null", "--socket"])
             .arg(&socket)
+            .args(extra)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -166,20 +172,25 @@ impl Drop for TempFile {
     }
 }
 
-/// A `tracks:2` base path and the two files a take derives from it.
+/// A multi-track base path and the files a take derives from it.
 struct TwoTracks {
     base: PathBuf,
+    count: usize,
 }
 
 impl TwoTracks {
     fn new(name: &str) -> Self {
+        Self::with_count(name, 2)
+    }
+
+    fn with_count(name: &str, count: usize) -> Self {
         let base = std::env::temp_dir().join(format!(
             "jawn-audio-socket-tracks-{}-{name}.wav",
             std::process::id()
         ));
-        let set = TwoTracks { base };
+        let set = TwoTracks { base, count };
         let _ = fs::remove_file(&set.base);
-        for track in 1..=2 {
+        for track in 1..=set.count {
             let _ = fs::remove_file(set.derived(track));
         }
         set
@@ -202,7 +213,7 @@ impl TwoTracks {
 impl Drop for TwoTracks {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.base);
-        for track in 1..=2 {
+        for track in 1..=self.count {
             let _ = fs::remove_file(self.derived(track));
         }
     }
@@ -452,6 +463,96 @@ fn a_two_track_record_reports_both_and_status_carries_them() {
 }
 
 #[test]
+fn eight_tracks_over_the_socket_report_every_track() {
+    let server = Server::start_with("eight", &["--channels", "8"]);
+    let mut client = server.connect();
+    let take = TwoTracks::with_count("eight", 8);
+    let inputs = [7usize, 0, 1, 2, 3, 4, 5, 6];
+
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.05,\"tracks\":8,\"inputs\":[7,0,1,2,3,4,5,6]}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    assert!(reply.contains("\"channels\":8"), "record: {reply}");
+    for (index, input) in inputs.iter().enumerate() {
+        assert!(
+            reply.contains(&format!(
+                "\"path\":\"{}\",\"input\":{input}",
+                take.derived(index + 1).display()
+            )),
+            "track {}: {reply}",
+            index + 1
+        );
+    }
+
+    let status = client.wait_for_done();
+    assert!(status.contains("\"state\":\"done\""), "status: {status}");
+    assert_eq!(json_number(&status, "channels"), 8.0, "status: {status}");
+    assert_eq!(json_number(&status, "frames"), 2_400.0, "status: {status}");
+    for (index, input) in inputs.iter().enumerate() {
+        assert!(
+            status.contains(&format!(
+                "\"path\":\"{}\",\"input\":{input},\"frames\":2400,\"dropped\":0",
+                take.derived(index + 1).display()
+            )),
+            "track {}: {status}",
+            index + 1
+        );
+        assert_wav(&take.derived(index + 1), 2_400);
+    }
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_take_that_does_not_fit_the_device_is_refused_before_any_file() {
+    let server = Server::start("too-many");
+    let mut client = server.connect();
+    let take = TwoTracks::with_count("refused", 9);
+
+    // More tracks than the engine's two channels.
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.05,\"tracks\":9}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "nine tracks: {reply}");
+    assert!(reply.contains("channel"), "nine tracks: {reply}");
+
+    // A track whose input is outside the granted count.
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.05,\"tracks\":2,\"inputs\":[0,9]}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "input 9: {reply}");
+    assert!(reply.contains("input 9"), "input 9: {reply}");
+
+    for track in 1..=9 {
+        assert!(
+            !take.derived(track).exists(),
+            "a refused take created track {track}"
+        );
+    }
+
+    // The connection survives both refusals.
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"ok\":true"), "status: {status}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, _) = server.finish();
+    assert!(output.status.success());
+}
+
+#[test]
 fn a_param_moves_a_running_strip_and_the_take_still_finishes() {
     let server = Server::start("param");
     let mut client = server.connect();
@@ -528,6 +629,128 @@ fn a_param_moves_a_running_strip_and_the_take_still_finishes() {
     let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"gain\",\"value\":0.5}");
     assert!(reply.contains("\"ok\":false"), "after done: {reply}");
     assert!(reply.contains("no take is running"), "after done: {reply}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn a_take_is_armed_with_a_per_track_plan_and_status_reports_it() {
+    let server = Server::start("planned");
+    let mut client = server.connect();
+    let take = TwoTracks::new("planned");
+
+    // A long take, so the knobs below have a live strip to reach.
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300,\"tracks\":[{{\"input\":0,\"gain\":0.8,\"pan\":-0.3,\"inserts\":[\"tone\",\"delay\"]}},{{\"input\":1,\"gain\":900,\"pan\":-9,\"inserts\":[\"reverb\"]}}]}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    // The reply already carries the armed plan, not a wire.
+    assert!(
+        reply.contains("\"gain\":0.8,\"pan\":-0.3,\"inserts\":\"tone,delay\""),
+        "track 1 plan: {reply}"
+    );
+    // Gain and pan are clamped exactly as the CLI clamps them.
+    assert!(
+        reply.contains("\"gain\":4,\"pan\":-1,\"inserts\":\"reverb\""),
+        "track 2 plan: {reply}"
+    );
+
+    // `param` addresses the effects that were armed, and says so when the
+    // effect is not in that track's chain.
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"tone.bass\",\"value\":3}");
+    assert_eq!(reply, "{\"ok\":true,\"track\":0,\"name\":\"tone.bass\"}");
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":0,\"name\":\"delay.feedback\",\"value\":0.5}");
+    assert!(reply.contains("\"ok\":true"), "delay knob: {reply}");
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":1,\"name\":\"reverb.mix\",\"value\":0.5}");
+    assert!(reply.contains("\"ok\":true"), "reverb knob: {reply}");
+    let reply = client.ask("{\"cmd\":\"param\",\"track\":1,\"name\":\"tone.bass\",\"value\":3}");
+    assert!(reply.contains("\"ok\":false"), "tone is not on track 2: {reply}");
+    assert!(
+        reply.contains("no such parameter: tone.bass"),
+        "tone is not on track 2: {reply}"
+    );
+
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"state\":\"recording\""), "status: {status}");
+    assert!(
+        status.contains(&format!(
+            "{{\"path\":\"{}\",\"input\":0",
+            take.derived(1).display()
+        )),
+        "track 1 entry: {status}"
+    );
+    assert!(
+        status.contains("\"gain\":0.8,\"pan\":-0.3,\"inserts\":\"tone,delay\""),
+        "track 1 plan in status: {status}"
+    );
+    assert!(
+        status.contains("\"gain\":4,\"pan\":-1,\"inserts\":\"reverb\""),
+        "track 2 plan in status: {status}"
+    );
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    assert!(
+        stopped.contains("\"inserts\":\"tone,delay\""),
+        "stop keeps the plan: {stopped}"
+    );
+    assert_eq!(json_number(&stopped, "gain"), 0.8, "stop: {stopped}");
+    assert_eq!(json_number(&stopped, "pan"), -0.3, "stop: {stopped}");
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+#[test]
+fn an_unknown_insert_is_refused_before_a_file_exists() {
+    let server = Server::start("bad-insert");
+    let mut client = server.connect();
+    let take = TempFile::new("bad-insert");
+
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.05,\"tracks\":[{{\"input\":0,\"inserts\":[\"tone\",\"flanger\"]}}]}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":false"), "unknown insert: {reply}");
+    assert!(
+        reply.contains("no such insert: flanger"),
+        "unknown insert: {reply}"
+    );
+    assert!(
+        !take.path.exists(),
+        "a refused plan must not create the take file"
+    );
+
+    // The connection survives, and a plan the engine can build still runs.
+    let good = TempFile::new("good-insert");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":0.1,\"tracks\":[{{\"input\":0,\"inserts\":[\"tone\",\"delay\"]}}]}}",
+        good.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "good plan: {reply}");
+    let status = client.wait_for_done();
+    assert!(status.contains("\"state\":\"done\""), "status: {status}");
+    assert!(
+        status.contains("\"inserts\":\"tone,delay\""),
+        "a one-track take still reports its chain: {status}"
+    );
+    assert_wav(&good.path, 4_800);
 
     let reply = client.ask("{\"cmd\":\"quit\"}");
     assert_eq!(reply, "{\"ok\":true}");

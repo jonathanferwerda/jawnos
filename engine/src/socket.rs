@@ -1,11 +1,12 @@
-//! The control socket: one flat JSON object per line, in and out.
+//! The control socket: one JSON object per line, in and out.
 //!
 //! The Perl manager arms a take (`record`), watches it (`status`), moves the
 //! running strip's knobs (`param`) and ends it (`stop`) over a Unix socket, so
 //! the wire format here is deliberately dumb:
-//! one object per line, values that are only strings, numbers, booleans or
-//! null, and no crates — the parser below is the whole of it. That keeps the
-//! engine's dependency set at "the audio backend, and nothing else"
+//! one object per line, values that are strings, numbers, booleans, null,
+//! arrays, or (for a take's `tracks` plan) one object per track, and no crates
+//! — the parser below is the whole of it. That keeps the engine's dependency
+//! set at "the audio backend, and nothing else"
 //! (docs/studio-audio-roadmap.md §7, P2).
 //!
 //! # The socket's life
@@ -46,10 +47,11 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use jawn_audio::{
-    to_i16, BackendKind, Channel, Device, DiskWriter, Mixer, NullDevice, ParamName, ParamQueue,
+    to_i16, BackendKind, Channel, Device, DiskWriter, InsertKind, Mixer, NullDevice, ParamName,
+    ParamQueue,
 };
 
-use crate::{take_frames, RECORD_CHANNELS};
+use crate::{take_frames, MAX_CHANNELS, MAX_TRACKS, TAKE_CHANNELS};
 
 /// How long a take runs when the command does not say.
 const DEFAULT_SECONDS: f64 = 10.0;
@@ -58,9 +60,12 @@ const DEFAULT_SECONDS: f64 = 10.0;
 /// long to be read; the socket is idle almost all the time.
 const POLL: Duration = Duration::from_millis(2);
 
-/// A command is one flat object; this bounds a client that never sends a
-/// newline.
+/// A command is one object; this bounds a client that never sends a newline.
 const MAX_LINE: usize = 64 * 1024;
+
+/// A value may hold an object (a take's `tracks` plan), but a plan is one
+/// level deep: this bounds a caller that nests one object inside another.
+const MAX_VALUE_DEPTH: usize = 3;
 
 /// How many times `send` retries a blocked write before deciding the peer is
 /// gone. A reply is one short line, so this is generous.
@@ -74,6 +79,8 @@ pub(crate) struct Config {
     pub rate: u32,
     pub period: usize,
     pub buffer: usize,
+    /// The capture channel count a take asks the device for.
+    pub channels: usize,
     pub socket: PathBuf,
 }
 
@@ -376,15 +383,62 @@ impl Server {
             }
             _ => return error_line("\"start_at\" must be a whole, non-negative sample count"),
         };
-        let tracks = match get(object, "tracks") {
-            None | Some(Value::Null) => 1usize,
+        // Two shapes for `tracks`: the historical count (`"tracks":2`, one
+        // wire per input) and the plan the page arms, one object per track.
+        let plans = match get(object, "tracks") {
+            None | Some(Value::Null) => vec![TrackPlan::wire(0)],
             Some(Value::Num(value))
-                if value.is_finite() && (*value == 1.0 || *value == 2.0) =>
+                if value.is_finite()
+                    && *value >= 1.0
+                    && *value <= MAX_TRACKS as f64
+                    && value.fract() == 0.0 =>
             {
-                *value as usize
+                let tracks = *value as usize;
+                let inputs = match parse_inputs(object, tracks) {
+                    Ok(inputs) => inputs,
+                    Err(error) => return error_line(&error),
+                };
+                inputs
+                    .into_iter()
+                    .map(TrackPlan::wire)
+                    .collect::<Vec<TrackPlan>>()
             }
-            _ => return error_line("\"tracks\" must be 1 or 2"),
+            Some(Value::Arr(values)) => {
+                // The plan names each track's input, so the parallel `inputs`
+                // array would be a second, possibly contradictory answer.
+                if matches!(get(object, "inputs"), Some(value) if !matches!(value, Value::Null)) {
+                    return error_line(
+                        "\"inputs\" cannot be combined with a per-track \"tracks\" plan: give each track its input",
+                    );
+                }
+                match track_plans(values) {
+                    Ok(plans) => plans,
+                    Err(error) => return error_line(&error),
+                }
+            }
+            _ => {
+                return error_line(&format!(
+                    "\"tracks\" must be a whole number of tracks, 1..={MAX_TRACKS}, or an array of track plans"
+                ))
+            }
         };
+        let tracks = plans.len();
+        if tracks > self.config.channels {
+            return error_line(&format!(
+                "a {tracks}-track take needs at least {tracks} input channels, but the engine has {} channel(s): restart it with a larger --channels",
+                self.config.channels
+            ));
+        }
+        for (index, plan) in plans.iter().enumerate() {
+            if plan.input >= self.config.channels {
+                return error_line(&format!(
+                    "track {} records input {}, but the engine has only {} channel(s): pass a smaller input or restart it with a larger --channels",
+                    index + 1,
+                    plan.input,
+                    self.config.channels
+                ));
+            }
+        }
         if let Some(running) = &self.current {
             if running.is_recording() {
                 return error_line("a take is already running");
@@ -396,19 +450,21 @@ impl Server {
         if let Err(error) = crate::record_support(self.config.backend) {
             return error_line(&error);
         }
-        if let Err(error) = crate::probe_capture(
+        let channels = match crate::probe_capture(
             self.config.backend,
             &self.config.device,
             self.config.rate,
             self.config.period,
             self.config.buffer,
+            self.config.channels,
         ) {
-            return error_line(&error);
-        }
+            Ok(granted) => granted,
+            Err(error) => return error_line(&error),
+        };
 
-        // One WAV per track: a one-track take keeps `out` exactly; two tracks
-        // split the stem into `-ch1`/`-ch2`. Both files share one start_sample,
-        // because one take is one position on the transport.
+        // One WAV per track: a one-track take keeps `out` exactly; more tracks
+        // split the stem into `-ch1`/`-ch2`/... All files share one
+        // start_sample, because one take is one position on the transport.
         let paths = match crate::take_paths(&path, tracks) {
             Ok(paths) => paths,
             Err(error) => return error_line(&error),
@@ -418,14 +474,14 @@ impl Server {
             self.config.backend,
             frames,
             self.config.period,
-            RECORD_CHANNELS,
+            TAKE_CHANNELS,
         );
         let mut disks: Vec<DiskWriter> = Vec::with_capacity(paths.len());
         for (index, track_path) in paths.iter().enumerate() {
             match DiskWriter::spawn(
                 Path::new(track_path),
                 self.config.rate,
-                RECORD_CHANNELS as u16,
+                TAKE_CHANNELS as u16,
                 self.config.period,
                 queue,
             ) {
@@ -442,8 +498,6 @@ impl Server {
             }
         }
 
-        let inputs: Vec<usize> = (0..tracks).collect();
-
         // Join a finished worker before replacing it, so a stream of takes does
         // not leave detached threads behind.
         if let Some(mut previous) = self.current.take() {
@@ -452,20 +506,21 @@ impl Server {
 
         let take = self.next_take;
         self.next_take += 1;
-        // A serve take starts as a wire: gain 1, centred, no inserts, until a
-        // `param` moves it. The values here are the knobs `status` reports and
-        // only this thread changes them, so the mirror is the truth.
+        // The plan is what the page asked for: gain and pan are already
+        // clamped, the inserts already named. `status` mirrors these values
+        // until a `param` moves one, because the strips themselves live on the
+        // take thread and nothing else writes them.
         let track_status: Vec<TrackStatus> = paths
             .iter()
-            .enumerate()
-            .map(|(index, path)| TrackStatus {
+            .zip(plans.iter())
+            .map(|(path, plan)| TrackStatus {
                 path: path.clone(),
-                input: inputs[index],
+                input: plan.input,
                 frames: 0,
                 dropped: 0,
-                gain: 1.0,
-                pan: 0.0,
-                inserts: String::new(),
+                gain: plan.gain,
+                pan: plan.pan,
+                inserts: plan.insert_list(),
             })
             .collect();
         let shared = Arc::new(Mutex::new(Status {
@@ -474,6 +529,7 @@ impl Server {
             path: paths[0].clone(),
             frames: 0,
             dropped: 0,
+            channels,
             start_sample: start_at,
             xruns: 0,
             tracks: track_status.clone(),
@@ -490,9 +546,10 @@ impl Server {
             let stop = Arc::clone(&stop);
             let params = Arc::clone(&params);
             let config = self.config.clone();
+            let plans = plans.clone();
             thread::Builder::new()
                 .name("jawn-audio-take".to_string())
-                .spawn(move || run_take(config, seconds, disks, tracks, shared, stop, params))
+                .spawn(move || run_take(config, seconds, disks, plans, shared, stop, params))
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -512,7 +569,7 @@ impl Server {
             params,
         });
         format!(
-            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"start_sample\":{start_at}{}}}",
+            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at}{}}}",
             tracks_json(&track_status)
         )
     }
@@ -605,6 +662,181 @@ impl State {
     }
 }
 
+/// One track the socket arms: the input it records, the strip's knobs, and its
+/// inserts in chain order.
+#[derive(Clone)]
+struct TrackPlan {
+    input: usize,
+    /// Clamped to [`Channel::MAX_GAIN`] when the plan is read.
+    gain: f32,
+    /// -1 left ..= 1 right.
+    pan: f32,
+    inserts: Vec<InsertKind>,
+}
+
+impl TrackPlan {
+    /// A wire: gain 1, centred, no inserts. The historical `"tracks":N` shape
+    /// arms one of these per input.
+    fn wire(input: usize) -> Self {
+        TrackPlan {
+            input,
+            gain: 1.0,
+            pan: 0.0,
+            inserts: Vec::new(),
+        }
+    }
+
+    /// The chain order `status` reports, e.g. `tone,delay`.
+    fn insert_list(&self) -> String {
+        self.inserts
+            .iter()
+            .map(|kind| kind.name())
+            .collect::<Vec<&str>>()
+            .join(",")
+    }
+}
+
+/// The historical `"inputs":[0,1]` field: one device channel per track, in
+/// track order. Absent means `0..tracks`.
+fn parse_inputs(object: &Object, tracks: usize) -> Result<Vec<usize>, String> {
+    let inputs = match get(object, "inputs") {
+        None | Some(Value::Null) => (0..tracks).collect::<Vec<usize>>(),
+        Some(Value::Arr(values)) => {
+            let mut inputs = Vec::with_capacity(values.len());
+            for value in values {
+                match value {
+                    Value::Num(input)
+                        if input.is_finite()
+                            && *input >= 0.0
+                            && *input <= MAX_CHANNELS as f64
+                            && input.fract() == 0.0 =>
+                    {
+                        inputs.push(*input as usize)
+                    }
+                    _ => {
+                        return Err(
+                            "\"inputs\" must be whole, non-negative channel numbers".to_string(),
+                        )
+                    }
+                }
+            }
+            inputs
+        }
+        _ => return Err("\"inputs\" must be an array of channel numbers".to_string()),
+    };
+    if inputs.len() != tracks {
+        return Err(format!(
+            "\"inputs\" names {} channel(s) but \"tracks\" is {tracks}: a take has one input per track",
+            inputs.len()
+        ));
+    }
+    Ok(inputs)
+}
+
+/// The array form: one object per track. Every insert is parsed here, before
+/// any file is created, and a name the engine does not have is refused by
+/// name.
+fn track_plans(values: &[Value]) -> Result<Vec<TrackPlan>, String> {
+    if values.is_empty() {
+        return Err("\"tracks\" is empty: a take needs at least one track".to_string());
+    }
+    if values.len() > MAX_TRACKS {
+        return Err(format!(
+            "\"tracks\" has {} tracks, but the engine takes at most {MAX_TRACKS}",
+            values.len()
+        ));
+    }
+    let mut plans = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        let fields = match value {
+            Value::Obj(fields) => fields,
+            _ => {
+                return Err(format!(
+                    "track {} must be an object with input, gain, pan and inserts",
+                    index + 1
+                ))
+            }
+        };
+        plans.push(track_plan(index, fields)?);
+    }
+    Ok(plans)
+}
+
+/// One object from the `tracks` plan. A missing field takes the CLI's default;
+/// gain and pan are clamped exactly as the CLI clamps them.
+fn track_plan(index: usize, fields: &Object) -> Result<TrackPlan, String> {
+    let input = match get(fields, "input") {
+        None | Some(Value::Null) => index,
+        Some(Value::Num(value))
+            if value.is_finite()
+                && *value >= 0.0
+                && *value <= MAX_CHANNELS as f64
+                && value.fract() == 0.0 =>
+        {
+            *value as usize
+        }
+        _ => {
+            return Err(format!(
+                "track {} \"input\" must be a whole, non-negative channel number",
+                index + 1
+            ))
+        }
+    };
+    let gain = match get(fields, "gain") {
+        None | Some(Value::Null) => 1.0,
+        Some(Value::Num(value)) if value.is_finite() => Channel::clamp_gain(*value as f32),
+        _ => {
+            return Err(format!(
+                "track {} \"gain\" must be a finite number",
+                index + 1
+            ))
+        }
+    };
+    let pan = match get(fields, "pan") {
+        None | Some(Value::Null) => 0.0,
+        Some(Value::Num(value)) if value.is_finite() => Channel::clamp_pan(*value as f32),
+        _ => {
+            return Err(format!(
+                "track {} \"pan\" must be a finite number",
+                index + 1
+            ))
+        }
+    };
+    let inserts = match get(fields, "inserts") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Arr(names)) => {
+            let mut inserts = Vec::with_capacity(names.len());
+            for name in names {
+                let word = match name {
+                    Value::Str(word) => word.as_str(),
+                    _ => {
+                        return Err(format!(
+                            "track {} \"inserts\" must hold insert names",
+                            index + 1
+                        ))
+                    }
+                };
+                let kind = InsertKind::parse(word)
+                    .ok_or_else(|| format!("no such insert: {word}"))?;
+                inserts.push(kind);
+            }
+            inserts
+        }
+        _ => {
+            return Err(format!(
+                "track {} \"inserts\" must be an array of insert names",
+                index + 1
+            ))
+        }
+    };
+    Ok(TrackPlan {
+        input,
+        gain,
+        pan,
+        inserts,
+    })
+}
+
 #[derive(Clone)]
 struct TrackStatus {
     path: String,
@@ -626,6 +858,8 @@ struct Status {
     path: String,
     frames: u64,
     dropped: u64,
+    /// The capture channel count the engine asked the device for.
+    channels: usize,
     start_sample: u64,
     xruns: usize,
     /// One entry per track; track 1's also fills the top-level fields.
@@ -709,12 +943,13 @@ impl Running {
         // already do; every track's own values are in `tracks`.
         let first = status.tracks.first();
         format!(
-            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"start_sample\":{},\"xruns\":{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
+            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
             status.take,
             status.state.name(),
             jawn_audio::loopback::json_escape(&status.path),
             status.frames,
             status.dropped,
+            status.channels,
             status.start_sample,
             status.xruns,
             tracks_json(&status.tracks),
@@ -739,17 +974,27 @@ fn run_take(
     config: Config,
     seconds: f64,
     mut disks: Vec<DiskWriter>,
-    tracks: usize,
+    plans: Vec<TrackPlan>,
     status: Arc<Mutex<Status>>,
     stop: Arc<AtomicBool>,
     params: Arc<ParamQueue>,
 ) {
     // Build the mixer here, on the take's thread, so it is never moved between
-    // threads. Its control ring is the one the socket already holds.
-    let inputs: Vec<usize> = (0..tracks).collect();
-    let labels: Vec<String> = (1..=tracks).map(|track| format!("ch{track}")).collect();
+    // threads. Its control ring is the one the socket already holds. The
+    // chains are built here too: an insert is not `Send`, and `param` addresses
+    // the effects that are actually in each track's strip.
+    let inputs: Vec<usize> = plans.iter().map(|plan| plan.input).collect();
+    let labels: Vec<String> = (1..=plans.len()).map(|track| format!("ch{track}")).collect();
     let label_refs: Vec<&str> = labels.iter().map(|label| label.as_str()).collect();
     let mut mixer = Mixer::with_queue(&inputs, &label_refs, Arc::clone(&params));
+    for (index, track) in mixer.tracks_mut().iter_mut().enumerate() {
+        let plan = &plans[index];
+        let mut channel = Channel::new(plan.gain, plan.pan);
+        for kind in &plan.inserts {
+            channel.push(kind.build());
+        }
+        track.channel = channel;
+    }
     let outcome = match config.backend {
         BackendKind::Null => {
             capture_null(&config, seconds, &mut disks, &mut mixer, &status, &stop)
@@ -876,13 +1121,13 @@ fn capture_null(
             disks.len()
         ));
     }
-    let mut device = NullDevice::new(config.rate, config.period, track_count);
+    let mut device = NullDevice::new(config.rate, config.period, config.channels);
     mixer.prepare(config.rate, config.period);
     let total = take_frames(seconds, config.rate);
-    let mut source = vec![0.0f32; config.period * track_count];
+    let mut source = vec![0.0f32; config.period * config.channels];
     let mut mono = vec![0.0f32; config.period];
-    let mut stereo = vec![0.0f32; config.period * RECORD_CHANNELS];
-    let mut pcm = vec![0i16; config.period * RECORD_CHANNELS];
+    let mut stereo = vec![0.0f32; config.period * TAKE_CHANNELS];
+    let mut pcm = vec![0i16; config.period * TAKE_CHANNELS];
     let mut remaining = total;
     let mut pushed = 0u64;
     while remaining > 0 {
@@ -893,10 +1138,17 @@ fn capture_null(
             .process(&mut source)
             .map_err(|error| format!("device: {error:?}"))?;
         let frames = remaining.min(config.period as u64) as usize;
-        let samples = frames * RECORD_CHANNELS;
+        let samples = frames * TAKE_CHANNELS;
         for track in 0..track_count {
+            let input = mixer.tracks()[track].input;
+            if input >= config.channels {
+                return Err(format!(
+                    "track {track} records input {input}, but the device has {} channel(s)",
+                    config.channels
+                ));
+            }
             for frame in 0..frames {
-                mono[frame] = source[frame * track_count + track];
+                mono[frame] = source[frame * config.channels + input];
             }
             mixer
                 .process(track, &mono[..frames], &mut stereo[..samples])
@@ -923,6 +1175,8 @@ struct ServeSink<'a> {
     status: &'a Arc<Mutex<Status>>,
     stop: &'a AtomicBool,
     pushed: u64,
+    /// Device channels per frame, learned in `prepared`.
+    channels: usize,
     mono: Vec<f32>,
     stereo: Vec<f32>,
     pcm: Vec<i16>,
@@ -930,11 +1184,24 @@ struct ServeSink<'a> {
 
 #[cfg(feature = "alsa")]
 impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
-    fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
+    fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
+        self.channels = channels;
+        if let Some(index) = self
+            .mixer
+            .tracks()
+            .iter()
+            .position(|track| track.input >= channels)
+        {
+            let input = self.mixer.tracks()[index].input;
+            return Err(format!(
+                "track {} records input {input}, but the device granted only {channels} channel(s)",
+                index + 1
+            ));
+        }
         self.mixer.prepare(rate, period);
         self.mono = vec![0.0; period];
-        self.stereo = vec![0.0; period * RECORD_CHANNELS];
-        self.pcm = vec![0i16; period * RECORD_CHANNELS];
+        self.stereo = vec![0.0; period * TAKE_CHANNELS];
+        self.pcm = vec![0i16; period * TAKE_CHANNELS];
         Ok(())
     }
 
@@ -944,7 +1211,8 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
         if self.stop.load(Ordering::SeqCst) {
             return Err("stopped".to_string());
         }
-        let frames = (block.len() / RECORD_CHANNELS).min(self.mono.len());
+        let channels = self.channels;
+        let frames = (block.len() / channels).min(self.mono.len());
         let track_count = self.mixer.tracks().len();
         if self.disks.len() != track_count {
             return Err(format!(
@@ -952,11 +1220,16 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
                 self.disks.len()
             ));
         }
-        let samples = frames * RECORD_CHANNELS;
+        let samples = frames * TAKE_CHANNELS;
         for track in 0..track_count {
-            let input = self.mixer.tracks()[track].input.min(1);
+            let input = self.mixer.tracks()[track].input;
+            if input >= channels {
+                return Err(format!(
+                    "track {track} records input {input}, but the device has {channels} channel(s)"
+                ));
+            }
             for frame in 0..frames {
-                self.mono[frame] = f32::from(block[frame * RECORD_CHANNELS + input]) / 32_768.0;
+                self.mono[frame] = f32::from(block[frame * channels + input]) / 32_768.0;
             }
             self.mixer
                 .process(track, &self.mono[..frames], &mut self.stereo[..samples])
@@ -987,6 +1260,7 @@ fn capture_hardware(
         status,
         stop,
         pushed: 0,
+        channels: config.channels,
         mono: Vec::new(),
         stereo: Vec::new(),
         pcm: Vec::new(),
@@ -996,6 +1270,7 @@ fn capture_hardware(
         config.rate,
         config.period,
         config.buffer,
+        config.channels,
         seconds,
         sink,
     )
@@ -1021,17 +1296,22 @@ fn capture_hardware(
 
 // --- the parser -------------------------------------------------------------
 
-/// One scalar from a flat object.
+/// One value from the line: a scalar, an array of values, or an object (a
+/// take's per-track plan).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Str(String),
     Num(f64),
     Bool(bool),
     Null,
+    /// An array: `"inputs":[0,1,2]` or `"inserts":["tone","delay"]`.
+    Arr(Vec<Value>),
+    /// One object in a value position, as `tracks` carries one per track.
+    Obj(Object),
 }
 
-/// A flat object, in the order its keys appeared. A repeated key reads as the
-/// last one, as a JSON parser would.
+/// An object, in the order its keys appeared. A repeated key reads as the last
+/// one, as a JSON parser would.
 pub type Object = Vec<(String, Value)>;
 
 /// The last value for `key`, if the object has one.
@@ -1043,43 +1323,23 @@ pub fn get<'a>(object: &'a Object, key: &str) -> Option<&'a Value> {
         .map(|(_, value)| value)
 }
 
-/// Parse one flat JSON object.
+/// Parse one JSON object.
 ///
-/// Values are strings, numbers, booleans or null only: an array or an object
-/// in a value position is an error, so a caller cannot smuggle a shape this
-/// protocol never promised. Strings decode `\"`, `\\`, `\/`, `\b`, `\f`, `\n`,
-/// `\r`, `\t` and `\uXXXX` (including surrogate pairs); every other character,
-/// including non-ASCII and spaces, is taken literally.
+/// Values are strings, numbers, booleans, null, arrays, or objects. An object
+/// is what a take's `tracks` array carries one of per track; an array inside an
+/// array is still an error, and nesting is bounded by [`MAX_VALUE_DEPTH`], so a
+/// caller cannot smuggle an unbounded shape this protocol never promised.
+/// Strings decode `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t` and
+/// `\uXXXX` (including surrogate pairs); every other character, including
+/// non-ASCII and spaces, is taken literally.
 pub fn parse_object(line: &str) -> Result<Object, String> {
-    let mut parser = Parser { text: line, at: 0 };
+    let mut parser = Parser {
+        text: line,
+        at: 0,
+        depth: 0,
+    };
     parser.skip_ws();
-    parser.expect(b'{')?;
-    let mut object = Object::new();
-    parser.skip_ws();
-    if parser.bump_if(b'}') {
-        parser.finish()?;
-        return Ok(object);
-    }
-    loop {
-        parser.skip_ws();
-        let key = parser.string()?;
-        parser.skip_ws();
-        parser.expect(b':')?;
-        parser.skip_ws();
-        let value = parser.value()?;
-        object.push((key, value));
-        parser.skip_ws();
-        if parser.bump_if(b',') {
-            continue;
-        }
-        if parser.bump_if(b'}') {
-            break;
-        }
-        return Err(format!(
-            "expected `,` or `}}` after a value (byte {})",
-            parser.at
-        ));
-    }
+    let object = parser.object()?;
     parser.finish()?;
     Ok(object)
 }
@@ -1087,6 +1347,8 @@ pub fn parse_object(line: &str) -> Result<Object, String> {
 struct Parser<'a> {
     text: &'a str,
     at: usize,
+    /// How many objects enclose the value being read.
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -1155,15 +1417,51 @@ impl Parser<'_> {
         }
     }
 
+    /// One object: the line's own, or a `tracks` plan entry. Every caller
+    /// expects the leading `{`, so the caller's `skip_ws` is what allows it.
+    fn object(&mut self) -> Result<Object, String> {
+        if self.depth >= MAX_VALUE_DEPTH {
+            return Err(format!(
+                "objects are nested more than {MAX_VALUE_DEPTH} deep"
+            ));
+        }
+        self.expect(b'{')?;
+        self.depth += 1;
+        let mut object = Object::new();
+        self.skip_ws();
+        if self.bump_if(b'}') {
+            self.depth -= 1;
+            return Ok(object);
+        }
+        loop {
+            self.skip_ws();
+            let key = self.string()?;
+            self.skip_ws();
+            self.expect(b':')?;
+            self.skip_ws();
+            let value = self.value()?;
+            object.push((key, value));
+            self.skip_ws();
+            if self.bump_if(b',') {
+                continue;
+            }
+            if self.bump_if(b'}') {
+                break;
+            }
+            return Err(format!(
+                "expected `,` or `}}` after a value (byte {})",
+                self.at
+            ));
+        }
+        self.depth -= 1;
+        Ok(object)
+    }
+
     fn value(&mut self) -> Result<Value, String> {
         match self.peek() {
             Some(b'"') => return self.string().map(Value::Str),
-            Some(b'{') | Some(b'[') => {
-                return Err(
-                    "a value must be a string, number, boolean or null: arrays and nested objects are not allowed"
-                        .to_string(),
-                )
-            }
+            Some(b'[') => return self.array(),
+            Some(b'{') => return self.object().map(Value::Obj),
             Some(b'-') | Some(b'0'..=b'9') => return self.number(),
             Some(_) => {}
             None => return Err("the object ends where a value was expected".to_string()),
@@ -1178,9 +1476,37 @@ impl Parser<'_> {
             return Ok(Value::Null);
         }
         Err(format!(
-            "a value must be a string, number, boolean or null (byte {})",
+            "a value must be a string, number, boolean, null or an array (byte {})",
             self.at
         ))
+    }
+
+    fn array(&mut self) -> Result<Value, String> {
+        self.expect(b'[')?;
+        let mut values = Vec::new();
+        self.skip_ws();
+        if self.bump_if(b']') {
+            return Ok(Value::Arr(values));
+        }
+        loop {
+            self.skip_ws();
+            if self.peek() == Some(b'[') {
+                return Err("nested arrays are not allowed".to_string());
+            }
+            values.push(self.value()?);
+            self.skip_ws();
+            if self.bump_if(b',') {
+                continue;
+            }
+            if self.bump_if(b']') {
+                break;
+            }
+            return Err(format!(
+                "expected `,` or `]` in an array (byte {})",
+                self.at
+            ));
+        }
+        Ok(Value::Arr(values))
     }
 
     fn number(&mut self) -> Result<Value, String> {
@@ -1403,13 +1729,62 @@ mod tests {
     }
 
     #[test]
-    fn arrays_and_nested_objects_are_refused() {
-        let error = parse_object(r#"{"a":[1,2]}"#).unwrap_err();
-        assert!(error.contains("arrays"), "{error}");
-        let error = parse_object(r#"{"a":{"b":1}}"#).unwrap_err();
+    fn an_array_of_scalars_parses_but_a_nested_array_is_refused() {
+        let object = parse_object(r#"{"inputs":[2,0,3]}"#).expect("parse");
+        assert_eq!(
+            get(&object, "inputs"),
+            Some(&Value::Arr(vec![
+                Value::Num(2.0),
+                Value::Num(0.0),
+                Value::Num(3.0)
+            ]))
+        );
+        let empty = parse_object(r#"{"a":[]}"#).expect("parse");
+        assert_eq!(get(&empty, "a"), Some(&Value::Arr(Vec::new())));
+
+        let error = parse_object(r#"{"a":[[1]]}"#).unwrap_err();
         assert!(error.contains("nested"), "{error}");
         // A nested object in the key position is not a shape either.
         assert!(parse_object(r#"{{"a":1}:2}"#).is_err());
+        // A trailing comma and an unterminated array are errors, not guesses.
+        assert!(parse_object(r#"{"a":[1,]}"#).is_err());
+        assert!(parse_object(r#"{"a":[1,2}"#).is_err());
+    }
+
+    #[test]
+    fn a_tracks_plan_is_an_array_of_objects() {
+        let object = parse_object(
+            r#"{"tracks":[{"input":0,"gain":0.8,"inserts":["tone","delay"]},{"input":1,"inserts":[]}]}"#,
+        )
+        .expect("parse");
+        let tracks = match get(&object, "tracks") {
+            Some(Value::Arr(tracks)) => tracks,
+            other => panic!("tracks is not an array: {other:?}"),
+        };
+        assert_eq!(tracks.len(), 2);
+        let first = match &tracks[0] {
+            Value::Obj(fields) => fields,
+            other => panic!("a track is not an object: {other:?}"),
+        };
+        assert_eq!(number(first, "input"), Some(0.0));
+        assert_eq!(text(first, "gain"), None);
+        assert_eq!(
+            get(first, "inserts"),
+            Some(&Value::Arr(vec![
+                Value::Str("tone".to_string()),
+                Value::Str("delay".to_string())
+            ]))
+        );
+        let second = match &tracks[1] {
+            Value::Obj(fields) => fields,
+            other => panic!("a track is not an object: {other:?}"),
+        };
+        assert_eq!(number(second, "input"), Some(1.0));
+        assert_eq!(get(second, "inserts"), Some(&Value::Arr(Vec::new())));
+
+        // Depth is bounded, so a caller cannot nest a plan inside a plan.
+        let deep = r#"{"a":{"b":{"c":{"d":1}}}}"#;
+        assert!(parse_object(deep).is_err());
     }
 
     #[test]

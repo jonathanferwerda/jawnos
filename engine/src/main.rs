@@ -4,7 +4,7 @@
 //! no sound card. `--backends` says which optional backends this build carries,
 //! and `--loopback` measures the patch-cable round trip when one does
 //! (docs/studio-audio-roadmap.md P1). `--serve` is the control socket the
-//! manager drives: one flat JSON object per line, one client at a time
+//! manager drives: one JSON object per line, one client at a time
 //! (docs/studio-audio-roadmap.md P2).
 
 mod socket;
@@ -18,9 +18,14 @@ use jawn_audio::{
     DiskWriter, Header, InsertKind, Mixer, NullDevice, Strip, HEADER_LEN,
 };
 
-/// A take is the interface's own shape: stereo at the sample rate in the
-/// header. `--channels` is a `--run` option and is not silently reused here.
-pub(crate) const RECORD_CHANNELS: usize = 2;
+/// Every track's WAV is stereo: the strip's panned output. `--channels` is the
+/// take's *source* shape, the number of device channels the interface is asked
+/// for, and one track reads one of them.
+pub(crate) const TAKE_CHANNELS: usize = 2;
+/// The largest interface and the largest take the engine accepts. One track per
+/// input channel is the largest shape the strip model has.
+pub(crate) const MAX_CHANNELS: usize = 32;
+pub(crate) const MAX_TRACKS: usize = MAX_CHANNELS;
 /// `--record` without `--seconds`: long enough to be a take, short enough to
 /// not surprise someone who forgot the flag.
 const RECORD_SECONDS: f64 = 5.0;
@@ -45,7 +50,7 @@ jawn-audio — the JawnOS audio engine
   --buffer N      buffer size in frames (default 256)
   --seconds S     how long to run, in seconds (default 1)
   --rate HZ       sample rate (default 48000)
-  --channels N    channels per frame (default 2)
+  --channels N    channels per frame (default 2, 1..=32)
   --tone HZ       emit a sine instead of silence
   --json          one JSON line instead of prose
 
@@ -58,22 +63,28 @@ jawn-audio — the JawnOS audio engine
   --seconds S     how long to record, in seconds (default 5)
   --rate HZ       sample rate (default 48000)
   --start-at S    the take's start sample on the transport (default 0)
-  --tracks N      1 (default) or 2: one WAV per device input
+  --channels N    capture channels to ask the device for (default 2, 1..=32)
+  --tracks N      tracks to write, 1..=channels (default 1)
+  --inputs LIST   which device channels become tracks, e.g. 2,0,3
+                  (default 0..tracks, in track order)
   --gain N        channel trim, linear (default 1.0)
   --pan N         channel pan, -1 left .. 1 right (default 0, centre)
-  --channel N     which input a one-track take records (0 or 1, default 0)
+  --channel N     which input a one-track take records (default input 0)
   --insert NAME   an insert, repeatable in chain order:
                   tone, distortion, delay, compressor or reverb
                   (reverb2 is accepted as the web's name; default none)
   --tone HZ       with the null backend, record a sine instead of silence
   --json          one JSON line instead of prose
 
-  --tracks 2 records inputs 0 and 1 at once and writes one WAV per track:
-  --out take.wav becomes take-ch1.wav and take-ch2.wav. Both files share the
-  take's start_sample. --gain, --pan and --insert apply to every track unless
+  Every track writes its own stereo WAV: --out take.wav becomes take-ch1.wav,
+  take-ch2.wav, ... for each track. All files share the take's start_sample.
+  --inputs 2,0 makes track 1 input 2 and track 2 input 0, in the order given.
+  A track whose input is outside the device's channels is refused before any
+  file is created. --gain, --pan and --insert apply to every track unless
   prefixed with a 1-based track number, e.g. --insert 1:delay, --gain 2:0.5,
   --pan 2:-1. A prefixed knob may only name a track the take has. The JSON's
-  top-level path/frames/dropped/inserts describe track 1; a two-track take adds
+  top-level path/frames/dropped/inserts describe track 1; channels is the
+  count the device granted; a multi-track take adds
   \"tracks\":[{\"path\":...,\"input\":N,\"frames\":N,\"dropped\":N},...]. A
   one-track take keeps its historical shape and omits \"tracks\".
 
@@ -93,10 +104,15 @@ jawn-audio — the JawnOS audio engine
   --period N      block/period size in frames (default 64)
   --buffer N      buffer size in frames (default 256)
   --rate HZ       sample rate (default 48000)
+  --channels N    capture channels a take asks for (default 2, 1..=32)
 
---serve speaks one flat JSON object per line: record, param, status, stop,
-quit. `param` moves one knob of a running take's strip and answers when the
-change is queued for the next block.
+--serve speaks one JSON object per line: record, param, status, stop,
+quit. `record` takes \"out\", \"seconds\", \"start_at\", \"tracks\" and \"inputs\";
+`tracks` is a count (one wire per input) or an array of per-track objects
+{\"input\":N,\"gain\":G,\"pan\":P,\"inserts\":[NAMES]}, which arms that track's
+real chain. `param` moves one knob of a running take's strip and answers when
+the change is queued for the next block; `status` reports every track and
+the gain, pan and inserts it was armed with.
 The null backend needs no sound card. ALSA and JACK exist only in a build with
 --features alsa and/or --features jack; pipewire uses the ALSA `default` PCM.
 A loopback needs the interface's output patched into its input.";
@@ -140,6 +156,10 @@ struct Options {
     pans: Vec<(usize, f32)>,
     inserts: Vec<InsertSpec>,
     tracks: usize,
+    /// The device channels a take records, in track order. Empty means the
+    /// default `0..tracks`; `--inputs` fills it.
+    inputs: Vec<usize>,
+    inputs_given: bool,
     input: usize,
     input_given: bool,
     seconds_given: bool,
@@ -176,6 +196,8 @@ fn run() -> Result<ExitCode, String> {
         pans: Vec::new(),
         inserts: Vec::new(),
         tracks: 1,
+        inputs: Vec::new(),
+        inputs_given: false,
         input: 0,
         input_given: false,
         seconds_given: false,
@@ -252,7 +274,12 @@ fn run() -> Result<ExitCode, String> {
                 let raw = value(&mut args, "--tracks")?;
                 options.tracks = raw
                     .parse()
-                    .map_err(|_| format!("--tracks wants 1 or 2, not `{raw}`"))?;
+                    .map_err(|_| format!("--tracks wants a track count, not `{raw}`"))?;
+            }
+            "--inputs" => {
+                let raw = value(&mut args, "--inputs")?;
+                options.inputs = parse_inputs(&raw)?;
+                options.inputs_given = true;
             }
             "--gain" => {
                 let raw = value(&mut args, "--gain")?;
@@ -269,7 +296,7 @@ fn run() -> Result<ExitCode, String> {
                 let raw = value(&mut args, "--channel")?;
                 options.input = raw
                     .parse()
-                    .map_err(|_| format!("--channel wants 0 or 1, not `{raw}`"))?;
+                    .map_err(|_| format!("--channel wants an input number, not `{raw}`"))?;
                 options.input_given = true;
             }
             "--pan" => {
@@ -307,10 +334,11 @@ fn run() -> Result<ExitCode, String> {
             || !options.gains.is_empty()
             || !options.pans.is_empty()
             || !options.inserts.is_empty()
-            || options.tracks != 1)
+            || options.tracks != 1
+            || options.inputs_given)
     {
         return Err(
-            "--tracks, --gain, --pan and --insert apply only to --record".to_string(),
+            "--tracks, --inputs, --gain, --pan and --insert apply only to --record".to_string(),
         );
     }
 
@@ -372,6 +400,21 @@ fn value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, 
     args.next().ok_or_else(|| format!("{flag} wants a value"))
 }
 
+/// `--inputs 0,1,2` -> the device channels that become tracks, in track order.
+/// A channel is a 0-based device input; the track number is its position.
+fn parse_inputs(raw: &str) -> Result<Vec<usize>, String> {
+    if raw.trim().is_empty() {
+        return Err("--inputs wants at least one input channel, e.g. 0,1".to_string());
+    }
+    raw.split(',')
+        .map(|part| {
+            part.trim().parse::<usize>().map_err(|_| {
+                format!("--inputs wants input channels separated by commas, not `{raw}`")
+            })
+        })
+        .collect()
+}
+
 /// `1:delay` -> `(Some(1), "delay")`; an unprefixed value -> `(None, value)`.
 /// The track number is 1-based and matched against `--tracks`, so `1:` is the
 /// first track whether the take has one or two. A colon that is not preceded by
@@ -401,14 +444,25 @@ fn validate_block(frames: usize, buffer: usize) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_channels(options: &Options) -> Result<(), String> {
+    if options.channels == 0 {
+        return Err("--channels must be at least 1".to_string());
+    }
+    if options.channels > MAX_CHANNELS {
+        return Err(format!(
+            "--channels is {}; at most {MAX_CHANNELS} channels can be captured",
+            options.channels
+        ));
+    }
+    Ok(())
+}
+
 fn validate_run(options: &Options) -> Result<(), String> {
     validate_block(options.frames, options.buffer)?;
     if options.rate == 0 {
         return Err("--rate must be at least 1".to_string());
     }
-    if options.channels == 0 {
-        return Err("--channels must be at least 1".to_string());
-    }
+    validate_channels(options)?;
     if options.seconds < 0.0 {
         return Err("--seconds cannot be negative".to_string());
     }
@@ -468,6 +522,7 @@ fn alsa_run(device: &str, options: &Options) -> Result<RunReport, String> {
         options.rate,
         options.frames,
         options.buffer,
+        options.channels,
         options.seconds,
         options.tone,
     )?;
@@ -566,6 +621,7 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
         rate: options.rate,
         period: options.frames,
         buffer: options.buffer,
+        channels: options.channels,
         socket,
     });
     match outcome {
@@ -610,6 +666,7 @@ impl TakeReport {
         backend: &'static str,
         device: String,
         rate: u32,
+        channels: usize,
         start_sample: u64,
         xruns: usize,
         inserts: String,
@@ -627,7 +684,7 @@ impl TakeReport {
             rate,
             frames,
             dropped,
-            channels: RECORD_CHANNELS,
+            channels,
             start_sample,
             xruns,
             inserts,
@@ -641,6 +698,7 @@ impl TakeReport {
         backend: &'static str,
         device: String,
         rate: u32,
+        channels: usize,
         start_sample: u64,
         inserts: String,
         error: String,
@@ -653,7 +711,7 @@ impl TakeReport {
             rate,
             frames: 0,
             dropped: 0,
-            channels: RECORD_CHANNELS,
+            channels,
             start_sample,
             xruns: 0,
             inserts,
@@ -751,22 +809,51 @@ fn validate_record(options: &Options) -> Result<(), String> {
     if options.rate == 0 {
         return Err("--rate must be at least 1".to_string());
     }
-    if options.tracks != 1 && options.tracks != 2 {
+    validate_channels(options)?;
+    if options.tracks == 0 {
+        return Err("--tracks must be at least 1".to_string());
+    }
+    if options.tracks > MAX_TRACKS {
         return Err(format!(
-            "--tracks must be 1 or 2, not {}",
+            "--tracks is {}; at most {MAX_TRACKS} tracks can be recorded at once",
             options.tracks
         ));
     }
-    if options.tracks > 1 && options.input_given {
-        return Err("--channel picks one input; --tracks 2 records both".to_string());
-    }
-    if options.input > 1 {
-        return Err("--channel must be 0 or 1".to_string());
-    }
-    if options.channels != RECORD_CHANNELS {
+    if options.tracks > options.channels {
         return Err(format!(
-            "--record writes stereo; --channels must be {RECORD_CHANNELS}"
+            "--tracks {} needs at least {} input channels, but --channels is {}: an interface records one track per input channel",
+            options.tracks, options.tracks, options.channels
         ));
+    }
+    if options.inputs_given && options.input_given {
+        return Err("--inputs chooses the take's channels; --channel picks one input, so pass one of them".to_string());
+    }
+    if options.tracks > 1 && options.input_given {
+        return Err("--channel picks one input; --tracks N records N inputs".to_string());
+    }
+    if options.input_given && options.input >= options.channels {
+        return Err(format!(
+            "--channel {} is outside the {}-channel device",
+            options.input, options.channels
+        ));
+    }
+    if options.inputs_given {
+        if options.inputs.len() != options.tracks {
+            return Err(format!(
+                "--inputs names {} input channel(s) but --tracks is {}: a take has one input per track",
+                options.inputs.len(),
+                options.tracks
+            ));
+        }
+        for (index, input) in options.inputs.iter().enumerate() {
+            if *input >= options.channels {
+                return Err(format!(
+                    "track {} records input {input}, but the device has only {} channel(s): pass a smaller --inputs or a larger --channels",
+                    index + 1,
+                    options.channels
+                ));
+            }
+        }
     }
     if options.seconds < 0.0 {
         return Err("--seconds cannot be negative".to_string());
@@ -866,8 +953,8 @@ struct TrackPlan {
 }
 
 /// The take's files. A one-track take writes exactly `--out`, as it always
-/// did. A two-track take splits the stem: `take.wav` becomes `take-ch1.wav`
-/// and `take-ch2.wav`, in the same directory (or relative to the same cwd).
+/// did. A multi-track take splits the stem: `take.wav` becomes `take-ch1.wav`,
+/// `take-ch2.wav`, ..., in the same directory (or relative to the same cwd).
 pub(crate) fn take_paths(out: &str, tracks: usize) -> Result<Vec<String>, String> {
     if tracks <= 1 {
         return Ok(vec![out.to_string()]);
@@ -889,16 +976,23 @@ pub(crate) fn take_paths(out: &str, tracks: usize) -> Result<Vec<String>, String
     Ok(paths)
 }
 
-fn track_plans(options: &Options, out: &str) -> Result<Vec<TrackPlan>, String> {
-    let paths = take_paths(out, options.tracks)?;
-    let inputs: Vec<usize> = if options.tracks == 1 {
+/// The device input behind each positional track: `--inputs` in the order it
+/// was given, or a one-track `--channel`, or `0..tracks` by default.
+fn take_inputs(options: &Options) -> Vec<usize> {
+    if options.inputs_given {
+        options.inputs.clone()
+    } else if options.tracks == 1 {
         vec![options.input]
     } else {
         (0..options.tracks).collect()
-    };
+    }
+}
+
+fn track_plans(options: &Options, out: &str) -> Result<Vec<TrackPlan>, String> {
+    let paths = take_paths(out, options.tracks)?;
     Ok(paths
         .into_iter()
-        .zip(inputs)
+        .zip(take_inputs(options))
         .enumerate()
         .map(|(index, (path, input))| TrackPlan {
             path,
@@ -921,6 +1015,7 @@ fn validate_serve(options: &Options) -> Result<(), String> {
     if options.rate == 0 {
         return Err("--rate must be at least 1".to_string());
     }
+    validate_channels(options)?;
     // A backend that cannot capture is a configuration mistake, so say it at
     // startup rather than when the first take is armed.
     record_support(options.backend)
@@ -999,6 +1094,7 @@ fn run_record(options: &Options) -> Result<ExitCode, String> {
                 options.backend.name(),
                 device,
                 options.rate,
+                options.channels,
                 options.start_at,
                 insert_list(options, 1),
                 error.clone(),
@@ -1034,17 +1130,29 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
     // Open and close the device before the file. A busy or missing device then
     // fails without truncating a path the caller named; the real open follows
     // inside the recording run.
-    probe_capture(
+    let granted = probe_capture(
         options.backend,
         device,
         options.rate,
         options.frames,
         options.buffer,
+        options.channels,
     )?;
 
     let plans = track_plans(options, out)?;
+    // The device may have granted fewer channels than asked; a track that names
+    // an input past that count is refused here, before any WAV is created.
+    for (index, plan) in plans.iter().enumerate() {
+        if plan.input >= granted {
+            return Err(format!(
+                "track {} records input {}, but the device granted only {granted} channel(s)",
+                index + 1,
+                plan.input
+            ));
+        }
+    }
     let frames = take_frames(seconds, options.rate);
-    let queue = queue_blocks(options.backend, frames, options.frames, RECORD_CHANNELS);
+    let queue = queue_blocks(options.backend, frames, options.frames, TAKE_CHANNELS);
 
     // One writer per track. Each spawn creates its WAV before any audio, so a
     // bad path fails here; a failure on a later track joins the writers already
@@ -1054,7 +1162,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
         match DiskWriter::spawn(
             Path::new(&plan.path),
             options.rate,
-            RECORD_CHANNELS as u16,
+            TAKE_CHANNELS as u16,
             options.frames,
             queue,
         ) {
@@ -1156,6 +1264,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
         options.backend.name(),
         device.to_string(),
         rate,
+        granted,
         options.start_at,
         xruns,
         insert_list(options, 1),
@@ -1182,31 +1291,46 @@ pub(crate) fn record_support(backend: BackendKind) -> Result<(), String> {
 }
 
 /// Open and close the capture device without touching the output file, so a
-/// busy or missing device fails before a path is truncated.
+/// busy or missing device fails before a path is truncated. Returns the channel
+/// count the device granted.
 pub(crate) fn probe_capture(
     backend: BackendKind,
     device: &str,
     rate: u32,
     period: usize,
     buffer: usize,
-) -> Result<(), String> {
+    channels: usize,
+) -> Result<usize, String> {
     match backend {
         BackendKind::Alsa | BackendKind::PipeWire => {
-            capture_probe(device, rate, period, buffer)
+            capture_probe(device, rate, period, buffer, channels)
         }
-        BackendKind::Null | BackendKind::Jack => Ok(()),
+        // The null device is whatever count it was asked for.
+        BackendKind::Null | BackendKind::Jack => Ok(channels),
     }
 }
 
 #[cfg(feature = "alsa")]
-fn capture_probe(device: &str, rate: u32, period: usize, buffer: usize) -> Result<(), String> {
-    jawn_audio::alsa_device::check_capture(device, rate, period, buffer)
+fn capture_probe(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    channels: usize,
+) -> Result<usize, String> {
+    jawn_audio::alsa_device::check_capture(device, rate, period, buffer, channels)
         .map_err(|error| format!("cannot record: {error}"))
 }
 
 #[cfg(not(feature = "alsa"))]
-fn capture_probe(device: &str, rate: u32, period: usize, buffer: usize) -> Result<(), String> {
-    let _ = (device, rate, period, buffer);
+fn capture_probe(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    channels: usize,
+) -> Result<usize, String> {
+    let _ = (device, rate, period, buffer, channels);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
@@ -1217,7 +1341,7 @@ fn capture_probe(device: &str, rate: u32, period: usize, buffer: usize) -> Resul
 pub(crate) fn rewrite_rate(path: &Path, rate: u32) -> Result<(), String> {
     use std::io::{Seek, SeekFrom, Write};
 
-    let byte_rate = u64::from(rate) * RECORD_CHANNELS as u64 * 2;
+    let byte_rate = u64::from(rate) * TAKE_CHANNELS as u64 * 2;
     if rate == 0 || byte_rate > u64::from(u32::MAX) {
         return Err(format!("{rate} Hz does not fit a WAV header"));
     }
@@ -1252,29 +1376,37 @@ fn record_null(
             disks.len()
         ));
     }
-    // The null backend is the source's own shape: one channel per track, so a
-    // two-track take has two inputs to read even though both are the same sine.
-    let mut device = NullDevice::new(options.rate, options.frames, track_count);
+    // The null backend is the source's own shape: one channel per device
+    // channel, so a track reads the input `--inputs` gave it even though every
+    // channel carries the same silence or sine.
+    let channels = options.channels;
+    let mut device = NullDevice::new(options.rate, options.frames, channels);
     if let Some(hz) = options.tone {
         device = device.with_tone(hz);
     }
     mixer.prepare(options.rate, options.frames);
 
     let total = take_frames(seconds, options.rate);
-    let mut source = vec![0.0f32; options.frames * track_count];
+    let mut source = vec![0.0f32; options.frames * channels];
     let mut mono = vec![0.0f32; options.frames];
-    let mut stereo = vec![0.0f32; options.frames * RECORD_CHANNELS];
-    let mut pcm = vec![0i16; options.frames * RECORD_CHANNELS];
+    let mut stereo = vec![0.0f32; options.frames * TAKE_CHANNELS];
+    let mut pcm = vec![0i16; options.frames * TAKE_CHANNELS];
     let mut remaining = total;
     while remaining > 0 {
         device
             .process(&mut source)
             .map_err(|error| format!("device: {error:?}"))?;
         let frames = remaining.min(options.frames as u64) as usize;
-        let samples = frames * RECORD_CHANNELS;
+        let samples = frames * TAKE_CHANNELS;
         for track in 0..track_count {
+            let input = mixer.tracks()[track].input;
+            if input >= channels {
+                return Err(format!(
+                    "track {track} records input {input}, but the device has {channels} channel(s)"
+                ));
+            }
             for frame in 0..frames {
-                mono[frame] = source[frame * track_count + track];
+                mono[frame] = source[frame * channels + input];
             }
             mixer
                 .process(track, &mono[..frames], &mut stereo[..samples])
@@ -1293,13 +1425,15 @@ fn record_null(
 }
 
 /// The hardware take's tracks: read each track's input from the interleaved
-/// stereo block, run its strip, write its stereo result to its own writer.
-/// Every buffer is sized once in [`CaptureSink::prepared`] from the shape ALSA
-/// granted.
+/// block at the granted channel count, run its strip, write its stereo result
+/// to its own writer. Every buffer is sized once in [`CaptureSink::prepared`]
+/// from the shape ALSA granted.
 #[cfg(feature = "alsa")]
 struct TakeChannel<'a> {
     mixer: &'a mut Mixer,
     disks: &'a mut [DiskWriter],
+    /// Device channels per frame, learned in `prepared`.
+    channels: usize,
     mono: Vec<f32>,
     stereo: Vec<f32>,
     pcm: Vec<i16>,
@@ -1307,16 +1441,30 @@ struct TakeChannel<'a> {
 
 #[cfg(feature = "alsa")]
 impl jawn_audio::alsa_device::CaptureSink for TakeChannel<'_> {
-    fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
+    fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String> {
+        self.channels = channels;
+        if let Some(index) = self
+            .mixer
+            .tracks()
+            .iter()
+            .position(|track| track.input >= channels)
+        {
+            let input = self.mixer.tracks()[index].input;
+            return Err(format!(
+                "track {} records input {input}, but the device granted only {channels} channel(s)",
+                index + 1
+            ));
+        }
         self.mixer.prepare(rate, period);
         self.mono = vec![0.0; period];
-        self.stereo = vec![0.0; period * RECORD_CHANNELS];
-        self.pcm = vec![0i16; period * RECORD_CHANNELS];
+        self.stereo = vec![0.0; period * TAKE_CHANNELS];
+        self.pcm = vec![0i16; period * TAKE_CHANNELS];
         Ok(())
     }
 
     fn block(&mut self, block: &[i16]) -> Result<(), String> {
-        let frames = (block.len() / RECORD_CHANNELS).min(self.mono.len());
+        let channels = self.channels;
+        let frames = (block.len() / channels).min(self.mono.len());
         let track_count = self.mixer.tracks().len();
         if self.disks.len() != track_count {
             return Err(format!(
@@ -1324,14 +1472,19 @@ impl jawn_audio::alsa_device::CaptureSink for TakeChannel<'_> {
                 self.disks.len()
             ));
         }
-        let samples = frames * RECORD_CHANNELS;
+        let samples = frames * TAKE_CHANNELS;
         for track in 0..track_count {
             // One input per channel strip, not the sum of two: a mic on input 0
             // and an instrument on input 1 are different sources, and averaging
             // them mixes a vocal into a guitar.
-            let input = self.mixer.tracks()[track].input.min(1);
+            let input = self.mixer.tracks()[track].input;
+            if input >= channels {
+                return Err(format!(
+                    "track {track} records input {input}, but the device has {channels} channel(s)"
+                ));
+            }
             for frame in 0..frames {
-                self.mono[frame] = f32::from(block[frame * RECORD_CHANNELS + input]) / 32_768.0;
+                self.mono[frame] = f32::from(block[frame * channels + input]) / 32_768.0;
             }
             self.mixer
                 .process(track, &self.mono[..frames], &mut self.stereo[..samples])
@@ -1356,6 +1509,7 @@ fn record_alsa(
     let sink = TakeChannel {
         mixer,
         disks,
+        channels: options.channels,
         mono: Vec::new(),
         stereo: Vec::new(),
         pcm: Vec::new(),
@@ -1365,6 +1519,7 @@ fn record_alsa(
         options.rate,
         options.frames,
         options.buffer,
+        options.channels,
         seconds,
         sink,
     )?;
@@ -1444,7 +1599,7 @@ mod tests {
         assert_eq!(frames, 9_600);
         assert_eq!(take_blocks(frames, 64), 150);
         assert_eq!(
-            queue_blocks(BackendKind::Null, frames, 64, RECORD_CHANNELS),
+            queue_blocks(BackendKind::Null, frames, 64, TAKE_CHANNELS),
             150
         );
     }
@@ -1453,7 +1608,7 @@ mod tests {
     fn the_null_queue_is_capped_so_a_long_take_cannot_ask_for_the_world() {
         let frames = take_frames(3_600.0, 48_000);
         let blocks = take_blocks(frames, 64);
-        let queue = queue_blocks(BackendKind::Null, frames, 64, RECORD_CHANNELS);
+        let queue = queue_blocks(BackendKind::Null, frames, 64, TAKE_CHANNELS);
         assert!(queue < blocks, "the cap must bite: {queue} of {blocks}");
         assert_eq!(queue, NULL_QUEUE_BYTES / (64 * 2 * 2));
     }
@@ -1462,7 +1617,7 @@ mod tests {
     fn hardware_gets_a_shallow_queue() {
         // Hardware is paced by the device; a deep queue would only hide a
         // stalled disk until the take ended.
-        let queue = queue_blocks(BackendKind::Alsa, 480_000, 64, RECORD_CHANNELS);
+        let queue = queue_blocks(BackendKind::Alsa, 480_000, 64, TAKE_CHANNELS);
         assert_eq!(queue, HARDWARE_QUEUE_BLOCKS);
     }
 
@@ -1470,7 +1625,7 @@ mod tests {
     fn an_empty_take_still_gets_a_queue_with_room() {
         assert_eq!(take_blocks(0, 64), 0);
         assert_eq!(
-            queue_blocks(BackendKind::Null, 0, 64, RECORD_CHANNELS),
+            queue_blocks(BackendKind::Null, 0, 64, TAKE_CHANNELS),
             1,
             "a queue of zero blocks is refused before the file is created"
         );

@@ -132,12 +132,24 @@ sub audio_engine_command {
 
 # The four commands, in the engine's spelling. Absent values are left out
 # rather than sent as null, so the engine's own default is the one that runs.
+#
+# `$extra` is the optional take plan: `tracks` is either the historical count
+# or the engine's per-track array of objects, and `inputs` is the parallel
+# channel list. Only those two keys are forwarded, so a caller cannot turn this
+# into a way to smuggle a field the engine never promised; an empty or absent
+# hash keeps the old three-argument call exactly as it was.
 sub audio_engine_record {
-	my ($out_abs, $seconds, $start_at) = @_;
+	my ($out_abs, $seconds, $start_at, $extra) = @_;
 	my $request = { cmd => 'record' };
 	$request->{'out'} = $out_abs if defined $out_abs;
 	$request->{'seconds'} = $seconds if defined $seconds;
 	$request->{'start_at'} = $start_at if defined $start_at;
+	if (ref $extra eq 'HASH') {
+		for my $key (qw(tracks inputs)) {
+			next unless exists $extra->{$key};
+			$request->{$key} = $extra->{$key};
+		}
+	}
 	return audio_engine_command($request);
 }
 

@@ -233,21 +233,26 @@ impl Drop for TempTake {
     }
 }
 
-/// A `--tracks 2` base path: the two files the take derives from it are removed
+/// A multi-track base path: every file the take derives from it is removed
 /// with it, whether the test passes or not.
 struct TempTracks {
     base: PathBuf,
+    count: usize,
 }
 
 impl TempTracks {
     fn new(name: &str) -> Self {
+        Self::with_count(name, 2)
+    }
+
+    fn with_count(name: &str, count: usize) -> Self {
         let base = std::env::temp_dir().join(format!(
             "jawn-audio-tracks-{}-{name}.wav",
             std::process::id()
         ));
-        let tracks = TempTracks { base };
+        let tracks = TempTracks { base, count };
         let _ = fs::remove_file(tracks.base());
-        for track in 1..=2 {
+        for track in 1..=tracks.count {
             let _ = fs::remove_file(tracks.derived(track));
         }
         tracks
@@ -275,7 +280,7 @@ impl TempTracks {
 impl Drop for TempTracks {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.base);
-        for track in 1..=2 {
+        for track in 1..=self.count {
             let _ = fs::remove_file(self.derived(track));
         }
     }
@@ -443,15 +448,26 @@ fn record_without_an_out_path_is_a_usage_error() {
 }
 
 #[test]
-fn record_refuses_to_pretend_a_take_is_not_stereo() {
-    let take = TempTake::new("mono");
+fn a_mono_source_still_writes_a_stereo_take() {
+    // The source is one device input; the strip's panned output is stereo, so
+    // `--channels 1` is a legal one-track take and the WAV still has two
+    // channels.
+    let take = TempTake::new("mono-source");
     let out = run(&[
-        "--record", "--backend", "null", "--channels", "1", "--out", take.text(),
+        "--record", "--backend", "null", "--seconds", "0.05", "--channels", "1",
+        "--out", take.text(), "--json",
     ]);
-    assert_eq!(out.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("stereo"), "stderr: {stderr}");
-    assert!(!take.path.exists(), "a refused take created a file");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "channels"), 1.0, "stdout: {text}");
+
+    let bytes = fs::read(&take.path).expect("read the take");
+    assert_eq!(u16_at(&bytes, 22), 2, "the WAV is the strip's stereo output");
+    assert_eq!(u32_at(&bytes, 40) as usize / 4, 2_400, "frames");
 }
 
 #[test]
@@ -600,6 +616,147 @@ fn record_two_tracks_writes_one_wav_per_input() {
     assert_eq!(u32_at(&second_bytes, 40) as usize / 4, 4_800, "track 2 frames");
     assert_eq!(first_bytes.len(), 44 + 4_800 * 4);
     assert_eq!(second_bytes.len(), 44 + 4_800 * 4);
+}
+
+#[test]
+fn eight_tracks_share_one_start_sample_and_name_their_inputs() {
+    let takes = TempTracks::with_count("eight", 8);
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--rate", "48000", "--channels",
+        "8", "--tracks", "8", "--inputs", "0,1,2,3,4,5,6,7", "--start-at", "96000", "--out",
+        takes.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(json_number(&text, "channels"), 8.0, "stdout: {text}");
+    assert_eq!(json_number(&text, "start_sample"), 96_000.0, "stdout: {text}");
+    assert_eq!(
+        text.matches("\"start_sample\":96000").count(),
+        1,
+        "one take is one transport position: {text}"
+    );
+
+    for track in 1..=8 {
+        let path = takes.derived(track);
+        let path_text = path.to_str().expect("UTF-8 path");
+        assert!(path.exists(), "track {track} file missing");
+        assert!(
+            text.contains(&format!(
+                "{{\"path\":\"{path_text}\",\"input\":{},\"frames\":4800,\"dropped\":0}}",
+                track - 1
+            )),
+            "track {track} entry: {text}"
+        );
+        let bytes = fs::read(&path).expect("read the track");
+        assert_eq!(u16_at(&bytes, 22), 2, "track {track} is stereo");
+        assert_eq!(u32_at(&bytes, 40) as usize / 4, 4_800, "track {track} frames");
+    }
+}
+
+#[test]
+fn inputs_choose_and_order_the_tracks() {
+    let takes = TempTracks::new("input-order");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.05", "--tone", "440", "--channels",
+        "4", "--tracks", "2", "--inputs", "2,0", "--out", takes.text(), "--json",
+    ]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    let first = text
+        .find("\"input\":2")
+        .unwrap_or_else(|| panic!("track 1 does not record input 2: {text}"));
+    let second = text
+        .find("\"input\":0")
+        .unwrap_or_else(|| panic!("track 2 does not record input 0: {text}"));
+    assert!(first < second, "the report must keep the given order: {text}");
+
+    assert!(takes.derived(1).exists(), "track 1 file missing");
+    assert!(takes.derived(2).exists(), "track 2 file missing");
+    let first_bytes = fs::read(takes.derived(1)).expect("read track 1");
+    let second_bytes = fs::read(takes.derived(2)).expect("read track 2");
+    assert_eq!(u32_at(&first_bytes, 40) as usize / 4, 2_400, "track 1 frames");
+    assert_eq!(u32_at(&second_bytes, 40) as usize / 4, 2_400, "track 2 frames");
+}
+
+#[test]
+fn a_track_count_larger_than_the_device_is_a_usage_error() {
+    let takes = TempTracks::with_count("nine-of-eight", 9);
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--channels", "8", "--tracks",
+        "9", "--out", takes.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--tracks"), "stderr: {stderr}");
+    assert!(stderr.contains("--channels"), "stderr: {stderr}");
+    for track in 1..=9 {
+        assert!(!takes.derived(track).exists(), "a refused take created a file");
+    }
+}
+
+#[test]
+fn a_one_channel_device_cannot_record_two_tracks() {
+    let takes = TempTracks::new("two-on-one");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--channels", "1", "--tracks",
+        "2", "--out", takes.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("input channel"),
+        "the refusal must be a sentence about inputs: {stderr}"
+    );
+    assert!(!takes.derived(1).exists(), "a refused take created a file");
+    assert!(!takes.derived(2).exists(), "a refused take created a file");
+}
+
+#[test]
+fn an_input_outside_the_granted_channels_is_a_usage_error() {
+    let takes = TempTracks::new("input-outside");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--channels", "8", "--tracks",
+        "2", "--inputs", "0,9", "--out", takes.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("input 9"), "stderr: {stderr}");
+    assert!(!takes.derived(1).exists(), "a refused take created a file");
+    assert!(!takes.derived(2).exists(), "a refused take created a file");
+}
+
+#[test]
+fn the_input_list_must_have_one_entry_per_track() {
+    let take = TempTake::new("input-short-list");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--channels", "4", "--tracks",
+        "2", "--inputs", "0", "--out", take.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--inputs"), "stderr: {stderr}");
+    assert!(!take.path.exists(), "a refused take created a file");
+}
+
+#[test]
+fn more_than_thirty_two_channels_is_a_usage_error() {
+    let take = TempTake::new("too-many-channels");
+    let out = run(&[
+        "--record", "--backend", "null", "--seconds", "0.1", "--channels", "33", "--out",
+        take.text(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--channels"), "stderr: {stderr}");
+    assert!(!take.path.exists(), "a refused take created a file");
 }
 
 #[test]

@@ -182,6 +182,41 @@ my %reply = (
 	$server_pids[-1] = undef;
 }
 
+# --- the optional take plan is forwarded unchanged --------------------------
+{
+	my ($path, $log, $pid) = start_mock(replies => \%reply);
+	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
+
+	my $plan = [
+		{ input => 0, gain => 0.8, pan => -0.3, inserts => [qw(tone delay)] },
+		{ input => 1, gain => 1, pan => 0.3, inserts => [qw(reverb)] },
+	];
+	my $planned = JawnOS::Audio::Engine::audio_engine_record('/tmp/plan.wav', 10, 0, { tracks => $plan });
+	ok($planned->{'ok'}, 'a record with a plan is answered');
+
+	# The numeric shape and the parallel inputs array ride the same field names.
+	my $numeric = JawnOS::Audio::Engine::audio_engine_record('/tmp/plan.wav', 10, 0,
+		{ tracks => 2, inputs => [0, 1], path => '/tmp/ignored.wav' });
+	ok($numeric->{'ok'}, 'the numeric shape is forwarded too');
+
+	# The three-argument call is what every existing caller makes; it must not
+	# grow a plan or a stray key.
+	my $plain = JawnOS::Audio::Engine::audio_engine_record('/tmp/plan.wav', 10, 0);
+	ok($plain->{'ok'}, 'the old call still works');
+
+	my @seen = logged_requests($log);
+	is_deeply($seen[0]{'tracks'}, $plan, 'the per-track plan is sent as it was built');
+	is($seen[1]{'tracks'}, 2, 'a numeric track count stays numeric');
+	is_deeply($seen[1]{'inputs'}, [0, 1], 'and the inputs array is relayed');
+	ok(!exists $seen[1]{'path'}, 'no other key is forwarded');
+	is_deeply([sort keys %{ $seen[2] }], [qw(cmd out seconds start_at)],
+		'a plain record sends only its three fields');
+
+	JawnOS::Audio::Engine::audio_engine_quit();
+	waitpid($pid, 0);
+	$server_pids[-1] = undef;
+}
+
 # --- a sandbox database for the route --------------------------------------
 # The route reads misc/rec_location through subs::setting_grabber, so the test
 # needs the app's own settings table. This is the same shape as the shared
@@ -293,6 +328,39 @@ sub run_take {
 	my $default = run_take();
 	is($default->{'status'}, 200, 'a take with no length is accepted');
 	is($calls[-1][1], 10, 'and defaults to ten seconds');
+	is($calls[-1][3], undef, 'an unarmed take sends no plan');
+
+	# The page's inserts, track count and inputs become the engine's per-track
+	# array; each track carries its input and the same chain.
+	my $armed = run_take(seconds => '5', tracks => '2', inputs => '0,1', inserts => 'tone,delay');
+	is($armed->{'status'}, 200, 'a planned take is 200');
+	is(ref $calls[-1][3], 'HASH', 'the plan reaches audio_engine_record');
+	is_deeply($calls[-1][3]{'tracks'}, [
+		{ input => 0, inserts => [qw(tone delay)] },
+		{ input => 1, inserts => [qw(tone delay)] },
+	], 'each track gets its input and the armed chain');
+
+	my $one = run_take(tracks => '3', inserts => 'reverb');
+	is_deeply($calls[-1][3]{'tracks'}, [
+		map { { input => $_, inserts => ['reverb'] } } 0 .. 2
+	], 'inputs default to 0..tracks-1 and inserts reach every track');
+
+	# A name the engine cannot build is refused here, before any command.
+	my $before = scalar @calls;
+	my $unknown = run_take(inserts => 'tone,flanger');
+	is($unknown->{'status'}, 400, 'an unknown insert is a 400');
+	like($unknown->{'json'}{'error'}, qr/no such insert: flanger/,
+		'and names the insert the engine does not have');
+	is(scalar @calls, $before, 'nothing is sent to the engine');
+
+	for my $bad (['0', undef, undef], ['33', undef, undef], ['2', '0,1,2', undef],
+		['1', '0,32', undef], ['1', 'zero', undef], ['x', undef, undef]) {
+		my ($tracks, $inputs) = @$bad;
+		my $refused = run_take(tracks => $tracks, inputs => $inputs);
+		is($refused->{'status'}, 400, "tracks=$tracks inputs=" . ($inputs // '') . ' is a 400');
+		ok(!$refused->{'json'}{'ok'}, 'with ok false');
+	}
+	is(scalar @calls, $before, 'no malformed plan reaches the engine');
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_misc9.pm");
 	unlike($controller, qr/param\(\s*['"]path['"]\s*\)/, 'the controller never reads a path parameter');
@@ -350,6 +418,23 @@ sub run_take {
 	is($status->{'status'}, 200, 'status is always 200');
 	is($status->{'json'}{'state'}, 'recording', 'and relays the engine object');
 	is($status->{'json'}{'path'}, '/tmp/x.wav', 'field for field');
+
+	# The page renders what it armed, so the per-track plan must survive the
+	# reply untouched.
+	local *JawnOS::Audio::Engine::audio_engine_status = sub {
+		return {
+			ok => 1, take => 2, state => 'recording', path => '/tmp/y.wav',
+			tracks => [
+				{ input => 0, frames => 4800, gain => 0.8, pan => -0.3, inserts => 'tone,delay' },
+				{ input => 1, frames => 4800, gain => 1, pan => 0.3, inserts => 'reverb' },
+			],
+		};
+	};
+	my $planned = run_take(action => 'status');
+	is_deeply($planned->{'json'}{'tracks'}, [
+		{ input => 0, frames => 4800, gain => 0.8, pan => -0.3, inserts => 'tone,delay' },
+		{ input => 1, frames => 4800, gain => 1, pan => 0.3, inserts => 'reverb' },
+	], 'status relays each track and the inserts it was armed with');
 
 	local *JawnOS::Audio::Engine::audio_engine_stop = sub {
 		return { ok => 1, take => 1, state => 'done', frames => 48000 };

@@ -14,7 +14,10 @@ use alsa::{Direction, ValueOr};
 use crate::backends::RunReport;
 use crate::loopback::{self, LoopbackReport};
 
-const CHANNELS: u32 = 2;
+/// A patch-cable loopback is the interface's stereo pair: the click leaves one
+/// output and comes back on one input, so the measurement is stereo by nature
+/// rather than by an assumption the capture path makes.
+const LOOPBACK_CHANNELS: u32 = 2;
 
 /// One open and configured PCM stream, plus the shape ALSA actually granted.
 struct Stream {
@@ -22,6 +25,7 @@ struct Stream {
     rate: u32,
     period: usize,
     buffer: usize,
+    channels: usize,
 }
 
 fn sample_format() -> Format {
@@ -38,6 +42,7 @@ fn open(
     rate: u32,
     period: usize,
     buffer: usize,
+    channels: u32,
 ) -> Result<Stream, String> {
     let pcm = PCM::new(device, direction, false)
         .map_err(|error| format!("cannot open {device}: {error}"))?;
@@ -51,8 +56,8 @@ fn open(
             .set_access(Access::RWInterleaved)
             .map_err(|error| format!("{device}: interleaved access: {error}"))?;
         params
-            .set_channels(CHANNELS)
-            .map_err(|error| format!("{device}: {CHANNELS} channels: {error}"))?;
+            .set_channels(channels)
+            .map_err(|error| format!("{device}: {channels} channels: {error}"))?;
         params
             .set_format(sample_format())
             .map_err(|error| format!("{device}: S16 format: {error}"))?;
@@ -78,7 +83,17 @@ fn open(
         .get_buffer_size()
         .unwrap_or(buffer as i64)
         .max(period as i64) as usize;
+    let granted = applied.get_channels().unwrap_or(channels) as usize;
     drop(applied);
+
+    // A take's interleaving and every per-track input index are laid out from
+    // the requested count, so a stream that grants a different one cannot be
+    // read honestly. Name the granted number rather than silently reshaping.
+    if granted != channels as usize {
+        return Err(format!(
+            "{device}: asked for {channels} channels, the device granted {granted}"
+        ));
+    }
 
     pcm.prepare()
         .map_err(|error| format!("{device}: prepare: {error}"))?;
@@ -88,6 +103,7 @@ fn open(
         rate,
         period,
         buffer,
+        channels: granted,
     })
 }
 
@@ -102,10 +118,19 @@ pub fn run_playback(
     rate: u32,
     period: usize,
     buffer: usize,
+    channels: usize,
     seconds: f64,
     tone: Option<f32>,
 ) -> Result<RunReport, String> {
-    let stream = open(device, Direction::Playback, rate, period, buffer)?;
+    let stream = open(
+        device,
+        Direction::Playback,
+        rate,
+        period,
+        buffer,
+        channels as u32,
+    )?;
+    let channels = stream.channels;
     let io = stream
         .pcm
         .io_i16()
@@ -116,13 +141,13 @@ pub fn run_playback(
     let blocks = (total_frames / frames as f64) as usize;
     let step = tone.map(|hz| TAU * hz / stream.rate as f32);
 
-    let mut block = vec![0i16; frames * CHANNELS as usize];
+    let mut block = vec![0i16; frames * channels];
     let mut phase = 0.0f32;
     let mut peak = 0.0f32;
     let mut xruns = 0usize;
 
     for _ in 0..blocks {
-        for frame in block.chunks_mut(CHANNELS as usize) {
+        for frame in block.chunks_mut(channels) {
             let sample = if let Some(step) = step {
                 let value = phase.sin();
                 phase = (phase + step) % TAU;
@@ -143,7 +168,7 @@ pub fn run_playback(
         while written < block.len() {
             match io.writei(&block[written..]) {
                 Ok(0) => break,
-                Ok(count) => written += count * CHANNELS as usize,
+                Ok(count) => written += count * channels,
                 Err(error) => {
                     let message = format!("{error}");
                     match stream.pcm.try_recover(error, true) {
@@ -165,9 +190,9 @@ pub fn run_playback(
         rate: stream.rate,
         frames,
         buffer: stream.buffer,
-        channels: CHANNELS as usize,
+        channels,
         blocks,
-        samples: blocks * frames * CHANNELS as usize,
+        samples: blocks * frames * channels,
         peak,
         xruns,
     })
@@ -185,22 +210,30 @@ pub struct CaptureReport {
     pub xruns: usize,
 }
 
-/// Capture `seconds` of the input, handing each block to `sink` as interleaved
-/// S16 samples. The sink does the writing, so this module stays about the
-/// device and the take's WAV layout stays in `wav` (docs/studio-audio-roadmap.md
-/// §7, P2).
-///
-/// The final block is short when the requested duration is not a whole number
-/// of periods: the take is exactly `seconds`, not padded to the block size.
-/// Answer "can this device be opened for capture?" and close it again.
+/// Answer "can this device be opened for capture?", with the channel count it
+/// granted, and close it again.
 ///
 /// `--record` asks this before it creates the output file, so a take that
 /// cannot start never truncates a path the caller already named. Opening twice
 /// costs a millisecond and saves an existing take; the real open follows.
-pub fn check_capture(device: &str, rate: u32, period: usize, buffer: usize) -> Result<(), String> {
-    let stream = open(device, Direction::Capture, rate, period, buffer)?;
+pub fn check_capture(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    channels: usize,
+) -> Result<usize, String> {
+    let stream = open(
+        device,
+        Direction::Capture,
+        rate,
+        period,
+        buffer,
+        channels as u32,
+    )?;
+    let granted = stream.channels;
     let _ = stream.pcm.drop();
-    Ok(())
+    Ok(granted)
 }
 
 /// What a capture does with the blocks it reads, and a chance to size its
@@ -208,22 +241,39 @@ pub fn check_capture(device: &str, rate: u32, period: usize, buffer: usize) -> R
 /// device opens and before the first read, so a channel can allocate its
 /// scratch and delay lines at the real rate rather than guessing.
 pub trait CaptureSink {
-    fn prepared(&mut self, _rate: u32, _period: usize) -> Result<(), String> {
+    fn prepared(&mut self, _rate: u32, _period: usize, _channels: usize) -> Result<(), String> {
         Ok(())
     }
-    /// One interleaved stereo block, already the device's own i16 samples.
+    /// One interleaved block of the device's own i16 samples, `channels`
+    /// samples per frame.
     fn block(&mut self, block: &[i16]) -> Result<(), String>;
 }
 
+/// Capture `seconds` of the input, handing each block to `sink` as interleaved
+/// S16 samples at the granted channel count. The sink does the writing, so this
+/// module stays about the device and the take's WAV layout stays in `wav`
+/// (docs/studio-audio-roadmap.md §7, P2).
+///
+/// The final block is short when the requested duration is not a whole number
+/// of periods: the take is exactly `seconds`, not padded to the block size.
 pub fn run_capture<S: CaptureSink>(
     device: &str,
     rate: u32,
     period: usize,
     buffer: usize,
+    channels: usize,
     seconds: f64,
     mut sink: S,
 ) -> Result<CaptureReport, String> {
-    let stream = open(device, Direction::Capture, rate, period, buffer)?;
+    let stream = open(
+        device,
+        Direction::Capture,
+        rate,
+        period,
+        buffer,
+        channels as u32,
+    )?;
+    let channels = stream.channels;
     let io = stream
         .pcm
         .io_i16()
@@ -232,7 +282,7 @@ pub fn run_capture<S: CaptureSink>(
     let frames = stream.period.max(1);
     // Let the sink size itself from the granted shape before the first read:
     // this is setup, not the audio path.
-    sink.prepared(stream.rate, frames)?;
+    sink.prepared(stream.rate, frames, channels)?;
 
     // Capture starts when read is called, but starting it explicitly makes the
     // first frame's position unambiguous and matches the loopback path.
@@ -245,16 +295,16 @@ pub fn run_capture<S: CaptureSink>(
     let mut remaining = total;
     let mut captured = 0u64;
     let mut xruns = 0usize;
-    let mut block = vec![0i16; frames * CHANNELS as usize];
+    let mut block = vec![0i16; frames * channels];
 
     while remaining > 0 {
         let want = remaining.min(frames as u64) as usize;
-        let slice = &mut block[..want * CHANNELS as usize];
+        let slice = &mut block[..want * channels];
         match io.readi(slice) {
             Ok(0) => break,
             Ok(got) => {
                 let got = got.min(want);
-                sink.block(&slice[..got * CHANNELS as usize])
+                sink.block(&slice[..got * channels])
                     .map_err(|error| format!("{device}: write take: {error}"))?;
                 captured += got as u64;
                 remaining -= got as u64;
@@ -275,7 +325,7 @@ pub fn run_capture<S: CaptureSink>(
         rate: stream.rate,
         period: frames,
         buffer: stream.buffer,
-        channels: CHANNELS as usize,
+        channels,
         frames: captured,
         xruns,
     })
@@ -338,8 +388,24 @@ fn measure(
         precision: requested_period,
     };
 
-    let capture = open(device, Direction::Capture, rate, period, buffer).map_err(fail)?;
-    let playback = open(device, Direction::Playback, rate, period, buffer).map_err(fail)?;
+    let capture = open(
+        device,
+        Direction::Capture,
+        rate,
+        period,
+        buffer,
+        LOOPBACK_CHANNELS,
+    )
+    .map_err(fail)?;
+    let playback = open(
+        device,
+        Direction::Playback,
+        rate,
+        period,
+        buffer,
+        LOOPBACK_CHANNELS,
+    )
+    .map_err(fail)?;
     let precision = capture.period.max(1) as u64;
 
     // Start playback on a full buffer. A short click alone would otherwise
@@ -380,16 +446,16 @@ fn measure(
         ((capture.rate as f64 * loopback::PRE_ROLL_MS as f64 / 1000.0).round() as usize).max(1);
     let mut noise_peak = 0.0f32;
     let mut read_frames = 0usize;
-    let mut chunk = vec![0i16; capture.period.max(1) * CHANNELS as usize];
+    let mut chunk = vec![0i16; capture.period.max(1) * LOOPBACK_CHANNELS as usize];
     while read_frames < preroll_frames {
         let want = (preroll_frames - read_frames).min(capture.period.max(1));
         let got = capture_io
-            .readi(&mut chunk[..want * CHANNELS as usize])
+            .readi(&mut chunk[..want * LOOPBACK_CHANNELS as usize])
             .map_err(|error| fail(format!("{device}: capture: {error}")))?;
         if got == 0 {
             break;
         }
-        for frame in chunk[..got * CHANNELS as usize].chunks(CHANNELS as usize) {
+        for frame in chunk[..got * LOOPBACK_CHANNELS as usize].chunks(LOOPBACK_CHANNELS as usize) {
             for sample in frame {
                 noise_peak = noise_peak.max(sample.unsigned_abs() as f32 / 32768.0);
             }
@@ -408,11 +474,11 @@ fn measure(
     // comes back.
     let click_frames = loopback::click_frames();
     let play_frames = playback.buffer.max(click_frames.len());
-    let mut click = vec![0i16; play_frames * CHANNELS as usize];
+    let mut click = vec![0i16; play_frames * LOOPBACK_CHANNELS as usize];
     for (frame, sample) in click_frames.iter().enumerate() {
         let quantised = to_i16(*sample);
-        click[frame * CHANNELS as usize] = quantised;
-        click[frame * CHANNELS as usize + 1] = quantised;
+        click[frame * LOOPBACK_CHANNELS as usize] = quantised;
+        click[frame * LOOPBACK_CHANNELS as usize + 1] = quantised;
     }
 
     // Buffer the click while playback is still stopped, then start playback:
@@ -427,7 +493,7 @@ fn measure(
         if got == 0 {
             return Err(fail(format!("{device}: playback wrote nothing")));
         }
-        written += got * CHANNELS as usize;
+        written += got * LOOPBACK_CHANNELS as usize;
     }
     if playback.pcm.state() != State::Running {
         let state = playback.pcm.state();
@@ -443,13 +509,13 @@ fn measure(
     while position < limit {
         let want = (limit - position).min(capture.period.max(1));
         let got = capture_io
-            .readi(&mut chunk[..want * CHANNELS as usize])
+            .readi(&mut chunk[..want * LOOPBACK_CHANNELS as usize])
             .map_err(|error| fail(format!("{device}: capture: {error}")))?;
         if got == 0 {
             continue;
         }
-        for (offset, frame) in chunk[..got * CHANNELS as usize]
-            .chunks(CHANNELS as usize)
+        for (offset, frame) in chunk[..got * LOOPBACK_CHANNELS as usize]
+            .chunks(LOOPBACK_CHANNELS as usize)
             .enumerate()
         {
             let level = frame

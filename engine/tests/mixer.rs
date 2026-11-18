@@ -169,6 +169,55 @@ fn a_tracks_inserts_run_in_the_order_they_were_given() {
 }
 
 #[test]
+fn eight_tracks_mix_and_process_without_panicking() {
+    let labels = ["ch1", "ch2", "ch3", "ch4", "ch5", "ch6", "ch7", "ch8"];
+    let inputs: Vec<usize> = (0..8).collect();
+    let mut mixer = Mixer::new(&inputs, &labels);
+    for (index, track) in mixer.tracks_mut().iter_mut().enumerate() {
+        let pan = if index % 2 == 0 { -1.0 } else { 1.0 };
+        let mut channel = Channel::new(0.1, pan);
+        // A distinct chain per track: eight independent strips, not one shared
+        // by every position.
+        channel.push(Box::new(Scale(1.0 + index as f32 * 0.05)));
+        track.channel = channel;
+    }
+    mixer.prepare(48_000, 64);
+
+    let blocks: Vec<Vec<f32>> = (0..8)
+        .map(|track| vec![0.5 + track as f32 * 0.01; 64])
+        .collect();
+    let mut stereo = vec![0.0f32; 128];
+    for track in 0..8 {
+        mixer
+            .process(track, &blocks[track], &mut stereo)
+            .unwrap_or_else(|error| panic!("track {track}: {error}"));
+        assert!(
+            stereo.iter().all(|sample| sample.is_finite()),
+            "track {track} produced a non-finite sample"
+        );
+    }
+
+    let mut bus = vec![0.0f32; 128];
+    let refs: Vec<&[f32]> = blocks.iter().map(|block| block.as_slice()).collect();
+    mixer.mix(&refs, &mut bus).expect("eight tracks mix");
+    assert!(bus.iter().all(|sample| sample.is_finite()));
+    assert!(bus.iter().any(|sample| sample.abs() > 0.0), "the bus is silent");
+
+    // A short block is an error at eight tracks, exactly as at two.
+    let mut short = vec![0.0f32; 2];
+    let error = mixer
+        .process(7, &[0.0; 64], &mut short)
+        .expect_err("a short stereo buffer must be refused");
+    assert!(error.contains("BadBlock"), "unexpected error: {error}");
+
+    let mut odd = vec![0.0f32; 127];
+    let error = mixer
+        .mix(&refs, &mut odd)
+        .expect_err("a bus without whole stereo frames must be refused");
+    assert!(error.contains("whole stereo frames"), "unexpected error: {error}");
+}
+
+#[test]
 fn process_refuses_a_short_stereo_buffer_instead_of_panicking() {
     let mut mixer = Mixer::new(&[0], &["ch1"]);
     mixer.prepare(48_000, 4);

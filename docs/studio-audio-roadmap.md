@@ -340,10 +340,24 @@ take be compared with the browser without three filters of phase always in the w
 | `JawnSynth` | not an effect | It is a generator, not a stage: its output replaces the chain. Putting it in an insert list would mean a strip that can be fed from nowhere. |
 
 A strip is **one input**, which is Studio's own model: an interface's two inputs are a mic and an
-instrument, not a stereo pair, and summing them would put a vocal inside a guitar. `--channel 0|1`
-picks the input a take records, and `--record` writes the strip's panned stereo output. A true
-stereo take, and a mixer of several channels, are the next slices — not something to fake by
-averaging two sources.
+instrument, not a stereo pair, and summing them would put a vocal inside a guitar. `--channel N`
+(or `--inputs`) picks the input a take records, and `--record` writes the strip's panned stereo
+output. A true stereo take of one source is still a separate slice; an N-track take runs several
+one-input strips at once rather than faking stereo by averaging two sources.
+
+An 8-input interface is the same code path with N=8, but the cost is worth naming before anyone
+promises eight channels in a take. The device side is 8 × 48 kHz × 16-bit ≈ **6.1 Mbit/s** of
+isochronous USB traffic before the playback direction, and a class-compliant interface may expose
+all eight inputs only in one mode or rate its vendor documents — that is a measurement, not an
+assumption. Each track keeps its own `DiskWriter`, so eight tracks are **eight queues and eight
+files**: deliberate, because a stalled disk then drops one track rather than all of them, but it is
+also eight times the header syncing and eight file handles per take. The reverb is per instance, not
+shared: eight reverbs are roughly 8 × 4 MB ≈ **34 MB** of spectra and about **half a core** at the
+pedalboard's 6–8% per channel, so the impulse response has to become shareable (one IR, eight
+convolutions) before reverb is a sensible default on every input. What must be verified on the
+testing hardware, not claimed here: the order the driver presents the eight channels in, whether all
+eight can be captured at 48 kHz at the requested period, and whether a stereo-link switch groups
+adjacent inputs (which can turn an 8-channel request into a refusal or a 4-channel grant).
 
 Every effect is prepared once — the delay line, the channel's scratch block, the filter
 coefficients — and after that only reads and writes memory it already owns. Controls move through
@@ -557,6 +571,21 @@ alignment (`engine/`, 40 tests), the build and staging script, and `t/332`. **St
 device behind the same `Device` trait — and the PCM2902 accepts only 48-sample periods, so the
 backend must fill a 64-frame block across two USB frames.
 
+**The supervisor:** `perl/Audio.pl` owns the machine's one engine. It starts
+`perl/audio/jawn-audio --serve` with the configured backend, device, period, buffer and socket,
+restarts it when it exits on a 1/2/5/10/30 s ladder, and keeps the restart count and last exit in
+`~/.president/audio.json`. An `flock` on `~/.president/audio.lock` makes a second supervisor exit
+with one sentence rather than fight for the socket; `--status` prints the file and `--check` is 0
+only while the supervisor and its child are alive; TERM/INT stop the child, remove the status file
+and exit 0. Config is flags, then `JAWNOS_AUDIO_*`, then defaults (alsa, `hw:1,0`, 64/256,
+`~/.president/audio.sock`). A missing binary is reported once and retried at the 30 s cap, because
+the engine stays optional.
+
+It is deliberately **not** started by a web request: a request that spawns it leaves a daemon no
+worker owns and no restart stops. The worker tree starts it beside `Sco.pl` and `Reception.pl`
+later; until then it runs by hand. P3 assumes it exists — two machines on one clock both need an
+engine that is up.
+
 **Gate:** ≤ 5 ms round trip at 64 frames on `table`, zero xruns over 10 minutes with the house running
 its own JawnOS, and a null backend that runs in the suite.
 
@@ -569,7 +598,9 @@ construction.
 
 Channels, gain/pan, the tone stack, the pedal inserts, the click, the transport, and takes written as
 WAV/FLAC on disk (the DB keeps the take row as today). The page keeps the waveform canvas and the
-knobs and calls the engine; `JawnOS::Audio::Engine` is the Perl-side client.
+knobs and calls the engine; `JawnOS::Audio::Engine` is the Perl-side client. A take armed over the
+socket carries a per-track plan — input, gain, pan and the inserts in chain order — so the page's
+inserts reach the take rather than being flattened to a wire.
 
 **Gate:** a four-track take through the UM2 lands within **±1 sample** of the click on playback, and
 an A/B against the current path is indistinguishable except for latency.

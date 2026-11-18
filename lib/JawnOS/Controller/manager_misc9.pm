@@ -1257,7 +1257,13 @@ sub action_44023 {
 		return;
 	}
 
-	my ($status, $answer) = &studio_take_start($c->param('seconds'), $c->param('start_at'));
+	my ($status, $answer) = &studio_take_start(
+		$c->param('seconds'),
+		$c->param('start_at'),
+		$c->param('tracks'),
+		$c->param('inputs'),
+		$c->param('inserts'),
+	);
 	$c->render(json => $answer, status => $status);
 	return;
 }
@@ -1319,13 +1325,78 @@ sub studio_take_path {
 	return File::Spec->catfile($folder, "studio-take-$epoch-$take.wav");
 }
 
+# The five inserts the engine can build. `reverb2` is the web's alias for
+# reverb and is not a sixth name; the page sends the engine's spelling.
+our %studio_take_inserts = map { $_ => 1 } qw(tone distortion delay compressor reverb);
+our $studio_take_tracks_max = 32;
+our $studio_take_input_max  = 31;
+
+# Validate the request's three optional plan fields and answer with the engine's
+# per-track array, or with the sentence that refuses them. The array form is
+# always used when any field is present: a numeric `tracks` cannot carry
+# inserts, and the page arms each track's input and chain together. Nothing
+# here names a path.
+sub studio_take_plan {
+	my ($tracks, $inputs, $inserts) = @_;
+
+	my $count;
+	if (defined $tracks && length $tracks) {
+		return ('tracks must be a whole number between 1 and 32', undef)
+			unless $tracks =~ /\A\s*\+?(\d+)\s*\z/;
+		$count = $1 + 0;
+		return ('tracks must be a whole number between 1 and 32', undef)
+			unless $count >= 1 && $count <= $studio_take_tracks_max;
+	}
+
+	my @inputs;
+	if (defined $inputs && length $inputs) {
+		for my $part (split /,/, $inputs, -1) {
+			$part =~ s/\A\s+|\s+\z//g;
+			return ('inputs must be channel numbers separated by commas', undef)
+				unless $part =~ /\A\+?\d+\z/;
+			return ('inputs must be whole channel numbers between 0 and 31', undef)
+				unless $part <= $studio_take_input_max;
+			push @inputs, $part + 0;
+		}
+		return ('inputs must name at least one channel', undef) unless @inputs;
+		return ('tracks must be a whole number between 1 and 32', undef)
+			if @inputs > $studio_take_tracks_max;
+	}
+
+	my @inserts;
+	if (defined $inserts && length $inserts) {
+		for my $part (split /,/, $inserts) {
+			$part =~ s/\A\s+|\s+\z//g;
+			next unless length $part;
+			return ("no such insert: $part", undef) unless $studio_take_inserts{$part};
+			push @inserts, $part;
+		}
+	}
+
+	# Nothing to plan: the engine's own one-track wire is the take.
+	return (undef, undef) unless defined $count || @inputs || @inserts;
+
+	$count = @inputs if !defined $count && @inputs;
+	$count = 1 unless defined $count;
+	if (@inputs && @inputs != $count) {
+		return ('inputs must name one channel per track', undef);
+	}
+	@inputs = (0 .. $count - 1) unless @inputs;
+
+	my @plan = map { { input => $inputs[$_], inserts => [@inserts] } } 0 .. $count - 1;
+	return (undef, \@plan);
+}
+
 # Resolve, arm and send one take. The folder is made server-side because the
 # disk writer does not create parents; the engine is checked first so a machine
 # without one does not leave an empty directory behind.
 sub studio_take_start {
-	my ($seconds, $start_at) = @_;
+	my ($seconds, $start_at, $tracks, $inputs, $inserts) = @_;
 	$seconds  = &studio_take_seconds($seconds);
 	$start_at = &studio_take_start_at($start_at);
+
+	my ($plan_error, $plan) = &studio_take_plan($tracks, $inputs, $inserts);
+	return (400, { ok => 0, error => $plan_error }) if defined $plan_error;
 
 	my $folder = &studio_take_folder();
 	return (503, { ok => 0, error => 'no recording folder is set on this machine' })
@@ -1341,7 +1412,9 @@ sub studio_take_start {
 		unless $ready && -d $folder;
 
 	my $path = &studio_take_path($folder);
-	my $answer = &JawnOS::Audio::Engine::audio_engine_record($path, $seconds, $start_at);
+	my $answer = &JawnOS::Audio::Engine::audio_engine_record(
+		$path, $seconds, $start_at, $plan ? { tracks => $plan } : undef,
+	);
 	$answer = { ok => 0, error => 'the audio engine did not answer' }
 		unless ref $answer eq 'HASH';
 
