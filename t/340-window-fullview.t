@@ -71,6 +71,10 @@ like($fit, qr/win\.css\(\{ 'position': 'fixed', 'left': box\.left, 'top': box\.t
 	'and puts the window back where it was');
 like($fit, qr/if \(win\.hasClass\('window_full_viewport'\)\) \{ return; \}/,
 	'a viewport fit leaves the full glass alone');
+like($fit, qr/var foot = viewH - \(\(typeof windowBottomClearance == 'function'\) \? windowBottomClearance\(\) : 0\)/,
+	'the fit stops above the taskbar and dock');
+like($fit, qr/if \(!windowPhoneChecker\(\) && winTop \+ win\.height\(\) > foot\)/,
+	'and a piled window is clamped too, not only a free one');
 like($fit, qr/\$\(document\)\.on\('click', '\.fullview_button'/, 'the title-bar control enters full screen');
 like($fit, qr/\$\(document\)\.on\('click', '\.fullview_exit_button'/, 'the corner control leaves it');
 like($fit, qr/function windowFullViewportEnter\(win\) \{[\s\S]{0,500}jawnosLauncherShell/, 'a launcher shell cannot enter full screen');

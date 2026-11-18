@@ -772,11 +772,18 @@ function windowFit(win) {
 	// free or pinned window still fits.
 	var piled = (typeof windowTiledSlot == 'function' && windowTiledSlot(win) >= 0)
 		|| (windowPhoneChecker() && win.attr('deck') !== undefined);
-	if (!piled && winTop + win.height() > viewH) {
+	// The taskbar's strip is a hard edge: no window, free or piled, may put its
+	// foot under it. A height saved on a taller screen is the case that matters -
+	// it ran a restored Studio's console and pedal sheet off the bottom of the
+	// viewport - so the clamp applies even where the pile deliberately is not
+	// squeezed. A phone keeps its own deck fit.
+	var foot = viewH - ((typeof windowBottomClearance == 'function') ? windowBottomClearance() : 0);
+	if (foot < 240) { foot = 240; }
+	if (!windowPhoneChecker() && winTop + win.height() > foot) {
 		if (win.attr('fit_shrunk') != 'yes') {
 			win.attr('fit_height', win.height()).attr('fit_shrunk', 'yes');
 		}
-		win.height(Math.max(240, viewH - winTop));
+		win.height(Math.max(240, foot - winTop));
 	}
 	win.find('.window_contents').each(function () {
 		var el = this;

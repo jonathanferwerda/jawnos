@@ -87,8 +87,10 @@ like($windows, qr/at\.left \+ Math\.round\(width \* windowStackAcross\)/,
 	'a full pile starts a new one, half a window across');
 like($fit, qr/var piled = \(typeof windowTiledSlot == 'function' && windowTiledSlot\(win\) >= 0\)[\s\S]{0,140}win\.attr\('deck'\) !== undefined/,
 	'a piled window, on a desk or in a phone deck, is not squeezed to fit');
-like($fit, qr/if \(!piled && winTop \+ win\.height\(\) > viewH\)/,
-	'while a free or pinned one still is');
+like($fit, qr/var foot = viewH - \(\(typeof windowBottomClearance == 'function'\) \? windowBottomClearance\(\) : 0\)/,
+	'but the taskbar strip is a hard edge for every desktop window');
+like($fit, qr/if \(!windowPhoneChecker\(\) && winTop \+ win\.height\(\) > foot\)/,
+	'and a piled window is clamped too, so a saved height cannot run off the bottom');
 like($windows, qr/function windowTiledLeave\(win, float\)/, 'a window can leave the tile');
 like($stack, qr/function windowDeckOf\(win\)/, 'a phone window carries the deck it sits in');
 like($stack, qr/function windowStacker\(app, raise\)[\s\S]{0,1200}windowDeckOf\(el\) === deck/,
