@@ -1,8 +1,9 @@
 # tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css
 # covers:    a new window pours out of the control that opened it - the press
-#            records a viewport rectangle, windowMaker hands it over once, and a
-#            fixed sheet plus the window's own fade-in play it. Also the pile
-#            preview exception for a drag carrying its pile.
+#            records a viewport rectangle and richer app metadata, pointerdown
+#            draws the chrome preview at once, windowMaker hands the real
+#            rectangle over, and the preview is retargeted or put away. Also
+#            the pile preview exception for a drag carrying its pile.
 
 use strict;
 use warnings;
@@ -31,8 +32,10 @@ like($index, qr/if \(edge && !\(group && group\.length\)\)/,
 	'a drag carrying its pile does not draw the half preview');
 
 # --- the press sources -------------------------------------------------------
-like($board, qr/jawnosWindowOriginFromPoint[\s\S]{0,900}appointmentGrabber\(o\[4\]\['name'\],timestamp\)/,
-	'the canvas pill records its rectangle before the opener');
+like($board, qr/jawnosWindowOriginFromPoint[\s\S]{0,1600}appointmentGrabber\(o\[4\]\['name'\],timestamp\)/,
+	'the canvas pill records its rectangle and preview before the opener');
+like($board, qr/jawnosWindowOriginFromPoint[\s\S]{0,1600}jawnosWindowEmergeGhostStart\(origin\)/,
+	'the canvas starts the preview from the hit path');
 like($lazy, qr/jawnosWindowOriginFromElement\(target\[0\], app\); \}\s*target\.trigger\('click'\)/,
 	'the lazy replay stamps the origin again before the click');
 
@@ -44,6 +47,20 @@ like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*\.jawnos_emerge_sh
 ok(index($css, '.jawnos_emerge_sheet') > index($css, '@keyframes jawnos_window_lock'),
 	'the emerge styles are appended after the class effects');
 
+# --- the press-time preview's styles ----------------------------------------
+like($css, qr/\.jawnos_emerge_ghost\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*2147482891[^}]*pointer-events:\s*none/s,
+	'the ghost is fixed, click-through and above the windows');
+like($css, qr/\.jawnos_emerge_ghost \.jawnos_emerge_bar\s*\{[^}]*height:\s*var\(--navbar_h, 36px\)/s,
+	'its title bar is the height of a real one');
+like($css, qr/\.jawnos_emerge_ghost \.jawnos_emerge_button\s*\{/,
+	'the chrome draws the standard window controls');
+like($css, qr/body\[data-window-effects="off"\] \.jawnos_emerge_ghost \{ display: none !important; \}/,
+	'turning the effects off hides a preview already in flight');
+like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*\.jawnos_emerge_ghost \{ display: none; \}\s*\}/s,
+	'reduced motion hides the preview too');
+ok(index($css, '.jawnos_emerge_ghost') > index($css, '.jawnos_emerge_sheet'),
+	'the preview styles follow the sheet block at the very end');
+
 # --- the implementation stays on the plan ------------------------------------
 like($emerge, qr/function jawnosWindowOriginFromElement\(/, 'a DOM control can be captured');
 like($emerge, qr/function jawnosWindowOriginFromPoint\(/, 'a canvas pill can be captured');
@@ -51,6 +68,10 @@ like($emerge, qr/function jawnosWindowOriginTake\(/, 'the press is taken once');
 like($emerge, qr/function jawnosWindowEmergeKeyframes\(/, 'the shape is pure geometry');
 like($emerge, qr/function jawnosWindowEmergeCssRect\(/, 'a zoomed rectangle is put back into layout units');
 like($emerge, qr/function jawnosWindowEmerge\(win, origin\)/, 'the motion takes the window and an origin');
+like($emerge, qr/function jawnosWindowEmergeGhostStart\(origin\)/, 'the press can start a preview');
+like($emerge, qr/function jawnosWindowEmergeGhostRetarget\(/, 'the preview is retargeted to the real frame');
+like($emerge, qr/function jawnosWindowEmergeGhostCancel\(/, 'the preview can be put away');
+like($emerge, qr/function jawnosWindowEmergePredict\(/, 'the frame is predicted from the cascade');
 like($emerge, qr/jawnosWindowEffectsLevel/, 'the level is read when it exists');
 like($emerge, qr/prefers-reduced-motion/, 'reduced motion is honoured');
 unlike($emerge, qr/\bgetContext\s*\(/, 'no canvas or WebGL context is created');
@@ -82,76 +103,183 @@ function advance(ms) {
 	} while (due.length);
 }
 
+function hasClass(node, cls) {
+	return !!node && (' ' + (node.className || '') + ' ').indexOf(' ' + cls + ' ') >= 0;
+}
+function selectorTokens(sel) { return String(sel || '').split(',').map((s) => s.trim()); }
+function ancestorId(node, id) {
+	let p = node;
+	while (p) { if (p.id === id) { return true; } p = p.parentNode; }
+	return false;
+}
+function matchSimple(node, token) {
+	if (!node || node.nodeType !== 1) { return false; }
+	if (token.charAt(0) === '.') { return hasClass(node, token.slice(1)); }
+	if (token.charAt(0) === '#') { return node.id === token.slice(1); }
+	return false;
+}
+function findDescendant(root, sel) {
+	const tokens = selectorTokens(sel);
+	const stack = (root.children || []).slice();
+	while (stack.length) {
+		const n = stack.shift();
+		for (const t of tokens) {
+			if (t === '#app_switcher .app') {
+				if (hasClass(n, 'app') && ancestorId(n, 'app_switcher')) { return n; }
+			}
+			else if (matchSimple(n, t)) { return n; }
+		}
+		if (n.children) { stack.push.apply(stack, n.children); }
+	}
+	return null;
+}
+function closestMatch(node, sel) {
+	const tokens = selectorTokens(sel);
+	let p = node;
+	while (p && p.nodeType === 1) {
+		for (const t of tokens) {
+			if (t === '#app_switcher .app') {
+				if (hasClass(p, 'app') && ancestorId(p, 'app_switcher')) { return p; }
+			}
+			else if (matchSimple(p, t)) { return p; }
+		}
+		p = p.parentNode;
+	}
+	return null;
+}
+function findClass(root, cls) {
+	if (!root) { return null; }
+	if (hasClass(root, cls)) { return root; }
+	const kids = root.children || [];
+	for (let i = 0; i < kids.length; i++) {
+		const found = findClass(kids[i], cls);
+		if (found) { return found; }
+	}
+	return null;
+}
+function rectFromStyle(el) {
+	const px = (v) => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
+	return {
+		left: px(el.style.left), top: px(el.style.top),
+		width: px(el.style.width), height: px(el.style.height),
+		radius: px(el.style.borderRadius)
+	};
+}
+function makeElement(tag, className) {
+	const el = {
+		nodeType: 1,
+		tagName: String(tag || 'DIV').toUpperCase(),
+		className: className || '',
+		style: { setProperty: function (k, v) { this[k] = v; } },
+		children: [],
+		attributes: {},
+		parentNode: null,
+		textContent: '',
+		animations: [],
+		offsetWidth: 0,
+		appendChild: function (child) { if (child) { child.parentNode = this; this.children.push(child); } return child; },
+		removeChild: function (child) {
+			const i = this.children.indexOf(child);
+			if (i >= 0) { this.children.splice(i, 1); }
+			if (child) { child.parentNode = null; }
+		},
+		setAttribute: function (k, v) { this.attributes[k] = String(v); if (k === 'id') { this.id = String(v); } },
+		getAttribute: function (k) {
+			if (this.attributes[k] !== undefined) { return this.attributes[k]; }
+			if (this[k] !== undefined) { return this[k]; }
+			return null;
+		},
+		getBoundingClientRect: function () { return rectFromStyle(this); },
+		getClientRects: function () { return [this.getBoundingClientRect()]; },
+		querySelector: function (sel) { return findDescendant(this, sel); },
+		closest: function (sel) { return closestMatch(this, sel); },
+		animate: function (keys, options) {
+			const a = {
+				owner: this, keys: keys, options: options, cancelled: 0,
+				finished: { then: function () {} },
+				cancel: function () { this.cancelled = 1; }
+			};
+			this.animations.push(a);
+			// A ghost's box follows its final key, so the retarget reads the
+			// frame the open animation has reached. Other elements keep their
+			// inline start values (the fallback sheet is asserted that way).
+			if (keys && keys.length && (this.className || '').indexOf('jawnos_emerge_ghost') === 0) {
+				const last = keys[keys.length - 1];
+				['left', 'top', 'width', 'height', 'borderRadius', 'opacity'].forEach((p) => {
+					if (last[p] !== undefined) { this.style[p] = last[p]; }
+				});
+			}
+			return a;
+		}
+	};
+	return el;
+}
+
+function El(app) {
+	const el = makeElement('DIV');
+	el.app = app || '';
+	el.rect = { left: 300, top: 100, width: 400, height: 300 };
+	el.getBoundingClientRect = function () { return this.rect; };
+	el.getClientRects = function () { return [this.rect]; };
+	return el;
+}
+
 function wrap(el) {
 	return {
 		jquery: 1, length: 1, 0: el,
-		attr: function (name) { return (el && el[name] !== undefined) ? el[name] : ((el && el.app) || ''); }
+		attr: function (name) {
+			if (!el) { return undefined; }
+			if (el.attributes && el.attributes[name] !== undefined) { return el.attributes[name]; }
+			return (el[name] !== undefined) ? el[name] : undefined;
+		}
 	};
 }
+const handlers = {};
+const startMenuIcons = {};
+const created = [];
+const body = makeElement('BODY');
+const documentElement = makeElement('HTML');
+documentElement.clientWidth = 1200;
+documentElement.clientHeight = 900;
+const sandboxDocument = {
+	createElement: function (tag) { const el = makeElement(tag); created.push(el); return el; },
+	body: body,
+	documentElement: documentElement,
+	querySelector: function () { return null; },
+	querySelectorAll: function () { return []; },
+	getElementById: function (id) { return startMenuIcons[id] || null; },
+	addEventListener: function () {}
+};
 function $(x) {
 	if (x && x.jquery) { return x; }
+	if (x === sandboxDocument) {
+		return { length: 1, on: function (ev, fn) { handlers[ev] = fn; } };
+	}
 	if (x && x.nodeType === 1) { return wrap(x); }
 	return { length: 0 };
 }
 
-function animated(owner) {
-	const a = {
-		owner: owner, keys: null, options: null, cancelled: 0,
-		cancel: function () { this.cancelled = 1; }
-	};
-	return a;
-}
-
-function El(app) {
-	this.nodeType = 1;
-	this.tagName = 'DIV';
-	this.app = app || '';
-	this.rect = { left: 300, top: 100, width: 400, height: 300 };
-	this.animations = [];
-}
-El.prototype.getBoundingClientRect = function () { return this.rect; };
-El.prototype.getClientRects = function () { return [this.rect]; };
-El.prototype.animate = function (keys, options) {
-	const a = animated(this);
-	a.keys = keys; a.options = options;
-	this.animations.push(a);
-	return a;
-};
-
-function Sheet() {
-	this.nodeType = 1;
-	this.tagName = 'DIV';
-	this.className = '';
-	this.style = {};
-	this.parentNode = null;
-	this.animations = [];
-}
-Sheet.prototype.animate = function (keys, options) {
-	const a = animated(this);
-	a.keys = keys; a.options = options;
-	this.animations.push(a);
-	return a;
-};
-
-const created = [];
-const body = {
-	appendChild: function (el) { el.parentNode = body; },
-	removeChild: function (el) { el.parentNode = null; }
-};
-const sandboxDocument = {
-	createElement: function () { const s = new Sheet(); created.push(s); return s; },
-	body: body
-};
-
 let effects_on = true;
 let reduced = false;
+let level = 'medium';
 
 const sandbox = {
 	$, setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, console,
 	document: sandboxDocument,
-	window: { matchMedia: function () { return { matches: reduced }; } },
-	startMenuIconApps: { terminal_toggle: 'terminal' },
-	jawnosWindowEffectsOn: function () { return effects_on; }
+	window: {
+		matchMedia: function () { return { matches: reduced }; },
+		innerWidth: 1200, innerHeight: 900,
+		PointerEvent: function () {}
+	},
+	startMenuIconApps: { terminal_toggle: 'terminal', clock_toggle: 'clock' },
+	jawnosWindowEffectsOn: function () { return effects_on; },
+	jawnosWindowEffectsLevel: function () { return level; },
+	windowTileDefaultWidth: 480,
+	windowTileDefaultHeight: 640,
+	windowTiledDefaultStack: '0',
+	windowTiledAnchor: function () { return { left: 0, top: 40 }; },
+	windowNextTileSlot: function () { return 0; },
+	windowTopLimit: function () { return 40; }
 };
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
@@ -161,10 +289,26 @@ function check(name, cond) {
 	if (!cond) { failures++; console.log('not ok - ' + name); }
 	else { console.log('ok - ' + name); }
 }
+function press(el) {
+	if (!handlers.pointerdown) { throw new Error('the press handler was not installed'); }
+	handlers.pointerdown({ button: 0, target: el });
+}
+function startIcon(id, app, src, hint, left, top, w, h) {
+	const img = makeElement('IMG');
+	img.id = id;
+	img.setAttribute('src', src);
+	img.setAttribute('hint', hint);
+	img.style.left = (left === undefined ? 10 : left) + 'px';
+	img.style.top = (top === undefined ? 20 : top) + 'px';
+	img.style.width = (w === undefined ? 40 : w) + 'px';
+	img.style.height = (h === undefined ? 40 : h) + 'px';
+	startMenuIcons[id] = img;
+	return img;
+}
 
 // --- levels, defaults and the pure shapes -----------------------------------
 check('the level defaults to medium when 05_effects has no reader',
-	sandbox.jawnosWindowEmergeLevel() === 'medium');
+	typeof sandbox.jawnosWindowEmergeLevel === 'function' && sandbox.jawnosWindowEmergeLevel() === 'medium');
 
 const from = sandbox.jawnosWindowOriginFromPoint(140, 215, 80, 30, 15, 'notes', 1000);
 check('a point origin is centred on the press',
@@ -210,36 +354,181 @@ check('light is shorter and subtler', light.duration < medium.duration
 check('maximum is longer and overshoots more', maximum.duration > medium.duration
 	&& maximum.sheet[1].transform.indexOf('scale(5.5, 11)') >= 0);
 
-// --- a control's rectangle and its app ---------------------------------------
-const icon = {
-	nodeType: 1, tagName: 'IMG', id: 'terminal_toggle',
-	getAttribute: function () { return null; },
-	closest: function () { return null; },
-	querySelector: function () { return null; },
-	getBoundingClientRect: function () { return { left: 10, top: 20, width: 40, height: 40 }; }
-};
+// --- a control's rectangle, its app and its picture --------------------------
+const icon = startIcon('terminal_toggle', 'terminal', '/images/terminal.png', 'Terminal');
 const icon_origin = sandbox.jawnosWindowOriginFromElement(icon);
 check('a start-menu icon is filed under its app', icon_origin.app === 'terminal');
 check('and its rectangle is the icon box', icon_origin.left === 10 && icon_origin.width === 40);
+check('and it carries the icon and name into the preview',
+	icon_origin.icon === '/images/terminal.png' && icon_origin.name === 'Terminal');
 
-const tile = {
-	nodeType: 1, tagName: 'SPAN', id: '',
-	getAttribute: function (n) { return n === 'app' ? 'music' : null; },
-	closest: function () { return null; },
-	querySelector: function () { return null; },
-	getBoundingClientRect: function () { return { left: 5, top: 6, width: 50, height: 30 }; }
+const tile = makeElement('SPAN', 'taskbar_pin taskbar_app_pin');
+tile.setAttribute('app', 'music');
+tile.setAttribute('hint', 'Music');
+tile.style.left = '5px'; tile.style.top = '6px'; tile.style.width = '50px'; tile.style.height = '30px';
+const tile_icon = makeElement('IMG', 'taskbar_app_pin_icon');
+tile_icon.setAttribute('src', '/images/music.png');
+tile.appendChild(tile_icon);
+const tile_origin = sandbox.jawnosWindowOriginFromElement(tile);
+check('a taskbar pin names its app itself', tile_origin.app === 'music');
+check('and it carries its own icon and hint',
+	tile_origin.icon === '/images/music.png' && tile_origin.name === 'Music');
+
+const table = makeElement('TABLE');
+table.id = 'app_switcher';
+const cell = makeElement('TD', 'app');
+cell.style.left = '30px'; cell.style.top = '40px'; cell.style.width = '60px'; cell.style.height = '60px';
+const toggle = makeElement('SPAN', 'window_toggle');
+toggle.setAttribute('app', 'notes');
+toggle.setAttribute('formatted_name', 'Notes');
+const toggle_icon = makeElement('IMG', 'window_toggle_icon');
+toggle_icon.setAttribute('src', '/images/notes.png');
+toggle.appendChild(toggle_icon);
+cell.appendChild(toggle);
+table.appendChild(cell);
+const switch_origin = sandbox.jawnosWindowOriginFromElement(cell);
+check('an app switcher cell names the window app', switch_origin.app === 'notes');
+check('and it carries the tile icon and formatted name',
+	switch_origin.icon === '/images/notes.png' && switch_origin.name === 'Notes');
+
+// a canvas painter can hand over its own icon/name with the pill
+const canvas_origin = sandbox.jawnosWindowOriginFromPoint(140, 215, 80, 30, 15, 'notes',
+	{ icon: '/images/notes.png', name: 'Notes' });
+check('a point origin can carry the preview metadata',
+	canvas_origin.icon === '/images/notes.png' && canvas_origin.name === 'Notes');
+sandbox.jawnosWindowOriginTake('notes', Date.now());
+
+// --- the press-time preview --------------------------------------------------
+level = 'medium';
+const press_icon = startIcon('clock_toggle', 'clock', '/images/clock.png', 'Clock');
+press(press_icon);
+const ghost = sandbox.jawnosWindowEmergeGhost;
+check('pointerdown creates the preview at once', !!ghost && ghost.el.parentNode === body);
+check('the preview is the body-level ghost',
+	!!ghost && ghost.el.className === 'jawnos_emerge_ghost');
+check('it starts at the pressed control',
+	!!ghost && ghost.el.animations[0].keys[0].left === '10px'
+	&& ghost.el.animations[0].keys[0].top === '20px'
+	&& ghost.el.animations[0].keys[0].width === '40px');
+check('and grows to the predicted cascade frame',
+	!!ghost && ghost.el.animations[0].keys[1].left === '0px'
+	&& ghost.el.animations[0].keys[1].top === '40px'
+	&& ghost.el.animations[0].keys[1].width === '480px'
+	&& ghost.el.animations[0].keys[1].height === '640px');
+check('the preview growth follows the medium level',
+	!!ghost && ghost.el.animations[0].options.duration === 280);
+const chrome = !!ghost && findClass(ghost.el, 'jawnos_emerge_chrome');
+check('the preview already wears a window chrome', !!chrome);
+const bar = !!chrome && findClass(chrome, 'jawnos_emerge_bar');
+check('with a title bar', !!bar);
+const chrome_icon = !!chrome && findClass(chrome, 'jawnos_emerge_icon');
+check('the pressed icon is drawn in the bar',
+	!!chrome_icon && chrome_icon.getAttribute('src') === '/images/clock.png');
+const chrome_name = !!chrome && findClass(chrome, 'jawnos_emerge_name');
+check('and the app name', !!chrome_name && chrome_name.textContent === 'Clock');
+const chrome_buttons = !!chrome && findClass(chrome, 'jawnos_emerge_buttons');
+check('and the three standard controls',
+	!!chrome_buttons && chrome_buttons.children.length === 3
+	&& hasClass(chrome_buttons.children[0], 'jawnos_emerge_button_minimize')
+	&& hasClass(chrome_buttons.children[1], 'jawnos_emerge_button_maximize')
+	&& hasClass(chrome_buttons.children[2], 'jawnos_emerge_button_close'));
+
+// --- the real window takes the preview over ---------------------------------
+const win = new El('clock');
+win.rect = { left: 12, top: 44, width: 480, height: 640 };
+check('the window takes the preview', sandbox.jawnosWindowEmerge(win) === true);
+check('the real window fades in exactly once', win.animations.length === 1);
+const retarget = ghost.el.animations[ghost.el.animations.length - 1];
+check('the preview is retargeted, not snapped',
+	retarget.keys.length === 3 && retarget.keys[2].left === '12px'
+	&& retarget.keys[2].top === '44px' && retarget.keys[2].width === '480px');
+check('the retarget follows the medium level', retarget.options.duration === 220);
+check('the real window is faded over the same beat', win.animations[0].options.duration === 220);
+const ghost_el = ghost.el;
+advance(1000);
+check('the preview is removed once the window owns the frame',
+	ghost_el.parentNode === null && win.jawnosEmergeGhost === null);
+check('and the window animation is put down', win.jawnosEmergeWindowAnim === null);
+
+// --- a press that opens nothing is put away ---------------------------------
+level = 'medium';
+press(press_icon);
+const idle = sandbox.jawnosWindowEmergeGhost;
+check('a second press starts a second preview', !!idle && idle.el.parentNode === body);
+const idle_el = idle.el;
+advance(3100);
+check('the unsent preview is put away by its TTL',
+	idle_el.parentNode === null && sandbox.jawnosWindowEmergeGhost === null);
+
+// --- off, reduced motion and the effects switch -----------------------------
+level = 'off';
+press(press_icon);
+check('off draws no preview', sandbox.jawnosWindowEmergeGhost === null);
+level = 'medium';
+reduced = true;
+press(press_icon);
+check('reduced motion draws no preview', sandbox.jawnosWindowEmergeGhost === null);
+reduced = false;
+effects_on = false;
+press(press_icon);
+check('the effects switch stops the preview', sandbox.jawnosWindowEmergeGhost === null);
+effects_on = true;
+
+// --- the level scales the growth and the retarget ---------------------------
+const scales = {
+	light: { ghost: 180, retarget: 140 },
+	medium: { ghost: 280, retarget: 220 },
+	maximum: { ghost: 400, retarget: 300 }
 };
-check('a taskbar tile names its app itself', sandbox.jawnosWindowOriginFromElement(tile).app === 'music');
+Object.keys(scales).forEach(function (name) {
+	level = name;
+	press(press_icon);
+	const scaled = sandbox.jawnosWindowEmergeGhost;
+	const scaled_el = scaled.el;
+	check(name + ' scales the preview growth',
+		!!scaled && scaled.el.animations[0].options.duration === scales[name].ghost);
+	const scaled_win = new El('clock');
+	scaled_win.rect = { left: 16, top: 48, width: 480, height: 640 };
+	sandbox.jawnosWindowEmerge(scaled_win);
+	const scaled_retarget = scaled.el.animations[scaled.el.animations.length - 1];
+	check(name + ' scales the retarget',
+		scaled_retarget.options.duration === scales[name].retarget);
+	sandbox.jawnosWindowEmergeCancel(scaled_win);
+	check(name + ' cleans the preview away',
+		scaled_el.parentNode === null && sandbox.jawnosWindowEmergeGhost === null);
+});
 
-// --- the motion itself -------------------------------------------------------
-sandbox.jawnosWindowEffectsLevel = function () { return level; };
-let level = 'medium';
+// --- closing or hiding a window takes its preview ---------------------------
+level = 'medium';
+press(press_icon);
+const closing = sandbox.jawnosWindowEmergeGhost;
+const closing_el = closing.el;
+const close_win = new El('clock');
+close_win.rect = { left: 12, top: 44, width: 480, height: 640 };
+sandbox.jawnosWindowEmerge(close_win);
+sandbox.jawnosWindowEmergeCancel(close_win);
+check('a close or hide takes the preview with it',
+	closing_el.parentNode === null && sandbox.jawnosWindowEmergeGhost === null);
 
-const win = new El('notes');
+// an opener can hide a window it did not ask to show, straight after the maker
+const hidden_after = new El('hushed');
+sandbox.jawnosWindowOriginFromPoint(140, 215, 80, 30, 15, 'hushed');
+check('the maker can start the fallback motion', sandbox.jawnosWindowEmerge(hidden_after) === true);
+const hushed_sheet = created[created.length - 1];
+hidden_after.getClientRects = function () { return []; };
+advance(0);
+check('a window hidden straight after takes its sheet with it',
+	hidden_after.jawnosEmergeSheet === null && hushed_sheet.parentNode === null);
+
+// --- the fallback sheet still plays -----------------------------------------
+level = 'medium';
+const win_fallback = new El('notes');
 sandbox.jawnosWindowOriginFromPoint(140, 215, 80, 30, 15, 'notes');
-check('a window with an origin emerges', sandbox.jawnosWindowEmerge(win) === true);
+check('a window with an origin and no preview emerges',
+	sandbox.jawnosWindowEmerge(win_fallback) === true);
 check('the window fades in on its own geometry',
-	win.animations.length === 1 && win.animations[0].options.duration === 240 && win.animations[0].options.delay === 90);
+	win_fallback.animations.length === 1 && win_fallback.animations[0].options.duration === 240
+	&& win_fallback.animations[0].options.delay === 90);
 const sheet = created[created.length - 1];
 check('the sheet is the pressed pill',
 	sheet.className === 'jawnos_emerge_sheet' && sheet.style.left === '100px'
@@ -247,11 +536,10 @@ check('the sheet is the pressed pill',
 	&& sheet.style.borderRadius === '15px');
 check('the sheet plays the medium stretch',
 	sheet.animations.length === 1 && sheet.animations[0].options.duration === 340);
-const emerged = win;
 advance(1000);
-check('the sheet is put away', emerged.jawnosEmergeSheet === null && sheet.parentNode === null);
+check('the sheet is put away', win_fallback.jawnosEmergeSheet === null && sheet.parentNode === null);
 check('and both animations are cancelled',
-	sheet.animations[0].cancelled === 1 && emerged.animations[0].cancelled === 1);
+	sheet.animations[0].cancelled === 1 && win_fallback.animations[0].cancelled === 1);
 
 level = 'off';
 const off_win = new El('notes');
@@ -279,22 +567,14 @@ hidden_win.getClientRects = function () { return []; };
 sandbox.jawnosWindowOriginFromPoint(140, 215, 80, 30, 15, 'hidden');
 check('a hidden window is left alone', sandbox.jawnosWindowEmerge(hidden_win) === false);
 
-// an opener can hide a window it did not ask to show, straight after the maker
-const hidden_after = new El('hushed');
-sandbox.jawnosWindowOriginFromPoint(140, 215, 80, 30, 15, 'hushed');
-check('the maker can start the motion', sandbox.jawnosWindowEmerge(hidden_after) === true);
-const hushed_sheet = created[created.length - 1];
-hidden_after.getClientRects = function () { return []; };
-advance(0);
-check('a window hidden straight after takes its sheet with it',
-	hidden_after.jawnosEmergeSheet === null && hushed_sheet.parentNode === null);
-
 effects_on = false;
 const off_desk = new El('desk');
 sandbox.jawnosWindowOriginFromPoint(140, 215, 80, 30, 15, 'desk');
 check('the effects switch stops the motion', sandbox.jawnosWindowEmerge(off_desk) === false);
+effects_on = true;
 
-advance(1000);
+sandbox.jawnosWindowEmergeGhostCancel();
+advance(5000);
 process.exit(failures ? 1 : 0);
 JS
 	close $fh;
@@ -302,7 +582,7 @@ JS
 	my $out = `$node "$harness" "$root/public/js/manager/windows/06_emerge.js" 2>&1`;
 	my $rc = $? >> 8;
 	diag($out) if $rc;
-	is($rc, 0, 'the emerge captures, plays, scales by level and cleans up');
+	is($rc, 0, 'the emerge captures, previews, retargets, scales by level and cleans up');
 }
 
 # --- and every touched script parses ----------------------------------------

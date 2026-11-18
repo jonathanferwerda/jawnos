@@ -323,8 +323,14 @@ function windowDraggable(win) {
 					var ok = windowTopLimit();
 					var point = document.elementFromPoint(d.x, d.y) || 'null';
 					var pd = $('#' + p.target.id).closest('.wind');
+					var was = parseFloat(pd.css('top'));
 					
 					pd.css({ 'top': ok });
+					// only a drop that really moved up to the line snaps: a click on the
+					// title bar, or a release already at the limit, has nothing to land
+					if (Math.abs(was - ok) > 0.5 && typeof jawnosWindowEffect == 'function') {
+						jawnosWindowEffect(pd, 'snap');
+					}
 				}
 				else if (now - windows[p.target.id] < 250) {
 					var point = document.elementFromPoint(d.x, d.y) || 'null';

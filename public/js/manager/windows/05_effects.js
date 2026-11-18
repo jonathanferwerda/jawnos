@@ -1,9 +1,10 @@
 // Window effects: the desk's own memory of a compositor. A dragged window leans
 // and lags like a soft sheet, a half or maximized window stretches into its new
-// size, a minimizing or returning window bounces, and a pinned one gives a small
-// kick. Every motion is a transform on .wind (see manager.css), so layout, the
-// saved geometry and the drag maths never see it. One Misc level - off, light,
-// medium or maximum - sets the amplitude of the whole set.
+// size, a minimizing or returning window bounces, a window whose top was snapped
+// up to the clothesline settles down from that edge, and a pinned one gives a
+// small kick. Every motion is a transform on .wind (see manager.css), so layout,
+// the saved geometry and the drag maths never see it. One Misc level - off,
+// light, medium or maximum - sets the amplitude of the whole set.
 
 function jawnosWindowEffectsLevel() {
 	var raw = '';
@@ -70,7 +71,7 @@ if (typeof document != 'undefined') {
 // The one-shot classes live in one place so a new effect cannot leave another
 // one behind when it starts. The wobble is not one of these: it writes its own
 // transform while the title bar is held.
-var jawnosWindowEffectClasses = 'jawnos_effect_stretch jawnos_effect_in jawnos_effect_out jawnos_effect_lock';
+var jawnosWindowEffectClasses = 'jawnos_effect_stretch jawnos_effect_in jawnos_effect_out jawnos_effect_lock jawnos_effect_snap';
 
 function jawnosWindowPhysicsCancel(win) {
 	var el = $(win)[0];

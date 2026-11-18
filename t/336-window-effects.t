@@ -1,8 +1,9 @@
 # tests-for: public/js/manager/windows/05_effects.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js public/js/manager/windows.js public/js/manager/taskbar_edit.js public/css/manager.css templates/configure/misc_setting_list.html.ep templates/layouts/manager.html.ep public/js/manager/taskbar/01_inputs.js perl/help/topics_configure.pl
 # covers:    the desk's window effects - a soft-sheet lean while dragging, a
 #            stretch into the half or the whole screen, a bounce out and back,
-#            and a kick on the pin - with one per-device level (off, light,
-#            medium, maximum) setting their amplitude.
+#            a settle from the top edge when the clothesline snaps a window, and
+#            a kick on the pin - with one per-device level (off, light, medium,
+#            maximum) setting their amplitude.
 
 use strict;
 use warnings;
@@ -51,16 +52,22 @@ like($effects, qr/function jawnosWindowMotionAllowed\(\)/, 'the physics asks red
 like($effects, qr/jawnosWindowEmergeCancel\(el\)/, 'a one-shot motion cancels an emerge sheet too');
 
 # --- the motions are transform-only classes ---------------------------------
-foreach my $name (qw(stretch bounce_in bounce_out lock)) {
+foreach my $name (qw(stretch bounce_in bounce_out lock snap)) {
 	like($css, qr/\@keyframes jawnos_window_$name \{/, "manager.css defines $name");
 }
-foreach my $class (qw(stretch in out lock)) {
+foreach my $class (qw(stretch in out lock snap)) {
 	like($css, qr/\.wind\.jawnos_effect_$class \{ animation:/, "the $class class plays a keyframe");
 }
 like($css, qr/\.wind\.jawnos_wobbling \{ transform-origin: 50% 0%/, 'the drag hangs from the title bar');
 like($css, qr/body\[data-window-effects="light"\]/, 'the light level has its own amplitudes');
 like($css, qr/body\[data-window-effects="maximum"\]/, 'so does maximum');
 like($css, qr/var\(--je-(?:wobble|stretch|bounce|time)\)/, 'the keyframes read the level variables');
+like($css, qr/\.wind\.jawnos_effect_snap \{[^}]*transform-origin: 50% 0%/s,
+	'the top snap hangs from the window\'s top edge');
+like($css, qr/\@keyframes jawnos_window_snap \{.*?var\(--je-bounce\)/s,
+	'and its settle scales with the level');
+like($css, qr/\.wind\.jawnos_effect_snap \{ animation: jawnos_window_snap calc\([^)]*var\(--je-time\)/,
+	'and its time comes from the level too');
 like($css, qr/prefers-reduced-motion: reduce/, 'reduced motion shortens every one-shot');
 unlike($css, qr/\.wind\.jawnos_effect_[a-z_]+ \{[^}]*\b(left|top|width|height):/s,
 	'no effect writes layout geometry');
@@ -75,6 +82,9 @@ like($fit, qr/function windowRestorer.*?jawnosWindowMinimizeOut\(win\)/s, 'and b
 like($fit, qr/jawnosWindowWobbleStart\(win\)/, 'a drag starts the lean');
 like($fit, qr/jawnosWindowWobbleMove\(win, p\.pageX, p\.pageY\)/, 'each drag event feeds the spring');
 like($fit, qr/jawnosWindowWobbleStop\(win\)/, 'and the drop lets it settle');
+like($fit, qr/else if \(d\.y < windowTopLimit\(\) \+ 10\).*?var was = parseFloat\(pd\.css\('top'\)\);.*?pd\.css\(\{ 'top': ok \}\);.*?if \(Math\.abs\(was - ok\) > 0\.5 && typeof jawnosWindowEffect == 'function'\) \{\s*jawnosWindowEffect\(pd, 'snap'\);\s*\}/s,
+	'a drop above the clothesline settles only when the top actually snapped');
+like($effects, qr/jawnos_effect_snap/, 'the top snap is cleaned up with the other one-shots');
 like($fit, qr/jawnosWindowEffect\(win, 'lock'\)/, 'the pin gives the window a kick');
 like($index, qr/jawnosWindowRestoreIn\(tw\)/, 'a named window shown from the bar bounces in');
 like($index, qr/jawnosWindowMinimizeOut\(tw\)/, 'and one hidden from the bar bounces out');
@@ -219,6 +229,16 @@ check('the old on value comes back as medium', sandbox.jawnosWindowEffectsLevel(
 sandbox.jawnosWindowEffect(w, 'stretch');
 advance(1000);
 check('the effect class does not outlive the motion', !w.classes['jawnos_effect_stretch']);
+
+// the clothesline snap is a one-shot like the rest, and the level owns it
+sandbox.jawnosWindowEffect(w, 'snap');
+check('the top snap adds its class', w.classes['jawnos_effect_snap'] === 1);
+advance(1000);
+check('and does not outlive its motion', !w.classes['jawnos_effect_snap']);
+sandbox.jawnosWindowEffect(w, 'snap');
+sandbox.jawnosWindowEffectsSet('off');
+check('turning the level off clears the top snap', !w.classes['jawnos_effect_snap']);
+sandbox.jawnosWindowEffectsSet('on');
 
 // the lean is a spring: a rightward move shears the foot back, and the drop settles
 const phys = new Win('window_phys');

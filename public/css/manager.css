@@ -1214,7 +1214,8 @@ body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(
 /* ---- window effects -------------------------------------------------------
    The old compositor's manners, kept in transforms: a dragged window leans and
    lags like a soft sheet, a half or maximized window stretches into its new
-   size, a minimizing or returning window bounces, and a pinned one kicks. Only
+   size, a minimizing or returning window bounces, a window whose top was snapped
+   up to the clothesline settles down from that edge, and a pinned one kicks. Only
    transform and opacity are touched, so layout, the saved geometry and the drag
    maths never see an effect. Misc -> Window Effects sets the whole set's level;
    the classes are added and removed by windows/05_effects.js, and the body's
@@ -1260,6 +1261,16 @@ body[data-window-effects="maximum"] {
 	68% { transform: scale(calc(1 - .006 * var(--je-bounce))) rotate(calc(.24deg * var(--je-wobble))); }
 	100% { transform: scale(1) rotate(0deg); }
 }
+/* A window held above the clothesline and let go has its top snapped up to the
+   desk's limit. Hanging from that top edge, the body dips a little past its
+   foot and settles back, so the window reads as dropping into place rather
+   than jumping there. */
+@keyframes jawnos_window_snap {
+	0% { transform: scale(1, 1); }
+	38% { transform: scale(calc(1 + .006 * var(--je-bounce)), calc(1 + .028 * var(--je-bounce))); }
+	72% { transform: scale(calc(1 - .002 * var(--je-bounce)), calc(1 - .008 * var(--je-bounce))); }
+	100% { transform: scale(1, 1); }
+}
 /* The physics writes the drag transform inline; this only gives it the hanging
    point at the title bar and a compositing hint while it is in the hand. */
 .wind.jawnos_wobbling { transform-origin: 50% 0%; will-change: transform; }
@@ -1267,11 +1278,12 @@ body[data-window-effects="maximum"] {
 .wind.jawnos_effect_in { animation: jawnos_window_bounce_in calc(320ms * var(--je-time)) cubic-bezier(.2,.9,.25,1.2); transform-origin: 50% 60%; will-change: transform; }
 .wind.jawnos_effect_out { animation: jawnos_window_bounce_out calc(190ms * var(--je-time)) ease-in; transform-origin: 50% 60%; will-change: transform, opacity; }
 .wind.jawnos_effect_lock { animation: jawnos_window_lock calc(260ms * var(--je-time)) ease-out; transform-origin: 50% 10%; will-change: transform; }
+.wind.jawnos_effect_snap { animation: jawnos_window_snap calc(280ms * var(--je-time)) cubic-bezier(.2,.9,.25,1.2); transform-origin: 50% 0%; will-change: transform; }
 @media (prefers-reduced-motion: reduce) {
 	/* the one-shots finish at once and their animationend still closes a
 	   minimise; the drag physics is skipped in JS, not here */
 	.wind.jawnos_effect_stretch, .wind.jawnos_effect_in,
-	.wind.jawnos_effect_out, .wind.jawnos_effect_lock {
+	.wind.jawnos_effect_out, .wind.jawnos_effect_lock, .wind.jawnos_effect_snap {
 		animation-duration: 1ms;
 	}
 }
@@ -4428,4 +4440,128 @@ body.dark_theme .jawnos_emerge_sheet {
    changed. */
 @media (prefers-reduced-motion: reduce) {
 	.jawnos_emerge_sheet { display: none; }
+}
+
+/* ---- the press-time preview ---------------------------------------------
+   The ghost is made on pointerdown, before the app's chunk or the server is
+   asked for the window, so the desk answers at once. It wears the standard
+   window chrome - the title bar, the app icon and name, and the same three
+   controls - because every app window is drawn with them. Its own box grows
+   from the pressed control to the predicted frame; the chrome fades in as the
+   box becomes readable, then the preview holds until the real window lands
+   (windows/06_emerge.js retargets it to the actual rectangle). It is a picture
+   of a window: inert, click-through, and above the desk but below a drag hint. */
+.jawnos_emerge_ghost {
+	position: fixed;
+	z-index: 2147482891;
+	pointer-events: none;
+	box-sizing: border-box;
+	overflow: hidden;
+	border: var(--window_border, 3px) solid var(--window_border_colour, var(--line));
+	border-radius: var(--window_radius, var(--jawnos-corner, 12px));
+	background: var(--window, var(--panel));
+	box-shadow: 0 18px 44px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.12);
+	will-change: left, top, width, height, opacity;
+}
+.jawnos_emerge_ghost .jawnos_emerge_chrome {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+	opacity: 0;
+	will-change: opacity;
+}
+.jawnos_emerge_ghost .jawnos_emerge_bar {
+	flex: 0 0 auto;
+	height: var(--navbar_h, 36px);
+	max-height: var(--navbar_h, 36px);
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	padding: 0 2px;
+	overflow: hidden;
+	border-radius: var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px)) 0 0;
+	background-color: var(--emerge_tint, transparent);
+	background-image: linear-gradient(rgba(255,255,255,.14), rgba(0,0,0,.04));
+}
+.jawnos_emerge_ghost .jawnos_emerge_icon_holder {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	padding: 2px;
+}
+.jawnos_emerge_ghost .jawnos_emerge_icon {
+	display: block;
+	height: calc(var(--navbar_h, 36px) - 10px);
+	width: auto;
+	max-width: calc(var(--navbar_h, 36px) - 4px);
+	object-fit: contain;
+	border-radius: 6px;
+}
+.jawnos_emerge_ghost .jawnos_emerge_initial {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: calc(var(--navbar_h, 36px) - 10px);
+	height: calc(var(--navbar_h, 36px) - 10px);
+	border-radius: 6px;
+	font-size: calc(var(--navbar_h, 36px) * 0.42);
+	font-weight: 600;
+	color: var(--ink);
+	background: rgba(0,0,0,.08);
+}
+.jawnos_emerge_ghost .jawnos_emerge_name {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 0 6px;
+	text-align: center;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: calc(var(--navbar_h, 36px) * 0.4);
+	line-height: normal;
+	color: var(--ink);
+}
+.jawnos_emerge_ghost .jawnos_emerge_buttons {
+	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	height: 100%;
+}
+.jawnos_emerge_ghost .jawnos_emerge_button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: calc(var(--navbar_h, 36px) - 6px);
+	height: calc(var(--navbar_h, 36px) - 6px);
+	min-width: calc(var(--navbar_h, 36px) - 6px);
+	border-radius: 5px;
+	font-size: calc(var(--navbar_h, 36px) * 0.36);
+	line-height: 1;
+	color: var(--ink);
+	opacity: .82;
+}
+.jawnos_emerge_ghost .jawnos_emerge_button_close { opacity: .95; }
+.jawnos_emerge_ghost .jawnos_emerge_body {
+	flex: 1 1 auto;
+	min-height: 0;
+	background: var(--window, var(--panel));
+	background-image: linear-gradient(rgba(255,255,255,.06), rgba(0,0,0,.03));
+}
+body.dark_theme .jawnos_emerge_ghost {
+	box-shadow: 0 20px 50px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);
+}
+body.dark_theme .jawnos_emerge_ghost .jawnos_emerge_bar {
+	background-image: linear-gradient(rgba(255,255,255,.06), rgba(0,0,0,.12));
+}
+/* Turning the effects off stands the preview down with the rest of the desk,
+   even if it is already in flight. */
+body[data-window-effects="off"] .jawnos_emerge_ghost { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+	.jawnos_emerge_ghost { display: none; }
 }

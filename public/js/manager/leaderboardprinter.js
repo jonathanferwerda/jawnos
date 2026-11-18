@@ -266,14 +266,28 @@ $(document).on('click', '.background', function (e) {
 				if (origin_canvas && origin_canvas.getBoundingClientRect) {
 					var origin_box = origin_canvas.getBoundingClientRect();
 					var origin_zoom = (origin_canvas.offsetWidth ? origin_box.width / origin_canvas.offsetWidth : 1) || 1;
-					jawnosWindowOriginFromPoint(
+					var origin_app = (o[4] && o[4]['name']) || '';
+					var origin_icon = (o[4] && o[4]['icon']) || '';
+					if (!origin_icon && typeof jawnosWindowOriginIconForApp == 'function') {
+						origin_icon = jawnosWindowOriginIconForApp(origin_app) || '';
+					}
+					var origin = jawnosWindowOriginFromPoint(
 						e.clientX,
 						e.clientY,
 						(magnify_rect[2] - magnify_rect[0]) * origin_zoom,
 						(magnify_rect[3] - magnify_rect[1]) * origin_zoom,
 						magnify_radius * origin_zoom,
-						(o[4] && o[4]['name']) || ''
+						origin_app,
+						{
+							icon: origin_icon,
+							name: (o[4] && o[4]['formatted_name']) || origin_app
+						}
 					);
+					// the canvas knows the pill right here, before the opener asks
+					// for the window, so the preview can start at once
+					if (origin && typeof jawnosWindowEmergeGhostStart == 'function') {
+						jawnosWindowEmergeGhostStart(origin);
+					}
 				}
 			}
 			appointmentGrabber(o[4]['name'],timestamp);
