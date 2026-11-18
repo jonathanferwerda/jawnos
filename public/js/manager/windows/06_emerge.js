@@ -1083,8 +1083,17 @@ function jawnosWindowEmergeSwallowClick(e) {
 // a reload still opens into a real-looking preview.
 var JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge';
 var JAWNOS_EMERGE_PREVIEW_STORE = 'windows';
-var JAWNOS_EMERGE_PREVIEW_APPS = 8;
-var JAWNOS_EMERGE_PREVIEW_BYTES = 300000;
+var JAWNOS_EMERGE_PREVIEW_APPS = 24;
+var JAWNOS_EMERGE_PREVIEW_BYTES = 1500000;
+// The parsed copies live in memory for the session; a big app's markup is many
+// times its own length once parsed, so the map is budgeted by the HTML it keeps
+// rather than only by the count.
+var JAWNOS_EMERGE_PREVIEW_MEMORY = 4000000;
+// A photograph embedded in the markup is no part of what a preview is for, and
+// one of them can be most of an app's window: the box stays, the picture does
+// not.
+var JAWNOS_EMERGE_PREVIEW_IMAGE = 8000;
+var JAWNOS_EMERGE_PREVIEW_BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 var jawnosEmergePreviews = {};
 var jawnosEmergePreviewDb = null;
 var jawnosEmergePreviewSheetCache = null;
@@ -1194,6 +1203,14 @@ function jawnosEmergePreviewSanitize(node) {
 				child.removeAttribute('autoplay');
 			}
 		}
+		if (tag == 'IMG' && child.getAttribute && child.setAttribute) {
+			var src = child.getAttribute('src') || '';
+			// an embedded photograph is most of a gallery's window and none of what
+			// the preview is for: a blank of the same size keeps the layout
+			if (src.length > JAWNOS_EMERGE_PREVIEW_IMAGE && /^data:/i.test(src)) {
+				child.setAttribute('src', JAWNOS_EMERGE_PREVIEW_BLANK);
+			}
+		}
 		jawnosEmergePreviewSanitize(child);
 	}
 	return node;
@@ -1219,14 +1236,21 @@ function jawnosEmergePreviewCapture(win) {
 	try { html = node.outerHTML || ''; } catch (e) { html = ''; }
 	var at = Date.now();
 	jawnosEmergePreviews[app] = { node: node, html: html, at: at };
-	// memory keeps the last few, like the store does
+	// memory keeps the most recently used, like the store does: by count, and by
+	// the markup it is holding, so a handful of big windows cannot crowd out the
+	// rest of the desk
 	var apps = [];
 	for (var key in jawnosEmergePreviews) {
 		if (jawnosEmergePreviews.hasOwnProperty(key)) { apps.push(key); }
 	}
-	if (apps.length > JAWNOS_EMERGE_PREVIEW_APPS) {
-		apps.sort(function (a, b) { return (jawnosEmergePreviews[a].at || 0) - (jawnosEmergePreviews[b].at || 0); });
-		for (var drop = 0; drop < apps.length - JAWNOS_EMERGE_PREVIEW_APPS; drop++) { delete jawnosEmergePreviews[apps[drop]]; }
+	apps.sort(function (a, b) { return (jawnosEmergePreviews[a].at || 0) - (jawnosEmergePreviews[b].at || 0); });
+	var held = 0;
+	for (var s = 0; s < apps.length; s++) { held += (jawnosEmergePreviews[apps[s]].html || '').length; }
+	for (var cut = 0; cut < apps.length; cut++) {
+		var over_count = (apps.length - cut) > JAWNOS_EMERGE_PREVIEW_APPS;
+		if (!over_count && held <= JAWNOS_EMERGE_PREVIEW_MEMORY) { break; }
+		held -= (jawnosEmergePreviews[apps[cut]].html || '').length;
+		delete jawnosEmergePreviews[apps[cut]];
 	}
 	if (html && html.length <= JAWNOS_EMERGE_PREVIEW_BYTES) {
 		jawnosEmergePreviewSave({ app: app, html: html, at: at }).then(jawnosEmergePreviewPrune, function () {});
@@ -1326,6 +1350,9 @@ function jawnosEmergePreviewBuild(origin, host) {
 	if (!host || !host.attachShadow || !origin.app) { return false; }
 	var snapshot = jawnosEmergePreviews[origin.app];
 	if (!snapshot || !snapshot.node) { return false; }
+	// using it is using the app: the copy the store and the memory map drop first
+	// is the one the desk has not looked at in the longest time
+	snapshot.at = Date.now();
 	var node = null;
 	var scope = null;
 	var built = null;

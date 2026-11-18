@@ -1174,6 +1174,40 @@ check('the next sweep takes the other one',
 sandboxDocument.querySelectorAll = sweep_saved_qsa;
 sandbox.jawnosEmergePreviews = {};
 
+// --- the cache is per app, and holds far more than one cluster --------------
+// Ten windows in a row are ten apps, and every one of them should come back as
+// a picture: the map is budgeted, not a handful of slots.
+sandbox.jawnosEmergePreviews = {};
+const cache_apps = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'a10'];
+cache_apps.forEach(function (name) {
+	const w = new El(name);
+	w.parentNode = body;
+	w.cloneNode = function () {
+		const c = makeElement('DIV', 'wind');
+		c.app = name;
+		c.outerHTML = '<div class="wind" app="' + name + '"></div>';
+		return c;
+	};
+	sandbox.jawnosEmergePreviewCapture(w);
+});
+check('ten windows in a row all keep their picture',
+	cache_apps.every(function (name) { return !!sandbox.jawnosEmergePreviews[name]; }));
+check('and the store is asked for every one of them', sandbox.JAWNOS_EMERGE_PREVIEW_APPS >= 10);
+
+// a photograph embedded in the markup is no part of a preview
+const photo = makeElement('IMG');
+photo.setAttribute('src', 'data:image/png;base64,' + 'A'.repeat(20000));
+const thumb = makeElement('IMG');
+thumb.setAttribute('src', 'data:image/png;base64,AAAA');
+const with_img = makeElement('DIV', 'wind');
+with_img.appendChild(photo);
+with_img.appendChild(thumb);
+sandbox.jawnosEmergePreviewSanitize(with_img);
+check('a big embedded photograph is left out of the picture',
+	photo.getAttribute('src') === sandbox.JAWNOS_EMERGE_PREVIEW_BLANK);
+check('a small one stays', thumb.getAttribute('src') === 'data:image/png;base64,AAAA');
+sandbox.jawnosEmergePreviews = {};
+
 // --- the growth is sized to how fast this desk opens windows ----------------
 // A phone that answers in half a second should not be given the level's 840ms
 // tail: the window would land with most of it left and the retarget would have
@@ -1223,6 +1257,14 @@ like($emerge, qr/attachShadow\(\{ mode: 'closed' \}\)/,
 	'in its own id space, so it cannot answer a lookup meant for the real window');
 like($emerge, qr/JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge'/,
 	'and the copies are kept on the device');
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_APPS = 24/,
+	'the cache holds a desk of apps, not a handful of slots');
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_MEMORY = 4000000/,
+	'budgeted by the markup it keeps in memory');
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_IMAGE = 8000/,
+	'with embedded photographs left out of the picture');
+like($emerge, qr/\tsnapshot\.at = Date\.now\(\);/,
+	'and using a preview marks it as the freshest');
 like($emerge, qr/jawnosEmergePreviewSelector/, 'the page\'s rules are scoped to the preview');
 like($emerge, qr/jawnosEmergePreviewSanitize/, 'while nothing live is carried in with it');
 like($emerge, qr/function jawnosEmergePreviewSweep\(\)/,
