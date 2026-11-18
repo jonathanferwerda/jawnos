@@ -33,6 +33,42 @@ function windowMinimizer(timestamp,app) {
 	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(); }
 }
 
+// The box the half snap takes: from the header's own line to the foot the desk
+// leaves free, half the screen wide, on the named side. windowHalfski applies
+// it and the drag preview draws it, so the highlight is exactly where the
+// window will land.
+function windowHalfRect(side) {
+	// the top sits flush under a taskbar on the top edge - headerHeight is the
+	// bar's own height - so the titlebar is not tucked under the bar. (The old
+	// reservedSpots['header'] + 2 left a 2px overlap.)
+	var ok = (typeof headerHeight != 'undefined') ? headerHeight : (reservedSpots['header'] || 0);
+	var ww = $(window).width();
+	// The half window reaches the foot of the screen, stopping only for what
+	// holds the bottom edge: a bottom taskbar, and the strip a bottom dock keeps
+	// on screen while it is tucked (windowBottomClearance carries both). That
+	// leaves the dock's reach on screen instead of burying it - and the window's
+	// own foot controls, which sit at its very bottom, clear the dock instead of
+	// hiding under it. While the search rides the dock its panel may be out, so
+	// the foot also stops on the dock's own top edge.
+	var foot = $(window).height() - windowBottomClearance();
+	var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
+	var dock_on_bottom = (typeof jawnosDockTop == 'function' && !jawnosDockTop())
+		&& (typeof jawnosSideDock == 'function' && !jawnosSideDock())
+		&& (typeof jawnosDockHidden == 'function' && !jawnosDockHidden());
+	if (search_in_dock && dock_on_bottom) {
+		var dock = $('#pseudonym_home');
+		if (dock.length) { foot = Math.min(foot, dock.offset().top); }
+	}
+	var right = (side == 'right');
+	return {
+		side: right ? 'right' : 'left',
+		left: right ? (ww / 2) : 0,
+		top: ok,
+		width: ww / 2,
+		height: foot - ok
+	};
+}
+
 function windowHalfski(win,side) {
 
 	var mouse = { x: null, y: null };
@@ -40,52 +76,22 @@ function windowHalfski(win,side) {
 		mouse = mouse_position();
 	}
 	if (!windowPhoneChecker()) {
-		// the top sits flush under a taskbar on the top edge - headerHeight is the
-		// bar's own height - so the titlebar is not tucked under the bar. (The old
-		// reservedSpots['header'] + 2 left a 2px overlap.)
-		var ok = (typeof headerHeight != 'undefined') ? headerHeight : (reservedSpots['header'] || 0);
 		var ww = $(window).width();
-		// The half window reaches the foot of the screen, stopping only for what
-		// holds the bottom edge: a bottom taskbar, and the strip a bottom dock keeps
-		// on screen while it is tucked (windowBottomClearance carries both). That
-		// leaves the dock's reach on screen instead of burying it - and the window's
-		// own foot controls, which sit at its very bottom, clear the dock instead of
-		// hiding under it. While the search rides the dock its panel may be out, so
-		// the foot also stops on the dock's own top edge.
-		var foot = $(window).height() - windowBottomClearance();
-		var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
-		var dock_on_bottom = (typeof jawnosDockTop == 'function' && !jawnosDockTop())
-			&& (typeof jawnosSideDock == 'function' && !jawnosSideDock())
-			&& (typeof jawnosDockHidden == 'function' && !jawnosDockHidden());
-		if (search_in_dock && dock_on_bottom) {
-			var dock = $('#pseudonym_home');
-			if (dock.length) { foot = Math.min(foot, dock.offset().top); }
-		}
-		var height = foot - ok;
-		var snapped = false;
-		if (mouse.x > (ww - (ww / 10)) || side == 'right') {
-			snapped = true;
-
-			win.css({ 
-				'position':'fixed', 
-				'height': height, 
+		var to = '';
+		if (mouse.x > (ww - (ww / 10)) || side == 'right') { to = 'right'; }
+		else if (mouse.x < (ww / 10) || side == 'left') { to = 'left'; }
+		if (to) {
+			var box = windowHalfRect(to);
+			win.css({
+				'position':'fixed',
+				'height': box.height,
 				'width': '50%',
-				'left': '50%',
-				'top': ok
-			});
-		}
-		else if (mouse.x < (ww / 10) || side == 'left') {
-			snapped = true;
-			win.css({ 
-				'position':'fixed', 
-				'height': height, 
-				'width': '50%',
-				'left': '0%',
-				'top': ok
+				'left': (to == 'right') ? '50%' : '0%',
+				'top': box.top
 			});
 		}
 		windowDimensionSetter(win);
-		if (snapped && typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
+		if (to && typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
 	}
 }
 
@@ -250,10 +256,24 @@ function windowDraggable(win) {
 				var snapped = win.attr('view');
 				if ((snapped == 'max' || snapped == 'left' || snapped == 'right') && win.attr('free_dimensions')) {
 					var d = JSON.parse(win.attr('free_dimensions'));
-					var top = win.css('top');
+					var home_left = parseFloat(win.css('left')) || 0;
 					var mouse = mouse_position();
-					var left = (mouse.x - (numeral(d.width).value() / 2));
-					win.css({'position': 'fixed', 'height': d.height, 'width': d.width });
+					var wide = numeral(d.width).value();
+					var left = mouse.x - (wide / 2);
+					// keep the first frame on the desk: grabbed near an edge, the
+					// centred window would otherwise hang half past it. The pointer
+					// stays inside the window either way.
+					var view_w = $(window).width();
+					left = (wide < view_w) ? Math.max(0, Math.min(view_w - wide, left)) : 0;
+					win.css({'position': 'fixed', 'height': d.height, 'width': d.width, 'left': left });
+					// The grab offset was measured against the half (or full) width,
+					// so a narrower window would trail the pointer by the difference.
+					// Move the drag's anchor to the restored width's middle, and the
+					// window comes out under the pointer and stays there.
+					var inst = win.data('ui-draggable');
+					if (inst && inst.offset && inst.offset.click) {
+						inst.offset.click.left += home_left - left;
+					}
 					ui.position.left = left;
 					win.find('.maximize_button').show();
 					win.find('.restore_button').hide();

@@ -1202,6 +1202,13 @@ img.window_icon { height:22px !important; width:auto !important; max-width:none 
 	background: var(--accent-soft, rgba(59,125,221,.18));
 	opacity: .55;
 }
+/* The half snap reads as a filled highlight rather than a slot hint: the same
+   outline, solid and a little stronger, so the free half is obvious. */
+#window_tile_preview[snap="half"] {
+	border-style: solid;
+	background: var(--accent-soft, rgba(59,125,221,.3));
+	opacity: .72;
+}
 body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35); }
 
 /* ---- window effects -------------------------------------------------------

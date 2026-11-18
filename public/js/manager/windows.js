@@ -1503,8 +1503,9 @@ function windowTiledJoinOrLeave(win, at, home, from, group) {
 
 // The slot a dragged window would join, drawn while it is still in the hand.
 // The same rule as the drop - the pile under the pointer, or the new pile the
-// drop would start - so what the outline shows is where the block's head lands;
-// at an edge that owns the half snap it is hidden.
+// drop would start - so what the outline shows is where the block's head lands.
+// At an edge the drop is the half snap, so the same outline becomes the half
+// the window will take.
 function windowTiledPreview(win, at, home, from, group) {
 	var box = $('#window_tile_preview');
 	if (!box.length) { box = $('<div id="window_tile_preview"></div>').appendTo('body'); }
@@ -1514,7 +1515,23 @@ function windowTiledPreview(win, at, home, from, group) {
 	// the drag takes the window out of its pile as soon as it is away from it
 	windowTiledDragLeave(win, at, home, from, group);
 	var ww = $(window).width();
-	if (at.x < (ww / 10) || at.x > (ww - (ww / 10))) { box.hide(); return; }
+	var edge = (at.x < (ww / 10)) ? 'left' : ((at.x > (ww - (ww / 10))) ? 'right' : '');
+	if (edge) {
+		// the edge owns the drop: draw the half it will take, which is the box
+		// windowHalfski applies on release
+		if (typeof windowHalfRect == 'function') {
+			var half = windowHalfRect(edge);
+			box.attr('snap', 'half').css({
+				'left': half.left + 'px',
+				'top': half.top + 'px',
+				'width': half.width + 'px',
+				'height': half.height + 'px'
+			}).show();
+		}
+		else { box.hide(); }
+		return;
+	}
+	box.removeAttr('snap');
 	var target = windowTiledDropTarget(at, win, home, from, group);
 	var to;
 	var anchor;
