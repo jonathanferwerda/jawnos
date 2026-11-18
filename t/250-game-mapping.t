@@ -44,14 +44,24 @@ is(JawnOS::GameMapping::physical_index('r'), 11, 'R is physical 11');
 is(JawnOS::GameMapping::physical_index('l2'), 12, 'L2 is physical 12');
 is(JawnOS::GameMapping::physical_index('r2'), 13, 'R2 is physical 13');
 
+# --- the sticks ---------------------------------------------------------------
+my $lstick = JawnOS::GameMapping::stick_axes('lstick');
+is_deeply([$lstick->{'x'}, $lstick->{'y'}], [0, 1], 'the left stick is ABS_X/ABS_Y');
+my $rstick = JawnOS::GameMapping::stick_axes('rstick');
+is_deeply([$rstick->{'x'}, $rstick->{'y'}], [3, 4], 'the right stick is ABS_RX/ABS_RY');
+ok(!defined JawnOS::GameMapping::stick_axes('a'), 'a face button has no axes');
+is(scalar @{ JawnOS::GameMapping::console_sticks('n64') }, 1, 'the N64 has one stick to stand in for');
+is(scalar @{ JawnOS::GameMapping::console_sticks('snes') }, 0, 'the SNES has none');
+
 # --- the N64 default the person asked for ------------------------------------
 my $n64 = JawnOS::GameMapping::default_mapping('n64');
 is_deeply($n64, {
 	a => 'c_down', b => 'c_right', x => 'c_up', y => 'c_left',
 	r2 => 'a', l2 => 'b', r => 'z', l => 'r', start => 'start',
+	lstick => 'analog',
 	dpad_up => 'dpad_up', dpad_down => 'dpad_down',
 	dpad_left => 'dpad_left', dpad_right => 'dpad_right',
-}, 'the N64 default is the GoldenEye scheme');
+}, 'the N64 default is the GoldenEye scheme, with the stick on the analog stick');
 
 is_deeply(
 	JawnOS::GameMapping::normalize_mapping('n64', { a => 'c_down', b => 'c_down', zzz => 'a', x => 'nope' }),
@@ -90,6 +100,31 @@ is($line{'down'}, '7', 'the D-pad Down is physical 7');
 is($line{'left'}, '8', 'the D-pad Left is physical 8');
 is($line{'right'}, '9', 'the D-pad Right is physical 9');
 unlike(join("\n", keys %line), qr/select/, 'N64 has no Select and the remap omits it');
+
+# A stick is four axis lines, not a button. The N64's C buttons already own the
+# RetroPad L/R buttons, so the analog stick has to reach the L axes beside them.
+my @rows = split /\n/, read_file($path);
+like(join("\n", @rows), qr/^input_player1_l_x_plus_axis\s+= "\+0"$/m, 'the analog stick reads the left stick axis up');
+like(join("\n", @rows), qr/^input_player1_l_x_minus_axis\s+= "-0"$/m, 'and down the same axis');
+like(join("\n", @rows), qr/^input_player1_l_y_plus_axis\s+= "\+1"$/m, 'the vertical axis is the left stick Y');
+like(join("\n", @rows), qr/^input_player1_l_y_minus_axis\s+= "-1"$/m, 'on both of its ends');
+
+# --- the PlayStation's two sticks ---------------------------------------------
+my $psx = JawnOS::GameMapping::default_mapping('psx');
+is($psx->{'lstick'}, 'analog_l', 'the PSX left stick is the left stick');
+is($psx->{'rstick'}, 'analog_r', 'and the right stick the right');
+my @psx_rows = split /\n/, JawnOS::GameMapping::remap_text('psx', $psx);
+like(join("\n", @psx_rows), qr/^input_player1_r_x_plus_axis\s+= "\+3"$/m, 'the right stick reaches the right axes');
+like(join("\n", @psx_rows), qr/^input_player1_r_y_minus_axis\s+= "-4"$/m, 'on both of its axes');
+
+# A stick stands in for a stick and a button for a button. A pair that crosses
+# the two kinds has no line to write, so it is refused before it is stored.
+is_deeply(JawnOS::GameMapping::normalize_mapping('n64', { lstick => 'a' }), {},
+	'a stick is not stored as a console button');
+is_deeply(JawnOS::GameMapping::normalize_mapping('n64', { a => 'analog' }), {},
+	'a button is not stored as a console stick');
+is_deeply(JawnOS::GameMapping::normalize_mapping('n64', { lstick => 'analog' }), { lstick => 'analog' },
+	'a stick on a stick is stored');
 
 # --- the write is atomic ------------------------------------------------------
 my $before = read_file($path);
@@ -156,6 +191,19 @@ like($page, qr/function assign\(/, 'the assign helper exists');
 like($page, qr/data-clear=/, 'each console row has a Clear button');
 like($page, qr/Reset to default/, 'the page offers Reset to default');
 unlike($page, qr/cursor:\s*(?:pointer|default|text|grab|move)\b/, 'no literal cursor value is used');
+
+# The two pictures sit side by side: a console drawn under the handheld read as
+# one long controller, and the pair is what a person compares.
+like($page, qr/grid-template-columns:minmax\(0, 1fr\) minmax\(0, 1fr\)/, 'the Gou and the console are drawn side by side');
+like($page, qr/\@media \(max-width: 520px\)/, 'and stack only in a genuinely narrow window');
+like($page, qr/class="mapping_gou_key mapping_stick" id="gou_key_<%=\s*\$token\s*%>"/, 'the Gou sticks are armable sources');
+like($page, qr/class="mapping_console_key mapping_stick<%=.*?%>" id="console_key_<%=\s*\$token\s*%>"/, 'the console sticks are assignable targets');
+is(scalar(() = $page =~ /data-kind="stick"/g), 2, 'both kinds of stick say they are sticks');
+like($page, qr/data-kind="button"/, 'a button says it is a button');
+like($page, qr/function kindOf\(/, 'the page can tell a stick from a button');
+like($page, qr/A stick pairs with a stick, and a button with a button\./, 'and refuses a pair that crosses the two');
+like($page, qr/for my \$s \(\@gou_sticks\)/, 'the Gou sticks are drawn from the stick table');
+like($page, qr/for my \$s \(@\{\$sticks\}\)/, 'and the console sticks from the profile');
 
 # --- the Guide ----------------------------------------------------------------
 my $help = read_file("$root/perl/help/topics_people.pl");

@@ -129,7 +129,17 @@ def main():
         "QPushButton { background:%s; border:1px solid %s; border-radius:10px;"
         " padding:6px; font-size:22px; color:%s; }"
         "QPushButton:disabled { color:#777; }"
-        "QCheckBox { font-size:18px; color:%s; padding:7px; }"
+        "QCheckBox { font-size:18px; color:%s; padding:7px; spacing:10px; }"
+        # The indicator is drawn by the style, not by the page: on this dark panel
+        # the default one is a hairline that a person cannot find, let alone see
+        # whether it is ticked. A grey square is visible when it is empty and
+        # white when it is not.
+        "QCheckBox::indicator { width:24px; height:24px; border-radius:6px;"
+        " border:2px solid #9a9a9a; background:#8a8a8a; }"
+        "QCheckBox::indicator:unchecked { background:#6a6a6a; border-color:#9a9a9a; }"
+        "QCheckBox::indicator:checked { background:#f4f4f4; border-color:#ffffff; }"
+        "QCheckBox::indicator:disabled { background:#3a3a3a; border-color:#555555; }"
+        "QCheckBox:disabled { color:#777; }"
         % (ink, ink, panel, line, ink, ink)
     )
     outer = QVBoxLayout(win)

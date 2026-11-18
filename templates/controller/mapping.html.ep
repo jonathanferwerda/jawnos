@@ -1,8 +1,9 @@
 <% use Mojo::JSON qw(encode_json); %>
 <%= include 'controller/standalone' %>
-<%# The per-console control map. The Gou is drawn above and the console
-    it is standing in for below. Arm a button on the Gou, then press the
-    console button it should work as; Save stores the pairing in the Games app
+<%# The per-console control map. The Gou is drawn on the left and the console
+    it is standing in for on the right, so the two pictures can be read
+    together. Arm a button or a stick on the Gou, then press the console
+    button or stick it should work as; Save stores the pairing in the Games app
     and writes the RetroArch remap the core reads. The layouts and the remap
     names come from lib/JawnOS/GameMapping.pm, so the picture and the file
     cannot disagree. %>
@@ -11,10 +12,12 @@
 	my $def = ref $defaults eq 'HASH' ? $defaults : {};
 	my $prof = ref $profile eq 'HASH' ? $profile : {};
 	my $buttons = ref $prof->{'buttons'} eq 'ARRAY' ? $prof->{'buttons'} : [];
+	my $sticks = ref $prof->{'sticks'} eq 'ARRAY' ? $prof->{'sticks'} : [];
 	my @physical = @{ &JawnOS::GameMapping::physical_buttons() };
-	my %physical_label = map { $_->{'token'} => $_->{'label'} } @physical;
+	my @gou_sticks = @{ &JawnOS::GameMapping::sticks() };
+	my %physical_label = map { $_->{'token'} => $_->{'label'} } (@physical, @gou_sticks);
 	my %assigned;
-	for my $p (@physical) {
+	for my $p (@physical, @gou_sticks) {
 		my $console = $map->{ $p->{'token'} };
 		next unless defined $console;
 		$assigned{$console} //= $p->{'token'};
@@ -53,8 +56,8 @@
 	#mapping_hint { flex:1 1 100%; font-size:11px; line-height:1.3; min-height:1em; opacity:.85; }
 	#mapping_note { flex:1 1 100%; font-size:11px; line-height:1.3; min-height:1em; color:#f0c66a; }
 	#mapping_body { flex:1 1 auto; min-height:0; overflow:auto; padding:8px; display:grid;
-		grid-template-columns:1fr; gap:8px; align-content:start; box-sizing:border-box; }
-	.mapping_panel { width:100%; max-width:760px; margin:0 auto; box-sizing:border-box;
+		grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:8px; align-content:start; box-sizing:border-box; }
+	.mapping_panel { width:100%; margin:0 auto; box-sizing:border-box;
 		min-width:0; padding:8px; border:1px solid #4a4a4a; border-radius:12px; background:#353535; }
 	.mapping_panel h3 { margin:0 0 6px; font-size:13px; font-weight:600; }
 	.mapping_svg { width:100%; height:auto; display:block; }
@@ -66,12 +69,15 @@
 	.mapping_gou_key[aria-pressed="true"] circle,
 	.mapping_gou_key[aria-pressed="true"] rect { fill:#4a90d9; stroke:#9cc4ef; }
 	.mapping_console_key.assigned circle, .mapping_console_key.assigned rect { fill:#3f5a3f; stroke:#7fb27f; }
+	.mapping_gou_key.assigned circle, .mapping_gou_key.assigned rect { stroke:#7fb27f; }
 	.mapping_gou_key text, .mapping_console_key text { fill:#fff; font-weight:600; pointer-events:none; }
 	.mapping_gou_key text { font-size:10px; }
 	.mapping_console_key .mapping_console_label { font-size:8px; }
 	.mapping_console_assign { fill:#f0c66a !important; font-size:8px !important; }
-	.mapping_stick circle { fill:#262626; stroke:#555; stroke-width:1.5; }
+	.mapping_stick .mapping_stick_ring { fill:#262626; stroke:#555; stroke-width:1.5; }
 	.mapping_stick text { fill:#aaa; font-size:8px; }
+	.mapping_gou_key.mapping_stick[aria-pressed="true"] .mapping_stick_ring { fill:#4a90d9; stroke:#9cc4ef; }
+	.mapping_console_key.mapping_stick.assigned .mapping_stick_ring { fill:#3f5a3f; stroke:#7fb27f; }
 	#mapping_rows { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr));
 		gap:2px 12px; padding:2px; }
 	.mapping_row { display:grid; grid-template-columns:1fr 1fr auto; align-items:center; gap:6px;
@@ -80,6 +86,11 @@
 	.mapping_clear { font:inherit; font-size:11px; padding:2px 8px; border:1px solid #4a4a4a;
 		border-radius:6px; background:#3a3a3a; color:#fff; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.mapping_clear:hover { border-color:var(--accent, #4a90d9); }
+	/* The handheld's own panel is 640 wide, so the pictures stay side by side
+	   there; only a genuinely narrow window stacks them. */
+	@media (max-width: 520px) {
+		#mapping_body { grid-template-columns:minmax(0, 1fr); }
+	}
 </style>
 <div id="mapping_shell">
 	<div id="mapping_bar">
@@ -92,7 +103,7 @@
 		</select>
 		<button type="button" class="mapping_button" id="mapping_reset"><%= &subs::ui('Reset to default') %></button>
 		<button type="button" class="mapping_button" id="mapping_save"><%= &subs::ui('Save') %></button>
-		<div id="mapping_hint"><%= &subs::ui('Press a button on the Gou, then the console button it should work as.') %></div>
+		<div id="mapping_hint"><%= &subs::ui('Press a button or stick on the Gou, then the console one it should work as.') %></div>
 		<div id="mapping_note" aria-live="polite"></div>
 	</div>
 	<div id="mapping_body"
@@ -108,7 +119,7 @@
 %   my $token = $b->{'token'};
 %   my $label = $physical_label{$token} // $token;
 %   my $rect = ($b->{'shape'} // '') eq 'rect';
-				<g class="mapping_gou_key" id="gou_key_<%= $token %>" data-physical="<%= $token %>"
+				<g class="mapping_gou_key" id="gou_key_<%= $token %>" data-physical="<%= $token %>" data-kind="button"
 					role="button" tabindex="0" aria-pressed="false" aria-label="<%= $label %>">
 					<title><%= $label %></title>
 %   if ($rect) {
@@ -120,14 +131,18 @@
 					<text x="<%= $b->{'x'} %>" y="<%= $b->{'y'} + 4 %>" text-anchor="middle"><%= $label %></text>
 				</g>
 % }
-				<g class="mapping_stick">
-					<circle cx="128" cy="180" r="22"/><circle cx="128" cy="180" r="10" fill="#333" stroke="#555"/>
-					<text x="128" y="212" text-anchor="middle"><%= &subs::ui('L stick') %></text>
+% for my $s (@gou_sticks) {
+%   my $token = $s->{'token'};
+%   my $label = $physical_label{$token} // $token;
+%   my $cx = $token eq 'rstick' ? 212 : 128;
+				<g class="mapping_gou_key mapping_stick" id="gou_key_<%= $token %>" data-physical="<%= $token %>" data-kind="stick"
+					role="button" tabindex="0" aria-pressed="false" aria-label="<%= $label %>">
+					<title><%= $label %></title>
+					<circle class="mapping_stick_ring" cx="<%= $cx %>" cy="180" r="22"/>
+					<circle cx="<%= $cx %>" cy="180" r="10" fill="#333" stroke="#555"/>
+					<text x="<%= $cx %>" y="212" text-anchor="middle"><%= $label %></text>
 				</g>
-				<g class="mapping_stick">
-					<circle cx="212" cy="180" r="22"/><circle cx="212" cy="180" r="10" fill="#333" stroke="#555"/>
-					<text x="212" y="212" text-anchor="middle"><%= &subs::ui('R stick') %></text>
-				</g>
+% }
 			</svg>
 		</div>
 		<div class="mapping_panel">
@@ -142,7 +157,7 @@
 %   my $value = defined $phys ? ($physical_label{$phys} // $phys) : '—';
 %   my $assign_y = $rect ? $b->{'y'} + ($b->{'h'} // 18) / 2 + 11 : $b->{'y'} + ($b->{'r'} // 15) + 11;
 				<g class="mapping_console_key<%= defined $phys ? ' assigned' : '' %>" id="console_key_<%= $token %>"
-					data-console="<%= $token %>" role="button" tabindex="0" aria-pressed="false" aria-label="<%= $label %>">
+					data-console="<%= $token %>" data-kind="button" role="button" tabindex="0" aria-pressed="false" aria-label="<%= $label %>">
 					<title><%= $label %></title>
 %   if ($rect) {
 					<rect x="<%= $b->{'x'} - ($b->{'w'} // 44) / 2 %>" y="<%= $b->{'y'} - ($b->{'h'} // 18) / 2 %>"
@@ -154,20 +169,44 @@
 					<text class="mapping_console_assign" id="console_assign_<%= $token %>" x="<%= $b->{'x'} %>" y="<%= $assign_y %>" text-anchor="middle"><%= $value %></text>
 				</g>
 % }
-			</svg>
-		</div>
-		<div id="mapping_rows">
+% for my $s (@{$sticks}) {
+%   my $token = $s->{'token'};
+%   my $label = $s->{'label'} // $token;
+%   my $phys = $assigned{$token};
+%   my $value = defined $phys ? ($physical_label{$phys} // $phys) : '—';
+					<g class="mapping_console_key mapping_stick<%= defined $phys ? ' assigned' : '' %>" id="console_key_<%= $token %>"
+						data-console="<%= $token %>" data-kind="stick" role="button" tabindex="0" aria-pressed="false" aria-label="<%= $label %>">
+						<title><%= $label %></title>
+						<circle class="mapping_stick_ring" cx="<%= $s->{'x'} %>" cy="<%= $s->{'y'} %>" r="22"/>
+						<circle cx="<%= $s->{'x'} %>" cy="<%= $s->{'y'} %>" r="10" fill="#333" stroke="#555"/>
+						<text class="mapping_console_label" x="<%= $s->{'x'} %>" y="<%= $s->{'y'} + 34 %>" text-anchor="middle"><%= $label %></text>
+						<text class="mapping_console_assign" id="console_assign_<%= $token %>" x="<%= $s->{'x'} %>" y="<%= $s->{'y'} + 45 %>" text-anchor="middle"><%= $value %></text>
+					</g>
+% }
+				</svg>
+			</div>
+			<div id="mapping_rows">
 % for my $b (@{$buttons}) {
 %   my $token = $b->{'token'};
 %   my $phys = $assigned{$token};
 %   my $value = defined $phys ? ($physical_label{$phys} // $phys) : '—';
-			<div class="mapping_row" data-console-row="<%= $token %>">
-				<span class="mapping_row_label"><%= $b->{'label'} // $token %></span>
-				<span class="mapping_row_assign" id="mapping_row_assign_<%= $token %>"><%= $value %></span>
-				<button type="button" class="mapping_clear" data-clear="<%= $token %>"><%= &subs::ui('Clear') %></button>
-			</div>
+				<div class="mapping_row" data-console-row="<%= $token %>">
+					<span class="mapping_row_label"><%= $b->{'label'} // $token %></span>
+					<span class="mapping_row_assign" id="mapping_row_assign_<%= $token %>"><%= $value %></span>
+					<button type="button" class="mapping_clear" data-clear="<%= $token %>"><%= &subs::ui('Clear') %></button>
+				</div>
 % }
-		</div>
+% for my $s (@{$sticks}) {
+%   my $token = $s->{'token'};
+%   my $phys = $assigned{$token};
+%   my $value = defined $phys ? ($physical_label{$phys} // $phys) : '—';
+				<div class="mapping_row" data-console-row="<%= $token %>">
+					<span class="mapping_row_label"><%= $s->{'label'} // $token %></span>
+					<span class="mapping_row_assign" id="mapping_row_assign_<%= $token %>"><%= $value %></span>
+					<button type="button" class="mapping_clear" data-clear="<%= $token %>"><%= &subs::ui('Clear') %></button>
+				</div>
+% }
+			</div>
 	</div>
 </div>
 <script>
@@ -189,20 +228,24 @@
 	var save = document.getElementById('mapping_save');
 	var picker = document.getElementById('mapping_system');
 	var armed = null;
+	var armedKind = 'button';
 	function t(text) { return (typeof jawnosT === 'function') ? jawnosT(text) : text; }
 	function label(token) { return physical[token] || token; }
+	function kindOf(el) { return (el && el.getAttribute('data-kind')) || 'button'; }
 	function gouKeys() { return Array.prototype.slice.call(document.querySelectorAll('.mapping_gou_key')); }
 	function consoleKeys() { return Array.prototype.slice.call(document.querySelectorAll('.mapping_console_key')); }
 	function disarm() {
 		armed = null;
+		armedKind = 'button';
 		gouKeys().forEach(function (el) { el.setAttribute('aria-pressed', 'false'); });
 	}
-	function arm(token) {
+	function arm(token, kind) {
 		armed = token;
+		armedKind = kind || 'button';
 		gouKeys().forEach(function (el) {
 			el.setAttribute('aria-pressed', el.getAttribute('data-physical') === token ? 'true' : 'false');
 		});
-		if (note) { note.textContent = t('Now press the console button that should use ') + label(token) + '.'; }
+		if (note) { note.textContent = t('Now press the console one that should use ') + label(token) + '.'; }
 	}
 	function assignedTo(consoleToken) {
 		var found = null;
@@ -212,6 +255,10 @@
 		return found;
 	}
 	function paint() {
+		gouKeys().forEach(function (el) {
+			var token = el.getAttribute('data-physical');
+			if (mapping[token]) { el.classList.add('assigned'); } else { el.classList.remove('assigned'); }
+		});
 		consoleKeys().forEach(function (el) {
 			var token = el.getAttribute('data-console');
 			var tokenPhysical = assignedTo(token);
@@ -223,9 +270,16 @@
 			if (tokenPhysical) { el.classList.add('assigned'); } else { el.classList.remove('assigned'); }
 		});
 	}
-	function assign(consoleToken) {
+	function assign(consoleToken, consoleKind) {
 		if (!armed) {
-			if (note) { note.textContent = t('Press a button on the Gou first.'); }
+			if (note) { note.textContent = t('Press a button or stick on the Gou first.'); }
+			return;
+		}
+		// A stick stands in for a stick: a stick paired with a button (or a button
+		// with a stick) is a line the remap cannot write, so the page does not
+		// store one either.
+		if ((consoleKind || 'button') !== armedKind) {
+			if (note) { note.textContent = t('A stick pairs with a stick, and a button with a button.'); }
 			return;
 		}
 		Object.keys(mapping).forEach(function (physicalToken) {
@@ -271,7 +325,7 @@
 		var token = el.getAttribute('data-physical');
 		el.addEventListener('click', function () {
 			if (armed === token) { disarm(); if (note) { note.textContent = ''; } }
-			else { arm(token); }
+			else { arm(token, kindOf(el)); }
 		});
 		el.addEventListener('keydown', function (ev) {
 			if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); el.click(); }
@@ -279,7 +333,7 @@
 	});
 	consoleKeys().forEach(function (el) {
 		var token = el.getAttribute('data-console');
-		el.addEventListener('click', function () { assign(token); });
+		el.addEventListener('click', function () { assign(token, kindOf(el)); });
 		el.addEventListener('keydown', function (ev) {
 			if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); el.click(); }
 		});

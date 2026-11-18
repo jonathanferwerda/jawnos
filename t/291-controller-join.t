@@ -146,6 +146,12 @@ like($first_run, qr{/sys/block/%s/device/type}, 'by the same rule the planner us
 like($first_run, qr/def is_root_disk/, 'and it never offers the disk the system runs from');
 like($first_run, qr{/sys/block/%s/%s}, 'asked of sysfs, not by trimming a device name');
 like($first_run, qr/Erase the card in the slot/, 'and offers the wipe as a box that must be ticked');
+# The style's own indicator is a hairline on this dark panel: the box was there
+# and could not be seen, so the tick was never found. A grey square is visible
+# empty and white when it is ticked.
+like($first_run, qr/QCheckBox::indicator \{[^}]*background:#8a8a8a/, 'the tick box is drawn as a visible grey square');
+like($first_run, qr/QCheckBox::indicator:checked \{[^}]*background:#f4f4f4/, 'and fills to white when it is ticked');
+like($first_run, qr/QCheckBox::indicator:unchecked/, 'with an empty state of its own');
 like($first_run, qr/def write_answers/, 'the answers are written for the root pass');
 like($provision, qr/gou_first_run\.py/, 'the dialog travels with the flash');
 like($provision, qr/gou-first-run\.service/, 'with a unit of its own');

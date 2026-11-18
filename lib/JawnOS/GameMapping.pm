@@ -25,9 +25,22 @@ our @PHYSICAL = (
 
 our %PHYSICAL = map { $_->{'token'} => $_ } @PHYSICAL;
 
+# The two sticks. They are not buttons and have no index: what a remap writes
+# for one is a pair of axes. The numbers are the Linux ABS codes the daemon's
+# virtual pad reports (the left stick on ABS_X/ABS_Y, the right on ABS_RX/ABS_RY),
+# which is what RetroArch numbers its joypad axes by.
+our @STICKS = (
+	{ token => 'lstick', label => 'L stick', kind => 'stick', x => 0, y => 1 },
+	{ token => 'rstick', label => 'R stick', kind => 'stick', x => 3, y => 4 },
+);
+
+our %STICKS = map { $_->{'token'} => $_ } @STICKS;
+
 sub physical_buttons { return [ map { { %$_ } } @PHYSICAL ] }
 sub physical_index   { my ($token) = @_; return $PHYSICAL{$token} ? $PHYSICAL{$token}->{'index'} : undef }
 sub physical_label   { my ($token) = @_; return $PHYSICAL{$token} ? $PHYSICAL{$token}->{'label'} : undef }
+sub sticks           { return [ map { { %$_ } } @STICKS ] }
+sub stick_axes       { my ($token) = @_; return $STICKS{$token} ? { %{ $STICKS{$token} } } : undef }
 
 # One table for every console the page offers. `buttons` is the drawing order
 # and the row order: token, label and the place the picture puts it. `retropad`
@@ -61,11 +74,18 @@ our %SYSTEMS = (
 			z => 'l2', l => 'select', r => 'r2', start => 'start',
 			dpad_up => 'up', dpad_down => 'down', dpad_left => 'left', dpad_right => 'right',
 		},
+		# The analog stick is a stick, not a face button: a console whose stick the
+		# Gou's own stick can stand in for names it here, with the RetroPad name the
+		# core reads its axes by.
+		sticks => [
+			{ token => 'analog', label => 'Analog', kind => 'stick', retropad => 'l', x => 110, y => 180 },
+		],
 		# The GoldenEye scheme: the four face buttons are the C buttons, the
 		# right trigger fires (N64 A) and the left trigger uses (N64 B).
 		default => {
 			a => 'c_down', b => 'c_right', x => 'c_up', y => 'c_left',
 			r2 => 'a', l2 => 'b', r => 'z', l => 'r', start => 'start',
+			lstick => 'analog',
 			dpad_up => 'dpad_up', dpad_down => 'dpad_down',
 			dpad_left => 'dpad_left', dpad_right => 'dpad_right',
 		},
@@ -96,10 +116,15 @@ our %SYSTEMS = (
 			start => 'start', select => 'select',
 			dpad_up => 'up', dpad_down => 'down', dpad_left => 'left', dpad_right => 'right',
 		},
+		sticks => [
+			{ token => 'analog_l', label => 'L stick', kind => 'stick', retropad => 'l', x => 110, y => 180 },
+			{ token => 'analog_r', label => 'R stick', kind => 'stick', retropad => 'r', x => 230, y => 180 },
+		],
 		default => {
 			b => 'cross', a => 'circle', y => 'square', x => 'triangle',
 			l => 'l1', r => 'r1', l2 => 'l2', r2 => 'r2',
 			start => 'start', select => 'select',
+			lstick => 'analog_l', rstick => 'analog_r',
 			dpad_up => 'dpad_up', dpad_down => 'dpad_down',
 			dpad_left => 'dpad_left', dpad_right => 'dpad_right',
 		},
@@ -197,27 +222,38 @@ sub console_buttons {
 	return [ map { { %$_ } } @{ $profile->{'buttons'} } ];
 }
 
+sub console_sticks {
+	my ($key) = @_;
+	my $profile = profile($key) or return [];
+	return [ map { { %$_ } } @{ $profile->{'sticks'} || [] } ];
+}
+
 sub console_labels {
 	my ($key) = @_;
 	my $profile = profile($key) or return {};
-	return { map { $_->{'token'} => $_->{'label'} } @{ $profile->{'buttons'} } };
+	return { map { $_->{'token'} => $_->{'label'} }
+		(@{ $profile->{'buttons'} }, @{ $profile->{'sticks'} || [] }) };
 }
 
 # A mapping is physical token -> console token. Unknown physical buttons and
 # console buttons that do not exist on this system are dropped. One console
 # button takes one physical button: the first physical in index order wins, so
 # the stored mapping and the remap cannot disagree about which press it means.
+# A stick stands in for a stick and a button for a button: a pair that crosses
+# the two kinds has no line to write, so it is never stored either.
 sub normalize_mapping {
 	my ($key, $raw) = @_;
 	my $profile = profile($key) or return undef;
 	my $src = ref $raw eq 'HASH' ? $raw : {};
-	my %valid = map { $_->{'token'} => 1 } @{ $profile->{'buttons'} };
+	my %valid = map { $_->{'token'} => ($_->{'kind'} // 'button') }
+		(@{ $profile->{'buttons'} }, @{ $profile->{'sticks'} || [] });
 	my (%out, %taken);
-	for my $physical (@PHYSICAL) {
+	for my $physical (@PHYSICAL, @STICKS) {
 		my $token = $physical->{'token'};
 		my $console = $src->{$token};
 		next unless defined $console;
-		next unless $valid{$console};
+		next unless defined $valid{$console};
+		next unless $valid{$console} eq ($physical->{'kind'} // 'button');
 		next if $taken{$console}++;
 		$out{$token} = $console;
 	}
@@ -252,7 +288,7 @@ sub reverse_mapping {
 	my $norm = normalize_mapping($key, $mapping);
 	return {} unless ref $norm eq 'HASH';
 	my %rev;
-	for my $physical (@PHYSICAL) {
+	for my $physical (@PHYSICAL, @STICKS) {
 		my $console = $norm->{ $physical->{'token'} };
 		next unless defined $console;
 		$rev{$console} //= $physical->{'token'};
@@ -263,6 +299,12 @@ sub reverse_mapping {
 # input_player1_<retropad>_btn = "<index>", one line per console button that has
 # a physical button assigned. The key is the core's RetroPad name, never the
 # console's own label, because that is what a .rmp reads.
+#
+# A console stick is four axis lines instead: a plus and a minus binding for each
+# of the two axes the physical stick reports. A RetroPad name is only skipped
+# when the button it already carried is the same button: the N64's C buttons use
+# the RetroPad L/R buttons while its analog stick uses the L/R axes, and those
+# are different settings in the same file.
 sub remap_lines {
 	my ($key, $mapping) = @_;
 	my $profile = profile($key) or return ();
@@ -279,6 +321,21 @@ sub remap_lines {
 		my $index = physical_index($physical);
 		next unless defined $index;
 		push @lines, sprintf('input_player1_%s_btn = "%d"', $retropad, $index);
+	}
+	my %seen_axis;
+	for my $stick (@{ $profile->{'sticks'} || [] }) {
+		my $console = $stick->{'token'};
+		my $retropad = $stick->{'retropad'};
+		next unless defined $retropad;
+		next if $seen_axis{$retropad}++;
+		my $physical = $rev->{$console};
+		next unless defined $physical;
+		my $axes = stick_axes($physical);
+		next unless $axes;
+		push @lines, sprintf('input_player1_%s_x_plus_axis  = "+%d"', $retropad, $axes->{'x'});
+		push @lines, sprintf('input_player1_%s_x_minus_axis = "-%d"', $retropad, $axes->{'x'});
+		push @lines, sprintf('input_player1_%s_y_plus_axis  = "+%d"', $retropad, $axes->{'y'});
+		push @lines, sprintf('input_player1_%s_y_minus_axis = "-%d"', $retropad, $axes->{'y'});
 	}
 	return @lines;
 }
