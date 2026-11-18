@@ -62,6 +62,28 @@ is_deeply(\@apps, ['brushing'],
 like($template, qr/id="keyboard_toggle"/, 'the keyboard is a start-menu app');
 like($template, qr/id="calculator_toggle"/, 'and the calculator');
 
+# Every launcher that opens a window (or a window-shaped panel) needs an app
+# key, or the press-time window preview has no app to match its origin to.
+# stop_all and upload are actions, not apps, and stay out of the map.
+my ($icon_map_src) = $menu_js =~ /var startMenuIconApps = \{(.*?)\n\};/s;
+ok(defined $icon_map_src, 'the start-menu icon map is readable');
+my %icon_apps = ($icon_map_src // '') =~ /([A-Za-z0-9_]+)\s*:\s*'([^']*)'/g;
+my %launchers = (
+	handbook_toggle => 'handbook', help_toggle => 'help',
+	notifications_toggle => 'notifications', packages_toggle => 'packages',
+	keyboard_toggle => 'keyboard', calculator_toggle => 'calculator',
+	weather_toggle => 'weather', power_toggle => 'power', sound_toggle => 'sound',
+	twirl_toggle => 'twirl', scan_toggle => 'scan', studio_toggle => 'studio'
+);
+for my $id (sort keys %launchers) {
+	is($icon_apps{$id}, $launchers{$id}, "$id names its app");
+}
+is(scalar(grep { !defined $icon_apps{$_} || $icon_apps{$_} eq '' } keys %icon_apps), 0,
+	'no mapped launcher has an empty app');
+for my $action (qw(stop_all upload)) {
+	ok(!exists $icon_apps{$action}, "$action is an action, not an app in the map");
+}
+
 # Every app label drawn through the core catalog must read as a label. A key
 # with no entry in language.pl falls back to printing itself, which is how the
 # keyboard icon stayed lowercase beside Clock and Sound. The catalogue is

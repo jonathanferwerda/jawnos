@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
 # covers:    a new window pours out of the control that opened it - the press
 #            records a viewport rectangle and richer app metadata, pointerdown
 #            draws the chrome preview at once, windowMaker hands the real
@@ -23,6 +23,7 @@ my $index  = read_file("$root/public/js/manager/windows.js");
 my $board  = read_file("$root/public/js/manager/leaderboardprinter.js");
 my $lazy   = read_file("$root/public/js/manager/lazy.js");
 my $css    = read_file("$root/public/css/manager.css");
+my $universal = read_file("$root/public/css/universal.css");
 my $layout = read_file("$root/templates/layouts/manager.html.ep");
 my $contrast = read_file("$root/lib/JawnOS/Domain/Contrast.pm");
 my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
@@ -65,6 +66,12 @@ like($css, qr/\.jawnos_emerge_skeleton_grid\s*\{/, 'the skeleton bodies have the
 like($css, qr/\.jawnos_emerge_skeleton_terminal\s*\{/, 'including a terminal body');
 like($css, qr/body\.dark_theme \.jawnos_emerge_ghost \.jawnos_emerge_bar/,
 	'a dark desk keeps the theme ink on the preview bar');
+like($universal, qr/body\.dark_theme \[data-appt-tint\]\s*\{[^}]*background-color:\s*var\(--appt-dark\)\s*!important/s,
+	'the shared dark rule repaints an appointment tint with --appt-dark');
+like($css, qr/body\.dark_theme \.jawnos_emerge_ghost \.jawnos_emerge_bar,\s*body\.dark_theme \.jawnos_emerge_ghost \.jawnos_emerge_name,\s*body\.dark_theme \.jawnos_emerge_ghost \.jawnos_emerge_button \{ color: var\(--ink\) !important; \}/s,
+	'and the bar, name and controls take the theme ink, as top_navbar does');
+like($emerge, qr/bar\.setAttribute\('data-appt-tint', 'yes'\)/,
+	'the ghost bar carries the real data-appt-tint hook');
 like($css, qr/body\[data-window-effects="off"\] \.jawnos_emerge_ghost \{ display: none !important; \}/,
 	'turning the effects off hides a preview already in flight');
 like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*\.jawnos_emerge_ghost \{ display: none; \}\s*\}/s,
@@ -550,6 +557,8 @@ check('and the three standard controls',
 	&& hasClass(chrome_buttons.children[1], 'jawnos_emerge_button_maximize')
 	&& hasClass(chrome_buttons.children[2], 'jawnos_emerge_button_close'));
 const bar_el = findClass(chrome, 'jawnos_emerge_bar');
+check('the bar carries the real appointment-tint hook',
+	!!bar_el && bar_el.getAttribute('data-appt-tint') === 'yes');
 check('the bar wears the app\'s saved colour',
 	!!bar_el && bar_el.style.backgroundColor === '#123456');
 check('and its real contrast ink', !!bar_el && bar_el.style.color === '#ffffff');

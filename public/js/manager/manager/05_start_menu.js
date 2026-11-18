@@ -290,7 +290,15 @@ var startMenuIconApps = {
 	backup_now: 'backup', security_toggle: 'security', terminal_toggle: 'terminal', network_toggle: 'network',
 	ide_toggle: 'ide', image_toggle: 'gallery', camera_toggle: 'camera', phone_toggle: 'phone',
 	synth_toggle: 'synth', editor_toggle: 'editor', marker_toggle: 'marker', notes_toggle: 'notes',
-	clock_toggle: 'clock', home_toggle: 'home', store_toggle: 'store', process_monitor_toggle: 'process_monitor'
+	clock_toggle: 'clock', home_toggle: 'home', store_toggle: 'store', process_monitor_toggle: 'process_monitor',
+	// The launchers below open a window (or a window-shaped panel), so a press
+	// needs an app to match its origin to; without an entry the press has no
+	// app key and the press-time preview cannot claim the window. stop_all and
+	// upload are actions, not apps, and are deliberately absent.
+	handbook_toggle: 'handbook', help_toggle: 'help', notifications_toggle: 'notifications',
+	power_toggle: 'power', sound_toggle: 'sound', packages_toggle: 'packages',
+	keyboard_toggle: 'keyboard', calculator_toggle: 'calculator', weather_toggle: 'weather',
+	twirl_toggle: 'twirl', scan_toggle: 'scan', studio_toggle: 'studio'
 };
 
 function startMenuHidePrivate(main) {

@@ -621,6 +621,11 @@ function jawnosWindowEmergeChrome(origin) {
 	var chrome = jawnosEmergeElement('div', 'jawnos_emerge_chrome');
 	if (!chrome) { return null; }
 	var bar = jawnosEmergeElement('div', 'jawnos_emerge_bar');
+	// The real navbar carries data-appt-tint="yes"; universal.css repaints that
+	// hook with --appt-dark on a dark desk. The ghost needs the same hook, or it
+	// keeps the light inline colour while the real bar changes. The name and
+	// controls then follow manager.css's dark-theme ink rule, as top_navbar does.
+	if (bar && bar.setAttribute) { bar.setAttribute('data-appt-tint', 'yes'); }
 	// The real window's title bar is the app's saved colour and the ink that
 	// reads on it. Set it inline so there is no rule to keep in step; on a dark
 	// desk the shared stylesheet brings the bar back to the theme ink, exactly
