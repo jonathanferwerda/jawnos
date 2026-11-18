@@ -1,7 +1,7 @@
 
 % title 'Gate';
 <style>
-	body { text-align:center; background-color: <%= &subs::theme_surface_colour('gate') || '#DEDFD0' %> }
+	body { text-align:center; background-color: <%= &subs::theme_surface_colour('gate') || (&subs::theme_is_dark() ? '#17181a' : '#DEDFD0') %> }
 	body.dark_theme { color:#e8e8e8; }
 	#welcome_logo { height: 180px; top:1px; border-radius: 5px; }
 	.destination { height: 50%; background-color:black;}

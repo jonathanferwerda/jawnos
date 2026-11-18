@@ -136,4 +136,38 @@ like( $log, qr/&subs::appointment_colours\(/,
 unlike( $log, qr/\$appts->\{\$a->\{'app'\}\}->\{'setting'\}->\{'dark_colour'\} = &subs::dark_colour_for\(/,
 	'the viewer no longer derives the dark face alone' );
 
+# --- the gate and denial background follows the theme's light line ----------
+# The old fallback drew every channel above 130, which is a bright page even
+# when the house is dark. The gate/denial helper keeps the random page but
+# takes the dark side of the line, and a theme palette still supplies the hue.
+{
+	local *subs::theme_palette = sub { () };
+	local *subs::theme_state = sub { (1, '', '', {}, '', 0) };
+	local *subs::theme_is_dark = sub { 1 };
+	for my $n (1..20) {
+		my $c = &subs::random_background_colour();
+		like( $c, qr/^[0-9a-f]{6}$/, "dark gate background $n is six hex digits" );
+		my ($r, $g, $b) = map { hex } ($c =~ /(..)(..)(..)/);
+		ok( $r < 131 && $g < 131 && $b < 131, "dark theme keeps $c dark" );
+	}
+}
+{
+	local *subs::theme_palette = sub { () };
+	local *subs::theme_state = sub { (0, '', '', {}, '', 0) };
+	local *subs::theme_is_dark = sub { 0 };
+	for my $n (1..20) {
+		my $c = &subs::random_background_colour();
+		my ($r, $g, $b) = map { hex } ($c =~ /(..)(..)(..)/);
+		ok( $r > 130 && $g > 130 && $b > 130, "light theme keeps $c bright" );
+	}
+}
+{
+	local *subs::theme_palette = sub { ('#eef2f7') };
+	local *subs::theme_is_dark = sub { 1 };
+	my $expect = &subs::dark_surface_colour('#eef2f7');
+	$expect =~ s/^#//;
+	is( &subs::random_background_colour(), $expect,
+		'a configured palette supplies the hue, darkened for a dark theme' );
+}
+
 done_testing();

@@ -750,6 +750,41 @@ sub random_colour_grabber {
 	return join "", map { sprintf "%02x", $col->[$_] } (0..2);
 }
 
+# A random background for a whole-page moment (the gate and the denial page).
+# It keeps the surprise, but stays on the theme's side of the light line: a dark
+# house gets a dark shade instead of the bright page the old fallback always
+# made. A configured theme palette supplies the hue when there is one, and
+# otherwise the dark shade follows the theme's own background, so it is the
+# house's colour and not a neutral grey.
+sub random_background_colour {
+	my $dark = &theme_is_dark();
+	my @palette = &theme_palette();
+	if (scalar @palette > 0) {
+		my $pick = $palette[ int(rand(scalar @palette)) ];
+		$pick = &dark_surface_colour($pick) if $dark;
+		$pick =~ s/^#//;
+		return $pick;
+	}
+
+	if ($dark) {
+		my (undef, undef, $bg) = &theme_state();
+		if (defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/) {
+			my ($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
+			my @shade = map {
+				my $v = int($_ * (0.55 + rand(0.5)));
+				$v = 255 if $v > 255;
+				$v;
+			} ($r, $g, $b);
+			return join '', map { sprintf '%02x', $_ } @shade;
+		}
+		# No theme background to follow: stay well below the bright fallback.
+		return join '', map { sprintf '%02x', 8 + int(rand(67)) } (1..3);
+	}
+
+	# A light house keeps the saturated page it has always had.
+	return join '', map { sprintf '%02x', 131 + int(rand(125)) } (1..3);
+}
+
 # Snap an app's colour into the theme. If the existing colour is already one of
 # the theme's colours it is left alone; otherwise a stable theme colour is chosen
 # for that app and saved. With no theme colours configured, the value is returned

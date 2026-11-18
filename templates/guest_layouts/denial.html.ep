@@ -5,7 +5,7 @@
 
 
 html {
-	background-color:#<%= &subs::random_colour_grabber() %>;
+	background-color:#<%= &subs::random_background_colour() %>;
 	text-align:center;
 	vertical-align:center;
 }

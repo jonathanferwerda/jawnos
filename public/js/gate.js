@@ -155,7 +155,7 @@ function gateKeeper(response) {
 
 	}
 	else if (response.authentication == 'denial') {
-		$('html').html(response.denial).css({"height":"100%", "background-color": '#1486ff'});;
+		$('html').html(response.denial).css({"height":"100%"});
 	}
 }
 
