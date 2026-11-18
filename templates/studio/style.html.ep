@@ -33,10 +33,23 @@
 		position:absolute;
 		padding-left:5px;
 		left:0;
-		right:130px;
+		right:0;
 		top:0;
 		bottom:0;
 		width:auto;
+	}
+	/* the transport buttons and the jog wheel share one row, so the wheel can
+	   never cover Prev/Next and the panel's own width is the only constraint */
+	.studio_transport_row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: nowrap;
+	}
+	.studio_transport_row .little_thumb {
+		width: 40px;
+		height: 40px;
+		flex: 0 0 40px;
 	}
 	#studio_track_container {
 		/* the hidden media elements live inside the track area, a clipped 1px box:
@@ -211,8 +224,8 @@
 		position: relative;
 		box-sizing: border-box;
 		min-width: 380px;
-		overflow-x: hidden;
-		overflow-y: auto;
+		/* the grid owns the height; the window never grows to fit a panel */
+		overflow: hidden;
 		display: flex;
 		flex-direction: column;
 	}
@@ -224,9 +237,28 @@
 		overflow-y: auto;
 		background-color: lightblue;
 	}
+	/* The four docked panels are cells: synth and tracks on the first row,
+	   channels and transport on the second, so the transport sits beside the
+	   strips instead of under them. A panel dropped on another cell swaps grid
+	   areas (07_layout.js); a floated panel leaves the grid. */
+	.studio_grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+		grid-template-areas:
+			"synth tracks"
+			"mixer transport";
+		gap: 6px;
+		flex: 1 1 auto;
+		min-height: 0;
+		padding: 4px;
+		box-sizing: border-box;
+		overflow: hidden;
+	}
 	#studio_mixer {
-		flex: 0 0 30%;
-		min-height: 140px;
+		grid-area: mixer;
+		min-width: 0;
+		min-height: 0;
 		width: 100%;
 		background-color: tan;
 		display: flex;
@@ -240,8 +272,10 @@
 		gap: 4px;
 		padding: 4px;
 		box-sizing: border-box;
+		/* strips scroll both ways: their faders are reachable even when the
+		   panel is short, and many strips still scroll sideways */
 		overflow-x: auto;
-		overflow-y: hidden;
+		overflow-y: auto;
 		flex: 1 1 auto;
 		min-height: 0;
 	}
@@ -251,41 +285,64 @@
 		min-height: 180px;
 	}
 	#studio_transport_panel {
+		grid-area: transport;
 		position: relative;
-		flex: 0 0 300px;
-		min-height: 260px;
+		min-width: 0;
+		min-height: 0;
 		width: 100%;
 		/* the transport and its video previews scroll inside the window; nothing
 		   in this panel may paint below it */
 		overflow: auto;
 	}
 	#studio_jog_wheel {
-		right: 10px;
+		left: 2px;
+		top: 2px;
 		position:absolute;
-		bottom: 10px;
-		height: 110px;
-		width: 110px;
+		height: 40px;
+		width: 40px;
 		border-radius: 50%;
 	}
 	.jog_wheel_frame {
+		position: relative;
+		display: inline-block;
+		flex: 0 0 44px;
+		width: 44px;
+		height: 44px;
+		vertical-align: middle;
+	}
+	.jog_wheel_frame .jog_wheel_centre {
 		position: absolute;
-		right: 0;
-		bottom: 0;
-		width: 130px;
-		height: 130px;
+		left: 50%;
+		top: 50%;
+		margin-left: -2px;
+		margin-top: -2px;
 	}
 	#studio_time_display {
 		font-size: 32px;
 	}
 	#studio_synth {
-		flex: 0 0 auto;
-		overflow: hidden;
+		grid-area: synth;
+		min-width: 0;
+		min-height: 0;
+		overflow: auto;
 	}
 	/* Studio is a desk-wide app. The dock and the taskbar sit at 39997/39998;
 	   raising the Studio window above them keeps the transport clickable at
 	   800x600 without taking the desk's start menu or power menu with it. */
 	@media (min-width: 640px) {
 		.wind[app="studio"] { z-index: 39999 !important; }
+	}
+	/* A doubled maximize control asks for the whole viewport, above the dock and
+	   the taskbar (39997/39998). The class is the explicit state; removing it
+	   gives the window back the geometry saved on the way in. */
+	.wind[app="studio"].window_full_viewport {
+		position: fixed !important;
+		left: 0 !important;
+		top: 0 !important;
+		width: 100% !important;
+		height: 100% !important;
+		inset: 0 !important;
+		z-index: 40000 !important;
 	}
 
 	/* ---- layout bar, per-track panels and floating panels ------------------ */
@@ -306,10 +363,11 @@
 		padding: 0 4px;
 	}
 	#studio_tracks_panel {
+		grid-area: tracks;
 		display: flex;
 		flex-direction: column;
-		flex: 1 1 220px;
-		min-height: 160px;
+		min-width: 0;
+		min-height: 0;
 		position: relative;
 		overflow: hidden;
 	}
@@ -353,6 +411,21 @@
 		opacity: .92;
 		cursor: var(--jawnos-cursor-grabbing, grabbing);
 	}
+	/* a resize grip rides the floated panel's bottom-right corner */
+	.studio_resize_handle {
+		display: none;
+		position: absolute;
+		right: 0;
+		bottom: 0;
+		width: 18px;
+		height: 18px;
+		z-index: 3;
+		cursor: var(--jawnos-cursor-nwse-resize, nwse-resize);
+		touch-action: none;
+		background: linear-gradient(135deg, transparent 0 42%, var(--line, #333) 43% 50%, transparent 51% 62%, var(--line, #333) 63% 70%, transparent 71%);
+	}
+	.studio_panel_floating .studio_resize_handle { display: block; }
+	.studio_panel_resizing { cursor: var(--jawnos-cursor-nwse-resize, nwse-resize); }
 	.studio_track {
 		display: flex;
 		align-items: stretch;

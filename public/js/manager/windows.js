@@ -1711,3 +1711,58 @@ function windowReorganizer(window_id) {
 	});
 	startMenuDisplayer();
 }
+
+// Studio's maximize control has a second gesture: a double-press fills the
+// whole viewport, above the dock and the taskbar, and a second double-press
+// gives the window its old box back. windowMaximizer swaps the maximize button
+// for the restore button after the first click, and the second click of the
+// double lands on that replacement, so both controls carry the gesture. The
+// single-click handlers in windows/02_fit.js run on the way to dblclick, so the
+// box is captured on pointerdown before the first click can overwrite it. The
+// capture is held for one gesture only, because the second press of the same
+// double-click must not record the already-maximized box.
+var studioWindowFullSelector = '.wind[app="studio"] .top_navbar .maximize_button, .wind[app="studio"] .top_navbar .restore_button';
+
+function jawnosWindowFullViewportBox(win) {
+	return {
+		left: win.css('left'),
+		top: win.css('top'),
+		width: win.css('width'),
+		height: win.css('height')
+	};
+}
+
+$(document).on('pointerdown', studioWindowFullSelector, function () {
+	var win = $(this).closest('.wind');
+	if (win.hasClass('window_full_viewport')) { return; }
+	var now = Date.now();
+	var at = win.data('window-full-viewport-at') || 0;
+	if (win.data('window-full-viewport-box') && now - at < 600) { return; }
+	win.data('window-full-viewport-box', jawnosWindowFullViewportBox(win));
+	win.data('window-full-viewport-at', now);
+});
+
+$(document).on('dblclick', studioWindowFullSelector, function (e) {
+	var win = $(this).closest('.wind');
+	e.preventDefault();
+	if (win.hasClass('window_full_viewport')) {
+		var box = win.data('window-full-viewport-box');
+		win.removeClass('window_full_viewport');
+		if (box) {
+			win.css({ 'position': 'fixed', 'left': box.left, 'top': box.top, 'width': box.width, 'height': box.height });
+			windowDimensionSetter(win);
+		}
+		var stamp = win.attr('timestamp');
+		if (stamp) {
+			$('#window_' + stamp + '_maximize').show();
+			$('#window_' + stamp + '_restore').hide();
+		}
+	}
+	else {
+		if (!win.data('window-full-viewport-box')) {
+			win.data('window-full-viewport-box', jawnosWindowFullViewportBox(win));
+		}
+		win.addClass('window_full_viewport');
+	}
+	if (typeof jawnosWindowEffect === 'function') { jawnosWindowEffect(win, 'stretch'); }
+});

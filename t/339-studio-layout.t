@@ -1,9 +1,12 @@
 # tests-for: templates/studio/studio.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/windows.js lib/JawnOS/Manager/Part22.pm perl/help/topics_apps.pl t/339-studio-layout.t
 # covers:    The Studio layout: a compact panel beside every track with its five
 #            controls, four remembered hide toggles, a Dock control and pointer
-#            drag handlers for each floating panel, a dynamic track list with
-#            Add track / a twice-pressed Delete, and a help topic that names
-#            them. Structure only; pixels are not asserted here.
+#            drag/resize handlers, a four-cell docking grid with area swaps, a
+#            channel-strips panel that scrolls its faders into reach, a jog wheel
+#            in the transport's button row, a dynamic track list with Add track /
+#            a twice-pressed Delete, a full-viewport double-press for the window,
+#            and a help topic that names them. Structure only; pixels are not
+#            asserted here.
 
 use strict;
 use warnings;
@@ -94,8 +97,8 @@ like($layout, qr/studioSaveTrackCount/, 'the track count is persisted');
 like($layout, qr/studioEnsureTracksForSong/, 'a loaded song restores its own track rows');
 like($style, qr/studio_track_automation_lane/, 'an automation lane exists for the view toggle');
 like($style, qr/#studio_mixer_strips[\s\S]*overflow-x: auto/, 'the strips scroll instead of clipping');
-like($style, qr/rail|#studio_transport_panel[\s\S]*studio_controls|#studio_controls[\s\S]*right:130px/,
-	'the transport is laid out clear of the jog wheel');
+like($style, qr/#studio_controls\s*\{[^}]*right:\s*0/s,
+	'the transport controls use the panel width instead of reserving a wheel rail');
 
 # --- the pedalboard can be closed -------------------------------------------
 like($markup, qr/id="studio_pedalboard_close"/, 'the pedalboard has a close control');
@@ -127,6 +130,64 @@ like($layout, qr/studioFloatPanel\(name, position, false\)/,
 like($layout, qr/\$\(window\)\.on\('resize'[\s\S]*studioClampPanelPosition/,
 	'a resize re-clamps floating panels');
 
+# --- the docked grid, scrolling strips, resize grip and jog wheel row ------
+like($markup, qr/id="studio_grid"/, 'the four docked panels share a grid container');
+like($style, qr/grid-template-areas:\s*\n?\s*"synth tracks"\s*\n?\s*"mixer transport"/s,
+	'the grid puts synth and tracks above the strips and transport');
+like($style, qr/#studio_mixer\s*\{[^}]*grid-area:\s*mixer/s,
+	'the channel strips own the mixer cell');
+like($style, qr/#studio_transport_panel\s*\{[^}]*grid-area:\s*transport/s,
+	'the transport owns the cell beside the strips');
+like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-y:\s*auto/s,
+	'the strips panel scrolls vertically so every fader is reachable');
+like($style, qr/#studio_mixer_strips\s*\{[^}]*overflow-x:\s*auto/s,
+	'many strips still scroll sideways');
+like($layout, qr/studioSwapDockedPanels/, 'a docked panel dropped on another swaps cells');
+like($layout, qr/studioApplyPanelArea\(/, 'a panel carries its grid area');
+like($layout, qr/docked: true, area: area/, 'a docked panel saves its cell');
+
+# --- drag moves both axes and keeps the box ---------------------------------
+like($layout, qr/left: clamped\.left \+ 'px', top: clamped\.top \+ 'px'/,
+	'the drag writes both left and top');
+like($layout, qr/function studioPanelBox[\s\S]*left:[\s\S]*top:[\s\S]*width:[\s\S]*height:/s,
+	'the saved box is left, top, width and height');
+like($layout, qr/studioPersistPanelPosition\(drag\.name, studioFloatState/,
+	'the drag persists width and height with the position');
+like($layout, qr/if \(!drag\.wasFloating && e\.type == 'pointerup'\)/,
+	'only a panel that started docked can swap cells');
+
+# --- the resize grip --------------------------------------------------------
+like($markup, qr/class="studio_resize_handle" data-studio-resize="mixer"/,
+	'the channel strips have a resize grip');
+like($markup, qr/data-studio-resize="transport"/, 'the transport has a resize grip');
+like($layout, qr/'pointerdown', '\.studio_resize_handle'/,
+	'a resize starts on the grip');
+like($layout, qr/studioPanelResize/, 'the resize is tracked while the pointer moves');
+like($layout, qr/studioPersistPanelPosition\(resize\.name, studioFloatState/,
+	'the resize persists width and height');
+like($style, qr/\.studio_panel_floating \.studio_resize_handle\s*\{\s*display:\s*block/, 
+	'the grip appears only on a floated panel');
+
+# --- the jog wheel shares the transport row --------------------------------
+like($markup, qr/id="studio_controls"[\s\S]*class="studio_transport_row"[\s\S]*id="studio_jog_wheel"/s,
+	'the jog wheel sits in the transport button row');
+like($style, qr/\.studio_transport_row\s*\{[^}]*display:\s*flex/s,
+	'the buttons and wheel share one flex row');
+unlike($style, qr/#studio_jog_wheel\s*\{[^}]*right:/s,
+	'the wheel no longer hangs off the panel\'s right edge');
+
+# --- maximize fills the viewport, and a second double-press restores it -----
+like($winjs, qr/studioWindowFullSelector = '[^']*maximize_button[^']*restore_button'/,
+	'the maximize and the restore control it becomes both carry the gesture');
+like($winjs, qr/\$\(document\)\.on\('dblclick', studioWindowFullSelector/,
+	'a double-press on the maximize control is bound');
+like($winjs, qr/window_full_viewport/, 'the full-viewport state is named');
+like($winjs, qr/window-full-viewport-box/, 'the previous box is saved for the restore');
+like($style, qr/\.wind\[app="studio"\]\.window_full_viewport\s*\{[^}]*inset:\s*0 !important/s,
+	'the full-viewport state fills the screen');
+like($style, qr/\.window_full_viewport\s*\{[^}]*z-index:\s*40000 !important/s,
+	'the full-viewport state covers the dock and taskbar');
+
 # --- the help topic names the new controls ----------------------------------
 like($help, qr/'Add a track, up to 32'/, 'help names Add track and its cap');
 like($help, qr/Show automation for this track/, 'help names the automation toggle');
@@ -137,6 +198,9 @@ like($help, qr/Hide the track listing/, 'help names the track hide toggle');
 like($help, qr/Dock the tracks/, 'help names the Dock control');
 like($help, qr/Close the pedalboard/, 'help names the pedalboard close');
 like($help, qr/Every track has a compact panel/, 'help describes the per-track panel');
+like($help, qr/Drag to resize this panel/, 'help names the floated panel resize grip');
+like($help, qr/sits beside the strips/, 'help describes the transport beside the strips');
+like($help, qr/jog wheel shares the transport/, 'help describes the jog wheel in the button row');
 
 # --- the old fixed count is gone --------------------------------------------
 unlike($sheet, qr/\|\|\s*4\b/, 'the page no longer falls back to four tracks');

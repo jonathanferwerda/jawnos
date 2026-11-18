@@ -5,6 +5,7 @@
 
 var STUDIO_MAX_TRACKS = 32;
 var studioPanelDrag = null;
+var studioPanelResize = null;
 var studioLayoutQuiet = false;
 
 function studioLayoutText(text) {
@@ -71,6 +72,30 @@ function studioApplyHideSettings() {
 
 // ---- floating panels -------------------------------------------------------
 
+// The four docked panels live in #studio_grid's named cells. A panel keeps its
+// area while floated, so Dock can send it home; dropping one docked panel on
+// another swaps their areas instead of restacking them.
+var studioPanelDefaultArea = {
+	synth: 'synth',
+	tracks: 'tracks',
+	mixer: 'mixer',
+	transport: 'transport'
+};
+
+function studioPanelArea(name) {
+	var panel = studioPanelElement(name);
+	return panel.attr('data-studio-area') || studioPanelDefaultArea[name] || name;
+}
+
+function studioApplyPanelArea(name, area, persist) {
+	var panel = studioPanelElement(name);
+	if (!panel.length || !area) { return; }
+	panel.attr('data-studio-area', area).css('grid-area', area);
+	if (persist) {
+		studioPersistPanelPosition(name, { docked: true, area: area });
+	}
+}
+
 function studioPersistPanelPosition(name, value) {
 	mixer = mixer || {};
 	mixer.settings = mixer.settings || {};
@@ -80,18 +105,53 @@ function studioPersistPanelPosition(name, value) {
 	studioSaveSettings([{ setting: setting, value: text }]);
 }
 
-function studioClampPanelPosition(panel, left, top) {
+function studioPanelSize(panel) {
+	return {
+		width: parseFloat(panel.css('width')) || panel.outerWidth() || 240,
+		height: parseFloat(panel.css('height')) || panel.outerHeight() || 160
+	};
+}
+
+function studioPanelBox(panel) {
+	var size = studioPanelSize(panel);
+	return {
+		left: parseFloat(panel.css('left')) || 0,
+		top: parseFloat(panel.css('top')) || 0,
+		width: size.width,
+		height: size.height
+	};
+}
+
+// A float keeps the cell it came from, so a reload followed by Dock does not
+// silently send a swapped panel back to its default cell.
+function studioFloatState(name, panel) {
+	var state = studioPanelBox(panel);
+	state.area = studioPanelArea(name);
+	return state;
+}
+
+function studioClampPanelBox(panel, left, top, width, height) {
 	var studio = $('#studio')[0];
-	if (!studio) { return { left: left, top: top }; }
+	if (!studio) { return { left: left, top: top, width: width, height: height }; }
 	var rect = studio.getBoundingClientRect();
-	var width = parseFloat(panel.css('width')) || panel.outerWidth() || 240;
-	var height = parseFloat(panel.css('height')) || panel.outerHeight() || 160;
+	var minWidth = 180;
+	var minHeight = 120;
+	width = Math.max(minWidth, Math.min(width || minWidth, Math.max(minWidth, rect.width)));
+	height = Math.max(minHeight, Math.min(height || minHeight, Math.max(minHeight, rect.height)));
 	var maxLeft = Math.max(0, rect.width - width);
 	var maxTop = Math.max(0, rect.height - height);
 	return {
 		left: Math.max(0, Math.min(left, maxLeft)),
-		top: Math.max(0, Math.min(top, maxTop))
+		top: Math.max(0, Math.min(top, maxTop)),
+		width: width,
+		height: height
 	};
+}
+
+function studioClampPanelPosition(panel, left, top) {
+	var size = studioPanelSize(panel);
+	var box = studioClampPanelBox(panel, left, top, size.width, size.height);
+	return { left: box.left, top: box.top };
 }
 
 function studioFloatPanel(name, position, persist) {
@@ -103,40 +163,57 @@ function studioFloatPanel(name, position, persist) {
 		panel.data('studio-home-parent', panel.parent()[0] || $('#studio')[0]);
 		panel.data('studio-home-next', panel.next()[0] || null);
 		panel.addClass('studio_panel_floating');
+		// A panel floated at the window's full width has nowhere to move
+		// sideways; keep it narrower than the desk so both axes are free.
+		var width = Math.min(rect.width > 20 ? rect.width : 320, Math.max(180, studioRect.width * 0.7));
+		var height = rect.height > 20 ? rect.height : 200;
+		var box = studioClampPanelBox(panel,
+			Math.max(0, rect.left - studioRect.left),
+			Math.max(0, rect.top - studioRect.top),
+			width, height);
 		panel.css({
-			left: Math.max(0, rect.left - studioRect.left) + 'px',
-			top: Math.max(0, rect.top - studioRect.top) + 'px'
+			left: box.left + 'px',
+			top: box.top + 'px',
+			width: box.width + 'px',
+			height: box.height + 'px'
 		});
-		if (rect.width > 20) { panel.css('width', rect.width + 'px'); }
-		if (name != 'synth' && rect.height > 20) { panel.css('height', rect.height + 'px'); }
 		$('#studio').append(panel);
 	}
 	if (position && typeof position.left == 'number' && typeof position.top == 'number') {
-		var clamped = studioClampPanelPosition(panel, position.left, position.top);
-		panel.css({ left: clamped.left + 'px', top: clamped.top + 'px' });
+		var current = studioPanelSize(panel);
+		if (position.area) { studioApplyPanelArea(name, position.area, false); }
+		var placed = studioClampPanelBox(panel, position.left, position.top,
+			typeof position.width == 'number' ? position.width : current.width,
+			typeof position.height == 'number' ? position.height : current.height);
+		panel.css({
+			left: placed.left + 'px',
+			top: placed.top + 'px',
+			width: placed.width + 'px',
+			height: placed.height + 'px'
+		});
 	}
 	if (persist) {
-		studioPersistPanelPosition(name, {
-			left: parseFloat(panel.css('left')) || 0,
-			top: parseFloat(panel.css('top')) || 0
-		});
+		studioPersistPanelPosition(name, studioFloatState(name, panel));
 	}
 	return panel;
 }
 
-function studioDockPanel(name) {
+function studioDockPanel(name, persist) {
 	var panel = studioPanelElement(name);
 	if (!panel.length || !panel.hasClass('studio_panel_floating')) { return; }
 	var parent = panel.data('studio-home-parent');
 	var next = panel.data('studio-home-next');
-	panel.removeClass('studio_panel_floating studio_panel_dragging')
+	panel.removeClass('studio_panel_floating studio_panel_dragging studio_panel_resizing')
 		.css({ left: '', top: '', width: '', height: '', position: '' });
 	if (parent && $.contains(document.documentElement, parent)) {
 		if (next && next.parentNode === parent) { $(next).before(panel); }
 		else { $(parent).append(panel); }
 	}
-	else { $('#studio').append(panel); }
-	studioPersistPanelPosition(name, { docked: true });
+	else { $('#studio_grid').append(panel); }
+	studioApplyPanelArea(name, studioPanelArea(name), false);
+	if (persist !== false) {
+		studioPersistPanelPosition(name, { docked: true, area: studioPanelArea(name) });
+	}
 }
 
 function studioApplyPanelPositions() {
@@ -146,7 +223,8 @@ function studioApplyPanelPositions() {
 		var position = null;
 		try { position = JSON.parse(raw); } catch (e) { return; }
 		if (!position) { return; }
-		if (position.docked) { studioDockPanel(name); }
+		if (position.area) { studioApplyPanelArea(name, position.area, false); }
+		if (position.docked) { studioDockPanel(name, false); }
 		else if (typeof position.left == 'number' && typeof position.top == 'number') {
 			studioFloatPanel(name, position, false);
 		}
@@ -158,9 +236,15 @@ function studioApplyPanelPositions() {
 $(window).on('resize', function () {
 	$('.studio_panel_floating').each(function () {
 		var panel = $(this);
-		var position = studioClampPanelPosition(panel,
-			parseFloat(panel.css('left')) || 0, parseFloat(panel.css('top')) || 0);
-		panel.css({ left: position.left + 'px', top: position.top + 'px' });
+		var box = studioPanelBox(panel);
+		var position = studioClampPanelPosition(panel, box.left, box.top);
+		var fitted = studioClampPanelBox(panel, position.left, position.top, box.width, box.height);
+		panel.css({
+			left: fitted.left + 'px',
+			top: fitted.top + 'px',
+			width: fitted.width + 'px',
+			height: fitted.height + 'px'
+		});
 	});
 });
 
@@ -171,6 +255,37 @@ function studioApplyLayoutSettings() {
 	studioUpdateTrackCount();
 }
 
+// ---- drag, resize and the docked grid --------------------------------------
+
+// The docked panel under the pointer, if any. Used on pointerup: a docked panel
+// dropped on another cell swaps with it; dropped anywhere else it stays a float.
+function studioDockedPanelUnder(name, original) {
+	if (!original) { return null; }
+	var target = null;
+	var x = original.clientX;
+	var y = original.clientY;
+	$.each(studioPanelSelectors, function (other) {
+		if (other == name) { return; }
+		var panel = studioPanelElement(other);
+		if (!panel.length || panel.hasClass('studio_panel_floating') || !panel.is(':visible')) { return; }
+		var rect = panel[0].getBoundingClientRect();
+		if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+			target = other;
+			return false;
+		}
+	});
+	return target;
+}
+
+function studioSwapDockedPanels(name, target) {
+	var from = studioPanelArea(name);
+	var to = studioPanelArea(target);
+	if (!from || !to || from == to) { return; }
+	studioDockPanel(name, false);
+	studioApplyPanelArea(name, to, true);
+	studioApplyPanelArea(target, from, true);
+}
+
 // A pointer drag moves a floating panel; pressing the handle on a docked panel
 // detaches it at its current place first, so the drag begins where you grabbed.
 $(document).on('pointerdown', '.studio_drag_handle', function (e) {
@@ -178,12 +293,13 @@ $(document).on('pointerdown', '.studio_drag_handle', function (e) {
 	var name = $(this).attr('data-studio-drag');
 	var panel = studioPanelElement(name);
 	if (!panel.length) { return; }
+	var wasFloating = panel.hasClass('studio_panel_floating');
 	studioFloatPanel(name);
-	var studioRect = $('#studio')[0].getBoundingClientRect();
 	var rect = panel[0].getBoundingClientRect();
 	studioPanelDrag = {
 		name: name,
 		panel: panel,
+		wasFloating: wasFloating,
 		dx: e.originalEvent.clientX - rect.left,
 		dy: e.originalEvent.clientY - rect.top
 	};
@@ -192,25 +308,70 @@ $(document).on('pointerdown', '.studio_drag_handle', function (e) {
 	e.preventDefault();
 });
 
+$(document).on('pointerdown', '.studio_resize_handle', function (e) {
+	if (e.originalEvent && e.originalEvent.button) { return; }
+	var name = $(this).attr('data-studio-resize');
+	var panel = studioPanelElement(name);
+	if (!panel.length || !panel.hasClass('studio_panel_floating')) { return; }
+	var rect = panel[0].getBoundingClientRect();
+	studioPanelResize = {
+		name: name,
+		panel: panel,
+		x: e.originalEvent.clientX,
+		y: e.originalEvent.clientY,
+		left: parseFloat(panel.css('left')) || 0,
+		top: parseFloat(panel.css('top')) || 0,
+		width: rect.width,
+		height: rect.height
+	};
+	panel.addClass('studio_panel_resizing');
+	try { this.setPointerCapture(e.originalEvent.pointerId); } catch (err) {}
+	e.preventDefault();
+	e.stopPropagation();
+});
+
 $(document).on('pointermove', function (e) {
+	var original = e.originalEvent || {};
+	if (studioPanelResize) {
+		var box = studioClampPanelBox(studioPanelResize.panel,
+			studioPanelResize.left, studioPanelResize.top,
+			studioPanelResize.width + (original.clientX - studioPanelResize.x),
+			studioPanelResize.height + (original.clientY - studioPanelResize.y));
+		studioPanelResize.panel.css({
+			left: box.left + 'px',
+			top: box.top + 'px',
+			width: box.width + 'px',
+			height: box.height + 'px'
+		});
+		e.preventDefault();
+		return;
+	}
 	if (!studioPanelDrag) { return; }
 	var studioRect = $('#studio')[0].getBoundingClientRect();
-	var left = e.originalEvent.clientX - studioRect.left - studioPanelDrag.dx;
-	var top = e.originalEvent.clientY - studioRect.top - studioPanelDrag.dy;
+	var left = original.clientX - studioRect.left - studioPanelDrag.dx;
+	var top = original.clientY - studioRect.top - studioPanelDrag.dy;
 	var clamped = studioClampPanelPosition(studioPanelDrag.panel, left, top);
 	studioPanelDrag.panel.css({ left: clamped.left + 'px', top: clamped.top + 'px' });
 	e.preventDefault();
 });
 
-$(document).on('pointerup pointercancel', function () {
+$(document).on('pointerup pointercancel', function (e) {
+	if (studioPanelResize) {
+		var resize = studioPanelResize;
+		studioPanelResize = null;
+		resize.panel.removeClass('studio_panel_resizing');
+		studioPersistPanelPosition(resize.name, studioFloatState(resize.name, resize.panel));
+		return;
+	}
 	if (!studioPanelDrag) { return; }
 	var drag = studioPanelDrag;
 	studioPanelDrag = null;
 	drag.panel.removeClass('studio_panel_dragging');
-	studioPersistPanelPosition(drag.name, {
-		left: parseFloat(drag.panel.css('left')) || 0,
-		top: parseFloat(drag.panel.css('top')) || 0
-	});
+	if (!drag.wasFloating && e.type == 'pointerup') {
+		var target = studioDockedPanelUnder(drag.name, e.originalEvent);
+		if (target) { studioSwapDockedPanels(drag.name, target); return; }
+	}
+	studioPersistPanelPosition(drag.name, studioFloatState(drag.name, drag.panel));
 });
 
 $(document).on('click', '.studio_hide_toggle', function () {
