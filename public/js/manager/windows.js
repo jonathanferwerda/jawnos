@@ -681,7 +681,9 @@ function panelTopLimit() {
 
 // The foot of the screen a window in a half or maximized state leaves free: a
 // bottom taskbar first, then the strip a bottom dock keeps on screen while it is
-// tucked (its search, or the sliver the pointer rests on to call it back).
+// tucked (its search, or the sliver the pointer rests on to call it back). A
+// see-through dock that keeps the search elsewhere keeps no strip, so the window
+// may run to the foot and sit under its faces.
 function windowBottomClearance() {
 	var bar = (typeof jawnosTaskbarEdge == 'function') ? jawnosTaskbarEdge('bottom') : 0;
 	if (typeof jawnosDockWindowReserve == 'function') { bar += jawnosDockWindowReserve(); }

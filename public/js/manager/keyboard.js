@@ -841,13 +841,16 @@ function jawnosDockIconsSet(state) {
 }
 // A see-through dock: the faces and the search keep their own backing, the
 // pill's slab steps aside. The class is applied to the live dock at once and
-// the value is written away, so a reload comes back the same.
+// the value is written away, so a reload comes back the same. A window already
+// wearing a half or a maximize takes the new foot at once: the menu does not run
+// the whole bars pass, so it asks the windows itself.
 function jawnosDockTransparentSet(state) {
 	state = state == 'on' ? 'on' : 'off';
 	if (typeof jawnosBars != 'undefined') { jawnosBars.transparent = state; }
 	var home = $('#pseudonym_home');
 	if (home.length) { home.toggleClass('dock_transparent', state == 'on'); }
 	if (typeof jawnosTaskbarSave == 'function') { jawnosTaskbarSave('dock_transparent', state); }
+	if (typeof jawnosWindowFootApply == 'function') { jawnosWindowFootApply(); }
 }
 
 // The dock's menu. It holds only the dock's own rows - Edit dock, Dock

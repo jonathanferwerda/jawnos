@@ -49,7 +49,9 @@ function windowHalfRect(side) {
 	// leaves the dock's reach on screen instead of burying it - and the window's
 	// own foot controls, which sit at its very bottom, clear the dock instead of
 	// hiding under it. While the search rides the dock its panel may be out, so
-	// the foot also stops on the dock's own top edge.
+	// the foot also stops on the dock's own top edge. A see-through dock that keeps
+	// the search elsewhere leaves no strip, so nothing is added for it and the
+	// half runs under its faces.
 	var foot = $(window).height() - windowBottomClearance();
 	var search_in_dock = $('#search_entanglement').closest('#pseudonym_home').length > 0;
 	var dock_on_bottom = (typeof jawnosDockTop == 'function' && !jawnosDockTop())
@@ -197,34 +199,62 @@ function windowMaximizer(timestamp, app) {
 	var win = $('#window_' + timestamp );
 	$('#window_' + timestamp + '_restore').show();
 	$('#window_' + timestamp + '_maximize').hide();
-	// A maximized window fills the space between the top limit and the foot
-	// clearance - a bottom taskbar and the strip a bottom dock keeps on screen - so
-	// no band of desktop shows beneath it and its own foot controls clear the dock.
-	// The old fixed percentages left that band (and overran the foot on a short
-	// screen). The phone keeps its own shorter face.
-	var hidden = (typeof jawnosDockIconsHidden == 'function') && jawnosDockIconsHidden();
-	if (windowPhoneChecker()) {
-		var tall = hidden ? Math.max(200, $(window).height() - windowTopLimit() - windowBottomClearance() - 6) + 'px' : null;
-		win.css({ 
-			'position':'fixed', 
-			'height': tall || '80%', 
-			'width': '98%',
-			'left': '0px',
-			'top': windowTopLimit()
-		});
-	}
-	else {
-		win.css({ 
-			'position':'fixed', 
-			'height': Math.max(200, $(window).height() - windowTopLimit() - windowBottomClearance()) + 'px', 
-			'width': '100%',
-			'left': '0px',
-			'top': windowTopLimit()
-		});
-	}
+	var box = windowMaxRect();
+	win.css({ 
+		'position':'fixed', 
+		'height': box.height, 
+		'width': box.width,
+		'left': box.left,
+		'top': box.top
+	});
 	$('#window_contents_' + timestamp ).css({ 'width': '100%' });
 	windowDimensionSetter($('#window_' + timestamp ));
 	if (typeof jawnosWindowEffect == 'function') { jawnosWindowEffect(win, 'stretch'); }
+}
+
+// The box a maximized window takes: from the top limit to the foot clearance - a
+// bottom taskbar and the strip a bottom dock keeps on screen - so no band of
+// desktop shows beneath it and its own foot controls clear the dock. A
+// see-through dock that keeps the search elsewhere leaves no strip, so the
+// window runs to the foot of the screen under it. The old fixed percentages left
+// that band (and overran the foot on a short screen). The phone keeps its own
+// shorter face: a share of the desk unless its icon row is hidden, when the foot
+// is measured. windowMaximizer applies this box and a bar change re-fits with it,
+// so the two can never disagree.
+function windowMaxRect() {
+	var top = windowTopLimit();
+	if (windowPhoneChecker()) {
+		var hidden = (typeof jawnosDockIconsHidden == 'function') && jawnosDockIconsHidden();
+		var tall = hidden ? Math.max(200, $(window).height() - top - windowBottomClearance() - 6) : null;
+		return { left: '0px', top: top, width: '98%', height: tall ? tall + 'px' : '80%' };
+	}
+	return {
+		left: '0px',
+		top: top,
+		width: '100%',
+		height: Math.max(200, $(window).height() - top - windowBottomClearance()) + 'px'
+	};
+}
+// The foot a window owns can move without the window being touched: the dock's
+// Transparent row, the search moving in or out of the dock, the taskbar's height
+// or edge. A half or maximized window is re-fitted through the same helpers that
+// placed it, so its foot follows the new clearance instead of keeping the screen
+// the desk had when it was snapped. A window whose foot is already right is left
+// alone, and a window filling the whole glass keeps its own box.
+function jawnosWindowFootApply() {
+	$('.wind').each(function () {
+		var win = $(this);
+		var view = win.attr('view');
+		if (view != 'max' && view != 'left' && view != 'right') { return; }
+		if (!win.is(':visible') || win.hasClass('window_full_viewport')) { return; }
+		var wanted = (view == 'max') ? windowMaxRect().height : windowHalfRect(view).height;
+		var current = (win[0] && win[0].style) ? win[0].style.height : '';
+		var a = parseFloat(wanted);
+		var b = parseFloat(current);
+		if (isFinite(a) && isFinite(b) && Math.abs(a - b) < 0.5) { return; }
+		if (view == 'max') { windowMaximizer(win.attr('timestamp'), win.attr('app')); }
+		else { windowHalfski(win, view); }
+	});
 }
 
 function windowRestore(timestamp,app) {

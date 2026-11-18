@@ -20,10 +20,12 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use File::Temp qw(tempfile);
 use RepoSource;
 
 my $root = repo_root();
 my $dock = js_source('public/js/manager/keyboard.js');
+my $bars = js_source('public/js/manager/taskbar.js');
 my $css  = read_file("$root/public/css/manager.css");
 
 # --- the menu is the dock's own ---------------------------------------------
@@ -60,6 +62,10 @@ like($dock, qr/function jawnosDockTransparentSet\(state\)/,
 like($dock, qr/jawnosBars\.transparent = state/, 'it moves the live setting');
 like($dock, qr/jawnosTaskbarSave\('dock_transparent', state\)/,
 	'and writes the dock_transparent setting');
+like($dock, qr/jawnosWindowFootApply\(\)/,
+	'the Transparent row re-fits a half or maximized window at once');
+like($bars, qr/if \(typeof jawnosWindowFootApply == 'function'\) \{ jawnosWindowFootApply\(\); \}/,
+	'a bars pass re-fits them too (search home, taskbar height or edge)');
 
 # --- Add items is a flyout beside the menu ----------------------------------
 like($dock, qr/function jawnosDockFlyoutToggle\(row, menu\)/,
@@ -234,5 +240,99 @@ like($steps, qr/Open windows/, 'a step names Open windows');
 like($steps, qr/Transparent/, 'a step names Transparent');
 like($steps, qr/those choices change the dock alone/, 'a step says Add items changes the dock alone');
 like($steps, qr/Edit dock and drag/, 'a step reorders the row');
+
+# --- a see-through dock lets a pinned window reach the foot -----------------
+# The row's faces carry their own backing, so a transparent bottom dock with the
+# search kept elsewhere needs no strip on screen: a half or maximized window may
+# run to the foot and sit under it. A dock that holds the search keeps its strip.
+like($bars, qr/function jawnosDockUnderWindow\(\)/, 'the see-through bottom dock is its own question');
+like($bars, qr/if \(jawnosBars\.transparent != 'on'\) \{ return false; \}/,
+	'only a transparent dock qualifies');
+like($bars, qr/if \(jawnosBars\.dock != 'bottom'\) \{ return false; \}/,
+	'and only on the bottom edge');
+like($bars, qr/return !\$\('#search_entanglement'\)\.closest\('#pseudonym_home'\)\.length;/,
+	'with the search kept elsewhere');
+like($bars, qr/if \(jawnosDockUnderWindow\(\)\) \{ return 0; \}/,
+	'the window reserve is nothing then, so the window runs to the foot');
+
+my $node = `command -v node 2>/dev/null`;
+chomp $node if defined $node;
+SKIP: {
+	skip 'node is needed to play the dock reserve', 1 unless $node && -x $node;
+
+	my ($fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $fh <<'JS';
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+
+let search_in_dock = false;
+const strip = 47;
+
+function chain() {
+	return {
+		length: 0,
+		on: function () { return this; },
+		ready: function () { return this; },
+		is: function () { return false; },
+		closest: function () { return { length: search_in_dock ? 1 : 0 }; },
+		toggleClass: function () { return this; },
+		attr: function () { return ''; },
+		css: function () { return this; },
+		outerHeight: function () { return 0; }
+	};
+}
+function $(sel) { return chain(); }
+
+const sandbox = {
+	window: { width: 1000, height: 800 },
+	document: { documentElement: { style: { setProperty: function () {} } } },
+	$: $,
+	setTimeout: setTimeout,
+	console: console,
+	pseudonymDockStrip: function () { return strip; }
+};
+vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
+
+let failures = 0;
+function eq(name, got, want) {
+	if (got === want) { console.log('ok - ' + name); }
+	else { failures++; console.log('not ok - ' + name + ': ' + got + ' != ' + want); }
+}
+
+const bars = sandbox.jawnosBars;
+bars.dock = 'bottom';
+bars.transparent = 'off';
+eq('an opaque bottom dock keeps its sliver', sandbox.jawnosDockWindowReserve(), strip);
+eq('and is not passed beneath', sandbox.jawnosDockUnderWindow(), false);
+
+bars.transparent = 'on';
+eq('a see-through bottom dock with the search elsewhere keeps nothing',
+	sandbox.jawnosDockWindowReserve(), 0);
+eq('so the window may run to the foot under it', sandbox.jawnosDockUnderWindow(), true);
+
+search_in_dock = true;
+eq('a see-through dock holding the search keeps its strip',
+	sandbox.jawnosDockWindowReserve(), strip);
+eq('and the window stops above it', sandbox.jawnosDockUnderWindow(), false);
+
+search_in_dock = false;
+bars.dock = 'top';
+eq('a top dock keeps nothing at the foot', sandbox.jawnosDockWindowReserve(), 0);
+bars.dock = 'floating';
+eq('a floating dock keeps nothing at the foot', sandbox.jawnosDockWindowReserve(), 0);
+bars.dock = 'hidden';
+eq('a hidden dock keeps nothing at the foot', sandbox.jawnosDockWindowReserve(), 0);
+
+process.exit(failures ? 1 : 0);
+JS
+	close $fh;
+
+	my $out = `$node "$harness" "$root/public/js/manager/taskbar.js" 2>&1`;
+	my $rc = $? >> 8;
+	diag($out) if $rc;
+	is($rc, 0, 'the dock reserve answers the see-through case');
+}
 
 done_testing();

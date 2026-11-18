@@ -275,4 +275,122 @@ JS
 	is($setter_rc, 0, 'a transform does not change the half a window wears');
 }
 
+# --- a bar change re-fits the window that owns the foot ---------------------
+# The dock's Transparent row and a bars pass both call one helper, which re-fits
+# only a visible half or maximized window through the helper that placed it, and
+# leaves a window whose foot is already right alone.
+like($fit, qr/function windowMaxRect\(\)/, 'the maximized box is one helper');
+like($fit, qr/var box = windowMaxRect\(\);/, 'the maximizer applies that box');
+like($fit, qr/function jawnosWindowFootApply\(\)/, 'a bar change has one re-fit');
+like($fit, qr/if \(view != 'max' && view != 'left' && view != 'right'\) \{ return; \}/,
+	'only a half or a maximize owns the foot');
+like($fit, qr/if \(!win\.is\(':visible'\) \|\| win\.hasClass\('window_full_viewport'\)\) \{ return; \}/,
+	'a hidden or whole-glass window keeps its box');
+like($fit, qr/windowMaximizer\(win\.attr\('timestamp'\), win\.attr\('app'\)\)/,
+	'a maximized window takes its box again');
+like($fit, qr/else \{ windowHalfski\(win, view\); \}/, 'a half takes its box again');
+
+SKIP: {
+	skip 'node is needed to play the foot re-fit', 1 unless $node && -x $node;
+
+	my ($ffh, $foot_harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $ffh <<'JS';
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+
+function El(opts) {
+	this.length = 1;
+	this.attrs = { view: opts.view, timestamp: opts.timestamp || '7', app: opts.app || 'app' };
+	this.visible = opts.visible !== false;
+	this.full = !!opts.full;
+	this[0] = { style: { height: opts.height } };
+}
+El.prototype.attr = function (k, v) {
+	if (v === undefined) { return this.attrs[k]; }
+	this.attrs[k] = v;
+	return this;
+};
+El.prototype.is = function () { return this.visible; };
+El.prototype.hasClass = function () { return this.full; };
+
+const windows = [];
+function $(sel) {
+	if (sel === '.wind') {
+		return {
+			length: windows.length,
+			each: function (fn) { windows.forEach(function (w, i) { fn.call(w, i, w); }); }
+		};
+	}
+	if (sel instanceof El) { return sel; }
+	return { length: 0, on: function () { return this; }, closest: function () { return this; } };
+}
+
+const calls = { max: [], half: [] };
+const sandbox = {
+	window: { width: 1600, height: 1000 },
+	document: {},
+	$: $,
+	Math: Math,
+	JSON: JSON,
+	console: console,
+	windowPhoneChecker: function () { return false; },
+	reservedSpots: { header: 0 },
+	clothesLinePos: { exists: 0 },
+	clothesLineHeight: 0
+};
+vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
+
+// stand in for the two appliers, so a call is visible and the box it writes is
+// the box the next pass must read
+sandbox.windowMaxRect = function () { return { height: '1000px' }; };
+sandbox.windowHalfRect = function (view) { return { height: view == 'left' ? 960 : 970 }; };
+sandbox.windowMaximizer = function (ts, app) {
+	calls.max.push(ts + '/' + app);
+	windows.forEach(function (w) {
+		if (w.attrs.timestamp == ts && w.attrs.app == app && w.attrs.view == 'max') { w[0].style.height = '1000px'; }
+	});
+};
+sandbox.windowHalfski = function (w, view) {
+	calls.half.push(view);
+	w[0].style.height = (view == 'left') ? '960px' : '970px';
+};
+
+let failures = 0;
+function eq(name, got, want) {
+	if (got === want) { console.log('ok - ' + name); }
+	else { failures++; console.log('not ok - ' + name + ': ' + got + ' != ' + want); }
+}
+
+windows.push(
+	new El({ view: 'max', height: '940px' }),
+	new El({ view: 'max', height: '1000px' }),
+	new El({ view: 'left', height: '900px' }),
+	new El({ view: 'right', height: '970px' }),
+	new El({ view: '', height: '500px' }),
+	new El({ view: 'left', height: '900px', visible: false }),
+	new El({ view: 'left', height: '900px', full: true }),
+	new El({ view: 'minimized', height: '900px' })
+);
+
+sandbox.jawnosWindowFootApply();
+eq('the stale maximize takes its box again', calls.max.join(','), '7/app');
+eq('and only the stale half does', calls.half.join(','), 'left');
+
+calls.max = [];
+calls.half = [];
+sandbox.jawnosWindowFootApply();
+eq('a second pass changes nothing', calls.max.length + calls.half.length, 0);
+
+process.exit(failures ? 1 : 0);
+JS
+	close $ffh;
+
+	my $foot_out = `$node "$foot_harness" "$root/public/js/manager/windows/02_fit.js" 2>&1`;
+	my $foot_rc = $? >> 8;
+	diag($foot_out) if $foot_rc;
+	is($foot_rc, 0, 'a bar change re-fits the half and the maximize');
+}
+
 done_testing();

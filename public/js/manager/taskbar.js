@@ -269,14 +269,27 @@ function jawnosDockLeft() {
 function jawnosDockIconsHidden() {
 	return jawnosBars.icons == 'hidden';
 }
+// A see-through dock on the bottom edge with the search kept elsewhere is only
+// its row of faces, and each face carries its own backing: no part of the slab
+// needs the foot of the screen, so a half or maximized window may run all the
+// way down and sit under the row. A dock that holds the search keeps its strip
+// (the input and its panel must stay reachable), and a hidden, floating or
+// raised dock is not on the bottom edge at all.
+function jawnosDockUnderWindow() {
+	if (jawnosBars.transparent != 'on') { return false; }
+	if (jawnosBars.dock != 'bottom') { return false; }
+	return !$('#search_entanglement').closest('#pseudonym_home').length;
+}
 // What a window in a half or maximized state leaves at the foot for the dock:
 // the strip a bottom dock keeps on screen while it is tucked - the search while
 // the input rides the dock, otherwise the sliver the pointer rests on to call the
 // icons back. A window that reached the foot would bury that strip under its own
 // backing, and its own foot controls (the music player's transport row, say)
-// under the dock. Nothing for any other edge, or a hidden dock.
+// under the dock. Nothing for any other edge, or a hidden dock, and nothing for
+// a see-through dock the window may pass beneath.
 function jawnosDockWindowReserve() {
 	if (jawnosBars.dock == 'hidden' || jawnosBars.dock == 'floating' || jawnosSideDock() || jawnosDockTop()) { return 0; }
+	if (jawnosDockUnderWindow()) { return 0; }
 	return (typeof pseudonymDockStrip == 'function') ? pseudonymDockStrip() : 0;
 }
 function jawnosSideSearchVisible() {
@@ -597,6 +610,10 @@ function jawnosBarsApply() {
 	// bar stands, which workspace is showing, and the edit handles. It runs last
 	// so the legacy edge rules above cannot pull a floating bar back to an edge.
 	if (typeof jawnosShellApply == 'function') { jawnosShellApply(); }
+	// a bar change can move the foot a window owns (a dock's transparency, the
+	// search's home, the taskbar's height or edge), so a half or maximized window
+	// takes the new clearance now rather than keeping the old one
+	if (typeof jawnosWindowFootApply == 'function') { jawnosWindowFootApply(); }
 }
 
 // The menu hangs from the button that opens it, wherever the bars have put that
