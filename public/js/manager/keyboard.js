@@ -1343,10 +1343,14 @@ function pseudonymFreeSpaceFinder(type) {
 		size = Math.max(floor, Math.min(full, size));
 		var total = (size * count) + (gap * (count - 1));
 		var start = Math.round((w - total) / 2);
-		// a dock on the top edge hangs its row from its own top - riding down with
-		// the home when the search strip calls it - and the bottom one keeps its
-		// 15px from the edge, raised over the taskbar when the two share the bottom
-		var dock_row_top = Math.round(numeral(home.css('top')).value()) + 15;
+		// a dock on the top edge hangs its row from its resting top - not from an
+		// inline top a tuck has already moved, or a layout pass while tucked would
+		// place the row above the edge and the reveal would pop it back. The
+		// bottom one keeps its 15px from the edge, raised over the taskbar when
+		// the two share the bottom
+		var row_home_top = (dock_top && typeof jawnosDockTopOffset == 'function')
+			? jawnosDockTopOffset() : numeral(home.css('top')).value();
+		var dock_row_top = Math.round(row_home_top) + 15;
 
 		$.each(visible, function(i,el) {
 			$(el).css({
@@ -1414,9 +1418,23 @@ function pseudonymFreeSpaceFinder(type) {
 	else {
 		home.show();
 	}
-	// a home that is tucked away takes its icons with it
-	if (numeral(home.css('bottom')).value() < 0) {
-		$('.pseudonym').hide();
+	// A row dock's faces are fixed boxes, so a tuck has to shift them explicitly
+	// (pseudonymDockFacesShift). The hider sets that shift with its edge move; a
+	// later layout pass - a resize, a bar change - recomputes it from the tucked
+	// inline edge, or clears it now that the home is revealed. Reading the inline
+	// edge, not the computed one, keeps a transition mid-flight out of the
+	// answer. The side dock hides its own tiles as it slides.
+	if (!dock_side && typeof pseudonymDockFacesShift == 'function') {
+		var row_style = home[0] ? home[0].style : null;
+		var tucked_edge = row_style ? parseFloat(dock_top ? row_style.top : row_style.bottom) : NaN;
+		if (isFinite(tucked_edge) && tucked_edge < 0) {
+			var strip_now = (typeof pseudonymDockStrip == 'function') ? pseudonymDockStrip() : 0;
+			var home_h = home.outerHeight();
+			pseudonymDockFacesShift(dock_top ? Math.min(0, strip_now - home_h) : Math.max(0, home_h - strip_now));
+		}
+		else {
+			pseudonymDockFacesShift(0);
+		}
 	}
 	// the search: sized by the dock while it rides there in a row, and nudged
 	// there to sit level with the icons; the taskbar centres its own items, so a

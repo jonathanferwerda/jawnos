@@ -110,6 +110,10 @@ my $css = read_file(root() . '/public/css/manager.css');
 like($menu_js, qr/jawnosWindowMotionAllowed/, 'the menu motion obeys the shared level and reduced-motion gate');
 like($menu_js, qr/jawnosStartMenuUnfold\(\$\('#start_menu'\), st\)/,
 	'the render unfolds the panel it has just shown and placed');
+like($menu_js, qr/var was_open = jawnosStartMenuOpen\(\$\('#start_menu'\)\);/,
+	'the render remembers whether the panel was already open');
+like($menu_js, qr/if \(!was_open\) \{ jawnosStartMenuUnfold/,
+	'so a tab press swaps the view without replaying the open motion');
 like($menu_js, qr/function jawnosStartMenuOrigin\(below, x\)/, 'the unfold origin is one pure geometry');
 like($menu_js, qr/jawnosStartMenuFold\(start_menu, st\)/,
 	'the closer folds the panel rather than hiding it outright');

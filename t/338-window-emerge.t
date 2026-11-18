@@ -590,6 +590,15 @@ check('an app with no place still cascades',
 	unpinned.left === 0 && unpinned.top === 54
 	&& unpinned.width === 480 && unpinned.height === 446);
 
+// A desk with no top bar has a limit of 0, but windowMaker still pulls a new
+// window out of the 40px top strip after the fit; the preview must land there.
+sandbox.windowTiledAnchor = function () { return { left: 0, top: 0 }; };
+viewWidth = 1366;
+viewHeight = 768;
+const laptop = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('a cascade that starts at 0 lands on the desk\'s 40px strip',
+	laptop.left === 0 && laptop.top === 40);
+
 // a phone's pile steps by the bar's outer height less its border; the count is
 // the windows already on the desk plus presses still in flight
 phone = true;
@@ -607,8 +616,10 @@ winds.push(new El('two'));
 const phone_2 = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
 check('a phone preview still uses the layout viewport',
 	phone_0.width === 412 && phone_0.height === 652);
+check('a phone preview lands below the desk\'s 40px top strip, as windowMaker moves it',
+	phone_0.top === 40);
 check('the phone pile steps by vAdvance',
-	phone_0.top === 0 && phone_1.top === 42 && phone_2.top === 84);
+	phone_1.top === 42 && phone_2.top === 84);
 winds.length = 1;
 sandbox.windowTiledPending = { pending: { stack: '0', at: Date.now(), slot: 0 } };
 const phone_pending = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
@@ -764,8 +775,9 @@ check('the window takes the preview', sandbox.jawnosWindowEmerge(win) === true);
 check('the real window fades in exactly once', win.animations.length === 1);
 const retarget = ghost.el.animations[ghost.el.animations.length - 1];
 check('the preview is retargeted, not snapped',
-	retarget.keys.length === 3 && retarget.keys[2].left === '12px'
-	&& retarget.keys[2].top === '44px' && retarget.keys[2].width === '480px');
+	retarget.keys.length === 2 && retarget.keys[1].left === '12px'
+	&& retarget.keys[1].top === '44px' && retarget.keys[1].width === '480px'
+	&& retarget.keys[0].opacity === 1);
 check('the retarget follows the medium level', retarget.options.duration === 220);
 check('the real window is faded over the same beat', win.animations[0].options.duration === 220);
 const ghost_el = ghost.el;
@@ -788,7 +800,7 @@ enter_win.style.height = '640px';
 enter_win.rect = { left: 12, top: 44, width: 472.8, height: 630.4 };
 check('a window mid-enter still hands over its layout box',
 	sandbox.jawnosWindowEmerge(enter_win) === true);
-const enter_target = scaled_ghost.el.animations[scaled_ghost.el.animations.length - 1].keys[2];
+const enter_target = scaled_ghost.el.animations[scaled_ghost.el.animations.length - 1].keys[1];
 check('the retarget lands on 480x640, not the 0.985 rect',
 	enter_target.left === '12px' && enter_target.top === '44px'
 	&& enter_target.width === '480px' && enter_target.height === '640px');

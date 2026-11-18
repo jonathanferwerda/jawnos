@@ -231,6 +231,40 @@ function pseudonymDockPointOnDock(x, y) {
 	return y >= vh - strip && y <= vh;
 }
 
+// The row dock's faces are fixed boxes placed by pseudonymFreeSpaceFinder, so
+// moving the home's own bottom (or top) does not carry them. Shift them by the
+// same distance, with the same transition, and fade them as they go, so the row
+// rides its backing out and back instead of only the backing moving. `dy` 0
+// puts them back where the finder placed them.
+function pseudonymDockFacesShift(dy) {
+	dy = isFinite(dy) ? Math.round(dy) : 0;
+	$('#pseudonym_bar .pseudonym.bar').each(function() {
+		if (dy) {
+			this.style.transform = 'translateY(' + dy + 'px)';
+			this.style.opacity = '0';
+		}
+		else {
+			this.style.transform = '';
+			this.style.opacity = '';
+		}
+	});
+}
+
+// Every face the dock's own switches call for. The finder does this while it
+// places the row, but a reveal only has to put the faces back: the hider used
+// to hide all of them and re-show only the pseudonyms and window faces, so an
+// added app, widget or launcher stayed gone until some later layout pass.
+function pseudonymDockFacesShow() {
+	var icons_hidden = (typeof jawnosDockIconsHidden == 'function') && jawnosDockIconsHidden();
+	$('#pseudonym_bar .pseudonym.bar').each(function() {
+		var icon = $(this);
+		var always_on = (typeof jawnosDockFaceAlwaysOn == 'function') && jawnosDockFaceAlwaysOn(icon);
+		var on = !icons_hidden && (always_on
+			|| ((typeof jawnosDockIconState == 'function') && jawnosDockIconState(icon.attr('toggle')) == 'on'));
+		icon.toggle(on);
+	});
+}
+
 function pseudonymHomeShower(x,y,interval) { 
 	// a floating dock is not an edge dock: it never tucks away or slides back
 	if (typeof jawnosBars != 'undefined' && jawnosBars.dock == 'floating') { return; }
@@ -266,9 +300,6 @@ function pseudonymHomeShower(x,y,interval) {
 	var t = $('#pseudonym_home').offset();
 
 	if (t && okay == 1) {
-		var w = $('#pseudonym_home').width();
-		var h = $('#pseudonym_home').height();
-		var wh = $(window).height();
 		if (was > 0) {
 			// a side dock slides straight back out over its strip
 			if (dock_side) {
@@ -280,38 +311,19 @@ function pseudonymHomeShower(x,y,interval) {
 			// is all it takes
 			else if (dock_top) {
 				$('#pseudonym_home').css({ 'top': jawnosDockTopOffset() });
-				pseudonymFreeSpaceFinder();
+				pseudonymDockFacesShow();
+				pseudonymDockFacesShift(0);
 				// the dropdown follows the box's new edge; the shared placement knows
 				// about the keyboard, which a hand-rolled offset here would not
 				if (typeof jawnosSearchResultsPlace == 'function') { jawnosSearchResultsPlace(); }
 				pseudonymIntervals = Date.now();
 			}
 			else {
-				$('.pseudonym.bar').each(function() {
-					var kbg = $(this);
-					var bottom = kbg.css('bottom');
-					var toggle = kbg.attr('toggle');
-					var diff = (0 - (h * .9));
-					var d = Number(numeral(bottom).format());
-					var diff_body = diff + d;
-
-					var diffplus =  Math.abs( d ) + Math.abs( diff );
-					if (diffplus == 80 && bottom != 80) {
-						if (was > 0) {
-							kbg.css({'bottom': diffplus });
-
-						}
-					}
-					var ls = (typeof jawnosDockFaceAlwaysOn == 'function' && jawnosDockFaceAlwaysOn(kbg))
-						? 'on' : jawnosDockIconState(toggle);
-					if (ls == 'on' && !(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden())) {
-						$('.pseudonym.keyboard[toggle="' + toggle + '"]').show();
-					}
-					else if (kbg.hasClass('window_toggle')) {
-						kbg.show();
-					}
-				});
+				// the row comes back with the backing, and every face its switches
+				// call for is showing by the time the strip has cleared
 				$('#pseudonym_home').css({ 'bottom': ((typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0) });
+				pseudonymDockFacesShow();
+				pseudonymDockFacesShift(0);
 				if (typeof jawnosSearchResultsPlace == 'function') { jawnosSearchResultsPlace(); }
 				pseudonymIntervals = Date.now();
 			}
@@ -360,11 +372,12 @@ function pseudonymHomeTopSettle() {
 	if (typeof jawnosDockTop != 'function' || !jawnosDockTop()) { return 0; }
 	var home = $('#pseudonym_home');
 	// size the box for the top edge first - its height is what the tuck reaches
-	// past - then tuck it and let the row ride up with it. The strip it keeps is
-	// the search's row, or the sliver when the search rides elsewhere.
+	// past - then tuck it and let the row ride up with the home. The strip it
+	// keeps is the search's row, or the sliver when the search rides elsewhere.
 	pseudonymFreeSpaceFinder();
-	home.css({ 'top': jawnosDockTopOffset() + Math.min(0, pseudonymDockStrip() - home.outerHeight()) });
-	pseudonymFreeSpaceFinder();
+	var tuck = Math.min(0, pseudonymDockStrip() - home.outerHeight());
+	home.css({ 'top': jawnosDockTopOffset() + tuck });
+	pseudonymDockFacesShift(tuck);
 	return 1;
 }
 
@@ -420,7 +433,9 @@ function pseudonymHomeHider(interval) {
 			var edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
 			var diff = Math.min(0, pseudonymDockStrip() - h) + edge;
 			$('#pseudonym_home').css({ 'bottom': diff });
-			$('.pseudonym.bar').hide();
+			// the faces travel down with the backing, fading as they go, rather
+			// than being hidden on the spot
+			pseudonymDockFacesShift(edge - diff);
 			$('.keyboard').each(function() {
 				var kbg = $(this);
 				var bottom = kbg.css('bottom');

@@ -225,9 +225,11 @@ like($css, qr/body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #pse
 	'and a bottom dock slides into its tuck, in its own direction');
 like($css, qr/body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #pseudonym_home\[position=left\],\s*body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #pseudonym_home\[position=right\]\s*\{[^}]*transition: left var\(--jm-bar-time/s,
 	'and a side dock slides at the same pace as its faces');
-unlike($css, qr/#pseudonym_home\[position=top\][^{]*\{[^}]*transition: top/s,
-	'a top dock is not given a top transition (its finder reads that offset back)');
-like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,500}#taskbar\[autohide=on\][\s\S]{0,120}transition: none !important/s,
+like($css, qr/body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #pseudonym_home\[position=top\]\s*\{[^}]*transition: top var\(--jm-bar-time/s,
+	'a top dock slides on the same beat, now its finder reads the resting edge');
+like($css, qr/body\.jawnos_shell_ready:not\(\[data-window-effects="off"\]\) #pseudonym_home\[position=bottom\] #pseudonym_bar \.pseudonym\.bar,[\s\S]{0,180}transition:[^}]*transform var\(--jm-bar-time/s,
+	'a row dock\'s faces ride the tuck with their backing');
+like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,800}#taskbar\[autohide=on\][\s\S]{0,400}transition: none !important/s,
 	'reduced motion takes the bar slide away');
 
 my $node = `command -v node 2>/dev/null`;

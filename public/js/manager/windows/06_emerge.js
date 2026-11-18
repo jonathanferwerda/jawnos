@@ -642,6 +642,15 @@ function jawnosWindowEmergePredict(origin, near) {
 	if (top + height > view.height) {
 		top = Math.max(0, view.height - height);
 	}
+	// windowMaker's own guard, applied after windowFit: no window opens in the
+	// desk's top strip (40px) or hanging off the right edge, so a cascade that
+	// starts at 0 lands at 40 instead of where the tile placed it. windowFit is
+	// not run again after this, so only the edge moves. Without it a phone and a
+	// desk with no top bar preview 40px too high, then jump down when the
+	// window arrives.
+	if (left >= view.width - 40) { left = 0; }
+	if (top <= 40) { top = 40; }
+	if (top >= view.height - 40) { top = 40; }
 
 	return {
 		left: left,
@@ -1151,10 +1160,12 @@ function jawnosWindowEmergeGhostWatch(ghost) {
 	catch (e) { ghost.observer = null; }
 }
 
-// When the real window lands: freeze the preview where it has reached, retarget
+// When the real window lands: take the preview where it has reached, retarget
 // it to the window's own rectangle (a pinned place or a slow slot can differ
 // from the prediction), and cross-fade the two. The real window is never moved
-// to the ghost: the ghost comes to the window.
+// to the ghost: the ghost comes to the window. The motion starts at once, from
+// the box the preview has reached - a hold at the start read as a pause part
+// way through whenever a press moved before its window landed.
 function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	if (!ghost || !ghost.el || !win_el) { return false; }
 	var level = jawnosWindowEmergeLevel();
@@ -1198,7 +1209,6 @@ function jawnosWindowEmergeGhostRetarget(ghost, win_el, to, zoom) {
 	if (el.animate) {
 		ghost.retargetAnim = el.animate([
 			{ left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px', borderRadius: from.radius + 'px', opacity: 1, offset: 0 },
-			{ left: from.left + 'px', top: from.top + 'px', width: from.width + 'px', height: from.height + 'px', borderRadius: from.radius + 'px', opacity: 1, offset: 0.42 },
 			{ left: through.left + 'px', top: through.top + 'px', width: through.width + 'px', height: through.height + 'px', borderRadius: through.radius + 'px', opacity: 0, offset: 1 }
 		], {
 			duration: duration,

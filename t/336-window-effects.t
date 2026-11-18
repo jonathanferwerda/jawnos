@@ -141,7 +141,7 @@ like($effects, qr/'close_fade' : \(\(level === 'maximum'\) \? 'close_burst' : 'c
 like($effects, qr/function jawnosWindowCloseShards\(el, rect, level\)/, 'the pieces are cut from the window rect');
 like($effects, qr/if \(name !== 'close_fade'[\s\S]*?jawnosWindowCloseShards\(el, rect, level\)/,
 	'light fades with no pieces at all');
-like($effects, qr/setTimeout\(finish, 450\)/, 'the bookkeeping waits at most 450 ms');
+like($effects, qr/setTimeout\(finish, 300\)/, 'the bookkeeping waits at most 300 ms');
 like($effects, qr/if \(this\.jawnosCloseEnd\) \{ this\.jawnosCloseEnd\(\); \}/,
 	'turning the effects off finishes a close already playing');
 foreach my $name (qw(close_fade close_crumble close_burst shard shard_burst flash)) {
@@ -150,6 +150,15 @@ foreach my $name (qw(close_fade close_crumble close_burst shard shard_burst flas
 foreach my $class (qw(close_fade close_crumble close_burst)) {
 	like($css, qr/\.wind\.jawnos_effect_$class \{ animation:/, "the $class class plays a keyframe");
 }
+# The close is half its old length, so a press answers at once at every level.
+like($css, qr/\.wind\.jawnos_effect_close_fade \{ animation: jawnos_window_close_fade calc\(110ms/,
+	'light fades in half the old time');
+like($css, qr/\.wind\.jawnos_effect_close_crumble \{ animation: jawnos_window_close_crumble calc\(170ms/,
+	'medium crumbles in half the old time');
+like($css, qr/\.wind\.jawnos_effect_close_burst \{ animation: jawnos_window_close_burst calc\(170ms/,
+	'maximum bursts in half the old time');
+like($css, qr/animation: jawnos_window_shard calc\(160ms/, 'the pieces leave on the same shorter beat');
+like($css, qr/animation: jawnos_window_flash calc\(90ms/, 'and so does the flash');
 like($css, qr/\.jawnos_close_shards \{ pointer-events: none; \}/, 'the shard overlay cannot swallow a press');
 like($css, qr/\.jawnos_close_shard \{[^}]*pointer-events: none/s, 'nor can a shard');
 like($css, qr/\.jawnos_close_flash \{[^}]*pointer-events: none/s, 'nor the flash');

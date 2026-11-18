@@ -475,7 +475,7 @@ function jawnosWindowCloseShards(el, rect, level) {
 		shard.style.setProperty('--je-shard-x', ((col + .5) * cell_width - width / 2).toFixed(1) + 'px');
 		shard.style.setProperty('--je-shard-y', ((row + .5) * cell_height - height / 2).toFixed(1) + 'px');
 		// the crumble chips away from one side; the burst leaves together
-		shard.style.animationDelay = (i * 16) + 'ms';
+		shard.style.animationDelay = (i * 8) + 'ms';
 		box.appendChild(shard);
 	}
 	if (level === 'maximum') {
@@ -545,6 +545,6 @@ function jawnosWindowCloseEffect(win, done) {
 	el.addEventListener('animationend', finish);
 	// the ceiling only matters when the animation never starts; it is longer
 	// than every close, and short enough that the bookkeeping barely waits
-	el.jawnosCloseTimer = setTimeout(finish, 450);
+	el.jawnosCloseTimer = setTimeout(finish, 300);
 	return true;
 }

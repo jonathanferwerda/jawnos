@@ -241,6 +241,12 @@ function startMenuToggle(data) {
 // markup, and with it whatever was typed. There is no timer on the menu: it
 // stands until something else is pressed.
 function startMenuRender(html, st) {
+	// Only the first open unfolds. A tab press (a fresh fetch for the same
+	// panel) swaps the markup while the menu stands, and replaying the open
+	// motion there reads as the whole menu opening again; an open, revealed
+	// panel simply takes the new view. A panel caught mid-fold is still on its
+	// way out, so that press is a fresh open and does animate.
+	var was_open = jawnosStartMenuOpen($('#start_menu'));
 	var search = $('#search_entanglement').closest('#start_menu').length ? $('#search_entanglement').detach() : null;
 	$('#start_menu').replaceWith(html);
 	$('#start_menu').show();
@@ -254,7 +260,7 @@ function startMenuRender(html, st) {
 	if (typeof mailDotPaint == 'function') { mailDotPaint(); }
 	if (typeof ticketDotPaint == 'function') { ticketDotPaint(); }
 	st.attr('toggled', 'open');
-	jawnosStartMenuUnfold($('#start_menu'), st);
+	if (!was_open) { jawnosStartMenuUnfold($('#start_menu'), st); }
 }
 
 // The recent list has changed under the menu; the kept markup carries the old

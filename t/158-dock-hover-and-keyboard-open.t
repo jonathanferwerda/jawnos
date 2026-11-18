@@ -80,8 +80,21 @@ like($kbd, qr/target\.closest\('\.pseudonym_bar \.pseudonym'\)\.length/,
 	'a face still keeps its own menu');
 like($kbd, qr/if \(typeof jawnosDockReveal == 'function'\) \{ jawnosDockReveal\(\); \}\s*jawnosDockMenuPlace\(jawnosDockContextBuild\(\$\(this\)\), e\.clientX, e\.clientY\);/,
 	'opening the menu calls the dock out of a tuck');
-like($shower, qr/jawnosDockFaceAlwaysOn\(kbg\)/,
+like($shower, qr/pseudonymDockFacesShow\(\);/, 'the reveal calls for every face the dock switches allow');
+like($dock, qr/function pseudonymDockFacesShow\(\)[\s\S]{0,400}jawnosDockFaceAlwaysOn\(icon\)/,
 	'a dock-owned face is shown by the reveal too');
+
+# --- a tuck carries the row's faces, not just its backing -------------------
+like($dock, qr/function pseudonymDockFacesShift\(dy\)[\s\S]{0,300}translateY/,
+	'a row tuck shifts the faces by the same distance');
+like($hider, qr/pseudonymDockFacesShift\(edge - diff\);/,
+	'the bottom hider carries the faces down with the home');
+like($dock, qr/var tuck = Math\.min\(0, pseudonymDockStrip\(\) - home\.outerHeight\(\)\);[\s\S]{0,120}pseudonymDockFacesShift\(tuck\);/,
+	'the top settle carries them up');
+like($kbd, qr/var tucked_edge = row_style \? parseFloat\(dock_top \? row_style\.top : row_style\.bottom\) : NaN;/,
+	'the finder reads the tucked inline edge');
+like($kbd, qr/pseudonymDockFacesShift\(dock_top \? Math\.min\(0, strip_now - home_h\) : Math\.max\(0, home_h - strip_now\)\)/,
+	'and recomputes the shift for the new layout, or clears it once revealed');
 
 # --- an empty dock tucks to its strip, not out full size --------------------
 like($kbd, qr/home\.toggleClass\('dock_empty', visible\.length == 0\)/,

@@ -1339,9 +1339,9 @@ body[data-window-effects="maximum"] {
    it, maximum bursts it; the pieces ride a fixed pointer-events:none overlay
    built by windows/05_effects.js, so no layout and no saved geometry moves and
    the teardown takes them with the window. */
-.wind.jawnos_effect_close_fade { animation: jawnos_window_close_fade calc(220ms * var(--je-time)) ease-in; pointer-events: none; will-change: opacity; }
-.wind.jawnos_effect_close_crumble { animation: jawnos_window_close_crumble calc(340ms * var(--je-time)) cubic-bezier(.3,.1,.7,1); pointer-events: none; will-change: transform, opacity; }
-.wind.jawnos_effect_close_burst { animation: jawnos_window_close_burst calc(340ms * var(--je-time)) cubic-bezier(.2,.6,.3,1); pointer-events: none; will-change: transform, opacity; }
+.wind.jawnos_effect_close_fade { animation: jawnos_window_close_fade calc(110ms * var(--je-time)) ease-in; pointer-events: none; will-change: opacity; }
+.wind.jawnos_effect_close_crumble { animation: jawnos_window_close_crumble calc(170ms * var(--je-time)) cubic-bezier(.3,.1,.7,1); pointer-events: none; will-change: transform, opacity; }
+.wind.jawnos_effect_close_burst { animation: jawnos_window_close_burst calc(170ms * var(--je-time)) cubic-bezier(.2,.6,.3,1); pointer-events: none; will-change: transform, opacity; }
 @keyframes jawnos_window_close_fade {
 	0% { opacity: 1; }
 	100% { opacity: 0; }
@@ -1364,11 +1364,11 @@ body[data-window-effects="maximum"] {
 	opacity: .5;
 	border-radius: 2px;
 	box-shadow: inset 0 0 0 1px rgba(0,0,0,.05);
-	animation: jawnos_window_shard calc(320ms * var(--je-time)) ease-in forwards;
+	animation: jawnos_window_shard calc(160ms * var(--je-time)) ease-in forwards;
 }
 .jawnos_close_shard_burst {
 	animation-name: jawnos_window_shard_burst;
-	animation-duration: calc(300ms * var(--je-time));
+	animation-duration: calc(150ms * var(--je-time));
 }
 @keyframes jawnos_window_shard {
 	0% { opacity: .5; transform: translate(0, 0) rotate(0deg); }
@@ -1390,7 +1390,7 @@ body[data-window-effects="maximum"] {
 	background: #fff;
 	opacity: 0;
 	pointer-events: none;
-	animation: jawnos_window_flash calc(180ms * var(--je-time)) ease-out;
+	animation: jawnos_window_flash calc(90ms * var(--je-time)) ease-out;
 }
 @keyframes jawnos_window_flash {
 	0% { opacity: .55; }
@@ -4999,17 +4999,26 @@ body[data-window-effects="maximum"] {
 }
 
 /* The bars slide at the level's pace, in the direction of their edge: the
-   taskbar's autohide tuck is a transform along its own edge, and a bottom
-   dock loses itself under the edge by its own offset. A top dock is left as a
-   direct move on purpose - its finder reads the home's `top` back to place the
-   icon row, so a transition there would hand the row the place it is leaving.
-   The ready class is hung only after the first layout has settled (taskbar.js),
-   so a fresh page does not animate the dock out from under its resting place. */
+   taskbar's autohide tuck is a transform along its own edge, and a row dock
+   loses itself under (or above) the edge by its own offset. The ready class is
+   hung only after the first layout has settled (taskbar.js), so a fresh page
+   does not animate the dock out from under its resting place. */
 body.jawnos_shell_ready:not([data-window-effects="off"]) #taskbar[autohide=on] {
 	transition: transform var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1);
 }
 body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=bottom] {
 	transition: bottom var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1);
+}
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=top] {
+	transition: top var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1);
+}
+/* A row dock's faces are fixed boxes the finder places, so moving the home's own
+   edge does not carry them. The tuck shifts them by the same distance and fades
+   them on the same beat, so the row rides its backing instead of the backing
+   sliding out from under a row that stays put. */
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=bottom] #pseudonym_bar .pseudonym.bar,
+body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[position=top] #pseudonym_bar .pseudonym.bar {
+	transition: border-color .15s ease, transform var(--jm-bar-time, 180ms) cubic-bezier(.22,.68,.3,1), box-shadow .15s ease, opacity var(--jm-bar-time, 180ms) ease;
 }
 /* A side dock already slides out of its edge; at a level above off it takes the
    level's pace, and the faces riding the pill take the same one so the row does
@@ -5035,8 +5044,11 @@ body.jawnos_shell_ready:not([data-window-effects="off"]) #pseudonym_home[positio
 	   motion is not a matter of who wrote last */
 	body #taskbar[autohide=on],
 	body #pseudonym_home[position=bottom],
+	body #pseudonym_home[position=top],
 	body #pseudonym_home[position=left],
-	body #pseudonym_home[position=right] { transition: none !important; }
+	body #pseudonym_home[position=right],
+	body #pseudonym_home[position=bottom] #pseudonym_bar .pseudonym.bar,
+	body #pseudonym_home[position=top] #pseudonym_bar .pseudonym.bar { transition: none !important; }
 }
 
 /* While it waits for its window the preview is the one live control on the desk:
