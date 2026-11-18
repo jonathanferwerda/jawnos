@@ -157,6 +157,12 @@
 			// the built-in apps, from the server's own list (gb::known_appts), so the
 			// client keeps no copy of its own that can drift
 			var jawnos_builtin_apps = <%== encode_json({ map { $_ => 1 } sort keys %{$gb::known_appts} }) %>;
+			// Each app's saved window colour and the ink that reads on it, for the
+			// press-time window preview. The preview is drawn before the server
+			// renders the window, so without this it would have to guess the title
+			// bar's colour; windows/06_emerge.js applies this pair exactly. Built
+			// from the settings rows the real window reads (see app_colour_map).
+			var jawnos_app_colours = <%== encode_json(&subs::app_colour_map([ sort keys %{$gb::known_appts} ])) %>;
 			// the core bundle is only what every window needs; an app's scripts are
 			// loaded on first open (lazy.js asks /js/manager/app.js for these lists)
 			var jawnos_app_scripts = <%== encode_json(\%Manager::manager_app_scripts) %>;

@@ -2,6 +2,7 @@
 # covers:    A colour is the light face of an appointment and dark_colour the dark one. An app born
 #            on a dark desktop stored that cut's own step as its colour, so a later light theme painted
 #            its plates near-black. The light face now comes back from the dark cut's pair.
+#            The press-time preview's app_colour_map carries the same pair and ink.
 
 use strict;
 use warnings;
@@ -83,6 +84,31 @@ my $free = &subs::settings_grabber({ app => 'free_appt' });
 is( $free->{'colour'}, '#dba0c4', 'a light appointment keeps its colour' );
 is( $free->{'dark_colour'}, &subs::dark_colour_for('#dba0c4'),
 	'and gets the usual derived dark face' );
+
+# --- the press-time preview's map carries the same pair ----------------------
+# a colour only another device class holds is adopted onto this one, so the
+# real window's settings_grabber and the preview read the same value
+$db->query('insert into settings (uuid, app, setting, device, value, server_time) values (?,?,?,?,?,?)',
+	'row-house_appt-colour', 'house_appt', 'colour', 'phone', '#abcdef', $now);
+my $colour_map = &subs::app_colour_map([]);
+my $adopted = $db->query('select value from settings where app=? and setting=? and device=?',
+	'house_appt', 'colour', 'computer')->hash;
+is( $colour_map->{'house_appt'}->{'colour'}, '#abcdef',
+	'a house-only colour reaches the preview map' );
+is( $adopted->{'value'}, '#abcdef',
+	'and is adopted onto this device for the real window' );
+is( $colour_map->{'warwick_appt'}->{'colour'}, '#a7b8d0',
+	'the preview map normalises a dark-born colour to its light face' );
+is( $colour_map->{'warwick_appt'}->{'dark'}, '#394658',
+	'and keeps the stored dark face' );
+is( $colour_map->{'warwick_appt'}->{'ink'}, &subs::contrast_ink('#a7b8d0'),
+	'with the contrast ink the real navbar uses' );
+is( $colour_map->{'warwick_appt'}->{'dark_ink'}, &subs::contrast_ink('#394658'),
+	'and the dark face\'s ink' );
+is( $colour_map->{'free_appt'}->{'colour'}, '#dba0c4',
+	'a light appointment keeps its colour in the preview map' );
+is( $colour_map->{'free_appt'}->{'dark'}, &subs::dark_colour_for('#dba0c4'),
+	'and its derived dark face' );
 
 # --- the appointment viewer reads the same pair -----------------------------
 my $root = root();

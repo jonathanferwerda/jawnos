@@ -1,9 +1,11 @@
-# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css
+# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
 # covers:    a new window pours out of the control that opened it - the press
 #            records a viewport rectangle and richer app metadata, pointerdown
 #            draws the chrome preview at once, windowMaker hands the real
-#            rectangle over, and the preview is retargeted or put away. Also
-#            the pile preview exception for a drag carrying its pile.
+#            rectangle over, and the preview is retargeted or put away. The
+#            preview wears the app's real saved colour/ink and a skeleton body
+#            chosen by archetype, and the prediction follows the placer's
+#            geometry. Also the pile preview exception for a drag.
 
 use strict;
 use warnings;
@@ -21,6 +23,9 @@ my $index  = read_file("$root/public/js/manager/windows.js");
 my $board  = read_file("$root/public/js/manager/leaderboardprinter.js");
 my $lazy   = read_file("$root/public/js/manager/lazy.js");
 my $css    = read_file("$root/public/css/manager.css");
+my $layout = read_file("$root/templates/layouts/manager.html.ep");
+my $contrast = read_file("$root/lib/JawnOS/Domain/Contrast.pm");
+my $loader = read_file("$root/lib/JawnOS/Domain/Loader.pm");
 
 # --- the part is named and reached -------------------------------------------
 like($index, qr/06_emerge\.js\s+-\s+a new window pouring/, 'windows.js names the emerge part');
@@ -54,6 +59,12 @@ like($css, qr/\.jawnos_emerge_ghost \.jawnos_emerge_bar\s*\{[^}]*height:\s*var\(
 	'its title bar is the height of a real one');
 like($css, qr/\.jawnos_emerge_ghost \.jawnos_emerge_button\s*\{/,
 	'the chrome draws the standard window controls');
+like($css, qr/\.jawnos_emerge_ghost \.jawnos_emerge_name\s*\{[^}]*font-size:\s*20px/s,
+	'the title uses .appointment_name\'s 20px size');
+like($css, qr/\.jawnos_emerge_skeleton_grid\s*\{/, 'the skeleton bodies have their own shapes');
+like($css, qr/\.jawnos_emerge_skeleton_terminal\s*\{/, 'including a terminal body');
+like($css, qr/body\.dark_theme \.jawnos_emerge_ghost \.jawnos_emerge_bar/,
+	'a dark desk keeps the theme ink on the preview bar');
 like($css, qr/body\[data-window-effects="off"\] \.jawnos_emerge_ghost \{ display: none !important; \}/,
 	'turning the effects off hides a preview already in flight');
 like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*\.jawnos_emerge_ghost \{ display: none; \}\s*\}/s,
@@ -72,10 +83,19 @@ like($emerge, qr/function jawnosWindowEmergeGhostStart\(origin\)/, 'the press ca
 like($emerge, qr/function jawnosWindowEmergeGhostRetarget\(/, 'the preview is retargeted to the real frame');
 like($emerge, qr/function jawnosWindowEmergeGhostCancel\(/, 'the preview can be put away');
 like($emerge, qr/function jawnosWindowEmergePredict\(/, 'the frame is predicted from the cascade');
+like($emerge, qr/function jawnosWindowEmergeAppColour\(/, 'the real app colour is read, not guessed');
+like($emerge, qr/function jawnosWindowEmergeArchetype\(/, 'an app chooses a skeleton archetype');
+like($emerge, qr/function jawnosWindowEmergeSkeleton\(/, 'the skeleton body is built');
 like($emerge, qr/jawnosWindowEffectsLevel/, 'the level is read when it exists');
 like($emerge, qr/prefers-reduced-motion/, 'reduced motion is honoured');
 unlike($emerge, qr/\bgetContext\s*\(/, 'no canvas or WebGL context is created');
 unlike($emerge, qr/\.filter\s*=/, 'no filter animation');
+unlike($emerge, qr/hsla?\(/, 'no hash tint is used for the app colour');
+like($layout, qr/var jawnos_app_colours = .*app_colour_map\(\[ sort keys %\{\$gb::known_appts\} \]\)/,
+	'the layout seeds the app colour map from the known apps');
+like($contrast, qr/sub app_colour_map \{/, 'the domain builds the colour map in one read');
+like($contrast, qr/&contrast_ink\(\$light\)/, 'the map uses the real contrast ink');
+like($loader, qr/app_colour_map/, 'the domain map registers app_colour_map');
 
 # --- played in a bare context ------------------------------------------------
 my $node = `command -v node 2>/dev/null`;
@@ -156,6 +176,13 @@ function findClass(root, cls) {
 		if (found) { return found; }
 	}
 	return null;
+}
+function textIn(root) {
+	if (!root) { return ''; }
+	let text = root.textContent || '';
+	const kids = root.children || [];
+	for (let i = 0; i < kids.length; i++) { text += textIn(kids[i]); }
+	return text;
 }
 function rectFromStyle(el) {
 	const px = (v) => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
@@ -262,6 +289,10 @@ function $(x) {
 let effects_on = true;
 let reduced = false;
 let level = 'medium';
+let viewWidth = 1200;
+let viewHeight = 900;
+let rootZoom = 1;
+const cssVars = { '--navbar_h': '36px', '--window_border': '3px', '--window_radius': '12px' };
 
 const sandbox = {
 	$, setTimeout: fakeSetTimeout, clearTimeout: fakeClearTimeout, console,
@@ -274,12 +305,24 @@ const sandbox = {
 	startMenuIconApps: { terminal_toggle: 'terminal', clock_toggle: 'clock' },
 	jawnosWindowEffectsOn: function () { return effects_on; },
 	jawnosWindowEffectsLevel: function () { return level; },
+	jawnos_app_colours: {},
+	jawnosBars: { navbar: 36, border: 3 },
 	windowTileDefaultWidth: 480,
 	windowTileDefaultHeight: 640,
+	windowTileAcrossStep: 50,
 	windowTiledDefaultStack: '0',
+	windowTiledPending: {},
+	windowTiledPendingApp: {},
 	windowTiledAnchor: function () { return { left: 0, top: 40 }; },
 	windowNextTileSlot: function () { return 0; },
-	windowTopLimit: function () { return 40; }
+	windowTopLimit: function () { return 40; },
+	windowViewport: function () { return { width: viewWidth, height: viewHeight }; },
+	getComputedStyle: function () {
+		return {
+			zoom: String(rootZoom),
+			getPropertyValue: function (name) { return cssVars[name] || ''; }
+		};
+	}
 };
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
@@ -354,6 +397,77 @@ check('light is shorter and subtler', light.duration < medium.duration
 check('maximum is longer and overshoots more', maximum.duration > medium.duration
 	&& maximum.sheet[1].transform.indexOf('scale(5.5, 11)') >= 0);
 
+// --- the prediction follows the placer's geometry ---------------------------
+const saved_anchor = sandbox.windowTiledAnchor;
+const saved_slot = sandbox.windowNextTileSlot;
+const saved_bars = sandbox.jawnosBars;
+sandbox.windowTiledAnchor = function () { return { left: 10, top: 55 }; };
+sandbox.windowNextTileSlot = function () { return 2; };
+sandbox.jawnosBars = { navbar: 44, border: 4 };
+viewWidth = 1000;
+viewHeight = 700;
+const predicted = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('the prediction uses the placer anchor and the counted slot',
+	predicted.left === 110 && predicted.top === 135);
+check('the cascade step is jawnosBars.navbar less jawnosBars.border', 55 + 2 * 40 === predicted.top);
+check('the prediction shrinks the height to the viewport, not the top',
+	predicted.width === 480 && predicted.height === 565 && predicted.top === 135);
+
+viewWidth = 500;
+const narrowed = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('a frame wider than the room shrinks to the fit room',
+	narrowed.width === 390 && narrowed.left === 110);
+viewWidth = 1000;
+
+sandbox.windowNextTileSlot = function () { return 0; };
+sandbox.windowTiledPendingApp = { clock: 'press-stamp' };
+sandbox.windowTiledPending = { 'press-stamp': { slot: 3, stack: '0' } };
+const reserved = sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+check('a reservation this press already made is counted',
+	reserved.left === 10 + 3 * 50 && reserved.top === 55 + 3 * 40);
+sandbox.windowTiledPendingApp = {};
+sandbox.windowTiledPending = {};
+
+// the measured table: 1366x703, top limit 54, step = 44 - 2 = 42
+sandbox.windowTiledAnchor = function () { return { left: 0, top: 54 }; };
+sandbox.jawnosBars = { navbar: 44, border: 2 };
+viewWidth = 1366;
+viewHeight = 703;
+const measured_table = [0, 1, 2, 3].map(function (slot) {
+	sandbox.windowNextTileSlot = function () { return slot; };
+	return sandbox.jawnosWindowEmergePredict({ app: 'clock' });
+});
+check('the measured 1366x703 table predicts the four real slots',
+	measured_table[0].left === 0 && measured_table[0].top === 54
+	&& measured_table[0].width === 480 && measured_table[0].height === 640
+	&& measured_table[1].left === 50 && measured_table[1].top === 96
+	&& measured_table[1].width === 480 && measured_table[1].height === 607
+	&& measured_table[2].left === 100 && measured_table[2].top === 138
+	&& measured_table[2].width === 480 && measured_table[2].height === 565
+	&& measured_table[3].left === 150 && measured_table[3].top === 180
+	&& measured_table[3].width === 480 && measured_table[3].height === 523);
+
+// a display-zoomed desk: the press rect is reported zoomed, the ghost is laid
+// out in the root's own units
+rootZoom = 1.25;
+const zoom_icon = startIcon('clock_toggle', 'clock', '/images/clock.png', 'Clock', 125, 250, 100, 50);
+press(zoom_icon);
+const zoom_ghost = sandbox.jawnosWindowEmergeGhost;
+check('a zoomed press rectangle is put into layout units',
+	!!zoom_ghost && zoom_ghost.el.animations[0].keys[0].left === '100px'
+	&& zoom_ghost.el.animations[0].keys[0].top === '200px'
+	&& zoom_ghost.el.animations[0].keys[0].width === '80px'
+	&& zoom_ghost.el.animations[0].keys[0].height === '40px');
+sandbox.jawnosWindowEmergeGhostCancel(zoom_ghost);
+advance(5000);
+rootZoom = 1;
+
+sandbox.windowTiledAnchor = saved_anchor;
+sandbox.windowNextTileSlot = saved_slot;
+sandbox.jawnosBars = saved_bars;
+viewWidth = 1200;
+viewHeight = 900;
+
 // --- a control's rectangle, its app and its picture --------------------------
 const icon = startIcon('terminal_toggle', 'terminal', '/images/terminal.png', 'Terminal');
 const icon_origin = sandbox.jawnosWindowOriginFromElement(icon);
@@ -400,6 +514,9 @@ sandbox.jawnosWindowOriginTake('notes', Date.now());
 
 // --- the press-time preview --------------------------------------------------
 level = 'medium';
+sandbox.jawnos_app_colours = {
+	clock: { colour: '#123456', dark: '#0a0a0a', ink: '#ffffff', dark_ink: '#ffffff' }
+};
 const press_icon = startIcon('clock_toggle', 'clock', '/images/clock.png', 'Clock');
 press(press_icon);
 const ghost = sandbox.jawnosWindowEmergeGhost;
@@ -432,6 +549,50 @@ check('and the three standard controls',
 	&& hasClass(chrome_buttons.children[0], 'jawnos_emerge_button_minimize')
 	&& hasClass(chrome_buttons.children[1], 'jawnos_emerge_button_maximize')
 	&& hasClass(chrome_buttons.children[2], 'jawnos_emerge_button_close'));
+const bar_el = findClass(chrome, 'jawnos_emerge_bar');
+check('the bar wears the app\'s saved colour',
+	!!bar_el && bar_el.style.backgroundColor === '#123456');
+check('and its real contrast ink', !!bar_el && bar_el.style.color === '#ffffff');
+const clock_body = findClass(chrome, 'jawnos_emerge_body_calendar');
+check('the clock gets a calendar skeleton', !!clock_body && !!findClass(chrome, 'jawnos_emerge_calendar'));
+check('the skeleton has no words', textIn(clock_body) === '');
+
+check('the archetype map follows the app',
+	sandbox.jawnosWindowEmergeArchetype('gallery') === 'grid'
+	&& sandbox.jawnosWindowEmergeArchetype('music') === 'media'
+	&& sandbox.jawnosWindowEmergeArchetype('travel') === 'map'
+	&& sandbox.jawnosWindowEmergeArchetype('chat') === 'chat'
+	&& sandbox.jawnosWindowEmergeArchetype('notes') === 'list'
+	&& sandbox.jawnosWindowEmergeArchetype('mystery') === 'generic');
+function archetype_chrome(app) { return sandbox.jawnosWindowEmergeChrome({ app: app, name: app }); }
+const list_chrome = archetype_chrome('notes');
+check('a list app gets rows, dot and lines',
+	!!findClass(list_chrome, 'jawnos_emerge_body_list')
+	&& !!findClass(list_chrome, 'jawnos_emerge_row')
+	&& !!findClass(list_chrome, 'jawnos_emerge_dot')
+	&& !!findClass(list_chrome, 'jawnos_emerge_line')
+	&& textIn(findClass(list_chrome, 'jawnos_emerge_body')) === '');
+const grid_chrome = archetype_chrome('gallery');
+check('a gallery gets a grid of tiles',
+	!!findClass(grid_chrome, 'jawnos_emerge_body_grid')
+	&& !!findClass(grid_chrome, 'jawnos_emerge_tile'));
+const media_chrome = archetype_chrome('music');
+check('music gets a player skeleton',
+	!!findClass(media_chrome, 'jawnos_emerge_body_media')
+	&& !!findClass(media_chrome, 'jawnos_emerge_media_art')
+	&& !!findClass(media_chrome, 'jawnos_emerge_media_bar'));
+const map_chrome = archetype_chrome('travel');
+check('travel gets a map skeleton',
+	!!findClass(map_chrome, 'jawnos_emerge_body_map')
+	&& !!findClass(map_chrome, 'jawnos_emerge_map_route'));
+const chat_chrome = archetype_chrome('chat');
+check('chat gets bubbles',
+	!!findClass(chat_chrome, 'jawnos_emerge_body_chat')
+	&& !!findClass(chat_chrome, 'jawnos_emerge_bubble'));
+const generic_chrome = archetype_chrome('mystery');
+check('an unknown app gets the neutral generic body',
+	!!findClass(generic_chrome, 'jawnos_emerge_body_generic')
+	&& !!findClass(generic_chrome, 'jawnos_emerge_block'));
 
 // --- the real window takes the preview over ---------------------------------
 const win = new El('clock');
@@ -449,6 +610,27 @@ advance(1000);
 check('the preview is removed once the window owns the frame',
 	ghost_el.parentNode === null && win.jawnosEmergeGhost === null);
 check('and the window animation is put down', win.jawnosEmergeWindowAnim === null);
+
+// a window measured mid-enter is at scale(0.985); the retarget must use its
+// layout box, not 472.8x630.4, or the ghost lands 1.5% small
+level = 'medium';
+press(press_icon);
+const scaled_ghost = sandbox.jawnosWindowEmergeGhost;
+const scaled_ghost_el = scaled_ghost.el;
+const enter_win = new El('clock');
+enter_win.style.left = '12px';
+enter_win.style.top = '44px';
+enter_win.style.width = '480px';
+enter_win.style.height = '640px';
+enter_win.rect = { left: 12, top: 44, width: 472.8, height: 630.4 };
+check('a window mid-enter still hands over its layout box',
+	sandbox.jawnosWindowEmerge(enter_win) === true);
+const enter_target = scaled_ghost.el.animations[scaled_ghost.el.animations.length - 1].keys[2];
+check('the retarget lands on 480x640, not the 0.985 rect',
+	enter_target.left === '12px' && enter_target.top === '44px'
+	&& enter_target.width === '480px' && enter_target.height === '640px');
+advance(1000);
+check('the mid-enter preview is put away', scaled_ghost_el.parentNode === null);
 
 // --- a press that opens nothing is put away ---------------------------------
 level = 'medium';

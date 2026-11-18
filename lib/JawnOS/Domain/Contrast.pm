@@ -479,6 +479,105 @@ sub app_theme_map {
 	return \%map;
 }
 
+# Every app's window colours in one read, for the press-time preview. The
+# preview is drawn before the server renders the window, so it needs the same
+# colour/ink pair window_maker uses. It reads the rows exactly as the real
+# window does: this device's row first, else the newest row another device
+# class holds (the value setting_initializer would adopt), and it adopts that
+# value onto this device so settings_grabber sees it too.
+#
+# An app with no saved colour at all is given the same first-open colour
+# setting_initializer would mint, saved silently, so the preview and the window
+# are the same the first time the app is opened. Without that write the
+# preview would have to guess a colour and the handoff would shift on every
+# never-opened app. The map is app -> { colour, dark, ink, dark_ink }.
+sub app_colour_map {
+	my ($apps) = @_;
+	$apps = [] unless ref $apps eq 'ARRAY';
+	my $device = &device_setter();
+	my %pick;
+	my $rows = eval {
+		&db_query("select app, device, setting, value, server_time from settings where setting in (?, ?) and value is not null and value != ''", 'colour', 'dark_colour')->hashes
+	} || [];
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'};
+		my $setting = $row->{'setting'};
+		my $value = $row->{'value'};
+		next unless defined $app && length $app && defined $value && length $value;
+		next unless $setting eq 'colour' || $setting eq 'dark_colour';
+		my $key = $app . "\0" . $setting;
+		my $current = (($row->{'device'} // '') eq $device) ? 1 : 0;
+		my $time = 0 + ($row->{'server_time'} // 0);
+		my $seen = $pick{$key};
+		# this device wins; otherwise the newest row is the one a fresh
+		# window adopts (setting_initializer reads the rows newest first)
+		if (!$seen
+			|| ($current && !$seen->{'current'})
+			|| ($current == $seen->{'current'} && $time >= $seen->{'time'})) {
+			$pick{$key} = { current => $current, time => $time, value => $value };
+		}
+	}
+
+	my (%colour, %dark);
+	foreach my $key ( keys %pick ) {
+		my ($app, $setting) = split /\0/, $key, 2;
+		if ($setting eq 'colour') { $colour{$app} = $pick{$key}->{'value'}; }
+		else { $dark{$app} = $pick{$key}->{'value'}; }
+	}
+
+	# A colour that only another device class holds is adopted onto this one,
+	# as setting_initializer would: then settings_grabber (which reads this
+	# device) and the preview agree. One write, only when this device has no
+	# row for the app yet.
+	foreach my $app ( keys %colour ) {
+		my $pick_key = $app . "\0" . 'colour';
+		next if $pick{$pick_key} && $pick{$pick_key}->{'current'};
+		next unless defined $colour{$app} && $colour{$app} =~ /^\#?[0-9a-fA-F]{6}$/;
+		&setting_setter({ app => $app, setting => 'colour', value => $colour{$app}, silent => 'yes' });
+		my $pick_dark = $app . "\0" . 'dark_colour';
+		if ($dark{$app} && $pick{$pick_dark} && !$pick{$pick_dark}->{'current'}
+			&& $dark{$app} =~ /^\#?[0-9a-fA-F]{6}$/) {
+			&setting_setter({ app => $app, setting => 'dark_colour', value => $dark{$app}, silent => 'yes' });
+		}
+	}
+
+	# a named app with no colour is about to open for the first time: give it
+	# the colour it is about to be born with, so the preview is not a guess
+	foreach my $app ( @{$apps} ) {
+		next unless defined $app && length $app;
+		next if defined $colour{$app} && $colour{$app} =~ /^\#?[0-9a-fA-F]{6}$/;
+		my $minted = '#' . &random_colour_grabber();
+		&setting_setter({ app => $app, setting => 'colour', value => $minted, silent => 'yes' });
+		$colour{$app} = $minted;
+		$dark{$app} = &dark_colour_for($minted) unless defined $dark{$app} && $dark{$app} =~ /^\#?[0-9a-fA-F]{6}$/;
+	}
+
+	my %map;
+	foreach my $app ( keys %colour ) {
+		my $raw = $colour{$app};
+		next unless defined $raw && $raw =~ /^\#?([0-9a-fA-F]{6})$/;
+		$raw = '#' . $1;
+		my $raw_dark = $dark{$app};
+		$raw_dark = &dark_colour_for($raw) unless defined $raw_dark && $raw_dark =~ /^\#?[0-9a-fA-F]{6}$/;
+		$raw_dark = '#' . $1 if $raw_dark =~ /^\#?([0-9a-fA-F]{6})$/;
+		# settings_grabber normalises the pair (an app born on a dark desk
+		# stored the dark cut as its colour); the preview must see the same
+		# light face the real window paints, not the raw row.
+		my ($light, $shade) = &appointment_colours($raw, $raw_dark);
+		next unless defined $light && $light =~ /^\#?([0-9a-fA-F]{6})$/;
+		$light = '#' . $1;
+		$shade = &dark_colour_for($light) unless defined $shade && $shade =~ /^\#?[0-9a-fA-F]{6}$/;
+		$shade = '#' . $1 if $shade =~ /^\#?([0-9a-fA-F]{6})$/;
+		$map{$app} = {
+			colour => $light,
+			dark => $shade,
+			ink => &contrast_ink($light),
+			dark_ink => &contrast_ink($shade),
+		};
+	}
+	return \%map;
+}
+
 # The theme an actively running start/record appointment asks for: the most
 # recently started one that has a theme. One join rather than a settings read
 # per open row - a stale run must not cost the desktop a query per appointment.

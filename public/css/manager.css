@@ -4457,11 +4457,22 @@ body.dark_theme .jawnos_emerge_sheet {
 	pointer-events: none;
 	box-sizing: border-box;
 	overflow: hidden;
-	border: var(--window_border, 3px) solid var(--window_border_colour, var(--line));
 	border-radius: var(--window_radius, var(--jawnos-corner, 12px));
 	background: var(--window, var(--panel));
 	box-shadow: 0 18px 44px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.12);
 	will-change: left, top, width, height, opacity;
+}
+/* the frame is an overlay, as .wind::after is: it must not take layout room
+   from the title bar, or the ghost's content would sit a border-width inside
+   the real window's */
+.jawnos_emerge_ghost::after {
+	content: '';
+	position: absolute;
+	left: 0; top: 0; right: 0; bottom: 0;
+	border: var(--window_border, 3px) solid var(--window_border_colour, var(--line));
+	border-radius: inherit;
+	pointer-events: none;
+	z-index: 2;
 }
 .jawnos_emerge_ghost .jawnos_emerge_chrome {
 	position: absolute;
@@ -4484,8 +4495,13 @@ body.dark_theme .jawnos_emerge_sheet {
 	padding: 0 2px;
 	overflow: hidden;
 	border-radius: var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px)) 0 0;
-	background-color: var(--emerge_tint, transparent);
+	/* the inline background-color from the app's saved colour paints over the
+	   fallback; the ink follows it, exactly as the real navbar does */
+	background-color: var(--panel);
 	background-image: linear-gradient(rgba(255,255,255,.14), rgba(0,0,0,.04));
+	border: var(--window_border, 3px) solid var(--window_border_colour, var(--line));
+	color: var(--ink);
+	font-family: inherit;
 }
 .jawnos_emerge_ghost .jawnos_emerge_icon_holder {
 	flex: 0 0 auto;
@@ -4512,7 +4528,7 @@ body.dark_theme .jawnos_emerge_sheet {
 	border-radius: 6px;
 	font-size: calc(var(--navbar_h, 36px) * 0.42);
 	font-weight: 600;
-	color: var(--ink);
+	color: inherit;
 	background: rgba(0,0,0,.08);
 }
 .jawnos_emerge_ghost .jawnos_emerge_name {
@@ -4523,9 +4539,11 @@ body.dark_theme .jawnos_emerge_sheet {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	font-size: calc(var(--navbar_h, 36px) * 0.4);
+	/* .appointment_name's own size, not a navbar fraction: the real title
+	   is 20px whatever the bar's height is */
+	font-size: 20px;
 	line-height: normal;
-	color: var(--ink);
+	color: inherit;
 }
 .jawnos_emerge_ghost .jawnos_emerge_buttons {
 	flex: 0 0 auto;
@@ -4543,7 +4561,7 @@ body.dark_theme .jawnos_emerge_sheet {
 	border-radius: 5px;
 	font-size: calc(var(--navbar_h, 36px) * 0.36);
 	line-height: 1;
-	color: var(--ink);
+	color: inherit;
 	opacity: .82;
 }
 .jawnos_emerge_ghost .jawnos_emerge_button_close { opacity: .95; }
@@ -4553,6 +4571,186 @@ body.dark_theme .jawnos_emerge_sheet {
 	background: var(--window, var(--panel));
 	background-image: linear-gradient(rgba(255,255,255,.06), rgba(0,0,0,.03));
 }
+/* the real window's ink is the theme's own on a dark desk, even when the
+   app's saved colour would have picked something else */
+body.dark_theme .jawnos_emerge_ghost .jawnos_emerge_bar,
+body.dark_theme .jawnos_emerge_ghost .jawnos_emerge_name,
+body.dark_theme .jawnos_emerge_ghost .jawnos_emerge_button { color: var(--ink) !important; }
+
+/* ---- the skeleton bodies -------------------------------------------------
+   One neutral silhouette per app archetype, drawn from the theme's own ink and
+   surface so the body reads as content before the content exists. No words and
+   no colours of their own; the shapes are blocks, lines and bubbles. The app
+   name chooses the archetype in windows/06_emerge.js. */
+.jawnos_emerge_skeleton {
+	position: relative;
+	color: var(--ink);
+	box-sizing: border-box;
+	padding: 10px;
+	overflow: hidden;
+}
+.jawnos_emerge_row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 34px;
+	margin: 0 2px;
+	border-bottom: 1px solid rgba(127,127,127,.16);
+}
+.jawnos_emerge_dot {
+	flex: 0 0 auto;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: .18;
+}
+.jawnos_emerge_lines {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+.jawnos_emerge_line {
+	display: block;
+	height: 6px;
+	width: 42%;
+	border-radius: 3px;
+	background: currentColor;
+	opacity: .16;
+}
+.jawnos_emerge_line_wide { width: 72%; }
+
+.jawnos_emerge_skeleton_grid {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	grid-auto-rows: 1fr;
+	gap: 10px;
+	padding: 12px;
+}
+.jawnos_emerge_tile {
+	min-height: 64px;
+	border-radius: 10px;
+	background: currentColor;
+	opacity: .13;
+}
+
+.jawnos_emerge_skeleton_terminal { padding: 12px; }
+.jawnos_emerge_term {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border-radius: 8px;
+	background: rgba(127,127,127,.10);
+}
+.jawnos_emerge_term_line {
+	height: 7px;
+	border-radius: 3px;
+	background: currentColor;
+	opacity: .22;
+}
+.jawnos_emerge_term_line_0 { width: 34%; }
+.jawnos_emerge_term_line_1 { width: 62%; }
+.jawnos_emerge_term_line_2 { width: 48%; }
+.jawnos_emerge_term_line_3 { width: 72%; }
+.jawnos_emerge_term_line_4 { width: 22%; }
+
+.jawnos_emerge_skeleton_media { display: flex; flex-direction: column; }
+.jawnos_emerge_media_art {
+	flex: 1 1 auto;
+	min-height: 0;
+	margin: 12px;
+	border-radius: 10px;
+	background: currentColor;
+	opacity: .12;
+}
+.jawnos_emerge_media_bars {
+	display: flex;
+	gap: 8px;
+	padding: 0 12px 14px;
+}
+.jawnos_emerge_media_bar {
+	height: 8px;
+	border-radius: 4px;
+	background: currentColor;
+	opacity: .20;
+}
+.jawnos_emerge_media_bar_0 { width: 42%; }
+.jawnos_emerge_media_bar_1 { width: 25%; }
+.jawnos_emerge_media_bar_2 { width: 12%; }
+
+.jawnos_emerge_skeleton_map { padding: 10px; }
+.jawnos_emerge_map {
+	position: absolute;
+	left: 10px; top: 10px; right: 10px; bottom: 10px;
+	border-radius: 10px;
+	background: rgba(127,127,127,.09);
+	overflow: hidden;
+}
+.jawnos_emerge_map_route {
+	position: absolute;
+	left: 12%; top: 58%;
+	width: 68%;
+	border-top: 3px dashed currentColor;
+	opacity: .28;
+	transform: rotate(-16deg);
+}
+.jawnos_emerge_map_pin {
+	position: absolute;
+	left: 54%; top: 30%;
+	width: 14px; height: 14px;
+	border-radius: 50% 50% 50% 0;
+	background: currentColor;
+	opacity: .30;
+	transform: rotate(-45deg);
+}
+
+.jawnos_emerge_skeleton_chat {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 12px;
+}
+.jawnos_emerge_bubble {
+	width: 56%;
+	height: 30px;
+	border-radius: 12px;
+	background: currentColor;
+	opacity: .12;
+}
+.jawnos_emerge_bubble_out {
+	margin-left: auto;
+	width: 44%;
+	opacity: .09;
+}
+
+.jawnos_emerge_skeleton_calendar { display: flex; padding: 10px; }
+.jawnos_emerge_calendar {
+	flex: 1 1 auto;
+	display: grid;
+	grid-template-columns: repeat(7, 1fr);
+	grid-auto-rows: 1fr;
+	gap: 5px;
+}
+.jawnos_emerge_cell {
+	min-height: 14px;
+	border-radius: 5px;
+	background: currentColor;
+	opacity: .13;
+}
+
+.jawnos_emerge_skeleton_generic { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.jawnos_emerge_block {
+	min-height: 36px;
+	border-radius: 8px;
+	background: currentColor;
+	opacity: .11;
+}
+.jawnos_emerge_block_0 { min-height: 64px; }
+.jawnos_emerge_block_1 { width: 72%; }
+.jawnos_emerge_block_2 { width: 44%; }
 body.dark_theme .jawnos_emerge_ghost {
 	box-shadow: 0 20px 50px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);
 }

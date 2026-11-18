@@ -51,6 +51,21 @@ var jawnosWindowEmergeShape = {
 	maximum: { duration: 460, travel: 0.82, overshoot: 1.100, window: 320, delay: 120, ghost: 400, retarget: 300 }
 };
 
+// The prediction's dials. The arithmetic lives in jawnosWindowEmergePredict;
+// these are the few numbers a measurement pass can move without rewriting it.
+// `across` and the bar/border fallbacks mirror windowTileAcrossStep and the CSS
+// defaults; the live values come from jawnosBars (navbar - border) first. The
+// foot is windowFit's own: shrink the height to the viewport, never move the
+// slot's top (the measured table matches that; a bottom bar is not subtracted
+// from a tiled window).
+var JAWNOS_EMERGE_GEOMETRY = {
+	across: 50,
+	barFallback: 36,
+	borderFallback: 3,
+	minWidth: 240,
+	minHeight: 240
+};
+
 function jawnosEmergeNumber(value, fallback) {
 	var n = parseFloat(value);
 	return isFinite(n) ? n : fallback;
@@ -309,13 +324,59 @@ function jawnosWindowEmergeCssRect(rect, zoom) {
 	};
 }
 
+function jawnosEmergePx(value) {
+	if (typeof value != 'string') { return undefined; }
+	var match = /^(-?\d+(?:\.\d+)?)px$/.exec(value);
+	return match ? parseFloat(match[1]) : undefined;
+}
+
+// The window's own layout box, not its transformed rect. A window arriving
+// mid-enter is at scale(0.985), so getBoundingClientRect reports 472.8x630.4
+// for a 480x640 window; retargeting the ghost there leaves it 1.5% small.
+// The settled CSS left/top/width/height (or offsetWidth/offsetHeight for a
+// percentage width, as a phone uses) are the layout pixels the ghost speaks.
+function jawnosWindowEmergeLayoutRect(el, measured, zoom) {
+	zoom = (isFinite(zoom) && zoom > 0) ? zoom : 1;
+	var left = el && el.style ? jawnosEmergePx(el.style.left) : undefined;
+	var top = el && el.style ? jawnosEmergePx(el.style.top) : undefined;
+	var width = el && el.style ? jawnosEmergePx(el.style.width) : undefined;
+	var height = el && el.style ? jawnosEmergePx(el.style.height) : undefined;
+	if (left === undefined) { left = measured.left / zoom; }
+	if (top === undefined) { top = measured.top / zoom; }
+	if (width === undefined || !width) { width = (el && el.offsetWidth) || (measured.width / zoom); }
+	if (height === undefined || !height) { height = (el && el.offsetHeight) || (measured.height / zoom); }
+	return { left: left, top: top, width: width, height: height };
+}
+
+function jawnosWindowEmergeCssNumber(name, fallback) {
+	try {
+		if (typeof getComputedStyle == 'function' && typeof document != 'undefined' && document.documentElement) {
+			var value = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+			if (isFinite(value)) { return value; }
+		}
+	}
+	catch (e) {}
+	return fallback;
+}
+
+// The same viewport windowFit reads, so the prediction and the real fit agree
+// about a display-zoomed desk: visualViewport first, then the jQuery viewport.
 function jawnosWindowEmergeViewport() {
+	try {
+		if (typeof windowViewport == 'function') {
+			var fitted = windowViewport();
+			if (fitted && fitted.width > 0 && fitted.height > 0) {
+				return { width: fitted.width, height: fitted.height };
+			}
+		}
+	}
+	catch (e) {}
 	var width = 0;
 	var height = 0;
 	try {
 		if (typeof window != 'undefined') {
-			width = window.innerWidth || 0;
-			height = window.innerHeight || 0;
+			width = (window.visualViewport && window.visualViewport.width) || window.innerWidth || 0;
+			height = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 0;
 		}
 		if ((!width || !height) && typeof document != 'undefined' && document.documentElement) {
 			width = width || document.documentElement.clientWidth || 0;
@@ -327,22 +388,55 @@ function jawnosWindowEmergeViewport() {
 }
 
 function jawnosWindowEmergeRadius() {
-	try {
-		if (typeof getComputedStyle == 'function' && typeof document != 'undefined' && document.documentElement) {
-			var served = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--window_radius'));
-			if (isFinite(served) && served >= 0) { return served; }
-		}
-	}
-	catch (e) {}
-	return 12;
+	return jawnosWindowEmergeCssNumber('--window_radius', 12);
 }
 
-// The frame a fresh window is about to take: the standard 480x640 at the next
-// slot of the default pile. The press has not reserved its slot yet (that
-// happens on click), so windowNextTileSlot already names the slot it will get;
-// a slot another press is still holding is counted, so two quick presses do not
-// predict the same place.
-function jawnosWindowEmergePredict(origin) {
+// The app's saved title-bar colour and ink, seeded by the layout's
+// jawnos_app_colours map (lib/JawnOS/Domain/Contrast.pm's app_colour_map). No
+// hash, no guess: the preview paints exactly what the real navbar paints.
+function jawnosWindowEmergeAppColour(app) {
+	if (!app) { return null; }
+	var map = null;
+	try {
+		if (typeof jawnos_app_colours != 'undefined') { map = jawnos_app_colours; }
+		else if (typeof window != 'undefined') { map = window.jawnos_app_colours; }
+	}
+	catch (e) {}
+	if (!map || !map[app]) { return null; }
+	var info = map[app];
+	if (!info || !info.colour) { return null; }
+	return info;
+}
+
+// The small set of skeleton bodies. The app name is all the press has, so the
+// map is the whole rule; an unknown app keeps the neutral generic body.
+var jawnosWindowEmergeArchetypes = {
+	terminal: ['terminal', 'ide', 'embedded', 'console', 'process_monitor'],
+	grid:     ['gallery', 'cards', 'store', 'controllers', 'box_office', 'home', 'twirl'],
+	media:    ['music', 'synth', 'studio', 'video', 'camera'],
+	map:      ['travel', 'maps', 'map'],
+	chat:     ['chat'],
+	calendar: ['clock', 'calendar', 'schedule'],
+	list:     ['notes', 'editor', 'budget', 'relational', 'email', 'search', 'internet',
+		'security', 'notifications', 'weather', 'configure', 'handbook', 'help', 'files', 'folders']
+};
+
+function jawnosWindowEmergeArchetype(app) {
+	if (!app) { return 'generic'; }
+	for (var kind in jawnosWindowEmergeArchetypes) {
+		if (!jawnosWindowEmergeArchetypes.hasOwnProperty(kind)) { continue; }
+		if (jawnosWindowEmergeArchetypes[kind].indexOf(app) >= 0) { return kind; }
+	}
+	return 'generic';
+}
+
+// The frame a fresh window is about to take: the standard 480x640 at the slot
+// the press will occupy. It follows the real placer's geometry - the same
+// viewport source, windowTopLimit(), jawnosBars' navbar/border step, the
+// cascade's across step and a reservation this press already made - and then
+// applies windowFit's own clamp and 240px floors. `near` is the already
+// zoom-corrected press rectangle, used only when the page has no placer.
+function jawnosWindowEmergePredict(origin, near) {
 	origin = origin || {};
 	var view = jawnosWindowEmergeViewport();
 	var width = (typeof windowTileDefaultWidth == 'number' && windowTileDefaultWidth > 0) ? windowTileDefaultWidth : 480;
@@ -350,48 +444,76 @@ function jawnosWindowEmergePredict(origin) {
 	var left = 0;
 	var top = 0;
 	var placed = false;
+	var topLimit = (typeof windowTopLimit == 'function') ? Math.max(0, jawnosEmergeNumber(windowTopLimit(), 0)) : 0;
+	var across = (typeof windowTileAcrossStep == 'number' && windowTileAcrossStep > 0)
+		? windowTileAcrossStep : JAWNOS_EMERGE_GEOMETRY.across;
+	// The cascade's step is the bar less its border, from the same setting the
+	// window's own title bar wears. The CSS defaults (36/3) are only for a page
+	// with no jawnosBars yet; a 44/2 desk must step 42, not 33.
+	var bar = JAWNOS_EMERGE_GEOMETRY.barFallback;
+	var border = JAWNOS_EMERGE_GEOMETRY.borderFallback;
+	if (typeof jawnosBars != 'undefined' && jawnosBars) {
+		if (jawnosBars.navbar !== undefined && jawnosBars.navbar !== null) {
+			bar = jawnosEmergeNumber(jawnosBars.navbar, bar);
+		}
+		if (jawnosBars.border !== undefined && jawnosBars.border !== null) {
+			border = jawnosEmergeNumber(jawnosBars.border, border);
+		}
+	}
+	var step = Math.max(20, bar - border);
+	var stack = (typeof jawnosWorkspaceStackDefault == 'function')
+		? jawnosWorkspaceStackDefault()
+		: ((typeof windowTiledDefaultStack != 'undefined') ? windowTiledDefaultStack : '0');
+	var slot = (typeof windowNextTileSlot == 'function') ? (windowNextTileSlot(stack) || 0) : 0;
+
+	// A lazy replay or a bespoke opener may already have reserved this press's
+	// slot. Count the press being predicted instead of handing it a later one.
+	if (origin.app && typeof windowTiledPendingApp != 'undefined' && typeof windowTiledPending != 'undefined') {
+		var stamp = windowTiledPendingApp[origin.app];
+		var pending = stamp && windowTiledPending[stamp];
+		if (pending && (pending.stack || stack) === stack && pending.slot >= 0) { slot = pending.slot; }
+	}
 
 	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) {
-		// a phone's window is the width of the desk and most of its height
+		// the real window is width:100% / height:71.28% in the same layout pixels
+		// windowViewport reports; its top is the pile's top limit
 		width = view.width;
-		height = Math.max(200, Math.round(view.height * 0.7128));
-		top = (typeof windowTopLimit == 'function') ? Math.max(0, windowTopLimit()) : 0;
+		height = Math.round(view.height * 0.7128);
+		left = 0;
+		top = topLimit + slot * step;
 		placed = true;
 	}
-	else if (typeof windowTiledAnchor == 'function' && typeof windowNextTileSlot == 'function') {
-		var stack = (typeof jawnosWorkspaceStackDefault == 'function')
-			? jawnosWorkspaceStackDefault()
-			: ((typeof windowTiledDefaultStack != 'undefined') ? windowTiledDefaultStack : '0');
-		var anchor = windowTiledAnchor(stack) || { left: 0, top: 0 };
-		var slot = windowNextTileSlot(stack) || 0;
-		// A cascade steps across by 50 and down by the title bar less its border.
-		var bar = 36;
-		var border = 3;
-		var probe = (typeof document != 'undefined' && document.querySelector) ? document.querySelector('.top_navbar') : null;
-		if (probe && probe.getBoundingClientRect && typeof getComputedStyle == 'function') {
-			var box = probe.getBoundingClientRect();
-			var served_border = parseFloat(getComputedStyle(probe).borderTopWidth);
-			if (box && box.height) { bar = box.height; }
-			if (isFinite(served_border)) { border = served_border; }
-		}
-		left = (jawnosEmergeNumber(anchor.left, 0)) + slot * 50;
-		top = (jawnosEmergeNumber(anchor.top, 0)) + slot * Math.max(20, bar - border);
+	else if (typeof windowTiledAnchor == 'function') {
+		var anchor = windowTiledAnchor(stack) || { left: 0, top: topLimit };
+		left = jawnosEmergeNumber(anchor.left, 0) + slot * across;
+		top = jawnosEmergeNumber(anchor.top, topLimit) + slot * step;
 		placed = true;
 	}
 
 	if (!placed) {
 		// no stack reader on this page: stand the preview beside the press
-		left = jawnosEmergeNumber(origin.left, 0);
-		top = jawnosEmergeNumber(origin.top, 0);
+		if (!near) { near = jawnosWindowEmergeCssRect(origin, jawnosWindowEmergeZoom(null, origin)); }
+		left = jawnosEmergeNumber(near.left, 0);
+		top = jawnosEmergeNumber(near.top, 0);
 	}
 
-	// keep the frame on the desk, the way windowFit would
-	if (width > view.width - 8) { width = Math.max(160, view.width - 8); }
-	if (left + width > view.width - 8) { left = Math.max(0, view.width - width - 8); }
 	if (left < 0) { left = 0; }
-	if (height > view.height - 16) { height = Math.max(160, view.height - 16); }
-	if (top + height > view.height - 8) { top = Math.max(0, view.height - height - 8); }
 	if (top < 0) { top = 0; }
+	// Exactly windowFit's clamp, in its order: shrink the box to the room,
+	// then slide it back on screen only if the floor (240) still overhangs.
+	// The slot's top is kept; the height is what gives way.
+	if (left + width > view.width) {
+		width = Math.max(JAWNOS_EMERGE_GEOMETRY.minWidth, view.width - left);
+	}
+	if (top + height > view.height) {
+		height = Math.max(JAWNOS_EMERGE_GEOMETRY.minHeight, view.height - top);
+	}
+	if (left + width > view.width) {
+		left = Math.max(0, view.width - width);
+	}
+	if (top + height > view.height) {
+		top = Math.max(0, view.height - height);
+	}
 
 	return {
 		left: left,
@@ -402,17 +524,72 @@ function jawnosWindowEmergePredict(origin) {
 	};
 }
 
-// A stable, quiet tint that tells one app's preview from another without
-// claiming the bold colour the server saved for its title bar (which the
-// preview cannot know before the response). It is only a wash over the
-// standard surface, so the cross-fade has little to undo.
-function jawnosWindowEmergeTint(app) {
-	if (!app) { return 'transparent'; }
-	var hash = 0;
-	for (var i = 0; i < app.length; i++) {
-		hash = ((hash * 31) + app.charCodeAt(i)) % 360;
+// One skeleton body per archetype: neutral theme surfaces, no words. The
+// shapes are painted by the rules appended to the emerge block in manager.css;
+// this builds only the boxes, so the handoff to real content is a change of
+// tone rather than a change of silhouette.
+function jawnosWindowEmergeSkeleton(kind) {
+	var body = jawnosEmergeElement('div', 'jawnos_emerge_body jawnos_emerge_body_' + kind + ' jawnos_emerge_skeleton jawnos_emerge_skeleton_' + kind);
+	if (!body) { return null; }
+	var i;
+	var wrap;
+	if (kind === 'list') {
+		for (i = 0; i < 6; i++) {
+			var row = jawnosEmergeElement('div', 'jawnos_emerge_row');
+			jawnosEmergeAppend(row, jawnosEmergeElement('span', 'jawnos_emerge_dot'));
+			var lines = jawnosEmergeElement('span', 'jawnos_emerge_lines');
+			jawnosEmergeAppend(lines, jawnosEmergeElement('span', 'jawnos_emerge_line jawnos_emerge_line_wide'));
+			jawnosEmergeAppend(lines, jawnosEmergeElement('span', 'jawnos_emerge_line'));
+			jawnosEmergeAppend(row, lines);
+			jawnosEmergeAppend(body, row);
+		}
 	}
-	return 'hsla(' + hash + ', 46%, 52%, 0.20)';
+	else if (kind === 'grid') {
+		for (i = 0; i < 6; i++) {
+			jawnosEmergeAppend(body, jawnosEmergeElement('div', 'jawnos_emerge_tile'));
+		}
+	}
+	else if (kind === 'terminal') {
+		wrap = jawnosEmergeElement('div', 'jawnos_emerge_term');
+		for (i = 0; i < 5; i++) {
+			var term_line = jawnosEmergeElement('div', 'jawnos_emerge_term_line jawnos_emerge_term_line_' + i);
+			jawnosEmergeAppend(wrap, term_line);
+		}
+		jawnosEmergeAppend(body, wrap);
+	}
+	else if (kind === 'media') {
+		jawnosEmergeAppend(body, jawnosEmergeElement('div', 'jawnos_emerge_media_art'));
+		wrap = jawnosEmergeElement('div', 'jawnos_emerge_media_bars');
+		for (i = 0; i < 3; i++) {
+			jawnosEmergeAppend(wrap, jawnosEmergeElement('span', 'jawnos_emerge_media_bar jawnos_emerge_media_bar_' + i));
+		}
+		jawnosEmergeAppend(body, wrap);
+	}
+	else if (kind === 'map') {
+		wrap = jawnosEmergeElement('div', 'jawnos_emerge_map');
+		jawnosEmergeAppend(wrap, jawnosEmergeElement('span', 'jawnos_emerge_map_route'));
+		jawnosEmergeAppend(wrap, jawnosEmergeElement('span', 'jawnos_emerge_map_pin'));
+		jawnosEmergeAppend(body, wrap);
+	}
+	else if (kind === 'chat') {
+		for (i = 0; i < 4; i++) {
+			var bubble = jawnosEmergeElement('div', 'jawnos_emerge_bubble ' + (i % 2 ? 'jawnos_emerge_bubble_out' : 'jawnos_emerge_bubble_in'));
+			jawnosEmergeAppend(body, bubble);
+		}
+	}
+	else if (kind === 'calendar') {
+		wrap = jawnosEmergeElement('div', 'jawnos_emerge_calendar');
+		for (i = 0; i < 28; i++) {
+			jawnosEmergeAppend(wrap, jawnosEmergeElement('span', 'jawnos_emerge_cell'));
+		}
+		jawnosEmergeAppend(body, wrap);
+	}
+	else {
+		for (i = 0; i < 3; i++) {
+			jawnosEmergeAppend(body, jawnosEmergeElement('div', 'jawnos_emerge_block jawnos_emerge_block_' + i));
+		}
+	}
+	return body;
 }
 
 function jawnosEmergeElement(tag, className, text) {
@@ -440,9 +617,23 @@ function jawnosEmergeBoxStyle(el, rect) {
 // pressed app's icon and name, and the same minimise/maximise/close controls.
 // It is inert and click-through; it is a picture of a window, not a window.
 function jawnosWindowEmergeChrome(origin) {
+	origin = origin || {};
 	var chrome = jawnosEmergeElement('div', 'jawnos_emerge_chrome');
 	if (!chrome) { return null; }
 	var bar = jawnosEmergeElement('div', 'jawnos_emerge_bar');
+	// The real window's title bar is the app's saved colour and the ink that
+	// reads on it. Set it inline so there is no rule to keep in step; on a dark
+	// desk the shared stylesheet brings the bar back to the theme ink, exactly
+	// as top_navbar does for the real window.
+	var app_colour = jawnosWindowEmergeAppColour(origin.app);
+	if (bar && app_colour) {
+		if (app_colour.colour) { bar.style.backgroundColor = app_colour.colour; }
+		if (app_colour.ink) { bar.style.color = app_colour.ink; }
+		if (bar.style.setProperty) {
+			bar.style.setProperty('--appt-dark', app_colour.dark || '');
+			bar.style.setProperty('--appt-dark-ink', app_colour.dark_ink || '');
+		}
+	}
 	var icon_holder = jawnosEmergeElement('span', 'jawnos_emerge_icon_holder');
 	var icon_src = origin.icon || jawnosWindowOriginIconForApp(origin.app);
 	if (icon_src) {
@@ -476,7 +667,8 @@ function jawnosWindowEmergeChrome(origin) {
 	jawnosEmergeAppend(bar, name);
 	jawnosEmergeAppend(bar, buttons);
 	jawnosEmergeAppend(chrome, bar);
-	jawnosEmergeAppend(chrome, jawnosEmergeElement('div', 'jawnos_emerge_body'));
+	var archetype = jawnosWindowEmergeArchetype(origin.app);
+	jawnosEmergeAppend(chrome, jawnosWindowEmergeSkeleton(archetype));
 	return chrome;
 }
 
@@ -533,11 +725,10 @@ function jawnosWindowEmergeGhostStart(origin) {
 	var shape = jawnosWindowEmergeShape[level] || jawnosWindowEmergeShape.medium;
 	var zoom = jawnosWindowEmergeZoom(null, origin);
 	var from = jawnosWindowEmergeCssRect(origin, zoom);
-	var to = jawnosWindowEmergePredict(origin);
+	var to = jawnosWindowEmergePredict(origin, from);
 	var el = jawnosEmergeElement('div', 'jawnos_emerge_ghost');
 	if (!el) { return null; }
 	el.setAttribute('aria-hidden', 'true');
-	el.style.setProperty('--emerge_tint', jawnosWindowEmergeTint(origin.app));
 	jawnosEmergeBoxStyle(el, from);
 
 	var chrome = jawnosWindowEmergeChrome(origin);
@@ -768,13 +959,23 @@ function jawnosWindowEmerge(win, origin) {
 	origin = origin || jawnosWindowOriginTake(app);
 	var ghost = jawnosWindowEmergeGhostTake(app);
 	if (!origin && !ghost) { return false; }
-	var to = el.getBoundingClientRect();
-	if (!to || !to.width || !to.height) {
+	var measured = el.getBoundingClientRect();
+	if (!measured || !measured.width || !measured.height) {
 		// the window is not measurable; keep a press-time preview for its TTL
 		if (ghost) { jawnosWindowEmergeGhost = ghost; }
 		return false;
 	}
-	var zoom = jawnosWindowEmergeZoom(el, to);
+	// The root's display zoom only. Reading it from the window's rect would
+	// mistake an enter transform for zoom (the 1.5% landing error).
+	var zoom = jawnosWindowEmergeZoom(null, measured);
+	var layout = jawnosWindowEmergeLayoutRect(el, measured, zoom);
+	// the rest of this file compares viewport-space rects and divides by zoom
+	var to = {
+		left: layout.left * zoom,
+		top: layout.top * zoom,
+		width: layout.width * zoom,
+		height: layout.height * zoom
+	};
 
 	if (ghost) {
 		jawnosWindowEmergeGhostRetarget(ghost, el, to, Math.max(1, zoom));
