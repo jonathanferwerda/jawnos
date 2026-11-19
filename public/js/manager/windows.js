@@ -557,6 +557,10 @@ function windowMaker(response, fragment) {
 			// open: the server rendered the app's ci setting onto the panel
 			if (typeof budgetLightRestore === 'function') { budgetLightRestore(app); }
 			carry_on = 1;
+			// A window that is standing is worth keeping even when the emerge
+			// motion is off (or the desk never closes it): the settle capture is
+			// gone in that case, and only the slow idle sweep would reach it.
+			if (typeof jawnosWindowsShellCaptureSoon == 'function') { jawnosWindowsShellCaptureSoon($('#' + window_id), 1500); }
 			// a pinned window keeps the place it was saved at, rescaled onto this
 			// screen; an unpinned one cascades in with the others
 			if (typeof windowPlaceRestore === 'function') { windowPlaceRestore($('#' + window_id)); }

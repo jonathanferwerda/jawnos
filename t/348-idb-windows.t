@@ -80,6 +80,7 @@ like($store, qr/jawnosWindowsSave\(identity, \{ shell: html, ts: stamp, app: app
 
 like($websocket, qr/jawnosWindowsShellCaptureSoon\(\$/, 'a pushed header writes its window back');
 like($windows, qr/jawnosWindowsShellCaptureSoon\(wind_el/, 'a re-rendered window writes itself back');
+like($windows, qr/jawnosWindowsShellCaptureSoon\(\$\('#' \+ window_id\), 1500\)/, 'an appended window is kept even with the motions off');
 like($emerge, qr/jawnosWindowsShellCapture\(win\)/, 'the settle/close/sweep capture also keeps the shell');
 like($emerge, qr/return jawnosWindowsSave\(jawnosWindowsIdentity\(record\.app, \{\}\)/, 'the press preview shares the one store');
 like($emerge, qr/row\.preview/, 'the reload reads the preview from the shared record');
