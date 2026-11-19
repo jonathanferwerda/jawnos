@@ -488,8 +488,8 @@ like($style, qr/\.studio_track_panel \.channel_volume \{[^}]*width:\s*100%/s,
 	'the track volume fills the track panel');
 like($style, qr/\.studio_track_panel \.channel_volume \{[^}]*flex:\s*1 1 auto !important/s,
 	'rather than sitting at a fixed 80px');
-like($markup, qr/id="studio_monitor"[^>]*aria-pressed="false"/,
-	'the transport carries a Monitor button');
+like($markup, qr/class="studio_track_monitor/,
+	'every track carries a Monitor button');
 
 # --- Configure scrolls inside the window ------------------------------------
 like($style, qr/#studio_config\s*\{[^}]*flex:\s*1 1 auto/s, 'Configure takes the free height');

@@ -370,7 +370,7 @@ function studioLoad(uuid) {
 			$('.studio_config[setting="loop_bars"]').val(mixer['time']['loop_bars'] === undefined ? 4 : mixer['time']['loop_bars']);
 			$('.studio_config[setting="count_in"]').val(mixer['time']['count_in'] || '');
 			$('.studio_config[setting="snap"]').val(mixer['time']['snap'] || 'bar');
-			$('.studio_config[setting="monitor"]').val(mixer['time']['monitor'] || 'no');
+			$('.studio_config[setting="monitor"]').val(studioMonitorOn(studioSelectedChannel) ? 'yes' : 'no');
 			studioApplyMonitor();
 			studioUpdateLatencyInfo();
 			if (mixer['time']['loop'] == 'on') {
@@ -524,41 +524,61 @@ $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', fu
 	}
 });
 
-// The transport's Monitor button is the same setting the config panel's
-// "Monitor input" select carries: on, a take is heard with the live input;
-// off, only the recorded track. One control updates the other. While an engine
-// take records, the take's own live-input state is the truth: the take can arm
-// input after it started, so the saved setting lags behind it.
-function studioMonitorButtonOn() {
-	if (studioEngineRecording) {
+// The Monitor control is per track: each strip hears its own live input. Only
+// one track is monitored at a time, because the engine (Oboe or the house
+// engine) opens one input stream; pressing another track's Monitor moves it.
+function studioMonitorOn(ch) {
+	ch = String(ch);
+	if (!mixer || !mixer.monitor) { return false; }
+	if (studioEngineRecording && String(studioMonitoredChannel()) === ch) {
 		return studioEngineMonitorArmed === true && studioEngineMonitorLevel > 0;
 	}
-	// With no take recording, the engine's live Listen is the monitor: it is
-	// what makes an interface the engine owns audible at all.
-	if (typeof studioListenActive !== 'undefined' && studioListenActive) { return true; }
-	return !!(mixer['time'] && mixer['time']['monitor'] == 'yes');
+	return mixer.monitor[ch] ? true : false;
 }
 
-function studioMonitorButtonRender() {
-	var on = studioMonitorButtonOn();
-	$('#studio_monitor').attr('aria-pressed', on ? 'true' : 'false')
-		.text(on ? studioListenText('Monitor on') : studioListenText('Monitor'));
+function studioMonitoredChannel() {
+	if (!mixer || !mixer.monitor) { return null; }
+	var found = null;
+	$.each(mixer.monitor, function (ch, on) {
+		if (on && found === null) { found = String(ch); }
+	});
+	return found;
 }
 
-$(document).on('click', '#studio_monitor', function () {
-	var on = !studioMonitorButtonOn();
-	$('.studio_config[setting="monitor"]').val(on ? 'yes' : 'no').trigger('change');
-	// While an engine take records the same button arms the live input from
+function studioSetMonitor(ch, on, from_user) {
+	ch = String(ch);
+	if (!mixer.monitor) { mixer.monitor = {}; }
+	if (on) {
+		$.each(mixer.monitor, function (other) { mixer.monitor[other] = 0; });
+		mixer.monitor[ch] = 1;
+	}
+	else { mixer.monitor[ch] = 0; }
+	// While an engine take records the same control arms the live input from
 	// this moment (1) or silences it (0); the recording so far is unaffected
-	// and the take keeps running either way. The take does not have to have
-	// started with Monitor on: the engine arms the input when this param
-	// arrives, so there is no armed-take guard here.
+	// and the take keeps running either way.
 	if (studioEngineRecording) {
-		studioEngineMonitorArmed = on;
+		studioEngineMonitorArmed = !!on;
 		studioEngineMonitorLevel = on ? 1 : 0;
 		studioEngineMonitorGain(on ? 1 : 0);
 	}
+	if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(!!from_user); }
 	studioMonitorButtonRender();
+	studioSaver();
+}
+
+function studioMonitorButtonRender() {
+	$('.studio_track_monitor').each(function () {
+		var ch = String($(this).attr('channel'));
+		var on = studioMonitorOn(ch);
+		$(this).attr('aria-pressed', on ? 'true' : 'false')
+			.text(on ? studioListenText('Monitor on') : studioListenText('Monitor'));
+	});
+	$('.studio_config[setting="monitor"]').val(studioMonitorOn(studioSelectedChannel) ? 'yes' : 'no');
+}
+
+$(document).on('click', '.studio_track_monitor', function () {
+	var ch = String($(this).attr('channel'));
+	studioSetMonitor(ch, !studioMonitorOn(ch), true);
 });
 
 $(document).on('change', '.studio_config', function() {
@@ -622,8 +642,7 @@ $(document).on('change', '.studio_config', function() {
 	}
 	if (setting == 'monitor') {
 		mixer['time']['monitor'] = value;
-		studioApplyMonitor(true);
-		studioSaver();
+		studioSetMonitor(studioSelectedChannel, value == 'yes', true);
 		return;
 	}
 	if (restart == 'yes') {
@@ -667,6 +686,31 @@ window.jawnosMediaSources.studioChannels = function () {
 // instrument), a gain, and the Inserts box's chain. While it runs, status is
 // polled so the row keeps showing the engine's state, input and frame count.
 
+// Which capture path this page has. The app's Oboe stream wins, then the house
+// engine's staged binary; the browser microphone is only for a machine with
+// neither. A native path never falls back to getUserMedia: a failure is shown,
+// not quietly replaced by the browser.
+var studioAudioBackendMemo;
+var studioEngineInstalled = false;
+
+function studioAudioBackend() {
+	if (studioAudioBackendMemo !== undefined) { return studioAudioBackendMemo; }
+	if (typeof studioNativeAudio === 'function' && studioNativeAudio()) {
+		studioAudioBackendMemo = 'oboe';
+	}
+	else if (studioEngineInstalled) {
+		studioAudioBackendMemo = 'engine';
+	}
+	else {
+		studioAudioBackendMemo = 'browser';
+	}
+	return studioAudioBackendMemo;
+}
+
+function studioAudioBackendReset() {
+	studioAudioBackendMemo = undefined;
+}
+
 // The Android app registers window.JawnAudioOboe: a native duplex stream that
 // is the phone's own monitor. When it is there the Listen toggle and the
 // transport's Monitor button drive it instead of the house engine's listen;
@@ -705,9 +749,13 @@ function studioNativeStatus() {
 	}
 	var on = !!(data.running || data.waiting);
 	studioListenSetActive(on);
+	if (on && data.running && typeof studioInputReleaseForMonitor === 'function') {
+		studioInputReleaseForMonitor();
+	}
 	if (!on) {
 		studioNativeListening = false;
 		studioListenPollStop();
+		if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
 		if (data.error) { studioListenShowError(data.error); }
 		else if (data.microphone === false) { studioListenShowError(studioListenText('the microphone permission is not granted')); }
 	}
@@ -743,6 +791,7 @@ function studioNativeStart(quiet) {
 	}
 	studioNativeListening = true;
 	studioListenSetActive(true);
+	if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
 	studioListenRender({ state: answer.state, channel: 0, frames: answer.frames, native: answer });
 	studioListenPollStart();
 }
@@ -856,6 +905,7 @@ function studioListenFailed(xhr, quiet) {
 	var data = xhr && xhr.responseJSON;
 	studioListenPollStop();
 	studioListenSetActive(false);
+	if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
 	var error = (data && data.error) ? data.error : studioListenText('the audio engine did not answer');
 	if (!(quiet && studioListenNotRunning(error))) { studioListenShowError(error); }
 }
@@ -896,6 +946,7 @@ function studioListenStart(quiet) {
 				return;
 			}
 			studioListenSetActive(true);
+			if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
 			studioListenRender(data);
 			studioListenPollStart();
 		},
@@ -909,6 +960,7 @@ function studioListenStop() {
 		studioNativeListening = false;
 		studioListenPollStop();
 		studioListenSetActive(false);
+		if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
 		if (bridge) { try { bridge.stop(); } catch (e) {} }
 		return;
 	}
@@ -920,6 +972,7 @@ function studioListenStop() {
 		success: function (data) {
 			studioListenPollStop();
 			studioListenSetActive(false);
+			if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
 			data = studioEngineAnswer(data);
 			if (data.ok !== true) {
 				studioListenShowError(data.error || studioListenText('the audio engine did not answer'));

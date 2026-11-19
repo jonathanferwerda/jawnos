@@ -25,7 +25,8 @@ function studioInit(data) {
 				},
 				buttons: { record: { obg: '', bg: 'red', interval: '' }, stop: { obg: '', bg: 'lightgreen', interval: '' }, play: { obg: '', bg: 'yellow', interval: '' } },
 				settings: response.settings,
-				automations: {}
+				automations: {},
+				monitor: {}
 			};
 			// fresh channel graphs, but keep the shared AudioContext and its master rack
 			studioFlushSources();

@@ -245,6 +245,37 @@ $(document).on('click', '.studio_plug_selection', function() {
 	studioRetriever();
 });
 
+// A native engine opens the microphone itself. While it monitors, the browser
+// capture is released so one input is not opened twice; a track armed to
+// record reopens it when the monitor stops. The browser is never the monitor
+// on a native backend, only the recorder.
+var studioMonitorInputReleased = false;
+
+function studioInputReleaseForMonitor() {
+	if (studioMonitorInputReleased) { return; }
+	studioMonitorInputReleased = true;
+	$.each(studioAudio.channels, function (ch) {
+		var m = mixer[ch] && mixer[ch].media;
+		if (!m || !m.inRaw) { return; }
+		m.inRaw.getTracks().forEach(function (track) { track.stop(); });
+		m.inRaw = undefined;
+		m.in = null;
+		m.active = false;
+		studioDetachInput(ch);
+		clearInterval(m.in_analyzer_timeout);
+	});
+}
+
+function studioInputResumeAfterMonitor() {
+	if (!studioMonitorInputReleased) { return; }
+	studioMonitorInputReleased = false;
+	$('.studio_track').each(function () {
+		var ch = String($(this).attr('data-channel'));
+		var state = $('.studio_track_arm[channel="' + ch + '"]').attr('state');
+		if (state === 'rec' || state === 'loop') { studioInputStreamGrabber(ch, state); }
+	});
+}
+
 async function studioInputStreamGrabber(channel,state) {
 	var ch = channel;
 	if (!mixer[ch]) { mixer[ch] = {}; }

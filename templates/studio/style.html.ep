@@ -1005,12 +1005,14 @@
 	}
 	.studio_track_fx,
 	.studio_track_automation,
+	.studio_track_monitor,
 	.studio_track_delete {
 		font-size: 10px;
 		padding: 0 3px;
 		flex: 0 0 auto;
 	}
-	.studio_track_automation[aria-pressed="true"] {
+	.studio_track_automation[aria-pressed="true"],
+	.studio_track_monitor[aria-pressed="true"] {
 		background: var(--accent-soft, var(--accent));
 		color: var(--ink);
 	}

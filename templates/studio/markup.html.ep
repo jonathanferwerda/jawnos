@@ -212,6 +212,7 @@
 						</div>
 						<div class="studio_track_line studio_track_actions">
 							<button class="studio_track_fx hover" channel="<%= $ch %>" hint="<%= &subs::ui('Show this track\'s pedals') %>"><%= &subs::ui('FX') %></button>
+							<button class="studio_track_monitor hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Hear this track\'s live input through the monitor; one track at a time') %>"><%= &subs::ui('Monitor') %></button>
 							<button class="studio_track_automation hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Show automation for this track') %>"><%= &subs::ui('Auto') %></button>
 							<button class="studio_track_delete hover" channel="<%= $ch %>" armed="no" hint="<%= &subs::ui('Delete this track') %>"><%= &subs::ui('Delete') %></button>
 						</div>
@@ -310,7 +311,6 @@
 				</span>
 				<img class="little_thumb mark hover" hint="Drop a mark" id="studio_mark" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
 				<img class="little_thumb metronome hover" hint="Metronome" id="studio_metronome" src="<%= &subs::icon_for('/images/studio/metronome.png') %>">
-				<button type="button" class="studio_monitor_toggle hover" id="studio_monitor" aria-pressed="false" hint="<%= &subs::ui('Hear the recorded track and the live input, or the recorded track alone') %>"><%= &subs::ui('Monitor') %></button>
 				<span class="studio_monitor_note" id="studio_monitor_note" aria-live="polite"></span>
 				<input class="studio_transport_field" id="studio_bpm" value="120" hint="<%= &subs::ui('Tempo in beats per minute') %>">
 				<input class="studio_transport_field" id="studio_signature" value="4/4" hint="<%= &subs::ui('Time signature') %>">

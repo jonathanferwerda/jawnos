@@ -1295,7 +1295,15 @@ sub action_44023 {
 	$action = '' unless defined $action;
 
 	if ($action eq 'status') {
-		$c->render(json => &JawnOS::Audio::Engine::audio_engine_status());
+		my $status = &JawnOS::Audio::Engine::audio_engine_status();
+		$status = {} unless ref $status eq 'HASH';
+		# `installed` is the machine's engine, not this take: a staged binary
+		# that is not running is still the capture path the page must use
+		# instead of the browser microphone. `available` is the live socket.
+		my $binary = &JawnOS::Audio::Engine::audio_engine_binary();
+		$status->{'installed'} = (defined $binary && length $binary && -x $binary) ? 1 : 0;
+		$status->{'available'} = &JawnOS::Audio::Engine::audio_engine_available() ? 1 : 0;
+		$c->render(json => $status);
 		return;
 	}
 	if ($action eq 'stop') {
