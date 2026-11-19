@@ -25,11 +25,12 @@ under a dated heading; older sections stay as history.
 - **Home tiles wear the count.** The JawnOS row on the launcher badges each app
   with the notices waiting for it, read from the house's own database. An app
   with notices that the start menu does not list gets its own tile, so an
-  appointment app's start/stop stands with its own count; answering or clearing
-  the notice clears the badge on the next visit to Home.
+  appointment app's start/stop stands with its own count; the tile wears the
+  newest notice's picture when it has one, and answering or clearing the notice
+  clears the badge on the next visit to Home.
 - **The shade still says JawnOS.** Android attributes a notification to the
   package that posted it, so the header line and the launcher badge remain
-  JawnOS; a second APK would be needed to change that. Build 1345.
+  JawnOS; a second APK would be needed to change that. Build 1347.
 
 ## 2026-11-17 — the alarm face stays until it is answered, with a five-minute backstop
 
