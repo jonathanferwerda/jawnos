@@ -93,6 +93,8 @@ like($store, qr/deleteDatabase\('jawn_emerge'\)/, 'the old plaintext store is re
 
 like($layout, qr/jawnos_session_scope/, 'the page names the person for the store scope');
 like($layout, qr/encode_json\(\$c->session\('name'\) \|\| ''\)/, 'the scope is a JSON string, so a name cannot break the script');
+like($store, qr/window\.jawnos_version/, 'the store scope names the build, so an update reaps old shells');
+like($store, qr/return machine \+ '\|' \+ person \+ '\|' \+ build/, 'the scope is machine, person and build');
 like($windows, qr/00_store\.js/, 'the split manifest names the new part');
 
 done_testing();

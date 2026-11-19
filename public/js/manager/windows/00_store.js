@@ -54,15 +54,22 @@ function jawnosWindowsSupported() {
 	return !!(window.indexedDB && window.crypto && window.crypto.subtle && jawnosWindowsEncoder && jawnosWindowsDecoder);
 }
 
-// The machine's own identity, plus the person signed in when the page was
-// rendered. A cache from another house or another session can never be read
-// back: a scope change wipes the store and mints a new key.
+// The machine's own identity, the person signed in when the page was rendered,
+// and the build that wrote the shells. A cache from another house, another
+// session or another build can never be read back: a scope change wipes the
+// store and mints a new key. The build belongs in the scope because a shell is
+// markup painted before the server answers - one from the previous build shows
+// last build's chrome around a freshly rendered window until it is closed and
+// opened again. A plain restart keeps the same build, so its shells survive;
+// an update changes the build and reaps them.
 function jawnosWindowsScope() {
 	var machine = '';
 	var person = '';
+	var build = '';
 	try { machine = String(window.signatorial || ''); } catch (e) { machine = ''; }
 	try { person = String(window.jawnos_session_scope || ''); } catch (e) { person = ''; }
-	return machine + '|' + person;
+	try { build = String(window.jawnos_version || ''); } catch (e) { build = ''; }
+	return machine + '|' + person + '|' + build;
 }
 
 // Private mode is never written to the disk. A private place, or an open private

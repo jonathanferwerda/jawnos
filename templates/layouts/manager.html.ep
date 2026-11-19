@@ -24,8 +24,9 @@
 			}
 			var device = "<%= $device %>";
 			var signatorial = "<%= $signatorial %>";
-			// The browser's window store is sealed per machine and person: a scope
-			// change (another house, another sign-in) wipes it and mints a new key.
+			// The browser's window store is sealed per machine, person and build: a
+			// scope change (another house, another sign-in, an update) wipes it and
+			// mints a new key, so an old build's shell is never painted into this one.
 			var jawnos_session_scope = <%== encode_json($c->session('name') || '') %>;
 			// the code revision: client caches that hold rendered HTML (the music
 			// window contents) key on it, so a template change is never served stale
