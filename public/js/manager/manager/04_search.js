@@ -175,16 +175,24 @@ function jawnosSearchMatches(query) {
 		// An aka is another word the house was taught for the app ("zzz" for
 		// sleep). A result may be found by a name it does not print, and a name
 		// match always outranks an aka-only one.
-		var aka = '';
+		var aka_list = [];
 		if (app.aka && app.aka.length) {
-			for (var k = 0; k < app.aka.length; k++) { aka += ' ' + jawnosSearchPlain(app.aka[k]); }
+			for (var k = 0; k < app.aka.length; k++) {
+				aka_list.push({ raw: String(app.aka[k]), plain: jawnosSearchPlain(app.aka[k]) });
+			}
 		}
 		var name_hay = name + ' ' + label;
 		var named = true;
+		var matched_aka = [];
 		for (var i = 0; i < words.length; i++) {
 			if (name_hay.indexOf(words[i]) >= 0) { continue; }
-			if (aka.indexOf(words[i]) >= 0) { named = false; continue; }
-			return;
+			var found = '';
+			for (var k = 0; k < aka_list.length; k++) {
+				if (aka_list[k].plain.indexOf(words[i]) >= 0) { found = aka_list[k].raw; break; }
+			}
+			if (!found) { return; }
+			named = false;
+			if (matched_aka.indexOf(found) < 0) { matched_aka.push(found); }
 		}
 		// an exact name beats a prefix, which beats a name the words appear in;
 		// a word found only in an aka comes last
@@ -192,7 +200,7 @@ function jawnosSearchMatches(query) {
 		var prefix = (name.indexOf(raw) === 0 || label.indexOf(raw) === 0) ? 0 : 1;
 		var click_key = 'a:' + app.app;
 		var clicked = Object.prototype.hasOwnProperty.call(clicks, click_key) ? clicks[click_key] : 0;
-		matches.push({ app: app, rank: named ? exact * 2 + prefix : 4, clicked: clicked });
+		matches.push({ app: app, rank: named ? exact * 2 + prefix : 4, clicked: clicked, aka: matched_aka });
 	});
 	matches.sort(function (a, b) {
 		if (a.rank != b.rank) { return a.rank - b.rank; }
@@ -395,6 +403,14 @@ $(function () {
 	jawnosDurationTick();
 });
 
+// The row's words: the app's printed name, with any aka that supplied a word
+// the name does not carry in brackets after it ("Sleep (zzz)").
+function jawnosSearchLabel(match) {
+	var text = match.app.name || match.app.app;
+	if (match.aka && match.aka.length) { text += ' (' + match.aka.join(', ') + ')'; }
+	return text;
+}
+
 function jawnosSearchRender(query) {
 	var box = $('#search_results');
 	if (!box.length) { return; }
@@ -409,7 +425,7 @@ function jawnosSearchRender(query) {
 	matches.forEach(function (match, i) {
 		var row = $('<div class="hover manager_search_result"></div>').attr('app', match.app.app).attr('index', i);
 		row.append($('<img class="manager_search_icon" alt="">').attr('src', match.app.icon || ''));
-		row.append($('<span class="manager_search_label"></span>').text(match.app.name || match.app.app));
+		row.append($('<span class="manager_search_label"></span>').text(jawnosSearchLabel(match)));
 		list.append(row);
 	});
 	// leave any transformed bar behind so the fixed coordinates are the viewport's

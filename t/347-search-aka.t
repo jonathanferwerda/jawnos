@@ -114,9 +114,121 @@ ok(!(grep { $_ eq 'secret' } @apps),
 my $js = read_file("$root/public/js/manager/manager/04_search.js");
 like($js, qr/if \(app\.aka && app\.aka\.length\)/,
 	'the dock reads the akas the index carries');
-like($js, qr/aka\.indexOf\(words\[i\]\)/,
+like($js, qr/aka_list\[k\]\.plain\.indexOf\(words\[i\]\)/,
 	'a word may be found in an aka');
 like($js, qr/rank: named \? exact \* 2 \+ prefix : 4/,
 	'an aka-only match ranks below every name match');
+like($js, qr/function jawnosSearchLabel\(match\)/,
+	'the row label is its own function');
+like($js, qr/\Qtext += ' (' + match.aka.join(', ') + ')'\E/,
+	'the label puts the matched aka in brackets');
+
+# The matching and the label are run in a bare JS context, so the words a row
+# prints are played out rather than only counted in the source. The harness is
+# written here, not kept in t/lib, because a t/lib change selects the full suite.
+my $node = `command -v node 2>/dev/null`;
+chomp $node if defined $node;
+if ($node && -x $node) {
+	my ($harness_fh, $harness) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $harness_fh <<'JS';
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+
+// A chainable stand-in for jQuery. Loading the file must not draw anything, so
+// $(fn) returns without calling fn and every other call chains.
+function chain() {
+	const fn = function () { return proxy; };
+	const proxy = new Proxy(fn, {
+		get: function (target, prop) {
+			if (prop === 'length') { return 0; }
+			if (prop === 'then') { return undefined; }
+			if (prop === 'val') { return function () { return ''; }; }
+			if (prop === 'is') { return function () { return false; }; }
+			return proxy;
+		},
+		apply: function () { return proxy; },
+	});
+	return proxy;
+}
+
+const sandbox = {
+	console: console,
+	Math: Math,
+	JSON: JSON,
+	Date: Date,
+	setTimeout: function () { return 0; },
+	clearTimeout: function () {},
+	setInterval: function () { return 0; },
+	clearInterval: function () {},
+	localStorage: {
+		getItem: function () { return null; },
+		setItem: function () {},
+	},
+	document: { addEventListener: function () {}, getElementById: function () { return null; } },
+	window: {},
+};
+sandbox.window = sandbox;
+sandbox.$ = chain;
+sandbox.jQuery = sandbox.$;
+
+vm.createContext(sandbox);
+vm.runInContext(source, sandbox, { filename: '04_search.js' });
+
+let failures = 0;
+function check(ok, name) {
+	if (!ok) { failures++; }
+	console.log((ok ? 'ok ' : 'not ok ') + name);
+}
+
+sandbox.jawnosSearchApps = [
+	{ app: 'sleep', name: 'Sleep', aka: [ 'zzz', 'shuteye' ] },
+	{ app: 'zzz_snooze', name: 'Zzz Snooze', aka: [] },
+	{ app: 'coffee', name: 'Coffee', aka: [ 'joe' ] },
+];
+
+function find(list, app) {
+	return list.filter(function (m) { return m.app.app === app; })[0];
+}
+
+let list = sandbox.jawnosSearchMatches('zzz');
+check(list.length === 2, 'a word finds the name that carries it and the app whose aka does');
+check(list[0].app.app === 'zzz_snooze', 'a name match is listed before an aka-only match');
+const sleep = find(list, 'sleep');
+check(!!sleep && sleep.aka.length === 1 && sleep.aka[0] === 'zzz',
+	'the aka that supplied the word travels with the match');
+check(sandbox.jawnosSearchLabel(sleep) === 'Sleep (zzz)',
+	'the row prints the matched aka in brackets');
+check(sandbox.jawnosSearchLabel(find(list, 'zzz_snooze')) === 'Zzz Snooze',
+	'a name match prints no brackets');
+
+list = sandbox.jawnosSearchMatches('shuteye');
+check(sandbox.jawnosSearchLabel(find(list, 'sleep')) === 'Sleep (shuteye)',
+	'a second aka prints the word it matched, not the first');
+
+list = sandbox.jawnosSearchMatches('sleep');
+check(sandbox.jawnosSearchLabel(find(list, 'sleep')) === 'Sleep',
+	'a match on the printed name adds no brackets');
+
+list = sandbox.jawnosSearchMatches('zzz shuteye');
+const both = find(list, 'sleep');
+check(!!both && both.aka.join(',') === 'zzz,shuteye', 'a query matching two akas carries both');
+check(sandbox.jawnosSearchLabel(both) === 'Sleep (zzz, shuteye)',
+	'and the row prints both in brackets');
+
+console.log((failures ? 'not ok ' : 'ok ') + failures + ' failure(s)');
+process.exit(failures);
+JS
+	close $harness_fh;
+	my $out = `$node "$harness" "$root/public/js/manager/manager/04_search.js" 2>&1`;
+	my @lines = split /\n/, $out;
+	unlike($out, qr/^not ok/m, 'every aka-row assertion passes');
+	is($lines[-1] // '', 'ok 0 failure(s)', 'the aka-row harness exits clean');
+	diag($out) unless ($lines[-1] // '') eq 'ok 0 failure(s)';
+}
+else {
+	diag('node is not installed; the aka-row rendering checks are skipped');
+}
 
 done_testing();
