@@ -1408,6 +1408,7 @@ sub clothesline_daily_hours {
 		foreach my $app ( keys %skip ) {
 			delete $scan->{'apps'}{$app} if ref $scan->{'apps'} eq 'HASH';
 			delete $scan->{'done'}{$app} if ref $scan->{'done'} eq 'HASH';
+			delete $scan->{'done_ms'}{$app} if ref $scan->{'done_ms'} eq 'HASH';
 			delete $scan->{'running'}{$app} if ref $scan->{'running'} eq 'HASH';
 		}
 		$scan->{'start_app'} = undef if defined $scan->{'start_app'} && $skip{ $scan->{'start_app'} };
@@ -1773,11 +1774,16 @@ sub clothesline_routine_scan {
 	}
 
 	# what this run of the routine has already finished, by app: the line takes
-	# those occurrences out of the canonical sequence, wherever in it they sit
-	my %done;
+	# those occurrences out of the canonical sequence, wherever in it they sit.
+	# The times are kept too: a day that takes a step twice needs to know *when*
+	# the finished ones happened, or two morning presses look like the evening
+	# occurrence and the head is carried to the night with it.
+	my (%done, %done_ms);
 	if ($belongs) {
 		foreach my $r ( @recent_completed ) {
-			$done{$r->{'app'}}++ if $r->{'ms'} >= $last_start;
+			next unless $r->{'ms'} >= $last_start;
+			$done{$r->{'app'}}++;
+			push @{ $done_ms{$r->{'app'}} }, $r->{'ms'};
 		}
 	}
 
@@ -1785,7 +1791,7 @@ sub clothesline_routine_scan {
 	$current->{'running'} = $last_any->{'app'} if $active && $last_any->{'type'} eq 'start';
 	$current->{'start'} = $belongs ? $last_start : undef;
 
-	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any, done => \%done, start_app => $start_app, running => \%open };
+	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any, done => \%done, done_ms => \%done_ms, start_app => $start_app, running => \%open };
 }
 
 # The longest run of steps two sequences share in order, which is how alike two
@@ -1928,20 +1934,56 @@ sub clothesline_sequence_anticipate {
 	# after it ride along, as the rail always has.
 	my $next_wave = (defined $opt{'next_wave'}) ? ($opt{'next_wave'} ? 1 : 0) : 1;
 
-	# which wave the last finished step sits in: the line shows that wave's
-	# remainder and the one after it, never a wave two ahead. The day moves by
-	# the order the person takes it in, not by the hour on the clock: a routine
-	# begun late still leads from where it began, and the clock never carries the
-	# line past a step that was not finished. The wave's own usual hour is only a
-	# name for the settings dialog, never a rule for the head.
+	# Which wave the last finished step sits in: the line shows that wave's
+	# remainder and the one after it, never a wave two ahead. Which step that is
+	# has to come from when it happened, not from how many times its app has been
+	# pressed: a day that brushes its teeth morning and night keeps two
+	# toothbrushings in its order, and counting two morning presses used to
+	# consume the evening one and carry the head to the night with it. The last
+	# finished step's time of day, read against the learned day's own times,
+	# places the wave. A caller that hands only counts - a test, a curated day -
+	# still places it by the order the steps were finished. The clock itself
+	# never places it: the line waits where the person last acted.
 	my (%left, $current_wave);
 	$current_wave = 0;
 	if (!$all) {
-		for my $i ( 0 .. $#{$seq} ) {
-			my $app = $seq->[$i];
-			if (($left{$app} //= ($done->{$app} || 0)) > 0) {
-				$left{$app}--;
-				$current_wave = $waves->[$i] if $waves && defined $waves->[$i];
+		my $anchored;
+		if (ref $scan->{'done_ms'} eq 'HASH' && ref $canonical_times eq 'ARRAY'
+			&& @{$canonical_times} && defined $canonical_times->[0]) {
+			# only a step the learned day knows can place the wave; a call, a
+			# step off the line, says nothing about where the routine stands
+			my %known = map { $_ => 1 } @{$seq};
+			my $last;
+			foreach my $app ( keys %{$scan->{'done_ms'}} ) {
+				next unless $known{$app} && ref $scan->{'done_ms'}{$app} eq 'ARRAY';
+				foreach my $ms ( @{$scan->{'done_ms'}{$app}} ) {
+					next unless defined $ms;
+					$last = $ms if !defined $last || $ms > $last;
+				}
+			}
+			if (defined $last) {
+				my $tod = sub { my $ms = shift; return ((int($ms / 1000) % 86400) + 86400) % 86400; };
+				my $want = $tod->($last);
+				my ($best, $best_gap);
+				for my $i ( 0 .. $#{$seq} ) {
+					next unless defined $canonical_times->[$i];
+					my $d = abs($tod->($canonical_times->[$i]) - $want);
+					$d = 86400 - $d if $d > 43200;
+					if (!defined $best_gap || $d < $best_gap) { ($best, $best_gap) = ($i, $d); }
+				}
+				if (defined $best) {
+					$current_wave = ($waves && defined $waves->[$best]) ? $waves->[$best] : 0;
+					$anchored = 1;
+				}
+			}
+		}
+		if (!$anchored) {
+			for my $i ( 0 .. $#{$seq} ) {
+				my $app = $seq->[$i];
+				if (($left{$app} //= ($done->{$app} || 0)) > 0) {
+					$left{$app}--;
+					$current_wave = $waves->[$i] if $waves && defined $waves->[$i];
+				}
 			}
 		}
 	}

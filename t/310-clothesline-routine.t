@@ -156,6 +156,47 @@ is_deeply([ map { $_->{'app'} } @{$wall->{'list'}} ], [qw(wake_up pee water coff
 is_deeply([ map { $_->{'wave'} } @{$wall->{'list'}} ], [0, 0, 0, 0, 1, 1, 2],
 	'and each step still knows the wave it belongs to');
 
+# --- the last finished step is found by when it happened --------------------
+# The learned day brushes its teeth in the morning and again at night. Pressing
+# the morning one twice (or adding a noon one) must not consume the night's
+# occurrence and carry the head to the evening with it.
+my $bseq = [qw(wake_up toothbrushing lunch work toothbrushing dinner bed)];
+my $btimes = [
+	$base,
+	$base + (10 * 60000),
+	$base + (270 * 60000),
+	$base + (300 * 60000),
+	$base + (810 * 60000),
+	$base + (840 * 60000),
+	$base + (870 * 60000),
+];
+my $bcanon = { seq => $bseq, waves => [ 0, 0, 1, 1, 2, 2, 3 ], times => $btimes };
+my $bscan = {
+	apps => { map { $_ => { due => 1 } } @{$bseq} },
+	current => { start => $base },
+	done => { wake_up => 1, toothbrushing => 2, lunch => 1, work => 1 },
+	done_ms => {
+		wake_up => [$base],
+		toothbrushing => [ $base + (10 * 60000), $base + (180 * 60000) ],
+		lunch => [ $base + (270 * 60000) ],
+		work => [ $base + (300 * 60000) ],
+	},
+};
+my $bhead = subs::clothesline_sequence_anticipate($bscan, $base + (310 * 60000),
+	limit => 10, canonical => $bcanon);
+is($bhead->{'current_wave'}, 1,
+	'two morning toothbrushings leave the head at the lunch wave, not the night');
+ok(!(grep { $_->{'app'} eq 'bed' } @{$bhead->{'list'}}),
+	'and the bed is not named as a next step while the day is still at lunch');
+
+# A bed made at nine in the morning is a morning position, not the night's.
+$bscan->{'done'} = { wake_up => 1, bed => 1 };
+$bscan->{'done_ms'} = { wake_up => [$base], bed => [ $base + (60 * 60000) ] };
+my $bearly = subs::clothesline_sequence_anticipate($bscan, $base + (60 * 60000),
+	limit => 10, canonical => $bcanon);
+is($bearly->{'current_wave'}, 0, 'a bed made at nine does not carry the head to the night');
+ok(!(grep { $_->{'app'} eq 'bed' } @{$bearly->{'list'}}), 'and the finished bed is taken out');
+
 # --- a curated day hands in its own order, and still advances ---------------
 # The person put lunch first, then the morning; the coffee is already taken, and
 # the tea is not due today by the learned cadence. The day keeps its order, the
