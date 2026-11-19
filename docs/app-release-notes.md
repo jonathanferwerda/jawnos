@@ -22,9 +22,14 @@ under a dated heading; older sections stay as history.
 - **A dismissed notice takes its header with it.** When the last notice in a
   group is swiped away, tapped, or removed by the manager, the group header is
   pruned instead of lingering.
+- **Home tiles wear the count.** The JawnOS row on the launcher badges each app
+  with the notices waiting for it, read from the house's own database. An app
+  with notices that the start menu does not list gets its own tile, so an
+  appointment app's start/stop stands with its own count; answering or clearing
+  the notice clears the badge on the next visit to Home.
 - **The shade still says JawnOS.** Android attributes a notification to the
   package that posted it, so the header line and the launcher badge remain
-  JawnOS; a second APK would be needed to change that. Build 1344.
+  JawnOS; a second APK would be needed to change that. Build 1345.
 
 ## 2026-11-17 — the alarm face stays until it is answered, with a five-minute backstop
 
