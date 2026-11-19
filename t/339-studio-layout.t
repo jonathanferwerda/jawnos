@@ -166,7 +166,7 @@ like($layout, qr/if \(studioPanelElement\(name\)\.hasClass\('studio_panel_floati
 	'Arrange brings a floated panel home');
 
 # --- arranged mode is an explicit DAW grid, left by any manual move --------
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/s,
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(90px,\s*1fr\) minmax\(120px,\s*45%\)/s,
 	'the arranged rows are auto, a dominant timeline, then auto');
 like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?"transport transport transport"[\s\S]*?"tracks tracks synth"[\s\S]*?"mixer mixer mixer"/s,
 	'the wide areas run transport, tracks beside the synth, then the console');
@@ -176,12 +176,12 @@ like($style, qr/#studio_grid\.studio_arranged > #studio_tracks_panel\s*\{[^}]*gr
 	'the timeline owns the middle area');
 like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*grid-area:\s*mixer !important/s,
 	'the console owns the bottom area');
-like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/s,
+like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(90px,\s*1fr\) minmax\(120px,\s*45%\)/s,
 	'the console row is auto rather than eating the timeline');
 like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?overflow-y:\s*auto/s,
 	'a very short arranged window scrolls the grid instead of clipping an area');
-like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*max-height:\s*min\(280px,\s*45%\)/s,
-	'the console is capped at a whole strip or 45% of the grid, whichever is less');
+like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*height:\s*100%/s,
+	'the console fills its row, which is capped at 45% of the grid');
 like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*min-height:\s*56px/s,
 	'the transport is content height, not a whole equal row');
 like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*max-height:\s*104px/s,

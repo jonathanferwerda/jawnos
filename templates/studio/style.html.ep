@@ -427,7 +427,10 @@
 		/* the console row is auto: its own 132px cap sizes the band, and that is
 		   well under 45% of the grid at the target window sizes, so the timeline
 		   keeps the room */
-		grid-template-rows: auto minmax(0, 1fr) auto;
+		/* the timeline keeps a track's worth (90px) even on a short window, and
+		   the console takes at most 45% of the grid rather than sizing its row to
+		   the strip's full height and leaving the timeline at zero */
+		grid-template-rows: auto minmax(90px, 1fr) minmax(120px, 45%);
 		grid-template-areas:
 			"transport transport transport"
 			"tracks tracks synth"
@@ -454,10 +457,11 @@
 		grid-area: mixer !important;
 		height: auto;
 		/* the bar plus a whole channel strip (the strips are ~240px of knobs
-		   and jacks under the window's own control sizes), but never more than
-		   45% of the grid: on a short window the console scrolls rather than
-		   starving the timeline, and the grip still trades the two */
-		max-height: min(280px, 45%);
+		   and jacks under the window's own control sizes); the row's 45% cap
+		   keeps it from starving the timeline, and the grip still trades the
+		   two */
+		height: 100%;
+		max-height: 100%;
 	}
 	/* A phone-width window stacks the same areas: transport, dominant timeline,
 	   a compact console, then the synth. The fixed auto-row heights are small so
