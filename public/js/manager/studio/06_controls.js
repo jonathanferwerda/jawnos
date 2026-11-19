@@ -509,17 +509,16 @@ $(document).on('click', '#studio_prev, #studio_next', function() {
 });
 
 $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', function() {
+	var studio = $('#studio');
 	var config = $('#studio_config');
-	var controls = $('#studio_controls');
-	var mixer = $('#studio_mixer');
 	if (config.is(':visible')) {
 		config.hide();
-		controls.show();
-		mixer.show();
+		// Removing the class brings the grid back exactly as its own hide
+		// toggles left it; nothing here shows a panel the user hid.
+		studio.removeClass('studio_config_open');
 	} else {
+		studio.addClass('studio_config_open');
 		config.show();
-		controls.hide();
-		mixer.hide();
 		studioUpdateLatencyInfo();
 		studioEngineStatus();
 	}
@@ -527,25 +526,36 @@ $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', fu
 
 // The transport's Monitor button is the same setting the config panel's
 // "Monitor input" select carries: on, a take is heard with the live input;
-// off, only the recorded track. One control updates the other.
+// off, only the recorded track. One control updates the other. While an engine
+// take records, the take's own live-input state is the truth: the take can arm
+// input after it started, so the saved setting lags behind it.
+function studioMonitorButtonOn() {
+	if (studioEngineRecording) {
+		return studioEngineMonitorArmed === true && studioEngineMonitorLevel > 0;
+	}
+	return !!(mixer['time'] && mixer['time']['monitor'] == 'yes');
+}
+
 function studioMonitorButtonRender() {
-	var on = mixer['time'] && mixer['time']['monitor'] == 'yes';
+	var on = studioMonitorButtonOn();
 	$('#studio_monitor').attr('aria-pressed', on ? 'true' : 'false')
 		.text(on ? studioListenText('Monitor on') : studioListenText('Monitor'));
 }
 
 $(document).on('click', '#studio_monitor', function () {
-	var on = !(mixer['time'] && mixer['time']['monitor'] == 'yes');
+	var on = !studioMonitorButtonOn();
 	$('.studio_config[setting="monitor"]').val(on ? 'yes' : 'no').trigger('change');
-	studioMonitorButtonRender();
-	// An engine take reads the setting when it is armed; while it records, the
-	// same button also trims or silences the live input on the monitor bus so
-	// the take can be muted without stopping. A take that armed no live input
-	// has nothing to trim, so the setting alone is the whole answer there.
-	// The browser path keeps the setting alone too.
-	if (studioEngineRecording && studioEngineMonitorArmed) {
+	// While an engine take records the same button arms the live input from
+	// this moment (1) or silences it (0); the recording so far is unaffected
+	// and the take keeps running either way. The take does not have to have
+	// started with Monitor on: the engine arms the input when this param
+	// arrives, so there is no armed-take guard here.
+	if (studioEngineRecording) {
+		studioEngineMonitorArmed = on;
+		studioEngineMonitorLevel = on ? 1 : 0;
 		studioEngineMonitorGain(on ? 1 : 0);
 	}
+	studioMonitorButtonRender();
 });
 
 $(document).on('change', '.studio_config', function() {

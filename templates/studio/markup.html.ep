@@ -300,7 +300,7 @@
 	</div>
 	</div>
 </div>
-<div id="studio_config" style="display:none; width:100%;background-color:var(--panel);">
+<div id="studio_config" style="display:none;">
 		<h1>Configure</h1>
 
 		<div id="song_controls" style="">

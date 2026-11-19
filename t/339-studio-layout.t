@@ -491,4 +491,18 @@ like($style, qr/\.studio_track_panel \.channel_volume \{[^}]*flex:\s*1 1 auto !i
 like($markup, qr/id="studio_monitor"[^>]*aria-pressed="false"/,
 	'the transport carries a Monitor button');
 
+# --- Configure scrolls inside the window ------------------------------------
+like($style, qr/#studio_config\s*\{[^}]*flex:\s*1 1 auto/s, 'Configure takes the free height');
+like($style, qr/#studio_config\s*\{[^}]*min-height:\s*0/s, 'and may shrink to the window');
+like($style, qr/#studio_config\s*\{[^}]*overflow-y:\s*auto/s,
+	'so the settings table and the engine panel scroll instead of clipping');
+like($style, qr/#studio_config\s*\{[^}]*overflow-x:\s*hidden/s, 'and never scroll sideways');
+like($style, qr/#studio_config\s*\{[^}]*background-color:\s*var\(--panel\)/s,
+	'the colour comes from the theme token, not inline style');
+like($style, qr/#studio\.studio_config_open #studio_viewer\s*\{\s*display:\s*none/s,
+	'the open class hides the viewer');
+like($ctrl, qr/addClass\('studio_config_open'\)/, 'the Configure handler sets the open class');
+like($ctrl, qr/removeClass\('studio_config_open'\)/, 'and clears it on close');
+unlike($markup, qr/id="studio_config"\s+style="[^"]*width:/, 'the inline width moved into the stylesheet');
+
 done_testing();

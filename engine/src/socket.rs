@@ -64,7 +64,7 @@ use std::time::Duration;
 
 use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
-    monitor_start, to_i16, BackendKind, Channel, Device, DiskWriter, InsertKind, Mixer,
+    monitor_start, to_i16, BackendKind, Channel, Consumer, Device, DiskWriter, InsertKind, Mixer,
     MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback, Producer,
     MASTER_ORDER,
 };
@@ -675,6 +675,11 @@ impl Server {
     /// The take's live-input trim: `"target":"input","name":"gain"`. It
     /// trims only the monitoring bus (the take's writers never see it), and
     /// `0` is how the page mutes live input without ending the take.
+    ///
+    /// Every take builds the monitoring ring, so a positive gain can also arm
+    /// the live input after the take has started: the ring is empty until then,
+    /// and a monitor opens on the live edge rather than on a backlog. `0` only
+    /// silences; it never arms.
     fn param_input(&mut self, object: &Object) -> String {
         let name = match get(object, "name") {
             Some(Value::Str(name)) => name.as_str(),
@@ -687,24 +692,156 @@ impl Server {
             Some(Value::Num(value)) if value.is_finite() => *value as f32,
             _ => return error_line("\"value\" must be a finite number"),
         };
-        let running = match &mut self.current {
-            Some(running) if running.is_recording() => running,
-            _ => return error_line("no live input is being monitored"),
+        // The take owns the ring and the trim from the moment it starts, so the
+        // gain is addressable whether or not monitoring was on at arm time.
+        let (clamped, armed, gain, remaining, master) = {
+            let running = match &self.current {
+                Some(running) if running.is_recording() => running,
+                _ => return error_line("no live input is being monitored"),
+            };
+            let clamped = value.clamp(0.0, 4.0);
+            running
+                .input_gain
+                .store(clamped.to_bits(), Ordering::Release);
+            let remaining = {
+                let mut status = running
+                    .status
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                status.monitor_gain = clamped;
+                remaining_frames(running.total_frames, status.frames)
+            };
+            (
+                clamped,
+                Arc::clone(&running.armed),
+                Arc::clone(&running.input_gain),
+                remaining,
+                running.master.clone(),
+            )
         };
-        let gain = match &running.input_gain {
-            Some(gain) => Arc::clone(gain),
-            None => return error_line("no live input is being monitored"),
-        };
-        let clamped = value.clamp(0.0, 4.0);
-        gain.store(clamped.to_bits(), Ordering::Release);
-        let mut status = running
-            .status
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        status.monitor_gain = clamped;
-        format!(
-            "{{\"ok\":true,\"target\":\"input\",\"name\":\"gain\",\"gain\":{clamped}}}"
-        )
+
+        // Zero is a mute, not an arming: a page that fades the trim out must
+        // not open the ring by accident.
+        let armed_now = armed.load(Ordering::Acquire);
+        if clamped <= 0.0 || armed_now {
+            return input_line(clamped, armed_now);
+        }
+        if remaining == 0 {
+            return error_line("the take has no time left to monitor");
+        }
+
+        // A monitor `record` built already carries the live input (with or
+        // without monitor files), so arming it rebuilds nothing. A take armed
+        // with monitoring off has no session and starts one here.
+        let has_live_session = self
+            .playback
+            .as_ref()
+            .map(|session| session.live)
+            .unwrap_or(false);
+        if !has_live_session {
+            // Two outputs on one device would fail mid-block; a plain playback
+            // that is still running is refused exactly as `record` refuses it.
+            if self
+                .playback
+                .as_ref()
+                .map(PlaySession::is_playing)
+                .unwrap_or(false)
+            {
+                return error_line("a playback is already running");
+            }
+            // The same probe `record` runs, so a busy or unopenable output is a
+            // refusal here rather than a monitor that fails a block later.
+            // `armed` stays false on every refusal, so a later `param` retries.
+            match crate::probe_playback(
+                self.config.backend,
+                &self.config.device,
+                self.config.rate,
+                self.config.period,
+                self.config.buffer,
+            ) {
+                Ok(granted) if granted == self.config.rate => {}
+                Ok(granted) => {
+                    return error_line(&format!(
+                        "the device granted {granted} Hz for the monitor, but the take records at {} Hz",
+                        self.config.rate
+                    ))
+                }
+                Err(error) => return error_line(&error),
+            }
+            // The consumer left the take only if an earlier monitor took it;
+            // then that monitor, not this call, owns the live edge.
+            let consumer = match self
+                .current
+                .as_mut()
+                .and_then(|running| running.consumer.take())
+            {
+                Some(consumer) => consumer,
+                None => {
+                    return error_line(
+                        "the take's monitor has ended; the live input cannot be reattached",
+                    )
+                }
+            };
+            let status = Arc::new(Mutex::new(PlayStatus {
+                state: State::Playing,
+                files: 0,
+                frames: 0,
+                error: String::new(),
+            }));
+            let monitor_stop = Arc::new(AtomicBool::new(false));
+            let monitor_params = Arc::new(ParamQueue::new());
+            let spawned = {
+                let status = Arc::clone(&status);
+                let stop = Arc::clone(&monitor_stop);
+                let params = Arc::clone(&monitor_params);
+                let config = self.config.clone();
+                thread::Builder::new()
+                    .name("jawn-audio-monitor".to_string())
+                    .spawn(move || {
+                        run_playback(
+                            config,
+                            Vec::new(),
+                            0,
+                            status,
+                            stop,
+                            Some(params),
+                            master,
+                            Some((consumer, gain)),
+                            Some(remaining),
+                        )
+                    })
+            };
+            match spawned {
+                Ok(handle) => {
+                    // Whatever finished session `status` was still reporting is
+                    // a status line now; the monitor replaces it.
+                    if let Some(mut previous) = self.playback.take() {
+                        previous.finish();
+                    }
+                    self.playback = Some(PlaySession {
+                        status,
+                        stop: monitor_stop,
+                        handle: Some(handle),
+                        strips: Vec::new(),
+                        params: Some(monitor_params),
+                        align: None,
+                        live: true,
+                    });
+                }
+                Err(error) => {
+                    return error_line(&format!("cannot start the monitor thread: {error}"))
+                }
+            }
+        }
+        armed.store(true, Ordering::Release);
+        if let Some(running) = &self.current {
+            let mut status = running
+                .status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            status.monitor_input = true;
+        }
+        input_line(clamped, true)
     }
 
 
@@ -1405,19 +1542,15 @@ impl Server {
         // to them as soon as `record` answers.
         let params = Arc::new(ParamQueue::new());
 
-        // The live-input ring: the capture thread pushes each block's summed,
-        // processed stereo output; the monitor thread pops it. Built here so
-        // both workers share one ring before either exists.
-        let (input_producer, input_consumer, input_gain) = if monitor_input {
-            let (producer, consumer) = MonitorBus::new(MONITOR_RING_FRAMES);
-            (
-                Some(producer),
-                Some(consumer),
-                Some(Arc::new(AtomicU32::new(monitor_gain.to_bits()))),
-            )
-        } else {
-            (None, None, None)
-        };
+        // The live-input ring: every take builds one, whether or not it is
+        // monitoring, so a monitor armed mid-take never has to restart the
+        // take. The capture thread pushes only while `armed`, which keeps the
+        // ring empty until monitoring begins; the trim is always addressable.
+        let (input_producer, input_consumer) = MonitorBus::new(MONITOR_RING_FRAMES);
+        let armed = Arc::new(AtomicBool::new(monitor_input));
+        let input_gain = Arc::new(AtomicU32::new(monitor_gain.to_bits()));
+        // The socket keeps the read side unless a monitor takes it here.
+        let mut parked_consumer = Some(input_consumer);
 
         // The monitoring bus: its own thread and its own device handle, fed by
         // `Playback` and never by the capture loop. Started before the take so
@@ -1438,10 +1571,11 @@ impl Server {
             let monitor_at = monitor_start(start_at, alignment.samples);
             let strips = monitor.clone();
             let monitor_master = master.clone();
-            let live = match (input_consumer, input_gain.as_ref()) {
-                (Some(consumer), Some(gain)) => Some((consumer, Arc::clone(gain))),
-                _ => None,
-            };
+            // Even a file monitor with `monitor_input` off carries the live
+            // input: arming later is one atomic store, not a monitor rebuild.
+            let live = parked_consumer
+                .take()
+                .map(|consumer| (consumer, Arc::clone(&input_gain)));
             let live_length = if monitor_input { Some(frames) } else { None };
             let spawned = {
                 let status = Arc::clone(&status);
@@ -1472,6 +1606,7 @@ impl Server {
                     strips,
                     params: Some(monitor_params),
                     align: Some(alignment),
+                    live: true,
                 }),
                 Err(error) => {
                     for disk in disks {
@@ -1487,12 +1622,16 @@ impl Server {
             }
         };
 
+        // The take thread owns `master`; the socket keeps a copy so a monitor
+        // armed mid-take arms the same mastering chain.
+        let master_for_monitor = master.clone();
         let spawned = {
             let shared = Arc::clone(&shared);
             let stop = Arc::clone(&stop);
             let params = Arc::clone(&params);
             let config = self.config.clone();
             let plans = plans.clone();
+            let armed = Arc::clone(&armed);
             thread::Builder::new()
                 .name("jawn-audio-take".to_string())
                 .spawn(move || {
@@ -1505,7 +1644,8 @@ impl Server {
                         stop,
                         params,
                         master,
-                        input_producer,
+                        Some(input_producer),
+                        armed,
                     )
                 })
         };
@@ -1535,6 +1675,10 @@ impl Server {
             handle: Some(handle),
             params,
             input_gain,
+            armed,
+            total_frames: frames,
+            consumer: parked_consumer,
+            master: master_for_monitor,
         });
         let monitor_part = if monitor_files == 0 && !monitor_input {
             String::new()
@@ -1715,6 +1859,7 @@ impl Server {
             strips: Vec::new(),
             params: None,
             align: None,
+            live: false,
         });
         format!(
             "{{\"ok\":true,\"state\":\"playing\",\"files\":{}}}",
@@ -2310,9 +2455,9 @@ struct Status {
     align_from: &'static str,
     /// One entry per track; track 1's also fills the top-level fields.
     tracks: Vec<TrackStatus>,
-    /// Whether this take armed live-input monitoring, the gain it is using
-    /// now, and frames the monitoring ring discarded because the monitor was
-    /// late. All three are measurements, never errors.
+    /// Whether this take is pushing its live input to the monitor right now,
+    /// the gain it is using, and frames the monitoring ring discarded because
+    /// the monitor was late. All three are measurements, never errors.
     monitor_input: bool,
     monitor_gain: f32,
     monitor_dropped: u64,
@@ -2344,6 +2489,23 @@ fn tracks_json(tracks: &[TrackStatus]) -> String {
     format!(",\"tracks\":[{}]", entries.join(","))
 }
 
+/// The `param` reply for the live trim: the gain just stored and whether the
+/// take is pushing the live edge. The page reads `monitor_input` instead of
+/// asking `status` a second time, so a raise that arms the input is visible in
+/// the answer itself.
+fn input_line(gain: f32, monitoring: bool) -> String {
+    format!(
+        "{{\"ok\":true,\"target\":\"input\",\"name\":\"gain\",\"gain\":{gain},\"monitor_input\":{monitoring}}}"
+    )
+}
+
+/// The frames a take has left to capture: its whole length less what the
+/// capture loop has already handed to disk. A monitor armed with none left
+/// would open a ring nobody can drain.
+fn remaining_frames(total_frames: u64, captured: u64) -> u64 {
+    total_frames.saturating_sub(captured)
+}
+
 /// The server's handle to one take's worker thread.
 struct Running {
     status: Arc<Mutex<Status>>,
@@ -2352,10 +2514,23 @@ struct Running {
     /// The same ring the take's mixer drains. Kept so `param` can push after
     /// the worker owns the strips.
     params: Arc<ParamQueue>,
-    /// The live-input trim, when this take armed live monitoring. `param
-    /// target=input` moves it and `status` mirrors it; `None` is a take with
-    /// no live input to address.
-    input_gain: Option<Arc<AtomicU32>>,
+    /// The live-input trim. Every take has one, because every take builds the
+    /// monitoring ring; `param target=input` moves it and `status` mirrors it.
+    input_gain: Arc<AtomicU32>,
+    /// Whether the capture thread is pushing the take's live input into the
+    /// ring. `false` at arm time when `monitor_input` was off, and `param`
+    /// raises it mid-take to start monitoring without restarting the take.
+    armed: Arc<AtomicBool>,
+    /// The take's whole length in frames, which is where a mid-take monitor's
+    /// remaining length is measured from.
+    total_frames: u64,
+    /// The ring's read side, parked here until a mid-take monitor takes it.
+    /// `record` hands it to a monitor it starts, and `None` then means that
+    /// monitor owns the live edge for the rest of the take.
+    consumer: Option<Consumer>,
+    /// The take's master rack, so a monitor armed mid-take runs the same
+    /// mastering chain as one `record` started.
+    master: Vec<InsertKind>,
 }
 
 impl Running {
@@ -2466,8 +2641,12 @@ struct PlaySession {
     /// The control ring for those strips; `None` for a plain playback.
     params: Option<Arc<ParamQueue>>,
     /// The take's alignment, so an overdub's status keeps reporting where its
-    /// monitor was placed after the take ends. `None` for a plain playback.
+    /// monitor was placed after the take ends. `None` for a plain playback and
+    /// for a monitor armed mid-take, which has no measured offset.
     align: Option<Alignment>,
+    /// Whether this session carries a take's live input. `param` uses it to
+    /// tell its own monitor from a plain `play`, which cannot take the ring.
+    live: bool,
 }
 
 impl PlaySession {
@@ -3140,6 +3319,7 @@ fn run_take(
     params: Arc<ParamQueue>,
     master: Vec<InsertKind>,
     live: Option<Producer>,
+    armed: Arc<AtomicBool>,
 ) {
     // Build the mixer here, on the take's thread, so it is never moved between
     // threads. Its control ring is the one the socket already holds. The
@@ -3173,6 +3353,7 @@ fn run_take(
             &status,
             &stop,
             live.as_ref(),
+            &armed,
         ),
         BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => capture_hardware(
             &config,
@@ -3182,6 +3363,7 @@ fn run_take(
             &status,
             &stop,
             live.as_ref(),
+            &armed,
         ),
     };
     // A stop is the caller's choice, not a failure: the take ends where it was
@@ -3350,6 +3532,18 @@ fn channel_error(track: usize, input: usize, channels: usize, device: usize, lim
     }
 }
 
+/// Push one summed block to the live ring, but only while the take is armed.
+/// A take that is not monitoring leaves the ring empty, so the live edge is
+/// where monitoring starts and a monitor never plays a backlog from before it.
+/// The push itself is lock-free; the load is the whole cost of a muted take.
+fn push_if_armed(producer: &Producer, armed: &AtomicBool, block: &[f32]) -> usize {
+    if armed.load(Ordering::Acquire) {
+        producer.push(block)
+    } else {
+        0
+    }
+}
+
 /// The null take: silence through the same block loop as hardware. The queue is
 /// sized for the whole take (see `main::queue_blocks`), because this loop runs
 /// far faster than real time.
@@ -3361,6 +3555,7 @@ fn capture_null(
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
     live: Option<&Producer>,
+    armed: &AtomicBool,
 ) -> Result<Captured, String> {
     let track_count = mixer.tracks().len();
     if disks.len() != track_count {
@@ -3427,7 +3622,7 @@ fn capture_null(
             disks[track].push(&pcm[..samples]);
         }
         if let Some(producer) = live {
-            producer.push(&live_block[..samples]);
+            push_if_armed(producer, armed, &live_block[..samples]);
         }
         pushed += frames as u64;
         note_progress(
@@ -3451,6 +3646,8 @@ struct ServeSink<'a> {
     status: &'a Arc<Mutex<Status>>,
     stop: &'a AtomicBool,
     live: Option<&'a Producer>,
+    /// Whether the take is pushing its live input; read once per block.
+    armed: &'a AtomicBool,
     pushed: u64,
     /// Device channels per frame, learned in `prepared`.
     channels: usize,
@@ -3543,7 +3740,7 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
             self.disks[track].push(&self.pcm[..samples]);
         }
         if let Some(producer) = self.live {
-            producer.push(&self.live_block[..samples]);
+            push_if_armed(producer, self.armed, &self.live_block[..samples]);
         }
         self.pushed += frames as u64;
         note_progress(
@@ -3565,6 +3762,7 @@ fn capture_hardware(
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
     live: Option<&Producer>,
+    armed: &AtomicBool,
 ) -> Result<Captured, String> {
     let sink = ServeSink {
         mixer,
@@ -3572,6 +3770,7 @@ fn capture_hardware(
         status,
         stop,
         live,
+        armed,
         pushed: 0,
         channels: config.channels,
         mono: Vec::new(),
@@ -3604,8 +3803,9 @@ fn capture_hardware(
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
     live: Option<&Producer>,
+    armed: &AtomicBool,
 ) -> Result<Captured, String> {
-    let _ = (config, seconds, disks, mixer, status, stop, live);
+    let _ = (config, seconds, disks, mixer, status, stop, live, armed);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
@@ -4169,7 +4369,13 @@ break"}"#).is_err());
             stop: Arc::new(AtomicBool::new(false)),
             handle: None,
             params,
-            input_gain: None,
+            input_gain: Arc::new(AtomicU32::new(1f32.to_bits())),
+            // Most of these tests predate mid-take arming: a take that is
+            // already monitoring keeps the gain test about the gain.
+            armed: Arc::new(AtomicBool::new(true)),
+            total_frames: 0,
+            consumer: None,
+            master: Vec::new(),
         }
     }
 
@@ -4451,17 +4657,18 @@ break"}"#).is_err());
     }
 
     #[test]
-    fn param_input_moves_the_live_gain_and_refuses_without_live_input() {
+    fn param_input_moves_the_live_gain_and_refuses_without_a_take() {
         let mut server = socket_server();
         let gain = Arc::new(AtomicU32::new(1f32.to_bits()));
         let mut take = running(take_status(""), Arc::new(ParamQueue::new()));
-        take.input_gain = Some(Arc::clone(&gain));
+        take.input_gain = Arc::clone(&gain);
         server.current = Some(take);
 
         let line = reply(server.handle(
             r#"{"cmd":"param","target":"input","name":"gain","value":2.5}"#,
         ));
         assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"monitor_input\":true"), "{line}");
         assert_eq!(f32::from_bits(gain.load(Ordering::Acquire)), 2.5);
         let status = server.current.as_ref().unwrap().snapshot();
         assert_eq!(status.monitor_gain, 2.5);
@@ -4477,10 +4684,110 @@ break"}"#).is_err());
         ));
         assert_eq!(line, error_line("target \"input\" only carries \"gain\""));
 
-        server.current = Some(running(take_status(""), Arc::new(ParamQueue::new())));
+        // With no take there is no ring to address.
+        server.current = None;
         let line = reply(server.handle(
             r#"{"cmd":"param","target":"input","name":"gain","value":1}"#,
         ));
         assert!(line.contains("no live input is being monitored"), "{line}");
+    }
+
+    #[test]
+    fn a_param_arms_monitoring_on_a_take_that_started_with_it_off() {
+        let mut server = socket_server();
+        let out = temp_take("arm");
+        // Long enough that the take is still recording when the next line is
+        // read: the null backend renders as fast as the CPU allows, so a short
+        // take could finish before a loaded test thread got to send `param`.
+        let line = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":30}}"#
+        )));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"monitor_input\":false"), "{line}");
+
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":1}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"monitor_input\":true"), "{line}");
+
+        // The take never restarted: it is the same take, now monitoring.
+        let line = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(line.contains("\"state\":\"recording\""), "{line}");
+        assert!(line.contains("\"monitor_input\":true"), "{line}");
+        assert!(line.contains("\"monitor_gain\":1"), "{line}");
+
+        let _ = server.handle(r#"{"cmd":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_zero_gain_never_arms_the_live_input() {
+        let mut server = socket_server();
+        let out = temp_take("zero");
+        // As above: the take must still be recording when the mute arrives.
+        let line = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":30}}"#
+        )));
+        assert!(line.contains("\"ok\":true"), "{line}");
+
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":0}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"monitor_input\":false"), "{line}");
+
+        let line = reply(server.handle(r#"{"cmd":"status"}"#));
+        assert!(line.contains("\"monitor_input\":false"), "{line}");
+        assert!(line.contains("\"monitor_gain\":0"), "{line}");
+
+        let _ = server.handle(r#"{"cmd":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn arming_on_a_take_with_no_time_left_is_refused() {
+        let mut server = socket_server();
+        let mut take = running(take_status(""), Arc::new(ParamQueue::new()));
+        take.armed = Arc::new(AtomicBool::new(false));
+        take.total_frames = 4096;
+        server.current = Some(take);
+        // Every frame this take had is already on disk, so no ring could be
+        // drained before the take ended.
+        server
+            .current
+            .as_ref()
+            .unwrap()
+            .status
+            .lock()
+            .expect("status")
+            .frames = 4096;
+
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":1}"#,
+        ));
+        assert_eq!(line, error_line("the take has no time left to monitor"));
+        assert!(
+            !server.current.as_ref().unwrap().armed.load(Ordering::Acquire),
+            "a refused arm opened the ring"
+        );
+        assert_eq!(remaining_frames(0, 0), 0);
+        assert_eq!(remaining_frames(512, 512), 0, "a finished take has none left");
+        assert_eq!(remaining_frames(512, 200), 312);
+    }
+
+    #[test]
+    fn the_ring_stays_empty_until_the_take_is_armed() {
+        let (producer, consumer) = MonitorBus::new(4096);
+        let armed = AtomicBool::new(false);
+        assert_eq!(push_if_armed(&producer, &armed, &[0.5, -0.5]), 0);
+        let mut out = vec![9.0f32; 2];
+        assert_eq!(consumer.pop(&mut out), 0, "an unarmed take pushed");
+        assert_eq!(out, vec![0.0f32; 2], "an underrun must be silence");
+
+        armed.store(true, Ordering::Release);
+        assert_eq!(push_if_armed(&producer, &armed, &[0.5, -0.5]), 0);
+        assert_eq!(consumer.pop(&mut out), 1);
+        assert_eq!(out, vec![0.5f32, -0.5], "the armed take's frame arrived");
     }
 }

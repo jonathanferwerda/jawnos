@@ -581,10 +581,13 @@ var studioEngineDeviceChannels = 2;
 // The plan the running take armed, so a strip can say which input and width it
 // recorded even when the engine's status does not echo them back.
 var studioEnginePlanArmed = null;
-// True while the running take actually armed the live input. A take armed with
-// Monitor off has no monitor bus to trim, so the button must not pretend it can
-// restore one.
+// The live input the running take last reported. It can become true mid-take
+// (the transport's Monitor button arms it with a gain param), so the button
+// reads this rather than the saved setting while the take records.
 var studioEngineMonitorArmed = false;
+// The monitor bus gain the engine last reported, 0 to 4. `monitor_input` stays
+// true when the gain is 0, so the pressed state needs both to say silence.
+var studioEngineMonitorLevel = 1;
 
 function studioEngineAnswer(data) {
 	if (!data || typeof data !== 'object') {
@@ -739,6 +742,12 @@ function studioEngineRender(data) {
 	var strips = studioEngineStrips(data);
 	var state = (typeof data.state === 'string') ? data.state : '';
 	studioEngineMonitorArmed = (data.monitor_input === true);
+	if (typeof data.monitor_gain === 'number' && isFinite(data.monitor_gain)) {
+		studioEngineMonitorLevel = data.monitor_gain;
+	}
+	// A take can arm its live input after it started, so the transport's
+	// pressed state follows the engine's report, not the saved setting.
+	if (typeof studioMonitorButtonRender === 'function') { studioMonitorButtonRender(); }
 
 	// The monitor ring's dropped frames are a measurement, not an error: a
 	// small readout beside the strips, never a pedal lamp.

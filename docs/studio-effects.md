@@ -166,8 +166,8 @@ Inputs stay unique by claimed channel, so a stereo pair at `0` and a mono at
 `1` is refused (`tracks_json track 2 input 1 overlaps track 1's stereo pair
 0-1`), and a claimed channel may not pass `31`.
 
-While a take records with live input, the page trims or mutes it through a
-fourth `param` target:
+While a take records, the page trims, mutes or starts its live input through
+a fourth `param` target:
 
 ```
 POST /manager/studio/take  { action: "param", target: "input",
@@ -176,5 +176,27 @@ POST /manager/studio/take  { action: "param", target: "input",
 
 `gain` is the only name this target carries; anything else is refused
 (`target "input" only carries "gain"`). `V` is a finite number clamped
-`0..=4` and mirrored in `status`. A take with no live input answers
+`0..=4` and mirrored in `status`. With no take recording, the target answers
 `no live input is being monitored`.
+
+Every take builds the live ring, whether or not it monitors, and the capture
+thread pushes into it only while the take is armed. A take armed with
+`monitor_input` off is unarmed but ready, so a positive `param` gain arms it
+mid-take: no restart, and nothing already recorded is lost. The ring was empty
+before that point, so the monitor opens on the live edge rather than on a
+backlog. The reply says which side of the edge the take is on:
+
+```
+{"ok":true,"target":"input","name":"gain","gain":1,"monitor_input":true}
+```
+
+`monitor_input` is `true` once the take is pushing, so a page reads the arming
+from this answer instead of asking `status` again. A `0` gain only silences; a
+silenced take stays unarmed until a positive value arrives. Arming probes the
+outputs exactly as `record` does and leaves the take unarmed if that fails; a
+take with no frames left refuses with `the take has no time left to monitor`.
+A monitor `record` already started holds the same ring, so raising the gain on
+an armed take, or on a monitor-file take armed with `monitor_input` off,
+rebuilds nothing. A monitor that has already finished stays finished: arming
+after its files have ended starts the push, and `monitor_dropped` counts what
+no monitor was left to drain.

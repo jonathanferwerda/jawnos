@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Audio/Engine.pm templates/studio/markup.html.ep public/js/manager/studio.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js perl/help/topics_apps.pl
+# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Audio/Engine.pm templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js perl/help/topics_apps.pl
 # covers:    Studio's Engine take panel - POST /manager/studio/take action=param
 #            relays one strip knob per name class through a live Unix socket,
 #            refuses an unknown name, a bad number and a bad track with a 400
@@ -456,8 +456,16 @@ like($controls_js, qr/inserts: studioListenInserts\(\)/, 'and sends that chain t
 like($controls_js, qr/'#studio_monitor'/, 'the transport Monitor button is bound');
 like($controls_js, qr/setting="monitor"/, 'and drives the monitor setting the config panel owns');
 like($controls_js, qr/function studioMonitorButtonRender/, 'one renderer keeps the button and the setting in step');
-like($controls_js, qr/studioEngineRecording && studioEngineMonitorArmed/,
-	'a recording engine take mutes the live input it armed from the Monitor button');
+like($controls_js, qr/if \(studioEngineRecording\) \{[\s\S]*?studioEngineMonitorGain\(on \? 1 : 0\)/,
+	'a recording engine take arms or silences the live input from the Monitor button');
+unlike($controls_js, qr/studioEngineRecording && studioEngineMonitorArmed/,
+	'and no guard blocks arming a take that started with Monitor off');
+like($controls_js, qr/studioEngineMonitorArmed === true && studioEngineMonitorLevel > 0/,
+	'the button prefers the engine\'s monitor_input while a take records');
+like($studio_js, qr/studioEngineMonitorArmed = \(data\.monitor_input === true\)/,
+	'the status render stores the engine\'s monitor_input');
+like($studio_js, qr/studioEngineMonitorLevel = data\.monitor_gain/,
+	'and the gain that says whether the input is armed or silenced');
 like($controls_js, qr/!ins\.bypassed && studioEffectBuilder\(ins\.name\)/, 'only enabled, real pedals');
 like($markup, qr/Input 1 \(channel 0\)/, 'the input picker names the interface channels');
 like($markup, qr/Input 2 \(channel 1\)/, 'both of them');
@@ -480,7 +488,9 @@ like($body, qr/Source picker/, 'help names the per-track Source choice');
 like($body, qr/Mono reads that one channel/, 'and what Mono and Stereo read');
 like($body, qr/silences or restores the live input it armed/,
 	'and what Monitor does during an engine take');
-like($body, qr/A take started with Monitor off armed no live input/,
-	'and that a take without Monitor has none to restore');
+like($body, qr/Pressing Monitor while it records starts the live input from that moment/,
+	'and that Monitor arms a take that started without it');
+unlike($body, qr/A take started with Monitor off armed no live input/,
+	'with the old start-the-next-take wording gone');
 
 done_testing();

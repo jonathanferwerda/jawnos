@@ -389,6 +389,29 @@
 		overflow-y: auto;
 		background-color: var(--panel-2);
 	}
+	/* Configure is a full-window sheet. It takes the height the grid leaves,
+	   and its own settings table plus the engine panel scroll inside it, so
+	   nothing is clipped in a short window. The window's width and colour come
+	   from here, not from inline style on the element. */
+	#studio_config {
+		flex: 1 1 auto;
+		min-height: 0;
+		width: 100%;
+		box-sizing: border-box;
+		overflow-y: auto;
+		overflow-x: hidden;
+		padding: 4px 10px;
+		background-color: var(--panel);
+	}
+	/* The class stands the grid down while Configure is open: the viewer and the
+	   panels behind it are out of the way, and a floated panel cannot overlap
+	   the settings. Removing the class restores whatever the hide toggles set. */
+	#studio.studio_config_open #studio_viewer { display: none; }
+	#studio.studio_config_open #studio_grid,
+	#studio.studio_config_open > .studio_panel,
+	#studio.studio_config_open > .studio_synth_panel {
+		display: none;
+	}
 	/* Manual packing is a column of flex rows. A row holds the panels that share
 	   one line, so it is exactly as tall as its tallest panel: shorten a panel
 	   and its row shrinks, the rows below move up and their flex-grow takes the
