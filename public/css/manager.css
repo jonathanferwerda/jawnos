@@ -2529,15 +2529,19 @@ html.jawnos_webview #admin_console_toggle {
 .marker_rail_left { flex: 0 0 176px; border-right: 1px solid rgba(0,0,0,0.22); }
 .marker_rail_right { flex: 0 0 190px; border-left: 1px solid rgba(0,0,0,0.22); }
 .marker_rail_head { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.marker_rail_left .marker_rail_head { justify-content: flex-end; }
 .marker_rail_title { font-size: 11px; font-weight: bold; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7; }
 .marker_group { border-radius: 8px; background: rgba(255,255,255,0.55); box-shadow: 0 1px 2px rgba(0,0,0,0.16); }
 .marker_group_head {
 	display: block; width: 100%; text-align: left; font-size: 11px; font-weight: bold;
-	padding: 5px 7px; background: none; border: 0; cursor: pointer; color: inherit;
+	padding: 5px 7px; background: none; border: 0; cursor: var(--jawnos-cursor-pointer, pointer); color: inherit;
 }
 .marker_group_head:hover { background: rgba(255,255,255,0.6); border-radius: 8px; }
 .marker_group_caret { display: inline-block; width: 10px; opacity: 0.75; }
 .marker_group_body { padding: 0 7px 7px; }
+/* a folded section is closed before the script runs, so a reload never flashes
+   every section open */
+.marker_group[data-open="no"] > .marker_group_body { display: none; }
 .marker_tool_grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 .marker_tool_icon { width: 16px; height: 16px; vertical-align: middle; margin-right: 4px; }
 .marker_tool_name { font-size: 11px; vertical-align: middle; }
@@ -2594,7 +2598,8 @@ html.jawnos_webview #admin_console_toggle {
 	width: 100%;
 	height: 100%;
 	display: block;
-	cursor: none;
+	/* the brush ring is the pointer here, so the system cursor is hidden */
+	cursor: var(--jawnos-cursor-none, none);
 	touch-action: none;
 }
 #marker_selection_overlay {
@@ -2652,10 +2657,10 @@ html.jawnos_webview #admin_console_toggle {
 
 /* the portfolio and the sessions */
 #portfolio { display: flex; flex-wrap: wrap; gap: 4px; max-height: 46vh; overflow-y: auto; padding-top: 4px; }
-#portfolio img.paper { width: 40px; height: 60px; cursor: pointer; }
+#portfolio img.paper { width: 40px; height: 60px; cursor: var(--jawnos-cursor-pointer, pointer); }
 #portfolio .marker_delete { font-size: 10px; padding: 0 3px; }
 #marker_sessions { font-size: 11px; max-height: 30vh; overflow-y: auto; }
-.marker_session { display: flex; align-items: center; gap: 4px; cursor: pointer; padding: 2px 0; }
+.marker_session { display: flex; align-items: center; gap: 4px; cursor: var(--jawnos-cursor-pointer, pointer); padding: 2px 0; }
 .marker_session:hover { background: rgba(255,255,255,0.6); }
 
 /* the dialogs: Init asks for a paper, Save to appointment asks for a record */

@@ -353,6 +353,7 @@ sub action_44729 {
 	my $marker = $c->param('marker');
 	my $image = $c->param('img');
 	my $paper = $c->param('paper');
+	my $attach_uuid = $c->param('attach_uuid');
 	my $app = &subs::unformat_name($c->param('app'));
 	my $app_path = &subs::path_name($app);
 	my $browser_tab_id = $c->param('browser_tab_id');
@@ -362,6 +363,28 @@ sub action_44729 {
 	shift @image;
 	$image = join ',', @image;
 	$image = decode_base64($image);
+
+	# Save to appointment appends the picture to a record that already exists,
+	# so the drawing is found where that record is read instead of arriving as
+	# an appointment of its own. The file lives in the target app's folder and
+	# the record's own file list names it.
+	if ($attach_uuid) {
+		my $target = &subs::db_select('appointments', undef, { uuid => $attach_uuid })->hash;
+		return $c->render(json => { error => 'no such appointment' }, status => 404) unless $target;
+		my $target_app = $target->{'app'} || $app;
+		my $target_timestamp = $target->{'timestamp'} || $timestamp;
+		my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $device });
+		my $location = &subs::home($folder) . '/' . &subs::path_name($target_app);
+		mkdir $location unless -d $location;
+		my $filename = $location . '/' . $timestamp . '.png';
+		write_file($filename, $image);
+		my $files = eval { return decode_json $target->{'file'} } || [];
+		$files = [ $files ] if ref $files eq 'HASH';
+		push @{$files}, { server_time => &subs::rightNow(), f => $filename, uuid => &subs::random_string_creator(18), type => 'image' };
+		&subs::db_update('appointments', { file => encode_json($files) }, { uuid => $attach_uuid });
+		&subs::file_encrypter({ app => $target_app, timestamp => $target_timestamp, suds => &subs::session_suds($c) });
+		return $c->render(json => { success => 1, attached => $attach_uuid, file => $filename });
+	}
 	my $folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
 	my $location = &subs::home($folder) . '/' . $app_path;
 	my $filename = $location . '/' . $timestamp . '.png';
@@ -898,6 +921,27 @@ sub action_45302 {
 	}
 	@machines = sort { lc($a->{'hostname'}) cmp lc($b->{'hostname'}) } @machines;
 	$c->render(json => { ok => 1, machines => \@machines });
+}
+
+# GET /manager/marker/appointments
+# The records Save to appointment can offer: the most recent appointments that
+# are not Marker drawings themselves, so a drawing attached to one is read
+# where that record is read. The client formats the timestamp.
+sub action_44905 {
+	my $c = shift;
+	my $app = &subs::unformat_name($c->param('app') || 'marker');
+	my $q = &subs::db_query("select uuid, app, timestamp from appointments where uuid is not null and uuid != '' and app != ? order by timestamp desc limit 40", $app);
+	my @appointments;
+	foreach my $row ( @{$q->hashes} ) {
+		next unless $row->{'uuid'} && length $row->{'uuid'};
+		push @appointments, {
+			uuid => $row->{'uuid'},
+			app => &subs::unformat_name($row->{'app'}),
+			name => &subs::format_name($row->{'app'}),
+			timestamp => $row->{'timestamp'}
+		};
+	}
+	$c->render(json => { appointments => \@appointments });
 }
 
 1;

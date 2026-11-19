@@ -287,7 +287,9 @@ function markerPaperEdge() {
 // rulers, the status bar, the paper edge and the brush ring's size.
 function markerViewChanged() {
 	markerViewSeq++;
-	markerRulersDraw();
+	// a wheel zoom fires many times a second; the rulers are throttled, the
+	// cheap DOM furniture is not
+	markerRulersSoon();
 	markerStatusRefresh();
 	markerPaperEdge();
 	if (typeof markerSelectionRedraw === 'function') { markerSelectionRedraw(); }
@@ -404,6 +406,11 @@ $(document).on('click', '.marker_group_head', function() {
 	var state = markerGroupState();
 	state[group] = open;
 	localStorage.setItem('marker_groups', JSON.stringify(state));
+	// the layer thumbnails are only drawn while the list is on screen, so
+	// opening the fold fills them in
+	if (group == 'layers' && open) {
+		setTimeout(function() { if (typeof markerLayerList === 'function') { markerLayerList(); } }, 200);
+	}
 });
 
 // ---- Save to appointment -----------------------------------------------
@@ -425,12 +432,21 @@ function markerAttachOpen() {
 			$.each(rows, function(i, row) {
 				var item = $('<button class="button marker_attach_row hover"></button>').attr('uuid', row.uuid);
 				item.append($('<b></b>').text(row.name || row.app || 'appointment'));
-				item.append($('<span class="marker_attach_when"></span>').text(' ' + (row.when || '')));
+				item.append($('<span class="marker_attach_when"></span>').text(' ' + markerAttachWhen(row.timestamp)));
 				list.append(item);
 			});
 		},
 		error: function() { list.html('<i>Could not read the appointments.</i>'); }
 	});
+}
+
+// an appointment's timestamp is epoch seconds, but a Marker save has always
+// written milliseconds, so both read the same way here
+function markerAttachWhen(timestamp) {
+	var value = Number(timestamp);
+	if (!value) { return ''; }
+	if (value < 100000000000) { value = value * 1000; }
+	return new Date(value).toLocaleString();
 }
 
 function markerAttachSave(uuid) {
@@ -495,9 +511,13 @@ function markerStageInit() {
 		$(document).on('input', '#marker_size, #marker_transparency', function() {
 			$('#marker_size_readout').text($('#marker_size').val());
 			$('#marker_transparency_readout').text($('#marker_transparency').val());
+			// the stroke reads its size and alpha from marker, not from the DOM
+			if (typeof markerSettingsLoad === 'function') { markerSettingsLoad(); }
 			if (markerRulerMemory.last_screen != undefined) { markerBrushCursorMove(markerRulerMemory.last_screen); }
 		});
 	}
 	$('#marker_size_readout').text($('#marker_size').val());
 	$('#marker_transparency_readout').text($('#marker_transparency').val());
+	// the sessions panel is fetched on demand; opening Marker is a good moment
+	if (typeof markerSessionPanel === 'function' && $('#marker_sessions').length > 0) { markerSessionPanel(); }
 }

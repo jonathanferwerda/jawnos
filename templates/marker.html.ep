@@ -4,7 +4,6 @@
 	<%# ---- left rail: the tools, the animation, the brush, the document, the layers %>
 	<div id="marker_toolbox" class="marker_rail marker_rail_left" data-open="yes">
 		<div class="marker_rail_head">
-			<span class="marker_rail_title"><%= &subs::ui('Tools') %></span>
 			<button class="button marker_rail_toggle" rail="left" hint="Hide the toolbox" id="marker_toolbox_hide">&#171;</button>
 		</div>
 
@@ -179,8 +178,8 @@
 	<%# ---- right rail: what is saved, and the two ways to save it %>
 	<div id="marker_toolbox_right" class="marker_rail marker_rail_right" data-open="yes">
 		<div class="marker_rail_head">
-			<button class="button marker_rail_toggle" rail="right" hint="Hide the portfolio" id="marker_toolbox_right_hide">&#187;</button>
 			<span class="marker_rail_title"><%= &subs::ui('Portfolio') %></span>
+			<button class="button marker_rail_toggle" rail="right" hint="Hide the portfolio" id="marker_toolbox_right_hide">&#187;</button>
 		</div>
 		<section class="marker_group" data-open="yes">
 			<button class="marker_group_head" group="file"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Save') %></button>

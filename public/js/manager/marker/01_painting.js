@@ -3,7 +3,9 @@
 var markerAutosaveTimeout;
 var markerAutosaveDirty = false;
 var markerSessionLoading = false;
-var markerAutosaveDelay = 5000;
+// a save re-encodes every dirty layer to PNG, and a tablet feels that as a
+// stutter mid-draw; eight seconds keeps a save off the pen's back
+var markerAutosaveDelay = 8000;
 
 function markerAutosaveSoon() {
 	markerAutosaveDirty = true;
@@ -11,11 +13,18 @@ function markerAutosaveSoon() {
 	markerAutosaveTimeout = setTimeout(markerAutosaveNow, markerAutosaveDelay);
 }
 
-function markerAutosaveNow() {
+function markerAutosaveNow(force) {
 	if (markerAutosaveTimeout) { clearTimeout(markerAutosaveTimeout); }
 	markerAutosaveTimeout = undefined;
 	if (!markerAutosaveDirty) { return; }
 	if (markerSessionLoading) { return; }
+	// a stroke still under the pen is not finished pixels: keep the dirty flag
+	// and look again once the pen has lifted. A forced save (the tab going
+	// away) takes the pixels as they are rather than losing them.
+	if (markerStroke.drawing && !force) {
+		markerAutosaveTimeout = setTimeout(markerAutosaveNow, 1500);
+		return;
+	}
 	var canvas = document.getElementById('whiteboard');
 	if (!canvas || markerLayers.length == 0) { return; }
 	markerAutosaveDirty = false;
@@ -32,9 +41,9 @@ function markerAutosaveNow() {
 // leaving the tab is the moment worth catching, so a save is not waiting on
 // the debounce when the page goes away
 $(document).on('visibilitychange', function() {
-	if (document.hidden) { markerAutosaveNow(); }
+	if (document.hidden) { markerAutosaveNow(true); }
 });
-$(window).on('pagehide', function() { markerAutosaveNow(); });
+$(window).on('pagehide', function() { markerAutosaveNow(true); });
 
 function markerSessionPanel(sessions) {
 	var panel = $('#marker_sessions');
@@ -110,7 +119,8 @@ function markerRgbaString(hex, alpha) {
 function markerBrushSprite(size, colour, alpha, hardness) {
 	var key = size + '_' + colour + '_' + alpha + '_' + hardness;
 	if (markerSprites[key]) { return markerSprites[key]; }
-	if (Object.keys(markerSprites).length > 80) { markerSprites = {}; }
+	// 120 stamps covers a full palette of sizes and colours without growing forever
+	if (Object.keys(markerSprites).length > 120) { markerSprites = {}; }
 	var canvas = document.createElement('canvas');
 	var diameter = Math.ceil(size * 2) + 2;
 	canvas.width = diameter;
@@ -172,13 +182,65 @@ function markerBlurDab(ctx, x, y, size) {
 	ctx.putImageData(image, left, top);
 }
 
+// Every dab of a blur stroke used to read, blur and write the patch under the
+// brush, and a tablet pays that from the compositor several dozen times a
+// segment. One patch over the whole segment is read and blurred once, then
+// each dab only copies the blurred pixels inside its round footprint into it.
+// A zero length segment reads exactly the patch markerBlurDab would.
+function markerBlurStroke(ctx, from, to, size) {
+	var canvas = ctx.canvas;
+	var radius = Math.max(1, Math.round(size / 2));
+	var blur = Math.max(1, Math.min(6, Math.round(size / 8) || 1));
+	var margin = blur + 1;
+	var left = Math.max(0, Math.floor(Math.min(from.x, to.x)) - radius - margin);
+	var top = Math.max(0, Math.floor(Math.min(from.y, to.y)) - radius - margin);
+	var right = Math.min(canvas.width, Math.floor(Math.max(from.x, to.x)) + radius + margin);
+	var bottom = Math.min(canvas.height, Math.floor(Math.max(from.y, to.y)) + radius + margin);
+	var width = right - left;
+	var height = bottom - top;
+	if (width < 2 || height < 2) { return; }
+	var image = ctx.getImageData(left, top, width, height);
+	var blurred = markerBlurImage(image, blur).data;
+	var data = image.data;
+	var distance = Math.sqrt((to.x - from.x) * (to.x - from.x) + (to.y - from.y) * (to.y - from.y));
+	var spacing = Math.max(1, size / 3);
+	var dabs = Math.max(1, Math.min(400, Math.floor(distance / spacing) + 1));
+	for (var d = 0; d <= dabs; d++) {
+		var t = dabs == 0 ? 0 : d / dabs;
+		var centre_x = from.x + (to.x - from.x) * t - left;
+		var centre_y = from.y + (to.y - from.y) * t - top;
+		// the footprint's own rows and columns, so a dab costs its area and not
+		// the segment's
+		var px0 = Math.max(0, Math.floor(centre_x - radius));
+		var px1 = Math.min(width - 1, Math.ceil(centre_x + radius));
+		var py0 = Math.max(0, Math.floor(centre_y - radius));
+		var py1 = Math.min(height - 1, Math.ceil(centre_y + radius));
+		for (var py = py0; py <= py1; py++) {
+			var dy = py - centre_y;
+			for (var px = px0; px <= px1; px++) {
+				var dx = px - centre_x;
+				if (dx * dx + dy * dy > radius * radius) { continue; }
+				var offset = (py * width + px) * 4;
+				data[offset] = blurred[offset];
+				data[offset + 1] = blurred[offset + 1];
+				data[offset + 2] = blurred[offset + 2];
+				data[offset + 3] = blurred[offset + 3];
+			}
+		}
+	}
+	ctx.putImageData(image, left, top);
+}
+
 function markerSprayTick() {
 	if (!markerStroke.drawing || markerStroke.tool != 'spray') {
 		markerStroke.spraying = false;
 		return;
 	}
 	markerSprayBurst(markerActiveContext(), markerStroke.x, markerStroke.y);
-	markerComposeSoon();
+	// compositing the whole board 60 times a second is what made spray lag; the
+	// burst only touched the brush's box, so repaint only that
+	var size = markerStroke.size + 4;
+	markerComposeSoon({ x: markerStroke.x - size, y: markerStroke.y - size, w: size * 2, h: size * 2 });
 	markerStroke.spraying = requestAnimationFrame(markerSprayTick);
 }
 
@@ -535,6 +597,9 @@ function markerCanvasBoxForget() {
 }
 
 $(window).on('scroll resize', markerCanvasBoxForget);
+// a window can be dragged between strokes without resizing anything, so the
+// box is measured again on the press that starts the stroke
+$(document).on('pointerdown', markerCanvasBoxForget);
 
 function markerPointerEvent(e) {
 	var canvas = document.getElementById('whiteboard');
@@ -617,14 +682,10 @@ function markerDrawSegment(ctx, from, to, pressure) {
 		}
 	}
 	else if (tool == 'blur') {
+		// one read, one blur and one write for the whole segment instead of a
+		// read/blur/write per dab (markerBlurStroke, in the brushes section)
 		var blur_size = Math.max(2, Math.round(markerStroke.size * (0.3 + 0.7 * pressure)));
-		var blur_distance = Math.sqrt((to.x - from.x) * (to.x - from.x) + (to.y - from.y) * (to.y - from.y));
-		var spacing = Math.max(1, markerStroke.size / 3);
-		var dabs = Math.max(1, Math.min(400, Math.floor(blur_distance / spacing) + 1));
-		for (var d = 0; d <= dabs; d++) {
-			var dt = dabs == 0 ? 0 : d / dabs;
-			markerBlurDab(ctx, from.x + (to.x - from.x) * dt, from.y + (to.y - from.y) * dt, blur_size);
-		}
+		markerBlurStroke(ctx, from, to, blur_size);
 	}
 	ctx.globalCompositeOperation = 'source-over';
 	ctx.globalAlpha = 1;
@@ -792,6 +853,8 @@ function markerSampleColour(pos) {
 function markerPointerDown(pos, straight_line) {
 	markerSettings();
 	var tool = markerStroke.tool;
+	// the select and move tools claim the pointer before any brush does
+	if (typeof markerSelectionPointerDown === 'function' && markerSelectionPointerDown(pos, straight_line)) { return; }
 	if (tool == 'kb') { markerKeyboardPointer(pos); return; }
 	if (tool == 'sample') { markerSampleColour(pos); return; }
 	if (tool == 'fill') {
@@ -828,6 +891,7 @@ function markerPointerDown(pos, straight_line) {
 }
 
 function markerPointerMove(pos) {
+	if (typeof markerSelectionPointerMove === 'function' && markerSelectionPointerMove(pos)) { return; }
 	if (!markerStroke.drawing) { return; }
 	markerSettings();
 	var x0 = markerStroke.x, y0 = markerStroke.y;
@@ -849,6 +913,10 @@ function markerPointerMove(pos) {
 }
 
 function markerEndStroke() {
+	if (typeof markerSelectionPointerUp === 'function' && markerSelectionPointerUp()) {
+		markerCompose();
+		return;
+	}
 	if (markerStroke.spraying) { cancelAnimationFrame(markerStroke.spraying); markerStroke.spraying = false; }
 	markerStroke.pointer_id = undefined;
 	if (!markerStroke.drawing) { markerPreview = undefined; return; }

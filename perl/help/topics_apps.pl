@@ -126,22 +126,28 @@ $topic{'gallery'} = {
 		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
 	};
 $topic{'marker'} = {
-		title => 'Marker', category => 'apps', app => 'marker',
-		controls => [ 'Black level', 'Blur', 'Bring to front', 'Brightness', 'Contrast', 'Crop', 'Delete', 'Delete layer', 'Double click to rename', 'Erase with the current brush', 'Fit the drawing (0 key)', 'Gallery', 'Hide the toolbox', 'Load this drawing in the marker', 'Lower layer', 'New drawing', 'New layer', 'Pause', 'Play', 'Raise layer', 'Record', 'Redo', 'Rotate', 'Save this drawing as a session', 'Sharpen', 'Show the toolbox', 'Show/hide', 'Start', 'Stylus (palm protection)', 'Target', 'Undo' ],
-		verified => '2026-11-15',
-		summary => 'A layered paint board for drawing and annotation.',
-		body => [
-			'Marker is a layered paint board with pencil, paintbrush, spray, blur and fill tools, an erase toggle for the drawing brushes, plus undo and redo, zoom and pan.',
-			'The blur brush softens the pixels under it as you draw, so a stroke smears and smooths rather than adding colour.',
-			'It reads stylus pressure and ignores your palm on a tablet, and it autosaves so a refresh never loses a painting.'
-		],
-		steps => [
-			'Open Marker and pick a tool from the palette — pencil, brush, spray, blur, fill or erase.',
-			'Add a layer for anything you want to keep separate, and name it by double-clicking.',
-			'Select a layer and use the transform row under the layer list — rotate, crop, brightness, contrast, black level, blur or sharpen — typing a number first; a crop is the rectangle you drag, and it applies when you let go.',
-			'Your work autosaves; reopen the drawing later from the marker\'s session list.'
-		],
-		related => [ 'gallery', 'studio' ]
+	title => 'Marker', category => 'apps', app => 'marker',
+	controls => [ '11 by 17 inches', '3.5 by 2 inches', '8.5 by 11 inches', '8.5 by 14 inches', 'A CD jewel case cover', 'A DVD case cover', 'A5, 5.8 by 8.3 inches', 'Add a colour', 'Black level', 'Blur', 'Brightness', 'Bring to front', 'Choose the size of a new drawing', 'Contrast', 'Copy the selected pixels', 'Crop', 'Cursor position in document pixels', 'Cut the selected pixels', 'Delete layer', 'Document pixels', 'Drop the selection', 'Erase the selected pixels', 'Erase with the current brush', 'Fit the drawing (0 key)', 'Gallery', 'Hide the portfolio', 'Hide the toolbox', 'How far across and down the drawing the cursor is', 'Lower layer', 'Milliseconds between frames', 'Move the selected pixels', 'New drawing', 'New layer', 'Paste the copied pixels', 'Pause', 'Play', 'Point the keyboard cursor at the drawing', 'Raise layer', 'Record', 'Redo', 'Remove this colour', 'Rotate', 'Sample a colour from the drawing', 'Save this drawing as a session', 'Save this drawing into the portfolio', 'Save this drawing onto an appointment', 'Select a freehand area of the drawing', 'Select a rectangle of the drawing', 'Select the whole layer', 'Sharpen', 'Show the portfolio', 'Show the toolbox', 'Start', 'Step back through the portfolio', 'Step forward through the portfolio', 'Stylus (palm protection)', 'Target', 'The board you have now, no paper edge', 'The layer you are drawing on', 'The size of the drawing', 'Undo', 'Zoom' ],
+	verified => '2026-11-19',
+	summary => 'A layered paint board for drawing and annotation.',
+	body => [
+		'Marker is a layered paint board with pencil, paintbrush, spray, blur and fill tools, an erase toggle for the drawing brushes, plus undo and redo, zoom and pan.',
+		'The blur brush softens the pixels under it as you draw, so a stroke smears and smooths rather than adding colour.',
+		'The left rail holds the tools, the animation frames, the brush size and transparency, the document controls and the layers, each in its own fold. The right rail holds Save, Save session, Save to appointment and the drawings already saved.',
+		'The drawing is a sheet of a chosen size, shown inside rulers. The top and left rulers count document pixels and mark the cursor; the bar along the bottom says which pixel the cursor is over, how far across and down the sheet that is, the sheet size, the zoom and the layer you are drawing on. The pointer is a ring the size of the brush.',
+		'Select and Lasso pick an area of the layer, Move drags the picked pixels, and Copy, Cut, Paste and Delete work on that area. The four effect buttons change the picked area the way the layer transforms do.',
+		'It reads stylus pressure and ignores your palm on a tablet, and it autosaves so a refresh never loses a painting.'
+	],
+	steps => [
+		'Press Init to choose the paper — Letter, Legal, Poster, Flyer, CD cover, DVD cover, Business card or the size of the window — and tick Landscape to turn it on its side. The sheet opens fitted to the window, so a small paper is shown larger than life.',
+		'Open Marker and pick a tool from the tools fold — pencil, brush, spray, blur, fill or erase. The brush fold sets the size and transparency; the ring follows the brush.',
+		'Add a layer for anything you want to keep separate, and name it by double-clicking.',
+		'Select a layer and use the transform row under the layer list — rotate, crop, brightness, contrast, black level, blur or sharpen — typing a number first; a crop is the rectangle you drag, and it applies when you let go.',
+		'To change part of a drawing, pick Select or Lasso and drag the area, then Move it, Copy it, Cut it, or press an effect button. Paste drops a copy you can drag into place before you click again.',
+		'Save puts the drawing in the portfolio beside you; Save to appointment asks which appointment takes it; Save session keeps every layer so you can reopen it later.',
+		'Your work autosaves; reopen the drawing later from the sessions fold.'
+	],
+	related => [ 'gallery', 'studio' ]
 	};
 $topic{'studio'} = {
 		title => 'Studio', category => 'apps', app => 'studio',

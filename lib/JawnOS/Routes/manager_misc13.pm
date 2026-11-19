@@ -23,6 +23,7 @@ sub routes {
 	[44874, 'get', '/manager/marker/session/load', 'action_44874'],
 	[44881, 'post', '/manager/marker/session/delete', 'action_44881'],
 	[44889, 'post', '/manager/room_namer', 'action_44889'],
+	[44905, 'get', '/manager/marker/appointments', 'action_44905'],
 	[44901, 'post', '/manager/new_room', 'action_44901'],
 	[44913, 'get', '/manager/update_database', 'action_44913'],
 	[44922, 'get', '/manager/version', 'action_44922'],
