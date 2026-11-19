@@ -13,11 +13,13 @@
 # Idempotent: an active forever ticket for the same client is reused, never
 # re-minted (the URL is rebuilt from the row, so a host change is picked up).
 # --rotate mints a fresh one, retires the old, and refreshes .shots/ticket.txt
-# (0600) even without --save: leaving the retired URL there is what makes the
-# desktop's embedded view meet the denial page on its next launch. --save
-# writes the file for a reused ticket as well. It is the file the desktop's
-# view already reads as its fallback, and an app on this device (the Android
-# fork's dashboard) can open the ticket from there without running anything.
+# (0600) when that file names the same client: leaving a retired URL there is
+# what makes the desktop's embedded view meet the denial page on its next
+# launch, while a phone's rotation must not edit the desktop's fallback.
+# --save writes the file regardless, and covers a reused ticket. It is the file
+# the desktop's view already reads as its fallback, and an app on this device
+# (the Android fork's dashboard) can open the ticket from there without running
+# anything.
 #
 #   perl scripts/app_ticket.pl desktop          # print the URL (mint if needed)
 #   perl scripts/app_ticket.pl phone --rotate   # mint a fresh one anyway
@@ -43,6 +45,25 @@ my $host = $domain || '127.0.0.1';
 # the live workers get these from the master; a bare script must name them
 $ENV{PORT_DOCK} = $ENV{PORT_DOCK} || $config->{'port'} || 3000;
 $ENV{PORT_AHOY} = $ENV{PORT_AHOY} || $config->{'working_port'} || 45545;
+
+# The fallback file the desktop reads. A rotation only refreshes it when it
+# holds a ticket of the same client; rotating the phone must not put the
+# phone's ticket where the desktop looks.
+sub fallback_uuid {
+	my $path = '.shots/ticket.txt';
+	return '' unless -f $path;
+	my $body = '';
+	if (open(my $fh, '<', $path)) { local $/; $body = <$fh> // ''; close $fh; }
+	return $1 if $body =~ m{/box_office/([A-Za-z0-9]+)};
+	return '';
+}
+
+my $fallback_uuid = &fallback_uuid();
+my $fallback_client = '';
+if ($fallback_uuid ne '') {
+	my $fallback_row = &subs::db_select('tickets', ['name'], { uuid => $fallback_uuid })->hashes->[0];
+	$fallback_client = $fallback_row ? ($fallback_row->{'name'} // '') : '';
+}
 
 my $row = &subs::db_select('tickets', undef, { project => 'app-ticket', name => $client, status => 'active' })->hashes->[0];
 my $url;
@@ -75,9 +96,9 @@ else {
 }
 print $url, "\n";
 
-# A rotation must not leave the retired URL in the fallback file: the desktop
-# tries it first and shows the denial page. --save still covers a reused ticket.
-my $write = $save || ($rotate && $minted);
+# A rotation refreshes the fallback only when that file names the same client;
+# --save still covers a reused ticket and writes it unconditionally.
+my $write = $save || ($rotate && $minted && $fallback_client ne '' && lc($fallback_client) eq lc($client));
 if ($write) {
 	mkdir '.shots' unless -d '.shots';
 	my $path = '.shots/ticket.txt';

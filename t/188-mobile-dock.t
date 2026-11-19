@@ -36,8 +36,10 @@ like($ticket, qr/config->\{'port'\}/, 'the dock port comes from config.json');
 # move with it or the desktop meets the denial page on its next launch.
 like($ticket, qr/my \$minted = 0;/, 'the ticket desk records a fresh mint');
 like($ticket, qr/\$minted = 1;/, 'set when the new row is inserted');
-like($ticket, qr/my \$write = \$save \|\| \(\$rotate && \$minted\);/,
-	'--rotate refreshes .shots/ticket.txt even without --save');
+like($ticket, qr/sub fallback_uuid/, 'the ticket desk reads the fallback file\'s ticket');
+like($ticket, qr/\$fallback_client/, 'and finds the client it belongs to');
+like($ticket, qr/my \$write = \$save \|\| \(\$rotate && \$minted && \$fallback_client ne '' && lc\(\$fallback_client\) eq lc\(\$client\)\);/,
+	'--rotate refreshes the fallback only for the client it names, and --save always writes');
 
 # Both listeners are required: the master watchdog must recover a dead ticket
 # desk as well as a dead manager.
