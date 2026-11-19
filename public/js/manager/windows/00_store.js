@@ -291,12 +291,16 @@ function jawnosWindowsSave(identity, patch) {
 					value.at = (patch.at !== undefined && patch.at !== null) ? patch.at : Date.now();
 					value.identity = identity;
 					return jawnosWindowsSeal(key, value).then(function (sealed) {
+						// A window shell and preview are markup; the timeline's view
+						// (07_timeshift.js) is one JSON object of its own, so it is counted
+						// by that. A shell-only patch pays nothing for the branch.
 						return jawnosWindowsRowPut({
 							k: k,
 							iv: sealed.iv,
 							ct: sealed.ct,
 							at: value.at,
 							bytes: (String(value.shell || '')).length + (String(value.preview || '')).length
+								+ (value.view ? JSON.stringify(value.view).length : 0)
 						});
 					});
 				});
