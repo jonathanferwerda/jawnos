@@ -758,11 +758,18 @@
 					// call catches the bucket the pointer comes to rest on while a sweep
 					// across a long film cannot spawn a frame per pixel.
 					var bucket = Math.max(0, Math.round(time));
-					var previewKey = v.src + '#' + bucket;
+					// v.src is empty until the element loads (a <source> child or a
+					// not-yet-started player), and a live or metadata-less video has
+					// no finite duration. Either one used to request
+					// /&thumb=ya&position=NaN - the home page, once per hover - and
+					// a screenful of hovers held the workers.
+					var previewSrc = v.currentSrc || v.src || '';
+					if (!previewSrc || previewSrc.indexOf('/file_open?') < 0 || !isFinite(bucket)) { return; }
+					var previewKey = previewSrc + '#' + bucket;
 					var paintPreview = function() {
 						if (v.lastPositionPreviewKey !== previewKey) {
 							v.lastPositionPreviewKey = previewKey;
-							$('#<%= $miss %>_position_preview').attr('src', v.src + '&thumb=ya&position=' + bucket);
+							$('#<%= $miss %>_position_preview').attr('src', previewSrc + '&thumb=ya&position=' + bucket);
 						}
 						$('#<%= $miss %>_position_preview').show();
 					};

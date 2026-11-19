@@ -29,6 +29,21 @@ use RepoSource;
 my $music = read_file("$FindBin::Bin/../public/js/music.js");
 my $video = template_source('apps/video');
 
+# The seek preview asks the server for one frame at a position. It used
+# v.src and an unguarded bucket, so an unloaded video (or one whose duration
+# was still NaN) requested /&thumb=ya&position=NaN - the home page, once per
+# hover. Read the loaded URL and refuse anything that is not a file_open
+# address or a finite position.
+my $video_script = read_file("$FindBin::Bin/../templates/apps/video/script.html.ep");
+like($video_script, qr/var previewSrc = v\.currentSrc \|\| v\.src/,
+	'the seek preview reads the loaded URL, not only the src attribute');
+like($video_script, qr/!isFinite\(bucket\)/,
+	'and never asks for a NaN position');
+like($video_script, qr/previewSrc\.indexOf\('\/file_open\?'\)/,
+	'and only builds a preview for a file_open URL');
+unlike($video_script, qr/attr\('src', v\.src \+ '&thumb=ya/,
+	'so an unloaded video cannot request /&thumb=ya&position=NaN');
+
 # 1. nothing in music.js clears the bar tick any more
 unlike($music, qr/clearInterval\(\s*vidControls\[\s*'video_video_interval'\s*\]\s*\)/,
 	'music.js no longer clears the player bar tick');
