@@ -330,7 +330,15 @@ sub continent_record($c) {
 				server_time => $server_time
 			});
 			$treturner->{'uuid'} = &subs::random_string_creator(31);
-			&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
+			# Own GPS: the place being replaced becomes part of this machine's motion
+			# history, so a handover can tell a walk from a device's drift. A place
+			# borrowed from a peer, or a home plate, is dropped as before.
+			if ($provider eq 'gps' && $device eq 'mobile') {
+				&subs::navigation_place_archive({ signatorial => $signatorial });
+			}
+			else {
+				&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
+			}
 			&subs::db_insert('continent', $treturner);
 		}
 		# A fresh fix is also the moment to hand it to a computer on this LAN:

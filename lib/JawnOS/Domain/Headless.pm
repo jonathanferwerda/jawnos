@@ -170,7 +170,9 @@ sub headless_navigation {
 				$returner->{'latitude'} = $loc->{'latitude'};
 				$returner->{'longitude'} = $loc->{'longitude'};
 				$returner->{'accuracy'} = sprintf("%.2F", ($loc->{'accuracy'} || 0));
-				&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
+				# This machine's own GPS: keep the place it held as a motion sample, so
+				# a handover later can tell a walk from a device left in the house.
+				&subs::navigation_place_archive({ signatorial => $signatorial });
 				my $treturner = clone $returner;
 				$treturner->{'uuid'} = &subs::random_string_creator(31);
 				&subs::db_insert('continent', $treturner);

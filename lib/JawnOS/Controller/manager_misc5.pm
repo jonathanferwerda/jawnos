@@ -545,7 +545,15 @@ sub action_15618 {
 				$treturner->{'app'} = '__president';
 				$treturner->{'uuid'} = &subs::random_string_creator(31);
 				$treturner->{'warranty'} = &subs::navigation_hold_warranty({ timestamp => $timestamp, server_time => $server_time });
-				&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
+				# A fix this machine's own GPS made: the place it held becomes a motion
+				# sample. A place leaned from a peer or another machine's deck is
+				# dropped instead, because it would be a history this machine never had.
+				if ($fix_provider eq 'gps' && &subs::navigation_gps_present()) {
+					&subs::navigation_place_archive({ signatorial => $signatorial });
+				}
+				else {
+					&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
+				}
 				&subs::db_insert('continent', $treturner);
 			}
 		}

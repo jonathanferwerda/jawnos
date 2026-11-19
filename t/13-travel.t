@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Controller/manager_travel.pm
-# covers:    Which device was with the person, which one files the activity, the track the distance reads (including a handover mid-trip), and how long a stopped home-plate visit stays resumable (three navigation intervals)
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Manager/Part26.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Controller/manager_travel.pm
+# covers:    Which device was with the person, which one files the activity, the machine's own motion tail, the track the distance reads (including a handover mid-trip), and how long a stopped home-plate visit stays resumable (three navigation intervals)
 
 use strict;
 use warnings;
@@ -204,6 +204,39 @@ is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 20
 	fix => { latitude => 43.0018, longitude => -81, timestamp => 20 * 60000 + 120000 } }), 'phone',
 	'a walk resumed after a long stop records its second leg' );
 
+# ------------------------------------- the machine's own places, not the activity
+# A device held silent by the one-device rule has no appointment rows at all, so
+# the question "is this machine moving?" has to be answered from its own places.
+# It keeps the last few: the current place and the ones it held before.
+my $still_tail = [ map { { latitude => 43.0024 + ( $_ % 2 ? 0.00005 : 0 ), longitude => -81.9419, timestamp => $_ * 120000 } } 1 .. 6 ];
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'tablet', now => 720000,
+	rows => [ fix( 600000, 'phone', 43.0100, -81 ) ],
+	fix => { latitude => 43.0024, longitude => -81.9419, timestamp => 720000 }, tail => $still_tail }), 'none',
+	'a tail that never leaves one spot is standing still, whatever the activity holds' );
+
+my $walk_tail = [ map { { latitude => 43 + $_ * 0.00135, longitude => -81, timestamp => $_ * 120000 } } 1 .. 6 ];
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 720000,
+	rows => [ fix( 600000, 'tablet', 43.0024, -81.9419 ) ],
+	fix => { latitude => 43.0081, longitude => -81, timestamp => 720000 }, tail => $walk_tail }), 'phone',
+	'a tail that walks is a machine that is moving' );
+
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 2000,
+	rows => [ fix( 1000, 'phone', 43.0000, -81 ) ],
+	fix => { latitude => 43.00135, longitude => -81, timestamp => 2000 },
+	tail => [ { latitude => 43, longitude => -81, timestamp => 1000 } ] }), 'phone',
+	'one sample cannot judge, so the last filed fix still answers' );
+
+# The next device may start a pace or two after the carrier goes quiet - earlier
+# than the reader joins the legs - so a dead phone does not leave the rest of the
+# walk unfiled and the join in the line is short.
+{
+	no warnings 'redefine';
+	local *subs::navigation_interval = sub { return 240 };
+	is( &subs::movement_start_gap('phone'), 480_000, 'two paces at a four-minute pace' );
+	local *subs::navigation_interval = sub { return 3600 };
+	is( &subs::movement_start_gap('phone'), 900_000, 'and never past the reader\'s quarter-hour' );
+}
+
 # ------------------------------------------ one activity, one device's track
 # The appointment's distance reads the carrier's fixes only. The parked device's
 # rows stay in the table - its own place and home plates keep running, and the
@@ -404,6 +437,22 @@ like( read_file("$root/lib/JawnOS/Controller/manager_travel.pm"),
 # handover are exactly the ones the read side joins.
 like( read_file("$root/lib/JawnOS/Domain/Device2.pm"), qr/movement_quiet_gap/,
 	'the record side asks the shared silence window' );
+
+# A machine keeps the last few places its own GPS gave it, so the question "is it
+# moving?" has an answer that does not depend on what an activity accepted. Only
+# the three own-GPS doors may add to it: a place borrowed from a peer, or a home
+# plate, would be movement the machine never made.
+foreach my $gps ( 'lib/JawnOS/Manager/Part13.pm', 'lib/JawnOS/Controller/manager_misc5.pm', 'lib/JawnOS/Domain/Headless.pm' ) {
+	like( read_file("$root/$gps"), qr/navigation_place_archive/, "$gps keeps its own places as motion samples" );
+}
+like( read_file("$root/lib/JawnOS/Domain/Device2.pm"), qr/tail => &motion_tail\(\{ signatorial => \$sig/,
+	'the record decision reads that tail' );
+
+# Archived places are history, not places the person went: the Travel atlas must
+# not draw them as dots.
+my $atlas_src = read_file("$root/lib/JawnOS/Manager/Part26.pm");
+like( $atlas_src, qr/archived_temporary/, 'the travel atlas knows the archived places by name' );
+unlike( $atlas_src, qr/type is null or type != \?\)/, 'and no longer treats every other type as a place' );
 
 # The headless navigator is the path an app on a phone actually takes, and it
 # names the appointment it is filing for - not the machine's current place.

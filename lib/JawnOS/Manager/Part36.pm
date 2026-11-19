@@ -292,6 +292,10 @@ sub remote_machine_reconnector($c) {
 								if (&remote_machine_online({ rm => $location_source }) == 1) {
 
 									&subs::db_delete('continent', { type => 'temporary', signatorial => $rj->{'signatorial'} });
+									# The peer's own motion samples go with it: they are its last few
+									# places, kept to tell a walk from drift, and this machine only
+									# needs the current one it is about to record.
+									&subs::db_delete('continent', { type => 'archived_temporary', signatorial => $rj->{'signatorial'} });
 									my $tlocation = &subs::db_select('continent', undef, { type => 'temporary', signatorial => $signatorial })->hashes->[0];
 									$rj->{'location'}->{'type'} = 'temporary';
 									$rj->{'location'}->{'uuid'} = &subs::random_string_creator(12);

@@ -366,8 +366,8 @@ sub travel_here_position {
 # dot, so a walk reads as its points rather than a stack of samples.
 sub travel_atlas_points {
 	my ($start,$end) = @_;
-	my $sql = 'select app, latitude, longitude, timestamp from continent where latitude is not null and (type is null or type != ?)';
-	my @bind = ('temporary');
+	my $sql = 'select app, latitude, longitude, timestamp from continent where latitude is not null and (type is null or (type != ? and type != ?))';
+	my @bind = ('temporary', 'archived_temporary');
 	if (defined $start && length $start && defined $end && length $end) {
 		$sql .= ' and timestamp >= ? and timestamp <= ?';
 		push @bind, $start, $end;
@@ -409,8 +409,8 @@ sub travel_atlas_appointments {
 		$start, $end, $start, $end, 'start', 'record', $end);
 	my @apps = map { $_->{'app'} } @{$rows};
 	return [] unless @apps;
-	my $sql = 'select app, latitude, longitude, timestamp from continent where latitude is not null and (type is null or type != ?) and app in (' . join(',', map { '?' } @apps) . ') and timestamp <= ? order by timestamp desc';
-	my $fixes = &subs::db_raw($sql, 'temporary', @apps, $end);
+	my $sql = 'select app, latitude, longitude, timestamp from continent where latitude is not null and (type is null or (type != ? and type != ?)) and app in (' . join(',', map { '?' } @apps) . ') and timestamp <= ? order by timestamp desc';
+	my $fixes = &subs::db_raw($sql, 'temporary', 'archived_temporary', @apps, $end);
 	my $out = [];
 	my $seen = {};
 	my %set_cache;

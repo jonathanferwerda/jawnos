@@ -77,9 +77,9 @@ sub device_label {
 # this device should file nothing: a tablet left in the house must not file its
 # own drift into a walk the phone is recording, and it cannot wait to be told -
 # a peer's fixes can be an hour behind, or never arrive. So with no other mover
-# in view the incoming fix itself decides, against the last fix this device
-# filed: a fix that has not left that place is drift. The machine that is moving
-# owns the activity, whichever one it is.
+# in view this device's own last few places decide, which is a history it keeps
+# whatever an activity accepted from it. The machine that is moving owns the
+# activity, whichever one it is.
 sub movement_recorder {
 	my ($p) = @_;
 	$p ||= {};
@@ -93,7 +93,8 @@ sub movement_recorder {
 	my $rows = &db_query(
 		'select latitude, longitude, timestamp, signatorial from continent where app = ? and uuid like ? and cast(timestamp as integer) >= ? order by cast(timestamp as integer)',
 		$p->{'app'}, $appt . '-%', $now - 3600000)->hashes;
-	return &movement_choice({ choice => 'auto', signatorial => $sig, rows => $rows, now => $now, fix => $p->{'fix'} });
+	return &movement_choice({ choice => 'auto', signatorial => $sig, rows => $rows, now => $now, fix => $p->{'fix'},
+		tail => &motion_tail({ signatorial => $sig, since => $now - 900000 }) });
 }
 
 # Does this device file the appointment's movement? Every door that writes a fix
@@ -111,12 +112,90 @@ sub movement_records_here {
 	return ( !length $recorder || $recorder eq $sig ) ? 1 : 0;
 }
 
+# How long another device must be quiet before this one may start filing the
+# same trip. Shorter than movement_quiet_gap on purpose: the distance reader
+# holds the new leg's fixes and only commits them once the carrier has really
+# gone, so filing early costs rows, not kilometres - and a dead phone no longer
+# leaves the rest of the walk unfiled.
+sub movement_start_gap {
+	my ($sig) = @_;
+	my $quiet = &movement_quiet_gap();
+	my $pace = &navigation_interval($sig);
+	my $gap = ( $pace || 600 ) * 1000 * 2;
+	return $gap > $quiet ? $quiet : $gap;
+}
+
+# The places this device has just been: its current place and the few it held
+# before. Only a fix this machine's own GPS made is archived, so the answer to
+# "is it moving?" is the machine's own history rather than a guess from the
+# fixes an activity happened to accept - a device held silent by the one-device
+# rule has no appointment rows at all.
+#
+#   my $tail = &subs::motion_tail({ signatorial => $sig, since => $t });
+#   # [ { latitude, longitude, timestamp }, ... oldest first ]
+sub motion_tail {
+	my ($p) = @_;
+	$p ||= {};
+	my $sig = defined $p->{'signatorial'} ? $p->{'signatorial'} : '';
+	return [] unless length $sig;
+	my $since = $p->{'since'} || ( &rightNow() - 900000 );
+	my $rows = &db_query(
+		'select latitude, longitude, timestamp from continent where (type = ? or type = ?) and signatorial = ? and cast(timestamp as integer) >= ? order by cast(timestamp as integer)',
+		'temporary', 'archived_temporary', $sig, $since)->hashes || [];
+	my @out;
+	foreach my $r ( @{$rows} ) {
+		next unless defined $r->{'latitude'} && defined $r->{'longitude'}
+			&& length $r->{'latitude'} && length $r->{'longitude'};
+		push @out, {
+			latitude => $r->{'latitude'},
+			longitude => $r->{'longitude'},
+			timestamp => $r->{'timestamp'},
+		};
+	}
+	return \@out;
+}
+
+# Keep the place this device held until a moment ago as a motion sample, then
+# drop the oldest beyond $keep. The caller writes its new current place next.
+# Only a fix this machine's own GPS made belongs here: archiving a place borrowed
+# from a peer, or a home plate someone marked, would give a machine a history of
+# movement it never made.
+#
+#   &subs::navigation_place_archive({ signatorial => $sig });
+#   &subs::db_insert('continent', $treturner);
+sub navigation_place_archive {
+	my ($p) = @_;
+	$p ||= {};
+	my $sig = $p->{'signatorial'} || &signatorial_designer();
+	my $keep = defined $p->{'keep'} ? ( 0 + $p->{'keep'} ) : 20;
+	my $now = &rightNow();
+	&db_update('continent', {
+		type => 'archived_temporary',
+		server_time => $now,
+		warranty => &ago_calc('-1d', $now),
+	}, { type => 'temporary', signatorial => $sig });
+	# The newest few are enough to tell a walk from a parked device's creep. A cap
+	# keeps a machine left running all day from growing the table. A peer drops its
+	# copy of these the same way it drops the stale current place, when it resets
+	# the machine's place on a reconnect, so no tombstone is written per fix.
+	my $old = &db_query(
+		'select uuid from continent where type = ? and signatorial = ? order by cast(timestamp as integer) desc',
+		'archived_temporary', $sig)->hashes || [];
+	my @drop = @{$old};
+	splice(@drop, 0, $keep) if scalar @drop > $keep;
+	foreach my $row ( @drop ) {
+		next unless defined $row->{'uuid'} && length $row->{'uuid'};
+		&db_delete('continent', { uuid => $row->{'uuid'} });
+	}
+}
+
 # The decision behind movement_recorder with the rows already read, so it can be
 # tested without a database. An explicit choice answers at once; 'auto' reads
 # the appointment's fixes from the last hour and asks two questions in order:
-# is another device in view the one that went somewhere, and if not, has this
-# device left the place of the last fix it filed? 'none' says this device files
-# nothing - its own place is a different row, and still gets written.
+# is another device in view the one that went somewhere, and if not, is this
+# device moving - by its own places when the caller hands them in, else by the
+# last fix it filed. 'none' says this device files nothing - its own place is a
+# different row, and still gets written.
 sub movement_choice {
 	my ($p) = @_;
 	$p ||= {};
@@ -171,13 +250,31 @@ sub movement_choice {
 	} @movers;
 	if ( defined $win && $win ne $sig ) {
 		# another device is the one that went somewhere: this one files nothing
-		# while that one is still reporting. A recorder quiet for a while has left,
-		# and then this device may take the trip over - but only if it has gone
-		# somewhere too, which the test below answers.
-		return 'none' unless $now && ( $now - ( $last{$win} || 0 ) ) > &subs::movement_quiet_gap();
+		# while that one is still reporting. A recorder quiet for a start gap has
+		# left, and then this device may take the trip over - but only if it has
+		# gone somewhere too, which the test below answers. The start gap is
+		# shorter than the reader's: the new leg's fixes are held and only joined
+		# once the carrier has really gone, so filing a little early costs rows,
+		# not kilometres, and the join in the line is short.
+		return 'none' unless $now && ( $now - ( $last{$win} || 0 ) ) > &movement_start_gap($sig);
 	}
-	# This device's own answer: the incoming fix against the last fix it filed.
-	# A telephone in a pocket at home answers its GPS all evening and never
+	my $fix = $p->{'fix'};
+	# This device's own answer, from its own places when it has them: a machine
+	# that has sat in one spot for its last few fixes is not travelling, whatever
+	# the activity did or did not accept from it. A phone held silent by the
+	# one-device rule has no appointment rows at all, so this is the only place
+	# that can still tell it is walking.
+	my $tail = $p->{'tail'};
+	if ( ref $tail eq 'ARRAY' && scalar @$tail >= 2 ) {
+		my $at = ( ref $fix eq 'HASH' && $fix->{'timestamp'} ) ? 0 + $fix->{'timestamp'} : $now;
+		my @recent = grep { ( 0 + ( $_->{'timestamp'} || 0 ) ) >= $at - 600000 } @{$tail};
+		if ( scalar @recent >= 2 ) {
+			my $mine = &carrier_device( \@recent );
+			return ( $mine && $mine->{'metres'} >= 100 ) ? $sig : 'none';
+		}
+	}
+	# Without a tail to read: the incoming fix against the last fix this device
+	# filed. A telephone in a pocket at home answers its GPS all evening and never
 	# leaves the room, so a fix within the jitter of the last one it filed is
 	# drift, not travel. The test is a distance, not a pace, so a resumed walk
 	# keeps recording: the gap since the last filed fix widens the test, but never
@@ -185,7 +282,6 @@ sub movement_choice {
 	my ($last_mine) = sort { ( $b->{'timestamp'} || 0 ) <=> ( $a->{'timestamp'} || 0 ) }
 		grep { ( defined $_->{'signatorial'} ? $_->{'signatorial'} : '' ) eq $sig } @rows;
 	return $sig unless $last_mine;
-	my $fix = $p->{'fix'};
 	return $sig unless ref $fix eq 'HASH';
 	my ($lat, $lon) = ( $fix->{'latitude'}, $fix->{'longitude'} );
 	return $sig unless defined $lat && defined $lon && length $lat && length $lon;
