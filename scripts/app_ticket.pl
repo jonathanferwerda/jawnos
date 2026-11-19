@@ -12,8 +12,10 @@
 #
 # Idempotent: an active forever ticket for the same client is reused, never
 # re-minted (the URL is rebuilt from the row, so a host change is picked up).
-# --rotate mints a fresh one and retires the old. --save writes the URL to
-# .shots/ticket.txt (0600) as well: that is the file the desktop's embedded
+# --rotate mints a fresh one, retires the old, and refreshes .shots/ticket.txt
+# (0600) even without --save: leaving the retired URL there is what makes the
+# desktop's embedded view meet the denial page on its next launch. --save
+# writes the file for a reused ticket as well. It is the file the desktop's
 # view already reads as its fallback, and an app on this device (the Android
 # fork's dashboard) can open the ticket from there without running anything.
 #
@@ -44,6 +46,7 @@ $ENV{PORT_AHOY} = $ENV{PORT_AHOY} || $config->{'working_port'} || 45545;
 
 my $row = &subs::db_select('tickets', undef, { project => 'app-ticket', name => $client, status => 'active' })->hashes->[0];
 my $url;
+my $minted = 0;
 if ($row && !$rotate && ($row->{'warranty'} || 0) == &subs::forever_warranty() && $row->{'secret'}) {
 	# the URL is rebuilt, not read back: the host is whatever this machine is
 	# called today, and only uuid and secret tie the link to the row
@@ -65,13 +68,17 @@ else {
 	});
 	&subs::db_insert('tickets', $data);
 	$url = $data->{'url'};
+	$minted = 1;
 	if ($row) {
 		&subs::db_update('tickets', { status => 'rotated' }, { uuid => $row->{'uuid'} });
 	}
 }
 print $url, "\n";
 
-if ($save) {
+# A rotation must not leave the retired URL in the fallback file: the desktop
+# tries it first and shows the denial page. --save still covers a reused ticket.
+my $write = $save || ($rotate && $minted);
+if ($write) {
 	mkdir '.shots' unless -d '.shots';
 	my $path = '.shots/ticket.txt';
 	if (open(my $fh, '>', $path)) {

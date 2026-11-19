@@ -90,7 +90,10 @@ like($gateretry, qr/^True True False False False False\s*$/m,
 like($qt, qr/def ticket_candidates/, 'the stored and tree tickets are both candidates');
 like($qt, qr/def store_ticket/, 'a ticket that signs in is stored back');
 like($qt, qr/def gate_ticket_choice/, 'the next hand-over picks the next candidate');
-like($qt, qr/ticket_just_loaded and ticket_used and ticket_used != stored_ticket_now/,
+like($qt, qr/def tree_tickets/, 'both .shots copies are candidates, not just the installed one');
+like($qt, qr/document\.querySelector\('\.denial_image'\)/,
+	'the denial drawing is the proof a ticket page was refused');
+like($qt, qr/ticket_won\["ok"\] and ticket_used and ticket_used != stored_ticket_now/,
 	'a Manager load after a winning ticket persists it when it differs from the stored one');
 
 my $ticketchoice = `cd "$root" && PYTHONPATH=desktop python3 -c 'from jawnos_desktop.qt_shell import gate_ticket_choice as c; print(c(0,["a","b"]), c(1,["a","b"]), c(2,["a","b"]), c(3,["a","b"]), c(0,[]))' 2>&1`;
@@ -100,16 +103,34 @@ like($ticketchoice, qr/^a b b None None\s*$/m,
 my $ticketcands = `cd "$root" && PYTHONPATH=desktop python3 -c '
 import jawnos_desktop.qt_shell as q
 q.stored_ticket = lambda: "https://h/box_office/OLD"
-q.tree_ticket = lambda jawn_dir=None: "https://h/box_office/NEW"
+q.tree_tickets = lambda jawn_dir=None: ["https://h/box_office/NEW"]
 print("c1=" + ",".join(t.rsplit("/", 1)[-1] for t in q.ticket_candidates("/x")))
-q.tree_ticket = lambda jawn_dir=None: "https://h/box_office/OLD"
+q.tree_tickets = lambda jawn_dir=None: ["https://h/box_office/OLD"]
 print("c2=" + ",".join(t.rsplit("/", 1)[-1] for t in q.ticket_candidates("/x")))
 q.stored_ticket = lambda: None
-q.tree_ticket = lambda jawn_dir=None: "https://h/box_office/NEW"
+q.tree_tickets = lambda jawn_dir=None: ["https://h/box_office/NEW"]
 print("c3=" + q.ticket_url("/x").rsplit("/", 1)[-1])
 ' 2>&1`;
 like($ticketcands, qr/\Ac1=OLD,NEW\nc2=OLD\nc3=NEW\n?\z/,
 	'the stored ticket comes first, duplicates collapse, and the tree ticket is the fallback');
+
+my $treetickets = `cd "$root" && PYTHONPATH=desktop python3 -c '
+import os, tempfile
+import jawnos_desktop.qt_shell as q
+base = tempfile.mkdtemp()
+q.ROOT_DIR = base
+root_shots = os.path.join(base, ".shots"); os.makedirs(root_shots)
+tree = os.path.join(base, "tree"); os.makedirs(os.path.join(tree, ".shots"))
+old = os.path.join(root_shots, "ticket.txt")
+new = os.path.join(tree, ".shots", "ticket.txt")
+open(old, "w").write("https://h/box_office/ROOT")
+open(new, "w").write("https://h/box_office/TREE")
+os.utime(old, (1000000000, 1000000000))
+os.utime(new, (1000000001, 1000000001))
+print(",".join(t.rsplit("/", 1)[-1] for t in q.tree_tickets(tree)))
+' 2>&1`;
+like($treetickets, qr/\ATREE,ROOT\s*\z/,
+	'both .shots copies are read, newest first, so a stale installed copy cannot hide the rotation');
 
 like($entry, qr/JAWNOS_DESKTOP_ENGINE/, 'the engine can still be chosen by environment');
 like($entry, qr/--engine/, 'and by flag');

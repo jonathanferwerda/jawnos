@@ -32,6 +32,13 @@ unlike($before, qr/\$device\s+ne\s+'mobile'/, 'the locker is not skipped on a ha
 like($ticket, qr/\$ENV\{PORT_DOCK\}/, 'the forever ticket is minted on the dock port');
 like($ticket, qr/config->\{'port'\}/, 'the dock port comes from config.json');
 
+# A rotation mints a new URL and retires the old row; the fallback file must
+# move with it or the desktop meets the denial page on its next launch.
+like($ticket, qr/my \$minted = 0;/, 'the ticket desk records a fresh mint');
+like($ticket, qr/\$minted = 1;/, 'set when the new row is inserted');
+like($ticket, qr/my \$write = \$save \|\| \(\$rotate && \$minted\);/,
+	'--rotate refreshes .shots/ticket.txt even without --save');
+
 # Both listeners are required: the master watchdog must recover a dead ticket
 # desk as well as a dead manager.
 like($master, qr/foreach my \$key \( 'port', 'working_port' \)/,

@@ -243,20 +243,36 @@ def stored_ticket():
         return None
 
 
-def tree_ticket(jawn_dir=None):
-    """The ticket a running tree wrote to .shots, if any.
+def tree_tickets(jawn_dir=None):
+    """The tickets a running tree wrote to .shots, newest file first.
 
-    The installed desktop's own ROOT_DIR is checked first: a packaged desktop
-    lives under ~/.local/share/jawnos, whose .shots is not the working tree the
-    board's first boot writes its ticket into. Pass jawn_dir so a fresh board
-    finds it.
+    Two copies can exist: the installed desktop's own ROOT_DIR (~/.local/
+    share/jawnos), which is what the packaged shell reads, and the working
+    tree's .shots, which is where app_ticket.pl --save writes. A rotation
+    refreshes the working tree's copy, so checking both means an old installed
+    copy cannot hide the new ticket.
     """
-    found = _ticket_from(os.path.join(ROOT_DIR, ".shots", "ticket.txt"))
-    if found:
-        return found
+    paths = [os.path.join(ROOT_DIR, ".shots", "ticket.txt")]
     if jawn_dir:
-        return _ticket_from(os.path.join(jawn_dir, ".shots", "ticket.txt"))
-    return None
+        paths.append(os.path.join(jawn_dir, ".shots", "ticket.txt"))
+    found = []
+    for path in paths:
+        ticket = _ticket_from(path)
+        if not ticket:
+            continue
+        try:
+            stamp = os.path.getmtime(path)
+        except OSError:
+            stamp = 0
+        found.append((stamp, ticket))
+    found.sort(key=lambda pair: pair[0], reverse=True)
+    return [ticket for _stamp, ticket in found]
+
+
+def tree_ticket(jawn_dir=None):
+    """The newest ticket a running tree wrote to .shots, if any."""
+    tickets = tree_tickets(jawn_dir)
+    return tickets[0] if tickets else None
 
 
 def ticket_url(jawn_dir=None):
@@ -273,7 +289,7 @@ def ticket_candidates(jawn_dir=None):
     second candidate lets the view heal itself when the first is refused.
     """
     candidates = []
-    for ticket in (stored_ticket(), tree_ticket(jawn_dir)):
+    for ticket in [stored_ticket()] + tree_tickets(jawn_dir):
         if ticket and ticket not in candidates:
             candidates.append(ticket)
     return candidates
@@ -1877,7 +1893,10 @@ def main(argv=None):
     # the ticket is loaded whenever a finished load is the Gate - at launch, or
     # when a lapse mid-run reloads the page - so the view signs itself back in.
     login_pending = False
-    ticket_just_loaded = False
+    # Only a ticket page that proves it is not the denial drawing may be
+    # written back over the keyring. The probe is the proof; no answer is no
+    # proof, so the default is "not won".
+    ticket_won = {"ok": False}
     gate_retry = {"attempts": 0}
     kick = None
     host = port = None
@@ -2308,7 +2327,6 @@ def main(argv=None):
     def on_load(_ok):
         nonlocal login_pending, migration_pending
         nonlocal ticket, ticket_used, candidate_tickets, stored_ticket_now
-        nonlocal ticket_just_loaded
         nav_guard.stop()
         if nav.pop("drawing_error", False):
             # the dark page finished drawing: the retry armed beside it is the
@@ -2351,16 +2369,29 @@ def main(argv=None):
             gate_retry["attempts"] += 1
             ticket = gate_ticket_choice(gate_retry["attempts"] - 1, candidate_tickets) or ticket
             ticket_used = ticket
-            ticket_just_loaded = False
+            ticket_won["ok"] = False
             login_pending = True
             view.setUrl(QUrl(ticket))
             return
         if login_pending:
             # The ticket page mints the session cookie; give it a moment, the
             # same 1.5 s the WebKit shell allows, then load the Manager on the
-            # ticket's own host (where the cookie is scoped).
+            # ticket's own host (where the cookie is scoped). A rotated ticket
+            # is answered with the denial drawing instead of the Box Office
+            # splash, so ask the page: only a page without it counts as won
+            # and may be written back over the keyring.
             login_pending = False
-            ticket_just_loaded = True
+            ticket_won["ok"] = False
+
+            def ticket_page_loaded(refused):
+                ticket_won["ok"] = not refused
+
+            try:
+                view.page().runJavaScript(
+                    "!!document.querySelector('.denial_image')",
+                    ticket_page_loaded)
+            except Exception:
+                pass
             QTimer.singleShot(1500, lambda: view.setUrl(QUrl(manager)))
             return
         current = urlparse(view.url().toString())
@@ -2372,13 +2403,13 @@ def main(argv=None):
             # won by a ticket - and that ticket is not the one already stored -
             # keep it: the next launch then starts clean instead of meeting the
             # rotated ticket again.
-            if ticket_just_loaded and ticket_used and ticket_used != stored_ticket_now:
+            if ticket_won["ok"] and ticket_used and ticket_used != stored_ticket_now:
                 stored_ticket_now = ticket_used
                 candidate_tickets = [ticket_used] + [
                     t for t in candidate_tickets if t != ticket_used]
                 ticket = ticket_used
                 call_core(lambda t=ticket_used: store_ticket(t))
-            ticket_just_loaded = False
+            ticket_won["ok"] = False
             gate_retry["attempts"] = 0
         if migration_pending and on_manager:
             migration_pending = False
