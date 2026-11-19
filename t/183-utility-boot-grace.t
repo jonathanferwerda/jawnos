@@ -53,4 +53,17 @@ my $ran_at = index($runner, 'my $ran = 0;');
 my $pending_decl = index($runner, 'my $pending = 0;');
 ok($pending_decl > $ran_at, 'the pending flag is declared with the pass state');
 
+
+# A job's die must reach the runner, which logs it with its reason. The
+# navigation job wrapped headless_navigation in an eval of its own, so a capture
+# that died on every tick (v0.1.3363 mapped navigation_place_archive to the
+# wrong domain module) read in the log exactly like a machine with no GPS fix,
+# and the phone quietly fell back to a public place.
+my ($navigation) = $functions =~ /(\$gb::timeouts->\{'navigation'\}->\{'subroutine'\} = sub \{.*?\n[ \t]*\};)/s;
+ok($navigation, 'the navigation job is still one subroutine');
+unlike($navigation, qr/\beval\b/, 'the navigation job does not swallow its own error');
+like($navigation, qr/&subs::headless_navigation\(\);/, 'and still runs the capture');
+like($runner, qr/threw an error but we caught it:/,
+	'so the runner logs the reason a job died');
+
 done_testing();

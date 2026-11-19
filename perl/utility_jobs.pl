@@ -765,10 +765,14 @@ sub utility_functions() {
 				}
 			};
 		};
+		# No eval of its own: the runner below already wraps every job and logs
+		# the reason it threw. A bare eval here swallowed that reason, so a
+		# capture that died on every tick (v0.1.3363 mapped
+		# navigation_place_archive to the wrong domain module) read exactly
+		# like a machine with no GPS fix - and the phone fell back to a public
+		# place with nothing in the log to say why.
 		$gb::timeouts->{'navigation'}->{'subroutine'} = sub {
-			my $r = eval {
-				&subs::headless_navigation();
-			};
+			my $r = &subs::headless_navigation();
 			return defined $r && !ref $r && length $r ? $r : undef;
 		};
 
