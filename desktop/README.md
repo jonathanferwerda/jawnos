@@ -404,7 +404,9 @@ It uses the same stored ticket as always: loading the ticket URL
 mints the session cookie, and the shell then loads the Manager on that host.
 The profile (`~/.config/jawnos/qt-webengine`) keeps the cookie across launches.
 Certificate errors are accepted for the house's self-signed certificate, and
-microphone/camera requests are granted to the page. Qt 6.8 and 6.12 spell web
+microphone/camera requests are granted to the page. A screen share is answered
+with the first screen, with no picker, for the house's own origins. Qt 6.8 and
+6.12 spell web
 permissions differently; both the `permissionRequested`/`QWebEnginePermission`
 path and the older `featurePermissionRequested` one are handled. `--probe` is
 also the regression check in `t/185-desktop-qt-shell.t`, which skips on a
@@ -472,8 +474,10 @@ under `~/.config/jawnos/browse-webengine` — so its cookies are never the
 manager view's (`jawnos`). That is what makes Browse
 independent: signing into a site there does not touch the manager session. The
 window accepts the house's self-signed certificate (the same exception the Qt
-shell makes) and grants microphone/camera capture; other permissions are
-denied. It calls `gpu.prepare_env()` before the `QApplication` exists, so the
+shell makes) and grants microphone/camera capture; for the house's own origins
+only, a screen share is answered with the first screen, with no picker. Other
+permissions are denied. It calls `gpu.prepare_env()` before the `QApplication`
+exists, so the
 same Chromium GPU flags apply.
 
 The page bridge (`window.webkit.messageHandlers.*`, forwarded over

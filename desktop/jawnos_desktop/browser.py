@@ -60,6 +60,7 @@ import urllib.parse
 
 from . import bridge, core, errorpage, gpu, keepawake, trust, usage
 from .core_paths import data_dir
+from .core_secrets import manager_host
 
 LOG = logging.getLogger("jawnos.browser")
 
@@ -336,10 +337,12 @@ try:  # pragma: no cover - the import result depends on the installed packages
         from PySide6.QtWebChannel import QWebChannel
     except Exception:
         QWebChannel = None
-    # The window painter and the one certificate rule live in qt_shell; both
-    # are toolkit code shared with the manager view, so they are imported
-    # rather than copied. qt_shell imports no toolkit at module level.
-    from .qt_shell import black_page, prepare_wayland_env
+    # The window painter, the one certificate rule and the screen-capture
+    # answer live in qt_shell; all are toolkit code shared with the manager
+    # view, so they are imported rather than copied. qt_shell imports no
+    # toolkit at module level.
+    from .qt_shell import (black_page, prepare_wayland_env,
+                           _allow_screen_capture, _permission_host)
     _QT_OK = True
 except Exception as _exc:  # pragma: no cover - only without PySide6/Qt WebEngine
     _QT_OK = False
@@ -348,6 +351,7 @@ except Exception as _exc:  # pragma: no cover - only without PySide6/Qt WebEngin
     QWebEngineScript = QWebEngineSettings = QWebEngineView = None
     QWebEngineUrlRequestInterceptor = QWebEngineDownloadRequest = None
     QWebEnginePermission = QWebChannel = None
+    _allow_screen_capture = _permission_host = None
     # Every name the module subclasses at import time has to exist even here, or
     # the import dies with a NameError and the clean "Qt is required" path is
     # unreachable (QLineEdit is AddressEntry's base).
@@ -1473,25 +1477,54 @@ def _webchannel_js():
         handle.close()
 
 
-def grant_media_permissions(page):
+def house_screen_hosts():
+    """The origins a Browse page may share its screen with.
+
+    Browse is a real browser, so a public site must never be handed the
+    desktop. The house's own Manager is the one page that needs it, and it is
+    served from loopback or the host its stored ticket names.
+    """
+    hosts = {"127.0.0.1", "localhost", "::1"}
+    try:
+        host = manager_host()
+        if host:
+            hosts.add(str(host).lower())
+    except Exception:
+        pass
+    return hosts
+
+
+def grant_media_permissions(page, screen_hosts=None):
     """Grant this page the microphone and camera; deny everything else.
 
     Qt 6.8 moved web permissions to ``QWebEnginePermission``; older bindings
     use ``QWebEnginePage.featurePermissionRequested``. Both are handled, and
     only capture features are granted -- geolocation, notifications and
-    clipboard stay denied.
+    clipboard stay denied. The two screen-capture features are granted only
+    when ``screen_hosts`` names the request's origin: a public page in Browse
+    cannot borrow the desktop's screen path.
     """
     granted_names = ("MediaAudioCapture", "MediaVideoCapture",
                      "MediaAudioVideoCapture")
+    screen_names = ("DesktopVideoCapture", "DesktopAudioVideoCapture")
+    screen_hosts = set(screen_hosts or ())
     enum = getattr(QWebEnginePermission, "PermissionType", None) \
         if QWebEnginePermission is not None else None
     if enum is not None and hasattr(page, "permissionRequested"):
         granted = {getattr(enum, name) for name in granted_names
                    if hasattr(enum, name)}
+        screen = {getattr(enum, name) for name in screen_names
+                  if hasattr(enum, name)}
 
         def decide(permission):
             try:
-                if permission.permissionType() in granted:
+                feature = permission.permissionType()
+                if feature in screen:
+                    if _permission_host(permission.origin()) in screen_hosts:
+                        permission.grant()
+                    else:
+                        permission.deny()
+                elif feature in granted:
                     permission.grant()
                 else:
                     permission.deny()
@@ -1506,10 +1539,18 @@ def grant_media_permissions(page):
         value = getattr(QWebEnginePage.Feature, name, None)
         if value is not None:
             granted.add(value)
+    screen = set()
+    for name in screen_names:
+        value = getattr(QWebEnginePage.Feature, name, None)
+        if value is not None:
+            screen.add(value)
 
     def decide_legacy(origin, feature):
+        allow = feature in granted
+        if feature in screen:
+            allow = _permission_host(origin) in screen_hosts
         policy = (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
-                  if feature in granted else
+                  if allow else
                   QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
         page.setFeaturePermission(origin, feature, policy)
 
@@ -1575,7 +1616,11 @@ class BrowsePage(_PageBase):
         self._tab = tab
         self.certificateError.connect(trust.accept_certificate)
         self._configure_settings()
-        grant_media_permissions(self)
+        screen_hosts = house_screen_hosts()
+        grant_media_permissions(self, screen_hosts)
+        if _allow_screen_capture is not None and QWebEngineSettings is not None:
+            _allow_screen_capture(
+                self, {"QWebEngineSettings": QWebEngineSettings}, screen_hosts)
         self.loadStarted.connect(self._tab.on_load_started)
         self.loadProgress.connect(self._tab.on_load_progress)
         if hasattr(self, "loadingChanged"):

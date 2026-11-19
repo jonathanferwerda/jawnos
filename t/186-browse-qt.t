@@ -53,16 +53,29 @@ unlike($src, qr/from \. import webview|import webview/,
 
 # ---- the shared helpers, imported not edited ------------------------------
 
-like($src, qr/from \.qt_shell import black_page, prepare_wayland_env/,
-	'the black page and Wayland helpers are shared with qt_shell');
+like($src, qr/from \.qt_shell import \(black_page, prepare_wayland_env,/,
+	'the black page, Wayland and screen helpers are shared with qt_shell');
+like($src, qr/_allow_screen_capture, _permission_host\)/,
+	'including the one screen-capture answer');
 like($src, qr/self\.certificateError\.connect\(trust\.accept_certificate\)/,
 	'every page trusts only this install\'s certificates');
 like($src, qr/black_page\(self\.page, self\.view\)/,
 	'and the empty page is painted black');
-like($src, qr/def grant_media_permissions\(page\):/,
-	'capture permissions are granted');
+like($src, qr/def grant_media_permissions\(page, screen_hosts=None\):/,
+	'capture permissions are granted, with a screen allowlist');
 like($src, qr/"MediaAudioCapture", "MediaVideoCapture",/,
 	'microphone and camera named explicitly');
+like($src, qr/"DesktopVideoCapture", "DesktopAudioVideoCapture"/,
+	'and both screen-capture features');
+like($src, qr/def house_screen_hosts\(\):/,
+	'only the house origins may share the screen');
+like($src, qr/manager_host\(\)/, 'the Manager ticket names the house host');
+like($src, qr/_permission_host\(permission\.origin\(\)\) in screen_hosts/,
+	'the modern permission path checks the screen origin');
+like($src, qr/_permission_host\(origin\) in screen_hosts/,
+	'and so does the legacy one');
+like($src, qr/_allow_screen_capture\(\s*self, \{"QWebEngineSettings": QWebEngineSettings\}, screen_hosts\)/,
+	'Browse answers getDisplayMedia with the shell\'s helper');
 like($src, qr/permission\.grant\(\)/,
 	'through the Qt 6.8 permission object');
 like($src, qr/featurePermissionRequested/,
@@ -347,6 +360,66 @@ PY
 	like($out, qr/"title": "Two"/, 'and the popup loaded there');
 	like($out, qr/"profile": true/,
 		'the profile lives under the house config directory');
+}
+
+# --- screen capture is the house's, and only the house's --------------------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $py = "$dir/perm.py";
+	write_file($py, <<'PERM');
+from PySide6.QtCore import QUrl
+from jawnos_desktop import browser
+
+class Signal:
+    def __init__(self):
+        self.callback = None
+    def connect(self, callback):
+        self.callback = callback
+
+class Page:
+    def __init__(self):
+        self.permissionRequested = Signal()
+
+class Permission:
+    def __init__(self, feature, origin):
+        self.feature = feature
+        self.origin_url = QUrl(origin)
+        self.answer = None
+    def permissionType(self):
+        return self.feature
+    def origin(self):
+        return self.origin_url
+    def grant(self):
+        self.answer = 'grant'
+    def deny(self):
+        self.answer = 'deny'
+
+def decide(feature, origin, hosts):
+    page = Page()
+    browser.grant_media_permissions(page, hosts)
+    permission = Permission(feature, origin)
+    page.permissionRequested.callback(permission)
+    return permission.answer
+
+P = browser.QWebEnginePermission.PermissionType
+print('house-screen', decide(P.DesktopVideoCapture, 'https://127.0.0.1:3001/', {'127.0.0.1'}))
+print('public-screen', decide(P.DesktopVideoCapture, 'https://example.com/', {'127.0.0.1'}))
+print('default-screen', decide(P.DesktopVideoCapture, 'https://127.0.0.1:3001/', None))
+print('public-mic', decide(P.MediaAudioCapture, 'https://example.com/', {'127.0.0.1'}))
+PERM
+	my $out = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop timeout 30 python3 "$py" 2>&1`;
+	SKIP: {
+		skip 'PySide6 is not installed here', 4
+			if $out =~ /No module named .PySide6|ModuleNotFoundError/;
+		like($out, qr/^house-screen grant$/m,
+			'a house origin is granted the screen');
+		like($out, qr/^public-screen deny$/m,
+			'a public origin is denied the screen');
+		like($out, qr/^default-screen deny$/m,
+			'a page with no screen allowlist is denied');
+		like($out, qr/^public-mic grant$/m,
+			'microphone capture still follows the old rule');
+	}
 }
 
 done_testing();

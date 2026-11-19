@@ -219,6 +219,10 @@ async function studioInputStreamGrabber(channel,state) {
 	var info = $('.studio_channel_information[direction="input"][channel="' + ch + '"]');
 	var plug = isJson(info.text()) ? JSON.parse(info.text()) : {};
 	var video = (plug['av'] == 'av' || plug['av'] == 'v');
+	// The plug list's screen row is a display capture, not a camera: it asks
+	// getDisplayMedia for the first screen (the desktop app answers that
+	// without a picker) rather than getUserMedia for a video device.
+	var screen_share = (plug['type'] == 'screen_share');
 
 	// The synth is an app input with no device behind it: route the engine into
 	// the channel instead of opening a microphone. It records through the tone
@@ -263,7 +267,20 @@ async function studioInputStreamGrabber(channel,state) {
 
 	var stream;
 	try {
-		stream = await navigator.mediaDevices.getUserMedia(constraints);
+		if (screen_share) {
+			if (!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)) {
+				console.log('studio: this browser cannot share a screen');
+				mixer[ch].media.active = false;
+				return;
+			}
+			stream = await navigator.mediaDevices.getDisplayMedia({
+				video: { displaySurface: 'monitor' },
+				audio: true
+			});
+		}
+		else {
+			stream = await navigator.mediaDevices.getUserMedia(constraints);
+		}
 	} catch (e) {
 		console.log('studio: could not open input for channel ' + ch, e);
 		mixer[ch].media.active = false;
@@ -283,10 +300,11 @@ async function studioInputStreamGrabber(channel,state) {
 	studioUpdateLatencyInfo();
 
 	// Push the raw input through the channel's tone stack + pedals and take the
-	// processed result as our recording source.
-	var processed = studioAttachInput(ch, stream);
+	// processed result as our recording source. A screen stream may carry no
+	// audio on this platform; the channel then records the picture alone.
+	var processed = stream.getAudioTracks().length ? studioAttachInput(ch, stream) : null;
 	var combined = new MediaStream();
-	if (processed) { combined.addTrack(processed.getAudioTracks()[0]); }
+	if (processed && processed.getAudioTracks()[0]) { combined.addTrack(processed.getAudioTracks()[0]); }
 	if (stream.getVideoTracks()[0]) { combined.addTrack(stream.getVideoTracks()[0]); }
 	mixer[ch].media.in = combined;
 	mixer[ch].media.video = !!stream.getVideoTracks()[0];

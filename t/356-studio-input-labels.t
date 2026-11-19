@@ -1,9 +1,10 @@
-# tests-for: public/js/manager/jp.js templates/studio/plug_selection.html.ep
+# tests-for: public/js/manager/jp.js public/js/manager/studio/05_inputs.js templates/studio/plug_selection.html.ep
 # covers:    the channel's input picker names its devices: enumerateDevices is
 #            asked again after the microphone permission, the "default" and
 #            "communications" pseudo entries are not shown, and a device that
 #            still has no label is named by its kind and number instead of
-#            showing a blank row.
+#            showing a blank row; the screen-share plug asks getDisplayMedia
+#            for the first screen rather than opening a camera.
 
 use strict;
 use warnings;
@@ -16,6 +17,7 @@ use File::Slurp qw(read_file);
 my $root = "$FindBin::Bin/..";
 my $jp = read_file("$root/public/js/manager/jp.js");
 my $template = read_file("$root/templates/studio/plug_selection.html.ep");
+my $inputs = read_file("$root/public/js/manager/studio/05_inputs.js");
 
 # --- the browser's list is named, not blank ----------------------------------
 like($jp, qr/function studioDeviceLabel\(/, 'jp.js names a device that has no label');
@@ -39,5 +41,13 @@ like($template, qr/&subs::ui\(\$word\) \. ' ' \. \$device_number/,
 	'blank devices get a translatable kind name');
 like($template, qr/<td style="font-size:20px;vertical-align:top;"><%= \$label %><\/td>/,
 	'the row prints the resolved label');
+
+# --- the screen-share plug is a display capture, not a camera ----------------
+like($inputs, qr/var screen_share = \(plug\['type'\] == 'screen_share'\)/,
+	'the plug type is remembered as a screen share');
+like($inputs, qr/navigator\.mediaDevices\.getDisplayMedia\(\{[\s\S]*?displaySurface: 'monitor'/,
+	'and asks for the monitor rather than a video device');
+like($inputs, qr/stream\.getAudioTracks\(\)\.length \? studioAttachInput/,
+	'a screen stream with no audio still records its picture');
 
 done_testing();
