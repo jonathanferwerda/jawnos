@@ -185,6 +185,37 @@ a)) {
 		"the $id control has a handler");
 }
 
+# --- the stage names its own stacking order ----------------------------------
+# manager.css paints every canvas at z-index 99 (`canvas { z-index: 99 }`), and a
+# grid item's z-index applies even when it is not positioned. A marker canvas
+# that said nothing therefore painted over the brush ring, the marching ants and
+# the rail buttons - which is how hiding a rail left its show button unclickable.
+like($marker_css, qr/#whiteboard \{[^}]*z-index: 0;/s, 'the board sits at the bottom of the stage stack');
+like($marker_css, qr/#marker_paper_edge \{[^}]*z-index: 1;/s, 'the paper edge sits over the board');
+like($marker_css, qr/\.marker_cursor_guide \{[^}]*z-index: 2;/s, 'the cursor guides sit over the paper edge');
+like($marker_css, qr/#marker_selection_overlay \{[^}]*z-index: 3;/s, 'the marching ants paint over the board');
+like($marker_css, qr/\.marker_brush_cursor \{[^}]*z-index: 4;/s, 'the brush ring paints over the ants');
+like($marker_css, qr/\.marker_ruler_top \{[^}]*z-index: 1;/s, 'the top ruler names its own level');
+like($marker_css, qr/\.marker_ruler_left \{[^}]*z-index: 1;/s, 'the left ruler names its own level');
+like($marker_page, qr/id="marker_toolbox_show"[^>]*z-index:1\d\d/, 'the toolbox show button outranks a canvas');
+like($marker_page, qr/id="marker_toolbox_right_show"[^>]*z-index:1\d\d/, 'the portfolio show button outranks a canvas');
+
+# --- the panel wears the desk's ink, not a fixed white plate ------------------
+# On a dark desk the ink is light, so a white plate made the active brush white
+# on white; the rail, the status bar and the ruler ticks had the same fault.
+like($marker_css, qr/\.marker_tool\.selected[^{]*\{[^}]*color: var\(--ink/s,
+	'the selected tool reads in the desk ink');
+unlike($marker_css, qr/\.marker_tool\.selected[^{]*\{[^}]*rgba\(255,\s*255,\s*255/s,
+	'the selected tool is not a fixed white plate');
+like($marker_css, qr/\.marker_rail \{[^}]*background: var\(--panel-2/s,
+	'the rail takes the theme surface and its ink');
+like($marker_css, qr/\.marker_status_bar \{[^}]*color: var\(--ink/s,
+	'the status bar reads in the desk ink');
+like($marker_css, qr/\.marker_ruler \{[^}]*background: var\(--panel-2/s,
+	'the rulers take the theme surface');
+like($marker_stage, qr/getComputedStyle\(document\.body\)\.getPropertyValue\('--ink'\)/,
+	'the ruler ticks are drawn in the desk ink');
+
 # the icons the toolbar calls for
 for my $icon (qw/pencil brush spray blur fill sample keyboard eraser select lasso move/) {
 	ok(-e "$root/public/images/marker/$icon.svg", "the $icon icon exists");

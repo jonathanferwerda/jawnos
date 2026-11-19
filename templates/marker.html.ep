@@ -203,8 +203,8 @@
 			</div>
 		</section>
 	</div>
-	<button class="button" id="marker_toolbox_show" hint="Show the toolbox" style="position:absolute;left:2px;top:40px;display:none;z-index:30;">&#187;</button>
-	<button class="button" id="marker_toolbox_right_show" hint="Show the portfolio" style="position:absolute;right:2px;top:40px;display:none;z-index:30;">&#171;</button>
+	<button class="button" id="marker_toolbox_show" hint="Show the toolbox" style="position:absolute;left:2px;top:40px;display:none;z-index:120;">&#187;</button>
+	<button class="button" id="marker_toolbox_right_show" hint="Show the portfolio" style="position:absolute;right:2px;top:40px;display:none;z-index:120;">&#171;</button>
 	<script>var marker_layer_eye = '<%= &subs::icon_for('/images/make believe/eye.png') %>';</script>
 </div>
 

@@ -2524,14 +2524,17 @@ html.jawnos_webview #admin_console_toggle {
 	padding: 6px;
 	overflow-y: auto;
 	overflow-x: hidden;
-	background: rgba(255,255,255,0.38);
+	/* the theme's own surface, so a dark desk does not get white text on a
+	   washed-out plate */
+	background: var(--panel-2, rgba(255,255,255,0.38));
+	color: var(--ink, inherit);
 }
 .marker_rail_left { flex: 0 0 176px; border-right: 1px solid rgba(0,0,0,0.22); }
 .marker_rail_right { flex: 0 0 190px; border-left: 1px solid rgba(0,0,0,0.22); }
 .marker_rail_head { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
 .marker_rail_left .marker_rail_head { justify-content: flex-end; }
 .marker_rail_title { font-size: 11px; font-weight: bold; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7; }
-.marker_group { border-radius: 8px; background: rgba(255,255,255,0.55); box-shadow: 0 1px 2px rgba(0,0,0,0.16); }
+.marker_group { border-radius: 8px; background: var(--panel, rgba(255,255,255,0.55)); box-shadow: 0 1px 2px rgba(0,0,0,0.16); }
 .marker_group_head {
 	display: block; width: 100%; text-align: left; font-size: 11px; font-weight: bold;
 	padding: 5px 7px; background: none; border: 0; cursor: var(--jawnos-cursor-pointer, pointer); color: inherit;
@@ -2547,8 +2550,12 @@ html.jawnos_webview #admin_console_toggle {
 .marker_tool_name { font-size: 11px; vertical-align: middle; }
 .marker_tool, .marker_erase_toggle { text-align: left; padding: 3px 5px; }
 .marker_tool.selected, .marker_erase_toggle.selected {
-	background: rgba(255,255,255,0.9);
-	box-shadow: inset 0 0 0 2px rgba(0,0,0,0.45);
+	/* the window's ink, not a fixed white plate: on a dark desk a white plate is
+	   white text on white, which is how the active brush disappeared */
+	background-color: var(--panel-2, #eceef1);
+	color: var(--ink, #111417);
+	box-shadow: inset 0 0 0 2px var(--ink, #111417);
+	font-weight: bold;
 }
 .marker_colour_cell { display: inline-block; width: 48%; margin: 1px 1%; }
 .marker_colour_cell input.marker_colour { width: 60%; }
@@ -2578,13 +2585,17 @@ html.jawnos_webview #admin_console_toggle {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	background: rgba(255,255,255,0.55);
+	background: var(--panel-2, rgba(255,255,255,0.55));
+	color: var(--ink, inherit);
 	border-right: 1px solid rgba(0,0,0,0.2);
 	border-bottom: 1px solid rgba(0,0,0,0.2);
 }
-.marker_ruler { display: block; width: 100%; height: 100%; background: rgba(255,255,255,0.55); }
-.marker_ruler_top { grid-area: 1 / 2; border-bottom: 1px solid rgba(0,0,0,0.2); }
-.marker_ruler_left { grid-area: 2 / 1; border-right: 1px solid rgba(0,0,0,0.2); }
+.marker_ruler { display: block; width: 100%; height: 100%; background: var(--panel-2, rgba(255,255,255,0.55)); }
+/* the desk gives every canvas z-index 99 (manager.css: canvas { z-index: 99 }),
+   so the stage names its own stack or the board paints over the rings, the ants
+   and the rail buttons */
+.marker_ruler_top { grid-area: 1 / 2; border-bottom: 1px solid rgba(0,0,0,0.2); z-index: 1; }
+.marker_ruler_left { grid-area: 2 / 1; border-right: 1px solid rgba(0,0,0,0.2); z-index: 1; }
 #marker_viewport {
 	grid-area: 2 / 2;
 	position: relative;
@@ -2601,6 +2612,7 @@ html.jawnos_webview #admin_console_toggle {
 	/* the brush ring is the pointer here, so the system cursor is hidden */
 	cursor: var(--jawnos-cursor-none, none);
 	touch-action: none;
+	z-index: 0;
 }
 /* a selection tool has no brush to show, so it asks for its own pointer */
 #marker_viewport[data-tool="select"] #whiteboard,
@@ -2613,11 +2625,13 @@ html.jawnos_webview #admin_console_toggle {
 	width: 100%;
 	height: 100%;
 	pointer-events: none;
+	z-index: 3;
 }
 #marker_paper_edge {
 	position: absolute;
 	pointer-events: none;
 	box-shadow: 0 0 0 1px rgba(0,0,0,0.45), 0 4px 14px rgba(0,0,0,0.3);
+	z-index: 1;
 }
 .marker_brush_cursor {
 	position: absolute;
@@ -2629,6 +2643,7 @@ html.jawnos_webview #admin_console_toggle {
 	pointer-events: none;
 	border: 1.5px solid rgba(0,0,0,0.8);
 	box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.75), 0 0 0 1.5px rgba(255,255,255,0.75);
+	z-index: 4;
 }
 .marker_brush_cursor i {
 	position: absolute;
@@ -2640,7 +2655,7 @@ html.jawnos_webview #admin_console_toggle {
 	border-radius: 50%;
 	background: rgba(0,0,0,0.85);
 }
-.marker_cursor_guide { position: absolute; display: none; pointer-events: none; background: rgba(190,0,0,0.22); }
+.marker_cursor_guide { position: absolute; display: none; pointer-events: none; background: rgba(190,0,0,0.22); z-index: 2; }
 .marker_cursor_guide_x { top: 0; bottom: 0; width: 1px; }
 .marker_cursor_guide_y { left: 0; right: 0; height: 1px; }
 .marker_status_bar {
@@ -2651,7 +2666,8 @@ html.jawnos_webview #admin_console_toggle {
 	padding: 0 8px;
 	font-size: 11px;
 	font-variant-numeric: tabular-nums;
-	background: rgba(255,255,255,0.6);
+	background: var(--panel-2, rgba(255,255,255,0.6));
+	color: var(--ink, inherit);
 	border-top: 1px solid rgba(0,0,0,0.2);
 	white-space: nowrap;
 	overflow: hidden;

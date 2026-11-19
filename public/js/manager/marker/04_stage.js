@@ -121,7 +121,12 @@ function markerRulersDraw() {
 	var size = markerDocSize();
 	var step = markerRulerStep(markerView.scale);
 	var minor = step % 5 == 0 ? step / 5 : step / 2;
+	// the ticks wear the desk's ink, so a dark theme's light text has light ticks
 	var ink = 'rgba(0,0,0,0.6)';
+	try {
+		var themed = (getComputedStyle(document.body).getPropertyValue('--ink') || '').trim();
+		if (themed) { ink = themed; }
+	} catch (err) {}
 
 	var top = markerRulerCanvas(document.getElementById('marker_ruler_top'));
 	if (top && size.w) {
