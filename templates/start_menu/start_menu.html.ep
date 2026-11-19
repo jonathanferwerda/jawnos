@@ -134,6 +134,8 @@
 
 				<img class="jonathan" category="system" src="<%= &subs::icon_for('/images/decipherable/stop sign.png') %>" hint="Stop all" id="stop_all"></img>
 				<img id="twirl_toggle" class="jonathan twirl" category="games" src="<%= &subs::icon_for('/images/decipherable/tetris.png') %>" hint="Twirl"></img>
+				<img id="pipedream_toggle" class="jonathan pipedream" category="games" src="<%= &subs::icon_for('/images/decipherable/tunnel.png') %>" hint="Pipedream"></img>
+				<img id="minesweeper_toggle" class="jonathan minesweeper" category="games" src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Minesweeper"></img>
 				<%# One row per DOS card the browser can run. A desk and a phone have no
 				    DOSBox, so the card opens the same game in js-dos; the handheld
 				    keeps its native shelf and does not get a second launcher. %>

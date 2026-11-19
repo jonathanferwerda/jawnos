@@ -209,7 +209,19 @@ $(document).on('click', '#twirl_toggle', function() {
 	});
 });
 
-
+// Pipedream and Minesweeper take the same shape as Twirl: one route, the page
+// made into a window, and the page's own script starts the play once it lands.
+$(document).on('click', '#pipedream_toggle, #minesweeper_toggle', function() {
+	var app = this.id.replace(/_toggle$/, '');
+	$.ajax({
+		url: '/manager/' + app,
+		type: 'GET',
+		data: { window_maker: 'yes', timestamp: Date.now() },
+		success: function(response) {
+			windowMaker(response);
+		}, error: function (response) {  }
+	});
+});
 
 $(document).on('click', '#home_toggle', function() {
 	var url = '/manager/home';

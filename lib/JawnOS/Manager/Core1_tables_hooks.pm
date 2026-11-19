@@ -294,6 +294,7 @@ our %manager_app_entry = (
 our %manager_toggle_apps = (
 	synth_toggle => 'synth', studio_toggle => 'studio', marker_toggle => 'marker',
 	terminal_toggle => 'terminal', travel_toggle => 'travel', twirl_toggle => 'twirl',
+	pipedream_toggle => 'pipedream', minesweeper_toggle => 'minesweeper',
 	editor_toggle => 'editor', relational_toggle => 'relational', people_toggle => 'people',
 	notes_toggle => 'notes', notifications_toggle => 'notifications', search_app_toggle => 'search', camera_toggle => 'camera', scan_toggle => 'scan',
 	network_toggle => 'network', phone_toggle => 'phone', ide_toggle => 'ide',

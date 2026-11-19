@@ -1,4 +1,4 @@
-# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js public/css/manager.css lib/JawnOS/Manager/Part11.pm
+# tests-for: templates/start_menu/start_menu.html.ep public/js/manager/manager/05_start_menu.js public/js/manager/manager/08_handbook.js public/css/manager.css lib/JawnOS/Manager/Part11.pm
 # covers:    the running list lists open sessions only, Internet is the one web entry
 #            point, and every catalog-driven app label reads as a capitalised name
 
@@ -75,7 +75,8 @@ my %launchers = (
 	notifications_toggle => 'notifications', packages_toggle => 'packages',
 	keyboard_toggle => 'keyboard', calculator_toggle => 'calculator',
 	weather_toggle => 'weather', power_toggle => 'power', sound_toggle => 'sound',
-	twirl_toggle => 'twirl', scan_toggle => 'scan', studio_toggle => 'studio'
+	twirl_toggle => 'twirl', scan_toggle => 'scan', studio_toggle => 'studio',
+	pipedream_toggle => 'pipedream', minesweeper_toggle => 'minesweeper'
 );
 for my $id (sort keys %launchers) {
 	is($icon_apps{$id}, $launchers{$id}, "$id names its app");
@@ -175,6 +176,15 @@ like($template, qr/data-game="<%= \$dos_game->\{'id'\} %>"/,
 like($template, qr/manager\/games\/art\?id=/, 'and the card picture when the shelf has one');
 like($menu_js, qr/\.dos_game_toggle/, 'a row press is the player opener');
 like($menu_js, qr{url: '/manager/games/play'}, 'which asks the player route for the window');
+
+# The games category carries a direct icon for each house game, so the desk
+# starts one without going through the Controller's second launcher. Each icon
+# is a lazy toggle, and core opens the window the same way Twirl's does.
+like($template, qr/id="pipedream_toggle"[^>]*category="games"/, 'Pipedream is a start-menu game');
+like($template, qr/id="minesweeper_toggle"[^>]*category="games"/, 'Minesweeper is a start-menu game');
+my $handbook_js = read_file(root() . '/public/js/manager/manager/08_handbook.js');
+like($handbook_js, qr/\#pipedream_toggle, \#minesweeper_toggle/, 'one opener handles both game icons');
+like($handbook_js, qr{url: '/manager/' \+ app}, 'and asks the game\'s own route for the window');
 
 # The template is rendered with `vars => 1`, so every name it uses has to be a
 # key in the stash the caller passes; a missing one fails compilation and the

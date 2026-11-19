@@ -42,6 +42,8 @@ like($hooks, qr{pipedream\s*=>\s*\[qw\(/js/manager/pipedream\.js\)\]}, 'Pipedrea
 like($hooks, qr{minesweeper\s*=>\s*\[qw\(/js/manager/minesweeper\.js\)\]}, 'Minesweeper loads its own chunk');
 like($hooks, qr{pipedream\s*=>\s*\[qw\(pipedreamInit\)\]}, 'Pipedream has an entry function');
 like($hooks, qr{minesweeper\s*=>\s*\[qw\(minesweeperInit\)\]}, 'Minesweeper has an entry function');
+like($hooks, qr/pipedream_toggle\s*=>\s*'pipedream'/, 'the start-menu icon loads the Pipedream chunk');
+like($hooks, qr/minesweeper_toggle\s*=>\s*'minesweeper'/, 'and Minesweeper\'s icon loads its chunk');
 
 # --- ?open= and the close hook ------------------------------------------------
 my $open = read_file("$root/public/js/manager/manager/09_app_back.js");

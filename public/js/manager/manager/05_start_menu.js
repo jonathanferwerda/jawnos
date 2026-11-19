@@ -305,7 +305,8 @@ var startMenuIconApps = {
 	handbook_toggle: 'handbook', help_toggle: 'help', notifications_toggle: 'notifications',
 	power_toggle: 'power', sound_toggle: 'sound', packages_toggle: 'packages',
 	keyboard_toggle: 'keyboard', calculator_toggle: 'calculator', weather_toggle: 'weather',
-	twirl_toggle: 'twirl', scan_toggle: 'scan', studio_toggle: 'studio'
+	twirl_toggle: 'twirl', pipedream_toggle: 'pipedream', minesweeper_toggle: 'minesweeper',
+	scan_toggle: 'scan', studio_toggle: 'studio'
 };
 
 function startMenuHidePrivate(main) {
