@@ -61,8 +61,11 @@ is(subs::peer_manager_url($tunnel, 'peer.example', 45545),
 	'https://127.0.0.1:59377',
 	'a tunnel row keeps its stored tunnel manager for the fqdn candidate');
 is(subs::peer_live_manager($tunnel),
+	'https://10.0.0.9:45545',
+	'a live tunnel with a direct address keeps the direct route first');
+is(subs::peer_live_manager({ manager => 'https://127.0.0.1:59377', fqdn => 'peer.example', port => 45545, tunnel => 'yes' }),
 	'https://127.0.0.1:59377',
-	'a live tunnel row keeps its loopback manager');
+	'a tunnel-only row keeps its live loopback');
 is(subs::peer_live_manager({ %{$tunnel}, manager => 'https://127.0.0.1:59378' }),
 	'https://10.0.0.9:45545',
 	'a tunnel flag with no active tunnel row falls back to the peer literal');

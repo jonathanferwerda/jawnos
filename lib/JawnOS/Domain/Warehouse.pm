@@ -772,16 +772,22 @@ sub remote_machine_tunnel_processor {
 		# replaces the peer's real address until its next redial, so only rewrite
 		# when the tunnel actually reserved a port; otherwise leave the advertised
 		# manager (and the LAN fallback below) to reach the peer.
-		if ($tun->{'PORT_AHOY'}) {
+		if (($tun->{'PORT_AHOY'} || 0) > 0) {
 			$rm->{'port_dock'} = $tun->{'PORT_DOCK'};
+			$rm->{'tunnel_manager'} = 'https://127.0.0.1:' . $tun->{'PORT_AHOY'};
 			unless ($rm->{'manager_verified'}) {
-				$rm->{'ip'} = '127.0.0.1';
-				my $man = $rm->{'manager'};
-				$rm->{'manager'} = 'https://' . $rm->{'ip'} . ':' . $tun->{'PORT_AHOY'};
-				if ($man ne $rm->{'manager'}) {
+				# Tailnet/LAN is first class: keep a direct route and leave the
+				# live tunnel as the probe's fallback (peer_literal_addresses
+				# lists the loopback last). Only a row with no direct literal
+				# takes the loopback as its manager.
+				my $live_manager = &subs::peer_live_manager($rm);
+				if (defined $live_manager && length $live_manager && $live_manager ne ($rm->{'manager'} || '')) {
+					$rm->{'manager'} = $live_manager;
+					my ($mh) = &subs::peer_manager_host({ manager => $live_manager });
+					$rm->{'ip'} = $mh if defined $mh && length $mh && &subs::peer_host_is_literal($mh);
 					&subs::db_update('remote_machines', {
-						manager => $rm->{'manager'},
-					}, { uuid => $rm->{'uuid'} });
+						manager => $live_manager,
+					}, { uuid => $rm->{'uuid'} }) if $rm->{'uuid'};
 				}
 			}
 		}

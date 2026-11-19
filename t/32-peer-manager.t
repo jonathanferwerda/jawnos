@@ -41,8 +41,11 @@ is(subs::peer_literal_manager({ ip => '10.20.0.20', port => '45545', manager => 
 	name => 'PORT_AHOY', in_port => 53665, uuid => 'test-tunnel-53665',
 });
 is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53665', fqdn => 'laptop.example', ip => '10.0.0.9', port => '45545', tunnel => 'yes' }),
+	'https://10.0.0.9:45545',
+	'a live tunnel with a direct address keeps the direct route first');
+is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53665', fqdn => 'laptop.example', port => '45545', tunnel => 'yes' }),
 	'https://127.0.0.1:53665',
-	'a live tunnel route keeps its loopback manager');
+	'a tunnel-only row keeps its live loopback');
 is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53666', fqdn => 'laptop.example', ip => '10.0.0.9', port => '45545', tunnel => 'yes' }),
 	'https://10.0.0.9:45545',
 	'a tunnel flag with no active tunnel row falls back to the peer literal');

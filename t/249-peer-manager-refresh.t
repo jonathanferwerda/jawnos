@@ -3,8 +3,8 @@
 #           LAN address this machine has left, must resolve to the route that
 #           can actually answer: the same LAN when both machines share it, the
 #           tailnet otherwise. The address a verified probe used is written
-#           back to remote_machines.manager, and a tunnel row keeps its own
-#           loopback route only while its port is an active tunnel.
+#           back to remote_machines.manager, and a live tunnel is the fallback
+#           route after the tailnet/LAN while its port is an active tunnel.
 
 use strict;
 use warnings;
@@ -96,21 +96,33 @@ is($live, 'https://100.64.0.3:45545',
 		'and the peer hostname is a fallback too');
 });
 
-# A tunnel row's loopback belongs to the hub and is kept exactly as stored
-# while the hub still holds its port. Seed the active tunnel row the hub writes
-# on confirm; without it the flag is stale and the row must use the tailnet.
+# A tunnel row's loopback is only the fallback: the tailnet is first class and
+# is kept while the hub still holds its port. Seed the active tunnel row.
 &subs::db_insert('tunnels', {
 	signatorial => 'laptop-sig', status => 'active', direction => 'out',
 	name => 'PORT_AHOY', in_port => 56138, uuid => 'test-tunnel-56138',
 });
 is(subs::peer_live_manager({ %{$laptop}, tunnel => 'yes' }),
+	'https://100.64.0.3:45545',
+	'a live tunnel with a tailnet keeps the tailnet first');
+is(subs::peer_live_manager({ signatorial => 'laptop-sig', manager => 'https://127.0.0.1:56138', fqdn => 'laptop.example', port => 45545, tunnel => 'yes' }),
 	'https://127.0.0.1:56138',
-	'a live tunnel row keeps its loopback manager');
+	'a tunnel-only row keeps its live loopback');
 &as_machine_at('10.20.0.10', sub {
 	$live = subs::peer_live_manager({ %{$laptop}, manager => 'https://127.0.0.1:56139', tunnel => 'yes' });
 });
 is($live, 'https://100.64.0.3:45545',
 	'a tunnel flag with no active tunnel row falls back to the tailnet');
+# The live tunnel's loopback is the probe's last candidate, after the tailnet.
+my $order;
+&as_machine_at('10.20.0.10', sub {
+	my $cands = subs::peer_probe_candidates({ %{$laptop}, tunnel => 'yes' });
+	my %pos; my $i = 0;
+	$pos{$_->{'host'}} = $i++ for @{$cands};
+	$order = [ $pos{'100.64.0.3'}, $pos{'127.0.0.1'} ];
+});
+ok(defined $order->[0] && defined $order->[1] && $order->[0] < $order->[1],
+	'the tailnet is tried before the live tunnel loopback');
 
 # With no literal to fall back to, the name is still last.
 is(subs::peer_live_manager({ manager => 'https://127.0.0.1:56138', fqdn => 'laptop.example', port => 45545 }),
@@ -153,12 +165,14 @@ my @writes;
 	is($writes[0]->[2]->{'uuid'}, 'laptop-uuid', 'for this peer row');
 
 	@writes = ();
-	ok(!subs::peer_manager_remember({ %{$laptop}, tunnel => 'yes' }, 'https://100.64.0.3:45545'),
-		'a tunnel row is never rewritten');
-	is(scalar @writes, 0, 'and nothing is written for it');
+	ok(subs::peer_manager_remember({ %{$laptop}, tunnel => 'yes' }, 'https://100.64.0.3:45545'),
+		'a tunnel row accepts the direct tailnet route');
+	is($writes[0]->[1]->{'manager'}, 'https://100.64.0.3:45545',
+		'and stores it as the row route');
 
-	ok(!subs::peer_manager_remember($laptop, 'https://127.0.0.1:56138'),
-		'a loopback is not persisted as a live route');
+	@writes = ();
+	ok(!subs::peer_manager_remember({ %{$laptop}, tunnel => 'yes' }, 'https://127.0.0.1:56138'),
+		'a tunnel row is never rewritten to a loopback');
 	is(scalar @writes, 0, 'so the retired tunnel manager cannot heal itself back');
 });
 

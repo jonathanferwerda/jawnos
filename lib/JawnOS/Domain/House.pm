@@ -782,6 +782,14 @@ sub peer_literal_addresses {
 		&$add($pseu->{'ip'}, $pseu->{'port'}, 'pseudonym') if ref $pseu eq 'HASH';
 	}
 	&$add($rm->{'tailnet_ip'} || &tailnet_address($rm), $default_port, 'tailnet');
+	# A live tunnel is the fallback route, tried after the direct addresses: its
+	# active row holds the hub-side listener port. A stale tunnel flag has no
+	# row and is not a route (2026-11-19).
+	if (($rm->{'tunnel'} || '') eq 'yes' && ($rm->{'signatorial'} || '')) {
+		my $rows = eval { &db_select('tunnels', undef, { signatorial => $rm->{'signatorial'}, status => 'active', name => 'PORT_AHOY' })->hashes } || [];
+		my $tport = $rows->[0] ? $rows->[0]->{'in_port'} : undef;
+		&$add('127.0.0.1', $tport, 'tunnel') if defined $tport && $tport =~ /^\d+$/ && $tport > 0;
+	}
 	# A same-LAN address first, then the tailnet, then a LAN literal we are not
 	# on, then anything else; insertion order breaks ties so the row's own ip
 	# keeps its precedence within a rank. A LAN address on a network this
@@ -972,6 +980,10 @@ sub peer_live_manager {
 	$rm ||= {};
 	my $manager = $rm->{'manager'} || '';
 	return $manager unless $manager =~ m{^https?://};
+	# A route the probe just proved is the one to use: it may be the tunnel
+	# fallback when the tailnet did not answer, and re-resolving it would send
+	# the pass back to the dead direct address.
+	return $manager if $rm->{'manager_verified'};
 	my ($host, $mport) = &peer_manager_host($rm);
 	return $manager unless defined $host && length $host;
 	my $loopback = &peer_host_is_loopback($host) ? 1 : 0;
@@ -991,16 +1003,21 @@ sub peer_live_manager {
 		# listener the tunnel reserved, so an active tunnel row with that in_port
 		# is the proof the loopback still belongs to this peer. A pending tunnel
 		# is left to remote_device_connect's own live-port guard.
-		if (($rm->{'tunnel'} || '') eq 'yes') {
-			my $live = 0;
-			if (defined $mport && $mport =~ /^\d+$/) {
-				my $rows = eval { &db_select('tunnels', undef, { status => 'active', in_port => $mport })->hashes } || [];
-				$live = 1 if scalar @{$rows};
-			}
-			return $manager if $live;
+		my $live = 0;
+		if (($rm->{'tunnel'} || '') eq 'yes' && defined $mport && $mport =~ /^\d+$/) {
+			my $rows = eval { &db_select('tunnels', undef, { status => 'active', in_port => $mport })->hashes } || [];
+			$live = 1 if scalar @{$rows};
 		}
+		# Tailnet/LAN is first class: when the row has a direct literal, use it
+		# and leave the live tunnel as the probe's fallback (peer_literal_addresses
+		# lists it last). A tunnel-only row has no direct literal and keeps the
+		# loopback while its tunnel is live.
 		my $literal = &peer_literal_manager($rm);
-		return $literal if $literal;
+		if ($literal) {
+			my ($lh) = &peer_manager_host({ manager => $literal });
+			return $literal if defined $lh && length $lh && !&peer_host_is_loopback($lh);
+		}
+		return $manager if $live;
 		my $fqdn = $rm->{'fqdn'} || '';
 		return $manager unless $fqdn ne '' && $fqdn !~ m{^127\.};
 		return &peer_manager_url($rm, $fqdn, $rm->{'port'});
@@ -1024,12 +1041,12 @@ sub peer_live_manager {
 
 # Write the route that answered back to the row, so the next pass does not
 # start from a retired loopback or a LAN this machine has left. A tunnel row's
-# loopback belongs to the hub and is never rewritten here. The manager url
-# carries the port; keep the row's port column in step when it changes.
+# loopback belongs to the hub and is never rewritten here; a direct tailnet/LAN
+# route learned for it is first class and may be. The manager url carries the
+# port; keep the row's port column in step when it changes.
 sub peer_manager_remember {
 	my ($rm, $manager) = @_;
 	return 0 unless ref $rm eq 'HASH' && defined $manager && length $manager;
-	return 0 if ($rm->{'tunnel'} || '') eq 'yes';
 	return 0 unless $manager =~ m{^https?://};
 	my ($host) = &peer_manager_host({ manager => $manager });
 	return 0 if !defined $host || !length $host || &peer_host_is_loopback($host);
