@@ -29,9 +29,13 @@ under a dated heading; older sections stay as history.
   newest notice's picture when it has one, and a shared or sealed picture falls
   back to that app's own colour and initials. Answering or clearing the notice
   clears the badge on the next visit to Home.
+- **A sealed photo reaches the notification.** A notice with a sealed main
+  image decrypts it in memory for its Android large icon and carries the JPEG
+  over the device bridge; the `.enc` stays sealed and no plaintext thumbnail is
+  cached.
 - **The shade still says JawnOS.** Android attributes a notification to the
   package that posted it, so the header line and the launcher badge remain
-  JawnOS; a second APK would be needed to change that. Build 1348.
+  JawnOS; a second APK would be needed to change that. Build 1349.
 
 ## 2026-11-17 — the alarm face stays until it is answered, with a five-minute backstop
 
