@@ -24,7 +24,7 @@ under a dated heading; older sections stay as history.
   pruned instead of lingering.
 - **The shade still says JawnOS.** Android attributes a notification to the
   package that posted it, so the header line and the launcher badge remain
-  JawnOS; a second APK would be needed to change that. Build 1336.
+  JawnOS; a second APK would be needed to change that. Build 1344.
 
 ## 2026-11-17 — the alarm face stays until it is answered, with a five-minute backstop
 
