@@ -349,7 +349,11 @@ sub action_10408 {
 	my $c = shift;
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	# The signatorial is public (it is rendered into DOM attributes and shipped in
+	# every advert), so naming one is not a credential. The app and session gates
+	# step aside for this peer route, so the proof has to be here: the request
+	# must carry the machine's pinned signature, exactly like the APK rail.
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm) && &subs::peer_allows($c, $rm, 'member')) { $c->rendered(403); return; }
 	$c->render(json => &crew::state());
 }
 

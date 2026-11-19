@@ -361,6 +361,14 @@ sub app_public_path {
 	return 1 if $path =~ m{^/manager/device(?:/|$)};
 	return 1 if $path =~ m{^/manager/app_release(?:/|$)};
 	return 1 if $path =~ m{^/manager/app_download(?:/|$)};
+	# The Crew rides that same bare signed rail: a machine reads a peer's
+	# abilities and dispatches a job with no session on the receiver. Both routes
+	# verify the caller's pinned signature against the roster themselves, so the
+	# app gate must step aside - without these two entries it answered the advert
+	# sync with the app-required page at 200, which decodes as an ability advert
+	# that never came, and every machine logged "crew: advert sync answered for 0
+	# peer(s)". The browser's own Advertise Now button stays a session action.
+	return 1 if $path eq '/manager/crew/state' || $path eq '/manager/crew/job';
 	# A crest lookup is house to house: the caller presents its own crest and the
 	# reply is signed by this house's key, so no session or app key is involved.
 	return 1 if $path =~ m{^/crest(?:/|$)};

@@ -516,6 +516,14 @@ Manager::app->hook(before_dispatch => sub {
 		# back to GitHub at the phone's ~24 KB/s (a 25-minute download).
 		$path eq '/manager/app_release' ||
 		$path eq '/manager/app_download' ||
+		# the Crew rail: a machine reads a peer's abilities and dispatches a job
+		# with no session on the receiver. Both routes verify the caller's pinned
+		# signature against the roster themselves (see Manager.pl), and the job
+		# route also checks the caller's grant because it runs work. A gated reply
+		# was the Gate page, which advert_sync decodes as "no peer answered" and
+		# the Network toggle's dispatch as no capable machine.
+		$path eq '/manager/crew/state' ||
+		$path eq '/manager/crew/job' ||
 		# a crest lookup is house to house: the caller presents its own signed
 		# crest and the route verifies that signature itself, so there is no
 		# session cookie to carry
