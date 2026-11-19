@@ -5,6 +5,27 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-11-19 — each app's notification stands on its own
+
+- **A notice's app names its channel.** Mail, Clock, Market, Scan, Security and
+  the rest each get their own notification channel, so each has its own sound,
+  importance and badge in Settings instead of sharing one JawnOS switch. The
+  app channels start at their defaults; the old JawnOS channel still governs a
+  notice that names no app.
+- **It wears its own icon.** A small envelope, clock, cart, scanner, calendar
+  and so on replaces the house mark in the status bar, chosen from the app that
+  sent the notice. The large picture the notice already carried is unchanged.
+- **It no longer shares the JawnOS bundle.** Each app has its own group, so mail
+  stops folding in with a Clock alarm or a Market receipt. Two or more waiting
+  notices from one app collapse under a header named for that app ("Mail");
+  a single notice is left uncollapsed so it stands on its own.
+- **A dismissed notice takes its header with it.** When the last notice in a
+  group is swiped away, tapped, or removed by the manager, the group header is
+  pruned instead of lingering.
+- **The shade still says JawnOS.** Android attributes a notification to the
+  package that posted it, so the header line and the launcher badge remain
+  JawnOS; a second APK would be needed to change that. Build 1336.
+
 ## 2026-11-17 — the alarm face stays until it is answered, with a five-minute backstop
 
 - **A ring stays until it is answered, or five minutes.** Dismiss or Snooze ends
