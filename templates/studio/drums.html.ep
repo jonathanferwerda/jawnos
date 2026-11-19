@@ -13,6 +13,7 @@
 		<button class="studio_span_toggle hover" data-panel="drums" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 	</div>
 	<span class="studio_resize_handle" data-studio-resize="drums" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+	<span class="studio_width_handle" data-studio-width="drums" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
 	<div id="studio_drums_body">
 		<div class="studio_drums_scroll">
 			<div class="studio_drums_head">

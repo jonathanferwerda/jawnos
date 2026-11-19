@@ -119,6 +119,7 @@
 			<button class="studio_span_toggle hover" data-panel="synth" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="synth" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+		<span class="studio_width_handle" data-studio-width="synth" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
 		<div class="studio_synth_body">
 			<div class="studio_synth_keys synth_keys"></div>
 			<div class="studio_synth_knobs">
@@ -135,7 +136,7 @@
 	<style>
 		.studio_synth_panel { margin: 4px 0; }
 		.studio_synth_bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-		.studio_synth_select { font-size: 14px; border: solid 1px var(--line); border-radius: 5px; background: var(--panel); color: inherit; padding: 2px 4px; max-width: 220px; }
+		.studio_synth_select { font-size: 14px; border: solid 1px var(--line); border-radius: 5px; background: var(--panel); color: inherit; padding: 2px 4px; max-width: 220px; flex: 1 1 170px; min-width: 140px; }
 		.studio_synth_body { margin-top: 4px; }
 		.studio_synth_keys { position: relative; width: 100%; box-sizing: border-box; height: 96px; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
 		.studio_synth_keys .synth_keys_inner { position: relative; height: 92px; white-space: nowrap; }
@@ -160,6 +161,7 @@
 			<button class="studio_span_toggle hover" data-panel="tracks" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="tracks" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+		<span class="studio_width_handle" data-studio-width="tracks" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
 		<div id="studio_viewer" channel_count="<%= $channel_count %>" data-max-tracks="<%= $max_tracks %>">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
 				<div class="studio_track" data-channel="<%= $ch %>" id="studio_track_row_<%= $ch %>">
@@ -199,6 +201,7 @@
 			<button class="studio_span_toggle hover" data-panel="mixer" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="mixer" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+		<span class="studio_width_handle" data-studio-width="mixer" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
 		<div id="studio_mixer_strips">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
 				<span class="channel channel_<%= $ch %>">
@@ -256,6 +259,7 @@
 			<button class="studio_span_toggle hover" data-panel="transport" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="transport" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+		<span class="studio_width_handle" data-studio-width="transport" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
 		<span id="studio_controls">
 			<div class="studio_transport_row" id="studio_transport_row">
 				<img class="little_thumb record hover" hint="Record" id="studio_record" src="<%= &subs::icon_for('/images/make believe/record.png') %>">

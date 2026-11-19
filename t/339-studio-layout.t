@@ -25,6 +25,7 @@ sub slurp {
 my $root = $FindBin::Bin;
 $root =~ s{/t$}{};
 my $markup = slurp("$root/templates/studio/markup.html.ep");
+my $drums  = slurp("$root/templates/studio/drums.html.ep");
 my $sheet  = slurp("$root/templates/studio/studio.html.ep");
 my $style  = slurp("$root/templates/studio/style.html.ep");
 my $js     = slurp("$root/public/js/manager/studio.js");
@@ -138,8 +139,10 @@ like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwor
 unlike($markup, qr/count\s*\*\s*175/, 'no tile is placed by counted pixels');
 
 # --- overflow is contained, never painted over -----------------------------
-like($style, qr/\.studio_grid > div\s*\{[^}]*min-height:\s*0/s, 'every docked panel may shrink');
-like($style, qr/\.studio_grid > div\s*\{[^}]*overflow:\s*auto/s, 'every docked panel scrolls its own content');
+like($style, qr/\.studio_grid > div,\s*\n\s*\.studio_grid_row > div\s*\{[^}]*min-height:\s*0/s,
+	'every docked panel may shrink, in a grid or in a row');
+like($style, qr/\.studio_grid > div,\s*\n\s*\.studio_grid_row > div\s*\{[^}]*overflow:\s*auto/s,
+	'every docked panel scrolls its own content');
 like($style, qr/#studio_mixer_strips\s*\{[^}]*min-height:\s*0/s, 'the strips block may shrink');
 like($style, qr/#studio_viewer\s*\{[^}]*min-height:\s*0/s, 'the track area may shrink');
 like($markup, qr/id="studio_mixer_strips"[\s\S]*id="studio_master_rack"[\s\S]*id="studio_transport_panel"/,
@@ -375,6 +378,10 @@ like($knobs, qr/if \(n == 'track_height'\)/, 'a saved height is restored');
 like($knobs, qr/if \(h < 64\) \{ return; \}/, 'a hidden track panel cannot save a zero height');
 
 # --- one transport row ------------------------------------------------------
+like($markup, qr/\.studio_synth_select\s*\{[^}]*min-width:\s*140px/s,
+	'the synth preset row keeps a readable width and wraps when the panel is narrow');
+like($markup, qr/\.studio_synth_select\s*\{[^}]*flex:\s*1 1 170px/s,
+	'the preset select grows into the bar before it wraps');
 like($markup, qr/id="studio_transport_row"/, 'the transport row is addressable');
 like($markup, qr/class="studio_transport_field"[^>]*id="studio_bpm"/, 'tempo sits in the row');
 like($markup, qr/class="studio_transport_field"[^>]*id="studio_signature"/, 'the signature sits in the row');
@@ -403,11 +410,72 @@ like($layout, qr/studioPersistPanelHeight\(resize\.name/, 'the docked resize per
 like($help, qr/snaps to the eight-pixel grid/, 'help explains the snap');
 like($help, qr/Drag a track\\'s bottom edge/, 'help explains the track resize');
 
+# --- the instruments start at their content width, tracks take the rest ----
+like($style, qr/\.studio_grid_row > #studio_synth\s*\{[^}]*width:\s*300px/s,
+	'the synth starts at its preset-row width');
+like($style, qr/\.studio_grid_row > #studio_synth\s*\{[^}]*min-width:\s*220px/s,
+	'the synth keeps a sensible minimum width');
+like($style, qr/\.studio_grid_row > #studio_drums\s*\{[^}]*width:\s*360px/s,
+	'the drums start wide enough for sixteen steps');
+like($style, qr/\.studio_grid_row > #studio_drums\s*\{[^}]*min-width:\s*320px/s,
+	'the drums keep a sensible minimum width');
+like($style, qr/\.studio_grid_row > #studio_tracks_panel\s*\{[^}]*flex:\s*1 1 280px/s,
+	'the tracks panel takes the rest of its row');
+like($style, qr/#studio_grid\.studio_arranged\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\) minmax\(220px,\s*300px\)/s,
+	'the arranged synth column stops at its content width');
+like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) clamp\(260px,\s*28%,\s*320px\) clamp\(320px,\s*36%,\s*360px\)/s,
+	'arranged gives the synth and drums content-sized columns and the tracks the rest');
+like($style, qr/#studio_grid\.studio_arranged\.studio_drums_open\s*\{[^}]*"tracks synth drums"/s,
+	'the arranged areas are unchanged by the sizing');
+
+# --- every docked panel has a width grip ------------------------------------
+for my $panel (qw(synth drums tracks mixer transport)) {
+	my $file = $panel eq 'drums' ? $drums : $markup;
+	like($file, qr/class="studio_width_handle" data-studio-width="$panel"/,
+		"$panel has a width grip");
+}
+like($style, qr/\.studio_width_handle\s*\{[^}]*right:\s*0/s, 'the width grip rides the right edge');
+like($style, qr/\.studio_width_handle\s*\{[^}]*ew-resize/s, 'the width grip has a sideways cursor');
+like($style, qr/\.studio_panel_floating \.studio_width_handle\s*\{\s*display:\s*none/s,
+	'a floated panel keeps its corner grip instead');
+like($layout, qr/'pointerdown', '\.studio_width_handle'/, 'a width drag starts on the grip');
+like($layout, qr/function studioApplyPanelWidth/, 'a saved width is applied');
+like($layout, qr/function studioPersistPanelWidth/, 'a dragged width is saved');
+like($layout, qr/'studio_panel_width_' \+ name/, 'the width is its own setting');
+like($layout, qr/function studioSnapPanelWidth/, 'the width snaps like the height');
+like($layout, qr/studioPersistPanelWidth\(resize\.name/, 'the width persists on release');
+like($layout, qr/STUDIO_PANEL_MIN_WIDTH/, 'a width has a floor');
+like($layout, qr/studioApplyPanelWidths\(\)/, 'every panel reapplies its width');
+like($layout, qr/studioApplyArrange[\s\S]*?studioPersistPanelWidth\(name, 0\)/,
+	'Arrange forgets a dragged width, as it forgets a height');
+
+# --- manual packing is rows, and later rows take the freed height -----------
+like($style, qr/\.studio_grid\s*\{[^}]*display:\s*flex/s, 'manual packing is a flex column');
+like($style, qr/\.studio_grid\s*\{[^}]*flex-direction:\s*column/s, 'its rows run down the window');
+like($style, qr/\.studio_grid_row\s*\{[^}]*display:\s*flex/s, 'a row lays its panels side by side');
+like($style, qr/\.studio_grid_row\s*\{[^}]*flex:\s*1 1 0/s, 'a row without a set height shares the leftover');
+like($layout, qr/function studioManualReflow/, 'one function rebuilds the manual rows');
+like($layout, qr/function studioReflowRowHeights/, 'one function re-measures the row heights');
+like($layout, qr/function studioManualUnwrap/, 'Arrange lifts the panels back onto the grid');
+like($layout, qr/function studioRowFixedHeight/, 'a row is fixed by its tallest saved panel');
+like($layout, qr/'flex': '0 0 ' \+ h \+ 'px'/, 'a set height fixes its row');
+like($layout, qr/'flex': '1 1 0'/, 'the unset rows take the rest');
+like($layout, qr/function studioPackWidth/, 'rows pack by the panels\' widths');
+like($layout, qr/row\.width \+ 6 \+ w > available/, 'a row breaks when the next panel will not fit');
+like($layout, qr/studioSnapTo\(w, sizes\.widths\)/, 'a width snaps to the grid and to a neighbour');
+like($layout, qr/the rows below grow into the freed height/, 'the source states the reflow rule');
+like($layout, qr/studioExitArrange\(true\);\n\tvar rect = panel\[0\]\.getBoundingClientRect\(\);\n\tstudioWidthResize/,
+	'a width drag measures after it has left Arrange');
+like($layout, qr/studioManualReflow\(\);/,
+	'the row flow is rebuilt after an order, span, hide, dock or float change');
+
 # --- the new hints are in the topic's controls list ------------------------
 for my $control ('Drag the bottom edge to resize this track', 'Drag to move the channel strips',
 	'Tempo in beats per minute', 'Time signature') {
 	like($help, qr/'\Q$control\E'/, "help lists $control as a control");
 }
+like($help, qr/Drag the right edge to resize this panel\\'s width/, 'help names the width grip');
+like($help, qr/the rows below move up and grow into the freed height/, 'help explains the reflow');
 
 # --- one clear insertion point for the drum machine -----------------------
 my @drums = $markup =~ /include 'studio\/drums'/g;

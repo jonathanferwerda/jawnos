@@ -389,30 +389,71 @@
 		overflow-y: auto;
 		background-color: var(--panel-2);
 	}
-	/* The four docked panels pack into one grid: every panel is one column wide
-	   by default, auto-flow dense fills the gaps, and a two-column span is the
-	   only widening. Nothing owns a named cell, so the transport fits beside the
-	   strips. A floated panel leaves the grid (07_layout.js). */
+	/* Manual packing is a column of flex rows. A row holds the panels that share
+	   one line, so it is exactly as tall as its tallest panel: shorten a panel
+	   and its row shrinks, the rows below move up and their flex-grow takes the
+	   freed height. A row whose panels all carry a saved height is fixed; the
+	   rest share what is left. A floated panel leaves the flow (07_layout.js).
+	   Arrange swaps this for the explicit grid below. */
 	.studio_grid {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-		grid-auto-flow: dense;
-		grid-auto-rows: minmax(0, 1fr);
+		display: flex;
+		flex-direction: column;
 		gap: 6px;
 		flex: 1 1 auto;
 		min-height: 0;
 		padding: 4px;
 		box-sizing: border-box;
-		overflow: hidden;
+		overflow-y: auto;
+	}
+	.studio_grid_row {
+		display: flex;
+		flex-direction: row;
+		align-items: stretch;
+		gap: 6px;
+		flex: 1 1 0;
+		min-width: 0;
 	}
 	/* A docked panel never paints over its neighbour: each one is a scroll box
 	   (`min-height: 0` + `overflow: auto`) and its own content scrolls inside. */
-	.studio_grid > div {
-		grid-column: span 1;
+	.studio_grid > div,
+	.studio_grid_row > div {
 		min-width: 0;
 		min-height: 0;
 		position: relative;
 		overflow: auto;
+	}
+	.studio_grid > div {
+		grid-column: span 1;
+	}
+	/* the row is a flex box, not one more scroll box */
+	.studio_grid > .studio_grid_row {
+		min-height: 120px;
+		overflow: visible;
+		position: static;
+	}
+	/* Content widths in manual packing: the instruments start at a sensible
+	   width (the drums fit their sixteen steps, the synth its preset row) and
+	   the tracks panel grows into what is left. A saved width wins. */
+	.studio_grid_row > #studio_synth {
+		flex: 0 1 auto;
+		width: 300px;
+		min-width: 220px;
+	}
+	.studio_grid_row > #studio_drums {
+		flex: 0 1 auto;
+		width: 360px;
+		min-width: 320px;
+	}
+	.studio_grid_row > #studio_tracks_panel {
+		flex: 1 1 280px;
+	}
+	.studio_grid_row > #studio_mixer {
+		flex: 1 1 300px;
+	}
+	.studio_grid_row > #studio_transport_panel {
+		flex: 1 1 100%;
+		max-height: 104px;
+		align-self: flex-start;
 	}
 	/* ---- arranged mode ------------------------------------------------------
 	   Arrange gives the grid its explicit DAW areas: the transport keeps only
@@ -423,7 +464,12 @@
 	   .studio_arranged the moment a panel is moved, floated, docked, widened or
 	   re-ordered, and the manual packing takes over again. */
 	#studio_grid.studio_arranged {
-		grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+		display: grid;
+		/* the tracks column takes what is left; the synth starts at its preset
+		   row's width and stops at 300px */
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(220px, 300px);
+		grid-auto-flow: dense;
+		grid-auto-rows: minmax(0, 1fr);
 		/* the console row is auto: its own 132px cap sizes the band, and that is
 		   well under 45% of the grid at the target window sizes, so the timeline
 		   keeps the room */
@@ -458,7 +504,10 @@
 	   grid above returns, so the timeline and the synth reclaim the width. The
 	   timeline keeps its full height either way. */
 	#studio_grid.studio_arranged.studio_drums_open {
-		grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.8fr);
+		/* content-sized instrument columns beside a tracks column that takes the
+		   rest: the drums keep their sixteen steps readable, the synth its
+		   preset row, and the timeline gets everything else */
+		grid-template-columns: minmax(0, 1fr) clamp(260px, 28%, 320px) clamp(320px, 36%, 360px);
 		grid-template-areas:
 			"transport transport transport"
 			"tracks synth drums"
@@ -692,10 +741,29 @@
 		bottom: 0;
 		width: 18px;
 		height: 18px;
-		z-index: 3;
+		/* above the width grip: the corner belongs to the height drag */
+		z-index: 4;
 		cursor: var(--jawnos-cursor-nwse-resize, nwse-resize);
 		touch-action: none;
 		background: linear-gradient(135deg, transparent 0 42%, var(--line, #333) 43% 50%, transparent 51% 62%, var(--line, #333) 63% 70%, transparent 71%);
+	}
+	/* a width grip rides the docked panel's right edge; the corner keeps height */
+	.studio_width_handle {
+		display: block;
+		position: absolute;
+		right: 0;
+		top: 0;
+		bottom: 0;
+		width: 8px;
+		z-index: 3;
+		cursor: var(--jawnos-cursor-ew-resize, ew-resize);
+		touch-action: none;
+	}
+	.studio_width_handle:hover {
+		background: color-mix(in srgb, var(--accent) 35%, transparent);
+	}
+	.studio_panel_floating .studio_width_handle {
+		display: none;
 	}
 	.studio_panel_resizing { cursor: var(--jawnos-cursor-nwse-resize, nwse-resize); }
 	/* A track has its own row height (90px by default); its bottom edge is the
