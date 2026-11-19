@@ -95,6 +95,9 @@ function studioInit(data) {
 			studioBindChannelDrop($('.channel, .studio_track_panel'));
 
 			studioRetriever();
+			// the drum panel reads its state from the song (restored above) and
+			// builds its voices once the window is on the page
+			if (typeof studioDrumsInit === 'function') { studioDrumsInit(); }
 			studioUpdateKnobHints();
 			if ($('#studio').attr('uuid')) {
 				if (!data['uuid']) {
@@ -415,7 +418,8 @@ function studioSaver() {
 	$('#studio_viewer .studio_track').each(function() { tracks.push($(this).attr('data-channel')); });
 	song['admin'] = { time: mixer['time'], name: name, uuid: uuid, loop: sl, video_toggle: video_toggle,
 		metronome: mixer['time']['metronome'], bpm: mixer['time']['bpm'], sig: mixer['time']['sig'],
-		tracks: tracks, master: studioMasterSave(), settings: { channel_count: String(tracks.length || 1) } };
+		tracks: tracks, master: studioMasterSave(), drums: studioDrumsSave(),
+		settings: { channel_count: String(tracks.length || 1) } };
 	studioSongStore(song);
 	return song;
 }
@@ -517,6 +521,10 @@ function studioRetriever() {
 			return { name: name, on: false };
 		}));
 	}
+
+	// The drum chart, keys, loop, mutes and MIDI input are the song's too; a
+	// cleared chart is valid and restores as silence.
+	studioDrumsRestore(mixer['admin'] && mixer['admin']['drums']);
 
 	var met = $('#studio_metronome');
 	if (mixer['time'] && mixer['time']['metronome'] == 'yes') {

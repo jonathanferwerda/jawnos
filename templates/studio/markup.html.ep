@@ -95,6 +95,8 @@
 		<button class="studio_hide_toggle hover" data-panel="tracks" data-setting="hide_tracks" data-hide-label="Hide tracks" data-show-label="Show tracks" aria-pressed="false" hint="<%= &subs::ui('Hide the track listing') %>"><%= &subs::ui('Hide tracks') %></button>
 		<button class="studio_float_toggle hover" data-panel="tracks" hint="<%= &subs::ui('Float the track listing') %>"><%= &subs::ui('Float tracks') %></button>
 		<button class="studio_float_toggle hover" data-panel="synth" hint="<%= &subs::ui('Float the synth') %>"><%= &subs::ui('Float synth') %></button>
+		<button class="studio_hide_toggle hover" data-panel="drums" data-setting="hide_drums" data-hide-label="Hide drums" data-show-label="Show drums" aria-pressed="false" hint="<%= &subs::ui('Hide the drums') %>"><%= &subs::ui('Hide drums') %></button>
+		<button class="studio_float_toggle hover" data-panel="drums" hint="<%= &subs::ui('Float the drums') %>"><%= &subs::ui('Float drums') %></button>
 		<span id="studio_effect_palette" class="studio_effect_palette">
 			<label for="studio_palette_effect" class="studio_palette_label"><%= &subs::ui('Effect') %></label>
 			<select id="studio_palette_effect" hint="<%= &subs::ui('Choose an effect to add to this track\'s rack') %>">
@@ -148,9 +150,9 @@
 		.studio_synth_knob input[type=range] { width: 60px; }
 		.studio_synth_note { opacity: .55; font-size: 12px; }
 	</style>
-	<%# The drum machine is the next docked instrument panel: include it here,
-	   in the grid beside the synth, with the same .studio_panel shape. %>
-	<%# include 'studio/drums' %>
+	<%# The drum machine is a docked instrument panel beside the synth; its own
+	   template carries its data, its markup and its script. %>
+	<%= include 'studio/drums' %>
 	<div id="studio_tracks_panel" class="studio_panel">
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="tracks" hint="<%= &subs::ui('Drag to move the track listing') %>"><%= &subs::ui('Tracks') %></span>

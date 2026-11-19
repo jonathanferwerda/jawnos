@@ -453,6 +453,34 @@
 	#studio_grid.studio_arranged > #studio_synth {
 		grid-area: synth !important;
 	}
+	/* The drum machine is a fifth panel. Arrange gives it a column of its own
+	   only while it is docked and visible; hide or float it and the three-column
+	   grid above returns, so the timeline and the synth reclaim the width. The
+	   timeline keeps its full height either way. */
+	#studio_grid.studio_arranged.studio_drums_open {
+		grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.8fr);
+		grid-template-areas:
+			"transport transport transport"
+			"tracks synth drums"
+			"mixer mixer mixer";
+	}
+	#studio_grid.studio_arranged.studio_drums_open > #studio_drums {
+		grid-area: drums !important;
+	}
+	#studio_grid.studio_arranged_compact.studio_drums_open {
+		grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+		grid-template-areas:
+			"transport"
+			"tracks"
+			"mixer"
+			"synth"
+			"drums";
+	}
+	#studio_grid.studio_arranged_compact.studio_drums_open > #studio_drums {
+		grid-area: drums !important;
+		height: auto;
+		max-height: 190px;
+	}
 	#studio_grid.studio_arranged > #studio_mixer {
 		grid-area: mixer !important;
 		height: auto;
@@ -931,6 +959,169 @@
 	}
 	.studio_track.studio_track_automation_on .studio_track_automation_lane {
 		display: block;
+	}
+	/* ---- the drum machine -------------------------------------------------
+	   Eight rows of sixteen steps. Every surface takes its colours from the
+	   theme; the only fixed colours left are the pedal LEDs, which are lamps. */
+	#studio_drums {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		min-height: 0;
+	}
+	#studio_drums_body {
+		flex: 1 1 auto;
+		min-height: 0;
+		/* the chart is the only scroller; the footer stays in reach */
+		overflow: hidden;
+		padding: 4px;
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.studio_drums_scroll {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow: auto;
+	}
+	/* one grid for the head and every row, so the sixteen columns line up */
+	.studio_drums_head,
+	.studio_drums_row {
+		display: grid;
+		grid-template-columns: 72px 24px 14px repeat(16, minmax(12px, 1fr));
+		gap: 2px;
+		align-items: center;
+		min-width: 338px;
+	}
+	.studio_drums_head {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		align-items: end;
+		min-height: 16px;
+		padding-top: 3px;
+		box-sizing: border-box;
+		background: var(--panel-2);
+	}
+	.studio_drums_head > span {
+		line-height: 12px;
+	}
+	.studio_drums_row {
+		margin-bottom: 2px;
+	}
+	.studio_drums_count {
+		font-size: 9px;
+		text-align: center;
+		opacity: .6;
+	}
+	.studio_drums_name_head,
+	.studio_drums_key_head {
+		font-size: 10px;
+		opacity: .7;
+	}
+	.studio_drums_voice,
+	.studio_drums_key {
+		height: 22px;
+		min-width: 0;
+		padding: 0 4px;
+		font-size: 11px;
+		line-height: 20px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		background: var(--panel);
+		color: var(--ink);
+		border: 1px solid var(--line);
+		border-radius: 3px;
+	}
+	.studio_drums_voice {
+		text-align: left;
+	}
+	.studio_drums_key {
+		padding: 0;
+		text-align: center;
+		font-weight: bold;
+	}
+	/* a key button in Learn mode says so, in the accent colour */
+	.studio_drums_key[aria-pressed="true"] {
+		background: var(--accent-soft, var(--panel-2));
+		border-color: var(--accent-line, var(--accent));
+		color: var(--ink);
+	}
+	/* the mute lamp: green and lit when the voice sounds, dark when muted */
+	.studio_drums_lamp {
+		width: 14px;
+		height: 14px;
+		/* the house button rule gives every button a 28px floor; a lamp is not
+		   a button to press with a thumb, it is a 14px roundel */
+		min-width: 14px;
+		max-width: 14px;
+		min-height: 14px;
+		max-height: 14px;
+		padding: 0;
+		border: 2px solid var(--line);
+		border-radius: 50%;
+		box-sizing: border-box;
+		background: var(--runway-good, #2f7d4f);
+		box-shadow: 0 0 6px color-mix(in srgb, var(--runway-good, #2f7d4f) 55%, transparent);
+	}
+	.studio_drums_lamp[aria-pressed="false"] {
+		background: color-mix(in srgb, var(--ink) 28%, var(--panel-2));
+		box-shadow: none;
+	}
+	.studio_drums_step {
+		height: 22px;
+		min-width: 13px;
+		padding: 0;
+		border: 1px solid var(--line);
+		border-radius: 3px;
+		background: var(--panel);
+	}
+	.studio_drums_step[aria-pressed="true"] {
+		background: var(--accent);
+		border-color: var(--accent-line, var(--accent));
+	}
+	.studio_drums_step[data-accent="yes"] {
+		background: var(--accent-line, var(--accent));
+		box-shadow: inset 0 0 0 2px var(--accent-ink, #fff);
+	}
+	/* the column the scheduler is sounding now */
+	.studio_drums_step.studio_drums_playing {
+		outline: 2px solid var(--accent-line, var(--accent));
+		outline-offset: 1px;
+	}
+	.studio_drums_key_state {
+		font-size: 11px;
+		color: var(--ink-muted, var(--ink));
+	}
+	.studio_drums_loop_label {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 11px;
+	}
+	.studio_drums_footer {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+		flex: 0 0 auto;
+	}
+	.studio_drums_footer #studio_drums_midi_input {
+		max-width: 100px;
+		font-size: 11px;
+	}
+	#studio_drums_midi_state {
+		flex: 1 1 100%;
+	}
+	#studio_drums_midi_state:empty {
+		display: none;
+	}
+	.studio_drums_note {
+		font-size: 10px;
+		color: var(--ink-muted, var(--ink));
+		opacity: .8;
 	}
 	/* Close lives in the dock's own bar, so it can never land on a pedal. */
 	#studio_pedalboard_close {

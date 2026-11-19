@@ -177,6 +177,20 @@ our $studio = {
 			control => 'lfo', colour => 'pink', left => '68%', top => '58%', width => '24%'
 		}]
 	}],
+	# The drum machine's voices. `name` is the wire name the browser renders and
+	# plays; `key` is the computer key it starts on; `note` is the Web MIDI note
+	# it answers. No samples: every voice is built from oscillators and noise in
+	# the browser once (see public/js/manager/studio/11_drums.js).
+	drums => [
+		{ name => 'kick', label => 'Kick', key => 'a', note => 36 },
+		{ name => 'snare', label => 'Snare', key => 's', note => 38 },
+		{ name => 'closed_hat', label => 'Closed Hat', key => 'd', note => 42 },
+		{ name => 'open_hat', label => 'Open Hat', key => 'f', note => 46 },
+		{ name => 'clap', label => 'Clap', key => 'g', note => 39 },
+		{ name => 'low_tom', label => 'Low Tom', key => 'h', note => 41 },
+		{ name => 'high_tom', label => 'High Tom', key => 'j', note => 45 },
+		{ name => 'rim', label => 'Rim', key => 'k', note => 37 }
+	],
 	# The shared effect contract (docs/studio-effects.md). `effects` is what the
 	# rack palette offers and what the browser's studioInsert() builds; `master`
 	# is the fixed chain after the mix. A control with `options` is a dropdown,

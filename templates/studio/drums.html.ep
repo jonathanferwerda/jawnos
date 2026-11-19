@@ -1,0 +1,47 @@
+<% use Mojo::JSON; %>
+<%# The drum machine: eight synthesised voices over one bar of sixteen steps.
+   The voice table is data (perl/gb/05_abilities_and_studio.pl), so the rows,
+   the starting keys and the MIDI notes have one source. The browser part is
+   public/js/manager/studio/11_drums.js. %>
+<script>window.jawnos_studio_drums = <%== Mojo::JSON::encode_json($gb::studio->{'drums'}) %>;</script>
+<div id="studio_drums" class="studio_panel">
+	<div class="studio_panel_bar">
+		<span class="studio_drag_handle" data-studio-drag="drums" hint="<%= &subs::ui('Drag to move the drums') %>"><%= &subs::ui('Drums') %></span>
+		<span id="studio_drums_key_state" class="studio_drums_key_state" aria-live="polite" hint="<%= &subs::ui('Computer keys follow the Studio window') %>"><%= &subs::ui('Keys live') %></span>
+		<label class="studio_drums_loop_label" hint="<%= &subs::ui('Repeat the drum chart each bar') %>"><input type="checkbox" id="studio_drums_loop" checked><%= &subs::ui('Loop') %></label>
+		<button class="studio_dock hover" data-panel="drums" hint="<%= &subs::ui('Dock the drums') %>"><%= &subs::ui('Dock') %></button>
+		<button class="studio_span_toggle hover" data-panel="drums" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
+	</div>
+	<span class="studio_resize_handle" data-studio-resize="drums" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
+	<div id="studio_drums_body">
+		<div class="studio_drums_scroll">
+			<div class="studio_drums_head">
+				<span class="studio_drums_name_head"><%= &subs::ui('Drum') %></span>
+				<span class="studio_drums_key_head"><%= &subs::ui('Key') %></span>
+				<span class="studio_drums_lamp_head"></span>
+				<% for my $step (0 .. 15) { %>
+					<span class="studio_drums_count"><%= $step + 1 %></span>
+				<% } %>
+			</div>
+			<% foreach my $v ( @{$gb::studio->{'drums'}} ) { %>
+				<div class="studio_drums_row" data-voice="<%= $v->{'name'} %>">
+					<button class="studio_drums_voice hover" data-voice="<%= $v->{'name'} %>" hint="<%= &subs::ui('Play this drum') %>"><%= &subs::ui($v->{'label'}) %></button>
+					<button class="studio_drums_key hover" data-voice="<%= $v->{'name'} %>" aria-pressed="false" title="<%= uc($v->{'key'}) %>" hint="<%= &subs::ui('Assign a computer key to this drum') %>"><%= uc($v->{'key'}) %></button>
+					<button class="studio_drums_lamp hover" data-voice="<%= $v->{'name'} %>" aria-pressed="true" title="<%= &subs::ui('Audible') %>" hint="<%= &subs::ui('Mute this drum') %>"></button>
+					<% for my $step (0 .. 15) { %>
+						<button class="studio_drums_step hover" data-voice="<%= $v->{'name'} %>" data-step="<%= $step %>" aria-pressed="false" hint="<%= &subs::ui('Click to place a beat, hold Shift for an accent') %>"></button>
+					<% } %>
+				</div>
+			<% } %>
+		</div>
+		<div class="studio_drums_footer">
+			<button id="studio_drums_clear" class="hover" hint="<%= &subs::ui('Clear the drum chart') %>"><%= &subs::ui('Clear') %></button>
+			<button id="studio_drums_midi" class="hover" disabled hint="<%= &subs::ui('Connect a MIDI keyboard to the drums') %>"><%= &subs::ui('MIDI') %></button>
+			<select id="studio_drums_midi_input" hint="<%= &subs::ui('Choose a MIDI input for the drums') %>" disabled>
+				<option value=""><%= &subs::ui('No MIDI input') %></option>
+			</select>
+			<span class="studio_drums_note" title="<%= &subs::ui('The browser take records the drums; the engine take does not yet.') %>"><%= &subs::ui('Browser take only') %></span>
+			<span id="studio_drums_midi_state" class="studio_drums_note"></span>
+		</div>
+	</div>
+</div>

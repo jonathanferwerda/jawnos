@@ -10,6 +10,7 @@
      08_effects.js  - the insert builders (the browser side of docs/studio-effects.md)
      09_pedals.js  - the per-track rack: palette, order, footswitch, remove
      10_master.js  - the mastering chain after the mix, its UI and its song state
+     11_drums.js  - the drum machine: voices, one-bar chart, keys, MIDI, routing
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var mixer = {};

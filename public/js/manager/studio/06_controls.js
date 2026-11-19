@@ -58,10 +58,14 @@ function studioTime(command) {
 		clearInterval(mixer['time']['interval']);
 		mixer['time']['interval'] = setInterval(studioTransportTick, 25);
 		studioTransportTick();
+		// the drum chart follows the transport; its own lookahead scheduler
+		// starts from the same gesture, not from a note per transport tick
+		if (typeof studioDrumsTransport === 'function') { studioDrumsTransport(true); }
 	}
 	else if (command == 'stop') {
 		clearInterval(mixer['time']['interval']);
 		mixer['time']['interval'] = 0;
+		if (typeof studioDrumsTransport === 'function') { studioDrumsTransport(false); }
 		studioTimeDisplay();
 	}
 	else {

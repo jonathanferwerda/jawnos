@@ -16,6 +16,7 @@ function studioLayoutText(text) {
 
 var studioPanelSelectors = {
 	synth: '#studio_synth',
+	drums: '#studio_drums',
 	mixer: '#studio_mixer',
 	transport: '#studio_transport_panel',
 	tracks: '#studio_tracks_panel'
@@ -23,6 +24,7 @@ var studioPanelSelectors = {
 
 var studioHideSettings = {
 	synth: 'hide_synth',
+	drums: 'hide_drums',
 	mixer: 'hide_channel_strips',
 	transport: 'hide_transport',
 	tracks: 'hide_tracks'
@@ -55,6 +57,9 @@ function studioSetPanelHidden(name, hidden, persist) {
 		studioPanelElement(name).toggle(!hidden);
 	}
 	studioUpdateHideButton(name, hidden);
+	// a hidden or floated drums panel hands its arranged column back to the
+	// timeline and the synth (see .studio_drums_open in style.html.ep)
+	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
 	mixer = mixer || {};
 	mixer.settings = mixer.settings || {};
 	mixer.settings[studioHideSettings[name]] = hidden ? 'yes' : 'no';
@@ -78,9 +83,13 @@ function studioApplyHideSettings() {
 // before that panel, and the ones after it reflow into the gaps. A floated panel
 // leaves the grid but keeps its order and span, so Dock puts it back in place.
 
-var studioPanelNames = ['synth', 'tracks', 'mixer', 'transport'];
+// The drum machine is a fifth panel. It has no entry in the Arrange preset
+// below for the same reason the synth has none: arranged mode places panels by
+// the stylesheet's named areas, and the drums column exists only while the
+// panel is docked and visible. In manual packing it falls last until moved.
+var studioPanelNames = ['synth', 'drums', 'tracks', 'mixer', 'transport'];
 var studioPanelOrder = studioPanelNames.slice();
-var studioPanelSpan = { synth: 1, tracks: 1, mixer: 1, transport: 1 };
+var studioPanelSpan = { synth: 1, drums: 1, tracks: 1, mixer: 1, transport: 1 };
 var STUDIO_PANEL_MIN_SPAN = 1;
 var STUDIO_PANEL_MAX_SPAN = 2;
 
@@ -368,6 +377,7 @@ function studioFloatPanel(name, position, persist) {
 			height: placed.height + 'px'
 		});
 	}
+	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
 	if (persist) {
 		studioPersistPanelPosition(name, studioFloatState(name, panel));
 	}
@@ -389,6 +399,7 @@ function studioDockPanel(name, persist) {
 	else { $('#studio_grid').append(panel); }
 	studioApplyPanelOrder();
 	studioApplyPanelSpan(name);
+	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
 	if (persist !== false) {
 		studioPersistPanelPosition(name, {
 			docked: true,
@@ -468,6 +479,7 @@ function studioApplyLayoutSettings() {
 	studioApplyPanelPositions();
 	studioApplyPanelHeights();
 	studioApplyHideSettings();
+	if (typeof studioDrumsGridState === 'function') { studioDrumsGridState(); }
 	studioUpdateTrackCount();
 }
 

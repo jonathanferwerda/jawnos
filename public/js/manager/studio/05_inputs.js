@@ -311,6 +311,16 @@ async function studioInputStreamGrabber(channel,state) {
 function studioStartTake(ch, looping, at) {
 	var media = mixer[ch] && mixer[ch].media;
 	if (!media || !media.in) {
+		// The drums feed the selected track's recDest rather than a microphone,
+		// so that track can take them with nothing plugged in. Any other empty
+		// track still has no input, exactly as before.
+		var drums_channel = studioAudio.channels[ch];
+		if (media && drums_channel && drums_channel.recDest
+			&& typeof studioDrums !== 'undefined' && studioDrums.routedDest === drums_channel.recDest) {
+			media.in = drums_channel.recDest.stream;
+		}
+	}
+	if (!media || !media.in) {
 		console.log('studio: channel ' + ch + ' is armed to record but has no input');
 		return;
 	}
