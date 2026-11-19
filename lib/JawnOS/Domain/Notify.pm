@@ -147,6 +147,12 @@ sub notification_sender($m,$db) {
 		# broadcast) stays as the fallback for a build older than the bridge.
 		my $image_path = $image;
 		$image_path =~ s/\\ / /g;
+		# The Android large icon cannot read a sealed .enc. Ask for an
+		# in-memory JPEG when the notice has no picture of its own; the bytes
+		# cross the bridge as base64 and are never written to disk.
+		my $inline_b64;
+		$inline_b64 = eval { &subs::main_image_inline_b64({ app => $app, max => 512 }) }
+			unless defined $m->{'image'};
 		my %nargs = (
 			id => $id,
 			title => $title,
@@ -158,6 +164,7 @@ sub notification_sender($m,$db) {
 			app => $m->{'app'},
 			timestamp => $m->{'timestamp'},
 			large_icon => $image_path,
+			large_icon_b64 => $inline_b64,
 			small_icon => ($m->{'small_icon'} || $m->{'app'} || ''),
 			vibrate => (($m->{'update'} || $m->{'silent'}) ? '' : '200,150,200,150'),
 			actions => $m->{'actions'},

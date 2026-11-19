@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part21.pm lib/JawnOS/Controller/apps_misc.pm templates/apps/gallery_home.html.ep
+# tests-for: lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Notify.pm lib/JawnOS/Manager/Part21.pm lib/JawnOS/Controller/apps_misc.pm templates/apps/gallery_home.html.ep
 # covers:    An appointment's main_image is drawable on every device: a path this
 #            machine can open is used as it stands, a path another machine wrote is
 #            mapped through this device's photo folder, and a snapshot's data URI is
@@ -14,8 +14,8 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
 use File::Path qw(make_path);
-use File::Slurp qw(read_file write_file);
-use MIME::Base64 qw(encode_base64);
+use File::Slurp qw(read_file write_file read_dir);
+use MIME::Base64 qw(encode_base64 decode_base64);
 use Mojo::SQLite;
 
 # A main_image row is written per device. A row synced from the phone names the
@@ -140,5 +140,41 @@ like( read_file("$root/lib/JawnOS/Controller/apps_misc.pm"), qr/data:image/,
 	'/apps/icon answers a data URI as bytes rather than a redirect' );
 like( read_file("$root/public/js/manager/windows.js"), qr/find\('\.window_icon'\)/,
 	'the taskbar clones the same window icon' );
+
+# --- the mobile notice asks for the same in-memory copy ---------------------
+my $notify_source = read_file("$root/lib/JawnOS/Domain/Notify.pm");
+like( $notify_source, qr/main_image_inline_b64/,
+	'the mobile notice asks for the inline main image' );
+like( $notify_source, qr/large_icon_b64/,
+	'and carries it to the device bridge' );
+
+# --- the inline copy for a notification, with no plaintext on disk -----------
+my $inline_png = decode_base64(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4xQAAAAASUVORK5CYII=');
+my $png_file = "$photos/programming/inline.png";
+my $sealed_inline = "$photos/programming/inline.png.enc";
+write_file($png_file, $inline_png);
+my $openssl_ok = system('openssl', 'enc', '-e', '-aes-256-cbc', '-pbkdf2',
+	'-pass', 'pass:test-pass', '-in', $png_file, '-out', $sealed_inline) == 0;
+
+is( subs::main_image_inline_bytes({ value => $data_uri, max => 0 }), $picture,
+	'a data URI main image is decoded in memory' );
+is( subs::main_image_inline_b64({ value => $data_uri, max => 0 }), encode_base64($picture, ''),
+	'the base64 copy carries the same bytes' );
+
+SKIP: {
+	skip 'openssl not available', 3 unless $openssl_ok;
+	my @before = sort read_dir($photos . '/programming');
+	local *subs::suds_grabber = sub { 'test-pass' };
+	my $opened = subs::main_image_inline_bytes({
+		value => $sealed_inline, app => 'programming', max => 0, standard => 'aes-256-cbc' });
+	is( $opened, $inline_png, 'a sealed main image is decrypted in memory' );
+	local *subs::suds_grabber = sub { '' };
+	ok( !defined subs::main_image_inline_bytes({
+		value => $sealed_inline, app => 'programming', max => 0, standard => 'aes-256-cbc' }),
+		'without the house key there is no inline copy' );
+	my @after = sort read_dir($photos . '/programming');
+	is_deeply( \@after, \@before, 'the inline copy leaves no plaintext file behind' );
+}
 
 done_testing();

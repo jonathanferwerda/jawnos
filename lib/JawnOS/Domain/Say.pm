@@ -530,6 +530,78 @@ sub main_image_src {
 	return $src;
 }
 
+# A copy of the app's main image for a notification or another native surface:
+# sealed bytes are decrypted through openssl with the passphrase in the process
+# environment and resized through a pipe. Nothing plaintext is written to disk,
+# not even a thumbnail cache; the caller gets the bytes (and may base64 them).
+sub main_image_inline_bytes {
+	my $data = shift || {};
+	my $app = $data->{'app'} || '';
+	my $max = $data->{'max'} || 0;
+	my $value = $data->{'value'};
+	$value = &subs::setting_grabber({ app => $app, setting => 'main_image' })
+		unless defined $value;
+	return undef unless defined $value && length $value;
+	if ($value =~ /\Adata:image\/[A-Za-z0-9.+-]+;base64,(.*)\z/s) {
+		my $b64 = $1;
+		$b64 =~ s/\s+//g;
+		my $bytes = eval { decode_base64($b64) };
+		return (defined $bytes && length $bytes) ? $bytes : undef;
+	}
+	my $suds = eval { &subs::suds_grabber() } || '';
+	return undef unless length $suds;
+	my $file = -e $value ? $value : '';
+	if (!length $file) {
+		my ($destination, $asset) = &subs::file_device_renamer({ file => $value, app => $app, type => 'image' });
+		$file = (defined $destination && defined $asset) ? $destination . $asset : '';
+		$file = '' unless length $file && -e $file;
+	}
+	return undef unless length $file;
+	my $bytes;
+	if ($file =~ /\.enc\z/i) {
+		my $standard = $data->{'standard'}
+			|| &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' })
+			|| 'aes-256-ctr';
+		local $ENV{'JAWNOS_INLINE_SUDS'} = $suds;
+		open(my $fh, '-|', 'openssl', 'enc', '-d', '-pass', 'env:JAWNOS_INLINE_SUDS', '-' . $standard, '-pbkdf2', '-in', $file) or return undef;
+		binmode $fh;
+		$bytes = do { local $/; <$fh> };
+		close $fh;
+		return undef if $?;
+	}
+	else {
+		$bytes = eval { read_file($file) };
+	}
+	return undef unless defined $bytes && length $bytes;
+	return $bytes unless $max > 0;
+	my $jpg = &main_image_inline_resize($bytes, $max);
+	return (defined $jpg && length $jpg) ? $jpg : $bytes;
+}
+
+sub main_image_inline_b64 {
+	my $bytes = &main_image_inline_bytes(shift);
+	return undef unless defined $bytes && length $bytes;
+	return encode_base64($bytes, '');
+}
+
+sub main_image_inline_resize {
+	my ($bytes, $max) = @_;
+	return undef unless defined $bytes && length $bytes;
+	my ($reader, $writer);
+	my $pid = eval { open2($reader, $writer, 'magick',
+		'-limit', 'memory', '128MiB', '-limit', 'map', '0',
+		'-', '-resize', "${max}x${max}>", '-quality', '86', 'jpg:-') };
+	return undef unless $pid;
+	binmode $writer;
+	print {$writer} $bytes;
+	close $writer;
+	binmode $reader;
+	my $jpg = do { local $/; <$reader> };
+	close $reader;
+	waitpid($pid, 0);
+	return (defined $jpg && length $jpg) ? $jpg : undef;
+}
+
 # The picture an app's icon shows: the person's own main image when there is
 # one, else the active icon set's version of the app's known picture, else the
 # placeholder for its pos. main_icon_maker renders this in HTML; the native
