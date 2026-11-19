@@ -1261,7 +1261,7 @@ function studioCreateTrack(ch) {
 
 	// keep the list in channel order even when a gap is filled
 	studioPlaceTrackRow(row, ch, '#studio_viewer');
-	studioPlaceTrackRow(strip, ch, '#studio_mixer_strips');
+	studioPlaceTrackRow(strip, ch, '#studio_mixer_strips', '#studio_master_rack');
 	studioBindChannelDrop(row.find('.studio_track_panel'));
 	studioBindChannelDrop(strip);
 
@@ -1315,8 +1315,11 @@ function studioEnsureTracksForSong(song) {
 	if (highest) { studioEnsureTracks(highest); }
 }
 
-// Move a freshly cloned row or strip into channel order.
-function studioPlaceTrackRow(node, ch, container) {
+// Move a freshly cloned row or strip into channel order. A container's tail
+// (the master rack) has no channel number of its own, so a row that fills a
+// gap after the last channel still goes before it: Master is always the last
+// strip, and a new track must never land to its right.
+function studioPlaceTrackRow(node, ch, container, tail) {
 	var placed = false;
 	$(container).children().each(function () {
 		var other = parseInt($(this).attr('data-channel'), 10);
@@ -1324,6 +1327,7 @@ function studioPlaceTrackRow(node, ch, container) {
 			var m = String($(this).attr('class') || '').match(/channel_(\d+)/);
 			other = m ? parseInt(m[1], 10) : 0;
 		}
+		if (!other && tail && $(this).is(tail)) { $(this).before(node); placed = true; return false; }
 		if (other > ch) { $(this).before(node); placed = true; return false; }
 	});
 	if (!placed) { $(container).append(node); }

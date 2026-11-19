@@ -117,6 +117,15 @@ like($layout, qr/mixer\[ch\]\.solo = false;[\s\S]*?if \(typeof studioStripMuteSo
 like($layout, qr/function studioRemoveTrack\(ch, quiet\)[\s\S]*?\$\('#studio_mixer_strips \.channel_' \+ ch\)\.remove\(\);[\s\S]*?if \(typeof studioStripMuteSoloRender === 'function'\) \{ studioStripMuteSoloRender\(\); \}/,
 	'removing a track repaints mute/solo once it is gone');
 
+# --- a new track's strip joins the console, before Master -----------------
+like($layout, qr/studioPlaceTrackRow\(strip, ch, '#studio_mixer_strips', '#studio_master_rack'\)/,
+	'a new strip is placed in channel order, before the master rack');
+my ($place) = $layout =~ /function studioPlaceTrackRow\(node, ch, container, tail\) \{(.*?)\n\}/s;
+ok(defined $place, 'the placement helper takes the container tail');
+$place = '' unless defined $place;
+like($place, qr/if \(!other && tail && \$\(this\)\.is\(tail\)\) \{ \$\(this\)\.before\(node\); placed = true; return false; \}/,
+	'a strip that fills the last gap still goes before the tail');
+
 # --- the rest of the clone reset is untouched -----------------------------
 like($layout, qr/function studioResetChannelMarkup\(node, ch\)[\s\S]*?node\.removeAttr\('data-colour'\)/,
 	'the reset still clears the inherited colour');
