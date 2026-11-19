@@ -71,6 +71,8 @@ ok(!crew::can('derp.public', { tools => {} }), 'a machine without headscale cann
 		'it validates a candidate config before installing it');
 	like($script, qr/urls: \[\]/, 'it can also write the empty urls list');
 	like($script, qr/derp-public\.yaml/, 'a pinned region set is a local derp.paths map');
+	like($script, qr/\$f\.new\.\$\$\.yaml/, 'the candidate config keeps a .yaml suffix (configtest infers the format)');
+	like($script, qr/\$path\.new\.\$\$\.yaml/, 'the candidate DERP map keeps a .yaml suffix');
 }
 {
 	my @cmd = crew::_derp_command({ host => 'ks5', lxc => '102' }, 'on', '8,21', 'YWJj');

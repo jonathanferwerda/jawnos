@@ -1192,7 +1192,10 @@ case "$regions" in
 	all|"") regions=all ;;
 	*[!0-9,]*) regions=all ;;
 esac
-tmp="$f.new.$$"
+# The candidate must keep a .yaml suffix: `headscale configtest -c` infers the
+# format from the extension, so a name ending in the pid was refused with
+# "Unsupported Config Type".
+tmp="$f.new.$$.yaml"
 cand=""
 case "$state" in
 	on)
@@ -1206,7 +1209,7 @@ case "$state" in
 				echo '{"ok":0,"error":"the chosen regions need a DERP map, and none was sent"}'
 				exit 0
 			fi
-			cand="$path.new.$$"
+			cand="$path.new.$$.yaml"
 			if ! printf '%s' "$mapb64" | base64 -d > "$cand" 2>/dev/null || [ ! -s "$cand" ]; then
 				rm -f "$tmp" "$cand"
 				echo '{"ok":0,"error":"the DERP map could not be written"}'
