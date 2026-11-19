@@ -238,4 +238,16 @@ JS
 	is($rc, 0, '30 in the Ago field is 30s, 30m, ... and a duration is still 30m, 30h, ...');
 }
 
+# --- shift paints the capitals it types --------------------------------------
+# The key face used to be forced lower case in the stylesheet, so a lit shift
+# typed capitals while the keys still read lower case.
+like($kb, qr/function softKbKeyHtml\(tok, layout, shift, extra\) \{[\s\S]*?var label = shift \? softKbUpper\(tok, layout\) : tok;/,
+	'a shifted letter key is drawn as its capital');
+like($kb, qr/function softKbLayoutRender\(\) \{[\s\S]*?var shift = !!jawnSoftShift && layout\.cased !== false;/,
+	'the letters panel redraws from the shift state');
+like($kb, qr/function softKbShiftSet\(on\) \{\s*jawnSoftShift = !!on;\s*softKbLayoutRender\(\);\s*\}/,
+	'the shift key redraws the keys it changed');
+unlike($css, qr/\.soft_kb_letter\s*\{[^}]*text-transform:\s*lowercase/s,
+	'the letter face is not forced lower case, so the capital is what shows');
+
 done_testing();

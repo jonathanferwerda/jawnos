@@ -497,9 +497,9 @@ body.soft_kb_open .dot_info {
 	background: rgba(79, 140, 255, .18);
 }
 
-.soft_kb_letter {
-	text-transform: lowercase;
-}
+/* The face comes from soft_keyboard.js: a layout's own tokens in lower case,
+   and shift's capitals when the shift key is lit. A transform here would win
+   over the drawn face and keep the keys lower case while typing capitals. */
 
 .soft_kb_wide {
 	flex: 1 1 0;
