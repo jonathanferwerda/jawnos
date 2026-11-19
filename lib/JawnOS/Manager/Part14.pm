@@ -253,6 +253,8 @@ sub manager_reset($c) {
 				|| 'system';
 			my $machine = $c->param('remote_signatorial') || '';
 			my $here = $capture_here;
+			my $screen_source = $c->param('screen') || '';
+			my $screen_name = $c->param('screen_name') || '';
 			my $dat = { recorder => $recording_type, machine => $machine };
 			if ($recording_type eq 'video') {
 				$seen = undef;
@@ -263,6 +265,13 @@ sub manager_reset($c) {
 			}
 			elsif ($recording_type eq 'screen') {
 				$seen = undef;
+				# The id is a row (screen:0, window:2); the name is the label a
+				# remote recorder can match after the list differs.
+				$screen_source = '' unless $screen_source =~ /\A(?:screen|window):\d+\z/;
+				$screen_name =~ s/[\x00-\x1f]//g;
+				$screen_name = substr($screen_name, 0, 300);
+				$dat->{'screen'} = $screen_source if length $screen_source;
+				$dat->{'screen_name'} = $screen_name if length $screen_name;
 			}
 			elsif ($recording_type eq 'video_front') {
 				$dat->{'camera'} = $camera;

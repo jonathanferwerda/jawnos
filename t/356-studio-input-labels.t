@@ -4,7 +4,8 @@
 #            "communications" pseudo entries are not shown, and a device that
 #            still has no label is named by its kind and number instead of
 #            showing a blank row; the screen-share plug asks getDisplayMedia
-#            for the first screen rather than opening a camera.
+#            for the chosen screen - by row and by name, so a recorder on
+#            another machine can find it - rather than opening a camera.
 
 use strict;
 use warnings;
@@ -53,8 +54,14 @@ like($inputs, qr/stream\.getAudioTracks\(\)\.length \? studioAttachInput/,
 # --- the channel's screen list and its app inputs ----------------------------
 like($inputs, qr/function studioScreenSourceFill/, 'the channel offers the desktop screen list');
 like($inputs, qr/studio_screen_source/, 'through a source select');
-like($inputs, qr/JawnScreen\.capture\(plug\['screen'\] \|\| ''\)/,
-	'and captures the chosen row');
+like($inputs, qr/return \{ id: select\.val\(\) \|\| '', name: option\.text\(\) \|\| '' \};/,
+	'reading both the chosen row and its label');
+like($inputs, qr/data\.screen_name = source\.name;/,
+	'a changed row stores the label with the plug');
+like($inputs, qr/if \(screen\.name\) \{ data\.screen_name = screen\.name; \}/,
+	'and a chosen row sends it when the plug opens');
+like($inputs, qr/JawnScreen\.capture\(plug\['screen'\] \|\| '', plug\['screen_name'\] \|\| ''\)/,
+	'and captures the chosen row by id and name');
 like($inputs, qr/plug\['app'\] == 'marker'/, 'Marker is a channel input');
 like($inputs, qr/whiteboard\.captureStream\(30\)/, 'through its canvas stream');
 like($inputs, qr/plug\['app'\] == 'music'/, 'Music is a channel input');

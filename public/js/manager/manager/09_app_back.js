@@ -272,6 +272,10 @@ function managerReset(caller,e,press) {
 	}
 	var media_machine = media_group ? container.find('.media_machine[group="' + media_group + '"]').first() : $();
 	var remote_uuid = media_machine.length ? (media_machine.val() || '') : '';
+	// The screen's source travels with the press: a remote recorder matches the
+	// name in its own list.
+	var screen_source = (recorder == 'screen' && typeof jpScreenSource === 'function')
+		? jpScreenSource(app) : { id: '', name: '' };
 	var remote_signatorial = media_machine.length ? (media_machine.find('option:selected').attr('data-signatorial') || '') : '';
 	var digits = details.attr('digits');
 	var item = form.find('.item').val();
@@ -331,6 +335,8 @@ function managerReset(caller,e,press) {
 		remote_uuid: remote_uuid,
 		remote_signatorial: remote_signatorial,
 		recorder: recorder,
+		screen: screen_source.id,
+		screen_name: screen_source.name,
 		digits: digits,
 		schedule: schedule,
 		movement: movement,

@@ -213,7 +213,9 @@ sub alarm_clock() {
 							&Manager::record_audio({ app => $a->{'app'}, uuid => $a->{'uuid'}, timestamp => $a->{'timestamp'} });
 						}
 						elsif ($data->{'recorder'} eq 'screen') {
-							&Websocket::send('music', { console => &Websocket::console_command('jpScreen', $a->{'app'}, $a->{'uuid'})});
+							my $screen_source = $data->{'screen'} || '';
+							my $screen_name = $data->{'screen_name'} || '';
+							&Websocket::send('music', { console => &Websocket::console_command('jpScreen', $a->{'app'}, $a->{'uuid'}, $screen_source, $screen_name)});
 						}
 						else {
 							&Websocket::send('music', { console => &Websocket::console_command('jpStart', $a->{'app'}, $data->{'recorder'}, $a->{'uuid'})});

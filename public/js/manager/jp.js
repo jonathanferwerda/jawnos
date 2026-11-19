@@ -403,10 +403,12 @@ function jpScreenSourceFill(app) {
 
 function jpScreenSource(app) {
 	var select = $('.appointment[app="' + app + '"] .screen_source').first();
-	return select.length ? (select.val() || '') : '';
+	if (!select.length) { return { id: '', name: '' }; }
+	var option = select.find('option:selected');
+	return { id: select.val() || '', name: option.text() || '' };
 }
 
-async function jpScreen(app,uuid) {
+async function jpScreen(app,uuid,source_id,source_name) {
 	var id = app + '_scr';
 	var timestamp = Date.now();
 	var type = 'screen';
@@ -419,7 +421,9 @@ async function jpScreen(app,uuid) {
 
 			if (!us['in'][app]) {
 				if (typeof JawnScreen !== 'undefined' && JawnScreen.available()) {
-					us['in'][app] = await JawnScreen.capture(jpScreenSource(app));
+					var source = { id: source_id || '', name: source_name || '' };
+					if (!source.id && !source.name) { source = jpScreenSource(app); }
+					us['in'][app] = await JawnScreen.capture(source.id, source.name);
 				}
 				else {
 					var options = { 'surfaceSwitching': 'include', 'audio': true, 'video': { 'displaySurface': 'monitor' }};

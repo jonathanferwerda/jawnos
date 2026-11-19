@@ -109,8 +109,9 @@
 	}
 
 	// Capture the chosen source. The shell selects that row of the request;
-	// without the bridge the browser's own picker decides.
-	function capture(id) {
+	// the name lets a remote recorder match it against its own list. Without
+	// the bridge the browser's own picker decides.
+	function capture(id, name) {
 		var media = navigator.mediaDevices;
 		if (!media || !media.getDisplayMedia) {
 			return Promise.reject(new Error('screen capture is not available'));
@@ -122,7 +123,10 @@
 			});
 		};
 		if (!available()) { return start(); }
-		return whenReady('screen_want', { id: String(id || '') }).then(start);
+		return whenReady('screen_want', {
+			id: String(id || ''),
+			name: String(name || '')
+		}).then(start);
 	}
 
 	window.JawnScreen = {

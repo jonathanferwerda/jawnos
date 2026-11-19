@@ -983,8 +983,24 @@ def _allow_screen_capture(page, qt, allowed_hosts):
         select(model.index(0, 0))
         return True
 
-    def choose_named(request, wanted):
+    def choose_named(request, wanted, wanted_name=''):
         wanted = str(wanted or '')
+        wanted_name = str(wanted_name or '').strip()
+        # A remote recorder has a different list: the name the person chose is
+        # the one thing both machines can agree on, so it wins over the index.
+        if wanted_name:
+            for kind, model, select in (
+                    ("screen", request.screensModel(), request.selectScreen),
+                    ("window", request.windowsModel(), request.selectWindow)):
+                try:
+                    for index in range(model.rowCount()):
+                        item = model.index(index, 0)
+                        label = model.data(item, Qt.ItemDataRole.DisplayRole)
+                        if label is not None and str(label).strip() == wanted_name:
+                            select(item)
+                            return True
+                except Exception:
+                    pass
         kind, _, index = wanted.partition(':')
         if kind in ("screen", "window") and index.isdigit():
             model = (request.screensModel() if kind == "screen"
@@ -1031,8 +1047,10 @@ def _allow_screen_capture(page, qt, allowed_hosts):
                 return
             if mode == "capture":
                 wanted = getattr(page, "_jawn_screen_want", "")
+                wanted_name = getattr(page, "_jawn_screen_want_name", "")
                 page._jawn_screen_want = ""
-                if choose_named(request, wanted):
+                page._jawn_screen_want_name = ""
+                if choose_named(request, wanted, wanted_name):
                     page._jawn_screen_request = None
                     return
             if choose(request.screensModel(), request.selectScreen):
@@ -1916,6 +1934,7 @@ def main(argv=None):
             # The page named the row its next capture should use.
             page_obj._jawn_screen_mode = "capture"
             page_obj._jawn_screen_want = str(message.get("id") or "")
+            page_obj._jawn_screen_want_name = str(message.get("name") or "")[:300]
             try:
                 page_obj.runJavaScript(
                     "window.jawnosScreenReady && window.jawnosScreenReady();")
@@ -1927,6 +1946,7 @@ def main(argv=None):
             page_obj._jawn_screen_request = None
             page_obj._jawn_screen_mode = ""
             page_obj._jawn_screen_want = ""
+            page_obj._jawn_screen_want_name = ""
             if pending is not None:
                 try:
                     pending.cancel()

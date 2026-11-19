@@ -134,7 +134,9 @@ function studioScreenSourceFill(panel) {
 
 function studioScreenSourceValue(panel) {
 	var select = panel ? panel.find('.studio_screen_source').first() : $();
-	return select.length ? (select.val() || '') : '';
+	if (!select.length) { return { id: '', name: '' }; }
+	var option = select.find('option:selected');
+	return { id: select.val() || '', name: option.text() || '' };
 }
 
 async function channelSelect(channel,direction) {
@@ -207,7 +209,9 @@ $(document).on('change', '.studio_screen_source', function() {
 	if (!isJson(info.text())) { return; }
 	var data = JSON.parse(info.text());
 	if (data.type != 'screen_share') { return; }
-	data.screen = $(this).val() || '';
+	var source = studioScreenSourceValue(panel);
+	data.screen = source.id;
+	data.screen_name = source.name;
 	info.text(JSON.stringify(data));
 	studioSaver();
 });
@@ -221,7 +225,7 @@ $(document).on('click', '.studio_plug_selection', function() {
 	var av = sis.attr('av');
 	var app = sis.attr('app');
 	var screen = (type == 'screen_share')
-		? studioScreenSourceValue(sis.closest('#studio_plug_select')) : '';
+		? studioScreenSourceValue(sis.closest('#studio_plug_select')) : { id: '', name: '' };
 	$('.studio_plug_selection[direction="' + direction + '"][channel="' + channel + '"]').removeClass('active_background');
 	var data = {
 		channel: channel,
@@ -231,7 +235,8 @@ $(document).on('click', '.studio_plug_selection', function() {
 		av: av,
 		app: app
 	}
-	if (screen) { data.screen = screen; }
+	if (screen.id) { data.screen = screen.id; }
+	if (screen.name) { data.screen_name = screen.name; }
 	console.log(data);
 	var jinfo = JSON.stringify(data);
 
@@ -400,7 +405,7 @@ async function studioInputStreamGrabber(channel,state) {
 				return;
 			}
 			stream = (typeof JawnScreen !== 'undefined' && JawnScreen.available())
-				? await JawnScreen.capture(plug['screen'] || '')
+				? await JawnScreen.capture(plug['screen'] || '', plug['screen_name'] || '')
 				: await navigator.mediaDevices.getDisplayMedia({
 					video: { displaySurface: 'monitor' },
 					audio: true

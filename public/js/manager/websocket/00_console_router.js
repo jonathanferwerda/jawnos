@@ -41,7 +41,9 @@ var jawnosConsoleCommands = {
 		if (typeof jpStop === 'function') { jpStop(String(a[0]), String(a[1]), String(a[2])); }
 	},
 	jpScreen: function (a) {
-		if (typeof jpScreen === 'function') { jpScreen(String(a[0]), String(a[1])); }
+		if (typeof jpScreen === 'function') {
+			jpScreen(String(a[0]), String(a[1]), String(a[2] || ''), String(a[3] || ''));
+		}
 	},
 	jpStart: function (a) {
 		if (typeof jpStart === 'function') { jpStart(String(a[0]), String(a[1]), String(a[2])); }

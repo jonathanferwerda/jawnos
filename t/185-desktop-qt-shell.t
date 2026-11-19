@@ -938,8 +938,8 @@ class Request:
     def __init__(self):
         self.selected = None
         self.cancelled = False
-        self.screens = Model(['Entire screen'])
-        self.windows = Model(['JawnOS'])
+        self.screens = Model(['Entire screen', 'Built-in display'])
+        self.windows = Model(['JawnOS', 'Editor'])
     def screensModel(self):
         return self.screens
     def windowsModel(self):
@@ -958,6 +958,7 @@ class Page:
         self.js = []
         self._jawn_screen_mode = ''
         self._jawn_screen_want = ''
+        self._jawn_screen_want_name = ''
         self.desktopMediaRequested = Signal()
     def settings(self):
         return self._settings
@@ -984,6 +985,23 @@ capture = Request()
 page.desktopMediaRequested.callback(capture)
 print('capture-selected', capture.selected)
 
+# A remote recorder's list is its own, so a row index there can point at a
+# different screen. The name the person chose wins over the index.
+page._jawn_screen_mode = 'capture'
+page._jawn_screen_want = 'screen:0'
+page._jawn_screen_want_name = 'JawnOS'
+named = Request()
+page.desktopMediaRequested.callback(named)
+print('named-selected', named.selected)
+print('named-cleared', page._jawn_screen_want_name == '')
+
+page._jawn_screen_mode = 'capture'
+page._jawn_screen_want = 'screen:1'
+page._jawn_screen_want_name = 'Gone elsewhere'
+missing = Request()
+page.desktopMediaRequested.callback(missing)
+print('missing-selected', missing.selected)
+
 page._jawn_screen_mode = ''
 auto = Request()
 page.desktopMediaRequested.callback(auto)
@@ -996,7 +1014,7 @@ print('public-cancelled', public.cancelled)
 SCREEN
 	my $out = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop timeout 30 python3 "$py" 2>&1`;
 	SKIP: {
-		skip 'PySide6 is not installed here', 7
+		skip 'PySide6 is not installed here', 11
 			if $out =~ /No module named .PySide6|ModuleNotFoundError/;
 		like($out, qr/^list-selected None$/m,
 			'a list request waits instead of choosing');
@@ -1006,6 +1024,12 @@ SCREEN
 		like($out, qr/^list-js True$/m, 'through jawnosScreenSources');
 		like($out, qr/^capture-selected \('window', \(0, 0\)\)$/m,
 			'a named row is the one captured');
+		like($out, qr/^named-selected \('window', \(0, 0\)\)$/m,
+			'a stale row index loses to the chosen name');
+		like($out, qr/^named-cleared True$/m,
+			'and the name is spent once the capture is made');
+		like($out, qr/^missing-selected \('screen', \(1, 0\)\)$/m,
+			'a name absent from this machine falls back to the row index');
 		like($out, qr/^auto-selected \('screen', \(0, 0\)\)$/m,
 			'an unnamed request keeps the first screen');
 		like($out, qr/^public-cancelled True$/m,
