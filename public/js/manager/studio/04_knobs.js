@@ -77,6 +77,9 @@ function studioInit(data) {
 			$(document).trigger('jawnos_synth_panel');
 			studioApplyLayoutSettings();
 			studioApplyMonitor();
+			// the engine take's per-track Input/Source pickers come from the markup
+			// the window just inserted; two channels until a status reply says more
+			studioEngineInputRows();
 			studioUpdateLatencyInfo();
 
 			// Jtune is a chromatic tuner, not an effect: nothing is wired in yet.

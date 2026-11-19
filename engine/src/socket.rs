@@ -57,7 +57,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -65,7 +65,8 @@ use std::time::Duration;
 use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
     monitor_start, to_i16, BackendKind, Channel, Device, DiskWriter, InsertKind, Mixer,
-    MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback, MASTER_ORDER,
+    MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback, Producer,
+    MASTER_ORDER,
 };
 
 use crate::patchbay::{PatchSummary, Patchbay};
@@ -74,6 +75,10 @@ use crate::{alignment_json, take_frames, Alignment, MAX_CHANNELS, MAX_TRACKS, TA
 
 /// How long a take runs when the command does not say.
 const DEFAULT_SECONDS: f64 = 10.0;
+
+/// The live-input ring: about 170 ms of stereo at 48 kHz, enough for a
+/// scheduling hiccup without letting a late monitor delay the take.
+const MONITOR_RING_FRAMES: usize = 8192;
 
 /// The serve loop's poll interval. A command that arrives waits at most this
 /// long to be read; the socket is idle almost all the time.
@@ -541,10 +546,11 @@ impl Server {
             None | Some(Value::Null) => self.param_take(object),
             Some(Value::Str(target)) if target == "take" => self.param_take(object),
             Some(Value::Str(target)) if target == "monitor" => self.param_monitor(object),
+            Some(Value::Str(target)) if target == "input" => self.param_input(object),
             Some(Value::Str(target)) if target == "listen" => self.param_listen(object),
             Some(Value::Str(target)) if target == "master" => self.param_master(object),
             Some(Value::Str(target)) if target == "patch" => self.param_patch(object),
-            _ => error_line("\"target\" must be \"take\", \"monitor\", \"listen\", \"master\" or \"patch\""),
+            _ => error_line("\"target\" must be \"take\", \"monitor\", \"input\", \"listen\", \"master\" or \"patch\""),
         }
     }
 
@@ -663,6 +669,41 @@ impl Server {
             "{{\"ok\":true,\"target\":\"monitor\",\"track\":{},\"name\":\"{}\"}}",
             track,
             jawn_audio::loopback::json_escape(name)
+        )
+    }
+
+    /// The take's live-input trim: `"target":"input","name":"gain"`. It
+    /// trims only the monitoring bus (the take's writers never see it), and
+    /// `0` is how the page mutes live input without ending the take.
+    fn param_input(&mut self, object: &Object) -> String {
+        let name = match get(object, "name") {
+            Some(Value::Str(name)) => name.as_str(),
+            _ => return error_line("param needs \"name\": a parameter name"),
+        };
+        if name != "gain" {
+            return error_line("target \"input\" only carries \"gain\"");
+        }
+        let value = match get(object, "value") {
+            Some(Value::Num(value)) if value.is_finite() => *value as f32,
+            _ => return error_line("\"value\" must be a finite number"),
+        };
+        let running = match &mut self.current {
+            Some(running) if running.is_recording() => running,
+            _ => return error_line("no live input is being monitored"),
+        };
+        let gain = match &running.input_gain {
+            Some(gain) => Arc::clone(gain),
+            None => return error_line("no live input is being monitored"),
+        };
+        let clamped = value.clamp(0.0, 4.0);
+        gain.store(clamped.to_bits(), Ordering::Release);
+        let mut status = running
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        status.monitor_gain = clamped;
+        format!(
+            "{{\"ok\":true,\"target\":\"input\",\"name\":\"gain\",\"gain\":{clamped}}}"
         )
     }
 
@@ -1040,9 +1081,21 @@ impl Server {
             Ok(monitor) => monitor,
             Err(error) => return error_line(&error),
         };
+        // The live-input monitoring switch and trim. Parsed before any file or
+        // thread exists, and valid with no monitor files at all.
+        let monitor_input = match get(object, "monitor_input") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(value)) => *value,
+            _ => return error_line("\"monitor_input\" must be true or false"),
+        };
+        let monitor_gain = match get(object, "monitor_gain") {
+            None | Some(Value::Null) => 1.0,
+            Some(Value::Num(value)) if value.is_finite() => (*value as f32).clamp(0.0, 4.0),
+            _ => return error_line("\"monitor_gain\" must be a finite number"),
+        };
         // One playback at a time: a take over the monitor it names is the
         // point, but a second monitor cannot join a playback already running.
-        if !monitor.is_empty() {
+        if !monitor.is_empty() || monitor_input {
             if let Some(session) = &self.playback {
                 if session.is_playing() {
                     return error_line("a playback is already running");
@@ -1141,7 +1194,19 @@ impl Server {
             ));
         }
         for (index, plan) in plans.iter().enumerate() {
-            if plan.input >= self.config.channels {
+            let claimed = plan.input + plan.channels;
+            if claimed > self.config.channels {
+                // A stereo track claims both channels, so the refusal names the
+                // pair rather than pretending it asked for one.
+                if plan.channels == 2 {
+                    return error_line(&format!(
+                        "track {} records inputs {}..{}, but the engine has only {} channel(s)",
+                        index + 1,
+                        plan.input,
+                        plan.input + 1,
+                        self.config.channels
+                    ));
+                }
                 return error_line(&format!(
                     "track {} records input {}, but the engine has only {} channel(s): pass a smaller input or restart it with a larger --channels",
                     index + 1,
@@ -1189,19 +1254,24 @@ impl Server {
                 Err(error) => return error_line(&error),
             }
         }
-        if !monitor_tracks.is_empty() {
+        let monitor_files = monitor_tracks.len();
+        if !monitor_tracks.is_empty() || monitor_input {
+            // Live-only monitoring is still a monitor: it needs a backend that
+            // can play and a free output, exactly as a monitor file does.
             if let Err(error) = crate::play_support(self.config.backend) {
                 return error_line(&error);
             }
-            match jawn_audio::playback::check_tracks(&monitor_tracks) {
-                Ok((rate, _)) if rate == self.config.rate => {}
-                Ok((rate, _)) => {
-                    return error_line(&format!(
-                        "the monitor is {rate} Hz but the take records at {} Hz; the monitor must share the take's rate or it would play at the wrong pitch",
-                        self.config.rate
-                    ))
+            if !monitor_tracks.is_empty() {
+                match jawn_audio::playback::check_tracks(&monitor_tracks) {
+                    Ok((rate, _)) if rate == self.config.rate => {}
+                    Ok((rate, _)) => {
+                        return error_line(&format!(
+                            "the monitor is {rate} Hz but the take records at {} Hz; the monitor must share the take's rate or it would play at the wrong pitch",
+                            self.config.rate
+                        ))
+                    }
+                    Err(error) => return error_line(&error),
                 }
-                Err(error) => return error_line(&error),
             }
             match crate::probe_playback(
                 self.config.backend,
@@ -1324,6 +1394,9 @@ impl Server {
             align_samples: alignment.samples,
             align_from: alignment.from,
             tracks: track_status.clone(),
+            monitor_input,
+            monitor_gain,
+            monitor_dropped: 0,
             error: String::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -1332,11 +1405,26 @@ impl Server {
         // to them as soon as `record` answers.
         let params = Arc::new(ParamQueue::new());
 
+        // The live-input ring: the capture thread pushes each block's summed,
+        // processed stereo output; the monitor thread pops it. Built here so
+        // both workers share one ring before either exists.
+        let (input_producer, input_consumer, input_gain) = if monitor_input {
+            let (producer, consumer) = MonitorBus::new(MONITOR_RING_FRAMES);
+            (
+                Some(producer),
+                Some(consumer),
+                Some(Arc::new(AtomicU32::new(monitor_gain.to_bits()))),
+            )
+        } else {
+            (None, None, None)
+        };
+
         // The monitoring bus: its own thread and its own device handle, fed by
         // `Playback` and never by the capture loop. Started before the take so
         // a player that cannot start is still a refusal rather than a take that
-        // records without the monitor the caller asked for.
-        let mut monitor_session = if monitor_tracks.is_empty() {
+        // records without the monitor the caller asked for. A live-only monitor
+        // has no files but still runs for the take's length.
+        let mut monitor_session = if monitor_tracks.is_empty() && !monitor_input {
             None
         } else {
             let status = Arc::new(Mutex::new(PlayStatus {
@@ -1350,6 +1438,11 @@ impl Server {
             let monitor_at = monitor_start(start_at, alignment.samples);
             let strips = monitor.clone();
             let monitor_master = master.clone();
+            let live = match (input_consumer, input_gain.as_ref()) {
+                (Some(consumer), Some(gain)) => Some((consumer, Arc::clone(gain))),
+                _ => None,
+            };
+            let live_length = if monitor_input { Some(frames) } else { None };
             let spawned = {
                 let status = Arc::clone(&status);
                 let stop = Arc::clone(&monitor_stop);
@@ -1366,6 +1459,8 @@ impl Server {
                             stop,
                             Some(params),
                             monitor_master,
+                            live,
+                            live_length,
                         )
                     })
             };
@@ -1401,7 +1496,17 @@ impl Server {
             thread::Builder::new()
                 .name("jawn-audio-take".to_string())
                 .spawn(move || {
-                    run_take(config, seconds, disks, plans, shared, stop, params, master)
+                    run_take(
+                        config,
+                        seconds,
+                        disks,
+                        plans,
+                        shared,
+                        stop,
+                        params,
+                        master,
+                        input_producer,
+                    )
                 })
         };
         let handle = match spawned {
@@ -1429,18 +1534,19 @@ impl Server {
             stop,
             handle: Some(handle),
             params,
+            input_gain,
         });
-        let monitor_part = if monitor.is_empty() {
+        let monitor_part = if monitor_files == 0 && !monitor_input {
             String::new()
         } else {
             format!(
                 ",\"playing\":{},\"monitor_frames\":0{}",
-                monitor.len(),
+                monitor_files,
                 jawn_audio::playback::monitor_json(&monitor)
             )
         };
         format!(
-            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at}{}{monitor_part}{}}}",
+            "{{\"ok\":true,\"take\":{take},\"state\":\"recording\",\"channels\":{channels},\"start_sample\":{start_at}{}{monitor_part},\"monitor_input\":{monitor_input},\"monitor_gain\":{monitor_gain},\"monitor_dropped\":0{}}}",
             tracks_json(&track_status),
             alignment_json(alignment)
         )
@@ -1585,7 +1691,17 @@ impl Server {
             thread::Builder::new()
                 .name("jawn-audio-play".to_string())
                 .spawn(move || {
-                    run_playback(config, tracks, start_at, status, stop, None, Vec::new())
+                    run_playback(
+                        config,
+                        tracks,
+                        start_at,
+                        status,
+                        stop,
+                        None,
+                        Vec::new(),
+                        None,
+                        None,
+                    )
                 })
         };
         let handle = match spawned {
@@ -1849,6 +1965,8 @@ impl State {
 #[derive(Clone)]
 struct TrackPlan {
     input: usize,
+    /// The device channels this track claims: `1` mono, `2` stereo.
+    channels: usize,
     /// Clamped to [`Channel::MAX_GAIN`] when the plan is read.
     gain: f32,
     /// -1 left ..= 1 right.
@@ -1862,6 +1980,7 @@ impl TrackPlan {
     fn wire(input: usize) -> Self {
         TrackPlan {
             input,
+            channels: 1,
             gain: 1.0,
             pan: 0.0,
             inserts: Vec::new(),
@@ -2063,7 +2182,7 @@ fn track_plans(values: &[Value]) -> Result<Vec<TrackPlan>, String> {
             Value::Obj(fields) => fields,
             _ => {
                 return Err(format!(
-                    "track {} must be an object with input, gain, pan and inserts",
+                    "track {} must be an object with input, channels, gain, pan and inserts",
                     index + 1
                 ))
             }
@@ -2089,6 +2208,18 @@ fn track_plan(index: usize, fields: &Object) -> Result<TrackPlan, String> {
         _ => {
             return Err(format!(
                 "track {} \"input\" must be a whole, non-negative channel number",
+                index + 1
+            ))
+        }
+    };
+    let channels = match get(fields, "channels") {
+        None | Some(Value::Null) => 1,
+        Some(Value::Num(value)) if value.is_finite() && (*value == 1.0 || *value == 2.0) => {
+            *value as usize
+        }
+        _ => {
+            return Err(format!(
+                "track {} \"channels\" must be 1 (mono) or 2 (stereo)",
                 index + 1
             ))
         }
@@ -2142,6 +2273,7 @@ fn track_plan(index: usize, fields: &Object) -> Result<TrackPlan, String> {
     };
     Ok(TrackPlan {
         input,
+        channels,
         gain,
         pan,
         inserts,
@@ -2178,6 +2310,12 @@ struct Status {
     align_from: &'static str,
     /// One entry per track; track 1's also fills the top-level fields.
     tracks: Vec<TrackStatus>,
+    /// Whether this take armed live-input monitoring, the gain it is using
+    /// now, and frames the monitoring ring discarded because the monitor was
+    /// late. All three are measurements, never errors.
+    monitor_input: bool,
+    monitor_gain: f32,
+    monitor_dropped: u64,
     error: String,
 }
 
@@ -2214,6 +2352,10 @@ struct Running {
     /// The same ring the take's mixer drains. Kept so `param` can push after
     /// the worker owns the strips.
     params: Arc<ParamQueue>,
+    /// The live-input trim, when this take armed live monitoring. `param
+    /// target=input` moves it and `status` mirrors it; `None` is a take with
+    /// no live input to address.
+    input_gain: Option<Arc<AtomicU32>>,
 }
 
 impl Running {
@@ -2281,7 +2423,7 @@ impl Running {
             from: status.align_from,
         });
         format!(
-            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"error\":\"{}\"}}",
+            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"monitor_input\":{},\"monitor_gain\":{},\"monitor_dropped\":{},\"error\":\"{}\"}}",
             status.take,
             status.state.name(),
             jawn_audio::loopback::json_escape(&status.path),
@@ -2296,6 +2438,9 @@ impl Running {
             first.map(|track| track.gain).unwrap_or(1.0),
             first.map(|track| track.pan).unwrap_or(0.0),
             jawn_audio::loopback::json_escape(first.map(|track| track.inserts.as_str()).unwrap_or("")),
+            status.monitor_input,
+            status.monitor_gain,
+            status.monitor_dropped,
             jawn_audio::loopback::json_escape(&status.error)
         )
     }
@@ -2811,14 +2956,40 @@ fn run_playback(
     stop: Arc<AtomicBool>,
     params: Option<Arc<ParamQueue>>,
     master: Vec<InsertKind>,
+    live: Option<(jawn_audio::Consumer, Arc<AtomicU32>)>,
+    length: Option<u64>,
 ) {
     // Build the strips here, on the playback thread, so a chain never moves
     // between threads. The control thread already checked the shape. A
     // monitor's control ring is the one `param` pushes to; a plain playback
     // has no live knobs yet.
-    let built = match params {
-        Some(params) => Playback::with_queue(tracks, start_at, params),
-        None => Playback::new(tracks, start_at),
+    let built = if tracks.is_empty() {
+        // A live-only monitor: no files to check, the take's frames and rate
+        // are the whole shape.
+        match live {
+            Some((consumer, gain)) => Ok(Playback::live(
+                config.rate,
+                length.unwrap_or(0),
+                consumer,
+                gain,
+            )),
+            None => Err("playback needs at least one file".to_string()),
+        }
+    } else {
+        let params = params.unwrap_or_else(|| Arc::new(ParamQueue::new()));
+        match Playback::with_queue(tracks, start_at, params) {
+            Ok(playback) => {
+                let mut playback = playback;
+                if let Some((consumer, gain)) = live {
+                    playback = playback.with_live_input(consumer, gain);
+                }
+                if let Some(length) = length {
+                    playback.set_length(length);
+                }
+                Ok(playback)
+            }
+            Err(error) => Err(error),
+        }
     };
     let mut playback = match built {
         Ok(mut playback) => {
@@ -2968,6 +3139,7 @@ fn run_take(
     stop: Arc<AtomicBool>,
     params: Arc<ParamQueue>,
     master: Vec<InsertKind>,
+    live: Option<Producer>,
 ) {
     // Build the mixer here, on the take's thread, so it is never moved between
     // threads. Its control ring is the one the socket already holds. The
@@ -2989,15 +3161,28 @@ fn run_take(
         for kind in &plan.inserts {
             channel.push(kind.build());
         }
+        track.channels = plan.channels;
         track.channel = channel;
     }
     let outcome = match config.backend {
-        BackendKind::Null => {
-            capture_null(&config, seconds, &mut disks, &mut mixer, &status, &stop)
-        }
-        BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => {
-            capture_hardware(&config, seconds, &mut disks, &mut mixer, &status, &stop)
-        }
+        BackendKind::Null => capture_null(
+            &config,
+            seconds,
+            &mut disks,
+            &mut mixer,
+            &status,
+            &stop,
+            live.as_ref(),
+        ),
+        BackendKind::Alsa | BackendKind::PipeWire | BackendKind::Jack => capture_hardware(
+            &config,
+            seconds,
+            &mut disks,
+            &mut mixer,
+            &status,
+            &stop,
+            live.as_ref(),
+        ),
     };
     // A stop is the caller's choice, not a failure: the take ends where it was
     // asked to, with a finished header.
@@ -3015,6 +3200,7 @@ fn run_take(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     current.dropped = dropped.first().copied().unwrap_or(0);
+    current.monitor_dropped = live.as_ref().map(Producer::dropped).unwrap_or(0);
     for (index, track) in current.tracks.iter_mut().enumerate() {
         track.dropped = dropped.get(index).copied().unwrap_or(0);
     }
@@ -3076,12 +3262,18 @@ fn run_take(
 /// Update what `status` reads while a take runs: frames captured so far and
 /// each track's dropped count. The lock is uncontended and held for a handful
 /// of field writes, so this never blocks the capture loop in practice.
-fn note_progress(status: &Arc<Mutex<Status>>, frames: u64, disks: &[DiskWriter]) {
+fn note_progress(
+    status: &Arc<Mutex<Status>>,
+    frames: u64,
+    disks: &[DiskWriter],
+    monitor_dropped: u64,
+) {
     let mut current = status
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     current.frames = frames;
     current.dropped = disks.first().map(|disk| disk.dropped_frames()).unwrap_or(0);
+    current.monitor_dropped = monitor_dropped;
     for (index, track) in current.tracks.iter_mut().enumerate() {
         track.frames = frames;
         track.dropped = disks
@@ -3099,6 +3291,65 @@ fn frames_so_far(status: &Arc<Mutex<Status>>) -> u64 {
         .frames
 }
 
+/// Read one track's input from an interleaved block. A stereo pair is summed
+/// at `0.5` each *before* the mono strip, so a guitar on two channels is one
+/// source, not two half-volume copies.
+fn read_mono_f32(
+    block: &[f32],
+    frames: usize,
+    device: usize,
+    input: usize,
+    channels: usize,
+    mono: &mut [f32],
+) {
+    if channels == 2 {
+        for frame in 0..frames {
+            let base = frame * device + input;
+            mono[frame] = 0.5 * (block[base] + block[base + 1]);
+        }
+    } else {
+        for frame in 0..frames {
+            mono[frame] = block[frame * device + input];
+        }
+    }
+}
+
+/// The hardware spelling of [`read_mono_f32`], from a signed 16-bit block.
+#[cfg(any(feature = "alsa", test))]
+fn read_mono_i16(
+    block: &[i16],
+    frames: usize,
+    device: usize,
+    input: usize,
+    channels: usize,
+    mono: &mut [f32],
+) {
+    if channels == 2 {
+        for frame in 0..frames {
+            let base = frame * device + input;
+            mono[frame] =
+                (f32::from(block[base]) + f32::from(block[base + 1])) / (2.0 * 32_768.0);
+        }
+    } else {
+        for frame in 0..frames {
+            mono[frame] = f32::from(block[frame * device + input]) / 32_768.0;
+        }
+    }
+}
+
+/// The refusal a track's claimed channels earn when the device cannot carry
+/// them. The pair is named for stereo; the count is always the device's.
+fn channel_error(track: usize, input: usize, channels: usize, device: usize, limit: &str) -> String {
+    if channels == 2 {
+        format!(
+            "track {track} records inputs {input}..{}, but {limit} {device} channel(s)",
+            input + 1
+        )
+    } else {
+        format!("track {track} records input {input}, but {limit} {device} channel(s)")
+    }
+}
+
 /// The null take: silence through the same block loop as hardware. The queue is
 /// sized for the whole take (see `main::queue_blocks`), because this loop runs
 /// far faster than real time.
@@ -3109,6 +3360,7 @@ fn capture_null(
     mixer: &mut Mixer,
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
+    live: Option<&Producer>,
 ) -> Result<Captured, String> {
     let track_count = mixer.tracks().len();
     if disks.len() != track_count {
@@ -3124,6 +3376,9 @@ fn capture_null(
     let mut mono = vec![0.0f32; config.period];
     let mut stereo = vec![0.0f32; config.period * TAKE_CHANNELS];
     let mut pcm = vec![0i16; config.period * TAKE_CHANNELS];
+    // The monitoring bus is the sum of every track's processed stereo output,
+    // pushed once per block so the monitor hears the whole take, not one stem.
+    let mut live_block = vec![0.0f32; config.period * TAKE_CHANNELS];
     let mut remaining = total;
     let mut pushed = 0u64;
     while remaining > 0 {
@@ -3135,27 +3390,52 @@ fn capture_null(
             .map_err(|error| format!("device: {error:?}"))?;
         let frames = remaining.min(config.period as u64) as usize;
         let samples = frames * TAKE_CHANNELS;
+        if live.is_some() {
+            live_block[..samples].fill(0.0);
+        }
         for track in 0..track_count {
             let input = mixer.tracks()[track].input;
-            if input >= config.channels {
-                return Err(format!(
-                    "track {track} records input {input}, but the device has {} channel(s)",
-                    config.channels
+            let track_channels = mixer.tracks()[track].channels;
+            if input + track_channels > config.channels {
+                return Err(channel_error(
+                    track + 1,
+                    input,
+                    track_channels,
+                    config.channels,
+                    "the device has",
                 ));
             }
-            for frame in 0..frames {
-                mono[frame] = source[frame * config.channels + input];
-            }
+            read_mono_f32(
+                &source,
+                frames,
+                config.channels,
+                input,
+                track_channels,
+                &mut mono[..frames],
+            );
             mixer
                 .process(track, &mono[..frames], &mut stereo[..samples])
                 .map_err(|error| format!("track {track}: {error}"))?;
+            if live.is_some() {
+                for (out, sample) in live_block[..samples].iter_mut().zip(&stereo[..samples]) {
+                    *out += sample;
+                }
+            }
             for (out, sample) in pcm[..samples].iter_mut().zip(&stereo[..samples]) {
                 *out = to_i16(*sample);
             }
             disks[track].push(&pcm[..samples]);
         }
+        if let Some(producer) = live {
+            producer.push(&live_block[..samples]);
+        }
         pushed += frames as u64;
-        note_progress(status, pushed, disks);
+        note_progress(
+            status,
+            pushed,
+            disks,
+            live.map(Producer::dropped).unwrap_or(0),
+        );
         remaining -= frames as u64;
     }
     Ok(Captured {
@@ -3170,11 +3450,13 @@ struct ServeSink<'a> {
     disks: &'a mut [DiskWriter],
     status: &'a Arc<Mutex<Status>>,
     stop: &'a AtomicBool,
+    live: Option<&'a Producer>,
     pushed: u64,
     /// Device channels per frame, learned in `prepared`.
     channels: usize,
     mono: Vec<f32>,
     stereo: Vec<f32>,
+    live_block: Vec<f32>,
     pcm: Vec<i16>,
 }
 
@@ -3186,17 +3468,21 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
             .mixer
             .tracks()
             .iter()
-            .position(|track| track.input >= channels)
+            .position(|track| track.input + track.channels > channels)
         {
-            let input = self.mixer.tracks()[index].input;
-            return Err(format!(
-                "track {} records input {input}, but the device granted only {channels} channel(s)",
-                index + 1
+            let track = &self.mixer.tracks()[index];
+            return Err(channel_error(
+                index + 1,
+                track.input,
+                track.channels,
+                channels,
+                "the device granted only",
             ));
         }
         self.mixer.prepare(rate, period);
         self.mono = vec![0.0; period];
         self.stereo = vec![0.0; period * TAKE_CHANNELS];
+        self.live_block = vec![0.0; period * TAKE_CHANNELS];
         self.pcm = vec![0i16; period * TAKE_CHANNELS];
         Ok(())
     }
@@ -3217,26 +3503,55 @@ impl jawn_audio::alsa_device::CaptureSink for ServeSink<'_> {
             ));
         }
         let samples = frames * TAKE_CHANNELS;
+        if self.live.is_some() {
+            self.live_block[..samples].fill(0.0);
+        }
         for track in 0..track_count {
             let input = self.mixer.tracks()[track].input;
-            if input >= channels {
-                return Err(format!(
-                    "track {track} records input {input}, but the device has {channels} channel(s)"
+            let track_channels = self.mixer.tracks()[track].channels;
+            if input + track_channels > channels {
+                return Err(channel_error(
+                    track + 1,
+                    input,
+                    track_channels,
+                    channels,
+                    "the device has",
                 ));
             }
-            for frame in 0..frames {
-                self.mono[frame] = f32::from(block[frame * channels + input]) / 32_768.0;
-            }
+            read_mono_i16(
+                block,
+                frames,
+                channels,
+                input,
+                track_channels,
+                &mut self.mono[..frames],
+            );
             self.mixer
                 .process(track, &self.mono[..frames], &mut self.stereo[..samples])
                 .map_err(|error| format!("track {track}: {error}"))?;
+            if self.live.is_some() {
+                for (out, sample) in self.live_block[..samples]
+                    .iter_mut()
+                    .zip(&self.stereo[..samples])
+                {
+                    *out += sample;
+                }
+            }
             for (out, sample) in self.pcm[..samples].iter_mut().zip(&self.stereo[..samples]) {
                 *out = to_i16(*sample);
             }
             self.disks[track].push(&self.pcm[..samples]);
         }
+        if let Some(producer) = self.live {
+            producer.push(&self.live_block[..samples]);
+        }
         self.pushed += frames as u64;
-        note_progress(self.status, self.pushed, self.disks);
+        note_progress(
+            self.status,
+            self.pushed,
+            self.disks,
+            self.live.map(Producer::dropped).unwrap_or(0),
+        );
         Ok(())
     }
 }
@@ -3249,16 +3564,19 @@ fn capture_hardware(
     mixer: &mut Mixer,
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
+    live: Option<&Producer>,
 ) -> Result<Captured, String> {
     let sink = ServeSink {
         mixer,
         disks,
         status,
         stop,
+        live,
         pushed: 0,
         channels: config.channels,
         mono: Vec::new(),
         stereo: Vec::new(),
+        live_block: Vec::new(),
         pcm: Vec::new(),
     };
     let report = jawn_audio::alsa_device::run_capture(
@@ -3285,8 +3603,9 @@ fn capture_hardware(
     mixer: &mut Mixer,
     status: &Arc<Mutex<Status>>,
     stop: &AtomicBool,
+    live: Option<&Producer>,
 ) -> Result<Captured, String> {
-    let _ = (config, seconds, disks, mixer, status, stop);
+    let _ = (config, seconds, disks, mixer, status, stop, live);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
@@ -3837,6 +4156,9 @@ break"}"#).is_err());
                 pan: 0.0,
                 inserts: inserts.to_string(),
             }],
+            monitor_input: false,
+            monitor_gain: 1.0,
+            monitor_dropped: 0,
             error: String::new(),
         }
     }
@@ -3847,6 +4169,7 @@ break"}"#).is_err());
             stop: Arc::new(AtomicBool::new(false)),
             handle: None,
             params,
+            input_gain: None,
         }
     }
 
@@ -3995,4 +4318,169 @@ break"}"#).is_err());
         assert!(parse_master(get(&wrong_shape, "master")).is_err());
     }
 
+    fn temp_take(name: &str) -> String {
+        use std::sync::atomic::AtomicUsize;
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let count = NEXT.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir()
+            .join(format!(
+                "jawn-live-{}-{count}-{name}.wav",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn a_live_only_monitor_is_accepted_with_no_files() {
+        let mut server = socket_server();
+        let out = temp_take("live");
+        let line = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":0.05,"monitor_input":true,"monitor_gain":0.9}}"#
+        )));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"monitor_input\":true"), "{line}");
+        assert!(line.contains("\"monitor_gain\":0.9"), "{line}");
+        assert!(line.contains("\"monitor_dropped\":0"), "{line}");
+        // The live monitor is a session even though it has no files.
+        assert!(line.contains("\"playing\":0"), "{line}");
+        let _ = server.handle(r#"{"cmd":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_tracks_channels_must_be_one_or_two() {
+        for bad in ["3", "1.5", "0", "\"2\""] {
+            let object = parse_object(&format!(
+                r#"{{"tracks":[{{"input":0,"channels":{bad}}}]}}"#
+            ))
+            .expect("parse");
+            let values = match get(&object, "tracks") {
+                Some(Value::Arr(values)) => values,
+                other => panic!("tracks is not an array: {other:?}"),
+            };
+            let error = track_plans(values)
+                .err()
+                .expect("channels must be refused");
+            assert_eq!(
+                error,
+                "track 1 \"channels\" must be 1 (mono) or 2 (stereo)",
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stereo_pair_past_the_engine_channels_is_refused() {
+        let mut server = socket_server();
+        let out = temp_take("stereo");
+        let line = reply(server.handle(&format!(
+            r#"{{"cmd":"record","out":"{out}","seconds":0.01,"tracks":[{{"input":0,"channels":2}}]}}"#
+        )));
+        assert!(
+            line.contains("track 1 records inputs 0..1, but the engine has only 1 channel(s)"),
+            "{line}"
+        );
+        assert!(!std::path::Path::new(&out).exists(), "a refusal created a file");
+    }
+
+    #[test]
+    fn monitor_input_and_gain_shapes_are_refused() {
+        let mut server = socket_server();
+        let out = temp_take("shape");
+        for (field, value, sentence) in [
+            (
+                "monitor_input",
+                "\"yes\"",
+                "\"monitor_input\" must be true or false",
+            ),
+            (
+                "monitor_gain",
+                "\"loud\"",
+                "\"monitor_gain\" must be a finite number",
+            ),
+        ] {
+            let line = reply(server.handle(&format!(
+                r#"{{"cmd":"record","out":"{out}","seconds":0.01,"{field}":{value}}}"#
+            )));
+            assert_eq!(line, error_line(sentence));
+        }
+    }
+
+    #[test]
+    fn a_plan_keeps_each_tracks_channels_and_the_reader_uses_them() {
+        let object = parse_object(
+            r#"{"tracks":[{"input":0,"channels":2},{"input":2,"channels":1}]}"#,
+        )
+        .expect("parse");
+        let values = match get(&object, "tracks") {
+            Some(Value::Arr(values)) => values,
+            other => panic!("tracks is not an array: {other:?}"),
+        };
+        let plans = track_plans(values).expect("plan");
+        assert_eq!(plans[0].channels, 2);
+        assert_eq!(plans[1].channels, 1);
+
+        // Two frames across three device channels: stereo at 0 averages each
+        // pair; mono at 2 takes the third channel alone.
+        let block = [0.2f32, 0.4, 0.6, 0.8, 1.0, 1.2];
+        let mut mono = [0.0f32; 2];
+        read_mono_f32(&block, 2, 3, 0, 2, &mut mono);
+        assert!((mono[0] - 0.3).abs() < 1e-6, "{mono:?}");
+        assert!((mono[1] - 0.9).abs() < 1e-6, "{mono:?}");
+        read_mono_f32(&block, 2, 3, 2, 1, &mut mono);
+        assert!((mono[0] - 0.6).abs() < 1e-6, "{mono:?}");
+        assert!((mono[1] - 1.2).abs() < 1e-6, "{mono:?}");
+
+        let hardware: Vec<i16> = [0.2f32, 0.4, 0.6, 0.8, 0.0, 0.2]
+            .iter()
+            .map(|sample| to_i16(*sample))
+            .collect();
+        read_mono_i16(&hardware, 2, 3, 0, 2, &mut mono);
+        assert!((mono[0] - 0.3).abs() < 1e-3, "{mono:?}");
+        assert!((mono[1] - 0.4).abs() < 1e-3, "{mono:?}");
+        read_mono_i16(&hardware, 2, 3, 2, 1, &mut mono);
+        assert!((mono[0] - 0.6).abs() < 1e-3, "{mono:?}");
+        assert!((mono[1] - 0.2).abs() < 1e-3, "{mono:?}");
+
+        let error = channel_error(1, 0, 2, 1, "the engine has only");
+        assert_eq!(
+            error,
+            "track 1 records inputs 0..1, but the engine has only 1 channel(s)"
+        );
+    }
+
+    #[test]
+    fn param_input_moves_the_live_gain_and_refuses_without_live_input() {
+        let mut server = socket_server();
+        let gain = Arc::new(AtomicU32::new(1f32.to_bits()));
+        let mut take = running(take_status(""), Arc::new(ParamQueue::new()));
+        take.input_gain = Some(Arc::clone(&gain));
+        server.current = Some(take);
+
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":2.5}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert_eq!(f32::from_bits(gain.load(Ordering::Acquire)), 2.5);
+        let status = server.current.as_ref().unwrap().snapshot();
+        assert_eq!(status.monitor_gain, 2.5);
+
+        // The gain is clamped to 0..=4.
+        let _ = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":9}"#,
+        ));
+        assert_eq!(f32::from_bits(gain.load(Ordering::Acquire)), 4.0);
+
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"pan","value":1}"#,
+        ));
+        assert_eq!(line, error_line("target \"input\" only carries \"gain\""));
+
+        server.current = Some(running(take_status(""), Arc::new(ParamQueue::new())));
+        let line = reply(server.handle(
+            r#"{"cmd":"param","target":"input","name":"gain","value":1}"#,
+        ));
+        assert!(line.contains("no live input is being monitored"), "{line}");
+    }
 }

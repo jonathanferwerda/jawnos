@@ -574,6 +574,17 @@ var studioEngineTimer = 0;
 // only while it is the path that is playing; the browser graph stays the path
 // when this is false and live listening is off.
 var studioEngineRecording = false;
+// The engine's configured capture width, from the last status reply. The Input
+// pickers offer that many channels; two until the engine answers, which is the
+// contract's fallback. Never invent a second key for it.
+var studioEngineDeviceChannels = 2;
+// The plan the running take armed, so a strip can say which input and width it
+// recorded even when the engine's status does not echo them back.
+var studioEnginePlanArmed = null;
+// True while the running take actually armed the live input. A take armed with
+// Monitor off has no monitor bus to trim, so the button must not pretend it can
+// restore one.
+var studioEngineMonitorArmed = false;
 
 function studioEngineAnswer(data) {
 	if (!data || typeof data !== 'object') {
@@ -603,6 +614,83 @@ function studioEnginePollStop() {
 	if (studioEngineTimer) { clearInterval(studioEngineTimer); studioEngineTimer = 0; }
 }
 
+// ---- one Input/Source pair per engine track ---------------------------------
+// The Tracks count decides how many rows there are; each row picks the
+// interface channel the engine track records and whether it reads one channel
+// or the stereo pair. The rows keep a hidden #studio_engine_inputs carrying the
+// comma list other code still reads, so the old path is never surprised.
+
+function studioEngineInputRow(index, channels) {
+	var row = $('<div class="studio_engine_input_row"></div>').attr('data-track', index).attr('channels', channels)
+		.css({ margin: '2px 0' });
+	var input = $('<select class="studio_engine_input_pick"></select>').attr('data-track', index)
+		.attr('hint', studioAudioLabel('Which interface channel this engine track records'));
+	for (var n = 1; n <= channels; n++) {
+		input.append($('<option></option>').val(n - 1).text(studioAudioLabel('Input') + ' ' + n));
+	}
+	var source = $('<select class="studio_engine_source_pick"></select>').attr('data-track', index)
+		.attr('hint', studioAudioLabel('Mono records one channel; stereo reads the pair at half each'));
+	source.append($('<option value="1"></option>').text(studioAudioLabel('Mono')));
+	source.append($('<option value="2"></option>').text(studioAudioLabel('Stereo')));
+	row.append($('<span></span>').text(studioAudioLabel('Track') + ' ' + (index + 1)).css({ 'margin-right': '6px' }));
+	row.append(input);
+	row.append($('<label></label>').css({ 'margin-left': '8px' }).append($('<span></span>').text(studioAudioLabel('Source') + ' ')).append(source));
+	return row;
+}
+
+// A stereo row claims input and input+1, so the last channel cannot be one.
+// The engine refuses it too; the UI simply never offers it.
+function studioEngineSourceSync(row) {
+	if (!row || !row.length) { return; }
+	var input = parseInt(row.find('.studio_engine_input_pick').val(), 10);
+	var source = row.find('.studio_engine_source_pick');
+	var pairs = source.find('option[value="2"]');
+	var last = isNaN(input) ? false : (input >= studioEngineDeviceChannels - 1);
+	pairs.prop('disabled', last);
+	if (last && source.val() === '2') { source.val('1'); }
+}
+
+// Keep the hidden comma list in step with the pickers. The plan and any code
+// that still reads #studio_engine_inputs see the same number for a track.
+function studioEngineInputSync() {
+	var inputs = [];
+	$('#studio_engine_inputs_rows .studio_engine_input_row').each(function () {
+		var value = parseInt($(this).find('.studio_engine_input_pick').val(), 10);
+		inputs.push(isNaN(value) ? 0 : value);
+	});
+	$('#studio_engine_inputs').val(inputs.join(','));
+}
+
+function studioEngineInputRows() {
+	var box = $('#studio_engine_inputs_rows');
+	if (!box.length) { return; }
+	var count = parseInt($('#studio_engine_tracks').val(), 10);
+	if (!(count >= 1)) { count = 1; }
+	if (count > 8) { count = 8; }
+	box.children('.studio_engine_input_row').slice(count).remove();
+	for (var i = 0; i < count; i++) {
+		var row = box.children('.studio_engine_input_row').eq(i);
+		// Rebuild only a row whose channel list changed: a count change or a
+		// device_channels refresh keeps every choice the person already made.
+		if (!row.length || parseInt(row.attr('channels'), 10) !== studioEngineDeviceChannels) {
+			var previous = row.length ? {
+				input: row.find('.studio_engine_input_pick').val(),
+				source: row.find('.studio_engine_source_pick').val()
+			} : null;
+			var fresh = studioEngineInputRow(i, studioEngineDeviceChannels);
+			if (row.length) { row.replaceWith(fresh); } else { box.append(fresh); }
+			row = fresh;
+			// A channel that no longer exists falls back to the first input.
+			if (previous && previous.input !== null) { row.find('.studio_engine_input_pick').val(previous.input); }
+			if (previous && previous.source !== null) { row.find('.studio_engine_source_pick').val(previous.source); }
+			if (row.find('.studio_engine_input_pick').val() === null) { row.find('.studio_engine_input_pick').val(0); }
+		}
+		row.attr('data-track', i);
+		studioEngineSourceSync(row);
+	}
+	studioEngineInputSync();
+}
+
 // The engine puts one track's fields at the top level and adds a `tracks` array
 // only when a take has more than one, so a one-track take still gets a row.
 function studioEngineStrips(data) {
@@ -621,6 +709,7 @@ function studioEngineRow(index) {
 	row.append($('<span class="studio_engine_state"></span>').css({ 'margin-right': '8px' }));
 	row.append($('<span class="studio_engine_frames"></span>').css({ 'margin-right': '8px' }));
 	row.append($('<span class="studio_engine_dropped"></span>').css({ 'margin-right': '8px' }));
+	row.append($('<span class="studio_engine_track_input"></span>').css({ 'margin-right': '8px' }));
 	row.append($('<label></label>').append($('<span></span>').text(studioAudioLabel('Gain') + ' ')).append(
 		$('<input type="range" class="studio_engine_gain" min="0" max="4" step="0.01">')
 			.attr('data-track', index).css(slider)
@@ -632,11 +721,29 @@ function studioEngineRow(index) {
 	return row;
 }
 
+// A strip says which input and width it recorded, e.g. `in 1 · mono`. The
+// take line reports each track's input, but its `channels` is the take's
+// granted capture width, not one track's source; the width is ours to remember
+// from the plan this page armed.
+function studioEngineTrackSummary(track, index) {
+	var armed = (studioEnginePlanArmed && studioEnginePlanArmed[index]) ? studioEnginePlanArmed[index] : null;
+	var input = (typeof track.input === 'number') ? track.input : (armed ? armed.input : null);
+	if (typeof input !== 'number' || isNaN(input)) { return ''; }
+	var channels = (armed && armed.channels === 2) ? 2 : 1;
+	return studioAudioLabel('in') + ' ' + (input + 1) + ' \u00b7 ' + (channels === 2 ? studioAudioLabel('stereo') : studioAudioLabel('mono'));
+}
+
 function studioEngineRender(data) {
 	var box = $('#studio_engine_strips');
 	if (!box.length) { return; }
 	var strips = studioEngineStrips(data);
 	var state = (typeof data.state === 'string') ? data.state : '';
+	studioEngineMonitorArmed = (data.monitor_input === true);
+
+	// The monitor ring's dropped frames are a measurement, not an error: a
+	// small readout beside the strips, never a pedal lamp.
+	var monitor = (typeof data.monitor_dropped === 'number' && isFinite(data.monitor_dropped)) ? data.monitor_dropped : null;
+	$('#studio_engine_monitor').text(monitor === null ? '' : studioAudioLabel('monitor dropped') + ' ' + monitor);
 
 	box.children('.studio_engine_strip').slice(strips.length).remove();
 
@@ -648,6 +755,7 @@ function studioEngineRender(data) {
 		row.find('.studio_engine_state').text(state || '\u2014');
 		row.find('.studio_engine_frames').text(studioAudioLabel('frames') + ' ' + studioEngineNumber(track.frames));
 		row.find('.studio_engine_dropped').text(studioAudioLabel('dropped') + ' ' + studioEngineNumber(track.dropped));
+		row.find('.studio_engine_track_input').text(studioEngineTrackSummary(track, i));
 		var gain = row.find('.studio_engine_gain').show();
 		var pan = row.find('.studio_engine_pan').show();
 		// A slider being dragged keeps its own position until it is let go.
@@ -662,6 +770,7 @@ function studioEngineRender(data) {
 		only.find('.studio_engine_state').text(state || '\u2014');
 		only.find('.studio_engine_frames').text('');
 		only.find('.studio_engine_dropped').text('');
+		only.find('.studio_engine_track_input').text('');
 		only.find('.studio_engine_gain, .studio_engine_pan').hide();
 	}
 }
@@ -679,9 +788,16 @@ function studioEngineStatus() {
 				studioEnginePollStop();
 				// The frames we last drew belong to a take we can no longer read.
 				jQuery('#studio_engine_strips').empty();
+				jQuery('#studio_engine_monitor').text('');
 				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
 				return;
 			}
+			if (typeof data.device_channels === 'number' && data.device_channels >= 1) {
+				studioEngineDeviceChannels = Math.floor(data.device_channels);
+			}
+			// The engine's capture width is known only once it answers; build
+			// the Input pickers from it, keeping any choice already made.
+			studioEngineInputRows();
 			if (typeof data.error === 'string' && data.error.length) { studioEngineShowError(data.error); }
 			studioEngineRecording = (data.state === 'recording');
 			studioEngineRender(data);
@@ -693,9 +809,10 @@ function studioEngineStatus() {
 }
 
 // The engine take arms each track's own rack now, not one global chain:
-// channel `ch` is engine track `ch-1`, its input comes from the Inputs list
-// (defaulting to the track's own number), and only the enabled (unbypassed)
-// inserts travel. The array is the engine's own per-track plan shape.
+// channel `ch` is engine track `ch-1`, its input comes from that track's Input
+// picker (defaulting to the track's own number), its width from its Source
+// picker, and only the enabled (unbypassed) inserts travel. The array is the
+// engine's own per-track plan shape.
 function studioEngineInputList() {
 	var text = String($('#studio_engine_inputs').val() || '').replace(/^\s+|\s+$/g, '');
 	if (!text.length) { return []; }
@@ -707,10 +824,23 @@ function studioEngineInputList() {
 	});
 }
 
+// 1 reads one channel; 2 reads the pair input/input+1, summed at half each
+// before the strip. A row that cannot be stereo (the last input) is Mono here.
+function studioEngineSourceList() {
+	var out = [];
+	$('#studio_engine_inputs_rows .studio_engine_input_row').each(function () {
+		var value = parseInt($(this).find('.studio_engine_source_pick').val(), 10);
+		out.push(value === 2 ? 2 : 1);
+	});
+	return out;
+}
+
 function studioEngineTrackPlan() {
 	var count = parseInt($('#studio_engine_tracks').val(), 10);
 	if (!(count >= 1)) { count = 1; }
+	studioEngineInputSync();
 	var inputs = studioEngineInputList();
+	var sources = studioEngineSourceList();
 	var plan = [];
 	for (var index = 0; index < count; index++) {
 		var channel = studioAudio.channels[index + 1];
@@ -723,6 +853,7 @@ function studioEngineTrackPlan() {
 		}
 		plan.push({
 			input: (index < inputs.length ? inputs[index] : index),
+			channels: (index < sources.length ? sources[index] : 1),
 			inserts: inserts
 		});
 	}
@@ -750,6 +881,9 @@ function studioEngineStart() {
 	studioEngineShowError('');
 	var plan = studioEngineTrackPlan();
 	var master = studioEngineMasterList();
+	// The config panel's Monitor setting is the same choice the transport's
+	// button carries: on, this take also sends the live input to the monitor.
+	var monitor = (mixer['time'] && mixer['time']['monitor'] == 'yes');
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',
@@ -762,7 +896,9 @@ function studioEngineStart() {
 			inputs: $('#studio_engine_inputs').val(),
 			inserts: $('#studio_engine_inserts').val(),
 			tracks_json: JSON.stringify(plan),
-			master_json: JSON.stringify(master)
+			master_json: JSON.stringify(master),
+			monitor_input: monitor ? 'true' : 'false',
+			monitor_gain: '1'
 		},
 		dataType: 'json',
 		success: function (data) {
@@ -773,7 +909,14 @@ function studioEngineStart() {
 				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
 				return;
 			}
+			if (typeof data.device_channels === 'number' && data.device_channels >= 1) {
+				studioEngineDeviceChannels = Math.floor(data.device_channels);
+			}
+			// Remember what this take armed so its strips can name the input
+			// and width even when the status line does not echo them.
+			studioEnginePlanArmed = plan;
 			studioEngineRecording = true;
+			studioEngineInputRows();
 			studioEngineRender(data);
 			studioEnginePollStart();
 			studioEngineStatus();
@@ -814,6 +957,24 @@ function studioEngineParam(track, name, value) {
 			if (data.ok !== true) {
 				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
 			}
+		},
+		error: studioEngineFailed
+	});
+}
+
+// While an engine take records, the transport's Monitor button trims the live
+// input on the monitor bus: 1 restores it, 0 silences it. It is a param
+// addressed to `input`, not to a track, and the take keeps recording either
+// way. With no engine take running the browser path uses the setting alone.
+function studioEngineMonitorGain(value) {
+	$.ajax({
+		url: '/manager/studio/take',
+		type: 'POST',
+		data: { action: 'param', target: 'input', name: 'gain', value: value },
+		dataType: 'json',
+		success: function (data) {
+			data = studioEngineAnswer(data);
+			if (data.ok !== true && data.error) { studioEngineShowError(data.error); }
 		},
 		error: studioEngineFailed
 	});

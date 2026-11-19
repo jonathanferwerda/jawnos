@@ -16,10 +16,12 @@
 //! been recorded from the same transport, and `--start-at` skips the same
 //! number of frames in every one of them.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use crate::effect::{Channel, InsertKind};
 use crate::mixer::{Mixer, ParamQueue};
+use crate::monbus::Consumer;
 use crate::wav_read::{read_wav, WavAudio};
 
 /// One file and the strip it plays through.
@@ -165,6 +167,17 @@ pub struct Playback {
     position: u64,
     /// One mono block per track, reused by every [`Playback::render`].
     voices: Vec<Vec<f32>>,
+    /// The take's live input, when this playback is also monitoring it.
+    live: Option<LiveInput>,
+}
+
+/// The monitoring ring's read side and the gain the socket can move mid-take.
+struct LiveInput {
+    consumer: Consumer,
+    /// `f32` bits of the live trim, clamped to `0..=4` by the control path.
+    gain: Arc<AtomicU32>,
+    /// One stereo block, popped and trimmed at the top of a render.
+    block: Vec<f32>,
 }
 
 /// Validate the file set without building strips, and return its rate and its
@@ -235,7 +248,51 @@ impl Playback {
             total_frames,
             position: 0,
             voices: Vec::new(),
+            live: None,
         })
+    }
+
+    /// A monitor with no files: only the take's live input, for `frames`
+    /// frames. It has no file rate to insist on, so `prepare` accepts whatever
+    /// rate the device grants.
+    pub fn live(
+        rate: u32,
+        frames: u64,
+        consumer: Consumer,
+        gain: Arc<AtomicU32>,
+    ) -> Self {
+        Playback {
+            tracks: Vec::new(),
+            mixer: Mixer::new(&[], &[]),
+            rate,
+            start_at: 0,
+            total_frames: frames,
+            position: 0,
+            voices: Vec::new(),
+            live: Some(LiveInput {
+                consumer,
+                gain,
+                block: Vec::new(),
+            }),
+        }
+    }
+
+    /// Attach the take's live input to an existing playback, so the monitor
+    /// files and the live input share one master chain.
+    pub fn with_live_input(mut self, consumer: Consumer, gain: Arc<AtomicU32>) -> Self {
+        self.live = Some(LiveInput {
+            consumer,
+            gain,
+            block: Vec::new(),
+        });
+        self
+    }
+
+    /// Set the playback's length. A live-only monitor uses the take's frames;
+    /// a file monitor with live input runs for the take too, so the live path
+    /// is not cut off when the shortest file ends.
+    pub fn set_length(&mut self, frames: u64) {
+        self.total_frames = frames;
     }
 
     /// The files' rate. `prepare` takes it as an argument so a device that
@@ -271,7 +328,12 @@ impl Playback {
         if period == 0 {
             return Err("a playback block must hold at least one frame".to_string());
         }
-        if rate != self.rate {
+        // A live-only monitor has no file whose pitch could be wrong, so it
+        // takes the device's rate; with files the rate must still match.
+        let live_only = self.tracks.is_empty() && self.live.is_some();
+        if live_only {
+            self.rate = rate;
+        } else if rate != self.rate {
             return Err(format!(
                 "the device runs at {rate} Hz but the files are {} Hz; the takes would play at the wrong pitch",
                 self.rate
@@ -279,6 +341,9 @@ impl Playback {
         }
         self.mixer.prepare(rate, period);
         self.voices = vec![vec![0.0; period]; self.tracks.len()];
+        if let Some(live) = &mut self.live {
+            live.block = vec![0.0; period * 2];
+        }
         Ok(())
     }
 
@@ -318,7 +383,12 @@ impl Playback {
             ));
         }
         let frames = out.len() / 2;
-        let prepared = self.voices.first().map(Vec::len).unwrap_or(0);
+        let prepared = self
+            .voices
+            .first()
+            .map(Vec::len)
+            .or_else(|| self.live.as_ref().map(|live| live.block.len() / 2))
+            .unwrap_or(0);
         if frames > prepared {
             return Err(format!(
                 "a {frames}-frame block is longer than the prepared {prepared} frames"
@@ -340,19 +410,46 @@ impl Playback {
                 *sample = if at < samples.len() as u64 {
                     samples[at as usize]
                 } else {
+                    // A live monitor can outlast its files: past a file's end
+                    // its voice is silence, not a held sample.
                     0.0
                 };
             }
         }
 
-        // The mixer sums the strips and then runs the master rack over the
-        // bus, so a monitor hears the same mastering chain the page shows.
-        // `mix_with` takes the voices by index: no temporary slice of
-        // references is built on the audio thread.
-        let voices = &self.voices;
-        self.mixer
-            .mix_with(out, |index| &voices[index][..frames])
-            .map_err(|error| format!("playback: {error}"))?;
+        // Pop the live ring once per render, trim it, and hand it to the same
+        // master bus as the files. A short ring is already zero-filled by the
+        // consumer, and a gain of zero is true silence.
+        {
+            let Playback {
+                mixer,
+                voices,
+                live,
+                ..
+            } = self;
+            let live_block = match live.as_mut() {
+                Some(live) => {
+                    let samples = frames * 2;
+                    live.consumer.pop(&mut live.block[..samples]);
+                    let gain = f32::from_bits(live.gain.load(Ordering::Acquire));
+                    if gain == 0.0 {
+                        live.block[..samples].fill(0.0);
+                    } else if gain != 1.0 {
+                        for sample in &mut live.block[..samples] {
+                            *sample *= gain;
+                        }
+                    }
+                    Some(&live.block[..samples])
+                }
+                None => None,
+            };
+            // `mix_with_live` takes the voices by index and the live block by
+            // slice: no temporary slice of references is built on the audio
+            // thread.
+            mixer
+                .mix_with_live(out, |index| &voices[index][..frames], live_block)
+                .map_err(|error| format!("playback: {error}"))?;
+        }
         self.position += frames as u64;
         Ok(())
     }
@@ -598,5 +695,56 @@ mod tests {
         let mut out = vec![0.0f32; 10];
         assert!(playback.render(&mut out).is_err());
         assert_eq!(playback.position(), 0);
+    }
+
+    fn live_gain(value: f32) -> Arc<AtomicU32> {
+        Arc::new(AtomicU32::new(value.to_bits()))
+    }
+
+    #[test]
+    fn a_live_only_monitor_plays_the_ring_for_its_length() {
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        let input = [0.5f32, -0.5, 0.25, -0.25];
+        producer.push(&input);
+        let mut playback = Playback::live(48_000, 2, consumer, live_gain(1.0));
+        // No file rate to protect: the device may grant another one.
+        playback.prepare(44_100, 4).expect("a live-only playback accepts the device rate");
+        let mut out = vec![0.0f32; 4];
+        playback.render(&mut out).expect("render");
+        assert_eq!(out, input);
+        assert_eq!(playback.remaining(), 0);
+    }
+
+    #[test]
+    fn a_zero_live_gain_is_silence() {
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        producer.push(&[1.0f32; 8]);
+        let mut playback = Playback::live(48_000, 4, consumer, live_gain(0.0));
+        playback.prepare(48_000, 4).expect("prepare");
+        let mut out = vec![9.0f32; 8];
+        playback.render(&mut out).expect("render");
+        assert!(out.iter().all(|sample| *sample == 0.0), "{out:?}");
+    }
+
+    #[test]
+    fn a_live_input_runs_past_the_end_of_its_files() {
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        // Four frames of live input at a quarter, while the file has two.
+        producer.push(&[0.25f32; 8]);
+        let mut source = track("a.wav", 0.5, 1.0, -1.0);
+        source.samples = vec![0.5; 2];
+        let mut playback = Playback::new(vec![source], 0)
+            .expect("playback")
+            .with_live_input(consumer, live_gain(1.0));
+        playback.set_length(4);
+        playback.prepare(48_000, 4).expect("prepare");
+        let mut out = vec![0.0f32; 8];
+        playback.render(&mut out).expect("render");
+        // The file is hard left, so it adds nothing to the right; the live
+        // input is centred. Past the file's end only the live input remains.
+        assert!((out[0] - 0.75).abs() < 1e-6, "{out:?}");
+        assert!((out[1] - 0.25).abs() < 1e-6, "{out:?}");
+        assert!((out[4] - 0.25).abs() < 1e-6, "{out:?}");
+        assert!((out[5] - 0.25).abs() < 1e-6, "{out:?}");
     }
 }

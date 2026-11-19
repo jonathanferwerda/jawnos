@@ -18,6 +18,7 @@ pub mod graph;
 pub mod listen;
 pub mod loopback;
 pub mod mixer;
+pub mod monbus;
 pub mod params;
 pub mod playback;
 pub mod proto;
@@ -41,6 +42,7 @@ pub use effect::{
 pub use graph::{mix_mono_into_stereo, peak, GraphError, Strip};
 pub use loopback::LoopbackReport;
 pub use mixer::{Mixer, ParamName, ParamQueue, Track, MASTER_ORDER};
+pub use monbus::{Consumer, MonitorBus, Producer};
 pub use playback::{monitor_json, monitor_start, MonitorSpec, PlayTrack, Playback};
 pub use params::Param;
 pub use proto::{

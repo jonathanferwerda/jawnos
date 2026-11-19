@@ -4,6 +4,11 @@ $(document).on('change', '#studio_latency_backend', function () { studioLatencyM
 // per strip. The functions live in studio.js; these bind them to the markup.
 $(document).on('click', '#studio_engine_start', function () { studioEngineStart(); });
 $(document).on('click', '#studio_engine_stop', function () { studioEngineStop(); });
+$(document).on('change', '#studio_engine_tracks', function () { studioEngineInputRows(); });
+$(document).on('change', '.studio_engine_input_pick, .studio_engine_source_pick', function () {
+	studioEngineInputSync();
+	studioEngineSourceSync($(this).closest('.studio_engine_input_row'));
+});
 $(document).on('change', '.studio_engine_gain, .studio_engine_pan', function () {
 	var name = $(this).hasClass('studio_engine_gain') ? 'gain' : 'pan';
 	studioEngineParam($(this).attr('data-track'), name, $(this).val());
@@ -533,6 +538,14 @@ $(document).on('click', '#studio_monitor', function () {
 	var on = !(mixer['time'] && mixer['time']['monitor'] == 'yes');
 	$('.studio_config[setting="monitor"]').val(on ? 'yes' : 'no').trigger('change');
 	studioMonitorButtonRender();
+	// An engine take reads the setting when it is armed; while it records, the
+	// same button also trims or silences the live input on the monitor bus so
+	// the take can be muted without stopping. A take that armed no live input
+	// has nothing to trim, so the setting alone is the whole answer there.
+	// The browser path keeps the setting alone too.
+	if (studioEngineRecording && studioEngineMonitorArmed) {
+		studioEngineMonitorGain(on ? 1 : 0);
+	}
 });
 
 $(document).on('change', '.studio_config', function() {

@@ -21,7 +21,7 @@ use warnings;
 # Windows has no IO::Socket::UNIX, so it is required only when dialling, the
 # same rule lib/JawnOS/Sco/Client.pm follows (t/228 guards it).
 use Socket qw(SOCK_STREAM);
-use Mojo::JSON qw(decode_json encode_json);
+use Mojo::JSON qw(decode_json encode_json true);
 use Cwd ();
 use File::Basename ();
 use File::Spec ();
@@ -149,10 +149,12 @@ sub audio_engine_command {
 #
 # `$extra` is the optional take plan: `tracks` is either the historical count
 # or the engine's per-track array of objects, `inputs` is the parallel channel
-# list, and `master` is the enabled mastering inserts the take arms. Only those
-# three keys are forwarded, so a caller cannot turn this into a way to smuggle a
+# list, `master` is the enabled mastering inserts the take arms, and
+# `monitor_input`/`monitor_gain` arm the live input on the monitor bus. Only
+# those keys are forwarded, so a caller cannot turn this into a way to smuggle a
 # field the engine never promised; an empty or absent hash keeps the old
-# three-argument call exactly as it was.
+# three-argument call exactly as it was. The switch is a JSON boolean and goes
+# out only when it is on; the gain goes out only when it has a number.
 sub audio_engine_record {
 	my ($out_abs, $seconds, $start_at, $extra) = @_;
 	my $request = { cmd => 'record' };
@@ -164,6 +166,9 @@ sub audio_engine_record {
 			next unless exists $extra->{$key};
 			$request->{$key} = $extra->{$key};
 		}
+		$request->{'monitor_input'} = true if $extra->{'monitor_input'};
+		$request->{'monitor_gain'} = $extra->{'monitor_gain'}
+			if defined $extra->{'monitor_gain'};
 	}
 	return audio_engine_command($request);
 }

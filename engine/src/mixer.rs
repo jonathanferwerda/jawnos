@@ -402,6 +402,9 @@ impl MasterSlot {
 pub struct Track {
     /// The device input index this track records, 0-based.
     pub input: usize,
+    /// How many device channels this track claims: `1` mono, `2` stereo. A
+    /// stereo pair is averaged at `0.5` each *before* the mono strip.
+    pub channels: usize,
     /// The name a take report and a file name use, e.g. `ch1`.
     pub label: String,
     /// Trim -> inserts in order -> equal-power pan.
@@ -441,6 +444,7 @@ impl Mixer {
             .enumerate()
             .map(|(index, label)| Track {
                 input: inputs.get(index).copied().unwrap_or(index),
+                channels: 1,
                 label: (*label).to_string(),
                 channel: Channel::new(1.0, 0.0),
             })
@@ -631,6 +635,22 @@ impl Mixer {
     where
         F: Fn(usize) -> &'a [f32],
     {
+        self.mix_with_live(bus, input, None)
+    }
+
+    /// The same sum, with the take's live input added to the bus **before** the
+    /// single master pass, so the person and the monitor files hear one
+    /// mastering chain. `live` is interleaved stereo and must match the bus;
+    /// `None` is exactly [`mix_with`](Mixer::mix_with).
+    pub fn mix_with_live<'a, F>(
+        &mut self,
+        bus: &mut [f32],
+        input: F,
+        live: Option<&[f32]>,
+    ) -> Result<(), String>
+    where
+        F: Fn(usize) -> &'a [f32],
+    {
         self.apply_pending();
         if bus.len() % 2 != 0 {
             return Err(format!(
@@ -656,6 +676,15 @@ impl Mixer {
                 ));
             }
         }
+        if let Some(live) = live {
+            if live.len() != bus.len() {
+                return Err(format!(
+                    "the live input has {} samples, the bus has {}",
+                    live.len(),
+                    bus.len()
+                ));
+            }
+        }
 
         bus.fill(0.0);
         let Mixer {
@@ -672,6 +701,15 @@ impl Mixer {
                 .process(input(index), stereo)
                 .map_err(|error| format!("track {index}: {error:?}"))?;
             for (out, sample) in bus.iter_mut().zip(stereo.iter()) {
+                *out += sample;
+            }
+        }
+
+        // The live input joins the bus here, after every strip and before the
+        // master pass below: a master insert that scales the files must scale
+        // the live input by the same amount.
+        if let Some(live) = live {
+            for (out, sample) in bus.iter_mut().zip(live.iter()) {
                 *out += sample;
             }
         }
@@ -971,5 +1009,36 @@ mod tests {
         assert!(mixer.bypass_master("master_eq", true));
         assert!(!mixer.bypass_master("master_limiter", true));
         assert_eq!(mixer.master_insert_names(), "equalizer");
+    }
+
+    #[test]
+    fn the_live_input_is_summed_before_the_master_chain() {
+        // With no files at all the bus is the live input, summed at unity.
+        let live = vec![0.8f32; 256];
+        let mut plain = Mixer::new(&[], &[]);
+        plain.prepare(48_000, 128);
+        let mut bus = vec![0.0f32; 256];
+        plain
+            .mix_with_live(&mut bus, |_| &[] as &[f32], Some(&live))
+            .expect("mix");
+        assert_eq!(bus, live);
+
+        // A master insert that scales the bus must scale the live input too:
+        // the limiter catches the live path exactly as it catches a file.
+        let mut mixer = Mixer::new(&[], &[]);
+        mixer.push_master(InsertKind::Limiter);
+        assert!(mixer.set_master("master_limiter.ceiling", -6.0));
+        mixer.prepare(48_000, 128);
+        let mut bus = vec![0.0f32; 256];
+        for _ in 0..4 {
+            mixer
+                .mix_with_live(&mut bus, |_| &[] as &[f32], Some(&live))
+                .expect("mix");
+        }
+        let ceiling = 10f32.powf(-6.0 / 20.0);
+        assert!(
+            bus.iter().all(|sample| sample.abs() <= ceiling + 2e-2),
+            "the master chain did not see the live input: {bus:?}"
+        );
     }
 }

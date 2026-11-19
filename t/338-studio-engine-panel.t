@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Audio/Engine.pm templates/studio/markup.html.ep public/js/manager/studio.js public/js/manager/studio/06_controls.js perl/help/topics_apps.pl
+# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Audio/Engine.pm templates/studio/markup.html.ep public/js/manager/studio.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js perl/help/topics_apps.pl
 # covers:    Studio's Engine take panel - POST /manager/studio/take action=param
 #            relays one strip knob per name class through a live Unix socket,
 #            refuses an unknown name, a bad number and a bad track with a 400
@@ -389,6 +389,9 @@ for my $id (qw(studio_engine_panel studio_engine_start studio_engine_stop
 }
 like($markup, qr/id="studio_engine_seconds" value="10"/, 'seconds default to ten');
 like($markup, qr/for my \$n \(1 \.\. 8\)/, 'the tracks picker offers one to eight');
+like($markup, qr/id="studio_engine_inputs_rows"/, 'the markup carries the per-track picker rows');
+like($markup, qr/<input type="hidden" id="studio_engine_inputs">/, 'the old Inputs id survives as a hidden comma list');
+like($markup, qr/id="studio_engine_monitor"/, 'and the monitor dropped readout');
 like($markup, qr/&subs::ui\('Start take'\)/, 'the Start take button is translatable');
 like($markup, qr/&subs::ui\('Stop take'\)/, 'the Stop take button is translatable');
 for my $id (qw(studio_listen_toggle studio_listen_input studio_listen_gain
@@ -413,10 +416,29 @@ like($studio_js, qr/studioAudioLabel\('Gain'\)/, 'Gain goes through the translat
 like($studio_js, qr/typeof jawnosT === 'function'/, 'and that helper is jawnosT');
 like($studio_js, qr/studioEngineNumber/,
 	'numbers are shown only when the engine reported them');
+like($studio_js, qr/function studioEngineInputRow\(/, 'the panel builds one row per engine track');
+like($studio_js, qr/studioAudioLabel\('Input'\)/, 'the Input picker options are translatable');
+like($studio_js, qr/studioAudioLabel\('Mono'\)/, 'the Source picker offers Mono');
+like($studio_js, qr/studioAudioLabel\('Stereo'\)/, 'and Stereo');
+like($studio_js, qr/data\.device_channels/, 'the input list follows the engine\'s capture width');
+like($studio_js, qr/channels: \(index < sources\.length/,
+	'the track plan sends each track\'s channels');
+like($studio_js, qr/monitor_input:/, 'starting a take sends monitor_input');
+like($studio_js, qr/monitor_gain:/, 'and monitor_gain');
+like($studio_js, qr/function studioEngineMonitorGain\(/,
+	'the transport Monitor has its own input-gain sender');
+like($studio_js, qr/target: 'input'/,
+	'addressed to the input, not a track');
+like($studio_js, qr/studioAudioLabel\('in'\)/, 'a strip names its input and source');
+like($studio_js, qr/monitor_dropped/, 'the panel reads the engine\'s monitor_dropped');
+like($studio_js, qr/studioAudioLabel\('monitor dropped'\)/, 'as a small readout');
 
 my $controls_js = read_file("$root/public/js/manager/studio/06_controls.js");
 like($controls_js, qr/'#studio_engine_start'/, 'Start take is bound in the controls part');
 like($controls_js, qr/'#studio_engine_stop'/, 'Stop take is bound in the controls part');
+like($controls_js, qr/'#studio_engine_tracks'/, 'the Tracks select rebuilds the pickers');
+like($controls_js, qr/\.studio_engine_input_pick, \.studio_engine_source_pick/,
+	'both per-track pickers are bound');
 like($controls_js, qr/\.studio_engine_gain, \.studio_engine_pan/,
 	'both strip sliders are bound');
 like($controls_js, qr/studioEngineParam\(\$\(this\)\.attr\('data-track'\)/,
@@ -434,6 +456,8 @@ like($controls_js, qr/inserts: studioListenInserts\(\)/, 'and sends that chain t
 like($controls_js, qr/'#studio_monitor'/, 'the transport Monitor button is bound');
 like($controls_js, qr/setting="monitor"/, 'and drives the monitor setting the config panel owns');
 like($controls_js, qr/function studioMonitorButtonRender/, 'one renderer keeps the button and the setting in step');
+like($controls_js, qr/studioEngineRecording && studioEngineMonitorArmed/,
+	'a recording engine take mutes the live input it armed from the Monitor button');
 like($controls_js, qr/!ins\.bypassed && studioEffectBuilder\(ins\.name\)/, 'only enabled, real pedals');
 like($markup, qr/Input 1 \(channel 0\)/, 'the input picker names the interface channels');
 like($markup, qr/Input 2 \(channel 1\)/, 'both of them');
@@ -452,5 +476,11 @@ like($body, qr/Listen, below those controls, starts live monitoring/, 'help name
 like($body, qr/choose Input 1 or Input 2 \(the interface's two channels\)/, 'help names the interface channels');
 like($body, qr/selected track's pedals are the monitor's chain/, 'and says the monitor uses the selected rack');
 like($body, qr/Only one capture is available/, 'help says listening and recording exclude each other');
+like($body, qr/Source picker/, 'help names the per-track Source choice');
+like($body, qr/Mono reads that one channel/, 'and what Mono and Stereo read');
+like($body, qr/silences or restores the live input it armed/,
+	'and what Monitor does during an engine take');
+like($body, qr/A take started with Monitor off armed no live input/,
+	'and that a take without Monitor has none to restore');
 
 done_testing();

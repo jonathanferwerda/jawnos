@@ -142,3 +142,39 @@ track; `master_*` names resolve to the same effect implementations.
 A change is forwarded only while the engine is the path that is actually
 playing (a take is armed, or live monitoring is on). The browser's own graph
 stays authoritative when it is; a knob is not sent twice for one movement.
+
+## Live input on the monitor bus
+
+An engine take can send its live input to the monitor outputs without changing
+what is recorded. Two `record` fields arm it:
+
+| field | meaning |
+| --- | --- |
+| `monitor_input` | boolean, default `false`; `true` sums the take's live input into the monitor bus |
+| `monitor_gain` | finite number, default `1.0`, clamped `0..=4`; trims live input on the monitor bus only |
+
+The live input goes through each track's strip and then the monitor's master
+chain, so it hears the same mastering as a monitor file. It is never written to
+the take. `monitor_gain` `0` is silence, which is how the page mutes live input
+without ending the take. A `monitor_input` take may have no `monitor` files: the
+monitor runs for the take's length.
+
+A track's plan entry also carries `channels`, a whole `1` or `2` and defaulting
+to `1`. `1` reads the single device channel `input`; `2` reads `input` and
+`input+1`, sums them at `0.5` each before the strip, and claims both channels.
+Inputs stay unique by claimed channel, so a stereo pair at `0` and a mono at
+`1` is refused (`tracks_json track 2 input 1 overlaps track 1's stereo pair
+0-1`), and a claimed channel may not pass `31`.
+
+While a take records with live input, the page trims or mutes it through a
+fourth `param` target:
+
+```
+POST /manager/studio/take  { action: "param", target: "input",
+                             name: "gain", value: V }
+```
+
+`gain` is the only name this target carries; anything else is refused
+(`target "input" only carries "gain"`). `V` is a finite number clamped
+`0..=4` and mirrored in `status`. A take with no live input answers
+`no live input is being monitored`.

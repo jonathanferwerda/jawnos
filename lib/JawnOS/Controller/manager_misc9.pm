@@ -1330,6 +1330,19 @@ sub action_44023 {
 			));
 			return;
 		}
+		if (defined $target && $target eq 'input') {
+			my ($error, $name, $value) = &studio_input_param(
+				$c->param('name'), $c->param('value'),
+			);
+			if (defined $error) {
+				$c->render(json => { ok => 0, error => $error }, status => 400);
+				return;
+			}
+			$c->render(json => &JawnOS::Audio::Engine::audio_engine_param(
+				undef, $name, $value, 'input',
+			));
+			return;
+		}
 		my ($error, $track, $name, $value) = &studio_take_param(
 			$c->param('track'), $c->param('name'), $c->param('value'),
 		);
@@ -1367,6 +1380,8 @@ sub action_44023 {
 		$c->param('inserts'),
 		$c->param('tracks_json'),
 		$c->param('master_json'),
+		$c->param('monitor_input'),
+		$c->param('monitor_gain'),
 	);
 	$c->render(json => $answer, status => $status);
 	return;
@@ -1587,7 +1602,19 @@ sub studio_master_param {
 	return (undef, $name, $number);
 }
 
-# The page's per-track plan, as a JSON array of `{ input, inserts }`. The
+# One live-input knob. The monitor bus carries a single control, `gain`; the
+# value is a finite decimal clamped to the engine's own range. Any other name
+# is a refusal, not a silent no-op.
+sub studio_input_param {
+	my ($name, $value) = @_;
+	$name = '' unless defined $name;
+	return ('target "input" only carries "gain"') unless $name eq 'gain';
+	my $number = &studio_listen_number($value);
+	return ('value must be a finite number') unless defined $number;
+	return (undef, 'gain', &studio_listen_clamp($number, 0, $studio_listen_gain_max));
+}
+
+# The page's per-track plan, as a JSON array of `{ input, channels, inserts }`. The
 # engine accepts that shape directly, so this only refuses what it could not
 # build: an input outside 0..31, an insert the engine does not have, a duplicate
 # input, or more tracks than the engine takes. When this field is present it
@@ -1601,7 +1628,7 @@ sub studio_take_json_plan {
 	return ('tracks_json must name between 1 and 32 tracks', undef)
 		unless @$decoded >= 1 && @$decoded <= $studio_take_tracks_max;
 
-	my (@plan, %seen_input);
+	my (@plan, %seen_input, %claimed);
 	for my $index (0 .. $#$decoded) {
 		my $entry = $decoded->[$index];
 		my $label = 'tracks_json track ' . ($index + 1);
@@ -1613,6 +1640,30 @@ sub studio_take_json_plan {
 				&& $input <= $studio_take_input_max;
 		$input += 0;
 		return ("$label names input $input twice", undef) if $seen_input{$input}++;
+
+		# `channels` is whole 1 or 2 and defaults to mono. A pair claims
+		# both device channels, so uniqueness is by claimed channel and the
+		# last one cannot pass the input bound.
+		my $channels = 1;
+		if (defined $entry->{'channels'}) {
+			my $raw = $entry->{'channels'};
+			return ("$label channels must be 1 (mono) or 2 (stereo)", undef)
+				unless !ref $raw && $raw =~ /\A\+?[12]\z/;
+			$channels = $raw + 0;
+		}
+		my $last = $input + $channels - 1;
+		return ("$label needs an input between 0 and 30 for a stereo pair", undef)
+			if $last > $studio_take_input_max;
+		for my $channel ($input .. $last) {
+			next unless exists $claimed{$channel};
+			my $other = $claimed{$channel};
+			my $other_channels = $plan[$other]{'channels'} // 1;
+			my $pair = $other_channels == 2
+				? 'stereo pair ' . $plan[$other]{'input'} . '-' . ($plan[$other]{'input'} + 1)
+				: 'input ' . $plan[$other]{'input'};
+			return ("$label input $input overlaps track " . ($other + 1) . "'s $pair", undef);
+		}
+		$claimed{$_} = $index for $input .. $last;
 
 		my $inserts = $entry->{'inserts'};
 		$inserts = [] unless defined $inserts;
@@ -1626,7 +1677,9 @@ sub studio_take_json_plan {
 				unless $studio_take_inserts{$name};
 			push @chain, $name;
 		}
-		push @plan, { input => $input, inserts => \@chain };
+		my %track = (input => $input, inserts => \@chain);
+		$track{'channels'} = 2 if $channels == 2;
+		push @plan, \%track;
 	}
 	return (undef, \@plan);
 }
@@ -1712,11 +1765,40 @@ sub studio_take_plan {
 	return (undef, \@plan);
 }
 
+# The live-monitor switch and its trim are validated before anything is
+# created. Absent or a word of refusal is off, a word of assent is on, and
+# anything else is refused rather than guessed. The gain is a finite decimal
+# clamped to the engine's range and defaulting to unity.
+our $studio_monitor_gain_default = 1.0;
+
+sub studio_monitor_start {
+	my ($monitor_input, $monitor_gain) = @_;
+
+	my $on = 0;
+	if (defined $monitor_input) {
+		(my $word = lc $monitor_input) =~ s/\A\s+|\s+\z//g;
+		$on = 1 if $word eq 'true' || $word eq '1' || $word eq 'yes';
+		return ('monitor_input must be on or off', undef, undef)
+			unless $on || $word eq '' || $word eq 'false' || $word eq 'no';
+	}
+
+	my $gain = $studio_monitor_gain_default;
+	if (defined $monitor_gain && length $monitor_gain) {
+		$gain = &studio_listen_number($monitor_gain);
+		return ('monitor_gain must be a finite number', undef, undef)
+			unless defined $gain;
+	}
+	$gain = &studio_listen_clamp($gain, 0, $studio_listen_gain_max);
+
+	return (undef, $on, $gain);
+}
+
 # Resolve, arm and send one take. The folder is made server-side because the
 # disk writer does not create parents; the engine is checked first so a machine
 # without one does not leave an empty directory behind.
 sub studio_take_start {
-	my ($seconds, $start_at, $tracks, $inputs, $inserts, $tracks_json, $master_json) = @_;
+	my ($seconds, $start_at, $tracks, $inputs, $inserts, $tracks_json, $master_json,
+		$monitor_input, $monitor_gain) = @_;
 	$seconds  = &studio_take_seconds($seconds);
 	$start_at = &studio_take_start_at($start_at);
 
@@ -1724,6 +1806,9 @@ sub studio_take_start {
 	return (400, { ok => 0, error => $plan_error }) if defined $plan_error;
 	my ($master_error, $master) = &studio_master_plan($master_json);
 	return (400, { ok => 0, error => $master_error }) if defined $master_error;
+	my ($monitor_error, $monitor_on, $monitor_level) =
+		&studio_monitor_start($monitor_input, $monitor_gain);
+	return (400, { ok => 0, error => $monitor_error }) if defined $monitor_error;
 
 	my $folder = &studio_take_folder();
 	return (503, { ok => 0, error => 'no recording folder is set on this machine' })
@@ -1742,6 +1827,10 @@ sub studio_take_start {
 	my $extra;
 	$extra->{'tracks'} = $plan if $plan;
 	$extra->{'master'} = $master if @$master;
+	if ($monitor_on) {
+		$extra->{'monitor_input'} = 1;
+		$extra->{'monitor_gain'} = $monitor_level;
+	}
 	my $answer = &JawnOS::Audio::Engine::audio_engine_record(
 		$path, $seconds, $start_at, $extra,
 	);
