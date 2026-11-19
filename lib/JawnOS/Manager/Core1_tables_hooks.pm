@@ -113,6 +113,7 @@ app->hook(after_static => sub {
 # that folder through subs::js_part_files, so a split needs no change here; the
 # list only says where each app starts in the concatenation.
 our @manager_bundle_files = qw(
+	/js/universal.js
 	/js/manager/lazy.js
 	/js/manager/stored.js
 	/js/manager/game_session.js
@@ -209,6 +210,8 @@ our @manager_bundle_files = qw(
 	/js/manager/screening.js
 	/js/manager/phone.js
 	/js/manager/people.js
+	/js/manager/websocket.js
+	/js/manager/jp.js
 );
 
 # Apps that load their scripts when they are first opened. The value is the

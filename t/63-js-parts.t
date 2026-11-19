@@ -293,15 +293,23 @@ like($js_misc, qr/content_encoding\('gzip'\)/, 'the bundle is gzipped when asked
 my $routes = read_file("$root/lib/JawnOS/Routes/js_misc.pm");
 like($routes, qr{'/js/manager/app\.js'.*action_7408}s, 'the chunk route is registered');
 
-# --- scripts loaded outside the bundle reach their parts --------------------
-# websocket and jp are separate <script> tags in the manager layout; the IME
-# page loads soft_keyboard on its own. They go through js_script_urls so a
-# folder of parts is not silently skipped when the page is opened.
+ok($bundle{'/js/universal.js'}, 'universal.js is in the core bundle');
+ok($bundle{'/js/manager/websocket.js'}, 'websocket.js is in the core bundle');
+ok($bundle{'/js/manager/jp.js'}, 'jp.js is in the core bundle');
+
+# --- one bundle, not fourteen tags ------------------------------------------
+# The manager page used to load universal, websocket and jp as fourteen
+# separate parser-blocking tags. They are in the one core bundle now (the route
+# expands each split index), so a laptop pays one parse and one request instead
+# of fourteen round trips before the desk stands. The IME page still loads
+# soft_keyboard on its own through js_script_urls.
 my $layout = read_file("$root/templates/layouts/manager.html.ep");
-like($layout, qr/js_script_urls\('public\/js\/manager\/websocket\.js'\)/,
-	'the manager layout expands websocket parts');
-like($layout, qr/js_script_urls\('public\/js\/manager\/jp\.js'\)/,
-	'the manager layout expands jp parts');
+unlike($layout, qr/js_script_urls\('public\/js\/manager\/websocket\.js'\)/,
+	'the manager layout no longer loads websocket as separate tags');
+unlike($layout, qr/js_script_urls\('public\/js\/manager\/jp\.js'\)/,
+	'and no longer loads jp as separate tags');
+unlike($layout, qr/js_script_urls\('public\/js\/universal\.js'\)/,
+	'and no longer loads universal as separate tags');
 like($layout, qr/var jawnos_app_scripts =/, 'the layout stamps the app chunk map');
 like($layout, qr/var jawnos_app_entry =/, 'the layout stamps the entry stubs');
 like($layout, qr/var jawnos_toggle_apps =/, 'the layout stamps the toggle map');

@@ -251,12 +251,11 @@
 		     but *before* #preload below: the preloaded window HTML carries an inline
 		     script that uses jQuery UI, so the libraries must already be loaded when
 		     it is parsed. Order matters and the inline windowMaker call stays last.
-		     /js/manager/bundle.js is the core (Manager.pl: manager_core_files); an
-		     app's own scripts come from /js/manager/app.js on first open. -->
-		<%# universal.js is an index plus public/js/universal/ parts; expand both %>
-		<% for my $script (&subs::js_script_urls('public/js/universal.js')) { %>
-			<script src="<%= $script %>?string=<%= $string %>"></script>
-		<% } %>
+		     /js/manager/bundle.js is every core script (Manager.pl:
+		     manager_bundle_files), universal.js, websocket.js and jp.js included:
+		     one parse and one request instead of the fourteen the split indices
+		     used to take. An app's own scripts come from /js/manager/app.js on
+		     first open. -->
 		<% if (&subs::language() ne 'en') { %>
 			<script src="/i18n/ui-<%= &subs::language() %>.js?string=<%= $string %>"></script>
 		<% } %>
@@ -281,13 +280,6 @@
 			else { windowMaker(preload,timestamp); }
 		});</script>
 	</body>
-	<%# these two are not in the bundle; each may now be an index plus parts %>
-	<% for my $script (&subs::js_script_urls('public/js/manager/websocket.js')) { %>
-		<script src="<%= $script %>?string=<%= $string %>"></script>
-	<% } %>
-	<% for my $script (&subs::js_script_urls('public/js/manager/jp.js')) { %>
-		<script src="<%= $script %>?string=<%= $string %>"></script>
-	<% } %>
 	<%# Developer tool, off by default: the refresh probe explains a WebUI
 	     reload across a long run, so only a browser that asks for it with
 	     ?probe=1 (and so carries its cookie afterwards) loads it. A normal
