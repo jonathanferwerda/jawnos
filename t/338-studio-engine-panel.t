@@ -431,6 +431,9 @@ like($controls_js, qr/setInterval\(studioListenStatus, 750\)/,
 	'listen status is polled while it runs');
 like($controls_js, qr/function studioListenInserts\(/, 'Listen takes the selected track\'s rack');
 like($controls_js, qr/inserts: studioListenInserts\(\)/, 'and sends that chain to the monitor');
+like($controls_js, qr/'#studio_monitor'/, 'the transport Monitor button is bound');
+like($controls_js, qr/setting="monitor"/, 'and drives the monitor setting the config panel owns');
+like($controls_js, qr/function studioMonitorButtonRender/, 'one renderer keeps the button and the setting in step');
 like($controls_js, qr/!ins\.bypassed && studioEffectBuilder\(ins\.name\)/, 'only enabled, real pedals');
 like($markup, qr/Input 1 \(channel 0\)/, 'the input picker names the interface channels');
 like($markup, qr/Input 2 \(channel 1\)/, 'both of them');

@@ -325,6 +325,7 @@ function studioApplyMonitor() {
 	$.each(studioAudio.channels, function (ch, c) {
 		if (c.monGain) { c.monGain.gain.value = on ? 1 : 0; }
 	});
+	if (typeof studioMonitorButtonRender === 'function') { studioMonitorButtonRender(); }
 }
 
 // Persist an app-wide preference (capture quality) without rebuilding the

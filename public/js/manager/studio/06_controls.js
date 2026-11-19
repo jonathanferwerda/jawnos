@@ -520,6 +520,21 @@ $(document).on('click', '#studio_config_toggle, .studio_config_toggle_close', fu
 	}
 });
 
+// The transport's Monitor button is the same setting the config panel's
+// "Monitor input" select carries: on, a take is heard with the live input;
+// off, only the recorded track. One control updates the other.
+function studioMonitorButtonRender() {
+	var on = mixer['time'] && mixer['time']['monitor'] == 'yes';
+	$('#studio_monitor').attr('aria-pressed', on ? 'true' : 'false')
+		.text(on ? studioListenText('Monitor on') : studioListenText('Monitor'));
+}
+
+$(document).on('click', '#studio_monitor', function () {
+	var on = !(mixer['time'] && mixer['time']['monitor'] == 'yes');
+	$('.studio_config[setting="monitor"]').val(on ? 'yes' : 'no').trigger('change');
+	studioMonitorButtonRender();
+});
+
 $(document).on('change', '.studio_config', function() {
 	var setting = $(this).attr('setting');
 	var value = $(this).val();
