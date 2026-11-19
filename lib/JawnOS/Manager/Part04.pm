@@ -175,12 +175,15 @@ sub rock_and_roll($c) {
 		# cache row the merge wrote. media_fetch_on_demand asks the server first,
 		# then the machine the row came from, then the other peers, and gives up
 		# quietly.
+		my $source;
 		if (length $file && !-e $file) {
-			my $source = ref $on_demand_entry eq 'HASH' ? $on_demand_entry : &subs::files_cache_source($file);
-			if (ref $source eq 'HASH' && defined $source->{'remote_f'} && length $source->{'remote_f'}) {
-				eval { &subs::media_fetch_on_demand($file, $source) };
-			}
+			$source = ref $on_demand_entry eq 'HASH' ? $on_demand_entry : &subs::files_cache_source($file);
 		}
+		# Everything below serves the file. It is a closure because a file this
+		# machine does not have is fetched in a child (render_in_subprocess), and
+		# this route's answer has to wait for that child without holding the
+		# worker: the parent's event loop serves other requests meanwhile.
+		my $serve = sub {
 		my @ext = split /\./, $file;
 		my $ext = $ext[-1];
 		my $timestamp = $c->param('timestamp') || &subs::rightNow();
@@ -776,6 +779,38 @@ sub rock_and_roll($c) {
 			$c->res->code(404);
 			$c->render(text => 'not found');
 		}
+		};
+		# A file kept on another machine is fetched on demand. The fetch (a
+		# connect and a body read) blocks, so it runs in a child; the parent is
+		# free to answer the rest of the page. The serve closure runs when the
+		# child returns, whether it wrote the file or not.
+		if (ref $source eq 'HASH' && defined $source->{'remote_f'} && length $source->{'remote_f'}) {
+			my $now = &subs::rightNow();
+			unless ($subs::media_fetch_down{$file} && $now - $subs::media_fetch_down{$file} < 60000) {
+				&subs::render_in_subprocess($c,
+					sub {
+						# A forked child inherits the request worker's reactor;
+						# reset it so the blocking UserAgent in the fetch has a
+						# loop of its own (the subprocessor wrapper does the same).
+						Mojo::IOLoop->reset({ freeze => 1 });
+						eval { JawnOS::Platform::Process::release_listeners() };
+						return &subs::media_fetch_on_demand($file, $source) ? 1 : 0;
+					},
+					sub {
+						my ($c, $fetched) = @_;
+						# The child has its own copy of the throttle; make the
+						# parent remember the verdict too, so the next redraw
+						# does not spawn another child for the same path.
+						$subs::media_fetch_down{$file} = &subs::rightNow() unless $fetched;
+						delete $subs::media_fetch_down{$file} if $fetched;
+						$serve->();
+						return;
+					});
+				return;
+			}
+		}
+		$serve->();
+		return;
 	}
 	else {
 		# the gate may already have answered (a locked request for a file is

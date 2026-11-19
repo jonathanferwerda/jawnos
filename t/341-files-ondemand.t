@@ -111,6 +111,12 @@ unlike($merge, qr/unless \(-e \$dest && !&subs::file_sentinel_stub\(\$dest\)\) \
 my $open = read_file("$root/lib/JawnOS/Manager/Part04.pm");
 like($open, qr/&subs::media_fetch_on_demand\(\$file, \$source\)/,
 	'opening a file that is not here asks the house for it');
+like($open, qr/&subs::render_in_subprocess\(\$c,/,
+	'and does it in a child, so the worker is free to answer other requests');
+like($open, qr/Mojo::IOLoop->reset\(\{ freeze => 1 \}\)/,
+	'the child gets its own reactor for the blocking fetch');
+unlike($open, qr/eval \{ &subs::media_fetch_on_demand/,
+	'the route no longer blocks on the fetch itself');
 like($open, qr/&subs::files_cache_source\(\$file\)/,
 	'a request that names only the path reads the source from the cache row');
 like($open, qr/\$on_demand_entry = \$f;/, 'the appointment entry goes with the request');
