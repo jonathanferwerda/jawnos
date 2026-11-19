@@ -9,10 +9,9 @@
 		left: auto;
 		top: auto;
 		box-sizing: border-box;
-		border: solid;
-		border-width: 5px;
+		border: 5px solid var(--line);
 		border-radius: 10px;
-		background: brown;
+		background: var(--panel-2);
 		overflow: hidden;
 	}
 	/* The pedalboard is a bottom sheet over the console, not a grid row: opening
@@ -27,9 +26,9 @@
 		/* the bar (20px) plus the 140px tiles and a thin scrollbar: 170px */
 		max-height: 170px;
 		overflow: hidden;
-		background-color: #3c200c;
-		border-top: 3px solid #2a1608;
-		box-shadow: 0 -6px 18px rgba(0, 0, 0, .45);
+		background-color: var(--panel-2);
+		border-top: 3px solid var(--line);
+		box-shadow: var(--shadow-2);
 		box-sizing: border-box;
 	}
 	.studio_pedalboard_bar {
@@ -78,8 +77,8 @@
 		align-items: center;
 		justify-content: center;
 		gap: 10px;
-		background: #3a2a1a;
-		color: #fff;
+		background: var(--panel-2);
+		color: var(--ink);
 	}
 	.studio_pedal_name {
 		font-size: 15px;
@@ -118,6 +117,15 @@
 		height: 14px;
 		align-self: center;
 	}
+	/* The insertion marker the rack sortable shows while a pedal is dragged. */
+	.studio_rack_placeholder {
+		display: block;
+		height: 24px;
+		margin: 2px 0;
+		border: 1px dashed var(--accent);
+		border-radius: 4px;
+		background: var(--accent-soft, var(--panel-2));
+	}
 	/* the rack row dims when bypassed, but its lamp must stay readable */
 	.studio_rack_off .studio_rack_led {
 		opacity: 1;
@@ -131,26 +139,64 @@
 	#studio_layout_bar { order: 1; }
 	#studio_grid { order: 2; }
 	#studio_controls {
-		position:absolute;
-		padding-left:5px;
-		left:0;
-		right:0;
-		top:0;
-		bottom:0;
-		width:auto;
+		position: static;
+		display: block;
+		padding: 0;
+		width: 100%;
 	}
-	/* the transport buttons and the jog wheel share one row, so the wheel can
-	   never cover Prev/Next and the panel's own width is the only constraint */
+	/* One row: the buttons, the jog wheel, tempo, signature, position and the
+	   metronome. It wraps only when the panel is genuinely too narrow. */
 	.studio_transport_row {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		flex-wrap: nowrap;
+		gap: 4px;
+		flex-wrap: wrap;
+		padding: 2px 4px;
+		box-sizing: border-box;
+		width: 100%;
 	}
 	.studio_transport_row .little_thumb {
-		width: 40px;
-		height: 40px;
-		flex: 0 0 40px;
+		width: 24px;
+		height: 24px;
+		flex: 0 0 24px;
+	}
+	.studio_transport_row .jog_wheel_frame {
+		flex: 0 0 28px;
+		width: 28px;
+		height: 28px;
+	}
+	.studio_transport_row #studio_jog_wheel {
+		width: 28px;
+		height: 28px;
+		left: 0;
+		top: 0;
+		position: static;
+	}
+	.studio_transport_field {
+		width: 44px;
+		height: 24px;
+		font-size: 12px;
+		vertical-align: middle;
+	}
+	.studio_transport_knob {
+		position: static;
+		width: 24px;
+		height: 24px;
+	}
+	.studio_transport_time {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 3px;
+		margin-left: auto;
+		font-size: 18px;
+		white-space: nowrap;
+	}
+	.studio_transport_sep {
+		opacity: .5;
+		font-size: 13px;
+	}
+	#studio_time_display {
+		font-size: 18px;
 	}
 	#studio_track_container {
 		/* the hidden media elements live inside the track area, a clipped 1px box:
@@ -174,7 +220,7 @@
 		word-break: break-word;
 		max-height: 42px;
 		overflow: hidden;
-		color: #04325f;
+		color: var(--ink-muted, var(--ink));
 	}
 	.knob {
 		width: 30px;
@@ -191,7 +237,7 @@
 		border-radius: 3px;
 	}
 	.channel.selected_channel {
-		box-shadow: inset 0 0 0 3px #8ab4f8;
+		box-shadow: inset 0 0 0 3px var(--accent);
 	}
 	.pedal_background {
 		cursor: var(--jawnos-cursor-grab, grab);
@@ -209,8 +255,8 @@
 		display: none;
 		z-index: 70000;
 		padding: 1px 6px;
-		background: #04325f;
-		color: #fff;
+		background: var(--accent);
+		color: var(--accent-ink, #fff);
 		border-radius: 4px;
 		font-size: 12px;
 		pointer-events: none;
@@ -220,7 +266,7 @@
 		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.pedal.pedal_revealed {
-		box-shadow: 0 0 0 4px #ffd21e;
+		box-shadow: 0 0 0 4px var(--accent);
 	}
 	.knob_control {
 		appearance:none;
@@ -239,16 +285,20 @@
 		z-index: 1;
 	}
 	.armed[state=off] {
-		background:grey;
+		background: var(--panel-2);
+		color: var(--ink);
 	}
 	.armed[state=rec] {
-		background:red;
+		background: var(--runway-bad, #b3453f);
+		color: #fff;
 	}
 	.armed[state=play] {
-		background:green;
+		background: var(--runway-good, #2f7d4f);
+		color: #fff;
 	}
 	.armed[state=loop] {
-		background:blue;
+		background: var(--accent);
+		color: var(--accent-ink, #fff);
 	}
 	.cord {
 		width:40px;
@@ -280,7 +330,7 @@
 		border-radius: 5px;
 		border-width: .1px;
 		background-color:transparent;
-		color: black;
+		color: var(--ink);
 		outline: none;
 	  writing-mode: vertical-lr;
 	  direction: rtl;
@@ -293,15 +343,15 @@
 		width: 30px;
 		left: 2px;
 		top: 1px;
-		color: black;
+		color: var(--ink);
 		outline: none;
 	  vertical-align: middle;
 
 	}
 	.channel {
-		border: solid;
-		border-width: 2px;
+		border: 2px solid var(--line);
 		border-radius: 5px;
+		background: var(--panel);
 		width: 40px;
 		height: auto;
 		min-height: 0;
@@ -320,9 +370,9 @@
 	#studio {
 		height:100%;
 		width:100%;
-		border-width: 10px;
+		border: 10px solid var(--line);
 		border-radius: 10px;
-		border: solid;
+		background: var(--panel);
 		position: relative;
 		box-sizing: border-box;
 		min-width: 380px;
@@ -337,7 +387,7 @@
 		width: 100%;
 		overflow-x: hidden;
 		overflow-y: auto;
-		background-color: lightblue;
+		background-color: var(--panel-2);
 	}
 	/* The four docked panels pack into one grid: every panel is one column wide
 	   by default, auto-flow dense fills the gaps, and a two-column span is the
@@ -361,6 +411,7 @@
 		grid-column: span 1;
 		min-width: 0;
 		min-height: 0;
+		position: relative;
 		overflow: auto;
 	}
 	/* ---- arranged mode ------------------------------------------------------
@@ -388,8 +439,10 @@
 	}
 	#studio_grid.studio_arranged > #studio_transport_panel {
 		grid-area: transport !important;
-		/* the record row and the tempo row; the rest scrolls */
-		height: 96px;
+		/* one row that grows only when it wraps on a narrow window */
+		height: auto;
+		min-height: 56px;
+		max-height: 104px;
 	}
 	#studio_grid.studio_arranged > #studio_tracks_panel {
 		grid-area: tracks !important;
@@ -400,7 +453,9 @@
 	#studio_grid.studio_arranged > #studio_mixer {
 		grid-area: mixer !important;
 		height: auto;
-		max-height: 132px;
+		/* the bar plus a whole channel strip (the strips are ~240px of knobs
+		   and jacks under the window's own control sizes) */
+		max-height: 280px;
 	}
 	/* A phone-width window stacks the same areas: transport, dominant timeline,
 	   a compact console, then the synth. The fixed auto-row heights are small so
@@ -418,7 +473,8 @@
 	}
 	#studio_grid.studio_arranged_compact > #studio_transport_panel {
 		grid-area: transport !important;
-		height: 88px;
+		height: auto;
+		min-height: 56px;
 	}
 	#studio_grid.studio_arranged_compact > #studio_tracks_panel {
 		grid-area: tracks !important;
@@ -435,7 +491,7 @@
 		min-width: 0;
 		min-height: 0;
 		width: 100%;
-		background-color: tan;
+		background-color: var(--panel-2);
 		display: flex;
 		flex-direction: column;
 		overflow: auto;
@@ -454,8 +510,11 @@
 		flex: 1 1 auto;
 		min-height: 0;
 	}
+	/* The strips fill the console: they grow into the room the master leaves,
+	   and only scroll once 56px each is no longer available. */
 	#studio_mixer_strips .channel {
-		flex: 0 0 44px;
+		flex: 1 1 72px;
+		min-width: 56px;
 		height: auto;
 		min-height: 0;
 	}
@@ -469,11 +528,6 @@
 		overflow: auto;
 	}
 	#studio_jog_wheel {
-		left: 2px;
-		top: 2px;
-		position:absolute;
-		height: 40px;
-		width: 40px;
 		border-radius: 50%;
 	}
 	.jog_wheel_frame {
@@ -492,7 +546,7 @@
 		margin-top: -2px;
 	}
 	#studio_time_display {
-		font-size: 32px;
+		font-size: 18px;
 	}
 	#studio_synth {
 		min-width: 0;
@@ -555,7 +609,7 @@
 		gap: 8px;
 		padding: 2px 4px;
 		flex: 0 0 auto;
-		background: rgba(0, 0, 0, 0.08);
+		background: color-mix(in srgb, var(--ink) 8%, transparent);
 		position: relative;
 		z-index: 2;
 	}
@@ -587,7 +641,7 @@
 		background: var(--panel, #eee);
 		border: 2px solid var(--line, #333);
 		border-radius: 8px;
-		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+		box-shadow: var(--shadow-2);
 		max-width: 96%;
 		max-height: 92%;
 		overflow: auto;
@@ -598,7 +652,7 @@
 	}
 	/* a resize grip rides the floated panel's bottom-right corner */
 	.studio_resize_handle {
-		display: none;
+		display: block;
 		position: absolute;
 		right: 0;
 		bottom: 0;
@@ -609,29 +663,36 @@
 		touch-action: none;
 		background: linear-gradient(135deg, transparent 0 42%, var(--line, #333) 43% 50%, transparent 51% 62%, var(--line, #333) 63% 70%, transparent 71%);
 	}
-	.studio_panel_floating .studio_resize_handle { display: block; }
 	.studio_panel_resizing { cursor: var(--jawnos-cursor-nwse-resize, nwse-resize); }
+	/* A track has its own row height (90px by default); its bottom edge is the
+	   grip. The timeline scrolls; it never stretches one track to fill the panel. */
 	.studio_track {
 		display: flex;
 		align-items: stretch;
 		gap: 4px;
+		position: relative;
+		height: var(--studio_track_height, 90px);
 		min-height: 64px;
-		border-bottom: 1px solid rgba(0, 0, 0, .12);
+		flex: 0 0 auto;
+		border-bottom: 1px solid var(--line);
 	}
 	.studio_track_panel {
 		flex: 0 0 150px;
 		width: 150px;
+		height: 100%;
 		box-sizing: border-box;
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
 		padding: 2px 4px;
-		background: rgba(255, 255, 255, .35);
+		background: var(--panel);
+		border-right: 1px solid var(--line);
 		min-width: 0;
+		overflow: hidden;
 		cursor: var(--jawnos-cursor-pointer, pointer);
 	}
 	.studio_track_panel.selected_channel {
-		box-shadow: inset 0 0 0 3px #8ab4f8;
+		box-shadow: inset 0 0 0 3px var(--accent);
 	}
 	.studio_track_line {
 		display: flex;
@@ -652,17 +713,46 @@
 		font-size: 12px;
 		border: solid 1px var(--line, #999);
 		border-radius: 3px;
-		background: var(--panel, #fff);
-		color: inherit;
+		background: var(--panel);
+		color: var(--ink);
+	}
+	.studio_track_actions {
+		display: flex;
+		gap: 2px;
+		min-width: 0;
+		overflow: hidden;
 	}
 	.studio_track_fx,
 	.studio_track_automation,
 	.studio_track_delete {
-		font-size: 11px;
-		padding: 1px 4px;
+		font-size: 10px;
+		padding: 0 3px;
+		flex: 0 0 auto;
 	}
 	.studio_track_automation[aria-pressed="true"] {
-		background: #ffd21e;
+		background: var(--accent-soft, var(--accent));
+		color: var(--ink);
+	}
+	.studio_track_resize {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: -3px;
+		height: 7px;
+		z-index: 4;
+		cursor: var(--jawnos-cursor-ns-resize, ns-resize);
+		touch-action: none;
+	}
+	.studio_track_resize:hover {
+		background: var(--accent);
+		opacity: .35;
+	}
+	.studio_track_resizing {
+		cursor: var(--jawnos-cursor-ns-resize, ns-resize);
+	}
+	/* while the edge is dragged the canvas must not swallow the pointer */
+	.studio_track_resizing .track {
+		pointer-events: none;
 	}
 	.studio_track_panel .channel_volume {
 		position: relative;
@@ -700,11 +790,12 @@
 		display: block;
 	}
 	.studio_rack_row {
-		border: 1px solid rgba(4, 50, 95, .25);
+		border: 1px solid var(--line);
 		border-radius: 4px;
 		padding: 2px;
 		margin-bottom: 2px;
-		background: rgba(255, 255, 255, .45);
+		background: var(--panel);
+		color: var(--ink);
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
@@ -758,7 +849,6 @@
 	.studio_master_rack {
 		flex: 0 0 210px;
 		width: 210px;
-		margin-left: auto;
 		align-self: stretch;
 		max-height: 100%;
 		box-sizing: border-box;
@@ -766,7 +856,7 @@
 		flex-direction: column;
 		gap: 3px;
 		padding: 4px;
-		border-left: 2px solid rgba(0, 0, 0, .15);
+		border-left: 2px solid var(--line);
 		overflow: auto;
 	}
 	.studio_master_title {
@@ -774,16 +864,17 @@
 		font-size: 12px;
 	}
 	.studio_master_effect {
-		border: 1px solid rgba(4, 50, 95, .25);
+		border: 1px solid var(--line);
 		border-radius: 4px;
 		padding: 2px 4px;
-		background: rgba(255, 255, 255, .4);
+		background: var(--panel);
+		color: var(--ink);
 		font-size: 11px;
 		box-sizing: border-box;
 	}
 	.studio_master_effect.studio_master_on {
-		background: rgba(255, 210, 30, .25);
-		border-color: #b8860b;
+		background: var(--accent-soft, var(--panel-2));
+		border-color: var(--accent-line, var(--accent));
 	}
 	.studio_master_toggle {
 		font-size: 11px;
@@ -813,20 +904,24 @@
 		flex-direction: column;
 	}
 	.studio_track_body .track {
+		/* the lane below it is a sibling, so the canvas takes what is left
+		   rather than 100% of the row */
 		flex: 1 1 auto;
-		min-height: 55px;
+		min-height: 0;
 		width: 100%;
-		height: 100%;
+		height: auto;
 		box-sizing: border-box;
 	}
 	.studio_track_automation_lane {
 		display: none;
+		flex: 0 0 26px;
 		height: 26px;
 		padding: 2px 5px;
 		font-size: 11px;
 		box-sizing: border-box;
-		background: rgba(4, 50, 95, .12);
-		border-top: 1px dashed rgba(4, 50, 95, .5);
+		background: color-mix(in srgb, var(--accent) 14%, transparent);
+		border-top: 1px dashed var(--accent-line, var(--accent));
+		color: var(--ink);
 	}
 	.studio_track.studio_track_automation_on .studio_track_automation_lane {
 		display: block;

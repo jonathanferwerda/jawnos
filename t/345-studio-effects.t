@@ -324,4 +324,37 @@ like($fx, qr/name: insertName \+ '\.bypass'/,
 like($master, qr/studioEngineMasterBypass\(name, !on\);/,
 	'the master toggle posts its bypass change');
 
+# --- one pedal frame for artwork and text tiles ----------------------------
+# The frame is the .pedal box, so a text tile is a card, not a bare label.
+like($style, qr/\.pedal\s*\{[^}]*border:\s*5px solid var\(--line\)/s,
+	'every pedal tile wears the same border');
+like($style, qr/\.pedal\s*\{[^}]*border-radius:\s*10px/s, 'every tile has the same radius');
+like($style, qr/\.pedal\s*\{[^}]*background:\s*var\(--panel-2\)/s, 'every tile takes the theme panel');
+like($style, qr/\.pedal\s*\{[^}]*height:\s*140px/s, 'a tile box is one height whether or not it has artwork');
+like($style, qr/\.pedal_text\s*\{[^}]*display:\s*flex/s, 'a text tile centres its label in the same box');
+like($markup, qr/class="pedal pedal_text"/, 'a palette effect is the same .pedal card');
+like($markup, qr/class="studio_pedal_name"/, 'the text tile keeps the same label slot');
+like($markup, qr/class="studio_pedal_foot hover"/, 'the text tile keeps a footswitch');
+
+# --- dragging a pedal reorders the chain, above every panel ----------------
+like($knobs, qr/zIndex:\s*90000,\s*appendTo:\s*'body'/, 'a shelf drag rides the body above the panels');
+like($rack, qr/zIndex:\s*90000/s, 'a rack drag rides above the pedal sheet too');
+like($rack, qr/appendTo:\s*'body'/, 'the rack helper leaves its container');
+like($rack, qr/helper:\s*'clone'/, 'the rack drags a clone, so the row stays in place');
+like($rack, qr/connectWith:\s*'\.studio_channel_rack'/, 'a rack row can be dropped on another track');
+like($rack, qr/placeholder:\s*'studio_rack_placeholder'/, 'a marker shows where the row will land');
+like($style, qr/\.studio_rack_placeholder\s*\{[^}]*border:\s*1px dashed var\(--accent\)/s,
+	'the marker is a dashed insertion line');
+like($rack, qr/function studioRackMoveInsert\(from, to, name\)/, 'one path moves an insert to another track');
+like($rack, qr/src\.inserts = src\.inserts\.filter/, 'the source chain loses the insert');
+like($rack, qr/dst\.inserts\.push\(ins\)/, 'the destination chain gains it');
+like($rack, qr/order\.push\(\$\(this\)\.attr\('insert'\)\)/, 'the dropped position is read from the DOM');
+like($rack, qr/studioRebuildInserts\(from\);[\s\S]*?studioRebuildInserts\(to\);/,
+	'both audio chains are rebuilt');
+like($rack, qr/if \(from !== to\) \{ studioRackMoveInsert\(from, to, name\); \}/,
+	'a drop on another track moves rather than reorders');
+like($rack, qr/else \{ studioRackReorder\(to\); \}/, 'a drop in the same rack reorders it');
+like($rack, qr/studioUpdateFxBadges\(\);[\s\S]*?studioSaver\(\);/,
+	'the move repaints the badges and saves the song');
+
 done_testing();

@@ -76,7 +76,24 @@ function studioRackRender(ch) {
 			items: '> .studio_rack_row',
 			axis: 'y',
 			tolerance: 'pointer',
-			update: function () { studioRackReorder(ch); }
+			connectWith: '.studio_channel_rack',
+			placeholder: 'studio_rack_placeholder',
+			forcePlaceholderSize: true,
+			// the clone rides the body, above every panel and the pedal sheet
+			helper: 'clone',
+			appendTo: 'body',
+			zIndex: 90000,
+			cursor: 'grabbing',
+			stop: function (event, ui) {
+				var holder = ui.item.closest('.studio_channel_rack');
+				var to = String(holder.attr('channel') || ch);
+				var from = String(ui.item.attr('channel') || to);
+				var name = ui.item.attr('insert');
+				if (!name) { return; }
+				ui.item.attr('channel', to);
+				if (from !== to) { studioRackMoveInsert(from, to, name); }
+				else { studioRackReorder(to); }
+			}
 		});
 	}
 }
@@ -85,6 +102,38 @@ function studioRackRenderAll() {
 	$.each(studioAudio.channels, function (ch) { studioRackRender(ch); });
 	studioPaletteLabel();
 	studioUpdatePedalLamps();
+}
+
+// Move one insert from one channel's chain to another, keeping the order the
+// dropped row landed in. The source's audio chain is rebuilt without it and the
+// destination's with it; the song's fx order follows.
+function studioRackMoveInsert(from, to, name) {
+	var src = studioAudio.channels[from];
+	var dst = studioAudio.channels[to];
+	if (!src || !dst) { return; }
+	var ins = src.insertByName[name];
+	if (!ins) { return; }
+	src.inserts = src.inserts.filter(function (x) { return x !== ins; });
+	delete src.insertByName[name];
+	dst.inserts.push(ins);
+	dst.insertByName[name] = ins;
+	var order = [];
+	$('.studio_channel_rack[channel="' + to + '"] .studio_rack_row').each(function () {
+		order.push($(this).attr('insert'));
+	});
+	var next = [];
+	order.forEach(function (n) {
+		var x = dst.insertByName[n];
+		if (x && next.indexOf(x) === -1) { next.push(x); }
+	});
+	dst.inserts.forEach(function (x) { if (next.indexOf(x) === -1) { next.push(x); } });
+	dst.inserts = next;
+	studioRebuildInserts(from);
+	studioRebuildInserts(to);
+	studioRackRender(from);
+	studioRackRender(to);
+	studioUpdateFxBadges();
+	studioSaver();
 }
 
 function studioRackReorder(ch) {
@@ -104,6 +153,7 @@ function studioRackReorder(ch) {
 	c.inserts.forEach(function (ins) { if (next.indexOf(ins) === -1) { next.push(ins); } });
 	c.inserts = next;
 	studioRebuildInserts(ch);
+	studioUpdatePedalLamps();
 	studioSaver();
 }
 

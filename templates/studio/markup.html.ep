@@ -5,7 +5,7 @@
 	<script>window.jawnos_studio_effects = <%== Mojo::JSON::encode_json($gb::studio->{'effects'}) %>;
 	window.jawnos_studio_master = <%== Mojo::JSON::encode_json($gb::studio->{'master'}) %>;</script>
 	<audio id="metronome" autoplay style="display:none;"></audio>
-	<div id="studio_plug_select_container" style="position:fixed;display:none;background-color:lightgreen;z-index:50009;border:solid;border-radius:4px;"></div>
+	<div id="studio_plug_select_container" style="position:fixed;display:none;background-color:var(--accent-soft, var(--panel-2));z-index:50009;border:solid;border-radius:4px;"></div>
 	<%# The artwork covers these effect kinds; an effect with no artwork gets a
 	   text tile instead. Jtune is the chromatic tuner, not an effect, so it
 	   answers for nothing here and JawnPitch keeps its own text tile. %>
@@ -138,16 +138,19 @@
 		.studio_synth_keys { position: relative; width: 100%; box-sizing: border-box; height: 96px; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
 		.studio_synth_keys .synth_keys_inner { position: relative; height: 92px; white-space: nowrap; }
 		.studio_synth_keys .piano_key { cursor: var(--jawnos-cursor-pointer, pointer); user-select: none; border: solid; border-width: 1px; box-sizing: border-box; }
-		.studio_synth_keys .piano_key.white { display: inline-block; vertical-align: top; width: 20px; height: 92px; background: #fdfdfa; color: #666; font-size: 8px; text-align: center; padding-top: 76px; border-radius: 0 0 3px 3px; position: relative; z-index: 1; }
-		.studio_synth_keys .piano_key.black { position: absolute; top: 0; width: 13px; height: 58px; background: #141414; border-color: #000; border-radius: 0 0 3px 3px; z-index: 2; }
-		.studio_synth_keys .piano_key.white.piano_key_on { background: #ffd21e; }
-		.studio_synth_keys .piano_key.black.piano_key_on { background: #b8860b; }
+		.studio_synth_keys .piano_key.white { display: inline-block; vertical-align: top; width: 20px; height: 92px; background: var(--panel); color: var(--ink-muted, var(--ink)); font-size: 8px; text-align: center; padding-top: 76px; border-radius: 0 0 3px 3px; position: relative; z-index: 1; }
+		.studio_synth_keys .piano_key.black { position: absolute; top: 0; width: 13px; height: 58px; background: var(--ink); border-color: var(--line); border-radius: 0 0 3px 3px; z-index: 2; }
+		.studio_synth_keys .piano_key.white.piano_key_on { background: var(--accent-soft, var(--accent)); }
+		.studio_synth_keys .piano_key.black.piano_key_on { background: var(--accent); }
 		.studio_synth_knobs { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 		.studio_synth_knob { display: flex; flex-direction: column; align-items: center; width: 64px; }
 		.studio_synth_knob label { font-size: 11px; opacity: .7; }
 		.studio_synth_knob input[type=range] { width: 60px; }
 		.studio_synth_note { opacity: .55; font-size: 12px; }
 	</style>
+	<%# The drum machine is the next docked instrument panel: include it here,
+	   in the grid beside the synth, with the same .studio_panel shape. %>
+	<%# include 'studio/drums' %>
 	<div id="studio_tracks_panel" class="studio_panel">
 		<div class="studio_panel_bar">
 			<span class="studio_drag_handle" data-studio-drag="tracks" hint="<%= &subs::ui('Drag to move the track listing') %>"><%= &subs::ui('Tracks') %></span>
@@ -163,8 +166,10 @@
 							<button class="armed studio_track_arm" channel="<%= $ch %>" control="armed" state="off" hint="<%= &subs::ui('Off, record, play or loop') %>">O</button>
 							<input class="studio_track_name" channel="<%= $ch %>" value="<%= &subs::ui('Track') %> <%= $ch %>" hint="<%= &subs::ui('Rename this track') %>">
 						</div>
-						<div class="studio_track_line">
+						<div class="studio_track_line studio_track_volume_line">
 							<input type="range" min="0" max="100" value="1" channel="<%= $ch %>" control="volume" class="channel_volume studio_track_volume" hint="<%= &subs::ui('Mix this track against the others') %>">
+						</div>
+						<div class="studio_track_line studio_track_actions">
 							<button class="studio_track_fx hover" channel="<%= $ch %>" hint="<%= &subs::ui('Show this track\'s pedals') %>"><%= &subs::ui('FX') %></button>
 							<button class="studio_track_automation hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Show automation for this track') %>"><%= &subs::ui('Auto') %></button>
 							<button class="studio_track_delete hover" channel="<%= $ch %>" armed="no" hint="<%= &subs::ui('Delete this track') %>"><%= &subs::ui('Delete') %></button>
@@ -179,6 +184,7 @@
 						<canvas class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="<%= &subs::ui('Drag to move a clip, its edges to trim, double-click to cut, select + Delete to remove') %>"></canvas>
 						<div class="studio_track_automation_lane" aria-hidden="true"><%= &subs::ui('Automation') %></div>
 					</div>
+					<span class="studio_track_resize hover" channel="<%= $ch %>" hint="<%= &subs::ui('Drag the bottom edge to resize this track') %>"></span>
 				</div>
 			<% } %>
 		</div>
@@ -249,8 +255,7 @@
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="transport" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
 		<span id="studio_controls">
-			<span class="studio_transport_row" style="left:2px;top:50px;position:absolute;">
-
+			<div class="studio_transport_row" id="studio_transport_row">
 				<img class="little_thumb record hover" hint="Record" id="studio_record" src="<%= &subs::icon_for('/images/make believe/record.png') %>">
 				<img class="little_thumb play hover" hint="Play" id="studio_play" src="<%= &subs::icon_for('/images/make believe/play.png') %>">
 				<img class="little_thumb stop hover" hint="Stop" id="studio_stop" src="<%= &subs::icon_for('/images/make believe/stop.png') %>">
@@ -260,42 +265,30 @@
 					<img class="jog_wheel" hint="Jog wheel" id="studio_jog_wheel" src="<%= &subs::icon_for('/images/studio/jog wheel tye dye.png') %>">
 					<span class="jog_wheel_centre" style="width:5px;height:5px;"></span>
 				</span>
-
-			</span>
-			<span style="left:2px;top:95px;position:absolute;">
 				<img class="little_thumb mark hover" hint="Drop a mark" id="studio_mark" src="<%= &subs::icon_for('/images/studio/plus.png') %>">
 				<img class="little_thumb metronome hover" hint="Metronome" id="studio_metronome" src="<%= &subs::icon_for('/images/studio/metronome.png') %>">
-				<input style="width:50px;vertical-align:top;" id="studio_bpm" value="120">
-				<input style="width:50px;vertical-align:top;" id="studio_signature" value="4/4">
+				<input class="studio_transport_field" id="studio_bpm" value="120" hint="<%= &subs::ui('Tempo in beats per minute') %>">
+				<input class="studio_transport_field" id="studio_signature" value="4/4" hint="<%= &subs::ui('Time signature') %>">
 				<% foreach my $k ( grep { $_->{'placement'} eq 'metronome' } @{$gb::studio->{'knobs'}}) { %>
-					<input channel="metronome" type="range" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="metronome" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
+					<input channel="metronome" type="range" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;">
+					<img class="knob studio_transport_knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="metronome" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
 				<% } %>
-			</span>
-			<span style="left:2px;top:140px;position:absolute;">
-
-			</span>
-			<span style="left:2px;top:190px;position:absolute;">
+				<span class="studio_transport_time">
+					<span id="studio_time_display">0:00</span>
+					<span class="studio_transport_sep">/</span>
+					<span id="studio_time_duration">0:00</span>
+				</span>
 				<img class="little_thumb hover video_toggle" hint="Camera" id="studio_video_toggle" src="<%= &subs::icon_for('/images/make believe/camera.png') %>">
 				<img class="little_thumb hover" hint="Pedalboard" src="<%= &subs::icon_for('/images/make believe/burger.png') %>" id="pedalboard_hamburger">
-			</span>
-			<span style="left:2px;top:240px;position:absolute;">
-				<span id="studio_time_display">
-					0:00
-				</span><br>
-				<span id="studio_time_duration">
-					0:00
-				</span>
-
-			</span>
-			<span id="studio_video_monitors" style="position:absolute;height:110px;top:300px;width:100%;">
+			</div>
+			<%# The video previews have no room in a one-row transport; they keep
+			   their elements here, hidden, so the monitor code still finds them. %>
+			<span id="studio_video_monitors" style="display:none;">
 				<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
-					<video id="studio_video_monitor_<%= $ch %>" style="display:none;height:100%;" muted autoplay class=""></video>
+					<video id="studio_video_monitor_<%= $ch %>" style="display:none;" muted autoplay class=""></video>
 				<% } %>
+				<video id="studio_video_monitor" style="display:none;" muted autoplay class=""></video>
 			</span>
-			<video id="studio_video_monitor" style="position:absolute;left:510px;top:311px;width:200px;" muted autoplay class=""></video>
-
-
 		</span>
 	</div>
 	</div>

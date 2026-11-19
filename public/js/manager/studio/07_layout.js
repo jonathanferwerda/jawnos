@@ -141,6 +141,10 @@ function studioApplyArrange(persist) {
 	studioPanelOrder = preset.order.slice();
 	$.each(studioPanelNames, function (i, name) {
 		studioPanelSpan[name] = preset.span[name] || STUDIO_PANEL_MIN_SPAN;
+		// Arrange is a clean preset: a height a person dragged is forgotten here.
+		if (persist) { studioPersistPanelHeight(name, 0); }
+		if (mixer && mixer.settings) { delete mixer.settings['studio_panel_height_' + name]; }
+		studioPanelElement(name).css('height', '');
 		// Arrange brings a floated panel home before it applies the preset.
 		if (studioPanelElement(name).hasClass('studio_panel_floating')) {
 			studioDockPanel(name, false);
@@ -196,6 +200,76 @@ function studioApplyPanelSpan(name) {
 		button.attr('aria-pressed', wide ? 'true' : 'false');
 		button.text(studioLayoutText(wide ? 'Narrow' : 'Wide'));
 	});
+}
+
+// A docked panel's height is its own choice, saved like its position. The
+// stylesheet's arranged heights are the default until a person drags the grip.
+function studioApplyPanelHeight(name) {
+	var panel = studioPanelElement(name);
+	if (!panel.length) { return; }
+	var raw = (mixer && mixer.settings) ? mixer.settings['studio_panel_height_' + name] : undefined;
+	var h = parseInt(raw, 10);
+	if (h > 0 && !panel.hasClass('studio_panel_floating')) { panel.css('height', h + 'px'); }
+	else { panel.css('height', ''); }
+}
+
+function studioApplyPanelHeights() {
+	$.each(studioPanelSelectors, function (name) { studioApplyPanelHeight(name); });
+}
+
+function studioPersistPanelHeight(name, h) {
+	mixer = mixer || {};
+	mixer.settings = mixer.settings || {};
+	var key = 'studio_panel_height_' + name;
+	if (h > 0) {
+		mixer.settings[key] = String(h);
+		studioSaveSettings([{ setting: key, value: String(h) }]);
+	}
+	else {
+		delete mixer.settings[key];
+		studioSaveSettings([{ setting: key, value: '' }]);
+	}
+}
+
+// Snap a drag to the 8px grid and, within 8px, to a neighbour's edge/size.
+function studioSnapTo(value, candidates) {
+	var best = Math.round(value / 8) * 8;
+	var best_d = 8.01;
+	(candidates || []).forEach(function (c) {
+		if (!isFinite(c)) { return; }
+		var d = Math.abs(c - value);
+		if (d <= 8 && d < best_d) { best = c; best_d = d; }
+	});
+	return Math.round(best);
+}
+
+function studioPanelNeighbourSizes(panel) {
+	var widths = [], heights = [];
+	$('.studio_grid > div, .studio_panel_floating').not(panel).each(function () {
+		var r = this.getBoundingClientRect();
+		widths.push(Math.round(r.width));
+		heights.push(Math.round(r.height));
+	});
+	return { widths: widths, heights: heights };
+}
+
+function studioSnapPanelHeight(panel, h) {
+	var sizes = studioPanelNeighbourSizes(panel);
+	var content = panel && panel[0] ? panel[0].scrollHeight : 0;
+	if (content) { sizes.heights.push(content); }
+	var limit = panel && panel.parent().length ? panel.parent()[0].clientHeight : h;
+	return Math.max(64, Math.min(limit || h, studioSnapTo(h, sizes.heights)));
+}
+
+function studioSnapPanelPosition(panel, left, top) {
+	var base = $('#studio')[0].getBoundingClientRect();
+	var xs = [], ys = [];
+	$('.studio_grid > div, .studio_panel_floating').not(panel).each(function () {
+		var r = this.getBoundingClientRect();
+		xs.push(r.left - base.left, r.right - base.left);
+		ys.push(r.top - base.top, r.bottom - base.top);
+	});
+	return { left: studioSnapTo(left, xs), top: studioSnapTo(top, ys) };
 }
 
 function studioPersistPanelPosition(name, value) {
@@ -307,6 +381,7 @@ function studioDockPanel(name, persist) {
 	var next = panel.data('studio-home-next');
 	panel.removeClass('studio_panel_floating studio_panel_dragging studio_panel_resizing')
 		.css({ left: '', top: '', width: '', height: '', position: '' });
+	studioApplyPanelHeight(name);
 	if (parent && $.contains(document.documentElement, parent)) {
 		if (next && next.parentNode === parent) { $(next).before(panel); }
 		else { $(parent).append(panel); }
@@ -391,6 +466,7 @@ $(window).on('resize', function () {
 function studioApplyLayoutSettings() {
 	// Positions first: a panel that is about to be hidden has no size to measure.
 	studioApplyPanelPositions();
+	studioApplyPanelHeights();
 	studioApplyHideSettings();
 	studioUpdateTrackCount();
 }
@@ -473,18 +549,21 @@ $(document).on('pointerdown', '.studio_resize_handle', function (e) {
 	if (e.originalEvent && e.originalEvent.button) { return; }
 	var name = $(this).attr('data-studio-resize');
 	var panel = studioPanelElement(name);
-	if (!panel.length || !panel.hasClass('studio_panel_floating')) { return; }
+	if (!panel.length) { return; }
+	var floating = panel.hasClass('studio_panel_floating');
 	studioExitArrange(true);
 	var rect = panel[0].getBoundingClientRect();
 	studioPanelResize = {
 		name: name,
 		panel: panel,
+		floating: floating,
 		x: e.originalEvent.clientX,
 		y: e.originalEvent.clientY,
 		left: parseFloat(panel.css('left')) || 0,
 		top: parseFloat(panel.css('top')) || 0,
 		width: rect.width,
-		height: rect.height
+		height: rect.height,
+		startH: rect.height
 	};
 	panel.addClass('studio_panel_resizing');
 	try { this.setPointerCapture(e.originalEvent.pointerId); } catch (err) {}
@@ -495,10 +574,18 @@ $(document).on('pointerdown', '.studio_resize_handle', function (e) {
 $(document).on('pointermove', function (e) {
 	var original = e.originalEvent || {};
 	if (studioPanelResize) {
+		if (!studioPanelResize.floating) {
+			var h = studioSnapPanelHeight(studioPanelResize.panel,
+				studioPanelResize.startH + (original.clientY - studioPanelResize.y));
+			studioPanelResize.panel.css({ height: h + 'px' });
+			e.preventDefault();
+			return;
+		}
+		var sizes = studioPanelNeighbourSizes(studioPanelResize.panel);
+		var w = studioSnapTo(studioPanelResize.width + (original.clientX - studioPanelResize.x), sizes.widths);
+		var hh = studioSnapTo(studioPanelResize.height + (original.clientY - studioPanelResize.y), sizes.heights);
 		var box = studioClampPanelBox(studioPanelResize.panel,
-			studioPanelResize.left, studioPanelResize.top,
-			studioPanelResize.width + (original.clientX - studioPanelResize.x),
-			studioPanelResize.height + (original.clientY - studioPanelResize.y));
+			studioPanelResize.left, studioPanelResize.top, w, hh);
 		studioPanelResize.panel.css({
 			left: box.left + 'px',
 			top: box.top + 'px',
@@ -512,7 +599,8 @@ $(document).on('pointermove', function (e) {
 	var studioRect = $('#studio')[0].getBoundingClientRect();
 	var left = original.clientX - studioRect.left - studioPanelDrag.dx;
 	var top = original.clientY - studioRect.top - studioPanelDrag.dy;
-	var clamped = studioClampPanelPosition(studioPanelDrag.panel, left, top);
+	var snapped = studioSnapPanelPosition(studioPanelDrag.panel, left, top);
+	var clamped = studioClampPanelPosition(studioPanelDrag.panel, snapped.left, snapped.top);
 	studioPanelDrag.panel.css({ left: clamped.left + 'px', top: clamped.top + 'px' });
 	e.preventDefault();
 });
@@ -522,7 +610,12 @@ $(document).on('pointerup pointercancel', function (e) {
 		var resize = studioPanelResize;
 		studioPanelResize = null;
 		resize.panel.removeClass('studio_panel_resizing');
-		studioPersistPanelPosition(resize.name, studioFloatState(resize.name, resize.panel));
+		if (resize.floating) {
+			studioPersistPanelPosition(resize.name, studioFloatState(resize.name, resize.panel));
+		}
+		else {
+			studioPersistPanelHeight(resize.name, Math.round(resize.panel[0].getBoundingClientRect().height));
+		}
 		return;
 	}
 	if (!studioPanelDrag) { return; }
@@ -534,6 +627,52 @@ $(document).on('pointerup pointercancel', function (e) {
 		if (target) { studioReorderDockedPanel(drag.name, target); return; }
 	}
 	studioPersistPanelPosition(drag.name, studioFloatState(drag.name, drag.panel));
+});
+
+// ---- track row height ------------------------------------------------------
+
+// A track keeps a default row height; its bottom edge drags it taller or
+// shorter. The height belongs to the song (studioSaver writes track_height),
+// the timeline scrolls, and the automation lane keeps its own height.
+var studioTrackResize = null;
+
+function studioTrackHeightClamp(h) {
+	var panel = $('#studio_tracks_panel');
+	var limit = panel.length ? panel[0].clientHeight - 48 : 280;
+	if (!limit || limit < 64) { limit = 280; }
+	return Math.max(64, Math.min(Math.min(280, limit), Math.round(h)));
+}
+
+$(document).on('pointerdown', '.studio_track_resize', function (e) {
+	if (e.originalEvent && e.originalEvent.button) { return; }
+	var row = $(this).closest('.studio_track');
+	if (!row.length) { return; }
+	studioTrackResize = {
+		row: row,
+		channel: String(row.attr('data-channel') || ''),
+		y: e.originalEvent.clientY,
+		startH: row[0].getBoundingClientRect().height
+	};
+	row.addClass('studio_track_resizing');
+	try { this.setPointerCapture(e.originalEvent.pointerId); } catch (err) {}
+	e.preventDefault();
+	e.stopPropagation();
+});
+
+$(document).on('pointermove', function (e) {
+	if (!studioTrackResize) { return; }
+	var h = studioTrackHeightClamp(studioTrackResize.startH + ((e.originalEvent || {}).clientY - studioTrackResize.y));
+	studioTrackResize.row.css('height', h + 'px');
+	e.preventDefault();
+});
+
+$(document).on('pointerup pointercancel', function () {
+	if (!studioTrackResize) { return; }
+	var ch = studioTrackResize.channel;
+	studioTrackResize.row.removeClass('studio_track_resizing');
+	studioTrackResize = null;
+	if (typeof studioDrawChannel === 'function' && ch) { studioDrawChannel(ch); }
+	studioSaver();
 });
 
 $(document).on('click', '.studio_hide_toggle', function () {

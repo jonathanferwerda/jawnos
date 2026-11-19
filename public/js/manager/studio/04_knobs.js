@@ -91,7 +91,7 @@ function studioInit(data) {
 			// tuner is not one of them.
 			$('.pedal_background').filter(function () {
 				return $(this).closest('.pedal').attr('data-tuner') !== 'yes';
-			}).draggable({ helper: 'clone', revert: 'invalid', scroll: false, zIndex: 60000 });
+			}).draggable({ helper: 'clone', revert: 'invalid', scroll: false, zIndex: 90000, appendTo: 'body' });
 			studioBindChannelDrop($('.channel, .studio_track_panel'));
 
 			studioRetriever();
@@ -284,18 +284,17 @@ $(document).on('click', '#studio_loop', function() {
 	if (sl.attr('enabled') == 'ongoing') {
 		loop = 'off';
 		sl.attr('enabled', loop);
-		sl.css({'background-color': 'rgb(211, 211, 211)' });
+		sl.css({'background-color': 'var(--panel-2)' });
 	}
 	else if (sl.attr('enabled') == 'on') {
 		loop = 'ongoing';
 		sl.attr('enabled', loop);
-		sl.css({'background-color': 'yellow' });
+		sl.css({'background-color': 'var(--accent-soft, var(--accent))' });
 	}
 	else {
 		loop = 'on';
-		sl.attr('obg', sl.css('background-color'));
 		sl.attr('enabled', loop);
-		sl.css({'background-color': 'red' });
+		sl.css({'background-color': 'var(--runway-bad, #b3453f)' });
 	}
 	mixer['time']['loop'] = loop
 	studioSaver();
@@ -375,6 +374,17 @@ function studioSaver() {
 	// per-channel insert rack: the chain in order, each insert's footswitch and
 	// the values its controls hold. The order and the on/off state are the song's;
 	// the old shape (an array of names) still loads via studioRetriever.
+	// A track's own row height is part of the song, like its name.
+	$('#studio_viewer .studio_track').each(function () {
+		var ch = $(this).attr('data-channel');
+		if (!/^[0-9]+$/.test(ch)) { return; }
+		// a hidden tracks panel measures zero: keep the height the song already has
+		var h = Math.round(this.getBoundingClientRect().height);
+		if (h < 64) { return; }
+		if (song[ch] == undefined) { song[ch] = {}; }
+		song[ch]['track_height'] = h;
+	});
+
 	$.each(studioAudio.channels, function(ch, c) {
 		if (song[ch] == undefined) { song[ch] = {}; }
 		song[ch]['fx'] = c.inserts.map(function(ins) {
@@ -453,6 +463,13 @@ function studioRetriever() {
 				if (w.state == 'rec') { studioInputStreamGrabber(i, 'rec'); }
 				return;
 			}
+			if (n == 'track_height') {
+				var h = Math.max(64, Math.min(280, parseInt(w, 10) || 90));
+				var row = $('#studio_track_row_' + i);
+				if (row.length) { row.css('height', h + 'px'); }
+				mixer[i]['track_height'] = h;
+				return;
+			}
 			if (n == 'pan') { w = (w - -1) / (1 - -1) * (100 - 0) + 0; }
 			$('[channel="' + i + '"][control="' + n + '"]').val(w);
 		});
@@ -504,11 +521,10 @@ function studioRetriever() {
 	var met = $('#studio_metronome');
 	if (mixer['time'] && mixer['time']['metronome'] == 'yes') {
 		met.attr('armed', 'yes');
-		if (met.attr('obg') != 'red') { met.attr('obg', met.css('background-color')); }
-		met.css({ 'background-color': 'red' });
+		met.css({ 'background-color': 'var(--runway-bad, #b3453f)' });
 	} else {
 		met.attr('armed', 'no');
-		met.css({ 'background-color': met.attr('obg') || 'rgb(211, 211, 211)' });
+		met.css({ 'background-color': 'var(--panel-2)' });
 	}
 	if (mixer['time']) {
 		if (mixer['time']['bpm']) { $('#studio_bpm').val(mixer['time']['bpm']); }
