@@ -932,6 +932,11 @@ function jawnosWindowEmergeGhostExpire(ghost) {
 		ghost.timer = setTimeout(function () { jawnosWindowEmergeGhostExpire(ghost); }, JAWNOS_EMERGE_GHOST_TTL);
 		return;
 	}
+	// the open never answered: a press kept against the picture has no window to
+	// be replayed on, so it is dropped rather than fired later against a stale one
+	if (ghost.app && typeof jawnosPredictionPressQueue != 'undefined' && jawnosPredictionPressQueue) {
+		jawnosPredictionPressQueue.drop(ghost.app);
+	}
 	jawnosWindowEmergeGhostCancel(ghost);
 }
 
@@ -1017,6 +1022,11 @@ function jawnosWindowEmergeDismiss(ghost) {
 	if (key) {
 		jawnosWindowEmergeDismissals[key] = { app: app, stamp: stamp, at: now };
 	}
+	// a dismissal cancels the open, so a press kept against its picture must not
+	// fire against the window that is now being taken back
+	if (app && typeof jawnosPredictionPressQueue != 'undefined' && jawnosPredictionPressQueue) {
+		jawnosPredictionPressQueue.drop(app);
+	}
 	jawnosWindowEmergeGhostCancel(ghost);
 	return true;
 }
@@ -1065,7 +1075,14 @@ function jawnosWindowEmergeDismissed(win) {
 		key = 'app:' + app;
 		record = jawnosWindowEmergeDismissals[key];
 	}
-	if (!record) { return false; }
+	if (!record) {
+		// no cancelled open: a press kept from the prediction is handed to the
+		// real window now that its contents are in place
+		if (typeof jawnosPredictionPressQueue != 'undefined' && jawnosPredictionPressQueue && typeof jawnosPredictionPressQueue.replay == 'function') {
+			jawnosPredictionPressQueue.replay(win);
+		}
+		return false;
+	}
 	if (record.app && app && record.app !== app) { return false; }
 	if (record.stamp && stamp && String(record.stamp) !== String(stamp)) { return false; }
 	delete jawnosWindowEmergeDismissals[key];
@@ -1099,15 +1116,242 @@ function jawnosWindowEmergeSwallowClick(e) {
 	return true;
 }
 
+// ---- presses made against a picture -----------------------------------------
+// The preview may be the only thing on the desk while the real window is on its
+// way. A press that lands on one of the app's own controls is meant for the
+// window, not for the picture: it must not dismiss the open. Keep it as a press
+// with the moment it happened and the values the prediction was showing, then
+// hand it to the real control once windowMaker installs the window. The server
+// ordering is still appointmentResetSend's per-app queue; this one only waits
+// for a control to exist.
+var JAWNOS_PREDICTION_PRESS_TTL = 30000;
+
+// A control's identity as markup, so the same control can be found in the
+// prediction and in the real render. The class list is sorted and the attrs
+// that choose one control among its siblings are kept.
+function jawnosPredictionPressKey(el) {
+	if (!el || el.nodeType !== 1) { return ''; }
+	var tag = String(el.tagName || '').toLowerCase();
+	var classes = String(el.className || '').split(/\s+/).filter(Boolean).sort().join('.');
+	var out = tag + (classes ? '.' + classes : '');
+	var attrs = ['type', 'name', 'camera', 'feed', 'media_group', 'group', 'app'];
+	for (var i = 0; i < attrs.length; i++) {
+		var v = el.getAttribute ? el.getAttribute(attrs[i]) : null;
+		if (v) { out += '[' + attrs[i] + '=' + v + ']'; }
+	}
+	return out;
+}
+
+function jawnosPredictionPressRead(root, selectors, as_html) {
+	if (!root || !root.querySelector) { return undefined; }
+	for (var i = 0; i < selectors.length; i++) {
+		var el = null;
+		try { el = root.querySelector(selectors[i]); } catch (e) { el = null; }
+		if (!el) { continue; }
+		if (as_html) {
+			if (el.innerHTML !== undefined) { return el.innerHTML; }
+			if (el.textContent !== undefined) { return el.textContent; }
+		}
+		if (el.value !== undefined) { return el.value; }
+		if (el.getAttribute) { var v = el.getAttribute('value'); if (v !== null) { return v; } }
+	}
+	return undefined;
+}
+
+// The values the prediction was showing (or the desk held at the press). They
+// go back into the real form before the replay, so a typed "ago 5m" is part of
+// the appointment even when the server's render started from a clean form.
+function jawnosPredictionPressValues(app, root) {
+	var values = {
+		ago: jawnosPredictionPressRead(root, ['.ago'], false),
+		duration: jawnosPredictionPressRead(root, ['.duration'], false),
+		quantity: jawnosPredictionPressRead(root, ['.main_input.quantity'], false),
+		notes: jawnosPredictionPressRead(root, ['.text_editor', '.app_notes'], true),
+		schedule: jawnosPredictionPressRead(root, ['.schedule'], false),
+		warranty: jawnosPredictionPressRead(root, ['.warranty'], false)
+	};
+	try {
+		if (typeof localStorage != 'undefined' && localStorage) {
+			values.project = localStorage.getItem('project');
+			// the same expression managerReset uses, so an unset pair stays 0
+			values.timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
+		}
+	} catch (e) {}
+	// the desk's own ago field and the machine are outside the window
+	if ((values.ago === undefined || values.ago === '') && typeof $ == 'function') {
+		try { var ago = $('#ago'); if (ago && typeof ago.val == 'function') { values.ago = ago.val(); } } catch (e) {}
+	}
+	try {
+		var tm = (typeof document != 'undefined' && document.getElementById) ? document.getElementById('time_machine') : null;
+		if (tm && tm.value !== undefined && tm.value !== '') { values.time_machine = tm.value; }
+		else if (typeof localStorage != 'undefined' && localStorage) { values.time_machine = localStorage.getItem('time_machine'); }
+	} catch (e) {}
+	if (typeof jawnosAppFieldGet == 'function') {
+		try { values.duration_typed = (jawnosAppFieldGet(app, 'duration_typed') === 'yes') ? 'yes' : 'no'; } catch (e) {}
+	}
+	return values;
+}
+
+// Mark the controls a press can land on. The shadow is closed, so a click on
+// the picture arrives at its host: the element and key kept here let the click
+// be resolved by geometry against the layout the preview is already wearing.
+function jawnosPredictionPressMark(root) {
+	var out = [];
+	if (!root || !root.querySelectorAll) { return out; }
+	var nodes = null;
+	// only .save_appointment calls managerReset: the .app_act row opens details,
+	// measures and configuration, and replaying one of those as a reset would
+	// write a record the person never pressed
+	try { nodes = root.querySelectorAll('.save_appointment'); } catch (e) { nodes = null; }
+	if (!nodes) { return out; }
+	for (var i = 0; i < nodes.length; i++) {
+		var el = nodes[i];
+		if (!el || el.nodeType !== 1) { continue; }
+		var key = jawnosPredictionPressKey(el);
+		if (!key) { continue; }
+		if (el.setAttribute) { el.setAttribute('data-jawnos-predict-press', key); }
+		out.push({ el: el, key: key });
+	}
+	return out;
+}
+
+function jawnosPredictionPressFind(root, key) {
+	if (!root || !root.querySelectorAll || !key) { return null; }
+	var nodes = null;
+	try { nodes = root.querySelectorAll('.save_appointment'); } catch (e) { nodes = null; }
+	if (!nodes) { return null; }
+	for (var i = 0; i < nodes.length; i++) {
+		if (jawnosPredictionPressKey(nodes[i]) === key) { return nodes[i]; }
+	}
+	return null;
+}
+
+function jawnosPredictionPressResolve(ghost, e) {
+	if (!ghost || !ghost.pressables || !ghost.pressables.length) { return null; }
+	var x = (e && typeof e.clientX == 'number') ? e.clientX : null;
+	var y = (e && typeof e.clientY == 'number') ? e.clientY : null;
+	if (x === null || y === null) { return null; }
+	for (var i = 0; i < ghost.pressables.length; i++) {
+		var item = ghost.pressables[i];
+		var rect = null;
+		try { rect = (item && item.el && item.el.getBoundingClientRect) ? item.el.getBoundingClientRect() : null; } catch (err) { rect = null; }
+		if (!rect || !(rect.width > 0) || !(rect.height > 0)) { continue; }
+		if (x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height) { return item; }
+	}
+	return null;
+}
+
+function jawnosPredictionPressReserve(app) {
+	try {
+		if (typeof windowTiledPendingApp != 'undefined' && windowTiledPendingApp && windowTiledPendingApp[app]) {
+			return String(windowTiledPendingApp[app]);
+		}
+	} catch (e) {}
+	return '';
+}
+
+// The queue lives on window so the window manager's replay sees it even when
+// the preview part and the appointment part are loaded separately. Entries are
+// keyed by app and the reserved landing stamp; a press that was not answered by
+// that same open is dropped rather than fired against a stale window.
+var jawnosPredictionPressQueue = {
+	items: {},
+	prune: function (now) {
+		now = now || Date.now();
+		for (var key in this.items) {
+			if (!this.items.hasOwnProperty(key)) { continue; }
+			if (now - (this.items[key].at || 0) > JAWNOS_PREDICTION_PRESS_TTL) { delete this.items[key]; }
+		}
+	},
+	queue: function (app, press) {
+		if (!app || !press) { return null; }
+		this.prune();
+		var stamp = String(press.stamp || '') || jawnosPredictionPressReserve(app);
+		var record = {
+			app: app,
+			stamp: stamp,
+			key: press.key || '',
+			at: press.at || Date.now(),
+			values: press.values || null,
+			ctrlKey: !!press.ctrlKey
+		};
+		this.items[app + '|' + stamp] = record;
+		return record;
+	},
+	take: function (app, stamp) {
+		if (!app) { return null; }
+		stamp = String(stamp || '');
+		var exact = app + '|' + stamp;
+		if (this.items[exact]) { var found = this.items[exact]; delete this.items[exact]; return found; }
+		// a press queued before the reservation was known answers the first
+		// landing for its app
+		var loose = app + '|';
+		if (stamp && this.items[loose]) { var l = this.items[loose]; delete this.items[loose]; return l; }
+		// an entry for another open of this app is not this window's press:
+		// leave it for its own landing (the TTL prunes it if that never comes)
+		return null;
+	},
+	drop: function (app) {
+		for (var key in this.items) {
+			if (!this.items.hasOwnProperty(key)) { continue; }
+			if (!app || this.items[key].app === app) { delete this.items[key]; }
+		}
+	},
+	replay: function (win) {
+		if (typeof managerReset != 'function') { return false; }
+		var el = null;
+		try { el = (typeof $ == 'function') ? $(win)[0] : win; } catch (e) { el = null; }
+		if (!el || !el.getAttribute) { return false; }
+		var app = el.getAttribute('app') || '';
+		var stamp = el.getAttribute('timestamp') || '';
+		if (!app) { return false; }
+		var record = this.take(app, stamp);
+		if (!record) { return false; }
+		var root = (el.closest && el.closest('.wind')) || el;
+		var control = jawnosPredictionPressFind(root, record.key);
+		if (!control) { return false; }
+		// a replay must never take the window's own install down with it
+		try { managerReset($(control), { ctrlKey: !!record.ctrlKey }, record); }
+		catch (e) { return false; }
+		return true;
+	}
+};
+window.jawnosPredictionPressQueue = jawnosPredictionPressQueue;
+
+function jawnosPredictionPressOffer(ghost, e) {
+	if (!ghost || !ghost.app) { return null; }
+	var item = jawnosPredictionPressResolve(ghost, e);
+	if (!item) { return null; }
+	// Prefer a real window that has already been installed under the picture:
+	// its fields hold what the person has typed. With no window yet, the clone
+	// the picture was drawn from is the only copy of those values.
+	var root = null;
+	if (typeof document != 'undefined' && document.querySelector) {
+		var app_name = String(ghost.app).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+		try { root = document.querySelector('.appointment[app="' + app_name + '"]'); } catch (err) { root = null; }
+	}
+	if (!root) { root = ghost.scope || null; }
+	var press = {
+		key: item.key,
+		at: Date.now(),
+		stamp: jawnosPredictionPressReserve(ghost.app),
+		ctrlKey: !!(e && e.ctrlKey),
+		values: jawnosPredictionPressValues(ghost.app, root)
+	};
+	return jawnosPredictionPressQueue.queue(ghost.app, press);
+}
+
 // ---- the app's own window as the preview ------------------------------------
 // A press should show the window it is about to open, not a neutral skeleton:
 // the app's own title bar and buttons, its colours and its layout. The last
 // settled window of each app is cloned - stripped of anything live - and offered
 // to the next press. It is drawn in a shadow root, so its ids can never answer a
 // document lookup meant for the real window, and the page's own rules are
-// carried in scoped to the preview, so it wears the current theme rather than
-// the one it was captured in. The last copy of each app is kept in the encrypted
-// windows store (00_store.js), so a reload still opens into a real-looking preview.
+// carried in scoped to the preview. The palette is inherited from the live root
+// rather than copied, and a picture captured under another theme is refused, so
+// a prediction never wears the previous theme. The last copy of each app is kept
+// in the encrypted windows store (00_store.js), so a reload still opens into a
+// real-looking preview.
 // How much the cache holds. The numbers live in the windows store beside the
 // encrypted records, and are aliased here so the preview and the shell agree on
 // one budget. It is per app, not per window: the desk writes a median of 192
@@ -1135,6 +1379,15 @@ var jawnosEmergePreviews = {};
 var jawnosEmergePreviewSheetCache = null;
 var JAWNOS_EMERGE_PREVIEW_SCOPE = 'jawnos_emerge_scope';
 
+// The theme the desk is wearing now. Both the kept pictures and the copied
+// stylesheet belong to one dressing; a picture from another is refused rather
+// than painted, so a prediction never shows last theme's buttons and icons.
+function jawnosEmergeThemeNow() {
+	if (typeof jawnosWindowsThemeNow == 'function') { return jawnosWindowsThemeNow(); }
+	if (typeof document == 'undefined' || !document.body || !document.body.getAttribute) { return ''; }
+	return document.body.getAttribute('data-theme-sig') || '';
+}
+
 function jawnosEmergePreviewAll() {
 	if (typeof jawnosWindowsAll != 'function') { return Promise.resolve([]); }
 	return jawnosWindowsAll();
@@ -1161,6 +1414,7 @@ function jawnosEmergePreviewSave(record) {
 	return jawnosWindowsSave(jawnosWindowsIdentity(record.app, {}), {
 		app: record.app,
 		preview: record.html,
+		theme: (record.theme !== undefined) ? record.theme : jawnosEmergeThemeNow(),
 		at: record.at || Date.now()
 	});
 }
@@ -1181,11 +1435,15 @@ function jawnosEmergePreviewParse(html) {
 // parsed node so a press never pays for a parse.
 function jawnosEmergePreviewLoad() {
 	jawnosEmergePreviewAll().then(function (rows) {
+		var theme = jawnosEmergeThemeNow();
 		for (var i = 0; i < rows.length; i++) {
 			var row = rows[i];
 			if (!row || !row.app || !row.preview || jawnosEmergePreviews[row.app]) { continue; }
+			// a record from another theme is not the picture the desk is about to
+			// wear; leave it in the store to be replaced by a fresh capture
+			if (String(row.theme || '') !== String(theme)) { continue; }
 			var node = jawnosEmergePreviewParse(row.preview);
-			if (node) { jawnosEmergePreviews[row.app] = { node: node, html: row.preview, at: row.at || 0 }; }
+			if (node) { jawnosEmergePreviews[row.app] = { node: node, html: row.preview, at: row.at || 0, theme: String(row.theme || '') }; }
 		}
 	}).then(null, function () {});
 }
@@ -1253,7 +1511,8 @@ function jawnosEmergePreviewCapture(win) {
 	var html = '';
 	try { html = node.outerHTML || ''; } catch (e) { html = ''; }
 	var at = Date.now();
-	jawnosEmergePreviews[app] = { node: node, html: html, at: at };
+	var theme = jawnosEmergeThemeNow();
+	jawnosEmergePreviews[app] = { node: node, html: html, at: at, theme: theme };
 	// memory keeps the most recently used, like the store does: by count, and by
 	// the markup it is holding, so a handful of big windows cannot crowd out the
 	// rest of the desk
@@ -1271,20 +1530,79 @@ function jawnosEmergePreviewCapture(win) {
 		delete jawnosEmergePreviews[apps[cut]];
 	}
 	if (html && html.length <= JAWNOS_EMERGE_PREVIEW_BYTES) {
-		jawnosEmergePreviewSave({ app: app, html: html, at: at }).then(jawnosEmergePreviewPrune, function () {});
+		jawnosEmergePreviewSave({ app: app, html: html, at: at, theme: theme }).then(jawnosEmergePreviewPrune, function () {});
 	}
 	return true;
 }
 
-// The page's own rules, with body moved onto the preview's wrapper: the shadow
-// root has no body, so scoping is what lets the page's stylesheet cross the
-// boundary at all. Rules that dress only html/:root are dropped instead of
-// copied: the theme's palette reaches the preview by inheritance from the real
-// root (jawnosApplyInk writes it on body), and a local copy of the stylesheet's
-// light defaults would pin every preview to the light theme wherever the desk
-// actually is.
+// A selector list's commas, split only between selectors. A comma inside
+// :where()/:is()/:not() (the form-control focus and texture rules use them)
+// is not a list separator: splitting there produced invalid CSS and those
+// rules silently never reached the preview.
+function jawnosEmergePreviewParts(text) {
+	var parts = [];
+	var depth = 0;
+	var quote = '';
+	var start = 0;
+	text = String(text || '');
+	for (var i = 0; i < text.length; i++) {
+		var ch = text.charAt(i);
+		if (quote) {
+			if (ch === '\\') { i++; continue; }
+			if (ch === quote) { quote = ''; }
+			continue;
+		}
+		if (ch === '"' || ch === "'") { quote = ch; continue; }
+		if (ch === '(' || ch === '[') { depth++; continue; }
+		if (ch === ')' || ch === ']') { if (depth) { depth--; } continue; }
+		if (ch === ',' && depth === 0) { parts.push(text.slice(start, i)); start = i + 1; }
+	}
+	parts.push(text.slice(start));
+	return parts;
+}
+
+// True when every part of the list dresses only body/html/:root itself and not
+// a descendant. Those are the rules that carry the palette (`body.dark_theme {
+// --panel: ... }`); the live desk already provides it by inheritance.
+function jawnosEmergePreviewRootOnly(text) {
+	var parts = jawnosEmergePreviewParts(text);
+	if (!parts.length) { return false; }
+	for (var i = 0; i < parts.length; i++) {
+		var part = parts[i].replace(/\s+/g, ' ').trim();
+		if (!part) { return false; }
+		if (!/^(?::root|html|body)(?:[.#\[:][^\s]*)*$/i.test(part)) { return false; }
+	}
+	return true;
+}
+
+// The page's declarations without the theme palette. A copied `body.dark_theme
+// { --panel: ... }` rule would sit on the preview wrapper and outrank the
+// custom properties inherited from body, pinning the preview (its inputs
+// included) to the stylesheet's static light/dark defaults instead of the
+// desk's actual colours. `color-scheme` and any non-variable declaration stay.
+function jawnosEmergePreviewDeclarations(style) {
+	if (!style) { return ''; }
+	if (style.length !== undefined && typeof style.item == 'function') {
+		var kept = [];
+		for (var i = 0; i < style.length; i++) {
+			var name = style.item(i);
+			if (String(name).indexOf('--') === 0) { continue; }
+			var priority = (typeof style.getPropertyPriority == 'function') ? style.getPropertyPriority(name) : '';
+			kept.push(name + ':' + style.getPropertyValue(name) + (priority ? ' !important' : ''));
+		}
+		return kept.join(';');
+	}
+	var parts = String(style.cssText || '').split(';');
+	var out = [];
+	for (var p = 0; p < parts.length; p++) {
+		if (/^\s*--/.test(parts[p])) { continue; }
+		if (parts[p].trim()) { out.push(parts[p].trim()); }
+	}
+	return out.join(';');
+}
+
 function jawnosEmergePreviewSelector(text) {
-	var parts = String(text || '').split(',');
+	var parts = jawnosEmergePreviewParts(text);
 	var out = [];
 	for (var i = 0; i < parts.length; i++) {
 		var part = parts[i].replace(/\s+/g, ' ').trim();
@@ -1304,7 +1622,12 @@ function jawnosEmergePreviewRules(rules, out) {
 		try {
 			if (rule.selectorText !== undefined && rule.style) {
 				var scoped = jawnosEmergePreviewSelector(rule.selectorText);
-				if (scoped) { out.push(scoped + '{' + rule.style.cssText + '}'); }
+				// the palette belongs to the live root; only the rest of a body-only
+				// rule is copied, so the preview inherits the desk's real colours
+				var declarations = jawnosEmergePreviewRootOnly(rule.selectorText)
+					? jawnosEmergePreviewDeclarations(rule.style)
+					: rule.style.cssText;
+				if (scoped && declarations) { out.push(scoped + '{' + declarations + '}'); }
 			}
 			else if (rule.cssRules && rule.type === 4) {
 				out.push('@media ' + rule.media.mediaText + '{');
@@ -1343,9 +1666,12 @@ function jawnosEmergePreviewCss() {
 	return out.join('\n');
 }
 
-// Built once: serialising every rule is not something a press should pay for.
+// Built once per theme: serialising every rule is not something a press should
+// pay for. A live theme change drops the cache (jawnosEmergePreviewThemeReset)
+// and the signature check here is the second guard.
 function jawnosEmergePreviewSheet() {
-	if (jawnosEmergePreviewSheetCache) { return jawnosEmergePreviewSheetCache; }
+	var theme = jawnosEmergeThemeNow();
+	if (jawnosEmergePreviewSheetCache && jawnosEmergePreviewSheetCache.theme === theme) { return jawnosEmergePreviewSheetCache; }
 	var css = jawnosEmergePreviewCss();
 	var sheet = null;
 	try {
@@ -1355,8 +1681,19 @@ function jawnosEmergePreviewSheet() {
 		}
 	}
 	catch (e) { sheet = null; }
-	jawnosEmergePreviewSheetCache = { sheet: sheet, css: css };
+	jawnosEmergePreviewSheetCache = { sheet: sheet, css: css, theme: theme };
 	return jawnosEmergePreviewSheetCache;
+}
+
+// A live theme change makes every kept picture and the copied stylesheet a
+// picture of the old dressing. Drop both; a press then draws the current-theme
+// skeleton until a window is captured under the new theme. The store's own
+// theme stamp keeps a reload from reading an old picture back.
+function jawnosEmergePreviewThemeReset() {
+	jawnosEmergePreviews = {};
+	jawnosEmergePreviewSheetCache = null;
+	if (typeof jawnosWindowEmergeGhostCancel == 'function') { jawnosWindowEmergeGhostCancel(jawnosWindowEmergeGhost); }
+	if (typeof jawnosEmergePreviewLoad == 'function') { jawnosEmergePreviewLoad(); }
 }
 
 // Draw the app's last window into the ghost. Answers false when there is no
@@ -1368,6 +1705,11 @@ function jawnosEmergePreviewBuild(origin, host) {
 	if (!host || !host.attachShadow || !origin.app) { return false; }
 	var snapshot = jawnosEmergePreviews[origin.app];
 	if (!snapshot || !snapshot.node) { return false; }
+	// The captured inline styles, the baked icon paths and the copied stylesheet
+	// are one theme's picture. A snapshot from another dressing cannot be
+	// honestly re-themed, so it is refused and the caller draws the current-theme
+	// skeleton instead of showing last theme's buttons.
+	if (String(snapshot.theme || '') !== String(jawnosEmergeThemeNow())) { return false; }
 	// using it is using the app: the copy the store and the memory map drop first
 	// is the one the desk has not looked at in the longest time
 	snapshot.at = Date.now();
@@ -1419,6 +1761,14 @@ function jawnosEmergePreviewBuild(origin, host) {
 	}
 	if (!adopted && style) { shadow.appendChild(style); }
 	shadow.appendChild(scope);
+	// The picture is a closed shadow tree: keep the scope and mark its controls
+	// so a press on one can be resolved by geometry and replayed when the real
+	// control lands (jawnosPredictionPressResolve). Only a picture that actually
+	// reached the desk is pressable.
+	if (host) {
+		host.jawnosEmergeScope = scope;
+		host.jawnosEmergePressables = jawnosPredictionPressMark(scope);
+	}
 	return true;
 }
 
@@ -1585,12 +1935,13 @@ function jawnosWindowEmergeGhostStart(origin) {
 		el.appendChild(chrome);
 	}
 
-	var ghost = { el: el, chrome: chrome, app: origin.app || '', origin: origin, to: to, timer: null, openAnim: null, chromeAnim: null, win: null, waited: 0, at: Date.now(), poured: !el.animate, armed: false, armTimer: null, pourTimer: null };
+	var ghost = { el: el, chrome: chrome, app: origin.app || '', origin: origin, to: to, timer: null, openAnim: null, chromeAnim: null, win: null, waited: 0, at: Date.now(), poured: !el.animate, armed: false, armTimer: null, pourTimer: null, scope: el.jawnosEmergeScope || null, pressables: el.jawnosEmergePressables || [] };
 	document.body.appendChild(el);
 	jawnosWindowEmergeGhost = ghost;
 
-	// The waiting preview takes the pointer so a press on it can be a dismissal;
-	// the class is removed at retarget, so the cross-fade is click-through again.
+	// The waiting preview takes the pointer so a press on it can be one of two
+	// things: a dismissal, or a press meant for the window's own controls.
+	// The class is removed at retarget, so the cross-fade is click-through again.
 	if (el.addEventListener) {
 		el.addEventListener('click', function (e) {
 			// a queued click can land after the window has taken the frame
@@ -1598,6 +1949,10 @@ function jawnosWindowEmergeGhostStart(origin) {
 			if (e && e.preventDefault) { e.preventDefault(); }
 			if (e && e.stopImmediatePropagation) { e.stopImmediatePropagation(); }
 			else if (e && e.stopPropagation) { e.stopPropagation(); }
+			// A press on a predicted control is the press the person meant for
+			// the app: keep it (with its own moment and values) and do not
+			// dismiss the open it is waiting for. Anything else is a dismissal.
+			if (jawnosPredictionPressOffer(ghost, e)) { return; }
 			jawnosWindowEmergeDismiss(ghost);
 		});
 	}

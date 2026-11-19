@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows/00_store.js public/js/manager/windows/02_fit.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows/00_store.js public/js/manager/windows/02_fit.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/js/manager/manager/09_app_back.js public/js/universal/05_theme_ink_icon_swap.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
 # covers:    a new window pours out of the control that opened it - the press
 #            records a viewport rectangle and richer app metadata, pointerdown
 #            draws the chrome preview at once, windowMaker hands the real
@@ -23,6 +23,8 @@ use RepoSource;
 my $root   = repo_root();
 my $emerge = read_file("$root/public/js/manager/windows/06_emerge.js");
 my $store  = read_file("$root/public/js/manager/windows/00_store.js");
+my $app_back = read_file("$root/public/js/manager/manager/09_app_back.js");
+my $theme_js = read_file("$root/public/js/universal/05_theme_ink_icon_swap.js");
 my $fit    = read_file("$root/public/js/manager/windows/02_fit.js");
 my $index  = read_file("$root/public/js/manager/windows.js");
 my $board  = read_file("$root/public/js/manager/leaderboardprinter.js");
@@ -1025,6 +1027,10 @@ const scales = {
 	maximum: { ghost: 400, retarget: 300 }
 };
 Object.keys(scales).forEach(function (name) {
+	// the slow-window test above advances the fake clock, and a loaded box can
+	// make a real-time retarget look like a learned pace; this block asserts the
+	// level's own durations, so it starts from no samples
+	sandbox.jawnosWindowEmergeLatencies = [];
 	level = name;
 	press(press_icon);
 	const scaled = sandbox.jawnosWindowEmergeGhost;
@@ -1148,6 +1154,101 @@ check('but the app\'s own attributes do', dirty_button.getAttribute('hint') === 
 check('with no snapshot the ghost keeps the drawn chrome',
 	sandbox.jawnosEmergePreviewBuild({ app: 'clock' }, makeElement('DIV')) === false);
 
+// --- the prediction takes the live palette, not the sheet's defaults --------
+check('a selector list is split only between selectors',
+	sandbox.jawnosEmergePreviewSelector(':where(input, select, textarea, button, .text_editor):focus-visible')
+	=== ':where(input, select, textarea, button, .text_editor):focus-visible');
+check('a body-only rule is the theme palette',
+	sandbox.jawnosEmergePreviewRootOnly('body.dark_theme') === true
+	&& sandbox.jawnosEmergePreviewRootOnly('body, html') === true
+	&& sandbox.jawnosEmergePreviewRootOnly('body.dark_theme input') === false);
+check('the copied palette leaves custom properties to the live body',
+	sandbox.jawnosEmergePreviewDeclarations({ cssText: '--panel:#1b1d21;--panel-2:#24272c;color-scheme:dark' })
+	=== 'color-scheme:dark');
+const scoped_rules = [];
+sandbox.jawnosEmergePreviewRules([
+	{ selectorText: 'body.dark_theme', style: { cssText: '--panel:#1b1d21;--panel-2:#24272c;color-scheme:dark' } },
+	{ selectorText: 'body.dark_theme input', style: { cssText: 'background-color:var(--panel-2);color:var(--ink)' } }
+], scoped_rules);
+check('a prediction input wears the real window\'s rule and the live variables',
+	scoped_rules.indexOf('.jawnos_emerge_scope.dark_theme{color-scheme:dark}') >= 0
+	&& scoped_rules.indexOf('.jawnos_emerge_scope.dark_theme input{background-color:var(--panel-2);color:var(--ink)}') >= 0);
+
+// --- a picture from another theme is refused -------------------------------
+body.setAttribute('data-theme-sig', 'theme-a');
+const theme_sheet_a = sandbox.jawnosEmergePreviewSheet();
+body.setAttribute('data-theme-sig', 'theme-b');
+const theme_sheet_b = sandbox.jawnosEmergePreviewSheet();
+check('the scoped stylesheet is rebuilt for a new theme',
+	theme_sheet_a !== theme_sheet_b && theme_sheet_b.theme === 'theme-b');
+const themed_node = makeElement('DIV');
+themed_node.cloneNode = function () {
+	const c = makeElement('DIV', 'wind');
+	c.outerHTML = '<div class="wind"></div>';
+	return c;
+};
+const themed_host = makeElement('DIV');
+themed_host.attachShadow = function () {
+	return { adoptedStyleSheets: null, appendChild: function () {} };
+};
+body.setAttribute('data-theme-sig', 'current');
+sandbox.jawnosEmergePreviews = { themeapp: { node: themed_node, theme: 'other' } };
+check('a picture from another theme is refused even with a snapshot',
+	sandbox.jawnosEmergePreviewBuild({ app: 'themeapp' }, themed_host) === false);
+sandbox.jawnosEmergePreviews.themeapp.theme = 'current';
+check('and the current theme is used',
+	sandbox.jawnosEmergePreviewBuild({ app: 'themeapp' }, themed_host) === true);
+body.removeAttribute('data-theme-sig');
+sandbox.jawnosEmergePreviews = {};
+
+// --- a press on the prediction waits for the real control -------------------
+const geom_control = makeElement('IMG', 'save_appointment');
+geom_control.setAttribute('type', 'start');
+geom_control.getBoundingClientRect = function () { return { left: 10, top: 20, width: 40, height: 30 }; };
+const geom_ghost = { app: 'notes', scope: null, pressables: [{ el: geom_control, key: 'img.save_appointment[type=start]' }] };
+check('a press on a predicted control resolves by geometry',
+	sandbox.jawnosPredictionPressResolve(geom_ghost, { clientX: 20, clientY: 30 }).key === 'img.save_appointment[type=start]');
+check('a press beside it does not',
+	sandbox.jawnosPredictionPressResolve(geom_ghost, { clientX: 200, clientY: 300 }) === null);
+const offered = sandbox.jawnosPredictionPressOffer(geom_ghost, { clientX: 20, clientY: 30, ctrlKey: false });
+check('a press on a predicted control is queued, not a dismissal',
+	!!offered && !!sandbox.window.jawnosPredictionPressQueue.items['notes|']
+	&& !sandbox.jawnosWindowEmergeDismissals['app:notes']);
+sandbox.window.jawnosPredictionPressQueue.drop('notes');
+
+let replayed_press = null;
+sandbox.managerReset = function (caller, ev, press) { replayed_press = press; };
+const predicted_control = makeElement('IMG', 'save_appointment');
+predicted_control.setAttribute('type', 'start');
+const predicted_key = sandbox.jawnosPredictionPressKey(predicted_control);
+const real_control = makeElement('IMG', 'save_appointment');
+real_control.setAttribute('type', 'start');
+const real_win = makeElement('DIV', 'wind');
+real_win.setAttribute('app', 'notes');
+real_win.setAttribute('timestamp', 'press-stamp');
+real_win.closest = function () { return this; };
+real_win.querySelectorAll = function (sel) {
+	return sel.indexOf('save_appointment') >= 0 ? [real_control] : [];
+};
+const press_queue = sandbox.window.jawnosPredictionPressQueue;
+press_queue.queue('notes', { key: predicted_key, at: 12345, stamp: 'press-stamp', values: { ago: '5m', duration: '10m' } });
+check('a predicted press is queued with the moment it was made',
+	!!press_queue.items['notes|press-stamp']
+	&& press_queue.items['notes|press-stamp'].at === 12345
+	&& press_queue.items['notes|press-stamp'].values.ago === '5m');
+check('the landed window replays it against the matching control',
+	press_queue.replay(real_win) === true
+	&& replayed_press && replayed_press.at === 12345 && replayed_press.values.ago === '5m');
+check('and only once', press_queue.replay(real_win) === false && replayed_press.at === 12345);
+const qnow = Date.now();
+press_queue.queue('notes', { key: predicted_key, at: qnow, stamp: 'one' });
+press_queue.queue('notes', { key: predicted_key, at: qnow + 1, stamp: 'two' });
+check('a landing takes only its own open',
+	press_queue.take('notes', 'one').at === qnow && !!press_queue.items['notes|two']);
+press_queue.drop('notes');
+
+delete sandbox.managerReset;
+
 // the idle sweep refreshes an open window, oldest picture first, one per tick
 const sweep_notes = new El('notes');
 const sweep_weather = new El('weather');
@@ -1220,6 +1321,7 @@ sandbox.jawnosEmergePreviews = {};
 // tail: the window would land with most of it left and the retarget would have
 // to squeeze it into the cross-fade. The last few opens set the pace.
 const saved_pace = {};
+sandbox.jawnosWindowEmergeLatencies = [];
 sandbox.localStorage = {
 	getItem: function (k) { return saved_pace[k] === undefined ? null : saved_pace[k]; },
 	setItem: function (k, v) { saved_pace[k] = String(v); }
@@ -1290,6 +1392,50 @@ like($emerge, qr/var app_colour = jawnosWindowEmergeAppColour\(origin\.app\);\s*
 	'and its title bar is repainted from the live app colour');
 like($emerge, qr/requestIdleCallback\(drafted, \{ timeout: 1200 \}\)/,
 	'the copy is taken once the desk is idle, not in the open\'s last frame');
+
+# --- a prediction never wears the previous theme ------------------------------
+like($store, qr/function jawnosWindowsThemeNow\(\)/,
+	'the current theme is read from the page signature');
+like($store, qr/theme: jawnosWindowsThemeNow\(\)/,
+	'a stored shell is stamped with the theme it was captured in');
+like($store, qr/if \(String\(row\.theme \|\| ''\) !== String\(jawnosWindowsThemeNow\(\)\)\) \{ return; \}/,
+	'and a shell from another theme is not restored');
+like($emerge, qr/function jawnosEmergeThemeNow\(\)/, 'the preview has one theme reader');
+like($emerge, qr/theme: \(record\.theme !== undefined\) \? record\.theme : jawnosEmergeThemeNow\(\)/,
+	'a stored picture is stamped with its theme');
+like($emerge, qr/if \(String\(row\.theme \|\| ''\) !== String\(theme\)\) \{ continue; \}/,
+	'a reload keeps only pictures from the current theme');
+like($emerge, qr/if \(String\(snapshot\.theme \|\| ''\) !== String\(jawnosEmergeThemeNow\(\)\)\) \{ return false; \}/,
+	'and a picture from another theme is refused, falling back to the skeleton');
+like($emerge, qr/jawnosEmergePreviewSheetCache\.theme === theme/,
+	'the scoped stylesheet is cached per theme');
+like($emerge, qr/function jawnosEmergePreviewThemeReset\(\)/, 'a live change drops the kept pictures');
+like($theme_js, qr/function jawnosThemeEmergeReset\(\)/, 'the theme path has one place to drop them');
+like($theme_js, qr/jawnosThemeEmergeReset\(\);/, 'both the Misc paint and the bundle call it');
+
+# --- a press on the prediction is a press, not a dismissal -------------------
+like($emerge, qr/function jawnosPredictionPressOffer\(ghost, e\)/,
+	'a press on a predicted control is offered to the queue');
+like($emerge, qr/if \(jawnosPredictionPressOffer\(ghost, e\)\) \{ return; \}\s*jawnosWindowEmergeDismiss\(ghost\);/,
+	'and it is queued before any dismissal, so the open is not cancelled');
+like($emerge, qr/root\.querySelectorAll\('\.save_appointment'\)/,
+	'only the controls that call managerReset are predicted presses');
+unlike($emerge, qr/querySelectorAll\('\.save_appointment, \.app_act'\)/,
+	'a details or configure action is not replayed as a reset');
+like($index, qr/jawnosPredictionPressQueue\.replay\(wind_el\[0\]\)/,
+	'a matched render also hands a predicted press to the window');
+like($emerge, qr/var jawnosPredictionPressQueue = \{[\s\S]{0,1600}?queue: function \(app, press\)/,
+	'the queue has a queue helper');
+like($emerge, qr/replay: function \(win\)[\s\S]{0,900}?managerReset\(\$\(control\), \{ ctrlKey: !!record\.ctrlKey \}, record\)/,
+	'and a replay that hands the press to the real control');
+like($emerge, qr/if \(typeof jawnosPredictionPressQueue != 'undefined' && jawnosPredictionPressQueue && typeof jawnosPredictionPressQueue\.replay == 'function'\) \{\s*jawnosPredictionPressQueue\.replay\(win\);/,
+	'the landing window replays it');
+like($emerge, qr/jawnosPredictionPressQueue\.drop\(app\)/, 'a dismissal drops a queued press');
+like($app_back, qr/function managerReset\(caller,e,press\)/, 'managerReset takes a replayed press');
+like($app_back, qr/var now = \(replay && replay\.at\) \? replay\.at : Date\.now\(\);/,
+	'and sends it with the click\'s own timestamp');
+like($app_back, qr/if \(captured\.ago !== undefined\) \{ container\.find\('\.ago'\)\.val\(captured\.ago\); \}/,
+	'with the values the prediction was showing');
 
 # --- and every touched script parses ----------------------------------------
 if ($node && -x $node) {

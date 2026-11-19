@@ -1,10 +1,14 @@
-# tests-for: public/js/manager/soft_keyboard.js public/css/soft_keyboard.css templates/soft_keyboard.html.ep perl/help/topics_mail.pl
+# tests-for: public/js/manager/soft_keyboard.js public/js/manager/soft_keyboard/03_convert.js public/js/manager/soft_keyboard/05_vault_ime.js public/css/soft_keyboard.css templates/soft_keyboard.html.ep perl/help/topics_mail.pl
 # covers:    On a desk the soft keyboard and calculator were the full width of
 #            the screen. They are now a floating panel with its own frame and
 #            shadow, moved by the bar above the keys and remembered on the
 #            device. A phone, a tablet and the handheld controller keep the
 #            full-width dock, and the Android input method page is never
 #            floated. The controller's own keys are not a hardware keyboard.
+#            The recommendation row reads the field's kind (a moment, a length)
+#            and lists seconds first for a moment: 30 in the Ago field offers
+#            30s, 30m, ...; a duration still starts at 30m. The input method
+#            reads the app's context and hint through that same test.
 
 use strict;
 use warnings;
@@ -13,6 +17,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use File::Temp qw(tempfile);
 use RepoSource;
 
 my $kb = js_source('public/js/manager/soft_keyboard.js');
@@ -161,5 +166,76 @@ like($kb, qr/css\(\{ position: '', left: '', top: '', bottom: '', width: '', hei
 
 like($kb, qr/#keyboard_toggle, #calculator_toggle/, 'the start-menu keyboard and calculator faces are taken');
 like($kb, qr/softKbDockOpen\(calc \? 'calc' : 'letters'\)/, 'and open the dock on their own page');
+
+# --- a typed number lists seconds first in a time field ----------------------
+# The appointment's Ago field is the house's own time input (class and text
+# "ago"). A bare number there saves as minutes, but a moment may be seconds
+# away, so the row follows the typed number and starts at seconds: 30 becomes
+# 30s, 30m, ... . A duration is a length and keeps its minutes. The kind is
+# read from the field's own words by the dock and from the app's context/hint
+# by the input method, through one test.
+like($kb, qr/function softKbContextKind\(raw\)/,
+	'one test reads the kind from a field\'s words or an app\'s hint');
+like($kb, qr/if \(has\('timestamp'\) \|\| has\('ago'\) \|\| has\('time'\) \|\| has\('when'\) \|\| has\('date'\)\) \{ return 'when'; \}/,
+	'a moment is `when`, whichever word named it');
+like($kb, qr/label: 'Time',[^}]*units: \['s', 'm', 'h', 'd', 'w', 'M', 'y'\]/s,
+	'the time row lists the typed number\'s seconds first');
+like($kb, qr/label: 'Duration',[^}]*units: \['m', 'h', 'd', 'w', 'M', 'y'\]/s,
+	'a duration still lists minutes first');
+like($kb, qr/var units = softKbSuggestUnits\(def\);/, 'the row takes that order from its own definition');
+like($kb, qr/jawnSoftContext = softKbContextKind\(context\);/, 'the input method reads the app\'s context through it');
+like($kb, qr/var kind = softKbContextKind\(jawnImeMeta && jawnImeMeta\.hint\);/, 'and the hint the app published too');
+
+my $node = qx{command -v node 2>/dev/null};
+chomp $node;
+
+SKIP: {
+	skip 'node is not installed', 2 unless $node;
+
+	my ($kindf) = $kb =~ m{(function softKbContextKind\(raw\) \{.*?\n\})}s;
+	my ($ctxf)  = $kb =~ m{(function softKbContext\(el\) \{.*?\n\})}s;
+	my ($defs)  = $kb =~ m{(var jawnSoftSuggestDefs = \{.*?\n\};)}s;
+	my ($unitf) = $kb =~ m{(function softKbSuggestUnits\(def\) \{.*?\n\})}s;
+	my ($textf) = $kb =~ m{(function softKbSuggestText\(\) \{.*?\n\})}s;
+	my ($itemsf) = $kb =~ m{(function softKbSuggestItems\(def\) \{.*?\n\})}s;
+	ok(defined $kindf && defined $ctxf && defined $defs && defined $unitf && defined $textf && defined $itemsf,
+		'the kind test and the recommendation row are whole in the assembled script');
+
+	my $script = <<'JS';
+var jawnSoftIme = false, jawnImeText = '', jawnSoftContext = '', jawnSoftField = null;
+var $ = function () { return { closest: function () { return { length: 0 }; }, text: function () { return ''; } }; };
+function softKbNumeric() { return false; }
+JS
+	$script .= join("\n", $kindf, $ctxf, $defs, $unitf, $textf, $itemsf) . "\n";
+	$script .= <<'JS';
+function field(attrs, value) {
+	return {
+		id: attrs.id || '',
+		className: attrs.className || '',
+		value: value,
+		getAttribute: function (k) { return attrs[k] == null ? null : attrs[k]; }
+	};
+}
+function fail(m) { console.error(m); process.exit(1); }
+var ago = field({ type: 'text', className: 'ago main_input', text: 'ago', placeholder: 'Ago' }, '30');
+if (softKbContext(ago) !== 'when') { fail('the Ago field reads as ' + softKbContext(ago)); }
+jawnSoftField = ago;
+var moment = softKbSuggestItems(jawnSoftSuggestDefs.when);
+if (moment[0] !== '30s' || moment[1] !== '30m') { fail('the time row starts ' + moment.slice(0, 3).join(',')); }
+var span = field({ type: 'text', className: 'duration main_input', text: 'duration', placeholder: 'Duration' }, '30');
+if (softKbContext(span) !== 'duration') { fail('the Duration field reads as ' + softKbContext(span)); }
+jawnSoftField = span;
+var length = softKbSuggestItems(jawnSoftSuggestDefs.duration);
+if (length[0] !== '30m' || length.indexOf('30s') >= 0) { fail('the duration row starts ' + length.slice(0, 3).join(',')); }
+if (softKbContextKind('Ago') !== 'when') { fail('the input method hint Ago is not a time field'); }
+if (softKbContextKind('Duration') !== 'duration') { fail('the input method hint Duration is not a duration'); }
+JS
+
+	my ($fh, $file) = tempfile( SUFFIX => '.js', UNLINK => 1 );
+	print {$fh} $script;
+	close $fh;
+	my $rc = system($node, $file);
+	is($rc, 0, '30 in the Ago field is 30s, 30m, ... and a duration is still 30m, 30h, ...');
+}
 
 done_testing();

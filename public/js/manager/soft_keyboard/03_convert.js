@@ -385,18 +385,24 @@ document.addEventListener('scroll', function () {
 var jawnSoftSuggestDefs = {
 	when: {
 		label: 'Time',
+		// a moment can be seconds away, so the typed number offers s first
+		units: ['s', 'm', 'h', 'd', 'w', 'M', 'y'],
 		items: ['now', '5m', '15m', '1h', '4h', '1d', '1w', '1M', 'yesterday', 'today', 'tomorrow', 'in 1h', 'in 1d']
 	},
 	duration: {
 		label: 'Duration',
+		// a length starts at minutes
+		units: ['m', 'h', 'd', 'w', 'M', 'y'],
 		items: ['5m', '15m', '30m', '1h', '2h', '4h', '8h', '1d', '1w']
 	},
 	warranty: {
 		label: 'Warranty',
+		units: ['m', 'h', 'd', 'w', 'M', 'y'],
 		items: ['-1d', '-1w', '-1M', '-3M', '-6M', '-1y', '-2y', '-5y', '-10y']
 	},
 	schedule: {
 		label: 'Repeat',
+		units: ['m', 'h', 'd', 'w', 'M', 'y'],
 		items: ['once', '1d', '1w', '1M', '1y', '1d for -2w', '1w for -8w']
 	}
 };
@@ -408,6 +414,13 @@ function softKbSuggestText() {
 	return el.isContentEditable ? $(el).text() : (el.value || '');
 }
 
+// The unit chips a typed number offers, in the order the row's own kind wants:
+// seconds first for a moment, minutes first for a length. The list belongs to
+// the definition, not to the mutable context the row was drawn for.
+function softKbSuggestUnits(def) {
+	return (def && def.units) ? def.units : ['m', 'h', 'd', 'w', 'M', 'y'];
+}
+
 // A number already typed steers the row: 5 in a time field offers 5s, 5m, 5h,
 // 5d, 5w, 5M and 5y, in a duration 5m through 5y, and a warranty takes them
 // negative. The fixed chips follow, without repeats.
@@ -416,7 +429,7 @@ function softKbSuggestItems(def) {
 	var found = String(softKbSuggestText() || '').match(/\d+(?:\.\d+)?/g);
 	var n = found ? found[found.length - 1] : '';
 	if (n) {
-		var units = (jawnSoftContext == 'when') ? ['s', 'm', 'h', 'd', 'w', 'M', 'y'] : ['m', 'h', 'd', 'w', 'M', 'y'];
+		var units = softKbSuggestUnits(def);
 		for (var i = 0; i < units.length; i++) {
 			var v = n + units[i];
 			if (jawnSoftContext == 'warranty') { v = '-' + v; }

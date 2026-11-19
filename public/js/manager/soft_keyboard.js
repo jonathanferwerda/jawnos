@@ -522,11 +522,26 @@ function softKbServerLabel(key, text) {
 	return (label != null && label !== '') ? label : softKbLabel(text);
 }
 
-// What kind of field the dock is typing into. The class, name and placeholder
-// are the house's own conventions ("ago", "duration", "warranty", "schedule",
-// "notes"), and a `time` input is a timestamp written in words. The answer
-// decides both the recommendation row and whether a typed "5m" is minutes or
-// metres.
+// What kind of field the dock is typing into, from the field's own words. The
+// class, name and placeholder are the house's own conventions ("ago",
+// "duration", "warranty", "schedule", "notes"), and a `time` input is a
+// timestamp written in words. The input method has no element to read: the app
+// names the field in a hint, and that hint goes through this same test. A
+// moment ("ago", "time", "timestamp") is `when` by either road, so the
+// recommendation row can offer seconds first wherever the field was met.
+function softKbContextKind(raw) {
+	var tokens = String(raw || '').toLowerCase().split(/[^a-z0-9]+/);
+	var has = function (t) { return tokens.indexOf(t) >= 0; };
+	if (has('duration')) { return 'duration'; }
+	if (has('warranty')) { return 'warranty'; }
+	if (has('schedule')) { return 'schedule'; }
+	if (has('timestamp') || has('ago') || has('time') || has('when') || has('date')) { return 'when'; }
+	if (has('notes') || has('note')) { return 'notes'; }
+	return '';
+}
+
+// The kind decides both the recommendation row and whether a typed "5m" is
+// minutes or metres.
 function softKbContext(el) {
 	if (!el) { return ''; }
 	if ((el.getAttribute('type') || '').toLowerCase() == 'password') { return 'password'; }
@@ -539,14 +554,9 @@ function softKbContext(el) {
 		el.getAttribute('hint'),
 		el.getAttribute('data-context'),
 		el.className
-	].join(' ').toLowerCase();
-	var tokens = raw.split(/[^a-z0-9]+/);
-	var has = function (t) { return tokens.indexOf(t) >= 0; };
-	if (has('duration')) { return 'duration'; }
-	if (has('warranty')) { return 'warranty'; }
-	if (has('schedule')) { return 'schedule'; }
-	if (has('timestamp') || has('ago') || has('time')) { return 'when'; }
-	if (has('notes') || has('note')) { return 'notes'; }
+	].join(' ');
+	var kind = softKbContextKind(raw);
+	if (kind) { return kind; }
 	if (el.id == 'message' || $(el).closest('.chat_shell').length) { return 'chat'; }
 	if (softKbNumeric(el)) { return 'number'; }
 	return 'text';

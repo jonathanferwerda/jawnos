@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Web.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Manager/Part05.pm templates/appointment_wrapper.html.ep templates/apps/appointment_stats.html.ep templates/apps/app_measure_details.html.ep templates/market/market.html.ep public/js/manager/manager/09_app_back.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js
-# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end; and the shopping list reading the same shelf as a due item, with its runway named on the row and on the Shopping tab badge
+# covers:    the appointment's bottom line - shelf in/out, days of stock left coloured when low and movements per period, and time, count, money and measures for today/week/month/year, each with its pace to the period's end and the share of the period that time fills; and the shopping list reading the same shelf as a due item, with its runway named on the row and on the Shopping tab badge
 
 use strict;
 use warnings;
@@ -178,6 +178,22 @@ cmp_ok(abs($p{'week'}->{'elapsed'} - $week_elapsed), '<', 1e-12,
 cmp_ok(abs($p{'week'}->{'projected'}->{'count'} - 3 / $week_elapsed), '<', 1e-9,
 	'the week carries its count to the end of the week');
 is($p{'today'}->{'progress'}, '50', 'the progress says the share the pace was read at');
+# Each period carries its own length, so the time spent reads as a share of
+# the day, week, month or year it fills; the pace's duration reads the same way.
+my ($day_begin, $day_end) = &subs::period_bounds('day', $now, 0);
+is($p{'today'}->{'span'}, $day_end - $day_begin, 'the day span is its own window length');
+cmp_ok(abs($p{'today'}->{'percent'} - 3600000 / ($day_end - $day_begin) * 100), '<', 1e-9,
+	'an hour is its share of the day');
+cmp_ok(abs($p{'today'}->{'projected'}->{'percent'} - 7200000 / ($day_end - $day_begin) * 100), '<', 1e-9,
+	'and the pace carries that share to the day end');
+my ($year_begin, $year_end) = &subs::period_bounds('year', $now, 0);
+is($p{'year'}->{'span'}, $year_end - $year_begin, 'the year span is its own window length');
+cmp_ok(abs($p{'year'}->{'percent'} - 16200000 / ($year_end - $year_begin) * 100), '<', 1e-9,
+	'the year reads its hours as a share of the whole year');
+my $opening = &subs::appointment_statistics_for('nothing_here', $day_begin);
+my %day_open = map { $_->{'key'} => $_ } @{ $opening->{'periods'} };
+ok(!defined $day_open{'today'}->{'projected'}, 'a day at its opening instant has no pace');
+is($day_open{'today'}->{'percent'}, 0, 'and no time spent is no share of the day');
 my $series = &subs::measure_series(0);
 is_deeply([ sort keys %{ $series->{'walk'} } ], [qw/steps weight/],
 	'the same clock fields are left out of the per-day series');
@@ -316,8 +332,8 @@ my $pace_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
 			periods => [ {
 				key => 'today', label => 'Today',
 				duration => 3600000, count => 1, money => 10,
-				elapsed => 0.5, progress => '50',
-				projected => { duration => 7200000, count => 2, money => 20 },
+				elapsed => 0.5, progress => '50', span => 86400000, percent => 4.2,
+				projected => { duration => 7200000, count => 2, money => 20, percent => 8.3 },
 				measures => {
 					steps => { value => 1000, calc => 'sum', unit => '', projected => 2000 },
 					weight => { value => 170, calc => 'average', unit => 'lb' },
@@ -332,6 +348,29 @@ my $pace_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
 );
 like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>2h<\/td>/,
 	'the time table carries the hour to the day end');
+like($pace_html, qr/<tr style="opacity:\.7;font-size:90%;"><td>%<\/td><td>4\.2<\/td>/,
+	'the time table shows the hour as a share of the day');
+like($pace_html, qr/<tr style="opacity:\.7;font-size:90%;"><td>%<\/td><td>8\.3<\/td>/,
+	'and the share the pace carries to the day end');
+my $open_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
+	scalar $stats_template,
+	{
+		app => 'walk',
+		app_stats => {
+			periods => [ {
+				key => 'today', label => 'Today',
+				duration => 0, count => 0, money => 0,
+				elapsed => 0, progress => '0', span => 86400000, percent => 0,
+				projected => undef, measures => {},
+			} ],
+			measure_names => [],
+		},
+	},
+);
+like($open_html, qr/<tr style="opacity:\.7;font-size:90%;"><td>%<\/td><td>0<\/td>/,
+	'a fresh period shows no share of its length done');
+like($open_html, qr/<tr style="opacity:\.7;font-size:90%;"><td>%<\/td><td>-<\/td>/,
+	'and a dash where there is no pace to carry yet');
 like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>2<\/td>/,
 	'the count table carries one occurrence to two');
 like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>\$20\.00<\/td>/,

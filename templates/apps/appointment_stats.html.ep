@@ -12,6 +12,9 @@
 	$s =~ s/\.0$//;
 	return $s;
 }; %>
+<%# A share of a period's own length reads the same way as a pace: one decimal,
+    no trailing .0, and a dash where there is no reading to show. %>
+<% my $percent_number = $pace_number; %>
 <div class="appointment_stats_panel" stat="inv" style="display:none;">
 	<% my $inv = $stats->{'inventory'} || {}; %>
 	<% if (scalar @{ $inv->{'units'} || [] }) { %>
@@ -63,7 +66,9 @@
 	<table class="appointment_stats_table">
 		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
 		<tr><td><%= &subs::ui('Duration') %></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::duration_sayer(($p->{'duration'} || 0) / 1000) %></td><% } %></tr>
+		<tr style="opacity:.7;font-size:90%;"><td>%</td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= $percent_number->($p->{'percent'}) %></td><% } %></tr>
 		<tr class="appointment_stats_pace"><td><%= &subs::ui('Pace') %> <span class="appointment_stats_calc"><%= &subs::ui('by the end') %></span></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><% if (defined $p->{'projected'}) { %><%= &subs::duration_sayer(($p->{'projected'}->{'duration'} || 0) / 1000) %><% } else { %>-<% } %></td><% } %></tr>
+		<tr style="opacity:.7;font-size:90%;"><td>%</td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= $percent_number->(defined $p->{'projected'} ? $p->{'projected'}->{'percent'} : undef) %></td><% } %></tr>
 	</table>
 </div>
 <div class="appointment_stats_panel" stat="count" style="display:none;">

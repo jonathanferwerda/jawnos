@@ -547,6 +547,14 @@ function windowMaker(response, fragment) {
 						if (typeof budgetLight === 'function') { budgetLight(app_attr,circumstance,'open'); }
 					}
 					carry_on = 1;
+					// A press made against the prediction waited for this render. A
+					// restored shell already gave it an append (and replayed there),
+					// but a press made while the shell stood waiting has no second
+					// append: this matched render is where it reaches the server's
+					// own markup.
+					if (typeof jawnosPredictionPressQueue != 'undefined' && jawnosPredictionPressQueue && typeof jawnosPredictionPressQueue.replay == 'function') {
+						jawnosPredictionPressQueue.replay(wind_el[0]);
+					}
 					// the render is the window's newest state: write it back for the
 					// next reload once the burst of frames has settled
 					if (typeof jawnosWindowsShellCaptureSoon == 'function') { jawnosWindowsShellCaptureSoon(wind_el, 1200); }

@@ -931,6 +931,9 @@ sub appointment_statistics_for {
 			key => $key,
 			label => &subs::ui($label_for{$key}),
 			elapsed => $elapsed,
+			# the period's own length, so a duration can be read as the
+			# share of the day, week, month or year it fills
+			span => $end - $begin,
 			duration => 0,
 			count => 0,
 			money => 0,
@@ -1021,11 +1024,16 @@ sub appointment_statistics_for {
 		# at its opening instant has no rate yet and carries no pace.
 		my $elapsed = $period{$key}->{'elapsed'};
 		my $pace = ($elapsed > 0) ? 1 / $elapsed : undef;
+		my $span = $period{$key}->{'span'} || 0;
 		$period{$key}->{'progress'} = sprintf('%.0f', $elapsed * 100);
+		# the time spent as a share of the period's own length, and the same
+		# share for the duration carried to the period's end
+		$period{$key}->{'percent'} = ($span > 0) ? $period{$key}->{'duration'} / $span * 100 : 0;
 		$period{$key}->{'projected'} = defined $pace ? {
 			duration => $period{$key}->{'duration'} * $pace,
 			count => $period{$key}->{'count'} * $pace,
 			money => $period{$key}->{'money'} * $pace,
+			percent => ($span > 0) ? $period{$key}->{'duration'} * $pace / $span * 100 : 0,
 		} : undef;
 		foreach my $name ( keys %{$period{$key}->{'measures'}} ) {
 			my $m = $period{$key}->{'measures'}->{$name};

@@ -307,6 +307,14 @@ function jawnosThemeLayoutRepaint() {
 		if (typeof deskPosition === 'function') { deskPosition(); }
 	}
 }
+// The press-time prediction keeps the last settled window of each app as a
+// picture (`jawnosEmergePreviews`) and the page's rules as one scoped
+// stylesheet. Both belong to one theme: a live change must drop them, or the
+// next press paints the old theme's buttons and icons. The press-time part may
+// not be loaded yet, so the call is guarded.
+function jawnosThemeEmergeReset() {
+	if (typeof jawnosEmergePreviewThemeReset === 'function') { jawnosEmergePreviewThemeReset(); }
+}
 // Paint the manager for a new theme. `appt` marks that a running appointment's
 // theme (not the Misc system theme) is in charge, so a later Misc change does
 // not paint over it. Deriving the panel/ink variables from the new background
@@ -322,6 +330,7 @@ function jawnosThemeApply(bg, appt) {
 	document.body.removeAttribute('data-theme-sig');
 	jawnosApplyInk();
 	jawnosThemeLayoutRepaint();
+	jawnosThemeEmergeReset();
 }
 // The cursor set is CSS-only: the sheet carries every set's role -> image
 // mapping, and the body's data-cursor-set picks one. A theme push moves the
@@ -419,6 +428,8 @@ function jawnosThemeBundleApply(bundle, appt) {
 	if (typeof bundle.cursor_css === 'string') { jawnosCursorCssApply(bundle.cursor_css); }
 	if (typeof jawnosReloadIcons === 'function') { setTimeout(jawnosReloadIcons, 60); }
 	if (sig) { document.body.setAttribute('data-theme-sig', sig); }
+	// the kept prediction pictures wear the old dressing now
+	jawnosThemeEmergeReset();
 }
 $(function () { jawnosApplyInk('', true); jawnosCursorInlineGuard(); });
 

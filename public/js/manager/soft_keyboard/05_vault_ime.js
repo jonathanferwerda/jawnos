@@ -403,12 +403,14 @@ function softKbImeStart() {
 
 // numeric: the field is a number/phone editor, so the calculator page opens.
 // context: what kind of value the field names, when the app tells us (Android's
-// EditorInfo hint or class); the recommendation row uses it.
+// EditorInfo hint or class); the recommendation row uses it. The app's word is
+// read through the same test a dock field's own words go through, so a moment
+// named "Ago" is `when` here too and its row offers seconds first.
 window.imeConfigure = function (numeric, context, text) {
 	if (!jawnSoftIme) { return; }
 	if (jawnVault.open) { softKbVaultClose(); }
 	jawnSoftNumeric = !!numeric;
-	jawnSoftContext = context || '';
+	jawnSoftContext = softKbContextKind(context);
 	jawnSoftField = null;
 	jawnSoftExpr = '';
 	// the field's own text, read when it begins: a number field seeds the
@@ -433,6 +435,18 @@ window.imeField = function (meta) {
 	if (!jawnSoftIme) { return; }
 	jawnImeMeta = meta || null;
 	if (jawnVault.open) { softKbVaultClose(); }
+	// The service's contextFor only knows the words it was taught, so a moment
+	// named in the app's own hint ("Ago") arrives with no kind at all. Read the
+	// published hint the way a dock field's words are read, and wake the rows it
+	// steers; a kind the service did give us is left alone.
+	if (!jawnSoftContext) {
+		var kind = softKbContextKind(jawnImeMeta && jawnImeMeta.hint);
+		if (kind) {
+			jawnSoftContext = kind;
+			softKbConvertUpdate();
+			softKbSuggestSync();
+		}
+	}
 	jawnVault.matches = [];
 	softKbVaultButtons();
 	softKbVaultSync();

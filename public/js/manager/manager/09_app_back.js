@@ -225,8 +225,10 @@ function appointmentResetDrain(key) {
 }
 
 
-function managerReset(caller,e) {
+function managerReset(caller,e,press) {
 	var lockingStatus = 'off';
+	var replay = (press && typeof press == 'object') ? press : null;
+	var captured = (replay && replay.values && typeof replay.values == 'object') ? replay.values : null;
 
 	var details = caller;
 	var pa = projectAccountGrabber(details);
@@ -234,10 +236,21 @@ function managerReset(caller,e) {
 	var container = details.closest('.appointment');
 	var form = container.find('.app_details');
 	former = form;
+	// A press made against the prediction is replayed against the window the
+	// server just installed: put the values it showed back into that form so the
+	// appointment is the one the person made, not the fresh render's state.
+	if (captured) {
+		if (captured.ago !== undefined) { container.find('.ago').val(captured.ago); }
+		if (captured.duration !== undefined) { container.find('.duration').val(captured.duration); }
+		if (captured.quantity !== undefined) { container.find('.main_input.quantity').val(captured.quantity); }
+		if (captured.schedule !== undefined) { container.find('.schedule').val(captured.schedule); }
+		if (captured.warranty !== undefined) { container.find('.warranty').val(captured.warranty); }
+		if (captured.notes !== undefined) { container.find('.text_editor').html(captured.notes); }
+	}
 	if (container.find('.appointment_locking_mechanism').attr('status') == 'on' || e.ctrlKey == true) {
 		lockingStatus = 'on';
 	}
-	var project = pa['project'];
+	var project = (captured && captured.project !== undefined) ? captured.project : pa['project'];
 	var movement = pa['movement'];
 
 	var club = form.find('.club').val();
@@ -263,17 +276,20 @@ function managerReset(caller,e) {
 	var digits = details.attr('digits');
 	var item = form.find('.item').val();
 	var amount = form.find('.amount').val();
-	var ago = $('#ago').val() || container.find('.ago').val();
-	var duration = container.find('.duration').val();
+	var ago = (captured && captured.ago !== undefined) ? captured.ago : ($('#ago').val() || container.find('.ago').val());
+	var duration = (captured && captured.duration !== undefined) ? captured.duration : container.find('.duration').val();
 	// A duration the person typed is an account of this session; one the window
 	// restored from an earlier visit is just the client's remembered field. The
 	// stop may use the first and must not mistake the second for a length.
-	var duration_typed = (duration && typeof jawnosAppFieldGet === 'function'
-		&& jawnosAppFieldGet(app, 'duration_typed') === 'yes') ? 'yes' : 'no';
-	var schedule = container.find('.schedule').val();
-	var quantity = container.find('.main_input.quantity').val();
-	var notes = container.find('.text_editor').html();
-	var now = Date.now();
+	var duration_typed = (captured && captured.duration_typed !== undefined) ? captured.duration_typed
+		: ((duration && typeof jawnosAppFieldGet === 'function'
+			&& jawnosAppFieldGet(app, 'duration_typed') === 'yes') ? 'yes' : 'no');
+	var schedule = (captured && captured.schedule !== undefined) ? captured.schedule : container.find('.schedule').val();
+	var quantity = (captured && captured.quantity !== undefined) ? captured.quantity : container.find('.main_input.quantity').val();
+	var notes = (captured && captured.notes !== undefined) ? captured.notes : container.find('.text_editor').html();
+	// The click's own moment, not the replay's: a start pressed against a slow
+	// prediction lands with the timestamp the person pressed it.
+	var now = (replay && replay.at) ? replay.at : Date.now();
 	// a stop names the session it closes: the appointment header carries the open
 	// session's uuid, so the server stops that row on every machine and not
 	// whichever open session each machine happens to hold (which left a stale one
@@ -282,9 +298,9 @@ function managerReset(caller,e) {
 	if (type == 'stop') {
 		running_uuid = container.find('.appointment_header_background').attr('running_uuid') || '';
 	}
-	var time_machine = $('#time_machine').val() || localStorage.getItem('time_machine');
-	var timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
-	var warranty = container.find('.warranty').val();
+	var time_machine = (captured && captured.time_machine !== undefined) ? captured.time_machine : ($('#time_machine').val() || localStorage.getItem('time_machine'));
+	var timeshift = (captured && captured.timeshift !== undefined) ? captured.timeshift : (localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope'));
+	var warranty = (captured && captured.warranty !== undefined) ? captured.warranty : container.find('.warranty').val();
 	var navigation = container.attr('navigation');
 	var measure_is_open = false;
 

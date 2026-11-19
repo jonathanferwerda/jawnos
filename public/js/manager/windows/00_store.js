@@ -78,6 +78,15 @@ function jawnosWindowsScope() {
 // it in public must not reveal that. The page carries both marks; the server also
 // writes one onto each window it renders in a private place, so a window built
 // under the grant is refused even before the page's own toggle catches up.
+// What the desk is wearing right now: the theme signature the layout set on the
+// body and a live bundle push updates. A shell or a picture captured under
+// another signature is never painted as the current one - a prediction must
+// not show the previous theme's buttons and icons.
+function jawnosWindowsThemeNow() {
+	if (typeof document == 'undefined' || !document.body || !document.body.getAttribute) { return ''; }
+	return document.body.getAttribute('data-theme-sig') || '';
+}
+
 function jawnosWindowsPublicNow(el) {
 	if (typeof document == 'undefined' || !document.body) { return true; }
 	if (typeof $ == 'function' && el) { el = $(el)[0]; }
@@ -477,7 +486,7 @@ function jawnosWindowsShellCapture(win) {
 	var html = '';
 	try { html = node.outerHTML || ''; } catch (e) { return false; }
 	if (!html || html.length > JAWNOS_WINDOWS_MAX_WINDOW_BYTES) { return false; }
-	jawnosWindowsSave(identity, { shell: html, ts: stamp, app: app, at: Date.now() });
+	jawnosWindowsSave(identity, { shell: html, ts: stamp, app: app, theme: jawnosWindowsThemeNow(), at: Date.now() });
 	return true;
 }
 
@@ -517,6 +526,10 @@ function jawnosWindowsShellRestore(app, timestamp, v) {
 	if (jawnosWindowsHasWindow(identity)) { return false; }
 	jawnosWindowsGet(identity).then(function (row) {
 		if (!row || !row.shell || !row.ts) { return; }
+		// A shell from another dressing would paint last theme's chrome until the
+		// server's render replaced it; the current-theme render is the honest
+		// fallback instead.
+		if (String(row.theme || '') !== String(jawnosWindowsThemeNow())) { return; }
 		// the server may have answered while the store was being read
 		if (jawnosWindowsHasWindow(identity)) { return; }
 		if ($('#start_menu').hasClass('lockdown')) { return; }
