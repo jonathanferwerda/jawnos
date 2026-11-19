@@ -89,13 +89,24 @@
 		object-fit: contain;
 	}
 	/* A palette effect with no hand-drawn artwork is drawn from the theme at the
-	   same size: a body, a title plate, one knob per slider and a footswitch. */
+	   same size: a case frame, a body inside it, one knob per slider and the
+	   footswitch. The frame matches the black case the artwork pedals wear, in
+	   the theme's own dark end. */
 	.pedal_graphic {
-		background: var(--panel-2);
+		background: color-mix(in srgb, var(--panel-2) 30%, #000);
+	}
+	.pedal_graphic::before {
+		content: '';
+		position: absolute;
+		inset: 3px;
+		z-index: 1;
+		border-radius: 7px;
+		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22), inset 0 0 0 2px rgba(0, 0, 0, .5);
+		pointer-events: none;
 	}
 	.pedal_body {
 		position: absolute;
-		inset: 0;
+		inset: 4px;
 		z-index: 0;
 		border-radius: 5px;
 		background:
@@ -213,36 +224,47 @@
 		width: auto;
 		z-index: 6;
 	}
-	/* The footswitch: the one control every tile carries at its foot, above the
-	   artwork or the drawn body, so a pedal is switched where it is. */
+	/* The footswitch is the pedal's own stomp switch: a domed treadle in the
+	   case, and the lamp beside it reads the same state. Press it, or the lamp,
+	   and the pedal switches where it stands. */
 	.studio_pedal_foot {
 		position: absolute;
-		left: 10%;
-		right: 10%;
-		bottom: 5px;
-		height: 20px;
-		min-height: 20px;
-		max-height: 20px;
+		left: 50%;
+		bottom: 4px;
+		width: 74px;
+		height: 22px;
 		min-width: 0;
+		min-height: 22px;
+		max-height: 22px;
 		padding: 0;
 		line-height: 18px;
-		font-size: 11px;
-		letter-spacing: .04em;
+		font-size: 10px;
+		letter-spacing: .06em;
 		text-transform: uppercase;
 		box-sizing: border-box;
-		border-radius: 9px;
-		background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 26%, var(--panel-2)), var(--panel-2));
+		transform: translateX(-50%);
+		border: 2px solid color-mix(in srgb, var(--panel-2) 25%, #000);
+		border-radius: 11px;
+		background:
+			radial-gradient(120% 160% at 50% -20%, rgba(255, 255, 255, .5), transparent 55%),
+			linear-gradient(180deg, color-mix(in srgb, var(--ink) 22%, var(--panel)) 0%, color-mix(in srgb, var(--ink) 38%, var(--panel)) 55%, color-mix(in srgb, var(--ink) 52%, var(--panel)) 100%);
 		color: var(--ink);
-		box-shadow: 0 2px 0 rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .16);
+		text-shadow: 0 1px 0 rgba(255, 255, 255, .28), 0 -1px 0 rgba(0, 0, 0, .4);
+		box-shadow: 0 3px 0 color-mix(in srgb, var(--panel-2) 25%, #000), inset 0 1px 0 rgba(255, 255, 255, .55), inset 0 -4px 8px rgba(0, 0, 0, .3);
 		cursor: var(--jawnos-cursor-pointer, pointer);
 		z-index: 7;
 	}
 	.studio_pedal_foot[aria-pressed="true"] {
-		background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--panel-2)));
+		background:
+			radial-gradient(120% 160% at 50% -20%, rgba(255, 255, 255, .5), transparent 55%),
+			linear-gradient(180deg, color-mix(in srgb, var(--accent) 62%, var(--panel)) 0%, color-mix(in srgb, var(--accent) 44%, var(--panel)) 60%, color-mix(in srgb, var(--accent) 32%, var(--panel)) 100%);
 		color: var(--accent-ink, #fff);
+		text-shadow: 0 -1px 0 rgba(0, 0, 0, .35);
+		box-shadow: 0 3px 0 color-mix(in srgb, var(--panel-2) 25%, #000), 0 0 10px color-mix(in srgb, var(--accent) 55%, transparent), inset 0 1px 0 rgba(255, 255, 255, .45);
 	}
 	.studio_pedal_foot:active {
-		box-shadow: inset 0 2px 4px rgba(0, 0, 0, .5);
+		bottom: 3px;
+		box-shadow: 0 2px 0 color-mix(in srgb, var(--panel-2) 25%, #000), inset 0 2px 5px rgba(0, 0, 0, .45);
 	}
 	/* The lamp: a 14px roundel. The unlit state is a dark red disc with a pale
 	   ring (never invisible); on it is a bright green with a soft glow. Every
@@ -266,6 +288,58 @@
 		border-color: #0b4a1a;
 		box-shadow: 0 0 10px #35e05a, 0 0 3px #fff, inset 0 1px 2px #0b4a1a;
 	}
+	/* Jtune's lamp is not an effect's lamp: it is the tuner's state light - grey
+	   when it is off, amber while it listens, green in tune. */
+	.pedal[data-tuner="yes"] .studio_pedal_led {
+		background: #6b7280;
+		border-color: #2b3138;
+		box-shadow: inset 0 1px 2px #000, 0 0 0 1px rgba(255, 255, 255, .3);
+	}
+	.pedal[data-tuner="yes"] .studio_pedal_led.studio_tuner_listening {
+		background: #f0b429;
+		border-color: #6b4a05;
+		box-shadow: 0 0 8px #f0b429, inset 0 1px 2px #6b4a05;
+	}
+	.pedal[data-tuner="yes"] .studio_pedal_led[aria-pressed="true"] {
+		background: #35e05a;
+		border-color: #0b4a1a;
+		box-shadow: 0 0 10px #35e05a, 0 0 3px #fff, inset 0 1px 2px #0b4a1a;
+	}
+	/* The tuner's screen sits on Jtune's drawn yellow panel: the note between the
+	   two arrows, and the cents (or the "press to tune" line) under it. The
+	   colours are the screen's own ink, like the LEDs are lamps. */
+	.studio_tuner {
+		position: absolute;
+		left: 13%;
+		right: 13%;
+		top: 30%;
+		height: 29%;
+		z-index: 3;
+		display: grid;
+		grid-template-columns: 18px minmax(0, 1fr) 18px;
+		grid-template-rows: 1fr auto;
+		align-items: center;
+		justify-items: center;
+		box-sizing: border-box;
+		padding: 2px 4px;
+		border-radius: 4px;
+		background: color-mix(in srgb, #000 10%, transparent);
+		color: #3a2f05;
+		text-shadow: 0 1px 0 rgba(255, 255, 255, .45);
+		font-family: monospace;
+		pointer-events: none;
+	}
+	.studio_tuner_up { grid-area: 1 / 1; }
+	.studio_tuner_note { grid-area: 1 / 2; display: inline-flex; align-items: baseline; gap: 2px; }
+	.studio_tuner_down { grid-area: 1 / 3; }
+	.studio_tuner_cents { grid-area: 2 / 1 / 2 / 4; font-size: 10px; line-height: 11px; font-weight: bold; white-space: nowrap; }
+	.studio_tuner_letter { font-size: 24px; line-height: 24px; font-weight: bold; letter-spacing: .02em; }
+	.studio_tuner_octave { font-size: 11px; }
+	.studio_tuner_arrow { font-size: 14px; line-height: 14px; color: rgba(58, 47, 5, .4); }
+	.studio_tuner_arrow_on { color: #b45309; text-shadow: 0 0 6px rgba(180, 83, 9, .65); }
+	.studio_tuner_tuned .studio_tuner_letter,
+	.studio_tuner_tuned .studio_tuner_cents { color: #1f7a3a; }
+	.studio_tuner_off .studio_tuner_letter { font-size: 13px; letter-spacing: .08em; }
 	.studio_rack_led {
 		position: static;
 		flex: 0 0 14px;

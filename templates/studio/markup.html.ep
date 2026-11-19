@@ -23,17 +23,28 @@
 		</div>
 		<div id="studio_pedalboard_pedals">
 		<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
-			<span id="pedal_<%= $p->{'name'} %>" class="pedal" data-effect="<%= $p->{'name'} %>">
+			<span id="pedal_<%= $p->{'name'} %>" class="pedal" data-effect="<%= $p->{'name'} %>"<% if ($p->{'tuner'}) { %> data-tuner="yes" hint="<%= &subs::ui('Start or stop the tuner') %>"<% } %>>
 				<% my $ch = $p->{'name'}; %>
 				<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
 				<img class="pedal_background" hint="<%= $p->{'name'} %>" src="<%= &subs::icon_for('/images/studio/' . $p->{'image'} . '.png') %>">
+				<%# Jtune's yellow panel is the tuner's own screen: the note sits
+				   between two arrows, and the line under it is the cents it is off
+				   by (or the words that say it is off). %>
+				<% if ($p->{'tuner'}) { %>
+					<span class="studio_tuner" aria-live="polite">
+						<span class="studio_tuner_arrow studio_tuner_up" aria-hidden="true">▲</span>
+						<span class="studio_tuner_note"><b class="studio_tuner_letter"><%= &subs::ui('TUNE') %></b><span class="studio_tuner_octave"></span></span>
+						<span class="studio_tuner_arrow studio_tuner_down" aria-hidden="true">▼</span>
+						<span class="studio_tuner_cents"><%= &subs::ui('press to tune') %></span>
+					</span>
+				<% } %>
 				<% foreach my $k ( @{$p->{'knobs'}} ) { %>
 					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
 					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
 
 				<% } %>
 				<% foreach my $b ( @{$p->{'buttons'}} ) { %>
-					<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;"  flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" src="<%= $button_icon->('depressed', $b->{'colour'}) %>">
+					<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;"  flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" hint="<%= &subs::ui($b->{'hint'} || &subs::format_name($b->{'control'})) %>" src="<%= $button_icon->('depressed', $b->{'colour'}) %>">
 				<% } %>
 				<%# The reverb family's model is a whole-number choice, not a knob: the
 				   pedal is the shelf's reverb, so its dropdown pushes a model to every

@@ -128,8 +128,9 @@ like($knobs, qr/data-tuner': 'yes'/, 'the Jtune shelf tile is marked a tuner');
 like($knobs, qr/#pedalboard \.pedal'\)\.filter\(function \(\) \{/, 'the tuner is not draggable into a rack');
 like($knobs, qr/distance: 4,/, 'a plain click on a tile is never a drag');
 like($knobs, qr/cancel: '\.knob,[^']*studio_pedal_foot/, 'the knobs and the footswitch cancel the drag');
-like($rack, qr/Chromatic tuner, not wired yet/, 'the tuner lamp says it is not wired');
-like($rack, qr/if \(tile\.attr\('data-tuner'\) === 'yes'\) \{ return; \}/, 'the tuner lamp is inert');
+like($rack, qr/studioTunerPaintLamp\(tile\)/, 'the tuner owns its lamp, not the effect lamp');
+like($rack, qr/if \(typeof studioTunerToggle === 'function'\) \{ studioTunerToggle\(\); \}/,
+	'the tuner lamp is its power switch');
 like($rack, qr/if \(name === 'Jtune'\) \{ return; \}/, 'the pedal toggle refuses the tuner');
 like($knobs, qr/tile\.attr\('data-tuner'\) !== 'yes' && typeof studioTogglePedal/, 'the tuner footswitch toggles no sound');
 
@@ -235,7 +236,7 @@ like($markup, qr/class="studio_pedal_foot hover" effect="<%= \$p->\{'name'\} %>"
 like($markup, qr/<% if \(!\$p->\{'tuner'\}\) \{ %>[\s\S]*?studio_pedal_foot/,
 	'the tuner is the one tile without a footswitch');
 like($style, qr/\.studio_pedal_foot\s*\{[^}]*position:\s*absolute/s, 'the footswitch sits at the tile\'s foot');
-like($style, qr/\.studio_pedal_foot\s*\{[^}]*bottom:\s*5px/s, 'the footswitch is clear of the knobs');
+like($style, qr/\.studio_pedal_foot\s*\{[^}]*bottom:\s*4px/s, 'the footswitch is clear of the knobs');
 like($style, qr/\.pedal \.pedal_model\s*\{[^}]*bottom:\s*30px/s,
 	'the reverb model dropdown sits above the footswitch, not over a knob');
 like($style, qr/\.pedal:hover,[\s\S]*?transform:\s*scale\(1\.05\)/, 'a hovered tile lifts so its knobs are readable');

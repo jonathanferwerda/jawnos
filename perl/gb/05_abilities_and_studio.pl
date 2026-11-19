@@ -117,14 +117,14 @@ our $studio = {
 		{ control => 'volume', colour => 'grey_plain', placement => 'metronome' }
 	],
 	pedals => [{ 
-		# Jtune is a chromatic tuner, not an effect: this artwork is a shelf
-		# marker for the tuner display that is planned, and nothing is wired in
-		# yet. It has no audio implementation and never joins the rack.
+		# Jtune is a chromatic tuner, not an effect: its artwork's yellow panel is
+		# the tuner display, its pink switch starts and stops the listening, and it
+		# has no audio implementation, so it never joins the rack.
 		name => 'Jtune',
 		image => 'jtune',
 		tuner => 1,
 		buttons => [{
-			control => 'automatic', colour => 'ruby_red', left => '17%', top => '76%', height => '15%', width => '25%', status => 'depressed'
+			control => 'automatic', colour => 'ruby_red', left => '17%', top => '76%', height => '15%', width => '25%', status => 'depressed', hint => 'Start or stop the tuner'
 		}]
 	},{ 
 		name => 'CompressionX',

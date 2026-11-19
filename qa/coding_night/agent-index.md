@@ -55,7 +55,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - security (topic security): 10 file(s), 48 route(s)
 - sound (topic sound): 9 file(s), 11 route(s)
 - store (topic store): 18 file(s), 52 route(s)
-- studio (topic studio): 17 file(s), 7 route(s)
+- studio (topic studio): 18 file(s), 7 route(s)
 - synth (topic synth): 3 file(s), 1 route(s)
 - tasks (topic tasks): 2 file(s), 3 route(s)
 - terminal (topic terminal): 4 file(s), 3 route(s)

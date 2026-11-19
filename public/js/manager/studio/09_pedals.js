@@ -210,16 +210,13 @@ function studioPedalLampLabel(on) {
 
 function studioUpdatePedalLamps() {
 	var ch = studioPaletteChannel();
-	// the shelf and the palette's text tiles
+	// the shelf and the palette's drawn pedals
 	$('#pedalboard .pedal').each(function () {
 		var tile = $(this);
-		// Jtune is a chromatic tuner, not an effect: its lamp is inert and says so.
+		// Jtune is a chromatic tuner, not an effect: the tuner part owns its lamp,
+		// which is grey while it is off, amber while it listens and green in tune.
 		if (tile.attr('data-tuner') === 'yes') {
-			var tuner = studioLayoutText('Chromatic tuner, not wired yet');
-			tile.find('.studio_pedal_led')
-				.attr({ 'aria-pressed': 'false', title: tuner, hint: tuner })
-				.css({ background: '#6b7280', cursor: 'var(--jawnos-cursor-default, default)', boxShadow: 'inset 0 1px 2px #000, 0 0 0 1px rgba(255, 255, 255, .3)' });
-			tile.find('.studio_pedal_foot').attr('aria-pressed', 'false');
+			if (typeof studioTunerPaintLamp === 'function') { studioTunerPaintLamp(tile); }
 			return;
 		}
 		var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
@@ -328,8 +325,11 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 	}
 	var tile = target.closest('.pedal');
 	if (!tile.length) { return; }
-	// a tuner tile is inert: pressing it toggles no sound
-	if (tile.attr('data-tuner') === 'yes') { return; }
+	// the tuner's lamp is its power switch: it starts or stops listening
+	if (tile.attr('data-tuner') === 'yes') {
+		if (typeof studioTunerToggle === 'function') { studioTunerToggle(); }
+		return;
+	}
 	var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
 	if (!name) { return; }
 	studioTogglePedal(studioPaletteChannel(), name);

@@ -376,7 +376,11 @@ function studioPedalboardOpen(show) {
 	if (show === undefined) { show = !board.is(':visible'); }
 	show = !!show;
 	if (show) { board.show(); }
-	else { board.hide(); }
+	else {
+		board.hide();
+		// the tuner is a microphone: closing the sheet must not leave it open
+		if (typeof studioTunerStop === 'function') { studioTunerStop(); }
+	}
 	$('#studio_pedals').attr('aria-pressed', show ? 'true' : 'false');
 	return show;
 }

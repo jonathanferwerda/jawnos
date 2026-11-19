@@ -11,6 +11,7 @@
      09_pedals.js  - the per-track rack: palette, order, footswitch, remove
      10_master.js  - the mastering chain after the mix, its UI and its song state
      11_drums.js  - the drum machine: voices, one-bar chart, keys, MIDI, routing
+     12_tuner.js  - the chromatic tuner on Jtune: listening, pitch, note, arrows
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var mixer = {};

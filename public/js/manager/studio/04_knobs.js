@@ -83,12 +83,14 @@ function studioInit(data) {
 			studioEngineInputRows();
 			studioUpdateLatencyInfo();
 
-			// Jtune is a chromatic tuner, not an effect: nothing is wired in yet.
-			// Mark the tile inert and keep it out of the draggable effects, so a
-			// drag can never add an audio insert that would never process.
-			$('#pedal_Jtune').attr({ 'data-tuner': 'yes', title: studioLayoutText('Chromatic tuner, not wired yet') });
-			$('#pedal_Jtune .pedal_background').attr('hint', studioLayoutText('Jtune - chromatic tuner, not wired yet'));
-			// repaint the lamp now that the tile is marked inert
+			// Jtune is a chromatic tuner, not an effect: it listens to the input and
+			// never joins a rack, so it stays out of the draggable effects. The tuner
+			// part owns its lamp, its pink switch and its display.
+			$('#pedal_Jtune').attr({ 'data-tuner': 'yes', hint: studioLayoutText('Start or stop the tuner') });
+			$('#pedal_Jtune .pedal_background').attr('hint', studioLayoutText('Jtune - press to tune'));
+			// a new window or song stops whatever the previous one was listening to
+			if (typeof studioTunerStop === 'function') { studioTunerStop(); }
+			// repaint the lamp now that the tile is marked a tuner
 			if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
 
 			// Pedals are dragged from the pedalboard onto a channel strip; the tuner
@@ -262,8 +264,16 @@ $(document).on('change mousemove touchmove','.knob_control',function() {
 	studioSaver();
 });
 
-$(document).on('click', '.button_control', function() {
+$(document).on('click', '.button_control', function(e) {
 	var b = $(this);
+	var tile = b.closest('.pedal');
+	// The tuner's pink switch is its power, not an effect's bypass; stop the
+	// click so the tile's own handler cannot toggle it a second time.
+	if (tile.length && tile.attr('data-tuner') === 'yes') {
+		e.stopPropagation();
+		if (typeof studioTunerToggle === 'function') { studioTunerToggle(); }
+		return;
+	}
 	var control = b.attr('control');
 	var colour = b.attr('colour');
 	var status = b.attr('status');
@@ -277,7 +287,6 @@ $(document).on('click', '.button_control', function() {
 	}
 	// A shelf pedal's artwork button is its footswitch too: it switches the
 	// effect on the selected track, exactly as the pedal's lamp does.
-	var tile = b.closest('.pedal');
 	if (tile.length && tile.attr('data-tuner') !== 'yes' && typeof studioTogglePedal === 'function') {
 		var effect = tile.attr('data-effect');
 		if (effect) { studioTogglePedal(studioPaletteChannel(), effect); }
