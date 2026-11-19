@@ -434,6 +434,148 @@ sub websocket_sessions_cull {
 	return $gone;
 }
 
+# A day of window flow, as the client reported it. window_event_record (the
+# manager's socket handler) writes one row per transition; the websockets row
+# keeps only the latest snapshot, so these rows are the only place the flow
+# survives. The time columns are text, so the bounds cast exactly as the
+# indexes do; the order is the cast timestamp, then rowid, because two events
+# that landed in the same millisecond were still written in the order they
+# happened. Every filter is a bound parameter - nothing here is interpolated -
+# and a filter that is present but not a plain value fails closed: an empty
+# answer, never a silently wider one, because a caller asking for one window
+# must never be handed another's events.
+#
+# Opts: from/to (epoch ms, inclusive), app, window_id, browser_tab_id, limit
+# (default 500, capped at 5000). Returns { events => [row...], count }.
+sub window_events_read {
+	if (@_ == 1 && ref $_[0] eq 'HASH') { return &subs::window_events_read(%{ $_[0] }) }
+	my (%opt) = @_;
+	my @where;
+	my @bind;
+	foreach my $bound (qw(from to)) {
+		next unless exists $opt{$bound} && defined $opt{$bound};
+		my $v = $opt{$bound};
+		return { events => [], count => 0, error => $bound }
+			unless !ref $v && "$v" =~ /\A-?\d{1,16}\z/;
+		push @where, 'cast("timestamp" as integer) ' . ($bound eq 'from' ? '>=' : '<=') . ' cast(? as integer)';
+		push @bind, $v + 0;
+	}
+	foreach my $column (qw(app window_id browser_tab_id)) {
+		next unless exists $opt{$column} && defined $opt{$column};
+		my $v = $opt{$column};
+		return { events => [], count => 0, error => $column }
+			unless !ref $v && length("$v") && length("$v") <= 500;
+		push @where, qq{"$column" = ?};
+		push @bind, "$v";
+	}
+	my $limit = 500;
+	if (exists $opt{'limit'} && defined $opt{'limit'} && !ref $opt{'limit'} && "$opt{'limit'}" =~ /\A\d+\z/) {
+		$limit = int($opt{'limit'});
+	}
+	$limit = 1 if $limit < 1;
+	$limit = 5000 if $limit > 5000;
+	my $sql = 'select rowid as event_row, uuid, window_id, browser_tab_id, app, event, timestamp, server_time, hostname, room, user_agent'
+		. ' from window_events'
+		. (@where ? ' where ' . join(' and ', @where) : '')
+		. ' order by cast("timestamp" as integer), rowid'
+		. ' limit ' . $limit;
+	my $rows = eval { &subs::db_query($sql, @bind)->hashes } || [];
+	my @events;
+	foreach my $row ( @{$rows} ) {
+		$row->{'timestamp'} = ($row->{'timestamp'} || 0) + 0;
+		$row->{'server_time'} = ($row->{'server_time'} || 0) + 0;
+		$row->{'event_row'} = ($row->{'event_row'} || 0) + 0;
+		push @events, $row;
+	}
+	return { events => \@events, count => scalar(@events) };
+}
+
+# The same window read as the line the clothesline draws: each window's open
+# paired with its close. A window still open ends with closed undef; an open
+# that follows the close of the same window is a new span (a window whose id
+# came back to the desk); a close with no open inside the range is kept with
+# opened undef rather than dropped, so the line never loses a transition it was
+# shown. minimize and restore ride inside the span that was open when they
+# happened. Returns { spans => [ { hostname, window_id, app, opened, closed,
+# duration_ms, events } ... ], count }.
+#
+# A span is keyed by the machine as well as the window. window_events syncs, and
+# window_id is page-local (window_<Date.now()>), so two machines can mint the
+# same id and would otherwise be read as one window opening and closing twice.
+# hostname is the server's own name, copied onto every event by
+# window_event_record, so it separates them; a row with no hostname falls back to
+# its browser_tab_id (the tab session, the only identity left), and then to the
+# bare window id, which is the old behavior for rows that carry neither.
+sub window_events_spans {
+	if (@_ == 1 && ref $_[0] eq 'HASH') { return &subs::window_events_spans(%{ $_[0] }) }
+	my (%opt) = @_;
+	my $read = &subs::window_events_read(%opt);
+	my @spans;
+	my %open;   # span key => the index of the span still waiting for its close
+	foreach my $event ( @{ $read->{'events'} } ) {
+		my $window_id = defined $event->{'window_id'} ? $event->{'window_id'} : '';
+		my $hostname = defined $event->{'hostname'} ? $event->{'hostname'} : '';
+		my $tab = defined $event->{'browser_tab_id'} ? $event->{'browser_tab_id'} : '';
+		# the machine is the hostname; a row without one is separated by its tab
+		my $machine = length $hostname ? $hostname : $tab;
+		my $key = $machine . "\x1f" . $window_id;
+		my $kind = $event->{'event'} || '';
+		my $at = $event->{'timestamp'};
+		if ($kind eq 'open') {
+			if (defined $open{$key}) {
+				# an open while that window is still open is the same span: the id
+				# never left the desk, so a second span would double the window
+				push @{ $spans[$open{$key}]->{'events'} }, $event;
+				next;
+			}
+			push @spans, {
+				hostname => $hostname,
+				window_id => $window_id,
+				app => $event->{'app'},
+				opened => $at,
+				closed => undef,
+				duration_ms => undef,
+				events => [ $event ]
+			};
+			$open{$key} = $#spans;
+			next;
+		}
+		if ($kind eq 'close') {
+			my $index = $open{$key};
+			unless (defined $index) {
+				push @spans, {
+					hostname => $hostname,
+					window_id => $window_id,
+					app => $event->{'app'},
+					opened => undef,
+					closed => $at,
+					duration_ms => undef,
+					events => [ $event ]
+				};
+				next;
+			}
+			$spans[$index]->{'closed'} = $at;
+			$spans[$index]->{'duration_ms'} = $at - $spans[$index]->{'opened'};
+			push @{ $spans[$index]->{'events'} }, $event;
+			delete $open{$key};
+			next;
+		}
+		# minimize / restore / anything else rides the span open at that moment
+		next unless defined $open{$key};
+		push @{ $spans[$open{$key}]->{'events'} }, $event;
+	}
+	# the line reads left to right: by the moment each span began, then the
+	# machine and its window id, so two machines' same-id spans never reorder
+	my @ordered = sort {
+		(($a->{'opened'} // $a->{'closed'} // 0) <=> ($b->{'opened'} // $b->{'closed'} // 0))
+			|| (($a->{'hostname'} // '') cmp ($b->{'hostname'} // ''))
+			|| (($a->{'window_id'} // '') cmp ($b->{'window_id'} // ''))
+	} @spans;
+	my $out = { spans => \@ordered, count => scalar(@ordered) };
+	$out->{'error'} = $read->{'error'} if defined $read->{'error'};
+	return $out;
+}
+
 # The house's device liveness, read from the month of retained sockets.
 #
 # A row is one socket, and a tab opens one per app, so a device's rows overlap

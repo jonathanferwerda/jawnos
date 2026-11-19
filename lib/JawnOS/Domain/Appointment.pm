@@ -1940,6 +1940,7 @@ sub clothesline_day_segments {
 			night => $wake[0]{'rest'},
 			profile => $wake[0]{'rest'}{'profile'},
 			inferred => 0,
+			resting => 0,
 		};
 	}
 	for my $i ( 0 .. $#wake ) {
@@ -1950,6 +1951,7 @@ sub clothesline_day_segments {
 			night => ($i < $#wake) ? $wake[$i+1]{'rest'} : undef,
 			profile => $wake[$i]{'rest'}{'profile'},
 			inferred => $wake[$i]{'inferred'},
+			resting => 0,
 		};
 	}
 
@@ -1984,6 +1986,34 @@ sub clothesline_day_segments {
 			};
 		}
 		$seg->{'pauses'} = \@pauses;
+	}
+
+	# A day closes at its night's start, not at the next morning's first step.
+	# While the person rests, the last day is over and the new one has not begun.
+	# The rest that closes it is not in `rests` yet - a rest is a quiet between
+	# two runs, and tonight's has not been broken - so it is read from the quiet
+	# still running: the time since the last step. That quiet is a night only by
+	# the same test every other rest gets (a rest sits at the same middle of the
+	# clock), so an evening that is only an hour old, or a quiet whose middle is
+	# not where the person's nights sit, closes nothing.
+	if (@segments) {
+		my $last_seg = $segments[-1];
+		my $last = (ref $last_seg->{'times'} eq 'ARRAY' && @{ $last_seg->{'times'} }) ? $last_seg->{'times'}[-1] : undef;
+		if (defined $last && $now > $last && ($now - $last) >= $rest_min) {
+			my @lt = localtime(int($last / 1000));
+			my $mid = ($lt[2] || 0) + (($lt[1] || 0) / 60) + (($now - $last) / 3600000) / 2;
+			$mid -= 24 * int($mid / 24);
+			my $night = 0;
+			foreach my $rest ( @rests ) {
+				next unless defined $rest->{'mid_hour'};
+				if ($circ_gap->($mid, $rest->{'mid_hour'}) <= $radius) { $night = 1; last; }
+			}
+			if ($night) {
+				$last_seg->{'closed_at'} = $last;
+				$last_seg->{'resting'} = 1;
+				$last_seg->{'night'} = { start => $last, stop => undef, length => $now - $last, blips => [] };
+			}
+		}
 	}
 
 	# A profile keeps its own day: the canonical sequence, the app that opens it,
@@ -2083,6 +2113,12 @@ sub clothesline_routine_scan {
 	my $current_seg = &$segment_of($now);
 	my $day_start = defined $current_seg ? $segments->[$current_seg]{'start'} : undef;
 	my $day_stop = (defined $current_seg && defined $segments->[$current_seg]{'stop'}) ? $segments->[$current_seg]{'stop'} : undef;
+	# The day that closed at its night is over: the person is resting, nothing of
+	# theirs is under way, and yesterday's steps are not today's. The head is left
+	# waiting for the wake - the new day's first step - instead of leading with
+	# what was finished before the night.
+	my $resting = (defined $current_seg && $segments->[$current_seg]{'resting'}) ? 1 : 0;
+	my $closed_at = $resting ? $segments->[$current_seg]{'closed_at'} : undef;
 	my $in_day = sub {
 		return 1 unless defined $day_start;
 		return 0 if $_[0] < $day_start || $_[0] > $now;
@@ -2114,7 +2150,7 @@ sub clothesline_routine_scan {
 				# line reads where it is running. One left open past the routine's
 				# pause - or from before this day's wake - is a forgotten session,
 				# not a step in hand.
-				if ($ms <= $now && ($now - $ms) <= $pause && $in_day->($ms)
+				if ($ms <= $now && ($now - $ms) <= $pause && !$resting && $in_day->($ms)
 					&& (!defined $open{$app} || $ms > $open{$app})) {
 					$open{$app} = 0 + $ms;
 				}
@@ -2149,7 +2185,7 @@ sub clothesline_routine_scan {
 	if (@started && (!$last_any || $started[-1]{'ms'} >= $last_any->{'ms'})) {
 		$last_any = { app => $started[-1]{'app'}, ms => $started[-1]{'ms'}, type => 'start' };
 	}
-	my $active = ($last_any && ($now - $last_any->{'ms'}) <= $pause && $in_day->($last_any->{'ms'})) ? 1 : 0;
+	my $active = (!$resting && $last_any && ($now - $last_any->{'ms'}) <= $pause && $in_day->($last_any->{'ms'})) ? 1 : 0;
 	my $last_start = @recent_completed ? $recent_completed[-1]{'ms'} : undef;
 	for (my $i = $#recent_completed; $i > 0; $i--) {
 		# The learned day is the unit, so its own steps are one run however long
@@ -2163,9 +2199,9 @@ sub clothesline_routine_scan {
 	# With a day learned the routine is under way for the whole of it: what was
 	# finished this morning is finished now, and the line does not offer it again
 	# after a quiet afternoon. Without one, a long pause still ends the run.
-	$active = 1 if $model && $last_any && $in_day->($last_any->{'ms'});
+	$active = 1 if !$resting && $model && $last_any && $in_day->($last_any->{'ms'});
 	my $belongs = 0;
-	if ($active && defined $last_start) {
+	if (!$resting && $active && defined $last_start) {
 		if ($model) { $belongs = 1; }
 		elsif ($last_any->{'type'} ne 'start') { $belongs = 1; }
 		elsif (@recent_completed && ($last_any->{'ms'} - $recent_completed[-1]{'ms'}) <= $pause) { $belongs = 1; }
@@ -2333,6 +2369,8 @@ sub clothesline_routine_scan {
 		start => $day_start,
 		stop => (ref $seg eq 'HASH' && defined $seg->{'stop'}) ? $seg->{'stop'} : undef,
 		inferred => (ref $seg eq 'HASH' && $seg->{'inferred'}) ? 1 : 0,
+		resting => $resting ? 1 : 0,
+		closed_at => $closed_at,
 		profile => $selected ? $selected->{'id'} : undef,
 		pause => $pause,
 	} : undef;

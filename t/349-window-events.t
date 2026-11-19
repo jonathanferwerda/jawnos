@@ -1,11 +1,15 @@
-# tests-for: database/schema.sql lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Controller/manager_ws.pm perl/Alarm.pl public/js/manager/windows.js
+# tests-for: database/schema.sql lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Controller/manager_ws.pm perl/Alarm.pl public/js/manager/windows.js lib/JawnOS/Domain/Misc.pm lib/JawnOS/Domain/Loader.pm
 # covers:    window_events records one row per desktop window transition (open,
 #            close, minimize, restore), so the clothesline can rebuild a day's
 #            window flow instead of reading the one layout snapshot the
 #            websockets row keeps. The table arrives both ways - schema.sql for a
 #            fresh database, update_database for an existing one; the manager's
 #            socket handler inserts a validated frame; the client sends it from
-#            the real transitions only; alarm_haircut expires it by warranty.
+#            the real transitions only; alarm_haircut expires it by warranty;
+#            window_events_read/window_events_spans read a day of it back in
+#            order; and the table itself rides the sync rail (it has a
+#            server_time and is not forbidden) so another machine reads the day
+#            too.
 
 use strict;
 use warnings;
@@ -247,6 +251,220 @@ ok(!$old->query(q{select 1 from window_events where uuid = ?}, 'expired-row')->h
 	'an expired window event is culled');
 ok($old->query(q{select 1 from window_events where uuid = ?}, 'live-row')->hashes->[0],
 	'a window event inside its month survives');
+
+# ---------------------------------------------------------------- the sync rail
+
+# The rail is dynamic: a table with a server_time that is not in the forbidden
+# list rides it. window_events is meant to ride it, so a second machine reads the
+# same day. The list is memoised, and the database under this test is the temp
+# one, so forget the memo before asking.
+$subs::sync_table_cache = undef;
+subs::preload('sync_table_list');
+my $sync_tables = eval { &subs::sync_table_list() } || [];
+ok(scalar @{$sync_tables} > 0, 'sync_table_list answers from the sandbox database');
+my %syncs = map { $_ => 1 } @{$sync_tables};
+ok($syncs{'window_events'}, 'window_events rides the sync rail');
+
+my $gb_defaults = read_file("$root/perl/gb/01_state_and_defaults.pl");
+my ($forbidden_tables) = $gb_defaults =~ /our \$forbidden = \{\s*tables => \[(.*?)\]/s;
+ok(defined $forbidden_tables, 'the forbidden table list can be read');
+like($forbidden_tables || '', qr/'websockets'/, 'a control: the retired sessions stay forbidden');
+unlike($forbidden_tables || '', qr/window_events/, 'window_events is not forbidden from syncing');
+
+# ---------------------------------------------------------------- reading the day
+
+$subs::sync_table_cache = undef;
+
+# A fixed day, far from the rows above (which use the real clock), so the
+# bounds select exactly these transitions.
+my $day = 1_700_000_000_000;
+my $day_from = $day + 500;
+my $day_to   = $day + 20000;
+my $add_event = sub {
+	my ($uuid, $window_id, $app, $event, $at, $tab, $hostname) = @_;
+	$hostname = 'test-box' unless defined $hostname;
+	$old->query(q{insert into window_events (uuid, window_id, browser_tab_id, app, event, timestamp, server_time, hostname, warranty, ost) values (?,?,?,?,?,?,?,?,?,?)},
+		$uuid, $window_id, (defined $tab ? $tab : 'tab-day'), $app, $event, $at, $at, $hostname, $live, $at);
+};
+
+# a whole window: open, two panels' worth of minimize/restore, close
+$add_event->('e1',  'wc-a', 'notes',   'open',     $day + 1000);
+$add_event->('e2',  'wc-a', 'notes',   'minimize', $day + 2000);
+$add_event->('e3',  'wc-a', 'notes',   'restore',  $day + 3000);
+$add_event->('e4',  'wc-a', 'notes',   'close',    $day + 4000);
+# a second tab's window
+$add_event->('e5',  'wc-b', 'mailbox', 'open',     $day + 5000, 'tab-day2');
+$add_event->('e6',  'wc-b', 'mailbox', 'close',    $day + 9000, 'tab-day2');
+# two transitions in the same millisecond, inserted close-first: only rowid can
+# tell them apart, and the rowid order is the order they happened
+$add_event->('e7',  'wc-tie', 'clock',  'close',    $day + 10000);
+$add_event->('e8',  'wc-tie', 'clock',  'open',     $day + 10000);
+# a window that closed and came back under the same id, then is still open
+$add_event->('e9',  'wc-c', 'notes',   'open',     $day + 11000);
+$add_event->('e10', 'wc-c', 'notes',   'close',    $day + 12000);
+# a window still open at the end of the range
+$add_event->('e11', 'wc-d', 'notes',   'open',     $day + 13000);
+$add_event->('e12', 'wc-c', 'notes',   'open',     $day + 15000);
+
+my $read = &subs::window_events_read(from => $day_from, to => $day_to);
+is($read->{'count'}, 12, 'the read returns the day\'s transitions');
+is(scalar @{ $read->{'events'} }, 12, 'count matches the list');
+
+my @order = map { $_->{'window_id'} . '/' . $_->{'event'} } @{ $read->{'events'} };
+is_deeply(\@order, [
+	'wc-a/open', 'wc-a/minimize', 'wc-a/restore', 'wc-a/close',
+	'wc-b/open', 'wc-b/close',
+	'wc-tie/close', 'wc-tie/open',
+	'wc-c/open', 'wc-c/close', 'wc-d/open', 'wc-c/open'
+], 'the events read in timestamp order, then rowid for a tie');
+
+my $first = $read->{'events'}[0] || {};
+ok(!ref $first->{'timestamp'} && $first->{'timestamp'} == $day + 1000,
+	'the timestamp comes back as a number');
+is($first->{'app'}, 'notes', 'the app comes back');
+is($first->{'browser_tab_id'}, 'tab-day', 'the tab comes back');
+is($first->{'hostname'}, 'test-box', 'the hostname comes back');
+ok(defined $first->{'event_row'} && $first->{'event_row'} > 0, 'each event names its rowid');
+
+my $notes = &subs::window_events_read(from => $day_from, to => $day_to, app => 'notes');
+is($notes->{'count'}, 8, 'an app filter keeps only that app\'s transitions');
+my @not_notes = grep { ($_->{'app'} || '') ne 'notes' } @{ $notes->{'events'} };
+is_deeply(\@not_notes, [], 'no other app leaks through the filter');
+
+my $minimizes = &subs::window_events_read(from => $day_from, to => $day_to, app => 'notes', limit => 3);
+is($minimizes->{'count'}, 3, 'the limit bounds the answer');
+
+my $one_window = &subs::window_events_read({ from => $day_from, to => $day_to, window_id => 'wc-c' });
+is($one_window->{'count'}, 3, 'a window filter (hashref options) keeps that window');
+
+my $one_tab = &subs::window_events_read(from => $day_from, to => $day_to, browser_tab_id => 'tab-day2');
+is($one_tab->{'count'}, 2, 'a tab filter keeps that tab\'s transitions');
+
+my $narrow = &subs::window_events_read(from => $day + 2000, to => $day + 5000);
+is($narrow->{'count'}, 4, 'the from/to bounds are inclusive and cut the rest off');
+
+# A filter that is not a plain value fails closed and says which one.
+my $bad_app = &subs::window_events_read(from => $day_from, to => $day_to, app => { nope => 1 });
+is($bad_app->{'count'}, 0, 'a ref used as an app filter returns nothing');
+is($bad_app->{'error'}, 'app', 'and names the filter it refused');
+my $bad_from = &subs::window_events_read(from => 'yesterday', to => $day_to);
+is($bad_from->{'count'}, 0, 'a non-numeric bound returns nothing');
+is($bad_from->{'error'}, 'from', 'and names the bound it refused');
+my $empty_window = &subs::window_events_read(from => $day_from, to => $day_to, window_id => '');
+is($empty_window->{'count'}, 0, 'an empty window filter returns nothing');
+
+# The values stay data: a quote in a filter is a quote, not a clause.
+my $injection = &subs::window_events_read(from => $day_from, to => $day_to, window_id => q{' or 1=1 --});
+is($injection->{'count'}, 0, 'a quoted filter value matches nothing instead of everything');
+
+# The reader's predicates are the ones the expression indexes were built for, so
+# a filter plus a range is a lookup rather than a scan of the month.
+for my $probe (
+	[ 'app', 'notes', qr/idx1_window_events/ ],
+	[ 'window_id', 'wc-a', qr/idx3_window_events/ ],
+	[ 'browser_tab_id', 'tab-day', qr/idx2_window_events/ ]
+) {
+	my ($column, $value, $want) = @{$probe};
+	my $plan = $fresh->query(
+		'explain query plan select rowid from window_events where cast("timestamp" as integer) >= cast(? as integer)'
+			. ' and cast("timestamp" as integer) <= cast(? as integer) and "' . $column . '" = ?'
+			. ' order by cast("timestamp" as integer), rowid limit 500',
+		$day_from, $day_to, $value
+	)->hashes->[0]->{'detail'} || '';
+	like($plan, $want, "a $column read with a range is served by its index");
+}
+
+# ---------------------------------------------------------------- pairing them up
+
+my $spans = &subs::window_events_spans(from => $day_from, to => $day_to);
+is($spans->{'count'}, 7, 'the day pairs into seven spans');
+my %spans_by_window;
+push @{ $spans_by_window{ $_->{'window_id'} } }, $_ for @{ $spans->{'spans'} };
+
+my $a = ($spans_by_window{'wc-a'} || [])->[0] || {};
+is($a->{'app'}, 'notes', 'a span names the app its open carried');
+is($a->{'opened'}, $day + 1000, 'the span opens when the window did');
+is($a->{'closed'}, $day + 4000, 'and closes when it did');
+is($a->{'duration_ms'}, 3000, 'the duration is the pair\'s difference');
+my @a_events = map { $_->{'event'} } @{ $a->{'events'} || [] };
+is_deeply(\@a_events, [ 'open', 'minimize', 'restore', 'close' ],
+	'minimize and restore ride inside the span that was open');
+
+my $b = ($spans_by_window{'wc-b'} || [])->[0] || {};
+is($b->{'duration_ms'}, 4000, 'a second window\'s own duration');
+
+my ($c_closed, $c_open) = @{ $spans_by_window{'wc-c'} || [] };
+is(scalar @{ $spans_by_window{'wc-c'} || [] }, 2, 'a second open after a close is a new span');
+is($c_closed->{'opened'}, $day + 11000, 'the first span opened first');
+is($c_closed->{'duration_ms'}, 1000, 'the first span closed in the same window id');
+is($c_open->{'opened'}, $day + 15000, 'the second span opened when the window came back');
+ok(!defined $c_open->{'closed'}, 'a window still open has no close');
+ok(!defined $c_open->{'duration_ms'}, 'and no duration');
+is(scalar @{ $c_open->{'events'} }, 1, 'the open span holds only its open');
+
+my $d = ($spans_by_window{'wc-d'} || [])->[0] || {};
+is($d->{'opened'}, $day + 13000, 'an open with no close is a span of its own');
+ok(!defined $d->{'closed'}, 'left open at the end of the range');
+
+my @tie = @{ $spans_by_window{'wc-tie'} || [] };
+is(scalar @tie, 2, 'a close with no open in range is kept, and the open after it is its own span');
+# both spans sit on the same millisecond, so which of the two the sort puts first
+# is arbitrary: find them by what they are, not by where they landed
+my ($tie_closed) = grep { !defined $_->{'opened'} } @tie;
+my ($tie_opened) = grep { defined $_->{'opened'} } @tie;
+ok($tie_closed, 'the close-only span has no opening');
+is($tie_closed->{'closed'}, $day + 10000, 'but it keeps the close it was shown') if $tie_closed;
+ok($tie_opened, 'the open after the close is a span');
+is($tie_opened->{'opened'}, $day + 10000, 'opened at its own moment') if $tie_opened;
+
+my $spans_order = $spans->{'spans'};
+is($spans_order->[0]{'window_id'}, 'wc-a', 'the spans read left to right');
+is($spans_order->[-1]{'opened'}, $day + 15000, 'the last span is the one that opened last');
+
+my $c_spans = &subs::window_events_spans(from => $day_from, to => $day_to, window_id => 'wc-c');
+is($c_spans->{'count'}, 2, 'the span reader takes the same filters as the event reader');
+
+# ------------------------------------------------- the machine is part of the key
+
+# window_events syncs, and window_id is page-local (window_<Date.now()>), so two
+# machines can mint the same id. They have to pair separately; within one machine
+# the pairing must read exactly as it did before.
+my $cross_from = $day + 30000;
+my $cross_to   = $day + 40000;
+$add_event->('x1', 'wc-dup', 'notes', 'open',  $day + 30000, 'tab-x', 'box-one');
+$add_event->('x2', 'wc-dup', 'notes', 'close', $day + 31000, 'tab-x', 'box-one');
+$add_event->('x3', 'wc-dup', 'notes', 'open',  $day + 32000, 'tab-y', 'box-two');
+$add_event->('x4', 'wc-dup', 'notes', 'close', $day + 33500, 'tab-y', 'box-two');
+
+my $cross = &subs::window_events_spans(from => $cross_from, to => $cross_to);
+is($cross->{'count'}, 2, 'one window id on two machines is two spans');
+is_deeply([ map { $_->{'hostname'} } @{ $cross->{'spans'} } ], [ 'box-one', 'box-two' ],
+	'each span names the machine it came from');
+is($cross->{'spans'}[0]{'window_id'}, 'wc-dup', 'both spans keep the same window id');
+is($cross->{'spans'}[1]{'window_id'}, 'wc-dup', 'and neither swallowed the other');
+is($cross->{'spans'}[0]{'duration_ms'}, 1000, 'the first machine pairs its own open and close');
+is($cross->{'spans'}[1]{'duration_ms'}, 1500, 'the second machine pairs its own');
+is(scalar @{ $cross->{'spans'}[0]{'events'} }, 2, 'each span holds only its machine\'s two transitions');
+
+# A row with no hostname falls back to its tab, and then to the bare window id.
+my $fallback_from = $day + 50000;
+my $fallback_to   = $day + 60000;
+$add_event->('y1', 'wc-nh',  'notes', 'open',  $day + 50000, 'tab-x', '');
+$add_event->('y2', 'wc-nh',  'notes', 'close', $day + 51000, 'tab-x', '');
+$add_event->('y3', 'wc-nh',  'notes', 'open',  $day + 52000, 'tab-y', '');
+$add_event->('y4', 'wc-nh',  'notes', 'close', $day + 54000, 'tab-y', '');
+$add_event->('y5', 'wc-nh2', 'notes', 'open',  $day + 55000, '',      '');
+$add_event->('y6', 'wc-nh2', 'notes', 'close', $day + 55500, '',      '');
+
+my $fallback = &subs::window_events_spans(from => $fallback_from, to => $fallback_to);
+is($fallback->{'count'}, 3, 'no hostname: the tab separates, and a pair with neither still pairs');
+my @fallback = @{ $fallback->{'spans'} };
+is($fallback[0]{'duration_ms'}, 1000, 'the first tab pairs its own');
+is($fallback[1]{'duration_ms'}, 2000, 'the second tab pairs its own rather than joining the first');
+is($fallback[2]{'window_id'}, 'wc-nh2', 'a row with neither identity still pairs by its window id');
+is($fallback[2]{'duration_ms'}, 500, 'over its own open and close');
+is_deeply([ map { $_->{'hostname'} } @fallback ], [ '', '', '' ],
+	'these spans carry the empty hostname they were read with');
 
 $gb::database_holder = {};
 

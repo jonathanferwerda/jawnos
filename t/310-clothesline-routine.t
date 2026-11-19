@@ -352,6 +352,46 @@ is($night->{'current'}{'active'}, 1, 'the routine is still under way');
 my $next_morning = subs::clothesline_routine_scan(\@night, JawnOSTest::ts(2026, 11, 16, 15, 0), window_days => 60, session_days => 14);
 ok(!$next_morning->{'done'}{'wake_up'}, 'a new morning starts with nothing finished');
 
+# --- a recognized night closes the day; an unlearned quiet does not ---------
+# The quiet above is not a night the person keeps (one rest is not a shape), so
+# the old rule still carries their day past midnight. Once the house has learned
+# their nights, the day closes at the night's first step: at three in the
+# morning the evening is finished and the new day has not begun, so the line
+# waits for the wake instead of offering yesterday's leftovers.
+my @closed;
+for my $day (1 .. 4) {
+	my $n = 0;
+	for (my $h = 7; $h <= 19; $h += 2) { burst(\@closed, 'step' . (++$n), 2026, 11, $day, $h, 0); }
+	burst(\@closed, 'evening', 2026, 11, $day, 22, 20);
+}
+my $night_scan = subs::clothesline_routine_scan(\@closed, JawnOSTest::ts(2026, 11, 5, 3, 0),
+	window_days => 60, session_days => 14);
+is(scalar keys %{ $night_scan->{'done'} }, 0, 'at three in the morning nothing is finished');
+ok(!$night_scan->{'current'}{'active'}, 'and the routine is not under way');
+ok(!defined $night_scan->{'current'}{'start'}, 'and the run has no start');
+ok($night_scan->{'day'}{'resting'}, 'the day is closed at its night');
+is($night_scan->{'day'}{'closed_at'}, JawnOSTest::ts(2026, 11, 4, 22, 55),
+	'at the first step of the night');
+ok(!$night_scan->{'done'}{'evening'} && !$night_scan->{'done'}{'step7'},
+	'and none of the finished day is carried over');
+my $night_head = subs::clothesline_sequence_anticipate($night_scan, JawnOSTest::ts(2026, 11, 5, 3, 0), limit => 5);
+is($night_head->{'list'}[0]{'app'}, 'step1', 'the head waits at the day\'s first step');
+# the same still an hour before the morning's first step
+my $before_wake = subs::clothesline_routine_scan(\@closed, JawnOSTest::ts(2026, 11, 5, 6, 50),
+	window_days => 60, session_days => 14);
+is(scalar keys %{ $before_wake->{'done'} }, 0, 'and it is still closed just before the wake');
+ok(!$before_wake->{'current'}{'active'}, 'with nothing under way yet');
+# the wake - the new day's first step - opens the day, and yesterday stays behind
+my @woken = @closed;
+burst(\@woken, 'step1', 2026, 11, 5, 7, 0);
+my $wake_scan = subs::clothesline_routine_scan(\@woken, JawnOSTest::ts(2026, 11, 5, 7, 40),
+	window_days => 60, session_days => 14);
+is($wake_scan->{'day'}{'start'}, JawnOSTest::ts(2026, 11, 5, 7, 0), 'the wake opens the new day');
+ok(!$wake_scan->{'day'}{'resting'}, 'and the day is no longer resting');
+is_deeply([ sort keys %{ $wake_scan->{'done'} } ], ['step1'],
+	'with only the new day\'s steps finished');
+ok($wake_scan->{'current'}{'active'}, 'and the routine under way again');
+
 # --- the head keeps its order, the rest follows alphabetically ---------------
 my $head = [
 	{ app => 'water', formatted_name => 'Water' },
