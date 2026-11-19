@@ -269,7 +269,11 @@ sub inventory_details($c,$settings) {
 					$a->{'duration'} = $view_now - $a->{'timestamp'};
 				}
 				else {
-					$a->{'duration'} = &subs::time_abbrev_translator($settings->{'duration'});
+					# A play session measures the play; it never borrows the app's usual
+					# duration to make a future bar look long.
+					$a->{'duration'} = ((lc($a->{'source'} // '') =~ /^(?:game|browser_game)$/)
+						|| ($a->{'app'} // '') eq 'games')
+						? 0 : &subs::time_abbrev_translator($settings->{'duration'});
 				}
 			}
 			# The open session is why a current row can be far larger than the

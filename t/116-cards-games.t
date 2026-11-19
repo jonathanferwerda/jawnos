@@ -54,8 +54,12 @@ like($style, qr/#cards \.sol_pips/, 'the card face has a pip field');
 like($style, qr/\.sol_slot \+ \.sol_card\.up \{ margin-top: 0; \}/, 'a revealed first card sits at the top of its column too');
 like($style, qr/\.sol_drag_ghost\.ok \.sol_card/, 'a valid drop makes the dragged card glow');
 like($style, qr/\.drop_ok \.sol_card:last-child/, 'and the card it would land on');
+like($style, qr/#cards \.sol_drag_ghost \{[^}]*position: absolute/, 'the drag ghost positions against the app, not the viewport');
 like($style, qr/margin-top: calc\(var\(--sol-up/, 'the tableau fan is measured from the card');
 unlike($style, qr/#cards \.sol_pip \{ display: none; \}/, 'the pips stay visible on a narrow screen');
+like($style, qr/#cards_solitaire #sol_stock,[\s\S]*?cursor: var\(--jawnos-cursor-pointer/, 'the stock keeps the pull cursor');
+like($style, qr/#cards #deck_card \{[^}]*height: 100%/, 'the tarot card fills the stage height before the script sizes it');
+like($style, qr/#cards #deck_card \{[^}]*object-fit: contain/, 'and keeps its shape when the stage is narrow');
 
 my $solitaire = read_file("$root/templates/cards/solitaire.html.ep");
 unlike($solitaire, qr/sol31/, 'the solitaire pane carries no Windows class');
@@ -74,7 +78,10 @@ like($storage_js, qr/if \(typeof cardsInit === 'function'\) \{ cardsInit\(\); \}
 like($js, qr/solitaireSaveState\(\)/, 'the solitaire table is saved');
 like($js, qr/solitaireLoadState\(\)/, 'and read back on the next open');
 like($js, qr/solitaireLastClick/, 'a double click is read from the click pair');
-like($js, qr/e\.clientX - solitaireDrag\.grabX/, 'the drag ghost follows the grab point');
+like($js, qr/function cardsGhostAt/, 'the drag ghost is placed against the app root');
+like($js, qr/x - grabX - origin\.left/, 'and keeps the grab point inside it');
+like($js, qr/cardsGhostAt\(solitaireDrag\.ghost/, 'the solitaire drag uses it');
+like($js, qr/cardsGhostAt\(spiderDrag\.ghost/, 'and the spider drag too');
 like($js, qr/solitaireDrag\.ghost\.addClass\('ok'\)/, 'the drag highlight marks the ghost when the drop is valid');
 like($js, qr/spiderSaveState\(\)/, 'the spider table is saved');
 like($js, qr/spiderLoadState\(\)/, 'and read back on the next open');

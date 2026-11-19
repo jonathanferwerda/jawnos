@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Appointment.pm perl/jobs.pl
-# covers: an open session whose machine stopped reporting closes at its last heartbeat, not at the housekeeping tick; a game under a minute is tombstoned, and a paused one is dropped once its resume window has passed
+# covers: an open session whose machine stopped reporting closes at its last heartbeat, not at the housekeeping tick; a browser game under a minute closes with its measured play, a Gou game under a minute is tombstoned, and a paused one with no play is dropped once its resume window has passed
 
 use strict;
 use warnings;
@@ -74,9 +74,11 @@ my %cache;
 	my $closed_browser = &subs::session_housekeeping_tick();
 	cmp_ok( $closed_browser, '>=', 1, 'the housekeeping closes a forgotten browser game' );
 	my $browser_row = &subs::db_query( 'select * from appointments where uuid = ?', $browser_uuid )->hash;
-	ok( !$browser_row, 'a forgotten game under a minute is tombstoned, not kept' );
-	cmp_ok( scalar @{ &subs::db_query('select id from sync_log where uuid = ?', $browser_uuid)->hashes }, '>=', 1,
-		'with a tombstone the peers can read' );
+	is( $browser_row->{'type'}, 'stop', 'a browser game under a minute is closed, not tombstoned' );
+	is( int( $browser_row->{'duration'} ), -30_000, 'with the play it was actually heard' );
+	is( $browser_row->{'source'}, 'browser_game', 'and the row is kept' );
+	is( scalar @{ &subs::db_query('select id from sync_log where uuid = ?', $browser_uuid)->hashes }, 0,
+		'with no tombstone' );
 
 	# a game that did run over a minute is closed at its last heartbeat
 	my $long_uuid = 'browserrow-long-housekeeping-test';

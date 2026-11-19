@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Loader.pm scripts/jawnos_game_launch.pl perl/help/topics_people.pl
-# covers: a GOU game session starts at the launch, pauses when the controls go quiet, resumes the same row within five minutes, and leaves the pause out of the play time; a browser game does the same, a play on an already-open row after a quiet spell is a pause, and a session under a minute is tombstoned with its own-app child
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Manager/Part16.pm scripts/jawnos_game_launch.pl perl/help/topics_people.pl
+# covers: a GOU game session starts at the launch, pauses when the controls go quiet, resumes the same row within five minutes, and leaves the pause out of the play time; a browser game does the same, a play on an already-open row after a quiet spell is a pause, and a short browser play is kept with its own-app child
 
 use strict;
 use warnings;
@@ -256,7 +256,7 @@ sub sessions {
 	my ($bj) = grep { ($_->{'project'} // '') eq 'Blackjack' } @{ $browser->() };
 	is( int( $bj->{'duration'} ), -120_000, 'the quiet spell on an open row is a pause, not play' );
 
-	# a game under a minute is not a session: it is tombstoned, with its child
+	# a browser play is touch-started, so a short stop with measured play is kept
 	my $short_start = $NOW + 10_000;
 	$NOW = $short_start;
 	&subs::browser_game_play({ device => $browser_device, game => 'Mahjong', state => 'play', at => $short_start });
@@ -266,14 +266,23 @@ sub sessions {
 	$NOW = $short_start + 20_000;
 	&subs::browser_game_play({ device => $browser_device, game => 'Mahjong', state => 'stop', at => $NOW });
 	my @short_rows = grep { ($_->{'project'} // '') eq 'Mahjong' } @{ $browser->() };
-	is( scalar @short_rows, 0, 'a game under a minute is tombstoned, not kept' );
-	is( scalar @{ &subs::db_query('select uuid from appointments where source_uuid = ?', $short_uuid)->hashes },
-		0, 'and the game\'s own app child goes with it' );
-	is( scalar @{ &subs::db_query('select id from sync_log where uuid = ?', $short_uuid)->hashes }, 1,
-		'with a tombstone the peers can read' );
+	is( scalar @short_rows, 1, 'a browser game under a minute is kept' );
+	is( int( $short_rows[0]->{'duration'} ), -20_000, 'with its measured play' );
+	is( scalar @{ &subs::db_query('select uuid from appointments where source_uuid = ?', $short_uuid)->hashes }, 1,
+		'and the game\'s own app child stays' );
 }
 
 my $helper = read_file(root() . '/scripts/jawnos_game_launch.pl');
 like($helper, qr/\$STATUS\{'state'\} = 'running'/, 'the helper marks the game running for the tick');
+
+# A play session measures the play. Games carries a usual `duration` setting
+# (the default length for a hand-made appointment), and neither the timeline nor
+# a future/just-started bar may borrow it for a game.
+my $log_pm = read_file(root() . '/lib/JawnOS/Domain/Log.pm');
+like($log_pm, qr/my \$play_session = .*?eq 'games';.*?if \(!\$a->\{'duration'\} && !\$play_session/s,
+	'the timeline keeps the usual duration off a play session');
+my $part16 = read_file(root() . '/lib/JawnOS/Manager/Part16.pm');
+like($part16, qr/\? 0 : &subs::time_abbrev_translator\(\$settings->\{'duration'\}\)/,
+	'and a future play bar is zero, not the setting');
 
 done_testing();

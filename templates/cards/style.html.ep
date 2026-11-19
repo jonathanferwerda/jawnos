@@ -285,9 +285,13 @@
 }
 #cards #deck_card {
 	flex: 0 0 auto;
-	max-height: 100%;
-	max-width: 78%;
+	/* Fill the stage height even before tarotFit() runs (and if it never does):
+	   the deck files are narrow, so a height-driven card is the big one. The
+	   script then sets an exact box and lifts these caps. */
+	height: 100%;
 	width: auto;
+	max-width: 100%;
+	object-fit: contain;
 	border-radius: 10px;
 	border: 1px solid rgba(231, 200, 115, .35);
 	box-shadow: 0 12px 30px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.3);
@@ -412,6 +416,10 @@
 }
 #cards .sol_gap { width: var(--card-w); height: var(--card-h); }
 #cards .sol_pile { position: relative; width: var(--card-w); height: var(--card-h); }
+/* The stock is a card back, whose own rule says the default cursor; the pile is
+   still something to pull from, so it keeps the pointer. */
+#cards_solitaire #sol_stock,
+#cards_solitaire #sol_stock .sol_card { cursor: var(--jawnos-cursor-pointer, pointer); }
 #cards .sol_slot {
 	position: absolute;
 	inset: 0;
@@ -722,7 +730,9 @@
 /* ---- solitaire drag --------------------------------------------------- */
 body.cards_dragging { cursor: var(--jawnos-cursor-grabbing, grabbing); user-select: none; }
 #cards .sol_drag_ghost {
-	position: fixed;
+	/* Positioned against the app root, not the viewport: a window that carries a
+	   transform (its opening lean) would otherwise move or clip a fixed ghost. */
+	position: absolute;
 	z-index: 9000;
 	pointer-events: none;
 	opacity: .9;

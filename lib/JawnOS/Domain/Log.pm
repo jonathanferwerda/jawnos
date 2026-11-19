@@ -522,6 +522,11 @@ sub log_reader {
 		#	}
 		#}
 		$a->{'app'} = $uname->($a->{'app'});
+		# A play session measures the play and never borrows the app's usual
+		# duration (a 17m Games default is not a game). The games app and every
+		# browser/Gou play report are covered.
+		my $play_session = (lc($a->{'source'} // '') =~ /^(?:game|browser_game)$/)
+			|| ($a->{'app'} // '') eq 'games';
 		my @a_settings = @{ $settings_by_app{$a->{'app'}} || [] };
 		foreach my $s (@{ $settings_by_app{$a->{'app'}} || [] }) {
 			if ($s->{'setting'} eq 'colour' && !length $s->{'value'}) {
@@ -537,7 +542,8 @@ sub log_reader {
 						$a->{'duration'} = $a->{'timestamp'} - $timestamp;
 					}
 					unless (($a->{'type'} || '') =~ /record|start/) {
-						if (my $dur = $a->{'duration'} || $appts->{$a->{'app'}}->{'setting'}->{$oi . '_' . $s->{'setting'}}) {
+						if (!($play_session && $s->{'setting'} eq 'duration')
+							&& (my $dur = $a->{'duration'} || $appts->{$a->{'app'}}->{'setting'}->{$oi . '_' . $s->{'setting'}})) {
 							$a->{'formatted_' . $s->{'setting'}} = $dsay->(($dur / 1000));
 						}
 					}
@@ -600,7 +606,10 @@ sub log_reader {
 		$appts->{$a->{'app'}}->{'just_time'} = $lt->strftime('%I:%M%P');
 		$appts->{$a->{'app'}}->{'just_date'} = $lt->strftime('%a %b %d %Y');
 
-		if (!$a->{'duration'} && grep { 'duration' eq $_->{'setting'} } @a_settings ) {
+		# An appointment with no length of its own falls back to the app's usual
+		# duration - except a play session, which measures the play.
+		if (!$a->{'duration'} && !$play_session
+			&& grep { 'duration' eq $_->{'setting'} } @a_settings ) {
 			$a->{'duration'} = $tabbr->($appts->{$a->{'app'}}->{'setting'}->{'duration'});
 		}
 		if ($a->{'timestamp'} < $timestamp && ($a->{'type'} eq 'start' || $a->{'type'} eq 'record')) {

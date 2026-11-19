@@ -922,6 +922,18 @@ function solitaireGhost(run) {
 	return $ghost;
 }
 
+// The ghost lives in the app root (which owns --card-w and --card-h), so a
+// pointer position becomes a position inside that root. A fixed ghost would be
+// moved or clipped by a window carrying a transform during its opening lean.
+function cardsGhostAt(ghost, x, y, grabX, grabY) {
+	var root = cardsRoot();
+	var origin = root ? root.getBoundingClientRect() : { left: 0, top: 0 };
+	ghost.css({
+		left: (x - grabX - origin.left) + 'px',
+		top: (y - grabY - origin.top) + 'px'
+	});
+}
+
 function solitaireDropTarget(x, y) {
 	var el = document.elementFromPoint(x, y);
 	if (!el) { return null; }
@@ -2215,6 +2227,9 @@ function tarotEnsure() {
 		}
 	}
 	tarotFit();
+	// A window that is still taking its saved geometry settles after this call;
+	// one more fit a moment later catches that without waiting on an observer.
+	setTimeout(tarotFit, 250);
 }
 
 // ---- tarot: the deck picker ------------------------------------------------
@@ -2479,7 +2494,7 @@ if (typeof jQuery !== 'undefined') {
 			$('#cards').append(solitaireDrag.ghost);
 			$(document.body).addClass('cards_dragging');
 		}
-		solitaireDrag.ghost.css({ left: (e.clientX - solitaireDrag.grabX) + 'px', top: (e.clientY - solitaireDrag.grabY) + 'px' });
+		cardsGhostAt(solitaireDrag.ghost, e.clientX, e.clientY, solitaireDrag.grabX, solitaireDrag.grabY);
 		solitaireHighlight(e.clientX, e.clientY);
 		if (e.preventDefault) { e.preventDefault(); }
 	});
@@ -2604,7 +2619,7 @@ if (typeof jQuery !== 'undefined') {
 			$('#cards').append(spiderDrag.ghost);
 			$(document.body).addClass('cards_dragging');
 		}
-		spiderDrag.ghost.css({ left: (e.clientX - spiderDrag.grabX) + 'px', top: (e.clientY - spiderDrag.grabY) + 'px' });
+		cardsGhostAt(spiderDrag.ghost, e.clientX, e.clientY, spiderDrag.grabX, spiderDrag.grabY);
 		spiderHighlight(e.clientX, e.clientY);
 		if (e.preventDefault) { e.preventDefault(); }
 	});

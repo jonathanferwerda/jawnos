@@ -568,12 +568,15 @@ sub game_session_close {
 	my $paused = ($mode // '') eq 'take' ? &session_pause_take($uuid) : &session_pause_peek($uuid);
 	my $duration = $started - $stop_at + $paused;
 	$duration = 0 if $duration > 0;
-	# A stop under a minute is a glance at the game or a failed launch, not a
-	# session: drop it rather than keeping a record of no play. A pause stays so
-	# the same row can resume; the housekeeping tick discards it when the resume
-	# window passes.
+	# A stop with no measured play is a glance at the game or a failed launch, not
+	# a session: drop it rather than keeping a record of nothing. The Gou's launch
+	# tick opens a session at the launch, so a short stop there is still a glance;
+	# a browser game starts only when the person touches the table (12_cards.js),
+	# so any play it measured, however short, is real and stays in the day.
+	my $browser_play = lc($open->{'source'} // '') eq 'browser_game';
+	my $no_play = $browser_play ? ($duration == 0) : (abs($duration) < $GAME_MIN_PLAY_MS);
 	return &game_session_discard($open, $now)
-		if ($mode // '') eq 'take' && abs($duration) < $GAME_MIN_PLAY_MS;
+		if ($mode // '') eq 'take' && $no_play;
 	&db_update('appointments', {
 		type => 'stop',
 		stop_timestamp => $stop_at,
@@ -977,7 +980,13 @@ sub session_housekeeping_tick {
 		my $paused = &session_pause_take($uuid);
 		my $duration = $started - $stop_at + $paused;
 		$duration = 0 if $duration > 0;
-		if (($open->{'source'} // '') =~ /^(?:game|browser_game)$/i && abs($duration) < $GAME_MIN_PLAY_MS) {
+		# The Gou's launch-opened session is dropped for being short; a browser play
+		# is touch-started, so only one that measured no play at all is dropped.
+		my $source = lc($open->{'source'} // '');
+		my $no_play = ($source eq 'browser_game')
+			? ($duration == 0)
+			: ($source eq 'game' && abs($duration) < $GAME_MIN_PLAY_MS);
+		if ($no_play) {
 			&game_session_discard($open, $now);
 			$closed++;
 			next;
@@ -993,14 +1002,17 @@ sub session_housekeeping_tick {
 		&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 		$closed++;
 	}
-	# A sub-minute game the page paused is waiting out its five-minute resume
-	# window. Once that window has passed it is not a game the person played:
-	# drop it (and its own-app child) with the house's tombstone. Only recent
-	# rows are touched, so a short session from the day's history is left alone.
+	# A sub-minute Gou game the launch tick paused is waiting out its five-minute
+	# resume window. Once that window has passed it is not a game the person
+	# played: drop it (and its own-app child) with the house's tombstone. A browser
+	# play is touch-started and keeps any measured play; only a browser pause that
+	# measured none is dropped here. Only recent rows are touched, so a short
+	# session from the day's history is left alone.
 	my $short = eval {
 		&db_query(q{
 			select app, uuid, timestamp, stop_timestamp, duration, source from appointments
-			 where lower(source) in ('game', 'browser_game')
+			 where (lower(source) = 'game'
+			    or (lower(source) = 'browser_game' and cast(duration as integer) = 0))
 			   and type = 'stop' and stop_seen = 'yes'
 			   and stop_timestamp is not null
 			   and stop_timestamp <= ? and stop_timestamp > ?
