@@ -1,8 +1,8 @@
-# tests-for: public/js/manager/studio/02_canvas.js public/js/manager/studio/03_editing.js templates/studio/markup.html.ep templates/studio/style.html.ep t/347-studio-timeline.t
+# tests-for: public/js/manager/studio/01_transport.js public/js/manager/studio/02_canvas.js public/js/manager/studio/03_editing.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js templates/studio/markup.html.ep templates/studio/style.html.ep t/347-studio-timeline.t
 # covers:    The Studio timeline: the ruler over the take canvases (bars/beats
-#            or seconds, click to seek), the clip context menu (split, cut,
-#            copy, paste), cross-track drag and drop, and the per-track colour
-#            the canvas paints its clips with.
+#            or seconds, click to seek while stopped or playing), the clip
+#            context menu (split, cut, copy, paste), cross-track drag and drop,
+#            and the per-track colour the canvas paints its clips with.
 
 use strict;
 use warnings;
@@ -18,12 +18,17 @@ my $markup = read_file("$root/templates/studio/markup.html.ep");
 my $style  = read_file("$root/templates/studio/style.html.ep");
 my $canvas = read_file("$root/public/js/manager/studio/02_canvas.js");
 my $edit   = read_file("$root/public/js/manager/studio/03_editing.js");
+my $transport = read_file("$root/public/js/manager/studio/01_transport.js");
+my $knobs     = read_file("$root/public/js/manager/studio/04_knobs.js");
+my $inputs    = read_file("$root/public/js/manager/studio/05_inputs.js");
+my $ctrl      = read_file("$root/public/js/manager/studio/06_controls.js");
 
 # --- the ruler's markup -----------------------------------------------------
 like($markup, qr/<div id="studio_ruler" class="studio_ruler">/, 'the tracks panel carries a ruler');
 like($markup, qr/<span class="studio_ruler_pad"><\/span>/, 'the ruler has a pad over the track panels');
 like($markup, qr/<canvas id="studio_ruler_canvas" class="studio_ruler_canvas"/, 'the ruler is a canvas');
 like($markup, qr/Click the ruler to move the playhead/, 'the ruler says what a click does');
+like($markup, qr/while stopped or playing/, 'the ruler says when a click may move the playhead');
 my $ruler_at  = index($markup, 'id="studio_ruler_canvas"');
 my $viewer_at = index($markup, 'id="studio_viewer"');
 ok($ruler_at != -1 && $viewer_at != -1 && $ruler_at < $viewer_at,
@@ -78,6 +83,21 @@ like($seek, qr/studioTimeDisplay\(\)[\s\S]{0,60}studioDrawTracks\(\)/,
 like($seek, qr/studioClockStart\(t\)/,
 	'a running transport re-anchors instead of overwriting the seek');
 unlike($seek, qr/status'\]\s*=[^=]/, 'a seek never changes the transport status');
+
+# --- seeking is refused while a take records --------------------------------
+my ($can_seek) = $transport =~ /function studioCanSeek\(\) \{(.*?)\n\}/s;
+ok(defined $can_seek, 'one guard decides who may seek');
+$can_seek = '' unless defined $can_seek;
+like($can_seek, qr/status == 'stop' \|\| status == 'play'/, 'only stop and play may seek');
+like($seek, qr/if \(!studioCanSeek\(\)\) \{ return false; \}/,
+	'the ruler refuses a seek while recording');
+unlike($seek, qr/status == 'record'/, 'the seek path no longer lets recording through');
+like($ctrl, qr/on\('click', '#studio_prev, #studio_next'[\s\S]{0,160}!studioCanSeek\(\)/,
+	'Previous and Next refuse while recording');
+like($knobs, qr/#studio_jog_wheel'[\s\S]{0,240}!studioCanSeek\(\)/,
+	'the wheel on the jog refuses while recording');
+like($inputs, qr/#studio_jog_wheel'[\s\S]{0,240}!studioCanSeek\(\)/,
+	'the jog drag refuses while recording');
 
 # --- the track colour in the canvas -----------------------------------------
 my ($channel) = $canvas =~ /function studioDrawChannel\(ch\) \{(.*?)\n\}/s;

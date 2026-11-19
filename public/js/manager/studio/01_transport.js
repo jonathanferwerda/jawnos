@@ -196,6 +196,14 @@ function studioFlushSources() {
 	studioAudio.sources = [];
 }
 
+// A seek is allowed only while the transport is stopped or playing. While a
+// take records, moving the playhead would re-anchor the clock under the
+// recording, so every seek entry point asks this first.
+function studioCanSeek() {
+	var status = mixer && mixer['time'] ? mixer['time']['status'] : 'stop';
+	return status == 'stop' || status == 'play';
+}
+
 // A take was added, moved, trimmed or removed while the transport runs: drop
 // what was queued for the rest of this pass and re-anchor scheduling at the
 // playhead, so the edit is heard on the next tick instead of at the next wrap.

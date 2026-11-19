@@ -2,6 +2,8 @@ var studio_jw_deg =  0;
 var studio_last = 'out';
 $(document).on('touchmove mousemove', '#studio_jog_wheel', function(e) {
 	e.preventDefault();			e.preventDefault();
+	// a recording owns the playhead, so the wheel neither turns nor seeks
+	if (!studioCanSeek()) { studio_last = 'out'; return; }
 	var j = $(this);
 	var jc = j.closest('.jog_wheel_frame').find('.jog_wheel_centre');
 	if (e.which === 1 || e.originalEvent.type == 'touchmove') {

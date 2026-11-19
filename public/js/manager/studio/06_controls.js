@@ -488,6 +488,8 @@ $(document).on('click', '#studio_mark', function() {
 });
 
 $(document).on('click', '#studio_prev, #studio_next', function() {
+	// a recording owns the playhead: marks and the song end are not seekable
+	if (!studioCanSeek()) { return; }
 	var potentialPosition = 0;
 	if ($(this).hasClass('prev')) {
 		for (var n = 0; n <= mixer['time']['marks'].length; n++) {

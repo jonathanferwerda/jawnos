@@ -214,7 +214,7 @@
 		   column, so a tick lands over the same moment on every canvas below. %>
 		<div id="studio_ruler" class="studio_ruler">
 			<span class="studio_ruler_pad"></span>
-			<canvas id="studio_ruler_canvas" class="studio_ruler_canvas" aria-label="<%= &subs::ui('Timeline ruler') %>" hint="<%= &subs::ui('Click the ruler to move the playhead') %>"></canvas>
+			<canvas id="studio_ruler_canvas" class="studio_ruler_canvas" aria-label="<%= &subs::ui('Timeline ruler') %>" hint="<%= &subs::ui('Click the ruler to move the playhead while stopped or playing') %>"></canvas>
 		</div>
 		<div id="studio_viewer" channel_count="<%= $channel_count %>" data-max-tracks="<%= $max_tracks %>">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>

@@ -317,15 +317,17 @@ function studioTimelineDuration() {
 // tick to overwrite it; the status itself is left alone (a seek is not a play
 // and not a stop).
 function studioSeek(t) {
+	if (!studioCanSeek()) { return false; }
 	var duration = studioTimelineDuration();
 	if (!(t >= 0)) { t = 0; }
 	t = Math.min(t, duration);
 	mixer['time']['position'] = t;
-	if ((mixer['time']['status'] == 'play' || mixer['time']['status'] == 'record') && typeof studioClockStart === 'function') {
+	if (mixer['time']['status'] == 'play' && typeof studioClockStart === 'function') {
 		studioClockStart(t);
 	}
 	if (typeof studioTimeDisplay === 'function') { studioTimeDisplay(); }
 	studioDrawTracks();
+	return true;
 }
 
 // Ticks and labels over the timeline. The display button swaps plain seconds

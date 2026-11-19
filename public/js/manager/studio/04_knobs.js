@@ -229,6 +229,8 @@ function studioWheelHandler(event) {
 
 	var jog = target.closest('#studio_jog_wheel');
 	if (jog) {
+		// while a take records the playhead stays where the take put it
+		if (!studioCanSeek()) { event.preventDefault(); return; }
 		var diff = studioWheelDelta(event) / 30;
 		studio_jw_deg = (studio_jw_deg + diff);
 		$(jog).css({ 'rotate': studio_jw_deg + 'deg' });
