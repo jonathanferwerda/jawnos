@@ -460,4 +460,94 @@ like( read_file("$root/lib/JawnOS/Domain/Headless.pm"),
 	qr/movement_records_here\(\{ app => \$nd->\{'app'\}, appt => \$nd->\{'uuid'\}/,
 	'the headless navigator asks for the appointment before filing a fix' );
 
+# ------------------------------------- the place type the start menu draws
+# The start menu's site icon and the nav button's answer both read
+# navigation_information. A machine standing inside a private plate's radius
+# must read "private"; a manual mark on this machine must still outrank the
+# plate; and a machine with no current place at all falls back to "public" and
+# says the place was lost - the picture a phone showed while its own-GPS capture
+# was dying inside the loader (v0.1.3363 mapped the place helpers to the wrong
+# module). The real navigation_information runs against the real schema, with
+# its database, clock and cache pointed at an in-memory copy.
+{
+	require DBI;
+	my $sql = read_file("$root/database/schema.sql");
+	my $dbh = DBI->connect('dbi:SQLite:dbname=:memory:', '', '',
+		{ RaiseError => 1, PrintError => 0 });
+	$dbh->do($_) for grep { /\S/ } split /;[ \t]*\n/, $sql;
+	my $now = &subs::rightNow();
+	$dbh->do(
+		'insert into continent (uuid, app, signatorial, type, latitude, longitude, accuracy, timestamp, server_time, warranty) values (?,?,?,?,?,?,?,?,?,?)',
+		undef, 'place-phone', '__president', 'plate-phone', 'temporary',
+		'43.4500', '-80.4900', '8', $now, $now, $now + 600_000);
+	$dbh->do(
+		'insert into settings (app, setting, value) values (?,?,?)',
+		undef, 'home', 'home_plate_duties',
+		encode_json([ { latitude => 43.45, longitude => -80.49, distance => '0.25', placement => 'within' } ]));
+
+	{
+		no warnings 'redefine';
+		local *subs::db_query = sub {
+			my ($query, @bind) = @_;
+			my $sth = $dbh->prepare($query);
+			$sth->execute(@bind);
+			return bless { rows => $sth->fetchall_arrayref({}) }, 'TravelFakeResult';
+		};
+		local *subs::cache_get    = sub { return undef };
+		local *subs::cache_set    = sub { return 1 };
+		# The app's own plate, and the site type on the plate's app. The house
+		# holds no manual mark yet, so the pair of machine settings answers empty.
+		local *subs::setting_grabber = sub {
+			my ($p) = @_;
+			my $setting = $p->{'setting'} // '';
+			my $app     = $p->{'app'} // '';
+			return encode_json({ latitude => 43.45, longitude => -80.49 })
+				if $setting eq 'home_plate' && $app eq 'home';
+			return undef;
+		};
+		local *subs::settings_grabber = sub {
+			my ($p) = @_;
+			my $app  = $p->{'app'} // '';
+			my @want = ref $p->{'settings'} eq 'ARRAY' ? @{ $p->{'settings'} } : ();
+			return {} unless $app eq 'home';
+			my %answer = ( site_type => 'private', toggle => 'on', warranty => '-1h' );
+			return { map { $_ => $answer{$_} } grep { exists $answer{$_} } @want };
+		};
+
+		my $at_home = &subs::navigation_information({ signatorial => 'plate-phone' });
+		is( $at_home->{'plate-phone'}->{'site_type'}, 'private',
+			'inside a private plate the place reads private' );
+		is( $at_home->{'plate-phone'}->{'site_source'}, 'navigation',
+			'and it came from the plate, not a manual mark' );
+		is( $at_home->{'plate-phone'}->{'site_rating'}, $gb::site_types->{'private'}->{'rating'},
+			'with the rating the locks and the lockdown read' );
+
+		my $nowhere = &subs::navigation_information({ signatorial => 'plate-nowhere' });
+		is( $nowhere->{'plate-nowhere'}->{'site_type'}, 'public',
+			'no current place falls back to public' );
+		is( $nowhere->{'plate-nowhere'}->{'site_source'}, 'lost',
+			'and says the place was lost rather than measured' );
+
+		# A manual mark on this machine outranks the plate it stands in.
+		local *subs::settings_grabber = sub {
+			my ($p) = @_;
+			my $app  = $p->{'app'} // '';
+			my @want = ref $p->{'settings'} eq 'ARRAY' ? @{ $p->{'settings'} } : ();
+			my %manual = ( 'plate-phone_site_type' => 'dangerous', 'plate-phone_site_rating' => 3 );
+			my %answer = ( site_type => 'private', toggle => 'on', warranty => '-1h' );
+			return { map { $_ => $manual{$_} } grep { exists $manual{$_} } @want } if $app eq '__president';
+			return { map { $_ => $answer{$_} } grep { exists $answer{$_} } @want } if $app eq 'home';
+			return {};
+		};
+		my $marked = &subs::navigation_information({ signatorial => 'plate-phone' });
+		is( $marked->{'plate-phone'}->{'site_type'}, 'dangerous', 'a manual mark outranks the plate' );
+		is( $marked->{'plate-phone'}->{'site_source'}, 'manual', 'and says it was set by hand' );
+	}
+}
+
+{
+	package TravelFakeResult;
+	sub hashes { return $_[0]->{'rows'} }
+}
+
 done_testing();

@@ -78,4 +78,38 @@ my @ghosts = grep { !$defined{$_} } sort keys %mapped;
 is(scalar @ghosts, 0, 'every %DOMAIN_MODULE name is defined by a module')
 	or diag('mapped but not defined: ' . join(', ', @ghosts));
 
+# The map's two checks above answer "is the name in the map" and "is the name
+# defined somewhere". Neither can see a name mapped to the wrong module, and
+# AUTOLOAD requires that one file and then insists on the sub: a misrouted name
+# dies "&subs::<name> is mapped to <module>, which does not define <name>" on a
+# person's machine. v0.1.3363 added motion_tail, movement_start_gap and
+# navigation_place_archive to the Appointment2 row while writing their bodies in
+# Device2.pm, so every own-GPS place capture died inside an eval: the phone kept
+# no current place and fell back to a public place. The map is the wiring, so it
+# is checked here, once, for every row.
+my %mod_of;
+while ($loader =~ /'([A-Za-z0-9_:]+)'\s+for\s+qw\(([^)]*)\)/g) {
+	my ($module, $names) = ($1, $2);
+	$mod_of{$_} = $module for split ' ', $names;
+}
+ok( scalar(keys %mod_of) > 1000, 'the map names a module for every helper' );
+
+my (%defines, %read);
+for my $name ( keys %mod_of ) {
+	my $module = $mod_of{$name};
+	next if $read{$module}++;
+	my $file = "$root/lib/" . join( '/', split /::/, $module ) . '.pm';
+	my $src  = eval { read_file($file) } // '';
+	$defines{$module} = {};
+	$defines{$module}->{$1} = 1 while $src =~ /^\s*sub\s+([A-Za-z_]\w*)\s*(?:\(|\{)/mg;
+}
+my %owner;
+for my $module ( sort keys %defines ) {
+	$owner{$_} //= $module for keys %{ $defines{$module} };
+}
+my @misrouted = grep { !$defines{ $mod_of{$_} }->{$_} } sort keys %mod_of;
+ok( !@misrouted, 'every mapped name is defined by the module its row names' )
+	or diag( 'mapped to the wrong module: '
+		. join( ', ', map { "$_ -> $mod_of{$_} (defined in " . ( $owner{$_} // 'nowhere' ) . ')' } @misrouted ) );
+
 done_testing();
