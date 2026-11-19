@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Warehouse.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl
-# covers:    A peer's stored manager can outlive the route it named: a LAN address the machine has since left, or a 127.0.0...
+# covers:    A peer's stored manager can outlive the route it named: a LAN address the machine has since left, a 127.0.0.1 port from a dead tunnel, or a tunnel flag whose active tunnel row is gone; the live route wins and a tunnel's loopback is kept only while its port is an active tunnel.
 
 use strict;
 use warnings;
@@ -49,15 +49,23 @@ is(subs::peer_live_manager($dead_tunnel),
 my $tunnel = {
 	manager => 'https://127.0.0.1:59377',
 	fqdn    => 'peer.example',
+	ip      => '10.0.0.9',
 	port    => 45545,
 	tunnel  => 'yes',
 };
+&subs::db_insert('tunnels', {
+	signatorial => 'peer-sig', status => 'active', direction => 'out',
+	name => 'PORT_AHOY', in_port => 59377, uuid => 'test-tunnel-59377',
+});
 is(subs::peer_manager_url($tunnel, 'peer.example', 45545),
 	'https://127.0.0.1:59377',
 	'a tunnel row keeps its stored tunnel manager for the fqdn candidate');
 is(subs::peer_live_manager($tunnel),
 	'https://127.0.0.1:59377',
-	'a tunnel row keeps its loopback manager');
+	'a live tunnel row keeps its loopback manager');
+is(subs::peer_live_manager({ %{$tunnel}, manager => 'https://127.0.0.1:59378' }),
+	'https://10.0.0.9:45545',
+	'a tunnel flag with no active tunnel row falls back to the peer literal');
 
 my $healthy = {
 	manager => 'https://laptop.jonathanferwerda.com:45545',

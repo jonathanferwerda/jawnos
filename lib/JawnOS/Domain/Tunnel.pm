@@ -207,11 +207,21 @@ sub tunnel_checker {
 		my %has_tunnel;
 		$has_tunnel{ $_->{'signatorial'} } = 1 for grep { $_->{'signatorial'} } @{$tunnels};
 		foreach my $rm ( @{ &subs::db_select('remote_machines', undef, { tunnel => 'yes' })->hashes } ) {
-			next unless $rm->{'signatorial'} && ($rm->{'manager'} || '') =~ m{127\.0\.0\.1};
+			next unless $rm->{'signatorial'};
 			next if $has_tunnel{ $rm->{'signatorial'} };
-			next unless ($rm->{'connection'} || '') eq 'active';
-			&subs::db_update('remote_machines', { connection => 'inactive', server_time => &subs::rightNow() }, { signatorial => $rm->{'signatorial'} });
-			&Websocket::send('server', { console => &Websocket::console_command('deviceLister')});
+			# The flag outlives the tunnel: a peer that dialled in once and then moved
+			# to a direct route keeps tunnel=yes with no tunnel row. A live row of
+			# either direction keeps the flag (a dial-in is 'out' on the hub and 'in'
+			# on the device), and a tunnel being set up (reserved on the hub,
+			# connecting on the device) is not stale either.
+			next if &subs::db_select('tunnels', undef, { signatorial => $rm->{'signatorial'}, status => 'active' })->hashes->[0];
+			next if &subs::db_select('tunnels', undef, { signatorial => $rm->{'signatorial'}, status => 'reserved' })->hashes->[0];
+			next if &subs::db_select('tunnels', undef, { signatorial => $rm->{'signatorial'}, status => 'connecting' })->hashes->[0];
+			my $loopback = ($rm->{'manager'} || '') =~ m{127\.0\.0\.1};
+			my $update = { tunnel => 'no', server_time => &subs::rightNow() };
+			$update->{'connection'} = 'inactive' if $loopback && ($rm->{'connection'} || '') eq 'active';
+			&subs::db_update('remote_machines', $update, { signatorial => $rm->{'signatorial'} });
+			&Websocket::send('server', { console => &Websocket::console_command('deviceLister')}) if $update->{'connection'};
 		}
 		foreach my $td ( @{$tunnel_duties} ) {
 			my $tun = &subs::tunnel_port_mapper({ signatorial => $td->{'signatorial'}  });

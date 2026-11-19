@@ -4,7 +4,7 @@
 #           can actually answer: the same LAN when both machines share it, the
 #           tailnet otherwise. The address a verified probe used is written
 #           back to remote_machines.manager, and a tunnel row keeps its own
-#           loopback route.
+#           loopback route only while its port is an active tunnel.
 
 use strict;
 use warnings;
@@ -96,10 +96,21 @@ is($live, 'https://100.64.0.3:45545',
 		'and the peer hostname is a fallback too');
 });
 
-# A tunnel row's loopback belongs to the hub and is kept exactly as stored.
+# A tunnel row's loopback belongs to the hub and is kept exactly as stored
+# while the hub still holds its port. Seed the active tunnel row the hub writes
+# on confirm; without it the flag is stale and the row must use the tailnet.
+&subs::db_insert('tunnels', {
+	signatorial => 'laptop-sig', status => 'active', direction => 'out',
+	name => 'PORT_AHOY', in_port => 56138, uuid => 'test-tunnel-56138',
+});
 is(subs::peer_live_manager({ %{$laptop}, tunnel => 'yes' }),
 	'https://127.0.0.1:56138',
-	'a tunnel row keeps its loopback manager');
+	'a live tunnel row keeps its loopback manager');
+&as_machine_at('10.20.0.10', sub {
+	$live = subs::peer_live_manager({ %{$laptop}, manager => 'https://127.0.0.1:56139', tunnel => 'yes' });
+});
+is($live, 'https://100.64.0.3:45545',
+	'a tunnel flag with no active tunnel row falls back to the tailnet');
 
 # With no literal to fall back to, the name is still last.
 is(subs::peer_live_manager({ manager => 'https://127.0.0.1:56138', fqdn => 'laptop.example', port => 45545 }),

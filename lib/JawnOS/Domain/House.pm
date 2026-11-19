@@ -972,7 +972,7 @@ sub peer_live_manager {
 	$rm ||= {};
 	my $manager = $rm->{'manager'} || '';
 	return $manager unless $manager =~ m{^https?://};
-	my ($host) = &peer_manager_host($rm);
+	my ($host, $mport) = &peer_manager_host($rm);
 	return $manager unless defined $host && length $host;
 	my $loopback = &peer_host_is_loopback($host) ? 1 : 0;
 	# A name that no longer resolves is as dead as a retired loopback port. The
@@ -983,7 +983,22 @@ sub peer_live_manager {
 		$resolves = gethostbyname($host) ? 1 : 0;
 	}
 	if ($loopback) {
-		return $manager if ($rm->{'tunnel'} || '') eq 'yes';
+		# A loopback is only a route while its tunnel is live. The tunnel flag
+		# can outlive the tunnel: a peer that dialled in once and then moved to a
+		# direct route keeps tunnel=yes, and a reauth then dialled the hub's own
+		# house-CA port (127.0.0.1:45551) and was refused as unverified
+		# (2026-11-19, 1,497 refusals). The manager's port is the hub-side
+		# listener the tunnel reserved, so an active tunnel row with that in_port
+		# is the proof the loopback still belongs to this peer. A pending tunnel
+		# is left to remote_device_connect's own live-port guard.
+		if (($rm->{'tunnel'} || '') eq 'yes') {
+			my $live = 0;
+			if (defined $mport && $mport =~ /^\d+$/) {
+				my $rows = eval { &db_select('tunnels', undef, { status => 'active', in_port => $mport })->hashes } || [];
+				$live = 1 if scalar @{$rows};
+			}
+			return $manager if $live;
+		}
 		my $literal = &peer_literal_manager($rm);
 		return $literal if $literal;
 		my $fqdn = $rm->{'fqdn'} || '';

@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/ perl/subroutines.pl
-# covers:    A peer row can carry a loopback manager: it is the hub's own tunnel route, and on any other row it is a leftov...
+# covers:    A peer row's loopback manager is the hub's tunnel route only while an active tunnel row holds that port; a stale tunnel flag falls back to the peer literal.
 
 use strict;
 use warnings;
@@ -33,9 +33,19 @@ is(subs::peer_literal_manager({ ip => '10.20.0.20', port => '45545', manager => 
 	'https://10.20.0.20:45551',
 	'a peer listener port survives the literal fallback');
 
-is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53665', fqdn => 'laptop.example', port => '45545', tunnel => 'yes' }),
+# The loopback is only a route while the hub still holds its tunnel port. Seed
+# the active tunnel row the hub writes when it confirms the dial-in; without it
+# the tunnel flag is stale and the row must use a literal instead.
+&subs::db_insert('tunnels', {
+	signatorial => 'laptop-sig', status => 'active', direction => 'out',
+	name => 'PORT_AHOY', in_port => 53665, uuid => 'test-tunnel-53665',
+});
+is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53665', fqdn => 'laptop.example', ip => '10.0.0.9', port => '45545', tunnel => 'yes' }),
 	'https://127.0.0.1:53665',
-	'a tunnel route keeps its loopback manager');
+	'a live tunnel route keeps its loopback manager');
+is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53666', fqdn => 'laptop.example', ip => '10.0.0.9', port => '45545', tunnel => 'yes' }),
+	'https://10.0.0.9:45545',
+	'a tunnel flag with no active tunnel row falls back to the peer literal');
 
 is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53665' }),
 	'https://127.0.0.1:53665',

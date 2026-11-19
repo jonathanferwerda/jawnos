@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Tunnel.pm
-# covers:    a client with config tunnel_hub starts a tunnel to that hub even when no NIC neighbour table names it
+# covers:    a client with config tunnel_hub starts a tunnel to that hub even when no NIC neighbour table names it; a tunnel flag with no tunnel row is cleared, and one still reserved is kept
 
 use strict;
 use warnings;
@@ -142,5 +142,38 @@ is_deeply(
 is_deeply(
 	(exists $form->{'tunnel'} ? eval { Mojo::JSON::decode_json($form->{'tunnel'}) } : undef),
 	[ $expected_batch ], 'the tunnel batch decodes back');
+
+# A tunnel flag with no tunnel row is stale and is cleared; a live or still
+# pending tunnel keeps the flag. The hub kept tunnel=yes for Phone/Table/Laptop
+# long after their dial-in tunnels were gone, and a reauth then dialled the
+# hub's own house-CA port and was refused (2026-11-19).
+{
+	my @updates;
+	local *subs::db_select = sub {
+		my ($table, $cols, $where) = @_;
+		return FakeResult->new() unless $table eq 'remote_machines' || $table eq 'tunnels';
+		if ($table eq 'tunnels') {
+			return FakeResult->new({ signatorial => 'pending', status => 'reserved' })
+				if $where && ($where->{'signatorial'} || '') eq 'pending';
+			return FakeResult->new();
+		}
+		return FakeResult->new(
+			{ signatorial => 'stale', manager => 'https://192.168.1.147:45545', connection => 'active', tunnel => 'yes' },
+			{ signatorial => 'pending', manager => 'https://127.0.0.1:63111', connection => 'active', tunnel => 'yes' },
+		) if $where && ($where->{'tunnel'} || '') eq 'yes';
+		return FakeResult->new();
+	};
+	local *subs::db_update = sub { push @updates, [ @_ ]; return 1 };
+	local *subs::device_setter = sub { 'server' };
+	local *subs::ensure_self_device = sub { 1 };
+	$subs::config = {};
+	$devices = [];
+	&subs::tunnel_checker({ duty => '', interval => 30 });
+	my ($cleared) = grep { ($_->[2]->{'signatorial'} || '') eq 'stale' } @updates;
+	ok($cleared, 'a tunnel flag with no tunnel row is cleared');
+	is($cleared->[1]->{'tunnel'}, 'no', 'and the row is written as tunnel=no');
+	ok(!(grep { ($_->[2]->{'signatorial'} || '') eq 'pending' } @updates),
+		'a tunnel still reserved keeps its flag');
+}
 
 done_testing();
