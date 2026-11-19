@@ -33,7 +33,7 @@ sub peer_candidates {
 	my ($prefer) = @_;
 	my $self = &subs::signatorial_designer() // '';
 	my @rows = grep { ($_->{'signatorial'} // '') ne $self }
-		@{ &subs::db_query("select uuid, signatorial, device, hostname, connection from remote_machines where connection = 'active'")->hashes || [] };
+		@{ &subs::db_query("select uuid, signatorial, device, hostname, connection, server_time, timestamp from remote_machines where connection = 'active'")->hashes || [] };
 	my (%seen, @out);
 	foreach my $row (@rows) {
 		next unless ($row->{'device'} // '') eq 'server';

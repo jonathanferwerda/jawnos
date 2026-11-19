@@ -42,6 +42,9 @@ use Unicode::Normalize qw(NFC);
 # still reads: archive_location_folder keeps the old lower-case folder when it
 # is the one that exists.
 our %archive_folder_names;
+# A path whose fetch from the house failed, and when. Per worker: the point is
+# to stop one gallery from paying the same connect timeout on every redraw.
+our %media_fetch_down;
 our $config;
 our $database;
 our $device;
@@ -356,6 +359,11 @@ sub media_fetch_on_demand {
 	my $want = $entry->{'remote_f'};
 	return 0 unless defined $want && length $want;
 	my $remembered = $entry->{'remote_peer'} // '';
+	my $now = &subs::rightNow();
+	# A gallery asks the same missing picture on every redraw. Remember a failed
+	# attempt for a minute per worker so it does not pay the connect timeout
+	# again and again.
+	return 0 if $media_fetch_down{$path} && $now - $media_fetch_down{$path} < 60000;
 	# Server first, then the machine the row came from, then the rest: one order
 	# for the whole house, shared with the games library (peer_candidates).
 	my @candidates = @{ &subs::peer_candidates($remembered) };
@@ -364,6 +372,12 @@ sub media_fetch_on_demand {
 	$dir =~ s{/[^/]+$}{};
 	if (length $dir && !-d $dir) { eval { File::Path::make_path($dir); 1 } }
 	foreach my $row (@candidates) {
+		# The roster is a cached ping: 'active' is believable only while its
+		# heartbeat is fresh. A machine that slept without a clean goodbye
+		# leaves an active row behind; do not spend a worker's connect timeout
+		# on it.
+		my $seen = 0 + ($row->{'server_time'} // $row->{'timestamp'} // 0);
+		next if $seen && $now - $seen > 120000;
 		my $agent = eval { &subs::remote_agent_for($row->{'uuid'}) } || {};
 		next if $agent->{'error'} || !$agent->{'manager'};
 		my $url = $agent->{'manager'} . '/file_open?as_is=yes&remoted=yes&subprocess=yes&file=' . &subs::url_escape($want);
@@ -378,8 +392,10 @@ sub media_fetch_on_demand {
 		my $wrote = eval { &write_file($temp, $bytes); 1 };
 		unless ($wrote && rename($temp, $path)) { unlink $temp; next; }
 		&files_cache_note($path);
+		delete $media_fetch_down{$path};
 		return 1;
 	}
+	$media_fetch_down{$path} = $now;
 	return 0;
 }
 

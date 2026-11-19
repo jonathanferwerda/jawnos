@@ -143,6 +143,47 @@ like($fetch, qr/\@\{ &subs::peer_candidates\(\$remembered\) \}/,
 		'sig-serv,sig-comp,sig-tab', 'with no preference, the server is still first');
 	subs::db_query('delete from remote_machines');
 }
+
+# --- the roster is the ping; a stale active row is not a peer ----------------
+{
+	%subs::media_fetch_down = ();
+	subs::db_query('delete from remote_machines');
+	my $now = subs::rightNow();
+	subs::db_insert('remote_machines', {
+		uuid => 'u-sleep', signatorial => 'sig-sleep', device => 'server',
+		hostname => 'asleep', connection => 'active',
+		timestamp => $now - 600000, server_time => $now - 600000,
+	});
+	my $calls = 0;
+	no warnings 'redefine';
+	local *subs::remote_agent_for = sub { $calls++; return { error => 'must not be asked' } };
+	is(subs::media_fetch_on_demand("$scratch/stale.bin", { remote_f => '/house/stale.bin', remote_peer => 'sig-sleep' }), 0,
+		'an active row with an old heartbeat is not fetched');
+	is($calls, 0, 'and the worker never opens a connection to it');
+	subs::db_query('delete from remote_machines');
+}
+
+# --- a failed fetch is remembered for a minute per worker --------------------
+{
+	%subs::media_fetch_down = ();
+	subs::db_query('delete from remote_machines');
+	my $now = subs::rightNow();
+	subs::db_insert('remote_machines', {
+		uuid => 'u-wake', signatorial => 'sig-wake', device => 'server',
+		hostname => 'awake', connection => 'active',
+		timestamp => $now, server_time => $now,
+	});
+	my $calls = 0;
+	no warnings 'redefine';
+	local *subs::remote_agent_for = sub { $calls++; return { error => 'no agent' } };
+	my $path = "$scratch/throttled.bin";
+	is(subs::media_fetch_on_demand($path, { remote_f => '/house/throttled.bin', remote_peer => 'sig-wake' }), 0,
+		'a peer that cannot be reached reports the file absent');
+	is(subs::media_fetch_on_demand($path, { remote_f => '/house/throttled.bin', remote_peer => 'sig-wake' }), 0,
+		'the next request gives up at once');
+	is($calls, 1, 'so one worker pays the timeout, not every redraw');
+	subs::db_query('delete from remote_machines');
+}
 like($fetch, qr/remoted=yes/, 'a peer answers the read instead of handing it on again');
 like($fetch, qr/&synced_file_payload\(\$res->body, \$path\)/,
 	'and the body goes through the sentinel-aware check');
