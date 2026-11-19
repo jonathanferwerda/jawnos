@@ -1294,6 +1294,107 @@
 	.studio_track.studio_track_automation_on .studio_track_automation_lane {
 		display: block;
 	}
+	/* ---- timeline ruler ----------------------------------------------------
+	   The ruler's first cell is exactly a track's panel column (150px + the
+	   row's 4px gap), so a ruler click and the playhead line up over every
+	   canvas below it. The canvas repaints itself from studioDrawRuler(). */
+	.studio_ruler {
+		display: flex;
+		align-items: stretch;
+		gap: 4px;
+		flex: 0 0 auto;
+		height: 22px;
+		border-bottom: 1px solid var(--line);
+		background: var(--panel);
+	}
+	.studio_ruler_pad {
+		flex: 0 0 150px;
+		width: 150px;
+	}
+	.studio_ruler_canvas {
+		flex: 1 1 auto;
+		min-width: 0;
+		width: 100%;
+		height: 21px;
+		box-sizing: border-box;
+		cursor: var(--jawnos-cursor-pointer, pointer);
+		touch-action: none;
+	}
+	/* A track's own colour dresses its panel edge, so a selected row reads at a
+	   glance; the canvas paint uses the same value (studioTrackColour). */
+	.studio_track_colour {
+		flex: 0 0 18px;
+		width: 18px;
+		min-width: 18px;
+		height: 18px;
+		padding: 0;
+		border: 1px solid var(--line);
+		border-radius: 3px;
+		background: none;
+		cursor: var(--jawnos-cursor-pointer, pointer);
+	}
+	.studio_track[data-colour] .studio_track_panel {
+		border-right-color: var(--studio-track-colour, var(--line));
+		box-shadow: inset 3px 0 0 var(--studio-track-colour, transparent);
+	}
+	/* ---- small context menus -----------------------------------------------
+	   One themed card for the timeline's clip menu and a beat's velocity menu.
+	   The caller positions it in viewport coordinates and removes it on the
+	   next press, exactly as the Clothesline menu does. */
+	.studio_menu {
+		position: fixed;
+		z-index: 60000;
+		min-width: 148px;
+		padding: 4px;
+		border: 1px solid var(--line);
+		border-radius: calc(var(--jawnos-corner, 12px) * .6);
+		background: var(--panel);
+		color: var(--ink);
+		box-shadow: var(--shadow-2, 0 8px 24px rgba(0, 0, 0, .28));
+	}
+	.studio_menu_head {
+		padding: 2px 8px 4px;
+		font-size: 11px;
+		opacity: .65;
+	}
+	.studio_menu_row {
+		display: block;
+		width: 100%;
+		box-sizing: border-box;
+		text-align: left;
+		padding: 4px 8px;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: inherit;
+		font-size: 13px;
+	}
+	.studio_menu_row:hover {
+		background: var(--accent-soft, var(--panel-2));
+	}
+	.studio_menu_row[disabled] {
+		opacity: .45;
+	}
+	.studio_menu_velocity {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 6px;
+		padding: 2px 4px;
+	}
+	.studio_menu_velocity button {
+		min-width: 30px;
+	}
+	.studio_menu_velocity span {
+		min-width: 34px;
+		text-align: center;
+		font-variant-numeric: tabular-nums;
+	}
+	/* A placed beat carries its velocity as a CSS variable, so a soft hit reads
+	   fainter than an accent without a second colour. */
+	.studio_drums_step[aria-pressed="true"] {
+		opacity: calc(.4 + var(--drums-velocity, 1) * .6);
+	}
 	/* ---- the drum machine -------------------------------------------------
 	   Eight rows of sixteen steps. Every surface takes its colours from the
 	   theme; the only fixed colours left are the pedal LEDs, which are lamps. */

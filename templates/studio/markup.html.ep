@@ -210,6 +210,12 @@
 		</div>
 		<span class="studio_resize_handle" data-studio-resize="tracks" hint="<%= &subs::ui('Drag to resize this panel') %>"></span>
 		<span class="studio_width_handle" data-studio-width="tracks" hint="<%= &subs::ui('Drag the right edge to resize this panel\'s width') %>"></span>
+		<%# The ruler sits over the timeline. Its first cell matches a track's panel
+		   column, so a tick lands over the same moment on every canvas below. %>
+		<div id="studio_ruler" class="studio_ruler">
+			<span class="studio_ruler_pad"></span>
+			<canvas id="studio_ruler_canvas" class="studio_ruler_canvas" hint="<%= &subs::ui('Click the ruler to move the playhead') %>"></canvas>
+		</div>
 		<div id="studio_viewer" channel_count="<%= $channel_count %>" data-max-tracks="<%= $max_tracks %>">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
 				<div class="studio_track" data-channel="<%= $ch %>" id="studio_track_row_<%= $ch %>">
@@ -217,6 +223,7 @@
 						<div class="studio_track_line">
 							<button class="armed studio_track_arm" channel="<%= $ch %>" control="armed" state="off" hint="<%= &subs::ui('Off, record, play or loop') %>">O</button>
 							<input class="studio_track_name" channel="<%= $ch %>" value="<%= &subs::ui('Track') %> <%= $ch %>" hint="<%= &subs::ui('Rename this track') %>">
+						<input type="color" class="studio_track_colour hover" channel="<%= $ch %>" control="colour" value="#3b7ddd" hint="<%= &subs::ui('Choose this track\'s colour') %>">
 						</div>
 						<div class="studio_track_line studio_track_volume_line">
 							<input type="range" min="0" max="100" value="1" channel="<%= $ch %>" control="volume" class="channel_volume studio_track_volume" hint="<%= &subs::ui('Mix this track against the others') %>">
@@ -234,7 +241,7 @@
 						<div class="studio_channel_rack" channel="<%= $ch %>" hint="<%= &subs::ui('The effects in this track\'s chain, in order') %>"></div>
 					</div>
 					<div class="studio_track_body">
-						<canvas class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="<%= &subs::ui('Drag to move a clip, its edges to trim, double-click to cut, select + Delete to remove') %>"></canvas>
+						<canvas class="track track_<%= $ch %>" id="track_view_<%= $ch %>" hint="<%= &subs::ui('Drag to move a clip, its edges to trim, double-click to cut, right-click for split, cut, copy and paste, select + Delete to remove') %>"></canvas>
 						<div class="studio_track_automation_lane" aria-hidden="true"><%= &subs::ui('Automation') %></div>
 					</div>
 					<span class="studio_track_resize hover" channel="<%= $ch %>" hint="<%= &subs::ui('Drag the bottom edge to resize this track') %>"></span>
