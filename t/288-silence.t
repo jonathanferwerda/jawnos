@@ -38,6 +38,7 @@ require "$root/lib/JawnOS/Domain/Silence.pm";
 no warnings 'redefine';
 our (%STORE, @MUTE, @SET, @CHANNEL, @RELAY);
 our $MUTE_FAIL = 0;
+our $MUTE_UNSUPPORTED = 0;
 our (@QUERY_SETTINGS, @QUERY_APPOINTMENTS, @NATIVE);
 our $NOW = 1000;
 our $DEVICE = 'computer';
@@ -62,6 +63,9 @@ sub reset_all {
 	@NATIVE = ();
 	$DEVICE = 'computer';
 	$MUTE_FAIL = 0;
+	$MUTE_UNSUPPORTED = 0;
+	$subs::silence_local_retry_at = 0;
+	$subs::silence_local_retry_count = 0;
 	$subs::silence_tick_at = 0;
 	$subs::silence_native_off_at = 0;
 	%subs::silence_owners_seen = ();
@@ -131,7 +135,13 @@ $main::SCRATCH = $scratch;
 		],
 	};
 };
-*subs::sound_mute = sub { my ($kind, $id, $mute) = @_; push @MUTE, "$kind|$id|$mute"; return { ok => ($MUTE_FAIL ? 0 : 1) } };
+*subs::sound_mute = sub {
+	my ($kind, $id, $mute) = @_;
+	push @MUTE, "$kind|$id|$mute";
+	return { ok => 0, supported => 0, error => 'mute is not available on this machine' }
+		if $MUTE_UNSUPPORTED;
+	return { ok => ($MUTE_FAIL ? 0 : 1) };
+};
 *subs::sound_set = sub { my ($kind, $id, $volume) = @_; push @SET, "$kind|$id|$volume"; return { ok => 1 } };
 *subs::sound_channels = sub {
 	return {
@@ -359,6 +369,61 @@ ok(-e $subs::SILENCE_LOCAL_FILE, 'and keeps the snapshot for the next pass');
 $MUTE_FAIL = 0;
 is(subs::silence_local_apply(0), 1, 'the next pass restores it');
 ok(!-e $subs::SILENCE_LOCAL_FILE, 'and clears the snapshot');
+
+# A backend with no mute setter (the phone's bridge) has nothing to restore.
+# Counting that as a refusal kept the snapshot alive, so every alarm pass wrote
+# the saved levels over whatever the person had just set.
+reset_all();
+$MUTE_UNSUPPORTED = 1;
+subs::silence_local_write({
+	outputs => [ { id => 'music', volume => 27, muted => 0 } ],
+	channels => {},
+	streams => [ { stream => 'music', volume => 4 } ],
+});
+is(subs::silence_local_apply(0), 1, 'a backend with no mute setter still restores');
+ok(!-e $subs::SILENCE_LOCAL_FILE, 'and the snapshot is cleared, not retried forever');
+
+# The reconciler keeps the snapshot and the state in step. A quiet house with
+# no snapshot is silenced again; an audible house with one is restored, but the
+# restore is retried at most once a minute and then dropped, so a stale entry
+# cannot command the mixer on every pass.
+reset_all();
+$STORE{'__president|silence_state|all'} = encode_json({ active => 1, owners => ['u1'], apps => {} });
+is(subs::silence_local_reconcile(), 1, 'a quiet house with no snapshot is silenced again');
+ok(-e $subs::SILENCE_LOCAL_FILE, 'and the snapshot is written');
+
+reset_all();
+subs::silence_local_write({
+	outputs => [ { id => 'music', volume => 27, muted => 0 } ],
+	channels => {},
+	streams => [ { stream => 'music', volume => 4 } ],
+});
+$MUTE_FAIL = 1;
+my $sets_before = scalar @SET;
+is(subs::silence_local_reconcile(), 0, 'a refused restore is reported once');
+my $sets_after_first = scalar @SET;
+ok($sets_after_first > $sets_before, 'the first pass writes the mixer');
+$NOW += 30000;
+is(subs::silence_local_reconcile(), 0, 'a retry inside the minute is skipped');
+is(scalar @SET, $sets_after_first, 'so the mixer is not written again');
+$MUTE_FAIL = 0;
+$NOW += 61000;
+is(subs::silence_local_reconcile(), 1, 'the next minute restores it');
+ok(!-e $subs::SILENCE_LOCAL_FILE, 'and clears the snapshot');
+
+# A backend that keeps refusing stops being asked: the record is dropped rather
+# than rewriting the saved levels forever.
+reset_all();
+subs::silence_local_write({
+	outputs => [ { id => 'music', volume => 27, muted => 0 } ],
+	channels => {},
+	streams => [ { stream => 'music', volume => 4 } ],
+});
+$MUTE_FAIL = 1;
+is(subs::silence_local_reconcile(), 0, 'the first refusal is kept');
+$NOW += 61000;
+is(subs::silence_local_reconcile(), 0, 'the second refusal is reported');
+ok(!-e $subs::SILENCE_LOCAL_FILE, 'and the record is dropped, not retried forever');
 
 # A stop releases even when the box was unticked before the stop arrived.
 reset_all();

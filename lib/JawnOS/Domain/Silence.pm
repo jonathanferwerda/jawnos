@@ -584,6 +584,18 @@ sub silence_local_apply_on {
 	return 1;
 }
 
+# A backend that says it has no such control (the phone's bridge has no mute
+# setter) has nothing to restore; counting that as a refusal kept the snapshot
+# alive, and the next pass wrote the saved levels over whatever the person set.
+# Only a backend that claims the control and refuses it is worth retrying.
+sub silence_restore_failed {
+	my ($answer) = @_;
+	return 0 unless ref $answer eq 'HASH';
+	return 0 if $answer->{'ok'};
+	return 0 if exists $answer->{'supported'} && !$answer->{'supported'};
+	return 1;
+}
+
 sub silence_local_apply_off {
 	my $snap = &silence_local_read();
 	return 0 unless ref $snap eq 'HASH';
@@ -596,17 +608,17 @@ sub silence_local_apply_off {
 		my $id = $device->{'id'};
 		next unless defined $id && length $id;
 		my $muted = eval { &subs::sound_mute('output', $id, $device->{'muted'} ? 1 : 0) };
-		$ok = 0 if ref $muted eq 'HASH' && !$muted->{'ok'};
+		$ok = 0 if &silence_restore_failed($muted);
 		if (defined $device->{'volume'}) {
 			my $set = eval { &subs::sound_set('output', $id, $device->{'volume'}) };
-			$ok = 0 if ref $set eq 'HASH' && !$set->{'ok'};
+			$ok = 0 if &silence_restore_failed($set);
 		}
 	}
 	foreach my $name ( sort keys %{ $snap->{'channels'} || {} } ) {
 		my $row = $snap->{'channels'}->{$name};
 		next unless ref $row eq 'HASH';
 		my $channel = eval { &subs::sound_channel_set($name, $row->{'volume'}, $row->{'muted'}) };
-		$ok = 0 if ref $channel eq 'HASH' && !$channel->{'ok'};
+		$ok = 0 if &silence_restore_failed($channel);
 	}
 	foreach my $stream ( @{ $snap->{'streams'} || [] } ) {
 		next unless ref $stream eq 'HASH';
@@ -631,6 +643,45 @@ sub silence_local_apply {
 		return &silence_local_apply_on();
 	}
 	return &silence_local_apply_off();
+}
+
+# The snapshot and the state must not drift. A quiet house with no snapshot (a
+# lost file, or a process that started after silence began) is silenced again;
+# an audible house with a snapshot is put back and the file dropped. The
+# restore is retried at most once a minute, and a backend that keeps refusing
+# stops being asked, so a stale entry cannot command the mixer every pass.
+our $silence_local_retry_at = 0;
+our $silence_local_retry_count = 0;
+our $SILENCE_RESTORE_RETRY_SECONDS = 60;
+our $SILENCE_RESTORE_GIVE_UP = 2;
+
+sub silence_local_reconcile {
+	my $snap = &silence_local_read();
+	if (&silence_state()->{'active'}) {
+		&silence_local_apply(1) unless ref $snap eq 'HASH';
+		$silence_local_retry_at = 0;
+		$silence_local_retry_count = 0;
+		return 1;
+	}
+	return 0 unless ref $snap eq 'HASH';
+	my $now = eval { &subs::rightNow() } || (time * 1000);
+	return 0 if $silence_local_retry_at
+		&& $now - $silence_local_retry_at < $SILENCE_RESTORE_RETRY_SECONDS * 1000;
+	$silence_local_retry_at = $now;
+	if (&silence_local_apply_off()) {
+		$silence_local_retry_at = 0;
+		$silence_local_retry_count = 0;
+		return 1;
+	}
+	$silence_local_retry_count++;
+	if ($silence_local_retry_count >= $SILENCE_RESTORE_GIVE_UP) {
+		# The mixer has refused a restore for long enough. Drop the record so it
+		# stops writing the saved levels over whatever the person sets.
+		&silence_local_clear();
+		$silence_local_retry_at = 0;
+		$silence_local_retry_count = 0;
+	}
+	return 0;
 }
 
 # ---- the two moves -----------------------------------------------------------
@@ -862,7 +913,7 @@ sub silence_tick {
 	# while this manager was down, and tell the phone's native half off: it keeps
 	# its own copy of the switch, so a push that was missed must not leave the
 	# phone silent forever. Both are no-ops on a machine that was never quiet.
-	&silence_local_apply(0);
+	&silence_local_reconcile();
 	if (!$silence_native_off_at || $now - $silence_native_off_at >= 60000) {
 		$silence_native_off_at = $now;
 		&silence_native_push(0);
