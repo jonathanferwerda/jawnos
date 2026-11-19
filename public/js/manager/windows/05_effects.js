@@ -489,6 +489,20 @@ function jawnosWindowCloseShards(el, rect, level) {
 		+ 'width:' + width.toFixed(1) + 'px;height:' + height.toFixed(1) + 'px;';
 	var z = 0;
 	try { z = parseInt($(el).css('z-index'), 10) || 0; } catch (e) { z = 0; }
+	// A row inside a window has no stacking level of its own; the overlay would
+	// land at the body's lowest layer, under the glass that holds the row. Borrow
+	// the nearest window's level (or, when it has none, the browser context's), so
+	// the pieces ride above it. A window answers with itself and keeps its z.
+	try {
+		var host = 0;
+		if (typeof $(el).closest === 'function') {
+			var glass = $(el).closest('.wind');
+			var browser_ctx = $(el).closest('#browser');
+			if (glass.length) { host = parseInt(glass.css('z-index'), 10) || 0; }
+			if (browser_ctx.length) { host = Math.max(host, parseInt(browser_ctx.css('z-index'), 10) || 0); }
+		}
+		if (host > z) { z = host; }
+	} catch (e) {}
 	box.style.zIndex = z + 1;
 	var cols = 4;
 	var rows = 2;

@@ -49,8 +49,21 @@ $(document).on('change', '.task_input', function(e) {
 		type: 'POST',
 		data: { timestamp: timestamp, app: app, papp: papp, name: name, value: value, uuid: uuid, colour: colour, project: project, account: account, movement: movement },
 		success: function(response) {
-			appointmentTaskReopener(container,response.html);
-			ac.scrollTop(top);
+			var reopen = function() {
+				appointmentTaskReopener(container,response.html);
+				ac.scrollTop(top);
+			};
+			// Under the Open filter a tick takes the row out of the list. Let it
+			// leave the way a window does - the desk's own close farewell, at the
+			// desk's own Window Effects level - and rebuild the list when it ends.
+			// Any other filter keeps the row, so it is swapped in at once.
+			if (taskLeavesOpenList(item, container, name, value)
+				&& typeof jawnosWindowCloseEffect === 'function') {
+				// the save has answered, so the row leaves at full colour
+				container.find('.task_list').removeClass('task_list_busy');
+				if (jawnosWindowCloseEffect(item[0], reopen)) { return; }
+			}
+			reopen();
 		}
 	});
 });
@@ -132,6 +145,20 @@ function appointmentTaskReopener(container,html) {
 		taskSettingsOpener(v);
 	});
 	$(selector).focus();
+}
+
+// Does this change take its row out of the list? Only a tick under the Open
+// filter does: the server rebuild drops the completed task. A nested list has
+// no Sort/Filter row of its own (and keeps its own setting), so only the list
+// the filter belongs to answers here - otherwise a checked child would crumble
+// and then reappear in the rebuilt markup. The window-close farewell is reused
+// as is, so the desk's Window Effects level (and reduced motion) decides it.
+function taskLeavesOpenList(item, container, name, value) {
+	if (name !== 'completed' || value !== 'on') { return false; }
+	var top = container.children('.task_list');
+	var list = item.closest('.task_list');
+	if (!top.length || !list.length || top[0] !== list[0]) { return false; }
+	return (container.find('.task_admin_input[setting="filter"]').val() || '') === 'open';
 }
 
 function taskSettingsOpener(uuid) {

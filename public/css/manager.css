@@ -1342,6 +1342,13 @@ body[data-window-effects="maximum"] {
 .wind.jawnos_effect_close_fade { animation: jawnos_window_close_fade calc(110ms * var(--je-time)) ease-in; pointer-events: none; will-change: opacity; }
 .wind.jawnos_effect_close_crumble { animation: jawnos_window_close_crumble calc(170ms * var(--je-time)) cubic-bezier(.3,.1,.7,1); pointer-events: none; will-change: transform, opacity; }
 .wind.jawnos_effect_close_burst { animation: jawnos_window_close_burst calc(170ms * var(--je-time)) cubic-bezier(.2,.6,.3,1); pointer-events: none; will-change: transform, opacity; }
+/* A task ticked out of an Open list leaves the way a window does: the same
+   fade, crumble or burst at the desk's Window Effects level, cut from the row's
+   own rectangle by windows/05_effects.js. The row is a list item, not a window,
+   so it names the keyframes itself instead of borrowing the .wind rules. */
+.task_item.jawnos_effect_close_fade { animation: jawnos_window_close_fade calc(110ms * var(--je-time)) ease-in; pointer-events: none; will-change: opacity; }
+.task_item.jawnos_effect_close_crumble { animation: jawnos_window_close_crumble calc(170ms * var(--je-time)) cubic-bezier(.3,.1,.7,1); pointer-events: none; will-change: transform, opacity; }
+.task_item.jawnos_effect_close_burst { animation: jawnos_window_close_burst calc(170ms * var(--je-time)) cubic-bezier(.2,.6,.3,1); pointer-events: none; will-change: transform, opacity; }
 @keyframes jawnos_window_close_fade {
 	0% { opacity: 1; }
 	100% { opacity: 0; }
@@ -1404,7 +1411,9 @@ body[data-window-effects="maximum"] {
 	.wind.jawnos_effect_stretch, .wind.jawnos_effect_in,
 	.wind.jawnos_effect_out, .wind.jawnos_effect_lock, .wind.jawnos_effect_snap,
 	.wind.jawnos_effect_jiggle, .wind.jawnos_effect_close_fade,
-	.wind.jawnos_effect_close_crumble, .wind.jawnos_effect_close_burst {
+	.wind.jawnos_effect_close_crumble, .wind.jawnos_effect_close_burst,
+	.task_item.jawnos_effect_close_fade, .task_item.jawnos_effect_close_crumble,
+	.task_item.jawnos_effect_close_burst {
 		animation-duration: 1ms;
 	}
 	/* the control-directed motions answer the same rule, and their own rules
