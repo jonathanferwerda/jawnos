@@ -497,9 +497,20 @@ function markerLayerTransform(duty, raw_value) {
 
 // ---- stroke input ------------------------------------------------------
 
+// the sliders are read once and then kept in sync by their own input event:
+// a stylus reports at the screen's rate, and reading four DOM values per report
+// is work the stroke does not need
+function markerSettingsLoad() {
+	var size = $('#marker_size').val();
+	var alpha = $('#marker_transparency').val();
+	marker.selected_marker_size = size ? numeral(size).value() : (marker.selected_marker_size || 20);
+	marker.selected_marker_transparency = alpha ? numeral(alpha).value() : (marker.selected_marker_transparency || 1);
+	marker.settings_ready = true;
+	return marker;
+}
+
 function markerSettings() {
-	marker.selected_marker_transparency = numeral($('#marker_transparency').val() || 1).value();
-	marker.selected_marker_size = numeral($('#marker_size').val() || 20).value();
+	if (!marker.settings_ready) { markerSettingsLoad(); }
 	markerStroke.tool = localStorage.getItem('marker_tool') || 'pencil';
 	markerStroke.erase = localStorage.getItem('marker_erase') == 'on';
 	markerStroke.size = marker.selected_marker_size;
@@ -507,9 +518,27 @@ function markerSettings() {
 	markerStroke.alpha = marker.selected_marker_transparency;
 }
 
+// The canvas sits still while the art moves, so its box is measured once and
+// reused; a resize, a scroll or a rail toggle throws the measurement away.
+var markerCanvasRect = null;
+
+function markerCanvasBox() {
+	if (!markerCanvasRect) {
+		var canvas = document.getElementById('whiteboard');
+		if (canvas) { markerCanvasRect = canvas.getBoundingClientRect(); }
+	}
+	return markerCanvasRect;
+}
+
+function markerCanvasBoxForget() {
+	markerCanvasRect = null;
+}
+
+$(window).on('scroll resize', markerCanvasBoxForget);
+
 function markerPointerEvent(e) {
 	var canvas = document.getElementById('whiteboard');
-	var rect = canvas.getBoundingClientRect();
+	var rect = markerCanvasBox() || canvas.getBoundingClientRect();
 	var x = e.clientX - rect.left;
 	var y = e.clientY - rect.top;
 	if (rect.width > 0 && rect.width != canvas.width) { x = x * (canvas.width / rect.width); }
@@ -652,6 +681,8 @@ function markerWheel(e) {
 		markerView.y -= delta;
 	}
 	markerViewClamp();
+	markerCanvasBoxForget();
+	markerViewChanged();
 	markerCompose();
 }
 
@@ -681,37 +712,38 @@ function markerGestureEnd(e) {
 // ---- toolbox -----------------------------------------------------------
 
 function markerToolboxHidden() {
-	return localStorage.getItem('marker_toolbox_hidden') == 'on';
+	return markerRailHidden('left');
 }
 
 function markerToolboxApply() {
-	var hidden = markerToolboxHidden();
-	$('#marker_toolbox').toggle(!hidden);
-	$('#marker_toolbox_show').toggle(hidden);
+	markerRailsApply();
 }
 
-// hiding the toolbox hands its width back to the board, and the layers keep
-// their size, so the extra room just shows more space around the drawing
+// the rails are chrome around the board, so hiding one hands its width to the
+// stage; the layers keep their size, so the extra room shows more of the sheet
 function markerCanvasResize() {
 	var canvas = document.getElementById('whiteboard');
 	if (!canvas) { return; }
-	var win = $(canvas).closest('.wind');
-	if (win.length == 0) { return; }
-	var toolbox_width = markerToolboxHidden() ? 0 : Math.round($('#marker_toolbox').outerWidth() || 0);
-	var width = Math.floor(win.width() - toolbox_width);
-	var height = Math.floor(win.height() - win.find('.top_navbar').height());
+	var viewport = document.getElementById('marker_viewport');
+	if (!viewport) { return; }
+	markerCanvasBoxForget();
+	var width = Math.floor(viewport.clientWidth);
+	var height = Math.floor(viewport.clientHeight);
 	if (width > 0 && height > 0 && (canvas.width !== width || canvas.height !== height)) {
 		canvas.width = width;
 		canvas.height = height;
 		markerViewClamp();
+		if (typeof markerStageResize === 'function') { markerStageResize(); }
 		markerCompose();
 	}
 }
 
-function markerToolboxToggle(hidden) {
-	localStorage.setItem('marker_toolbox_hidden', hidden ? 'on' : 'off');
-	markerToolboxApply();
+function markerToolboxToggle(hidden, rail) {
+	rail = rail || 'left';
+	localStorage.setItem('marker_rail_hidden_' + rail, hidden ? 'on' : 'off');
+	markerRailsApply();
 	markerCanvasResize();
+	markerCanvasBoxForget();
 }
 
 // palm protection: a finger or a resting palm must not draw when a stylus is
@@ -779,6 +811,7 @@ function markerPointerDown(pos, straight_line) {
 	markerStroke.line_to = undefined;
 	var size = markerStroke.size + 2;
 	markerSnapshotDirty(pos.x - size, pos.y - size, size * 2, size * 2);
+	markerComposeDirtyRect({ x: pos.x - size, y: pos.y - size, w: size * 2, h: size * 2 });
 	// ctrl (or shift / cmd) pulls a straight line from the last point, and
 	// dragging its far end previews where it will land
 	if (straight_line && markerLastPoint && (tool == 'pencil' || tool == 'brush' || tool == 'spray')) {
@@ -812,7 +845,7 @@ function markerPointerMove(pos) {
 	markerStroke.y = pos.y;
 	// straight lines start from wherever the brush was last put down
 	markerLastPoint = { x: pos.x, y: pos.y };
-	markerComposeSoon();
+	markerComposeSoon({ x: Math.min(x0, pos.x) - size, y: Math.min(y0, pos.y) - size, w: Math.abs(pos.x - x0) + size * 2, h: Math.abs(pos.y - y0) + size * 2 });
 }
 
 function markerEndStroke() {

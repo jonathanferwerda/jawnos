@@ -1,7 +1,9 @@
 /* [[js-split]]
    marker.js is part 1. The rest live in marker/ in name order:
-     01_painting.js  - autosave, brushes, flood fill, stroke input, toolbox and pointer down
+     01_painting.js  - autosave, brushes, flood fill, stroke input, wheel and the toolbox
      02_input_panel.js  - mouse/pointer input, canvas init, layer panel and undo/redo/session actions
+     03_selection.js  - the select and move tools, the clipboard and effects on a selection
+     04_stage.js  - paper sizes, rulers, the status bar, the brush cursor and the dialogs
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var marker = {
@@ -28,6 +30,13 @@ var markerBoundCanvas = null;
 var markerSprites = {};
 var markerComposePending = false;
 var markerThumbTimeout;
+// a stroke touches a small rectangle, so the repaint is that rectangle only;
+// markerComposeRect is the union of what is waiting for the next frame, and a
+// view change (zoom, pan, resize) invalidates it and forces the whole board
+var markerComposeRect = null;
+var markerViewSeq = 0;
+var markerComposedSeq = -1;
+var markerScratchCanvas = null;
 var markerStroke = { drawing: false, saved: false, spraying: false, pressure: 1, x: 0, y: 0, tool: 'pencil', erase: false, size: 20, colour: 'black', alpha: 1, pointer_id: undefined, line_from: undefined, line_to: undefined };
 var markerPenSeen = 0;
 var markerPenDown = false;
@@ -51,6 +60,7 @@ function markerUuid() {
 
 function markerNewLayer(name) {
 	var canvas = document.getElementById('whiteboard');
+	var doc = markerLayers.length ? markerDocSize() : undefined;
 	markerLayerCounter++;
 	var layer = {
 		uuid: markerUuid(),
@@ -59,9 +69,21 @@ function markerNewLayer(name) {
 		canvas: document.createElement('canvas'),
 		ctx: null
 	};
-	layer.canvas.width = canvas ? canvas.width : 300;
-	layer.canvas.height = canvas ? canvas.height : 150;
+	// a new layer is the document's size, not the window's: every layer is the
+	// same sheet, so drawing on a second layer lines up with the first
+	layer.canvas.width = (doc && doc.w) || (canvas ? canvas.width : 300);
+	layer.canvas.height = (doc && doc.h) || (canvas ? canvas.height : 150);
 	layer.ctx = layer.canvas.getContext('2d');
+	return layer;
+}
+
+// the first layer of a fresh board is the remembered paper, or Letter
+function markerFirstLayer() {
+	var doc = (typeof markerDocRemembered === 'function') ? markerDocRemembered() : undefined;
+	if (!doc) { doc = { w: 816, h: 1056 }; }
+	var layer = markerNewLayer('Layer 1');
+	layer.canvas.width = doc.w || 816;
+	layer.canvas.height = doc.h || 1056;
 	return layer;
 }
 
@@ -87,47 +109,121 @@ function markerLayerByUuid(uuid) {
 function markerCompose() {
 	var canvas = document.getElementById('whiteboard');
 	if (!canvas || !whiteboard_ctx) { return; }
+	markerComposeRect = null;
+	markerComposedSeq = markerViewSeq;
 	var size = markerDocSize();
-	whiteboard_ctx.save();
-	whiteboard_ctx.setTransform(1, 0, 0, 1, 0, 0);
-	whiteboard_ctx.globalAlpha = 1;
-	whiteboard_ctx.globalCompositeOperation = 'source-over';
-	whiteboard_ctx.clearRect(0, 0, canvas.width, canvas.height);
-	whiteboard_ctx.setTransform(markerView.scale, 0, 0, markerView.scale, markerView.x, markerView.y);
+	var ctx = whiteboard_ctx;
+	ctx.save();
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	ctx.globalAlpha = 1;
+	ctx.globalCompositeOperation = 'source-over';
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	ctx.setTransform(markerView.scale, 0, 0, markerView.scale, markerView.x, markerView.y);
+	markerComposePaper(ctx, size);
 	for (var i = 0; i < markerLayers.length; i++) {
-		if (markerLayers[i].visible) { whiteboard_ctx.drawImage(markerLayers[i].canvas, 0, 0); }
+		if (markerLayers[i].visible) { ctx.drawImage(markerLayers[i].canvas, 0, 0); }
 	}
 	if (markerPreview) {
-		markerDrawSegment(whiteboard_ctx, markerPreview.from, markerPreview.to, markerPreview.pressure);
+		markerDrawSegment(ctx, markerPreview.from, markerPreview.to, markerPreview.pressure);
 	}
-	// show where the paper ends when the view is not the whole document
-	if (size.w && (markerView.scale != 1 || markerView.x > 0 || markerView.y > 0)) {
-		whiteboard_ctx.setTransform(1, 0, 0, 1, 0, 0);
-		whiteboard_ctx.globalCompositeOperation = 'source-over';
-		whiteboard_ctx.globalAlpha = 1;
-		whiteboard_ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-		whiteboard_ctx.lineWidth = 1;
-		whiteboard_ctx.strokeRect(markerView.x + 0.5, markerView.y + 0.5, size.w * markerView.scale - 1, size.h * markerView.scale - 1);
-	}
-	whiteboard_ctx.restore();
+	ctx.restore();
 	markerThumbSoon();
+}
+
+// the sheet itself: the document is a white page, so a stroke drawn on any
+// layer sits on paper rather than on the window's own colour
+function markerComposePaper(ctx, size) {
+	if (!size.w || !size.h) { return; }
+	ctx.fillStyle = '#ffffff';
+	ctx.fillRect(0, 0, size.w, size.h);
+}
+
+// add a document-space rectangle to what the next frame has to repaint
+function markerComposeDirtyRect(rect) {
+	if (!rect || !rect.w || !rect.h) { return; }
+	if (!markerComposeRect) {
+		markerComposeRect = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+		return;
+	}
+	var current = markerComposeRect;
+	var right = Math.max(current.x + current.w, rect.x + rect.w);
+	var bottom = Math.max(current.y + current.h, rect.y + rect.h);
+	current.x = Math.min(current.x, rect.x);
+	current.y = Math.min(current.y, rect.y);
+	current.w = right - current.x;
+	current.h = bottom - current.y;
+}
+
+// Only the dirty rectangle of the board is repainted during a stroke: the
+// layers are drawn through the same view transform, clipped to the rectangle,
+// so the cost follows the brush rather than the size of the sheet. A view
+// change bumps markerViewSeq, and the queued rectangle is thrown away with it.
+function markerComposeRegion(rect) {
+	var canvas = document.getElementById('whiteboard');
+	if (!canvas || !whiteboard_ctx) { return; }
+	var size = markerDocSize();
+	if (!size.w || !size.h) { return; }
+	var x0 = Math.max(0, rect.x);
+	var y0 = Math.max(0, rect.y);
+	var x1 = Math.min(size.w, rect.x + rect.w);
+	var y1 = Math.min(size.h, rect.y + rect.h);
+	if (x1 <= x0 || y1 <= y0) { return; }
+	var scale = markerView.scale;
+	// two pixels of slack picks up the anti-aliased edge of the brush
+	var sx = Math.floor(x0 * scale + markerView.x) - 2;
+	var sy = Math.floor(y0 * scale + markerView.y) - 2;
+	var sw = Math.ceil((x1 - x0) * scale) + 4;
+	var sh = Math.ceil((y1 - y0) * scale) + 4;
+	if (sx + sw < 0 || sy + sh < 0 || sx > canvas.width || sy > canvas.height) { return; }
+	var ctx = whiteboard_ctx;
+	ctx.save();
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	ctx.beginPath();
+	ctx.rect(sx, sy, sw, sh);
+	ctx.clip();
+	ctx.clearRect(sx, sy, sw, sh);
+	ctx.setTransform(scale, 0, 0, scale, markerView.x, markerView.y);
+	ctx.fillStyle = '#ffffff';
+	ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+	for (var i = 0; i < markerLayers.length; i++) {
+		if (markerLayers[i].visible) { ctx.drawImage(markerLayers[i].canvas, 0, 0); }
+	}
+	if (markerPreview) {
+		markerDrawSegment(ctx, markerPreview.from, markerPreview.to, markerPreview.pressure);
+	}
+	ctx.restore();
 }
 
 // stamping fires many times per frame, so coalesce the repaints - strokes stay
 // live, but the composite only happens once per animation frame
-function markerComposeSoon() {
+function markerComposeSoon(rect) {
+	if (rect) { markerComposeDirtyRect(rect); }
 	if (markerComposePending) { return; }
 	markerComposePending = true;
 	requestAnimationFrame(function() {
 		markerComposePending = false;
+		// a hidden tab has nobody to show it to; the next show repaints whole
+		if (document.hidden) { markerComposeRect = null; return; }
+		if (markerComposeRect && markerComposedSeq === markerViewSeq) {
+			var pending = markerComposeRect;
+			markerComposeRect = null;
+			markerComposeRegion(pending);
+			return;
+		}
 		markerCompose();
 	});
 }
+
+$(document).on('visibilitychange', function() {
+	if (!document.hidden) { markerCompose(); }
+});
 
 function markerThumbSoon() {
 	if (markerThumbTimeout) { return; }
 	markerThumbTimeout = setTimeout(function() {
 		markerThumbTimeout = undefined;
+		// no panel on screen means nobody is looking at a thumbnail
+		if ($('#marker_layer_list:visible').length == 0) { return; }
 		$('#marker_layer_list .marker_layer_row').each(function() {
 			var row = $(this);
 			var layer = markerLayerByUuid(row.attr('uuid'));
@@ -218,7 +314,7 @@ window.jawnosMarkerSnapshot = function() {
 };
 
 function markerZoomAt(screen_x, screen_y, factor) {
-	var scale = Math.max(0.05, Math.min(16, markerView.scale * factor));
+	var scale = Math.max(0.02, Math.min(16, markerView.scale * factor));
 	if (scale == markerView.scale) { return; }
 	// keep the document point under the cursor pinned while the scale changes
 	markerView.x = screen_x - (screen_x - markerView.x) * (scale / markerView.scale);
@@ -226,6 +322,7 @@ function markerZoomAt(screen_x, screen_y, factor) {
 	markerView.scale = scale;
 	markerViewClamp();
 	markerZoomDisplay();
+	markerViewChanged();
 	markerCompose();
 }
 
@@ -235,15 +332,18 @@ function markerZoomCentre(factor) {
 	markerZoomAt(canvas.width / 2, canvas.height / 2, factor);
 }
 
+// Fit shows the whole sheet: a small paper (a business card) is shown larger
+// than life, a poster smaller, so the edge of the page is always in view.
 function markerViewFit() {
 	var canvas = document.getElementById('whiteboard');
 	var size = markerDocSize();
 	if (!canvas || !size.w || !size.h) { return; }
-	var scale = Math.min(canvas.width / size.w, canvas.height / size.h);
-	markerView.scale = Math.min(1, scale * 0.98);
+	var scale = Math.min(canvas.width / size.w, canvas.height / size.h) * 0.96;
+	markerView.scale = Math.max(0.02, Math.min(8, scale));
 	markerView.x = (canvas.width - size.w * markerView.scale) / 2;
 	markerView.y = (canvas.height - size.h * markerView.scale) / 2;
 	markerZoomDisplay();
+	markerViewChanged();
 	markerCompose();
 }
 
@@ -255,6 +355,7 @@ function markerViewReset() {
 	markerView.x = (canvas.width - size.w) / 2;
 	markerView.y = (canvas.height - size.h) / 2;
 	markerZoomDisplay();
+	markerViewChanged();
 	markerCompose();
 }
 
@@ -290,7 +391,7 @@ function markerPinchMove() {
 	var a = markerTouches[ids[0]], b = markerTouches[ids[1]];
 	var distance = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y));
 	var mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-	var scale = Math.max(0.05, Math.min(16, markerPinch.scale * (distance / markerPinch.distance)));
+	var scale = Math.max(0.02, Math.min(16, markerPinch.scale * (distance / markerPinch.distance)));
 	// the pinch midpoint drags the document, its spread scales it
 	var now_x = mid.x - rect.left, now_y = mid.y - rect.top;
 	var was_x = markerPinch.mid.x - rect.left, was_y = markerPinch.mid.y - rect.top;
@@ -298,6 +399,7 @@ function markerPinchMove() {
 	markerView.x = now_x - (was_x - markerPinch.x) * (scale / markerPinch.scale);
 	markerView.y = now_y - (was_y - markerPinch.y) * (scale / markerPinch.scale);
 	markerViewClamp();
+	markerViewChanged();
 	markerComposeSoon();
 }
 
@@ -311,9 +413,15 @@ function markerCancelStroke() {
 	markerStroke.line_to = undefined;
 	markerPreview = undefined;
 	if (markerStroke.spraying) { cancelAnimationFrame(markerStroke.spraying); markerStroke.spraying = false; }
-	if (before && before.image) {
+	if (before && before.copy) {
 		var layer = markerLayerByUuid(before.uuid);
-		if (layer) { layer.ctx.putImageData(before.image, 0, 0); }
+		if (layer) {
+			layer.ctx.save();
+			layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+			layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+			layer.ctx.drawImage(before.copy, 0, 0);
+			layer.ctx.restore();
+		}
 	}
 	markerCompose();
 }
@@ -327,9 +435,28 @@ function markerHistoryClear() {
 
 function markerHistoryPush(record) {
 	if (!record) { return; }
+	// an undo record is exactly "these pixels changed": the session upload
+	// re-encodes the layers it names and reuses the PNG of the rest, which is
+	// what keeps autosave off the tablet's CPU between strokes
+	if (record.kind == 'rect' || record.kind == 'layer') {
+		$.each(record.layers || [], function(i, snapshot) { markerLayerDirty(snapshot.uuid); });
+	}
 	markerHistory.push(record);
 	if (markerHistory.length > markerHistoryLimit) { markerHistory.shift(); }
 	markerRedo = [];
+}
+
+// a layer whose pixels changed needs re-encoding before the next save
+function markerLayerDirty(uuid) {
+	var layer = markerLayerByUuid(uuid);
+	if (layer) { layer.sessionDirty = true; }
+}
+
+function markerLayerEncoded(layer) {
+	if (layer.encoded && !layer.sessionDirty) { return layer.encoded; }
+	layer.encoded = layer.canvas.toDataURL('image/png');
+	layer.sessionDirty = false;
+	return layer.encoded;
 }
 
 // structural changes (add/delete/reorder/show-hide) only need the layer
@@ -354,14 +481,32 @@ function markerApplyStructure(record) {
 	if (markerLayerActive < 0) { markerLayerActive = 0; }
 }
 
-// a paint action remembers the pixels it covered: grab the whole layer when it
-// starts (one fast copy), then crop to the dirty rectangle when it ends
+// A paint action remembers the pixels it covered. Copying the layer with
+// drawImage is a GPU copy; reading it back with getImageData is not, and it
+// used to happen on every stroke down. The copy is kept on a scratch canvas and
+// only the dirty rectangle is read back, once, when the stroke ends.
+function markerSnapshotCanvas(width, height) {
+	if (!markerScratchCanvas) { markerScratchCanvas = document.createElement('canvas'); }
+	if (markerScratchCanvas.width != width || markerScratchCanvas.height != height) {
+		markerScratchCanvas.width = width;
+		markerScratchCanvas.height = height;
+	}
+	return markerScratchCanvas;
+}
+
 function markerSnapshotStart() {
 	var layer = markerActiveLayer();
 	if (!layer) { return; }
+	var copy = markerSnapshotCanvas(layer.canvas.width, layer.canvas.height);
+	var ctx = copy.getContext('2d');
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	ctx.globalAlpha = 1;
+	ctx.globalCompositeOperation = 'source-over';
+	ctx.clearRect(0, 0, copy.width, copy.height);
+	ctx.drawImage(layer.canvas, 0, 0);
 	markerStroke.before = {
 		uuid: layer.uuid,
-		image: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height),
+		copy: copy,
 		width: layer.canvas.width,
 		height: layer.canvas.height,
 		rect: undefined
@@ -379,15 +524,6 @@ function markerSnapshotDirty(x, y, w, h) {
 	before.rect = rect;
 }
 
-function markerImageDataCrop(image, width, x, y, w, h) {
-	var crop = new ImageData(w, h);
-	for (var row = 0; row < h; row++) {
-		var from = ((y + row) * width + x) * 4;
-		crop.data.set(image.data.subarray(from, from + w * 4), row * w * 4);
-	}
-	return crop;
-}
-
 function markerSnapshotCommit() {
 	var before = markerStroke.before;
 	markerStroke.before = undefined;
@@ -401,7 +537,7 @@ function markerSnapshotCommit() {
 	if (w <= 0 || h <= 0) { return; }
 	markerHistoryPush({
 		kind: 'rect',
-		layers: [{ uuid: before.uuid, x: x, y: y, w: w, h: h, data: markerImageDataCrop(before.image, before.width, x, y, w, h) }]
+		layers: [{ uuid: before.uuid, x: x, y: y, w: w, h: h, data: before.copy.getContext('2d').getImageData(x, y, w, h) }]
 	});
 }
 
@@ -441,6 +577,7 @@ function markerApplyRecord(record) {
 			layer.canvas.width = snapshot.width;
 			layer.canvas.height = snapshot.height;
 			layer.ctx.putImageData(snapshot.data, 0, 0);
+			markerLayerDirty(snapshot.uuid);
 		});
 		if (inverse.length == 0) { return undefined; }
 		return { kind: 'layer', layers: inverse };
@@ -452,6 +589,7 @@ function markerApplyRecord(record) {
 			if (!layer) { return; }
 			var current = layer.ctx.getImageData(crop.x, crop.y, crop.w, crop.h);
 			layer.ctx.putImageData(crop.data, crop.x, crop.y);
+			markerLayerDirty(crop.uuid);
 			inverse.push({ uuid: crop.uuid, x: crop.x, y: crop.y, w: crop.w, h: crop.h, data: current });
 		});
 		if (inverse.length == 0) { return undefined; }
@@ -523,7 +661,9 @@ function markerSessionUpload(options) {
 	}
 	var layers = [];
 	$.each(markerLayers, function(i, layer) {
-		layers.push({ name: layer.name, visible: layer.visible, image: layer.canvas.toDataURL('image/png') });
+		// only the layers a stroke touched are encoded again; an unchanged layer
+		// hands back the PNG it made last time
+		layers.push({ name: layer.name, visible: layer.visible, image: markerLayerEncoded(layer) });
 	});
 	var thumb = document.createElement('canvas');
 	thumb.width = 96;
@@ -582,11 +722,15 @@ function markerSessionApply(layers) {
 	markerAutosaveDirty = false;
 	var canvas = document.getElementById('whiteboard');
 	var size = markerDocSize();
+	// a session is drawn on a sheet, and the sheet it was drawn on is the one it
+	// comes back on
+	if (size.w && size.h) { markerDocRemember(markerSessionName || '', size.w, size.h); }
 	// a session drawn on a bigger screen than this one gets fitted to view
 	if (canvas && (size.w != canvas.width || size.h != canvas.height)) { markerViewFit(); }
 	else { markerViewReset(); }
 	markerLayerList();
 	markerCompose();
+	markerStageRefresh();
 }
 
 function markerSessionLoad(session_uuid, options) {

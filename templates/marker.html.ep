@@ -1,99 +1,244 @@
 <% use Mojo::JSON qw/decode_json/; %>
 <img id="pointer" style="position:fixed;" height="26" width="26" src="<%= &subs::icon_for('/images/make believe/start.png') %>" hint="Start">
-<div id="marker">
-	<canvas id="whiteboard"></canvas>
-	<div id="marker_toolbox" class="marker_toolbox" style="overflow:scroll; position:absolute;right:0px; float:right; top: 35px; height:100%; width: 85px; border: 2px; border-radius: 7px; background-color: green;">
+<div id="marker" class="marker">
+	<%# ---- left rail: the tools, the animation, the brush, the document, the layers %>
+	<div id="marker_toolbox" class="marker_rail marker_rail_left" data-open="yes">
+		<div class="marker_rail_head">
+			<span class="marker_rail_title"><%= &subs::ui('Tools') %></span>
+			<button class="button marker_rail_toggle" rail="left" hint="Hide the toolbox" id="marker_toolbox_hide">&#171;</button>
+		</div>
 
-		<button class="button" id="marker_toolbox_hide" hint="Hide the toolbox" style="width:100%;">&#187;</button>
-		<button class="button marker_init" onclick="markerInit()">Init</button>
-		<img src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Stylus (palm protection)" toggle="<%= $settings->{'stylus_toggle'} %>" class="little_thumb hover marker_stylus_toggle">
-		<br>
-		<input type="text" id="flipbook_interval" class="flipbook_interval" style="width: 80px;" value="60"><br>
-		<button movement="back" class="button flipbook"><-</button>
-		<button movement="forward" class="button flipbook">-></button><br>
-		<img id="marker_pause" class="little_thumb pause_marker" style="display:none;" src="<%= &subs::icon_for('/images/make believe/pause.png') %>" hint="Pause">
-		<img id="marker_record" class="medium_thumb record_marker" movement="forward" src="<%= &subs::icon_for('/images/make believe/record.png') %>" hint="Record">
-		<img class="tiny_thumb play_marker" movement="back" style="transform: rotate(180deg);" src="<%= &subs::icon_for('/images/make believe/play.png') %>" hint="Play">
-		<img class="tiny_thumb play_marker" movement="forward" src="<%= &subs::icon_for('/images/make believe/play.png') %>" hint="Play">
-
-		<button class="button marker_tool" tool="pencil">Pencil</button><br>
-		<button class="button marker_tool" tool="brush">Brush</button><br>
-		<button class="button marker_tool" tool="spray">Spray</button><br>
-		<button class="button marker_tool" tool="blur" hint="Blur">Blur</button><br>
-		<button class="button marker_tool" tool="fill">Fill</button><br>
-		<button class="button marker_erase_toggle" erase="off" hint="Erase with the current brush">Erase</button><br>
-		<button class="button marker_tool" tool="kb">KB</button><br>
-		<button class="button marker_tool" tool="sample">Sample</button><br>
-
-		<button class="button" id="marker_layers_toggle">Layers</button><br>
-		<div id="marker_layers" style="display:none;">
-			<div id="marker_layer_tools">
-				<button class="button marker_layer_add hover" hint="New layer">+</button>
-				<button class="button marker_layer_up hover" hint="Raise layer">&#9650;</button>
-				<button class="button marker_layer_down hover" hint="Lower layer">&#9660;</button>
-				<button class="button marker_layer_front hover" hint="Bring to front">&#10514;</button>
-				<button class="button marker_layer_delete hover" hint="Delete layer">&#10005;</button>
-				<br>
-				<button class="button marker_undo hover" hint="Undo">&#8630;</button>
-				<button class="button marker_redo hover" hint="Redo">&#8631;</button>
-				<button class="button marker_zoom_out hover" hint="Zoom out (or ctrl + scroll out)">-</button>
-				<button class="button marker_zoom_in hover" hint="Zoom in (or ctrl + scroll in)">+</button>
-				<button class="button marker_zoom_fit hover" hint="Fit the drawing (0 key)">Fit</button>
-				<button class="button" id="marker_wheel_mode" hint="Scroll pans, ctrl + scroll zooms">Scroll</button>
-				<button class="button marker_new_board hover" hint="New drawing">New</button>
-				<button class="button marker_session_save hover" hint="Save this drawing as a session">Session</button>
+		<section class="marker_group" data-open="yes">
+			<button class="marker_group_head" group="tools"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Tools') %></button>
+			<div class="marker_group_body">
+				<div class="marker_tool_grid">
+					<button class="button marker_tool hover" tool="pencil"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/pencil.svg') %>" alt=""><span class="marker_tool_name">Pencil</span></button>
+					<button class="button marker_tool hover" tool="brush"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/brush.svg') %>" alt=""><span class="marker_tool_name">Brush</span></button>
+					<button class="button marker_tool hover" tool="spray"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/spray.svg') %>" alt=""><span class="marker_tool_name">Spray</span></button>
+					<button class="button marker_tool hover" tool="blur" hint="Blur"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/blur.svg') %>" alt=""><span class="marker_tool_name">Blur</span></button>
+					<button class="button marker_tool hover" tool="fill"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/fill.svg') %>" alt=""><span class="marker_tool_name">Fill</span></button>
+					<button class="button marker_tool hover" tool="sample" hint="Sample a colour from the drawing"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/sample.svg') %>" alt=""><span class="marker_tool_name">Sample</span></button>
+					<button class="button marker_tool hover" tool="kb" hint="Point the keyboard cursor at the drawing"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/keyboard.svg') %>" alt=""><span class="marker_tool_name">Keyboard</span></button>
+					<button class="button marker_erase_toggle hover" erase="off" hint="Erase with the current brush"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/eraser.svg') %>" alt=""><span class="marker_tool_name">Erase</span></button>
+					<button class="button marker_tool hover" tool="select" hint="Select a rectangle of the drawing"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/select.svg') %>" alt=""><span class="marker_tool_name">Select</span></button>
+					<button class="button marker_tool hover" tool="lasso" hint="Select a freehand area of the drawing"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/lasso.svg') %>" alt=""><span class="marker_tool_name">Lasso</span></button>
+					<button class="button marker_tool hover" tool="move" hint="Move the selected pixels"><img class="marker_tool_icon" src="<%= &subs::icon_for('/images/marker/move.svg') %>" alt=""><span class="marker_tool_name">Move</span></button>
+				</div>
+				<div id="marker_kit">
+					<% 
+						my $colours = eval { return decode_json $settings->{'colours'} } || [];
+						if (scalar @{$colours} > 0) { %>
+							<% foreach my $colour ( @{$colours} ) { %>
+								<span class="marker_colour_cell">
+									<input type="color" style="width:45%;" uuid="<%= $colour->{'uuid'} %>" id="marker_colour_<%= $colour->{'uuid'} %>" class="marker_colour" value="<%= $colour->{'colour'} %>" />
+									<button class="marker_colour_remove" uuid="<%= $colour->{'uuid'} %>" hint="Remove this colour">-</button>
+								</span>
+							<% } %>
+						<% } else { %>
+							<% my $uuid = &subs::random_string_creator(10); %>
+							<span class="marker_colour_cell">
+								<input type="color" style="width:45%;" uuid="<%= $uuid %>" id="marker_colour_<%= $uuid %>" class="marker_colour" value="#000000" />
+								<button class="marker_colour_remove" uuid="<%= $uuid %>" hint="Remove this colour">-</button>
+							</span>
+						<% } %>
+				</div>
+				<button class="button" id="marker_colour_add" hint="Add a colour">+</button>
 			</div>
-			<div id="marker_layer_list"></div>
-			<%# the palette's transforms, applied to the layer chosen in that list %>
-			<div id="marker_layer_transforms" style="border-top:solid 1px rgba(0,0,0,0.35);margin-top:3px;">
-				<input type="text" class="marker_transform_input" placeholder="<%= &subs::ui('Number') %>" style="width: 70px;"><br>
-				<img class="little_thumb marker_transform hover" duty="rotate" src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Rotate">
-				<img class="little_thumb marker_transform hover" duty="crop" src="<%= &subs::icon_for('/images/palette/crop.png') %>" hint="Crop">
-				<img class="little_thumb marker_transform hover" duty="modulate" src="<%= &subs::icon_for('/images/palette/brightness.png') %>" hint="Brightness">
-				<img class="little_thumb marker_transform hover" duty="level" src="<%= &subs::icon_for('/images/palette/contrast.png') %>" hint="Contrast">
-				<img class="little_thumb marker_transform hover" duty="black-threshold" src="<%= &subs::icon_for('/images/palette/black level.png') %>" hint="Black level">
-				<img class="little_thumb marker_transform hover" duty="gaussian-blur" src="<%= &subs::icon_for('/images/palette/blur.png') %>" hint="Blur">
-				<img class="little_thumb marker_transform hover" duty="sharpen" src="<%= &subs::icon_for('/images/palette/sharpen.png') %>" hint="Sharpen">
+		</section>
+
+		<section class="marker_group" data-open="no">
+			<button class="marker_group_head" group="selection"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Selection') %></button>
+			<div class="marker_group_body">
+				<div class="marker_button_row">
+					<button class="button marker_selection_action hover" act="all" hint="Select the whole layer">All</button>
+					<button class="button marker_selection_action hover" act="none" hint="Drop the selection">None</button>
+					<button class="button marker_selection_action hover" act="copy" hint="Copy the selected pixels">Copy</button>
+				</div>
+				<div class="marker_button_row">
+					<button class="button marker_selection_action hover" act="cut" hint="Cut the selected pixels">Cut</button>
+					<button class="button marker_selection_action hover" act="paste" hint="Paste the copied pixels">Paste</button>
+					<button class="button marker_selection_action hover" act="delete" hint="Erase the selected pixels">Delete</button>
+				</div>
+				<div class="marker_selection_effects">
+					<label class="marker_slider_label" for="marker_selection_value"><%= &subs::ui('Effect amount') %></label>
+					<input type="text" id="marker_selection_value" class="marker_transform_input" placeholder="<%= &subs::ui('Number') %>" style="width: 60px;">
+					<div class="marker_button_row">
+						<button class="button marker_selection_effect hover" duty="modulate" hint="Brightness">Bright</button>
+						<button class="button marker_selection_effect hover" duty="level" hint="Contrast">Contrast</button>
+					</div>
+					<div class="marker_button_row">
+						<button class="button marker_selection_effect hover" duty="gaussian-blur" hint="Blur">Blur</button>
+						<button class="button marker_selection_effect hover" duty="sharpen" hint="Sharpen">Sharpen</button>
+					</div>
+				</div>
+				<div class="marker_hint_line"><%= &subs::ui('Select an area, then drag it with Move, copy it, or change it with an effect.') %></div>
 			</div>
+		</section>
+
+		<section class="marker_group" data-open="no">
+			<button class="marker_group_head" group="animation"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Animation') %></button>
+			<div class="marker_group_body">
+				<div class="marker_animation_row">
+					<label class="marker_animation_label" for="flipbook_interval"><%= &subs::ui('Frames every') %></label>
+					<input type="text" id="flipbook_interval" class="flipbook_interval" style="width: 60px;" value="60" hint="Milliseconds between frames">
+					<button movement="back" class="button flipbook hover" hint="Step back through the portfolio">&#8592;</button>
+					<button movement="forward" class="button flipbook hover" hint="Step forward through the portfolio">&#8594;</button>
+					<img class="tiny_thumb play_marker hover" movement="back" style="transform: rotate(180deg);" src="<%= &subs::icon_for('/images/make believe/play.png') %>" hint="Play">
+					<img class="tiny_thumb play_marker hover" movement="forward" src="<%= &subs::icon_for('/images/make believe/play.png') %>" hint="Play">
+					<img id="marker_record" class="medium_thumb record_marker hover" movement="forward" src="<%= &subs::icon_for('/images/make believe/record.png') %>" hint="Record">
+					<img id="marker_pause" class="little_thumb pause_marker" style="display:none;" src="<%= &subs::icon_for('/images/make believe/pause.png') %>" hint="Pause">
+				</div>
+				<div class="marker_hint_line"><%= &subs::ui('Step, play or record the portfolio drawings as frames.') %></div>
+			</div>
+		</section>
+
+		<section class="marker_group" data-open="yes">
+			<button class="marker_group_head" group="brush"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Brush') %></button>
+			<div class="marker_group_body">
+				<label class="marker_slider_label" for="marker_size"><%= &subs::ui('Size') %></label>
+				<span class="marker_slider_value" id="marker_size_readout">20</span>
+				<input class="slider_bar" style="width: 89%" type="range" id="marker_size" step=1 max=40 min=1 />
+				<label class="marker_slider_label" for="marker_transparency"><%= &subs::ui('Transparency') %></label>
+				<span class="marker_slider_value" id="marker_transparency_readout">1</span>
+				<input class="slider_bar" style="width: 89%" type="range" id="marker_transparency" step=.02 max=1 min=0 />
+				<div class="marker_brush_row">
+					<img src="<%= &subs::icon_for('/images/decipherable/marker.png') %>" hint="Stylus (palm protection)" toggle="<%= $settings->{'stylus_toggle'} %>" class="little_thumb hover marker_stylus_toggle">
+					<span class="marker_hint_line"><%= &subs::ui('Stylus is palm protection: a resting hand does not draw.') %></span>
+				</div>
+			</div>
+		</section>
+
+		<section class="marker_group" data-open="yes">
+			<button class="marker_group_head" group="document"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Document') %></button>
+			<div class="marker_group_body">
+				<div class="marker_button_row">
+					<button class="button marker_init hover" hint="Choose the size of a new drawing"><%= &subs::ui('Init') %></button>
+					<button class="button marker_new_board hover" hint="New drawing">New</button>
+				</div>
+				<div class="marker_button_row">
+					<button class="button marker_zoom_out hover" hint="Zoom out (or ctrl + scroll out)">-</button>
+					<button class="button marker_zoom_fit hover" id="marker_zoom_fit" hint="Fit the drawing (0 key)">100%</button>
+					<button class="button marker_zoom_in hover" hint="Zoom in (or ctrl + scroll in)">+</button>
+					<button class="button" id="marker_wheel_mode" hint="Scroll pans, ctrl + scroll zooms">Scroll</button>
+				</div>
+				<div class="marker_doc_line" id="marker_doc_line">Letter &middot; 816 &times; 1056</div>
+			</div>
+		</section>
+
+		<section class="marker_group" data-open="no">
+			<button class="marker_group_head" group="layers" id="marker_layers_toggle"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Layers') %></button>
+			<div class="marker_group_body" id="marker_layers" style="display:none;">
+				<div id="marker_layer_tools">
+					<button class="button marker_layer_add hover" hint="New layer">+</button>
+					<button class="button marker_layer_up hover" hint="Raise layer">&#9650;</button>
+					<button class="button marker_layer_down hover" hint="Lower layer">&#9660;</button>
+					<button class="button marker_layer_front hover" hint="Bring to front">&#10514;</button>
+					<button class="button marker_layer_delete hover" hint="Delete layer">&#10005;</button>
+					<br>
+					<button class="button marker_undo hover" hint="Undo">&#8630;</button>
+					<button class="button marker_redo hover" hint="Redo">&#8631;</button>
+				</div>
+				<div id="marker_layer_list"></div>
+				<%# the palette's transforms, applied to the layer chosen in that list %>
+				<div id="marker_layer_transforms" style="border-top:solid 1px rgba(0,0,0,0.35);margin-top:3px;">
+					<input type="text" class="marker_transform_input" placeholder="<%= &subs::ui('Number') %>" style="width: 70px;"><br>
+					<img class="little_thumb marker_transform hover" duty="rotate" src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Rotate">
+					<img class="little_thumb marker_transform hover" duty="crop" src="<%= &subs::icon_for('/images/palette/crop.png') %>" hint="Crop">
+					<img class="little_thumb marker_transform hover" duty="modulate" src="<%= &subs::icon_for('/images/palette/brightness.png') %>" hint="Brightness">
+					<img class="little_thumb marker_transform hover" duty="level" src="<%= &subs::icon_for('/images/palette/contrast.png') %>" hint="Contrast">
+					<img class="little_thumb marker_transform hover" duty="black-threshold" src="<%= &subs::icon_for('/images/palette/black level.png') %>" hint="Black level">
+					<img class="little_thumb marker_transform hover" duty="gaussian-blur" src="<%= &subs::icon_for('/images/palette/blur.png') %>" hint="Blur">
+					<img class="little_thumb marker_transform hover" duty="sharpen" src="<%= &subs::icon_for('/images/palette/sharpen.png') %>" hint="Sharpen">
+				</div>
+			</div>
+		</section>
+	</div>
+
+	<%# ---- the stage: rulers, the board and the status bar %>
+	<div id="marker_stage">
+		<div id="marker_ruler_corner" class="marker_ruler_corner" hint="Document pixels">0</div>
+		<canvas id="marker_ruler_top" class="marker_ruler marker_ruler_top"></canvas>
+		<canvas id="marker_ruler_left" class="marker_ruler marker_ruler_left"></canvas>
+		<div id="marker_viewport" class="marker_viewport">
+			<canvas id="whiteboard"></canvas>
+			<canvas id="marker_selection_overlay" class="marker_overlay_canvas"></canvas>
+			<div id="marker_paper_edge" class="marker_paper_edge"></div>
+			<div id="marker_brush_cursor" class="marker_brush_cursor"><i></i></div>
+			<div id="marker_cursor_x" class="marker_cursor_guide marker_cursor_guide_x"></div>
+			<div id="marker_cursor_y" class="marker_cursor_guide marker_cursor_guide_y"></div>
 		</div>
-		<script>var marker_layer_eye = '<%= &subs::icon_for('/images/make believe/eye.png') %>';</script>
-
-		<button class="button save_marker">Save</button>
-		<div id="marker_kit">
-			<% 
-				my $colours = eval { return decode_json $settings->{'colours'} } || [];
-				if (scalar @{$colours} > 0) { %>
-					<% foreach my $colour ( @{$colours} ) { %>
-						<input type="color" style="width:45%;" uuid="<%= $colour->{'uuid'} %>" id="marker_colour_<%= $colour->{'uuid'} %>" class="marker_colour" value="<%= $colour->{'colour'} %>" />
-						<button class="marker_colour_remove" uuid="<%= $colour->{'uuid'} %>">-</button><br>
-					<% } %>
-				<% } else { %>
-					<% my $uuid = &subs::random_string_creator(10); %>
-					<input type="color" style="width:45%;" uuid="<%= $uuid %>" id="marker_colour_<%= $uuid %>" class="marker_colour" value="#000000" />
-					<button class="marker_colour_remove" uuid="<%= $uuid %>">-</button><br>
-				<% } %>
-				<script>
-
-				</script>
-		</div>
-		<button id="marker_colour_add">+</button>
-
-		<div class="kit">
-			<input class="slider_bar" style="width: 89%" type="range" id="marker_size" step=1 max=40 min=1 />
-			<input class="slider_bar" style="width: 89%" type="range" id="marker_transparency" step=.02 max=1 min=0 />
-		</div>
-		<img src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="little_thumb" id="marker_gallery">
-		<div id="portfolio" style="max-width:100%; overflow:scroll;">
-		<% foreach my $d ( @{$drawings} ) { %>
-			<% my $files = eval { return decode_json $d->{'file'} } || []; %>
-
-			<% foreach my $fi ( grep { $_->{'type'} eq 'image' } @{$files} ) { %>
-				<button class="marker_delete" timestamp="<%= $d->{timestamp} %>" app="<%= $d->{'app'} %>" app_uuid="<%= $d->{'uuid'} %>" file_uuid="<%= $fi->{uuid} %>">D</button>
-				<img class="paper" timestamp="<%= $d->{timestamp} %>" app="<%= $d->{'app'} %>" app_uuid="<%= $d->{'uuid'} %>" file_uuid="<%= $fi->{uuid} %>" src="/file_open?file=<%= $fi->{'f'} %>&timestamp=<%= $fi->{'server_time'} %>" style="width:40px;height:60px"></img>
-			<% } %>
-		<% } %>
+		<div id="marker_status_bar" class="marker_status_bar">
+			<span class="marker_status_item" id="marker_status_xy" hint="Cursor position in document pixels">0, 0</span>
+			<span class="marker_status_item" id="marker_status_xy_percent" hint="How far across and down the drawing the cursor is">0%, 0%</span>
+			<span class="marker_status_item" id="marker_status_size" hint="The size of the drawing">Letter &middot; 816 &times; 1056</span>
+			<span class="marker_status_item marker_status_right" id="marker_status_zoom" hint="Zoom">100%</span>
+			<span class="marker_status_item marker_status_right" id="marker_status_layer" hint="The layer you are drawing on">Layer 1</span>
 		</div>
 	</div>
-	<button class="button" id="marker_toolbox_show" hint="Show the toolbox" style="position:absolute;right:0px;top:38px;display:none;z-index:30;">&#171;</button>
-	<img id="marker_targeting" style="position:fixed;display:none;" height="36" width="36" src="<%= &subs::icon_for('/images/make believe/bullseye.png') %>" hint="Target">
+
+	<%# ---- right rail: what is saved, and the two ways to save it %>
+	<div id="marker_toolbox_right" class="marker_rail marker_rail_right" data-open="yes">
+		<div class="marker_rail_head">
+			<button class="button marker_rail_toggle" rail="right" hint="Hide the portfolio" id="marker_toolbox_right_hide">&#187;</button>
+			<span class="marker_rail_title"><%= &subs::ui('Portfolio') %></span>
+		</div>
+		<section class="marker_group" data-open="yes">
+			<button class="marker_group_head" group="file"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Save') %></button>
+			<div class="marker_group_body">
+				<button class="button save_marker hover" hint="Save this drawing into the portfolio">Save</button>
+				<button class="button marker_session_save hover" hint="Save this drawing as a session">Save session</button>
+				<button class="button marker_save_appointment hover" hint="Save this drawing onto an appointment">Save to appointment</button>
+				<img src="<%= &subs::icon_for('/images/decipherable/gallery.png') %>" hint="Gallery" class="little_thumb hover" id="marker_gallery">
+			</div>
+		</section>
+		<section class="marker_group" data-open="yes">
+			<button class="marker_group_head" group="portfolio"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Drawings') %></button>
+			<div class="marker_group_body">
+				<div id="portfolio"></div>
+			</div>
+		</section>
+		<section class="marker_group" data-open="no">
+			<button class="marker_group_head" group="sessions"><span class="marker_group_caret">&#9662;</span> <%= &subs::ui('Sessions') %></button>
+			<div class="marker_group_body">
+				<div id="marker_sessions"></div>
+			</div>
+		</section>
+	</div>
+	<button class="button" id="marker_toolbox_show" hint="Show the toolbox" style="position:absolute;left:2px;top:40px;display:none;z-index:30;">&#187;</button>
+	<button class="button" id="marker_toolbox_right_show" hint="Show the portfolio" style="position:absolute;right:2px;top:40px;display:none;z-index:30;">&#171;</button>
+	<script>var marker_layer_eye = '<%= &subs::icon_for('/images/make believe/eye.png') %>';</script>
 </div>
+
+<%# ---- the size dialog: Init asks before it starts a drawing %>
+<div id="marker_size_dialog" class="marker_modal" style="display:none;">
+	<div class="marker_modal_card">
+		<div class="marker_modal_title">New drawing</div>
+		<div class="marker_size_grid">
+			<button class="button marker_size_choice" name="Letter" w="816" h="1056" hint="8.5 by 11 inches"><b>Letter</b><small>816 &times; 1056</small></button>
+			<button class="button marker_size_choice" name="Legal" w="816" h="1344" hint="8.5 by 14 inches"><b>Legal</b><small>816 &times; 1344</small></button>
+			<button class="button marker_size_choice" name="Poster" w="1056" h="1632" hint="11 by 17 inches"><b>Poster</b><small>1056 &times; 1632</small></button>
+			<button class="button marker_size_choice" name="Flyer" w="528" h="816" hint="A5, 5.8 by 8.3 inches"><b>Flyer</b><small>528 &times; 816</small></button>
+			<button class="button marker_size_choice" name="CD cover" w="480" h="480" hint="A CD jewel case cover"><b>CD cover</b><small>480 &times; 480</small></button>
+			<button class="button marker_size_choice" name="DVD cover" w="510" h="718" hint="A DVD case cover"><b>DVD cover</b><small>510 &times; 718</small></button>
+			<button class="button marker_size_choice" name="Business card" w="336" h="192" hint="3.5 by 2 inches"><b>Business card</b><small>336 &times; 192</small></button>
+			<button class="button marker_size_choice" name="Screen" w="0" h="0" hint="The board you have now, no paper edge"><b>Screen</b><small>this window</small></button>
+		</div>
+		<div class="marker_modal_row">
+			<label class="marker_landscape_label"><input type="checkbox" id="marker_size_landscape"> <%= &subs::ui('Landscape') %></label>
+			<button class="button marker_modal_cancel">Cancel</button>
+		</div>
+	</div>
+</div>
+
+<%# ---- the appointment picker: Save to appointment asks where %>
+<div id="marker_attach_dialog" class="marker_modal" style="display:none;">
+	<div class="marker_modal_card">
+		<div class="marker_modal_title">Save to an appointment</div>
+		<div id="marker_attach_list" class="marker_attach_list"><i>Loading&hellip;</i></div>
+		<div class="marker_modal_row">
+			<button class="button marker_modal_cancel">Cancel</button>
+		</div>
+	</div>
+</div>
+
+<img id="marker_targeting" style="position:fixed;display:none;" height="36" width="36" src="<%= &subs::icon_for('/images/make believe/bullseye.png') %>" hint="Target">
