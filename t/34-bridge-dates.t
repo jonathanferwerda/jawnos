@@ -33,6 +33,13 @@ is &subs::epoch_or_span('-120m', $now), $now + 120 * 60000,
 is &subs::epoch_or_span(undef, $now), undef,
 	'nothing stays nothing';
 
+# A zero offset is the manager's no-shift state: deloreanBringer sends
+# timeshift=0day. ago_calc read the 'a' as a clock time and handed "0day" to
+# str2time, which returned 0 - zeroing the view and making the appointment
+# viewer answer 500 (Can't use string ("0") as a HASH ref).
+is &subs::ago_calc('0day', $now), $now, 'a zero day offset leaves the moment alone';
+is &subs::ago_calc('0d', $now), $now, 'and the short zero offset does too';
+
 # --------------------------------------------------------- records_bad_date_fix
 my $sms = {
 	timestamp => -107596365275951649, ost => 1793393508781,

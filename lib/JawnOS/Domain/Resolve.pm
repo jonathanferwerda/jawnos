@@ -774,7 +774,10 @@ sub ago_calc {
 			$ago =~ s/$1//gi;
 			$is_dow = 1;
 		}
-		if ($ago =~ /[:\/APap]/) {
+		# A clock time or a written date, not any word with an a/p in it:
+		# "0day" is the manager's no-shift state, and reading its 'a' as a time
+		# handed it to str2time, which returned 0 and zeroed the whole view.
+		if ($ago =~ /\d\s*[:\/]\s*\d/ || $ago =~ /\d\s*[APap]\.?\s*[Mm]?\b/) {
 			$timestamp = str2time($ago) * 1000;
 			$announced_time = ago(($server_time - $timestamp ) / 1000) if $server_time != $timestamp;
 		}

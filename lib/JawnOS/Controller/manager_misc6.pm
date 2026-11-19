@@ -602,6 +602,13 @@ sub action_25183 {
 		view => 'appointment_viewer',
 		stats => $stats
 	});
+	# log_reader returns a bare 0 when it has no view to build (no timestamp,
+	# or a scope it cannot resolve). The caller reads __specs below, so name
+	# the empty answer here instead of dying on a string.
+	unless (ref $appts eq 'HASH') {
+		$c->render(json => { appts => {}, timestamp => $timestamp, clothesline => [] });
+		return;
+	}
 	$appts->{'__specs'}->{'layout'} = $layout;
 	$appts->{'__specs'}->{'time_machine_timestamp'} = $time_machine_timestamp;
 	$appts->{'__specs'}->{'time_machine_stationary'} = $time_machine_stationary;
