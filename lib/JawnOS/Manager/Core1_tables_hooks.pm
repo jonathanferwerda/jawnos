@@ -140,6 +140,7 @@ our @manager_bundle_files = qw(
 	/js/manager/chat.js
 	/js/manager/junderground.js
 	/js/manager/pen.js
+	/js/manager/printer_common.js
 	/js/manager/clockfaceprinter.js
 	/js/manager/leaderboardprinter.js
 	/js/manager/calendarprinter.js
@@ -305,12 +306,30 @@ our %manager_toggle_apps = (
 	packages_toggle => 'packages',
 );
 
+# The canvas layouts' printers. The desk is a wallpaper plus a layer of items,
+# not one of these views, so it never draws with them and must not pay their
+# parse: they arrive as one minified /js/manager/layout.js chunk at boot for a
+# canvas layout, and the first calculator() draw waits for it (see lazy.js).
+# printer_common.js and backgroundprinter.js stay core on purpose - the desk's
+# wallpaper fallback prints the header and hangs the clothesline, and the rail's
+# hit test reads appPosition, all without ever loading this chunk.
+our @manager_layout_files = qw(
+	/js/manager/clockfaceprinter.js
+	/js/manager/leaderboardprinter.js
+	/js/manager/calendarprinter.js
+	/js/manager/continentprinter.js
+	/js/manager/timelineprinter.js
+	/js/manager/narratorprinter.js
+);
+
 # The one bundle the page loads up front: everything an app chunk names is gone
-# from it. A file added to the list above but not to any app stays core, so a
-# mistake costs bytes rather than a broken app.
+# from it, and so is every layout printer. A file added to the list above but not
+# to any app or to @manager_layout_files stays core, so a mistake costs bytes
+# rather than a broken app.
 our @manager_core_files = do {
 	my %lazy = map { $_ => 1 } map { @{$_} } values %manager_app_scripts;
-	grep { !$lazy{$_} } @manager_bundle_files;
+	my %layout = map { $_ => 1 } @manager_layout_files;
+	grep { !$lazy{$_} && !$layout{$_} } @manager_bundle_files;
 };
 
 our $manager_bundle_cache;

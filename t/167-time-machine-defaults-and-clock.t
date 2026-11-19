@@ -1,4 +1,4 @@
-# tests-for: templates/apps/clock/machine.html.ep public/js/manager/keyboard/02_music_and_handlers.js public/js/manager/taskbar.js public/js/manager/leaderboardprinter.js public/js/manager/clothesline/01_timeline.js lib/JawnOS/Controller/manager_misc6.pm
+# tests-for: templates/apps/clock/machine.html.ep public/js/manager/keyboard/02_music_and_handlers.js public/js/manager/taskbar.js public/js/manager/printer_common.js public/js/manager/leaderboardprinter.js public/js/manager/clothesline/01_timeline.js lib/JawnOS/Controller/manager_misc6.pm
 # covers:    A fresh browser starts on the desk with the time machine on All,
 #            15 minutes and a 3 s interval, and the header and taskbar clocks
 #            tick every second unless the view is held on one moment.
@@ -29,7 +29,8 @@ my $root    = repo_root();
 my $keyboard = read_file("$root/templates/apps/clock/machine.html.ep");
 my $maker    = read_file("$root/public/js/manager/keyboard/02_music_and_handlers.js");
 my $taskbar  = read_file("$root/public/js/manager/taskbar.js");
-my $header   = read_file("$root/public/js/manager/leaderboardprinter.js");
+my $header   = read_file("$root/public/js/manager/printer_common.js");
+my $board    = read_file("$root/public/js/manager/leaderboardprinter.js");
 my $timeline = read_file("$root/public/js/manager/clothesline/01_timeline.js");
 my $viewer   = read_file("$root/lib/JawnOS/Controller/manager_misc6.pm");
 
@@ -97,9 +98,9 @@ like($viewer, qr/\$appts->\{'__specs'\}->\{'time_machine_stationary'\} = \$time_
 	'and the flag travels with the payload');
 
 # --- the dock's strip, not the background, calls it back ---------------------
-like($header, qr/typeof pseudonymHomeTapper == 'function'/,
+like($board, qr/typeof pseudonymHomeTapper == 'function'/,
 	'a background tap asks whether it landed on the dock');
-like($header, qr/pseudonymHomeTapper\(e\.clientX, e\.clientY\)/,
+like($board, qr/pseudonymHomeTapper\(e\.clientX, e\.clientY\)/,
 	'and only the strip the tucked dock keeps on screen brings it back');
 
 # --- the scripts still parse ------------------------------------------------
@@ -109,6 +110,7 @@ if ($node && -x $node) {
 	for my $file (qw(
 		public/js/manager/keyboard/02_music_and_handlers.js
 		public/js/manager/taskbar.js
+		public/js/manager/printer_common.js
 		public/js/manager/leaderboardprinter.js
 		public/js/manager/clothesline/01_timeline.js
 	)) {

@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/js_misc.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Manager.pm lib/JawnOS/Routes/js_misc.pm public/js/manager/ public/js/universal.js templates/
+# tests-for: lib/JawnOS/Controller/js_misc.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/Core1_tables_hooks.pm lib/JawnOS/Routes/js_misc.pm public/js/manager/ public/js/universal.js templates/
 # covers:    A big browser script keeps its old path as an index (its first part) and puts the rest in a folder of the same...
 
 use strict;
@@ -87,7 +87,20 @@ while (($apps_block // '') =~ /(\w+)\s*=>\s*\[qw\(([^)]*)\)\]/g) {
 ok(scalar(keys %apps) >= 15, 'the app map names the lazy apps');
 
 my %lazy = map { $_ => 1 } map { @$_ } values %apps;
-my @core = grep { !$lazy{$_} } @bundle_entries;
+
+# The canvas layouts' printers are a third list: neither core nor an app chunk.
+# The desk never draws them, so they load as one chunk; see @manager_layout_files.
+my ($layout_block) = $manager_pm =~ /our \@manager_layout_files = qw\((.*?)\);/s;
+ok(defined $layout_block, 'the layout printer list is found');
+my @layout_entries = grep { length } split /\s+/, ($layout_block // '');
+ok(@layout_entries >= 3, 'the layout chunk names the canvas printers');
+my %layout_files = map { $_ => 1 } @layout_entries;
+foreach my $file (@layout_entries) {
+	ok($bundle{$file}, "the layout chunk names the bundle entry $file");
+	ok(!$lazy{$file}, "$file is not also an app's script");
+}
+
+my @core = grep { !$lazy{$_} && !$layout_files{$_} } @bundle_entries;
 ok(@core >= 20, 'a real core bundle remains');
 
 foreach my $app (sort keys %apps) {
@@ -96,8 +109,8 @@ foreach my $app (sort keys %apps) {
 		ok($bundle{$file}, "$app names the bundle entry $file");
 	}
 }
-is_deeply([ sort(@core, keys %lazy) ], [ sort @bundle_entries ],
-	'every bundle entry is either core or owned by an app chunk');
+is_deeply([ sort(@core, keys %lazy, keys %layout_files) ], [ sort @bundle_entries ],
+	'every bundle entry is core, an app chunk or the layout chunk');
 
 # entry stubs: a function core may call before the chunk arrives
 my ($entry_block) = $manager_pm =~ /our %manager_app_entry = \((.*?)\n\);/s;
@@ -270,6 +283,13 @@ if ($have_node) {
 		}
 	}
 	is($chunks_failed, 0, 'every lazy app chunk parses as one script');
+
+	my ($layout_raw) = build_entries(@layout_entries);
+	my ($lfh, $ltmp) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $lfh $layout_raw;
+	close $lfh;
+	my $layout_out = `$node --check "$ltmp" 2>&1`;
+	is(($? == 0) ? 1 : 0, 1, 'the layout chunk parses as one script') or diag($layout_out);
 }
 else {
 	diag('node is not installed; the syntax checks are skipped');
@@ -285,13 +305,26 @@ like($lazy, qr/stopImmediatePropagation/, 'the first click waits for the chunk')
 like($lazy, qr/trigger\('click'\)/, 'the click is replayed after the chunk');
 like($lazy, qr/appWindowOpener\(app, Date\.now\(\)/, 'a re-rendered menu falls back to the opener');
 like($lazy, qr/window\[name\] = stub/, 'entry functions get a loading stub');
+like($lazy, qr/function jawnosLoadLayout\(/, 'the loader defines the layout chunk too');
+like($lazy, qr{/js/manager/layout\.js\?string=}, 'the layout chunk asks its own route');
+like($lazy, qr/layout != 'desk'/, 'the desk asks for no layout chunk');
+like($lazy, qr/window\.calculator = wrapper/, 'the first calculator draw waits for the chunk');
 
 my $js_misc = read_file("$root/lib/JawnOS/Controller/js_misc.pm");
 like($js_misc, qr/\@manager_core_files/, 'the page bundle serves the core list');
 like($js_misc, qr/sub action_7408/, 'the chunk action exists');
+like($js_misc, qr/sub action_7409/, 'the layout chunk action exists');
+like($js_misc, qr/\@manager_layout_files/, 'the layout chunk is built from the printer list');
+like($js_misc, qr/js_minify\(\$raw\)/, 'the layout chunk is minified');
 like($js_misc, qr/content_encoding\('gzip'\)/, 'the bundle is gzipped when asked');
 my $routes = read_file("$root/lib/JawnOS/Routes/js_misc.pm");
 like($routes, qr{'/js/manager/app\.js'.*action_7408}s, 'the chunk route is registered');
+like($routes, qr{'/js/manager/layout\.js'.*action_7409}s, 'the layout chunk route is registered');
+
+my %core_set = map { $_ => 1 } @core;
+ok(!$core_set{'/js/manager/timelineprinter.js'}, 'the timeline printer is not in the core bundle');
+ok($core_set{'/js/manager/printer_common.js'}, 'the shared header and hit areas stay core');
+ok($core_set{'/js/manager/backgroundprinter.js'}, 'the desk wallpaper printer stays core');
 
 ok($bundle{'/js/universal.js'}, 'universal.js is in the core bundle');
 ok($bundle{'/js/manager/websocket.js'}, 'websocket.js is in the core bundle');

@@ -7,6 +7,7 @@ sub routes {
 	return (
 	[7407, 'get', '/js/manager/bundle.js', 'action_7407'],
 	[7408, 'get', '/js/manager/app.js', 'action_7408'],
+	[7409, 'get', '/js/manager/layout.js', 'action_7409'],
 	);
 }
 

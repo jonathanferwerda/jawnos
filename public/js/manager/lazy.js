@@ -96,6 +96,80 @@ function jawnosCall(job) {
 	catch (e) { console.error('jawnos: lazy app ' + job.app, e); }
 }
 
+// ---- the layout chunk ------------------------------------------------------
+//
+// The canvas printers (timeline, calendar, leaderboard, continent, clockface,
+// narrator) are one group the desk never draws, so they are not in the core
+// bundle: a canvas layout asks for /js/manager/layout.js once, at boot, and the
+// chunk executes after the core has handed the dock and taskbar to the parser.
+// The first calculator() draw waits for it (see the gate below), so no view
+// draws with a printer missing; the desk skips the request entirely.
+var jawnos_layout_loaded = false;
+var jawnos_layout_busy = false;
+var jawnos_layout_waiting = [];
+
+function jawnosLayoutWanted() {
+	var layout = '';
+	try { layout = localStorage.getItem('layout') || ''; } catch (e) { layout = ''; }
+	// the desk is a wallpaper plus a layer of items, never a canvas view; a fresh
+	// page has no layout yet and initializer() gives it the desk
+	return layout.length > 0 && layout != 'desk';
+}
+
+function jawnosLoadLayout(callback) {
+	if (jawnos_layout_loaded) {
+		if (typeof callback === 'function') { callback(); }
+		return;
+	}
+	if (typeof callback === 'function') { jawnos_layout_waiting.push(callback); }
+	if (jawnos_layout_busy) { return; }
+	jawnos_layout_busy = true;
+	var script = document.createElement('script');
+	script.src = '/js/manager/layout.js?string=' + encodeURIComponent(window.jawnos_version || '');
+	script.async = true;
+	script.onload = function () {
+		jawnos_layout_loaded = true;
+		jawnos_layout_busy = false;
+		var waiting = jawnos_layout_waiting;
+		jawnos_layout_waiting = [];
+		for (var i = 0; i < waiting.length; i++) {
+			try { waiting[i](); }
+			catch (e) { console.error('jawnos: layout draw', e); }
+		}
+	};
+	script.onerror = function () {
+		// leave it unloaded: the next poll asks again, rather than drawing with a
+		// printer missing
+		jawnos_layout_busy = false;
+		jawnos_layout_waiting = [];
+		console.error('jawnos: could not load the layout scripts');
+	};
+	document.head.appendChild(script);
+}
+
+// Start the chunk as the core bundle runs, so a canvas layout's first draw is a
+// wait for bytes already on their way. A fresh page and the desk start nothing.
+if (jawnosLayoutWanted()) { jawnosLoadLayout(); }
+
+// The first calculator() draw may not run before the printers are here. The
+// wrapper is installed at ready (the core has defined calculator by then) and
+// re-reads the layout on every call, so a page that settles on the desk passes
+// straight through and one that switches to a canvas view loads the chunk first.
+(function () {
+	function gate() {
+		var real = window.calculator;
+		if (typeof real !== 'function' || real.jawnos_layout_gate) { return; }
+		var wrapper = function () {
+			if (!jawnosLayoutWanted() || jawnos_layout_loaded) { return real.apply(this, arguments); }
+			var self = this, args = arguments;
+			jawnosLoadLayout(function () { real.apply(self, args); });
+		};
+		wrapper.jawnos_layout_gate = true;
+		window.calculator = wrapper;
+	}
+	$(function () { gate(); });
+})();
+
 // The first click on a lazy app's icon, before its script is there. Returns the
 // app and the id/class token that matched, so the replay can find the icon
 // again if the start menu was re-rendered while the chunk was loading.

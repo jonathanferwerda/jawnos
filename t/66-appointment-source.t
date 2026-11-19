@@ -12,8 +12,9 @@ use RepoSource;
 
 # source=ws is the headless/automation read. The route already skipped its own
 # appointmentGrabber broadcast for it, but appt_header_printer still woke every
-# other tab with a header. These checks pin the whole silent path, and the chunk
-# route's first-open path (no terser on a small app chunk).
+# other tab with a header. These checks pin the whole silent path, and the two
+# chunk routes' cache shapes: an app chunk stays plain on first open, and the
+# layout chunk is minified because a canvas view waits on it before its paint.
 
 my $root = repo_root();
 my $route = read_file("$root/lib/JawnOS/Controller/manager_misc7.pm");
@@ -36,7 +37,12 @@ like($calendar, qr/unless \(\(\$data->\{'broadcast'\}.*?Websocket::send\('tab', 
 	'the header send sits inside the silent guard');
 
 like($js_misc, qr/my \$sig = 'plain1;'/, 'the chunk cache version can be busted');
-unlike($js_misc, qr/\$body = js_minify\(\$raw\);/, 'a lazy chunk is not minified on first open');
+my ($app_action) = $js_misc =~ /sub action_7408 \{(.*?)\n\}/s;
+ok(defined $app_action, 'the app chunk action is found');
+unlike($app_action // '', qr/js_minify\(/, 'a lazy app chunk is not minified on first open');
+my ($layout_action) = $js_misc =~ /sub action_7409 \{(.*?)\n\}/s;
+ok(defined $layout_action, 'the layout chunk action is found');
+like($layout_action // '', qr/\$body = js_minify\(\$raw\);/, 'the layout chunk is minified');
 like($js_misc, qr/content_encoding\('gzip'\)/, 'chunks still gzip on the wire');
 
 done_testing();

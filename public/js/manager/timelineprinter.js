@@ -6,7 +6,8 @@
 // right. Rows begin under the header and the clothesline, and the canvas
 // grows to hold every app.
 
-var appPosition = [];
+// appPosition is declared in printer_common.js (core), so a desk page and the
+// clothesline share the one list; timelinePrinter refills it on every draw.
 
 // The vertical rail the rows hang from, in a mid-tone of the theme's own colour
 // so it belongs to the scheme (the themed ink is black on a light desk, which
