@@ -203,11 +203,21 @@ sub action_7845 {
 	my $manage_on = eval { &subs::network_config()->{'manage'} } || 0;
 	$c->stash('manage_on' => $manage_on);
 	# The public-relay state is a house setting the machine that can reach
-	# Headscale writes; every device reads it here without a round trip.
+	# Headscale writes; every device reads it here without a round trip. The
+	# chosen regions are kept beside it, and the select's choices come from the
+	# map cached on this machine, so drawing the page never waits on the public
+	# map. The status route fetches it when the cache is cold.
 	my $derp_public = eval { &subs::setting_grabber({ app => 'network', setting => 'derp_public_relay', device => 'all' }) };
 	$derp_public = '' unless defined $derp_public;
+	my $derp_regions = eval { &subs::setting_grabber({ app => 'network', setting => 'derp_public_regions', device => 'all' }) };
+	$derp_regions = eval { &crew::derp_regions_clean($derp_regions) };
+	$derp_regions = 'all' unless defined $derp_regions && length $derp_regions;
+	my $derp_choices = eval { &crew::derp_region_catalog() } || [];
+	$derp_choices = [] unless ref $derp_choices eq 'ARRAY';
 	$c->stash('derp_public' => $derp_public);
-	my $content = $c->render_to_string(template => 'apps/network', websockets => $websockets, derp_public => $derp_public);
+	$c->stash('derp_regions' => $derp_regions);
+	$c->stash('derp_choices' => $derp_choices);
+	my $content = $c->render_to_string(template => 'apps/network', websockets => $websockets, derp_public => $derp_public, derp_regions => $derp_regions, derp_choices => $derp_choices);
 	my $contents = &window_maker({
 		user_agent => $c->param('user_agent'),
 		app => 'network',
@@ -576,15 +586,24 @@ sub action_7944 {
 
 # GET /manager/network/derp_public
 #
-# The public (Tailscale-hosted) DERP relay, as the house last set it. The value
-# is a house setting written by whichever machine can reach Headscale, so every
-# device shows the same state without a round trip.
+# The public (Tailscale-hosted) DERP relay, as the house last set it, with the
+# chosen regions and the regions the public map offers. The value is a house
+# setting written by whichever machine can reach Headscale, so every device
+# shows the same state without a round trip. The choices are cached; a cold
+# cache is filled here, on the one request that can afford the fetch.
 sub action_7946 {
 	my $c = shift;
 	my $state = eval { &subs::setting_grabber({ app => 'network', setting => 'derp_public_relay', device => 'all' }) };
+	my $regions = eval { &subs::setting_grabber({ app => 'network', setting => 'derp_public_regions', device => 'all' }) };
+	$regions = eval { &crew::derp_regions_clean($regions) };
+	$regions = 'all' unless defined $regions && length $regions;
+	my $choices = eval { &crew::derp_region_catalog({ fetch => 1 }) } || [];
+	$choices = [] unless ref $choices eq 'ARRAY';
 	$c->render(json => {
-		ok     => 1,
-		public => (($state // '') eq 'on' ? 1 : (($state // '') eq 'off' ? 0 : undef)),
+		ok      => 1,
+		public  => (($state // '') eq 'on' ? 1 : (($state // '') eq 'off' ? 0 : undef)),
+		regions => $regions,
+		choices => $choices,
 	});
 }
 
@@ -596,14 +615,19 @@ sub action_7946 {
 sub action_7947 {
 	my $c = shift;
 	my $state = $c->param('state') // '';
+	my $regions = &crew::derp_regions_clean($c->param('regions'));
 	unless ($state =~ /^(?:on|off)$/) {
 		$c->render(json => { ok => 0, error => 'The public relay can only be turned on or off.' });
+		return;
+	}
+	unless (defined $regions) {
+		$c->render(json => { ok => 0, error => 'The chosen regions must be all or a list of region ids.' });
 		return;
 	}
 	# The apply edits a config and restarts Headscale, so it runs in a child and
 	# cannot hold this worker's event loop.
 	&subs::render_in_subprocess($c, sub {
-		return &crew::dispatch('derp.public', { state => $state });
+		return &crew::dispatch('derp.public', { state => $state, regions => $regions });
 	}, sub {
 		my ($c, $outcome) = @_;
 		my $answer = { ok => 0, error => 'The public relay could not be changed.' };

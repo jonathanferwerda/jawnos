@@ -940,28 +940,291 @@ sub _headscale_control {
 	return { host => $host, lxc => $lxc };
 }
 
+# The public map Headscale serves to its clients and the map a pinned region
+# set is filtered from. One URL, so the status list and the applied map never
+# disagree about which regions exist.
+sub _derp_map_url {
+	return 'https://controlplane.tailscale.com/derpmap/default';
+}
+
+# The chosen regions as "all" or a sorted, comma-separated list of ids, or
+# undef when the value is not that. An empty value means "all", so an older
+# caller that sends only a state keeps the closest-region behaviour.
+sub derp_regions_clean {
+	my ($value) = @_;
+	return 'all' unless defined $value && length $value;
+	return undef if ref $value;
+	return 'all' if $value =~ /^\s*all\s*$/i;
+	my @ids;
+	foreach my $part ( split /,/, $value ) {
+		$part =~ s/^\s+|\s+$//g;
+		next unless length $part;
+		return undef unless $part =~ /^\d{1,6}$/ && $part > 0;
+		push @ids, 0 + $part;
+	}
+	return undef unless @ids;
+	my %seen;
+	@ids = sort { $a <=> $b } grep { !$seen{$_}++ } @ids;
+	return join(',', @ids);
+}
+
+# A field of a DERP region or node. The public map is Go's PascalCase JSON and
+# a local map is lower-case YAML, so both spellings are read here.
+sub _derp_field {
+	my ($row, @names) = @_;
+	foreach my $name ( @names ) {
+		next unless exists $row->{$name};
+		my $value = $row->{$name};
+		next if ref $value;
+		return $value;
+	}
+	return undef;
+}
+
+# The regions in a public DERP map, or undef when the document is not a map.
+sub _derp_map_regions {
+	my ($json) = @_;
+	my $doc = eval { decode_json($json) };
+	return undef unless ref $doc eq 'HASH';
+	my $regions = $doc->{'Regions'} // $doc->{'regions'};
+	return undef unless ref $regions eq 'HASH';
+	return $regions;
+}
+
+# [ { id, code, name } ] in id order. The Network app's select is built from
+# this, so the list a person chooses from is the map Headscale will serve.
+sub derp_region_list {
+	my ($json) = @_;
+	my $regions = _derp_map_regions($json);
+	return undef unless $regions;
+	my @out;
+	foreach my $key ( sort { $a <=> $b } grep { /^\d+$/ } keys %{$regions} ) {
+		my $row = $regions->{$key};
+		next unless ref $row eq 'HASH';
+		my $id = _derp_field($row, 'RegionID', 'regionid');
+		$id = $key unless defined $id && $id =~ /^\d+$/;
+		my $code = _derp_field($row, 'RegionCode', 'regioncode');
+		my $name = _derp_field($row, 'RegionName', 'regionname');
+		push @out, {
+			id   => 0 + $id,
+			code => defined $code ? "$code" : '',
+			name => defined $name ? "$name" : '',
+		};
+	}
+	return \@out;
+}
+
+# A scalar as YAML. encode_json() already quotes a string, leaves a number bare
+# and spells a boolean true/false, which is also what YAML reads; its quoted
+# string is a valid YAML double-quoted scalar.
+sub _derp_yaml_scalar {
+	my ($value) = @_;
+	return 'null' unless defined $value;
+	my $json = eval { encode_json($value) };
+	return 'null' unless defined $json;
+	return $json;
+}
+
+sub _derp_yaml_key {
+	my ($key) = @_;
+	return $key if defined $key && $key =~ /^(?:[A-Za-z_][A-Za-z0-9_]*|\d+)$/;
+	return _derp_yaml_scalar($key);
+}
+
+sub _derp_yaml_value {
+	my ($value, $indent) = @_;
+	if ( ref $value eq 'HASH' ) {
+		return " {}\n" unless %{$value};
+		return "\n" . _derp_yaml_dump($value, $indent);
+	}
+	if ( ref $value eq 'ARRAY' ) {
+		return " []\n" unless @{$value};
+		return "\n" . _derp_yaml_dump($value, $indent);
+	}
+	# A JSON boolean is a blessed scalar; encode_json() spells it true/false.
+	return ' ' . _derp_yaml_scalar($value) . "\n";
+}
+
+sub _derp_yaml_dump {
+	my ($data, $indent) = @_;
+	$indent ||= 0;
+	my $pad = ' ' x $indent;
+	if ( ref $data eq 'HASH' ) {
+		my @keys = keys %{$data};
+		return "{}\n" unless @keys;
+		@keys = ( @keys == grep { /^\d+$/ } @keys )
+			? sort { $a <=> $b } @keys
+			: sort @keys;
+		my $out = '';
+		foreach my $key ( @keys ) {
+			$out .= $pad . _derp_yaml_key($key) . ':' . _derp_yaml_value($data->{$key}, $indent + 2);
+		}
+		return $out;
+	}
+	if ( ref $data eq 'ARRAY' ) {
+		return "[]\n" unless @{$data};
+		my $out = '';
+		foreach my $item ( @{$data} ) {
+			if ( ref $item eq 'HASH' && %{$item} ) {
+				my @keys = keys %{$item};
+				@keys = ( @keys == grep { /^\d+$/ } @keys )
+					? sort { $a <=> $b } @keys
+					: sort @keys;
+				my $first = shift @keys;
+				$out .= $pad . '- ' . _derp_yaml_key($first) . ':' . _derp_yaml_value($item->{$first}, $indent + 2);
+				foreach my $key ( @keys ) {
+					$out .= (' ' x ($indent + 2)) . _derp_yaml_key($key) . ':' . _derp_yaml_value($item->{$key}, $indent + 4);
+				}
+			}
+			elsif ( ref $item eq 'ARRAY' ) {
+				$out .= $pad . "-\n" . _derp_yaml_dump($item, $indent + 2);
+			}
+			else {
+				$out .= $pad . '- ' . _derp_yaml_scalar($item) . "\n";
+			}
+		}
+		return $out;
+	}
+	return $pad . _derp_yaml_scalar($data) . "\n";
+}
+
+# Lower-case every struct field. yaml.Unmarshal reads the Go field name with
+# its first letter moved down (there are no yaml tags on tailcfg), and the
+# public map spells those fields the Go way.
+sub _derp_lower_keys {
+	my ($value) = @_;
+	if ( ref $value eq 'HASH' ) {
+		my %out;
+		foreach my $key ( keys %{$value} ) {
+			my $name = ($key =~ /^\d+$/) ? $key : lc $key;
+			$out{$name} = _derp_lower_keys($value->{$key});
+		}
+		return \%out;
+	}
+	if ( ref $value eq 'ARRAY' ) {
+		return [ map { _derp_lower_keys($_) } @{$value} ];
+	}
+	return $value;
+}
+
+# The map filtered to the chosen ids: { yaml => ..., regions => '8,21' }.
+# regions is the set actually present, so a region that left the public map
+# is not written into the house's setting as if it were still served.
+sub _derp_map_filter {
+	my ($json, $regions) = @_;
+	my $all = _derp_map_regions($json);
+	return undef unless $all;
+	my %want;
+	foreach my $id ( split /,/, ($regions // '') ) {
+		next unless $id =~ /^\d{1,6}$/;
+		$want{0 + $id} = 1;
+	}
+	return undef unless %want;
+	my %picked;
+	foreach my $key ( keys %{$all} ) {
+		next unless $key =~ /^\d+$/ && $want{0 + $key};
+		my $row = $all->{$key};
+		next unless ref $row eq 'HASH';
+		$picked{$key} = _derp_lower_keys($row);
+	}
+	return undef unless %picked;
+	my @present = sort { $a <=> $b } map { 0 + $_ } keys %picked;
+	return {
+		yaml    => _derp_yaml_dump({ regions => \%picked }, 0),
+		regions => join(',', @present),
+	};
+}
+
+# The public map, or undef. The capable machine fetches it; the LXC is handed
+# the filtered result so the remote shell stays a small, testable writer.
+sub _derp_map_fetch {
+	my $ua = eval { require Mojo::UserAgent; Mojo::UserAgent->new };
+	return undef unless $ua;
+	my $res = eval {
+		$ua->inactivity_timeout(6)->request_timeout(8)->get(_derp_map_url())->result;
+	};
+	return undef unless $res && $res->is_success;
+	my $body = $res->body;
+	return (defined $body && length $body) ? $body : undef;
+}
+
+# The regions the Network app offers, cached on this machine for six hours.
+# With fetch => 0 it reads only the cache, so drawing the page never waits on
+# the public map; the status route asks for the fetch.
+sub derp_region_catalog {
+	my ($opt) = @_;
+	$opt = {} unless ref $opt eq 'HASH';
+	my $now = eval { &subs::rightNow() } || time * 1000;
+	my $cached = eval { &subs::cache_get({ app => 'network', context => 'derp_region_catalog' }) };
+	my $stale = (ref $cached eq 'HASH' && ref $cached->{'regions'} eq 'ARRAY') ? $cached->{'regions'} : [];
+	return $stale if ref $cached eq 'HASH'
+		&& ref $cached->{'regions'} eq 'ARRAY'
+		&& ($cached->{'at'} || 0) > $now - 6 * 3600 * 1000;
+	return $stale unless $opt->{'fetch'};
+	my $body = _derp_map_fetch();
+	return $stale unless defined $body;
+	my $regions = derp_region_list($body);
+	return $stale unless ref $regions eq 'ARRAY' && @{$regions};
+	eval { &subs::cache_set({ app => 'network', context => 'derp_region_catalog', warranty => '-6h' }, { at => $now, regions => $regions }) };
+	return $regions;
+}
+
 # The shell the Headscale host runs. It writes a candidate beside the real
 # config, validates it with `headscale configtest -c`, and only then moves it
 # into place and restarts. A bad candidate is discarded, so the live relay is
-# never left broken. The edit touches only the `urls:` block.
+# never left broken. Only the `urls:` and `paths:` blocks are edited. A chosen
+# region set arrives as a filtered YAML map, written beside the live one and
+# validated through a candidate `paths:` entry before it is installed.
 sub _derp_script {
 	return <<'SH';
 set -e
 state="${1:-status}"
+regions="${2:-all}"
+mapb64="${3:-}"
 f=/etc/headscale/config.yaml
+path=/etc/headscale/derp-public.yaml
+regionsfile="$path.regions"
 if [ ! -f "$f" ]; then
 	echo '{"ok":0,"error":"the Headscale config was not found"}'
 	exit 0
 fi
+case "$regions" in
+	all|"") regions=all ;;
+	*[!0-9,]*) regions=all ;;
+esac
 tmp="$f.new.$$"
+cand=""
 case "$state" in
 	on)
 		cp -a "$f" "$tmp"
-		perl -0777 -pi -e 's{^  urls:[^\n]*\n(?:    - [^\n]*\n)*}{  urls:\n    - https://controlplane.tailscale.com/derpmap/default\n}m' "$tmp"
+		if [ "$regions" = all ]; then
+			perl -0777 -pi -e 's{^  urls:[^\n]*\n(?:    - [^\n]*\n)*}{  urls:\n    - https://controlplane.tailscale.com/derpmap/default\n}m' "$tmp"
+			perl -0777 -pi -e 's{^  paths:[^\n]*\n(?:    - [^\n]*\n)*}{  paths: []\n}m' "$tmp"
+		else
+			if [ -z "$mapb64" ]; then
+				rm -f "$tmp"
+				echo '{"ok":0,"error":"the chosen regions need a DERP map, and none was sent"}'
+				exit 0
+			fi
+			cand="$path.new.$$"
+			if ! printf '%s' "$mapb64" | base64 -d > "$cand" 2>/dev/null || [ ! -s "$cand" ]; then
+				rm -f "$tmp" "$cand"
+				echo '{"ok":0,"error":"the DERP map could not be written"}'
+				exit 0
+			fi
+			perl -0777 -pi -e 's{^  urls:[^\n]*\n(?:    - [^\n]*\n)*}{  urls: []\n}m' "$tmp"
+			perl -0777 -pi -e "s{^  paths:[^\n]*\n(?:    - [^\n]*\n)*}{  paths:\n    - $cand\n}m" "$tmp"
+			if ! grep -q '^  paths:' "$tmp"; then
+				rm -f "$tmp" "$cand"
+				echo '{"ok":0,"error":"the Headscale config has no derp paths list"}'
+				exit 0
+			fi
+		fi
 		;;
 	off)
 		cp -a "$f" "$tmp"
 		perl -0777 -pi -e 's{^  urls:[^\n]*\n(?:    - [^\n]*\n)*}{  urls: []\n}m' "$tmp"
+		perl -0777 -pi -e 's{^  paths:[^\n]*\n(?:    - [^\n]*\n)*}{  paths: []\n}m' "$tmp"
 		;;
 	status)
 		;;
@@ -972,32 +1235,65 @@ case "$state" in
 esac
 if [ "$state" != status ]; then
 	if ! headscale configtest -c "$tmp" >/dev/null 2>&1; then
-		rm -f "$tmp"
+		rm -f "$tmp" "$cand"
 		echo '{"ok":0,"error":"the new config failed headscale configtest; nothing changed"}'
 		exit 0
 	fi
-	cp -a "$f" "$f.bak-derp-toggle"
-	mv "$tmp" "$f"
-	systemctl restart headscale >/dev/null 2>&1
+	changed=0
+	if [ -n "$cand" ]; then
+		if [ ! -f "$path" ] || ! cmp -s "$cand" "$path"; then changed=1; fi
+		# The tested config named the candidate; the live one names the final file.
+		sed -i "s|$cand|$path|" "$tmp"
+	fi
+	if ! cmp -s "$tmp" "$f"; then changed=1; fi
+	if [ "$changed" -eq 0 ]; then
+		rm -f "$tmp" "$cand"
+	else
+		cp -a "$f" "$f.bak-derp-toggle"
+		if [ -n "$cand" ]; then
+			mv "$cand" "$path"
+			printf '%s\n' "$regions" > "$regionsfile"
+		else
+			rm -f "$regionsfile"
+		fi
+		mv "$tmp" "$f"
+		if ! systemctl restart headscale >/dev/null 2>&1; then
+			echo '{"ok":0,"error":"the config is installed, but Headscale did not restart"}'
+			exit 0
+		fi
+	fi
 fi
+pub=0
+regs=""
 if grep -q 'controlplane.tailscale.com' "$f" 2>/dev/null; then
 	pub=1
-else
-	pub=0
+	regs=all
+elif grep -q 'derp-public\.yaml' "$f" 2>/dev/null; then
+	pub=1
+	regs=$(cat "$regionsfile" 2>/dev/null | tr -cd '0-9,' || true)
+	[ -n "$regs" ] || regs=all
 fi
-echo "{\"ok\":1,\"public\":$pub,\"state\":\"$state\"}"
+if [ "$pub" = 1 ]; then st=on; else st=off; fi
+echo "{\"ok\":1,\"public\":$pub,\"regions\":\"$regs\",\"state\":\"$st\"}"
 SH
 }
 
-# The argv for one apply. Split out so a test can name it without an ssh.
+# The argv for one apply. Split out so a test can name it without an ssh. The
+# regions and the filtered map are validated here, so neither can become a
+# shell word the remote host would interpret.
 sub _derp_command {
-	my ($control, $state) = @_;
+	my ($control, $state, $regions, $map_b64) = @_;
 	return () unless ref $control eq 'HASH' && ($control->{'host'} // '') ne '';
 	return () unless defined $state && $state =~ /^(?:on|off|status)$/;
+	$regions = derp_regions_clean($regions);
+	$regions = 'all' unless defined $regions;
+	$map_b64 = '' unless defined $map_b64 && !ref $map_b64 && $map_b64 =~ /^[A-Za-z0-9+\/=]+$/;
 	my $b64 = encode_base64(_derp_script(), '');
 	$b64 =~ s/\s+//g;
 	return () unless length $b64;
-	my $inner = "echo $b64 | base64 -d | sh -s -- $state";
+	my $args = "$state $regions";
+	$args .= " $map_b64" if length $map_b64;
+	my $inner = "echo $b64 | base64 -d | sh -s -- $args";
 	my $lxc = $control->{'lxc'} // '';
 	$lxc = '' unless $lxc =~ /^\d{1,6}$/;
 	if ($lxc ne '') {
@@ -1011,14 +1307,29 @@ sub _derp_command {
 	return ('sh', '-c', $inner);
 }
 
-# Ask the Headscale host to set the state and return its JSON answer.
+# Ask the Headscale host to set the state and return its JSON answer. A pinned
+# region set is filtered on this machine first, so the remote shell only writes
+# the file it is handed.
 sub _headscale_apply {
-	my ($state) = @_;
+	my ($state, $regions) = @_;
 	return { ok => 0, error => 'the relay can only be turned on or off' }
 		unless defined $state && $state =~ /^(?:on|off|status)$/;
+	$regions = derp_regions_clean($regions);
+	return { ok => 0, error => 'the relay regions must be all or a list of region ids' }
+		unless defined $regions;
+	my $map_b64 = '';
+	if ($state eq 'on' && $regions ne 'all') {
+		my $body = _derp_map_fetch();
+		return { ok => 0, error => 'the public DERP map could not be read' } unless defined $body;
+		my $filter = _derp_map_filter($body, $regions);
+		return { ok => 0, error => 'none of the chosen DERP regions is in the public map' } unless $filter;
+		$regions = $filter->{'regions'};
+		$map_b64 = encode_base64($filter->{'yaml'}, '');
+		$map_b64 =~ s/\s+//g;
+	}
 	my $control = _headscale_control();
 	return { ok => 0, error => 'this machine cannot control Headscale' } unless $control;
-	my @cmd = _derp_command($control, $state);
+	my @cmd = _derp_command($control, $state, $regions, $map_b64);
 	return { ok => 0, error => 'the Headscale command could not be built' } unless @cmd;
 	# The job's own alarm bounds this too; the cap keeps a hung ssh from holding
 	# the worker for the whole of it.
@@ -1026,7 +1337,13 @@ sub _headscale_apply {
 	my @lines = split /\n/, ($out // '');
 	my ($json) = grep { /^\s*\{/ } reverse @lines;
 	my $answer = defined $json ? eval { decode_json($json) } : undef;
-	return $answer if ref $answer eq 'HASH';
+	if (ref $answer eq 'HASH') {
+		# The script reads the live config for status; an apply knows which set
+		# it just installed, so the requested one is the answer even when the
+		# script's reading is the older config it replaced.
+		$answer->{'regions'} = $regions if $state ne 'status';
+		return $answer;
+	}
 	my $why = (($out // '') =~ /\S/) ? substr($out, 0, 200) : 'no answer';
 	return { ok => 0, error => 'the Headscale host did not answer: ' . $why };
 }
@@ -1035,10 +1352,15 @@ sub _job_derp_public {
 	my ($payload) = @_;
 	$payload = {} unless ref $payload eq 'HASH';
 	my $state = $payload->{'state'} // 'status';
-	my $answer = _headscale_apply($state);
+	my $regions = derp_regions_clean($payload->{'regions'});
+	return { ok => 0, error => 'the relay regions must be all or a list of region ids' }
+		unless defined $regions;
+	my $answer = _headscale_apply($state, $regions);
 	return $answer unless $answer->{'ok'};
 	# The house keeps the last real state so every device shows it without a
-	# round trip; the capable machine is the one that writes it.
+	# round trip; the capable machine is the one that writes it. The region
+	# choice is kept even while the relay is off, so turning it on later uses
+	# the choice the person already made.
 	if ($state ne 'status' && defined $answer->{'public'}) {
 		eval {
 			&subs::setting_setter({
@@ -1048,6 +1370,17 @@ sub _job_derp_public {
 				device  => 'all',
 			});
 		};
+		my $stored = $answer->{'regions'} // $regions;
+		if ($stored =~ /^(?:all|\d+(?:,\d+)*)$/) {
+			eval {
+				&subs::setting_setter({
+					app     => 'network',
+					setting => 'derp_public_regions',
+					value   => $stored,
+					device  => 'all',
+				});
+			};
+		}
 	}
 	return $answer;
 }

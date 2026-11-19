@@ -32,10 +32,74 @@ function networkLabel(name, fallback) {
 
 // The public-relay button carries data-state = on|off|''. The label always says
 // what the relay is, not what a press would do, so it reads the same whether the
-// server drew it or a toggle redrew it.
-function networkRenderDerp(state) {
+// server drew it or a toggle redrew it. The regions select carries the house's
+// choice: "all" is Closest, a comma list pins named regions.
+function networkDerpRegionsParse(value) {
+	var text = $.trim(String(value || ''));
+	if (!text || text === 'all') { return [ 'all' ]; }
+	var parts = text.split(',');
+	var out = [];
+	for (var i = 0; i < parts.length; i++) {
+		var id = $.trim(parts[i]);
+		if (/^\d+$/.test(id) && out.indexOf(id) < 0) { out.push(id); }
+	}
+	return out.length ? out : [ 'all' ];
+}
+
+function networkDerpSelected(select) {
+	var picked = select.val();
+	if (picked === null || picked === undefined) { return []; }
+	return $.isArray(picked) ? picked : [ picked ];
+}
+
+// The catalog arrives with the page (from the cached public map) and again from
+// the status route. Add only ids the template did not draw, so a server-drawn
+// list and a later answer do not double an option.
+function networkDerpRegionsFill(choices) {
+	var select = $('#network_derp_regions');
+	if (!select.length || !choices || !choices.length) { return; }
+	var have = {};
+	select.find('option').each(function() { have[String($(this).val())] = 1; });
+	for (var i = 0; i < choices.length; i++) {
+		var choice = choices[i] || {};
+		var id = String(choice.id === undefined ? '' : choice.id);
+		if (!/^\d+$/.test(id) || have[id]) { continue; }
+		var label = choice.name || choice.code || (networkT('Region') + ' ' + id);
+		if (choice.name && choice.code) { label += ' (' + choice.code + ')'; }
+		select.append($('<option>').val(id).text(label));
+		have[id] = 1;
+	}
+}
+
+function networkRenderDerpRegions(regions) {
+	var select = $('#network_derp_regions');
+	if (!select.length) { return; }
+	var wanted = networkDerpRegionsParse(regions);
+	var all = wanted.length === 1 && wanted[0] === 'all';
+	select.find('option').each(function() {
+		var value = String($(this).val());
+		$(this).prop('selected', all ? value === 'all' : wanted.indexOf(value) >= 0);
+	});
+	select.attr('data-regions', all ? 'all' : wanted.join(','));
+	select.data('picked', networkDerpSelected(select));
+}
+
+function networkDerpRegionsValue() {
+	var select = $('#network_derp_regions');
+	if (!select.length) { return 'all'; }
+	var picked = networkDerpSelected(select);
+	if (!picked.length || picked.indexOf('all') >= 0) { return 'all'; }
+	var ids = [];
+	for (var i = 0; i < picked.length; i++) {
+		if (/^\d+$/.test(picked[i])) { ids.push(picked[i]); }
+	}
+	return ids.length ? ids.join(',') : 'all';
+}
+
+function networkRenderDerp(state, regions, choices) {
 	var button = $('#network_derp_toggle');
 	if (!button.length) { return; }
+	if (choices) { networkDerpRegionsFill(choices); }
 	var known = (state === 'on' || state === 'off');
 	button.attr('data-state', known ? state : '')
 		.attr('aria-pressed', state === 'on' ? 'true' : 'false')
@@ -43,6 +107,7 @@ function networkRenderDerp(state) {
 		.prop('disabled', false)
 		.text(state === 'on' ? networkT('Public relay on')
 			: (state === 'off' ? networkT('Public relay off') : networkT('Public relay')));
+	if (regions !== undefined && regions !== null) { networkRenderDerpRegions(regions); }
 }
 
 function networkBytes(value) {
@@ -89,6 +154,92 @@ function networkPost(path, data, done) {
 		done((response && typeof response === 'object') ? response : { ok: 0, error: networkT('The answer was unreadable.') });
 	}).fail(function(xhr) {
 		done({ ok: 0, error: networkT('The request failed.') + ' (' + xhr.status + ')' });
+	});
+}
+
+// ---------------------------------------------------------------- the scroll
+//
+// The app window can be repainted (a setting change, the fifteen-second beat)
+// or reloaded whole. A repaint moves the person back to the top of whatever is
+// long above the section they were reading. Save the visible section and its
+// place in the scroller, and put it back after the paint. The same anchor goes
+// to sessionStorage before a request, so a full reload can restore it on the
+// page that comes back.
+var network_scroll_key = 'jawnos_network_scroll';
+var network_pending_scroll = null;
+
+function networkScrollBox() {
+	var box = $('.wind[app="network"] .network_app');
+	if (!box.length) { box = $('.network_app'); }
+	return box.first();
+}
+
+function networkScrollAnchor(sectionSelector) {
+	var box = networkScrollBox();
+	if (!box.length) { return null; }
+	var anchor = { scroll: box.scrollTop() || 0, at: Date.now() };
+	var target = sectionSelector ? $(sectionSelector) : $();
+	if (target.length) {
+		anchor.section = target.attr('id') || '';
+		anchor.offset = target[0].getBoundingClientRect().top - box[0].getBoundingClientRect().top;
+		return anchor;
+	}
+	var boxTop = box[0].getBoundingClientRect().top;
+	box.find('.network_section:visible').each(function() {
+		var top = this.getBoundingClientRect().top - boxTop;
+		if (top <= 4 && (!anchor.section || top > anchor.offset)) {
+			anchor.section = this.id || '';
+			anchor.offset = top;
+		}
+	});
+	return anchor;
+}
+
+function networkScrollRestore(anchor) {
+	if (!anchor) { return; }
+	var box = networkScrollBox();
+	if (!box.length) { return; }
+	var section = anchor.section ? $(document.getElementById(anchor.section)) : $();
+	if (section.length) {
+		var now = section[0].getBoundingClientRect().top - box[0].getBoundingClientRect().top;
+		box.scrollTop((box.scrollTop() || 0) + (now - (anchor.offset || 0)));
+		return;
+	}
+	box.scrollTop(anchor.scroll || 0);
+}
+
+function networkScrollRestoreSoon(anchor) {
+	if (!anchor) { return; }
+	networkScrollRestore(anchor);
+	setTimeout(function() { networkScrollRestore(anchor); }, 60);
+}
+
+function networkScrollRemember(anchor) {
+	if (!anchor) { return; }
+	try { sessionStorage.setItem(network_scroll_key, JSON.stringify(anchor)); } catch (e) { }
+}
+
+function networkScrollRecall() {
+	try {
+		var raw = sessionStorage.getItem(network_scroll_key);
+		if (!raw) { return null; }
+		sessionStorage.removeItem(network_scroll_key);
+		var anchor = JSON.parse(raw);
+		if (!anchor || !anchor.at || Date.now() - anchor.at > 120000) { return null; }
+		return anchor;
+	} catch (e) { return null; }
+}
+
+// Read the house's state and the public map's regions. A cold cache is filled
+// by this request, so the page itself never waits on the map.
+function networkRefreshDerp() {
+	if (!$('#network_app').length) { return; }
+	networkGet('derp_public', {}, function(response) {
+		if (!response || response.ok === 0) { return; }
+		var state = response.public === 1 ? 'on' : (response.public === 0 ? 'off' : '');
+		var section = $('#network_derp_section');
+		var regions = response.regions || section.attr('data-regions') || 'all';
+		networkRenderDerp(state, regions, response.choices || null);
 	});
 }
 
@@ -356,6 +507,7 @@ function networkScan() {
 
 function networkRefreshAll() {
 	if (!$('#network_app').length) { return; }
+	if (!network_pending_scroll) { network_pending_scroll = networkScrollAnchor(); }
 	networkGet('status', {}, function(data) {
 		if (data.error) { $('#network_status_line').text(data.error); }
 		else { $('#network_status_line').text(new Date().toLocaleTimeString()); }
@@ -364,6 +516,9 @@ function networkRefreshAll() {
 		networkRenderWifi(data.wifi || {});
 		networkRenderVpn(data.vpn || {});
 		networkRenderAndroid();
+		var anchor = network_pending_scroll;
+		network_pending_scroll = null;
+		networkScrollRestoreSoon(anchor);
 	});
 }
 
@@ -739,24 +894,82 @@ $(document).on('click', '#network_radio_toggle', function() {
 
 // The public relay is a house-wide Headscale setting. The apply may run on a
 // peer that can reach Headscale, so the button waits for the answer before it
-// settles into the new state.
+// settles into the new state. The chosen regions ride with it, and the section's
+// place in the scroller is saved across the repaint and any reload.
 $(document).on('click', '#network_derp_toggle', function() {
 	var button = $(this);
 	if (button.prop('disabled')) { return; }
 	var current = button.attr('data-state') || '';
 	var state = (current === 'on') ? 'off' : 'on';
-	button.prop('disabled', true);
+	var regions = networkDerpRegionsValue();
+	var anchor = networkScrollAnchor('#network_derp_section');
+	networkScrollRemember(anchor);
+	button.prop('disabled', true).text(networkT('Working…'));
 	$('#network_status_line').text(networkT('Changing the public relay…'));
-	networkPost('derp_public', { state: state }, function(response) {
+	networkPost('derp_public', { state: state, regions: regions }, function(response) {
 		if (response && response.ok) {
 			var on = !!response.public;
-			networkRenderDerp(on ? 'on' : 'off');
+			networkRenderDerp(on ? 'on' : 'off', response.regions || regions);
 			$('#network_status_line').text(on ? networkT('The public relay is on.') : networkT('The public relay is off.'));
-			return;
 		}
-		networkRenderDerp(current);
-		$('#network_status_line').text((response && response.error) || networkT('The public relay could not be changed.'));
+		else {
+			networkRenderDerp(current, regions);
+			$('#network_status_line').text((response && response.error) || networkT('The public relay could not be changed.'));
+		}
+		networkScrollRestoreSoon(anchor);
 	});
+});
+
+// Closest is exclusive: picking it drops every named region, and picking a named
+// region drops it. The choice applies at once when the relay is on, and is
+// stored for when it is turned on while off. An empty selection means Closest.
+$(document).on('change', '#network_derp_regions', function() {
+	var select = $(this);
+	if (select.prop('disabled')) { return; }
+	var previous = select.data('picked') || [];
+	var now = networkDerpSelected(select);
+	var added = [];
+	for (var i = 0; i < now.length; i++) {
+		if (previous.indexOf(now[i]) < 0) { added.push(now[i]); }
+	}
+	if (added.indexOf('all') >= 0) { now = [ 'all' ]; }
+	else if (added.length) { now = now.filter(function(value) { return value !== 'all'; }); }
+	if (!now.length) { now = [ 'all' ]; }
+	select.val(now);
+	select.data('picked', now);
+	var before = select.attr('data-regions') || 'all';
+	var regions = networkDerpRegionsValue();
+	if (regions === before) { return; }
+	var state = $('#network_derp_toggle').attr('data-state') || 'off';
+	var anchor = networkScrollAnchor('#network_derp_section');
+	networkScrollRemember(anchor);
+	select.prop('disabled', true);
+	$('#network_status_line').text(networkT('Saving the relay regions…'));
+	networkPost('derp_public', { state: state, regions: regions }, function(response) {
+		select.prop('disabled', false);
+		if (response && response.ok) {
+			var on = !!response.public;
+			networkRenderDerp(on ? 'on' : 'off', response.regions || regions);
+			$('#network_status_line').text(state === 'on'
+				? (on ? networkT('The public relay is on.') : networkT('The public relay is off.'))
+				: networkT('The relay regions are saved.'));
+		}
+		else {
+			networkRenderDerp(state, before);
+			$('#network_status_line').text((response && response.error) || networkT('The relay regions could not be saved.'));
+		}
+		networkScrollRestoreSoon(anchor);
+	});
+});
+
+// The page may come back from a full reload after a control was pressed. Hand
+// the saved anchor to the refresh the part's ready block starts, so its repaint
+// lands on the same section instead of the top.
+$(document).ready(function() {
+	if (!$('#network_app').length) { return; }
+	var anchor = networkScrollRecall();
+	if (anchor) { network_pending_scroll = anchor; }
+	networkRefreshDerp();
 });
 
 $(document).on('change', '#network_manage', function() {
