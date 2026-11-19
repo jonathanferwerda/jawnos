@@ -97,9 +97,11 @@ like($stack, qr/function windowStacker\(app, raise\)[\s\S]{0,1200}windowDeckOf\(
 	'a walk stays inside the deck it was made in, and brings it forward');
 like($stack, qr/decks\.forEach\(function \(d\) \{ y\[d\] = windowTopLimit\(\); \}\)/,
 	'and every deck cascades from the desk\'s top');
-like($stack, qr/function windowPhoneCascadePlace\(geom\)/,
+like($stack, qr/function windowPhoneCascadePlace\(geom, self\)/,
 	'a full phone deck starts a fresh cascade over the top, on the same x');
-like($windows, qr/windowPhoneCascadePlace\(\)[\s\S]{0,200}win\.attr\('deck'/, 'which the open takes');
+like($stack, qr/if \(self_el && this === self_el\) \{ return; \}/,
+	'and the window being placed is not counted in its own deck');
+like($windows, qr/windowPhoneCascadePlace\(null, win\)[\s\S]{0,200}win\.attr\('deck'/, 'which the open takes');
 like($windows, qr/deck_plan\.top \+ deck_plan\.slot \* vAdvance/,
 	'and it lands at its own step in the deck, not at the deck\'s top');
 like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');

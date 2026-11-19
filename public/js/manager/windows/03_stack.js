@@ -109,8 +109,12 @@ function windowDeckFront() {
 }
 
 // The deck and the step a window opening now would take. `geom` lets the press
-// preview ask before the window exists.
-function windowPhoneCascadePlace(geom) {
+// preview ask before the window exists, and `self` is the window being placed so
+// it is not counted in its own deck. A window that has lost its deck attribute
+// (a re-render that replaced the node) reads as the first deck, so it still
+// takes a step of its own rather than being left out of the count.
+function windowPhoneCascadePlace(geom, self) {
+	var self_el = self ? $(self)[0] : null;
 	var height = (geom && geom.height) || Math.round(windowViewport().height * 0.7128);
 	var step = geom && geom.step ? geom.step : 0;
 	if (!(step > 0)) {
@@ -121,7 +125,7 @@ function windowPhoneCascadePlace(geom) {
 	var limit = (1 - windowStackVisible) * height;
 	var decks = {};
 	$('.wind').filter(':visible').each(function () {
-		if (this.getAttribute && this.getAttribute('deck') === null) { return; }
+		if (self_el && this === self_el) { return; }
 		var deck = windowDeckOf(this);
 		decks[deck] = (decks[deck] || 0) + 1;
 	});

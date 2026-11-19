@@ -1778,7 +1778,7 @@ function windowReorganizer(window_id) {
 				// a phone cascades into decks: the deck in front until it would show less
 				// than a third of a window, then a fresh cascade over the top of it
 				if (typeof windowPhoneCascadePlace == 'function' && win.attr('deck') === undefined) {
-					var deck_plan = windowPhoneCascadePlace();
+					var deck_plan = windowPhoneCascadePlace(null, win);
 					win.attr('deck', String(deck_plan.deck));
 					windowDeckTouch[deck_plan.deck] = Date.now();
 					win.css({ 'top': deck_plan.top + deck_plan.slot * vAdvance });
