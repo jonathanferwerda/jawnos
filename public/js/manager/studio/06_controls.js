@@ -706,6 +706,18 @@ function studioListenFailed(xhr) {
 	studioListenShowError((data && data.error) ? data.error : studioListenText('the audio engine did not answer'));
 }
 
+// Live listening is one input, not a take: its pedals are the selected
+// track's rack, in order and enabled only. A browser input picker cannot show
+// an interface the engine owns (WirePlumber hands it over), so this is the
+// path a guitar plugged into the UM2 is heard through.
+function studioListenInserts() {
+	var c = studioAudio.channels[studioSelectedChannel];
+	if (!c || !c.inserts) { return ''; }
+	return c.inserts.filter(function (ins) {
+		return ins && !ins.bypassed && studioEffectBuilder(ins.name);
+	}).map(function (ins) { return studioEffectKind(ins.name); }).join(',');
+}
+
 function studioListenStart() {
 	studioListenShowError('');
 	$.ajax({
@@ -715,7 +727,7 @@ function studioListenStart() {
 			action: 'listen_start',
 			channel: $('#studio_listen_input').val(),
 			gain: $('#studio_listen_gain').val(),
-			inserts: $('#studio_engine_inserts').val()
+			inserts: studioListenInserts()
 		},
 		dataType: 'json',
 		success: function (data) {

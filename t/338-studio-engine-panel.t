@@ -429,6 +429,11 @@ like($controls_js, qr/action: 'listen_stop'/, 'and stops it');
 like($controls_js, qr/target: 'listen'/, 'the gain is a param addressed to listen');
 like($controls_js, qr/setInterval\(studioListenStatus, 750\)/,
 	'listen status is polled while it runs');
+like($controls_js, qr/function studioListenInserts\(/, 'Listen takes the selected track\'s rack');
+like($controls_js, qr/inserts: studioListenInserts\(\)/, 'and sends that chain to the monitor');
+like($controls_js, qr/!ins\.bypassed && studioEffectBuilder\(ins\.name\)/, 'only enabled, real pedals');
+like($markup, qr/Input 1 \(channel 0\)/, 'the input picker names the interface channels');
+like($markup, qr/Input 2 \(channel 1\)/, 'both of them');
 
 # --- the help topic speaks in the panel's words ------------------------------
 require "$root/perl/help.pl";
@@ -441,7 +446,8 @@ like($body, qr/Stop take/, 'and its Stop take control');
 like($body, qr/Gain/, 'and the strip knob');
 like($body, qr/Pan/, 'and its partner');
 like($body, qr/Listen, below those controls, starts live monitoring/, 'help names the Listen control');
-like($body, qr/input 1 for the instrument/, 'help says input 1 is the instrument');
+like($body, qr/choose Input 1 or Input 2 \(the interface's two channels\)/, 'help names the interface channels');
+like($body, qr/selected track's pedals are the monitor's chain/, 'and says the monitor uses the selected rack');
 like($body, qr/Only one capture is available/, 'help says listening and recording exclude each other');
 
 done_testing();

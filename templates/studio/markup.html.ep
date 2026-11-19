@@ -432,7 +432,7 @@
 							<label><%= &subs::ui('Listen inserts') %> <input id="studio_engine_inserts" size="12" placeholder="tone,delay"></label>
 							<hr>
 							<button id="studio_listen_toggle" aria-pressed="false" hint="<%= &subs::ui('Start or stop live monitoring on the engine') %>"><%= &subs::ui('Listen') %></button>
-							<label><%= &subs::ui('Listen input') %> <select id="studio_listen_input" hint="<%= &subs::ui('Choose microphone (0) or instrument (1) for live monitoring') %>"><option value="0"><%= &subs::ui('0 - microphone') %></option><option value="1"><%= &subs::ui('1 - instrument') %></option></select></label>
+							<label><%= &subs::ui('Listen input') %> <select id="studio_listen_input" hint="<%= &subs::ui('Choose the interface input to monitor: input 1 is channel 0, input 2 is channel 1') %>"><option value="0"><%= &subs::ui('Input 1 (channel 0)') %></option><option value="1"><%= &subs::ui('Input 2 (channel 1)') %></option></select></label>
 							<label><%= &subs::ui('Listen gain') %> <input id="studio_listen_gain" type="range" min="0" max="4" step="0.01" value="0.8"></label>
 							<div id="studio_listen_status" style="font-size:12px;">
 								<span id="studio_listen_state">&mdash;</span>
