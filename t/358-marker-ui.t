@@ -216,6 +216,31 @@ like($marker_css, qr/\.marker_ruler \{[^}]*background: var\(--panel-2/s,
 like($marker_stage, qr/getComputedStyle\(document\.body\)\.getPropertyValue\('--ink'\)/,
 	'the ruler ticks are drawn in the desk ink');
 
+# --- the incremental repaint leaves no seam ----------------------------------
+# The repaint clears a device rectangle and paints the sheet inside it. If the
+# paint is smaller than the clear by even the 2px of brush slack, every patch
+# leaves a transparent frame: a stroke leaves a growing square outline around
+# itself until the end-of-stroke repaint wipes it. markerRegionBox is that pair
+# of rectangles, so it can be checked without a browser.
+like($marker_index, qr/function markerRegionBox\(rect, size, view, width, height\)/,
+	'the repaint geometry is one function');
+like($marker_index, qr/ctx\.clearRect\(box\.sx, box\.sy, box\.ex - box\.sx, box\.ey - box\.sy\)/,
+	'the clear uses the box');
+like($marker_index, qr/ctx\.fillRect\(box\.fx, box\.fy, box\.fw, box\.fh\)/,
+	'the sheet fill uses the box, not the unclamped rectangle');
+
+# --- a pointer move repaints nothing but the ring ---------------------------------
+# Moving the mouse used to redraw two ruler canvases and force a style recalc
+# every 60ms, and to reach the ring through jQuery: the ring lagged the pointer
+# and the board felt heavy. The rulers' cursor marks are DOM lines now.
+like($marker_page, qr/id="marker_ruler_cursor_x"/, 'the top ruler has a cursor mark');
+like($marker_page, qr/id="marker_ruler_cursor_y"/, 'the left ruler has a cursor mark');
+like($marker_stage, qr/function markerCursorNode\(name, id\)/, 'the hover nodes are looked up once');
+like($marker_stage, qr/cursor\.style\.transform = 'translate\('/, 'the ring is placed with a direct style write');
+unlike($marker_stage, qr/function markerBrushCursorMove\(screen\) \{[^}]*markerRulersSoon/s,
+	'a pointer move does not schedule a ruler redraw');
+like($marker_css, qr/\.marker_ruler_cursor_x \{[^}]*width: 1px/s, 'the ruler mark is a thin line');
+
 # the icons the toolbar calls for
 for my $icon (qw/pencil brush spray blur fill sample keyboard eraser select lasso move/) {
 	ok(-e "$root/public/images/marker/$icon.svg", "the $icon icon exists");
@@ -315,6 +340,24 @@ sandbox.markerStroke.size = 20;
 sandbox.markerView.scale = 2;
 out.ring = sandbox.markerBrushDiameter(1);
 
+// one incremental repaint: the cleared rectangle and the part painted white
+function region(rect) {
+	const box = sandbox.markerRegionBox(rect, { w: 816, h: 1056 }, { scale: 0.5, x: 20, y: 30 }, 900, 600);
+	return [box.sx, box.sy, box.ex - box.sx, box.ey - box.sy, box.fx - box.sx, box.fy - box.sy, box.fw, box.fh].join(':');
+}
+out.region_inside = region({ x: 100, y: 100, w: 40, h: 40 });
+out.region_edge = region({ x: -50, y: 900, w: 100, h: 100 });
+out.region_off = region({ x: -4000, y: -4000, w: 10, h: 10 });
+// the invariant, not the arithmetic: the painted sheet inside a patch must
+// cover the cleared rectangle exactly, leaving no transparent frame
+function covered(rect) {
+	const box = sandbox.markerRegionBox(rect, { w: 816, h: 1056 }, { scale: 0.5, x: 20, y: 30 }, 900, 600);
+	return box.fx === box.sx && box.fy === box.sy && box.fw === box.ex - box.sx && box.fh === box.ey - box.sy;
+}
+out.covered_inside = covered({ x: 100, y: 100, w: 40, h: 40 });
+out.covered_edge = covered({ x: -50, y: 900, w: 100, h: 100 });
+out.covered_corner = covered({ x: 700, y: 1000, w: 200, h: 200 });
+
 console.log(JSON.stringify(out));
 JS
 	close $fh;
@@ -350,6 +393,11 @@ JS
 	is($got{'drag'}, '10,20,80,70', 'a drag from bottom-right to top-left is a positive rectangle');
 	is($got{'clamped'}, '0,0,100,50', 'a drag past the sheet is clamped to it');
 	is($got{'ring'}, 80, 'the ring is the stroke width times the zoom');
+	# sx:sy:w:h of the clear, then the white fill's offset and size within it
+	is($got{'covered_inside'}, 1, 'a patch inside the sheet clears and paints the same rectangle');
+	is($got{'covered_edge'}, 1, 'a patch running off the sheet is clamped, clear and paint together');
+	is($got{'covered_corner'}, 1, 'a patch over the sheet corner still leaves no frame');
+	is($got{'region_off'}, '0:0:0:0:0:0:0:0', 'a patch nowhere near the board paints nothing');
 }
 else {
 	diag('node is not installed; the marker script checks are skipped');

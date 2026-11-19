@@ -158,6 +158,10 @@
 		<div id="marker_ruler_corner" class="marker_ruler_corner" hint="Document pixels">0</div>
 		<canvas id="marker_ruler_top" class="marker_ruler marker_ruler_top"></canvas>
 		<canvas id="marker_ruler_left" class="marker_ruler marker_ruler_left"></canvas>
+		<%# the cursor's column and row: thin marks over the rulers, moved with a
+		    transform so a pointer move never redraws a ruler canvas %>
+		<span id="marker_ruler_cursor_x" class="marker_ruler_cursor marker_ruler_cursor_x"></span>
+		<span id="marker_ruler_cursor_y" class="marker_ruler_cursor marker_ruler_cursor_y"></span>
 		<div id="marker_viewport" class="marker_viewport">
 			<canvas id="whiteboard"></canvas>
 			<canvas id="marker_selection_overlay" class="marker_overlay_canvas"></canvas>

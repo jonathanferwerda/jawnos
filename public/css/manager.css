@@ -2571,6 +2571,7 @@ html.jawnos_webview #admin_console_toggle {
 
 /* the stage: corner, two rulers, the board, the status bar */
 #marker_stage {
+	position: relative;
 	flex: 1 1 auto;
 	min-width: 0;
 	min-height: 0;
@@ -2656,8 +2657,12 @@ html.jawnos_webview #admin_console_toggle {
 	background: rgba(0,0,0,0.85);
 }
 .marker_cursor_guide { position: absolute; display: none; pointer-events: none; background: rgba(190,0,0,0.22); z-index: 2; }
-.marker_cursor_guide_x { top: 0; bottom: 0; width: 1px; }
-.marker_cursor_guide_y { left: 0; right: 0; height: 1px; }
+.marker_cursor_guide_x { top: 0; bottom: 0; width: 1px; left: 0; }
+.marker_cursor_guide_y { left: 0; right: 0; height: 1px; top: 0; }
+/* the cursor's column and row over the rulers: two thin marks, not a repaint */
+.marker_ruler_cursor { position: absolute; display: none; pointer-events: none; background: rgba(190,0,0,0.8); z-index: 2; left: 0; top: 0; }
+.marker_ruler_cursor_x { width: 1px; height: 22px; }
+.marker_ruler_cursor_y { height: 1px; width: 24px; }
 .marker_status_bar {
 	grid-area: 3 / 1 / 4 / 3;
 	display: flex;

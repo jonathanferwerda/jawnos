@@ -151,15 +151,6 @@ function markerRulersDraw() {
 			if (major) { ctx.fillText(String(Math.round(x)), sx + 2, 1); }
 		}
 		ctx.stroke();
-		// a tick marks the cursor's own column
-		if (markerRulerMemory.cursor_x_screen != undefined) {
-			ctx.strokeStyle = 'rgba(190,0,0,0.8)';
-			ctx.beginPath();
-			var cx = Math.round(markerRulerMemory.cursor_x_screen) + 0.5;
-			ctx.moveTo(cx, 0);
-			ctx.lineTo(cx, top.height);
-			ctx.stroke();
-		}
 	}
 
 	var left = markerRulerCanvas(document.getElementById('marker_ruler_left'));
@@ -190,14 +181,6 @@ function markerRulersDraw() {
 			}
 		}
 		ctx.stroke();
-		if (markerRulerMemory.cursor_y_screen != undefined) {
-			ctx.strokeStyle = 'rgba(190,0,0,0.8)';
-			ctx.beginPath();
-			var cy = Math.round(markerRulerMemory.cursor_y_screen) + 0.5;
-			ctx.moveTo(0, cy);
-			ctx.lineTo(left.width, cy);
-			ctx.stroke();
-		}
 	}
 }
 
@@ -242,41 +225,76 @@ function markerBrushDiameter(pressure) {
 	return Math.max(6, size * 2 * (0.3 + 0.7 * pressure) * markerView.scale);
 }
 
-// a selection tool has no brush to show, so the ring goes and the canvas wears
-// a crosshair (or the move cursor) instead
+// A selection tool has no brush to show, so the ring goes and the canvas wears
+// a crosshair (or the move cursor) instead.
 function markerToolCursor() {
-	$('#marker_viewport').attr('data-tool', localStorage.getItem('marker_tool') || 'pencil');
+	marker.current_tool = localStorage.getItem('marker_tool') || 'pencil';
+	$('#marker_viewport').attr('data-tool', marker.current_tool);
+}
+
+// The nodes a pointer move touches. They are looked up once and written with
+// style properties directly: this runs at the stylus's own rate, and a jQuery
+// lookup plus a style write per node per event is what made the ring feel like
+// it had its own idea of where the mouse was.
+var markerCursorNodes = {};
+function markerCursorNode(name, id) {
+	if (markerCursorNodes[name]) { return markerCursorNodes[name]; }
+	var node = document.getElementById(id);
+	markerCursorNodes[name] = node;
+	return node;
+}
+
+function markerCursorForget() {
+	markerCursorNodes = {};
 }
 
 function markerBrushCursorMove(screen) {
 	markerRulerMemory.last_screen = screen;
-	var cursor = $('#marker_brush_cursor');
+	var cursor = markerCursorNode('ring', 'marker_brush_cursor');
+	var guide_x = markerCursorNode('guide_x', 'marker_cursor_x');
+	var guide_y = markerCursorNode('guide_y', 'marker_cursor_y');
+	var mark_x = markerCursorNode('ruler_x', 'marker_ruler_cursor_x');
+	var mark_y = markerCursorNode('ruler_y', 'marker_ruler_cursor_y');
 	if (screen == undefined) {
-		cursor.hide();
-		$('#marker_cursor_x, #marker_cursor_y').hide();
+		if (cursor) { cursor.style.display = 'none'; }
+		if (guide_x) { guide_x.style.display = 'none'; }
+		if (guide_y) { guide_y.style.display = 'none'; }
+		if (mark_x) { mark_x.style.display = 'none'; }
+		if (mark_y) { mark_y.style.display = 'none'; }
 		markerRulerMemory.cursor_x_screen = undefined;
 		markerRulerMemory.cursor_y_screen = undefined;
-		markerRulersSoon();
 		return;
 	}
-	$('#marker_cursor_x').css({ left: screen.x + 'px' }).show();
-	$('#marker_cursor_y').css({ top: screen.y + 'px' }).show();
-	// the rulers mark the same column and row, only when it actually moved
-	var moved = markerRulerMemory.cursor_x_screen != Math.round(screen.x) || markerRulerMemory.cursor_y_screen != Math.round(screen.y);
+	// the guides and the ruler marks are thin lines: a translate, no layout
+	if (guide_x) {
+		guide_x.style.display = 'block';
+		guide_x.style.transform = 'translateX(' + screen.x + 'px)';
+	}
+	if (guide_y) {
+		guide_y.style.display = 'block';
+		guide_y.style.transform = 'translateY(' + screen.y + 'px)';
+	}
 	markerRulerMemory.cursor_x_screen = Math.round(screen.x);
 	markerRulerMemory.cursor_y_screen = Math.round(screen.y);
-	if (moved) { markerRulersSoon(); }
-	var tool = localStorage.getItem('marker_tool') || 'pencil';
+	if (mark_x) {
+		mark_x.style.display = 'block';
+		mark_x.style.transform = 'translateX(' + ((markerRulerMemory.top_left || 0) + screen.x) + 'px)';
+	}
+	if (mark_y) {
+		mark_y.style.display = 'block';
+		mark_y.style.transform = 'translateY(' + ((markerRulerMemory.left_top || 0) + screen.y) + 'px)';
+	}
+	var tool = marker.current_tool || localStorage.getItem('marker_tool') || 'pencil';
+	if (!cursor) { return; }
 	if (tool == 'select' || tool == 'lasso' || tool == 'move') {
-		cursor.hide();
+		cursor.style.display = 'none';
 		return;
 	}
 	var diameter = markerBrushDiameter(markerStroke.pressure);
-	cursor.css({
-		width: diameter + 'px',
-		height: diameter + 'px',
-		transform: 'translate(' + (screen.x - diameter / 2) + 'px, ' + (screen.y - diameter / 2) + 'px)'
-	}).show();
+	cursor.style.width = diameter + 'px';
+	cursor.style.height = diameter + 'px';
+	cursor.style.display = 'block';
+	cursor.style.transform = 'translate(' + (screen.x - diameter / 2) + 'px, ' + (screen.y - diameter / 2) + 'px)';
 }
 
 function markerBrushCursorHide() {
@@ -318,9 +336,31 @@ function markerViewChanged() {
 
 // ---- stage sizing ------------------------------------------------------
 
+// Where the ruler marks sit and how long they are, measured from the rulers
+// themselves so a change to the grid cannot leave them pointing at nothing.
+function markerRulerMarks() {
+	var top = document.getElementById('marker_ruler_top');
+	var left = document.getElementById('marker_ruler_left');
+	if (top) {
+		markerRulerMemory.top_left = top.offsetLeft;
+		markerRulerMemory.top_top = top.offsetTop;
+		markerRulerMemory.top_height = top.offsetHeight;
+	}
+	if (left) {
+		markerRulerMemory.left_left = left.offsetLeft;
+		markerRulerMemory.left_top = left.offsetTop;
+		markerRulerMemory.left_width = left.offsetWidth;
+	}
+	var mark_x = markerCursorNode('ruler_x', 'marker_ruler_cursor_x');
+	var mark_y = markerCursorNode('ruler_y', 'marker_ruler_cursor_y');
+	if (mark_x && top) { mark_x.style.height = top.offsetHeight + 'px'; }
+	if (mark_y && left) { mark_y.style.width = left.offsetWidth + 'px'; }
+}
+
 function markerStageResize() {
 	var canvas = document.getElementById('whiteboard');
 	var overlay = document.getElementById('marker_selection_overlay');
+	markerRulerMarks();
 	if (overlay && canvas) {
 		if (overlay.width != canvas.width || overlay.height != canvas.height) {
 			overlay.width = canvas.width;
@@ -519,6 +559,7 @@ function markerStatusMoved(point) {
 var markerStageObserver;
 var markerStageBound = false;
 function markerStageInit() {
+	markerCursorForget();
 	markerToolCursor();
 	markerRailsApply();
 	markerStageResize();

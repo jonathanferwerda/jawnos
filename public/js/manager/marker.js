@@ -154,6 +154,45 @@ function markerComposeDirtyRect(rect) {
 	current.h = bottom - current.y;
 }
 
+// The geometry of one incremental repaint: the device-space rectangle to clear
+// and the part of it that is over the paper. It is its own function because the
+// seam between those two rectangles is exactly what went wrong once - the clear
+// reached 2px past the paint, so every patched rectangle left a transparent
+// frame, and a stroke left a growing square outline around itself until the
+// end-of-stroke repaint wiped it.
+function markerRegionBox(rect, size, view, width, height) {
+	var box = { sx: 0, sy: 0, ex: 0, ey: 0, fx: 0, fy: 0, fw: 0, fh: 0 };
+	if (!size.w || !size.h || !view.scale) { return box; }
+	// the slack that picks up the anti-aliased edge of a brush lives in document
+	// units, so the cleared box and the painted box stay the same rectangle
+	var pad = 2 / view.scale;
+	var x0 = Math.max(0, Math.floor(rect.x - pad));
+	var y0 = Math.max(0, Math.floor(rect.y - pad));
+	var x1 = Math.min(size.w, Math.ceil(rect.x + rect.w + pad));
+	var y1 = Math.min(size.h, Math.ceil(rect.y + rect.h + pad));
+	if (x1 <= x0 || y1 <= y0) { return box; }
+	var sx = Math.max(0, Math.floor(x0 * view.scale + view.x));
+	var sy = Math.max(0, Math.floor(y0 * view.scale + view.y));
+	var ex = Math.min(width, Math.ceil(x1 * view.scale + view.x));
+	var ey = Math.min(height, Math.ceil(y1 * view.scale + view.y));
+	if (ex <= sx || ey <= sy) { return box; }
+	box.sx = sx;
+	box.sy = sy;
+	box.ex = ex;
+	box.ey = ey;
+	// the sheet's own rectangle in device space: the white fill covers the whole
+	// cleared area that is over it, so no sliver is left transparent
+	var paper_x = Math.floor(view.x);
+	var paper_y = Math.floor(view.y);
+	var paper_right = Math.ceil(view.x + size.w * view.scale);
+	var paper_bottom = Math.ceil(view.y + size.h * view.scale);
+	box.fx = Math.max(sx, paper_x);
+	box.fy = Math.max(sy, paper_y);
+	box.fw = Math.max(0, Math.min(ex, paper_right) - box.fx);
+	box.fh = Math.max(0, Math.min(ey, paper_bottom) - box.fy);
+	return box;
+}
+
 // Only the dirty rectangle of the board is repainted during a stroke: the
 // layers are drawn through the same view transform, clipped to the rectangle,
 // so the cost follows the brush rather than the size of the sheet. A view
@@ -163,28 +202,22 @@ function markerComposeRegion(rect) {
 	if (!canvas || !whiteboard_ctx) { return; }
 	var size = markerDocSize();
 	if (!size.w || !size.h) { return; }
-	var x0 = Math.max(0, rect.x);
-	var y0 = Math.max(0, rect.y);
-	var x1 = Math.min(size.w, rect.x + rect.w);
-	var y1 = Math.min(size.h, rect.y + rect.h);
-	if (x1 <= x0 || y1 <= y0) { return; }
-	var scale = markerView.scale;
-	// two pixels of slack picks up the anti-aliased edge of the brush
-	var sx = Math.floor(x0 * scale + markerView.x) - 2;
-	var sy = Math.floor(y0 * scale + markerView.y) - 2;
-	var sw = Math.ceil((x1 - x0) * scale) + 4;
-	var sh = Math.ceil((y1 - y0) * scale) + 4;
-	if (sx + sw < 0 || sy + sh < 0 || sx > canvas.width || sy > canvas.height) { return; }
+	var box = markerRegionBox(rect, size, markerView, canvas.width, canvas.height);
+	if (box.ex <= box.sx || box.ey <= box.sy) { return; }
 	var ctx = whiteboard_ctx;
 	ctx.save();
 	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	ctx.globalAlpha = 1;
+	ctx.globalCompositeOperation = 'source-over';
 	ctx.beginPath();
-	ctx.rect(sx, sy, sw, sh);
+	ctx.rect(box.sx, box.sy, box.ex - box.sx, box.ey - box.sy);
 	ctx.clip();
-	ctx.clearRect(sx, sy, sw, sh);
-	ctx.setTransform(scale, 0, 0, scale, markerView.x, markerView.y);
-	ctx.fillStyle = '#ffffff';
-	ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+	ctx.clearRect(box.sx, box.sy, box.ex - box.sx, box.ey - box.sy);
+	if (box.fw > 0 && box.fh > 0) {
+		ctx.fillStyle = '#ffffff';
+		ctx.fillRect(box.fx, box.fy, box.fw, box.fh);
+	}
+	ctx.setTransform(markerView.scale, 0, 0, markerView.scale, markerView.x, markerView.y);
 	for (var i = 0; i < markerLayers.length; i++) {
 		if (markerLayers[i].visible) { ctx.drawImage(markerLayers[i].canvas, 0, 0); }
 	}
