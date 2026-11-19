@@ -351,8 +351,10 @@ sub board_host_allowed {
 }
 
 # 0 = a private LAN or link-local address, 1 = the tailnet's CGNAT range,
-# 2 = anything else. Probing a same-wifi peer on its LAN first means a dead
-# tailnet route cannot hold up the pass, while the tailnet is still tried.
+# 2 = anything else. peer_literal_addresses tries the tailnet first (it is the
+# direct WireGuard path and survives a LAN that isolates its clients), then a
+# same-LAN literal, then an off-LAN one; the raw ranks here say what an address
+# is, not the order the pass dials it.
 sub peer_address_rank {
 	my $host = shift || '';
 	return 0 if $host =~ /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.)/;
@@ -790,20 +792,25 @@ sub peer_literal_addresses {
 		my $tport = $rows->[0] ? $rows->[0]->{'in_port'} : undef;
 		&$add('127.0.0.1', $tport, 'tunnel') if defined $tport && $tport =~ /^\d+$/ && $tport > 0;
 	}
-	# A same-LAN address first, then the tailnet, then a LAN literal we are not
-	# on, then anything else; insertion order breaks ties so the row's own ip
-	# keeps its precedence within a rank. A LAN address on a network this
-	# machine has left is still a candidate (a probe may fall back to it) but it
-	# must not win over the tailnet route that actually connects the two.
+	# The tailnet is first: it is the direct WireGuard path the peers make, and a
+	# same-LAN Wi-Fi can isolate its clients while the tailnet still works. Then
+	# a same-LAN literal, then a LAN literal we are not on, then the public and
+	# tunnel last; insertion order breaks ties so the row's own ip keeps its
+	# precedence within a rank. A LAN address on a network this machine has left
+	# is still a candidate (a probe may fall back to it) but it must not win over
+	# the tailnet route that actually connects the two.
 	my %rank_of;
 	foreach my $c ( @out ) {
 		my $host = $c->{'host'};
 		next if exists $rank_of{$host};
 		my $rank = &peer_address_rank($host);
-		if ($rank == 0) {
-			$rank = &peer_on_our_lan($host) ? 0 : 2;
+		if ($rank == 1) {
+			$rank = 0;
 		}
-		elsif ($rank == 2) {
+		elsif ($rank == 0) {
+			$rank = &peer_on_our_lan($host) ? 1 : 2;
+		}
+		else {
 			$rank = 3;
 		}
 		$rank_of{$host} = $rank;

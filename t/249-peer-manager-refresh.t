@@ -71,9 +71,9 @@ ok(scalar(grep { $_->{'host'} eq '192.168.1.123' } @{$addrs}),
 	$live  = subs::peer_live_manager($laptop);
 	$addrs = subs::peer_literal_addresses($laptop);
 });
-is($live, 'https://192.168.1.123:45545',
-	'the LAN address wins when both machines share that LAN');
-is($addrs->[0]->{'host'}, '192.168.1.123',
+is($live, 'https://100.64.0.3:45545',
+	'the tailnet wins even when both machines share that LAN');
+is($addrs->[0]->{'host'}, '100.64.0.3',
 	'and it is the first literal candidate there');
 
 # A row that already stored the LAN literal is corrected once this machine is
@@ -130,9 +130,9 @@ is(subs::peer_live_manager({ manager => 'https://127.0.0.1:56138', fqdn => 'lapt
 	'a loopback manager with no literal still resolves to the peer fqdn');
 
 # --- the probe tries every candidate -----------------------------------------
-# On the shared LAN the direct address is tried first and fails; the tailnet
-# must still be reached. This pins that a failed first literal does not end
-# the pass.
+# The tailnet is the first candidate even on a shared LAN; a failed tailnet
+# still falls through to the LAN, so a failed first literal does not end the
+# pass.
 my (@tried, $probe);
 &as_machine_at('192.168.1.50', sub {
 	$probe = subs::peer_presence_probe($laptop, {
@@ -141,15 +141,15 @@ my (@tried, $probe);
 		fetch       => sub {
 			my ($c) = @_;
 			push @tried, $c->{'host'};
-			return $c->{'host'} eq '100.64.0.3' ? 'laptop-sig' : '';
+			return $c->{'host'} eq '192.168.1.123' ? 'laptop-sig' : '';
 		},
 	});
 });
-ok($probe->{'ok'}, 'the probe finds the peer after the first literal fails');
-is($probe->{'manager'}, 'https://100.64.0.3:45545',
-	'the address that answered wins over the stale stored one');
-is_deeply(\@tried, [ '192.168.1.123', '100.64.0.3' ],
-	'both literals are tried, LAN first on that network');
+ok($probe->{'ok'}, 'the probe falls back to the LAN when the tailnet does not answer');
+is($probe->{'manager'}, 'https://192.168.1.123:45545',
+	'the LAN address that answered wins');
+is_deeply(\@tried, [ '100.64.0.3', '192.168.1.123' ],
+	'the tailnet is tried before the LAN');
 
 # --- the verified route is written back --------------------------------------
 my @writes;

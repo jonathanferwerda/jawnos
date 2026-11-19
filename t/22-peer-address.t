@@ -143,10 +143,10 @@ is(subs::peer_live_manager({
 	'a retired tunnel manager falls back to the stored LAN ip, not the name');
 
 # A row whose stored ip is on the tailnet but whose advertised map carries the
-# LAN address must try the LAN first: the offline tailnet node would otherwise
-# blackhole the pass.
-is(subs::peer_address_rank('192.168.1.155'), 0, 'a private LAN address ranks first');
-is(subs::peer_address_rank('100.64.0.3'), 1, 'a tailnet address ranks after the LAN');
+# LAN address must try the tailnet first: it is the direct WireGuard path and a
+# same-LAN Wi-Fi can isolate its clients while the tailnet still works.
+is(subs::peer_address_rank('192.168.1.155'), 0, 'a private LAN address is classed as LAN');
+is(subs::peer_address_rank('100.64.0.3'), 1, 'a tailnet address is classed as CGNAT');
 my $tailnet_row = {
 	ip      => '100.64.0.3',
 	fqdn    => 'laptop.jonathanferwerda.com',
@@ -155,13 +155,13 @@ my $tailnet_row = {
 };
 my $ranked;
 {
-	# This machine is on the peer's LAN, so the direct LAN address is the route.
+	# This machine is on the peer's LAN, but the tailnet is still tried first.
 	no warnings qw(redefine once);
 	local *subs::network_interface_reporter = sub { return { eth0 => { ip => '192.168.1.50' } } };
 	$ranked = subs::peer_probe_candidates($tailnet_row, 45545);
 }
-is($ranked->[0]->{'host'}, '192.168.1.155',
-	'the advertised LAN address is tried before the stored tailnet ip when we share that LAN');
+is($ranked->[0]->{'host'}, '100.64.0.3',
+	'the tailnet is tried before the advertised LAN when both are known');
 
 # The probe must not use ping as a gate: a peer whose echo is dropped (or a
 # candidate whose name has no DNS answer) still gets its manager called, and a
@@ -236,7 +236,7 @@ my $remembered = {
 };
 my $addresses;
 {
-	# A peer on our own LAN: the direct address is still tried first.
+	# A peer on our own LAN: the tailnet is still tried first.
 	no warnings qw(redefine once);
 	local *subs::network_interface_reporter = sub { return { eth0 => { ip => '192.168.1.50' } } };
 	$addresses = subs::peer_literal_addresses($remembered);
@@ -245,8 +245,8 @@ my @hosts = map { $_->{'host'} } @{$addresses};
 ok(scalar(grep { $_ eq '100.64.0.6' } @hosts), 'a persisted tailnet address is a probe candidate');
 my $lan_at = (grep { $hosts[$_] eq '192.168.1.142' } 0 .. $#hosts)[0];
 my $tail_at = (grep { $hosts[$_] eq '100.64.0.6' } 0 .. $#hosts)[0];
-ok(defined $lan_at && defined $tail_at && $lan_at < $tail_at,
-	'the LAN address is still tried before the tailnet one');
+ok(defined $lan_at && defined $tail_at && $tail_at < $lan_at,
+	'the tailnet address is tried before the LAN one');
 
 # The map alone can still name the tailnet when the column was never written.
 my $from_map = {
