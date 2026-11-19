@@ -54,4 +54,4 @@ not protected, so the settings merge carries it). Values: `auto`, `mesh`, `hub`.
 - The digest is a per-table `count/sum/max` scan. `sync_digest_map` caches it for
   30s per worker; on a 37k-row settings table a raw scan is a few tens of
   milliseconds on a phone.
-- The `sync_kick` utility is a watchdog, not a timed pull: it only acts when a pull has failed and none has completed for 15 minutes, a pull marker has no live owner, a pull job is left running, or the saved hub is inactive. A quiet house is left alone. `scripts/sync_kick.pl` forces an unconditional kick.
+- The `sync_kick` utility is a watchdog, not a timed pull: it only acts when a pull has failed and none has completed for 30 minutes (twice the 15-minute kick interval, so the next slot cannot miss a failure), a pull marker has no live owner, a pull job is left running, or the saved hub is inactive. A pull in flight withholds only the two marker-shaped signals, so it cannot hide another peer's failed pull, and the kick does not reap a running job while a live owner holds the marker. A quiet house is left alone. `scripts/sync_kick.pl` forces an unconditional kick.

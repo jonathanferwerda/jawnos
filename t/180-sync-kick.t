@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Lan.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part35.pm lib/JawnOS/Domain/Loader.pm perl/gb/01_state_and_defaults.pl perl/utility_jobs.pl perl/help/topics_features.pl scripts/sync_kick.pl
-# covers:    the sync kick job clears the three things that stall a rail and nudges the ordinary pass; a dead hub is not chosen; a controller holds its automatic sync until its card is mounted
+# covers:    the sync kick job clears the things that stall a rail and nudges the ordinary pass; a pull in flight neither hides another peer's failure nor gets its job reaped; a dead hub is not chosen; a controller holds its automatic sync until its card is mounted
 
 use strict;
 use warnings;
@@ -108,6 +108,24 @@ my $now = JawnOSTest::ts(2026, 11, 5, 14, 0, 0);
 	is(scalar @cache, 1, 'the ordinary pass is nudged once');
 }
 
+# --- a kick that looks past a busy marker leaves the live pull alone ----------
+# The scheduled job now checks another peer's failure while a pull is in
+# flight; it must not reap the job row of the pull that is still running.
+{
+	local *subs::rightNow = sub { $now };
+	my @reaped;
+	local *subs::remote_upgrade_lock_state = sub { { busy => 1, value => 'running:123', age => 0 } };
+	local *subs::remote_upgrade_marker_reapable = sub { 0 };
+	local *subs::sync_jobs_reap = sub { push @reaped, 1; return 0 };
+	local *subs::db_select = sub { StopRows->new([]) };
+	local *subs::setting_grabber = sub { '' };
+	local *subs::setting_setter = sub { };
+	local *subs::cache_set = sub { };
+	my $note = subs::sync_kick();
+	is(scalar @reaped, 0, 'a live pull job is not reaped while its marker is busy');
+	is($note, 'nothing was holding it', 'and the kick reports it found nothing to clear');
+}
+
 # --- a controller waits for its card -----------------------------------------
 # The card is the archive, so a pull before it is mounted writes the house's
 # appointments and files to the eMMC. The board's own first boot sets
@@ -165,8 +183,9 @@ like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s
 	local *subs::remote_upgrade_lock_state = sub { return { %{ $s{'up'} } }; };
 	local *subs::db_query = sub {
 		my ($sql) = @_;
-		return SyncQuery->new({ c => $s{'running'} }) if $sql =~ /state = 'running'/;
+		# The peer query now asks for a running count too, so match it first.
 		return StopRows->new($s{'jobs'}) if $sql =~ /group by peer/;
+		return SyncQuery->new({ c => $s{'running'} }) if $sql =~ /state = 'running'/;
 		return SyncQuery->new({});
 	};
 	local *subs::db_select = sub { StopRows->new($s{'peers'}) };
@@ -190,12 +209,33 @@ like($president, qr/\$gb::timeouts->\{'sync_kick'\}->\{'subroutine'\} = sub \{\s
 	$s{'jobs'} = [ { peer => 'phone', done => $now - 5 * 60 * 1000, fail => $now - 40 * 60 * 1000 } ];
 	is(subs::sync_stalled(), '', 'an old failure after a long-quiet rail is history');
 
+	# The failure window is twice the kick interval: a failure from 20 minutes
+	# ago with no completed pull since is still a live block at the next slot,
+	# because a 15-minute window let the 09:15 slot call the 08:59 failure
+	# history (2026-11-19).
+	$s{'jobs'} = [ { peer => 'phone', done => $now - 60 * 60 * 1000, fail => $now - 20 * 60 * 1000 } ];
+	like(subs::sync_stalled(), qr/no pull has finished/, 'a failure older than the kick interval is still a stall');
+	$s{'jobs'} = [ { peer => 'phone', done => $now - 60 * 60 * 1000, fail => $now - 40 * 60 * 1000 } ];
+	is(subs::sync_stalled(), '', 'a failure older than twice the kick interval is history');
+
 	$s{'jobs'} = [];
 	is(subs::sync_stalled(), '', 'a database with no job history is not judged');
 
 	$s{'jobs'} = [ { peer => 'phone', done => $now - 5 * 60 * 1000, fail => 0 } ];
 	$s{'up'} = { busy => 1, value => 'running:123', age => 0 };
 	is(subs::sync_stalled(), '', 'a pull in flight is not a stall');
+
+	# The pass claims its marker before it forks, so the scheduled kick runs in
+	# the same utility pass with a busy marker. That must not hide a different
+	# peer whose pull failed with no completed one since (2026-11-19).
+	$s{'jobs'} = [
+		{ peer => 'phone',  done => $now - 60 * 60 * 1000, fail => $now - 10 * 60 * 1000, running => 0 },
+		{ peer => 'laptop', done => $now - 2 * 60 * 1000,  fail => 0, running => 1 },
+	];
+	like(subs::sync_stalled(), qr/no pull has finished/, 'a pull in flight does not mask another peer\'s failed pull');
+	like(subs::sync_stalled(), qr/phone/, 'and the stalled peer is named');
+	$s{'jobs'} = [ { peer => 'phone', done => $now - 60 * 60 * 1000, fail => $now - 10 * 60 * 1000, running => 1 } ];
+	is(subs::sync_stalled(), '', 'a peer that is pulling again is not a stall');
 
 	$s{'up'} = { busy => 0, value => 'running:999999', age => 20 * 60 * 1000 };
 	like(subs::sync_stalled(), qr/pull marker/, 'a marker no live process owns is a stall');

@@ -646,6 +646,11 @@ sub remote_upgrade_marker_reapable {
 # a watchdog for a rail that is trying and failing, not a pull on a timer: a
 # machine with nothing to fetch is healthy and must be left alone.
 our $sync_stall_ms = 15 * 60 * 1000;
+# The per-peer failure window is twice the kick interval. The scheduled kick
+# runs every fifteen minutes, so a window the same length could miss a failure
+# entirely: the 09:00 slot saw a pull claim the marker, and by the 09:15 slot
+# the 08:59 failure was old enough to read as history (2026-11-19).
+our $sync_stall_fail_ms = 2 * $sync_stall_ms;
 
 # Name the reason the rail looks blocked, or '' when it is healthy. The four
 # shapes sync_kick can repair are also the four signals here: a pull marker no
@@ -657,17 +662,24 @@ sub sync_stalled {
 	my ($now) = @_;
 	$now ||= &rightNow();
 	my $cut = $now - $sync_stall_ms;
+	my $fail_cut = $now - $sync_stall_fail_ms;
 
-	# A pull in flight is not a stall, however long it legitimately runs.
+	# A pull in flight is not a stall, but it must not hide a different peer's
+	# failed pull. The pass writes its claim before it forks, so the scheduled
+	# kick runs in the same utility pass with a busy marker. Only the two
+	# marker-shaped signals - a dead owner and an orphaned job - are withheld;
+	# the hub and per-peer checks below still run.
 	my $up = &remote_upgrade_lock_state();
-	return '' if $up->{'busy'};
-	if (length($up->{'value'} || '') && $up->{'age'} > $sync_stall_ms) {
-		return 'a pull marker has had no live owner for ' . int($up->{'age'} / 60000) . 'm';
+	my $busy = $up->{'busy'} ? 1 : 0;
+	if (!$busy) {
+		if (length($up->{'value'} || '') && $up->{'age'} > $sync_stall_ms) {
+			return 'a pull marker has had no live owner for ' . int($up->{'age'} / 60000) . 'm';
+		}
+		my $orphan = &db_query(q{select count(*) as c from sync_jobs where state = 'running' and cast(updated as integer) < ?}, $cut);
+		return '' unless $orphan;
+		my $orow = $orphan->hashes->[0] || {};
+		return 'a pull job has been left running' if ($orow->{'c'} || 0) > 0;
 	}
-	my $orphan = &db_query(q{select count(*) as c from sync_jobs where state = 'running' and cast(updated as integer) < ?}, $cut);
-	return '' unless $orphan;
-	my $orow = $orphan->hashes->[0] || {};
-	return 'a pull job has been left running' if ($orow->{'c'} || 0) > 0;
 
 	# A saved hub the reconnector marks inactive keeps every non-server in hub
 	# mode while the live peers are never dialled.
@@ -681,22 +693,29 @@ sub sync_stalled {
 	# after it, and is not a stall. Judge each peer on its own pair: a house-wide
 	# newest-done test let one healthy machine hide a peer that kept failing, so
 	# the scheduled kick never fired while that peer's rows never moved
-	# (2026-11-16). Keep the failure window bounded too: a failure from an hour
-	# ago on a machine that has been quiet since is history, not a live block.
+	# (2026-11-16). Keep the failure window bounded too, but at twice the kick
+	# interval so the next slot cannot miss a failure the previous one stepped
+	# over: a failure from an hour ago on a machine that has been quiet since is
+	# still history, not a live block.
 	my $jobs = &db_query(q{
 		select peer,
 		       max(case when state = 'done' then cast(updated as integer) else 0 end) as done,
-		       max(case when state = 'failed' then cast(updated as integer) else 0 end) as fail
+		       max(case when state = 'failed' then cast(updated as integer) else 0 end) as fail,
+		       sum(case when state = 'running' then 1 else 0 end) as running
 		  from sync_jobs
 		 where direction = 'pull' and coalesce(peer, '') <> ''
 		 group by peer
 	})->hashes || [];
 	my $blocked;
 	foreach my $job ( @{$jobs} ) {
+		# A peer pulling again is the retry the watchdog wanted, not a stall.
+		# Guarding this here also keeps a busy marker from turning the retry
+		# itself into the reason the kick fires.
+		next if ($job->{'running'} || 0) > 0;
 		my $last_done = ($job->{'done'} || 0) + 0;
 		my $last_fail = ($job->{'fail'} || 0) + 0;
 		next unless $last_fail > $last_done;
-		next unless $last_fail >= $cut;
+		next unless $last_fail >= $fail_cut;
 		next if $last_done >= $cut;
 		$blocked = $job;
 		last;
@@ -737,7 +756,11 @@ sub sync_kick {
 		push @did, 'pull marker cleared';
 	}
 
-	my $reaped = &sync_jobs_reap(600000, 'pull', 'sync kick: no pull owned it');
+	# A live owner is doing work: its job row is young, and reaping it here
+	# would mark a pull that is still running as abandoned. The scheduled kick
+	# can now look past a busy marker at another peer's failure, so this guard
+	# is what keeps that wider view from cutting the live pull short.
+	my $reaped = $up->{'busy'} ? 0 : &sync_jobs_reap(600000, 'pull', 'sync kick: no pull owned it');
 	push @did, $reaped . ' pull job(s) reaped' if $reaped;
 
 	my $peers = &db_select('remote_machines')->hashes || [];
