@@ -15,6 +15,14 @@
 <%# A share of a period's own length reads the same way as a pace: one decimal,
     no trailing .0, and a dash where there is no reading to show. %>
 <% my $percent_number = $pace_number; %>
+<%# The period's header names how far into the span we are: the denominator the
+    carried % row and every pace are read against. Without it a % row's scale is
+    ambiguous - 2% of the whole day is 6% of the day so far. %>
+<% my $elapsed_text = sub {
+	my $p = shift;
+	return '' unless ref $p eq 'HASH' && defined $p->{'progress'};
+	return sprintf(&subs::ui('%s elapsed'), $percent_number->($p->{'progress'}) . '%');
+}; %>
 <div class="appointment_stats_panel" stat="inv" style="display:none;">
 	<% my $inv = $stats->{'inventory'} || {}; %>
 	<% if (scalar @{ $inv->{'units'} || [] }) { %>
@@ -64,7 +72,7 @@
 </div>
 <div class="appointment_stats_panel" stat="time" style="display:none;">
 	<table class="appointment_stats_table">
-		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %><% my $elapsed_share = $elapsed_text->($p); %><% if (length $elapsed_share) { %><br><span class="appointment_stats_calc"><%= $elapsed_share %></span><% } %></th><% } %></tr>
 		<tr><td><%= &subs::ui('Duration') %></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::duration_sayer(($p->{'duration'} || 0) / 1000) %></td><% } %></tr>
 		<tr style="opacity:.7;font-size:90%;"><td>%</td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= $percent_number->($p->{'percent'}) %></td><% } %></tr>
 		<tr class="appointment_stats_pace"><td><%= &subs::ui('Pace') %> <span class="appointment_stats_calc"><%= &subs::ui('by the end') %></span></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><% if (defined $p->{'projected'}) { %><%= &subs::duration_sayer(($p->{'projected'}->{'duration'} || 0) / 1000) %><% } else { %>-<% } %></td><% } %></tr>
@@ -73,14 +81,14 @@
 </div>
 <div class="appointment_stats_panel" stat="count" style="display:none;">
 	<table class="appointment_stats_table">
-		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %><% my $elapsed_share = $elapsed_text->($p); %><% if (length $elapsed_share) { %><br><span class="appointment_stats_calc"><%= $elapsed_share %></span><% } %></th><% } %></tr>
 		<tr><td><%= &subs::ui('Count') %></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::numeric_formatter($p->{'count'}) %></td><% } %></tr>
 		<tr class="appointment_stats_pace"><td><%= &subs::ui('Pace') %> <span class="appointment_stats_calc"><%= &subs::ui('by the end') %></span></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= $pace_number->($p->{'projected'} ? $p->{'projected'}->{'count'} : undef) %></td><% } %></tr>
 	</table>
 </div>
 <div class="appointment_stats_panel" stat="money" style="display:none;">
 	<table class="appointment_stats_table">
-		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+		<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %><% my $elapsed_share = $elapsed_text->($p); %><% if (length $elapsed_share) { %><br><span class="appointment_stats_calc"><%= $elapsed_share %></span><% } %></th><% } %></tr>
 		<tr><td>$</td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><%= &subs::price_formatter($p->{'money'} || 0) %></td><% } %></tr>
 		<tr class="appointment_stats_pace"><td><%= &subs::ui('Pace') %> <span class="appointment_stats_calc"><%= &subs::ui('by the end') %></span></td><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><td><% if ($p->{'projected'}) { %><%= &subs::price_formatter($p->{'projected'}->{'money'} || 0) %><% } else { %>-<% } %></td><% } %></tr>
 	</table>
@@ -89,7 +97,7 @@
 	<% my $measure_names = $stats->{'measure_names'} || []; %>
 	<% if (scalar @{$measure_names}) { %>
 		<table class="appointment_stats_table">
-			<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %></th><% } %></tr>
+			<tr><th></th><% foreach my $p ( @{$stats->{'periods'} || []} ) { %><th><%= $p->{'label'} %><% my $elapsed_share = $elapsed_text->($p); %><% if (length $elapsed_share) { %><br><span class="appointment_stats_calc"><%= $elapsed_share %></span><% } %></th><% } %></tr>
 			<% foreach my $m ( @{$measure_names} ) { %>
 				<tr>
 					<td><%= &subs::format_name($m->{'name'}) %> <span class="appointment_stats_calc"><%= &subs::format_name($m->{'calc'}) %></span></td>

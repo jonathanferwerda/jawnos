@@ -352,6 +352,8 @@ like($pace_html, qr/<tr style="opacity:\.7;font-size:90%;"><td>%<\/td><td>4\.2<\
 	'the time table shows the hour as a share of the day');
 like($pace_html, qr/<tr style="opacity:\.7;font-size:90%;"><td>%<\/td><td>8\.3<\/td>/,
 	'and the share the pace carries to the day end');
+like($pace_html, qr/<th>Today<br><span class="appointment_stats_calc">50% elapsed<\/span><\/th>/,
+	'the period header names the share of the span that has elapsed');
 my $open_html = Mojo::Template->new(vars => 1, auto_escape => 1)->render(
 	scalar $stats_template,
 	{
@@ -371,6 +373,8 @@ like($open_html, qr/<tr style="opacity:\.7;font-size:90%;"><td>%<\/td><td>0<\/td
 	'a fresh period shows no share of its length done');
 like($open_html, qr/<tr style="opacity:\.7;font-size:90%;"><td>%<\/td><td>-<\/td>/,
 	'and a dash where there is no pace to carry yet');
+like($open_html, qr/<th>Today<br><span class="appointment_stats_calc">0% elapsed<\/span><\/th>/,
+	'a day at its opening instant reads no share elapsed');
 like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>2<\/td>/,
 	'the count table carries one occurrence to two');
 like($pace_html, qr/<tr class="appointment_stats_pace"><td>Pace <span class="appointment_stats_calc">by the end<\/span><\/td><td>\$20\.00<\/td>/,
