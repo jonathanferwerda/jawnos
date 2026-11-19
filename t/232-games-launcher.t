@@ -1,7 +1,8 @@
 # tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_ws.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js public/js/manager/websocket.js public/js/manager/windows/03_stack.js templates/apps/transaction/options.html.ep perl/help/topics_people.pl public/css/manager.css
 # covers:    The second launcher behind the Controller's Games tile, Twirl's
-#            clockwise and counter-clockwise turns, and the strip a full-screen
-#            app used to keep where its title bar had been.
+#            clockwise and counter-clockwise turns and its single animation
+#            loop, and the strip a full-screen app used to keep where its
+#            title bar had been.
 
 use strict;
 use warnings;
@@ -188,6 +189,23 @@ like($game, qr/function rotateMatrixLeft/, 'a counter-clockwise matrix turn exis
 like($game, qr/function rotateCounter/, 'and keeps the same fixed pivot');
 like($game, qr/command == 'rotate_left'/, 'the action handles it');
 like($game, qr/\.on\('mousedown', '#twirl'/, 'A, a plain click, turns the piece clockwise');
+
+# --- Twirl's one loop ---------------------------------------------------------
+like($game, qr/function twirlTeardown/, 'the window close has a teardown to call');
+like(read_file("$root/public/js/manager/windows/03_stack.js"),
+	qr/app == 'twirl'[\s\S]*?twirlTeardown\(\)/,
+	'closing Twirl drops its game instance');
+like($game, qr/function twirlGame\(\) \{[\s\S]*?twirlTeardown\(\)[\s\S]*?twirlGameCreate/,
+	'a reopened window replaces the old instance instead of stacking a loop');
+like($game, qr/window\.requestAnimationFrame\(frame\)/, 'gravity runs from one animation frame');
+unlike($game, qr/setInterval\(/, 'no interval can outlive the window and tick a second game');
+like($game, qr/if \(!isAttached\(\)\) \{ destroy\(\); return; \}/,
+	'and the loop tears itself down when its canvas leaves the page');
+like($game, qr/observer\.disconnect\(\)/, 'a closed game lets go of its resize observer');
+like($game, qr/function makeSprite/, 'each colour is baked into a tile sprite');
+like($game, qr/function makeSprite[\s\S]*?createLinearGradient/, 'with a graded face');
+like($game, qr/twirlSeed/, 'and a deterministic grain, so neighbouring tiles differ');
+like($game, qr/\(viewW - boxW\) \/ 2/, 'the well and panel are centred on a wide window');
 
 # --- the full-screen strip ----------------------------------------------------
 like(read_file("$root/public/css/manager.css"),

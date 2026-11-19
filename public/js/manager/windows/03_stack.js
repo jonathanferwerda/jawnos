@@ -178,6 +178,7 @@ function windowCloseTearDown(timestamp, win, done) {
 	// this is the close transition itself, not a re-render
 	if (win.length && typeof windowEventSend == 'function') { windowEventSend('close', app, win.attr('id')); }
 	if (app == 'twirl') {
+		if (typeof twirlTeardown == 'function') { twirlTeardown(); }
 		twirlRunning = false;
 		if (typeof jawnosGameSessionGame === 'function' && jawnosGameSessionGame() === 'Twirl'
 			&& typeof jawnosGameSessionStop === 'function') { jawnosGameSessionStop(); }

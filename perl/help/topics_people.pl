@@ -204,14 +204,14 @@ $topic{'cards'} = {
 		],
 		related => [ 'twirl', 'measures' ]
 	};
-$topic{'twirl'} = {
+	$topic{'twirl'} = {
 		title => 'Twirl', category => 'apps', app => 'twirl',
-		verified => '2026-11-15',
+		verified => '2026-11-18',
 		templates => [ 'templates/twirl.html.ep', 'public/js/manager/twirl.js' ],
 		summary => 'A falling-block puzzle in a ten-by-twenty well.',
 		body => [
 			'Seven shapes fall one square at a time into a ten-by-twenty well. The left and right arrows slide a shape, the down arrow nudges it, the up arrow turns it, and the space bar drops it to the bottom. A full row clears and everything above it sinks. Ten cleared lines raise the level and the fall quickens.',
-			'The Next window shows the shape after this one, and Best keeps the five highest scores with three initials each. Escape pauses the game, C clears the saved scores, and Enter deals again after a game over. The shapes, the brick wall and the table are drawn in the house\'s own colours.'
+			'The Next window shows the shape after this one, and Best keeps the five highest scores with three initials each. Escape pauses the game, C clears the saved scores, and Enter deals again after a game over. The well and its panel sit centred in the window, and the shapes are bevelled, grained tiles set into the house\'s brick wall.'
 		],
 		related => [ 'cards' ]
 	};
