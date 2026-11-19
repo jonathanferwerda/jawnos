@@ -889,6 +889,12 @@
 		border-radius: 9px;
 		flex: 1 1 auto !important;
 	}
+	.studio_monitor_note {
+		font-size: 11px;
+		color: var(--danger, #c53030);
+		max-width: 220px;
+		line-height: 1.2;
+	}
 	.studio_monitor_toggle[aria-pressed="true"] {
 		background: var(--accent-soft, var(--accent));
 		border-color: var(--accent-line, var(--accent));

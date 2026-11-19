@@ -319,12 +319,21 @@ function studioApplyCapture() {
 }
 
 // Live monitoring: the processed input only reaches the speakers when the song
-// asks for it, because an open mic plus speakers howls.
-function studioApplyMonitor() {
+// asks for it, because an open mic plus speakers howls. `from_user` is the
+// person pressing Monitor (or changing its setting), not the page loading a
+// song: only then may the engine's Listen be started or stopped.
+function studioApplyMonitor(from_user) {
 	var on = mixer['time'] && mixer['time']['monitor'] == 'yes';
 	$.each(studioAudio.channels, function (ch, c) {
 		if (c.monGain) { c.monGain.gain.value = on ? 1 : 0; }
 	});
+	// With the engine up it owns the interface, so the browser cannot capture
+	// it. The same Monitor choice therefore drives the engine's live Listen;
+	// a machine without an engine simply keeps the browser path above.
+	if (from_user && !studioEngineRecording && typeof studioListenStart === 'function') {
+		if (on && !studioListenActive) { studioListenStart(true); }
+		else if (!on && studioListenActive) { studioListenStop(); }
+	}
 	if (typeof studioMonitorButtonRender === 'function') { studioMonitorButtonRender(); }
 }
 

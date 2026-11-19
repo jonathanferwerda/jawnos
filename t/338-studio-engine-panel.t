@@ -493,4 +493,17 @@ like($body, qr/Pressing Monitor while it records starts the live input from that
 unlike($body, qr/A take started with Monitor off armed no live input/,
 	'with the old start-the-next-take wording gone');
 
+like($markup, qr/id="studio_monitor_note"/, 'the transport carries a monitor note');
+like($studio_js, qr/function studioApplyMonitor\(from_user\)/, 'Monitor takes a user flag');
+like($studio_js, qr/studioListenStart\(true\)/, 'a user Monitor starts the engine Listen');
+like($studio_js, qr/studioListenStop\(\)/, 'and switching it off stops it');
+like($controls_js, qr/studioApplyMonitor\(true\)/, 'the monitor setting tells the engine path it was a person');
+like($controls_js, qr/function studioListenStart\(quiet\)/, 'Listen can start quietly for the browser fallback');
+like($controls_js, qr/function studioListenNotRunning/, 'and knows the not-running sentence');
+like($controls_js, qr/typeof studioListenActive !== 'undefined' && studioListenActive/,
+	'the transport button follows the live Listen');
+like($controls_js, qr/\$\('#studio_monitor_note'\)\.text\(text\)/, 'listen errors reach the transport note');
+like($body, qr/Monitor starts the engine's live Listen/,
+	'help says Monitor starts the engine Listen with no take');
+
 done_testing();

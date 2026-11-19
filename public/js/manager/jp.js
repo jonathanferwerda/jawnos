@@ -210,6 +210,64 @@ async function jpStart(app,pref,uuid) {
 	}
 }
 
+// A device's label (and even its id) is blank until the page has been granted
+// the microphone or camera once. The picker can only name what enumerateDevices
+// can tell it, so ask, enumerate again, and fall back to a numbered kind name
+// when a device still has no label. The browser also inserts "default" and
+// "communications" pseudo entries that name no device of their own: they are
+// duplicates with blank text, so they are not choices a channel can be plugged
+// into.
+function studioDeviceLabel(kind, label, number) {
+	label = String(label || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+	if (label.length) { return label; }
+	var word = (kind == 'videoinput') ? 'Camera' : (kind == 'audiooutput' ? 'Speaker' : 'Microphone');
+	var text = word + ' ' + number;
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+function studioDeviceList(list) {
+	var out = [];
+	var number = { audioinput: 0, audiooutput: 0, videoinput: 0 };
+	$.each(list || [], function(i, v) {
+		if (!v || !v.deviceId) { return; }
+		if (v.deviceId == 'default' || v.deviceId == 'communications') { return; }
+		var kind = v.kind || '';
+		if (kind != 'audioinput' && kind != 'audiooutput' && kind != 'videoinput') { return; }
+		number[kind] = (number[kind] || 0) + 1;
+		out.push({
+			kind: kind,
+			deviceId: v.deviceId,
+			groupId: v.groupId || '',
+			label: studioDeviceLabel(kind, v.label, number[kind])
+		});
+	});
+	return out;
+}
+
+function studioDeviceLabelsReady(list) {
+	var ready = true;
+	$.each(list || [], function(i, v) {
+		if (!v || !v.deviceId || !v.kind) { return; }
+		if (v.kind != 'audioinput' && v.kind != 'audiooutput' && v.kind != 'videoinput') { return; }
+		var label = String(v.label || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+		if (!label.length) { ready = false; }
+	});
+	return ready;
+}
+
+async function studioDevicePermissionProbe(constraints) {
+	try {
+		var probe = await navigator.mediaDevices.getUserMedia(constraints);
+		(probe.getTracks ? probe.getTracks() : []).forEach(function(track) {
+			try { track.stop(); } catch (e) {}
+		});
+		return true;
+	} catch (e) {
+		console.log('studio: the input permission was not granted', e);
+		return false;
+	}
+}
+
 async function constraintMaker(pref) {
 
 	var constraints = { 'audio': false, 'video': false };
@@ -218,9 +276,8 @@ async function constraintMaker(pref) {
 	var hasAudio = false;
 	var hasVideo = false;
 	var av = await navigator.mediaDevices.enumerateDevices();
-	var all = [];
+	var all = studioDeviceList(av);
 	$.each(av, function(i,v) {
-		all.push(v);
 		var mic = jawnosDevicePickGet('audioinput', v.deviceId);
 		var cam = jawnosDevicePickGet('videoinput', v.deviceId);
 		var spkr = jawnosDevicePickGet('audiooutput', v.deviceId);
@@ -237,9 +294,9 @@ async function constraintMaker(pref) {
 			if (cam == 'on' && v.deviceId) {
 
 				isInitialized = true;
-				constraints['video'] = { 
-					deviceId: { 
-						exact: v.deviceId 
+				constraints['video'] = {
+					deviceId: {
+						exact: v.deviceId
 					},
 					width: { ideal: 1280, max:4000 },
 					height: { ideal: 720, max:3000 }
@@ -261,15 +318,28 @@ async function constraintMaker(pref) {
 		if (hasVideo == true || pref != 'audio') {
 			constraints['video'] = true;
 		}
-		var test = await navigator.mediaDevices.getUserMedia(constraints);
-		test.onstart = function(event) {
-			test.stop();
-		};
+		// Asking is the point: the labels arrive only after a grant. Stop the
+		// probe at once - a stream left open would hold the microphone.
+		if (await studioDevicePermissionProbe(constraints)) {
+			av = await navigator.mediaDevices.enumerateDevices();
+			all = studioDeviceList(av);
+		}
+	}
+	else if (!studioDeviceLabelsReady(av)) {
+		// A saved pick can outlive the browser's permission memory. Ask once so
+		// the channel's list names the devices instead of showing blank rows.
+		var probe = { 'audio': true };
+		if (hasVideo) { probe['video'] = true; }
+		if (await studioDevicePermissionProbe(probe)) {
+			av = await navigator.mediaDevices.enumerateDevices();
+			all = studioDeviceList(av);
+		}
 	}
 	// say_it('the end');
 	constraints['all'] = all;
 	return constraints;
 }
+
 
 function jpScope(app) {
 	var x = 0;

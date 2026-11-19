@@ -6,7 +6,7 @@
 			<tr><th></th><th></th></tr>
 		</thead>
 		<tbody>
-			<% foreach my $av ( @{$constraints->{'all'}} ) {
+			<% my %device_number; foreach my $av ( @{$constraints->{'all'}} ) {
 				if (($direction eq 'input' && $av->{'kind'} =~ /input/gi) || ($direction eq 'output' && $av->{'kind'} =~ /output/gi)) {
 					if ($av->{'kind'} eq 'audioinput') {
 						$av->{'icon'} = 'microphone';
@@ -14,7 +14,7 @@
 					}
 					elsif ($av->{'kind'} eq 'videoinput') {
 						$av->{'av'} = 'av';
-						if ($av->{'label'} =~ /front/gi) {
+						if (defined $av->{'label'} && $av->{'label'} =~ /front/i) {
 							$av->{'icon'} = 'camera front';
 						}
 						else {
@@ -26,10 +26,17 @@
 						$av->{'icon'} = 'speaker';
 						$av->{'av'} = 'a';
 					}
+					$device_number{$av->{'kind'}} = ($device_number{$av->{'kind'}} || 0) + 1;
+					my $label = defined $av->{'label'} ? $av->{'label'} : '';
+					if ($label !~ /\S/) {
+						my $word = $av->{'kind'} eq 'videoinput' ? 'Camera'
+							: $av->{'kind'} eq 'audiooutput' ? 'Speaker' : 'Microphone';
+						$label = &subs::ui($word) . ' ' . $device_number{$av->{'kind'}};
+					}
 				%>
 					<tr class="studio_plug_selection hover" channel="<%= $channel %>" direction="<%= $direction %>" type="usermedia" hint="<%= &subs::ui('Use this microphone or camera on the channel') %>" sid="<%= $av->{'deviceId'} %>" av="<%= $av->{'av'} %>" app="">
 						<td><img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/' . $av->{'icon'} . '.png') %>" hint="<%= &subs::format_name($av->{'icon'}) %>"></td>
-						<td style="font-size:20px;vertical-align:top;"><%= $av->{'label'} %></td>
+						<td style="font-size:20px;vertical-align:top;"><%= $label %></td>
 					</tr>
 				<% } 
 				} %>

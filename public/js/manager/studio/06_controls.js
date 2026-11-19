@@ -533,6 +533,9 @@ function studioMonitorButtonOn() {
 	if (studioEngineRecording) {
 		return studioEngineMonitorArmed === true && studioEngineMonitorLevel > 0;
 	}
+	// With no take recording, the engine's live Listen is the monitor: it is
+	// what makes an interface the engine owns audible at all.
+	if (typeof studioListenActive !== 'undefined' && studioListenActive) { return true; }
 	return !!(mixer['time'] && mixer['time']['monitor'] == 'yes');
 }
 
@@ -619,7 +622,7 @@ $(document).on('change', '.studio_config', function() {
 	}
 	if (setting == 'monitor') {
 		mixer['time']['monitor'] = value;
-		studioApplyMonitor();
+		studioApplyMonitor(true);
 		studioSaver();
 		return;
 	}
@@ -678,9 +681,13 @@ function studioListenInputText(channel) {
 function studioListenSetActive(active) {
 	studioListenActive = !!active;
 	var button = $('#studio_listen_toggle');
-	if (!button.length) { return; }
-	button.attr('aria-pressed', studioListenActive ? 'true' : 'false');
-	button.text(studioListenActive ? studioListenText('Listening') : studioListenText('Listen'));
+	if (button.length) {
+		button.attr('aria-pressed', studioListenActive ? 'true' : 'false');
+		button.text(studioListenActive ? studioListenText('Listening') : studioListenText('Listen'));
+	}
+	// The transport's Monitor button is the same live path; when Listen starts
+	// or stops, the button says so too.
+	if (typeof studioMonitorButtonRender === 'function') { studioMonitorButtonRender(); }
 }
 
 function studioListenRender(data) {
@@ -733,15 +740,27 @@ function studioListenStatus() {
 }
 
 function studioListenShowError(text) {
+	text = text || '';
 	var el = $('#studio_engine_error');
-	if (el.length) { el.text(text || ''); }
+	if (el.length) { el.text(text); }
+	// The Monitor button is in the transport, where the error must be visible
+	// even when Configure is closed.
+	$('#studio_monitor_note').text(text);
 }
 
-function studioListenFailed(xhr) {
+// `the audio engine is not running on this machine` is not an error when the
+// person merely pressed Monitor: the browser path is the fallback, so a quiet
+// start leaves the engine's panel alone.
+function studioListenNotRunning(error) {
+	return /not running/i.test(String(error || ''));
+}
+
+function studioListenFailed(xhr, quiet) {
 	var data = xhr && xhr.responseJSON;
 	studioListenPollStop();
 	studioListenSetActive(false);
-	studioListenShowError((data && data.error) ? data.error : studioListenText('the audio engine did not answer'));
+	var error = (data && data.error) ? data.error : studioListenText('the audio engine did not answer');
+	if (!(quiet && studioListenNotRunning(error))) { studioListenShowError(error); }
 }
 
 // Live listening is one input, not a take: its pedals are the selected
@@ -756,7 +775,7 @@ function studioListenInserts() {
 	}).map(function (ins) { return studioEffectKind(ins.name); }).join(',');
 }
 
-function studioListenStart() {
+function studioListenStart(quiet) {
 	studioListenShowError('');
 	$.ajax({
 		url: '/manager/studio/take',
@@ -772,7 +791,9 @@ function studioListenStart() {
 			data = studioEngineAnswer(data);
 			if (data.ok !== true) {
 				studioListenSetActive(false);
-				studioListenShowError(data.error || studioListenText('the audio engine did not answer'));
+				if (!(quiet && studioListenNotRunning(data.error))) {
+					studioListenShowError(data.error || studioListenText('the audio engine did not answer'));
+				}
 				studioListenRender(data);
 				return;
 			}
@@ -780,7 +801,7 @@ function studioListenStart() {
 			studioListenRender(data);
 			studioListenPollStart();
 		},
-		error: studioListenFailed
+		error: function (xhr) { studioListenFailed(xhr, quiet); }
 	});
 }
 
