@@ -13,6 +13,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file write_file);
 use File::Temp qw(tempdir);
+use MIME::Base64 qw(encode_base64);
 use RepoSource;
 use JawnOSTest;
 
@@ -109,21 +110,21 @@ unlike($merge, qr/unless \(-e \$dest && !&subs::file_sentinel_stub\(\$dest\)\) \
 
 # --- the open fetches it once ------------------------------------------------
 my $open = read_file("$root/lib/JawnOS/Manager/Part04.pm");
-like($open, qr/&subs::media_fetch_on_demand\(\$file, \$source\)/,
-	'opening a file that is not here asks the house for it');
-like($open, qr/&subs::render_in_subprocess\(\$c,/,
-	'and does it in a child, so the worker is free to answer other requests');
-like($open, qr/Mojo::IOLoop->reset\(\{ freeze => 1 \}\)/,
-	'the child gets its own reactor for the blocking fetch');
-unlike($open, qr/eval \{ &subs::media_fetch_on_demand/,
+like($open, qr/&subs::media_fetch_on_demand_p\(\$file, \$source\)/,
+	'opening a file that is not here asks the house without blocking');
+like($open, qr/\$c->render_later/, 'the answer is deferred while the peer responds');
+like($open, qr/&subs::request_busy_release\(\$c\)/,
+	'and the busy slot is released meanwhile');
+unlike($open, qr/render_in_subprocess/, 'no child process is needed');
+unlike($open, qr/eval \{ &subs::media_fetch_on_demand\(/,
 	'the route no longer blocks on the fetch itself');
 like($open, qr/&subs::files_cache_source\(\$file\)/,
 	'a request that names only the path reads the source from the cache row');
 like($open, qr/\$on_demand_entry = \$f;/, 'the appointment entry goes with the request');
 
 my $file_pm = read_file("$root/lib/JawnOS/Domain/File.pm");
-my ($fetch) = $file_pm =~ /(sub media_fetch_on_demand\b.*?\n\})/s;
-ok($fetch, 'media_fetch_on_demand exists');
+my ($fetch) = $file_pm =~ /(sub media_fetch_on_demand_p\b.*?\n\})/s;
+ok($fetch, 'media_fetch_on_demand_p exists');
 like($fetch, qr/\@\{ &subs::peer_candidates\(\$remembered\) \}/,
 	'the order comes from the one shared helper');
 
@@ -188,6 +189,53 @@ like($fetch, qr/\@\{ &subs::peer_candidates\(\$remembered\) \}/,
 	is(subs::media_fetch_on_demand($path, { remote_f => '/house/throttled.bin', remote_peer => 'sig-wake' }), 0,
 		'the next request gives up at once');
 	is($calls, 1, 'so one worker pays the timeout, not every redraw');
+	subs::db_query('delete from remote_machines');
+}
+
+# The promise path with a peer that has the bytes. The fake UA answers the
+# chain media_fetch_on_demand_p builds; the body is base64, as as_is returns it.
+{
+	package FakeUA;
+	sub new { bless { body => $_[1] }, $_[0] }
+	sub inactivity_timeout { $_[0] }
+	sub request_timeout { $_[0] }
+	sub connect_timeout { $_[0] }
+	sub get_promise {
+		my ($self) = @_;
+		my $res = bless { body => $self->{body} }, 'FakeRes';
+		return Mojo::Promise->resolve(bless { res => $res }, 'FakeTx');
+	}
+	package FakeRes;
+	sub is_success { 1 }
+	sub body { $_[0]->{body} }
+	package FakeTx;
+	sub res { $_[0]->{res} }
+}
+
+{
+	%subs::media_fetch_down = ();
+	subs::db_query('delete from remote_machines');
+	my $now = subs::rightNow();
+	subs::db_insert('remote_machines', {
+		uuid => 'u-ok', signatorial => 'sig-ok', device => 'server',
+		hostname => 'hub', connection => 'active',
+		timestamp => $now, server_time => $now,
+	});
+	no warnings 'redefine';
+	local *subs::remote_agent_for = sub {
+		return { manager => 'https://hub.invalid', ua => FakeUA->new(encode_base64('hello', '')) };
+	};
+	my $path = "$scratch/ondemand-ok.bin";
+	# The merge is what writes the source row; the fetch re-notes the path and
+	# must keep it, so seed it the way the merge does.
+	subs::files_cache_note($path, '/house/ok.bin', 'sig-ok');
+	is(subs::media_fetch_on_demand($path, { remote_f => '/house/ok.bin', remote_peer => 'sig-ok' }), 1,
+		'a peer with the bytes completes the fetch');
+	is(read_file($path), 'hello', 'and the file lands where the appointment expects it');
+	my $source = subs::files_cache_source($path);
+	is($source->{'remote_f'}, '/house/ok.bin', 'the source is remembered for a path-only open');
+	ok(!exists $subs::media_fetch_down{$path}, 'and a success clears the failure note');
+	unlink $path;
 	subs::db_query('delete from remote_machines');
 }
 like($fetch, qr/remoted=yes/, 'a peer answers the read instead of handing it on again');

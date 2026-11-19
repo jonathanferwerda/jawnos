@@ -26,6 +26,7 @@ use List::Util qw(shuffle);
 use MIME::Base64;
 use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
 use Mojo::IOLoop;
+use Mojo::Promise;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
@@ -352,51 +353,95 @@ sub files_pressure_sweep {
 # the next peer is asked, and when none has it the caller reports it absent.
 # The request carries `remoted=yes`, so the peer answers this read instead of
 # handing it on again.
-sub media_fetch_on_demand {
+# The promise form: a request worker keeps serving while the house is asked.
+# The caller renders later and runs its serve path when this resolves (1 when
+# the bytes were written, 0 when no peer has them or the path is throttled).
+sub media_fetch_on_demand_p {
 	my ($path, $entry) = @_;
-	return 0 unless defined $path && length $path;
+	my $promise = Mojo::Promise->new;
+	return $promise->resolve(0) unless defined $path && length $path;
 	$entry = {} unless ref $entry eq 'HASH';
 	my $want = $entry->{'remote_f'};
-	return 0 unless defined $want && length $want;
+	return $promise->resolve(0) unless defined $want && length $want;
 	my $remembered = $entry->{'remote_peer'} // '';
 	my $now = &subs::rightNow();
 	# A gallery asks the same missing picture on every redraw. Remember a failed
 	# attempt for a minute per worker so it does not pay the connect timeout
 	# again and again.
-	return 0 if $media_fetch_down{$path} && $now - $media_fetch_down{$path} < 60000;
+	return $promise->resolve(0) if $media_fetch_down{$path} && $now - $media_fetch_down{$path} < 60000;
 	# Server first, then the machine the row came from, then the rest: one order
 	# for the whole house, shared with the games library (peer_candidates).
 	my @candidates = @{ &subs::peer_candidates($remembered) };
-	return 0 unless @candidates;
+	return $promise->resolve(0) unless @candidates;
 	my $dir = $path;
 	$dir =~ s{/[^/]+$}{};
 	if (length $dir && !-d $dir) { eval { File::Path::make_path($dir); 1 } }
-	foreach my $row (@candidates) {
-		# The roster is a cached ping: 'active' is believable only while its
-		# heartbeat is fresh. A machine that slept without a clean goodbye
-		# leaves an active row behind; do not spend a worker's connect timeout
-		# on it.
-		my $seen = 0 + ($row->{'server_time'} // $row->{'timestamp'} // 0);
-		next if $seen && $now - $seen > 120000;
-		my $agent = eval { &subs::remote_agent_for($row->{'uuid'}) } || {};
-		next if $agent->{'error'} || !$agent->{'manager'};
-		my $url = $agent->{'manager'} . '/file_open?as_is=yes&remoted=yes&subprocess=yes&file=' . &subs::url_escape($want);
-		my $res = eval {
-			$agent->{'ua'}->inactivity_timeout(6)->request_timeout(20)->connect_timeout(4)
-				->get($url)->result
-		};
-		next unless $res && $res->is_success;
-		my $bytes = &synced_file_payload($res->body, $path);
-		next unless defined $bytes && length $bytes;
-		my $temp = $path . '.part.' . $$ . '.' . int(rand(1_000_000));
-		my $wrote = eval { &write_file($temp, $bytes); 1 };
-		unless ($wrote && rename($temp, $path)) { unlink $temp; next; }
-		&files_cache_note($path);
-		delete $media_fetch_down{$path};
-		return 1;
-	}
-	$media_fetch_down{$path} = $now;
-	return 0;
+	my $done = 0;
+	my $finish = sub {
+		my ($ok) = @_;
+		return if $done;
+		$done = 1;
+		if ($ok) {
+			delete $media_fetch_down{$path};
+			$promise->resolve(1);
+		}
+		else {
+			$media_fetch_down{$path} = $now;
+			$promise->resolve(0);
+		}
+	};
+	my $index = 0;
+	my $next;
+	$next = sub {
+		return if $done;
+		while ($index < @candidates) {
+			my $row = $candidates[$index++];
+			# The roster is a cached ping: 'active' is believable only while its
+			# heartbeat is fresh. A machine that slept without a clean goodbye
+			# leaves an active row behind; do not spend a connect timeout on it.
+			my $seen = 0 + ($row->{'server_time'} // $row->{'timestamp'} // 0);
+			next if $seen && $now - $seen > 120000;
+			my $agent = eval { &subs::remote_agent_for($row->{'uuid'}) } || {};
+			next if $agent->{'error'} || !$agent->{'manager'};
+			my $url = $agent->{'manager'} . '/file_open?as_is=yes&remoted=yes&subprocess=yes&file=' . &subs::url_escape($want);
+			my $chain = eval {
+				$agent->{'ua'}->inactivity_timeout(6)->request_timeout(20)->connect_timeout(4)
+					->get_promise($url)
+			};
+			next unless $chain;
+			$chain->then(sub {
+				my ($tx) = @_;
+				my $res = $tx ? $tx->res : undef;
+				unless ($res && $res->is_success) { $next->(); return; }
+				my $bytes = &synced_file_payload($res->body, $path);
+				unless (defined $bytes && length $bytes) { $next->(); return; }
+				my $temp = $path . '.part.' . $$ . '.' . int(rand(1_000_000));
+				my $wrote = eval { &write_file($temp, $bytes); 1 };
+				unless ($wrote && rename($temp, $path)) { unlink $temp; $next->(); return; }
+				&files_cache_note($path);
+				$finish->(1);
+			})->catch(sub {
+				$next->();
+			});
+			return;
+		}
+		$finish->(0);
+	};
+	$next->();
+	return $promise;
+}
+
+# The blocking form stays for scripts and tests. A request worker must use the
+# promise form: wait() returns at once inside a running loop, so the answer
+# would never be served.
+sub media_fetch_on_demand {
+	my ($path, $entry) = @_;
+	return 0 if Mojo::IOLoop->is_running;
+	my $promise = &media_fetch_on_demand_p($path, $entry);
+	my $result = 0;
+	$promise->then(sub { $result = shift || 0 });
+	$promise->wait;
+	return $result;
 }
 
 	sub file_encrypter {

@@ -180,9 +180,9 @@ sub rock_and_roll($c) {
 			$source = ref $on_demand_entry eq 'HASH' ? $on_demand_entry : &subs::files_cache_source($file);
 		}
 		# Everything below serves the file. It is a closure because a file this
-		# machine does not have is fetched in a child (render_in_subprocess), and
-		# this route's answer has to wait for that child without holding the
-		# worker: the parent's event loop serves other requests meanwhile.
+		# machine does not have is fetched asynchronously, and this route's
+		# answer has to wait for that fetch without holding the worker: the
+		# event loop serves other requests meanwhile.
 		my $serve = sub {
 		my @ext = split /\./, $file;
 		my $ext = $ext[-1];
@@ -785,29 +785,24 @@ sub rock_and_roll($c) {
 		# free to answer the rest of the page. The serve closure runs when the
 		# child returns, whether it wrote the file or not.
 		if (ref $source eq 'HASH' && defined $source->{'remote_f'} && length $source->{'remote_f'}) {
-			my $now = &subs::rightNow();
-			unless ($subs::media_fetch_down{$file} && $now - $subs::media_fetch_down{$file} < 60000) {
-				&subs::render_in_subprocess($c,
-					sub {
-						# A forked child inherits the request worker's reactor;
-						# reset it so the blocking UserAgent in the fetch has a
-						# loop of its own (the subprocessor wrapper does the same).
-						Mojo::IOLoop->reset({ freeze => 1 });
-						eval { JawnOS::Platform::Process::release_listeners() };
-						return &subs::media_fetch_on_demand($file, $source) ? 1 : 0;
-					},
-					sub {
-						my ($c, $fetched) = @_;
-						# The child has its own copy of the throttle; make the
-						# parent remember the verdict too, so the next redraw
-						# does not spawn another child for the same path.
-						$subs::media_fetch_down{$file} = &subs::rightNow() unless $fetched;
-						delete $subs::media_fetch_down{$file} if $fetched;
-						$serve->();
-						return;
-					});
+			# Ask the house without blocking this worker: the event loop keeps
+			# serving while the peer answers. The promise resolves 1 (written) or
+			# 0 (absent/throttled); either way the serve closure finishes the
+			# request.
+			$c->render_later;
+			&subs::request_busy_release($c);
+			my $finish = sub {
+				eval { $serve->(); 1 } or do {
+					my $why = $@ || 'the file could not be served';
+					eval { $log->error('files on demand: ' . ($why =~ s/\s+/ /gr)) } if $log;
+					eval { $c->render(text => 'not found') };
+				};
 				return;
-			}
+			};
+			my $fetch = eval { &subs::media_fetch_on_demand_p($file, $source) };
+			unless ($fetch) { $finish->(); return; }
+			$fetch->then(sub { $finish->() }, sub { $finish->() });
+			return;
 		}
 		$serve->();
 		return;
