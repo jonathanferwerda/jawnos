@@ -1,4 +1,4 @@
-# tests-for: perl/help/topics_configure.pl public/js/manager/configure/03_platform_misc.js public/js/manager/configure/01_update_controls.js public/js/manager/websocket/02_heartbeat_and_reload.js templates/configure/device_lister/body.html.ep templates/layouts/manager.html.ep
+# tests-for: perl/help/topics_configure.pl public/js/manager/configure/03_platform_misc.js public/js/manager/configure/01_update_controls.js public/js/manager/websocket/02_heartbeat_and_reload.js public/js/manager/websocket/01_message_handler.js lib/JawnOS/Manager/Part35.pm lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Domain/Loader.pm templates/configure/device_lister/body.html.ep templates/layouts/manager.html.ep
 # covers:    Auto-reload on update is a per-device choice, off by default. Off
 #            means pill only: a shipped script change waits for a press instead
 #            of reloading a hidden tab on its own. On restores the auto-reload.
@@ -106,5 +106,51 @@ my $listen_at = index($layout, "document.addEventListener('error'");
 my $first_css = index($layout, 'rel="stylesheet" href="/css/keyboard.css');
 ok($listen_at >= 0 && $first_css > $listen_at,
 	'the listener is armed before the first stylesheet link');
+
+# --- the reload waits for the NEW build, not just an answer -----------------
+# The socket hands out the new revision while the tree is still restarting, so
+# the wait must not reload into a closed port. But a 200 from the tree being
+# REPLACED proves only that it is still up: reloading into it comes back to the
+# same old page and the update never lands. The wait therefore compares the
+# health answer with the boot stamp and version this page load began with.
+like($reload, qr/var page_boot = window\.jawnosPageBoot \|\| '';/,
+	'the wait remembers the boot this page load first saw');
+like($reload, qr/var page_version = \(typeof jawnos_version !== 'undefined'\)/,
+	'and the version the page itself was served');
+like($reload, qr/boot !== page_boot/,
+	'a restart since the page loaded proves the new build is serving');
+like($reload, qr/version !== page_version/,
+	'so does a different version');
+like($reload, qr/var comparable = \(boot && page_boot\) \|\| \(version && page_version\);/,
+	'an answer carrying neither stamp is not waited on');
+unlike($reload, qr/\.done\(go\)/, 'a bare 200 is no longer enough to reload');
+like($reload, qr/else \{ go\(\); \}/, 'the bound still reloads, so a tab is never frozen');
+
+# The page records the boot it loaded under, once, in memory: the comparison
+# above has nothing to compare without it, and sessionStorage would carry a
+# stale stamp into the reloaded page.
+my $handler = read_file("$root/public/js/manager/websocket/01_message_handler.js");
+like($handler, qr/if \(!window\.jawnosPageBoot\) \{ window\.jawnosPageBoot = data\['boot'\]; \}/,
+	'the first connect of a page load records its boot');
+unlike($handler, qr/sessionStorage\.setItem\('jawnosPageBoot'/,
+	'it is not kept in sessionStorage: a reload must start a fresh record');
+
+# One stamp, both callers: the socket's connect and the health read must answer
+# the same boot, or the wait compares two different clocks.
+my $generate = read_file("$root/lib/JawnOS/Domain/Generate.pm");
+my $part35   = read_file("$root/lib/JawnOS/Manager/Part35.pm");
+my $ws_route = read_file("$root/lib/JawnOS/Controller/manager_ws.pm");
+my $loader   = read_file("$root/lib/JawnOS/Domain/Loader.pm");
+
+like($generate, qr/sub jawn_boot_stamp \{/, 'one helper mints the tree boot stamp');
+like($generate, qr/\(\(stat\(\$boot_file\)\)\[9\] \|\| 0\) \. '-' \. \$boot_pid/,
+	'the stamp is the pid file mtime and the pid it holds');
+like($loader, qr/JawnOS::Domain::Generate' for qw\([^)]*\bjawn_boot_stamp\b/,
+	'the domain map names the helper, so subs:: finds it');
+like($part35, qr/boot\s+=> &subs::jawn_boot_stamp\(\),/,
+	'the health read carries the stamp');
+like($ws_route, qr/my \$boot_stamp = &subs::jawn_boot_stamp\(\);/,
+	'and the socket connect answers the same one');
+unlike($ws_route, qr/stat\(\$boot_file\)/, 'the socket no longer mints its own copy');
 
 done_testing();

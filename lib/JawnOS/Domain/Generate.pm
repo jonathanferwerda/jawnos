@@ -594,6 +594,20 @@ sub jawn_version {
 # (the Coding agent's commit subject reads it) must be told to forget it.
 sub jawn_version_forget { undef $jawn_version_cache; }
 
+# The tree's boot: the master writes ~/.president/pid once at boot, so its pid
+# and mtime move only when the process does - and a quick restart can reuse a
+# pid, which is why the stamp carries both. A browser compares it to tell a
+# restart (which replaces the code and drops every media grant) from a socket
+# that merely flapped, so the socket's connect and /manager/health must answer
+# the same stamp: one helper, both callers.
+sub jawn_boot_stamp {
+	my $boot_file = &subs::home('~/.president/pid');
+	return '' unless -e $boot_file;
+	my $boot_pid = eval { read_file($boot_file) } // '';
+	$boot_pid =~ s/\s+//g;
+	return ((stat($boot_file))[9] || 0) . '-' . $boot_pid;
+}
+
 sub code_revision {
 	return $code_revision_cache if $code_revision_cache;
 	my @files;

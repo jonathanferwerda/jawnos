@@ -404,8 +404,9 @@ sub marker_session_store($session) {
 # ---------------------------------------------------------------------------
 # A headless health read: what a supervisor or `jawnosctl status` needs to tell
 # "the tree is up and current" from "it is wedged" - the running version and
-# commit, how long it has been up, the database and its write-ahead log, and
-# each peer's last reported version and link state. No setting value crosses
+# commit, the boot stamp the socket also sends (a browser waiting to reload
+# compares it), how long it has been up, the database and its write-ahead log,
+# and each peer's last reported version and link state. No setting value crosses
 # here. A server has no session and no login, so the route rides the gate-exempt
 # rail (hooks.pl) and gates itself: a loopback caller (the machine's own CLI or
 # monitor), an approved browser session, or a signed peer (peer_verify against
@@ -487,6 +488,7 @@ sub health_report {
 	return {
 		ok             => 1,
 		version        => &subs::jawn_version(),
+		boot           => &subs::jawn_boot_stamp(),
 		commit         => $revision->{'commit'},
 		branch         => $revision->{'branch'},
 		dirty          => $revision->{'dirty'} ? 1 : 0,

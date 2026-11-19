@@ -93,6 +93,11 @@ function wsMessageDispatch(raw) {
 			// A window that slept through the screening's start push asks again
 			// on every connect: the boot stamp is what a reconnect carries.
 			if (typeof jawnScreenPoll === 'function') { jawnScreenPoll(); }
+			// The boot THIS page load first saw, kept for the whole load: the
+			// update reload compares the tree's answer against it, so a restart
+			// that happens while the tab waits is what it is watching for. Not
+			// sessionStorage - a reloaded page must start a fresh record.
+			if (!window.jawnosPageBoot) { window.jawnosPageBoot = data['boot']; }
 			var boot = window.jawnosMediaBoot;
 			window.jawnosMediaBoot = data['boot'];
 			if (boot && boot !== data['boot'] && typeof jawnosMediaRefresh === 'function') {

@@ -530,20 +530,38 @@ function jawnosUpdateQuietReload() {
 	}
 }
 
-// Reload, but only once the tree is actually answering. An update is a push
-// followed by a restart: the tab's socket reconnects and hands out the revision
-// while the tree is still coming back, and a bare reload in that window lands on
-// a closed port - the browser's own error page - leaving the app stranded until
-// it is re-entered from the dashboard. Ask the health route (which trusts a
-// local caller, so it needs no session) until it answers, then reload; if it
-// never does, reload anyway, so a tab is never frozen waiting on a dead tree.
+// Reload, but only once the tree is actually answering WITH THE NEW BUILD. An
+// update is a push followed by a restart: the tab's socket reconnects and hands
+// out the revision while the tree is still coming back, and a bare reload in
+// that window lands on a closed port - the browser's own error page - leaving
+// the app stranded until it is re-entered from the dashboard. So ask the health
+// route (which trusts a local caller, so it needs no session) until its answer
+// proves the new build is what is serving: a restart since this page loaded
+// (the boot stamp moved) or a different version. A 200 from the tree being
+// replaced proves only that it is still up - reloading into it comes back to
+// this same page and the update never lands. If it never proves, reload anyway,
+// so a tab is never frozen waiting on a dead tree.
 function jawnosReloadWhenReady(attempt) {
 	attempt = attempt || 0;
 	var go = function () { location.reload(); };
+	var page_boot = window.jawnosPageBoot || '';
+	var page_version = (typeof jawnos_version !== 'undefined') ? String(jawnos_version) : '';
+	var again = function () {
+		if (attempt < 40) { setTimeout(function () { jawnosReloadWhenReady(attempt + 1); }, 1000); }
+		else { go(); }
+	};
 	$.ajax({ url: '/manager/health', type: 'GET', dataType: 'json', cache: false, timeout: 4000 })
-		.done(go)
-		.fail(function () {
-			if (attempt < 40) { setTimeout(function () { jawnosReloadWhenReady(attempt + 1); }, 1000); }
-			else { go(); }
-		});
+		.done(function (h) {
+			h = h || {};
+			var boot = h.boot ? String(h.boot) : '';
+			var version = h.version ? String(h.version) : '';
+			var comparable = (boot && page_boot) || (version && page_version);
+			var moved = (boot && page_boot && boot !== page_boot)
+				|| (version && page_version && version !== page_version);
+			// an answer carrying neither stamp cannot be compared: take it as
+			// ready, as before, rather than waiting out the bound
+			if (moved || !comparable) { go(); return; }
+			again();
+		})
+		.fail(again);
 }

@@ -101,16 +101,16 @@ sub action_47050 {
 	$connection_id = $connection_id->connection;
 	my $code_rev = &subs::code_revision();
 	# The tree's boot, so the client can tell a restart from a socket that merely
-	# flapped. A restart clears every media grant (padlock_seed_default); the pid
-	# file is written once by the master at boot, so its pid and mtime change only
-	# then. Keyed on both, because a quick restart can reuse a pid.
-	my $boot_file = &subs::home('~/.president/pid');
-	my $boot_stamp = '';
-	if (-e $boot_file) {
-		my $boot_pid = eval { read_file($boot_file) } // '';
-		$boot_pid =~ s/\s+//g;
-		$boot_stamp = ((stat($boot_file))[9] || 0) . '-' . $boot_pid;
-	}
+	# flapped. A restart clears every media grant (padlock_seed_default): the pid
+	# file is written once by the master at boot, so its pid and mtime change
+	# only then. Keyed on both, because a quick restart can reuse a pid.
+	#
+	# The health route answers the same stamp (GET /manager/health -> boot), and
+	# a browser waiting to reload compares the two: a restart since its page
+	# loaded is one proof the new build is what serves. Minting it in one place
+	# (subs::jawn_boot_stamp) is what keeps the two answers comparable, so this
+	# block and the route can never drift by a restart.
+	my $boot_stamp = &subs::jawn_boot_stamp();
 	my $init_data = {
 		browser_tab_id => $browser_tab_id,
 		browser_tab => $browser_tab,
