@@ -501,15 +501,19 @@ sub clothesline_anticipatory_week {
 	my $start = timelocal(0, 0, 0, $lt[3], $lt[4], $lt[5]) * 1000;
 	my $monday = $start - ((($lt[6] + 6) % 7) * 86400 * 1000);
 	# The near two months are read once for the whole week: a scan a day would
-	# read the same history seven times, and that read was the dialog's wait.
+	# read the same history seven times, and that read was the dialog's wait. The
+	# sockets are read once for the same reason, and handed to every day, so the
+	# days that were only inferred are marked by one sighting rather than seven.
 	my $history = [ &clothesline_place_history($now) ];
+	my $live = &clothesline_device_liveness($now);
+	$live = undef unless ref $live eq 'HASH' && ref $live->{'devices'} eq 'HASH' && %{ $live->{'devices'} };
 	my @week;
 	for my $i ( 0 .. 6 ) {
 		my $day_ms = &calendar_shift($monday, $i, 'day');
 		my @d = localtime(int($day_ms / 1000));
 		my $morning = timelocal(0, 0, 9, $d[3], $d[4], $d[5]) * 1000;
 		my $key = &day_key($morning);
-		my $daily = &clothesline_daily_hours($morning, history => $history);
+		my $daily = &clothesline_daily_hours($morning, history => $history, live => $live);
 		# The whole day, not the head: every routine the day keeps, and every habit
 		# the one day the routine was read from happened to leave out.
 		my $ant = &clothesline_sequence_anticipate($daily, $morning, limit => 400, all_waves => 1);

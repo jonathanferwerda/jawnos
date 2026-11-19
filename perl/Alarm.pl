@@ -368,6 +368,9 @@ sub alarm_haircut() {
 	# retired first, then the closed rows whose month is up are deleted by row (a
 	# live sibling on the same tab must survive).
 	&subs::websocket_sessions_cull($timestamp);
+	# The window transitions carry the same month's warranty, so they expire with
+	# the sessions they were reported over.
+	&subs::db_query('delete from window_events where cast(warranty as integer) < cast(? as integer)', $timestamp);
 
 	# Keep the planner's statistics honest. optimize only re-runs ANALYZE for tables
 	# whose stats are stale or missing, and analysis_limit keeps each run bounded,

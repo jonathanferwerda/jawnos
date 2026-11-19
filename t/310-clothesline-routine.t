@@ -6,7 +6,15 @@
 #            The day is read as waves - a long pause between steps starts the
 #            next one - and the line shows the wave under way plus one ahead,
 #            never two, and the head moves by the order the person takes the day
-#            in, never by the hour on the clock. A routine keeps the day it began past midnight, and
+#            in, never by the hour on the clock. A day is the night's own end:
+#            the learned rests place it, a short night counts, a brief waking in
+#            the night is a blip, and a long daytime gap is not a day. Each day
+#            carries its profile (a day shift and a night shift are two shapes),
+#            and the most recent rest selects the shape the line leads with. The
+#            sockets say whether the house was up or out: a night the house was
+#            out for is one inferred day, a house never seen at all invents
+#            nothing, and a long house-up afternoon is only a data gap. A
+#            routine keeps the day it began past midnight, and
 #            every press re-hangs the line in the reply instead of waiting for
 #            the poll. Only the appointments the person starts and stops
 #            themselves are learned; a task or default step stays with its
@@ -218,21 +226,58 @@ my $lhead = subs::clothesline_sequence_anticipate($late, $latebase + (310 * 6000
 is($lhead->{'current_wave'}, $bhead->{'current_wave'},
 	'the same progress at a later hour sits in the same wave');
 
-# --- six hours of quiet starts the day, whenever it began -------------------
-my @quiet5 = (
-	row('wake_up', JawnOSTest::ts(2026, 11, 16, 5, 0)),
-	row('breakfast', JawnOSTest::ts(2026, 11, 16, 10, 0)),
-);
-my $q5 = subs::clothesline_routine_scan(\@quiet5, JawnOSTest::ts(2026, 11, 16, 10, 30),
+# --- a night ends the day, however short it is ------------------------------
+# Six hours of quiet was a guess. The day is now the learned night's own end: a
+# five-hour night opens a day as surely as a nine-hour one, and what was
+# finished before it is not today's. The steps come in bursts here because a day
+# of lone presses is a day of blips, which the rest learning absorbs into one
+# long quiet - a burst is what the house's own day looks like.
+sub burst {
+	my ($rows, $app, $y, $m, $d, $h, $mi, $n) = @_;
+	$n = 8 unless defined $n;
+	push @{$rows}, row($app, JawnOSTest::ts($y, $m, $d, $h, $mi + 5 * $_)) for 0 .. $n - 1;
+	return $rows;
+}
+
+# A five-hour night (22:55 -> 04:00) over four nights, every daytime gap shorter.
+my @quiet5;
+for my $day (1 .. 4) {
+	burst(\@quiet5, 'first',   2026, 11, $day, 4,  0);
+	burst(\@quiet5, 'second',  2026, 11, $day, 8,  0);
+	burst(\@quiet5, 'third',   2026, 11, $day, 12, 0);
+	burst(\@quiet5, 'fourth',  2026, 11, $day, 16, 0);
+	burst(\@quiet5, 'fifth',   2026, 11, $day, 19, 0);
+	burst(\@quiet5, 'evening', 2026, 11, $day, 22, 20);
+}
+burst(\@quiet5, 'first', 2026, 11, 5, 4, 0);
+my $q5 = subs::clothesline_routine_scan(\@quiet5, JawnOSTest::ts(2026, 11, 5, 4, 40),
 	window_days => 60, session_days => 14);
-is($q5->{'done'}{'wake_up'}, 1, 'a five-hour quiet keeps the same run');
-my @quiet7 = (
-	row('wake_up', JawnOSTest::ts(2026, 11, 16, 5, 0)),
-	row('breakfast', JawnOSTest::ts(2026, 11, 16, 12, 0)),
-);
-my $q7 = subs::clothesline_routine_scan(\@quiet7, JawnOSTest::ts(2026, 11, 16, 12, 30),
-	window_days => 60, session_days => 14);
-ok(!defined $q7->{'done'}{'wake_up'}, 'a seven-hour quiet starts a new day');
+is($q5->{'day'}{'start'}, JawnOSTest::ts(2026, 11, 5, 4, 0),
+	'a five-hour night opens the day at its wake');
+is_deeply([ sort keys %{ $q5->{'done'} } ], ['first'],
+	'and the evening before the night is not today\'s');
+
+# A nine-hour night (22:55 -> 08:00) with one day's seven-hour daytime gap, the
+# house up all through it: idle time, not a night, so the day goes on across it.
+my @quiet7;
+for my $day (1 .. 3) {
+	burst(\@quiet7, 'first',   2026, 11, $day, 8,  0);
+	burst(\@quiet7, 'second',  2026, 11, $day, 10, 0);
+	burst(\@quiet7, 'third',   2026, 11, $day, 12, 0);
+	burst(\@quiet7, 'fourth',  2026, 11, $day, 14, 0);
+	burst(\@quiet7, 'fifth',   2026, 11, $day, 16, 0);
+	burst(\@quiet7, 'sixth',   2026, 11, $day, 19, 0);
+	burst(\@quiet7, 'evening', 2026, 11, $day, 22, 20);
+}
+burst(\@quiet7, 'first', 2026, 11, 4, 8,  0);
+burst(\@quiet7, 'fifth', 2026, 11, 4, 16, 0);
+my $q7 = subs::clothesline_routine_scan(\@quiet7, JawnOSTest::ts(2026, 11, 4, 17, 0),
+	window_days => 60, session_days => 14, live => { down => [], up => 1 });
+is($q7->{'day'}{'start'}, JawnOSTest::ts(2026, 11, 4, 8, 0),
+	'a seven-hour daytime gap with the house up does not open a day');
+is(scalar keys %{ $q7->{'done'} }, 2, 'the day keeps both of its stretches of steps');
+ok($q7->{'done'}{'first'} && $q7->{'done'}{'fifth'},
+	'the steps on both sides of the gap are still today\'s');
 
 # --- a curated day hands in its own order, and still advances ---------------
 # The person put lunch first, then the morning; the coffee is already taken, and
@@ -991,6 +1036,250 @@ cmp_ok(scalar @{ $shifts->{'profiles'} }, '>=', 2,
 	'a day shift and a night shift are at least two profiles (a transition day can be its own)');
 ok($shifts->{'profile'} && abs($shifts->{'profile'}{'start_hour'} - 9) < 2,
 	'the most recent rest selects the night-shift profile');
+
+# --- the day is the night's own end, and each shape keeps its own day -------
+# The rest learning says where the quiet was; the day segments say what it
+# means: the wake that ends a night opens a day, a short night is still a
+# night, a brief waking inside one is a blip, and a quiet the house was up for
+# is idle time, not a boundary. Each segment carries its steps, the waves they
+# fell into and where those waves paused, and the profile (the shape of the
+# day) the rest that opened it belongs to.
+
+# A steady day: bursts every two hours from 04:00, an evening burst at 22:20,
+# and a five-hour night to the next 04:00. Five days, the last one only its wake.
+my @steady;
+for my $day (1 .. 4) {
+	my $n = 0;
+	for (my $h = 4; $h <= 20; $h += 2) { burst(\@steady, 'step' . (++$n), 2026, 11, $day, $h, 0); }
+	burst(\@steady, 'evening', 2026, 11, $day, 22, 20);
+}
+burst(\@steady, 'step1', 2026, 11, 5, 4, 0);
+my $days = subs::clothesline_day_segments(\@steady, undef, JawnOSTest::ts(2026, 11, 5, 4, 40),
+	window_days => 60);
+is($days->{'source'}, 'model', 'a week of nights is learned as days');
+is(scalar @{ $days->{'segments'} }, 5, 'one day per night, and the day the last one opened');
+my ($day4) = grep { $_->{'start'} == JawnOSTest::ts(2026, 11, 4, 4, 0) } @{ $days->{'segments'} };
+ok($day4, 'a five-hour night opens its day at the wake');
+is($day4->{'stop'}, JawnOSTest::ts(2026, 11, 5, 4, 0), 'and it runs to the next night\'s wake');
+is($day4->{'day'}, subs::clothesline_day_index(JawnOSTest::ts(2026, 11, 4, 4, 0)),
+	'and keeps the local day it opened on');
+is(scalar @{ $day4->{'seq'} }, 80, 'the day holds exactly its own steps');
+is_deeply($day4->{'waves'}, [ map { my $w = $_; ($w) x 8 } 0 .. 9 ],
+	'each stretch of the day is its own wave');
+is(scalar @{ $day4->{'pauses'} }, 9, 'and the day knows where its waves paused');
+cmp_ok($day4->{'pauses'}[0]{'gap'}, '>', $day4->{'gap'}, 'a pause is a gap longer than the day\'s own');
+is($day4->{'profile'}{'start_app'}, 'step1', 'the shape opens with the step its days open with');
+is($day4->{'profile'}{'canonical'}{'seq'}[0], 'step1', 'and keeps its own canonical day');
+ok(defined $day4->{'profile'}{'pause'} && $day4->{'profile'}{'pause'} > 0,
+	'and the pause it runs in');
+is($days->{'profile'}{'id'}, $day4->{'profile'}{'id'},
+	'the most recent rest selects the shape the day runs in');
+
+# A three-hour night (00:55 -> 04:00) ends the day just as a long one does: the
+# late burst before it is yesterday's, not today's.
+my @short;
+for my $day (1 .. 4) {
+	my $n = 0;
+	for (my $h = 4; $h <= 20; $h += 2) { burst(\@short, 'step' . (++$n), 2026, 11, $day, $h, 0); }
+	burst(\@short, 'evening', 2026, 11, $day, 22, 20);
+	burst(\@short, 'late',    2026, 11, $day + 1, 0, 20);
+}
+burst(\@short, 'step1', 2026, 11, 5, 4, 0);
+my $short_day = subs::clothesline_routine_scan(\@short, JawnOSTest::ts(2026, 11, 5, 4, 40),
+	window_days => 60, session_days => 14);
+is($short_day->{'day'}{'start'}, JawnOSTest::ts(2026, 11, 5, 4, 0),
+	'a three-hour night still opens the day');
+is(scalar keys %{ $short_day->{'done'} }, 1, 'and only today\'s steps are finished');
+ok($short_day->{'done'}{'step1'} && !$short_day->{'done'}{'late'},
+	'the late burst before the short night is yesterday\'s');
+
+# A five-minute waking at 03:10 inside a seven-hour night is a blip: the night
+# stays one rest, and what came before it is not a new day.
+my @blip;
+for my $day (1 .. 4) {
+	my $n = 0;
+	for (my $h = 6; $h <= 20; $h += 2) { burst(\@blip, 'step' . (++$n), 2026, 11, $day, $h, 0); }
+	burst(\@blip, 'evening', 2026, 11, $day, 22, 20);
+}
+burst(\@blip, 'waking', 2026, 11, 2, 3, 10, 2);
+burst(\@blip, 'waking', 2026, 11, 3, 3, 10, 2);
+burst(\@blip, 'waking', 2026, 11, 4, 3, 10, 2);
+burst(\@blip, 'step1',  2026, 11, 5, 6, 0);
+my $blipped_day = subs::clothesline_day_segments(\@blip, undef, JawnOSTest::ts(2026, 11, 5, 6, 40),
+	window_days => 60);
+my ($blip_night) = grep { $_->{'start'} == JawnOSTest::ts(2026, 11, 3, 22, 55) } @{ $blipped_day->{'rests'} };
+ok($blip_night, 'a five-minute waking does not split the night');
+ok($blip_night && $blip_night->{'stop'} == JawnOSTest::ts(2026, 11, 4, 6, 0),
+	'and the night keeps its own length');
+ok($blip_night && scalar @{ $blip_night->{'blips'} }, 'with the waking kept as a blip');
+my $blip_scan = subs::clothesline_routine_scan(\@blip, JawnOSTest::ts(2026, 11, 5, 6, 40),
+	window_days => 60, session_days => 14);
+is($blip_scan->{'day'}{'start'}, JawnOSTest::ts(2026, 11, 5, 6, 0),
+	'and the day opens at the night\'s end, not at the waking');
+ok(!$blip_scan->{'done'}{'waking'}, 'the night waking is not a step of today');
+
+# A shortened night: four hours instead of nine, and the day still turns over
+# at the early wake.
+my @early;
+for my $day (1 .. 3) {
+	my $n = 0;
+	for (my $h = 8; $h <= 20; $h += 2) { burst(\@early, 'step' . (++$n), 2026, 11, $day, $h, 0); }
+	burst(\@early, 'evening', 2026, 11, $day, 22, 20);
+}
+my $n4 = 0;
+for (my $h = 3; $h <= 19; $h += 2) { burst(\@early, 'early' . (++$n4), 2026, 11, 4, $h, 0); }
+burst(\@early, 'evening', 2026, 11, 4, 22, 20);
+my $early_day = subs::clothesline_routine_scan(\@early, JawnOSTest::ts(2026, 11, 4, 23, 0),
+	window_days => 60, session_days => 14);
+is($early_day->{'day'}{'start'}, JawnOSTest::ts(2026, 11, 4, 3, 0),
+	'a shortened night opens its day at the early wake');
+ok(!$early_day->{'done'}{'step5'}, 'and the long night\'s last day is not carried over');
+ok($early_day->{'done'}{'evening'}, 'while the early day\'s own evening is');
+
+# A seven-hour outage across the night is one inferred day: nothing was seen,
+# but the day happened, and its wake is the morning's.
+my @outage = @steady;
+# one device was seen in the window: a sighting is what makes `down` mean the
+# house was out rather than that nothing was ever retained (see the fresh-house
+# case below)
+my $outage_live = {
+	devices => { 'test|house' => { background => 0, span_ms => 4 * 3600 * 1000, sessions => 1 } },
+	down => [ [ JawnOSTest::ts(2026, 11, 4, 22, 55), JawnOSTest::ts(2026, 11, 5, 4, 0) ] ],
+	up => 1,
+	night => { start_hour => 22, end_hour => 4 },
+};
+my $out = subs::clothesline_day_segments(\@outage, $outage_live, JawnOSTest::ts(2026, 11, 5, 5, 0),
+	window_days => 60);
+my ($out_day) = grep { $_->{'start'} == JawnOSTest::ts(2026, 11, 5, 4, 0) } @{ $out->{'segments'} };
+ok($out_day, 'an outage across the night still opens the day at its wake');
+ok($out_day && $out_day->{'inferred'}, 'and that day is marked inferred');
+is(scalar(grep { $_->{'start'} > JawnOSTest::ts(2026, 11, 4, 21, 0) && $_->{'start'} < JawnOSTest::ts(2026, 11, 5, 9, 0) } @{ $out->{'segments'} }), 1,
+	'one day, not two: the outage opens one boundary');
+
+# The same seven hours of no steps with the house up is idle time, not a day.
+my $up_live = {
+	devices => { 'test|house' => { background => 0, span_ms => 8 * 3600 * 1000, sessions => 1 } },
+	down => [],
+	up => 1,
+};
+my $idle = subs::clothesline_day_segments(\@outage, $up_live, JawnOSTest::ts(2026, 11, 5, 5, 0),
+	window_days => 60);
+is($idle->{'source'}, 'model', 'a quiet day with the house up is still a day');
+ok(!grep({ $_->{'inferred'} } @{ $idle->{'segments'} }), 'but none of its days is inferred');
+
+# the daily hours route hands the liveness (and a pinned pause) to the scan
+my $hours = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 5, 5, 0),
+	history => [ \@outage, 60, 14 ], live => $outage_live);
+ok($hours->{'day'} && $hours->{'day'}{'inferred'}, 'the daily hours hand the liveness to the day');
+my $pinned_hours = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 5, 5, 0),
+	history => [ \@outage, 60, 14 ], pause => 6 * 3600 * 1000);
+ok(!$pinned_hours->{'day'}, 'and a pinned pause keeps the old split there too');
+
+# The house-up daytime gap is a data gap through the wired route too: the daily
+# hours open no day at the burst after it.
+my $gap_hours = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 4, 17, 0),
+	history => [ \@quiet7, 60, 14 ], live => $up_live);
+is($gap_hours->{'day'}{'start'}, JawnOSTest::ts(2026, 11, 4, 8, 0),
+	'a seven-hour house-up daytime gap opens no day through the daily hours');
+ok($gap_hours->{'done'}{'first'} && $gap_hours->{'done'}{'fifth'},
+	'and both of its stretches of steps are still today\'s');
+
+# A house whose sockets were never retained is not a house that was out. The
+# daily hours read the liveness themselves here (no `live` handed in), get no
+# sighting, and let the rests decide - so a fresh house opens no day it did not
+# learn and marks none inferred.
+&subs::db_query('delete from websockets');
+my $fresh = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 5, 5, 0),
+	history => [ \@outage, 60, 14 ]);
+ok($fresh->{'day'} && $fresh->{'day'}{'start'} == JawnOSTest::ts(2026, 11, 5, 4, 0),
+	'a fresh house still opens its day at the learned wake');
+ok(!$fresh->{'day'}{'inferred'}, 'and no day is called inferred with no socket ever seen');
+my $fresh_gap = subs::clothesline_daily_hours(JawnOSTest::ts(2026, 11, 4, 17, 0),
+	history => [ \@quiet7, 60, 14 ]);
+is($fresh_gap->{'day'}{'start'}, JawnOSTest::ts(2026, 11, 4, 8, 0),
+	'and a daytime gap with no sighting at all still opens no day');
+
+# Two shapes again, now through the days: the most recent rest picks the shape,
+# and the shape keeps its own canonical day and its own opener.
+my (@day_shift, @night_shift);
+for my $day (1 .. 7) {
+	my $n = 0;
+	for my $h ( 6, 9, 12, 15, 18, 20 ) { burst(\@day_shift, 'day' . (++$n), 2026, 11, $day, $h, 0); }
+	burst(\@day_shift, 'day_home', 2026, 11, $day, 22, 20);
+}
+for my $day (8 .. 14) {
+	my $n = 0;
+	for my $h ( 17, 19, 21, 23 ) { burst(\@night_shift, 'shift' . (++$n), 2026, 11, $day, $h, 0); }
+	for my $h ( 1, 3, 5, 7 ) { burst(\@night_shift, 'shift' . (++$n), 2026, 11, $day + 1, $h, 0); }
+}
+my @shapes = (@day_shift, @night_shift);
+my $shaped = subs::clothesline_day_segments(\@shapes, undef, JawnOSTest::ts(2026, 11, 15, 12, 0),
+	window_days => 60);
+cmp_ok(scalar @{ $shaped->{'profiles'} }, '>=', 2, 'the day shift and the night shift are two shapes');
+ok($shaped->{'profile'} && abs($shaped->{'profile'}{'stop_hour'} - 17) < 2,
+	'the most recent rest selects the night-shift day');
+is($shaped->{'profile'}{'start_app'}, 'shift1', 'which opens with its own first step');
+is($shaped->{'profile'}{'canonical'}{'seq'}[0], 'shift1', 'and keeps its own canonical day');
+my $tagbase = JawnOSTest::ts(2026, 11, 16, 8, 0);
+my $tagged = [
+	{ seq => [qw(a b)], times => [ $tagbase - 86400000, $tagbase - 86400000 + 60000 ], start => $tagbase - 86400000, profile => 1 },
+	{ seq => [qw(c d)], times => [ $tagbase, $tagbase + 60000 ], start => $tagbase, profile => 2 },
+	{ seq => [qw(a b)], times => [ $tagbase + 86400000, $tagbase + 86400000 + 60000 ], start => $tagbase + 86400000, profile => 1 },
+];
+is_deeply(subs::clothesline_sequence_canonical($tagged, undef, undef, profile => 2)->{'seq'}, [qw(c d)],
+	'the canonical day can be read for the selected profile alone');
+is_deeply(subs::clothesline_sequence_canonical($tagged, undef, undef, profile => 1)->{'seq'}, [qw(a b)],
+	'and each profile keeps its own day');
+my $day_scan = subs::clothesline_routine_scan(\@day_shift, JawnOSTest::ts(2026, 11, 7, 23, 0),
+	window_days => 60, session_days => 14);
+is($day_scan->{'start_app'}, 'day1', 'the day-shift week keeps the day-shift opener');
+is($day_scan->{'profile'}{'start_app'}, 'day1', 'and its own shape');
+
+# --- a skipped wave does not hold the day back ------------------------------
+# The same step opens the morning and the midday; only the midday one was
+# pressed. The head moves to the midday wave and does not offer the morning
+# again. A press at the morning's own hour still answers the morning, so a step
+# the day keeps twice is never pulled to its far occurrence.
+my $rbase = JawnOSTest::ts(2026, 11, 16, 8, 0);
+my $rseq = [qw(water b c water d e)];
+my $rtimes = [ $rbase, $rbase + 300000, $rbase + 600000,
+	$rbase + (4 * 3600000), $rbase + (4 * 3600000) + 300000, $rbase + (4 * 3600000) + 600000 ];
+my $rcanon = subs::clothesline_sequence_canonical([{ seq => $rseq, times => $rtimes, start => $rbase }], undef);
+is_deeply($rcanon->{'waves'}, [ 0, 0, 0, 1, 1, 1 ], 'the morning and the midday are two waves');
+my $rscan = {
+	apps => { map { $_ => { due => 1 } } @{$rseq} },
+	current => { start => $rbase },
+	done => { water => 1 },
+	done_ms => { water => [ $rbase + (4 * 3600000) ] },
+	running => {},
+};
+my $rmid = subs::clothesline_sequence_anticipate($rscan, $rbase + (4 * 3600000) + 60000, canonical => $rcanon);
+is($rmid->{'current_wave'}, 1, 'the midday wave starts when the morning was never done');
+is_deeply([ map { $_->{'app'} } @{ $rmid->{'list'} } ], [qw(water d e)],
+	'and the morning steps are not offered again');
+my $rmorning = { %{$rscan}, done_ms => { water => [$rbase] } };
+my $ram = subs::clothesline_sequence_anticipate($rmorning, $rbase + 60000, canonical => $rcanon);
+is($ram->{'current_wave'}, 0, 'a press at the morning\'s own hour keeps the morning wave');
+is_deeply([ map { $_->{'app'} } @{ $ram->{'list'} } ], [qw(b c water d e)],
+	'and the midday occurrence is still to come');
+
+# --- the fixed pause is still a caller's to pin -----------------------------
+# A pinned pause keeps the old split exactly: the day model is not consulted.
+my $pinned_scan = subs::clothesline_routine_scan(\@steady, JawnOSTest::ts(2026, 11, 5, 4, 40),
+	window_days => 60, session_days => 14, pause => 6 * 3600 * 1000);
+ok(!$pinned_scan->{'day'}, 'a pinned pause answers the old question, with no learned day');
+is($pinned_scan->{'pause'}, 6 * 3600 * 1000, 'and keeps the pause it was given');
+
+# One rest is not a shape: with nothing to compare it to, the old six-hour quiet
+# still stands (a house that has only ever been seen asleep once has no day).
+my @one_night = (
+	row('only', JawnOSTest::ts(2026, 11, 16, 5, 0)),
+	row('only', JawnOSTest::ts(2026, 11, 16, 8, 0)),
+);
+my $one = subs::clothesline_routine_scan(\@one_night, JawnOSTest::ts(2026, 11, 16, 8, 30),
+	window_days => 60, session_days => 14);
+ok(!$one->{'day'}, 'a single quiet is not a learned day');
+is($one->{'done'}{'only'}, 2, 'and the old split still keeps its run');
 
 done_testing();
 

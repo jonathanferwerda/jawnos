@@ -322,6 +322,23 @@ message LONGTEXT,
 app LONGTEXT,
 uuid VARCHAR(255) unique
 , connection_id VARCHAR(255), browser_tab_id VARCHAR(255), browser_tab VARCHAR(255), hostname VARCHAR(500), connected VARCHAR(25), user_agent LONGTEXT, local_address VARCHAR(25), remote_address VARCHAR(25), type VARCHAR(25), windows LONGTEXT, room VARCHAR(255), db VARCHAR(255), music_data LONGTEXT, jp_data LONGTEXT, random_string VARCHAR(500), warranty VARCHAR(25), href VARCHAR(500), pathname VARCHAR(500), cookie LONGTEXT, ost VARCHAR(25), ticket_uuid VARCHAR(255), revision VARCHAR(255));
+-- One row per desktop window transition (open, close, minimize, restore). A
+-- websockets row keeps only the latest layout snapshot, so the day's window flow
+-- is read from these events instead. The time columns are text; the indexes
+-- below cast them the way the queries do.
+CREATE TABLE "window_events" (
+uuid VARCHAR(255) unique,
+window_id VARCHAR(255),
+browser_tab_id VARCHAR(255),
+app VARCHAR(500),
+event VARCHAR(25),
+timestamp VARCHAR(25),
+server_time VARCHAR(255),
+hostname VARCHAR(500),
+user_agent LONGTEXT,
+room VARCHAR(255),
+warranty VARCHAR(25),
+ost VARCHAR(25));
 CREATE TABLE tunnels (
 			server_time VARCHAR(255),
 			ost VARCHAR(255),
@@ -375,6 +392,10 @@ CREATE INDEX idx2_ws on websockets (browser_tab_id);
 CREATE INDEX idx4_ws on websockets (app, cast(connected as integer));
 CREATE INDEX idx5_ws on websockets (cast(connected as integer));
 CREATE INDEX idx6_ws on websockets (cast(warranty as integer));
+CREATE INDEX idx1_window_events on window_events (app, cast(timestamp as integer));
+CREATE INDEX idx2_window_events on window_events (browser_tab_id, cast(timestamp as integer));
+CREATE INDEX idx3_window_events on window_events (window_id, cast(timestamp as integer));
+CREATE INDEX idx4_window_events on window_events (cast(warranty as integer));
 CREATE INDEX idx1_continent on continent (app);
 CREATE INDEX idx2_continent on continent (app,uuid);
 CREATE INDEX idx7_continent on continent (cast(timestamp as integer));

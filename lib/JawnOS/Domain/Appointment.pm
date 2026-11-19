@@ -1449,7 +1449,22 @@ sub clothesline_daily_hours {
 	my $old = $ENV{'TZ'};
 	$ENV{'TZ'} = $zone;
 	POSIX::tzset();
-	my $scan = &clothesline_routine_scan($rows, $now, window_days => $window_days, session_days => $session_days);
+	# The sockets say whether the house was up or out, which is what tells a day
+	# whose shape was seen from one that was only inferred. A caller may hand the
+	# reading in (the week walk reads it once for its seven days); otherwise it is
+	# read here, on the house clock the day model runs in. A house whose sockets
+	# were never retained has not been seen at all - liveness answers the whole
+	# window as down - and no sighting is no evidence, so the rests decide alone
+	# and a fresh house behaves exactly as it did before.
+	my $live = $opt{'live'};
+	if (!exists $opt{'live'}) {
+		$live = &clothesline_device_liveness($now);
+		$live = undef unless ref $live eq 'HASH' && ref $live->{'devices'} eq 'HASH' && %{ $live->{'devices'} };
+	}
+	my $scan = &clothesline_routine_scan($rows, $now,
+		window_days => $window_days, session_days => $session_days,
+		live => $live,
+		(defined $opt{'pause'} ? (pause => $opt{'pause'}) : ()));
 	if ($had) { $ENV{'TZ'} = $old } else { delete $ENV{'TZ'} }
 	POSIX::tzset();
 	# The rail and the settings dialog are drawn on a screen anyone can see: an
@@ -1791,6 +1806,237 @@ sub clothesline_rest_episodes {
 	};
 }
 
+# The day's segments: a day begins at the end of a rest. The rests are learned
+# (clothesline_rest_episodes) and placed on the clock; the liveness says whether
+# the house was up or out. A quiet the person comes back to night after night is
+# their night, however short, and its wake opens a day; a quiet alone at its hour
+# is a nap, an idle afternoon or a data gap and opens nothing, so a seven-hour
+# afternoon with the house up never cuts a day in two. A night the house was out
+# for is still one day - the person was gone or the power was - and it is marked
+# inferred, because the shape of it was not seen.
+#
+# Each segment carries the steps that ran in it, the waves they fell into and
+# where those waves paused, and the profile (the shape of the day) of the rest
+# that opened it. A profile keeps its own day: a day shift and a night shift are
+# two shapes, and each keeps the canonical day, the head and the pause it runs
+# in. The last segment is open - it ends when the next night does.
+#
+# The caller's clock is the house clock, as for clothesline_rest_episodes: the
+# hour only places a rest on the person's own day, it never decides that a day
+# happened. No app's name is read here.
+sub clothesline_day_segments {
+	my ($rows, $live, $now, %opt) = @_;
+	$rows = eval { [ $rows->each ] } if ref $rows && ref $rows ne 'ARRAY';
+	$rows = [] unless ref $rows eq 'ARRAY';
+	$now = &rightNow() unless defined $now;
+	my $radius = defined $opt{'radius'} ? $opt{'radius'} : 3;
+	my $model = &clothesline_rest_episodes($rows, $now, %opt);
+	my $rest_min = $model->{'rest_min'};
+	my $brief = $model->{'brief'};
+	my @rests = @{ $model->{'rests'} || [] };
+	my @profiles = @{ $model->{'profiles'} || [] };
+	$profiles[$_]{'id'} = $_ for 0 .. $#profiles;
+
+	# The steps the person took themselves, in order - the same rule the rest
+	# learning applies: a press or a tag, or a row from before the source was
+	# kept. A task's checkbox or a default option is not the person's day.
+	my @steps;
+	foreach my $r ( @{$rows} ) {
+		next unless ref $r eq 'HASH';
+		my $app = $r->{'app'};
+		my $ms = $r->{'timestamp'};
+		next unless defined $app && length $app && defined $ms && $ms =~ /^\d+(?:\.\d+)?$/ && $ms > 0;
+		my $origin = lc($r->{'source'} // '');
+		if ($origin ne 'press' && $origin ne 'nfc') { next if defined $r->{'source_uuid'} && length $r->{'source_uuid'}; }
+		my $type = lc($r->{'type'} || '');
+		next unless $type eq 'usual' || $type eq 'stop';
+		next if $ms > $now;   # the day model describes the past, as the rests do
+		push @steps, { app => $app, ms => 0 + $ms };
+	}
+	@steps = sort { $a->{'ms'} <=> $b->{'ms'} } @steps;
+
+	my $empty = {
+		rests => \@rests,
+		profiles => \@profiles,
+		profile => $model->{'profile'},
+		window => $model->{'window'},
+		segments => [],
+		source => 'none',
+		rest_min => $rest_min,
+		brief => $brief,
+		pause => undef,
+	};
+
+	my $circ_gap = sub {
+		my $d = abs($_[0] - $_[1]);
+		$d = 24 - $d if $d > 12;
+		return $d;
+	};
+
+	# The clock the middle of a rest sits at: a night's start slides with the
+	# person's own bedtime (eleven one night, one the next), but the middle of a
+	# sleep stays put, so that is what tells a night from a long evening gap. The
+	# hours are the house's, used to place a rest - never to decide one happened.
+	foreach my $rest ( @rests ) {
+		my $mid = $rest->{'start_hour'} + ($rest->{'length'} / 3600000) / 2;
+		$mid -= 24 * int($mid / 24);
+		$rest->{'mid_hour'} = $mid;
+	}
+
+	# A night is a rest the person keeps returning to: another rest sits at the
+	# same middle of the clock within the radius. A quiet alone at its hour is a
+	# nap, an idle afternoon or a data gap, and its end opens no day - including
+	# the first day of the window, whose real night belongs to the day after it.
+	my @wake;
+	for my $i ( 0 .. $#rests ) {
+		my $night = 0;
+		for my $j ( 0 .. $#rests ) {
+			next if $i == $j;
+			if ($circ_gap->($rests[$i]{'mid_hour'}, $rests[$j]{'mid_hour'}) <= $radius) { $night = 1; last; }
+		}
+		next unless $night;
+		push @wake, { ms => $rests[$i]{'stop'}, inferred => 0, rest => $rests[$i] };
+	}
+
+	# The liveness is optional: with none the rests alone say where the days are -
+	# and none includes a house that has not been seen at all, whose empty
+	# `devices` means every span is missing rather than the house being out. With
+	# a sighting, a night the house was out for is still a day - the person was
+	# gone or the power was - but the shape of it was not seen, so the day is
+	# marked inferred rather than learned. A quiet the house was up for is idle
+	# time and never a boundary unless it is a night on the clock, which is what
+	# keeps a seven-hour afternoon from cutting the day in two.
+	my $known = (ref $live eq 'HASH' && ref $live->{'down'} eq 'ARRAY'
+		&& ref $live->{'devices'} eq 'HASH' && %{ $live->{'devices'} }) ? 1 : 0;
+	my @down = $known ? @{ $live->{'down'} } : ();
+	my $down_in = sub {
+		my ($a, $b) = @_;
+		my $sum = 0;
+		foreach my $d ( @down ) {
+			next unless ref $d eq 'ARRAY' && @{$d} >= 2;
+			my $lo = $a > $d->[0] ? $a : $d->[0];
+			my $hi = $b < $d->[1] ? $b : $d->[1];
+			$sum += $hi - $lo if $hi > $lo;
+		}
+		return $sum;
+	};
+	foreach my $w ( @wake ) {
+		next unless $known;
+		my $rest = $w->{'rest'};
+		$w->{'inferred'} = 1 if $rest->{'length'} > 0 && $down_in->($rest->{'start'}, $rest->{'stop'}) >= 0.5 * $rest->{'length'};
+	}
+
+	@wake = sort { $a->{'ms'} <=> $b->{'ms'} } @wake;
+	return $empty unless @wake && @steps;
+
+	my @segments;
+	# The day the first learned night closes is a day too: it runs from the first
+	# step the window kept to the wake that ends it, in the shape of that night.
+	if ($steps[0]{'ms'} < $wake[0]{'ms'}) {
+		push @segments, {
+			start => $steps[0]{'ms'},
+			stop => $wake[0]{'ms'},
+			opened_by => undef,
+			night => $wake[0]{'rest'},
+			profile => $wake[0]{'rest'}{'profile'},
+			inferred => 0,
+		};
+	}
+	for my $i ( 0 .. $#wake ) {
+		push @segments, {
+			start => $wake[$i]{'ms'},
+			stop => ($i < $#wake) ? $wake[$i+1]{'ms'} : undef,
+			opened_by => $wake[$i]{'rest'},
+			night => ($i < $#wake) ? $wake[$i+1]{'rest'} : undef,
+			profile => $wake[$i]{'rest'}{'profile'},
+			inferred => $wake[$i]{'inferred'},
+		};
+	}
+
+	# Each segment's own day: its steps in order, the waves they fall into, and
+	# the pauses where one wave gives way to the next. The steps are sorted and
+	# the segments are contiguous, so one walk fills every day.
+	my $pinned_gap = $opt{'gap'};
+	my @bucket;
+	my $at = 0;
+	foreach my $step ( @steps ) {
+		$at++ while $at < $#segments && defined $segments[$at]{'stop'} && $step->{'ms'} >= $segments[$at]{'stop'};
+		push @{ $bucket[$at] }, $step;
+	}
+	for my $i ( 0 .. $#segments ) {
+		my $seg = $segments[$i];
+		my @mine = @{ $bucket[$i] || [] };
+		$seg->{'day'} = &clothesline_day_index($seg->{'start'});
+		$seg->{'seq'} = [ map { $_->{'app'} } @mine ];
+		$seg->{'times'} = [ map { $_->{'ms'} } @mine ];
+		my $gap = &clothesline_sequence_pause($seg->{'times'}, $pinned_gap);
+		my $waves = &clothesline_sequence_waves($seg->{'times'}, $gap);
+		$seg->{'gap'} = $gap;
+		$seg->{'waves'} = $waves;
+		my @pauses;
+		for my $i ( 1 .. $#{$waves} ) {
+			next unless $waves->[$i] > $waves->[$i-1];
+			push @pauses, {
+				index => $i,
+				gap => $seg->{'times'}[$i] - $seg->{'times'}[$i-1],
+				after => $seg->{'seq'}[$i-1],
+				before => $seg->{'seq'}[$i],
+			};
+		}
+		$seg->{'pauses'} = \@pauses;
+	}
+
+	# A profile keeps its own day: the canonical sequence, the app that opens it,
+	# and the pause it runs in. The pause is where the day's own waves give way -
+	# its longest repeated gap, floored at a coffee and capped at a workday - so a
+	# dense morning and a sparse one each keep their own.
+	foreach my $p ( @profiles ) {
+		my @mine = grep { ref $_->{'profile'} eq 'HASH' && $_->{'profile'}{'id'} == $p->{'id'} } @segments;
+		my @sessions;
+		my @gaps;
+		foreach my $seg ( @mine ) {
+			my $t = $seg->{'times'};
+			push @gaps, $t->[$_] - $t->[$_-1] for 1 .. $#$t;
+			next unless @{ $seg->{'seq'} };
+			push @sessions, {
+				seq => [ @{ $seg->{'seq'} } ],
+				times => [ @{ $seg->{'times'} } ],
+				start => $seg->{'start'},
+				profile => $p->{'id'},
+			};
+		}
+		# the canonical day is the most common *recent* one: two months of a
+		# shape is a comparison per pair per day, and yesterday says it better
+		my $keep = $opt{'session_days'} || 14;
+		@sessions = @sessions[-$keep .. -1] if @sessions > $keep;
+		$p->{'sessions'} = \@sessions;
+		$p->{'start_app'} = &clothesline_sequence_start_app(\@sessions);
+		$p->{'canonical'} = &clothesline_sequence_canonical(\@sessions, $p->{'start_app'});
+		my $pause = 6 * 3600 * 1000;
+		if (@gaps) {
+			my @sorted = sort { $a <=> $b } @gaps;
+			$pause = $sorted[ int($#sorted * 0.8) ];
+			$pause = 90 * 60 * 1000 if $pause < 90 * 60 * 1000;
+			$pause = 6 * 3600 * 1000 if $pause > 6 * 3600 * 1000;
+		}
+		$p->{'pause'} = $pause;
+	}
+
+	my $profile = $model->{'profile'};
+	my $pause = ($profile && defined $profile->{'pause'}) ? $profile->{'pause'} : (6 * 3600 * 1000);
+	return {
+		rests => \@rests,
+		profiles => \@profiles,
+		profile => $profile,
+		window => $model->{'window'},
+		segments => \@segments,
+		source => 'model',
+		rest_min => $rest_min,
+		brief => $brief,
+		pause => $pause,
+	};
+}
+
 # Read the window's appointments into the routine the clothesline paints. Pure
 # but for the clock: the query is clothesline_daily_hours' job, so a test can
 # hand it rows and a moment and see the sequence, the days and the due flags.
@@ -1804,8 +2050,45 @@ sub clothesline_routine_scan {
 	$now = &rightNow() unless defined $now;
 	my $window = $opt{'window_days'} || 60;
 	my $session_days = $opt{'session_days'} || 14;
-	my $pause = $opt{'pause'} || (6 * 3600 * 1000); # a gap that ends a routine
 	my $recent_since = $now - ($session_days * 86400 * 1000);
+
+	# The day is learned now, not counted from six hours of quiet: a night's wake
+	# opens a day and the day it opens carries its own shape, so a three-hour
+	# night ends yesterday as surely as a nine-hour one, and a long daytime gap
+	# with the house up does not. A caller may pin the pause (the session tests
+	# do): then the old split is kept exactly, so a pinned pause still answers
+	# what it always did. With no learned night - one rest is not a shape - the
+	# old six-hour quiet stands as the fallback.
+	my $pinned = (defined $opt{'pause'} && $opt{'pause'} > 0) ? $opt{'pause'} : undef;
+	my $days = $pinned ? undef : &clothesline_day_segments($rows, $opt{'live'}, $now,
+		window_days => $window, session_days => $session_days, %opt);
+	my $model = ($days && $days->{'source'} eq 'model') ? $days : undef;
+	my $segments = $model ? $model->{'segments'} : [];
+	my $pause = defined $pinned ? $pinned
+		: ($model && $model->{'pause'}) ? $model->{'pause'}
+		: (6 * 3600 * 1000); # a gap that ends a routine when no day was learned
+
+	# Where a moment sits in the learned days, and whether it belongs to the day
+	# under way at all. A step from before this day's wake is yesterday's, however
+	# recently it was pressed: the night was a boundary, not a long pause.
+	my $segment_of = sub {
+		my ($ms) = @_;
+		return undef unless $model;
+		for my $i ( 0 .. $#{$segments} ) {
+			my $seg = $segments->[$i];
+			return $i if $ms >= $seg->{'start'} && (!defined $seg->{'stop'} || $ms < $seg->{'stop'});
+		}
+		return undef;
+	};
+	my $current_seg = &$segment_of($now);
+	my $day_start = defined $current_seg ? $segments->[$current_seg]{'start'} : undef;
+	my $day_stop = (defined $current_seg && defined $segments->[$current_seg]{'stop'}) ? $segments->[$current_seg]{'stop'} : undef;
+	my $in_day = sub {
+		return 1 unless defined $day_start;
+		return 0 if $_[0] < $day_start || $_[0] > $now;
+		return 0 if defined $day_stop && $_[0] >= $day_stop;
+		return 1;
+	};
 
 	my (@completed, @recent_completed, @started);
 	my (%lengths, %open);
@@ -1829,8 +2112,9 @@ sub clothesline_routine_scan {
 				push @started, { app => $app, ms => $ms + 0 };
 				# the session is still open, and still this run of the routine: the
 				# line reads where it is running. One left open past the routine's
-				# pause is a forgotten session, not a step in hand.
-				if ($ms <= $now && ($now - $ms) <= $pause
+				# pause - or from before this day's wake - is a forgotten session,
+				# not a step in hand.
+				if ($ms <= $now && ($now - $ms) <= $pause && $in_day->($ms)
 					&& (!defined $open{$app} || $ms > $open{$app})) {
 					$open{$app} = 0 + $ms;
 				}
@@ -1856,7 +2140,8 @@ sub clothesline_routine_scan {
 	# The step at hand, and the run of the routine it belongs to. The routine
 	# keeps the day it began, so one that runs past midnight is still that day's
 	# routine - the steps already taken do not come round again when the clock
-	# turns.
+	# turns. With a learned day the run is the day's own: a step from before this
+	# day's wake is yesterday's, however short the night that separated them.
 	my $last_any;
 	if (@recent_completed) {
 		$last_any = { app => $recent_completed[-1]{'app'}, ms => $recent_completed[-1]{'ms'}, type => 'done' };
@@ -1864,15 +2149,25 @@ sub clothesline_routine_scan {
 	if (@started && (!$last_any || $started[-1]{'ms'} >= $last_any->{'ms'})) {
 		$last_any = { app => $started[-1]{'app'}, ms => $started[-1]{'ms'}, type => 'start' };
 	}
-	my $active = ($last_any && ($now - $last_any->{'ms'}) <= $pause) ? 1 : 0;
+	my $active = ($last_any && ($now - $last_any->{'ms'}) <= $pause && $in_day->($last_any->{'ms'})) ? 1 : 0;
 	my $last_start = @recent_completed ? $recent_completed[-1]{'ms'} : undef;
 	for (my $i = $#recent_completed; $i > 0; $i--) {
-		last if $recent_completed[$i]{'ms'} - $recent_completed[$i-1]{'ms'} > $pause;
+		# The learned day is the unit, so its own steps are one run however long
+		# the gaps inside it (a workday is not a new day). Without a learned day
+		# the old pause still splits the run.
+		last unless $in_day->($recent_completed[$i-1]{'ms'});
+		last if !$model && $recent_completed[$i]{'ms'} - $recent_completed[$i-1]{'ms'} > $pause;
 		$last_start = $recent_completed[$i-1]{'ms'};
 	}
+	$last_start = undef if defined $last_start && !$in_day->($last_start);
+	# With a day learned the routine is under way for the whole of it: what was
+	# finished this morning is finished now, and the line does not offer it again
+	# after a quiet afternoon. Without one, a long pause still ends the run.
+	$active = 1 if $model && $last_any && $in_day->($last_any->{'ms'});
 	my $belongs = 0;
 	if ($active && defined $last_start) {
-		if ($last_any->{'type'} ne 'start') { $belongs = 1; }
+		if ($model) { $belongs = 1; }
+		elsif ($last_any->{'type'} ne 'start') { $belongs = 1; }
 		elsif (@recent_completed && ($last_any->{'ms'} - $recent_completed[-1]{'ms'}) <= $pause) { $belongs = 1; }
 	}
 	my $anchor_ms = $belongs ? $last_start : $now;
@@ -1963,31 +2258,54 @@ sub clothesline_routine_scan {
 		}
 	}
 
-	# sessions: recent completed steps in order, split by a long pause so one
-	# morning is not joined to the next morning
-	my (@sessions, @names, @times, $start, $prev);
+	# sessions: the recent completed steps in order, split where one day ends and
+	# the next begins. With a learned day the day is the session - a whole day's
+	# steps are one shape, and the waves inside it are the pauses between its own
+	# stretches - so a morning and its evening are not two days. Without one, a
+	# long pause splits as it always did.
+	my (@sessions, @names, @times, $start, $prev, $prev_seg, $sess_profile);
+	my $profile_of = sub {
+		my ($seg) = @_;
+		return undef unless $model && defined $seg;
+		my $p = $segments->[$seg]{'profile'};
+		return ref $p eq 'HASH' ? $p->{'id'} : undef;
+	};
 	foreach my $r ( @recent_completed ) {
-		if (@names && $r->{'ms'} - $prev > $pause) {
-			push @sessions, { seq => [@names], times => [@times], start => $start };
-			@names = ();
-			@times = ();
+		my $seg = $model ? &$segment_of($r->{'ms'}) : undef;
+		if (@names) {
+			my $split = $model
+				? ((defined $seg ? $seg : -1) != (defined $prev_seg ? $prev_seg : -1))
+				: ($r->{'ms'} - $prev > $pause);
+			if ($split) {
+				push @sessions, { seq => [@names], times => [@times], start => $start, profile => $sess_profile };
+				@names = ();
+				@times = ();
+				$sess_profile = undef;
+			}
 		}
-		$start = $r->{'ms'} unless @names;
+		if (!@names) {
+			$start = $r->{'ms'};
+			$sess_profile = &$profile_of($seg);
+		}
 		push @names, $r->{'app'};
 		push @times, $r->{'ms'};
 		$prev = $r->{'ms'};
+		$prev_seg = $seg;
 	}
-	push @sessions, { seq => [@names], times => [@times], start => $start } if @names;
+	push @sessions, { seq => [@names], times => [@times], start => $start, profile => $sess_profile } if @names;
+
+	# The shape the person is living now is the one the most recent rest belongs
+	# to, not the calendar's: the canonical day, its opener and its pauses are
+	# that shape's own. A shape still being learned keeps its own day rather than
+	# borrowing another's.
+	my $selected = ($model && ref $model->{'profile'} eq 'HASH') ? $model->{'profile'} : undef;
+	if ($selected) {
+		my @mine = grep { ref $_ eq 'HASH' && defined $_->{'profile'} && $_->{'profile'} eq $selected->{'id'} } @sessions;
+		@sessions = @mine if @mine;
+	}
 	# the app that opens the routine most often: the line starts there, so a
-	# call or the weather checked before wake_up is not made the routine's head
-	my %start_count;
-	foreach my $s ( @sessions ) {
-		$start_count{$s->{'seq'}[0]}++ if @{$s->{'seq'}};
-	}
-	my ($start_app, $start_best) = (undef, -1);
-	foreach my $app ( sort keys %start_count ) {
-		if ($start_count{$app} > $start_best) { ($start_app, $start_best) = ($app, $start_count{$app}); }
-	}
+	# call or the weather checked before the first step is not made its head
+	my $start_app = &clothesline_sequence_start_app(\@sessions);
 
 	# what this run of the routine has already finished, by app: the line takes
 	# those occurrences out of the canonical sequence, wherever in it they sit.
@@ -2003,10 +2321,30 @@ sub clothesline_routine_scan {
 	}
 
 	my $current = { active => $active, running => undef, start => undef };
-	$current->{'running'} = $last_any->{'app'} if $active && $last_any->{'type'} eq 'start';
+	$current->{'running'} = $last_any->{'app'} if $active && $last_any->{'type'} eq 'start'
+		&& ($now - $last_any->{'ms'}) <= $pause;
 	$current->{'start'} = $belongs ? $last_start : undef;
 
-	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any, done => \%done, done_ms => \%done_ms, start_app => $start_app, running => \%open };
+	# The day under way, and the shape it runs in, for a caller that wants it: the
+	# segments themselves stay in clothesline_day_segments (a week of them is not
+	# something to carry per hang).
+	my $seg = defined $current_seg ? $segments->[$current_seg] : undef;
+	my $day = $model ? {
+		start => $day_start,
+		stop => (ref $seg eq 'HASH' && defined $seg->{'stop'}) ? $seg->{'stop'} : undef,
+		inferred => (ref $seg eq 'HASH' && $seg->{'inferred'}) ? 1 : 0,
+		profile => $selected ? $selected->{'id'} : undef,
+		pause => $pause,
+	} : undef;
+	my $shape = $selected ? {
+		id => $selected->{'id'},
+		start_hour => $selected->{'start_hour'},
+		stop_hour => $selected->{'stop_hour'},
+		count => $selected->{'count'},
+		pause => $selected->{'pause'},
+		start_app => $selected->{'start_app'},
+	} : undef;
+	return { apps => $apps, sessions => \@sessions, current => $current, last => $last_any, done => \%done, done_ms => \%done_ms, start_app => $start_app, running => \%open, pause => $pause, day => $day, profile => $shape };
 }
 
 # The longest run of steps two sequences share in order, which is how alike two
@@ -2029,15 +2367,84 @@ sub clothesline_sequence_similarity {
 	return $prev[$m];
 }
 
+# The pause that gives way to the next wave: the day's own top fifth of gaps,
+# kept between ten minutes and two hours, so a dense day and a sparse one each
+# break where their routines actually change. A caller may pin the gap instead
+# (the tests do, and so does a curated day).
+sub clothesline_sequence_pause {
+	my ($times, $pinned) = @_;
+	return $pinned if defined $pinned && $pinned > 0;
+	my $gap;
+	if (ref $times eq 'ARRAY') {
+		my @gaps;
+		for my $i ( 1 .. $#{$times} ) {
+			push @gaps, $times->[$i] - $times->[$i - 1] if $times->[$i] && $times->[$i - 1];
+		}
+		if (@gaps) {
+			my @sorted = sort { $a <=> $b } @gaps;
+			$gap = $sorted[ int($#sorted * 0.8) ];
+			$gap = 10 * 60 * 1000 if $gap < 10 * 60 * 1000;
+			$gap = 120 * 60 * 1000 if $gap > 120 * 60 * 1000;
+		}
+	}
+	return (defined $gap && $gap > 0) ? $gap : (90 * 60 * 1000);
+}
+
+# Which wave each step of the day falls in: the wave turns over wherever two
+# steps are further apart than the day's own pause. A step with no time cannot
+# turn one over, so it keeps the wave it landed in. `$count` is the day's step
+# count, which may outrun the times when a caller handed only some of them.
+sub clothesline_sequence_waves {
+	my ($times, $gap, $count) = @_;
+	my @waves;
+	return \@waves unless ref $times eq 'ARRAY';
+	$count = scalar @{$times} unless defined $count;
+	$gap = 90 * 60 * 1000 unless defined $gap && $gap > 0;
+	my $wave = 0;
+	for my $i ( 0 .. $count - 1 ) {
+		if ($i > 0 && $times->[$i] && $times->[$i - 1]
+			&& ($times->[$i] - $times->[$i - 1]) > $gap) { $wave++; }
+		push @waves, $wave;
+	}
+	return \@waves;
+}
+
+# The app that opens the day most often: the line starts there, so a call or the
+# weather checked before the first step is not made the routine's head. A
+# profile learns its own opener, so a night shift's day does not open with the
+# step a day shift happens to take first.
+sub clothesline_sequence_start_app {
+	my ($sessions) = @_;
+	my %count;
+	foreach my $s ( ref $sessions eq 'ARRAY' ? @{$sessions} : () ) {
+		next unless ref $s eq 'HASH' && ref $s->{'seq'} eq 'ARRAY' && @{ $s->{'seq'} };
+		$count{ $s->{'seq'}[0] }++;
+	}
+	my ($app, $best) = (undef, -1);
+	foreach my $name ( sort keys %count ) {
+		if ($count{$name} > $best) { ($app, $best) = ($name, $count{$name}); }
+	}
+	return $app;
+}
+
 # The most common recent day: the session whose sequence is most like all the
 # others, with an exact shape winning a tie and the later session after that. A
 # day that moves one step is still close to the rest; a one-off day is not. The
 # comparison looks at the first thirty steps after the routine's start, which is
 # cheap and enough to tell one day's shape from another; the whole day is
 # returned, so the head can reach the evening's steps as the day goes on.
+#
+# The shape the person is living now is a profile (a day shift and a night shift
+# are two): a caller that names one keeps only the sessions tagged with it, so
+# the canonical day is the selected profile's own. A session with no tag - a
+# test's, a curated day's - always counts.
 sub clothesline_sequence_canonical {
-	my ($sessions, $start_app, $wave_gap) = @_;
+	my ($sessions, $start_app, $wave_gap, %opt) = @_;
 	$sessions = [] unless ref $sessions eq 'ARRAY';
+	if (defined $opt{'profile'}) {
+		my @kept = grep { ref $_ eq 'HASH' && (!defined $_->{'profile'} || $_->{'profile'} eq $opt{'profile'}) } @{$sessions};
+		$sessions = \@kept if @kept;
+	}
 	my $cap = 30;
 	my (@full, @full_times, @full_waves, @cut);
 	foreach my $session ( @{$sessions} ) {
@@ -2054,35 +2461,13 @@ sub clothesline_sequence_canonical {
 			}
 		}
 		# A wave is one stretch of the day: the steps run close together, then the
-		# day pauses before the next. The pause that counts is the day's own - its
-		# top fifth of gaps, kept between ten minutes and two hours - so a dense
-		# day and a sparse one each break where their routines actually change. A
-		# caller may pin the gap instead (the tests do).
-		my $gap = $wave_gap;
-		unless (defined $gap && $gap > 0) {
-			my @gaps;
-			for my $i ( 1 .. $#times ) {
-				push @gaps, $times[$i] - $times[$i - 1] if $times[$i] && $times[$i - 1];
-			}
-			if (@gaps) {
-				my @sorted = sort { $a <=> $b } @gaps;
-				$gap = $sorted[ int($#sorted * 0.8) ];
-				$gap = 10 * 60 * 1000 if $gap < 10 * 60 * 1000;
-				$gap = 120 * 60 * 1000 if $gap > 120 * 60 * 1000;
-			}
-		}
-		$gap = 90 * 60 * 1000 unless defined $gap && $gap > 0;
-		my @waves;
-		my $wave = 0;
-		for my $i ( 0 .. $#seq ) {
-			if ($i > 0 && @times > $i && @times > $i - 1
-				&& $times[$i] && $times[$i - 1]
-				&& ($times[$i] - $times[$i - 1]) > $gap) { $wave++; }
-			push @waves, $wave;
-		}
+		# day pauses before the next. The pause is the day's own (see
+		# clothesline_sequence_pause), unless the caller pinned the gap.
+		my $gap = &clothesline_sequence_pause(\@times, $wave_gap);
+		my $waves = &clothesline_sequence_waves(\@times, $gap, scalar @seq);
 		push @full, \@seq;
 		push @full_times, \@times;
-		push @full_waves, \@waves;
+		push @full_waves, $waves;
 		my @short = @seq;
 		@short = @short[0 .. $cap - 1] if @short > $cap;
 		push @cut, \@short;
@@ -2160,6 +2545,13 @@ sub clothesline_sequence_anticipate {
 	# repeat of a step already passed stays a repeat. A caller that hands only
 	# counts - a test, a curated day - still places it by the order the steps
 	# were finished.
+	#
+	# A wave whose steps were never done does not hold the day back: a morning
+	# skipped is still a morning passed when the midday step is pressed. The
+	# occurrence a press belongs to is the one its own hour of the day points at,
+	# so a step the day keeps twice is answered by the occurrence the person is
+	# actually at, and a press clearly past an early occurrence leaves it behind
+	# (the wave limit is what still stops a repeat jumping to its far one).
 	my (%left, $current_wave);
 	$current_wave = 0;
 	if (!$all) {
@@ -2179,19 +2571,63 @@ sub clothesline_sequence_anticipate {
 				@acts = sort { $a->{'ms'} <=> $b->{'ms'} } @acts;
 				my %occ;
 				for my $i ( 0 .. $#{$seq} ) { push @{ $occ{ $seq->[$i] } }, $i; }
+				# the day's own clock: an act and an occurrence are compared by
+				# how far each sits from the day's first step, never by the hour
+				my $cbase = (ref $canonical_times eq 'ARRAY' && defined $canonical_times->[0]) ? (0 + $canonical_times->[0]) : undef;
+				my $abase = (ref $scan->{'current'} eq 'HASH' && defined $scan->{'current'}{'start'}) ? $scan->{'current'}{'start'}
+					: (ref $scan->{'day'} eq 'HASH' && defined $scan->{'day'}{'start'}) ? $scan->{'day'}{'start'}
+					: undef;
+				my $near = (defined $opt{'near'} && $opt{'near'} > 0) ? $opt{'near'}
+					: (ref $scan->{'pause'} && $scan->{'pause'} > 0) ? $scan->{'pause'}
+					: (90 * 60 * 1000);
+				my $off_of = sub {
+					my ($i) = @_;
+					return undef unless defined $cbase && ref $canonical_times eq 'ARRAY' && defined $canonical_times->[$i];
+					return (0 + $canonical_times->[$i]) - $cbase;
+				};
 				my ($at, %used);
 				$at = 0;
 				foreach my $step ( @acts ) {
 					my $list = $occ{ $step->{'app'} } or next;
+					my $act_off = defined $abase ? $step->{'ms'} - $abase : undef;
+					my (@pick, @passed);
 					foreach my $i ( @{$list} ) {
 						next if $i < $at || $used{$i};
 						my $wave = defined $waves->[$i] ? $waves->[$i] : 0;
-						next if $wave > $current_wave + 1;
-						$used{$i} = 1;
-						$at = $i + 1;
-						$current_wave = $wave if $wave > $current_wave;
-						last;
+						my $off = $off_of->($i);
+						my $close = (defined $act_off && defined $off) ? (abs($off - $act_off) <= $near ? 1 : 0) : 0;
+						next unless $wave <= $current_wave + 1 || $close;
+						push @pick, { i => $i, wave => $wave, off => $off };
+						# the person is already at this occurrence, not waiting for it
+						push @passed, $i if defined $off && defined $act_off && $off <= $act_off;
 					}
+					next unless @pick;
+					# The occurrence a press belongs to is the one its own hour of the day
+					# points at. Those the person is already past win, the latest of them;
+					# with none, the nearest one ahead. A caller with no day clock keeps
+					# the old order: the first one that fits the wave.
+					my $best;
+					if (!defined $act_off) { $best = $pick[0]; }
+					else {
+						my %passed = map { $_ => 1 } @passed;
+						my @prefer = @passed ? (grep { $passed{ $_->{'i'} } } @pick) : @pick;
+						$best = $prefer[0];
+						foreach my $c ( @prefer ) {
+							my ($a, $b) = ($c->{'off'}, $best->{'off'});
+							next if !defined $a && defined $b;
+							if (defined $a && defined $b) {
+								# a passed occurrence: the latest one; else the nearest ahead
+								my $cmp = @passed ? ($b <=> $a) : (abs($a - $act_off) <=> abs($b - $act_off));
+								next if $cmp > 0;
+								next if $cmp == 0 && $c->{'i'} > $best->{'i'};
+							}
+							elsif (!defined $a && !defined $b) { next if $c->{'i'} > $best->{'i'}; }
+							$best = $c;
+						}
+					}
+					$used{ $best->{'i'} } = 1;
+					$at = $best->{'i'} + 1;
+					$current_wave = $best->{'wave'} if $best->{'wave'} > $current_wave;
 				}
 				$anchored = 1;
 			}

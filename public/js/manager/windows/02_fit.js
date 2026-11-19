@@ -11,6 +11,7 @@ function windowMinimizer(timestamp,app) {
 		var effecting = (typeof jawnosWindowMinimizeOut == 'function') && jawnosWindowMinimizeOut(win);
 		if (!effecting) { win.hide(); }
 		win.attr('view', 'minimized');
+		if (win.length && typeof windowEventSend == 'function') { windowEventSend('minimize', win.attr('app'), win.attr('id')); }
 		var tnh = win.height();
 		var tnw = win.width();
 
@@ -27,6 +28,7 @@ function windowMinimizer(timestamp,app) {
 		var tnw = jawnosWindowSizeGet(timestamp, 'w');
 		$('#window_' + timestamp).css({'height': tnh, 'width': tnw });
 		if (typeof jawnosWindowRestoreIn == 'function') { jawnosWindowRestoreIn(win); }
+		if (win.length && typeof windowEventSend == 'function') { windowEventSend('restore', win.attr('app'), win.attr('id')); }
 	}
 	windowDimensionSetter(win);
 	// the window that steps forward or away from the front owns the keyboard cue

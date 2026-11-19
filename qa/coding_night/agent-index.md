@@ -67,7 +67,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 
 ## tables
 
-42 tables (database/schema.sql). Columns are inline; `perl scripts/agent_help.pl --schema <table>` adds the apps that use one.
+43 tables (database/schema.sql). Columns are inline; `perl scripts/agent_help.pl --schema <table>` adds the apps that use one.
 - appointments (57): app, timestamp, data, type, account, amount, unit, duration, status, notes, start_notes, end_notes, vendor, tax, quantity, total, item, server_time, file, device, project, pos, club, warranty, source, formulas, position, toggle, uuid, ticket_uuid, browser_tab_id, seen, model, option, movement, aux, aux_description, state, has_tax, has_totes, ost, balance, measures, manufacturer, encryption_standard, options, source_uuid, currency, stop_seen, stop_timestamp, duties, next_duty, subtype, app_uuid, autostop, taxes, tax_exemption
 - backups (12): timestamp, server_time, signatorial, destination, size, reason, warranty, uuid, recipient, recipient, ost, enc_file
 - cache (10): timestamp, server_time, app, context, warranty, subcontext, device, uuid, ost, data
@@ -110,6 +110,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - websites (9): url, content, illegal_content, app, internal_url, server_time, warranty, uuid, ost
 - websocket_messages (13): timestamp, server_time, message, destination, origin, status, app, environment, sent_count, uuid, tally, ost, patience
 - websockets (27): timestamp, server_time, message, app, uuid, connection_id, browser_tab_id, browser_tab, hostname, connected, user_agent, local_address, remote_address, type, windows, room, db, music_data, jp_data, random_string, warranty, href, pathname, cookie, ost, ticket_uuid, revision
+- window_events (12): uuid, window_id, browser_tab_id, app, event, timestamp, server_time, hostname, user_agent, room, warranty, ost
 
 ## routes
 
@@ -121,7 +122,7 @@ One route: `perl scripts/where.pl /manager/pen`.
 ## helpers
 
 662 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-2629 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+2633 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware

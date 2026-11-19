@@ -174,6 +174,9 @@ function windowCloseTearDown(timestamp, win, done) {
 
 	win.find('.window_script').remove();
 	var app = win.attr('app');
+	// the teardown runs once per window (closeWindow guards a second request), so
+	// this is the close transition itself, not a re-render
+	if (win.length && typeof windowEventSend == 'function') { windowEventSend('close', app, win.attr('id')); }
 	if (app == 'twirl') {
 		twirlRunning = false;
 		if (typeof jawnosGameSessionGame === 'function' && jawnosGameSessionGame() === 'Twirl'

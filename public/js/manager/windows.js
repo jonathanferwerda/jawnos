@@ -425,6 +425,22 @@ function windowResponseRoot(fragment) {
 	return null;
 }
 
+// A window transition (open, close, minimize, restore) is a row of its own, so
+// the clothesline can rebuild the day's window flow instead of reading the one
+// layout snapshot the websockets row keeps. The tab socket is the one that
+// speaks for the page as a whole, the same socket the act frame uses. An event
+// the socket cannot take is dropped, not queued: the layout beat still carries
+// what is open, and a stale transition delivered later would be worse than a
+// missing one.
+function windowEventSend(event, app, window_id) {
+	if (typeof ws !== 'object' || !ws) { return; }
+	var socket = ws['tab'];
+	if (!socket || socket.readyState != 1) { return; }
+	try {
+		socket.send(JSON.stringify({ type: 'window_event', event: event, app: app, window_id: window_id }));
+	} catch (e) {}
+}
+
 function windowMaker(response, fragment) {
 	if (response == '') { return; }
 	fragment = fragment || windowResponseFragment(response);
@@ -517,6 +533,9 @@ function windowMaker(response, fragment) {
 		if (matches == 0 && response != "null") {
 			$('#browser').append('' + response + '');
 			made = 1;
+			// only a window that was really appended is an open: a re-render or a
+			// restore of a window already on the desk matched above and is not one
+			windowEventSend('open', app, window_id);
 			// The desk the window belongs to, and its pile, are set before the
 			// reorganizer lays it into a slot.
 			if (typeof jawnosWorkspaceWindowNew == 'function') { jawnosWorkspaceWindowNew($('#' + window_id)); }

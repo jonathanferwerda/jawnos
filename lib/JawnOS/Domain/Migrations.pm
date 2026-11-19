@@ -693,6 +693,28 @@ sub update_database($data) {
 		'CREATE INDEX IF NOT EXISTS idx4_ws on websockets (app, cast(connected as integer))',
 		'CREATE INDEX IF NOT EXISTS idx5_ws on websockets (cast(connected as integer))',
 		'CREATE INDEX IF NOT EXISTS idx6_ws on websockets (cast(warranty as integer))',
+		# One row per desktop window transition (open, close, minimize, restore), so
+		# the clothesline can rebuild the day's window flow instead of reading the
+		# one layout snapshot the websockets row overwrites. The time columns are
+		# text; each index casts them exactly as the queries do.
+		'create table if not exists window_events (
+			uuid VARCHAR(255) unique,
+			window_id VARCHAR(255),
+			browser_tab_id VARCHAR(255),
+			app VARCHAR(500),
+			event VARCHAR(25),
+			timestamp VARCHAR(25),
+			server_time VARCHAR(255),
+			hostname VARCHAR(500),
+			user_agent LONGTEXT,
+			room VARCHAR(255),
+			warranty VARCHAR(25),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_window_events on window_events (app, cast(timestamp as integer))',
+		'create index if not exists idx2_window_events on window_events (browser_tab_id, cast(timestamp as integer))',
+		'create index if not exists idx3_window_events on window_events (window_id, cast(timestamp as integer))',
+		'create index if not exists idx4_window_events on window_events (cast(warranty as integer))',
 		'CREATE INDEX idx1_continent on continent (app)',
 		'CREATE INDEX idx2_continent on continent (app,uuid)',
 		# navigation_information asks continent for the current (type='temporary')

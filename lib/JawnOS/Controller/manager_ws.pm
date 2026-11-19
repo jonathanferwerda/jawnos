@@ -547,11 +547,10 @@ sub action_47050 {
 
 		}
 		elsif (($data->{'type'} || '') eq 'act') {
-			# An act panel opening or closing is an event, not a layout. The client
-			# sends just the affected window's jopen the moment it changes, so the
-			# 10 s beat never has to carry the whole layout to report a panel. Only
-			# the named window is written - the old beat wrote one for every window
-			# in the page on its way past.
+			# An act panel opening or closing is an event, not a layout: the client
+			# sends just that window's jopen when it changes, so the 10 s beat never
+			# carries the layout to report a panel. Only the named window is written -
+			# the old beat wrote one for every window on its way past.
 			my $jopen = eval { return decode_json($data->{'jopen'} || '') } || {};
 			if (ref $jopen eq 'HASH') {
 				foreach my $window_app ( keys %{$jopen} ) {
@@ -564,6 +563,7 @@ sub action_47050 {
 				}
 			}
 		}
+		elsif (($data->{'type'} || '') eq 'window_event') { eval { &window_event_record({ data => $data, app => $app, browser_tab_id => $browser_tab_id, hostname => $hostname, user_agent => $user_agent }) }; }
 		elsif (($data->{'type'} || '') eq 'terminal_open' && $app eq 'server') {
 			# Every Terminal window names its own pty. A window opened from the
 			# session list attaches to the one still running; a new window starts one.
@@ -877,4 +877,58 @@ sub controller_snapshot_save {
 	my %snap = %{$return_data};
 	delete $snap{'remote'};
 	&subs::cache_set({ app => 'controller', context => 'beat_' . $app, subcontext => $key }, \%snap);
+}
+
+# One desktop window transition, as the client reports it: open, close, minimize
+# or restore. The websockets row only ever holds the latest snapshot of what is
+# open, so these rows are the flow itself - one per transition, stamped by the
+# house clock (rowid breaks a same-millisecond tie). Every field is client data:
+# the event is an allowlist, the names are bounded, and nothing here may raise
+# into the socket's message handler.
+sub window_event_record {
+	my ($args) = @_;
+	return 0 unless ref $args eq 'HASH';
+	my $data = (ref $args->{'data'} eq 'HASH') ? $args->{'data'} : {};
+	my $event = ($data->{'event'} // '') . '';
+	return 0 unless $event =~ /\A(?:open|close|minimize|restore)\z/;
+	my $app = ($data->{'app'} // '') . '';
+	$app =~ s/[<>]//g;
+	$app = substr($app, 0, 500);
+	return 0 unless length $app;
+	my $window_id = ($data->{'window_id'} // '') . '';
+	$window_id =~ s/[<>]//g;
+	$window_id = substr($window_id, 0, 255);
+	my $browser_tab_id = ($args->{'browser_tab_id'} // '') . '';
+	return 0 unless length $browser_tab_id;
+	$browser_tab_id = substr($browser_tab_id, 0, 255);
+	my $server_time = &subs::rightNow();
+	# A room is the name the desk gave this tab's socket; a tab that never named
+	# one keeps the column empty.
+	my $room;
+	my $room_row = eval { &subs::db_query(q{select room from websockets where browser_tab_id = ? and room is not null and room != '' limit 1}, $browser_tab_id)->hashes->[0] };
+	if ($room_row && defined $room_row->{'room'}) {
+		$room = $room_row->{'room'};
+		$room =~ s/[<>]//g;
+		$room = substr($room, 0, 255);
+	}
+	my $uuid = eval { Data::UUID->new->create_str() } || &subs::random_string_creator(15);
+	my $ok = eval {
+		&subs::db_insert('window_events', {
+			'uuid' => $uuid,
+			window_id => $window_id,
+			browser_tab_id => $browser_tab_id,
+			app => $app,
+			event => $event,
+			timestamp => $server_time,
+			server_time => $server_time,
+			hostname => $args->{'hostname'} || '',
+			user_agent => $args->{'user_agent'} || '',
+			room => $room,
+			# the month the retained websocket sessions keep
+			warranty => &subs::ago_calc('-30d', $server_time),
+			ost => $server_time
+		});
+		1;
+	};
+	return $ok ? 1 : 0;
 }
