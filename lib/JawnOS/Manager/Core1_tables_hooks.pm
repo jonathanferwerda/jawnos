@@ -116,6 +116,7 @@ our @manager_bundle_files = qw(
 	/js/universal.js
 	/js/manager/lazy.js
 	/js/manager/stored.js
+	/js/manager/screen_sources.js
 	/js/manager/game_session.js
 	/js/manager/keyboard.js
 	/js/manager/remote_input.js

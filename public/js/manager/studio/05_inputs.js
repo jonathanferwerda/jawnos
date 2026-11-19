@@ -96,6 +96,47 @@ $(document).on('click', '.studio_cord', function() {
 	channelSelect(channel,'output');
 });
 
+// The channel's Screen Share plug gains the desktop app's screen and window
+// list. A plain browser has no bridge and keeps getDisplayMedia's own picker.
+function studioScreenSourceFill(panel) {
+	if (!panel || !panel.length) { return; }
+	var row = panel.find('.studio_plug_selection[type="screen_share"]').first();
+	if (!row.length) { return; }
+	if (typeof JawnScreen === 'undefined' || !JawnScreen.available()) { return; }
+	var select = $('<select class="studio_screen_source"></select>')
+		.attr('hint', studioAudioLabel('Which screen or window to share'));
+	// The plug list is a table: the chosen source sits in its own row so the
+	// markup stays valid.
+	var holder = $('<tr class="studio_screen_source_row"></tr>')
+		.append($('<td colspan="2"></td>')
+			.css({ padding: '4px 0 4px 24px' })
+			.append(select));
+	row.after(holder);
+	JawnScreen.refresh().then(function (rows) {
+		var groups = {};
+		(rows || []).forEach(function (source) {
+			var word = (source.kind === 'window') ? 'Windows' : 'Screens';
+			if (!groups[word]) {
+				groups[word] = $('<optgroup></optgroup>')
+					.attr('label', studioAudioLabel(word));
+				select.append(groups[word]);
+			}
+			groups[word].append($('<option></option>')
+				.val(source.id)
+				.text(source.label || source.name || source.id));
+		});
+		if (!rows || !rows.length) {
+			select.append($('<option></option>').val('')
+				.text(studioAudioLabel('Entire screen')));
+		}
+	});
+}
+
+function studioScreenSourceValue(panel) {
+	var select = panel ? panel.find('.studio_screen_source').first() : $();
+	return select.length ? (select.val() || '') : '';
+}
+
 async function channelSelect(channel,direction) {
 	var sis = $('#studio_plug_select_container');
 	if ($('#studio_plug_select[channel="' + channel + '"][direction="' + direction + '"]').is(':visible')) {
@@ -147,6 +188,7 @@ async function channelSelect(channel,direction) {
 					sis.css({ 'bottom': (($(window).height() - y) + 20), 'top': '' });
 				}
 
+				studioScreenSourceFill(sis);
 				appointment_chron();
 			}
 		});
@@ -158,6 +200,18 @@ $(document).on('click', '.close_plug_select', function() {
 	sis.hide();
 });
 
+$(document).on('change', '.studio_screen_source', function() {
+	var panel = $(this).closest('#studio_plug_select');
+	var channel = panel.attr('channel');
+	var info = $('.studio_channel_information[direction="input"][channel="' + channel + '"]');
+	if (!isJson(info.text())) { return; }
+	var data = JSON.parse(info.text());
+	if (data.type != 'screen_share') { return; }
+	data.screen = $(this).val() || '';
+	info.text(JSON.stringify(data));
+	studioSaver();
+});
+
 $(document).on('click', '.studio_plug_selection', function() {
 	var sis = $(this);
 	var channel = sis.attr('channel');
@@ -166,6 +220,8 @@ $(document).on('click', '.studio_plug_selection', function() {
 	var type = sis.attr('type');
 	var av = sis.attr('av');
 	var app = sis.attr('app');
+	var screen = (type == 'screen_share')
+		? studioScreenSourceValue(sis.closest('#studio_plug_select')) : '';
 	$('.studio_plug_selection[direction="' + direction + '"][channel="' + channel + '"]').removeClass('active_background');
 	var data = {
 		channel: channel,
@@ -175,6 +231,7 @@ $(document).on('click', '.studio_plug_selection', function() {
 		av: av,
 		app: app
 	}
+	if (screen) { data.screen = screen; }
 	console.log(data);
 	var jinfo = JSON.stringify(data);
 
@@ -220,9 +277,47 @@ async function studioInputStreamGrabber(channel,state) {
 	var plug = isJson(info.text()) ? JSON.parse(info.text()) : {};
 	var video = (plug['av'] == 'av' || plug['av'] == 'v');
 	// The plug list's screen row is a display capture, not a camera: it asks
-	// getDisplayMedia for the first screen (the desktop app answers that
-	// without a picker) rather than getUserMedia for a video device.
+	// for the chosen screen or window (the desktop app supplies the list)
+	// rather than getUserMedia for a video device.
 	var screen_share = (plug['type'] == 'screen_share');
+
+	// Marker and Music are already on this page: the whiteboard canvas and the
+	// player's #video element. Capture their own streams instead of opening a
+	// device. Music may be paused or closed; a closed app has nothing to offer.
+	if (plug['app'] == 'marker') {
+		var whiteboard = document.getElementById('whiteboard');
+		if (!whiteboard || !whiteboard.captureStream) {
+			console.log('studio: Marker is not open, so there is no canvas to record');
+			mixer[ch].media.active = false;
+			return;
+		}
+		var markerStream;
+		try { markerStream = whiteboard.captureStream(30); }
+		catch (e) { markerStream = null; }
+		if (!markerStream || !markerStream.getTracks().length) {
+			console.log('studio: the Marker canvas has no picture yet');
+			mixer[ch].media.active = false;
+			return;
+		}
+		return studioAttachCapturedStream(ch, markerStream);
+	}
+	if (plug['app'] == 'music') {
+		var player = document.getElementById('video');
+		if (!player || !player.captureStream) {
+			console.log('studio: Music is not open, so there is no video to record');
+			mixer[ch].media.active = false;
+			return;
+		}
+		var musicStream;
+		try { musicStream = player.captureStream(); }
+		catch (e) { musicStream = null; }
+		if (!musicStream || !musicStream.getTracks().length) {
+			console.log('studio: Music has no playing picture to record');
+			mixer[ch].media.active = false;
+			return;
+		}
+		return studioAttachCapturedStream(ch, musicStream);
+	}
 
 	// The synth is an app input with no device behind it: route the engine into
 	// the channel instead of opening a microphone. It records through the tone
@@ -273,10 +368,12 @@ async function studioInputStreamGrabber(channel,state) {
 				mixer[ch].media.active = false;
 				return;
 			}
-			stream = await navigator.mediaDevices.getDisplayMedia({
-				video: { displaySurface: 'monitor' },
-				audio: true
-			});
+			stream = (typeof JawnScreen !== 'undefined' && JawnScreen.available())
+				? await JawnScreen.capture(plug['screen'] || '')
+				: await navigator.mediaDevices.getDisplayMedia({
+					video: { displaySurface: 'monitor' },
+					audio: true
+				});
 		}
 		else {
 			stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -287,6 +384,10 @@ async function studioInputStreamGrabber(channel,state) {
 		return;
 	}
 
+	return studioAttachCapturedStream(ch, stream);
+}
+
+function studioAttachCapturedStream(ch, stream) {
 	mixer[ch].media.inRaw = stream;
 	mixer[ch].media.active = true;
 

@@ -371,6 +371,41 @@ function jpScope(app) {
 
 }
 
+// The media panel's screen list. The desktop app answers with the screens and
+// windows Qt exposes; a plain browser has no bridge and keeps its own picker.
+function jpScreenSourceFill(app) {
+	var select = $('.appointment[app="' + app + '"] .screen_source').first();
+	if (!select.length) { return; }
+	if (typeof JawnScreen === 'undefined' || !JawnScreen.available()) {
+		select.hide();
+		return;
+	}
+	JawnScreen.refresh().then(function (rows) {
+		var groups = {};
+		select.empty();
+		(rows || []).forEach(function (row) {
+			var word = (row.kind === 'window') ? 'Windows' : 'Screens';
+			var label = (typeof jawnosT === 'function') ? jawnosT(word) : word;
+			if (!groups[word]) {
+				groups[word] = $('<optgroup></optgroup>').attr('label', label);
+				select.append(groups[word]);
+			}
+			groups[word].append($('<option></option>')
+				.val(row.id)
+				.text(row.label || row.name || row.id));
+		});
+		if (!rows || !rows.length) {
+			select.append($('<option></option>').val('').text('Entire screen'));
+		}
+		select.show();
+	});
+}
+
+function jpScreenSource(app) {
+	var select = $('.appointment[app="' + app + '"] .screen_source').first();
+	return select.length ? (select.val() || '') : '';
+}
+
 async function jpScreen(app,uuid) {
 	var id = app + '_scr';
 	var timestamp = Date.now();
@@ -383,8 +418,13 @@ async function jpScreen(app,uuid) {
 		if (app) {
 
 			if (!us['in'][app]) {
-				var options = { 'surfaceSwitching': 'include', 'audio': true, 'video': { 'displaySurface': 'monitor' }};
-				us['in'][app] = await navigator.mediaDevices.getDisplayMedia(options);
+				if (typeof JawnScreen !== 'undefined' && JawnScreen.available()) {
+					us['in'][app] = await JawnScreen.capture(jpScreenSource(app));
+				}
+				else {
+					var options = { 'surfaceSwitching': 'include', 'audio': true, 'video': { 'displaySurface': 'monitor' }};
+					us['in'][app] = await navigator.mediaDevices.getDisplayMedia(options);
+				}
 			}
 			if (!us['rec'][app] || us['rec'][app].state =="inactive" ) {
 				us['rec'][app] = new MediaRecorder(us['in'][app]);

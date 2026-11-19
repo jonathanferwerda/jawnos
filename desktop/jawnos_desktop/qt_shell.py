@@ -922,14 +922,17 @@ def _feature_permission(page, qt, allowed_hosts, gps_on=False):
 
 
 def _allow_screen_capture(page, qt, allowed_hosts):
-    """Answer a page's ``getDisplayMedia`` with the first screen.
+    """Answer a page's ``getDisplayMedia`` with a screen or window.
 
     Qt keeps screen capture switched off until ``ScreenCaptureEnabled`` is set,
     and then hands the request to the app. ``QWebEngineDesktopMediaRequest``
-    has no accept(): there is only a screen/window model to choose from, so
-    this shares the first screen rather than presenting a picker. The request
-    does not expose its origin, so the page's committed URI is checked against
-    the same host allowlist as the permission handler.
+    has no accept(): there is only a screen/window model to choose from. A page
+    that sent ``screen_list`` first gets those rows instead of a selection, so
+    its own select can name one; ``screen_want`` then selects that row for the
+    next request. Without either message the first screen is chosen, so every
+    existing caller keeps working. The request does not expose its origin, so
+    the page's committed URI is checked against the same host allowlist as the
+    permission handler.
     """
     try:
         page.settings().setAttribute(
@@ -937,17 +940,101 @@ def _allow_screen_capture(page, qt, allowed_hosts):
     except Exception:
         pass
 
+    try:
+        from PySide6.QtCore import Qt
+    except Exception:
+        Qt = None
+
+    def rows(model, kind):
+        found = []
+        try:
+            for index in range(model.rowCount()):
+                item = model.index(index, 0)
+                label = model.data(item, Qt.ItemDataRole.DisplayRole)
+                if isinstance(label, bytes):
+                    label = label.decode('utf-8', 'replace')
+                label = str(label).strip() if label is not None else ''
+                if not label:
+                    label = ('Screen ' if kind == 'screen' else 'Window ') + str(index + 1)
+                found.append({
+                    "id": (kind + ':' + str(index)),
+                    "kind": kind,
+                    "index": index,
+                    "label": label,
+                    "name": label,
+                })
+        except Exception:
+            pass
+        return found
+
+    def send_list(request):
+        payload = {"sources": rows(request.screensModel(), "screen")
+                              + rows(request.windowsModel(), "window")}
+        try:
+            page.runJavaScript(
+                "window.jawnosScreenSources && window.jawnosScreenSources(%s);"
+                % json.dumps(payload))
+        except Exception:
+            pass
+
     def choose(model, select):
         if model is None or model.rowCount() < 1:
             return False
         select(model.index(0, 0))
         return True
 
+    def choose_named(request, wanted):
+        wanted = str(wanted or '')
+        kind, _, index = wanted.partition(':')
+        if kind in ("screen", "window") and index.isdigit():
+            model = (request.screensModel() if kind == "screen"
+                     else request.windowsModel())
+            select = (request.selectScreen if kind == "screen"
+                      else request.selectWindow)
+            try:
+                if int(index) < model.rowCount():
+                    select(model.index(int(index), 0))
+                    return True
+            except Exception:
+                pass
+        # The model has display names only, so a page that kept the name
+        # across a request can still find its row.
+        for kind, model, select in (
+                ("screen", request.screensModel(), request.selectScreen),
+                ("window", request.windowsModel(), request.selectWindow)):
+            try:
+                for index in range(model.rowCount()):
+                    item = model.index(index, 0)
+                    label = model.data(item, Qt.ItemDataRole.DisplayRole)
+                    if label is not None and str(label).strip() == wanted:
+                        select(item)
+                        return True
+            except Exception:
+                pass
+        return False
+
     def handle(request):
         try:
             if _permission_host(page.url()) not in allowed_hosts:
                 request.cancel()
                 return
+            # Every request can name its rows: a page that sent screen_list
+            # gets them and waits, and a page that did not still has the list
+            # if its message arrived late.
+            send_list(request)
+            mode = getattr(page, "_jawn_screen_mode", "")
+            page._jawn_screen_mode = ""
+            if mode == "list":
+                # The page asked for the choices; hold the request open until
+                # it cancels or names one.
+                page._jawn_screen_request = request
+                return
+            if mode == "capture":
+                wanted = getattr(page, "_jawn_screen_want", "")
+                page._jawn_screen_want = ""
+                if choose_named(request, wanted):
+                    page._jawn_screen_request = None
+                    return
             if choose(request.screensModel(), request.selectScreen):
                 return
             # A session with no screen output may still offer windows; take
@@ -1775,7 +1862,8 @@ def main(argv=None):
                        json.dumps({"ok": True, "pong": True})))
             return
         if action not in ("app_pubkey", "app_sign", "media_state",
-                          "open_manager", "browse"):
+                          "open_manager", "browse", "screen_list",
+                          "screen_want", "screen_cancel"):
             return
         # Only the manager's own origin may use the bridge. A public page
         # loaded in this view must not be able to borrow the app's key.
@@ -1813,6 +1901,37 @@ def main(argv=None):
             media["audio"] = bool(message.get("audio"))
             media["video"] = bool(message.get("video"))
             reconcile_media()
+            return
+        if action == "screen_list":
+            # The page is about to ask getDisplayMedia for the choices; the
+            # next request is held open and answered with the model's rows.
+            page_obj._jawn_screen_mode = "list"
+            try:
+                page_obj.runJavaScript(
+                    "window.jawnosScreenReady && window.jawnosScreenReady();")
+            except Exception:
+                pass
+            return
+        if action == "screen_want":
+            # The page named the row its next capture should use.
+            page_obj._jawn_screen_mode = "capture"
+            page_obj._jawn_screen_want = str(message.get("id") or "")
+            try:
+                page_obj.runJavaScript(
+                    "window.jawnosScreenReady && window.jawnosScreenReady();")
+            except Exception:
+                pass
+            return
+        if action == "screen_cancel":
+            pending = getattr(page_obj, "_jawn_screen_request", None)
+            page_obj._jawn_screen_request = None
+            page_obj._jawn_screen_mode = ""
+            page_obj._jawn_screen_want = ""
+            if pending is not None:
+                try:
+                    pending.cancel()
+                except Exception:
+                    pass
             return
         msg_id = message.get("id") or ""
         try:

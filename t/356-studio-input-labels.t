@@ -50,4 +50,17 @@ like($inputs, qr/navigator\.mediaDevices\.getDisplayMedia\(\{[\s\S]*?displaySurf
 like($inputs, qr/stream\.getAudioTracks\(\)\.length \? studioAttachInput/,
 	'a screen stream with no audio still records its picture');
 
+# --- the channel's screen list and its app inputs ----------------------------
+like($inputs, qr/function studioScreenSourceFill/, 'the channel offers the desktop screen list');
+like($inputs, qr/studio_screen_source/, 'through a source select');
+like($inputs, qr/JawnScreen\.capture\(plug\['screen'\] \|\| ''\)/,
+	'and captures the chosen row');
+like($inputs, qr/plug\['app'\] == 'marker'/, 'Marker is a channel input');
+like($inputs, qr/whiteboard\.captureStream\(30\)/, 'through its canvas stream');
+like($inputs, qr/plug\['app'\] == 'music'/, 'Music is a channel input');
+like($inputs, qr/player\.captureStream\(\)/, 'through the #video element');
+like($inputs, qr/plug\['app'\] == 'synth'[\s\S]*?studioAttachSynth/,
+	'Synth still routes its real output node into the channel');
+like($inputs, qr/function studioAttachCapturedStream/, 'one attach path serves them all');
+
 done_testing();

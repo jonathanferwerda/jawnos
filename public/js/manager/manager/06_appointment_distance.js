@@ -609,7 +609,14 @@ $(document).on('click', '.group_toggle', function() {
 	var contents = appointment.find('.' + group + '_group_contents');
 	var open = contents.is(':visible');
 	appointment.find('.group_contents').hide();
-	if (!open) { contents.show(); }
+	if (!open) {
+		contents.show();
+		// The media panel gains the desktop app's screens and windows when it
+		// opens, so a screen record can name its source before the press.
+		if (group == 'media' && typeof jpScreenSourceFill === 'function') {
+			jpScreenSourceFill(appointment.attr('app'));
+		}
+	}
 });
 
 // The media machine choice is a preference of this person at this screen, like

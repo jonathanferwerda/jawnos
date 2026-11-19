@@ -404,9 +404,10 @@ It uses the same stored ticket as always: loading the ticket URL
 mints the session cookie, and the shell then loads the Manager on that host.
 The profile (`~/.config/jawnos/qt-webengine`) keeps the cookie across launches.
 Certificate errors are accepted for the house's self-signed certificate, and
-microphone/camera requests are granted to the page. A screen share is answered
-with the first screen, with no picker, for the house's own origins. Qt 6.8 and
-6.12 spell web
+microphone/camera requests are granted to the page. A Manager page may ask for
+the desktop's screens and windows and choose one from its own list; any other
+request is answered with the first screen, with no picker, for the house's own
+origins. Qt 6.8 and 6.12 spell web
 permissions differently; both the `permissionRequested`/`QWebEnginePermission`
 path and the older `featurePermissionRequested` one are handled. `--probe` is
 also the regression check in `t/185-desktop-qt-shell.t`, which skips on a

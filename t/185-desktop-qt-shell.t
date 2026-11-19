@@ -906,4 +906,111 @@ PY
 	is($notch // -1, 0, 'a single wheel notch does not coast');
 }
 
+# --- the screen list a panel can show ---------------------------------------
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $py = "$dir/screen.py";
+	write_file($py, <<'SCREEN');
+from PySide6.QtCore import QUrl
+from jawnos_desktop.qt_shell import _allow_screen_capture
+
+class Signal:
+    def __init__(self):
+        self.callback = None
+    def connect(self, callback):
+        self.callback = callback
+
+class Settings:
+    def setAttribute(self, *args):
+        return None
+
+class Model:
+    def __init__(self, names):
+        self.names = names
+    def rowCount(self):
+        return len(self.names)
+    def index(self, row, column):
+        return (row, column)
+    def data(self, item, role):
+        return self.names[item[0]]
+
+class Request:
+    def __init__(self):
+        self.selected = None
+        self.cancelled = False
+        self.screens = Model(['Entire screen'])
+        self.windows = Model(['JawnOS'])
+    def screensModel(self):
+        return self.screens
+    def windowsModel(self):
+        return self.windows
+    def selectScreen(self, item):
+        self.selected = ('screen', item)
+    def selectWindow(self, item):
+        self.selected = ('window', item)
+    def cancel(self):
+        self.cancelled = True
+
+class Page:
+    def __init__(self, url):
+        self._url = QUrl(url)
+        self._settings = Settings()
+        self.js = []
+        self._jawn_screen_mode = ''
+        self._jawn_screen_want = ''
+        self.desktopMediaRequested = Signal()
+    def settings(self):
+        return self._settings
+    def url(self):
+        return self._url
+    def runJavaScript(self, script):
+        self.js.append(script)
+
+page = Page('https://127.0.0.1:3001/manager')
+_allow_screen_capture(page, {}, {'127.0.0.1'})
+
+page._jawn_screen_mode = 'list'
+listing = Request()
+page.desktopMediaRequested.callback(listing)
+print('list-selected', listing.selected)
+print('list-cancelled', listing.cancelled)
+joined = ' '.join(page.js)
+print('list-sources', 'Entire screen' in joined and 'JawnOS' in joined)
+print('list-js', 'window.jawnosScreenSources' in joined)
+
+page._jawn_screen_mode = 'capture'
+page._jawn_screen_want = 'window:0'
+capture = Request()
+page.desktopMediaRequested.callback(capture)
+print('capture-selected', capture.selected)
+
+page._jawn_screen_mode = ''
+auto = Request()
+page.desktopMediaRequested.callback(auto)
+print('auto-selected', auto.selected)
+
+page._url = QUrl('https://example.com/')
+public = Request()
+page.desktopMediaRequested.callback(public)
+print('public-cancelled', public.cancelled)
+SCREEN
+	my $out = `cd "$root" && QT_QPA_PLATFORM=offscreen PYTHONPATH=desktop timeout 30 python3 "$py" 2>&1`;
+	SKIP: {
+		skip 'PySide6 is not installed here', 7
+			if $out =~ /No module named .PySide6|ModuleNotFoundError/;
+		like($out, qr/^list-selected None$/m,
+			'a list request waits instead of choosing');
+		like($out, qr/^list-cancelled False$/m, 'and is not cancelled');
+		like($out, qr/^list-sources True$/m,
+			'the page receives the screens and windows');
+		like($out, qr/^list-js True$/m, 'through jawnosScreenSources');
+		like($out, qr/^capture-selected \('window', \(0, 0\)\)$/m,
+			'a named row is the one captured');
+		like($out, qr/^auto-selected \('screen', \(0, 0\)\)$/m,
+			'an unnamed request keeps the first screen');
+		like($out, qr/^public-cancelled True$/m,
+			'a public origin is still cancelled');
+	}
+}
+
 done_testing();
