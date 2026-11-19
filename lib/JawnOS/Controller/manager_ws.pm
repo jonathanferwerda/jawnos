@@ -273,7 +273,7 @@ sub action_47050 {
 			$gb::ws->{$app}->{$tab}->{'device_uuid'} = $c->session('device_uuid') || '';
 		}
 		my $remote_machines;
-		if ($data->{'type'} eq 'stayingAlive') {
+		if ($data->{'type'} eq 'stayingAlive') { &subs::browser_game_heartbeat({ game => $data->{'game'}, at => $data->{'timestamp'} }) if ($data->{'game'} // '') ne '';
 			my $beat_once = sub {
 				my ($beat_app) = @_;
 				my $app = $beat_app;

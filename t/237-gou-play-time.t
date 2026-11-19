@@ -219,6 +219,11 @@ sub sessions {
 	is( $solitaire->[0]->{'type'}, 'stop', 'the child stops with the session' );
 	is( int( $solitaire->[0]->{'duration'} ), -60_000, 'and keeps the same play time' );
 
+	# a beat never starts a session: after the stop there is no open row
+	my $closed_beat = &subs::browser_game_heartbeat({ device => $browser_device, game => 'Solitaire', at => $b1 + 130_000 });
+	is( $closed_beat->{'state'}, 'none', 'a beat with no open play starts none' );
+	is( scalar @{$browser->()}, 1, 'and adds no appointment' );
+
 	# another game on the same device is its own row
 	$NOW = $b1 + 150_000;
 	&subs::browser_game_play({ device => $browser_device, game => 'Twirl', state => 'play', at => $b1 + 150_000 });
@@ -243,6 +248,25 @@ sub sessions {
 
 	is( &subs::browser_game_play({ device => $browser_device, game => 'Tarot', state => 'play' })->{'ok'}, 0,
 		'tarot is not a play session' );
+
+	# a websocket beat keeps an open play alive without adding play time
+	my $beat_start = $b1 + 300_000;
+	$NOW = $beat_start;
+	&subs::browser_game_play({ device => $browser_device, game => 'Solitaire', state => 'play', at => $beat_start });
+	my ($beating) = grep { ($_->{'project'} // '') eq 'Solitaire' && ($_->{'type'} // '') eq 'start' } @{ $browser->() };
+	ok( $beating && $beating->{'uuid'}, 'a later Solitaire session opens' );
+	my $beat_uuid = $beating ? ($beating->{'uuid'} // '') : '';
+	$NOW = $beat_start + 20_000;
+	&subs::browser_game_play({ device => $browser_device, game => 'Solitaire', state => 'play', at => $NOW });
+	my $play_clock = &subs::db_query('select server_time from appointments where uuid = ?', $beat_uuid)->hash;
+	$NOW = $beat_start + 30_000;
+	my $beat = &subs::browser_game_heartbeat({ device => $browser_device, game => 'Solitaire', at => $NOW });
+	is( $beat->{'state'}, 'beat', 'a heartbeat marks the open play' );
+	my $mark = &subs::cache_get(&subs::browser_game_beat_key($beat_uuid));
+	is( int(($mark // {})->{'at'}), $beat_start + 30_000, 'with the moment it was heard' );
+	my $after_beat = &subs::db_query('select server_time from appointments where uuid = ?', $beat_uuid)->hash;
+	is( int($after_beat->{'server_time'}), int($play_clock->{'server_time'}),
+		'and does not touch the appointment play clock' );
 
 	# a play that lands on a still-open row after a quiet spell is a reopened
 	# window, not continuous play: the gap is a pause and is left out

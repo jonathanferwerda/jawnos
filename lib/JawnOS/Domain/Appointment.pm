@@ -553,6 +553,7 @@ sub game_session_discard {
 	}
 	&subs::records_tombstone($app, $uuid);
 	&session_pause_take($uuid);
+	&subs::cache_delete(&browser_game_beat_key($uuid)) if &browser_game_beat_key($uuid);
 	&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $now });
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
 	return 1;
@@ -584,6 +585,7 @@ sub game_session_close {
 		duration => $duration,
 		server_time => $now,
 	}, { uuid => $uuid, app => $app });
+	&subs::cache_delete(&browser_game_beat_key($uuid)) if &browser_game_beat_key($uuid);
 	&game_session_child_close($uuid, $stop_at, $duration, $now);
 	&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_at });
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $app, $uuid)});
@@ -840,6 +842,50 @@ sub browser_game_option_attach {
 	}
 }
 
+# A browser game's window is alive while its tab beats. The beat is a liveness
+# mark, not play: writing it to the appointment's server_time would defeat the
+# quiet-gap pause (a fresh beat would make an idle gap look like play), so it
+# lives in the cache and the play time still ends at the last touch.
+sub browser_game_beat_key {
+	my ($uuid) = @_;
+	return undef unless defined $uuid && length $uuid;
+	return {
+		app => '__president',
+		context => 'game_beat',
+		subcontext => substr($uuid, 0, 24),
+		warranty => '-1d',
+	};
+}
+
+sub browser_game_heartbeat {
+	my ($opts) = @_;
+	$opts ||= {};
+	my %allowed = map { $_ => 1 } ('Solitaire', 'Spider Solitaire', 'Mahjong', 'Blackjack', 'Twirl');
+	my $game = $opts->{'game'} // '';
+	$game =~ s/^\s+//;
+	$game =~ s/\s+$//;
+	return { ok => 0, error => 'That game does not save play time.' } unless $allowed{$game};
+	my $now = &rightNow();
+	my $device = $opts->{'device'} // &device_setter();
+	my $at = int($opts->{'at'} // 0);
+	$at = $now if $at <= 0 || $at > $now;
+	# Only an open session is kept alive; a beat never starts one.
+	my $open = &db_query(q{
+		select uuid from appointments
+		 where app = 'games' and lower(source) = 'browser_game' and device = ? and project = ?
+		   and (type = 'start' or type = 'record') and stop_seen is null
+		 order by cast(timestamp as integer) desc limit 1
+	}, $device, $game)->hash;
+	return { ok => 1, state => 'none' } unless $open && $open->{'uuid'};
+	&subs::cache_set(&browser_game_beat_key($open->{'uuid'}), {
+		uuid => $open->{'uuid'},
+		at => $at,
+		game => $game,
+		device => $device,
+	});
+	return { ok => 1, state => 'beat' };
+}
+
 sub browser_game_play {
 	my ($opts) = @_;
 	$opts ||= {};
@@ -961,6 +1007,7 @@ sub browser_game_play {
 sub session_housekeeping_tick {
 	my $now = &rightNow();
 	my $stale = 10 * 60 * 1000;
+	my $play_stale = 2 * 60 * 1000;
 	my $rows = eval {
 		&db_query(q{
 			select app, uuid, timestamp, server_time, source from appointments
@@ -974,7 +1021,19 @@ sub session_housekeeping_tick {
 		my $app = $open->{'app'} || next;
 		my $started = int($open->{'timestamp'} // 0);
 		my $beat = int($open->{'server_time'} // 0) || $started;
-		next if $now - $beat <= $stale;
+		# A browser game's tab beats while it is being played; the liveness mark
+		# lives in the cache so the play time still ends at the last touch. The
+		# Gou's tick refreshes server_time itself. Either way a game whose
+		# heartbeat stopped is closed within a couple of minutes, not ten.
+		my $source = lc($open->{'source'} // '');
+		my $heard = $beat;
+		if ($source eq 'browser_game') {
+			my $mark = &subs::cache_get(&browser_game_beat_key($uuid));
+			my $mark_at = ref $mark eq 'HASH' ? int($mark->{'at'} // 0) : 0;
+			$heard = $mark_at if $mark_at > $heard;
+		}
+		my $limit = ($source eq 'game' || $source eq 'browser_game') ? $play_stale : $stale;
+		next if $now - $heard <= $limit;
 		my $stop_at = $beat > $started ? $beat : $started;
 		$stop_at = $now if $stop_at > $now;
 		my $paused = &session_pause_take($uuid);
@@ -982,7 +1041,6 @@ sub session_housekeeping_tick {
 		$duration = 0 if $duration > 0;
 		# The Gou's launch-opened session is dropped for being short; a browser play
 		# is touch-started, so only one that measured no play at all is dropped.
-		my $source = lc($open->{'source'} // '');
 		my $no_play = ($source eq 'browser_game')
 			? ($duration == 0)
 			: ($source eq 'game' && abs($duration) < $GAME_MIN_PLAY_MS);

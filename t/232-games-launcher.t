@@ -1,4 +1,4 @@
-# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js public/js/manager/windows/03_stack.js templates/apps/transaction/options.html.ep perl/help/topics_people.pl public/css/manager.css
+# tests-for: templates/apps/games.html.ep templates/controller/standalone.html.ep lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm lib/JawnOS/Controller/manager_ws.pm public/js/manager/manager/09_app_back.js public/js/manager/twirl.js public/js/manager/twirl/01_twirl_game.js public/js/manager/manager/12_cards.js public/js/manager/game_session.js public/js/manager/websocket.js public/js/manager/windows/03_stack.js templates/apps/transaction/options.html.ep perl/help/topics_people.pl public/css/manager.css
 # covers:    The second launcher behind the Controller's Games tile, Twirl's
 #            clockwise and counter-clockwise turns, and the strip a full-screen
 #            app used to keep where its title bar had been.
@@ -47,6 +47,12 @@ unlike($tick, qr/!s\.screen\(\)\) \{[\s\S]*?jawnosGameSessionStop\(\)/,
 
 my $hooks = read_file("$root/lib/JawnOS/Manager/Core1_tables_hooks.pm");
 like($hooks, qr{/js/manager/game_session\.js}, 'the tracker ships in the eager bundle');
+like($tracker, qr/function jawnosGameSessionActive/,
+	'a running game can tell the beat it is being played');
+my $ws_js = read_file("$root/public/js/manager/websocket.js");
+like($ws_js, qr/data\['game'\] = playing/, 'the websocket beat names the running game');
+my $ws_controller = read_file("$root/lib/JawnOS/Controller/manager_ws.pm");
+like($ws_controller, qr/&subs::browser_game_heartbeat\(/, 'and the server records the beat');
 
 my $cards_js = read_file("$root/public/js/manager/manager/12_cards.js");
 my ($game_map) = $cards_js =~ /(var CARDS_GAME_NAMES = \{[^\}]*\};)/;
@@ -75,6 +81,7 @@ like($twirl_js, qr/jawnosGameSessionPause\(\)/, 'and Escape pauses the play appo
 my $stack = read_file("$root/public/js/manager/windows/03_stack.js");
 like($stack, qr/app == 'cards'[\s\S]*?jawnosGameSessionStop\(\)/,
 	'closing the card room ends its game');
+like($stack, qr/card_game === 'Spider Solitaire'/, 'and closes Spider with it');
 
 my $options_template = read_file("$root/templates/apps/transaction/options.html.ep");
 like($options_template, qr/\$l->\{'app'\} eq 'games'/, 'a game option opens the Cards app');

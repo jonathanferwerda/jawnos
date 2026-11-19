@@ -633,6 +633,13 @@ function heartbeatSend(app, collect) {
 				seen_headers[ha] = hh.attr('last_updated') || hh.attr('last_update') || '';
 			});
 			data['headers_at'] = seen_headers;
+			// A running game names itself on the tab's beat. The server keeps the
+			// play appointment alive only while these beats arrive; a closed window
+			// stops them, so the appointment closes on its own without a stop.
+			if (typeof jawnosGameSessionActive === 'function' && jawnosGameSessionActive()) {
+				var playing = (typeof jawnosGameSessionGame === 'function') ? jawnosGameSessionGame() : '';
+				if (playing) { data['game'] = playing; }
+			}
 		}
 		// The music socket now beats on pages that never opened the music app. A
 		// track on screen is the only thing the writer can report: the window

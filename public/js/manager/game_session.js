@@ -48,6 +48,17 @@ function jawnosGameSessionGame() {
 	return jawnosGameSession.game;
 }
 
+// True while a game is being played and its pane is on screen. The websocket
+// beat names the game only then, so a closed window stops the heartbeat and the
+// server can close the play appointment on its own.
+function jawnosGameSessionActive() {
+	var s = jawnosGameSession;
+	if (!s.game || !s.started || s.paused) { return false; }
+	if (typeof s.screen === 'function' && !s.screen()) { return false; }
+	if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { return false; }
+	return true;
+}
+
 function jawnosGameSessionTick() {
 	var s = jawnosGameSession;
 	if (!s.started) { return; }

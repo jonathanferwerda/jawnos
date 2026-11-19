@@ -93,6 +93,25 @@ my %cache;
 	is( int( $long_row->{'stop_timestamp'} ), $base + 150_000, 'at its last heartbeat' );
 	is( int( $long_row->{'duration'} ), -120_000, 'with the time it was actually heard' );
 
+	# a live beat keeps a browser play open past its last touch; when the beats
+	# stop, the row closes at the last touch, not at the beat
+	my $beating_uuid = 'browserrow-beat-housekeeping-test';
+	&subs::db_insert( 'appointments', {
+		app => 'games', uuid => $beating_uuid, type => 'start',
+		timestamp => $base + 30_000, server_time => $base + 50_000,
+		source => 'browser_game', device => 'phone', project => 'Mahjong', seen => 'yes',
+	} );
+	&subs::cache_set( &subs::browser_game_beat_key($beating_uuid), { at => $base + 19 * 60_000 } );
+	&subs::session_housekeeping_tick();
+	my $beating_row = &subs::db_query( 'select * from appointments where uuid = ?', $beating_uuid )->hash;
+	is( $beating_row->{'type'}, 'start', 'a live beat keeps the open play' );
+	&subs::cache_set( &subs::browser_game_beat_key($beating_uuid), { at => $base + 5 * 60_000 } );
+	&subs::session_housekeeping_tick();
+	$beating_row = &subs::db_query( 'select * from appointments where uuid = ?', $beating_uuid )->hash;
+	is( $beating_row->{'type'}, 'stop', 'a stopped beat closes it' );
+	is( int( $beating_row->{'stop_timestamp'} ), $base + 50_000, 'at the last touch, not the beat' );
+	is( int( $beating_row->{'duration'} ), -20_000, 'with only the measured play' );
+
 	# a short game the page paused is dropped once the five-minute resume window
 	# has passed, and left alone inside it
 	my $paused_uuid = 'browserrow-paused-housekeeping-test';

@@ -180,12 +180,11 @@ function windowCloseTearDown(timestamp, win, done) {
 			&& typeof jawnosGameSessionStop === 'function') { jawnosGameSessionStop(); }
 	}
 	// Closing the card room is the end of its game: the pane being hidden is only
-	// a pause, and a session under a minute is dropped when the stop lands. Only
-	// the card games are stopped, so closing a background Cards window cannot end
-	// a Twirl session.
+	// a pause. Only the card games are stopped, so closing a background Cards
+	// window cannot end a Twirl session.
 	if (app == 'cards' && typeof jawnosGameSessionGame === 'function' && typeof jawnosGameSessionStop === 'function') {
 		var card_game = jawnosGameSessionGame();
-		if (card_game === 'Solitaire' || card_game === 'Mahjong' || card_game === 'Blackjack') {
+		if (card_game === 'Solitaire' || card_game === 'Spider Solitaire' || card_game === 'Mahjong' || card_game === 'Blackjack') {
 			jawnosGameSessionStop();
 		}
 	}
