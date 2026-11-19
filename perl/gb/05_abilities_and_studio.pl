@@ -117,8 +117,12 @@ our $studio = {
 		{ control => 'volume', colour => 'grey_plain', placement => 'metronome' }
 	],
 	pedals => [{ 
+		# Jtune is a chromatic tuner, not an effect: this artwork is a shelf
+		# marker for the tuner display that is planned, and nothing is wired in
+		# yet. It has no audio implementation and never joins the rack.
 		name => 'Jtune',
 		image => 'jtune',
+		tuner => 1,
 		buttons => [{
 			control => 'automatic', colour => 'ruby_red', left => '17%', top => '76%', height => '15%', width => '25%', status => 'depressed'
 		}]
@@ -207,7 +211,9 @@ our $studio = {
 			{ control => 'ceiling', label => 'Ceiling' },
 			{ control => 'release', label => 'Release' }
 		] },
-		autotune => { label => 'Autotune', controls => [
+		# The wire name stays autotune for the engine, the socket and saved
+		# songs; only the label people read is JawnPitch. Do not rename the key.
+		autotune => { label => 'JawnPitch', controls => [
 			{ control => 'speed', label => 'Speed' },
 			{ control => 'amount', label => 'Amount' },
 			{ control => 'key', label => 'Key', options => [ qw(C C# D D# E F F# G G# A A# B) ] },
@@ -242,7 +248,8 @@ our $studio = {
 			{ control => 'mix', label => 'Mix' }
 		] }
 	},
-	# The order the Add list offers them.
+	# The order the Add list offers them. The entries are wire names; the Add
+	# list shows each effect's label (autotune appears as JawnPitch).
 	palette => [ qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor) ],
 	# The order of the reverb model dropdown; both implementations agree.
 	reverb_models => [ qw(Room Spring Plate Hall Cave) ],

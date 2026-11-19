@@ -30,6 +30,13 @@ my $help   = read_file("$root/perl/help/topics_apps.pl");
 # The contract's channel insert names (docs/studio-effects.md, "Insert kinds").
 my @contract = qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor);
 
+# --- the labels and the wire names -----------------------------------------
+# autotune is the wire name; people read JawnPitch. Jtune is a tuner, not an
+# effect, and is neither an alias nor an insert.
+like($studio, qr/autotune => \{ label => 'JawnPitch'/, 'the autotune effect is shown as JawnPitch');
+like($studio, qr/name => 'Jtune',[\s\S]*?tuner => 1/, 'the studio data marks Jtune as a tuner');
+unlike($studio, qr/autotune => \{ label => 'Autotune'/, 'the old Autotune label is gone');
+
 # --- the palette and the builders agree ------------------------------------
 my ($palette) = $studio =~ /palette\s*=>\s*\[\s*qw\(([^)]*)\)\s*\]/s;
 ok(defined $palette && length $palette, 'the studio data carries a palette list');
@@ -45,7 +52,8 @@ like($fx, qr/\breverb2\s*:\s*'reverb'/, 'reverb2 is still an alias of reverb');
 like($fx, qr/\bCompressionX\s*:\s*'compressor'/, 'CompressionX still maps to compressor');
 like($fx, qr/\bDistorjawn\s*:\s*'distortion'/, 'Distorjawn still maps to distortion');
 like($fx, qr/\bDelayed\s*:\s*'delay'/, 'Delayed still maps to delay');
-like($fx, qr/\bJtune\s*:\s*'autotune'/, 'Jtune is now the autotune pedal');
+unlike($fx, qr/\bJtune\s*:/, 'Jtune is not in the effect alias table');
+like($fx, qr/\bautotune\s*:\s*'autotune'/, 'the wire name autotune is still accepted');
 like($js, qr/function studioInsert\(ctx, name\)[\s\S]*?\n\}/,
 	'studioInsert() is the one dispatcher');
 like($js, qr/var build = studioEffectBuilder\(name\);/, 'studioInsert delegates to the builder table');
@@ -111,11 +119,17 @@ like($knobs, qr/rack_restore\.push\(\{ ch: i, name: name, record: entry \}\);/,
 	'a restored rack waits for its own control values');
 like($knobs, qr/studioSetInsert\(i, name, true\)/, 'the stored order is rebuilt insert by insert');
 
-# A legacy "Jtune" was artwork with no implementation, so it is restored as
-# autotune switched off rather than as a live effect it never was.
-like($knobs, qr/typeof entry === 'string' && name === 'Jtune'/, 'a legacy Jtune string is recognised');
-like($knobs, qr/studioSetInsert\(i, 'autotune', true\);/, 'it is restored as the autotune insert');
-like($knobs, qr/record: \{ name: 'autotune', on: false \}/, 'the restored insert starts bypassed');
+# Jtune is a chromatic tuner, not an effect: a legacy entry is dropped, never
+# turned into an insert, and never mapped to autotune.
+like($knobs, qr/if \(name === 'Jtune'\) \{ return; \}/, 'a legacy Jtune entry is ignored on restore');
+unlike($knobs, qr/typeof entry === 'string' && name === 'Jtune'/, 'there is no Jtune-to-autotune migration');
+unlike($knobs, qr/studioSetInsert\(i, 'autotune', true\)/, 'a legacy Jtune is not turned into autotune');
+like($knobs, qr/data-tuner': 'yes'/, 'the Jtune shelf tile is marked a tuner');
+like($knobs, qr/closest\('\.pedal'\)\.attr\('data-tuner'\) !== 'yes'/, 'the tuner is not draggable into a rack');
+like($rack, qr/Chromatic tuner, not wired yet/, 'the tuner lamp says it is not wired');
+like($rack, qr/if \(tile\.attr\('data-tuner'\) === 'yes'\) \{ return; \}/, 'the tuner lamp is inert');
+like($rack, qr/if \(name === 'Jtune'\) \{ return; \}/, 'the pedal toggle refuses the tuner');
+like($knobs, qr/tile\.attr\('data-tuner'\) !== 'yes' && typeof studioTogglePedal/, 'the tuner footswitch toggles no sound');
 
 # --- the master rack -------------------------------------------------------
 my ($master_list) = $studio =~ /master\s*=>\s*\[(.*?)\n\t\]/s;
@@ -199,7 +213,9 @@ like($markup, qr/class="studio_pedal_led" role="button" aria-pressed="false" tit
 like($style, qr/\.pedal\s*\{[^}]*height:\s*140px/s, 'an artwork pedal is 140px tall');
 like($style, qr/\.pedal_text\s*\{/, 'a palette tile is styled from the same box');
 like($markup, qr/class="pedal pedal_text"/, 'the palette\'s text tiles are pedal tiles');
-like($markup, qr/delete \$shelf_has\{'autotune'\}/, 'Autotune keeps its own text tile even though Jtune shares its effect');
+unlike($markup, qr/Jtune\s*=>\s*'autotune'/, 'Jtune is not mapped to an audio effect');
+like($markup, qr/%shelf_kind = \(\s*CompressionX => 'compressor'/, 'the artwork map names only real pedals');
+unlike($markup, qr/delete \$shelf_has/, 'so JawnPitch needs no artwork alias to keep its text tile');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork is contained, not cropped');
 
 # --- the help topic speaks in the pedalboard's words ------------------------
@@ -233,8 +249,9 @@ like($help, qr/Drag a row by its handle/, 'the help explains reordering');
 like($help, qr/The master rack is the last of the channel strips, at their far right/,
 	'the help puts the master rack at the far right of the strips');
 like($help, qr/Every pedal tile wears a small lamp/, 'the help explains the lamp');
-like($help, qr/The Jtune pedal is the old artwork for Autotune/, 'the help explains Jtune');
-like($help, qr/loads as Autotune switched off/, 'the help explains the legacy migration');
+like($help, qr/The Jtune pedal is a chromatic tuner, not an effect/, 'the help explains Jtune the tuner');
+like($help, qr/ignores that entry when it loads/, 'the help explains that a legacy Jtune is ignored');
+like($help, qr/JawnPitch follows one note at a time/, 'the help names JawnPitch');
 like($help, qr/Every tile is the same height/, 'the help says every tile is one height');
 
 # --- the rack knobs reach the native engine -------------------------------

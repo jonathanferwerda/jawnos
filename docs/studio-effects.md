@@ -11,6 +11,15 @@
 `InsertKind::parse` (Rust) and `studioInsert` (JS) accept these names. The
 `reverb2` name is kept as an alias of `reverb` so old songs still load.
 
+`autotune` is the **wire name** used by `InsertKind`, the socket and saved
+songs. The UI shows it as **JawnPitch**; keep the key `autotune` so old songs
+and the engine keep working.
+
+**Jtune is not an effect.** It is a chromatic tuner planned for the shelf, with
+no audio implementation: it is not an `InsertKind`, it has no alias, and a
+legacy `Jtune` entry in a song is dropped on load rather than mapped to
+`autotune`.
+
 | name | purpose | controls (UI `0..100`) |
 | --- | --- | --- |
 | `reverb` | the reverb family | `mix`, `volume`, `model` |
@@ -18,7 +27,7 @@
 | `fuzz` | hard, gated distortion | `gain`, `tone`, `level` |
 | `amp` | amplifier + cabinet | `gain`, `bass`, `mid`, `treble`, `cabinet` |
 | `limiter` | peak limiter | `ceiling`, `release` |
-| `autotune` | monophonic pitch correction | `speed`, `amount`, `key`, `scale` |
+| `autotune` | monophonic pitch correction (JawnPitch in the UI) | `speed`, `amount`, `key`, `scale` |
 | `equalizer` | three-band tone shaping | `low`, `mid`, `high` |
 | `tone` | the strip's own bass/mid/treble (existing) | `bass`, `mid`, `treble`, `gain` |
 | `distortion` | existing | `drive` |
@@ -97,7 +106,7 @@ the insert belongs.
    short time constant, so a dragged slider cannot click.
 3. **Clamp in the effect.** A control thread may send anything; the effect
    clamps to its own range and ignores NaN.
-4. **Honest approximation.** `autotune` is a monophonic pitch corrector: it
+4. **Honest approximation.** `autotune` (JawnPitch in the UI) is a monophonic pitch corrector: it
    detects the input period, picks the nearest scale tone, and shifts with a
    short crossfaded delay line. It is not a polyphonic Antares clone, and it
    must be documented as such, never silently bypassed.

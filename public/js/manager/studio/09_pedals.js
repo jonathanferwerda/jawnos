@@ -163,6 +163,15 @@ function studioUpdatePedalLamps() {
 	// the shelf and the palette's text tiles
 	$('#pedalboard .pedal').each(function () {
 		var tile = $(this);
+		// Jtune is a chromatic tuner, not an effect: its lamp is inert and says so.
+		if (tile.attr('data-tuner') === 'yes') {
+			var tuner = studioLayoutText('Chromatic tuner, not wired yet');
+			tile.find('.studio_pedal_led')
+				.attr({ 'aria-pressed': 'false', title: tuner, hint: tuner })
+				.css({ background: '#6b7280', cursor: 'default', boxShadow: 'inset 0 1px 2px #000, 0 0 0 1px rgba(255, 255, 255, .3)' });
+			tile.find('.studio_pedal_foot').attr('aria-pressed', 'false');
+			return;
+		}
 		var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
 		var ins = studioPedalInsert(ch, name);
 		var on = !!(ins && !ins.bypassed);
@@ -192,6 +201,8 @@ function studioUpdatePedalLamps() {
 // The lamp is the footswitch: absent means switch it on in this track's rack,
 // present means bypass it in place exactly as the rack row does.
 function studioTogglePedal(ch, name) {
+	// The tuner has no audio state to toggle.
+	if (name === 'Jtune') { return; }
 	var ins = studioPedalInsert(ch, name);
 	if (!ins) { studioSetInsert(ch, name, true); }
 	else { studioSetInsertBypass(ch, ins.name, !ins.bypassed); }
@@ -267,6 +278,8 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 	}
 	var tile = target.closest('.pedal');
 	if (!tile.length) { return; }
+	// a tuner tile is inert: pressing it toggles no sound
+	if (tile.attr('data-tuner') === 'yes') { return; }
 	var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
 	if (!name) { return; }
 	studioTogglePedal(studioPaletteChannel(), name);

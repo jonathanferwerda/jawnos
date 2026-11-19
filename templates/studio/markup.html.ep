@@ -6,16 +6,14 @@
 	window.jawnos_studio_master = <%== Mojo::JSON::encode_json($gb::studio->{'master'}) %>;</script>
 	<audio id="metronome" autoplay style="display:none;"></audio>
 	<div id="studio_plug_select_container" style="position:fixed;display:none;background-color:lightgreen;z-index:50009;border:solid;border-radius:4px;"></div>
-	<%# The artwork covers these effect kinds. Jtune's artwork is the autotune
-	   pedal now (studioEffectAliases maps it), so it answers for autotune too. %>
+	<%# The artwork covers these effect kinds; an effect with no artwork gets a
+	   text tile instead. Jtune is the chromatic tuner, not an effect, so it
+	   answers for nothing here and JawnPitch keeps its own text tile. %>
 	<% my %shelf_kind = (
-		Jtune => 'autotune', CompressionX => 'compressor', Distorjawn => 'distortion',
+		CompressionX => 'compressor', Distorjawn => 'distortion',
 		Delayed => 'delay', reverb2 => 'reverb', JawnSynth => 'synth',
 	); %>
 	<% my %shelf_has = map { ($shelf_kind{ $_->{'name'} } || $_->{'name'}) => 1 } @{$gb::studio->{'pedals'}}; %>
-	<%# Jtune is artwork for the same effect, but Autotune keeps its own text tile:
-	   either lamp switches the same insert, so both read the one state. %>
-	<% delete $shelf_has{'autotune'}; %>
 	<%# The pedalboard is a bottom sheet over the foot of the window: it floats
 	   above the console instead of taking a grid row, its own bar carries
 	   Close, and the tiles scroll inside it. %>

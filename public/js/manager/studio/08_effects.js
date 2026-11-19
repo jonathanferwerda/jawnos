@@ -946,14 +946,14 @@ var studioEffectAliases = {
 	Delayed: 'delay',
 	reverb: 'reverb',
 	reverb2: 'reverb',
-	// The old Jtune artwork had no implementation: a saved "Jtune" was a
-	// pass-through. It is the autotune pedal now, so the artwork does something;
-	// studioRetriever restores a legacy string as autotune switched off.
-	Jtune: 'autotune',
+	// Jtune is a chromatic tuner, not an effect: it has no alias here and no
+	// builder below. A legacy "Jtune" entry in a song is dropped on restore.
 	flanger: 'flanger',
 	fuzz: 'fuzz',
 	amp: 'amp',
 	limiter: 'limiter',
+	// The wire name autotune stays for the engine, the socket and old songs;
+	// the UI labels it JawnPitch (the effects table in 05_abilities_and_studio.pl).
 	autotune: 'autotune',
 	equalizer: 'equalizer',
 	tone: 'tone',

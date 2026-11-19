@@ -79,8 +79,19 @@ function studioInit(data) {
 			studioApplyMonitor();
 			studioUpdateLatencyInfo();
 
-			// pedals are dragged from the pedalboard onto a channel strip
-			$('.pedal_background').draggable({ helper: 'clone', revert: 'invalid', scroll: false, zIndex: 60000 });
+			// Jtune is a chromatic tuner, not an effect: nothing is wired in yet.
+			// Mark the tile inert and keep it out of the draggable effects, so a
+			// drag can never add an audio insert that would never process.
+			$('#pedal_Jtune').attr({ 'data-tuner': 'yes', title: studioLayoutText('Chromatic tuner, not wired yet') });
+			$('#pedal_Jtune .pedal_background').attr('hint', studioLayoutText('Jtune - chromatic tuner, not wired yet'));
+			// repaint the lamp now that the tile is marked inert
+			if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
+
+			// pedals are dragged from the pedalboard onto a channel strip; the
+			// tuner is not one of them.
+			$('.pedal_background').filter(function () {
+				return $(this).closest('.pedal').attr('data-tuner') !== 'yes';
+			}).draggable({ helper: 'clone', revert: 'invalid', scroll: false, zIndex: 60000 });
 			studioBindChannelDrop($('.channel, .studio_track_panel'));
 
 			studioRetriever();
@@ -253,7 +264,7 @@ $(document).on('click', '.button_control', function() {
 	// A shelf pedal's artwork button is its footswitch too: it switches the
 	// effect on the selected track, exactly as the pedal's lamp does.
 	var tile = b.closest('.pedal');
-	if (tile.length && typeof studioTogglePedal === 'function') {
+	if (tile.length && tile.attr('data-tuner') !== 'yes' && typeof studioTogglePedal === 'function') {
 		var effect = tile.attr('data-effect');
 		if (effect) { studioTogglePedal(studioPaletteChannel(), effect); }
 	}
@@ -455,14 +466,10 @@ function studioRetriever() {
 				// per insert (name, footswitch, controls), in chain order.
 				var name = (typeof entry === 'string') ? entry : (entry && entry.name);
 				if (!name) { return; }
-				// A legacy "Jtune" string was artwork with no implementation, so it
-				// never processed anything. Restore it as Autotune switched off; its
-				// lamp then says off and the person can switch it on deliberately.
-				if (typeof entry === 'string' && name === 'Jtune') {
-					studioSetInsert(i, 'autotune', true);
-					rack_restore.push({ ch: i, name: 'autotune', record: { name: 'autotune', on: false } });
-					return;
-				}
+				// Jtune is a chromatic tuner, not an effect: it was never wired
+				// in, so an old entry is dropped instead of becoming an insert
+				// (and it never becomes autotune). The song still loads.
+				if (name === 'Jtune') { return; }
 				studioSetInsert(i, name, true);
 				if (entry && typeof entry === 'object') {
 					rack_restore.push({ ch: i, name: name, record: entry });
