@@ -30,6 +30,8 @@ sub routes {
 	[7940, 'post', '/manager/network/vpn', 'action_7940'],
 	[7943, 'get', '/manager/network/public_ip', 'action_7943'],
 	[7944, 'post', '/manager/network/public_ip_lookup', 'action_7944'],
+	[7946, 'get', '/manager/network/derp_public', 'action_7946'],
+	[7947, 'post', '/manager/network/derp_public', 'action_7947'],
 	[7994, 'get', '/manager/time_jump', 'action_7994'],
 	[8094, 'post', '/manager/pay/setting', 'action_8094'],
 	[8127, 'post', '/manager/pay/test', 'action_8127'],

@@ -30,6 +30,21 @@ function networkLabel(name, fallback) {
 	return (value && value.length) ? value : networkT(fallback);
 }
 
+// The public-relay button carries data-state = on|off|''. The label always says
+// what the relay is, not what a press would do, so it reads the same whether the
+// server drew it or a toggle redrew it.
+function networkRenderDerp(state) {
+	var button = $('#network_derp_toggle');
+	if (!button.length) { return; }
+	var known = (state === 'on' || state === 'off');
+	button.attr('data-state', known ? state : '')
+		.attr('aria-pressed', state === 'on' ? 'true' : 'false')
+		.toggleClass('network_off', state === 'off')
+		.prop('disabled', false)
+		.text(state === 'on' ? networkT('Public relay on')
+			: (state === 'off' ? networkT('Public relay off') : networkT('Public relay')));
+}
+
 function networkBytes(value) {
 	var n = Number(value);
 	if (!isFinite(n) || n < 0) { return '—'; }
@@ -719,6 +734,28 @@ $(document).on('click', '#network_radio_toggle', function() {
 	networkPost('radio', { state: state }, function() {
 		box.prop('disabled', false);
 		networkRefreshAll();
+	});
+});
+
+// The public relay is a house-wide Headscale setting. The apply may run on a
+// peer that can reach Headscale, so the button waits for the answer before it
+// settles into the new state.
+$(document).on('click', '#network_derp_toggle', function() {
+	var button = $(this);
+	if (button.prop('disabled')) { return; }
+	var current = button.attr('data-state') || '';
+	var state = (current === 'on') ? 'off' : 'on';
+	button.prop('disabled', true);
+	$('#network_status_line').text(networkT('Changing the public relay…'));
+	networkPost('derp_public', { state: state }, function(response) {
+		if (response && response.ok) {
+			var on = !!response.public;
+			networkRenderDerp(on ? 'on' : 'off');
+			$('#network_status_line').text(on ? networkT('The public relay is on.') : networkT('The public relay is off.'));
+			return;
+		}
+		networkRenderDerp(current);
+		$('#network_status_line').text((response && response.error) || networkT('The public relay could not be changed.'));
 	});
 });
 

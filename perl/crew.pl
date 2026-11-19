@@ -28,7 +28,7 @@ use Sereal::Decoder qw(decode_sereal);
 use POSIX ();
 use IO::Select;
 use IPC::Open3;
-use MIME::Base64 qw(decode_base64);
+use MIME::Base64 qw(decode_base64 encode_base64);
 
 # How long this machine's own facts are reused (seconds). One minute keeps the
 # Configure panel and the role placer cheap without hiding a model just pulled.
@@ -93,6 +93,15 @@ our %KINDS = (
 		timeout => 600,
 		needs   => ['whisper'],
 		cost    => 'heavy',
+	},
+	# The public (Tailscale-hosted) DERP relay. Any machine may dispatch it; the
+	# `headscale` ability decides which one runs it, because only a machine that
+	# holds the Headscale control target can reach the relay's config.
+	'derp.public' => {
+		handler => \&_job_derp_public,
+		timeout => 60,
+		needs   => ['headscale'],
+		cost    => 'light',
 	},
 );
 
@@ -181,6 +190,9 @@ sub _compute_abilities {
 		perl      => _which('perl') ? 1 : 0,
 		node      => _which('node') ? 1 : 0,
 		git       => _which('git') ? 1 : 0,
+		# Only a machine that can reach Headscale holds its control target, so
+		# this is what makes it the one that runs the public-relay toggle.
+		headscale => _headscale_control() ? 1 : 0,
 	);
 
 	my %abilities = (
@@ -891,6 +903,153 @@ sub _run_capped {
 	close $out if $out;
 	close $err if $err;
 	return join '', map { $buffer{$_} } sort { $a <=> $b } keys %buffer;
+}
+
+# ---------------------------------------------------------------------------
+# The public (Tailscale-hosted) DERP relay.
+#
+# Headscale's config names the external DERP maps it serves. Turning the public
+# relay on adds Tailscale's own fleet as a fallback; turning it off leaves only
+# this house's embedded relay. The change is a config edit plus a restart, so it
+# runs on the machine that can reach Headscale (the one holding the control
+# target below) and is placed there through the Crew.
+# ---------------------------------------------------------------------------
+
+# Where this machine controls Headscale, or undef. The first line is
+# "<ssh host> <lxc id>" (the id may be omitted when Headscale is local), read
+# from $ENV{JAWNOS_HEADSCALE_CTL} or .secrets/headscale-ctl. A machine without
+# it does not advertise the `headscale` ability.
+sub _headscale_control {
+	my $spec = $ENV{'JAWNOS_HEADSCALE_CTL'};
+	unless (defined $spec && length $spec) {
+		foreach my $path (
+			(($ENV{'JAWNOS_ROOT'} // '') ne '' ? $ENV{'JAWNOS_ROOT'} . '/.secrets/headscale-ctl' : ()),
+			(($ENV{'HOME'} // '') ne '' ? $ENV{'HOME'} . '/jawnos/.secrets/headscale-ctl' : ()),
+			'.secrets/headscale-ctl'
+		) {
+			next unless -f $path;
+			$spec = _read_first_line($path);
+			last;
+		}
+	}
+	return undef unless defined $spec && length $spec;
+	$spec =~ s/^\s+//;
+	my ($host, $lxc) = split /\s+/, $spec;
+	return undef unless defined $host && $host =~ /^[A-Za-z0-9._:\-\[\]]{1,255}$/;
+	$lxc = '' unless defined $lxc && $lxc =~ /^\d{1,6}$/;
+	return { host => $host, lxc => $lxc };
+}
+
+# The shell the Headscale host runs. It writes a candidate beside the real
+# config, validates it with `headscale configtest -c`, and only then moves it
+# into place and restarts. A bad candidate is discarded, so the live relay is
+# never left broken. The edit touches only the `urls:` block.
+sub _derp_script {
+	return <<'SH';
+set -e
+state="${1:-status}"
+f=/etc/headscale/config.yaml
+if [ ! -f "$f" ]; then
+	echo '{"ok":0,"error":"the Headscale config was not found"}'
+	exit 0
+fi
+tmp="$f.new.$$"
+case "$state" in
+	on)
+		cp -a "$f" "$tmp"
+		perl -0777 -pi -e 's{^  urls:[^\n]*\n(?:    - [^\n]*\n)*}{  urls:\n    - https://controlplane.tailscale.com/derpmap/default\n}m' "$tmp"
+		;;
+	off)
+		cp -a "$f" "$tmp"
+		perl -0777 -pi -e 's{^  urls:[^\n]*\n(?:    - [^\n]*\n)*}{  urls: []\n}m' "$tmp"
+		;;
+	status)
+		;;
+	*)
+		echo '{"ok":0,"error":"state must be on, off or status"}'
+		exit 0
+		;;
+esac
+if [ "$state" != status ]; then
+	if ! headscale configtest -c "$tmp" >/dev/null 2>&1; then
+		rm -f "$tmp"
+		echo '{"ok":0,"error":"the new config failed headscale configtest; nothing changed"}'
+		exit 0
+	fi
+	cp -a "$f" "$f.bak-derp-toggle"
+	mv "$tmp" "$f"
+	systemctl restart headscale >/dev/null 2>&1
+fi
+if grep -q 'controlplane.tailscale.com' "$f" 2>/dev/null; then
+	pub=1
+else
+	pub=0
+fi
+echo "{\"ok\":1,\"public\":$pub,\"state\":\"$state\"}"
+SH
+}
+
+# The argv for one apply. Split out so a test can name it without an ssh.
+sub _derp_command {
+	my ($control, $state) = @_;
+	return () unless ref $control eq 'HASH' && ($control->{'host'} // '') ne '';
+	return () unless defined $state && $state =~ /^(?:on|off|status)$/;
+	my $b64 = encode_base64(_derp_script(), '');
+	$b64 =~ s/\s+//g;
+	return () unless length $b64;
+	my $inner = "echo $b64 | base64 -d | sh -s -- $state";
+	my $lxc = $control->{'lxc'} // '';
+	$lxc = '' unless $lxc =~ /^\d{1,6}$/;
+	if ($lxc ne '') {
+		return (
+			'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+			'-o', 'StrictHostKeyChecking=accept-new',
+			$control->{'host'},
+			"sudo -n pct exec $lxc -- sh -c '$inner'"
+		);
+	}
+	return ('sh', '-c', $inner);
+}
+
+# Ask the Headscale host to set the state and return its JSON answer.
+sub _headscale_apply {
+	my ($state) = @_;
+	return { ok => 0, error => 'the relay can only be turned on or off' }
+		unless defined $state && $state =~ /^(?:on|off|status)$/;
+	my $control = _headscale_control();
+	return { ok => 0, error => 'this machine cannot control Headscale' } unless $control;
+	my @cmd = _derp_command($control, $state);
+	return { ok => 0, error => 'the Headscale command could not be built' } unless @cmd;
+	# The job's own alarm bounds this too; the cap keeps a hung ssh from holding
+	# the worker for the whole of it.
+	my $out = _run_capped(45, @cmd);
+	my @lines = split /\n/, ($out // '');
+	my ($json) = grep { /^\s*\{/ } reverse @lines;
+	my $answer = defined $json ? eval { decode_json($json) } : undef;
+	return $answer if ref $answer eq 'HASH';
+	my $why = (($out // '') =~ /\S/) ? substr($out, 0, 200) : 'no answer';
+	return { ok => 0, error => 'the Headscale host did not answer: ' . $why };
+}
+
+sub _job_derp_public {
+	my ($payload) = @_;
+	$payload = {} unless ref $payload eq 'HASH';
+	my $state = $payload->{'state'} // 'status';
+	my $answer = _headscale_apply($state);
+	return $answer unless $answer->{'ok'};
+	# The house keeps the last real state so every device shows it without a
+	# round trip; the capable machine is the one that writes it.
+	if ($state ne 'status' && defined $answer->{'public'}) {
+		eval {
+			&subs::setting_setter({
+				app     => 'network',
+				setting => 'derp_public_relay',
+				value   => ($answer->{'public'} ? 'on' : 'off'),
+				device  => 'all',
+			});
+		};
+	}
+	return $answer;
 }
 
 sub _log {

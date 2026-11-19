@@ -202,7 +202,12 @@ sub action_7845 {
 	# domain may not be present on a bare tree; zero is the safe start.
 	my $manage_on = eval { &subs::network_config()->{'manage'} } || 0;
 	$c->stash('manage_on' => $manage_on);
-	my $content = $c->render_to_string(template => 'apps/network', websockets => $websockets);
+	# The public-relay state is a house setting the machine that can reach
+	# Headscale writes; every device reads it here without a round trip.
+	my $derp_public = eval { &subs::setting_grabber({ app => 'network', setting => 'derp_public_relay', device => 'all' }) };
+	$derp_public = '' unless defined $derp_public;
+	$c->stash('derp_public' => $derp_public);
+	my $content = $c->render_to_string(template => 'apps/network', websockets => $websockets, derp_public => $derp_public);
 	my $contents = &window_maker({
 		user_agent => $c->param('user_agent'),
 		app => 'network',
@@ -567,6 +572,49 @@ sub action_7944 {
 		eval { &subs::cache_set({ app => 'network', context => 'public_ip_lookup', warranty => '-15m' }, $answer) };
 	}
 	$c->render(json => $answer);
+}
+
+# GET /manager/network/derp_public
+#
+# The public (Tailscale-hosted) DERP relay, as the house last set it. The value
+# is a house setting written by whichever machine can reach Headscale, so every
+# device shows the same state without a round trip.
+sub action_7946 {
+	my $c = shift;
+	my $state = eval { &subs::setting_grabber({ app => 'network', setting => 'derp_public_relay', device => 'all' }) };
+	$c->render(json => {
+		ok     => 1,
+		public => (($state // '') eq 'on' ? 1 : (($state // '') eq 'off' ? 0 : undef)),
+	});
+}
+
+# POST /manager/network/derp_public
+#
+# Turn the public relay on or off. The work is a Crew job, so the machine that
+# can reach Headscale runs it: pressed on a device that cannot, the job is
+# placed on the peer that advertises the `headscale` ability.
+sub action_7947 {
+	my $c = shift;
+	my $state = $c->param('state') // '';
+	unless ($state =~ /^(?:on|off)$/) {
+		$c->render(json => { ok => 0, error => 'The public relay can only be turned on or off.' });
+		return;
+	}
+	# The apply edits a config and restarts Headscale, so it runs in a child and
+	# cannot hold this worker's event loop.
+	&subs::render_in_subprocess($c, sub {
+		return &crew::dispatch('derp.public', { state => $state });
+	}, sub {
+		my ($c, $outcome) = @_;
+		my $answer = { ok => 0, error => 'The public relay could not be changed.' };
+		if (ref $outcome eq 'HASH' && $outcome->{'ok'} && ref $outcome->{'result'} eq 'HASH') {
+			$answer = $outcome->{'result'};
+		}
+		elsif (ref $outcome eq 'HASH' && ($outcome->{'error'} // '') ne '') {
+			$answer = { ok => 0, error => $outcome->{'error'} };
+		}
+		$c->render(json => $answer);
+	});
 }
 
 # GET /manager/time_jump

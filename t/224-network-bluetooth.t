@@ -361,7 +361,7 @@ like(source('public/js/manager/network/02_tabs_bluetooth_remote.js'), qr/tab ===
 # it and the render died with "Global symbol $websockets requires explicit
 # package name". The action now puts the list in the stash for the include.
 my $action = source('lib/JawnOS/Controller/manager_misc2.pm');
-like($action, qr/render_to_string\(template => 'apps\/network', websockets => \$websockets\)/,
+like($action, qr/render_to_string\(template => 'apps\/network', websockets => \$websockets(?:,|\s*\))/,
 	'the Network action passes the socket list into the template');
 unlike($template, qr/my \$websockets =/,
 	'the parent template no longer wraps it in a lexical the include cannot see');

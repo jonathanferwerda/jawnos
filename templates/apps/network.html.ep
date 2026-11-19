@@ -202,6 +202,16 @@
 			</div>
 		</section>
 
+		<section class="network_section" id="network_derp_section">
+			<div class="network_section_head">
+				<h3><%= &subs::ui('Tailnet relay') %></h3>
+				<button type="button" id="network_derp_toggle" class="network_button" data-state="<%= $derp_public %>" aria-pressed="<%= (($derp_public // '') eq 'on') ? 'true' : 'false' %>"><%= (($derp_public // '') eq 'on') ? &subs::ui('Public relay on') : ((($derp_public // '') eq 'off') ? &subs::ui('Public relay off') : &subs::ui('Public relay')) %></button>
+			</div>
+			<div class="network_section_body">
+				<span id="network_derp_hint" class="network_status"><%= &subs::ui('When on, a Tailscale-hosted relay can carry this house\'s traffic if a direct path fails. When off, only this house\'s own relay is used.') %></span>
+			</div>
+		</section>
+
 		<section class="network_section" id="network_devices_section">
 			<div class="network_section_head">
 				<h3><%= $t->('network.devices') %></h3>
