@@ -172,16 +172,27 @@ function jawnosSearchMatches(query) {
 	jawnosSearchApps.forEach(function (app) {
 		var name = jawnosSearchPlain(app.app);
 		var label = jawnosSearchPlain(app.name);
-		var haystack = name + ' ' + label;
-		for (var i = 0; i < words.length; i++) {
-			if (haystack.indexOf(words[i]) < 0) { return; }
+		// An aka is another word the house was taught for the app ("zzz" for
+		// sleep). A result may be found by a name it does not print, and a name
+		// match always outranks an aka-only one.
+		var aka = '';
+		if (app.aka && app.aka.length) {
+			for (var k = 0; k < app.aka.length; k++) { aka += ' ' + jawnosSearchPlain(app.aka[k]); }
 		}
-		// an exact name beats a prefix, which beats a name the words appear in
+		var name_hay = name + ' ' + label;
+		var named = true;
+		for (var i = 0; i < words.length; i++) {
+			if (name_hay.indexOf(words[i]) >= 0) { continue; }
+			if (aka.indexOf(words[i]) >= 0) { named = false; continue; }
+			return;
+		}
+		// an exact name beats a prefix, which beats a name the words appear in;
+		// a word found only in an aka comes last
 		var exact = (name === raw || label === raw) ? 0 : 1;
 		var prefix = (name.indexOf(raw) === 0 || label.indexOf(raw) === 0) ? 0 : 1;
 		var click_key = 'a:' + app.app;
 		var clicked = Object.prototype.hasOwnProperty.call(clicks, click_key) ? clicks[click_key] : 0;
-		matches.push({ app: app, rank: exact * 2 + prefix, clicked: clicked });
+		matches.push({ app: app, rank: named ? exact * 2 + prefix : 4, clicked: clicked });
 	});
 	matches.sort(function (a, b) {
 		if (a.rank != b.rank) { return a.rank - b.rank; }

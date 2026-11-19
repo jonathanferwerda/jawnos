@@ -569,7 +569,7 @@ sub search_index_setting($set, $device) {
 # included because the row pictures follow it; manager_background_colour picks
 # the light or dark cut of that set.
 sub search_index_signature {
-	my $s = &subs::db_query("select count(*) as n, max(cast(server_time as integer)) as t from settings where setting in ('pos','visible','main_image','icon_set','manager_background_colour')")->hashes->[0] || {};
+	my $s = &subs::db_query("select count(*) as n, max(cast(server_time as integer)) as t from settings where setting in ('pos','visible','main_image','aka','icon_set','manager_background_colour')")->hashes->[0] || {};
 	my $g = &subs::db_query('select count(*) as n, max(cast(server_time as integer)) as t from appointments where account = ?', 'gallery')->hashes->[0] || {};
 	return join ':', ($s->{'n'} // 0), ($s->{'t'} // 0), ($g->{'n'} // 0), ($g->{'t'} // 0);
 }
@@ -601,12 +601,16 @@ sub search_index_icon($data) {
 }
 
 # The Apps tab. An app matches when its own name (or the name a person reads)
-# carries the words, and it is one the house knows: an appointment record, a
-# visible app, or a built-in the menu opens.
+# carries the words, or when one of the akas the house was taught for it does,
+# and it is one the house knows: an appointment record, a visible app, or a
+# built-in the menu opens.
 sub search_app_matches($search) {
 	$search = &subs::unformat_name($search || '');
 	return [] unless length $search;
 	my $like = '%' . $search . '%';
+	my $plain = sub { my $s = lc($_[0] // ''); $s =~ s/_/ /g; return $s };
+	my $needle = $plain->($search);
+	my %aka_only;
 	my %seen;
 	my @apps;
 	my $push = sub {
@@ -623,16 +627,22 @@ sub search_app_matches($search) {
 	foreach my $row ( @{ &subs::db_query("select distinct app from settings where app is not null and app != '' and app like ? and setting in ('visible','main_image')", $like)->hashes || [] } ) {
 		$push->($row->{'app'});
 	}
+	# the akas are the other words the house was taught for an app ("zzz" for
+	# sleep). $push still applies the hidden/private rule, so an app the person
+	# may not see cannot leak through one of its names either.
+	foreach my $row ( @{ &subs::db_query("select distinct app from settings where app is not null and app != '' and setting = 'aka' and value like ?", $like)->hashes || [] } ) {
+		my $app = $row->{'app'};
+		$aka_only{$app} = 1 if defined $app && length $app && index($plain->($app), $needle) < 0;
+		$push->($app);
+	}
 	foreach my $app ( keys %{$gb::known_appts} ) {
 		$push->($app) if $app =~ /\Q$search\E/i;
 	}
-	my $plain = sub { my $s = lc($_[0] // ''); $s =~ s/_/ /g; return $s };
-	my $needle = $plain->($search);
 	@apps = sort {
 		my $na = $plain->($a); my $nb = $plain->($b);
 		my $ra = ($na eq $needle) ? 0 : (index($na, $needle) == 0 ? 1 : 2);
 		my $rb = ($nb eq $needle) ? 0 : (index($nb, $needle) == 0 ? 1 : 2);
-		$ra <=> $rb || $na cmp $nb
+		($aka_only{$a} ? 1 : 0) <=> ($aka_only{$b} ? 1 : 0) || $ra <=> $rb || $na cmp $nb
 	} @apps;
 	splice @apps, 40 if scalar @apps > 40;
 	my @out;

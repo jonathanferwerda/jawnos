@@ -519,9 +519,10 @@ sub action_25928 {
 # The whole searchable app list, read once by the manager and filtered in the
 # browser. The settings table is small enough to hand over in one go, which is
 # what makes typing local (and so instant) instead of a request per keystroke.
-# Each entry is the key a window opens with, the name a person reads, and the
-# icon the window wears. `version` lets the manager ask a tiny question - "has
-# anything changed?" - without pulling the list again while it is unchanged.
+# Each entry is the key a window opens with, the name a person reads, the icon
+# the window wears, and the akas the house has taught it. `version` lets the
+# manager ask a tiny question - "has anything changed?" - without pulling the
+# list again while it is unchanged.
 # GET /manager/search_index
 sub action_26091 {
 	my $c = shift;
@@ -530,7 +531,7 @@ sub action_26091 {
 		$c->render(json => { version => $version });
 		return;
 	}
-	my $rows = &subs::db_query("select app, device, setting, value, server_time from settings where app is not null and app != '' and setting in ('pos','visible','main_image')")->hashes;
+	my $rows = &subs::db_query("select app, device, setting, value, server_time from settings where app is not null and app != '' and setting in ('pos','visible','main_image','aka')")->hashes;
 	my %settings_by_app;
 	foreach my $r ( @{$rows} ) {
 		next unless defined $r->{'app'} && length $r->{'app'};
@@ -557,7 +558,21 @@ sub action_26091 {
 		my $mi_entry = &search_index_setting($s->{'main_image'}, $device);
 		my $main_image = defined $mi_entry ? (ref $mi_entry eq 'HASH' ? $mi_entry->{'value'} : $mi_entry) : '';
 		my $stamp = ref $mi_entry eq 'HASH' ? ($mi_entry->{'server_time'} || '') : '';
-		push @apps, { app => $app, name => &subs::format_name($app), icon => &search_index_icon({ app => $app, pos => $pos, main_image => $main_image, stamp => $stamp }) };
+		# the same aka convention guide_aka_read follows: a comma-separated row
+		# on the app itself, so a word the person taught the house still finds
+		# the app from the dock. The akas are house-wide, so every device's row
+		# is read, not only this machine's. A hidden (private) app never gets
+		# here.
+		my (@aka, %aka_seen);
+		foreach my $aka_row ( values %{ $s->{'aka'} || {} } ) {
+			my $aka_value = ref $aka_row eq 'HASH' ? $aka_row->{'value'} : $aka_row;
+			foreach my $token ( split /,/, ($aka_value || '') ) {
+				$token =~ s/^\s+|\s+$//g;
+				next unless length $token;
+				push @aka, $token unless $aka_seen{$token}++;
+			}
+		}
+		push @apps, { app => $app, name => &subs::format_name($app), icon => &search_index_icon({ app => $app, pos => $pos, main_image => $main_image, stamp => $stamp }), (scalar @aka ? (aka => \@aka) : ()) };
 		$indexed{$app} = 1;
 	}
 	# the menu's own apps are code, not appointments: help, folders and mailbox
