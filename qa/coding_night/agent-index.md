@@ -112,7 +112,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - websites (9): url, content, illegal_content, app, internal_url, server_time, warranty, uuid, ost
 - websocket_messages (13): timestamp, server_time, message, destination, origin, status, app, environment, sent_count, uuid, tally, ost, patience
 - websockets (27): timestamp, server_time, message, app, uuid, connection_id, browser_tab_id, browser_tab, hostname, connected, user_agent, local_address, remote_address, type, windows, room, db, music_data, jp_data, random_string, warranty, href, pathname, cookie, ost, ticket_uuid, revision
-- window_events (12): uuid, window_id, browser_tab_id, app, event, timestamp, server_time, hostname, user_agent, room, warranty, ost
+- window_events (13): uuid, window_id, browser_tab_id, device_id, app, event, timestamp, server_time, hostname, user_agent, room, warranty, ost
 
 ## routes
 

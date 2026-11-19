@@ -1748,7 +1748,11 @@ sub clothesline_rest_episodes {
 	return $empty unless @rests;
 
 	my $pi = 4 * atan2(1, 1);
-	my $hour_of = sub { my $ms = shift; my @t = localtime(int($ms / 1000)); return $t[2] + $t[3] / 60; };
+	# The hour is the clock's, with its minutes: $t[2] is the hour and $t[1] the
+	# minutes. $t[3] is the day of the month, and reading it here made every
+	# learned hour drift with the date (up to half an hour, around the month),
+	# which moved a rest nearer or further from a profile's radius as days passed.
+	my $hour_of = sub { my $ms = shift; my @t = localtime(int($ms / 1000)); return $t[2] + $t[1] / 60; };
 	my $circ_mean = sub {
 		my @h = @_;
 		my ($s, $c) = (0, 0);
@@ -1993,20 +1997,37 @@ sub clothesline_day_segments {
 	# The rest that closes it is not in `rests` yet - a rest is a quiet between
 	# two runs, and tonight's has not been broken - so it is read from the quiet
 	# still running: the time since the last step. That quiet is a night only by
-	# the same test every other rest gets (a rest sits at the same middle of the
-	# clock), so an evening that is only an hour old, or a quiet whose middle is
-	# not where the person's nights sit, closes nothing.
+	# the same evidence every other rest gets, read at either end of the sleep:
+	# its middle sits at the middle of the person's nights (a long sleep keeps
+	# its middle put while its start slides), or its start sits at the hour their
+	# night usually begins - the wind-down, which is the same clue the night test
+	# reads, taken from the other end. The middle alone lagged: while the quiet is
+	# young its computed middle is pulled toward its own start, so a night shift
+	# whose nights begin at eight was not recognised until two hours in, and the
+	# day stayed open through the wind-down. The trade: a quiet that merely
+	# *begins* at the learned night hour now closes the day at its first step, so
+	# a ninety-minute evening gap that starts at their usual bedtime closes the
+	# day even if they get back up. That is the intended reading - the clock says
+	# it is their night. A quiet that is still short of a rest, or that begins
+	# nowhere near a learned night, closes nothing.
 	if (@segments) {
 		my $last_seg = $segments[-1];
 		my $last = (ref $last_seg->{'times'} eq 'ARRAY' && @{ $last_seg->{'times'} }) ? $last_seg->{'times'}[-1] : undef;
 		if (defined $last && $now > $last && ($now - $last) >= $rest_min) {
 			my @lt = localtime(int($last / 1000));
-			my $mid = ($lt[2] || 0) + (($lt[1] || 0) / 60) + (($now - $last) / 3600000) / 2;
+			my $start_hour = ($lt[2] || 0) + (($lt[1] || 0) / 60);
+			my $mid = $start_hour + (($now - $last) / 3600000) / 2;
 			$mid -= 24 * int($mid / 24);
 			my $night = 0;
 			foreach my $rest ( @rests ) {
 				next unless defined $rest->{'mid_hour'};
 				if ($circ_gap->($mid, $rest->{'mid_hour'}) <= $radius) { $night = 1; last; }
+			}
+			unless ($night) {
+				foreach my $rest ( @rests ) {
+					next unless defined $rest->{'start_hour'};
+					if ($circ_gap->($start_hour, $rest->{'start_hour'}) <= $radius) { $night = 1; last; }
+				}
 			}
 			if ($night) {
 				$last_seg->{'closed_at'} = $last;

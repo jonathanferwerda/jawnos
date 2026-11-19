@@ -731,6 +731,13 @@ sub action_25345 {
 	my $c = shift;
 	my $clothesline = eval { return decode_json &subs::clothesline_house_setting('__president', 'clothesline') } || [];
 	my %payload = ( clothesline => $clothesline, timestamp => &subs::rightNow() );
+
+	# The day's window flow, painted server-side from window_events so the rail
+	# carries when the person opened and closed windows. The partial bounds its
+	# read to today and guards it; this eval guards the render too, so a missing
+	# table or one bad row can never break the rail.
+	my $flow = eval { $c->render_to_string(template => 'apps/clothesline/flow') };
+	$payload{'flow'} = $flow if defined $flow && length $flow;
 	if (($c->param('background_images') || '') eq 'on') {
 		my $backgrounds = eval { return decode_json &subs::setting_grabber({ app => 'marker', setting => 'backgrounds' }) } || [];
 		$payload{'backgrounds'} = $backgrounds;

@@ -901,6 +901,12 @@ sub window_event_record {
 	my $browser_tab_id = ($args->{'browser_tab_id'} // '') . '';
 	return 0 unless length $browser_tab_id;
 	$browser_tab_id = substr($browser_tab_id, 0, 255);
+	# The browser's own persisted identity, sent with every transition. It is
+	# client data like the rest: bounded, stripped to id characters, and empty on
+	# the rows written before it existed (the span reader falls back for those).
+	my $device_id = ref $data->{'device_id'} ? '' : (($data->{'device_id'} // '') . '');
+	$device_id =~ s/[^A-Za-z0-9._:-]//g;
+	$device_id = substr($device_id, 0, 255);
 	my $server_time = &subs::rightNow();
 	# A room is the name the desk gave this tab's socket; a tab that never named
 	# one keeps the column empty.
@@ -917,6 +923,7 @@ sub window_event_record {
 			'uuid' => $uuid,
 			window_id => $window_id,
 			browser_tab_id => $browser_tab_id,
+			device_id => $device_id,
 			app => $app,
 			event => $event,
 			timestamp => $server_time,

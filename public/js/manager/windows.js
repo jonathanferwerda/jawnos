@@ -425,6 +425,31 @@ function windowResponseRoot(fragment) {
 	return null;
 }
 
+// The browser's own identity for the window flow. window_id is page-local, so a
+// reload used to split one window into two spans; hostname is the server's name,
+// the same for every browser on this box. A random id minted once and kept in
+// the desk's own localStorage family (jawnosStore) survives a reload and belongs
+// to one browser, so its tabs share it and another machine never does. A page
+// that cannot keep anything gets an id for this page only, which is no worse
+// than the window id alone.
+var jawnosWindowEventDeviceId = '';
+function windowEventDeviceId() {
+	if (jawnosWindowEventDeviceId) { return jawnosWindowEventDeviceId; }
+	var id = '';
+	if (typeof jawnosStore != 'undefined' && jawnosStore) {
+		try { id = jawnosStore.get('window_events', 'device_id', 'window_event_device_id') || ''; } catch (e) { id = ''; }
+	}
+	if (!id) {
+		try { id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ''; } catch (e) { id = ''; }
+		if (!id) { id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12); }
+		if (typeof jawnosStore != 'undefined' && jawnosStore) {
+			try { jawnosStore.set('window_events', 'device_id', id, 'window_event_device_id'); } catch (e) {}
+		}
+	}
+	jawnosWindowEventDeviceId = String(id);
+	return jawnosWindowEventDeviceId;
+}
+
 // A window transition (open, close, minimize, restore) is a row of its own, so
 // the clothesline can rebuild the day's window flow instead of reading the one
 // layout snapshot the websockets row keeps. The tab socket is the one that
@@ -437,7 +462,7 @@ function windowEventSend(event, app, window_id) {
 	var socket = ws['tab'];
 	if (!socket || socket.readyState != 1) { return; }
 	try {
-		socket.send(JSON.stringify({ type: 'window_event', event: event, app: app, window_id: window_id }));
+		socket.send(JSON.stringify({ type: 'window_event', event: event, app: app, window_id: window_id, device_id: windowEventDeviceId() }));
 	} catch (e) {}
 }
 

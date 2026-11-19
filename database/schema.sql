@@ -325,11 +325,15 @@ uuid VARCHAR(255) unique
 -- One row per desktop window transition (open, close, minimize, restore). A
 -- websockets row keeps only the latest layout snapshot, so the day's window flow
 -- is read from these events instead. The time columns are text; the indexes
--- below cast them the way the queries do.
+-- below cast them the way the queries do. device_id is the browser's own
+-- persisted identity: one id across that browser's reloads and tabs, unlike
+-- hostname (the server's name, shared by every browser on this box) and
+-- browser_tab_id (one per tab). It is empty on rows written before it existed.
 CREATE TABLE "window_events" (
 uuid VARCHAR(255) unique,
 window_id VARCHAR(255),
 browser_tab_id VARCHAR(255),
+device_id VARCHAR(255),
 app VARCHAR(500),
 event VARCHAR(25),
 timestamp VARCHAR(25),
@@ -396,6 +400,9 @@ CREATE INDEX idx1_window_events on window_events (app, cast(timestamp as integer
 CREATE INDEX idx2_window_events on window_events (browser_tab_id, cast(timestamp as integer));
 CREATE INDEX idx3_window_events on window_events (window_id, cast(timestamp as integer));
 CREATE INDEX idx4_window_events on window_events (cast(warranty as integer));
+-- The span reader groups by device and can filter by it over a time range, so
+-- the index carries the identity first and the cast timestamp second.
+CREATE INDEX idx5_window_events on window_events (device_id, cast(timestamp as integer));
 CREATE INDEX idx1_continent on continent (app);
 CREATE INDEX idx2_continent on continent (app,uuid);
 CREATE INDEX idx7_continent on continent (cast(timestamp as integer));

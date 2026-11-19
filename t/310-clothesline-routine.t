@@ -1323,5 +1323,93 @@ my $one = subs::clothesline_routine_scan(\@one_night, JawnOSTest::ts(2026, 11, 1
 ok(!$one->{'day'}, 'a single quiet is not a learned day');
 is($one->{'done'}{'only'}, 2, 'and the old split still keeps its run');
 
+# --- the wind-down closes the day, not only the middle of the sleep ----------
+# A night shift's nights begin near eight in the morning and wake near four.
+# The quiet that is still running is young, so its computed middle is pulled
+# toward its own start; read at the other end, the quiet's start hour sits on
+# the learned night's start, and that is the same clue the night test uses. The
+# four cases below pin both ends: the wind-down closes a night shift's day, a
+# quiet under rest_min still closes nothing, a day shift's afternoon gap begins
+# nowhere near their night and closes nothing, and a quiet that begins at the
+# learned bedtime closes the day at its first step.
+sub burst_to {
+	my ($rows, $app, $y, $m, $d, $h, $mi, $end_mi) = @_;
+	my $base = JawnOSTest::ts($y, $m, $d, $h, $mi);
+	my $n = int(($end_mi - $mi) / 5) + 1;
+	push @{$rows}, row($app, $base + 5 * 60 * 1000 * $_) for 0 .. $n - 1;
+	return $rows;
+}
+
+my @wind_rows;
+for my $day (10 .. 14) {
+	for my $h (16, 18, 20, 22) { burst(\@wind_rows, 'evening' . $h, 2026, 11, $day, $h, 0); }
+	for my $h (0, 2, 4, 6) { burst(\@wind_rows, 'small' . $h, 2026, 11, $day + 1, $h, 0); }
+	burst_to(\@wind_rows, 'wind_down', 2026, 11, $day + 1, 7, 35, 70);
+}
+my $wind_down = subs::clothesline_day_segments(\@wind_rows, undef, JawnOSTest::ts(2026, 11, 15, 9, 45),
+	window_days => 60);
+cmp_ok(scalar @{ $wind_down->{'segments'} }, '>=', 2, 'a night shift\'s nights are learned as days');
+is($wind_down->{'segments'}[-1]{'closed_at'}, JawnOSTest::ts(2026, 11, 15, 8, 10),
+	'the running quiet closes the day at the first step of its wind-down');
+ok($wind_down->{'segments'}[-1]{'resting'}, 'and the day is resting');
+
+# The same quiet seventy minutes old is still short of a rest, so it closes
+# nothing however close its start sits to the learned night.
+my $wind_short = subs::clothesline_day_segments(\@wind_rows, undef, JawnOSTest::ts(2026, 11, 15, 9, 20),
+	window_days => 60);
+ok(!defined $wind_short->{'segments'}[-1]{'closed_at'},
+	'a quiet under rest_min closes nothing, however it started');
+ok(!$wind_short->{'segments'}[-1]{'resting'}, 'and the day is not resting');
+
+# A day shift: nights from 23:05 to seven, every daytime gap under rest_min.
+my @day_clock_rows;
+for my $day (10 .. 13) {
+	for my $h (7, 9, 11, 13, 15, 17, 19, 21) { burst(\@day_clock_rows, 'day' . $h, 2026, 11, $day, $h, 0); }
+	burst_to(\@day_clock_rows, 'late', 2026, 11, $day, 22, 30, 65);
+}
+my @afternoon_gap = @day_clock_rows;
+for my $h (7, 9, 11, 13, 15, 17) { burst(\@afternoon_gap, 'day' . $h, 2026, 11, 14, $h, 0); }
+burst_to(\@afternoon_gap, 'day_home', 2026, 11, 14, 18, 25, 60);
+my $afternoon = subs::clothesline_day_segments(\@afternoon_gap, undef, JawnOSTest::ts(2026, 11, 14, 21, 0),
+	window_days => 60);
+ok(!defined $afternoon->{'segments'}[-1]{'closed_at'},
+	'a day shift\'s afternoon gap begins nowhere near their night, so it closes nothing');
+
+# The trade the second signal makes: a quiet that merely begins at the learned
+# bedtime closes the day at its first step, even though it is only an hour and
+# a half old - the clock says it is their night.
+my @bedtime = @day_clock_rows;
+for my $h (7, 9, 11, 13, 15, 17, 19, 21) { burst(\@bedtime, 'day' . $h, 2026, 11, 14, $h, 0); }
+burst_to(\@bedtime, 'late', 2026, 11, 14, 22, 30, 65);
+my $at_bedtime = subs::clothesline_day_segments(\@bedtime, undef, JawnOSTest::ts(2026, 11, 15, 0, 45),
+	window_days => 60);
+is($at_bedtime->{'segments'}[-1]{'closed_at'}, JawnOSTest::ts(2026, 11, 14, 23, 5),
+	'a quiet that begins at the learned bedtime closes the day at its first step');
+ok($at_bedtime->{'segments'}[-1]{'resting'}, 'and the day is resting');
+
+# The learned hour is the clock's hour and nothing else. Two fortnights with the
+# same shape, one early in the month and one late, must read the same hour: a
+# profile is placed on the clock, so a rest that slid with the date would drift
+# in and out of its radius as the month advanced.
+sub month_rows {
+	my ($first_day) = @_;
+	my @out;
+	for my $day ($first_day .. $first_day + 3) {
+		push @out, row('morning', JawnOSTest::ts(2026, 11, $day, 7, 5), 'stop');
+		push @out, row('midday', JawnOSTest::ts(2026, 11, $day, 12, 30), 'stop');
+		push @out, row('evening', JawnOSTest::ts(2026, 11, $day, 19, 0), 'stop');
+		push @out, row('evening_two', JawnOSTest::ts(2026, 11, $day, 22, 55), 'stop');
+	}
+	return \@out;
+}
+my $early_rests = subs::clothesline_rest_episodes(month_rows(2), JawnOSTest::ts(2026, 11, 6, 12, 0), window_days => 60);
+my $late_rests = subs::clothesline_rest_episodes(month_rows(20), JawnOSTest::ts(2026, 11, 24, 12, 0), window_days => 60);
+is(scalar @{ $early_rests->{'rests'} }, scalar @{ $late_rests->{'rests'} },
+	'both fortnights learn the same number of rests');
+is(sprintf('%.4f', $early_rests->{'rests'}[0]{'start_hour'}), sprintf('%.4f', $late_rests->{'rests'}[0]{'start_hour'}),
+	'a rest at the same clock hour reads the same on the second as on the twentieth');
+is(sprintf('%.4f', $early_rests->{'rests'}[0]{'stop_hour'}), sprintf('%.4f', $late_rests->{'rests'}[0]{'stop_hour'}),
+	'and its wake reads the same too');
+
 done_testing();
 

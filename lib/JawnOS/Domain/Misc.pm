@@ -445,7 +445,8 @@ sub websocket_sessions_cull {
 # answer, never a silently wider one, because a caller asking for one window
 # must never be handed another's events.
 #
-# Opts: from/to (epoch ms, inclusive), app, window_id, browser_tab_id, limit
+# Opts: from/to (epoch ms, inclusive), app, window_id, browser_tab_id, device_id,
+# limit
 # (default 500, capped at 5000). Returns { events => [row...], count }.
 sub window_events_read {
 	if (@_ == 1 && ref $_[0] eq 'HASH') { return &subs::window_events_read(%{ $_[0] }) }
@@ -460,7 +461,7 @@ sub window_events_read {
 		push @where, 'cast("timestamp" as integer) ' . ($bound eq 'from' ? '>=' : '<=') . ' cast(? as integer)';
 		push @bind, $v + 0;
 	}
-	foreach my $column (qw(app window_id browser_tab_id)) {
+	foreach my $column (qw(app window_id browser_tab_id device_id)) {
 		next unless exists $opt{$column} && defined $opt{$column};
 		my $v = $opt{$column};
 		return { events => [], count => 0, error => $column }
@@ -474,7 +475,7 @@ sub window_events_read {
 	}
 	$limit = 1 if $limit < 1;
 	$limit = 5000 if $limit > 5000;
-	my $sql = 'select rowid as event_row, uuid, window_id, browser_tab_id, app, event, timestamp, server_time, hostname, room, user_agent'
+	my $sql = 'select rowid as event_row, uuid, window_id, browser_tab_id, device_id, app, event, timestamp, server_time, hostname, room, user_agent'
 		. ' from window_events'
 		. (@where ? ' where ' . join(' and ', @where) : '')
 		. ' order by cast("timestamp" as integer), rowid'
@@ -496,16 +497,20 @@ sub window_events_read {
 # came back to the desk); a close with no open inside the range is kept with
 # opened undef rather than dropped, so the line never loses a transition it was
 # shown. minimize and restore ride inside the span that was open when they
-# happened. Returns { spans => [ { hostname, window_id, app, opened, closed,
-# duration_ms, events } ... ], count }.
+# happened. Returns { spans => [ { device_id, hostname, window_id, app, opened,
+# closed, duration_ms, events } ... ], count }.
 #
-# A span is keyed by the machine as well as the window. window_events syncs, and
-# window_id is page-local (window_<Date.now()>), so two machines can mint the
+# A span is keyed by the browser as well as the window. window_events syncs, and
+# window_id is page-local (window_<Date.now()>), so two browsers can mint the
 # same id and would otherwise be read as one window opening and closing twice.
-# hostname is the server's own name, copied onto every event by
-# window_event_record, so it separates them; a row with no hostname falls back to
-# its browser_tab_id (the tab session, the only identity left), and then to the
-# bare window id, which is the old behavior for rows that carry neither.
+# device_id is the browser's own persisted identity: it survives a reload and is
+# shared by that browser's tabs, so a flow that came back under the same window
+# id stays one span while two browsers stay apart. A row written before
+# device_id existed falls back to hostname (the server's own name, copied onto
+# every event by window_event_record), which separates two servers but not two
+# browsers on one; then to browser_tab_id (the tab session); and finally to the
+# bare window id, which is the old behavior for rows that carry none of the
+# three.
 sub window_events_spans {
 	if (@_ == 1 && ref $_[0] eq 'HASH') { return &subs::window_events_spans(%{ $_[0] }) }
 	my (%opt) = @_;
@@ -514,10 +519,12 @@ sub window_events_spans {
 	my %open;   # span key => the index of the span still waiting for its close
 	foreach my $event ( @{ $read->{'events'} } ) {
 		my $window_id = defined $event->{'window_id'} ? $event->{'window_id'} : '';
+		my $device_id = defined $event->{'device_id'} ? $event->{'device_id'} : '';
 		my $hostname = defined $event->{'hostname'} ? $event->{'hostname'} : '';
 		my $tab = defined $event->{'browser_tab_id'} ? $event->{'browser_tab_id'} : '';
-		# the machine is the hostname; a row without one is separated by its tab
-		my $machine = length $hostname ? $hostname : $tab;
+		# the browser is its device id; an older row falls back to the hostname,
+		# then to its tab, and a row with none of them keeps its bare window id
+		my $machine = length $device_id ? $device_id : (length $hostname ? $hostname : $tab);
 		my $key = $machine . "\x1f" . $window_id;
 		my $kind = $event->{'event'} || '';
 		my $at = $event->{'timestamp'};
@@ -529,6 +536,7 @@ sub window_events_spans {
 				next;
 			}
 			push @spans, {
+				device_id => $device_id,
 				hostname => $hostname,
 				window_id => $window_id,
 				app => $event->{'app'},
@@ -544,6 +552,7 @@ sub window_events_spans {
 			my $index = $open{$key};
 			unless (defined $index) {
 				push @spans, {
+					device_id => $device_id,
 					hostname => $hostname,
 					window_id => $window_id,
 					app => $event->{'app'},
@@ -568,6 +577,7 @@ sub window_events_spans {
 	# machine and its window id, so two machines' same-id spans never reorder
 	my @ordered = sort {
 		(($a->{'opened'} // $a->{'closed'} // 0) <=> ($b->{'opened'} // $b->{'closed'} // 0))
+			|| (($a->{'device_id'} // '') cmp ($b->{'device_id'} // ''))
 			|| (($a->{'hostname'} // '') cmp ($b->{'hostname'} // ''))
 			|| (($a->{'window_id'} // '') cmp ($b->{'window_id'} // ''))
 	} @spans;

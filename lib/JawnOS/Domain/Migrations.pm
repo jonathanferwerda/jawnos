@@ -701,6 +701,7 @@ sub update_database($data) {
 			uuid VARCHAR(255) unique,
 			window_id VARCHAR(255),
 			browser_tab_id VARCHAR(255),
+			device_id VARCHAR(255),
 			app VARCHAR(500),
 			event VARCHAR(25),
 			timestamp VARCHAR(25),
@@ -711,10 +712,14 @@ sub update_database($data) {
 			warranty VARCHAR(25),
 			ost VARCHAR(25)
 		)',
+		# A house that already had window_events predates the browser identity; the
+		# create table above is a no-op there, so the column arrives here.
+		'alter table window_events add column device_id VARCHAR(255)',
 		'create index if not exists idx1_window_events on window_events (app, cast(timestamp as integer))',
 		'create index if not exists idx2_window_events on window_events (browser_tab_id, cast(timestamp as integer))',
 		'create index if not exists idx3_window_events on window_events (window_id, cast(timestamp as integer))',
 		'create index if not exists idx4_window_events on window_events (cast(warranty as integer))',
+		'create index if not exists idx5_window_events on window_events (device_id, cast(timestamp as integer))',
 		'CREATE INDEX idx1_continent on continent (app)',
 		'CREATE INDEX idx2_continent on continent (app,uuid)',
 		# navigation_information asks continent for the current (type='temporary')

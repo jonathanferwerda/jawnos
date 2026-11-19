@@ -1,0 +1,107 @@
+<%# The day's window flow, drawn as a thin strip: one row per app, one bar per
+    span across the house clock's 24 hours. window_events_spans pairs each open
+    with its close (a window still open runs to now). The read is bounded to
+    today and guarded, so a missing table or one bad row leaves the strip empty
+    and never breaks the rail. Nothing here is queried for a past day. %>
+<%
+	my $now_ms = &subs::rightNow();
+	# The day's bounds are the house clock's. The whole calculation is guarded,
+	# not only the read: this partial is included straight into the clothesline
+	# page, so a calendar or zone call that throws must leave the strip empty
+	# rather than take the page down with it.
+	my ($day_from, $day_to);
+	eval {
+		my $restore_zone = &subs::clock_zone_adopt(&subs::clock_zone_house()) || sub { };
+		my @house_now = localtime(int($now_ms / 1000));
+		$day_from = Time::Local::timelocal(0, 0, 0, $house_now[3], $house_now[4], $house_now[5]) * 1000;
+		$day_to = Time::Local::timelocal(0, 0, 0, $house_now[3] + 1, $house_now[4], $house_now[5]) * 1000 - 1;
+		$restore_zone->();
+	};
+	my $flow_read = (defined $day_from && defined $day_to)
+		? eval { &subs::window_events_spans(from => $day_from, to => $day_to, limit => 5000) }
+		: undef;
+	my $flow_spans = (ref $flow_read eq 'HASH' && ref $flow_read->{'spans'} eq 'ARRAY') ? $flow_read->{'spans'} : [];
+	my %flow_by_app;
+	foreach my $flow_span ( @{$flow_spans} ) {
+		next unless ref $flow_span eq 'HASH';
+		my $flow_app = defined $flow_span->{'app'} ? $flow_span->{'app'} : '';
+		next unless length $flow_app;
+		push @{ $flow_by_app{$flow_app} }, $flow_span;
+	}
+	my @flow_apps = sort { lc($a) cmp lc($b) } keys %flow_by_app;
+	my $flow_extra = 0;
+	if (scalar @flow_apps > 12) {
+		$flow_extra = scalar(@flow_apps) - 12;
+		@flow_apps = @flow_apps[0 .. 11];
+	}
+	my $flow_day_len = (defined $day_from && defined $day_to) ? $day_to - $day_from + 1 : 0;
+%>
+<% if (scalar @flow_apps) { %>
+<div class="clothes_flow" role="group" aria-label="<%= &subs::ui("Today's window flow") %>">
+	<h3><%= &subs::ui("Today's window flow") %></h3>
+	<div class="clothes_flow_axis" aria-hidden="true">
+		<span><%= &subs::clothesline_hour_word(0) %></span>
+		<span><%= &subs::clothesline_hour_word(6) %></span>
+		<span><%= &subs::clothesline_hour_word(12) %></span>
+		<span><%= &subs::clothesline_hour_word(18) %></span>
+		<span><%= &subs::clothesline_hour_word(0) %></span>
+	</div>
+	<% foreach my $flow_app ( @flow_apps ) { %>
+	<div class="clothes_flow_row" id="clothes_flow_<%= &subs::html_name($flow_app) %>" data-app="<%= $flow_app %>">
+		<span class="clothes_flow_name"><%= &subs::format_name($flow_app) %></span>
+		<span class="clothes_flow_track">
+			<% foreach my $flow_span ( @{ $flow_by_app{$flow_app} } ) { %>
+<%
+				my $flow_opened = $flow_span->{'opened'};
+				my $flow_closed = $flow_span->{'closed'};
+				my $flow_start = defined $flow_opened ? $flow_opened + 0 : (defined $flow_closed ? $flow_closed + 0 : undef);
+				if (defined $flow_start) {
+					my $flow_end = defined $flow_closed ? $flow_closed + 0 : $now_ms;
+					$flow_start = $day_from if $flow_start < $day_from;
+					$flow_end = $day_to if $flow_end > $day_to;
+					$flow_end = $flow_start if $flow_end < $flow_start;
+					my $flow_left = (($flow_start - $day_from) / $flow_day_len) * 100;
+					my $flow_width = (($flow_end - $flow_start) / $flow_day_len) * 100;
+					$flow_width = 0.6 if $flow_width < 0.6;
+					$flow_left = 100 - $flow_width if ($flow_left + $flow_width) > 100;
+					$flow_left = 0 if $flow_left < 0;
+					my $flow_name = &subs::format_name($flow_app);
+					my $flow_from_text = &subs::clock_zone_text($flow_start, undef, '%I:%M%P');
+					my $flow_label;
+					if (defined $flow_opened && defined $flow_closed) {
+						$flow_label = sprintf(&subs::ui('%s, open %s to %s'), $flow_name, $flow_from_text, &subs::clock_zone_text($flow_closed, undef, '%I:%M%P'));
+					}
+					elsif (defined $flow_opened) {
+						$flow_label = sprintf(&subs::ui('%s, open %s, still open'), $flow_name, $flow_from_text);
+					}
+					else {
+						$flow_label = sprintf(&subs::ui('%s, closed %s'), $flow_name, &subs::clock_zone_text($flow_closed, undef, '%I:%M%P'));
+					}
+%>
+			<span class="clothes_flow_bar <%= defined $flow_closed ? 'clothes_flow_closed' : 'clothes_flow_open' %>"
+				style="left: <%= sprintf('%.2f', $flow_left) %>%; width: <%= sprintf('%.2f', $flow_width) %>%;"
+				data-app="<%= $flow_app %>" data-window="<%= $flow_span->{'window_id'} // '' %>"
+				title="<%= $flow_label %>" aria-label="<%= $flow_label %>"></span>
+<%				} %>
+			<% } %>
+		</span>
+	</div>
+	<% } %>
+	<% if ($flow_extra) { %>
+	<div class="clothes_flow_more"><%= sprintf(&subs::ui('and %s more'), $flow_extra) %></div>
+	<% } %>
+</div>
+<style>
+	.clothes_flow { margin: 10px 0 4px; }
+	.clothes_flow h3 { margin: 0 0 4px; }
+	.clothes_flow_axis { display: flex; justify-content: space-between; font-size: 10px; opacity: .6; margin-left: 120px; }
+	.clothes_flow_row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+	.clothes_flow_name { flex: 0 0 114px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.clothes_flow_track { position: relative; flex: 1 1 auto; height: 12px; border-radius: 6px; background: rgba(127, 127, 127, .14); overflow: hidden; }
+	.clothes_flow_track::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / 24 - 1px), rgba(127, 127, 127, .22) calc(100% / 24 - 1px), rgba(127, 127, 127, .22) calc(100% / 24)); }
+	.clothes_flow_bar { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 3px; }
+	.clothes_flow_closed { background: currentColor; opacity: .55; }
+	.clothes_flow_open { background: currentColor; opacity: .9; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25); }
+	.clothes_flow_more { font-size: 11px; opacity: .6; margin-left: 120px; }
+</style>
+<% } %>

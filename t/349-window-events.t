@@ -28,11 +28,12 @@ my $root = repo_root();
 require "$root/lib/JawnOS/Controller/manager_ws.pm";
 
 my @want_columns = qw(
-	uuid window_id browser_tab_id app event timestamp server_time
+	uuid window_id browser_tab_id device_id app event timestamp server_time
 	hostname user_agent room warranty ost
 );
 my @want_indexes = qw(
 	idx1_window_events idx2_window_events idx3_window_events idx4_window_events
+	idx5_window_events
 );
 
 my $schema = read_file("$root/database/schema.sql");
@@ -72,6 +73,8 @@ like($index_sql{'idx3_window_events'}, qr/\(window_id,\s*cast\(timestamp as inte
 	'the window read is indexed by the cast timestamp');
 like($index_sql{'idx4_window_events'}, qr/cast\(warranty as integer\)/,
 	'the warranty cull is indexed by the cast warranty');
+like($index_sql{'idx5_window_events'}, qr/\(device_id,\s*cast\(timestamp as integer\)\)/,
+	'the device read is indexed by the cast timestamp');
 
 # The indexes only help if the planner matches the expression the queries write.
 my $warranty_plan = $fresh->query(
@@ -133,6 +136,7 @@ my $inserted = eval {
 			event     => 'open',
 			app       => 'notes',
 			window_id => 'window_1700000000001',
+			device_id => 'device-round-trip',
 		},
 		browser_tab_id => 'tab-round-trip',
 		hostname       => 'test-box',
@@ -146,6 +150,7 @@ is($row->{'event'}, 'open', 'the event round-trips');
 is($row->{'app'}, 'notes', 'the app round-trips');
 is($row->{'window_id'}, 'window_1700000000001', 'the window id round-trips');
 is($row->{'browser_tab_id'}, 'tab-round-trip', 'the tab round-trips');
+is($row->{'device_id'}, 'device-round-trip', 'the browser device id round-trips');
 is($row->{'hostname'}, 'test-box', 'the hostname round-trips');
 is($row->{'user_agent'}, 'TestAgent/1.0', 'the user agent round-trips');
 ok(defined $row->{'uuid'} && length $row->{'uuid'}, 'the row has a uuid');
@@ -179,6 +184,25 @@ for my $bad (qw(explode openx drag '')) {
 }
 is($old->query('select count(*) as n from window_events')->hashes->[0]->{'n'}, $before,
 	'no refused frame writes a row');
+
+# A frame with no device id still records, and a device id that is not a plain id
+# is stripped rather than dying the handler; the span reader falls back for the
+# rows that carry none.
+my $no_device = eval { &Manager::window_event_record({
+	data => { event => 'open', app => 'notes', window_id => 'window_nodev' },
+	browser_tab_id => 'tab-round-trip',
+}); };
+is($no_device, 1, 'a frame with no device id is still recorded');
+my $nodev_row = $old->query(q{select * from window_events where window_id = ?}, 'window_nodev')->hashes->[0] || {};
+ok(!defined $nodev_row->{'device_id'} || $nodev_row->{'device_id'} eq '', 'and stores no device id');
+
+my $junk_device = eval { &Manager::window_event_record({
+	data => { event => 'open', app => 'notes', window_id => 'window_junkdev', device_id => '<script>' },
+	browser_tab_id => 'tab-round-trip',
+}); };
+is($junk_device, 1, 'a device id with markup is still recorded');
+my $junk_row = $old->query(q{select * from window_events where window_id = ?}, 'window_junkdev')->hashes->[0] || {};
+is($junk_row->{'device_id'}, 'script', 'the device id is stripped to id characters');
 
 # A malformed frame must never die the socket's message handler.
 my @survived;
@@ -217,8 +241,11 @@ like($windows_js, qr/windowEventSend\('restore', win\.attr\('app'\), win\.attr\(
 	'a restore sends the restore event');
 like($windows_js, qr/windowEventSend\('close', app, win\.attr\('id'\)\)/,
 	'the close teardown sends the close event');
-like($windows_js, qr/type: 'window_event', event: event, app: app, window_id: window_id/,
-	'the frame carries the event, the app and the window id');
+like($windows_js, qr/type: 'window_event', event: event, app: app, window_id: window_id, device_id: windowEventDeviceId\(\)/,
+	'the frame carries the event, the app, the window id and the browser device id');
+like($windows_js, qr/function windowEventDeviceId\(\)/, 'the browser identity has one helper');
+like($windows_js, qr/jawnosStore\.get\('window_events', 'device_id'/, 'the identity is read from the desk store');
+like($windows_js, qr/jawnosStore\.set\('window_events', 'device_id'/, 'and minted into it once');
 # one socket: the tab socket the act frame already speaks on
 like($windows_js, qr/var socket = ws\['tab'\];/, 'the event rides the tab socket, not a new one');
 unlike($windows_js, qr/new WebSocket\(/, 'the client opens no second socket for events');
@@ -281,10 +308,10 @@ my $day = 1_700_000_000_000;
 my $day_from = $day + 500;
 my $day_to   = $day + 20000;
 my $add_event = sub {
-	my ($uuid, $window_id, $app, $event, $at, $tab, $hostname) = @_;
+	my ($uuid, $window_id, $app, $event, $at, $tab, $hostname, $device) = @_;
 	$hostname = 'test-box' unless defined $hostname;
-	$old->query(q{insert into window_events (uuid, window_id, browser_tab_id, app, event, timestamp, server_time, hostname, warranty, ost) values (?,?,?,?,?,?,?,?,?,?)},
-		$uuid, $window_id, (defined $tab ? $tab : 'tab-day'), $app, $event, $at, $at, $hostname, $live, $at);
+	$old->query(q{insert into window_events (uuid, window_id, browser_tab_id, device_id, app, event, timestamp, server_time, hostname, warranty, ost) values (?,?,?,?,?,?,?,?,?,?,?)},
+		$uuid, $window_id, (defined $tab ? $tab : 'tab-day'), $device, $app, $event, $at, $at, $hostname, $live, $at);
 };
 
 # a whole window: open, two panels' worth of minimize/restore, close
@@ -362,7 +389,8 @@ is($injection->{'count'}, 0, 'a quoted filter value matches nothing instead of e
 for my $probe (
 	[ 'app', 'notes', qr/idx1_window_events/ ],
 	[ 'window_id', 'wc-a', qr/idx3_window_events/ ],
-	[ 'browser_tab_id', 'tab-day', qr/idx2_window_events/ ]
+	[ 'browser_tab_id', 'tab-day', qr/idx2_window_events/ ],
+	[ 'device_id', 'dev-day', qr/idx5_window_events/ ]
 ) {
 	my ($column, $value, $want) = @{$probe};
 	my $plan = $fresh->query(
@@ -465,6 +493,50 @@ is($fallback[2]{'window_id'}, 'wc-nh2', 'a row with neither identity still pairs
 is($fallback[2]{'duration_ms'}, 500, 'over its own open and close');
 is_deeply([ map { $_->{'hostname'} } @fallback ], [ '', '', '' ],
 	'these spans carry the empty hostname they were read with');
+
+# ------------------------------------------------- the browser is part of the key
+
+# A reload keeps one flow: two tabs of one browser (one device id) and the same
+# window id closing what the other opened are one span, not two.
+my $reload_from = $day + 70000;
+my $reload_to   = $day + 80000;
+$add_event->('z1', 'wc-reload', 'notes', 'open',  $day + 70000, 'tab-r1', 'box-one', 'dev-one');
+$add_event->('z2', 'wc-reload', 'notes', 'close', $day + 71000, 'tab-r2', 'box-one', 'dev-one');
+
+my $reload = &subs::window_events_spans(from => $reload_from, to => $reload_to);
+is($reload->{'count'}, 1, 'a reload across two tabs of one browser is one span');
+is($reload->{'spans'}[0]{'duration_ms'}, 1000, 'the reload\'s two halves pair');
+is($reload->{'spans'}[0]{'device_id'}, 'dev-one', 'the span names its browser');
+
+my $by_device = &subs::window_events_read(from => $reload_from, to => $reload_to, device_id => 'dev-one');
+is($by_device->{'count'}, 2, 'a device filter keeps that browser\'s transitions');
+
+# Two browsers sharing a window id keep their own flows.
+my $devices_from = $day + 90000;
+my $devices_to   = $day + 100000;
+$add_event->('v1', 'wc-both', 'notes', 'open',  $day + 90000, 'tab-a', 'box-one', 'dev-one');
+$add_event->('v2', 'wc-both', 'notes', 'close', $day + 91000, 'tab-a', 'box-one', 'dev-one');
+$add_event->('v3', 'wc-both', 'notes', 'open',  $day + 92000, 'tab-b', 'box-one', 'dev-two');
+$add_event->('v4', 'wc-both', 'notes', 'close', $day + 94000, 'tab-b', 'box-one', 'dev-two');
+
+my $devices = &subs::window_events_spans(from => $devices_from, to => $devices_to);
+is($devices->{'count'}, 2, 'two browsers sharing a window id are two spans');
+is($devices->{'spans'}[0]{'device_id'}, 'dev-one', 'the first span names its browser');
+is($devices->{'spans'}[1]{'device_id'}, 'dev-two', 'the second span names the other');
+is($devices->{'spans'}[0]{'duration_ms'}, 1000, 'the first browser pairs its own');
+is($devices->{'spans'}[1]{'duration_ms'}, 2000, 'the second pairs its own');
+is(scalar @{ $devices->{'spans'}[0]{'events'} }, 2, 'each span holds only its browser\'s transitions');
+
+# The device id outranks the server's name: one browser seen through two
+# hostnames (a renamed box) is still one flow.
+my $outrank_from = $day + 110000;
+my $outrank_to   = $day + 120000;
+$add_event->('w1', 'wc-out', 'notes', 'open',  $day + 110000, 'tab-a', 'box-one', 'dev-one');
+$add_event->('w2', 'wc-out', 'notes', 'close', $day + 112000, 'tab-b', 'box-two', 'dev-one');
+
+my $outrank = &subs::window_events_spans(from => $outrank_from, to => $outrank_to);
+is($outrank->{'count'}, 1, 'one device id is one span even across server names');
+is($outrank->{'spans'}[0]{'duration_ms'}, 2000, 'and pairs its two transitions');
 
 $gb::database_holder = {};
 

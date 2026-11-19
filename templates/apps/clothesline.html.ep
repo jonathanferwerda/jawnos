@@ -57,6 +57,8 @@
 	</tbody>
 </table>
 
+<%= include 'apps/clothesline/flow' %>
+
 <style>
 	.clothes_picker[wearing=on] {
 		background-color:lightgreen;
