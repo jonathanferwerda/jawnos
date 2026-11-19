@@ -1323,19 +1323,25 @@ sub navigation_automation {
 
 					}
 					if ($cactable == 1) {
-						my $cdata = {
-							timestamp => $returner->{'timestamp'},
-							latitude => $returner->{'latitude'},
-							longitude => $returner->{'longitude'},
-							accuracy => sprintf("%.2F", $returner->{'accuracy'}),
-							server_time => &subs::rightNow(),
-							uuid => $hpdata->{'uuid'} . '-' . &subs::random_string_creator(8),
-							type => 'app',
-							app => $app,
-							warranty => &subs::ago_calc($hset->{'warranty'}, &subs::rightNow()),
-							signatorial => $signatorial
-						};
-						&subs::db_insert('continent', $cdata);
+						# The plate fix joins the activity under the same one-device rule
+						# as every other door: a machine the appointment is not recording
+						# on still runs its plates, it just does not add a row the track will
+						# count. The start or stop itself has already been written above.
+						if (&subs::movement_records_here({ app => $app, appt => $hpdata->{'uuid'}, signatorial => $signatorial, timestamp => $returner->{'timestamp'}, fix => { latitude => $returner->{'latitude'}, longitude => $returner->{'longitude'}, timestamp => $returner->{'timestamp'} } })) {
+							my $cdata = {
+								timestamp => $returner->{'timestamp'},
+								latitude => $returner->{'latitude'},
+								longitude => $returner->{'longitude'},
+								accuracy => sprintf("%.2F", $returner->{'accuracy'}),
+								server_time => &subs::rightNow(),
+								uuid => $hpdata->{'uuid'} . '-' . &subs::random_string_creator(8),
+								type => 'app',
+								app => $app,
+								warranty => &subs::ago_calc($hset->{'warranty'}, &subs::rightNow()),
+								signatorial => $signatorial
+							};
+							&subs::db_insert('continent', $cdata);
+						}
 					}
 				}
 			}

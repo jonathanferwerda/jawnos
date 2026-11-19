@@ -68,14 +68,18 @@ sub device_label {
 # counted twice; one device records and the rest keep their own current place
 # and their home plates, they just do not file the appointment's movement.
 #
-#   my $sig = &subs::movement_recorder({ app => $app, appt => $uuid, signatorial => $me, timestamp => $t });
+#   my $recorder = &subs::movement_recorder({ app => $app, appt => $uuid, signatorial => $me, timestamp => $t, fix => { latitude => .., longitude => .., timestamp => .. } });
 #
 # The house setting movement_device answers: a signatorial names that machine,
 # 'every' lets them all record (the old way), and 'auto' (the default) takes the
-# device that has actually covered ground in the last hour, preferring the one
-# that has been recording the appointment longest. A device standing still never
-# wins over one that is moving, so a tablet left in the house cannot take a trip
-# away from the phone that went for the walk.
+# device that has actually gone somewhere in the last hour, preferring the one
+# that has been recording the appointment longest. The answer is 'none' when
+# this device should file nothing: a tablet left in the house must not file its
+# own drift into a walk the phone is recording, and it cannot wait to be told -
+# a peer's fixes can be an hour behind, or never arrive. So with no other mover
+# in view the incoming fix itself decides, against the last fix this device
+# filed: a fix that has not left that place is drift. The machine that is moving
+# owns the activity, whichever one it is.
 sub movement_recorder {
 	my ($p) = @_;
 	$p ||= {};
@@ -89,13 +93,30 @@ sub movement_recorder {
 	my $rows = &db_query(
 		'select latitude, longitude, timestamp, signatorial from continent where app = ? and uuid like ? and cast(timestamp as integer) >= ? order by cast(timestamp as integer)',
 		$p->{'app'}, $appt . '-%', $now - 3600000)->hashes;
-	return &movement_choice({ choice => 'auto', signatorial => $sig, rows => $rows, now => $now });
+	return &movement_choice({ choice => 'auto', signatorial => $sig, rows => $rows, now => $now, fix => $p->{'fix'} });
+}
+
+# Does this device file the appointment's movement? Every door that writes a fix
+# into an activity asks this one question - the record route, the "anyway" route
+# and the headless navigator - so a door added later cannot forget the rule. A
+# fix that is not this device's to file still updates this machine's own place
+# and runs its home plates; only the activity's track is skipped.
+#
+#   next unless &subs::movement_records_here({ app => $app, appt => $uuid, signatorial => $me, timestamp => $t });
+sub movement_records_here {
+	my ($p) = @_;
+	$p ||= {};
+	my $sig = $p->{'signatorial'} || '';
+	my $recorder = &movement_recorder($p);
+	return ( !length $recorder || $recorder eq $sig ) ? 1 : 0;
 }
 
 # The decision behind movement_recorder with the rows already read, so it can be
 # tested without a database. An explicit choice answers at once; 'auto' reads
-# the appointment's fixes from the last hour and picks the device that went
-# somewhere, the longest-recording one first.
+# the appointment's fixes from the last hour and asks two questions in order:
+# is another device in view the one that went somewhere, and if not, has this
+# device left the place of the last fix it filed? 'none' says this device files
+# nothing - its own place is a different row, and still gets written.
 sub movement_choice {
 	my ($p) = @_;
 	$p ||= {};
@@ -114,34 +135,66 @@ sub movement_choice {
 		$last{$dev} = $ts if !defined $last{$dev} || $ts > $last{$dev};
 		push @{ $devs{$dev} }, $r;
 	}
-	my %metres;
+	my (%metres,%pace);
 	foreach my $dev ( keys %devs ) {
 		my $carrier = &carrier_device( $devs{$dev} );
 		$metres{$dev} = $carrier ? $carrier->{'metres'} : 0;
+		# The pace is read over the device's own recent fixes, not its whole
+		# session: a walk with a long stop in it is judged on the last ten minutes,
+		# so a person who sat for a while and then set off is travelling again.
+		my @mine = sort { ( $a->{'timestamp'} || 0 ) <=> ( $b->{'timestamp'} || 0 ) } @{ $devs{$dev} };
+		my @recent = grep { ( 0 + ( $_->{'timestamp'} || 0 ) ) >= $now - 600000 } @mine;
+		@recent = @mine if scalar @recent < 2;
+		my $span = ( 0 + $recent[-1]->{'timestamp'} ) - ( 0 + $recent[0]->{'timestamp'} );
+		my $recent_carrier = &carrier_device( \@recent );
+		my $covered = $recent_carrier ? $recent_carrier->{'metres'} : 0;
+		$pace{$dev} = $span > 0 ? $covered / ( $span / 1000 ) : 0; # metres per second
 	}
 	# A device is travelling only when it has gone somewhere. The jitter floor in
 	# carrier_device takes the small shuffles out, but a device parked for hours
-	# can still creep a hundred metres, so a mover must also be a real share of
-	# the furthest one: a tablet left at home never takes a 1 km walk from the
-	# phone that recorded it.
+	# can still creep a few hundred metres, and the pace is what tells that drift
+	# from a walk: a mover keeps walking pace (2 km/h) over its recent fixes. A
+	# session too young to judge - one that does not span three minutes yet - is
+	# not held to that, so a trip can still start.
 	my $furthest = 0;
 	foreach my $dev ( keys %metres ) {
 		$furthest = $metres{$dev} if ( $metres{$dev} || 0 ) > $furthest;
 	}
 	my @movers = grep {
 		( $metres{$_} || 0 ) >= 100 && ( $metres{$_} || 0 ) >= $furthest * 0.25
+			&& ( ( $pace{$_} || 0 ) >= 0.55 || ( ( $last{$_} || 0 ) - ( $first{$_} || 0 ) ) < 180000 )
 	} keys %devs;
-	my @pool = scalar @movers ? @movers : keys %devs;
 	my ($win) = sort {
 		( $first{$a} || 0 ) <=> ( $first{$b} || 0 )
 			|| ( $metres{$b} || 0 ) <=> ( $metres{$a} || 0 )
 			|| $a cmp $b
-	} @pool;
-	return $sig unless defined $win;
-	# a recorder that has gone quiet for a quarter of an hour has left: the device
-	# that is here takes the trip over rather than losing it
-	return $sig if $win ne $sig && $now && ( $now - ( $last{$win} || 0 ) ) > 900000;
-	return $win;
+	} @movers;
+	if ( defined $win && $win ne $sig ) {
+		# another device is the one that went somewhere: this one files nothing
+		# while that one is still reporting. A recorder quiet for a quarter of an
+		# hour has left, and then this device may take the trip over - but only if
+		# it has gone somewhere too, which the test below answers.
+		return 'none' unless $now && ( $now - ( $last{$win} || 0 ) ) > 900000;
+	}
+	# This device's own answer: the incoming fix against the last fix it filed.
+	# A telephone in a pocket at home answers its GPS all evening and never
+	# leaves the room, so a fix within the jitter of the last one it filed is
+	# drift, not travel. The test is a distance, not a pace, so a resumed walk
+	# keeps recording: the gap since the last filed fix widens the test, but never
+	# past ten minutes' worth, so a stop cannot silence the rest of the trip.
+	my ($last_mine) = sort { ( $b->{'timestamp'} || 0 ) <=> ( $a->{'timestamp'} || 0 ) }
+		grep { ( defined $_->{'signatorial'} ? $_->{'signatorial'} : '' ) eq $sig } @rows;
+	return $sig unless $last_mine;
+	my $fix = $p->{'fix'};
+	return $sig unless ref $fix eq 'HASH';
+	my ($lat, $lon) = ( $fix->{'latitude'}, $fix->{'longitude'} );
+	return $sig unless defined $lat && defined $lon && length $lat && length $lon;
+	my $elapsed = ( 0 + ( $fix->{'timestamp'} || $now ) ) - ( 0 + ( $last_mine->{'timestamp'} || 0 ) );
+	return $sig if $elapsed <= 0;
+	return $sig unless defined $last_mine->{'latitude'} && defined $last_mine->{'longitude'};
+	my $step = &subs::geodesic_offset( $last_mine->{'latitude'}, $last_mine->{'longitude'}, $lat, $lon )->{'metres'};
+	my $needed = 50 + 0.2 * ( $elapsed > 600000 ? 600 : $elapsed / 1000 );
+	return $step >= $needed ? $sig : 'none';
 }
 
 # The places an app went, read from the continent table the GPS fills. A walk's

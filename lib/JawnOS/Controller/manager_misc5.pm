@@ -498,12 +498,10 @@ sub action_15618 {
 			|| &subs::navigation_gps_present()
 			|| ($purpose eq 'navigation' && &subs::device_setter() eq 'mobile')) ? 1 : 0;
 		# the same one-device rule as the ordinary record route: a fix filed
-		# "anyway" is still movement, and must not be counted twice
+		# "anyway" is still movement, and must not be counted twice. The place is
+		# asked for first, because a device standing still is told to file nothing
+		# by the fix itself.
 		my $movement_here = 1;
-		if ($purpose eq 'app' && $c->param('uuid')) {
-			my $recorder = &subs::movement_recorder({ app => $app, appt => $pre_uuid, signatorial => $signatorial, timestamp => $timestamp });
-			$movement_here = 0 if length $recorder && $recorder ne $signatorial;
-		}
 
 		my $returner = {
 			timestamp => $timestamp,
@@ -517,6 +515,9 @@ sub action_15618 {
 
 		my $scope = $c->param('scope');
 		$returner = &subs::embedded_location_grabber($returner);
+		if ($purpose eq 'app' && $c->param('uuid')) {
+			$movement_here = &subs::movement_records_here({ app => $app, appt => $pre_uuid, signatorial => $signatorial, timestamp => $timestamp, fix => { latitude => $returner->{'latitude'}, longitude => $returner->{'longitude'}, timestamp => $timestamp } }) ? 1 : 0;
+		}
 		# The deck answers /my_position from its own GPS. The home-plate fallback
 		# below is not a fix, so it gets no provider and cannot move an appointment.
 		my $fix_provider = $returner->{'latitude'} ? 'gps' : '';

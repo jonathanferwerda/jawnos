@@ -270,8 +270,9 @@ sub continent_record($c) {
 	my $movement_here = 1;
 	my $recorder_of;
 	if ($purpose eq 'app' && $c->param('uuid')) {
-		$recorder_of = &subs::movement_recorder({ app => $app, appt => $pre_uuid, signatorial => $signatorial, timestamp => $timestamp });
-		$movement_here = 0 if length $recorder_of && $recorder_of ne $signatorial;
+		$movement_here = &subs::movement_records_here({ app => $app, appt => $pre_uuid, signatorial => $signatorial, timestamp => $timestamp, fix => { latitude => $c->param('latitude'), longitude => $c->param('longitude'), timestamp => $timestamp } }) ? 1 : 0;
+		# name the machine that is carrying it, for the answer the caller gets
+		$recorder_of = &subs::movement_recorder({ app => $app, appt => $pre_uuid, signatorial => $signatorial, timestamp => $timestamp }) unless $movement_here;
 	}
 	if ($navigation ne 'once') {
 		my $continentals = &subs::db_query('select * from continent where app = ? and uuid = ? order by server_time DESC LIMIT 1', $app, $uuid)->hashes;

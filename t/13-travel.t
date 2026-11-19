@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Render.pm
-# covers:    Which device was with the person; and how long a stopped home-plate visit stays resumable (three navigation intervals)
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc7.pm
+# covers:    Which device was with the person, which one files the activity, and that the distance reads that device's fixes only; and how long a stopped home-plate visit stays resumable (three navigation intervals)
 
 use strict;
 use warnings;
@@ -129,19 +129,22 @@ my @walking = (
 );
 is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 6000, rows => [@walking] }), 'phone',
 	'the moving device takes the trip from the one left at home' );
-is( &subs::movement_choice({ choice => 'auto', signatorial => 'tablet', now => 6000, rows => [@walking] }), 'phone',
-	'and the device at home defers even when it has more fixes' );
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'tablet', now => 6000, rows => [@walking] }), 'none',
+	'and the device at home is told to file nothing, even with more fixes' );
 
 # Both travelled together: the first to start recording keeps the trip, so the
-# role does not swap from fix to fix.
+# role does not swap from fix to fix. The other device is told to file nothing
+# rather than told the winner's name.
 my @together = (
 	fix( 1000, 'tablet', 43.0000, -81 ),
 	fix( 2000, 'tablet', 43.0027, -81 ),
 	fix( 2500, 'phone',  43.0000, -81 ),
 	fix( 3000, 'phone',  43.0030, -81 ),
 );
-is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 4000, rows => [@together] }), 'tablet',
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'tablet', now => 4000, rows => [@together] }), 'tablet',
 	'when both are moving, the one that started recording keeps it' );
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 4000, rows => [@together] }), 'none',
+	'and the other device files nothing while it does' );
 
 # The recorder left its fixes behind a quarter of an hour ago: hand the trip on
 # rather than lose it.
@@ -153,10 +156,12 @@ my @gone = (
 is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 1000 + 20 * 60 * 1000, rows => [@gone] }), 'phone',
 	'a recorder that went quiet is replaced' );
 
-# Both parked: it does not matter which one records, but it must be one of them.
+# Both parked where they last filed: this device answers for itself, and a fix
+# that has not left the place of the last one it filed is drift.
 my @parked = ( fix( 1, 'tablet', 43.0024, -81.9419 ), fix( 2, 'phone', 43.0024, -81.9419 ) );
-is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 3, rows => [@parked] }), 'tablet',
-	'with nothing moving the earliest recorder keeps it' );
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 2000, rows => [@parked],
+	fix => { latitude => 43.00242, longitude => -81.9419, timestamp => 2000 } }), 'none',
+	'a device standing where it last filed files nothing' );
 
 # A device parked for hours can creep a hundred metres of jitter without going
 # anywhere. It must not take a real walk from the device that recorded it, even
@@ -170,6 +175,81 @@ push @creep, fix( 7000, 'phone', 43.0000, -81 ), fix( 8000, 'phone', 43.0020, -8
 	fix( 11000, 'phone', 43.0080, -81 );
 my $creep = &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 12000, rows => [@creep] });
 is( $creep, 'phone', 'a creeping device does not take a real walk' );
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'tablet', now => 12000, rows => [@creep] }), 'none',
+	'and the creeping device itself is told to file nothing' );
+
+# ------------------------------------- the tablet in the house, on its own
+# The device filed the walk's first fix, then stayed in the house. Its own fixes
+# wander a few metres at a time for as long as it is left on, and it is the only
+# device this manager can see - the phone's fixes can be an hour behind, or never
+# arrive. Its drift must not stand in for the trip.
+my @home_alone;
+for my $i ( 1 .. 40 ) {
+	push @home_alone, fix( $i * 120000, 'tablet', 43.0024 + ( $i % 2 ? 0.00005 : -0.00005 ), -81.9419 );
+}
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'tablet', now => 40 * 120000 + 120000, rows => [@home_alone],
+	fix => { latitude => 43.00245, longitude => -81.9419, timestamp => 40 * 120000 + 120000 } }), 'none',
+	'a device left in the house files nothing, even when it is the only one in view' );
+
+# The same device, actually carried out of the house: its fix has left the place
+# it last filed, so it records again - a tablet is not banned, it just has to move.
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'tablet', now => 40 * 120000 + 120000, rows => [@home_alone],
+	fix => { latitude => 43.00375, longitude => -81.9419, timestamp => 40 * 120000 + 120000 } }), 'tablet',
+	'and the same device carried out of the house files again' );
+
+# A walk with a long stop in it: the gap since the last filed fix widens the test,
+# but only to ten minutes' worth, so the second leg still records.
+my @stopped = ( fix( 1, 'phone', 43.0000, -81 ) );
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 20 * 60000 + 120000, rows => [@stopped],
+	fix => { latitude => 43.0018, longitude => -81, timestamp => 20 * 60000 + 120000 } }), 'phone',
+	'a walk resumed after a long stop records its second leg' );
+
+# ------------------------------------------ one activity, one device's track
+# The appointment's distance reads the carrier's fixes only. The parked device's
+# rows stay in the table - its own place and home plates keep running, and the
+# person asked for that - they just do not make the track, or the kilometres it
+# reports. Reading every row in time order is what zigzags the line: home, walk,
+# home, walk, and a leg it never travelled between each pair.
+my @both = ( @tablet, @walk );
+my $track = &subs::carrier_fixes( \@both );
+is( scalar @{ $track }, scalar @walk, 'the carrier\'s fixes make the track' );
+is_deeply( [ sort keys %{ { map { $_->{'signatorial'} => 1 } @{$track} } } ], ['phone'],
+	'and none of the device left at home' );
+is( scalar @{ &subs::carrier_fixes( \@walk ) }, scalar @walk, 'one device: the list is handed back whole' );
+is_deeply( &subs::carrier_fixes( undef ), [], 'no rows is no track' );
+is_deeply( &subs::carrier_fixes( [] ), [], 'an empty appointment is no track' );
+is( scalar @{ &subs::carrier_fixes( Mojo::Collection->new( @both ) ) }, scalar @walk,
+	'a route\'s collection is read the same way' );
+
+my $walk_metres = 0;
+my $prev_fix;
+foreach my $f ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$track} ) {
+	$walk_metres += &subs::geodesic_offset( $prev_fix->{'latitude'}, $prev_fix->{'longitude'}, $f->{'latitude'}, $f->{'longitude'} )->{'metres'} if $prev_fix;
+	$prev_fix = $f;
+}
+my $zigzag_metres = 0;
+$prev_fix = undef;
+foreach my $f ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @both ) {
+	$zigzag_metres += &subs::geodesic_offset( $prev_fix->{'latitude'}, $prev_fix->{'longitude'}, $f->{'latitude'}, $f->{'longitude'} )->{'metres'} if $prev_fix;
+	$prev_fix = $f;
+}
+cmp_ok( $walk_metres, '>', 800, 'the walk is measured' );
+cmp_ok( $walk_metres, '<', 1000, 'and measured once, not twice' );
+cmp_ok( $zigzag_metres, '>', 2 * $walk_metres, 'reading every row in time order is what zigzags it' );
+
+# Every door that files a fix into an activity asks one question, so a door
+# added later cannot forget the rule. The answer is the device's own name, or
+# 'none' when it should file nothing.
+{
+	no warnings 'redefine';
+	local *subs::movement_recorder = sub { return 'phone' };
+	is( &subs::movement_records_here({ signatorial => 'phone' }), 1, 'the carrying device files' );
+	is( &subs::movement_records_here({ signatorial => 'tablet' }), 0, 'the other device does not' );
+	local *subs::movement_recorder = sub { return 'none' };
+	is( &subs::movement_records_here({ signatorial => 'tablet' }), 0, 'a trip nobody in view is carrying files nothing' );
+	local *subs::movement_recorder = sub { return '' };
+	is( &subs::movement_records_here({ signatorial => 'tablet' }), 1, 'no answer still files, so a trip can start' );
+}
 
 # ------------------------------------------------- the plate arms the autostop
 # The details bar offers the autostop switch only where navigation_automation can
@@ -232,5 +312,31 @@ like($appointment_src, qr/return \$window > \$cap \? \$cap : \$window;/,
 	'and the rule caps the window rather than scaling without bound');
 unlike($appointment_src, qr/stop_timestamp >= \? order by stop_timestamp desc limit 1', \$app, 'navigation', 'stop', &subs::rightNow\(\) - 15 \* 60 \* 1000/,
 	'and no longer the fixed fifteen minutes');
+
+# No door may file a fix into an activity without asking the one-device rule: the
+# record route, the "anyway" route, the headless navigator and the plate
+# automation all ask it. A door that stops asking is the bug this test exists for.
+like($appointment_src, qr/movement_records_here/, 'the plate automation asks the one-device rule');
+foreach my $door (
+	'lib/JawnOS/Manager/Part13.pm',
+	'lib/JawnOS/Controller/manager_misc5.pm',
+	'lib/JawnOS/Domain/Headless.pm',
+) {
+	like( read_file("$root/$door"), qr/movement_records_here/, "$door asks the one-device rule" );
+}
+
+# The appointment's own distance and list read that carrier's track, so the
+# number beside the appointment is the trip and not the trip plus the house.
+my $detail_src = read_file("$root/lib/JawnOS/Controller/manager_misc7.pm");
+like( $detail_src, qr/my \$track = &subs::carrier_fixes\(\$continental\);/,
+	'the appointment distance reads the carrier\'s track' );
+like( $detail_src, qr/foreach my \$continent \( \@\{\$track\} \)/,
+	'and every point and step comes from it' );
+
+# The headless navigator is the path an app on a phone actually takes, and it
+# names the appointment it is filing for - not the machine's current place.
+like( read_file("$root/lib/JawnOS/Domain/Headless.pm"),
+	qr/movement_records_here\(\{ app => \$nd->\{'app'\}, appt => \$nd->\{'uuid'\}/,
+	'the headless navigator asks for the appointment before filing a fix' );
 
 done_testing();

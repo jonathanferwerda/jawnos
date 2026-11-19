@@ -771,6 +771,28 @@ sub carrier_device {
 	};
 }
 
+# The fixes that make an activity's track, which is the carrier's alone once
+# more than one device has filed into the appointment. The other device's rows
+# are still stored - its own place and its home plates keep running - they are
+# just not part of this activity or of the distance it reports. Reading the
+# stored rows in time order instead joins home to walk to home, so every fix the
+# parked device filed adds a leg it never travelled (2026-11-02: a 37 km drive
+# read as 683 km). With one device the list is the list handed in, unchanged.
+#
+#   my $track = &subs::carrier_fixes($continental);
+#   # arrayref of the same rows, carrier's only when there are two devices
+sub carrier_fixes {
+	my ($fixes) = @_;
+	return [] unless ref $fixes;
+	# a route passes db_query(...)->hashes (an arrayref); a caller may pass a
+	# Mojo::Collection, and carrier_device takes both, so this door takes both too
+	my @list = ref $fixes eq 'ARRAY' ? @{$fixes} : eval { @{ $fixes->to_array } };
+	my $carrier = &carrier_device(\@list);
+	return \@list unless $carrier && ($carrier->{'devices'} || 0) > 1;
+	my $sig = defined $carrier->{'signatorial'} ? $carrier->{'signatorial'} : '';
+	return [ grep { ( defined $_->{'signatorial'} ? $_->{'signatorial'} : '' ) eq $sig } @list ];
+}
+
 # A device's signatorial as the name the house knows it by: the first label of
 # its house address (phone, tablet, laptop), then a peer's hostname, and this
 # machine's own name when neither is known. One place, so a carrier line, the

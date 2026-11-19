@@ -178,6 +178,11 @@ sub action_25444 {
 				devices => $carrier->{'devices'},
 			};
 		}
+		# only the device that was with the person makes the track and its
+		# distance: the parked device's rows still exist (its own place and home
+		# plates keep running) but joining them in time order added a house-to-walk
+		# leg per fix, and the total read as kilometres the person never travelled
+		my $track = &subs::carrier_fixes($continental);
 		my @p = grep { $_->{'name'} eq $l->{'type'} } @{$pseudonyms};
 		$l->{'total_distance'} = 0;
 		my $last_visitor;
@@ -186,9 +191,10 @@ sub action_25444 {
 			my $hp = $main_home_plate;
 			@homebase_plate = ( $hp->{'latitude'} + 0, $hp->{'longitude'} + 0 );
 		}
-		my $c_count = 0;
-		foreach my $continent ( @{$continental} ) {
+		my $start_ts;
+		foreach my $continent ( @{$track} ) {
 			if ($continent->{'latitude'}) {
+				$start_ts ||= $continent->{'timestamp'};
 				my @home_plate;
 
 				if ($l->{'model'}->{'home_plate'}->{'latitude'} && $l->{'model'}->{'home_plate'}->{'longitude'}) {
@@ -213,7 +219,7 @@ sub action_25444 {
 					$speed = &travel_speed_calculator({ distance => $increment_distance, start => $last_visitor->{'continent'}->{'timestamp'}, end => $continent->{'timestamp'} });
 					$l->{'total_distance'} += sprintf("%.4f", $increment_distance);
 					if ($speed) {
-						$l->{'speed'} = &travel_speed_calculator({ distance => $l->{'total_distance'}, start => $continental->[0]->{'timestamp'}, end => $continental->[$c_count]->{'timestamp'} });
+						$l->{'speed'} = &travel_speed_calculator({ distance => $l->{'total_distance'}, start => $start_ts, end => $continent->{'timestamp'} });
 					}
 				}
 
@@ -236,7 +242,6 @@ sub action_25444 {
 				};
 
 			}
-			$c_count++;
 		}
 		$l->{'pseudonym'} = $p[0];
 		if ($l->{'type'} eq 'website') {

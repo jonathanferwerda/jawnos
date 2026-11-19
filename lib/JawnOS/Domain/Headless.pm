@@ -200,13 +200,19 @@ sub headless_navigation {
 			&subs::navigation_share_fix($returner);
 
 		#	&subs::db_insert('continent', $returner);
-			foreach my $nd ( @{$navigation_due} ) {
-				$returner->{'uuid'} = $nd->{'uuid'} . '-' . &subs::random_string_creator(9);
-				$returner->{'app'} = $nd->{'app'};
-				$returner->{'warranty'} = $nd->{'warranty'};
-				$returner->{'type'} = 'app';
-				&subs::db_insert('continent', $returner);
-			}
+				foreach my $nd ( @{$navigation_due} ) {
+					# One device files an appointment's movement - the same rule the
+					# record route applies. The fix has already updated this machine's
+					# own place and runs its home plates above; what it must not do is
+					# join an activity another machine is carrying, because the two
+					# tracks interleaved read as one zigzag and twice the distance.
+					next unless &subs::movement_records_here({ app => $nd->{'app'}, appt => $nd->{'uuid'}, signatorial => $signatorial, timestamp => $returner->{'timestamp'}, fix => { latitude => $returner->{'latitude'}, longitude => $returner->{'longitude'}, timestamp => $returner->{'timestamp'} } });
+					$returner->{'uuid'} = $nd->{'uuid'} . '-' . &subs::random_string_creator(9);
+					$returner->{'app'} = $nd->{'app'};
+					$returner->{'warranty'} = $nd->{'warranty'};
+					$returner->{'type'} = 'app';
+					&subs::db_insert('continent', $returner);
+				}
 			&subs::navigation_automation($returner, 'gps');
 
 		}
