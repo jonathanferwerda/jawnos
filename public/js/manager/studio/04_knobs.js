@@ -375,6 +375,13 @@ function studioSaver() {
 		if (song[channel] == undefined) { song[channel] = {}; }
 		song[channel]['automation_view'] = $(v).attr('aria-pressed') == 'true' ? 1 : 0;
 	});
+	// The per-track Monitor choice is the song's too; the button records it.
+	$('.studio_track_monitor').each(function(i,v) {
+		var channel = $(v).attr('channel');
+		if (!/^[0-9]+$/.test(channel)) { return; }
+		if (song[channel] == undefined) { song[channel] = {}; }
+		song[channel]['monitor'] = $(v).attr('aria-pressed') == 'true' ? 'yes' : 'no';
+	});
 	$('.studio_channel_information').each(function(inf,sci) {
 		var text = $(sci).text();
 		if (isJson(text)) {
@@ -464,6 +471,11 @@ function studioRetriever() {
 		if (!mixer[i].armed) { mixer[i].armed = { state: 'off', text: 'O' }; }
 		$.each(v, function(n,w) {
 			if (n == 'plugs' || n == 'mixer' || n == 'fx') { return; }
+			if (n == 'monitor') {
+				if (!mixer.monitor) { mixer.monitor = {}; }
+				mixer.monitor[i] = (w == 'yes' || w == 1 || w == '1' || w === true) ? 1 : 0;
+				return;
+			}
 			mixer[i][n] = w;
 			if (n == 'name') {
 				$('.studio_track_name[channel="' + i + '"]').val(w);
@@ -510,6 +522,11 @@ function studioRetriever() {
 		}
 		studioApplyChannel(i);
 	});
+
+	// The saved Monitor choice is restored after every row, so the buttons and
+	// the one active stream agree before the rest of the song is rebuilt.
+	if (typeof studioMonitorButtonRender === 'function') { studioMonitorButtonRender(); }
+	if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(true); }
 
 	studioApplyPedals();
 	// A rack's own values win over the shelf's global pedals, so they are pushed

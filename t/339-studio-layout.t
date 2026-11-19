@@ -490,6 +490,9 @@ like($style, qr/\.studio_track_panel \.channel_volume \{[^}]*flex:\s*1 1 auto !i
 	'rather than sitting at a fixed 80px');
 like($markup, qr/class="studio_track_monitor/,
 	'every track carries a Monitor button');
+like($knobs, qr/song\[channel\]\['monitor'\]/, 'the per-track Monitor choice is saved with the song');
+like($knobs, qr/mixer\.monitor\[i\] =/, 'and restored per track');
+like($knobs, qr/studioApplyMonitor\(true\)/, 'the restored monitor is applied on load');
 
 # --- Configure scrolls inside the window ------------------------------------
 like($style, qr/#studio_config\s*\{[^}]*flex:\s*1 1 auto/s, 'Configure takes the free height');
