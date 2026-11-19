@@ -180,8 +180,8 @@ like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?grid-template-rows:\s*
 	'the console row is auto rather than eating the timeline');
 like($style, qr/#studio_grid\.studio_arranged\s*\{[\s\S]*?overflow-y:\s*auto/s,
 	'a very short arranged window scrolls the grid instead of clipping an area');
-like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*max-height:\s*280px/s,
-	'the console keeps a compact auto height that still shows a whole strip');
+like($style, qr/#studio_grid\.studio_arranged > #studio_mixer\s*\{[^}]*max-height:\s*min\(280px,\s*45%\)/s,
+	'the console is capped at a whole strip or 45% of the grid, whichever is less');
 like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*min-height:\s*56px/s,
 	'the transport is content height, not a whole equal row');
 like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*max-height:\s*104px/s,

@@ -454,8 +454,10 @@
 		grid-area: mixer !important;
 		height: auto;
 		/* the bar plus a whole channel strip (the strips are ~240px of knobs
-		   and jacks under the window's own control sizes) */
-		max-height: 280px;
+		   and jacks under the window's own control sizes), but never more than
+		   45% of the grid: on a short window the console scrolls rather than
+		   starving the timeline, and the grip still trades the two */
+		max-height: min(280px, 45%);
 	}
 	/* A phone-width window stacks the same areas: transport, dominant timeline,
 	   a compact console, then the synth. The fixed auto-row heights are small so
