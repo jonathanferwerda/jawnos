@@ -860,7 +860,7 @@ sub browser_game_beat_key {
 sub browser_game_heartbeat {
 	my ($opts) = @_;
 	$opts ||= {};
-	my %allowed = map { $_ => 1 } ('Solitaire', 'Spider Solitaire', 'Mahjong', 'Blackjack', 'Twirl');
+	my %allowed = map { $_ => 1 } ('Solitaire', 'Spider Solitaire', 'Mahjong', 'Blackjack', 'Twirl', 'Pipedream', 'Minesweeper');
 	my $game = $opts->{'game'} // '';
 	$game =~ s/^\s+//;
 	$game =~ s/\s+$//;
@@ -889,7 +889,7 @@ sub browser_game_heartbeat {
 sub browser_game_play {
 	my ($opts) = @_;
 	$opts ||= {};
-	my %allowed = map { $_ => 1 } ('Solitaire', 'Spider Solitaire', 'Mahjong', 'Blackjack', 'Twirl');
+	my %allowed = map { $_ => 1 } ('Solitaire', 'Spider Solitaire', 'Mahjong', 'Blackjack', 'Twirl', 'Pipedream', 'Minesweeper');
 	my $game = $opts->{'game'} // '';
 	$game =~ s/^\s+//;
 	$game =~ s/\s+$//;

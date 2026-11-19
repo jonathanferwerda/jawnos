@@ -730,6 +730,8 @@ $(function () {
 	if (!open) { return; }
 	var urls = {
 		twirl: '/manager/twirl',
+		pipedream: '/manager/pipedream',
+		minesweeper: '/manager/minesweeper',
 		music: '/manager/music',
 		gallery: '/manager/gallery',
 		configure: '/manager/configure',

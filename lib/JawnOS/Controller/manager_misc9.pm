@@ -832,21 +832,63 @@ sub action_44003 {
 }
 
 # GET /manager/games
-# A second launcher, one press in from the Controller's Games tile. Cards and
-# Twirl run inside the house; the emulated shelf is the same page with
-# ?view=emulated, which draws the ROMs found under ~/roms and the two install
-# buttons. The scan is cheap (one directory walk) and every card carries the id
-# the launch route checks against it.
+# A second launcher, one press in from the Controller's Games tile. The house's
+# own games run inside it and are listed most recently played first, from the
+# play ledger; the emulated shelf is the same page with ?view=emulated, which
+# draws the ROMs found under ~/roms and the two install buttons. The scan is
+# cheap (one directory walk) and every card carries the id the launch route
+# checks against it.
 sub action_44004 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
 	my $view = ($c->param('view') // '') eq 'emulated' ? 'emulated' : 'launcher';
 	my $library = eval { &subs::game_library() } || { ok => 0, games => [], systems => [] };
+	# One tile per house game, the card games sharing the recency of the table
+	# played last. rank is the fixed tie-break, so a shelf nobody has touched
+	# still reads Cards, Twirl, Pipedream, Minesweeper.
+	my @jawnos_games = (
+		{ key => 'cards', title => 'Cards', note => 'The card room: solitaire, spider, mahjong and blackjack',
+			icon => '/images/decipherable/cards.png', rank => 0,
+			projects => [ 'Solitaire', 'Spider Solitaire', 'Mahjong', 'Blackjack' ] },
+		{ key => 'twirl', title => 'Twirl', note => 'The falling-block puzzle: A turns one way and B the other',
+			icon => '/images/decipherable/tetris.png', rank => 1, projects => [ 'Twirl' ] },
+		{ key => 'pipedream', title => 'Pipedream', note => 'Place the pipes before the liquid spills',
+			icon => '/images/decipherable/tunnel.png', rank => 2, projects => [ 'Pipedream' ] },
+		{ key => 'minesweeper', title => 'Minesweeper', note => 'Clear the field without hitting a mine',
+			icon => '/images/decipherable/marker.png', rank => 3, projects => [ 'Minesweeper' ] },
+	);
+	if ($view eq 'launcher') {
+		# The play ledger writes a games appointment per game, its project the
+		# name the game reports. A game with no row is simply unplayed (0).
+		my $played = {};
+		my $rows = eval {
+			&subs::db_query(
+				"select project, max(cast(timestamp as integer)) as last_at from appointments"
+					. " where app = 'games' and project is not null and project != '' group by project"
+			)->hashes;
+		} || [];
+		$played->{ $_->{'project'} } = $_->{'last_at'} // 0 for grep { ref $_ eq 'HASH' && defined $_->{'project'} } @{ $rows };
+		for my $game (@jawnos_games) {
+			$game->{'last_at'} = 0;
+			for my $project (@{ $game->{'projects'} }) {
+				my $at = $played->{$project} // 0;
+				$game->{'last_at'} = $at if $at > $game->{'last_at'};
+			}
+		}
+		@jawnos_games = sort {
+			($b->{'last_at'} <=> $a->{'last_at'}) || ($a->{'rank'} <=> $b->{'rank'})
+		} @jawnos_games;
+	}
+	for my $game (@jawnos_games) {
+		delete $game->{'projects'};
+		delete $game->{'rank'};
+	}
 	my $contents = $c->render_to_string(
 		template => 'apps/games',
 		view => $view,
 		library => $library,
 		emulators => &subs::game_emulator_present(),
+		jawnos_games => \@jawnos_games,
 	);
 	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'games', contents => $contents }, $timestamp);
 	$c->render(text => $website);

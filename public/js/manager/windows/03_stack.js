@@ -182,6 +182,15 @@ function windowCloseTearDown(timestamp, win, done) {
 		if (typeof jawnosGameSessionGame === 'function' && jawnosGameSessionGame() === 'Twirl'
 			&& typeof jawnosGameSessionStop === 'function') { jawnosGameSessionStop(); }
 	}
+	// Pipedream and Minesweeper each own one play session; closing the window is
+	// the end of it, not a pause.
+	if (app == 'pipedream' || app == 'minesweeper') {
+		var own_game = (typeof jawnosGameSessionGame === 'function') ? jawnosGameSessionGame() : '';
+		if ((app == 'pipedream' && own_game === 'Pipedream')
+			|| (app == 'minesweeper' && own_game === 'Minesweeper')) {
+			if (typeof jawnosGameSessionStop === 'function') { jawnosGameSessionStop(); }
+		}
+	}
 	// Closing the card room is the end of its game: the pane being hidden is only
 	// a pause. Only the card games are stopped, so closing a background Cards
 	// window cannot end a Twirl session.

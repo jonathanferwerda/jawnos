@@ -178,6 +178,8 @@ our @manager_bundle_files = qw(
 	/js/store.js
 	/js/store/cart.js
 	/js/manager/twirl.js
+	/js/manager/pipedream.js
+	/js/manager/minesweeper.js
 	/js/manager/transaction.js
 	/js/manager/time_preview.js
 	/js/manager/relational.js
@@ -226,6 +228,8 @@ our %manager_app_scripts = (
 	terminal        => [qw(/js/manager/terminal.js)],
 	travel          => [qw(/js/manager/travel.js)],
 	twirl           => [qw(/js/manager/twirl.js)],
+	pipedream       => [qw(/js/manager/pipedream.js)],
+	minesweeper     => [qw(/js/manager/minesweeper.js)],
 	editor          => [qw(/js/manager/editor.js)],
 	relational      => [qw(/js/manager/relational.js)],
 	warehouse       => [qw(/js/manager/warehouse.js)],
@@ -261,6 +265,8 @@ our %manager_app_entry = (
 	terminal        => [qw(terminalOpener)],
 	travel          => [qw(travelViewer)],
 	twirl           => [qw(twirlGame)],
+	pipedream       => [qw(pipedreamInit)],
+	minesweeper     => [qw(minesweeperInit)],
 	editor          => [qw(editorInit)],
 	relational      => [qw(relationalInit relationalOpener)],
 	warehouse       => [qw(warehouseInitializer)],

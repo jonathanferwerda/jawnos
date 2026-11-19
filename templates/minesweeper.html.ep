@@ -1,0 +1,223 @@
+<div id="minesweeper" class="minesweeper_app" data-cols="9" data-rows="9" data-mines="10" tabindex="0" role="group" aria-label="<%= &subs::ui('Minesweeper') %>">
+<style>
+/* Everything here is scoped under the game root. The surface and ink follow
+   the window's theme variables; the field itself is a CSS grid whose cell size
+   the script settles to the room the pane has. */
+#minesweeper {
+	--ms-gap: 2px;
+	--ms-flag: #d0544a;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	box-sizing: border-box;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--window, var(--panel, #f7f7f7));
+	color: var(--ink, #1b1d21);
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	outline: none;
+	touch-action: manipulation;
+	-webkit-user-select: none;
+	user-select: none;
+}
+#minesweeper .ms_bar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	flex: 0 0 auto;
+	padding: 8px 10px;
+	border-bottom: 1px solid var(--line, #d7d9de);
+	background: linear-gradient(rgba(255,255,255,.16), rgba(0,0,0,.03));
+}
+#minesweeper .ms_stat {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 52px;
+	padding: 4px 9px;
+	border: 1px solid var(--line, #d7d9de);
+	border-radius: 9px;
+	background: var(--panel-2, #f2f3f5);
+}
+#minesweeper .ms_label {
+	font-size: 10px;
+	line-height: 1.1;
+	letter-spacing: .08em;
+	text-transform: uppercase;
+	color: var(--ink-muted, #5b6169);
+}
+#minesweeper .ms_value {
+	font-size: 16px;
+	line-height: 1.1;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+#minesweeper .ms_spacer {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+#minesweeper .ms_btn {
+	appearance: none;
+	-webkit-appearance: none;
+	border: 1px solid var(--line, #d7d9de);
+	border-radius: 9px;
+	padding: 8px 12px;
+	background: var(--panel-2, #f2f3f5);
+	color: var(--ink, #1b1d21);
+	font: 600 13px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+	touch-action: manipulation;
+}
+#minesweeper .ms_btn:hover {
+	border-color: var(--accent, #3b7ddd);
+}
+#minesweeper .ms_btn:focus-visible {
+	outline: 2px solid var(--accent, #3b7ddd);
+	outline-offset: 1px;
+}
+#minesweeper .ms_btn.ms_primary {
+	background: var(--accent, #3b7ddd);
+	border-color: transparent;
+	color: var(--accent-ink, #ffffff);
+}
+#minesweeper .ms_btn.on {
+	background: color-mix(in srgb, var(--accent, #3b7ddd) 22%, var(--panel, #ffffff));
+	border-color: var(--accent, #3b7ddd);
+	color: var(--ink, #1b1d21);
+}
+#minesweeper .ms_stage {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	padding: 10px;
+	overflow: auto;
+	background: radial-gradient(120% 100% at 50% 0%,
+		color-mix(in srgb, var(--panel, #ffffff) 92%, var(--accent, #3b7ddd) 8%),
+		var(--panel, #ffffff));
+}
+#minesweeper .ms_board {
+	display: grid;
+	grid-template-columns: repeat(var(--ms-cols, 9), var(--ms-cell, 34px));
+	grid-auto-rows: var(--ms-cell, 34px);
+	gap: var(--ms-gap, 2px);
+	flex: 0 0 auto;
+	margin: auto;
+	touch-action: manipulation;
+}
+#minesweeper .ms_cell {
+	appearance: none;
+	-webkit-appearance: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+	border: 1px solid color-mix(in srgb, var(--line, #d7d9de) 82%, var(--ink, #1b1d21) 18%);
+	border-radius: 4px;
+	background: linear-gradient(145deg,
+		color-mix(in srgb, var(--panel-2, #f2f3f5) 90%, #ffffff),
+		var(--panel-2, #f2f3f5));
+	color: var(--ink, #1b1d21);
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	font-weight: 700;
+	font-size: max(12px, calc(var(--ms-cell, 34px) * .5));
+	line-height: 1;
+	font-variant-numeric: tabular-nums;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+	touch-action: manipulation;
+	-webkit-user-select: none;
+	user-select: none;
+	box-shadow: inset 0 1px 0 rgba(255,255,255,.38), inset 0 -1px 0 rgba(0,0,0,.12);
+}
+#minesweeper .ms_cell:hover {
+	border-color: var(--accent, #3b7ddd);
+}
+#minesweeper .ms_cell:active {
+	transform: translateY(1px);
+}
+#minesweeper .ms_cell.open {
+	background: color-mix(in srgb, var(--panel, #ffffff) 90%, var(--ink, #1b1d21) 10%);
+	box-shadow: none;
+	cursor: var(--jawnos-cursor-default, default);
+	transform: none;
+}
+#minesweeper .ms_cell.open:hover {
+	border-color: color-mix(in srgb, var(--line, #d7d9de) 82%, var(--ink, #1b1d21) 18%);
+}
+#minesweeper .ms_cell.flag {
+	color: var(--ms-flag, #d0544a);
+}
+#minesweeper .ms_cell.mine {
+	color: var(--ink, #1b1d21);
+}
+#minesweeper .ms_cell.boom {
+	background: color-mix(in srgb, var(--ms-flag, #d0544a) 34%, var(--panel, #ffffff));
+}
+#minesweeper .ms_cell.cursor {
+	outline: 2px solid var(--accent, #3b7ddd);
+	outline-offset: 1px;
+	z-index: 1;
+}
+#minesweeper .ms_cell.n1 { color: #3f74cf; }
+#minesweeper .ms_cell.n2 { color: #2f8a53; }
+#minesweeper .ms_cell.n3 { color: #c8433b; }
+#minesweeper .ms_cell.n4 { color: #7a5bc4; }
+#minesweeper .ms_cell.n5 { color: #a55f2a; }
+#minesweeper .ms_cell.n6 { color: #2f8f96; }
+#minesweeper .ms_cell.n7 { color: #6b7280; }
+#minesweeper .ms_cell.n8 { color: #8a6a4a; }
+#minesweeper .ms_note {
+	flex: 0 0 auto;
+	min-height: 18px;
+	padding: 0 12px 8px;
+	text-align: center;
+	font-size: 13px;
+	color: var(--ink-muted, #5b6169);
+}
+@media (max-width: 520px) {
+	#minesweeper .ms_bar {
+		padding: 6px 8px;
+		gap: 6px;
+	}
+	#minesweeper .ms_stat {
+		min-width: 44px;
+		padding: 3px 7px;
+	}
+	#minesweeper .ms_btn {
+		padding: 7px 10px;
+	}
+	#minesweeper .ms_stage {
+		padding: 6px;
+	}
+	#minesweeper .ms_note {
+		font-size: 12px;
+		padding: 0 8px 6px;
+	}
+}
+</style>
+	<div class="ms_bar">
+		<div class="ms_stat" title="<%= &subs::ui('Mines left') %>">
+			<span class="ms_label"><%= &subs::ui('Mines') %></span>
+			<b class="ms_value" id="ms_mines">10</b>
+		</div>
+		<div class="ms_stat" title="<%= &subs::ui('Time since the first reveal') %>">
+			<span class="ms_label"><%= &subs::ui('Time') %></span>
+			<b class="ms_value" id="ms_time">0:00</b>
+		</div>
+		<div class="ms_spacer"></div>
+		<button type="button" class="ms_btn" id="ms_flag" aria-pressed="false" hint="<%= &subs::ui('Tap a square to flag it instead of revealing it') %>"><%= &subs::ui('Flag') %></button>
+		<button type="button" class="ms_btn ms_primary" id="ms_new" hint="<%= &subs::ui('Lay a new field') %>"><%= &subs::ui('New game') %></button>
+	</div>
+	<div class="ms_stage">
+		<div id="ms_board" class="ms_board" role="group" aria-label="<%= &subs::ui('Minefield') %>"></div>
+	</div>
+	<div class="ms_note" id="ms_note" aria-live="polite"><%= &subs::ui('Clear the field without hitting a mine.') %></div>
+	<script>minesweeperInit();</script>
+</div>

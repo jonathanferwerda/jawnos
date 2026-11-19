@@ -88,9 +88,11 @@ like($options_template, qr/\$l->\{'app'\} eq 'games'/, 'a game option opens the 
 
 # --- the shelf ----------------------------------------------------------------
 my $page = read_file("$root/templates/apps/games.html.ep");
-like($page, qr/href="\/manager\?open=cards&amp;full=1&amp;back=%2Fmanager%2Fgames"/,
+like($page, qr/href="\/manager\?open=<%=\s*\$tile->\{'key'\}\s*%>&amp;full=1&amp;back=%2Fmanager%2Fgames"/,
+	'a house game tile opens its game full screen and remembers the Games launcher');
+like($controller, qr/key => 'cards'[\s\S]*?\/images\/decipherable\/cards\.png/,
 	'Cards opens the card room full screen and remembers the Games launcher');
-like($page, qr/href="\/manager\?open=twirl&amp;full=1&amp;back=%2Fmanager%2Fgames"/,
+like($controller, qr/key => 'twirl'[\s\S]*?\/images\/decipherable\/tetris\.png/,
 	'Twirl opens the puzzle full screen and remembers the Games launcher');
 like($page, qr/Emulated games/, 'the emulated shelf is named');
 like($page, qr/None installed yet/, 'and says there is nothing on it yet');
@@ -146,8 +148,8 @@ unlike($page, qr/cursor:(?!var\()/, 'every cursor uses the house pointer token')
 
 # --- the shelf wears the theme it was given -----------------------------------
 like($page, qr/include 'controller\/standalone'/, 'the shelf includes the standalone theme and Home rule');
-like($page, qr/icon_for\('\/images\/decipherable\/cards\.png'\)/, 'Cards wears the active icon set');
-like($page, qr/icon_for\('\/images\/decipherable\/tetris\.png'\)/, 'Twirl wears the active icon set');
+like($controller, qr{'/images/decipherable/cards\.png'}, 'Cards wears the active icon set');
+like($controller, qr{'/images/decipherable/tetris\.png'}, 'Twirl wears the active icon set');
 like($page, qr/icon_for\('\/images\/decipherable\/diskette\.png'\)/, 'Emulated games wears the active icon set');
 like($page, qr/decoding="async"/, 'a cover decodes off the page\'s drawing thread');
 

@@ -1,0 +1,143 @@
+<style>
+/* The pipe board is a quiet panel: the grid, the brass accent of the house and
+   the water it carries. Everything is scoped under #pipedream so the page can
+   use plain names without touching the rest of the panel. */
+#pipedream {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--panel, #ffffff);
+	color: var(--ink, #111417);
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+#pipedream .pd_head {
+	flex: 0 0 auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 2px 12px;
+	padding: 9px 14px 6px;
+	border-bottom: 1px solid var(--line, #d7d9de);
+}
+#pipedream .pd_title {
+	font: 700 15px/1.2 Georgia, "Times New Roman", serif;
+	letter-spacing: .16em;
+	text-transform: uppercase;
+	color: var(--accent-line, #2f6cc4);
+}
+#pipedream .pd_status {
+	flex: 1 1 220px;
+	min-width: 0;
+	font-size: 13px;
+	line-height: 1.35;
+	color: var(--ink-muted, #5b6169);
+}
+#pipedream[data-pd-state="won"] .pd_status { color: var(--runway-good, #2f7d4f); }
+#pipedream[data-pd-state="lost"] .pd_status { color: var(--runway-bad, #b3453f); }
+#pipedream .pd_stage {
+	position: relative;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	padding: 0 8px;
+}
+#pipedream canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	touch-action: none;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+#pipedream .pd_hand {
+	flex: 0 0 auto;
+	display: flex;
+	gap: 6px;
+	padding: 8px 12px 4px;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: thin;
+}
+#pipedream .pd_hand_piece {
+	flex: 0 0 auto;
+	appearance: none;
+	width: 48px;
+	height: 48px;
+	padding: 4px;
+	border: 1px solid var(--line, #d7d9de);
+	border-radius: 10px;
+	background: var(--panel-2, #f2f3f5);
+	color: var(--ink, #111417);
+	font: inherit;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+#pipedream .pd_hand_piece.active {
+	border-color: var(--accent, #3b7ddd);
+	box-shadow: 0 0 0 2px var(--accent-soft, #e6effb);
+}
+#pipedream .pd_hand_piece.used { opacity: .28; }
+#pipedream .pd_hand_piece:focus-visible { outline: 2px solid var(--accent, #3b7ddd); outline-offset: 2px; }
+#pipedream .pd_hand_icon {
+	display: block;
+	width: 100%;
+	height: 100%;
+	transition: transform .12s ease;
+}
+#pipedream .pd_bar {
+	flex: 0 0 auto;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 6px 12px 10px;
+	border-top: 1px solid var(--line, #d7d9de);
+}
+#pipedream .pd_btn {
+	appearance: none;
+	border: 1px solid var(--line, #d7d9de);
+	border-radius: 999px;
+	background: var(--panel-2, #f2f3f5);
+	color: var(--ink, #111417);
+	font: 600 13px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	padding: 9px 14px;
+	cursor: var(--jawnos-cursor-pointer, pointer);
+}
+#pipedream .pd_btn.primary {
+	background: var(--accent, #3b7ddd);
+	border-color: var(--accent-line, #2f6cc4);
+	color: var(--accent-ink, #ffffff);
+}
+#pipedream .pd_btn:hover { border-color: var(--accent-line, #2f6cc4); }
+#pipedream .pd_btn:focus-visible { outline: 2px solid var(--accent, #3b7ddd); outline-offset: 2px; }
+@media (max-width: 560px) {
+	#pipedream .pd_head { padding: 6px 10px 4px; }
+	#pipedream .pd_title { font-size: 13px; }
+	#pipedream .pd_status { font-size: 12px; }
+	#pipedream .pd_hand { gap: 5px; padding: 6px 8px 2px; }
+	#pipedream .pd_hand_piece { width: 40px; height: 40px; }
+	#pipedream .pd_bar { padding: 4px 8px 8px; }
+	#pipedream .pd_btn { padding: 8px 12px; font-size: 12px; }
+}
+</style>
+<div id="pipedream" data-pd-state="ready">
+	<div class="pd_head">
+		<div class="pd_title"><%= &subs::ui('Pipedream') %></div>
+		<div class="pd_status" id="pd_status" aria-live="polite"><%= &subs::ui('Place a pipe, turn it, then start the flow.') %></div>
+	</div>
+	<div class="pd_stage">
+		<canvas id="pd_board" aria-label="<%= &subs::ui('Pipedream board') %>"></canvas>
+	</div>
+	<div class="pd_hand" id="pd_hand" role="group" aria-label="<%= &subs::ui('Pipe pieces') %>"></div>
+	<div class="pd_bar">
+		<button type="button" class="pd_btn primary" id="pd_start"><%= &subs::ui('Start flow') %></button>
+		<button type="button" class="pd_btn" id="pd_rotate" hint="<%= &subs::ui('Turn the pipe under the cursor or the chosen piece') %>"><%= &subs::ui('Rotate') %></button>
+		<button type="button" class="pd_btn" id="pd_undo" hint="<%= &subs::ui('Lift the last pipe back into the hand') %>"><%= &subs::ui('Undo') %></button>
+		<button type="button" class="pd_btn" id="pd_new"><%= &subs::ui('New deal') %></button>
+	</div>
+</div>
+<script>
+	pipedreamInit();
+</script>
