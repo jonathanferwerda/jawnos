@@ -71,6 +71,10 @@ function deskRailRefresh() {
 		data: { background_images: localStorage.getItem('background_images') || '' },
 		success: function (response) {
 			if (!response || typeof response != 'object') { return; }
+			// the same reply carries the day's window flow as numbers; hand it to
+			// the rail's painted band so this once-a-minute poll keeps the band
+			// current too, not only a clothesline action does
+			if (typeof clotheslineFlowSet == 'function') { clotheslineFlowSet(response['flow_spans'], response['flow_day']); }
 			if (typeof clotheslineHanger == 'function') { clotheslineHanger(response['clothesline'] || []); }
 			// a picture background lives on #background, under the desk canvas
 			if (localStorage.getItem('background_images') == 'on' && typeof response['backgrounds'] != 'undefined'

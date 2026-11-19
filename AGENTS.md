@@ -188,6 +188,9 @@ translatable in the same change:
   onto the same machine; after a cross-machine restore, repair the identity before trusting the panel
   (its own `devices` row, direct `remote_machines` peers, no source rows). The incident and the exact
   repair: `docs/AGENTS-records.md`.
+- **The learned day can be read.** `perl scripts/clothesline_audit.pl --days 7` prints each learned day's
+  rest, close, waves and profile, then the head and the selected profile — read-only, and the same model the
+  rail runs. Reach for it when the anticipatory line looks wrong, before changing the model.
 - **Appointments that do not match what the person remembers** (still open from hours ago, far longer
   than usual, or cut short) are checked before anything is edited: `perl scripts/records_audit.pl`
   (dry run; `--all` for full history). Repair rules and `records_recover.pl`: `docs/AGENTS-records.md`.

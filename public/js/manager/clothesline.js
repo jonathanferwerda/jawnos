@@ -265,9 +265,91 @@ function clotheslineHanger(clothes) {
 			ctx.fillRect(barX - 2, barTop, 4, barHeight);
 			ctx.restore();
 		}
+		// the day's window flow, a few quiet pixels along the rail's foot. It is
+		// painted inside the band just cleared and clipped, so it can never move a
+		// pill or grow the rail. On a very short rail the garments' own minimum
+		// height reaches the foot, so the band waits for a clean margin.
+		var flowBand = Math.max(2, Math.min(4, Math.round(clothesLineHeight * 0.08)));
+		var flowFoot = minHeight + pad + topGap + Math.max(8, clothesLineHeight - (pad * 2) - topGap - shadowGap);
+		if (clothes.length > 0 && maxHeight - flowFoot >= flowBand && typeof clotheslineFlowPaint == 'function') {
+			clotheslineFlowPaint(ctx, minHeight, maxHeight, canvas.width);
+		}
 		ctx.restore();
 		hangingClothes = 0;
 	}
+}
+
+// The day's window flow, as a quiet band along the rail's foot. The rail reply
+// (action_25345) carries flow_spans as [ from_ms, to_ms, open_flag, app ] per
+// window span, today only, an open span running to now, plus flow_day, the
+// house clock's [ day_from_ms, day_to_ms ]. Nothing here names an app: a span
+// takes the colour of the rail tile that wears its app, and the themed ink
+// when the rail has no tile for it.
+var clotheslineFlowSpans = [];
+var clotheslineFlowDay = undefined;
+
+// Take a rail reply's flow. An older server sends neither, and a reply without
+// a usable day leaves what the rail already has alone: the band is optional.
+function clotheslineFlowSet(spans, day) {
+	if (!(spans instanceof Array) || !(day instanceof Array) || day.length < 2) { return; }
+	var from = Number(day[0]);
+	var to = Number(day[1]);
+	if (!isFinite(from) || !isFinite(to) || !(to > from)) { return; }
+	clotheslineFlowSpans = spans;
+	clotheslineFlowDay = [ from, to ];
+}
+
+// Every app's colour, read from the rail's own clothes rather than a table of
+// names: a garment is the same setting the server sent as clothesline, so this
+// is runtime data end to end.
+function clotheslineFlowColours() {
+	var colours = {};
+	if (typeof wardrobe == 'undefined' || !wardrobe || !wardrobe.length) { return colours; }
+	$.each(wardrobe, function(i, v) {
+		if (!v) { return true; }
+		var app = '' + (v['app'] || '');
+		if (!app) { return true; }
+		colours[app] = (typeof jawnosApptColour == 'function' ? jawnosApptColour(v) : v['colour']) || v['colour'] || '';
+		return true;
+	});
+	return colours;
+}
+
+// Paint the day across the bottom few pixels of the rail's band. The caller has
+// already cleared and clipped that band, so this can only overpaint it; it never
+// changes the height, the pills or the hit-testing. One bar per span, low alpha,
+// a still-open span a little brighter.
+function clotheslineFlowPaint(context, minHeight, maxHeight, width) {
+	if (!context || !clotheslineFlowSpans || !clotheslineFlowSpans.length) { return; }
+	if (!(clotheslineFlowDay instanceof Array) || clotheslineFlowDay.length < 2) { return; }
+	var dayFrom = clotheslineFlowDay[0];
+	var dayTo = clotheslineFlowDay[1];
+	var dayLength = dayTo - dayFrom;
+	if (!(dayLength > 0) || !(width > 0) || !(maxHeight > minHeight)) { return; }
+	var bandHeight = Math.max(2, Math.min(4, Math.round(clothesLineHeight * 0.08)));
+	var bandY = maxHeight - bandHeight;
+	var colours = clotheslineFlowColours();
+	var fallback = (typeof jawnosInk == 'function') ? jawnosInk() : '#888888';
+	context.save();
+	$.each(clotheslineFlowSpans, function(i, span) {
+		if (!span || span.length < 2) { return true; }
+		var from = Number(span[0]);
+		var to = Number(span[1]);
+		if (!isFinite(from) || !isFinite(to)) { return true; }
+		from = Math.max(dayFrom, Math.min(dayTo, from));
+		to = Math.max(from, Math.min(dayTo, to));
+		var x = ((from - dayFrom) / dayLength) * width;
+		var w = ((to - from) / dayLength) * width;
+		if (w < 1) { w = 1; }
+		if (x + w > width) { x = width - w; }
+		if (x < 0) { x = 0; }
+		var app = '' + (span[3] == null ? '' : span[3]);
+		context.globalAlpha = span[2] ? 0.55 : 0.32;
+		context.fillStyle = colours[app] || fallback;
+		context.fillRect(x, bandY, w, bandHeight);
+		return true;
+	});
+	context.restore();
 }
 
 

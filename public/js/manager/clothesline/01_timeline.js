@@ -611,7 +611,12 @@ function clotheslineRefresh() {
 		type: 'GET',
 		data: { timestamp: Date.now() },
 		success: function(response) {
-			if (response && response['clothesline']) { clotheslineHanger(response['clothesline']); }
+			if (!response || typeof response != 'object') { return; }
+			// the reply's day flow feeds the rail's painted band before the hang,
+			// so one draw carries both; an older server sends neither and the
+			// rail hangs exactly as it did
+			if (typeof clotheslineFlowSet == 'function') { clotheslineFlowSet(response['flow_spans'], response['flow_day']); }
+			if (response['clothesline']) { clotheslineHanger(response['clothesline']); }
 		}
 	});
 }

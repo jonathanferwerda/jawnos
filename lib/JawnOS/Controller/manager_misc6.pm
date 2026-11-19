@@ -730,7 +730,8 @@ sub action_25183 {
 sub action_25345 {
 	my $c = shift;
 	my $clothesline = eval { return decode_json &subs::clothesline_house_setting('__president', 'clothesline') } || [];
-	my %payload = ( clothesline => $clothesline, timestamp => &subs::rightNow() );
+	my $now_ms = &subs::rightNow();
+	my %payload = ( clothesline => $clothesline, timestamp => $now_ms );
 
 	# The day's window flow, painted server-side from window_events so the rail
 	# carries when the person opened and closed windows. The partial bounds its
@@ -738,6 +739,56 @@ sub action_25345 {
 	# table or one bad row can never break the rail.
 	my $flow = eval { $c->render_to_string(template => 'apps/clothesline/flow') };
 	$payload{'flow'} = $flow if defined $flow && length $flow;
+
+	# The same day's flow as numbers the canvas can paint: [ from_ms, to_ms,
+	# open_flag, app ] per span, today only, an open span running to now. The
+	# partial is not ours to pass data through, so this is its own bounded read;
+	# the same guard means no day bounds, a missing table or one bad row leaves
+	# the rail exactly as it was.
+	my $flow_spans = [];
+	my ($flow_day_from, $flow_day_to);
+	eval {
+		require Time::Local;
+		my $restore_zone = &subs::clock_zone_adopt(&subs::clock_zone_house());
+		eval {
+			my @house_now = localtime(int($now_ms / 1000));
+			$flow_day_from = Time::Local::timelocal(0, 0, 0, $house_now[3], $house_now[4], $house_now[5]) * 1000;
+			$flow_day_to = Time::Local::timelocal(0, 0, 0, $house_now[3] + 1, $house_now[4], $house_now[5]) * 1000 - 1;
+		};
+		# put the worker's own zone back even when the bounds above throw
+		$restore_zone->() if $restore_zone;
+		die "no day bounds\n" unless defined $flow_day_from && defined $flow_day_to;
+		my $flow_read = &subs::window_events_spans(from => $flow_day_from, to => $flow_day_to, limit => 5000);
+		my $flow_day = (ref $flow_read eq 'HASH' && ref $flow_read->{'spans'} eq 'ARRAY') ? $flow_read->{'spans'} : [];
+		my @compact;
+		foreach my $flow_span ( @{$flow_day} ) {
+			next unless ref $flow_span eq 'HASH';
+			my $flow_app = defined $flow_span->{'app'} ? $flow_span->{'app'} : '';
+			next unless length $flow_app;
+			my $flow_opened = $flow_span->{'opened'};
+			my $flow_closed = $flow_span->{'closed'};
+			my $flow_begin = defined $flow_opened ? $flow_opened + 0 : (defined $flow_closed ? $flow_closed + 0 : undef);
+			next unless defined $flow_begin;
+			my $flow_end = defined $flow_closed ? $flow_closed + 0 : $now_ms;
+			# keep the band inside today, as the strip does
+			$flow_begin = $flow_day_from if $flow_begin < $flow_day_from;
+			$flow_end = $flow_day_to if $flow_end > $flow_day_to;
+			$flow_end = $flow_begin if $flow_end < $flow_begin;
+			push @compact, [ $flow_begin, $flow_end, (defined $flow_closed ? 0 : 1), $flow_app ];
+		}
+		# Bound the reply: a few painted pixels cannot resolve more than a few
+		# hundred spans and every rail poll would carry them. Past 300 we thin
+		# evenly across the day rather than truncate, so evening stays covered.
+		my $flow_cap = 300;
+		if (scalar @compact > $flow_cap) {
+			my $flow_step = scalar(@compact) / $flow_cap;
+			@compact = map { $compact[ int($_ * $flow_step) ] } 0 .. $flow_cap - 1;
+		}
+		$flow_spans = \@compact;
+	};
+	$payload{'flow_spans'} = $flow_spans;
+	$payload{'flow_day'} = [ $flow_day_from, $flow_day_to ] if defined $flow_day_from && defined $flow_day_to;
+
 	if (($c->param('background_images') || '') eq 'on') {
 		my $backgrounds = eval { return decode_json &subs::setting_grabber({ app => 'marker', setting => 'backgrounds' }) } || [];
 		$payload{'backgrounds'} = $backgrounds;
