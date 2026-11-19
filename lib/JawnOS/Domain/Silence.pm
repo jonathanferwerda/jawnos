@@ -40,6 +40,7 @@ our $silence_native_off_at = 0;
 # The full hold (channels and streams) runs every ten seconds; the sinks above
 # it are re-muted on every two-second tick.
 our $silence_hold_full_at = 0;
+our $silence_local_checked_at = 0;
 # Owners this process itself saw open. A release inferred from an owner in this
 # set is this machine's own appointment closing, so it may be relayed; a peer
 # that merely missed the appointment must not tell the house it is over.
@@ -573,14 +574,18 @@ sub silence_local_apply_on {
 			eval { &subs::device_call('audio.volume', { stream => $id, volume => 0 }) };
 		}
 	}
+	my $now = eval { &subs::rightNow() } || (time * 1000);
 	&silence_local_write({
 		applied => 1,
-		at => &subs::rightNow(),
+		at => $now,
+		set_at => $now,
+		checked_at => $now,
 		outputs => \@saved,
 		channels => \%channel_saved,
 		streams => \@streams,
 	});
-	$silence_hold_full_at = eval { &subs::rightNow() } || (time * 1000);
+	$silence_local_checked_at = $now;
+	$silence_hold_full_at = $now;
 	return 1;
 }
 
@@ -658,12 +663,14 @@ our $SILENCE_RESTORE_GIVE_UP = 2;
 sub silence_local_reconcile {
 	my $snap = &silence_local_read();
 	if (&silence_state()->{'active'}) {
+		&silence_local_touch($snap) if ref $snap eq 'HASH';
 		&silence_local_apply(1) unless ref $snap eq 'HASH';
 		$silence_local_retry_at = 0;
 		$silence_local_retry_count = 0;
 		return 1;
 	}
 	return 0 unless ref $snap eq 'HASH';
+	&silence_local_touch($snap);
 	my $now = eval { &subs::rightNow() } || (time * 1000);
 	return 0 if $silence_local_retry_at
 		&& $now - $silence_local_retry_at < $SILENCE_RESTORE_RETRY_SECONDS * 1000;
@@ -682,6 +689,20 @@ sub silence_local_reconcile {
 		$silence_local_retry_count = 0;
 	}
 	return 0;
+}
+
+# Record that the snapshot was looked at. The write is throttled to the same
+# minute as the retry, so a two-second alarm pass does not rewrite the file.
+sub silence_local_touch {
+	my ($snap) = @_;
+	$snap = &silence_local_read() unless ref $snap eq 'HASH';
+	return 0 unless ref $snap eq 'HASH';
+	my $now = eval { &subs::rightNow() } || (time * 1000);
+	return 0 if $silence_local_checked_at
+		&& $now - $silence_local_checked_at < $SILENCE_RESTORE_RETRY_SECONDS * 1000;
+	$snap->{'checked_at'} = $now;
+	$silence_local_checked_at = $now;
+	return &silence_local_write($snap);
 }
 
 # ---- the two moves -----------------------------------------------------------
@@ -750,6 +771,7 @@ sub silence_release {
 sub silence_local_hold {
 	my $snap = &silence_local_read();
 	return &silence_local_apply_on() unless ref $snap eq 'HASH';
+	&silence_local_touch($snap);
 	foreach my $device ( @{ $snap->{'outputs'} || [] } ) {
 		next unless ref $device eq 'HASH' && defined $device->{'id'};
 		eval { &subs::sound_mute('output', $device->{'id'}, 1) };

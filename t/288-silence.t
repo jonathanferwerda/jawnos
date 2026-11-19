@@ -66,6 +66,7 @@ sub reset_all {
 	$MUTE_UNSUPPORTED = 0;
 	$subs::silence_local_retry_at = 0;
 	$subs::silence_local_retry_count = 0;
+	$subs::silence_local_checked_at = 0;
 	$subs::silence_tick_at = 0;
 	$subs::silence_native_off_at = 0;
 	%subs::silence_owners_seen = ();
@@ -391,6 +392,27 @@ reset_all();
 $STORE{'__president|silence_state|all'} = encode_json({ active => 1, owners => ['u1'], apps => {} });
 is(subs::silence_local_reconcile(), 1, 'a quiet house with no snapshot is silenced again');
 ok(-e $subs::SILENCE_LOCAL_FILE, 'and the snapshot is written');
+my $fresh = subs::silence_local_read();
+ok($fresh->{'set_at'} && $fresh->{'checked_at'},
+	'a new snapshot records when it was set and when it was checked');
+is($fresh->{'set_at'}, $fresh->{'checked_at'}, 'the first check is the set time');
+
+# A later look moves the checked time but not the set time, and the write is
+# throttled to a minute so the two-second alarm pass does not rewrite the file.
+reset_all();
+subs::silence_local_write({ applied => 1, set_at => 111, checked_at => 111, outputs => [], channels => {}, streams => [] });
+$NOW += 100000;
+is(subs::silence_local_touch(), 1, 'a look records itself');
+my $touched = subs::silence_local_read();
+is($touched->{'set_at'}, 111, 'the set time is left alone');
+isnt($touched->{'checked_at'}, 111, 'the checked time moves');
+my $first_check = $touched->{'checked_at'};
+$NOW += 1000;
+is(subs::silence_local_touch(), 0, 'a second look inside the minute is skipped');
+is(subs::silence_local_read()->{'checked_at'}, $first_check, 'so the checked time holds');
+$NOW += 61000;
+is(subs::silence_local_touch(), 1, 'the next minute records another look');
+isnt(subs::silence_local_read()->{'checked_at'}, $first_check, 'and the checked time moves again');
 
 reset_all();
 subs::silence_local_write({
