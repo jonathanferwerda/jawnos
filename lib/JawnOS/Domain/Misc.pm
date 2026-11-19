@@ -378,6 +378,62 @@ sub coding_path($rel) {
 	return length $abs_real ? $abs_real : $abs;
 }
 
+# A closed websocket is still worth keeping. The row already spans the session
+# (`connected` is the connect time, `server_time` the last message), so retiring
+# it rather than deleting it leaves the house a month of "this device was up"
+# for the clothesline and for any app that reads activity later. The warranty is
+# its own and bounded: the app/me warranties are years out, and reusing them is
+# what once left hundreds of dead rows behind.
+sub websocket_retire {
+	my ($where, %opt) = @_;
+	$where = {} unless ref $where eq 'HASH';
+	my $now = $opt{'now'} || &subs::rightNow();
+	my $keep = $opt{'warranty'} || &subs::ago_calc('-30d', $now);
+	my @clause = (q{coalesce("type", '') != ?});
+	my @bind = ('closed', $now, $keep, 'closed');
+	foreach my $k ( sort keys %{$where} ) {
+		next unless $k =~ /^[A-Za-z_][A-Za-z0-9_]*$/;
+		my $v = $where->{$k};
+		if (ref $v eq 'HASH' && defined $v->{'<'}) {
+			push @clause, qq{cast("$k" as integer) < cast(? as integer)};
+			push @bind, $v->{'<'};
+		}
+		elsif (defined $v) {
+			push @clause, qq{"$k" = ?};
+			push @bind, $v;
+		}
+		else {
+			push @clause, qq{"$k" is null};
+		}
+	}
+	my $res = &subs::db_query('update websockets set "type" = ?, "server_time" = ?, "warranty" = ? where '
+		. join(' and ', @clause), @bind);
+	return ($res && $res->rows) ? $res->rows : 0;
+}
+
+# The monthly cull for the retained sessions. It first retires a live row whose
+# socket died without a finish (a day of silence is well past the heartbeat's
+# cadence), then deletes the closed rows whose month is up. A row is deleted by
+# itself, never by its tab: another live session for the same tab must survive.
+sub websocket_sessions_cull {
+	my ($now) = @_;
+	$now ||= &subs::rightNow();
+	&subs::websocket_retire({ room => undef, 'server_time' => { '<' => &subs::ago_calc('1d', $now) } }, now => $now);
+	my $expired = eval {
+		&subs::db_query(q{select uuid, browser_tab_id from websockets where coalesce("type", '') = ? and cast("warranty" as integer) < cast(? as integer)}, 'closed', $now)->hashes;
+	} || [];
+	my $gone = 0;
+	foreach my $row ( @{$expired} ) {
+		my $res = &subs::db_query(q{delete from websockets where "uuid" = ? and coalesce("type", '') = ?}, $row->{'uuid'}, 'closed');
+		$gone += ($res && $res->rows) ? $res->rows : 0;
+		my $tab = $row->{'browser_tab_id'};
+		next unless defined $tab && length $tab;
+		my $left = eval { &subs::db_query('select 1 from websockets where "browser_tab_id" = ? limit 1', $tab)->hashes } || [];
+		eval { &subs::db_query('delete from drawings where browser_tab_id = ?', $tab) } unless @{$left};
+	}
+	return $gone;
+}
+
 sub coding_repo { return &subs::home('~/jawnos'); }
 
 1;

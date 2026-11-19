@@ -519,7 +519,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 			}
 		}
 		elsif (!$ws->{'room'}) {
-			&subs::db_delete('websockets', { uuid => $ws->{'uuid'} });
+			&subs::websocket_retire({ uuid => $ws->{'uuid'} });
 		}
 	}
 

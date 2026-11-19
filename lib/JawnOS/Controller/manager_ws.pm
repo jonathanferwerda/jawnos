@@ -147,7 +147,7 @@ sub action_47050 {
 	$gb::ws->{$app}->{$browser_tab_id} = $c->tx;
 	$gb::ws->{$app}->{$browser_tab_id}->{'privilege'} = $c->session('privilege');
 	$gb::ws->{$app}->{$browser_tab_id}->{'device_uuid'} = $c->session('device_uuid') || '';
-	my $tab_check = &subs::db_query('select * from websockets where browser_tab_id = ? and remote_address = ? and app = ?',$browser_tab_id, $remote_address, $app );
+	my $tab_check = &subs::db_query('select * from websockets where browser_tab_id = ? and remote_address = ? and app = ? and coalesce(type, \'\') != \'closed\'',$browser_tab_id, $remote_address, $app );
 	my $existing_websockets = $tab_check->hashes;
 
 	unless (scalar @{$existing_websockets} > 0) {
@@ -365,7 +365,7 @@ sub action_47050 {
 					}
 					my $ws_updated = &subs::db_update('websockets', $ws_update, {
 						browser_tab_id => $browser_tab_id,
-						app => $app
+						app => $app, 'type' => { '!=' => 'closed' }
 					});
 					# The row can vanish underneath a live socket: stale-row sweeps,
 					# warranty expiry while a tab slept, or older builds that deleted
@@ -718,11 +718,11 @@ sub action_47050 {
 		# out and log the stop, or the fresh socket goes deaf.
 		my $on_duty = $gb::ws->{$app}->{$browser_tab_id};
 		if ($on_duty && $on_duty == $c->tx) {
-			# A socket that is gone leaves no row behind unless it was parked in a
-			# named room - the parking lot keeps those on purpose. It used to be
-			# marked type=closed instead, and with a warranty years out those rows
-			# were never culled (about 870 dead rows had piled up).
-			&subs::db_query('delete from websockets where app = ? and browser_tab_id = ? and room is null', $app, $browser_tab_id);
+			# A socket that is gone keeps its session for a month: the row spans
+			# connect to last beat, so the clothesline can tell when a device was up.
+			# A parked room row is left alone. The warranty is bounded (see
+			# websocket_retire), so the closed rows do not pile up as they once did.
+			&subs::websocket_retire({ app => $app, browser_tab_id => $browser_tab_id, room => undef });
 			delete $gb::ws->{$app}->{$browser_tab_id};
 			if ($app eq 'music') {
 				if ($log_me eq 'on') {
@@ -740,13 +740,13 @@ sub action_47050 {
 			}
 		}
 		&websocket_close($app);
-		# Tidy stale rows for this tab only. This used to run against a
-		# *future* timestamp, so closing any socket deleted every other
-		# tab's rows too and the controller list stayed empty until the
-		# next reconnect. ago_calc counts backwards: '1d' is yesterday,
-		# '-1d' is tomorrow.
+		# Retire this tab's stale live rows rather than deleting them: a socket can
+		# die silently, and its row is the session the clothesline reads. This used
+		# to run against a *future* timestamp, so a close deleted every other tab's
+		# rows too and the controller list stayed empty until the next reconnect.
+		# ago_calc counts backwards: '1d' is yesterday, '-1d' is tomorrow.
 		my $stale = &subs::ago_calc('1d', &subs::rightNow());
-		&subs::db_query('delete from websockets where room is null and browser_tab_id = ? and server_time < ?', $browser_tab_id, $stale)->hashes;
+		&subs::websocket_retire({ room => undef, browser_tab_id => $browser_tab_id, 'server_time' => { '<' => $stale } });
 	});
 
 	# The remote-tab fan-out used to be built here. `unless (1 == 0 && ...)`

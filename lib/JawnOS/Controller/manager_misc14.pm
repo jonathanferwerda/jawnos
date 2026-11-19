@@ -560,9 +560,9 @@ sub action_47847 {
 # GET /manager/ws_close
 sub action_48331 {
 	my $c = shift;
-	my $websocket = &subs::db_select('websockets', undef, { app => $c->param('app'), browser_tab_id => $c->param('browser_tab_id') })->hash;
+	my $websocket = &subs::db_select('websockets', undef, { app => $c->param('app'), browser_tab_id => $c->param('browser_tab_id'), 'type' => { '!=' => 'closed' } })->hash;
 	unless ($websocket->{'room'}) {
-		&subs::db_delete('websockets', { app => $c->param('app'), browser_tab_id => $c->param('browser_tab_id') });
+		&subs::websocket_retire({ app => $c->param('app'), browser_tab_id => $c->param('browser_tab_id') });
 	}
 	$c->render('text' => 'ok');
 }

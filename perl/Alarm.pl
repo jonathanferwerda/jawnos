@@ -364,11 +364,10 @@ sub alarm_haircut() {
 	&subs::db_query('delete from websites where cast(warranty as integer) < cast(? as integer)', $timestamp);
 	&subs::db_query('delete from cache where cast(warranty as integer) < cast(? as integer)', $timestamp);
 
-	my $websocks = &subs::db_query('select * from websockets where cast(warranty as integer) < cast(? as integer)', $timestamp);
-	foreach my $webs (@{$websocks->hashes}) {
-		my $art_query = &subs::db_query('delete from drawings where browser_tab_id = ?', $webs->{'browser_tab_id'});
-		my $del_query = &subs::db_query('delete from websockets where browser_tab_id = ?', $webs->{'browser_tab_id'});
-	}
+	# The retained websocket sessions: a live row whose socket died silently is
+	# retired first, then the closed rows whose month is up are deleted by row (a
+	# live sibling on the same tab must survive).
+	&subs::websocket_sessions_cull($timestamp);
 
 	# Keep the planner's statistics honest. optimize only re-runs ANALYZE for tables
 	# whose stats are stale or missing, and analysis_limit keeps each run bounded,

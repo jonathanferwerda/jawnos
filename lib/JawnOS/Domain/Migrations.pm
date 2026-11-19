@@ -686,6 +686,13 @@ sub update_database($data) {
 		'CREATE INDEX idx1_ws on websockets (app,browser_tab_id)',
 		'CREATE INDEX idx3_ws on websockets (app,browser_tab_id,remote_address)',
 		'CREATE INDEX idx2_ws on websockets (browser_tab_id)',
+		# the retained session's own reads: an app's sessions over time, any
+		# session over time, and the warranty cull. The time columns are text,
+		# so the index matches the cast the queries make; a plain-column index
+		# would not be used.
+		'CREATE INDEX IF NOT EXISTS idx4_ws on websockets (app, cast(connected as integer))',
+		'CREATE INDEX IF NOT EXISTS idx5_ws on websockets (cast(connected as integer))',
+		'CREATE INDEX IF NOT EXISTS idx6_ws on websockets (cast(warranty as integer))',
 		'CREATE INDEX idx1_continent on continent (app)',
 		'CREATE INDEX idx2_continent on continent (app,uuid)',
 		# navigation_information asks continent for the current (type='temporary')
