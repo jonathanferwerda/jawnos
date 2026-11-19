@@ -514,6 +514,17 @@ function wsMessageDispatch(raw) {
 			}
 			appointment_chron()
 		}
+		else if ( data['type'] == 'clothesline' ) {
+			// The press's reply no longer waits for the re-hang; the new line is
+			// pushed when the fork finishes. Take it the same way the reply did.
+			if (typeof clotheslineHanger === 'function') {
+				if (typeof clotheslineEnabled != 'undefined' && typeof clothesLineBaseHeight != 'undefined') {
+					clothesLineHeight = (clotheslineEnabled && (data['clothesline'] || []).length) ? clothesLineBaseHeight : 0;
+				}
+				clotheslineHanger(data['clothesline'] || []);
+				if (typeof deskPosition === 'function') { deskPosition(); }
+			}
+		}
 		else if (data['type'] == 'transmitter') {
 			var timestamp = Date.now();
 			//tree.sound.currentTime = numeral(data['seek']).value() + ((timestamp - data['timestamp']) / 1000);

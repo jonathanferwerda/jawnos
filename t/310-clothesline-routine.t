@@ -891,7 +891,9 @@ like($part32, qr/clothesline_slot_now/, 'the Configure slots are counted on the 
 
 my $part14 = read_file(repo_root() . '/lib/JawnOS/Manager/Part14.pm');
 like($part14, qr/&subs::hang_to_dry\(reuse_head =>/, 'a press re-hangs the line at once');
-like($part14, qr/\$returner->\{'clothesline'\}/, 'the reply carries the new line');
+like($part14, qr/name => 'reset tail'/, 'the re-hang is forked, so the header reply does not wait for it');
+like($part14, qr/type => 'clothesline'/, 'and the finished line is pushed when it is ready');
+unlike($part14, qr/\$returner->\{'clothesline'\}/, 'the reply does not wait for the re-hang');
 like($part14, qr/console_command\('calculator'\)/, 'the other managers are told to refresh');
 my $app_back = read_file(repo_root() . '/public/js/manager/manager/09_app_back.js');
 like($app_back, qr/response\['clothesline'\]/, 'the pressing page redraws the rail from the reply');

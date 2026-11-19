@@ -1151,6 +1151,11 @@ function jawnosEmergePreviewPrune() {
 
 function jawnosEmergePreviewSave(record) {
 	if (!record || !record.app || typeof jawnosWindowsSave != 'function') { return Promise.resolve(); }
+	// Private mode is a place, or an open grant: the picture may still be drawn
+	// (it never leaves the page), but it must not be written to the disk. A
+	// preview from there would be the app's own window, and reopening it in
+	// public must not reveal what the place was showing.
+	if (typeof jawnosWindowsPublicNow == 'function' && !jawnosWindowsPublicNow()) { return Promise.resolve(); }
 	// a preview is per app; the empty instance suffix is also the identity every
 	// single-window app's shell uses, so the two share one record
 	return jawnosWindowsSave(jawnosWindowsIdentity(record.app, {}), {
@@ -1228,12 +1233,11 @@ function jawnosEmergePreviewSanitize(node) {
 // is made from.
 function jawnosEmergePreviewCapture(win) {
 	if (typeof document == 'undefined' || !document.body) { return false; }
-	// Private mode keeps nothing at all: not the shell, not the picture. The
-	// shell's own capture checks this too, for the live pushes that reach it
-	// without going through the preview.
-	if (typeof jawnosWindowsPublicNow == 'function' && !jawnosWindowsPublicNow(win)) { return false; }
 	// The window itself is kept for the next reload whether or not a picture is
 	// drawn: a desk with the motions off still wants its windows back at once.
+	// The shell's own capture refuses private mode; the picture is only refused
+	// the disk, below, so the predicted view still works while the place is
+	// private.
 	if (typeof jawnosWindowsShellCapture == 'function') { jawnosWindowsShellCapture(win); }
 	if (typeof jawnosWindowEffectsOn == 'function' && !jawnosWindowEffectsOn()) { return false; }
 	if (typeof jawnosWindowEmergeLevel == 'function' && jawnosWindowEmergeLevel() == 'off') { return false; }

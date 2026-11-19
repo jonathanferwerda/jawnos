@@ -45,7 +45,8 @@ like($store, qr/data-private/, 'the capture reads the server private mark');
 like($store, qr/function jawnosWindowsPublicNow/, 'private mode is a store-wide refusal');
 like($store, qr/data-private-place/, 'a private place refuses every write');
 like($store, qr/if \(!jawnosWindowsPublicNow\(el\)\) \{ return false; \}/, 'the shell capture refuses private mode');
-like($emerge, qr/jawnosWindowsPublicNow\(win\)/, 'the preview capture refuses it too, before it keeps either copy');
+like($emerge, qr/function jawnosEmergePreviewSave\(record\) \{.*?if \(typeof jawnosWindowsPublicNow == 'function' && !jawnosWindowsPublicNow\(\)\) \{ return Promise\.resolve\(\); \}/s,
+	'the preview still draws in private mode but refuses the disk');
 like($manager, qr/my \$private_mode_attr = \(&subs::private_reachable_now\(\) \|\| &subs::private_revealed\(\)\)/,
 	'a window rendered in private mode carries the mark');
 like($manager, qr/\$private_attr \. \$private_mode_attr/, 'the mark is on the .wind the capture reads');
@@ -79,6 +80,7 @@ like($store, qr/jawnosWindowsSave\(identity, \{ shell: html, ts: stamp, app: app
 # --- a live update is written back ------------------------------------------
 
 like($websocket, qr/jawnosWindowsShellCaptureSoon\(\$/, 'a pushed header writes its window back');
+like($websocket, qr/data\['type'\] == 'clothesline'/, 'a pushed clothesline redraws the rail');
 like($windows, qr/jawnosWindowsShellCaptureSoon\(wind_el/, 'a re-rendered window writes itself back');
 like($windows, qr/jawnosWindowsShellCaptureSoon\(\$\('#' \+ window_id\), 1500\)/, 'an appended window is kept even with the motions off');
 like($emerge, qr/jawnosWindowsShellCapture\(win\)/, 'the settle/close/sweep capture also keeps the shell');
