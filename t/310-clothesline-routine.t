@@ -156,7 +156,7 @@ is_deeply([ map { $_->{'app'} } @{$wall->{'list'}} ], [qw(wake_up pee water coff
 is_deeply([ map { $_->{'wave'} } @{$wall->{'list'}} ], [0, 0, 0, 0, 1, 1, 2],
 	'and each step still knows the wave it belongs to');
 
-# --- the last finished step is found by when it happened --------------------
+# --- a step the day keeps twice is not pulled to its far occurrence --------
 # The learned day brushes its teeth in the morning and again at night. Pressing
 # the morning one twice (or adding a noon one) must not consume the night's
 # occurrence and carry the head to the evening with it.
@@ -196,6 +196,43 @@ my $bearly = subs::clothesline_sequence_anticipate($bscan, $base + (60 * 60000),
 	limit => 10, canonical => $bcanon);
 is($bearly->{'current_wave'}, 0, 'a bed made at nine does not carry the head to the night');
 ok(!(grep { $_->{'app'} eq 'bed' } @{$bearly->{'list'}}), 'and the finished bed is taken out');
+
+# The same progress earlier or later on the clock sits in the same wave: the
+# clock is not what places the day.
+my $latebase = $base + (3 * 3600000);
+my $late = {
+	apps => { map { $_ => { due => 1 } } @{$bseq} },
+	current => { start => $latebase },
+	done => { wake_up => 1, toothbrushing => 2, lunch => 1, work => 1 },
+	done_ms => {
+		wake_up => [$latebase],
+		toothbrushing => [ $latebase + (10 * 60000), $latebase + (180 * 60000) ],
+		lunch => [ $latebase + (270 * 60000) ],
+		work => [ $latebase + (300 * 60000) ],
+	},
+};
+my $latecanon = { seq => $bseq, waves => [ 0, 0, 1, 1, 2, 2, 3 ],
+	times => [ map { $_ + (3 * 3600000) } @{$btimes} ] };
+my $lhead = subs::clothesline_sequence_anticipate($late, $latebase + (310 * 60000),
+	limit => 10, canonical => $latecanon);
+is($lhead->{'current_wave'}, $bhead->{'current_wave'},
+	'the same progress at a later hour sits in the same wave');
+
+# --- six hours of quiet starts the day, whenever it began -------------------
+my @quiet5 = (
+	row('wake_up', JawnOSTest::ts(2026, 11, 16, 5, 0)),
+	row('breakfast', JawnOSTest::ts(2026, 11, 16, 10, 0)),
+);
+my $q5 = subs::clothesline_routine_scan(\@quiet5, JawnOSTest::ts(2026, 11, 16, 10, 30),
+	window_days => 60, session_days => 14);
+is($q5->{'done'}{'wake_up'}, 1, 'a five-hour quiet keeps the same run');
+my @quiet7 = (
+	row('wake_up', JawnOSTest::ts(2026, 11, 16, 5, 0)),
+	row('breakfast', JawnOSTest::ts(2026, 11, 16, 12, 0)),
+);
+my $q7 = subs::clothesline_routine_scan(\@quiet7, JawnOSTest::ts(2026, 11, 16, 12, 30),
+	window_days => 60, session_days => 14);
+ok(!defined $q7->{'done'}{'wake_up'}, 'a seven-hour quiet starts a new day');
 
 # --- a curated day hands in its own order, and still advances ---------------
 # The person put lunch first, then the morning; the coffee is already taken, and

@@ -1775,9 +1775,8 @@ sub clothesline_routine_scan {
 
 	# what this run of the routine has already finished, by app: the line takes
 	# those occurrences out of the canonical sequence, wherever in it they sit.
-	# The times are kept too: a day that takes a step twice needs to know *when*
-	# the finished ones happened, or two morning presses look like the evening
-	# occurrence and the head is carried to the night with it.
+	# The times are kept too: the order the steps were finished is what tells a
+	# second press of a step the day keeps twice from being its far occurrence.
 	my (%done, %done_ms);
 	if ($belongs) {
 		foreach my $r ( @recent_completed ) {
@@ -1935,46 +1934,50 @@ sub clothesline_sequence_anticipate {
 	my $next_wave = (defined $opt{'next_wave'}) ? ($opt{'next_wave'} ? 1 : 0) : 1;
 
 	# Which wave the last finished step sits in: the line shows that wave's
-	# remainder and the one after it, never a wave two ahead. Which step that is
-	# has to come from when it happened, not from how many times its app has been
-	# pressed: a day that brushes its teeth morning and night keeps two
-	# toothbrushings in its order, and counting two morning presses used to
-	# consume the evening one and carry the head to the night with it. The last
-	# finished step's time of day, read against the learned day's own times,
-	# places the wave. A caller that hands only counts - a test, a curated day -
-	# still places it by the order the steps were finished. The clock itself
-	# never places it: the line waits where the person last acted.
+	# remainder and the one after it, never a wave two ahead. The wave is read
+	# from the person's own order through the learned day, not from the clock:
+	# they may wake at five or at eleven, and the same routine runs in a longer
+	# or shorter span, so the hour is no anchor for where the day stands. A step
+	# the day keeps twice (toothbrushing morning and night) must not be pulled to
+	# its far occurrence by a second press in the morning: a completion advances
+	# only to an occurrence in the wave under way or the one after it, and a
+	# repeat of a step already passed stays a repeat. A caller that hands only
+	# counts - a test, a curated day - still places it by the order the steps
+	# were finished.
 	my (%left, $current_wave);
 	$current_wave = 0;
 	if (!$all) {
 		my $anchored;
-		if (ref $scan->{'done_ms'} eq 'HASH' && ref $canonical_times eq 'ARRAY'
-			&& @{$canonical_times} && defined $canonical_times->[0]) {
+		if (ref $scan->{'done_ms'} eq 'HASH' && ref $waves eq 'ARRAY' && @{$waves}) {
 			# only a step the learned day knows can place the wave; a call, a
 			# step off the line, says nothing about where the routine stands
 			my %known = map { $_ => 1 } @{$seq};
-			my $last;
+			my @acts;
 			foreach my $app ( keys %{$scan->{'done_ms'}} ) {
 				next unless $known{$app} && ref $scan->{'done_ms'}{$app} eq 'ARRAY';
 				foreach my $ms ( @{$scan->{'done_ms'}{$app}} ) {
-					next unless defined $ms;
-					$last = $ms if !defined $last || $ms > $last;
+					push @acts, { app => $app, ms => $ms } if defined $ms;
 				}
 			}
-			if (defined $last) {
-				my $tod = sub { my $ms = shift; return ((int($ms / 1000) % 86400) + 86400) % 86400; };
-				my $want = $tod->($last);
-				my ($best, $best_gap);
-				for my $i ( 0 .. $#{$seq} ) {
-					next unless defined $canonical_times->[$i];
-					my $d = abs($tod->($canonical_times->[$i]) - $want);
-					$d = 86400 - $d if $d > 43200;
-					if (!defined $best_gap || $d < $best_gap) { ($best, $best_gap) = ($i, $d); }
+			if (@acts) {
+				@acts = sort { $a->{'ms'} <=> $b->{'ms'} } @acts;
+				my %occ;
+				for my $i ( 0 .. $#{$seq} ) { push @{ $occ{ $seq->[$i] } }, $i; }
+				my ($at, %used);
+				$at = 0;
+				foreach my $step ( @acts ) {
+					my $list = $occ{ $step->{'app'} } or next;
+					foreach my $i ( @{$list} ) {
+						next if $i < $at || $used{$i};
+						my $wave = defined $waves->[$i] ? $waves->[$i] : 0;
+						next if $wave > $current_wave + 1;
+						$used{$i} = 1;
+						$at = $i + 1;
+						$current_wave = $wave if $wave > $current_wave;
+						last;
+					}
 				}
-				if (defined $best) {
-					$current_wave = ($waves && defined $waves->[$best]) ? $waves->[$best] : 0;
-					$anchored = 1;
-				}
+				$anchored = 1;
 			}
 		}
 		if (!$anchored) {
