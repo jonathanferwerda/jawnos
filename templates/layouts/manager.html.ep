@@ -24,6 +24,9 @@
 			}
 			var device = "<%= $device %>";
 			var signatorial = "<%= $signatorial %>";
+			// The browser's window store is sealed per machine and person: a scope
+			// change (another house, another sign-in) wipes it and mints a new key.
+			var jawnos_session_scope = <%== encode_json($c->session('name') || '') %>;
 			// the code revision: client caches that hold rendered HTML (the music
 			// window contents) key on it, so a template change is never served stale
 			var jawnos_version = '<%= $string %>';
@@ -212,8 +215,12 @@
     the Misc manager colour is the system theme %>
 <% my ($manager_bg, $manager_appt_theme) = &subs::active_manager_background(); %>
 <% my $theme_dark = &subs::theme_is_dark(); %>
+  <%# Private mode is what stops the browser's window store: the page carries the
+      place and the grant so the store can refuse every write while either is on %>
+  <% my $private_place = &subs::private_reachable_now() ? 1 : 0; %>
+  <% my $private_mode = &subs::private_revealed() ? 1 : 0; %>
   <% my $body_class = join ' ', grep { length } (($theme_dark ? 'dark_theme' : ''), ((&Manager::fingerprint_available() && &Manager::padlock_request_is_local($c)) ? '' : 'no_local_fingerprint')); %>
-  <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>" data-icon-set="<%= &subs::icon_set() %>" data-cursor-set="<%= &subs::cursor_set() %>" data-theme-sig="<%= &subs::theme_signature() %>" data-window-effects="<%= $window_effects_level %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
+  <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>" data-icon-set="<%= &subs::icon_set() %>" data-cursor-set="<%= &subs::cursor_set() %>" data-theme-sig="<%= &subs::theme_signature() %>" data-window-effects="<%= $window_effects_level %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %><% if ($private_place) { %> data-private-place="yes"<% } %><% if ($private_mode) { %> data-private-mode="yes"<% } %>>
   <% my $title_font = $theme_bundle->{'font'} || &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
   <style>
     :root { --jawnos-font: <%= $title_font %>; --corner_radius: <%= $corner_misc %>px;<% if (length $corner_theme_now) { %> --jawnos-corner: <%= $corner_theme_now %>;<% } %> }

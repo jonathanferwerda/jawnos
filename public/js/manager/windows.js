@@ -1,5 +1,6 @@
 /* [[js-split]]
    windows.js is part 1. The rest live in windows/ in name order:
+     00_store.js  - the encrypted IndexedDB store for window shells and previews
      01_storage.js  - windowSaver, retriever, appWindowOpener, windowjOpener
      02_fit.js  - minimise/restore/move, draggable, viewport/fit, phone check
      03_stack.js  - stacker, close, z-order, everythingMoves, dimension setter, background, drawer
@@ -505,6 +506,9 @@ function windowMaker(response, fragment) {
 						if (typeof budgetLight === 'function') { budgetLight(app_attr,circumstance,'open'); }
 					}
 					carry_on = 1;
+					// the render is the window's newest state: write it back for the
+					// next reload once the burst of frames has settled
+					if (typeof jawnosWindowsShellCaptureSoon == 'function') { jawnosWindowsShellCaptureSoon(wind_el, 1200); }
 				}
 				else { matches = 1; }
 			}

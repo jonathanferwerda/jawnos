@@ -494,6 +494,12 @@ sub app_theme_map {
 sub app_colour_map {
 	my ($apps) = @_;
 	$apps = [] unless ref $apps eq 'ARRAY';
+	# A caller that names its apps gets those alone. The manager page asks for its
+	# ~46 windows, while the house carries a colour for every gallery track too
+	# (1,372 on the desk that found this): shipping them all made the page 123KB
+	# heavier on every load, and adopted each one onto this device on the way. An
+	# empty list still means the whole house, for a caller that wants it.
+	my %wanted = map { $_ => 1 } grep { defined $_ && length $_ } @{$apps};
 	my $device = &device_setter();
 	my %pick;
 	my $rows = eval {
@@ -530,6 +536,7 @@ sub app_colour_map {
 	# device) and the preview agree. One write, only when this device has no
 	# row for the app yet.
 	foreach my $app ( keys %colour ) {
+		next if %wanted && !$wanted{$app};
 		my $pick_key = $app . "\0" . 'colour';
 		next if $pick{$pick_key} && $pick{$pick_key}->{'current'};
 		next unless defined $colour{$app} && $colour{$app} =~ /^\#?[0-9a-fA-F]{6}$/;
@@ -554,6 +561,7 @@ sub app_colour_map {
 
 	my %map;
 	foreach my $app ( keys %colour ) {
+		next if %wanted && !$wanted{$app};
 		my $raw = $colour{$app};
 		next unless defined $raw && $raw =~ /^\#?([0-9a-fA-F]{6})$/;
 		$raw = '#' . $1;

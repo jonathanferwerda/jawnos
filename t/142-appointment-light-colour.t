@@ -117,6 +117,24 @@ is( $colour_map->{'free_appt'}->{'colour'}, '#dba0c4',
 is( $colour_map->{'free_appt'}->{'dark'}, &subs::dark_colour_for('#dba0c4'),
 	'and its derived dark face' );
 
+# --- a caller that names its apps gets only those ----------------------------
+# The manager page asks for its windows, and the house carries a colour for
+# every gallery track too: the whole map was 123KB of a 214KB page.
+my $named_map = &subs::app_colour_map(['warwick_appt']);
+is( $named_map->{'warwick_appt'}->{'colour'}, '#a7b8d0',
+	'a named app is in the map');
+ok( !exists $named_map->{'free_appt'},
+	'an app the caller did not name is left out' );
+ok( !exists $named_map->{'house_appt'},
+	'and an unrelated house-only colour is not shipped with it' );
+# The desk's own lists still get their colours: gallery, folders and music are
+# in the named set, so their press previews keep the real navbar paint.
+my $container_map = &subs::app_colour_map([qw(gallery folders music)]);
+ok( exists $container_map->{$_}, "$_ keeps its colour in a named map" )
+	for qw(gallery folders music);
+ok( !exists $container_map->{'warwick_appt'},
+	'and an app not named is still left out' );
+
 # --- pinned places ----------------------------------------------------------
 my $places = &subs::app_window_places();
 is( $places->{'pinned_appt'}->{'left'}, 40, 'a pinned window place keeps its left' );

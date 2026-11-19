@@ -279,6 +279,10 @@ function appWindowOpenerNow(i,timestamp,v) {
 	// server marks what it has seen, so this is a no-op after the first time and
 	// on a machine with no model.
 	if (typeof i === 'string' && i) { $.post('/manager/help/review', { app: i }); }
+	// A reload paints the window it last saw before the server answers: the
+	// stored shell goes in at once, and the render replaces it when it lands.
+	// Only a restore, not a press: the press already has its emerge preview.
+	if (typeof jawnosWindowsShellRestore == 'function') { jawnosWindowsShellRestore(i, timestamp, v); }
 	var window_w = $(window).width();
 	var window_h = $(window).height();
 	var app = JSON.stringify({ name: i });
@@ -480,8 +484,11 @@ function appWindowOpenerNow(i,timestamp,v) {
 
 				},
 				error: function(e) {
-					// the press never made a window: give its reserved slot back
-					if (typeof windowTiledRelease === 'function') {
+					// The press never made a window: give its reserved slot back - unless
+					// a stored shell is already standing at this stamp, which keeps its place
+					// even when the render fails.
+					if ($('#window_' + timestamp).length) { return; }
+					if (typeof windowTiledRelease == 'function') {
 						windowTiledRelease(timestamp);
 						windowTiledSettleSoon();
 					}
@@ -527,7 +534,9 @@ function appWindowOpenerNow(i,timestamp,v) {
 				if (typeof jawnosWorkspaceWindowRestore == 'function') { jawnosWorkspaceWindowRestore(window, v); }
 			},
 			error: function(e) {
-				if (typeof windowTiledRelease === 'function') {
+				// a stored shell that is already standing keeps its slot
+				if ($('#window_' + timestamp).length) { return; }
+				if (typeof windowTiledRelease == 'function') {
 					windowTiledRelease(timestamp);
 					windowTiledSettleSoon();
 				}

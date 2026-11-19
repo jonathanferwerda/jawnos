@@ -1106,23 +1106,22 @@ function jawnosWindowEmergeSwallowClick(e) {
 // to the next press. It is drawn in a shadow root, so its ids can never answer a
 // document lookup meant for the real window, and the page's own rules are
 // carried in scoped to the preview, so it wears the current theme rather than
-// the one it was captured in. The last copy of each app is kept in IndexedDB, so
-// a reload still opens into a real-looking preview.
-var JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge';
-var JAWNOS_EMERGE_PREVIEW_STORE = 'windows';
-// How much the cache holds. It is per app, not per window: the desk writes a
-// median of 192 appointment records a day (512 days of appointments.server_time;
-// the mean, 234, is pulled up by import days), and a day's work is spread over
-// the desk's ~30 apps - so thirty-two slots are a day's apps with the room the
-// twenty percent asks for, and more entries than the desk has apps would never
-// be used.
-var JAWNOS_EMERGE_PREVIEW_APPS = 32;
+// the one it was captured in. The last copy of each app is kept in the encrypted
+// windows store (00_store.js), so a reload still opens into a real-looking preview.
+// How much the cache holds. The numbers live in the windows store beside the
+// encrypted records, and are aliased here so the preview and the shell agree on
+// one budget. It is per app, not per window: the desk writes a median of 192
+// appointment records a day (512 days of appointments.server_time; the mean,
+// 234, is pulled up by import days), and a day's work is spread over the desk's
+// ~30 apps - so thirty-two slots are a day's apps with the room the twenty
+// percent asks for, and more entries than the desk has apps would never be used.
+var JAWNOS_EMERGE_PREVIEW_APPS = (typeof JAWNOS_WINDOWS_MAX_APPS == 'number') ? JAWNOS_WINDOWS_MAX_APPS : 32;
 // One window: a gallery with its photographs trimmed is ~40KB and a heavy app a
 // couple of hundred, so 1.5MB is a whole window of any of them.
-var JAWNOS_EMERGE_PREVIEW_BYTES = 1500000;
+var JAWNOS_EMERGE_PREVIEW_BYTES = (typeof JAWNOS_WINDOWS_MAX_WINDOW_BYTES == 'number') ? JAWNOS_WINDOWS_MAX_WINDOW_BYTES : 1500000;
 // The store on the device, across every app: the fifty megabytes asked for. The
 // oldest go first when it is reached.
-var JAWNOS_EMERGE_PREVIEW_BUDGET = 52428800;
+var JAWNOS_EMERGE_PREVIEW_BUDGET = (typeof JAWNOS_WINDOWS_MAX_BYTES == 'number') ? JAWNOS_WINDOWS_MAX_BYTES : 52428800;
 // The parsed copies live in memory for the session; a parsed DOM costs several
 // times its markup, so the hot set is budgeted by the markup it keeps rather
 // than by the store's disk allowance.
@@ -1133,66 +1132,31 @@ var JAWNOS_EMERGE_PREVIEW_MEMORY = 8000000;
 var JAWNOS_EMERGE_PREVIEW_IMAGE = 8000;
 var JAWNOS_EMERGE_PREVIEW_BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
 var jawnosEmergePreviews = {};
-var jawnosEmergePreviewDb = null;
 var jawnosEmergePreviewSheetCache = null;
 var JAWNOS_EMERGE_PREVIEW_SCOPE = 'jawnos_emerge_scope';
 
-function jawnosEmergePreviewIdb() {
-	if (jawnosEmergePreviewDb) { return Promise.resolve(jawnosEmergePreviewDb); }
-	if (typeof indexedDB == 'undefined' || !indexedDB) { return Promise.reject(new Error('no indexeddb')); }
-	return new Promise(function (res, rej) {
-		var request = indexedDB.open(JAWNOS_EMERGE_PREVIEW_DB, 1);
-		request.onupgradeneeded = function () {
-			request.result.createObjectStore(JAWNOS_EMERGE_PREVIEW_STORE, { keyPath: 'app' });
-		};
-		request.onsuccess = function () { jawnosEmergePreviewDb = request.result; res(request.result); };
-		request.onerror = function () { rej(request.error); };
-	});
-}
-
 function jawnosEmergePreviewAll() {
-	return jawnosEmergePreviewIdb().then(function (db) {
-		return new Promise(function (res, rej) {
-			var query = db.transaction(JAWNOS_EMERGE_PREVIEW_STORE, 'readonly').objectStore(JAWNOS_EMERGE_PREVIEW_STORE).getAll();
-			query.onsuccess = function () { res(query.result || []); };
-			query.onerror = function () { rej(query.error); };
-		});
-	});
+	if (typeof jawnosWindowsAll != 'function') { return Promise.resolve([]); }
+	return jawnosWindowsAll();
 }
 
 // One copy per app, and the oldest go first: a preview from a month ago is not
 // worth the space, and the desk's own memory only ever holds the last one. The
-// fifty megabytes are the whole store, so the sweep is by held bytes as well as
-// by count.
+// sweep is by held bytes as well as by count, and both windows in a record -
+// the shell and the picture - count against it.
 function jawnosEmergePreviewPrune() {
-	return jawnosEmergePreviewIdb().then(function (db) {
-		return new Promise(function (res) {
-			var tx = db.transaction(JAWNOS_EMERGE_PREVIEW_STORE, 'readwrite');
-			var store = tx.objectStore(JAWNOS_EMERGE_PREVIEW_STORE);
-			var query = store.getAll();
-			query.onsuccess = function () {
-				var rows = (query.result || []).sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
-				var held = 0;
-				for (var i = 0; i < rows.length; i++) {
-					held += ((rows[i].html || '').length);
-					if (i < JAWNOS_EMERGE_PREVIEW_APPS && held <= JAWNOS_EMERGE_PREVIEW_BUDGET) { continue; }
-					try { store.delete(rows[i].app); } catch (e) {}
-				}
-				res();
-			};
-			query.onerror = function () { res(); };
-		});
-	});
+	if (typeof jawnosWindowsPrune != 'function') { return Promise.resolve(); }
+	return jawnosWindowsPrune();
 }
 
 function jawnosEmergePreviewSave(record) {
-	return jawnosEmergePreviewIdb().then(function (db) {
-		return new Promise(function (res, rej) {
-			var tx = db.transaction(JAWNOS_EMERGE_PREVIEW_STORE, 'readwrite');
-			tx.objectStore(JAWNOS_EMERGE_PREVIEW_STORE).put(record);
-			tx.oncomplete = function () { res(); };
-			tx.onerror = function () { rej(tx.error); };
-		});
+	if (!record || !record.app || typeof jawnosWindowsSave != 'function') { return Promise.resolve(); }
+	// a preview is per app; the empty instance suffix is also the identity every
+	// single-window app's shell uses, so the two share one record
+	return jawnosWindowsSave(jawnosWindowsIdentity(record.app, {}), {
+		app: record.app,
+		preview: record.html,
+		at: record.at || Date.now()
 	});
 }
 
@@ -1214,9 +1178,9 @@ function jawnosEmergePreviewLoad() {
 	jawnosEmergePreviewAll().then(function (rows) {
 		for (var i = 0; i < rows.length; i++) {
 			var row = rows[i];
-			if (!row || !row.app || !row.html || jawnosEmergePreviews[row.app]) { continue; }
-			var node = jawnosEmergePreviewParse(row.html);
-			if (node) { jawnosEmergePreviews[row.app] = { node: node, html: row.html, at: row.at || 0 }; }
+			if (!row || !row.app || !row.preview || jawnosEmergePreviews[row.app]) { continue; }
+			var node = jawnosEmergePreviewParse(row.preview);
+			if (node) { jawnosEmergePreviews[row.app] = { node: node, html: row.preview, at: row.at || 0 }; }
 		}
 	}).then(null, function () {});
 }
@@ -1264,6 +1228,13 @@ function jawnosEmergePreviewSanitize(node) {
 // is made from.
 function jawnosEmergePreviewCapture(win) {
 	if (typeof document == 'undefined' || !document.body) { return false; }
+	// Private mode keeps nothing at all: not the shell, not the picture. The
+	// shell's own capture checks this too, for the live pushes that reach it
+	// without going through the preview.
+	if (typeof jawnosWindowsPublicNow == 'function' && !jawnosWindowsPublicNow(win)) { return false; }
+	// The window itself is kept for the next reload whether or not a picture is
+	// drawn: a desk with the motions off still wants its windows back at once.
+	if (typeof jawnosWindowsShellCapture == 'function') { jawnosWindowsShellCapture(win); }
 	if (typeof jawnosWindowEffectsOn == 'function' && !jawnosWindowEffectsOn()) { return false; }
 	if (typeof jawnosWindowEmergeLevel == 'function' && jawnosWindowEmergeLevel() == 'off') { return false; }
 	win = $(win)[0];

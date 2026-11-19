@@ -1,4 +1,4 @@
-# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows/02_fit.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: public/js/manager/windows/06_emerge.js public/js/manager/windows/00_store.js public/js/manager/windows/02_fit.js public/js/manager/windows.js public/js/manager/leaderboardprinter.js public/js/manager/lazy.js public/css/manager.css public/css/universal.css templates/layouts/manager.html.ep lib/JawnOS/Domain/Contrast.pm lib/JawnOS/Domain/Loader.pm
 # covers:    a new window pours out of the control that opened it - the press
 #            records a viewport rectangle and richer app metadata, pointerdown
 #            draws the chrome preview at once, windowMaker hands the real
@@ -22,6 +22,7 @@ use RepoSource;
 
 my $root   = repo_root();
 my $emerge = read_file("$root/public/js/manager/windows/06_emerge.js");
+my $store  = read_file("$root/public/js/manager/windows/00_store.js");
 my $fit    = read_file("$root/public/js/manager/windows/02_fit.js");
 my $index  = read_file("$root/public/js/manager/windows.js");
 my $board  = read_file("$root/public/js/manager/leaderboardprinter.js");
@@ -1261,14 +1262,16 @@ like($emerge, qr/if \(!jawnosEmergePreviewBuild\(origin, el\)\) \{ chrome = jawn
 	'the drawn chrome is only the fallback');
 like($emerge, qr/attachShadow\(\{ mode: 'closed' \}\)/,
 	'in its own id space, so it cannot answer a lookup meant for the real window');
-like($emerge, qr/JAWNOS_EMERGE_PREVIEW_DB = 'jawn_emerge'/,
-	'and the copies are kept on the device');
-like($emerge, qr/JAWNOS_EMERGE_PREVIEW_APPS = 32/,
+like($store, qr/JAWNOS_WINDOWS_DB = 'jawnos_windows'/,
+	'and the copies are kept in the encrypted windows store');
+like($store, qr/JAWNOS_WINDOWS_MAX_APPS = 32/,
 	'the cache holds the desk\'s apps, a day\'s use with room to spare');
-like($emerge, qr/JAWNOS_EMERGE_PREVIEW_BUDGET = 52428800/,
+like($store, qr/JAWNOS_WINDOWS_MAX_BYTES = 52428800/,
 	'and the store is capped at the fifty megabytes asked for');
-like($emerge, qr/if \(i < JAWNOS_EMERGE_PREVIEW_APPS && held <= JAWNOS_EMERGE_PREVIEW_BUDGET\) \{ continue; \}/,
+like($store, qr/if \(i < JAWNOS_WINDOWS_MAX_APPS && held <= JAWNOS_WINDOWS_MAX_BYTES\) \{ continue; \}/,
 	'whose oldest copies go first when it is reached');
+like($emerge, qr/JAWNOS_EMERGE_PREVIEW_APPS = \(typeof JAWNOS_WINDOWS_MAX_APPS/,
+	'and the preview reads that one budget');
 like($emerge, qr/JAWNOS_EMERGE_PREVIEW_MEMORY = 8000000/,
 	'budgeted by the markup it keeps in memory');
 like($emerge, qr/JAWNOS_EMERGE_PREVIEW_IMAGE = 8000/,

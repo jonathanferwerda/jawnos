@@ -21,6 +21,11 @@ function jawnosHeaderApply(app, html, timestamp) {
 	header.attr('last_updated', timestamp || Date.now());
 	if (typeof appointment_chron === 'function') { appointment_chron(); }
 	if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
+	// The header is the half of a window that moves all day; keep the shell's
+	// copy current, so a reload paints the status it was last showing.
+	if (typeof jawnosWindowsShellCaptureSoon == 'function') {
+		jawnosWindowsShellCaptureSoon($('.wind[app="' + app + '"]'), 1500);
+	}
 }
 
 function wsMessageHandler(event) {

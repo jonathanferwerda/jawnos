@@ -557,6 +557,15 @@ sub window_maker($type,$timestamp) {
 	my $html_name = &subs::html_name($type->{'app'});
 	my $app_attr = &subs::html_text($unformatted_name);
 	my $app_text = &subs::html_text($window_name);
+	# Private is a lock, and the browser's window store is on the disk: a private
+	# app's window is marked here so the client refuses to keep it (a lock that
+	# leaves a copy on the disk is not a lock).
+	my $private_attr = ($app ne 'Denied' && &subs::app_private_now($app)) ? ' data-private="yes"' : '';
+	# Private mode - a private place, or an open private grant - stops the
+	# browser's window store for every app, not just a private one: a public
+	# window opened here may still show what the place holds, and reopening it
+	# in public must not reveal that.
+	my $private_mode_attr = (&subs::private_reachable_now() || &subs::private_revealed()) ? ' data-private-mode="yes"' : '';
 	my $http_name = &subs::http_name($type->{'app'});
 	my $apostrophe_escape = &subs::apostrophe_escape($type->{'app'});
 	my $terminal_attr = '';
@@ -678,7 +687,7 @@ sub window_maker($type,$timestamp) {
 	}
 
 	my $display =
-		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . $place_screen . ' default_width="' . $default_width . '" default_height="' . $default_height . '"  style="background-color:var(--window, var(--panel));
+		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . $private_attr . $private_mode_attr . $place_screen . ' default_width="' . $default_width . '" default_height="' . $default_height . '"  style="background-color:var(--window, var(--panel));
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || $default_width) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || $default_height) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" revealed="no" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .

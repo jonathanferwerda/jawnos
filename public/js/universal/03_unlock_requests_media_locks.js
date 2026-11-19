@@ -274,6 +274,13 @@ $(document).on('mousemove mousedown keydown touchstart scroll wheel', function (
 function jawnosPrivateRefresh(opened) {
 	if (opened === 1) { jawnosPrivateIdleStart(); }
 	else if (opened === 0) { jawnosPrivateIdleStop(); }
+	// The browser's window store refuses every write while private mode is on.
+	// The page carries the place at load; this is the grant opening and closing.
+	try {
+		if (opened === 1 && document.body) { document.body.setAttribute('data-private-mode', 'yes'); }
+		else if (opened === 0 && document.body) { document.body.removeAttribute('data-private-mode'); }
+	}
+	catch (e) {}
 	if (typeof calculator === 'function') { calculator(); }
 	if (typeof appointment_chron === 'function') { appointment_chron(); }
 	if (typeof galleryFetch === 'function' && $('#gallery').length) { galleryFetch(true); }
