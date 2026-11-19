@@ -105,6 +105,10 @@ like($stack, qr/var windowDeckByApp = \{\}/,
 	'with the deck an app was last in kept against a re-render');
 like($stack, qr/windowDeckByApp\[app\] !== undefined\) \{ return windowDeckByApp\[app\]; \}/,
 	'which a window that lost its own attribute reads');
+like($stack, qr/var limit = windowStackVisible \* view\.height/,
+	'and it is full when its bars take a third of the glass, six on a phone');
+like($stack, qr/if \(changed\) \{\s*\$\(stacked\)\.each/,
+	'a re-cascade that changes no order leaves z alone');
 like($windows, qr/windowPhoneCascadePlace\(null, win, deck_keep\)[\s\S]{0,300}win\.attr\('deck'/, 'which the open takes');
 like($windows, qr/deck_plan\.top \+ deck_plan\.slot \* vAdvance/,
 	'and it lands at its own step in the deck, not at the deck\'s top');

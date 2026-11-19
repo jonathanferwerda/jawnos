@@ -62,8 +62,16 @@ function windowStacker(app, raise) {
 	decks.forEach(function (d) {
 		$(order).each(function () { if (windowDeckOf(this) === d) { stacked.push(this); } });
 	});
-	$(stacked).each(function (slot) { $(this).css({ 'z-index': top_level_now + slot + 1 }); });
-	top_level_now = top_level_now + stacked.length;
+	var changed = false;
+	$(stacked).each(function (i) {
+		if ((parseInt($(this).css('z-index'), 10) || 0) !== (top_level_now + i + 1)) { changed = true; }
+	});
+	// a re-cascade that changes no order must not touch z (or the frame ring and
+	// the taskbar pins churn on every restore timer)
+	if (changed) {
+		$(stacked).each(function (slot) { $(this).css({ 'z-index': top_level_now + slot + 1 }); });
+		top_level_now = top_level_now + stacked.length;
+	}
 	order = stacked;
 
 	// re-cascade each deck from the desk's top: a closed window leaves no gap,
@@ -123,14 +131,17 @@ function windowDeckFront() {
 // takes a step of its own rather than being left out of the count.
 function windowPhoneCascadePlace(geom, self, keep) {
 	var self_el = self ? $(self)[0] : null;
-	var height = (geom && geom.height) || Math.round(windowViewport().height * 0.7128);
+	var view = windowViewport();
 	var step = geom && geom.step ? geom.step : 0;
 	if (!(step > 0)) {
 		var bar = $('.wind').first().find('.top_navbar');
 		step = (bar.outerHeight() || 40) - (parseFloat(bar.css('border-top-width')) || 0);
 	}
 	if (!(step > 0)) { step = 40; }
-	var limit = (1 - windowStackVisible) * height;
+	// A phone's deck is a row of bars down the screen: the deck is full when the
+	// bars it would add take more than a third of the glass. On an S24 FE that is
+	// six windows, which is what a stack there holds.
+	var limit = windowStackVisible * view.height;
 	var decks = {};
 	$('.wind').filter(':visible').each(function () {
 		if (self_el && this === self_el) { return; }
