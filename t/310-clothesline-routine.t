@@ -924,4 +924,73 @@ like($hang, qr/if \(\$day_apps && !\$reused && \$daily\)/,
 	'a reused head keeps the list already hung');
 like($hang, qr/\$curated_running/, 'a step started again is put back in a curated head');
 
+# --- the day's rests are learned from shape, not names ----------------------
+# Four opaque apps and a steady day: the night is the day's longest quiet, and
+# its window is learned from where that quiet falls, never from an app's name.
+my @day_rows;
+for my $day (1 .. 14) {
+	for my $h ( 7 .. 21 ) {
+		for my $m ( 0, 30 ) { push @day_rows, row('alpha', JawnOSTest::ts(2026, 11, $day, $h, $m)); }
+	}
+	push @day_rows, row('delta', JawnOSTest::ts(2026, 11, $day, 22, 0));
+}
+my $learned = subs::clothesline_rest_episodes(\@day_rows, JawnOSTest::ts(2026, 11, 14, 23, 0),
+	window_days => 60);
+ok(scalar @{ $learned->{'rests'} } >= 12, 'a rest is found for each day the activity closes');
+ok(abs($learned->{'window'}{'start_hour'} - 22) < 1,
+	'the rest window starts where the longest quiet starts');
+ok(abs($learned->{'window'}{'stop_hour'} - 7) < 1,
+	'and ends where the next day opens');
+is(scalar @{ $learned->{'profiles'} }, 1, 'a steady day is one profile');
+
+# A short night (three hours) is still a rest: the floor is the shape, not six
+# hours. The wake day's steps stay close after it.
+my @short_rows;
+for my $day (1 .. 3) {
+	for my $h ( 12 .. 22 ) { push @short_rows, row('alpha', JawnOSTest::ts(2026, 11, $day, $h, 0)); }
+	for my $h ( 1 .. 12 ) { push @short_rows, row('beta', JawnOSTest::ts(2026, 11, $day + 1, $h, 0)); }
+}
+my $short = subs::clothesline_rest_episodes(\@short_rows, JawnOSTest::ts(2026, 11, 4, 23, 0),
+	window_days => 60);
+my ($short_rest) = grep { abs($_->{'length'} - (3 * 3600000)) < 60000 } @{ $short->{'rests'} };
+ok($short_rest, 'a three-hour night is still a rest');
+ok($short_rest && abs($short_rest->{'stop_hour'} - 1) < 1, 'and its wake is the day it opens');
+
+# A five-minute phone check in the night is a blip: the rest stays one night.
+my @blip_rows;
+for my $day (1 .. 2) {
+	for my $h ( 7 .. 21 ) {
+		for my $m ( 0, 30 ) { push @blip_rows, row('alpha', JawnOSTest::ts(2026, 11, $day, $h, $m)); }
+	}
+	push @blip_rows, row('delta', JawnOSTest::ts(2026, 11, $day, 22, 0));
+}
+push @blip_rows, row('alpha', JawnOSTest::ts(2026, 11, 1, 23, 30));
+push @blip_rows, row('beta',  JawnOSTest::ts(2026, 11, 1, 23, 35));
+my $blipped = subs::clothesline_rest_episodes(\@blip_rows, JawnOSTest::ts(2026, 11, 2, 13, 0),
+	window_days => 60);
+my ($blip_rest) = grep { abs($_->{'length'} - (9 * 3600000)) < 60000 } @{ $blipped->{'rests'} };
+ok($blip_rest, 'a night with a brief waking is still one nine-hour rest');
+ok($blip_rest && scalar @{ $blip_rest->{'blips'} }, 'and the waking is recorded as a blip');
+
+# Two shapes: a day shift and a night shift are two profiles, and the most
+# recent rest selects the one the person is living now.
+my @shift_rows;
+for my $day (1 .. 7) {
+	for my $h ( 6 .. 21 ) {
+		for my $m ( 0, 30 ) { push @shift_rows, row('alpha', JawnOSTest::ts(2026, 11, $day, $h, $m)); }
+	}
+	push @shift_rows, row('alpha', JawnOSTest::ts(2026, 11, $day, 22, 0));
+}
+for my $day (8 .. 14) {
+	for my $h ( 17 .. 23 ) { push @shift_rows, row('beta', JawnOSTest::ts(2026, 11, $day, $h, 0)); }
+	for my $h ( 0 .. 9 ) { push @shift_rows, row('beta', JawnOSTest::ts(2026, 11, $day + 1, $h, 0)); }
+}
+my $shifts = subs::clothesline_rest_episodes(\@shift_rows, JawnOSTest::ts(2026, 11, 15, 12, 0),
+	window_days => 60);
+cmp_ok(scalar @{ $shifts->{'profiles'} }, '>=', 2,
+	'a day shift and a night shift are at least two profiles (a transition day can be its own)');
+ok($shifts->{'profile'} && abs($shifts->{'profile'}{'start_hour'} - 9) < 2,
+	'the most recent rest selects the night-shift profile');
+
 done_testing();
+

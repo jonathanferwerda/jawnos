@@ -1651,6 +1651,146 @@ sub clothesline_day_index {
 	return int($noon / 86400);
 }
 
+# The day's rests, learned from activity alone. A rest is the quiet interval a
+# day keeps: the person stops, and starts again. Nothing here knows what the
+# person calls it - the shape is the lesson. The night window and the profiles
+# (a day shift and a night shift are two shapes) are learned from where those
+# intervals fall on the clock, always relative to the person's own day.
+#
+# A brief waking inside a rest (a phone check, a trip in the night) is absorbed:
+# a short run between two quiets is recorded as a blip and the night stays one
+# rest. A day's main rest is its longest quiet interval; the shorter ones are
+# naps or the pauses between the day's waves, and stay out of the rest set.
+#
+# The caller's clock is the house clock (clothesline_daily_hours adopts it); the
+# hours are only ever used to place a rest on the person's own day, never as a
+# gate on whether a rest happened.
+sub clothesline_rest_episodes {
+	my ($rows, $now, %opt) = @_;
+	$rows = eval { [ $rows->each ] } if ref $rows && ref $rows ne 'ARRAY';
+	$rows = [] unless ref $rows eq 'ARRAY';
+	$now = &rightNow() unless defined $now;
+	my $window_days = $opt{'window_days'} || 60;
+	my $brief = $opt{'brief'} || (30 * 60 * 1000);
+	my $rest_min = $opt{'rest_min'} || (90 * 60 * 1000);
+	my $radius = $opt{'radius'} || 3;
+	my $since = $now - ($window_days * 86400 * 1000);
+
+	my @act;
+	foreach my $r ( @{$rows} ) {
+		next unless ref $r eq 'HASH';
+		my $app = $r->{'app'};
+		my $ms = $r->{'timestamp'};
+		next unless defined $app && length $app && defined $ms && $ms =~ /^\d+(?:\.\d+)?$/ && $ms > 0;
+		my $origin = lc($r->{'source'} // '');
+		if ($origin ne 'press' && $origin ne 'nfc') { next if defined $r->{'source_uuid'} && length $r->{'source_uuid'}; }
+		my $type = lc($r->{'type'} || '');
+		next unless $type eq 'usual' || $type eq 'stop';
+		next if $ms < $since || $ms > $now;
+		push @act, 0 + $ms;
+	}
+	my $empty = { rests => [], profiles => [], profile => undef, window => undef, rest_min => $rest_min, brief => $brief };
+	return $empty unless @act;
+	@act = sort { $a <=> $b } @act;
+
+	# Runs: activity closer than a brief waking is one run. A short run between
+	# two quiets is a waking, not a run: it is kept as a blip on the rest.
+	my @runs;
+	foreach my $ms ( @act ) {
+		if (@runs && $ms - $runs[-1]{'to'} <= $brief) { $runs[-1]{'to'} = $ms; }
+		else { push @runs, { from => $ms, to => $ms, blips => [] }; }
+	}
+	my @kept;
+	foreach my $i ( 0 .. $#runs ) {
+		my $run = $runs[$i];
+		if ($i > 0 && $i < $#runs && ($run->{'to'} - $run->{'from'}) <= $brief
+			&& ($run->{'from'} - $runs[$i-1]{'to'}) >= $rest_min
+			&& ($runs[$i+1]{'from'} - $run->{'to'}) >= $rest_min) {
+			push @{ $kept[-1]{'blips'} }, [ $run->{'from'}, $run->{'to'} ];
+			next;
+		}
+		push @kept, { %{$run}, blips => [ @{$run->{'blips'}} ] };
+	}
+	@runs = @kept;
+	return $empty if @runs < 2;
+
+	# Quiet intervals between runs. A day's main rest is the longest one whose
+	# wake (the next run's first step) falls on that local day; the day it ends
+	# is the day it starts, so a night that crosses midnight still belongs to the
+	# morning it opens.
+	my %day_rest;
+	foreach my $i ( 1 .. $#runs ) {
+		my $start = $runs[$i-1]{'to'};
+		my $stop = $runs[$i]{'from'};
+		my $len = $stop - $start;
+		next if $len < $rest_min;
+		my $day = &clothesline_day_index($stop);
+		my $rest = { start => $start, stop => $stop, length => $len,
+			blips => [ @{ $runs[$i-1]{'blips'} } ] };
+		$day_rest{$day} = $rest if !defined $day_rest{$day} || $len > $day_rest{$day}{'length'};
+	}
+	my @rests = map { $day_rest{$_} } sort { $a <=> $b } keys %day_rest;
+	return $empty unless @rests;
+
+	my $pi = 4 * atan2(1, 1);
+	my $hour_of = sub { my $ms = shift; my @t = localtime(int($ms / 1000)); return $t[2] + $t[3] / 60; };
+	my $circ_mean = sub {
+		my @h = @_;
+		my ($s, $c) = (0, 0);
+		foreach my $h ( @h ) { my $a = $h / 24 * 2 * $pi; $s += sin($a); $c += cos($a); }
+		my $a = atan2($s / scalar(@h), $c / scalar(@h));
+		$a += 2 * $pi while $a < 0;
+		return ($a / (2 * $pi)) * 24;
+	};
+	foreach my $rest ( @rests ) {
+		$rest->{'start_hour'} = $hour_of->($rest->{'start'});
+		$rest->{'stop_hour'} = $hour_of->($rest->{'stop'});
+	}
+	my $window = {
+		start_hour => $circ_mean->(map { $_->{'start_hour'} } @rests),
+		stop_hour  => $circ_mean->(map { $_->{'stop_hour'} } @rests),
+		days       => scalar @rests,
+	};
+
+	# Profiles: a day shift and a night shift are two places on the clock. A rest
+	# joins the first profile whose means are within the radius; otherwise it
+	# starts one. The selected profile is the one of the most recent rest - the
+	# last day the person actually lived, not the calendar.
+	my @profiles;
+	my $circ_gap = sub {
+		my ($a, $b) = @_;
+		my $d = abs($a - $b); $d = 24 - $d if $d > 12; return $d;
+	};
+	foreach my $rest ( sort { $a->{'stop'} <=> $b->{'stop'} } @rests ) {
+		my $found;
+		foreach my $p ( @profiles ) {
+			next unless $circ_gap->($p->{'start_hour'}, $rest->{'start_hour'}) <= $radius;
+			next unless $circ_gap->($p->{'stop_hour'}, $rest->{'stop_hour'}) <= $radius;
+			$found = $p; last;
+		}
+		unless ($found) {
+			$found = { count => 0, starts => [], stops => [] };
+			push @profiles, $found;
+		}
+		$found->{'count'}++;
+		push @{$found->{'starts'}}, $rest->{'start_hour'};
+		push @{$found->{'stops'}}, $rest->{'stop_hour'};
+		$found->{'start_hour'} = $circ_mean->(@{$found->{'starts'}});
+		$found->{'stop_hour'} = $circ_mean->(@{$found->{'stops'}});
+		$found->{'last_stop'} = $rest->{'stop'};
+		$rest->{'profile'} = $found;
+	}
+	my $selected = $rests[-1]{'profile'};
+	return {
+		rests => \@rests,
+		profiles => \@profiles,
+		profile => $selected,
+		window => $window,
+		rest_min => $rest_min,
+		brief => $brief,
+	};
+}
+
 # Read the window's appointments into the routine the clothesline paints. Pure
 # but for the clock: the query is clothesline_daily_hours' job, so a test can
 # hand it rows and a moment and see the sequence, the days and the due flags.
