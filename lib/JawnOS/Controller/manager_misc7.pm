@@ -166,13 +166,17 @@ sub action_25444 {
 		}
 		$l->{'measures'} = eval { return decode_json $l->{'measures'} } || [];
 		# which device was with the person: the one whose fixes covered the most
-		# ground in this appointment. A tablet left at home moves a few metres; the
-		# phone carried on a walk covers the walk.
+		# ground in this appointment, or the two that shared it when the device
+		# changed mid-trip. A tablet left at home moves a few metres; the phone
+		# carried on a walk covers the walk.
 		my $carrier = &subs::carrier_device($continental);
+		my $carried = &subs::carrier_track($continental);
 		if ($carrier) {
+			my @names = map { $carrier_names->{$_} || substr($_, 0, 10) } @{ $carried->{'carriers'} || [] };
+			@names = ( $carrier_names->{ $carrier->{'signatorial'} } || substr( $carrier->{'signatorial'}, 0, 10 ) ) unless @names;
 			$l->{'carrier'} = {
 				signatorial => $carrier->{'signatorial'},
-				name => $carrier_names->{ $carrier->{'signatorial'} } || substr($carrier->{'signatorial'}, 0, 10),
+				name => join(', ', @names),
 				path => $carrier->{'metres'},
 				fixes => $carrier->{'fixes'},
 				devices => $carrier->{'devices'},
@@ -181,8 +185,10 @@ sub action_25444 {
 		# only the device that was with the person makes the track and its
 		# distance: the parked device's rows still exist (its own place and home
 		# plates keep running) but joining them in time order added a house-to-walk
-		# leg per fix, and the total read as kilometres the person never travelled
-		my $track = &subs::carrier_fixes($continental);
+		# leg per fix, and the total read as kilometres the person never travelled.
+		# Where the device with the person changed mid-trip the track is one leg
+		# each, so a dead battery costs the trip nothing.
+		my $track = $carried->{'fixes'};
 		my @p = grep { $_->{'name'} eq $l->{'type'} } @{$pseudonyms};
 		$l->{'total_distance'} = 0;
 		my $last_visitor;
@@ -243,6 +249,9 @@ sub action_25444 {
 
 			}
 		}
+		# the carrier line's own number is the track this section just summed, so a
+		# trip that changed devices reads as one trip rather than as one leg of it
+		$l->{'carrier'}->{'path'} = int( $l->{'total_distance'} * 1000 + 0.5 ) if $l->{'carrier'};
 		$l->{'pseudonym'} = $p[0];
 		if ($l->{'type'} eq 'website') {
 			$l->{'content'} = &subs::db_select('websites', [ 'internal_url' ], { timestamp => $l->{'timestamp'} })->{content}->{hash};

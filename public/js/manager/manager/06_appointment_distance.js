@@ -200,35 +200,30 @@ function appointmentDistMap(panel, provider) {
 	var points = [];
 	var fixes = data.points || [];
 	var home = data.home || {};
-	var carrier = (data.carrier && data.carrier.signatorial) || '';
 	var fixPoints = [];
 	fixes.forEach(function(p) {
 		if (!p || !p.latitude || !p.longitude) { return; }
-		fixPoints.push({ lat: +p.latitude, lon: +p.longitude, t: +p.timestamp || 0, dev: p.signatorial || '', colour: '#a0503f' });
+		fixPoints.push({ lat: +p.latitude, lon: +p.longitude, t: +p.timestamp || 0, colour: '#a0503f' });
 	});
-	// two devices can file fixes under one appointment (one at home, one driving).
-	// The house names the device that was with the person; only its fixes make the
-	// line, because the other one just sits there and jitters.
-	var linePoints = carrier ? fixPoints.filter(function(p) { return p.dev === carrier; }) : fixPoints;
-	var byDev = {};
-	linePoints.forEach(function(p) { (byDev[p.dev] = byDev[p.dev] || []).push(p); });
+	// The house sends the track itself: one device's fixes, or one leg each when
+	// the device with the person changed mid-trip (a dead phone, the tablet carried
+	// on). So the line is every point in the order they were taken - splitting it
+	// per device would leave a handover as two lines that never meet.
+	fixPoints.sort(function(a, b) { return a.t - b.t; });
+	var run = [];
+	fixPoints.forEach(function(p) {
+		var last = run.length ? run[run.length - 1] : null;
+		if (last && p.lat === last.lat && p.lon === last.lon) { return; }
+		run.push(p);
+	});
 	var lines = [];
-	$.each(byDev, function(dev, list) {
-		list.sort(function(a, b) { return a.t - b.t; });
-		var run = [];
-		$.each(list, function(i, p) {
-			var last = run.length ? run[run.length - 1] : null;
-			if (last && p.lat === last.lat && p.lon === last.lon) { return; }
-			run.push(p);
-		});
-		if (run.length < 2) { return; }
+	if (run.length > 1) {
 		var span = 0;
 		for (var i = 1; i < run.length; i++) {
 			if (typeof jawnosMarkerMetres === 'function') { span = Math.max(span, jawnosMarkerMetres(run[0], run[i])); }
 		}
-		if (span < 50) { return; }
-		lines.push({ colour: '#a0503f', points: run.map(function(p) { return { lat: p.lat, lon: p.lon }; }) });
-	});
+		if (span >= 50) { lines.push({ colour: '#a0503f', points: run.map(function(p) { return { lat: p.lat, lon: p.lon }; }) }); }
+	}
 	engine.setLines(lines);
 	fixPoints.forEach(function(p) { points.push({ lat: p.lat, lon: p.lon, colour: '#a0503f' }); });
 	if (home.latitude && home.longitude) {
@@ -237,7 +232,7 @@ function appointmentDistMap(panel, provider) {
 	engine.setPoints(points);
 	// frame the fixes themselves, so a home plate far away cannot shrink them to a
 	// dot; the home point still rides on the map when it is in view
-	var frame = linePoints.length ? linePoints : (fixPoints.length ? fixPoints : (home.latitude && home.longitude ? [{ lat: home.latitude, lon: home.longitude }] : []));
+	var frame = fixPoints.length ? fixPoints : (home.latitude && home.longitude ? [{ lat: home.latitude, lon: home.longitude }] : []);
 	if (frame.length) {
 		var lats = frame.map(function(p) { return p.lat; });
 		var lons = frame.map(function(p) { return p.lon; });

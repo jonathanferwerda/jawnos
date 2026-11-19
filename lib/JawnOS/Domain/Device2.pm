@@ -171,10 +171,10 @@ sub movement_choice {
 	} @movers;
 	if ( defined $win && $win ne $sig ) {
 		# another device is the one that went somewhere: this one files nothing
-		# while that one is still reporting. A recorder quiet for a quarter of an
-		# hour has left, and then this device may take the trip over - but only if
-		# it has gone somewhere too, which the test below answers.
-		return 'none' unless $now && ( $now - ( $last{$win} || 0 ) ) > 900000;
+		# while that one is still reporting. A recorder quiet for a while has left,
+		# and then this device may take the trip over - but only if it has gone
+		# somewhere too, which the test below answers.
+		return 'none' unless $now && ( $now - ( $last{$win} || 0 ) ) > &subs::movement_quiet_gap();
 	}
 	# This device's own answer: the incoming fix against the last fix it filed.
 	# A telephone in a pocket at home answers its GPS all evening and never

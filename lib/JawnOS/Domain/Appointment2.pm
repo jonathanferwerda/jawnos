@@ -730,6 +730,10 @@ sub evaluation_measures {
 # are spaced far apart still adds up. Ties fall to the device with more fixes,
 # then to its signatorial, so the answer does not change between reads.
 #
+# This names one device, for a label and for the record side's first question.
+# The track an activity's distance is built from can hand over mid-trip, so read
+# it through carrier_track, not through this answer.
+#
 #   my $carrier = &subs::carrier_device($fixes);
 #   # { signatorial, metres, fixes, devices } or undef
 sub carrier_device {
@@ -771,26 +775,107 @@ sub carrier_device {
 	};
 }
 
-# The fixes that make an activity's track, which is the carrier's alone once
-# more than one device has filed into the appointment. The other device's rows
-# are still stored - its own place and its home plates keep running - they are
-# just not part of this activity or of the distance it reports. Reading the
-# stored rows in time order instead joins home to walk to home, so every fix the
-# parked device filed adds a leg it never travelled (2026-11-02: a 37 km drive
-# read as 683 km). With one device the list is the list handed in, unchanged.
+# How long a device must be silent before the house says it has left the trip.
+# The record side hands the appointment over after the same gap, so the fixes it
+# then files are exactly the ones this side reads as the next leg.
+sub movement_quiet_gap {
+	return 900000; # a quarter of an hour, in milliseconds
+}
+
+# The fixes that make an activity's track, and the devices that made it. One
+# device normally carries the whole trip, but the device with the person can
+# change mid-trip - the phone's battery dies and the tablet carries on - and
+# then the track is that device's fixes up to where it stopped, followed by the
+# next moving device's once its own fixes begin. A device that is only standing
+# still never takes the trip over, so a tablet left in the house cannot stand in
+# for a phone that has gone quiet.
 #
-#   my $track = &subs::carrier_fixes($continental);
-#   # arrayref of the same rows, carrier's only when there are two devices
-sub carrier_fixes {
+# Reading the stored rows in time order without this joins home to walk to home,
+# so every fix the parked device filed adds a leg it never travelled (2026-11-02:
+# a 37 km drive read as 683 km).
+#
+#   my $track = &subs::carrier_track($continental);
+#   # { fixes => [ ...rows in time order... ], carriers => [ $sig, ... ] }
+sub carrier_track {
 	my ($fixes) = @_;
-	return [] unless ref $fixes;
-	# a route passes db_query(...)->hashes (an arrayref); a caller may pass a
-	# Mojo::Collection, and carrier_device takes both, so this door takes both too
-	my @list = ref $fixes eq 'ARRAY' ? @{$fixes} : eval { @{ $fixes->to_array } };
+	my @list;
+	if (ref $fixes eq 'ARRAY') { @list = @{$fixes}; }
+	elsif (ref $fixes) { @list = eval { @{ $fixes->to_array } }; }
+	# db_query(...)->hashes hands back a Mojo::Collection, a caller's own list is a
+	# plain arrayref; both shapes reach the same answer, as they do in carrier_device.
+	@list = grep { ref $_ eq 'HASH' } @list;
 	my $carrier = &carrier_device(\@list);
-	return \@list unless $carrier && ($carrier->{'devices'} || 0) > 1;
+	return { fixes => \@list, carriers => [] } unless $carrier && ($carrier->{'devices'} || 0) > 1;
+	my (%devs,%first,%last,%metres);
+	foreach my $f ( @list ) {
+		my $dev = defined $f->{'signatorial'} ? $f->{'signatorial'} : '';
+		my $ts = 0 + ( $f->{'timestamp'} || 0 );
+		push @{ $devs{$dev} }, $f;
+		$first{$dev} = $ts if !defined $first{$dev} || $ts < $first{$dev};
+		$last{$dev} = $ts if !defined $last{$dev} || $ts > $last{$dev};
+	}
+	my $furthest = 0;
+	foreach my $dev ( keys %devs ) {
+		my $one = &carrier_device( $devs{$dev} );
+		$metres{$dev} = $one ? $one->{'metres'} : 0;
+		$furthest = $metres{$dev} if $metres{$dev} > $furthest;
+	}
+	# A device was travelling only if it went somewhere: the jitter floor takes
+	# the shuffles out, a real share of the furthest device keeps a drifting one
+	# from counting, and the pace over its own span tells a walk from a parked
+	# device's creep. A session too young to judge is given the benefit of the
+	# doubt, as it is on the record side.
+	my %mover;
+	foreach my $dev ( keys %devs ) {
+		my $span = ( $last{$dev} || 0 ) - ( $first{$dev} || 0 );
+		my $pace = $span > 0 ? $metres{$dev} / ( $span / 1000 ) : 0; # metres per second
+		next unless $metres{$dev} >= 100 && $metres{$dev} >= $furthest * 0.25;
+		$mover{$dev} = 1 if $pace >= 0.55 || $span < 180000;
+	}
+	my $gap = &movement_quiet_gap();
+	my (@track,@carriers,@pending);
+	my ($current,$current_last);
+	foreach my $f ( sort { ( $a->{'timestamp'} || 0 ) <=> ( $b->{'timestamp'} || 0 ) } @list ) {
+		my $dev = defined $f->{'signatorial'} ? $f->{'signatorial'} : '';
+		my $ts = 0 + ( $f->{'timestamp'} || 0 );
+		unless (defined $current) {
+			# the trip starts with the first device that is actually going somewhere
+			next unless $mover{$dev};
+			$current = $dev;
+			$current_last = $ts;
+			push @carriers, $dev;
+			push @track, $f;
+			next;
+		}
+		if ($dev eq $current) {
+			# the carrier is back: what the other device filed meanwhile was a gap,
+			# not a leg, and nothing of it belongs in the trip
+			@pending = ();
+			$current_last = $ts;
+			push @track, $f;
+			next;
+		}
+		next unless $mover{$dev};
+		if (defined $current_last && $ts - $current_last > $gap) {
+			# the carrier has gone quiet: this device takes over, and the fixes it
+			# filed while the carrier was silent are the start of the new leg
+			push @track, @pending;
+			@pending = ();
+			$current = $dev;
+			$current_last = $ts;
+			push @carriers, $dev if !grep { $_ eq $dev } @carriers;
+			push @track, $f;
+			next;
+		}
+		push @pending, $f;
+	}
+	return { fixes => \@track, carriers => \@carriers } if scalar @track;
+	# nothing in view was travelling: the one device that filed the trip, as before
 	my $sig = defined $carrier->{'signatorial'} ? $carrier->{'signatorial'} : '';
-	return [ grep { ( defined $_->{'signatorial'} ? $_->{'signatorial'} : '' ) eq $sig } @list ];
+	return {
+		fixes => [ grep { ( defined $_->{'signatorial'} ? $_->{'signatorial'} : '' ) eq $sig } @list ],
+		carriers => [ $sig ],
+	};
 }
 
 # A device's signatorial as the name the house knows it by: the first label of

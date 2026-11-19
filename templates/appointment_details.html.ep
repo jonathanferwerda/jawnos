@@ -213,7 +213,7 @@
 						</select>
 						<% if ($l->{'carrier'}) { %>
 							<span class="appointment_dist_carrier" style="font-size:12px;opacity:.75;"
-								hint="<%= &subs::ui('The device that was with you. Only its fixes are joined into the line.') %>">
+								hint="<%= &subs::ui('The devices that were with you. Only their fixes are joined into the line.') %>">
 								<%= &subs::lang('common.with') %> <b><%= &subs::format_name($l->{'carrier'}->{'name'}) %></b>
 								<% if (($l->{'carrier'}->{'devices'} || 0) > 1) { %>
 									&middot; <%= &subs::lang('common.devices') %>: <%= $l->{'carrier'}->{'devices'} %>

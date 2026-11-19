@@ -544,8 +544,10 @@ sub action_33700 {
 
 	# One appointment can hold fixes from more than one device: a tablet left in
 	# the house files jittering rows while the phone carried on the walk files the
-	# walk. One track is drawn per appointment, from the device that covered the
-	# most ground, so the stationary device cannot zigzag it.
+	# walk. One track is drawn per appointment, and it is the track the carrier
+	# rule makes - the device that went somewhere, handing over to the next moving
+	# device when that one goes quiet - so the stationary device cannot zigzag it
+	# and a dead battery does not cut the trip in half.
 	my %travel_carrier;
 	{
 		my %by_appt;
@@ -554,8 +556,8 @@ sub action_33700 {
 			push @{$by_appt{ $sl->{'appointment_uuid'} }}, $sl if $sl->{'appointment_uuid'};
 		}
 		foreach my $appt ( keys %by_appt ) {
-			my $carrier = &subs::carrier_device($by_appt{$appt});
-			$travel_carrier{$appt} = $carrier->{'signatorial'} if $carrier;
+			my $track = &subs::carrier_track( $by_appt{$appt} );
+			$travel_carrier{$appt} = { map { $_->{'uuid'} => 1 } grep { $_->{'uuid'} } @{ $track->{'fixes'} } };
 		}
 	}
 
@@ -565,16 +567,14 @@ sub action_33700 {
 	$main_map->{'home_plate'}->{'app'} = $main_map->{'home_plate'}->{'legend'};
 
 	foreach my $sl (@{$locations}) {
-		# the device that was with the person on this appointment; the map draws
-		# its fixes as one track and ignores the others' jitter. The uuid was
-		# matched in the pre-pass above, before any two devices' rows were grouped.
-		# A row in an appointment is explicitly 0 or 1: the map must be able to tell
-		# "the other device" from "not part of a track at all", which a missing key
-		# cannot say.
+		# the fixes that make the track on this appointment; the map draws them as
+		# one line and ignores the others' jitter. The uuid was matched in the
+		# pre-pass above, before any two devices' rows were grouped. A row in an
+		# appointment is explicitly 0 or 1: the map must be able to tell "the other
+		# device" from "not part of a track at all", which a missing key cannot say.
 		if ($sl->{'appointment_uuid'}) {
-			my $carried = defined $travel_carrier{ $sl->{'appointment_uuid'} }
-				&& (defined $sl->{'signatorial'} ? $sl->{'signatorial'} : '') eq $travel_carrier{ $sl->{'appointment_uuid'} };
-			$sl->{'carrier'} = $carried ? 1 : 0;
+			my $set = $travel_carrier{ $sl->{'appointment_uuid'} };
+			$sl->{'carrier'} = ( $set && $sl->{'uuid'} && $set->{ $sl->{'uuid'} } ) ? 1 : 0;
 		}
 		$universal_settings->{$sl->{'app'}} = &subs::settings_grabber({ app => $sl->{'app'} }) unless $universal_settings->{$sl->{'app'}};
 		$sl->{'settings'} = $universal_settings->{$sl->{'app'}};

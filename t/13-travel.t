@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc7.pm
-# covers:    Which device was with the person, which one files the activity, and that the distance reads that device's fixes only; and how long a stopped home-plate visit stays resumable (three navigation intervals)
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part13.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Controller/manager_travel.pm
+# covers:    Which device was with the person, which one files the activity, the track the distance reads (including a handover mid-trip), and how long a stopped home-plate visit stays resumable (three navigation intervals)
 
 use strict;
 use warnings;
@@ -211,14 +211,14 @@ is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 20
 # reports. Reading every row in time order is what zigzags the line: home, walk,
 # home, walk, and a leg it never travelled between each pair.
 my @both = ( @tablet, @walk );
-my $track = &subs::carrier_fixes( \@both );
+my $track = &subs::carrier_track( \@both )->{'fixes'};
 is( scalar @{ $track }, scalar @walk, 'the carrier\'s fixes make the track' );
 is_deeply( [ sort keys %{ { map { $_->{'signatorial'} => 1 } @{$track} } } ], ['phone'],
 	'and none of the device left at home' );
-is( scalar @{ &subs::carrier_fixes( \@walk ) }, scalar @walk, 'one device: the list is handed back whole' );
-is_deeply( &subs::carrier_fixes( undef ), [], 'no rows is no track' );
-is_deeply( &subs::carrier_fixes( [] ), [], 'an empty appointment is no track' );
-is( scalar @{ &subs::carrier_fixes( Mojo::Collection->new( @both ) ) }, scalar @walk,
+is( scalar @{ &subs::carrier_track( \@walk )->{'fixes'} }, scalar @walk, 'one device: the list is handed back whole' );
+is_deeply( &subs::carrier_track( undef )->{'fixes'}, [], 'no rows is no track' );
+is_deeply( &subs::carrier_track( [] )->{'fixes'}, [], 'an empty appointment is no track' );
+is( scalar @{ &subs::carrier_track( Mojo::Collection->new( @both ) )->{'fixes'} }, scalar @walk,
 	'a route\'s collection is read the same way' );
 
 my $walk_metres = 0;
@@ -236,6 +236,65 @@ foreach my $f ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @both ) {
 cmp_ok( $walk_metres, '>', 800, 'the walk is measured' );
 cmp_ok( $walk_metres, '<', 1000, 'and measured once, not twice' );
 cmp_ok( $zigzag_metres, '>', 2 * $walk_metres, 'reading every row in time order is what zigzags it' );
+
+# ---------------------------------------- the device with you changes mid-trip
+# The phone records the first leg and then dies. The tablet, which was in the
+# bag, carries on. The track is one leg each: the carrier's fixes up to where it
+# stopped, then the next moving device's from where it took over.
+my @swap;
+for my $i ( 1 .. 5 ) {
+	push @swap, fix( $i * 120000, 'phone', 43.0000 + $i * 0.0025, -81 );
+}
+my $resumed_at = 5 * 120000 + 20 * 60000;
+for my $i ( 1 .. 5 ) {
+	push @swap, fix( $resumed_at + $i * 120000, 'tablet', 43.0125 + $i * 0.0025, -81 );
+}
+my $swap_track = &subs::carrier_track( \@swap );
+is_deeply( $swap_track->{'carriers'}, [ 'phone', 'tablet' ],
+	'a carrier silent for a quarter of an hour hands the trip to the moving device' );
+is( scalar @{ $swap_track->{'fixes'} }, 10, 'and both legs make the track' );
+is( $swap_track->{'fixes'}[0]->{'signatorial'}, 'phone', 'the leg that was recorded first leads' );
+is( $swap_track->{'fixes'}[-1]->{'signatorial'}, 'tablet', 'and the new carrier closes the trip' );
+
+# The tablet was left in the house when the phone died. It must not inherit the
+# trip: its drift is not a leg.
+my @died = (@walk);
+for my $i ( 1 .. 20 ) {
+	push @died, fix( 400000 + $i * 30000, 'tablet', 43.0024 + ( $i % 2 ? 0.00005 : -0.00005 ), -81.9419 );
+}
+my $died_track = &subs::carrier_track( \@died );
+is_deeply( $died_track->{'carriers'}, ['phone'], 'a parked device never inherits a trip from one that died' );
+is( scalar @{ $died_track->{'fixes'} }, scalar @walk, 'the track is the leg that was actually recorded' );
+
+# A short gap is not a handover: the carrier comes back, and what the other
+# device filed meanwhile was a gap, not a leg.
+my @blip = (
+	fix( 1000, 'phone', 43.0000, -81 ),
+	fix( 2000, 'phone', 43.0020, -81 ),
+	fix( 150000, 'tablet', 43.0200, -81 ),
+	fix( 250000, 'tablet', 43.0230, -81 ),
+	fix( 260000, 'phone', 43.0040, -81 ),
+	fix( 270000, 'phone', 43.0060, -81 ),
+);
+my $blip_track = &subs::carrier_track( \@blip );
+is_deeply( $blip_track->{'carriers'}, ['phone'], 'a carrier that comes back keeps its trip' );
+is( scalar @{ $blip_track->{'fixes'} }, 4, 'and the gap is not joined as a leg' );
+
+# Two devices carried together both move, but only one records: the trip does not
+# change hands just because the other one is also walking.
+my @convoy;
+for my $i ( 1 .. 5 ) {
+	push @convoy, fix( $i * 120000, 'phone', 43 + $i * 0.0020, -81 );
+	push @convoy, fix( $i * 120000 + 60000, 'tablet', 43 + $i * 0.0020, -81.0001 );
+}
+my $convoy_track = &subs::carrier_track( \@convoy );
+is_deeply( $convoy_track->{'carriers'}, ['phone'], 'two devices travelling together still make one track' );
+is( scalar @{ $convoy_track->{'fixes'} }, 5, 'and only the one that started makes it' );
+
+# One device needs no decision: every fix it filed is the track.
+my $one_track = &subs::carrier_track( \@walk );
+is( scalar @{ $one_track->{'fixes'} }, scalar @walk, 'one device: every fix is the track' );
+is_deeply( $one_track->{'carriers'}, [], 'and there is no handover to report' );
 
 # Every door that files a fix into an activity asks one question, so a door
 # added later cannot forget the rule. The answer is the device's own name, or
@@ -325,13 +384,26 @@ foreach my $door (
 	like( read_file("$root/$door"), qr/movement_records_here/, "$door asks the one-device rule" );
 }
 
-# The appointment's own distance and list read that carrier's track, so the
-# number beside the appointment is the trip and not the trip plus the house.
+# The appointment's own distance and list read the track carrier_track builds,
+# so the number beside the appointment is the trip and not the trip plus the
+# house - and a trip that changed devices is still one trip.
 my $detail_src = read_file("$root/lib/JawnOS/Controller/manager_misc7.pm");
-like( $detail_src, qr/my \$track = &subs::carrier_fixes\(\$continental\);/,
-	'the appointment distance reads the carrier\'s track' );
-like( $detail_src, qr/foreach my \$continent \( \@\{\$track\} \)/,
+like( $detail_src, qr/my \$carried = &subs::carrier_track\(\$continental\);/,
+	'the appointment distance reads the carrier track' );
+like( $detail_src, qr/my \$track = \$carried->\{'fixes'\};/,
 	'and every point and step comes from it' );
+like( $detail_src, qr/\@\{ \$carried->\{'carriers'\}/,
+	'and the carrier line names every device that carried it' );
+
+# The Travel map draws the same track, so a handover there is one line too.
+like( read_file("$root/lib/JawnOS/Controller/manager_travel.pm"),
+	qr/my \$track = &subs::carrier_track\( \$by_appt\{\$appt\} \);/,
+	'the travel map marks the track carrier_track builds' );
+
+# Both halves use one silence window, so the fixes the record side files after a
+# handover are exactly the ones the read side joins.
+like( read_file("$root/lib/JawnOS/Domain/Device2.pm"), qr/movement_quiet_gap/,
+	'the record side asks the shared silence window' );
 
 # The headless navigator is the path an app on a phone actually takes, and it
 # names the appointment it is filing for - not the machine's current place.
