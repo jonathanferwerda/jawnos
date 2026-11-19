@@ -1,11 +1,12 @@
 # tests-for: public/js/manager/manager/07_timeshift.js public/js/manager/windows/00_store.js public/js/manager/clothesline/01_timeline.js
 # covers:    a reload paints the last view before the first appointment_viewer
 #            answer, but only when it is honestly the same view: the request's
-#            inputs must still match, and a "now" view must be younger than the
-#            short TTL. An anchored view (time machine or timeshift) is not aged;
-#            a now view is re-centred through the drag path's own positions. A
-#            private place or grant and the desk never paint or write, the view
-#            rides the sealed windows store, and a server answer always wins.
+#            inputs must still match, and a "now" view must be younger than its
+#            own scope (5m scope -> five minutes, 10m -> ten, capped); an
+#            anchored view (time machine or timeshift) is not aged; a now view
+#            is re-centred through the drag path's own positions. A private place
+#            or grant and the desk never paint or write, the view rides the sealed
+#            windows store, and a server answer always wins.
 
 use strict;
 use warnings;
@@ -25,8 +26,12 @@ my $timeline  = js_source('public/js/manager/clothesline/01_timeline.js');
 # --- the record and the freshness policy ------------------------------------
 like($timeshift, qr/var JAWNOS_TIMELINE_CACHE_IDENTITY = 'timeline_view';/,
 	'the view has a reserved identity in the one sealed store');
-like($timeshift, qr/var JAWNOS_TIMELINE_CACHE_TTL = 600000;/,
-	'a now view is worth ten minutes, and no longer');
+like($timeshift, qr/var JAWNOS_TIMELINE_CACHE_TTL_FLOOR = 60000;/,
+	'a scope shorter than a minute still gets a minute');
+like($timeshift, qr/var JAWNOS_TIMELINE_CACHE_TTL_CAP = 600000;/,
+	'and a long scope is capped at ten');
+like($timeshift, qr/function jawnosTimelineCacheTTL\(record\)/,
+	'the TTL is the view\'s own half-window');
 like($timeshift, qr/var JAWNOS_TIMELINE_CACHE_MAX_BYTES = 4000000;/,
 	'one view, with a ceiling on what is worth writing');
 like($timeshift, qr/var JAWNOS_TIMELINE_CACHE_SAVE_WAIT = 2000;/,
@@ -45,8 +50,8 @@ like($timeshift, qr/function jawnosTimelineCacheEligible\(record, data, now\)/,
 	'eligibility joins both halves of the rule');
 like($timeshift, qr/if \(jawnosTimelineCacheAnchored\(data\)\) \{ return true; \}/,
 	'an anchored view is not aged');
-like($timeshift, qr/return age <= JAWNOS_TIMELINE_CACHE_TTL;/,
-	'a now view is held to the TTL');
+like($timeshift, qr/return age <= jawnosTimelineCacheTTL\(record\);/,
+	'a now view is held to its scope');
 like($timeshift, qr/if \(age < 0\) \{ age = 0; \}/,
 	'a clock that stepped back does not make a view look newer than the page');
 
@@ -172,7 +177,7 @@ check('a timeshift pins the view', anchored({ time_machine: '', timeshift: '30m'
 check('a negative timeshift too', anchored({ time_machine: '', timeshift: '-3h' }) === true);
 
 // --- eligibility ------------------------------------------------------------
-const view = { appts: { __specs: { timestamp: 1000, start: 0, end: 2000 } } };
+const view = { appts: { __specs: { timestamp: 1000000, start: 100000, end: 1900000 } } };
 const record = { view: view, sig: sig, fetched_at: 1000000 };
 check('no record paints nothing', eligible(null, base, 1000000) === false);
 check('a view with no specs paints nothing', eligible({ view: { appts: {} }, sig: sig, fetched_at: 1000000 }, base, 1000000) === false);
@@ -181,6 +186,20 @@ check('no remembered fetch time is refused', eligible({ view: view, sig: sig }, 
 check('a now view inside the TTL paints', eligible(record, base, 1000000 + 600000) === true);
 check('one millisecond past the TTL does not', eligible(record, base, 1000000 + 600001) === false);
 check('a clock that stepped back still paints', eligible(record, base, 999000) === true);
+// The scope is the view's own half-window: a 5m scope reaches 5m from the
+// centre, a 10m scope 10m. The base view's 15m half is capped at ten, which is
+// why the checks above still sit at ten minutes.
+const five = { appts: { __specs: { timestamp: 1000000, start: 700000, end: 1300000 } } };
+const five_record = { view: five, sig: sig, fetched_at: 1000000 };
+check('a 5m scope paints on its own five minutes', eligible(five_record, base, 1000000 + 300000) === true);
+check('and not a millisecond more', eligible(five_record, base, 1000000 + 300001) === false);
+const ten = { appts: { __specs: { timestamp: 1000000, start: 400000, end: 1600000 } } };
+const ten_record = { view: ten, sig: sig, fetched_at: 1000000 };
+check('a 10m scope gets ten minutes', eligible(ten_record, base, 1000000 + 600000) === true);
+check('but not eleven', eligible(ten_record, base, 1000000 + 600001) === false);
+const hour = { appts: { __specs: { timestamp: 1000000, start: -2600000, end: 4600000 } } };
+const hour_record = { view: hour, sig: sig, fetched_at: 1000000 };
+check('an hour-long scope is capped at ten', eligible(hour_record, base, 1000000 + 600001) === false);
 
 const pinned = Object.assign({}, base, { time_machine: '2024-03-01 10:00' });
 const pinned_record = { view: view, sig: signature(pinned), fetched_at: 1000000 };

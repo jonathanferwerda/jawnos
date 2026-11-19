@@ -269,14 +269,17 @@ function deloreanBringer() {
 // whose centre is pinned is not aged at all, because its rows cannot have
 // moved. See jawnosTimelineCacheEligible().
 var JAWNOS_TIMELINE_CACHE_IDENTITY = 'timeline_view';
-// Ten minutes. A now view is what a person works from - a running appointment,
-// the hour either side - and those rows move inside that. Painting an older one
-// would show work in a place it has left; the skeleton for the few hundred
-// milliseconds of a fetch is the cheaper truth. An anchored view is not aged:
-// the time machine names a moment and a timeshift is a distance from the
-// anchor, so the same inputs describe the same rows however long the page was
-// away. The fresh response replaces either one within the poll.
-var JAWNOS_TIMELINE_CACHE_TTL = 600000;
+// The TTL is the view's own scope, not a fixed number: time_span('5m') puts the
+// centre five minutes from the left edge, and the window the person sees is twice
+// that. A view older than its own half has less than half of the current window
+// in it, so a phone's 5m scope is held to five minutes and the laptop's 10m scope
+// to ten. The floor keeps a very small scope from disabling the cache; the cap
+// keeps an hour-long scope from painting an hour-old canvas. An anchored view is
+// not aged at all: the time machine names a moment and a timeshift is a distance
+// from the anchor, so the same inputs describe the same rows however long the
+// page was away. The fresh response replaces either one within the poll.
+var JAWNOS_TIMELINE_CACHE_TTL_FLOOR = 60000;
+var JAWNOS_TIMELINE_CACHE_TTL_CAP = 600000;
 // One view is all that is kept; a payload past this is not worth the write or
 // the room. The ordinary timeline is tens of kilobytes and a full day a few
 // hundred, so four megabytes is a view no desk should need to restore.
@@ -321,6 +324,24 @@ function jawnosTimelineCacheAnchored(data) {
 	return isFinite(value) && value !== 0;
 }
 
+// The view's own half-window: how long its scope reaches from the centre to the
+// left edge. A 5m scope is 300000, a 10m one 600000; anything without a usable
+// half falls back to the cap, which is the old ten-minute rule.
+function jawnosTimelineCacheTTL(record) {
+	var specs = record && record['view'] && record['view']['appts'] && record['view']['appts']['__specs'];
+	if (specs) {
+		var centre = Number(specs['timestamp']);
+		var start = Number(specs['start']);
+		if (isFinite(centre) && isFinite(start)) {
+			var half = Math.abs(centre - start);
+			if (isFinite(half) && half > 0) {
+				return Math.min(Math.max(half, JAWNOS_TIMELINE_CACHE_TTL_FLOOR), JAWNOS_TIMELINE_CACHE_TTL_CAP);
+			}
+		}
+	}
+	return JAWNOS_TIMELINE_CACHE_TTL_CAP;
+}
+
 // The freshness rule in one place: a stored view paints only when the inputs
 // still describe it (the signature), and then only if it is anchored - so its
 // rows cannot have moved - or it is a now view younger than the short TTL.
@@ -335,7 +356,7 @@ function jawnosTimelineCacheEligible(record, data, now) {
 	// a clock that stepped back must not make the cache look newer than the
 	// page; treat it as just fetched rather than refusing it outright
 	if (age < 0) { age = 0; }
-	return age <= JAWNOS_TIMELINE_CACHE_TTL;
+	return age <= jawnosTimelineCacheTTL(record);
 }
 
 // A now view's specs name the moment it was fetched. The rows are placed from
