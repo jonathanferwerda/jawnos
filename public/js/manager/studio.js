@@ -177,6 +177,7 @@ function studioChannelEngine(ch) {
 		treble: ctx.createBiquadFilter(),
 		recGain: ctx.createGain(),
 		recAnalyser: ctx.createAnalyser(),
+		meterAnalyser: ctx.createAnalyser(),
 		recDest: ctx.createMediaStreamDestination(),
 		playBus: ctx.createGain(),
 		outIn: ctx.createGain(),
@@ -194,11 +195,15 @@ function studioChannelEngine(ch) {
 	c.treble.type = 'highshelf'; c.treble.frequency.value = 3500;
 	c.recAnalyser.fftSize = 2048;
 	c.recData = new Float32Array(c.recAnalyser.fftSize);
+	c.meterAnalyser.fftSize = 1024;
+	c.meterAnalyser.smoothingTimeConstant = 0.6;
+	c.meterData = new Float32Array(c.meterAnalyser.fftSize);
 	// the recorded stream follows the configured channel count
 	try { c.recDest.channelCount = studioSettingNumber('audio_channels', 2) || 2; } catch (e) {}
 	c.trim.connect(c.bass).connect(c.mid).connect(c.treble);
 	c.recGain.connect(c.recAnalyser);
 	c.recGain.connect(c.recDest);
+	c.recGain.connect(c.meterAnalyser);
 	// takes play through the channel fader, then the output chain (the pedals
 	// after the take), then the pan into the master bus. A new channel's chain
 	// is empty, so the rebuild below is the wire outIn -> playPan and a take
@@ -207,6 +212,7 @@ function studioChannelEngine(ch) {
 	studioAudio.channels[ch] = c;
 	studioRebuildOutputs(ch);
 	c.playPan.connect(studioAudio.master);
+	c.playPan.connect(c.meterAnalyser);
 	// live monitoring taps the same post-pedal signal the recorder gets, so you
 	// hear exactly what is being captured; it is muted until the song asks
 	c.monGain.gain.value = 0;

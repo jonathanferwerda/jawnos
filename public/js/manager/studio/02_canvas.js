@@ -138,7 +138,6 @@ function studioDrawChannel(ch) {
 	ctx.fillStyle = 'rgba(255,255,255,0.18)';
 	ctx.fillRect(0, 0, w, h);
 
-	var duration = studioTimelineDuration();
 	var m = mixer[ch] || {};
 	var co = studioAudio.channels[ch];
 	// a track's colour dresses its clips, so the lane and the panel edge agree
@@ -163,8 +162,8 @@ function studioDrawChannel(ch) {
 	var region = studioVisibleRegion();
 	var region_x = 0, region_w = 0;
 	if (region && region.end > region.start) {
-		region_x = (region.start / duration) * w;
-		region_w = Math.max(2, ((region.end - region.start) / duration) * w);
+		region_x = studioTimelineXAt(canvas, region.start);
+		region_w = Math.max(2, studioTimelineWidth(canvas, region.end - region.start));
 		ctx.fillStyle = 'rgba(255,255,255,0.22)';
 		ctx.fillRect(region_x, 0, region_w, h);
 	}
@@ -175,8 +174,8 @@ function studioDrawChannel(ch) {
 		orderedDraw.forEach(function (take, tIndex) {
 			if (!take) { return; }
 			studioEnsureWaveform(ch, take);
-			var x = (take.startTime / duration) * w;
-			var tw = Math.max(2, ((take.duration || 0) / duration) * w);
+			var x = studioTimelineXAt(canvas, take.startTime);
+			var tw = Math.max(2, studioTimelineWidth(canvas, take.duration || 0));
 			var selected = studioSelectedTake && studioSelectedTake.take === take;
 			var isVideo = take.encoding && take.encoding.indexOf('video') !== -1;
 			ctx.fillStyle = take.status == 'recording' ? 'rgba(220,0,0,0.55)' : (isVideo ? 'rgba(120,60,190,0.5)' : fill);
@@ -201,7 +200,10 @@ function studioDrawChannel(ch) {
 				ctx.strokeStyle = 'rgba(255,255,255,0.85)';
 				ctx.lineWidth = 1;
 				ctx.beginPath();
-				for (var b = 0; b < tw; b++) {
+				// only the peaks the window can show: a zoomed take is many lanes wide
+				var b0 = Math.max(0, Math.floor(-x));
+				var b1 = Math.min(tw, Math.ceil(w - x));
+				for (var b = b0; b < b1; b++) {
 					var idx = Math.min(peaks.length - 1, Math.floor((b / tw) * peaks.length));
 					var amp = peaks[idx] * (h * 0.42);
 					ctx.moveTo(x + b, mid - amp);
@@ -217,8 +219,8 @@ function studioDrawChannel(ch) {
 				var prev = orderedDraw[tIndex - 1];
 				var next = orderedDraw[tIndex + 1];
 				var shade = function (from, to) {
-					var fx = (from / duration) * w;
-					var tx = (to / duration) * w;
+					var fx = studioTimelineXAt(canvas, from);
+					var tx = studioTimelineXAt(canvas, to);
 					ctx.fillStyle = 'rgba(255,220,40,0.30)';
 					ctx.fillRect(fx, 3, Math.max(1, tx - fx), h - 6);
 				};
@@ -277,20 +279,37 @@ function studioDrawChannel(ch) {
 	}
 
 	if (mixer['time']['position'] > 0) {
-		var px = (mixer['time']['position'] / duration) * w;
-		ctx.strokeStyle = 'black';
-		ctx.lineWidth = 2;
-		ctx.beginPath();
-		ctx.moveTo(px, 0);
-		ctx.lineTo(px, h);
-		ctx.stroke();
+		// the playhead only shows while it is inside the visible window
+		var px = studioTimelineXAt(canvas, mixer['time']['position']);
+		if (px >= 0 && px <= w) {
+			ctx.strokeStyle = 'black';
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			ctx.moveTo(px, 0);
+			ctx.lineTo(px, h);
+			ctx.stroke();
+		}
 	}
 }
 
 function studioDrawMetre(ch) {
-	var canvas = document.getElementById('channel_volume_metre_' + ch);
 	var co = studioAudio.channels[ch];
-	if (!canvas || !co || !co.source) { return; }
+	if (!co) { return; }
+	// The strip's ten LEDs follow the channel meter: the live input while it is
+	// heard, the playback bus while a take plays.
+	if (co.meterAnalyser && co.meterData) {
+		co.meterAnalyser.getFloatTimeDomainData(co.meterData);
+		var msum = 0;
+		for (var m = 0; m < co.meterData.length; m++) { msum += co.meterData[m] * co.meterData[m]; }
+		var mlevel = Math.min(1, Math.sqrt(msum / co.meterData.length) * 3);
+		var lit = Math.round(mlevel * 10);
+		$('.studio_strip_meter[channel="' + ch + '"] .studio_strip_led').each(function () {
+			var index = parseInt($(this).attr('data-led'), 10) || 0;
+			$(this).toggleClass('lit', index < lit);
+		});
+	}
+	var canvas = document.getElementById('channel_volume_metre_' + ch);
+	if (!canvas || !co.source) { return; }
 	studioFitCanvas(canvas);
 	var ctx = canvas.getContext('2d');
 	var w = canvas.width, h = canvas.height;
@@ -310,6 +329,75 @@ function studioDrawMetre(ch) {
 function studioTimelineDuration() {
 	var duration = mixer['time'] && mixer['time']['duration'];
 	return (duration > 0) ? duration : 60;
+}
+
+// ---- the visible window -----------------------------------------------------
+// The lanes and the ruler can show less than the whole song. One zoom factor
+// (1..32) and the second the window starts on describe it; every time/pixel
+// mapping reads the view, so a clip, a tick and a click agree at any zoom.
+var studioTimelineZoom = 1;
+var studioTimelineStart = 0;
+var STUDIO_TIMELINE_ZOOM_MAX = 32;
+
+function studioTimelineView() {
+	var duration = studioTimelineDuration();
+	var zoom = studioTimelineZoom || 1;
+	if (!(zoom >= 1)) { zoom = 1; }
+	if (zoom > STUDIO_TIMELINE_ZOOM_MAX) { zoom = STUDIO_TIMELINE_ZOOM_MAX; }
+	var span = duration / zoom;
+	// a shorter song (or a take that shrank it) can leave the window past the end
+	var start = Math.max(0, Math.min(studioTimelineStart || 0, duration - span));
+	return { start: start, span: span, end: start + span, duration: duration, zoom: zoom };
+}
+
+// Put the window back inside the song. Clamping here means a duration change
+// cannot leave the stored start out of range for the next zoom step.
+function studioTimelineSetStart(seconds) {
+	var view = studioTimelineView();
+	studioTimelineStart = Math.max(0, Math.min(seconds || 0, view.duration - view.span));
+	return studioTimelineStart;
+}
+
+// A new song starts on the whole timeline.
+function studioTimelineReset() {
+	studioTimelineZoom = 1;
+	studioTimelineStart = 0;
+}
+
+// The visible window on the whole song's own scale: the zoom stretches it wide
+// and the start shifts it left. Lanes and the ruler are the whole song's width,
+// so this rect is all the geometry a click needs.
+function studioTimelineWindowRect(canvas) {
+	var rect = canvas.getBoundingClientRect();
+	var view = studioTimelineView();
+	var width = rect.width * (view.duration / view.span);
+	return { left: rect.left - ((view.start / view.span) * rect.width), width: width };
+}
+
+// The song time under a canvas x: the window rect carries the view, so one
+// multiplication reads the visible window out of the song's own scale.
+function studioTimelineTimeAt(canvas, clientX) {
+	var rect = studioTimelineWindowRect(canvas);
+	if (!rect.width) { return studioTimelineView().start; }
+	return ((clientX - rect.left) / rect.width) * studioTimelineDuration();
+}
+
+// The inverse: a song time back to a lane x. It is the same window, so it can
+// measure straight from the view's start and span.
+function studioTimelineXAt(canvas, seconds) {
+	var rect = canvas.getBoundingClientRect();
+	var view = studioTimelineView();
+	if (!rect.width || !view.span) { return 0; }
+	return (((seconds || 0) - view.start) / view.span) * rect.width;
+}
+
+// A duration as lane pixels: the inverse above measures from the window's
+// start, this one measures a length.
+function studioTimelineWidth(canvas, seconds) {
+	var rect = canvas.getBoundingClientRect();
+	var view = studioTimelineView();
+	if (!rect.width || !view.span) { return 0; }
+	return ((seconds || 0) / view.span) * rect.width;
 }
 
 // Seek from any transport state. A playing transport measures its position on
@@ -342,7 +430,7 @@ function studioDrawRuler() {
 	var w = canvas.width, h = canvas.height;
 	ctx.clearRect(0, 0, w, h);
 
-	var duration = studioTimelineDuration();
+	var view = studioTimelineView();
 	var style = window.getComputedStyle ? window.getComputedStyle(canvas) : null;
 	var themed = function (name, fallback) {
 		var value = style ? String(style.getPropertyValue(name) || '').trim() : '';
@@ -361,11 +449,12 @@ function studioDrawRuler() {
 		var ladder = [0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
 		var step = ladder[ladder.length - 1];
 		for (var s = 0; s < ladder.length; s++) {
-			if ((ladder[s] / duration) * w >= 46) { step = ladder[s]; break; }
+			if ((ladder[s] / view.span) * w >= 46) { step = ladder[s]; break; }
 		}
 		var minor = step / 5;
-		for (var mi = 0; mi * minor <= duration + 1e-9; mi++) {
-			var mx = ((mi * minor) / duration) * w;
+		// the window is absolute time, so the labels are too
+		for (var mi = Math.ceil(view.start / minor); mi * minor <= view.end + 1e-9; mi++) {
+			var mx = studioTimelineXAt(canvas, mi * minor);
 			var major = (mi % 5) === 0;
 			ctx.strokeStyle = line;
 			ctx.beginPath();
@@ -382,14 +471,14 @@ function studioDrawRuler() {
 		// bars and beats: bar lines taller and labelled, beats shorter
 		var bar = studioBarSeconds();
 		var beat = studioBeatSeconds();
-		var pxBar = (bar / duration) * w;
-		var pxBeat = (beat / duration) * w;
+		var pxBar = studioTimelineWidth(canvas, bar);
+		var pxBeat = studioTimelineWidth(canvas, beat);
 		var every = 1;
 		var spans = [2, 4, 8, 16, 32, 64];
 		for (var e = 0; e < spans.length && (pxBar * every) < 46; e++) { every = spans[e]; }
 		if (pxBeat >= 5) {
-			for (var bi = 0; bi * beat <= duration + 1e-9; bi++) {
-				var bx = ((bi * beat) / duration) * w;
+			for (var bi = Math.ceil(view.start / beat); bi * beat <= view.end + 1e-9; bi++) {
+				var bx = studioTimelineXAt(canvas, bi * beat);
 				ctx.strokeStyle = line;
 				ctx.beginPath();
 				ctx.moveTo(bx + 0.5, h - 5);
@@ -397,8 +486,8 @@ function studioDrawRuler() {
 				ctx.stroke();
 			}
 		}
-		for (var ni = 0; ni * bar <= duration + 1e-9; ni++) {
-			var barx = ((ni * bar) / duration) * w;
+		for (var ni = Math.ceil(view.start / bar); ni * bar <= view.end + 1e-9; ni++) {
+			var barx = studioTimelineXAt(canvas, ni * bar);
 			ctx.strokeStyle = line;
 			ctx.beginPath();
 			ctx.moveTo(barx + 0.5, h - 10);
@@ -413,7 +502,7 @@ function studioDrawRuler() {
 	}
 
 	var position = (mixer['time'] && mixer['time']['position']) || 0;
-	var px = (position / duration) * w;
+	var px = studioTimelineXAt(canvas, position);
 	if (px >= 0 && px <= w) {
 		ctx.strokeStyle = accent;
 		ctx.lineWidth = 2;
@@ -433,7 +522,9 @@ function studioDrawRuler() {
 
 // A delegated handler: the ruler is markup the window can rebuild under us.
 $(document).on('click', '#studio_ruler_canvas', function (e) {
-	var rect = this.getBoundingClientRect();
+	// the ruler is the whole song's scale; the window rect maps the click through
+	// the zoomed window and studioSeek then clamps to the whole duration
+	var rect = studioTimelineWindowRect(this);
 	if (!rect.width) { return; }
 	studioSeek(((e.clientX - rect.left) / rect.width) * studioTimelineDuration());
 });
@@ -449,6 +540,81 @@ function studioDrawTracks() {
 		studioDrawMetre(ch);
 	});
 }
+
+// ---- zooming the timeline ---------------------------------------------------
+// Ctrl+wheel (a trackpad pinch arrives the same way in Chromium) narrows the
+// window to less of the song; a plain wheel is still the panel's vertical
+// scroll. The zoom is anchored: the time under the pointer stays under it.
+
+// The lane under the pointer, or the ruler itself. Every lane shares the
+// ruler's horizontal scale, so any lane can measure a point in the viewer.
+function studioTimelineCanvasFor(target) {
+	if (!target || !target.closest) { return null; }
+	var ruler = target.closest('#studio_ruler_canvas');
+	if (ruler) { return ruler; }
+	if (!target.closest('#studio_viewer')) { return null; }
+	return target.closest('canvas.track') || document.querySelector('#studio_viewer canvas.track');
+}
+
+// Zoom by `factor` about the canvas point, keeping that point's time fixed.
+function studioTimelineZoomAt(canvas, clientX, factor) {
+	var view = studioTimelineView();
+	var time = studioTimelineTimeAt(canvas, clientX);
+	var rect = canvas.getBoundingClientRect();
+	studioTimelineZoom = Math.max(1, Math.min(STUDIO_TIMELINE_ZOOM_MAX, view.zoom * factor));
+	// the point's fraction of the window is unchanged; only its span is narrower
+	var frac = rect.width ? (clientX - rect.left) / rect.width : 0.5;
+	studioTimelineSetStart(time - (frac * (view.duration / studioTimelineZoom)));
+	studioDrawTracks();
+}
+
+function studioTimelineWheel(event) {
+	var canvas = studioTimelineCanvasFor(event.target);
+	if (!canvas) { return; }
+	studioTimelineZoomAt(canvas, event.clientX, Math.exp(-event.deltaY * 0.0015));
+	event.preventDefault();
+}
+
+// A pinch arrives as gesture events on some platforms and as a ctrl+wheel on
+// Chromium; whichever arrives first owns the zoom, so the other cannot apply
+// the same pinch twice.
+var studioTimelineGestureActive = false;
+var studioTimelineGestureScale = 1;
+
+// Bound natively in the capture phase and non-passively: the WebUI's own
+// ctrl+wheel handling must not run before the timeline has taken the event, and
+// only a listener that is not passive can cancel the page zoom.
+document.addEventListener('wheel', function (event) {
+	if (!event.ctrlKey && !event.metaKey) { return; }
+	if (studioTimelineGestureActive) { return; }
+	if (!studioTimelineCanvasFor(event.target)) { return; }
+	studioTimelineWheel(event);
+}, { capture: true, passive: false });
+
+document.addEventListener('gesturestart', function (event) {
+	if (!studioTimelineCanvasFor(event.target)) { return; }
+	studioTimelineGestureActive = true;
+	studioTimelineGestureScale = 1;
+	event.preventDefault();
+}, { capture: true, passive: false });
+
+// event.scale is cumulative since the gesture began, so only the change since
+// the last event is this step's factor; the centre stays where it started.
+document.addEventListener('gesturechange', function (event) {
+	if (!studioTimelineGestureActive) { return; }
+	var canvas = studioTimelineCanvasFor(event.target);
+	if (!canvas) { return; }
+	var scale = event.scale || 1;
+	var factor = scale / (studioTimelineGestureScale || 1);
+	studioTimelineGestureScale = scale;
+	if (factor !== 1) { studioTimelineZoomAt(canvas, event.clientX, factor); }
+	event.preventDefault();
+}, { capture: true, passive: false });
+
+document.addEventListener('gestureend', function () {
+	studioTimelineGestureActive = false;
+	studioTimelineGestureScale = 1;
+}, { capture: true, passive: false });
 
 function studioUpdateFxBadges() {
 	$.each(studioAudio.channels, function (ch, c) {

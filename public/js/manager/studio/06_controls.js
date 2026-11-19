@@ -389,6 +389,8 @@ function studioLoad(uuid) {
 			$('#studio').attr('uuid', response['uuid']);
 
 			mixer['time']['duration'] = studioKnobNumber(response.song && response.song.duration, 0) || 0;
+			// a different song opens on its whole timeline, not the old song's zoom
+			studioTimelineReset();
 
 			// a loaded song owns its track list; build any rows it needs and drop
 			// the ones the previous song left behind

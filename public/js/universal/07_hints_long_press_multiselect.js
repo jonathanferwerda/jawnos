@@ -523,3 +523,12 @@ document.addEventListener('scroll', function (e) {
 	});
 })();
 
+
+// ---- ctrl+wheel belongs to the app ----------------------------------------
+// The WebUI itself never zooms: a ctrl/meta wheel is the page's to cancel, and
+// cancelling only the default keeps the event travelling, so Studio's timeline
+// zoom and Marker's wheel handler still see it. No stopPropagation.
+document.addEventListener('wheel', function (event) {
+	if (!event.ctrlKey && !event.metaKey) { return; }
+	event.preventDefault();
+}, { passive: false });

@@ -87,8 +87,8 @@ like($knobs, qr/studioApplyPedals\(\);[\s\S]*studioRackRenderAll\(\);/,
 like($rack, qr/'\.studio_pedal_model'/, 'the shelf model dropdown is wired to the rack');
 
 # --- the rack: add, order, bypass, remove ----------------------------------
-like($markup, qr/id="studio_palette_effect"/, 'the palette has an effect list');
-like($markup, qr/id="studio_palette_add"/, 'the palette has an Add button');
+unlike($markup, qr/id="studio_effect_palette"/, 'the old layout-bar effect palette is gone');
+like($markup, qr/id="studio_add_track"[\s\S]{0,300}?Add track/, 'Add track sits where the palette was');
 like($markup, qr/class="studio_channel_rack"[^>]*channel="<%= \$ch %>"/,
 	'every track panel has its own rack');
 like($markup, qr/id="studio_rack_template"/, 'the rack row template is in the markup');
@@ -253,9 +253,6 @@ ok(defined $controls, 'the studio help topic was found');
 $controls = '' unless defined $controls;
 $controls =~ s/\\'/'/g;
 for my $label (
-	'Choose an effect to add to this track\'s rack',
-	'Add the chosen effect to this track\'s rack',
-	'The track the palette adds to',
 	'The effects in this track\'s chain, in order',
 	'Drag to reorder this effect',
 	'Bypass this effect without removing it',
@@ -270,6 +267,7 @@ for my $label (
 ) {
 	like($controls // '', qr/\Q$label\E/, "the help topic's controls list names $label");
 }
+like($help, qr/Drag a pedal from the pedalboard onto the track/, 'the help explains adding from the pedalboard');
 like($help, qr/Reverb has five models/, 'the help explains the reverb models');
 like($help, qr/footswitch bypasses the insert/, 'the help explains bypassing');
 like($help, qr/Drag a row by its handle/, 'the help explains reordering');

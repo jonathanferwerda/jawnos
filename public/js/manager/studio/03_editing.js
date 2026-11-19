@@ -163,10 +163,12 @@ function studioCanvasHit(canvas, clientX) {
 	if (!ch) { return null; }
 	var rect = canvas.getBoundingClientRect();
 	if (!rect.width) { return null; }
-	var duration = mixer['time']['duration'] > 0 ? mixer['time']['duration'] : 1;
+	var view = studioTimelineView();
 	var x = clientX - rect.left;
-	var t = (x / rect.width) * duration;
-	var tpp = duration / rect.width;
+	// the take's time and its pixels come from the same visible window, so a
+	// zoomed lane still selects, moves and trims the clip under the pointer
+	var t = studioTimelineTimeAt(canvas, clientX);
+	var tpp = view.span / rect.width;
 	var takes = (mixer[ch] && mixer[ch].media && mixer[ch].media.out) || [];
 	for (var i = takes.length - 1; i >= 0; i--) {
 		var take = takes[i];
@@ -175,8 +177,8 @@ function studioCanvasHit(canvas, clientX) {
 		if (t >= take.startTime - (6 * tpp) && t <= end + (6 * tpp)) {
 			var mode = 'move';
 			if (take.duration) {
-				if (Math.abs(x - (take.startTime / duration) * rect.width) < 8) { mode = 'trim-start'; }
-				else if (Math.abs(x - (end / duration) * rect.width) < 8) { mode = 'trim-end'; }
+				if (Math.abs(x - studioTimelineXAt(canvas, take.startTime)) < 8) { mode = 'trim-start'; }
+				else if (Math.abs(x - studioTimelineXAt(canvas, end)) < 8) { mode = 'trim-end'; }
 			}
 			return { ch: ch, take: take, mode: mode, tpp: tpp, x: clientX, t: t,
 				startTime: take.startTime, startDur: take.duration || 0, startOffset: take.offset || 0 };
@@ -186,10 +188,10 @@ function studioCanvasHit(canvas, clientX) {
 }
 
 // A press on empty lane space has no take to measure against, so a loop track
-// turns the pointer into a timeline position with the same scale as the take
-// hit test.
+// turns the pointer into a timeline position: the window rect carries the view,
+// so the same song-scale multiplication reads the visible window.
 function studioCanvasTime(canvas, clientX) {
-	var rect = canvas.getBoundingClientRect();
+	var rect = studioTimelineWindowRect(canvas);
 	if (!rect.width) { return 0; }
 	var duration = studioTimelineDuration();
 	var t = ((clientX - rect.left) / rect.width) * duration;

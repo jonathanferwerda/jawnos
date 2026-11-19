@@ -1152,6 +1152,7 @@ function studioResetChannelMarkup(node, ch) {
 	// channel its own false values after this reset.
 	if (mixer[ch]) { mixer[ch].mute = false; mixer[ch].solo = false; }
 	node.find('.studio_strip_mute, .studio_strip_solo').removeAttr('aria-pressed');
+	node.find('.studio_strip_led').removeClass('lit');
 	node.removeClass('studio_solo_muted');
 	node.find('.studio_solo_muted').removeClass('studio_solo_muted');
 	node.removeClass('selected_channel studio_track_automation_on studio_fx_open');
