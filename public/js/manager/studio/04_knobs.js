@@ -300,6 +300,28 @@ $(document).on('change', '.channel_volume', function() {
 	studioSaver();
 });
 
+// A track's colour is live: it redraws that canvas and the song keeps it. The
+// swatch is not a channel control, so it has its own small handler and never
+// runs through the knob/fader appliers above.
+$(document).on('input change', '.studio_track_colour', function() {
+	var input = $(this);
+	var channel = input.attr('channel');
+	if (!/^[0-9]+$/.test(channel)) { return; }
+	studioApplyTrackColour(channel, input.val());
+	studioSaver();
+});
+
+// The selection handler skips inputs so a fader drag does not reselect; picking
+// a colour still means picking that track, so the swatch selects it here.
+$(document).on('click', '.studio_track_colour', function() {
+	var channel = $(this).attr('channel');
+	if (!/^[0-9]+$/.test(channel)) { return; }
+	$('.channel, .studio_track_panel').removeClass('selected_channel');
+	$('.studio_track_panel[channel="' + channel + '"]').addClass('selected_channel');
+	$('#studio_mixer_strips .channel_' + channel).addClass('selected_channel');
+	studioSelectedChannel = channel;
+});
+
 $(document).on('click', '#studio_loop', function() {
 	var sl = $(this);
 	var loop = sl.attr('enabled');
@@ -390,6 +412,15 @@ function studioSaver() {
 		if (!/^[0-9]+$/.test(channel)) { return; }
 		if (song[channel] == undefined) { song[channel] = {}; }
 		song[channel]['monitor'] = $(v).attr('aria-pressed') == 'true' ? 'yes' : 'no';
+	});
+	// A track's colour is part of the song like its name. It gets its own pass
+	// rather than joining the knob/fader selector, so it never reaches the
+	// channel appliers: it dresses the row and the canvas, not the audio graph.
+	$('.studio_track_colour').each(function(i,v) {
+		var channel = $(v).attr('channel');
+		if (!/^[0-9]+$/.test(channel)) { return; }
+		if (song[channel] == undefined) { song[channel] = {}; }
+		song[channel]['colour'] = $(v).val();
 	});
 	$('.studio_channel_information').each(function(inf,sci) {
 		var text = $(sci).text();
@@ -489,6 +520,11 @@ function studioRetriever() {
 			if (n == 'name') {
 				$('.studio_track_name[channel="' + i + '"]').val(w);
 			}
+			if (n == 'colour') {
+				// the swatch and the row's custom property, not a channel control
+				studioApplyTrackColour(i, w);
+				return;
+			}
 			if (n == 'automation_view') {
 				var on = (w == 1 || w == '1' || w === true);
 				$('.studio_track_automation[channel="' + i + '"]').attr('aria-pressed', on ? 'true' : 'false');
@@ -536,6 +572,11 @@ function studioRetriever() {
 	// the one active stream agree before the rest of the song is rebuilt.
 	if (typeof studioMonitorButtonRender === 'function') { studioMonitorButtonRender(); }
 	if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(true); }
+
+	// Every row ends up with a colour: the song's where it carried one, a fresh
+	// theme-family one for a row the server rendered without one. The canvases
+	// then paint with it on this first frame.
+	studioApplyTrackColours();
 
 	studioApplyPedals();
 	// A rack's own values win over the shelf's global pedals, so they are pushed

@@ -214,7 +214,7 @@
 		   column, so a tick lands over the same moment on every canvas below. %>
 		<div id="studio_ruler" class="studio_ruler">
 			<span class="studio_ruler_pad"></span>
-			<canvas id="studio_ruler_canvas" class="studio_ruler_canvas" hint="<%= &subs::ui('Click the ruler to move the playhead') %>"></canvas>
+			<canvas id="studio_ruler_canvas" class="studio_ruler_canvas" aria-label="<%= &subs::ui('Timeline ruler') %>" hint="<%= &subs::ui('Click the ruler to move the playhead') %>"></canvas>
 		</div>
 		<div id="studio_viewer" channel_count="<%= $channel_count %>" data-max-tracks="<%= $max_tracks %>">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
@@ -223,7 +223,7 @@
 						<div class="studio_track_line">
 							<button class="armed studio_track_arm" channel="<%= $ch %>" control="armed" state="off" hint="<%= &subs::ui('Off, record, play or loop') %>">O</button>
 							<input class="studio_track_name" channel="<%= $ch %>" value="<%= &subs::ui('Track') %> <%= $ch %>" hint="<%= &subs::ui('Rename this track') %>">
-						<input type="color" class="studio_track_colour hover" channel="<%= $ch %>" control="colour" value="#3b7ddd" hint="<%= &subs::ui('Choose this track\'s colour') %>">
+						<input type="color" class="studio_track_colour hover" channel="<%= $ch %>" control="colour" value="#3b7ddd" aria-label="<%= &subs::ui('Choose this track\'s colour') %>" hint="<%= &subs::ui('Choose this track\'s colour') %>">
 						</div>
 						<div class="studio_track_line studio_track_volume_line">
 							<input type="range" min="0" max="100" value="1" channel="<%= $ch %>" control="volume" class="channel_volume studio_track_volume" hint="<%= &subs::ui('Mix this track against the others') %>">

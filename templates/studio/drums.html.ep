@@ -1,14 +1,22 @@
 <% use Mojo::JSON; %>
 <%# The drum machine: eight synthesised voices over one bar of sixteen steps.
-   The voice table is data (perl/gb/05_abilities_and_studio.pl), so the rows,
-   the starting keys and the MIDI notes have one source. The browser part is
-   public/js/manager/studio/11_drums.js. %>
+   The voice and kit tables are data (perl/gb/05_abilities_and_studio.pl), so
+   the rows, the starting keys, the MIDI notes and the Kit list have one source.
+   The browser part is public/js/manager/studio/11_drums.js. %>
 <script>window.jawnos_studio_drums = <%== Mojo::JSON::encode_json($gb::studio->{'drums'}) %>;</script>
+<script>window.jawnos_studio_drum_kits = <%== Mojo::JSON::encode_json($gb::studio->{'drum_kits'}) %>;</script>
 <div id="studio_drums" class="studio_panel">
 	<div class="studio_panel_bar">
 		<span class="studio_drag_handle" data-studio-drag="drums" hint="<%= &subs::ui('Drag to move the drums') %>"><%= &subs::ui('Drums') %></span>
 		<span id="studio_drums_key_state" class="studio_drums_key_state" aria-live="polite" hint="<%= &subs::ui('Computer keys follow the Studio window') %>"><%= &subs::ui('Keys live') %></span>
 		<label class="studio_drums_loop_label" hint="<%= &subs::ui('Repeat the drum chart each bar') %>"><input type="checkbox" id="studio_drums_loop" checked><%= &subs::ui('Loop') %></label>
+		<label class="studio_drums_kit_label"><%= &subs::ui('Kit') %>
+			<select id="studio_drums_kit" aria-label="<%= &subs::ui('Choose a drum kit') %>" hint="<%= &subs::ui('Choose a drum kit') %>">
+				<% foreach my $k ( @{$gb::studio->{'drum_kits'}} ) { %>
+					<option value="<%= $k->{'name'} %>"><%= &subs::ui($k->{'label'}) %></option>
+				<% } %>
+			</select>
+		</label>
 		<button class="studio_dock hover" data-panel="drums" hint="<%= &subs::ui('Dock the drums') %>"><%= &subs::ui('Dock') %></button>
 		<button class="studio_span_toggle hover" data-panel="drums" aria-pressed="false" hint="<%= &subs::ui('Give this panel one or two columns') %>"><%= &subs::ui('Wide') %></button>
 	</div>
@@ -30,7 +38,7 @@
 					<button class="studio_drums_key hover" data-voice="<%= $v->{'name'} %>" aria-pressed="false" title="<%= uc($v->{'key'}) %>" hint="<%= &subs::ui('Assign a computer key to this drum') %>"><%= uc($v->{'key'}) %></button>
 					<button class="studio_drums_lamp hover" data-voice="<%= $v->{'name'} %>" aria-pressed="true" title="<%= &subs::ui('Audible') %>" hint="<%= &subs::ui('Mute this drum') %>"></button>
 					<% for my $step (0 .. 15) { %>
-						<button class="studio_drums_step hover" data-voice="<%= $v->{'name'} %>" data-step="<%= $step %>" aria-pressed="false" hint="<%= &subs::ui('Click to place a beat, hold Shift for an accent') %>"></button>
+						<button class="studio_drums_step hover" data-voice="<%= $v->{'name'} %>" data-step="<%= $step %>" aria-pressed="false" hint="<%= &subs::ui('Click to place a beat, hold Shift for an accent, right-click to set its velocity') %>"></button>
 					<% } %>
 				</div>
 			<% } %>

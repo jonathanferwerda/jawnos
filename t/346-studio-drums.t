@@ -1,8 +1,9 @@
 # tests-for: templates/studio/drums.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/11_drums.js perl/gb/05_abilities_and_studio.pl perl/help/topics_apps.pl t/346-studio-drums.t
-# covers:    The Studio drum machine: the eight-voice table, a one-bar chart of
-#            sixteen steps, the transport/lookahead scheduler, the computer-key
-#            map with its typing guard, Web MIDI, the song's admin.drums state,
-#            and the routing into the master rack and the browser take.
+# covers:    The Studio drum machine: the eight-voice table and the ten kits, a
+#            one-bar chart of sixteen steps that each carry a velocity, the
+#            transport/lookahead scheduler, the computer-key map with its typing
+#            guard, Web MIDI, the song's admin.drums state, and the routing into
+#            the master rack and the browser take.
 
 use strict;
 use warnings;
@@ -47,16 +48,43 @@ my @notes = $table =~ /note\s*=>\s*(\d+)/g;
 is(scalar(@notes), 8, 'every voice has a MIDI note');
 is(scalar(keys %{{ map { $_ => 1 } @notes }}), 8, 'the MIDI notes are distinct');
 
+# --- the kit table ----------------------------------------------------------
+my ($kits) = $studio =~ /drum_kits\s*=>\s*\[(.*?)\n\t\],/s;
+ok(defined $kits, 'the studio data carries a drum kit table');
+$kits = '' unless defined $kits;
+my @kit_names = $kits =~ /name\s*=>\s*'([^']+)'/g;
+is_deeply(\@kit_names,
+	[qw(acoustic electronic techno beats latin pearl tama gretsch 808 metal)],
+	'the ten kits are the ones the panel offers, in order');
+my @kit_labels = $kits =~ /label\s*=>\s*'([^']+)'/g;
+is_deeply(\@kit_labels,
+	[qw(Acoustic Electronic Techno Beats Latin Pearl Tama Gretsch 808 Metal)],
+	'every kit has the label people read');
+like($studio, qr/# The drum kits\. `name` is the wire name saved in the song/,
+	'the table says the name is the wire name and the label is what people read');
+
 # --- the panel is included once and is data-driven --------------------------
 my @includes = $markup =~ /include 'studio\/drums'/g;
 is(scalar(@includes), 1, 'the markup includes the drum panel once');
 like($markup, qr/id="studio_drums"|include 'studio\/drums'/, 'the drum panel is a real include');
 like($drums, qr/window\.jawnos_studio_drums/, 'the panel publishes its voice table');
+like($drums, qr/window\.jawnos_studio_drum_kits/, 'the panel publishes its kit table');
+like($drums, qr/id="studio_drums_kit"/, 'the panel has a Kit list');
+like($drums, qr/id="studio_drums_kit"[^\n]*Choose a drum kit/, 'the Kit list explains itself');
+like($drums, qr/<select id="studio_drums_kit" aria-label=/, 'the Kit list is named for a screen reader');
+like($drums, qr/foreach my \$k \( \@\{\$gb::studio->\{'drum_kits'\}\} \)/,
+	'the Kit options come from the table, not hard-coded markup');
+like($drums, qr/<option value="<%=\s*\$k->\{'name'\}\s*%>"><%=\s*&subs::ui\(\$k->\{'label'\}\)\s*%><\/option>/,
+	'a kit option carries its wire name and its label');
+like($drums, qr/studio_drums_loop_label[\s\S]*studio_drums_kit_label/s,
+	'the Kit list sits beside Loop in the panel bar');
 like($drums, qr/foreach my \$v \( \@\{\$gb::studio->\{'drums'\}\} \)/,
 	'the rows come from the table, not hard-coded markup');
 my @steps = $drums =~ /for my \$step \(0 \.\. 15\)/g;
 is(scalar(@steps), 2, 'the head and every row count sixteen steps');
 like($drums, qr/data-step="<%=\s*\$step\s*%>"/, 'a step carries its index');
+like($drums, qr/hint="<%=\s*&subs::ui\('Click to place a beat, hold Shift for an accent, right-click to set its velocity'\)\s*%>"/,
+	'a step says what a click, Shift-click and right-click do');
 like($drums, qr/class="studio_drums_row" data-voice="<%=\s*\$v->\{'name'\}\s*%>"/,
 	'a row is addressed by its voice name');
 like($drums, qr/class="studio_drums_lamp[^"]*"[^>]*data-voice/, 'a voice carries a mute lamp');
@@ -116,8 +144,8 @@ like($code, qr/studioDrums\.focus = !!.*closest\('#studio'\)\.length/,
 	'the last pointer press decides which window owns the keys');
 like($code, qr/Typing: drum keys are paused/, 'the panel says when typing pauses the keys');
 like($code, qr/Click Studio to play the drum keys/, 'the panel says when another window owns them');
-like($code, qr/studioDrumsTrigger\(voice, e\.shiftKey \? 2 : 1, true\)/,
-	'a mapped key plays and, in record, writes the current step');
+like($code, qr/studioDrumsTrigger\(voice, e\.shiftKey \? 100 : 70, true\)/,
+	'a mapped key plays 70, Shift plays a full accent, and in record writes the step');
 like($code, qr/typeof studioSelectedTake !== 'undefined' && studioSelectedTake\) \{ return; \}/,
 	'a selected take pauses the drum keys so S cannot play and split at once');
 like($help, qr/no take is selected/, 'help names the selected-take pause');
@@ -128,21 +156,93 @@ like($code, qr/navigator\.requestMIDIAccess/, 'Web MIDI is offered where it exis
 like($code, qr/Web MIDI is not available in this browser\./, 'the panel says plainly when it is absent');
 like($code, qr/function studioDrumsVoiceForNote/, 'a MIDI note resolves to a voice');
 like($code, qr/\(data\[0\] & 0xf0\) !== 0x90/, 'only note-on messages play');
-like($code, qr/data\[2\] > 96 \? 2 : 1/, 'MIDI velocity chooses the accent');
+like($code, qr/Math\.max\(1, Math\.round\(data\[2\] \/ 127 \* 100\)\)/,
+	'MIDI velocity becomes a percent, with 1 as the softest hit');
 like($code, qr/studioDrums\.midiInput/, 'the chosen MIDI input is remembered');
 
 # --- persistence ------------------------------------------------------------
 like($code, qr/function studioDrumsSave\(\)/, 'the chart has one save function');
-like($code, qr/return \{ steps: steps, keys: keys, loop: studioDrums\.loop \? 1 : 0, voices: voices, midi:/,
-	'the saved shape is steps, keys, loop, voices and midi');
+like($code, qr/return \{ steps: steps, keys: keys, loop: studioDrums\.loop \? 1 : 0, voices: voices, midi: studioDrums\.midiInput \|\| '', kit: studioDrums\.kit \};/,
+	'the saved shape is steps, keys, loop, voices, midi and kit');
 like($knobs, qr/drums: studioDrumsSave\(\)/, 'the song stores the drum state in admin');
 like($knobs, qr/studioDrumsRestore\(mixer\['admin'\] && mixer\['admin'\]\['drums'\]\)/,
 	'loading a song restores it');
 like($code, qr/function studioDrumsRestore\(data\)/, 'the restore has one entry point');
 like($code, qr/studioDrums\.steps\[v\.name\] = \[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0\]/,
 	'a cleared chart is sixteen zeroes, which is valid');
-like($code, qr/value === 1 \|\| value === 2/, 'a step restores as off, on or accent');
+like($code, qr/if \(!\(value > 0\)\) \{ value = 0; \}/, 'an empty or nonsense step restores as off');
+like($code, qr/else if \(value === 1\) \{ value = 70; \}/, 'a legacy beat (1) restores at 70');
+like($code, qr/else if \(value === 2\) \{ value = 100; \}/, 'a legacy accent (2) restores at 100');
+like($code, qr/else \{ value = Math\.min\(100, value\); \}/, 'a newer saved velocity is clamped to 100');
 like($code, qr/studioSaver\(\)/, 'a chart edit saves the song');
+
+# --- kits: the table, the choice and the rebuild ----------------------------
+like($code, qr/kit: 'acoustic'/, 'the drum machine opens on Acoustic');
+like($code, qr/function studioDrumsKits\(\)/, 'the browser reads the published kit table');
+like($code, qr/window\.jawnos_studio_drum_kits/, 'the kit table is the one the panel published');
+like($code, qr/function studioDrumsKitName\(name\)/, 'a saved kit is validated against the table');
+like($code, qr/studioDrumsKitNames\(\)\.indexOf\(name\) >= 0/, 'an unknown kit falls back to Acoustic');
+like($code, qr/studioDrums\.kit = studioDrumsKitName\(data\.kit\)/, 'restore reads the saved kit');
+like($code, qr/studioDrums\.buffers = \{\};[\s\S]{0,160}studioDrumsBuild\(studioDrums\.ctx\)/,
+	'a kit change clears the old buffers and builds the new set');
+like($code, qr/if \(studioDrums\.ctx && studioDrums\.builtKit !== studioDrums\.kit\)/,
+	'a restored song rebuilds when its kit is not the one in hand');
+like($code, qr/var token = \+\+studioDrums\.buildGen;/, 'each build takes a generation token');
+like($code, qr/if \(token !== studioDrums\.buildGen\) \{ return; \}/,
+	'an older build cannot overwrite newer buffers');
+like($code, qr/\$\('#studio_drums_kit'\)\.val\(studioDrums\.kit\)/, 'the Kit list shows the chosen kit');
+like($code, qr/function studioDrumsVoiceSpec\(kit, name\)/, 'the voice spec is kit-aware');
+like($code, qr/studioDrumsVoiceSpec\(kit, v\.name\)/, 'the build asks for the current kit');
+like($code, qr/function studioDrumsRenderVoice\(off, kit, name\)/, 'the render takes the kit too');
+like($code, qr/function studioDrumsBaseSpec\(name\)/, 'the acoustic eight are the base every kit overrides');
+unlike($code, qr/^\tacoustic: \{/m, 'Acoustic is the base, not a table of duplicates');
+for my $kit (grep { $_ ne 'acoustic' } @kit_names) {
+	like($code, qr/^\t'?\Q$kit\E'?: \{/m, "the $kit kit overrides the acoustic voices");
+}
+like($code, qr/from: 110, to: 32/, 'Beats puts a long sub under the kick');
+like($code, qr/from: 90, to: 28, dur: 0\.70/, '808 has a long sub kick');
+like($code, qr/freq: 5000, dur: 0\.02, gain: 0\.45/, 'Metal has a clicky kick');
+like($code, qr/from: 240, to: 150, dur: 0\.18/, 'Latin lifts the toms');
+
+# --- velocity ---------------------------------------------------------------
+like($code, qr/current \? 0 : \(e\.shiftKey \? 100 : 70\)/,
+	'a plain click places 70, Shift places 100, and either removes');
+like($code, qr/\.attr\('data-velocity', value \? String\(value\) : ''\)/, 'a step carries its velocity');
+like($code, qr/value >= 100 \? 'yes' : 'no'/, 'a full beat keeps the accent look');
+like($code, qr/setProperty\('--drums-velocity', String\(value \/ 100\)\)/, 'a placed beat fades with its velocity');
+like($code, qr/removeProperty\('--drums-velocity'\)/, 'an empty step clears the custom property');
+like($code, qr/el\.attr\('title', label \+ ' ' \+ value \+ '%'\)/, 'a placed beat names the voice and its percent');
+like($code, qr/studioDrumsPlay\(v\.name, when, value \/ 100\)/, 'a step plays at value/100');
+like($code, qr/var percent = Math\.max\(1, Math\.min\(100, Math\.round\(velocity \|\| 0\)\)\);/,
+	'the trigger takes a percent');
+like($code, qr/studioDrumsPlay\(voice, ctx\.currentTime \+ 0\.008, percent \/ 100\)/,
+	'the play path still receives a 0..1 fraction');
+like($code, qr/studioDrums\.steps\[voice\]\[step\] = percent;/, 'recording writes the same percent');
+like($code, qr/studioDrumsTrigger\(\$\(this\)\.attr\('data-voice'\), 80, false\)/,
+	'the voice button auditions at 80');
+
+# --- the velocity menu ------------------------------------------------------
+like($code, qr/function studioDrumsVelocityMenu\(voice, step, x, y\)/, 'a placed beat has a velocity menu');
+like($code, qr/class="studio_menu studio_drums_velocity"/, 'the menu uses the shared theme card');
+like($code, qr/studio_menu_head/, 'the menu names the drum');
+like($code, qr/class="studio_menu_velocity"/, 'the menu has its velocity row');
+like($code, qr/data-delta="-10"/, 'the menu can go softer');
+like($code, qr/data-delta="10"/, 'the menu can go harder');
+like($code, qr/Math\.max\(10, Math\.min\(100, /, 'the menu keeps a beat between 10 and 100');
+like($code, qr/menu\.find\('\[data-value\]'\)\.text\(String\(value\)\)/,
+	'the menu shows the new value while it stays open');
+like($code, qr/studioDrumsTrigger\(voice, value, false\)/, 'a press auditions at the new velocity');
+like($code, qr/if \(!value\) \{ return; \}[\s\S]{0,40}e\.preventDefault\(\);/,
+	'an empty step opens no menu and the browser menu stands');
+like($code, qr/closest\('#studio_drums_velocity'\)\.length\) \{ studioDrumsMenuClose\(\); \}/,
+	'the next press elsewhere closes the menu');
+like($code, qr/if \(e\.key === 'Escape'\) \{ studioDrumsMenuClose\(\); \}/, 'Escape closes the menu');
+like($code, qr/addEventListener\('scroll', studioDrumsMenuClose, true\)/, 'a scroll closes the menu');
+like($code, qr/studioDrumsMenuClose\(\);[\s\S]{0,60}studioDrumsVoices\(\)\.forEach/,
+	'Clear closes the menu');
+like($code, qr/function studioDrumsMenuPlace/, 'the menu is clamped to the viewport');
+like($code, qr/Math\.max\(4, Math\.min\(x, viewW - width - 4\)\)/, 'its left edge stays inside the window');
+like($code, qr/Math\.max\(4, Math\.min\(y, viewH - height - 4\)\)/, 'its top edge stays inside the window');
 
 # --- routing ----------------------------------------------------------------
 like($code, qr/studioDrums\.out\.connect\(studioAudio\.master\)/,
@@ -201,7 +301,8 @@ for my $label (
 	'Drag to move the drums', 'Dock the drums', 'Float the drums', 'Hide the drums',
 	'Computer keys follow the Studio window', 'Repeat the drum chart each bar',
 	'Clear the drum chart', 'Play this drum', 'Assign a computer key to this drum',
-	'Mute this drum', 'Click to place a beat, hold Shift for an accent',
+	'Mute this drum', 'Click to place a beat, hold Shift for an accent, right-click to set its velocity',
+	'Choose a drum kit',
 	'Connect a MIDI keyboard to the drums', 'Choose a MIDI input for the drums') {
 	like($controls, qr/'\Q$label\E'/, "the help controls list names '$label'");
 }

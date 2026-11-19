@@ -7,14 +7,23 @@
 // with an OfflineAudioContext, so a step allocates only a source and its gain —
 // never a buffer, an oscillator or a filter.
 //
+// A kit is the same eight rows heard through a different set of shapes: the
+// acoustic specs are the base and a kit only overrides the voices it changes.
+// Changing the kit clears the rendered buffers and builds the new set.
+//
+// A step is a velocity, not a flag: 0 is off and 1..100 is how hard the beat is
+// struck. A plain click places one at 70, Shift-click places a full 100, and a
+// right-click on a placed beat opens its velocity menu. The step's opacity
+// follows the velocity through the --drums-velocity custom property.
+//
 // The chart follows the Studio transport: it starts with play or record, takes
 // its tempo from mixer.time.bpm, and loops the bar while Loop is on. Steps are
 // placed on the AudioContext clock with a 25ms timer and a 100ms lookahead, so
 // timer jitter never reaches the ear.
 //
-// `admin.drums` in the song is the whole state: steps, keys, loop, the per-voice
-// mutes and the chosen MIDI input. A cleared chart (sixteen zeroes per voice) is
-// a valid chart.
+// `admin.drums` in the song is the whole state: steps, keys, loop, the kit, the
+// per-voice mutes and the chosen MIDI input. A cleared chart (sixteen zeroes per
+// voice) is a valid chart.
 //
 // Routing: the drum bus feeds studioAudio.master, which is the input of the
 // mastering rack, so the drums are heard through the master chain like every
@@ -31,10 +40,13 @@ var studioDrums = {
 	routedDest: null,
 	buffers: {},
 	buildState: 'idle',
+	buildGen: 0,
+	builtKit: '',
 	steps: {},
 	keys: {},
 	muted: {},
 	loop: true,
+	kit: 'acoustic',
 	loaded: false,
 	timer: 0,
 	running: false,
@@ -63,6 +75,32 @@ function studioDrumsVoiceNames() {
 	return studioDrumsVoices().map(function (v) { return v.name; });
 }
 
+// The kit table is data too (perl/gb/05_abilities_and_studio.pl): `name` is the
+// wire name saved in the song, `label` is the word people read.
+function studioDrumsKits() {
+	var table = window.jawnos_studio_drum_kits;
+	return (table && table.length) ? table : [];
+}
+
+function studioDrumsKitNames() {
+	return studioDrumsKits().map(function (k) { return k.name; });
+}
+
+// A saved song may name a kit this build does not have; it opens on Acoustic
+// rather than on silence.
+function studioDrumsKitName(name) {
+	name = String(name || '');
+	return (studioDrumsKitNames().indexOf(name) >= 0) ? name : 'acoustic';
+}
+
+function studioDrumsVoiceLabel(name) {
+	var label = name;
+	studioDrumsVoices().forEach(function (v) {
+		if (v.name === name) { label = studioDrumsText(v.label || name); }
+	});
+	return label;
+}
+
 function studioDrumsDefaults() {
 	studioDrums.steps = {};
 	studioDrums.keys = {};
@@ -73,6 +111,7 @@ function studioDrumsDefaults() {
 		studioDrums.muted[v.name] = false;
 	});
 	studioDrums.loop = true;
+	studioDrums.kit = 'acoustic';
 	studioDrums.loaded = true;
 }
 
@@ -85,7 +124,7 @@ function studioDrumsSave() {
 		voices[v.name] = { mute: studioDrums.muted[v.name] ? 1 : 0 };
 		if (studioDrums.keys[v.name]) { keys[v.name] = studioDrums.keys[v.name]; }
 	});
-	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '' };
+	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '', kit: studioDrums.kit };
 }
 
 function studioDrumsRestore(data) {
@@ -97,7 +136,14 @@ function studioDrumsRestore(data) {
 			if (!row || !row.length) { return; }
 			for (var i = 0; i < 16; i++) {
 				var value = parseInt(row[i], 10);
-				studioDrums.steps[v.name][i] = (value === 1 || value === 2) ? value : 0;
+				// Older songs saved a flag, not a velocity: 1 was a beat and 2 an
+				// accent. Read them as 70 and 100; a newer 1..100 is already a
+				// percent, and anything else is an empty step.
+				if (!(value > 0)) { value = 0; }
+				else if (value === 1) { value = 70; }
+				else if (value === 2) { value = 100; }
+				else { value = Math.min(100, value); }
+				studioDrums.steps[v.name][i] = value;
 			}
 		});
 		var savedKeys = data.keys || {};
@@ -112,9 +158,15 @@ function studioDrumsRestore(data) {
 			studioDrums.muted[voice] = !!(record && (record.mute == 1 || record.mute === true));
 		});
 		studioDrums.loop = !(data.loop == 0 || data.loop === false || data.loop === '0');
+		studioDrums.kit = studioDrumsKitName(data.kit);
 		if (data.midi) { studioDrums.midiInput = String(data.midi); }
 	}
 	studioDrums.loaded = true;
+	// The buffers are the previous song's kit until they are built again.
+	if (studioDrums.ctx && studioDrums.builtKit !== studioDrums.kit) {
+		studioDrums.buffers = {};
+		studioDrumsBuild(studioDrums.ctx);
+	}
 	if ($('#studio_drums').length) { studioDrumsRender(); }
 }
 
@@ -122,6 +174,7 @@ function studioDrumsRestore(data) {
 
 function studioDrumsRender() {
 	$('#studio_drums_loop').prop('checked', !!studioDrums.loop);
+	$('#studio_drums_kit').val(studioDrums.kit);
 	$('#studio_drums .studio_drums_row').each(function () {
 		var row = $(this);
 		var voice = row.attr('data-voice');
@@ -139,12 +192,25 @@ function studioDrumsRender() {
 
 function studioDrumsRenderSteps(voice) {
 	var row = studioDrums.steps[voice] || [];
+	var label = studioDrumsVoiceLabel(voice);
 	$('#studio_drums .studio_drums_step[data-voice="' + voice + '"]').each(function () {
 		var step = parseInt($(this).attr('data-step'), 10) || 0;
-		var value = row[step] || 0;
-		$(this)
-			.attr('aria-pressed', value ? 'true' : 'false')
-			.attr('data-accent', value === 2 ? 'yes' : 'no');
+		var value = parseInt(row[step], 10) || 0;
+		if (value < 0) { value = 0; }
+		var el = $(this);
+		el.attr('aria-pressed', value ? 'true' : 'false')
+			.attr('data-accent', value >= 100 ? 'yes' : 'no')
+			.attr('data-velocity', value ? String(value) : '');
+		// A placed beat fades with its velocity and says how hard it is; an empty
+		// one carries neither, so the rule's own default applies.
+		if (value) {
+			el.attr('title', label + ' ' + value + '%');
+			this.style.setProperty('--drums-velocity', String(value / 100));
+		}
+		else {
+			el.removeAttr('title');
+			this.style.removeProperty('--drums-velocity');
+		}
 	});
 }
 
@@ -232,20 +298,28 @@ function studioDrumsBuild(ctx) {
 	var Ctor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
 	var voices = studioDrumsVoices();
 	if (!Ctor || !voices.length) { studioDrums.buildState = 'unsupported'; return; }
+	// Two fast kit changes must not let an older, slower render write over the
+	// newer buffers: only the newest build may land.
+	var token = ++studioDrums.buildGen;
+	var kit = studioDrums.kit;
 	studioDrums.buildState = 'building';
 	var rate = ctx.sampleRate || 44100;
 	var pending = voices.length;
 	var finish = function (voice, buffer) {
+		if (token !== studioDrums.buildGen) { return; }
 		if (buffer) { studioDrums.buffers[voice] = buffer; }
 		pending--;
-		if (pending <= 0) { studioDrums.buildState = 'ready'; }
+		if (pending <= 0) {
+			studioDrums.builtKit = kit;
+			studioDrums.buildState = 'ready';
+		}
 	};
 	voices.forEach(function (v) {
-		var spec = studioDrumsVoiceSpec(v.name);
+		var spec = studioDrumsVoiceSpec(kit, v.name);
 		var off;
 		try { off = new Ctor(1, Math.ceil(rate * (spec.length || 0.6)), rate); }
 		catch (e) { finish(v.name, null); return; }
-		studioDrumsRenderVoice(off, v.name);
+		studioDrumsRenderVoice(off, kit, v.name);
 		var rendering;
 		try { rendering = off.startRendering(); }
 		catch (e) { finish(v.name, null); return; }
@@ -268,8 +342,9 @@ function studioDrumsNoiseBuffer(off, seconds) {
 }
 
 // A voice is a shape, not a sample: one or two pitched sweeps plus a filtered
-// noise wash. Everything below is rendered once, offline.
-function studioDrumsVoiceSpec(name) {
+// noise wash. Everything below is rendered once, offline. These eight are the
+// acoustic base; a kit overrides only the voices it changes.
+function studioDrumsBaseSpec(name) {
 	switch (name) {
 		case 'kick':
 			return { length: 0.55,
@@ -284,12 +359,7 @@ function studioDrumsVoiceSpec(name) {
 		case 'open_hat':
 			return { length: 0.45, noise: [{ filter: 'highpass', freq: 6500, dur: 0.32, gain: 0.55 }] };
 		case 'clap':
-			return { length: 0.35, noise: [
-				{ filter: 'bandpass', freq: 1200, q: 1.2, at: 0, dur: 0.02, gain: 0.6 },
-				{ filter: 'bandpass', freq: 1200, q: 1.2, at: 0.011, dur: 0.02, gain: 0.6 },
-				{ filter: 'bandpass', freq: 1200, q: 1.2, at: 0.022, dur: 0.02, gain: 0.6 },
-				{ filter: 'bandpass', freq: 1200, q: 1.2, at: 0.03, dur: 0.12, gain: 0.4 }
-			] };
+			return studioDrumsClapSpec(1200, 1.2, 0.6, 0.12);
 		case 'low_tom':
 			return { length: 0.45, tones: [{ type: 'sine', from: 130, to: 75, dur: 0.22, gain: 0.9, env: 0.35 }] };
 		case 'high_tom':
@@ -302,6 +372,196 @@ function studioDrumsVoiceSpec(name) {
 	return { length: 0.2, noise: [{ filter: 'highpass', freq: 2000, dur: 0.05, gain: 0.4 }] };
 }
 
+// A clap is the same four-burst shape in every kit; a kit only names its
+// colour (frequency and resonance) and how long the last burst rings.
+function studioDrumsClapSpec(freq, q, gain, tail) {
+	var burst = function (at, dur, level) {
+		return { filter: 'bandpass', freq: freq, q: q, at: at, dur: dur, gain: level };
+	};
+	return { length: tail + 0.2, noise: [
+		burst(0, 0.02, gain),
+		burst(0.011, 0.02, gain),
+		burst(0.022, 0.02, gain),
+		burst(0.03, tail, gain * 0.66)
+	] };
+}
+
+// Each kit is a set of overrides on the acoustic base: only the voices that give
+// it its character are listed, so a kick, snare and hat say most of it and a
+// voice left out stays familiar. The names match perl/gb/05_abilities_and_studio.pl.
+var studioDrumsKitSpecs = {
+	// Tighter and brighter: a short synthetic kick, dry snare, glassy hats.
+	electronic: {
+		kick: { length: 0.32,
+			tones: [{ type: 'sine', from: 180, to: 60, dur: 0.10, gain: 1.0, env: 0.22 }],
+			noise: [{ filter: 'highpass', freq: 5000, dur: 0.008, gain: 0.18 }] },
+		snare: { length: 0.22,
+			tones: [{ type: 'triangle', from: 240, to: 200, dur: 0.07, gain: 0.35, env: 0.09 }],
+			noise: [{ filter: 'bandpass', freq: 2600, q: 1.1, dur: 0.10, gain: 0.85 }] },
+		closed_hat: { length: 0.10, noise: [{ filter: 'highpass', freq: 9000, dur: 0.035, gain: 0.55 }] },
+		open_hat: { length: 0.28, noise: [{ filter: 'highpass', freq: 8500, dur: 0.20, gain: 0.5 }] },
+		clap: studioDrumsClapSpec(1800, 1.5, 0.55, 0.07),
+		low_tom: { length: 0.28, tones: [{ type: 'sine', from: 180, to: 110, dur: 0.12, gain: 0.8, env: 0.18 }] },
+		high_tom: { length: 0.22, tones: [{ type: 'sine', from: 320, to: 200, dur: 0.10, gain: 0.75, env: 0.14 }] },
+		rim: { length: 0.08,
+			tones: [{ type: 'square', from: 1200, to: 1000, dur: 0.012, gain: 0.28, env: 0.03 }],
+			noise: [{ filter: 'bandpass', freq: 3500, q: 1.6, dur: 0.015, gain: 0.35 }] }
+	},
+	// A hard kick with a click, tight hats and a gritty snare.
+	techno: {
+		kick: { length: 0.50,
+			tones: [{ type: 'sine', from: 170, to: 38, dur: 0.14, gain: 1.15, env: 0.34 }],
+			noise: [{ filter: 'highpass', freq: 2200, dur: 0.02, gain: 0.35 }] },
+		snare: { length: 0.30,
+			tones: [{ type: 'triangle', from: 210, to: 150, dur: 0.10, gain: 0.5, env: 0.13 }],
+			noise: [{ filter: 'bandpass', freq: 1500, q: 0.6, dur: 0.14, gain: 0.95 }] },
+		closed_hat: { length: 0.09, noise: [{ filter: 'highpass', freq: 8500, dur: 0.025, gain: 0.5 }] },
+		open_hat: { length: 0.35, noise: [{ filter: 'highpass', freq: 6000, dur: 0.22, gain: 0.45 }] },
+		clap: studioDrumsClapSpec(1000, 1.0, 0.6, 0.10),
+		low_tom: { length: 0.40, tones: [{ type: 'sine', from: 120, to: 65, dur: 0.20, gain: 0.95, env: 0.30 }] },
+		high_tom: { length: 0.30, tones: [{ type: 'sine', from: 200, to: 120, dur: 0.16, gain: 0.9, env: 0.24 }] },
+		rim: { length: 0.10,
+			tones: [{ type: 'square', from: 800, to: 600, dur: 0.015, gain: 0.32, env: 0.035 }],
+			noise: [{ filter: 'bandpass', freq: 2200, q: 1.2, dur: 0.018, gain: 0.45 }] }
+	},
+	// Urban: a long sub under the kick, a snappy snare and clap.
+	beats: {
+		kick: { length: 0.80,
+			tones: [{ type: 'sine', from: 110, to: 32, dur: 0.40, gain: 1.2, env: 0.60 }],
+			noise: [{ filter: 'highpass', freq: 2500, dur: 0.015, gain: 0.3 }] },
+		snare: { length: 0.30,
+			tones: [{ type: 'triangle', from: 210, to: 180, dur: 0.08, gain: 0.4, env: 0.12 }],
+			noise: [{ filter: 'bandpass', freq: 2200, q: 0.7, dur: 0.12, gain: 1.0 }] },
+		closed_hat: { length: 0.12, noise: [{ filter: 'highpass', freq: 8000, dur: 0.04, gain: 0.5 }] },
+		open_hat: { length: 0.40, noise: [{ filter: 'highpass', freq: 7000, dur: 0.26, gain: 0.45 }] },
+		clap: studioDrumsClapSpec(1500, 1.4, 0.7, 0.08),
+		low_tom: { length: 0.60, tones: [{ type: 'sine', from: 100, to: 55, dur: 0.32, gain: 1.0, env: 0.50 }] },
+		high_tom: { length: 0.40, tones: [{ type: 'sine', from: 180, to: 110, dur: 0.22, gain: 0.9, env: 0.32 }] },
+		rim: { length: 0.10,
+			tones: [{ type: 'square', from: 1000, to: 800, dur: 0.015, gain: 0.3, env: 0.035 }],
+			noise: [{ filter: 'bandpass', freq: 3000, q: 1.3, dur: 0.018, gain: 0.4 }] }
+	},
+	// Hand percussion: higher toms and rim, shaker-like hats.
+	latin: {
+		kick: { length: 0.30,
+			tones: [{ type: 'sine', from: 200, to: 90, dur: 0.10, gain: 0.8, env: 0.20 }],
+			noise: [{ filter: 'highpass', freq: 3500, dur: 0.008, gain: 0.15 }] },
+		snare: { length: 0.18,
+			tones: [{ type: 'triangle', from: 300, to: 260, dur: 0.06, gain: 0.25, env: 0.07 }],
+			noise: [{ filter: 'bandpass', freq: 3000, q: 1.8, dur: 0.06, gain: 0.55 }] },
+		closed_hat: { length: 0.18, noise: [{ filter: 'highpass', freq: 9000, dur: 0.10, gain: 0.28 }] },
+		open_hat: { length: 0.50, noise: [{ filter: 'highpass', freq: 8500, dur: 0.40, gain: 0.22 }] },
+		clap: studioDrumsClapSpec(2200, 2.2, 0.55, 0.06),
+		low_tom: { length: 0.35, tones: [{ type: 'sine', from: 240, to: 150, dur: 0.18, gain: 0.75, env: 0.22 }] },
+		high_tom: { length: 0.25, tones: [{ type: 'sine', from: 360, to: 240, dur: 0.12, gain: 0.7, env: 0.16 }] },
+		rim: { length: 0.14,
+			tones: [{ type: 'square', from: 1400, to: 1100, dur: 0.02, gain: 0.35, env: 0.04 }],
+			noise: [{ filter: 'bandpass', freq: 3200, q: 2.0, dur: 0.025, gain: 0.5 }] }
+	},
+	// Bright and resonant, with a ringing snare.
+	pearl: {
+		kick: { length: 0.50,
+			tones: [{ type: 'sine', from: 160, to: 52, dur: 0.16, gain: 1.0, env: 0.42 }],
+			noise: [{ filter: 'highpass', freq: 3800, dur: 0.015, gain: 0.3 }] },
+		snare: { length: 0.40,
+			tones: [{ type: 'triangle', from: 210, to: 180, dur: 0.14, gain: 0.5, env: 0.20 }],
+			noise: [{ filter: 'bandpass', freq: 2400, q: 0.9, dur: 0.22, gain: 1.0 }] },
+		closed_hat: { length: 0.16, noise: [{ filter: 'highpass', freq: 8000, dur: 0.06, gain: 0.62 }] },
+		open_hat: { length: 0.50, noise: [{ filter: 'highpass', freq: 7500, dur: 0.36, gain: 0.55 }] },
+		clap: studioDrumsClapSpec(1400, 1.1, 0.6, 0.12),
+		low_tom: { length: 0.50, tones: [{ type: 'sine', from: 150, to: 85, dur: 0.26, gain: 0.9, env: 0.40 }] },
+		high_tom: { length: 0.40, tones: [{ type: 'sine', from: 260, to: 150, dur: 0.20, gain: 0.85, env: 0.32 }] },
+		rim: { length: 0.13,
+			tones: [{ type: 'square', from: 1000, to: 800, dur: 0.022, gain: 0.32, env: 0.045 }],
+			noise: [{ filter: 'bandpass', freq: 2800, q: 1.5, dur: 0.022, gain: 0.45 }] }
+	},
+	// Punchy and deep: a short low kick and a deep snare.
+	tama: {
+		kick: { length: 0.42,
+			tones: [{ type: 'sine', from: 140, to: 40, dur: 0.12, gain: 1.1, env: 0.26 }],
+			noise: [{ filter: 'highpass', freq: 2000, dur: 0.018, gain: 0.3 }] },
+		snare: { length: 0.30,
+			tones: [{ type: 'triangle', from: 175, to: 145, dur: 0.09, gain: 0.5, env: 0.10 }],
+			noise: [{ filter: 'bandpass', freq: 1600, q: 0.7, dur: 0.13, gain: 1.0 }] },
+		closed_hat: { length: 0.12, noise: [{ filter: 'highpass', freq: 7000, dur: 0.04, gain: 0.55 }] },
+		open_hat: { length: 0.40, noise: [{ filter: 'highpass', freq: 6200, dur: 0.26, gain: 0.5 }] },
+		clap: studioDrumsClapSpec(1100, 1.0, 0.6, 0.11),
+		low_tom: { length: 0.48, tones: [{ type: 'sine', from: 115, to: 62, dur: 0.24, gain: 0.95, env: 0.34 }] },
+		high_tom: { length: 0.36, tones: [{ type: 'sine', from: 195, to: 110, dur: 0.18, gain: 0.9, env: 0.26 }] },
+		rim: { length: 0.12,
+			tones: [{ type: 'square', from: 850, to: 650, dur: 0.02, gain: 0.32, env: 0.04 }],
+			noise: [{ filter: 'bandpass', freq: 2300, q: 1.3, dur: 0.02, gain: 0.45 }] }
+	},
+	// Warm and round: a softer click and darker, longer tails.
+	gretsch: {
+		kick: { length: 0.60,
+			tones: [{ type: 'sine', from: 130, to: 42, dur: 0.22, gain: 0.95, env: 0.50 }],
+			noise: [{ filter: 'highpass', freq: 1800, dur: 0.01, gain: 0.18 }] },
+		snare: { length: 0.38,
+			tones: [{ type: 'triangle', from: 165, to: 145, dur: 0.14, gain: 0.42, env: 0.20 }],
+			noise: [{ filter: 'bandpass', freq: 1400, q: 0.6, dur: 0.20, gain: 0.8 }] },
+		closed_hat: { length: 0.14, noise: [{ filter: 'highpass', freq: 6200, dur: 0.05, gain: 0.5 }] },
+		open_hat: { length: 0.48, noise: [{ filter: 'highpass', freq: 5600, dur: 0.34, gain: 0.48 }] },
+		clap: studioDrumsClapSpec(1000, 0.9, 0.55, 0.13),
+		low_tom: { length: 0.52, tones: [{ type: 'sine', from: 115, to: 68, dur: 0.28, gain: 0.85, env: 0.42 }] },
+		high_tom: { length: 0.42, tones: [{ type: 'sine', from: 200, to: 120, dur: 0.22, gain: 0.8, env: 0.34 }] },
+		rim: { length: 0.13,
+			tones: [{ type: 'square', from: 780, to: 620, dur: 0.022, gain: 0.28, env: 0.045 }],
+			noise: [{ filter: 'bandpass', freq: 2000, q: 1.1, dur: 0.024, gain: 0.36 }] }
+	},
+	// A long sub kick, a snappy snare and metallic hats.
+	'808': {
+		kick: { length: 1.20,
+			tones: [{ type: 'sine', from: 90, to: 28, dur: 0.70, gain: 1.2, env: 0.90 }],
+			noise: [{ filter: 'highpass', freq: 4000, dur: 0.008, gain: 0.12 }] },
+		snare: { length: 0.28,
+			tones: [{ type: 'triangle', from: 230, to: 200, dur: 0.05, gain: 0.4, env: 0.07 }],
+			noise: [{ filter: 'bandpass', freq: 2800, q: 1.2, dur: 0.10, gain: 1.0 }] },
+		closed_hat: { length: 0.20, noise: [{ filter: 'highpass', freq: 10000, dur: 0.05, gain: 0.5 }] },
+		open_hat: { length: 0.60, noise: [{ filter: 'highpass', freq: 9500, dur: 0.38, gain: 0.45 }] },
+		clap: studioDrumsClapSpec(1900, 1.6, 0.55, 0.09),
+		low_tom: { length: 0.80, tones: [{ type: 'sine', from: 95, to: 40, dur: 0.45, gain: 0.95, env: 0.60 }] },
+		high_tom: { length: 0.50, tones: [{ type: 'sine', from: 180, to: 90, dur: 0.28, gain: 0.85, env: 0.40 }] },
+		rim: { length: 0.10,
+			tones: [{ type: 'square', from: 1600, to: 1300, dur: 0.015, gain: 0.3, env: 0.035 }],
+			noise: [{ filter: 'bandpass', freq: 4000, q: 1.7, dur: 0.015, gain: 0.4 }] }
+	},
+	// Aggressive: a clicky, fast kick for a double-kick feel, a big snare and
+	// cutting hats.
+	metal: {
+		kick: { length: 0.30,
+			tones: [{ type: 'sine', from: 190, to: 55, dur: 0.07, gain: 1.1, env: 0.16 }],
+			noise: [{ filter: 'highpass', freq: 5000, dur: 0.02, gain: 0.45 }] },
+		snare: { length: 0.45,
+			tones: [{ type: 'triangle', from: 260, to: 210, dur: 0.12, gain: 0.55, env: 0.18 }],
+			noise: [{ filter: 'bandpass', freq: 3300, q: 0.6, dur: 0.25, gain: 1.05 }] },
+		closed_hat: { length: 0.10, noise: [{ filter: 'highpass', freq: 9500, dur: 0.03, gain: 0.55 }] },
+		open_hat: { length: 0.30, noise: [{ filter: 'highpass', freq: 9000, dur: 0.18, gain: 0.5 }] },
+		clap: studioDrumsClapSpec(2400, 1.6, 0.6, 0.10),
+		low_tom: { length: 0.30, tones: [{ type: 'sine', from: 150, to: 80, dur: 0.14, gain: 0.9, env: 0.20 }] },
+		high_tom: { length: 0.24, tones: [{ type: 'sine', from: 270, to: 150, dur: 0.10, gain: 0.85, env: 0.14 }] },
+		rim: { length: 0.10,
+			tones: [{ type: 'square', from: 1400, to: 1100, dur: 0.015, gain: 0.34, env: 0.03 }],
+			noise: [{ filter: 'bandpass', freq: 3800, q: 1.8, dur: 0.015, gain: 0.5 }] }
+	}
+};
+
+// A kit is the acoustic spec with its overrides laid on top. A voice the kit
+// leaves alone keeps the base shape; a voice it names takes the kit's tone and
+// noise whole.
+function studioDrumsVoiceSpec(kit, name) {
+	var base = studioDrumsBaseSpec(name);
+	var table = studioDrumsKitSpecs[kit];
+	var change = table && table[name];
+	if (!change) { return base; }
+	var spec = { length: change.length || base.length };
+	if (change.tones) { spec.tones = change.tones; }
+	else if (base.tones) { spec.tones = base.tones; }
+	if (change.noise) { spec.noise = change.noise; }
+	else if (base.noise) { spec.noise = base.noise; }
+	return spec;
+}
+
 function studioDrumsEnvelope(off, dur, peak, at) {
 	var gain = off.createGain();
 	var start = at || 0;
@@ -311,8 +571,8 @@ function studioDrumsEnvelope(off, dur, peak, at) {
 	return gain;
 }
 
-function studioDrumsRenderVoice(off, name) {
-	var spec = studioDrumsVoiceSpec(name);
+function studioDrumsRenderVoice(off, kit, name) {
+	var spec = studioDrumsVoiceSpec(kit, name);
 	var noise = (spec.noise && spec.noise.length) ? studioDrumsNoiseBuffer(off, spec.length || 0.6) : null;
 	(spec.tones || []).forEach(function (tone) {
 		var at = tone.at || 0;
@@ -390,15 +650,17 @@ function studioDrumsCurrentStep() {
 	return (step + 16) % 16;
 }
 
-// A mapped key, a MIDI note, the voice's own name button, or a shelf-style hit:
-// one entry point, so recording and auditioning cannot disagree.
+// A mapped key, a MIDI note, the voice's own name button, a step or the velocity
+// menu: one entry point, so recording and auditioning cannot disagree. The
+// velocity is a percent (1..100); the play path takes the 0..1 fraction.
 function studioDrumsTrigger(voice, velocity, record) {
 	var ctx = studioDrumsBus();
 	if (!ctx || !studioDrums.steps[voice]) { return; }
+	var percent = Math.max(1, Math.min(100, Math.round(velocity || 0)));
 	var step = studioDrumsCurrentStep();
-	studioDrumsPlay(voice, ctx.currentTime + 0.008, velocity);
+	studioDrumsPlay(voice, ctx.currentTime + 0.008, percent / 100);
 	if (record !== false && studioDrumsRecording()) {
-		studioDrums.steps[voice][step] = (velocity >= 2) ? 2 : 1;
+		studioDrums.steps[voice][step] = percent;
 		studioDrumsRenderSteps(voice);
 		studioSaver();
 	}
@@ -461,7 +723,7 @@ function studioDrumsPlayRow(step, when) {
 		if (studioDrums.muted[v.name]) { return; }
 		var value = (studioDrums.steps[v.name] || [])[step] || 0;
 		if (!value) { return; }
-		studioDrumsPlay(v.name, when, value === 2 ? 1 : 0.7);
+		studioDrumsPlay(v.name, when, value / 100);
 	});
 }
 
@@ -513,7 +775,7 @@ $(document).on('click', '.studio_drums_key', function (e) {
 
 $(document).on('click', '.studio_drums_voice', function (e) {
 	e.preventDefault();
-	studioDrumsTrigger($(this).attr('data-voice'), 1, false);
+	studioDrumsTrigger($(this).attr('data-voice'), 80, false);
 });
 
 $(document).on('click', '.studio_drums_lamp', function (e) {
@@ -530,10 +792,102 @@ $(document).on('click', '.studio_drums_step', function (e) {
 	var step = parseInt($(this).attr('data-step'), 10) || 0;
 	if (!studioDrums.steps[voice]) { return; }
 	var current = studioDrums.steps[voice][step] || 0;
-	// Shift marks the beat as an accent; a normal click is on or off.
-	studioDrums.steps[voice][step] = e.shiftKey ? (current === 2 ? 0 : 2) : (current ? 0 : 1);
+	// A plain click places a beat at 70; Shift places a full accent at 100.
+	// Either click removes a beat that is already there.
+	studioDrums.steps[voice][step] = current ? 0 : (e.shiftKey ? 100 : 70);
 	studioDrumsRenderSteps(voice);
 	if (studioDrums.steps[voice][step]) { studioDrumsTrigger(voice, studioDrums.steps[voice][step], false); }
+	studioSaver();
+});
+
+// ---- a beat's velocity ----------------------------------------------------
+
+function studioDrumsMenuClose() {
+	$('#studio_drums_velocity').remove();
+}
+
+// The card is placed at the pointer and kept inside the window on every side.
+function studioDrumsMenuPlace(menu, x, y) {
+	var width = menu.outerWidth() || 148;
+	var height = menu.outerHeight() || 60;
+	var viewW = window.innerWidth || document.documentElement.clientWidth || 0;
+	var viewH = window.innerHeight || document.documentElement.clientHeight || 0;
+	var left = Math.max(4, Math.min(x, viewW - width - 4));
+	var top = Math.max(4, Math.min(y, viewH - height - 4));
+	menu.css({ left: left + 'px', top: top + 'px' });
+}
+
+// A placed beat carries a velocity from 10 to 100. The card stays open while
+// the person taps it, so a beat can be tuned by ear in one visit.
+function studioDrumsVelocityMenu(voice, step, x, y) {
+	studioDrumsMenuClose();
+	var value = (studioDrums.steps[voice] || [])[step] || 0;
+	var menu = $('<div class="studio_menu studio_drums_velocity" id="studio_drums_velocity"></div>')
+		.attr('data-voice', voice)
+		.attr('data-step', step);
+	$('<div class="studio_menu_head"></div>').text(studioDrumsVoiceLabel(voice)).appendTo(menu);
+	var row = $('<div class="studio_menu_velocity"></div>').appendTo(menu);
+	$('<button type="button" class="hover" data-delta="-10"></button>')
+		.attr('aria-label', studioDrumsText('Softer'))
+		.attr('title', studioDrumsText('Softer'))
+		.text('\u2212')
+		.appendTo(row);
+	$('<span></span>').attr('data-value', '1').text(String(value)).appendTo(row);
+	$('<button type="button" class="hover" data-delta="10"></button>')
+		.attr('aria-label', studioDrumsText('Harder'))
+		.attr('title', studioDrumsText('Harder'))
+		.text('+')
+		.appendTo(row);
+	$('body').append(menu);
+	studioDrumsMenuPlace(menu, x, y);
+}
+
+// Right-click opens the menu on a placed beat only; an empty step has no
+// velocity, so the browser's own menu stands there.
+$(document).on('contextmenu', '.studio_drums_step', function (e) {
+	var voice = $(this).attr('data-voice');
+	var step = parseInt($(this).attr('data-step'), 10) || 0;
+	var value = (studioDrums.steps[voice] || [])[step] || 0;
+	if (!value) { return; }
+	e.preventDefault();
+	studioDrumsVelocityMenu(voice, step, e.clientX, e.clientY);
+});
+
+$(document).on('click', '#studio_drums_velocity button', function (e) {
+	e.preventDefault();
+	var menu = $('#studio_drums_velocity');
+	if (!menu.length) { return; }
+	var voice = menu.attr('data-voice');
+	var step = parseInt(menu.attr('data-step'), 10) || 0;
+	var delta = parseInt($(this).attr('data-delta'), 10) || 0;
+	if (!studioDrums.steps[voice]) { return; }
+	var value = Math.max(10, Math.min(100, (studioDrums.steps[voice][step] || 0) + delta));
+	studioDrums.steps[voice][step] = value;
+	studioDrumsRenderSteps(voice);
+	menu.find('[data-value]').text(String(value));
+	studioDrumsTrigger(voice, value, false);
+	studioSaver();
+});
+
+// The next press elsewhere, Escape, a scroll or a cleared chart closes it.
+$(document).on('pointerdown', function (e) {
+	if (!$(e.target).closest('#studio_drums_velocity').length) { studioDrumsMenuClose(); }
+});
+
+$(document).on('keydown', function (e) {
+	if (e.key === 'Escape') { studioDrumsMenuClose(); }
+});
+
+document.addEventListener('scroll', studioDrumsMenuClose, true);
+
+$(document).on('change', '#studio_drums_kit', function () {
+	studioDrums.kit = studioDrumsKitName($(this).val());
+	// The rendered buffers belong to the old kit; build the new set and let the
+	// build token drop anything the old render still has in flight.
+	studioDrums.buffers = {};
+	studioDrums.buildState = 'idle';
+	if (studioDrums.ctx) { studioDrumsBuild(studioDrums.ctx); }
+	studioDrumsRender();
 	studioSaver();
 });
 
@@ -544,6 +898,7 @@ $(document).on('change', '#studio_drums_loop', function () {
 
 $(document).on('click', '#studio_drums_clear', function (e) {
 	e.preventDefault();
+	studioDrumsMenuClose();
 	studioDrumsVoices().forEach(function (v) {
 		studioDrums.steps[v.name] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 	});
@@ -577,7 +932,7 @@ $(document).on('keydown', function (e) {
 	if (typeof studioSelectedTake !== 'undefined' && studioSelectedTake) { return; }
 	var voice = studioDrumsVoiceForKey(e.key);
 	if (!voice) { return; }
-	studioDrumsTrigger(voice, e.shiftKey ? 2 : 1, true);
+	studioDrumsTrigger(voice, e.shiftKey ? 100 : 70, true);
 	e.preventDefault();
 });
 
@@ -648,7 +1003,8 @@ function studioDrumsMidiMessage(input, event) {
 	if ((data[0] & 0xf0) !== 0x90 || data[2] === 0) { return; }
 	var voice = studioDrumsVoiceForNote(data[1]);
 	if (!voice) { return; }
-	studioDrumsTrigger(voice, data[2] > 96 ? 2 : 1, true);
+	// A note's velocity is 0..127; a beat is a percent, and 1 is the softest hit.
+	studioDrumsTrigger(voice, Math.max(1, Math.round(data[2] / 127 * 100)), true);
 }
 
 $(document).on('click', '#studio_drums_midi', function (e) {

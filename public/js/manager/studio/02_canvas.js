@@ -138,9 +138,13 @@ function studioDrawChannel(ch) {
 	ctx.fillStyle = 'rgba(255,255,255,0.18)';
 	ctx.fillRect(0, 0, w, h);
 
-	var duration = mixer['time']['duration'] > 0 ? mixer['time']['duration'] : 1;
+	var duration = studioTimelineDuration();
 	var m = mixer[ch] || {};
 	var co = studioAudio.channels[ch];
+	// a track's colour dresses its clips, so the lane and the panel edge agree
+	var colour = (typeof studioTrackColour === 'function') ? studioTrackColour(ch) : '#145abe';
+	var fill = (typeof studioColourRgba === 'function') ? studioColourRgba(colour, 0.5) : 'rgba(20,90,190,0.5)';
+	var ghost = (typeof studioColourRgba === 'function') ? studioColourRgba(colour, 0.16) : 'rgba(20,90,190,0.16)';
 
 	if (co && co.source) {
 		co.recAnalyser.getFloatTimeDomainData(co.recData);
@@ -175,14 +179,13 @@ function studioDrawChannel(ch) {
 			var tw = Math.max(2, ((take.duration || 0) / duration) * w);
 			var selected = studioSelectedTake && studioSelectedTake.take === take;
 			var isVideo = take.encoding && take.encoding.indexOf('video') !== -1;
-			ctx.fillStyle = take.status == 'recording' ? 'rgba(220,0,0,0.55)' : (isVideo ? 'rgba(120,60,190,0.5)' : 'rgba(20,90,190,0.5)');
+			ctx.fillStyle = take.status == 'recording' ? 'rgba(220,0,0,0.55)' : (isVideo ? 'rgba(120,60,190,0.5)' : fill);
 			ctx.fillRect(x, 3, tw, h - 6);
 
 			// a looping take repeats across the rest of the song: ghost those passes
 			if (take.loop && take.duration > 0) {
 				ctx.save();
-				ctx.globalAlpha = 0.16;
-				ctx.fillStyle = '#145abe';
+				ctx.fillStyle = ghost;
 				for (var gx = x + tw; gx < w; gx += tw) { ctx.fillRect(gx, 3, tw, h - 6); }
 				ctx.restore();
 			}
@@ -229,7 +232,7 @@ function studioDrawChannel(ch) {
 				}
 			}
 
-			ctx.strokeStyle = selected ? '#ffd21e' : '#04325f';
+			ctx.strokeStyle = selected ? colour : '#04325f';
 			ctx.lineWidth = selected ? 3 : 1;
 			ctx.strokeRect(x, 3, tw, h - 6);
 			// grab handles
@@ -267,6 +270,12 @@ function studioDrawChannel(ch) {
 		ctx.fillText(studioBarLabel(region.start) + ' \u2192 ' + studioBarLabel(region.end) + (region.tentative ? ' loop' : ' (loop)'), region_x + 4, h - 3);
 	}
 
+	// a cross-track drag tints the lane the take would land in
+	if (typeof studioTakeDrag !== 'undefined' && studioTakeDrag && studioTakeDrag.mode == 'move' && studioTakeDrag.over == ch) {
+		ctx.fillStyle = (typeof studioColourRgba === 'function') ? studioColourRgba(colour, 0.12) : 'rgba(20,90,190,0.12)';
+		ctx.fillRect(0, 0, w, h);
+	}
+
 	if (mixer['time']['position'] > 0) {
 		var px = (mixer['time']['position'] / duration) * w;
 		ctx.strokeStyle = 'black';
@@ -294,10 +303,144 @@ function studioDrawMetre(ch) {
 	ctx.fillRect(0, h - (level * h), w, level * h);
 }
 
+// ---- the timeline ruler -----------------------------------------------------
+
+// The ruler (and every lane's time axis) always has a scale, even on an empty
+// song: 60 seconds stands in for a duration the transport has not learned yet.
+function studioTimelineDuration() {
+	var duration = mixer['time'] && mixer['time']['duration'];
+	return (duration > 0) ? duration : 60;
+}
+
+// Seek from any transport state. A playing transport measures its position on
+// the audio clock, so a seek re-anchors that clock instead of waiting for the
+// tick to overwrite it; the status itself is left alone (a seek is not a play
+// and not a stop).
+function studioSeek(t) {
+	var duration = studioTimelineDuration();
+	if (!(t >= 0)) { t = 0; }
+	t = Math.min(t, duration);
+	mixer['time']['position'] = t;
+	if ((mixer['time']['status'] == 'play' || mixer['time']['status'] == 'record') && typeof studioClockStart === 'function') {
+		studioClockStart(t);
+	}
+	if (typeof studioTimeDisplay === 'function') { studioTimeDisplay(); }
+	studioDrawTracks();
+}
+
+// Ticks and labels over the timeline. The display button swaps plain seconds
+// for bar:beat, so the ruler reads the same way the transport does: 'beats'
+// means seconds here too.
+function studioDrawRuler() {
+	var canvas = document.getElementById('studio_ruler_canvas');
+	if (!canvas) { return; }
+	studioFitCanvas(canvas);
+	var ctx = canvas.getContext('2d');
+	if (!ctx) { return; }
+	var w = canvas.width, h = canvas.height;
+	ctx.clearRect(0, 0, w, h);
+
+	var duration = studioTimelineDuration();
+	var style = window.getComputedStyle ? window.getComputedStyle(canvas) : null;
+	var themed = function (name, fallback) {
+		var value = style ? String(style.getPropertyValue(name) || '').trim() : '';
+		return value || fallback;
+	};
+	var ink = themed('--ink', '#d9dde4');
+	var line = themed('--line', 'rgba(128,128,128,0.45)');
+	var accent = themed('--accent', '#145abe');
+
+	ctx.font = '9px sans-serif';
+	ctx.textBaseline = 'top';
+	ctx.lineWidth = 1;
+
+	if (mixer['time'] && mixer['time']['display'] == 'beats') {
+		// seconds: the coarsest step that still leaves room for its label
+		var ladder = [0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+		var step = ladder[ladder.length - 1];
+		for (var s = 0; s < ladder.length; s++) {
+			if ((ladder[s] / duration) * w >= 46) { step = ladder[s]; break; }
+		}
+		var minor = step / 5;
+		for (var mi = 0; mi * minor <= duration + 1e-9; mi++) {
+			var mx = ((mi * minor) / duration) * w;
+			var major = (mi % 5) === 0;
+			ctx.strokeStyle = line;
+			ctx.beginPath();
+			ctx.moveTo(mx + 0.5, major ? h - 10 : h - 5);
+			ctx.lineTo(mx + 0.5, h);
+			ctx.stroke();
+			if (major && mx < w - 12) {
+				ctx.fillStyle = ink;
+				ctx.fillText(String(Math.round(mi * minor * 1000) / 1000), mx + 3, 2);
+			}
+		}
+	}
+	else {
+		// bars and beats: bar lines taller and labelled, beats shorter
+		var bar = studioBarSeconds();
+		var beat = studioBeatSeconds();
+		var pxBar = (bar / duration) * w;
+		var pxBeat = (beat / duration) * w;
+		var every = 1;
+		var spans = [2, 4, 8, 16, 32, 64];
+		for (var e = 0; e < spans.length && (pxBar * every) < 46; e++) { every = spans[e]; }
+		if (pxBeat >= 5) {
+			for (var bi = 0; bi * beat <= duration + 1e-9; bi++) {
+				var bx = ((bi * beat) / duration) * w;
+				ctx.strokeStyle = line;
+				ctx.beginPath();
+				ctx.moveTo(bx + 0.5, h - 5);
+				ctx.lineTo(bx + 0.5, h);
+				ctx.stroke();
+			}
+		}
+		for (var ni = 0; ni * bar <= duration + 1e-9; ni++) {
+			var barx = ((ni * bar) / duration) * w;
+			ctx.strokeStyle = line;
+			ctx.beginPath();
+			ctx.moveTo(barx + 0.5, h - 10);
+			ctx.lineTo(barx + 0.5, h);
+			ctx.stroke();
+			// the transport numbers its first bar 0, so the ruler does too
+			if ((ni % every) === 0 && barx < w - 10) {
+				ctx.fillStyle = ink;
+				ctx.fillText(String(ni), barx + 3, 2);
+			}
+		}
+	}
+
+	var position = (mixer['time'] && mixer['time']['position']) || 0;
+	var px = (position / duration) * w;
+	if (px >= 0 && px <= w) {
+		ctx.strokeStyle = accent;
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(px, 0);
+		ctx.lineTo(px, h);
+		ctx.stroke();
+		ctx.fillStyle = accent;
+		ctx.beginPath();
+		ctx.moveTo(px - 4, 0);
+		ctx.lineTo(px + 4, 0);
+		ctx.lineTo(px, 5);
+		ctx.closePath();
+		ctx.fill();
+	}
+}
+
+// A delegated handler: the ruler is markup the window can rebuild under us.
+$(document).on('click', '#studio_ruler_canvas', function (e) {
+	var rect = this.getBoundingClientRect();
+	if (!rect.width) { return; }
+	studioSeek(((e.clientX - rect.left) / rect.width) * studioTimelineDuration());
+});
+
 function studioDrawTracks() {
 	// the transport keeps running while the tab is hidden, but there is no point
 	// repainting canvases nobody can see
 	if (document.hidden) { return; }
+	studioDrawRuler();
 	$.each(mixer, function (ch) {
 		if (!/^[0-9]+$/.test(ch)) { return; }
 		studioDrawChannel(ch);

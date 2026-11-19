@@ -191,6 +191,23 @@ our $studio = {
 		{ name => 'high_tom', label => 'High Tom', key => 'j', note => 45 },
 		{ name => 'rim', label => 'Rim', key => 'k', note => 37 }
 	],
+	# The drum kits. `name` is the wire name saved in the song and compared by the
+	# browser; `label` is what people read in the Kit list. A kit is the same
+	# eight voices with its own shapes on top (see studioDrumsKitSpecs in
+	# public/js/manager/studio/11_drums.js), so a kit never changes a row, key or
+	# step. Acoustic is the unfiltered base every other kit overrides.
+	drum_kits => [
+		{ name => 'acoustic', label => 'Acoustic' },
+		{ name => 'electronic', label => 'Electronic' },
+		{ name => 'techno', label => 'Techno' },
+		{ name => 'beats', label => 'Beats' },
+		{ name => 'latin', label => 'Latin' },
+		{ name => 'pearl', label => 'Pearl' },
+		{ name => 'tama', label => 'Tama' },
+		{ name => 'gretsch', label => 'Gretsch' },
+		{ name => '808', label => '808' },
+		{ name => 'metal', label => 'Metal' }
+	],
 	# The shared effect contract (docs/studio-effects.md). `effects` is what the
 	# rack palette offers and what the browser's studioInsert() builds; `master`
 	# is the fixed chain after the mix. A control with `options` is a dropdown,

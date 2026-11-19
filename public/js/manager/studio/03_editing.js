@@ -122,6 +122,10 @@ function studioLoopTakeDuration(take) {
 
 var studioTakeDrag = null;
 var studioSelectedTake = null;
+// The clip menu's clipboard is a snapshot of a take's source, not the take
+// itself, so a cut can take the original away and a paste can still rebuild it.
+var studioClipboard = null;
+var studioClipMenuTarget = null;
 
 function studioCanvasChannel(canvas) {
 	var m = (canvas && canvas.id || '').match(/^track_view_(\d+)$/);
@@ -244,7 +248,169 @@ function studioSplitTake(ch, take, t) {
 	return right;
 }
 
+// ---- the clip menu ----------------------------------------------------------
+
+function studioClipMenuRow(menu, command, label, disabled) {
+	$('<button type="button" class="studio_menu_row"></button>')
+		.attr('data-command', command)
+		.text(label)
+		.prop('disabled', !!disabled)
+		.appendTo(menu);
+}
+
+// What a copy keeps: everything needed to place the clip again on any track.
+// A saved clip points at its file by uuid; an unsaved one carries its blob.
+function studioClipSnapshot(take) {
+	if (!take) { return null; }
+	return {
+		src: take.src,
+		uuid: take.uuid || null,
+		data: take.data,
+		offset: take.offset || 0,
+		duration: take.duration || 0,
+		encoding: take.encoding,
+		loop: !!take.loop
+	};
+}
+
+function studioClipMenu(hit, px, py) {
+	$('.studio_menu').remove();
+	studioClipMenuTarget = { ch: hit.ch, take: hit.take, t: hit.t };
+	var menu = $('<div class="studio_menu studio_clip_menu"></div>').attr('data-channel', hit.ch);
+	$('<div class="studio_menu_head"></div>').text(studioLayoutText('Clip')).appendTo(menu);
+	studioClipMenuRow(menu, 'split', studioLayoutText('Split'), false);
+	studioClipMenuRow(menu, 'cut', studioLayoutText('Cut'), false);
+	studioClipMenuRow(menu, 'copy', studioLayoutText('Copy'), false);
+	// Paste needs a snapshot, so it reads disabled until something is copied
+	studioClipMenuRow(menu, 'paste', studioLayoutText('Paste'), !studioClipboard);
+	$('body').append(menu);
+	var margin = 6;
+	var left = Math.min(px, $(window).width() - menu.outerWidth() - margin);
+	var top = Math.min(py, $(window).height() - menu.outerHeight() - margin);
+	menu.css({ left: Math.max(margin, left), top: Math.max(margin, top) });
+}
+
+// Build the take beside the split's right half: a hidden media element in the
+// track container, then the object in the channel's list. A looping snapshot
+// pastes as an ordinary clip.
+function studioPasteTake(ch, t) {
+	if (!studioClipboard) { return null; }
+	var m = mixer[ch];
+	if (!m) { return null; }
+	if (!m.media) { m.media = {}; }
+	if (!m.media.out) { m.media.out = []; }
+	var clip = studioClipboard;
+	var pasted = {
+		uuid: clip.uuid || null,
+		startTime: Math.max(0, t),
+		offset: clip.offset || 0,
+		duration: clip.duration || 0,
+		status: 'stop',
+		src: clip.src,
+		encoding: clip.encoding,
+		loop: false
+	};
+	// A saved clip already has a server file; an unsaved one must carry its blob
+	// so the pasted copy gets uploaded too.
+	if (!clip.uuid) { pasted.data = clip.data; }
+
+	var el = document.createElement('video');
+	el.className = 'studio_video';
+	el.style.display = 'none';
+	el.preload = 'auto';
+	if (clip.src) { el.src = clip.src; }
+	$('#studio_track_container').append(el);
+	pasted.track = el;
+
+	m.media.out.push(pasted);
+	studioReindexTakes(ch);
+	mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, pasted.startTime + (pasted.duration || 0));
+	studioSelectedTake = { ch: ch, take: pasted };
+	studioDrawChannel(ch);
+	studioSaver();
+	studioTakesChanged();
+	return pasted;
+}
+
+$(document).on('contextmenu', '.track', function (e) {
+	var hit = studioCanvasHit(this, e.clientX);
+	if (!hit) { return; }
+	e.preventDefault();
+	studioSelectedTake = { ch: hit.ch, take: hit.take };
+	studioDrawChannel(hit.ch);
+	studioClipMenu(hit, e.clientX, e.clientY);
+});
+
+$(document).on('click', '.studio_clip_menu .studio_menu_row', function (e) {
+	e.preventDefault();
+	var row = $(this);
+	if (row.prop('disabled')) { return; }
+	var command = row.attr('data-command');
+	var hit = studioClipMenuTarget;
+	$('.studio_menu').remove();
+	studioClipMenuTarget = null;
+	if (!hit || !hit.take) { return; }
+	if (command == 'split') {
+		studioSplitTake(hit.ch, hit.take, hit.t);
+		studioDrawChannel(hit.ch);
+		studioSaver();
+	}
+	else if (command == 'copy') {
+		studioClipboard = studioClipSnapshot(hit.take);
+	}
+	else if (command == 'cut') {
+		studioClipboard = studioClipSnapshot(hit.take);
+		studioRemoveTake(hit.ch, hit.take);
+	}
+	else if (command == 'paste') {
+		studioPasteTake(hit.ch, hit.t);
+	}
+});
+
+// One menu on screen at a time: the next press elsewhere, Escape, or any scroll
+// puts it away (the Clothesline menu's rules).
+$(document).on('pointerdown', function (e) {
+	if ($(e.target).closest('.studio_menu').length) { return; }
+	$('.studio_menu').remove();
+	studioClipMenuTarget = null;
+});
+
+$(document).on('keydown', function (e) {
+	if (e.key == 'Escape' && $('.studio_menu').length) {
+		$('.studio_menu').remove();
+		studioClipMenuTarget = null;
+	}
+});
+
+window.addEventListener('scroll', function () {
+	$('.studio_menu').remove();
+	studioClipMenuTarget = null;
+}, true);
+
+// Carry a take to another lane: the take object moves, it is never copied.
+// Both channels are reindexed because the media element ids follow the array
+// positions the server stores files by.
+function studioMoveTake(take, from, to) {
+	if (!take || !from || !to || from == to) { return false; }
+	if (take.status == 'recording') { return false; }
+	var media = mixer[from] && mixer[from].media;
+	var target = mixer[to] && mixer[to].media;
+	if (!media || !media.out || !target) { return false; }
+	var index = media.out.indexOf(take);
+	if (index == -1) { return false; }
+	if (!target.out) { target.out = []; }
+	media.out.splice(index, 1);
+	target.out.push(take);
+	studioReindexTakes(from);
+	studioReindexTakes(to);
+	if (studioSelectedTake && studioSelectedTake.take === take) { studioSelectedTake = { ch: to, take: take }; }
+	return true;
+}
+
 $(document).on('pointerdown', '.track', function (e) {
+	// only the primary button starts a drag or changes the selection; the
+	// right button belongs to the clip menu
+	if (e.button !== 0) { return; }
 	var hit = studioCanvasHit(this, e.originalEvent.clientX);
 	if (!hit) {
 		studioSelectedTake = null;
@@ -266,6 +432,17 @@ $(document).on('pointermove', function (e) {
 
 	if (d.mode == 'move') {
 		take.startTime = Math.max(0, studioSnap(d.startTime + dt, targets, threshold));
+		// which lane is under the pointer? a drop there carries the take over
+		var under = document.elementFromPoint ? document.elementFromPoint(e.originalEvent.clientX, e.originalEvent.clientY) : null;
+		var lane = (under && under.closest) ? under.closest('.track') : null;
+		var over = lane ? studioCanvasChannel(lane) : null;
+		if (over && !mixer[over]) { over = null; }
+		if (over != d.over) {
+			var was = d.over;
+			d.over = over;
+			if (was && was != d.ch) { studioDrawChannel(was); }
+			if (over && over != d.ch) { studioDrawChannel(over); }
+		}
 	}
 	else if (d.mode == 'trim-end') {
 		var srcDur = Infinity;
@@ -291,9 +468,14 @@ $(document).on('pointermove', function (e) {
 
 $(document).on('pointerup', function () {
 	if (!studioTakeDrag) { return; }
-	var ch = studioTakeDrag.ch;
+	var d = studioTakeDrag;
 	studioTakeDrag = null;
-	studioDrawChannel(ch);
+	var from = d.ch;
+	var to = d.over;
+	// a drop on another lane moves the one take; a recording take stays put
+	if (d.mode == 'move' && to && to != from) { studioMoveTake(d.take, from, to); }
+	studioDrawChannel(from);
+	if (to && to != from) { studioDrawChannel(to); }
 	studioSaver();
 	studioTakesChanged();
 });

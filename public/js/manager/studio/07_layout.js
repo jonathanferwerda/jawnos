@@ -1009,6 +1009,112 @@ function studioSaveTrackCount() {
 	studioUpdateTrackCount();
 }
 
+// ---- track colour ----------------------------------------------------------
+
+// A new track takes a colour from the theme's own family - a random hue at the
+// saturation and lightness the theme already uses for its panels - rather than
+// an arbitrary neon swatch. The last hue is remembered so two tracks added in a
+// row do not collide outright.
+var STUDIO_TRACK_COLOUR = '#145abe';
+var STUDIO_TRACK_COLOUR_RE = /^#[0-9a-f]{6}$/i;
+var studioTrackHue = -1;
+
+function studioHexColour(value) {
+	value = String(value || '').trim();
+	return STUDIO_TRACK_COLOUR_RE.test(value) ? value.toLowerCase() : '';
+}
+
+// Dark themes want a brighter, lighter swatch to read on a near-black panel;
+// the body class is the theme's own word for it, and the background is a
+// fallback for a page that has not set the class yet.
+function studioThemeIsDark() {
+	if (document.body && document.body.classList && document.body.classList.contains('dark_theme')) { return true; }
+	var bg = '';
+	try { bg = getComputedStyle(document.body).backgroundColor || ''; } catch (e) { bg = ''; }
+	var m = bg.match(/rgba?\(([^)]+)\)/);
+	if (!m) { return false; }
+	var p = m[1].split(',');
+	if (p.length < 3) { return false; }
+	var lum = (0.2126 * (p[0] - 0) + 0.7152 * (p[1] - 0) + 0.0722 * (p[2] - 0)) / 255;
+	return lum < 0.5;
+}
+
+function studioRandomTrackColour() {
+	var h = Math.floor(Math.random() * 360);
+	if (h === studioTrackHue) { h = (h + 47) % 360; }
+	studioTrackHue = h;
+	var dark = studioThemeIsDark();
+	var s = 0.55 + Math.random() * 0.15;
+	var l = dark ? 0.62 + Math.random() * 0.10 : 0.42 + Math.random() * 0.10;
+	if (typeof jawnosHslToHex !== 'function') {
+		// an older bundle may not carry the universal helper: a small themed palette
+		var fallback = dark
+			? ['#6ea8ff', '#7fd6a8', '#ff9f7a', '#c79bff', '#ffd06e', '#7ad4e0']
+			: ['#145abe', '#1f8a5b', '#b2412a', '#6a3fb0', '#a0781f', '#1f6f8a'];
+		return fallback[Math.floor(Math.random() * fallback.length)];
+	}
+	return jawnosHslToHex(h, s, l);
+}
+
+// The swatch is the song's word for the colour; the row's custom property is
+// what the stylesheet reads, and the fallback keeps an old row paintable.
+function studioTrackColour(ch) {
+	ch = String(ch);
+	var input = $('.studio_track_colour[channel="' + ch + '"]');
+	if (input.length) {
+		var picked = studioHexColour(input.val());
+		if (picked) { return picked; }
+	}
+	var row = document.getElementById('studio_track_row_' + ch);
+	if (row && row.style) {
+		var prop = studioHexColour(row.style.getPropertyValue('--studio-track-colour'));
+		if (prop) { return prop; }
+	}
+	return STUDIO_TRACK_COLOUR;
+}
+
+// Turn a hex into the translucent fill a canvas wants. Anything unparseable is
+// handed back untouched, so a caller can pass a named colour or an rgba().
+function studioColourRgba(colour, alpha) {
+	var m = String(colour || '').match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+	if (!m) { return colour; }
+	if (alpha === undefined) { alpha = 1; }
+	var hex = m[1];
+	if (hex.length == 3) { hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2]; }
+	var r = parseInt(hex.slice(0, 2), 16);
+	var g = parseInt(hex.slice(2, 4), 16);
+	var b = parseInt(hex.slice(4, 6), 16);
+	return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+function studioApplyTrackColour(ch, colour) {
+	var hex = studioHexColour(colour);
+	if (!hex) { return; }
+	ch = String(ch);
+	var input = $('.studio_track_colour[channel="' + ch + '"]');
+	if (input.length) { input.val(hex); }
+	var row = document.getElementById('studio_track_row_' + ch);
+	if (row) {
+		$(row).attr('data-colour', hex);
+		if (row.style) { row.style.setProperty('--studio-track-colour', hex); }
+	}
+	if (typeof studioDrawChannel === 'function') { studioDrawChannel(ch); }
+}
+
+// Give every rendered row a colour: the song's where it has one, a fresh
+// theme-family one where the server rendered the row without one. Also the
+// initial paint, so the first frame already has the right edges and clips.
+function studioApplyTrackColours() {
+	$('#studio_viewer .studio_track').each(function () {
+		var ch = $(this).attr('data-channel');
+		if (!ch) { return; }
+		var colour = $(this).attr('data-colour') ? studioTrackColour(ch) : studioRandomTrackColour();
+		studioApplyTrackColour(ch, colour);
+	});
+	if (typeof studioDrawTracks === 'function') { studioDrawTracks(); }
+	if (typeof studioDrawRuler === 'function') { studioDrawRuler(); }
+}
+
 // Rewrite the channel number a cloned row or strip carries.
 function studioRewireChannel(node, from, to) {
 	from = String(from);
@@ -1043,6 +1149,15 @@ function studioResetChannelMarkup(node, ch) {
 	node.find('.studio_track_automation').attr('aria-pressed', 'false');
 	node.removeClass('selected_channel studio_track_automation_on studio_fx_open');
 	node.find('.selected_channel').removeClass('selected_channel');
+	// a recycled clone must not wear the first track's colour
+	node.removeAttr('data-colour');
+	node.find('[data-colour]').removeAttr('data-colour');
+	var clearTrackColour = function () {
+		if (this.style) { this.style.removeProperty('--studio-track-colour'); }
+	};
+	node.each(clearTrackColour);
+	node.find('.studio_track').each(clearTrackColour);
+	node.find('.studio_track_colour').val(STUDIO_TRACK_COLOUR);
 	node.find('canvas').each(function () { this.width = 0; this.height = 0; });
 	var resetVideo = function () {
 		this.removeAttribute('src');
@@ -1094,6 +1209,10 @@ function studioCreateTrack(ch) {
 	studioChannelEngine(ch);
 	studioApplyChannel(ch);
 	$('.knob_control[channel="' + ch + '"]').trigger('change');
+	// the reset above cleared the clone's inherited colour; give this track its own
+	row.removeAttr('data-colour');
+	if (row[0] && row[0].style) { row[0].style.removeProperty('--studio-track-colour'); }
+	studioApplyTrackColour(ch, studioRandomTrackColour());
 	studioDrawChannel(ch);
 	studioLayoutQuiet = wasQuiet;
 	studioUpdateTrackCount();
