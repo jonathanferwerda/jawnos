@@ -2602,6 +2602,10 @@ html.jawnos_webview #admin_console_toggle {
 	cursor: var(--jawnos-cursor-none, none);
 	touch-action: none;
 }
+/* a selection tool has no brush to show, so it asks for its own pointer */
+#marker_viewport[data-tool="select"] #whiteboard,
+#marker_viewport[data-tool="lasso"] #whiteboard { cursor: var(--jawnos-cursor-crosshair, crosshair); }
+#marker_viewport[data-tool="move"] #whiteboard { cursor: var(--jawnos-cursor-move, move); }
 #marker_selection_overlay {
 	position: absolute;
 	left: 0;

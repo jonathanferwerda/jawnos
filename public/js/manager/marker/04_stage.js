@@ -230,7 +230,17 @@ function markerStatusPointer(point) {
 // ring has the diameter the brush actually paints.
 
 function markerBrushDiameter(pressure) {
-	return Math.max(6, markerWidth(pressure) * markerView.scale);
+	if (pressure == undefined) { pressure = markerStroke.pressure; }
+	// the sliders' value is the brush even before the first stroke sets
+	// markerStroke.size, so the ring never shows the wrong width
+	var size = (marker && marker.selected_marker_size) ? marker.selected_marker_size : markerStroke.size;
+	return Math.max(6, size * 2 * (0.3 + 0.7 * pressure) * markerView.scale);
+}
+
+// a selection tool has no brush to show, so the ring goes and the canvas wears
+// a crosshair (or the move cursor) instead
+function markerToolCursor() {
+	$('#marker_viewport').attr('data-tool', localStorage.getItem('marker_tool') || 'pencil');
 }
 
 function markerBrushCursorMove(screen) {
@@ -244,12 +254,6 @@ function markerBrushCursorMove(screen) {
 		markerRulersSoon();
 		return;
 	}
-	var diameter = markerBrushDiameter(markerStroke.pressure);
-	cursor.css({
-		width: diameter + 'px',
-		height: diameter + 'px',
-		transform: 'translate(' + (screen.x - diameter / 2) + 'px, ' + (screen.y - diameter / 2) + 'px)'
-	}).show();
 	$('#marker_cursor_x').css({ left: screen.x + 'px' }).show();
 	$('#marker_cursor_y').css({ top: screen.y + 'px' }).show();
 	// the rulers mark the same column and row, only when it actually moved
@@ -257,6 +261,17 @@ function markerBrushCursorMove(screen) {
 	markerRulerMemory.cursor_x_screen = Math.round(screen.x);
 	markerRulerMemory.cursor_y_screen = Math.round(screen.y);
 	if (moved) { markerRulersSoon(); }
+	var tool = localStorage.getItem('marker_tool') || 'pencil';
+	if (tool == 'select' || tool == 'lasso' || tool == 'move') {
+		cursor.hide();
+		return;
+	}
+	var diameter = markerBrushDiameter(markerStroke.pressure);
+	cursor.css({
+		width: diameter + 'px',
+		height: diameter + 'px',
+		transform: 'translate(' + (screen.x - diameter / 2) + 'px, ' + (screen.y - diameter / 2) + 'px)'
+	}).show();
 }
 
 function markerBrushCursorHide() {
@@ -372,6 +387,9 @@ function markerSizeDialogOpen() {
 	$('#marker_size_landscape').prop('checked', false);
 	markerDialogOpen('marker_size_dialog');
 }
+
+$(document).on('click', '.marker_init', function() { markerSizeDialogOpen(); });
+$(document).on('click', '.marker_tool, .marker_erase_toggle', function() { markerToolCursor(); });
 
 $(document).on('click', '.marker_modal_cancel', function() { markerDialogClose(); });
 $(document).on('click', '.marker_modal', function(e) {
@@ -496,6 +514,7 @@ function markerStatusMoved(point) {
 var markerStageObserver;
 var markerStageBound = false;
 function markerStageInit() {
+	markerToolCursor();
 	markerRailsApply();
 	markerStageResize();
 	if (window.ResizeObserver && !markerStageObserver) {

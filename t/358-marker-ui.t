@@ -116,8 +116,10 @@ unlike($marker_index, qr/markerImageDataCrop/, 'the per-stroke whole-layer crop 
 # --- the brush ring, the rulers and the status bar ---------------------------
 like($marker_stage, qr/function markerBrushDiameter\(pressure\)/,
 	'the ring is the size of the brush');
-like($marker_stage, qr/markerWidth\(pressure\) \* markerView\.scale/,
-	'the ring follows the zoom');
+like($marker_stage, qr/size \* 2 \* \(0\.3 \+ 0\.7 \* pressure\) \* markerView\.scale/,
+	'the ring is the brush width at the current zoom');
+like($marker_stage, qr/marker && marker\.selected_marker_size/,
+	'the ring shows the chosen size, not only the size of the last stroke');
 like($marker_stage, qr/function markerRulersDraw\(\)/, 'the rulers are drawn from the view');
 like($marker_stage, qr/function markerRulerStep\(scale\)/, 'the ruler picks a step that fits its labels');
 like($marker_stage, qr/function markerStatusPointer\(point\)/,
@@ -163,6 +165,25 @@ like($misc13, qr/and app != \? order by timestamp desc limit 40/,
 like($misc13, qr/my \$attach_uuid = \$c->param\('attach_uuid'\);/, 'a save can name an appointment');
 like($misc13, qr/&subs::db_update\('appointments', \{ file => encode_json\(\$files\) \}, \{ uuid => \$attach_uuid \}\)/,
 	'an attached drawing joins that record\'s own file list');
+
+# --- the controls are wired ---------------------------------------------------
+# A button that no handler answers is a button that does nothing: the shell was
+# rewritten, so every control the rail shows is checked against the scripts that
+# claim it (the rails' own toggles live on their ids).
+my $all_js = join "\n", $marker_index, $marker_paint, $marker_panel, $marker_select, $marker_stage;
+for my $name (qw(
+	marker_init marker_size_choice marker_modal_cancel marker_save_appointment marker_attach_row
+	marker_selection_action marker_selection_effect marker_group_head
+	save_marker marker_session_save marker_tool marker_erase_toggle marker_transform marker_paper
+	marker_delete flipbook play_marker record_marker marker_layer_add marker_layer_delete
+	marker_undo marker_redo marker_zoom_in marker_zoom_out marker_zoom_fit marker_new_board
+	marker_colour marker_colour_add marker_colour_remove marker_stylus_toggle
+	marker_toolbox_hide marker_toolbox_show marker_toolbox_right_hide marker_toolbox_right_show
+a)) {
+	my $id = $name eq 'marker_paper' ? 'paper' : $name;
+	like($all_js, qr/\.on\('[^']*',\s*'[^']*\Q$id\E/,
+		"the $id control has a handler");
+}
 
 # the icons the toolbar calls for
 for my $icon (qw/pencil brush spray blur fill sample keyboard eraser select lasso move/) {

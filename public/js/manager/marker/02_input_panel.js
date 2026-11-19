@@ -381,14 +381,9 @@ $(document).on('click', '.marker_session_delete', function(e) {
 	});
 });
 
-// the sessions panel is fetched from the server, so wait for its container to
-// appear before filling it
-function markerSessionPanelWait(attempts) {
-	if (attempts > 20) { return; }
-	if ($('#marker_sessions').length > 0) { markerSessionPanel(); return; }
-	setTimeout(function() { markerSessionPanelWait(attempts + 1); }, 250);
-}
-
+// the right rail holds #marker_sessions, so the panel is filled directly on
+// open (markerStageInit) rather than waiting for a keyboard command to create
+// its container, as it used to
 var record_marker;
 $(document).on('click', '.record_marker', function() {
 	jpCanvas();
