@@ -83,7 +83,7 @@ function studioApplyHideSettings() {
 // its persisted order (the grid's auto-placement order) and its width is the
 // number of columns it spans. Dropping a docked panel onto another inserts it
 // before that panel, and the ones after it reflow into the gaps. A floated panel
-// leaves the grid but keeps its order and span, so Dock puts it back in place.
+// leaves the grid but keeps its order and span, so Dock puts it where it was dropped.
 
 // The drum machine is a fifth panel. It has no entry in the Arrange preset
 // below for the same reason the synth has none: arranged mode places panels by
@@ -559,14 +559,67 @@ function studioFloatPanel(name, position, persist) {
 	return panel;
 }
 
+// The docked panel a float is nearest to: the largest overlap wins, then the
+// nearest centre. A float dragged over the grid is asking for that place.
+function studioDockTarget(name, panel) {
+	var rect = panel[0].getBoundingClientRect();
+	var target = null;
+	var bestArea = 0;
+	var bestDistance = Infinity;
+	$.each(studioPanelSelectors, function (other) {
+		if (other == name) { return; }
+		var p = studioPanelElement(other);
+		if (!p.length || p.hasClass('studio_panel_floating') || !p.is(':visible')) { return; }
+		var r = p[0].getBoundingClientRect();
+		var overlapW = Math.max(0, Math.min(rect.right, r.right) - Math.max(rect.left, r.left));
+		var overlapH = Math.max(0, Math.min(rect.bottom, r.bottom) - Math.max(rect.top, r.top));
+		var area = overlapW * overlapH;
+		var dx = (r.left + r.width / 2) - (rect.left + rect.width / 2);
+		var dy = (r.top + r.height / 2) - (rect.top + rect.height / 2);
+		var distance = dx * dx + dy * dy;
+		if (area > bestArea || (area === bestArea && distance < bestDistance)) {
+			target = other;
+			bestArea = area;
+			bestDistance = distance;
+		}
+	});
+	return target;
+}
+
+// Dock the float where it was dropped: before the target when its centre is
+// above or left of the target's, otherwise after it. The saved order is the
+// whole arrangement, so the neighbours reflow around the new place.
+function studioDockPosition(name, panel, target) {
+	var t = studioPanelElement(target);
+	if (!t.length) { return; }
+	var rect = panel[0].getBoundingClientRect();
+	var tr = t[0].getBoundingClientRect();
+	var cx = rect.left + rect.width / 2;
+	var cy = rect.top + rect.height / 2;
+	var tx = tr.left + tr.width / 2;
+	var ty = tr.top + tr.height / 2;
+	var after = (cy > ty + 4) || (Math.abs(cy - ty) <= 4 && cx > tx);
+	var from = studioPanelOrder.indexOf(name);
+	if (from >= 0) { studioPanelOrder.splice(from, 1); }
+	var to = studioPanelOrder.indexOf(target);
+	if (to < 0) { to = studioPanelOrder.length; }
+	if (after) { to++; }
+	studioPanelOrder.splice(to, 0, name);
+}
+
 function studioDockPanel(name, persist) {
 	var panel = studioPanelElement(name);
 	if (!panel.length || !panel.hasClass('studio_panel_floating')) { return; }
+	// A person pressing Dock means "put it where I left it": use the float's
+	// current place to choose its neighbours. Restoring a saved docked panel
+	// (persist === false) keeps the stored order.
+	var dropped = (persist !== false) ? studioDockTarget(name, panel) : null;
 	panel.removeClass('studio_panel_floating studio_panel_dragging studio_panel_resizing')
 		.css({ left: '', top: '', width: '', height: '', position: '', flex: '' });
 	studioApplyPanelHeight(name);
 	studioApplyPanelWidth(name);
-	// back into the grid; the row flow puts it in its place from the saved order
+	if (dropped) { studioDockPosition(name, panel, dropped); }
+	// back into the grid; the row flow puts it in its place from the new order
 	$('#studio_grid').append(panel);
 	studioApplyPanelOrder();
 	studioApplyPanelSpan(name);
@@ -578,6 +631,7 @@ function studioDockPanel(name, persist) {
 			order: studioPanelOrderIndex(name),
 			span: studioPanelSpanValue(name)
 		});
+		if (dropped) { studioPersistPanelOrder(); }
 	}
 }
 
@@ -696,7 +750,7 @@ function studioReorderDockedPanel(name, target) {
 }
 
 // Persist order and span for every panel. A floated panel keeps its box, and its
-// saved order/span so Dock returns it to the packed place it left.
+// saved order/span so Dock can put it where it was dropped.
 function studioPersistPanelOrder() {
 	$.each(studioPanelNames, function (i, name) {
 		var panel = studioPanelElement(name);
@@ -1377,12 +1431,10 @@ $(document).on('click', '.studio_track_automation', function () {
 $(document).on('click', '.studio_track_fx', function () {
 	var ch = $(this).attr('channel');
 	studioSelectedChannel = ch;
-	var badge = $('.channel_fx[channel="' + ch + '"]');
-	var open = !badge.hasClass('studio_fx_open');
-	badge.toggleClass('studio_fx_open', open);
-	// FX shows this track's chain in the panel; the shelf stays where it was.
-	$('#studio_track_row_' + ch).toggleClass('studio_fx_open', open);
+	// FX shows this track's chain in the panel. The pedalboard follows the
+	// press, so a second press puts the shelf away and the chain stays in reach.
+	$('#studio_track_row_' + ch).addClass('studio_fx_open');
 	studioRackRender(ch);
 	studioPaletteLabel();
-	if (open) { studioPedalboardOpen(true); }
+	studioPedalboardOpen(!$('#pedalboard').is(':visible'));
 });

@@ -139,24 +139,13 @@ function studioDrawChannel(ch) {
 	ctx.fillRect(0, 0, w, h);
 
 	var m = mixer[ch] || {};
-	var co = studioAudio.channels[ch];
 	// a track's colour dresses its clips, so the lane and the panel edge agree
 	var colour = (typeof studioTrackColour === 'function') ? studioTrackColour(ch) : '#145abe';
 	var fill = (typeof studioColourRgba === 'function') ? studioColourRgba(colour, 0.5) : 'rgba(20,90,190,0.5)';
 	var ghost = (typeof studioColourRgba === 'function') ? studioColourRgba(colour, 0.16) : 'rgba(20,90,190,0.16)';
 
-	if (co && co.source) {
-		co.recAnalyser.getFloatTimeDomainData(co.recData);
-		ctx.strokeStyle = '#0a8a3a';
-		ctx.lineWidth = 1;
-		ctx.beginPath();
-		for (var i = 0; i < w; i++) {
-			var v = co.recData[Math.floor(i / w * co.recData.length)] || 0;
-			var y = (h / 2) + (v * h * 0.45);
-			if (i === 0) { ctx.moveTo(i, y); } else { ctx.lineTo(i, y); }
-		}
-		ctx.stroke();
-	}
+	// The lane draws the recorded takes' own waveforms below; the live input
+	// meter belongs in the track panel's metre, not across the whole timeline.
 
 	// the loop region: reserved bars, or what arming L would reserve now
 	var region = studioVisibleRegion();

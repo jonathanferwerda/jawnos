@@ -114,6 +114,9 @@ like($channel, qr/ctx\.strokeStyle = selected \? colour : '#04325f';/,
 like($channel, qr/'rgba\(220,0,0,0\.55\)'/, 'a recording clip stays red');
 like($channel, qr/'rgba\(120,60,190,0\.5\)'/, 'a video clip stays purple');
 like($channel, qr/studioTakeDrag\.over == ch/, 'the lane a cross-track drag would land in is tinted');
+unlike($channel, qr/recAnalyser/, 'the lane no longer paints the live input across the timeline');
+like($channel, qr/take\.waveform && take\.waveform\.length/,
+	'the lane paints the recorded take\'s own peaks');
 
 # --- the clip context menu ---------------------------------------------------
 like($edit, qr/\$\(document\)\.on\('contextmenu', '\.track'/, 'a right-press on a take opens a menu');

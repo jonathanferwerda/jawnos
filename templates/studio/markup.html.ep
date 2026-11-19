@@ -250,8 +250,14 @@
 		<div id="studio_mixer_strips">
 			<% for (my $ch = 1; $ch <= $channel_count; $ch++) { %>
 				<span class="channel channel_<%= $ch %>">
-					<img class="tiny_thumb jack studio_jack hover" hint="Jack" src="<%= &subs::icon_for('/images/studio/jack.png') %>" channel="<%= $ch %>">
-					<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="input"></div>
+					<%# Input and output sit side by side at the head of the strip: the jack
+					   chooses what feeds the track, the cord what it feeds. %>
+					<span class="channel_jacks">
+						<img class="tiny_thumb jack studio_jack hover" hint="Jack" src="<%= &subs::icon_for('/images/studio/jack.png') %>" channel="<%= $ch %>">
+						<img class="tiny_thumb jack studio_cord hover" hint="Cord" src="<%= &subs::icon_for('/images/studio/cord.png') %>" channel="<%= $ch %>">
+						<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="input"></div>
+						<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="output"></div>
+					</span>
 
 					<%# The knobs and the volume fader share the strip: the fader is the
 					   same track volume as the slider under the track, in the console. %>
@@ -289,8 +295,6 @@
 						</span>
 					</span>
 				</span>
-					<img class="tiny_thumb jack studio_cord hover" hint="Cord" src="<%= &subs::icon_for('/images/studio/cord.png') %>" channel="<%= $ch %>">
-					<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="output"></div>
 				</span>
 			<% } %>
 			<%# The mastering chain is one rack on the mixer's bus, not a pedal on a

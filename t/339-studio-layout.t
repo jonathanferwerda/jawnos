@@ -45,6 +45,9 @@ like($markup, qr/class="armed studio_track_arm"[^>]*channel="<%=\s*\$ch\s*%>"/,
 like($markup, qr/class="channel_volume studio_track_volume"/,
 	'the panel has the existing channel volume control');
 like($markup, qr/class="studio_track_fx hover"/, 'the panel has an FX control');
+like($markup, qr/class="channel_jacks"[\s\S]*?studio_jack[\s\S]*?studio_cord/,
+	'the channel\'s output cord sits beside its input jack');
+like($style, qr/\.channel_jacks\s*\{[^}]*flex-direction:\s*row/s, 'the two jacks share one row');
 like($markup, qr/class="studio_track_automation hover"/, 'the panel has an automation view toggle');
 like($markup, qr/class="studio_track_name"/, 'the panel has an editable name');
 like($markup, qr/id="studio_track_row_<%=\s*\$ch\s*%>"/, 'each row is addressable by channel');
@@ -109,7 +112,8 @@ like($edit, qr/function studioPedalboardOpen\(show\)/, 'one open/close path serv
 like($edit, qr/\$\('#studio_pedals'\)\.attr\('aria-pressed'/, 'the Pedals button follows the sheet');
 like($edit, qr/'#studio_pedals, #pedalboard_hamburger'/, 'the Pedals button and the old burger both toggle it');
 like($layout, qr/'#studio_pedalboard_close'[\s\S]*studioPedalboardOpen\(false\)/, 'the close control hides the sheet');
-like($layout, qr/if \(open\) \{ studioPedalboardOpen\(true\); \}/, 'FX opens the sheet through the same path');
+like($layout, qr/studioPedalboardOpen\(!\$\('#pedalboard'\)\.is\(':visible'\)\)/,
+	'FX toggles the sheet, so a second press puts it away');
 like($edit, qr/studioPedalboardOpen\(true\);[\s\S]*scroller\.scrollLeft/, 'a channel badge opens the sheet and scrolls to the pedal');
 like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_pedals"[^>]*hint="[^"]*Open or close the pedalboard/,
 	'the Pedals button sits in the layout bar');
@@ -201,6 +205,23 @@ like($layout, qr/function studioSetArranged\(on, persist\)/, 'one function enter
 like($layout, qr/function studioExitArrange\(persist\)/, 'leaving the mode has its own helper');
 like($layout, qr/studioExitArrange\(true\);\n\tstudioFloatPanel\(name\);/, 'a drag leaves the mode');
 like($layout, qr/studioExitArrange\(true\);\n\tstudioDockPanel\(\$\(this\)\.attr\('data-panel'\)\);/, 'a Dock leaves the mode');
+
+# --- Dock puts a float where it was dropped -------------------------------
+like($layout, qr/function studioDockTarget\(name, panel\)/,
+	'a float finds the docked panel it was dropped on');
+like($layout, qr/function studioDockPosition\(name, panel, target\)/,
+	'the dropped place becomes the saved order');
+like($layout, qr/var dropped = \(persist !== false\) \? studioDockTarget\(name, panel\) : null;/,
+	'only a person pressing Dock re-orders; restoring keeps the saved order');
+like($layout, qr/if \(dropped\) \{ studioPersistPanelOrder\(\); \}/,
+	'the whole arrangement is saved after a drop');
+my ($dockpos) = $layout =~ /function studioDockPosition\(name, panel, target\) \{(.*?)\n\}/s;
+ok(defined $dockpos, 'the placement helper is found');
+$dockpos = '' unless defined $dockpos;
+like($dockpos, qr/studioPanelOrder\.splice\(to, 0, name\)/,
+	'the panel joins the order at the dropped place');
+like($dockpos, qr/if \(after\) \{ to\+\+; \}/,
+	'a drop below or right of the target lands after it');
 like($layout, qr/studioExitArrange\(true\);\n\tstudioPanelSpan\[name\]/, 'a width change leaves the mode');
 like($layout, qr/function studioReorderDockedPanel\(name, target\) \{\n\tstudioExitArrange\(true\);/, 'a re-order leaves the mode');
 like($layout, qr/studioExitArrange\(true\);\n\tif \(panel\.hasClass\('studio_panel_floating'\)\)/, 'the float control leaves the mode');

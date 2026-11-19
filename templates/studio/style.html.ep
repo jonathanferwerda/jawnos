@@ -536,6 +536,21 @@
 	.jack {
 		width:40px;
 	}
+	/* Input and output share the head of the strip, so both are in reach and the
+	   foot of the fader is free. Two 40px icons do not fit a 76px strip. */
+	.channel_jacks {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		flex: 0 0 auto;
+	}
+	.channel_jacks .jack {
+		width: 32px;
+		height: 24px;
+		object-fit: contain;
+	}
 
 	/* the fader and its metre live inside the strip, below the arm button, so
 	   they can never sit on top of the record/play/loop toggle */
