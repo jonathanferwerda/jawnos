@@ -132,9 +132,9 @@ like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*scrollbar-width:\s*thin/s, 't
 like($style, qr/\.pedal\s*\{[^}]*flex:\s*0 0 auto/s, 'a tile keeps its width in the row');
 like($style, qr/\.pedal\s*\{[^}]*position:\s*relative/s, 'a tile is positioned in the row');
 like($style, qr/\.pedal\s*\{[^}]*left:\s*auto/s, 'the fixed left offset is gone');
-like($style, qr/\.pedal\s*\{[^}]*height:\s*140px/s, 'every tile is 140px tall');
-like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*170px/s, 'the dock fits a 600px-tall window');
-like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*max-height:\s*150px/s, 'the tile row keeps within the dock');
+like($style, qr/\.pedal\s*\{[^}]*height:\s*190px/s, 'every tile is 190px tall');
+like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*238px/s, 'the dock fits a shorter window');
+like($style, qr/#studio_pedalboard_pedals\s*\{[^}]*max-height:\s*214px/s, 'the tile row keeps within the dock');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork fits inside the tile');
 unlike($markup, qr/count\s*\*\s*175/, 'no tile is placed by counted pixels');
 
@@ -322,7 +322,7 @@ like($help, qr/Hide the track listing/, 'help names the track hide toggle');
 like($help, qr/Dock the tracks/, 'help names the Dock control');
 like($help, qr/Close the pedalboard/, 'help names the pedalboard close');
 like($help, qr/Open or close the pedalboard/, 'help names the Pedals button');
-like($help, qr/The Pedals button in the layout bar opens the pedalboard as a 170px sheet/,
+like($help, qr/The Pedals button in the layout bar opens the pedalboard as a 238px sheet/,
 	'help describes the sheet over the console');
 like($help, qr/Every track has a compact panel/, 'help describes the per-track panel');
 like($help, qr/Drag to resize this panel/, 'help names the floated panel resize grip');

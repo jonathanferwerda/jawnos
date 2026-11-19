@@ -957,13 +957,14 @@ $(document).on('click', '#studio_pedalboard_close', function () {
 // ---- the dynamic track list ------------------------------------------------
 
 // Binding the pedal drop on a strip or a per-track panel. The channel number is
-// the class suffix on a strip and the channel attribute on a track panel.
+// the class suffix on a strip and the channel attribute on a track panel. The
+// whole tile is draggable, artwork or drawn, so the drop reads its effect name.
 function studioBindChannelDrop(node) {
 	node.droppable({
-		accept: '.pedal_background',
+		accept: '.pedal',
 		tolerance: 'pointer',
 		drop: function (event, ui) {
-			var name = ui.draggable.attr('hint');
+			var name = ui.draggable.attr('data-effect') || ui.draggable.attr('hint');
 			var m = (String($(this).attr('class')) || '').match(/channel_(\d+)/);
 			var ch = m ? m[1] : $(this).attr('channel');
 			if (!name || !ch) { return; }

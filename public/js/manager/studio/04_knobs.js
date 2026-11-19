@@ -90,11 +90,18 @@ function studioInit(data) {
 			// repaint the lamp now that the tile is marked inert
 			if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
 
-			// pedals are dragged from the pedalboard onto a channel strip; the
-			// tuner is not one of them.
-			$('.pedal_background').filter(function () {
-				return $(this).closest('.pedal').attr('data-tuner') !== 'yes';
-			}).draggable({ helper: 'clone', revert: 'invalid', scroll: false, zIndex: 90000, appendTo: 'body' });
+			// Pedals are dragged from the pedalboard onto a channel strip; the tuner
+			// is not one of them. The whole tile is the handle, so a palette pedal
+			// (which has no artwork image) drags too, but its knobs, lamp, dropdown
+			// and footswitch are cancelled: they stay clickable, and a click that
+			// never travels 4px is a click, not a drag.
+			$('#pedalboard .pedal').filter(function () {
+				return $(this).attr('data-tuner') !== 'yes';
+			}).draggable({
+				helper: 'clone', revert: 'invalid', scroll: false, zIndex: 90000, appendTo: 'body',
+				distance: 4,
+				cancel: '.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, select, option, input, button'
+			});
 			studioBindChannelDrop($('.channel, .studio_track_panel'));
 
 			studioRetriever();

@@ -1,9 +1,10 @@
 <style>
-	/* Every tile is the same 140px box: the artwork pedals, the palette's text
-	   tiles and Autotune line up, and the row scrolls instead of overlapping. */
+	/* Every tile is the same 170x190 box: the artwork pedals, the palette's drawn
+	   pedals and the tuner line up, and the row scrolls instead of overlapping.
+	   The size leaves room for a row of knobs, a dropdown and the footswitch. */
 	.pedal {
-		width: 160px;
-		height: 140px;
+		width: 170px;
+		height: 190px;
 		flex: 0 0 auto;
 		position: relative;
 		left: auto;
@@ -13,6 +14,18 @@
 		border-radius: 10px;
 		background: var(--panel-2);
 		overflow: hidden;
+		cursor: var(--jawnos-cursor-grab, grab);
+		transition: transform .12s ease, box-shadow .12s ease;
+	}
+	/* Hovering lifts a tile a little, so a cramped row of knobs is readable
+	   without making the whole sheet taller. The scroller's padding leaves the
+	   scaled tile room, so nothing is clipped. */
+	.pedal:hover,
+	.pedal:focus-within {
+		transform: scale(1.05);
+		transform-origin: bottom center;
+		z-index: 3;
+		box-shadow: var(--shadow-2), 0 0 0 2px var(--accent-line, var(--accent));
 	}
 	/* The pedalboard is a bottom sheet over the console, not a grid row: opening
 	   it never shrinks the arranged timeline and it cannot be pushed off the
@@ -23,8 +36,9 @@
 		right: 0;
 		bottom: 0;
 		z-index: 70002;
-		/* the bar (20px) plus the 140px tiles and a thin scrollbar: 170px */
-		max-height: 170px;
+		/* the bar (20px) plus the 190px tiles, the scroller's padding and a thin
+		   scrollbar: 238px */
+		max-height: 238px;
 		overflow: hidden;
 		background-color: var(--panel-2);
 		border-top: 3px solid var(--line);
@@ -43,20 +57,24 @@
 	}
 	#studio_pedalboard_close {
 		font-size: 12px;
-		line-height: 18px;
+		/* the bar is 20px: the house button height would reach down onto a tile */
+		height: 18px;
+		min-height: 18px;
+		line-height: 16px;
 		padding: 0 4px;
 	}
 	#studio_pedalboard_pedals {
 		position: static;
 		display: flex;
 		align-items: flex-start;
-		gap: 10px;
+		gap: 12px;
 		min-height: 0;
-		max-height: 150px;
-		padding: 0 6px;
+		max-height: 214px;
+		/* room for a tile's hover scale above it, so the lift never clips */
+		padding: 10px 10px 8px;
 		box-sizing: border-box;
 		/* sideways, and down only if the window really cannot give the row its
-		   140px; a thin scrollbar is part of the 150px budget */
+		   190px; a thin scrollbar is part of the 214px budget */
 		overflow: auto;
 		scrollbar-width: thin;
 	}
@@ -70,23 +88,161 @@
 		height: 100%;
 		object-fit: contain;
 	}
-	/* A palette effect with no artwork is a text tile, not a smaller box. */
-	.pedal_text {
+	/* A palette effect with no hand-drawn artwork is drawn from the theme at the
+	   same size: a body, a title plate, one knob per slider and a footswitch. */
+	.pedal_graphic {
+		background: var(--panel-2);
+	}
+	.pedal_body {
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		border-radius: 5px;
+		background:
+			radial-gradient(130% 90% at 50% -10%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 62%),
+			repeating-linear-gradient(90deg, rgba(255, 255, 255, .03) 0 2px, transparent 2px 5px),
+			linear-gradient(180deg, color-mix(in srgb, var(--panel) 80%, var(--accent)) 0%, var(--panel-2) 55%, color-mix(in srgb, var(--panel-2) 82%, var(--ink)) 100%);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), inset 0 -12px 20px rgba(0, 0, 0, .45);
+		pointer-events: none;
+	}
+	/* two case screws, at the foot either side of the footswitch */
+	.pedal_body::before,
+	.pedal_body::after {
+		content: '';
+		position: absolute;
+		bottom: 34px;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: radial-gradient(circle at 35% 35%, color-mix(in srgb, var(--ink) 55%, #fff), color-mix(in srgb, var(--ink) 35%, #000));
+		box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .5);
+	}
+	.pedal_body::before { left: 8px; }
+	.pedal_body::after { right: 8px; }
+	.pedal_title {
+		position: absolute;
+		top: 7px;
+		left: 12px;
+		right: 12px;
+		z-index: 4;
+		text-align: center;
+		font-size: 13px;
+		line-height: 1.1;
+		letter-spacing: .02em;
+		color: var(--ink);
+		text-shadow: 0 1px 1px rgba(0, 0, 0, .5);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.pedal_controls {
+		position: absolute;
+		left: 5px;
+		right: 5px;
+		top: 27px;
+		bottom: 30px;
+		z-index: 4;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 10px;
-		background: var(--panel-2);
-		color: var(--ink);
+		gap: 5px;
 	}
-	.studio_pedal_name {
-		font-size: 15px;
+	.pedal_knobs {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		justify-content: center;
+		/* four 35px knobs and their gaps fit one row inside the tile */
+		gap: 2px 1px;
+	}
+	.pedal_knob {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1px;
+		width: 35px;
+		cursor: var(--jawnos-cursor-ns-resize, ns-resize);
+	}
+	.pedal_knob .knob {
+		width: 30px;
+		height: 30px;
+	}
+	.pedal_knob_label {
+		font-size: 9px;
+		line-height: 10px;
 		text-align: center;
-		padding: 0 6px 0 14px;
+		white-space: nowrap;
+		color: var(--ink);
+		opacity: .85;
 	}
+	.pedal_select_row {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		width: 100%;
+	}
+	.pedal_select_row .pedal_knob_label {
+		flex: 0 0 auto;
+		opacity: .75;
+	}
+	/* the same small dropdown the shelf's reverb carries, in the pedal's row */
+	.pedal_select,
+	.pedal_model {
+		box-sizing: border-box;
+		height: 18px;
+		min-height: 18px;
+		padding: 0 4px;
+		font-size: 10px;
+		line-height: 16px;
+		border-width: 1px;
+		border-radius: 4px;
+	}
+	.pedal_select {
+		flex: 1 1 auto;
+		min-width: 0;
+		width: auto;
+	}
+	/* The shelf's reverb model sits in its own row above the footswitch, clear
+	   of the knobs; the old top-percentage position left it over Mix. */
+	.pedal .pedal_model {
+		position: absolute;
+		left: 7%;
+		right: 7%;
+		bottom: 30px;
+		width: auto;
+		z-index: 6;
+	}
+	/* The footswitch: the one control every tile carries at its foot, above the
+	   artwork or the drawn body, so a pedal is switched where it is. */
 	.studio_pedal_foot {
-		font-size: 12px;
+		position: absolute;
+		left: 10%;
+		right: 10%;
+		bottom: 5px;
+		height: 20px;
+		min-height: 20px;
+		max-height: 20px;
+		min-width: 0;
+		padding: 0;
+		line-height: 18px;
+		font-size: 11px;
+		letter-spacing: .04em;
+		text-transform: uppercase;
+		box-sizing: border-box;
+		border-radius: 9px;
+		background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 26%, var(--panel-2)), var(--panel-2));
+		color: var(--ink);
+		box-shadow: 0 2px 0 rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .16);
+		cursor: var(--jawnos-cursor-pointer, pointer);
+		z-index: 7;
+	}
+	.studio_pedal_foot[aria-pressed="true"] {
+		background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--panel-2)));
+		color: var(--accent-ink, #fff);
+	}
+	.studio_pedal_foot:active {
+		box-shadow: inset 0 2px 4px rgba(0, 0, 0, .5);
 	}
 	/* The lamp: a 14px roundel. The unlit state is a dark red disc with a pale
 	   ring (never invisible); on it is a bright green with a soft glow. Every

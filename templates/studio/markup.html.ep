@@ -39,7 +39,7 @@
 				   pedal is the shelf's reverb, so its dropdown pushes a model to every
 				   reverb in the rack, and each insert can still keep its own. %>
 				<% if ($p->{'name'} eq 'reverb2') { %>
-					<select class="studio_pedal_model" channel="<%= $ch %>" control="model" hint="<%= &subs::ui('Choose the reverb model') %>" style="position:absolute;left:7%;top:60%;width:86%;box-sizing:border-box;font-size:11px;">
+					<select class="studio_pedal_model pedal_model" channel="<%= $ch %>" control="model" hint="<%= &subs::ui('Choose the reverb model') %>">
 						<% my $mi = 0; %>
 						<% foreach my $model ( @{$gb::studio->{'reverb_models'}} ) { %>
 							<option value="<%= $mi %>"<%= $mi == 2 ? ' selected' : '' %>><%= &subs::ui($model) %></option>
@@ -47,14 +47,51 @@
 						<% } %>
 					</select>
 				<% } %>
+				<%# Every tile carries the same footswitch at its foot, so a pedal is
+				   switched from the tile itself; the lamp reads the same state. The
+				   tuner switches no sound, so it has none. %>
+				<% if (!$p->{'tuner'}) { %>
+					<button class="studio_pedal_foot hover" effect="<%= $p->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
+				<% } %>
 			</span>
 		<% } %>
-			<%# Palette effects with no artwork of their own are text tiles at the same
-			   140px height, so every tile in the row lines up. %>
+			<%# A palette effect with no hand-drawn artwork is drawn from the theme
+			   instead: the body, a knob per slider, a dropdown per choice and a
+			   footswitch, at the same size as the artwork tiles. %>
 			<% foreach my $name ( @{$gb::studio->{'palette'}} ) { next if $shelf_has{$name}; %>
-				<span id="pedal_<%= $name %>" class="pedal pedal_text" data-effect="<%= $name %>">
+				<% my $effect = $gb::studio->{'effects'}->{$name} || {}; %>
+				<% my $art = $gb::studio->{'palette_art'}->{$name} || []; %>
+				<% my $fallback = $gb::studio->{'palette_knob_colours'} || [ 'grey_plain' ]; %>
+				<span id="pedal_<%= $name %>" class="pedal pedal_graphic" data-effect="<%= $name %>">
 					<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
-					<b class="studio_pedal_name"><%= &subs::ui($gb::studio->{'effects'}->{$name}->{'label'}) %></b>
+					<span class="pedal_body" aria-hidden="true"></span>
+					<b class="pedal_title"><%= &subs::ui($effect->{'label'} || $name) %></b>
+					<span class="pedal_controls">
+						<span class="pedal_knobs">
+						<% my $ki = 0; %>
+						<% foreach my $k ( @{$effect->{'controls'} || []} ) { next if $k->{'options'}; %>
+							<% my $colour = $art->[$ki] || $fallback->[ $ki % scalar(@$fallback) ]; %>
+							<label class="pedal_knob">
+								<input type="range" channel="<%= $name %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control" style="display:none;">
+								<img class="knob" channel="<%= $name %>" control="<%= $k->{'control'} %>" flip="180" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $colour . '.png') %>">
+								<span class="pedal_knob_label"><%= &subs::ui($k->{'label'} || $k->{'control'}) %></span>
+							</label>
+							<% $ki++; %>
+						<% } %>
+						</span>
+						<% foreach my $k ( @{$effect->{'controls'} || []} ) { next unless $k->{'options'}; %>
+							<label class="pedal_select_row">
+								<span class="pedal_knob_label"><%= &subs::ui($k->{'label'} || $k->{'control'}) %></span>
+								<select class="studio_pedal_model pedal_select" channel="<%= $name %>" control="<%= $k->{'control'} %>" hint="<%= &subs::ui($k->{'hint'} || 'Choose the option') %>">
+									<% my $oi = 0; %>
+									<% foreach my $option ( @{$k->{'options'}} ) { %>
+										<option value="<%= $oi %>"><%= &subs::ui($option) %></option>
+										<% $oi++; %>
+									<% } %>
+								</select>
+							</label>
+						<% } %>
+					</span>
 					<button class="studio_pedal_foot hover" effect="<%= $name %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
 				</span>
 			<% } %>

@@ -219,7 +219,7 @@ our $studio = {
 			{ control => 'mid', label => 'Mid' },
 			{ control => 'treble', label => 'Treble' },
 			# 0 Combo (1x12), 1 Open (2x12), 2 Closed (4x12), 3 Tweed (4x10)
-			{ control => 'cabinet', label => 'Cabinet', options => [ qw(Combo Open Closed Tweed) ] }
+			{ control => 'cabinet', label => 'Cabinet', hint => 'Choose the cabinet', options => [ qw(Combo Open Closed Tweed) ] }
 		] },
 		limiter => { label => 'Limiter', controls => [
 			{ control => 'ceiling', label => 'Ceiling' },
@@ -230,9 +230,9 @@ our $studio = {
 		autotune => { label => 'JawnPitch', controls => [
 			{ control => 'speed', label => 'Speed' },
 			{ control => 'amount', label => 'Amount' },
-			{ control => 'key', label => 'Key', options => [ qw(C C# D D# E F F# G G# A A# B) ] },
+			{ control => 'key', label => 'Key', hint => 'Choose the key', options => [ qw(C C# D D# E F F# G G# A A# B) ] },
 			# 0 Major, 1 Minor, 2 Chromatic, 3 Pentatonic
-			{ control => 'scale', label => 'Scale', options => [ qw(Major Minor Chromatic Pentatonic) ] }
+			{ control => 'scale', label => 'Scale', hint => 'Choose the scale', options => [ qw(Major Minor Chromatic Pentatonic) ] }
 		] },
 		equalizer => { label => 'Equaliser', controls => [
 			{ control => 'low', label => 'Low' },
@@ -265,6 +265,21 @@ our $studio = {
 	# The order the Add list offers them. The entries are wire names; the Add
 	# list shows each effect's label (autotune appears as JawnPitch).
 	palette => [ qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor) ],
+	# A palette effect with no hand-drawn artwork is drawn from the theme instead:
+	# the template gives it the same body, one knob per slider (the colours below,
+	# in control order) and a dropdown per choice, so its tile matches the artwork
+	# pedals rather than being a bare on/off button. The colours are knob artwork
+	# the shelf already ships; the list at the end is the fallback rotation.
+	palette_art => {
+		flanger   => [ qw(orange blue pink green) ],
+		fuzz      => [ qw(cyan yellow red) ],
+		amp       => [ qw(cyan red green yellow) ],
+		limiter   => [ qw(red_numbered blue) ],
+		autotune  => [ qw(cyan pink) ],
+		equalizer => [ qw(red green yellow) ],
+		tone      => [ qw(red green yellow cyan) ],
+	},
+	palette_knob_colours => [ qw(red yellow green blue orange pink cyan navy) ],
 	# The order of the reverb model dropdown; both implementations agree.
 	reverb_models => [ qw(Room Spring Plate Hall Cave) ],
 	# The fixed mastering chain: after every channel, before the destination.
