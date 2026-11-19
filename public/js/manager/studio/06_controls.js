@@ -667,6 +667,86 @@ window.jawnosMediaSources.studioChannels = function () {
 // instrument), a gain, and the Inserts box's chain. While it runs, status is
 // polled so the row keeps showing the engine's state, input and frame count.
 
+// The Android app registers window.JawnAudioOboe: a native duplex stream that
+// is the phone's own monitor. When it is there the Listen toggle and the
+// transport's Monitor button drive it instead of the house engine's listen;
+// the physical volume keys move STREAM_MUSIC and the stream follows it.
+var studioNativeBridge;
+var studioNativeListening = false;
+
+function studioNativeAudio() {
+	if (studioNativeBridge !== undefined) { return studioNativeBridge; }
+	studioNativeBridge = null;
+	try {
+		if (window.JawnAudioOboe && typeof window.JawnAudioOboe.load === 'function') {
+			var info = JSON.parse(window.JawnAudioOboe.load());
+			if (info && info.ok === 1) { studioNativeBridge = window.JawnAudioOboe; }
+		}
+	} catch (e) { studioNativeBridge = null; }
+	return studioNativeBridge;
+}
+
+function studioNativeStatus() {
+	var bridge = studioNativeAudio();
+	if (!bridge) {
+		studioNativeListening = false;
+		studioListenPollStop();
+		studioListenSetActive(false);
+		return;
+	}
+	var data = {};
+	try { data = JSON.parse(bridge.stats()); } catch (e) { data = {}; }
+	if (!data || data.ok !== 1) {
+		studioNativeListening = false;
+		studioListenPollStop();
+		studioListenSetActive(false);
+		studioListenShowError((data && data.error) || studioListenText('the native audio bridge did not answer'));
+		return;
+	}
+	var on = !!(data.running || data.waiting);
+	studioListenSetActive(on);
+	if (!on) {
+		studioNativeListening = false;
+		studioListenPollStop();
+		if (data.error) { studioListenShowError(data.error); }
+		else if (data.microphone === false) { studioListenShowError(studioListenText('the microphone permission is not granted')); }
+	}
+	studioListenRender({ state: data.state, channel: 0, frames: data.frames, native: data });
+}
+
+function studioNativeStart(quiet) {
+	var bridge = studioNativeAudio();
+	if (!bridge) { return; }
+	var rate = (typeof studioSampleRate === 'function') ? studioSampleRate() : 48000;
+	if (!(rate > 0)) { rate = 48000; }
+	var gain = $('#studio_listen_gain').val() || '0.8';
+	var answer = {};
+	try {
+		answer = JSON.parse(bridge.start(String(rate), '192', String(gain)));
+	} catch (e) {
+		answer = { ok: 0, error: studioListenText('the native audio bridge did not answer') };
+	}
+	if (answer && answer.ok !== 1 && answer.waiting) {
+		studioNativeListening = true;
+		studioListenSetActive(true);
+		studioListenRender({ state: 'waiting', channel: 0, frames: 0, native: answer });
+		studioListenPollStart();
+		return;
+	}
+	if (!answer || answer.ok !== 1) {
+		studioNativeListening = false;
+		studioListenSetActive(false);
+		if (!(quiet && studioListenNotRunning(answer && answer.error))) {
+			studioListenShowError((answer && answer.error) || studioListenText('the native audio bridge did not answer'));
+		}
+		return;
+	}
+	studioNativeListening = true;
+	studioListenSetActive(true);
+	studioListenRender({ state: answer.state, channel: 0, frames: answer.frames, native: answer });
+	studioListenPollStart();
+}
+
 var studioListenTimer = 0;
 var studioListenActive = false;
 
@@ -698,6 +778,22 @@ function studioListenRender(data) {
 	$('#studio_listen_input_text').text(studioListenText('Input') + ' ' + studioListenInputText(channel));
 	var frames = (typeof data.frames == 'number' && isFinite(data.frames))
 		? String(data.frames) : '\u2014';
+	if (data.native) {
+		var native = data.native;
+		var facts = [];
+		if (native.sharingMode) { facts.push('share ' + native.sharingMode); }
+		if (native.performanceMode) { facts.push('perf ' + native.performanceMode); }
+		if (native.sampleRate) { facts.push(native.sampleRate + ' Hz'); }
+		if (native.framesPerBurst) { facts.push(native.framesPerBurst + ' fr'); }
+		if (typeof native.xRunCount == 'number') { facts.push('xrun ' + native.xRunCount); }
+		if (typeof native.systemVolume == 'number') {
+			facts.push('vol ' + Math.round(native.systemVolume * 100) + '%'
+				+ (native.systemVolumeApplied ? ' engine' : ' mixer'));
+		}
+		facts.push(studioListenText('Frames') + ' ' + frames);
+		$('#studio_listen_frames').text(facts.join(' \u00b7 '));
+		return;
+	}
 	$('#studio_listen_frames').text(studioListenText('Frames') + ' ' + frames);
 }
 
@@ -711,6 +807,7 @@ function studioListenPollStop() {
 }
 
 function studioListenStatus() {
+	if (studioNativeListening) { studioNativeStatus(); return; }
 	if (!$('#studio_listen_toggle').length) { studioListenPollStop(); return; }
 	$.ajax({
 		url: '/manager/studio/take',
@@ -777,6 +874,7 @@ function studioListenInserts() {
 
 function studioListenStart(quiet) {
 	studioListenShowError('');
+	if (studioNativeAudio()) { studioNativeStart(quiet); return; }
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',
@@ -806,6 +904,14 @@ function studioListenStart(quiet) {
 }
 
 function studioListenStop() {
+	if (studioNativeListening) {
+		var bridge = studioNativeAudio();
+		studioNativeListening = false;
+		studioListenPollStop();
+		studioListenSetActive(false);
+		if (bridge) { try { bridge.stop(); } catch (e) {} }
+		return;
+	}
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',
@@ -832,6 +938,11 @@ function studioListenToggle() {
 
 function studioListenParam(value) {
 	if (!studioListenActive) { return; }
+	if (studioNativeListening) {
+		var bridge = studioNativeAudio();
+		if (bridge) { try { bridge.setGain(value); } catch (e) {} }
+		return;
+	}
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',

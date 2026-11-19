@@ -324,8 +324,13 @@ function studioApplyCapture() {
 // song: only then may the engine's Listen be started or stopped.
 function studioApplyMonitor(from_user) {
 	var on = mixer['time'] && mixer['time']['monitor'] == 'yes';
+	// The Android app's native stream is the phone's monitor: it opens the
+	// microphone itself, so the browser tap must stay muted or the input is
+	// heard twice. Only a person starts it, as with the engine's Listen.
+	var native = !!(from_user && !studioEngineRecording
+		&& typeof studioNativeAudio === 'function' && studioNativeAudio());
 	$.each(studioAudio.channels, function (ch, c) {
-		if (c.monGain) { c.monGain.gain.value = on ? 1 : 0; }
+		if (c.monGain) { c.monGain.gain.value = (on && !native) ? 1 : 0; }
 	});
 	// With the engine up it owns the interface, so the browser cannot capture
 	// it. The same Monitor choice therefore drives the engine's live Listen;

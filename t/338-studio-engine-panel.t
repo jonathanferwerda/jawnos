@@ -506,4 +506,19 @@ like($controls_js, qr/\$\('#studio_monitor_note'\)\.text\(text\)/, 'listen error
 like($body, qr/Monitor starts the engine's live Listen/,
 	'help says Monitor starts the engine Listen with no take');
 
+like($controls_js, qr/function studioNativeAudio\(/, 'the app bridge is detected on the phone');
+like($controls_js, qr/window\.JawnAudioOboe/, 'and named');
+like($controls_js, qr/if \(studioNativeAudio\(\)\) \{ studioNativeStart\(quiet\); return; \}/,
+	'Listen prefers the phone\'s native stream');
+like($controls_js, qr/bridge\.start\(String\(rate\), '192', String\(gain\)\)/,
+	'the native stream opens at the house rate, a 4 ms burst and the Listen gain');
+like($controls_js, qr/if \(studioNativeListening\) \{ studioNativeStatus\(\); return; \}/,
+	'status is read from the native stream while it runs');
+like($controls_js, qr/bridge\.stats\(\)/, 'the native facts come from stats()');
+like($controls_js, qr/native\.systemVolumeApplied/, 'and say whether the engine or the mixer applied the level');
+like($controls_js, qr/bridge\.setGain\(value\)/, 'the gain slider moves the engine gain');
+like($controls_js, qr/bridge\.stop\(\)/, 'stopping Listen stops the native stream');
+like($studio_js, qr/c\.monGain\.gain\.value = \(on && !native\) \? 1 : 0/,
+	'the browser tap stays muted while the native stream monitors');
+
 done_testing();
