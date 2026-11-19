@@ -83,7 +83,7 @@ function studioRackRender(ch) {
 			helper: 'clone',
 			appendTo: 'body',
 			zIndex: 90000,
-			cursor: 'grabbing',
+			cursor: 'var(--jawnos-cursor-grabbing, grabbing)',
 			stop: function (event, ui) {
 				var holder = ui.item.closest('.studio_channel_rack');
 				var to = String(holder.attr('channel') || ch);
