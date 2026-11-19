@@ -92,10 +92,18 @@ function windowStacker(app, raise) {
 // the deck worked in most recently is the front one, and a walk stays inside the
 // deck it was made in and brings that deck forward.
 var windowDeckTouch = {};
+// The deck each app was last placed in. A re-render that replaces the window's
+// node drops its attributes, and this is what keeps that window in the deck it
+// was in rather than dropping it to the first one.
+var windowDeckByApp = {};
 
 function windowDeckOf(win) {
-	var deck = parseInt($(win).attr('deck'), 10);
-	return isNaN(deck) ? 0 : deck;
+	win = $(win);
+	var deck = parseInt(win.attr('deck'), 10);
+	if (!isNaN(deck)) { return deck; }
+	var app = win.attr('app') || '';
+	if (app && windowDeckByApp[app] !== undefined) { return windowDeckByApp[app]; }
+	return 0;
 }
 
 function windowDeckFront() {
@@ -113,7 +121,7 @@ function windowDeckFront() {
 // it is not counted in its own deck. A window that has lost its deck attribute
 // (a re-render that replaced the node) reads as the first deck, so it still
 // takes a step of its own rather than being left out of the count.
-function windowPhoneCascadePlace(geom, self) {
+function windowPhoneCascadePlace(geom, self, keep) {
 	var self_el = self ? $(self)[0] : null;
 	var height = (geom && geom.height) || Math.round(windowViewport().height * 0.7128);
 	var step = geom && geom.step ? geom.step : 0;
@@ -129,7 +137,8 @@ function windowPhoneCascadePlace(geom, self) {
 		var deck = windowDeckOf(this);
 		decks[deck] = (decks[deck] || 0) + 1;
 	});
-	var front = windowDeckFront();
+	// a window coming back into a deck it already belonged to stays in it
+	var front = (keep !== undefined && keep !== null) ? keep : windowDeckFront();
 	var count = decks[front] || 0;
 	if (count * step <= limit) { return { deck: front, slot: count, top: windowTopLimit() }; }
 	return { deck: front + 1, slot: 0, top: windowTopLimit() };

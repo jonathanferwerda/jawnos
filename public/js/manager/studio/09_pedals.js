@@ -168,7 +168,7 @@ function studioUpdatePedalLamps() {
 			var tuner = studioLayoutText('Chromatic tuner, not wired yet');
 			tile.find('.studio_pedal_led')
 				.attr({ 'aria-pressed': 'false', title: tuner, hint: tuner })
-				.css({ background: '#6b7280', cursor: 'default', boxShadow: 'inset 0 1px 2px #000, 0 0 0 1px rgba(255, 255, 255, .3)' });
+				.css({ background: '#6b7280', cursor: 'var(--jawnos-cursor-default, default)', boxShadow: 'inset 0 1px 2px #000, 0 0 0 1px rgba(255, 255, 255, .3)' });
 			tile.find('.studio_pedal_foot').attr('aria-pressed', 'false');
 			return;
 		}

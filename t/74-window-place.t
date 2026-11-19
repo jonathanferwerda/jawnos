@@ -97,11 +97,15 @@ like($stack, qr/function windowStacker\(app, raise\)[\s\S]{0,1200}windowDeckOf\(
 	'a walk stays inside the deck it was made in, and brings it forward');
 like($stack, qr/decks\.forEach\(function \(d\) \{ y\[d\] = windowTopLimit\(\); \}\)/,
 	'and every deck cascades from the desk\'s top');
-like($stack, qr/function windowPhoneCascadePlace\(geom, self\)/,
+like($stack, qr/function windowPhoneCascadePlace\(geom, self, keep\)/,
 	'a full phone deck starts a fresh cascade over the top, on the same x');
 like($stack, qr/if \(self_el && this === self_el\) \{ return; \}/,
 	'and the window being placed is not counted in its own deck');
-like($windows, qr/windowPhoneCascadePlace\(null, win\)[\s\S]{0,200}win\.attr\('deck'/, 'which the open takes');
+like($stack, qr/var windowDeckByApp = \{\}/,
+	'with the deck an app was last in kept against a re-render');
+like($stack, qr/windowDeckByApp\[app\] !== undefined\) \{ return windowDeckByApp\[app\]; \}/,
+	'which a window that lost its own attribute reads');
+like($windows, qr/windowPhoneCascadePlace\(null, win, deck_keep\)[\s\S]{0,300}win\.attr\('deck'/, 'which the open takes');
 like($windows, qr/deck_plan\.top \+ deck_plan\.slot \* vAdvance/,
 	'and it lands at its own step in the deck, not at the deck\'s top');
 like($windows, qr/\$\(this\)\.attr\('tile', String\(s - 1\)\)/, 'a step up brings the slot number down with it');

@@ -1776,10 +1776,15 @@ function windowReorganizer(window_id) {
 			}
 			else {
 				// a phone cascades into decks: the deck in front until it would show less
-				// than a third of a window, then a fresh cascade over the top of it
-				if (typeof windowPhoneCascadePlace == 'function' && win.attr('deck') === undefined) {
-					var deck_plan = windowPhoneCascadePlace(null, win);
+				// than a third of a window, then a fresh cascade over the top of it. A
+				// window that is here again - a re-render - keeps the deck it was in.
+				if (typeof windowPhoneCascadePlace == 'function') {
+					var deck_app = win.attr('app') || '';
+					var deck_keep = parseInt(win.attr('deck'), 10);
+					if (isNaN(deck_keep)) { deck_keep = (deck_app && windowDeckByApp[deck_app] !== undefined) ? windowDeckByApp[deck_app] : undefined; }
+					var deck_plan = windowPhoneCascadePlace(null, win, deck_keep);
 					win.attr('deck', String(deck_plan.deck));
+					if (deck_app) { windowDeckByApp[deck_app] = deck_plan.deck; }
 					windowDeckTouch[deck_plan.deck] = Date.now();
 					win.css({ 'top': deck_plan.top + deck_plan.slot * vAdvance });
 				}
