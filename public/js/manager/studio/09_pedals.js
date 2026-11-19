@@ -273,21 +273,22 @@ function studioUpdatePedalLamps() {
 	// the shelf and the palette's drawn pedals
 	$('#pedalboard .pedal').each(function () {
 		var tile = $(this);
-		// Jtune is a chromatic tuner, not an effect: the tuner part owns its lamp,
-		// which is grey while it is off, amber while it listens and green in tune.
-		if (tile.attr('data-tuner') === 'yes') {
-			if (typeof studioTunerPaintLamp === 'function') { studioTunerPaintLamp(tile); }
-			return;
-		}
 		var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
 		var ins = studioPedalInsert(ch, name);
 		var on = !!(ins && !ins.bypassed);
-		var label = studioPedalLampLabel(on);
-		tile.find('.studio_pedal_led').attr({
-			'aria-pressed': on ? 'true' : 'false',
-			title: label,
-			hint: label
-		});
+		// Jtune is a listen-only pedal: its lamp is the tuner's light (grey off,
+		// amber listening, green in tune), while the foot is the ordinary on/off.
+		if (tile.attr('data-tuner') === 'yes') {
+			if (typeof studioTunerPaintLamp === 'function') { studioTunerPaintLamp(tile); }
+		}
+		else {
+			var label = studioPedalLampLabel(on);
+			tile.find('.studio_pedal_led').attr({
+				'aria-pressed': on ? 'true' : 'false',
+				title: label,
+				hint: label
+			});
+		}
 		tile.find('.studio_pedal_foot').attr('aria-pressed', on ? 'true' : 'false')
 			.text(studioLayoutText(on ? 'On' : 'Off'));
 	});
@@ -303,13 +304,13 @@ function studioUpdatePedalLamps() {
 			hint: label
 		});
 	});
+	// the tuner listens only while its insert is on, wherever the rack puts it
+	if (typeof studioTunerSync === 'function') { studioTunerSync(); }
 }
 
 // The lamp is the footswitch: absent means switch it on in this track's rack,
 // present means bypass it in place exactly as the rack row does.
 function studioTogglePedal(ch, name) {
-	// The tuner has no audio state to toggle.
-	if (name === 'Jtune') { return; }
 	var ins = studioPedalInsert(ch, name);
 	if (!ins) { studioSetInsert(ch, name, true); }
 	else { studioSetInsertBypass(ch, ins.name, !ins.bypassed); }
@@ -410,11 +411,6 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 	}
 	var tile = target.closest('.pedal');
 	if (!tile.length) { return; }
-	// the tuner's lamp is its power switch: it starts or stops listening
-	if (tile.attr('data-tuner') === 'yes') {
-		if (typeof studioTunerToggle === 'function') { studioTunerToggle(); }
-		return;
-	}
 	var name = tile.attr('data-effect') || String(tile.attr('id') || '').replace(/^pedal_/, '');
 	if (!name) { return; }
 	studioTogglePedal(studioPaletteChannel(), name);

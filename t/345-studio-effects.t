@@ -119,20 +119,20 @@ like($knobs, qr/rack_restore\.push\(\{ ch: i, name: name, record: entry \}\);/,
 	'a restored rack waits for its own control values');
 like($knobs, qr/studioSetInsert\(i, name, true\)/, 'the stored order is rebuilt insert by insert');
 
-# Jtune is a chromatic tuner, not an effect: a legacy entry is dropped, never
-# turned into an insert, and never mapped to autotune.
-like($knobs, qr/if \(name === 'Jtune'\) \{ return; \}/, 'a legacy Jtune entry is ignored on restore');
+# Jtune is a listen-only insert: it restores with the chain and is never mapped
+# to autotune.
+unlike($knobs, qr/if \(name === 'Jtune'\) \{ return; \}/, 'Jtune restores like any insert');
 unlike($knobs, qr/typeof entry === 'string' && name === 'Jtune'/, 'there is no Jtune-to-autotune migration');
 unlike($knobs, qr/studioSetInsert\(i, 'autotune', true\)/, 'a legacy Jtune is not turned into autotune');
 like($knobs, qr/data-tuner': 'yes'/, 'the Jtune shelf tile is marked a tuner');
-like($knobs, qr/#pedalboard \.pedal'\)\.filter\(function \(\) \{/, 'the tuner is not draggable into a rack');
+like($knobs, qr/#pedalboard \.pedal'\)\.draggable\(\{/, 'every pedal, the tuner included, drags into a rack');
 like($knobs, qr/distance: 4,/, 'a plain click on a tile is never a drag');
 like($knobs, qr/cancel: '\.knob,[^']*studio_pedal_foot/, 'the knobs and the footswitch cancel the drag');
 like($rack, qr/studioTunerPaintLamp\(tile\)/, 'the tuner owns its lamp, not the effect lamp');
-like($rack, qr/if \(typeof studioTunerToggle === 'function'\) \{ studioTunerToggle\(\); \}/,
-	'the tuner lamp is its power switch');
-like($rack, qr/if \(name === 'Jtune'\) \{ return; \}/, 'the pedal toggle refuses the tuner');
-like($knobs, qr/tile\.attr\('data-tuner'\) !== 'yes' && typeof studioTogglePedal/, 'the tuner footswitch toggles no sound');
+like($rack, qr/if \(typeof studioTunerSync === 'function'\) \{ studioTunerSync\(\); \}/,
+	'one lamp paint keeps the tuner in step with its insert');
+unlike($rack, qr/if \(name === 'Jtune'\) \{ return; \}/, 'the tuner toggles like any pedal');
+unlike($fx, qr/^\s*Jtune\s*:\s*'/m, 'Jtune has no builder, so the engine plan leaves it out');
 
 # --- the master rack -------------------------------------------------------
 my ($master_list) = $studio =~ /master\s*=>\s*\[(.*?)\n\t\]/s;
@@ -233,8 +233,8 @@ like($style, qr/\.pedal_graphic\s*\{/, 'a palette pedal is styled from the same 
 like($markup, qr/class="pedal pedal_graphic"/, 'the palette\'s drawn pedals are pedal tiles');
 like($markup, qr/class="studio_pedal_foot hover" effect="<%= \$p->\{'name'\} %>"/,
 	'a shelf pedal carries the same footswitch');
-like($markup, qr/<% if \(!\$p->\{'tuner'\}\) \{ %>[\s\S]*?studio_pedal_foot/,
-	'the tuner is the one tile without a footswitch');
+unlike($markup, qr/<% if \(!\$p->\{'tuner'\}\) \{ %>/,
+	'no tile is left without a footswitch, the tuner included');
 like($style, qr/\.studio_pedal_foot\s*\{[^}]*position:\s*absolute/s, 'the footswitch sits at the tile\'s foot');
 like($style, qr/\.studio_pedal_foot\s*\{[^}]*bottom:\s*4px/s, 'the footswitch is clear of the knobs');
 like($style, qr/\.pedal \.pedal_model\s*\{[^}]*bottom:\s*30px/s,
@@ -276,8 +276,8 @@ like($help, qr/Drag a row by its handle/, 'the help explains reordering');
 like($help, qr/The master rack is the last of the channel strips, at their far right/,
 	'the help puts the master rack at the far right of the strips');
 like($help, qr/Every pedal tile wears a small lamp/, 'the help explains the lamp');
-like($help, qr/The Jtune pedal is a chromatic tuner, not an effect/, 'the help explains Jtune the tuner');
-like($help, qr/ignores that entry when it loads/, 'the help explains that a legacy Jtune is ignored');
+like($help, qr/The Jtune pedal is a chromatic tuner, not an audio effect/, 'the help explains Jtune the tuner');
+like($help, qr/The song keeps it in the chain like any pedal/, 'the help says the tuner is saved in the chain');
 like($help, qr/JawnPitch follows one note at a time/, 'the help names JawnPitch');
 like($help, qr/Every tile is the same size/, 'the help says every tile is one size');
 

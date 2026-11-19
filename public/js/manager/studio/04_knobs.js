@@ -83,9 +83,9 @@ function studioInit(data) {
 			studioEngineInputRows();
 			studioUpdateLatencyInfo();
 
-			// Jtune is a chromatic tuner, not an effect: it listens to the input and
-			// never joins a rack, so it stays out of the draggable effects. The tuner
-			// part owns its lamp, its pink switch and its display.
+			// Jtune is a chromatic tuner, a listen-only pedal in the rack: the tuner
+			// part owns its lamp, its pink switch and its display, and it drags like
+			// any other pedal now.
 			$('#pedal_Jtune').attr({ 'data-tuner': 'yes', hint: studioLayoutText('Start or stop the tuner') });
 			$('#pedal_Jtune .pedal_background').attr('hint', studioLayoutText('Jtune - press to tune'));
 			// a new window or song stops whatever the previous one was listening to
@@ -93,16 +93,16 @@ function studioInit(data) {
 			// repaint the lamp now that the tile is marked a tuner
 			if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
 
-			// Pedals are dragged from the pedalboard onto a channel strip; the tuner
-			// is not one of them. The whole tile is the handle, so a palette pedal
-			// (which has no artwork image) drags too, but its knobs, lamp, dropdown
-			// and footswitch are cancelled: they stay clickable, and a click that
-			// never travels 4px is a click, not a drag.
-			$('#pedalboard .pedal').filter(function () {
-				return $(this).attr('data-tuner') !== 'yes';
-			}).draggable({
+			// Pedals are dragged from the pedalboard onto a channel strip. The whole
+			// tile is the handle, so a palette pedal (which has no artwork image)
+			// drags too, but its knobs, lamp, dropdown and footswitch are cancelled:
+			// they stay clickable, and a click that never travels 4px is a click,
+			// not a drag.
+			$('#pedalboard .pedal').draggable({
 				helper: 'clone', revert: 'invalid', scroll: false, zIndex: 90000, appendTo: 'body',
 				distance: 4,
+				start: function () { if (typeof studioTunerDragAt !== 'undefined') { studioTunerDragAt = Date.now(); } },
+				stop: function () { if (typeof studioTunerDragAt !== 'undefined') { studioTunerDragAt = Date.now(); } },
 				cancel: '.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, select, option, input, button'
 			});
 			studioBindChannelDrop($('.channel, .studio_track_panel'));
@@ -595,10 +595,8 @@ function studioRetriever() {
 				// per insert (name, footswitch, controls), in chain order.
 				var name = (typeof entry === 'string') ? entry : (entry && entry.name);
 				if (!name) { return; }
-				// Jtune is a chromatic tuner, not an effect: it was never wired
-				// in, so an old entry is dropped instead of becoming an insert
-				// (and it never becomes autotune). The song still loads.
-				if (name === 'Jtune') { return; }
+				// Jtune is a real listen-only insert now, so it restores with the
+				// chain; the pass-through is what keeps it silent.
 				studioSetInsert(i, name, true);
 				if (entry && typeof entry === 'object') {
 					rack_restore.push({ ch: i, name: name, record: entry });

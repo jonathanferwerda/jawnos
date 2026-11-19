@@ -1,14 +1,18 @@
 // ===========================================================================
 // The chromatic tuner (Jtune)
 // ===========================================================================
-// Jtune is not an effect and never joins a rack. It is a tuner on the selected
-// track's chain: it taps the channel after its inserts, the same signal the
-// take recorder and the monitor hear, so the interface input the track is
-// listening on is the input it tunes. It opens no microphone of its own; a
-// track with no live input says so. The pink switch and the lamp are one
-// control: press either to start or stop listening; the lamp is grey while it
-// is off, amber while it listens, and green when the note is inside the
-// tolerance.
+// Jtune is not an effect and never joins a rack in the browser graph's sense:
+// it is a listen-only pedal. The rack treats it like any insert - it is dragged
+// in, ordered and bypassed with Up/Down and the footswitch - but studioInsert
+// builds the fallback pass-through for it, so it never colours the sound and the
+// native engine's plan (which asks for a builder) leaves it out.
+//
+// It taps its own insert's input, which is the chain exactly where it sits: put
+// it first and it hears the clean input, put it after a pedal and it hears that
+// pedal. The switch is the insert's on/off; bypassed, the signal still passes
+// and the tuner stops listening. The pink switch and the lamp are the same
+// control: the lamp is grey while it is off, amber while it listens, and green
+// when the note is inside the tolerance.
 //
 // The pitch comes from YIN's cumulative-mean-normalized difference, run on a
 // half-rate copy of the analyser window. Half the rate halves the lags the
@@ -18,6 +22,7 @@
 var studioTunerTolerance = 5;   // cents inside which a note counts as in tune
 var studioTunerGate = 0.006;    // RMS below this is silence, not a note
 var studioTunerNotes = [ 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B' ];
+var studioTunerDragAt = 0;      // a drag that just ended must not read as a click
 
 var studioTuner = {
 	analyser: null, mute: null, tap: null, channel: 0,
@@ -94,23 +99,37 @@ function studioTunerTile() {
 	return $('#pedal_Jtune');
 }
 
-// The lamp and the pink switch are the same power control, so both read the
-// tuner's state rather than an insert's.
+// The tuner is a listen-only pedal in the selected track's rack, so its on/off
+// is the insert's bypass. These two read that state; the lamp, the switch and
+// the display all follow it.
+function studioTunerInsert(ch) {
+	ch = (ch === undefined || ch === null) ? studioPaletteChannel() : ch;
+	return studioRackFind(ch, 'Jtune');
+}
+
+function studioTunerOn() {
+	var ins = studioTunerInsert();
+	return !!(ins && !ins.bypassed);
+}
+
 function studioTunerPaintLamp(tile) {
 	tile = (tile && tile.length) ? tile : studioTunerTile();
 	if (!tile.length) { return; }
 	var lamp = tile.find('.studio_pedal_led');
-	var label = studioTuner.running
-		? studioLayoutText(studioTuner.inTune ? 'In tune' : 'Tuning')
-		: studioLayoutText('Start or stop the tuner');
-	lamp.attr({ 'aria-pressed': studioTuner.inTune ? 'true' : 'false', title: label, hint: label });
-	lamp.toggleClass('studio_tuner_listening', !!studioTuner.running && !studioTuner.inTune);
+	var on = studioTunerOn();
+	var tuned = !!(on && studioTuner.inTune);
+	var label = !on
+		? studioLayoutText('Start or stop the tuner')
+		: studioLayoutText(tuned ? 'In tune' : 'Tuning');
+	lamp.attr({ 'aria-pressed': on ? 'true' : 'false', title: label, hint: label });
+	lamp.toggleClass('studio_tuner_listening', !!on && !tuned)
+		.toggleClass('studio_tuner_tuned', tuned);
 }
 
 function studioTunerPaintButton() {
 	var b = studioTunerTile().find('.button_control');
 	if (!b.length) { return; }
-	var pressed = !!studioTuner.running;
+	var pressed = studioTunerOn();
 	var colour = b.attr('colour') || 'ruby_red';
 	b.attr('status', pressed ? 'pressed' : 'depressed')
 		.attr('src', jawnosStudioButtonIcon(pressed ? 'pressed' : 'depressed', colour));
@@ -119,7 +138,7 @@ function studioTunerPaintButton() {
 function studioTunerDraw() {
 	var tile = studioTunerTile();
 	if (!tile.length) { return; }
-	var on = !!studioTuner.running;
+	var on = studioTunerOn();
 	var note = studioTuner.note;
 	var cents = studioTuner.cents;
 	var tuned = !!(on && note && studioTuner.inTune);
@@ -134,6 +153,7 @@ function studioTunerDraw() {
 	var line = '';
 	if (!on) { line = studioLayoutText(studioTuner.error || 'press to tune'); }
 	else if (note) { line = (cents > 0 ? '+' : '') + Math.round(cents); }
+	else if (studioTuner.error) { line = studioTuner.error; }
 	else { line = studioLayoutText('Track') + ' ' + (studioTuner.channel || 1); }
 	tile.find('.studio_tuner_cents').text(line);
 	studioTunerPaintLamp(tile);
@@ -142,49 +162,56 @@ function studioTunerDraw() {
 
 // ---- listening -------------------------------------------------------------
 //
-// The tuner is another pedal on the selected track's chain: it taps the
-// channel's post-insert gain, the same signal the take recorder and the monitor
-// hear, so the interface input the track listens on is the input it tunes. It
-// never opens a microphone of its own.
+// Jtune is a listen-only pedal in the selected track's rack, at the place the
+// rack puts it: first in the chain it hears the clean input, and after a pedal
+// it hears that pedal. The insert is the fallback pass-through studioInsert
+// builds for a name with no builder, so it never colours the sound and the
+// native engine's plan leaves it out. Its on/off is the insert's bypass: off,
+// the signal still passes and the tuner stops listening.
 
-function studioTunerChannel() {
-	return studioPaletteChannel();
-}
-
-function studioTunerTapFor(ch) {
-	var c = studioAudio.channels[ch];
-	if (!c || !c.recGain) { return null; }
-	// no live input is attached: a take playing on the channel is not a source
-	if (!c.source && !c.synthTap) { return null; }
-	return c.recGain;
+// Attach, move or detach the analyser to match the selected track's insert.
+function studioTunerSync() {
+	var ch = studioPaletteChannel();
+	var ins = studioRackFind(ch, 'Jtune');
+	var on = !!(ins && !ins.bypassed);
+	if (!on) {
+		if (studioTuner.running) { studioTunerStop(); }
+		else { studioTunerDraw(); }
+		return;
+	}
+	if (studioTuner.running && studioTuner.channel === ch && studioTuner.tap === ins.input) {
+		studioTunerDraw();
+		return;
+	}
+	studioTunerDetach();
+	studioTunerAttach(ch, ins);
 }
 
 function studioTunerToggle() {
-	if (studioTuner.running) { studioTunerStop(); }
-	else { studioTunerStart(); }
+	var ch = studioPaletteChannel();
+	var ins = studioRackFind(ch, 'Jtune');
+	if (!ins) { studioSetInsert(ch, 'Jtune', true); }
+	else { studioSetInsertBypass(ch, 'Jtune', !ins.bypassed); }
+	studioTunerSync();
 }
 
-function studioTunerStart() {
-	if (studioTuner.running) { return; }
+function studioTunerAttach(ch, ins) {
 	var ctx = studioContext();
-	if (!ctx) { studioTunerFail('No audio'); return; }
-	var ch = studioTunerChannel();
-	var tap = studioTunerTapFor(ch);
-	if (!tap) { studioTunerFail('No live input'); return; }
+	if (!ctx || !ins || !ins.input) { studioTunerFail('No audio'); return; }
 	var analyser = ctx.createAnalyser();
 	analyser.fftSize = 4096;
 	analyser.smoothingTimeConstant = 0;
 	var mute = ctx.createGain();
 	mute.gain.value = 0;
 	try {
-		tap.connect(analyser);
+		ins.input.connect(analyser);
 		analyser.connect(mute);
 		mute.connect(ctx.destination);
 	}
 	catch (e) { studioTunerFail('No audio'); return; }
 	studioTuner.analyser = analyser;
 	studioTuner.mute = mute;
-	studioTuner.tap = tap;
+	studioTuner.tap = ins.input;
 	studioTuner.channel = ch;
 	studioTuner.buffer = new Float32Array(analyser.fftSize);
 	studioTuner.half = new Float32Array(studioTuner.buffer.length / 2);
@@ -199,42 +226,53 @@ function studioTunerStart() {
 	studioTunerDraw();
 }
 
-// The selection moved to another track while the tuner listens: move the tap to
-// that track's chain rather than stopping, so the display follows the chain.
-function studioTunerFollow() {
-	if (!studioTuner.running) { return; }
-	var ch = studioTunerChannel();
-	if (studioTuner.channel === ch) { return; }
-	var tap = studioTunerTapFor(ch);
-	if (!tap) { studioTunerFail('No live input'); return; }
+function studioTunerDetach() {
+	clearTimeout(studioTuner.timer);
+	studioTuner.timer = 0;
 	if (studioTuner.tap && studioTuner.analyser) {
 		try { studioTuner.tap.disconnect(studioTuner.analyser); } catch (e) {}
 	}
-	try { tap.connect(studioTuner.analyser); }
-	catch (e) { studioTunerFail('No live input'); return; }
-	studioTuner.tap = tap;
-	studioTuner.channel = ch;
+	if (studioTuner.analyser) { try { studioTuner.analyser.disconnect(); } catch (e) {} }
+	if (studioTuner.mute) { try { studioTuner.mute.disconnect(); } catch (e) {} }
+	studioTuner.analyser = null;
+	studioTuner.mute = null;
+	studioTuner.tap = null;
+	studioTuner.channel = 0;
+	studioTuner.running = false;
 	studioTuner.note = null;
 	studioTuner.cents = 0;
 	studioTuner.inTune = false;
 	studioTuner.silent = 0;
-	studioTunerDraw();
+}
+
+// The selection moved to another track, or its rack changed: follow it.
+function studioTunerFollow() {
+	studioTunerSync();
 }
 
 function studioTunerRead() {
 	clearTimeout(studioTuner.timer);
 	studioTuner.timer = 0;
 	if (!studioTuner.running || !studioTuner.analyser) { return; }
-	// the selected chain can change under a listening tuner; follow it
-	if (studioTuner.channel !== studioTunerChannel()) {
-		studioTunerFollow();
-		if (!studioTuner.running) { return; }
+	// the insert can be moved, bypassed or removed under a listening tuner
+	var ins = studioTunerInsert(studioTuner.channel);
+	if (!ins || ins.bypassed || ins.input !== studioTuner.tap || studioTuner.channel !== studioPaletteChannel()) {
+		// the sync's own attach starts the next read (and a stop schedules nothing)
+		studioTunerSync();
+		return;
 	}
 	var c = studioAudio.channels[studioTuner.channel];
 	if (!c || (!c.source && !c.synthTap)) {
-		studioTunerFail('No live input');
+		// the pedal is still on; there is just nothing at its input yet
+		studioTuner.error = studioLayoutText('No live input');
+		studioTuner.note = null;
+		studioTuner.cents = 0;
+		studioTuner.inTune = false;
+		studioTunerDraw();
+		studioTuner.timer = setTimeout(studioTunerRead, 120);
 		return;
 	}
+	studioTuner.error = '';
 	var analyser = studioTuner.analyser;
 	var buf = studioTuner.buffer;
 	if (!buf || buf.length !== analyser.fftSize) { buf = studioTuner.buffer = new Float32Array(analyser.fftSize); }
@@ -270,24 +308,12 @@ function studioTunerRead() {
 
 function studioTunerFail(message) {
 	studioTuner.error = studioLayoutText(message);
-	studioTunerStop(true);
+	studioTunerDetach();
+	studioTunerDraw();
 }
 
 function studioTunerStop(keepError) {
-	studioTuner.running = false;
-	clearTimeout(studioTuner.timer);
-	studioTuner.timer = 0;
-	if (studioTuner.tap && studioTuner.analyser) {
-		try { studioTuner.tap.disconnect(studioTuner.analyser); } catch (e) {}
-	}
-	if (studioTuner.analyser) { try { studioTuner.analyser.disconnect(); } catch (e) {} studioTuner.analyser = null; }
-	if (studioTuner.mute) { try { studioTuner.mute.disconnect(); } catch (e) {} studioTuner.mute = null; }
-	studioTuner.tap = null;
-	studioTuner.channel = 0;
-	studioTuner.note = null;
-	studioTuner.cents = 0;
-	studioTuner.inTune = false;
-	studioTuner.silent = 0;
+	studioTunerDetach();
 	if (!keepError) { studioTuner.error = ''; }
 	studioTunerDraw();
 }
@@ -299,6 +325,8 @@ function studioTunerStop(keepError) {
 // toggle it a second time.
 
 $(document).on('click', '#pedal_Jtune', function (e) {
-	if ($(e.target).closest('.button_control, .studio_pedal_led').length) { return; }
+	if ($(e.target).closest('.button_control, .studio_pedal_led, .studio_pedal_foot').length) { return; }
+	// a drag that has just ended (or reverted over the tile) is not a press
+	if (studioTunerDragAt && (Date.now() - studioTunerDragAt) < 300) { return; }
 	studioTunerToggle();
 });

@@ -15,10 +15,12 @@
 songs. The UI shows it as **JawnPitch**; keep the key `autotune` so old songs
 and the engine keep working.
 
-**Jtune is not an effect.** It is a chromatic tuner planned for the shelf, with
-no audio implementation: it is not an `InsertKind`, it has no alias, and a
-legacy `Jtune` entry in a song is dropped on load rather than mapped to
-`autotune`.
+**Jtune is a listen-only insert, not an `InsertKind`.** `studioInsert` builds the
+fallback pass-through for it because it has no builder, so it never colours the
+sound, and if it were given a builder the native engine's plan would send it a
+name `InsertKind::parse` rejects. Leave it without a builder and without an
+alias: the browser taps its input for the tuner display, the rack orders and
+bypasses it like any pedal, and the song keeps it in the chain.
 
 | name | purpose | controls (UI `0..100`) |
 | --- | --- | --- |

@@ -59,11 +59,9 @@
 					</select>
 				<% } %>
 				<%# Every tile carries the same footswitch at its foot, so a pedal is
-				   switched from the tile itself; the lamp reads the same state. The
-				   tuner switches no sound, so it has none. %>
-				<% if (!$p->{'tuner'}) { %>
-					<button class="studio_pedal_foot hover" effect="<%= $p->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
-				<% } %>
+				   switched from the tile itself; the lamp reads the same state. Jtune
+				   is an insert like the rest now, so its foot bypasses it too. %>
+				<button class="studio_pedal_foot hover" effect="<%= $p->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
 			</span>
 		<% } %>
 			<%# A palette effect with no hand-drawn artwork is drawn from the theme

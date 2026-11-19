@@ -1017,8 +1017,9 @@ var studioEffectAliases = {
 	Delayed: 'delay',
 	reverb: 'reverb',
 	reverb2: 'reverb',
-	// Jtune is a chromatic tuner, not an effect: it has no alias here and no
-	// builder below. A legacy "Jtune" entry in a song is dropped on restore.
+	// Jtune is a listen-only tuner: it has no alias here and no builder below,
+	// so studioInsert builds the pass-through and the engine plan (which asks
+	// for a builder) leaves it out. It is still a real rack insert in the song.
 	flanger: 'flanger',
 	fuzz: 'fuzz',
 	amp: 'amp',
