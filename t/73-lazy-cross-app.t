@@ -43,6 +43,13 @@ unlike($travel, qr/^function continent_record\(/m,
 	'the Travel chunk no longer owns a function the whole manager calls');
 unlike($travel, qr/^function jawnGpsWait\(/m, 'nor the helper beside it');
 
+like($core, qr/^function navigationNow\(/m,
+	'the navigation button handler lives in core, where the start menu is');
+like($core, qr/^function navigationNowApply\(/m, 'and the site-type picture it updates');
+like($core, qr/\$\(document\)\.on\('click', '#navigation_now'/, 'the press is caught in core');
+unlike($travel, qr/^function navigationNow\(/m,
+	'the Travel chunk no longer catches it, so an unopened Travel still answers');
+
 # --- the rest are guarded at the call site ---------------------------------
 like($windows, qr/if \(typeof budgetLight === 'function'\) \{ budgetLight\(app_attr,circumstance,'open'\); \}/,
 	'a window redraw guards the budget light');
