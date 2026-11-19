@@ -11,6 +11,9 @@
      09_pedals.js  - the per-track rack: palette, order, footswitch, remove
      10_master.js  - the mastering chain after the mix, its UI and its song state
      11_drums.js  - the drum machine: voices, one-bar chart, keys, MIDI, routing
+     12_export.js - render each track through its output chain and attach it to the song
+     13_strip.js  - the channel strip's mute and solo buttons
+     14_audio_file.js - encode an AudioBuffer as a 16-bit WAV blob
      12_tuner.js  - the chromatic tuner on Jtune: listening, pitch, note, arrows
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
@@ -176,10 +179,14 @@ function studioChannelEngine(ch) {
 		recAnalyser: ctx.createAnalyser(),
 		recDest: ctx.createMediaStreamDestination(),
 		playBus: ctx.createGain(),
+		outIn: ctx.createGain(),
 		playPan: ctx.createStereoPanner(),
 		monGain: ctx.createGain(),
 		inserts: [],
 		insertByName: {},
+		outInserts: [],
+		outInsertByName: {},
+		rackChain: ((mixer[ch] || {}).fx_chain === 'out') ? 'out' : 'in',
 		source: null
 	};
 	c.bass.type = 'lowshelf'; c.bass.frequency.value = 220;
@@ -192,14 +199,19 @@ function studioChannelEngine(ch) {
 	c.trim.connect(c.bass).connect(c.mid).connect(c.treble);
 	c.recGain.connect(c.recAnalyser);
 	c.recGain.connect(c.recDest);
-	// takes play through the channel fader + pan into the master bus
-	c.playBus.connect(c.playPan).connect(studioAudio.master);
+	// takes play through the channel fader, then the output chain (the pedals
+	// after the take), then the pan into the master bus. A new channel's chain
+	// is empty, so the rebuild below is the wire outIn -> playPan and a take
+	// plays exactly as it was recorded.
+	c.playBus.connect(c.outIn);
+	studioAudio.channels[ch] = c;
+	studioRebuildOutputs(ch);
+	c.playPan.connect(studioAudio.master);
 	// live monitoring taps the same post-pedal signal the recorder gets, so you
 	// hear exactly what is being captured; it is muted until the song asks
 	c.monGain.gain.value = 0;
 	c.recGain.connect(c.monGain);
 	c.monGain.connect(studioAudio.master);
-	studioAudio.channels[ch] = c;
 	return c;
 }
 
@@ -217,40 +229,81 @@ function studioRebuildInserts(ch) {
 	node.connect(c.recGain);
 }
 
+// The output chain sits after the take, between the playback bus and the pan:
+// playBus -> outIn -> [inserts in order] -> playPan -> master. An empty chain
+// is a wire, so a clean take plays exactly as recorded.
+function studioRebuildOutputs(ch) {
+	var c = studioAudio.channels[ch];
+	if (!c || !c.outIn) { return; }
+	try { c.outIn.disconnect(); } catch (e) {}
+	var node = c.outIn;
+	c.outInserts.forEach(function (insert) {
+		node.connect(insert.input);
+		node = insert.output;
+	});
+	node.connect(c.playPan);
+}
+
+// The rack shows one chain at a time. Which one is the channel's own view and
+// is saved with the song, so a reload shows the rack that was left open.
+function studioChannelChain(ch) {
+	var c = studioAudio.channels[ch];
+	return (c && c.rackChain === 'out') ? 'out' : 'in';
+}
+
+function studioSetChannelChain(ch, chain) {
+	var c = studioChannelEngine(ch);
+	if (!c) { return; }
+	c.rackChain = (chain === 'out') ? 'out' : 'in';
+	if (!mixer[ch]) { mixer[ch] = {}; }
+	mixer[ch].fx_chain = c.rackChain;
+}
+
 function studioApplyPedals() {
 	// The shelf's pedals are global: a knob on the artwork pushes its value to
 	// every insert of that kind, however it was named when it was added (the
-	// shelf says reverb2, the palette says reverb).
+	// shelf says reverb2, the palette says reverb). Both of a channel's chains
+	// hear it: In prints into the take, Out is heard on playback.
 	$('.knob_control, .studio_pedal_model').each(function (i, v) {
 		var channel = $(v).attr('channel');
 		var control = $(v).attr('control');
 		if (!channel || !control || /^[0-9]+$/.test(channel)) { return; }
 		var kind = studioEffectKind(channel);
 		$.each(studioAudio.channels, function (ch, c) {
-			$.each(c.insertByName, function (name, ins) {
-				if (studioEffectKind(name) === kind) { ins.set(control, $(v).val()); }
+			$.each([c.insertByName, c.outInsertByName], function (j, map) {
+				$.each(map, function (name, ins) {
+					if (studioEffectKind(name) === kind) { ins.set(control, $(v).val()); }
+				});
 			});
 		});
 	});
 }
 
-function studioSetInsert(ch, name, on) {
+function studioSetInsert(ch, name, on, chain) {
 	var c = studioChannelEngine(ch);
 	if (!c) { return; }
+	// `chain` is 'in' (before the take, so the recording is wet) unless the
+	// caller asks for 'out' (after the take, browser playback only).
+	var out = (chain === 'out');
+	var list = out ? c.outInserts : c.inserts;
+	var byName = out ? c.outInsertByName : c.insertByName;
 	var at = -1;
-	c.inserts.forEach(function (ins, i) { if (ins.name == name) { at = i; } });
+	list.forEach(function (ins, i) { if (ins.name == name) { at = i; } });
 	if (on && at == -1) {
 		var ins = studioInsert(studioContext(), name);
-		c.inserts.push(ins);
-		c.insertByName[name] = ins;
+		list.push(ins);
+		byName[name] = ins;
 	}
 	else if (!on && at != -1) {
-		var gone = c.inserts.splice(at, 1)[0];
+		var gone = list.splice(at, 1)[0];
+		// A removed insert may still feed the next node or the bus; drop every
+		// edge out of it before it leaves the graph.
+		if (gone && gone.output) { try { gone.output.disconnect(); } catch (e) {} }
 		if (gone && gone.destroy) { try { gone.destroy(); } catch (e) {} }
-		delete c.insertByName[name];
+		delete byName[name];
 	}
 	studioApplyPedals();
-	studioRebuildInserts(ch);
+	if (out) { studioRebuildOutputs(ch); } else { studioRebuildInserts(ch); }
 	studioUpdateFxBadges();
 	// keep every rack view and every pedal lamp in step with the engine
 	if (typeof studioRackRender === 'function') { studioRackRender(ch); }
@@ -280,6 +333,9 @@ function studioAttachInput(ch, stream) {
 	c.source.connect(c.trim);
 	studioApplyChannel(ch);
 	studioRebuildInserts(ch);
+	// a device input supersedes the drums on this channel, so their own
+	// recorder tap may follow the selection again
+	if (typeof studioDrumsRouteSelection === 'function') { studioDrumsRouteSelection(); }
 	return c.recDest.stream;
 }
 
@@ -307,6 +363,45 @@ function studioAttachSynth(ch) {
 	c.synthTap = { node: node, gain: tap };
 	studioApplyChannel(ch);
 	studioRebuildInserts(ch);
+	// a drums channel is no longer the one being taken
+	if (typeof studioDrumsRouteSelection === 'function') { studioDrumsRouteSelection(); }
+	return c.recDest.stream;
+}
+
+// Feed the drum machine into a channel the way a live input is fed. The kit's
+// bus keeps its direct feed to the master, so it is audible on its own before
+// it is patched anywhere; this adds the wet path through the channel's tone
+// stack, input pedals and fader, so a browser take prints the processed drums
+// and Monitor hears that same path. The tap is a per-channel gain, so detaching
+// never silences the kit's own output.
+function studioAttachDrums(ch) {
+	var ctx = studioContext();
+	var c = studioChannelEngine(ch);
+	if (!ctx || !c || typeof studioDrums === 'undefined' || typeof studioDrumsBus !== 'function') { return null; }
+	studioDrumsBus();
+	if (!studioDrums.out) { return null; }
+	if (c.source) { try { c.source.disconnect(); } catch (e) {} c.source = null; }
+	if (c.synthTap) {
+		try { c.synthTap.node.disconnect(c.synthTap.gain); } catch (e) {}
+		try { c.synthTap.gain.disconnect(); } catch (e) {}
+		c.synthTap = null;
+	}
+	if (c.drumTap) {
+		try { c.drumTap.node.disconnect(c.drumTap.gain); } catch (e) {}
+		try { c.drumTap.gain.disconnect(); } catch (e) {}
+		c.drumTap = null;
+	}
+	var tap = ctx.createGain();
+	tap.gain.value = 1;
+	studioDrums.out.connect(tap);
+	tap.connect(c.trim);
+	c.drumTap = { node: studioDrums.out, gain: tap };
+	studioApplyChannel(ch);
+	studioRebuildInserts(ch);
+	// The drums' own recorder tap follows the selected channel; its owner skips
+	// that tap while this channel's input is the drums, so the take is not
+	// printed twice.
+	if (typeof studioDrumsRouteSelection === 'function') { studioDrumsRouteSelection(); }
 	return c.recDest.stream;
 }
 
@@ -874,6 +969,9 @@ function studioEngineTrackPlan() {
 		if (channel && channel.inserts) {
 			channel.inserts.forEach(function (ins) {
 				if (!ins || ins.bypassed) { return; }
+				// The Stereo Widener is a browser-only insert: the native engine has
+				// no such effect, so sending its name refuses the whole take.
+				if (studioEffectKind(ins.name) === 'stereowidener') { return; }
 				inserts.push(studioEffectKind(ins.name));
 			});
 		}
@@ -897,7 +995,11 @@ function studioEngineMasterList() {
 		records = mixer['admin']['master'];
 	}
 	return records.filter(function (record) {
-		return record && record['on'];
+		// The Stereo Widener is a browser-only master effect: the native engine
+		// cannot build it, so an enabled slot is left out rather than refusing
+		// the take.
+		return record && record['on']
+			&& studioEffectKind(record['name']) !== 'stereowidener';
 	}).map(function (record) {
 		return record['name'];
 	});

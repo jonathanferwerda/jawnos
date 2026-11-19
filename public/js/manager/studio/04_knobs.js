@@ -306,6 +306,9 @@ function studioChannelVolumeSet(ch, value) {
 	$('.channel_volume[channel="' + ch + '"]').val(value);
 	var c = studioAudio.channels[ch];
 	if (c && c.playBus) { try { c.playBus.gain.value = studioVolumeFraction(value); } catch (e) {} }
+	// the fader is one factor of the mix, not the whole of it: a muted or
+	// solo-silenced channel stays silent while its fader moves
+	studioApplyPlaybackMix();
 	studioSaver();
 }
 
@@ -466,6 +469,23 @@ function studioSaver() {
 			$.each(ins.values || {}, function(control, value) { controls[control] = value; });
 			return { name: ins.name, on: !ins.bypassed, controls: controls };
 		});
+		// The output chain plays after the take and never touches it; the selected
+		// chain is the rack's own view. Both are the song's, in the same shape as
+		// the input chain, so a reload shows the same two racks.
+		song[ch]['fx_out'] = c.outInserts.map(function(ins) {
+			var controls = {};
+			$.each(ins.values || {}, function(control, value) { controls[control] = value; });
+			return { name: ins.name, on: !ins.bypassed, controls: controls };
+		});
+		song[ch]['fx_chain'] = (c.rackChain === 'out') ? 'out' : 'in';
+	});
+
+	// Mute and solo are the song's mix state too.
+	$.each(mixer, function(ch, m) {
+		if (!/^[0-9]+$/.test(ch) || !m) { return; }
+		if (song[ch] == undefined) { song[ch] = {}; }
+		song[ch]['mute'] = m.mute ? 1 : 0;
+		song[ch]['solo'] = m.solo ? 1 : 0;
 	});
 
 	// recorded takes: metadata only, the audio blobs are uploaded by studioSave
@@ -523,10 +543,14 @@ function studioRetriever() {
 		if (!mixer[i]) { mixer[i] = {}; }
 		if (!mixer[i].armed) { mixer[i].armed = { state: 'off', text: 'O' }; }
 		$.each(v, function(n,w) {
-			if (n == 'plugs' || n == 'mixer' || n == 'fx') { return; }
+			if (n == 'plugs' || n == 'mixer' || n == 'fx' || n == 'fx_out' || n == 'fx_chain') { return; }
 			if (n == 'monitor') {
 				if (!mixer.monitor) { mixer.monitor = {}; }
 				mixer.monitor[i] = (w == 'yes' || w == 1 || w == '1' || w === true) ? 1 : 0;
+				return;
+			}
+			if (n == 'mute' || n == 'solo') {
+				mixer[i][n] = (w == 1 || w == '1' || w === true);
 				return;
 			}
 			mixer[i][n] = w;
@@ -559,10 +583,13 @@ function studioRetriever() {
 			$('[channel="' + i + '"][control="' + n + '"]').val(w);
 		});
 
-		// rebuild this channel's insert rack
+		// rebuild this channel's two insert racks
 		var c = studioChannelEngine(i);
 		if (c) {
+			// the selected chain is a view, not audio; an older song starts on In
+			studioSetChannelChain(i, (v['fx_chain'] == 'out') ? 'out' : 'in');
 			c.inserts.slice().forEach(function(ins) { studioSetInsert(i, ins.name, false); });
+			c.outInserts.slice().forEach(function(ins) { studioSetInsert(i, ins.name, false, 'out'); });
 			(v['fx'] || []).forEach(function(entry) {
 				// An old song stored just the pedal names; a new one stores a record
 				// per insert (name, footswitch, controls), in chain order.
@@ -575,6 +602,16 @@ function studioRetriever() {
 				studioSetInsert(i, name, true);
 				if (entry && typeof entry === 'object') {
 					rack_restore.push({ ch: i, name: name, record: entry });
+				}
+			});
+			// An older song has no fx_out: the clear above is the whole output
+			// chain, so its takes still play exactly as they were recorded.
+			(v['fx_out'] || []).forEach(function(entry) {
+				var name = (typeof entry === 'string') ? entry : (entry && entry.name);
+				if (!name || name === 'Jtune') { return; }
+				studioSetInsert(i, name, true, 'out');
+				if (entry && typeof entry === 'object') {
+					rack_restore.push({ ch: i, name: name, record: entry, chain: 'out' });
 				}
 			});
 		}
@@ -593,9 +630,10 @@ function studioRetriever() {
 
 	studioApplyPedals();
 	// A rack's own values win over the shelf's global pedals, so they are pushed
-	// in last: the shelf is a macro, the stored rack is the song.
+	// in last: the shelf is a macro, the stored rack is the song. Each record is
+	// applied to the chain it was saved from.
 	rack_restore.forEach(function(item) {
-		var ins = studioRackFind(item.ch, item.name);
+		var ins = studioRackFind(item.ch, item.name, item.chain || 'in');
 		if (!ins) { return; }
 		$.each(item.record.controls || {}, function(control, value) { ins.set(control, value); });
 		if (ins.setBypass) { ins.setBypass(item.record.on === false); }
@@ -634,6 +672,10 @@ function studioRetriever() {
 	mixer['settings'] = mixer['settings'] || {};
 	mixer['settings']['channel_count'] = $('#studio_viewer').attr('channel_count');
 	studioUpdateKnobHints();
+	// the restored mute/solo state owns the playback bus and the dimming; the
+	// strip paints its own buttons from mixer on this event
+	$(document).trigger('studio:mute-solo');
+	studioApplyMuteSolo();
 	return song;
 }
 

@@ -52,6 +52,7 @@ sub routes {
 	[44027, 'get', '/manager/games/serve', 'action_44027'],
 	[44028, 'get', '/manager/games/house', 'action_44028'],
 	[44029, 'post', '/manager/games/pull', 'action_44029'],
+	[44032, 'post', '/manager/studio/export', 'action_44032'],
 	);
 }
 

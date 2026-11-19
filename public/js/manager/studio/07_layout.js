@@ -1147,6 +1147,13 @@ function studioResetChannelMarkup(node, ch) {
 	node.find('.knob').css('transform', '');
 	node.find('.studio_track_name').val(studioLayoutText('Track') + ' ' + ch);
 	node.find('.studio_track_automation').attr('aria-pressed', 'false');
+	// A reused clone starts audible and unsoloed. The state belongs to the
+	// channel, so it is cleared here too; studioCreateTrack gives a brand-new
+	// channel its own false values after this reset.
+	if (mixer[ch]) { mixer[ch].mute = false; mixer[ch].solo = false; }
+	node.find('.studio_strip_mute, .studio_strip_solo').removeAttr('aria-pressed');
+	node.removeClass('studio_solo_muted');
+	node.find('.studio_solo_muted').removeClass('studio_solo_muted');
 	node.removeClass('selected_channel studio_track_automation_on studio_fx_open');
 	node.find('.selected_channel').removeClass('selected_channel');
 	// a recycled clone must not wear the first track's colour
@@ -1206,9 +1213,15 @@ function studioCreateTrack(ch) {
 	if (!mixer[ch]) { mixer[ch] = {}; }
 	if (!mixer[ch].media) { mixer[ch].media = { out: [], rec: [] }; }
 	if (!mixer[ch].armed) { mixer[ch].armed = { state: 'off', text: 'O' }; }
+	// a new channel is audible and unsoloed before anything can click it
+	mixer[ch].mute = false;
+	mixer[ch].solo = false;
 	studioChannelEngine(ch);
 	studioApplyChannel(ch);
 	$('.knob_control[channel="' + ch + '"]').trigger('change');
+	// the cloned buttons lost their pressed state in the reset above; paint the
+	// new strip (and refresh the solo dimming) from mixer
+	if (typeof studioStripMuteSoloRender === 'function') { studioStripMuteSoloRender(); }
 	// the reset above cleared the clone's inherited colour; give this track its own
 	row.removeAttr('data-colour');
 	if (row[0] && row[0].style) { row[0].style.removeProperty('--studio-track-colour'); }
@@ -1314,6 +1327,9 @@ function studioRemoveTrack(ch, quiet) {
 		var left = studioTrackNumbers();
 		studioSelectedChannel = left.length ? left[0] : 0;
 	}
+	// The channel is gone, so a solo it held is gone with it: the remaining
+	// strips must not stay dimmed behind a solo that no longer exists.
+	if (typeof studioStripMuteSoloRender === 'function') { studioStripMuteSoloRender(); }
 	studioTakesChanged();
 	studioUpdateTrackCount();
 	if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }

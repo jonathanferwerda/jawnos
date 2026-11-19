@@ -185,6 +185,17 @@ function studioCanvasHit(canvas, clientX) {
 	return null;
 }
 
+// A press on empty lane space has no take to measure against, so a loop track
+// turns the pointer into a timeline position with the same scale as the take
+// hit test.
+function studioCanvasTime(canvas, clientX) {
+	var rect = canvas.getBoundingClientRect();
+	if (!rect.width) { return 0; }
+	var duration = studioTimelineDuration();
+	var t = ((clientX - rect.left) / rect.width) * duration;
+	return Math.max(0, Math.min(duration, t));
+}
+
 function studioRemoveTake(ch, take) {
 	var media = mixer[ch] && mixer[ch].media;
 	if (!media || !media.out) { return; }
@@ -258,6 +269,27 @@ function studioClipMenuRow(menu, command, label, disabled) {
 		.appendTo(menu);
 }
 
+// The drum loop section of a track menu: one row per saved loop, or a single
+// disabled row that says the library is empty. The row's index is looked up in
+// the published library when it is clicked.
+function studioLoopMenuRows(menu) {
+	$('<div class="studio_menu_head"></div>').text(studioLayoutText('Add drum loop')).appendTo(menu);
+	var library = (typeof studioDrumsLoopLibrary === 'function') ? studioDrumsLoopLibrary() : [];
+	if (!library.length) {
+		$('<button type="button" class="studio_menu_row" disabled></button>')
+			.text(studioLayoutText('No saved loops'))
+			.appendTo(menu);
+		return;
+	}
+	library.forEach(function (item, index) {
+		if (!item || !item.name) { return; }
+		$('<button type="button" class="studio_menu_row studio_drums_loop_row"></button>')
+			.attr('data-loop', index)
+			.text(item.name)
+			.appendTo(menu);
+	});
+}
+
 // What a copy keeps: everything needed to place the clip again on any track.
 // A saved clip points at its file by uuid; an unsaved one carries its blob.
 function studioClipSnapshot(take) {
@@ -283,6 +315,23 @@ function studioClipMenu(hit, px, py) {
 	studioClipMenuRow(menu, 'copy', studioLayoutText('Copy'), false);
 	// Paste needs a snapshot, so it reads disabled until something is copied
 	studioClipMenuRow(menu, 'paste', studioLayoutText('Paste'), !studioClipboard);
+	// Only a loop track takes a drum loop; another track keeps the clip menu.
+	var loopTrack = mixer[hit.ch] && mixer[hit.ch].armed && mixer[hit.ch].armed.state == 'loop';
+	if (loopTrack) { studioLoopMenuRows(menu); }
+	$('body').append(menu);
+	var margin = 6;
+	var left = Math.min(px, $(window).width() - menu.outerWidth() - margin);
+	var top = Math.min(py, $(window).height() - menu.outerHeight() - margin);
+	menu.css({ left: Math.max(margin, left), top: Math.max(margin, top) });
+}
+
+// A loop track with no take under the pointer still gets a menu: it offers the
+// saved drum loops and nothing else.
+function studioLoopMenu(ch, at, px, py) {
+	$('.studio_menu').remove();
+	studioClipMenuTarget = { ch: ch, take: null, t: at };
+	var menu = $('<div class="studio_menu studio_clip_menu studio_drum_loop_menu"></div>').attr('data-channel', ch);
+	studioLoopMenuRows(menu);
 	$('body').append(menu);
 	var margin = 6;
 	var left = Math.min(px, $(window).width() - menu.outerWidth() - margin);
@@ -341,12 +390,33 @@ $(document).on('contextmenu', '.track', function (e) {
 	studioClipMenu(hit, e.clientX, e.clientY);
 });
 
+// A loop track that has no take under the pointer is the other place a saved
+// drum loop can land. The first handler above has already declined the press
+// (no take), so this one owns the menu and its click time.
+$(document).on('contextmenu', '.track', function (e) {
+	if (studioCanvasHit(this, e.clientX)) { return; }
+	var ch = studioCanvasChannel(this);
+	var loopTrack = mixer[ch] && mixer[ch].armed && mixer[ch].armed.state == 'loop';
+	if (!loopTrack) { return; }
+	e.preventDefault();
+	studioLoopMenu(ch, studioCanvasTime(this, e.clientX), e.clientX, e.clientY);
+});
+
 $(document).on('click', '.studio_clip_menu .studio_menu_row', function (e) {
 	e.preventDefault();
 	var row = $(this);
 	if (row.prop('disabled')) { return; }
-	var command = row.attr('data-command');
+	var loop = row.attr('data-loop');
 	var hit = studioClipMenuTarget;
+	if (loop !== undefined) {
+		$('.studio_menu').remove();
+		studioClipMenuTarget = null;
+		if (!hit || typeof studioDrumsInsertLoop !== 'function') { return; }
+		var item = studioDrumsLoopLibrary()[parseInt(loop, 10)];
+		if (item) { studioDrumsInsertLoop(hit.ch, hit.t, item); }
+		return;
+	}
+	var command = row.attr('data-command');
 	$('.studio_menu').remove();
 	studioClipMenuTarget = null;
 	if (!hit || !hit.take) { return; }

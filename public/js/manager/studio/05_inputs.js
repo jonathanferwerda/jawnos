@@ -158,7 +158,8 @@ async function channelSelect(channel,direction) {
 		var eligibleApps = [ 
 			{ app: 'music', id: 'video', av: 'av' },
 			{ app: 'marker', id: 'whiteboard', av: 'v' },
-			{ app: 'synth', id: 'synthesizer', direction: 'input', av: 'a' }
+			{ app: 'synth', id: 'synthesizer', direction: 'input', av: 'a' },
+			{ app: 'drums', id: 'drums', direction: 'input', av: 'a' }
 		];
 
 		var information = {};
@@ -373,6 +374,24 @@ async function studioInputStreamGrabber(channel,state) {
 			studioDrawMetre(ch);
 		}, 40);
 		return synthStream;
+	}
+
+	// The drum machine is an app input too: patch its bus through the channel's
+	// tone stack and pedals, so the take is the wet drums and Monitor hears them.
+	// Its own direct feed stays, so the kit is audible even when unpatched.
+	if (plug['app'] == 'drums') {
+		var drumStream = studioAttachDrums(ch);
+		if (!drumStream) { mixer[ch].media.active = false; return; }
+		mixer[ch].media.active = true;
+		mixer[ch].media.in = drumStream;
+		mixer[ch].media.video = false;
+		clearInterval(mixer[ch].media.in_analyzer_timeout);
+		mixer[ch].media.in_analyzer_timeout = setInterval(function() {
+			if (document.hidden) { return; }
+			studioDrawChannel(ch);
+			studioDrawMetre(ch);
+		}, 40);
+		return drumStream;
 	}
 
 	var audio = {

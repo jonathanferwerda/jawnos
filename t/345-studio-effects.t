@@ -28,7 +28,7 @@ my $studio = read_file("$root/perl/gb/05_abilities_and_studio.pl");
 my $help   = read_file("$root/perl/help/topics_apps.pl");
 
 # The contract's channel insert names (docs/studio-effects.md, "Insert kinds").
-my @contract = qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor);
+my @contract = qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor stereowidener);
 
 # --- the labels and the wire names -----------------------------------------
 # autotune is the wire name; people read JawnPitch. Jtune is a tuner, not an
@@ -137,11 +137,11 @@ like($knobs, qr/tile\.attr\('data-tuner'\) !== 'yes' && typeof studioTogglePedal
 # --- the master rack -------------------------------------------------------
 my ($master_list) = $studio =~ /master\s*=>\s*\[(.*?)\n\t\]/s;
 ok(defined $master_list, 'the studio data carries the master rack');
-for my $name (qw(master_comp master_eq master_reverb master_maximizer master_limiter)) {
+for my $name (qw(master_comp master_eq master_stereowidener master_reverb master_maximizer master_limiter)) {
 	like($master_list // '', qr/name\s*=>\s*'\Q$name\E'/, "the master rack names $name");
 	like($fx, qr/\b\Q$name\E\b\s*:\s*'/, "the builder table maps $name to an implementation");
 }
-like($master, qr/var studioMasterOrder = \[ 'master_comp', 'master_eq', 'master_reverb', 'master_maximizer', 'master_limiter' \];/,
+like($master, qr/var studioMasterOrder = \[ 'master_comp', 'master_eq', 'master_stereowidener', 'master_reverb', 'master_maximizer', 'master_limiter' \];/,
 	'the master chain order is fixed');
 like($master, qr/function studioMasterChain\(ctx\)/, 'studioMasterChain builds the fixed chain');
 like($master, qr/node\.connect\(ins\.input\);\s*\n\s*node = ins\.output;/,

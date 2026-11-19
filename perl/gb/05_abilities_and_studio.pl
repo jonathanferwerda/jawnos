@@ -212,7 +212,8 @@ our $studio = {
 	# rack palette offers and what the browser's studioInsert() builds; `master`
 	# is the fixed chain after the mix. A control with `options` is a dropdown,
 	# the rest are 0..100 sliders. Keep these names and their order in step with
-	# engine/src/effect.rs, or the palette offers a pedal the engine ignores.
+	# engine/src/effect.rs, or the palette offers a pedal the engine ignores;
+	# stereowidener is the one deliberate exception (browser only, see below).
 	effects => {
 		reverb => { label => 'Reverb', controls => [
 			{ control => 'mix', label => 'Mix' },
@@ -277,11 +278,18 @@ our $studio = {
 			{ control => 'release', label => 'Release' },
 			{ control => 'knee', label => 'Knee' },
 			{ control => 'mix', label => 'Mix' }
+		] },
+		# Browser only: the native insert chain is mono, so there is no L/R pair
+		# to take a mid/side matrix from and engine/src/effect.rs has no kind for
+		# it. A take omits the pedal instead of faking it.
+		stereowidener => { label => 'Stereo Widener', controls => [
+			{ control => 'width', label => 'Width' },
+			{ control => 'mix', label => 'Mix' }
 		] }
 	},
 	# The order the Add list offers them. The entries are wire names; the Add
 	# list shows each effect's label (autotune appears as JawnPitch).
-	palette => [ qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor) ],
+	palette => [ qw(reverb flanger fuzz amp limiter autotune equalizer tone distortion delay compressor stereowidener) ],
 	# A palette effect with no hand-drawn artwork is drawn from the theme instead:
 	# the template gives it the same body, one knob per slider (the colours below,
 	# in control order) and a dropdown per choice, so its tile matches the artwork
@@ -310,6 +318,10 @@ our $studio = {
 			{ control => 'low', label => 'Low' },
 			{ control => 'mid', label => 'Mid' },
 			{ control => 'high', label => 'High' }
+		] },
+		{ name => 'master_stereowidener', label => 'Stereo Widener', controls => [
+			{ control => 'width', label => 'Width' },
+			{ control => 'mix', label => 'Mix' }
 		] },
 		{ name => 'master_reverb', label => 'Reverb', controls => [
 			{ control => 'mix', label => 'Mix' },

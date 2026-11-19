@@ -738,6 +738,19 @@ impl Effect for Compressor {
 /// their channel counterparts: the prefix says where the insert belongs, not
 /// what it does. [`Mixer`](crate::mixer::Mixer) owns the master rack that uses
 /// them; this enum only selects the implementation.
+///
+/// # Stereo Widener is browser only
+///
+/// The browser's pedalboard and master rack also offer `stereowidener` and
+/// `master_stereowidener` (`perl/gb/05_abilities_and_studio.pl`,
+/// `public/js/manager/studio/08_effects.js`). There is deliberately no variant
+/// for them: an [`Effect`] is a mono processor, and a track runs one mono block
+/// through its chain while the master rack runs two independent instances, one
+/// per side. Either way an insert never holds an L/R pair, so there is nothing
+/// to take a mid/side matrix from. Rather than ship a mono "widener" that
+/// changes the sound without widening anything, [`parse`](InsertKind::parse)
+/// answers `None`: a take omits the pedal, and the help topic says the native
+/// take does not process it yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InsertKind {
     Tone,
@@ -1697,6 +1710,11 @@ mod tests {
             assert_eq!(InsertKind::parse(word), Some(kind), "{word}");
         }
         assert_eq!(InsertKind::Maximizer.name(), "maximizer");
+        // Stereo Widener is browser only: the insert chain is mono, so there
+        // is no kind to build and a native take omits the pedal (see
+        // `InsertKind`). Both the track and the rack spelling are refused.
+        assert_eq!(InsertKind::parse("stereowidener"), None);
+        assert_eq!(InsertKind::parse("master_stereowidener"), None);
         assert_eq!(InsertKind::parse("banana"), None);
     }
 }

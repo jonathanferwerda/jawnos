@@ -2,8 +2,9 @@
 // Studio inserts - the browser side of the shared effect contract
 // ===========================================================================
 // docs/studio-effects.md is the contract with the native engine: the same
-// names, the same controls, the same 0..100 sliders. This part builds every
-// insert studioInsert() can hand back. Each builder returns
+// names, the same controls, the same 0..100 sliders. Stereo Widener is the one
+// deliberate exception - it is browser only (see its builder below). This part
+// builds every insert studioInsert() can hand back. Each builder returns
 //
 //   { name, input, output, set(control, value), setBypass(on), bypassed }
 //
@@ -82,6 +83,10 @@ function studioEffectNatural(kind, control, value) {
 			return amount * 1.5;
 		case 'tone.gain':
 			return amount * 2;
+		// Width is a 0..2 gain on the side signal: 50 is the untouched
+		// image, 0 folds it to mono and 100 doubles the side.
+		case 'stereowidener.width':
+			return amount * 2;
 		default:
 			return amount;
 	}
@@ -102,6 +107,10 @@ var studioEngineParamErrorShown = false;
 // One POST per knob per 150 ms, like the patchbay faders: a drag is a handful
 // of engine commands, not one per pixel.
 function studioEngineParamPost(data, key) {
+	// Stereo Widener is browser only: the engine's insert chain is mono and has
+	// no mid/side matrix, so a take neither arms nor moves it. The browser graph
+	// is the only place it runs (engine/src/effect.rs).
+	if (data && /^(?:master_)?stereowidener\./.test(String(data.name || ''))) { return; }
 	if (!studioEngineIsPath()) { return; }
 	if (studioEngineParamTimers[key]) { clearTimeout(studioEngineParamTimers[key]); }
 	studioEngineParamTimers[key] = setTimeout(function () {
@@ -598,6 +607,68 @@ function studioEffectTone(ctx, name) {
 	return fx;
 }
 
+// ---- stereo widener --------------------------------------------------------
+// A mid/side matrix, not a Haas delay or an all-pass pair: mid = (L+R)/2 and
+// side = (L-R)/2, the side is scaled by Width and the two are summed back into
+// L and R. Width runs 0..2 (50 is the untouched image, 0 folds it to mono,
+// 100 doubles the side) and Mix 0..1 (50 blends half the matrix with half the
+// dry signal). The input is forced to two channels before the splitter, so a
+// mono source arrives as L = R: its side is exactly zero and it stays mono,
+// centred and finite at every Width, instead of becoming a phase-inverted pair
+// invented out of one channel. The engine's inserts are mono processors, so
+// there is no L/R pair to take a matrix from and a take omits this pedal
+// (engine/src/effect.rs); the browser is the only place it runs.
+function studioEffectStereoWidener(ctx, name) {
+	var fx = studioEffectShell(ctx, name || 'stereowidener');
+	// Up-mix a mono source to two equal channels; a stereo one passes through.
+	var two = ctx.createGain();
+	two.channelCount = 2;
+	two.channelCountMode = 'explicit';
+	two.channelInterpretation = 'speakers';
+	var split = ctx.createChannelSplitter(2);
+	var merge = ctx.createChannelMerger(2);
+	// mid = (L + R) / 2
+	var mid = ctx.createGain();
+	mid.gain.value = 0.5;
+	// side = (L - R) / 2
+	var side = ctx.createGain();
+	side.gain.value = 0.5;
+	var minus = ctx.createGain();
+	minus.gain.value = -1;
+	var width = ctx.createGain();
+	width.gain.value = 1;
+	// R is mid minus the widened side, so its own copy is inverted.
+	var invert = ctx.createGain();
+	invert.gain.value = -1;
+	var wetGain = ctx.createGain();
+	var dryGain = ctx.createGain();
+
+	fx.input.connect(two).connect(split);
+	split.connect(mid, 0);
+	split.connect(mid, 1);
+	split.connect(side, 0);
+	split.connect(minus, 1);
+	minus.connect(side);
+	side.connect(width);
+	mid.connect(merge, 0, 0);
+	width.connect(merge, 0, 0);
+	mid.connect(merge, 0, 1);
+	width.connect(invert, 0);
+	invert.connect(merge, 0, 1);
+	two.connect(dryGain).connect(fx.wet);
+	merge.connect(wetGain).connect(fx.wet);
+
+	fx.setters['width'] = function (v) { width.gain.value = studioEffectNatural(fx.name, 'width', v); };
+	fx.setters['mix'] = function (v) {
+		var n = studioEffectNatural(fx.name, 'mix', v);
+		wetGain.gain.value = n;
+		dryGain.gain.value = 1 - n;
+	};
+	fx.set('width', 50);
+	fx.set('mix', 50);
+	return fx;
+}
+
 // ---- autotune --------------------------------------------------------------
 // An honest monophonic pitch corrector, not a polyphonic Antares clone. It
 // tracks one period from the input, picks the nearest tone in the chosen key
@@ -957,9 +1028,13 @@ var studioEffectAliases = {
 	autotune: 'autotune',
 	equalizer: 'equalizer',
 	tone: 'tone',
+	// Browser only: the engine's inserts are mono and have no mid/side
+	// matrix (engine/src/effect.rs), so only this side ever builds it.
+	stereowidener: 'stereowidener',
 	JawnSynth: 'synth',
 	master_comp: 'compressor',
 	master_eq: 'equalizer',
+	master_stereowidener: 'stereowidener',
 	master_reverb: 'reverb',
 	master_maximizer: 'maximizer',
 	master_limiter: 'limiter'
@@ -978,6 +1053,7 @@ var studioEffectBuilders = {
 	autotune: studioEffectAutotune,
 	equalizer: studioEffectEqualizer,
 	tone: studioEffectTone,
+	stereowidener: studioEffectStereoWidener,
 	synth: studioEffectSynth
 };
 

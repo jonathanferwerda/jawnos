@@ -9,7 +9,10 @@
 // The order is the contract's table (docs/studio-effects.md) and does not
 // change per song; the song's admin stores the on/off state and the controls.
 
-var studioMasterOrder = [ 'master_comp', 'master_eq', 'master_reverb', 'master_maximizer', 'master_limiter' ];
+// The rack holds the contract's five engine inserts plus the browser-only
+// Stereo Widener; a native take builds the five it can and leaves that slot
+// out (engine/src/effect.rs).
+var studioMasterOrder = [ 'master_comp', 'master_eq', 'master_stereowidener', 'master_reverb', 'master_maximizer', 'master_limiter' ];
 
 function studioMasterNames() {
 	var names = [];

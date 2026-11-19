@@ -278,6 +278,10 @@
 						</span>
 						<span class="channel_fader">
 							<input type="range" min="0" max="100" value="1" channel="<%= $ch %>" control="volume" class="channel_volume studio_strip_volume" hint="<%= &subs::ui('Mix this track against the others') %>">
+							<span class="studio_strip_mute_solo">
+								<button class="studio_strip_mute hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Mute this channel') %>">M</button>
+								<button class="studio_strip_solo hover" channel="<%= $ch %>" aria-pressed="false" hint="<%= &subs::ui('Solo this channel') %>">S</button>
+							</span>
 						</span>
 					</span>
 					<img class="tiny_thumb jack studio_cord hover" hint="Cord" src="<%= &subs::icon_for('/images/studio/cord.png') %>" channel="<%= $ch %>">
@@ -483,6 +487,38 @@
 					<tr>
 						<td>Latency<br><span style="font-size:12px;">what the browser reports for this session</span></td>
 						<td><span id="studio_latency_info">&mdash;</span></td>
+					</tr>
+					<tr>
+						<td colspan="2" style="padding-top:14px;"><b>Export</b><br><span style="font-size:12px;">renders every track through its output pedals and fader, then saves it on this song as an audio file named after the track</span></td>
+					</tr>
+					<tr>
+						<td>Format</td>
+						<td>
+							<select id="studio_export_format" hint="<%= &subs::ui('Choose the export format') %>">
+								<option value="wav">WAV</option>
+								<option value="mp3" selected>MP3</option>
+								<option value="flac">FLAC</option>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<td>Bit rate (kbps)</td>
+						<td>
+							<select id="studio_export_bitrate" hint="<%= &subs::ui('Choose the export bit rate') %>">
+								<option value="128">128</option>
+								<option value="192" selected>192</option>
+								<option value="256">256</option>
+								<option value="320">320</option>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<td>Master</td>
+						<td><label><input type="checkbox" id="studio_export_master" hint="<%= &subs::ui('Include the mastering rack') %>"> <%= &subs::ui('Include the mastering rack') %></label></td>
+					</tr>
+					<tr>
+						<td>Export now</td>
+						<td><button id="studio_export_tracks" class="hover" hint="<%= &subs::ui('Export every track as an audio file on this song') %>"><%= &subs::ui('Export tracks') %></button> <span id="studio_export_state" aria-live="polite"></span></td>
 					</tr>
 					<tr>
 						<td>Round trip<br><span style="font-size:12px;">plays a few clicks through the speakers and times the echo on the mic; use speakers (not headphones) and stay quiet</span></td>

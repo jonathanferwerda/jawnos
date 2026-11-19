@@ -1,9 +1,10 @@
 # tests-for: templates/studio/drums.html.ep templates/studio/markup.html.ep templates/studio/style.html.ep public/js/manager/studio.js public/js/manager/studio/04_knobs.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js public/js/manager/studio/07_layout.js public/js/manager/studio/11_drums.js perl/gb/05_abilities_and_studio.pl perl/help/topics_apps.pl t/346-studio-drums.t
 # covers:    The Studio drum machine: the eight-voice table and the ten kits, a
-#            one-bar chart of sixteen steps that each carry a velocity, the
-#            transport/lookahead scheduler, the computer-key map with its typing
-#            guard, Web MIDI, the song's admin.drums state, and the routing into
-#            the master rack and the browser take.
+#            chart of four to 128 sixteenths (a bar is sixteen, a beat four),
+#            the transport/lookahead scheduler, the computer-key map with its
+#            typing guard, Web MIDI, the song's admin.drums state, the saved
+#            loop library, and the routing into the master rack and the
+#            browser take.
 
 use strict;
 use warnings;
@@ -80,8 +81,10 @@ like($drums, qr/studio_drums_loop_label[\s\S]*studio_drums_kit_label/s,
 	'the Kit list sits beside Loop in the panel bar');
 like($drums, qr/foreach my \$v \( \@\{\$gb::studio->\{'drums'\}\} \)/,
 	'the rows come from the table, not hard-coded markup');
-my @steps = $drums =~ /for my \$step \(0 \.\. 15\)/g;
-is(scalar(@steps), 2, 'the head and every row count sixteen steps');
+my @steps = $drums =~ /for my \$step \(0 \.\. 127\)/g;
+is(scalar(@steps), 2, 'the head and every row can hold up to 128 steps');
+like($drums, qr/class="studio_drums_count" data-step="<%=\s*\$step\s*%>"/,
+	'a step count carries its index so the length can hide it');
 like($drums, qr/data-step="<%=\s*\$step\s*%>"/, 'a step carries its index');
 like($drums, qr/hint="<%=\s*&subs::ui\('Click to place a beat, hold Shift for an accent, right-click to set its velocity'\)\s*%>"/,
 	'a step says what a click, Shift-click and right-click do');
@@ -107,8 +110,10 @@ like($code, qr/var stepDur = 60 \/ bpm \/ 4;/, 'a step is a sixteenth at the tra
 like($code, qr/studioKnobNumber\(mixer\['time'\]\['bpm'\], 120\)/, 'the tempo comes from the transport');
 like($code, qr/if \(studioDrums\.step === 0 && !studioDrums\.loop\)/,
 	'a chart without Loop plays once');
-like($code, qr/studioDrums\.step = \(studioDrums\.step \+ 1\) % 16/,
-	'the bar wraps after sixteen steps');
+like($code, qr/studioDrums\.step = \(studioDrums\.step \+ 1\) % steps/,
+	'the chart wraps after its length, not a fixed sixteen');
+like($code, qr/var steps = studioDrums\.lengthSteps \|\| 16;/,
+	'the scheduler reads the chart length');
 like($code, qr/when !==|studioDrumsPlayRow\(studioDrums\.step, studioDrums\.nextTime\)/,
 	'each step is placed on the audio clock, not a note per timer tick');
 like($code, qr/studioDrumsHighlightStep/, 'the panel shows the sounding column');
@@ -160,16 +165,89 @@ like($code, qr/Math\.max\(1, Math\.round\(data\[2\] \/ 127 \* 100\)\)/,
 	'MIDI velocity becomes a percent, with 1 as the softest hit');
 like($code, qr/studioDrums\.midiInput/, 'the chosen MIDI input is remembered');
 
-# --- persistence ------------------------------------------------------------
+# --- the chart length -------------------------------------------------------
+like($code, qr/lengthSteps: 16/, 'the chart opens at one bar of sixteen steps');
+like($code, qr/function studioDrumsNormaliseLength\(value, fallback\)/,
+	'one function normalises the chart length');
+like($code, qr/n = Math\.round\(n \/ 4\) \* 4;/, 'the length is always a multiple of four');
+like($code, qr/return Math\.max\(4, Math\.min\(128, n\)\);/, 'the length stays between one beat and eight bars');
+like($code, qr/function studioDrumsZeroRow\(length\)/, 'a blank row follows the chart length');
+like($code, qr/function studioDrumsSetLength\(length\)/, 'one setter grows or trims every row');
+like($code, qr/\.slice\(0, length\)/, 'a shorter chart trims the rows');
+like($code, qr/while \(row\.length < length\) \{ row\.push\(0\); \}/,
+	'a longer chart appends zeroed steps');
+like($code, qr/studioDrumsChangeLength\(16\)/, 'a bar is sixteen steps');
+like($code, qr/studioDrumsChangeLength\(-16\)/, 'removing a bar is sixteen steps');
+like($code, qr/studioDrumsChangeLength\(4\)/, 'a beat is four steps');
+like($code, qr/studioDrumsChangeLength\(-4\)/, 'removing a beat is four steps');
+like($code, qr/function studioDrumsRenderLength\(\)/, 'one function paints the length');
+like($code, qr/repeat\(' \+ length \+ ', minmax\(12px, 1fr\)\)/,
+	'the head and rows share the length-sized grid');
+like($code, qr/\$\('#studio_drums \.studio_drums_head, #studio_drums \.studio_drums_row'\)\.css\('grid-template-columns', columns\)/,
+	'every row gets the inline grid');
+like($code, qr/\$\(this\)\.css\('display', step < length \? '' : 'none'\)/,
+	'steps past the length are hidden and the rest are shown');
+like($code, qr/bars \+ ' ' \+ \(bars === 1 \? 'bar' : 'bars'\)/,
+	'the readout counts bars with the right plural');
+like($code, qr/beats \+ ' ' \+ \(beats === 1 \? 'beat' : 'beats'\)/,
+	'the readout counts beats with the right plural');
+like($code, qr/\$\('#studio_drums_length_readout'\)\.text\(studioDrumsText\(text\)\)/,
+	'the readout names the length');
+like($code, qr/studioDrums\.lengthSteps = studioDrumsNormaliseLength\(data\.length\)/,
+	'restore reads the saved length');
+like($code, qr/studioDrumsZeroRow\(studioDrums\.lengthSteps\)/,
+	'restore normalises every row to the length');
+like($code, qr/length: studioDrums\.lengthSteps/, 'the saved song carries the length');
+
+for my $id (qw(studio_drums_bar_add studio_drums_bar_remove studio_drums_beat_add studio_drums_beat_remove)) {
+	like($drums, qr/id="\Q$id\E"/, "the footer has $id");
+}
+like($drums, qr/id="studio_drums_bar_add"[^\n]*>\+ Bar/, 'the bar button says + Bar');
+like($drums, qr/id="studio_drums_bar_remove"[^\n]*>&minus; Bar/, 'the bar button says minus Bar');
+like($drums, qr/id="studio_drums_beat_add"[^\n]*>\+ Beat/, 'the beat button says + Beat');
+like($drums, qr/id="studio_drums_beat_remove"[^\n]*>&minus; Beat/, 'the beat button says minus Beat');
+like($drums, qr/id="studio_drums_bar_add"[^>]*Add a bar to the drum loop/, 'the bar button explains itself');
+like($drums, qr/id="studio_drums_bar_remove"[^>]*Remove a bar from the drum loop/, 'the bar remove explains itself');
+like($drums, qr/id="studio_drums_beat_add"[^>]*Add a beat to the drum loop/, 'the beat button explains itself');
+like($drums, qr/id="studio_drums_beat_remove"[^>]*Remove a beat from the drum loop/, 'the beat remove explains itself');
+like($drums, qr/id="studio_drums_length_readout"/, 'the footer reads out the length');
+
+# --- the saved drum loop library -------------------------------------------
+like($drums, qr/window\.jawnos_studio_drum_loops = <%== Mojo::JSON::encode_json\(eval \{ Mojo::JSON::decode_json\(\$settings->\{'drum_loops'\} \|\| '\[\]'\) \} \|\| \[\]\) %>;/,
+	'the panel publishes the saved drum loops');
+like($drums, qr/id="studio_drums_save_name" class="studio_drums_save_name"[^\n]*Name this drum loop/,
+	'a loop has a name field');
+like($drums, qr/id="studio_drums_save_loop"[^>]*Save the drum pattern as a loop/,
+	'the pattern can be saved under that name');
+like($drums, qr/<select id="studio_drums_loops" class="studio_drums_loops"[^>]*Choose a drum loop/,
+	'a saved loop can be chosen');
+like($drums, qr/<option value="">[^\n]*No saved loop/, 'the empty choice says so');
+like($drums, qr/id="studio_drums_load_loop"[^>]*Load the chosen drum loop/, 'a loop can be loaded');
+like($drums, qr/id="studio_drums_delete_loop"[^>]*Delete the chosen drum loop/, 'a loop can be deleted');
+like($code, qr/function studioDrumsLoopLibrary\(\)/, 'the browser reads the published library');
+like($code, qr/function studioDrumsSaveLoop\(\)/, 'a loop has one save function');
+like($code, qr/library\.push\(\{ name: name, kit: studioDrums\.kit, length: studioDrums\.lengthSteps, steps: steps \}\)/,
+	'a saved loop carries its name, kit, length and steps');
+like($code, qr/if \(!name\) \{ return false; \}/, 'a loop needs a name');
+like($code, qr/studioSaveSettings\(\[\{ setting: 'drum_loops', value: JSON\.stringify\(studioDrumsLoopLibrary\(\)\) \}\]\)/,
+	'the library is persisted as an app setting');
+like($code, qr/function studioDrumsLoadLoop\(\)/, 'a loop has one load function');
+like($code, qr/studioDrums\.lengthSteps = studioDrumsNormaliseLength\(item\.length\)/,
+	'loading a loop restores its length');
+like($code, qr/var kit = studioDrumsKitName\(item\.kit\)/, 'an unknown loop kit falls back to Acoustic');
+like($code, qr/function studioDrumsDeleteLoop\(\)/, 'a loop has one delete function');
+like($code, qr/library\.splice\(index, 1\)/, 'delete removes just the chosen loop');
+
+# --- length and loop persistence -------------------------------------------
 like($code, qr/function studioDrumsSave\(\)/, 'the chart has one save function');
-like($code, qr/return \{ steps: steps, keys: keys, loop: studioDrums\.loop \? 1 : 0, voices: voices, midi: studioDrums\.midiInput \|\| '', kit: studioDrums\.kit \};/,
-	'the saved shape is steps, keys, loop, voices, midi and kit');
+like($code, qr/return \{ steps: steps, keys: keys, loop: studioDrums\.loop \? 1 : 0, voices: voices, midi: studioDrums\.midiInput \|\| '', kit: studioDrums\.kit, length: studioDrums\.lengthSteps \};/,
+	'the saved shape is steps, keys, loop, voices, midi, kit and length');
 like($knobs, qr/drums: studioDrumsSave\(\)/, 'the song stores the drum state in admin');
 like($knobs, qr/studioDrumsRestore\(mixer\['admin'\] && mixer\['admin'\]\['drums'\]\)/,
 	'loading a song restores it');
 like($code, qr/function studioDrumsRestore\(data\)/, 'the restore has one entry point');
-like($code, qr/studioDrums\.steps\[v\.name\] = \[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0\]/,
-	'a cleared chart is sixteen zeroes, which is valid');
+like($code, qr/studioDrums\.steps\[v\.name\] = studioDrumsZeroRow\(studioDrums\.lengthSteps\)/,
+	'a cleared chart is a row of zeroes at the chart length, which is valid');
 like($code, qr/if \(!\(value > 0\)\) \{ value = 0; \}/, 'an empty or nonsense step restores as off');
 like($code, qr/else if \(value === 1\) \{ value = 70; \}/, 'a legacy beat (1) restores at 70');
 like($code, qr/else if \(value === 2\) \{ value = 100; \}/, 'a legacy accent (2) restores at 100');
@@ -250,6 +328,25 @@ like($code, qr/studioDrums\.out\.connect\(studioAudio\.master\)/,
 like($code, qr/studioDrums\.rec\.connect\(c\.recDest\)/,
 	'the recording tap feeds a channel recDest');
 like($code, qr/function studioDrumsRouteSelection/, 'the tap follows the selected track');
+my ($route) = $code =~ /function studioDrumsRouteSelection\(\) \{(.*?)\n\}/s;
+ok(defined $route, 'the routing function is found');
+$route = '' unless defined $route;
+like($route, qr/if \(!ctx \|\| !studioDrums\.rec\) \{ return; \}/,
+	'routing is safe before the bus is built');
+like($route, qr/var info = \$\('\.studio_channel_information\[direction="input"\]\[channel="' \+ ch \+ '"\]'\)\.text\(\);/,
+	'routing reads the channel input plug');
+like($route, qr/var plug = isJson\(info\) \? JSON\.parse\(info\) : \{\};/,
+	'a missing or non-JSON plug is empty');
+like($route, qr/try \{ studioDrums\.rec\.disconnect\(\); \} catch \(e\) \{\}/,
+	'the previous direct tap is removed first');
+like($route, qr/if \(plug\['app'\] !== 'drums'\) \{ studioDrums\.rec\.connect\(c\.recDest\); \}/,
+	'a non-drums input reconnects the direct tap');
+unlike($route, qr/^\tstudioDrums\.rec\.connect\(c\.recDest\);/m,
+	'a drums input leaves the direct tap disconnected, so the take is not doubled');
+like($route, qr/studioDrums\.routedDest = c\.recDest;/,
+	'routedDest still names the channel the drums serve');
+unlike($route, qr/routedDest === c\.recDest\) \{ return; \}/,
+	'a plug change away from drums is re-evaluated');
 like($code, qr/native engine[\s\S]{0,20}take cannot record them yet/, 'the engine limitation is a code comment');
 like($inputs, qr/studioDrums\.routedDest === drums_channel\.recDest/,
 	'an armed, empty selected track can take the drums');
@@ -303,7 +400,11 @@ for my $label (
 	'Clear the drum chart', 'Play this drum', 'Assign a computer key to this drum',
 	'Mute this drum', 'Click to place a beat, hold Shift for an accent, right-click to set its velocity',
 	'Choose a drum kit',
-	'Connect a MIDI keyboard to the drums', 'Choose a MIDI input for the drums') {
+	'Connect a MIDI keyboard to the drums', 'Choose a MIDI input for the drums',
+	'Add a bar to the drum loop', 'Remove a bar from the drum loop',
+	'Add a beat to the drum loop', 'Remove a beat from the drum loop',
+	'Name this drum loop', 'Save the drum pattern as a loop',
+	'Choose a drum loop', 'Load the chosen drum loop', 'Delete the chosen drum loop') {
 	like($controls, qr/'\Q$label\E'/, "the help controls list names '$label'");
 }
 

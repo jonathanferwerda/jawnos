@@ -2,10 +2,10 @@
 // The drum machine
 // ===========================================================================
 //
-// Eight voices over one bar of sixteen steps. Every voice is synthesised: there
-// are no samples and no files. The one-shots are rendered once into AudioBuffers
-// with an OfflineAudioContext, so a step allocates only a source and its gain —
-// never a buffer, an oscillator or a filter.
+// Eight voices over a chart of `lengthSteps` sixteenth notes. Every voice is
+// synthesised: there are no samples and no files. The one-shots are rendered
+// once into AudioBuffers with an OfflineAudioContext, so a step allocates only
+// a source and its gain — never a buffer, an oscillator or a filter.
 //
 // A kit is the same eight rows heard through a different set of shapes: the
 // acoustic specs are the base and a kit only overrides the voices it changes.
@@ -17,13 +17,18 @@
 // follows the velocity through the --drums-velocity custom property.
 //
 // The chart follows the Studio transport: it starts with play or record, takes
-// its tempo from mixer.time.bpm, and loops the bar while Loop is on. Steps are
-// placed on the AudioContext clock with a 25ms timer and a 100ms lookahead, so
-// timer jitter never reaches the ear.
+// its tempo from mixer.time.bpm, and loops the chart while Loop is on. A bar is
+// sixteen steps and a beat is four, so the length controls grow or trim the
+// chart by those amounts. Steps are placed on the AudioContext clock with a
+// 25ms timer and a 100ms lookahead, so timer jitter never reaches the ear.
 //
-// `admin.drums` in the song is the whole state: steps, keys, loop, the kit, the
-// per-voice mutes and the chosen MIDI input. A cleared chart (sixteen zeroes per
-// voice) is a valid chart.
+// `admin.drums` in the song is the whole state: the length, steps, keys, loop,
+// the kit, the per-voice mutes and the chosen MIDI input. A cleared chart (a
+// row of zeroes, however long) is a valid chart.
+//
+// Saved patterns live in the `drum_loops` app setting and are published as
+// window.jawnos_studio_drum_loops. A saved loop can be put back on the panel,
+// or rendered offline onto a loop track from the track's context menu.
 //
 // Routing: the drum bus feeds studioAudio.master, which is the input of the
 // mastering rack, so the drums are heard through the master chain like every
@@ -46,6 +51,7 @@ var studioDrums = {
 	keys: {},
 	muted: {},
 	loop: true,
+	lengthSteps: 16,
 	kit: 'acoustic',
 	loaded: false,
 	timer: 0,
@@ -105,8 +111,9 @@ function studioDrumsDefaults() {
 	studioDrums.steps = {};
 	studioDrums.keys = {};
 	studioDrums.muted = {};
+	studioDrums.lengthSteps = 16;
 	studioDrumsVoices().forEach(function (v) {
-		studioDrums.steps[v.name] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+		studioDrums.steps[v.name] = studioDrumsZeroRow(studioDrums.lengthSteps);
 		studioDrums.keys[v.name] = String(v.key || '');
 		studioDrums.muted[v.name] = false;
 	});
@@ -115,26 +122,62 @@ function studioDrumsDefaults() {
 	studioDrums.loaded = true;
 }
 
-// ---- state, saved with the song -------------------------------------------
+// The chart length is a sixteenth-note count: one bar is sixteen and one beat
+// is four. Four is the shortest loop and eight bars (128) the longest; a value
+// that is not a multiple of four is rounded to one.
+function studioDrumsNormaliseLength(value, fallback) {
+	var n = parseInt(value, 10);
+	if (!(n > 0)) { n = fallback || 16; }
+	n = Math.round(n / 4) * 4;
+	return Math.max(4, Math.min(128, n));
+}
+
+function studioDrumsZeroRow(length) {
+	var row = [];
+	for (var i = 0; i < length; i++) { row.push(0); }
+	return row;
+}
+
+// Grow or trim every row to the chart length. Added steps are zeroes; a
+// shortened chart drops the steps past the new end.
+function studioDrumsSetLength(length) {
+	length = studioDrumsNormaliseLength(length, studioDrums.lengthSteps);
+	if (length === studioDrums.lengthSteps) { return false; }
+	studioDrums.lengthSteps = length;
+	studioDrumsVoices().forEach(function (v) {
+		var row = (studioDrums.steps[v.name] || []).slice(0, length);
+		while (row.length < length) { row.push(0); }
+		studioDrums.steps[v.name] = row;
+	});
+	return true;
+}
+
+function studioDrumsChangeLength(delta) {
+	if (!studioDrumsSetLength(studioDrums.lengthSteps + delta)) { return; }
+	studioDrumsRender();
+	studioSaver();
+}
 
 function studioDrumsSave() {
 	var steps = {}, voices = {}, keys = {};
 	studioDrumsVoices().forEach(function (v) {
-		steps[v.name] = (studioDrums.steps[v.name] || []).slice(0, 16);
+		steps[v.name] = (studioDrums.steps[v.name] || []).slice(0, studioDrums.lengthSteps);
 		voices[v.name] = { mute: studioDrums.muted[v.name] ? 1 : 0 };
 		if (studioDrums.keys[v.name]) { keys[v.name] = studioDrums.keys[v.name]; }
 	});
-	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '', kit: studioDrums.kit };
+	return { steps: steps, keys: keys, loop: studioDrums.loop ? 1 : 0, voices: voices, midi: studioDrums.midiInput || '', kit: studioDrums.kit, length: studioDrums.lengthSteps };
 }
 
 function studioDrumsRestore(data) {
 	studioDrumsDefaults();
 	if (data && typeof data === 'object') {
+		// A legacy song has no length; it opens as one bar of sixteen.
+		studioDrums.lengthSteps = studioDrumsNormaliseLength(data.length);
 		var saved = data.steps || {};
 		studioDrumsVoices().forEach(function (v) {
-			var row = saved[v.name];
-			if (!row || !row.length) { return; }
-			for (var i = 0; i < 16; i++) {
+			var row = saved[v.name] || [];
+			var steps = studioDrumsZeroRow(studioDrums.lengthSteps);
+			for (var i = 0; i < studioDrums.lengthSteps && i < row.length; i++) {
 				var value = parseInt(row[i], 10);
 				// Older songs saved a flag, not a velocity: 1 was a beat and 2 an
 				// accent. Read them as 70 and 100; a newer 1..100 is already a
@@ -143,8 +186,9 @@ function studioDrumsRestore(data) {
 				else if (value === 1) { value = 70; }
 				else if (value === 2) { value = 100; }
 				else { value = Math.min(100, value); }
-				studioDrums.steps[v.name][i] = value;
+				steps[i] = value;
 			}
+			studioDrums.steps[v.name] = steps;
 		});
 		var savedKeys = data.keys || {};
 		Object.keys(savedKeys).forEach(function (voice) {
@@ -187,7 +231,27 @@ function studioDrumsRender() {
 			.attr('title', studioDrums.muted[voice] ? studioDrumsText('Muted') : studioDrumsText('Audible'));
 		studioDrumsRenderSteps(voice);
 	});
+	studioDrumsRenderLength();
 	studioDrumsFocusState();
+}
+
+// The template carries the full 128-step head and rows once; the chart length
+// decides which steps are shown. The head and every row share one inline grid,
+// so the columns line up whatever the length is.
+function studioDrumsRenderLength() {
+	var length = studioDrums.lengthSteps;
+	var bars = Math.floor(length / 16);
+	var beats = (length % 16) / 4;
+	var text = '';
+	if (bars) { text = bars + ' ' + (bars === 1 ? 'bar' : 'bars'); }
+	if (beats) { text += (text ? ' ' : '') + beats + ' ' + (beats === 1 ? 'beat' : 'beats'); }
+	$('#studio_drums_length_readout').text(studioDrumsText(text));
+	var columns = '72px 24px 14px repeat(' + length + ', minmax(12px, 1fr))';
+	$('#studio_drums .studio_drums_head, #studio_drums .studio_drums_row').css('grid-template-columns', columns);
+	$('#studio_drums .studio_drums_step, #studio_drums .studio_drums_count').each(function () {
+		var step = parseInt($(this).attr('data-step'), 10) || 0;
+		$(this).css('display', step < length ? '' : 'none');
+	});
 }
 
 function studioDrumsRenderSteps(voice) {
@@ -280,17 +344,25 @@ function studioDrumsBus() {
 }
 
 // The recording tap follows the selected track: that is the channel whose take
-// the drums print to, and the channel the person arms. Reconnected on a change
-// of selection, never duplicated.
+// the drums print to, and the channel the person arms. Re-evaluated on every
+// input change (05_inputs calls it after a plug changes), never duplicated.
+//
+// A channel whose input plug is the drums already carries them through its own
+// input chain into the same recDest, so the direct tap is disconnected then;
+// the take would otherwise record the kit twice. Changing the plug away
+// reconnects it. routedDest still names the channel the drums serve, which is
+// how an empty armed track finds the drums as a recording source.
 function studioDrumsRouteSelection() {
 	var ctx = studioDrums.ctx;
 	if (!ctx || !studioDrums.rec) { return; }
 	var ch = parseInt(studioSelectedChannel, 10) || 1;
 	var c = studioAudio.channels[ch];
 	if (!c && typeof studioChannelEngine === 'function') { c = studioChannelEngine(ch); }
-	if (!c || !c.recDest || studioDrums.routedDest === c.recDest) { return; }
+	if (!c || !c.recDest) { return; }
+	var info = $('.studio_channel_information[direction="input"][channel="' + ch + '"]').text();
+	var plug = isJson(info) ? JSON.parse(info) : {};
 	try { studioDrums.rec.disconnect(); } catch (e) {}
-	studioDrums.rec.connect(c.recDest);
+	if (plug['app'] !== 'drums') { studioDrums.rec.connect(c.recDest); }
 	studioDrums.routedDest = c.recDest;
 }
 
@@ -645,9 +717,10 @@ function studioDrumsRecording() {
 
 function studioDrumsCurrentStep() {
 	if (!studioDrums.running || !studioDrums.stepDur) { return 0; }
+	var steps = studioDrums.lengthSteps || 16;
 	var elapsed = (studioDrums.ctx.currentTime - studioDrums.anchor) / studioDrums.stepDur;
-	var step = Math.floor(elapsed) % 16;
-	return (step + 16) % 16;
+	var step = Math.floor(elapsed) % steps;
+	return (step + steps) % steps;
 }
 
 // A mapped key, a MIDI note, the voice's own name button, a step or the velocity
@@ -699,13 +772,14 @@ function studioDrumsSchedule() {
 	if (!ctx) { return; }
 	var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
 	var stepDur = 60 / bpm / 4;
+	var steps = studioDrums.lengthSteps || 16;
 	studioDrums.stepDur = stepDur;
 	var now = ctx.currentTime;
 	var guard = 0;
 	while (studioDrums.nextTime < now + 0.1 && guard++ < 64) {
 		studioDrumsPlayRow(studioDrums.step, studioDrums.nextTime);
 		studioDrums.nextTime += stepDur;
-		studioDrums.step = (studioDrums.step + 1) % 16;
+		studioDrums.step = (studioDrums.step + 1) % steps;
 		if (studioDrums.step === 0 && !studioDrums.loop) { studioDrums.done = true; break; }
 	}
 	if (studioDrums.done) {
@@ -715,7 +789,7 @@ function studioDrumsSchedule() {
 		return;
 	}
 	var elapsed = (now - studioDrums.anchor) / stepDur;
-	studioDrumsHighlightStep(((Math.floor(elapsed) % 16) + 16) % 16);
+	studioDrumsHighlightStep(((Math.floor(elapsed) % steps) + steps) % steps);
 }
 
 function studioDrumsPlayRow(step, when) {
@@ -900,11 +974,306 @@ $(document).on('click', '#studio_drums_clear', function (e) {
 	e.preventDefault();
 	studioDrumsMenuClose();
 	studioDrumsVoices().forEach(function (v) {
-		studioDrums.steps[v.name] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+		studioDrums.steps[v.name] = studioDrumsZeroRow(studioDrums.lengthSteps);
 	});
 	studioDrumsRender();
 	studioSaver();
 });
+
+// ---- the chart length -----------------------------------------------------
+
+$(document).on('click', '#studio_drums_bar_add', function (e) {
+	e.preventDefault();
+	studioDrumsChangeLength(16);
+});
+
+$(document).on('click', '#studio_drums_bar_remove', function (e) {
+	e.preventDefault();
+	studioDrumsChangeLength(-16);
+});
+
+$(document).on('click', '#studio_drums_beat_add', function (e) {
+	e.preventDefault();
+	studioDrumsChangeLength(4);
+});
+
+$(document).on('click', '#studio_drums_beat_remove', function (e) {
+	e.preventDefault();
+	studioDrumsChangeLength(-4);
+});
+
+// ---- the saved loop library ----------------------------------------------
+
+// The library is a plain array published by the panel and persisted in the
+// drum_loops app setting. It is shared by the panel's list and the track menu.
+function studioDrumsLoopLibrary() {
+	var library = window.jawnos_studio_drum_loops;
+	if (!library || typeof library.length !== 'number') {
+		library = [];
+		window.jawnos_studio_drum_loops = library;
+	}
+	return library;
+}
+
+function studioDrumsLoopPersist() {
+	studioSaveSettings([{ setting: 'drum_loops', value: JSON.stringify(studioDrumsLoopLibrary()) }]);
+}
+
+function studioDrumsLoopOptions() {
+	var select = $('#studio_drums_loops');
+	if (!select.length) { return; }
+	var chosen = select.val();
+	select.empty();
+	select.append($('<option></option>').attr('value', '').text(studioDrumsText('No saved loop')));
+	studioDrumsLoopLibrary().forEach(function (item, index) {
+		if (!item || !item.name) { return; }
+		select.append($('<option></option>').attr('value', String(index)).text(item.name));
+	});
+	if (chosen !== null && chosen !== undefined && select.find('option[value="' + chosen + '"]').length) {
+		select.val(chosen);
+	}
+}
+
+function studioDrumsChosenLoop() {
+	var select = $('#studio_drums_loops');
+	if (!select.length) { return null; }
+	var index = parseInt(select.val(), 10);
+	var library = studioDrumsLoopLibrary();
+	if (!(index >= 0) || !library[index]) { return null; }
+	return library[index];
+}
+
+// A saved loop is the pattern alone: the name, the kit, the length and a deep
+// copy of every row. Editing the chart afterwards cannot change it.
+function studioDrumsSaveLoop() {
+	var name = String($('#studio_drums_save_name').val() || '').trim();
+	if (!name) { return false; }
+	var steps = {};
+	studioDrumsVoices().forEach(function (v) {
+		steps[v.name] = (studioDrums.steps[v.name] || []).slice(0, studioDrums.lengthSteps);
+	});
+	var library = studioDrumsLoopLibrary();
+	library.push({ name: name, kit: studioDrums.kit, length: studioDrums.lengthSteps, steps: steps });
+	studioDrumsLoopPersist();
+	studioDrumsLoopOptions();
+	$('#studio_drums_loops').val(String(library.length - 1));
+	return true;
+}
+
+function studioDrumsLoadLoop() {
+	var item = studioDrumsChosenLoop();
+	if (!item) { return false; }
+	studioDrums.lengthSteps = studioDrumsNormaliseLength(item.length);
+	var saved = item.steps || {};
+	studioDrumsVoices().forEach(function (v) {
+		var row = saved[v.name] || [];
+		var steps = studioDrumsZeroRow(studioDrums.lengthSteps);
+		for (var i = 0; i < studioDrums.lengthSteps && i < row.length; i++) {
+			var value = parseInt(row[i], 10);
+			steps[i] = (value > 0) ? Math.min(100, value) : 0;
+		}
+		studioDrums.steps[v.name] = steps;
+	});
+	// A loop saved with a kit this build does not have falls back to Acoustic.
+	var kit = studioDrumsKitName(item.kit);
+	if (kit !== studioDrums.kit) {
+		studioDrums.kit = kit;
+		studioDrums.buffers = {};
+		studioDrums.buildState = 'idle';
+		if (studioDrums.ctx) { studioDrumsBuild(studioDrums.ctx); }
+	}
+	studioDrumsRender();
+	studioSaver();
+	return true;
+}
+
+function studioDrumsDeleteLoop() {
+	var select = $('#studio_drums_loops');
+	var index = parseInt(select.val(), 10);
+	var library = studioDrumsLoopLibrary();
+	if (!(index >= 0) || !library[index]) { return false; }
+	library.splice(index, 1);
+	studioDrumsLoopPersist();
+	studioDrumsLoopOptions();
+	return true;
+}
+
+$(document).on('click', '#studio_drums_save_loop', function (e) {
+	e.preventDefault();
+	studioDrumsSaveLoop();
+});
+
+$(document).on('click', '#studio_drums_load_loop', function (e) {
+	e.preventDefault();
+	studioDrumsLoadLoop();
+});
+
+$(document).on('click', '#studio_drums_delete_loop', function (e) {
+	e.preventDefault();
+	studioDrumsDeleteLoop();
+});
+
+// ---- a saved loop as a take ----------------------------------------------
+
+// The kit buffers an offline render needs. The live kit is kept as rendered;
+// another kit is built into a throwaway set, so the panel's kit never changes.
+function studioDrumsOfflineBuffers(kit, rate) {
+	return new Promise(function (resolve) {
+		var voices = studioDrumsVoices();
+		if (!voices.length) { resolve({}); return; }
+		if (kit === studioDrums.kit) {
+			var live = function () {
+				if (studioDrums.buildState !== 'ready' || studioDrums.builtKit !== kit) { return false; }
+				resolve(studioDrums.buffers || {});
+				return true;
+			};
+			if (live()) { return; }
+			if (studioDrums.buildState === 'idle') {
+				var ctx = studioContext();
+				if (!ctx) { resolve({}); return; }
+				studioDrumsBuild(ctx);
+			}
+			var tries = 0;
+			var timer = setInterval(function () {
+				tries++;
+				if (live() || studioDrums.buildState === 'unsupported' || tries > 400) {
+					clearInterval(timer);
+					resolve(studioDrums.buffers || {});
+				}
+			}, 25);
+			return;
+		}
+		var Ctor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+		if (!Ctor) { resolve({}); return; }
+		var out = {};
+		var pending = voices.length;
+		var done = function (name, buffer) {
+			if (buffer) { out[name] = buffer; }
+			pending--;
+			if (pending <= 0) { resolve(out); }
+		};
+		voices.forEach(function (v) {
+			var spec = studioDrumsVoiceSpec(kit, v.name);
+			var off;
+			try { off = new Ctor(1, Math.ceil(rate * (spec.length || 0.6)), rate); }
+			catch (e) { done(v.name, null); return; }
+			studioDrumsRenderVoice(off, kit, v.name);
+			var rendering;
+			try { rendering = off.startRendering(); }
+			catch (e) { done(v.name, null); return; }
+			if (rendering && rendering.then) {
+				rendering.then(function (buffer) { done(v.name, buffer); })
+					.catch(function () { done(v.name, null); });
+			}
+			else {
+				off.oncomplete = function (event) { done(v.name, event.renderedBuffer); };
+			}
+		});
+	});
+}
+
+// Render a saved pattern offline at the transport tempo, then place it on a
+// loop track as an ordinary looping take carrying its own WAV blob.
+function studioDrumsInsertLoop(ch, at, item) {
+	ch = String(ch);
+	if (!item || !item.name) { return null; }
+	var m = mixer[ch];
+	if (!m || !m.media) { return null; }
+	var length = studioDrumsNormaliseLength(item.length);
+	var bpm = studioKnobNumber(mixer['time'] && mixer['time']['bpm'], 120) || 120;
+	var stepDur = 60 / bpm / 4;
+	var duration = length * stepDur;
+	var ctx = studioContext();
+	var rate = (ctx && ctx.sampleRate) || 44100;
+	var kit = studioDrumsKitName(item.kit);
+	var Ctor = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+	if (!Ctor) { return null; }
+	return studioDrumsOfflineBuffers(kit, rate).then(function (kitBuffers) {
+		var off;
+		try { off = new Ctor(2, Math.ceil(rate * duration), rate); }
+		catch (e) { return null; }
+		var steps = item.steps || {};
+		studioDrumsVoices().forEach(function (v) {
+			var buffer = kitBuffers[v.name];
+			if (!buffer) { return; }
+			var row = steps[v.name] || [];
+			for (var i = 0; i < length && i < row.length; i++) {
+				var value = parseInt(row[i], 10) || 0;
+				if (value <= 0) { continue; }
+				var src = off.createBufferSource();
+				var gain = off.createGain();
+				src.buffer = buffer;
+				gain.gain.value = Math.min(1, value / 100);
+				src.connect(gain);
+				gain.connect(off.destination);
+				src.start(i * stepDur);
+			}
+		});
+		var rendering;
+		try { rendering = off.startRendering(); }
+		catch (e) { return null; }
+		return new Promise(function (resolve) {
+			var finish = function (buffer) {
+				resolve(buffer ? studioDrumsLoopTake(ch, at, buffer) : null);
+			};
+			if (rendering && rendering.then) {
+				rendering.then(finish).catch(function () { finish(null); });
+			}
+			else {
+				off.oncomplete = function (event) { finish(event.renderedBuffer); };
+			}
+		});
+	}).catch(function () { return null; });
+}
+
+// The take is the same shape a recording produces, so the rest of the timeline
+// treats it as any other clip: it draws, loops and uploads through studioSave.
+function studioDrumsLoopTake(ch, at, buffer) {
+	var m = mixer[ch];
+	if (!m || !m.media) { return null; }
+	if (!m.media.out) { m.media.out = []; }
+	var wav = studioBufferToWav(buffer);
+	// A 600-bucket waveform from channel 0, so the clip draws immediately.
+	var peaks = new Float32Array(600);
+	var data = buffer.getChannelData(0);
+	var stride = Math.max(1, Math.floor(data.length / 600));
+	for (var b = 0; b < 600; b++) {
+		var peak = 0;
+		for (var i = b * stride; i < (b + 1) * stride && i < data.length; i++) {
+			var v = Math.abs(data[i]);
+			if (v > peak) { peak = v; }
+		}
+		peaks[b] = peak;
+	}
+	var el = document.createElement('video');
+	el.className = 'studio_video';
+	el.style.display = 'none';
+	el.preload = 'auto';
+	var take = {
+		uuid: null,
+		startTime: at,
+		offset: 0,
+		duration: buffer.duration,
+		status: 'stop',
+		buffer: buffer,
+		loop: true,
+		encoding: 'audio/wav',
+		data: wav,
+		src: URL.createObjectURL(wav)
+	};
+	el.src = take.src;
+	$('#studio_track_container').append(el);
+	take.track = el;
+	take.waveform = peaks;
+	if (take.src) { studioWaveformCache[take.src] = peaks; }
+	m.media.out.push(take);
+	studioReindexTakes(ch);
+	mixer['time']['duration'] = Math.max(mixer['time']['duration'] || 0, take.startTime + take.duration);
+	studioDrawChannel(ch);
+	studioSaver();
+	studioTakesChanged();
+	return take;
+}
 
 // The guard that keeps a track name from playing a kick: a mapped key only
 // sounds when no text field has focus and Studio was the last window touched.
@@ -1030,6 +1399,7 @@ function studioDrumsInit() {
 	if (!studioDrumsVoices().length) { return; }
 	if (!studioDrums.loaded) { studioDrumsDefaults(); }
 	studioDrumsRender();
+	studioDrumsLoopOptions();
 	studioDrums.focus = !!$('#studio').is(':visible');
 	studioDrumsBus();
 	studioDrumsMidiProbe();

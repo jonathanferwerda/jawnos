@@ -275,7 +275,10 @@ function studioSave() {
 		if (!/^[0-9]+$/.test(i) || !mixer[i].media || !mixer[i].media.out) { return; }
 		mixer[i].media.out.forEach(function(take, ir) {
 			if (take && take.data && take.data.size && !take.uuid) {
-				formData.append('blob', take.data, app + '_' + now + '_' + i + '_' + ir + '.webm');
+				// A rendered WAV (an exported drum loop, for instance) keeps its
+				// extension; the browser recorder's blobs are webm.
+				var ext = (take.data.type && take.data.type.indexOf('wav') !== -1) ? '.wav' : '.webm';
+				formData.append('blob', take.data, app + '_' + now + '_' + i + '_' + ir + ext);
 				uploads++;
 			}
 		});
@@ -920,7 +923,10 @@ function studioListenInserts() {
 	var c = studioAudio.channels[studioSelectedChannel];
 	if (!c || !c.inserts) { return ''; }
 	return c.inserts.filter(function (ins) {
-		return ins && !ins.bypassed && studioEffectBuilder(ins.name);
+		// the native engine has no stereo widener: an insert list it cannot
+		// build must omit the name rather than refuse the whole take
+		return ins && !ins.bypassed && studioEffectBuilder(ins.name)
+			&& studioEffectKind(ins.name) !== 'stereowidener';
 	}).map(function (ins) { return studioEffectKind(ins.name); }).join(',');
 }
 

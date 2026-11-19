@@ -9,6 +9,14 @@ function studioDetachInput(ch) {
 		try { c.synthTap.gain.disconnect(); } catch (e) {}
 		c.synthTap = null;
 	}
+	if (c.drumTap) {
+		try { c.drumTap.node.disconnect(c.drumTap.gain); } catch (e) {}
+		try { c.drumTap.gain.disconnect(); } catch (e) {}
+		c.drumTap = null;
+	}
+	// The drums' own recorder tap follows the selected channel; tell it that this
+	// channel no longer takes them.
+	if (typeof studioDrumsRouteSelection === 'function') { studioDrumsRouteSelection(); }
 }
 
 // Route a take's media element through the channel's playback bus. A media
@@ -321,14 +329,44 @@ function studioScheduleTick() {
 	}
 }
 
+// Is any channel soloed? Solo is exclusive-ish: while at least one is, the
+// channels that are not are silent.
+function studioAnySolo() {
+	var solo = false;
+	$.each(mixer, function (ch, m) {
+		if (!/^[0-9]+$/.test(String(ch)) || !m) { return; }
+		if (m.solo) { solo = true; }
+	});
+	return solo;
+}
+
 // The channel fader / pan feed the take bus, so set them once per pass rather
-// than per take.
+// than per take. Mute and solo gate the same gain: a muted channel is silent,
+// and while any channel is soloed every other one is.
 function studioApplyPlaybackMix() {
+	var anySolo = studioAnySolo();
 	$.each(studioAudio.channels, function (ch, c) {
 		if (!c) { return; }
-		c.playBus.gain.value = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val());
+		var m = mixer[ch] || {};
+		var silent = m.mute || (anySolo && !m.solo);
+		c.playBus.gain.value = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()) * (silent ? 0 : 1);
 		c.playPan.pan.value = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
 	});
+}
+
+// Mute and solo are the mix, not the recording: the playback bus is gated, while
+// the captured input and the monitor tap stay exactly as they were. The track
+// rows and the strips dim when another channel's solo silences them.
+function studioApplyMuteSolo() {
+	var anySolo = studioAnySolo();
+	$.each(mixer, function (ch) {
+		if (!/^[0-9]+$/.test(String(ch))) { return; }
+		var m = mixer[ch] || {};
+		var dimmed = anySolo && !m.solo;
+		$('#studio_track_row_' + ch).toggleClass('studio_solo_muted', !!dimmed);
+		$('.channel_' + ch).toggleClass('studio_solo_muted', !!dimmed);
+	});
+	studioApplyPlaybackMix();
 }
 
 // The clip-edge gain, matching the media-element path's ramps: fade in over the

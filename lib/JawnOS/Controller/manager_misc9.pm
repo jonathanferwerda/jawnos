@@ -2012,4 +2012,217 @@ sub action_44029 {
 	$c->render(json => $said);
 }
 
+# POST /manager/studio/export
+#
+# Studio renders each track in the browser through its own output chain and
+# sends the WAV here. This route names the file after the track, transcodes it
+# with ffmpeg, and files it on the song's appointment the way a capture is
+# filed: one record in the appointment's `file` JSON, typed `audio`. The song
+# must already exist; an export joins a record, it never makes one.
+#
+# Nothing from the request becomes a path, an option or a shell word. The name
+# is one filesystem component through subs::path_name(), the format is one of
+# three words, and the bit rate is a clamped integer. The encoder command is a
+# list for system(), never a shell string.
+sub action_44032 {
+	my $c = shift;
+	my $uuid = $c->param('uuid');
+	my $name = $c->param('name');
+	my $format = &studio_export_format($c->param('format'));
+	my $bitrate = &studio_export_bitrate($c->param('bitrate'));
+	# The mastering rack is the browser's: its state is already printed into the
+	# upload. Reading the flag keeps the request's shape complete.
+	my $master = $c->param('master');
+	my $upload = $c->req->upload('audio');
+
+	unless (defined $uuid && length $uuid) {
+		$c->render(json => { ok => 0, error => 'save the song before exporting its tracks' }, status => 400);
+		return;
+	}
+	unless (defined $format) {
+		$c->render(json => { ok => 0, error => 'choose wav, mp3 or flac' }, status => 400);
+		return;
+	}
+	unless ($upload) {
+		$c->render(json => { ok => 0, error => 'no audio was sent' }, status => 400);
+		return;
+	}
+
+	my $song = &subs::db_select('appointments', undef, { uuid => $uuid, type => 'studio' })->hashes->[0];
+	unless ($song) {
+		$c->render(json => { ok => 0, error => 'that song is not saved' }, status => 404);
+		return;
+	}
+
+	my $encoder = &studio_export_ffmpeg();
+	unless (length $encoder) {
+		$c->render(json => { ok => 0, error => 'the audio encoder is not installed' }, status => 503);
+		return;
+	}
+
+	my $location = eval {
+		&subs::home(&subs::setting_grabber({
+			app => 'misc', setting => 'rec_location', device => $device,
+		}));
+	};
+	unless (defined $location && !ref $location && length $location) {
+		$c->render(json => { ok => 0, error => 'no recording folder is set on this machine' }, status => 503);
+		return;
+	}
+	my $folder = File::Spec->catdir($location, 'studio');
+	require File::Path;
+	my $ready = eval { File::Path::make_path($folder); 1 };
+	unless ($ready && -d $folder) {
+		$c->render(json => { ok => 0, error => 'the studio folder could not be created' }, status => 503);
+		return;
+	}
+
+	my $track = (defined $name && length $name) ? $name : 'Track';
+	my $path = &studio_export_path($folder, $track, $format);
+	# path_name() already turns a separator into a percent escape. Keeping the
+	# assertion makes the containment explicit, so a future change to the
+	# encoder path cannot quietly write outside the studio folder.
+	unless (index($path, $folder . '/') == 0) {
+		$c->render(json => { ok => 0, error => 'that name cannot be a file' }, status => 400);
+		return;
+	}
+
+	# The browser sends WAV; ffmpeg normalises it and writes the chosen format.
+	# The temp file lives beside the destination so the move is on one volume.
+	require File::Temp;
+	my ($temp_fh, $temp) = File::Temp::tempfile(
+		'studio-export-XXXXXX', DIR => $folder, SUFFIX => '.wav', UNLINK => 0,
+	);
+	unless ($temp_fh) {
+		$c->render(json => { ok => 0, error => 'the upload could not be saved' }, status => 503);
+		return;
+	}
+	close $temp_fh;
+	unlink $temp;
+	eval { $upload->move_to($temp) };
+	unless (-e $temp && (-s $temp) > 0) {
+		unlink $temp;
+		$c->render(json => { ok => 0, error => 'the upload could not be saved' }, status => 400);
+		return;
+	}
+
+	my @command = &studio_export_command($temp, $path, $format, $bitrate);
+	# Run the binary the availability check found, not a fresh PATH lookup.
+	$command[0] = $encoder if @command;
+	my $ran = @command ? system(@command) : -1;
+	unlink $temp;
+	unless ($ran == 0 && -e $path && (-s $path) > 0) {
+		unlink $path if -e $path && !-s $path;
+		$c->render(json => { ok => 0, error => 'the audio encoder could not make that file' }, status => 500);
+		return;
+	}
+
+	my $files = (defined $song->{'file'} && length $song->{'file'})
+		? (eval { decode_json $song->{'file'} } || [])
+		: [];
+	$files = [] unless ref $files eq 'ARRAY';
+	&studio_export_append($files, $path, &subs::random_string_creator(16));
+	# The exported track is an appointment file like a capture, so it takes the
+	# same sealing path: the fresh server_time puts the row inside the window
+	# file_encrypter scans, and the call then seals what this route wrote. The
+	# response keeps the plain destination because it only reports the file.
+	&subs::db_update(
+		'appointments',
+		{ file => encode_json($files), server_time => &subs::rightNow() },
+		{ uuid => $uuid, type => 'studio' },
+	);
+	&subs::file_encrypter({ app => 'studio' });
+
+	$c->render(json => { ok => 1, file => $path, name => $track, format => $format });
+}
+
+# The three formats the exporter writes. A word outside the map is not a
+# format, and the route refuses it rather than guessing.
+our %studio_export_formats = map { $_ => 1 } qw(wav mp3 flac);
+our $studio_export_bitrate_default = 192;
+
+sub studio_export_format {
+	my ($value) = @_;
+	return undef unless defined $value && !ref $value;
+	(my $word = lc $value) =~ s/\A\s+|\s+\z//g;
+	return undef unless $studio_export_formats{$word};
+	return $word;
+}
+
+# A bit rate the encoder can take: a malformed value falls back to the default,
+# and a number is clamped to 64..320 kbps.
+sub studio_export_bitrate {
+	my ($value) = @_;
+	$value = $studio_export_bitrate_default
+		unless defined $value && !ref $value
+			&& $value =~ /\A\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*\z/;
+	$value += 0;
+	return 64 if $value < 64;
+	return 320 if $value > 320;
+	return int($value + 0.5);
+}
+
+# The encoder command as a list for system(): the two paths are separate argv
+# entries, so a space or a quote in one can neither split the command nor reach
+# a shell. WAV is plain PCM and ignores the bit rate; MP3 and FLAC take it.
+sub studio_export_command {
+	my ($in, $out, $format, $kbps) = @_;
+	return () unless defined $in && defined $out;
+	$format = 'wav' unless defined $format && $studio_export_formats{$format};
+	$kbps = $studio_export_bitrate_default unless defined $kbps && $kbps =~ /\A\d+\z/;
+	my @command = ('ffmpeg', '-nostdin', '-loglevel', 'error', '-y', '-i', $in);
+	if ($format eq 'mp3') {
+		push @command, '-vn', '-codec:a', 'libmp3lame', '-b:a', $kbps . 'k', '-f', 'mp3', $out;
+	}
+	elsif ($format eq 'flac') {
+		push @command, '-vn', '-codec:a', 'flac', '-b:a', $kbps . 'k', '-f', 'flac', $out;
+	}
+	else {
+		push @command, '-vn', '-codec:a', 'pcm_s16le', '-f', 'wav', $out;
+	}
+	return @command;
+}
+
+# Is there an encoder to run? system() with a list still raises ENOENT through
+# a warning and a non-zero status when nothing matches, but the route can say
+# "ffmpeg is not installed" before it writes a temp file. JAWNOS_FFMPEG lets a
+# staged build be named; otherwise PATH is searched.
+sub studio_export_ffmpeg {
+	my $staged = $ENV{'JAWNOS_FFMPEG'};
+	return $staged if defined $staged && length $staged && -x $staged;
+	foreach my $dir (split /:/, ($ENV{'PATH'} // '')) {
+		next unless length $dir;
+		my $path = File::Spec->catfile($dir, 'ffmpeg');
+		return $path if -x $path;
+	}
+	return '';
+}
+
+# <studio folder>/<track>.<format>, with a numeric suffix when that name is
+# already on disk so a second export never overwrites the first. `name` is a
+# track title, so it becomes one component through subs::path_name().
+sub studio_export_path {
+	my ($folder, $name, $format) = @_;
+	$format = 'wav' unless defined $format && $studio_export_formats{$format};
+	my $base = &subs::path_name((defined $name && length $name) ? $name : 'Track');
+	$base = 'Track' unless defined $base && length $base;
+	my $path = File::Spec->catfile($folder, $base . '.' . $format);
+	my $n = 1;
+	while (-e $path) {
+		$n++;
+		$path = File::Spec->catfile($folder, $base . '-' . $n . '.' . $format);
+	}
+	return $path;
+}
+
+# The house's appointment file: one record in the song's `file` JSON, named by
+# the path the encoder wrote and typed `audio`, the way a capture is typed
+# `recording`. Kept separate so its shape is asserted without a database.
+sub studio_export_append {
+	my ($files, $path, $uuid) = @_;
+	$files = [] unless ref $files eq 'ARRAY';
+	push @{$files}, { f => $path, uuid => $uuid, type => 'audio' };
+	return $files;
+}
+
 1;

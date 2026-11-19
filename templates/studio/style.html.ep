@@ -1607,4 +1607,124 @@
 			flex-basis: 300px;
 		}
 	}
+	/* The transport's controls are larger, and the jog wheel is twice their size. */
+	.studio_transport_row .little_thumb {
+		width: 32px;
+		height: 32px;
+		flex: 0 0 32px;
+	}
+	.studio_transport_row .jog_wheel_frame {
+		flex: 0 0 64px;
+		width: 64px;
+		height: 64px;
+	}
+	.studio_transport_row #studio_jog_wheel {
+		width: 64px;
+		height: 64px;
+	}
+	.studio_transport_row .jog_wheel_frame .jog_wheel_centre {
+		width: 10px;
+		height: 10px;
+		margin-left: -5px;
+		margin-top: -5px;
+	}
+	.studio_transport_knob {
+		width: 32px;
+		height: 32px;
+	}
+	/* A dial is a roundel, never a square tile. */
+	.knob,
+	.studio_transport_knob,
+	#studio_jog_wheel {
+		border-radius: 50%;
+		clip-path: circle(50% at 50% 50%);
+	}
+	/* The fader takes 80% of the strip; mute and solo sit under it. */
+	#studio_mixer_strips .channel {
+		height: 100%;
+	}
+	.studio_strip_body {
+		height: 100%;
+		align-items: flex-start;
+	}
+	.channel_fader {
+		height: 80%;
+		width: 34px;
+		flex: 0 0 34px;
+		min-height: 90px;
+		position: relative;
+	}
+	.channel_fader .channel_volume {
+		height: calc(100% - 22px);
+	}
+	.studio_strip_mute_solo {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		display: flex;
+		gap: 2px;
+		justify-content: center;
+	}
+	.studio_strip_mute,
+	.studio_strip_solo {
+		width: 16px;
+		min-width: 16px;
+		height: 16px;
+		padding: 0;
+		font-size: 9px;
+		line-height: 14px;
+		border-radius: 50%;
+	}
+	.studio_strip_mute[aria-pressed="true"] {
+		background: var(--runway-bad, #b3453f);
+		color: #fff;
+	}
+	.studio_strip_solo[aria-pressed="true"] {
+		background: var(--runway-good, #2f7d4f);
+		color: #fff;
+	}
+	.channel.studio_solo_muted {
+		opacity: .55;
+	}
+	/* The FX rack's input/output chain switch and the drum loop controls. */
+	.studio_chain_toggle {
+		display: flex;
+		gap: 2px;
+		padding: 2px 4px;
+	}
+	.studio_chain_choice {
+		font-size: 10px;
+		padding: 0 5px;
+		min-width: 28px;
+	}
+	.studio_chain_choice[aria-pressed="true"] {
+		background: var(--accent-soft, var(--panel-2));
+		border-color: var(--accent-line, var(--accent));
+	}
+	.studio_drums_length,
+	.studio_drums_library {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		font-size: 11px;
+	}
+	.studio_drums_length button,
+	.studio_drums_library button {
+		min-width: 22px;
+		padding: 0 4px;
+		font-size: 11px;
+	}
+	.studio_drums_loops {
+		max-width: 120px;
+		font-size: 11px;
+	}
+	.studio_drums_save_name {
+		width: 100px;
+		font-size: 11px;
+	}
+	#studio_export_state {
+		font-size: 12px;
+		opacity: .8;
+	}
 </style>
