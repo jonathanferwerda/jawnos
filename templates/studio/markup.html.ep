@@ -264,13 +264,22 @@
 					<img class="tiny_thumb jack studio_jack hover" hint="Jack" src="<%= &subs::icon_for('/images/studio/jack.png') %>" channel="<%= $ch %>">
 					<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="input"></div>
 
-					<% foreach my $k ( grep { $_->{'placement'} eq 'channel' } @{$gb::studio->{'knobs'}}) { %>
-						<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-						<img class="knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
-						<span class="to_sound" channel="<%= $ch %>" >
-							<img class="cord draggable" hint="Cord" style="display:none;" control="input" channel="<%= $ch %>" src="<%= &subs::icon_for('/images/studio/cord.png') %>">
+					<%# The knobs and the volume fader share the strip: the fader is the
+					   same track volume as the slider under the track, in the console. %>
+					<span class="studio_strip_body">
+						<span class="studio_strip_knobs">
+						<% foreach my $k ( grep { $_->{'placement'} eq 'channel' } @{$gb::studio->{'knobs'}}) { %>
+							<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
+							<img class="knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
+							<span class="to_sound" channel="<%= $ch %>" >
+								<img class="cord draggable" hint="Cord" style="display:none;" control="input" channel="<%= $ch %>" src="<%= &subs::icon_for('/images/studio/cord.png') %>">
+							</span>
+						<% } %>
 						</span>
-					<% } %>
+						<span class="channel_fader">
+							<input type="range" min="0" max="100" value="1" channel="<%= $ch %>" control="volume" class="channel_volume studio_strip_volume" hint="<%= &subs::ui('Mix this track against the others') %>">
+						</span>
+					</span>
 					<img class="tiny_thumb jack studio_cord hover" hint="Cord" src="<%= &subs::icon_for('/images/studio/cord.png') %>" channel="<%= $ch %>">
 					<div class="studio_channel_information" style="display:none;" channel="<%= $ch %>" direction="output"></div>
 				</span>

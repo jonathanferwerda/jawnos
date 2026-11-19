@@ -1,13 +1,14 @@
 // ===========================================================================
 // The chromatic tuner (Jtune)
 // ===========================================================================
-// Jtune is not an effect and never joins a rack. Its yellow panel is a
-// chromatic tuner: it listens to the default audio input (point the browser at
-// the interface's channel to tune a guitar or a bass through it), names the
-// nearest note, and says which way to turn the machine head. The pink switch
-// and the lamp are one control: press either to start or stop listening; the
-// lamp is grey while it is off, amber while it listens, and green when the
-// note is inside the tolerance.
+// Jtune is not an effect and never joins a rack. It is a tuner on the selected
+// track's chain: it taps the channel after its inserts, the same signal the
+// take recorder and the monitor hear, so the interface input the track is
+// listening on is the input it tunes. It opens no microphone of its own; a
+// track with no live input says so. The pink switch and the lamp are one
+// control: press either to start or stop listening; the lamp is grey while it
+// is off, amber while it listens, and green when the note is inside the
+// tolerance.
 //
 // The pitch comes from YIN's cumulative-mean-normalized difference, run on a
 // half-rate copy of the analyser window. Half the rate halves the lags the
@@ -19,9 +20,9 @@ var studioTunerGate = 0.006;    // RMS below this is silence, not a note
 var studioTunerNotes = [ 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B' ];
 
 var studioTuner = {
-	stream: null, source: null, analyser: null, mute: null,
+	analyser: null, mute: null, tap: null, channel: 0,
 	buffer: null, half: null, bytes: null, diff: null,
-	timer: 0, running: false, pending: false, token: 0,
+	timer: 0, running: false,
 	note: null, cents: 0, inTune: false, silent: 0, error: ''
 };
 
@@ -133,70 +134,62 @@ function studioTunerDraw() {
 	var line = '';
 	if (!on) { line = studioLayoutText(studioTuner.error || 'press to tune'); }
 	else if (note) { line = (cents > 0 ? '+' : '') + Math.round(cents); }
-	else { line = studioLayoutText('listening'); }
+	else { line = studioLayoutText('Track') + ' ' + (studioTuner.channel || 1); }
 	tile.find('.studio_tuner_cents').text(line);
 	studioTunerPaintLamp(tile);
 	studioTunerPaintButton();
 }
 
 // ---- listening -------------------------------------------------------------
+//
+// The tuner is another pedal on the selected track's chain: it taps the
+// channel's post-insert gain, the same signal the take recorder and the monitor
+// hear, so the interface input the track listens on is the input it tunes. It
+// never opens a microphone of its own.
+
+function studioTunerChannel() {
+	return studioPaletteChannel();
+}
+
+function studioTunerTapFor(ch) {
+	var c = studioAudio.channels[ch];
+	if (!c || !c.recGain) { return null; }
+	// no live input is attached: a take playing on the channel is not a source
+	if (!c.source && !c.synthTap) { return null; }
+	return c.recGain;
+}
 
 function studioTunerToggle() {
-	if (studioTuner.running || studioTuner.pending) { studioTunerStop(); }
+	if (studioTuner.running) { studioTunerStop(); }
 	else { studioTunerStart(); }
 }
 
 function studioTunerStart() {
-	if (studioTuner.running || studioTuner.pending) { return; }
-	var media = navigator.mediaDevices;
-	if (!media || !media.getUserMedia) { studioTunerFail('No microphone'); return; }
+	if (studioTuner.running) { return; }
 	var ctx = studioContext();
 	if (!ctx) { studioTunerFail('No audio'); return; }
-	studioTuner.pending = true;
-	studioTuner.error = '';
-	studioTunerDraw();
-	// A press that starts and then stops before the browser answers must not
-	// leave a microphone running: the promise carries the token it started with.
-	var token = ++studioTuner.token;
-	media.getUserMedia({
-		audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-		video: false
-	}).then(function (stream) {
-		if (token !== studioTuner.token) {
-			try { stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-			return;
-		}
-		studioTunerAttach(ctx, stream);
-	}).catch(function () {
-		if (token !== studioTuner.token) { return; }
-		studioTuner.pending = false;
-		studioTunerFail('No microphone');
-	});
-}
-
-// The analyser is fed through a muted gain so the graph is pulled by the
-// destination (which is what keeps it running) without the input ever being
-// heard. The tuner is a listener, not a monitor.
-function studioTunerAttach(ctx, stream) {
-	studioTuner.pending = false;
-	if (!ctx || !stream) { studioTunerFail('No microphone'); return; }
-	studioTuner.stream = stream;
+	var ch = studioTunerChannel();
+	var tap = studioTunerTapFor(ch);
+	if (!tap) { studioTunerFail('No live input'); return; }
+	var analyser = ctx.createAnalyser();
+	analyser.fftSize = 4096;
+	analyser.smoothingTimeConstant = 0;
+	var mute = ctx.createGain();
+	mute.gain.value = 0;
 	try {
-		studioTuner.source = ctx.createMediaStreamSource(stream);
-		var analyser = ctx.createAnalyser();
-		analyser.fftSize = 4096;
-		analyser.smoothingTimeConstant = 0;
-		studioTuner.analyser = analyser;
-		studioTuner.mute = ctx.createGain();
-		studioTuner.mute.gain.value = 0;
-		studioTuner.source.connect(analyser);
-		analyser.connect(studioTuner.mute);
-		studioTuner.mute.connect(ctx.destination);
+		tap.connect(analyser);
+		analyser.connect(mute);
+		mute.connect(ctx.destination);
 	}
-	catch (e) { studioTunerFail('No microphone'); return; }
+	catch (e) { studioTunerFail('No audio'); return; }
+	studioTuner.analyser = analyser;
+	studioTuner.mute = mute;
+	studioTuner.tap = tap;
+	studioTuner.channel = ch;
 	studioTuner.buffer = new Float32Array(analyser.fftSize);
 	studioTuner.half = new Float32Array(studioTuner.buffer.length / 2);
 	studioTuner.running = true;
+	studioTuner.error = '';
 	studioTuner.note = null;
 	studioTuner.cents = 0;
 	studioTuner.inTune = false;
@@ -206,10 +199,42 @@ function studioTunerAttach(ctx, stream) {
 	studioTunerDraw();
 }
 
+// The selection moved to another track while the tuner listens: move the tap to
+// that track's chain rather than stopping, so the display follows the chain.
+function studioTunerFollow() {
+	if (!studioTuner.running) { return; }
+	var ch = studioTunerChannel();
+	if (studioTuner.channel === ch) { return; }
+	var tap = studioTunerTapFor(ch);
+	if (!tap) { studioTunerFail('No live input'); return; }
+	if (studioTuner.tap && studioTuner.analyser) {
+		try { studioTuner.tap.disconnect(studioTuner.analyser); } catch (e) {}
+	}
+	try { tap.connect(studioTuner.analyser); }
+	catch (e) { studioTunerFail('No live input'); return; }
+	studioTuner.tap = tap;
+	studioTuner.channel = ch;
+	studioTuner.note = null;
+	studioTuner.cents = 0;
+	studioTuner.inTune = false;
+	studioTuner.silent = 0;
+	studioTunerDraw();
+}
+
 function studioTunerRead() {
 	clearTimeout(studioTuner.timer);
 	studioTuner.timer = 0;
 	if (!studioTuner.running || !studioTuner.analyser) { return; }
+	// the selected chain can change under a listening tuner; follow it
+	if (studioTuner.channel !== studioTunerChannel()) {
+		studioTunerFollow();
+		if (!studioTuner.running) { return; }
+	}
+	var c = studioAudio.channels[studioTuner.channel];
+	if (!c || (!c.source && !c.synthTap)) {
+		studioTunerFail('No live input');
+		return;
+	}
 	var analyser = studioTuner.analyser;
 	var buf = studioTuner.buffer;
 	if (!buf || buf.length !== analyser.fftSize) { buf = studioTuner.buffer = new Float32Array(analyser.fftSize); }
@@ -249,18 +274,16 @@ function studioTunerFail(message) {
 }
 
 function studioTunerStop(keepError) {
-	studioTuner.token++;
 	studioTuner.running = false;
-	studioTuner.pending = false;
 	clearTimeout(studioTuner.timer);
 	studioTuner.timer = 0;
-	if (studioTuner.source) { try { studioTuner.source.disconnect(); } catch (e) {} studioTuner.source = null; }
+	if (studioTuner.tap && studioTuner.analyser) {
+		try { studioTuner.tap.disconnect(studioTuner.analyser); } catch (e) {}
+	}
 	if (studioTuner.analyser) { try { studioTuner.analyser.disconnect(); } catch (e) {} studioTuner.analyser = null; }
 	if (studioTuner.mute) { try { studioTuner.mute.disconnect(); } catch (e) {} studioTuner.mute = null; }
-	if (studioTuner.stream) {
-		try { studioTuner.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} }); } catch (e) {}
-		studioTuner.stream = null;
-	}
+	studioTuner.tap = null;
+	studioTuner.channel = 0;
 	studioTuner.note = null;
 	studioTuner.cents = 0;
 	studioTuner.inTune = false;

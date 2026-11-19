@@ -297,8 +297,13 @@ function studioPaletteAdd() {
 $(document).on('click', '#studio_palette_add', function () { studioPaletteAdd(); });
 
 // The palette follows the selected strip or track panel. The selection handler
-// itself is in 03_editing.js; this runs after it in bundle order.
-$(document).on('click', '.channel, .studio_track_panel', function () { studioPaletteLabel(); studioUpdatePedalLamps(); });
+// itself is in 03_editing.js; this runs after it in bundle order. A listening
+// tuner moves its tap to the newly selected chain.
+$(document).on('click', '.channel, .studio_track_panel', function () {
+	studioPaletteLabel();
+	studioUpdatePedalLamps();
+	if (typeof studioTunerFollow === 'function') { studioTunerFollow(); }
+});
 
 // ---- rack actions ----------------------------------------------------------
 

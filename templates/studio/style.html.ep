@@ -539,6 +539,22 @@
 
 	/* the fader and its metre live inside the strip, below the arm button, so
 	   they can never sit on top of the record/play/loop toggle */
+	/* the knobs and the volume fader sit side by side in the strip */
+	.studio_strip_body {
+		display: flex;
+		flex-direction: row;
+		align-items: flex-start;
+		justify-content: center;
+		gap: 2px;
+		width: 100%;
+		min-width: 0;
+	}
+	.studio_strip_knobs {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		min-width: 0;
+	}
 	.channel_fader {
 		position: relative;
 		display: block;
@@ -847,10 +863,10 @@
 		min-height: 0;
 	}
 	/* The strips fill the console: they grow into the room the master leaves,
-	   and only scroll once 56px each is no longer available. */
+	   and only scroll once 76px each is no longer available. */
 	#studio_mixer_strips .channel {
-		flex: 1 1 72px;
-		min-width: 56px;
+		flex: 1 1 88px;
+		min-width: 76px;
 		height: auto;
 		min-height: 0;
 	}

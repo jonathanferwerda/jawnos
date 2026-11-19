@@ -1,11 +1,14 @@
 # tests-for: public/js/manager/studio/12_tuner.js public/js/manager/studio/09_pedals.js public/js/manager/studio/04_knobs.js public/js/manager/studio/03_editing.js templates/studio/markup.html.ep templates/studio/style.html.ep perl/help/topics_apps.pl perl/gb/05_abilities_and_studio.pl t/357-studio-tuner.t
 # covers:    Jtune is a chromatic tuner, not an effect: its pink switch and the
-#            lamp start and stop one microphone listener, the yellow panel names
-#            the nearest note with an upgrade/downgrade arrow either side, and the
-#            lamp is grey (off), amber (listening) or green (in tune). The pitch
-#            maths is run under node against guitar and bass tones, so a change to
-#            the detector has to keep its answers. The drawn pedals' frame and the
-#            stomp switch are pinned here too.
+#            lamp start and stop one listener on the selected track's chain, after
+#            its pedals and at the point the take is recorded, so the interface
+#            input the track listens on is what it hears and it opens no
+#            microphone of its own. The yellow panel names the nearest note with
+#            an upgrade/downgrade arrow either side, and the lamp is grey (off),
+#            amber (listening) or green (in tune). The pitch maths is run under
+#            node against guitar and bass tones, so a change to the detector has
+#            to keep its answers. The drawn pedals' frame and the stomp switch are
+#            pinned here too.
 
 use strict;
 use warnings;
@@ -67,22 +70,28 @@ like($rack, qr/if \(typeof studioTunerToggle === 'function'\) \{ studioTunerTogg
 like($rack, qr/if \(typeof studioTunerPaintLamp === 'function'\) \{ studioTunerPaintLamp\(tile\); \}/,
 	'the tuner owns its lamp instead of the effect lamp');
 like($tuner, qr/\$\('#pedal_Jtune'\)/, 'the tile itself starts and stops the tuner');
-like($tuner, qr/getUserMedia\(/, 'the tuner asks for the microphone');
-like($tuner, qr/echoCancellation: false, noiseSuppression: false, autoGainControl: false/,
-	'the tuner asks for the raw input, not a speech-processed one');
+like($tuner, qr/function studioTunerTapFor\(ch\)/, 'one function finds the selected chain\'s tap');
+like($tuner, qr/c\.recGain/, 'the tuner taps the channel after its inserts, where the take is recorded');
+like($tuner, qr/if \(!c\.source && !c\.synthTap\) \{ return null; \}/,
+	'a track with no live input has nothing to tune');
+like($tuner, qr/studioTunerFail\('No live input'\)/, 'a silent chain says why it cannot tune');
+like($tuner, qr/function studioTunerFollow\(\)/, 'the tuner can move its tap to another chain');
+like($rack, qr/studioTunerFollow\(\)/, 'selecting a strip moves the listening tuner');
 like($tuner, qr/gain\.value = 0/, 'the tuner is a listener, never a monitor');
-like($edit, qr/studioTunerStop\(\)/, 'closing the pedalboard releases the microphone');
-like($knobs, qr/studioTunerStop\(\)/, 'a new window or song releases the microphone');
-like($tuner, qr/token !== studioTuner\.token/, 'a press stopped before the browser answers cannot leave a microphone running');
-like($tuner, qr/getTracks\(\)\.forEach/, 'the tuner ends the microphone track when it stops');
+unlike($tuner, qr/getUserMedia/, 'the tuner opens no microphone of its own');
+like($edit, qr/studioTunerStop\(\)/, 'closing the pedalboard stops the listener');
+like($knobs, qr/studioTunerStop\(\)/, 'a new window or song stops the listener');
 
 # --- the help speaks in the tuner's words ----------------------------------
-like($help, qr/press its pink switch \(or its lamp\) and it listens/,
-	'the help explains how the tuner starts');
+like($help, qr/selected track.{0,3}s chain, the same signal that track records and monitors/,
+	'the help puts the tuner on the track\'s chain');
+like($help, qr/the tuner hears the guitar or bass on that input, never a microphone of its own/,
+	'the help says it hears the interface input and opens no microphone');
+like($help, qr/click another strip and it listens there instead/, 'the help says the tuner follows the selection');
+like($help, qr/If the track has no live input it says so/, 'the help explains the no-input message');
 like($help, qr/the arrow on the left means tune up, the arrow on the right means tune down/,
 	'the help names the arrows');
 like($help, qr/within five cents/, 'the help states the tolerance');
-like($help, qr/close the pedalboard, and the microphone stops/, 'the help says the microphone stops');
 
 # --- the maths, under node --------------------------------------------------
 my $node = `command -v node 2>/dev/null`;

@@ -221,8 +221,7 @@ function studioWheelHandler(event) {
 
 	var vol = target.closest('.channel_volume');
 	if (vol) {
-		$(vol).val(numeral($(vol).val()).value() + (studioWheelDelta(event) / 30));
-		studioSaver();
+		studioChannelVolumeSet($(vol).attr('channel'), numeral($(vol).val()).value() + (studioWheelDelta(event) / 30));
 		event.preventDefault();
 		return;
 	}
@@ -298,8 +297,20 @@ $(document).on('click', '.button_control', function(e) {
 
 // (channel fader and jog wheel wheels are handled by studioWheelHandler)
 
-$(document).on('change', '.channel_volume', function() {
+// One track volume, two controls: the slider under the track and the fader in
+// the console strip. Either one writes both, the song and the playback gain, so
+// they can never disagree.
+function studioChannelVolumeSet(ch, value) {
+	if (!ch) { return; }
+	value = Math.max(0, Math.min(100, studioKnobNumber(value, 1)));
+	$('.channel_volume[channel="' + ch + '"]').val(value);
+	var c = studioAudio.channels[ch];
+	if (c && c.playBus) { try { c.playBus.gain.value = studioVolumeFraction(value); } catch (e) {} }
 	studioSaver();
+}
+
+$(document).on('input change', '.channel_volume', function() {
+	studioChannelVolumeSet($(this).attr('channel'), $(this).val());
 });
 
 // A track's colour is live: it redraws that canvas and the song keeps it. The

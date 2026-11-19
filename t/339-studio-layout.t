@@ -347,8 +347,28 @@ like($edit, qr/'channel_count', 'value': '1'/, 'New song asks for a single track
 # --- the console fills its width, master at the far right -------------------
 like($style, qr/#studio_mixer_strips \.channel\s*\{[^}]*flex:\s*1 1/s,
 	'the strips stretch to fill the console instead of leaving a gap');
-like($style, qr/#studio_mixer_strips \.channel\s*\{[^}]*min-width:\s*56px/s,
+like($style, qr/#studio_mixer_strips \.channel\s*\{[^}]*min-width:\s*76px/s,
 	'every strip keeps a readable floor and the row scrolls only past it');
+like($markup, qr/class="studio_strip_body"[\s\S]*class="studio_strip_knobs"/,
+	'the strip puts its knobs and its fader in one row');
+like($markup, qr/class="channel_fader">[\s\S]{0,400}?studio_strip_volume/,
+	'each strip carries the track volume as a fader');
+like($markup, qr/control="volume"[\s\S]{0,400}?class="channel_volume studio_strip_volume"/,
+	'the strip fader is the same volume control as the track slider');
+like($style, qr/\.studio_strip_body\s*\{[^}]*flex-direction:\s*row/s, 'the fader sits beside the knobs');
+like($style, qr/\.channel_fader\s*\{[^}]*height:\s*120px/s, 'the strip fader is a tall fader');
+like($knobs, qr/function studioChannelVolumeSet\(ch, value\)/,
+	'one setter owns the track volume');
+like($knobs, qr/\.channel_volume\[channel=[^\n]*\.val\(value\)/,
+	'either fader moves both');
+like($knobs, qr/function studioChannelVolumeSet[\s\S]{0,400}?playBus\.gain\.value = studioVolumeFraction\(value\)/,
+	'moving it applies the playback gain at once');
+like($knobs, qr/\$\(document\)\.on\('input change', '\.channel_volume'/,
+	'the strip fader and the track slider share one handler');
+like($knobs, qr/studioChannelVolumeSet\(\$\(vol\)\.attr\('channel'\)/,
+	'the wheel over either fader uses the same setter');
+like($help, qr/volume fader beside its knobs/,
+	'the help describes the strip fader');
 unlike($style, qr/\.studio_master_rack\s*\{[^}]*margin-left:\s*auto/s,
 	'the master rack is the last strip, not pushed away from the strips');
 like($style, qr/#studio_mixer\s*\{[^}]*overflow:\s*auto/s,
