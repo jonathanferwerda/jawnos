@@ -168,6 +168,8 @@ for my $name (qw(subs::path_name path_name)) {
 		'and skipping the generated `our (...)` line that holds the words by accident');
 
 	(undef, $out) = where('crew_advert');
+	# The phrase is spelled apart in comments all over lib/; the job row in
+	# perl/jobs.pl has to survive them and the mention cap.
 	like($out, qr{^  perl/(?:jobs|crew)\.pl:\d+:.*crew advert}mi,
 		'and a phrase that is a job name in the source');
 }
@@ -315,7 +317,7 @@ JS
 	write_file("$tmp/jw/.pio/build/dup.cpp", "void probe_fn() {\n}\n");
 	write_file("$tmp/jw/big_model.h", "#define probe_big 1\n" . ('x' x 140000) . "\n");
 	write_file("$tmp/public/js/jquery.js", "function probe_vendored() {\n}\n");
-	# The deck is scanned before the watch, and the mention scan stops at eight
+	# The deck is scanned before the watch, and the mention scan stops at twelve
 	# lines: a flag the deck mentions often used to hide the watch's declaration.
 	write_file("$tmp/jt/deck.ino", "static bool probe_flag = false;\n"
 		. join('', map { "probe_flag = $_;\n" } 1 .. 10));

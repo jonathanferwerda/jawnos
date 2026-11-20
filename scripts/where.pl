@@ -54,7 +54,10 @@ my @raw_argv   = @ARGV;
 my $real_root  = abs_path("$FindBin::Bin/..");
 my $root       = $real_root;
 my $context    = 0;
-my $limit      = 8;
+# How many mention lines one answer prints. Twelve, not eight: a guessed phrase
+# that is also a job name is spelled in prose all over lib/, and a run of those
+# comments used to push the `%JOB` row in perl/jobs.pl off the list (t/96).
+my $limit      = 12;
 my $terse      = 0;
 my $body_flag;
 my $body_lines;

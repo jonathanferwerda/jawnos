@@ -17,6 +17,15 @@ package JawnOS::Audio::SystemMix;
 # idempotent; a machine with no pactl/PipeWire answers `skipped`, never a
 # failure that would stop the plan from saving.
 #
+# The record is the fast path, not the only one. A boot wipe once deleted it
+# while the sink lived on: `jawn_system` stayed the default with nothing
+# capturing it (every app silent) and the hardware sink stayed pinned at unity,
+# and `remove` answered `skipped`. So a removal with no state finds the
+# null-sink module by the sink name it was loaded with, hands the default to a
+# real sink, carries the mix's own level onto it (never a stored one, and never
+# a mute), and unloads that module by id - the same machine the record would
+# have restored.
+#
 # The WirePlumber rule is for an ALSA card only. A PipeWire device (`default`)
 # names no card, so `ensure` makes just the sink and the default switch. The
 # default the sink replaced is also the device a PipeWire engine must play out -
@@ -615,14 +624,100 @@ sub _remove_managed_card {
 	};
 }
 
-sub _sinks {
+# The sinks in the server's own order. A removal with no state record has to
+# pick one to hand the machine back to, and the server's order is the only
+# preference it has; `_sinks` keeps the hash shape the rest of the module reads.
+sub _sink_list {
 	my $text = JawnOS::Platform::Audio::run('pactl', 'list', 'short', 'sinks');
-	my %name;
-	foreach my $line ( split /\n/, $text ) {
+	my @name;
+	foreach my $line ( split /\n/, defined $text ? $text : '' ) {
 		my @field = split /\t/, $line;
-		$name{ $field[1] } = 1 if @field > 1 && length $field[1];
+		push @name, $field[1] if @field > 1 && defined $field[1] && length $field[1];
 	}
-	return \%name;
+	return \@name;
+}
+
+sub _sinks {
+	my $names = _sink_list();
+	return { map { $_ => 1 } @{$names} };
+}
+
+# The sink a null-sink module was loaded with. Modules are matched on this
+# rather than on a recorded id, and a sink that is any null module is not a
+# hardware output to hand the machine back to (the reception handset is one).
+sub _sink_name_in {
+	my ($argument) = @_;
+	return undef unless defined $argument && length $argument;
+	foreach my $token ( split /\s+/, $argument ) {
+		return $1 if $token =~ /\Asink_name=(.+)\z/;
+	}
+	return undef;
+}
+
+sub _module_from_short {
+	my ($text) = @_;
+	my @found;
+	foreach my $line ( split /\n/, defined $text ? $text : '' ) {
+		my @field = split /\t/, $line;
+		next unless @field >= 2;
+		my ($id, $name, $argument) = @field;
+		next unless defined $id && $id =~ /\A\d+\z/;
+		next unless defined $name && $name eq 'module-null-sink';
+		push @found, { id => $id + 0, name => $name, sink => _sink_name_in($argument) };
+	}
+	return \@found;
+}
+
+sub _module_from_long {
+	my ($text) = @_;
+	my @found;
+	my ($id, $name, $argument);
+	my $keep = sub {
+		return unless defined $id && defined $name && $name eq 'module-null-sink';
+		push @found, { id => $id + 0, name => $name, sink => _sink_name_in($argument) };
+	};
+	foreach my $line ( split /\n/, defined $text ? $text : '' ) {
+		if ( $line =~ /^Module #(\d+)/ ) {
+			$keep->();
+			($id, $name, $argument) = ($1, undef, undef);
+			next;
+		}
+		next unless defined $id;
+		$name     = $1 if $line =~ /^\s*Name:\s*(\S+)/;
+		$argument = $1 if $line =~ /^\s*Argument:\s*(.*?)\s*$/;
+	}
+	$keep->();
+	return \@found;
+}
+
+# Every null-sink module the server reports, short listing first and the long
+# listing as the fallback for an older tool. A tool that answers neither gives
+# an empty list, which simply means there is nothing to undo.
+sub _null_sink_modules {
+	my $short = JawnOS::Platform::Audio::run('pactl', 'list', 'short', 'modules');
+	my $found = _module_from_short($short);
+	return $found if ref $found eq 'ARRAY' && @{$found};
+	my $long = JawnOS::Platform::Audio::run('pactl', 'list', 'modules');
+	return _module_from_long($long);
+}
+
+# The output the mix replaced, when no record says which one it was: the first
+# real sink the server lists, excluding ours and every other null sink. A
+# reception handset's null sink is silent to play into, so it is not a
+# candidate; a monitor is a capture end, not an output a person can hear.
+sub _real_output {
+	my ($order, $sinks, $null) = @_;
+	$sinks ||= _sinks();
+	$null  ||= {};
+	foreach my $name ( @{ $order || _sink_list() } ) {
+		next unless defined $name && length $name;
+		next if $name eq $system_sink;
+		next if $null->{$name};
+		next if $sinks && !$sinks->{$name};
+		next if $name =~ /\.monitor\z/;
+		return $name;
+	}
+	return '';
 }
 
 sub _current_default {
@@ -941,15 +1036,99 @@ sub ensure {
 	};
 }
 
+# A removal with no record. The state file is the fast path, but losing it must
+# not strand the machine: the sink is still the default, nothing captures it, and
+# the hardware sink may still be held at unity. Find the module by the sink name
+# it was loaded with, hand the default back to a real output, carry the mix's own
+# level onto that output (the person's loudness was moved onto the mix), unmute,
+# and unload by id. Safe on a machine that has no null sink at all: it answers
+# `skipped` and touches nothing.
+sub _recover_without_state {
+	my ($state_dir) = @_;
+
+	# The card rule is independent of the Pulse shim, the same as the recorded
+	# path. Only a rule that is actually on disk is looked at: an absent one has
+	# nothing to undo, and a needless WirePlumber restart glitches every app.
+	my $card = { ok => 1, skipped => 1 };
+	my $rule_path = managed_card_path();
+	if ( defined $rule_path && -e $rule_path ) {
+		$card = _remove_managed_card($state_dir, { managed_card => { path => $rule_path } });
+	}
+
+	my $nothing = {
+		ok => 1, skipped => 1, error => '',
+		( $card->{'removed'} || $card->{'restored'} ? ( managed_card => $card ) : () ),
+	};
+	return $nothing unless available();
+
+	my $order   = _sink_list();
+	my $sinks   = { map { $_ => 1 } @{$order} };
+	my $modules = _null_sink_modules();
+	my ($module) = grep {
+		ref $_ eq 'HASH' && defined $_->{'sink'} && $_->{'sink'} eq $system_sink
+	} @{$modules};
+	return $nothing unless $module;
+	my %null = map {
+		ref $_ eq 'HASH' && defined $_->{'sink'} ? ( $_->{'sink'} => 1 ) : ()
+	} @{$modules};
+
+	# Read the mix's level while the sink is still here; it is the only copy of
+	# the loudness the person hears today.
+	my $volume = JawnOS::Platform::Audio::get_volume('output', $system_sink);
+
+	my $current  = _current_default();
+	my $target   = '';
+	my $restored = 0;
+	if ( $current eq $system_sink ) {
+		$target = _real_output($order, $sinks, \%null);
+		if ( length $target ) {
+			$restored = JawnOS::Platform::Audio::set_default('output', $target) ? 1 : 0;
+			my $after = _current_default();
+			$target = $after if length $after && $after ne $system_sink;
+		}
+	}
+	elsif ( length $current && $current ne $system_sink && $sinks->{$current} ) {
+		# Something already handed the default back; the level still goes there.
+		$target = $current;
+	}
+
+	my $level_restored = 0;
+	if ( length $target && $target ne $system_sink && $sinks->{$target} ) {
+		$level_restored = 1
+			if defined $volume
+			&& JawnOS::Platform::Audio::set_volume('output', $target, $volume);
+		# The mix may have been muted; the machine handed back must not be.
+		JawnOS::Platform::Audio::set_mute('output', $target, 0);
+	}
+
+	my $unloaded = _unload($module->{'id'});
+	if ( _sinks()->{$system_sink} ) {
+		return {
+			ok => 0, recovered => 1, restored => $restored, unloaded => $unloaded,
+			level_restored => $level_restored, managed_card => $card,
+			error => "the $system_sink sink is still loaded",
+		};
+	}
+
+	my $path = state_path($state_dir);
+	unlink $path if defined $path && -e $path;
+	return {
+		ok => 1, recovered => 1, restored => $restored, unloaded => $unloaded,
+		level_restored => $level_restored, managed_card => $card,
+		( defined $volume ? ( level => $volume ) : () ),
+		note => 'the system mix was found without its state file;'
+			. ' the default output, its level and the module are back',
+	};
+}
+
 # Put the previous default back and unload our sink. A state file with no sink
 # (the server restarted, or a crash happened between the two writes) still
-# restores the default and then goes away.
+# restores the default and then goes away. No state at all is recovered from the
+# server's own module list.
 sub remove {
 	my ($state_dir) = @_;
 	my $state = _read_state($state_dir);
-	unless ($state) {
-		return { ok => 1, skipped => 1, error => '' };
-	}
+	return _recover_without_state($state_dir) unless $state;
 
 	# The rule is independent of the Pulse shim: a machine whose server is down
 	# still gets its card back, and a person's file is never unlinked.

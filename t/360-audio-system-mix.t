@@ -12,6 +12,11 @@
 #            keeps that output at unity, and remove puts the level and mute
 #            back - after a failed unload and after a crash too. An output
 #            whose level cannot be read leaves both sinks alone and says why.
+#            A mix whose state file was wiped is still taken down: the module is
+#            found by the sink name it was loaded with, the default leaves
+#            jawn_system, the mix's own level is carried onto the real output
+#            and unmuted, and the module is unloaded by that id; no sink at all
+#            is a clean skip.
 
 use strict;
 use warnings;
@@ -148,6 +153,14 @@ if ($cmd eq 'list' && ($ARGV[1] // '') eq 'short' && ($ARGV[2] // '') eq 'sinks'
 	print read_file("$dir/sinks");
 	exit 0;
 }
+if ($cmd eq 'list' && ($ARGV[1] // '') eq 'short' && ($ARGV[2] // '') eq 'modules') {
+	print read_file("$dir/modules_short");
+	exit 0;
+}
+if ($all eq 'list modules') {
+	print read_file("$dir/modules_long");
+	exit 0;
+}
 if ($cmd eq 'get-default-sink') {
 	print read_file("$dir/default");
 	exit 0;
@@ -176,19 +189,27 @@ if ($cmd eq 'load-module') {
 	open(my $fh, '>>', "$dir/sinks") or exit 9;
 	print {$fh} "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n";
 	close $fh;
+	open(my $mfh, '>', "$dir/modules_short") or exit 9;
+	print {$mfh} "42\tmodule-null-sink\tsink_name=jawn_system\n";
+	close $mfh;
+	open(my $mlh, '>', "$dir/modules_long") or exit 9;
+	print {$mlh} "Module #42\n\tName: module-null-sink\n\tArgument: sink_name=jawn_system\n";
+	close $mlh;
 	print "42\n";
 	exit 0;
 }
 	if ($cmd eq 'unload-module') {
-	# A server that refuses the unload leaves the sink in place, so the
-	# caller can be seen restoring what it changed on a failed removal.
-	exit 1 if ($ENV{FAKE_PACTL_UNLOAD} || '') eq 'fail';
-	open(my $fh, '>', "$dir/sinks") or exit 9;
-	print {$fh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
-	close $fh;
-	sink_level('jawn_system', undef, undef, 1);
-	exit 0;
-}
+		# A server that refuses the unload leaves the sink in place, so the
+		# caller can be seen restoring what it changed on a failed removal.
+		exit 1 if ($ENV{FAKE_PACTL_UNLOAD} || '') eq 'fail';
+		write_text("$dir/modules_short", '');
+		write_text("$dir/modules_long", '');
+		open(my $fh, '>', "$dir/sinks") or exit 9;
+		print {$fh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+		close $fh;
+		sink_level('jawn_system', undef, undef, 1);
+		exit 0;
+	}
 if ($cmd eq 'get-sink-volume') {
 	if (($ENV{FAKE_PACTL_LEVEL} || '') eq 'unreadable') {
 		print "Failure: No such entity\n";
@@ -226,6 +247,13 @@ if ($cmd eq 'get-sink-mute') {
 	my $text = <$fh>;
 	close $fh;
 	return defined $text ? $text : '';
+}
+
+sub write_text {
+	my ($path, $text) = @_;
+	open(my $fh, '>', $path) or exit 9;
+	print {$fh} $text;
+	close $fh;
 }
 
 # One line per sink: `name volume mute`. A sink with no line is the server
@@ -276,6 +304,9 @@ chmod 0755, $systemctl or die "chmod $systemctl: $!";
 local $ENV{PATH} = "$bin:$ENV{PATH}";
 local $ENV{FAKE_PACTL_DIR} = $dir;
 local $ENV{JAWNOS_SYSTEMCTL} = $systemctl;
+# No test may look at the developer's real WirePlumber config: the no-state
+# recovery inspects our rule there and would unlink it.
+local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$dir/wireplumber";
 JawnOS::Platform::Audio::reset_backend();
 
 my $state_dir = "$dir/state";
@@ -456,6 +487,88 @@ is($twice->{skipped}, 1, 'and changes nothing');
 	write_levels('');
 }
 
+# --- a mix whose state file was wiped is still taken down -------------------
+# The boot wipe removed audio-system-mix.json while jawn_system stayed the
+# default with nothing capturing it. `manage=0` answered ok:1 and changed
+# nothing. The server's own module listing is the record now.
+{
+	reset_mix();
+	write_file("$dir/sinks", "0\tjawn_call_in\tmodule-null-sink\ts16le 2ch 48000Hz\n"
+		. "1\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "2\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/default", "jawn_system\n");
+	write_file("$dir/modules_short", "41\tmodule-null-sink\tsink_name=jawn_call_in\n"
+		. "42\tmodule-null-sink\tsink_name=jawn_system\n");
+	write_file("$dir/modules_long",
+		"Module #41\n\tName: module-null-sink\n\tArgument: sink_name=jawn_call_in\n"
+			. "Module #42\n\tName: module-null-sink\n\tArgument: sink_name=jawn_system\n");
+	write_levels("alsa_output.real 100 no\njawn_system 45 yes\n");
+	my $lost = tempdir(CLEANUP => 1);
+
+	my $off = JawnOS::Audio::SystemMix::remove($lost);
+	is($off->{ok}, 1, 'a mix with no state file is still removed');
+	is($off->{recovered}, 1, 'and says it was found without its record');
+	is($off->{restored}, 1, 'the default leaves the mix sink');
+	is(read_file("$dir/default"), "alsa_output.real\n",
+		'for the real output, not another null sink');
+	is($off->{unloaded}, 1, 'the module is unloaded by the id the server lists');
+	unlike(read_file("$dir/sinks"), qr/jawn_system/, 'and the sink is gone');
+	is($off->{level_restored}, 1, 'the loudness carries over');
+	is((level_of('alsa_output.real'))[0], 45, "the mix's own level, not the server default");
+	is((level_of('alsa_output.real'))[1], 'no', 'and it is unmuted');
+	like(read_file("$dir/pactl.log"), qr/unload-module 42/, 'the listed id is what is unloaded');
+	write_levels('');
+}
+
+# An older tool answers only the long listing; its id works the same way.
+{
+	reset_mix();
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/default", "jawn_system\n");
+	write_file("$dir/modules_long",
+		"Module #7\n\tName: module-null-sink\n"
+			. "\tArgument: sink_name=jawn_system sink_properties=device.description=System\n");
+	my $lost = tempdir(CLEANUP => 1);
+
+	my $off = JawnOS::Audio::SystemMix::remove($lost);
+	is($off->{ok}, 1, 'the long module listing is enough to find the sink');
+	like(read_file("$dir/pactl.log"), qr/unload-module 7/, 'and its id is used');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'the default is back on the real output');
+}
+
+# A mix that is not the default still has to go; the level lands on whatever
+# output the machine is using.
+{
+	reset_mix();
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/default", "alsa_output.real\n");
+	write_file("$dir/modules_short", "42\tmodule-null-sink\tsink_name=jawn_system\n");
+	write_levels("alsa_output.real 100 no\njawn_system 30 no\n");
+	my $lost = tempdir(CLEANUP => 1);
+
+	my $off = JawnOS::Audio::SystemMix::remove($lost);
+	is($off->{ok}, 1, 'a mix that is not the default is still unloaded');
+	is($off->{restored}, 0, 'the default needs no moving');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'and stays where it is');
+	is((level_of('alsa_output.real'))[0], 30, 'the level still lands on the real output');
+	write_levels('');
+}
+
+# No sink and no record: the machine is already what it should be.
+{
+	reset_mix();
+	my $nothing = tempdir(CLEANUP => 1);
+
+	my $off = JawnOS::Audio::SystemMix::remove($nothing);
+	is($off->{ok}, 1, 'no sink and no record is a quiet success');
+	is($off->{skipped}, 1, 'it is skipped');
+	ok(!exists $off->{recovered}, 'nothing was recovered');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'the default is untouched');
+	unlike(read_file("$dir/pactl.log"), qr/unload-module/, 'and nothing is unloaded');
+}
+
 # --- the default switch is verified, not trusted ---------------------------
 # The hardware run that found this: `pactl load-module` and
 # `pactl set-default-sink` raced, ensure answered ok, and the next run found
@@ -467,6 +580,8 @@ sub reset_mix {
 	write_file("$dir/pactl.log", '');
 	write_file("$dir/systemctl.log", '');
 	write_file("$dir/levels", '');
+	write_file("$dir/modules_short", '');
+	write_file("$dir/modules_long", '');
 	unlink "$dir/set_count";
 }
 

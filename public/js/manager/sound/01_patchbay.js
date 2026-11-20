@@ -301,7 +301,16 @@ function soundPatchManage(on) {
 		success: function(result) {
 			result = result || {};
 			var applied = result.applied;
-			soundPatchNote(applied && applied.error ? applied.error : '');
+			var mix = applied && applied.system_mix;
+			var note = '';
+			if (applied && applied.error) { note = applied.error; }
+			else if (mix && mix.error) { note = mix.error; }
+			else if (mix && mix.recovered) {
+				// The app died mid-mix and the wipe took the record; the switch still
+				// handed the machine back. Say so rather than pretend nothing happened.
+				note = jawnosT('The switch is off; the mix was still in place without its record, and the machine has its output back');
+			}
+			soundPatchNote(note);
 			soundPatchLoad();
 		},
 		error: function() { soundPatchNote(jawnosT('The switch could not be saved')); }

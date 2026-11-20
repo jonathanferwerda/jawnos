@@ -15,8 +15,11 @@
 #            mix replaced, captures the same monitor as ALSA, and a failed
 #            capture hands the machine back instead of leaving our sink default.
 #            An engine the supervisor did not start but can identify as this
-#            binary on this socket is asked to quit before a spawn; a process
-#            it cannot identify is left alone. With no saved plan the pair is
+#            binary on this socket is asked to quit before a spawn; one that
+#            ignores the quit (or cannot be reached because the boot wipe took
+#            its socket file) gets TERM and is spawned over; a process it
+#            cannot identify is left alone. A refused spawn is recorded and
+#            retried, never an exit. With no saved plan the pair is
 #            pipewire/default when a sound server answers, alsa/hw:1,0 when
 #            none does, and the choice is logged once. The plan defaults to
 #            the durable audio state dir, not the wiped ~/.president, and the
@@ -1804,10 +1807,12 @@ my %arg;
 for (my $i = 0; $i < @ARGV; $i++) {
 	$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
 }
+unlink $arg{'--socket'} if defined $arg{'--socket'} && -e $arg{'--socket'};
 my $listener = IO::Socket::UNIX->new(
 	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
 ) or exit 1;
 my $orphan = $ENV{'AUDIO_TEST_ORPHAN'} ? 1 : 0;
+my $ignore = $ENV{'AUDIO_TEST_IGNORE_QUIT'} ? 1 : 0;
 while (my $client = $listener->accept) {
 	$client->autoflush(1);
 	my $line = <$client>;
@@ -1816,6 +1821,7 @@ while (my $client = $listener->accept) {
 	if ($cmd eq 'quit') {
 		print {$client} "{\"ok\":true}\n";
 		close $client;
+		next if $ignore;    # the request arrived; this engine just will not go
 		last;
 	}
 	next if $orphan;    # no status answer: adoption cannot see it
@@ -1872,6 +1878,101 @@ ENGINE
 		qr/found engine \Q$orphan\E already serving \Q$sockpath\E but not as my child; asking it to quit/,
 		'and logs the engine it found');
 	like($text, qr/engine \Q$orphan\E quit/, 'and that the orphan left');
+}
+
+# --- an engine that ignores the quit gets TERM, and the spawn follows --------
+# The failure this covers: ./jawn's boot wipe deleted audio.sock while an engine
+# from the previous boot still held the listening end, so the quit request could
+# never arrive. The supervisor used to wait, refuse, and leave the machine with
+# an engine it could not reach and no supervisor of its own.
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	my $mark = "$dir/engine.pid";
+	local $ENV{AUDIO_TEST_ENGINE_MARK} = $mark;
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/stubborn-engine", <<'ENGINE');
+my $mark = $ENV{'AUDIO_TEST_ENGINE_MARK'} || '';
+open(my $fh, '>>', $mark) or exit 7;
+print {$fh} "$$\n";
+close $fh;
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
+use JSON::PP ();
+my %arg;
+for (my $i = 0; $i < @ARGV; $i++) {
+	$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
+}
+unlink $arg{'--socket'} if defined $arg{'--socket'} && -e $arg{'--socket'};
+my $listener = IO::Socket::UNIX->new(
+	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+) or exit 1;
+my $orphan = $ENV{'AUDIO_TEST_ORPHAN'} ? 1 : 0;
+while (my $client = $listener->accept) {
+	$client->autoflush(1);
+	my $line = <$client>;
+	my $obj = eval { JSON::PP->new->decode($line) };
+	my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+	if ($cmd eq 'quit') {
+		print {$client} "{\"ok\":true}\n";
+		close $client;
+		next;    # the quit arrived; this engine simply does not take it
+	}
+	next if $orphan;    # no status answer: adoption cannot see it
+	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"idle\",\"backend\":\"null\",\"device\":\"hw:1,0\"}\n";
+	close $client;
+}
+close $listener;
+ENGINE
+
+	my $sockpath = "$dir/stubborn.sock";
+	my $orphan = fork();
+	die "fork: $!" unless defined $orphan;
+	if (!$orphan) {
+		$ENV{'AUDIO_TEST_ORPHAN'} = 1;
+		exec $^X, $ENV{'JAWNOS_AUDIO_BINARY'}, '--serve', '--socket', $sockpath
+			or POSIX::_exit(127);
+	}
+	push @children, $orphan;
+	ok(wait_for(sub { -S $sockpath }, 5), 'the stubborn engine holds the socket');
+
+	# The boot wipe: the file goes, the listening end does not.
+	unlink $sockpath;
+	ok(!-S $sockpath, 'the socket file is wiped with the engine still running');
+
+	my $status = "$home/.president/audio.json";
+	my $log    = "$dir/supervisor.log";
+	my $sup = start_supervisor(
+		log  => $log,
+		args => ['--backend', 'null', '--device', 'hw:1,0', '--socket', $sockpath],
+	);
+
+	ok(wait_for(sub { reap_child($orphan) }, 25),
+		'an engine the socket cannot reach is sent TERM and leaves')
+		or diag('log: ' . read_text($log));
+	my $s = wait_for(sub {
+		my $data = read_status($status);
+		return 0 unless $data && defined $data->{'pid'};
+		return $data;
+	}, 15);
+	ok($s, 'and the supervisor then starts its own engine')
+		or diag('status: ' . read_text($status) . ' log: ' . read_text($log));
+	my $started = $s ? $s->{'pid'} : undef;
+	ok($started && wait_for(sub {
+		my @pids = grep { /\A[0-9]+\z/ } split /\n/, read_text($mark);
+		return scalar( grep { $_ == $started } @pids );
+	}, 5), 'the child in the status file is the engine that ran')
+		or diag('status pid: ' . ($started // '(none)') . ' mark: ' . read_text($mark));
+	push @children, $started if $started;
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the supervisor that took the ladder stops cleanly');
+	my $text = read_text($log);
+	like($text, qr/engine \Q$orphan\E did not quit over the socket; sending it TERM/,
+		'and the log shows the ladder, not a refusal');
+	like($text, qr/engine \Q$orphan\E is gone/, 'with the engine gone');
+	unlike($text, qr/not starting a second one/, 'and no refusal to spawn');
 }
 
 # --- a process this supervisor cannot identify is left alone -----------------
@@ -1932,5 +2033,16 @@ like($audio_src, qr/ensure_engine_fresh\(\);[\s\S]*?unless \(-f \$binary/,
 	'before the missing-binary check, so the first run can build it');
 like($audio_src, qr/return if defined \$given\{'binary'\}[\s\S]*?JAWNOS_AUDIO_BINARY/,
 	'a hand-run supervisor never rebuilds a binary it was given');
+
+# An orphan the socket cannot reach is taken down by the same ladder as our own
+# child, and only after its identity is read again; a spawn it refuses is a
+# retry with a reason, never the end of the supervisor.
+like($audio_src, qr/sub terminate_orphan[\s\S]*?kill 'TERM', \$pid[\s\S]*?kill 'KILL', \$pid/,
+	'an identified orphan gets TERM, then KILL');
+like($audio_src, qr/sub still_orphan[\s\S]*?runs_binary[\s\S]*?serves_socket/,
+	'after its identity is read again');
+like($audio_src,
+	qr/\$last_exit = \$spawn_refused[\s\S]*?write_status\(\);[\s\S]*?\$next_start = time \+ \$MISSING_RETRY/,
+	'a refused spawn is recorded and retried, not an exit');
 
 done_testing();

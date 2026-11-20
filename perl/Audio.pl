@@ -28,9 +28,13 @@
 #   orphan   a socket that does not answer can still have an older or wedged
 #            engine behind it. Before spawning, /proc/<pid>/cmdline is scanned
 #            for this binary with `--serve` on this socket. Such a process is
-#            asked to quit over the socket and waited for, and no second engine
-#            is started until it goes. A process that is not this binary on
-#            this socket is never signalled.
+#            asked to quit over the socket and waited for; when it does not go
+#            (the boot wipe removes the socket file it would be reached on) the
+#            same TERM-then-KILL ladder that ends this supervisor's own child
+#            applies to it, and only then is an engine started. A process that
+#            is not this binary on this socket is never signalled, and no
+#            second engine is ever started. A refused spawn never ends the
+#            supervisor: it records why and retries.
 #   lock     an flock on ~/.president/audio.lock. A second supervisor says one
 #            sentence and exits 1 instead of starting a second engine on the
 #            same socket. flock is held by the kernel for the life of the open
@@ -159,9 +163,9 @@ On start it adopts a live engine left on the socket by a killed supervisor
 (a `status` command over that socket must answer with "ok": true) instead of
 starting a second one, and starts its own only after the adopted engine stops
 answering. An engine that is alive but does not answer is identified by its
-command line and asked to quit before a new one starts. A socket file with
-nothing behind it is removed and replaced. A clean stop asks an adopted engine
-to quit, so no engine is left behind.
+command line, asked to quit, and sent TERM then KILL if it will not. A socket
+file with nothing behind it is removed and replaced. A clean stop asks an
+adopted engine to quit, so no engine is left behind.
 
 Options:
   --backend NAME   audio backend: null, alsa, pipewire or jack (default alsa)
@@ -424,6 +428,9 @@ my $active_system_mode    = undef;
 # The output a PipeWire engine must play through instead of `default`, which
 # would be our own sink once the mix has moved it.
 my $active_playback_device = undef;
+# Why the last spawn attempt started no engine, for the status file and the
+# retry below. Never a reason to stop supervising.
+my $spawn_refused;
 
 sub write_status {
 	my $data = {
@@ -545,9 +552,65 @@ sub orphan_engines {
 	return @found;
 }
 
+# A zombie is gone for our purpose: it holds no socket and never will. Its
+# parent reaps it, and some parents are slow (a container's PID 1 may never). A
+# pid with no readable /proc entry keeps the alive answer - only a state this
+# supervisor can actually read is proof that the engine left.
+sub pid_dead {
+	my ($pid) = @_;
+	return 1 unless pid_alive($pid);
+	open(my $fh, '<', "/proc/$pid/stat") or return 0;
+	my $line = <$fh>;
+	close $fh;
+	return 0 unless defined $line;
+	my $close = rindex($line, ')');
+	return 0 if $close < 0;
+	return substr($line, $close + 2, 1) eq 'Z' ? 1 : 0;
+}
+
+# The identity is read again immediately before each signal, so a pid the kernel
+# reused between the /proc scan and the kill is never hit for its number.
+sub still_orphan {
+	my ($pid, $socket, $binary) = @_;
+	return 0 if pid_dead($pid);
+	my $args = read_cmdline($pid) or return 0;
+	return 0 unless @$args;
+	return 0 unless runs_binary($pid, $args, $binary);
+	return 0 unless serves_socket($args, $socket);
+	return 1;
+}
+
+# TERM, a grace, then KILL - the same ladder `stop_supervisor` uses on its own
+# child. Returns 1 once the engine is gone (or no longer the process we
+# identified, which means the one we wanted is gone) and 0 while it still is.
+sub terminate_orphan {
+	my ($pid, $socket, $binary) = @_;
+	return 1 if pid_dead($pid);
+	kill 'TERM', $pid if still_orphan($pid, $socket, $binary);
+	my $deadline = time + $STOP_GRACE;
+	while (time < $deadline) {
+		return 1 if pid_dead($pid);
+		sleep 0.05;
+	}
+	return 1 if pid_dead($pid);
+	return 1 unless still_orphan($pid, $socket, $binary);
+	kill 'KILL', $pid;
+	$deadline = time + $STOP_GRACE;
+	while (time < $deadline) {
+		return 1 if pid_dead($pid);
+		sleep 0.05;
+	}
+	return pid_dead($pid) ? 1 : 0;
+}
+
 # Ask an engine we did not start to quit before replacing the socket under it.
-# A clean quit unlinks the socket and exits; only then is a spawn safe. A
-# process we cannot identify as this binary on this socket is never signalled.
+# A clean quit unlinks the socket and exits; only then is a spawn safe. The
+# request needs the socket file to exist, and the boot wipe deletes it while an
+# engine from the previous run keeps the listening end - so the wait below is
+# often known to fail before it starts. An engine positively identified from
+# /proc (this binary, `--serve`, this socket) then gets the ladder: TERM, a
+# grace, KILL. A process that is not this binary on this socket is never
+# signalled, and no second engine is ever started.
 sub clear_orphans {
 	my ($socket, $binary) = @_;
 	my @orphans = orphan_engines($socket, $binary);
@@ -558,17 +621,32 @@ sub clear_orphans {
 	my $deadline = time + $ORPHAN_GRACE;
 	my @alive = @orphans;
 	while (time < $deadline) {
-		@alive = grep { pid_alive($_) } @orphans;
+		@alive = grep { !pid_dead($_) } @orphans;
 		last unless @alive;
 		sleep 0.05;
 	}
-	@alive = grep { pid_alive($_) } @orphans;
-	if (@alive) {
-		print STDERR "audio supervisor: engine " . join(' ', @alive)
-			. " on $socket did not quit; not starting a second one\n";
+	@alive = grep { !pid_dead($_) } @orphans;
+	if (!@alive) {
+		print "audio supervisor: engine " . join(' ', @orphans) . " quit\n";
+		return 1;
+	}
+
+	# It could not be reached over the socket (or ignored the request). Asking a
+	# supervisor to give up here is what left a machine with an engine it could
+	# not see, a sink nobody captured and no supervisor of its own: the next
+	# start found the same orphan and refused the same way.
+	print STDERR "audio supervisor: engine " . join(' ', @alive)
+		. " did not quit over the socket; sending it TERM\n";
+	my @stuck;
+	for my $pid (@alive) {
+		push @stuck, $pid unless terminate_orphan($pid, $socket, $binary);
+	}
+	if (@stuck) {
+		print STDERR "audio supervisor: engine " . join(' ', @stuck)
+			. " is still alive after TERM and KILL; not starting a second one\n";
 		return 0;
 	}
-	print "audio supervisor: engine " . join(' ', @orphans) . " quit\n";
+	print "audio supervisor: engine " . join(' ', @alive) . " is gone\n";
 	return 1;
 }
 
@@ -682,11 +760,19 @@ sub ensure_system_mix {
 sub remove_system_mix {
 	return unless load_system_mix();
 	my $state = JawnOS::Audio::SystemMix::status($audio_dir);
-	return unless defined $active_system_device || ($state && $state->{active});
+	# A sink with no state record is a mix a wipe or a crash left behind; the
+	# module can find and undo it by its own listing. `present` is what a
+	# supervisor that lost the record still knows.
+	return unless defined $active_system_device
+		|| ($state && ($state->{active} || $state->{present}));
 	my $answer = JawnOS::Audio::SystemMix::remove($audio_dir);
 	$active_system_device   = undef;
 	$active_system_mode     = undef;
 	$active_playback_device = undef;
+	if ($answer && $answer->{recovered}) {
+		print "audio supervisor: the system mix was found without its state record;"
+			. " handed the machine back\n";
+	}
 	if ($answer && !$answer->{ok} && $answer->{error}) {
 		print STDERR "audio supervisor: system mix: " . $answer->{error} . "\n";
 	}
@@ -831,9 +917,14 @@ sub spawn_choice {
 sub spawn_engine {
 	# An engine left by an older binary (or a wedged one) may hold this socket
 	# without answering `status`; the adopt path cannot see it, and starting
-	# ours would put two engines on the machine. Ask it to quit first and wait:
-	# never spawn a second engine this supervisor cannot see.
-	return undef unless clear_orphans($socket, $binary);
+	# ours would put two engines on the machine. Ask it to quit first, and take
+	# it down the TERM/KILL ladder if it will not: never spawn a second engine
+	# this supervisor cannot see, and never signal one it cannot identify.
+	unless (clear_orphans($socket, $binary)) {
+		$spawn_refused = "an engine this supervisor did not start is still on $socket";
+		return undef;
+	}
+	$spawn_refused = undef;
 	my $chosen  = plan_config();
 	my $manage  = $chosen ? $chosen->{'manage'} : 0;
 	my $choice  = spawn_choice();
@@ -857,6 +948,7 @@ sub spawn_engine {
 	my $pid = fork();
 	unless (defined $pid) {
 		warn "audio supervisor: cannot fork: $!\n";
+		$spawn_refused = 'cannot fork';
 		# The sink this spawn may have just made has no child to capture it.
 		remove_system_mix();
 		return undef;
@@ -1114,7 +1206,16 @@ while (!$stop) {
 			print "audio supervisor: started engine as $child_pid\n";
 		}
 		else {
-			# fork failed; treat it like a missing binary rather than looping.
+			# A spawn the machine refused (an engine that would not leave,
+			# or a fork that failed) is not a reason to stop supervising:
+			# the next retry is what recovers it. Say why the house is
+			# silent in the status file instead, so --check and Sound can
+			# explain it rather than showing a bare null pid.
+			$last_exit = $spawn_refused // 'the engine could not be started';
+			$child_pid = undef;
+			$child_started = undef;
+			write_status();
+			print "audio supervisor: $last_exit; retrying in ${MISSING_RETRY}s\n";
 			$next_start = time + $MISSING_RETRY;
 		}
 	}
