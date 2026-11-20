@@ -24,12 +24,19 @@ use warnings;
 
 use File::Path qw(make_path);
 use JSON::PP ();
+use Time::HiRes qw(sleep);
 
 use JawnOS::Platform::Audio ();
 
 our $system_sink   = 'jawn_system';
 our $system_source = 'jawn_system.monitor';
 our $state_name    = 'audio-system-mix.json';
+
+# The receptionist's virtual handset publishes the screened call here
+# (lib/JawnOS/Sco/Mixer.pm). A plan source of kind `handset` taps it; the
+# supervisor names it on every start and the engine binds it only when the plan
+# asks, so an ordinary machine starts no extra capture.
+our $handset_source = 'jawn_call_in.monitor';
 
 # Where the state lives. The caller passes the supervisor's state directory
 # (`~/.president`); the domain derives the same one from the plan path. A test
@@ -96,6 +103,16 @@ sub _sinks {
 }
 
 sub _current_default {
+	# The system mix only exists when `pactl` does, and the Pulse shim is what OS
+	# apps follow. Ask it directly first: on PipeWire the generic backend probe
+	# can see WirePlumber's view, which lags the shim's default by a moment and
+	# made `ensure` believe a switch that had not happened.
+	my $pactl = JawnOS::Platform::Audio::which('pactl');
+	if ($pactl) {
+		my $out = JawnOS::Platform::Audio::run('pactl', 'get-default-sink');
+		my ($id) = defined $out ? $out =~ /^\s*(\S+)/ : ();
+		return $id if defined $id && length $id;
+	}
 	my $name = JawnOS::Platform::Audio::default('output');
 	$name = '' unless defined $name && !ref $name;
 	# Older PulseAudio has no get-default-sink verb; its info line carries the
@@ -117,7 +134,9 @@ sub _unload {
 
 # Create the sink if it is not there, remember the default it replaced, and
 # make it the default. Repeating this while it is already active changes
-# nothing.
+# nothing. The switch is verified rather than trusted: `set-default-sink` can
+# return before the server has moved the default, and reporting success then
+# would strand a later run on a sink that is not the output.
 sub ensure {
 	my ($state_dir) = @_;
 	unless (available()) {
@@ -127,9 +146,11 @@ sub ensure {
 		};
 	}
 
-	my $state   = _read_state($state_dir) || {};
-	my $sinks   = _sinks();
-	my $created = 0;
+	my $state     = _read_state($state_dir);
+	my $had_state = $state ? 1 : 0;
+	$state ||= {};
+	my $sinks     = _sinks();
+	my $created   = 0;
 	my $module_id = $state->{'module_id'};
 
 	unless ( $sinks->{$system_sink} ) {
@@ -161,13 +182,41 @@ sub ensure {
 	my $wrote = _write_state($state_dir, $doc);
 	return $wrote unless $wrote->{ok};
 
-	if ( _current_default() ne $system_sink ) {
-		unless ( JawnOS::Platform::Audio::set_default('output', $system_sink) ) {
-			_unload($module_id) if $created;
+	my $current  = _current_default();
+	my $switched = 1;
+	if ( $current ne $system_sink ) {
+		$switched = JawnOS::Platform::Audio::set_default('output', $system_sink) ? 1 : 0;
+		$current  = _current_default();
+	}
+
+	# The hardware run that found this: the sink was loaded and
+	# `set-default-sink` answered 0, but `get-default-sink` still named the
+	# built-in card, so the next run could not move it. Give the server a
+	# moment to settle and ask for the switch once more.
+	if ( !$switched || $current ne $system_sink ) {
+		sleep 0.15;
+		$switched = JawnOS::Platform::Audio::set_default('output', $system_sink) ? 1 : 0;
+		$current  = _current_default();
+	}
+
+	if ( !$switched || $current ne $system_sink ) {
+		# A sink this call created has no owner once we give up on it. An
+		# earlier state still records a loaded sink and its module id, so it is
+		# kept for `remove` to clean later rather than forgetting the id.
+		if ($created) {
+			_unload($module_id);
 			my $path = state_path($state_dir);
-			unlink $path if $created && defined $path && -e $path;
-			return { ok => 0, error => "cannot make $system_sink the default output" };
+			unlink $path if defined $path && -e $path;
 		}
+		elsif ( !$had_state ) {
+			my $path = state_path($state_dir);
+			unlink $path if defined $path && -e $path;
+		}
+		my $still = length $current ? $current : 'another output';
+		return {
+			ok    => 0,
+			error => "$system_sink did not become the default output; the machine is still on $still",
+		};
 	}
 
 	return {

@@ -150,6 +150,8 @@ Options:
   --machine NAME   which machine this supervisor owns (default the host name)
   --system-device NAME  capture the machine's own mix from this source instead
                    of the supervisor-made jawn_system.monitor
+  --handset-device NAME  the reception mixer's call source a `handset` plan
+                   source taps (default jawn_call_in.monitor)
   --status         print ~/.president/audio.json and exit
   --check          exit 0 while the supervisor and its engine are alive,
                    1 otherwise (an adopted engine counts while it answers)
@@ -158,15 +160,16 @@ Options:
 Config, highest precedence first: these flags, then JAWNOS_AUDIO_SOCKET,
 JAWNOS_AUDIO_BINARY, JAWNOS_AUDIO_BACKEND, JAWNOS_AUDIO_DEVICE,
 JAWNOS_AUDIO_PERIOD, JAWNOS_AUDIO_BUFFER, JAWNOS_AUDIO_PLAN,
-JAWNOS_AUDIO_MACHINE and JAWNOS_AUDIO_SYSTEM_DEVICE, then the defaults above.
+JAWNOS_AUDIO_MACHINE, JAWNOS_AUDIO_SYSTEM_DEVICE and
+JAWNOS_AUDIO_HANDSET_DEVICE, then the defaults above.
 
 The status file is written while the supervisor runs and removed on a clean
 stop. Its keys are: pid (the engine child, null while it is down or while an
 engine is adopted), adopted (true while an engine found at start is answering),
 adopted_since (when that adoption began), supervisor_pid, socket, binary,
-backend, device, period, buffer, plan, machine, started_at,
-engine_started_at, restarts, last_exit, consecutive_restarts, backoff and
-updated_at.
+backend, device, period, buffer, plan, machine, system_device,
+handset_device, started_at, engine_started_at, restarts, last_exit,
+consecutive_restarts, backoff and updated_at.
 USAGE
 }
 
@@ -244,12 +247,12 @@ while (@argv) {
 	}
 	elsif ($arg eq '--status') { $mode = 'status' }
 	elsif ($arg eq '--check')  { $mode = 'check' }
-	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine|system-device)$/) {
+	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine|system-device|handset-device)$/) {
 		my $name = $1;
 		fatal("--$name needs a value") unless @argv;
 		$given{$name} = shift @argv;
 	}
-	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine|system-device)=(.*)$/s) {
+	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine|system-device|handset-device)=(.*)$/s) {
 		$given{$1} = $2;
 	}
 	else {
@@ -266,6 +269,7 @@ my $buffer  = pick($given{'buffer'},  'JAWNOS_AUDIO_BUFFER',  '256');
 my $plan    = pick($given{'plan'},    'JAWNOS_AUDIO_PLAN',    "$state_dir/audio-plan.json");
 my $machine = pick($given{'machine'}, 'JAWNOS_AUDIO_MACHINE', host_name());
 my $system_device = pick($given{'system-device'}, 'JAWNOS_AUDIO_SYSTEM_DEVICE', '');
+my $handset_device = pick($given{'handset-device'}, 'JAWNOS_AUDIO_HANDSET_DEVICE', '');
 
 fatal('--socket wants a path') unless length $socket;
 fatal('--binary wants a path') unless length $binary;
@@ -279,6 +283,22 @@ fatal('--plan wants a path') unless length $plan;
 fatal('--machine wants a name') unless length $machine;
 fatal('--system-device wants a source name')
 	if length $system_device && $system_device !~ /\A[A-Za-z0-9_.:,-]+\z/;
+fatal('--handset-device wants a source name')
+	if length $handset_device && $handset_device !~ /\A[A-Za-z0-9_.:,-]+\z/;
+
+# A handset source is opt-in in the plan, and the engine already defaults the
+# source to `jawn_call_in.monitor`. The supervisor records the effective value
+# but passes the flag only when a person named one: an older staged binary that
+# predates the flag must keep starting, and the engine still binds the default.
+my $handset_given = ( defined $given{'handset-device'} && length $given{'handset-device'} )
+	|| ( defined $ENV{'JAWNOS_AUDIO_HANDSET_DEVICE'} && length $ENV{'JAWNOS_AUDIO_HANDSET_DEVICE'} )
+	? 1 : 0;
+unless ( length $handset_device ) {
+	no warnings 'once';    # the constant is read from the module that owns it
+	$handset_device = load_system_mix()
+		? ( $JawnOS::Audio::SystemMix::handset_source // '' ) : '';
+	$handset_device = 'jawn_call_in.monitor' unless length $handset_device;
+}
 
 # --- status and check ---------------------------------------------------------
 
@@ -376,6 +396,7 @@ sub write_status {
 		plan                 => $plan,
 		machine              => $machine,
 		system_device        => $active_system_device,
+		handset_device       => $handset_device,
 		started_at           => int($supervisor_start),
 		engine_started_at    => defined $child_started ? int($child_started) : undef,
 		restarts             => $restarts,
@@ -544,6 +565,8 @@ sub spawn_engine {
 		);
 		push @args, ('--system-device', $system_source)
 			if defined $system_source && length $system_source;
+		push @args, ('--handset-device', $handset_device)
+			if $handset_given && defined $handset_device && length $handset_device;
 		exec { $binary } @args or do {
 				print STDERR "audio supervisor: cannot run $binary: $!\n";
 				POSIX::_exit(127);

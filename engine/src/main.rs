@@ -70,6 +70,10 @@ jawn-audio — the JawnOS audio engine
   --out FILE.wav  where to write the take (required)
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
+  --system-device NAME
+                  mix the machine's own audio from this PulseAudio/PipeWire
+                  source into the monitor output only, never the take
+                  (the manager uses jawn_system.monitor)
   --period N      block/period size in frames (default 64)
   --buffer N      buffer size in frames (default 256)
   --seconds S     how long to record, in seconds (default 5)
@@ -164,6 +168,10 @@ jawn-audio — the JawnOS audio engine
 --listen options:
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
+  --system-device NAME
+                  mix the machine's own audio from this PulseAudio/PipeWire
+                  source into the monitored output (the manager uses
+                  jawn_system.monitor)
   --channel N     which input to monitor (default 0; the instrument is 1)
   --gain N        channel trim, linear (default 1.0)
   --pan N         channel pan, -1 left .. 1 right (default 0, centre)
@@ -193,6 +201,9 @@ jawn-audio — the JawnOS audio engine
   --system-device NAME
                   capture the machine's own mix from this PulseAudio/PipeWire
                   source (the manager uses jawn_system.monitor)
+  --handset-device NAME
+                  capture a plan's `handset` source from this PulseAudio/
+                  PipeWire source (default jawn_call_in.monitor)
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64; --frames is an alias)
@@ -204,9 +215,11 @@ jawn-audio — the JawnOS audio engine
   --json          one JSON line instead of prose
 
   The plan is docs/studio-audio-roadmap.md §8. A source is an input channel,
-  a bus is a stereo sum, a sink is the output pair, and a route is an edge
-  with gain and pan. A node this machine cannot bind (a peer, a phone, a zone)
-  is reported in \"silent\" and contributes nothing; a route delay, a gain or
+  the machine's own mix (a `device` source), or the reception handset's
+  screened call (a `handset` source); a bus is a stereo sum, a sink is the
+  output pair, and a route is an edge with gain and pan. A node this machine
+  cannot bind (a peer, a phone, a zone) is reported in \"silent\" and
+  contributes nothing; a route delay, a gain or
   pan outside its range, an unknown endpoint and a bus loop are refused. The
   graph is compiled before the device opens: the block loop allocates nothing.
 
@@ -228,6 +241,9 @@ jawn-audio — the JawnOS audio engine
   --system-device NAME
                   capture the machine's own mix from this PulseAudio/PipeWire
                   source (the manager uses jawn_system.monitor)
+  --handset-device NAME
+                  capture a plan's `handset` source from this PulseAudio/
+                  PipeWire source (default jawn_call_in.monitor)
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64)
@@ -314,6 +330,11 @@ struct Options {
     system_device: Option<String>,
     /// Whether `--system-device` was given on the command line.
     system_device_given: bool,
+    /// The PulseAudio/PipeWire source a plan's `handset` source is captured
+    /// from. `None` means the caller asked for no handset capture at all.
+    handset_device: Option<String>,
+    /// Whether `--handset-device` was given on the command line.
+    handset_device_given: bool,
     start_at: u64,
     gain: f32,
     pan: f32,
@@ -386,6 +407,8 @@ fn run() -> Result<ExitCode, String> {
         machine_given: false,
         system_device: None,
         system_device_given: false,
+        handset_device: None,
+        handset_device_given: false,
         start_at: 0,
         gain: 1.0,
         pan: 0.0,
@@ -535,6 +558,11 @@ fn run() -> Result<ExitCode, String> {
                 options.system_device = Some(value(&mut args, "--system-device")?);
                 options.system_device_given = true;
             }
+            "--handset-device" => {
+                let name = value(&mut args, "--handset-device")?;
+                options.handset_device = (!name.is_empty()).then_some(name);
+                options.handset_device_given = true;
+            }
             "--start-at" => {
                 let raw = value(&mut args, "--start-at")?;
                 options.start_at = raw
@@ -607,6 +635,14 @@ fn run() -> Result<ExitCode, String> {
                 options.system_device = Some(device);
             }
         }
+    }
+    if !options.handset_device_given {
+        options.handset_device = Some(
+            std::env::var("JAWNOS_AUDIO_HANDSET_DEVICE")
+                .ok()
+                .filter(|device| !device.is_empty())
+                .unwrap_or_else(|| "jawn_call_in.monitor".to_string()),
+        );
     }
 
     // `--record` together with `--play` is an overdub, not two modes: the
@@ -693,8 +729,18 @@ fn run() -> Result<ExitCode, String> {
     if options.machine_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
         return Err("--machine applies only to --patch and --serve".to_string());
     }
-    if options.system_device_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
-        return Err("--system-device applies only to --patch and --serve".to_string());
+    if !matches!(
+        options.mode,
+        Mode::Record | Mode::Listen | Mode::Patch | Mode::Serve
+    ) && options.system_device_given
+    {
+        return Err(
+            "--system-device applies only to --record, --listen, --patch and --serve"
+                .to_string(),
+        );
+    }
+    if options.handset_device_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
+        return Err("--handset-device applies only to --patch and --serve".to_string());
     }
 
     match options.mode {
@@ -1006,6 +1052,7 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
         plan,
         machine: options.machine.clone(),
         system_device: options.system_device.clone(),
+        handset_device: options.handset_device.clone(),
     });
     match outcome {
         Ok(code) => Ok(code),
@@ -1864,8 +1911,25 @@ fn listen_alsa(
     total: Option<u64>,
     stop: &AtomicBool,
 ) -> Result<listen::ListenRun, String> {
+    // Only the exclusive ALSA backend needs the system mix: PipeWire is
+    // already a shared sink, and capturing its own output would loop.
+    let system_device = if options.backend == BackendKind::Alsa {
+        options.system_device.as_deref()
+    } else {
+        None
+    };
+    let (mut capture, mut system) = match system_device {
+        Some(source) => match crate::system_capture::SystemCapture::start(source, options.rate) {
+            Ok((capture, consumer)) => (Some(capture), Some(consumer)),
+            Err(error) => {
+                eprintln!("jawn-audio: system mix: {error}");
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
     let sink = CliListenSink { strip, channels: 0 };
-    jawn_audio::alsa_device::run_listen(
+    let run = jawn_audio::alsa_device::run_listen_with_system(
         device,
         options.rate,
         options.frames,
@@ -1874,7 +1938,12 @@ fn listen_alsa(
         total,
         stop,
         sink,
-    )
+        system.as_mut(),
+    );
+    if let Some(capture) = capture.as_mut() {
+        capture.stop();
+    }
+    run
 }
 
 #[cfg(not(feature = "alsa"))]
@@ -1938,6 +2007,10 @@ fn run_patch(options: &Options) -> Result<ExitCode, String> {
             ))
         }
     };
+    // The reception mixer's screened call is a second capture, started only
+    // when the plan declares a `handset` source. A sink this machine does not
+    // offer is reported silent; the rest of the patch still runs.
+    let handset = attach_patch_handset(options, &mut patchbay);
     // The summary is taken before the ALSA arm moves the graph to the device
     // loop, and it is what the report says either way.
     let summary = patchbay.summary().clone();
@@ -1969,6 +2042,12 @@ fn run_patch(options: &Options) -> Result<ExitCode, String> {
         }
         BackendKind::Jack => Err(listen_support_message()),
     };
+
+    // Stop the handset capture with the patch; the consumer moved into the
+    // graph, so the process handle is all that is left here.
+    if let Some(mut capture) = handset {
+        capture.stop();
+    }
 
     match outcome {
         Ok(run) => {
@@ -2036,6 +2115,42 @@ fn patch_failure(backend: &str, device: &str, error: &str, json: bool) -> ExitCo
         eprintln!("jawn-audio: patch: {error}");
     }
     ExitCode::from(1)
+}
+
+/// Start the reception mixer's screened-call capture when the plan declares a
+/// `handset` source. No handset in the plan means no extra `parec`. A sink the
+/// server does not offer (or a capture that cannot start) is a silent node,
+/// not a failed patch.
+fn attach_patch_handset(
+    options: &Options,
+    patchbay: &mut patchbay::Patchbay,
+) -> Option<crate::system_capture::SystemCapture> {
+    if !patchbay.wants_handset() {
+        return None;
+    }
+    if !matches!(options.backend, BackendKind::Alsa | BackendKind::PipeWire) {
+        patchbay.silence_handset();
+        return None;
+    }
+    let Some(source) = options.handset_device.as_deref() else {
+        patchbay.silence_handset();
+        return None;
+    };
+    if crate::system_capture::source_exists(source) == Some(false) {
+        patchbay.silence_handset();
+        return None;
+    }
+    match crate::system_capture::SystemCapture::start(source, options.rate) {
+        Ok((capture, consumer)) => {
+            patchbay.set_handset(consumer);
+            Some(capture)
+        }
+        Err(error) => {
+            eprintln!("jawn-audio: handset: {error}");
+            patchbay.silence_handset();
+            None
+        }
+    }
 }
 
 #[cfg(feature = "alsa")]
@@ -2114,6 +2229,17 @@ impl listen::ListenSink for CliListenSink<'_> {
 
     fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
         self.strip.process_i16(input, self.channels, output)?;
+        Ok(())
+    }
+
+    fn block_with_system(
+        &mut self,
+        input: &[i16],
+        system: &[f32],
+        output: &mut [i16],
+    ) -> Result<(), String> {
+        let frames = self.strip.process_i16(input, self.channels, output)?;
+        listen::add_system_to_i16(output, system, frames);
         Ok(())
     }
 }
@@ -2225,8 +2351,25 @@ fn run_monitor(
     tracks: Vec<PlayTrack>,
     start_at: u64,
     stop: Arc<AtomicBool>,
+    system_device: Option<String>,
 ) -> Result<(u64, usize), String> {
     let mut playback = Playback::new(tracks, start_at)?;
+    // The machine's own mix goes to the monitor only, never to the take's
+    // capture or writers. The capture lives exactly as long as this thread, so
+    // a finished monitor leaves no `parec` behind.
+    let _system = match system_device {
+        Some(source) => match crate::system_capture::SystemCapture::start(&source, rate) {
+            Ok((capture, consumer)) => {
+                playback = playback.with_system_input(consumer);
+                Some(capture)
+            }
+            Err(error) => {
+                eprintln!("jawn-audio: system mix: {error}");
+                None
+            }
+        },
+        None => None,
+    };
     match backend {
         BackendKind::Null => {
             playback.prepare(rate, period)?;
@@ -2635,6 +2778,13 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
             let period = options.frames;
             let buffer = options.buffer;
             let start_at = monitor_start(options.start_at, alignment.samples);
+            // Only the exclusive ALSA backend owns the card; on a shared
+            // PipeWire backend the system mix is already in the output.
+            let system_device = if options.backend == BackendKind::Alsa {
+                options.system_device.clone()
+            } else {
+                None
+            };
             thread::Builder::new()
                 .name("jawn-audio-monitor".to_string())
                 .spawn(move || {
@@ -2647,6 +2797,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
                         monitor_tracks,
                         start_at,
                         stop,
+                        system_device,
                     )
                 })
         };

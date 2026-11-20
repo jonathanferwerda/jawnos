@@ -751,7 +751,7 @@ ENGINE
 	local $ENV{AUDIO_TEST_ARGS} = $args_log;
 
 	my $sup = start_supervisor(
-		args => ['--socket', "$dir/audio.sock"],
+		args => ['--socket', "$dir/audio.sock", '--handset-device', 'call.monitor'],
 		log  => "$dir/supervisor.log",
 	);
 	my $saw = wait_for(sub {
@@ -761,6 +761,8 @@ ENGINE
 	}, 10);
 	ok($saw, 'the supervisor opens the picker device, not its own default')
 		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
+	like(read_text($args_log), qr/--handset-device call\.monitor/,
+		'a handset device flag reaches the engine');
 
 	# The supervisor writes status once before it spawns (with its own defaults)
 	# and again after, so wait for the device rather than the first file.
@@ -771,6 +773,7 @@ ENGINE
 	}, 10);
 	ok($s, 'the status names the picker device') or diag('status: ' . read_text("$home/.president/audio.json"));
 	is($s->{'backend'}, 'null', 'and the picker backend') if $s;
+	is($s->{'handset_device'}, 'call.monitor', 'and the handset device') if $s;
 	like($s->{'pid'} // '', qr/\A[1-9][0-9]*\z/, 'with the engine pid') if $s;
 
 	my $code = stop_supervisor($sup);
@@ -890,6 +893,8 @@ ENGINE
 	}, 10);
 	ok($saw, 'the engine is started to capture the system mix')
 		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
+	unlike(read_text($args_log), qr/--handset-device/,
+		'the default handset source needs no flag; the engine already knows it');
 
 	my $s = wait_for(sub {
 		my $got = read_status("$home/.president/audio.json");
@@ -897,6 +902,7 @@ ENGINE
 		return ($got->{'system_device'} // '') eq 'jawn_system.monitor' ? $got : 0;
 	}, 10);
 	ok($s, 'and the status names the source') or diag('status: ' . read_text("$home/.president/audio.json"));
+	is($s->{'handset_device'}, 'jawn_call_in.monitor', 'the status names the handset source too') if $s;
 	is(read_text($default), "jawn_system\n", 'the machine default is the virtual sink while managed');
 	like(read_text($pactl_log), qr/load-module module-null-sink sink_name=jawn_system/,
 		'the sink was created');

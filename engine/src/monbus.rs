@@ -49,6 +49,7 @@ impl MonitorBus {
     }
 }
 
+#[derive(Debug)]
 struct Inner {
     /// Interleaved stereo samples; `frame * 2` is the left one.
     samples: Box<[AtomicU32]>,
@@ -62,6 +63,7 @@ struct Inner {
 }
 
 /// The capture side. It never blocks: a full ring is a short return value.
+#[derive(Debug)]
 pub struct Producer {
     inner: Arc<Inner>,
 }
@@ -106,6 +108,7 @@ impl Producer {
 
 /// The monitor side. It reads whole stereo frames and zero-fills the rest of a
 /// requested buffer, so a late capture is a dropout rather than a stale tail.
+#[derive(Debug)]
 pub struct Consumer {
     inner: Arc<Inner>,
 }

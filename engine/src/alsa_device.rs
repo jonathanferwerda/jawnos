@@ -517,8 +517,42 @@ pub fn run_listen_with_system<S: crate::listen::ListenSink>(
         .io_i16()
         .map_err(|error| format!("{device}: playback stream: {error}"))?;
 
-    // Capture starts first: playback auto-starts on its first write, so the
-    // first block has somewhere to go.
+    // Prime the playback with one full buffer of silence and start it before
+    // the capture loop. A playback auto-starts on its first write and drains
+    // while the loop blocks on the next capture read, so a single write per
+    // read leaves it with no cushion and it underruns nearly every block (the
+    // hardware run on `table` counted 4,178 in ten seconds). Capture and
+    // playback share the card's clock, so the lead absorbs the read's jitter
+    // without drifting away. The silence is monitor-only, never part of a take.
+    let lead = crate::listen::monitor_prefill_frames(playback.buffer, frames);
+    let silence = vec![0i16; lead * 2];
+    let mut primed = 0usize;
+    while primed < lead {
+        match playback_io.writei(&silence[primed * 2..]) {
+            Ok(0) => break,
+            Ok(count) => primed += count,
+            Err(error) => {
+                let message = format!("{error}");
+                match playback.pcm.try_recover(error, true) {
+                    Ok(()) => {}
+                    Err(_) => {
+                        return Err(format!("{device}: prime playback: {message}"))
+                    }
+                }
+            }
+        }
+    }
+    // A full buffer may already have crossed ALSA's start threshold, in which
+    // case the stream is running and `start` is a no-op. Either way the lead
+    // is queued and the clock is moving.
+    match playback.pcm.start() {
+        Ok(()) => {}
+        Err(_) if playback.pcm.state() == State::Running => {}
+        Err(error) => return Err(format!("{device}: start playback: {error}")),
+    }
+
+    // Capture starts after the lead is queued, so the first read has somewhere
+    // to go and the playback clock is already running.
     capture
         .pcm
         .start()

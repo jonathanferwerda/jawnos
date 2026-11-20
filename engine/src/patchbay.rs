@@ -11,9 +11,10 @@
 //! Three rules keep the compile honest:
 //!
 //! * **A node the machine cannot bind is silent, not fatal.** A plan may name a
-//!   phone, a peer machine, the reception handset or a zone. On this machine an
-//!   `input` source is a capture channel, a `device` source is the machine's own
-//!   system mix (Music, video, notifications, calls), and an
+//!   phone, a peer machine or a zone. On this machine an `input` source is a
+//!   capture channel, a `device` source is the machine's own system mix (Music,
+//!   video, notifications, calls), a `handset` source is the reception mixer's
+//!   screened-call monitor (`jawn_call_in.monitor`), and an
 //!   `interface`/`speakers` sink is the local output; the rest are reported in
 //!   [`PatchSummary::silent`] and their routes contribute nothing. A plan is one
 //!   document for the whole house; applying it on one machine must not fail
@@ -44,13 +45,14 @@ use std::sync::Arc;
 use jawn_audio::graph::{mix_mono_into_stereo, Strip};
 use jawn_audio::listen::ListenSink;
 use jawn_audio::mixer::{ParamName, ParamQueue};
+use jawn_audio::monbus::Consumer;
 use jawn_audio::{to_i16, Device, NullDevice};
 
 use crate::socket::{get, Object, Value};
 
-/// The source kinds a saved plan may name. `input` is a capture channel and
-/// `device` is this machine's system mix; the rest are declared but silent
-/// here.
+/// The source kinds a saved plan may name. `input` is a capture channel,
+/// `device` is this machine's system mix, and `handset` is the reception
+/// mixer's screened call; `player` and `peer` are declared but silent here.
 const SOURCE_KINDS: &[&str] = &["input", "player", "peer", "handset", "device"];
 
 /// The sink kinds a saved plan may name. `interface` and `speakers` are the
@@ -70,12 +72,15 @@ enum SourceRoute {
 
 /// One declared source. `channel` is `None` when the machine cannot bind it;
 /// `system` marks a `device` source, which reads the machine's own mix from a
-/// second capture rather than a channel of the interface.
+/// second capture rather than a channel of the interface; `handset` marks a
+/// `handset` source, which reads the reception mixer's screened-call monitor
+/// (`jawn_call_in.monitor`) from a capture of its own.
 #[derive(Debug)]
 struct Source {
     id: String,
     channel: Option<usize>,
     system: bool,
+    handset: bool,
     routes: Vec<SourceRoute>,
 }
 
@@ -110,6 +115,11 @@ pub struct PatchSummary {
     /// when the machine's own mix is added to the output at unity because the
     /// plan does not route it.
     pub system: &'static str,
+    /// `capturing` when a declared `handset` source is bound to the call
+    /// monitor, `pending` before the capture is attached, `unavailable` when
+    /// the sink is absent (the source is then also named in `silent`), and
+    /// `off` when the plan declares no `handset` source.
+    pub handset: &'static str,
 }
 
 impl PatchSummary {
@@ -122,7 +132,7 @@ impl PatchSummary {
             .collect::<Vec<String>>()
             .join(",");
         format!(
-            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"system\":\"{}\"",
+            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"system\":\"{}\",\"handset\":\"{}\"",
             self.sources,
             self.buses,
             self.sinks,
@@ -130,7 +140,8 @@ impl PatchSummary {
             self.bound_sources,
             self.bound_sinks,
             silent,
-            self.system
+            self.system,
+            self.handset
         )
     }
 }
@@ -164,6 +175,11 @@ pub struct Patchbay {
     /// Interleaved stereo f32 system mix, one block. Empty when the block did
     /// not carry one; the same length as `input`'s frames otherwise.
     system: Vec<f32>,
+    /// The reverse side of the reception mixer's `jawn_call_in.monitor` capture.
+    /// `None` when the plan declares no `handset` source.
+    handset: Option<Consumer>,
+    /// Interleaved stereo f32 handset mix, one block, popped once per render.
+    handset_block: Vec<f32>,
     /// One mono source, reused for every source.
     mono: Vec<f32>,
     /// One stereo block per bus.
@@ -222,20 +238,25 @@ impl Patchbay {
             });
             // A `device` source is this machine's ordinary audio, captured from
             // the virtual sink's monitor. It has no interface channel, so the
-            // channel field is not consulted.
+            // channel field is not consulted. A `handset` source is the
+            // reception mixer's screened call, captured from `jawn_call_in`'s
+            // monitor the same way and bound on this machine unless the plan
+            // places it elsewhere.
             let system = kind == "device" && on_this_machine;
+            let handset = kind == "handset" && on_this_machine;
             let reachable =
                 kind == "input" && on_this_machine && channel < config_channels;
-            if !reachable && !system {
-                // A plan saved for a wider interface (or a peer/phone/handset,
-                // or a route delegated elsewhere) is a declared node this
-                // machine cannot reach, not a broken plan.
+            if !reachable && !system && !handset {
+                // A plan saved for a wider interface (or a peer/phone, or a
+                // route delegated elsewhere) is a declared node this machine
+                // cannot reach, not a broken plan.
                 silent.push(id.clone());
             }
             sources.push(Source {
                 id,
                 channel: reachable.then_some(channel),
                 system,
+                handset,
                 routes: Vec::new(),
             });
         }
@@ -357,7 +378,10 @@ impl Patchbay {
 
             let executable = match (from_ref, to_ref) {
                 (NodeRef::Source(source), NodeRef::Bus(bus)) => {
-                    if sources[source].channel.is_some() || sources[source].system {
+                    if sources[source].channel.is_some()
+                        || sources[source].system
+                        || sources[source].handset
+                    {
                         sources[source].routes.push(SourceRoute::Bus {
                             index: bus,
                             strip: route_index,
@@ -368,7 +392,9 @@ impl Patchbay {
                     }
                 }
                 (NodeRef::Source(source), NodeRef::Sink(sink)) => {
-                    if (sources[source].channel.is_some() || sources[source].system)
+                    if (sources[source].channel.is_some()
+                        || sources[source].system
+                        || sources[source].handset)
                         && sinks[sink].bound
                     {
                         sources[source].routes.push(SourceRoute::Sink {
@@ -419,11 +445,18 @@ impl Patchbay {
             routes: route_count,
             bound_sources: sources
                 .iter()
-                .filter(|source| source.channel.is_some() || source.system)
+                .filter(|source| {
+                    source.channel.is_some() || source.system || source.handset
+                })
                 .count(),
             bound_sinks: sinks.iter().filter(|sink| sink.bound).count(),
             silent,
             system: if system_routed { "routed" } else { "fallback" },
+            handset: if sources.iter().any(|source| source.handset) {
+                "pending"
+            } else {
+                "off"
+            },
         };
 
         let bus_count = buses.len();
@@ -441,6 +474,8 @@ impl Patchbay {
             system_routed,
             input: Vec::new(),
             system: Vec::new(),
+            handset: None,
+            handset_block: Vec::new(),
             mono: Vec::new(),
             buses: (0..bus_count).map(|_| Vec::new()).collect(),
             sink_buffers: (0..sink_count).map(|_| Vec::new()).collect(),
@@ -450,6 +485,51 @@ impl Patchbay {
 
     pub fn summary(&self) -> &PatchSummary {
         &self.summary
+    }
+
+    /// Whether the plan declares a `handset` source on this machine. The
+    /// caller starts the second capture only when this is true, so a plan
+    /// without a handset never runs an extra `parec`.
+    pub fn wants_handset(&self) -> bool {
+        self.sources.iter().any(|source| source.handset)
+    }
+
+    /// Attach the reception mixer's screened-call capture. The ring is popped
+    /// once per block and mixed like any other stereo source.
+    pub fn set_handset(&mut self, consumer: Consumer) {
+        // A caller may attach the capture after `prepared` (the socket attaches
+        // before its worker starts, but the tests and a future caller need not).
+        if self.handset_block.len() < self.period.saturating_mul(2) {
+            self.handset_block = vec![0.0; self.period.saturating_mul(2)];
+        }
+        self.handset = Some(consumer);
+        self.summary.handset = "capturing";
+    }
+
+    /// The call sink is absent (or its capture could not start). A declared
+    /// handset node becomes `silent` rather than an error, and the rest of the
+    /// patch is untouched.
+    pub fn silence_handset(&mut self) {
+        let mut ids: Vec<String> = Vec::new();
+        for source in &mut self.sources {
+            if source.handset {
+                source.handset = false;
+                source.routes.clear();
+                ids.push(source.id.clone());
+            }
+        }
+        for id in ids {
+            if !self.summary.silent.iter().any(|name| name == &id) {
+                self.summary.silent.push(id);
+            }
+        }
+        self.summary.handset = "unavailable";
+        self.summary.bound_sources = self
+            .sources
+            .iter()
+            .filter(|source| source.channel.is_some() || source.system)
+            .count();
+        self.handset = None;
     }
 
     /// The shared control ring the socket's `param` pushes to. The block
@@ -511,6 +591,12 @@ impl Patchbay {
         }
         self.input = vec![0.0; period.saturating_mul(channels)];
         self.system = vec![0.0; period.saturating_mul(2)];
+        // Allocated whether or not a ring is attached yet: the socket can attach
+        // the call capture after the graph is prepared, and the callback must
+        // never grow a buffer.
+        if self.handset.is_some() {
+            self.handset_block = vec![0.0; period.saturating_mul(2)];
+        }
         self.mono = vec![0.0; period];
         for bus in &mut self.buses {
             *bus = vec![0.0; period.saturating_mul(2)];
@@ -681,6 +767,12 @@ impl Patchbay {
         // a second block accumulates onto the first.
         self.mix[..stereo].fill(0.0);
 
+        // The handset ring is read once per block, before the sources, the same
+        // way the take's live monitor pops its ring. A short ring is silence.
+        if let Some(consumer) = &self.handset {
+            consumer.pop(&mut self.handset_block[..stereo]);
+        }
+
         // Sources first: each one is read once, then summed into every place
         // it was routed to. An `input` source is one capture channel; a
         // `device` source is the machine's stereo system mix.
@@ -739,6 +831,31 @@ impl Patchbay {
                             mix_stereo_into_stereo(
                                 &mut self.sink_buffers[*index][..stereo],
                                 &self.system[..stereo],
+                                strip,
+                            );
+                        }
+                    }
+                }
+            } else if source.handset {
+                for route in &source.routes {
+                    match route {
+                        SourceRoute::Bus { index, strip } => {
+                            let Some(strip) = &self.strips[*strip] else {
+                                continue;
+                            };
+                            mix_stereo_into_stereo(
+                                &mut self.buses[*index][..stereo],
+                                &self.handset_block[..stereo],
+                                strip,
+                            );
+                        }
+                        SourceRoute::Sink { index, strip } => {
+                            let Some(strip) = &self.strips[*strip] else {
+                                continue;
+                            };
+                            mix_stereo_into_stereo(
+                                &mut self.sink_buffers[*index][..stereo],
+                                &self.handset_block[..stereo],
                                 strip,
                             );
                         }
@@ -1539,6 +1656,105 @@ mod tests {
         for frame in output.chunks(2) {
             assert!((frame[0] - 16_384).abs() <= 1, "{frame:?}");
             assert!((frame[1] + 16_384).abs() <= 1, "{frame:?}");
+        }
+    }
+
+    // --- the reception handset -------------------------------------------------
+
+    #[test]
+    fn a_plan_without_a_handset_asks_for_no_second_capture() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"gtr","kind":"input","channel":0}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"gtr","to":"out"}]
+            }"#,
+        );
+        assert!(!patchbay.wants_handset());
+        assert_eq!(patchbay.summary().handset, "off");
+    }
+
+    #[test]
+    fn a_handset_source_is_bound_and_mixed_like_a_stereo_source() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"call","kind":"handset"}],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[
+                    {"from":"call","to":"house","gain":0.5,"pan":0},
+                    {"from":"house","to":"out"}
+                ]
+            }"#,
+        );
+        assert!(patchbay.wants_handset());
+        assert_eq!(patchbay.summary().bound_sources, 1);
+        assert!(patchbay.summary().silent.is_empty());
+        assert_eq!(patchbay.summary().handset, "pending");
+
+        let (producer, consumer) = jawn_audio::monbus::MonitorBus::new(4096);
+        producer.push(&[0.5f32, -0.25, 0.5, -0.25, 0.5, -0.25, 0.5, -0.25]);
+        patchbay.set_handset(consumer);
+        assert_eq!(patchbay.summary().handset, "capturing");
+
+        let input = [0.0f32; 8];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+        for frame in output.chunks(2) {
+            assert!((frame[0] - 0.25).abs() < 1e-6, "{frame:?}");
+            assert!((frame[1] + 0.125).abs() < 1e-6, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn a_handset_source_on_another_machine_is_silent() {
+        let patchbay = bay_for(
+            r#"{
+                "sources":[{"id":"call","kind":"handset","machine":"table"}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"call","to":"out"}]
+            }"#,
+            "laptop",
+        );
+        assert!(!patchbay.wants_handset());
+        assert_eq!(patchbay.summary().bound_sources, 0);
+        assert!(patchbay.summary().silent.contains(&"call".to_string()));
+        assert_eq!(patchbay.summary().handset, "off");
+    }
+
+    #[test]
+    fn an_absent_call_sink_is_silent_and_the_rest_of_the_patch_still_runs() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[
+                    {"id":"call","kind":"handset"},
+                    {"id":"gtr","kind":"input","channel":0}
+                ],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[
+                    {"from":"call","to":"out"},
+                    {"from":"gtr","to":"out"}
+                ]
+            }"#,
+        );
+        assert!(patchbay.wants_handset());
+        // The sink is not there: the caller reports it silent rather than
+        // failing the patch.
+        patchbay.silence_handset();
+        assert_eq!(patchbay.summary().handset, "unavailable");
+        assert!(patchbay.summary().silent.contains(&"call".to_string()));
+        assert_eq!(patchbay.summary().bound_sources, 1, "the guitar still binds");
+
+        let input = [0.5f32, 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 0.0];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+        let expected = 0.5f32 / std::f32::consts::SQRT_2;
+        for frame in output.chunks(2) {
+            assert!((frame[0] - expected).abs() < 1e-5, "{frame:?}");
+            assert!((frame[1] - expected).abs() < 1e-5, "{frame:?}");
         }
     }
 }

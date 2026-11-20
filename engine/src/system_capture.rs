@@ -158,6 +158,33 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Whether `device` is a source the sound server currently offers. `None`
+/// means the question cannot be asked here (no `pactl`, or it failed), and the
+/// caller starts the capture anyway rather than refusing a source it cannot
+/// check. A `handset` source treats `Some(false)` as silent, not an error.
+pub fn source_exists(device: &str) -> Option<bool> {
+    if !jawn_audio::backends::command_exists("pactl") {
+        return None;
+    }
+    let output = Command::new("pactl")
+        .arg("list")
+        .arg("short")
+        .arg("sources")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(lists_source(&String::from_utf8_lossy(&output.stdout), device))
+}
+
+/// One `pactl list short sources` line is `index<TAB>name<TAB>driver<TAB>…`.
+fn lists_source(listing: &str, device: &str) -> bool {
+    listing
+        .lines()
+        .any(|line| line.split('\t').nth(1) == Some(device))
+}
+
 fn spawn_parec(device: &str, rate: u32) -> Result<Child, String> {
     Command::new("parec")
         .arg(format!("--device={device}"))
@@ -206,6 +233,14 @@ mod tests {
         assert_eq!(consumer.pop(&mut out), 1);
         assert!((out[0] - 0.5).abs() < 1e-6, "{out:?}");
         assert!((out[1] + 0.5).abs() < 1e-6, "{out:?}");
+    }
+
+    #[test]
+    fn a_short_source_listing_names_the_sink_monitor() {
+        let listing = "47\tjawn_call_in.monitor\tPipeWire\ts16le 2ch 48000Hz\n48\tjawn_system.monitor\tPipeWire\ts16le 2ch 48000Hz\n";
+        assert!(lists_source(listing, "jawn_call_in.monitor"));
+        assert!(!lists_source(listing, "jawn_call_in"));
+        assert!(!lists_source(listing, "jawn_call_out.monitor"));
     }
 
     #[test]

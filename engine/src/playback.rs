@@ -169,6 +169,10 @@ pub struct Playback {
     voices: Vec<Vec<f32>>,
     /// The take's live input, when this playback is also monitoring it.
     live: Option<LiveInput>,
+    /// The machine's ordinary audio, added to the monitor output only. It is
+    /// never part of a take: the capture loop writes the take from its own
+    /// [`Mixer`], not from this playback.
+    system: Option<SystemInput>,
 }
 
 /// The monitoring ring's read side and the gain the socket can move mid-take.
@@ -177,6 +181,14 @@ struct LiveInput {
     /// `f32` bits of the live trim, clamped to `0..=4` by the control path.
     gain: Arc<AtomicU32>,
     /// One stereo block, popped and trimmed at the top of a render.
+    block: Vec<f32>,
+}
+
+/// The machine's own mix, captured from a virtual sink's monitor. The monitor
+/// output only; the take's WAV never sees it.
+struct SystemInput {
+    consumer: Consumer,
+    /// One stereo block, popped at the top of a render.
     block: Vec<f32>,
 }
 
@@ -249,6 +261,7 @@ impl Playback {
             position: 0,
             voices: Vec::new(),
             live: None,
+            system: None,
         })
     }
 
@@ -274,6 +287,7 @@ impl Playback {
                 gain,
                 block: Vec::new(),
             }),
+            system: None,
         }
     }
 
@@ -283,6 +297,17 @@ impl Playback {
         self.live = Some(LiveInput {
             consumer,
             gain,
+            block: Vec::new(),
+        });
+        self
+    }
+
+    /// Attach the machine's own mix to the monitor output. It is added after
+    /// the master chain at unity, exactly like the patchbay's `device`
+    /// fallback, and never reaches a take's capture or disk writer.
+    pub fn with_system_input(mut self, consumer: Consumer) -> Self {
+        self.system = Some(SystemInput {
+            consumer,
             block: Vec::new(),
         });
         self
@@ -343,6 +368,9 @@ impl Playback {
         self.voices = vec![vec![0.0; period]; self.tracks.len()];
         if let Some(live) = &mut self.live {
             live.block = vec![0.0; period * 2];
+        }
+        if let Some(system) = &mut self.system {
+            system.block = vec![0.0; period * 2];
         }
         Ok(())
     }
@@ -425,6 +453,7 @@ impl Playback {
                 mixer,
                 voices,
                 live,
+                system,
                 ..
             } = self;
             let live_block = match live.as_mut() {
@@ -449,6 +478,16 @@ impl Playback {
             mixer
                 .mix_with_live(out, |index| &voices[index][..frames], live_block)
                 .map_err(|error| format!("playback: {error}"))?;
+
+            // The machine's own mix is monitor-only, added after the master
+            // chain at unity. A short ring is silence for the part it misses.
+            if let Some(system) = system.as_mut() {
+                let samples = frames * 2;
+                system.consumer.pop(&mut system.block[..samples]);
+                for (target, sample) in out[..samples].iter_mut().zip(&system.block[..samples]) {
+                    *target += sample;
+                }
+            }
         }
         self.position += frames as u64;
         Ok(())
@@ -746,5 +785,52 @@ mod tests {
         assert!((out[1] - 0.25).abs() < 1e-6, "{out:?}");
         assert!((out[4] - 0.25).abs() < 1e-6, "{out:?}");
         assert!((out[5] - 0.25).abs() < 1e-6, "{out:?}");
+    }
+
+    #[test]
+    fn the_monitor_carries_the_system_ring_but_the_take_mix_does_not() {
+        // The take path is the capture's `Mixer`; the monitor path is this
+        // playback. The same live block feeds both, and only the monitor sees
+        // the machine's own mix.
+        let (live_producer, live_consumer) = crate::monbus::MonitorBus::new(4096);
+        live_producer.push(&[0.5f32; 8]);
+        let (system_producer, system_consumer) = crate::monbus::MonitorBus::new(4096);
+        system_producer.push(&[0.25f32; 8]);
+
+        let mut playback = Playback::live(48_000, 4, live_consumer, live_gain(1.0))
+            .with_system_input(system_consumer);
+        playback.prepare(48_000, 4).expect("prepare");
+        let mut out = vec![0.0f32; 8];
+        playback.render(&mut out).expect("render");
+        for sample in &out {
+            assert!((sample - 0.75).abs() < 1e-6, "monitor: {out:?}");
+        }
+
+        // What the disk writer receives: the same capture block through the
+        // take's strip, with no ring in the path at all.
+        let mut take = Mixer::new(&[0], &["ch1"]);
+        take.prepare(48_000, 4);
+        let mut recorded = vec![0.0f32; 8];
+        take.process(0, &[0.5f32; 4], &mut recorded)
+            .expect("take block");
+        for sample in &recorded {
+            // The take's centre strip is equal-power, so the live input alone
+            // yields 0.5 / sqrt(2); the system ring is not in this path.
+            let expected = 0.5 / 2f32.sqrt();
+            assert!((sample - expected).abs() < 1e-6, "take: {recorded:?}");
+        }
+    }
+
+    #[test]
+    fn a_monitor_without_a_system_ring_is_unchanged() {
+        let (producer, consumer) = crate::monbus::MonitorBus::new(4096);
+        producer.push(&[0.5f32; 8]);
+        let mut playback = Playback::live(48_000, 4, consumer, live_gain(1.0));
+        playback.prepare(48_000, 4).expect("prepare");
+        let mut out = vec![0.0f32; 8];
+        playback.render(&mut out).expect("render");
+        for sample in &out {
+            assert!((sample - 0.5).abs() < 1e-6, "{out:?}");
+        }
     }
 }

@@ -478,6 +478,14 @@ it; a state file beside the plan lets the supervisor do the same after a crash. 
 pactl/PipeWire tooling, or on the shared PipeWire backend, keeps its ordinary output and needs none
 of this.
 
+Two source kinds carry the outside world into the plan. A `handset` source is the screened call —
+the reception mixer's `jawn_call_in` — so a call the receptionist answers routes like any other
+source; a `device` source is a channel on the interface the engine owns. While the engine owns the
+card, ordinary operating-system and app audio — Music, a video, a notification, and audio received
+from another machine — is carried through the system mix and the plan's `device` source. During a
+take or Listen that system mix is monitored, never written into the take. The switch remains the
+way out: off restores the output that was the default before the sink was made.
+
 ---
 
 ## 10. The protocol, in outline

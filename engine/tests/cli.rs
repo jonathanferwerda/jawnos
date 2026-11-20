@@ -348,6 +348,44 @@ fn record_null_writes_a_stereo_48k_take_and_its_contract() {
 }
 
 #[test]
+fn a_system_device_never_reaches_a_take() {
+    // The monitor may carry the machine's own mix, but the take's WAV is the
+    // capture through its strip. A requested system ring must not change a
+    // single byte of it.
+    let baseline = TempTake::new("no-system");
+    let requested = TempTake::new("with-system");
+    for (take, system) in [(&baseline, None), (&requested, Some("jawn_system.monitor"))] {
+        let mut args = vec![
+            "--record",
+            "--backend",
+            "null",
+            "--seconds",
+            "0.1",
+            "--period",
+            "64",
+            "--tone",
+            "440",
+            "--out",
+            take.text(),
+            "--json",
+        ];
+        if let Some(source) = system {
+            args.push("--system-device");
+            args.push(source);
+        }
+        let out = run(&args);
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let without = fs::read(&baseline.path).expect("read the plain take");
+    let with = fs::read(&requested.path).expect("read the system-device take");
+    assert_eq!(with, without, "a system ring changed the recorded WAV");
+}
+
+#[test]
 fn record_writes_the_last_partial_block_exactly() {
     // 0.1 s is 4800 frames: 37 full 128-frame blocks and a 64-frame tail.
     let take = TempTake::new("partial");

@@ -80,6 +80,20 @@ if ($cmd eq 'get-default-sink') {
 	exit 0;
 }
 if ($cmd eq 'set-default-sink') {
+	# A server can accept the switch and not move the default yet. `once`
+	# ignores the first request and honours the second; `never` ignores all of
+	# them. The count file lets the test see how many attempts were made.
+	my $count_file = "$dir/set_count";
+	my $count = read_file($count_file);
+	$count =~ s/\s+//g;
+	$count = 0 unless $count =~ /\A\d+\z/;
+	$count++;
+	open(my $cfh, '>', $count_file) or exit 9;
+	print {$cfh} "$count\n";
+	close $cfh;
+	my $mode = $ENV{FAKE_PACTL_SET} || '';
+	exit 0 if $mode eq 'never';
+	exit 0 if $mode eq 'once' && $count == 1;
 	open(my $fh, '>', "$dir/default") or exit 9;
 	print {$fh} $ARGV[1], "\n";
 	close $fh;
@@ -167,6 +181,53 @@ is($twice->{skipped}, 1, 'and changes nothing');
 	my $stale = JawnOS::Audio::SystemMix::remove($state_dir);
 	is($stale->{ok}, 1, 'a crash remnant is removed');
 	is(read_file("$dir/default"), "alsa_output.real\n", 'the machine is handed back');
+}
+
+# --- the default switch is verified, not trusted ---------------------------
+# The hardware run that found this: `pactl load-module` and
+# `pactl set-default-sink` raced, ensure answered ok, and the next run found
+# the built-in card still the default. The fake ignores the first switch, so a
+# run that always succeeds can only pass by asking again.
+sub reset_mix {
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n");
+	write_file("$dir/default", "alsa_output.real\n");
+	write_file("$dir/pactl.log", '');
+	unlink "$dir/set_count";
+}
+sub set_attempts {
+	my $count = () = read_file("$dir/pactl.log") =~ /set-default-sink jawn_system/g;
+	return $count;
+}
+
+{
+	reset_mix();
+	local $ENV{FAKE_PACTL_SET} = 'once';
+	my $race_state = tempdir(CLEANUP => 1);
+
+	my $on = JawnOS::Audio::SystemMix::ensure($race_state);
+	is($on->{ok}, 1, 'ensure succeeds when the server honours the retried switch');
+	is(read_file("$dir/default"), "jawn_system\n", 'the sink is the default after the retry');
+	is(set_attempts(), 2, 'it asked for the switch twice rather than trusting the first');
+	is($on->{source}, 'jawn_system.monitor', 'the engine source is still the sink monitor');
+	ok(-s "$race_state/audio-system-mix.json", 'and the state file is written');
+
+	my $off = JawnOS::Audio::SystemMix::remove($race_state);
+	is($off->{ok}, 1, 'the sink can still be removed after the retry');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'and the previous default comes back');
+}
+
+{
+	reset_mix();
+	local $ENV{FAKE_PACTL_SET} = 'never';
+	my $race_state = tempdir(CLEANUP => 1);
+
+	my $on = JawnOS::Audio::SystemMix::ensure($race_state);
+	is($on->{ok}, 0, 'ensure refuses success when the default never moves');
+	like($on->{error}, qr/default output/, 'and says the switch did not take in one sentence');
+	is(set_attempts(), 2, 'it retried once and then gave up');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'the machine keeps the output it had');
+	unlike(read_file("$dir/sinks"), qr/jawn_system/, 'the sink this call created is unloaded');
+	ok(!-e "$race_state/audio-system-mix.json", 'and no state is left to strand');
 }
 
 done_testing();

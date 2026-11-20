@@ -300,6 +300,28 @@ impl ListenReport {
     }
 }
 
+/// The lead a duplex monitor primes before its first capture read: one full
+/// playback buffer, and never less than one period. A playback auto-starts on
+/// its first write and drains while the loop blocks on the next capture read,
+/// so a single write per read gives it no cushion and it underruns almost every
+/// block. One buffer of silence absorbs the capture read's jitter; capture and
+/// playback share the card's clock, so the lead does not drift away.
+pub fn monitor_prefill_frames(buffer: usize, period: usize) -> usize {
+    buffer.max(period).max(1)
+}
+
+/// Add the machine's system mix to an already-rendered stereo i16 block. The
+/// listen strip's own input is the capture; the system mix is the machine's
+/// ordinary audio and stays at unity, exactly as the patchbay's fallback does.
+/// A short ring is silence for the part it does not carry.
+pub fn add_system_to_i16(output: &mut [i16], system: &[f32], frames: usize) {
+    let samples = frames.saturating_mul(2).min(output.len());
+    let carried = system.len().min(samples);
+    for (target, sample) in output[..carried].iter_mut().zip(&system[..carried]) {
+        *target = target.saturating_add(crate::to_i16(*sample));
+    }
+}
+
 /// What a hardware listen loop hands its blocks to. The ALSA module owns the
 /// streams; this trait keeps it free of the strip's types, exactly as
 /// [`crate::alsa_device::CaptureSink`] does for a take.
@@ -501,6 +523,33 @@ mod tests {
         let run = run_null(&mut strip, 48_000, 64, 2, None, None, &stop, |_| {})
             .expect("null listen");
         assert_eq!(run.frames, 0);
+    }
+
+    #[test]
+    fn a_listen_output_carries_the_system_mix_at_unity() {
+        // The strip renders 0.25; the system ring adds -0.25. The monitor
+        // hears the sum; an absent ring leaves the strip's own block untouched.
+        let mut out = vec![crate::to_i16(0.25f32); 4];
+        let system = [0.25f32, -0.25, 0.25, -0.25, 0.25, -0.25];
+        add_system_to_i16(&mut out, &system, 4);
+        assert_eq!(out[0], crate::to_i16(0.5));
+        assert_eq!(out[1], crate::to_i16(0.0));
+        assert_eq!(out[2], crate::to_i16(0.5));
+        assert_eq!(out[3], crate::to_i16(0.0));
+
+        let mut untouched = vec![1234i16; 4];
+        add_system_to_i16(&mut untouched, &[], 2);
+        assert_eq!(untouched, vec![1234i16; 4], "an absent ring is silence");
+    }
+
+    #[test]
+    fn a_duplex_monitor_primes_at_least_one_full_playback_buffer() {
+        // The 64/256 shape on the table: a 256-frame lead, four periods deep.
+        assert_eq!(monitor_prefill_frames(256, 64), 256);
+        // A buffer smaller than the period (unusual, but granted) still primes
+        // one whole period rather than nothing.
+        assert_eq!(monitor_prefill_frames(48, 64), 64);
+        assert_eq!(monitor_prefill_frames(0, 0), 1);
     }
 
     #[test]

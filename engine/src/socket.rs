@@ -114,6 +114,10 @@ pub(crate) struct Config {
     /// the old behaviour: the patch plays only what the plan routes from the
     /// interface.
     pub system_device: Option<String>,
+    /// The PulseAudio/PipeWire source a plan's `handset` source is captured
+    /// from (`jawn_call_in.monitor` by default). `None` starts no capture and
+    /// reports a declared handset as silent.
+    pub handset_device: Option<String>,
 }
 
 /// `--socket`, else `$JAWNOS_AUDIO_SOCKET`, else `$HOME/.president/audio.sock`.
@@ -152,6 +156,44 @@ pub(crate) fn default_plan_path(flag: Option<&str>) -> Option<PathBuf> {
             Some(PathBuf::from(home).join(".president/audio-plan.json"))
         }
         _ => None,
+    }
+}
+
+/// Start the reception mixer's screened-call capture when the plan declares a
+/// `handset` source. A plan without one runs no extra `parec`. A sink the
+/// sound server does not offer (or a capture that cannot start) silences the
+/// node and leaves the rest of the patch running.
+fn attach_handset(
+    patchbay: &mut Patchbay,
+    config: &Config,
+) -> Option<crate::system_capture::SystemCapture> {
+    if !patchbay.wants_handset() {
+        return None;
+    }
+    if !matches!(config.backend, BackendKind::Alsa | BackendKind::PipeWire) {
+        // The null device captures nothing; report the node as silent rather
+        // than leave it "pending" forever.
+        patchbay.silence_handset();
+        return None;
+    }
+    let Some(source) = config.handset_device.as_deref() else {
+        patchbay.silence_handset();
+        return None;
+    };
+    if crate::system_capture::source_exists(source) == Some(false) {
+        patchbay.silence_handset();
+        return None;
+    }
+    match crate::system_capture::SystemCapture::start(source, config.rate) {
+        Ok((capture, consumer)) => {
+            patchbay.set_handset(consumer);
+            Some(capture)
+        }
+        Err(error) => {
+            eprintln!("jawn-audio: handset: {error}");
+            patchbay.silence_handset();
+            None
+        }
     }
 }
 
@@ -342,9 +384,13 @@ impl Server {
     /// Returns the summary the caller reports in its reply.
     fn start_patch_worker(
         &mut self,
-        patchbay: Patchbay,
+        mut patchbay: Patchbay,
         system_device: Option<String>,
     ) -> Result<PatchSummary, String> {
+        // A plan that declares a handset source gets the reception mixer's call
+        // monitor captured here; one that does not runs no extra `parec`. A
+        // missing sink silences the node and leaves the rest of the patch up.
+        let handset = attach_handset(&mut patchbay, &self.config);
         let summary = patchbay.summary().clone();
         let params = patchbay.params();
         let executable = (0..patchbay.route_count())
@@ -379,6 +425,7 @@ impl Server {
                     handle: Some(handle),
                     params,
                     executable,
+                    handset,
                 });
                 Ok(summary)
             }
@@ -811,6 +858,7 @@ impl Server {
                 let stop = Arc::clone(&monitor_stop);
                 let params = Arc::clone(&monitor_params);
                 let config = self.config.clone();
+                let system_device = self.config.system_device.clone();
                 thread::Builder::new()
                     .name("jawn-audio-monitor".to_string())
                     .spawn(move || {
@@ -824,6 +872,7 @@ impl Server {
                             master,
                             Some((consumer, gain)),
                             Some(remaining),
+                            system_device,
                         )
                     })
             };
@@ -1605,6 +1654,7 @@ impl Server {
                 .take()
                 .map(|consumer| (consumer, Arc::clone(&input_gain)));
             let live_length = if monitor_input { Some(frames) } else { None };
+            let system_device = self.config.system_device.clone();
             let spawned = {
                 let status = Arc::clone(&status);
                 let stop = Arc::clone(&monitor_stop);
@@ -1623,6 +1673,7 @@ impl Server {
                             monitor_master,
                             live,
                             live_length,
+                            system_device,
                         )
                     })
             };
@@ -1871,6 +1922,7 @@ impl Server {
                         stop,
                         None,
                         Vec::new(),
+                        None,
                         None,
                         None,
                     )
@@ -2899,6 +2951,9 @@ struct PatchSession {
     /// One flag per route (plan order): whether it has a live strip and can
     /// take a gain/pan change.
     executable: Vec<bool>,
+    /// The reception mixer's screened-call capture, when the plan declared a
+    /// `handset` source. Stopped and joined with the patch.
+    handset: Option<crate::system_capture::SystemCapture>,
 }
 
 impl PatchSession {
@@ -2921,6 +2976,9 @@ impl PatchSession {
             Some(handle) => handle.join(),
             None => Ok(()),
         };
+        if let Some(mut handset) = self.handset.take() {
+            handset.stop();
+        }
         if joined.is_err() {
             let mut status = self
                 .status
@@ -3166,6 +3224,23 @@ impl listen::ListenSink for SocketListenSink<'_> {
         current.frames = self.frames;
         Ok(())
     }
+
+    fn block_with_system(
+        &mut self,
+        input: &[i16],
+        system: &[f32],
+        output: &mut [i16],
+    ) -> Result<(), String> {
+        let frames = self.strip.process_i16(input, self.channels, output)?;
+        listen::add_system_to_i16(output, system, frames);
+        self.frames += frames as u64;
+        let mut current = self
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        current.frames = self.frames;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "alsa")]
@@ -3175,13 +3250,30 @@ fn listen_hardware(
     status: &Arc<Mutex<ListenStatus>>,
     stop: &AtomicBool,
 ) -> Result<u64, String> {
+    // Only the exclusive ALSA backend needs the system mix: PipeWire is
+    // already a shared sink, and capturing its own output would loop.
+    let system_device = if config.backend == BackendKind::Alsa {
+        config.system_device.as_deref()
+    } else {
+        None
+    };
+    let (mut capture, mut system) = match system_device {
+        Some(source) => match crate::system_capture::SystemCapture::start(source, config.rate) {
+            Ok((capture, consumer)) => (Some(capture), Some(consumer)),
+            Err(error) => {
+                eprintln!("jawn-audio: system mix: {error}");
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
     let sink = SocketListenSink {
         strip,
         status,
         channels: config.channels,
         frames: 0,
     };
-    let run = jawn_audio::alsa_device::run_listen(
+    let run = jawn_audio::alsa_device::run_listen_with_system(
         &config.device,
         config.rate,
         config.period,
@@ -3190,8 +3282,12 @@ fn listen_hardware(
         None,
         stop,
         sink,
-    )
-    .map_err(|error| format!("cannot listen: {error}"))?;
+        system.as_mut(),
+    );
+    if let Some(capture) = capture.as_mut() {
+        capture.stop();
+    }
+    let run = run.map_err(|error| format!("cannot listen: {error}"))?;
     Ok(run.frames)
 }
 
@@ -3226,6 +3322,7 @@ fn run_playback(
     master: Vec<InsertKind>,
     live: Option<(jawn_audio::Consumer, Arc<AtomicU32>)>,
     length: Option<u64>,
+    system_device: Option<String>,
 ) {
     // Build the strips here, on the playback thread, so a chain never moves
     // between threads. The control thread already checked the shape. A
@@ -3274,6 +3371,28 @@ fn run_playback(
             current.error = error;
             return;
         }
+    };
+    // The machine's own mix is monitor-only, added after the master chain. It
+    // never reaches the take's capture or writers; the capture lives exactly
+    // as long as this playback thread, so stopping the monitor joins `parec`.
+    let _system = if config.backend == BackendKind::Alsa {
+        match system_device {
+            Some(source) => {
+                match crate::system_capture::SystemCapture::start(&source, config.rate) {
+                    Ok((capture, consumer)) => {
+                        playback = playback.with_system_input(consumer);
+                        Some(capture)
+                    }
+                    Err(error) => {
+                        eprintln!("jawn-audio: system mix: {error}");
+                        None
+                    }
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
     };
     let outcome = match config.backend {
         BackendKind::Null => play_null_stream(config.period, &mut playback, &status, &stop),
@@ -4422,6 +4541,7 @@ break"}"#).is_err());
             plan: None,
             machine: "test".to_string(),
             system_device: None,
+            handset_device: None,
         })
     }
 
