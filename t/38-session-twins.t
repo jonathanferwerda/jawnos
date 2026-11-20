@@ -39,7 +39,7 @@ subs::preload($_) for qw(db_query);
 	is scalar @{$rows}, 1, 'an open row near the start is returned';
 	is $rows->[0]->{'uuid'}, 'twin-uuid', 'with its uuid';
 	like $seen[0]->{'sql'}, qr/stop_seen is null/, 'only an open session is a twin';
-	like $seen[0]->{'sql'}, qr/abs\(cast\(timestamp as integer\) - \?\) <= \?/, 'the window is a tolerance, not an exact stamp';
+	like $seen[0]->{'sql'}, qr/abs\(cast\(timestamp as integer\) - cast\(\? as integer\)\) <= cast\(\? as integer\)/, 'the window is arithmetic, not a text comparison';
 	is $seen[0]->{'args'}->[0], 'programming', 'the app is named';
 	is $seen[0]->{'args'}->[1], 'start', 'and the type must match';
 	is $seen[0]->{'args'}->[4], 2000, 'the default tolerance is two seconds';

@@ -316,7 +316,12 @@ sub session_open_near {
 	return [] unless $app && defined $timestamp;
 	$type ||= 'start';
 	$tolerance = 2000 unless defined $tolerance && $tolerance =~ /^\d+$/;
-	return &db_query('select uuid,timestamp from appointments where app=? and type=? and stop_seen is null and timestamp <= ? and abs(cast(timestamp as integer) - ?) <= ? order by timestamp asc',
+	# The moment and the tolerance are bound, and a bare `?` has no affinity:
+	# `abs(cast(timestamp as integer) - ?)` is an integer compared with a TEXT
+	# parameter, and SQLite orders every integer before every text, so `<= ?`
+	# was true for ANY open session rather than one inside the window. Cast the
+	# binds too, or the window is unlimited (a stop then retires every session).
+	return &db_query('select uuid,timestamp from appointments where app=? and type=? and stop_seen is null and timestamp <= ? and abs(cast(timestamp as integer) - cast(? as integer)) <= cast(? as integer) order by timestamp asc',
 		$app, $type, &rightNow(), $timestamp, $tolerance)->hashes || [];
 }
 
@@ -324,7 +329,10 @@ sub session_twin_rows {
 	my ($app, $uuid, $timestamp, $tolerance) = @_;
 	return [] unless $app && $uuid && defined $timestamp;
 	$tolerance = 2000 unless defined $tolerance && $tolerance =~ /^\d+$/;
-	return &db_query('select uuid,timestamp from appointments where app=? and (type=? or type=?) and stop_seen is null and uuid != ? and abs(cast(timestamp as integer) - ?) <= ? order by timestamp asc',
+	# Same bind affinity as session_open_near: without the casts the window is
+	# always true and this selector returns every other open session of the app,
+	# which is how one stop closed two same-name appointments minutes apart.
+	return &db_query('select uuid,timestamp from appointments where app=? and (type=? or type=?) and stop_seen is null and uuid != ? and abs(cast(timestamp as integer) - cast(? as integer)) <= cast(? as integer) order by timestamp asc',
 		$app, 'start', 'record', $uuid, $timestamp, $tolerance)->hashes || [];
 }
 
