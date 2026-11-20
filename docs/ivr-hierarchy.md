@@ -3,11 +3,13 @@
 **Status:** design, 2026-11-19. Phase 1 (the ordered setting and the
 reorderable pane), the crew `ivr` ability, Phase 2 (every enabled candidate
 listens and arms; a request can name the machine a call chose; only the first
-candidate keeps the phone's Bluetooth link warm) and Phase 3 (the app answers
+candidate keeps the phone's Bluetooth link warm), Phase 3 (the app answers
 from the first candidate that is ready, and names it on every gateway request)
-are implemented. Phase 4 (the audio engine backend) remains. This note records
-what existed, the rule we want, and the smallest set of changes that gets there
-without answering a call into silence.
+and Phase 4a (the backend seam, the truthful `ready` advert and the pane's audio
+line) are implemented. Phase 4b (the engine's own gateway ports) waits on the
+audio engine and is not promised here. This note records what existed, the rule
+we want, and the smallest set of changes that gets there without answering a
+call into silence.
 
 ## Today: one gateway, by name
 
@@ -263,11 +265,12 @@ Today the IVR is the last big `pactl` caller:
 So the hierarchy must not depend on the engine being in the IVR path. Keep
 the selection backend-agnostic:
 
-- Add `JawnOS::Sco::Audio` as the gateway's audio role: `prepare`, `attach`,
-  `in`, `out`, `monitor`, `status`, `release`.
+- Add `JawnOS::Sco::Backend` as the gateway's audio role: `prepare`, `attach`,
+  `in`, `out`, `monitor`, `status`, `release`. (`JawnOS::Sco::Audio` is a
+  different thing: the recorded greeting clips.)
 - The **`pactl` backend** wraps today's `Mixer` and the helper's `--pipe` /
-  `--pcm` modes. The hierarchy ships on this backend first.
-- The **engine backend** is phase 4: a `gateway` plan over `--serve` with
+  `--pcm` modes. The hierarchy ships on this backend.
+- The **engine backend** is phase 4b: a `gateway` plan over `--serve` with
   `gateway.call_in` (the caller's sink), `gateway.prompt` (the caller's
   microphone), and `gateway.monitor` (the transcript/recorder tap); the
   Bluetooth card's streams are linked by the engine's patchbay. `sco_helper`
@@ -275,13 +278,15 @@ the selection backend-agnostic:
   spawning `parec`/`pacat`. The engine's monitor bus can replace the helper's
   `--tee` FIFO.
 - The advert's `ivr.audio` says which backend a machine uses; `ivr.ready` is
-  the engine's (or the mixer's) own readiness. The pane shows it; the phone's
-  choice only needs the `able` boolean.
+  the backend's own readiness, and `ivr.ready_note` says why not. The pane
+  shows it; the phone's choice only needs the `able` boolean, which is `ready`
+  plus the light-load check.
 - The hierarchy's `scoState` handshake is the same for both backends: a
   gateway that has no ready audio says so and is skipped.
 
-Until phase 4, the hierarchy is honest that the IVR still uses `pactl` on
-the gateway. That is a migration item, not a blocker for the ranking.
+Phase 4a ships the seam and the advert on `pactl`; the engine backend answers
+not-ready with "the engine has no gateway ports yet". Phase 4b (the engine's
+gateway plan, `sco_helper --engine`, and the monitor bus) waits on those ports.
 
 ## Backward compatibility
 
@@ -358,9 +363,25 @@ app still uses the first entry, so this is safe to land alone.
 - APK 0.118.352 (`versionCode` 1350), built, staged and published, and the
   surface checks the same in `t/180-sco-transcript.t`.
 
-**Phase 4 (the engine backend; later).** The `Audio` role, the engine's `gateway`
-plan, `sco_helper --engine`, and the advert's `ivr.audio`/`ivr.ready`.
-Rust tests for the plan; Perl tests for the backend selection.
+**Phase 4a (implemented): the backend seam and truthful readiness.**
+`JawnOS::Sco::Backend` is the gateway's audio role (`prepare`, `attach`, `in`,
+`out`, `monitor`, `status`, `release`); the `pactl` backend wraps `Mixer` and the
+`engine` backend answers not-ready with "the engine has no gateway ports yet".
+The crew `ivr` advert keeps `audio` and gains `ready`/`ready_note`, and `able`
+is now `ready` plus the light-load check. The Phone pane's IVR status line names
+the backend and says whether it is ready (or why not), and the help topic says
+the same. Files: `lib/JawnOS/Sco/Backend.pm`, `perl/crew.pl`,
+`lib/JawnOS/Controller/manager_phone.pm`, `templates/apps/phone.html.ep`,
+`perl/help/topics_web.pl`, `t/181-ivr-backend.t`.
+
+**Phase 4b (engine-blocked; not promised here).** `sco_helper --engine`, the
+engine's `gateway` plan (`gateway.call_in`, `gateway.prompt`,
+`gateway.monitor`), and the engine monitor bus replacing the helper's `--tee`
+FIFO all wait on the engine gaining gateway ports: today it is a take/play
+control socket with no way to bind the caller's PipeWire streams. The hierarchy
+ships on `pactl` until that exists; the engine backend says so rather than
+pretending. Rust tests for the plan and the Perl backend selection follow in
+that change.
 
 ## Open questions
 
@@ -391,8 +412,8 @@ Rust tests for the plan; Perl tests for the backend selection.
    still ring through (or the flow's After), not be answered into nothing.
    Confirm the desired behavior.
 9. **The engine's gateway plan is new API.** Do not promise it in the same
-   change as the ranking. The hierarchy ships on `pactl`, and phase 4 moves
-   the audio.
+   change as the ranking. The hierarchy ships on `pactl`, and phase 4b moves
+   the audio once the engine has gateway ports.
 
 ## Risk
 

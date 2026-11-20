@@ -90,6 +90,9 @@ sub action_23201 {
 	my $ivr_machine = &phone_ivr_machine($ivr->{'machine'});
 	$ivr->{'machine_available'} = ($ivr_machine && (($ivr_machine->{'connection'} || '') eq 'active')) ? 1 : 0;
 	$ivr->{'machine_label'} = $ivr_machine ? ($ivr_machine->{'hostname'} || $ivr_machine->{'ip'} || '') : '';
+	# The pane's status line says which audio backend carries the gateway's call
+	# and whether it is ready; a not-ready gateway says why instead of pretending.
+	&_ivr_audio_state($ivr, $ivr->{'machine'});
 	# a row says so itself when any of its lines is on the desk's list, and each
 	# line carries its own reading (the number, its type, whether it is blocked) so
 	# the template joins them without walking the tuples itself
@@ -456,6 +459,7 @@ sub action_24755 {
 	$ivr->{'machine_available'} = ($ivr_machine && (($ivr_machine->{'connection'} || '') eq 'active')) ? 1 : 0;
 	$ivr->{'machine_host'} = $ivr_machine ? ($ivr_machine->{'hostname'} || $ivr_machine->{'ip'} || '') : '';
 	$ivr->{'machine_ip'} = $ivr_machine ? ($ivr_machine->{'ip'} || '') : '';
+	&_ivr_audio_state($ivr, $ivr->{'machine'});
 	$ivr->{'machine_manager'} = $ivr_machine ? ($ivr_machine->{'manager'} || '') : '';
 	# The ordered gateways: each entry carries its own Bluetooth name, online and
 	# able flags from the mesh and the crew's ability, and its rank. The scalar
@@ -484,6 +488,47 @@ sub action_24755 {
 		silence => $silenced,
 		ringtone => &phone_ringtone(),
 	});
+}
+
+# What the pane says about the chosen gateway's audio: the backend word, its own
+# readiness, and the reason when it is not ready. A remote gateway is described
+# by its advert, which is the only truthful source this machine has; this
+# machine answers for itself through JawnOS::Sco::Backend. A gateway that has
+# not advertised is not-ready with a plain note rather than an invented stack.
+sub _ivr_audio_state {
+	my ($ivr, $machine) = @_;
+	return $ivr unless ref $ivr eq 'HASH';
+	my $self = eval { &phone_self_signatorial() } || '';
+	if (length($machine || '') && !(length $self && $machine eq $self)) {
+		my $advert_get = eval { UNIVERSAL::can('crew', 'advert_get') };
+		my $advert = $advert_get ? eval { $advert_get->($machine) } : undef;
+		my $adv = (ref $advert eq 'HASH' && ref $advert->{'abilities'} eq 'HASH'
+			&& ref $advert->{'abilities'}{'ivr'} eq 'HASH')
+			? $advert->{'abilities'}{'ivr'} : undef;
+		my $audio = $adv ? ($adv->{'audio'} || '') : '';
+		my $ready = ($adv && $adv->{'ready'}) ? 1 : 0;
+		$ivr->{'audio'} = $audio;
+		$ivr->{'backend'} = $audio eq 'engine' ? 'engine' : ($adv ? 'pactl' : '');
+		$ivr->{'ready'} = $ready;
+		$ivr->{'ready_note'} = $ready ? ''
+			: ($adv && length($adv->{'ready_note'} || '') ? $adv->{'ready_note'}
+				: ($adv ? 'the gateway did not report a reason' : 'the gateway has not reported its audio'));
+		return $ivr;
+	}
+	unless (eval { require JawnOS::Sco::Backend; 1 }) {
+		$ivr->{'audio'} = '';
+		$ivr->{'backend'} = '';
+		$ivr->{'ready'} = 0;
+		$ivr->{'ready_note'} = 'the audio backend is not available';
+		return $ivr;
+	}
+	my $backend = JawnOS::Sco::Backend->new(backend => 'pactl');
+	my ($ready, $why) = $backend->ready();
+	$ivr->{'audio'} = $backend->audio();
+	$ivr->{'backend'} = $backend->name();
+	$ivr->{'ready'} = $ready ? 1 : 0;
+	$ivr->{'ready_note'} = $ready ? '' : ($why || 'the audio backend is not ready');
+	return $ivr;
 }
 
 # POST /manager/phone/lines

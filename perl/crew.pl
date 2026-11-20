@@ -225,6 +225,20 @@ sub _compute_abilities {
 	my @hci = glob('/sys/class/bluetooth/hci*');
 	my $adapter = @hci ? 1 : 0;
 	my $pactl = _which('pactl') ? 1 : 0;
+	# `ready` is the audio backend's own answer, not the load: the helper, an
+	# adapter and pactl. `able` adds the light-load gate on top, so the hierarchy
+	# can never call a machine able when its audio cannot carry the call. The
+	# engine backend answers not-ready until it has gateway ports (phase 4b).
+	my ($audio_ready, $ready_note) = (0, 'the audio backend is not available');
+	if (eval { require JawnOS::Sco::Backend; 1 }) {
+		my $backend = JawnOS::Sco::Backend->new(
+			backend => 'pactl',
+			helper  => $helper,
+			adapter => $adapter,
+			pactl   => $pactl,
+		);
+		($audio_ready, $ready_note) = $backend->ready();
+	}
 	my $sco_socket = 0;
 	if (my $sock = eval { &subs::home('~/.president/sco.sock') }) {
 		$sco_socket = -S $sock ? 1 : 0;
@@ -249,13 +263,15 @@ sub _compute_abilities {
 		helper     => $helper,
 		adapter    => $adapter,
 		audio      => $pactl ? 'pipewire' : '',
+		ready      => $audio_ready ? 1 : 0,
+		ready_note => $audio_ready ? '' : $ready_note,
 		listening  => $sco_socket,
 		armed      => $armed,
 		port       => $port + 0,
 		bluetooth  => $bluetooth,
 		checked_at => int(time() * 1000),
 	);
-	$ivr{'able'} = ($helper && $adapter && $pactl && !_overloaded(\%abilities, 'light')) ? 1 : 0;
+	$ivr{'able'} = ($audio_ready && !_overloaded(\%abilities, 'light')) ? 1 : 0;
 	$abilities{'ivr'} = \%ivr;
 
 	return \%abilities;

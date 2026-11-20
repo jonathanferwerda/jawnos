@@ -354,6 +354,15 @@
 				<% } else { %>
 					<%= &subs::ui('No IVR gateway selected.') %>
 				<% } %>
+				<% my $audio_word = defined $ivr->{'audio'} ? $ivr->{'audio'} : '';
+				   my $audio_note = defined $ivr->{'ready_note'} ? $ivr->{'ready_note'} : ''; %>
+				<span class="phone_app_ivr_audio">
+				<% if ($ivr->{'ready'}) { %>
+					<%= &subs::ui('Audio:') %> <%= length $audio_word ? $audio_word : &subs::ui('unknown') %> — <%= &subs::ui('ready') %>
+				<% } else { %>
+					<%= &subs::ui('Audio: not ready') %><% if (length $audio_note) { %> — <%= $audio_note %><% } %>
+				<% } %>
+				</span>
 			</div>
 			<div class="phone_app_ivr_flow_row">
 				<span class="phone_app_ivr_flow_label" id="phone_ivr_gateway_state"><%= &subs::ui('Gateway idle') %></span>
