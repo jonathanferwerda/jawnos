@@ -12,9 +12,11 @@ What this window does:
 * tabs, an address bar that also searches a phrase, back/forward/reload/stop,
   home, find-in-page, downloads, error pages and external protocol
   delegation;
-* its own persistent ``QWebEngineProfile("jawnos-browse")`` under
+* one persistent ``QWebEngineProfile("jawnos-browse")`` for the process under
   ``~/.config/jawnos/browse-webengine`` -- never the manager view's profile
-  (``jawnos``) and never WebKitGTK's store;
+  (``jawnos``) and never WebKitGTK's store. It is created once, kept for the
+  life of the application, and shared by every page: a page must never outlive
+  its profile;
 * a local JSONL history;
 * site-time accounting: the focused tab's registrable domain is queued as a
   ``usage_sessions`` row (``kind=site``, ``source=browser``) while this window
@@ -80,6 +82,11 @@ MAX_MEASURE_HTML = 1572864
 # must not share a cookie jar.
 PROFILE_NAME = "jawnos-browse"
 PROFILE_DIR_NAME = "browse-webengine"
+
+# The one profile this process uses. It is held here, and parented to the
+# QApplication rather than to a window, so closing a window can never release
+# it while a page (and its renderer) is still alive. See browser_profile().
+_PROFILE = None
 
 # The address bar searches a phrase. DuckDuckGo is the house's own default
 # general engine (perl/gb/03_engines_and_tools.pl), so a phrase typed in Browse
@@ -282,6 +289,7 @@ com.vc net.vc org.vc edu.vc gov.vc
 _QT_ERROR = None
 try:  # pragma: no cover - the import result depends on the installed packages
     from PySide6.QtCore import (
+        QEvent,
         QFile,
         QIODevice,
         QObject,
@@ -383,6 +391,42 @@ def browser_data_dir():
 def profile_store_dir():
     """The Qt profile's on-disk store: ``~/.config/jawnos/browse-webengine``."""
     return os.path.join(core.config_dir(), PROFILE_DIR_NAME)
+
+
+def browser_profile():
+    """The one browse profile for this process, created on first use.
+
+    A ``QWebEnginePage`` must never outlive its ``QWebEngineProfile``. A
+    window-owned profile was deleted with its window, before the queued page
+    deletions had run; Qt then printed "Release of profile requested but
+    WebEnginePage still not deleted" and aborted the renderer (SIGTRAP),
+    leaving a black window that only a desktop restart cleared. So the profile
+    is parented to the application, cached for the life of the process, and
+    every page uses it. Browse runs one window per process, so this is that
+    window's profile as well; the storage name and on-disk paths are unchanged,
+    so cookies and the disk cache still carry across restarts.
+    """
+    global _PROFILE
+    if _PROFILE is not None:
+        return _PROFILE
+    store = profile_store_dir()
+    try:
+        os.makedirs(os.path.join(store, "storage"), exist_ok=True)
+        os.makedirs(os.path.join(store, "cache"), exist_ok=True)
+    except OSError as exc:
+        LOG.warning("could not create the browse profile directory: %s", exc)
+    profile = QWebEngineProfile(PROFILE_NAME, QApplication.instance())
+    profile.setPersistentStoragePath(os.path.join(store, "storage"))
+    profile.setCachePath(os.path.join(store, "cache"))
+    profile.setPersistentCookiesPolicy(
+        QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+    try:
+        profile.setHttpCacheType(
+            QWebEngineProfile.HttpCacheType.DiskHttpCache)
+    except Exception:
+        pass
+    _PROFILE = profile
+    return profile
 
 
 def allow_private():
@@ -1929,22 +1973,13 @@ class BrowserWindow(_MainWindowBase):
     # ---- construction ----------------------------------------------------
 
     def _build_profile(self):
-        store = profile_store_dir()
-        try:
-            os.makedirs(os.path.join(store, "storage"), exist_ok=True)
-            os.makedirs(os.path.join(store, "cache"), exist_ok=True)
-        except OSError as exc:
-            LOG.warning("could not create the browse profile directory: %s", exc)
-        profile = QWebEngineProfile(PROFILE_NAME, self)
-        profile.setPersistentStoragePath(os.path.join(store, "storage"))
-        profile.setCachePath(os.path.join(store, "cache"))
-        profile.setPersistentCookiesPolicy(
-            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
-        try:
-            profile.setHttpCacheType(
-                QWebEngineProfile.HttpCacheType.DiskHttpCache)
-        except Exception:
-            pass
+        """Attach this window's interceptor and download hook to the profile.
+
+        The profile itself belongs to the process (see
+        :func:`browser_profile`); Browse runs one window per process, so the
+        first window supplies the per-window wiring.
+        """
+        profile = browser_profile()
         self._interceptor = _AdInterceptor(self.adblock, profile)
         try:
             profile.setUrlRequestInterceptor(self._interceptor)
@@ -3216,12 +3251,28 @@ def main(argv=None):
     window = BrowserWindow(args, check=args.check)
     if args.check:
         window.close()
-        QApplication.processEvents()
+        _flush_deferred_deletes()
         print("jawnos-browse: window constructed")
         return 0
     window.show()
     QTimer.singleShot(0, window._sync_site)
-    return app.exec()
+    code = app.exec()
+    # The profile lives as long as the application; every page has to be gone
+    # before it is released. closeEvent queued the deletions, so run them now,
+    # while the profile is still held, rather than let the application's own
+    # teardown delete the profile under a live page.
+    window.shutdown()
+    window._close_pages()
+    _flush_deferred_deletes()
+    return code
+
+
+def _flush_deferred_deletes():
+    """Run deleteLater() events now, so pages are gone before the profile."""
+    try:
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":  # pragma: no cover

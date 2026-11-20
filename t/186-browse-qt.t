@@ -29,8 +29,19 @@ like($src, qr/from PySide6\.QtWebEngineCore import \(\s*\n\s*QWebEngineDownloadR
 	'and uses the WebEngine core types');
 like($src, qr/PROFILE_NAME = "jawnos-browse"/,
 	'the profile has a name of its own');
-like($src, qr/QWebEngineProfile\(PROFILE_NAME, self\)/,
-	'and is constructed by that name');
+like($src, qr/^_PROFILE = None$/m,
+	'cached in a module-level strong reference');
+like($src, qr/def browser_profile\(\):/,
+	'built once by a process-wide accessor');
+like($src, qr/QWebEngineProfile\(PROFILE_NAME, QApplication\.instance\(\)\)/,
+	'parented to the application, not a window that closes');
+unlike($src, qr/QWebEngineProfile\(PROFILE_NAME, self\)/,
+	'never parented to the window');
+my @profile_sites = ($src =~ /\bQWebEngineProfile\(\s*PROFILE_NAME\s*,/g);
+is(scalar(@profile_sites), 1,
+	'the process constructs exactly one profile');
+like($src, qr/self\.page = BrowsePage\(window\.profile, self\)/,
+	'every tab page uses the shared profile');
 like($src, qr/def profile_store_dir\(\):\n(?:.*\n)*?    return os\.path\.join\(core\.config_dir\(\), PROFILE_DIR_NAME\)/,
 	'the store is under the house config directory');
 like($src, qr/PROFILE_DIR_NAME = "browse-webengine"/,
@@ -246,8 +257,8 @@ SKIP: {
 # ---- a loaded page: bridge, ad blocker, media, popup ---------------------
 
 SKIP: {
-	skip 'xvfb-run is not installed', 7 unless $xvfb;
-	skip 'PySide6 with Qt WebEngine is not installed', 7 unless $have_qt;
+	skip 'xvfb-run is not installed', 8 unless $xvfb;
+	skip 'PySide6 with Qt WebEngine is not installed', 8 unless $have_qt;
 
 	my $dir = tempdir(CLEANUP => 1);
 	my $home = "$dir/home";
@@ -339,8 +350,13 @@ def finish():
     out['title'] = window.current_tab().page.title()
     out['profile'] = os.path.isdir(
         home + '/.config/jawnos/browse-webengine/storage')
-    print('RESULT ' + json.dumps(out))
     window.close()
+    # Closing the window must not drop the profile: the page deletions may
+    # still be queued, and a profile released under a live page aborts the
+    # renderer.
+    out['profile_after_close'] = (browser._PROFILE is not None
+                                  and browser._PROFILE is window.profile)
+    print('RESULT ' + json.dumps(out))
     app.quit()
 
 
@@ -360,6 +376,8 @@ PY
 	like($out, qr/"title": "Two"/, 'and the popup loaded there');
 	like($out, qr/"profile": true/,
 		'the profile lives under the house config directory');
+	like($out, qr/"profile_after_close": true/,
+		'and closing the window does not release it');
 }
 
 # --- screen capture is the house's, and only the house's --------------------
