@@ -113,7 +113,9 @@ pub struct PatchSummary {
     pub silent: Vec<String>,
     /// `routed` when the plan sends a `device` source somewhere; `fallback`
     /// when the machine's own mix is added to the output at unity because the
-    /// plan does not route it.
+    /// plan does not route it. It is serialised as `system_route`, because
+    /// `system` on the same line is the capture state (see
+    /// [`PatchSummary::json`]).
     pub system: &'static str,
     /// `capturing` when a declared `handset` source is bound to the call
     /// monitor, `pending` before the capture is attached, `unavailable` when
@@ -138,7 +140,7 @@ impl PatchSummary {
             .collect::<Vec<String>>()
             .join(",");
         format!(
-            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"system\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\"",
+            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\"",
             self.sources,
             self.buses,
             self.sinks,

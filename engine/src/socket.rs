@@ -2938,6 +2938,9 @@ struct PatchStatus {
     /// it runs, `unavailable` when this machine cannot capture it (no parec or
     /// no source), and `off` when the patch was not asked for one. The
     /// supervisor reads this before it keeps the virtual sink as the default.
+    /// It is the line's only `system` key: the plan's own shape is
+    /// `system_route` (`routed`/`fallback`), so a decoder that keeps the last
+    /// duplicate cannot mistake the route for the capture state.
     system: String,
     error: String,
 }
@@ -2994,19 +2997,25 @@ impl PatchSession {
     }
 
     fn line(&self) -> String {
-        let status = self.snapshot();
-        let ok = status.state != State::Failed;
-        format!(
-            "{{\"ok\":{},\"state\":\"{}\",\"frames\":{},\"xruns\":{},\"system\":\"{}\",{},\"error\":\"{}\"}}",
-            ok,
-            status.state.name(),
-            status.frames,
-            status.xruns,
-            jawn_audio::loopback::json_escape(&status.system),
-            status.summary.json(),
-            jawn_audio::loopback::json_escape(&status.error)
-        )
+        patch_line(&self.snapshot())
     }
+}
+
+/// The status line for one patch snapshot: the capture state, the frame count,
+/// the plan's shape and the error. Free rather than a method so a test can
+/// build a line without a worker thread.
+fn patch_line(status: &PatchStatus) -> String {
+    let ok = status.state != State::Failed;
+    format!(
+        "{{\"ok\":{},\"state\":\"{}\",\"frames\":{},\"xruns\":{},\"system\":\"{}\",{},\"error\":\"{}\"}}",
+        ok,
+        status.state.name(),
+        status.frames,
+        status.xruns,
+        jawn_audio::loopback::json_escape(&status.system),
+        status.summary.json(),
+        jawn_audio::loopback::json_escape(&status.error)
+    )
 }
 
 /// The patchbay's worker: compile happened on the control thread, so this only
@@ -5020,5 +5029,68 @@ break"}"#).is_err());
         assert_eq!(push_if_armed(&producer, &armed, &[0.5, -0.5]), 0);
         assert_eq!(consumer.pop(&mut out), 1);
         assert_eq!(out, vec![0.5f32, -0.5], "the armed take's frame arrived");
+    }
+
+    /// A patch line carries two different facts whose names once collided: the
+    /// capture state (`system`) and the plan's routing (`system_route`). A JSON
+    /// decoder keeps the last duplicate, so one key with two meanings made the
+    /// supervisor read `fallback` where the engine meant `capturing`, drop the
+    /// virtual sink, and leave the machine silent behind a card it still held.
+    #[test]
+    fn a_patch_line_names_the_capture_state_and_the_route_separately() {
+        let known = ["pending", "capturing", "unavailable", "off"];
+        for capture in known {
+            for route in ["routed", "fallback"] {
+                let status = PatchStatus {
+                    state: State::Patching,
+                    frames: 960,
+                    xruns: 0,
+                    summary: crate::patchbay::PatchSummary {
+                        sources: 1,
+                        buses: 0,
+                        sinks: 1,
+                        routes: 1,
+                        bound_sources: 1,
+                        bound_sinks: 1,
+                        silent: Vec::new(),
+                        system: route,
+                        handset: "off",
+                        mode: "playback",
+                    },
+                    system: capture.to_string(),
+                    error: String::new(),
+                };
+                let line = patch_line(&status);
+                let object = parse_object(&line).expect("the line parses");
+                let systems: Vec<&str> = object
+                    .iter()
+                    .filter(|(key, _)| key == "system")
+                    .filter_map(|(_, value)| match value {
+                        Value::Str(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    systems.len(),
+                    1,
+                    "exactly one `system` key, and it is the capture state: {line}"
+                );
+                assert!(
+                    known.contains(&systems[0]),
+                    "`system` is a capture state, not a route: {}",
+                    systems[0]
+                );
+                assert_eq!(systems[0], capture, "the capture state survived: {line}");
+                let routes: Vec<&str> = object
+                    .iter()
+                    .filter(|(key, _)| key == "system_route")
+                    .filter_map(|(_, value)| match value {
+                        Value::Str(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(routes, vec![route], "the plan's routing has its own key: {line}");
+            }
+        }
     }
 }

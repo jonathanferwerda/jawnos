@@ -1448,7 +1448,10 @@ fn patch_runs_a_plan_and_reports_its_shape() {
     assert!(reply.contains("\"silent\":[\"phone\"]"), "patch: {reply}");
     // The plan does not route a `device` source, so the machine's own mix is
     // carried at the output (the compile-time statement, not the runtime one).
-    assert!(reply.contains("\"system\":\"fallback\""), "patch: {reply}");
+    assert!(
+        reply.contains("\"system_route\":\"fallback\""),
+        "patch: {reply}"
+    );
 
     // The null loop runs until stop, so status has frames and the plan's shape.
     std::thread::sleep(Duration::from_millis(20));

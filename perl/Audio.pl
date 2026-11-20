@@ -458,6 +458,29 @@ sub plan_config {
 	};
 }
 
+# Whether a backend carries the machine's own audio through the engine, and so
+# needs the virtual sink: ALSA always owns the card; a PipeWire playback plan
+# plays the sink's monitor out the device it replaced. Duplex on PipeWire keeps
+# the ordinary path, because one pipewire-alsa process takes one node target.
+sub mix_backends {
+	my ($backend, $mode) = @_;
+	return 1 if defined $backend && $backend eq 'alsa';
+	return 1 if defined $backend && $backend eq 'pipewire'
+		&& defined $mode && $mode eq 'playback';
+	return 0;
+}
+
+# `alsa|hw:0,0` and `hw:0,0` are the same choice; the engine reports the bare
+# form while the picker and the plan may store the prefixed one.
+sub device_same {
+	my ($a, $b) = @_;
+	$a = '' unless defined $a;
+	$b = '' unless defined $b;
+	$a =~ s/\Aalsa\|//;
+	$b =~ s/\Aalsa\|//;
+	return $a eq $b ? 1 : 0;
+}
+
 # Put the machine's own audio on the virtual sink exactly while the engine
 # plays the machine's output. On ALSA the engine holds the card, so the sink is
 # the only place an app can land; on the shared PipeWire backend the engine is
@@ -467,7 +490,7 @@ sub plan_config {
 # playback node goes in before the child opens it, and only for an ALSA card;
 # the microphone node deliberately stays with PipeWire.
 sub ensure_system_mix {
-	my ($backend, $manage, $device, $mode) = @_;
+	my ($backend, $manage, $device, $mode, $engine) = @_;
 	return undef unless load_system_mix();
 
 	# ALSA always needs the sink: the engine holds the card. PipeWire needs it
@@ -476,8 +499,13 @@ sub ensure_system_mix {
 	# takes one node target for the whole process, so an engine playing out the
 	# replaced sink would also capture that sink, and a shared backend has no
 	# card to free.
-	my $mix_backend = $backend eq 'alsa'
-		|| ( $backend eq 'pipewire' && defined $mode && $mode eq 'playback' );
+	#
+	# A live child's own report is the fact; the flags only describe the next
+	# spawn. Deciding from the flags while the child runs could take the sink
+	# away from a card-owning engine and silence the machine.
+	my $deciding = defined $engine && defined $engine->{'backend'} && length $engine->{'backend'}
+		? $engine->{'backend'} : $backend;
+	my $mix_backend = mix_backends($deciding, $mode);
 	if (!$manage || !$mix_backend) {
 		remove_system_mix() if defined $active_system_device;
 		return undef;
@@ -567,8 +595,7 @@ sub sync_system_mix {
 		&& $engine->{'mode'} =~ /\A(?:duplex|playback)\z/
 		? $engine->{'mode'} : undef;
 	my $mode = JawnOS::Audio::SystemMix::mode_union($engine_mode, $plan_mode);
-	my $mix_backend = $engine_backend eq 'alsa'
-		|| ( $engine_backend eq 'pipewire' && $mode eq 'playback' );
+	my $mix_backend = mix_backends($engine_backend, $mode);
 
 	if ($manage && $mix_backend && $live && $system eq 'pending') {
 		return;
@@ -580,21 +607,18 @@ sub sync_system_mix {
 			&& $active_system_mode eq $mode;
 		my $engine_device = $engine && defined $engine->{'device'} && length $engine->{'device'}
 			? $engine->{'device'} : $device;
-		my $mix = JawnOS::Audio::SystemMix::ensure($state_dir, $engine_device, $mode);
-		if ($mix && $mix->{ok}) {
-			$active_system_device = $mix->{source};
-			$active_system_mode   = $mode;
-			$active_playback_device = $engine_backend eq 'pipewire'
-				&& defined $mix->{playback_device} && length $mix->{playback_device}
-				? $mix->{playback_device} : undef;
-		}
-		elsif ($mix && $mix->{error}) {
-			print "audio supervisor: system mix: " . $mix->{error} . "\n";
-		}
+		ensure_system_mix($engine_backend, $manage, $engine_device, $mode, $engine);
 		return;
 	}
 
-	remove_system_mix() if defined $active_system_device;
+	# A switch that just went off, or a plan that just moved to another backend,
+	# describes the next spawn: the child still owns the output. The mismatch
+	# quit above ends it first, and `child_exited` takes the sink away, so the
+	# machine is never left on a card the engine holds with no sink behind it.
+	# A failed capture is different - that child plays the output the mix
+	# replaced, so a sink nobody captures must not stay the default.
+	return if !$manage && $live && mix_backends($engine_backend, $mode);
+	remove_system_mix();
 }
 
 my $engine_build_at = 0;
@@ -624,14 +648,24 @@ sub ensure_engine_fresh {
 	print "audio supervisor: engine $summary\n";
 }
 
-sub spawn_engine {
+# The pair the next spawn will use. A command-line flag still wins over the
+# plan file, exactly as `spawn_engine` reads it; `$backend`/`$device` hold the
+# last spawn's pair once a plan has been read, and stay that if the file goes.
+sub spawn_choice {
 	my $chosen = plan_config();
-	my $manage = 0;
-	if ($chosen) {
-		$backend = $chosen->{'backend'} unless defined $given{'backend'};
-		$device  = $chosen->{'device'}  unless defined $given{'device'};
-		$manage  = $chosen->{'manage'};
-	}
+	my $next_backend = defined $given{'backend'} ? $backend
+		: ( $chosen ? $chosen->{'backend'} : $backend );
+	my $next_device = defined $given{'device'} ? $device
+		: ( $chosen ? $chosen->{'device'} : $device );
+	return { backend => $next_backend, device => $next_device };
+}
+
+sub spawn_engine {
+	my $chosen  = plan_config();
+	my $manage  = $chosen ? $chosen->{'manage'} : 0;
+	my $choice  = spawn_choice();
+	$backend = $choice->{'backend'};
+	$device  = $choice->{'device'};
 	my $mode = load_system_mix() && $chosen
 		? JawnOS::Audio::SystemMix::plan_mode($chosen->{'plan'}, $machine)
 		: 'playback';
@@ -650,6 +684,8 @@ sub spawn_engine {
 	my $pid = fork();
 	unless (defined $pid) {
 		warn "audio supervisor: cannot fork: $!\n";
+		# The sink this spawn may have just made has no child to capture it.
+		remove_system_mix();
 		return undef;
 	}
 	if ($pid == 0) {
@@ -676,6 +712,31 @@ sub spawn_engine {
 			};
 	}
 	return $pid;
+}
+
+# The plan file is what the next spawn will use. A child spawned before a plan
+# change keeps its own pair - and on ALSA keeps the card exclusively - so a
+# mismatch is ended here rather than deferred to a restart that never comes.
+# The device is compared for ALSA only: a PipeWire child is deliberately started
+# on the output the mix replaced, so its `--device` is not the plan's device.
+sub follow_plan {
+	my ($engine) = @_;
+	return unless $engine && defined $engine->{'backend'} && length $engine->{'backend'};
+	my $want = spawn_choice();
+	my $note;
+	if ($engine->{'backend'} ne $want->{'backend'}) {
+		$note = "the engine runs backend $engine->{'backend'};"
+			. " the saved plan says $want->{'backend'}";
+	}
+	elsif ($engine->{'backend'} eq 'alsa'
+		&& defined $engine->{'device'} && length $engine->{'device'}
+		&& !device_same($engine->{'device'}, $want->{'device'})) {
+		$note = "the engine plays $engine->{'device'};"
+			. " the saved plan says $want->{'device'}";
+	}
+	return unless defined $note;
+	print "audio supervisor: $note; asking it to restart on the saved choice\n";
+	engine_command($socket, { cmd => 'quit' });
 }
 
 sub child_exited {
@@ -841,7 +902,10 @@ while (!$stop) {
 		if (time >= $next_sync) {
 			$next_sync = time + $ADOPT_POLL;
 			my $engine = engine_answers($socket);
-			sync_system_mix($engine) if $engine;
+			if ($engine) {
+				sync_system_mix($engine);
+				follow_plan($engine);
+			}
 		}
 	}
 	elsif (time >= $next_start) {

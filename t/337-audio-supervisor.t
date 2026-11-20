@@ -874,6 +874,8 @@ for (my $i = 0; $i < @ARGV; $i++) {
 my $listener = IO::Socket::UNIX->new(
 	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
 ) or exit 1;
+my $backend = $arg{'--backend'} // 'alsa';
+my $device  = $arg{'--device'}  // 'hw:1,0';
 while (my $client = $listener->accept) {
 	$client->autoflush(1);
 	my $line = <$client>;
@@ -884,7 +886,7 @@ while (my $client = $listener->accept) {
 		close $client;
 		last;
 	}
-	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"patching\",\"system\":\"capturing\",\"mode\":\"playback\",\"backend\":\"alsa\",\"device\":\"hw:1,0\"}\n";
+	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"patching\",\"system\":\"capturing\",\"mode\":\"playback\",\"backend\":\"$backend\",\"device\":\"$device\"}\n";
 	close $client;
 }
 close $listener;
@@ -927,6 +929,29 @@ ENGINE
 		'the sink was created');
 	like(read_text($pactl_log), qr/set-default-sink jawn_system/,
 		'and made the default');
+
+	# The one-second status probe must keep the sink: the engine reports it is
+	# capturing, so the supervisor's `capturing` branch re-ensures and returns.
+	sleep 2;
+	is(read_text($default), "jawn_system\n",
+		'the sink stays the default across two status probes');
+	ok(-e "$home/.president/audio-system-mix.json", 'and its state is kept');
+
+	# A plan change while the child runs is followed, not deferred to a restart
+	# that never comes: the saved pair moves to the shared backend, so the ALSA
+	# child is asked to quit and the supervisor respawns on the new one.
+	open(my $changed, '>', $plan) or die "plan: $!";
+	print {$changed} '{"manage":1,"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]},'
+		. '"backend":"pipewire","device":"default"}';
+	close $changed;
+	my $respawned = wait_for(sub {
+		my @line = split /\n/, read_text($args_log);
+		return scalar( grep { /--backend pipewire/ } @line ) ? 1 : 0;
+	}, 10);
+	ok($respawned, 'the supervisor respawns the engine on the plan\'s new backend')
+		or diag('args: ' . read_text($args_log));
+	like(read_text("$dir/supervisor.log"), qr/asking it to restart on the saved choice/,
+		'after asking the old child to quit');
 
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the managing supervisor stops cleanly');
@@ -1355,6 +1380,98 @@ ENGINE
 
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the supervisor still stops cleanly');
+}
+
+# --- an adopted engine lets go of a sink nobody captures ---------------------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+	delete $ENV{JAWNOS_AUDIO_SYSTEM_DEVICE};
+
+	# The switch is off. The sink below is a crash remnant: a supervisor died
+	# between loading it and removing it, so nothing in this process remembers
+	# it. The adopted engine reports idle, so the sink must go.
+	my $plan = "$dir/audio-plan.json";
+	open(my $pfh, '>', $plan) or die "plan: $!";
+	print {$pfh} '{"manage":0,"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]},'
+		. '"backend":"null","device":"null"}';
+	close $pfh;
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+
+	open(my $state, '>', "$home/.president/audio-system-mix.json") or die "state: $!";
+	print {$state} '{"sink":"jawn_system","source":"jawn_system.monitor",'
+		. '"previous_default":"alsa_output.real","module_id":"42"}';
+	close $state;
+
+	my $sinks     = "$dir/sinks";
+	my $default   = "$dir/default";
+	my $pactl_log = "$dir/pactl.log";
+	open(my $sfh, '>', $sinks) or die "sinks: $!";
+	print {$sfh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+	print {$sfh} "42\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n";
+	close $sfh;
+	open(my $dfh, '>', $default) or die "default: $!";
+	print {$dfh} "jawn_system\n";
+	close $dfh;
+	open(my $lfh, '>', $pactl_log) or die "log: $!";
+	close $lfh;
+	write_script("$dir/bin/pactl", <<'PACTL');
+my $dir = $ENV{'FAKE_PACTL_DIR'} or exit 9;
+open(my $log, '>>', "$dir/pactl.log") or exit 9;
+print {$log} join(' ', @ARGV), "\n";
+close $log;
+sub slurp {
+	my ($path) = @_;
+	open(my $fh, '<', $path) or return '';
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	return defined $text ? $text : '';
+}
+my $cmd = $ARGV[0] // '';
+my $all = join(' ', @ARGV);
+if ($cmd eq 'info') { print "Server Name: PulseAudio (on PipeWire)\n"; exit 0; }
+if ($all eq 'list short sinks') { print slurp("$dir/sinks"); exit 0; }
+if ($cmd eq 'get-default-sink') { print slurp("$dir/default"); exit 0; }
+if ($cmd eq 'set-default-sink') {
+	open(my $fh, '>', "$dir/default") or exit 9;
+	print {$fh} $ARGV[1], "\n"; close $fh; exit 0;
+}
+if ($cmd eq 'unload-module') {
+	open(my $fh, '>', "$dir/sinks") or exit 9;
+	print {$fh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+	close $fh; exit 0;
+}
+exit 0;
+PACTL
+	local $ENV{PATH} = "$dir/bin:$ENV{PATH}";
+	local $ENV{FAKE_PACTL_DIR} = $dir;
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$dir/wireplumber";
+
+	my $fake = start_fake_engine("$dir/audio.sock", "$dir/fake.ready",
+		backend => 'null', device => 'null');
+	ok(wait_for(sub { -s "$dir/fake.ready" }, 5), 'the leftover-sink engine is listening');
+
+	my $sup = start_supervisor(
+		args => ['--socket', "$dir/audio.sock"],
+		log  => "$dir/supervisor.log",
+	);
+
+	my $healed = wait_for(sub {
+		return read_text($default) eq "alsa_output.real\n"
+			&& read_text($pactl_log) =~ /unload-module 42/
+			&& !-e "$home/.president/audio-system-mix.json";
+	}, 10);
+	ok($healed, 'an adopted engine removes a sink left by a crashed supervisor')
+		or diag('default: ' . read_text($default) . ' log: ' . read_text($pactl_log));
+	is(read_text($default), "alsa_output.real\n",
+		'and the machine\'s own output is the default again');
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the adopted supervisor stops cleanly');
+	ok(wait_for(sub { reap_child($fake) }, 10), 'and asks the adopted engine to quit');
 }
 
 # --- the staged binary is a build artifact ------------------------------------
