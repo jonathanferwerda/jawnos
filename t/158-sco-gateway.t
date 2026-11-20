@@ -274,6 +274,23 @@ like($unreachable->{'error'}, qr/unreachable/, 'and the error names the address'
 	is($named->{'token'}, 'house-token', 'and it still carries the house token');
 	delete $setting{'sco_gateway'};
 
+	# a machine the app chose for this call
+	local *subs::phone_ivr_grab = sub { return '' };
+	my $chosen = JawnOS::Sco::Client->new(machine => 'gw-sig');
+	ok($chosen->remote(), 'a chosen machine is remote');
+	is($chosen->where(), '10.0.0.5:45701', 'the chosen machine is dialled by its roster address');
+	is($chosen->machine(), 'gw-sig', 'and the chosen name is kept');
+	my $unknown = JawnOS::Sco::Client->new(machine => 'gone-sig');
+	my $why = $unknown->call({ cmd => 'status' });
+	is($why->{'ok'}, 0, 'a chosen machine with no roster row is an ordinary answer');
+	like($why->{'error'}, qr/gone-sig.*no address/, 'and the answer names the machine it could not place');
+
+	# a chosen machine wins over the older fixed sco_gateway
+	$setting{'sco_gateway'} = '10.9.9.9:45999';
+	my $chosen_over = JawnOS::Sco::Client->new(machine => 'gw-sig');
+	is($chosen_over->where(), '10.0.0.5:45701', 'the chosen machine wins over sco_gateway');
+	delete $setting{'sco_gateway'};
+
 	# a machine the roster cannot place: local, and the reason names it
 	local *subs::db_select = sub { return ScoRows->new([]) };
 	local *subs::phone_ivr_grab = sub { return 'gone-sig' };
@@ -293,6 +310,8 @@ like($president, qr/'--token'/, 'and the token travels as an argument');
 like($president, qr/\$is_gateway/, 'only the machine the house names as the gateway listens');
 like($president, qr/if \(\$is_gateway\)/, 'and only it starts the Reception armer');
 like($president, qr/!length\(\$ivr_machine\) && \$device ne 'controller'/, 'a handheld never offers itself as the phone gateway');
+like($president, qr/ivr_machines/, 'the master reads the ranked gateway list');
+like($president, qr/\$in_list/, 'and starts every enabled candidate');
 
 my $daemon = read_file("$repo/perl/Sco.pl");
 like($daemon, qr/--listen/, 'the daemon can listen on the tailnet');
@@ -302,6 +321,8 @@ like($daemon, qr/merge_clips/, 'the daemon renders the words a phone sends');
 like($controller, qr/words => \\%words/, 'an arm carries the words');
 like($controller, qr/\$client->remote\(\)/,
 	'and only a local arm renders its clips here');
+like($controller, qr/sco_client\(\$c->param\('machine'\)\)/,
+	'the SCO routes can name the machine the phone chose');
 my $reception_src = read_file("$repo/perl/Reception.pl");
 # Reception names the flows, not one set of words: the gateway (which has the
 # voice) renders each flow's words itself, so there is no local clip pass.
@@ -311,7 +332,9 @@ like($reception_src, qr/default_flow => \$unknown/,
 	'with the unknown bucket as the one a caller nobody named follows');
 like($reception_src, qr/voicemail_greeting/,
 	'and a recorded greeting travels with its flow on arm');
-like($reception_src, qr/\$not_the_gateway/, 'a helper box that is not the gateway does not arm it');
+like($reception_src, qr/\$is_candidate/, 'the armer knows whether this machine is a candidate');
+like($reception_src, qr/\$prewarm/, 'only the first candidate keeps the phone link warm');
+like($reception_src, qr/new\(path => .*sco\.sock/, 'the armer arms its own socket, not another machine\'s');
 like($daemon, qr/note_caller/, 'a status poll carries the caller to the gateway');
 like($controller, qr/param\('number'\)/, 'the status route passes the caller number');
 

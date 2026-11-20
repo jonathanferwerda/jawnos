@@ -15,8 +15,9 @@ use warnings;
 # its own, without lib/ on @INC, and a controller that uses a lib module has to
 # survive that (the app itself has lib/ loaded long before a route runs).
 sub sco_client {
+	my ($machine) = @_;
 	require JawnOS::Sco::Client;
-	return JawnOS::Sco::Client->new();
+	return JawnOS::Sco::Client->new(machine => ($machine || ''));
 }
 
 sub sco_render {
@@ -38,7 +39,7 @@ sub action_52001 {
 	my %request = (cmd => 'status');
 	my $number = $c->param('number') || '';
 	$request{'number'} = $number if length $number;
-	my $client = &sco_client();
+	my $client = &sco_client($c->param('machine'));
 	my $status = $client->call(\%request);
 	unless (ref $status eq 'HASH' && defined $status->{'state'}) {
 		my $why = ref $status eq 'HASH' ? ($status->{'error'} || '') : '';
@@ -71,7 +72,7 @@ sub action_52002 {
 	foreach my $key (qw(greeting prompt thanks)) {
 		$words{$key} = $c->param($key) || '';
 	}
-	my $client = &sco_client();
+	my $client = &sco_client($c->param('machine'));
 	my %clips;
 	unless ($client->remote()) {
 		foreach my $key (keys %words) {
@@ -130,7 +131,7 @@ sub action_52009 {
 	my $flow = $c->param('flow') || '';
 	$request{'bucket'} = $bucket if length $bucket;
 	$request{'flow'} = $flow if length $flow;
-	$c->render(json => &sco_client()->call(\%request));
+	$c->render(json => &sco_client($c->param('machine'))->call(\%request));
 }
 
 # POST /manager/sco/voicemail
@@ -142,7 +143,7 @@ sub action_52010 {
 	my %request = (cmd => 'voicemail');
 	my $text = $c->param('text') || '';
 	$request{'text'} = $text if length $text;
-	$c->render(json => &sco_client()->call(\%request));
+	$c->render(json => &sco_client($c->param('machine'))->call(\%request));
 }
 
 # POST /manager/sco/hangup
@@ -150,7 +151,7 @@ sub action_52010 {
 # The panel's hang up: the plan and the call are over.
 sub action_52011 {
 	my $c = shift;
-	$c->render(json => &sco_client()->call({ cmd => 'hangup' }));
+	$c->render(json => &sco_client($c->param('machine'))->call({ cmd => 'hangup' }));
 }
 
 # POST /manager/sco/hold
@@ -160,7 +161,7 @@ sub action_52011 {
 sub action_52008 {
 	my $c = shift;
 	my $action = ($c->param('action') || '') eq 'start' ? 'start' : 'stop';
-	$c->render(json => &sco_client()->call({ cmd => 'hold', action => $action }));
+	$c->render(json => &sco_client($c->param('machine'))->call({ cmd => 'hold', action => $action }));
 }
 
 # POST /manager/sco/say
@@ -170,13 +171,13 @@ sub action_52008 {
 # answer is read into.
 sub action_52007 {
 	my $c = shift;
-	$c->render(json => &sco_client()->call({ cmd => 'say', text => $c->param('text') || '' }));
+	$c->render(json => &sco_client($c->param('machine'))->call({ cmd => 'say', text => $c->param('text') || '' }));
 }
 
 # POST /manager/sco/cancel
 sub action_52003 {
 	my $c = shift;
-	$c->render(json => &sco_client()->call({ cmd => 'cancel' }));
+	$c->render(json => &sco_client($c->param('machine'))->call({ cmd => 'cancel' }));
 }
 
 # GET /manager/sco/result
@@ -185,7 +186,7 @@ sub action_52003 {
 # with the name it was filed under.
 sub action_52004 {
 	my $c = shift;
-	my $status = &sco_client()->call({ cmd => 'status' });
+	my $status = &sco_client($c->param('machine'))->call({ cmd => 'status' });
 	my ($latest) = @{ $status->{'recordings'} || [] };
 	$c->render(json => {
 		%{$status},
@@ -205,11 +206,15 @@ sub action_52005 {
 		$c->rendered(404);
 		return;
 	}
+	my $machine = $c->param('machine') || '';
+	my $self_sig = eval { &subs::signatorial_designer() } || '';
+	my $local = !length($machine) || (length($self_sig) && $machine eq $self_sig);
 	my $file = &subs::home('~/.president/sco/kept') . '/' . $name;
 	$file = &subs::home('~/.president/sco') . '/' . $name unless -s $file;
-	# a pane on another machine asks the gateway, which holds the file
-	unless (-s $file) {
-		my $answer = &sco_client()->call({ cmd => 'recording', name => $name });
+	# a pane on another machine asks the gateway, which holds the file; a chosen
+	# machine other than this one never serves this machine's same-named file
+	unless ($local && -s $file) {
+		my $answer = &sco_client($machine)->call({ cmd => 'recording', name => $name });
 		unless ($answer && $answer->{'ok'} && length($answer->{'wav'} || '')) {
 			$c->rendered(404);
 			return;
@@ -269,7 +274,7 @@ sub action_52006 {
 			return $c->render(json => { ok => 0, error => 'nothing to signal' });
 		}
 	}
-	$c->render(json => &sco_client()->call({
+	$c->render(json => &sco_client($c->param('machine'))->call({
 		cmd => 'rtc',
 		action => $action,
 		message => \%message,

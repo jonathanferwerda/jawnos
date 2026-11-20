@@ -27,18 +27,57 @@ require JawnOS::Sco::Reconnect;
 
 my $config = -e &subs::config_path() ? eval { decode_json(read_file(&subs::config_path())) } : {};
 my $log = Mojo::Log->new(path => &subs::home(($config && $config->{'logfile'}) || '~/manager.log'));
-my $client = JawnOS::Sco::Client->new();
+my $raw_machines = eval { &subs::phone_ivr_grab('ivr_machines') } || '';
+my $ivr_list = length $raw_machines ? eval { decode_json($raw_machines) } : undef;
+my $has_list = ref $ivr_list eq 'ARRAY' ? 1 : 0;
+my $self_sig = eval { &subs::signatorial_designer() } || '';
+my $ivr_machine = eval { &subs::phone_ivr_grab('ivr_machine') } || '';
+my $sco_named = eval { &subs::setting_grabber({ app => 'misc', setting => 'sco_gateway', device => 'all', benign => 1 }) } || '';
+my ($in_list, $first_key) = (0, '');
+if ($has_list) {
+	foreach my $entry ( @{$ivr_list} ) {
+		next unless ref $entry eq 'HASH' && $entry->{'enabled'};
+		my $key = $entry->{'key'} || '';
+		$key = $self_sig if $key eq 'local' && length $self_sig;
+		$first_key = $key unless length $first_key;
+		$in_list = 1 if length $self_sig && $key eq $self_sig;
+	}
+}
+# Is this machine one of the gateways the house ranked? The list is the truth;
+# an absent list keeps the older ivr_machine/sco_gateway arrangement, and an
+# explicit empty list means no machine is a candidate.
+my $is_candidate;
+if (length $sco_named) { $is_candidate = 1; }
+elsif ($has_list) { $is_candidate = $in_list; }
+elsif (length $ivr_machine) { $is_candidate = (length $self_sig && $ivr_machine eq $self_sig) ? 1 : 0; }
+else { $is_candidate = ((eval { &subs::device_setter() } || 'computer') ne 'controller') ? 1 : 0; }
+# Only the first enabled candidate keeps the phone's link warm. With several
+# candidates the phone owns the link at call time (gatewayProblem), and three
+# machines asking the same phone to connect would tug it against itself.
+my $prewarm;
+if (length $sco_named) { $prewarm = 1; }
+elsif ($has_list) { $prewarm = (length $self_sig && length $first_key && $first_key eq $self_sig) ? 1 : 0; }
+else { $prewarm = $is_candidate; }
+# A chosen gateway on the network is the older sco_gateway arrangement; the
+# ranked list arms the gateway on this machine, its own socket.
+my $client = length($sco_named)
+	? JawnOS::Sco::Client->new()
+	: JawnOS::Sco::Client->new(path => &subs::home('~/.president/sco.sock'));
 my $helper = './perl/sco/sco_helper';
 my $armed_at = 0;
 my $armed_from = '';
 # the phone's link, and the last thing that was said about it
 my $reconnect;
 my $reconnect_said = '';
+$log->info('reception: this machine is not a gateway candidate; not arming')
+	unless $is_candidate;
 # The phone's own Bluetooth link is what carries the call. A phone that walked
 # out of range comes back without it, and nothing on a quiet table retries the
 # dropped ACL: the next call then has no Hands-Free audio at all. While the
-# gateway waits for a call, ask the phone to connect again.
+# gateway waits for a call, ask the phone to connect again - but only the first
+# candidate does, so a ranked list does not turn into a tug of war.
 sub keep_bluetooth_ready {
+	return '' unless $prewarm;
 	unless ($reconnect) {
 		my $peer = eval { &subs::misc_setting('sco_peer') } || '';
 		return '' unless $peer;
@@ -55,15 +94,6 @@ sub keep_bluetooth_ready {
 	}
 	return $verdict;
 }
-
-# The chosen gateway is another machine's: this one must not arm it as well, or
-# two Receivers cancel and re-spawn the same plan every few minutes. An explicit
-# sco_gateway is the older arrangement and names no machine, so it still arms.
-my $not_the_gateway = $client->remote()
-	&& length($client->machine())
-	&& $client->machine() ne (eval { &subs::signatorial_designer() } || '');
-$log->info('reception: the gateway is another machine (' . $client->machine() . '); this one will not arm it')
-	if $not_the_gateway;
 
 # Keep the names a screened call left, where the house can find them after the
 # call is over: the gateway's own recordings directory is pruned, and the index
@@ -247,7 +277,7 @@ sub file_pending_voicemails {
 }
 
 sub tick {
-	return if $not_the_gateway;
+	return unless $is_candidate;
 	&keep_new_recordings();
 	my $status = $client->call({ cmd => 'status' });
 	my $state = ($status && $status->{'ok'}) ? ($status->{'state'} || 'idle') : '';

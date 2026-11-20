@@ -1,11 +1,12 @@
 # The IVR gateway hierarchy
 
 **Status:** design, 2026-11-19. Phase 1 (the ordered setting and the
-reorderable pane) and the crew `ivr` ability are implemented in this worktree.
-Phase 2 (who listens and arms), Phase 3 (the app) and Phase 4 (the audio
-engine backend) remain. This note records what existed, the rule we want, and
-the smallest set of changes that gets there without answering a call into
-silence.
+reorderable pane), the crew `ivr` ability, and Phase 2 (every enabled candidate
+listens and arms; a request can name the machine a call chose; only the first
+candidate keeps the phone's Bluetooth link warm) are implemented. Phase 3 (the
+app) and Phase 4 (the audio engine backend) remain. This note records what
+existed, the rule we want, and the smallest set of changes that gets there
+without answering a call into silence.
 
 ## Today: one gateway, by name
 
@@ -298,8 +299,8 @@ the gateway. That is a migration item, not a blocker for the ranking.
 
 **Phase 0 (this note).** Design and the backpack BOM.
 
-**Phase 1 (implemented in this worktree): the setting and the pane.** No app
-change yet; the app still uses the first entry, so this is safe to land alone.
+**Phase 1 (implemented): the setting and the pane.** No app change yet; the
+app still uses the first entry, so this is safe to land alone.
 
 - `lib/JawnOS/Domain/Phone.pm`: `phone_ivr_defaults` (`:18-35`),
   `phone_ivr_machines_clean` / `phone_ivr_flag` (new), `phone_ivr_grab`
@@ -318,18 +319,24 @@ change yet; the app still uses the first entry, so this is safe to land alone.
 - Tests: the settings save/read, order, disabled rows, legacy fallback, and
   the `/manager/phone/sync` `ivr.machines` shape. Update the help test.
 
-**Phase 2 (next): who listens and who arms.**
+**Phase 2 (implemented): who listens and who arms.**
 
 - `perl/President.pl:838-860`: start on `in the list`.
 - `perl/Reception.pl:40-66`, `:250`: local arming; retire/limit the
   pre-warm.
-- `lib/JawnOS/Sco/Client.pm`: `machine => <key>`; keep the first-entry
-  default.
+- `lib/JawnOS/Sco/Client.pm`: `machine => <key>`; a chosen machine wins over
+  the older `sco_gateway`, and a chosen machine with no roster address is an
+  unresolved answer, not a fallback to the local socket.
+- `lib/JawnOS/Controller/manager_sco.pm`: every SCO route accepts `machine`;
+  the recording route never serves this machine's same-named file for another
+  machine's call.
+- `perl/President.pl`: every enabled candidate in the list starts `Sco.pl` and
+  `Reception.pl`; an explicit empty list starts none.
+- `perl/Reception.pl`: local arming on the candidate's own socket; only the
+  first enabled candidate pre-warms the phone's Bluetooth link.
 - `perl/crew.pl`: the `ivr` ability and the `ivr.answer` kind.
-- `lib/JawnOS/Controller/manager_sco.pm`: accept `machine` on
-  `status/arm/cancel/voicemail/hold/rtc`; validate it against the list.
-- Tests: the advert shape; the chosen-machine resolution; local arming; the
-  route validation.
+- Tests: the chosen-machine resolution (including the unresolved answer), the
+  source contracts for the master/armer, and the legacy fallback.
 
 **Phase 3 (the app; later).**
 
@@ -360,9 +367,9 @@ Rust tests for the plan; Perl tests for the backend selection.
 3. **Mid-call failover?** Recommend no. The SCO link is the call; moving it
    means re-routing and a second gateway handshake. Keep the hierarchy for
    answering.
-4. **Who owns the Bluetooth pre-warm?** Recommended: the phone. The gateway
-   reconnect stays only for one candidate. This is the biggest behavioral
-   change to `Reception.pl`.
+4. **Who owns the Bluetooth pre-warm?** Resolved: the phone owns the link at
+   call time (`gatewayProblem`); only the first enabled candidate pre-warms, so
+   a ranked list cannot become a tug of war.
 5. **Should the phone prefer an already-connected adapter over the top-ranked
    one that would need a 1.5 s connect?** The user's stated rule is rank
    first. Keep rank first; the connect attempt is bounded.
@@ -381,11 +388,9 @@ Rust tests for the plan; Perl tests for the backend selection.
 
 ## Risk
 
-The largest risk is the **arming model**, not the UI: today exactly one
-machine listens and arms, and `Reception.pl` refuses when `Client.pm` names
-another. The hierarchy needs every enabled candidate warm, which means
-multiple listeners sharing the house `sco_token`, and a deliberate decision
-about the Bluetooth pre-warm. If phase 2 leaves the old guard in place, the
-phone will rank a machine that never armed and skip it, and the pane will
-look correct while every call rings through. Phase 2 is the change to test
-with a real second machine before the app relies on it.
+Phase 2 has changed the arming model: every enabled candidate listens and
+arms, sharing the house `sco_token`, and only the first candidate pre-warms
+the phone. The remaining risk is the app: it still uses the first enabled
+gateway until Phase 3, so a second ranked machine is warm but not yet chosen
+by the phone. Test the live selection with a real second machine before
+relying on the fall-through.

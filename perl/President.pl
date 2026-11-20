@@ -841,23 +841,35 @@ sub manager_starter() {
 	# now, the Odroid Go in a bag later) also has an adapter to hold the link;
 	# one that does not pays nothing and answers "not built" on the routes.
 	if (-x './perl/sco/sco_helper') {
-		# Only the machine the house named as the gateway listens on the
-		# network and arms the phone's calls. Another helper box in the same
-		# house (a dev machine, a spare laptop) would otherwise mint a second
-		# sco_token and re-arm the same plan every few minutes. A machine named
-		# in ivr_machine is the gateway; no name means this one, and an explicit
-		# sco_gateway keeps the older remote-puck arrangement.
+		# Every enabled machine in the ranked list listens on the network and
+		# arms the phone's calls; the phone chooses one by its Bluetooth link. A
+		# controller is a gateway only when the house puts it in the list (or
+		# names it); the no-list arrangement keeps the older single-gateway
+		# behavior, and an explicit sco_gateway keeps the older remote puck.
 		my $ivr_machine = eval { &subs::phone_ivr_grab('ivr_machine') } || '';
 		my $self_sig = eval { &subs::signatorial_designer() } || '';
 		my $sco_named = eval { &subs::setting_grabber({ app => 'misc', setting => 'sco_gateway', device => 'all', benign => 1 }) } || '';
-		# A handheld is not the phone gateway. With no machine named, only a
-		# machine that can play the prompts (a computer or a server) offers its
-		# adapter; a controller waits for the house to name a gateway, instead of
-		# starting Sco.pl, Reception and the piper TTS on a 2 GB board. Naming this
-		# board explicitly (ivr_machine or sco_gateway) still wins.
+		my $raw_machines = eval { &subs::phone_ivr_grab('ivr_machines') } || '';
+		my $ivr_list = length $raw_machines ? eval { decode_json($raw_machines) } : undef;
+		my $has_list = ref $ivr_list eq 'ARRAY' ? 1 : 0;
+		my $in_list = 0;
+		if ($has_list) {
+			foreach my $entry ( @{$ivr_list} ) {
+				next unless ref $entry eq 'HASH' && $entry->{'enabled'};
+				my $key = $entry->{'key'} || '';
+				$key = $self_sig if $key eq 'local' && length $self_sig;
+				if (length $self_sig && $key eq $self_sig) { $in_list = 1; last; }
+			}
+		}
+		# A handheld is not the phone gateway unless the list names it: with no
+		# list, only a machine that can play the prompts (a computer or a server)
+		# offers its adapter, so a 2 GB board is not started by default. Naming
+		# this board explicitly (ivr_machine, the list, or sco_gateway) wins.
 		my $named_here = length($ivr_machine) && length($self_sig) && $ivr_machine eq $self_sig;
-		my $is_gateway = $named_here || length($sco_named)
-			|| (!length($ivr_machine) && $device ne 'controller');
+		my $is_gateway;
+		if (length $sco_named) { $is_gateway = 1; }
+		elsif ($has_list) { $is_gateway = $in_list; }
+		else { $is_gateway = $named_here || (!length($ivr_machine) && $device ne 'controller'); }
 		# The network face is what lets a phone with no helper of its own use
 		# this machine's adapter. The port is the house's; the secret is one
 		# value for the house, minted once here, and never logged. Sco.pl

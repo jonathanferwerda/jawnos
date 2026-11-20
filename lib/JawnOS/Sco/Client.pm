@@ -77,6 +77,8 @@ sub new {
 		host => $args{'host'} || '',
 		port => $args{'port'} || 0,
 		token => $args{'token'} || '',
+		# A machine the app chose for this call; '' keeps the house default.
+		requested_machine => $args{'machine'} || '',
 	}, $class;
 	# A gateway on another machine is a setting, not an argument: every caller
 	# (the routes, Reception.pl) asks for "the gateway" and gets whichever one
@@ -87,6 +89,34 @@ sub new {
 
 sub _resolve {
 	my ($self) = @_;
+	# A machine the app chose for this call wins over the house's older
+	# single-gateway settings: that choice is the whole point of the ranked list.
+	# The local machine is the local socket; a machine with no roster address is
+	# an unresolved answer, not a silent fallback to whichever gateway is here.
+	my $requested = $self->{'requested_machine'} || '';
+	if (length $requested) {
+		my $self_sig = eval { &subs::signatorial_designer() } || '';
+		if (length $self_sig && $requested eq $self_sig) {
+			$self->{'machine'} = $requested;
+			return;
+		}
+		my $row = &_machine_row($requested);
+		my $ip = ref $row eq 'HASH' ? &_usable_host($row->{'ip'}) : '';
+		unless (length $ip) {
+			$self->{'note'} = 'the gateway machine ' . $requested
+				. ' has no address in remote_machines';
+			$self->{'unresolved'} = 1;
+			$self->{'machine'} = $requested;
+			return;
+		}
+		my $port = &_house_setting('sco_port');
+		$port = 45700 unless $port =~ /^\d{1,5}$/ && $port > 0 && $port < 65536;
+		$self->{'host'} = $ip;
+		$self->{'port'} = int($port);
+		$self->{'token'} = &_house_setting('sco_token');
+		$self->{'machine'} = $requested;
+		return;
+	}
 	# An address named outright still wins: it is the older puck setting, and
 	# an operator who filled it meant exactly that machine.
 	my $named = &_house_setting('sco_gateway');
@@ -134,12 +164,17 @@ sub machine { $_[0]->{'machine'} || '' }
 # the puck owns the adapter, the local socket otherwise.
 sub where {
 	my ($self) = @_;
+	return $self->{'note'} if $self->{'unresolved'};
 	return $self->{'host'} . ':' . $self->{'port'} if $self->remote();
 	return $self->{'path'};
 }
 
 sub call {
 	my ($self, $request) = @_;
+	# An explicit machine that the roster cannot place must not quietly use the
+	# local gateway; say which machine was asked for instead.
+	return { ok => 0, error => $self->{'note'} }
+		if $self->{'unresolved'} && length($self->{'note'} || '');
 	my ($sock, $error) = $self->remote() ? $self->_dial_tcp() : $self->_dial_unix();
 	return $error if $error;
 	$sock->autoflush(1);
