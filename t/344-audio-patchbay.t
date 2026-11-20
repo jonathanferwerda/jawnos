@@ -342,4 +342,124 @@ require JawnOS::Domain::Audio;
 	}
 }
 
+# --- a device choice restarts a running engine whatever the switch says ----
+{
+	%STORE = ();
+	my $quit;
+	{
+		no warnings 'redefine';
+		local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
+		local *JawnOS::Audio::Engine::audio_engine_quit = sub {
+			$quit = 1;
+			return { ok => 1, state => 'done' };
+		};
+		is(subs::audio_manage_read(), 0, 'the master switch is off');
+		my $written = subs::audio_engine_device_write('pipewire', 'default');
+		is($written->{ok}, 1, 'the choice still saves');
+		is($quit, 1, 'and a running engine is asked to restart on it anyway');
+		is($written->{applied}{ok}, 1, 'the answer carries that quit');
+	}
+
+	{
+		my $tried = 0;
+		no warnings 'redefine';
+		local *JawnOS::Audio::Engine::audio_engine_available = sub { 0 };
+		local *JawnOS::Audio::Engine::audio_engine_quit = sub { $tried = 1; return { ok => 1 } };
+		my $written = subs::audio_engine_device_write('alsa', 'hw:0,0');
+		is($written->{ok}, 1, 'a machine with no engine still saves the choice');
+		is($written->{applied}{skipped}, 1, 'and says there was nothing to restart');
+		is($tried, 0, 'nothing pretends to quit');
+	}
+}
+
+# --- a PipeWire switch turned on restarts an engine that predates the mix ---
+{
+	%STORE = ();
+	require JawnOS::Audio::SystemMix;
+	open(my $bfh, '>', $ENV{JAWNOS_AUDIO_PLAN}) or die "boot plan: $!";
+	print {$bfh} '{"manage":0,"backend":"pipewire","device":"default",'
+		. '"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]}}';
+	close $bfh;
+
+	my ($quit, $patched) = (0, 0);
+	{
+		no warnings 'redefine';
+		local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
+		local *JawnOS::Audio::Engine::audio_engine_status = sub {
+			return { ok => 1, state => 'patching', backend => 'pipewire', device => 'default' };
+		};
+		local *JawnOS::Audio::Engine::audio_engine_patch = sub {
+			$patched = 1;
+			return { ok => 1, state => 'patching' };
+		};
+		local *JawnOS::Audio::Engine::audio_engine_quit = sub {
+			$quit = 1;
+			return { ok => 1, state => 'done' };
+		};
+		local *JawnOS::Audio::SystemMix::ensure = sub {
+			return {
+				ok => 1, source => 'jawn_system.monitor',
+				previous_default => 'alsa_output.real',
+				playback_device  => 'alsa_output.real',
+				created          => 1,
+			};
+		};
+
+		my $on = subs::audio_manage_set(1);
+		is($on->{applied}{restarted}, 1,
+			'a pipewire engine that started before the mix is restarted');
+		is($quit, 1, 'which is a quit');
+		is($patched, 0, 'and the patch waits for the respawn');
+		is($on->{applied}{system_mix}{playback_device}, 'alsa_output.real',
+			'the answer names the output the engine will play through');
+	}
+	subs::audio_manage_set(0);
+}
+
+# --- a duplex PipeWire plan keeps the ordinary path, with no mix -----------
+{
+	%STORE = (
+		'sound/audio_plan/all' => JSON::PP::encode_json({
+			sources => [ { id => 'gtr', kind => 'input', channel => 0 } ],
+			buses   => [],
+			sinks   => [ { id => 'out', kind => 'interface' } ],
+			routes  => [ { from => 'gtr', to => 'out' } ],
+		}),
+	);
+	require JawnOS::Audio::SystemMix;
+	open(my $dfh, '>', $ENV{JAWNOS_AUDIO_PLAN}) or die "boot plan: $!";
+	print {$dfh} '{"manage":0,"backend":"pipewire","device":"default",'
+		. '"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]}}';
+	close $dfh;
+
+	my ($ensured, $quit, $patched) = (0, 0, 0);
+	{
+		no warnings 'redefine';
+		local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
+		local *JawnOS::Audio::Engine::audio_engine_status = sub {
+			return { ok => 1, state => 'patching', mode => 'duplex',
+				backend => 'pipewire', device => 'default' };
+		};
+		local *JawnOS::Audio::Engine::audio_engine_patch = sub {
+			$patched = 1;
+			return { ok => 1, state => 'patching' };
+		};
+		local *JawnOS::Audio::Engine::audio_engine_quit = sub {
+			$quit = 1;
+			return { ok => 1, state => 'done' };
+		};
+		local *JawnOS::Audio::SystemMix::ensure = sub {
+			$ensured++;
+			return { ok => 1, source => 'jawn_system.monitor', created => 1 };
+		};
+
+		my $on = subs::audio_manage_set(1);
+		is($ensured, 0, 'a duplex pipewire plan creates no system mix');
+		is($quit, 0, 'and does not restart the engine for one');
+		is($patched, 1, 'the patch is applied directly');
+		ok(!defined $on->{applied}{restarted}, 'the answer does not claim a restart');
+	}
+	subs::audio_manage_set(0);
+}
+
 done_testing();

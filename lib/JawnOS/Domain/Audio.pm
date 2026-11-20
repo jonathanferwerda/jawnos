@@ -260,17 +260,38 @@ sub audio_plan_apply {
 	my $status_mode = ref $status eq 'HASH' ? $status->{mode} : undef;
 	my $mode = JawnOS::Audio::SystemMix::mode_union($status_mode, $plan_mode);
 
-	# The engine owns the card exclusively on ALSA, so the machine's own audio
-	# needs the virtual sink before the patch arms. A machine with no engine, no
-	# pactl, or a shared PipeWire backend keeps its ordinary output: `ensure`
-	# says `skipped` rather than muting the house.
+	# The engine plays the machine's own output, so the virtual sink is needed
+	# before the patch arms: on ALSA the card is held exclusively, and on the
+	# shared PipeWire backend a playback plan mixes the sink and plays it out
+	# the output it replaced. A machine with no engine, no pactl, or a device
+	# that names no output keeps its ordinary sound: `ensure` says `skipped`
+	# rather than muting the house.
 	my $mix;
-	if ($available && $engine_backend eq 'alsa') {
+	my $mix_backend = $engine_backend eq 'alsa'
+		|| ( $engine_backend eq 'pipewire' && $mode eq 'playback' );
+	if ($available && $mix_backend) {
 		$mix = JawnOS::Audio::SystemMix::ensure(
 			JawnOS::Audio::Engine::audio_engine_state_dir(),
 			$engine_device,
 			$mode,
 		);
+		# A PipeWire engine plays out the sink the mix replaced. One that
+		# started before the sink existed is still on `default`, which the mix
+		# has just made our own sink: restart it so the supervisor spawns it on
+		# the mix's playback device and capture.
+		if ($engine_backend eq 'pipewire' && ref $mix eq 'HASH' && $mix->{ok}
+			&& $mix->{created} && ref $status eq 'HASH') {
+			my $quit = eval { JawnOS::Audio::Engine::audio_engine_quit() };
+			return {
+				ok         => 1,
+				skipped    => 1,
+				restarted  => 1,
+				note       => 'the pipewire engine started before the system mix;'
+					. ' asked it to restart on the mix playback device',
+				system_mix => $mix,
+				engine     => $quit,
+			};
+		}
 	}
 
 	my $answer = JawnOS::Audio::Engine::audio_engine_patch(
@@ -327,7 +348,9 @@ sub _audio_plan_boot_write {
 # Choose the interface the engine opens. The pair goes into the supervisor's
 # startup file, so a restart uses it; while the engine is up, `quit` makes the
 # supervisor restart it with the new choice (the supervisor reads the file at
-# every spawn). A machine with no engine still saves the choice for later.
+# every spawn), whatever the manage switch says - an engine left running keeps
+# its old backend and device, and on ALSA that means holding the wrong card. A
+# machine with no engine still saves the choice for later.
 sub audio_engine_device_write {
 	my ($backend, $device) = @_;
 	$backend = '' if !defined $backend || ref $backend;
@@ -354,13 +377,10 @@ sub audio_engine_device_write {
 	}
 
 	require JawnOS::Audio::Engine;
-	my $applied;
-	if ($manage) {
-		my $available = eval { JawnOS::Audio::Engine::audio_engine_available() } ? 1 : 0;
-		$applied = $available
-			? JawnOS::Audio::Engine::audio_engine_quit()
-			: { ok => 1, skipped => 1, error => '' };
-	}
+	my $available = eval { JawnOS::Audio::Engine::audio_engine_available() } ? 1 : 0;
+	my $applied = $available
+		? JawnOS::Audio::Engine::audio_engine_quit()
+		: { ok => 1, skipped => 1, error => '' };
 	return { ok => 1, backend => $backend, device => $device, applied => $applied };
 }
 

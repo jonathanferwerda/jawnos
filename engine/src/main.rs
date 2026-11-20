@@ -1911,9 +1911,10 @@ fn listen_alsa(
     total: Option<u64>,
     stop: &AtomicBool,
 ) -> Result<listen::ListenRun, String> {
-    // Only the exclusive ALSA backend needs the system mix: PipeWire is
-    // already a shared sink, and capturing its own output would loop.
-    let system_device = if options.backend == BackendKind::Alsa {
+    // The system mix is the machine's own audio. On ALSA the engine owns the
+    // card; on the shared PipeWire backend it plays the output the mix
+    // replaced, so it captures the sink either way.
+    let system_device = if owns_system_mix(options.backend) {
         options.system_device.as_deref()
     } else {
         None
@@ -2162,10 +2163,10 @@ fn patch_alsa(
     total: Option<u64>,
     stop: &AtomicBool,
 ) -> Result<PatchRun, String> {
-    // The manager names the virtual sink's monitor for the exclusive ALSA
-    // backend. A shared PipeWire backend already mixes every app, so capturing
-    // its own output there would be a loop; leave it alone.
-    let system_source = if options.backend == BackendKind::Alsa {
+    // The manager names the virtual sink's monitor; the engine plays the
+    // output the mix replaced, so capturing the sink is not a loop. A plan that
+    // wants no system audio simply has no source here.
+    let system_source = if owns_system_mix(options.backend) {
         options.system_device.as_deref()
     } else {
         None
@@ -2477,6 +2478,14 @@ pub(crate) fn play_support(backend: BackendKind) -> Result<(), String> {
 
 fn play_support_message() -> String {
     "no JACK file playback yet; use --backend alsa or null".to_string()
+}
+
+/// The backends that carry the machine's own audio through the engine. ALSA
+/// owns the card exclusively; a managed PipeWire engine plays the output it
+/// replaced and captures the mix sink. JACK and the null device neither own an
+/// output nor have a sink of ours to capture.
+pub(crate) fn owns_system_mix(backend: BackendKind) -> bool {
+    matches!(backend, BackendKind::Alsa | BackendKind::PipeWire)
 }
 
 /// A backend that cannot monitor an input says so before a worker is started.
@@ -2796,9 +2805,9 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
             let period = options.frames;
             let buffer = options.buffer;
             let start_at = monitor_start(options.start_at, alignment.samples);
-            // Only the exclusive ALSA backend owns the card; on a shared
-            // PipeWire backend the system mix is already in the output.
-            let system_device = if options.backend == BackendKind::Alsa {
+            // The monitor plays the output the mix replaced and adds the
+            // machine's own audio, so it carries the sink either way.
+            let system_device = if owns_system_mix(options.backend) {
                 options.system_device.clone()
             } else {
                 None
@@ -3377,5 +3386,13 @@ mod tests {
             1,
             "a queue of zero blocks is refused before the file is created"
         );
+    }
+
+    #[test]
+    fn the_engine_carries_the_system_mix_on_the_backends_that_own_the_output() {
+        assert!(owns_system_mix(BackendKind::Alsa));
+        assert!(owns_system_mix(BackendKind::PipeWire));
+        assert!(!owns_system_mix(BackendKind::Jack));
+        assert!(!owns_system_mix(BackendKind::Null));
     }
 }

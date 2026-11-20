@@ -379,6 +379,9 @@ my $next_probe            = 0;
 my $next_sync             = 0;
 my $active_system_device  = undef;
 my $active_system_mode    = undef;
+# The output a PipeWire engine must play through instead of `default`, which
+# would be our own sink once the mix has moved it.
+my $active_playback_device = undef;
 
 sub write_status {
 	my $data = {
@@ -455,17 +458,27 @@ sub plan_config {
 	};
 }
 
-# Put the machine's own audio on the virtual sink exactly while the engine owns
-# the card. The plan file is the switch's durable copy, so a supervisor that
-# starts after a reboot knows without asking the manager. A shared PipeWire
-# backend needs none of this: the engine is already one client among the apps.
-# The rule that frees the card's playback node goes in before the child opens
-# it; the microphone node deliberately stays with PipeWire.
+# Put the machine's own audio on the virtual sink exactly while the engine
+# plays the machine's output. On ALSA the engine holds the card, so the sink is
+# the only place an app can land; on the shared PipeWire backend the engine is
+# the mixer itself and plays the sink's monitor out the device it replaced. The
+# plan file is the switch's durable copy, so a supervisor that starts after a
+# reboot knows without asking the manager. The rule that frees the card's
+# playback node goes in before the child opens it, and only for an ALSA card;
+# the microphone node deliberately stays with PipeWire.
 sub ensure_system_mix {
 	my ($backend, $manage, $device, $mode) = @_;
 	return undef unless load_system_mix();
 
-	if (!$manage || $backend ne 'alsa') {
+	# ALSA always needs the sink: the engine holds the card. PipeWire needs it
+	# for a playback plan, where the engine plays the mix out the output it
+	# replaced. A duplex plan keeps the ordinary PipeWire path: pipewire-alsa
+	# takes one node target for the whole process, so an engine playing out the
+	# replaced sink would also capture that sink, and a shared backend has no
+	# card to free.
+	my $mix_backend = $backend eq 'alsa'
+		|| ( $backend eq 'pipewire' && defined $mode && $mode eq 'playback' );
+	if (!$manage || !$mix_backend) {
 		remove_system_mix() if defined $active_system_device;
 		return undef;
 	}
@@ -473,8 +486,9 @@ sub ensure_system_mix {
 	# A hand-run supervisor may name the source itself; then it owns the sink
 	# and this one must not load or unload it.
 	if (defined $given{'system-device'} && length $given{'system-device'}) {
-		$active_system_device = $system_device;
-		$active_system_mode   = $mode;
+		$active_system_device   = $system_device;
+		$active_system_mode     = $mode;
+		$active_playback_device = undef;
 		return $system_device;
 	}
 
@@ -482,12 +496,16 @@ sub ensure_system_mix {
 	if ($mix && $mix->{ok}) {
 		$active_system_device = $mix->{source};
 		$active_system_mode   = $mode;
+		$active_playback_device = $backend eq 'pipewire'
+			&& defined $mix->{playback_device} && length $mix->{playback_device}
+			? $mix->{playback_device} : undef;
 		if ($mix->{managed_card} && $mix->{managed_card}->{note}) {
 			print "audio supervisor: card rule: " . $mix->{managed_card}->{note} . "\n";
 		}
 		return $mix->{source};
 	}
-	$active_system_device = undef;
+	$active_system_device   = undef;
+	$active_playback_device = undef;
 	if ($mix && $mix->{error}) {
 		print "audio supervisor: system mix: " . $mix->{error} . "\n";
 	}
@@ -499,8 +517,9 @@ sub remove_system_mix {
 	my $state = JawnOS::Audio::SystemMix::status($state_dir);
 	return unless defined $active_system_device || ($state && $state->{active});
 	my $answer = JawnOS::Audio::SystemMix::remove($state_dir);
-	$active_system_device = undef;
-	$active_system_mode   = undef;
+	$active_system_device   = undef;
+	$active_system_mode     = undef;
+	$active_playback_device = undef;
 	if ($answer && !$answer->{ok} && $answer->{error}) {
 		print STDERR "audio supervisor: system mix: " . $answer->{error} . "\n";
 	}
@@ -515,7 +534,9 @@ sub remove_system_mix {
 # Keep the virtual sink only while the engine is actually patching and actually
 # capturing its monitor. The engine says `capturing` once parec is reading,
 # `unavailable` when this machine has no parec/source, and `off` when the patch
-# did not ask for one. A failed or ended patch takes the sink away with it.
+# did not ask for one. A failed or ended patch takes the sink away with it - on
+# PipeWire especially, where a failed capture must never leave `jawn_system` as
+# the machine's default.
 sub sync_system_mix {
 	my ($engine) = @_;
 	return unless load_system_mix();
@@ -528,8 +549,9 @@ sub sync_system_mix {
 	my $engine_backend = $engine && defined $engine->{'backend'} && length $engine->{'backend'}
 		? $engine->{'backend'} : $backend;
 
-	# A take, a playback or a listen still holds the card, so the machine's
-	# output must stay on the sink even though the patch is not the status line.
+	# A take, a playback or a listen still holds the output, so the machine's
+	# ordinary audio must stay on the sink even though the patch is not the
+	# status line.
 	return if $state =~ /\A(?:recording|playing|listening)\z/;
 
 	my $live   = $state eq 'patching';
@@ -545,11 +567,13 @@ sub sync_system_mix {
 		&& $engine->{'mode'} =~ /\A(?:duplex|playback)\z/
 		? $engine->{'mode'} : undef;
 	my $mode = JawnOS::Audio::SystemMix::mode_union($engine_mode, $plan_mode);
+	my $mix_backend = $engine_backend eq 'alsa'
+		|| ( $engine_backend eq 'pipewire' && $mode eq 'playback' );
 
-	if ($manage && $engine_backend eq 'alsa' && $live && $system eq 'pending') {
+	if ($manage && $mix_backend && $live && $system eq 'pending') {
 		return;
 	}
-	if ($manage && $engine_backend eq 'alsa' && $live && $system eq 'capturing') {
+	if ($manage && $mix_backend && $live && $system eq 'capturing') {
 		# A mode flip rewrites the rule; the same mode costs nothing.
 		return if defined $active_system_device
 			&& defined $active_system_mode
@@ -560,6 +584,9 @@ sub sync_system_mix {
 		if ($mix && $mix->{ok}) {
 			$active_system_device = $mix->{source};
 			$active_system_mode   = $mode;
+			$active_playback_device = $engine_backend eq 'pipewire'
+				&& defined $mix->{playback_device} && length $mix->{playback_device}
+				? $mix->{playback_device} : undef;
 		}
 		elsif ($mix && $mix->{error}) {
 			print "audio supervisor: system mix: " . $mix->{error} . "\n";
@@ -609,6 +636,17 @@ sub spawn_engine {
 		? JawnOS::Audio::SystemMix::plan_mode($chosen->{'plan'}, $machine)
 		: 'playback';
 	my $system_source = ensure_system_mix($backend, $manage, $device, $mode);
+	# A PipeWire engine plays out the output the mix replaced; `default` would
+	# be our own sink once the switch has moved it. The engine's device is the
+	# PCM it opens, so the node name reaches pipewire-alsa through the
+	# environment, which is how that plugin picks its target.
+	my $engine_device = $device;
+	$engine_device = $active_playback_device
+		if $backend eq 'pipewire'
+			&& defined $active_playback_device && length $active_playback_device;
+	my $pipewire_node = $backend eq 'pipewire'
+		&& defined $active_playback_device && length $active_playback_device
+		? $active_playback_device : undef;
 	my $pid = fork();
 	unless (defined $pid) {
 		warn "audio supervisor: cannot fork: $!\n";
@@ -617,10 +655,11 @@ sub spawn_engine {
 	if ($pid == 0) {
 		# Belt and braces: FD_CLOEXEC should already have done this on exec.
 		close $lock;
+		$ENV{'PIPEWIRE_NODE'} = $pipewire_node if defined $pipewire_node;
 		my @args = (
 			$binary, '--serve',
 			'--backend', $backend,
-			'--device',  $device,
+			'--device',  $engine_device,
 			'--period',  $period,
 			'--buffer',  $buffer,
 			'--socket',  $socket,

@@ -1,9 +1,11 @@
 # tests-for: lib/JawnOS/Audio/SystemMix.pm
-# covers:    the machine's ordinary audio while the engine owns the card: a
-#            machine with no pactl keeps its output and skips, the sink is
-#            created and made the default once, a repeat changes nothing, and
-#            off restores the previous default and unloads the sink. A state
-#            file left by a crash is cleaned up rather than stranded.
+# covers:    the machine's ordinary audio while the engine plays it: a machine
+#            with no pactl keeps its output and skips, the sink is created and
+#            made the default once, a repeat changes nothing, and off restores
+#            the previous default and unloads the sink. A state file left by a
+#            crash is cleaned up rather than stranded. A PipeWire device gets
+#            the sink and the switch and no card rule, and a mix with no known
+#            output to play through is refused rather than looped.
 
 use strict;
 use warnings;
@@ -396,6 +398,62 @@ sub set_attempts {
 	is($map->{ok}, 1, 'the long listing maps without JSON');
 	is($map->{node}, 'alsa_output.pci-0000_00_1f.3.analog-stereo',
 		'and names the same playback node');
+}
+
+# --- a PipeWire device gets the sink and no card rule ----------------------
+{
+	reset_mix();
+	my $wp_dir = tempdir(CLEANUP => 1);
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$wp_dir/wireplumber";
+	my $rule = "$wp_dir/wireplumber/51-jawnos-studio-card.conf";
+
+	my $map = JawnOS::Audio::SystemMix::card_nodes('default', 'playback');
+	is($map->{ok}, 0, 'a PipeWire device names no ALSA card');
+	like($map->{error}, qr/not an ALSA card/, 'and card_nodes says so');
+
+	my $on = JawnOS::Audio::SystemMix::ensure($wp_dir, 'default');
+	is($on->{ok}, 1, 'ensure with default creates the system sink');
+	is($on->{source}, 'jawn_system.monitor', 'whose monitor is the engine source');
+	is($on->{playback_device}, 'alsa_output.real',
+		'and names the output the engine must play through');
+	ok(!exists $on->{managed_card}, 'no WirePlumber rule is installed');
+	ok(!-e $rule, 'and no rule file is written');
+	is(read_file("$dir/default"), "jawn_system\n", 'the sink is the default output');
+
+	my $off = JawnOS::Audio::SystemMix::remove($wp_dir);
+	is($off->{ok}, 1, 'remove succeeds');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'and the output comes back');
+}
+
+# --- with no known previous output the mix would capture itself ------------
+{
+	reset_mix();
+	my $wp_dir = tempdir(CLEANUP => 1);
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$wp_dir/wireplumber";
+	write_file("$dir/default", "jawn_system\n");
+
+	my $on = JawnOS::Audio::SystemMix::ensure($wp_dir, 'default');
+	is($on->{ok}, 0, 'ensure refuses when the sink is default with no history');
+	like($on->{error}, qr/own capture/, 'and says it will not play into itself');
+	unlike(read_file("$dir/sinks"), qr/jawn_system/, 'no sink is loaded');
+	ok(!-e "$wp_dir/audio-system-mix.json", 'and no state is written');
+}
+
+{
+	reset_mix();
+	my $wp_dir = tempdir(CLEANUP => 1);
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/default", "jawn_system\n");
+	write_file("$wp_dir/audio-system-mix.json",
+		'{"sink":"jawn_system","source":"jawn_system.monitor",'
+			. '"previous_default":"","module_id":42}');
+
+	my $on = JawnOS::Audio::SystemMix::ensure($wp_dir, 'default');
+	is($on->{ok}, 0, 'an active mix with no playback device is refused');
+	unlike(read_file("$dir/sinks"), qr/jawn_system/,
+		'the sink that would capture itself is unloaded');
+	ok(!-e "$wp_dir/audio-system-mix.json", 'and its state is cleared');
 }
 
 # --- duplex disables both nodes because the engine captures the mic --------

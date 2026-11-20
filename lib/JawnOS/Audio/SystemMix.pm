@@ -1,12 +1,14 @@
 package JawnOS::Audio::SystemMix;
 
-# The machine's ordinary audio while the engine owns the interface.
+# The machine's ordinary audio while the engine plays it.
 #
-# A managed engine opens the card exclusively, so Music, a video, a
-# notification or a call has nowhere to go. This module makes a null sink,
-# makes it the default output, and leaves the engine to capture that sink's
-# monitor as its `device` source (engine/src/system_capture.rs). Off, or after
-# a crash, the previous default comes back and the sink is unloaded
+# A managed engine takes the machine's output: on ALSA it opens the card
+# exclusively, and on the shared PipeWire backend it plays the machine's output
+# itself. Either way Music, a video, a notification or a call needs a sink the
+# engine can capture. This module makes a null sink, makes it the default
+# output, and leaves the engine to capture that sink's monitor as its `device`
+# source (engine/src/system_capture.rs). Off, or after a crash, the previous
+# default comes back and the sink is unloaded
 # (docs/studio-audio-roadmap.md §8-§9, D11).
 #
 # The state file is what makes the cleanup honest: it records the sink, the
@@ -14,6 +16,11 @@ package JawnOS::Audio::SystemMix;
 # followed by one that puts the machine back. `ensure` and `remove` are
 # idempotent; a machine with no pactl/PipeWire answers `skipped`, never a
 # failure that would stop the plan from saving.
+#
+# The WirePlumber rule is for an ALSA card only. A PipeWire device (`default`)
+# names no card, so `ensure` makes just the sink and the default switch. The
+# default the sink replaced is also the device a PipeWire engine must play out -
+# never the sink itself, or it would capture its own output.
 #
 # This is deliberately the same `pactl` idiom JawnOS::Sco::Mixer already uses,
 # through JawnOS::Platform::Audio::run so a test can inject the tool and a
@@ -655,17 +662,21 @@ sub ensure {
 		};
 	}
 
+	# The card rule is for a card only. `hw:N,0` (or the picker's
+	# `alsa|hw:N,0`) names one; a PipeWire device such as `default` names no
+	# card, so it gets the sink and the switch and no WirePlumber rule.
+	my $card = defined $device && length $device ? _card_index($device) : undef;
+
 	# Find the nodes before touching anything. A miss must leave the machine
 	# exactly as it was, because a guessed rule would disable the wrong device
 	# and still not free the card. A rule we wrote already hides its nodes from
 	# pactl, so an earlier state supplies them and only a mode change maps the
 	# direction that was not hidden.
 	my $mapping;
-	if (defined $device && length $device) {
+	if (defined $card) {
 		my $state = _read_state($state_dir);
 		my $known = $state && ref $state->{'managed_card'} eq 'HASH'
 			? $state->{'managed_card'} : undef;
-		my $card  = _card_index($device);
 		my $path  = managed_card_path();
 		my $reuse;
 		if ($known && defined $card
@@ -691,6 +702,30 @@ sub ensure {
 	my $state     = _read_state($state_dir);
 	my $had_state = $state ? 1 : 0;
 	$state ||= {};
+
+	# The output the sink replaces is also the device a PipeWire engine must
+	# play through. Resolve it before the sink exists - it is the ordinary
+	# output, not ours - and refuse a mix we cannot play out of: an engine left
+	# on `default` after the switch would open this sink and capture itself.
+	my $previous = $state->{'previous_default'};
+	if ( !defined $previous || !length $previous ) {
+		$previous = _current_default();
+		# If our sink is already the default and no state explains why, there
+		# is no previous output to name; PulseAudio picks one when it goes.
+		$previous = '' if $previous eq $system_sink;
+	}
+	if ( !defined $card && defined $device && length $device
+		&& !length $previous ) {
+		# An active mix with no named output is exactly the state that would
+		# loop; hand the machine back instead of keeping it.
+		remove($state_dir) if $had_state;
+		return {
+			ok => 0,
+			error => "$system_sink is already the default output and no earlier"
+				. ' output is recorded; not playing the engine into its own capture',
+		};
+	}
+
 	my $sinks     = _sinks();
 	my $created   = 0;
 	my $module_id = $state->{'module_id'};
@@ -704,14 +739,6 @@ sub ensure {
 			return { ok => 0, error => "cannot create the $system_sink null sink" };
 		}
 		$created = 1;
-	}
-
-	my $previous = $state->{'previous_default'};
-	if ( !defined $previous || !length $previous ) {
-		$previous = _current_default();
-		# If our sink is already the default and no state explains why, there
-		# is no previous output to name; PulseAudio picks one when it goes.
-		$previous = '' if $previous eq $system_sink;
 	}
 
 	my $doc = {
@@ -788,6 +815,9 @@ sub ensure {
 		sink             => $system_sink,
 		source           => $system_source,
 		previous_default => $previous,
+		# Where the engine must play out: the output this sink replaced. A
+		# PipeWire engine given `default` would resolve to the sink above.
+		playback_device  => $previous,
 		module_id        => $module_id,
 		created          => $created,
 		( $card_rule ? ( managed_card => $card_rule ) : () ),

@@ -401,7 +401,9 @@ impl Server {
             frames: 0,
             xruns: 0,
             summary: summary.clone(),
-            system: if self.config.backend == BackendKind::Alsa && system_device.is_some() {
+            system: if crate::owns_system_mix(self.config.backend)
+                && system_device.is_some()
+            {
                 "pending".to_string()
             } else {
                 "off".to_string()
@@ -3131,9 +3133,9 @@ fn patch_hardware(
     stop: &AtomicBool,
     system_device: Option<String>,
 ) -> Result<(u64, usize), String> {
-    // Only the exclusive ALSA backend needs the system mix: PipeWire is
-    // already a shared sink, and capturing its own output would loop.
-    let system_device = if config.backend == BackendKind::Alsa {
+    // The system mix is the machine's own audio; the engine plays the output
+    // the mix replaced, so capturing the sink is not a loop.
+    let system_device = if crate::owns_system_mix(config.backend) {
         system_device
     } else {
         None
@@ -3269,9 +3271,9 @@ fn listen_hardware(
     status: &Arc<Mutex<ListenStatus>>,
     stop: &AtomicBool,
 ) -> Result<u64, String> {
-    // Only the exclusive ALSA backend needs the system mix: PipeWire is
-    // already a shared sink, and capturing its own output would loop.
-    let system_device = if config.backend == BackendKind::Alsa {
+    // The system mix is the machine's own audio; the engine plays the output
+    // the mix replaced, so capturing the sink is not a loop.
+    let system_device = if crate::owns_system_mix(config.backend) {
         config.system_device.as_deref()
     } else {
         None
@@ -3394,7 +3396,7 @@ fn run_playback(
     // The machine's own mix is monitor-only, added after the master chain. It
     // never reaches the take's capture or writers; the capture lives exactly
     // as long as this playback thread, so stopping the monitor joins `parec`.
-    let _system = if config.backend == BackendKind::Alsa {
+    let _system = if crate::owns_system_mix(config.backend) {
         match system_device {
             Some(source) => {
                 match crate::system_capture::SystemCapture::start(&source, config.rate) {
