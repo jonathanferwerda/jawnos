@@ -70,11 +70,17 @@ function attributeSave(att) {
 	var def_wday = JSON.stringify(att.find('.def_wday').val());
 	if (def == true) { 
 		def = 'on'; 
-		$('.attribute[app="' + app + '"]').each(function(i,v) {
-			if ($(v).attr('uuid') != uuid) {
-				$(v).find('.def').prop('checked', false);
-			}
-		});
+		// One model default means one row: clear the other model checkboxes for
+		// this app. Options are not touched - honey and milk are both defaults -
+		// and the selector is scoped to the model list, because a model and an
+		// option can share a name and even a uuid after a catalogue migration.
+		if (attribute === 'model') {
+			$('.attribute[att="model"][app="' + app + '"]').each(function(i,v) {
+				if ($(v).attr('uuid') != uuid) {
+					$(v).find('.def').prop('checked', false);
+				}
+			});
+		}
 	}
 
 	var save_app = att.find('.save_app').prop('checked');
@@ -143,15 +149,15 @@ function attributeSave(att) {
 			}
 			else {
 				att.removeData('att_saving');
-				var t = $(response.template).find('.attribute[uuid="' + uuid + '"]').html();
+				var t = $(response.template).find('.attribute[att="' + attribute + '"][uuid="' + uuid + '"]').html();
 
 				var st = $('.appointment_contents[app="' + app + '"]').scrollTop();
-				wind.find('.attribute[uuid="' + uuid + '"]').html(t);
+				wind.find('.attribute[att="' + attribute + '"][uuid="' + uuid + '"]').html(t);
 				$('.appointment_contents[app="' + app + '"]').scrollTop(st);
 
 				openAttributeReopener(app);
 			}
-			var row = wind.find('.attribute[uuid="' + uuid + '"]');
+			var row = wind.find('.attribute[att="' + attribute + '"][uuid="' + uuid + '"]');
 			$.each(scrolls, function(i,v) {
 				row.find(i).scrollTop(v);
 			});
@@ -231,9 +237,9 @@ $(document).on('change', '.char', function(e) {
 			ac.removeData('char_saving');
 			ac.attr('uuid', response.uuid);
 
-			var t = $(response.template).find('.attribute[uuid="' + att_uuid + '"]').html();
+			var t = $(response.template).find('.attribute[att="' + att + '"][uuid="' + att_uuid + '"]').html();
 			var st = $('.appointment_contents[app="' + app + '"]').scrollTop();
-			container.find('.attribute[uuid="' + att_uuid + '"]').html(t);
+			container.find('.attribute[att="' + att + '"][uuid="' + att_uuid + '"]').html(t);
 			$('.appointment_contents[app="' + app + '"]').scrollTop(st);
 			openAttributeReopener(app);
 //			configurationReloader(app);
@@ -283,7 +289,7 @@ $(document).on('click', '.delete_attribute', function() {
 			type: 'POST',
 			data: { uuid: uuid, att: att, timestamp: timestamp },
 			success: function(response) {
-				$('.attribute[uuid="' + uuid + '"]').remove();
+				$('.attribute[att="' + att + '"][uuid="' + uuid + '"]').remove();
 			}
 		});
 	}

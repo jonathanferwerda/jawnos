@@ -1,4 +1,4 @@
-# tests-for: scripts/model_duplicates.pl lib/JawnOS/Controller/manager_store.pm public/js/manager/attributes.js perl/help/topics_features.pl
+# tests-for: scripts/model_duplicates.pl lib/JawnOS/Controller/manager_store.pm public/js/manager/attributes.js public/js/manager/attributes/01_upload_copy_migration.js perl/help/topics_features.pl
 # covers:    a catalogue name is one row: the Add route answers with the existing
 #            model instead of minting a twin, the dedupe tool keeps the row the
 #            records point at, repoints the rest, and tombstones what it removes
@@ -236,11 +236,16 @@ sub add_model {
 		};
 		local *subs::db_insert = sub { push @inserted, [@_]; return 1 };
 		local *subs::db_update = sub { push @updated, [@_]; return 1 };
+		local *subs::db_select = sub {
+			my ($table, $cols, $where) = @_;
+			return ModelAddRows->new(($table // '') eq 'option' ? \@existing_option : \@existing_model);
+		};
 		my $c = ModelAddProbe->new(
 			att => $p{'att'} // 'model',
 			uuid => $p{'uuid'} // 'new',
 			app => $p{'app'} // 'news',
 			name => $p{'name'} // 'global',
+			def => $p{'def'},
 			timestamp => 1_700_000_000_000,
 			option_category => $p{'option_category'} // '',
 		);
@@ -291,6 +296,54 @@ is(scalar @{$inserted}, 0, 'an uncategorised name matches an uncategorised optio
 );
 is(scalar @{$inserted}, 1, 'while a categorised add does not match an uncategorised one');
 
+# A model default is one row. The save clears the others in the database, not
+# just the checkboxes the panel happened to redraw, so a second default cannot
+# come back with the next sync.
+my (undef, undef, $updated_default) = add_model(
+	uuid => 'keepmodel', name => 'medium', def => 'on',
+	existing_model => [ { uuid => 'keepmodel' }, { uuid => 'stale' } ],
+);
+my @cleared = grep { ($_->[0] // '') eq 'model' && ($_->[1]->{'def'} // '') eq 'off' } @{$updated_default};
+is(scalar @cleared, 1, 'setting a model default clears the other model default');
+is($cleared[0]->[2]->{'uuid'}, 'stale', 'and only the other row, not the one saved');
+
+# Options may hold several defaults (honey with milk), so another option's
+# default is left alone.
+my (undef, undef, $updated_option) = add_model(
+	att => 'option', uuid => 'keepopt', name => 'honey', def => 'on',
+	existing_options => [ { uuid => 'keepopt' }, { uuid => 'milkopt' } ],
+);
+is(scalar(grep { ($_->[0] // '') eq 'option' && ($_->[1]->{'def'} // '') eq 'off' } @{$updated_option}), 0,
+	'another option default is not cleared');
+
+# A catalogue row deleted in Configure leaves a durable tombstone. Without it a
+# peer that still held the row handed it back on the next pull.
+{
+	package DeleteProbe;
+	sub new { my ($class, %p) = @_; return bless { params => \%p, rendered => undef }, $class }
+	sub param { my ($s, $k) = @_; return $s->{'params'}->{$k} }
+	sub render { my ($s, %o) = @_; $s->{'rendered'} = $o{'text'}; return $s }
+	package main;
+}
+my (@deleted, @registered);
+{
+	no warnings 'redefine';
+	local *subs::db_select = sub { return ModelAddRows->new([ { uuid => 'doomed', server_time => '4242', app => 'tea' } ]) };
+	local *subs::db_delete = sub { push @deleted, [@_]; return 1 };
+	local *Manager::deletion_registration = sub { push @registered, @_; return 1 };
+	my $c = DeleteProbe->new(uuid => 'doomed', att => 'model');
+	Manager::action_6893($c);
+	is($c->{'rendered'}, 'ok', 'the delete answers ok');
+}
+is(scalar @deleted, 1, 'the catalogue row is deleted');
+is($deleted[0]->[0], 'model', 'from its own table');
+is($deleted[0]->[1]->{'uuid'}, 'doomed', 'by uuid');
+is(scalar @registered, 1, 'and a deletion is registered so the next sync cannot hand it back');
+is($registered[0]->{'table'}, 'model', 'the tombstone names the table');
+is($registered[0]->{'uuid'}, 'doomed', 'and the row');
+is($registered[0]->{'server_time'}, '4242', 'with the stamp the row had');
+is($registered[0]->{'scope'}, 'single', 'as a whole-row deletion');
+
 # ------------------------------------------------------- what the person sees
 my $js = read_file("$root/public/js/manager/attributes.js");
 like($js, qr/if \(response\.duplicate\)/, 'the Register notices the existing row');
@@ -298,6 +351,12 @@ like($js, qr/That model already exists/, 'and says so rather than letting the mo
 like($js, qr/That option already exists in this category/, 'and names the option key in its own notice');
 like($js, qr/option_category: option_category/, 'the Add carries the option category chosen beside the name');
 like($js, qr/if \(att_uuid == 'new'\) \{ return; \}/, 'a new row leaves its category for the Add to save');
+like($js, qr/attribute === 'model'/, 'only a model default clears its siblings');
+like($js, qr/\.attribute\[att="model"\]\[app="/, 'the uncheck is scoped to the model list, not every catalogue table');
+like($js, qr/\.attribute\[att="'\s*\+\s*\w+\s*\+\s*'"\]\[uuid=/, 'a saved row is replaced by its own catalogue table');
+like($js, qr/\.attribute\[att="'\s*\+\s*att\s*\+\s*'"\]\[uuid=/, 'the characteristic setter replaces its own row');
+my $copy_js = read_file("$root/public/js/manager/attributes/01_upload_copy_migration.js");
+like($copy_js, qr/\.attribute\[att="'\s*\+\s*att\s*\+\s*'"\]\[uuid=/, 'the copy tool replaces its own row too');
 my $help = read_file("$root/perl/help/topics_features.pl");
 like($help, qr/a name the catalogue already holds \(in the same option category\) opens that row/,
 	'the guide names the option category in that rule');

@@ -81,10 +81,10 @@ $(document).on('click', '.attribute_copy_app_save', function() {
 		type: 'POST',
 		data: { uuid: uuid, att: att, app: app, pre_app: pre_app },
 		success: function(response) {
-			var t = $(response.template).find('.attribute[uuid="' + response.attribute.uuid + '"]').html();
+			var t = $(response.template).find('.attribute[att="' + att + '"][uuid="' + response.attribute.uuid + '"]').html();
 
 			var st = $('.appointment_contents[app="' + response.attribute.app + '"]').scrollTop();
-			var existing = wind.find('.attribute[uuid="' + response.attribute.uuid + '"]');
+			var existing = wind.find('.attribute[att="' + att + '"][uuid="' + response.attribute.uuid + '"]');
 			if (existing.length > 0) {
 				existing.html(t);
 			}

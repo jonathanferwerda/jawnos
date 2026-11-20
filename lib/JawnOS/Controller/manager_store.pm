@@ -1155,6 +1155,19 @@ sub action_6625 {
 		$returner->{'uuid'} = $uuid;
 		&subs::db_update($att, $returner, { uuid => $uuid });
 	}
+	# A model is one choice. The panel cleared the other checkboxes in the
+	# browser only, so every model that had ever been set default stayed def='on'
+	# in the database; with several defaults, which one a press started followed
+	# the row order of whichever machine merged first. Clear the others here,
+	# where the choice is actually written. Options may keep more than one
+	# default (honey with milk), so they are left alone.
+	if ($att eq 'model' && ($def // '') eq 'on' && length $app) {
+		my $others = &subs::db_select('model', ['uuid'], { app => $app, def => 'on' })->hashes || [];
+		foreach my $other ( @{$others} ) {
+			next if ($other->{'uuid'} // '') eq ($returner->{'uuid'} // '');
+			&subs::db_update('model', { def => 'off', server_time => $server_time }, { uuid => $other->{'uuid'}, app => $app });
+		}
+	}
 
 	my $attd = $att;
 	$attd = s/_//gi;
@@ -1257,7 +1270,14 @@ sub action_6893 {
 	my $uuid = $c->param('uuid');
 	my $att = $c->param('att');
 	my ($db,$database) = &subs::database_grabber();
+	# A catalogue row is deleted just like an appointment: the tombstone is what
+	# stops a peer that still holds the row from handing it back on the next pull.
+	# Without it the deleted model or option reappeared (and with it a default the
+	# person had already removed). Read the row first, since the delete is what
+	# the tombstone describes.
+	my $original = &subs::db_select($att, undef, { uuid => $uuid })->hashes->[0];
 	&subs::db_delete($att, { uuid => $uuid });
+	&deletion_registration({ table => $att, uuid => $uuid, scope => 'single', server_time => ($original ? $original->{'server_time'} : &subs::rightNow()) }) if $original;
 	$c->render('text' => 'ok');
 }
 

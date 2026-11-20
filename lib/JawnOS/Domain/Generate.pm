@@ -204,9 +204,22 @@ sub usual_appointment_maker {
 	if ($settings->{'project'}) {
 		$data->{'project'} = $settings->{'project'};
 	}
-	my $m = &subs::db_select('model', undef, { app => $app, def => 'on' })->hashes->[0];
+	# More than one model can carry a default flag - a size and a drink, or a twin
+	# left behind by a catalogue migration. Reading the database's row order made
+	# two machines disagree about which rows a press starts: an unordered
+	# `limit 1` follows whatever order each database happens to hold. A default
+	# whose window contains this moment is the one wanted; when several do, the
+	# oldest configured one wins, so the answer is the same on every machine and
+	# a legacy second flag cannot displace the default the app already had.
+	my $model_defaults = &subs::db_select('model', undef, { app => $app, def => 'on' })->hashes || [];
+	my ($m) = sort {
+		(0 + ($a->{'server_time'} || 0)) <=> (0 + ($b->{'server_time'} || 0))
+		|| (0 + ($a->{'timestamp'} || 0)) <=> (0 + ($b->{'timestamp'} || 0))
+		|| (($a->{'uuid'} // '') cmp ($b->{'uuid'} // ''))
+	} grep { &default_attribute_time_checker($_, $timestamp) eq 'yes' } @{$model_defaults};
+	$m ||= {};
 	my ($model,$jmodel,$joptions);
-	if ($m->{'uuid'} && $m->{'def'} eq 'on' && &default_attribute_time_checker($m,$timestamp) eq 'yes') {
+	if ($m->{'uuid'}) {
 		$model = {
 			uuid => $m->{'uuid'},
 			name => $m->{'name'},
@@ -255,6 +268,12 @@ sub usual_appointment_maker {
 sub default_attribute_time_checker {
 	my $d = shift;
 	my $timestamp = shift;
+	# A default's window is the person's clock, not the box's. The house keeps
+	# its clock on UTC while the person reads Eastern, so an evening tea would
+	# otherwise be read as a morning one and start at the wrong end of the day.
+	# Adopt the house zone for the read and put the worker's own zone back; a
+	# missing setting or a database that cannot answer leaves the process zone.
+	my $restore_zone = eval { &subs::clock_zone_adopt(&subs::clock_zone_house()) } || sub { };
 	my @ts = localtime($timestamp / 1000);
 	my $allowed_count = 0;
 
@@ -331,6 +350,7 @@ sub default_attribute_time_checker {
 	}
 
 
+	$restore_zone->();
 	return $allowed_count == 4 ? 'yes' : 'no';
 }
 
@@ -550,6 +570,56 @@ sub source_model_option_remove {
 	&subs::db_update('appointments', $write, { uuid => $parent->{'uuid'}, app => $parent->{'app'} });
 	&Websocket::send('tab', { console => &Websocket::console_command('appointmentDetailGrabber', $parent->{'app'}, $parent->{'uuid'})});
 	return $parent;
+}
+
+# A parent session's model/option children are the sessions the default catalogue
+# started under it (source_uuid names the parent). A stop closes those children
+# on the machine that pressed it, but the stop travels the mesh as a row and the
+# child is written on whichever machine started the app: either can arrive at a
+# peer first, and a child that arrives after its parent's stop has nothing left
+# to close it. Reconcile the pair whenever a row is merged, so a stopped parent
+# never leaves a running default session behind on any machine. Only a running
+# start/record is closed - a purchase, a transfer leg or a browser tab shares
+# source_uuid but is not the parent's model/option session.
+sub default_children_close {
+	my ($parent) = @_;
+	return [] unless ref $parent eq 'HASH';
+	my $uuid = $parent->{'uuid'};
+	return [] unless defined $uuid && length $uuid;
+	my $closed = (defined $parent->{'stop_seen'} && length $parent->{'stop_seen'})
+		|| (($parent->{'type'} // '') =~ /^(?:stop|cancel)$/);
+	return [] unless $closed;
+	my $cancelled = (($parent->{'type'} // '') eq 'cancel') ? 1 : 0;
+	my $stop = (defined $parent->{'stop_timestamp'} && length $parent->{'stop_timestamp'})
+		? $parent->{'stop_timestamp'}
+		: ((defined $parent->{'timestamp'} && length $parent->{'timestamp'}) ? $parent->{'timestamp'} : &subs::rightNow());
+	$stop = 0 + $stop;
+	my @queue = ($uuid);
+	my %seen = ($uuid => 1);
+	my @closed;
+	while (scalar @queue) {
+		my $from = shift @queue;
+		my $children = &subs::db_query("select uuid, app, timestamp from appointments where source_uuid = ? and (type = 'start' or type = 'record') and stop_seen is null order by cast(timestamp as integer)",
+			$from)->hashes || [];
+		foreach my $child ( @{$children} ) {
+			my $child_uuid = $child->{'uuid'};
+			next unless defined $child_uuid && length $child_uuid && !$seen{$child_uuid};
+			$seen{$child_uuid} = 1;
+			my $start = (defined $child->{'timestamp'} && $child->{'timestamp'} =~ /^\d+$/)
+				? 0 + $child->{'timestamp'} : $stop;
+			&subs::db_update('appointments', {
+				type => ($cancelled ? 'cancel' : 'stop'),
+				duration => $start - $stop,
+				stop_timestamp => $stop,
+				stop_seen => 'yes',
+				seen => 'yes',
+				server_time => &subs::rightNow(),
+			}, { uuid => $child_uuid, app => $child->{'app'} });
+			push @closed, { app => $child->{'app'}, uuid => $child_uuid };
+			push @queue, $child_uuid;
+		}
+	}
+	return \@closed;
 }
 
 sub log_writer {

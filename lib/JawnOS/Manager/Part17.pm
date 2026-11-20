@@ -109,14 +109,19 @@ sub merge_table_rows {
 	# `single` tombstone drops the whole row; a `file` tombstone removes just
 	# the named attachment, so an appointment with surviving photos stays.
 	my (%tombstone_single, %tombstone_file);
-	if ($q eq 'appointments' || $q eq 'mailbox') {
-		foreach my $tomb ( @{ &subs::db_query('select uuid, scope, additional from sync_log where tbl = ?', $q)->hashes || [] } ) {
-			my $scope = $tomb->{'scope'} || '';
-			if ($scope eq 'single') { $tombstone_single{$tomb->{'uuid'}} = 1; }
-			elsif ($scope eq 'file') {
-				my $extra = eval { return decode_json $tomb->{'additional'} } || {};
-				$tombstone_file{$tomb->{'uuid'}}->{$extra->{'file_uuid'}} = 1 if $extra->{'file_uuid'};
-			}
+	# Every uuid-keyed table honours a durable `single` tombstone, not only the two
+	# that carry attachments. A catalogue row deleted by Configure used to be
+	# handed back by whichever peer still held it, because the merge only read
+	# tombstones for appointments and mailbox: the deleted model or option then
+	# reappeared (and with it a second default). `file` tombstones still belong to
+	# the tables that have attachments.
+	foreach my $tomb ( @{ &subs::db_query('select uuid, scope, additional from sync_log where tbl = ?', $q)->hashes || [] } ) {
+		my $scope = $tomb->{'scope'} || '';
+		next unless defined $tomb->{'uuid'} && length $tomb->{'uuid'};
+		if ($scope eq 'single') { $tombstone_single{$tomb->{'uuid'}} = 1; }
+		elsif ($scope eq 'file' && ($q eq 'appointments' || $q eq 'mailbox')) {
+			my $extra = eval { return decode_json $tomb->{'additional'} } || {};
+			$tombstone_file{$tomb->{'uuid'}}->{$extra->{'file_uuid'}} = 1 if $extra->{'file_uuid'};
 		}
 	}
 	# Settings have no uuid, so their tombstones are keyed by (app, setting,
@@ -211,7 +216,7 @@ sub merge_table_rows {
 								}
 								next ROW;
 							}
-							next ROW if ($q eq 'appointments' || $q eq 'mailbox') && $tombstone_single{$r->{'uuid'}};
+							next ROW if $tombstone_single{$r->{'uuid'} // ''};
 							$percentage = $results_size ? sprintf("%.2f", $n / $results_size * 100) : 0;
 							if ($sync_job && &subs::rightNow() >= ($job_alert + 250)) {
 								my %progress = (current => $n);
@@ -608,7 +613,8 @@ sub merge_table_rows {
 									}
 									$r->{'file'} = encode_json $files;
 								}
-								unless ( grep { defined $_->{'uuid'} && defined $r->{'uuid'} && ($_->{'uuid'} eq $r->{'uuid'} ) && ($_->{'table'} || '') eq $q && ($_->{'scope'} || '') ne 'file' } @{$deletions} ) {
+								my $removed_row = grep { defined $_->{'uuid'} && defined $r->{'uuid'} && ($_->{'uuid'} eq $r->{'uuid'} ) && ($_->{'table'} || '') eq $q && ($_->{'scope'} || '') ne 'file' } @{$deletions};
+								unless ($removed_row) {
 									if (scalar @resulters == 0) {
 										my $inserted = eval { &subs::db_insert($q,$r)};
 										if ($@) { push @insert_errors, ($r->{'uuid'} || '?') . ': ' . ($@ =~ s/\s+/ /gr); }
@@ -629,6 +635,53 @@ sub merge_table_rows {
 									if ($q eq 'settings' && ($r->{'setting'} // '') eq 'toggle' && ($r->{'app'} // '') !~ /^__/
 										&& (scalar @resulters == 0 || !$h->{'server_time'} || $r->{'server_time'} > $h->{'server_time'})) {
 										$toggle_changed{$r->{'app'}} = $r->{'value'};
+									}
+								}
+								# A stop can reach this machine before the default session it must
+								# close - or after it. The child is written on the machine that
+								# started the app and the stop wherever it was pressed, so one
+								# peer can hold an open child under a parent another peer has
+								# already closed. Reconcile the pair here as well as on the press,
+								# so a stopped parent never leaves a running model/option session.
+								# Two states must not be undone: a stale stop replayed over a
+								# parent that has since reopened, and a child reopened for a
+								# pause/resume whose parent's reopen is still in flight. The
+								# row's own server_time is the order both were written in.
+								if ($q eq 'appointments' && !$removed_row) {
+									my $is_closed = sub {
+										my ($row) = @_;
+										return 0 unless ref $row eq 'HASH';
+										return 1 if (defined $row->{'stop_seen'} && length $row->{'stop_seen'});
+										return (($row->{'type'} // '') =~ /^(?:stop|cancel)$/) ? 1 : 0;
+									};
+									my $is_open = sub {
+										my ($row) = @_;
+										return 0 unless ref $row eq 'HASH';
+										return 0 unless (($row->{'type'} // '') =~ /^(?:start|record)$/);
+										return (defined $row->{'stop_seen'} && length $row->{'stop_seen'}) ? 0 : 1;
+									};
+									my $stamp = sub {
+										my ($row) = @_;
+										return (ref $row eq 'HASH' && defined $row->{'server_time'}) ? (0 + $row->{'server_time'}) : 0;
+									};
+									my $parent;
+									if ($is_closed->($r)) {
+										# only a copy that actually moved the parent: a replayed
+										# stop must not close a session a resume just reopened
+										$parent = $r if !$h || $stamp->($r) >= $stamp->($h);
+									}
+									elsif ($is_open->($r) && defined $r->{'source_uuid'} && length $r->{'source_uuid'}) {
+										my $parent_row = &subs::db_select('appointments', undef, { uuid => $r->{'source_uuid'} })->hashes->[0];
+										if ($parent_row && $is_closed->($parent_row)) {
+											my $resume = $h && $is_closed->($h) && $stamp->($r) > $stamp->($h);
+											$parent = $parent_row unless $resume;
+										}
+									}
+									if ($parent) {
+										my $closed_children = &subs::default_children_close($parent);
+										foreach my $child ( @{$closed_children} ) {
+											push @{$updateables}, $child unless grep { ($_->{'uuid'} // '') eq ($child->{'uuid'} // '') } @{$updateables};
+										}
 									}
 								}
 							}
