@@ -12,12 +12,17 @@
 //!
 //! # The socket's life
 //!
-//! The parent directory is created if missing, a socket left by a killed
-//! engine is unlinked, the socket is bound, and its mode is set to 0600 at
-//! once. A clean `quit` unlinks it; a crash leaves the file behind on purpose,
-//! because the next start removes whatever is at that path before binding.
-//! That is why the unlink happens *before* `bind` and never after a successful
-//! bind: removing a live socket would strand the running engine.
+//! The parent directory is created if missing, whatever is at the path is
+//! asked for a `status` line, and only a socket that does not answer (a crash
+//! remnant) is unlinked. A live engine is refused instead, so a second start
+//! can never displace the one that owns the path. The socket is then bound and
+//! its mode set to 0600 at once. A clean `quit` unlinks it; a crash leaves the
+//! file behind on purpose, because the next start can tell that remnant from a
+//! live engine. That is why the unlink happens *before* `bind` and never after
+//! a successful bind: removing a live socket would strand the running engine.
+//! A running engine also watches the file it bound, and exits if it is gone or
+//! was replaced, so an engine displaced by an older binary cannot play and
+//! capture forever where no manager can reach it.
 //!
 //! # One client at a time
 //!
@@ -52,8 +57,8 @@
 //! Two takes at once, or two playbacks at once, are still refused.
 
 use std::fs;
-use std::io::{self, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -83,6 +88,15 @@ const MONITOR_RING_FRAMES: usize = 8192;
 /// The serve loop's poll interval. A command that arrives waits at most this
 /// long to be read; the socket is idle almost all the time.
 const POLL: Duration = Duration::from_millis(2);
+
+/// How long a status probe waits for the peer to answer. A live engine answers
+/// in microseconds; this only bounds a wedged one.
+const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// How often the watchdog compares the socket file's identity. An engine that
+/// lost its socket is invisible to the manager either way; this only bounds
+/// how long it keeps playing and capturing first.
+const SOCKET_WATCH: Duration = Duration::from_millis(250);
 
 /// A command is one object; this bounds a client that never sends a newline.
 const MAX_LINE: usize = 64 * 1024;
@@ -200,13 +214,110 @@ fn attach_handset(
 pub(crate) fn serve(config: Config) -> Result<ExitCode, String> {
     let path = config.socket.clone();
     let listener = bind(&path)?;
+    let bound = socket_id(&path).ok_or_else(|| {
+        format!(
+            "cannot stat the socket {}: {}",
+            path.display(),
+            io::Error::last_os_error()
+        )
+    })?;
+    // A second engine used to unlink this path and bind its own, leaving this
+    // one playing and capturing where nothing could reach it. Watch the file we
+    // bound: if it is gone, or another engine replaced it (a new inode), this
+    // engine is the invisible one and must go. The check runs on a thread so a
+    // blocked `accept` cannot postpone it.
+    let watched = path.clone();
+    let finished = Arc::new(AtomicBool::new(false));
+    let watch_finished = Arc::clone(&finished);
+    thread::spawn(move || {
+        wait_for_socket_change(&watched, bound);
+        // A clean quit removes the path just before the process goes; that is
+        // not a replacement, and it must not print a second exit line.
+        if watch_finished.load(Ordering::SeqCst) {
+            return;
+        }
+        eprintln!(
+            "jawn-audio: the control socket {} was removed or replaced; exiting",
+            watched.display()
+        );
+        // `serve`'s clean unlink must not run here: the replacement owns the
+        // path now, and removing it would strand the engine that took over.
+        std::process::exit(0);
+    });
     let mut server = Server::new(config);
     server.boot_restore();
     let outcome = server.run(listener);
-    // A clean exit unlinks the socket. A crash leaves it behind, and the next
-    // start unlinks that stale path before it binds.
-    let _ = fs::remove_file(&path);
+    finished.store(true, Ordering::SeqCst);
+    // A clean exit unlinks the socket, but only if it is still the file this
+    // engine bound. A crash leaves it behind, and the next start unlinks that
+    // stale path before it binds.
+    if socket_id(&path) == Some(bound) {
+        let _ = fs::remove_file(&path);
+    }
     outcome.map(|()| ExitCode::SUCCESS)
+}
+
+/// Ask whatever is listening on `path` for a status line.
+///
+/// `Some` means the peer answered in the engine's protocol: either a healthy
+/// `{"ok":true,...}` or the one error line a busy engine sends while another
+/// client holds the socket. Both are a live engine; only a path with nothing
+/// behind it (or a peer that never answers) is stale. The pid rides in the
+/// status object, so it is absent for an engine too old to report one. Factored
+/// out of `bind` so a test can put a fake engine on a socket and exercise the
+/// decision without a device.
+fn probe_live_engine(path: &Path) -> Option<LiveEngine> {
+    let stream = UnixStream::connect(path).ok()?;
+    stream.set_read_timeout(Some(PROBE_TIMEOUT)).ok()?;
+    stream.set_write_timeout(Some(PROBE_TIMEOUT)).ok()?;
+    (&stream).write_all(b"{\"cmd\":\"status\"}\n").ok()?;
+    let mut reader = BufReader::new(&stream).take(MAX_LINE as u64);
+    let mut line = String::new();
+    match reader.read_line(&mut line) {
+        Ok(0) | Err(_) => return None,
+        Ok(_) => {}
+    }
+    let object = parse_object(line.trim()).ok()?;
+    let pid = match get(&object, "pid") {
+        Some(Value::Num(value)) if *value >= 1.0 && value.fract() == 0.0 => Some(*value as u32),
+        _ => None,
+    };
+    Some(LiveEngine { pid })
+}
+
+/// What a live engine's status answer tells us about the process behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LiveEngine {
+    /// The pid the engine reports, when it is new enough to report one.
+    pid: Option<u32>,
+}
+
+/// The file identity of a path. A replacement at the same path is a different
+/// inode, which is how a displaced engine notices it no longer owns the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SocketId {
+    dev: u64,
+    ino: u64,
+}
+
+fn socket_id(path: &Path) -> Option<SocketId> {
+    let meta = fs::metadata(path).ok()?;
+    Some(SocketId {
+        dev: meta.dev(),
+        ino: meta.ino(),
+    })
+}
+
+/// Block until the file at `path` is gone or is no longer the one `bound`
+/// described. The serve loop calls this on a thread; returning is the signal
+/// that another engine (or a person) took the path.
+fn wait_for_socket_change(path: &Path, bound: SocketId) {
+    loop {
+        thread::sleep(SOCKET_WATCH);
+        if socket_id(path) != Some(bound) {
+            return;
+        }
+    }
 }
 
 /// Create the parent directory, drop a stale socket, bind, and lock the socket
@@ -219,16 +330,19 @@ fn bind(path: &Path) -> Result<UnixListener, String> {
             })?;
         }
     }
-    // A socket file with a listener behind it is a live engine. Refuse rather
-    // than unlink it: a second engine must never steal the first one's path or
-    // answer its manager. `connect` to a stale file fails, which is the only
-    // case where removing it is safe.
+    // A socket that answers a status request has a live engine behind it.
+    // Refuse rather than unlink it: a second engine must never steal the first
+    // one's path or answer its manager. A file with nothing behind it (a crash
+    // remnant) does not answer, and removing it is safe.
     if path.exists() {
-        if UnixStream::connect(path).is_ok() {
-            return Err(format!(
-                "another engine is already serving {}",
-                path.display()
-            ));
+        if let Some(live) = probe_live_engine(path) {
+            return Err(match live.pid {
+                Some(pid) => format!(
+                    "another engine (pid {pid}) is already serving {}",
+                    path.display()
+                ),
+                None => format!("another engine is already serving {}", path.display()),
+            });
         }
         match fs::remove_file(path) {
             Ok(()) => {}
@@ -2095,8 +2209,10 @@ fn idle_line() -> String {
 }
 
 /// Append the configuration the engine actually serves with to a status
-/// object. The existing keys keep their order and meaning; these six are added
-/// at the end, so every state answers the same question. A recording line
+/// object. The existing keys keep their order and meaning; these seven are
+/// added at the end, so every state answers the same question. `pid` is the
+/// engine process itself, which lets a supervisor refuse to displace it even
+/// when the manager's own client holds the socket. A recording line
 /// already has a `channels` key for the take's granted capture channels; the
 /// configured capture width is `device_channels`, not `channels`: a recording
 /// line already carries `channels` for the take's granted width, and two keys of
@@ -2107,13 +2223,14 @@ fn add_config(line: String, config: &Config) -> String {
         None => return line,
     };
     format!(
-        "{head},\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"period\":{},\"buffer\":{},\"device_channels\":{}}}",
+        "{head},\"backend\":\"{}\",\"device\":\"{}\",\"rate\":{},\"period\":{},\"buffer\":{},\"device_channels\":{},\"pid\":{}}}",
         config.backend.name(),
         jawn_audio::loopback::json_escape(&config.device),
         config.rate,
         config.period,
         config.buffer,
-        config.channels
+        config.channels,
+        std::process::id()
     )
 }
 
@@ -4799,6 +4916,139 @@ break"}"#).is_err());
             ))
             .to_string_lossy()
             .into_owned()
+    }
+
+    fn temp_socket(name: &str) -> PathBuf {
+        use std::sync::atomic::AtomicUsize;
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let count = NEXT.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "jawn-audio-sock-{}-{count}-{name}.sock",
+            std::process::id()
+        ))
+    }
+
+    /// Bind a stand-in engine at `path` that answers exactly one status probe
+    /// with `reply` (or closes without answering, like a wedged engine).
+    fn fake_engine(path: &Path, reply: Option<&'static str>) -> thread::JoinHandle<()> {
+        let listener = UnixListener::bind(path).expect("bind the fake engine");
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buffer = [0u8; 128];
+                let _ = stream.read(&mut buffer);
+                if let Some(reply) = reply {
+                    let _ = stream.write_all(reply.as_bytes());
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn a_probe_reads_a_live_engines_pid() {
+        let path = temp_socket("live");
+        let engine = fake_engine(
+            &path,
+            Some("{\"ok\":true,\"take\":0,\"state\":\"idle\",\"pid\":4242}\n"),
+        );
+        let probe = probe_live_engine(&path).expect("a live engine answers");
+        assert_eq!(probe.pid, Some(4242));
+        engine.join().expect("fake engine");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_busy_engines_error_line_still_counts_as_live() {
+        // The manager holds the one client slot during a take; the engine
+        // answers a probe with its one error line. That is still an engine to
+        // refuse, never a stale socket to unlink.
+        let path = temp_socket("busy");
+        let engine = fake_engine(
+            &path,
+            Some("{\"ok\":false,\"error\":\"a client is already connected\"}\n"),
+        );
+        let probe = probe_live_engine(&path).expect("the busy line speaks the protocol");
+        assert_eq!(probe.pid, None, "an error line carries no pid");
+        engine.join().expect("fake engine");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_socket_that_never_answers_is_stale() {
+        let path = temp_socket("silent");
+        let engine = fake_engine(&path, None);
+        assert_eq!(probe_live_engine(&path), None);
+        engine.join().expect("fake engine");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn bind_refuses_a_live_engine_without_unlinking_its_socket() {
+        let path = temp_socket("refuse");
+        let engine = fake_engine(
+            &path,
+            Some("{\"ok\":true,\"take\":0,\"state\":\"idle\",\"pid\":77}\n"),
+        );
+        let error = bind(&path).expect_err("a live engine must not be displaced");
+        assert!(error.contains("pid 77"), "{error}");
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(path.exists(), "a refused bind leaves the live socket alone");
+        engine.join().expect("fake engine");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn bind_still_replaces_a_socket_that_does_not_answer() {
+        let path = temp_socket("stale");
+        {
+            let dead = UnixListener::bind(&path).expect("bind the stale socket");
+            drop(dead);
+        }
+        assert!(path.exists(), "a crash leaves the file behind");
+        let listener = bind(&path).expect("a stale socket is replaced");
+        drop(listener);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_replaced_or_removed_socket_is_noticed() {
+        let path = temp_socket("watch");
+        let original = UnixListener::bind(&path).expect("bind the watched socket");
+        let bound = socket_id(&path).expect("stat the watched socket");
+        let watched = path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            wait_for_socket_change(&watched, bound);
+            let _ = tx.send(());
+        });
+
+        // A second listener moved onto the path is a different inode: the
+        // engine that bound the old one no longer owns the name.
+        let replacement = temp_socket("watch-replacement");
+        let takeover = UnixListener::bind(&replacement).expect("bind the replacement");
+        fs::rename(&replacement, &path).expect("replace the socket path");
+        rx.recv_timeout(Duration::from_secs(2))
+            .expect("a replaced socket is noticed");
+        drop(takeover);
+        drop(original);
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_removed_socket_is_noticed() {
+        let path = temp_socket("gone");
+        let original = UnixListener::bind(&path).expect("bind the watched socket");
+        let bound = socket_id(&path).expect("stat the watched socket");
+        let watched = path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            wait_for_socket_change(&watched, bound);
+            let _ = tx.send(());
+        });
+        fs::remove_file(&path).expect("remove the socket path");
+        rx.recv_timeout(Duration::from_secs(2))
+            .expect("a removed socket is noticed");
+        drop(original);
     }
 
     #[test]

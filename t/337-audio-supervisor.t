@@ -14,6 +14,11 @@
 #            file. A managed PipeWire engine plays the sink out the output the
 #            mix replaced, captures the same monitor as ALSA, and a failed
 #            capture hands the machine back instead of leaving our sink default.
+#            An engine the supervisor did not start but can identify as this
+#            binary on this socket is asked to quit before a spawn; a process
+#            it cannot identify is left alone. With no saved plan the pair is
+#            pipewire/default when a sound server answers, alsa/hw:1,0 when
+#            none does, and the choice is logged once.
 
 use strict;
 use warnings;
@@ -39,6 +44,9 @@ ok(-f $audio, 'perl/Audio.pl is in the tree');
 # supervisor or an engine behind.
 my @children;
 END {
+	# Killing a leftover child sets `$?` to its signal; keep that from becoming
+	# this file's exit status after Test::More has already passed.
+	local $?;
 	for my $pid (grep { defined && $_ > 0 } @children) {
 		next unless kill(0, $pid);
 		kill 'KILL', $pid;
@@ -84,6 +92,17 @@ sub write_script {
 	my ($path, $body) = @_;
 	open(my $fh, '>', $path) or die "$path: $!";
 	print {$fh} "#!/usr/bin/env perl\nuse strict;\nuse warnings;\n$body\n";
+	close $fh;
+	chmod 0755, $path or die "chmod $path: $!";
+	return $path;
+}
+
+# A script whose shebang is this Perl, so a test can run it with a PATH that
+# names no `perl` at all (the no-sound-server case).
+sub write_absolute_script {
+	my ($path, $body) = @_;
+	open(my $fh, '>', $path) or die "$path: $!";
+	print {$fh} "#!$^X\nuse strict;\nuse warnings;\n$body\n";
 	close $fh;
 	chmod 0755, $path or die "chmod $path: $!";
 	return $path;
@@ -1605,6 +1624,278 @@ PACTL
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the adopted supervisor stops cleanly');
 	ok(wait_for(sub { reap_child($fake) }, 10), 'and asks the adopted engine to quit');
+}
+
+# --- no plan file: share the machine when a sound server is present ---------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+	delete $ENV{JAWNOS_AUDIO_PLAN};
+	delete $ENV{JAWNOS_AUDIO_BACKEND};
+	delete $ENV{JAWNOS_AUDIO_DEVICE};
+
+	# `pactl info` names a PulseAudio-compatible server (PipeWire's shim).
+	write_script("$dir/bin/pactl", <<'PACTL');
+if (($ARGV[0] // '') eq 'info') { print "Server Name: PulseAudio (on PipeWire)\n"; exit 0; }
+exit 0;
+PACTL
+	local $ENV{PATH} = "$dir/bin:$ENV{PATH}";
+
+	my $args_log = "$dir/args.log";
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/pipewire-engine", <<'ENGINE');
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
+use JSON::PP ();
+open(my $log, '>>', $ENV{'AUDIO_TEST_ARGS'}) or exit 1;
+print {$log} join(' ', @ARGV), "\n";
+close $log;
+my %arg;
+for (my $i = 0; $i < @ARGV; $i++) {
+	$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
+}
+my $listener = IO::Socket::UNIX->new(
+	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+) or exit 1;
+while (my $client = $listener->accept) {
+	$client->autoflush(1);
+	my $line = <$client>;
+	my $obj = eval { JSON::PP->new->decode($line) };
+	my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+	if ($cmd eq 'quit') {
+		print {$client} "{\"ok\":true}\n";
+		close $client;
+		last;
+	}
+	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"idle\",\"backend\":\"pipewire\",\"device\":\"default\"}\n";
+	close $client;
+}
+close $listener;
+unlink $arg{'--socket'};
+ENGINE
+	local $ENV{AUDIO_TEST_ARGS} = $args_log;
+
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => ['--socket', "$dir/audio.sock"],
+	);
+	my $saw = wait_for(sub {
+		return 0 unless -s $args_log;
+		return read_text($args_log) =~ /--backend pipewire --device default/;
+	}, 10);
+	ok($saw, 'with no plan and a sound server the engine opens pipewire on default')
+		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the fallback supervisor stops cleanly');
+	like(read_text("$dir/supervisor.log"),
+		qr/no saved plan at .*audio-plan\.json; choosing backend pipewire on device default/,
+		'and logs the missing plan and the pair it chose');
+}
+
+# --- no plan file and no server: the compiled ALSA default still applies -----
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+	delete $ENV{JAWNOS_AUDIO_PLAN};
+	delete $ENV{JAWNOS_AUDIO_BACKEND};
+	delete $ENV{JAWNOS_AUDIO_DEVICE};
+
+	# An empty PATH: no pactl, wpctl or amixer, so no server is discovered. The
+	# engine's own shebang names this Perl, so it still runs.
+	local $ENV{PATH} = "$dir/bin";
+
+	my $args_log = "$dir/args.log";
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_absolute_script("$dir/alsa-engine", <<'ENGINE');
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
+use JSON::PP ();
+open(my $log, '>>', $ENV{'AUDIO_TEST_ARGS'}) or exit 1;
+print {$log} join(' ', @ARGV), "\n";
+close $log;
+my %arg;
+for (my $i = 0; $i < @ARGV; $i++) {
+	$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
+}
+my $listener = IO::Socket::UNIX->new(
+	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+) or exit 1;
+while (my $client = $listener->accept) {
+	$client->autoflush(1);
+	my $line = <$client>;
+	my $obj = eval { JSON::PP->new->decode($line) };
+	my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+	if ($cmd eq 'quit') {
+		print {$client} "{\"ok\":true}\n";
+		close $client;
+		last;
+	}
+	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"idle\",\"backend\":\"alsa\",\"device\":\"hw:1,0\"}\n";
+	close $client;
+}
+close $listener;
+unlink $arg{'--socket'};
+ENGINE
+	local $ENV{AUDIO_TEST_ARGS} = $args_log;
+
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => ['--socket', "$dir/audio.sock"],
+	);
+	my $saw = wait_for(sub {
+		return 0 unless -s $args_log;
+		return read_text($args_log) =~ /--backend alsa --device hw:1,0/;
+	}, 10);
+	ok($saw, 'with no plan and no server the engine keeps alsa on hw:1,0')
+		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the no-server fallback supervisor stops cleanly');
+	like(read_text("$dir/supervisor.log"),
+		qr/no saved plan at .*audio-plan\.json; choosing backend alsa on device hw:1,0/,
+		'and logs the missing plan and the ALSA pair');
+}
+
+# --- an engine this supervisor did not start is asked to quit first ----------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	my $mark = "$dir/engine.pid";
+	local $ENV{AUDIO_TEST_ENGINE_MARK} = $mark;
+	delete $ENV{AUDIO_TEST_ORPHAN};
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/orphan-engine", <<'ENGINE');
+my $mark = $ENV{'AUDIO_TEST_ENGINE_MARK'} || '';
+open(my $fh, '>>', $mark) or exit 7;
+print {$fh} "$$\n";
+close $fh;
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
+use JSON::PP ();
+my %arg;
+for (my $i = 0; $i < @ARGV; $i++) {
+	$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
+}
+my $listener = IO::Socket::UNIX->new(
+	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+) or exit 1;
+my $orphan = $ENV{'AUDIO_TEST_ORPHAN'} ? 1 : 0;
+while (my $client = $listener->accept) {
+	$client->autoflush(1);
+	my $line = <$client>;
+	my $obj = eval { JSON::PP->new->decode($line) };
+	my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+	if ($cmd eq 'quit') {
+		print {$client} "{\"ok\":true}\n";
+		close $client;
+		last;
+	}
+	next if $orphan;    # no status answer: adoption cannot see it
+	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"idle\",\"backend\":\"null\",\"device\":\"hw:1,0\"}\n";
+	close $client;
+}
+close $listener;
+unlink $arg{'--socket'};
+ENGINE
+
+	my $sockpath = "$dir/orphan.sock";
+	my $orphan = fork();
+	die "fork: $!" unless defined $orphan;
+	if (!$orphan) {
+		$ENV{'AUDIO_TEST_ORPHAN'} = 1;
+		exec $^X, $ENV{'JAWNOS_AUDIO_BINARY'}, '--serve', '--socket', $sockpath
+			or POSIX::_exit(127);
+	}
+	push @children, $orphan;
+	ok(wait_for(sub { -S $sockpath }, 5), 'the orphan engine is serving the socket');
+
+	my $status = "$home/.president/audio.json";
+	my $log    = "$dir/supervisor.log";
+	my $sup = start_supervisor(
+		log  => $log,
+		args => ['--backend', 'null', '--device', 'hw:1,0', '--socket', $sockpath],
+	);
+
+	ok(wait_for(sub { reap_child($orphan) }, 10),
+		'the supervisor asked the orphan engine to quit before spawning')
+		or diag('log: ' . read_text($log));
+	my $s = wait_for(sub {
+		my $data = read_status($status);
+		return 0 unless $data && defined $data->{'pid'};
+		return $data;
+	}, 10);
+	ok($s, 'and only then started its own engine') or diag('status: ' . read_text($status));
+	my $started = $s ? $s->{'pid'} : undef;
+	# The status file is written as soon as fork returns; the engine records
+	# its own pid a moment later. Wait for the two to name the same process
+	# rather than reading that mark when it may still hold only the orphan.
+	my $matched = $started && wait_for(sub {
+		my @pids = grep { /\A[0-9]+\z/ } split /\n/, read_text($mark);
+		return scalar( grep { $_ == $started } @pids );
+	}, 5);
+	ok($matched, 'the child in the status file is the engine that ran')
+		or diag('status pid: ' . ($started // '(none)') . ' mark: ' . read_text($mark));
+	push @children, $started if $started;
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the orphan-clearing supervisor stops cleanly');
+	my $text = read_text($log);
+	like($text,
+		qr/found engine \Q$orphan\E already serving \Q$sockpath\E but not as my child; asking it to quit/,
+		'and logs the engine it found');
+	like($text, qr/engine \Q$orphan\E quit/, 'and that the orphan left');
+}
+
+# --- a process this supervisor cannot identify is left alone -----------------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+	delete $ENV{JAWNOS_AUDIO_PLAN};
+	my $mark = "$dir/engine.pid";
+	local $ENV{AUDIO_TEST_ENGINE_MARK} = $mark;
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/engine", <<'ENGINE');
+my $mark = $ENV{'AUDIO_TEST_ENGINE_MARK'} || '';
+open(my $fh, '>', $mark) or exit 7;
+print {$fh} "$$\n";
+close $fh;
+sleep 600;
+ENGINE
+
+	# Same flags, same socket, but a different binary path: not this engine.
+	my $sockpath = "$dir/decoy.sock";
+	my $decoy_script = write_absolute_script("$dir/decoy", "sleep 600;\n");
+	my $decoy = fork();
+	die "fork: $!" unless defined $decoy;
+	if (!$decoy) {
+		exec $^X, $decoy_script, '--serve', '--socket', $sockpath or POSIX::_exit(127);
+	}
+	push @children, $decoy;
+	sleep 0.2;
+
+	my $status = "$home/.president/audio.json";
+	my $sup = start_supervisor(
+		log  => "$dir/supervisor.log",
+		args => ['--backend', 'null', '--device', 'hw:1,0', '--socket', $sockpath],
+	);
+	my $s = wait_for(sub {
+		my $data = read_status($status);
+		return 0 unless $data && defined $data->{'pid'};
+		return -s $mark ? $data : 0;
+	}, 10);
+	ok($s, 'a process this supervisor cannot identify does not block its spawn')
+		or diag('status: ' . read_text($status) . ' log: ' . read_text("$dir/supervisor.log"));
+	ok(kill(0, $decoy), 'and that process is still alive: it was never signalled');
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the decoy supervisor stops cleanly');
+	kill 'KILL', $decoy;
+	waitpid($decoy, 0);
 }
 
 # --- the staged binary is a build artifact ------------------------------------

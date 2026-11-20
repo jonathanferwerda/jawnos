@@ -3,9 +3,9 @@
 //! one line back. No sound card anywhere — the backend is `null`.
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -945,6 +945,56 @@ fn a_second_engine_on_the_same_socket_refuses_to_steal_it() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+// --- play -------------------------------------------------------------------
+
+/// An engine that lost its socket used to keep playing and capturing where no
+/// manager could reach it. Replacing the path (a new inode) must end it.
+#[test]
+fn an_engine_whose_socket_is_replaced_exits_zero() {
+    let mut server = Server::start("displaced");
+    let replacement = std::env::temp_dir().join(format!(
+        "jawn-audio-sock-{}-displaced-takeover.sock",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&replacement);
+    let takeover = UnixListener::bind(&replacement).expect("bind the takeover");
+    fs::rename(&replacement, &server.socket).expect("replace the socket path");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        let child = server.child.as_mut().expect("the server is running");
+        if let Some(status) = child.try_wait().expect("wait for the displaced engine") {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the displaced engine kept serving where nothing could reach it"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(status.success(), "a displaced engine exits 0, not by a signal");
+
+    let mut stderr = String::new();
+    server
+        .child
+        .as_mut()
+        .expect("the server is running")
+        .stderr
+        .take()
+        .expect("stderr is piped")
+        .read_to_string(&mut stderr)
+        .expect("read stderr");
+    assert!(
+        stderr.contains("was removed or replaced"),
+        "the exit is explained once: {stderr}"
+    );
+    assert!(
+        server.socket.exists(),
+        "the replacement owns the path; the displaced engine must not unlink it"
+    );
+    drop(takeover);
 }
 
 // --- play -------------------------------------------------------------------

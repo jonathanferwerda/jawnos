@@ -25,6 +25,12 @@
 #            supervisor spawns its own engine only once the adopted one stops
 #            answering. A socket file with nothing behind it is a stale crash
 #            remnant: it is removed and an engine is started as usual.
+#   orphan   a socket that does not answer can still have an older or wedged
+#            engine behind it. Before spawning, /proc/<pid>/cmdline is scanned
+#            for this binary with `--serve` on this socket. Such a process is
+#            asked to quit over the socket and waited for, and no second engine
+#            is started until it goes. A process that is not this binary on
+#            this socket is never signalled.
 #   lock     an flock on ~/.president/audio.lock. A second supervisor says one
 #            sentence and exits 1 instead of starting a second engine on the
 #            same socket. flock is held by the kernel for the life of the open
@@ -70,6 +76,9 @@ my $POLL           = 0.25;
 # healthy engine from a wedged one without making a crash take long to notice.
 my $PROBE_TIMEOUT  = 1;
 my $ADOPT_POLL     = 1;
+# How long a supervisor waits for an engine it found but did not start to leave
+# before deciding it cannot safely spawn a second one.
+my $ORPHAN_GRACE   = 5;
 
 my $script     = abs_path(__FILE__) // __FILE__;
 my $script_dir = dirname($script);
@@ -135,8 +144,10 @@ intervals, and refuses to run beside a second supervisor.
 On start it adopts a live engine left on the socket by a killed supervisor
 (a `status` command over that socket must answer with "ok": true) instead of
 starting a second one, and starts its own only after the adopted engine stops
-answering. A socket file with nothing behind it is removed and replaced. A
-clean stop asks an adopted engine to quit, so no engine is left behind.
+answering. An engine that is alive but does not answer is identified by its
+command line and asked to quit before a new one starts. A socket file with
+nothing behind it is removed and replaced. A clean stop asks an adopted engine
+to quit, so no engine is left behind.
 
 Options:
   --backend NAME   audio backend: null, alsa, pipewire or jack (default alsa)
@@ -434,6 +445,102 @@ sub describe_wait {
 	return "status $raw";
 }
 
+# --- an engine this supervisor cannot see -------------------------------------
+
+sub read_cmdline {
+	my ($pid) = @_;
+	open(my $fh, '<:raw', "/proc/$pid/cmdline") or return undef;
+	local $/;
+	my $raw = <$fh>;
+	close $fh;
+	return undef unless defined $raw && length $raw;
+	return [ split /\0/, $raw ];
+}
+
+# Is this process the engine binary? A native engine is argv[0]; a script is
+# reached through its interpreter, so its path is argv[1]. `/proc/<pid>/exe`
+# also covers a staged binary that was replaced or deleted while it ran.
+sub runs_binary {
+	my ($pid, $args, $binary) = @_;
+	my $abs = abs_path($binary);
+	for my $index (0, 1) {
+		my $arg = $args->[$index];
+		next unless defined $arg && length $arg;
+		return 1 if $arg eq $binary;
+		return 1 if defined $abs && $arg eq $abs;
+	}
+	my $exe = readlink("/proc/$pid/exe");
+	return 1 if defined $exe && defined $abs && $exe eq $abs;
+	return 0;
+}
+
+sub serves_socket {
+	my ($args, $socket) = @_;
+	my ($serve, $path) = (0, undef);
+	for (my $i = 0; $i < @$args; $i++) {
+		my $arg = $args->[$i];
+		next unless defined $arg;
+		$serve = 1 if $arg eq '--serve';
+		if ($arg eq '--socket') {
+			$path = $args->[$i + 1];
+			$i++;
+		}
+		elsif ($arg =~ /\A--socket=(.*)\z/s) { $path = $1 }
+	}
+	return 0 unless $serve && defined $path;
+	return $path eq $socket ? 1 : 0;
+}
+
+# Every process running this engine binary with `--serve` on this socket,
+# except this supervisor and its own child. The adopt probe at startup only
+# sees an engine that answers `status`; an older or wedged one keeps playing
+# and capturing while its socket looks like a stale file.
+sub orphan_engines {
+	my ($socket, $binary) = @_;
+	opendir(my $dh, '/proc') or return ();
+	my @found;
+	for my $entry (readdir $dh) {
+		next unless $entry =~ /\A([0-9]+)\z/;
+		my $pid = 0 + $1;
+		next if $pid == $$;
+		next if defined $child_pid && $pid == $child_pid;
+		my $args = read_cmdline($pid) or next;
+		next unless @$args;
+		next unless runs_binary($pid, $args, $binary);
+		next unless serves_socket($args, $socket);
+		push @found, $pid;
+	}
+	closedir $dh;
+	return @found;
+}
+
+# Ask an engine we did not start to quit before replacing the socket under it.
+# A clean quit unlinks the socket and exits; only then is a spawn safe. A
+# process we cannot identify as this binary on this socket is never signalled.
+sub clear_orphans {
+	my ($socket, $binary) = @_;
+	my @orphans = orphan_engines($socket, $binary);
+	return 1 unless @orphans;
+	print "audio supervisor: found engine " . join(' ', @orphans)
+		. " already serving $socket but not as my child; asking it to quit\n";
+	engine_command($socket, { cmd => 'quit' });
+	my $deadline = time + $ORPHAN_GRACE;
+	my @alive = @orphans;
+	while (time < $deadline) {
+		@alive = grep { pid_alive($_) } @orphans;
+		last unless @alive;
+		sleep 0.05;
+	}
+	@alive = grep { pid_alive($_) } @orphans;
+	if (@alive) {
+		print STDERR "audio supervisor: engine " . join(' ', @alive)
+			. " on $socket did not quit; not starting a second one\n";
+		return 0;
+	}
+	print "audio supervisor: engine " . join(' ', @orphans) . " quit\n";
+	return 1;
+}
+
 # The picker's choice, if a manager has written one: the supervisor's startup
 # file carries `backend` and `device` beside the plan. A flag on the command
 # line still wins, so a hand-run supervisor can be pinned to one device; the
@@ -648,19 +755,50 @@ sub ensure_engine_fresh {
 	print "audio supervisor: engine $summary\n";
 }
 
+# What to use when no saved plan describes one. The compiled default
+# (`alsa hw:1,0`) opens a card exclusively; on a machine with a
+# PipeWire/PulseAudio server the shared `pipewire`/`default` pair coexists with
+# everything else. A flag or the environment still wins. The pair is decided
+# once per supervisor, so a `follow_plan` poll does not probe `pactl` every
+# second; it is also the diagnostic for a plan file that disappears.
+my $fallback_pair;
+my $fallback_announced = 0;
+sub fallback_choice {
+	return undef if defined $given{'backend'} || defined $given{'device'};
+	return undef if defined $ENV{'JAWNOS_AUDIO_BACKEND'} && length $ENV{'JAWNOS_AUDIO_BACKEND'};
+	return undef if defined $ENV{'JAWNOS_AUDIO_DEVICE'} && length $ENV{'JAWNOS_AUDIO_DEVICE'};
+	return $fallback_pair if defined $fallback_pair;
+	my $server = load_system_mix() && JawnOS::Audio::SystemMix::available();
+	$fallback_pair = $server
+		? { backend => 'pipewire', device => 'default' }
+		: { backend => 'alsa',     device => 'hw:1,0' };
+	return $fallback_pair;
+}
+
 # The pair the next spawn will use. A command-line flag still wins over the
 # plan file, exactly as `spawn_engine` reads it; `$backend`/`$device` hold the
 # last spawn's pair once a plan has been read, and stay that if the file goes.
 sub spawn_choice {
-	my $chosen = plan_config();
+	my $chosen   = plan_config();
+	my $fallback = $chosen ? undef : fallback_choice();
+	if ($fallback && !$fallback_announced) {
+		$fallback_announced = 1;
+		print "audio supervisor: no saved plan at $plan; choosing backend"
+			. " $fallback->{'backend'} on device $fallback->{'device'}\n";
+	}
 	my $next_backend = defined $given{'backend'} ? $backend
-		: ( $chosen ? $chosen->{'backend'} : $backend );
+		: ( $chosen ? $chosen->{'backend'} : ( $fallback ? $fallback->{'backend'} : $backend ) );
 	my $next_device = defined $given{'device'} ? $device
-		: ( $chosen ? $chosen->{'device'} : $device );
+		: ( $chosen ? $chosen->{'device'} : ( $fallback ? $fallback->{'device'} : $device ) );
 	return { backend => $next_backend, device => $next_device };
 }
 
 sub spawn_engine {
+	# An engine left by an older binary (or a wedged one) may hold this socket
+	# without answering `status`; the adopt path cannot see it, and starting
+	# ours would put two engines on the machine. Ask it to quit first and wait:
+	# never spawn a second engine this supervisor cannot see.
+	return undef unless clear_orphans($socket, $binary);
 	my $chosen  = plan_config();
 	my $manage  = $chosen ? $chosen->{'manage'} : 0;
 	my $choice  = spawn_choice();
@@ -842,11 +980,21 @@ if (-S $socket) {
 				. " instead of starting a second one\n";
 		}
 	}
-	elsif (unlink $socket) {
-		print "audio supervisor: removed the stale socket $socket\n";
+	elsif (clear_orphans($socket, $binary)) {
+		if (!-S $socket) {
+			# The engine we asked to quit unlinked it on the way out.
+			print "audio supervisor: the socket $socket is free\n";
+		}
+		elsif (unlink $socket) {
+			print "audio supervisor: removed the stale socket $socket\n";
+		}
+		else {
+			print STDERR "audio supervisor: cannot remove the stale socket $socket: $!\n";
+		}
 	}
 	else {
-		print STDERR "audio supervisor: cannot remove the stale socket $socket: $!\n";
+		print STDERR "audio supervisor: leaving $socket to the engine that would not quit;"
+			. " not starting a second one\n";
 	}
 }
 
