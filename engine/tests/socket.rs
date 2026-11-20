@@ -23,19 +23,29 @@ impl Server {
 
     /// The same, with extra `--serve` arguments such as `--channels 8`.
     fn start_with(name: &str, extra: &[&str]) -> Self {
+        Self::start_env(name, extra, &[])
+    }
+
+    /// The same, with environment overrides. The gateway tests use this to
+    /// choose what `parec` is (a stand-in, or nothing at all) without touching
+    /// the machine.
+    fn start_env(name: &str, extra: &[&str], env: &[(&str, &str)]) -> Self {
         let socket = std::env::temp_dir().join(format!(
             "jawn-audio-sock-{}-{name}.sock",
             std::process::id()
         ));
         let _ = fs::remove_file(&socket);
-        let child = Command::new(env!("CARGO_BIN_EXE_jawn-audio"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_jawn-audio"));
+        command
             .args(["--serve", "--backend", "null", "--socket"])
             .arg(&socket)
             .args(extra)
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn --serve");
+            .stderr(Stdio::piped());
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let child = command.spawn().expect("spawn --serve");
         // Generous: under a loaded suite a spawn plus a bind can take seconds.
         let deadline = Instant::now() + Duration::from_secs(60);
         while !socket.exists() {
@@ -201,6 +211,28 @@ impl Conversation {
                 "the monitor never reached {frames} frames: {status}"
             );
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// `status` until the gateway's drain has counted at least one frame.
+    /// Before a patch is armed the gateway's `frames` is the line's only one.
+    fn wait_for_gateway_frames(&mut self) -> String {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let status = self.ask("{\"cmd\":\"status\"}");
+            assert!(status.contains("\"ok\":true"), "status: {status}");
+            assert!(
+                status.contains("\"call_in\":\"captured\""),
+                "the gateway is not capturing: {status}"
+            );
+            if json_number(&status, "frames") > 0.0 {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the gateway never heard a frame: {status}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 }
@@ -1823,4 +1855,166 @@ fn listen_and_record_refuse_each_other() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!socket_left, "a clean quit must unlink the socket");
+}
+
+// --- the gateway's inbound port ---------------------------------------------
+
+/// A stand-in `parec` on a private `PATH`: it ignores the arguments the engine
+/// passes and writes one 20 ms chunk of 8 kHz mono silence per 20 ms. Paced, so
+/// the test does not burn a core and the ring drops only if the drain stops.
+fn fake_parec(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "jawn-audio-parec-{}-{name}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("create the fake tool directory");
+    let path = dir.join("parec");
+    fs::write(
+        &path,
+        "#!/bin/sh\nwhile :; do\n  dd if=/dev/zero bs=320 count=1 2>/dev/null\n  sleep 0.02\ndone\n",
+    )
+    .expect("write the stand-in parec");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+        .expect("make the stand-in executable");
+    dir
+}
+
+#[test]
+fn the_gateway_binds_the_call_monitor_and_releases_it() {
+    let parec = fake_parec("gateway");
+    // The stand-in's directory comes first, so it wins even on a machine that
+    // has a real parec; `dd` and `sleep` come from the usual places.
+    let path = format!("{}:/usr/bin:/bin", parec.display());
+    let server = Server::start_env("gateway", &[], &[("PATH", path.as_str())]);
+    let mut client = server.connect();
+
+    // Nothing is bound until a call asks for it.
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(
+        status.contains("\"gateway\":{\"call_in\":\"off\""),
+        "status: {status}"
+    );
+    assert!(status.contains("\"prompt\":\"silent\""), "status: {status}");
+
+    let bind = "{\"cmd\":\"gateway\",\"action\":\"bind\",\"call_in\":\"jawn_call_in\"}";
+    let bound = client.ask(bind);
+    assert!(bound.contains("\"ok\":true"), "bind: {bound}");
+    assert!(bound.contains("\"call_in\":\"captured\""), "bind: {bound}");
+    assert!(bound.contains("\"rate\":8000"), "bind: {bound}");
+    assert!(bound.contains("\"channels\":1"), "bind: {bound}");
+
+    let status = client.wait_for_gateway_frames();
+    let first = json_number(&status, "frames") as u64;
+    assert!(first > 0, "the drain never counted a frame: {status}");
+    assert!(status.contains("\"peak\":"), "status: {status}");
+
+    // Binding again keeps the first capture: the count never restarts.
+    let again = client.ask(bind);
+    assert!(
+        again.contains("\"call_in\":\"captured\""),
+        "second bind: {again}"
+    );
+    let status = client.wait_for_gateway_frames();
+    assert!(
+        json_number(&status, "frames") as u64 >= first,
+        "the second bind restarted the capture: {status}"
+    );
+
+    // A page that already polls the engine sees the gateway on the patch line
+    // too, since the patchbay and the gateway coexist.
+    let plan = "{\"sources\":[{\"id\":\"in0\",\"kind\":\"input\",\"channel\":0}],\"buses\":[{\"id\":\"house\"}],\"sinks\":[{\"id\":\"out\",\"kind\":\"interface\"}],\"routes\":[{\"from\":\"in0\",\"to\":\"house\"},{\"from\":\"house\",\"to\":\"out\"}]}";
+    let reply = client.ask(&format!("{{\"cmd\":\"patch\",\"plan\":{plan}}}"));
+    assert!(reply.contains("\"ok\":true"), "patch: {reply}");
+    assert!(
+        reply.contains("\"gateway\":{\"call_in\":\"captured\""),
+        "patch: {reply}"
+    );
+    std::thread::sleep(Duration::from_millis(20));
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"state\":\"patching\""), "status: {status}");
+    assert!(
+        status.contains("\"gateway\":{\"call_in\":\"captured\""),
+        "status: {status}"
+    );
+
+    // Release ends the capture and returns the port to off.
+    let released = client.ask("{\"cmd\":\"gateway\",\"action\":\"release\"}");
+    assert!(released.contains("\"ok\":true"), "release: {released}");
+    assert!(released.contains("\"call_in\":\"off\""), "release: {released}");
+    assert!(released.contains("\"frames\":0"), "release: {released}");
+
+    let unknown = client.ask("{\"cmd\":\"gateway\",\"action\":\"wobble\"}");
+    assert!(unknown.contains("\"ok\":false"), "unknown: {unknown}");
+    assert!(unknown.contains("no such gateway action"), "unknown: {unknown}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+    let _ = fs::remove_dir_all(&parec);
+}
+
+#[test]
+fn a_gateway_bind_that_cannot_capture_is_silent_and_the_engine_serves_on() {
+    // No `parec` anywhere on this engine's PATH: a missing tool is a silent
+    // port, never a failed bind.
+    let empty = std::env::temp_dir().join(format!(
+        "jawn-audio-nopath-{}-gateway",
+        std::process::id()
+    ));
+    fs::create_dir_all(&empty).expect("create the empty PATH directory");
+    let server = Server::start_env(
+        "gateway-silent",
+        &[],
+        &[("PATH", empty.to_str().expect("temp path is UTF-8"))],
+    );
+    let mut client = server.connect();
+
+    let bound = client.ask("{\"cmd\":\"gateway\",\"action\":\"bind\",\"call_in\":\"jawn_call_in\"}");
+    assert!(bound.contains("\"ok\":true"), "bind: {bound}");
+    assert!(bound.contains("\"call_in\":\"silent\""), "bind: {bound}");
+    assert!(bound.contains("\"frames\":0"), "bind: {bound}");
+
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"ok\":true"), "status: {status}");
+    assert!(
+        status.contains("\"gateway\":{\"call_in\":\"silent\""),
+        "status: {status}"
+    );
+
+    // The engine keeps serving: a patch still compiles and runs beside it.
+    let plan = "{\"sources\":[{\"id\":\"in0\",\"kind\":\"input\",\"channel\":0}],\"buses\":[{\"id\":\"house\"}],\"sinks\":[{\"id\":\"out\",\"kind\":\"interface\"}],\"routes\":[{\"from\":\"in0\",\"to\":\"house\"},{\"from\":\"house\",\"to\":\"out\"}]}";
+    let reply = client.ask(&format!("{{\"cmd\":\"patch\",\"plan\":{plan}}}"));
+    assert!(reply.contains("\"ok\":true"), "patch: {reply}");
+    std::thread::sleep(Duration::from_millis(20));
+    let status = client.ask("{\"cmd\":\"status\"}");
+    assert!(status.contains("\"state\":\"patching\""), "status: {status}");
+    assert!(
+        status.contains("\"gateway\":{\"call_in\":\"silent\""),
+        "status: {status}"
+    );
+
+    // A release returns the port to off even though nothing was captured.
+    let released = client.ask("{\"cmd\":\"gateway\",\"action\":\"release\"}");
+    assert!(released.contains("\"call_in\":\"off\""), "release: {released}");
+
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+    let _ = fs::remove_dir_all(&empty);
 }

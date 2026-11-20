@@ -62,7 +62,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -84,6 +84,16 @@ const DEFAULT_SECONDS: f64 = 10.0;
 /// The live-input ring: about 170 ms of stereo at 48 kHz, enough for a
 /// scheduling hiccup without letting a late monitor delay the take.
 const MONITOR_RING_FRAMES: usize = 8192;
+
+/// The gateway's inbound boundary: the call is 8 kHz mono, and the engine owns
+/// that rate, not the house rate (`docs/ivr-gateway-engine.md`).
+const GATEWAY_RATE: u32 = 8_000;
+const GATEWAY_CHANNELS: usize = 1;
+
+/// The gateway drain's tick and block: one 20 ms chunk of the call, popped
+/// every 10 ms, so the ring is emptied faster than `parec` fills it.
+const GATEWAY_DRAIN_MSEC: u64 = 10;
+const GATEWAY_DRAIN_FRAMES: usize = 160;
 
 /// The serve loop's poll interval. A command that arrives waits at most this
 /// long to be read; the socket is idle almost all the time.
@@ -207,6 +217,166 @@ fn attach_handset(
             eprintln!("jawn-audio: handset: {error}");
             patchbay.silence_handset();
             None
+        }
+    }
+}
+
+/// The gateway's inbound port (`docs/ivr-gateway-engine.md`).
+///
+/// Phase 4b-1 binds the caller's monitor and reports the truth: the same
+/// `parec` capture the system mix uses, drained on its own worker, keeping a
+/// frame count and a peak and dropping the samples. No tee file, no WAV and no
+/// bus — the helper still carries the call's PCM.
+struct Gateway {
+    /// The sink named by the last `bind`; `None` before the first bind and
+    /// after `release`.
+    call_in: Option<String>,
+    /// `Some` while the monitor is actually captured; `None` with `call_in`
+    /// set means the bind found nothing it could capture (`silent`).
+    capture: Option<GatewayCapture>,
+}
+
+impl Gateway {
+    fn off() -> Self {
+        Gateway {
+            call_in: None,
+            capture: None,
+        }
+    }
+
+    /// `off` before any bind, `silent` when the sink could not be captured,
+    /// `captured` while the drain runs.
+    fn state(&self) -> &'static str {
+        match (&self.call_in, &self.capture) {
+            (None, _) => "off",
+            (Some(_), Some(_)) => "captured",
+            (Some(_), None) => "silent",
+        }
+    }
+
+    /// The `"gateway":{...}` fragment every status line and the patch reply
+    /// carry. The field names are the house's contract: it reads them, and
+    /// they do not move between slices.
+    fn fragment(&self) -> String {
+        let (frames, peak) = match &self.capture {
+            Some(capture) => capture.counters.read(),
+            None => (0, 0.0),
+        };
+        format!(
+            "\"gateway\":{{\"call_in\":\"{}\",\"prompt\":\"silent\",\"monitor\":\"silent\",\"rate\":{},\"channels\":{},\"peak\":{:.6},\"frames\":{}}}",
+            self.state(),
+            GATEWAY_RATE,
+            GATEWAY_CHANNELS,
+            peak,
+            frames
+        )
+    }
+
+    /// Stop the capture and the drain, leaving no child, thread or ring.
+    fn release(&mut self) {
+        if let Some(mut capture) = self.capture.take() {
+            capture.finish();
+        }
+        self.call_in = None;
+    }
+}
+
+/// One bound gateway capture: the `parec` child, the worker draining its ring,
+/// and the two counters `status` reads.
+struct GatewayCapture {
+    capture: crate::system_capture::SystemCapture,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+    counters: GatewayCounters,
+}
+
+/// The drain's answer: how many frames it heard and the loudest sample. Shared
+/// with the worker, so `status` never touches the ring.
+#[derive(Clone, Default)]
+struct GatewayCounters {
+    frames: Arc<AtomicU64>,
+    peak: Arc<AtomicU32>,
+}
+
+impl GatewayCounters {
+    fn read(&self) -> (u64, f32) {
+        (
+            self.frames.load(Ordering::Relaxed),
+            f32::from_bits(self.peak.load(Ordering::Relaxed)),
+        )
+    }
+}
+
+impl GatewayCapture {
+    fn start(sink: &str) -> Result<GatewayCapture, String> {
+        let (capture, consumer) =
+            crate::system_capture::SystemCapture::start_sink(sink, GATEWAY_RATE)?;
+        let counters = GatewayCounters::default();
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread_counters = counters.clone();
+        let handle = thread::Builder::new()
+            .name("jawn-audio-gateway".to_string())
+            .spawn(move || {
+                let mut block = vec![0.0f32; GATEWAY_DRAIN_FRAMES * 2];
+                while !thread_stop.load(Ordering::SeqCst) {
+                    drain_gateway(&consumer, &thread_counters, &mut block);
+                    thread::sleep(Duration::from_millis(GATEWAY_DRAIN_MSEC));
+                }
+            })
+            .map_err(|error| format!("cannot start the gateway thread: {error}"))?;
+        Ok(GatewayCapture {
+            capture,
+            stop,
+            handle: Some(handle),
+            counters,
+        })
+    }
+
+    /// Stop the drain, then the capture: when this returns `parec` is reaped
+    /// and no thread is left holding the ring.
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        self.capture.stop();
+    }
+}
+
+impl Drop for GatewayCapture {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+/// Pop whatever the capture holds, keep a frame count and a peak level, and
+/// drop the samples. `block` is reused between ticks, so the drain allocates
+/// nothing while a call runs. The ring drops rather than blocks, so a busy
+/// drain is a lost frame, never a stalled `parec`.
+fn drain_gateway(consumer: &Consumer, counters: &GatewayCounters, block: &mut [f32]) {
+    let wanted = block.len() / 2;
+    let mut frames = 0u64;
+    let mut peak = 0.0f32;
+    loop {
+        let got = consumer.pop(block);
+        if got == 0 {
+            break;
+        }
+        for sample in &block[..got * 2] {
+            peak = peak.max(sample.abs());
+        }
+        frames += got as u64;
+        if got < wanted {
+            break;
+        }
+    }
+    if frames > 0 {
+        counters.frames.fetch_add(frames, Ordering::Relaxed);
+        // A non-negative f32 keeps its numeric order in its bit pattern, so
+        // `fetch_max` is a monotonic peak without a lock on the worker.
+        if peak > 0.0 {
+            counters.peak.fetch_max(peak.to_bits(), Ordering::Relaxed);
         }
     }
 }
@@ -383,6 +553,10 @@ struct Server {
     /// The house patchbay. It owns both the capture and the outputs, so it
     /// cannot share a machine with a take, a playback or a listen.
     patch: Option<PatchSession>,
+    /// The gateway's inbound port, if a call bound it. Independent of the
+    /// patch: the caller's monitor is captured by `parec`, not by the device
+    /// loop, so it runs beside a patch and says `off` until the first bind.
+    gateway: Gateway,
     next_take: u64,
     /// What the boot restore did with the saved plan, reported on every status
     /// line as `plan` or `plan_error` beside `machine`.
@@ -421,6 +595,7 @@ impl Server {
             playback: None,
             listen: None,
             patch: None,
+            gateway: Gateway::off(),
             next_take: 1,
             boot: BootPlan::Error("no audio plan file configured".to_string()),
         }
@@ -558,14 +733,16 @@ impl Server {
         };
         match &self.boot {
             BootPlan::Armed(summary) => format!(
-                "{head},\"machine\":\"{}\",\"plan\":{{{}}}}}",
+                "{head},\"machine\":\"{}\",\"plan\":{{{}}},{}}}",
                 jawn_audio::loopback::json_escape(&self.config.machine),
-                summary.json()
+                summary.json(),
+                self.gateway.fragment()
             ),
             BootPlan::Error(message) => format!(
-                "{head},\"machine\":\"{}\",\"plan_error\":\"{}\"}}",
+                "{head},\"machine\":\"{}\",\"plan_error\":\"{}\",{}}}",
                 jawn_audio::loopback::json_escape(&self.config.machine),
-                jawn_audio::loopback::json_escape(message)
+                jawn_audio::loopback::json_escape(message),
+                self.gateway.fragment()
             ),
         }
     }
@@ -680,6 +857,9 @@ impl Server {
                         if let Some(session) = &mut self.patch {
                             session.finish();
                         }
+                        // A quit is the process's end, so the gateway's child
+                        // must be reaped here rather than left to init.
+                        self.gateway.release();
                         let _ = send(&mut client.stream, &reply);
                         return Ok(true);
                     }
@@ -702,6 +882,7 @@ impl Server {
             "play" => Action::Reply(self.play(&object)),
             "listen" => Action::Reply(self.listen(&object)),
             "patch" => Action::Reply(self.patch(&object)),
+            "gateway" => Action::Reply(self.gateway_command(&object)),
             "unpatch" => Action::Reply(self.unpatch_line()),
             "param" => Action::Reply(self.param(&object)),
             "status" => Action::Reply(self.status_line()),
@@ -1320,6 +1501,69 @@ impl Server {
         }
     }
 
+    /// `{"cmd":"gateway","action":"bind","call_in":"jawn_call_in"}`:
+    /// bind the gateway's inbound port to `<call_in>.monitor`, and `release` or
+    /// `status` it.
+    ///
+    /// This rides the socket, not the saved plan, because the Sound/Studio UI
+    /// rewrites the plan on every save and a `gateway` section would vanish
+    /// under a person's edits. The gateway is machine-local and lives only
+    /// while a call is up, which is exactly a transient command.
+    ///
+    /// Binding is idempotent: a second `bind` keeps the first capture. A sink
+    /// the machine cannot capture answers `ok` with `call_in:"silent"` — a
+    /// missing sink must not fail the engine, the same rule the patchbay
+    /// follows.
+    fn gateway_command(&mut self, object: &Object) -> String {
+        let action = match get(object, "action") {
+            Some(Value::Str(action)) => action.as_str(),
+            _ => {
+                return error_line(
+                    "\"gateway\" needs \"action\": \"bind\", \"release\" or \"status\"",
+                )
+            }
+        };
+        match action {
+            "bind" => self.gateway_bind(object),
+            "release" => {
+                self.gateway.release();
+                format!("{{\"ok\":true,{}}}", self.gateway.fragment())
+            }
+            "status" => format!("{{\"ok\":true,{}}}", self.gateway.fragment()),
+            other => error_line(&format!("no such gateway action: {other}")),
+        }
+    }
+
+    fn gateway_bind(&mut self, object: &Object) -> String {
+        let sink = match get(object, "call_in") {
+            Some(Value::Str(name)) if !name.is_empty() => name.clone(),
+            _ => return error_line("gateway bind needs \"call_in\": a sink name"),
+        };
+        // One call at a time: while a capture runs a second bind is a no-op,
+        // and it keeps the first capture's sink and counters.
+        if self.gateway.capture.is_some() {
+            return format!("{{\"ok\":true,{}}}", self.gateway.fragment());
+        }
+        let monitor = crate::system_capture::monitor_name(&sink);
+        if crate::system_capture::source_exists(&monitor) == Some(false) {
+            // The server says the source is not there; do not start a `parec`
+            // that can only fail. The port is silent, not fatal.
+            self.gateway.call_in = Some(sink);
+            return format!("{{\"ok\":true,{}}}", self.gateway.fragment());
+        }
+        match GatewayCapture::start(&sink) {
+            Ok(capture) => {
+                self.gateway.call_in = Some(sink);
+                self.gateway.capture = Some(capture);
+            }
+            Err(error) => {
+                eprintln!("jawn-audio: gateway: {error}");
+                self.gateway.call_in = Some(sink);
+            }
+        }
+        format!("{{\"ok\":true,{}}}", self.gateway.fragment())
+    }
+
     /// `{"cmd":"patch","plan":{...}}`: run the house patchbay from the saved
     /// plan until `stop`.
     ///
@@ -1385,7 +1629,11 @@ impl Server {
             Ok(summary) => summary,
             Err(error) => return error_line(&error),
         };
-        format!("{{\"ok\":true,\"state\":\"patching\",{}}}", summary.json())
+        format!(
+            "{{\"ok\":true,\"state\":\"patching\",{},{}}}",
+            summary.json(),
+            self.gateway.fragment()
+        )
     }
 
     fn record(&mut self, object: &Object) -> String {
@@ -5366,5 +5614,75 @@ break"}"#).is_err());
                 assert_eq!(routes, vec![route], "the plan's routing has its own key: {line}");
             }
         }
+    }
+
+    #[test]
+    fn the_gateway_is_off_until_a_bind_and_an_unknown_action_is_refused() {
+        let mut server = socket_server();
+
+        let line = reply(server.handle("{\"cmd\":\"gateway\",\"action\":\"status\"}"));
+        assert!(line.contains("\"ok\":true"), "status: {line}");
+        assert!(line.contains("\"call_in\":\"off\""), "status: {line}");
+        assert!(line.contains("\"prompt\":\"silent\""), "status: {line}");
+        assert!(line.contains("\"monitor\":\"silent\""), "status: {line}");
+        assert!(line.contains("\"rate\":8000"), "status: {line}");
+        assert!(line.contains("\"channels\":1"), "status: {line}");
+        assert!(line.contains("\"peak\":0.000000"), "status: {line}");
+        assert!(line.contains("\"frames\":0"), "status: {line}");
+
+        // Every status line carries the same object, so a page that already
+        // polls the engine does not need a second command.
+        let line = server.status_line();
+        assert!(
+            line.contains(
+                "\"gateway\":{\"call_in\":\"off\",\"prompt\":\"silent\",\"monitor\":\"silent\",\"rate\":8000,\"channels\":1,\"peak\":0.000000,\"frames\":0}"
+            ),
+            "status: {line}"
+        );
+
+        // A bind without a sink names nothing to capture.
+        let line = reply(server.handle("{\"cmd\":\"gateway\",\"action\":\"bind\"}"));
+        assert!(line.contains("\"ok\":false"), "bind: {line}");
+        assert!(line.contains("call_in"), "bind: {line}");
+
+        // A missing action is refused the same way an unknown command is.
+        let line = reply(server.handle("{\"cmd\":\"gateway\",\"action\":\"wobble\"}"));
+        assert!(line.contains("\"ok\":false"), "unknown action: {line}");
+        assert!(line.contains("no such gateway action"), "{line}");
+        let line = reply(server.handle("{\"cmd\":\"gateway\"}"));
+        assert!(line.contains("\"ok\":false"), "no action: {line}");
+    }
+
+    #[test]
+    fn a_full_gateway_ring_drops_frames_and_the_count_and_peak_still_answer() {
+        // The smallest ring `monbus` offers; one frame more than it holds is
+        // the burst a late drain would see.
+        let (producer, consumer) = MonitorBus::new(4096);
+        let pushed = 4096 + 16;
+        let block: Vec<f32> = (0..pushed)
+            .flat_map(|frame| {
+                if frame % 2 == 0 {
+                    [0.5f32, -0.75]
+                } else {
+                    [-0.25, 0.125]
+                }
+            })
+            .collect();
+        assert_eq!(
+            producer.push(&block),
+            16,
+            "a full ring drops the newest frames rather than blocking"
+        );
+
+        let counters = GatewayCounters::default();
+        let mut block = vec![0.0f32; GATEWAY_DRAIN_FRAMES * 2];
+        drain_gateway(&consumer, &counters, &mut block);
+        let (frames, peak) = counters.read();
+        assert_eq!(frames, 4096, "the drain kept every frame the ring held");
+        assert!((peak - 0.75).abs() < 1e-6, "the peak survived the drop: {peak}");
+
+        // The ring is empty now, and a second drain adds nothing.
+        drain_gateway(&consumer, &counters, &mut block);
+        assert_eq!(counters.read().0, 4096);
     }
 }

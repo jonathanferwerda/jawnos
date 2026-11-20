@@ -81,6 +81,13 @@ impl SystemCapture {
         Self::start_with(device, rate, 2, None)
     }
 
+    /// Start the capture of `sink`'s monitor. A caller that names a sink (the
+    /// gateway's `jawn_call_in`) rather than the source's full name gets the
+    /// same `parec`, pacing and ring as the system mix.
+    pub fn start_sink(sink: &str, rate: u32) -> Result<(SystemCapture, Consumer), String> {
+        Self::start(&monitor_name(sink), rate)
+    }
+
     /// Start one routed input's own capture. `channels` is the plan's capture
     /// width; the samples of `channel` are kept and duplicated into the stereo
     /// ring every capture uses, so the patchbay can read it like a card
@@ -232,6 +239,16 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// The monitor source a sink offers. A name that already ends in `.monitor`
+/// is left alone, so a caller may pass either the sink or its source.
+pub fn monitor_name(sink: &str) -> String {
+    if sink.ends_with(".monitor") {
+        sink.to_string()
+    } else {
+        format!("{sink}.monitor")
+    }
+}
+
 /// Whether `device` is a source the sound server currently offers. `None`
 /// means the question cannot be asked here (no `pactl`, or it failed), and the
 /// caller starts the capture anyway rather than refusing a source it cannot
@@ -341,6 +358,19 @@ mod tests {
         assert_eq!(consumer.pop(&mut out), 1);
         assert!((out[0] - 0.5).abs() < 1e-6, "{out:?}");
         assert!((out[1] + 0.5).abs() < 1e-6, "{out:?}");
+    }
+
+    #[test]
+    fn a_sink_names_its_monitor_and_a_monitor_source_is_not_suffixed_twice() {
+        assert_eq!(monitor_name("jawn_call_in"), "jawn_call_in.monitor");
+        assert_eq!(
+            monitor_name("jawn_call_in.monitor"),
+            "jawn_call_in.monitor"
+        );
+        assert_eq!(
+            monitor_name("alsa_output.pci.monitor"),
+            "alsa_output.pci.monitor"
+        );
     }
 
     #[test]

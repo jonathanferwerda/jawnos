@@ -6,10 +6,11 @@ listens and arms; a request can name the machine a call chose; only the first
 candidate keeps the phone's Bluetooth link warm), Phase 3 (the app answers
 from the first candidate that is ready, and names it on every gateway request)
 and Phase 4a (the backend seam, the truthful `ready` advert and the pane's audio
-line) are implemented. Phase 4b (the engine's own gateway ports) waits on the
-audio engine and is not promised here. This note records what existed, the rule
-we want, and the smallest set of changes that gets there without answering a
-call into silence.
+line) are implemented. Phase 4b-1 is implemented too: the engine binds the
+gateway's inbound port over a control-socket command and reports it, without
+moving any call audio. Phase 4b-2 (the PCM move and `sco_helper --engine`)
+remains. This note records what existed, the rule we want, and the smallest set
+of changes that gets there without answering a call into silence.
 
 ## Today: one gateway, by name
 
@@ -259,8 +260,9 @@ Today the IVR is the last big `pactl` caller:
 - `perl/sco/sco_helper.c` opens BlueALSA (`--pcm`) or pipes `parec`/`pacat`
   (`--pipe`). The helper, not the engine, owns the call's PCM.
 - `lib/JawnOS/Audio/Engine.pm` and `engine/src/socket.rs` are a **take and
-  playback** control socket: record, play, monitor, patchbay. It has no
-  gateway ports and does not route arbitrary PipeWire streams yet.
+  playback** control socket: record, play, monitor, patchbay. Since 4b-1 it
+  also binds the gateway's inbound port (`{"cmd":"gateway",...}`) and reports
+  it, but it moves no call PCM and has no prompt writer yet.
 
 So the hierarchy must not depend on the engine being in the IVR path. Keep
 the selection backend-agnostic:
@@ -270,13 +272,17 @@ the selection backend-agnostic:
   different thing: the recorded greeting clips.)
 - The **`pactl` backend** wraps today's `Mixer` and the helper's `--pipe` /
   `--pcm` modes. The hierarchy ships on this backend.
-- The **engine backend** is phase 4b: a `gateway` plan over `--serve` with
-  `gateway.call_in` (the caller's sink), `gateway.prompt` (the caller's
-  microphone), and `gateway.monitor` (the transcript/recorder tap); the
-  Bluetooth card's streams are linked by the engine's patchbay. `sco_helper`
-  gains an `--engine` mode that reads/writes the engine's PCM instead of
-  spawning `parec`/`pacat`. The engine's monitor bus can replace the helper's
-  `--tee` FIFO.
+- The **engine backend** is phase 4b. **4b-1 (implemented)** adds a transient
+  `{"cmd":"gateway"}` `bind`/`release`/`status` on the engine's control socket:
+  `bind` captures `jawn_call_in.monitor`, drains it, and reports
+  `{call_in,prompt,monitor,rate,channels,peak,frames}` on the status line. The
+  gateway is a command rather than a plan section because the Studio UI rewrites
+  the saved plan on every save. It writes no PCM and does not touch
+  `jawn_prompt`, so the helper and the `pactl` path are unchanged. **4b-2** adds
+  `gateway.prompt` (the caller's microphone), `gateway.monitor` (the
+  transcript/recorder tap), and `sco_helper --engine` so the engine carries the
+  call's PCM instead of spawning `parec`/`pacat`; the engine's monitor bus can
+  then replace the helper's `--tee` FIFO.
 - The advert's `ivr.audio` says which backend a machine uses; `ivr.ready` is
   the backend's own readiness, and `ivr.ready_note` says why not. The pane
   shows it; the phone's choice only needs the `able` boolean, which is `ready`
@@ -285,8 +291,11 @@ the selection backend-agnostic:
   gateway that has no ready audio says so and is skipped.
 
 Phase 4a ships the seam and the advert on `pactl`; the engine backend answers
-not-ready with "the engine has no gateway ports yet". Phase 4b (the engine's
-gateway plan, `sco_helper --engine`, and the monitor bus) waits on those ports.
+not-ready with "the engine has no gateway ports yet". **Phase 4b-1 (implemented)**
+lets the engine bind and report the inbound port, so the house can check whether
+the ports are real before any audio moves; readiness deliberately does not
+change yet. Phase 4b-2 (`sco_helper --engine`, the prompt and monitor ports, and
+the readiness rule) remains.
 
 ## Backward compatibility
 
@@ -374,14 +383,21 @@ the same. Files: `lib/JawnOS/Sco/Backend.pm`, `perl/crew.pl`,
 `lib/JawnOS/Controller/manager_phone.pm`, `templates/apps/phone.html.ep`,
 `perl/help/topics_web.pl`, `t/181-ivr-backend.t`.
 
-**Phase 4b (engine-blocked; not promised here).** `sco_helper --engine`, the
-engine's `gateway` plan (`gateway.call_in`, `gateway.prompt`,
-`gateway.monitor`), and the engine monitor bus replacing the helper's `--tee`
-FIFO all wait on the engine gaining gateway ports: today it is a take/play
-control socket with no way to bind the caller's PipeWire streams. The hierarchy
-ships on `pactl` until that exists; the engine backend says so rather than
-pretending. Rust tests for the plan and the Perl backend selection follow in
-that change.
+**Phase 4b-1 (implemented): the engine binds and reports the inbound port.**
+The engine answers `{"cmd":"gateway","action":"bind","call_in":"jawn_call_in"}`,
+`release` and `status` on its control socket. `bind` starts one `parec` capture
+of `<call_in>.monitor` through `system_capture.rs` (generalised to a sink name),
+drains it on its own worker, and keeps only a frame count and a peak; the samples
+are dropped. `release` leaves no child, thread or ring. The gateway object
+(`call_in`, `prompt`, `monitor`, `rate`, `channels`, `peak`, `frames`) rides every
+`status` line and the `patch` reply. `prompt`/`monitor` are `silent`, and
+`JawnOS::Sco::Backend` still answers not-ready, so the advert still says
+`pipewire` and the helper keeps `parec`/`pacat`.
+
+**Phase 4b-2 (remaining).** `sco_helper --engine` and the `gateway.in`/
+`gateway.out` PCM streams, so the engine owns the prompt and the capture; the
+monitor bus replaces the helper's `--tee` FIFO without changing the transcript
+reader; and the engine backend becomes ready only when all three ports bind.
 
 ## Open questions
 
@@ -411,9 +427,10 @@ that change.
    receptionist flow for every caller. If no gateway is able, the call should
    still ring through (or the flow's After), not be answered into nothing.
    Confirm the desired behavior.
-9. **The engine's gateway plan is new API.** Do not promise it in the same
-   change as the ranking. The hierarchy ships on `pactl`, and phase 4b moves
-   the audio once the engine has gateway ports.
+9. **The engine's gateway API is new.** It landed in 4b-1 as a control-socket
+   command, not a plan section (the Studio UI rewrites the plan on save). The
+   hierarchy still ships on `pactl`; phase 4b-2 moves the audio once readiness
+   follows the ports.
 
 ## Risk
 
