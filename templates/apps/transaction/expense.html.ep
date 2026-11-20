@@ -155,7 +155,7 @@
 		</div>
 		<div class="tx_row tx_switches">
 			<button class="purchase_config" attribute="has_totes" config="totes" title="<%= &subs::ui('The amount is for the whole line, not one unit') %>" <% if (($app->{'has_totes'} || $appts->{$a}->{'setting'}->{'has_totes'}) ne 'off') { %>enabled="on" style="background-color:lightgreen;"<% } %>><%= &subs::ui('Amount covers the line') %></button>
-			<button class="purchase_config" attribute="has_tax" config="tax" title="<%= &subs::ui('The price includes tax') %>" <% if (($app->{'has_tax'} || $appts->{$a}->{'setting'}->{'has_tax'}) ne 'off') { %>enabled="on" style="background-color:lightgreen;"<% } %>><%= &subs::ui('Price includes tax') %></button>
+			<button class="purchase_config" attribute="has_tax" config="tax" title="<%= &subs::ui('The price includes tax') %>" <% if (($app->{'has_tax'} || $appts->{$a}->{'setting'}->{'has_tax'}) eq 'on') { %>enabled="on" style="background-color:lightgreen;"<% } %>><%= &subs::ui('Price includes tax') %></button>
 			<button class="plusminus" title="<%= &subs::ui('Flip the sign for a refund') %>"><%= &subs::ui('Refund') %></button>
 		</div>
 	</details>

@@ -234,7 +234,28 @@ function transactionTaxApply(amount, rate, inclusive, aux) {
 function transactionTaxExclusive(line) {
 	var button = line.find('.purchase_config[config="tax"]');
 	if (button.attr('enabled') != 'on') { return; }
-	button.attr('enabled', 'off').css({ 'background-color': 'lightgrey' });
+	purchaseConfigPaint(button, false);
+}
+
+// A config button keeps its state in `enabled` and its colour, not in `value`.
+// The click handler and the history retriever both paint it through here.
+function purchaseConfigPaint(button, on) {
+	if (!button || !button.length) { return; }
+	button.attr('enabled', on ? 'on' : 'off');
+	button.css({ 'background-color': on ? 'lightgreen' : 'lightgrey' });
+}
+
+// Which way a saved line's amount reads: true when the figures say the amount
+// already contains its tax (amount ~ total), false when the tax was added on
+// top (amount + tax ~ total), null when the figures cannot say (no tax).
+function transactionTaxInclusiveFromFields(line) {
+	var amount = Math.abs(numeral(line.find('[attribute="amount"]').val()).value());
+	var tax = Math.abs(numeral(line.find('[attribute="tax"]').val()).value());
+	var total = Math.abs(numeral(line.find('[attribute="total"]').val()).value());
+	if (!(tax > 0.004)) { return null; }
+	if (Math.abs(total - amount) < 0.005) { return true; }
+	if (Math.abs(total - (amount + tax)) < 0.005) { return false; }
+	return null;
 }
 
 // Recompute a line from its Amount field and its own rate, used when the rate
@@ -303,6 +324,15 @@ $(document).on('change', '.purchase_input', function() {
 	var iq = $(this).closest('.app_details');
 	var app = iq.attr('app');
 	iq = e.closest('.purchase_details');
+	// Only a field that moves a figure recalculates the line. A vendor change is
+	// the history retriever's cue to repopulate the invoice picker; letting it
+	// fall into the catch-all recomputed the line from the amount and an empty
+	// tax selection, wiping the tax and total Repeat last had just restored.
+	if (!e.hasClass('amount') && !e.hasClass('tax') && !e.hasClass('aux')
+		&& !e.hasClass('total') && !e.hasClass('quantity')
+		&& !e.hasClass('taxes') && !e.hasClass('tax_exemption')) {
+		return;
+	}
 	var quantity_in = iq.find('.quantity');
 	var quantity = numeral(quantity_in.val() || 1).value();
 	var multiplier = 1;
@@ -382,13 +412,6 @@ $(document).on('change', '.purchase_input', function() {
 		total_in.val(numeral(figures.total).format('0.00'));
 	}
 	else if (e.hasClass('quantity')) {
-		amount = amount * multiplier;
-		amount_in.val(numeral(amount).format('0.00'));
-		figures = transactionTaxApply(amount, rate, inclusive, aux);
-		tax_in.val(numeral(figures.tax).format('0.00'));
-		total_in.val(numeral(figures.total).format('0.00'));
-	}
-	else {
 		amount = amount * multiplier;
 		amount_in.val(numeral(amount).format('0.00'));
 		figures = transactionTaxApply(amount, rate, inclusive, aux);
@@ -751,6 +774,10 @@ function transactionStorageRetriever(app) {
 				if (input.attr('type') == 'checkbox') {
 					input.val(vr).prop('checked', vr == 'on');
 				}
+				else if (input.is('button.purchase_config')) {
+					// the button carries its state in `enabled`, not `value`
+					purchaseConfigPaint(input, vr == 'on');
+				}
 				else {
 					input.val(vr);
 				}
@@ -758,6 +785,13 @@ function transactionStorageRetriever(app) {
 			// the stored sign says what the line is: a positive expense total is a
 			// refund, so mark it before anything can turn it negative again
 			block.attr('refund', numeral(block.find('.total').val()).value() > 0 ? 'on' : 'off');
+			// an older row can carry an inclusive flag its own figures contradict
+			// (amount + tax = total means the amount was net); the figures are what
+			// the person saw, so let them settle the toggle on the way back
+			var inclusive = transactionTaxInclusiveFromFields(block);
+			if (inclusive !== null) {
+				purchaseConfigPaint(block.find('.purchase_config[config="tax"]'), inclusive);
+			}
 		});
 		// whatever block is left unclaimed belongs to no stored item
 		$.each(available, function(i,v) { v.remove(); });

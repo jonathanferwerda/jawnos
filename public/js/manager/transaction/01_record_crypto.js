@@ -158,18 +158,13 @@ $(document).on('click', '.purchase_config', function() {
 	var pd = con.closest('.purchase_details');
 	var app = pd.attr('app');
 	var enabled = con.attr('enabled');
-	if (enabled == 'on') {
-		con.attr('enabled', 'off');
-		con.css({ 'background-color':'lightgrey'});
-	}
-	else {
-		con.css({ 'background-color':'lightgreen'});
-		con.attr('enabled', 'on');
-	}
+	purchaseConfigPaint(con, enabled != 'on');
 	var new_enabled = con.attr('enabled');
 
 	if (!con.closest('.appointment_edit_area')) {
-		settingSetter({ 'app': app, 'setting': config, 'value': new_enabled });		
+		// has_tax/has_totes is what the form reads back; `config` only names the
+		// selector pair (tax/totes), so writing it left the app default unset.
+		settingSetter({ 'app': app, 'setting': (con.attr('attribute') || config), 'value': new_enabled });		
 	}
 	var total = pd.find('.purchase_input[attribute="total"]');
 	var quantity = pd.find('.purchase_input[attribute="quantity"]');
