@@ -2215,8 +2215,12 @@ fn patch_alsa(
     let streams = patchbay.stream_plan(options.backend);
     let mut input_captures = Vec::new();
     for input in &streams.inputs {
+        let node = input
+            .node
+            .as_deref()
+            .unwrap_or(crate::system_capture::DEFAULT_INPUT);
         match crate::system_capture::SystemCapture::start_channel(
-            crate::system_capture::DEFAULT_INPUT,
+            node,
             options.rate,
             input.channel,
             options.channels,

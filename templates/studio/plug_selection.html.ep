@@ -52,6 +52,20 @@
 						<td><img src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Monitor" class="little_thumb"></td><td style="font-size:20px;vertical-align:top;">Screen Share</td>
 					</tr>
 				% }
+				% if (defined $direction && $direction eq 'input' && ref $sources eq 'ARRAY' && @{$sources}) {
+					<tr class="studio_input_node_row">
+						<td colspan="2" style="padding:6px 0 2px 24px;">
+							<label for="studio_input_node_<%= $channel %>"><%= &subs::ui('This machine\'s input') %></label><br>
+							<select class="studio_input_node" channel="<%= $channel %>" input="<%= defined $input ? $input : 0 %>" hint="<%= &subs::ui('Choose which of this machine\'s inputs the channel captures') %>">
+								<option value=""<%= (defined $input_node && length $input_node) ? '' : ' selected' %>><%= &subs::ui('The machine\'s default input') %></option>
+							% foreach my $source ( @{$sources} ) {
+								<option value="<%= $source->{'node'} %>"<%= (defined $input_node && $input_node eq $source->{'node'}) ? ' selected' : '' %>><%= $source->{'name'} %></option>
+							% }
+							</select>
+							<span class="studio_input_node_note"></span>
+						</td>
+					</tr>
+				% }
 			</tbody>
 		</table>
 </div>

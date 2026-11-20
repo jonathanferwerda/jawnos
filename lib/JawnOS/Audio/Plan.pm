@@ -37,6 +37,14 @@ our $audio_plan_max_send_depth = 6;
 # say is far more likely to be a 48 kHz house device than to be mute.
 our $audio_plan_default_rate = 48_000;
 
+# A local `input` may name the capture node it listens to instead of taking the
+# machine's default source. The value is a PipeWire/Pulse source name, so it
+# uses the same discipline the Sound app's device ids use: one bare word, never
+# a path, and never starting with `-` (which `parec` would read as an option).
+# It is passed to the engine as an argument, never joined into a path.
+our $audio_plan_node_max = 200;
+our $audio_plan_node_pattern = qr/\A[A-Za-z0-9][A-Za-z0-9_.:@+\-]*\z/;
+
 our $audio_plan_gain_min = 0;
 our $audio_plan_gain_max = 1;
 our $audio_plan_pan_min  = -1;
@@ -107,6 +115,17 @@ sub _audio_plan_kind {
 	return (grep { $_ eq $kind } @$allowed) ? 1 : 0;
 }
 
+# Is this a capture node name a plan may carry? Exported because the picker and
+# the write path ask the same question, and a value the engine would hand to
+# `parec` as an option is not a name.
+sub audio_plan_node_valid {
+	my ($node) = @_;
+	return 0 unless defined $node && !ref $node;
+	$node = "$node";
+	return 0 unless length $node && length $node <= $audio_plan_node_max;
+	return $node =~ $audio_plan_node_pattern ? 1 : 0;
+}
+
 # One source or sink entry, with the optional facts filled in. The identity
 # (`id` and `kind`) is the entry; a missing rate or channel count is an older
 # declaration, so it takes the default rather than removing the node.
@@ -120,6 +139,13 @@ sub _audio_plan_node {
 	# engine could bind one meant.
 	my $channel = _audio_plan_number($entry->{channel});
 	$channel = defined $channel && $channel >= 0 ? int($channel) : 0;
+	# The capture node a local `input` listens to. Only an `input` has one: a
+	# `device` source is the system mix, captured from the sink it was made
+	# for, and a `handset` is the reception mixer's call monitor. A name that
+	# fails the charset is dropped rather than carried to the engine, where it
+	# would be a command option rather than a source.
+	my $node = _audio_plan_text($entry->{node});
+	$node = undef unless defined $node && $kind eq 'input' && audio_plan_node_valid($node);
 	return {
 		id         => $id,
 		label      => $label,
@@ -128,6 +154,7 @@ sub _audio_plan_node {
 		rate       => _audio_plan_count($entry->{rate}, $audio_plan_default_rate),
 		channels   => _audio_plan_count($entry->{channels}, 1),
 		channel    => $channel,
+		node       => defined $node ? $node : '',
 		latency_ms => _audio_plan_nonnegative($entry->{latency_ms}, 0),
 	};
 }
@@ -318,6 +345,16 @@ sub _audio_plan_valid_node {
 	if (exists $entry->{latency_ms}) {
 		my $number = _audio_plan_number($entry->{latency_ms});
 		return 0 unless defined $number && $number >= 0;
+	}
+	if (exists $entry->{node}) {
+		# Only an `input` captures from a node; a node on any other kind is a
+		# writer's mistake, and an empty node means "the machine's default".
+		my $node = $entry->{node};
+		return 0 if ref $node;
+		$node = '' unless defined $node;
+		if (length "$node") {
+			return 0 unless $kind eq 'input' && audio_plan_node_valid($node);
+		}
 	}
 
 	$kind_of->{$id} = $type;

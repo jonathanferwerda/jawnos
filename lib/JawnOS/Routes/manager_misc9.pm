@@ -16,6 +16,7 @@ sub routes {
 	[28384, 'get', '/manager/synth', 'action_28384'],
 	[28412, 'get', '/manager/studio', 'action_28412'],
 	[28457, 'get', '/manager/studio/plug/select', 'action_28457'],
+	[28458, 'post', '/manager/studio/input/node', 'action_28458'],
 	[28480, 'post', '/manager/studio/save', 'action_28480'],
 	[28546, 'get', '/manager/studio/load', 'action_28546'],
 	[28573, 'post', '/manager/studio/delete', 'action_28573'],

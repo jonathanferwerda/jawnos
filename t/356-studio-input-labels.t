@@ -51,6 +51,27 @@ like($inputs, qr/navigator\.mediaDevices\.getDisplayMedia\(\{[\s\S]*?displaySurf
 like($inputs, qr/stream\.getAudioTracks\(\)\.length \? studioAttachInput/,
 	'a screen stream with no audio still records its picture');
 
+# --- the input offers this machine's capture sources -------------------------
+# A laptop with a built-in mic and a UM2 must be able to say which one a take
+# means. The picker lists the machine's sources (minus a sink's own monitor),
+# shows the human name, and saves the choice on the plan's input source.
+like($template, qr/studio_input_node/, 'the input picker offers a capture-source select');
+like($template, qr/&subs::ui\('This machine\\'s input'\)/,
+	'named in on-screen words rather than a device id');
+like($template, qr/&subs::ui\('The machine\\'s default input'\)/,
+	'with the default source as a row of its own');
+like($template, qr/\$source->\{'name'\}/, 'each row shows the source\'s human name');
+like($template, qr/selected/, 'the node the plan already names is the one selected');
+like($template, qr/hint="<%= &subs::ui\('Choose which of this machine/, 'and the choice says what it does');
+like($inputs, qr#url: '/manager/studio/input/node'#,
+	'choosing one saves it on the plan, which the engine reads');
+like($inputs, qr/data: \{ channel: Math\.floor\(input\), node: select\.val\(\) \|\| '' \}/,
+	'the device channel and the chosen node are the two facts saved');
+like($inputs, qr/var name = option\.text\(\) \|\| '';/,
+	'and the answer names the node a person chose');
+like($inputs, qr/jawnosT\('The input source is saved'\)/,
+	'the result is said in the page language');
+
 # --- the channel's screen list and its app inputs ----------------------------
 like($inputs, qr/function studioScreenSourceFill/, 'the channel offers the desktop screen list');
 like($inputs, qr/studio_screen_source/, 'through a source select');

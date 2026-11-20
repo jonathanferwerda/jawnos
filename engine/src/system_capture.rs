@@ -42,8 +42,8 @@ pub const LATENCY_MSEC: u32 = 20;
 const RING_MSEC: u32 = 85;
 
 /// The PulseAudio/PipeWire alias for this machine's default input. A plan's
-/// `input` source names a channel, not a node, so the engine records the
-/// default source; the system mix only moves the default output.
+/// `input` source may name a capture node of its own; when it does not, the
+/// engine captures this alias, and the status reports it as the input's node.
 #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
 pub const DEFAULT_INPUT: &str = "@DEFAULT_SOURCE@";
 
@@ -88,11 +88,14 @@ impl SystemCapture {
         Self::start(&monitor_name(sink), rate)
     }
 
-    /// Start one routed input's own capture. `channels` is the plan's capture
-    /// width; the samples of `channel` are kept and duplicated into the stereo
-    /// ring every capture uses, so the patchbay can read it like a card
-    /// channel. The stream is separate from the system mix and from every
-    /// other input, and uses the same 20 ms pacing.
+    /// Start one routed input's own capture. `device` is the plan source's
+    /// `node` when it names one (for example the UM2's
+    /// `alsa_input.usb-BEHRINGER_UMC202HD`), otherwise `@DEFAULT_SOURCE@`.
+    /// `channels` is the plan's capture width; the samples of `channel` are
+    /// kept and duplicated into the stereo ring every capture uses, so the
+    /// patchbay can read it like a card channel. The stream is separate from
+    /// the system mix and from every other input, and uses the same 20 ms
+    /// pacing.
     #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
     pub fn start_channel(
         device: &str,

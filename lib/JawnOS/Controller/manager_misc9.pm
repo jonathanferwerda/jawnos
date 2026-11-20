@@ -586,21 +586,60 @@ sub action_28457 {
 	my $screen_share = $c->param('screenShare');
 	my $channel = $c->param('channel');
 	my $direction = $c->param('direction');
+	my $information = eval { return decode_json $c->param('information') } || {};
+	$information = {} unless ref $information eq 'HASH';
+
+	# An input's picker also offers this machine's capture sources, so a take
+	# can name the microphone it means instead of taking the default. The plan
+	# is the truth: the source the channel's input number already names is the
+	# one the picker opens on.
+	my $sources = [];
+	my $input_node = '';
+	my $input = $information->{'input'};
+	$input = 0 unless defined $input && !ref $input && $input =~ /\A\d+\z/;
+	if (defined $direction && $direction eq 'input') {
+		$sources = eval { &subs::audio_capture_sources() } || [];
+		my $plan = eval { &subs::audio_plan_read() } || { sources => [] };
+		my ($source) = grep {
+			($_->{'kind'} || '') eq 'input'
+				&& !($_->{'machine'} || '')
+				&& ($_->{'channel'} || 0) == $input
+		} @{ $plan->{'sources'} || [] };
+		$input_node = $source ? ($source->{'node'} || '') : '';
+	}
+
 	my $html = $c->render_to_string(
 		template => 'studio/plug_selection',
 		constraints => $constraints,
 		channel => $channel,
 		screen_share => $screen_share,
 		apps => $apps,
-		direction => $direction
+		direction => $direction,
+		sources => $sources,
+		input => $input,
+		input_node => $input_node,
 	);
 	$c->render(json => {
 		constraints => $constraints,
 		channel => $channel,
 		apps => $apps,
 		screen_share => $screen_share,
-		html => $html
+		html => $html,
 	});
+}
+
+# POST /manager/studio/input/node
+# The input picker's save: the plan's input source on this device channel now
+# captures the named PipeWire/Pulse source (or the machine's default, when the
+# name is empty). The answer is the saved plan, so the page never guesses.
+sub action_28458 {
+	my $c = shift;
+	my $answer = eval {
+		&subs::audio_plan_source_node_write($c->param('channel'), $c->param('node'))
+	};
+	$answer = { ok => 0, error => ($@ ? "$@" : 'the input source could not be saved') }
+		unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
 }
 
 # POST /manager/studio/save

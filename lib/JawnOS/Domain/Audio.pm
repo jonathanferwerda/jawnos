@@ -183,6 +183,98 @@ sub audio_plan_status {
 	};
 }
 
+# ---- naming the source an input captures -----------------------------------
+# A local `input` may name the PipeWire/Pulse source it listens to; without one
+# it captures the machine's default. The Studio input picker asks for the list
+# and saves one choice, so both halves live here beside the plan they touch.
+
+# `pactl list short sources` is the authority for what is present. A `.monitor`
+# source is a sink's own playback tap, so no person can point a microphone at
+# it and it is left out. A row's human name is the long listing's Description;
+# without one the node is prettified so the picker never shows an empty row.
+sub audio_capture_sources {
+	my ($short, $long) = @_;
+	require JawnOS::Audio::Plan;
+	if (!defined $short) {
+		require JawnOS::Platform::Audio;
+		$short = JawnOS::Platform::Audio::run('pactl', 'list', 'short', 'sources');
+		$long  = JawnOS::Platform::Audio::run('pactl', 'list', 'sources');
+	}
+
+	my %description;
+	foreach my $block (split /^Source\s+#\d+\b.*$/m, ($long || '')) {
+		my ($node)  = $block =~ /^\s*Name:\s*(\S+)\s*$/m;
+		my ($label) = $block =~ /^\s*Description:\s*(.+?)\s*$/m;
+		next unless defined $node && defined $label && length $label;
+		$description{$node} = $label;
+	}
+
+	my (@sources, %seen);
+	foreach my $line (split /\n/, ($short || '')) {
+		my @field = split /\t/, $line;
+		next unless @field >= 2;
+		my $node = $field[1];
+		next unless defined $node && length $node;
+		next if $node =~ /\.monitor\z/;
+		next if $seen{$node}++;
+		# The engine would take a malformed name as a command option, so it
+		# is not offered as a choice either.
+		next unless JawnOS::Audio::Plan::audio_plan_node_valid($node);
+		my $name = $description{$node};
+		$name = &_audio_capture_source_name($node) unless defined $name && length $name;
+		push @sources, { node => $node, name => $name };
+	}
+	return \@sources;
+}
+
+sub _audio_capture_source_name {
+	my ($node) = @_;
+	my $name = $node;
+	$name =~ s/\A(?:alsa_input|alsa_output)\.//;
+	$name =~ s/[._]+/ /g;
+	$name =~ s/\A\s+|\s+\z//g;
+	return length $name ? $name : $node;
+}
+
+# Point the plan's input source on one device channel at a capture node, or
+# clear it back to the machine's default with an empty name. The plan is saved
+# whole through its own write path, so the engine arms the same plan it already
+# had with one fact changed.
+sub audio_plan_source_node_write {
+	my ($channel, $node) = @_;
+	require JawnOS::Audio::Plan;
+	$channel = '' if !defined $channel || ref $channel;
+	return { ok => 0, error => 'an input channel is a whole number from 0 to 31' }
+		unless $channel =~ /\A\s*\d{1,2}\s*\z/ && $channel <= 31;
+	$channel += 0;
+
+	$node = '' if !defined $node || ref $node;
+	$node =~ s/\A\s+|\s+\z//g;
+	return { ok => 0, error => 'a node is a capture source name: letters, digits and . _ : @ + -' }
+		if length $node && !JawnOS::Audio::Plan::audio_plan_node_valid($node);
+
+	my $plan = &audio_plan_read();
+	my ($source) = grep {
+		($_->{kind} || '') eq 'input'
+			&& !($_->{machine} || '')
+			&& ($_->{channel} || 0) == $channel
+	} @{ $plan->{sources} };
+	return {
+		ok => 0,
+		error => "no input source on channel $channel for this machine; declare one in Sound's patchbay first",
+	} unless $source;
+
+	$source->{node} = $node;
+	my $saved = eval { &audio_plan_write($plan) };
+	return { ok => 0, error => ($@ ? "$@" : 'the plan could not be saved') }
+		unless ref $saved eq 'HASH' && $saved->{ok};
+	return {
+		ok    => 1,
+		plan  => $saved->{plan},
+		source => { id => $source->{id}, channel => $channel, node => $node },
+	};
+}
+
 # Save one plan. The write path refuses a wrong shape instead of repairing it:
 # a dangling route or a gain of 5 is a mistake, and the read path already
 # repairs an older plan, so the two never disagree about what is stored.

@@ -50,6 +50,7 @@ use jawn_audio::{to_i16, Device, NullDevice};
 
 use crate::backends::BackendKind;
 use crate::socket::{get, Object, Value};
+use crate::system_capture::DEFAULT_INPUT;
 
 /// The source kinds a saved plan may name. `input` is a capture channel,
 /// `device` is this machine's system mix, and `handset` is the reception
@@ -82,6 +83,11 @@ enum SourceRoute {
 struct Source {
     id: String,
     channel: Option<usize>,
+    /// The PipeWire/Pulse source this input captures, when the plan names one.
+    /// `None` means the machine's default source (`@DEFAULT_SOURCE@`); a named
+    /// node is never replaced by that default, because a take that asked for
+    /// the UM2 must not quietly record the laptop's microphone.
+    node: Option<String>,
     system: bool,
     handset: bool,
     input: Option<Consumer>,
@@ -99,6 +105,8 @@ pub struct InputStream {
     /// Which channel of the capture feeds this source, read the way the ALSA
     /// duplex loop reads the card's channels.
     pub channel: usize,
+    /// The named capture node, or `None` for the machine's default source.
+    pub node: Option<String>,
 }
 
 /// Which streams a patch asks the device worker to open.
@@ -141,6 +149,10 @@ pub struct PatchSummary {
     pub bound_sinks: usize,
     /// Node ids that were declared and routed but cannot be bound here.
     pub silent: Vec<String>,
+    /// Every bound local `input`, as (id, capture node): the plan's own `node`,
+    /// or `@DEFAULT_SOURCE@` when it names none. The status shows which
+    /// microphone a take will actually use.
+    pub inputs: Vec<(String, String)>,
     /// `routed` when the plan sends a `device` source somewhere; `fallback`
     /// when the machine's own mix is added to the output at unity because the
     /// plan does not route it. It is serialised as `system_route`, because
@@ -169,8 +181,20 @@ impl PatchSummary {
             .map(|id| format!("\"{}\"", jawn_audio::loopback::json_escape(id)))
             .collect::<Vec<String>>()
             .join(",");
+        let inputs = self
+            .inputs
+            .iter()
+            .map(|(id, node)| {
+                format!(
+                    "{{\"id\":\"{}\",\"node\":\"{}\"}}",
+                    jawn_audio::loopback::json_escape(id),
+                    jawn_audio::loopback::json_escape(node)
+                )
+            })
+            .collect::<Vec<String>>()
+            .join(",");
         format!(
-            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\"",
+            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"inputs\":[{}],\"system_route\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\"",
             self.sources,
             self.buses,
             self.sinks,
@@ -178,6 +202,7 @@ impl PatchSummary {
             self.bound_sources,
             self.bound_sinks,
             silent,
+            inputs,
             self.system,
             self.handset,
             self.mode
@@ -245,6 +270,22 @@ impl Patchbay {
         config_channels: usize,
         machine: &str,
     ) -> Result<Patchbay, String> {
+        Self::from_object_with_probe(object, config_channels, machine, &|node| {
+            crate::system_capture::source_exists(node)
+        })
+    }
+
+    /// The same compile, with the question "does this machine offer this
+    /// source?" asked through `probe` instead of `pactl`. A test compiles a plan
+    /// for a microphone it does not have; a machine that cannot ask (no
+    /// `pactl`) answers `None` and the capture is still attempted, because an
+    /// unverifiable node is not evidence of a wrong one.
+    pub fn from_object_with_probe(
+        object: &Object,
+        config_channels: usize,
+        machine: &str,
+        probe: &dyn Fn(&str) -> Option<bool>,
+    ) -> Result<Patchbay, String> {
         if config_channels == 0 {
             return Err("a patch needs at least one capture channel".to_string());
         }
@@ -273,6 +314,11 @@ impl Patchbay {
                 ));
             }
             let channel = integer(entry, "channel")?.unwrap_or(0);
+            // The capture node an `input` names, or `None` for the machine's
+            // default source. A `node` on any other kind is a plan this engine
+            // does not understand; the manager refuses it on save, and here it
+            // is simply not a capture.
+            let node = source_node(entry, &kind)?;
             // `machine` is optional; absent or empty means "this machine". A
             // source delegated to another host is declared but silent here.
             let on_this_machine = node_machine(entry).map_or(true, |host| {
@@ -286,8 +332,14 @@ impl Patchbay {
             // places it elsewhere.
             let system = kind == "device" && on_this_machine;
             let handset = kind == "handset" && on_this_machine;
-            let reachable =
+            let mut reachable =
                 kind == "input" && on_this_machine && channel < config_channels;
+            // A named node this machine does not offer is silent, like a
+            // channel the interface does not have. Falling back to the default
+            // source would record the wrong microphone and say nothing.
+            if reachable && node.as_deref().is_some_and(|name| probe(name) == Some(false)) {
+                reachable = false;
+            }
             if !reachable && !system && !handset {
                 // A plan saved for a wider interface (or a peer/phone, or a
                 // route delegated elsewhere) is a declared node this machine
@@ -297,6 +349,7 @@ impl Patchbay {
             sources.push(Source {
                 id,
                 channel: reachable.then_some(channel),
+                node: reachable.then_some(node).flatten(),
                 system,
                 handset,
                 input: None,
@@ -499,6 +552,7 @@ impl Patchbay {
                 .count(),
             bound_sinks: sinks.iter().filter(|sink| sink.bound).count(),
             silent,
+            inputs: bound_inputs(&sources),
             system: if system_routed { "routed" } else { "fallback" },
             handset: if sources.iter().any(|source| source.handset) {
                 "pending"
@@ -581,6 +635,7 @@ impl Patchbay {
                         index,
                         id: source.id.clone(),
                         channel,
+                        node: source.node.clone(),
                     })
                 })
                 .collect()
@@ -623,6 +678,7 @@ impl Patchbay {
             .iter()
             .filter(|source| source.channel.is_some() || source.system || source.handset)
             .count();
+        self.summary.inputs = bound_inputs(&self.sources);
     }
 
     /// Attach the reception mixer's screened-call capture. The ring is popped
@@ -720,6 +776,7 @@ impl Patchbay {
                 }
             }
         }
+        self.summary.inputs = bound_inputs(&self.sources);
         self.input = vec![0.0; period.saturating_mul(channels)];
         self.capture_block = vec![0.0; period.saturating_mul(2)];
         self.system = vec![0.0; period.saturating_mul(2)];
@@ -1118,6 +1175,25 @@ fn sources_want_input(sources: &[Source]) -> bool {
         .any(|source| source.channel.is_some() && !source.routes.is_empty())
 }
 
+/// Every bound local `input` and the node it captures: the plan's own name, or
+/// the Pulse alias for the machine's default source. The status line reports
+/// this, so a person can see which microphone a take will use.
+fn bound_inputs(sources: &[Source]) -> Vec<(String, String)> {
+    sources
+        .iter()
+        .filter(|source| source.channel.is_some())
+        .map(|source| {
+            (
+                source.id.clone(),
+                source
+                    .node
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_INPUT.to_string()),
+            )
+        })
+        .collect()
+}
+
 /// Add one interleaved stereo block into another. A stereo source already has
 /// an image, so a centred strip is unity in both channels and pan is a balance.
 fn mix_stereo_into_stereo(out: &mut [f32], input: &[f32], strip: &Strip) {
@@ -1209,6 +1285,42 @@ fn text(object: &Object, key: &str) -> Option<String> {
 
 fn node_id(object: &Object, what: &str) -> Result<String, String> {
     text(object, "id").ok_or_else(|| format!("every {what} needs an \"id\" string"))
+}
+
+/// The longest capture node name a plan may carry, and the characters it may
+/// use. The manager writes the same rule (`audio_plan_node_valid`); the engine
+/// repeats it because `--plan` can be handed a hand-written file, and a name
+/// that begins with `-` would be read by `parec` as an option.
+const NODE_NAME_MAX: usize = 200;
+
+fn capture_node_name_ok(name: &str) -> bool {
+    let mut characters = name.chars();
+    match characters.next() {
+        Some(first) if first.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    name.len() <= NODE_NAME_MAX
+        && characters.all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '+' | '-')
+        })
+}
+
+/// A source's optional `"node"`: the capture node an `input` listens to.
+/// Absent or empty means the machine's default source. Any other kind has no
+/// capture of its own to name, so a `node` there is not a capture.
+fn source_node(object: &Object, kind: &str) -> Result<Option<String>, String> {
+    let Some(node) = text(object, "node") else {
+        return Ok(None);
+    };
+    if kind != "input" {
+        return Ok(None);
+    }
+    if !capture_node_name_ok(&node) {
+        return Err(format!(
+            "the source names the capture node \"{node}\"; a PipeWire source name is letters, digits and . _ : @ + -",
+        ));
+    }
+    Ok(Some(node))
 }
 
 /// A node's optional `"machine"` host. Absent or empty means "this machine",
@@ -1311,6 +1423,15 @@ mod tests {
     fn bay_for(json: &str, machine: &str) -> Patchbay {
         let object = parse_object(json).expect("the plan parses");
         Patchbay::from_object(&object, 2, machine).expect("the plan compiles")
+    }
+
+    /// A compile whose "does this machine offer this source?" answer is the
+    /// test's own, so a microphone the test machine does not have can still be
+    /// named (and an unknown one can be proven unknown).
+    fn bay_probing(json: &str, probe: &dyn Fn(&str) -> Option<bool>) -> Patchbay {
+        let object = parse_object(json).expect("the plan parses");
+        Patchbay::from_object_with_probe(&object, 2, "local", probe)
+            .expect("the plan compiles")
     }
 
     fn prepared(json: &str) -> Patchbay {
@@ -1930,6 +2051,114 @@ mod tests {
         let streams = patchbay.stream_plan(BackendKind::PipeWire);
         assert!(!streams.card_capture);
         assert!(streams.inputs.is_empty(), "the microphone stays closed");
+    }
+
+    // --- naming the capture node ---------------------------------------------
+
+    const NAMED_INPUT: &str = r#"{
+        "sources":[{
+            "id":"gtr","kind":"input","channel":0,
+            "node":"alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo"
+        }],
+        "buses":[],
+        "sinks":[{"id":"out","kind":"interface"}],
+        "routes":[{"from":"gtr","to":"out"}]
+    }"#;
+
+    #[test]
+    fn a_named_node_is_the_stream_the_input_captures() {
+        let patchbay = bay_probing(NAMED_INPUT, &|_| Some(true));
+        let streams = patchbay.stream_plan(BackendKind::PipeWire);
+        assert_eq!(streams.inputs.len(), 1);
+        assert_eq!(
+            streams.inputs[0].node.as_deref(),
+            Some("alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo")
+        );
+        // The status names the node the capture was given, so a take can say
+        // which microphone it means.
+        assert_eq!(
+            patchbay.summary().inputs,
+            vec![(
+                "gtr".to_string(),
+                "alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo".to_string()
+            )]
+        );
+        // And the status line carries it, so the page reads the node the engine
+        // bound rather than assuming one.
+        let line = patchbay.summary().json();
+        assert!(
+            line.contains(
+                "\"inputs\":[{\"id\":\"gtr\",\"node\":\"alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo\"}]"
+            ),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn an_input_without_a_node_reports_the_default_source_alias() {
+        let patchbay = bay(ONE_INPUT);
+        assert_eq!(
+            patchbay.summary().inputs,
+            vec![("in0".to_string(), DEFAULT_INPUT.to_string())]
+        );
+        assert_eq!(patchbay.stream_plan(BackendKind::PipeWire).inputs[0].node, None);
+    }
+
+    #[test]
+    fn an_unknown_capture_node_is_silent_and_never_the_default() {
+        // The machine does not offer the node the plan names. The input must
+        // be named in `silent`, not quietly captured from the default source.
+        let patchbay = bay_probing(NAMED_INPUT, &|_| Some(false));
+        assert!(patchbay.summary().silent.contains(&"gtr".to_string()));
+        assert_eq!(patchbay.summary().bound_sources, 0);
+        assert!(
+            patchbay.stream_plan(BackendKind::PipeWire).inputs.is_empty(),
+            "no stream starts for a node this machine does not offer"
+        );
+        assert!(patchbay.summary().inputs.is_empty(), "and nothing is reported as bound");
+    }
+
+    #[test]
+    fn a_node_the_machine_cannot_check_is_still_attempted() {
+        // No pactl: the question cannot be asked, so the capture is attempted
+        // with the named node rather than refused or replaced.
+        let patchbay = bay_probing(NAMED_INPUT, &|_| None);
+        assert!(patchbay.summary().silent.is_empty());
+        assert_eq!(patchbay.stream_plan(BackendKind::PipeWire).inputs.len(), 1);
+    }
+
+    #[test]
+    fn a_capture_node_that_is_not_a_name_is_refused() {
+        let object = parse_object(
+            r#"{
+                "sources":[{"id":"gtr","kind":"input","node":"-device"}],
+                "buses":[],
+                "sinks":[],
+                "routes":[]
+            }"#,
+        )
+        .expect("the plan parses");
+        assert!(
+            Patchbay::from_object(&object, 2, "local").is_err(),
+            "a name that `parec` would read as an option is refused"
+        );
+    }
+
+    #[test]
+    fn a_node_on_a_device_source_is_not_a_capture() {
+        // `device` is the system mix and `handset` the call monitor; neither
+        // captures from a node of its own, so a stray `node` is not one.
+        let patchbay = bay_probing(
+            r#"{
+                "sources":[{"id":"system","kind":"device","node":"alsa_output.ghost.monitor"}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"system","to":"out"}]
+            }"#,
+            &|_| Some(false),
+        );
+        assert_eq!(patchbay.summary().system, "routed");
+        assert!(patchbay.summary().silent.is_empty());
     }
 
     #[test]

@@ -155,6 +155,84 @@ require JawnOS::Domain::Audio;
 	);
 }
 
+# --- the input's own capture source ------------------------------------------
+# A take on a laptop with a built-in mic and a UM2 has to be able to name which
+# one it means. The Studio input picker saves the choice on the plan's input
+# source for that device channel, and reading the plan back hands the picker
+# the same node, so the two never disagree.
+{
+	%STORE = ();
+	my $node = 'alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo';
+	my $plan = {
+		sources => [
+			{ id => 'mic', kind => 'input', channel => 1 },
+			{ id => 'gtr', kind => 'input', channel => 0 },
+		],
+		buses  => [],
+		sinks  => [ { id => 'out', kind => 'interface', channel => 0 } ],
+		routes => [],
+	};
+	is(subs::audio_plan_write($plan)->{ok}, 1, 'a plan with two local inputs saves');
+
+	my $picked = subs::audio_plan_source_node_write(1, $node);
+	is($picked->{ok}, 1, 'the picker saves a capture node on channel 1');
+	is($picked->{source}{node}, $node, 'and answers with the node it saved');
+	is(subs::audio_plan_read()->{sources}[0]{node}, $node,
+		'the saved plan reads the node back, so the picker opens on it');
+	is(subs::audio_plan_read()->{sources}[1]{node}, '',
+		'and the other channel keeps its own source, unchanged');
+
+	my $cleared = subs::audio_plan_source_node_write(1, '');
+	is($cleared->{ok}, 1, 'an empty name is a choice too');
+	is(subs::audio_plan_read()->{sources}[0]{node}, '',
+		'and puts the channel back on the machine default');
+
+	my $path = subs::audio_plan_source_node_write(1, '/dev/snd/by-id/mic');
+	is($path->{ok}, 0, 'a path is refused rather than saved');
+	my $option = subs::audio_plan_source_node_write(1, '-device');
+	is($option->{ok}, 0, 'and so is a name parec would read as an option');
+	my $missing = subs::audio_plan_source_node_write(7, $node);
+	is($missing->{ok}, 0, 'a channel with no input source is refused');
+	like($missing->{error}, qr/no input source on channel 7/, 'and says why');
+	is(subs::audio_plan_read()->{sources}[0]{node}, '',
+		'a refused choice changes nothing');
+}
+
+# --- the machine's capture sources, as the picker lists them ------------------
+# The short listing is the truth about what is present; a `.monitor` row is a
+# sink's own playback tap, not a microphone, so it is never offered. The long
+# listing's Description is the human name, and a source without one is
+# prettified rather than shown blank.
+{
+	my $short = join "\n",
+		"2\talsa_output.pci-0000_00_1f.3.analog-stereo.monitor\tPipeWire\ts16le 2ch 48000Hz\tSUSPENDED",
+		"3\talsa_input.pci-0000_00_1f.3.analog-stereo\tPipeWire\ts16le 2ch 48000Hz\tSUSPENDED",
+		"4\talsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo\tPipeWire\ts16le 2ch 48000Hz\tSUSPENDED";
+	my $long = join "\n",
+		'Source #3',
+		"\tState: SUSPENDED",
+		"\tName: alsa_input.pci-0000_00_1f.3.analog-stereo",
+		"\tDescription: Built-in Audio Analog Stereo",
+		'Source #4',
+		"\tState: SUSPENDED",
+		"\tName: alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo",
+		"\tDescription: BEHRINGER UMC 202HD 192k Analog Stereo";
+
+	my $sources = subs::audio_capture_sources($short, $long);
+	is_deeply(
+		[ map { $_->{node} } @$sources ],
+		[ 'alsa_input.pci-0000_00_1f.3.analog-stereo', 'alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo' ],
+		'the monitor is left out and both microphones are offered'
+	);
+	is($sources->[0]{name}, 'Built-in Audio Analog Stereo', 'the long listing names a source for a person');
+	is($sources->[1]{name}, 'BEHRINGER UMC 202HD 192k Analog Stereo', 'and so does the second');
+
+	my $unnamed = subs::audio_capture_sources("5\talsa_input.usb_mic\tPipeWire\ts16le 1ch 48000Hz\tIDLE", '');
+	is($unnamed->[0]{name}, 'usb mic', 'a source with no description is prettified, never blank');
+	my $none = subs::audio_capture_sources('', '');
+	is_deeply($none, [], 'a machine with no sources offers nothing rather than a blank row');
+}
+
 # --- the engine's startup copy follows the plan and the switch ---------------
 {
 	%STORE = ();

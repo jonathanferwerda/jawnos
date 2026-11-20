@@ -25,8 +25,10 @@ master switch is on. The matrix shows each sink's declared latency and the
 engine's state, frames, xruns and silent nodes. A fader moves the running patch
 without re-arming it (`param` target `patch`); a node may name the machine it
 live on, so one central plan can describe several machines. The manager writes
-`~/.president/audio-plan.json` and the supervisor passes it to a fresh engine, so
-a reboot comes back routed. A machine with more than one interface picks the one
+the startup copy and the supervisor passes it to a fresh engine, so
+a reboot comes back routed. (2026-11-20: that copy is no longer under
+`~/.president` — it sits in `~/.local/state/jawnos/audio/`, which the boot wipe
+does not reach; see P1 and P5.) A machine with more than one interface picks the one
 the engine opens in the same section (**Engine device**), stored beside the plan
 in the startup file so the next spawn opens it. President starts the supervisor
 when the engine binary is staged, so the switch needs no terminal work. What is
@@ -440,6 +442,14 @@ Rules that keep it honest:
    the declared latency beside the route, so a zone never gets mistaken for a booth.
 4. **A route is not a recording.** Recording a bus is a take, and a take is a Studio row; the
    patchbay can create one but does not own it.
+5. **A local `input` may name its capture node.** A source's `node` is a PipeWire/Pulse source name —
+   the same one-word discipline the Sound app's device ids use, never a path — and the engine binds
+   that node through its own `parec` stream instead of taking the machine's default. The status
+   returns the node each bound input got (`inputs: [{id, node}]`), and a take can therefore say which
+   microphone it means on a laptop that has a built-in mic and a UM2. Absent means
+   `@DEFAULT_SOURCE@`; a name this machine does not offer is **silent** — listed in `silent` — and is
+   never quietly replaced by the default. A card input on the ALSA duplex path keeps its
+   interface/channel and has no `node`; the field is a PipeWire-backend fact.
 
 This is the answer to item 5: one table, on any device, for every input and output in the house.
 
@@ -510,6 +520,16 @@ magic | version | session | stream | seq | master_sample | codec | flags | paylo
 
 Node discovery reuses what the firmware already does: one more mDNS TXT key, `audio`, beside `arm`,
 `coms` and `bestow` (`jw/jw_07_house_audio.ino:111`), and the node registry the house server keeps.
+
+The patch reply, and every `status` line, carries the compiled plan and its verdict as plain keys so
+a supervisor and a page read one document: `sources`, `buses`, `sinks`, `routes`,
+`bound_sources`, `bound_sinks`, `silent` (ids this machine cannot bind), and `inputs` — one entry per
+bound local input, `{"id": …, "node": …}`, where `node` is the plan's own capture name or
+`@DEFAULT_SOURCE@`. `system_route` says `routed` or `fallback`, `handset` says `pending`,
+`capturing`, `unavailable` or `off`, and `mode` says `duplex` or `playback`. `system` on the same line
+is the capture state — `capturing`, `unavailable`, `off`, or `feedback` when the playback guard
+refused to play into the sink this pass captures. A refusal keeps `ok` true (the server is healthy),
+puts the sentence naming the link in `error`, and ends the pass: retrying would only reopen the loop.
 
 Loss policy differs per stream, and that is a feature: an **input** stream conceals (repeat, fade),
 because a missing guitar sample is better than a gap; a **bus or zone** stream drops stale audio
@@ -615,7 +635,13 @@ PipeWire could not hold quantum 64. The instrumentation is in Studio
 (`window.studioAudioReport()`); the laptop's numbers are owed, and come from running the probe on the
 machine where Studio is used.
 
-### P1 — The engine skeleton (1 week, spike) — **skeleton built; device backend next**
+**Still owed (2026-11-20):** the laptop's row, and with it the gate. P0 asks for a table for *both*
+machines and only `table` has one, so the phase is half measured, not passed. The measurement is the
+probe itself: open Studio on the laptop and run `window.studioAudioReport()` in its page console, then
+paste the row here. Nothing about a native engine's case rests on that row — it rests on §2 — but no
+one should read P0 as finished until it exists.
+
+### P1 — The engine skeleton (1 week, spike) — **built; both real backends measured**
 
 An `engine/` Cargo workspace and the `jawn-audio` binary: open the UM2, pass 2 in / 2 out through,
 report xruns and the measured round trip on a Unix socket under `~/.president/`.
@@ -623,9 +649,14 @@ report xruns and the measured round trip on a Unix socket under `~/.president/`.
 binary is gitignored beside `perl/sco/sco_helper`.
 
 **In the tree:** the crate, the CLI, the null device, the datagram header, master election and clock
-alignment (`engine/`, 40 tests), the build and staging script, and `t/332`. **Still owed:** the real
-device behind the same `Device` trait — and the PCM2902 accepts only 48-sample periods, so the
-backend must fill a 64-frame block across two USB frames.
+alignment (`engine/`), the build and staging script, and `t/332`.
+
+**The real devices (2026-11-19, 2026-11-20):** "the real device behind the same `Device` trait" is no
+longer owed. Two backends implement it: `engine/src/alsa_device.rs` opens `hw:N,0` for playback,
+capture or both, and the PipeWire backend plays out the node the system mix replaced instead of
+taking the card (`engine/src/pipewire_guard.rs`). The measured number is §2's: **2.71–2.79 ms round
+trip at 64/256** through the patch cable, repeating to within four samples. The PCM2902's 48-sample
+period is a solved fact, not a risk: a 64-frame block is filled across two USB frames.
 
 **The supervisor:** `perl/Audio.pl` owns the machine's one engine. It starts
 `perl/audio/jawn-audio --serve` with the configured backend, device, period, buffer and socket,
@@ -636,6 +667,13 @@ only while the supervisor and its child are alive; TERM/INT stop the child, remo
 and exit 0. Config is flags, then `JAWNOS_AUDIO_*`, then defaults (alsa, `hw:1,0`, 64/256,
 `~/.president/audio.sock`). A missing binary is reported once and retried at the 30 s cap, because
 the engine stays optional.
+
+**Durable state (2026-11-20):** the plan, the device picker's pair beside it and the system-mix record
+are configuration, not run state, and the launcher wipes `~/.president` at every boot
+(`jawn:210-223`). They live in `~/.local/state/jawnos/audio/` (`audio-plan.json`,
+`audio-system-mix.json`); the supervisor's own status file and lock stay under `~/.president`,
+because a restart may forget those. The first boot after the move migrates an older build's copy out
+of the wipe's reach once, and a lost copy is rebuilt from the settings rows anyway.
 
 **The engine is rebuilt from the tree, not shipped as a file.** `scripts/build_engine.pl --if-stale`
 compares the staged binary against `engine/Cargo.toml`, `Cargo.lock` and `engine/src`, and builds only
@@ -658,7 +696,8 @@ its own JawnOS, and a null backend that runs in the suite.
 **Met on `table` (2026-11-17):** the engine measured **2.71–2.79 ms** at 64/256 through the patch
 cable, with 180 s of duplex at zero xruns. The one caveat is the method: the streams are unlinked, so
 each number carries one period (±1.33 ms) of start-boundary uncertainty. JACK would remove it by
-construction.
+construction. (2026-11-20: the ten-minute clause has not been re-run; the 180 s run is what was
+measured, and it is stated as such rather than rounded up.)
 
 ### P2 — Studio's graph in the engine (2–3 weeks)
 
@@ -699,7 +738,7 @@ writes its own take locally first (D14), so the master places it rather than own
 **Gate:** guitar through the UM2 and voice on the phone in one session, both in time with the click,
 both on the same take, ten minutes without a lost take. Then the same with a T-Deck clip.
 
-### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree, hardware routing next**
+### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
 The `manage` switch, the saved audio plan, the matrix and the node inspector (§9), driving the
 engine on `table` and plain PipeWire elsewhere. The engine's streams and quantum are fixed, so
@@ -707,16 +746,31 @@ pavucontrol has nothing to fight over and nothing to break.
 
 **In the tree (2026-11-18):** the plan store (`Domain::Audio`), the `manage` switch, the Sound matrix
 and node inspector (state, frames, xruns, declared latency, silent nodes), the engine's
-`patch`/`unpatch` and live fader `param`, and the supervisor's boot restore (the manager writes
-`~/.president/audio-plan.json`; a fresh engine arms it when `manage` is on). A managed ALSA card also
+`patch`/`unpatch` and live fader `param`, and the supervisor's boot restore (the manager writes the
+startup copy; a fresh engine arms it when `manage` is on). A managed ALSA card also
 gets a WirePlumber drop-in (`51-jawnos-studio-card.conf`) written before the engine opens
 `hw:N,0` and removed when manage goes off or the engine stops. Its matches follow the engine's
 mode: a playback plan disables only the playback node (the microphone stays with PipeWire), a
 duplex plan disables the playback and capture nodes because the engine captures the microphone;
 a hand-written both-direction rule at that path is adopted and replaced, never restored on off.
-**Still owed:** delegation
-of a route to a peer machine's engine (P3), and a per-machine `manage` setting (the switch is
-house-wide today).
+
+**What moved (2026-11-20):** the startup copy is no longer under `~/.president`. The plan and the
+picker's pair live in `~/.local/state/jawnos/audio/audio-plan.json`, because the launcher wipes
+`~/.president` at every boot (`jawn:210-223`), and a machine that rebooted lost the routing it had
+saved. PipeWire machines own their output now, not only ALSA ones: the manager makes the same
+`jawn_system` sink for every plan, the engine plays out the node that sink replaced, ordinary app
+audio comes through the sink's monitor as the `device` source, and a duplex plan captures each routed
+input through its own `parec` stream — one `pipewire-alsa` process never plays one node and captures
+another. A playback that would fall back to the sink this pass captures is refused before it opens,
+with `system: "feedback"` and the sentence naming the link
+(`engine/src/pipewire_guard.rs`), so the supervisor hands the machine back instead of leaving a loop
+running. Sound's Apps pill lists only the apps that have a window open on this machine right now,
+refreshed while the pill is open. A local input may also name the capture node it listens to
+(Studio's input picker offers this machine's sources, minus a sink's own monitor), and the status
+reports the node each bound input got (§8, §10).
+
+**Still owed:** delegation of a route to a peer machine's engine (P3), and a per-machine `manage`
+setting (the switch is house-wide today).
 
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;

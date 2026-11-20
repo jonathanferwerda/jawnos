@@ -273,6 +273,64 @@ sub route {
 	ok( !valid($raw), 'and the raw plan is invalid' );
 }
 
+# --- a local input may name its capture node ---------------------------------
+# Without a node every routed input takes the machine's default source, so a
+# laptop with a built-in mic and a UM2 cannot say which one a take means. The
+# value is a PipeWire/Pulse source name, never a path, and a name that begins
+# with `-` would be read by `parec` as an option.
+{
+	my $node = 'alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo';
+	my $named = normalize({
+		sources => [ source('mic', node => $node) ],
+		buses   => [],
+		sinks   => [ sink('out') ],
+		routes  => [],
+	});
+	is($named->{sources}[0]{node}, $node, 'an input keeps the node it names');
+
+	my $plain = normalize({
+		sources => [ source('mic') ],
+		buses   => [],
+		sinks   => [],
+		routes  => [],
+	});
+	is($plain->{sources}[0]{node}, '', 'an input with no node reads as the machine default');
+
+	ok(valid({ sources => [ source('mic', node => $node) ], buses => [], sinks => [], routes => [] }),
+		'a PipeWire source name is valid');
+	ok(!valid({ sources => [ source('mic', node => '-device') ], buses => [], sinks => [], routes => [] }),
+		'a name that begins with - is refused, because parec would read it as an option');
+	ok(!valid({ sources => [ source('mic', node => '/dev/snd/by-id/mic') ], buses => [], sinks => [], routes => [] }),
+		'a path is not a node');
+	ok(!valid({ sources => [ source('mic', node => 'a b') ], buses => [], sinks => [], routes => [] }),
+		'a name with a space is refused');
+	ok(!valid({ sources => [ source('mic', node => { name => $node }) ], buses => [], sinks => [], routes => [] }),
+		'a node that is a ref is refused');
+
+	# The read path drops a name the engine must never receive, so a hand-edited
+	# setting cannot turn into a command option; the write path refuses it.
+	my $bad = normalize({
+		sources => [ source('mic', node => '-device') ],
+		buses   => [],
+		sinks   => [],
+		routes  => [],
+	});
+	is($bad->{sources}[0]{node}, '', 'the read path drops a name the engine would read as an option');
+
+	# Only an `input` captures from a node: a `device` source is the system mix
+	# and a `handset` is the call monitor.
+	my $sink = normalize({
+		sources => [ source('system', kind => 'device', node => $node) ],
+		buses   => [],
+		sinks   => [ sink('out', node => $node) ],
+		routes  => [],
+	});
+	is($sink->{sources}[0]{node}, '', 'a device source has no node of its own');
+	is($sink->{sinks}[0]{node}, '', 'and a sink keeps none');
+	ok(!valid({ sources => [], buses => [], sinks => [ sink('out', node => $node) ], routes => [] }),
+		'a node on a sink is refused on save');
+}
+
 # --- declared latency --------------------------------------------------------
 {
 	my $raw = {

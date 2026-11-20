@@ -144,6 +144,36 @@ function studioScreenSourceValue(panel) {
 	return { id: select.val() || '', name: option.text() || '' };
 }
 
+// The input picker also names which of this machine's capture sources the
+// channel's input uses. The plan is the source of truth: the picker opens on
+// the saved node, and choosing another saves it on the plan's input source for
+// that device channel, so the engine - not the browser - captures it.
+$(document).on('change', '.studio_input_node', function() {
+	var select = $(this);
+	var input = Number(select.attr('input'));
+	if (!isFinite(input) || input < 0) { input = 0; }
+	var option = select.find('option:selected');
+	var name = option.text() || '';
+	var note = select.closest('td').find('.studio_input_node_note');
+	$.ajax({
+		url: '/manager/studio/input/node',
+		type: 'POST',
+		data: { channel: Math.floor(input), node: select.val() || '' },
+		success: function(result) {
+			result = result || {};
+			if (result.ok) {
+				note.text(select.val()
+					? jawnosT('The input source is saved') + ': ' + name
+					: jawnosT('The input source is saved'));
+			}
+			else {
+				note.text(result.error || jawnosT('The input source could not be saved'));
+			}
+		},
+		error: function() { note.text(jawnosT('The input source could not be saved')); }
+	});
+});
+
 // What a channel's input jack is connected to, as the chooser stored it. An
 // empty or unreadable plug means no input is chosen.
 function studioChannelInput(ch) {

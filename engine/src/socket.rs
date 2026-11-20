@@ -4059,8 +4059,12 @@ fn patch_hardware(
     // machine's ordinary audio, keeps playing.
     let mut input_captures = Vec::new();
     for input in &streams.inputs {
+        let node = input
+            .node
+            .as_deref()
+            .unwrap_or(crate::system_capture::DEFAULT_INPUT);
         match crate::system_capture::SystemCapture::start_channel(
-            crate::system_capture::DEFAULT_INPUT,
+            node,
             config.rate,
             input.channel,
             config.channels,
@@ -6184,6 +6188,7 @@ break"}"#).is_err());
                         bound_sources: 1,
                         bound_sinks: 1,
                         silent: Vec::new(),
+                        inputs: Vec::new(),
                         system: route,
                         handset: "off",
                         mode: "playback",
