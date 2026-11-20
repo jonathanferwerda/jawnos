@@ -1437,6 +1437,26 @@ like($app_back, qr/var now = \(replay && replay\.at\) \? replay\.at : Date\.now\
 like($app_back, qr/if \(captured\.ago !== undefined\) \{ container\.find\('\.ago'\)\.val\(captured\.ago\); \}/,
 	'with the values the prediction was showing');
 
+# --- a scroll is not a press -------------------------------------------------
+like($emerge, qr/var JAWNOS_EMERGE_DRAG_SLOP = 12;/,
+	'a scroll is told from a tap by the shim\'s own 12px slop');
+like($emerge, qr/function jawnosWindowEmergePressMoved\(e\)[\s\S]{0,400}JAWNOS_EMERGE_DRAG_SLOP \* JAWNOS_EMERGE_DRAG_SLOP/,
+	'and the distance is measured against that slop');
+like($emerge, qr/jawnosWindowEmergePressAt = jawnosWindowEmergePoint\(e\);[\s\S]{0,160}jawnosWindowEmergeDragSwallow = false;/,
+	'a new press starts the measurement and clears an old swallow');
+like($emerge, qr/function jawnosWindowEmergeAbandonPress\(\)[\s\S]{0,320}jawnosWindowEmergeGhostCancel\(\)[\s\S]{0,200}jawnosWindowEmergeDragSwallow = true/,
+	'a move past the slop takes the preview back and remembers the lift');
+like($emerge, qr/document\.addEventListener\('pointermove', onmove, true\)/,
+	'the move is watched on the document while the press is down');
+like($emerge, qr/document\.addEventListener\('pointercancel', oncancel, true\)/,
+	'and a gesture the browser takes (a scroll) ends the press');
+like($emerge, qr/var dragged = jawnosWindowEmergeDragSwallow;[\s\S]{0,400}if \(dragged \|\| !ghost \|\| ghost\.win\) \{ return; \}/,
+	'a scroll\'s lift never arms the preview');
+like($emerge, qr/if \(jawnosWindowEmergeDragSwallow\) \{[\s\S]{0,400}jawnosWindowEmergePressHost\(e\.target\)[\s\S]{0,300}stopImmediatePropagation/,
+	'the click that ends a scroll neither opens an app nor closes the menu');
+like($emerge, qr/if \(!jawnosWindowEmergePressHost\(e\.target\)\) \{ return false; \}/,
+	'and only a press on an opener is swallowed');
+
 # --- and every touched script parses ----------------------------------------
 if ($node && -x $node) {
 	foreach my $file (qw(

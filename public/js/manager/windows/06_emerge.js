@@ -1105,6 +1105,17 @@ function jawnosWindowEmergeBlockNextClick(app) {
 }
 
 function jawnosWindowEmergeSwallowClick(e) {
+	// the lift that ended a scroll belongs to the gesture, not to the row under
+	// the finger: it must neither open an app nor close the menu
+	if (jawnosWindowEmergeDragSwallow) {
+		if (!e || !e.target || e.target.nodeType !== 1) { return false; }
+		if (!jawnosWindowEmergePressHost(e.target)) { return false; }
+		jawnosWindowEmergeDragSwallow = false;
+		if (e.preventDefault) { e.preventDefault(); }
+		if (e.stopImmediatePropagation) { e.stopImmediatePropagation(); }
+		else if (e.stopPropagation) { e.stopPropagation(); }
+		return true;
+	}
 	var token = jawnosWindowEmergeClickBlock;
 	if (!token || !e || !e.target || e.target.nodeType !== 1) { return false; }
 	var control = jawnosWindowEmergeControl(e.target);
@@ -2447,6 +2458,60 @@ if (typeof document != 'undefined' && document.addEventListener) {
 	document.addEventListener('click', function (e) { jawnosWindowEmergeSwallowClick(e); }, true);
 }
 
+// A scroll is not a press. The menu is scrolled with the same finger that
+// opens an app, and the browser still answers a lift that barely moved with a
+// click: a scroll began an open, the preview took its frame, the row's click
+// closed the menu, and the window the finger never asked for never came - only
+// its picture stood on the desk. A move past the slop Touch Punch calls a drag
+// (public/js/touch-threshold.js) takes the preview back at once and keeps that
+// click off the row. The slop is the shim's own 12px, so a tap that drifts a
+// few pixels still opens its app.
+var JAWNOS_EMERGE_DRAG_SLOP = 12;
+var jawnosWindowEmergePressAt = null;
+var jawnosWindowEmergeDragSwallow = false;
+
+function jawnosWindowEmergePoint(e) {
+	if (!e) { return null; }
+	var oe = e.originalEvent || e;
+	if (oe.touches && oe.touches.length) { return { x: oe.touches[0].clientX, y: oe.touches[0].clientY }; }
+	if (oe.changedTouches && oe.changedTouches.length) { return { x: oe.changedTouches[0].clientX, y: oe.changedTouches[0].clientY }; }
+	if (oe.clientX != null) { return { x: oe.clientX, y: oe.clientY }; }
+	return null;
+}
+
+// The controls a press can open from: the paths the preview reads, named once
+// so the drag's swallow and the opener agree on what a press is.
+function jawnosWindowEmergePressHost(el) {
+	if (!el || el.nodeType !== 1) { return null; }
+	if (el.id && typeof startMenuIconApps != 'undefined' && startMenuIconApps[el.id]) { return el; }
+	if (!el.closest) { return null; }
+	return el.closest('.start_menu_item, .taskbar_pin, .window_toggle, .manager_search_result, #app_switcher .app');
+}
+
+function jawnosWindowEmergePressMoved(e) {
+	if (!jawnosWindowEmergePressAt) { return false; }
+	var p = jawnosWindowEmergePoint(e);
+	if (!p) { return false; }
+	var dx = p.x - jawnosWindowEmergePressAt.x;
+	var dy = p.y - jawnosWindowEmergePressAt.y;
+	return (dx * dx + dy * dy) >= (JAWNOS_EMERGE_DRAG_SLOP * JAWNOS_EMERGE_DRAG_SLOP);
+}
+
+// Take the press back: no preview, and the lift it ends opens nothing. The
+// swallow is short-lived and the next press clears it, so a tap made right
+// after a scroll still answers.
+function jawnosWindowEmergeAbandonPress() {
+	if (!jawnosWindowEmergePressAt) { return false; }
+	jawnosWindowEmergePressAt = null;
+	jawnosWindowEmergePointerDown = false;
+	jawnosWindowEmergeGhostCancel();
+	jawnosWindowEmergeDragSwallow = true;
+	if (typeof setTimeout == 'function') {
+		setTimeout(function () { jawnosWindowEmergeDragSwallow = false; }, 700);
+	}
+	return true;
+}
+
 // A press records its control here: pointerdown catches the ordinary press
 // before the menu closes or the tile re-renders. A canvas is skipped because
 // its own press handler knows which pill was hit and records that rectangle (and
@@ -2461,6 +2526,9 @@ if (typeof document != 'undefined' && document.addEventListener) {
 		var el = e.target;
 		if (!el || el.nodeType !== 1) { return; }
 		jawnosWindowEmergePointerDown = true;
+		// where the press landed, so a scroll is told from a tap
+		jawnosWindowEmergePressAt = jawnosWindowEmergePoint(e);
+		jawnosWindowEmergeDragSwallow = false;
 		var waiting = jawnosWindowEmergeGhost;
 		// A press on the preview itself belongs to the preview: the click that
 		// follows dismisses it. Returning here keeps the press from being read as
@@ -2502,19 +2570,33 @@ if (typeof document != 'undefined' && document.addEventListener) {
 	// frame can sit over the control that started it, and a click caught there
 	// would dismiss the very open it is waiting for.
 	var release = function () {
+		var dragged = jawnosWindowEmergeDragSwallow;
+		jawnosWindowEmergePressAt = null;
 		jawnosWindowEmergePointerDown = false;
 		var ghost = jawnosWindowEmergeGhost;
-		if (!ghost || ghost.win) { return; }
+		// a scroll's lift: the preview is already gone and the click that comes
+		// with the lift must not open the row it lands on
+		if (dragged || !ghost || ghost.win) { return; }
 		if (ghost.releaseTimer) { clearTimeout(ghost.releaseTimer); }
 		ghost.releaseTimer = setTimeout(function () {
 			ghost.releaseTimer = null;
 			jawnosWindowEmergeGhostArm(ghost);
 		}, 220);
 	};
+	var onmove = function (e) {
+		if (jawnosWindowEmergePressMoved(e)) { jawnosWindowEmergeAbandonPress(); }
+	};
+	// the browser took the gesture - a scroll, a palm, an alert: the press was
+	// not a tap, so the preview goes and its lift opens nothing
+	var oncancel = function () { jawnosWindowEmergeAbandonPress(); };
 	if (document.addEventListener) {
 		document.addEventListener('pointerup', release, true);
 		document.addEventListener('mouseup', release, true);
 		document.addEventListener('touchend', release, true);
-		document.addEventListener('touchcancel', release, true);
+		document.addEventListener('pointermove', onmove, true);
+		document.addEventListener('mousemove', onmove, true);
+		document.addEventListener('touchmove', onmove, true);
+		document.addEventListener('pointercancel', oncancel, true);
+		document.addEventListener('touchcancel', oncancel, true);
 	}
 })();
