@@ -39,7 +39,18 @@ my $launcher = "$root/desktop/jawnos-qt";
 
 like($qt, qr/from PySide6\.QtWebEngineWidgets import QWebEngineView/,
 	'the shell is Qt WebEngine');
-like($qt, qr/QWebEngineProfile\("jawnos"/, 'a named, on-disk profile');
+like($qt, qr/QWebEngineProfile\("jawnos", app\)/, 'a named, on-disk profile');
+my @shell_profile_sites = ($qt =~ /\bQWebEngineProfile\(\s*"jawnos"/g);
+is(scalar(@shell_profile_sites), 1,
+	'one profile for the process, not one per window');
+like($qt, qr/def _close_shell_pages\(\):/,
+	'every page is destroyed before the profile');
+like($qt, qr/code = app\.exec\(\)(?:.*\n)*?\s*_close_shell_pages\(\)/,
+	'teardown runs after the loop, before the app lets the profile go');
+like($qt, qr/QApplication\.sendPostedEvents\(None, QEvent\.Type\.DeferredDelete\)/,
+	'queued page deletions are flushed before the profile is released');
+like($qt, qr/profile\.deleteLater\(\)/,
+	'and the profile is released last');
 like($qt, qr/ForcePersistentCookies/, 'so the login cookie survives a restart');
 like($qt, qr/MediaAudioCapture/, 'the microphone permission is granted');
 like($qt, qr/MediaAudioVideoCapture/, 'and the camera/audio pair');

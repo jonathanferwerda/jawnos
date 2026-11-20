@@ -1366,6 +1366,7 @@ def main(argv=None):
 
     try:
         from PySide6.QtCore import (
+            QEvent,
             QObject,
             QTimer,
             QUrl,
@@ -2585,7 +2586,45 @@ def main(argv=None):
         view.showMaximized()
     else:
         view.show()
-    return app.exec()
+
+    def _close_shell_pages():
+        """Destroy every page before the application releases the profile.
+
+        A ``QWebEnginePage`` must never outlive its ``QWebEngineProfile``. The
+        profile is a child of the application (one per process, created above),
+        but the pages are children of windows, so their destruction order at
+        exit is not guaranteed. Qt aborts the renderer when a profile goes with
+        a page still alive ("Release of profile requested but WebEnginePage
+        still not deleted"), leaving a black window. Delete every JawnOS view
+        and its page here, flush the queued deletions, then let the profile go.
+        """
+        for widget in QApplication.topLevelWidgets():
+            if not isinstance(widget, QWebEngineView):
+                continue
+            try:
+                widget.close()
+            except Exception:
+                pass
+            try:
+                owned = widget.page()
+                if owned is not None:
+                    owned.deleteLater()
+            except Exception:
+                pass
+            try:
+                widget.deleteLater()
+            except Exception:
+                pass
+        try:
+            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            profile.deleteLater()
+            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        except Exception:
+            pass
+
+    code = app.exec()
+    _close_shell_pages()
+    return code
 
 
 if __name__ == "__main__":
