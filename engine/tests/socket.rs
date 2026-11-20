@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
@@ -63,6 +63,12 @@ impl Server {
 
     fn connect(&self) -> Conversation {
         Conversation::open(&self.socket)
+    }
+
+    /// The served process's pid. The gateway's per-call directory is keyed by
+    /// it, so a test can find the FIFOs without parsing a reply.
+    fn child_id(&self) -> u32 {
+        self.child.as_ref().expect("the server is running").id()
     }
 
     /// Wait for the served process and answer with its output and whether its
@@ -1862,6 +1868,8 @@ fn listen_and_record_refuse_each_other() {
 /// A stand-in `parec` on a private `PATH`: it ignores the arguments the engine
 /// passes and writes one 20 ms chunk of 8 kHz mono silence per 20 ms. Paced, so
 /// the test does not burn a core and the ring drops only if the drain stops.
+/// The same directory gets a `pacat` that records what the prompt sent it, so
+/// `capable` is true in these tests.
 fn fake_parec(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "jawn-audio-parec-{}-{name}",
@@ -1876,16 +1884,63 @@ fn fake_parec(name: &str) -> PathBuf {
     .expect("write the stand-in parec");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
         .expect("make the stand-in executable");
+    // The prompt child: record its own pid and then copy its stdin to the file
+    // the test named, so a test can prove both that it ran and what it heard.
+    let pacat = dir.join("pacat");
+    fs::write(
+        &pacat,
+        "#!/bin/sh\necho $$ > \"$PACAT_PID\"\nexec cat > \"$PACAT_OUT\"\n",
+    )
+    .expect("write the stand-in pacat");
+    fs::set_permissions(&pacat, fs::Permissions::from_mode(0o755))
+        .expect("make the stand-in executable");
+    dir
+}
+
+/// A plan path under a private state directory, so the gateway's FIFOs land in
+/// the test's own directory instead of `~/.president`.
+fn gateway_state(name: &str) -> (PathBuf, String) {
+    let dir = std::env::temp_dir().join(format!(
+        "jawn-audio-state-{}-{name}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("create the gateway state directory");
+    let plan = dir.join("audio-plan.json");
+    (dir, plan.to_str().expect("UTF-8 path").to_string())
+}
+
+/// A stand-in `pactl`: it lists the call monitor only after the marker file
+/// exists, so a bind made first is honestly silent and the retry has something
+/// to find later. All other `pactl` verbs succeed quietly.
+fn fake_pactl(name: &str, marker: &Path) -> PathBuf {
+    let dir = fake_parec(name);
+    let path = dir.join("pactl");
+    let marker = marker.to_str().expect("UTF-8 marker path");
+    fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\nif [ -e '{marker}' ]; then\n  printf '47\\tjawn_call_in.monitor\\tPipeWire\\ts16le 2ch 48000Hz\\n'\nfi\nexit 0\n"
+        ),
+    )
+    .expect("write the stand-in pactl");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+        .expect("make the stand-in executable");
     dir
 }
 
 #[test]
 fn the_gateway_binds_the_call_monitor_and_releases_it() {
     let parec = fake_parec("gateway");
+    let (state, plan) = gateway_state("gateway");
     // The stand-in's directory comes first, so it wins even on a machine that
     // has a real parec; `dd` and `sleep` come from the usual places.
     let path = format!("{}:/usr/bin:/bin", parec.display());
-    let server = Server::start_env("gateway", &[], &[("PATH", path.as_str())]);
+    let server = Server::start_env(
+        "gateway",
+        &[],
+        &[("PATH", path.as_str()), ("JAWNOS_AUDIO_PLAN", plan.as_str())],
+    );
     let mut client = server.connect();
 
     // Nothing is bound until a call asks for it.
@@ -1959,6 +2014,7 @@ fn the_gateway_binds_the_call_monitor_and_releases_it() {
     );
     assert!(!socket_left, "a clean quit must unlink the socket");
     let _ = fs::remove_dir_all(&parec);
+    let _ = fs::remove_dir_all(&state);
 }
 
 #[test]
@@ -1970,10 +2026,14 @@ fn a_gateway_bind_that_cannot_capture_is_silent_and_the_engine_serves_on() {
         std::process::id()
     ));
     fs::create_dir_all(&empty).expect("create the empty PATH directory");
+    let (state, plan) = gateway_state("gateway-silent");
     let server = Server::start_env(
         "gateway-silent",
         &[],
-        &[("PATH", empty.to_str().expect("temp path is UTF-8"))],
+        &[
+            ("PATH", empty.to_str().expect("temp path is UTF-8")),
+            ("JAWNOS_AUDIO_PLAN", plan.as_str()),
+        ],
     );
     let mut client = server.connect();
 
@@ -2017,4 +2077,135 @@ fn a_gateway_bind_that_cannot_capture_is_silent_and_the_engine_serves_on() {
     );
     assert!(!socket_left, "a clean quit must unlink the socket");
     let _ = fs::remove_dir_all(&empty);
+    let _ = fs::remove_dir_all(&state);
+}
+
+/// The prompt child is spawned by the first byte, not by the bind, and is
+/// reaped by `release`.
+#[test]
+fn the_gateway_prompt_spawns_pacat_on_the_first_byte_and_reaps_it_on_release() {
+    let tools = fake_parec("gateway-prompt");
+    let (state, plan) = gateway_state("gateway-prompt");
+    let out = state.join("prompt.pcm");
+    let pid_file = state.join("pacat.pid");
+    let path = format!("{}:/usr/bin:/bin", tools.display());
+    let server = Server::start_env(
+        "gateway-prompt",
+        &[],
+        &[
+            ("PATH", path.as_str()),
+            ("JAWNOS_AUDIO_PLAN", plan.as_str()),
+            ("PACAT_OUT", out.to_str().expect("UTF-8 output path")),
+            ("PACAT_PID", pid_file.to_str().expect("UTF-8 pid path")),
+        ],
+    );
+    let mut client = server.connect();
+
+    let bound = client.ask("{\"cmd\":\"gateway\",\"action\":\"bind\",\"call_in\":\"jawn_call_in\"}");
+    assert!(bound.contains("\"ok\":true"), "bind: {bound}");
+    assert!(bound.contains("\"prompt\":\"writing\""), "bind: {bound}");
+
+    // The bind runs the capture but not `pacat`: no prompt byte has arrived.
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        !pid_file.exists(),
+        "pacat was spawned by the bind, not by the first prompt byte"
+    );
+
+    let dir = state.join(format!("gateway-{}", server.child_id()));
+    let prompt = dir.join("prompt");
+    let mut writer = fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(0o4000)
+        .open(&prompt)
+        .expect("open the prompt write end");
+    let frame: Vec<u8> = (0..80)
+        .flat_map(|sample| ((sample as i16) * 100).to_le_bytes())
+        .collect();
+    writer.write_all(&frame).expect("write one prompt frame");
+    writer.flush().expect("flush the prompt frame");
+
+    // `pacat` now exists and has the frame on its stdin.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut heard = Vec::new();
+    while heard.len() < frame.len() && Instant::now() < deadline {
+        heard = fs::read(&out).unwrap_or_default();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(heard, frame, "the prompt frame did not reach pacat");
+    let pacat = fs::read_to_string(&pid_file).expect("pacat wrote its pid");
+    let pacat: u32 = pacat.trim().parse().expect("a numeric pid");
+
+    let released = client.ask("{\"cmd\":\"gateway\",\"action\":\"release\"}");
+    assert!(released.contains("\"call_in\":\"off\""), "release: {released}");
+    assert!(released.contains("\"prompt\":\"silent\""), "release: {released}");
+    assert!(!dir.exists(), "release removed the call's directory");
+
+    // A reaped child leaves `/proc`; a leaked one does not.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while std::path::Path::new(&format!("/proc/{pacat}")).exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pacat}")).exists(),
+        "pacat {pacat} outlived release"
+    );
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, _socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = fs::remove_dir_all(&tools);
+    let _ = fs::remove_dir_all(&state);
+}
+
+/// A sink the server does not list at bind time comes up a moment later; the
+/// engine's own retry reaches `captured` without anyone asking again.
+#[test]
+fn a_silent_gateway_bind_retries_until_the_source_appears() {
+    let (state, plan) = gateway_state("gateway-retry");
+    let marker = state.join("source-ready");
+    let tools = fake_pactl("gateway-retry", &marker);
+    let path = format!("{}:/usr/bin:/bin", tools.display());
+    let server = Server::start_env(
+        "gateway-retry",
+        &[],
+        &[("PATH", path.as_str()), ("JAWNOS_AUDIO_PLAN", plan.as_str())],
+    );
+    let mut client = server.connect();
+
+    let bound = client.ask("{\"cmd\":\"gateway\",\"action\":\"bind\",\"call_in\":\"jawn_call_in\"}");
+    assert!(bound.contains("\"call_in\":\"silent\""), "bind: {bound}");
+
+    fs::write(&marker, b"now").expect("the source appears");
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut last = String::new();
+    while Instant::now() < deadline {
+        last = client.ask("{\"cmd\":\"gateway\",\"action\":\"status\"}");
+        if last.contains("\"call_in\":\"captured\"") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        last.contains("\"call_in\":\"captured\""),
+        "the silent bind never retried: {last}"
+    );
+
+    let released = client.ask("{\"cmd\":\"gateway\",\"action\":\"release\"}");
+    assert!(released.contains("\"call_in\":\"off\""), "release: {released}");
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, _socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = fs::remove_dir_all(&tools);
+    let _ = fs::remove_dir_all(&state);
 }

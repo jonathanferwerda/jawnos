@@ -219,25 +219,31 @@ sub _compute_abilities {
 	# The reception gateway's own facts. `able` is the pre-filter the Phone pane
 	# and the app read; the live socket/plan state is a hint, because a
 	# five-minute advert cannot promise what a call needs this second. The audio
-	# backend is still the IVR's existing pactl/PipeWire path; the JawnOS audio
-	# engine's gateway plan is a later change and is not claimed here.
+	# backend prefers the engine when it can carry the gateway (its socket answers
+	# `capable` and the helper was built with `--engine`), and otherwise stays on
+	# the pactl/PipeWire path the house ships on. `audio` says which one.
 	my $helper = -x './perl/sco/sco_helper' ? 1 : 0;
 	my @hci = glob('/sys/class/bluetooth/hci*');
 	my $adapter = @hci ? 1 : 0;
 	my $pactl = _which('pactl') ? 1 : 0;
 	# `ready` is the audio backend's own answer, not the load: the helper, an
-	# adapter and pactl. `able` adds the light-load gate on top, so the hierarchy
-	# can never call a machine able when its audio cannot carry the call. The
-	# engine backend answers not-ready until it has gateway ports (phase 4b).
+	# adapter and pactl (plus, for the engine, its own ports). `able` adds the
+	# light-load gate on top, so the hierarchy can never call a machine able when
+	# its audio cannot carry the call.
 	my ($audio_ready, $ready_note) = (0, 'the audio backend is not available');
+	my $audio_word = $pactl ? 'pipewire' : '';
 	if (eval { require JawnOS::Sco::Backend; 1 }) {
-		my $backend = JawnOS::Sco::Backend->new(
-			backend => 'pactl',
+		my %common = (
 			helper  => $helper,
 			adapter => $adapter,
 			pactl   => $pactl,
 		);
+		my $pactl_backend = JawnOS::Sco::Backend->new(backend => 'pactl', %common);
+		my $engine_backend = JawnOS::Sco::Backend->new(backend => 'engine', %common);
+		my ($engine_ready) = eval { $engine_backend->ready() };
+		my $backend = $engine_ready ? $engine_backend : $pactl_backend;
 		($audio_ready, $ready_note) = $backend->ready();
+		$audio_word = $backend->audio();
 	}
 	my $sco_socket = 0;
 	if (my $sock = eval { &subs::home('~/.president/sco.sock') }) {
@@ -262,7 +268,7 @@ sub _compute_abilities {
 	my %ivr = (
 		helper     => $helper,
 		adapter    => $adapter,
-		audio      => $pactl ? 'pipewire' : '',
+		audio      => $audio_word,
 		ready      => $audio_ready ? 1 : 0,
 		ready_note => $audio_ready ? '' : $ready_note,
 		listening  => $sco_socket,

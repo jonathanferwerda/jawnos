@@ -10,7 +10,10 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use File::Temp qw(tempdir);
+use IO::Socket::UNIX;
 use Mojo::Template;
+use POSIX qw(_exit);
 
 use RepoSource;
 use JawnOSTest;
@@ -51,18 +54,132 @@ foreach my $case (
 }
 
 # --------------------------------------------------------------- the engine seam
-my $engine = JawnOS::Sco::Backend->new(backend => 'engine');
-is($engine->name, 'engine', 'an engine backend names itself');
-{
-	my ($ready, $why) = $engine->ready();
-	ok(!$ready, 'the engine backend is never ready');
-	like($why, qr/has no gateway ports yet/,
-		'because the engine has no way to bind the caller streams');
+# A mock engine answers one status line; the helper is a file whose usage text
+# either names `--engine` or does not, which is exactly the check readiness makes.
+my @engine_pids;
+END { kill 'KILL', grep { defined } @engine_pids }
+
+sub engine_helper_file {
+	my ($with_engine) = @_;
+	my $dir = tempdir(CLEANUP => 1);
+	my $path = "$dir/sco_helper";
+	open(my $fh, '>', $path) or die "$path: $!";
+	print {$fh} $with_engine ? "usage: sco_helper --engine DIR\n" : "usage: sco_helper --pipe-in CMD\n";
+	close $fh;
+	chmod 0755, $path;
+	return $path;
 }
-foreach my $role (qw(prepare attach in out monitor status release)) {
-	my @answer = $engine->$role('00:11:22:33:44:55');
-	is($answer[0], 0, "the engine's $role answers not-ready");
-	like($answer[1], qr/has no gateway ports yet/, "and $role gives the same honest reason");
+
+sub start_engine {
+	my ($capable) = @_;
+	my $dir  = tempdir(CLEANUP => 1);
+	my $path = "$dir/audio.sock";
+	my $pid  = fork();
+	die "fork: $!" unless defined $pid;
+	if (!$pid) {
+		my $listener = IO::Socket::UNIX->new(
+			Type => SOCK_STREAM, Local => $path, Listen => 5,
+		) or _exit(1);
+		while (my $client = $listener->accept) {
+			my $line = <$client>;
+			next unless defined $line;
+			my $cap = $capable ? 'true' : 'false';
+			print {$client} '{"ok":true,"gateway":{"call_in":"off","prompt":"silent",'
+				. '"monitor":"helper","capable":' . $cap . '}}' . "\n";
+			close $client;
+		}
+		_exit(0);
+	}
+	push @engine_pids, $pid;
+	my $deadline = time + 3;
+	until (-S $path) {
+		last if time > $deadline;
+		select undef, undef, undef, 0.01;
+	}
+	die "mock engine did not listen on $path\n" unless -S $path;
+	return ($path, $pid);
+}
+
+my $with_engine = engine_helper_file(1);
+my $without_engine = engine_helper_file(0);
+
+my $engine = JawnOS::Sco::Backend->new(
+	backend => 'engine', helper => 1, helper_path => $with_engine,
+);
+is($engine->name, 'engine', 'an engine backend names itself');
+is($engine->audio, 'engine', 'and names the engine stack the advert shows');
+
+{
+	my ($path, $pid) = start_engine(1);
+	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
+	my ($ready, $why) = $engine->ready();
+	ok($ready, 'the engine is ready when its socket answers capable');
+	ok(!defined $why, 'with no reason to give');
+	kill 'KILL', $pid;
+	waitpid($pid, 0);
+	$engine_pids[-1] = undef;
+}
+
+{
+	my ($path, $pid) = start_engine(0);
+	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
+	my ($ready, $why) = $engine->ready();
+	ok(!$ready, 'an engine that cannot carry the gateway is not ready');
+	like($why, qr/parec and pacat/, 'and says which tools it is missing');
+	kill 'KILL', $pid;
+	waitpid($pid, 0);
+	$engine_pids[-1] = undef;
+}
+
+{
+	my $dir = tempdir(CLEANUP => 1);
+	local $ENV{JAWNOS_AUDIO_SOCKET} = "$dir/not-here.sock";
+	my ($ready, $why) = $engine->ready();
+	ok(!$ready, 'a machine with no engine socket does not claim the engine');
+	like($why, qr/not running/, 'and says the engine is not running');
+}
+
+{
+	my ($path, $pid) = start_engine(1);
+	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
+	my $old = JawnOS::Sco::Backend->new(
+		backend => 'engine', helper => 1, helper_path => $without_engine,
+	);
+	my ($ready, $why) = $old->ready();
+	ok(!$ready, 'an engine-capable socket with a helper built without --engine is not ready');
+	is($why, $JawnOS::Sco::Backend::ENGINE_NO_HELPER, 'and says the helper is the half that is missing');
+	kill 'KILL', $pid;
+	waitpid($pid, 0);
+	$engine_pids[-1] = undef;
+}
+
+# Once ready, the engine backend keeps the mixer's jobs: the null sinks, the
+# stream moves and the call's own liveness. Only the two `in`/`out` commands are
+# the transport's, and the engine carries those on its FIFOs.
+{
+	package FakeMixer;
+	sub new { bless {}, shift }
+	sub ensure { 2 }
+	sub attach { my ($self, $address) = @_; return { ok => 1, streams => 2, moved => 1, address => $address } }
+	sub call_active { 1 }
+	sub detach { 1 }
+	sub capture_command { 'CAT' }
+	sub playback_command { 'PLAY' }
+}
+my $roles = JawnOS::Sco::Backend->new(
+	backend => 'engine', helper => 1, helper_path => $with_engine, mixer => FakeMixer->new(),
+);
+is($roles->prepare, 2, 'prepare keeps loading the mixer sinks');
+is_deeply($roles->attach('00:11:22:33:44:55'),
+	{ ok => 1, streams => 2, moved => 1, address => '00:11:22:33:44:55' },
+	'attach keeps moving the call streams');
+is($roles->status->{'active'}, 1, 'status still reads the caller sink');
+is($roles->release, 1, 'release still puts the streams back');
+is($roles->monitor, '', 'the monitor is still the helper tee, not a second bus');
+foreach my $role (qw(in out)) {
+	my @answer = $roles->$role();
+	is($answer[0], 0, "the engine's $role has no command to return");
+	like($answer[1], qr/parec and pacat|engine cannot carry/, "and $role says where the PCM comes from");
 }
 
 # --------------------------------------------------------------- the crew advert
@@ -73,12 +190,22 @@ foreach my $role (qw(prepare attach in out monitor status release)) {
 	foreach my $key (qw(ready ready_note)) {
 		ok(exists $ivr->{$key}, "the ivr ability carries $key");
 	}
-	like($ivr->{'audio'}, qr/^(?:pipewire)?$/, 'audio stays the stack word');
+	like($ivr->{'audio'}, qr/^(?:pipewire|engine)?$/, 'audio is one of the two stack words');
 	ok($ivr->{'ready'} eq '0' || $ivr->{'ready'} eq '1' || $ivr->{'ready'} == 0 || $ivr->{'ready'} == 1,
 		'ready is a 0/1 answer');
 	ok(!$ivr->{'able'} || $ivr->{'ready'}, 'able implies ready');
 	ok($ivr->{'ready'} || length($ivr->{'ready_note'}),
 		'a not-ready advert carries a reason');
+}
+
+# An engine-ready machine advertises the engine; anything else keeps the pactl
+# word. The choice lives in one place, so the pane and the phone agree.
+{
+	local *JawnOS::Sco::Backend::ready = sub { return (1) };
+	my $abilities = crew::abilities({ refresh => 1 });
+	is($abilities->{'ivr'}{'audio'}, 'engine',
+		'an engine-ready machine advertises engine audio');
+	ok($abilities->{'ivr'}{'ready'}, 'and says it is ready');
 }
 
 # --------------------------------------------------------------- the pane's state

@@ -16,6 +16,8 @@ use IO::Socket::INET;
 use IPC::Open2 ();
 use JSON::PP;
 use Mojo::IOLoop;
+use Fcntl qw(:DEFAULT O_NONBLOCK);
+use POSIX ();
 
 use RepoSource;
 use JawnOSTest;
@@ -415,6 +417,103 @@ isnt(JawnOS::Sco::Render::key('hello!', 'piper-a'), JawnOS::Sco::Render::key('he
 	# stream.
 	is_deeply($mixer->call_streams('pcm'), { sink_input => undef, source_output => undef },
 		'a transport label is not an address, so it matches no stream');
+}
+# ------------------------------------------------- the engine transport choice
+# The gateway asks the backend at arm time, binds the engine's ports, and hands
+# the helper `--engine <dir>`. A silent bind waits; if it never comes up the
+# call falls back to the pipes, never to a dead port.
+{
+	package EngineBackendFake;
+	sub new { my ($class, $ready) = @_; return bless { ready => $ready }, $class; }
+	sub name { 'engine' }
+	sub ready { return $_[0]->{'ready'} ? (1) : (0, 'not ready') }
+	package GatewayMixerFake;
+	sub new { bless {}, shift }
+	sub capture_command { 'CAPTURE-CMD' }
+	sub playback_command { 'PLAYBACK-CMD' }
+}
+
+# The engine's reply, mapped to the three choices without a socket.
+{
+	my $captured = { ok => 1, gateway => { call_in => 'captured',
+		paths => { call_in => '/p/call_in', prompt => '/p/prompt' } } };
+	my ($plan, $paths) = JawnOS::Sco::Gateway::_engine_plan($captured);
+	is($plan, 'engine', 'a captured bind starts the helper on the engine');
+	is($paths->{'call_in'}, '/p/call_in', 'and its paths are kept');
+
+	my ($silent) = JawnOS::Sco::Gateway::_engine_plan({ ok => 1, gateway => {
+		call_in => 'silent', paths => { call_in => '/p/call_in', prompt => '/p/prompt' } } });
+	is($silent, 'wait', 'a silent bind waits through the retry');
+
+	my ($refused) = JawnOS::Sco::Gateway::_engine_plan(
+		{ ok => 0, error => 'no such gateway action' });
+	is($refused, 'pactl', 'a refused bind uses the pipes immediately');
+	my ($odd) = JawnOS::Sco::Gateway::_engine_plan(
+		{ ok => 1, gateway => { call_in => 'captured' } });
+	is($odd, 'pactl', 'a captured port with no paths is not usable');
+}
+
+# The arm-time choice: ready wins, not-ready stays on pactl.
+{
+	my $ready = JawnOS::Sco::Gateway->new(
+		dir => "$dir/engine-choice", helper => '/bin/false',
+		status_path => "$dir/engine-choice.json", pipe => 1,
+		engine => EngineBackendFake->new(1));
+	is($ready->_engine_choice->name, 'engine', 'an engine-ready backend is chosen at arm time');
+	my $waiting = JawnOS::Sco::Gateway->new(
+		dir => "$dir/engine-choice-no", helper => '/bin/false',
+		status_path => "$dir/engine-choice-no.json", pipe => 1,
+		engine => EngineBackendFake->new(0));
+	ok(!$waiting->_engine_choice, 'a not-ready engine leaves the call on pactl');
+}
+
+# Both transports spawn the helper with the arguments that name them.
+{
+	my $edir = "$dir/engine-gateway";
+	make_path($edir);
+	my $call_in = "$edir/call_in";
+	my $prompt  = "$edir/prompt";
+	unlink $call_in, $prompt;
+	POSIX::mkfifo($call_in, 0600) or die "mkfifo $call_in: $!";
+	POSIX::mkfifo($prompt, 0600) or die "mkfifo $prompt: $!";
+
+	my $argv = "$dir/engine-argv.txt";
+	my $script = "$dir/engine-helper";
+	write_file($script, "#!/bin/sh\nprintf '%s\\n' \"\$@\" > \"\$ENGINE_ARGV\"\nexec sleep 5\n");
+	chmod 0755, $script;
+	local $ENV{ENGINE_ARGV} = $argv;
+
+	my $gw = JawnOS::Sco::Gateway->new(
+		dir => "$dir/engine-gateway-sco", helper => $script,
+		status_path => "$dir/engine-gateway.json", pipe => 1,
+		engine => EngineBackendFake->new(1));
+	$gw->{'mixer'} = GatewayMixerFake->new();
+
+	ok($gw->_engine_helper({ call_in => $call_in, prompt => $prompt }),
+		'the helper starts against the engine pair');
+	my $deadline = time + 3;
+	my @args = ();
+	while (time < $deadline) {
+		@args = split /\n/, read_file($argv) if -e $argv && -s $argv;
+		last if @args;
+		select undef, undef, undef, 0.02;
+	}
+	is_deeply(\@args, [ '--engine', $edir ], 'the helper is given --engine and the directory');
+	$gw->cancel();
+
+	# A silent bind that never came up: release the engine and use the pipes.
+	unlink $argv;
+	$gw->{'engine_backend'} = EngineBackendFake->new(1);
+	$gw->_engine_fallback();
+	@args = ();
+	while (time < $deadline + 3) {
+		@args = split /\n/, read_file($argv) if -e $argv && -s $argv;
+		last if @args;
+		select undef, undef, undef, 0.02;
+	}
+	is_deeply(\@args, [ '--pipe-in', 'CAPTURE-CMD', '--pipe-out', 'PLAYBACK-CMD' ],
+		'the fallback spawns the pactl pipe transport');
+	$gw->cancel();
 }
 
 # Moving a stream that is already ours re-links it and drops a word of the
@@ -1251,6 +1350,85 @@ SKIP: {
 		'a silent line the gateway says is up is greeted anyway');
 	unlike($pipe_run->(0), qr/"event":"accepted"/,
 		'and a line of zeros with no word from the gateway is not a call');
+}
+
+# ---------------------------------------------------- the engine transport
+# Two plain FIFOs stand in for the engine's ports: no radio, no PipeWire and no
+# engine process. The helper then uses the same read and write a real call
+# makes: call_in is the caller's voice, prompt is what the caller hears.
+SKIP: {
+	skip 'the SCO helper is not built on this machine', 5 unless -x $helper;
+	my $edir = "$dir/engine-ports";
+	make_path($edir);
+	my $call_in = "$edir/call_in";
+	my $prompt  = "$edir/prompt";
+	unlink $call_in, $prompt;
+	POSIX::mkfifo($call_in, 0600) or die "mkfifo $call_in: $!";
+	POSIX::mkfifo($prompt, 0600) or die "mkfifo $prompt: $!";
+
+	my ($out, $in);
+	my $pid = IPC::Open2::open2($out, $in, $helper, '--engine-selftest', $edir);
+	ok($pid, 'the helper opens the engine pair');
+	# The helper polls for both ends before it reads; open ours now. A FIFO's
+	# write end refuses to open (ENXIO) until the helper's read end is there, so
+	# give the spawn a moment rather than dying on that race.
+	my $open_retry = sub {
+		my ($path, $flags) = @_;
+		my $end = time + 5;
+		while (time < $end) {
+			my $fh;
+			return $fh if sysopen($fh, $path, $flags);
+			select(undef, undef, undef, 0.02);
+		}
+		die "open $path: $!";
+	};
+	my $writer = $open_retry->($call_in, O_WRONLY | O_NONBLOCK);
+	my $reader = $open_retry->($prompt, O_RDONLY | O_NONBLOCK);
+	binmode $writer;
+	binmode $reader;
+	my $frame = join('', map { pack('s<', 1000 + $_) } 1 .. 80);
+	syswrite($writer, $frame);
+
+	my $heard = '';
+	my $deadline = time + 5;
+	while (length($heard) < 120 && time < $deadline) {
+		my $rin = '';
+		vec($rin, fileno($reader), 1) = 1;
+		my $rout = $rin;
+		next unless select($rout, undef, undef, 0.2);
+		my $got = sysread($reader, my $chunk, 4096);
+		last unless defined $got && $got > 0;
+		$heard .= $chunk;
+	}
+	is(length $heard, 120, 'a frame written to call_in is read as the caller voice');
+	is($heard, substr($frame, 0, 120), 'and it is the same PCM on the prompt side');
+
+	close $writer;
+	my $events = do { local $/; <$out> // '' };
+	close $in;
+	close $out;
+	waitpid($pid, 0);
+	is($? >> 8, 0, 'the engine selftest exits zero');
+	like($events, qr/"event":"engine-selftest","bytes":120/,
+		'and reports the frame it echoed');
+	rmdir $edir;
+}
+
+# A missing FIFO is a sentence and a non-zero exit, never a hang: the armer has
+# to hear that the port is not there before it decides to fall back.
+SKIP: {
+	skip 'the SCO helper is not built on this machine', 2 unless -x $helper;
+	my $empty = "$dir/no-engine-ports";
+	make_path($empty);
+	my $pid = open(my $ph, '-|', $helper, '--engine-selftest', $empty);
+	ok($pid, 'the helper starts without the FIFOs');
+	my $events = do { local $/; <$ph> // '' };
+	close $ph;
+	waitpid($pid, 0);
+	unlike($events, qr/"event":"engine-selftest"/,
+		'it never claims to have echoed a frame');
+	like($events, qr/"event":"error"/,
+		'a missing FIFO is an error event');
 }
 
 # A link that hands the gateway nothing but digital silence is not a call yet:

@@ -56,16 +56,18 @@
 //! `playing`, `monitor_frames`, the alignment and the monitor strips beside it.
 //! Two takes at once, or two playbacks at once, are still refused.
 
-use std::fs;
+use std::ffi::CString;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Child, Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
@@ -90,10 +92,29 @@ const MONITOR_RING_FRAMES: usize = 8192;
 const GATEWAY_RATE: u32 = 8_000;
 const GATEWAY_CHANNELS: usize = 1;
 
-/// The gateway drain's tick and block: one 20 ms chunk of the call, popped
-/// every 10 ms, so the ring is emptied faster than `parec` fills it.
+/// The gateway drain's tick and block: one 10 ms frame of the call, popped
+/// every 10 ms. `parec` delivers 20 ms at a time, so the ring is emptied at
+/// real time while each write to `call_in` is one whole 160-byte frame.
 const GATEWAY_DRAIN_MSEC: u64 = 10;
-const GATEWAY_DRAIN_FRAMES: usize = 160;
+const GATEWAY_DRAIN_FRAMES: usize = 80;
+
+/// The prompt the reception mixer plays into (`JawnOS::Sco::Mixer`), used when
+/// a bind names no `prompt` sink of its own.
+const GATEWAY_PROMPT_SINK: &str = "jawn_prompt";
+
+/// The prompt FIFO's read pace. `pacat` asks for 20 ms of latency; a 10 ms
+/// tick keeps the FIFO from filling between reads without busy-waiting.
+const GATEWAY_PROMPT_MSEC: u64 = 10;
+
+/// A silent bind retries this often, for this long, while `call_in` stays
+/// requested. The reception mixer creates `jawn_call_in` a moment after the
+/// engine is asked to bind it, so the first look can honestly be `silent`.
+const GATEWAY_RETRY: Duration = Duration::from_millis(500);
+const GATEWAY_RETRY_FOR: Duration = Duration::from_secs(5);
+
+/// `O_NONBLOCK`, without dragging in the libc crate for one constant. Linux's
+/// value on every architecture the engine builds for.
+const O_NONBLOCK: i32 = 0o4000;
 
 /// The serve loop's poll interval. A command that arrives waits at most this
 /// long to be read; the socket is idle almost all the time.
@@ -221,12 +242,19 @@ fn attach_handset(
     }
 }
 
-/// The gateway's inbound port (`docs/ivr-gateway-engine.md`).
+/// The gateway's three ports (`docs/ivr-gateway-engine.md`).
 ///
-/// Phase 4b-1 binds the caller's monitor and reports the truth: the same
-/// `parec` capture the system mix uses, drained on its own worker, keeping a
-/// frame count and a peak and dropping the samples. No tee file, no WAV and no
-/// bus — the helper still carries the call's PCM.
+/// Phase 4b-2 carries the call's PCM. `bind` creates a per-call directory with
+/// two named pipes beside the engine's plan and socket:
+///
+/// - `call_in`: the engine writes the caller's voice, mono s16le at 8 kHz; the
+///   helper reads it as its capture side.
+/// - `prompt`: the helper writes the prompt, the engine feeds it to `pacat` on
+///   the reception mixer's prompt sink.
+///
+/// The control socket stays line-based; PCM never crosses it. The capture is
+/// still the same `parec` of `<call_in>.monitor` the system mix uses, drained on
+/// its own worker, keeping a frame count, a peak and a drop count.
 struct Gateway {
     /// The sink named by the last `bind`; `None` before the first bind and
     /// after `release`.
@@ -234,13 +262,48 @@ struct Gateway {
     /// `Some` while the monitor is actually captured; `None` with `call_in`
     /// set means the bind found nothing it could capture (`silent`).
     capture: Option<GatewayCapture>,
+    /// The prompt port, opened at bind and run by its own worker. `None` means
+    /// the port could not be opened; `prompt` then answers `silent`.
+    prompt: Option<GatewayPrompt>,
+    /// Where the FIFOs live. `None` until a bind makes them and after release.
+    paths: Option<GatewayPaths>,
+    /// A silent bind's bounded retry, cleared when the capture starts or the
+    /// window closes.
+    retry: Option<BindRetry>,
+    /// Whether this engine could carry a gateway at all: the socket answers
+    /// (by construction) and both `parec` and `pacat` are on `PATH`. Readiness
+    /// reads this while idle, before any call binds.
+    capable: bool,
+}
+
+/// The two FIFOs one bound call uses. Absolute, because the helper is given the
+/// directory and both sides must agree without consulting a working directory.
+#[derive(Clone)]
+struct GatewayPaths {
+    dir: PathBuf,
+    call_in: PathBuf,
+    prompt: PathBuf,
+}
+
+/// A bind that found no source yet: look again every `GATEWAY_RETRY` for
+/// `GATEWAY_RETRY_FOR`. The reception mixer creates its sink a moment after the
+/// engine is asked to bind it, and a port that stayed silent forever was the
+/// defect 4b-1's review named.
+struct BindRetry {
+    sink: String,
+    next: Instant,
+    deadline: Instant,
 }
 
 impl Gateway {
-    fn off() -> Self {
+    fn off(capable: bool) -> Self {
         Gateway {
             call_in: None,
             capture: None,
+            prompt: None,
+            paths: None,
+            retry: None,
+            capable,
         }
     }
 
@@ -254,35 +317,272 @@ impl Gateway {
         }
     }
 
+    /// `writing` once a call bound the prompt port and its worker is alive,
+    /// `silent` when no call is bound or `pacat` died. The port is bound even
+    /// before the first prompt byte; the child spawns lazily with the first.
+    fn prompt_state(&self) -> &'static str {
+        match &self.prompt {
+            Some(prompt) if prompt.writing() => "writing",
+            _ => "silent",
+        }
+    }
+
     /// The `"gateway":{...}` fragment every status line and the patch reply
-    /// carry. The field names are the house's contract: it reads them, and
-    /// they do not move between slices.
+    /// carry. The field names are the house's contract: it reads them, and they
+    /// do not move between slices. `dropped` is additive (4b-2): frames the
+    /// ring or a full `call_in` pipe could not take.
     fn fragment(&self) -> String {
-        let (frames, peak) = match &self.capture {
+        let (frames, peak, dropped) = match &self.capture {
             Some(capture) => capture.counters.read(),
-            None => (0, 0.0),
+            None => (0, 0.0, 0),
+        };
+        let paths = match &self.paths {
+            Some(paths) => format!(
+                "{{\"call_in\":\"{}\",\"prompt\":\"{}\"}}",
+                jawn_audio::loopback::json_escape(&paths.call_in.to_string_lossy()),
+                jawn_audio::loopback::json_escape(&paths.prompt.to_string_lossy())
+            ),
+            None => "{}".to_string(),
         };
         format!(
-            "\"gateway\":{{\"call_in\":\"{}\",\"prompt\":\"silent\",\"monitor\":\"silent\",\"rate\":{},\"channels\":{},\"peak\":{:.6},\"frames\":{}}}",
+            "\"gateway\":{{\"call_in\":\"{}\",\"prompt\":\"{}\",\"monitor\":\"helper\",\"rate\":{},\"channels\":{},\"peak\":{:.6},\"frames\":{},\"dropped\":{},\"paths\":{},\"capable\":{}}}",
             self.state(),
+            self.prompt_state(),
             GATEWAY_RATE,
             GATEWAY_CHANNELS,
             peak,
-            frames
+            frames,
+            dropped,
+            paths,
+            self.capable
         )
     }
 
-    /// Stop the capture and the drain, leaving no child, thread or ring.
+    /// Open the two FIFOs for a call and start the prompt worker. Returns the
+    /// paths so a caller can report them; a stale directory from a crashed
+    /// engine is removed first, because it is this process's own name.
+    fn open_ports(&mut self, state_dir: &Path, prompt_sink: &str) -> Result<GatewayPaths, String> {
+        if let Some(paths) = &self.paths {
+            return Ok(paths.clone());
+        }
+        let dir = gateway_dir(state_dir);
+        if dir.exists() {
+            let _ = fs::remove_dir_all(&dir);
+        }
+        fs::create_dir_all(&dir)
+            .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
+        let paths = GatewayPaths {
+            call_in: dir.join("call_in"),
+            prompt: dir.join("prompt"),
+            dir,
+        };
+        make_fifo(&paths.call_in)?;
+        make_fifo(&paths.prompt)?;
+        // Opening the read side does not start `pacat`; the child waits for the
+        // first prompt byte, so a bind with no call runs only the capture.
+        self.prompt = Some(GatewayPrompt::start(paths.prompt.clone(), prompt_sink.to_string())?);
+        self.paths = Some(paths.clone());
+        Ok(paths)
+    }
+
+    /// Try the capture once. `true` means it started; `false` leaves `call_in`
+    /// set and the port `silent`, and the caller schedules a retry.
+    fn try_capture(&mut self, sink: &str, paths: &GatewayPaths) -> bool {
+        let monitor = crate::system_capture::monitor_name(sink);
+        if crate::system_capture::source_exists(&monitor) == Some(false) {
+            return false;
+        }
+        match GatewayCapture::start(sink, paths.call_in.clone()) {
+            Ok(capture) => {
+                self.capture = Some(capture);
+                true
+            }
+            Err(error) => {
+                eprintln!("jawn-audio: gateway: {error}");
+                false
+            }
+        }
+    }
+
+    /// One look at a silent bind's retry clock. Called from the serve loop, so
+    /// the retry runs whether or not a client is connected. Nothing is tried
+    /// after the window closes; a `release` clears it too.
+    fn tick(&mut self) {
+        if self.capture.is_some() {
+            self.retry = None;
+            return;
+        }
+        let Some(retry) = &self.retry else { return };
+        let now = Instant::now();
+        if now >= retry.deadline {
+            self.retry = None;
+            return;
+        }
+        if now < retry.next {
+            return;
+        }
+        let sink = retry.sink.clone();
+        if let Some(retry) = self.retry.as_mut() {
+            retry.next = now + GATEWAY_RETRY;
+        }
+        let Some(paths) = self.paths.clone() else {
+            self.retry = None;
+            return;
+        };
+        if self.try_capture(&sink, &paths) {
+            self.retry = None;
+        }
+    }
+
+    /// Stop the capture and the prompt, then remove the per-call directory,
+    /// leaving no child, thread, ring or stale path.
     fn release(&mut self) {
         if let Some(mut capture) = self.capture.take() {
             capture.finish();
         }
+        if let Some(mut prompt) = self.prompt.take() {
+            prompt.finish();
+        }
+        if let Some(paths) = self.paths.take() {
+            let _ = fs::remove_dir_all(&paths.dir);
+        }
         self.call_in = None;
+        self.retry = None;
     }
 }
 
-/// One bound gateway capture: the `parec` child, the worker draining its ring,
-/// and the two counters `status` reads.
+impl Drop for Gateway {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// The per-call directory beside the engine's own state: the plan's directory
+/// when there is a plan, else the socket's, else `~/.president`. The Perl side
+/// names the same one (`JawnOS::Audio::Engine::audio_engine_state_dir`).
+fn state_dir(config: &Config) -> PathBuf {
+    let parent = config
+        .plan
+        .as_ref()
+        .and_then(|plan| plan.parent())
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .or_else(|| {
+            config
+                .socket
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+        });
+    let dir = match parent {
+        Some(parent) => parent.to_path_buf(),
+        None => match std::env::var("HOME") {
+            Ok(home) if !home.is_empty() => PathBuf::from(home).join(".president"),
+            _ => PathBuf::from("."),
+        },
+    };
+    if dir.is_absolute() {
+        dir
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&dir))
+            .unwrap_or(dir)
+    }
+}
+
+/// `<state dir>/gateway-<pid>`: one call at a time, one engine process.
+fn gateway_dir(state_dir: &Path) -> PathBuf {
+    state_dir.join(format!("gateway-{}", std::process::id()))
+}
+
+extern "C" {
+    fn mkfifo(pathname: *const std::os::raw::c_char, mode: u32) -> i32;
+}
+
+/// A named pipe the engine and the helper meet on. `mkfifo` is the one portable
+/// way to make it without a new crate; its failure is the bind's failure.
+fn make_fifo(path: &Path) -> Result<(), String> {
+    let name = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| format!("a FIFO path cannot hold a NUL: {}", path.display()))?;
+    let made = unsafe { mkfifo(name.as_ptr(), 0o600) };
+    if made != 0 {
+        return Err(format!(
+            "cannot create the FIFO {}: {}",
+            path.display(),
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+/// The `call_in` write side. Opened lazily, because a FIFO's write end refuses
+/// to open until the helper's read end exists; a frame that arrives first is a
+/// counted drop, exactly like a frame the ring could not hold.
+struct CallInPort {
+    path: PathBuf,
+    file: Option<File>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl CallInPort {
+    fn new(path: PathBuf, dropped: Arc<AtomicU64>) -> Self {
+        CallInPort {
+            path,
+            file: None,
+            dropped,
+        }
+    }
+
+    fn open(&mut self) -> bool {
+        if self.file.is_some() {
+            return true;
+        }
+        match OpenOptions::new()
+            .write(true)
+            .custom_flags(O_NONBLOCK)
+            .open(&self.path)
+        {
+            Ok(file) => {
+                self.file = Some(file);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// One whole frame or nothing: a FIFO write of at most `PIPE_BUF` is atomic,
+    /// so a full pipe answers `EAGAIN` instead of a partial frame. Return `true`
+    /// when the frame was written.
+    fn write_frame(&mut self, bytes: &[u8]) -> bool {
+        if !self.open() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        let Some(file) = self.file.as_mut() else {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+            return false;
+        };
+        match file.write(bytes) {
+            Ok(written) if written == bytes.len() => true,
+            Ok(_) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+                false
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+                false
+            }
+            Err(_) => {
+                // The helper closed its read end. Drop the handle so a later
+                // call's helper can open a fresh writer.
+                self.file = None;
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+                false
+            }
+        }
+    }
+}
+
+/// One bound gateway capture: the `parec` child, the worker draining its ring
+/// into `call_in`, and the counters `status` reads.
 struct GatewayCapture {
     capture: crate::system_capture::SystemCapture,
     stop: Arc<AtomicBool>,
@@ -290,25 +590,28 @@ struct GatewayCapture {
     counters: GatewayCounters,
 }
 
-/// The drain's answer: how many frames it heard and the loudest sample. Shared
-/// with the worker, so `status` never touches the ring.
+/// The drain's answer: how many frames it heard, the loudest sample, and how
+/// many frames the ring or the pipe refused. Shared with the worker, so `status`
+/// never touches the ring.
 #[derive(Clone, Default)]
 struct GatewayCounters {
     frames: Arc<AtomicU64>,
     peak: Arc<AtomicU32>,
+    dropped: Arc<AtomicU64>,
 }
 
 impl GatewayCounters {
-    fn read(&self) -> (u64, f32) {
+    fn read(&self) -> (u64, f32, u64) {
         (
             self.frames.load(Ordering::Relaxed),
             f32::from_bits(self.peak.load(Ordering::Relaxed)),
+            self.dropped.load(Ordering::Relaxed),
         )
     }
 }
 
 impl GatewayCapture {
-    fn start(sink: &str) -> Result<GatewayCapture, String> {
+    fn start(sink: &str, call_in: PathBuf) -> Result<GatewayCapture, String> {
         let (capture, consumer) =
             crate::system_capture::SystemCapture::start_sink(sink, GATEWAY_RATE)?;
         let counters = GatewayCounters::default();
@@ -319,8 +622,10 @@ impl GatewayCapture {
             .name("jawn-audio-gateway".to_string())
             .spawn(move || {
                 let mut block = vec![0.0f32; GATEWAY_DRAIN_FRAMES * 2];
+                let mut mono = vec![0u8; GATEWAY_DRAIN_FRAMES * 2];
+                let mut port = CallInPort::new(call_in, thread_counters.dropped.clone());
                 while !thread_stop.load(Ordering::SeqCst) {
-                    drain_gateway(&consumer, &thread_counters, &mut block);
+                    drain_gateway(&consumer, &thread_counters, &mut block, &mut mono, &mut port);
                     thread::sleep(Duration::from_millis(GATEWAY_DRAIN_MSEC));
                 }
             })
@@ -350,11 +655,155 @@ impl Drop for GatewayCapture {
     }
 }
 
-/// Pop whatever the capture holds, keep a frame count and a peak level, and
-/// drop the samples. `block` is reused between ticks, so the drain allocates
-/// nothing while a call runs. The ring drops rather than blocks, so a busy
-/// drain is a lost frame, never a stalled `parec`.
-fn drain_gateway(consumer: &Consumer, counters: &GatewayCounters, block: &mut [f32]) {
+/// The prompt port's read side. The worker sleeps on the FIFO and spawns
+/// `pacat` only when the first prompt byte arrives, so an idle bind runs no
+/// process. A dead child is reported through `writing` and reaped; it is never
+/// fatal to the engine or the call.
+struct GatewayPrompt {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+    writing: Arc<AtomicBool>,
+}
+
+impl GatewayPrompt {
+    fn start(path: PathBuf, sink: String) -> Result<GatewayPrompt, String> {
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(O_NONBLOCK)
+            .open(&path)
+            .map_err(|error| format!("cannot open the prompt FIFO {}: {error}", path.display()))?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let writing = Arc::new(AtomicBool::new(true));
+        let thread_stop = Arc::clone(&stop);
+        let thread_writing = Arc::clone(&writing);
+        let handle = thread::Builder::new()
+            .name("jawn-audio-gateway-prompt".to_string())
+            .spawn(move || prompt_worker(file, sink, thread_stop, thread_writing))
+            .map_err(|error| format!("cannot start the prompt thread: {error}"))?;
+        Ok(GatewayPrompt {
+            stop,
+            handle: Some(handle),
+            writing,
+        })
+    }
+
+    fn writing(&self) -> bool {
+        self.writing.load(Ordering::Relaxed)
+    }
+
+    /// Stop the worker and reap `pacat` if it was ever spawned.
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for GatewayPrompt {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+fn prompt_child(sink: &str) -> Result<Child, String> {
+    Command::new("pacat")
+        .args([
+            "--playback".to_string(),
+            "--raw".to_string(),
+            format!("--device={sink}"),
+            "--format=s16le".to_string(),
+            format!("--rate={GATEWAY_RATE}"),
+            format!("--channels={GATEWAY_CHANNELS}"),
+            "--latency-msec=20".to_string(),
+            // The mixer repairs the prompt's route by this name (a bare
+            // `pacat` can inherit a saved route onto `jawn_call_in`), so the
+            // engine's child wears the same name the helper's did.
+            "--client-name=jawn-sco-prompt".to_string(),
+            "--stream-name=jawn-sco-prompt".to_string(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("cannot start pacat: {error}"))
+}
+
+fn prompt_worker(
+    mut fifo: File,
+    sink: String,
+    stop: Arc<AtomicBool>,
+    writing: Arc<AtomicBool>,
+) {
+    let mut child: Option<Child> = None;
+    let mut buffer = [0u8; 4096];
+    while !stop.load(Ordering::SeqCst) {
+        match fifo.read(&mut buffer) {
+            Ok(0) => {
+                // No writer: the helper is not in the call yet, or it has gone.
+                // Take a dead child with it so `pacat` never outlives the call.
+                if let Some(mut done) = child.take() {
+                    let _ = done.kill();
+                    let _ = done.wait();
+                }
+                thread::sleep(Duration::from_millis(GATEWAY_PROMPT_MSEC));
+            }
+            Ok(count) => {
+                if child.is_none() {
+                    match prompt_child(&sink) {
+                        Ok(spawned) => {
+                            child = Some(spawned);
+                            writing.store(true, Ordering::Relaxed);
+                        }
+                        Err(error) => {
+                            eprintln!("jawn-audio: gateway prompt: {error}");
+                            writing.store(false, Ordering::Relaxed);
+                            thread::sleep(Duration::from_millis(GATEWAY_PROMPT_MSEC));
+                            continue;
+                        }
+                    }
+                }
+                let fed = child
+                    .as_mut()
+                    .and_then(|running| running.stdin.as_mut())
+                    .map(|stdin| stdin.write_all(&buffer[..count]).is_ok())
+                    .unwrap_or(false);
+                if !fed {
+                    if let Some(mut done) = child.take() {
+                        let _ = done.kill();
+                        let _ = done.wait();
+                    }
+                    writing.store(false, Ordering::Relaxed);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(GATEWAY_PROMPT_MSEC));
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => {
+                writing.store(false, Ordering::Relaxed);
+                thread::sleep(Duration::from_millis(GATEWAY_PROMPT_MSEC));
+            }
+        }
+    }
+    if let Some(mut done) = child.take() {
+        let _ = done.kill();
+        let _ = done.wait();
+    }
+}
+
+/// Pop whatever the capture holds, keep a frame count and a peak, downmix the
+/// stereo ring to mono s16le, and write it to `call_in`. `block` and `mono` are
+/// reused between ticks, so the drain allocates nothing while a call runs. The
+/// ring and the pipe both drop rather than block, so a busy drain is a counted
+/// lost frame, never a stalled `parec`.
+fn drain_gateway(
+    consumer: &Consumer,
+    counters: &GatewayCounters,
+    block: &mut [f32],
+    mono: &mut [u8],
+    port: &mut CallInPort,
+) {
     let wanted = block.len() / 2;
     let mut frames = 0u64;
     let mut peak = 0.0f32;
@@ -363,9 +812,16 @@ fn drain_gateway(consumer: &Consumer, counters: &GatewayCounters, block: &mut [f
         if got == 0 {
             break;
         }
-        for sample in &block[..got * 2] {
-            peak = peak.max(sample.abs());
+        let mut at = 0;
+        for frame in 0..got {
+            let left = block[frame * 2];
+            let right = block[frame * 2 + 1];
+            peak = peak.max(left.abs()).max(right.abs());
+            let down = to_i16((left + right) * 0.5);
+            mono[at..at + 2].copy_from_slice(&down.to_le_bytes());
+            at += 2;
         }
+        port.write_frame(&mono[..at]);
         frames += got as u64;
         if got < wanted {
             break;
@@ -589,13 +1045,17 @@ fn chain_parameter(name: &str, has_insert: impl Fn(&str) -> bool) -> Result<Para
 
 impl Server {
     fn new(config: Config) -> Self {
+        // `capable` is the environment, not a call: a socket that answers (this
+        // one) plus the two tools the ports need. Readiness reads it while idle.
+        let capable = jawn_audio::backends::command_exists("parec")
+            && jawn_audio::backends::command_exists("pacat");
         Server {
             config,
             current: None,
             playback: None,
             listen: None,
             patch: None,
-            gateway: Gateway::off(),
+            gateway: Gateway::off(capable),
             next_take: 1,
             boot: BootPlan::Error("no audio plan file configured".to_string()),
         }
@@ -748,16 +1208,27 @@ impl Server {
     }
 
     fn run(&mut self, listener: UnixListener) -> Result<(), String> {
+        // Non-blocking accept so the silent bind's retry clock is looked at even
+        // while no client is connected (a call holds the FIFOs, not the socket).
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| format!("cannot set the socket non-blocking: {error}"))?;
         loop {
-            // Block while idle; `serve_one` switches to non-blocking so it can
-            // see a second connection arrive while the first still holds the
-            // socket.
-            listener
-                .set_nonblocking(false)
-                .map_err(|error| format!("cannot set the socket blocking: {error}"))?;
-            let (stream, _) = listener.accept().map_err(|error| {
-                format!("accept on {}: {error}", self.config.socket.display())
-            })?;
+            self.gateway.tick();
+            let (stream, _) = match listener.accept() {
+                Ok(accepted) => accepted,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(POLL);
+                    continue;
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "accept on {}: {error}",
+                        self.config.socket.display()
+                    ))
+                }
+            };
             stream
                 .set_nonblocking(true)
                 .map_err(|error| format!("cannot set the client non-blocking: {error}"))?;
@@ -779,6 +1250,7 @@ impl Server {
             .map_err(|error| format!("cannot set the socket non-blocking: {error}"))?;
         let mut scratch = [0u8; 8192];
         loop {
+            self.gateway.tick();
             // One client at a time: a second connection is told why, in the
             // same line protocol, and closed without reading anything from it.
             match listener.accept() {
@@ -1539,27 +2011,36 @@ impl Server {
             Some(Value::Str(name)) if !name.is_empty() => name.clone(),
             _ => return error_line("gateway bind needs \"call_in\": a sink name"),
         };
-        // One call at a time: while a capture runs a second bind is a no-op,
-        // and it keeps the first capture's sink and counters.
+        let prompt_sink = match get(object, "prompt") {
+            Some(Value::Str(name)) if !name.is_empty() => name.clone(),
+            _ => GATEWAY_PROMPT_SINK.to_string(),
+        };
+        // One call at a time: a bind while the capture runs is a no-op and keeps
+        // the first capture, its sink and its counters.
         if self.gateway.capture.is_some() {
             return format!("{{\"ok\":true,{}}}", self.gateway.fragment());
         }
-        let monitor = crate::system_capture::monitor_name(&sink);
-        if crate::system_capture::source_exists(&monitor) == Some(false) {
-            // The server says the source is not there; do not start a `parec`
-            // that can only fail. The port is silent, not fatal.
-            self.gateway.call_in = Some(sink);
-            return format!("{{\"ok\":true,{}}}", self.gateway.fragment());
-        }
-        match GatewayCapture::start(&sink) {
-            Ok(capture) => {
-                self.gateway.call_in = Some(sink);
-                self.gateway.capture = Some(capture);
-            }
-            Err(error) => {
+        let state_dir = state_dir(&self.config);
+        // A silent bind may be retried by a later bind; the ports it already
+        // made are still this call's, so keep them rather than removing a
+        // worker that may already be feeding the helper.
+        if self.gateway.paths.is_none() {
+            if let Err(error) = self.gateway.open_ports(&state_dir, &prompt_sink) {
                 eprintln!("jawn-audio: gateway: {error}");
-                self.gateway.call_in = Some(sink);
+                return error_line(&error);
             }
+        }
+        self.gateway.call_in = Some(sink.clone());
+        let paths = self.gateway.paths.clone().expect("open_ports made them");
+        if self.gateway.try_capture(&sink, &paths) {
+            self.gateway.retry = None;
+        } else {
+            let now = Instant::now();
+            self.gateway.retry = Some(BindRetry {
+                sink,
+                next: now + GATEWAY_RETRY,
+                deadline: now + GATEWAY_RETRY_FOR,
+            });
         }
         format!("{{\"ok\":true,{}}}", self.gateway.fragment())
     }
@@ -5624,18 +6105,30 @@ break"}"#).is_err());
         assert!(line.contains("\"ok\":true"), "status: {line}");
         assert!(line.contains("\"call_in\":\"off\""), "status: {line}");
         assert!(line.contains("\"prompt\":\"silent\""), "status: {line}");
-        assert!(line.contains("\"monitor\":\"silent\""), "status: {line}");
+        assert!(line.contains("\"monitor\":\"helper\""), "status: {line}");
         assert!(line.contains("\"rate\":8000"), "status: {line}");
         assert!(line.contains("\"channels\":1"), "status: {line}");
         assert!(line.contains("\"peak\":0.000000"), "status: {line}");
         assert!(line.contains("\"frames\":0"), "status: {line}");
+        assert!(line.contains("\"dropped\":0"), "status: {line}");
+        assert!(line.contains("\"paths\":{}"), "status: {line}");
+        assert!(line.contains("\"capable\":"), "status does not name the environment: {line}");
+
+        // `capable` is the environment, not a call: the same two worlds answer
+        // differently while both are `off`.
+        let capable = jawn_audio::backends::command_exists("parec")
+            && jawn_audio::backends::command_exists("pacat");
+        assert!(
+            line.contains(&format!("\"capable\":{capable}")),
+            "capable disagrees with PATH: {line}"
+        );
 
         // Every status line carries the same object, so a page that already
         // polls the engine does not need a second command.
         let line = server.status_line();
         assert!(
             line.contains(
-                "\"gateway\":{\"call_in\":\"off\",\"prompt\":\"silent\",\"monitor\":\"silent\",\"rate\":8000,\"channels\":1,\"peak\":0.000000,\"frames\":0}"
+                "\"gateway\":{\"call_in\":\"off\",\"prompt\":\"silent\",\"monitor\":\"helper\",\"rate\":8000,\"channels\":1,\"peak\":0.000000,\"frames\":0,\"dropped\":0,\"paths\":{},\"capable\":"
             ),
             "status: {line}"
         );
@@ -5651,6 +6144,155 @@ break"}"#).is_err());
         assert!(line.contains("no such gateway action"), "{line}");
         let line = reply(server.handle("{\"cmd\":\"gateway\"}"));
         assert!(line.contains("\"ok\":false"), "no action: {line}");
+    }
+
+    /// A throwaway directory for one test's FIFOs and socket.
+    fn gateway_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "jawn-audio-gw-unit-{}-{name}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create the gateway test directory");
+        dir
+    }
+
+    /// A server whose state directory is the test's own, so two tests never
+    /// meet in `<tmp>/gateway-<pid>`.
+    fn gateway_server(dir: &Path) -> Server {
+        let mut server = socket_server();
+        server.config.socket = dir.join("audio.sock");
+        server
+    }
+
+    #[test]
+    fn a_bind_makes_absolute_fifos_and_release_removes_the_directory() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let dir = gateway_test_dir("bind");
+        let mut server = gateway_server(&dir);
+        let line = reply(server.handle(
+            "{\"cmd\":\"gateway\",\"action\":\"bind\",\"call_in\":\"jawn_call_in\"}",
+        ));
+        assert!(line.contains("\"ok\":true"), "bind: {line}");
+        assert!(line.contains("\"monitor\":\"helper\""), "bind: {line}");
+        assert!(line.contains("\"call_in\":\""), "bind: {line}");
+
+        let call_dir = dir.join(format!("gateway-{}", std::process::id()));
+        let call_in = call_dir.join("call_in");
+        let prompt = call_dir.join("prompt");
+        assert!(call_in.is_absolute(), "{} is not absolute", call_in.display());
+        assert!(prompt.is_absolute(), "{} is not absolute", prompt.display());
+        assert!(
+            line.contains(call_in.to_str().expect("UTF-8 path")),
+            "the reply does not name the call_in FIFO: {line}"
+        );
+        assert!(
+            line.contains(prompt.to_str().expect("UTF-8 path")),
+            "the reply does not name the prompt FIFO: {line}"
+        );
+        assert!(
+            fs::metadata(&call_in).expect("call_in exists").file_type().is_fifo(),
+            "call_in is not a FIFO"
+        );
+        assert!(
+            fs::metadata(&prompt).expect("prompt exists").file_type().is_fifo(),
+            "prompt is not a FIFO"
+        );
+
+        // The prompt port is open and idle; its `pacat` waits for a byte.
+        assert!(
+            line.contains("\"prompt\":\"writing\""),
+            "an idle prompt port still answers writing: {line}"
+        );
+
+        let released = reply(server.handle("{\"cmd\":\"gateway\",\"action\":\"release\"}"));
+        assert!(released.contains("\"call_in\":\"off\""), "release: {released}");
+        assert!(
+            !call_dir.exists(),
+            "release left {} behind",
+            call_dir.display()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_drain_writes_ten_millisecond_mono_frames_to_call_in() {
+        let dir = gateway_test_dir("drain");
+        let fifo = dir.join("call_in");
+        make_fifo(&fifo).expect("make the call_in FIFO");
+        let mut reader = OpenOptions::new()
+            .read(true)
+            .custom_flags(O_NONBLOCK)
+            .open(&fifo)
+            .expect("open the reading end");
+
+        let (producer, consumer) = MonitorBus::new(4096);
+        let frames = vec![0.5f32; GATEWAY_DRAIN_FRAMES];
+        let mut stereo = Vec::with_capacity(GATEWAY_DRAIN_FRAMES * 2);
+        for value in frames {
+            stereo.push(value);
+            stereo.push(value);
+        }
+        assert_eq!(producer.push(&stereo), 0, "the fake ring holds one block");
+
+        let counters = GatewayCounters::default();
+        let mut block = vec![0.0f32; GATEWAY_DRAIN_FRAMES * 2];
+        let mut mono = vec![0u8; GATEWAY_DRAIN_FRAMES * 2];
+        let mut port = CallInPort::new(fifo, counters.dropped.clone());
+        drain_gateway(&consumer, &counters, &mut block, &mut mono, &mut port);
+
+        // One 10 ms frame at 8 kHz mono s16le is 160 bytes.
+        let mut got = Vec::new();
+        let mut buffer = [0u8; 512];
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while got.len() < 160 && Instant::now() < deadline {
+            match reader.read(&mut buffer) {
+                Ok(0) => thread::sleep(Duration::from_millis(5)),
+                Ok(count) => got.extend_from_slice(&buffer[..count]),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => panic!("read call_in: {error}"),
+            }
+        }
+        assert_eq!(got.len(), 160, "one 10 ms mono frame was written");
+        let sample = i16::from_le_bytes([got[0], got[1]]);
+        assert!(
+            (i32::from(sample) - i32::from(to_i16(0.5))).abs() <= 1,
+            "the stereo ring was not downmixed: {sample}"
+        );
+        let (counted, peak, dropped) = counters.read();
+        assert_eq!(counted, GATEWAY_DRAIN_FRAMES as u64, "the frame count survived");
+        assert!((peak - 0.5).abs() < 1e-6, "the peak survived: {peak}");
+        assert_eq!(dropped, 0, "nothing was dropped");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_full_call_in_pipe_drops_the_frame_and_counts_it() {
+        let dir = gateway_test_dir("full");
+        let fifo = dir.join("call_in");
+        make_fifo(&fifo).expect("make the call_in FIFO");
+        // A reader that never reads: the pipe fills and stays full.
+        let _reader = OpenOptions::new()
+            .read(true)
+            .custom_flags(O_NONBLOCK)
+            .open(&fifo)
+            .expect("open the reading end");
+
+        let counters = GatewayCounters::default();
+        let mut port = CallInPort::new(fifo, counters.dropped.clone());
+        let frame = [0u8; 160];
+        for _ in 0..1000 {
+            port.write_frame(&frame);
+        }
+        assert!(
+            counters.read().2 > 0,
+            "a full pipe must drop and count rather than block"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -5674,15 +6316,36 @@ break"}"#).is_err());
             "a full ring drops the newest frames rather than blocking"
         );
 
+        let dir = gateway_test_dir("ring");
+        let fifo = dir.join("call_in");
+        make_fifo(&fifo).expect("make the call_in FIFO");
+        let mut reader = OpenOptions::new()
+            .read(true)
+            .custom_flags(O_NONBLOCK)
+            .open(&fifo)
+            .expect("open the reading end");
+
         let counters = GatewayCounters::default();
         let mut block = vec![0.0f32; GATEWAY_DRAIN_FRAMES * 2];
-        drain_gateway(&consumer, &counters, &mut block);
-        let (frames, peak) = counters.read();
+        let mut mono = vec![0u8; GATEWAY_DRAIN_FRAMES * 2];
+        let mut port = CallInPort::new(fifo, counters.dropped.clone());
+        drain_gateway(&consumer, &counters, &mut block, &mut mono, &mut port);
+        let (frames, peak, _) = counters.read();
         assert_eq!(frames, 4096, "the drain kept every frame the ring held");
         assert!((peak - 0.75).abs() < 1e-6, "the peak survived the drop: {peak}");
 
-        // The ring is empty now, and a second drain adds nothing.
-        drain_gateway(&consumer, &counters, &mut block);
+        // Drain what the pipe took; the ring is empty now, and a second drain
+        // adds nothing.
+        let mut sink = Vec::new();
+        let mut buffer = [0u8; 4096];
+        while let Ok(count) = reader.read(&mut buffer) {
+            if count == 0 {
+                break;
+            }
+            sink.extend_from_slice(&buffer[..count]);
+        }
+        drain_gateway(&consumer, &counters, &mut block, &mut mono, &mut port);
         assert_eq!(counters.read().0, 4096);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -18,11 +18,17 @@ use Mojo::IOLoop;
 use Mojo::IOLoop::Stream;
 use Mojo::JSON qw(decode_json encode_json);
 use File::Path qw(make_path);
+use File::Basename qw(dirname);
 use POSIX qw(:sys_wait_h);
 use IPC::Open2 ();
 use List::Util qw(shuffle);
 
 my $KEEP_RECORDINGS = 40;
+
+# How many 500 ms looks a silent engine bind gets before the call falls back to
+# the helper's own `--pipe-in`/`--pipe-out` transport. Five seconds, the same
+# window the engine retries its own capture for.
+my $ENGINE_WAIT_TRIES = 10;
 
 sub new {
 	my ($class, %args) = @_;
@@ -31,6 +37,12 @@ sub new {
 	my $self = bless {
 		dir => $dir,
 		helper => $args{'helper'} || './perl/sco/sco_helper',
+		helper_path => $args{'helper_path'}
+			|| (ref $args{'helper'} eq 'ARRAY' ? $args{'helper'}[0] : $args{'helper'})
+			|| './perl/sco/sco_helper',
+		# a test may hand in the engine backend (or 0 to keep it off); in the
+		# house it is found and asked at arm time
+		(defined $args{'engine'} ? (engine => $args{'engine'}) : ()),
 		status_path => $args{'status_path'} || &subs::home('~/.president/sco.json'),
 		(defined $args{'pipe'} ? (pipe => ($args{'pipe'} ? 1 : 0)) : ()),
 		state => 'idle',
@@ -87,6 +99,186 @@ sub pipe_mode {
 	return $self->{'pipe'} ? 1 : 0 if exists $self->{'pipe'};
 	my $on = eval { &subs::misc_setting('sco_pipe') } || '';
 	return $on eq 'yes';
+}
+
+# ---- the engine transport ------------------------------------------
+#
+# The engine replaces the helper's two spawned commands, not its job: it binds
+# `jawn_call_in.monitor`, writes the caller's voice to one FIFO and feeds the
+# prompt from another. The helper is still the SCO link, the 8 kHz framing and
+# the tee. The engine is used only when the backend says it can carry the
+# gateway; otherwise (and on any bind that stays silent past its retry) this
+# call uses the pipes, so a call is never left on a dead port.
+
+# Ask the backend once per arm. A test may inject `engine => $obj` (or 0); the
+# house builds the engine backend and asks its own readiness.
+sub _engine_choice {
+	my ($self) = @_;
+	return $self->{'engine_choice'} if exists $self->{'engine_choice'};
+	my $backend = $self->{'engine'};
+	unless (defined $backend) {
+		$backend = eval {
+			require JawnOS::Sco::Backend;
+			JawnOS::Sco::Backend->new(backend => 'engine', helper_path => $self->{'helper_path'});
+		};
+	}
+	my $ready = 0;
+	($ready) = eval { $backend->ready() }
+		if ref $backend && ($backend->name || '') eq 'engine';
+	$self->{'engine_choice'} = $ready ? $backend : undef;
+	return $self->{'engine_choice'};
+}
+
+# What a `gateway bind` (or `status`) reply means for a call. Pure, so the
+# choice is testable without a socket:
+#   engine - the port captured; start the helper on `--engine <dir>`
+#   wait   - the port is silent; poll for up to $ENGINE_WAIT_TRIES, then fall back
+#   pactl  - the bind was refused or answered a shape we cannot use
+sub _engine_plan {
+	my ($reply) = @_;
+	return ('pactl', undef) unless ref $reply eq 'HASH' && $reply->{'ok'};
+	my $gateway = $reply->{'gateway'};
+	return ('pactl', undef) unless ref $gateway eq 'HASH';
+	my $paths = $gateway->{'paths'};
+	return ('pactl', undef)
+		unless ref $paths eq 'HASH'
+			&& defined $paths->{'call_in'} && length $paths->{'call_in'}
+			&& defined $paths->{'prompt'} && length $paths->{'prompt'};
+	my $state = $gateway->{'call_in'} || '';
+	return ('engine', $paths) if $state eq 'captured';
+	return ('wait', $paths) if $state eq 'silent';
+	return ('pactl', undef);
+}
+
+sub _engine_request {
+	my ($self, $request, $timeout) = @_;
+	return eval {
+		require JawnOS::Audio::Engine;
+		JawnOS::Audio::Engine::audio_engine_command($request, $timeout);
+	};
+}
+
+# Bind the engine's two ports for this call. A captured port starts the helper
+# on `--engine`; a silent one starts the bounded poll; a refusal falls back now.
+sub _engine_begin {
+	my ($self) = @_;
+	return 0 unless $self->{'engine_backend'};
+	return 1 if $self->{'engine_starting'};
+	$self->{'engine_starting'} = 1;
+	my $reply = $self->_engine_request({
+		cmd => 'gateway', action => 'bind',
+		call_in => 'jawn_call_in', prompt => 'jawn_prompt',
+	}, 2);
+	my ($plan, $paths) = _engine_plan($reply);
+	$self->{'engine_bound'} = 1 if $plan ne 'pactl';
+	if ($plan eq 'engine') {
+		$self->{'engine_starting'} = 0;
+		return 1 if $self->_engine_helper($paths);
+		return $self->_engine_fallback();
+	}
+	if ($plan eq 'wait') {
+		$self->{'engine_paths'} = $paths;
+		$self->{'engine_tries'} = 0;
+		$self->{'engine_timer'} = Mojo::IOLoop->recurring(0.5 => sub { $self->_engine_poll });
+		return 1;
+	}
+	# The engine refused the bind. The pipes are this call's transport.
+	$self->{'engine_starting'} = 0;
+	$self->{'engine_backend'} = undef;
+	return $self->_pipe_helper();
+}
+
+# One look at a silent bind. The engine runs its own capture retry for five
+# seconds; this side waits the same window and then gives the call the pipe
+# transport rather than leaving it on a port that never came up.
+sub _engine_poll {
+	my ($self) = @_;
+	return 1 unless $self->{'engine_starting'};
+	my $paths = $self->{'engine_paths'};
+	my $reply = $self->_engine_request({ cmd => 'gateway', action => 'status' }, 1);
+	my ($plan) = _engine_plan($reply);
+	if ($plan eq 'engine') {
+		$self->_engine_stop_wait();
+		$self->{'engine_starting'} = 0;
+		return 1 if $self->_engine_helper($paths);
+		return $self->_engine_fallback();
+	}
+	if (++$self->{'engine_tries'} >= $ENGINE_WAIT_TRIES) {
+		$self->_engine_stop_wait();
+		$self->{'engine_starting'} = 0;
+		$self->{'last_error'} = 'the engine never captured the call; using the pipe transport';
+		return $self->_engine_fallback();
+	}
+	return 1;
+}
+
+sub _engine_stop_wait {
+	my ($self) = @_;
+	if (my $timer = delete $self->{'engine_timer'}) {
+		Mojo::IOLoop->remove($timer);
+	}
+	delete $self->{'engine_tries'};
+	return 1;
+}
+
+# Start the helper against the FIFO pair the engine named.
+sub _engine_helper {
+	my ($self, $paths) = @_;
+	my $dir = ref $paths eq 'HASH' && defined $paths->{'call_in'}
+		? dirname($paths->{'call_in'}) : '';
+	return 0 unless length $dir && -p "$dir/call_in" && -p "$dir/prompt";
+	return 0 unless $self->_spawn($self->helper_command(), '--engine', $dir);
+	$self->{'engine_active'} = 1;
+	$self->{'engine_paths'} = $paths;
+	$self->_attach_ready();
+	return 1;
+}
+
+# The pactl transport: the two Mixer commands, exactly as before 4b-2.
+sub _pipe_helper {
+	my ($self) = @_;
+	my $mixer = $self->{'mixer'} or return 0;
+	unless ($self->_spawn(
+		$self->helper_command(),
+		'--pipe-in', $mixer->capture_command(),
+		'--pipe-out', $mixer->playback_command(),
+	)) {
+		$self->{'last_error'} = 'the audio helper would not start';
+		return 0;
+	}
+	$self->{'engine_active'} = 0;
+	$self->_attach_ready();
+	return 1;
+}
+
+# The pair is the call: say so, so the plan can start before the caller speaks.
+sub _attach_ready {
+	my ($self) = @_;
+	$self->_send(cmd => 'line');
+	$self->{'line_up'} = 1;
+	$self->{'last_event'} = 'attached';
+	$self->{'state'} = 'armed';
+	$self->{'since'} = time;
+	$self->write_status();
+	return 1;
+}
+
+# A call that leaves the engine (silent bind, refused bind, or its end) releases
+# the ports, so no capture child and no stale FIFO directory outlive it.
+sub _engine_fallback {
+	my ($self) = @_;
+	$self->_engine_release();
+	$self->{'engine_backend'} = undef;
+	$self->{'engine_active'} = 0;
+	return $self->_pipe_helper();
+}
+
+sub _engine_release {
+	my ($self) = @_;
+	delete $self->{'engine_paths'};
+	return 0 unless delete $self->{'engine_bound'};
+	$self->_engine_request({ cmd => 'gateway', action => 'release' }, 1);
+	return 1;
 }
 
 sub peer_address {
@@ -516,6 +708,12 @@ sub arm {
 	$self->{'clip_out'} = 0;
 	$self->{'voicemail_until'} = 0;
 	$self->{'line_up'} = 0;
+	# Every call asks the backend again: a machine may start its engine between
+	# two calls, and a previous call's bind has already been released.
+	delete @{$self}{qw(
+		engine_backend engine_choice engine_starting engine_active
+		engine_timer engine_tries engine_paths engine_bound
+	)};
 	my @cmd = $self->helper_command();
 	return { ok => 0, error => 'the SCO helper is not built on this machine' } unless @cmd;
 	# A Hands-Free stack (BlueALSA) owning the link leaves us as a plain audio
@@ -606,6 +804,9 @@ sub arm {
 	if ($self->pipe_mode()) {
 		require JawnOS::Sco::Mixer;
 		$self->{'mixer'} = JawnOS::Sco::Mixer->new();
+		# The engine carries the same virtual-handset streams the pipes do;
+		# it is chosen only when its own backend says it is ready.
+		$self->{'engine_backend'} = $self->_engine_choice();
 		$self->{'peer'} = $args{'peer'} || $self->peer_address();
 		$self->{'call_id'} = $args{'call_id'} || &call_id();
 		$self->_start_transcript();
@@ -905,21 +1106,12 @@ sub watch_streams {
 		# guard against a second plan.
 		return if $self->{'held'};
 		$mixer->attach($self->{'peer'});
-		my @cmd = ( $self->helper_command(), '--pipe-in', $mixer->capture_command(),
-			'--pipe-out', $mixer->playback_command() );
-		unless ($self->_spawn(@cmd)) {
-			$self->{'last_error'} = 'the audio helper would not start';
-			return;
+		# The engine, when it is carrying this call, binds its ports and hands
+		# the helper the FIFO directory instead of two commands.
+		if ($self->{'engine_backend'}) {
+			return $self->_engine_begin();
 		}
-		# the pair is the call: say so, so the plan can start before the
-		# caller speaks (the helper's own gate waits for a frame that carries
-		# signal, which someone waiting to be greeted never sends)
-		$self->_send({ cmd => 'line' });
-		$self->{'line_up'} = 1;
-		$self->{'last_event'} = 'attached';
-		$self->{'state'} = 'armed';
-		$self->{'since'} = time;
-		$self->write_status();
+		return $self->_pipe_helper();
 	});
 	return 1;
 }
@@ -986,6 +1178,7 @@ sub watch_streams {
 	$self->{'keypad_open'} = 0;
 	$self->_clear_keypad_timer();
 	$self->_clear_hold_timer();
+	$self->_engine_stop_wait();
 	return 1 if $self->{'state'} eq 'idle';
 	$self->{'state'} = 'idle';
 	$self->{'since'} = time;
@@ -1037,6 +1230,7 @@ sub stop_watch {
 			Mojo::IOLoop->remove($w);
 		}
 	}
+	$self->_engine_stop_wait();
 	return 1;
 }
 
@@ -1945,7 +2139,11 @@ sub cancel {
 	if ($self->{'mixer'} && $self->{'mixer'}->{'attached'} && !$self->{'mixer'}->call_active()) {
 		$self->{'mixer'}->detach();
 	}
-	return { ok => 1, state => $self->{'state'} } if $self->{'state'} eq 'idle';
+	$self->_engine_stop_wait();
+	if ($self->{'state'} eq 'idle') {
+		$self->_engine_release();
+		return { ok => 1, state => $self->{'state'} };
+	}
 	$self->_push_screen('ended');
 	$self->_send(cmd => 'quit');
 	$self->_reap();
@@ -1968,22 +2166,26 @@ sub _reap {
 		next unless $thing;
 		eval { $thing->close };
 	}
-	return unless $pid;
-	# the helper has PR_SET_PDEATHSIG, so this is belt and braces: a stuck
-	# helper must not outlive the call that armed it
-	my $tries = 0;
-	my $gone = 0;
-	while ($tries++ < 10) {
-		my $done = waitpid($pid, WNOHANG);
-		if ($done == $pid) { $gone = 1; last; }
-		select(undef, undef, undef, 0.02);
+	if ($pid) {
+		# the helper has PR_SET_PDEATHSIG, so this is belt and braces: a stuck
+		# helper must not outlive the call that armed it
+		my $tries = 0;
+		my $gone = 0;
+		while ($tries++ < 10) {
+			my $done = waitpid($pid, WNOHANG);
+			if ($done == $pid) { $gone = 1; last; }
+			select(undef, undef, undef, 0.02);
+		}
+		unless ($gone) {
+			# the helper has PR_SET_PDEATHSIG, so it is on its way out; wait for it
+			# rather than leaving a zombie with nothing left to reap it
+			kill 'TERM', $pid;
+			waitpid($pid, 0);
+		}
 	}
-	unless ($gone) {
-		# the helper has PR_SET_PDEATHSIG, so it is on its way out; wait for it
-		# rather than leaving a zombie with nothing left to reap it
-		kill 'TERM', $pid;
-		waitpid($pid, 0);
-	}
+	# The helper's read end is gone, so the engine can stop its capture, reap
+	# `pacat` and remove the call's FIFO directory. Never fatal.
+	$self->_engine_release();
 	$self->{'reaping'} = 0;
 	return;
 }

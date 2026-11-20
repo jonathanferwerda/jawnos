@@ -78,6 +78,11 @@ static int loopback = 0, fast = 0;
 static const char *pcm_dev = NULL;
 static const char *pipe_in_cmd = NULL, *pipe_out_cmd = NULL;
 static FILE *pipe_in = NULL, *pipe_out = NULL;
+/* --engine DIR: the engine carries the call's PCM on two FIFOs beside its
+ * control socket. The helper keeps the link, the 8 kHz framing, DTMF, the
+ * recording and the tee; it no longer spawns parec/pacat. */
+static const char *engine_dir = NULL;
+static int engine_in_fd = -1, engine_out_fd = -1;
 /* The gateway can see the phone's two Hands-Free streams, so it knows the
  * call is up before a frame arrives, and says so ("line"). Without it the
  * plan waited for a frame that carries signal - which a caller waiting to be
@@ -91,6 +96,9 @@ static int pipe_write_chunk(const unsigned char *buf, size_t len);
 static int backend_open(void);
 static int backend_read(unsigned char *buf, size_t cap);
 static int backend_write(const unsigned char *buf, size_t len);
+static int engine_open_pair(void);
+static int engine_read_chunk(unsigned char *buf, size_t cap);
+static int engine_write_chunk(const unsigned char *buf, size_t len);
 static int chunk_has_signal(const unsigned char *buf, size_t len);
 static char pcm_error[128] = "";
 static long long last_complain = 0;        /* BlueALSA PCM, e.g. bluealsa:DEV=...,PROFILE=hfp-hf */
@@ -863,6 +871,7 @@ static int addrs_from_sys(char addresses[][18], int max) {
 }
 
 static int backend_open(void) {
+	if (engine_dir) return (engine_in_fd >= 0 && engine_out_fd >= 0) ? 0 : engine_open_pair();
 	return pipe_mode ? pipe_open_pair() : -1;
 }
 
@@ -876,11 +885,72 @@ static int chunk_has_signal(const unsigned char *buf, size_t len) {
 	return 0;
 }
 
+/* ---- the engine transport ---------------------------------------------- *
+ *
+ * `--engine DIR` is the fourth PCM source: the engine writes the caller's
+ * voice to DIR/call_in and reads the prompt from DIR/prompt. Both are named
+ * pipes made by `gateway bind`; the control socket stays line-based and no PCM
+ * crosses it. The helper opens the pair once, before it listens, because a
+ * missing FIFO is an error the armer must hear rather than a silent hang. */
+static int engine_open_one(const char *path, int flags) {
+	long long deadline = now_ns() + 2000000000LL;
+	for (;;) {
+		int fd = open(path, flags | O_NONBLOCK);
+		if (fd >= 0) return fd;
+		if (errno != ENOENT && errno != ENXIO && errno != EAGAIN && errno != EINTR) return -1;
+		if (now_ns() >= deadline) return -1;
+		usleep(20000);
+	}
+}
+
+static int engine_open_pair(void) {
+	if (engine_in_fd >= 0 && engine_out_fd >= 0) return 0;
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path), "%s/call_in", engine_dir);
+	engine_in_fd = engine_open_one(path, O_RDONLY);
+	if (engine_in_fd < 0) {
+		emit_error("the engine's call_in FIFO is not there");
+		return -1;
+	}
+	snprintf(path, sizeof(path), "%s/prompt", engine_dir);
+	engine_out_fd = engine_open_one(path, O_WRONLY);
+	if (engine_out_fd < 0) {
+		close(engine_in_fd);
+		engine_in_fd = -1;
+		emit_error("the engine's prompt FIFO is not there");
+		return -1;
+	}
+	return 0;
+}
+
+/* The caller's voice. No writer is not the end of the call (the daemon decides
+ * that, as it does for every transport), so a zero read is silence for now. */
+static int engine_read_chunk(unsigned char *buf, size_t cap) {
+	if (engine_in_fd < 0) return -1;
+	ssize_t n = read(engine_in_fd, buf, cap);
+	if (n > 0) return (int) n;
+	return 0;
+}
+
+/* The prompt. A full FIFO drops the frame rather than stalling the plan: the
+ * engine's reader is `pacat` at 20 ms, and a late prompt byte is worth less
+ * than a prompt that keeps time. `CHUNK_BYTES` is well under PIPE_BUF, so this
+ * write is one frame or nothing. */
+static int engine_write_chunk(const unsigned char *buf, size_t len) {
+	if (engine_out_fd < 0) return -1;
+	ssize_t n = write(engine_out_fd, buf, len);
+	if (n >= 0) return (int) n;
+	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return (int) len;
+	return -1;
+}
+
 static int backend_read(unsigned char *buf, size_t cap) {
+	if (engine_dir) return engine_read_chunk(buf, cap);
 	return pipe_mode ? pipe_read_chunk(buf, cap) : pcm_read_chunk(buf, cap);
 }
 
 static int backend_write(const unsigned char *buf, size_t len) {
+	if (engine_dir) return engine_write_chunk(buf, len);
 	return pipe_mode ? pipe_write_chunk(buf, len) : pcm_write_chunk(buf, len);
 }
 
@@ -1096,7 +1166,30 @@ static int pcm_mode_main(void) {
 	return 0;
 }
 
+/* `--engine-selftest DIR`: open the pair and echo one frame. It exists so a
+ * test can prove the transport with two plain FIFOs - no radio, no PipeWire,
+ * no engine process - using the same read and write the call uses. */
+static int engine_selftest_main(void) {
+	if (engine_open_pair() != 0) return 1;
+	unsigned char buf[CHUNK_BYTES];
+	long long deadline = now_ns() + 2000000000LL;
+	int got = 0;
+	while (now_ns() < deadline) {
+		got = engine_read_chunk(buf, sizeof(buf));
+		if (got > 0) break;
+		usleep(5000);
+	}
+	if (got <= 0) {
+		emit_error("the engine selftest heard no frame");
+		return 1;
+	}
+	int wrote = engine_write_chunk(buf, (size_t) got);
+	emit("{\"event\":\"engine-selftest\",\"bytes\":%d}", wrote);
+	return wrote == got ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
+	int engine_selftest = 0;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--local") && i + 1 < argc) local_addr = argv[++i];
 		else if (!strcmp(argv[i], "--peer") && i + 1 < argc) peer_want = argv[++i];
@@ -1105,6 +1198,8 @@ int main(int argc, char **argv) {
 		else if (!strcmp(argv[i], "--pcm") && i + 1 < argc) pcm_dev = argv[++i];
 		else if (!strcmp(argv[i], "--pipe-in") && i + 1 < argc) pipe_in_cmd = argv[++i];
 		else if (!strcmp(argv[i], "--pipe-out") && i + 1 < argc) pipe_out_cmd = argv[++i];
+		else if (!strcmp(argv[i], "--engine") && i + 1 < argc) engine_dir = argv[++i];
+		else if (!strcmp(argv[i], "--engine-selftest") && i + 1 < argc) { engine_dir = argv[++i]; engine_selftest = 1; }
 		else if (!strcmp(argv[i], "--tee") && i + 1 < argc) tee_path = argv[++i];
 		else if (!strcmp(argv[i], "--fast")) fast = 1;
 		else if (!strcmp(argv[i], "--silence-level") && i + 1 < argc) silence_level = atoi(argv[++i]);
@@ -1113,9 +1208,14 @@ int main(int argc, char **argv) {
 			fprintf(stderr,
 				"usage: %s [--local BDADDR] [--peer BDADDR] [--silence-level RMS]\n"
 				"          [--loopback DOWNLINK.raw [--loopback-uplink UPLINK.raw] [--fast]]\n"
-				"          [--tee FIFO]\n", argv[0]);
+				"          [--pcm DEVICE | --pipe-in CMD --pipe-out CMD | --engine DIR]\n"
+				"          [--engine-selftest DIR] [--tee FIFO]\n", argv[0]);
 			return 2;
 		}
+	}
+	if (engine_dir && (pcm_dev || pipe_in_cmd || pipe_out_cmd)) {
+		fprintf(stderr, "%s: --engine cannot be combined with --pcm or --pipe-in/--pipe-out\n", argv[0]);
+		return 2;
 	}
 
 	/* the daemon owns this process; if it goes, take the audio link with it
@@ -1125,6 +1225,13 @@ int main(int argc, char **argv) {
 	signal(SIGINT, on_signal);
 	signal(SIGPIPE, SIG_IGN);
 
+	if (engine_dir) {
+		/* A missing FIFO is a clear error and a non-zero exit, never a hang. */
+		if (engine_selftest) return engine_selftest_main();
+		if (engine_open_pair() != 0) return 1;
+		pipe_mode = 1;
+		return pcm_mode_main();
+	}
 	if (pipe_in_cmd || pipe_out_cmd) { pipe_mode = 1; return pcm_mode_main(); }
 	if (pcm_dev) return pcm_mode_main();
 
