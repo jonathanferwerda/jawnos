@@ -291,8 +291,13 @@ sub notification_already_recorded {
 	my ($n,$payment,$account) = @_;
 	my $timestamp = ($n->{'timestamp'} || 0) + 0;
 	return 0 unless $timestamp;
+	# A bound parameter has no affinity: `abs(cast(timestamp as integer) - ?) <= ?`
+	# compares an integer with text, and SQLite orders every integer before every
+	# text, so the window was true for every row. The twenty-row limit could then
+	# return older purchases and hide the same-day one, booking a payment twice.
+	# Cast the binds too, so the window and the amount are arithmetic.
 	my $rows = &subs::db_query(
-		"select vendor, item, timestamp from warehouse where kind='money' and type='transaction' and movement='expense' and account=? and abs(cast(total as real) + ?) < 0.005 and abs(cast(timestamp as integer) - ?) <= ? limit 20",
+		"select vendor, item, timestamp from warehouse where kind='money' and type='transaction' and movement='expense' and account=? and abs(cast(total as real) + cast(? as real)) < 0.005 and abs(cast(timestamp as integer) - cast(? as integer)) <= cast(? as integer) limit 20",
 		$account, $payment->{'amount'}, $timestamp, 36 * 3600000)->hashes || [];
 	return 0 unless scalar @{$rows};
 	my %want = map { $_ => 1 } &bank_merchant_tokens($payment->{'merchant'});
