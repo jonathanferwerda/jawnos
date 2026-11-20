@@ -126,18 +126,18 @@ sub manager_reset($c) {
 		}
 	}
 	# A stop names one row before it is relayed, resolved here on the machine
-	# that received the press. Relaying an empty uuid made every peer fall back
-	# to its own copy of the database, so one press closed two different open
-	# sessions (the same app open on two machines, or a stale row beside the
-	# current one). The oldest open start/record is the target, and that uuid is
-	# what travels, so a peer either closes that one row or nothing.
-	if ($type eq 'stop' && !$target_uuid) {
-		my $resolved = &subs::stop_target_row($app, '', $timestamp);
-		if ($resolved && $resolved->{'uuid'}) {
-			$target_uuid = $resolved->{'uuid'};
-			$uuid = $target_uuid;
-			$c->param('uuid' => $uuid);
-		}
+	# that received the press. Relaying the client's name unchanged was not enough:
+	# when that name is one header behind (a session already closed) or a session
+	# begun after a backdated press, each peer resolved the fallback against its
+	# own copy and one press closed two same-name sessions, one per machine. Resolve
+	# once here, whatever the client sent, and travel with that uuid. A press that
+	# closes nothing travels with a uuid no row holds, so a peer's lagging copy
+	# cannot sweep up a different open session either.
+	if ($type eq 'stop') {
+		my $resolved = &subs::stop_target_row($app, $target_uuid, $timestamp);
+		$target_uuid = ($resolved && $resolved->{'uuid'}) ? $resolved->{'uuid'} : &subs::random_string_creator(40);
+		$uuid = $target_uuid;
+		$c->param('uuid' => $uuid);
 	}
 	my $returner = { app => $app, timestamp => $timestamp, server_time => $server_time, init => $init, uuid => $uuid };
 	# A media press names the machine that does the work (the camera, scan and

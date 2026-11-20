@@ -235,31 +235,54 @@ sub open_session_uuid {
 # the one the person was looking at: pressing stop there must never close the
 # session they started since.
 #
-# A named session that is already closed is not a no-op any more: the header a stop
-# button read can be one render behind (the person pressed start, the reply and its
-# header had not reached the panel yet, and the stop named the session before it),
-# and the session actually running was left open. That is still a person pressing
-# stop on the session in front of them, so it falls back to the OLDEST open
-# start/record at or before the press - the session that has been running longest,
-# and the one a missing stop left behind. The press time is what keeps a late
-# duplicate honest: a session started after that moment is not the one it meant, so
-# a duplicate stop can never close a session the person started afterwards.
-# One row per press; a repeated stop clears the next one rather than sweeping the
-# whole backlog.
+# A named session this machine does not hold at all closes nothing: the row is
+# either not synced yet or was already closed on the machine that named it, and
+# falling back to "some other open session" is how one press closed two sessions
+# of one app - each machine stopping the different session its own copy held.
+#
+# A named session that is already closed is not always a no-op: the header a stop
+# button read can be one render behind (the person pressed start, the reply and
+# its header had not reached the panel yet, and the stop named the session before
+# it), and the session actually running was left open. That is still a person
+# pressing stop on the session in front of them, so it falls back to the OLDEST
+# open start/record at or before the press - the session that has been running
+# longest, and the one a missing stop left behind. A row closed at this same press
+# timestamp is not that case: this press (or its relayed copy) already closed it,
+# so it must close nothing rather than sweep the next session. The press time is
+# what keeps a late duplicate honest: a session started after that moment is not
+# the one it meant, so a duplicate stop can never close a session the person
+# started afterwards. One row per press; a repeated stop clears the next one
+# rather than sweeping the whole backlog.
 sub stop_target_row {
 	my ($app, $target_uuid, $timestamp) = @_;
 	return undef unless $app;
 	$timestamp ||= &rightNow();
 	if ($target_uuid) {
-		my $named = &db_query('select * from appointments where app=? and uuid=? and (type=? or type=?) and stop_seen is null limit 1',
-			$app, $target_uuid, 'start', 'record')->hashes->[0];
-		if ($named && $named->{'uuid'}) {
+		# The name is authoritative across the mesh. The press is relayed to every
+		# machine, and a peer's copy of the named row can be absent (not yet synced)
+		# or already closed by this same press (the origin closed it). Close nothing
+		# in either case: falling back to a different open session is how one press
+		# stopped two same-name sessions, one on each machine.
+		my $named = &db_query('select * from appointments where uuid=? limit 1', $target_uuid)->hashes->[0];
+		return undef unless $named && ($named->{'app'} // '') eq $app;
+		my $is_open = (($named->{'type'} // '') =~ /^(?:start|record)$/)
+			&& !(defined $named->{'stop_seen'} && length $named->{'stop_seen'});
+		my $started = defined $named->{'timestamp'} ? (0 + $named->{'timestamp'}) : 0;
+		if ($is_open) {
 			# A named row that starts after the press belongs to the future the
 			# person has since lived through, not to the moment they stopped: fall
 			# through to the oldest open session at or before that moment, or to none.
-			my $started = defined $named->{'timestamp'} ? (0 + $named->{'timestamp'}) : 0;
 			return $named if $started <= (0 + $timestamp);
 		}
+		elsif ((defined $named->{'stop_seen'} && length $named->{'stop_seen'})
+			&& defined $named->{'stop_timestamp'} && length $named->{'stop_timestamp'}
+			&& (0 + $named->{'stop_timestamp'}) == (0 + $timestamp)) {
+			# This press already closed the named row, here or on the machine that
+			# named it. A second copy must not sweep a different session.
+			return undef;
+		}
+		# A named row closed by an earlier press is the header one render behind:
+		# fall through to the oldest open session at or before this press.
 	}
 	my $row = &db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1',
 		$app, 'start', 'record', $timestamp)->hashes->[0];
