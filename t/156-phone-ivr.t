@@ -539,6 +539,63 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	like $abilities->{'ivr'}->{'port'}, qr/^\d+$/, 'the port is a number';
 }
 
+# ---------------------------------------------------------------- adapter conflicts
+{
+	# The phone matches a gateway by its adapter name, and a blank name resolves to
+	# the built-in jawn-gateway, so two enabled gateways on one name are a
+	# configuration error: the phone answers on whichever it bonded first. The flag
+	# is computed on the resolved name, trimmed and case-insensitive.
+	my $candidates_for = sub {
+		my ($list) = @_;
+		local *Manager::phone_self_signatorial = sub { return '' };
+		local *subs::setting_grabber = sub {
+			my $request = shift;
+			return encode_json($list) if ($request->{'setting'} || '') eq 'ivr_machines';
+			return undef;
+		};
+		local *subs::db_select = sub { return FakeRows->new([]) };
+		local *subs::rightNow = sub { return 1700000000000 };
+		local *crew::advert_get = sub { return undef };
+		return Manager::phone_ivr_candidates();
+	};
+
+	my $same = $candidates_for->([
+		{ key => 'gw-a', bluetooth => 'jawn-laptop', enabled => 1 },
+		{ key => 'gw-b', bluetooth => ' Jawn-Laptop ', enabled => 1 },
+	]);
+	is $same->[0]->{'bluetooth_conflict'}, 1, 'the first of two gateways on one name is flagged';
+	is $same->[1]->{'bluetooth_conflict'}, 1, 'and the second is too (trimmed, case-insensitive)';
+	is $same->[0]->{'bluetooth_conflict_count'}, 2, 'the flag says how many share the name';
+	is $same->[0]->{'bluetooth'}, 'jawn-laptop', 'the existing Bluetooth field is left as it was';
+
+	my $apart = $candidates_for->([
+		{ key => 'gw-a', bluetooth => 'jawn-laptop', enabled => 1 },
+		{ key => 'gw-b', bluetooth => 'jawn-odroid', enabled => 1 },
+	]);
+	ok !$apart->[0]->{'bluetooth_conflict'}, 'two different names are not a conflict';
+	ok !$apart->[1]->{'bluetooth_conflict'}, 'either way';
+
+	my $off = $candidates_for->([
+		{ key => 'gw-a', bluetooth => 'jawn-laptop', enabled => 1 },
+		{ key => 'gw-b', bluetooth => 'jawn-laptop', enabled => 0 },
+	]);
+	ok !$off->[0]->{'bluetooth_conflict'}, 'a disabled gateway on the same name is no conflict';
+	is $off->[0]->{'bluetooth_conflict_count'}, undef, 'and does not count';
+	ok !$off->[1]->{'bluetooth_conflict'}, 'the disabled row is never flagged';
+
+	my $blank = $candidates_for->([
+		{ key => 'gw-a', bluetooth => '', enabled => 1 },
+		{ key => 'gw-b', bluetooth => ' JAWN-Gateway ', enabled => 1 },
+	]);
+	is $blank->[0]->{'bluetooth_conflict'}, 1, 'a blank name resolves to jawn-gateway and collides with it';
+	is $blank->[1]->{'bluetooth_conflict'}, 1, 'and the literal name is flagged too';
+
+	my $alone = $candidates_for->([
+		{ key => 'gw-a', bluetooth => '', enabled => 1 },
+	]);
+	ok !$alone->[0]->{'bluetooth_conflict'}, 'a lone blank name is no conflict';
+}
+
 # ---------------------------------------------------------------- steps
 {
 	local *subs::setting_grabber = sub { return undef };
@@ -988,6 +1045,11 @@ like $js, qr{phone_app_ivr_gateway_up}, 'a gateway can move up';
 like $js, qr{phone_app_ivr_gateway_down}, 'a gateway can move down';
 like $js, qr{phone_ivr_gateway_add}, 'a machine can be added';
 like $js, qr{jawnPhoneGatewaysHidden}, 'the first enabled gateway is mirrored to the scalar rows';
+like $js, qr{phone_app_ivr_gateway_dupe}, 'a shared adapter name marks the gateway rows';
+like $js, qr{phone_ivr_gateway_dupe_warn}, 'the pane has a warning line under the list';
+like $js, qr{Two gateways share a Bluetooth name}, 'the warning says why the duplicate matters';
+like $js, qr{phone_app_ivr_gateway_dupe_name}, 'the shared name sits in its own untranslated element';
+like $js, qr{typed \|\| 'jawn-gateway'}, 'a blank adapter name counts as the built-in jawn-gateway';
 like $js, qr{phone_ivr_flow_list}, 'the pane draws the flow list';
 like $template, qr{\.phone_app_ivr_flow_edit\[hidden\] \{ display:none}, 'a folded flow\'s editor is really hidden';
 like $js, qr{#phone_app \.phone_app_ivr_flow_head}, 'a flow\'s head is the handler that folds it';

@@ -874,6 +874,29 @@ sub phone_ivr_candidates {
 			ram_free_mb => ref $advert eq 'HASH' ? $advert->{'abilities'}{'ram_free_mb'} : undef,
 		};
 	}
+	# The phone matches a gateway by its adapter name, and a blank name resolves to
+	# the built-in jawn-gateway, so two enabled gateways on one name are a
+	# configuration error: the phone answers on whichever it bonded first. Compare
+	# the resolved name, trimmed and case-insensitively, the way the app reads it.
+	my @names = map {
+		$_->{'enabled'} ? do {
+			my $name = lc($_->{'bluetooth'} || '');
+			$name =~ s/^\s+//;
+			$name =~ s/\s+$//;
+			length($name) ? $name : 'jawn-gateway';
+		} : undef
+	} @out;
+	my %shared;
+	foreach my $name ( @names ) {
+		next unless defined $name;
+		$shared{$name}++;
+	}
+	foreach my $i ( 0 .. $#out ) {
+		next unless defined $names[$i];
+		next unless ($shared{$names[$i]} || 0) > 1;
+		$out[$i]->{'bluetooth_conflict'} = 1;
+		$out[$i]->{'bluetooth_conflict_count'} = $shared{$names[$i]};
+	}
 	return \@out;
 }
 

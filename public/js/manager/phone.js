@@ -293,6 +293,51 @@ function jawnPhoneGatewaysHidden() {
 	});
 	$('#phone_app #phone_ivr_machine').val(first ? first.key : '');
 	$('#phone_app #phone_ivr_bluetooth').val(first ? first.bluetooth : '');
+	jawnPhoneGatewayDuplicates();
+}
+
+// The phone matches a gateway by its adapter name, and a blank name resolves to
+// the built-in jawn-gateway, so two enabled gateways on one name are a
+// configuration error: the phone answers on whichever it bonded first. The rows
+// are read, never remembered, so a name edit or a toggle keeps the warning true.
+function jawnPhoneGatewayDuplicates() {
+	var list = $('#phone_app #phone_ivr_gateway_list');
+	if (!list.length) { return; }
+	var seen = {};
+	var folds = [];
+	var has = function (map, key) { return Object.prototype.hasOwnProperty.call(map, key); };
+	$('#phone_app .phone_app_ivr_gateway_row').each(function () {
+		var row = $(this);
+		if (!row.find('.phone_app_ivr_gateway_enabled').is(':checked')) { return; }
+		var typed = (row.find('.phone_app_ivr_gateway_bluetooth').val() || '').trim();
+		var name = typed || 'jawn-gateway';
+		var fold = name.toLowerCase();
+		if (!has(seen, fold)) { seen[fold] = { name: name, rows: [] }; folds.push(fold); }
+		seen[fold].rows.push(row);
+	});
+	var dupes = [];
+	$.each(folds, function (i, fold) {
+		if (seen[fold].rows.length > 1) { dupes.push(seen[fold]); }
+	});
+	$('#phone_app .phone_app_ivr_gateway_row').removeClass('phone_app_ivr_gateway_dupe');
+	$.each(dupes, function (i, dupe) {
+		$.each(dupe.rows, function (j, row) { row.addClass('phone_app_ivr_gateway_dupe'); });
+	});
+	var warning = $('#phone_app #phone_ivr_gateway_dupe_warn');
+	if (!dupes.length) {
+		if (warning.length) { warning.remove(); }
+		return;
+	}
+	if (!warning.length) {
+		warning = $('<div class="phone_app_ivr_gateway_dupe_warn" id="phone_ivr_gateway_dupe_warn"></div>');
+		list.after(warning);
+	}
+	warning.empty();
+	warning.append($('<span class="phone_app_ivr_gateway_dupe_text"></span>')
+		.text(jawnosT('Two gateways share a Bluetooth name; the phone answers on the first one it bonded.')));
+	$.each(dupes, function (i, dupe) {
+		warning.append($('<span class="phone_app_ivr_gateway_dupe_name"></span>').text(dupe.name));
+	});
 }
 
 // The IVR pane's save: the settings are the phone's own setting rows, and the
