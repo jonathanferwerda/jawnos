@@ -416,50 +416,65 @@ require JawnOS::Domain::Audio;
 	subs::audio_manage_set(0);
 }
 
-# --- a duplex PipeWire plan keeps the ordinary path, with no mix -----------
+# --- the manager gate: ALSA and every PipeWire plan get the mix ------------
+#
+# A duplex PipeWire plan used to keep the ordinary path because one
+# pipewire-alsa process could not play one node and capture another. The
+# engine now plays the replaced node and captures each routed input through its
+# own stream, so the gate is the backend alone.
 {
-	%STORE = (
-		'sound/audio_plan/all' => JSON::PP::encode_json({
-			sources => [ { id => 'gtr', kind => 'input', channel => 0 } ],
-			buses   => [],
-			sinks   => [ { id => 'out', kind => 'interface' } ],
-			routes  => [ { from => 'gtr', to => 'out' } ],
-		}),
-	);
 	require JawnOS::Audio::SystemMix;
-	open(my $dfh, '>', $ENV{JAWNOS_AUDIO_PLAN}) or die "boot plan: $!";
-	print {$dfh} '{"manage":0,"backend":"pipewire","device":"default",'
-		. '"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]}}';
-	close $dfh;
+	for my $case (
+		{ backend => 'pipewire', mode => 'duplex',   device => 'default', name => 'a duplex PipeWire plan' },
+		{ backend => 'pipewire', mode => 'playback', device => 'default', name => 'a playback PipeWire plan' },
+		{ backend => 'alsa',     mode => 'duplex',   device => 'hw:1,0',  name => 'a duplex ALSA plan' },
+		{ backend => 'alsa',     mode => 'playback', device => 'hw:1,0',  name => 'a playback ALSA plan' },
+	) {
+		%STORE = (
+			'sound/audio_plan/all' => JSON::PP::encode_json({
+				sources => [ { id => 'gtr', kind => 'input', channel => 0 } ],
+				buses   => [],
+				sinks   => [ { id => 'out', kind => 'interface' } ],
+				routes  => [ { from => 'gtr', to => 'out' } ],
+			}),
+		);
+		open(my $pfh, '>', $ENV{JAWNOS_AUDIO_PLAN}) or die "boot plan: $!";
+		print {$pfh} '{"manage":0,"backend":"' . $case->{backend} . '",'
+			. '"device":"' . $case->{device} . '",'
+			. '"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]}}';
+		close $pfh;
 
-	my ($ensured, $quit, $patched) = (0, 0, 0);
-	{
-		no warnings 'redefine';
-		local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
-		local *JawnOS::Audio::Engine::audio_engine_status = sub {
-			return { ok => 1, state => 'patching', mode => 'duplex',
-				backend => 'pipewire', device => 'default' };
-		};
-		local *JawnOS::Audio::Engine::audio_engine_patch = sub {
-			$patched = 1;
-			return { ok => 1, state => 'patching' };
-		};
-		local *JawnOS::Audio::Engine::audio_engine_quit = sub {
-			$quit = 1;
-			return { ok => 1, state => 'done' };
-		};
-		local *JawnOS::Audio::SystemMix::ensure = sub {
-			$ensured++;
-			return { ok => 1, source => 'jawn_system.monitor', created => 1 };
-		};
+		my ($ensured, $quit, $patched) = (0, 0, 0);
+		{
+			no warnings 'redefine';
+			local *JawnOS::Audio::Engine::audio_engine_available = sub { 1 };
+			local *JawnOS::Audio::Engine::audio_engine_status = sub {
+				return { ok => 1, state => 'patching', mode => $case->{mode},
+					backend => $case->{backend}, device => $case->{device} };
+			};
+			local *JawnOS::Audio::Engine::audio_engine_patch = sub {
+				$patched = 1;
+				return { ok => 1, state => 'patching' };
+			};
+			local *JawnOS::Audio::Engine::audio_engine_quit = sub {
+				$quit = 1;
+				return { ok => 1, state => 'done' };
+			};
+			local *JawnOS::Audio::SystemMix::ensure = sub {
+				$ensured++;
+				return { ok => 1, source => 'jawn_system.monitor',
+					previous_default => 'alsa_output.real', created => 0 };
+			};
 
-		my $on = subs::audio_manage_set(1);
-		is($ensured, 0, 'a duplex pipewire plan creates no system mix');
-		is($quit, 0, 'and does not restart the engine for one');
-		is($patched, 1, 'the patch is applied directly');
-		ok(!defined $on->{applied}{restarted}, 'the answer does not claim a restart');
+			my $on = subs::audio_manage_set(1);
+			is($ensured, 1, "$case->{name} creates the system mix");
+			is($quit, 0, "$case->{name} does not restart when the mix was already there");
+			is($patched, 1, "$case->{name} applies the plan");
+			is($on->{applied}{system_mix}{source}, 'jawn_system.monitor',
+				"$case->{name} names the mix source in the answer");
+		}
+		subs::audio_manage_set(0);
 	}
-	subs::audio_manage_set(0);
 }
 
 done_testing();

@@ -471,14 +471,16 @@ visible toggle that can be turned off, not a setting applied once and forgotten.
 
 Ordinary audio does not stop when the engine takes the output. On an ALSA-managed machine the manager
 creates a null sink (`jawn_system`), makes it the default output, and the engine captures its monitor
-as the plan's `device` source; on a managed PipeWire machine the same sink is made for a playback plan
+as the plan's `device` source; on a managed PipeWire machine the same sink is made for every plan
 (with no WirePlumber card rule, since a PipeWire device names no card) and the engine plays it out the
-output the sink replaced. A duplex plan keeps the ordinary PipeWire path, because one pipewire-alsa
-process cannot play out one node and capture another. A plan that routes that source owns it; a plan
-that does not still hears it at unity, so Music, a video, a notification or a remote-received stream
-is never lost to an empty table. Turning the switch off restores the output that was default before
-the sink and unloads it; a state file beside the plan lets the supervisor do the same after a crash. A
-machine with no pactl/PipeWire tooling keeps its ordinary output and needs none of this.
+output the sink replaced. A duplex PipeWire plan plays the replaced node the same way but does not
+open the card for capture: each routed local input is captured through its own `parec` stream, so one
+pipewire-alsa process never has to play out one node and capture another. A plan that routes that
+source owns it; a plan that does not still hears it at unity, so Music, a video, a notification or a
+remote-received stream is never lost to an empty table. Turning the switch off restores the output
+that was default before the sink and unloads it; a state file beside the plan lets the supervisor do
+the same after a crash. A machine with no pactl/PipeWire tooling keeps its ordinary output and needs
+none of this.
 
 Two source kinds carry the outside world into the plan. A `handset` source is the screened call —
 the reception mixer's `jawn_call_in` — so a call the receptionist answers routes like any other

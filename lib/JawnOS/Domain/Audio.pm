@@ -262,13 +262,15 @@ sub audio_plan_apply {
 
 	# The engine plays the machine's own output, so the virtual sink is needed
 	# before the patch arms: on ALSA the card is held exclusively, and on the
-	# shared PipeWire backend a playback plan mixes the sink and plays it out
-	# the output it replaced. A machine with no engine, no pactl, or a device
-	# that names no output keeps its ordinary sound: `ensure` says `skipped`
-	# rather than muting the house.
+	# shared PipeWire backend both playback and duplex plans mix the sink and
+	# play it out the output they replaced. A duplex plan captures its routed
+	# inputs through their own streams, so it no longer has to keep the ordinary
+	# path. A machine with no engine, no pactl, or a device that names no output
+	# keeps its ordinary sound: `ensure` says `skipped` rather than muting the
+	# house.
 	my $mix;
 	my $mix_backend = $engine_backend eq 'alsa'
-		|| ( $engine_backend eq 'pipewire' && $mode eq 'playback' );
+		|| $engine_backend eq 'pipewire';
 	if ($available && $mix_backend) {
 		$mix = JawnOS::Audio::SystemMix::ensure(
 			JawnOS::Audio::Engine::audio_engine_state_dir(),

@@ -48,6 +48,7 @@ use jawn_audio::mixer::{ParamName, ParamQueue};
 use jawn_audio::monbus::Consumer;
 use jawn_audio::{to_i16, Device, NullDevice};
 
+use crate::backends::BackendKind;
 use crate::socket::{get, Object, Value};
 
 /// The source kinds a saved plan may name. `input` is a capture channel,
@@ -74,14 +75,43 @@ enum SourceRoute {
 /// `system` marks a `device` source, which reads the machine's own mix from a
 /// second capture rather than a channel of the interface; `handset` marks a
 /// `handset` source, which reads the reception mixer's screened-call monitor
-/// (`jawn_call_in.monitor`) from a capture of its own.
+/// (`jawn_call_in.monitor`) from a capture of its own. `input` is the source's
+/// own `parec` ring on a PipeWire machine, where the card is never opened for
+/// capture: its samples land in the plan's `channel` each block.
 #[derive(Debug)]
 struct Source {
     id: String,
     channel: Option<usize>,
     system: bool,
     handset: bool,
+    input: Option<Consumer>,
     routes: Vec<SourceRoute>,
+}
+
+/// One routed local input the engine captures through its own stream.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputStream {
+    /// The source's index in the compiled plan, so a ring reaches the source
+    /// it was started for.
+    pub index: usize,
+    /// The plan's id, for the operator message when the capture cannot start.
+    pub id: String,
+    /// Which channel of the capture feeds this source, read the way the ALSA
+    /// duplex loop reads the card's channels.
+    pub channel: usize,
+}
+
+/// Which streams a patch asks the device worker to open.
+#[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamPlan {
+    /// Open the interface for capture as well as playback. ALSA duplex needs
+    /// this; a PipeWire engine plays only, and captures each routed input
+    /// through `parec`, because one pipewire-alsa process takes one node
+    /// target for the whole process.
+    pub card_capture: bool,
+    /// One `parec` stream per routed local input, on the PipeWire backend.
+    pub inputs: Vec<InputStream>,
 }
 
 /// One declared sink, and whether this machine's playback can receive it.
@@ -181,6 +211,9 @@ pub struct Patchbay {
     system_routed: bool,
     /// Interleaved f32 capture, one block.
     input: Vec<f32>,
+    /// One stereo block popped from an input's own `parec` ring, then written
+    /// into that source's plan channel before the graph renders.
+    capture_block: Vec<f32>,
     /// Interleaved stereo f32 system mix, one block. Empty when the block did
     /// not carry one; the same length as `input`'s frames otherwise.
     system: Vec<f32>,
@@ -266,6 +299,7 @@ impl Patchbay {
                 channel: reachable.then_some(channel),
                 system,
                 handset,
+                input: None,
                 routes: Vec::new(),
             });
         }
@@ -488,6 +522,7 @@ impl Patchbay {
             summary,
             system_routed,
             input: Vec::new(),
+            capture_block: Vec::new(),
             system: Vec::new(),
             handset: None,
             handset_block: Vec::new(),
@@ -518,8 +553,76 @@ impl Patchbay {
     /// all external or silent and need no card capture. A plan without one runs
     /// playback-only, so the microphone stays with PipeWire and its privacy
     /// indicator stays off.
+    #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
     pub fn wants_input(&self) -> bool {
         sources_want_input(&self.sources)
+    }
+
+    /// What streams this patch asks the device worker to open on `backend`.
+    ///
+    /// ALSA opens the card once and reads every input channel from it, so a
+    /// routed local input asks for `card_capture` and no extra process. A
+    /// PipeWire engine plays out the node it replaced and cannot also capture
+    /// the card with the same pipewire-alsa process, so each routed input gets
+    /// its own `parec` stream and the loop stays playback-only.
+    #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+    pub fn stream_plan(&self, backend: BackendKind) -> StreamPlan {
+        let pipewire = backend == BackendKind::PipeWire;
+        let inputs = if pipewire {
+            self.sources
+                .iter()
+                .enumerate()
+                .filter_map(|(index, source)| {
+                    let channel = source.channel?;
+                    if source.routes.is_empty() {
+                        return None;
+                    }
+                    Some(InputStream {
+                        index,
+                        id: source.id.clone(),
+                        channel,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        StreamPlan {
+            card_capture: backend == BackendKind::Alsa && self.wants_input(),
+            inputs,
+        }
+    }
+
+    /// Attach a routed input's own capture. Its samples are written into the
+    /// source's plan channel at the top of each block, exactly where the ALSA
+    /// duplex loop's card capture would have put them.
+    #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+    pub fn attach_input(&mut self, index: usize, consumer: Consumer) {
+        if let Some(source) = self.sources.get_mut(index) {
+            source.input = Some(consumer);
+        }
+    }
+
+    /// An input's capture could not start. Only that source is silenced: the
+    /// machine's ordinary audio and every other route keep playing, and the
+    /// source's id is named in `silent` so the status can say why.
+    #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+    pub fn silence_input(&mut self, index: usize) {
+        let Some(source) = self.sources.get_mut(index) else {
+            return;
+        };
+        source.channel = None;
+        source.input = None;
+        source.routes.clear();
+        let id = source.id.clone();
+        if !self.summary.silent.iter().any(|name| name == &id) {
+            self.summary.silent.push(id);
+        }
+        self.summary.bound_sources = self
+            .sources
+            .iter()
+            .filter(|source| source.channel.is_some() || source.system || source.handset)
+            .count();
     }
 
     /// Attach the reception mixer's screened-call capture. The ring is popped
@@ -618,6 +721,7 @@ impl Patchbay {
             }
         }
         self.input = vec![0.0; period.saturating_mul(channels)];
+        self.capture_block = vec![0.0; period.saturating_mul(2)];
         self.system = vec![0.0; period.saturating_mul(2)];
         // Allocated whether or not a ring is attached yet: the socket can attach
         // the call capture after the graph is prepared, and the callback must
@@ -794,6 +898,20 @@ impl Patchbay {
         // The mix is the sink sum for *this* block; it must start at silence or
         // a second block accumulates onto the first.
         self.mix[..stereo].fill(0.0);
+
+        // A PipeWire input has its own stream. Pop it once per block and write
+        // it into the plan's channel, so the source loop below reads it exactly
+        // as it reads the ALSA duplex loop's capture. A channel two sources
+        // share is written twice, the same as one card channel feeding both.
+        for source in &self.sources {
+            let (Some(consumer), Some(channel)) = (source.input.as_ref(), source.channel) else {
+                continue;
+            };
+            consumer.pop(&mut self.capture_block[..stereo]);
+            for frame in 0..frames {
+                self.input[frame * self.channels + channel] = self.capture_block[frame * 2];
+            }
+        }
 
         // The handset ring is read once per block, before the sources, the same
         // way the take's live monitor pops its ring. A short ring is silence.
@@ -1755,6 +1873,97 @@ mod tests {
         // nothing: nothing reads the capture, so nothing needs the card.
         assert!(!patchbay.wants_input());
         assert_eq!(patchbay.summary().mode, "playback");
+    }
+
+    // --- which streams a backend opens ---------------------------------------
+
+    #[test]
+    fn a_pipewire_duplex_plan_plays_and_captures_each_routed_input_itself() {
+        let patchbay = bay(
+            r#"{
+                "sources":[
+                    {"id":"gtr","kind":"input","channel":0},
+                    {"id":"keys","kind":"input","channel":1},
+                    {"id":"room","kind":"input","channel":0}
+                ],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[
+                    {"from":"gtr","to":"out"},
+                    {"from":"keys","to":"out"}
+                ]
+            }"#,
+        );
+        assert_eq!(patchbay.summary().mode, "duplex");
+
+        let streams = patchbay.stream_plan(BackendKind::PipeWire);
+        // The loop stays playback-only: the process plays the node the mix
+        // replaced and cannot capture the card through the same pipewire-alsa
+        // process. Each routed input is captured by a stream of its own.
+        assert!(!streams.card_capture);
+        assert_eq!(streams.inputs.len(), 2, "one per routed input: {:?}", streams.inputs);
+        assert_eq!(streams.inputs[0].id, "gtr");
+        assert_eq!(streams.inputs[0].channel, 0);
+        assert_eq!(streams.inputs[1].id, "keys");
+        assert_eq!(streams.inputs[1].channel, 1);
+        assert!(
+            !streams.inputs.iter().any(|input| input.id == "room"),
+            "an unrouted input asks for no capture"
+        );
+
+        // ALSA is unchanged: one duplex open reads every channel.
+        let streams = patchbay.stream_plan(BackendKind::Alsa);
+        assert!(streams.card_capture);
+        assert!(streams.inputs.is_empty(), "ALSA opens no second process");
+    }
+
+    #[test]
+    fn a_plan_with_no_routed_input_asks_for_no_capture() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"system","kind":"device"}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"system","to":"out"}]
+            }"#,
+        );
+        let streams = patchbay.stream_plan(BackendKind::PipeWire);
+        assert!(!streams.card_capture);
+        assert!(streams.inputs.is_empty(), "the microphone stays closed");
+    }
+
+    #[test]
+    fn an_attached_input_feeds_its_plan_channel_and_can_be_silenced() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"gtr","kind":"input","channel":1}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"gtr","to":"out"}]
+            }"#,
+        );
+        let (producer, consumer) = jawn_audio::monbus::MonitorBus::new(4096);
+        producer.push(&[0.25f32, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]);
+        patchbay.attach_input(0, consumer);
+
+        let input = [0.0f32; 8];
+        let mut output = [0.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+        // The ring's samples land in plan channel 1 and are routed to the
+        // stereo output, exactly as the ALSA duplex capture would be (a centred
+        // mono source is equal-power, so 0.25 becomes 0.25/sqrt(2) per side).
+        let expected = 0.25f32 / 2.0f32.sqrt();
+        assert!(
+            output.iter().all(|sample| (*sample - expected).abs() < 1e-6),
+            "{output:?}"
+        );
+
+        // A capture that could not start silences only its own source.
+        patchbay.silence_input(0);
+        assert!(patchbay.summary().silent.contains(&"gtr".to_string()));
+        let mut output = [7.0f32; 8];
+        patchbay.block_f32(&input, &mut output).expect("run");
+        assert!(output.iter().all(|sample| *sample == 0.0), "{output:?}");
     }
 
     // --- the reception handset -------------------------------------------------

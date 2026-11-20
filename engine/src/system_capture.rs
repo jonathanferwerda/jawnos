@@ -41,6 +41,12 @@ pub const LATENCY_MSEC: u32 = 20;
 /// below its own floor, so this is the minimum.
 const RING_MSEC: u32 = 85;
 
+/// The PulseAudio/PipeWire alias for this machine's default input. A plan's
+/// `input` source names a channel, not a node, so the engine records the
+/// default source; the system mix only moves the default output.
+#[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+pub const DEFAULT_INPUT: &str = "@DEFAULT_SOURCE@";
+
 /// Frames in one `parec` process period at `rate`.
 fn chunk_frames(rate: u32) -> usize {
     (u64::from(rate) * u64::from(LATENCY_MSEC) / 1000) as usize
@@ -72,6 +78,35 @@ impl SystemCapture {
     /// returning the ring's consumer. The child is spawned on a thread that
     /// retries, so a sink created a moment later is still picked up.
     pub fn start(device: &str, rate: u32) -> Result<(SystemCapture, Consumer), String> {
+        Self::start_with(device, rate, 2, None)
+    }
+
+    /// Start one routed input's own capture. `channels` is the plan's capture
+    /// width; the samples of `channel` are kept and duplicated into the stereo
+    /// ring every capture uses, so the patchbay can read it like a card
+    /// channel. The stream is separate from the system mix and from every
+    /// other input, and uses the same 20 ms pacing.
+    #[cfg_attr(not(feature = "alsa"), allow(dead_code))]
+    pub fn start_channel(
+        device: &str,
+        rate: u32,
+        channel: usize,
+        channels: usize,
+    ) -> Result<(SystemCapture, Consumer), String> {
+        if channels <= channel {
+            return Err(format!(
+                "input channel {channel} is outside the {channels}-channel capture"
+            ));
+        }
+        Self::start_with(device, rate, channels, Some(channel))
+    }
+
+    fn start_with(
+        device: &str,
+        rate: u32,
+        channels: usize,
+        pick: Option<usize>,
+    ) -> Result<(SystemCapture, Consumer), String> {
         if !jawn_audio::backends::command_exists("parec") {
             return Err(
                 "no parec on PATH; the machine's own audio cannot be captured".to_string()
@@ -90,7 +125,7 @@ impl SystemCapture {
             .spawn(move || {
                 let mut complained = false;
                 while !thread_stop.load(Ordering::SeqCst) {
-                    match spawn_parec(&device, rate) {
+                    match spawn_parec(&device, rate, channels) {
                         Ok(mut running) => {
                             let Some(mut stdout) = running.stdout.take() else {
                                 let _ = running.kill();
@@ -117,7 +152,7 @@ impl SystemCapture {
                                     Ok(0) => break,
                                     Ok(count) => {
                                         pending.extend_from_slice(&bytes[..count]);
-                                        push_whole_frames(&producer, &mut pending);
+                                        push_whole_frames(&producer, &mut pending, channels, pick);
                                     }
                                     Err(error) => {
                                         if !complained {
@@ -228,21 +263,21 @@ fn lists_source(listing: &str, device: &str) -> bool {
 /// without a sound server; the explicit process latency is the fix, not a
 /// preference: without it the server's own default is seconds of buffer, and
 /// each burst exceeds the ring.
-fn parec_args(device: &str, rate: u32) -> Vec<String> {
+fn parec_args(device: &str, rate: u32, channels: usize) -> Vec<String> {
     vec![
         format!("--device={device}"),
         "--format=s16le".to_string(),
         format!("--rate={rate}"),
-        "--channels=2".to_string(),
+        format!("--channels={channels}"),
         format!("--latency-msec={LATENCY_MSEC}"),
         format!("--process-time-msec={LATENCY_MSEC}"),
         "--raw".to_string(),
     ]
 }
 
-fn spawn_parec(device: &str, rate: u32) -> Result<Child, String> {
+fn spawn_parec(device: &str, rate: u32, channels: usize) -> Result<Child, String> {
     Command::new("parec")
-        .args(parec_args(device, rate))
+        .args(parec_args(device, rate, channels))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -250,23 +285,45 @@ fn spawn_parec(device: &str, rate: u32) -> Result<Child, String> {
         .map_err(|error| format!("cannot start parec: {error}"))
 }
 
-/// Convert complete little-endian S16 stereo frames to f32 and push them. A
+/// Convert complete little-endian S16 frames to f32 and push them. `pick`
+/// selects one channel and duplicates it to both sides, which is how a routed
+/// input keeps its own channel; without it the first two channels are kept. A
 /// partial frame stays in `pending` for the next read; it is never guessed.
-fn push_whole_frames(producer: &monbus::Producer, pending: &mut Vec<u8>) {
-    let frames = pending.len() / 4;
+fn push_whole_frames(
+    producer: &monbus::Producer,
+    pending: &mut Vec<u8>,
+    channels: usize,
+    pick: Option<usize>,
+) {
+    let width = channels.max(1) * 2;
+    let frames = pending.len() / width;
     if frames == 0 {
         return;
     }
     let mut block = Vec::with_capacity(frames * 2);
     for frame in 0..frames {
-        let offset = frame * 4;
-        let left = i16::from_le_bytes([pending[offset], pending[offset + 1]]);
-        let right = i16::from_le_bytes([pending[offset + 2], pending[offset + 3]]);
-        block.push(f32::from(left) / 32_768.0);
-        block.push(f32::from(right) / 32_768.0);
+        let base = frame * width;
+        let sample = |channel: usize| {
+            let offset = base + channel.min(channels.saturating_sub(1)) * 2;
+            let value = i16::from_le_bytes([pending[offset], pending[offset + 1]]);
+            f32::from(value) / 32_768.0
+        };
+        let (left, right) = match pick {
+            Some(channel) => {
+                let value = sample(channel);
+                (value, value)
+            }
+            None if channels >= 2 => (sample(0), sample(1)),
+            None => {
+                let value = sample(0);
+                (value, value)
+            }
+        };
+        block.push(left);
+        block.push(right);
     }
     producer.push(&block);
-    pending.drain(..frames * 4);
+    pending.drain(..frames * width);
 }
 
 #[cfg(test)]
@@ -277,7 +334,7 @@ mod tests {
     fn whole_frames_are_converted_and_a_partial_one_is_kept() {
         let (producer, consumer) = monbus::new(ring_frames(48_000));
         let mut pending = vec![0x00, 0x40, 0x00, 0xC0, 0x00, 0x20];
-        push_whole_frames(&producer, &mut pending);
+        push_whole_frames(&producer, &mut pending, 2, None);
         assert_eq!(pending.len(), 2, "the incomplete second frame stays");
 
         let mut out = [0.0f32; 2];
@@ -287,8 +344,30 @@ mod tests {
     }
 
     #[test]
+    fn an_input_capture_keeps_only_the_channel_it_was_started_for() {
+        // Two four-channel frames: channels 0..3 are 0.1, 0.2, 0.3, 0.4.
+        let (producer, consumer) = monbus::new(ring_frames(48_000));
+        let sample = |value: f32| ((value * 32_768.0) as i16).to_le_bytes();
+        let mut pending = Vec::new();
+        for _ in 0..2 {
+            for value in [0.1f32, 0.2, 0.3, 0.4] {
+                pending.extend_from_slice(&sample(value));
+            }
+        }
+        push_whole_frames(&producer, &mut pending, 4, Some(2));
+        assert!(pending.is_empty(), "both whole frames were consumed");
+
+        let mut out = [0.0f32; 4];
+        assert_eq!(consumer.pop(&mut out), 2);
+        for frame in out.chunks(2) {
+            assert!((frame[0] - 0.3).abs() < 1e-3, "{out:?}");
+            assert!((frame[1] - 0.3).abs() < 1e-3, "the channel feeds both sides");
+        }
+    }
+
+    #[test]
     fn the_capture_asks_for_small_steady_chunks() {
-        let args = parec_args("jawn_system.monitor", 48_000);
+        let args = parec_args("jawn_system.monitor", 48_000, 2);
         assert!(args.contains(&"--device=jawn_system.monitor".to_string()), "{args:?}");
         assert!(args.contains(&"--format=s16le".to_string()), "{args:?}");
         assert!(args.contains(&"--rate=48000".to_string()), "{args:?}");
@@ -304,6 +383,32 @@ mod tests {
             args.contains(&format!("--process-time-msec={LATENCY_MSEC}")),
             "{args:?}"
         );
+    }
+
+    #[test]
+    fn an_input_capture_asks_for_the_plan_width_with_the_same_pacing() {
+        let args = parec_args(DEFAULT_INPUT, 48_000, 4);
+        assert!(
+            args.contains(&format!("--device={DEFAULT_INPUT}")),
+            "{args:?}"
+        );
+        assert!(args.contains(&"--channels=4".to_string()), "{args:?}");
+        assert!(
+            args.contains(&format!("--latency-msec={LATENCY_MSEC}")),
+            "an input uses the same 20 ms pacing: {args:?}"
+        );
+        assert!(
+            args.contains(&format!("--process-time-msec={LATENCY_MSEC}")),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn a_channel_outside_the_capture_is_refused_before_a_process_starts() {
+        let error = SystemCapture::start_channel(DEFAULT_INPUT, 48_000, 2, 2)
+            .err()
+            .expect("channel 2 cannot exist in a two-channel capture");
+        assert!(error.contains("channel 2"), "{error}");
     }
 
     #[test]

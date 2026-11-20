@@ -2159,7 +2159,7 @@ fn attach_patch_handset(
 fn patch_alsa(
     device: &str,
     options: &Options,
-    patchbay: patchbay::Patchbay,
+    mut patchbay: patchbay::Patchbay,
     total: Option<u64>,
     stop: &AtomicBool,
 ) -> Result<PatchRun, String> {
@@ -2181,7 +2181,30 @@ fn patch_alsa(
         },
         None => (None, None),
     };
-    let run = if patchbay.wants_input() {
+    // On PipeWire each routed local input gets its own capture: the loop plays
+    // out the node the mix replaced and never opens the card for capture. On
+    // ALSA the same channel arrives in the duplex loop below, so no second
+    // process runs.
+    let streams = patchbay.stream_plan(options.backend);
+    let mut input_captures = Vec::new();
+    for input in &streams.inputs {
+        match crate::system_capture::SystemCapture::start_channel(
+            crate::system_capture::DEFAULT_INPUT,
+            options.rate,
+            input.channel,
+            options.channels,
+        ) {
+            Ok((capture, consumer)) => {
+                patchbay.attach_input(input.index, consumer);
+                input_captures.push(capture);
+            }
+            Err(error) => {
+                eprintln!("jawn-audio: input {}: {error}", input.id);
+                patchbay.silence_input(input.index);
+            }
+        }
+    }
+    let run = if streams.card_capture {
         // A routed local input reads a card channel, so the loop is duplex.
         jawn_audio::alsa_device::run_listen_with_system(
             device,
@@ -2209,6 +2232,9 @@ fn patch_alsa(
             system.as_mut(),
         )?
     };
+    for mut capture in input_captures {
+        capture.stop();
+    }
     if let Some(capture) = capture.as_mut() {
         capture.stop();
     }

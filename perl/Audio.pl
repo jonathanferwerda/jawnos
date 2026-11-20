@@ -459,14 +459,14 @@ sub plan_config {
 }
 
 # Whether a backend carries the machine's own audio through the engine, and so
-# needs the virtual sink: ALSA always owns the card; a PipeWire playback plan
-# plays the sink's monitor out the device it replaced. Duplex on PipeWire keeps
-# the ordinary path, because one pipewire-alsa process takes one node target.
+# needs the virtual sink: ALSA always owns the card; a PipeWire plan (playback
+# or duplex) plays the sink's monitor out the device it replaced. A duplex plan
+# captures its routed inputs through their own streams, so the engine never
+# needs the card's capture through pipewire-alsa.
 sub mix_backends {
 	my ($backend, $mode) = @_;
 	return 1 if defined $backend && $backend eq 'alsa';
-	return 1 if defined $backend && $backend eq 'pipewire'
-		&& defined $mode && $mode eq 'playback';
+	return 1 if defined $backend && $backend eq 'pipewire';
 	return 0;
 }
 
@@ -484,21 +484,21 @@ sub device_same {
 # Put the machine's own audio on the virtual sink exactly while the engine
 # plays the machine's output. On ALSA the engine holds the card, so the sink is
 # the only place an app can land; on the shared PipeWire backend the engine is
-# the mixer itself and plays the sink's monitor out the device it replaced. The
-# plan file is the switch's durable copy, so a supervisor that starts after a
-# reboot knows without asking the manager. The rule that frees the card's
-# playback node goes in before the child opens it, and only for an ALSA card;
-# the microphone node deliberately stays with PipeWire.
+# the mixer itself and plays the sink's monitor out the device it replaced. A
+# duplex PipeWire plan uses the same mix and plays only; each routed input is
+# captured by its own stream. The plan file is the switch's durable copy, so a
+# supervisor that starts after a reboot knows without asking the manager. The
+# rule that frees the card's playback node goes in before the child opens it,
+# and only for an ALSA card; the microphone node deliberately stays with
+# PipeWire.
 sub ensure_system_mix {
 	my ($backend, $manage, $device, $mode, $engine) = @_;
 	return undef unless load_system_mix();
 
 	# ALSA always needs the sink: the engine holds the card. PipeWire needs it
-	# for a playback plan, where the engine plays the mix out the output it
-	# replaced. A duplex plan keeps the ordinary PipeWire path: pipewire-alsa
-	# takes one node target for the whole process, so an engine playing out the
-	# replaced sink would also capture that sink, and a shared backend has no
-	# card to free.
+	# for every plan: the engine plays the mix out the output it replaced, and a
+	# duplex plan's routed inputs arrive through their own capture streams, so
+	# no single pipewire-alsa process has to play one node and capture another.
 	#
 	# A live child's own report is the fact; the flags only describe the next
 	# spawn. Deciding from the flags while the child runs could take the sink

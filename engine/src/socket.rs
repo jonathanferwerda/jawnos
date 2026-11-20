@@ -3137,7 +3137,7 @@ impl SocketPatchSink<'_> {
 #[cfg(feature = "alsa")]
 fn patch_hardware(
     config: &Config,
-    patchbay: Patchbay,
+    mut patchbay: Patchbay,
     status: &Arc<Mutex<PatchStatus>>,
     stop: &AtomicBool,
     system_device: Option<String>,
@@ -3150,11 +3150,11 @@ fn patch_hardware(
         None
     };
     let expected = system_device.is_some();
-    // Decide before `prepared` can drop a channel: whether the plan reads a
-    // card input, and therefore whether the loop opens capture. A plan that
-    // only mixes the system/handset captures runs playback-only, leaving the
-    // microphone to PipeWire.
-    let wants_input = patchbay.wants_input();
+    // Decide before `prepared` can drop a channel: what streams the plan asks
+    // for. On ALSA a routed local input is a card capture in the loop; on
+    // PipeWire it is one `parec` per input, because one pipewire-alsa process
+    // cannot play out the replaced node and capture the card at the same time.
+    let streams = patchbay.stream_plan(config.backend);
     let (mut capture, mut system) = match system_device.as_deref() {
         Some(source) => match crate::system_capture::SystemCapture::start(source, config.rate) {
             Ok((capture, consumer)) => (Some(capture), Some(consumer)),
@@ -3165,6 +3165,27 @@ fn patch_hardware(
         },
         None => (None, None),
     };
+    // Every routed input gets its own capture on the PipeWire backend. A
+    // failed one is named in `silent` and the rest of the patch, including the
+    // machine's ordinary audio, keeps playing.
+    let mut input_captures = Vec::new();
+    for input in &streams.inputs {
+        match crate::system_capture::SystemCapture::start_channel(
+            crate::system_capture::DEFAULT_INPUT,
+            config.rate,
+            input.channel,
+            config.channels,
+        ) {
+            Ok((capture, consumer)) => {
+                patchbay.attach_input(input.index, consumer);
+                input_captures.push(capture);
+            }
+            Err(error) => {
+                eprintln!("jawn-audio: input {}: {error}", input.id);
+                patchbay.silence_input(input.index);
+            }
+        }
+    }
     {
         let mut current = status
             .lock()
@@ -3183,7 +3204,7 @@ fn patch_hardware(
         channels: config.channels,
         frames: 0,
     };
-    let run = if wants_input {
+    let run = if streams.card_capture {
         jawn_audio::alsa_device::run_listen_with_system(
             &config.device,
             config.rate,
@@ -3209,6 +3230,9 @@ fn patch_hardware(
         )
     }
     .map_err(|error| format!("cannot patch: {error}"))?;
+    for mut capture in input_captures {
+        capture.stop();
+    }
     if let Some(capture) = capture.as_mut() {
         capture.stop();
     }
