@@ -56,7 +56,7 @@ control-socket command, not of a saved document. So it is three transient
 commands, answered in the same one-object-per-line protocol:
 
 ```
-{"cmd":"gateway","action":"bind","call_in":"jawn_call_in","prompt":"jawn_prompt"}
+{"cmd":"gateway","action":"bind","call_in":"jawn_call_in","prompt":"jawn_prompt","volume":37}
 {"cmd":"gateway","action":"release"}
 {"cmd":"gateway","action":"status"}
 ```
@@ -67,7 +67,9 @@ commands, answered in the same one-object-per-line protocol:
   source to any sink name), and opens the prompt port. It answers
   `{"ok":true,"gateway":{...}}`. Binding while already bound is idempotent and
   keeps the first capture. `"prompt"` is optional and defaults to
-  `jawn_prompt`.
+  `jawn_prompt`; `"volume"` is optional and, when present, is the phone
+  channel's gain in percent (0..100, clamped and rounded like the mixer's), so
+  the engine's `pacat` carries the same level the helper's did.
 - A sink the machine cannot capture still answers `ok` with
   `call_in:"silent"` and **schedules a bounded retry** (below). A missing sink
   is never fatal — the same rule the patchbay follows.
@@ -160,9 +162,14 @@ waits on the FIFO and starts
 
 ```
 pacat --playback --raw --device=<prompt_sink> --format=s16le --rate=8000 \
-      --channels=1 --latency-msec=20 \
+      --channels=1 --latency-msec=20 [--volume=<n>%] \
       --client-name=jawn-sco-prompt --stream-name=jawn-sco-prompt
 ```
+
+The optional `--volume` comes from the bind's `volume`, which
+`JawnOS::Sco::Gateway` fills from `Mixer::playback_volume` (the phone channel's
+`sound_channel_gain`, the same number the helper's `pacat` uses). Absent means
+`pacat`'s default.
 
 The two names are the mixer's: `attach` repairs the prompt stream's route by
 `application.name = jawn-sco-prompt`, and an unnamed `pacat` can inherit a saved
@@ -204,12 +211,15 @@ call makes.
 
 ## Readiness and selection
 
-`JawnOS::Sco::Backend`'s `engine` backend reports ready only when all three
+`JawnOS::Sco::Backend`'s `engine` backend reports ready only when all four
 hold:
 
 1. the helper binary is built,
-2. that binary names `--engine` (one cached scan of its usage text), and
-3. the eval-guarded engine socket answers a `status` whose `gateway.capable` is
+2. that binary names `--engine` (one cached scan of its usage text, keyed by
+   path, mtime and size so a rebuilt helper is re-read), and
+3. a Bluetooth adapter is present — the engine carries the PCM, not the radio,
+   and without an adapter the helper can never take the Hands-Free link,
+4. the eval-guarded engine socket answers a `status` whose `gateway.capable` is
    true.
 
 Otherwise `ready` is 0 with the engine's own reason, and the gateway uses

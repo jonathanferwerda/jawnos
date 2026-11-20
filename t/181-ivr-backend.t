@@ -104,10 +104,21 @@ my $with_engine = engine_helper_file(1);
 my $without_engine = engine_helper_file(0);
 
 my $engine = JawnOS::Sco::Backend->new(
-	backend => 'engine', helper => 1, helper_path => $with_engine,
+	backend => 'engine', helper => 1, adapter => 1, helper_path => $with_engine,
 );
 is($engine->name, 'engine', 'an engine backend names itself');
 is($engine->audio, 'engine', 'and names the engine stack the advert shows');
+
+# A gateway with no adapter can never take the Hands-Free link, so its ports
+# cannot make it ready. The reason is the pactl branch's own sentence.
+{
+	my $no_adapter = JawnOS::Sco::Backend->new(
+		backend => 'engine', helper => 1, adapter => 0, helper_path => $with_engine,
+	);
+	my ($ready, $why) = $no_adapter->ready();
+	ok(!$ready, 'an engine with no Bluetooth adapter is not ready');
+	is($why, 'no Bluetooth adapter is present', 'and gives the same reason the pactl branch gives');
+}
 
 {
 	my ($path, $pid) = start_engine(1);
@@ -143,7 +154,7 @@ is($engine->audio, 'engine', 'and names the engine stack the advert shows');
 	my ($path, $pid) = start_engine(1);
 	local $ENV{JAWNOS_AUDIO_SOCKET} = $path;
 	my $old = JawnOS::Sco::Backend->new(
-		backend => 'engine', helper => 1, helper_path => $without_engine,
+		backend => 'engine', helper => 1, adapter => 1, helper_path => $without_engine,
 	);
 	my ($ready, $why) = $old->ready();
 	ok(!$ready, 'an engine-capable socket with a helper built without --engine is not ready');
@@ -151,6 +162,21 @@ is($engine->audio, 'engine', 'and names the engine stack the advert shows');
 	kill 'KILL', $pid;
 	waitpid($pid, 0);
 	$engine_pids[-1] = undef;
+}
+
+# A helper rebuilt at the same path must not stay cached as stale for the life
+# of a manager: the cache is keyed by path, mtime and size.
+{
+	my $path = engine_helper_file(1);
+	my $rebuilt = JawnOS::Sco::Backend->new(
+		backend => 'engine', helper => 1, adapter => 1, helper_path => $path,
+	);
+	ok($rebuilt->helper_engine_capable(), 'the staged helper names --engine');
+	open(my $fh, '>', $path) or die "$path: $!";
+	print {$fh} "usage: --pipe-in CMD\n";
+	close $fh;
+	chmod 0755, $path;
+	ok(!$rebuilt->helper_engine_capable(), 'a helper rebuilt in place is read again, not served stale');
 }
 
 # Once ready, the engine backend keeps the mixer's jobs: the null sinks, the
@@ -167,7 +193,7 @@ is($engine->audio, 'engine', 'and names the engine stack the advert shows');
 	sub playback_command { 'PLAY' }
 }
 my $roles = JawnOS::Sco::Backend->new(
-	backend => 'engine', helper => 1, helper_path => $with_engine, mixer => FakeMixer->new(),
+	backend => 'engine', helper => 1, adapter => 1, helper_path => $with_engine, mixer => FakeMixer->new(),
 );
 is($roles->prepare, 2, 'prepare keeps loading the mixer sinks');
 is_deeply($roles->attach('00:11:22:33:44:55'),
@@ -237,6 +263,56 @@ foreach my $role (qw(in out)) {
 	is($state->{'backend'}, '', 'a gateway that never advertised gets no invented backend');
 	is($state->{'ready'}, 0, 'and is not ready');
 	like($state->{'ready_note'}, qr/has not reported/, 'with a note that says so');
+}
+
+# The local pane asks the same way the advert does: the engine first, then the
+# pactl fallback, so a gateway's own page cannot disagree with its advert.
+{
+	local *JawnOS::Sco::Backend::ready = sub {
+		return $_[0]->name eq 'engine' ? (1) : (0, 'pactl is not installed');
+	};
+	my $state = Manager::_ivr_audio_state({}, '');
+	is($state->{'backend'}, 'engine', 'the local pane prefers the engine when it is ready');
+	is($state->{'audio'}, 'engine', 'and shows the engine word');
+	ok($state->{'ready'}, 'and is ready');
+}
+{
+	local *JawnOS::Sco::Backend::ready = sub {
+		return $_[0]->name eq 'engine' ? (0, 'the audio engine is not running on this machine') : (1);
+	};
+	my $state = Manager::_ivr_audio_state({}, '');
+	is($state->{'backend'}, 'pactl', 'a not-ready engine leaves the local pane on pactl');
+	ok($state->{'ready'}, 'and the pactl backend is still asked');
+}
+
+# The gateway sends the phone channel's gain on the bind, so the engine's
+# prompt pacat can carry the same level the helper's does.
+{
+	require(root() . '/lib/JawnOS/Sco/Gateway.pm');
+	my $dir = tempdir(CLEANUP => 1);
+	my $gw = JawnOS::Sco::Gateway->new(
+		dir => "$dir/sco", helper => '/bin/false', status_path => "$dir/sco.json", pipe => 1,
+	);
+	$gw->{'engine_backend'} = bless({}, 'EngineReady');
+	$gw->{'mixer'} = bless({}, 'GainMixer');
+	no warnings 'once';
+	local *GainMixer::playback_volume = sub { 37 };
+	my $captured;
+	local *JawnOS::Sco::Gateway::_engine_request = sub {
+		my ($self, $request) = @_;
+		$captured = $request;
+		return { ok => 1, gateway => {
+			call_in => 'silent',
+			paths => { call_in => '/p/call_in', prompt => '/p/prompt' } } };
+	};
+	$gw->_engine_begin();
+	$gw->_engine_stop_wait();
+	is($captured->{'cmd'}, 'gateway', 'the gain rides the gateway command');
+	is($captured->{'action'}, 'bind', 'on the bind');
+	is($captured->{'volume'}, 37, 'the bind request carries the phone channel gain');
+	is($captured->{'call_in'}, 'jawn_call_in', 'and names the call sink');
+	is($captured->{'prompt'}, 'jawn_prompt', 'and the prompt sink');
+	$gw->cancel();
 }
 
 # --------------------------------------------------------------- the pane wording

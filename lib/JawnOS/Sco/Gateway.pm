@@ -165,10 +165,17 @@ sub _engine_begin {
 	return 0 unless $self->{'engine_backend'};
 	return 1 if $self->{'engine_starting'};
 	$self->{'engine_starting'} = 1;
-	my $reply = $self->_engine_request({
+	my $request = {
 		cmd => 'gateway', action => 'bind',
 		call_in => 'jawn_call_in', prompt => 'jawn_prompt',
-	}, 2);
+	};
+	# The prompt's gain is the phone channel's, the same value the helper's
+	# `pacat --volume` carries in pipe mode. The engine formats it; send the
+	# mixer's own number rather than a second reading of the setting.
+	my $volume = eval { $self->{'mixer'}->playback_volume() };
+	$request->{'volume'} = $volume
+		if defined $volume && $volume =~ /^\d+$/;
+	my $reply = $self->_engine_request($request, 2);
 	my ($plan, $paths) = _engine_plan($reply);
 	$self->{'engine_bound'} = 1 if $plan ne 'pactl';
 	if ($plan eq 'engine') {

@@ -1884,12 +1884,13 @@ fn fake_parec(name: &str) -> PathBuf {
     .expect("write the stand-in parec");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
         .expect("make the stand-in executable");
-    // The prompt child: record its own pid and then copy its stdin to the file
-    // the test named, so a test can prove both that it ran and what it heard.
+    // The prompt child: record its own pid and argv, then copy its stdin to the
+    // file the test named, so a test can prove both that it ran and what it
+    // heard (and with which gain).
     let pacat = dir.join("pacat");
     fs::write(
         &pacat,
-        "#!/bin/sh\necho $$ > \"$PACAT_PID\"\nexec cat > \"$PACAT_OUT\"\n",
+        "#!/bin/sh\n[ -n \"$PACAT_PID\" ] && echo $$ > \"$PACAT_PID\"\n[ -n \"$PACAT_ARGS\" ] && printf '%s\\n' \"$@\" > \"$PACAT_ARGS\"\nexec cat > \"${PACAT_OUT:-/dev/null}\"\n",
     )
     .expect("write the stand-in pacat");
     fs::set_permissions(&pacat, fs::Permissions::from_mode(0o755))
@@ -2088,6 +2089,7 @@ fn the_gateway_prompt_spawns_pacat_on_the_first_byte_and_reaps_it_on_release() {
     let (state, plan) = gateway_state("gateway-prompt");
     let out = state.join("prompt.pcm");
     let pid_file = state.join("pacat.pid");
+    let args_file = state.join("pacat.args");
     let path = format!("{}:/usr/bin:/bin", tools.display());
     let server = Server::start_env(
         "gateway-prompt",
@@ -2097,11 +2099,15 @@ fn the_gateway_prompt_spawns_pacat_on_the_first_byte_and_reaps_it_on_release() {
             ("JAWNOS_AUDIO_PLAN", plan.as_str()),
             ("PACAT_OUT", out.to_str().expect("UTF-8 output path")),
             ("PACAT_PID", pid_file.to_str().expect("UTF-8 pid path")),
+            ("PACAT_ARGS", args_file.to_str().expect("UTF-8 argv path")),
         ],
     );
     let mut client = server.connect();
 
-    let bound = client.ask("{\"cmd\":\"gateway\",\"action\":\"bind\",\"call_in\":\"jawn_call_in\"}");
+    // The phone channel's gain rides the bind; the child must carry it.
+    let bound = client.ask(
+        "{\"cmd\":\"gateway\",\"action\":\"bind\",\"call_in\":\"jawn_call_in\",\"volume\":37}",
+    );
     assert!(bound.contains("\"ok\":true"), "bind: {bound}");
     assert!(bound.contains("\"prompt\":\"writing\""), "bind: {bound}");
 
@@ -2133,6 +2139,11 @@ fn the_gateway_prompt_spawns_pacat_on_the_first_byte_and_reaps_it_on_release() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(heard, frame, "the prompt frame did not reach pacat");
+    let argv = fs::read_to_string(&args_file).expect("pacat recorded its argv");
+    assert!(
+        argv.lines().any(|arg| arg == "--volume=37%"),
+        "the bind volume did not reach pacat: {argv}"
+    );
     let pacat = fs::read_to_string(&pid_file).expect("pacat wrote its pid");
     let pacat: u32 = pacat.trim().parse().expect("a numeric pid");
 

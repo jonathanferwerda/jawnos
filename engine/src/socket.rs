@@ -361,7 +361,12 @@ impl Gateway {
     /// Open the two FIFOs for a call and start the prompt worker. Returns the
     /// paths so a caller can report them; a stale directory from a crashed
     /// engine is removed first, because it is this process's own name.
-    fn open_ports(&mut self, state_dir: &Path, prompt_sink: &str) -> Result<GatewayPaths, String> {
+    fn open_ports(
+        &mut self,
+        state_dir: &Path,
+        prompt_sink: &str,
+        volume: Option<u32>,
+    ) -> Result<GatewayPaths, String> {
         if let Some(paths) = &self.paths {
             return Ok(paths.clone());
         }
@@ -380,7 +385,11 @@ impl Gateway {
         make_fifo(&paths.prompt)?;
         // Opening the read side does not start `pacat`; the child waits for the
         // first prompt byte, so a bind with no call runs only the capture.
-        self.prompt = Some(GatewayPrompt::start(paths.prompt.clone(), prompt_sink.to_string())?);
+        self.prompt = Some(GatewayPrompt::start(
+            paths.prompt.clone(),
+            prompt_sink.to_string(),
+            volume,
+        )?);
         self.paths = Some(paths.clone());
         Ok(paths)
     }
@@ -666,7 +675,11 @@ struct GatewayPrompt {
 }
 
 impl GatewayPrompt {
-    fn start(path: PathBuf, sink: String) -> Result<GatewayPrompt, String> {
+    fn start(
+        path: PathBuf,
+        sink: String,
+        volume: Option<u32>,
+    ) -> Result<GatewayPrompt, String> {
         let file = OpenOptions::new()
             .read(true)
             .custom_flags(O_NONBLOCK)
@@ -678,7 +691,7 @@ impl GatewayPrompt {
         let thread_writing = Arc::clone(&writing);
         let handle = thread::Builder::new()
             .name("jawn-audio-gateway-prompt".to_string())
-            .spawn(move || prompt_worker(file, sink, thread_stop, thread_writing))
+            .spawn(move || prompt_worker(file, sink, volume, thread_stop, thread_writing))
             .map_err(|error| format!("cannot start the prompt thread: {error}"))?;
         Ok(GatewayPrompt {
             stop,
@@ -706,22 +719,28 @@ impl Drop for GatewayPrompt {
     }
 }
 
-fn prompt_child(sink: &str) -> Result<Child, String> {
+fn prompt_child(sink: &str, volume: Option<u32>) -> Result<Child, String> {
+    let mut args = vec![
+        "--playback".to_string(),
+        "--raw".to_string(),
+        format!("--device={sink}"),
+        "--format=s16le".to_string(),
+        format!("--rate={GATEWAY_RATE}"),
+        format!("--channels={GATEWAY_CHANNELS}"),
+        "--latency-msec=20".to_string(),
+        // The mixer repairs the prompt's route by this name (a bare `pacat`
+        // can inherit a saved route onto `jawn_call_in`), so the engine's
+        // child wears the same name the helper's did.
+        "--client-name=jawn-sco-prompt".to_string(),
+        "--stream-name=jawn-sco-prompt".to_string(),
+    ];
+    // The phone channel's gain, in the mixer's own percent form. Absent means
+    // `pacat`'s default (100%), exactly as the helper's command omits it.
+    if let Some(percent) = volume {
+        args.push(format!("--volume={percent}%"));
+    }
     Command::new("pacat")
-        .args([
-            "--playback".to_string(),
-            "--raw".to_string(),
-            format!("--device={sink}"),
-            "--format=s16le".to_string(),
-            format!("--rate={GATEWAY_RATE}"),
-            format!("--channels={GATEWAY_CHANNELS}"),
-            "--latency-msec=20".to_string(),
-            // The mixer repairs the prompt's route by this name (a bare
-            // `pacat` can inherit a saved route onto `jawn_call_in`), so the
-            // engine's child wears the same name the helper's did.
-            "--client-name=jawn-sco-prompt".to_string(),
-            "--stream-name=jawn-sco-prompt".to_string(),
-        ])
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -732,6 +751,7 @@ fn prompt_child(sink: &str) -> Result<Child, String> {
 fn prompt_worker(
     mut fifo: File,
     sink: String,
+    volume: Option<u32>,
     stop: Arc<AtomicBool>,
     writing: Arc<AtomicBool>,
 ) {
@@ -750,7 +770,7 @@ fn prompt_worker(
             }
             Ok(count) => {
                 if child.is_none() {
-                    match prompt_child(&sink) {
+                    match prompt_child(&sink, volume) {
                         Ok(spawned) => {
                             child = Some(spawned);
                             writing.store(true, Ordering::Relaxed);
@@ -1041,6 +1061,20 @@ fn chain_parameter(name: &str, has_insert: impl Fn(&str) -> bool) -> Result<Para
         }
     }
     Ok(parameter)
+}
+
+/// The optional `volume` a bind may carry: the phone channel's gain as a
+/// percentage, which is how `JawnOS::Sco::Mixer::playback_volume` reports it and
+/// how the helper's `pacat --volume` spells it. It is clamped the way the mixer
+/// clamps the gain (0..1 → 0..100%), and absent means `pacat`'s own default.
+fn parse_prompt_volume(object: &Object) -> Result<Option<u32>, String> {
+    match get(object, "volume") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Num(value)) if value.is_finite() => {
+            Ok(Some(value.round().clamp(0.0, 100.0) as u32))
+        }
+        Some(_) => Err("gateway bind \"volume\" must be a number from 0 to 100".to_string()),
+    }
 }
 
 impl Server {
@@ -2015,6 +2049,10 @@ impl Server {
             Some(Value::Str(name)) if !name.is_empty() => name.clone(),
             _ => GATEWAY_PROMPT_SINK.to_string(),
         };
+        let volume = match parse_prompt_volume(object) {
+            Ok(volume) => volume,
+            Err(error) => return error_line(&error),
+        };
         // One call at a time: a bind while the capture runs is a no-op and keeps
         // the first capture, its sink and its counters.
         if self.gateway.capture.is_some() {
@@ -2025,7 +2063,7 @@ impl Server {
         // made are still this call's, so keep them rather than removing a
         // worker that may already be feeding the helper.
         if self.gateway.paths.is_none() {
-            if let Err(error) = self.gateway.open_ports(&state_dir, &prompt_sink) {
+            if let Err(error) = self.gateway.open_ports(&state_dir, &prompt_sink, volume) {
                 eprintln!("jawn-audio: gateway: {error}");
                 return error_line(&error);
             }
@@ -6347,5 +6385,22 @@ break"}"#).is_err());
         drain_gateway(&consumer, &counters, &mut block, &mut mono, &mut port);
         assert_eq!(counters.read().0, 4096);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_bind_volume_is_clamped_like_the_mixers_phone_gain() {
+        let volume = |line: &str| parse_prompt_volume(&parse_object(line).expect("an object"));
+        assert_eq!(volume("{\"volume\":37}"), Ok(Some(37)));
+        assert_eq!(volume("{\"volume\":0}"), Ok(Some(0)));
+        assert_eq!(volume("{\"volume\":100}"), Ok(Some(100)));
+        assert_eq!(volume("{\"volume\":150}"), Ok(Some(100)), "over the top clamps");
+        assert_eq!(volume("{\"volume\":-5}"), Ok(Some(0)), "under zero clamps");
+        assert_eq!(volume("{\"volume\":42.6}"), Ok(Some(43)), "the mixer rounds");
+        assert_eq!(volume("{\"call_in\":\"jawn_call_in\"}"), Ok(None), "absent is omitted");
+        assert_eq!(volume("{\"volume\":null}"), Ok(None), "null is omitted too");
+        assert!(
+            volume("{\"volume\":\"loud\"}").is_err(),
+            "a non-number is a refusal, not a silent 100%"
+        );
     }
 }

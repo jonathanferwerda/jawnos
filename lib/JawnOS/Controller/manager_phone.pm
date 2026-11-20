@@ -522,8 +522,16 @@ sub _ivr_audio_state {
 		$ivr->{'ready_note'} = 'the audio backend is not available';
 		return $ivr;
 	}
-	my $backend = JawnOS::Sco::Backend->new(backend => 'pactl');
-	my ($ready, $why) = $backend->ready();
+	# Ask the way the crew advert does, so the pane and the advert cannot
+	# disagree: the engine first when it can carry the gateway, else pactl.
+	my $pactl_backend = JawnOS::Sco::Backend->new(backend => 'pactl');
+	my $engine_backend = JawnOS::Sco::Backend->new(backend => 'engine');
+	# Ask the engine once: a ready engine needs no second probe, and a refused or
+	# slow one is not asked again for the same pane.
+	my ($engine_ready) = eval { $engine_backend->ready() };
+	my ($backend, $ready, $why) = $engine_ready
+		? ($engine_backend, 1, '')
+		: ($pactl_backend, ($pactl_backend->ready())[0, 1]);
 	$ivr->{'audio'} = $backend->audio();
 	$ivr->{'backend'} = $backend->name();
 	$ivr->{'ready'} = $ready ? 1 : 0;

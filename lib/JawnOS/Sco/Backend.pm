@@ -92,6 +92,9 @@ sub ready {
 	if ($self->{'backend'} eq 'engine') {
 		return (0, 'the audio helper is not built') unless $self->{'helper'};
 		return (0, $ENGINE_NO_HELPER) unless $self->helper_engine_capable();
+		# The engine carries the PCM, not the radio: without an adapter the
+		# helper can never take the Hands-Free link, so no port matters.
+		return (0, 'no Bluetooth adapter is present') unless $self->{'adapter'};
 		my $status = eval {
 			require JawnOS::Audio::Engine;
 			JawnOS::Audio::Engine::audio_engine_command({ cmd => 'status' }, 1);
@@ -114,13 +117,16 @@ sub ready {
 }
 
 # Whether the staged helper speaks `--engine`. The usage text names the flag,
-# so one scan of the binary answers without running it; the answer is cached per
-# path for this process.
+# so one scan of the binary answers without running it. The answer is cached by
+# path, mtime and size, so a helper rebuilt in place is re-read rather than
+# reported stale for the life of a long-lived manager.
 sub helper_engine_capable {
 	my ($self) = @_;
 	my $path = $self->{'helper_path'};
 	return 0 unless defined $path && length $path && -f $path;
-	return $HELPER_ENGINE{$path} if exists $HELPER_ENGINE{$path};
+	my @stat = stat($path);
+	my $key = @stat ? join("\0", $path, $stat[9], $stat[7]) : $path;
+	return $HELPER_ENGINE{$key} if exists $HELPER_ENGINE{$key};
 	my $found = 0;
 	if (open(my $fh, '<', $path)) {
 		binmode $fh;
@@ -133,7 +139,7 @@ sub helper_engine_capable {
 		}
 		close $fh;
 	}
-	$HELPER_ENGINE{$path} = $found;
+	$HELPER_ENGINE{$key} = $found;
 	return $found;
 }
 
