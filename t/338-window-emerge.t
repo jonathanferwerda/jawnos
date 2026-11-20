@@ -1457,6 +1457,24 @@ like($emerge, qr/if \(jawnosWindowEmergeDragSwallow\) \{[\s\S]{0,400}jawnosWindo
 like($emerge, qr/if \(!jawnosWindowEmergePressHost\(e\.target\)\) \{ return false; \}/,
 	'and only a press on an opener is swallowed');
 
+# --- a scroll never draws the preview at all --------------------------------
+like($emerge, qr/var JAWNOS_EMERGE_PRESS_SETTLE = 120;/,
+	'a touch press waits for the settle before the preview is drawn');
+like($emerge, qr/function jawnosWindowEmergePressIsTouch\(e\)[\s\S]{0,240}oe\.pointerType === 'touch'/,
+	'the event itself says whether the press was a finger');
+like($emerge, qr/function jawnosWindowEmergePressStart\(origin, e\)[\s\S]{0,420}setTimeout\(function \(\)[\s\S]{0,160}jawnosWindowEmergeGhostStart\(origin\)/,
+	'and a finger starts the preview only after that beat');
+like($emerge, qr/function jawnosWindowEmergePressStart\(origin, e\)[\s\S]{0,260}if \(!jawnosWindowEmergePressIsTouch\(e\)\) \{ return !!jawnosWindowEmergeGhostStart\(origin\); \}/,
+	'a mouse still answers the press at once');
+like($emerge, qr/jawnosWindowEmergePressStart\(origin, e\); \}/,
+	'the press handler asks for it through the settle');
+like($emerge, qr/function jawnosWindowEmergeAbandonPress\(\) \{\s*jawnosWindowEmergePressClear\(\);/,
+	'a press taken back for a scroll drops the pending start');
+like($emerge, qr/var dragged = jawnosWindowEmergeDragSwallow;[\s\S]{0,220}jawnosWindowEmergePressClear\(\);/,
+	'and a tap that lifts early never draws one either');
+is(scalar(() = $emerge =~ /jawnosWindowEmergePressClear\(\);/g), 3,
+	'the pending start is cleared when a press begins, is taken back and lifts');
+
 # --- and every touched script parses ----------------------------------------
 if ($node && -x $node) {
 	foreach my $file (qw(

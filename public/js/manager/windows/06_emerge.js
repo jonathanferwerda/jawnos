@@ -7,7 +7,8 @@
 // Two pieces play the motion:
 //
 //   * The press-time preview (a body-level .jawnos_emerge_ghost) appears the
-//     moment the pointer goes down. It already wears the standard window
+//     moment the pointer goes down - on touch, after a short settle, so the
+//     first frames of a scroll never draw it. It already wears the standard window
 //     chrome - the title bar, the app's icon and name, minimise/maximise/close
 //     - because every app window is drawn with the same controls. It grows
 //     from the pressed control to the frame the window is predicted to take
@@ -2501,6 +2502,7 @@ function jawnosWindowEmergePressMoved(e) {
 // swallow is short-lived and the next press clears it, so a tap made right
 // after a scroll still answers.
 function jawnosWindowEmergeAbandonPress() {
+	jawnosWindowEmergePressClear();
 	if (!jawnosWindowEmergePressAt) { return false; }
 	jawnosWindowEmergePressAt = null;
 	jawnosWindowEmergePointerDown = false;
@@ -2509,6 +2511,38 @@ function jawnosWindowEmergeAbandonPress() {
 	if (typeof setTimeout == 'function') {
 		setTimeout(function () { jawnosWindowEmergeDragSwallow = false; }, 700);
 	}
+	return true;
+}
+
+// A touch press may be the first frame of a scroll, and the preview begins to
+// grow the moment the press is made - on a phone that is a window flashing up
+// for the frames it takes the finger to move. On touch the preview waits for the
+// settle: a finger that stays inside the slop for a moment is a press, one that
+// moves has already taken the preview back before it was ever drawn. A mouse
+// cannot scroll the menu and still starts at once.
+var JAWNOS_EMERGE_PRESS_SETTLE = 120;
+var jawnosWindowEmergePressTimer = null;
+
+function jawnosWindowEmergePressIsTouch(e) {
+	var oe = (e && e.originalEvent) || e || {};
+	if (oe.pointerType) { return oe.pointerType === 'touch'; }
+	return (typeof window != 'undefined') && ('ontouchstart' in window);
+}
+
+function jawnosWindowEmergePressClear() {
+	if (jawnosWindowEmergePressTimer && typeof clearTimeout == 'function') { clearTimeout(jawnosWindowEmergePressTimer); }
+	jawnosWindowEmergePressTimer = null;
+}
+
+function jawnosWindowEmergePressStart(origin, e) {
+	if (!origin) { return false; }
+	jawnosWindowEmergePressClear();
+	if (!jawnosWindowEmergePressIsTouch(e)) { return !!jawnosWindowEmergeGhostStart(origin); }
+	if (typeof setTimeout != 'function') { return !!jawnosWindowEmergeGhostStart(origin); }
+	jawnosWindowEmergePressTimer = setTimeout(function () {
+		jawnosWindowEmergePressTimer = null;
+		jawnosWindowEmergeGhostStart(origin);
+	}, JAWNOS_EMERGE_PRESS_SETTLE);
 	return true;
 }
 
@@ -2552,7 +2586,7 @@ function jawnosWindowEmergeAbandonPress() {
 		jawnosWindowEmergeGhostCancel();
 		if (control) {
 			var origin = jawnosWindowOriginFromElement(control.el, control.app);
-			if (origin) { jawnosWindowEmergeGhostStart(origin); }
+			if (origin) { jawnosWindowEmergePressStart(origin, e); }
 			return;
 		}
 		// the app is already on the desk: raise its window with the desk's jiggle
@@ -2571,6 +2605,9 @@ function jawnosWindowEmergeAbandonPress() {
 	// would dismiss the very open it is waiting for.
 	var release = function () {
 		var dragged = jawnosWindowEmergeDragSwallow;
+		// a tap shorter than the settle is answered by its own window; there is no
+		// loading gap for a preview to cover
+		jawnosWindowEmergePressClear();
 		jawnosWindowEmergePressAt = null;
 		jawnosWindowEmergePointerDown = false;
 		var ghost = jawnosWindowEmergeGhost;
