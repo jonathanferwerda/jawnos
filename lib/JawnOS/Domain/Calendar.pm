@@ -229,7 +229,11 @@ sub open_session_uuid {
 # The row a stop closes, resolved the same way wherever the stop runs (manager_reset
 # and appointment_writer both call this): the session the client named, carried
 # through the relay so every machine closes the same one. A stop that names an open
-# session closes that row and only it.
+# session closes that row and only it - provided that session had already started
+# at the press. A stop placed in the past (the time machine, ago or timeshift)
+# carries that past moment as its timestamp, and a session begun after it is not
+# the one the person was looking at: pressing stop there must never close the
+# session they started since.
 #
 # A named session that is already closed is not a no-op any more: the header a stop
 # button read can be one render behind (the person pressed start, the reply and its
@@ -249,7 +253,13 @@ sub stop_target_row {
 	if ($target_uuid) {
 		my $named = &db_query('select * from appointments where app=? and uuid=? and (type=? or type=?) and stop_seen is null limit 1',
 			$app, $target_uuid, 'start', 'record')->hashes->[0];
-		return $named if $named && $named->{'uuid'};
+		if ($named && $named->{'uuid'}) {
+			# A named row that starts after the press belongs to the future the
+			# person has since lived through, not to the moment they stopped: fall
+			# through to the oldest open session at or before that moment, or to none.
+			my $started = defined $named->{'timestamp'} ? (0 + $named->{'timestamp'}) : 0;
+			return $named if $started <= (0 + $timestamp);
+		}
 	}
 	my $row = &db_query('select * from appointments where app=? and (type=? or type=?) and timestamp <= ? and stop_seen is null order by timestamp asc limit 1',
 		$app, 'start', 'record', $timestamp)->hashes->[0];
