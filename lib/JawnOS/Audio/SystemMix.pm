@@ -24,8 +24,11 @@ package JawnOS::Audio::SystemMix;
 #
 # The tray's volume follows the default sink. A null sink is born at the server
 # default (100%), so `ensure` copies the replaced output's volume and mute onto
-# it once: the person's control shows the level they had and the loudness is
-# unchanged, because the app streams already play at 100% into the sink.
+# it once, and raises that output to unity: the mix carries the person's level,
+# the hardware sink only passes the engine's signal through. Leaving both at
+# the same level applied it twice - the engine read the mix at V and played it
+# out a sink still at V, so the room heard V squared. `remove` puts the
+# hardware level back before it unloads the sink, including after a crash.
 #
 # This is deliberately the same `pactl` idiom JawnOS::Sco::Mixer already uses,
 # through JawnOS::Platform::Audio::run so a test can inject the tool and a
@@ -654,12 +657,12 @@ sub _unload {
 
 # The tray's volume control follows the default sink, so a null sink born at
 # the server default would show 100% while the person still hears the level
-# their hardware sink was at. Copy the output being replaced onto the mix once:
-# its volume and its mute. App streams normally sit at 100%, so the sink is the
-# master the tray is showing. Each half is copied only if the server reports it
-# (a sink that vanished answers nothing), and a failure is cosmetic: the mix
-# still plays, so `ensure` does not fail over it.
-sub _adopt_output_level {
+# their hardware sink was at. Read the output being replaced once: its volume
+# and its mute. App streams normally sit at 100%, so the sink is the master the
+# tray is showing. Each half counts only if the server reports it (a sink that
+# vanished answers nothing); with neither, the level is unknown and the caller
+# must leave both sinks alone rather than guess one.
+sub _read_output_level {
 	my ($previous, $sinks) = @_;
 	return undef unless defined $previous && length $previous;
 	return undef if $previous eq $system_sink;
@@ -668,15 +671,51 @@ sub _adopt_output_level {
 	my $volume = JawnOS::Platform::Audio::get_volume('output', $previous);
 	my $mute   = JawnOS::Platform::Audio::get_mute('output', $previous);
 	return undef unless defined $volume || defined $mute;
-
-	JawnOS::Platform::Audio::set_volume('output', $system_sink, $volume)
-		if defined $volume;
-	JawnOS::Platform::Audio::set_mute('output', $system_sink, $mute)
-		if defined $mute;
 	return {
 		( defined $volume ? ( volume => $volume ) : () ),
 		( defined $mute   ? ( mute   => $mute )   : () ),
 	};
+}
+
+# The output the engine plays through only passes the engine's signal on: the
+# mix already holds the person's level. A second volume on the hardware sink
+# would apply it twice, so it is held at 100% and unmuted while the mix lives.
+sub _hold_output_unity {
+	my ($previous, $sinks) = @_;
+	return 0 unless defined $previous && length $previous;
+	return 0 if $previous eq $system_sink;
+	return 0 if $sinks && !$sinks->{$previous};
+	JawnOS::Platform::Audio::set_volume('output', $previous, 100);
+	JawnOS::Platform::Audio::set_mute('output', $previous, 0);
+	return 1;
+}
+
+# Give the mix the person's level and leave the replaced output at unity.
+sub _apply_output_level {
+	my ($previous, $level, $sinks) = @_;
+	return 0 unless ref $level eq 'HASH';
+	JawnOS::Platform::Audio::set_volume('output', $system_sink, $level->{'volume'})
+		if defined $level->{'volume'};
+	JawnOS::Platform::Audio::set_mute('output', $system_sink, $level->{'mute'})
+		if defined $level->{'mute'};
+	return _hold_output_unity($previous, $sinks);
+}
+
+# Put the output's own level back, whether `remove` is undoing a live mix or one
+# a crash left behind. Without this the hardware sink would stay pinned at 100%
+# and the person's next ordinary playback would be much louder than before.
+sub _restore_output_level {
+	my ($previous, $saved, $sinks) = @_;
+	return 0 unless ref $saved eq 'HASH';
+	return 0 unless defined $previous && length $previous;
+	return 0 if $previous eq $system_sink;
+	return 0 if $sinks && !$sinks->{$previous};
+	my $did = 0;
+	$did = 1 if defined $saved->{'volume'}
+		&& JawnOS::Platform::Audio::set_volume('output', $previous, $saved->{'volume'});
+	$did = 1 if defined $saved->{'mute'}
+		&& JawnOS::Platform::Audio::set_mute('output', $previous, $saved->{'mute'});
+	return $did;
 }
 
 # Create the sink if it is not there, remember the default it replaced, and
@@ -774,12 +813,19 @@ sub ensure {
 	}
 
 	# A sink this call created, or one it finds with no state of its own, is
-	# new to the person's ears and to the tray: give it the level of the output
-	# it replaced. A repeated ensure keeps the state, so it never overwrites a
-	# volume the person has since set on the live mix.
-	my $level;
-	if ($created || !$had_state) {
-		$level = _adopt_output_level($previous, $sinks);
+	# new to the person's ears and to the tray: the mix takes the level of the
+	# output it replaced. A repeated ensure keeps the state, so it never
+	# overwrites a volume the person has since set on the live mix. Read before
+	# writing anything: the state records what `remove` must put back, so the
+	# raise below can never outlive its own cleanup.
+	my $adopt = $created || !$had_state;
+	my $read  = $adopt ? _read_output_level($previous, $sinks) : undef;
+	my $saved_level;
+	if ($read) {
+		$saved_level = {
+			( defined $read->{'volume'} ? ( volume => $read->{'volume'} ) : () ),
+			( defined $read->{'mute'}   ? ( mute   => $read->{'mute'} )   : () ),
+		};
 	}
 
 	my $doc = {
@@ -789,9 +835,33 @@ sub ensure {
 		previous_default => $previous,
 		module_id        => $module_id,
 		created_at       => time,
+		( $saved_level ? ( previous_level => $saved_level ) : () ),
 	};
 	my $wrote = _write_state($state_dir, $doc);
 	return $wrote unless $wrote->{ok};
+
+	# The mix carries the person's level and the output the engine plays
+	# through sits at unity, so the level is applied once rather than twice.
+	# A repeat ensure must not re-apply the level, but it still holds the
+	# hardware sink at unity in case something moved it.
+	if ($read) {
+		_apply_output_level($previous, $read, $sinks);
+	}
+	elsif (!$created && $had_state
+		&& ref $state->{'previous_level'} eq 'HASH') {
+		_hold_output_unity($previous, $sinks);
+	}
+
+	# What the person's tray now shows, and why it could not be adopted.
+	my $level = $read
+		? { ok => 1, %{$read} }
+		: $adopt
+		? {
+			ok    => 0,
+			error => 'the level of ' . ( length $previous ? $previous : 'the replaced output' )
+				. ' cannot be read; the mix and the output keep the levels they have',
+		}
+		: undef;
 
 	my $current  = _current_default();
 	my $switched = 1;
@@ -814,6 +884,10 @@ sub ensure {
 		# A sink this call created has no owner once we give up on it. An
 		# earlier state still records a loaded sink and its module id, so it is
 		# kept for `remove` to clean later rather than forgetting the id.
+		# Either way the output this call raised must get its level back.
+		if ( $read && ( $created || !$had_state ) ) {
+			_restore_output_level($previous, $saved_level, $sinks);
+		}
 		if ($created) {
 			_unload($module_id);
 			my $path = state_path($state_dir);
@@ -840,6 +914,7 @@ sub ensure {
 			# no freed card. State from an earlier run keeps its module id for a
 			# later `remove` instead.
 			if ($created) {
+				_restore_output_level($previous, $saved_level, $sinks) if $read;
 				if (length $previous && $previous ne $system_sink) {
 					JawnOS::Platform::Audio::set_default('output', $previous);
 				}
@@ -882,12 +957,20 @@ sub remove {
 
 	my $previous   = $state->{'previous_default'} // '';
 	my $module_id  = $state->{'module_id'} // '';
+	my $saved_level = $state->{'previous_level'};
 	my $restored   = 0;
+	my $level_restored = 0;
 	my $unloaded   = 0;
 
 	my $sinks = available() ? _sinks() : {};
 	if ( length $previous && $previous ne $system_sink && $sinks->{$previous} ) {
 		$restored = JawnOS::Platform::Audio::set_default('output', $previous) ? 1 : 0;
+	}
+	# The mix carried the person's level while the hardware sink played at
+	# unity. Put that level back before the sink goes - the normal path, a
+	# removal that cannot finish, and a mix a crash left behind all end here.
+	if ( available() && ref $saved_level eq 'HASH' ) {
+		$level_restored = _restore_output_level($previous, $saved_level, $sinks);
 	}
 	if ( available() ) {
 		$unloaded = _unload($module_id);
@@ -898,6 +981,7 @@ sub remove {
 	if ( available() && _sinks()->{$system_sink} ) {
 		return {
 			ok => 0, restored => $restored, unloaded => $unloaded,
+			level_restored => $level_restored,
 			managed_card => $card,
 			error => "the $system_sink sink is still loaded",
 		};
@@ -907,6 +991,7 @@ sub remove {
 	unlink $path if defined $path && -e $path;
 	return {
 		ok => 1, restored => $restored, unloaded => $unloaded,
+		level_restored => $level_restored,
 		managed_card => $card,
 	};
 }

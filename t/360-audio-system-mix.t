@@ -7,8 +7,11 @@
 #            the sink and the switch and no card rule, and a mix with no known
 #            output to play through is refused rather than looped. The sink is
 #            born with the replaced output's volume and mute, so the tray does
-#            not jump to 100%; a repeated ensure leaves a level the person set,
-#            and an output that is gone leaves the sink at the server default.
+#            not jump to 100%, while the output the engine plays through is
+#            held at unity; a repeated ensure leaves a level the person set but
+#            keeps that output at unity, and remove puts the level and mute
+#            back - after a failed unload and after a crash too. An output
+#            whose level cannot be read leaves both sinks alone and says why.
 
 use strict;
 use warnings;
@@ -176,23 +179,34 @@ if ($cmd eq 'load-module') {
 	print "42\n";
 	exit 0;
 }
-if ($cmd eq 'unload-module') {
-		open(my $fh, '>', "$dir/sinks") or exit 9;
-		print {$fh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
-		close $fh;
-		sink_level('jawn_system', undef, undef, 1);
-		exit 0;
+	if ($cmd eq 'unload-module') {
+	# A server that refuses the unload leaves the sink in place, so the
+	# caller can be seen restoring what it changed on a failed removal.
+	exit 1 if ($ENV{FAKE_PACTL_UNLOAD} || '') eq 'fail';
+	open(my $fh, '>', "$dir/sinks") or exit 9;
+	print {$fh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+	close $fh;
+	sink_level('jawn_system', undef, undef, 1);
+	exit 0;
+}
+if ($cmd eq 'get-sink-volume') {
+	if (($ENV{FAKE_PACTL_LEVEL} || '') eq 'unreadable') {
+		print "Failure: No such entity\n";
+		exit 1;
 	}
-	if ($cmd eq 'get-sink-volume') {
-		my ($volume) = sink_level($ARGV[1]);
-		print "Volume: front-left: 32768 / $volume% / -0.00 dB,   front-right: 32768 / $volume% / -0.00 dB\n";
-		exit 0;
+	my ($volume) = sink_level($ARGV[1]);
+	print "Volume: front-left: 32768 / $volume% / -0.00 dB,   front-right: 32768 / $volume% / -0.00 dB\n";
+	exit 0;
+}
+if ($cmd eq 'get-sink-mute') {
+	if (($ENV{FAKE_PACTL_LEVEL} || '') eq 'unreadable') {
+		print "Failure: No such entity\n";
+		exit 1;
 	}
-	if ($cmd eq 'get-sink-mute') {
-		my (undef, $mute) = sink_level($ARGV[1]);
-		print "Mute: $mute\n";
-		exit 0;
-	}
+	my (undef, $mute) = sink_level($ARGV[1]);
+	print "Mute: $mute\n";
+	exit 0;
+}
 	if ($cmd eq 'set-sink-volume') {
 		my $volume = $ARGV[2] // '';
 		$volume =~ s/%//g;
@@ -334,6 +348,8 @@ is($twice->{skipped}, 1, 'and changes nothing');
 	my ($volume, $mute) = level_of('jawn_system');
 	is($volume, 65, "the person's volume, not the server default");
 	is($mute, 'yes', 'and its mute state too');
+	is((level_of('alsa_output.real'))[0], 100,
+		'the output the engine plays through is raised to unity');
 
 	# The person moves the live mix; a repeated ensure must not undo that.
 	write_levels("alsa_output.real 65 yes\njawn_system 40 no\n");
@@ -342,9 +358,83 @@ is($twice->{skipped}, 1, 'and changes nothing');
 	ok(!exists $again->{level}, 'and copies nothing a second time');
 	is((level_of('jawn_system'))[0], 40, 'leaving the level the person set');
 
+	# Something moved the hardware sink; the level must still be applied once.
+	write_levels("alsa_output.real 55 no\njawn_system 40 no\n");
+	JawnOS::Audio::SystemMix::ensure($level_state, 'default');
+	is((level_of('alsa_output.real'))[0], 100,
+		'a repeat ensure holds the hardware output at unity');
+
 	my $off = JawnOS::Audio::SystemMix::remove($level_state);
 	is($off->{ok}, 1, 'the mix still removes cleanly');
+	is($off->{level_restored}, 1, 'and reports the level put back');
 	is(read_file("$dir/default"), "alsa_output.real\n", 'and the previous output comes back');
+	is((level_of('alsa_output.real'))[0], 65,
+		'the output is handed back at the volume it had');
+	is((level_of('alsa_output.real'))[1], 'yes', 'and muted as it was');
+	write_levels('');
+}
+
+# A failed removal and a crashed mix both end at the same place: the output must
+# not be left pinned at 100%, or the person's next ordinary playback is loud.
+{
+	reset_mix();
+	write_levels("alsa_output.real 30 no\n");
+	my $out = tempdir(CLEANUP => 1);
+	my $on = JawnOS::Audio::SystemMix::ensure($out, 'default');
+	is($on->{ok}, 1, 'a quiet hardware output is raised for the mix');
+	is((level_of('alsa_output.real'))[0], 100, 'it sits at unity while the mix lives');
+
+	local $ENV{FAKE_PACTL_UNLOAD} = 'fail';
+	my $stuck = JawnOS::Audio::SystemMix::remove($out);
+	is($stuck->{ok}, 0, 'a removal that cannot unload the sink fails');
+	is($stuck->{level_restored}, 1, 'and still reports the level put back');
+	is((level_of('alsa_output.real'))[0], 30, 'the output gets its level back anyway');
+	ok(-e "$out/audio-system-mix.json", 'the state is kept for a retry');
+
+	local $ENV{FAKE_PACTL_UNLOAD} = '';
+	my $retry = JawnOS::Audio::SystemMix::remove($out);
+	is($retry->{ok}, 1, 'the retry removes the mix');
+	is((level_of('alsa_output.real'))[0], 30, 'and the level stays where it belongs');
+	write_levels('');
+}
+
+{
+	reset_mix();
+	write_file("$dir/sinks", "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n");
+	write_file("$dir/default", "jawn_system\n");
+	write_levels("alsa_output.real 100 no\njawn_system 30 yes\n");
+	my $out = tempdir(CLEANUP => 1);
+	write_file("$out/audio-system-mix.json",
+		'{"sink":"jawn_system","source":"jawn_system.monitor",'
+			. '"previous_default":"alsa_output.real","module_id":42,'
+			. '"previous_level":{"volume":30,"mute":1}}');
+
+	my $stale = JawnOS::Audio::SystemMix::remove($out);
+	is($stale->{ok}, 1, 'a mix a crash left behind is removed');
+	is($stale->{level_restored}, 1, 'and the level it carried goes back');
+	is((level_of('alsa_output.real'))[0], 30, 'the output is no longer pinned at 100%');
+	is((level_of('alsa_output.real'))[1], 'yes', 'and its mute comes back too');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'it is the default again');
+	write_levels('');
+}
+
+# A level the server will not report is not guessed at.
+{
+	reset_mix();
+	write_levels("alsa_output.real 30 yes\n");
+	local $ENV{FAKE_PACTL_LEVEL} = 'unreadable';
+	my $out = tempdir(CLEANUP => 1);
+
+	my $on = JawnOS::Audio::SystemMix::ensure($out, 'default');
+	is($on->{ok}, 1, 'the mix still comes up without a level');
+	is($on->{level}{ok}, 0, 'and reports that it could not be read');
+	like($on->{level}{error}, qr/cannot be read/, 'with the reason in one sentence');
+	is((level_of('alsa_output.real'))[0], 30, 'the hardware output keeps its level');
+	is((level_of('alsa_output.real'))[1], 'yes', 'and its mute');
+	is((level_of('jawn_system'))[0], 100, 'the mix keeps the server default');
+
+	JawnOS::Audio::SystemMix::remove($out);
 	write_levels('');
 }
 
@@ -358,7 +448,8 @@ is($twice->{skipped}, 1, 'and changes nothing');
 
 	my $on = JawnOS::Audio::SystemMix::ensure($gone_state, 'default');
 	is($on->{ok}, 1, 'ensure still creates the sink when the replaced output is gone');
-	ok(!exists $on->{level}, 'it copies nothing it cannot read');
+	is($on->{level}{ok}, 0, 'it reports that no level could be read');
+	like($on->{level}{error}, qr/cannot be read/, 'and says why');
 	is((level_of('jawn_system'))[0], 100, 'and the sink stays at the server default');
 
 	JawnOS::Audio::SystemMix::remove($gone_state);
