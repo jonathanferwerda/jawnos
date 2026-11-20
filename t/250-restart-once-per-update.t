@@ -83,6 +83,13 @@ my $installs_at = index($git, "install_system_dependencies('.')");
 ok($installs_at >= 0 && $guard_at > $installs_at,
 	'and after the installs that open the race window');
 
+# The engine is a build artifact too: the pull may change engine/ while the
+# staged binary stays behind, so the watcher restages it before the restart.
+my $engine_at = index($git, "build_engine.pl', '--if-stale'");
+ok($engine_at >= 0, 'the watcher restages a stale audio engine');
+ok($engine_at > $installs_at, 'after the installs, like the other artifacts');
+ok($engine_at < $ask_at, 'and before it asks for the restart');
+
 unlike($git, qr/, restarting\\n/, 'the move no longer promises a restart it may not ask for');
 
 # --- syntax -----------------------------------------------------------------

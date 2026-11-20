@@ -34,6 +34,11 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 - **Restart needed?** `.ep` **no** (mtime checked per request) · `.pl` **yes**
   (`perl -c perl/Manager.pl` first) · `public/js/*.js` **no** (static assets revalidate; the bundle
   rebuilds from mtimes).
+- **Audio engine:** a source change does not rebuild the staged `perl/audio/jawn-audio`.
+  `scripts/build_engine.pl --if-stale` runs after a pull (the git watcher, before its restart) and
+  before the supervisor spawns a child; President starts the supervisor on a Linux machine with a
+  sound card and a Rust toolchain even before the first build. A no-cargo machine keeps the old
+  binary; the engine stays optional.
 - **Docker:** `docker compose up -d --build` runs this same tree from `Dockerfile`; the entry point
   seeds `config.json` and the database on first boot. Ports, volumes and what is deliberately absent
   (desktop app, firmware, SSH, hardware passthrough): `docs/docker.md`. The nightly smoke

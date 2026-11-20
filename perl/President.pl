@@ -897,10 +897,27 @@ sub manager_starter() {
 		}
 	}
 	# The house audio engine's one supervisor. The engine binary is staged per
-	# machine; a machine without it pays nothing. Started here, not from a web
+	# machine; a machine without one pays nothing. Started here, not from a web
 	# request, so the master owns it and a restart stops it. `fork => 1` keeps a
 	# resident loop out of the master's own process.
-	if (-x './perl/audio/jawn-audio') {
+	#
+	# A machine with a sound card, the engine source and a Rust toolchain starts
+	# the supervisor even before the first build: `perl/Audio.pl` runs
+	# `scripts/build_engine.pl --if-stale` before it spawns, so a fresh laptop
+	# stages the engine on its first boot and every pull that changes engine/ is
+	# built before the restart. A machine with no card (a server, a container)
+	# still starts nothing and pays nothing.
+	my $audio_staged = -x './perl/audio/jawn-audio';
+	my $cargo_path = ( defined $ENV{'CARGO'} && -x $ENV{'CARGO'} )
+		? $ENV{'CARGO'} : JawnOS::Platform::tool_path('cargo');
+	if ( !$cargo_path && defined $ENV{HOME} && -x "$ENV{HOME}/.cargo/bin/cargo" ) {
+		$cargo_path = "$ENV{HOME}/.cargo/bin/cargo";
+	}
+	my $audio_buildable = -f './engine/Cargo.toml'
+		&& -f './scripts/build_engine.pl'
+		&& -e '/proc/asound/cards'
+		&& $cargo_path;
+	if ($audio_staged || $audio_buildable) {
 		&subs::subprocessor(\&jobs::job_audio_supervisor,
 			{ name => 'audio supervisor', fork => 1 });
 	}

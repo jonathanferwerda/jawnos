@@ -633,10 +633,19 @@ and exit 0. Config is flags, then `JAWNOS_AUDIO_*`, then defaults (alsa, `hw:1,0
 `~/.president/audio.sock`). A missing binary is reported once and retried at the 30 s cap, because
 the engine stays optional.
 
+**The engine is rebuilt from the tree, not shipped as a file.** `scripts/build_engine.pl --if-stale`
+compares the staged binary against `engine/Cargo.toml`, `Cargo.lock` and `engine/src`, and builds only
+when the source is newer. Three callers keep a machine from booting an old engine: the git watcher
+(`lib/JawnOS/Domain/Git.pm`) runs it after a pull and before the restart it asks for, the supervisor
+runs it before it spawns a child (so a hand pull or a peer sync is covered too), and President starts
+the supervisor on a Linux machine that has a sound card, the engine source and a Rust toolchain even
+before the first build. A machine with no card, no source or no compiler still starts no supervisor
+and pays nothing; a no-cargo machine keeps the old binary and the build script says so in one sentence.
+
 It is deliberately **not** started by a web request: a request that spawns it leaves a daemon no
 worker owns and no restart stops. **President starts it** beside `Sco.pl` and `Reception.pl` when the
-engine binary is staged, as a real child (`jobs::job_audio_supervisor`, `fork => 1`); a machine with
-no binary starts no supervisor and pays nothing. P3 assumes it exists — two machines on one clock both
+engine binary is staged (or buildable on a machine with a card), as a real child
+(`jobs::job_audio_supervisor`, `fork => 1`). P3 assumes it exists — two machines on one clock both
 need an engine that is up.
 
 **Gate:** ≤ 5 ms round trip at 64 frames on `table`, zero xruns over 10 minutes with the house running

@@ -9,7 +9,15 @@
 #   perl scripts/build_engine.pl                  # device backends if possible
 #   perl scripts/build_engine.pl --features alsa  # exactly these features
 #   perl scripts/build_engine.pl --check          # report whether it is staged
-#   perl scripts/build_engine.pl --debug          # build without --release
+#   perl scripts/build_engine.pl --if-stale      # build only when engine/ is newer
+#   perl scripts/build_engine.pl --debug         # build without --release
+#
+# --if-stale is what a pull and a supervisor start call: the staged binary is a
+# build artifact, and a tree that moved must not boot the previous engine. It
+# answers `fresh:` (exit 0) when the binary is at least as new as every file
+# that affects the binary (Cargo.toml, Cargo.lock and engine/src), and otherwise
+# builds exactly as a normal run does. tests do not affect the binary and are
+# not compared.
 #
 # The default feature set is `alsa,jack`. A build that cannot find the headers
 # or library for one of them is not fatal: the script retries with no features,
@@ -23,6 +31,7 @@ use strict;
 use warnings;
 
 use File::Copy qw(copy);
+use File::Find ();
 use File::Path qw(make_path);
 use File::Spec;
 use File::Temp qw(tempfile);
@@ -32,6 +41,7 @@ my $root     = File::Spec->rel2abs("$FindBin::Bin/..");
 my $manifest = "$root/engine/Cargo.toml";
 my $out      = "$root/perl/audio/jawn-audio";
 my $check    = grep { $_ eq '--check' } @ARGV;
+my $if_stale = grep { $_ eq '--if-stale' } @ARGV;
 my $debug    = grep { $_ eq '--debug' } @ARGV;
 
 # `--features LIST` overrides the default; an empty list asks for no features.
@@ -54,9 +64,59 @@ if ($check) {
 	exit 1;
 }
 
+# The newest file that can change the staged binary. A missing source tree is 0,
+# which makes --if-stale build (and then fail honestly) rather than call a
+# binary that has no source fresh.
+sub newest_source_mtime {
+	my $newest = 0;
+	my @roots = grep { -e $_ }
+		( "$root/engine/Cargo.toml", "$root/engine/Cargo.lock", "$root/engine/src" );
+	foreach my $path (@roots) {
+		if ( -d $path ) {
+			File::Find::find(
+				{
+					no_chdir => 1,
+					wanted   => sub {
+						return unless -f $_;
+						my $mtime = ( stat($_) )[9];
+						$newest = $mtime if defined $mtime && $mtime > $newest;
+					},
+				},
+				$path
+			);
+		}
+		else {
+			my $mtime = ( stat($path) )[9];
+			$newest = $mtime if defined $mtime && $mtime > $newest;
+		}
+	}
+	return $newest;
+}
+
+if ($if_stale) {
+	my $source = newest_source_mtime();
+	if ( -x $out ) {
+		my $staged = ( stat($out) )[9] || 0;
+		if ( !$source || $staged >= $source ) {
+			print "fresh: $out\n";
+			exit 0;
+		}
+	}
+}
+
 die "no $manifest\n" unless -e $manifest;
 
 my $cargo = ( defined $ENV{'CARGO'} && length $ENV{'CARGO'} ) ? $ENV{'CARGO'} : 'cargo';
+
+# A desktop launch (an .desktop entry or the app) never sources a shell, so
+# ~/.cargo/bin is often not on PATH. The same tree that finds the engine's
+# source should find the toolchain the person installed for it.
+if ( $cargo eq 'cargo' ) {
+	my $on_path = grep { -x File::Spec->catfile( $_, 'cargo' ) } File::Spec->path;
+	my $local   = ( defined $ENV{'HOME'} && length $ENV{'HOME'} )
+		? "$ENV{'HOME'}/.cargo/bin/cargo" : '';
+	$cargo = $local if !$on_path && length $local && -x $local;
+}
 
 # Probe the toolchain before building. A machine without Rust is the ordinary
 # case, not an error in the house: say so in a sentence rather than letting the

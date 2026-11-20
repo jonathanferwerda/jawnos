@@ -32,7 +32,15 @@ like( $jobs, qr/^sub job_audio_supervisor\b/m, 'the audio supervisor job exists'
 like( $jobs, qr/'audio supervisor' => \\&job_audio_supervisor/,
 	'it is registered by name for a box without fork' );
 like( $pres, qr/perl\/audio\/jawn-audio/,
-	'the master starts the audio supervisor only when the engine is staged' );
+	'the master starts the audio supervisor when the engine is staged' );
+like( $pres, qr/engine\/Cargo\.toml/,
+	'a machine with the engine source' );
+like( $pres, qr/asound\/cards/,
+	'and a sound card' );
+like( $pres, qr/tool_path\('cargo'\)/,
+	'and a Rust toolchain starts it before the first build' );
+like( $pres, qr/\.cargo\/bin\/cargo/,
+	'including a desktop launch whose PATH omits ~/.cargo/bin' );
 like( $pres, qr/job_audio_supervisor/,
 	'and the job it starts is the one jobs.pl registers' );
 

@@ -140,6 +140,25 @@ sub git_watcher_check {
 	# once when sudo needs no password; otherwise left as a request the manager
 	# puts to a person after the restart.
 	&subs::install_system_dependencies('.');
+	# The audio engine is a build artifact like the desktop install: a pull that
+	# changes engine/ must restage perl/audio/jawn-audio, or the restart below
+	# boots the old binary. Only machines that can use it (a sound card, or a
+	# binary already staged) pay the build; no cargo is a normal machine, and the
+	# supervisor's own check is the fallback for a hand pull.
+	if ( ( -x './perl/audio/jawn-audio' || -e '/proc/asound/cards' )
+		&& -f './scripts/build_engine.pl' && -f './engine/Cargo.toml' ) {
+		my $engine_pid = open(my $engine_fh, '-|', $^X, './scripts/build_engine.pl', '--if-stale');
+		if ($engine_pid) {
+			my @engine_out = <$engine_fh>;
+			close $engine_fh;
+			my ($engine_line) = reverse grep { /^(?:built|fresh):/ } @engine_out;
+			if ($subs::logfile && defined $engine_line) {
+				open(my $fh, '>>', $subs::logfile);
+				print $fh &subs::rightNow() . " audio engine: $engine_line";
+				close $fh;
+			}
+		}
+	}
 	my $after_commit = `git rev-parse --short HEAD 2>/dev/null`;
 	chomp $after_commit;
 	my $from = substr($before, 0, 10);

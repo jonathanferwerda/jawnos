@@ -918,4 +918,15 @@ ENGINE
 	ok(!-e "$home/.president/audio-system-mix.json", 'nothing is left behind');
 }
 
+# --- the staged binary is a build artifact ------------------------------------
+my $audio_src = read_text($audio);
+like($audio_src, qr/sub ensure_engine_fresh/,
+	'the supervisor checks the staged engine before spawning');
+like($audio_src, qr/build_engine\.pl.*--if-stale/s,
+	'through the one stale check');
+like($audio_src, qr/ensure_engine_fresh\(\);[\s\S]*?unless \(-f \$binary/,
+	'before the missing-binary check, so the first run can build it');
+like($audio_src, qr/return if defined \$given\{'binary'\}[\s\S]*?JAWNOS_AUDIO_BINARY/,
+	'a hand-run supervisor never rebuilds a binary it was given');
+
 done_testing();

@@ -250,6 +250,39 @@ sub cargo_available {
 	is_deeply( \@left, ['jawn-audio'], 'and leaves no temp file behind' );
 }
 
+# --- --if-stale builds only when engine/ moved ------------------------------
+{
+	my $dir   = fixture();
+	my $cargo = fake_cargo($dir);
+	my $ware  = tempdir( CLEANUP => 1 );
+	my $out   = "$dir/perl/audio/jawn-audio";
+	make_path("$dir/engine/src");
+	open( my $src, '>', "$dir/engine/src/lib.rs" ) or die $!;
+	print {$src} "pub fn fixture() {}\n";
+	close $src;
+
+	local $ENV{'CARGO'}            = $cargo;
+	local $ENV{'CARGO_TARGET_DIR'} = $ware;
+
+	my ( $status, $stdout, $stderr ) = run_in( $dir, '--if-stale' );
+	is( $status, 0, '--if-stale builds when nothing is staged' ) or diag( $stdout . $stderr );
+	like( $stdout, qr/^built: /m, 'and says built: with the path' );
+	ok( -x $out, 'and stages a binary' );
+	my $first = ( stat $out )[1];
+
+	( $status, $stdout, $stderr ) = run_in( $dir, '--if-stale' );
+	is( $status, 0, '--if-stale accepts the binary it just staged' ) or diag( $stdout . $stderr );
+	like( $stdout, qr/^fresh: /m, 'and says fresh: rather than building again' );
+	is( ( stat $out )[1], $first, 'and leaves the same binary in place' );
+
+	my $future = time + 30;
+	utime( $future, $future, "$dir/engine/src/lib.rs" ) or die "utime: $!";
+	( $status, $stdout, $stderr ) = run_in( $dir, '--if-stale' );
+	is( $status, 0, '--if-stale builds after an engine source changes' ) or diag( $stdout . $stderr );
+	like( $stdout, qr/^built: /m, 'and reports the new build' );
+	isnt( ( stat $out )[1], $first, 'and stages a new binary' );
+}
+
 # --- the real crate builds, stages and runs ---------------------------------
 SKIP: {
 	skip 'no cargo toolchain on this machine', 7 unless cargo_available();

@@ -536,6 +536,33 @@ sub sync_system_mix {
 	remove_system_mix() if defined $active_system_device;
 }
 
+my $engine_build_at = 0;
+sub ensure_engine_fresh {
+	# The staged binary is a build artifact. A pull can change engine/ without
+	# restaging it, so the supervisor asks the one build script whether the
+	# binary is fresh before it spawns one. A hand-run supervisor with a binary
+	# of its own (`--binary` or the environment) never touches the tree's engine.
+	my $script = ( defined $ENV{'JAWNOS_AUDIO_BUILD'} && length $ENV{'JAWNOS_AUDIO_BUILD'} )
+		? $ENV{'JAWNOS_AUDIO_BUILD'} : "$root/scripts/build_engine.pl";
+	return unless -f $script;
+	return if defined $given{'binary'}
+		|| ( defined $ENV{'JAWNOS_AUDIO_BINARY'} && length $ENV{'JAWNOS_AUDIO_BINARY'} );
+	# A missing toolchain answers in a sentence; do not run it on every backoff
+	# step. A real engine change is noticed within a minute.
+	return if $engine_build_at && time - $engine_build_at < 60;
+	$engine_build_at = time;
+	my $pid = open(my $fh, '-|', $^X, $script, '--if-stale');
+	return unless $pid;
+	my $summary = '';
+	while (my $line = <$fh>) {
+		$summary = $line if $line =~ /^(?:fresh|built):/;
+	}
+	close $fh;
+	return unless $? == 0 && length $summary;
+	chomp $summary;
+	print "audio supervisor: engine $summary\n";
+}
+
 sub spawn_engine {
 	my $chosen = plan_config();
 	my $manage = 0;
@@ -742,6 +769,10 @@ while (!$stop) {
 		}
 	}
 	elsif (time >= $next_start) {
+		# A pull can move engine/ while the staged binary stays behind; restage
+		# it before the missing/binary check, because the first run may be the
+		# one that builds the binary at all.
+		ensure_engine_fresh();
 		unless (-f $binary && -x $binary) {
 			report_missing();
 			$last_exit = 'engine missing';
