@@ -326,10 +326,50 @@ sub sound_streams {
 }
 
 # ---- the JawnOS apps --------------------------------------------------------
-# Every app the settings already know, with the profile level it carries. The
-# rows are read once so a long app list does not cost one query per app.
+# A desktop tab writes its latest layout snapshot onto its websockets row: a JSON
+# map keyed by app (and by its own bookkeeping keys, window_stacks and
+# musicData), where each open window is a value with type 'window'. A row is
+# live while it is a stayingAlive heartbeat inside the manager's liveness window
+# (Manager.pm $ws_live_window, 60s); a row that died is retired to type 'closed',
+# and one that merely went quiet ages out here. websockets is a local table (it
+# is in $gb::forbidden and not on the sync rail), and the hostname clause keeps
+# the answer to this machine even if a row ever arrives another way.
+our $sound_window_live_ms = 60000;
+
+sub sound_open_window_apps {
+	my $hostname = eval { &subs::machine_hostname() } || '';
+	my $sql = "select windows from websockets "
+		. "where type = 'stayingAlive' and cast(server_time as integer) >= ? "
+		. "and windows is not null and windows != ''";
+	my @bind = (&subs::rightNow() - $sound_window_live_ms);
+	if (defined $hostname && length $hostname) {
+		$sql .= ' and hostname = ?';
+		push @bind, $hostname;
+	}
+	my $rows = eval { &subs::db_query($sql, @bind)->hashes } || [];
+	my (%seen, @apps);
+	foreach my $row ( @{$rows} ) {
+		my $windows = eval { JSON::PP::decode_json($row->{'windows'}) };
+		next unless ref $windows eq 'HASH';
+		foreach my $app ( keys %{$windows} ) {
+			my $window = $windows->{$app};
+			next unless ref $window eq 'HASH';
+			next unless ($window->{'type'} || '') eq 'window';
+			next unless defined $app && !ref $app && length $app;
+			next if $app =~ /^__/;
+			next if $seen{$app}++;
+			push @apps, $app;
+		}
+	}
+	return [ sort { lc($a) cmp lc($b) } @apps ];
+}
+
+# The apps with a window open on this machine, each with the profile level it
+# carries. The rows are read once so a long app list does not cost one query per
+# app. An app with a window but no profile reads as passive, so the level is
+# still written for every row the list shows.
 sub sound_apps_list {
-	my $choices = eval { &subs::sound_app_choices() } || [];
+	my $choices = eval { &sound_open_window_apps() } || [];
 	my $rows = eval { &subs::sound_profile_rows() } || {};
 	my (@apps, %seen);
 	foreach my $app ( @{ ref $choices eq 'ARRAY' ? $choices : [] } ) {

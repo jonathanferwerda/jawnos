@@ -64,6 +64,7 @@
 #sound .sound_apps_detail { font-size: 13px; opacity: .72; overflow-wrap: anywhere; }
 #sound .sound_apps_row .sound_control { flex: 1 1 240px; }
 #sound .sound_apps_value { min-width: 4.5em; text-align: right; opacity: .78; }
+#sound .sound_apps_rows { max-height: 240px; overflow-y: auto; }
 </style>
 <div id="sound" app="sound">
 	<div class="sound_note" id="sound_note"></div>
@@ -233,16 +234,16 @@
 			</div>
 			<div class="sound_subsection">
 				<h4><%= &subs::lang('sound_jawnos_apps') %></h4>
-				<div id="sound_apps_apps"></div>
+				<div id="sound_apps_apps" class="sound_apps_rows" tabindex="0" aria-label="<%= &subs::ui('Apps with a window open on this machine') %>"></div>
 			</div>
 			<div class="sound_subsection">
 				<h4><%= &subs::lang('sound_playing_now') %></h4>
 				<p class="sound_level_hint"><%= &subs::ui('Each row is one stream as the sound system lists it. Chromium and Firefox appear by the media they are playing; the operating system exposes no finer per-tab control.') %></p>
-				<div id="sound_apps_playback"></div>
+				<div id="sound_apps_playback" class="sound_apps_rows" tabindex="0" aria-label="<%= &subs::lang('sound_playing_now') %>"></div>
 			</div>
 			<div class="sound_subsection">
 				<h4><%= &subs::lang('sound_recording_now') %></h4>
-				<div id="sound_apps_recording"></div>
+				<div id="sound_apps_recording" class="sound_apps_rows" tabindex="0" aria-label="<%= &subs::lang('sound_recording_now') %>"></div>
 			</div>
 			<div class="sound_note" id="sound_apps_note"></div>
 		</div>

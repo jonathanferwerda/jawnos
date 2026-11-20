@@ -165,7 +165,7 @@ my (%store, %levels);
 	$store{ $settings->{'setting'} } = $settings->{'value'};
 	return 1;
 };
-*subs::sound_app_choices = sub { [ 'Music', 'Studio' ] };
+*subs::sound_open_window_apps = sub { [ 'Music', 'Studio' ] };
 *subs::sound_profile_rows = sub {
 	return { profile => { Music => 'quiet' }, legacy => {} };
 };

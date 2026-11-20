@@ -134,7 +134,7 @@ function soundAppsRender(data) {
 				soundAppsSliderFromLevel(level), null, { name: app.name, level: level })
 		});
 	});
-	soundAppsGroup($('#sound_apps_apps'), appRows, 'No apps have a sound profile');
+	soundAppsGroup($('#sound_apps_apps'), appRows, 'No apps have a window open on this machine');
 
 	var playbackRows = [];
 	$.each(data.playback || [], function(i, stream) {
