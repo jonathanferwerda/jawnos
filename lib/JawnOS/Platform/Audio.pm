@@ -531,16 +531,26 @@ sub set_default {
 	return $rc == 0 ? 1 : 0;
 }
 
-# ---- the sink-input report --------------------------------------------------
-# `pactl -f json list sink-inputs` as decoded rows. The stock `pactl` (not the
-# JSON build) prints an error instead; that is an empty list, not a caller's
-# problem.
-sub stream_inputs {
-	my $json = run('pactl', '-f', 'json', 'list', 'sink-inputs');
+# ---- the stream reports -----------------------------------------------------
+# `pactl -f json list <what>` as decoded rows. The stock `pactl` (not the JSON
+# build) prints an error instead; that is an empty list, not a caller's problem.
+sub _json_list {
+	my $what = shift;
+	my $json = run('pactl', '-f', 'json', 'list', $what);
 	return [] unless defined $json && $json =~ /^\s*\[/;
 	require JSON::PP;
 	my $list = eval { JSON::PP::decode_json($json) };
 	return ref $list eq 'ARRAY' ? $list : [];
+}
+
+# Playback streams: what each program is sending to a sink.
+sub stream_inputs {
+	return _json_list('sink-inputs');
+}
+
+# Recording streams: what each program is taking from a source.
+sub stream_outputs {
+	return _json_list('source-outputs');
 }
 
 sub set_stream_input_mute {
@@ -563,6 +573,30 @@ sub set_stream_input_volume {
 	my $backend = backend();
 	return 0 unless ($backend->{'kind'} || '') eq 'pactl';
 	my $rc = system($backend->{'bin'}, 'set-sink-input-volume', $id, $pct . '%');
+	return $rc == 0 ? 1 : 0;
+}
+
+# The recording side is the same two verbs with `source-output` in the name.
+sub set_stream_output_mute {
+	my ($id, $mute) = @_;
+	return 0 unless defined $id && $id =~ /^\d+$/;
+	my $want;
+	if (defined $mute && $mute =~ /^(?:1|on|true|yes|mute|muted)$/i) { $want = '1'; }
+	elsif (defined $mute && $mute =~ /^(?:0|off|false|no|unmute|unmuted)$/i) { $want = '0'; }
+	else { return 0; }
+	my $backend = backend();
+	return 0 unless ($backend->{'kind'} || '') eq 'pactl';
+	my $rc = system($backend->{'bin'}, 'set-source-output-mute', $id, $want);
+	return $rc == 0 ? 1 : 0;
+}
+
+sub set_stream_output_volume {
+	my ($id, $pct) = @_;
+	return 0 unless defined $id && $id =~ /^\d+$/;
+	return 0 unless defined $pct && $pct =~ /^\d+$/;
+	my $backend = backend();
+	return 0 unless ($backend->{'kind'} || '') eq 'pactl';
+	my $rc = system($backend->{'bin'}, 'set-source-output-volume', $id, $pct . '%');
 	return $rc == 0 ? 1 : 0;
 }
 

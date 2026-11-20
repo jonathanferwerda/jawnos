@@ -191,6 +191,17 @@ sub audio_plan_write {
 	return { ok => 1, plan => $clean, applied => $applied };
 }
 
+# `alsa|hw:0,0` and `hw:0,0` are the same choice; the engine may report the
+# prefixed form while the picker stores the bare one.
+sub _audio_device_same {
+	my ($a, $b) = @_;
+	$a = '' unless defined $a;
+	$b = '' unless defined $b;
+	$a =~ s/\Aalsa\|//;
+	$b =~ s/\Aalsa\|//;
+	return $a eq $b ? 1 : 0;
+}
+
 # Ask this machine's engine to run the saved plan. A caller may pass the plan
 # it just saved so the engine is not asked to re-read a setting in the same
 # request; with no argument the stored plan is read.
@@ -202,24 +213,63 @@ sub audio_plan_apply {
 	return { ok => 0, skipped => 1, error => 'the house mixer is not managed on this machine' }
 		unless &audio_manage_read();
 
+	my $available = eval { JawnOS::Audio::Engine::audio_engine_available() } ? 1 : 0;
+	my $choice = &audio_engine_device_read();
+	my $status;
+	$status = eval { JawnOS::Audio::Engine::audio_engine_status() } if $available;
+
+	my $engine_backend = $choice->{backend} || '';
+	my $engine_device  = $choice->{device} || '';
+	if (ref $status eq 'HASH') {
+		$engine_backend = $status->{backend}
+			if defined $status->{backend} && length $status->{backend};
+		$engine_device = $status->{device}
+			if defined $status->{device} && length $status->{device};
+
+		# The saved choice is what the supervisor will use on its next spawn. An
+		# engine still patching the old backend/device would otherwise keep the
+		# card and the boot file would describe a different machine. Quit so the
+		# supervisor respawns with the choice and installs the sink/rule before
+		# the child opens the card.
+		my $differs = 0;
+		$differs = 1 if defined $status->{backend} && length $status->{backend}
+			&& $status->{backend} ne ( $choice->{backend} || '' );
+		$differs = 1 if defined $status->{device} && length $status->{device}
+			&& defined $choice->{device} && length $choice->{device}
+			&& !_audio_device_same( $status->{device}, $choice->{device} );
+		if ($differs) {
+			my $quit = eval { JawnOS::Audio::Engine::audio_engine_quit() };
+			return {
+				ok        => 1,
+				skipped   => 1,
+				restarted => 1,
+				note      => 'the running engine is on a different backend or device;'
+					. ' asked it to restart on the saved choice',
+				engine    => $quit,
+			};
+		}
+	}
+
+	# The running engine's mode can lag the plan by one patch. The union keeps
+	# capture provisioned whenever either says duplex: over-provisioning is
+	# harmless, but a sink-only rule would make the new patch fail to open the
+	# microphone.
+	require Sys::Hostname;
+	my $machine = eval { Sys::Hostname::hostname() } || '';
+	my $plan_mode = JawnOS::Audio::SystemMix::plan_mode($clean, $machine);
+	my $status_mode = ref $status eq 'HASH' ? $status->{mode} : undef;
+	my $mode = JawnOS::Audio::SystemMix::mode_union($status_mode, $plan_mode);
+
 	# The engine owns the card exclusively on ALSA, so the machine's own audio
 	# needs the virtual sink before the patch arms. A machine with no engine, no
 	# pactl, or a shared PipeWire backend keeps its ordinary output: `ensure`
 	# says `skipped` rather than muting the house.
 	my $mix;
-	my $available = eval { JawnOS::Audio::Engine::audio_engine_available() } ? 1 : 0;
-	my $choice = &audio_engine_device_read();
-	# The running engine's own answer wins over the saved choice: a stale engine
-	# on the shared PipeWire backend must not have a sink pointed at itself.
-	my $engine_backend = $choice->{backend} || '';
-	if ($available) {
-		my $status = eval { JawnOS::Audio::Engine::audio_engine_status() };
-		$engine_backend = $status->{backend}
-			if ref $status eq 'HASH' && defined $status->{backend} && length $status->{backend};
-	}
 	if ($available && $engine_backend eq 'alsa') {
 		$mix = JawnOS::Audio::SystemMix::ensure(
-			JawnOS::Audio::Engine::audio_engine_state_dir()
+			JawnOS::Audio::Engine::audio_engine_state_dir(),
+			$engine_device,
+			$mode,
 		);
 	}
 
@@ -293,8 +343,10 @@ sub audio_engine_device_write {
 	return { ok => 0, error => $written->{error} } unless $written->{ok};
 
 	# Leaving ALSA for a shared PipeWire or the null device means the engine no
-	# longer holds the card, so the virtual sink must not stay the default.
-	if ($backend ne 'alsa' && $manage) {
+	# longer holds the card, so the virtual sink must not stay the default and
+	# the card rule must go. This runs even with manage off, because a rule left
+	# by a crash would otherwise keep the desktop's playback node hidden.
+	if ($backend ne 'alsa') {
 		require JawnOS::Audio::SystemMix;
 		JawnOS::Audio::SystemMix::remove(
 			JawnOS::Audio::Engine::audio_engine_state_dir()

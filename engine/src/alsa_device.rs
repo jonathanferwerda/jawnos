@@ -646,6 +646,143 @@ pub fn run_listen_with_system<S: crate::listen::ListenSink>(
     })
 }
 
+/// The patch that needs no card capture: open only the output and write the
+/// mixed stereo block.
+///
+/// This is the laptop's path. When WirePlumber owns the microphone, opening
+/// capture on the same card is `Device or resource busy`; a playback-only open
+/// leaves the capture to PipeWire (so the privacy indicator stays off) while
+/// the plan's own audio is still mixed to the outputs. The machine's ordinary
+/// audio arrives in `system` (the virtual sink's monitor) and is drained
+/// between blocks exactly as the duplex loop drains it; a `handset` source is a
+/// separate `parec` ring the patchbay pops inside its own render. The sink is
+/// prepared against `input_channels` and handed a zero block, so no capture
+/// stream is ever opened.
+///
+/// Timing comes from the output: one buffer of silence is queued before the
+/// start, and each blocking write is paced by the device clock rather than by
+/// the loop's own speed.
+pub fn run_playback_with_system<S: crate::listen::ListenSink>(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    input_channels: usize,
+    total: Option<u64>,
+    stop: &AtomicBool,
+    mut sink: S,
+    mut system: Option<&mut Consumer>,
+) -> Result<crate::listen::ListenRun, String> {
+    if input_channels == 0 {
+        return Err("a patch needs at least one channel".to_string());
+    }
+    let playback = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    let rate = playback.rate;
+    let frames = playback.period.max(1);
+    // The graph is still compiled against the width the plan named, so its
+    // buffers match; the block it renders is silence for every channel.
+    sink.prepared(rate, frames, input_channels)?;
+
+    let playback_io = playback
+        .pcm
+        .io_i16()
+        .map_err(|error| format!("{device}: playback stream: {error}"))?;
+
+    // The same lead as the duplex loop: queue one buffer of silence and start
+    // before the first real block, so the blocking writes below are paced by
+    // the device and the loop does not spin ahead of it.
+    let lead = crate::listen::monitor_prefill_frames(playback.buffer, frames);
+    let silence = vec![0i16; lead * 2];
+    let mut primed = 0usize;
+    while primed < lead {
+        match playback_io.writei(&silence[primed * 2..]) {
+            Ok(0) => break,
+            Ok(count) => primed += count,
+            Err(error) => {
+                let message = format!("{error}");
+                match playback.pcm.try_recover(error, true) {
+                    Ok(()) => {}
+                    Err(_) => {
+                        return Err(format!("{device}: prime playback: {message}"))
+                    }
+                }
+            }
+        }
+    }
+    match playback.pcm.start() {
+        Ok(()) => {}
+        Err(_) if playback.pcm.state() == State::Running => {}
+        Err(error) => return Err(format!("{device}: start playback: {error}")),
+    }
+
+    // The plan's capture is zero, and this buffer is never written: no card
+    // input is opened, which is the whole point of the playback-only patch.
+    let input = vec![0i16; frames * input_channels];
+    let mut output = vec![0i16; frames * 2];
+    let mut system_block = vec![0.0f32; frames * 2];
+    let mut remaining = total;
+    let mut played = 0u64;
+    let mut xruns = 0usize;
+
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        let want = match remaining {
+            Some(0) => break,
+            Some(left) => left.min(frames as u64) as usize,
+            None => frames,
+        };
+
+        let stereo = want * 2;
+        match system.as_deref_mut() {
+            Some(consumer) => {
+                consumer.pop(&mut system_block[..stereo]);
+            }
+            None => system_block[..stereo].fill(0.0),
+        }
+        sink.block_with_system(
+            &input[..want * input_channels],
+            &system_block[..stereo],
+            &mut output[..stereo],
+        )?;
+
+        let mut written = 0usize;
+        while written < stereo {
+            match playback_io.writei(&output[written..stereo]) {
+                Ok(0) => break,
+                Ok(count) => written += count * 2,
+                Err(error) => {
+                    let message = format!("{error}");
+                    match playback.pcm.try_recover(error, true) {
+                        Ok(()) => xruns += 1,
+                        Err(_) => return Err(format!("{device}: playback: {message}")),
+                    }
+                }
+            }
+        }
+
+        played += want as u64;
+        if let Some(left) = remaining.as_mut() {
+            *left = left.saturating_sub(want as u64);
+        }
+    }
+
+    // Let the last buffered block reach the device; a drain timeout is not a
+    // failure of the run itself.
+    let _ = playback.pcm.drain();
+    let _ = playback.pcm.drop();
+
+    Ok(crate::listen::ListenRun {
+        rate,
+        period: frames,
+        buffer: playback.buffer,
+        channels: input_channels,
+        frames: played,
+        xruns,
+    })
+}
+
 /// Write one click and find it again. Capture starts first; playback starts a
 /// moment later, so `precision_samples` is the period ALSA granted, not a
 /// claim of sample alignment.

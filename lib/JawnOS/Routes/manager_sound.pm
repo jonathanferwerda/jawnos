@@ -17,6 +17,8 @@ sub routes {
 		[53032, 'post', '/manager/sound/manage',  'action_53032'],
 		[53033, 'post', '/manager/sound/param',   'action_53033'],
 		[53034, 'post', '/manager/sound/device',  'action_53034'],
+		[53035, 'get',  '/manager/sound/apps',    'action_53035'],
+		[53036, 'post', '/manager/sound/app',     'action_53036'],
 	);
 }
 

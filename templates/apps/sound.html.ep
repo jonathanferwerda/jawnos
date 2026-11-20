@@ -57,6 +57,13 @@
 #sound .sound_patch_add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 #sound .sound_patch_add input[type=text], #sound .sound_patch_add input[type=number] { width: 110px; }
 #sound .sound_patch_save { margin-top: 10px; }
+#sound .sound_apps_body > .sound_subsection + .sound_subsection { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+#sound .sound_apps_row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+#sound .sound_apps_head { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+#sound .sound_apps_name { overflow-wrap: anywhere; }
+#sound .sound_apps_detail { font-size: 13px; opacity: .72; overflow-wrap: anywhere; }
+#sound .sound_apps_row .sound_control { flex: 1 1 240px; }
+#sound .sound_apps_value { min-width: 4.5em; text-align: right; opacity: .78; }
 </style>
 <div id="sound" app="sound">
 	<div class="sound_note" id="sound_note"></div>
@@ -64,6 +71,7 @@
 		<button type="button" class="sound_section_pill is-active" role="tab" data-section="patchbay" aria-selected="true" aria-controls="sound_section_patchbay" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('Patchbay') %></button>
 		<button type="button" class="sound_section_pill" role="tab" data-section="io" aria-selected="false" aria-controls="sound_section_io" hint="<%= &subs::ui('Show this section') %>"><%= &subs::ui('IO') %></button>
 		<button type="button" class="sound_section_pill" role="tab" data-section="profiles" aria-selected="false" aria-controls="sound_section_profiles" hint="<%= &subs::ui('Show this section') %>"><%= &subs::lang('sound_profiles') %></button>
+		<button type="button" class="sound_section_pill" role="tab" data-section="apps" aria-selected="false" aria-controls="sound_section_apps" hint="<%= &subs::ui('Show this section') %>"><%= &subs::lang('sound_apps') %></button>
 	</div>
 % my $level = (ref($status) eq 'HASH' && $status->{'level'}) ? $status->{'level'} : 'sound';
 % my $house_level = (ref($status) eq 'HASH' && $status->{'house_level'}) ? $status->{'house_level'} : $level;
@@ -214,6 +222,29 @@
 					<button type="button" id="sound_profile_add"><%= &subs::ui('Save') %></button>
 				</div>
 			</div>
+		</div>
+	</section>
+	<section id="sound_section_apps" class="sound_section sound_apps_section" data-section="apps" role="tabpanel">
+		<div class="sound_section_head"><h3><%= &subs::lang('sound_apps') %></h3></div>
+		<div class="sound_section_body sound_apps_body">
+			<div class="sound_subsection">
+				<h4><%= &subs::lang('sound_house_channels') %></h4>
+				<div id="sound_apps_channels"></div>
+			</div>
+			<div class="sound_subsection">
+				<h4><%= &subs::lang('sound_jawnos_apps') %></h4>
+				<div id="sound_apps_apps"></div>
+			</div>
+			<div class="sound_subsection">
+				<h4><%= &subs::lang('sound_playing_now') %></h4>
+				<p class="sound_level_hint"><%= &subs::ui('Each row is one stream as the sound system lists it. Chromium and Firefox appear by the media they are playing; the operating system exposes no finer per-tab control.') %></p>
+				<div id="sound_apps_playback"></div>
+			</div>
+			<div class="sound_subsection">
+				<h4><%= &subs::lang('sound_recording_now') %></h4>
+				<div id="sound_apps_recording"></div>
+			</div>
+			<div class="sound_note" id="sound_apps_note"></div>
 		</div>
 	</section>
 </div>

@@ -120,6 +120,12 @@ pub struct PatchSummary {
     /// the sink is absent (the source is then also named in `silent`), and
     /// `off` when the plan declares no `handset` source.
     pub handset: &'static str,
+    /// `duplex` when the plan needs the card's capture (a routed local
+    /// `input` source) and the device loop opens capture and playback;
+    /// `playback` when it does not and the loop opens only the output, leaving
+    /// the microphone to PipeWire. The system mix and the handset are external
+    /// `parec` captures and do not make a plan `duplex`.
+    pub mode: &'static str,
 }
 
 impl PatchSummary {
@@ -132,7 +138,7 @@ impl PatchSummary {
             .collect::<Vec<String>>()
             .join(",");
         format!(
-            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"system\":\"{}\",\"handset\":\"{}\"",
+            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"system\":\"{}\",\"handset\":\"{}\",\"mode\":\"{}\"",
             self.sources,
             self.buses,
             self.sinks,
@@ -141,7 +147,8 @@ impl PatchSummary {
             self.bound_sinks,
             silent,
             self.system,
-            self.handset
+            self.handset,
+            self.mode
         )
     }
 }
@@ -438,6 +445,11 @@ impl Patchbay {
         // Music, video and a call audible on an empty plan.
         let system_routed = system_owned;
 
+        let mode = if sources_want_input(&sources) {
+            "duplex"
+        } else {
+            "playback"
+        };
         let summary = PatchSummary {
             sources: sources.len(),
             buses: buses.len(),
@@ -457,6 +469,7 @@ impl Patchbay {
             } else {
                 "off"
             },
+            mode,
         };
 
         let bus_count = buses.len();
@@ -492,6 +505,19 @@ impl Patchbay {
     /// without a handset never runs an extra `parec`.
     pub fn wants_handset(&self) -> bool {
         self.sources.iter().any(|source| source.handset)
+    }
+
+    /// Whether the compiled plan needs the card's capture.
+    ///
+    /// True only when at least one local `input` source is bound to a real
+    /// channel *and* has an executable route. A source declared for another
+    /// machine, a `device` source (the system mix), a `handset` source (the
+    /// reception mixer's call monitor), an unrouted input and a muted route are
+    /// all external or silent and need no card capture. A plan without one runs
+    /// playback-only, so the microphone stays with PipeWire and its privacy
+    /// indicator stays off.
+    pub fn wants_input(&self) -> bool {
+        sources_want_input(&self.sources)
     }
 
     /// Attach the reception mixer's screened-call capture. The ring is popped
@@ -962,6 +988,14 @@ fn balance(gain: f32, pan: f32) -> (f32, f32) {
     let left = if pan <= 0.0 { 1.0 } else { 1.0 - pan };
     let right = if pan >= 0.0 { 1.0 } else { 1.0 + pan };
     (gain * left, gain * right)
+}
+
+/// Whether any local `input` source is both bound and routed. The one fact
+/// behind [`Patchbay::wants_input`] and the summary's `mode`.
+fn sources_want_input(sources: &[Source]) -> bool {
+    sources
+        .iter()
+        .any(|source| source.channel.is_some() && !source.routes.is_empty())
 }
 
 /// Add one interleaved stereo block into another. A stereo source already has
@@ -1659,6 +1693,68 @@ mod tests {
         }
     }
 
+    // --- whether the card's capture is needed ---------------------------------
+
+    #[test]
+    fn a_system_only_plan_wants_no_card_capture() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"system","kind":"device"}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"system","to":"out"}]
+            }"#,
+        );
+        // The system mix is a `parec` capture of the virtual sink's monitor,
+        // not the card: the microphone can stay with PipeWire.
+        assert!(!patchbay.wants_input());
+        assert_eq!(patchbay.summary().mode, "playback");
+    }
+
+    #[test]
+    fn a_routed_local_input_wants_the_card_capture() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"gtr","kind":"input","channel":0}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"gtr","to":"out"}]
+            }"#,
+        );
+        assert!(patchbay.wants_input());
+        assert_eq!(patchbay.summary().mode, "duplex");
+    }
+
+    #[test]
+    fn an_unrouted_local_input_wants_no_card_capture() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"gtr","kind":"input","channel":0}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[]
+            }"#,
+        );
+        assert!(!patchbay.wants_input());
+        assert_eq!(patchbay.summary().mode, "playback");
+    }
+
+    #[test]
+    fn a_muted_local_input_route_wants_no_card_capture() {
+        let patchbay = bay(
+            r#"{
+                "sources":[{"id":"gtr","kind":"input","channel":0}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"gtr","to":"out","mute":1}]
+            }"#,
+        );
+        // A muted route is kept so the UI can unmute it, but it contributes
+        // nothing: nothing reads the capture, so nothing needs the card.
+        assert!(!patchbay.wants_input());
+        assert_eq!(patchbay.summary().mode, "playback");
+    }
+
     // --- the reception handset -------------------------------------------------
 
     #[test]
@@ -1689,6 +1785,8 @@ mod tests {
             }"#,
         );
         assert!(patchbay.wants_handset());
+        assert!(!patchbay.wants_input(), "a handset is a parec capture, not the card");
+        assert_eq!(patchbay.summary().mode, "playback");
         assert_eq!(patchbay.summary().bound_sources, 1);
         assert!(patchbay.summary().silent.is_empty());
         assert_eq!(patchbay.summary().handset, "pending");

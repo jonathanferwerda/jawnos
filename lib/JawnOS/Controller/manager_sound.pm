@@ -175,4 +175,38 @@ sub action_53034 {
 	$c->render(json => $result || { ok => 0, error => 'the engine device could not be saved' });
 }
 
+# GET /manager/sound/apps - the Apps pill: the house channels, the JawnOS app
+# levels and every playback and recording stream the sound system reports.
+sub action_53035 {
+	my $c = shift;
+	my $reading = eval { &subs::sound_apps_reading() };
+	$c->render(json => $reading || {
+		ok => 0, error => 'the streams could not be read',
+		channels => {}, apps => [], playback => [], recording => [],
+	});
+}
+
+# POST /manager/sound/app - one fader, mute or app level from the Apps pill.
+# kind is channel, app, playback or recording; a successful answer carries the
+# fresh reading so the window updates from one response.
+sub action_53036 {
+	my $c = shift;
+	my $result = eval {
+		&subs::sound_apps_set(
+			$c->param('kind'),
+			$c->param('name'),
+			$c->param('id'),
+			$c->param('volume'),
+			$c->param('muted'),
+			$c->param('level'),
+		);
+	};
+	$result = { ok => 0, error => 'the sound could not be set' } unless ref $result eq 'HASH';
+	if ($result->{'ok'}) {
+		my $reading = eval { &subs::sound_apps_reading() } || {};
+		$result = { %{$reading}, %{$result} };
+	}
+	$c->render(json => $result);
+}
+
 1;

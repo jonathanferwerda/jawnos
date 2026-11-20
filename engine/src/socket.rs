@@ -3139,6 +3139,11 @@ fn patch_hardware(
         None
     };
     let expected = system_device.is_some();
+    // Decide before `prepared` can drop a channel: whether the plan reads a
+    // card input, and therefore whether the loop opens capture. A plan that
+    // only mixes the system/handset captures runs playback-only, leaving the
+    // microphone to PipeWire.
+    let wants_input = patchbay.wants_input();
     let (mut capture, mut system) = match system_device.as_deref() {
         Some(source) => match crate::system_capture::SystemCapture::start(source, config.rate) {
             Ok((capture, consumer)) => (Some(capture), Some(consumer)),
@@ -3167,17 +3172,31 @@ fn patch_hardware(
         channels: config.channels,
         frames: 0,
     };
-    let run = jawn_audio::alsa_device::run_listen_with_system(
-        &config.device,
-        config.rate,
-        config.period,
-        config.buffer,
-        config.channels,
-        None,
-        stop,
-        sink,
-        system.as_mut(),
-    )
+    let run = if wants_input {
+        jawn_audio::alsa_device::run_listen_with_system(
+            &config.device,
+            config.rate,
+            config.period,
+            config.buffer,
+            config.channels,
+            None,
+            stop,
+            sink,
+            system.as_mut(),
+        )
+    } else {
+        jawn_audio::alsa_device::run_playback_with_system(
+            &config.device,
+            config.rate,
+            config.period,
+            config.buffer,
+            config.channels,
+            None,
+            stop,
+            sink,
+            system.as_mut(),
+        )
+    }
     .map_err(|error| format!("cannot patch: {error}"))?;
     if let Some(capture) = capture.as_mut() {
         capture.stop();

@@ -1369,6 +1369,47 @@ fn patch_on_null_runs_a_plan_and_reports_its_shape() {
     assert_eq!(json_number(&text, "sources"), 2.0, "stdout: {text}");
     assert_eq!(json_number(&text, "bound_sources"), 1.0, "stdout: {text}");
     assert!(text.contains("\"silent\":[\"phone\"]"), "stdout: {text}");
+    // A routed local input is what makes the plan need the card's capture.
+    assert!(text.contains("\"mode\":\"duplex\""), "stdout: {text}");
+}
+
+#[test]
+fn a_patch_with_only_the_system_mix_reports_playback_mode() {
+    let path = std::env::temp_dir().join(format!(
+        "jawn-audio-patch-playback-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        r#"{
+            "sources":[{"id":"system","kind":"device"}],
+            "buses":[],
+            "sinks":[{"id":"out","kind":"interface"}],
+            "routes":[{"from":"system","to":"out"}]
+        }"#,
+    )
+    .expect("write the plan");
+
+    let out = run(&[
+        "--patch",
+        "--plan",
+        path.to_str().expect("path"),
+        "--backend",
+        "null",
+        "--seconds",
+        "0.05",
+        "--json",
+    ]);
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    // The system mix is a `parec` capture; nothing reads the card, so the
+    // hardware loop opens playback only.
+    assert!(text.contains("\"mode\":\"playback\""), "stdout: {text}");
 }
 
 #[test]

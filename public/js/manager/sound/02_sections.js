@@ -1,5 +1,5 @@
 // ---- the section pills ------------------------------------------------------
-// Patchbay, IO and Profiles are one section at a time. The pills scroll
+// Patchbay, IO, Profiles and Apps are one section at a time. The pills scroll
 // sideways on a narrow window rather than wrapping, and the section a person
 // leaves is remembered in this browser so opening Sound again lands where they
 // were. The memory is per device on purpose: it is a view preference, not a

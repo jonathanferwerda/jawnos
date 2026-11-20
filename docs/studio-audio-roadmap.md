@@ -266,7 +266,7 @@ can cross in one or two frames (~3 ms).
 | D6 | **48 kHz inside, always.** 44.1 k material and 16 kHz devices are resampled at the edge, once. | The UM2 cannot do 44.1, the handset is already 48 k, and a second rate buys nothing. |
 | D7 | **Latency is compensated, never hidden.** Each node declares its buffer and rate; the engine places every take by that number. | This is what lets a 30 ms phone mic be a multitrack source. |
 | D8 | **PCM on a wired LAN, Opus for the phone and Wi-Fi.** | PCM is free on a gigabit; Opus at 10 ms frames keeps a phone's uplink honest. Chosen per peer and stream. |
-| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The machine holding the interface uses raw ALSA at 64 frames; every other machine stays a PipeWire client at 128.** | Measured on `table` (§2): raw ALSA held 64/256 for 180 s duplex with no xruns and the patch cable times its round trip at 2.7 ms, against 52 ms through PipeWire. Exclusive ownership costs that one machine its ordinary mixer, and PipeWire only frees the card when it is stopped, so `manage` needs a WirePlumber rule rather than a suspend. |
+| D9 | **JawnOS owns the mixer; Sound is its control surface.** A `manage` switch in the shape of Power's plan. **The machine holding the interface uses raw ALSA at 64 frames; every other machine stays a PipeWire client at 128.** The WirePlumber rule follows the engine's **mode**: `playback` disables only the playback node, leaving the microphone with PipeWire so an app can still record and the privacy indicator follows that app's own use; `duplex` disables both nodes because the plan routes a local input and the engine captures the microphone too (this is what `table`'s hand-written rule already does). | Measured on `table` (§2): raw ALSA held 64/256 for 180 s duplex with no xruns and the patch cable times its round trip at 2.7 ms, against 52 ms through PipeWire. Exclusive ownership costs that one machine its ordinary mixer, and PipeWire only frees the card when it is stopped, so `manage` needs a WirePlumber rule rather than a suspend. A playback-only plan must not disable the microphone (it would take recording from every app), while a duplex plan must, or PipeWire would fight the engine for the capture PCM. |
 | D10 | **Zones are declared-latency nodes, not promises.** An amp node is a speaker, never a booth. | Keeps the low-latency path honest; a zone with a 60 ms buffer is correct, not a failure. |
 | D11 | **Graceful fallback, always.** No engine → today's WebAudio and PipeWire paths, unchanged. | A machine that cannot build it is a machine with the audio it has now. |
 | D12 | **The engine is a node, not a silo.** The handset's `jawn_call_in` / `jawn_prompt`, the Music player and the browser's own inputs are sources. | One graph for the house, not a fourth stack beside PipeWire, WebRTC and Sco. |
@@ -704,7 +704,13 @@ pavucontrol has nothing to fight over and nothing to break.
 **In the tree (2026-11-18):** the plan store (`Domain::Audio`), the `manage` switch, the Sound matrix
 and node inspector (state, frames, xruns, declared latency, silent nodes), the engine's
 `patch`/`unpatch` and live fader `param`, and the supervisor's boot restore (the manager writes
-`~/.president/audio-plan.json`; a fresh engine arms it when `manage` is on). **Still owed:** delegation
+`~/.president/audio-plan.json`; a fresh engine arms it when `manage` is on). A managed ALSA card also
+gets a WirePlumber drop-in (`51-jawnos-studio-card.conf`) written before the engine opens
+`hw:N,0` and removed when manage goes off or the engine stops. Its matches follow the engine's
+mode: a playback plan disables only the playback node (the microphone stays with PipeWire), a
+duplex plan disables the playback and capture nodes because the engine captures the microphone;
+a hand-written both-direction rule at that path is adopted and replaced, never restored on off.
+**Still owed:** delegation
 of a route to a peer machine's engine (P3), and a per-machine `manage` setting (the switch is
 house-wide today).
 

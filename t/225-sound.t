@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Sound.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm lib/JawnOS/Routes.pm templates/apps/sound.html.ep templates/apps/sound/media.html.ep public/js/manager/sound.js public/js/manager/sound/02_sections.js public/js/manager/taskbar_sound.js public/icons/sound.svg templates/start_menu/start_menu.html.ep public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm public/js/manager/windows/01_storage.js public/js/manager/taskbar_edit.js perl/language.pl perl/help/topics_apps.pl perl/help/topics_features.pl perl/gb/02_labels_and_collectives.pl
+# tests-for: lib/JawnOS/Domain/Sound.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Platform/Audio.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm lib/JawnOS/Routes.pm templates/apps/sound.html.ep templates/apps/sound/media.html.ep public/js/manager/sound.js public/js/manager/sound/02_sections.js public/js/manager/sound/03_apps.js public/js/manager/taskbar_sound.js public/icons/sound.svg templates/start_menu/start_menu.html.ep public/css/manager.css lib/JawnOS/Manager/Core1_tables_hooks.pm public/js/manager/windows/01_storage.js public/js/manager/taskbar_edit.js perl/language.pl perl/help/topics_apps.pl perl/help/topics_features.pl perl/gb/02_labels_and_collectives.pl
 # covers:    The Sound app: pactl/wpctl/amixer/the Android bridge readings, the
 #            validated writers and the default-device choice, plus the route,
 #            start-menu, taskbar-widget, lazy-chunk, translation and help wiring.
@@ -465,6 +465,8 @@ write_file($log, '');
 	like($routes, qr{\[\s*53031\s*,\s*'get'\s*,\s*'/manager/sound/plan'}, 'the plan read route exists');
 	like($routes, qr{\[\s*53032\s*,\s*'post'\s*,\s*'/manager/sound/manage'}, 'the mixer switch route exists');
 	like($routes, qr{\[\s*53033\s*,\s*'post'\s*,\s*'/manager/sound/param'}, 'the live-fader route exists');
+	like($routes, qr{\[\s*53035\s*,\s*'get'\s*,\s*'/manager/sound/apps'}, 'the Apps reading route exists');
+	like($routes, qr{\[\s*53036\s*,\s*'post'\s*,\s*'/manager/sound/app'}, 'the Apps write route exists');
 
 	my $controller = read_file("$root/lib/JawnOS/Controller/manager_sound.pm");
 	like($controller, qr/^sub action_53020\b/m, 'the window action exists');
@@ -472,6 +474,10 @@ write_file($log, '');
 	like($controller, qr/^sub action_53025\b/m, 'the level action exists');
 	like($controller, qr/^sub action_53026\b/m, 'the profile action exists');
 	like($controller, qr/^sub action_53034\b/m, 'the engine-device action exists');
+	like($controller, qr/^sub action_53035\b/m, 'the Apps reading action exists');
+	like($controller, qr/^sub action_53036\b/m, 'the Apps write action exists');
+	like($controller, qr/&subs::sound_apps_reading\(/, 'the Apps reading calls the domain');
+	like($controller, qr/&subs::sound_apps_set\(/, 'the Apps write calls the domain');
 	like($controller, qr/&subs::sound_set\(/, 'the volume action calls the domain');
 	like($controller, qr/&subs::sound_mute\(/, 'the mute action calls the domain');
 	like($controller, qr/&subs::sound_default\(/, 'the default action calls the domain');
@@ -493,6 +499,8 @@ write_file($log, '');
 	like($loader, qr/JawnOS::Domain::Sound' for qw\([^)]*\bsound_status\b/, 'the status helper is in the loader');
 	like($loader, qr/JawnOS::Domain::Sound' for qw\([^)]*\bsound_set\b/, 'the setter is in the loader');
 	like($loader, qr/JawnOS::Domain::Sound' for qw\([^)]*\bsound_default\b/, 'the default helper is in the loader');
+	like($loader, qr/JawnOS::Domain::Sound' for qw\([^)]*\bsound_apps_reading\b/, 'the Apps reading is in the loader');
+	like($loader, qr/JawnOS::Domain::Sound' for qw\([^)]*\bsound_apps_set\b/, 'the Apps dispatcher is in the loader');
 
 	require "$root/qa/lib/Probe.pm";
 	is(Probe::tier_needed('/manager/sound'), 'resident', 'the Sound window is a resident route');
@@ -573,6 +581,13 @@ write_file($log, '');
 	like($template, qr/id="sound_section_patchbay"[^>]*data-section="patchbay"/, 'the Patchbay section is named for its pill');
 	like($template, qr/id="sound_section_io"[^>]*data-section="io"/, 'so is IO');
 	like($template, qr/id="sound_section_profiles"[^>]*data-section="profiles"/, 'so is Profiles');
+	like($template, qr/class="sound_section_pill"[^>]*data-section="apps"/, 'Apps has a pill');
+	like($template, qr/id="sound_section_apps"[^>]*data-section="apps"/, 'the Apps section is named for its pill');
+	like($template, qr/id="sound_apps_channels"/, 'the Apps pill lists the house channels');
+	like($template, qr/id="sound_apps_apps"/, 'and the JawnOS app levels');
+	like($template, qr/id="sound_apps_playback"/, 'and the playing streams');
+	like($template, qr/id="sound_apps_recording"/, 'and the recording streams');
+	like($template, qr/per-tab control/, 'the note states the per-window limit');
 
 	my $sections_js = read_file("$root/public/js/manager/sound/02_sections.js");
 	like($sections_js, qr/function soundSectionShow\(/, 'the pills are switched in one place');
@@ -580,6 +595,13 @@ write_file($log, '');
 	like($sections_js, qr/localStorage\.getItem\(soundSectionKey\)/, 'and read back on open');
 	like(read_file("$root/public/js/manager/sound.js"), qr/soundSectionRestore\(\);/, 'opening Sound restores it');
 	like(read_file("$root/public/js/manager/sound.js"), qr/'\.sound_section_pill', function\(\)/, 'a pill press switches the section');
+	my $apps_js = read_file("$root/public/js/manager/sound/03_apps.js");
+	like($apps_js, qr/function soundAppsRender\(/, 'the Apps section has a renderer');
+	like($apps_js, qr{url: '/manager/sound/apps'}, 'it reads the Apps route');
+	like($apps_js, qr{url: '/manager/sound/app'}, 'it writes the Apps route');
+	like($apps_js, qr/\}, 2000\);/, 'it polls every two seconds');
+	like($apps_js, qr/function soundAppsSectionActive\(/, 'and only while the section is visible');
+	like(read_file("$root/public/js/manager/sound.js"), qr/soundAppsPoll\(\);/, 'opening Sound starts the Apps clock');
 
 	no warnings 'redefine';
 	*subs::lang = sub { $_ [0] };
@@ -607,6 +629,8 @@ write_file($log, '');
 	like($html, qr/value="40"/, 'the output volume fills the slider');
 	like($html, qr/id="sound_level"/, 'the house level renders');
 	like($html, qr/id="sound_profiles_list"/, 'the profiles list renders');
+	like($html, qr/id="sound_apps_playback"/, 'the Apps streams render');
+	like($html, qr/id="sound_apps_recording"/, 'as does the recording group');
 	unlike($html, qr/<script>/, 'a device name is escaped');
 }
 
@@ -616,7 +640,7 @@ write_file($log, '');
 {
 	require "$root/perl/language.pl";
 	for my $lang (@language::languages) {
-		for my $key (qw(sound sound_output sound_muted sound_profile sound_passive sound_quiet sound_silence sound_level sound_profiles sound_running sound_add_profile)) {
+		for my $key (qw(sound sound_output sound_muted sound_profile sound_passive sound_quiet sound_silence sound_level sound_profiles sound_running sound_add_profile sound_apps sound_house_channels sound_jawnos_apps sound_playing_now sound_recording_now)) {
 			isnt(language::translate($lang->{code}, $key), $key,
 				$lang->{code} . " translates $key");
 		}
@@ -632,6 +656,11 @@ write_file($log, '');
 		'the topic says walkboy is still the media picker');
 	like(join(' ', @{ $topic->{body} }), qr/house level/, 'the topic explains the house level');
 	like(join(' ', @{ $topic->{body} }), qr/one section at a time/, 'the topic explains the pills');
+	like(join(' ', @{ $topic->{body} }), qr/Apps pill/, 'the topic explains the Apps pill');
+	like(join(' ', @{ $topic->{body} }), qr/House channels/, 'and its house channels');
+	like(join(' ', @{ $topic->{body} }), qr/Playing now/, 'and the playing streams');
+	like(join(' ', @{ $topic->{body} }), qr/Recording now/, 'and the recording streams');
+	like(join(' ', @{ $topic->{body} }), qr/per-tab control/, 'and the per-window limitation');
 
 	my $taskbar = $help::topic{'taskbar'};
 	like(join(' ', @{ $taskbar->{body} }), qr/Sound shows/, 'the taskbar topic lists Sound');

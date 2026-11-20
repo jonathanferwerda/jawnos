@@ -245,6 +245,35 @@ foreach my $code ( keys %sound_labels ) {
 	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
 }
 
+# The Apps pill's own core labels. The group headings and the pill are read on
+# the window in every language; the sentences around them, the per-stream rows
+# and the empty notices go through jawnosT/subs::ui on demand.
+my @sound_apps_keys = qw( sound_apps sound_house_channels sound_jawnos_apps
+	sound_playing_now sound_recording_now );
+my %sound_apps_labels = (
+en => [ 'Apps', 'House channels', 'JawnOS apps', 'Playing now', 'Recording now' ],
+zh => [ '应用', '家庭频道', 'JawnOS 应用', '正在播放', '正在录音' ],
+fr => [ 'Applications', 'Canaux de la maison', 'Applications JawnOS', 'Lecture en cours', 'Enregistrement en cours' ],
+es => [ 'Aplicaciones', 'Canales de la casa', 'Aplicaciones JawnOS', 'Reproduciendo ahora', 'Grabando ahora' ],
+de => [ 'Apps', 'Hauskanäle', 'JawnOS-Apps', 'Wiedergabe läuft', 'Aufnahme läuft' ],
+pt => [ 'Apps', 'Canais da casa', 'Apps JawnOS', 'Reproduzindo agora', 'Gravando agora' ],
+hi => [ 'ऐप्स', 'घर के चैनल', 'JawnOS ऐप्स', 'अभी चल रहा है', 'अभी रिकॉर्ड हो रहा है' ],
+ar => [ 'التطبيقات', 'قنوات المنزل', 'تطبيقات JawnOS', 'يُشغَّل الآن', 'يُسجَّل الآن' ],
+bn => [ 'অ্যাপ', 'বাড়ির চ্যানেল', 'JawnOS অ্যাপ', 'এখন চলছে', 'এখন রেকর্ড হচ্ছে' ],
+ru => [ 'Приложения', 'Каналы дома', 'Приложения JawnOS', 'Сейчас играет', 'Сейчас записывается' ],
+ja => [ 'アプリ', 'ハウスチャンネル', 'JawnOS アプリ', '再生中', '録音中' ],
+pa => [ 'ਐਪਾਂ', 'ਘਰ ਦੇ ਚੈਨਲ', 'JawnOS ਐਪਾਂ', 'ਹੁਣ ਚੱਲ ਰਿਹਾ', 'ਹੁਣ ਰਿਕਾਰਡ ਹੋ ਰਿਹਾ' ],
+id => [ 'Aplikasi', 'Saluran rumah', 'Aplikasi JawnOS', 'Sedang diputar', 'Sedang merekam' ],
+ko => [ '앱', '하우스 채널', 'JawnOS 앱', '재생 중', '녹음 중' ],
+it => [ 'App', 'Canali della casa', 'App JawnOS', 'In riproduzione', 'In registrazione' ],
+tr => [ 'Uygulamalar', 'Ev kanalları', 'JawnOS uygulamaları', 'Şimdi çalıyor', 'Şimdi kaydediyor' ],
+);
+foreach my $code ( keys %sound_apps_labels ) {
+	my %add;
+	@add{@sound_apps_keys} = @{$sound_apps_labels{$code}};
+	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
+}
+
 # The dock's context menu. These are core labels on the dock and its menu, so
 # they are written here in every interface language rather than left to the
 # English fallback. The four older dock labels (add, remove, open_windows and

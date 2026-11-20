@@ -2064,9 +2064,10 @@ fn run_patch(options: &Options) -> Result<ExitCode, String> {
             }
             else {
                 println!(
-                    "patched {} ({}) at {} Hz: {} frames, {} xrun(s); {} source(s), {} bus(es), {} sink(s), {} route(s)",
+                    "patched {} ({}, {}) at {} Hz: {} frames, {} xrun(s); {} source(s), {} bus(es), {} sink(s), {} route(s)",
                     options.backend.name(),
                     device,
+                    summary.mode,
                     run.rate,
                     run.frames,
                     run.xruns,
@@ -2179,17 +2180,34 @@ fn patch_alsa(
         },
         None => (None, None),
     };
-    let run = jawn_audio::alsa_device::run_listen_with_system(
-        device,
-        options.rate,
-        options.frames,
-        options.buffer,
-        options.channels,
-        total,
-        stop,
-        patchbay,
-        system.as_mut(),
-    )?;
+    let run = if patchbay.wants_input() {
+        // A routed local input reads a card channel, so the loop is duplex.
+        jawn_audio::alsa_device::run_listen_with_system(
+            device,
+            options.rate,
+            options.frames,
+            options.buffer,
+            options.channels,
+            total,
+            stop,
+            patchbay,
+            system.as_mut(),
+        )?
+    } else {
+        // Nothing reads the card: open only the output and leave the capture
+        // to PipeWire, so the microphone and its privacy indicator stay off.
+        jawn_audio::alsa_device::run_playback_with_system(
+            device,
+            options.rate,
+            options.frames,
+            options.buffer,
+            options.channels,
+            total,
+            stop,
+            patchbay,
+            system.as_mut(),
+        )?
+    };
     if let Some(capture) = capture.as_mut() {
         capture.stop();
     }

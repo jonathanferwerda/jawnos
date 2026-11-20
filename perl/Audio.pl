@@ -378,6 +378,7 @@ my $adopted_note;
 my $next_probe            = 0;
 my $next_sync             = 0;
 my $active_system_device  = undef;
+my $active_system_mode    = undef;
 
 sub write_status {
 	my $data = {
@@ -391,6 +392,7 @@ sub write_status {
 		binary               => $binary,
 		backend              => $backend,
 		device               => $device,
+		mode                 => $active_system_mode,
 		period               => 0 + $period,
 		buffer               => 0 + $buffer,
 		plan                 => $plan,
@@ -449,6 +451,7 @@ sub plan_config {
 		backend => $backend,
 		device  => $device,
 		manage  => $doc->{'manage'} ? 1 : 0,
+		plan    => $doc->{'plan'},
 	};
 }
 
@@ -456,8 +459,10 @@ sub plan_config {
 # the card. The plan file is the switch's durable copy, so a supervisor that
 # starts after a reboot knows without asking the manager. A shared PipeWire
 # backend needs none of this: the engine is already one client among the apps.
+# The rule that frees the card's playback node goes in before the child opens
+# it; the microphone node deliberately stays with PipeWire.
 sub ensure_system_mix {
-	my ($backend, $manage) = @_;
+	my ($backend, $manage, $device, $mode) = @_;
 	return undef unless load_system_mix();
 
 	if (!$manage || $backend ne 'alsa') {
@@ -469,12 +474,17 @@ sub ensure_system_mix {
 	# and this one must not load or unload it.
 	if (defined $given{'system-device'} && length $given{'system-device'}) {
 		$active_system_device = $system_device;
+		$active_system_mode   = $mode;
 		return $system_device;
 	}
 
-	my $mix = JawnOS::Audio::SystemMix::ensure($state_dir);
+	my $mix = JawnOS::Audio::SystemMix::ensure($state_dir, $device, $mode);
 	if ($mix && $mix->{ok}) {
 		$active_system_device = $mix->{source};
+		$active_system_mode   = $mode;
+		if ($mix->{managed_card} && $mix->{managed_card}->{note}) {
+			print "audio supervisor: card rule: " . $mix->{managed_card}->{note} . "\n";
+		}
 		return $mix->{source};
 	}
 	$active_system_device = undef;
@@ -490,8 +500,15 @@ sub remove_system_mix {
 	return unless defined $active_system_device || ($state && $state->{active});
 	my $answer = JawnOS::Audio::SystemMix::remove($state_dir);
 	$active_system_device = undef;
+	$active_system_mode   = undef;
 	if ($answer && !$answer->{ok} && $answer->{error}) {
 		print STDERR "audio supervisor: system mix: " . $answer->{error} . "\n";
+	}
+	if ($answer && $answer->{managed_card}
+		&& $answer->{managed_card}->{restart}
+		&& $answer->{managed_card}->{restart}->{error}) {
+		print STDERR "audio supervisor: card rule: "
+			. $answer->{managed_card}->{restart}->{error} . "\n";
 	}
 }
 
@@ -518,14 +535,31 @@ sub sync_system_mix {
 	my $live   = $state eq 'patching';
 	my $system = $engine ? ( $engine->{'system'} // '' ) : '';
 
+	# The engine's mode can lag the plan by one patch. Keep duplex whenever
+	# either says duplex: an extra capture rule is harmless, but a sink-only
+	# rule would make the new duplex patch fail to open the microphone.
+	my $plan_mode = load_system_mix() && $chosen
+		? JawnOS::Audio::SystemMix::plan_mode($chosen->{'plan'}, $machine)
+		: 'playback';
+	my $engine_mode = $engine && defined $engine->{'mode'}
+		&& $engine->{'mode'} =~ /\A(?:duplex|playback)\z/
+		? $engine->{'mode'} : undef;
+	my $mode = JawnOS::Audio::SystemMix::mode_union($engine_mode, $plan_mode);
+
 	if ($manage && $engine_backend eq 'alsa' && $live && $system eq 'pending') {
 		return;
 	}
 	if ($manage && $engine_backend eq 'alsa' && $live && $system eq 'capturing') {
-		return if defined $active_system_device;
-		my $mix = JawnOS::Audio::SystemMix::ensure($state_dir);
+		# A mode flip rewrites the rule; the same mode costs nothing.
+		return if defined $active_system_device
+			&& defined $active_system_mode
+			&& $active_system_mode eq $mode;
+		my $engine_device = $engine && defined $engine->{'device'} && length $engine->{'device'}
+			? $engine->{'device'} : $device;
+		my $mix = JawnOS::Audio::SystemMix::ensure($state_dir, $engine_device, $mode);
 		if ($mix && $mix->{ok}) {
 			$active_system_device = $mix->{source};
+			$active_system_mode   = $mode;
 		}
 		elsif ($mix && $mix->{error}) {
 			print "audio supervisor: system mix: " . $mix->{error} . "\n";
@@ -571,7 +605,10 @@ sub spawn_engine {
 		$device  = $chosen->{'device'}  unless defined $given{'device'};
 		$manage  = $chosen->{'manage'};
 	}
-	my $system_source = ensure_system_mix($backend, $manage);
+	my $mode = load_system_mix() && $chosen
+		? JawnOS::Audio::SystemMix::plan_mode($chosen->{'plan'}, $machine)
+		: 'playback';
+	my $system_source = ensure_system_mix($backend, $manage, $device, $mode);
 	my $pid = fork();
 	unless (defined $pid) {
 		warn "audio supervisor: cannot fork: $!\n";

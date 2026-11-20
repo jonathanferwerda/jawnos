@@ -230,6 +230,163 @@ sub sound_status {
 	return $status;
 }
 
+# ---- the live streams -------------------------------------------------------
+# `pactl -f json list sink-inputs` / `source-outputs` rows, normalized for the
+# window. A stock pactl answers no JSON, so the list is empty rather than an
+# error. Every field is a scalar; a row with no usable index is skipped.
+sub sound_stream_text {
+	my ($value) = @_;
+	return '' if !defined $value || ref $value;
+	return "$value";
+}
+
+sub sound_stream_clamp {
+	my ($value) = @_;
+	return 0 unless defined $value && $value =~ /\A[+-]?(?:\d+(?:\.\d*)?|\.\d+)\z/;
+	my $level = int($value + ($value >= 0 ? 0.5 : -0.5));
+	return 0 if $level < 0;
+	return 100 if $level > 100;
+	return $level;
+}
+
+# One channel of a pactl volume map. pactl reports `value` out of 65536 and
+# usually a ready `value_percent`; either answers a whole percent.
+sub sound_stream_percent {
+	my ($channel) = @_;
+	return undef unless ref $channel eq 'HASH';
+	my $percent = $channel->{'value_percent'};
+	if (defined $percent && $percent =~ /^\s*(\d+(?:\.\d+)?)\s*%/) {
+		return &sound_stream_clamp($1);
+	}
+	my $value = $channel->{'value'};
+	if (defined $value && $value =~ /\A\d+(?:\.\d+)?\z/) {
+		return &sound_stream_clamp($value * 100 / 65536);
+	}
+	return undef;
+}
+
+# The first front-left or mono value, otherwise the mean of every channel.
+sub sound_stream_volume {
+	my ($volume) = @_;
+	return 0 unless ref $volume eq 'HASH';
+	foreach my $name (qw(front-left mono)) {
+		next unless ref $volume->{$name} eq 'HASH';
+		my $percent = &sound_stream_percent($volume->{$name});
+		return $percent if defined $percent;
+	}
+	my @levels = grep { defined } map { &sound_stream_percent($volume->{$_}) }
+		grep { ref $volume->{$_} eq 'HASH' } keys %{$volume};
+	return 0 unless @levels;
+	my $total = 0;
+	$total += $_ for @levels;
+	return &sound_stream_clamp($total / scalar(@levels));
+}
+
+# One pactl row as the window's shape. `sink` and `source` are the engine's
+# numeric ids, shown beside the stream so the row is not anonymous.
+sub sound_stream_row {
+	my ($row, $kind) = @_;
+	return undef unless ref $row eq 'HASH';
+	my $id = defined $row->{'index'} ? $row->{'index'} : $row->{'id'};
+	return undef unless defined $id && !ref $id && $id =~ /^\d+$/;
+	my $props = ref $row->{'properties'} eq 'HASH' ? $row->{'properties'} : {};
+	my $app = &sound_stream_text($props->{'application.name'});
+	my $binary = &sound_stream_text($props->{'application.process.binary'});
+	$app = $binary unless length $app;
+	my $stream = {
+		id => $id + 0,
+		app => $app,
+		media => &sound_stream_text($props->{'media.name'}),
+		binary => $binary,
+		volume => &sound_stream_volume($row->{'volume'}),
+		mute => $row->{'mute'} ? 1 : 0,
+		corked => $row->{'corked'} ? 1 : 0,
+		state => &sound_stream_text($row->{'state'}),
+	};
+	if (defined $kind && $kind eq 'recording') {
+		$stream->{'source'} = &sound_stream_text($row->{'source'});
+	}
+	else {
+		$stream->{'sink'} = &sound_stream_text($row->{'sink'});
+	}
+	return $stream;
+}
+
+sub sound_streams {
+	my ($kind) = @_;
+	my $rows = (defined $kind && $kind eq 'recording')
+		? JawnOS::Platform::Audio::stream_outputs()
+		: JawnOS::Platform::Audio::stream_inputs();
+	my @streams;
+	foreach my $row ( @{ $rows || [] } ) {
+		my $stream = &sound_stream_row($row, $kind);
+		push @streams, $stream if $stream;
+	}
+	return \@streams;
+}
+
+# ---- the JawnOS apps --------------------------------------------------------
+# Every app the settings already know, with the profile level it carries. The
+# rows are read once so a long app list does not cost one query per app.
+sub sound_apps_list {
+	my $choices = eval { &subs::sound_app_choices() } || [];
+	my $rows = eval { &subs::sound_profile_rows() } || {};
+	my (@apps, %seen);
+	foreach my $app ( @{ ref $choices eq 'ARRAY' ? $choices : [] } ) {
+		next unless defined $app && !ref $app && length $app;
+		next if $seen{$app}++;
+		my $level = eval { &subs::sound_profile_rows_level($rows, $app) };
+		$level = 'passive' unless defined $level && length $level;
+		push @apps, { name => "$app", level => $level };
+	}
+	return \@apps;
+}
+
+# One answer for the Apps pill: the house channels, the JawnOS app levels and
+# every stream the sound system is carrying now.
+sub sound_apps_reading {
+	return {
+		ok => 1,
+		channels => &sound_channels(),
+		apps => &sound_apps_list(),
+		playback => &sound_streams('playback'),
+		recording => &sound_streams('recording'),
+	};
+}
+
+# The app-level slider has five stops; the route carries a 0..100 volume, so
+# the nearest stop is what the profile store receives.
+our @sound_app_level_stops = (
+	[0, 'passive'], [25, 'sound'], [50, 'quiet'], [75, 'mute'], [100, 'silence'],
+);
+our @sound_app_levels = map { $_->[1] } @sound_app_level_stops;
+
+sub sound_app_level_from_volume {
+	my ($volume) = @_;
+	return undef unless &sound_volume_valid($volume);
+	my $want = int($volume);
+	my $best = $sound_app_level_stops[0];
+	foreach my $stop ( @sound_app_level_stops ) {
+		$best = $stop if abs($stop->[0] - $want) < abs($best->[0] - $want);
+	}
+	return $best->[1];
+}
+
+# A name is written to a settings row, so it may carry any printable character.
+# Length is bounded and control characters are refused.
+sub sound_target_name_ok {
+	my ($name) = @_;
+	return 0 unless defined $name && !ref $name && length $name && length $name <= 200;
+	return 0 if $name =~ /[\x00-\x1f\x7f]/;
+	return 1;
+}
+
+sub sound_option {
+	my ($value) = @_;
+	return undef unless defined $value && !ref $value && length $value;
+	return $value;
+}
+
 # ---- the writes -------------------------------------------------------------
 sub sound_set {
 	my ($kind, $id, $volume) = @_;
@@ -395,6 +552,79 @@ sub sound_channel_set {
 	};
 	return { ok => 0, error => 'the channels could not be saved' } unless $saved;
 	return { ok => 1, channels => $channels };
+}
+
+# ---- one dispatcher for the Apps pill --------------------------------------
+# kind is channel, app, playback or recording. Channel and app carry a name;
+# the two stream kinds carry the pactl numeric id. Exactly one of volume or
+# muted is expected, so a mute press never rewrites a level.
+sub sound_apps_set {
+	my ($kind, $name, $id, $volume, $muted, $level) = @_;
+	$kind = lc(&sound_option($kind) || '');
+	$name = &sound_option($name);
+	$id = &sound_option($id);
+	$volume = &sound_option($volume);
+	$muted = &sound_option($muted);
+	$level = &sound_option($level);
+
+	if ($kind eq 'channel') {
+		return { ok => 0, error => 'unknown channel' }
+			unless defined $name && exists $sound_channel_default{$name};
+		return &sound_channel_set($name, $volume, $muted);
+	}
+
+	if ($kind eq 'app') {
+		return { ok => 0, error => 'unknown app' } unless &sound_target_name_ok($name);
+		my $want;
+		if (defined $level) {
+			my $clean = lc $level;
+			$clean =~ s/^\s+|\s+$//g;
+			return { ok => 0, error => 'unknown app level' }
+				unless grep { $_ eq $clean } @sound_app_levels;
+			$want = $clean;
+		}
+		else {
+			$want = &sound_app_level_from_volume($volume);
+			return { ok => 0, error => 'volume must be between 0 and 100' }
+				unless defined $want;
+		}
+		my $saved = eval { &subs::sound_app_level_write($name, $want) };
+		return { ok => 0, error => 'the app level could not be set' } unless $saved;
+		return { ok => 1, changed => { kind => 'app', name => $name, level => $want } };
+	}
+
+	if ($kind eq 'playback' || $kind eq 'recording') {
+		return { ok => 0, error => 'stream id is a whole number' }
+			unless defined $id && $id =~ /^\d+$/;
+		my $backend = &sound_backend();
+		return { ok => 0, supported => 0, error => 'streams are only listed by pactl' }
+			unless ($backend->{'kind'} || '') eq 'pactl';
+
+		if (defined $volume) {
+			return { ok => 0, error => 'volume must be between 0 and 100' }
+				unless &sound_volume_valid($volume);
+			my $pct = int($volume);
+			my $done = $kind eq 'recording'
+				? JawnOS::Platform::Audio::set_stream_output_volume($id, $pct)
+				: JawnOS::Platform::Audio::set_stream_input_volume($id, $pct);
+			return { ok => 0, error => 'the stream volume could not be set' } unless $done;
+			return { ok => 1, changed => { kind => $kind, id => $id + 0, volume => $pct } };
+		}
+
+		if (defined $muted) {
+			my $want = &sound_mute_value($muted);
+			return { ok => 0, error => 'mute must be on or off' } unless defined $want;
+			my $done = $kind eq 'recording'
+				? JawnOS::Platform::Audio::set_stream_output_mute($id, $want)
+				: JawnOS::Platform::Audio::set_stream_input_mute($id, $want);
+			return { ok => 0, error => 'the stream mute state could not be set' } unless $done;
+			return { ok => 1, changed => { kind => $kind, id => $id + 0, muted => $want } };
+		}
+
+		return { ok => 0, error => 'nothing to change' };
+	}
+
+	return { ok => 0, error => 'unknown sound target' };
 }
 
 # A player multiplies its own level by this, so a muted channel is silence and

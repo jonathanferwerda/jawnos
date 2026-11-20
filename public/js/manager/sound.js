@@ -2,6 +2,7 @@
    sound.js is part 1. The rest live in sound/ in name order:
      01_patchbay.js  - the house plan: node and route editor, the manage switch, save and load
      02_sections.js  - the section pills: one section at a time, remembered per browser
+     03_apps.js      - the Apps pill: house channels, app levels and the live stream mixer
    /js/manager/bundle.js and the app chunk concatenate the index and these parts.
    [[/js-split]] */
 // The Sound app: the machine's output and input devices, the default speaker
@@ -32,6 +33,7 @@ function soundOpener(timestamp) {
 			windowMaker(response.window || response);
 			soundBind();
 			soundSectionRestore();
+			if (typeof soundAppsPoll == 'function') { soundAppsPoll(); }
 			soundPatchLoad();
 			soundBrowserRefresh().then(soundLoad);
 		}

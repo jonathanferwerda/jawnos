@@ -824,6 +824,11 @@ sub slurp {
 }
 my $cmd = $ARGV[0] // '';
 if ($cmd eq 'info') { print "Server Name: PulseAudio (on PipeWire)\n"; exit 0; }
+if (($ARGV[0] // '') eq '-f' && ($ARGV[1] // '') eq 'json' && ($ARGV[2] // '') eq 'list') {
+	print '[{"index":0,"name":"alsa_output.real","properties":{';
+	print '"alsa.card":"1","api.alsa.pcm.stream":"playback","node.name":"alsa_output.real"}}]';
+	exit 0;
+}
 if ($cmd eq 'list' && ($ARGV[1] // '') eq 'short' && ($ARGV[2] // '') eq 'sinks') {
 	print slurp("$dir/sinks"); exit 0;
 }
@@ -847,6 +852,9 @@ exit 0;
 PACTL
 	local $ENV{PATH} = "$dir/bin:$ENV{PATH}";
 	local $ENV{FAKE_PACTL_DIR} = $dir;
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$dir/wireplumber";
+	# A fake session manager; the host's real WirePlumber is never restarted.
+	local $ENV{JAWNOS_SYSTEMCTL} = write_script("$dir/bin/systemctl", "exit 0;\n");
 
 	# A little engine that records its arguments and answers the protocol.
 	my $args_log = "$dir/args.log";
@@ -874,7 +882,7 @@ while (my $client = $listener->accept) {
 		close $client;
 		last;
 	}
-	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"patching\",\"system\":\"capturing\",\"backend\":\"alsa\",\"device\":\"hw:1,0\"}\n";
+	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"patching\",\"system\":\"capturing\",\"mode\":\"playback\",\"backend\":\"alsa\",\"device\":\"hw:1,0\"}\n";
 	close $client;
 }
 close $listener;
@@ -893,6 +901,15 @@ ENGINE
 	}, 10);
 	ok($saw, 'the engine is started to capture the system mix')
 		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
+
+	# The rule is written before the child opens the card, and only for the
+	# playback node; the microphone node stays with PipeWire.
+	my $rule = "$dir/wireplumber/51-jawnos-studio-card.conf";
+	ok(-s $rule, 'the sink-only WirePlumber rule is installed before the engine');
+	like(read_text($rule), qr/node\.name = "alsa_output\.real"/,
+		'and names the card\'s playback node');
+	unlike(read_text($rule), qr/alsa_input|api\.alsa\.pcm\.stream/,
+		'while leaving the microphone to PipeWire');
 	unlike(read_text($args_log), qr/--handset-device/,
 		'the default handset source needs no flag; the engine already knows it');
 
@@ -915,7 +932,185 @@ ENGINE
 	like(read_text($pactl_log), qr/set-default-sink alsa_output\.real/,
 		'the restore is the recorded default, not a guess');
 	like(read_text($pactl_log), qr/unload-module 42/, 'and the sink is unloaded');
+	ok(!-e $rule, 'the card rule is removed so the desktop gets the card back');
 	ok(!-e "$home/.president/audio-system-mix.json", 'nothing is left behind');
+}
+
+# --- a table-like plan installs the duplex rule before the engine -----------
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+	delete $ENV{JAWNOS_AUDIO_SYSTEM_DEVICE};
+
+	# A local input routed through the house bus: the engine needs capture.
+	my $plan = "$dir/audio-plan.json";
+	open(my $pfh, '>', $plan) or die "plan: $!";
+	print {$pfh} '{"manage":1,"backend":"alsa","device":"hw:1,0","plan":{'
+		. '"sources":[{"id":"gtr","kind":"input","channel":0}],'
+		. '"buses":[{"id":"house"}],'
+		. '"sinks":[{"id":"out","kind":"interface","channel":0}],'
+		. '"routes":[{"from":"gtr","to":"house"},'
+		. '{"from":"house","to":"out"}]}}';
+	close $pfh;
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+
+	my $sinks     = "$dir/sinks";
+	my $default   = "$dir/default";
+	my $pactl_log = "$dir/pactl.log";
+	open(my $sfh, '>', $sinks) or die "sinks: $!";
+	print {$sfh} "0\talsa_output.card1\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+	close $sfh;
+	open(my $dfh, '>', $default) or die "default: $!";
+	print {$dfh} "alsa_output.card1\n";
+	close $dfh;
+	open(my $lfh, '>', $pactl_log) or die "log: $!";
+	close $lfh;
+	write_script("$dir/bin/pactl", <<'PACTL');
+	my $dir = $ENV{'FAKE_PACTL_DIR'} or exit 9;
+	open(my $log, '>>', "$dir/pactl.log") or exit 9;
+	print {$log} join(' ', @ARGV), "\n";
+	close $log;
+	sub slurp {
+		my ($path) = @_;
+		open(my $fh, '<', $path) or return '';
+		local $/;
+		my $text = <$fh>;
+		close $fh;
+		return defined $text ? $text : '';
+	}
+	my $cmd = $ARGV[0] // '';
+	my $all = join(' ', @ARGV);
+	if ($cmd eq 'info') { print "Server Name: PulseAudio (on PipeWire)\n"; exit 0; }
+	if ($all eq '-f json list sinks') {
+		print '[{"index":0,"name":"alsa_output.card1","properties":{';
+		print '"alsa.card":"1","api.alsa.pcm.stream":"playback","node.name":"alsa_output.card1"}}]';
+		exit 0;
+	}
+	if ($all eq '-f json list sources') {
+		print '[{"index":0,"name":"alsa_input.card1","properties":{';
+		print '"alsa.card":"1","api.alsa.pcm.stream":"capture","node.name":"alsa_input.card1"}}]';
+		exit 0;
+	}
+	if ($all eq 'list short sinks') { print slurp("$dir/sinks"); exit 0; }
+	if ($cmd eq 'get-default-sink') { print slurp("$dir/default"); exit 0; }
+	if ($cmd eq 'set-default-sink') {
+		open(my $fh, '>', "$dir/default") or exit 9;
+		print {$fh} $ARGV[1], "\n"; close $fh; exit 0;
+	}
+	if ($cmd eq 'load-module') {
+		open(my $fh, '>>', "$dir/sinks") or exit 9;
+		print {$fh} "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n";
+		close $fh; print "42\n"; exit 0;
+	}
+	if ($cmd eq 'unload-module') {
+		open(my $fh, '>', "$dir/sinks") or exit 9;
+		print {$fh} "0\talsa_output.card1\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+		close $fh; exit 0;
+	}
+	exit 0;
+PACTL
+	local $ENV{PATH} = "$dir/bin:$ENV{PATH}";
+	local $ENV{FAKE_PACTL_DIR} = $dir;
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = "$dir/wireplumber";
+	local $ENV{JAWNOS_SYSTEMCTL} = write_script("$dir/bin/systemctl", "exit 0;\n");
+
+	my $args_log = "$dir/args.log";
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/duplex-engine", <<'ENGINE');
+	use IO::Socket::UNIX;
+	use Socket qw(SOCK_STREAM);
+	use JSON::PP ();
+	open(my $log, '>>', $ENV{'AUDIO_TEST_ARGS'}) or exit 1;
+	print {$log} join(' ', @ARGV), "\n";
+	close $log;
+	my %arg;
+	for (my $i = 0; $i < @ARGV; $i++) {
+		$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
+	}
+	my $listener = IO::Socket::UNIX->new(
+		Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+	) or exit 1;
+	while (my $client = $listener->accept) {
+		$client->autoflush(1);
+		my $line = <$client>;
+		my $obj = eval { JSON::PP->new->decode($line) };
+		my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+		if ($cmd eq 'quit') {
+			print {$client} "{\"ok\":true}\n";
+			close $client;
+			last;
+		}
+		my $mode = $ENV{'FAKE_ENGINE_MODE'} // 'duplex';
+		print {$client} "{\"ok\":true,\"take\":0,\"state\":\"patching\","
+			. "\"system\":\"capturing\",\"mode\":\"$mode\","
+			. "\"backend\":\"alsa\",\"device\":\"hw:1,0\"}\n";
+		close $client;
+	}
+	close $listener;
+	unlink $arg{'--socket'};
+ENGINE
+	local $ENV{AUDIO_TEST_ARGS} = $args_log;
+	# The old engine still says playback while the new plan needs duplex. The
+	# union keeps both matches, so the patch can open capture.
+	local $ENV{FAKE_ENGINE_MODE} = 'playback';
+
+	my $sup = start_supervisor(
+		args => ['--socket', "$dir/audio.sock"],
+		log  => "$dir/supervisor.log",
+	);
+
+	my $saw = wait_for(sub {
+		return 0 unless -s $args_log;
+		return read_text($args_log) =~ /--backend alsa --device hw:1,0/;
+	}, 10);
+	ok($saw, 'the duplex engine opens the saved card')
+		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
+
+	my $rule = "$dir/wireplumber/51-jawnos-studio-card.conf";
+	ok(-s $rule, 'the plan duplex installs the rule before the engine');
+	like(read_text($rule), qr/node\.name = "alsa_output\.card1"/,
+		'it names the playback node');
+	like(read_text($rule), qr/node\.name = "alsa_input\.card1"/,
+		'and the capture node even while the engine still says playback');
+	is(read_text("$dir/default"), "jawn_system\n", 'the machine is on the virtual sink');
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the duplex supervisor stops cleanly');
+	ok(!-e $rule, 'and the card is handed back');
+
+	# The reverse transition: the plan is now playback but the engine is still
+	# patching duplex. The rule may stay duplex until the respawn; the engine
+	# must not fail.
+	open(my $pfh2, '>', $plan) or die "plan2: $!";
+	print {$pfh2} '{"manage":1,"backend":"alsa","device":"hw:1,0","plan":{'
+		. '"sources":[],"buses":[],"sinks":[],"routes":[]}}';
+	close $pfh2;
+	$ENV{FAKE_ENGINE_MODE} = 'duplex';
+	my $args_log2 = "$dir/args2.log";
+	$ENV{AUDIO_TEST_ARGS} = $args_log2;
+
+	my $sup2 = start_supervisor(
+		args => ['--socket', "$dir/audio2.sock"],
+		log  => "$dir/supervisor2.log",
+	);
+	my $saw2 = wait_for(sub {
+		return 0 unless -s $args_log2;
+		return read_text($args_log2) =~ /--backend alsa --device hw:1,0/;
+	}, 10);
+	ok($saw2, 'the playback plan still starts its engine')
+		or diag('args: ' . (-s $args_log2 ? read_text($args_log2) : '(none)'));
+
+	my $kept = wait_for(sub {
+		return 0 unless -s $rule;
+		return read_text($rule) =~ /alsa_input\.card1/;
+	}, 10);
+	ok($kept, 'the rule stays duplex while the engine is still patching duplex');
+	like(read_text($rule), qr/alsa_output\.card1/, 'with both matches, not just playback');
+
+	my $code2 = stop_supervisor($sup2);
+	is($code2, 0, 'the reverse-transition supervisor stops cleanly');
+	ok(!-e $rule, 'and the card is handed back too');
 }
 
 # --- the staged binary is a build artifact ------------------------------------
