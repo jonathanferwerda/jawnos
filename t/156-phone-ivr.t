@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Routes/manager_phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Domain/Phone.pm templates/apps/phone.html.ep public/js/manager/phone.js public/js/manager/manager/02_web_nfc.js perl/help/topics_web.pl
+# tests-for: lib/JawnOS/Controller/manager_phone.pm lib/JawnOS/Routes/manager_phone.pm lib/JawnOS/Manager/Part12.pm lib/JawnOS/Domain/Phone.pm templates/apps/phone.html.ep public/js/manager/phone.js public/js/manager/manager/02_web_nfc.js perl/help/topics_web.pl perl/crew.pl
 # covers:    The IVR pane's settings and named flows, the remote-machine list, the sync blob, and the recent-call dialer icon.
 
 use strict;
@@ -17,6 +17,7 @@ use RepoSource;
 use JawnOSTest;
 
 require(root() . '/lib/JawnOS/Manager/Part12.pm');
+require(root() . '/perl/crew.pl');
 
 { package FakeRows;
   sub new { my ($class, $rows) = @_; return bless { rows => $rows || [] }, $class; }
@@ -40,6 +41,7 @@ is $defaults->{'enabled'}, 'no', 'IVR starts off';
 is $defaults->{'route'}, 'unknown', 'strangers are the default route';
 is $defaults->{'voice'}, &subs::say_default_voice(), 'the default voice is the house default';
 is $defaults->{'bluetooth'}, 'jawn-gateway', 'the gateway adapter has a Bluetooth name';
+is $defaults->{'machines'}, '', 'the gateway list starts unset';
 like $defaults->{'prompt'}, qr/name/i, 'the default name prompt asks for a name';
 ok length($defaults->{'greeting'}) && length($defaults->{'voicemail'}) && length($defaults->{'thanks'}),
 	'the greeting, voicemail prompt and thanks have defaults';
@@ -102,6 +104,9 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $settings->{'voice'}, 'piper-john', 'the chosen voice is read back';
 	is $settings->{'prompt'}, 'Who is this?', 'the prompt is read back';
 	is $settings->{'machine'}, 'gw-sig', 'the gateway is read back';
+	is $settings->{'machines'}->[0]->{'key'}, 'gw-sig', 'the legacy machine becomes the first gateway';
+	is $settings->{'machines'}->[0]->{'bluetooth'}, 'jawn-gateway', 'with the default Bluetooth name';
+	is $settings->{'machines'}->[0]->{'enabled'}, 1, 'and it is enabled';
 	is $settings->{'thanks'}, 'Thanks', 'the thanks prompt is read back';
 	is $settings->{'flows'}->{'unknown'}, 'ring', 'a saved flow is read back';
 	is $settings->{'flows'}->{'friend'}, 'ivr', 'a saved relationship flow is read back';
@@ -274,7 +279,7 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $saved->{'flows'}->{'enemy'}, 'reject', 'a missing flow keeps its default';
 	is $saved->{'flow_defs'}->{'receptionist'}->{'greeting'}, 'Hello',
 		'the legacy prompt edits the receptionist flow, so the two agree';
-	is scalar @writes, 12, 'every IVR setting is written';
+	is scalar @writes, 13, 'every IVR setting is written';
 	is $writes[0]->{'app'}, 'phone', 'the settings belong to the phone app';
 	like $writes[0]->{'setting'}, qr/^ivr_/, 'the settings carry the ivr_ prefix';
 	is $writes[9]->{'setting'}, 'ivr_hold', 'the hold music is one more house row';
@@ -283,6 +288,11 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $writes[11]->{'setting'}, 'ivr_flow_defs', 'the named flows are one more house row';
 	is $writes[11]->{'device'}, 'all', 'and the house, not the device, owns them';
 	like $writes[11]->{'value'}, qr/"receptionist"/, 'the flow row is JSON';
+	is $writes[12]->{'setting'}, 'ivr_machines', 'the ordered gateways are one more house row';
+	is $writes[12]->{'device'}, 'all', 'and the house owns them';
+	like $writes[12]->{'value'}, qr/"gw-sig"/, 'the row carries the gateway JSON';
+	is $saved->{'machines'}->[0]->{'key'}, 'gw-sig', 'the saved list names the gateway';
+	is $saved->{'machine'}, 'gw-sig', 'and the legacy scalar is its first entry';
 }
 {
 	local *subs::setting_grabber = sub { return undef };
@@ -291,8 +301,66 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	local *subs::setting_setter = sub { push @writes, { %{ $_[0] } } };
 	my $saved = Manager::phone_ivr_save({ machine => 'not-a-machine', prompt => 'x' x 2000, hold => '../../etc/passwd' });
 	is $saved->{'machine'}, '', 'a machine that is not in remote_machines is dropped';
+	is scalar @{ $saved->{'machines'} }, 0, 'and the ordered list is empty too';
 	is $saved->{'hold'}, '', 'and a hold choice cannot name its way out of the music library';
 	is length($saved->{'prompt'}), 1000, 'a prompt is capped at 1000 characters';
+}
+{
+	# The pane posts the ordered list; duplicates and unknown keys are dropped,
+	# and the first enabled entry is mirrored to the legacy rows.
+	local *subs::setting_grabber = sub { return undef };
+	local *subs::db_select = sub {
+		my ($table, $columns, $where) = @_;
+		my @rows = ($gateway, $sleepy);
+		my @match = grep {
+			my $ok = 1;
+			foreach my $key ( keys %{ $where || {} } ) {
+				$ok = 0 if (($$_{$key} // '') ne ($where->{$key} // ''));
+			}
+			$ok;
+		} @rows;
+		return FakeRows->new(\@match);
+	};
+	my @writes;
+	local *subs::setting_setter = sub { push @writes, { %{ $_[0] } } };
+	my $saved = Manager::phone_ivr_save({
+		enabled => 'yes',
+		machines => encode_json([
+			{ key => 'gw-sig', bluetooth => 'jawn-laptop', enabled => 1 },
+			{ key => '10.0.0.9', bluetooth => 'jawn-odroid', enabled => 1 },
+			{ key => 'gw-sig', bluetooth => 'duplicate', enabled => 1 },
+			{ key => 'not-a-machine', bluetooth => 'x', enabled => 1 },
+		]),
+	});
+	is scalar @{ $saved->{'machines'} }, 2, 'a duplicate and an unknown machine are dropped';
+	is $saved->{'machines'}->[0]->{'key'}, 'gw-sig', 'the list keeps its order';
+	is $saved->{'machines'}->[0]->{'bluetooth'}, 'jawn-laptop', 'and the entry Bluetooth name';
+	is $saved->{'machines'}->[1]->{'key'}, '10.0.0.9', 'the second entry follows';
+	is $saved->{'machine'}, 'gw-sig', 'the legacy machine is the first enabled entry';
+	is $saved->{'bluetooth'}, 'jawn-laptop', 'and so is its Bluetooth name';
+	my ($row) = grep { $_->{'setting'} eq 'ivr_machines' } @writes;
+	ok $row, 'the list is written';
+	my $stored = eval { decode_json($row->{'value'}) };
+	is ref $stored, 'ARRAY', 'as JSON';
+	is_deeply $stored->[0], { key => 'gw-sig', bluetooth => 'jawn-laptop', enabled => 1 },
+		'and the first entry keeps its shape';
+}
+{
+	# Removing every row must clear the legacy scalar too; an explicit empty
+	# list is not "no list yet", so it must not resurrect the old machine.
+	local *subs::setting_grabber = sub {
+		my $request = shift;
+		return 'gw-sig' if ($request->{'setting'} || '') eq 'ivr_machine';
+		return undef;
+	};
+	local *subs::db_select = sub { return FakeRows->new([ $gateway ]) };
+	my @writes;
+	local *subs::setting_setter = sub { push @writes, { %{ $_[0] } } };
+	my $saved = Manager::phone_ivr_save({ enabled => 'yes', machines => '[]' });
+	is scalar @{ $saved->{'machines'} }, 0, 'an explicit empty list clears every gateway';
+	is $saved->{'machine'}, '', 'and the legacy machine row with it';
+	my ($row) = grep { $_->{'setting'} eq 'ivr_machines' } @writes;
+	is $row->{'value'}, '[]', 'the house row is an empty list';
 }
 {
 	# the pane posts the flows and the matrix in one save; a bucket may name a
@@ -426,6 +494,49 @@ is $defaults->{'flows'}->{'enemy'}, 'reject', 'an enemy is rejected by default';
 	is $machines->[0]->{'available'}, 1, 'the online machine is available';
 	is $machines->[1]->{'key'}, '10.0.0.9', 'a machine with no signatorial keys on its IP';
 	is $machines->[1]->{'available'}, 0, 'the offline machine is not available';
+}
+{
+	local *Manager::phone_self_signatorial = sub { return '' };
+	local *subs::setting_grabber = sub {
+		my $request = shift;
+		return encode_json([
+			{ key => 'gw-sig', bluetooth => 'jawn-laptop', enabled => 1 },
+			{ key => '10.0.0.9', bluetooth => 'jawn-odroid', enabled => 1 },
+		]) if ($request->{'setting'} || '') eq 'ivr_machines';
+		return undef;
+	};
+	local *subs::db_select = sub { return FakeRows->new([ $sleepy, $gateway ]) };
+	local *subs::rightNow = sub { return 1700000000000 };
+	local *crew::advert_get = sub {
+		my ($key) = @_;
+		return undef unless $key eq 'gw-sig';
+		return {
+			signatorial => $key,
+			read_at => 1700000000000,
+			abilities => {
+				signatorial => $key, hostname => 'gateway', load1 => 0.1, ram_free_mb => 900,
+				ivr => { able => 1, audio => 'pipewire', bluetooth => 'jawn-laptop', armed => 1, listening => 1 },
+			},
+		};
+	};
+	my $candidates = Manager::phone_ivr_candidates();
+	is scalar @{$candidates}, 2, 'the ordered list is returned';
+	is $candidates->[0]->{'key'}, 'gw-sig', 'the first entry is first';
+	is $candidates->[0]->{'available'}, 1, 'an online machine is available';
+	is $candidates->[0]->{'able'}, 1, 'an advertising machine is able';
+	is $candidates->[0]->{'bluetooth'}, 'jawn-laptop', 'the entry Bluetooth name wins';
+	is $candidates->[0]->{'audio'}, 'pipewire', 'the advert carries the audio backend';
+	is $candidates->[1]->{'key'}, '10.0.0.9', 'the second entry follows';
+	is $candidates->[1]->{'available'}, 0, 'the offline machine is not available';
+	is $candidates->[1]->{'able'}, 0, 'and not able';
+}
+{
+	my $abilities = crew::abilities({ refresh => 1 });
+	is ref($abilities->{'ivr'}), 'HASH', 'the crew advert carries the IVR ability';
+	foreach my $key (qw(helper adapter audio listening armed port bluetooth able checked_at)) {
+		ok exists $abilities->{'ivr'}->{$key}, "the IVR ability carries $key";
+	}
+	like $abilities->{'ivr'}->{'port'}, qr/^\d+$/, 'the port is a number';
 }
 
 # ---------------------------------------------------------------- steps
@@ -831,6 +942,8 @@ like $manager, qr{/manager/phone/greeting}, 'the greeting routes are registered'
 like $manager, qr{sub action_24763}, 'the recorded greeting has an upload action';
 like $manager, qr{sub action_24764}, 'and a route that plays it';
 like $manager, qr{ivr => \$ivr}, 'the sync blob carries the IVR policy';
+like $manager, qr{ivr_candidates}, 'the page and sync carry the ordered candidates';
+like $manager, qr{machines\s*=>\s*\$c->param\('machines'\)}, 'the save forwards the gateway list';
 like $manager, qr{flow_callers}, 'the sync blob carries the resolved caller index';
 like $manager, qr{phone_ivr_caller_index}, 'built from the flow defs, so each entry\'s lines resolve';
 like $manager, qr{caller_choices}, 'the pane receives the picker choices';
@@ -841,6 +954,12 @@ like $manager, qr{flow_order}, 'the save forwards the flow order that decides a 
 my $template = template_source('apps/phone');
 like $template, qr{pane="ivr"}, 'the Phone app has an IVR pane';
 like $template, qr{phone_ivr_machine}, 'the pane chooses a remote machine';
+like $template, qr{phone_ivr_gateway_list}, 'the pane has the ordered gateway list';
+like $template, qr{phone_app_ivr_gateway_row}, 'the pane draws gateway rows';
+like $template, qr{phone_app_ivr_gateway_bluetooth}, 'each row has its Bluetooth name';
+like $template, qr{phone_ivr_gateway_add}, 'the pane can add a machine';
+like $template, qr{phone_app_ivr_gateways}, 'the gateway list has its own block';
+like $template, qr{advert_age}, 'the pane can mark a stale advert';
 like $template, qr{phone_app_ivr_flow}, 'the pane has the per-caller flow matrix';
 like $template, qr{phone_ivr_flows_editor}, 'the pane has the flows editor';
 like $template, qr{phone_ivr_flow_list}, 'the pane has a list to draw the flows into';
@@ -863,6 +982,12 @@ like $js, qr{JawnPhone\.dial}, 'the recent icon asks the native bridge to dial';
 like $js, qr{phone_app_row_call}, 'the recent icon has a click handler';
 like $js, qr{phone_app_ivr_flow}, 'the pane collects the flow matrix';
 like $js, qr{flow_defs}, 'the pane saves the named flows';
+like $js, qr{machines: JSON\.stringify\(gateways\)}, 'the pane saves the ordered gateways';
+like $js, qr{phone_ivr_gateway_list}, 'the pane draws the gateway list';
+like $js, qr{phone_app_ivr_gateway_up}, 'a gateway can move up';
+like $js, qr{phone_app_ivr_gateway_down}, 'a gateway can move down';
+like $js, qr{phone_ivr_gateway_add}, 'a machine can be added';
+like $js, qr{jawnPhoneGatewaysHidden}, 'the first enabled gateway is mirrored to the scalar rows';
 like $js, qr{phone_ivr_flow_list}, 'the pane draws the flow list';
 like $template, qr{\.phone_app_ivr_flow_edit\[hidden\] \{ display:none}, 'a folded flow\'s editor is really hidden';
 like $js, qr{#phone_app \.phone_app_ivr_flow_head}, 'a flow\'s head is the handler that folds it';
@@ -922,6 +1047,8 @@ like $help, qr/folds to one open flow at a time/, 'the help topic says a flow fo
 like $help, qr/Callers/, 'the help topic explains the callers list';
 like $help, qr/Add caller/, 'the help topic names the body picker';
 like $help, qr/Add number/, 'the help topic names the number control';
+like $help, qr/Gateways, in order/, 'the help names the ordered gateway list';
+like $help, qr/rings through/, 'the help says a call rings when no gateway can answer';
 
 # The pane has to render with the settings the controller passes, not only match
 # a source grep. Empty call/list data keeps the rest of the page quiet.
@@ -941,6 +1068,7 @@ like $help, qr/Add number/, 'the help topic names the number control';
 				ringtone => 'notifications/ring.mp3',
 				own_lines => [],
 				ivr_machines => [],
+				ivr_candidates => [],
 				ivr_voices => [ &subs::say_voices() ],
 				caller_choices => [],
 			},
@@ -948,6 +1076,7 @@ like $help, qr/Add number/, 'the help topic names the number control';
 	};
 	is $@, '', 'the Phone template renders with the IVR pane';
 	like $out, qr{id="phone_ivr_flows_editor"}, 'the rendered pane has the flows editor';
+	like $out, qr{phone_ivr_gateway_list}, 'the rendered pane has the gateway list';
 	like $out, qr{id="phone_ivr_flow_list"}, 'the rendered pane has the flow list';
 	like $out, qr{data-flow-defs="[^"]*receptionist}, 'the rendered pane carries the flows as JSON';
 	like $out, qr{data-caller-choices}, 'the rendered pane carries the caller choices';
@@ -955,6 +1084,40 @@ like $help, qr/Add number/, 'the help topic names the number control';
 	like $out, qr{pane="voicemail"}, 'the rendered page has the Voicemail pill';
 	like $out, qr{id="phone_voicemail"}, 'the rendered page has the message list';
 	like $out, qr{No voicemail messages yet\.}, 'the empty state says so';
+}
+
+{
+	# A real row, not only the empty state: the template must draw the handle,
+	# the status, the per-row Bluetooth name and the order buttons without dying.
+	my $ivr;
+	{
+		local *subs::setting_grabber = sub { return undef };
+		$ivr = Manager::phone_ivr_settings();
+	}
+	my $mt = Mojo::Template->new(vars => 1, auto_escape => 1);
+	my $out = eval {
+		$mt->render_file(
+			root() . '/templates/apps/phone.html.ep',
+			{
+				calls => [], known => [], numbers => [], blocked => [],
+				ivr => $ivr,
+				ringtone => 'notifications/ring.mp3',
+				own_lines => [],
+				ivr_machines => [ { key => 'gw-sig', hostname => 'gateway', available => 1 } ],
+				ivr_candidates => [ {
+					key => 'gw-sig', hostname => 'gateway', enabled => 1,
+					available => 1, able => 1, bluetooth => 'jawn-laptop',
+					audio => 'pipewire', armed => 1, advert_age => 10,
+				} ],
+				ivr_voices => [ &subs::say_voices() ],
+				caller_choices => [],
+			},
+		);
+	};
+	is $@, '', 'the Phone template renders a non-empty gateway list';
+	like $out, qr{data-key="gw-sig"}, 'the row carries its machine key';
+	like $out, qr{jawn-laptop}, 'the row carries its Bluetooth name';
+	like $out, qr{phone_app_ivr_gateway_handle}, 'the row has a drag handle';
 }
 
 done_testing();

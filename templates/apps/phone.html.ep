@@ -46,6 +46,28 @@
 	.phone_app_ivr_save { align-self:flex-start; padding:7px 18px; border-radius:999px;
 		border:1px solid var(--line); background:var(--panel); color:inherit; cursor:var(--jawnos-cursor-pointer, pointer); }
 	.phone_app_ivr_status { min-height:18px; color:var(--muted,#8e8e8e); font-size:12px; }
+	.phone_app_ivr_gateways { display:flex; flex-direction:column; gap:6px; }
+	.phone_app_ivr_gateways_title { font-size:13px; font-weight:600; }
+	.phone_app_ivr_gateway_list { display:flex; flex-direction:column; gap:6px; }
+	.phone_app_ivr_gateway_row { display:flex; align-items:center; gap:6px; border:1px solid var(--line);
+		border-radius:8px; padding:6px 8px; flex-wrap:wrap; background:var(--panel); }
+	.phone_app_ivr_gateway_handle { flex:0 0 auto; cursor:var(--jawnos-cursor-grab, grab); touch-action:none;
+		user-select:none; -webkit-user-select:none; padding:2px 4px; }
+	.phone_app_ivr_gateway_handle:active { cursor:var(--jawnos-cursor-grabbing, grabbing); background:var(--line); }
+	.phone_app_ivr_gateway_name { flex:1 1 120px; min-width:0; font-weight:600; overflow:hidden;
+		text-overflow:ellipsis; white-space:nowrap; }
+	.phone_app_ivr_gateway_status { flex:0 0 auto; font-size:11px; color:var(--muted,#8e8e8e); }
+	.phone_app_ivr_gateway_bluetooth { flex:0 0 130px; min-width:0; font:inherit; padding:5px 7px;
+		border-radius:7px; border:1px solid var(--line); background:var(--panel); color:inherit; }
+	.phone_app_ivr_gateway_row button { flex:0 0 auto; padding:2px 8px; border-radius:999px;
+		border:1px solid var(--line); background:transparent; color:inherit;
+		cursor:var(--jawnos-cursor-pointer, pointer); }
+	.phone_app_ivr_gateway_add { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+	.phone_app_ivr_gateway_add select { flex:1 1 auto; min-width:0; }
+	.phone_app_ivr_gateway_add button { flex:0 0 auto; padding:5px 11px; border-radius:999px;
+		border:1px solid var(--line); background:transparent; color:inherit;
+		cursor:var(--jawnos-cursor-pointer, pointer); }
+	.phone_app_ivr_gateway_help { font-size:12px; color:var(--muted,#8e8e8e); }
 	.phone_app_ivr_flows { display:flex; flex-direction:column; gap:6px; }
 	.phone_app_ivr_flow_row { display:flex; align-items:center; gap:8px; }
 	.phone_app_ivr_flow_label { flex:1 1 auto; }
@@ -291,17 +313,41 @@
 	<div class="phone_app_pane" pane="ivr">
 		<div class="phone_app_ivr">
 			<label class="phone_app_ivr_toggle"><input type="checkbox" id="phone_ivr_enabled" <%= (($ivr->{'enabled'} || '') eq 'yes') ? 'checked' : '' %>> <%= &subs::ui('Enable IVR') %></label>
-			<label><%= &subs::ui('Gateway Bluetooth name') %>
-				<input type="text" id="phone_ivr_bluetooth" value="<%= $ivr->{'bluetooth'} || '' %>" placeholder="jawn-gateway">
-			</label>
-			<label><%= &subs::ui('Remote machine') %>
-				<select id="phone_ivr_machine">
-					<option value=""><%= &subs::ui('— No gateway —') %></option>
-					<% foreach my $m (@{$ivr_machines || []}) { %>
-						<option value="<%= $m->{'key'} %>" <%= (($ivr->{'machine'} || '') eq $m->{'key'}) ? 'selected' : '' %>><%= $m->{'hostname'} %> — <%= $m->{'available'} ? &subs::ui('online') : &subs::ui('offline') %></option>
+			<%# The ordered gateways. The scalar rows stay as hidden inputs so the
+			    rest of the page (and an older app build) still reads one machine and
+			    one Bluetooth name; the first enabled row is mirrored into them. %>
+			<input type="hidden" id="phone_ivr_machine" value="<%= $ivr->{'machine'} || '' %>">
+			<input type="hidden" id="phone_ivr_bluetooth" value="<%= $ivr->{'bluetooth'} || '' %>">
+			<% my $gateway_rows = $ivr_candidates || [];
+			   my %gateway_have = map { ($_->{'key'} || '') => 1 } @{$gateway_rows}; %>
+			<div class="phone_app_ivr_gateways">
+				<div class="phone_app_ivr_gateways_title"><%= &subs::ui('Gateways, in order') %></div>
+				<div class="phone_app_ivr_gateway_list" id="phone_ivr_gateway_list">
+					<% foreach my $g (@{$gateway_rows}) { %>
+						<div class="phone_app_ivr_gateway_row" data-key="<%= $g->{'key'} %>">
+							<span class="phone_app_ivr_gateway_handle" hint="<%= &subs::ui('Drag to reorder') %>">≡</span>
+							<input type="checkbox" class="phone_app_ivr_gateway_enabled" <%= $g->{'enabled'} ? 'checked' : '' %>>
+							<span class="phone_app_ivr_gateway_name"><%= $g->{'hostname'} || $g->{'key'} %></span>
+							<span class="phone_app_ivr_gateway_status"><%= $g->{'available'} ? &subs::ui('online') : &subs::ui('offline') %> · <%= $g->{'able'} ? &subs::ui('able') : &subs::ui('not able') %><% if ($g->{'audio'}) { %> · <%= $g->{'audio'} %><% } %><% if ($g->{'armed'}) { %> · <%= &subs::ui('armed') %><% } %><% if (defined $g->{'advert_age'} && $g->{'advert_age'} > 300) { %> · <%= &subs::ui('stale') %><% } %></span>
+							<input type="text" class="phone_app_ivr_gateway_bluetooth" value="<%= $g->{'bluetooth'} || '' %>" placeholder="jawn-gateway">
+							<button class="phone_app_ivr_gateway_up" hint="<%= &subs::ui('Move up') %>">↑</button>
+							<button class="phone_app_ivr_gateway_down" hint="<%= &subs::ui('Move down') %>">↓</button>
+							<button class="phone_app_ivr_gateway_remove" hint="<%= &subs::ui('Remove gateway') %>">×</button>
+						</div>
 					<% } %>
-				</select>
-			</label>
+				</div>
+				<div class="phone_app_ivr_gateway_add">
+					<select id="phone_ivr_gateway_add_select">
+						<option value=""><%= &subs::ui('Add machine') %></option>
+						<% foreach my $m (@{ $ivr_machines || [] }) {
+							next if $gateway_have{ $m->{'key'} || '' }; %>
+							<option value="<%= $m->{'key'} %>"><%= $m->{'hostname'} %> — <%= $m->{'available'} ? &subs::ui('online') : &subs::ui('offline') %></option>
+						<% } %>
+					</select>
+					<button id="phone_ivr_gateway_add" hint="<%= &subs::ui('Add machine') %>"><%= &subs::ui('Add machine') %></button>
+				</div>
+				<div class="phone_app_ivr_gateway_help"><%= &subs::ui('The list is saved in priority order. The first enabled gateway answers today; the phone update will try each in turn and ring through if none can.') %></div>
+			</div>
 			<div class="phone_app_ivr_status">
 				<% if ($ivr->{'machine'}) { %>
 					<%= &subs::ui('Gateway:') %> <%= $ivr->{'machine_label'} || $ivr->{'machine'} %> — <%= $ivr->{'machine_available'} ? &subs::ui('online') : &subs::ui('offline') %>

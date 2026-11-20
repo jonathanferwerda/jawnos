@@ -462,6 +462,7 @@ our %SUB = (
 	'phone_ringtone'                         => 'JawnOS/Manager/Part12.pm',
 	'phone_voicemail_transcript'             => 'JawnOS/Manager/Part12.pm',
 	'phone_ivr_machines'                     => 'JawnOS/Manager/Part12.pm',
+	'phone_ivr_candidates'                   => 'JawnOS/Manager/Part12.pm',
 	'phone_ivr_machine'                      => 'JawnOS/Manager/Part12.pm',
 	'phone_relationships'                    => 'JawnOS/Manager/Part12.pm',
 	'phone_route_for'                        => 'JawnOS/Manager/Part12.pm',

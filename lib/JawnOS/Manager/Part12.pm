@@ -581,7 +581,7 @@ sub phone_ringtone {
 
 sub phone_ivr_save($params) {
 	my $next = &phone_ivr_settings();
-	foreach my $key (qw(enabled machine route voice bluetooth greeting prompt voicemail thanks hold)) {
+	foreach my $key (qw(enabled route voice greeting prompt voicemail thanks hold)) {
 		next unless exists $params->{$key};
 		my $value = defined $params->{$key} ? $params->{$key} : '';
 		$value =~ s/^\s+|\s+$//g;
@@ -633,6 +633,55 @@ sub phone_ivr_save($params) {
 	}
 	$next->{'enabled'} = ($next->{'enabled'} eq 'yes' || $next->{'enabled'} eq '1' || $next->{'enabled'} eq 'on') ? 'yes' : 'no';
 	$next->{'route'} = 'unknown' unless $next->{'route'} =~ /^(?:unknown|all|off)$/;
+	# The ordered gateway list. A save from the new pane posts `machines`; an
+	# older client posts one machine/bluetooth pair, which updates the first
+	# entry. The first enabled entry is mirrored to the scalar rows so every
+	# current route and an older app still agree.
+	my $raw_machines = exists $params->{'machines'} ? $params->{'machines'} : $next->{'machines'};
+	my $machines = &subs::phone_ivr_machines_clean($raw_machines, $next);
+	if (!exists $params->{'machines'} && exists $params->{'machine'}) {
+		my $machine = defined $params->{'machine'} ? $params->{'machine'} : '';
+		my $bluetooth = defined $params->{'bluetooth'} ? $params->{'bluetooth'} : '';
+		$machine =~ s/^\s+|\s+$//g;
+		$bluetooth =~ s/^\s+|\s+$//g;
+		if (!length $machine) {
+			# an older client clearing the scalar clears the list too; an empty
+			# list must not fall back to the stale legacy row
+			$machines = [];
+		}
+		elsif (@{$machines}) {
+			$machines->[0]->{'key'} = $machine;
+			$machines->[0]->{'bluetooth'} = $bluetooth if length $bluetooth;
+			$machines->[0]->{'enabled'} = 1;
+		}
+		else {
+			push @{$machines}, { key => $machine, bluetooth => $bluetooth, enabled => 1 };
+		}
+	}
+	elsif (!exists $params->{'machines'} && exists $params->{'bluetooth'}) {
+		my $bluetooth = defined $params->{'bluetooth'} ? $params->{'bluetooth'} : '';
+		$bluetooth =~ s/^\s+|\s+$//g;
+		$machines->[0]->{'bluetooth'} = $bluetooth if @{$machines} && length $bluetooth;
+	}
+	my $gateway_self = (-x './perl/sco/sco_helper') ? &phone_self_signatorial() : '';
+	my @kept;
+	foreach my $entry ( @{$machines} ) {
+		my $key = $entry->{'key'} || '';
+		$key = $gateway_self if $key eq 'local' && length $gateway_self;
+		next unless length $key;
+		my $known = ($gateway_self && $key eq $gateway_self)
+			|| &subs::db_select('remote_machines', undef, { signatorial => $key })->hashes->[0]
+			|| &subs::db_select('remote_machines', undef, { ip => $key })->hashes->[0]
+			|| $key =~ /^[0-9a-f]{32}$/
+			|| $key =~ /^[0-9a-fA-F.:]+$/;
+		next unless $known;
+		push @kept, { %{$entry}, key => $key };
+		last if @kept >= 8;
+	}
+	my ($first) = grep { $_->{'enabled'} } @kept;
+	$next->{'machines'} = \@kept;
+	$next->{'machine'} = $first ? $first->{'key'} : '';
+	$next->{'bluetooth'} = $first ? $first->{'bluetooth'} : '';
 	my %voices = map { $_->{'value'} => 1 } &subs::say_voices();
 	$next->{'voice'} = &subs::say_default_voice() unless $voices{ $next->{'voice'} };
 	if (defined $next->{'machine'} && length $next->{'machine'}) {
@@ -663,6 +712,7 @@ sub phone_ivr_save($params) {
 	}
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flows', value => encode_json($next->{'flows'}), device => 'all' });
 	&subs::setting_setter({ app => 'phone', setting => 'ivr_flow_defs', value => encode_json($next->{'flow_defs'}), device => 'all' });
+	&subs::setting_setter({ app => 'phone', setting => 'ivr_machines', value => encode_json($next->{'machines'}), device => 'all' });
 	$next->{'caller_warnings'} = \@caller_warnings;
 	return $next;
 }
@@ -768,6 +818,63 @@ sub phone_ivr_machine($key) {
 	}
 	return &subs::db_select('remote_machines', undef, { signatorial => $key })->hashes->[0]
 		|| &subs::db_select('remote_machines', undef, { ip => $key })->hashes->[0];
+}
+
+# The ordered gateways the pane and the phone read: the saved list merged with
+# the mesh's availability and the crew's `ivr` ability. That ability is a
+# pre-filter; the phone's Bluetooth link and the gateway's live state are still
+# the final gates (the app does those).
+sub phone_ivr_candidates {
+	eval { require './perl/crew.pl' } unless defined &crew::abilities || defined &crew::advert_get;
+	my $settings = &phone_ivr_settings();
+	my $catalog = &phone_ivr_machines();
+	my %by_key = map { ($_->{'key'} || '') => $_ } @{$catalog};
+	my $self = &phone_self_signatorial();
+	my $now = eval { &subs::rightNow() } || int(time() * 1000);
+	# The crew package defines its own can() (a job-capability check), so the
+	# symbol check must be UNIVERSAL's, not crew->can.
+	my $crew_pkg = 'crew';
+	my (@out, $rank);
+	foreach my $entry ( @{ $settings->{'machines'} || [] } ) {
+		my $key = $entry->{'key'} || '';
+		next unless length $key;
+		my $row = $by_key{$key} || {
+			key => $key, hostname => $key, ip => '', connection => 'inactive',
+			available => 0, device => '', manager => '', signatorial => $key, local => 0,
+		};
+		my $advert;
+		if (length $self && $key eq $self) {
+			my $abilities = eval { &crew::abilities() };
+			$advert = { abilities => $abilities, read_at => $now } if ref $abilities eq 'HASH';
+		}
+		else {
+			# A feature check, not a hard dependency: an older crew has no
+			# advert_get and simply leaves the machine unadvertised.
+			my $advert_get = eval { UNIVERSAL::can($crew_pkg, 'advert_get') };
+			$advert = $advert_get ? eval { $advert_get->($key) } : undef;
+		}
+		my $ivr = (ref $advert eq 'HASH' && ref $advert->{'abilities'}{'ivr'} eq 'HASH')
+			? $advert->{'abilities'}{'ivr'} : {};
+		my $available = $row->{'available'} ? 1 : 0;
+		my $read_at = ref $advert eq 'HASH' ? ($advert->{'read_at'} || 0) : 0;
+		push @out, {
+			%{$row},
+			key         => $key,
+			enabled     => $entry->{'enabled'} ? 1 : 0,
+			bluetooth   => (length($entry->{'bluetooth'} || '') ? $entry->{'bluetooth'} : ($ivr->{'bluetooth'} || '')),
+			rank        => ++$rank,
+			available   => $available,
+			able        => ($available && $ivr->{'able'}) ? 1 : 0,
+			audio       => $ivr->{'audio'} || '',
+			armed       => $ivr->{'armed'} ? 1 : 0,
+			listening   => $ivr->{'listening'} ? 1 : 0,
+			advert_at   => $read_at,
+			advert_age  => $read_at ? int(($now - $read_at) / 1000) : undef,
+			load1       => ref $advert eq 'HASH' ? $advert->{'abilities'}{'load1'} : undef,
+			ram_free_mb => ref $advert eq 'HASH' ? $advert->{'abilities'}{'ram_free_mb'} : undef,
+		};
+	}
+	return \@out;
 }
 
 # The caller's relationship by number, for the app's call screening. The house's

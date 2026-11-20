@@ -352,3 +352,10 @@ so cross-device delivery over the peer rail is the next step).
   a call; the helper's own silence gate does.
 - The helper logs `waiting for call audio` every few seconds while it waits; a
   `pcm open failed` means the PCM device name is wrong (BlueALSA only).
+
+## See also
+
+- `docs/ivr-hierarchy.md` — the ranked gateway design (the first available and
+  able gateway answers, rather than a single named machine).
+- `docs/backpack-gateway.md` — the travel gateway's parts list (CAD), power,
+  pack and sewing options.

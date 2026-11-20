@@ -261,6 +261,38 @@ $(document).on('click', '#phone_app .phone_app_row_call', function (e) {
 	$('#phone_app .phone_app_tab[pane="dial"]').trigger('click');
 });
 
+// The gateway rows, in the order the pane draws them. The first enabled row is
+// mirrored into the hidden scalar rows so the arm control (and an older app
+// build) still reads one machine and one Bluetooth name.
+function jawnPhoneGatewaysRead() {
+	var out = [];
+	$('#phone_app .phone_app_ivr_gateway_row').each(function () {
+		var row = $(this);
+		out.push({
+			key: row.attr('data-key') || '',
+			bluetooth: (row.find('.phone_app_ivr_gateway_bluetooth').val() || '').trim(),
+			enabled: row.find('.phone_app_ivr_gateway_enabled').is(':checked') ? 1 : 0
+		});
+	});
+	return out;
+}
+
+function jawnPhoneGatewaysHidden() {
+	var first = null;
+	$('#phone_app .phone_app_ivr_gateway_row').each(function () {
+		var row = $(this);
+		if (row.find('.phone_app_ivr_gateway_enabled').is(':checked')) {
+			first = {
+				key: row.attr('data-key') || '',
+				bluetooth: (row.find('.phone_app_ivr_gateway_bluetooth').val() || '').trim()
+			};
+			return false;
+		}
+	});
+	$('#phone_app #phone_ivr_machine').val(first ? first.key : '');
+	$('#phone_app #phone_ivr_bluetooth').val(first ? first.bluetooth : '');
+}
+
 // The IVR pane's save: the settings are the phone's own setting rows, and the
 // machine is the remote_machines signatorial (or IP) the gateway runs on. The
 // named flows ride in one JSON string; the older top-level prompt fields follow
@@ -275,15 +307,19 @@ $(document).on('click', '#phone_app #phone_ivr_save', function (e) {
 	});
 	var defs = jawnPhoneFlowsSync();
 	var receptionist = defs.receptionist || {};
+	var gateways = jawnPhoneGatewaysRead();
+	var firstGateway = null;
+	$.each(gateways, function (i, g) { if (g.enabled) { firstGateway = g; return false; } });
 	$.ajax({
 		url: '/manager/phone/ivr',
 		type: 'POST',
 		data: {
 			timestamp: Date.now(),
 			enabled: $('#phone_app #phone_ivr_enabled').is(':checked') ? 'yes' : 'no',
-			machine: $('#phone_app #phone_ivr_machine').val() || '',
+			machine: firstGateway ? firstGateway.key : '',
 			voice: receptionist.voice || '',
-			bluetooth: $('#phone_app #phone_ivr_bluetooth').val() || '',
+			bluetooth: firstGateway ? firstGateway.bluetooth : '',
+			machines: JSON.stringify(gateways),
 			greeting: receptionist.greeting || '',
 			prompt: receptionist.prompt || '',
 			voicemail: receptionist.voicemail || '',
@@ -1669,6 +1705,7 @@ $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
 	e.preventDefault();
 	var label = $('#phone_app #phone_ivr_gateway_state');
 	label.text(jawnosT('Arming…'));
+	jawnPhoneGatewaysHidden();
 	jawnPhoneFlowsInit();
 	// The gateway is armed with the receptionist flow: that is what the older
 	// top-level prompt rows mean, and the bucket matrix picks a flow per caller.
@@ -1692,6 +1729,60 @@ $(document).on('click', '#phone_app #phone_ivr_arm', function (e) {
 		},
 		error: function () { label.text('Gateway: not answering'); }
 	});
+});
+
+// The gateway list: enable, reorder, add and remove. The hidden scalar rows are
+// kept in step so the arm control and an older app build still see the first.
+$(document).on('change', '#phone_app .phone_app_ivr_gateway_enabled', function () {
+	jawnPhoneGatewaysHidden();
+});
+$(document).on('change', '#phone_app .phone_app_ivr_gateway_bluetooth', function () {
+	jawnPhoneGatewaysHidden();
+});
+$(document).on('click', '#phone_app .phone_app_ivr_gateway_up', function (e) {
+	e.preventDefault();
+	var row = $(this).closest('.phone_app_ivr_gateway_row');
+	var prev = row.prev('.phone_app_ivr_gateway_row');
+	if (prev.length) { row.insertBefore(prev); jawnPhoneGatewaysHidden(); }
+});
+$(document).on('click', '#phone_app .phone_app_ivr_gateway_down', function (e) {
+	e.preventDefault();
+	var row = $(this).closest('.phone_app_ivr_gateway_row');
+	var next = row.next('.phone_app_ivr_gateway_row');
+	if (next.length) { row.insertAfter(next); jawnPhoneGatewaysHidden(); }
+});
+$(document).on('click', '#phone_app .phone_app_ivr_gateway_remove', function (e) {
+	e.preventDefault();
+	$(this).closest('.phone_app_ivr_gateway_row').remove();
+	jawnPhoneGatewaysHidden();
+});
+$(document).on('click', '#phone_app #phone_ivr_gateway_add', function (e) {
+	e.preventDefault();
+	var select = $('#phone_app #phone_ivr_gateway_add_select');
+	var key = select.val() || '';
+	if (!key) { return; }
+	if ($('#phone_app .phone_app_ivr_gateway_row[data-key="' + key + '"]').length) { return; }
+	var name = select.find('option:selected').text() || key;
+	var row = $('<div class="phone_app_ivr_gateway_row"></div>').attr('data-key', key);
+	row.append($('<span class="phone_app_ivr_gateway_handle"></span>')
+		.attr('hint', jawnosT('Drag to reorder')).text('≡'));
+	row.append('<input type="checkbox" class="phone_app_ivr_gateway_enabled" checked>');
+	row.append($('<span class="phone_app_ivr_gateway_name"></span>').text(name));
+	row.append($('<span class="phone_app_ivr_gateway_status"></span>').text(jawnosT('not saved')));
+	row.append('<input type="text" class="phone_app_ivr_gateway_bluetooth" placeholder="jawn-gateway">');
+	row.append($('<button class="phone_app_ivr_gateway_up"></button>').attr('hint', jawnosT('Move up')).text('↑'));
+	row.append($('<button class="phone_app_ivr_gateway_down"></button>').attr('hint', jawnosT('Move down')).text('↓'));
+	row.append($('<button class="phone_app_ivr_gateway_remove"></button>').attr('hint', jawnosT('Remove gateway')).text('×'));
+	$('#phone_app #phone_ivr_gateway_list').append(row);
+	select.val('');
+	jawnPhoneGatewaysHidden();
+});
+$(function () {
+	var list = $('#phone_app #phone_ivr_gateway_list');
+	if (list.length && list.sortable) {
+		list.sortable({ handle: '.phone_app_ivr_gateway_handle', axis: 'y', update: jawnPhoneGatewaysHidden });
+	}
+	jawnPhoneGatewaysHidden();
 });
 
 // A face button lands on the Phone app with a pane to open; without this the

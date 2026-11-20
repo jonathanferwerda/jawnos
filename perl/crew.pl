@@ -215,6 +215,49 @@ sub _compute_abilities {
 	# power_supply sysfs to apps, so a phone simply says nothing here.
 	$abilities{'on_ac'} = $on_ac if defined $on_ac;
 	$abilities{'battery_percent'} = $battery_percent if defined $battery_percent;
+
+	# The reception gateway's own facts. `able` is the pre-filter the Phone pane
+	# and the app read; the live socket/plan state is a hint, because a
+	# five-minute advert cannot promise what a call needs this second. The audio
+	# backend is still the IVR's existing pactl/PipeWire path; the JawnOS audio
+	# engine's gateway plan is a later change and is not claimed here.
+	my $helper = -x './perl/sco/sco_helper' ? 1 : 0;
+	my @hci = glob('/sys/class/bluetooth/hci*');
+	my $adapter = @hci ? 1 : 0;
+	my $pactl = _which('pactl') ? 1 : 0;
+	my $sco_socket = 0;
+	if (my $sock = eval { &subs::home('~/.president/sco.sock') }) {
+		$sco_socket = -S $sock ? 1 : 0;
+	}
+	my $armed = 0;
+	if (my $state_file = eval { &subs::home('~/.president/sco.json') }) {
+		if (-e $state_file && open(my $fh, '<', $state_file)) {
+			local $/;
+			my $raw = <$fh>;
+			close $fh;
+			my $state = eval { decode_json($raw) };
+			$armed = 1 if ref $state eq 'HASH'
+				&& (($state->{'state'} || '') eq 'armed' || ($state->{'state'} || '') eq 'waiting');
+		}
+	}
+	my $bluetooth = eval { &subs::phone_ivr_grab('ivr_bluetooth') } || '';
+	my $port = eval { &subs::setting_grabber({
+		app => 'misc', setting => 'sco_port', device => 'all', benign => 1,
+	}) } || '';
+	$port = 45700 unless defined $port && $port =~ /^\d{1,5}$/ && $port > 0 && $port < 65536;
+	my %ivr = (
+		helper     => $helper,
+		adapter    => $adapter,
+		audio      => $pactl ? 'pipewire' : '',
+		listening  => $sco_socket,
+		armed      => $armed,
+		port       => $port + 0,
+		bluetooth  => $bluetooth,
+		checked_at => int(time() * 1000),
+	);
+	$ivr{'able'} = ($helper && $adapter && $pactl && !_overloaded(\%abilities, 'light')) ? 1 : 0;
+	$abilities{'ivr'} = \%ivr;
+
 	return \%abilities;
 }
 

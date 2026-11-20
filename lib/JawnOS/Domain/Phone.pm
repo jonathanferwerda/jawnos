@@ -23,6 +23,9 @@ sub phone_ivr_defaults {
 		voice     => &subs::say_default_voice(),
 		# the adapter the phone must send call audio to, by Bluetooth name
 		bluetooth => 'jawn-gateway',
+		# no stored gateway list: the legacy machine/bluetooth pair is still the
+		# whole answer (an explicit empty list means "no gateways")
+		machines  => '',
 		greeting  => &subs::ui('This automated system records calls.'),
 		prompt    => &subs::ui('Please say your name after the tone.'),
 		voicemail => &subs::ui('Please leave a message after the tone.'),
@@ -37,6 +40,55 @@ sub phone_ivr_defaults {
 # The six call-flow buckets. `route` is the older three-way knob; when a phone
 # has no saved matrix, the matrix is derived from it so an existing phone keeps
 # behaving the same way.
+# The ordered gateway list. An entry is { key, bluetooth, enabled }; the key is
+# a signatorial (or the literal `local`, which the save resolves). A list that is
+# missing, not JSON, or empty falls back to the legacy machine/bluetooth pair,
+# so an older house keeps behaving as it does now. At most eight candidates: the
+# phone tries them in order and a long tail is latency, not choice.
+sub phone_ivr_machines_clean {
+	my ($raw, $legacy) = @_;
+	my $list = $raw;
+	# An explicit empty list means "no gateways"; only an absent or unreadable
+	# row falls back to the legacy pair.
+	my $explicit = ref $list eq 'ARRAY' ? 1 : 0;
+	if (defined $list && !ref $list && length $list) {
+		my $decoded = eval { decode_json($list) };
+		if (ref $decoded eq 'ARRAY') { $list = $decoded; $explicit = 1; }
+		else { $list = []; }
+	}
+	$list = [] unless ref $list eq 'ARRAY';
+	my (@out, %seen);
+	foreach my $entry ( @{$list} ) {
+		next unless ref $entry eq 'HASH';
+		my $key = defined $entry->{'key'} ? $entry->{'key'} : '';
+		$key =~ s/^\s+|\s+$//g;
+		next unless length $key;
+		next if $seen{$key}++;
+		my $bluetooth = defined $entry->{'bluetooth'} ? $entry->{'bluetooth'} : '';
+		$bluetooth =~ s/^\s+|\s+$//g;
+		my $enabled = exists $entry->{'enabled'} ? &phone_ivr_flag($entry->{'enabled'}) : 1;
+		push @out, { key => $key, bluetooth => $bluetooth, enabled => $enabled };
+		last if @out >= 8;
+	}
+	if (!$explicit && !@out && ref $legacy eq 'HASH' && length($legacy->{'machine'} || '')) {
+		push @out, {
+			key       => $legacy->{'machine'},
+			bluetooth => ($legacy->{'bluetooth'} || 'jawn-gateway'),
+			enabled   => 1,
+		};
+	}
+	return \@out;
+}
+
+# 1/yes/true/on are enabled; 0/no/off/false (and a JSON false) are not.
+sub phone_ivr_flag {
+	my ($value) = @_;
+	return 0 unless defined $value;
+	return 0 unless $value;
+	return 0 if !ref $value && $value =~ /^(?:0|no|off|false)$/i;
+	return 1;
+}
+
 sub phone_ivr_flow_defaults {
 	my ($route) = @_;
 	my %flow = (
@@ -709,6 +761,12 @@ sub phone_ivr_settings {
 			$settings->{$key} = $receptionist->{$key};
 		}
 	}
+	# The ordered list is the truth; the scalar machine/bluetooth rows are its
+	# first enabled entry, so an older app and every current route still agree.
+	$settings->{'machines'} = &subs::phone_ivr_machines_clean($settings->{'machines'}, $settings);
+	my ($first) = grep { $_->{'enabled'} } @{ $settings->{'machines'} };
+	$settings->{'machine'} = $first ? $first->{'key'} : '';
+	$settings->{'bluetooth'} = $first ? $first->{'bluetooth'} : ($settings->{'bluetooth'} || 'jawn-gateway');
 	$settings->{'flow_defs'} = $defs;
 	return $settings;
 }

@@ -214,6 +214,7 @@ sub phone_ivr_save;
 sub phone_ringtone;
 sub phone_voicemail_transcript;
 sub phone_ivr_machines;
+sub phone_ivr_candidates;
 sub phone_ivr_machine;
 sub phone_relationships;
 sub phone_route_for;

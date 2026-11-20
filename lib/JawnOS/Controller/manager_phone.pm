@@ -113,6 +113,7 @@ sub action_23201 {
 		ringtone => &phone_ringtone(),
 		own_lines => &subs::own_phone_lines(&subs::own_phone_host()),
 		ivr_machines => &phone_ivr_machines(),
+		ivr_candidates => &phone_ivr_candidates(),
 		routes => &phone_routes_read(),
 		ivr_voices => [ &subs::say_voices() ],
 		caller_choices => &phone_caller_choices(),
@@ -313,6 +314,7 @@ sub action_24760 {
 		flows     => $c->param('flows'),
 		flow_defs => $c->param('flow_defs'),
 		flow_order => $c->param('flow_order'),
+		machines  => $c->param('machines'),
 	});
 	# The reception is the house's: hand the same save to the peers now, so the
 	# gateway machine and the phone hold it immediately instead of waiting for
@@ -449,6 +451,10 @@ sub action_24755 {
 	$ivr->{'machine_host'} = $ivr_machine ? ($ivr_machine->{'hostname'} || $ivr_machine->{'ip'} || '') : '';
 	$ivr->{'machine_ip'} = $ivr_machine ? ($ivr_machine->{'ip'} || '') : '';
 	$ivr->{'machine_manager'} = $ivr_machine ? ($ivr_machine->{'manager'} || '') : '';
+	# The ordered gateways: each entry carries its own Bluetooth name, online and
+	# able flags from the mesh and the crew's ability, and its rank. The scalar
+	# machine/bluetooth above remain the first entry for an older app build.
+	$ivr->{'machines'} = &phone_ivr_candidates();
 	# The app resolves a caller's flow before it rings. It has the numbers and the
 	# names, never the house's settings rows, so each entry's lines are resolved
 	# here: number -> { flow, kind, label }. The flow keys ride the defs beside it.
