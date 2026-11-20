@@ -14,6 +14,7 @@ use alsa::{Direction, ValueOr};
 
 use crate::backends::RunReport;
 use crate::loopback::{self, LoopbackReport};
+use crate::monbus::Consumer;
 
 /// A patch-cable loopback is the interface's stereo pair: the click leaves one
 /// output and comes back on one input, so the measurement is stereo by nature
@@ -439,14 +440,6 @@ pub fn run_capture<S: CaptureSink>(
 
 /// Monitor one input on the outputs: open capture and playback on the same
 /// device, read one block, hand it to `sink`, write the stereo result.
-///
-/// The capture stream is the clock. The two streams are unlinked, as the
-/// loopback's are, so the output's latency is the block it was read from plus
-/// the playback buffer, not a sample-exact promise. `total` is the run's frame
-/// count; `None` runs until `stop` is set, checked between blocks.
-///
-/// `capture_channels` is the interface's input width; the output is always
-/// stereo, because the strip's pan has two sides to put the signal in.
 pub fn run_listen<S: crate::listen::ListenSink>(
     device: &str,
     rate: u32,
@@ -455,7 +448,39 @@ pub fn run_listen<S: crate::listen::ListenSink>(
     capture_channels: usize,
     total: Option<u64>,
     stop: &AtomicBool,
+    sink: S,
+) -> Result<crate::listen::ListenRun, String> {
+    run_listen_with_system(
+        device,
+        rate,
+        period,
+        buffer,
+        capture_channels,
+        total,
+        stop,
+        sink,
+        None,
+    )
+}
+
+/// The same monitor, plus the machine's system mix from a virtual sink's
+/// monitor. `system` is a lock-free ring filled by a second capture; its
+/// frames are added to the block handed to the sink. A missing ring is the
+/// ordinary monitor, unchanged.
+///
+/// The second stream is not the clock: it is drained between blocks and
+/// zero-filled on an underrun, exactly as the monitor bus already behaves. That
+/// keeps a stalled `parec` a dropout rather than a stalled device loop.
+pub fn run_listen_with_system<S: crate::listen::ListenSink>(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    capture_channels: usize,
+    total: Option<u64>,
+    stop: &AtomicBool,
     mut sink: S,
+    mut system: Option<&mut Consumer>,
 ) -> Result<crate::listen::ListenRun, String> {
     if capture_channels == 0 {
         return Err("a capture needs at least one channel".to_string());
@@ -501,6 +526,7 @@ pub fn run_listen<S: crate::listen::ListenSink>(
 
     let mut input = vec![0i16; frames * channels];
     let mut output = vec![0i16; frames * 2];
+    let mut system_block = vec![0.0f32; frames * 2];
     let mut remaining = total;
     let mut played = 0u64;
     let mut xruns = 0usize;
@@ -533,7 +559,18 @@ pub fn run_listen<S: crate::listen::ListenSink>(
             break;
         }
 
-        sink.block(&input[..got * channels], &mut output[..got * 2])?;
+        let system_len = got * 2;
+        match system.as_deref_mut() {
+            Some(consumer) => {
+                consumer.pop(&mut system_block[..system_len]);
+            }
+            None => system_block[..system_len].fill(0.0),
+        }
+        sink.block_with_system(
+            &input[..got * channels],
+            &system_block[..system_len],
+            &mut output[..got * 2],
+        )?;
 
         // `writei` counts frames; a partial write is normal near the end of a
         // block, and an underrun is recovered and counted like `--run` does.

@@ -201,6 +201,21 @@ like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?grid-template-
 	'the compact rows are transport, timeline, console, synth');
 like($style, qr/#studio_grid\.studio_arranged_compact\s*\{[\s\S]*?"transport"[\s\S]*?"tracks"[\s\S]*?"mixer"[\s\S]*?"synth"/s,
 	'the compact areas stack in that order');
+
+# --- the transport sizes to its controls, wide or narrow -------------------
+like($style, qr/\.studio_grid_row > #studio_transport_panel\s*\{[^}]*flex:\s*0 1 auto/s,
+	'a manual row lets the transport shrink to its content');
+like($style, qr/\.studio_grid_row > #studio_transport_panel\s*\{[^}]*width:\s*fit-content/s,
+	'a manual row sizes the transport to its controls');
+like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*grid-area:\s*transport !important/s,
+	'the arranged transport still owns the top area');
+like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*width:\s*fit-content/s,
+	'the arranged transport does not reserve an empty band');
+like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*max-width:\s*100%/s,
+	'...but never grows past its column');
+like($style, qr/#studio_grid\.studio_arranged > #studio_transport_panel\s*\{[^}]*justify-self:\s*start/s,
+	'the arranged transport starts at the left edge');
+unlike($layout, qr/studioApplyNarrowClass/, 'no separate narrow-width class is needed');
 like($layout, qr/function studioSetArranged\(on, persist\)/, 'one function enters and leaves the mode');
 like($layout, qr/function studioExitArrange\(persist\)/, 'leaving the mode has its own helper');
 like($layout, qr/studioExitArrange\(true\);\n\tstudioFloatPanel\(name\);/, 'a drag leaves the mode');

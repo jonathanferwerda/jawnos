@@ -38,13 +38,16 @@ like($inputs, qr/\{ app: 'drums', id: 'drums', direction: 'input', av: 'a' \}/,
 
 my $grab = body($inputs, 'studioInputStreamGrabber');
 ok(length $grab, 'the input grabber is one function');
-like($grab, qr/if \(plug\['app'\] == 'drums'\) \{/, 'the grabber handles the Drums app');
-like($grab, qr/var drumStream = studioAttachDrums\(ch\);/, 'and attaches the drum bus to the channel');
-like($grab, qr/mixer\[ch\]\.media\.active = true;/, 'a successful attach marks the input active');
-like($grab, qr/mixer\[ch\]\.media\.in = drumStream;/, 'the take records the channel’s processed drum stream');
-like($grab, qr/mixer\[ch\]\.media\.video = false;/, 'the drums have no picture');
-like($grab, qr/\}, 40\);/,
-	'and the same 40ms meter/redraw interval the synth path uses');
+like($grab, qr/if \(studioInputIsApp\(plug\)\) \{ return studioAttachAppInput\(ch, plug\); \}/,
+	'the grabber hands every app to the app attach path');
+
+my $app = body($inputs, 'studioAttachAppInput');
+ok(length $app, 'the app attach path is one function');
+like($app, qr/studioAttachDrums\(ch\)/, 'it attaches the drum bus to the channel');
+like($app, qr/mixer\[ch\]\.media\.active = true;/, 'a successful attach marks the input active');
+like($app, qr/mixer\[ch\]\.media\.in = stream;/, 'the take records the channel’s processed app stream');
+like($app, qr/mixer\[ch\]\.media\.video = false;/, 'the drums and synth have no picture');
+like($app, qr/\}, 40\);/, 'and the same 40ms meter/redraw interval the synth path uses');
 
 my $drums = body($js, 'studioAttachDrums');
 ok(length $drums, 'studioAttachDrums is in the engine');

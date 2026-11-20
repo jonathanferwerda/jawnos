@@ -137,6 +137,7 @@ sub _audio_alsa_devices {
 sub audio_plan_status {
 	require JawnOS::Audio::Engine;
 	require JawnOS::Audio::Plan;
+	require JawnOS::Audio::SystemMix;
 	require Sys::Hostname;
 	my $plan = &audio_plan_read();
 	my %latency;
@@ -155,6 +156,9 @@ sub audio_plan_status {
 		engine           => $engine,
 		devices          => &audio_engine_devices(),
 		engine_device    => &audio_engine_device_read(),
+		system_mix       => JawnOS::Audio::SystemMix::status(
+			JawnOS::Audio::Engine::audio_engine_state_dir()
+		),
 		machine          => (eval { Sys::Hostname::hostname() } || ''),
 	};
 }
@@ -193,10 +197,38 @@ sub audio_plan_write {
 sub audio_plan_apply {
 	my ($plan) = @_;
 	require JawnOS::Audio::Engine;
+	require JawnOS::Audio::SystemMix;
 	my $clean = ref $plan eq 'HASH' ? $plan : &audio_plan_read();
 	return { ok => 0, skipped => 1, error => 'the house mixer is not managed on this machine' }
 		unless &audio_manage_read();
-	return JawnOS::Audio::Engine::audio_engine_patch($clean);
+
+	# The engine owns the card exclusively on ALSA, so the machine's own audio
+	# needs the virtual sink before the patch arms. A machine with no engine, no
+	# pactl, or a shared PipeWire backend keeps its ordinary output: `ensure`
+	# says `skipped` rather than muting the house.
+	my $mix;
+	my $available = eval { JawnOS::Audio::Engine::audio_engine_available() } ? 1 : 0;
+	my $choice = &audio_engine_device_read();
+	# The running engine's own answer wins over the saved choice: a stale engine
+	# on the shared PipeWire backend must not have a sink pointed at itself.
+	my $engine_backend = $choice->{backend} || '';
+	if ($available) {
+		my $status = eval { JawnOS::Audio::Engine::audio_engine_status() };
+		$engine_backend = $status->{backend}
+			if ref $status eq 'HASH' && defined $status->{backend} && length $status->{backend};
+	}
+	if ($available && $engine_backend eq 'alsa') {
+		$mix = JawnOS::Audio::SystemMix::ensure(
+			JawnOS::Audio::Engine::audio_engine_state_dir()
+		);
+	}
+
+	my $answer = JawnOS::Audio::Engine::audio_engine_patch(
+		$clean,
+		(ref $mix eq 'HASH' && $mix->{ok}) ? $mix->{source} : undef,
+	);
+	$answer->{system_mix} = $mix if ref $answer eq 'HASH' && defined $mix;
+	return $answer;
 }
 
 # The engine's startup copy, written beside the socket the supervisor reads:
@@ -260,6 +292,15 @@ sub audio_engine_device_write {
 	my $written = &_audio_plan_boot_write($manage, $plan, $backend, $device);
 	return { ok => 0, error => $written->{error} } unless $written->{ok};
 
+	# Leaving ALSA for a shared PipeWire or the null device means the engine no
+	# longer holds the card, so the virtual sink must not stay the default.
+	if ($backend ne 'alsa' && $manage) {
+		require JawnOS::Audio::SystemMix;
+		JawnOS::Audio::SystemMix::remove(
+			JawnOS::Audio::Engine::audio_engine_state_dir()
+		);
+	}
+
 	require JawnOS::Audio::Engine;
 	my $applied;
 	if ($manage) {
@@ -295,6 +336,14 @@ sub audio_manage_set {
 		$answer = $available
 			? JawnOS::Audio::Engine::audio_engine_unpatch()
 			: { ok => 1, skipped => 1, error => '' };
+		# Off hands the machine back: restore the output that was the default
+		# before the sink, and unload it. This runs even with no engine, so a
+		# sink left by a crash is not stranded.
+		require JawnOS::Audio::SystemMix;
+		my $mix = JawnOS::Audio::SystemMix::remove(
+			JawnOS::Audio::Engine::audio_engine_state_dir()
+		);
+		$answer->{system_mix} = $mix if ref $answer eq 'HASH';
 	}
 	return { ok => 1, manage => $want, applied => $answer };
 }

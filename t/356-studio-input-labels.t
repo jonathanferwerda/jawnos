@@ -60,6 +60,10 @@ like($inputs, qr/data\.screen_name = source\.name;/,
 	'a changed row stores the label with the plug');
 like($inputs, qr/if \(screen\.name\) \{ data\.screen_name = screen\.name; \}/,
 	'and a chosen row sends it when the plug opens');
+like($inputs, qr/\.index\(sis\)/, 'a real audio input is numbered by its place in the list');
+like($inputs, qr/data\.input = input;/, 'and that number is stored with the plug');
+like($inputs, qr/if \(direction == 'input' && type == 'usermedia' && av == 'a'\)/,
+	'only an audio input gets the engine number');
 like($inputs, qr/JawnScreen\.capture\(plug\['screen'\] \|\| '', plug\['screen_name'\] \|\| ''\)/,
 	'and captures the chosen row by id and name');
 like($inputs, qr/plug\['app'\] == 'marker'/, 'Marker is a channel input');

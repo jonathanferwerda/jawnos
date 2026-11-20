@@ -434,6 +434,7 @@ like($studio_js, qr/monitor_dropped/, 'the panel reads the engine\'s monitor_dro
 like($studio_js, qr/studioAudioLabel\('monitor dropped'\)/, 'as a small readout');
 
 my $controls_js = read_file("$root/public/js/manager/studio/06_controls.js");
+my $inputs_js = read_file("$root/public/js/manager/studio/05_inputs.js");
 like($controls_js, qr/'#studio_engine_start'/, 'Start take is bound in the controls part');
 like($controls_js, qr/'#studio_engine_stop'/, 'Stop take is bound in the controls part');
 like($controls_js, qr/'#studio_engine_tracks'/, 'the Tracks select rebuilds the pickers');
@@ -452,7 +453,7 @@ like($controls_js, qr/target: 'listen'/, 'the gain is a param addressed to liste
 like($controls_js, qr/setInterval\(studioListenStatus, 750\)/,
 	'listen status is polled while it runs');
 like($controls_js, qr/function studioListenInserts\(/, 'Listen takes the selected track\'s rack');
-like($controls_js, qr/inserts: studioListenInserts\(\)/, 'and sends that chain to the monitor');
+like($controls_js, qr/inserts: studioListenInserts\(ch\)/, 'and sends the monitored track\'s chain to the monitor');
 like($markup, qr/class="studio_track_monitor/, 'every track carries a Monitor button');
 like($controls_js, qr/\.studio_track_monitor/, 'the track Monitor buttons are bound');
 like($controls_js, qr/function studioSetMonitor/, 'one track is monitored at a time');
@@ -504,15 +505,36 @@ like($controls_js, qr/function studioAudioBackend/, 'a native backend is chosen'
 like($controls_js, qr/studioAudioBackendMemo = 'oboe'/, 'Oboe wins');
 like($controls_js, qr/studioEngineInstalled/, 'then the house engine');
 like($controls_js, qr/studioInputReleaseForMonitor/, 'the browser capture is released while a native stream monitors');
-like($controls_js, qr/function studioListenStart\(quiet\)/, 'Listen can start quietly for the browser fallback');
+like($controls_js, qr/function studioListenStart\(quiet, channel, ch\)/, 'Listen can start quietly and name its input and rack');
 like($controls_js, qr/function studioListenNotRunning/, 'and knows the not-running sentence');
-like($studio_js, qr/var nativeish = backend !== 'browser'/,
-	'the browser tap is not the monitor on a native backend');
+like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1\)/,
+	'a real device on a native backend is the engine Listen');
+like($studio_js, qr/var tap = on && !!input && \(app \|\| !engine\)/,
+	'no input is silent, an app is the browser tap, and only an engine device mutes it');
+like($studio_js, qr/studioListenStart\(false, listen_channel, active\)/,
+	'Monitor names the device input and the monitored track');
+like($studio_js, qr/else if \(studioListenActive\) \{ studioListenStop\(\); \}/,
+	'an app input or no input never starts the engine');
+like($inputs_js, qr/function studioChannelInput\(/,
+	'the track\'s chosen input is readable from its plug');
+like($inputs_js, qr/function studioInputIsApp\(/,
+	'an app input is recognised');
+like($inputs_js, qr/function studioInputIsDevice\(/,
+	'and a real audio device is distinguished from a camera or screen share');
+like($inputs_js, qr/function studioInputListenChannel\(/,
+	'whose engine input number follows the plug');
+like($inputs_js, qr/data\.input = input;/, 'the device number is stored with the plug');
 like($controls_js, qr/\$\('#studio_monitor_note'\)\.text\(text\)/, 'listen errors reach the transport note');
 like($body, qr/Monitor starts the engine's live Listen/,
 	'help says Monitor starts the engine Listen with no take');
 like($body, qr/Each track's Monitor button/, 'help says Monitor is per track');
 like($body, qr/one track is monitored at a time/, 'and that one input is monitored at a time');
+like($body, qr/With no input chosen it is silent and opens no microphone/,
+	'help says a track with no input is silent');
+like($body, qr/With Synth, Drums, Music or Marker it plays that app/,
+	'help says an app input is heard through the browser tap');
+like($body, qr/Input 1 is channel 0 and Input 2 is channel 1/,
+	'and names the engine input each device number reaches');
 
 like($controls_js, qr/function studioNativeAudio\(/, 'the app bridge is detected on the phone');
 like($controls_js, qr/window\.JawnAudioOboe/, 'and named');
@@ -526,7 +548,7 @@ like($controls_js, qr/bridge\.stats\(\)/, 'the native facts come from stats()');
 like($controls_js, qr/native\.systemVolumeApplied/, 'and say whether the engine or the mixer applied the level');
 like($controls_js, qr/bridge\.setGain\(value\)/, 'the gain slider moves the engine gain');
 like($controls_js, qr/bridge\.stop\(\)/, 'stopping Listen stops the native stream');
-like($studio_js, qr/c\.monGain\.gain\.value = \(on && !nativeish\) \? 1 : 0/,
-	'the browser tap stays muted while the native stream monitors');
+like($studio_js, qr/c\.monGain\.gain\.value = tap \? 1 : 0/,
+	'the browser tap is muted only when the engine listens');
 
 done_testing();

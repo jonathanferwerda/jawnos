@@ -424,21 +424,60 @@ function studioApplyCapture() {
 // asks for it, because an open mic plus speakers howls. `from_user` is the
 // person pressing Monitor (or changing its setting), not the page loading a
 // song: only then may the engine's Listen be started or stopped.
+//
+// Monitor hears only the end of the chain the track's input feeds. No input is
+// silence; an app already on this page is the browser's post-FX tap; a real
+// audio device is the engine's own Listen when a native engine owns the
+// interface, because the engine can open it, and the browser tap otherwise.
+// One track is monitored at a time.
+//
+// The app channel Monitor attached while its track was unarmed, so turning
+// Monitor off or moving it can detach that graph again.
+var studioMonitorAppChannel = null;
 function studioApplyMonitor(from_user) {
 	var active = (typeof studioMonitoredChannel === 'function') ? studioMonitoredChannel() : null;
 	var backend = (typeof studioAudioBackend === 'function') ? studioAudioBackend() : 'browser';
 	var nativeish = backend !== 'browser';
+	var input = (active !== null && typeof studioChannelInput === 'function')
+		? studioChannelInput(active) : null;
+	var app = !!(input && typeof studioInputIsApp === 'function' && studioInputIsApp(input));
+	var device = !!(input && typeof studioInputIsDevice === 'function' && studioInputIsDevice(input));
+	var listen_channel = (device && typeof studioInputListenChannel === 'function')
+		? studioInputListenChannel(input) : 0;
+	// The engine's Listen names one of its two interface inputs; a device past
+	// them has no Listen, so its browser tap stays the only path.
+	var engine = !!(device && nativeish && listen_channel <= 1);
+	// An unarmed app track has no graph yet. Monitor builds one for the track it
+	// hears and removes it when it lets go; an armed track's input belongs to
+	// the arm button. Only an app is ever attached here: a device is the engine's
+	// Listen and never opens the browser capture from Monitor.
+	var previous_app = studioMonitorAppChannel;
+	studioMonitorAppChannel = (app && active !== null
+		&& typeof studioMonitorAttachApp === 'function'
+		&& studioMonitorAttachApp(active)) ? String(active) : null;
+	if (previous_app !== null && previous_app !== studioMonitorAppChannel
+		&& typeof studioMonitorDetachApp === 'function') {
+		studioMonitorDetachApp(previous_app);
+	}
 	$.each(studioAudio.channels, function (ch, c) {
 		if (!c.monGain) { return; }
 		var on = active !== null && String(ch) === String(active);
-		c.monGain.gain.value = (on && !nativeish) ? 1 : 0;
+		// The tap is the monitor for an app input and for every browser-only
+		// path; only a device the engine listens to keeps it muted.
+		var tap = on && !!input && (app || !engine);
+		c.monGain.gain.value = tap ? 1 : 0;
 	});
-	// A native path is the monitor and never falls back to the browser tap; a
-	// browser-only machine has no engine Listen to start, so the tap is it.
-	if (from_user && !studioEngineRecording && nativeish
-		&& typeof studioListenStart === 'function') {
-		if (active && !studioListenActive) { studioListenStart(false); }
-		else if (!active && studioListenActive) { studioListenStop(); }
+	if (from_user && !studioEngineRecording && typeof studioListenStart === 'function') {
+		if (engine) {
+			if (!studioListenActive) { studioListenStart(false, listen_channel, active); }
+			else if (typeof studioListenChannel !== 'undefined' && studioListenChannel !== null
+				&& Number(studioListenChannel) !== listen_channel) {
+				// A different track (or a different input) is the monitor now: the
+				// engine allows one Listen, so stop the old input and start the new.
+				studioListenStop(listen_channel, active);
+			}
+		}
+		else if (studioListenActive) { studioListenStop(); }
 	}
 	if (typeof studioMonitorButtonRender === 'function') { studioMonitorButtonRender(); }
 }

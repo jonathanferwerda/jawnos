@@ -8,6 +8,7 @@
 //! (docs/studio-audio-roadmap.md P2).
 
 mod patchbay;
+mod system_capture;
 mod socket;
 
 use std::path::{Path, PathBuf};
@@ -189,6 +190,9 @@ jawn-audio — the JawnOS audio engine
                   sources, buses, sinks and routes
   --machine NAME  which machine this engine is (default: --machine, then
                   $JAWNOS_AUDIO_MACHINE, then $HOSTNAME, then \"local\")
+  --system-device NAME
+                  capture the machine's own mix from this PulseAudio/PipeWire
+                  source (the manager uses jawn_system.monitor)
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64; --frames is an alias)
@@ -221,6 +225,9 @@ jawn-audio — the JawnOS audio engine
                   $JAWNOS_AUDIO_PLAN, else $HOME/.president/audio-plan.json);
                   a missing file, manage false, or an invalid plan still serves
   --machine NAME  which machine this engine serves (same precedence as --patch)
+  --system-device NAME
+                  capture the machine's own mix from this PulseAudio/PipeWire
+                  source (the manager uses jawn_system.monitor)
   --backend N     null (default), alsa, pipewire or jack
   --device NAME   ALSA PCM name (alsa defaults to hw:1,0; pipewire uses default)
   --period N      block/period size in frames (default 64)
@@ -301,6 +308,12 @@ struct Options {
     /// Whether `--machine` was given on the command line (so it can be refused
     /// outside `--patch`/`--serve`).
     machine_given: bool,
+    /// The PulseAudio/PipeWire source the machine's own mix is captured from.
+    /// The supervisor names the virtual sink's monitor; a hand-run patch can
+    /// name a fixture source. `None` means no system mix.
+    system_device: Option<String>,
+    /// Whether `--system-device` was given on the command line.
+    system_device_given: bool,
     start_at: u64,
     gain: f32,
     pan: f32,
@@ -371,6 +384,8 @@ fn run() -> Result<ExitCode, String> {
         plan: None,
         machine: String::new(),
         machine_given: false,
+        system_device: None,
+        system_device_given: false,
         start_at: 0,
         gain: 1.0,
         pan: 0.0,
@@ -516,6 +531,10 @@ fn run() -> Result<ExitCode, String> {
                 options.machine = value(&mut args, "--machine")?;
                 options.machine_given = true;
             }
+            "--system-device" => {
+                options.system_device = Some(value(&mut args, "--system-device")?);
+                options.system_device_given = true;
+            }
             "--start-at" => {
                 let raw = value(&mut args, "--start-at")?;
                 options.start_at = raw
@@ -582,6 +601,13 @@ fn run() -> Result<ExitCode, String> {
     } else {
         None
     });
+    if !options.system_device_given {
+        if let Ok(device) = std::env::var("JAWNOS_AUDIO_SYSTEM_DEVICE") {
+            if !device.is_empty() {
+                options.system_device = Some(device);
+            }
+        }
+    }
 
     // `--record` together with `--play` is an overdub, not two modes: the
     // take is the capture and the files are the monitoring bus. `--monitor`
@@ -666,6 +692,9 @@ fn run() -> Result<ExitCode, String> {
     }
     if options.machine_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
         return Err("--machine applies only to --patch and --serve".to_string());
+    }
+    if options.system_device_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
+        return Err("--system-device applies only to --patch and --serve".to_string());
     }
 
     match options.mode {
@@ -976,6 +1005,7 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
         socket,
         plan,
         machine: options.machine.clone(),
+        system_device: options.system_device.clone(),
     });
     match outcome {
         Ok(code) => Ok(code),
@@ -2016,7 +2046,25 @@ fn patch_alsa(
     total: Option<u64>,
     stop: &AtomicBool,
 ) -> Result<PatchRun, String> {
-    let run = jawn_audio::alsa_device::run_listen(
+    // The manager names the virtual sink's monitor for the exclusive ALSA
+    // backend. A shared PipeWire backend already mixes every app, so capturing
+    // its own output there would be a loop; leave it alone.
+    let system_source = if options.backend == BackendKind::Alsa {
+        options.system_device.as_deref()
+    } else {
+        None
+    };
+    let (mut capture, mut system) = match system_source {
+        Some(source) => match crate::system_capture::SystemCapture::start(source, options.rate) {
+            Ok((capture, consumer)) => (Some(capture), Some(consumer)),
+            Err(error) => {
+                eprintln!("jawn-audio: system mix: {error}");
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
+    let run = jawn_audio::alsa_device::run_listen_with_system(
         device,
         options.rate,
         options.frames,
@@ -2025,7 +2073,11 @@ fn patch_alsa(
         total,
         stop,
         patchbay,
+        system.as_mut(),
     )?;
+    if let Some(capture) = capture.as_mut() {
+        capture.stop();
+    }
     Ok(PatchRun {
         frames: run.frames,
         rate: run.rate,

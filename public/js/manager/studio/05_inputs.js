@@ -83,6 +83,9 @@ $(document).on('click', '.armed',function() {
 	if (!mixer[channel]) { mixer[channel] = {}; }
 	mixer[channel].armed = { state: state, text: armed.text() };
 	studioInputStreamGrabber(channel,state);
+	// A monitored app keeps its graph when the arm button leaves it unarmed;
+	// this only re-applies the choice, so it never starts a take.
+	if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(); }
 	studioDrawTracks();
 });
 
@@ -139,6 +142,40 @@ function studioScreenSourceValue(panel) {
 	if (!select.length) { return { id: '', name: '' }; }
 	var option = select.find('option:selected');
 	return { id: select.val() || '', name: option.text() || '' };
+}
+
+// What a channel's input jack is connected to, as the chooser stored it. An
+// empty or unreadable plug means no input is chosen.
+function studioChannelInput(ch) {
+	var info = $('.studio_channel_information[direction="input"][channel="' + ch + '"]');
+	if (!isJson(info.text())) { return null; }
+	var plug;
+	try { plug = JSON.parse(info.text()); }
+	catch (e) { return null; }
+	if (!plug || (!plug['type'] && !plug['app'])) { return null; }
+	return plug;
+}
+
+// Marker, Music, Synth and Drums already play in this page, so their post-FX
+// signal is the browser's tap, never a microphone.
+function studioInputIsApp(plug) {
+	if (!plug) { return false; }
+	return ['marker', 'music', 'synth', 'drums'].indexOf(String(plug['app'] || '')) !== -1;
+}
+
+// A real audio device is the input the engine's own Listen can open. A camera
+// or a screen share has no engine channel, so it stays on the browser tap.
+function studioInputIsDevice(plug) {
+	return !!(plug && plug['type'] == 'usermedia' && plug['av'] == 'a');
+}
+
+// The engine's Listen channel for a real input: Input 1 is 0 and Input 2 is 1,
+// matching the device's number in the plug list. Older songs stored no number,
+// so the first input is the fallback.
+function studioInputListenChannel(plug) {
+	var n = plug ? Number(plug['input']) : 0;
+	if (!isFinite(n) || n < 0) { return 0; }
+	return Math.floor(n);
 }
 
 async function channelSelect(channel,direction) {
@@ -230,6 +267,15 @@ $(document).on('click', '.studio_plug_selection', function() {
 	var screen = (type == 'screen_share')
 		? studioScreenSourceValue(sis.closest('#studio_plug_select')) : { id: '', name: '' };
 	$('.studio_plug_selection[direction="' + direction + '"][channel="' + channel + '"]').removeClass('active_background');
+	// A real audio input's place in this list is the interface input the
+	// engine's Listen names: the first audio device is Input 1 (channel 0), the
+	// second Input 2 (channel 1). Keep that number with the plug so Monitor can
+	// start the engine on the same input without the list being open.
+	var input = 0;
+	if (direction == 'input' && type == 'usermedia' && av == 'a') {
+		input = sis.closest('tbody').find('.studio_plug_selection[direction="input"][type="usermedia"][av="a"]').index(sis);
+		if (!(input >= 0)) { input = 0; }
+	}
 	var data = {
 		channel: channel,
 		direction: direction,
@@ -238,6 +284,7 @@ $(document).on('click', '.studio_plug_selection', function() {
 		av: av,
 		app: app
 	}
+	if (direction == 'input' && type == 'usermedia' && av == 'a') { data.input = input; }
 	if (screen.id) { data.screen = screen.id; }
 	if (screen.name) { data.screen_name = screen.name; }
 	console.log(data);
@@ -253,10 +300,10 @@ $(document).on('click', '.studio_plug_selection', function() {
 	studioRetriever();
 });
 
-// A native engine opens the microphone itself. While it monitors, the browser
-// capture is released so one input is not opened twice; a track armed to
-// record reopens it when the monitor stops. The browser is never the monitor
-// on a native backend, only the recorder.
+// A native engine opens a real device itself. While it monitors that device,
+// the browser capture is released so one input is not opened twice; a track
+// armed to record reopens it when the monitor stops. An app input never starts
+// the engine, so its browser graph stays connected and is the monitor.
 var studioMonitorInputReleased = false;
 
 function studioInputReleaseForMonitor() {
@@ -282,6 +329,68 @@ function studioInputResumeAfterMonitor() {
 		var state = $('.studio_track_arm[channel="' + ch + '"]').attr('state');
 		if (state === 'rec' || state === 'loop') { studioInputStreamGrabber(ch, state); }
 	});
+}
+
+// Attach one app input (Marker, Music, Synth or Drums) to a channel and mark
+// the media active. This is the only place an app graph is built, so Monitor
+// and the arm button share one definition and neither opens a device.
+function studioAttachAppInput(ch, plug) {
+	ch = String(ch);
+	if (!plug || !studioInputIsApp(plug)) { return null; }
+	if (!mixer[ch]) { mixer[ch] = {}; }
+	if (!mixer[ch].media) { mixer[ch].media = {}; }
+	if (!mixer[ch].media.out) { mixer[ch].media.out = []; }
+	if (!mixer[ch].media.rec) { mixer[ch].media.rec = []; }
+	// Marker and Music are the whiteboard canvas and the player's #video
+	// element: capture their own streams instead of opening a device.
+	if (plug['app'] == 'marker') {
+		var whiteboard = document.getElementById('whiteboard');
+		if (!whiteboard || !whiteboard.captureStream) {
+			console.log('studio: Marker is not open, so there is no canvas to record');
+			mixer[ch].media.active = false;
+			return null;
+		}
+		var markerStream;
+		try { markerStream = whiteboard.captureStream(30); }
+		catch (e) { markerStream = null; }
+		if (!markerStream || !markerStream.getTracks().length) {
+			console.log('studio: the Marker canvas has no picture yet');
+			mixer[ch].media.active = false;
+			return null;
+		}
+		return studioAttachCapturedStream(ch, markerStream);
+	}
+	if (plug['app'] == 'music') {
+		var player = document.getElementById('video');
+		if (!player || !player.captureStream) {
+			console.log('studio: Music is not open, so there is no video to record');
+			mixer[ch].media.active = false;
+			return null;
+		}
+		var musicStream;
+		try { musicStream = player.captureStream(); }
+		catch (e) { musicStream = null; }
+		if (!musicStream || !musicStream.getTracks().length) {
+			console.log('studio: Music has no playing picture to record');
+			mixer[ch].media.active = false;
+			return null;
+		}
+		return studioAttachCapturedStream(ch, musicStream);
+	}
+	// The synth and the drums are app buses with no device behind them: route
+	// them through the channel's tone stack and pedals like any other source.
+	var stream = (plug['app'] == 'synth') ? studioAttachSynth(ch) : studioAttachDrums(ch);
+	if (!stream) { mixer[ch].media.active = false; return null; }
+	mixer[ch].media.active = true;
+	mixer[ch].media.in = stream;
+	mixer[ch].media.video = false;
+	clearInterval(mixer[ch].media.in_analyzer_timeout);
+	mixer[ch].media.in_analyzer_timeout = setInterval(function() {
+		if (document.hidden) { return; }
+		studioDrawChannel(ch);
+		studioDrawMetre(ch);
+	}, 40);
+	return stream;
 }
 
 async function studioInputStreamGrabber(channel,state) {
@@ -320,79 +429,9 @@ async function studioInputStreamGrabber(channel,state) {
 	// rather than getUserMedia for a video device.
 	var screen_share = (plug['type'] == 'screen_share');
 
-	// Marker and Music are already on this page: the whiteboard canvas and the
-	// player's #video element. Capture their own streams instead of opening a
-	// device. Music may be paused or closed; a closed app has nothing to offer.
-	if (plug['app'] == 'marker') {
-		var whiteboard = document.getElementById('whiteboard');
-		if (!whiteboard || !whiteboard.captureStream) {
-			console.log('studio: Marker is not open, so there is no canvas to record');
-			mixer[ch].media.active = false;
-			return;
-		}
-		var markerStream;
-		try { markerStream = whiteboard.captureStream(30); }
-		catch (e) { markerStream = null; }
-		if (!markerStream || !markerStream.getTracks().length) {
-			console.log('studio: the Marker canvas has no picture yet');
-			mixer[ch].media.active = false;
-			return;
-		}
-		return studioAttachCapturedStream(ch, markerStream);
-	}
-	if (plug['app'] == 'music') {
-		var player = document.getElementById('video');
-		if (!player || !player.captureStream) {
-			console.log('studio: Music is not open, so there is no video to record');
-			mixer[ch].media.active = false;
-			return;
-		}
-		var musicStream;
-		try { musicStream = player.captureStream(); }
-		catch (e) { musicStream = null; }
-		if (!musicStream || !musicStream.getTracks().length) {
-			console.log('studio: Music has no playing picture to record');
-			mixer[ch].media.active = false;
-			return;
-		}
-		return studioAttachCapturedStream(ch, musicStream);
-	}
-
-	// The synth is an app input with no device behind it: route the engine into
-	// the channel instead of opening a microphone. It records through the tone
-	// stack and pedals like any other source.
-	if (plug['app'] == 'synth') {
-		var synthStream = studioAttachSynth(ch);
-		if (!synthStream) { mixer[ch].media.active = false; return; }
-		mixer[ch].media.active = true;
-		mixer[ch].media.in = synthStream;
-		mixer[ch].media.video = false;
-		clearInterval(mixer[ch].media.in_analyzer_timeout);
-		mixer[ch].media.in_analyzer_timeout = setInterval(function() {
-			if (document.hidden) { return; }
-			studioDrawChannel(ch);
-			studioDrawMetre(ch);
-		}, 40);
-		return synthStream;
-	}
-
-	// The drum machine is an app input too: patch its bus through the channel's
-	// tone stack and pedals, so the take is the wet drums and Monitor hears them.
-	// Its own direct feed stays, so the kit is audible even when unpatched.
-	if (plug['app'] == 'drums') {
-		var drumStream = studioAttachDrums(ch);
-		if (!drumStream) { mixer[ch].media.active = false; return; }
-		mixer[ch].media.active = true;
-		mixer[ch].media.in = drumStream;
-		mixer[ch].media.video = false;
-		clearInterval(mixer[ch].media.in_analyzer_timeout);
-		mixer[ch].media.in_analyzer_timeout = setInterval(function() {
-			if (document.hidden) { return; }
-			studioDrawChannel(ch);
-			studioDrawMetre(ch);
-		}, 40);
-		return drumStream;
-	}
+	// Marker, Music, Synth and Drums already play on this page. Their graph is
+	// built without opening a device; a closed app has nothing to offer.
+	if (studioInputIsApp(plug)) { return studioAttachAppInput(ch, plug); }
 
 	var audio = {
 		echoCancellation: false,  // Disables echo suppression
@@ -482,6 +521,42 @@ function studioAttachCapturedStream(ch, stream) {
 		if (mixer[ch].media.video) { $(monitor).show(); }
 	}
 	return combined;
+}
+
+// Monitor on an app input builds that app's channel graph even when the track
+// is not armed, so its post-pedal tap is audible without starting a take. A
+// device input is the engine's Listen, so this never opens the browser's
+// capture and never calls getUserMedia. An armed track's graph belongs to the
+// arm button, so Monitor leaves it alone.
+function studioMonitorAttachApp(ch) {
+	ch = String(ch);
+	var plug = studioChannelInput(ch);
+	if (!plug || !studioInputIsApp(plug)) { return false; }
+	var m = mixer[ch] && mixer[ch].media;
+	if (m && m.active) { return true; }
+	var state = $('.studio_track_arm[channel="' + ch + '"]').attr('state');
+	if (state === 'rec' || state === 'loop') { return false; }
+	return !!studioAttachAppInput(ch, plug);
+}
+
+// Monitor off (or moved) removes only the app graph Monitor built, and only
+// while the track is still unarmed. An armed track keeps its input for the take.
+function studioMonitorDetachApp(ch) {
+	ch = String(ch);
+	var m = mixer[ch] && mixer[ch].media;
+	if (!m || !m.active) { return; }
+	var state = $('.studio_track_arm[channel="' + ch + '"]').attr('state');
+	if (state === 'rec' || state === 'loop') { return; }
+	var plug = studioChannelInput(ch);
+	if (!plug || !studioInputIsApp(plug)) { return; }
+	if (m.inRaw) { m.inRaw.getTracks().forEach(function (track) { track.stop(); }); }
+	m.inRaw = undefined;
+	m.in = null;
+	m.active = false;
+	studioDetachInput(ch);
+	clearInterval(m.in_analyzer_timeout);
+	var monitor = document.getElementById('studio_video_monitor_' + ch);
+	if (monitor) { monitor.srcObject = null; $(monitor).hide(); }
 }
 
 function studioStartTake(ch, looping, at) {

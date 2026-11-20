@@ -735,7 +735,11 @@
 		flex: 1 1 300px;
 	}
 	.studio_grid_row > #studio_transport_panel {
-		flex: 1 1 100%;
+		/* the transport sizes to its controls: a narrow window must not get a wide
+		   empty band, and the wide arrangement still lets it start at the left */
+		flex: 0 1 auto;
+		width: fit-content;
+		max-width: 100%;
 		max-height: 104px;
 		align-self: flex-start;
 	}
@@ -772,10 +776,14 @@
 	}
 	#studio_grid.studio_arranged > #studio_transport_panel {
 		grid-area: transport !important;
-		/* one row that grows only when it wraps on a narrow window */
+		/* one row that grows only when it wraps on a narrow window, and only as
+		   wide as the controls rather than reserving the whole top band */
 		height: auto;
 		min-height: 56px;
 		max-height: 104px;
+		width: fit-content;
+		max-width: 100%;
+		justify-self: start;
 	}
 	#studio_grid.studio_arranged > #studio_tracks_panel {
 		grid-area: tracks !important;
@@ -1705,7 +1713,10 @@
 		border: 1px solid var(--line);
 		border-radius: 4px;
 		background-color: color-mix(in srgb, var(--ink) 8%, transparent);
-		background-size: 100% 100%;
+		/* the shared .channel_volume paints fixed handle artwork that reads as a
+		   button parked in the middle; the accent thumb is the only handle, so
+		   the strip fader paints a bare track instead */
+		background-image: none;
 	}
 	.channel_fader .channel_volume::-webkit-slider-thumb {
 		-webkit-appearance: none;

@@ -110,6 +110,10 @@ pub(crate) struct Config {
     pub plan: Option<PathBuf>,
     /// Which machine this engine serves; a node delegated elsewhere is silent.
     pub machine: String,
+    /// The PulseAudio/PipeWire source for this machine's own mix. `None` keeps
+    /// the old behaviour: the patch plays only what the plan routes from the
+    /// interface.
+    pub system_device: Option<String>,
 }
 
 /// `--socket`, else `$JAWNOS_AUDIO_SOCKET`, else `$HOME/.president/audio.sock`.
@@ -323,7 +327,7 @@ impl Server {
                 return;
             }
         };
-        match self.start_patch_worker(patchbay) {
+        match self.start_patch_worker(patchbay, self.config.system_device.clone()) {
             Ok(summary) => self.boot = BootPlan::Armed(summary),
             Err(error) => {
                 self.boot = BootPlan::Error(format!("{}: {error}", plan_path.display()));
@@ -332,8 +336,15 @@ impl Server {
     }
 
     /// Spawn the patch worker and store its handle, queue and per-route liveness.
+    /// `system_device` names this machine's ordinary-audio source; the boot
+    /// restore uses the configured one, and a `patch` command may carry its own
+    /// so turning the mixer switch on does not need an engine restart.
     /// Returns the summary the caller reports in its reply.
-    fn start_patch_worker(&mut self, patchbay: Patchbay) -> Result<PatchSummary, String> {
+    fn start_patch_worker(
+        &mut self,
+        patchbay: Patchbay,
+        system_device: Option<String>,
+    ) -> Result<PatchSummary, String> {
         let summary = patchbay.summary().clone();
         let params = patchbay.params();
         let executable = (0..patchbay.route_count())
@@ -344,6 +355,11 @@ impl Server {
             frames: 0,
             xruns: 0,
             summary: summary.clone(),
+            system: if self.config.backend == BackendKind::Alsa && system_device.is_some() {
+                "pending".to_string()
+            } else {
+                "off".to_string()
+            },
             error: String::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -353,7 +369,7 @@ impl Server {
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-patch".to_string())
-                .spawn(move || run_patch_worker(config, patchbay, status, stop))
+                .spawn(move || run_patch_worker(config, patchbay, status, stop, system_device))
         };
         match spawned {
             Ok(handle) => {
@@ -1182,13 +1198,25 @@ impl Server {
             return error_line(&error);
         }
 
+        // The manager creates the virtual sink and names its monitor here. An
+        // older caller sends no field and keeps the engine's startup choice; an
+        // explicit empty string means "no system mix for this patch".
+        let system_device = match get(object, "system_device") {
+            None | Some(Value::Null) => self.config.system_device.clone(),
+            Some(Value::Str(name)) if name.is_empty() => None,
+            Some(Value::Str(name)) => Some(name.clone()),
+            Some(_) => {
+                return error_line("\"system_device\" must be one source name")
+            }
+        };
+
         // Join a finished patch before replacing it, so a sequence of plans
         // does not leave detached threads behind.
         if let Some(mut previous) = self.patch.take() {
             previous.finish();
         }
 
-        let summary = match self.start_patch_worker(patchbay) {
+        let summary = match self.start_patch_worker(patchbay, system_device) {
             Ok(summary) => summary,
             Err(error) => return error_line(&error),
         };
@@ -2852,6 +2880,11 @@ struct PatchStatus {
     frames: u64,
     xruns: usize,
     summary: PatchSummary,
+    /// The system mix: `pending` before the worker opens it, `capturing` while
+    /// it runs, `unavailable` when this machine cannot capture it (no parec or
+    /// no source), and `off` when the patch was not asked for one. The
+    /// supervisor reads this before it keeps the virtual sink as the default.
+    system: String,
     error: String,
 }
 
@@ -2904,11 +2937,12 @@ impl PatchSession {
         let status = self.snapshot();
         let ok = status.state != State::Failed;
         format!(
-            "{{\"ok\":{},\"state\":\"{}\",\"frames\":{},\"xruns\":{},{},\"error\":\"{}\"}}",
+            "{{\"ok\":{},\"state\":\"{}\",\"frames\":{},\"xruns\":{},\"system\":\"{}\",{},\"error\":\"{}\"}}",
             ok,
             status.state.name(),
             status.frames,
             status.xruns,
+            jawn_audio::loopback::json_escape(&status.system),
             status.summary.json(),
             jawn_audio::loopback::json_escape(&status.error)
         )
@@ -2922,11 +2956,12 @@ fn run_patch_worker(
     mut patchbay: Patchbay,
     status: Arc<Mutex<PatchStatus>>,
     stop: Arc<AtomicBool>,
+    system_device: Option<String>,
 ) {
     let outcome: Result<(u64, usize), String> = match config.backend {
         BackendKind::Null => patch_null(&mut patchbay, &config, &status, &stop),
         BackendKind::Alsa | BackendKind::PipeWire => {
-            patch_hardware(&config, patchbay, &status, &stop)
+            patch_hardware(&config, patchbay, &status, &stop, system_device)
         }
         BackendKind::Jack => Err(crate::listen_support_message()),
     };
@@ -3002,13 +3037,31 @@ impl listen::ListenSink for SocketPatchSink<'_> {
 
     fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
         self.patchbay.block(input, output)?;
-        self.frames += (input.len() / self.channels) as u64;
+        self.record(input.len() / self.channels);
+        Ok(())
+    }
+
+    fn block_with_system(
+        &mut self,
+        input: &[i16],
+        system: &[f32],
+        output: &mut [i16],
+    ) -> Result<(), String> {
+        self.patchbay.block_with_system_f32(input, system, output)?;
+        self.record(input.len() / self.channels);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alsa")]
+impl SocketPatchSink<'_> {
+    fn record(&mut self, frames: usize) {
+        self.frames += frames as u64;
         let mut current = self
             .status
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         current.frames = self.frames;
-        Ok(())
     }
 }
 
@@ -3018,14 +3071,45 @@ fn patch_hardware(
     patchbay: Patchbay,
     status: &Arc<Mutex<PatchStatus>>,
     stop: &AtomicBool,
+    system_device: Option<String>,
 ) -> Result<(u64, usize), String> {
+    // Only the exclusive ALSA backend needs the system mix: PipeWire is
+    // already a shared sink, and capturing its own output would loop.
+    let system_device = if config.backend == BackendKind::Alsa {
+        system_device
+    } else {
+        None
+    };
+    let expected = system_device.is_some();
+    let (mut capture, mut system) = match system_device.as_deref() {
+        Some(source) => match crate::system_capture::SystemCapture::start(source, config.rate) {
+            Ok((capture, consumer)) => (Some(capture), Some(consumer)),
+            Err(error) => {
+                eprintln!("jawn-audio: system mix: {error}");
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
+    {
+        let mut current = status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        current.system = if capture.is_some() {
+            "capturing".to_string()
+        } else if expected {
+            "unavailable".to_string()
+        } else {
+            "off".to_string()
+        };
+    }
     let sink = SocketPatchSink {
         patchbay,
         status,
         channels: config.channels,
         frames: 0,
     };
-    let run = jawn_audio::alsa_device::run_listen(
+    let run = jawn_audio::alsa_device::run_listen_with_system(
         &config.device,
         config.rate,
         config.period,
@@ -3034,8 +3118,12 @@ fn patch_hardware(
         None,
         stop,
         sink,
+        system.as_mut(),
     )
     .map_err(|error| format!("cannot patch: {error}"))?;
+    if let Some(capture) = capture.as_mut() {
+        capture.stop();
+    }
     Ok((run.frames, run.xruns))
 }
 
@@ -3045,8 +3133,9 @@ fn patch_hardware(
     patchbay: Patchbay,
     status: &Arc<Mutex<PatchStatus>>,
     stop: &AtomicBool,
+    system_device: Option<String>,
 ) -> Result<(u64, usize), String> {
-    let _ = (config, patchbay, status, stop);
+    let _ = (config, patchbay, status, stop, system_device);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
@@ -4332,6 +4421,7 @@ break"}"#).is_err());
             socket: PathBuf::from("/tmp/jawn-audio-test.sock"),
             plan: None,
             machine: "test".to_string(),
+            system_device: None,
         })
     }
 

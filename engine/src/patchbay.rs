@@ -11,11 +11,21 @@
 //! Three rules keep the compile honest:
 //!
 //! * **A node the machine cannot bind is silent, not fatal.** A plan may name a
-//!   phone, a peer machine, the reception handset or a zone. On this machine
-//!   only an `input` source and an `interface`/`speakers` sink are real, so the
-//!   rest are reported in [`PatchSummary::silent`] and their routes contribute
-//!   nothing. A plan is one document for the whole house; applying it on one
-//!   machine must not fail because the rest of the house is elsewhere.
+//!   phone, a peer machine, the reception handset or a zone. On this machine an
+//!   `input` source is a capture channel, a `device` source is the machine's own
+//!   system mix (Music, video, notifications, calls), and an
+//!   `interface`/`speakers` sink is the local output; the rest are reported in
+//!   [`PatchSummary::silent`] and their routes contribute nothing. A plan is one
+//!   document for the whole house; applying it on one machine must not fail
+//!   because the rest of the house is elsewhere.
+//!
+//! * **Ordinary audio survives the engine taking the card.** A machine in
+//!   managed mode sends its apps to a virtual sink; the engine captures that
+//!   sink's monitor as the `device` source and mixes it like any other source.
+//!   When the plan does not route a `device` source at all, the system mix is
+//!   still added to the output at unity (the `fallback` in
+//!   [`PatchSummary::system`]), so a machine whose plan is empty is not silent.
+//!   A plan that routes the source owns it: its gain, pan and mute apply.
 //! * **A route that cannot be executed is refused, not approximated.** A route
 //!   delay is a promise the engine does not keep yet, so `delay_ms > 0` is an
 //!   error rather than a silent zero. A gain outside 0..=1 and a pan outside
@@ -38,8 +48,9 @@ use jawn_audio::{to_i16, Device, NullDevice};
 
 use crate::socket::{get, Object, Value};
 
-/// The source kinds a saved plan may name. Only `input` is a channel this
-/// engine can capture; the rest are declared but silent here.
+/// The source kinds a saved plan may name. `input` is a capture channel and
+/// `device` is this machine's system mix; the rest are declared but silent
+/// here.
 const SOURCE_KINDS: &[&str] = &["input", "player", "peer", "handset", "device"];
 
 /// The sink kinds a saved plan may name. `interface` and `speakers` are the
@@ -57,11 +68,14 @@ enum SourceRoute {
     Sink { index: usize, strip: usize },
 }
 
-/// One declared source. `channel` is `None` when the machine cannot bind it.
+/// One declared source. `channel` is `None` when the machine cannot bind it;
+/// `system` marks a `device` source, which reads the machine's own mix from a
+/// second capture rather than a channel of the interface.
 #[derive(Debug)]
 struct Source {
     id: String,
     channel: Option<usize>,
+    system: bool,
     routes: Vec<SourceRoute>,
 }
 
@@ -92,6 +106,10 @@ pub struct PatchSummary {
     pub bound_sinks: usize,
     /// Node ids that were declared and routed but cannot be bound here.
     pub silent: Vec<String>,
+    /// `routed` when the plan sends a `device` source somewhere; `fallback`
+    /// when the machine's own mix is added to the output at unity because the
+    /// plan does not route it.
+    pub system: &'static str,
 }
 
 impl PatchSummary {
@@ -104,14 +122,15 @@ impl PatchSummary {
             .collect::<Vec<String>>()
             .join(",");
         format!(
-            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}]",
+            "\"sources\":{},\"buses\":{},\"sinks\":{},\"routes\":{},\"bound_sources\":{},\"bound_sinks\":{},\"silent\":[{}],\"system\":\"{}\"",
             self.sources,
             self.buses,
             self.sinks,
             self.routes,
             self.bound_sources,
             self.bound_sinks,
-            silent
+            silent,
+            self.system
         )
     }
 }
@@ -137,8 +156,14 @@ pub struct Patchbay {
     /// drains at its top.
     params: Arc<ParamQueue>,
     summary: PatchSummary,
+    /// Whether a bound `device` source is routed by the plan. When it is not,
+    /// the system mix is added to the output at unity instead of disappearing.
+    system_routed: bool,
     /// Interleaved f32 capture, one block.
     input: Vec<f32>,
+    /// Interleaved stereo f32 system mix, one block. Empty when the block did
+    /// not carry one; the same length as `input`'s frames otherwise.
+    system: Vec<f32>,
     /// One mono source, reused for every source.
     mono: Vec<f32>,
     /// One stereo block per bus.
@@ -195,9 +220,13 @@ impl Patchbay {
             let on_this_machine = node_machine(entry).map_or(true, |host| {
                 host.eq_ignore_ascii_case(machine)
             });
+            // A `device` source is this machine's ordinary audio, captured from
+            // the virtual sink's monitor. It has no interface channel, so the
+            // channel field is not consulted.
+            let system = kind == "device" && on_this_machine;
             let reachable =
                 kind == "input" && on_this_machine && channel < config_channels;
-            if !reachable {
+            if !reachable && !system {
                 // A plan saved for a wider interface (or a peer/phone/handset,
                 // or a route delegated elsewhere) is a declared node this
                 // machine cannot reach, not a broken plan.
@@ -206,6 +235,7 @@ impl Patchbay {
             sources.push(Source {
                 id,
                 channel: reachable.then_some(channel),
+                system,
                 routes: Vec::new(),
             });
         }
@@ -255,6 +285,10 @@ impl Patchbay {
         let mut bus_edges: Vec<(usize, usize)> = Vec::new();
         let mut strips: Vec<Option<Strip>> = Vec::new();
         let mut route_count = 0usize;
+        // A muted device route still means the plan owns the system mix; a
+        // route to a sink this machine cannot bind does not, or a plan for
+        // another machine would silence this one's ordinary audio.
+        let mut system_owned = false;
 
         for entry in list(object, "routes")? {
             let entry = as_object(entry, "a route")?;
@@ -302,6 +336,16 @@ impl Patchbay {
             }
             route_count += 1;
             let route_index = strips.len();
+            let owns_system = match (from_ref, to_ref) {
+                (NodeRef::Source(source), NodeRef::Bus(_)) => sources[source].system,
+                (NodeRef::Source(source), NodeRef::Sink(sink)) => {
+                    sources[source].system && sinks[sink].bound
+                }
+                _ => false,
+            };
+            if owns_system {
+                system_owned = true;
+            }
             if mute {
                 // A muted route is a route the plan kept so the UI can unmute
                 // it. It contributes nothing, and it is not a compile error. A
@@ -313,7 +357,7 @@ impl Patchbay {
 
             let executable = match (from_ref, to_ref) {
                 (NodeRef::Source(source), NodeRef::Bus(bus)) => {
-                    if sources[source].channel.is_some() {
+                    if sources[source].channel.is_some() || sources[source].system {
                         sources[source].routes.push(SourceRoute::Bus {
                             index: bus,
                             strip: route_index,
@@ -324,7 +368,9 @@ impl Patchbay {
                     }
                 }
                 (NodeRef::Source(source), NodeRef::Sink(sink)) => {
-                    if sources[source].channel.is_some() && sinks[sink].bound {
+                    if (sources[source].channel.is_some() || sources[source].system)
+                        && sinks[sink].bound
+                    {
                         sources[source].routes.push(SourceRoute::Sink {
                             index: sink,
                             strip: route_index,
@@ -360,14 +406,24 @@ impl Patchbay {
 
         let order = bus_order(buses.len(), &bus_edges)?;
 
+        // The plan owns the system mix when it routes a bound `device` source
+        // somewhere executable (or mutes such a route). Otherwise the
+        // machine's ordinary audio is added at the output; that is what keeps
+        // Music, video and a call audible on an empty plan.
+        let system_routed = system_owned;
+
         let summary = PatchSummary {
             sources: sources.len(),
             buses: buses.len(),
             sinks: sinks.len(),
             routes: route_count,
-            bound_sources: sources.iter().filter(|source| source.channel.is_some()).count(),
+            bound_sources: sources
+                .iter()
+                .filter(|source| source.channel.is_some() || source.system)
+                .count(),
             bound_sinks: sinks.iter().filter(|sink| sink.bound).count(),
             silent,
+            system: if system_routed { "routed" } else { "fallback" },
         };
 
         let bus_count = buses.len();
@@ -382,7 +438,9 @@ impl Patchbay {
             strips,
             params: Arc::new(ParamQueue::new()),
             summary,
+            system_routed,
             input: Vec::new(),
+            system: Vec::new(),
             mono: Vec::new(),
             buses: (0..bus_count).map(|_| Vec::new()).collect(),
             sink_buffers: (0..sink_count).map(|_| Vec::new()).collect(),
@@ -452,6 +510,7 @@ impl Patchbay {
             }
         }
         self.input = vec![0.0; period.saturating_mul(channels)];
+        self.system = vec![0.0; period.saturating_mul(2)];
         self.mono = vec![0.0; period];
         for bus in &mut self.buses {
             *bus = vec![0.0; period.saturating_mul(2)];
@@ -464,7 +523,21 @@ impl Patchbay {
     }
 
     /// One interleaved i16 capture block into one interleaved stereo i16 block.
+    /// With no system mix this is the old call exactly: the `device` sources,
+    /// if any, contribute silence.
     pub fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
+        self.block_with_system(input, &[], output)
+    }
+
+    /// The same block, plus the machine's system mix (`system`, interleaved
+    /// stereo i16) captured from the virtual sink's monitor. A short or absent
+    /// block is silence for the part it does not carry.
+    pub fn block_with_system(
+        &mut self,
+        input: &[i16],
+        system: &[i16],
+        output: &mut [i16],
+    ) -> Result<(), String> {
         let channels = self.channels;
         if channels == 0 {
             return Err("the patchbay was not prepared".to_string());
@@ -487,6 +560,55 @@ impl Patchbay {
         for (target, sample) in self.input[..input.len()].iter_mut().zip(input) {
             *target = f32::from(*sample) / 32_768.0;
         }
+        let stereo = frames * 2;
+        let carried = system.len().min(stereo);
+        for (target, sample) in self.system[..stereo].iter_mut().zip(&system[..carried]) {
+            *target = f32::from(*sample) / 32_768.0;
+        }
+        for target in &mut self.system[carried..stereo] {
+            *target = 0.0;
+        }
+        self.render(frames)?;
+        for (target, sample) in output[..frames * 2].iter_mut().zip(&self.mix[..frames * 2]) {
+            *target = to_i16(*sample);
+        }
+        Ok(())
+    }
+
+    /// The same block, with the system mix as the device loop carries it: an
+    /// interleaved stereo f32 ring, already at the capture's frame count.
+    pub fn block_with_system_f32(
+        &mut self,
+        input: &[i16],
+        system: &[f32],
+        output: &mut [i16],
+    ) -> Result<(), String> {
+        let channels = self.channels;
+        if channels == 0 {
+            return Err("the patchbay was not prepared".to_string());
+        }
+        if input.len() % channels != 0 {
+            return Err(format!(
+                "a capture block of {} samples is not whole {channels}-channel frames",
+                input.len()
+            ));
+        }
+        let frames = input.len() / channels;
+        self.check_frames(frames)?;
+        if output.len() < frames * 2 {
+            return Err(format!(
+                "the playback block holds {} samples, the mix needs {}",
+                output.len(),
+                frames * 2
+            ));
+        }
+        for (target, sample) in self.input[..input.len()].iter_mut().zip(input) {
+            *target = f32::from(*sample) / 32_768.0;
+        }
+        let stereo = frames * 2;
+        let carried = system.len().min(stereo);
+        self.system[..carried].copy_from_slice(&system[..carried]);
+        self.system[carried..stereo].fill(0.0);
         self.render(frames)?;
         for (target, sample) in output[..frames * 2].iter_mut().zip(&self.mix[..frames * 2]) {
             *target = to_i16(*sample);
@@ -496,6 +618,16 @@ impl Patchbay {
 
     /// The f32 shape, for the null backend and the unit tests.
     pub fn block_f32(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), String> {
+        self.block_f32_with_system(input, &[], output)
+    }
+
+    /// The f32 shape with a system mix, for the null backend and the tests.
+    pub fn block_f32_with_system(
+        &mut self,
+        input: &[f32],
+        system: &[f32],
+        output: &mut [f32],
+    ) -> Result<(), String> {
         let channels = self.channels;
         if channels == 0 {
             return Err("the patchbay was not prepared".to_string());
@@ -516,6 +648,10 @@ impl Patchbay {
             ));
         }
         self.input[..input.len()].copy_from_slice(input);
+        let stereo = frames * 2;
+        let carried = system.len().min(stereo);
+        self.system[..carried].copy_from_slice(&system[..carried]);
+        self.system[carried..stereo].fill(0.0);
         self.render(frames)?;
         output[..frames * 2].copy_from_slice(&self.mix[..frames * 2]);
         Ok(())
@@ -546,40 +682,66 @@ impl Patchbay {
         self.mix[..stereo].fill(0.0);
 
         // Sources first: each one is read once, then summed into every place
-        // it was routed to.
+        // it was routed to. An `input` source is one capture channel; a
+        // `device` source is the machine's stereo system mix.
         for source in &self.sources {
-            let Some(channel) = source.channel else {
-                continue;
-            };
             if source.routes.is_empty() {
                 continue;
             }
-            for frame in 0..frames {
-                self.mono[frame] = self.input[frame * self.channels + channel];
-            }
-            for route in &source.routes {
-                match route {
-                    SourceRoute::Bus { index, strip } => {
-                        let Some(strip) = &self.strips[*strip] else {
-                            continue;
-                        };
-                        mix_mono_into_stereo(
-                            &mut self.buses[*index][..stereo],
-                            &self.mono[..frames],
-                            strip,
-                        )
-                        .map_err(|error| format!("bus {index}: {error:?}"))?;
+            if let Some(channel) = source.channel {
+                for frame in 0..frames {
+                    self.mono[frame] = self.input[frame * self.channels + channel];
+                }
+                for route in &source.routes {
+                    match route {
+                        SourceRoute::Bus { index, strip } => {
+                            let Some(strip) = &self.strips[*strip] else {
+                                continue;
+                            };
+                            mix_mono_into_stereo(
+                                &mut self.buses[*index][..stereo],
+                                &self.mono[..frames],
+                                strip,
+                            )
+                            .map_err(|error| format!("bus {index}: {error:?}"))?;
+                        }
+                        SourceRoute::Sink { index, strip } => {
+                            let Some(strip) = &self.strips[*strip] else {
+                                continue;
+                            };
+                            mix_mono_into_stereo(
+                                &mut self.sink_buffers[*index][..stereo],
+                                &self.mono[..frames],
+                                strip,
+                            )
+                            .map_err(|error| format!("sink {index}: {error:?}"))?;
+                        }
                     }
-                    SourceRoute::Sink { index, strip } => {
-                        let Some(strip) = &self.strips[*strip] else {
-                            continue;
-                        };
-                        mix_mono_into_stereo(
-                            &mut self.sink_buffers[*index][..stereo],
-                            &self.mono[..frames],
-                            strip,
-                        )
-                        .map_err(|error| format!("sink {index}: {error:?}"))?;
+                }
+            }
+            else if source.system {
+                for route in &source.routes {
+                    match route {
+                        SourceRoute::Bus { index, strip } => {
+                            let Some(strip) = &self.strips[*strip] else {
+                                continue;
+                            };
+                            mix_stereo_into_stereo(
+                                &mut self.buses[*index][..stereo],
+                                &self.system[..stereo],
+                                strip,
+                            );
+                        }
+                        SourceRoute::Sink { index, strip } => {
+                            let Some(strip) = &self.strips[*strip] else {
+                                continue;
+                            };
+                            mix_stereo_into_stereo(
+                                &mut self.sink_buffers[*index][..stereo],
+                                &self.system[..stereo],
+                                strip,
+                            );
+                        }
                     }
                 }
             }
@@ -620,6 +782,15 @@ impl Patchbay {
                 *target += sample;
             }
         }
+
+        // The machine's own audio, when the plan did not route it: Music,
+        // video, notifications and a call stay audible on an empty plan. A
+        // plan that routes a `device` source owns it, including a mute.
+        if !self.system_routed {
+            for (target, sample) in self.mix[..stereo].iter_mut().zip(&self.system[..stereo]) {
+                *target += sample;
+            }
+        }
         Ok(())
     }
 }
@@ -631,6 +802,15 @@ impl ListenSink for Patchbay {
 
     fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String> {
         Patchbay::block(self, input, output)
+    }
+
+    fn block_with_system(
+        &mut self,
+        input: &[i16],
+        system: &[f32],
+        output: &mut [i16],
+    ) -> Result<(), String> {
+        Patchbay::block_with_system_f32(self, input, system, output)
     }
 }
 
@@ -667,6 +847,16 @@ fn balance(gain: f32, pan: f32) -> (f32, f32) {
     (gain * left, gain * right)
 }
 
+/// Add one interleaved stereo block into another. A stereo source already has
+/// an image, so a centred strip is unity in both channels and pan is a balance.
+fn mix_stereo_into_stereo(out: &mut [f32], input: &[f32], strip: &Strip) {
+    let (left, right) = balance(strip.gain.get(), strip.pan.get());
+    for (target, sample) in out.chunks_mut(2).zip(input.chunks(2)) {
+        target[0] += sample[0] * left;
+        target[1] += sample[1] * right;
+    }
+}
+
 /// The bus evaluation order: Kahn's algorithm over the bus -> bus edges. A
 /// plan with a cycle is refused rather than run.
 fn bus_order(buses: usize, edges: &[(usize, usize)]) -> Result<Vec<usize>, String> {
@@ -695,6 +885,7 @@ fn bus_order(buses: usize, edges: &[(usize, usize)]) -> Result<Vec<usize>, Strin
 
 // ---- the plan's small JSON --------------------------------------------------
 
+#[derive(Clone, Copy)]
 enum NodeRef {
     Source(usize),
     Bus(usize),
@@ -1223,5 +1414,131 @@ mod tests {
         );
         assert!(!patchbay.route_live(0));
         assert!(patchbay.route_live(1));
+    }
+
+    // --- the machine's own mix -------------------------------------------------
+
+    #[test]
+    fn the_system_mix_is_carried_when_the_plan_does_not_route_it() {
+        // The plan draws a guitar into the interface and says nothing about the
+        // machine's own audio. Music, video and a call must still be heard.
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"gtr","kind":"input","channel":0}],
+                "buses":[{"id":"house"}],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[
+                    {"from":"gtr","to":"house"},
+                    {"from":"house","to":"out"}
+                ]
+            }"#,
+        );
+        assert_eq!(patchbay.summary().system, "fallback");
+
+        let input = [0.5f32; 8];
+        let system = [0.25f32, -0.25, 0.25, -0.25, 0.25, -0.25, 0.25, -0.25];
+        let mut output = [0.0f32; 8];
+        patchbay
+            .block_f32_with_system(&input, &system, &mut output)
+            .expect("run");
+
+        let guitar = 0.5f32 / std::f32::consts::SQRT_2;
+        for frame in output.chunks(2) {
+            assert!((frame[0] - (guitar + 0.25)).abs() < 1e-5, "{frame:?}");
+            assert!((frame[1] - (guitar - 0.25)).abs() < 1e-5, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn a_routed_device_source_replaces_the_fallback() {
+        // The plan sends the machine's mix to the interface at half gain. The
+        // fallback must not add a second, unison copy on top.
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"system","kind":"device"}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"system","to":"out","gain":0.5,"pan":0}]
+            }"#,
+        );
+        assert_eq!(patchbay.summary().system, "routed");
+        assert_eq!(patchbay.summary().bound_sources, 1);
+        assert!(patchbay.summary().silent.is_empty());
+
+        let input = [0.0f32; 8];
+        let system = [0.4f32, -0.2, 0.4, -0.2, 0.4, -0.2, 0.4, -0.2];
+        let mut output = [0.0f32; 8];
+        patchbay
+            .block_f32_with_system(&input, &system, &mut output)
+            .expect("run");
+
+        for frame in output.chunks(2) {
+            assert!((frame[0] - 0.2).abs() < 1e-5, "{frame:?}");
+            assert!((frame[1] + 0.1).abs() < 1e-5, "{frame:?}");
+        }
+    }
+
+    #[test]
+    fn a_muted_device_route_silences_the_mix_instead_of_falling_back() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[{"id":"system","kind":"device"}],
+                "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[{"from":"system","to":"out","mute":1}]
+            }"#,
+        );
+        assert_eq!(patchbay.summary().system, "routed");
+
+        let input = [0.0f32; 8];
+        let system = [0.5f32; 8];
+        let mut output = [9.0f32; 8];
+        patchbay
+            .block_f32_with_system(&input, &system, &mut output)
+            .expect("run");
+        assert!(output.iter().all(|sample| *sample == 0.0), "{output:?}");
+    }
+
+    #[test]
+    fn a_device_source_on_another_machine_does_not_silence_this_one() {
+        let plan = r#"{
+            "sources":[{"id":"laptop-system","kind":"device","machine":"laptop"}],
+            "buses":[],
+            "sinks":[{"id":"out","kind":"interface"}],
+            "routes":[{"from":"laptop-system","to":"out"}]
+        }"#;
+        let mut patchbay = bay_for(plan, "table");
+        assert_eq!(patchbay.summary().system, "fallback");
+        assert!(patchbay.summary().silent.contains(&"laptop-system".to_string()));
+
+        patchbay.prepared(48_000, 4, 2).expect("prepare");
+        let input = [0.0f32; 8];
+        let system = [0.125f32; 8];
+        let mut output = [0.0f32; 8];
+        patchbay
+            .block_f32_with_system(&input, &system, &mut output)
+            .expect("run");
+        assert!(output.iter().all(|sample| (*sample - 0.125).abs() < 1e-6), "{output:?}");
+    }
+
+    #[test]
+    fn the_i16_system_path_round_trips_the_mix() {
+        let mut patchbay = prepared(
+            r#"{
+                "sources":[], "buses":[],
+                "sinks":[{"id":"out","kind":"interface"}],
+                "routes":[]
+            }"#,
+        );
+        let input = [0i16; 8];
+        let system = [16_384i16, -16_384, 16_384, -16_384, 16_384, -16_384, 16_384, -16_384];
+        let mut output = [7i16; 8];
+        patchbay
+            .block_with_system(&input, &system, &mut output)
+            .expect("run");
+        for frame in output.chunks(2) {
+            assert!((frame[0] - 16_384).abs() <= 1, "{frame:?}");
+            assert!((frame[1] + 16_384).abs() <= 1, "{frame:?}");
+        }
     }
 }

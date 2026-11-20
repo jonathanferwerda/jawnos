@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Audio/Engine.pm docs/studio-effects.md
+# tests-for: lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Audio/Engine.pm docs/studio-effects.md public/js/manager/studio.js public/js/manager/studio/05_inputs.js public/js/manager/studio/06_controls.js
 # covers:    the live-input contract on the manager side - audio_engine_record
 #            puts `monitor_input` and `monitor_gain` on the record wire and
 #            leaves them out when off or undefined, a take's per-track plan
@@ -404,5 +404,61 @@ like($doc, qr/`channels`, a whole `1` or `2`/, 'and the per-track source width')
 like($doc, qr/overlaps track 1's stereo pair\s+0-1/,
 	'including the overlap sentence it refuses');
 like($doc, qr/target: "input"/, 'and the fourth param target');
+
+# --- Monitor follows the track's input, not the machine ----------------------
+# The page chooses the monitor path from the track's plug: no input is silence,
+# an app is the browser's post-FX tap, and a real device is the engine's Listen
+# on its own numbered input. Only the real-device path may open a microphone.
+my $studio_js = read_file("$root/public/js/manager/studio.js");
+my $controls_js = read_file("$root/public/js/manager/studio/06_controls.js");
+my $inputs_js = read_file("$root/public/js/manager/studio/05_inputs.js");
+
+like($inputs_js, qr/function studioChannelInput\(/, 'the track\'s plug is readable');
+like($inputs_js, qr/\['marker', 'music', 'synth', 'drums'\]\.indexOf\(/,
+	'an app input is named by its app');
+like($inputs_js, qr/plug\['type'\] == 'usermedia' && plug\['av'\] == 'a'/,
+	'a real audio device is the one the engine can open');
+like($inputs_js, qr/function studioInputListenChannel\(/,
+	'and its input number is the engine\'s Listen channel');
+like($inputs_js, qr/if \(direction == 'input' && type == 'usermedia' && av == 'a'\) \{ data\.input = input; \}/,
+	'the device number is stored with the plug when it is chosen');
+
+like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1\)/,
+	'a device on a native backend is the engine Listen');
+like($studio_js, qr/var tap = on && !!input && \(app \|\| !engine\)/,
+	'no input is silent and an app is the browser tap');
+like($studio_js, qr/if \(engine\) \{[\s\S]*?studioListenStart\(false, listen_channel, active\)/,
+	'a device starts the engine on its own input');
+like($studio_js, qr/else if \(studioListenActive\) \{ studioListenStop\(\); \}/,
+	'an app or no input does not start the engine Listen');
+
+like($controls_js, qr/function studioListenStart\(quiet, channel, ch\)/,
+	'Listen can name the input and the monitored rack');
+like($controls_js, qr/channel: listen_channel/, 'and sends that input to the engine');
+like($controls_js, qr/inserts: studioListenInserts\(ch\)/,
+	'through the monitored track\'s pedals');
+
+# An app has no device behind it, so Monitor may build its graph itself on an
+# unarmed track; a device is the engine's Listen and never the browser capture.
+like($inputs_js, qr/function studioAttachAppInput\(/, 'one app attach path serves Monitor and the arm button');
+like($inputs_js, qr/function studioMonitorAttachApp\(/, 'Monitor attaches an app on an unarmed track');
+like($inputs_js, qr/function studioMonitorDetachApp\(/, 'and detaches it when Monitor lets go');
+like($inputs_js, qr/if \(state === 'rec' \|\| state === 'loop'\) \{ return false; \}/,
+	'an armed track keeps its own graph');
+like($studio_js, qr/studioMonitorAttachApp\(active\)/, 'Monitor builds the app graph');
+like($studio_js, qr/studioMonitorDetachApp\(previous_app\)/, 'and detaches the one it built');
+like($inputs_js, qr/if \(typeof studioApplyMonitor === 'function'\) \{ studioApplyMonitor\(\); \}/,
+	'the arm button re-applies a monitored app');
+
+my ($monitor_attach) = $inputs_js =~ /(function studioMonitorAttachApp\b.*?)(?=\nfunction studioMonitorDetachApp\b)/s;
+ok(defined $monitor_attach, 'the Monitor attach helper is readable');
+unlike($monitor_attach // '', qr/getUserMedia|studioInputStreamGrabber/,
+	'Monitor never opens the browser capture for an app');
+my ($app_attach) = $inputs_js =~ /(function studioAttachAppInput\b.*?)(?=\nasync function studioInputStreamGrabber\b)/s;
+ok(defined $app_attach, 'the app attach path is readable');
+unlike($app_attach // '', qr/getUserMedia/, 'the app attach path never opens a device');
+
+unlike($studio_js, qr/c\.monGain\.gain\.value = \(on && !nativeish\) \? 1 : 0/,
+	'the tap is not muted for every native backend');
 
 done_testing();

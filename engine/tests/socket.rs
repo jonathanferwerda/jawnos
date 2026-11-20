@@ -1446,6 +1446,9 @@ fn patch_runs_a_plan_and_reports_its_shape() {
     assert!(reply.contains("\"sources\":2"), "patch: {reply}");
     assert!(reply.contains("\"bound_sources\":1"), "patch: {reply}");
     assert!(reply.contains("\"silent\":[\"phone\"]"), "patch: {reply}");
+    // The plan does not route a `device` source, so the machine's own mix is
+    // carried at the output (the compile-time statement, not the runtime one).
+    assert!(reply.contains("\"system\":\"fallback\""), "patch: {reply}");
 
     // The null loop runs until stop, so status has frames and the plan's shape.
     std::thread::sleep(Duration::from_millis(20));
@@ -1453,6 +1456,8 @@ fn patch_runs_a_plan_and_reports_its_shape() {
     assert!(status.contains("\"state\":\"patching\""), "status: {status}");
     assert!(json_number(&status, "frames") > 0.0, "status: {status}");
     assert!(status.contains("\"buses\":1"), "status: {status}");
+    // The null backend never captures a system mix, and says so.
+    assert!(status.contains("\"system\":\"off\""), "status: {status}");
 
     // One capture and one set of outputs: a listen is refused while patching.
     let reply = client.ask("{\"cmd\":\"listen\",\"channel\":0}");
@@ -1463,8 +1468,11 @@ fn patch_runs_a_plan_and_reports_its_shape() {
     assert!(unpatched.contains("\"state\":\"done\""), "unpatch: {unpatched}");
     assert!(json_number(&unpatched, "frames") > 0.0, "unpatch: {unpatched}");
 
-    // A second patch, and the transport's one stop joins it too.
-    let reply = client.ask(&format!("{{\"cmd\":\"patch\",\"plan\":{plan}}}"));
+    // A second patch, and the transport's one stop joins it too. The manager's
+    // system source is accepted even though this null backend has none.
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"patch\",\"plan\":{plan},\"system_device\":\"jawn_system.monitor\"}}"
+    ));
     assert!(reply.contains("\"ok\":true"), "second patch: {reply}");
     std::thread::sleep(Duration::from_millis(20));
     let stopped = client.ask("{\"cmd\":\"stop\"}");

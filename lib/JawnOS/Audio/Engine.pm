@@ -59,6 +59,14 @@ sub audio_engine_plan_path {
 	return File::Spec->catfile('.president', 'audio-plan.json');
 }
 
+# The directory beside the plan and the socket: the system-mix state and the
+# supervisor's own status already live here. It follows the plan path so a
+# test that points JAWNOS_AUDIO_PLAN at a tempdir also points this at it.
+sub audio_engine_state_dir {
+	my $path = audio_engine_plan_path();
+	return File::Basename::dirname($path);
+}
+
 # The staged engine under the tree, resolved from this file rather than from the
 # process's working directory: a worker, a probe and a test all run from
 # different places. The binary is optional; `available` below is about the
@@ -211,11 +219,19 @@ sub audio_engine_listen {
 # object `JawnOS::Audio::Plan` normalises, and the engine compiles it before it
 # opens the device. The answer is `state:"patching"` with the plan's shape and
 # the nodes this machine cannot bind; a bad plan is the engine's refusal.
+#
+# `system_device` names this machine's ordinary-audio source (the virtual sink's
+# monitor). It rides the command as well as the engine's startup flags, so
+# turning the mixer switch on for an engine that started before the switch does
+# not need a restart to begin carrying Music and the rest.
 sub audio_engine_patch {
-	my ($plan) = @_;
+	my ($plan, $system_device) = @_;
 	return { ok => 0, error => 'a patch needs one plan object' }
 		unless ref $plan eq 'HASH';
-	return audio_engine_command({ cmd => 'patch', plan => $plan });
+	my $request = { cmd => 'patch', plan => $plan };
+	$request->{'system_device'} = $system_device
+		if defined $system_device && !ref $system_device && length $system_device;
+	return audio_engine_command($request);
 }
 
 # One live fader of the running patch: `{"cmd":"param","target":"patch",

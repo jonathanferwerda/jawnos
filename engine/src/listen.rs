@@ -307,6 +307,18 @@ pub trait ListenSink {
     fn prepared(&mut self, rate: u32, period: usize, channels: usize) -> Result<(), String>;
     /// One interleaved capture block and the stereo block to play.
     fn block(&mut self, input: &[i16], output: &mut [i16]) -> Result<(), String>;
+    /// The same block with the machine's system mix (interleaved stereo f32,
+    /// already at the capture's frame count). A sink that has no use for it
+    /// keeps the old two-argument path exactly.
+    fn block_with_system(
+        &mut self,
+        input: &[i16],
+        system: &[f32],
+        output: &mut [i16],
+    ) -> Result<(), String> {
+        let _ = system;
+        self.block(input, output)
+    }
 }
 
 /// The null listen loop: a sine (or silence) as the capture input, the strip,

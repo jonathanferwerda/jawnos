@@ -75,6 +75,21 @@ my $script     = abs_path(__FILE__) // __FILE__;
 my $script_dir = dirname($script);
 my $root       = dirname($script_dir);
 
+# The system-mix lifecycle lives in the tree's lib/ because the manager uses
+# the same module when the switch changes. The supervisor is run from this
+# tree, so the absolute path is stable; a build without it simply has no
+# system mix to make.
+my $system_mix_loaded = 0;
+sub load_system_mix {
+	return $system_mix_loaded if $system_mix_loaded;
+	my $path = "$root/lib/JawnOS/Audio/SystemMix.pm";
+	return 0 unless -f $path;
+	unshift @INC, "$root/lib";
+	require $path;
+	$system_mix_loaded = 1;
+	return 1;
+}
+
 sub home_dir {
 	my $home = $ENV{'HOME'};
 	return $home if defined $home && length $home;
@@ -133,6 +148,8 @@ Options:
   --plan PATH      the saved-plan wrapper the engine restores from at startup
                    (default ~/.president/audio-plan.json)
   --machine NAME   which machine this supervisor owns (default the host name)
+  --system-device NAME  capture the machine's own mix from this source instead
+                   of the supervisor-made jawn_system.monitor
   --status         print ~/.president/audio.json and exit
   --check          exit 0 while the supervisor and its engine are alive,
                    1 otherwise (an adopted engine counts while it answers)
@@ -140,8 +157,8 @@ Options:
 
 Config, highest precedence first: these flags, then JAWNOS_AUDIO_SOCKET,
 JAWNOS_AUDIO_BINARY, JAWNOS_AUDIO_BACKEND, JAWNOS_AUDIO_DEVICE,
-JAWNOS_AUDIO_PERIOD, JAWNOS_AUDIO_BUFFER, JAWNOS_AUDIO_PLAN and
-JAWNOS_AUDIO_MACHINE, then the defaults above.
+JAWNOS_AUDIO_PERIOD, JAWNOS_AUDIO_BUFFER, JAWNOS_AUDIO_PLAN,
+JAWNOS_AUDIO_MACHINE and JAWNOS_AUDIO_SYSTEM_DEVICE, then the defaults above.
 
 The status file is written while the supervisor runs and removed on a clean
 stop. Its keys are: pid (the engine child, null while it is down or while an
@@ -227,12 +244,12 @@ while (@argv) {
 	}
 	elsif ($arg eq '--status') { $mode = 'status' }
 	elsif ($arg eq '--check')  { $mode = 'check' }
-	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine)$/) {
+	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine|system-device)$/) {
 		my $name = $1;
 		fatal("--$name needs a value") unless @argv;
 		$given{$name} = shift @argv;
 	}
-	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine)=(.*)$/s) {
+	elsif ($arg =~ /^--(socket|binary|backend|device|period|buffer|plan|machine|system-device)=(.*)$/s) {
 		$given{$1} = $2;
 	}
 	else {
@@ -248,6 +265,7 @@ my $period  = pick($given{'period'},  'JAWNOS_AUDIO_PERIOD',  '64');
 my $buffer  = pick($given{'buffer'},  'JAWNOS_AUDIO_BUFFER',  '256');
 my $plan    = pick($given{'plan'},    'JAWNOS_AUDIO_PLAN',    "$state_dir/audio-plan.json");
 my $machine = pick($given{'machine'}, 'JAWNOS_AUDIO_MACHINE', host_name());
+my $system_device = pick($given{'system-device'}, 'JAWNOS_AUDIO_SYSTEM_DEVICE', '');
 
 fatal('--socket wants a path') unless length $socket;
 fatal('--binary wants a path') unless length $binary;
@@ -259,6 +277,8 @@ fatal('--buffer wants a positive whole number of frames')
 	unless $buffer =~ /\A[1-9][0-9]*\z/;
 fatal('--plan wants a path') unless length $plan;
 fatal('--machine wants a name') unless length $machine;
+fatal('--system-device wants a source name')
+	if length $system_device && $system_device !~ /\A[A-Za-z0-9_.:,-]+\z/;
 
 # --- status and check ---------------------------------------------------------
 
@@ -336,6 +356,8 @@ my $adopted_since;
 my $adopted_mismatch;
 my $adopted_note;
 my $next_probe            = 0;
+my $next_sync             = 0;
+my $active_system_device  = undef;
 
 sub write_status {
 	my $data = {
@@ -353,6 +375,7 @@ sub write_status {
 		buffer               => 0 + $buffer,
 		plan                 => $plan,
 		machine              => $machine,
+		system_device        => $active_system_device,
 		started_at           => int($supervisor_start),
 		engine_started_at    => defined $child_started ? int($child_started) : undef,
 		restarts             => $restarts,
@@ -401,15 +424,106 @@ sub plan_config {
 	my $device  = $doc->{'device'};
 	return undef unless defined $backend && $backend =~ /\A(?:alsa|pipewire|null)\z/;
 	return undef unless defined $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/;
-	return { backend => $backend, device => $device };
+	return {
+		backend => $backend,
+		device  => $device,
+		manage  => $doc->{'manage'} ? 1 : 0,
+	};
+}
+
+# Put the machine's own audio on the virtual sink exactly while the engine owns
+# the card. The plan file is the switch's durable copy, so a supervisor that
+# starts after a reboot knows without asking the manager. A shared PipeWire
+# backend needs none of this: the engine is already one client among the apps.
+sub ensure_system_mix {
+	my ($backend, $manage) = @_;
+	return undef unless load_system_mix();
+
+	if (!$manage || $backend ne 'alsa') {
+		remove_system_mix() if defined $active_system_device;
+		return undef;
+	}
+
+	# A hand-run supervisor may name the source itself; then it owns the sink
+	# and this one must not load or unload it.
+	if (defined $given{'system-device'} && length $given{'system-device'}) {
+		$active_system_device = $system_device;
+		return $system_device;
+	}
+
+	my $mix = JawnOS::Audio::SystemMix::ensure($state_dir);
+	if ($mix && $mix->{ok}) {
+		$active_system_device = $mix->{source};
+		return $mix->{source};
+	}
+	$active_system_device = undef;
+	if ($mix && $mix->{error}) {
+		print "audio supervisor: system mix: " . $mix->{error} . "\n";
+	}
+	return undef;
+}
+
+sub remove_system_mix {
+	return unless load_system_mix();
+	my $state = JawnOS::Audio::SystemMix::status($state_dir);
+	return unless defined $active_system_device || ($state && $state->{active});
+	my $answer = JawnOS::Audio::SystemMix::remove($state_dir);
+	$active_system_device = undef;
+	if ($answer && !$answer->{ok} && $answer->{error}) {
+		print STDERR "audio supervisor: system mix: " . $answer->{error} . "\n";
+	}
+}
+
+# Keep the virtual sink only while the engine is actually patching and actually
+# capturing its monitor. The engine says `capturing` once parec is reading,
+# `unavailable` when this machine has no parec/source, and `off` when the patch
+# did not ask for one. A failed or ended patch takes the sink away with it.
+sub sync_system_mix {
+	my ($engine) = @_;
+	return unless load_system_mix();
+	# A hand-run supervisor named its own source; it owns that sink.
+	return if defined $given{'system-device'} && length $given{'system-device'};
+
+	my $chosen = plan_config();
+	my $manage = $chosen ? $chosen->{manage} : 0;
+	my $state  = $engine ? ( $engine->{'state'} // '' ) : '';
+	my $engine_backend = $engine && defined $engine->{'backend'} && length $engine->{'backend'}
+		? $engine->{'backend'} : $backend;
+
+	# A take, a playback or a listen still holds the card, so the machine's
+	# output must stay on the sink even though the patch is not the status line.
+	return if $state =~ /\A(?:recording|playing|listening)\z/;
+
+	my $live   = $state eq 'patching';
+	my $system = $engine ? ( $engine->{'system'} // '' ) : '';
+
+	if ($manage && $engine_backend eq 'alsa' && $live && $system eq 'pending') {
+		return;
+	}
+	if ($manage && $engine_backend eq 'alsa' && $live && $system eq 'capturing') {
+		return if defined $active_system_device;
+		my $mix = JawnOS::Audio::SystemMix::ensure($state_dir);
+		if ($mix && $mix->{ok}) {
+			$active_system_device = $mix->{source};
+		}
+		elsif ($mix && $mix->{error}) {
+			print "audio supervisor: system mix: " . $mix->{error} . "\n";
+		}
+		return;
+	}
+
+	remove_system_mix() if defined $active_system_device;
 }
 
 sub spawn_engine {
 	my $chosen = plan_config();
+	my $manage = 0;
 	if ($chosen) {
 		$backend = $chosen->{'backend'} unless defined $given{'backend'};
 		$device  = $chosen->{'device'}  unless defined $given{'device'};
+		$manage  = $chosen->{'manage'};
 	}
+	my $system_source = ensure_system_mix($backend, $manage);
 	my $pid = fork();
 	unless (defined $pid) {
 		warn "audio supervisor: cannot fork: $!\n";
@@ -418,15 +532,19 @@ sub spawn_engine {
 	if ($pid == 0) {
 		# Belt and braces: FD_CLOEXEC should already have done this on exec.
 		close $lock;
-		exec { $binary } $binary, '--serve',
+		my @args = (
+			$binary, '--serve',
 			'--backend', $backend,
 			'--device',  $device,
 			'--period',  $period,
 			'--buffer',  $buffer,
 			'--socket',  $socket,
 			'--plan',    $plan,
-			'--machine', $machine
-			or do {
+			'--machine', $machine,
+		);
+		push @args, ('--system-device', $system_source)
+			if defined $system_source && length $system_source;
+		exec { $binary } @args or do {
 				print STDERR "audio supervisor: cannot run $binary: $!\n";
 				POSIX::_exit(127);
 			};
@@ -436,6 +554,9 @@ sub spawn_engine {
 
 sub child_exited {
 	my ($raw) = @_;
+	# The engine is gone, so the machine must not stay pointed at a sink nobody
+	# captures. Put the previous default back before the backoff starts.
+	remove_system_mix();
 	my $ran = defined $child_started ? time - $child_started : 0;
 	$last_exit = describe_wait($raw);
 	# A real run earns a fresh ladder; a run of a few milliseconds does not.
@@ -461,6 +582,7 @@ sub report_missing {
 }
 
 sub stop_supervisor {
+	remove_system_mix();
 	if (defined $child_pid) {
 		kill 'TERM', $child_pid;
 		my $deadline = time + $STOP_GRACE;
@@ -541,6 +663,13 @@ if (-S $socket) {
 	}
 }
 
+# A supervisor that was killed leaves its engine and its virtual sink behind.
+# A live engine is adopted above and keeps both; with no adopted engine, the
+# state file is a crash remnant and the machine's own default comes back now.
+unless ($adopted) {
+	remove_system_mix();
+}
+
 # --- supervise ----------------------------------------------------------------
 
 $SIG{'TERM'} = sub { $stop = 1 };
@@ -553,8 +682,10 @@ print "audio supervisor: supervising $socket (binary $binary, backend $backend,"
 while (!$stop) {
 	if ($adopted) {
 		if (time >= $next_probe) {
-			if (engine_answers($socket)) {
+			my $engine = engine_answers($socket);
+			if ($engine) {
 				$next_probe = time + $ADOPT_POLL;
+				sync_system_mix($engine);
 			}
 			else {
 				# A signal may have interrupted the probe; do not turn that
@@ -581,6 +712,11 @@ while (!$stop) {
 			$next_start = time + child_exited($?);
 			next;
 		}
+		if (time >= $next_sync) {
+			$next_sync = time + $ADOPT_POLL;
+			my $engine = engine_answers($socket);
+			sync_system_mix($engine) if $engine;
+		}
 	}
 	elsif (time >= $next_start) {
 		unless (-f $binary && -x $binary) {
@@ -596,6 +732,7 @@ while (!$stop) {
 		if (defined $child_pid) {
 			$child_started = time;
 			$next_start    = 0;
+			$next_sync     = time + $ADOPT_POLL;
 			write_status();
 			print "audio supervisor: started engine as $child_pid\n";
 		}

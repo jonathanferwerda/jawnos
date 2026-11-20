@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Audio.pm lib/JawnOS/Audio/Plan.pm lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm templates/apps/sound.html.ep public/js/manager/sound.js public/js/manager/sound/01_patchbay.js perl/help/topics_apps.pl engine/src/patchbay.rs
+# tests-for: lib/JawnOS/Domain/Audio.pm lib/JawnOS/Audio/Plan.pm lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_sound.pm lib/JawnOS/Routes/manager_sound.pm templates/apps/sound.html.ep public/js/manager/sound.js public/js/manager/sound/01_patchbay.js perl/help/topics_apps.pl engine/src/patchbay.rs engine/src/system_capture.rs
 # covers:    the saved house plan (docs/studio-audio-roadmap.md §8): a default plan reads as four
 #            empty lists, a valid plan saves on the house row, a dangling route is refused, the
 #            master switch is the only thing that applies an engine patch, a sink's declared
@@ -206,6 +206,11 @@ require JawnOS::Domain::Audio;
 		is($seen->{cmd}, 'patch', 'a patch is the engine\'s patch command');
 		is_deeply($seen->{plan}, $plan, 'and the plan goes over the socket whole');
 		is($answer->{ok}, 1, 'the engine answer is relayed');
+		ok(!exists $seen->{system_device}, 'a patch without a source sends no system device');
+
+		JawnOS::Audio::Engine::audio_engine_patch($plan, 'jawn_system.monitor');
+		is($seen->{system_device}, 'jawn_system.monitor',
+			'a managed patch names the machine\'s own-audio source');
 
 		my $refused = JawnOS::Audio::Engine::audio_engine_patch('not a plan');
 		is($refused->{ok}, 0, 'a non-object plan is refused before the socket');

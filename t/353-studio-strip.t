@@ -153,6 +153,16 @@ like($style, qr/\.studio_strip_led\.led_yellow\.lit\s*\{[^}]*background:/s,
 	'the yellow LEDs have their own lit colour');
 like($style, qr/\.studio_strip_scale\s*\{[^}]*position:\s*absolute/s,
 	'the dB scale is drawn inside the fader');
+
+# --- the strip fader paints a bare track, not a fixed handle ---------------
+like($style, qr/\.channel_fader \.channel_volume\s*\{[^}]*background-image:\s*none/s,
+	'the strip fader draws no fixed slider2 handle artwork');
+unlike($style, qr/\.channel_fader \.channel_volume\s*\{[^}]*slider2/s,
+	'the strip fader never references the slider2 capsule');
+like($style, qr/\.channel_fader \.channel_volume::-webkit-slider-thumb\s*\{[^}]*border-radius:\s*50%/s,
+	'the moving accent thumb is still the handle');
+like($style, qr/\.channel_fader \.channel_volume::-moz-range-thumb\s*\{[^}]*border-radius:\s*50%/s,
+	'the Firefox thumb still moves the fader');
 like($studio, qr/meterAnalyser:\s*ctx\.createAnalyser\(\)/, 'each channel owns a level analyser');
 like($canvas, qr/studio_strip_led[\s\S]{0,220}toggleClass\('lit'/,
 	'each transport repaint lights the LED ladder');

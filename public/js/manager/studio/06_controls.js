@@ -805,6 +805,9 @@ function studioNativeStart(quiet) {
 
 var studioListenTimer = 0;
 var studioListenActive = false;
+// The engine input the running Listen names, so Monitor can tell when another
+// track (or another input) has become the one to hear.
+var studioListenChannel = null;
 
 function studioListenText(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
@@ -816,6 +819,7 @@ function studioListenInputText(channel) {
 
 function studioListenSetActive(active) {
 	studioListenActive = !!active;
+	if (!studioListenActive) { studioListenChannel = null; }
 	var button = $('#studio_listen_toggle');
 	if (button.length) {
 		button.attr('aria-pressed', studioListenActive ? 'true' : 'false');
@@ -921,8 +925,9 @@ function studioListenFailed(xhr, quiet) {
 // track's rack, in order and enabled only. A browser input picker cannot show
 // an interface the engine owns (WirePlumber hands it over), so this is the
 // path a guitar plugged into the UM2 is heard through.
-function studioListenInserts() {
-	var c = studioAudio.channels[studioSelectedChannel];
+function studioListenInserts(ch) {
+	ch = (ch === undefined || ch === null) ? studioSelectedChannel : ch;
+	var c = studioAudio.channels[ch];
 	if (!c || !c.inserts) { return ''; }
 	return c.inserts.filter(function (ins) {
 		// the native engine has no stereo widener: an insert list it cannot
@@ -932,17 +937,21 @@ function studioListenInserts() {
 	}).map(function (ins) { return studioEffectKind(ins.name); }).join(',');
 }
 
-function studioListenStart(quiet) {
+// `channel` and `ch` let Monitor name the input and rack the track's own; the
+// Configure Listen control leaves both unset and uses its own pickers.
+function studioListenStart(quiet, channel, ch) {
 	studioListenShowError('');
 	if (studioNativeAudio()) { studioNativeStart(quiet); return; }
+	var listen_channel = (channel === undefined || channel === null)
+		? $('#studio_listen_input').val() : String(channel);
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',
 		data: {
 			action: 'listen_start',
-			channel: $('#studio_listen_input').val(),
+			channel: listen_channel,
 			gain: $('#studio_listen_gain').val(),
-			inserts: studioListenInserts()
+			inserts: studioListenInserts(ch)
 		},
 		dataType: 'json',
 		success: function (data) {
@@ -956,6 +965,7 @@ function studioListenStart(quiet) {
 				return;
 			}
 			studioListenSetActive(true);
+			studioListenChannel = (typeof data.channel === 'number') ? data.channel : Number(listen_channel);
 			if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
 			studioListenRender(data);
 			studioListenPollStart();
@@ -964,7 +974,9 @@ function studioListenStart(quiet) {
 	});
 }
 
-function studioListenStop() {
+// `next_channel`/`ch` let Monitor move the one Listen to another track's input
+// after the engine has stopped the old one; the Configure control passes none.
+function studioListenStop(next_channel, ch) {
 	if (studioNativeListening) {
 		var bridge = studioNativeAudio();
 		studioNativeListening = false;
@@ -972,6 +984,7 @@ function studioListenStop() {
 		studioListenSetActive(false);
 		if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
 		if (bridge) { try { bridge.stop(); } catch (e) {} }
+		if (next_channel !== undefined) { studioListenStart(false, next_channel, ch); }
 		return;
 	}
 	$.ajax({
@@ -989,6 +1002,7 @@ function studioListenStop() {
 				return;
 			}
 			studioListenRender(data);
+			if (next_channel !== undefined) { studioListenStart(false, next_channel, ch); }
 		},
 		error: studioListenFailed
 	});
