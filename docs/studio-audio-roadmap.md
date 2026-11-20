@@ -494,11 +494,12 @@ none of this.
 
 Two source kinds carry the outside world into the plan. A `handset` source is the screened call —
 the reception mixer's `jawn_call_in` — so a call the receptionist answers routes like any other
-source; a `device` source is a channel on the interface the engine owns. While the engine owns the
-card, ordinary operating-system and app audio — Music, a video, a notification, and audio received
-from another machine — is carried through the system mix and the plan's `device` source. During a
-take or Listen that system mix is monitored, never written into the take. The switch remains the
-way out: off restores the output that was the default before the sink was made.
+source; a `device` source is the machine's own audio, captured from the `jawn_system` mix's monitor.
+While the engine owns the card, ordinary operating-system and app audio — Music, a video, a
+notification, and audio received from another machine — is carried through the system mix and the
+plan's `device` source. During a take or Listen that system mix is monitored, never written into the
+take. The switch remains the way out: off restores the output that was the default before the sink
+was made.
 
 ---
 
@@ -662,7 +663,10 @@ period is a solved fact, not a risk: a 64-frame block is filled across two USB f
 `perl/audio/jawn-audio --serve` with the configured backend, device, period, buffer and socket,
 restarts it when it exits on a 1/2/5/10/30 s ladder, and keeps the restart count and last exit in
 `~/.president/audio.json`. An `flock` on `~/.president/audio.lock` makes a second supervisor exit
-with one sentence rather than fight for the socket; `--status` prints the file and `--check` is 0
+with one sentence rather than fight for the socket; **one engine per socket**: the engine's `bind`
+probes the path first and refuses when a live engine answers there, so a second engine can neither
+steal the path nor answer the first one's manager, while a crashed one's stale file is removed and
+replaced. `--status` prints the file and `--check` is 0
 only while the supervisor and its child are alive; TERM/INT stop the child, remove the status file
 and exit 0. Config is flags, then `JAWNOS_AUDIO_*`, then defaults (alsa, `hw:1,0`, 64/256,
 `~/.president/audio.sock`). A missing binary is reported once and retried at the 30 s cap, because
@@ -741,7 +745,8 @@ both on the same take, ten minutes without a lost take. Then the same with a T-D
 ### P5 — Sound owns the mixer (2 weeks) — **control plane in the tree; output owned on both backends**
 
 The `manage` switch, the saved audio plan, the matrix and the node inspector (§9), driving the
-engine on `table` and plain PipeWire elsewhere. The engine's streams and quantum are fixed, so
+engine on `table` and, on PipeWire, the engine playing out the sink it replaced while it captures
+that sink's monitor. The engine's streams and quantum are fixed, so
 pavucontrol has nothing to fight over and nothing to break.
 
 **In the tree (2026-11-18):** the plan store (`Domain::Audio`), the `manage` switch, the Sound matrix
@@ -768,6 +773,13 @@ running. Sound's Apps pill lists only the apps that have a window open on this m
 refreshed while the pill is open. A local input may also name the capture node it listens to
 (Studio's input picker offers this machine's sources, minus a sink's own monitor), and the status
 reports the node each bound input got (§8, §10).
+
+**The capture pace (2026-11-20):** every `parec` stream — the system mix's monitor, the reception
+handset's call monitor, and each routed input's — is asked for a **20 ms process latency**
+(`--latency-msec=20 --process-time-msec=20`, `engine/src/system_capture.rs`). Left to itself the
+server buffers seconds of a monitor and hands it over in bursts, which no modest ring can hold; the
+ring spans about 85 ms (one chunk plus a cushion, never less than two chunks), so a steady pace drops
+nothing and a burst drops whole frames and counts them rather than splitting one.
 
 **Still owed:** delegation of a route to a peer machine's engine (P3), and a per-machine `manage`
 setting (the switch is house-wide today).
