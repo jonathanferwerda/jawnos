@@ -526,7 +526,8 @@ sub job_audio_supervisor {
 	$ENV{PURPOSE} = 'audio';
 	# Audio.pl parses @ARGV at file scope; the master's own arguments belong
 	# to ./jawn, so the supervisor gets none of them and uses its defaults
-	# (alsa, hw:1,0, 64/256, ~/.president/audio.sock and audio-plan.json).
+	# (alsa, hw:1,0, 64/256, ~/.president/audio.sock, and the durable
+	# state_dir/audio/audio-plan.json).
 	local @ARGV = ();
 	require './perl/Audio.pl';
 }

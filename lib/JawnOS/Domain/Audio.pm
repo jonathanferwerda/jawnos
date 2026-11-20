@@ -56,15 +56,31 @@ sub audio_manage_read {
 }
 
 # The backends the engine can open, and the default device for each. The
-# picker stores the pair in the supervisor's startup file, not in a house
-# setting: the interface is a fact about this machine, and the file is local
-# to it.
+# picker's pair is a fact about this machine: it is kept on this device's
+# settings row (the same way the other local facts are), with the supervisor's
+# startup file as a fast cache. Losing that file therefore costs nothing.
 our %audio_backend_ok = map { $_ => 1 } qw(alsa pipewire null);
 our %audio_backend_device = (
 	alsa     => 'hw:1,0',
 	pipewire => 'default',
 	null     => 'null',
 );
+our $audio_engine_device_setting = 'audio_engine_device';
+
+# The picker pair from this device's row, or undef. Stored as
+# `backend|device`, the same spelling the Sound page posts.
+sub _audio_engine_device_setting_read {
+	my $raw = &subs::setting_grabber({
+		app     => 'sound',
+		setting => $audio_engine_device_setting,
+		device  => &subs::device_setter(),
+	});
+	return undef unless defined $raw && length $raw;
+	my ($backend, $device) = split /\|/, $raw, 2;
+	return undef unless defined $backend && $audio_backend_ok{$backend}
+		&& defined $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/;
+	return { backend => $backend, device => $device };
+}
 
 sub _audio_engine_boot_read {
 	require JawnOS::Audio::Engine;
@@ -79,10 +95,14 @@ sub _audio_engine_boot_read {
 	return { path => $path, doc => ref $doc eq 'HASH' ? $doc : undef };
 }
 
-# The engine device the supervisor will use on its next start. The startup
-# file is the source of truth once the picker has written one; a machine that
-# has never chosen falls back to the same ALSA default the supervisor uses.
+# The engine device the supervisor will use on its next start. The settings
+# row is the source of truth; the startup file is the fast cache a supervisor
+# and the compiled default follow. A machine that has never chosen falls back
+# to the same ALSA default the supervisor uses.
 sub audio_engine_device_read {
+	my $stored = &_audio_engine_device_setting_read();
+	return $stored if $stored;
+
 	my $boot = &_audio_engine_boot_read();
 	my $doc = $boot->{doc} || {};
 	my $backend = $doc->{backend};
@@ -304,13 +324,15 @@ sub audio_plan_apply {
 	return $answer;
 }
 
-# The engine's startup copy, written beside the socket the supervisor reads:
-# `{"manage":0|1,"plan":{...},"backend":"alsa","device":"hw:1,0"}`. The
-# setting on the house row is the source of truth for the plan; this file exists
-# so a fresh engine can arm the saved plan and open the chosen interface without
-# a running manager to ask. It is written atomically - a temp file renamed over
-# the target - so a crash mid-write cannot leave a torn JSON object for the next
-# boot, and the directory is made if the install has never run the engine.
+# The engine's startup copy: `{"manage":0|1,"plan":{...},"backend":"alsa",
+# "device":"hw:1,0"}`. The setting on the house row is the source of truth
+# for the plan, and this device's row for the picker pair; the file exists so a
+# fresh engine can arm the saved plan and open the chosen interface without a
+# running manager to ask. It lives in the durable audio state dir, not beside
+# the socket: `~/.president` is wiped at boot and this file must survive a
+# restart. It is written atomically - a temp file renamed over the target - so
+# a crash mid-write cannot leave a torn JSON object for the next boot, and the
+# directory is made if the install has never run the engine.
 sub _audio_plan_boot_write {
 	my ($manage, $plan, $backend, $device) = @_;
 	require JawnOS::Audio::Engine;
@@ -347,12 +369,52 @@ sub _audio_plan_boot_write {
 	return { ok => 1, path => $path };
 }
 
-# Choose the interface the engine opens. The pair goes into the supervisor's
-# startup file, so a restart uses it; while the engine is up, `quit` makes the
-# supervisor restart it with the new choice (the supervisor reads the file at
-# every spawn), whatever the manage switch says - an engine left running keeps
-# its old backend and device, and on ALSA that means holding the wrong card. A
-# machine with no engine still saves the choice for later.
+# Rebuild the startup copy from the settings rows once, at app start, so a
+# supervisor that comes up before anyone opens Sound still gets the right plan.
+# The one-time migration first moves an older build's file out of `~/.president`
+# (which the boot wipe would otherwise delete), then this device's picker pair
+# is seeded from it when the settings row has none - after that a lost file
+# costs nothing. A machine that has never chosen writes no pair, so the
+# supervisor's own fallback (PipeWire when a server answers, else ALSA) still
+# decides; the boot write must not silently pin hw:1,0 on it. Every input is
+# durable; a failure is reported and that fallback covers the window.
+sub audio_boot_file_write {
+	require JawnOS::Audio::Engine;
+	eval { JawnOS::Audio::Engine::audio_engine_plan_migrate() };
+
+	my $plan = &audio_plan_read();
+	my $choice = &_audio_engine_device_setting_read();
+	unless ($choice) {
+		# An upgrading machine kept its pair only in the old file; take it
+		# before the next crash can lose it again.
+		my $doc = (&_audio_engine_boot_read())->{doc} || {};
+		my $backend = $doc->{backend};
+		my $device  = $doc->{device};
+		if (defined $backend && $audio_backend_ok{$backend}
+			&& defined $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/) {
+			$choice = { backend => $backend, device => $device };
+			&subs::setting_setter({
+				app     => 'sound',
+				setting => $audio_engine_device_setting,
+				device  => &subs::device_setter(),
+				value   => "$backend|$device",
+			});
+		}
+	}
+	return &_audio_plan_boot_write(
+		&audio_manage_read(), $plan,
+		(defined $choice ? $choice->{backend} : undef),
+		(defined $choice ? $choice->{device}  : undef),
+	);
+}
+
+# Choose the interface the engine opens. The pair is kept on this device's
+# settings row and written into the supervisor's startup file, so a restart
+# uses it and a lost file is rebuilt from the row; while the engine is up,
+# `quit` makes the supervisor restart it with the new choice (the supervisor
+# reads the file at every spawn), whatever the manage switch says - an engine
+# left running keeps its old backend and device, and on ALSA that means holding
+# the wrong card. A machine with no engine still saves the choice for later.
 sub audio_engine_device_write {
 	my ($backend, $device) = @_;
 	$backend = '' if !defined $backend || ref $backend;
@@ -364,6 +426,12 @@ sub audio_engine_device_write {
 
 	my $plan   = &audio_plan_read();
 	my $manage = &audio_manage_read();
+	&subs::setting_setter({
+		app     => 'sound',
+		setting => $audio_engine_device_setting,
+		device  => &subs::device_setter(),
+		value   => $backend . '|' . $device,
+	});
 	my $written = &_audio_plan_boot_write($manage, $plan, $backend, $device);
 	return { ok => 0, error => $written->{error} } unless $written->{ok};
 

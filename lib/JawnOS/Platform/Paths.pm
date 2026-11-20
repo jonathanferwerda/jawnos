@@ -32,7 +32,7 @@ use File::Spec ();
 
 use Exporter 'import';
 our @EXPORT_OK = qw(
-	home tree_dir data_dir config_dir state_dir tmp_dir
+	home tree_dir data_dir config_dir state_dir audio_state_dir tmp_dir
 	store_dir config_path database_dir run_dir server_dir voices_dir releases_dir
 	basemaps_dir
 	database_seed_path database_schema_path
@@ -187,6 +187,15 @@ sub state_dir {
 	return length($home)
 		? File::Spec->catdir($home, '.local', 'state', 'jawnos')
 		: './.local/state/jawnos';
+}
+
+# The audio engine's durable configuration: the startup plan, the picker's
+# machine-local pair beside it and the system-mix state. It is deliberately
+# outside data_dir (~/.president), which ./jawn wipes at boot: these files
+# outlive a restart, and the supervisor may start before the manager can ask.
+sub audio_state_dir {
+	my %opt = @_;
+	return File::Spec->catdir(state_dir(%opt), 'audio');
 }
 
 # Android's root /tmp exists on an emulator but belongs to the shell user, so a

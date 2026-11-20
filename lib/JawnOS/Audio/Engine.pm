@@ -45,26 +45,71 @@ sub audio_engine_socket {
 	return File::Spec->catfile('.president', 'audio.sock');
 }
 
-# `$JAWNOS_AUDIO_PLAN`, else the engine's own default under the user's data
-# dir. The engine reads the same two for its startup plan, so a supervisor can
-# point both at one temporary path without a second convention. It mirrors
-# `audio_engine_socket` and never shells out.
+# `$JAWNOS_AUDIO_PLAN`, else the durable audio state dir (`state_dir/audio`,
+# i.e. $XDG_STATE_HOME/jawnos/audio or ~/.local/state/jawnos/audio). This is
+# configuration, not run state: `~/.president` is wiped at every boot (jawn),
+# so the plan and the picker's pair beside it must live outside it. The
+# engine reads the same two names for its startup plan, so a supervisor can
+# point both at one temporary path without a second convention.
 sub audio_engine_plan_path {
 	my $override = $ENV{JAWNOS_AUDIO_PLAN};
 	return $override if defined $override && length $override;
 	require JawnOS::Platform::Paths;
-	my $home = JawnOS::Platform::Paths::home();
-	return File::Spec->catfile($home, '.president', 'audio-plan.json')
-		if defined $home && length $home;
-	return File::Spec->catfile('.president', 'audio-plan.json');
+	return File::Spec->catfile(JawnOS::Platform::Paths::audio_state_dir(), 'audio-plan.json');
 }
 
-# The directory beside the plan and the socket: the system-mix state and the
-# supervisor's own status already live here. It follows the plan path so a
-# test that points JAWNOS_AUDIO_PLAN at a tempdir also points this at it.
+# Where the old build kept the plan, inside the directory ./jawn wipes. Read
+# only by the one-time migration below.
+sub audio_engine_plan_legacy_path {
+	require JawnOS::Platform::Paths;
+	return File::Spec->catfile(JawnOS::Platform::Paths::data_dir(), 'audio-plan.json');
+}
+
+# The directory beside the plan: the system-mix state lives here, and the
+# supervisor's own status and lock stay under `~/.president` (they are run
+# state and belong to the wipe's world). It follows the plan path so a test
+# that points JAWNOS_AUDIO_PLAN at a tempdir also points this at it.
 sub audio_engine_state_dir {
 	my $path = audio_engine_plan_path();
 	return File::Basename::dirname($path);
+}
+
+# Move the durable pair out of the wipe's reach, once. A plan or mix state
+# written by an older build sits next to the run state under `~/.president`;
+# the next boot would delete it. A file already at the new path wins, and the
+# stale old copy is removed so this runs at most once. An explicit
+# JAWNOS_AUDIO_PLAN is a test or a hand-run pin: never migrate a real file into
+# it. The caller (./jawn, the supervisor, the manager's boot write) ignores a
+# failure; the settings rows rebuild the file anyway.
+sub audio_engine_plan_migrate {
+	return { ok => 1, migrated => 0, skipped => 'explicit plan path' }
+		if defined $ENV{JAWNOS_AUDIO_PLAN} && length $ENV{JAWNOS_AUDIO_PLAN};
+
+	require File::Path;
+	my $new_dir = audio_engine_state_dir();
+	my $old_dir = audio_engine_plan_legacy_path();
+	$old_dir = File::Basename::dirname($old_dir);
+	return { ok => 1, migrated => 0 }
+		unless defined $old_dir && defined $new_dir && $old_dir ne $new_dir;
+
+	my @moved;
+	for my $name ('audio-plan.json', 'audio-system-mix.json') {
+		my $old = File::Spec->catfile($old_dir, $name);
+		my $new = File::Spec->catfile($new_dir, $name);
+		next unless -e $old;
+		if (-e $new) {
+			unlink $old;
+			next;
+		}
+		eval { File::Path::make_path($new_dir) };
+		my $done = rename $old, $new;
+		unless ($done) {
+			require File::Copy;
+			$done = eval { File::Copy::copy($old, $new) && unlink $old };
+		}
+		push @moved, $name if $done;
+	}
+	return { ok => 1, migrated => scalar @moved, moved => \@moved, dir => $new_dir };
 }
 
 # The staged engine under the tree, resolved from this file rather than from the

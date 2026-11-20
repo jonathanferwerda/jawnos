@@ -99,6 +99,20 @@ sub load_system_mix {
 	return 1;
 }
 
+# The engine's path rules and the one-time migration out of the wiped run
+# directory live in the tree's lib/ beside SystemMix. Loaded by absolute path
+# for the same reason: the supervisor is run from this tree.
+my $engine_loaded = 0;
+sub load_engine {
+	return $engine_loaded if $engine_loaded;
+	my $path = "$root/lib/JawnOS/Audio/Engine.pm";
+	return 0 unless -f $path;
+	unshift @INC, "$root/lib";
+	require $path;
+	$engine_loaded = 1;
+	return 1;
+}
+
 sub home_dir {
 	my $home = $ENV{'HOME'};
 	return $home if defined $home && length $home;
@@ -157,7 +171,8 @@ Options:
   --socket PATH    control socket (default ~/.president/audio.sock)
   --binary PATH    engine binary (default perl/audio/jawn-audio under this tree)
   --plan PATH      the saved-plan wrapper the engine restores from at startup
-                   (default ~/.president/audio-plan.json)
+                   (default $XDG_STATE_HOME/jawnos/audio/audio-plan.json,
+                   else ~/.local/state/jawnos/audio/audio-plan.json)
   --machine NAME   which machine this supervisor owns (default the host name)
   --system-device NAME  capture the machine's own mix from this source instead
                    of the supervisor-made jawn_system.monitor
@@ -277,7 +292,13 @@ my $backend = pick($given{'backend'}, 'JAWNOS_AUDIO_BACKEND', 'alsa');
 my $device  = pick($given{'device'},  'JAWNOS_AUDIO_DEVICE',  'hw:1,0');
 my $period  = pick($given{'period'},  'JAWNOS_AUDIO_PERIOD',  '64');
 my $buffer  = pick($given{'buffer'},  'JAWNOS_AUDIO_BUFFER',  '256');
-my $plan    = pick($given{'plan'},    'JAWNOS_AUDIO_PLAN',    "$state_dir/audio-plan.json");
+# The plan, the picker's pair and the system-mix state are durable: they
+# live under the XDG state dir, outside ~/.president, which ./jawn wipes at
+# boot. The socket, the status file and the lock stay in the run dir.
+my $default_plan = "$home/.local/state/jawnos/audio/audio-plan.json";
+$default_plan = JawnOS::Audio::Engine::audio_engine_plan_path() if load_engine();
+my $plan    = pick($given{'plan'},    'JAWNOS_AUDIO_PLAN',    $default_plan);
+my $audio_dir = dirname($plan);
 my $machine = pick($given{'machine'}, 'JAWNOS_AUDIO_MACHINE', host_name());
 my $system_device = pick($given{'system-device'}, 'JAWNOS_AUDIO_SYSTEM_DEVICE', '');
 my $handset_device = pick($given{'handset-device'}, 'JAWNOS_AUDIO_HANDSET_DEVICE', '');
@@ -358,6 +379,8 @@ if ($mode eq 'check') {
 
 make_path($state_dir) unless -d $state_dir;
 fatal("cannot create $state_dir: $!") unless -d $state_dir;
+make_path($audio_dir) unless -d $audio_dir;
+fatal("cannot create $audio_dir: $!") unless -d $audio_dir;
 open(my $lock, '>>', $lock_path)
 	or fatal("cannot open the lock $lock_path: $!");
 # Close the lock in the child's exec rather than only in fork: an inherited
@@ -368,6 +391,14 @@ unless (flock($lock, LOCK_EX | LOCK_NB)) {
 	print STDERR "audio supervisor: another audio supervisor already holds $lock_path; not starting a second one\n";
 	exit 1;
 }
+
+# One-time move out of the run directory the old build used. The boot wipe
+# would otherwise delete a plan (and the system-mix state beside it) written
+# before the restart; a file already at the durable path wins. A hand-run
+# --plan or JAWNOS_AUDIO_PLAN is never migrated into, so a test cannot pull a
+# real file into its tempdir.
+load_engine()
+	&& JawnOS::Audio::Engine::audio_engine_plan_migrate();
 
 # --- state --------------------------------------------------------------------
 
@@ -541,10 +572,12 @@ sub clear_orphans {
 	return 1;
 }
 
-# The picker's choice, if a manager has written one: the supervisor's startup
-# file carries `backend` and `device` beside the plan. A flag on the command
-# line still wins, so a hand-run supervisor can be pinned to one device; the
-# manager's picker is the normal path (it starts with JawnOS, with no flags).
+# The saved plan and switch, plus the picker's choice when one was written.
+# A flag on the command line still wins over the pair, so a hand-run supervisor
+# can be pinned to one device; the manager's picker is the normal path (it
+# starts with JawnOS, with no flags). The pair is optional: a machine that has
+# never chosen one still gets its plan and switch, and `spawn_choice` decides
+# the interface with its safe fallback (never a silent hw:1,0).
 sub plan_config {
 	return undef unless -s $plan;
 	open(my $fh, '<', $plan) or return undef;
@@ -555,11 +588,10 @@ sub plan_config {
 	return undef unless ref $doc eq 'HASH';
 	my $backend = $doc->{'backend'};
 	my $device  = $doc->{'device'};
-	return undef unless defined $backend && $backend =~ /\A(?:alsa|pipewire|null)\z/;
-	return undef unless defined $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/;
+	my $pair = defined $backend && $backend =~ /\A(?:alsa|pipewire|null)\z/
+		&& defined $device && $device =~ /\A[A-Za-z0-9_.:,-]+\z/;
 	return {
-		backend => $backend,
-		device  => $device,
+		($pair ? (backend => $backend, device => $device) : ()),
 		manage  => $doc->{'manage'} ? 1 : 0,
 		plan    => $doc->{'plan'},
 	};
@@ -627,7 +659,7 @@ sub ensure_system_mix {
 		return $system_device;
 	}
 
-	my $mix = JawnOS::Audio::SystemMix::ensure($state_dir, $device, $mode);
+	my $mix = JawnOS::Audio::SystemMix::ensure($audio_dir, $device, $mode);
 	if ($mix && $mix->{ok}) {
 		$active_system_device = $mix->{source};
 		$active_system_mode   = $mode;
@@ -649,9 +681,9 @@ sub ensure_system_mix {
 
 sub remove_system_mix {
 	return unless load_system_mix();
-	my $state = JawnOS::Audio::SystemMix::status($state_dir);
+	my $state = JawnOS::Audio::SystemMix::status($audio_dir);
 	return unless defined $active_system_device || ($state && $state->{active});
-	my $answer = JawnOS::Audio::SystemMix::remove($state_dir);
+	my $answer = JawnOS::Audio::SystemMix::remove($audio_dir);
 	$active_system_device   = undef;
 	$active_system_mode     = undef;
 	$active_playback_device = undef;
@@ -780,16 +812,19 @@ sub fallback_choice {
 # last spawn's pair once a plan has been read, and stay that if the file goes.
 sub spawn_choice {
 	my $chosen   = plan_config();
-	my $fallback = $chosen ? undef : fallback_choice();
+	my $has_pair = $chosen
+		&& defined $chosen->{'backend'} && length $chosen->{'backend'}
+		&& defined $chosen->{'device'}  && length $chosen->{'device'};
+	my $fallback = $has_pair ? undef : fallback_choice();
 	if ($fallback && !$fallback_announced) {
 		$fallback_announced = 1;
 		print "audio supervisor: no saved plan at $plan; choosing backend"
 			. " $fallback->{'backend'} on device $fallback->{'device'}\n";
 	}
 	my $next_backend = defined $given{'backend'} ? $backend
-		: ( $chosen ? $chosen->{'backend'} : ( $fallback ? $fallback->{'backend'} : $backend ) );
+		: ( $has_pair ? $chosen->{'backend'} : ( $fallback ? $fallback->{'backend'} : $backend ) );
 	my $next_device = defined $given{'device'} ? $device
-		: ( $chosen ? $chosen->{'device'} : ( $fallback ? $fallback->{'device'} : $device ) );
+		: ( $has_pair ? $chosen->{'device'} : ( $fallback ? $fallback->{'device'} : $device ) );
 	return { backend => $next_backend, device => $next_device };
 }
 

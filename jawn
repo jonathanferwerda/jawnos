@@ -208,6 +208,15 @@ if (-e $boot_pid_file) {
 }
 
 my $dump_dir = &home('~/.president');
+# The audio plan and the system-mix state are durable machine configuration,
+# not run state - they used to sit here and the wipe below deleted them on
+# every restart. Move them once, before the wipe, to the durable audio dir
+# (JawnOS::Audio::Engine owns the path rule and the migration). A failure is
+# harmless: the manager's boot write rebuilds the plan from the settings rows.
+eval {
+	require JawnOS::Audio::Engine;
+	JawnOS::Audio::Engine::audio_engine_plan_migrate();
+};
 # Wipe the tree's own run state, but keep the handshake files the Android app
 # and this tree exchange. The app's location service can write wake_ready a
 # moment before or after the master starts; deleting it here made the manager

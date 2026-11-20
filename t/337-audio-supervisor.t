@@ -18,7 +18,9 @@
 #            binary on this socket is asked to quit before a spawn; a process
 #            it cannot identify is left alone. With no saved plan the pair is
 #            pipewire/default when a sound server answers, alsa/hw:1,0 when
-#            none does, and the choice is logged once.
+#            none does, and the choice is logged once. The plan defaults to
+#            the durable audio state dir, not the wiped ~/.president, and the
+#            system-mix state follows the plan beside it.
 
 use strict;
 use warnings;
@@ -703,6 +705,7 @@ ENGINE
 	local $ENV{HOME} = $home;
 	local $ENV{JAWNOS_AUDIO_BINARY} = "$dir/no-such-engine";
 	delete $ENV{JAWNOS_AUDIO_MACHINE};
+	delete $ENV{XDG_STATE_HOME};
 
 	my $status = "$home/.president/audio.json";
 	my $sup = start_supervisor(
@@ -714,8 +717,8 @@ ENGINE
 	ok($s, 'the supervisor writes status with no machine flag');
 	ok(defined $s->{'machine'} && length $s->{'machine'},
 		'the machine defaults to a host name') if $s;
-	is($s->{'plan'}, "$home/.president/audio-plan.json",
-		'the plan defaults to $state_dir/audio-plan.json') if $s;
+	is($s->{'plan'}, "$home/.local/state/jawnos/audio/audio-plan.json",
+		'the plan defaults to the durable audio state dir') if $s;
 
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the default-plan supervisor stops cleanly');
@@ -954,7 +957,7 @@ ENGINE
 	sleep 2;
 	is(read_text($default), "jawn_system\n",
 		'the sink stays the default across two status probes');
-	ok(-e "$home/.president/audio-system-mix.json", 'and its state is kept');
+	ok(-e "$dir/audio-system-mix.json", 'and its state is kept');
 
 	# A plan change while the child runs is followed, not deferred to a restart
 	# that never comes: the saved pair moves to the shared backend, so the ALSA
@@ -979,7 +982,7 @@ ENGINE
 		'the restore is the recorded default, not a guess');
 	like(read_text($pactl_log), qr/unload-module 42/, 'and the sink is unloaded');
 	ok(!-e $rule, 'the card rule is removed so the desktop gets the card back');
-	ok(!-e "$home/.president/audio-system-mix.json", 'nothing is left behind');
+	ok(!-e "$dir/audio-system-mix.json", 'nothing is left behind');
 }
 
 # --- a table-like plan installs the duplex rule before the engine -----------
@@ -1524,11 +1527,11 @@ ENGINE
 	my $healed = wait_for(sub {
 		return read_text($default) eq "alsa_output.real\n"
 			&& read_text($pactl_log) =~ /unload-module 42/
-			&& !-e "$home/.president/audio-system-mix.json";
+			&& !-e "$dir/audio-system-mix.json";
 	}, 10);
 	ok($healed, 'a failed capture puts the machine back on its own output')
 		or diag('default: ' . read_text($default) . ' log: ' . read_text($pactl_log));
-	ok(!-e "$home/.president/audio-system-mix.json", 'and keeps no state to strand');
+	ok(!-e "$dir/audio-system-mix.json", 'and keeps no state to strand');
 
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the supervisor still stops cleanly');
@@ -1552,7 +1555,7 @@ ENGINE
 	close $pfh;
 	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
 
-	open(my $state, '>', "$home/.president/audio-system-mix.json") or die "state: $!";
+	open(my $state, '>', "$dir/audio-system-mix.json") or die "state: $!";
 	print {$state} '{"sink":"jawn_system","source":"jawn_system.monitor",'
 		. '"previous_default":"alsa_output.real","module_id":"42"}';
 	close $state;
@@ -1614,7 +1617,7 @@ PACTL
 	my $healed = wait_for(sub {
 		return read_text($default) eq "alsa_output.real\n"
 			&& read_text($pactl_log) =~ /unload-module 42/
-			&& !-e "$home/.president/audio-system-mix.json";
+			&& !-e "$dir/audio-system-mix.json";
 	}, 10);
 	ok($healed, 'an adopted engine removes a sink left by a crashed supervisor')
 		or diag('default: ' . read_text($default) . ' log: ' . read_text($pactl_log));
@@ -1692,6 +1695,27 @@ ENGINE
 	like(read_text("$dir/supervisor.log"),
 		qr/no saved plan at .*audio-plan\.json; choosing backend pipewire on device default/,
 		'and logs the missing plan and the pair it chose');
+
+	# A regenerated plan may carry the switch and the plan with no chosen
+	# interface (a machine that never picked one). The safe fallback still
+	# decides; the boot write must not pin the compiled ALSA pair on it.
+	my $durable = "$home/.local/state/jawnos/audio";
+	make_path($durable);
+	open(my $dfh, '>', "$durable/audio-plan.json") or die "plan: $!";
+	print {$dfh} '{"manage":1,"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]}}';
+	close $dfh;
+	unlink $args_log;
+	my $second = start_supervisor(
+		log  => "$dir/supervisor2.log",
+		args => ['--socket', "$dir/audio.sock"],
+	);
+	my $again = wait_for(sub {
+		return 0 unless -s $args_log;
+		return read_text($args_log) =~ /--backend pipewire --device default/;
+	}, 10);
+	ok($again, 'a plan with no chosen interface still uses the safe fallback')
+		or diag('args: ' . (-s $args_log ? read_text($args_log) : '(none)'));
+	is(stop_supervisor($second), 0, 'the pairless-plan supervisor stops cleanly');
 }
 
 # --- no plan file and no server: the compiled ALSA default still applies -----

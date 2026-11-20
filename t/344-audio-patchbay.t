@@ -33,12 +33,13 @@ print {$cards_fh} " 1 [UM2            ]: USB-Audio - BEHRINGER UMC 202HD 192k\n"
 close $cards_fh;
 local $ENV{JAWNOS_ASOUND_CARDS} = $cards;
 
-# One in-memory settings table, keyed the way setting_grabber/setter write.
-# The domain module under test reads only these two helpers, so this is the
-# whole database it needs.
+# One in-memory settings table, keyed the way setting_grabber/setter write,
+# and this machine's name for the device-scoped rows. The domain module under
+# test reads only these three helpers, so this is the whole database it needs.
 our %STORE;
 {
 	package subs;
+	sub device_setter { return 'test-computer' }
 	sub setting_setter {
 		my ($settings) = @_;
 		my $key = join '/', $settings->{'app'} // '', $settings->{'setting'} // '',

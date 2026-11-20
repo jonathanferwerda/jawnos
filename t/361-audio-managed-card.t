@@ -20,10 +20,11 @@ require JawnOS::Audio::Engine;
 require JawnOS::Audio::SystemMix;
 require JawnOS::Domain::Audio;
 
-# The domain reads only these two helpers; this is the whole database it needs.
+# The domain reads only these three helpers; this is the whole database it needs.
 our %STORE;
 {
 	package subs;
+	sub device_setter { return 'test-computer' }
 	sub setting_setter {
 		my ($settings) = @_;
 		my $key = join '/', $settings->{'app'} // '', $settings->{'setting'} // '',

@@ -15,7 +15,7 @@ use File::Temp qw(tempdir);
 use File::Slurp qw(read_file);
 
 use JawnOS::Platform;
-use JawnOS::Platform::Paths qw(home tree_dir data_dir config_dir state_dir tmp_dir log_path tool_path store_dir config_path database_dir run_dir server_dir voices_dir releases_dir database_seed_path database_schema_path);
+use JawnOS::Platform::Paths qw(home tree_dir data_dir config_dir state_dir audio_state_dir tmp_dir log_path tool_path store_dir config_path database_dir run_dir server_dir voices_dir releases_dir database_seed_path database_schema_path);
 
 my $root = "$FindBin::Bin/..";
 
@@ -66,6 +66,10 @@ is(state_dir(env => { 'XDG_STATE_HOME' => '/state', 'HOME' => '/h' }), '/state/j
 	'state honours XDG_STATE_HOME');
 is(state_dir(env => { 'HOME' => '/h' }), '/h/.local/state/jawnos',
 	'and falls back to the fixed path');
+is(audio_state_dir(env => { 'XDG_STATE_HOME' => '/state', 'HOME' => '/h' }), '/state/jawnos/audio',
+	'the audio plan and mix state live under the state dir');
+is(audio_state_dir(env => { 'HOME' => '/h' }), '/h/.local/state/jawnos/audio',
+	'and follow its fallback, outside the wiped ~/.president');
 
 # --- temp -------------------------------------------------------------------
 my $tmp = tempdir(CLEANUP => 1);

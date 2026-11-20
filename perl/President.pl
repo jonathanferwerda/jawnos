@@ -535,6 +535,13 @@ sub manager_starter() {
 	# sync itself triggers heals the data without waiting for a login. Ones whose
 	# prerequisites are not ready yet are left for the login / merge pass.
 	&subs::run_backfills();
+	# The audio engine's supervisor starts beside the master, before anyone can
+	# open Sound. Rebuild its startup file from the settings rows now, so the
+	# saved plan, the manage switch and this machine's picker pair are there for
+	# a fresh child even after a restart wiped the old run-state copy. The
+	# write is atomic and a failure only leaves the supervisor's own fallback.
+	eval { &subs::audio_boot_file_write(); };
+	$log->warn('audio: the boot file could not be rebuilt: ' . ($@ =~ s/\s+/ /gr)) if $@;
 	# A house that has a paper recovery code starts gated (padlock row, General,
 	# Enforce). The marker makes it a default: Turn the gate off stays off.
 	&subs::padlock_seed_default();
