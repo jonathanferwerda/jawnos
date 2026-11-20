@@ -22,6 +22,11 @@ package JawnOS::Audio::SystemMix;
 # default the sink replaced is also the device a PipeWire engine must play out -
 # never the sink itself, or it would capture its own output.
 #
+# The tray's volume follows the default sink. A null sink is born at the server
+# default (100%), so `ensure` copies the replaced output's volume and mute onto
+# it once: the person's control shows the level they had and the loudness is
+# unchanged, because the app streams already play at 100% into the sink.
+#
 # This is deliberately the same `pactl` idiom JawnOS::Sco::Mixer already uses,
 # through JawnOS::Platform::Audio::run so a test can inject the tool and a
 # machine without it behaves as if there were nothing to do.
@@ -647,6 +652,33 @@ sub _unload {
 	return 1;
 }
 
+# The tray's volume control follows the default sink, so a null sink born at
+# the server default would show 100% while the person still hears the level
+# their hardware sink was at. Copy the output being replaced onto the mix once:
+# its volume and its mute. App streams normally sit at 100%, so the sink is the
+# master the tray is showing. Each half is copied only if the server reports it
+# (a sink that vanished answers nothing), and a failure is cosmetic: the mix
+# still plays, so `ensure` does not fail over it.
+sub _adopt_output_level {
+	my ($previous, $sinks) = @_;
+	return undef unless defined $previous && length $previous;
+	return undef if $previous eq $system_sink;
+	return undef unless $sinks && $sinks->{$previous};
+
+	my $volume = JawnOS::Platform::Audio::get_volume('output', $previous);
+	my $mute   = JawnOS::Platform::Audio::get_mute('output', $previous);
+	return undef unless defined $volume || defined $mute;
+
+	JawnOS::Platform::Audio::set_volume('output', $system_sink, $volume)
+		if defined $volume;
+	JawnOS::Platform::Audio::set_mute('output', $system_sink, $mute)
+		if defined $mute;
+	return {
+		( defined $volume ? ( volume => $volume ) : () ),
+		( defined $mute   ? ( mute   => $mute )   : () ),
+	};
+}
+
 # Create the sink if it is not there, remember the default it replaced, and
 # make it the default. Repeating this while it is already active changes
 # nothing. The switch is verified rather than trusted: `set-default-sink` can
@@ -741,6 +773,15 @@ sub ensure {
 		$created = 1;
 	}
 
+	# A sink this call created, or one it finds with no state of its own, is
+	# new to the person's ears and to the tray: give it the level of the output
+	# it replaced. A repeated ensure keeps the state, so it never overwrites a
+	# volume the person has since set on the live mix.
+	my $level;
+	if ($created || !$had_state) {
+		$level = _adopt_output_level($previous, $sinks);
+	}
+
 	my $doc = {
 		%{$state},
 		sink             => $system_sink,
@@ -820,6 +861,7 @@ sub ensure {
 		playback_device  => $previous,
 		module_id        => $module_id,
 		created          => $created,
+		( $level ? ( level => $level ) : () ),
 		( $card_rule ? ( managed_card => $card_rule ) : () ),
 	};
 }

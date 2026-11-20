@@ -8,10 +8,13 @@
 //!
 //! The capture is `parec` — the same PulseAudio/PipeWire tooling the reception
 //! mixer and the remote Music receiver already use — so a machine without that
-//! tooling simply has no system mix; the patch still runs. A dedicated thread
-//! owns the child and a lock-free ring, and the device loop only pops whole
-//! stereo frames, so a slow or missing `parec` is a dropout, never a stalled
-//! callback.
+//! tooling simply has no system mix; the patch still runs. `parec` is asked for
+//! a small process latency: its own default buffers seconds of a monitor
+//! source and hands it over in bursts, which a ring sized for a few periods
+//! cannot hold. A dedicated thread owns the child and a lock-free ring, and the
+//! device loop only pops whole stereo frames, so a slow or missing `parec` is a
+//! dropout, never a stalled callback. Nothing prefills the ring: the output
+//! starts as silence on the frame it is asked for, not a period late.
 //!
 //! `parec` is retried while the engine runs: the supervisor may create the
 //! sink a moment after the engine starts, and a PipeWire restart replaces the
@@ -20,22 +23,47 @@
 
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use jawn_audio::monbus::{self, Consumer};
 
-/// Frames the monitor ring holds: about 85 ms of stereo at 48 kHz, the same
-/// cushion the take monitor uses. A `parec` stall longer than this is a gap.
-const RING_FRAMES: usize = 4096;
+/// The process latency `parec` is asked for: small, steady chunks. Left to
+/// itself the server hands a monitor source seconds of audio in bursts, which
+/// no modest ring can hold; the device loop then hears a third of a second on,
+/// a third off, two seconds behind.
+pub const LATENCY_MSEC: u32 = 20;
+
+/// The ring spans about one chunk plus a cushion — the same ~85 ms of stereo
+/// the take monitor uses. `monbus` rounds up to a power of two and never goes
+/// below its own floor, so this is the minimum.
+const RING_MSEC: u32 = 85;
+
+/// Frames in one `parec` process period at `rate`.
+fn chunk_frames(rate: u32) -> usize {
+    (u64::from(rate) * u64::from(LATENCY_MSEC) / 1000) as usize
+}
+
+/// The ring's minimum span in frames: one 20 ms chunk plus the cushion. It is
+/// never smaller than two chunks, so a full period may arrive while the device
+/// loop is mid-buffer without an immediate drop.
+fn ring_frames(rate: u32) -> usize {
+    let span = (u64::from(rate) * u64::from(RING_MSEC) / 1000) as usize;
+    span.max(2 * chunk_frames(rate))
+}
 
 /// One system capture: the child process, the thread reading it, and the ring
 /// the device loop drains.
 pub struct SystemCapture {
     stop: Arc<AtomicBool>,
     child: Arc<Mutex<Option<Child>>>,
+    /// Frames the ring discarded because it was full. Shared with the bus, so a
+    /// future status field can read it while the capture runs (nothing reads it
+    /// yet, hence `allow`).
+    #[allow(dead_code)]
+    drops: Arc<AtomicU64>,
     handle: Option<JoinHandle<()>>,
 }
 
@@ -49,7 +77,8 @@ impl SystemCapture {
                 "no parec on PATH; the machine's own audio cannot be captured".to_string()
             );
         }
-        let (producer, consumer) = monbus::new(RING_FRAMES);
+        let (producer, consumer) = monbus::new(ring_frames(rate));
+        let drops = producer.dropped_handle();
         let stop = Arc::new(AtomicBool::new(false));
         let child = Arc::new(Mutex::new(None));
         let thread_stop = Arc::clone(&stop);
@@ -128,10 +157,20 @@ impl SystemCapture {
             SystemCapture {
                 stop,
                 child,
+                drops,
                 handle: Some(handle),
             },
             consumer,
         ))
+    }
+
+    /// Frames the ring has discarded because `parec` delivered a burst larger
+    /// than the ring could hold. Whole frames only; a non-zero count is the
+    /// measure of a capture that is still too slow, not an error. Nothing reads
+    /// it yet; a status field is the intended caller.
+    #[allow(dead_code)]
+    pub fn dropped(&self) -> u64 {
+        self.drops.load(Ordering::Relaxed)
     }
 
     /// Stop the child and join the thread. Called by `Drop` as well, so a
@@ -185,13 +224,25 @@ fn lists_source(listing: &str, device: &str) -> bool {
         .any(|line| line.split('\t').nth(1) == Some(device))
 }
 
+/// The `parec` argument vector. Factored out so a test can assert its shape
+/// without a sound server; the explicit process latency is the fix, not a
+/// preference: without it the server's own default is seconds of buffer, and
+/// each burst exceeds the ring.
+fn parec_args(device: &str, rate: u32) -> Vec<String> {
+    vec![
+        format!("--device={device}"),
+        "--format=s16le".to_string(),
+        format!("--rate={rate}"),
+        "--channels=2".to_string(),
+        format!("--latency-msec={LATENCY_MSEC}"),
+        format!("--process-time-msec={LATENCY_MSEC}"),
+        "--raw".to_string(),
+    ]
+}
+
 fn spawn_parec(device: &str, rate: u32) -> Result<Child, String> {
     Command::new("parec")
-        .arg(format!("--device={device}"))
-        .arg("--format=s16le")
-        .arg(format!("--rate={rate}"))
-        .arg("--channels=2")
-        .arg("--raw")
+        .args(parec_args(device, rate))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -224,7 +275,7 @@ mod tests {
 
     #[test]
     fn whole_frames_are_converted_and_a_partial_one_is_kept() {
-        let (producer, consumer) = monbus::new(RING_FRAMES);
+        let (producer, consumer) = monbus::new(ring_frames(48_000));
         let mut pending = vec![0x00, 0x40, 0x00, 0xC0, 0x00, 0x20];
         push_whole_frames(&producer, &mut pending);
         assert_eq!(pending.len(), 2, "the incomplete second frame stays");
@@ -233,6 +284,101 @@ mod tests {
         assert_eq!(consumer.pop(&mut out), 1);
         assert!((out[0] - 0.5).abs() < 1e-6, "{out:?}");
         assert!((out[1] + 0.5).abs() < 1e-6, "{out:?}");
+    }
+
+    #[test]
+    fn the_capture_asks_for_small_steady_chunks() {
+        let args = parec_args("jawn_system.monitor", 48_000);
+        assert!(args.contains(&"--device=jawn_system.monitor".to_string()), "{args:?}");
+        assert!(args.contains(&"--format=s16le".to_string()), "{args:?}");
+        assert!(args.contains(&"--rate=48000".to_string()), "{args:?}");
+        assert!(args.contains(&"--channels=2".to_string()), "{args:?}");
+        assert!(args.contains(&"--raw".to_string()), "{args:?}");
+        // The whole point of the change: an explicit process latency, so the
+        // server does not answer with seconds of buffered audio at once.
+        assert!(
+            args.contains(&format!("--latency-msec={LATENCY_MSEC}")),
+            "{args:?}"
+        );
+        assert!(
+            args.contains(&format!("--process-time-msec={LATENCY_MSEC}")),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn the_ring_holds_more_than_two_chunks() {
+        let rate = 48_000;
+        assert_eq!(chunk_frames(rate), 960, "20 ms at 48 kHz");
+        assert!(
+            ring_frames(rate) >= 2 * chunk_frames(rate),
+            "{} frames is not two chunks",
+            ring_frames(rate)
+        );
+    }
+
+    #[test]
+    fn a_steady_twenty_millisecond_pace_drops_nothing() {
+        let rate = 48_000;
+        let (producer, consumer) = monbus::new(ring_frames(rate));
+        let chunk = chunk_frames(rate);
+        let mut out = vec![0.0f32; chunk * 2];
+        let mut frame = 0u64;
+        for period in 0..200 {
+            let block: Vec<f32> = (0..chunk)
+                .flat_map(|_| {
+                    let value = frame as f32;
+                    frame += 1;
+                    [value, -value]
+                })
+                .collect();
+            assert_eq!(
+                producer.push(&block),
+                0,
+                "period {period} overflowed the ring"
+            );
+            assert_eq!(consumer.pop(&mut out), chunk, "period {period} underran");
+            for index in 0..chunk {
+                let left = out[index * 2];
+                assert_eq!(out[index * 2 + 1], -left, "period {period} split a frame");
+            }
+        }
+        assert_eq!(producer.dropped(), 0, "a steady pace never drops");
+        assert_eq!(frame, 200 * chunk as u64, "every frame was produced");
+    }
+
+    #[test]
+    fn a_burst_drops_whole_frames_and_never_a_partial_one() {
+        let rate = 48_000;
+        let (producer, consumer) = monbus::new(ring_frames(rate));
+        let capacity = ring_frames(rate).max(monbus::MIN_FRAMES).next_power_of_two();
+        let burst = capacity + 960 * 7;
+        let block: Vec<f32> = (0..burst)
+            .flat_map(|frame| [frame as f32, -(frame as f32)])
+            .collect();
+
+        let dropped = producer.push(&block);
+        assert_eq!(dropped, burst - capacity, "the newest frames are dropped");
+        assert_eq!(producer.dropped() as usize, dropped, "the count is exposed");
+
+        let mut out = vec![0.0f32; capacity * 2];
+        assert_eq!(consumer.pop(&mut out), capacity);
+        for frame in 0..capacity {
+            let left = out[frame * 2];
+            assert_eq!(left, frame as f32, "frame {frame} was not the oldest");
+            assert_eq!(out[frame * 2 + 1], -left, "a partial frame was emitted");
+        }
+    }
+
+    #[test]
+    fn a_new_capture_holds_no_startup_silence() {
+        // Nothing prefills the ring and nothing on the output side waits: a
+        // capture that has not delivered yet is a zero-frame pop, not a
+        // delayed start.
+        let (_producer, consumer) = monbus::new(ring_frames(48_000));
+        let mut out = vec![7.0f32; 64];
+        assert_eq!(consumer.pop(&mut out), 0);
+        assert!(out.iter().all(|sample| *sample == 0.0), "{out:?}");
     }
 
     #[test]
@@ -248,7 +394,10 @@ mod tests {
         // The build machine may have parec, so only the shape is asserted: a
         // start either returns a running capture or the sentence.
         match SystemCapture::start("jawn_system.monitor", 48_000) {
-            Ok((mut capture, _consumer)) => capture.stop(),
+            Ok((mut capture, _consumer)) => {
+                assert_eq!(capture.dropped(), 0, "a fresh capture has dropped nothing");
+                capture.stop();
+            }
             Err(error) => assert!(error.contains("parec"), "{error}"),
         }
     }

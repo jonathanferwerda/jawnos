@@ -5,7 +5,10 @@
 #            the previous default and unloads the sink. A state file left by a
 #            crash is cleaned up rather than stranded. A PipeWire device gets
 #            the sink and the switch and no card rule, and a mix with no known
-#            output to play through is refused rather than looped.
+#            output to play through is refused rather than looped. The sink is
+#            born with the replaced output's volume and mute, so the tray does
+#            not jump to 100%; a repeated ensure leaves a level the person set,
+#            and an output that is gone leaves the sink at the server default.
 
 use strict;
 use warnings;
@@ -174,19 +177,69 @@ if ($cmd eq 'load-module') {
 	exit 0;
 }
 if ($cmd eq 'unload-module') {
-	open(my $fh, '>', "$dir/sinks") or exit 9;
-	print {$fh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
-	close $fh;
+		open(my $fh, '>', "$dir/sinks") or exit 9;
+		print {$fh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+		close $fh;
+		sink_level('jawn_system', undef, undef, 1);
+		exit 0;
+	}
+	if ($cmd eq 'get-sink-volume') {
+		my ($volume) = sink_level($ARGV[1]);
+		print "Volume: front-left: 32768 / $volume% / -0.00 dB,   front-right: 32768 / $volume% / -0.00 dB\n";
+		exit 0;
+	}
+	if ($cmd eq 'get-sink-mute') {
+		my (undef, $mute) = sink_level($ARGV[1]);
+		print "Mute: $mute\n";
+		exit 0;
+	}
+	if ($cmd eq 'set-sink-volume') {
+		my $volume = $ARGV[2] // '';
+		$volume =~ s/%//g;
+		sink_level($ARGV[1], $volume, undef);
+		exit 0;
+	}
+	if ($cmd eq 'set-sink-mute') {
+		my $mute = ($ARGV[2] // '0') =~ /^(?:1|yes|true|on)$/i ? 'yes' : 'no';
+		sink_level($ARGV[1], undef, $mute);
+		exit 0;
+	}
 	exit 0;
-}
-exit 0;
-sub read_file {
+	sub read_file {
 	my ($path) = @_;
 	open(my $fh, '<', $path) or return '';
 	local $/;
 	my $text = <$fh>;
 	close $fh;
 	return defined $text ? $text : '';
+}
+
+# One line per sink: `name volume mute`. A sink with no line is the server
+# default the server gives every new sink: 100%, unmuted.
+sub sink_level {
+	my ($name, $volume, $mute, $drop) = @_;
+	my (@lines, $found);
+	foreach my $line (split /\n/, read_file("$dir/levels")) {
+		my ($n, $v, $m) = split /\s+/, $line;
+		next unless defined $n && length $n;
+		if ($n eq $name) {
+			$found = [ $v, $m ];
+			next if $drop;
+			$v = $volume if defined $volume;
+			$m = $mute if defined $mute;
+			push @lines, "$n $v $m";
+			next;
+		}
+		push @lines, $line;
+	}
+	unless ($drop) {
+		push @lines, "$name " . ($volume // 100) . ' ' . ($mute // 'no')
+			unless $found;
+	}
+	open(my $fh, '>', "$dir/levels") or exit 9;
+	print {$fh} join("\n", @lines) . (@lines ? "\n" : '');
+	close $fh;
+	return $found ? @{$found} : (100, 'no');
 }
 PACTL
 chmod 0755, $pactl or die "chmod $pactl: $!";
@@ -266,6 +319,52 @@ is($twice->{skipped}, 1, 'and changes nothing');
 	is(read_file("$dir/default"), "alsa_output.real\n", 'the machine is handed back');
 }
 
+# --- the mix carries the person's level, so the tray does not jump ---------
+# The hardware run that found this: the sink was created at the server default,
+# so the desktop tray read 100% while the loudness stayed where it was.
+{
+	reset_mix();
+	write_levels("alsa_output.real 65 yes\n");
+	local $ENV{JAWNOS_WIREPLUMBER_DIR} = tempdir(CLEANUP => 1) . '/wireplumber';
+	my $level_state = tempdir(CLEANUP => 1);
+
+	my $on = JawnOS::Audio::SystemMix::ensure($level_state, 'default');
+	is($on->{ok}, 1, 'ensure creates the sink');
+	is($on->{level}{volume}, 65, 'and reports the volume it copied');
+	my ($volume, $mute) = level_of('jawn_system');
+	is($volume, 65, "the person's volume, not the server default");
+	is($mute, 'yes', 'and its mute state too');
+
+	# The person moves the live mix; a repeated ensure must not undo that.
+	write_levels("alsa_output.real 65 yes\njawn_system 40 no\n");
+	my $again = JawnOS::Audio::SystemMix::ensure($level_state, 'default');
+	is($again->{ok}, 1, 'a repeat ensure succeeds');
+	ok(!exists $again->{level}, 'and copies nothing a second time');
+	is((level_of('jawn_system'))[0], 40, 'leaving the level the person set');
+
+	my $off = JawnOS::Audio::SystemMix::remove($level_state);
+	is($off->{ok}, 1, 'the mix still removes cleanly');
+	is(read_file("$dir/default"), "alsa_output.real\n", 'and the previous output comes back');
+	write_levels('');
+}
+
+# An output the server no longer lists has no level to copy; the sink stays at
+# the server default rather than the module guessing one.
+{
+	reset_mix();
+	write_levels("alsa_output.real 65 no\n");
+	write_file("$dir/default", "alsa_output.gone\n");
+	my $gone_state = tempdir(CLEANUP => 1);
+
+	my $on = JawnOS::Audio::SystemMix::ensure($gone_state, 'default');
+	is($on->{ok}, 1, 'ensure still creates the sink when the replaced output is gone');
+	ok(!exists $on->{level}, 'it copies nothing it cannot read');
+	is((level_of('jawn_system'))[0], 100, 'and the sink stays at the server default');
+
+	JawnOS::Audio::SystemMix::remove($gone_state);
+	write_levels('');
+}
+
 # --- the default switch is verified, not trusted ---------------------------
 # The hardware run that found this: `pactl load-module` and
 # `pactl set-default-sink` raced, ensure answered ok, and the next run found
@@ -276,7 +375,23 @@ sub reset_mix {
 	write_file("$dir/default", "alsa_output.real\n");
 	write_file("$dir/pactl.log", '');
 	write_file("$dir/systemctl.log", '');
+	write_file("$dir/levels", '');
 	unlink "$dir/set_count";
+}
+
+# The fake server's per-sink levels: `name volume mute`. A sink with no line is
+# what the server gives a new sink, 100% and unmuted.
+sub write_levels {
+	write_file("$dir/levels", @_ ? $_[0] : '');
+}
+
+sub level_of {
+	my ($name) = @_;
+	foreach my $line (split /\n/, read_file("$dir/levels")) {
+		my ($n, $volume, $mute) = split /\s+/, $line;
+		return ($volume, $mute) if defined $n && $n eq $name;
+	}
+	return (100, 'no');
 }
 sub restart_count {
 	my $log = read_file("$dir/systemctl.log");

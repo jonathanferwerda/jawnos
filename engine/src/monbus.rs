@@ -30,7 +30,7 @@ pub fn new(frames: usize) -> (Producer, Consumer) {
         mask: frames - 1,
         write: AtomicUsize::new(0),
         read: AtomicUsize::new(0),
-        drops: AtomicU64::new(0),
+        drops: Arc::new(AtomicU64::new(0)),
     });
     (
         Producer {
@@ -58,8 +58,9 @@ struct Inner {
     /// A monotonic frame counter, not an index into `samples`.
     write: AtomicUsize,
     read: AtomicUsize,
-    /// Frames the producer discarded because the ring was full.
-    drops: AtomicU64,
+    /// Frames the producer discarded because the ring was full. Shared, so a
+    /// status read can see the count without touching the ring.
+    drops: Arc<AtomicU64>,
 }
 
 /// The capture side. It never blocks: a full ring is a short return value.
@@ -103,6 +104,12 @@ impl Producer {
     /// Frames discarded since the bus was created.
     pub fn dropped(&self) -> u64 {
         self.inner.drops.load(Ordering::Relaxed)
+    }
+
+    /// A cloneable handle to the same counter, for a status read that does not
+    /// own the producer (the capture thread does).
+    pub fn dropped_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.inner.drops)
     }
 }
 
