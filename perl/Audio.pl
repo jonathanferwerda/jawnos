@@ -733,7 +733,12 @@ sub ensure_system_mix {
 	if (defined $given{'system-device'} && length $given{'system-device'}) {
 		$active_system_device   = $system_device;
 		$active_system_mode     = $mode;
-		$active_playback_device = undef;
+		# The engine still has to play out the output this sink replaced. A
+		# hand-run supervisor names that output with --device; `default` is
+		# the mix sink now, so it is deliberately not a target.
+		$active_playback_device = $backend eq 'pipewire'
+			&& defined $device && length $device && $device ne 'default'
+			? $device : undef;
 		return $system_device;
 	}
 
@@ -797,6 +802,8 @@ sub remove_system_mix {
 my $system_unavailable;   # plan token under which the engine could not capture
 my $system_quit_token;    # plan token of the child already asked to leave
 my $child_system_source;  # the source this child was actually handed
+my $loop_broken_token;    # plan token under which a feedback link was cut
+my $loop_quit_token;      # plan token of the child already asked to leave for a loop
 
 # What the next spawn would ask for, as one comparable string. `unavailable` is
 # remembered against this, so a plan change (the switch, the pair, the capture
@@ -820,6 +827,157 @@ sub system_source_present {
 	my $present = JawnOS::Audio::SystemMix::sink_present($sink);
 	return 1 unless defined $present;
 	return $present ? 1 : 0;
+}
+
+# The sink a source belongs to. `jawn_system.monitor` is a source on the
+# `jawn_system` sink; a name that is not a monitor names its own sink.
+sub mix_sink_name {
+	my ($source) = @_;
+	return undef unless defined $source && length $source;
+	(my $sink = $source) =~ s/\.monitor\z//;
+	return $sink;
+}
+
+# A PipeWire engine opens the ALSA `default` PCM whatever `--device` says, so
+# the only safe play-out is a named output that is not the sink being captured.
+# `default` after the switch is that sink, and no name means the same fallback.
+sub playback_target_ok {
+	my ($backend, $target, $source) = @_;
+	return 1 unless defined $backend && $backend eq 'pipewire';
+	my $sink = mix_sink_name($source);
+	return 0 unless defined $sink && length $sink;
+	return 0 unless defined $target && length $target;
+	return 0 if $target eq 'default';
+	return 0 if $target eq $sink || $target eq "$sink.monitor";
+	return 1;
+}
+
+# One command's stdout, or undef when it cannot be run or answers non-zero.
+sub command_text {
+	my (@cmd) = @_;
+	open(my $fh, '-|', @cmd) or return undef;
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	return undef unless $? == 0;
+	return defined $text ? $text : '';
+}
+
+# `pw-link -l` pairs, as [output, input] port names. The listing groups a node
+# header with one indented arrow per link, and both `|-> out` and `|<- out`
+# shapes appear; accepting both is what makes this independent of the order
+# PipeWire chose to print.
+sub pw_link_pairs {
+	my ($text) = @_;
+	my (@pairs, $current);
+	for my $line (split /\n/, $text) {
+		my $t = $line;
+		$t =~ s/\A\s+//;
+		$t =~ s/\s+\z//;
+		next unless length $t;
+		if ($t =~ /\A\|->\s*(\S.*)\z/) {
+			push @pairs, [ $current, $1 ] if defined $current;
+		}
+		elsif ($t =~ /\A\|<-\s*(\S.*)\z/) {
+			push @pairs, [ $1, $current ] if defined $current;
+		}
+		else { $current = $t; }
+	}
+	return \@pairs;
+}
+
+sub port_node {
+	my ($port) = @_;
+	$port =~ s/:[^:]*\z//;
+	return $port;
+}
+
+# The links that make this pass an oscillator: the engine's own playback node
+# feeding the sink it is capturing. `undef` means the graph cannot be asked
+# (no pw-link), which is not the same answer as "no loop".
+sub playback_loop_links {
+	my ($sink) = @_;
+	my $text = command_text('pw-link', '-l');
+	return undef unless defined $text;
+	my @loop;
+	for my $pair (@{ pw_link_pairs($text) }) {
+		my ($out, $in) = @{$pair};
+		next unless defined $out && defined $in;
+		next unless $out =~ /\Aalsa_playback\./;
+		my $node = port_node($in);
+		push @loop, $pair if $node eq $sink || $node eq "$sink.monitor";
+	}
+	return \@loop;
+}
+
+# The fallback when `pw-link` is not installed: a sink-input whose sink is the
+# mix. It can only detect the loop, not break it.
+sub pactl_playback_loop {
+	my ($sink) = @_;
+	my $sinks = command_text('pactl', 'list', 'short', 'sinks');
+	return 0 unless defined $sinks;
+	my ($index) = map { (split /\t/)[0] }
+		grep {
+			my @field = split /\t/;
+			defined $field[1] && $field[1] eq $sink;
+		} split /\n/, $sinks;
+	return 0 unless defined $index && $index =~ /\A\d+\z/;
+	my $text = command_text('pactl', 'list', 'sink-inputs');
+	return 0 unless defined $text;
+	for my $block (split /\n\s*\n/, $text) {
+		next unless $block =~ /^\s*Sink:\s*\Q$index\E\s*$/m;
+		next unless $block =~ /jawn-audio|alsa_playback/;
+		return 1;
+	}
+	return 0;
+}
+
+# An oscillator at unity gain: the engine plays into the sink it captures. Log
+# it once, cut the link, and end the child if it re-forms. A link that cannot
+# be cut ends the child at once; the supervisor then respawns without a source
+# rather than leave the burst running.
+sub check_playback_loop {
+	my ($token) = @_;
+	my $sink = mix_sink_name($active_system_device);
+	return unless defined $sink && length $sink;
+
+	my $links = playback_loop_links($sink);
+	if (!defined $links) {
+		return unless pactl_playback_loop($sink);
+		if (!defined $loop_quit_token || $loop_quit_token ne $token) {
+			$loop_quit_token = $token;
+			print "audio supervisor: the engine's output is playing into $sink,\n"
+				. " the sink it captures; ending it\n";
+			engine_command($socket, { cmd => 'quit' });
+		}
+		return;
+	}
+	return unless @{$links};
+
+	if (!defined $loop_broken_token || $loop_broken_token ne $token) {
+		$loop_broken_token = $token;
+		my $broke = 1;
+		for my $pair (@{$links}) {
+			my ($out, $in) = @{$pair};
+			print "audio supervisor: the engine's output $out is linked into $in,\n"
+				. " the sink it captures; breaking the loop\n";
+			$broke = 0 unless system('pw-link', '-d', $out, $in) == 0;
+		}
+		if (!$broke) {
+			print "audio supervisor: the loop into $sink could not be broken;"
+				. " ending the engine\n";
+			$loop_quit_token = $token;
+			engine_command($socket, { cmd => 'quit' });
+		}
+		return;
+	}
+
+	# The same plan, still linked: the break did not hold.
+	if (!defined $loop_quit_token || $loop_quit_token ne $token) {
+		$loop_quit_token = $token;
+		print "audio supervisor: the loop into $sink re-formed; ending the engine\n";
+		engine_command($socket, { cmd => 'quit' });
+	}
 }
 
 sub sync_system_mix {
@@ -863,6 +1021,32 @@ sub sync_system_mix {
 		if defined $system_unavailable && $system_unavailable ne $token;
 	$system_quit_token = undef
 		if defined $system_quit_token && $system_quit_token ne $token;
+	$loop_broken_token = undef
+		if defined $loop_broken_token && $loop_broken_token ne $token;
+	$loop_quit_token = undef
+		if defined $loop_quit_token && $loop_quit_token ne $token;
+
+	# The engine refused to play through the named output because it is the
+	# sink it captures, or could not verify where its stream landed. That is
+	# this pass's verdict: hand the machine back and end the child once, so the
+	# supervisor retries with no capture rather than keep a failed patch.
+	if ($system eq 'feedback') {
+		remove_system_mix() if $owns_sink;
+		# Remember the verdict under this plan, the same way an impossible
+		# capture is remembered: the respawn asks for no source instead of
+		# recreating the mix that produced the refusal.
+		$system_unavailable = $token;
+		if ( !defined $loop_quit_token || $loop_quit_token ne $token ) {
+			$loop_quit_token = $token;
+			my $reason = $engine && defined $engine->{'error'} && length $engine->{'error'}
+				? $engine->{'error'}
+				: 'the playback output could not be verified';
+			print "audio supervisor: $reason; handing the machine back and restarting"
+				. " the engine without the mix source\n";
+			engine_command($socket, { cmd => 'quit' });
+		}
+		return;
+	}
 
 	if ($live && $mix_backend) {
 		if ($system eq 'unavailable') {
@@ -895,6 +1079,10 @@ sub sync_system_mix {
 				return;
 			}
 			if ($system eq 'capturing') {
+				# A PipeWire engine that fell back to the default sink plays into
+				# the very sink it captures. Check the live graph before deciding
+				# anything about the mix; a loop is cut or ended either way.
+				check_playback_loop($token) if $engine_backend eq 'pipewire';
 				return unless $owns_sink;
 				# A mode flip rewrites the rule; the same mode costs nothing.
 				return if defined $active_system_device
@@ -1037,9 +1225,23 @@ sub spawn_engine {
 	$engine_device = $active_playback_device
 		if $backend eq 'pipewire'
 			&& defined $active_playback_device && length $active_playback_device;
+	# A PipeWire engine opens the ALSA `default` PCM whatever `--device` says,
+	# so a target that is missing, `default`, or the mix sink itself would land
+	# on the sink it captures. Refuse the spawn instead of starting a loop.
+	if ($backend eq 'pipewire' && defined $system_source && length $system_source
+		&& !playback_target_ok($backend, $engine_device, $system_source)) {
+		$spawn_refused = "the mix sink would also be the pipewire engine's output;"
+			. " name the output it replaced with --device";
+		print STDERR "audio supervisor: $spawn_refused; not starting an engine"
+			. " that would play into its own capture\n";
+		$child_system_source = undef;
+		remove_system_mix()
+			unless defined $given{'system-device'} && length $given{'system-device'};
+		return undef;
+	}
 	my $pipewire_node = $backend eq 'pipewire'
-		&& defined $active_playback_device && length $active_playback_device
-		? $active_playback_device : undef;
+		&& defined $engine_device && length $engine_device
+		? $engine_device : undef;
 	my $pid = fork();
 	unless (defined $pid) {
 		warn "audio supervisor: cannot fork: $!\n";

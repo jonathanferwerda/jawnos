@@ -15,6 +15,7 @@ use alsa::{Direction, ValueOr};
 use crate::backends::RunReport;
 use crate::loopback::{self, LoopbackReport};
 use crate::monbus::Consumer;
+use crate::pipewire_guard::PlaybackGuard;
 
 /// A patch-cable loopback is the interface's stereo pair: the click leaves one
 /// output and comes back on one input, so the measurement is stereo by nature
@@ -239,9 +240,31 @@ pub fn run_file_playback<S: crate::playback::RenderSource>(
     period: usize,
     buffer: usize,
     total_frames: u64,
-    mut source: S,
+    source: S,
 ) -> Result<PlaybackReport, String> {
+    run_file_playback_guarded(device, rate, period, buffer, total_frames, source, None)
+}
+
+/// The same playback with an optional PipeWire guard. The guard arms the
+/// stream target before the PCM opens and verifies the resulting graph before
+/// a block is rendered, so a stream that fell back to the mix sink stops the
+/// pass instead of feeding it.
+pub fn run_file_playback_guarded<S: crate::playback::RenderSource>(
+    device: &str,
+    rate: u32,
+    period: usize,
+    buffer: usize,
+    total_frames: u64,
+    mut source: S,
+    guard: Option<&PlaybackGuard>,
+) -> Result<PlaybackReport, String> {
+    if let Some(guard) = guard {
+        guard.arm();
+    }
     let stream = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    if let Some(guard) = guard {
+        guard.verify()?;
+    }
     if stream.rate != rate {
         return Err(format!(
             "{device}: asked for {rate} Hz, the device granted {} Hz; the takes would play at the wrong pitch",
@@ -460,6 +483,7 @@ pub fn run_listen<S: crate::listen::ListenSink>(
         stop,
         sink,
         None,
+        None,
     )
 }
 
@@ -481,10 +505,14 @@ pub fn run_listen_with_system<S: crate::listen::ListenSink>(
     stop: &AtomicBool,
     mut sink: S,
     mut system: Option<&mut Consumer>,
+    guard: Option<&PlaybackGuard>,
 ) -> Result<crate::listen::ListenRun, String> {
     if capture_channels == 0 {
         return Err("a capture needs at least one channel".to_string());
     }
+    // Capture opens first, before the target is armed: `PIPEWIRE_NODE` applies
+    // to every stream the ALSA plugin creates, and a capture must keep the
+    // default source while the playback goes to the named output.
     let capture = open(
         device,
         Direction::Capture,
@@ -493,7 +521,13 @@ pub fn run_listen_with_system<S: crate::listen::ListenSink>(
         buffer,
         capture_channels as u32,
     )?;
+    if let Some(guard) = guard {
+        guard.arm();
+    }
     let playback = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    if let Some(guard) = guard {
+        guard.verify()?;
+    }
     if capture.rate != playback.rate {
         return Err(format!(
             "{device}: capture runs at {} Hz but playback at {} Hz; monitoring needs one clock",
@@ -672,11 +706,18 @@ pub fn run_playback_with_system<S: crate::listen::ListenSink>(
     stop: &AtomicBool,
     mut sink: S,
     mut system: Option<&mut Consumer>,
+    guard: Option<&PlaybackGuard>,
 ) -> Result<crate::listen::ListenRun, String> {
     if input_channels == 0 {
         return Err("a patch needs at least one channel".to_string());
     }
+    if let Some(guard) = guard {
+        guard.arm();
+    }
     let playback = open(device, Direction::Playback, rate, period, buffer, 2)?;
+    if let Some(guard) = guard {
+        guard.verify()?;
+    }
     let rate = playback.rate;
     let frames = playback.period.max(1);
     // The graph is still compiled against the width the plan named, so its

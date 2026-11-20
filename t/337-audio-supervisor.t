@@ -14,6 +14,10 @@
 #            file. A managed PipeWire engine plays the sink out the output the
 #            mix replaced, captures the same monitor as ALSA, and a failed
 #            capture hands the machine back instead of leaving our sink default.
+#            The playback target is checked too: a correct graph is left alone,
+#            a link from the engine's output into the sink it captures is cut
+#            and ended if it re-forms, and a spawn whose output is `default`
+#            beside that sink is refused before a child starts.
 #            An engine the supervisor did not start but can identify as this
 #            binary on this socket is asked to quit before a spawn; one that
 #            ignores the quit (or cannot be reached because the boot wipe took
@@ -2335,6 +2339,309 @@ ENGINE
 
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the guarded supervisor stops cleanly');
+}
+
+# --- a PipeWire playback that lands where it was told ------------------------
+# The incident: the engine captured `jawn_system.monitor`, opened the ALSA
+# `default` PCM (the PipeWire backend ignores --device), and autoconnected to
+# the mix sink. These fixtures hold the graph still so the supervisor's probe
+# can be asserted: the env target, a correct graph left alone, a loop cut and
+# then ended, and a spawn refused when no safe output is named.
+sub write_graph_pactl {
+	my ($dir) = @_;
+	write_script("$dir/bin/pactl", <<'PACTL');
+	my $dir = $ENV{'FAKE_PACTL_DIR'} or exit 9;
+	open(my $log, '>>', "$dir/pactl.log") or exit 9;
+	print {$log} join(' ', @ARGV), "\n";
+	close $log;
+	sub slurp {
+		my ($path) = @_;
+		open(my $fh, '<', $path) or return '';
+		local $/;
+		my $text = <$fh>;
+		close $fh;
+		return defined $text ? $text : '';
+	}
+	my $cmd = $ARGV[0] // '';
+	my $all = join(' ', @ARGV);
+	if ($cmd eq 'info') { print "Server Name: PulseAudio (on PipeWire)\n"; exit 0; }
+	if ($all eq 'list short sinks') { print slurp("$dir/sinks"); exit 0; }
+	if ($all eq 'list short sources') { print slurp("$dir/sources"); exit 0; }
+	if ($cmd eq 'get-default-sink') { print slurp("$dir/default"); exit 0; }
+	if ($cmd eq 'set-default-sink') {
+		open(my $fh, '>', "$dir/default") or exit 9;
+		print {$fh} $ARGV[1], "\n"; close $fh; exit 0;
+	}
+	if ($cmd eq 'load-module') {
+		open(my $fh, '>>', "$dir/sinks") or exit 9;
+		print {$fh} "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n";
+		close $fh; print "42\n"; exit 0;
+	}
+	if ($cmd eq 'unload-module') {
+		open(my $fh, '>', "$dir/sinks") or exit 9;
+		print {$fh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+		close $fh; exit 0;
+	}
+	exit 0;
+PACTL
+}
+
+sub write_graph_link {
+	my ($dir) = @_;
+	write_script("$dir/bin/pw-link", <<'PWLINK');
+	my $dir = $ENV{'FAKE_PACTL_DIR'} or exit 9;
+	open(my $log, '>>', "$dir/pwlink.log") or exit 9;
+	print {$log} join(' ', @ARGV), "\n";
+	close $log;
+	my $cmd = $ARGV[0] // '';
+	if ($cmd eq '-l') {
+		open(my $fh, '<', "$dir/pwlink.txt") or exit 0;
+		local $/;
+		print <$fh>;
+		close $fh;
+	}
+	exit 0;
+PWLINK
+}
+
+sub write_graph_engine {
+	my ($dir) = @_;
+	return write_script("$dir/pw-engine", <<'ENGINE');
+	use IO::Socket::UNIX;
+	use Socket qw(SOCK_STREAM);
+	use JSON::PP ();
+	open(my $alog, '>>', $ENV{'FAKE_ENGINE_ARGS'}) or exit 1;
+	print {$alog} join(' ', @ARGV), "\n";
+	close $alog;
+	open(my $elog, '>>', $ENV{'FAKE_ENGINE_ENV'}) or exit 1;
+	print {$elog} 'PIPEWIRE_NODE=' . ($ENV{'PIPEWIRE_NODE'} // '') . "\n";
+	close $elog;
+	my %arg;
+	for (my $i = 0; $i < @ARGV; $i++) {
+		$arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/;
+	}
+	my $listener = IO::Socket::UNIX->new(
+		Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+	) or exit 1;
+	while (my $client = $listener->accept) {
+		$client->autoflush(1);
+		my $line = <$client>;
+		my $obj = eval { JSON::PP->new->decode($line) };
+		my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+		if ($cmd eq 'quit') {
+			open(my $q, '>>', $ENV{'FAKE_ENGINE_QUIT'}) or exit 1;
+			print {$q} "quit\n";
+			close $q;
+			print {$client} "{\"ok\":true}\n";
+			close $client;
+			last;
+		}
+		my $system = $ENV{'FAKE_ENGINE_SYSTEM'} // 'capturing';
+		print {$client} "{\"ok\":true,\"take\":0,\"state\":\"patching\","
+			. "\"system\":\"$system\",\"mode\":\"playback\","
+			. "\"backend\":\"pipewire\",\"device\":\"default\"}\n";
+		close $client;
+	}
+	close $listener;
+	unlink $arg{'--socket'};
+ENGINE
+}
+
+# The hand-run path from the incident, done correctly: --device names the output
+# the mix replaced, so the target reaches pipewire-alsa and the good graph is
+# left alone.
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+	local $ENV{PATH} = "$dir/bin:$ENV{PATH}";
+	local $ENV{FAKE_PACTL_DIR} = $dir;
+	delete $ENV{JAWNOS_AUDIO_SYSTEM_DEVICE};
+
+	# A managed plan: the capture switch is on, so --system-device is the
+	# person's explicit source and the supervisor must name the play-out too.
+	my $plan = "$dir/audio-plan.json";
+	open(my $pfh, '>', $plan) or die "plan: $!";
+	print {$pfh} '{"manage":1,"plan":{"sources":[],"buses":[],'
+		. '"sinks":[{"id":"out","kind":"interface"}],"routes":[]},'
+		. '"backend":"pipewire","device":"default"}';
+	close $pfh;
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+
+	open(my $sfh, '>', "$dir/sinks") or die "sinks: $!";
+	print {$sfh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n";
+	close $sfh;
+	open(my $dfh, '>', "$dir/default") or die "default: $!";
+	print {$dfh} "jawn_system\n";
+	close $dfh;
+	open(my $lfh, '>', "$dir/pwlink.txt") or die "links: $!";
+	print {$lfh} "jawn_system:monitor_FL\n  |-> parec:input_FL\n\n"
+		. "alsa_playback.jawn-audio:output_FL\n"
+		. "  |-> alsa_output.real:playback_FL\n";
+	close $lfh;
+	write_graph_pactl($dir);
+	write_graph_link($dir);
+
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_graph_engine($dir);
+	local $ENV{FAKE_ENGINE_ARGS} = "$dir/args.log";
+	local $ENV{FAKE_ENGINE_ENV}  = "$dir/env.log";
+	local $ENV{FAKE_ENGINE_QUIT} = "$dir/quit.log";
+	local $ENV{FAKE_ENGINE_SYSTEM} = 'capturing';
+
+	my $sup = start_supervisor(
+		args => [
+			'--socket', "$dir/audio.sock",
+			'--backend', 'pipewire',
+			'--device', 'alsa_output.real',
+			'--system-device', 'jawn_system.monitor',
+		],
+		log => "$dir/supervisor.log",
+	);
+
+	my $ran = wait_for(sub { -s "$dir/env.log" }, 10);
+	ok($ran, 'a hand-run pipewire engine starts with a named output')
+		or diag('log: ' . read_text("$dir/supervisor.log"));
+	like(read_text("$dir/env.log"), qr/^PIPEWIRE_NODE=alsa_output\.real$/m,
+		'the replaced output reaches pipewire-alsa through PIPEWIRE_NODE');
+	like(read_text("$dir/args.log"), qr/--system-device jawn_system\.monitor/,
+		'and the engine still captures the mix');
+
+	my $checked = wait_for(sub {
+		read_text("$dir/pwlink.log") =~ /-l/;
+	}, 10);
+	ok($checked, 'the supervisor checks the live graph');
+	sleep 0.4;
+	unlike(read_text("$dir/pwlink.log"), qr/^-d\b/m,
+		'a correct graph is not cut');
+	ok(!-e "$dir/quit.log", 'and the engine is left running')
+		or diag('quit: ' . read_text("$dir/quit.log"));
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the supervised engine stops cleanly');
+}
+
+# The loop itself: the engine's output is linked into the sink it captures. The
+# probe cuts the link; when it re-forms the child is ended rather than left to
+# oscillate.
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+	local $ENV{PATH} = "$dir/bin:$ENV{PATH}";
+	local $ENV{FAKE_PACTL_DIR} = $dir;
+	delete $ENV{JAWNOS_AUDIO_SYSTEM_DEVICE};
+
+	my $plan = "$dir/audio-plan.json";
+	open(my $pfh, '>', $plan) or die "plan: $!";
+	print {$pfh} '{"manage":1,"plan":{"sources":[],"buses":[],'
+		. '"sinks":[{"id":"out","kind":"interface"}],"routes":[]},'
+		. '"backend":"pipewire","device":"default"}';
+	close $pfh;
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+
+	open(my $sfh, '>', "$dir/sinks") or die "sinks: $!";
+	print {$sfh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n";
+	close $sfh;
+	open(my $dfh, '>', "$dir/default") or die "default: $!";
+	print {$dfh} "alsa_output.real\n";
+	close $dfh;
+	open(my $lfh, '>', "$dir/pwlink.txt") or die "links: $!";
+	print {$lfh} "jawn_system:monitor_FL\n  |-> parec:input_FL\n\n"
+		. "alsa_playback.jawn-audio:output_FL\n"
+		. "  |-> jawn_system:playback_FL\n";
+	close $lfh;
+	write_graph_pactl($dir);
+	write_graph_link($dir);
+
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_graph_engine($dir);
+	local $ENV{FAKE_ENGINE_ARGS} = "$dir/args.log";
+	local $ENV{FAKE_ENGINE_ENV}  = "$dir/env.log";
+	local $ENV{FAKE_ENGINE_QUIT} = "$dir/quit.log";
+	local $ENV{FAKE_ENGINE_SYSTEM} = 'capturing';
+
+	my $sup = start_supervisor(
+		args => ['--socket', "$dir/audio.sock"],
+		log  => "$dir/supervisor.log",
+	);
+
+	my $cut = wait_for(sub {
+		read_text("$dir/pwlink.log") =~ /^-d alsa_playback\.jawn-audio:output_FL jawn_system:playback_FL$/m;
+	}, 15);
+	ok($cut, 'the engine output is cut away from the sink it captures')
+		or diag('log: ' . read_text("$dir/supervisor.log"));
+	like(read_text("$dir/supervisor.log"),
+		qr/engine's output .* is linked into jawn_system:playback_FL/s,
+		'and the log names the loop');
+
+	my $ended = wait_for(sub { -s "$dir/quit.log" }, 15);
+	ok($ended, 'a loop that re-forms ends the engine')
+		or diag('log: ' . read_text("$dir/supervisor.log"));
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the supervisor still stops cleanly');
+	# The supervisor's stdout is buffered until it exits (or shells out), so read
+	# the re-form line after the clean stop rather than the moment `quit` lands.
+	like(read_text("$dir/supervisor.log"), qr/loop into jawn_system re-formed/,
+		'and says the loop came back');
+}
+
+# A target that cannot be resolved is refused before a child starts. `default`
+# after the switch is the mix sink, so an engine given it would loop.
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president", "$dir/bin");
+	local $ENV{HOME} = $home;
+	local $ENV{PATH} = "$dir/bin:$ENV{PATH}";
+	local $ENV{FAKE_PACTL_DIR} = $dir;
+	delete $ENV{JAWNOS_AUDIO_SYSTEM_DEVICE};
+
+	my $plan = "$dir/audio-plan.json";
+	open(my $pfh, '>', $plan) or die "plan: $!";
+	print {$pfh} '{"manage":1,"plan":{"sources":[],"buses":[],'
+		. '"sinks":[{"id":"out","kind":"interface"}],"routes":[]},'
+		. '"backend":"pipewire","device":"default"}';
+	close $pfh;
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+
+	open(my $sfh, '>', "$dir/sinks") or die "sinks: $!";
+	print {$sfh} "0\talsa_output.real\tmodule-alsa-card\ts16le 2ch 48000Hz\n"
+		. "1\tjawn_system\tmodule-null-sink\ts16le 2ch 48000Hz\n";
+	close $sfh;
+	open(my $dfh, '>', "$dir/default") or die "default: $!";
+	print {$dfh} "jawn_system\n";
+	close $dfh;
+	write_graph_pactl($dir);
+	write_graph_link($dir);
+
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_graph_engine($dir);
+	local $ENV{FAKE_ENGINE_ARGS} = "$dir/args.log";
+	local $ENV{FAKE_ENGINE_ENV}  = "$dir/env.log";
+	local $ENV{FAKE_ENGINE_QUIT} = "$dir/quit.log";
+
+	my $sup = start_supervisor(
+		args => [
+			'--socket', "$dir/audio.sock",
+			'--backend', 'pipewire',
+			'--device', 'default',
+			'--system-device', 'jawn_system.monitor',
+		],
+		log => "$dir/supervisor.log",
+	);
+
+	my $refused = wait_for(sub {
+		read_text("$dir/supervisor.log") =~ /not starting an engine that would play into its own capture/;
+	}, 10);
+	ok($refused, 'a default target beside the captured sink is refused')
+		or diag('log: ' . read_text("$dir/supervisor.log"));
+	ok(!-s "$dir/args.log", 'and no engine was started')
+		or diag('args: ' . read_text("$dir/args.log"));
+
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the refusing supervisor stops cleanly');
 }
 
 # --- the staged binary is a build artifact ------------------------------------

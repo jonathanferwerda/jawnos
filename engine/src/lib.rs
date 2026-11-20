@@ -20,6 +20,7 @@ pub mod loopback;
 pub mod mixer;
 pub mod monbus;
 pub mod params;
+pub mod pipewire_guard;
 pub mod playback;
 pub mod proto;
 pub mod reverb;

@@ -77,6 +77,7 @@ use jawn_audio::{
 };
 
 use crate::patchbay::{PatchSummary, Patchbay};
+use jawn_audio::pipewire_guard::{PlaybackGuard, FEEDBACK_PREFIX};
 
 use crate::{alignment_json, take_frames, Alignment, MAX_CHANNELS, MAX_TRACKS, TAKE_CHANNELS};
 
@@ -145,6 +146,10 @@ const SEND_RETRIES: usize = 2_000;
 pub(crate) struct Config {
     pub backend: BackendKind,
     pub device: String,
+    /// The output the caller named for a PipeWire stream. The backend opens the
+    /// ALSA `default` PCM regardless, so this is what the guard hands to
+    /// `PIPEWIRE_NODE` and verifies after the stream exists.
+    pub target: Option<String>,
     pub rate: u32,
     pub period: usize,
     pub buffer: usize,
@@ -4088,6 +4093,23 @@ fn patch_hardware(
         channels: config.channels,
         frames: 0,
     };
+    // A PipeWire playback that falls back to the default sink would play into
+    // the sink captured above. Build the guard before opening, and report a
+    // refusal as this pass's own verdict so the supervisor can hand the machine
+    // back instead of leaving a loop running.
+    let guard = match (&capture, config.backend) {
+        (Some(_), BackendKind::PipeWire) => match PlaybackGuard::new(
+            config.target.as_deref(),
+            system_device.as_deref().unwrap_or(""),
+        ) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                note_feedback(status, &error);
+                return Ok((0, 0));
+            }
+        },
+        _ => None,
+    };
     let run = if streams.card_capture {
         jawn_audio::alsa_device::run_listen_with_system(
             &config.device,
@@ -4099,6 +4121,7 @@ fn patch_hardware(
             stop,
             sink,
             system.as_mut(),
+            None,
         )
     } else {
         jawn_audio::alsa_device::run_playback_with_system(
@@ -4111,9 +4134,17 @@ fn patch_hardware(
             stop,
             sink,
             system.as_mut(),
+            guard.as_ref(),
         )
-    }
-    .map_err(|error| format!("cannot patch: {error}"))?;
+    };
+    let run = match run {
+        Ok(run) => run,
+        Err(error) if error.starts_with(FEEDBACK_PREFIX) => {
+            note_feedback(status, &error);
+            return Ok((0, 0));
+        }
+        Err(error) => return Err(format!("cannot patch: {error}")),
+    };
     for mut capture in input_captures {
         capture.stop();
     }
@@ -4121,6 +4152,21 @@ fn patch_hardware(
         capture.stop();
     }
     Ok((run.frames, run.xruns))
+}
+
+/// Record a playback-guard refusal as the pass's system-mix verdict. The
+/// status stays `ok` (the server is healthy) with `system: "feedback"` and the
+/// sentence a supervisor or person can act on, rather than a generic failure.
+#[cfg(feature = "alsa")]
+fn note_feedback(status: &Arc<Mutex<PatchStatus>>, error: &str) {
+    let mut current = status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    current.system = "feedback".to_string();
+    current.error = error
+        .strip_prefix(FEEDBACK_PREFIX)
+        .unwrap_or(error)
+        .to_string();
 }
 
 #[cfg(not(feature = "alsa"))]
@@ -4195,6 +4241,13 @@ fn listen_hardware(
     } else {
         None
     };
+    let guard = match (system_device, config.backend) {
+        (Some(source), BackendKind::PipeWire) => Some(PlaybackGuard::new(
+            config.target.as_deref(),
+            source,
+        )?),
+        _ => None,
+    };
     let (mut capture, mut system) = match system_device {
         Some(source) => match crate::system_capture::SystemCapture::start(source, config.rate) {
             Ok((capture, consumer)) => (Some(capture), Some(consumer)),
@@ -4221,6 +4274,7 @@ fn listen_hardware(
         stop,
         sink,
         system.as_mut(),
+        guard.as_ref(),
     );
     if let Some(capture) = capture.as_mut() {
         capture.stop();
@@ -4332,10 +4386,33 @@ fn run_playback(
     } else {
         None
     };
+    // A PipeWire playback that falls back to the default sink would play into
+    // the sink captured above. Build the guard before the device opens; a
+    // refusal fails this playback rather than feeding the mix back to itself.
+    let guard = match (&_system, config.backend) {
+        (Some(_), BackendKind::PipeWire) => match PlaybackGuard::new(
+            config.target.as_deref(),
+            config.system_device.as_deref().unwrap_or(""),
+        ) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                let mut current = status
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                current.state = State::Failed;
+                current.error = error
+                    .strip_prefix(FEEDBACK_PREFIX)
+                    .unwrap_or(&error)
+                    .to_string();
+                return;
+            }
+        },
+        _ => None,
+    };
     let outcome = match config.backend {
         BackendKind::Null => play_null_stream(config.period, &mut playback, &status, &stop),
         BackendKind::Alsa | BackendKind::PipeWire => {
-            play_hardware(&config, &mut playback, &status, &stop)
+            play_hardware(&config, &mut playback, &status, &stop, guard.as_ref())
         }
         // `play` already refused a backend that cannot play; name it if a
         // future caller reaches the worker another way.
@@ -4415,6 +4492,7 @@ fn play_hardware(
     playback: &mut Playback,
     status: &Arc<Mutex<PlayStatus>>,
     stop: &AtomicBool,
+    guard: Option<&PlaybackGuard>,
 ) -> Result<u64, String> {
     let rate = playback.rate();
     let total = playback.total_frames();
@@ -4423,15 +4501,25 @@ fn play_hardware(
         status,
         stop,
     };
-    let report = jawn_audio::alsa_device::run_file_playback(
+    let report = jawn_audio::alsa_device::run_file_playback_guarded(
         &config.device,
         rate,
         config.period,
         config.buffer,
         total,
         sink,
+        guard,
     )
-    .map_err(|error| format!("cannot play: {error}"))?;
+    .map_err(|error| {
+        if error.starts_with(FEEDBACK_PREFIX) {
+            error
+                .strip_prefix(FEEDBACK_PREFIX)
+                .unwrap_or(&error)
+                .to_string()
+        } else {
+            format!("cannot play: {error}")
+        }
+    })?;
     Ok(report.frames)
 }
 
@@ -4441,8 +4529,9 @@ fn play_hardware(
     playback: &mut Playback,
     status: &Arc<Mutex<PlayStatus>>,
     stop: &AtomicBool,
+    guard: Option<&PlaybackGuard>,
 ) -> Result<u64, String> {
-    let _ = (config, playback, status, stop);
+    let _ = (config, playback, status, stop, guard);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
@@ -5471,6 +5560,7 @@ break"}"#).is_err());
         Server::new(Config {
             backend: BackendKind::Null,
             device: "null".to_string(),
+            target: None,
             rate: 48_000,
             period: 4096,
             buffer: 2,

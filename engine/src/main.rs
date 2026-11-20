@@ -1038,12 +1038,21 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
     validate_serve(options)?;
     let socket = socket::default_path(options.socket.as_deref())?;
     let device = options.backend.device_name(options.device.as_deref());
+    // Set the PipeWire target on the control thread, before the server spawns
+    // its capture threads; the guard re-checks it rather than racing a
+    // worker-thread `setenv`.
+    if options.backend == BackendKind::PipeWire {
+        if let Some(target) = options.device.as_deref() {
+            std::env::set_var("PIPEWIRE_NODE", target);
+        }
+    }
     let plan = socket::default_plan_path(options.plan.as_deref());
     // A server that cannot bind is a runtime failure, not a usage error: exit 1
     // tells a supervisor to try again, while 2 would mean the arguments are bad.
     let outcome = socket::serve(socket::Config {
         backend: options.backend,
         device,
+        target: options.device.clone(),
         rate: options.rate,
         period: options.frames,
         buffer: options.buffer,
@@ -1929,18 +1938,28 @@ fn listen_alsa(
         },
         None => (None, None),
     };
-    let sink = CliListenSink { strip, channels: 0 };
-    let run = jawn_audio::alsa_device::run_listen_with_system(
-        device,
-        options.rate,
-        options.frames,
-        options.buffer,
-        options.channels,
-        total,
-        stop,
-        sink,
-        system.as_mut(),
-    );
+    	let sink = CliListenSink { strip, channels: 0 };
+    	let guard = match (&capture, options.backend) {
+    		(Some(_), BackendKind::PipeWire) => Some(
+    			jawn_audio::pipewire_guard::PlaybackGuard::new(
+    				options.device.as_deref(),
+    				system_device.unwrap_or(""),
+    			)?,
+    		),
+    		_ => None,
+    	};
+    	let run = jawn_audio::alsa_device::run_listen_with_system(
+    		device,
+    		options.rate,
+    		options.frames,
+    		options.buffer,
+    		options.channels,
+    		total,
+    		stop,
+    		sink,
+    		system.as_mut(),
+    		guard.as_ref(),
+    	);
     if let Some(capture) = capture.as_mut() {
         capture.stop();
     }
@@ -2171,6 +2190,14 @@ fn patch_alsa(
     } else {
         None
     };
+    // A PipeWire pass that plays through `default` would play into the sink it
+    // captures. Refuse a target it does not have rather than fall back.
+    let guard = match system_source {
+        Some(source) if options.backend == BackendKind::PipeWire => Some(
+            jawn_audio::pipewire_guard::PlaybackGuard::new(options.device.as_deref(), source)?,
+        ),
+        _ => None,
+    };
     let (mut capture, mut system) = match system_source {
         Some(source) => match crate::system_capture::SystemCapture::start(source, options.rate) {
             Ok((capture, consumer)) => (Some(capture), Some(consumer)),
@@ -2216,6 +2243,7 @@ fn patch_alsa(
             stop,
             patchbay,
             system.as_mut(),
+            None,
         )?
     } else {
         // Nothing reads the card: open only the output and leave the capture
@@ -2230,6 +2258,7 @@ fn patch_alsa(
             stop,
             patchbay,
             system.as_mut(),
+            guard.as_ref(),
         )?
     };
     for mut capture in input_captures {
@@ -2397,8 +2426,17 @@ fn run_monitor(
     start_at: u64,
     stop: Arc<AtomicBool>,
     system_device: Option<String>,
+    target: Option<String>,
 ) -> Result<(u64, usize), String> {
     let mut playback = Playback::new(tracks, start_at)?;
+    // A PipeWire monitor that plays through `default` would play into the sink
+    // it captures; refuse a missing target rather than fall back.
+    let guard = match system_device.as_deref() {
+        Some(source) if backend == BackendKind::PipeWire => Some(
+            jawn_audio::pipewire_guard::PlaybackGuard::new(target.as_deref(), source)?,
+        ),
+        _ => None,
+    };
     // The machine's own mix goes to the monitor only, never to the take's
     // capture or writers. The capture lives exactly as long as this thread, so
     // a finished monitor leaves no `parec` behind.
@@ -2426,7 +2464,7 @@ fn run_monitor(
             Ok((playback.position(), 0))
         }
         BackendKind::Alsa | BackendKind::PipeWire => {
-            monitor_hardware(device, rate, period, buffer, &mut playback, &stop)
+            monitor_hardware(device, rate, period, buffer, &mut playback, &stop, guard.as_ref())
         }
         BackendKind::Jack => Err(play_support_message()),
     }
@@ -2440,10 +2478,19 @@ fn monitor_hardware(
     buffer: usize,
     playback: &mut Playback,
     stop: &AtomicBool,
+    guard: Option<&jawn_audio::pipewire_guard::PlaybackGuard>,
 ) -> Result<(u64, usize), String> {
     let total = playback.total_frames();
     let sink = MonitorSink { playback, stop };
-    match jawn_audio::alsa_device::run_file_playback(device, rate, period, buffer, total, sink) {
+    match jawn_audio::alsa_device::run_file_playback_guarded(
+        device,
+        rate,
+        period,
+        buffer,
+        total,
+        sink,
+        guard,
+    ) {
         Ok(report) => Ok((report.frames, report.xruns)),
         // A stop is the take ending, not a monitor failure.
         Err(_) if stop.load(Ordering::SeqCst) => Ok((playback.position(), 0)),
@@ -2459,8 +2506,9 @@ fn monitor_hardware(
     buffer: usize,
     playback: &mut Playback,
     stop: &AtomicBool,
+    guard: Option<&jawn_audio::pipewire_guard::PlaybackGuard>,
 ) -> Result<(u64, usize), String> {
-    let _ = (device, rate, period, buffer, playback, stop);
+    let _ = (device, rate, period, buffer, playback, stop, guard);
     Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
 }
 
@@ -2838,6 +2886,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
             } else {
                 None
             };
+            let target = options.device.clone();
             thread::Builder::new()
                 .name("jawn-audio-monitor".to_string())
                 .spawn(move || {
@@ -2851,6 +2900,7 @@ fn record_take(options: &Options, out: &str, device: &str) -> Result<TakeReport,
                         start_at,
                         stop,
                         system_device,
+                        target,
                     )
                 })
         };
