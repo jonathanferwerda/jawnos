@@ -17,6 +17,11 @@ var soundTimer = null;
 var soundStatusData = null;
 var soundBrowserLabels = { output: '', input: '' };
 var soundProfilesSignature = null;
+// A wheel notch over a volume slider moves it a step, and a two-finger trackpad
+// swipe sends the same wheel events. The readout moves at once; one write goes
+// out after the scroll settles, through the change handler a drag already uses,
+// so the server sees one write per gesture.
+var soundWheelDelay = 150;
 
 $(document).on('click', '#sound_toggle, .sound_toggle', function() {
 	soundOpener();
@@ -153,8 +158,12 @@ function soundRender(status) {
 	}
 
 	var out_volume = output ? Math.max(0, Math.min(100, parseInt(output.volume, 10) || 0)) : 0;
-	$('#sound_output_volume').val(out_volume).prop('disabled', !output);
-	$('#sound_output_volume_value').text(out_volume + '%');
+	var out_slider = $('#sound_output_volume');
+	if (!out_slider.is('[data-sound-wheel-pending]')) {
+		out_slider.val(out_volume);
+		$('#sound_output_volume_value').text(out_volume + '%');
+	}
+	out_slider.prop('disabled', !output);
 	var out_mute = $('#sound_output_mute');
 	var can_mute = !!(output && status.output_mute);
 	out_mute.prop('disabled', !can_mute);
@@ -162,8 +171,12 @@ function soundRender(status) {
 
 	var in_volume = input ? Math.max(0, Math.min(100, parseInt(input.volume, 10) || 0)) : 0;
 	var in_ok = !!(input && input_supported);
-	$('#sound_input_volume').val(in_volume).prop('disabled', !in_ok);
-	$('#sound_input_volume_value').text(in_volume + '%');
+	var in_slider = $('#sound_input_volume');
+	if (!in_slider.is('[data-sound-wheel-pending]')) {
+		in_slider.val(in_volume);
+		$('#sound_input_volume_value').text(in_volume + '%');
+	}
+	in_slider.prop('disabled', !in_ok);
 	var in_mute = $('#sound_input_mute');
 	in_mute.prop('disabled', !in_ok || !(status && status.input_mute));
 	in_mute.text(input && input.muted ? jawnosT('sound_muted') : jawnosT('sound_mute'));
@@ -221,6 +234,59 @@ function soundLoad() {
 		success: soundRender,
 		error: function() { soundNote(jawnosT('sound_not_available')); }
 	});
+}
+
+function soundWheelClamp(value) {
+	var level = parseInt(value, 10);
+	if (isNaN(level)) { level = 0; }
+	return Math.max(0, Math.min(100, level));
+}
+
+// Called for a wheel over any volume slider in the window: the gesture moves
+// that slider and the section does not scroll under it. A disabled control, a
+// held modifier (a trackpad pinch is a wheel with ctrl) or a zero delta keeps
+// the event, so everything but a real scroll over a live slider still scrolls.
+function soundWheelEvent(e, input) {
+	if (!input || !input.length || input.is(':disabled')) { return; }
+	var original = e.originalEvent || e;
+	if (original.ctrlKey) { return; }
+	var delta = (original.deltaY !== undefined) ? original.deltaY : e.deltaY;
+	delta = parseFloat(delta) || 0;
+	// Firefox reports lines, not pixels: three lines is about one notch.
+	if (original.deltaMode === 1) { delta *= 33; }
+	else if (original.deltaMode === 2) { delta *= 100; }
+	if (!delta) { return; }
+	soundWheelAdjust(input, delta);
+	if (e.preventDefault) { e.preventDefault(); }
+}
+
+// One notch is a slider's own step: a point for a 0..100 volume, one level stop
+// for a step-25 slider. The accumulator carries the fractions between events, so
+// a mouse wheel moves a point a notch and a trackpad moves smoothly instead of
+// jumping a point per pixel.
+function soundWheelAdjust(input, delta) {
+	var step = parseInt(input.attr('step'), 10) || 1;
+	var points = (input.data('sound_wheel_points') || 0) + (-delta / 100) * step;
+	var whole = points > 0 ? Math.floor(points) : Math.ceil(points);
+	input.data('sound_wheel_points', points - whole);
+	if (!whole) { return; }
+	var base = input.data('sound_wheel_volume');
+	if (base === undefined || base === null) { base = soundWheelClamp(input.val()); }
+	var volume = soundWheelClamp(base + whole);
+	// At an end of the range the gesture is still the slider's, but there is
+	// nothing to write.
+	if (volume === base) { return; }
+	input.data('sound_wheel_volume', volume);
+	// The poll and the renderer leave a slider marked this way alone, so a
+	// reading cannot undo the wheel before it is written.
+	input.val(volume).attr('data-sound-wheel-pending', '1');
+	input.trigger('input');
+	if (input.data('sound_wheel_timer')) { clearTimeout(input.data('sound_wheel_timer')); }
+	input.data('sound_wheel_timer', setTimeout(function() {
+		input.removeData('sound_wheel_timer').removeData('sound_wheel_volume').removeData('sound_wheel_points');
+		input.removeAttr('data-sound-wheel-pending');
+		input.trigger('change');
+	}, soundWheelDelay));
 }
 
 function soundSetVolume(kind, volume) {
@@ -291,6 +357,11 @@ function soundBind() {
 	});
 	window_box.on('change', '#sound_input_volume', function() {
 		soundSetVolume('input', $(this).val());
+	});
+	// IO's two sliders and every Apps row sit in .sound_control, so one wheel
+	// handler serves them all and row rebuilds keep it.
+	window_box.on('wheel', '.sound_control input[type=range]', function(e) {
+		soundWheelEvent(e, $(this));
 	});
 	window_box.on('click', '#sound_output_mute', function() {
 		soundToggleMute('output');

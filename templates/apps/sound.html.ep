@@ -152,7 +152,7 @@
 					</div>
 					<div class="sound_control">
 						<label><%= &subs::lang('sound_volume') %>
-							<input type="range" id="sound_output_volume" hint="<%= &subs::ui('Drag to set the default speaker volume') %>" min="0" max="100" step="1" value="<%= $output_volume %>"<% if (!$output->{'id'}) { %> disabled<% } %>>
+							<input type="range" id="sound_output_volume" hint="<%= &subs::ui('Drag or scroll to set the default speaker volume') %>" min="0" max="100" step="1" value="<%= $output_volume %>"<% if (!$output->{'id'}) { %> disabled<% } %>>
 							<span id="sound_output_volume_value"><%= $output_volume %>%</span>
 						</label>
 						<button type="button" id="sound_output_mute" hint="<%= &subs::ui('Mute the default speaker') %>" data-kind="output"<% if (!$output->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>
@@ -179,7 +179,7 @@
 					</div>
 					<div class="sound_control">
 						<label><%= &subs::lang('sound_volume') %>
-							<input type="range" id="sound_input_volume" hint="<%= &subs::ui('Drag to set the default microphone volume, when the mixer exposes it') %>" min="0" max="100" step="1" value="<%= $input_volume %>"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>>
+							<input type="range" id="sound_input_volume" hint="<%= &subs::ui('Drag or scroll to set the default microphone volume, when the mixer exposes it') %>" min="0" max="100" step="1" value="<%= $input_volume %>"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>>
 							<span id="sound_input_volume_value"><%= $input_volume %>%</span>
 						</label>
 						<button type="button" id="sound_input_mute" hint="<%= &subs::ui('Mute the default microphone') %>" data-kind="input"<% if (!$input_supported || !$input->{'id'}) { %> disabled<% } %>><%= &subs::lang('sound_mute') %></button>

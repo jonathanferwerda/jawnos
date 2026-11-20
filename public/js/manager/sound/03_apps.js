@@ -4,7 +4,8 @@
 // program) and every recording stream. The sound system names a browser by the
 // media it is playing, so per-tab control is not offered; the note beside
 // Playing now says so. The section refreshes every two seconds only while it is
-// the visible pill, and a slider posts once it is released.
+// the visible pill, and a slider posts once it is released, or once the wheel
+// over it settles.
 
 var soundAppsTimer = null;
 var soundAppsLevelStops = ['passive', 'sound', 'quiet', 'mute', 'silence'];
@@ -83,6 +84,9 @@ function soundAppsFill(box, rows) {
 			return $(this).attr('data-key') === row.key;
 		}).first();
 		if (!old.length) { box.append(row.row); return; }
+		// A slider under a wheel is mid-gesture: the wheel owns its value and
+		// readout until the debounced write goes out, so the poll leaves the row.
+		if (old.find('input[type=range][data-sound-wheel-pending]').length) { return; }
 		old.attr('data-muted', row.row.attr('data-muted') || '');
 		old.find('.sound_apps_name').first().text(row.row.find('.sound_apps_name').first().text());
 		old.find('.sound_apps_detail').first().text(row.row.find('.sound_apps_detail').first().text());

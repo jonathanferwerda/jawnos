@@ -562,6 +562,10 @@ write_file($log, '');
 	like($template, qr/id="sound_input_list"/, 'it has an input list');
 	like($template, qr/id="sound_output_volume"/, 'it has an output volume slider');
 	like($template, qr/id="sound_output_mute"/, 'it has an output mute');
+	like($template, qr/Drag or scroll to set the default speaker volume/, 'the speaker slider says it answers to a scroll too');
+	like($template, qr/Drag or scroll to set the default microphone volume/, 'and so does the microphone slider');
+	like(read_file("$root/perl/help/topics_apps.pl"), qr/one notch moves it one step/,
+		'the Sound topic says the sliders answer to the wheel or a trackpad swipe');
 	like($template, qr/class="sound_default"/, 'device rows carry Set default');
 	like($template, qr/id="sound_level"/, 'it has the house level');
 	like($template, qr/id="sound_profiles_list"/, 'and the per-app profiles');
@@ -602,6 +606,27 @@ write_file($log, '');
 	like($apps_js, qr/\}, 2000\);/, 'it polls every two seconds');
 	like($apps_js, qr/function soundAppsSectionActive\(/, 'and only while the section is visible');
 	like(read_file("$root/public/js/manager/sound.js"), qr/soundAppsPoll\(\);/, 'opening Sound starts the Apps clock');
+	like($apps_js, qr/input\[type=range\]\[data-sound-wheel-pending\]/, 'the refresh leaves a slider under a wheel alone');
+
+	# A wheel notch over a volume slider moves it and keeps the section still.
+	# This harness has no browser to dispatch a wheel event, so these pin the
+	# wiring and the step maths the way the rest of this file pins the JS.
+	my $sound_js = read_file("$root/public/js/manager/sound.js");
+	like($sound_js, qr/window_box\.on\('wheel', '\.sound_control input\[type=range\]'/,
+		'a wheel over any volume slider in the window is heard - IO and every Apps row');
+	like($sound_js, qr/function soundWheelEvent\(/, 'in one handler');
+	like($sound_js, qr/input\.is\(':disabled'\)/, 'a disabled control keeps the event, so its page still scrolls');
+	like($sound_js, qr/\be\.preventDefault\(\)/, 'an accepted gesture does not scroll the section under it');
+	like($sound_js, qr/var step = parseInt\(input\.attr\('step'\), 10\) \|\| 1;/,
+		'one notch is the slider\'s own step - a point, or one level stop');
+	like($sound_js, qr/\(-delta \/ 100\) \* step/, 'and the notch is 100 of deltaY, up is louder');
+	like($sound_js, qr/function soundWheelClamp\(.*?Math\.max\(0, Math\.min\(100/s, 'the value clamps at 0 and 100');
+	like($sound_js, qr/input\.trigger\('input'\)/, 'the readout moves at once');
+	like($sound_js, qr/input\.trigger\('change'\)/, 'and the write is the change path a drag already uses');
+	like($sound_js, qr/var soundWheelDelay = 150;/, 'debounced so a gesture writes once');
+	like($sound_js, qr/setTimeout\(function\(\) \{\s*input\.removeData\('sound_wheel_timer'\)/,
+		'one request after the scroll settles');
+	unlike($sound_js, qr/soundWheel[^\n]*\.focus\(/, 'the wheel never steals focus');
 
 	no warnings 'redefine';
 	*subs::lang = sub { $_ [0] };
