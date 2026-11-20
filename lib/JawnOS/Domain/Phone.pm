@@ -784,16 +784,20 @@ sub phone_ivr_settings {
 # the caller from this house's contact rows, because that is the half the
 # gateway never sees.
 #
+# A named gateway is the machine the phone screened the call on, which need not
+# be this one: its words live in its own status, not in this machine's
+# transcript directory. '' keeps the older single-gateway answer.
+#
 # The call window picks the file: the gateway and the phone are the same house
 # and a call is one at a time, but a transcript from minutes later belongs to a
 # different call and is left alone. '' when there is nothing to file.
 sub phone_call_transcript_note {
-	my ($number, $started_ms, $ended_ms) = @_;
+	my ($number, $started_ms, $ended_ms, $machine) = @_;
 	my $digits = defined $number ? $number : '';
 	$digits =~ s/\D+//g;
 	$digits =~ s/^1//;
 	return 0 unless length $digits;
-	my ($file, $said) = &phone_call_transcript_lines($ended_ms);
+	my ($file, $said) = &phone_call_transcript_lines($ended_ms, $machine);
 	return 0 unless length $file && @{$said};
 	# The number is the phone's, not the gateway's, so the header names the
 	# caller from the house's own contact rows. An unknown number reads as the
@@ -839,13 +843,22 @@ sub phone_call_transcript_note {
 # and is left alone. A spent local transcript is renamed .filed, so a retried
 # call log cannot file it twice. Returns () when there is nothing to file.
 sub phone_call_transcript_lines {
-	my ($ended_ms) = @_;
+	my ($ended_ms, $machine) = @_;
 	my $dir = $ENV{'JAWNOS_SCO_DIR'}
 		? $ENV{'JAWNOS_SCO_DIR'} . '/transcripts'
 		: &subs::home('~/.president/sco/transcripts');
 	my $ended = &phone_call_epoch($ended_ms);
+	# Only this machine's transcript directory speaks for this machine. A call
+	# the phone screened on another gateway is asked of that gateway alone;
+	# reading the local directory first would file whichever call happened to
+	# end here at the same moment.
+	my $here = 1;
+	if (defined $machine && length $machine && $machine ne 'local') {
+		my $self = eval { &subs::signatorial_designer() } || '';
+		$here = (length $self && $machine eq $self) ? 1 : 0;
+	}
 
-	if (-d $dir) {
+	if ($here && -d $dir) {
 		opendir(my $dh, $dir);
 		if ($dh) {
 			my @files = sort grep { /\.jsonl$/ && -s "$dir/$_" } readdir $dh;
@@ -878,7 +891,7 @@ sub phone_call_transcript_lines {
 	# gateway (the ordinary desktop) answers { ok => 0 }, which is not an error.
 	my $status = eval {
 		require JawnOS::Sco::Client;
-		JawnOS::Sco::Client->new()->call({ cmd => 'status' });
+		JawnOS::Sco::Client->new(machine => $machine)->call({ cmd => 'status' });
 	};
 	return () unless ref $status eq 'HASH' && $status->{'ok'};
 

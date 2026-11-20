@@ -240,6 +240,12 @@ sub action_24636 {
 		my $ended = $c->param('ended') || $started;
 		my $answered = ($c->param('answered') || '') eq 'yes';
 		my $direction = $c->param('direction') || 'incoming';
+		# The ranked list means the gateway that answered may not be this machine.
+		# The app names it on the call record, and the transcript is asked of that
+		# gateway instead of this machine's own directory.
+		my $gateway = $c->param('gateway') || '';
+		$gateway =~ s/^\s+|\s+$//g;
+		$gateway = substr($gateway, 0, 128);
 		# A call that rang through already wrote its appointment from the ring
 		# event; close that row rather than writing a second one for the same
 		# call. The ring and the call's own start are seconds apart.
@@ -270,7 +276,7 @@ sub action_24636 {
 		&subs::db_update('appointments', \%closing, { uuid => $wrote->{'uuid'} });
 		# the reception's own words for this call, into the number's Chat thread.
 		# A screened call is answered, so only those carry a transcript.
-		&subs::phone_call_transcript_note($number, $started, $ended) if $answered;
+		&subs::phone_call_transcript_note($number, $started, $ended, $gateway) if $answered;
 		$c->render(json => { ok => 1, app => $app, uuid => $wrote->{'uuid'} });
 		return;
 	}

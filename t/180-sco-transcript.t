@@ -124,6 +124,44 @@ is_deeply($said, ['may i ask whose calling', 'this is john'], 'and its lines are
 	is(scalar @gone, 0, 'a call whose words are long gone files nothing');
 }
 
+# ------------------------------------------- the gateway that answered is asked
+# The ranked list means a call may have been screened on another machine. That
+# machine keeps its words in its own live status, so this machine's transcript
+# directory must not be read in its place - it may hold another call.
+{
+	my $other = tempdir(CLEANUP => 1);
+	mkdir "$other/transcripts";
+	write_file("$other/transcripts/here.jsonl",
+		encode_json({ who => 'caller', text => 'the table heard this', at => $now }) . "\n");
+	utime($now, $now, "$other/transcripts/here.jsonl");
+	local $ENV{'JAWNOS_SCO_DIR'} = $other;
+	my @asked;
+	no warnings 'redefine';
+	local *subs::signatorial_designer = sub { return 'the-table' };
+	local *JawnOS::Sco::Client::new = sub {
+		my ($class, %args) = @_;
+		push @asked, $args{'machine'};
+		return bless {}, $class;
+	};
+	local *JawnOS::Sco::Client::call = sub {
+		return { ok => 1, call_id => 'laptop-call', since => $now - 3,
+			transcript => [ { who => 'caller', text => 'the laptop heard this', at => $now, ms => 800 } ] };
+	};
+
+	my @elsewhere = subs::phone_call_transcript_lines($now * 1000, 'the-laptop');
+	is_deeply \@asked, ['the-laptop'], 'the machine that answered is the one asked';
+	is_deeply \@elsewhere, ['laptop-call', ['the laptop heard this']],
+		"and this machine's transcript directory is not read in its place";
+
+	my ($mine, $words) = subs::phone_call_transcript_lines($now * 1000, 'the-table');
+	is($mine, "$other/transcripts/here.jsonl", 'the machine named as this one reads its own file');
+	is_deeply($words, ['the table heard this'], "and its words are the call's");
+
+	# '' is the older single gateway: this machine's file still wins.
+	is((subs::phone_call_transcript_lines($now * 1000))[0], "$other/transcripts/here.jsonl",
+		'no machine keeps the older local-first answer');
+}
+
 # A house with no key cannot seal a message, so nothing is written and the
 # transcript is left for the next attempt rather than being lost or stored open.
 is(subs::phone_call_transcript_note('+1 (555) 123-4567', 0, $now * 1000), 0,
@@ -216,6 +254,11 @@ like($js, qr/slice\(jawnPhoneTranscriptSeen\)/, 'a poll adds only the lines it h
 like($js, qr/function jawnPhoneTranscriptPushed/, 'a pushed line reaches the pane');
 like($js, qr/phone_transcript_title/, 'the transcript header is its own element');
 like($js, qr/Call from:/, 'and names the caller when the status carries one');
+like($js, qr/gateway: c\.gateway/, 'the call log tells the house which gateway screened it');
+my $call_route = read_file("$repo/lib/JawnOS/Controller/manager_phone.pm");
+like($call_route, qr/\$c->param\('gateway'\)/, 'the call log reads the gateway the app named');
+like($call_route, qr/phone_call_transcript_note\(\$number, \$started, \$ended, \$gateway\)/,
+	'and files the transcript from the machine that answered');
 my $screening = read_file("$repo/public/js/manager/screening.js");
 like($screening, qr/incomingNumber/, 'the floating panel asks the phone for the caller');
 like($screening, qr/Call from:/, 'and its header names the caller too');

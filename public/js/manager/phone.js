@@ -107,7 +107,9 @@ function jawnPhoneAppFileCalls(reload) {
 				direction: c.direction || 'incoming',
 				started: c.started || 0,
 				ended: c.ended || 0,
-				answered: c.answered ? 'yes' : 'no'
+				answered: c.answered ? 'yes' : 'no',
+				// the gateway that screened it: the transcript lives on that machine
+				gateway: c.gateway || ''
 			},
 			success: function (res) {
 				filed++;

@@ -346,7 +346,7 @@
 					</select>
 					<button id="phone_ivr_gateway_add" hint="<%= &subs::ui('Add machine') %>"><%= &subs::ui('Add machine') %></button>
 				</div>
-				<div class="phone_app_ivr_gateway_help"><%= &subs::ui('The list is saved in priority order. The first enabled gateway answers today; the phone update will try each in turn and ring through if none can.') %></div>
+				<div class="phone_app_ivr_gateway_help"><%= &subs::ui('The list is saved in priority order. The phone tries each gateway in turn and answers on the first that is online and able; if none can, the call rings through.') %></div>
 			</div>
 			<div class="phone_app_ivr_status">
 				<% if ($ivr->{'machine'}) { %>

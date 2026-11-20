@@ -1,11 +1,12 @@
 # The IVR gateway hierarchy
 
 **Status:** design, 2026-11-19. Phase 1 (the ordered setting and the
-reorderable pane), the crew `ivr` ability, and Phase 2 (every enabled candidate
+reorderable pane), the crew `ivr` ability, Phase 2 (every enabled candidate
 listens and arms; a request can name the machine a call chose; only the first
-candidate keeps the phone's Bluetooth link warm) are implemented. Phase 3 (the
-app) and Phase 4 (the audio engine backend) remain. This note records what
-existed, the rule we want, and the smallest set of changes that gets there
+candidate keeps the phone's Bluetooth link warm) and Phase 3 (the app answers
+from the first candidate that is ready, and names it on every gateway request)
+are implemented. Phase 4 (the audio engine backend) remains. This note records
+what existed, the rule we want, and the smallest set of changes that gets there
 without answering a call into silence.
 
 ## Today: one gateway, by name
@@ -338,17 +339,24 @@ app still uses the first entry, so this is safe to land alone.
 - Tests: the chosen-machine resolution (including the unresolved answer), the
   source contracts for the master/armer, and the legacy fallback.
 
-**Phase 3 (the app; later).**
+**Phase 3 (the app; done).**
 
-- `app/.../JawnPhoneBridge.java`: parse `ivr.machines`; `scoFlow/scoState/
-  scoHold/scoVoicemail` take the key; `ivrShouldScreen` checks "any enabled."
-- `app/.../JawnInCallService.java`: iterate candidates; choose; route;
-  answer; else ring. Keep the watchdog.
-- `app/.../JawnIvrAudio.java`: no new selection logic; it already takes a
-  name.
-- `JawnScreenFace`/`JawnScreeningActivity`: poll the chosen key.
-- APK: bump `versionCode`/`versionName` and build/stage/publish per
-  `~/jawnos-app/termux-app/AGENTS.md`.
+- `app/.../JawnPhoneBridge.java`: parses `ivr.machines` into `Gateway` rows,
+  ranks them as saved (an absent list is the older single machine), and every
+  gateway request - `scoFlow`, `scoStatus`, `scoState`, `scoHold`,
+  `scoVoicemail`, `scoRtc`, `cancelGateway` - carries the chosen key.
+  `ivrShouldScreen` treats an explicit empty list as no gateway.
+- `app/.../JawnInCallService.java`: `screenWhenGatewayReady` walks the list in
+  order and takes the first candidate that is online, advertises the ability,
+  is paired with the phone and answers the live status probe; the trip records
+  the machine and its adapter, and the flow, route and answer follow. None ready
+  means the call rings and the screen shows. The call record carries `gateway`.
+- `app/.../JawnScreenFace.java`: the screening face polls the chosen machine.
+- The page posts that `gateway` on `/manager/phone/call`; the manager files the
+  transcript from that machine's live status and reads a local `.jsonl` only
+  when the chosen gateway is this machine.
+- APK 0.118.352 (`versionCode` 1350), built, staged and published, and the
+  surface checks the same in `t/180-sco-transcript.t`.
 
 **Phase 4 (the engine backend; later).** The `Audio` role, the engine's `gateway`
 plan, `sco_helper --engine`, and the advert's `ivr.audio`/`ivr.ready`.
@@ -388,9 +396,10 @@ Rust tests for the plan; Perl tests for the backend selection.
 
 ## Risk
 
-Phase 2 has changed the arming model: every enabled candidate listens and
-arms, sharing the house `sco_token`, and only the first candidate pre-warms
-the phone. The remaining risk is the app: it still uses the first enabled
-gateway until Phase 3, so a second ranked machine is warm but not yet chosen
-by the phone. Test the live selection with a real second machine before
-relying on the fall-through.
+Phase 2 changed the arming model: every enabled candidate listens and arms,
+sharing the house `sco_token`, and only the first candidate pre-warms the
+phone. The remaining risk is the live choice: with several candidates warm the
+phone must pick the same one its Bluetooth link is on, and only a real second
+machine proves the fall-through (the first candidate off or unbonded, the
+second answering). The tests pin the decision order and the source contracts,
+not the radio.

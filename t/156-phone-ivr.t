@@ -1047,7 +1047,8 @@ like $help, qr/folds to one open flow at a time/, 'the help topic says a flow fo
 like $help, qr/Callers/, 'the help topic explains the callers list';
 like $help, qr/Add caller/, 'the help topic names the body picker';
 like $help, qr/Add number/, 'the help topic names the number control';
-like $help, qr/Gateways, in order/, 'the help names the ordered gateway list';
+like $help, qr/Gateways, in priority order/, 'the help names the ordered gateway list';
+like $help, qr/tries them top to bottom/, 'and says the phone tries them in turn';
 like $help, qr/rings through/, 'the help says a call rings when no gateway can answer';
 
 # The pane has to render with the settings the controller passes, not only match
