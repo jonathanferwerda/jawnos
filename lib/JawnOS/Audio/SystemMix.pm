@@ -88,6 +88,19 @@ sub available {
 	return ( $backend->{'kind'} || '' ) eq 'pactl' ? 1 : 0;
 }
 
+# Is this sink in the server's own listing right now? `undef` means the question
+# cannot be asked (no pactl/server), so a caller does not drop a source it
+# cannot check. The supervisor asks this of the source it is about to hand the
+# engine: a name the server does not list is one `parec` can only retry
+# forever against.
+sub sink_present {
+	my ($name) = @_;
+	return undef unless defined $name && length $name;
+	return undef unless available();
+	my $sinks = _sinks();
+	return $sinks->{$name} ? 1 : 0;
+}
+
 sub _read_state {
 	my ($state_dir) = @_;
 	my $path = state_path($state_dir);

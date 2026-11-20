@@ -785,16 +785,49 @@ sub remove_system_mix {
 }
 
 # Keep the virtual sink only while the engine is actually patching and actually
-# capturing its monitor. The engine says `capturing` once parec is reading,
-# `unavailable` when this machine has no parec/source, and `off` when the patch
-# did not ask for one. A failed or ended patch takes the sink away with it - on
-# PipeWire especially, where a failed capture must never leave `jawn_system` as
-# the machine's default.
+# capturing its monitor. The engine's `system` value is the fact (its own status
+# contract, engine/src/socket.rs): `capturing` once parec is reading, `pending`
+# while the worker is still opening it, `unavailable` when this machine cannot
+# capture it (no parec or no source), and `off` when the patch was not asked for
+# one. A failed or ended patch takes the sink away with it - on PipeWire
+# especially, where a failed capture must never leave `jawn_system` as the
+# machine's default. A child that reports `unavailable` can never capture, so it
+# is ended as well: the supervisor respawns it without the source, rather than
+# leaving a `parec` retrying against a node nobody provides.
+my $system_unavailable;   # plan token under which the engine could not capture
+my $system_quit_token;    # plan token of the child already asked to leave
+my $child_system_source;  # the source this child was actually handed
+
+# What the next spawn would ask for, as one comparable string. `unavailable` is
+# remembered against this, so a plan change (the switch, the pair, the capture
+# mode) is a fresh attempt while a respawn of the same plan is not.
+sub mix_token {
+	my ($manage, $backend, $device, $mode) = @_;
+	return join '|', ( $manage ? 1 : 0 ),
+		( defined $backend ? $backend : '' ),
+		( defined $device  ? $device  : '' ),
+		( defined $mode    ? $mode    : '' );
+}
+
+# The sink a source belongs to, for the one check a spawn makes: a monitor of a
+# sink the server does not list is a name `parec` can only retry forever
+# against. A source that is not a monitor is left to the engine to judge.
+sub system_source_present {
+	my ($source) = @_;
+	return 1 unless defined $source && $source =~ /\A(.+)\.monitor\z/;
+	my $sink = $1;
+	return 1 unless load_system_mix();
+	my $present = JawnOS::Audio::SystemMix::sink_present($sink);
+	return 1 unless defined $present;
+	return $present ? 1 : 0;
+}
+
 sub sync_system_mix {
 	my ($engine) = @_;
 	return unless load_system_mix();
-	# A hand-run supervisor named its own source; it owns that sink.
-	return if defined $given{'system-device'} && length $given{'system-device'};
+	# A hand-run supervisor named its own source; it owns that sink. It still
+	# owns the child, so an `unavailable` capture still ends the child below.
+	my $owns_sink = !( defined $given{'system-device'} && length $given{'system-device'} );
 
 	my $chosen = plan_config();
 	my $manage = $chosen ? $chosen->{manage} : 0;
@@ -821,29 +854,72 @@ sub sync_system_mix {
 		? $engine->{'mode'} : undef;
 	my $mode = JawnOS::Audio::SystemMix::mode_union($engine_mode, $plan_mode);
 	my $mix_backend = mix_backends($engine_backend, $mode);
+	# The plan this poll describes. A token that differs from the one the engine
+	# failed under is a fresh attempt - the person moved the switch, the pair or
+	# the capture mode - even if no spawn has happened since.
+	my $next  = spawn_choice();
+	my $token = mix_token($manage, $next->{'backend'}, $next->{'device'}, $plan_mode);
+	$system_unavailable = undef
+		if defined $system_unavailable && $system_unavailable ne $token;
+	$system_quit_token = undef
+		if defined $system_quit_token && $system_quit_token ne $token;
 
-	if ($manage && $mix_backend && $live && $system eq 'pending') {
-		return;
-	}
-	if ($manage && $mix_backend && $live && $system eq 'capturing') {
-		# A mode flip rewrites the rule; the same mode costs nothing.
-		return if defined $active_system_device
-			&& defined $active_system_mode
-			&& $active_system_mode eq $mode;
-		my $engine_device = $engine && defined $engine->{'device'} && length $engine->{'device'}
-			? $engine->{'device'} : $device;
-		ensure_system_mix($engine_backend, $manage, $engine_device, $mode, $engine);
-		return;
+	if ($live && $mix_backend) {
+		if ($system eq 'unavailable') {
+			# The engine's own status says this machine has no capture it can
+			# ever make. Hand the output back, remember the verdict so the next
+			# spawn asks for no source, and end the child that holds it - once,
+			# however often the status is polled.
+			$system_unavailable = $token;
+			remove_system_mix() if $owns_sink;
+			if ( !defined $system_quit_token || $system_quit_token ne $token ) {
+				my $stranded = defined $child_system_source || $adopted;
+				if ($stranded) {
+					$system_quit_token   = $token;
+					$child_system_source = undef;
+					print "audio supervisor: the engine cannot capture the system mix;"
+						. " handing the machine back and restarting it without that source\n";
+					engine_command($socket, { cmd => 'quit' });
+				}
+			}
+			return;
+		}
+		if ($manage) {
+			if ($system eq 'pending') {
+				# Still opening the capture; the child's own retry loop owns it.
+				return;
+			}
+			if ($system eq 'off') {
+				# The pass no longer asks for a mix. The child keeps running.
+				remove_system_mix() if $owns_sink;
+				return;
+			}
+			if ($system eq 'capturing') {
+				return unless $owns_sink;
+				# A mode flip rewrites the rule; the same mode costs nothing.
+				return if defined $active_system_device
+					&& defined $active_system_mode
+					&& $active_system_mode eq $mode;
+				my $engine_device = $engine && defined $engine->{'device'} && length $engine->{'device'}
+					? $engine->{'device'} : $device;
+				ensure_system_mix($engine_backend, $manage, $engine_device, $mode, $engine);
+				return;
+			}
+			# No report at all (an engine older than this field) or a value this
+			# supervisor does not know: keep the mix and let the child's own
+			# capture retry decide, rather than take the output from under it.
+			return;
+		}
 	}
 
 	# A switch that just went off, or a plan that just moved to another backend,
 	# describes the next spawn: the child still owns the output. The mismatch
-	# quit above ends it first, and `child_exited` takes the sink away, so the
-	# machine is never left on a card the engine holds with no sink behind it.
-	# A failed capture is different - that child plays the output the mix
+	# quit in `follow_plan` ends it first, and `child_exited` takes the sink away,
+	# so the machine is never left on a card the engine holds with no sink behind
+	# it. A failed capture is different - that child plays the output the mix
 	# replaced, so a sink nobody captures must not stay the default.
 	return if !$manage && $live && mix_backends($engine_backend, $mode);
-	remove_system_mix();
+	remove_system_mix() if $owns_sink;
 }
 
 my $engine_build_at = 0;
@@ -933,7 +1009,26 @@ sub spawn_engine {
 	my $mode = load_system_mix() && $chosen
 		? JawnOS::Audio::SystemMix::plan_mode($chosen->{'plan'}, $machine)
 		: 'playback';
-	my $system_source = ensure_system_mix($backend, $manage, $device, $mode);
+	my $token = mix_token($manage, $backend, $device, $mode);
+	# A plan change is a fresh attempt: an engine this plan could not capture
+	# with says nothing about the next one. The same plan is not retried, or a
+	# machine with no parec would recreate the sink and be ended forever.
+	$system_unavailable = undef
+		if defined $system_unavailable && $system_unavailable ne $token;
+	my $system_source;
+	$system_source = ensure_system_mix($backend, $manage, $device, $mode)
+		if !defined $system_unavailable;
+	# The engine's source must exist at this moment. `ensure` may have just made
+	# the sink; a source whose sink the server does not list is one its `parec`
+	# can only retry against, so the flag is not passed at all. This is the
+	# direct guard against a run left with `manage: 1` and no `jawn_system`.
+	if (defined $system_source && length $system_source
+		&& !system_source_present($system_source)) {
+		print "audio supervisor: not passing --system-device $system_source;"
+			. " its sink is not in pactl's list\n";
+		$system_source = undef;
+	}
+	$child_system_source = $system_source;
 	# A PipeWire engine plays out the output the mix replaced; `default` would
 	# be our own sink once the switch has moved it. The engine's device is the
 	# PCM it opens, so the node name reaches pipewire-alsa through the
@@ -951,6 +1046,7 @@ sub spawn_engine {
 		$spawn_refused = 'cannot fork';
 		# The sink this spawn may have just made has no child to capture it.
 		remove_system_mix();
+		$child_system_source = undef;
 		return undef;
 	}
 	if ($pid == 0) {
@@ -1009,6 +1105,7 @@ sub child_exited {
 	# The engine is gone, so the machine must not stay pointed at a sink nobody
 	# captures. Put the previous default back before the backoff starts.
 	remove_system_mix();
+	$child_system_source = undef;
 	my $ran = defined $child_started ? time - $child_started : 0;
 	$last_exit = describe_wait($raw);
 	# A real run earns a fresh ladder; a run of a few milliseconds does not.
@@ -1083,6 +1180,8 @@ if (-S $socket) {
 		$adopted_since    = time;
 		$adopted_mismatch = 0;
 		$adopted_note     = undef;
+		# This engine's source was chosen by whatever started it, not by us.
+		$child_system_source = undef;
 		$next_probe       = time + $ADOPT_POLL;
 		my $engine_backend = $engine->{'backend'};
 		my $engine_device  = $engine->{'device'};
