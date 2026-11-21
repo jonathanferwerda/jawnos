@@ -203,6 +203,8 @@ like($standalone, qr/jawnosStandaloneHome/, 'and sends Home back one launcher pa
 like($standalone, qr/\/manager\/games\/mapping'\) \{ back = '\/manager\/games\?view=emulated'/, 'the controls page returns to the shelf');
 like($standalone, qr/\/manager\/controller\/config'\) \{ back = '\/manager\/controller'/, 'Configuration returns to the launcher');
 like($standalone, qr/\/manager\/controller\/power'\)\s*\{\s*back = '\/manager\/controller\/config'/, 'Power returns to Configuration');
+like($standalone, qr/\.window_fullview_exit[^{]*\{[^}]*display\s*:\s*none/,
+	'the desk full-screen exit, which manager.css sizes, is hidden');
 
 my %tile_icon = (
 	Music => 'headphones', Gallery => 'gallery', Notifications => 'bell', Games => 'tetris',

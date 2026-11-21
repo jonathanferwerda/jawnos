@@ -7,6 +7,13 @@
     the attribute before setting it). %>
 <style id="jawnos_cursor_css"><%== &subs::cursor_css() %></style>
 <style>:root{--accent:<%= &subs::active_theme_bundle()->{'accent'} || '#4a90d9' %>;}</style>
+<style>
+/* The desk's full-screen exit control is sized by manager.css, which a
+   standalone controller page does not load. With a themed icon set it draws at
+   its natural 512px and covers the launcher; a controller page is already the
+   whole panel, so the control has no meaning here. */
+.window_fullview_exit, .fullview_button { display:none !important; }
+</style>
 <script>
 (function () {
 	var cursor = '<%= &subs::cursor_set() %>';
