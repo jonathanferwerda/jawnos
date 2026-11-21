@@ -1438,6 +1438,7 @@ sub action_44023 {
 		$c->param('master_json'),
 		$c->param('monitor_input'),
 		$c->param('monitor_gain'),
+		$c->param('click_json'),
 	);
 	$c->render(json => $answer, status => $status);
 	return;
@@ -1860,12 +1861,52 @@ sub studio_monitor_start {
 	return (undef, $on, $gain);
 }
 
+# The engine's metronome click, sent as `click_json`:
+# `{"bpm":120,"beats_per_bar":4,"gain":0.5}`. The numerator of the signature
+# is `beats_per_bar`; the page splits "4/4" before sending it. The engine is
+# still the authority, but validating here keeps a malformed click a refusal
+# before the engine is dialled and no file exists. A missing gain is half.
+our $studio_click_gain_default = 0.5;
+
+sub studio_click_start {
+	my ($click_json) = @_;
+	return (undef, undef) unless defined $click_json && length $click_json;
+
+	my $click = eval { decode_json($click_json) };
+	return ('click must be one JSON object', undef) unless ref $click eq 'HASH';
+
+	my $bpm = $click->{'bpm'};
+	return ('click bpm must be a finite number greater than zero', undef)
+		unless defined $bpm && !ref $bpm
+			&& $bpm =~ /\A\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*\z/;
+	$bpm += 0;
+	return ('click bpm must be a finite number greater than zero', undef)
+		unless $bpm > 0 && $bpm == $bpm && $bpm < 1e308;
+
+	my $beats = $click->{'beats_per_bar'};
+	$beats = '' unless defined $beats && !ref $beats;
+	return ('click beats_per_bar must be a whole number from 1 to 32', undef)
+		unless $beats =~ /\A\s*\+?(\d+)\s*\z/ && $1 >= 1 && $1 <= 32;
+	$beats = int($1);
+
+	my $gain = exists $click->{'gain'} && defined $click->{'gain'}
+		? $click->{'gain'} : $studio_click_gain_default;
+	return ('click gain must be a finite number from 0 to 1', undef)
+		unless !ref $gain
+			&& $gain =~ /\A\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*\z/;
+	$gain += 0;
+	return ('click gain must be a finite number from 0 to 1', undef)
+		unless $gain >= 0 && $gain <= 1 && $gain == $gain;
+
+	return (undef, { bpm => $bpm, beats_per_bar => $beats, gain => $gain });
+}
+
 # Resolve, arm and send one take. The folder is made server-side because the
 # disk writer does not create parents; the engine is checked first so a machine
 # without one does not leave an empty directory behind.
 sub studio_take_start {
 	my ($seconds, $start_at, $tracks, $inputs, $inserts, $tracks_json, $master_json,
-		$monitor_input, $monitor_gain) = @_;
+		$monitor_input, $monitor_gain, $click_json) = @_;
 	$seconds  = &studio_take_seconds($seconds);
 	$start_at = &studio_take_start_at($start_at);
 
@@ -1876,6 +1917,8 @@ sub studio_take_start {
 	my ($monitor_error, $monitor_on, $monitor_level) =
 		&studio_monitor_start($monitor_input, $monitor_gain);
 	return (400, { ok => 0, error => $monitor_error }) if defined $monitor_error;
+	my ($click_error, $click) = &studio_click_start($click_json);
+	return (400, { ok => 0, error => $click_error }) if defined $click_error;
 
 	my $folder = &studio_take_folder();
 	return (503, { ok => 0, error => 'no recording folder is set on this machine' })
@@ -1898,6 +1941,7 @@ sub studio_take_start {
 		$extra->{'monitor_input'} = 1;
 		$extra->{'monitor_gain'} = $monitor_level;
 	}
+	$extra->{'click'} = $click if $click;
 	my $answer = &JawnOS::Audio::Engine::audio_engine_record(
 		$path, $seconds, $start_at, $extra,
 	);

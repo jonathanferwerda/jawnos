@@ -134,7 +134,7 @@ function studioReleaseTakes() {
 function studioTeardown() {
 	studioReleaseTimers();
 	if (typeof studioFlushSources === 'function') { studioFlushSources(); }
-	if (mixer && mixer['time']) { mixer['time']['punch_in'] = null; mixer['time']['pending_takes'] = null; }
+	if (mixer && mixer['time']) { mixer['time']['punch_in'] = null; mixer['time']['pending_takes'] = null; mixer['time']['engine_take'] = false; }
 	studioAudio.playSeg = null;
 	studioAudio.schedSeg = null;
 	studioAudio.clickSeg = null;

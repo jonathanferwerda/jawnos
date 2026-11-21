@@ -153,6 +153,148 @@ pub fn monitor_start(take_start: u64, align_samples: u64) -> u64 {
     take_start.saturating_sub(align_samples)
 }
 
+/// The metronome click a take asked for: its tempo, the beats in a bar, and the
+/// page's trim. It is built into the monitor output only; a take's WAV never
+/// sees it.
+///
+/// The wire shape is `{"bpm":120,"beats_per_bar":4,"gain":0.5}`. A malformed
+/// value is refused before any file or thread exists, exactly as a malformed
+/// monitor is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClickSpec {
+    /// Beats per minute, a finite number greater than zero.
+    pub bpm: f64,
+    /// Beats in one bar; the first beat of each bar is accented.
+    pub beats_per_bar: u32,
+    /// The monitor bus trim, 0..=1.
+    pub gain: f32,
+}
+
+impl ClickSpec {
+    /// The gain used when the page sends no trim.
+    pub const DEFAULT_GAIN: f32 = 0.5;
+
+    /// Validate one click request. The engine refuses anything a later block
+    /// loop could not represent, rather than clamping it into a different
+    /// tempo than the person asked for.
+    pub fn new(bpm: f64, beats_per_bar: u32, gain: f32) -> Result<Self, String> {
+        if !bpm.is_finite() || bpm <= 0.0 {
+            return Err("click \"bpm\" must be a finite number greater than zero".to_string());
+        }
+        if !(1..=32).contains(&beats_per_bar) {
+            return Err("click \"beats_per_bar\" must be a whole number from 1 to 32".to_string());
+        }
+        if !gain.is_finite() || !(0.0..=1.0).contains(&gain) {
+            return Err("click \"gain\" must be a finite number from 0 to 1".to_string());
+        }
+        Ok(ClickSpec {
+            bpm,
+            beats_per_bar,
+            gain,
+        })
+    }
+}
+
+/// How long one click sounds. Short enough that a fast tempo still has silence
+/// between beats, long enough to be a tone rather than a sample step.
+const CLICK_SECONDS: f64 = 0.020;
+/// The regular beat, and the first beat of a bar. The accent is both higher and
+/// louder, so it reads as an accent on any speaker.
+const CLICK_HZ: f32 = 900.0;
+const CLICK_ACCENT_HZ: f32 = 1100.0;
+const CLICK_LEVEL: f32 = 0.72;
+
+/// The click, ready for the block loop. Every buffer is built in `prepare`, so
+/// `render` only adds samples.
+struct ClickState {
+    /// One click tone per buffer, mono, zero at both ends.
+    beat: Vec<f32>,
+    accent: Vec<f32>,
+    gain: f32,
+    /// Frames between onsets, rounded from the tempo at the device rate.
+    beat_frames: f64,
+    beats_per_bar: u64,
+    /// The prepared block size, so `render` can validate a caller's block.
+    period: usize,
+    /// The output frame (from the playback's first frame) of the next onset.
+    next_beat: u64,
+    /// How many beats have started, which decides the accent.
+    beat_index: u64,
+    /// Samples already played of the current tone; past its end is silence.
+    tone_offset: usize,
+    /// Whether the tone currently sounding is the bar's accent.
+    accenting: bool,
+}
+
+impl ClickState {
+    fn build(spec: ClickSpec, rate: u32, period: usize) -> Self {
+        let length = ((rate as f64 * CLICK_SECONDS).round() as usize).max(2);
+        let beat = click_tone(length, rate, CLICK_HZ, CLICK_LEVEL);
+        let accent = click_tone(length, rate, CLICK_ACCENT_HZ, 1.0);
+        // At least one frame between beats, even for an absurd tempo, so the
+        // grid advances instead of firing the same onset forever.
+        let beat_frames = (rate as f64 * 60.0 / spec.bpm).max(1.0);
+        let tone_offset = beat.len();
+        ClickState {
+            beat,
+            accent,
+            gain: spec.gain,
+            beat_frames,
+            beats_per_bar: u64::from(spec.beats_per_bar),
+            period,
+            next_beat: 0,
+            beat_index: 0,
+            tone_offset,
+            accenting: true,
+        }
+    }
+
+    /// Add this block's clicks to `out`, starting at the playback's frame
+    /// `start`. The first onset is frame 0 of the playback, which is
+    /// `monitor_at`: the click receives the same start correction as the
+    /// monitor files, so the performer's captured playing lands on the click
+    /// grid even when `align_samples` starts the monitor early.
+    fn render_into(&mut self, out: &mut [f32], start: u64) {
+        let frames = out.len() / 2;
+        for frame in 0..frames {
+            let at = start + frame as u64;
+            if at >= self.next_beat {
+                self.tone_offset = 0;
+                self.accenting = self.beat_index % self.beats_per_bar == 0;
+                self.beat_index += 1;
+                let next = (self.beat_index as f64 * self.beat_frames).round() as u64;
+                // A tempo so fast that two onsets round to one frame must still
+                // move the grid forward.
+                self.next_beat = next.max(at + 1);
+            }
+            if self.tone_offset < self.beat.len() {
+                let sample = if self.accenting {
+                    self.accent[self.tone_offset]
+                } else {
+                    self.beat[self.tone_offset]
+                } * self.gain;
+                out[frame * 2] += sample;
+                out[frame * 2 + 1] += sample;
+                self.tone_offset += 1;
+            }
+        }
+    }
+}
+
+/// One click tone: a sine carrier under a half-sine envelope, so it starts and
+/// ends at exactly zero and has no DC or hard edge.
+fn click_tone(length: usize, rate: u32, hz: f32, level: f32) -> Vec<f32> {
+    let mut samples = Vec::with_capacity(length);
+    let last = (length - 1) as f32;
+    for index in 0..length {
+        let t = index as f32 / rate as f32;
+        let carrier = (2.0 * std::f32::consts::PI * hz * t).sin();
+        let envelope = (std::f32::consts::PI * index as f32 / last).sin();
+        samples.push(carrier * envelope * level);
+    }
+    samples
+}
+
 /// A running playback: the sources, their strips, and where on the shared
 /// timeline the next block starts.
 pub struct Playback {
@@ -173,6 +315,11 @@ pub struct Playback {
     /// never part of a take: the capture loop writes the take from its own
     /// [`Mixer`], not from this playback.
     system: Option<SystemInput>,
+    /// The take's metronome click, built from `click_spec` in `prepare` and
+    /// added to the monitor output after the master chain.
+    click: Option<ClickState>,
+    /// The page's click request, kept until `prepare` knows the device rate.
+    click_spec: Option<ClickSpec>,
 }
 
 /// The monitoring ring's read side and the gain the socket can move mid-take.
@@ -262,6 +409,8 @@ impl Playback {
             voices: Vec::new(),
             live: None,
             system: None,
+            click: None,
+            click_spec: None,
         })
     }
 
@@ -288,6 +437,27 @@ impl Playback {
                 block: Vec::new(),
             }),
             system: None,
+            click: None,
+            click_spec: None,
+        }
+    }
+
+    /// A monitor with neither files nor a live input: just the take's click for
+    /// `frames` frames. Like [`Playback::live`] it has no file rate to insist on,
+    /// so `prepare` accepts whatever rate the device grants.
+    pub fn click_only(rate: u32, frames: u64) -> Self {
+        Playback {
+            tracks: Vec::new(),
+            mixer: Mixer::new(&[], &[]),
+            rate,
+            start_at: 0,
+            total_frames: frames,
+            position: 0,
+            voices: Vec::new(),
+            live: None,
+            system: None,
+            click: None,
+            click_spec: None,
         }
     }
 
@@ -310,6 +480,13 @@ impl Playback {
             consumer,
             block: Vec::new(),
         });
+        self
+    }
+
+    /// Attach the take's metronome click. The buffers are built in `prepare`,
+    /// once the device rate is known; until then this is just the request.
+    pub fn with_click(mut self, spec: ClickSpec) -> Self {
+        self.click_spec = Some(spec);
         self
     }
 
@@ -353,10 +530,11 @@ impl Playback {
         if period == 0 {
             return Err("a playback block must hold at least one frame".to_string());
         }
-        // A live-only monitor has no file whose pitch could be wrong, so it
-        // takes the device's rate; with files the rate must still match.
-        let live_only = self.tracks.is_empty() && self.live.is_some();
-        if live_only {
+        // A monitor with no files (live input or click only) has no file whose
+        // pitch could be wrong, so it takes the device's rate; with files the
+        // rate must still match.
+        let no_files = self.tracks.is_empty();
+        if no_files {
             self.rate = rate;
         } else if rate != self.rate {
             return Err(format!(
@@ -372,6 +550,11 @@ impl Playback {
         if let Some(system) = &mut self.system {
             system.block = vec![0.0; period * 2];
         }
+        // The click's tone buffers are built here, before the device opens, so
+        // the block loop only adds samples.
+        self.click = self
+            .click_spec
+            .map(|spec| ClickState::build(spec, rate, period));
         Ok(())
     }
 
@@ -416,6 +599,7 @@ impl Playback {
             .first()
             .map(Vec::len)
             .or_else(|| self.live.as_ref().map(|live| live.block.len() / 2))
+            .or_else(|| self.click.as_ref().map(|click| click.period))
             .unwrap_or(0);
         if frames > prepared {
             return Err(format!(
@@ -430,6 +614,7 @@ impl Playback {
         }
 
         let base = self.start_at + self.position;
+        let position = self.position;
         for index in 0..self.tracks.len() {
             let samples = &self.tracks[index].samples;
             let voice = &mut self.voices[index][..frames];
@@ -454,6 +639,7 @@ impl Playback {
                 voices,
                 live,
                 system,
+                click,
                 ..
             } = self;
             let live_block = match live.as_mut() {
@@ -478,6 +664,15 @@ impl Playback {
             mixer
                 .mix_with_live(out, |index| &voices[index][..frames], live_block)
                 .map_err(|error| format!("playback: {error}"))?;
+
+            // The click is monitor-only and sits after the master chain, so a
+            // limiter on the master cannot squash it; it is never in the
+            // capture path. Its origin is frame 0 of this playback, which is
+            // `monitor_at`: an alignment that started the monitor early still
+            // hears the first click on the take's start.
+            if let Some(click) = click.as_mut() {
+                click.render_into(out, position);
+            }
 
             // The machine's own mix is monitor-only, added after the master
             // chain at unity. A short ring is silence for the part it misses.
@@ -831,6 +1026,143 @@ mod tests {
         playback.render(&mut out).expect("render");
         for sample in &out {
             assert!((sample - 0.5).abs() < 1e-6, "{out:?}");
+        }
+    }
+
+    fn click_spec(bpm: f64, beats_per_bar: u32, gain: f32) -> ClickSpec {
+        ClickSpec::new(bpm, beats_per_bar, gain).expect("click spec")
+    }
+
+    /// A click-only playback at 8 kHz: 120 bpm is exactly 4000 frames per beat,
+    /// and 900/1100 Hz stay under Nyquist. One tone is 160 frames.
+    fn click_playback(frames: u64) -> Playback {
+        Playback::click_only(8_000, frames).with_click(click_spec(120.0, 4, 1.0))
+    }
+
+    fn peak(samples: &[f32]) -> f32 {
+        samples.iter().fold(0.0f32, |high, sample| high.max(sample.abs()))
+    }
+
+    #[test]
+    fn a_click_spec_refuses_values_the_block_loop_could_not_represent() {
+        assert!(ClickSpec::new(0.0, 4, 0.5).is_err());
+        assert!(ClickSpec::new(-120.0, 4, 0.5).is_err());
+        assert!(ClickSpec::new(f64::INFINITY, 4, 0.5).is_err());
+        assert!(ClickSpec::new(120.0, 0, 0.5).is_err());
+        assert!(ClickSpec::new(120.0, 33, 0.5).is_err());
+        assert!(ClickSpec::new(120.0, 4, -0.1).is_err());
+        assert!(ClickSpec::new(120.0, 4, 1.1).is_err());
+        assert!(ClickSpec::new(120.0, 4, f32::NAN).is_err());
+        assert_eq!(
+            ClickSpec::new(120.0, 4, 0.0).expect("a muted click is legal"),
+            click_spec(120.0, 4, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_click_only_playback_clicks_on_every_beat_and_is_silent_between() {
+        let mut playback = click_playback(12_000);
+        playback.prepare(8_000, 4_000).expect("prepare");
+
+        let mut first = vec![0.0f32; 8_000];
+        playback.render(&mut first).expect("render");
+        // The envelope starts at zero, so the very first sample is silent even
+        // though the tone starts on frame 0.
+        assert!(first[0].abs() < 1e-6 && first[1].abs() < 1e-6, "{:?}", &first[..8]);
+        assert!(peak(&first[..320]) > 0.3, "no click on the first beat");
+        // 160 frames of tone, then nothing until the next beat.
+        assert!(
+            first[320..].iter().all(|sample| sample.abs() < 1e-9),
+            "the click is not silent between beats"
+        );
+
+        let mut second = vec![0.0f32; 8_000];
+        playback.render(&mut second).expect("render");
+        assert!(peak(&second[..320]) > 0.3, "no click on the second beat");
+        assert!(second[320..].iter().all(|sample| sample.abs() < 1e-9));
+    }
+
+    #[test]
+    fn the_first_beat_of_each_bar_is_accented() {
+        let mut playback = click_playback(32_000);
+        playback.prepare(8_000, 4_000).expect("prepare");
+        let mut peaks = Vec::new();
+        for _ in 0..8 {
+            let mut block = vec![0.0f32; 8_000];
+            playback.render(&mut block).expect("render");
+            peaks.push(peak(&block[..320]));
+        }
+        assert!(peaks[0] > peaks[1] * 1.15, "the first beat is not accented: {peaks:?}");
+        assert!(peaks[4] > peaks[1] * 1.15, "bar two lost its accent: {peaks:?}");
+        for beat in [1, 2, 3, 5, 6, 7] {
+            assert!(peaks[beat] < peaks[0] * 0.9, "beat {beat} is accented: {peaks:?}");
+        }
+    }
+
+    #[test]
+    fn a_click_only_playback_accepts_the_device_rate() {
+        let mut playback = Playback::click_only(44_100, 100).with_click(click_spec(120.0, 4, 0.5));
+        playback
+            .prepare(48_000, 100)
+            .expect("a click-only playback accepts the device rate");
+        assert_eq!(playback.rate(), 48_000);
+    }
+
+    #[test]
+    fn the_first_click_lands_on_the_monitor_start_not_the_file_start() {
+        // The monitor starts two frames before the take's stamp for an
+        // alignment; the click is anchored at frame 0 of the monitor, so it
+        // shares the monitor's start correction rather than being shifted
+        // again by `start_at`.
+        let mut source = track("a.wav", 0.0, 1.0, 0.0);
+        source.rate = 8_000;
+        source.samples = vec![0.0; 4_000];
+        let start = monitor_start(10, 8);
+        assert_eq!(start, 2);
+        let mut playback = Playback::new(vec![source], start)
+            .expect("playback")
+            .with_click(click_spec(120.0, 4, 1.0));
+        playback.prepare(8_000, 4_000).expect("prepare");
+
+        let mut out = vec![0.0f32; 3_998 * 2];
+        playback.render(&mut out).expect("render");
+        assert!(peak(&out[..320]) > 0.3, "the first click did not land on monitor_at");
+    }
+
+    #[test]
+    fn a_click_does_not_change_a_track_except_by_adding_the_click() {
+        let source = || {
+            let mut source = track("a.wav", 0.3, 1.0, -1.0);
+            source.rate = 8_000;
+            source.samples = vec![0.3; 4_000];
+            source
+        };
+        let spec = click_spec(120.0, 4, 1.0);
+
+        let mut plain = Playback::new(vec![source()], 0).expect("playback");
+        plain.prepare(8_000, 4_000).expect("prepare");
+        let mut without = vec![0.0f32; 8_000];
+        plain.render(&mut without).expect("render");
+
+        let mut clicked = Playback::new(vec![source()], 0)
+            .expect("playback")
+            .with_click(spec);
+        clicked.prepare(8_000, 4_000).expect("prepare");
+        let mut with = vec![0.0f32; 8_000];
+        clicked.render(&mut with).expect("render");
+
+        let mut alone = click_playback(4_000);
+        alone.prepare(8_000, 4_000).expect("prepare");
+        let mut click = vec![0.0f32; 8_000];
+        alone.render(&mut click).expect("render");
+
+        for index in 0..8_000 {
+            let added = with[index] - without[index];
+            assert!(
+                (added - click[index]).abs() < 1e-6,
+                "sample {index}: the take changed by {added}, the click is {}",
+                click[index]
+            );
         }
     }
 }

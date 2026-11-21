@@ -532,6 +532,9 @@ function studioScheduleTake(ch, take, ordered, i, p0, p1, ctx0) {
 }
 
 function studioScheduleClicks(p0, p1, ctx0) {
+	// An engine take generates its own click on the device clock; the browser
+	// must not add a second one while it records.
+	if (mixer['time'] && mixer['time']['engine_take']) { return; }
 	var ctx = studioAudio.ctx;
 	if (!ctx || !mixer['time']['bpm']) { return; }
 	var beat = studioBeatSeconds();

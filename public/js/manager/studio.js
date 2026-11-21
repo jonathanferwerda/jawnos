@@ -852,6 +852,7 @@ function studioEngineFailed(xhr) {
 	var data = xhr && xhr.responseJSON;
 	studioEnginePollStop();
 	studioEngineRecording = false;
+	if (mixer['time']) { mixer['time']['engine_take'] = false; }
 	studioEngineShowError((data && data.error) ? data.error : studioAudioLabel('the audio engine did not answer'));
 }
 
@@ -1049,6 +1050,9 @@ function studioEngineStatus() {
 				studioEnginePollStop();
 				// The socket is gone, so a confirmed Listen cannot still be playing.
 				studioEngineListening = false;
+				// A take we can no longer read is not recording; the browser
+				// metronome is not suppressed by a dead engine.
+				if (mixer['time']) { mixer['time']['engine_take'] = false; }
 				// The frames we last drew belong to a take we can no longer read.
 				jQuery('#studio_engine_strips').empty();
 				jQuery('#studio_engine_monitor').text('');
@@ -1065,6 +1069,9 @@ function studioEngineStatus() {
 			studioEngineInputRows();
 			if (typeof data.error === 'string' && data.error.length) { studioEngineShowError(data.error); }
 			studioEngineRecording = (data.state === 'recording');
+			// The engine take owns the click while it records; a completed or
+			// failed take hands the browser metronome back.
+			if (mixer['time']) { mixer['time']['engine_take'] = studioEngineRecording; }
 			studioEngineRender(data);
 			if (typeof studioApplyMonitor === 'function') { studioApplyMonitor(); }
 			if (studioEngineRecording) { studioEnginePollStart(); }
@@ -1150,10 +1157,30 @@ function studioEngineMasterList() {
 	});
 }
 
+// The engine take's own metronome, built only while the transport's metronome
+// is on. The signature's numerator is `beats_per_bar`; the metronome volume
+// knob is 0..100 and the engine's trim is 0..1 (half when the knob is absent).
+function studioEngineClick() {
+	if (!mixer['time'] || mixer['time']['metronome'] != 'yes') { return null; }
+	var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
+	var beats = studioKnobNumber(String(mixer['time']['sig'] || '4/4').split('/')[0], 4) || 4;
+	var volume = studioKnobNumber($('.knob_control[channel="metronome"][control="volume"]').val(), 50);
+	if (!isFinite(volume)) { volume = 50; }
+	return {
+		bpm: bpm,
+		beats_per_bar: beats,
+		gain: Math.max(0, Math.min(1, volume / 100))
+	};
+}
+
 function studioEngineStart() {
 	studioEngineShowError('');
 	var plan = studioEngineTrackPlan();
 	var master = studioEngineMasterList();
+	var click = studioEngineClick();
+	// A refused start must not hand the click back to the browser while an
+	// earlier take is still recording.
+	var wasRecording = studioEngineRecording;
 	// A monitored track (or the config panel's Monitor setting) also sends the
 	// live input to the take's monitor.
 	var monitor = (typeof studioMonitoredChannel === 'function' && studioMonitoredChannel() !== null)
@@ -1171,6 +1198,9 @@ function studioEngineStart() {
 			inserts: $('#studio_engine_inserts').val(),
 			tracks_json: JSON.stringify(plan),
 			master_json: JSON.stringify(master),
+			// The engine generates the click on its own sample clock, so the take
+			// and the click share a device clock. Empty when the metronome is off.
+			click_json: click ? JSON.stringify(click) : '',
 			monitor_input: monitor ? 'true' : 'false',
 			monitor_gain: '1'
 		},
@@ -1179,8 +1209,10 @@ function studioEngineStart() {
 			data = studioEngineAnswer(data);
 			if (data.ok !== true) {
 				studioEnginePollStop();
-				studioEngineRecording = false;
+				studioEngineRecording = wasRecording;
+				if (mixer['time']) { mixer['time']['engine_take'] = wasRecording; }
 				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));
+				if (wasRecording) { studioEnginePollStart(); }
 				return;
 			}
 			if (typeof data.device_channels === 'number' && data.device_channels >= 1) {
@@ -1190,6 +1222,11 @@ function studioEngineStart() {
 			// and width even when the status line does not echo them.
 			studioEnginePlanArmed = plan;
 			studioEngineRecording = true;
+			// The engine owns the click for the take; the browser scheduler
+			// must not add a second one. Drop the clicks already placed in the
+			// two-second lookahead so a take started mid-transport is clean.
+			if (mixer['time']) { mixer['time']['engine_take'] = true; }
+			if (typeof studioFlushClicks === 'function') { studioFlushClicks(); }
 			studioEngineInputRows();
 			studioEngineRender(data);
 			studioEnginePollStart();
@@ -1208,6 +1245,7 @@ function studioEngineStop() {
 		success: function (data) {
 			studioEnginePollStop();
 			studioEngineRecording = false;
+			if (mixer['time']) { mixer['time']['engine_take'] = false; }
 			data = studioEngineAnswer(data);
 			if (data.ok !== true) {
 				studioEngineShowError(data.error || studioAudioLabel('the audio engine did not answer'));

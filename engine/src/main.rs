@@ -259,7 +259,12 @@ machine cannot bind. `record` takes \"out\", \"seconds\", \"start_at\", \"tracks
 \"monitor\" is an array of absolute WAV paths, or of objects
 {\"file\":\"/abs/a.wav\",\"gain\":0.8,\"pan\":-0.2,\"inserts\":[\"tone\"]},
 played to the outputs while the take records (an overdub; the monitor never
-enters the take). `play` may run beside a recording's monitor, and `record`
+enters the take). \"click\" is the take's metronome,
+{\"bpm\":120,\"beats_per_bar\":4,\"gain\":0.5}: the engine generates it on the
+monitor's own sample clock, accented on the first beat of each bar, for the
+take's \"seconds\" (a click-only take opens the output with no monitor files
+and no live input). It is monitor-only and never enters the take. `play` may
+run beside a recording's monitor, and `record`
 may start over a running playback. Two takes at once, and two playbacks at
 once, are refused. `listen` opens capture on \"channel\" and plays it through
 one strip (\"gain\", \"pan\", \"inserts\"); `status` reports it as \"listening\"

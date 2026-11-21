@@ -77,9 +77,9 @@ use std::time::{Duration, Instant};
 
 use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
-    monitor_start, to_i16, BackendKind, Channel, Consumer, Device, DiskWriter, InsertKind, Mixer,
-    MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack, Playback, Producer,
-    MASTER_ORDER,
+    monitor_start, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device, DiskWriter,
+    InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack,
+    Playback, Producer, MASTER_ORDER,
 };
 
 use crate::patchbay::{PatchSummary, Patchbay};
@@ -1822,6 +1822,7 @@ impl Server {
                             Some((consumer, gain)),
                             Some(remaining),
                             system_device,
+                            None,
                         )
                     })
             };
@@ -2336,6 +2337,12 @@ impl Server {
             Ok(monitor) => monitor,
             Err(error) => return error_line(&error),
         };
+        // The metronome click, if this take asked for one. Parsed before any
+        // file or thread exists, exactly as the monitor is.
+        let click = match parse_click(get(object, "click")) {
+            Ok(click) => click,
+            Err(error) => return error_line(&error),
+        };
         // The live-input monitoring switch and trim. Parsed before any file or
         // thread exists, and valid with no monitor files at all.
         let monitor_input = match get(object, "monitor_input") {
@@ -2350,7 +2357,8 @@ impl Server {
         };
         // One playback at a time: a take over the monitor it names is the
         // point, but a second monitor cannot join a playback already running.
-        if !monitor.is_empty() || monitor_input {
+        // A click-only monitor is still output, so it follows the same rule.
+        if !monitor.is_empty() || monitor_input || click.is_some() {
             if let Some(session) = &self.playback {
                 if session.is_playing() {
                     return error_line("a playback is already running");
@@ -2510,9 +2518,10 @@ impl Server {
             }
         }
         let monitor_files = monitor_tracks.len();
-        if !monitor_tracks.is_empty() || monitor_input {
-            // Live-only monitoring is still a monitor: it needs a backend that
-            // can play and a free output, exactly as a monitor file does.
+        if !monitor_tracks.is_empty() || monitor_input || click.is_some() {
+            // A monitor with no files is still a monitor: a live input or a
+            // click needs a backend that can play and a free output, exactly as
+            // a monitor file does.
             if let Err(error) = crate::play_support(self.config.backend) {
                 return error_line(&error);
             }
@@ -2675,7 +2684,7 @@ impl Server {
         // a player that cannot start is still a refusal rather than a take that
         // records without the monitor the caller asked for. A live-only monitor
         // has no files but still runs for the take's length.
-        let mut monitor_session = if monitor_tracks.is_empty() && !monitor_input {
+        let mut monitor_session = if monitor_tracks.is_empty() && !monitor_input && click.is_none() {
             None
         } else {
             let status = Arc::new(Mutex::new(PlayStatus {
@@ -2689,12 +2698,19 @@ impl Server {
             let monitor_at = monitor_start(start_at, alignment.samples);
             let strips = monitor.clone();
             let monitor_master = master.clone();
+            let click_spec = click;
             // Even a file monitor with `monitor_input` off carries the live
             // input: arming later is one atomic store, not a monitor rebuild.
             let live = parked_consumer
                 .take()
                 .map(|consumer| (consumer, Arc::clone(&input_gain)));
-            let live_length = if monitor_input { Some(frames) } else { None };
+            // A live input runs for the take; so does a click, even when the
+            // monitor has no files, so the click covers the whole take.
+            let live_length = if monitor_input || click.is_some() {
+                Some(frames)
+            } else {
+                None
+            };
             let system_device = self.config.system_device.clone();
             let spawned = {
                 let status = Arc::clone(&status);
@@ -2715,6 +2731,7 @@ impl Server {
                             live,
                             live_length,
                             system_device,
+                            click_spec,
                         )
                     })
             };
@@ -2800,13 +2817,14 @@ impl Server {
             consumer: parked_consumer,
             master: master_for_monitor,
         });
-        let monitor_part = if monitor_files == 0 && !monitor_input {
+        let monitor_part = if monitor_files == 0 && !monitor_input && click.is_none() {
             String::new()
         } else {
             format!(
-                ",\"playing\":{},\"monitor_frames\":0{}",
+                ",\"playing\":{},\"monitor_frames\":0{}{}",
                 monitor_files,
-                jawn_audio::playback::monitor_json(&monitor)
+                jawn_audio::playback::monitor_json(&monitor),
+                click_json(click)
             )
         };
         format!(
@@ -2963,6 +2981,7 @@ impl Server {
                         stop,
                         None,
                         Vec::new(),
+                        None,
                         None,
                         None,
                         None,
@@ -3393,6 +3412,55 @@ fn monitor_spec(value: &Value) -> Result<MonitorSpec, String> {
             })
         }
         _ => Err("\"monitor\" must hold WAV paths or monitor objects".to_string()),
+    }
+}
+
+/// The `click` object: `{"bpm":120,"beats_per_bar":4,"gain":0.5}`.
+///
+/// The tempo is the take's one tempo; a take has no tempo map. `beats_per_bar`
+/// carries the signature's numerator (the page sends "4" out of "4/4"), and a
+/// missing `gain` is the page's default half. Every value is validated here,
+/// before any WAV or thread exists, so a malformed click is a refusal.
+fn parse_click(value: Option<&Value>) -> Result<Option<ClickSpec>, String> {
+    let fields = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Obj(fields)) => fields,
+        _ => return Err("\"click\" must be an object with bpm, beats_per_bar and gain".to_string()),
+    };
+    let bpm = match get(fields, "bpm") {
+        Some(Value::Num(value)) => *value,
+        _ => return Err("click \"bpm\" must be a finite number greater than zero".to_string()),
+    };
+    let beats_per_bar = match get(fields, "beats_per_bar") {
+        Some(Value::Num(value))
+            if value.is_finite() && *value >= 1.0 && *value <= 32.0 && value.fract() == 0.0 =>
+        {
+            *value as u32
+        }
+        _ => {
+            return Err(
+                "click \"beats_per_bar\" must be a whole number from 1 to 32".to_string()
+            )
+        }
+    };
+    let gain = match get(fields, "gain") {
+        None | Some(Value::Null) => ClickSpec::DEFAULT_GAIN,
+        Some(Value::Num(value)) => *value as f32,
+        _ => return Err("click \"gain\" must be a finite number from 0 to 1".to_string()),
+    };
+    ClickSpec::new(bpm, beats_per_bar, gain).map(Some)
+}
+
+/// The `click` object `record` echoes when it armed one, e.g.
+/// `,"click":{"bpm":120,"beats_per_bar":4,"gain":0.5}`. Empty otherwise, so a
+/// take without a click gains no key.
+fn click_json(click: Option<ClickSpec>) -> String {
+    match click {
+        Some(spec) => format!(
+            ",\"click\":{{\"bpm\":{},\"beats_per_bar\":{},\"gain\":{}}}",
+            spec.bpm, spec.beats_per_bar, spec.gain
+        ),
+        None => String::new(),
     }
 }
 
@@ -4472,14 +4540,15 @@ fn run_playback(
     live: Option<(jawn_audio::Consumer, Arc<AtomicU32>)>,
     length: Option<u64>,
     system_device: Option<String>,
+    click: Option<ClickSpec>,
 ) {
     // Build the strips here, on the playback thread, so a chain never moves
     // between threads. The control thread already checked the shape. A
     // monitor's control ring is the one `param` pushes to; a plain playback
     // has no live knobs yet.
     let built = if tracks.is_empty() {
-        // A live-only monitor: no files to check, the take's frames and rate
-        // are the whole shape.
+        // No files: a live monitor or a click-only monitor. The take's frames
+        // and rate are the whole shape, and a click alone is a legal playback.
         match live {
             Some((consumer, gain)) => Ok(Playback::live(
                 config.rate,
@@ -4487,6 +4556,9 @@ fn run_playback(
                 consumer,
                 gain,
             )),
+            None if click.is_some() => {
+                Ok(Playback::click_only(config.rate, length.unwrap_or(0)))
+            }
             None => Err("playback needs at least one file".to_string()),
         }
     } else {
@@ -4507,6 +4579,11 @@ fn run_playback(
     };
     let mut playback = match built {
         Ok(mut playback) => {
+            // The click is built from the spec in `prepare`, after the master
+            // rack is armed, so it is never in the master chain or the take.
+            if let Some(spec) = click {
+                playback = playback.with_click(spec);
+            }
             // The master rack is armed before the device is opened, so the
             // first monitored block already has the page's mastering chain.
             playback.arm_master(&master);
@@ -5924,6 +6001,42 @@ break"}"#).is_err());
         assert!(parse_master(get(&wrong, "master")).is_err());
         let wrong_shape = parse_object(r#"{"master":"master_comp"}"#).expect("parse");
         assert!(parse_master(get(&wrong_shape, "master")).is_err());
+    }
+
+    #[test]
+    fn a_click_plan_is_validated_before_any_file_or_thread_exists() {
+        let object = parse_object(
+            r#"{"click":{"bpm":120,"beats_per_bar":4,"gain":0.5}}"#,
+        )
+        .expect("parse");
+        let click = parse_click(get(&object, "click")).expect("click");
+        assert_eq!(
+            click,
+            Some(ClickSpec {
+                bpm: 120.0,
+                beats_per_bar: 4,
+                gain: 0.5,
+            })
+        );
+
+        // A missing gain takes the page's half, and no click at all is absent.
+        let defaulted = parse_object(r#"{"click":{"bpm":120,"beats_per_bar":3}}"#)
+            .expect("parse");
+        let click = parse_click(get(&defaulted, "click")).expect("click");
+        assert_eq!(click.expect("click").gain, ClickSpec::DEFAULT_GAIN);
+        assert_eq!(parse_click(None).expect("no click"), None);
+
+        for bad in [
+            r#"{"click":{"bpm":0,"beats_per_bar":4}}"#,
+            r#"{"click":{"bpm":120,"beats_per_bar":0}}"#,
+            r#"{"click":{"bpm":120,"beats_per_bar":33}}"#,
+            r#"{"click":{"bpm":120,"beats_per_bar":4,"gain":2}}"#,
+            r#"{"click":{"bpm":120}}"#,
+            r#"{"click":120}"#,
+        ] {
+            let object = parse_object(bad).expect("parse");
+            assert!(parse_click(get(&object, "click")).is_err(), "accepted {bad}");
+        }
     }
 
     fn temp_take(name: &str) -> String {
