@@ -16,7 +16,7 @@
 //! been recorded from the same transport, and `--start-at` skips the same
 //! number of frames in every one of them.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::effect::{Channel, InsertKind};
@@ -211,6 +211,9 @@ struct ClickState {
     beat: Vec<f32>,
     accent: Vec<f32>,
     gain: f32,
+    /// The device rate the tone buffers were built at, so a tempo change can
+    /// recompute the frame grid without rebuilding the buffers.
+    rate: u32,
     /// Frames between onsets, rounded from the tempo at the device rate.
     beat_frames: f64,
     beats_per_bar: u64,
@@ -224,6 +227,18 @@ struct ClickState {
     tone_offset: usize,
     /// Whether the tone currently sounding is the bar's accent.
     accenting: bool,
+    /// Absolute mode: onsets come from the absolute output frame and the
+    /// song's own beat grid (beat 0 at position 0), not from a counter that
+    /// restarts at the transport's start.
+    absolute: bool,
+    /// The absolute output frame in absolute mode.
+    position: u64,
+    /// The loop's absolute frame bounds; equal bounds mean no loop.
+    loop_start: u64,
+    loop_end: u64,
+    /// The last absolute beat that sounded. A beat crosses from a frame's own
+    /// grid index to the next one exactly when its onset arrives.
+    last_beat: i64,
 }
 
 impl ClickState {
@@ -239,6 +254,7 @@ impl ClickState {
             beat,
             accent,
             gain: spec.gain,
+            rate,
             beat_frames,
             beats_per_bar: u64::from(spec.beats_per_bar),
             period,
@@ -246,6 +262,108 @@ impl ClickState {
             beat_index: 0,
             tone_offset,
             accenting: true,
+            absolute: false,
+            position: 0,
+            loop_start: 0,
+            loop_end: 0,
+            last_beat: 0,
+        }
+    }
+
+    /// A click on the song's own grid, for the transport. `position` is the
+    /// absolute frame the output starts at: the first onset is the next grid
+    /// beat at or after it, accented when it is the first beat of an absolute
+    /// bar. A loop wraps the position and re-reads the grid from the wrapped
+    /// point, so a repeat stays musical instead of restarting a bar at an
+    /// arbitrary place.
+    fn build_absolute(
+        spec: ClickSpec,
+        rate: u32,
+        period: usize,
+        position: u64,
+        loop_start: u64,
+        loop_end: u64,
+    ) -> Self {
+        let mut click = Self::build(spec, rate, period);
+        click.absolute = true;
+        click.loop_start = loop_start;
+        click.loop_end = loop_end;
+        click.seek(position);
+        click
+    }
+
+    /// Jump the absolute grid to `position`. A position exactly on a grid line
+    /// sounds that beat at once; one between lines waits for the next, so a
+    /// seek never clicks off the song's phase.
+    fn seek(&mut self, position: u64) {
+        self.position = position;
+        let beat = (position as f64 / self.beat_frames).floor() as i64;
+        let onset = (beat.max(0) as f64 * self.beat_frames).ceil() as u64;
+        self.last_beat = if beat >= 0 && position == onset {
+            beat - 1
+        } else {
+            beat
+        };
+        // A seek is a jump: a tone from the old place must not carry across it.
+        self.tone_offset = self.beat.len();
+    }
+
+    /// Move the beat grid to a new tempo without rebuilding the tone buffers.
+    /// The grid is re-anchored at the current absolute position, so the change
+    /// takes effect on the next beat rather than shifting every earlier one.
+    fn set_tempo(&mut self, bpm: f64) {
+        let frames = (self.rate as f64 * 60.0 / bpm).max(1.0);
+        if frames != self.beat_frames {
+            self.beat_frames = frames;
+            self.seek(self.position);
+        }
+    }
+
+    fn set_beats_per_bar(&mut self, beats_per_bar: u32) {
+        self.beats_per_bar = u64::from(beats_per_bar.max(1));
+    }
+
+    fn set_gain(&mut self, gain: f32) {
+        self.gain = gain;
+    }
+
+    fn set_loop(&mut self, loop_start: u64, loop_end: u64) {
+        self.loop_start = loop_start;
+        self.loop_end = loop_end;
+    }
+
+    fn position(&self) -> u64 {
+        self.position
+    }
+
+    /// Add this block's absolute-grid clicks to `out`. The position advances
+    /// frame by frame, so a loop wrap is sample-accurate and the tone's own
+    /// phase follows the wrapped position rather than a counter.
+    fn render_absolute_into(&mut self, out: &mut [f32]) {
+        let frames = out.len() / 2;
+        for frame in 0..frames {
+            let beat = (self.position as f64 / self.beat_frames).floor() as i64;
+            if beat != self.last_beat {
+                self.last_beat = beat;
+                self.tone_offset = 0;
+                self.accenting = beat.rem_euclid(self.beats_per_bar as i64) == 0;
+            }
+            if self.tone_offset < self.beat.len() {
+                let sample = if self.accenting {
+                    self.accent[self.tone_offset]
+                } else {
+                    self.beat[self.tone_offset]
+                } * self.gain;
+                out[frame * 2] += sample;
+                out[frame * 2 + 1] += sample;
+                self.tone_offset += 1;
+            }
+            self.position += 1;
+            if self.loop_end > self.loop_start && self.position >= self.loop_end {
+                let length = self.loop_end - self.loop_start;
+                let wrapped = self.loop_start + (self.position - self.loop_end) % length;
+                self.seek(wrapped);
+            }
         }
     }
 
@@ -293,6 +411,244 @@ fn click_tone(length: usize, rate: u32, hz: f32, level: f32) -> Vec<f32> {
         samples.push(carrier * envelope * level);
     }
     samples
+}
+
+/// The transport's mutable controls, shared by the socket and the render
+/// thread. Every field is an atomic: a seek, tempo change or loop change takes
+/// effect at the next block without stopping the device or reallocating the
+/// click, so the transport never opens a gap to move a knob.
+///
+/// Positions are absolute output frames at the device rate. The socket speaks
+/// seconds and converts with [`TransportControl::rate`], which `prepared`
+/// records from the device.
+pub struct TransportControl {
+    stop: AtomicBool,
+    playing: AtomicBool,
+    /// BPM as `f64` bits.
+    bpm: AtomicU64,
+    beats_per_bar: AtomicU32,
+    /// The click trim as `f32` bits.
+    gain: AtomicU32,
+    loop_start: AtomicU64,
+    loop_end: AtomicU64,
+    /// The next seek target, paired with `seek_seq` so several writes in a row
+    /// cannot be read half-applied.
+    seek_frames: AtomicU64,
+    seek_seq: AtomicU64,
+    position: AtomicU64,
+    rate: AtomicU32,
+}
+
+impl TransportControl {
+    pub fn new(spec: ClickSpec, position: u64, loop_start: u64, loop_end: u64) -> Self {
+        TransportControl {
+            stop: AtomicBool::new(false),
+            playing: AtomicBool::new(false),
+            bpm: AtomicU64::new(spec.bpm.to_bits()),
+            beats_per_bar: AtomicU32::new(spec.beats_per_bar),
+            gain: AtomicU32::new(spec.gain.to_bits()),
+            loop_start: AtomicU64::new(loop_start),
+            loop_end: AtomicU64::new(loop_end),
+            seek_frames: AtomicU64::new(position),
+            seek_seq: AtomicU64::new(0),
+            position: AtomicU64::new(position),
+            rate: AtomicU32::new(48_000),
+        }
+    }
+
+    fn spec(&self) -> ClickSpec {
+        ClickSpec {
+            bpm: f64::from_bits(self.bpm.load(Ordering::Acquire)),
+            beats_per_bar: self.beats_per_bar.load(Ordering::Acquire),
+            gain: f32::from_bits(self.gain.load(Ordering::Acquire)),
+        }
+    }
+
+    pub fn bpm(&self) -> f64 {
+        f64::from_bits(self.bpm.load(Ordering::Acquire))
+    }
+
+    pub fn beats_per_bar(&self) -> u32 {
+        self.beats_per_bar.load(Ordering::Acquire)
+    }
+
+    pub fn gain(&self) -> f32 {
+        f32::from_bits(self.gain.load(Ordering::Acquire))
+    }
+
+    pub fn loop_start(&self) -> u64 {
+        self.loop_start.load(Ordering::Acquire)
+    }
+
+    pub fn loop_end(&self) -> u64 {
+        self.loop_end.load(Ordering::Acquire)
+    }
+
+    pub fn position(&self) -> u64 {
+        self.position.load(Ordering::Acquire)
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.rate.load(Ordering::Acquire).max(1)
+    }
+
+    /// Move the transport to `position` at the next block. The last request
+    /// wins; the render thread sees a whole seek or none of it.
+    pub fn seek(&self, position: u64) {
+        self.seek_frames.store(position, Ordering::Release);
+        self.position.store(position, Ordering::Release);
+        self.seek_seq.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Retune in place. A running transport re-reads the grid at its current
+    /// position; the device is never closed.
+    pub fn set_tempo(&self, bpm: f64, beats_per_bar: u32, gain: f32) {
+        self.bpm.store(bpm.to_bits(), Ordering::Release);
+        self.beats_per_bar
+            .store(beats_per_bar, Ordering::Release);
+        self.gain.store(gain.to_bits(), Ordering::Release);
+    }
+
+    pub fn set_loop(&self, loop_start: u64, loop_end: u64) {
+        self.loop_start.store(loop_start, Ordering::Release);
+        self.loop_end.store(loop_end, Ordering::Release);
+    }
+
+    pub fn set_playing(&self, playing: bool) {
+        self.playing.store(playing, Ordering::Release);
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.playing.load(Ordering::Acquire)
+    }
+
+    pub fn request_stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_stopping(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+
+    fn seek_seq(&self) -> u64 {
+        self.seek_seq.load(Ordering::Acquire)
+    }
+
+    /// The seek target, kept apart from the live `position` the render thread
+    /// publishes. The two must not share one word: a block that read its old
+    /// position could overwrite a seek before applying it.
+    fn seek_frames(&self) -> u64 {
+        self.seek_frames.load(Ordering::Acquire)
+    }
+
+    fn bpm_bits(&self) -> u64 {
+        self.bpm.load(Ordering::Acquire)
+    }
+
+    fn gain_bits(&self) -> u32 {
+        self.gain.load(Ordering::Acquire)
+    }
+
+    fn set_rate(&self, rate: u32) {
+        self.rate.store(rate.max(1), Ordering::Release);
+    }
+
+    fn store_position(&self, position: u64) {
+        self.position.store(position, Ordering::Release);
+    }
+}
+
+/// The transport's render source: the same click buffers as a take's
+/// metronome, read from the absolute song grid and blended with the mutable
+/// controls at the top of every block. It allocates nothing after `prepared`.
+pub struct TransportSource {
+    control: Arc<TransportControl>,
+    click: Option<ClickState>,
+    seek_seq: u64,
+    bpm_bits: u64,
+    beats_per_bar: u32,
+    gain_bits: u32,
+    loop_bounds: (u64, u64),
+}
+
+impl TransportSource {
+    pub fn new(control: Arc<TransportControl>) -> Self {
+        TransportSource {
+            control,
+            click: None,
+            seek_seq: 0,
+            bpm_bits: 0,
+            beats_per_bar: 0,
+            gain_bits: 0,
+            loop_bounds: (0, 0),
+        }
+    }
+}
+
+impl RenderSource for TransportSource {
+    fn prepared(&mut self, rate: u32, period: usize) -> Result<(), String> {
+        if period == 0 {
+            return Err("a transport block must hold at least one frame".to_string());
+        }
+        self.control.set_rate(rate);
+        self.seek_seq = self.control.seek_seq();
+        self.bpm_bits = self.control.bpm_bits();
+        self.beats_per_bar = self.control.beats_per_bar();
+        self.gain_bits = self.control.gain_bits();
+        self.loop_bounds = (self.control.loop_start(), self.control.loop_end());
+        let spec = self.control.spec();
+        self.click = Some(ClickState::build_absolute(
+            spec,
+            rate,
+            period,
+            self.control.seek_frames(),
+            self.loop_bounds.0,
+            self.loop_bounds.1,
+        ));
+        Ok(())
+    }
+
+    fn block(&mut self, out: &mut [f32]) -> Result<(), String> {
+        if self.control.is_stopping() {
+            return Err("stopped".to_string());
+        }
+        let click = self
+            .click
+            .as_mut()
+            .ok_or_else(|| "the transport was not prepared".to_string())?;
+
+        // A seek is applied before tempo or loop changes so a `start` that
+        // carries all three lands on the new position with the new grid.
+        let seq = self.control.seek_seq();
+        if seq != self.seek_seq {
+            self.seek_seq = seq;
+            click.seek(self.control.seek_frames());
+        }
+        let bpm_bits = self.control.bpm_bits();
+        if bpm_bits != self.bpm_bits {
+            self.bpm_bits = bpm_bits;
+            click.set_tempo(f64::from_bits(bpm_bits));
+        }
+        let beats = self.control.beats_per_bar();
+        if beats != self.beats_per_bar {
+            self.beats_per_bar = beats;
+            click.set_beats_per_bar(beats);
+        }
+        let gain_bits = self.control.gain_bits();
+        if gain_bits != self.gain_bits {
+            self.gain_bits = gain_bits;
+            click.set_gain(f32::from_bits(gain_bits));
+        }
+        let loop_bounds = (self.control.loop_start(), self.control.loop_end());
+        if loop_bounds != self.loop_bounds {
+            self.loop_bounds = loop_bounds;
+            click.set_loop(loop_bounds.0, loop_bounds.1);
+        }
+
+        click.render_absolute_into(out);
+        self.control.store_position(click.position());
+        Ok(())
+    }
 }
 
 /// A running playback: the sources, their strips, and where on the shared
@@ -1164,5 +1520,139 @@ mod tests {
                 click[index]
             );
         }
+    }
+
+    // --- transport: the absolute song grid -----------------------------------
+
+    /// A 4000-frame block at 8 kHz, interleaved stereo.
+    const TRANSPORT_BLOCK: usize = 8_000;
+
+    fn transport(
+        bpm: f64,
+        position: u64,
+        loop_start: u64,
+        loop_end: u64,
+    ) -> (Arc<TransportControl>, TransportSource) {
+        let control = Arc::new(TransportControl::new(
+            click_spec(bpm, 4, 1.0),
+            position,
+            loop_start,
+            loop_end,
+        ));
+        let source = TransportSource::new(Arc::clone(&control));
+        (control, source)
+    }
+
+    #[test]
+    fn a_transport_started_mid_bar_waits_for_the_next_absolute_beat() {
+        // 120 bpm at 8 kHz is 4000 frames per beat. Position 10000 is halfway
+        // through beat 2; the next grid beat is beat 3 at frame 12000, not a
+        // click on the first frame of this playback.
+        let (_, mut source) = transport(120.0, 10_000, 0, 0);
+        source.prepared(8_000, 4_000).expect("prepare");
+        let mut block = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut block).expect("block");
+
+        assert!(
+            block[..4_000].iter().all(|sample| sample.abs() < 1e-9),
+            "a mid-bar start clicked before its next beat"
+        );
+        assert!(peak(&block[4_000..4_640]) > 0.3, "no click on the next beat");
+    }
+
+    #[test]
+    fn a_transport_accent_follows_the_absolute_bar_not_the_start() {
+        let (_, mut source) = transport(120.0, 0, 0, 0);
+        source.prepared(8_000, 4_000).expect("prepare");
+        let mut peaks = Vec::new();
+        for _ in 0..8 {
+            let mut block = vec![0.0f32; TRANSPORT_BLOCK];
+            source.block(&mut block).expect("block");
+            peaks.push(peak(&block[..320]));
+        }
+        assert!(peaks[0] > peaks[1] * 1.15, "beat 0 is not accented: {peaks:?}");
+        assert!(peaks[4] > peaks[1] * 1.15, "bar two lost its accent: {peaks:?}");
+        for beat in [1, 2, 3, 5, 6, 7] {
+            assert!(peaks[beat] < peaks[0] * 0.9, "beat {beat} is accented: {peaks:?}");
+        }
+    }
+
+    #[test]
+    fn a_transport_loop_wraps_the_position_and_the_bar_phase() {
+        // Two beats per loop at 120 bpm: 0..8000. After the wrap the click is
+        // back on absolute beat 0, so the loop's downbeat stays a downbeat.
+        let (control, mut source) = transport(120.0, 0, 0, 8_000);
+        source.prepared(8_000, 4_000).expect("prepare");
+
+        let mut first = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut first).expect("block");
+        let mut second = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut second).expect("block");
+        let mut third = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut third).expect("block");
+
+        assert!(peak(&first[..320]) > 0.3, "no downbeat at position 0");
+        assert!(peak(&second[..320]) > 0.3, "no click on the loop's second beat");
+        assert!(peak(&third[..320]) > 0.3, "no click after the loop wrapped");
+        assert!(third[320..].iter().all(|sample| sample.abs() < 1e-9));
+        assert_eq!(control.position(), 4_000, "the wrapped position is wrong");
+    }
+
+    #[test]
+    fn a_transport_seek_moves_the_grid_to_the_new_position() {
+        let (control, mut source) = transport(120.0, 0, 0, 0);
+        source.prepared(8_000, 4_000).expect("prepare");
+        let mut first = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut first).expect("block");
+        assert!(peak(&first[..320]) > 0.3);
+
+        // 6000 is halfway through beat 1; the next grid beat is 8000, which is
+        // frame 2000 of the next block.
+        control.seek(6_000);
+        let mut second = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut second).expect("block");
+        assert!(
+            second[..4_000].iter().all(|sample| sample.abs() < 1e-9),
+            "the seek clicked before the next absolute beat"
+        );
+        assert!(peak(&second[4_000..4_640]) > 0.3, "no click after the seek");
+        assert_eq!(control.position(), 10_000);
+    }
+
+    #[test]
+    fn a_seek_survives_a_stale_position_published_by_the_render_thread() {
+        // The render thread publishes its position every block. A seek that
+        // arrives just before that store must still land on its own target:
+        // the target lives in its own word, so a stale publish cannot erase it.
+        let (control, mut source) = transport(120.0, 0, 0, 0);
+        source.prepared(8_000, 4_000).expect("prepare");
+        control.seek(6_000);
+        control.store_position(2_000);
+
+        let mut block = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut block).expect("block");
+        assert!(
+            block[..4_000].iter().all(|sample| sample.abs() < 1e-9),
+            "the stale publish moved the seek back"
+        );
+        assert!(peak(&block[4_000..4_640]) > 0.3, "the seek target was lost");
+        assert_eq!(control.position(), 10_000);
+    }
+
+    #[test]
+    fn a_transport_tempo_change_is_read_at_the_next_block() {
+        let (control, mut source) = transport(120.0, 0, 0, 0);
+        source.prepared(8_000, 4_000).expect("prepare");
+        let mut first = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut first).expect("block");
+
+        // 240 bpm at 8 kHz is 2000 frames per beat. Position 4000 is now
+        // exactly absolute beat 2, so the grid re-seats on the downbeat and
+        // the next block starts on it without reopening the device.
+        control.set_tempo(240.0, 4, 1.0);
+        let mut second = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut second).expect("block");
+        assert!(peak(&second[..320]) > 0.3, "the new grid did not sound");
+        assert_eq!(control.position(), 8_000);
     }
 }

@@ -79,11 +79,12 @@ use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
     monitor_start, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device, DiskWriter,
     InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack,
-    Playback, Producer, MASTER_ORDER,
+    Playback, Producer, TransportControl, TransportSource, MASTER_ORDER,
 };
 
 use crate::patchbay::{PatchSummary, Patchbay};
 use jawn_audio::pipewire_guard::{PlaybackGuard, FEEDBACK_PREFIX};
+use jawn_audio::playback::RenderSource;
 
 use crate::{alignment_json, take_frames, Alignment, MAX_CHANNELS, MAX_TRACKS, TAKE_CHANNELS};
 
@@ -1116,6 +1117,10 @@ struct Server {
     /// The house patchbay. It owns both the capture and the outputs, so it
     /// cannot share a machine with a take, a playback or a listen.
     patch: Option<PatchSession>,
+    /// The most recent transport, kept after it stops so `transport status`
+    /// and `seek` can describe a resting position. A transport owns an output
+    /// like a playback, so it cannot start beside one.
+    transport: Option<TransportSession>,
     /// The signal flag the serve loop reads, and the wake pipe that makes a
     /// blocked `poll` look at it. Both are set up by `run_serve`; a signal
     /// stops the server exactly as a `quit` command does.
@@ -1181,6 +1186,7 @@ impl Server {
             playback: None,
             listen: None,
             patch: None,
+            transport: None,
             stop,
             wake,
             gateway: Gateway::off(capable),
@@ -1534,6 +1540,7 @@ impl Server {
             "play" => Action::Reply(self.play(&object)),
             "listen" => Action::Reply(self.listen(&object)),
             "patch" => Action::Reply(self.patch(&object)),
+            "transport" => Action::Reply(self.transport_command(&object)),
             "gateway" => Action::Reply(self.gateway_command(&object)),
             "unpatch" => Action::Reply(self.unpatch_line()),
             "param" => Action::Reply(self.param(&object)),
@@ -2028,6 +2035,14 @@ impl Server {
     /// the gain, pan and inserts it was armed with. A `param` moves those
     /// values at the next block, through the same [`ParamQueue`] a take uses.
     fn listen(&mut self, object: &Object) -> String {
+        // The transport owns the output while it runs; a listen needs one too.
+        if let Some(session) = &self.transport {
+            if session.is_playing() {
+                return error_line(
+                    "the transport is playing; stop it before listening. Sharing the transport's output with a listen is the next stage",
+                );
+            }
+        }
         // One capture stream, one owner: a take cannot also feed the monitor
         // yet. Sharing one capture between listen and record is the next step.
         if let Some(running) = &self.current {
@@ -2250,6 +2265,13 @@ impl Server {
     /// replaces the first: the old graph is joined before the new one opens the
     /// device, so the reply describes a graph that is actually running.
     fn patch(&mut self, object: &Object) -> String {
+        if let Some(session) = &self.transport {
+            if session.is_playing() {
+                return error_line(
+                    "the transport is playing; stop it before patching. Sharing the transport's output with the patchbay is the next stage",
+                );
+            }
+        }
         if let Some(running) = &self.current {
             if running.is_recording() {
                 return error_line(
@@ -2315,6 +2337,16 @@ impl Server {
     }
 
     fn record(&mut self, object: &Object) -> String {
+        // The transport owns the output while it runs. A take's monitor (or a
+        // click-only take) would need the same device, so the two do not share
+        // it yet even when the take itself only captures.
+        if let Some(session) = &self.transport {
+            if session.is_playing() {
+                return error_line(
+                    "the transport is playing; stop it before recording. Sharing the transport's output with a take is the next stage",
+                );
+            }
+        }
         // One capture stream, one owner: a take cannot also feed the monitor
         // yet. Sharing one capture between listen and record is the next step.
         if let Some(session) = &self.listen {
@@ -2842,6 +2874,15 @@ impl Server {
     /// `failed` a moment later. The strips are the defaults the wire has no
     /// knobs for yet: unity trim, centre pan, no inserts.
     fn play(&mut self, object: &Object) -> String {
+        // A transport owns the output exactly as a playback does; sharing one
+        // device between them is the punch stage, not this one.
+        if let Some(session) = &self.transport {
+            if session.is_playing() {
+                return error_line(
+                    "the transport is playing; stop it before starting a playback. Sharing the transport's output with a playback is the next stage",
+                );
+            }
+        }
         if let Some(session) = &self.listen {
             if session.is_listening() {
                 return error_line(
@@ -3007,6 +3048,198 @@ impl Server {
         )
     }
 
+    /// `{"cmd":"transport","action":"start","position":0,"bpm":120,
+    /// "beats_per_bar":4,"gain":0.5,"loop_start":0,"loop_end":0}`.
+    ///
+    /// The engine owns the metronome and the clock for the browser transport.
+    /// Positions are seconds on the song timeline; the render thread converts
+    /// them to absolute device frames. Every field is validated before a thread
+    /// or a device exists. A `start` while the transport already plays retunes
+    /// and seeks in place: no device is closed, so there is no gap.
+    fn transport_command(&mut self, object: &Object) -> String {
+        let action = match get(object, "action") {
+            Some(Value::Str(action)) => action.as_str(),
+            _ => {
+                return error_line(
+                    "transport needs \"action\": \"start\", \"stop\", \"seek\" or \"status\"",
+                )
+            }
+        };
+        match action {
+            "start" => self.transport_start(object),
+            "stop" => self.transport_stop(),
+            "seek" => self.transport_seek(object),
+            "status" => self.transport_status(),
+            other => error_line(&format!("no such transport action: {other}")),
+        }
+    }
+
+    fn transport_start(&mut self, object: &Object) -> String {
+        let bpm = match transport_bpm(object) {
+            Ok(value) => value,
+            Err(error) => return error_line(&error),
+        };
+        let beats_per_bar = match transport_beats_per_bar(object) {
+            Ok(value) => value,
+            Err(error) => return error_line(&error),
+        };
+        let gain = match transport_gain(object) {
+            Ok(value) => value,
+            Err(error) => return error_line(&error),
+        };
+        let position = match transport_frames(object, "position", 0.0, self.config.rate) {
+            Ok(value) => value,
+            Err(error) => return error_line(&error),
+        };
+        let loop_start = match transport_frames(object, "loop_start", 0.0, self.config.rate) {
+            Ok(value) => value,
+            Err(error) => return error_line(&error),
+        };
+        let loop_end = match transport_frames(object, "loop_end", 0.0, self.config.rate) {
+            Ok(value) => value,
+            Err(error) => return error_line(&error),
+        };
+        if loop_end > 0 && loop_end <= loop_start {
+            return error_line(
+                "transport \"loop_end\" must be greater than \"loop_start\", or 0 for no loop",
+            );
+        }
+        let spec = match ClickSpec::new(bpm, beats_per_bar, gain) {
+            Ok(spec) => spec,
+            Err(error) => return error_line(&error),
+        };
+
+        // Already ours: a tempo, loop or position change takes effect at the
+        // next block. This is the responsive path the page's knobs use.
+        if let Some(session) = &self.transport {
+            if session.is_playing() {
+                session.control.set_tempo(bpm, beats_per_bar, gain);
+                session.control.set_loop(loop_start, loop_end);
+                session.control.seek(position);
+                return self.transport_status();
+            }
+        }
+
+        if let Some(running) = &self.current {
+            if running.is_recording() {
+                return error_line(
+                    "a take is recording; stop it before starting the transport. Sharing the transport's output with a take is the next stage",
+                );
+            }
+        }
+        if let Some(session) = &self.playback {
+            if session.is_playing() {
+                return error_line(
+                    "a playback is running; stop it before starting the transport. Sharing the transport's output with a playback is the next stage",
+                );
+            }
+        }
+        if let Some(session) = &self.listen {
+            if session.is_listening() {
+                return error_line(
+                    "listen is monitoring the inputs; stop it before starting the transport. Sharing the transport's output with a listen is the next stage",
+                );
+            }
+        }
+        if let Some(session) = &self.patch {
+            if session.is_patching() {
+                return error_line(
+                    "the patchbay is using the outputs; stop the patch before starting the transport. Sharing the transport's output with the patchbay is the next stage",
+                );
+            }
+        }
+
+        if let Err(error) = crate::play_support(self.config.backend) {
+            return error_line(&error);
+        }
+        match crate::probe_playback(
+            self.config.backend,
+            &self.config.device,
+            self.config.rate,
+            self.config.period,
+            self.config.buffer,
+        ) {
+            Ok(granted) if granted != self.config.rate => {
+                return error_line(&format!(
+                    "the device granted {granted} Hz, but the transport runs at {} Hz; the click would be at the wrong tempo",
+                    self.config.rate
+                ))
+            }
+            Ok(_) => {}
+            Err(error) => return error_line(&error),
+        }
+
+        if let Some(mut previous) = self.transport.take() {
+            previous.finish();
+        }
+        let control = Arc::new(TransportControl::new(spec, position, loop_start, loop_end));
+        control.set_playing(true);
+        let error = Arc::new(Mutex::new(String::new()));
+        let spawned = {
+            let control = Arc::clone(&control);
+            let error = Arc::clone(&error);
+            let config = self.config.clone();
+            thread::Builder::new()
+                .name("jawn-audio-transport".to_string())
+                .spawn(move || run_transport(config, control, error))
+        };
+        let handle = match spawned {
+            Ok(handle) => handle,
+            Err(error) => {
+                control.set_playing(false);
+                return error_line(&format!("cannot start the transport thread: {error}"));
+            }
+        };
+        self.transport = Some(TransportSession {
+            control,
+            handle: Some(handle),
+            error,
+        });
+        self.transport_status()
+    }
+
+    /// `{"cmd":"transport","action":"seek","position":12.5}`. A seek is a
+    /// position change at the next block; a loop or tempo change rides a
+    /// `start`, which updates the running transport in place.
+    fn transport_seek(&mut self, object: &Object) -> String {
+        let position = match get(object, "position") {
+            Some(Value::Num(value)) if value.is_finite() && *value >= 0.0 => {
+                match transport_frames(object, "position", 0.0, self.config.rate) {
+                    Ok(value) => value,
+                    Err(error) => return error_line(&error),
+                }
+            }
+            _ => return error_line("seek needs \"position\": a number of seconds on the song timeline"),
+        };
+        match &self.transport {
+            Some(session) => {
+                session.control.seek(position);
+                self.transport_status()
+            }
+            None => error_line("the transport has not been started"),
+        }
+    }
+
+    /// `{"cmd":"transport","action":"stop"}`: silence the click and join the
+    /// render thread. The session stays, so a following `status` still reports
+    /// where it stopped and a `start` can resume from there.
+    fn transport_stop(&mut self) -> String {
+        if let Some(mut session) = self.transport.take() {
+            session.finish();
+            self.transport = Some(session);
+        }
+        self.transport_status()
+    }
+
+    /// The dedicated transport status: state, seconds, tempo, signature and the
+    /// loop bounds. The historical `status` command keeps its own shape.
+    fn transport_status(&self) -> String {
+        match &self.transport {
+            Some(session) => session.line(self.config.rate),
+            None => default_transport_line(),
+        }
+    }
+
     fn status_line(&self) -> String {
         // A take that is recording is the transport, so its line leads and the
         // monitor reports beside it. A finished take stays a status line and an
@@ -3088,6 +3321,11 @@ impl Server {
             .as_ref()
             .map(PatchSession::is_patching)
             .unwrap_or(false);
+        let was_transport = self
+            .transport
+            .as_ref()
+            .map(TransportSession::is_playing)
+            .unwrap_or(false);
         // Signal every worker before joining any: a join waits for a loop that
         // has already been told to stop, so neither worker can hold the other
         // past its block.
@@ -3103,6 +3341,9 @@ impl Server {
         if let Some(session) = &self.patch {
             session.stop.store(true, Ordering::SeqCst);
         }
+        if let Some(session) = &self.transport {
+            session.control.request_stop();
+        }
         // Joining before answering makes `frames` and `monitor_frames` what was
         // actually produced, not a guess about a running loop.
         if let Some(running) = &mut self.current {
@@ -3115,6 +3356,9 @@ impl Server {
             session.finish();
         }
         if let Some(session) = &mut self.patch {
+            session.finish();
+        }
+        if let Some(session) = &mut self.transport {
             session.finish();
         }
         if was_patching {
@@ -3131,6 +3375,9 @@ impl Server {
             if let Some(running) = &self.current {
                 return running.line_with_play(self.playback.as_ref());
             }
+        }
+        if was_transport {
+            return self.transport_status();
         }
         if let Some(session) = &self.playback {
             return session.line();
@@ -3449,6 +3696,69 @@ fn parse_click(value: Option<&Value>) -> Result<Option<ClickSpec>, String> {
         _ => return Err("click \"gain\" must be a finite number from 0 to 1".to_string()),
     };
     ClickSpec::new(bpm, beats_per_bar, gain).map(Some)
+}
+
+/// The transport's `bpm`: a finite number greater than zero. Missing means the
+/// page's default 120.
+fn transport_bpm(object: &Object) -> Result<f64, String> {
+    match get(object, "bpm") {
+        None | Some(Value::Null) => Ok(120.0),
+        Some(Value::Num(value)) if value.is_finite() && *value > 0.0 => Ok(*value),
+        _ => Err("transport \"bpm\" must be a finite number greater than zero".to_string()),
+    }
+}
+
+/// The signature's numerator: a whole number from 1 to 32. Missing means 4.
+fn transport_beats_per_bar(object: &Object) -> Result<u32, String> {
+    match get(object, "beats_per_bar") {
+        None | Some(Value::Null) => Ok(4),
+        Some(Value::Num(value))
+            if value.is_finite() && *value >= 1.0 && *value <= 32.0 && value.fract() == 0.0 =>
+        {
+            Ok(*value as u32)
+        }
+        _ => Err(
+            "transport \"beats_per_bar\" must be a whole number from 1 to 32".to_string(),
+        ),
+    }
+}
+
+/// The click trim: 0..=1. Missing means the same half a take's click defaults to.
+fn transport_gain(object: &Object) -> Result<f32, String> {
+    match get(object, "gain") {
+        None | Some(Value::Null) => Ok(ClickSpec::DEFAULT_GAIN),
+        Some(Value::Num(value))
+            if value.is_finite() && (0.0..=1.0).contains(value) =>
+        {
+            Ok(*value as f32)
+        }
+        _ => Err("transport \"gain\" must be a finite number from 0 to 1".to_string()),
+    }
+}
+
+/// One seconds field converted to absolute device frames. A missing field uses
+/// `default`; a negative, non-finite or absurdly large value is refused before
+/// a thread exists.
+fn transport_frames(
+    object: &Object,
+    key: &str,
+    default: f64,
+    rate: u32,
+) -> Result<u64, String> {
+    let seconds = match get(object, key) {
+        None | Some(Value::Null) => default,
+        Some(Value::Num(value)) if value.is_finite() && *value >= 0.0 => *value,
+        _ => {
+            return Err(format!(
+                "transport \"{key}\" must be a finite number of seconds, not negative"
+            ))
+        }
+    };
+    let frames = seconds * f64::from(rate.max(1));
+    if !frames.is_finite() || frames > u64::MAX as f64 {
+        return Err(format!("transport \"{key}\" is too large for this device"));
+    }
+    Ok(frames.round() as u64)
 }
 
 /// The `click` object `record` echoes when it armed one, e.g.
@@ -3895,6 +4205,161 @@ impl PlaySession {
     }
 }
 
+
+/// The server's handle to one transport's render thread. The control block is
+/// the same one the socket writes: seek, tempo and loop changes are atomic and
+/// take effect at the next block.
+struct TransportSession {
+    control: Arc<TransportControl>,
+    handle: Option<JoinHandle<()>>,
+    /// The worker's failure, empty while healthy. A stopped transport can still
+    /// report why it stopped.
+    error: Arc<Mutex<String>>,
+}
+
+impl TransportSession {
+    fn is_playing(&self) -> bool {
+        self.control.is_playing() && !self.control.is_stopping()
+    }
+
+    /// Signal the render thread and wait for it. When this returns the device
+    /// is closed (or the null loop has left) and `state` is stopped.
+    fn finish(&mut self) {
+        self.control.request_stop();
+        let joined = match self.handle.take() {
+            Some(handle) => handle.join(),
+            None => Ok(()),
+        };
+        self.control.set_playing(false);
+        if joined.is_err() {
+            let mut error = self
+                .error
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if error.is_empty() {
+                *error = "the transport thread panicked".to_string();
+            }
+        }
+    }
+
+    fn line(&self, rate: u32) -> String {
+        let control = &self.control;
+        let rate = rate.max(1) as f64;
+        let state = if control.is_playing() {
+            "playing"
+        } else {
+            "stopped"
+        };
+        let error = self
+            .error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let error = if error.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ",\"error\":\"{}\"",
+                jawn_audio::loopback::json_escape(&error)
+            )
+        };
+        format!(
+            "{{\"ok\":true,\"transport\":{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6}{}}}}}",
+            state,
+            control.position() as f64 / rate,
+            control.bpm(),
+            control.beats_per_bar(),
+            control.loop_start() as f64 / rate,
+            control.loop_end() as f64 / rate,
+            error
+        )
+    }
+}
+
+/// The transport before it was ever started: stopped at zero, at the page's
+/// default tempo and signature, with no loop. The route always has a shape to
+/// answer with, exactly as an idle `status` does.
+fn default_transport_line() -> String {
+    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000}}"
+        .to_string()
+}
+
+/// The transport's worker. It owns the output for as long as it runs; the
+/// socket never opens a second device for a take, playback or listen while it
+/// does. The device loop never returns on its own: `stop` makes the source's
+/// next block fail, which is the same clean path a stopped playback takes.
+fn run_transport(config: Config, control: Arc<TransportControl>, error: Arc<Mutex<String>>) {
+    let source = TransportSource::new(Arc::clone(&control));
+    let outcome = match config.backend {
+        BackendKind::Null => transport_null(&config, source, &control),
+        BackendKind::Alsa | BackendKind::PipeWire => {
+            transport_hardware(&config, source, &control)
+        }
+        BackendKind::Jack => Err(crate::play_support_message()),
+    };
+    control.set_playing(false);
+    if let Err(message) = outcome {
+        if !control.is_stopping() {
+            let mut slot = error
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *slot = message;
+        }
+    }
+}
+
+/// The null transport keeps the same real-time shape a device does: one block
+/// per period, so status and control latency read like the hardware path. It
+/// writes no samples anywhere; the click exists only in the rendered block.
+fn transport_null(
+    config: &Config,
+    mut source: TransportSource,
+    control: &TransportControl,
+) -> Result<(), String> {
+    source.prepared(config.rate, config.period)?;
+    let mut out = vec![0.0f32; config.period * 2];
+    let step = Duration::from_secs_f64(config.period as f64 / config.rate.max(1) as f64);
+    while !control.is_stopping() {
+        source.block(&mut out)?;
+        thread::sleep(step);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "alsa")]
+fn transport_hardware(
+    config: &Config,
+    source: TransportSource,
+    _control: &TransportControl,
+) -> Result<(), String> {
+    jawn_audio::alsa_device::run_file_playback_guarded(
+        &config.device,
+        config.rate,
+        config.period,
+        config.buffer,
+        u64::MAX,
+        source,
+        None,
+    )
+    .map(|_| ())
+    .map_err(|error| {
+        if error == "stopped" {
+            error
+        } else {
+            format!("cannot play: {error}")
+        }
+    })
+}
+
+#[cfg(not(feature = "alsa"))]
+fn transport_hardware(
+    config: &Config,
+    source: TransportSource,
+    _control: &TransportControl,
+) -> Result<(), String> {
+    let _ = (config, source);
+    Err("this build has no ALSA/PipeWire backend; rebuild with --features alsa".to_string())
+}
 
 /// What `status` reads for a listen: its state, the frames it has rendered and
 /// the strip it was armed with.
@@ -6841,5 +7306,131 @@ break"}"#).is_err());
             waited < Duration::from_secs(10),
             "the retry clock did not bound the wait: {waited:?}"
         );
+    }
+
+    fn playing_transport(position: u64) -> TransportSession {
+        let control = Arc::new(TransportControl::new(
+            ClickSpec::new(120.0, 4, 0.5).expect("spec"),
+            position,
+            0,
+            0,
+        ));
+        control.set_playing(true);
+        TransportSession {
+            control,
+            handle: None,
+            error: Arc::new(Mutex::new(String::new())),
+        }
+    }
+
+    #[test]
+    fn a_transport_status_is_stopped_before_it_ever_starts() {
+        let mut server = socket_server();
+        let line = reply(server.handle(r#"{"cmd":"transport","action":"status"}"#));
+        assert!(line.contains("\"transport\":{\"state\":\"stopped\""), "{line}");
+        assert!(line.contains("\"bpm\":120"), "{line}");
+        assert!(line.contains("\"beats_per_bar\":4"), "{line}");
+        assert!(line.contains("\"loop_start\":0.000000"), "{line}");
+        assert!(line.contains("\"loop_end\":0.000000"), "{line}");
+    }
+
+    #[test]
+    fn a_transport_refuses_every_bad_field_before_a_thread_exists() {
+        let mut server = socket_server();
+        let bad = [
+            r#"{"cmd":"transport","action":"start","position":-1}"#,
+            r#"{"cmd":"transport","action":"start","bpm":0}"#,
+            r#"{"cmd":"transport","action":"start","bpm":-120}"#,
+            r#"{"cmd":"transport","action":"start","beats_per_bar":33}"#,
+            r#"{"cmd":"transport","action":"start","beats_per_bar":2.5}"#,
+            r#"{"cmd":"transport","action":"start","gain":2}"#,
+            r#"{"cmd":"transport","action":"start","loop_start":4,"loop_end":2}"#,
+            r#"{"cmd":"transport","action":"seek","position":12.5}"#,
+        ];
+        for line in bad {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(
+                server.transport.is_none(),
+                "{line} started a transport anyway"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transport_starts_and_stops_on_the_null_device() {
+        let mut server = socket_server();
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"start","position":0,"bpm":120,"beats_per_bar":4,"gain":0.5,"loop_start":0,"loop_end":0}"#,
+        ));
+        assert!(line.contains("\"transport\":{\"state\":\"playing\""), "{line}");
+
+        let stopped = reply(server.handle(r#"{"cmd":"transport","action":"stop"}"#));
+        assert!(
+            stopped.contains("\"transport\":{\"state\":\"stopped\""),
+            "{stopped}"
+        );
+    }
+
+    #[test]
+    fn a_seek_moves_a_resting_transport() {
+        let mut server = socket_server();
+        server.transport = Some(playing_transport(0));
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"seek","position":12.5}"#,
+        ));
+        assert!(
+            line.contains("\"transport\":{\"state\":\"playing\""),
+            "{line}"
+        );
+        assert!(line.contains("\"position\":12.500000"), "{line}");
+    }
+
+    #[test]
+    fn a_transport_refuses_a_running_playback() {
+        let mut server = socket_server();
+        server.playback = Some(PlaySession {
+            status: Arc::new(Mutex::new(PlayStatus {
+                state: State::Playing,
+                files: 1,
+                frames: 0,
+                error: String::new(),
+            })),
+            stop: Arc::new(AtomicBool::new(false)),
+            handle: None,
+            strips: Vec::new(),
+            params: None,
+            align: None,
+            live: false,
+        });
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"start","position":0}"#,
+        ));
+        assert!(line.contains("playback is running"), "{line}");
+        assert!(server.transport.is_none());
+    }
+
+    #[test]
+    fn a_transport_and_a_take_refuse_each_other() {
+        let mut server = socket_server();
+        server.current = Some(running(take_status("tone"), Arc::new(ParamQueue::new())));
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"start","position":0}"#,
+        ));
+        assert!(line.contains("take is recording"), "{line}");
+        assert!(server.transport.is_none());
+
+        let mut server = socket_server();
+        server.transport = Some(playing_transport(0));
+        for (command, needle) in [
+            (r#"{"cmd":"record","out":"/tmp/transport-take.wav"}"#, "before recording"),
+            (r#"{"cmd":"play","files":["/tmp/a.wav"]}"#, "before starting a playback"),
+            (r#"{"cmd":"listen"}"#, "before listening"),
+            (r#"{"cmd":"patch"}"#, "before patching"),
+        ] {
+            let answer = reply(server.handle(command));
+            assert!(answer.contains("transport is playing"), "{command}: {answer}");
+            assert!(answer.contains(needle), "{command}: {answer}");
+        }
     }
 }

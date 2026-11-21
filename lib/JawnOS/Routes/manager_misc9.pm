@@ -47,6 +47,7 @@ sub routes {
 	[44021, 'get',  '/manager/controller/power', 'action_44021'],
 	[44022, 'post', '/manager/studio/latency', 'action_44022'],
 	[44023, 'post', '/manager/studio/take', 'action_44023'],
+	[44033, 'post', '/manager/studio/transport', 'action_44033'],
 	[44024, 'get', '/manager/games/play', 'action_44024'],
 	[44025, 'get', '/manager/games/dos_bundle', 'action_44025'],
 	[44026, 'get', '/manager/games/peer_library', 'action_44026'],

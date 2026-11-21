@@ -262,8 +262,195 @@ function studioTrackSource(src, gain, kind) {
 	studioAudio.sources.push(entry);
 }
 
+// ---- engine transport -------------------------------------------------------
+//
+// When the house engine is live, it owns the transport clock and the
+// metronome: one absolute bar phase for the browser playhead and the browser
+// takes. The page still schedules take audio on its own AudioContext, but it
+// re-anchors that segment from the engine's position, so both read one clock
+// and one click. An engine take owns the output for itself, so the transport
+// waits for it; a dead or refusing engine falls back to the browser clock and
+// click, and no second click is ever scheduled.
+
+var studioEngineTransportTimer = 0;
+var studioEngineTransportDrift = 0.05;
+
+function studioEngineTransportReady() {
+	if (typeof studioEngineAvailable === 'undefined' || !studioEngineAvailable) { return false; }
+	if (typeof studioEngineRecording !== 'undefined' && studioEngineRecording) { return false; }
+	if (mixer['time'] && mixer['time']['engine_take']) { return false; }
+	// A browser recording keeps the browser clock and its count-in click: the
+	// engine is not in that capture path, and its transport cannot represent a
+	// negative count-in position. An engine take brings its own engine click.
+	if (mixer['time'] && mixer['time']['status'] == 'record') { return false; }
+	return true;
+}
+
+// The engine always runs its click-only output; the gain is zero while the
+// metronome is off, so the transport still has a clock but no sound.
+function studioEngineTransportFields(pos) {
+	var bpm = studioKnobNumber(mixer['time']['bpm'], 120) || 120;
+	var beats = studioKnobNumber(String(mixer['time']['sig'] || '4/4').split('/')[0], 4) || 4;
+	var volume = studioKnobNumber($('.knob_control[channel="metronome"][control="volume"]').val(), 50);
+	if (!isFinite(volume)) { volume = 50; }
+	var gain = (mixer['time']['metronome'] == 'yes') ? (volume / 100) : 0;
+	var loop = studioEngineTransportLoop();
+	return {
+		position: Math.max(0, pos || 0),
+		bpm: bpm,
+		beats_per_bar: beats,
+		gain: Math.max(0, Math.min(1, gain)),
+		loop_start: loop.start,
+		loop_end: loop.end
+	};
+}
+
+// A committed loop follows the same region the browser segment uses. The
+// engine wraps its position at loop_end and re-reads the absolute bar grid
+// from loop_start. `record` never wraps, and `loop on` plays the song once.
+function studioEngineTransportLoop() {
+	if (mixer['time']['status'] == 'record' || mixer['time']['loop'] != 'ongoing') {
+		return { start: 0, end: 0 };
+	}
+	var region = studioLoopRegion();
+	if (region && region.end > region.start) { return { start: region.start, end: region.end }; }
+	var duration = mixer['time']['duration'] || 0;
+	if (duration > 0) { return { start: 0, end: duration }; }
+	return { start: 0, end: 0 };
+}
+
+function studioEngineTransportPost(action, fields, done) {
+	var data = $.extend({ action: action }, fields || {});
+	$.ajax({
+		url: '/manager/studio/transport',
+		type: 'POST',
+		data: data,
+		dataType: 'json',
+		success: function (answer) {
+			if (done) { done(studioEngineAnswer(answer)); }
+		},
+		error: function (xhr) {
+			var answer = xhr && xhr.responseJSON;
+			if (done) { done({ ok: false, error: (answer && answer.error) ? answer.error : studioAudioLabel('the audio engine did not answer') }); }
+		}
+	});
+}
+
+// Start the engine clock at a position, or seek the one already running.
+// Suppressing the browser click starts before the request answers; a refusal
+// clears the flag and re-anchors the browser click immediately.
+function studioEngineTransportStart(pos) {
+	if (!studioEngineTransportReady()) {
+		mixer['time']['engine_transport'] = false;
+		return;
+	}
+	var fields = studioEngineTransportFields(pos);
+	var running = !!mixer['time']['engine_transport'];
+	mixer['time']['engine_transport'] = true;
+	if (running) {
+		// A seek is position-only; tempo and loop changes ride a start below.
+		studioEngineTransportPost('seek', { position: fields.position }, studioEngineTransportAnswer);
+		return;
+	}
+	studioEngineTransportPost('start', fields, studioEngineTransportAnswer);
+}
+
+function studioEngineTransportAnswer(data) {
+	if (!data || data.ok !== true) {
+		studioEngineTransportDrop();
+		return;
+	}
+	studioEngineTransportPollStart();
+	if (data.transport) { studioEngineTransportApply(data.transport); }
+}
+
+// The engine path refused or went away: hand the clock and click back to the
+// browser. A fire-and-forget stop is safe even when no transport was started;
+// it never touches a take, and it prevents an engine clock we can no longer
+// read from playing a second click beside the browser's.
+function studioEngineTransportDrop() {
+	mixer['time']['engine_transport'] = false;
+	studioEngineTransportPollStop();
+	if (typeof studioClickReanchor === 'function') { studioClickReanchor(); }
+	studioEngineTransportPost('stop', {}, function () {});
+}
+
+function studioEngineTransportSync() {
+	if (!mixer['time']['engine_transport']) { return; }
+	var ctx = studioAudio.ctx;
+	var seg = studioAudio.playSeg;
+	var pos = (ctx && seg) ? (seg.pos0 + (ctx.currentTime - seg.ctx0)) : (mixer['time']['position'] || 0);
+	var fields = studioEngineTransportFields(pos);
+	// A start on a running transport retunes, re-loops and seeks in place: the
+	// engine never closes the device, so a knob does not make a gap.
+	studioEngineTransportPost('start', fields, function (data) {
+		if (!data || data.ok !== true) {
+			studioEngineTransportDrop();
+		}
+	});
+}
+
+function studioEngineTransportStop() {
+	studioEngineTransportPollStop();
+	var was = !!mixer['time']['engine_transport'];
+	mixer['time']['engine_transport'] = false;
+	if (!was) { return; }
+	studioEngineTransportPost('stop', {}, function () {});
+}
+
+function studioEngineTransportPollStart() {
+	if (studioEngineTransportTimer) { return; }
+	studioEngineTransportTimer = setInterval(studioEngineTransportPoll, 250);
+}
+
+function studioEngineTransportPollStop() {
+	if (studioEngineTransportTimer) { clearInterval(studioEngineTransportTimer); studioEngineTransportTimer = 0; }
+}
+
+function studioEngineTransportPoll() {
+	if (!mixer['time']['engine_transport']) { studioEngineTransportPollStop(); return; }
+	studioEngineTransportPost('status', {}, function (data) {
+		if (!data || data.ok !== true || !data.transport) {
+			studioEngineTransportDrop();
+			return;
+		}
+		studioEngineTransportApply(data.transport);
+	});
+}
+
+// The engine is the clock: update the playhead from it and re-anchor the
+// browser segment when the two have drifted past a small threshold. A loop
+// wrap is compared on the loop cycle, so a wrap is never read as a drift.
+function studioEngineTransportApply(transport) {
+	if (!transport || typeof transport.position !== 'number' || !isFinite(transport.position)) { return; }
+	if (transport.state && transport.state != 'playing') {
+		studioEngineTransportDrop();
+		return;
+	}
+	var pos = Math.max(0, transport.position);
+	var ctx = studioAudio.ctx;
+	var seg = studioAudio.playSeg;
+	var drift = 0;
+	if (ctx && seg) {
+		drift = (seg.pos0 + (ctx.currentTime - seg.ctx0)) - pos;
+	}
+	var loopStart = Number(transport.loop_start) || 0;
+	var loopEnd = Number(transport.loop_end) || 0;
+	var period = (loopEnd > loopStart) ? (loopEnd - loopStart) : 0;
+	if (period > 0) {
+		drift = ((drift % period) + period) % period;
+		if (drift > period / 2) { drift -= period; }
+	}
+	mixer['time']['position'] = pos;
+	if (Math.abs(drift) > studioEngineTransportDrift && typeof studioClockStart === 'function') {
+		// Re-anchor the segment (and the takes that have not sounded yet) to
+		// the engine position. This never commands the engine again.
+		studioClockStart(pos, true);
+	}
+}
+
 // Begin (or restart) the transport at a transport position, anchored to now.
-function studioClockStart(pos) {
+function studioClockStart(pos, fromEngine) {
 	var ctx = studioContext();
 	if (!ctx) { return; }
 	// resuming past a committed loop lands back on its in-point, so the section
@@ -277,6 +464,7 @@ function studioClockStart(pos) {
 	studioAudio.clickSeg = studioSegmentCopy(seg);
 	studioAudio.clickKey = studioClickKey();
 	mixer['time']['position'] = pos;
+	if (!fromEngine && typeof studioEngineTransportStart === 'function') { studioEngineTransportStart(pos); }
 	studioScheduleTick();
 }
 
@@ -342,6 +530,8 @@ function studioScheduleTick() {
 	if (studioAudio.clickKey !== key) {
 		studioAudio.clickKey = key;
 		studioClickReanchor();
+		// A tempo, signature or loop change retimes the engine too, in place.
+		if (typeof studioEngineTransportSync === 'function') { studioEngineTransportSync(); }
 	}
 	var horizon = ctx.currentTime + (studioAudio.lookahead || 2.0);
 	var guard = 0;
@@ -532,9 +722,10 @@ function studioScheduleTake(ch, take, ordered, i, p0, p1, ctx0) {
 }
 
 function studioScheduleClicks(p0, p1, ctx0) {
-	// An engine take generates its own click on the device clock; the browser
-	// must not add a second one while it records.
-	if (mixer['time'] && mixer['time']['engine_take']) { return; }
+	// An engine take generates its own click on the device clock, and the
+	// engine transport owns the transport's one click; the browser must not
+	// add a second one while either is active.
+	if (mixer['time'] && (mixer['time']['engine_take'] || mixer['time']['engine_transport'])) { return; }
 	var ctx = studioAudio.ctx;
 	if (!ctx || !mixer['time']['bpm']) { return; }
 	var beat = studioBeatSeconds();

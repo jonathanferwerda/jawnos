@@ -307,6 +307,31 @@ sub audio_engine_status {
 	return audio_engine_command({ cmd => 'status' });
 }
 
+# The engine's transport: `{"cmd":"transport","action":"start",
+# "position":0,"bpm":120,"beats_per_bar":4,"gain":0.5,
+# "loop_start":0,"loop_end":0}`. Positions are seconds on the song
+# timeline. Only the six fields the engine promised are forwarded, so a caller
+# cannot smuggle a seventh key through this helper; `action` is one of `start`,
+# `stop`, `seek` or `status`, and the engine validates every value before a
+# thread or a device exists. This is the browser transport's clock and
+# metronome, not an engine take: a take and the transport own the output in
+# turns, never together.
+our @audio_engine_transport_fields = qw(
+	position bpm beats_per_bar gain loop_start loop_end
+);
+
+sub audio_engine_transport {
+	my ($action, $fields) = @_;
+	my $request = { cmd => 'transport', action => $action };
+	if (ref $fields eq 'HASH') {
+		for my $key (@audio_engine_transport_fields) {
+			next unless exists $fields->{$key};
+			$request->{$key} = $fields->{$key};
+		}
+	}
+	return audio_engine_command($request);
+}
+
 sub audio_engine_stop {
 	return audio_engine_command({ cmd => 'stop' });
 }

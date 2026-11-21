@@ -1444,6 +1444,116 @@ sub action_44023 {
 	return;
 }
 
+# POST /manager/studio/transport
+#
+# The engine's transport, which owns the browser transport's clock and
+# metronome: start, stop, seek or status, with positions in seconds on the song
+# timeline. The route validates every field before the engine is dialled, so a
+# malformed request is this route's 400 rather than a socket line the engine has
+# to refuse; the engine is still the authority and its answer is relayed
+# unchanged. It never names a path, a device or a process.
+sub action_44033 {
+	my $c = shift;
+	require JawnOS::Audio::Engine;
+
+	my $action = $c->param('action');
+	$action = '' unless defined $action;
+
+	if ($action eq 'status') {
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_transport('status'));
+		return;
+	}
+	if ($action eq 'stop') {
+		$c->render(json => &JawnOS::Audio::Engine::audio_engine_transport('stop'));
+		return;
+	}
+	unless ($action eq 'start' || $action eq 'seek') {
+		$c->render(json => { ok => 0, error => 'choose a transport action: start, stop, seek or status' }, status => 400);
+		return;
+	}
+
+	my ($error, $fields) = &studio_transport_fields($c, $action);
+	if (defined $error) {
+		$c->render(json => { ok => 0, error => $error }, status => 400);
+		return;
+	}
+	$c->render(json => &JawnOS::Audio::Engine::audio_engine_transport($action, $fields));
+	return;
+}
+
+# One transport decimal: a finite JSON number, not a ref and not an empty
+# string. The exponent form is accepted, as the engine's parser accepts it.
+sub studio_transport_decimal {
+	my ($value) = @_;
+	return undef unless defined $value && !ref $value && length $value;
+	return undef unless $value =~ /\A\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*\z/;
+	my $number = $value + 0;
+	return undef unless $number == $number && abs($number) < 1e308;
+	return $number;
+}
+
+# Validate the transport's six fields and return (error, hash). A `seek` needs
+# a position; a `start` defaults it to zero. Tempo, signature and gain default
+# to the page's 120 / 4 / 0.5 when omitted, and the engine has the same
+# defaults. The loop is off unless its end is past its start.
+sub studio_transport_fields {
+	my ($c, $action) = @_;
+
+	my $raw_position = $c->param('position');
+	my $position = &studio_transport_decimal($raw_position);
+	if (defined $raw_position && length $raw_position) {
+		return ('transport position must be a finite number of seconds, not negative', undef)
+			unless defined $position && $position >= 0;
+	}
+	elsif ($action eq 'seek') {
+		return ('seek needs "position": seconds on the song timeline', undef);
+	}
+
+	my %fields;
+	$fields{'position'} = defined $position ? $position : 0;
+
+	my $raw_bpm = $c->param('bpm');
+	if (defined $raw_bpm && length $raw_bpm) {
+		my $bpm = &studio_transport_decimal($raw_bpm);
+		return ('transport bpm must be a finite number greater than zero', undef)
+			unless defined $bpm && $bpm > 0;
+		$fields{'bpm'} = $bpm;
+	}
+
+	my $raw_beats = $c->param('beats_per_bar');
+	if (defined $raw_beats && length $raw_beats) {
+		my $beats = &studio_transport_decimal($raw_beats);
+		return ('transport beats_per_bar must be a whole number from 1 to 32', undef)
+			unless defined $beats && $beats == int($beats) && $beats >= 1 && $beats <= 32;
+		$fields{'beats_per_bar'} = int($beats);
+	}
+
+	my $raw_gain = $c->param('gain');
+	if (defined $raw_gain && length $raw_gain) {
+		my $gain = &studio_transport_decimal($raw_gain);
+		return ('transport gain must be a number from 0 to 1', undef)
+			unless defined $gain && $gain >= 0 && $gain <= 1;
+		$fields{'gain'} = $gain;
+	}
+
+	for my $key (qw(loop_start loop_end)) {
+		my $raw = $c->param($key);
+		next unless defined $raw && length $raw;
+		my $value = &studio_transport_decimal($raw);
+		return ("transport $key must be a finite number of seconds, not negative", undef)
+			unless defined $value && $value >= 0;
+		$fields{$key} = $value;
+	}
+
+	my $loop_start = exists $fields{'loop_start'} ? $fields{'loop_start'} : 0;
+	my $loop_end = exists $fields{'loop_end'} ? $fields{'loop_end'} : 0;
+	if ($loop_end > 0 && $loop_end <= $loop_start) {
+		return ('transport loop_end must be greater than loop_start, or 0 for no loop', undef);
+	}
+
+	return (undef, \%fields);
+}
+
 our $studio_take_seconds_default = 10;
 our $studio_take_seconds_min     = 1;
 our $studio_take_seconds_max     = 3600;

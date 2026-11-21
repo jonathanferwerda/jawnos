@@ -24,6 +24,9 @@ $(document).on('change', '#studio_listen_input', function () {
 $(document).on('change', '#studio_listen_gain', function () { studioListenParam($(this).val()); });
 
 async function studioStop() {
+	// The engine owns the transport clock and click while it is on; stopping
+	// the browser transport stops the engine's output too.
+	if (typeof studioEngineTransportStop === 'function') { studioEngineTransportStop(); }
 	var wasRecording = (mixer['time']['status'] == 'record');
 	// a stop during the count-in cancels the take that never started
 	mixer['time']['punch_in'] = null;
@@ -133,8 +136,9 @@ function studioReleaseTakes() {
 // lets go of every take; the shared AudioContext is deliberately left alone.
 function studioTeardown() {
 	studioReleaseTimers();
+	if (typeof studioEngineTransportStop === 'function') { studioEngineTransportStop(); }
 	if (typeof studioFlushSources === 'function') { studioFlushSources(); }
-	if (mixer && mixer['time']) { mixer['time']['punch_in'] = null; mixer['time']['pending_takes'] = null; mixer['time']['engine_take'] = false; }
+	if (mixer && mixer['time']) { mixer['time']['punch_in'] = null; mixer['time']['pending_takes'] = null; mixer['time']['engine_take'] = false; mixer['time']['engine_transport'] = false; }
 	studioAudio.playSeg = null;
 	studioAudio.schedSeg = null;
 	studioAudio.clickSeg = null;

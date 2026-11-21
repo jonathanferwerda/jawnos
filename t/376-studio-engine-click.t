@@ -299,8 +299,8 @@ like($teardown, qr/engine_take'\] = false/, 'teardown clears the flag too');
 
 my $sched = body($transport, 'studioScheduleClicks');
 ok(length $sched, 'the browser click scheduler is still one function');
-like($sched, qr/if \(mixer\['time'\] && mixer\['time'\]\['engine_take'\]\) \{ return; \}/,
-	'the browser adds no second click during an engine take');
+like($sched, qr/if \(mixer\['time'\] && \(mixer\['time'\]\['engine_take'\] \|\| mixer\['time'\]\['engine_transport'\]\)\) \{ return; \}/,
+	'the browser adds no second click during an engine take or engine transport');
 like($sched, qr/osc\.frequency\.value = accent \? 1100 : 900;/,
 	'the browser click itself is unchanged');
 
