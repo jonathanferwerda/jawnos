@@ -2320,6 +2320,9 @@ function musicContentCache(html) {
 	// the middle of the queue at scrollTop 0. Any details panels are live state
 	// too and are fetched again on first press.
 	shell.find('.track_description').remove();
+	// a card whose panel was open keeps the class the pitch reader skips; the
+	// panel is gone from this shell, so the class must go too
+	shell.find('.music_track').removeClass('music_window_open');
 	var window_shell = shell.find('#music_window');
 	if (window_shell.length && parseInt(window_shell.attr('data-offset') || '0', 10) > 0) {
 		window_shell.empty();
@@ -2779,6 +2782,18 @@ function treeMaker() {
 	// own global called tree, and reading it as if it were the player's crashed
 	// the whole page before anything rendered
 	var prev = (typeof tree == 'object' && tree && Array.isArray(tree.songs) && Array.isArray(tree.past_songs)) ? tree : null;
+	var sound = document.getElementById('video');
+	// The manifest cache hands back the same object until the list is re-rendered,
+	// so its identity alone says the queue has not changed. Return before the
+	// per-call walk of every song, the key copy and the signature join: a very
+	// large library paid that linear cost on every treeMaker() call (each open,
+	// search, play and restore) even though the queue was the same. A detail
+	// panel open or a scroll never reaches this path either.
+	if (prev && entries && prev.manifest_entries === entries) {
+		prev.files = files;
+		prev.sound = sound;
+		return prev;
+	}
 	var all = [];
 	var by_key = {};
 	if (entries) {
@@ -2821,7 +2836,6 @@ function treeMaker() {
 	// the rendered slice without changing the queue, and a signature built from
 	// the DOM would rebuild (and truncate) the queue on every scroll.
 	var signature = keys.join('\u0001');
-	var sound = document.getElementById('video');
 	var same_entries = prev && prev.manifest_entries === (entries || null) && prev.signature === signature;
 	// The list only changes when it is re-rendered (a search, a crate change). Any
 	// other call keeps what it already has: rebuilding threw the queue away on
@@ -2867,15 +2881,52 @@ treeMaker();
 // --- the window over the queue -------------------------------------------------
 // The server draws one slice of the ordered queue; this keeps the slice that is
 // near the viewport mounted and asks /music/window for another when the person
-// scrolls. The pitch is measured from a real card (list row or grid row), never
-// assumed, so the list and the phone's tighter rows keep their own sizes. The
-// queue itself is the manifest, so replacing the DOM never changes what plays
-// next.
+// scrolls. The pitch is measured from the shortest closed row of the slice (list
+// row or grid row) and held for that layout, so a wrapped title or an opened
+// details panel cannot move the padding that stands in for the unmounted rest.
+// The queue itself is the manifest, so replacing the DOM never changes what
+// plays next.
 var musicWindowState = {
 	el: null, scroller: null, layout: 'list', offset: 0, total: 0, limit: 60,
-	baseTop: 0, baseBottom: 0, pitch: 0, gap: 0, columns: 1,
+	baseTop: 0, baseBottom: 0, pitch: 0, gap: 0, columns: 1, measuredFor: '',
 	seq: 0, busy: false, frame: 0, ro: null
 };
+
+// --- the window's arithmetic --------------------------------------------------
+// [[music-window-math]]
+// The pitch sizes the padding over rows that are NOT mounted, so it must be one
+// stable number: the shortest row with no details panel open, plus the gap
+// between rows. A wrapped title or an opened panel makes its own row taller,
+// and neither may move every unmounted row's share of the scroll height. A row
+// height of 0 means "not a baseline row" (a panel is open somewhere in it).
+// Pure, so a test can hand it plain numbers instead of a layout engine.
+function musicWindowPitch(rows, gap) {
+	var best = 0;
+	for (var i = 0; i < rows.length; i++) {
+		var h = rows[i];
+		if (!(h > 0)) { continue; }
+		if (!(best > 0) || h < best) { best = h; }
+	}
+	if (!(best > 0)) { return 0; }
+	return best + (gap > 0 ? gap : 0);
+}
+
+// The mounted row at the top of the viewport: the first card whose bottom is
+// below the viewport's top edge. `bottomAt(i)` is that card's bottom in the
+// scroller's own coordinates; `guess` is the pitch-based estimate, so a scroll
+// only touches the cards around it. Mixed row heights are the normal case, so
+// this reads the real edges rather than dividing scrollTop by a pitch.
+function musicWindowRowAt(count, bottomAt, topY, guess) {
+	if (!count) { return 0; }
+	guess = Math.floor(guess || 0);
+	if (guess < 0) { guess = 0; }
+	if (guess > count - 1) { guess = count - 1; }
+	var i = guess;
+	while (i > 0 && bottomAt(i - 1) > topY + 1) { i--; }
+	while (i < count - 1 && !(bottomAt(i) > topY + 1)) { i++; }
+	return i;
+}
+// [[/music-window-math]]
 
 function musicWindowInit() {
 	var el = document.getElementById('music_window');
@@ -2944,25 +2995,45 @@ function musicWindowMeasure() {
 			s.columns = Math.max(1, n);
 		}
 	}
-	var pitch = 0;
-	// an open details panel makes its row taller; measure from rows that are
-	// closed so opening one cannot change the pitch the padding is built from
-	var open = function (i) { return cards[i] && cards[i].classList.contains('music_window_open'); };
-	if (cards.length >= s.columns + 1 && !open(0) && !open(s.columns)) {
-		// the next grid row (or the next list row) gives the true pitch
-		pitch = cards[s.columns].getBoundingClientRect().top - cards[0].getBoundingClientRect().top;
-	}
-	if (!(pitch > 0) && cards.length) {
-		var maxH = 0;
-		var count = Math.min(cards.length, s.columns);
-		for (var i = 0; i < count; i++) {
-			if (open(i)) { continue; }
-			maxH = Math.max(maxH, cards[i].getBoundingClientRect().height);
+	// Measure only rows with no details panel open, and take the shortest of
+	// them. An open panel (or a wrapped title) stretches the row it is on, and
+	// measuring that row is what used to change the pitch: with a slice mounted
+	// at offset 500, a few pixels on the first card moved the padding by
+	// thousands. In a grid, a row is open if any card in it is, because the
+	// whole row stretches with it.
+	var rows = [];
+	for (var base = 0; base < cards.length; base += s.columns) {
+		var row_open = false;
+		var row_h = 0;
+		for (var c = 0; c < s.columns && base + c < cards.length; c++) {
+			var card = cards[base + c];
+			if (card.classList.contains('music_window_open')) { row_open = true; break; }
+			var h = card.getBoundingClientRect().height;
+			if (h > row_h) { row_h = h; }
 		}
-		pitch = maxH + s.gap;
+		rows.push(row_open ? 0 : row_h);
 	}
-	if (!(pitch > 0)) { pitch = (s.layout == 'grid') ? 190 : 74; }
-	s.pitch = pitch;
+	var candidate = musicWindowPitch(rows, s.gap);
+	// A content change (a title rewrapping, a panel opening) reflows the mounted
+	// rows, but it does not change the row the stylesheet draws. Keep the pitch
+	// already measured until the layout itself moves - the window's width, the
+	// number of columns, or the gap - so a resize re-measures and a panel does
+	// not. The ResizeObserver fires when a scrollbar appears, which used to be
+	// enough to re-measure through an open panel and resize every padding above.
+	var width = el.clientWidth || 0;
+	// the phone dresses the same card as a tighter row, so its switch is part of
+	// the layout the pitch belongs to
+	var music = document.getElementById('music');
+	var phone = (music && music.getAttribute('phone_layout')) || '';
+	var signature = s.layout + '|' + s.columns + '|' + Math.round(s.gap * 100) + '|' + width + '|' + phone;
+	if (signature !== s.measuredFor) {
+		if (candidate > 0) { s.pitch = candidate; s.measuredFor = signature; }
+		else if (!(s.pitch > 0)) { s.pitch = (s.layout == 'grid') ? 190 : 74; s.measuredFor = signature; }
+		// a signature change with no closed row keeps the old pitch and leaves
+		// measuredFor alone, so the next measurement that sees a closed row wins
+	}
+	else if (!(s.pitch > 0) && candidate > 0) { s.pitch = candidate; }
+	if (!(s.pitch > 0)) { s.pitch = (s.layout == 'grid') ? 190 : 74; }
 }
 
 function musicWindowApply() {
@@ -2971,6 +3042,10 @@ function musicWindowApply() {
 	var mounted = el.querySelectorAll('.music_track').length;
 	var before = Math.max(0, s.offset);
 	var after = Math.max(0, s.total - s.offset - mounted);
+	// The pitch is the one stable row height measured above; sync reads the
+	// mounted cards' real edges. They cannot disagree about which row is at the
+	// top: this padding sets where the slice starts, and sync reads the cards from
+	// there. The padding only stands in for the rows that are not mounted.
 	// a grid row holds `columns` cards, so the padding is in rows, not items;
 	// a slice is always snapped to a row boundary (see musicWindowFetch)
 	var before_rows = Math.floor(before / s.columns);
@@ -2998,9 +3073,17 @@ function musicWindowSync() {
 	var firstRect = cards[0].getBoundingClientRect();
 	// the first mounted row's content offset inside the scroller
 	var firstContentY = (firstRect.top - scRect.top) + s.scroller.scrollTop;
-	var rowDelta = Math.floor((s.scroller.scrollTop - firstContentY) / s.pitch);
-	if (!isFinite(rowDelta)) { rowDelta = 0; }
-	var topIndex = s.offset + rowDelta * s.columns;
+	var guess = Math.floor((s.scroller.scrollTop - firstContentY) / s.pitch);
+	if (!isFinite(guess)) { guess = 0; }
+	// Read the real card edges: the pitch describes an unmounted row, and a
+	// wrapped title or an open panel above makes the mounted slice taller than
+	// pitch * rows. Dividing by the pitch then names the wrong row and asks for
+	// a slice that repeats what is already mounted. The guess only aims the
+	// scan; the measurement is what decides.
+	var rowAt = musicWindowRowAt(cards.length, function (i) {
+		return cards[i].getBoundingClientRect().bottom;
+	}, scRect.top, guess);
+	var topIndex = s.offset + rowAt;
 	topIndex = Math.max(0, Math.min(s.total - 1, topIndex));
 	var visible = Math.max(1, Math.ceil(s.scroller.clientHeight / s.pitch) + 1);
 	var mountedEnd = s.offset + cards.length;
@@ -3023,6 +3106,41 @@ function musicWindowSync() {
 	}
 	if (start === s.offset && end === mountedEnd) { return; }
 	musicWindowFetch(start, end, false);
+}
+
+// The card at the top of the viewport and how far down it sits. A slice swap
+// replaces rows whose real heights the padding above only approximated, so this
+// is captured before the markup changes and put back afterwards; otherwise a
+// wrapped title or an opened panel above the viewport lands as a jump.
+function musicWindowAnchor() {
+	var s = musicWindowState;
+	if (!s.el || !s.scroller) { return null; }
+	var cards = s.el.querySelectorAll('.music_track');
+	if (!cards.length) { return null; }
+	var scRect = s.scroller.getBoundingClientRect();
+	var firstRect = cards[0].getBoundingClientRect();
+	var firstContentY = (firstRect.top - scRect.top) + s.scroller.scrollTop;
+	var guess = Math.floor((s.scroller.scrollTop - firstContentY) / s.pitch);
+	if (!isFinite(guess)) { guess = 0; }
+	var rowAt = musicWindowRowAt(cards.length, function (i) {
+		return cards[i].getBoundingClientRect().bottom;
+	}, scRect.top, guess);
+	return {
+		index: s.offset + rowAt,
+		top: cards[rowAt].getBoundingClientRect().top - scRect.top
+	};
+}
+
+function musicWindowRestoreAnchor(anchor, start) {
+	var s = musicWindowState;
+	if (!anchor || !s.el || !s.scroller) { return; }
+	var cards = s.el.querySelectorAll('.music_track');
+	var at = anchor.index - start;
+	if (at < 0 || at >= cards.length) { return; }
+	var scRect = s.scroller.getBoundingClientRect();
+	var now = cards[at].getBoundingClientRect().top - scRect.top;
+	var dy = now - anchor.top;
+	if (dy) { s.scroller.scrollTop += dy; }
 }
 
 function musicWindowFetch(start, end, force) {
@@ -3060,6 +3178,7 @@ function musicWindowFetch(start, end, force) {
 			// a later scroll owns the window; drop this answer
 			if (seq !== s.seq) { return; }
 			if (!r || typeof r.html != 'string') { s.busy = false; return; }
+			var anchor = musicWindowAnchor();
 			s.offset = start;
 			// the cache saver reads this to tell a fresh top-of-list view from one
 			// the person had scrolled away before the shell was stored
@@ -3071,6 +3190,8 @@ function musicWindowFetch(start, end, force) {
 			musicWindowMeasure();
 			musicWindowApply();
 			musicApplyRowState();
+			// put the row the person was reading back where it was
+			musicWindowRestoreAnchor(anchor, start);
 			// a scroll that arrived while this was out was refused; look again now
 			musicWindowSchedule();
 		},

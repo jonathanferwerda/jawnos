@@ -1,4 +1,4 @@
-# tests-for: templates/apps/music/files.html.ep templates/apps/music/track_rows.html.ep templates/apps/music/track_description.html.ep public/js/music.js public/css/music.css perl/Music/05_library_and_queue.pl perl/Music/07_song_maker.pl perl/Music/08_music_routes.pl
+# tests-for: templates/apps/music/files.html.ep templates/apps/music/track_rows.html.ep templates/apps/music/track_description.html.ep public/js/music.js public/css/music.css perl/Music/05_library_and_queue.pl perl/Music/07_song_maker.pl perl/Music/08_music_routes.pl lib/JawnOS/Manager/Part28.pm public/js/manager/help/01_music_speech.js
 # covers:    The Music list is a window over a manifest queue: the server draws
 #            only a slice, the player reads the whole queue from the manifest,
 #            and the details panel is fetched on first press instead of being
@@ -13,12 +13,13 @@ use Test::More;
 use File::Slurp qw(read_file write_file);
 use Mojo::JSON qw(encode_json);
 use File::Path qw(make_path);
-use File::Temp qw(tempdir);
+use File::Temp qw(tempdir tempfile);
 use JawnOSTest;
 
 require "$FindBin::Bin/../perl/Music/05_library_and_queue.pl";
 require "$FindBin::Bin/../perl/Music/06_track_naming.pl";
 require "$FindBin::Bin/../perl/Music/07_song_maker.pl";
+require JawnOS::Manager::Part28;
 
 my $root = root();
 my $js   = read_file("$root/public/js/music.js");
@@ -28,6 +29,8 @@ my $rows_tpl  = read_file("$root/templates/apps/music/track_rows.html.ep");
 my $desc_tpl  = read_file("$root/templates/apps/music/track_description.html.ep");
 my $routes    = read_file("$root/perl/Music/08_music_routes.pl");
 my $library   = read_file("$root/perl/Music/05_library_and_queue.pl");
+my $part28    = read_file("$root/lib/JawnOS/Manager/Part28.pm");
+my $help_js   = read_file("$root/public/js/manager/help/01_music_speech.js");
 
 # ------------------------------------------------------------------ the window
 {
@@ -273,6 +276,93 @@ like($js, qr/var start = Math\.max\(0, topIndex - visible \* 2 \* s\.columns\);/
 like($js, qr/var end = Math\.min\(s\.total, topIndex \+ visible \* 4 \* s\.columns\);/,
 	'and four screens ahead, so the next fetch has the same lead');
 
+# ------------------------------------------------- a slice of mixed row heights
+# The pitch sizes the padding over rows that are NOT mounted, so it must not
+# move when a mounted row grows. It is the shortest row with no details panel
+# open plus the gap, and it is only re-measured when the layout itself moves.
+like($js, qr/function musicWindowPitch\(rows, gap\)/, 'the pitch has one pure helper');
+like($js, qr/function musicWindowRowAt\(count, bottomAt, topY, guess\)/, 'the top row has one pure helper');
+my ($measure) = $js =~ /(function musicWindowMeasure\(\)\s*\{.*?\n\})/s;
+ok(defined $measure, 'musicWindowMeasure is found');
+like($measure // '', qr/rows\.push\(row_open \? 0 : row_h\)/,
+	'a row with an open panel is not a baseline row');
+like($measure // '', qr/var candidate = musicWindowPitch\(rows, s\.gap\)/,
+	'the pitch is the shortest closed row plus the gap');
+like($measure // '', qr/if \(signature !== s\.measuredFor\)/,
+	'it re-measures only when the layout signature moves');
+like($measure // '', qr/s\.measuredFor = signature/, 'and records the layout it measured for');
+unlike($measure // '', qr/cards\[s\.columns\]\.getBoundingClientRect\(\)\.top - cards\[0\]/,
+	'the first-two-rows comparison is gone');
+my ($sync) = $js =~ /(function musicWindowSync\(\)\s*\{.*?\n\})/s;
+ok(defined $sync, 'musicWindowSync is found');
+like($sync // '', qr/musicWindowRowAt\(cards\.length/,
+	'scroll maps through the real card edges');
+unlike($sync // '', qr/rowDelta \* s\.columns/, 'not by dividing scrollTop by the pitch');
+my ($apply) = $js =~ /(function musicWindowApply\(\)\s*\{.*?\n\})/s;
+ok(defined $apply, 'musicWindowApply is found');
+like($apply // '', qr/before_rows \* s\.pitch/, 'the padding is offset rows at the one stable pitch');
+unlike($apply // '', qr/getBoundingClientRect/, 'not the mounted rows\x27 real heights');
+like($js, qr/function musicWindowAnchor\(\)/, 'a slice swap captures its top row');
+like($js, qr/function musicWindowRestoreAnchor\(anchor, start\)/, 'and puts it back');
+like($js, qr/musicWindowRestoreAnchor\(anchor, start\);\s*\n\s*\/\/ a scroll that arrived/,
+	'after the new slice is padded and its rows are restored');
+
+# The arithmetic is pure, so its two shapes are driven with plain numbers: a
+# wrapped title or an open panel must not change the pitch, and a mixed slice
+# must name the row that really covers the top edge.
+my ($math) = $js =~ m{// \[\[music-window-math\]\](.*?)// \[\[/music-window-math\]\]}s;
+ok(defined $math && $math =~ /function musicWindowPitch/, 'the window math is marked for the runtime check');
+my $node = qx{command -v node 2>/dev/null};
+chomp $node;
+SKIP: {
+	skip 'node is not installed', 1 unless $node && defined $math;
+	my $script = <<"JS";
+$math
+function fail(message) { console.error(message); process.exit(1); }
+if (musicWindowPitch([74, 74], 4) !== 78) { fail('baseline rows: ' + musicWindowPitch([74, 74], 4)); }
+if (musicWindowPitch([140, 74, 74], 4) !== 78) { fail('a wrapped title raised the pitch'); }
+if (musicWindowPitch([0, 74, 0], 4) !== 78) { fail('an open panel row was measured'); }
+if (musicWindowPitch([0, 0], 4) !== 0) { fail('no closed row must say no measurement'); }
+var bottoms = [78, 218, 296, 374];
+function bottomAt(i) { return bottoms[i]; }
+if (musicWindowRowAt(4, bottomAt, 0, 0) !== 0) { fail('top of the list'); }
+if (musicWindowRowAt(4, bottomAt, 100, 0) !== 1) { fail('after a taller first row: ' + musicWindowRowAt(4, bottomAt, 100, 0)); }
+if (musicWindowRowAt(4, bottomAt, 100, 3) !== 1) { fail('the scan did not retreat to the real row'); }
+if (musicWindowRowAt(4, bottomAt, 250, 1) !== 2) { fail('the scan did not advance past a shorter row'); }
+if (musicWindowRowAt(4, bottomAt, 500, 0) !== 3) { fail('past the last bottom did not name the last row'); }
+if (musicWindowRowAt(0, bottomAt, 0, 0) !== 0) { fail('an empty slice'); }
+process.exit(0);
+JS
+	my ($fh, $file) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print {$fh} $script;
+	close $fh;
+	my $rc = system($node, $file);
+	is($rc, 0, 'a mixed-height slice keeps one pitch and names the real top row');
+}
+
+# ------------------------------------------------ the manifest walk per list
+# The parsed manifest is the whole queue, so it must be parsed once per list
+# and not copied per call. musicManifestRead caches on the element and its
+# token; treeMaker returns on the manifest object before the per-song walk.
+my ($manifest) = $js =~ /(function musicManifestRead\(\)\s*\{.*?\n\})/s;
+ok(defined $manifest, 'musicManifestRead is found');
+like($manifest // '', qr/if \(el === musicManifestEl && token === musicManifestToken\) \{ return musicManifestCache; \}/,
+	'the manifest is parsed once per element and token');
+like($manifest // '', qr/musicManifestCache = \(data && Array\.isArray\(data\.songs\)\) \? data : null;/,
+	'and the parsed queue is the cache');
+my ($detail_fetch) = $js =~ /(function musicDetailsFetch\(key, card\)\s*\{.*?\n\})/s;
+ok(defined $detail_fetch, 'musicDetailsFetch is found');
+unlike($detail_fetch // '', qr/musicManifestRead|JSON\.parse/,
+	'opening a panel reads the cached queue, not the manifest again');
+my ($tree_body) = $js =~ /(function treeMaker\(\)\s*\{.*?\n\}\s*\ntreeMaker\(\);)/s;
+ok(defined $tree_body, 'treeMaker is found for the walk check');
+my $early = index($tree_body // '', 'if (prev && entries && prev.manifest_entries === entries) {');
+my $walk  = index($tree_body // '', 'var all = [];');
+my $join  = index($tree_body // '', 'var signature = keys.join');
+ok($early >= 0 && $walk > $early,
+	'a treeMaker call returns on the manifest identity before walking the queue');
+ok($join > $early, 'and before copying the keys for the signature');
+
 # the cached shell carries the initial slice and the manifest, never a stale view
 my ($cache) = $js =~ /(function musicContentCache\(html\)\s*\{.*?\n\}\n)/s;
 ok(defined $cache, 'musicContentCache is found');
@@ -281,6 +371,41 @@ like($cache // '', qr/window_shell\.empty\(\)/,
 	'and drops a slice that was scrolled away before storing it');
 like($cache // '', qr/track_description\x27\)\.remove\(\)/,
 	'so an open details panel is not frozen into the shell');
+like($cache // '', qr/music_window_open/,
+	'and the card class the pitch reader skips goes with it');
+
+# ------------------------------------------- the guide's play-all is a queue
+# "play Friends" hands the player every match, but only max_files of them: the
+# list is sliced before it becomes the queue, so the UI never draws or plays an
+# unbounded match set. `found` still counts every match for the answer.
+my ($play) = $part28 =~ /(sub help_music_file\(.*?\n\})/s;
+ok(defined $play, 'help_music_file is found');
+like($play // '', qr/my \$max = .*setting_grabber\(\{ app => \x27misc\x27, setting => \x27max_files\x27 \}\) \|\| 30;/,
+	'the guide clamps the handed queue to max_files');
+like($play // '', qr/\@all = \@all\[0 \.\. \$max - 1\] if scalar \@all > \$max;/,
+	'and hands over only that many files');
+like($help_js, qr/var list = \(r\.files && r\.files\.length\) \? r\.files : \[r\.file\];/,
+	'the client opens that bounded list as the queue');
+{
+	my @every = map { sprintf('Music/Friends/Season 1/Episode %03d.mp4', $_) } (1 .. 120);
+	my $r = do {
+		no warnings 'redefine';
+		local *Manager::music_search = sub { return { files => [ @every ] } };
+		local *Manager::misc_setting_list = sub { return { local => { local_location => '/Music' } } };
+		local *Manager::help_media_revealed = sub { return 0 };
+		local *Manager::media_unlock_device = sub { return 'device' };
+		local *subs::settings_grabber = sub {
+			my $q = shift;
+			return (($q->{'app'} // '') eq 'misc' && ($q->{'setting'} // '') eq 'max_files') ? 30 : {};
+		};
+		local *subs::device_setter = sub { return 'local' };
+		&Manager::help_music_file(bless({}, 'MusicHelpFakeC'), 'friends', 0);
+	};
+	is($r->{'found'}, 120, 'every match is counted');
+	is(scalar @{ $r->{'files'} }, 30, 'but the queue carries max_files, not every match');
+	is($r->{'files'}->[0], $every[0], 'and the best match leads');
+	is($r->{'same_order'}, 0, 'an unshuffled request keeps the ranked order');
+}
 
 like($css, qr/#music \.music_track \{[^}]*content-visibility: auto;/s,
 	'a mounted but off-screen row skips its own layout');
@@ -293,5 +418,17 @@ sub param { return undef; }
 
 package MusicWindowParamC;
 sub param { my ($self, $name) = @_; return $self->{$name}; }
+
+package MusicHelpBase;
+sub new { bless {}, shift }
+sub port { 443 }
+package MusicHelpURL;
+sub new { bless {}, shift }
+sub base { MusicHelpBase->new }
+package MusicHelpReq;
+sub new { bless {}, shift }
+sub url { MusicHelpURL->new }
+package MusicHelpFakeC;
+sub req { MusicHelpReq->new }
 
 1;
