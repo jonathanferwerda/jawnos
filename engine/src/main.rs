@@ -303,6 +303,14 @@ A loopback needs the interface's output patched into its input.
   --master IP:PORT  the clock master to probe (required; there is no default)
   --seconds S       how long to probe, in seconds (default 1)
   --rate HZ         the sample rate the timestamps count (default 48000)
+  --pong-timeout-ms MS
+                  how long one ping waits for its pong before the next
+                  (default 20; a LAN's round trip must fit, or every reply is
+                  discarded)
+  --window N        probes kept in the least-squares fit (default 64). A
+                  window at least as long as the run fits the whole run, so
+                  the slope is the drift over that span rather than the rate
+                  of the last second.
   --json            one JSON line instead of prose
 
   A clock probe sends a CLOCK_PING every 10 ms; the master repeats the receive
@@ -357,6 +365,14 @@ struct Options {
     bind: Option<String>,
     /// `--master`: the address a clock peer probes.
     master: Option<String>,
+    /// `--pong-timeout-ms`: how long one clock ping waits for its pong. Shorter
+    /// than a LAN's round trip loses every reply; longer only delays the next
+    /// ping after a loss.
+    pong_timeout_ms: u64,
+    /// `--window`: how many probes the clock estimator's least-squares fit
+    /// keeps. A window at least as long as the run fits the whole run, which
+    /// is what turns a rate estimate into a drift measurement.
+    window: usize,
     /// Which machine this engine serves, resolved from `--machine`, then
     /// `$JAWNOS_AUDIO_MACHINE`, then `$HOSTNAME`, then `"local"`.
     machine: String,
@@ -428,8 +444,8 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<ExitCode, String> {
-    let mut options = Options {
+fn default_options() -> Options {
+    Options {
         mode: Mode::Help,
         backend: BackendKind::Null,
         device: None,
@@ -444,6 +460,8 @@ fn run() -> Result<ExitCode, String> {
         plan: None,
         bind: None,
         master: None,
+        pong_timeout_ms: peer::PONG_TIMEOUT_MS,
+        window: peer::ESTIMATOR_CAPACITY,
         machine: String::new(),
         machine_given: false,
         system_device: None,
@@ -475,9 +493,13 @@ fn run() -> Result<ExitCode, String> {
         input_given: false,
         seconds_given: false,
         json: false,
-    };
+    }
+}
 
-    let mut args = std::env::args().skip(1);
+fn parse_arguments(
+    options: &mut Options,
+    mut args: impl Iterator<Item = String>,
+) -> Result<(), String> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--check" => options.mode = Mode::Check,
@@ -543,6 +565,18 @@ fn run() -> Result<ExitCode, String> {
             "--clock-peer" => options.mode = Mode::ClockPeer,
             "--bind" => options.bind = Some(value(&mut args, "--bind")?),
             "--master" => options.master = Some(value(&mut args, "--master")?),
+            "--pong-timeout-ms" => {
+                let raw = value(&mut args, "--pong-timeout-ms")?;
+                options.pong_timeout_ms = raw.parse().map_err(|_| {
+                    format!("--pong-timeout-ms wants milliseconds, not `{raw}`")
+                })?;
+            }
+            "--window" => {
+                let raw = value(&mut args, "--window")?;
+                options.window = raw
+                    .parse()
+                    .map_err(|_| format!("--window wants a probe count, not `{raw}`"))?;
+            }
             "--selftest" => options.mode = Mode::SelfTest,
             "--version" | "-V" => options.mode = Mode::Version,
             "--help" | "-h" => options.mode = Mode::Help,
@@ -665,6 +699,52 @@ fn run() -> Result<ExitCode, String> {
             other => return Err(format!("unknown option `{other}` (try --help)")),
         }
     }
+    Ok(())
+}
+
+/// The clock modes' own rules. `--bind` and `--master` belong to one role
+/// each, a probe loop needs a duration and rate it can act on, and the two
+/// knobs that tune that loop belong to the peer alone.
+fn validate_clock_options(options: &Options) -> Result<(), String> {
+    if options.bind.is_some() && options.mode != Mode::ClockMaster {
+        return Err("--bind applies only to --clock-master".to_string());
+    }
+    if options.master.is_some() && options.mode != Mode::ClockPeer {
+        return Err("--master applies only to --clock-peer".to_string());
+    }
+    if options.mode != Mode::ClockPeer
+        && (options.pong_timeout_ms != peer::PONG_TIMEOUT_MS
+            || options.window != peer::ESTIMATOR_CAPACITY)
+    {
+        return Err("--pong-timeout-ms and --window apply only to --clock-peer".to_string());
+    }
+    if options.mode == Mode::ClockPeer && options.master.is_none() {
+        return Err(
+            "--clock-peer needs --master IP:PORT: the clock master to probe".to_string(),
+        );
+    }
+    if matches!(options.mode, Mode::ClockMaster | Mode::ClockPeer) {
+        if !(options.seconds.is_finite() && options.seconds > 0.0) {
+            return Err("--seconds wants a positive, finite duration".to_string());
+        }
+        if options.rate == 0 {
+            return Err("--rate wants a positive sample rate".to_string());
+        }
+    }
+    if options.mode == Mode::ClockPeer {
+        if options.pong_timeout_ms == 0 {
+            return Err("--pong-timeout-ms wants a positive number of milliseconds".to_string());
+        }
+        if options.window == 0 {
+            return Err("--window wants at least one probe".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn run() -> Result<ExitCode, String> {
+    let mut options = default_options();
+    parse_arguments(&mut options, std::env::args().skip(1))?;
 
     // The machine is resolved once, from the flag, then the environment, then
     // the hostname, then "local". It is only used by `--patch` and `--serve`,
@@ -787,25 +867,7 @@ fn run() -> Result<ExitCode, String> {
     if options.handset_device_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
         return Err("--handset-device applies only to --patch and --serve".to_string());
     }
-    if options.bind.is_some() && options.mode != Mode::ClockMaster {
-        return Err("--bind applies only to --clock-master".to_string());
-    }
-    if options.master.is_some() && options.mode != Mode::ClockPeer {
-        return Err("--master applies only to --clock-peer".to_string());
-    }
-    if options.mode == Mode::ClockPeer && options.master.is_none() {
-        return Err(
-            "--clock-peer needs --master IP:PORT: the clock master to probe".to_string(),
-        );
-    }
-    if matches!(options.mode, Mode::ClockMaster | Mode::ClockPeer) {
-        if !(options.seconds.is_finite() && options.seconds > 0.0) {
-            return Err("--seconds wants a positive, finite duration".to_string());
-        }
-        if options.rate == 0 {
-            return Err("--rate wants a positive sample rate".to_string());
-        }
-    }
+    validate_clock_options(&options)?;
 
     match options.mode {
         Mode::Help => {
@@ -1173,11 +1235,11 @@ fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
         .connect(master)
         .map_err(|error| format!("--clock-peer cannot reach {master}: {error}"))?;
     socket
-        .set_read_timeout(Some(Duration::from_millis(peer::PONG_TIMEOUT_MS)))
+        .set_read_timeout(Some(Duration::from_millis(options.pong_timeout_ms)))
         .map_err(|error| format!("clock peer timeout: {error}"))?;
 
     let clock = InstantClock::new(options.rate);
-    let mut estimator = ClockEstimator::new(options.rate);
+    let mut estimator = ClockEstimator::with_capacity(options.window, options.rate);
     let shared = peer::new_shared_estimate();
     let duration = Duration::try_from_secs_f64(options.seconds)
         .map_err(|_| format!("--seconds is out of range: {}", options.seconds))?;
@@ -3652,6 +3714,49 @@ mod signals {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clock_knobs_parse_and_apply_only_to_the_peer() {
+        let parse = |words: &[&str]| {
+            let mut options = default_options();
+            parse_arguments(&mut options, words.iter().map(|word| word.to_string()))
+                .expect("a parse");
+            options
+        };
+
+        // The defaults are the peer module's own, so a run that names neither
+        // knob behaves as the constant says.
+        let bare = parse(&[]);
+        assert_eq!(bare.pong_timeout_ms, peer::PONG_TIMEOUT_MS);
+        assert_eq!(bare.window, peer::ESTIMATOR_CAPACITY);
+
+        let peer = parse(&[
+            "--clock-peer",
+            "--master",
+            "127.0.0.1:7050",
+            "--pong-timeout-ms",
+            "40",
+            "--window",
+            "65536",
+        ]);
+        assert_eq!(peer.pong_timeout_ms, 40);
+        assert_eq!(peer.window, 65_536);
+        validate_clock_options(&peer).expect("a peer may set both knobs");
+
+        // The master answers pings; it has no probe loop to tune.
+        let master = parse(&["--clock-master", "--pong-timeout-ms", "40"]);
+        assert!(validate_clock_options(&master).is_err());
+
+        // Zero would mean a probe loop that waits for nothing or fits nothing.
+        let zero = parse(&[
+            "--clock-peer",
+            "--master",
+            "127.0.0.1:7050",
+            "--window",
+            "0",
+        ]);
+        assert!(validate_clock_options(&zero).is_err());
+    }
 
     #[test]
     fn an_explicit_alignment_is_given_and_a_null_calibration_shifts_nothing() {

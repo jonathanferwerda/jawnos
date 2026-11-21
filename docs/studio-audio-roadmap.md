@@ -733,6 +733,16 @@ does not track how the offset moves during a take.
 **Gate:** two machines, ten minutes, drift **< 1 sample** without an audible correction, LAN
 monitoring **< 15 ms**.
 
+**First measurement (2026-11-21):** `table` as master, the laptop as peer, over the house's Wi-Fi.
+Ten minutes kept 17 109 probes with an 86-sample (1.8 ms) minimum round trip, so the monitoring
+gate is already clear. Raw drift was -0.79 ppm in one run and +3.3 ppm in the one before it, because
+`CLOCK_MONOTONIC` follows NTP's frequency steering; the spike timestamps counters, not the DAC, so
+P3's resampling must track the audio clock itself. The fit pinned the rate to 0.11 ppm, about three
+samples of model uncertainty across the ten minutes - the number the drift gate is judged on. Two
+knobs came out of the run: `--window` keeps the whole run in the least-squares fit (the default 64
+probes span 640 ms), and `--pong-timeout-ms` must clear the path's round trip (the old 5 ms lost
+every Wi-Fi reply). Both reports now carry the fit's residual and slope error.
+
 ### P4 — Sources that are late (2 weeks)
 
 The uplink proper, with compensation: the phone (C) and the T-Deck (D) become channels on the master,
@@ -782,7 +792,10 @@ ring spans about 85 ms (one chunk plus a cushion, never less than two chunks), s
 nothing and a burst drops whole frames and counts them rather than splitting one.
 
 **Still owed:** delegation of a route to a peer machine's engine (P3), and a per-machine `manage`
-setting (the switch is house-wide today).
+setting (the switch is house-wide today). A picker choice of `default` must resolve to the sink
+the mix replaced rather than to the house's own sink: the engine takes the boot file's `device`, so
+a plan written with `default` patches its playback onto `jawn_system` and fails with ALSA I/O error
+5 even though the supervisor spawned it on the right node.
 
 **Gate:** the house's sound is routed, saved and restored across a reboot entirely from Sound; other
 streams on `table` (Music, alerts, a call) neither change the UM2's latency nor drop a sample;

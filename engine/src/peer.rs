@@ -45,15 +45,20 @@ pub const PONG_PAYLOAD_LEN: usize = 24;
 /// per 10 ms audio block at 48 kHz and enough samples for a short fit.
 pub const PING_INTERVAL_MS: u64 = 10;
 /// How long the peer waits for a pong before giving up on that ping. A lost
-/// reply costs one interval, not the probe.
-pub const PONG_TIMEOUT_MS: u64 = 5;
+/// reply costs one interval, not the probe. It must exceed the path's round
+/// trip: twenty milliseconds clears a Wi-Fi LAN whose ping floor is a few
+/// milliseconds, and a reply that arrives sooner still returns the call at
+/// once, so the loopback case pays nothing.
+pub const PONG_TIMEOUT_MS: u64 = 20;
 /// The master's default bind: loopback only, an ephemeral port. Opening a port
 /// another machine can reach is an explicit `--bind`.
 pub const DEFAULT_BIND: &str = "127.0.0.1:0";
 
 /// How many probes the estimator keeps. At one ping per 10 ms this is ~640 ms
 /// of history: enough to reject jitter without pretending to remember a whole
-/// session. The two-machine ten-minute run measures the long-term model.
+/// session. A caller that needs the long-term model (`--window`) widens it
+/// rather than changing this default: a ten-minute run keeps every probe, so
+/// the fit's slope spans the run.
 pub const ESTIMATOR_CAPACITY: usize = 64;
 /// A probe whose round trip is more than this much worse than the best one in
 /// the window is treated as an outlier. The allowance scales with the best
@@ -432,6 +437,17 @@ impl ClockEstimator {
     /// The current estimate, or `None` until the window has `MIN_SAMPLES`
     /// points (or all of them share one local time).
     pub fn estimate(&self) -> Option<ClockOffset> {
+        self.fit().map(|(estimate, _quality)| estimate)
+    }
+
+    /// The current estimate with the fit's own quality.
+    ///
+    /// `slope_error_ppm` is the slope's standard error. Over a run of `T`
+    /// seconds it is the corrected drift the model leaves behind:
+    /// `slope_error_ppm * T * rate / 1e6` samples. A ten-minute gate reads
+    /// that number rather than the raw drift, because the raw drift is what
+    /// the fitted rate exists to cancel.
+    pub fn fit(&self) -> Option<(ClockOffset, FitQuality)> {
         if self.samples.len() < MIN_SAMPLES {
             return None;
         }
@@ -456,9 +472,28 @@ impl ClockEstimator {
         }
         let slope = sxy / sxx;
         let intercept = mean_y - slope * mean_x;
-        Some(ClockOffset::new(
-            intercept.round() as i64,
-            (1.0 - slope) * 1_000_000.0,
+        let mut sse = 0.0;
+        for sample in &self.samples {
+            let residual =
+                sample.master_midpoint() - (intercept + slope * sample.local_midpoint());
+            sse += residual * residual;
+        }
+        let rms_residual_samples = (sse / count).sqrt();
+        // Two fitted parameters cost two degrees of freedom.
+        let slope_error_ppm = if self.samples.len() > 2 {
+            (sse / (count - 2.0) / sxx).sqrt() * 1_000_000.0
+        } else {
+            f64::INFINITY
+        };
+        Some((
+            ClockOffset::new(
+                intercept.round() as i64,
+                (1.0 - slope) * 1_000_000.0,
+            ),
+            FitQuality {
+                rms_residual_samples,
+                slope_error_ppm,
+            },
         ))
     }
 
@@ -486,6 +521,15 @@ impl ClockEstimator {
     pub fn window_len(&self) -> usize {
         self.samples.len()
     }
+}
+
+/// How well the line explains the probes it was fitted to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FitQuality {
+    /// RMS distance of the kept probes from the fitted line, in samples.
+    pub rms_residual_samples: f64,
+    /// The slope's standard error, in ppm.
+    pub slope_error_ppm: f64,
 }
 
 /// The latest estimate, off the audio thread.
@@ -538,6 +582,8 @@ pub struct ClockReport {
     pub min_rtt_samples: Option<u64>,
     pub last_rtt_samples: Option<u64>,
     pub estimate: Option<ClockOffset>,
+    /// The fit's residual and slope error, for a peer run long enough to fit.
+    pub quality: Option<FitQuality>,
     pub error: String,
 }
 
@@ -557,6 +603,7 @@ impl ClockReport {
             min_rtt_samples: None,
             last_rtt_samples: None,
             estimate: None,
+            quality: None,
             error: String::new(),
         }
     }
@@ -584,6 +631,7 @@ impl ClockReport {
             min_rtt_samples: estimator.min_rtt(),
             last_rtt_samples: estimator.last_rtt(),
             estimate,
+            quality: estimator.fit().map(|(_estimate, quality)| quality),
             error: String::new(),
         }
     }
@@ -603,6 +651,7 @@ impl ClockReport {
             min_rtt_samples: None,
             last_rtt_samples: None,
             estimate: None,
+            quality: None,
             error: error.into(),
         }
     }
@@ -643,8 +692,15 @@ impl ClockReport {
             ),
             None => ("null".to_string(), "null".to_string()),
         };
+        let (rms, slope_error) = match self.quality {
+            Some(quality) => (
+                format!("{:.3}", quality.rms_residual_samples),
+                format!("{:.6}", quality.slope_error_ppm),
+            ),
+            None => ("null".to_string(), "null".to_string()),
+        };
         format!(
-            "{{\"ok\":true,\"role\":\"peer\",\"master\":\"{}\",\"rate\":{},\"seconds\":{},\"sent\":{},\"received\":{},\"kept\":{},\"dropped\":{},\"min_rtt_samples\":{},\"last_rtt_samples\":{},\"offset_samples\":{},\"drift_ppm\":{}}}",
+            "{{\"ok\":true,\"role\":\"peer\",\"master\":\"{}\",\"rate\":{},\"seconds\":{},\"sent\":{},\"received\":{},\"kept\":{},\"dropped\":{},\"min_rtt_samples\":{},\"last_rtt_samples\":{},\"offset_samples\":{},\"drift_ppm\":{},\"rms_residual_samples\":{},\"slope_error_ppm\":{}}}",
             json_escape(&self.address),
             self.rate,
             self.seconds,
@@ -655,7 +711,9 @@ impl ClockReport {
             option_u64(self.min_rtt_samples),
             option_u64(self.last_rtt_samples),
             offset,
-            drift
+            drift,
+            rms,
+            slope_error
         )
     }
 
@@ -676,10 +734,18 @@ impl ClockReport {
             ),
             None => "no estimate yet".to_string(),
         };
+        let fit = match self.quality {
+            Some(quality) => format!(
+                ", fit rms {:.2} samples, slope ±{:.3} ppm",
+                quality.rms_residual_samples, quality.slope_error_ppm
+            ),
+            None => String::new(),
+        };
         format!(
-            "clock peer of {}: {}, {} sent, {} received, {} kept, {} dropped, RTT {} samples (min {})",
+            "clock peer of {}: {}{}, {} sent, {} received, {} kept, {} dropped, RTT {} samples (min {})",
             self.address,
             estimate,
+            fit,
             self.sent,
             self.received,
             self.kept,
@@ -876,6 +942,45 @@ mod tests {
             after.drift_ppm
         );
         assert!((after.drift_ppm - before.drift_ppm).abs() < 0.5);
+    }
+
+    #[test]
+    fn a_long_window_fits_the_whole_run_not_its_tail() {
+        // A ten-minute run is ~60 000 probes; 4 000 keeps the test quick and
+        // is still 60x the default window. The exact drift is 4 ppm; at this
+        // baseline a fourth of a ppm is the integer stamp's own floor, and the
+        // 640 ms default window's slope is an order of magnitude noisier.
+        let mut wide = ClockEstimator::with_capacity(4_096, RATE);
+        let mut tail = ClockEstimator::new(RATE);
+        for index in 0..4_000u64 {
+            // Probes 10 ms apart with a one-sample jitter either way.
+            let sample = sample_at(index * 480, 48, 1_000_000, 4.0, (index % 3) as i64 - 1);
+            wide.push(sample);
+            tail.push(sample);
+        }
+        assert_eq!(wide.window_len(), 4_000);
+        assert_eq!(tail.window_len(), ESTIMATOR_CAPACITY);
+        let estimate = wide.estimate().expect("an estimate");
+        assert!(
+            (estimate.drift_ppm - 4.0).abs() < 0.2,
+            "drift {} wanted ~4 ppm",
+            estimate.drift_ppm
+        );
+        // The wide fit pins the slope down; the tail cannot, because its
+        // baseline is a second rather than the run.
+        let (_estimate, wide_quality) = wide.fit().expect("a fit");
+        let (_estimate, tail_quality) = tail.fit().expect("a fit");
+        assert!(
+            wide_quality.rms_residual_samples < 2.0,
+            "rms {} samples wanted under 2",
+            wide_quality.rms_residual_samples
+        );
+        assert!(
+            wide_quality.slope_error_ppm < tail_quality.slope_error_ppm / 4.0,
+            "slope error wide {} tail {}",
+            wide_quality.slope_error_ppm,
+            tail_quality.slope_error_ppm
+        );
     }
 
     #[test]
