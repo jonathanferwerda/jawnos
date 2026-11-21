@@ -1503,3 +1503,70 @@ fn a_machine_outside_patch_or_serve_is_a_usage_error() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("--machine"), "stderr: {stderr}");
 }
+
+/// A SIGTERM is the tree's stop: it must take the same clean path as `quit`,
+/// not kill the process mid-block. The serve loop waits in `poll`, and the C
+/// signal handler restarts that wait (SA_RESTART), so the only way this passes
+/// is the wake pipe the handler writes and the loop polls.
+#[test]
+fn a_sigterm_stops_the_server_cleanly() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let dir = std::env::temp_dir().join(format!("jawn-audio-term-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let socket = dir.join("audio.sock");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_jawn-audio"))
+        .args([
+            "--serve",
+            "--backend",
+            "null",
+            "--socket",
+            socket.to_str().expect("socket path"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn --serve");
+
+    // Wait for the line protocol, not for the socket file: bind happens before
+    // the loop, so a mere path would not prove the server is serving.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut answered = false;
+    while Instant::now() < deadline {
+        if let Ok(mut stream) = UnixStream::connect(&socket) {
+            stream.set_read_timeout(Some(Duration::from_secs(1))).ok();
+            if stream.write_all(b"{\"cmd\":\"status\"}\n").is_ok() {
+                let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_ok() && line.contains("\"ok\":true") {
+                    answered = true;
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(answered, "the server never answered on {}", socket.display());
+
+    let killed = Command::new("kill")
+        .arg("-TERM")
+        .arg(child.id().to_string())
+        .status()
+        .expect("run kill");
+    assert!(killed.success(), "kill -TERM failed");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait for serve") {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "the server did not stop on SIGTERM");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "exit status: {status:?}");
+    assert!(!socket.exists(), "a clean stop unlinks the socket");
+    let _ = std::fs::remove_dir_all(&dir);
+}

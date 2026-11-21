@@ -30,7 +30,10 @@
 //! same take. A second connection is answered with one error line and closed.
 //! Seeing it takes a non-blocking accept while the first client is connected,
 //! so the loop waits in `poll(2)` for either descriptor rather than sleeping
-//! between looks: an idle engine must not wake for nothing.
+//! between looks: an idle engine must not wake for nothing. A signal is the
+//! one thing that must wake it from outside, and `signal(2)` restarts `poll`
+//! (SA_RESTART), so the handler writes a byte to a wake pipe that is polled
+//! beside the listener: a TERM takes the same clean path as `quit`.
 //!
 //! # Recording
 //!
@@ -937,7 +940,11 @@ fn wait_readable(fds: &[i32], next: Option<Instant>) -> Result<(), String> {
     }
 }
 
-pub(crate) fn serve(config: Config) -> Result<ExitCode, String> {
+pub(crate) fn serve(
+    config: Config,
+    stop: &'static AtomicBool,
+    wake: Option<c_int>,
+) -> Result<ExitCode, String> {
     let path = config.socket.clone();
     let listener = bind(&path)?;
     let bound = socket_id(&path).ok_or_else(|| {
@@ -970,7 +977,7 @@ pub(crate) fn serve(config: Config) -> Result<ExitCode, String> {
         // path now, and removing it would strand the engine that took over.
         std::process::exit(0);
     });
-    let mut server = Server::new(config);
+    let mut server = Server::new(config, stop, wake);
     server.boot_restore();
     let outcome = server.run(listener);
     finished.store(true, Ordering::SeqCst);
@@ -1109,6 +1116,11 @@ struct Server {
     /// The house patchbay. It owns both the capture and the outputs, so it
     /// cannot share a machine with a take, a playback or a listen.
     patch: Option<PatchSession>,
+    /// The signal flag the serve loop reads, and the wake pipe that makes a
+    /// blocked `poll` look at it. Both are set up by `run_serve`; a signal
+    /// stops the server exactly as a `quit` command does.
+    stop: &'static AtomicBool,
+    wake: Option<c_int>,
     /// The gateway's inbound port, if a call bound it. Independent of the
     /// patch: the caller's monitor is captured by `parec`, not by the device
     /// loop, so it runs beside a patch and says `off` until the first bind.
@@ -1158,7 +1170,7 @@ fn parse_prompt_volume(object: &Object) -> Result<Option<u32>, String> {
 }
 
 impl Server {
-    fn new(config: Config) -> Self {
+    fn new(config: Config, stop: &'static AtomicBool, wake: Option<c_int>) -> Self {
         // `capable` is the environment, not a call: a socket that answers (this
         // one) plus the two tools the ports need. Readiness reads it while idle.
         let capable = jawn_audio::backends::command_exists("parec")
@@ -1169,6 +1181,8 @@ impl Server {
             playback: None,
             listen: None,
             patch: None,
+            stop,
+            wake,
             gateway: Gateway::off(capable),
             next_take: 1,
             boot: BootPlan::Error("no audio plan file configured".to_string()),
@@ -1321,6 +1335,44 @@ impl Server {
         }
     }
 
+    fn stopping(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
+    }
+
+    /// Stop everything the server owns and reap the gateway's child. A `quit`
+    /// and a SIGTERM reach the same place, so a signal never leaves a closed
+    /// WAV unwritten, a device held, or an orphan behind. Every step takes its
+    /// handle, so a second call changes nothing.
+    fn shutdown(&mut self) {
+        if let Some(running) = &self.current {
+            running.stop.store(true, Ordering::SeqCst);
+        }
+        if let Some(session) = &self.playback {
+            session.stop.store(true, Ordering::SeqCst);
+        }
+        if let Some(session) = &self.listen {
+            session.stop.store(true, Ordering::SeqCst);
+        }
+        if let Some(session) = &self.patch {
+            session.stop.store(true, Ordering::SeqCst);
+        }
+        if let Some(running) = &mut self.current {
+            running.finish();
+        }
+        if let Some(session) = &mut self.playback {
+            session.finish();
+        }
+        if let Some(session) = &mut self.listen {
+            session.finish();
+        }
+        if let Some(session) = &mut self.patch {
+            session.finish();
+        }
+        // A quit is the process's end, so the gateway's child must be reaped
+        // here rather than left to init.
+        self.gateway.release();
+    }
+
     fn run(&mut self, listener: UnixListener) -> Result<(), String> {
         // Non-blocking accept, because the loop waits in `poll` and then takes
         // everything that is ready: the wait is the watcher, not a sleep.
@@ -1330,11 +1382,25 @@ impl Server {
         let listener_fd = listener.as_raw_fd();
         loop {
             self.gateway.tick();
-            // No client and no silent bind: wait on the listener alone, with no
-            // deadline. The old 2 ms sleep woke 500 times a second forever and
-            // kept the CPU out of its deeper idle states; a command now costs
-            // the same wait it always did, and an idle engine costs none.
-            wait_readable(&[listener_fd], self.gateway.next_tick())?;
+            if self.stopping() {
+                self.shutdown();
+                return Ok(());
+            }
+            // The listener, and the wake pipe a signal writes to: the wait has
+            // no deadline, so an idle engine still costs nothing, and a TERM
+            // still gets here. The old 2 ms sleep woke 500 times a second
+            // forever and kept the CPU out of its deeper idle states.
+            let mut fds = [listener_fd, -1];
+            let mut count = 1;
+            if let Some(wake) = self.wake {
+                fds[count] = wake;
+                count += 1;
+            }
+            wait_readable(&fds[..count], self.gateway.next_tick())?;
+            if self.stopping() {
+                self.shutdown();
+                return Ok(());
+            }
             let (stream, _) = match listener.accept() {
                 Ok(accepted) => accepted,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -1370,11 +1436,26 @@ impl Server {
         let mut scratch = [0u8; 8192];
         loop {
             self.gateway.tick();
+            if self.stopping() {
+                self.shutdown();
+                return Ok(true);
+            }
             // Both descriptors: this client's next line, and the second
             // connection that must be told the socket is taken. A pending
             // silent-bind retry bounds the wait, so a client that says nothing
-            // cannot postpone the retry clock.
-            wait_readable(&[listener_fd, client_fd], self.gateway.next_tick())?;
+            // cannot postpone the retry clock. The wake pipe is the third: a
+            // signal has to reach a server that is blocked on a quiet client.
+            let mut fds = [listener_fd, client_fd, -1];
+            let mut count = 2;
+            if let Some(wake) = self.wake {
+                fds[count] = wake;
+                count += 1;
+            }
+            wait_readable(&fds[..count], self.gateway.next_tick())?;
+            if self.stopping() {
+                self.shutdown();
+                return Ok(true);
+            }
             // One client at a time: a second connection is told why, in the
             // same line protocol, and closed without reading anything from it.
             match listener.accept() {
@@ -1430,33 +1511,7 @@ impl Server {
                         // WAV the caller armed is closed and the monitor loop
                         // has stopped rather than being killed mid-block. A
                         // quit is still answered exactly as promised.
-                        if let Some(running) = &self.current {
-                            running.stop.store(true, Ordering::SeqCst);
-                        }
-                        if let Some(session) = &self.playback {
-                            session.stop.store(true, Ordering::SeqCst);
-                        }
-                        if let Some(session) = &self.listen {
-                            session.stop.store(true, Ordering::SeqCst);
-                        }
-                        if let Some(session) = &self.patch {
-                            session.stop.store(true, Ordering::SeqCst);
-                        }
-                        if let Some(running) = &mut self.current {
-                            running.finish();
-                        }
-                        if let Some(session) = &mut self.playback {
-                            session.finish();
-                        }
-                        if let Some(session) = &mut self.listen {
-                            session.finish();
-                        }
-                        if let Some(session) = &mut self.patch {
-                            session.finish();
-                        }
-                        // A quit is the process's end, so the gateway's child
-                        // must be reaped here rather than left to init.
-                        self.gateway.release();
+                        self.shutdown();
                         let _ = send(&mut client.stream, &reply);
                         return Ok(true);
                     }
@@ -5647,20 +5702,27 @@ break"}"#).is_err());
         assert!(parse_object("{\"a\":1}").is_ok(), "a good object parses");
     }
     fn socket_server() -> Server {
-        Server::new(Config {
-            backend: BackendKind::Null,
-            device: "null".to_string(),
-            target: None,
-            rate: 48_000,
-            period: 4096,
-            buffer: 2,
-            channels: 1,
-            socket: PathBuf::from("/tmp/jawn-audio-test.sock"),
-            plan: None,
-            machine: "test".to_string(),
-            system_device: None,
-            handset_device: None,
-        })
+        // A server built for a protocol test has no one to stop it; the flag is
+        // static because that is what the real one reads.
+        static STOP: AtomicBool = AtomicBool::new(false);
+        Server::new(
+            Config {
+                backend: BackendKind::Null,
+                device: "null".to_string(),
+                target: None,
+                rate: 48_000,
+                period: 4096,
+                buffer: 2,
+                channels: 1,
+                socket: PathBuf::from("/tmp/jawn-audio-test.sock"),
+                plan: None,
+                machine: "test".to_string(),
+                system_device: None,
+                handset_device: None,
+            },
+            &STOP,
+            None,
+        )
     }
 
     fn take_status(inserts: &str) -> Status {

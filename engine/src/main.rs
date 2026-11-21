@@ -1036,6 +1036,26 @@ fn run_loopback(options: &Options) -> Result<ExitCode, String> {
 
 fn run_serve(options: &Options) -> Result<ExitCode, String> {
     validate_serve(options)?;
+    // A signal must take the same clean path as `quit`: the workers finish, the
+    // output fades and drains, and the socket is unlinked. The C handler sets
+    // SA_RESTART, so it cannot wake the server's `poll` by interrupting it; it
+    // writes to a wake pipe that the server polls beside its own descriptors.
+    let stop = signals::install();
+    #[cfg(unix)]
+    let wake = match signals::wake_pipe() {
+        Ok(pipe) => Some(pipe),
+        Err(error) => {
+            eprintln!("jawn-audio: cannot make the signal wake pipe: {error}");
+            None
+        }
+    };
+    #[cfg(unix)]
+    let wake_fd = {
+        use std::os::unix::io::AsRawFd;
+        wake.as_ref().map(|pipe| pipe.as_raw_fd())
+    };
+    #[cfg(not(unix))]
+    let wake_fd = None;
     let socket = socket::default_path(options.socket.as_deref())?;
     let device = options.backend.device_name(options.device.as_deref());
     // Set the PipeWire target on the control thread, before the server spawns
@@ -1049,20 +1069,24 @@ fn run_serve(options: &Options) -> Result<ExitCode, String> {
     let plan = socket::default_plan_path(options.plan.as_deref());
     // A server that cannot bind is a runtime failure, not a usage error: exit 1
     // tells a supervisor to try again, while 2 would mean the arguments are bad.
-    let outcome = socket::serve(socket::Config {
-        backend: options.backend,
-        device,
-        target: options.device.clone(),
-        rate: options.rate,
-        period: options.frames,
-        buffer: options.buffer,
-        channels: options.channels,
-        socket,
-        plan,
-        machine: options.machine.clone(),
-        system_device: options.system_device.clone(),
-        handset_device: options.handset_device.clone(),
-    });
+    let outcome = socket::serve(
+        socket::Config {
+            backend: options.backend,
+            device,
+            target: options.device.clone(),
+            rate: options.rate,
+            period: options.frames,
+            buffer: options.buffer,
+            channels: options.channels,
+            socket,
+            plan,
+            machine: options.machine.clone(),
+            system_device: options.system_device.clone(),
+            handset_device: options.handset_device.clone(),
+        },
+        stop,
+        wake_fd,
+    );
     match outcome {
         Ok(code) => Ok(code),
         Err(error) => {
@@ -3340,24 +3364,41 @@ fn self_test() -> Result<(), String> {
     Ok(())
 }
 
-/// SIGINT/SIGTERM for a run with no `--seconds`.
+/// SIGINT/SIGTERM for a run with no `--seconds`, and for the server.
 ///
 /// The handler only sets an `AtomicBool`; the listen loop checks it between
 /// blocks, so both streams are dropped in order and the report is printed
-/// rather than the process dying mid-period. `signal` is declared directly
+/// rather than the process dying mid-period. The server waits in `poll`, and
+/// the C `signal` sets SA_RESTART, which restarts that wait instead of
+/// returning: so the handler also writes one byte to a wake pipe the server
+/// adds to the descriptors it polls. `signal` and `write` are declared directly
 /// because the crate deliberately has no dependency beyond the audio backend.
 #[cfg(unix)]
 mod signals {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::io;
+    use std::os::unix::io::{AsRawFd, RawFd};
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
     static STOP: AtomicBool = AtomicBool::new(false);
+    /// The wake pipe's write end, or -1 before one exists.
+    static WAKE: AtomicI32 = AtomicI32::new(-1);
 
     extern "C" {
         fn signal(signum: i32, handler: usize) -> usize;
+        fn write(fd: i32, buf: *const std::ffi::c_void, count: usize) -> isize;
     }
 
     extern "C" fn on_signal(_: i32) {
         STOP.store(true, Ordering::SeqCst);
+        let fd = WAKE.load(Ordering::SeqCst);
+        if fd >= 0 {
+            // One byte, async-signal-safe. A full pipe is harmless: the fd is
+            // already readable, which is all the poll below needs.
+            unsafe {
+                write(fd, b"x".as_ptr() as *const std::ffi::c_void, 1);
+            }
+        }
     }
 
     /// Install the handlers once and return the flag the loop reads.
@@ -3369,6 +3410,20 @@ mod signals {
             signal(SIGTERM, on_signal as extern "C" fn(i32) as usize);
         }
         &STOP
+    }
+
+    /// The read end a `poll`-blocked loop adds to its descriptors. Call
+    /// `install` first. The write end lives for the process: the handler can
+    /// only hold a number, so closing it would leave the wake pointing at a
+    /// reused descriptor.
+    pub fn wake_pipe() -> io::Result<UnixStream> {
+        let (reader, writer) = UnixStream::pair()?;
+        reader.set_nonblocking(true)?;
+        writer.set_nonblocking(true)?;
+        let fd: RawFd = writer.as_raw_fd();
+        WAKE.store(fd, Ordering::SeqCst);
+        std::mem::forget(writer);
+        Ok(reader)
     }
 }
 
