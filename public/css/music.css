@@ -222,9 +222,10 @@ body.dark_theme .music_cfg_drawer {
 }
 /* The theatre's chrome slides rather than fades. The class is the whole state:
    display stays, so the transform can animate both ways, and an off-screen bar
-   fades out with it (the windows do not clip to their frame) and stops taking
-   clicks. musicChromeShow/Hide in music.js set it; the video include's mouse
-   handler asks for the class instead of :visible. */
+   fades out with it (the windows do not clip to their frame), stops taking
+   clicks, and leaves the focus order once the slide is done. musicChromeShow/
+   Hide in music.js set it; the video include's mouse handler asks for the class
+   instead of :visible. */
 #music #interface,
 #music .media_controls.music_player_bar {
 	transition: transform .3s ease, opacity .3s ease;
@@ -232,16 +233,24 @@ body.dark_theme .music_cfg_drawer {
 #music #interface.music_chrome_hidden {
 	transform: translateY(-100%);
 	opacity: 0;
+	visibility: hidden;
 	pointer-events: none;
+	/* the visibility flip waits for the slide out; removing the class shows it
+	   at once, because the base rule has no visibility transition */
+	transition: transform .3s ease, opacity .3s ease, visibility 0s linear .3s;
 }
 #music .media_controls.music_player_bar.music_chrome_hidden {
 	transform: translateY(100%);
 	opacity: 0;
+	visibility: hidden;
 	pointer-events: none;
+	transition: transform .3s ease, opacity .3s ease, visibility 0s linear .3s;
 }
 @media (prefers-reduced-motion: reduce) {
 	#music #interface,
-	#music .media_controls.music_player_bar { transition: none; }
+	#music #interface.music_chrome_hidden,
+	#music .media_controls.music_player_bar,
+	#music .media_controls.music_player_bar.music_chrome_hidden { transition: none; }
 }
 /* one row: transport, search taking the slack, the time, then the two options -
    nothing is laid over anything else, so the search can never cover the clock */

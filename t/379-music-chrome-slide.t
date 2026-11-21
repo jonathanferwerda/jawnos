@@ -29,9 +29,14 @@ like($css, qr/#music #interface,\s*#music \.media_controls\.music_player_bar \{\
 	'both bars transition the slide');
 like($css, qr/#music #interface\.music_chrome_hidden \{[^}]*pointer-events:\s*none/s,
 	'an off-screen interface cannot be clicked');
+like($css, qr/#music #interface\.music_chrome_hidden \{[^}]*visibility:\s*hidden/s,
+	'and leaves the focus order once it is gone');
 like($css, qr/#music \.media_controls\.music_player_bar\.music_chrome_hidden \{[^}]*pointer-events:\s*none/s,
 	'an off-screen player bar cannot be clicked');
-like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*#music #interface,\s*#music \.media_controls\.music_player_bar \{ transition: none; \}/s,
+like($css, qr/#music \.media_controls\.music_player_bar\.music_chrome_hidden \{[^}]*visibility:\s*hidden/s,
+	'and leaves the focus order once it is gone');
+like($css, qr/visibility 0s linear \.3s/, 'the visibility flip waits for the slide out');
+like($css, qr/\@media \(prefers-reduced-motion: reduce\) \{\s*#music #interface,\s*#music #interface\.music_chrome_hidden,\s*#music \.media_controls\.music_player_bar,\s*#music \.media_controls\.music_player_bar\.music_chrome_hidden \{ transition: none; \}/s,
 	'no motion is asked for with prefers-reduced-motion');
 
 # --- the state helpers ------------------------------------------------------
