@@ -75,10 +75,6 @@ $plan = &Manager::music_selection_plan([ { path => &subs::home('~/Videos/Friends
 is($plan->{'walk'}->[0], &subs::home('~/Videos/Friends'), 'a local pick walks the local folder');
 is($plan->{'archive'}->[0]->{'relative'}, 'Friends', 'and still asks the archive for what is missing');
 
-my @budget = &Manager::music_budget_files([ 'local/a', 'archive/b', 'local/c' ], { 'archive/b' => 1 }, 2);
-is_deeply(\@budget, [ 'local/a', 'local/c' ], 'the budget is spent on local files first');
-@budget = &Manager::music_budget_files([ 'local/a', 'archive/b', 'local/c' ], { 'archive/b' => 1 }, 3);
-is_deeply(\@budget, [ 'local/a', 'local/c', 'archive/b' ], 'a free slot then takes the archived fallback');
 
 # ---------------------------------------------------------------- a scratch DB
 my ($fh, $dbfile) = tempfile('jawnos-music-machine-XXXXXX', TMPDIR => 1, UNLINK => 1);
@@ -198,8 +194,9 @@ unlike($library, qr/music_folder_toggle', setting => \$s, device => \$music_devi
 like($library, qr/my %local_keys;/, 'the listing keys the copies it found on this disk');
 like($library, qr/next if \$local_keys\{/, 'and leaves the matching archive row out');
 my $maker = read_file("$FindBin::Bin/../perl/Music/07_song_maker.pl");
-like($maker, qr/\@local_files = &music_budget_files\(\\\@local_files, \$archive, \$max_files\);/,
-	'the player budget is spent on local files before archived ones');
+like($maker, qr/for \(my \$n = 0; \$n <= \$#local_files; \$n\+\+\)/,
+	'the walk covers every local file, not a budget');
+unlike($maker, qr/music_budget_files\(/, 'and there is no budget split');
 my $main = read_file("$FindBin::Bin/../perl/Music.pl");
 like($main, qr/my \$remote_render = .*'remoted'.*eq 'yes'/,
 	'a relayed open is recognised too');

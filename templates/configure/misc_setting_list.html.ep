@@ -389,7 +389,6 @@
 			<summary><%= &subs::lang('configure.general') %></summary>
 			<div class="cfg-grid misc_grid">
 			<% my @general = (
-				[ 'max_files', 'Max Files', [ 0..5000 ] ],
 				[ 'photo_size', 'Photo Size', [ '', @{$photo_sizes} ] ],
 				[ 'scan_size', 'Scan Size', [ '', @{$photo_sizes} ] ],
 				[ 'thumbnail_size', 'Thumb Size', [ '', @{$thumbnail_sizes} ] ],

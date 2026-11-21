@@ -15,23 +15,8 @@ our ($music_thumb_files);
 # the next window as it scrolls.
 our $music_window_limit = 60;
 
-# Local files first, then archived tracks in the slots that remain. An
-# archived row whose copy is on this disk has already been left out of
-# $files by music_search, so this only decides how many of each to show.
-sub music_budget_files($files, $archive, $max_files) {
-	my @all = @{ $files || [] };
-	$max_files = 30 unless defined $max_files && $max_files =~ /^\d+$/;
-	my (@local, @archived);
-	foreach my $path ( @all ) {
-		if ($archive && ref $archive eq 'HASH' && $archive->{$path}) { push @archived, $path; }
-		else { push @local, $path; }
-	}
-	splice @local, $max_files if scalar @local > $max_files;
-	my $remaining = $max_files - scalar @local;
-	$remaining = 0 if $remaining < 0;
-	splice @archived, $remaining if scalar @archived > $remaining;
-	return (@local, @archived);
-}
+# The whole library is the queue now: a render describes every file the walk
+# found and draws only the window near the viewport. There is no max_files cap.
 
 # Which slice of the ordered queue this render draws. The queue is the capped,
 # ordered list; offset 0 is its first row. A request asking for a window past
@@ -371,7 +356,6 @@ sub song_maker($data) {
 	else {
 		@local_files = @{$files};
 	}
-	my $max_files = &subs::setting_grabber({ app => 'misc', setting => 'max_files' }) || 30;
 	my $remote_uuid = $c ? $c->param('remote_uuid') : undef;
 	my $ctx = &music_probe_context();
 	$ctx->{'tree'} = &subs::inventory_grabber();
@@ -390,9 +374,8 @@ sub song_maker($data) {
 	my ($window_offset, $window_limit) = &music_window_window($data);
 
 	# A local copy is the one the person wants; the archive is the fallback for
-	# what is not on this disk. Spend the budget on local files first, in the
-	# order the window chose, then fill whatever is left with archived tracks.
-	@local_files = &music_budget_files(\@local_files, $archive, $max_files);
+	# what is not on this disk. Both are in the queue; only the window near the
+	# viewport is probed and drawn.
 	if ($now_playing->{'file'}) {
 		unshift @local_files, $now_playing->{'file'} unless grep { $_ eq $now_playing->{'file'} } @local_files;
 	}
@@ -411,7 +394,7 @@ sub song_maker($data) {
 		$noise_by_folder{$dir} = &music_common_noise($files_by_folder{$dir});
 	}
 
-	for (my $n = 0; $n <= $max_files; $n++) {
+	for (my $n = 0; $n <= $#local_files; $n++) {
 		my $path = $local_files[$n];
 		last unless defined $path;
 		# an archived track is not on this disk: the manifest already said what

@@ -50,7 +50,6 @@ my $library   = read_file("$root/perl/Music/05_library_and_queue.pl");
 		local *subs::config_reader = sub { { manager => { background_colour => 'white' }, name => 'Test', folders => [] } };
 		local *subs::setting_grabber = sub {
 			my $q = shift;
-			return 5000 if ($q->{'app'} // '') eq 'misc' && ($q->{'setting'} // '') eq 'max_files';
 			return 'Test' if ($q->{'setting'} // '') eq 'computer_name';
 			return '';
 		};
@@ -132,7 +131,6 @@ my $library   = read_file("$root/perl/Music/05_library_and_queue.pl");
 		local *subs::config_reader = sub { { manager => { background_colour => 'white' }, name => 'Test', folders => [] } };
 		local *subs::setting_grabber = sub {
 			my $q = shift;
-			return 500 if ($q->{'app'} // '') eq 'misc' && ($q->{'setting'} // '') eq 'max_files';
 			return 'Test' if ($q->{'setting'} // '') eq 'computer_name';
 			return '';
 		};
