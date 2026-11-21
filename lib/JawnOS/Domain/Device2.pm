@@ -765,6 +765,10 @@ sub measure_contrasts {
 # offers. A model is chosen by id: a bare name goes to the local Ollama,
 # @cf/... to Cloudflare, and everything else is "provider:model".
 sub ai_providers {
+	# OpenCode's free ids cost nothing without a Go plan; they ride in its model
+	# list beside the paid ones, and free_models names them so ai_model_paid leaves
+	# them offered when the account is out of Go credit.
+	my @opencode_free = qw/big-pickle mimo-v2.6-flash-free deepseek-v4.1-flash-free longcat-2.5-free iceman-free beam-free flint-40b-free nemotron-3.5-super-vl-free nemotron-3.5-lightning-free hy4-flash-free tidepool-alpha-free/;
 	return [
 		{ id => 'ollama',     label => 'Ollama (local)',        keys => [ [ 'ollama_key', 'API key (optional)' ] ] },
 		{ id => 'cloudflare', label => 'Cloudflare Workers AI', keys => [ [ 'cloudflare_account', 'Account ID' ], [ 'cloudflare_token', 'API token' ] ] },
@@ -791,10 +795,10 @@ sub ai_providers {
 			models => [ qw{openai/gpt-4o anthropic/claude-3.5-sonnet meta-llama/llama-3.3-70b-instruct google/gemini-2.0-flash-001} ] },
 		{ id => 'opencode',   label => 'OpenCode (Go / Console)', keys => [ [ 'opencode_key', 'API key' ] ],
 			# OpenCode's Console gateway is OpenAI-compatible. Models are reached as
-			# opencode:<id>. The free ids are left out because ai_model_paid treats
-			# every model of a paid provider as paid, so a bucket out of credit would
-			# hide them as well.
-			models => [ qw/claude-sonnet-5-5 claude-opus-5-5 claude-haiku-4-5 gemini-3.8-flash gemini-3.5-flash gpt-6.2-sol gpt-6.1-sol gpt-6-luna grok-4.7 qwen3.8-max qwen3.8-flash deepseek-v4.1-flash deepseek-v4-pro minimax-m3 glm-5.3 glm-5.3-flash kimi-k3 kimi-k2.7-code mistral-large-4/ ] },
+			# opencode:<id>. The list follows the gateway's own /models: a text price
+			# of 0 both ways is free, and those ids are named in free_models.
+			models => [ qw/claude-sonnet-5-5 claude-opus-5-5 claude-haiku-4-5 gemini-3.8-flash gemini-3.5-flash gpt-6.2-sol gpt-6.1-sol gpt-6-luna grok-4.7 qwen3.8-max qwen3.8-flash deepseek-v4.1-flash deepseek-v4-pro minimax-m3 glm-5.3 glm-5.3-flash kimi-k3 kimi-k2.7-code mistral-large-4/, @opencode_free ],
+			free_models => \@opencode_free },
 	];
 }
 
@@ -921,7 +925,8 @@ sub ai_model_device {
 }
 
 # The billing bucket a model draws on. Local Ollama and Cloudflare (its plan is
-# included) are free; an Ollama :cloud model and every third-party provider cost.
+# included) are free; an Ollama :cloud model and every third-party provider cost,
+# except a model its provider names as free (OpenCode's free_models).
 sub ai_model_bucket {
 	my ($model) = @_;
 	my $provider = &ai_model_provider($model);
@@ -933,6 +938,15 @@ sub ai_model_paid {
 	my ($model) = @_;
 	my $bucket = &ai_model_bucket($model);
 	return 0 if $bucket eq 'cloudflare' || $bucket eq 'ollama' || $bucket eq 'ollama_remote';
+	# a provider may name models it serves at no charge (OpenCode's free ids); the
+	# bucket stays the provider's, so an account out of credit hides only the rest
+	my $provider = &ai_model_provider($model);
+	my ($p) = grep { ($_->{'id'} || '') eq $provider } @{ &ai_providers() };
+	if ($p && ref $p->{'free_models'} eq 'ARRAY') {
+		my ($name) = $model =~ /^[a-z]+:(.+)$/;
+		$name = $model unless defined $name;
+		return 0 if grep { $_ eq $name } @{ $p->{'free_models'} };
+	}
 	return 1;
 }
 

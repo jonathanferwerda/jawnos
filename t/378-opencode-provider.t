@@ -1,6 +1,7 @@
 # tests-for: lib/JawnOS/Domain/Device2.pm lib/JawnOS/Domain/Ai3.pm lib/JawnOS/Domain/Loader.pm
-# covers:    the OpenCode provider — its key setting and its model prefix — and the
-#           Go allowance windows the balance read shows as the time available.
+# covers:    the OpenCode provider — its key setting, its model prefix, and its free
+#           ids — and the Go allowance windows the balance read shows as the time
+#           available.
 
 use strict;
 use warnings;
@@ -22,6 +23,21 @@ is( subs::ai_model_provider('opencode:deepseek-v4.1-flash'), 'opencode',
 	'an opencode model routes to opencode' );
 is( subs::ai_model_provider('opencode:claude-sonnet-5-5'), 'opencode',
 	'and so does a model of another family' );
+
+# The free ids ride in the same list; ai_model_paid reads free_models, so an
+# account out of Go credit hides only the paid models.
+my %offered = map { $_ => 1 } @{ $provider{'opencode'}{'models'} || [] };
+my @free = @{ $provider{'opencode'}{'free_models'} || [] };
+ok( scalar @free, 'the free ids are named' );
+ok( ( grep { $_ eq 'big-pickle' } @free ), 'a free OpenCode model is named' );
+is_deeply( [ grep { !$offered{$_} } @free ], [], 'every free id is offered in the model list' );
+is( subs::ai_model_paid('opencode:big-pickle'), 0, 'a free OpenCode model is not billed' );
+is( subs::ai_model_paid('opencode:deepseek-v4.1-flash-free'), 0,
+	'nor is a free id of another family' );
+is( subs::ai_model_paid('opencode:deepseek-v4.1-flash'), 1,
+	'a paid OpenCode model still is' );
+is( subs::ai_model_bucket('opencode:big-pickle'), 'opencode',
+	'a free model still draws on the OpenCode bucket' );
 
 # The hosted usage document: three meters, each with a percent used and the clock
 # it resets. 2023-11-14T22:13:20Z, so the reset clocks below are ordinary ones.

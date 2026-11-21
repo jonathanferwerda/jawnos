@@ -167,10 +167,10 @@ $topic{'platform'} = {
 		title => 'Platform (AI providers)', category => 'functions',
 		templates => [ 'templates/configure/plat_setting_list.html.ep' ],
 		summary => 'Choose the model each assistant uses, test it, add provider keys, and teach the Guide runtime commands.',
-		verified => '2026-11-16',
+		verified => '2026-11-21',
 		body => [
 			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs. On this machine {{live:models}} assistant roles have a model set, and the local Ollama is {{live:ollama}}.',
-			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
+			'Providers include the local Ollama, Cloudflare Workers AI, OpenCode, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare. OpenCode\'s free models are listed beside its paid ones and marked free, so they stay offered even when the account is out of Go credit.',
 			'Other machines\' own Ollama models are offered too, each listed under the machine that runs it (Ollama · that machine). Their model lists are cached in the background, so Plat opens without waiting on the network; picking one runs the call on that machine.',
 			'Google Veo is offered as a Video-generation model: it runs the job on Google\'s side and the tree polls it until the video is ready.',
 			'Thinking is set per agent, beside its model, and shown for the language agents — the Help guide, Evaluation, Vision, the Pen and Coding — when the chosen model can reason; Image generation never carries one. A model that does not reason is not offered the choice (the families that do: the o-series, GPT-5, Claude 3.7/4, Gemini 2.5+, Grok 3/4, DeepSeek R1/v4/flash, Magistral, Qwen3 and the like). The level reaches each agent\'s own model calls, and a level a model does not understand is dropped and the call retried without it. A machine can also switch an agent\'s thinking off outright — see Thinking (AI agents) under Configure → Misc — and then that agent carries no level here at all, whatever is chosen for it.',
