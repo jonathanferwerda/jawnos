@@ -1504,6 +1504,59 @@ fn a_machine_outside_patch_or_serve_is_a_usage_error() {
     assert!(stderr.contains("--machine"), "stderr: {stderr}");
 }
 
+#[test]
+fn clock_peer_without_a_master_is_a_usage_error() {
+    let out = run(&["--clock-peer", "--seconds", "0.1"]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--master"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_clock_flag_outside_its_role_is_a_usage_error() {
+    let out = run(&[
+        "--clock-master",
+        "--master",
+        "127.0.0.1:1",
+        "--seconds",
+        "0.1",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--master applies only"), "stderr: {stderr}");
+
+    let out = run(&[
+        "--clock-peer",
+        "--master",
+        "127.0.0.1:1",
+        "--bind",
+        "127.0.0.1:0",
+        "--seconds",
+        "0.1",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--bind applies only"), "stderr: {stderr}");
+}
+
+#[test]
+fn a_clock_master_answers_on_a_loopback_port_and_prints_it() {
+    let out = run(&["--clock-master", "--seconds", "0.1", "--json"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"role\":\"master\""), "{stdout}");
+    assert!(stdout.contains("\"served\":0"), "{stdout}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("clock master listening on 127.0.0.1:"),
+        "{stderr}"
+    );
+}
+
 /// A SIGTERM is the tree's stop: it must take the same clean path as `quit`,
 /// not kill the process mid-block. The serve loop waits in `poll`, and the C
 /// signal handler restarts that wait (SA_RESTART), so the only way this passes

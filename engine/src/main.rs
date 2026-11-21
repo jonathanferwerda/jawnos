@@ -11,16 +11,20 @@ mod patchbay;
 mod system_capture;
 mod socket;
 
+use std::io::ErrorKind;
+use std::net::{SocketAddr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use jawn_audio::{
     backends::{self, BackendKind, RunReport},
     decode, encode_datagram, loopback, mix_mono_into_stereo, monitor_start, peak, to_i16, Channel,
     listen::{self, ListenPlan, ListenReport, ListenStrip},
+    peer::{self, Clock, ClockEstimator, ClockReport, InstantClock, ProbeSample},
     Codec, Device, DiskWriter, Header, InsertKind, Mixer, MonitorSpec, NullDevice, PlayTrack,
     Playback, Strip, HEADER_LEN,
 };
@@ -52,6 +56,8 @@ jawn-audio — the JawnOS audio engine
   jawn-audio --listen [options]           monitor one input through a strip
   jawn-audio --patch --plan FILE          run the house patchbay from a saved plan
   jawn-audio --serve [options]            arm and place takes over a Unix socket
+  jawn-audio --clock-master [options]     answer clock probes over UDP (P3)
+  jawn-audio --clock-peer [options]       measure a master's clock over UDP (P3)
   jawn-audio --version                    print the version
   jawn-audio --help                       this text
 
@@ -283,7 +289,29 @@ the change is queued for the next block; `status` reports every track and
 the gain, pan and inserts it was armed with.
 The null backend needs no sound card. ALSA and JACK exist only in a build with
 --features alsa and/or --features jack; pipewire uses the ALSA `default` PCM.
-A loopback needs the interface's output patched into its input.";
+A loopback needs the interface's output patched into its input.
+
+--clock-master options:
+  --bind IP:PORT  address to listen on (default 127.0.0.1:0, loopback only and
+                  an ephemeral port); the bound address is printed on stderr
+                  as soon as it binds
+  --seconds S     how long to answer probes, in seconds (default 1)
+  --rate HZ       the sample rate the timestamps count (default 48000)
+  --json          one JSON line at the end instead of prose
+
+--clock-peer options:
+  --master IP:PORT  the clock master to probe (required; there is no default)
+  --seconds S       how long to probe, in seconds (default 1)
+  --rate HZ         the sample rate the timestamps count (default 48000)
+  --json            one JSON line instead of prose
+
+  A clock probe sends a CLOCK_PING every 10 ms; the master repeats the receive
+  and send times in a CLOCK_PONG, and the peer least-squares fits master =
+  a + b*local over a bounded window. offset_samples is a and drift_ppm is the
+  peer clock's rate error (positive means the peer runs fast). High-RTT probes
+  are dropped rather than fitted. This mode opens no audio device and writes
+  no socket under ~/.president; the default master bind is loopback, and an
+  address another machine can reach is an explicit --bind.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -296,6 +324,8 @@ enum Mode {
     Listen,
     Patch,
     Serve,
+    ClockMaster,
+    ClockPeer,
     SelfTest,
     Version,
     Help,
@@ -323,6 +353,10 @@ struct Options {
     /// `--plan`: the saved plan a `--patch` run applies, or the saved-plan
     /// wrapper a `--serve` restores from.
     plan: Option<String>,
+    /// `--bind`: the address a clock master listens on.
+    bind: Option<String>,
+    /// `--master`: the address a clock peer probes.
+    master: Option<String>,
     /// Which machine this engine serves, resolved from `--machine`, then
     /// `$JAWNOS_AUDIO_MACHINE`, then `$HOSTNAME`, then `"local"`.
     machine: String,
@@ -408,6 +442,8 @@ fn run() -> Result<ExitCode, String> {
         out: None,
         socket: None,
         plan: None,
+        bind: None,
+        master: None,
         machine: String::new(),
         machine_given: false,
         system_device: None,
@@ -503,6 +539,10 @@ fn run() -> Result<ExitCode, String> {
             }
             "--calibrate" => options.calibrate = true,
             "--serve" => options.mode = Mode::Serve,
+            "--clock-master" => options.mode = Mode::ClockMaster,
+            "--clock-peer" => options.mode = Mode::ClockPeer,
+            "--bind" => options.bind = Some(value(&mut args, "--bind")?),
+            "--master" => options.master = Some(value(&mut args, "--master")?),
             "--selftest" => options.mode = Mode::SelfTest,
             "--version" | "-V" => options.mode = Mode::Version,
             "--help" | "-h" => options.mode = Mode::Help,
@@ -747,6 +787,25 @@ fn run() -> Result<ExitCode, String> {
     if options.handset_device_given && !matches!(options.mode, Mode::Patch | Mode::Serve) {
         return Err("--handset-device applies only to --patch and --serve".to_string());
     }
+    if options.bind.is_some() && options.mode != Mode::ClockMaster {
+        return Err("--bind applies only to --clock-master".to_string());
+    }
+    if options.master.is_some() && options.mode != Mode::ClockPeer {
+        return Err("--master applies only to --clock-peer".to_string());
+    }
+    if options.mode == Mode::ClockPeer && options.master.is_none() {
+        return Err(
+            "--clock-peer needs --master IP:PORT: the clock master to probe".to_string(),
+        );
+    }
+    if matches!(options.mode, Mode::ClockMaster | Mode::ClockPeer) {
+        if !(options.seconds.is_finite() && options.seconds > 0.0) {
+            return Err("--seconds wants a positive, finite duration".to_string());
+        }
+        if options.rate == 0 {
+            return Err("--rate wants a positive sample rate".to_string());
+        }
+    }
 
     match options.mode {
         Mode::Help => {
@@ -794,6 +853,8 @@ fn run() -> Result<ExitCode, String> {
         Mode::Listen => run_listen(&options),
         Mode::Patch => run_patch(&options),
         Mode::Serve => run_serve(&options),
+        Mode::ClockMaster => run_clock_master(&options),
+        Mode::ClockPeer => run_clock_peer(&options),
     }
 }
 
@@ -1037,6 +1098,151 @@ fn run_loopback(options: &Options) -> Result<ExitCode, String> {
         println!("{}", report.prose());
     }
     Ok(ExitCode::from(if report.ok { 0 } else { 1 }))
+}
+
+fn run_clock_master(options: &Options) -> Result<ExitCode, String> {
+    let requested = options.bind.as_deref().unwrap_or(peer::DEFAULT_BIND);
+    let socket = UdpSocket::bind(requested)
+        .map_err(|error| format!("--clock-master cannot bind {requested}: {error}"))?;
+    let bound = socket
+        .local_addr()
+        .map_err(|error| format!("clock master address: {error}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(20)))
+        .map_err(|error| format!("clock master timeout: {error}"))?;
+    // The default port is ephemeral, so the human (or the peer's command line)
+    // needs the bound address before this run ends.
+    eprintln!("jawn-audio: clock master listening on {bound}");
+
+    let clock = InstantClock::new(options.rate);
+    let duration = Duration::try_from_secs_f64(options.seconds)
+        .map_err(|_| format!("--seconds is out of range: {}", options.seconds))?;
+    let deadline = Instant::now()
+        .checked_add(duration)
+        .ok_or_else(|| format!("--seconds is out of range: {}", options.seconds))?;
+    let mut incoming = [0u8; 2048];
+    let mut reply = [0u8; 2048];
+    let mut served = 0u64;
+    while Instant::now() < deadline {
+        match socket.recv_from(&mut incoming) {
+            Ok((length, origin)) => {
+                if let Ok(Some(length)) =
+                    peer::answer_ping(&incoming[..length], &clock, &mut reply)
+                {
+                    if socket.send_to(&reply[..length], origin).is_ok() {
+                        served += 1;
+                    }
+                }
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) => return Err(format!("clock master receive: {error}")),
+        }
+    }
+
+    let report = ClockReport::master(bound.to_string(), options.rate, options.seconds, served);
+    if options.json {
+        println!("{}", report.to_json());
+    } else {
+        println!("{}", report.prose());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_clock_peer(options: &Options) -> Result<ExitCode, String> {
+    let text = options
+        .master
+        .as_deref()
+        .expect("--clock-peer validates --master");
+    let master: SocketAddr = text
+        .parse()
+        .map_err(|_| format!("--master wants ip:port, not `{text}`"))?;
+    let local = if master.is_ipv6() {
+        if master.ip().is_loopback() {
+            "[::1]:0"
+        } else {
+            "[::]:0"
+        }
+    } else if master.ip().is_loopback() {
+        "127.0.0.1:0"
+    } else {
+        "0.0.0.0:0"
+    };
+    let socket = UdpSocket::bind(local)
+        .map_err(|error| format!("--clock-peer cannot bind {local}: {error}"))?;
+    socket
+        .connect(master)
+        .map_err(|error| format!("--clock-peer cannot reach {master}: {error}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(peer::PONG_TIMEOUT_MS)))
+        .map_err(|error| format!("clock peer timeout: {error}"))?;
+
+    let clock = InstantClock::new(options.rate);
+    let mut estimator = ClockEstimator::new(options.rate);
+    let shared = peer::new_shared_estimate();
+    let duration = Duration::try_from_secs_f64(options.seconds)
+        .map_err(|_| format!("--seconds is out of range: {}", options.seconds))?;
+    let deadline = Instant::now()
+        .checked_add(duration)
+        .ok_or_else(|| format!("--seconds is out of range: {}", options.seconds))?;
+    let interval = Duration::from_millis(peer::PING_INTERVAL_MS);
+    let mut outgoing = [0u8; 64];
+    let mut incoming = [0u8; 2048];
+    let mut sent = 0u64;
+    let mut received = 0u64;
+    let mut seq = 0u32;
+
+    while Instant::now() < deadline {
+        let cycle = Instant::now();
+        let local_send = clock.now();
+        seq = seq.wrapping_add(1);
+        let length = peer::encode_ping(&mut outgoing, seq, local_send, 0)
+            .map_err(|error| format!("clock ping: {error:?}"))?;
+        socket
+            .send(&outgoing[..length])
+            .map_err(|error| format!("clock peer send: {error}"))?;
+        sent += 1;
+
+        match socket.recv(&mut incoming) {
+            Ok(length) => {
+                let local_recv = clock.now();
+                if let Ok((_, pong)) = peer::decode_pong(&incoming[..length]) {
+                    // The echo matches this ping, not a late reply to the one before.
+                    if pong.echo_local_send == local_send {
+                        let sample = ProbeSample::from_pong(pong, local_send, local_recv);
+                        estimator.push(sample);
+                        if let Some(estimate) = estimator.estimate() {
+                            peer::publish_estimate(&shared, estimate);
+                        }
+                        received += 1;
+                    }
+                }
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(error) => return Err(format!("clock peer receive: {error}")),
+        }
+
+        let elapsed = cycle.elapsed();
+        if elapsed < interval {
+            thread::sleep(interval - elapsed);
+        }
+    }
+
+    let estimate = estimator.estimate();
+    let report = ClockReport::peer(
+        master.to_string(),
+        options.rate,
+        options.seconds,
+        sent,
+        received,
+        &estimator,
+        estimate,
+    );
+    if options.json {
+        println!("{}", report.to_json());
+    } else {
+        println!("{}", report.prose());
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_serve(options: &Options) -> Result<ExitCode, String> {

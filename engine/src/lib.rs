@@ -20,6 +20,7 @@ pub mod loopback;
 pub mod mixer;
 pub mod monbus;
 pub mod params;
+pub mod peer;
 pub mod pipewire_guard;
 pub mod playback;
 pub mod proto;
@@ -49,6 +50,13 @@ pub use playback::{
     TransportControl, TransportLive, TransportPlan, TransportSource,
 };
 pub use params::Param;
+pub use peer::{
+    answer_ping, decode_ping, decode_pong, encode_ping, encode_pong, latest_estimate,
+    new_shared_estimate, publish_estimate, Clock, ClockEstimator, ClockReport, InstantClock,
+    ManualClock, Pong, ProbeError, ProbeSample, SharedEstimate, SkewedClock, CLOCK_SESSION,
+    DEFAULT_BIND, ESTIMATOR_CAPACITY, MIN_SAMPLES, PING_INTERVAL_MS, PING_PAYLOAD_LEN,
+    PONG_PAYLOAD_LEN, PONG_TIMEOUT_MS, RTT_SLACK_MS, STREAM_CLOCK_PING, STREAM_CLOCK_PONG,
+};
 pub use proto::{
     decode, encode_datagram, Codec, Header, ProtoError, FLAG_CONCEALED, FLAG_DISCONTINUITY,
     HEADER_LEN, VERSION,
