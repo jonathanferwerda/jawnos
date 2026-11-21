@@ -12,7 +12,7 @@ our ($music_device, $music_files, $music_permissive);
 # it. A configured <location>_location wins; when the row is absent the house's
 # folder list supplies the conventional folder (Videos, Music, ...), which is
 # what the configure panel offers and what an archive folder is named after.
-sub music_location_roots($misc_settings, $folders) {
+sub music_location_roots($misc_settings, $folders = undef) {
 	$misc_settings = &Manager::misc_setting_list() unless ref $misc_settings eq 'HASH';
 	my $settings = $misc_settings->{$music_device} || {};
 	my @folders = ref $folders eq 'ARRAY' ? @{$folders} : @{ &subs::config_reader()->{'folders'} || [] };

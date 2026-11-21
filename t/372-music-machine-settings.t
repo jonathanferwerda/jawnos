@@ -41,6 +41,15 @@ my $roots = &Manager::music_location_roots({ computer => { music_location => '~/
 is($roots->{'music'}, &subs::home('~/Music'), 'a configured location is the root');
 is($roots->{'video'}, &subs::home('~/Videos'), 'an unset location falls back to the house folder named Videos');
 ok(!defined $roots->{'rec'}, 'a location with no configured or conventional folder has no root');
+{
+	# every production caller passes only the settings; the folder list is the
+	# optional second argument. A required one made /music/search die at the call.
+	no warnings 'redefine';
+	local *subs::config_reader = sub { { folders => [ '~/Videos' ] } };
+	my $house = &Manager::music_location_roots({ computer => {} });
+	is($house->{'video'}, &subs::home('~/Videos'),
+		'a one-argument call reads the house folders');
+}
 
 my $parts = &Manager::music_local_parts(&subs::home('~/Videos/Friends/S01E01.mkv'), $roots);
 is($parts->{'location'}, 'video', 'a local file resolves to its location');
