@@ -173,6 +173,7 @@
 						<% $app_tax_codes = [] unless ref $app_tax_codes eq 'ARRAY'; %>
 						<% my %app_tax_selected = map { $_ => 1 } grep { !ref($_) && length($_) } @{$app_tax_codes}; %>
 						<% my $app_tax_country = uc($appts->{$a}->{'setting'}->{'tax_country'} || ''); %>
+						<% my $app_tax_save = $appts->{$a}->{'setting'}->{'tax_delta_save'} || 'block'; %>
 						<% my $tax_rows = scalar @{$tax_catalog}; $tax_rows = 6 if ($tax_rows > 6); $tax_rows = 1 if ($tax_rows < 1); %>
 						<div class="app_tax">
 							<h4 class="app_tax_title"><%= &subs::ui('Tax') %></h4>
@@ -204,6 +205,16 @@
 												<% my $rate_text = $app_tax->{'rate'} // ''; $rate_text =~ s/0+$// if $rate_text =~ /\./; $rate_text =~ s/\.$//; %>
 												<option value="<%= $app_tax->{'code'} %>"<% if ($app_tax_selected{$app_tax->{'code'}}) { %> selected<% } %>><%= $app_tax->{'name'} %> (<%= $rate_text %>%)</option>
 											<% } %>
+										</select>
+									</span>
+								</div>
+								<div class="cfg-row">
+									<label><%= &subs::ui('Receipt tax does not match') %></label>
+									<span>
+										<select class="configure_input" app="<%= $a %>" setting="tax_delta_save">
+											<option value="block"<% if ($app_tax_save eq 'block') { %> selected<% } %>><%= &subs::ui('Block save until it matches') %></option>
+											<option value="unattributed"<% if ($app_tax_save eq 'unattributed') { %> selected<% } %>><%= &subs::ui('Warn, then save the tax unassigned') %></option>
+											<option value="warn"<% if ($app_tax_save eq 'warn') { %> selected<% } %>><%= &subs::ui('Warn, then save without the receipt tax') %></option>
 										</select>
 									</span>
 								</div>

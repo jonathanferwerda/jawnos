@@ -1,4 +1,5 @@
 <% no warnings 'uninitialized'; %>
+<% use Mojo::JSON qw/encode_json/; %>
 <%# Market: the shopping side of the warehouse. A vendors dropdown scopes the
     list; the Shopping List tab holds what to buy, each row carrying a need/want
     dial; the Shopping tab reads the same list through a needs/wants/all filter.
@@ -123,7 +124,7 @@
 			<div style="padding:10px;font-size:16px;opacity:.7;">No receipts kept yet. Read one with the Receipt button.</div>
 		<% } %>
 		<% foreach my $r ( @receipts ) { %>
-			<div class="market_receipt_row" data-uuid="<%= $r->{'uuid'} %>" data-apply="<%= $r->{'apply_json'} %>" data-files="<%= $r->{'files_json'} %>" data-total="<%= defined $r->{'total'} ? $r->{'total'} : '' %>" data-date="<%= $r->{'date'} %>" data-time="<%= $r->{'time'} || '' %>" data-category="<%= $r->{'category'} || '' %>" data-vendor="<%= $r->{'vendor'} %>" data-payment="<%= $r->{'payment_method'} %>" data-payment-ref="<%= $r->{'payment_ref'} %>" data-account="<%= $r->{'account'} %>" style="border-bottom:1px solid var(--line);padding:6px;">
+			<div class="market_receipt_row" data-uuid="<%= $r->{'uuid'} %>" data-apply="<%= $r->{'apply_json'} %>" data-files="<%= $r->{'files_json'} %>" data-total="<%= defined $r->{'total'} ? $r->{'total'} : '' %>" data-subtotal="<%= defined $r->{'subtotal'} ? $r->{'subtotal'} : '' %>" data-tax-total="<%= defined $r->{'tax_total'} ? $r->{'tax_total'} : '' %>" data-taxes="<%= encode_json($r->{'taxes'} || []) %>" data-tax-legend="<%= encode_json($r->{'tax_legend'} || []) %>" data-tax-included="<%= $r->{'tax_included'} ? '1' : '0' %>" data-date="<%= $r->{'date'} %>" data-time="<%= $r->{'time'} || '' %>" data-category="<%= $r->{'category'} || '' %>" data-vendor="<%= $r->{'vendor'} %>" data-payment="<%= $r->{'payment_method'} %>" data-payment-ref="<%= $r->{'payment_ref'} %>" data-account="<%= $r->{'account'} %>" style="border-bottom:1px solid var(--line);padding:6px;">
 				<div style="font-size:17px;">
 					<b><%= &subs::format_name($r->{'vendor'} || 'Receipt') %></b>
 					<% if ($r->{'date'}) { %><span style="opacity:.6;font-size:14px;margin-left:6px;"><%= $r->{'date'} %><% if ($r->{'time'}) { %> <%= $r->{'time'} %><% } %></span><% } %>

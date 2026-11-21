@@ -339,6 +339,23 @@ $(document).on('click', '.record_purchase', function() {
 		}
 	}
 
+	// The receipt's printed tax is the checksum. A vendor policy of block stops
+	// the save here for an immediate answer; the server checks the same thing
+	// against the kept receipt before it writes anything.
+	if ((movement == 'expense' || movement == 'income') && typeof transactionTaxCodedTotal === 'function') {
+		var receiptTax = numeral(iq.attr('receipt_tax')).value() || 0;
+		var taxPolicy = iq.attr('tax_policy') || 'block';
+		if (receiptTax > 0) {
+			var codedTax = transactionTaxCodedTotal(iq);
+			if (Math.abs(receiptTax - codedTax) > 0.02 && taxPolicy == 'block') {
+				if (typeof txTaxDeltaPaint === 'function') { txTaxDeltaPaint(iq); }
+				jawnosAlertText(t('The receipt tax does not match the lines. Tick the tax on the items, or change this vendor\'s receipt-tax policy.')
+					+ ' (' + numeral(receiptTax).format('0.00') + ' / ' + numeral(codedTax).format('0.00') + ')');
+				return;
+			}
+		}
+	}
+
 	var unit = iq.find('.unit').val() || 1;
 
 	var data = { 

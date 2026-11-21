@@ -163,8 +163,10 @@ sub action_3497 {
 	# the person to check and save. Each line carries record_item, so saving it
 	# writes the purchase (and its stock move) with the edited quantity/unit.
 	my $category = '';
-	my (@lines, $total, $account, $vendor);
+	my (@lines, $account, $vendor);
 	my ($receipt_ts, $receipt_when, $receipt_uuid);
+	my ($net_total, $tax_total) = (0, 0);
+	my $catalog = &subs::tax_catalog();
 	# Checkout always opens an expense: money leaves the account, so the stored
 	# figure carries the negative sign Accounting reads as an outlay. A refund is
 	# the exception, flipped in the form later.
@@ -181,15 +183,28 @@ sub action_3497 {
 		$vendor = $it->{'vendor'} if !$vendor && ($it->{'vendor'} || '') ne '';
 		my $qty = ($it->{'quantity'} || 1) + 0;
 		my $price = ($it->{'price'} || 0) + 0;
-		$total += $price;
+		# The line's own taxes travel with the cart row, so the expense form opens
+		# with the receipt's per-line choice rather than a blank picker. A line
+		# that names none is left blank on purpose.
+		my $codes = &subs::tax_codes_value($it->{'tax_codes'});
+		my $line_tax = 0;
+		if (scalar @{$codes}) {
+			my $snap = &subs::tax_line_snapshot($price, &subs::tax_entries_for_codes($catalog, $codes), 0);
+			$line_tax += ($_->{'amount'} || 0) for @{$snap};
+		}
+		$line_tax = 0 + sprintf('%.2f', $line_tax);
+		$net_total += $price;
+		$tax_total += $line_tax;
 		push @lines, {
 			uuid => &subs::random_string_creator(12),
 			item => &subs::format_name($it->{'text'}),
 			quantity => $qty,
 			amount => $price * $sign,
-			tax => 0,
+			tax => $line_tax,
 			aux => 0,
-			total => $price * $sign,
+			total => ($price + $line_tax) * $sign,
+			taxes => $codes,
+			tax_known => ($it->{'tax_known'} ? 1 : 0),
 			unit => ($it->{'unit'} || 'each'),
 			state => 'delivered',
 			record_item => 'on',
@@ -199,6 +214,33 @@ sub action_3497 {
 	$category ||= &market_list_key($c->param('list') || '');
 	$category ||= &subs::unformat_name($lines[0]->{'item'}) if scalar @lines;
 	$account ||= 'cash';
+	# The paper's own tax is the reference the expense form checks against. The
+	# receipt record carries it; an older record without tax_total falls back to
+	# the printed total less its line prices.
+	my ($receipt_tax, $receipt_total);
+	if (($receipt_uuid || '') ne '') {
+		my ($receipt) = grep { ($_->{'uuid'} || '') eq $receipt_uuid } @{ &market_receipts() };
+		if ($receipt) {
+			if (defined $receipt->{'tax_total'} && $receipt->{'tax_total'} =~ /[0-9]/) {
+				$receipt_tax = &subs::tax_number($receipt->{'tax_total'});
+			}
+			elsif (defined $receipt->{'total'} && $receipt->{'total'} =~ /[0-9]/) {
+				my $sum = 0;
+				$sum += &subs::tax_number($_->{'price'}) for grep { ref $_ eq 'HASH' } @{ $receipt->{'lines'} || [] };
+				$receipt_tax = &subs::tax_number($receipt->{'total'}) - $sum;
+				$receipt_tax = 0 if $receipt_tax < 0;
+			}
+			$receipt_total = &subs::tax_number($receipt->{'total'}) if defined $receipt->{'total'} && $receipt->{'total'} =~ /[0-9]/;
+		}
+	}
+	# The vendor's own policy decides what Save may do when the paper and the
+	# lines disagree. A vendor that is not an app, or has never chosen, blocks.
+	my $tax_policy = 'block';
+	my $vendor_key = &subs::unformat_name($vendor || '');
+	if ($vendor_key ne '') {
+		my $raw = &subs::setting_grabber({ app => $vendor_key, setting => 'tax_delta_save' });
+		$tax_policy = $raw if defined $raw && $raw =~ /^(block|unattributed|warn)$/;
+	}
 	my $storage;
 	if (scalar @lines) {
 		my %mov;
@@ -207,16 +249,26 @@ sub action_3497 {
 				item => $l->{'item'}, quantity => $l->{'quantity'},
 				amount => $l->{'amount'}, tax => $l->{'tax'},
 				aux => $l->{'aux'}, total => $l->{'total'},
+				taxes => $l->{'taxes'}, tax_known => $l->{'tax_known'},
 				unit => $l->{'unit'}, state => $l->{'state'},
 				record_item => 'on'
 			};
 		}
-		$mov{'totals'} = { uuid => $lines[0]->{'uuid'}, vendor => $vendor, information => 'none', amount => $total * $sign, tax => 0, aux => 0, total => $total * $sign, receipt_timestamp => $receipt_ts, receipt_when => $receipt_when };
+		$mov{'totals'} = { uuid => $lines[0]->{'uuid'}, vendor => $vendor, information => 'none',
+			amount => $net_total * $sign, tax => $tax_total, aux => 0, total => ($net_total + $tax_total) * $sign,
+			receipt_tax => (defined $receipt_tax ? $receipt_tax : ''),
+			receipt_total => (defined $receipt_total ? $receipt_total : ''),
+			tax_policy => $tax_policy,
+			receipt_timestamp => $receipt_ts, receipt_when => $receipt_when };
 		$storage = { expense => \%mov };
 	}
 	$c->render(json => {
 		items => scalar @lines,
-		transaction => { app => $category, account => $account, vendor => $vendor, total => $total * $sign, timestamp => $receipt_ts, when => $receipt_when, uuid => $receipt_uuid, storage => $storage },
+		transaction => { app => $category, account => $account, vendor => $vendor,
+			total => ($net_total + $tax_total) * $sign, timestamp => $receipt_ts, when => $receipt_when, uuid => $receipt_uuid,
+			receipt_tax => (defined $receipt_tax ? $receipt_tax : ''),
+			receipt_total => (defined $receipt_total ? $receipt_total : ''),
+			tax_policy => $tax_policy, storage => $storage },
 	});
 }
 

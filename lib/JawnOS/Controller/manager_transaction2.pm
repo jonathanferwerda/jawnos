@@ -203,6 +203,31 @@ sub action_16986 {
 	my $tax_snapshot = &subs::tax_transaction_snapshot(
 		ref $transactions->{$movement} eq 'HASH' ? $transactions->{$movement} : {}
 	);
+	# The kept receipt is the paper's own record. Save is checked against it, not
+	# against a hidden form field, so a stale tab cannot slip a wrong tax through.
+	my $receipt_uuid = $c->param('receipt_uuid') || '';
+	my ($receipt) = $receipt_uuid ne ''
+		? grep { ($_->{'uuid'} || '') eq $receipt_uuid } @{ &market_receipts() }
+		: ();
+	my $receipt_tax;
+	if ($receipt) {
+		if (defined $receipt->{'tax_total'} && $receipt->{'tax_total'} =~ /[0-9]/) {
+			$receipt_tax = &subs::tax_number($receipt->{'tax_total'});
+		}
+		elsif (defined $receipt->{'total'} && $receipt->{'total'} =~ /[0-9]/) {
+			my $line_sum = 0;
+			$line_sum += &subs::tax_number($_->{'price'}) for grep { ref $_ eq 'HASH' } @{ $receipt->{'lines'} || [] };
+			$receipt_tax = &subs::tax_number($receipt->{'total'}) - $line_sum;
+			$receipt_tax = 0 if $receipt_tax < 0;
+		}
+	}
+	my $coded_tax = &subs::tax_snapshot_total($tax_snapshot);
+	my $tax_delta = defined $receipt_tax ? &subs::tax_receipt_delta($receipt_tax, $tax_snapshot) : 0;
+	my $tax_policy = 'block';
+	if ($vendor ne '') {
+		my $raw = &subs::setting_grabber({ app => $vendor, setting => 'tax_delta_save' });
+		$tax_policy = $raw if defined $raw && $raw =~ /^(block|unattributed|warn)$/;
+	}
 	my $tax_exemption = (ref $transactions->{$movement} eq 'HASH' && ref $transactions->{$movement}->{'totals'} eq 'HASH')
 		? ($transactions->{$movement}->{'totals'}->{'tax_exemption'} // '')
 		: '';
@@ -239,7 +264,44 @@ sub action_16986 {
 			currency => $currency
 		};
 
+		# A receipt whose lines do not account for its printed tax is the one case
+		# the vendor's policy governs. Block is the default; unattributed keeps the
+		# paper's total and tax on the transaction; warn keeps the form's figures.
+		if (defined $receipt_tax && abs($tax_delta) > 0.02) {
+			if ($tax_policy eq 'block') {
+				$c->render(json => { error => &subs::ui('The receipt tax does not match the lines. Tick the tax on the items, or change this vendor\'s receipt-tax policy.')
+					. ' (' . sprintf('%.2f', $receipt_tax) . ' / ' . sprintf('%.2f', $coded_tax) . ')' });
+				return;
+			}
+			if ($tax_policy eq 'unattributed') {
+				my $gross = (defined $receipt->{'total'} && $receipt->{'total'} =~ /[0-9]/) ? &subs::tax_number($receipt->{'total'}) : abs($write->{'total'} || 0);
+				my $net = $gross - $receipt_tax;
+				$write->{'tax'} = $receipt_tax;
+				$write->{'total'} = $movement eq 'expense' ? -abs($gross) : abs($gross);
+				$write->{'amount'} = $movement eq 'expense' ? -abs($net) : abs($net);
+			}
+			$transactions->{$movement}->{'totals'} ||= {};
+			$transactions->{$movement}->{'totals'}->{'receipt_tax'} = $receipt_tax;
+			$transactions->{$movement}->{'totals'}->{'tax_delta'} = $tax_delta;
+			$jtransactions = encode_json($transactions);
+			$write->{'data'} = $jtransactions;
+		}
+
 		&appointment_writer($c,$write);
+		# The item's tax choice is remembered from the line the person saved, so the
+		# next receipt or transaction starts from it. Only an explicit choice is
+		# written; an untouched picker leaves the item unknown.
+		foreach my $key ( keys %{ ref $transactions->{$movement} eq 'HASH' ? $transactions->{$movement} : {} } ) {
+			next if $key eq 'totals' || $key eq 'crypto';
+			my $line = $transactions->{$movement}->{$key};
+			next unless ref $line eq 'HASH' && $line->{'tax_known'};
+			my $codes = &subs::tax_codes_value($line->{'taxes'});
+			foreach my $item ( grep { length } map { &subs::unformat_name($_) } split /,/, ($line->{'item'} || '') ) {
+				my $init = &subs::setting_initializer($item, &subs::rightNow());
+				my $item_app = $init->{'app'} || $item;
+				&subs::setting_setter({ app => $item_app, setting => 'tax_codes', value => encode_json($codes) });
+			}
+		}
 		# The paper the shopping run was read off belongs to the purchase it paid
 		# for: copy its pages onto this appointment (the category - clothes, say),
 		# so they sit in that app's own Files and outlive the Receipts list.

@@ -159,16 +159,22 @@ function marketCheckoutOpen(t) {
 				if (t.account) { w.find('.app_details .account').val(t.account); }
 				if (typeof transactionStorageRetriever === 'function') { transactionStorageRetriever(app); }
 				// the receipt's own moment, so Save records the day it was printed
+				var details = w.find('.app_details');
 				if (t.timestamp || t.when) {
-					var details = w.find('.app_details');
 					// a left-over Ago would override the receipt on the server
 					w.find('.ago').val('');
 					if (t.timestamp) { details.attr('receipt_timestamp', t.timestamp); }
 					if (t.when) { details.attr('receipt_when', t.when); }
 					if (t.uuid) { details.attr('receipt_uuid', t.uuid); }
-					if (typeof txReceiptPaint === 'function') { txReceiptPaint(details); }
-					if (typeof transactionStorageSaver === 'function') { transactionStorageSaver(app); }
 				}
+				// The paper's tax and the vendor's Save policy ride with the form,
+				// so the delta bar and the Save check work before any edit.
+				if (t.receipt_tax !== undefined && t.receipt_tax !== null) { details.attr('receipt_tax', t.receipt_tax); }
+				if (t.receipt_total !== undefined && t.receipt_total !== null) { details.attr('receipt_total', t.receipt_total); }
+				if (t.tax_policy) { details.attr('tax_policy', t.tax_policy); }
+				if (typeof txReceiptPaint === 'function') { txReceiptPaint(details); }
+				if (typeof txTaxDeltaPaint === 'function') { txTaxDeltaPaint(details); }
+				if (typeof transactionStorageSaver === 'function') { transactionStorageSaver(app); }
 			};
 			setTimeout(fill, 800);
 			setTimeout(fill, 1600);

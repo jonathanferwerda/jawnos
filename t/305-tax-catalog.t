@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Tax.pm database/schema.sql lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_transaction2.pm lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/PDF/Store.pm templates/configure/me_setting_list.html.ep templates/configure/store_setting_list.html.ep templates/configure/appointment_list.html.ep templates/apps/transaction/expense.html.ep templates/apps/transaction/income.html.ep templates/apps/app_details.html.ep templates/store/item.html.ep templates/store/register.html.ep templates/store/printer/header.html.ep public/js/manager/transaction.js public/js/store.js public/js/store/register.js public/js/manager/configure/03_platform_misc.js
+# tests-for: lib/JawnOS/Domain/Tax.pm database/schema.sql lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_transaction2.pm lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/PDF/Store.pm templates/configure/me_setting_list.html.ep templates/configure/store_setting_list.html.ep templates/configure/appointment_list.html.ep templates/apps/transaction/expense.html.ep templates/apps/transaction/income.html.ep templates/apps/app_details.html.ep templates/store/item.html.ep templates/store/register.html.ep templates/store/printer/header.html.ep public/js/manager/transaction.js public/js/store.js public/js/store/register.js public/js/manager/configure/03_platform_misc.js lib/JawnOS/Manager/Part06.pm lib/JawnOS/Controller/manager_market2.pm lib/JawnOS/Controller/manager_market.pm public/js/manager/market/01_tabs_and_receipts.js public/js/manager/market.js templates/market/market.html.ep lib/JawnOS/Routes/manager_market2.pm perl/help/topics_business.pl perl/help/topics_functions.pl
 # covers:    The house tax catalog is one list, rates are percents, a fresh house
 #            is offered its home currency's standard rates, a line's selected
 #            taxes are snapshotted, a customer's exemption travels with the
@@ -20,7 +20,7 @@ my $root = repo_root();
 # --- the helpers are reachable through the domain loader -------------------
 foreach my $name (qw(tax_catalog tax_catalog_write tax_percent tax_entry_normalize
 	tax_codes_value tax_entries_for_codes tax_compute tax_line_snapshot
-	tax_snapshot_merge tax_transaction_snapshot tax_exemption_for tax_countries
+	tax_snapshot_merge tax_snapshot_total tax_receipt_delta tax_transaction_snapshot tax_exemption_for tax_countries
 	store_tax_enabled store_tax_default_codes store_tax_settings
 	store_tax_line_snapshot store_tax_totals tax_suggested_catalog cash_rounding_home_currency
 	cash_rounding_setting cash_rounding_step cash_rounding_apply)) {
@@ -231,6 +231,12 @@ my $snapshot = subs::tax_transaction_snapshot($movement, $catalog);
 my %by = map { $_->{'code'} => $_ } @{$snapshot};
 is($by{'HST'}->{'amount'}, 19.5, 'HST is merged across the lines');
 is($by{'GST'}->{'amount'}, 5, 'GST is its own line');
+is(subs::tax_snapshot_total($snapshot), 24.5, 'the snapshot total adds the coded tax');
+is(subs::tax_receipt_delta(24.5, $snapshot), 0, 'a matching receipt has no delta');
+is(subs::tax_receipt_delta(30, $snapshot), 5.5, 'a receipt that charged more leaves a positive delta');
+is(subs::tax_receipt_delta(20, $snapshot), -4.5, 'a receipt that charged less leaves a negative delta');
+my $expense_snapshot = subs::tax_transaction_snapshot({ line => { amount => -100, taxes => [ 'HST' ] }, totals => {} }, $catalog);
+is($expense_snapshot->[0]->{'amount'}, 13, 'an expense line records its tax as a positive amount');
 
 # --- a customer's exemption and country defaults ---------------------------
 my $with_gb = [ @{$catalog}, { code => 'VAT_GB', name => 'VAT (UK)', rate => 20, country => 'GB' } ];
@@ -406,6 +412,27 @@ my $pdf = read_file("$root/lib/JawnOS/PDF/Store.pm");
 like($pdf, qr/labels->\{'rounding'\}/, 'the PDF labels the rounding row');
 my $me_ui = read_file("$root/templates/configure/me_setting_list.html.ep");
 like($me_ui, qr/suggests common rates for the home currency/, 'the Me panel says the list follows the home currency');
+
+# --- the receipt tax path is wired -----------------------------------------
+my $receipt_reader = read_file("$root/lib/JawnOS/Manager/Part06.pm");
+like($receipt_reader, qr/tax_marker/, 'the receipt read asks for the printed tax marker');
+like($receipt_reader, qr/market_receipt_tax_map/, 'and maps it to the house catalog');
+my $market_routes = read_file("$root/lib/JawnOS/Routes/manager_market2.pm");
+like($market_routes, qr{/manager/market/item_tax}, 'the receipt confirm can remember an item tax');
+my $market_apply = read_file("$root/lib/JawnOS/Controller/manager_market2.pm");
+like($market_apply, qr/tax_codes/, 'the apply keeps the line tax codes');
+my $market_checkout = read_file("$root/lib/JawnOS/Controller/manager_market.pm");
+like($market_checkout, qr/receipt_tax/, 'checkout carries the receipt tax');
+my $transaction_save = read_file("$root/lib/JawnOS/Controller/manager_transaction2.pm");
+like($transaction_save, qr/tax_receipt_delta/, 'Save checks the receipt delta');
+my $app_ui = read_file("$root/templates/configure/appointment_list.html.ep");
+like($app_ui, qr/tax_delta_save/, 'the vendor Tax panel has the policy picker');
+my $expense_ui = read_file("$root/templates/apps/transaction/expense.html.ep");
+like($expense_ui, qr/tax_known/, 'the expense line carries whether its tax was chosen');
+my $delta_ui = read_file("$root/templates/apps/app_details.html.ep");
+like($delta_ui, qr/tx_tax_delta/, 'the transaction has a tax delta bar');
+my $receipt_js = read_file("$root/public/js/manager/market/01_tabs_and_receipts.js");
+like($receipt_js, qr/marketReceiptTaxPaint/, 'the receipt confirm paints the delta');
 
 
 done_testing();

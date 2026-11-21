@@ -423,12 +423,18 @@ sub market_receipt_read {
 	return (undef, 'no receipt image to read') unless $pages && scalar @{$pages};
 	my $system = 'You read shop receipts for JawnOS and answer with strict JSON only, no prose.';
 	my $ask = 'These images are the pages of ONE shop receipt, page one first. Return ONLY JSON: '
-		. '{"vendor":"the shop name or empty","date":"YYYY-MM-DD or empty","time":"the printed time of day as HH:MM in 24-hour form, or empty","total":the printed total as a number or null,'
+		. '{"vendor":"the shop name or empty","date":"YYYY-MM-DD or empty","time":"the printed time of day as HH:MM in 24-hour form, or empty",'
+		. '"subtotal":the printed subtotal as a number or null,"tax_total":the printed tax total as a number or null,'
+		. '"taxes":[{"label":"the tax row exactly as printed","rate":the rate as a number or null,"amount":the printed amount as a number or null}],'
+		. '"tax_legend":[{"marker":"a tax marker exactly as printed","label":"what the receipt says it means, or empty","rate":the rate if printed or null}],'
+		. '"tax_included":true when the printed line prices already contain their tax, else false,'
+		. '"total":the printed total as a number or null,'
 		. '"payment_method":"the tender as printed (cash, debit, credit, visa, mastercard, amex, mobile, gift, other) or empty",'
 		. '"payment_ref":"the card number\'s last 4 digits, or an approval/auth code printed with the tender, digits only, else empty",'
 		. '"lines":[{"description":"the item text as printed, trimmed","code":"a barcode, UPC or ISBN printed on that line, digits only, else empty",'
-		. '"qty":the quantity as a number (1 when not shown),"price":the line total as a number,"unit_price":the price per unit as a number or null}]}. '
-		. 'Prices as plain numbers without symbols. Read the tender/payment rows only into payment_method and payment_ref, never as a line. Include only purchased lines; skip subtotal, tax, change, loyalty, savings and other summary rows.';
+		. '"qty":the quantity as a number (1 when not shown),"price":the line total as a number,"unit_price":the price per unit as a number or null,'
+		. '"tax_marker":"the tax marker printed on this line exactly as it appears (a letter, digit or symbol), or empty"}]}. '
+		. 'Prices as plain numbers without symbols. Read the tender/payment rows only into payment_method and payment_ref, never as a line. Include only purchased lines; skip subtotal, tax, change, loyalty, savings and other summary rows. Copy a tax marker exactly; never interpret it. If the receipt explains its markers in a legend, copy that legend. tax_total is the sum of the taxes rows.';
 	my ($text, $err) = &subs::ai_chat_role('visual_assistant', [
 		{ role => 'system', content => $system },
 		{ role => 'user', content => $ask, images => $pages },
@@ -438,6 +444,77 @@ sub market_receipt_read {
 	my $out = eval { return decode_json $json } || {};
 	return (undef, 'the vision model did not return a JSON receipt') unless ref $out eq 'HASH';
 	return ($out, undef);
+}
+
+# Map a receipt's printed tax marker (a letter, a digit, a symbol) to a house
+# tax code. The receipt's own legend wins; when it prints no legend but exactly
+# one tax row, every marker on the receipt names that tax (Walmart prints `J`
+# and one `HST 13%` row). An unknown marker stays unknown rather than guessing.
+sub market_receipt_tax_map {
+	my ($out, $catalog) = @_;
+	$catalog ||= &subs::tax_catalog();
+	my (%by_rate, %by_name);
+	foreach my $e ( @{$catalog || []} ) {
+		next unless ref $e eq 'HASH';
+		$by_rate{ sprintf('%.4f', $e->{'rate'} || 0) } ||= $e;
+		my $name = lc($e->{'name'} || '');
+		$by_name{$name} ||= $e if length $name;
+	}
+	my %map;
+	my $legend = ref $out->{'tax_legend'} eq 'ARRAY' ? $out->{'tax_legend'} : [];
+	foreach my $leg ( @{$legend} ) {
+		next unless ref $leg eq 'HASH';
+		my $marker = $leg->{'marker'} // '';
+		$marker =~ s/^\s+|\s+$//g;
+		next unless length $marker;
+		my $rate = (defined $leg->{'rate'} && $leg->{'rate'} =~ /[0-9]/) ? sprintf('%.4f', $leg->{'rate'}) : '';
+		my $e = ($rate ne '' ? $by_rate{$rate} : undef) || $by_name{ lc($leg->{'label'} || '') };
+		$map{$marker} = $e->{'code'} if $e && ($e->{'code'} || '') ne '';
+	}
+	unless (scalar keys %map) {
+		my %codes;
+		my $taxes = ref $out->{'taxes'} eq 'ARRAY' ? $out->{'taxes'} : [];
+		foreach my $t ( @{$taxes} ) {
+			next unless ref $t eq 'HASH';
+			my $rate = (defined $t->{'rate'} && $t->{'rate'} =~ /[0-9]/) ? sprintf('%.4f', $t->{'rate'}) : '';
+			my $e = ($rate ne '' ? $by_rate{$rate} : undef) || $by_name{ lc($t->{'label'} || '') };
+			$codes{ $e->{'code'} } = 1 if $e && ($e->{'code'} || '') ne '';
+		}
+		if (scalar keys %codes == 1) {
+			my ($code) = keys %codes;
+			my (%markers, %sum);
+			foreach my $l ( @{ $out->{'lines'} || [] } ) {
+				next unless ref $l eq 'HASH';
+				my $m = $l->{'tax_marker'} // '';
+				$m =~ s/^\s+|\s+$//g;
+				next unless length $m;
+				$markers{$m} = 1;
+				$sum{$m} += &subs::tax_number($l->{'price'}) if defined $l->{'price'};
+			}
+			# One marker on every marked line (Walmart's `J`) names the single
+			# tax. Two markers (Red Apple's `1` and its zero mark) are settled by
+			# the tax total: the marker whose lines add up to the printed tax is
+			# the taxable one. Anything else stays unknown rather than guessing.
+			if (scalar keys %markers == 1) {
+				my ($marker) = keys %markers;
+				$map{$marker} = $code;
+			}
+			elsif (scalar keys %markers > 1) {
+				my ($tax) = grep { ref $_ eq 'HASH' && defined $_->{'rate'} && $_->{'rate'} =~ /[0-9]/ } @{ ref $out->{'taxes'} eq 'ARRAY' ? $out->{'taxes'} : [] };
+				my $rate = $tax ? $tax->{'rate'} + 0 : 0;
+				my $receipt_tax = (defined $out->{'tax_total'} && $out->{'tax_total'} =~ /[0-9]/) ? $out->{'tax_total'} + 0 : undef;
+				if ($rate > 0 && defined $receipt_tax) {
+					foreach my $marker ( keys %sum ) {
+						my $taxable = $out->{'tax_included'}
+							? $sum{$marker} - $sum{$marker} / (1 + $rate / 100)
+							: $sum{$marker} * $rate / 100;
+						$map{$marker} = $code if abs($taxable - $receipt_tax) < 0.015;
+					}
+				}
+			}
+		}
+	}
+	return \%map;
 }
 
 # Read a receipt's lines into rows a person can confirm. A printed code resolves
@@ -475,9 +552,28 @@ sub market_receipt_lines {
 		}
 	}
 	my @lines;
+	my $tax_map = &market_receipt_tax_map($out);
 	foreach my $r ( @rows ) {
 		next unless $r->{'item'} =~ /\S/;
 		my $l = $r->{'line'};
+		my $marker = $l->{'tax_marker'} // '';
+		$marker =~ s/^\s+|\s+$//g;
+		my ($tax_codes, $tax_known, $tax_source) = ([], 0, '');
+		if ($marker ne '' && $tax_map->{$marker}) {
+			$tax_codes = [ $tax_map->{$marker} ];
+			$tax_known = 1;
+			$tax_source = 'receipt';
+		}
+		else {
+			# The item's own remembered choice is the next best evidence. An
+			# explicit empty list means "not taxed", not "never asked".
+			my $memo = &subs::setting_grabber({ app => $r->{'item'}, setting => 'tax_codes' });
+			if (defined $memo && length $memo) {
+				$tax_codes = &subs::tax_codes_value($memo);
+				$tax_known = 1;
+				$tax_source = 'item';
+			}
+		}
 		push @lines, {
 			description => ($l->{'description'} || ''),
 			raw => $r->{'raw'},
@@ -487,6 +583,10 @@ sub market_receipt_lines {
 			qty => (defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/) ? 0 + $l->{'qty'} : 1,
 			price => (defined $l->{'price'} && $l->{'price'} =~ /[0-9]/) ? 0 + $l->{'price'} : undef,
 			unit_price => (defined $l->{'unit_price'} && $l->{'unit_price'} =~ /[0-9]/) ? 0 + $l->{'unit_price'} : undef,
+			tax_marker => $marker,
+			tax_codes => $tax_codes,
+			tax_known => $tax_known,
+			tax_source => $tax_source,
 			matched_by => $r->{'how'},
 			on_list => (&market_list_row($r->{'item'}) ? 1 : 0),
 		};
@@ -755,6 +855,9 @@ sub market_receipt_file {
 			item => ($l->{'item'} || ''),
 			qty => ($l->{'qty'} || 1),
 			price => $l->{'price'},
+			tax_codes => &subs::tax_codes_value($l->{'tax_codes'}),
+			tax_known => ($l->{'tax_known'} ? 1 : 0),
+			tax_marker => ($l->{'marker'} || $l->{'tax_marker'} || ''),
 		};
 	}
 	my $receipt_uuid = ($data->{'uuid'} || '') ne '' ? $data->{'uuid'} : &subs::random_string_creator(20);
@@ -766,6 +869,11 @@ sub market_receipt_file {
 		category => ($data->{'category'} || ''),
 		vendor => ($data->{'vendor'} || ''),
 		total => (defined $data->{'total'} && $data->{'total'} =~ /[0-9]/) ? 0 + $data->{'total'} : undef,
+		subtotal => (defined $data->{'subtotal'} && $data->{'subtotal'} =~ /[0-9]/) ? 0 + $data->{'subtotal'} : undef,
+		tax_total => (defined $data->{'tax_total'} && $data->{'tax_total'} =~ /[0-9]/) ? 0 + $data->{'tax_total'} : undef,
+		taxes => (ref $data->{'taxes'} eq 'ARRAY' ? $data->{'taxes'} : []),
+		tax_legend => (ref $data->{'tax_legend'} eq 'ARRAY' ? $data->{'tax_legend'} : []),
+		tax_included => ($data->{'tax_included'} ? 1 : 0),
 		payment_method => ($data->{'payment_method'} || ''),
 		payment_ref => ($data->{'payment_ref'} || ''),
 		account => ($data->{'account'} || ''),
@@ -1066,7 +1174,8 @@ sub market_receipts_prepared {
 		my @lines;
 		foreach my $l ( @{ $r->{'lines'} || [] } ) {
 			next unless ref $l eq 'HASH' && ($l->{'item'} || '') =~ /\S/;
-			push @lines, { include => 1, item => $l->{'item'}, qty => (defined $l->{'qty'} ? $l->{'qty'} : 1), price => $l->{'price'} };
+			push @lines, { include => 1, item => $l->{'item'}, qty => (defined $l->{'qty'} ? $l->{'qty'} : 1), price => $l->{'price'},
+				tax_codes => &subs::tax_codes_value($l->{'tax_codes'}), tax_known => ($l->{'tax_known'} ? 1 : 0), marker => ($l->{'tax_marker'} || '') };
 		}
 		push @out, {
 			%{$r},

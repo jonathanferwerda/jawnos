@@ -213,6 +213,54 @@ function transactionTaxRate(line) {
 	return 1 + (percent / 100);
 }
 
+// The rate the line's own selected codes carry, with no legacy multiplier
+// fallback: attribution is what the receipt delta checks, so an unselected line
+// contributes nothing.
+function transactionTaxCodedRate(line) {
+	var catalog = (typeof jawnos_tax_catalog !== 'undefined' && jawnos_tax_catalog) ? jawnos_tax_catalog : [];
+	var selected = line.find('.purchase_input[attribute="taxes"]').val();
+	if (!$.isArray(selected)) { selected = (selected === null || selected === undefined || selected === '') ? [] : [selected]; }
+	var percent = 0;
+	$.each(selected, function(i, code) {
+		$.each(catalog, function(ci, entry) {
+			if (entry && String(entry.code) === String(code)) { percent += numeral(entry.rate).value(); }
+		});
+	});
+	return 1 + (percent / 100);
+}
+
+function transactionTaxCodedTotal(ad) {
+	var total = 0;
+	ad.find('.purchase_details').each(function() {
+		var line = $(this);
+		var amount = Math.abs(numeral(line.find('[attribute="amount"]').val()).value());
+		var inclusive = (line.find('.purchase_config[config="tax"]').attr('enabled') == 'on');
+		var rate = transactionTaxCodedRate(line);
+		if (!(rate > 1) || !(amount > 0)) { return; }
+		total += inclusive ? (amount - amount / rate) : (amount * (rate - 1));
+	});
+	return Math.round(total * 100) / 100;
+}
+
+// The paper's tax against what the selected codes account for. The details' own
+// receipt_tax attribute is set by Checkout; a manually opened form has none and
+// the bar stays hidden.
+function txTaxDeltaPaint(ad) {
+	if (!ad || !ad.length) { return; }
+	var box = ad.find('.tx_tax_delta');
+	if (!box.length) { return; }
+	var receiptTax = numeral(ad.attr('receipt_tax')).value() || 0;
+	if (!(receiptTax > 0)) { box.hide().empty(); return; }
+	var coded = transactionTaxCodedTotal(ad);
+	var diff = Math.round((receiptTax - coded) * 100) / 100;
+	var ok = Math.abs(diff) < 0.02;
+	var t = function(text) { return (typeof jawnosT === 'function') ? jawnosT(text) : text; };
+	box.text(t('Receipt tax') + ' ' + numeral(receiptTax).format('0.00')
+		+ ' · ' + t('Lines') + ' ' + numeral(coded).format('0.00')
+		+ ' · ' + (ok ? t('Matches') : t('Difference') + ' ' + numeral(diff).format('0.00')))
+		.attr('data-ok', ok ? '1' : '0').show();
+}
+
 // A typed Amount is gross when "Price includes tax" is on and net when it is
 // off, so the button's label decides that arithmetic. On a gross amount the tax
 // is the portion inside it; on a net amount it is added. A typed Total is
@@ -397,6 +445,7 @@ $(document).on('change', '.purchase_input', function() {
 		amount_in.val(numeral(amount).format('0.00'));
 	}
 	else if (e.hasClass('taxes')) {
+		iq.find('[attribute="tax_known"]').val('1');
 		figures = transactionTaxApply(amount, rate, inclusive, aux);
 		tax_in.val(numeral(figures.tax).format('0.00'));
 		total_in.val(numeral(figures.total).format('0.00'));
@@ -420,6 +469,7 @@ $(document).on('change', '.purchase_input', function() {
 	}
 	txTenderChange(iq.closest('.app_details'));
 	transactionStorageSaver(app);
+	txTaxDeltaPaint(iq.closest('.app_details'));
 
 });
 
@@ -549,6 +599,9 @@ function transactionStorageSaver(app) {
 		// reopening the window keeps the day it was bought on
 		storage[movement]['totals']['receipt_timestamp'] = appt.find('.app_details').attr('receipt_timestamp') || '';
 		storage[movement]['totals']['receipt_uuid'] = appt.find('.app_details').attr('receipt_uuid') || '';
+		storage[movement]['totals']['receipt_tax'] = appt.find('.app_details').attr('receipt_tax') || '';
+		storage[movement]['totals']['receipt_total'] = appt.find('.app_details').attr('receipt_total') || '';
+		storage[movement]['totals']['tax_policy'] = appt.find('.app_details').attr('tax_policy') || '';
 		storage[movement]['totals']['receipt_when'] = appt.find('.app_details').attr('receipt_when') || '';
 	}
 	$('.purchase_details[app="' + app + '"]').each(function(i,v) {
@@ -813,7 +866,14 @@ function transactionStorageRetriever(app) {
 		else { details.removeAttr('receipt_when'); }
 		if (totals['receipt_uuid']) { details.attr('receipt_uuid', totals['receipt_uuid']); }
 		else { details.removeAttr('receipt_uuid'); }
+		if (totals['receipt_tax'] !== undefined && totals['receipt_tax'] !== null && totals['receipt_tax'] !== '') { details.attr('receipt_tax', totals['receipt_tax']); }
+		else { details.removeAttr('receipt_tax'); }
+		if (totals['receipt_total'] !== undefined && totals['receipt_total'] !== null && totals['receipt_total'] !== '') { details.attr('receipt_total', totals['receipt_total']); }
+		else { details.removeAttr('receipt_total'); }
+		if (totals['tax_policy']) { details.attr('tax_policy', totals['tax_policy']); }
+		else { details.removeAttr('tax_policy'); }
 		txReceiptPaint(details);
+		txTaxDeltaPaint(details);
 		txTenderPaint(appt.find('.app_details'));
 	}
 	// the vendor's change brings the open invoices for that vendor back into

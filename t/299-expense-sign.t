@@ -32,10 +32,10 @@ like($js, qr/iq\.attr\('refund', numeral\(iq\.find\('\.total'\)\.val\(\)\)\.valu
 # --- checkout hands over the same signed figure ----------------------------
 like($market, qr/my \$sign = -1;/, 'checkout names the expense sign');
 like($market, qr/amount => \$price \* \$sign,/, 'each line amount is signed');
-like($market, qr/total => \$price \* \$sign,/, 'each line total is signed');
-like($market, qr/amount => \$total \* \$sign, tax => 0, aux => 0, total => \$total \* \$sign/,
+like($market, qr/total => \(\$price \+ \$line_tax\) \* \$sign,/, 'each line total includes its tax and is signed');
+like($market, qr/amount => \$net_total \* \$sign, tax => \$tax_total, aux => 0, total => \(\$net_total \+ \$tax_total\) \* \$sign/,
 	'the line totals are signed');
-like($market, qr/total => \$total \* \$sign, timestamp => \$receipt_ts, when => \$receipt_when, uuid => \$receipt_uuid, storage => \$storage/,
+like($market, qr/total => \(\$net_total \+ \$tax_total\) \* \$sign, timestamp => \$receipt_ts, when => \$receipt_when, uuid => \$receipt_uuid,/, 
 	'the returned transaction total is signed too');
 
 # --- and the guide says it in the on-screen words --------------------------

@@ -105,6 +105,7 @@ sub market_list_row;
 sub market_receipt_name_batch;
 sub market_receipt_read;
 sub market_receipt_lines;
+sub market_receipt_tax_map;
 sub market_receipt_scan;
 sub scanner_escl_pages;
 sub scanner_log_tail;

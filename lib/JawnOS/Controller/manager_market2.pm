@@ -121,12 +121,18 @@ sub action_4700 {
 	my @category_choices = map { $_->{'app'} } @{ &subs::db_query("select app, count(*) as c from appointments where type in ('transaction','purchase') and app is not null and app != '' group by app order by c desc limit 150")->hashes || [] };
 	unshift @category_choices, $receipt_category if $receipt_category ne '' && !grep { $_ eq $receipt_category } @category_choices;
 	my $receipt_vendor = &market_vendor_resolve($out->{'vendor'} || '');
+	my $num = sub { (defined $_[0] && $_[0] =~ /[0-9]/) ? 0 + $_[0] : undef };
 	$c->render(json => {
 		vendor => $receipt_vendor,
 		vendor_formatted => &subs::format_name($receipt_vendor),
 		date => $out->{'date'} || '',
 		time => $out->{'time'} || '',
-		total => (defined $out->{'total'} && $out->{'total'} =~ /[0-9]/) ? 0 + $out->{'total'} : undef,
+		subtotal => $num->($out->{'subtotal'}),
+		tax_total => $num->($out->{'tax_total'}),
+		taxes => (ref $out->{'taxes'} eq 'ARRAY' ? $out->{'taxes'} : []),
+		tax_legend => (ref $out->{'tax_legend'} eq 'ARRAY' ? $out->{'tax_legend'} : []),
+		tax_included => ($out->{'tax_included'} ? 1 : 0),
+		total => $num->($out->{'total'}),
 		payment_method => ($out->{'payment_method'} || ''),
 		payment_ref => ($out->{'payment_ref'} || ''),
 		account => &market_payment_account($out->{'payment_method'}),
@@ -169,6 +175,11 @@ sub action_4765 {
 	}
 	my $lines = eval { return decode_json $c->param('lines') } || [];
 	return $c->render(json => { error => 'nothing to add' }) unless ref $lines eq 'ARRAY' && scalar @{$lines};
+	my $tax_total = $c->param('tax_total');
+	my $receipt_subtotal = $c->param('subtotal');
+	my $receipt_taxes = eval { return decode_json($c->param('taxes') || '[]') } || [];
+	my $receipt_legend = eval { return decode_json($c->param('tax_legend') || '[]') } || [];
+	my $tax_included = $c->param('tax_included') ? 1 : 0;
 	my $now = &subs::rightNow();
 	my $list_key = &market_list_key($list_name);
 	my $list = &market_list();
@@ -180,6 +191,11 @@ sub action_4765 {
 		next unless $item ne '';
 		my $init = &subs::setting_initializer($item, $now);
 		$item = $init->{'app'} if $init->{'app'};
+		my $tax_codes = &subs::tax_codes_value($l->{'tax_codes'});
+		my $tax_known = $l->{'tax_known'} ? 1 : 0;
+		if ($tax_known) {
+			&subs::setting_setter({ app => $item, setting => 'tax_codes', value => encode_json($tax_codes) });
+		}
 		my $code = $l->{'code'} || '';
 		$code =~ s/[^0-9]//g;
 		if (length $code >= 8 && !&market_barcode_house($code)) {
@@ -197,6 +213,8 @@ sub action_4765 {
 			$it->{'receipt_uuid'} = $receipt_uuid;
 			$it->{'quantity'} = 0 + $l->{'qty'} if defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/;
 			$it->{'price'} = 0 + $l->{'price'} if defined $l->{'price'} && $l->{'price'} =~ /[0-9]/;
+			$it->{'tax_codes'} = $tax_codes if $tax_known;
+			$it->{'tax_known'} = $tax_known;
 			$found = 1;
 			$linked++;
 			last;
@@ -213,6 +231,8 @@ sub action_4765 {
 			quantity => (defined $l->{'qty'} && $l->{'qty'} =~ /[0-9]/) ? 0 + $l->{'qty'} : 1,
 		};
 		$row->{'price'} = 0 + $l->{'price'} if defined $l->{'price'} && $l->{'price'} =~ /[0-9]/;
+		$row->{'tax_codes'} = $tax_codes if $tax_known;
+		$row->{'tax_known'} = $tax_known;
 		$row->{'account'} = $account if $account;
 		$row->{'category'} = $category if $category ne '';
 		$row->{'receipt_when'} = $receipt_when if $receipt_when ne '';
@@ -225,8 +245,26 @@ sub action_4765 {
 	&market_save_list($list);
 	&market_lists_touch_vendor($list_key, &subs::format_name($list_name), $vendor) if $list_key && $vendor;
 	my $files = eval { return decode_json $c->param('files') } || [];
-	&market_receipt_file({ uuid => $receipt_uuid, files => $files, lines => $lines, date => $receipt_date, time => $receipt_time, category => $category, vendor => $vendor, total => $c->param('total'), payment_method => $c->param('payment_method'), payment_ref => $c->param('payment_ref'), account => $account }) if scalar @{$files};
+	&market_receipt_file({ uuid => $receipt_uuid, files => $files, lines => $lines, date => $receipt_date, time => $receipt_time, category => $category, vendor => $vendor, total => $c->param('total'), subtotal => $receipt_subtotal, tax_total => $tax_total, taxes => $receipt_taxes, tax_legend => $receipt_legend, tax_included => $tax_included, payment_method => $c->param('payment_method'), payment_ref => $c->param('payment_ref'), account => $account }) if scalar @{$files};
 	$c->render(json => { added => scalar @added, linked => $linked });
+}
+
+# POST /manager/market/item_tax
+# Remember one item's tax choice the moment it is ticked or unticked in the
+# receipt confirm, so the next read of the same product starts from it. An
+# explicit empty list is "not taxed"; no row at all is "never asked".
+sub action_4920 {
+	my $c = shift;
+	my $item = &subs::unformat_name($c->param('item') || '');
+	return $c->render(json => { ok => 0, error => 'no item' }) unless $item ne '';
+	return $c->render(json => { ok => 1, remembered => 0 }) unless $c->param('tax_known');
+	my $codes = eval { return decode_json($c->param('tax_codes') || '[]') } || [];
+	$codes = [] unless ref $codes eq 'ARRAY';
+	my @codes = grep { !ref && length } @{$codes};
+	my $init = &subs::setting_initializer($item, &subs::rightNow());
+	$item = $init->{'app'} if $init->{'app'};
+	&subs::setting_setter({ app => $item, setting => 'tax_codes', value => encode_json(\@codes) });
+	$c->render(json => { ok => 1, item => $item, tax_codes => \@codes });
 }
 
 # A running scan's pages and the scanner's own log, for the confirm panel's live

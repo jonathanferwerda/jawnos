@@ -192,6 +192,30 @@ require "$root/lib/JawnOS/Manager/Part06.pm";
 	ok(!defined $none->{'r2'}, 'a receipt nothing uses lists nothing');
 }
 
+# --- a printed marker names the house tax only when the paper says so ------
+{
+	my $catalog = [ { code => 'HST_ON', name => 'HST (ON)', rate => 13 } ];
+	my $walmart = Manager::market_receipt_tax_map({
+		taxes => [ { label => 'HST 13.0000 %', rate => 13, amount => 17.41 } ],
+		lines => [ { tax_marker => 'J', price => 21.97 }, { tax_marker => 'J', price => 12 } ],
+		tax_total => 17.41,
+	}, $catalog);
+	is($walmart->{'J'}, 'HST_ON', 'one marker and one tax row names the marker');
+	my $red_apple = Manager::market_receipt_tax_map({
+		taxes => [ { label => 'HST 13%', rate => 13, amount => 7.8 } ],
+		lines => [ { tax_marker => '1', price => 60 }, { tax_marker => '0', price => 40 } ],
+		tax_total => 7.8,
+	}, $catalog);
+	is($red_apple->{'1'}, 'HST_ON', 'the marker whose lines add up to the printed tax is the taxable one');
+	ok(!defined $red_apple->{'0'}, 'the other marker is left alone');
+	my $unknown = Manager::market_receipt_tax_map({
+		taxes => [ { label => 'HST 13%', rate => 13, amount => 5 } ],
+		lines => [ { tax_marker => 'X', price => 10 }, { tax_marker => 'Y', price => 10 } ],
+		tax_total => 5,
+	}, $catalog);
+	is(scalar keys %{$unknown}, 0, 'an ambiguous receipt with no legend is left for the person');
+}
+
 # --- the wiring between the pane, the cart, the form and the save ---------
 ok(index($receipt, 'market_receipt_remove($uuid)') >= 0, 'the remove route asks the helper');
 ok(index($receipt_js, '/manager/market/receipt/remove') >= 0, 'the pane posts to the remove route');
@@ -200,7 +224,7 @@ ok(index($market_page, 'data-uuid=') >= 0, 'and the id that button removes');
 ok(index($market_page, 'referenced_by') >= 0, 'the row says which apps use the receipt');
 ok(index($receipt, 'my $receipt_uuid = &subs::random_string_creator(20);') >= 0, 'apply names the kept receipt on the cart rows');
 ok(index($receipt, 'uuid => $receipt_uuid, files => $files') >= 0, 'and keeps it under that id');
-ok(index($market, 'uuid => $receipt_uuid, storage => $storage') >= 0, 'checkout hands it to the transaction form');
+ok(index($market, 'uuid => $receipt_uuid') >= 0 && index($market, 'storage => $storage') >= 0, 'checkout hands it to the transaction form');
 ok(index($market_js, "attr('receipt_uuid', t.uuid)") >= 0, 'which the form carries');
 ok(index($tx_js, "['receipt_uuid']") >= 0, 'the draft keeps it too');
 ok(index($record_js, 'receipt_uuid: receipt_uuid') >= 0, 'and the save sends it');

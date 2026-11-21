@@ -323,6 +323,7 @@ our %SUB = (
 	'market_receipt_attach'                  => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_referrers'               => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_lines'                   => 'JawnOS/Manager/Part06.pm',
+	'market_receipt_tax_map'                 => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_name_batch'              => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_read'                    => 'JawnOS/Manager/Part06.pm',
 	'market_receipt_scan'                    => 'JawnOS/Manager/Part06.pm',

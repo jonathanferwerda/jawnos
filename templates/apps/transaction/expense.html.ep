@@ -144,6 +144,7 @@
 					<% } %>
 				</select>
 			</span>
+			<input type="hidden" class="purchase_input" attribute="tax_known" value="<%= $app->{'tax_known'} %>">
 			<span class="tx_field">
 				<label><%= &subs::ui('Extra charge') %></label>
 				<input type="text" name="aux" attribute="aux" value="<%= $app->{'aux'} %>" class="purchase_input aux" placeholder="0.00">

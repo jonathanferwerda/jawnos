@@ -120,13 +120,19 @@ $(document).on('click', '#market_receipt_apply', function() {
 	$('#market_receipt_panel .market_receipt_line').each(function() {
 		var r = $(this);
 		if (!r.find('.market_receipt_include').prop('checked')) { return; }
+		var code = r.find('.market_receipt_tax').val() || '';
+		var codes = (code && code !== 'none') ? [code] : [];
+		var known = r.find('.market_receipt_tax_known').val() === '1';
 		lines.push({
 			include: 1,
 			item: r.find('.market_receipt_item').val(),
 			description: r.attr('data-description'),
 			code: r.attr('data-code'),
+			marker: r.attr('data-marker') || '',
 			qty: r.find('.market_receipt_qty').val(),
-			price: r.find('.market_receipt_price').val()
+			price: r.find('.market_receipt_price').val(),
+			tax_codes: codes,
+			tax_known: known ? 1 : 0
 		});
 	});
 	if (!lines.length) { marketReceiptPanel(); return; }
@@ -144,6 +150,11 @@ $(document).on('click', '#market_receipt_apply', function() {
 		payment_method: $('#market_receipt_payment').val() || '',
 		payment_ref: $('#market_receipt_payment_ref').val() || '',
 		account: $('#market_receipt_account').val() || '',
+		subtotal: $('#market_receipt_subtotal').val() || '',
+		tax_total: $('#market_receipt_tax_total').val() || '',
+		taxes: $('#market_receipt_taxes').val() || '[]',
+		tax_legend: $('#market_receipt_tax_legend').val() || '[]',
+		tax_included: $('#market_receipt_tax_included').val() || '0',
 		files: panel.attr('data-files') || '[]',
 		timestamp: Date.now()
 	}, function() { marketReceiptPanel(); });
@@ -236,6 +247,11 @@ $(document).on('click', '.market_receipt_readd', function() {
 		payment_method: row.attr('data-payment') || '',
 		payment_ref: row.attr('data-payment-ref') || '',
 		account: row.attr('data-account') || '',
+		subtotal: row.attr('data-subtotal') || '',
+		tax_total: row.attr('data-tax-total') || '',
+		taxes: row.attr('data-taxes') || '[]',
+		tax_legend: row.attr('data-tax-legend') || '[]',
+		tax_included: row.attr('data-tax-included') || '0',
 		vendor: marketVendor || row.attr('data-vendor') || '',
 		list: marketList,
 		timestamp: Date.now()
@@ -249,6 +265,7 @@ function marketReceiptShow(response) {
 	}
 	var lines = response.lines || [];
 	var images = response.images || [];
+	var catalog = (typeof jawnos_tax_catalog !== 'undefined' && jawnos_tax_catalog) ? jawnos_tax_catalog : [];
 	var category_options = (response.categories || []).map(function(c) {
 		return '<option value="' + marketEsc(c) + '"></option>';
 	}).join('');
@@ -270,6 +287,13 @@ function marketReceiptShow(response) {
 		+ '<label style="font-size:14px;">time <input id="market_receipt_time" type="text" value="' + marketEsc(response.time || '') + '" style="width:70px;"></label>'
 		+ '<label style="font-size:14px;">total <input id="market_receipt_total" type="text" value="' + marketEsc(response.total === null || response.total === undefined ? '' : response.total) + '" style="width:80px;"></label>'
 		+ '</div>';
+	// The paper's tax facts ride with the confirm so the delta and the kept
+	// receipt both carry them, even after the visible total is edited.
+	h += '<input id="market_receipt_subtotal" type="hidden" value="' + marketEsc(response.subtotal === null || response.subtotal === undefined ? '' : response.subtotal) + '">'
+		+ '<input id="market_receipt_tax_total" type="hidden" value="' + marketEsc(response.tax_total === null || response.tax_total === undefined ? '' : response.tax_total) + '">'
+		+ '<input id="market_receipt_taxes" type="hidden" value="' + marketEsc(JSON.stringify(response.taxes || [])) + '">'
+		+ '<input id="market_receipt_tax_legend" type="hidden" value="' + marketEsc(JSON.stringify(response.tax_legend || [])) + '">'
+		+ '<input id="market_receipt_tax_included" type="hidden" value="' + (response.tax_included ? '1' : '0') + '">';
 	h += '<div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap;">'
 		+ '<label style="font-size:14px;">category <input id="market_receipt_category" list="market_receipt_categories" type="text" value="' + marketEsc(response.category || '') + '" style="width:130px;" placeholder="' + ((typeof jawnosT === 'function') ? jawnosT('Food, Vape, Dinner...') : 'Food, Vape, Dinner...') + '"></label>'
 		+ '<datalist id="market_receipt_categories">' + category_options + '</datalist>'
@@ -284,11 +308,21 @@ function marketReceiptShow(response) {
 	h += '<div style="margin-top:6px;">';
 	if (!lines.length) { h += '<div style="padding:8px;font-size:15px;opacity:.7;">No lines were read.</div>'; }
 	lines.forEach(function(l) {
-		h += '<div class="market_receipt_line" data-description="' + marketEsc(l.description) + '" data-code="' + marketEsc(l.code || '') + '" style="border-bottom:1px solid var(--line);padding:4px;font-size:16px;">';
+		var selected = (l.tax_codes || []).map(String);
+		var tax_options = '<option value="">(tax?)</option>'
+			+ '<option value="none"' + (l.tax_known && !selected.length ? ' selected' : '') + '>No tax</option>';
+		catalog.forEach(function(t) {
+			var rate = (t.rate === null || t.rate === undefined) ? '' : ' ' + t.rate + '%';
+			tax_options += '<option value="' + marketEsc(t.code) + '"' + (selected.indexOf(String(t.code)) !== -1 ? ' selected' : '') + '>' + marketEsc((t.name || t.code) + rate) + '</option>';
+		});
+		h += '<div class="market_receipt_line" data-description="' + marketEsc(l.description) + '" data-code="' + marketEsc(l.code || '') + '" data-marker="' + marketEsc(l.tax_marker || '') + '" style="border-bottom:1px solid var(--line);padding:4px;font-size:16px;">';
 		h += '<input class="market_receipt_include" type="checkbox" checked style="vertical-align:middle;"> ';
-		h += '<input class="market_receipt_item" type="text" value="' + marketEsc(l.item_formatted || l.item) + '" style="width:40%;"> ';
+		h += '<input class="market_receipt_item" type="text" value="' + marketEsc(l.item_formatted || l.item) + '" style="width:34%;"> ';
 		h += 'x<input class="market_receipt_qty" type="text" value="' + marketEsc(l.qty) + '" style="width:9%;"> ';
 		h += '@<input class="market_receipt_price" type="text" value="' + marketEsc(l.price === null || l.price === undefined ? '' : l.price) + '" style="width:14%;"> ';
+		h += '<select class="market_receipt_tax" title="' + ((typeof jawnosT === 'function') ? jawnosT('Tax on this line') : 'Tax on this line') + '" style="max-width:34%;">' + tax_options + '</select> ';
+		h += '<input class="market_receipt_tax_known" type="hidden" value="' + (l.tax_known ? '1' : '0') + '">';
+		if (l.tax_marker) { h += '<span class="market_receipt_marker" style="font-size:12px;opacity:.6;">' + marketEsc(l.tax_marker) + '</span> '; }
 		if (l.on_list) { h += '<span style="font-size:13px;opacity:.7;">on list</span> '; }
 		else if (l.matched_by) { h += '<span style="font-size:13px;opacity:.7;">' + marketEsc(l.matched_by) + '</span> '; }
 		if (l.description && l.description.toLowerCase() !== String(l.item || '').toLowerCase()) {
@@ -296,10 +330,125 @@ function marketReceiptShow(response) {
 		}
 		h += '</div>';
 	});
+	h += '<div id="market_receipt_tax_delta" class="market_receipt_tax_delta" style="margin-top:8px;padding:6px;border:1px solid var(--line);border-radius:4px;font-size:14px;"></div>';
 	h += '</div></div></div>';
 	marketReceiptPanel(h);
-	$('#market_receipt_panel').attr('data-files', JSON.stringify(response.files || [])).attr('data-vendor', response.vendor || '');
+	$('#market_receipt_panel').attr('data-files', JSON.stringify(response.files || [])).attr('data-vendor', response.vendor || '')
+		.attr('data-subtotal', response.subtotal === null || response.subtotal === undefined ? '' : response.subtotal)
+		.attr('data-tax-total', response.tax_total === null || response.tax_total === undefined ? '' : response.tax_total)
+		.attr('data-taxes', JSON.stringify(response.taxes || []))
+		.attr('data-tax-legend', JSON.stringify(response.tax_legend || []))
+		.attr('data-tax-included', response.tax_included ? '1' : '0');
+	marketReceiptTaxPaint();
 }
+
+function marketReceiptCatalog() {
+	return (typeof jawnos_tax_catalog !== 'undefined' && jawnos_tax_catalog) ? jawnos_tax_catalog : [];
+}
+
+function marketReceiptRate(code) {
+	var catalog = marketReceiptCatalog();
+	for (var i = 0; i < catalog.length; i++) {
+		if (String(catalog[i].code) === String(code)) { return numeral(catalog[i].rate).value(); }
+	}
+	return 0;
+}
+
+// Which house code a printed tax row names: its rate first, then its label. An
+// unmatched row still shows its own receipt figure, but no line can claim it.
+function marketReceiptCodeForTax(t) {
+	var catalog = marketReceiptCatalog();
+	var rate = numeral(t && t.rate).value();
+	for (var i = 0; i < catalog.length; i++) {
+		if (rate && Math.abs(numeral(catalog[i].rate).value() - rate) < 0.0001) { return String(catalog[i].code); }
+	}
+	var label = String((t && t.label) || '').toLowerCase();
+	for (var j = 0; j < catalog.length; j++) {
+		var name = String(catalog[j].name || catalog[j].code || '').toLowerCase();
+		var code = String(catalog[j].code || '').toLowerCase();
+		if (label && (label.indexOf(name) !== -1 || label.indexOf(code) !== -1)) { return String(catalog[j].code); }
+	}
+	return '';
+}
+
+// The receipt's printed tax against what the chosen per-line codes add up to.
+// Only included lines count; a line left on (tax?) is the reason for a delta.
+function marketReceiptTaxPaint() {
+	var panel = $('#market_receipt_panel');
+	var box = $('#market_receipt_tax_delta');
+	if (!panel.length || !box.length) { return; }
+	var included = $('#market_receipt_tax_included').val() === '1';
+	var rawTax = $('#market_receipt_tax_total').val() || '';
+	if (rawTax === '') {
+		box.html('<div>' + ((typeof jawnosT === 'function') ? jawnosT('The receipt tax total was not read; tick a line to set it.') : 'The receipt tax total was not read; tick a line to set it.') + '</div>').attr('data-ok', '0');
+		return;
+	}
+	var receiptTax = numeral(rawTax).value() || 0;
+	var taxes = [];
+	try { taxes = JSON.parse($('#market_receipt_taxes').val() || '[]') || []; } catch (e) { taxes = []; }
+	var byCode = {};
+	var noTax = 0;
+	panel.find('.market_receipt_line').each(function() {
+		var r = $(this);
+		if (!r.find('.market_receipt_include').prop('checked')) { return; }
+		var code = r.find('.market_receipt_tax').val() || '';
+		var price = numeral(r.find('.market_receipt_price').val()).value() || 0;
+		var rate = (code && code !== 'none') ? marketReceiptRate(code) : 0;
+		if (!(rate > 0)) { noTax++; return; }
+		var amount = included ? (price - price / (1 + rate / 100)) : (price * rate / 100);
+		byCode[code] = (byCode[code] || 0) + amount;
+	});
+	var rows = [];
+	var hasAmounts = taxes.length && taxes.every(function(t) { return t && t.amount !== null && t.amount !== undefined && t.amount !== ''; });
+	if (hasAmounts) {
+		taxes.forEach(function(t) {
+			var code = marketReceiptCodeForTax(t);
+			rows.push({ label: t.label || ((t.rate || '') + '%'), receipt: numeral(t.amount).value() || 0, lines: code ? (byCode[code] || 0) : 0 });
+		});
+	}
+	else {
+		var coded = 0;
+		Object.keys(byCode).forEach(function(k) { coded += byCode[k]; });
+		rows.push({ label: 'Tax', receipt: receiptTax, lines: coded });
+	}
+	var html = '';
+	var totalDiff = 0;
+	rows.forEach(function(row) {
+		var diff = Math.round((row.receipt - row.lines) * 100) / 100;
+		totalDiff += diff;
+		html += '<div>' + marketEsc(row.label) + ': receipt ' + numeral(row.receipt).format('0.00')
+			+ ' · lines ' + numeral(row.lines).format('0.00') + ' · '
+			+ (Math.abs(diff) < 0.02 ? 'matches' : 'difference ' + numeral(diff).format('0.00')) + '</div>';
+	});
+	totalDiff = Math.round(totalDiff * 100) / 100;
+	var ok = Math.abs(totalDiff) < 0.02;
+	html += '<div style="margin-top:4px;font-weight:bold;">' + (ok
+		? ((typeof jawnosT === 'function') ? jawnosT('Reconciles') : 'Reconciles')
+		: (noTax ? noTax + ' ' + ((typeof jawnosT === 'function') ? jawnosT('line(s) with no tax') : 'line(s) with no tax') + ' · ' : '')
+			+ ((typeof jawnosT === 'function') ? jawnosT('difference') : 'difference') + ' ' + numeral(totalDiff).format('0.00')) + '</div>';
+	box.html(html).attr('data-ok', ok ? '1' : '0');
+}
+
+$(document).on('change', '.market_receipt_tax', function() {
+	var r = $(this).closest('.market_receipt_line');
+	var code = $(this).val() || '';
+	// A blank picker is "not decided yet", not "untaxed": only No tax and a
+	// chosen code are an explicit answer worth remembering.
+	var known = code !== '';
+	r.find('.market_receipt_tax_known').val(known ? '1' : '0');
+	if (known) {
+		var codes = (code === 'none') ? [] : [code];
+		$.post('/manager/market/item_tax', {
+			item: r.find('.market_receipt_item').val(),
+			tax_known: 1,
+			tax_codes: JSON.stringify(codes),
+			timestamp: Date.now()
+		});
+	}
+	marketReceiptTaxPaint();
+});
+
+$(document).on('input change', '.market_receipt_price, .market_receipt_include', marketReceiptTaxPaint);
 
 function marketEsc(s) {
 	return $('<div></div>').text(s === null || s === undefined ? '' : String(s)).html();

@@ -349,6 +349,24 @@ sub tax_snapshot_merge {
 	return [ map { my $e = $by{$_}; $e->{'amount'} = 0 + sprintf('%.2f', $e->{'amount'}); $e } @order ];
 }
 
+# The tax a merged snapshot accounts for. A receipt's printed tax is compared
+# against this, not against the line `tax` fields: a line can carry a tax amount
+# with no code selected, and that tax is not attributed to an item yet.
+sub tax_snapshot_total {
+	my ($snapshot) = @_;
+	my $sum = 0;
+	$sum += ($_->{'amount'} || 0) for grep { ref $_ eq 'HASH' } @{ ref $snapshot eq 'ARRAY' ? $snapshot : [] };
+	return 0 + sprintf('%.2f', $sum);
+}
+
+# The printed tax a receipt carries minus what its lines account for. Positive
+# means the paper charged tax no line explains; negative means the lines claim
+# more tax than the paper shows.
+sub tax_receipt_delta {
+	my ($receipt_tax, $snapshot) = @_;
+	return 0 + sprintf('%.2f', &tax_number($receipt_tax) - &tax_snapshot_total($snapshot));
+}
+
 # What the transaction's own `taxes` column should say: the selected taxes for
 # every line, merged by code, with the amount each actually charged. The lines
 # are the browser's own draft (each one carries the codes it selected); the
@@ -365,7 +383,7 @@ sub tax_transaction_snapshot {
 		next unless scalar @{$codes};
 		my $entries = &tax_entries_for_codes($catalog, $codes);
 		next unless scalar @{$entries};
-		my $amount = &tax_number($line->{'amount'});
+		my $amount = abs(&tax_number($line->{'amount'}));
 		my $inclusive = (($line->{'has_tax'} // '') eq 'on') ? 1 : 0;
 		push @snaps, &tax_line_snapshot($amount, $entries, $inclusive);
 	}
@@ -373,7 +391,7 @@ sub tax_transaction_snapshot {
 		my $codes = &tax_codes_value($movement->{'totals'}->{'taxes'});
 		my $entries = &tax_entries_for_codes($catalog, $codes);
 		if (scalar @{$entries}) {
-			my $amount = &tax_number($movement->{'totals'}->{'amount'});
+			my $amount = abs(&tax_number($movement->{'totals'}->{'amount'}));
 			my $inclusive = (($movement->{'totals'}->{'has_tax'} // '') eq 'on') ? 1 : 0;
 			push @snaps, &tax_line_snapshot($amount, $entries, $inclusive);
 		}
