@@ -83,11 +83,11 @@ like($css, qr/\.taskbar_windows \.window_toggle \{ cursor: var\(--jawnos-cursor-
 like($css, qr/\.taskbar_window_placeholder/, 'the drop place has a visible placeholder');
 
 # --- the front window keeps a bright title bar ------------------------------
-like($edit, qr/function jawnosWindowFocusApply\(\)/, 'one pass marks the front window');
+like($edit, qr/function jawnosWindowFocusApply\(screen\)/, 'one shared pass marks the front window');
 like($edit, qr/bar\.attr\('data-focus', \(this === top\) \? 'on' : 'off'\)/,
 	'only the top window is lit');
-like($edit, qr/if \(typeof jawnosWindowFocusApply == 'function'\) \{ jawnosWindowFocusApply\(\); \}/,
-	'the taskbar state pass applies the focus cue');
+like($edit, qr/if \(typeof jawnosWindowFocusApply == 'function'\) \{ jawnosWindowFocusApply\(screen\); \}/,
+	'the taskbar state pass applies the focus cue from the same pass');
 like($css, qr/\.top_navbar\[data-focus="off"\] \{ opacity: \.62; filter: grayscale\(\.9\); \}/,
 	'an unfocused title bar is greyed');
 

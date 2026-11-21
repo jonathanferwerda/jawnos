@@ -48,7 +48,7 @@ function soundAppsRow(kind, key, title, detail, volume, muted, options) {
 	var control = $('<div class="sound_control"></div>');
 	var label = $('<label></label>');
 	label.append($('<span></span>').text(jawnosT('sound_volume')));
-	var range = $('<input type="range" min="0" max="100" step="1">').val(soundAppsClamp(volume));
+	var range = $('<input type="range" class="sound_slider sound_apps_slider" min="0" max="100" step="1">').val(soundAppsClamp(volume));
 	if (options.level) { range.attr('step', '25'); }
 	label.append(range);
 	var readout = $('<span class="sound_apps_value"></span>');
@@ -248,7 +248,7 @@ $(document).on('click', '.wind[app="sound"] .sound_section_pill', function() {
 	setTimeout(soundAppsPoll, 0);
 });
 
-$(document).on('input', '#sound_section_apps .sound_apps_row input[type=range]', function() {
+$(document).on('input', '.sound_apps_slider', function() {
 	var row = $(this).closest('.sound_apps_row');
 	var value = soundAppsClamp($(this).val());
 	var readout = row.find('.sound_apps_value').first();
@@ -260,7 +260,7 @@ $(document).on('input', '#sound_section_apps .sound_apps_row input[type=range]',
 	}
 });
 
-$(document).on('change', '#sound_section_apps .sound_apps_row input[type=range]', function() {
+$(document).on('change', '.sound_apps_slider', function() {
 	var row = $(this).closest('.sound_apps_row');
 	var value = soundAppsClamp($(this).val());
 	var payload = soundAppsRowTarget(row);

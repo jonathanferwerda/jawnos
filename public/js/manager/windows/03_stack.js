@@ -324,8 +324,8 @@ $(document).on('wheel', '.wind', function() {
 function windowIsFront(win) {
 	var z = parseInt(win.css('z-index'), 10) || 0;
 	var front = true;
-	$('.wind').filter(':visible').each(function() {
-		if (this !== win[0] && (parseInt($(this).css('z-index'), 10) || 0) > z) {
+	$('.wind').each(function() {
+		if (this !== win[0] && jawnosWindowOnScreen(this) && (parseInt($(this).css('z-index'), 10) || 0) > z) {
 			front = false;
 			return false;
 		}
@@ -516,14 +516,15 @@ function selectorMaker(target,censored) {
 	}
 }
 
-function topWindow(apper) {
+function topWindow(apper, screen) {
 	var windows = [];
 	var zindex = 0;
 	$('.wind').each(function(i,v) {
 		var app = $(v).attr('app');
 		// a window playing its out motion is no longer the front: the next press
 		// should raise what remains, not this one on its way out
-		if (app != apper && $(v).css('z-index') > zindex && $(v).is(':visible')
+		if (app != apper && $(v).css('z-index') > zindex
+			&& (screen ? screen.onScreen.has(v) : jawnosWindowOnScreen(v))
 			&& !(typeof jawnosWindowEffectLeaving == 'function' && jawnosWindowEffectLeaving(v))) {
 			zindex = $(v).css('z-index');
 			windows.push(app);
@@ -593,10 +594,53 @@ function windowDimensionSetter(w) {
 	}
 }
 
+// jQuery's own :visible predicate, read directly: an element paints when it has
+// an offset box or a client rect. Calling it here avoids re-running Sizzle, and
+// the windows are position: fixed, so offsetParent cannot stand in for it.
+function jawnosWindowOnScreen(el) {
+	return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+}
+
+// One pass over the desk for the passes that all need the same answer: which
+// windows and dialogs are on screen, which window is in front, and which window
+// or dialog is in front. byKey/byApp are the dock face's lookups, built once
+// instead of scanned per face; each keeps the first match in document order.
+function jawnosWindowsOnScreen() {
+	var onScreen = new Set();
+	var byKey = new Map();
+	var byApp = new Map();
+	var top = null, topz = -1;
+	var topWindow = null, topWindowZ = -1;
+	$('.wind, .dialog_box').each(function() {
+		var el = this;
+		var dialog = el.classList.contains('dialog_box');
+		if (jawnosWindowOnScreen(el)) {
+			onScreen.add(el);
+			var z = parseInt($(el).css('z-index'), 10) || 0;
+			if (z >= topz) { topz = z; top = el; }
+			if (!dialog && z >= topWindowZ) { topWindowZ = z; topWindow = el; }
+		}
+		var id;
+		if (dialog) {
+			id = el.getAttribute('data-dialog-id');
+			if (id !== null && !byKey.has('dialog:' + id)) { byKey.set('dialog:' + id, el); }
+		}
+		else {
+			id = el.getAttribute('data-terminal-id');
+			if (id !== null && !byKey.has('terminal:' + id)) { byKey.set('terminal:' + id, el); }
+			id = el.getAttribute('data-window-id');
+			if (id !== null && !byKey.has('window:' + id)) { byKey.set('window:' + id, el); }
+			id = el.getAttribute('app');
+			if (id !== null && !byApp.has(id)) { byApp.set(id, el); }
+		}
+	});
+	return { onScreen: onScreen, top: top, topWindow: topWindow, byKey: byKey, byApp: byApp };
+}
+
 // Place one background layer, writing only what actually changed. The view
 // poll calls the adjuster every few seconds; re-assigning the same width and
-// left still marks style dirty, and the next :visible or computed-style read
-// turns that into a full layout of a desk that has not moved.
+// left still marks style dirty, and the next visibility read turns that into a
+// full layout of a desk that has not moved.
 function windowBackgroundPlace(el, width, left, fixed) {
 	if (!el) { return; }
 	if (el.style.width !== width) { el.style.width = width; }
@@ -606,11 +650,16 @@ function windowBackgroundPlace(el, width, left, fixed) {
 
 function windowBackgroundAdjuster(data) {
 	if (!data) { data = {}; }
-	// Ask the edge windows first: the old selector read :visible on every window
-	// before it looked at the attribute, so the poll forced a reflow per window
-	// even when nothing sat at an edge.
-	var leftFree = $('.wind[view="left"]').filter(':visible').length > 0 ? 0 : 1;
-	var rightFree = $('.wind[view="right"]').filter(':visible').length > 0 ? 0 : 1;
+	// Ask the edge windows first, and read each one's visibility without Sizzle:
+	// the poll runs every few seconds, and the old :visible filter re-asked the
+	// engine for layout once per matching window even when nothing sat at an edge.
+	var leftFree = 1, rightFree = 1;
+	$('.wind[view="left"], .wind[view="right"]').each(function() {
+		if (!jawnosWindowOnScreen(this)) { return; }
+		if (this.getAttribute('view') === 'left') { leftFree = 0; }
+		else { rightFree = 0; }
+		if (!leftFree && !rightFree) { return false; }
+	});
 	var layout = localStorage.getItem('layout') || '';
 	var layout_el = layout ? document.getElementById(layout) : null;
 	var full = (leftFree == rightFree) ? 1 : 0;

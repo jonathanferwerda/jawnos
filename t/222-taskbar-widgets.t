@@ -107,7 +107,12 @@ like($sound, qr/jawnosTaskbarPanelToggle\('taskbar_sound_panel'/, 'the sound wid
 like($sound, qr/\.on\('wheel'/, 'a wheel over the sound widget is heard');
 like($sound, qr/function jawnosSoundTaskbarWheelAdjust\(/, 'and adjusts the output volume');
 like($sound, qr/jawnosSoundTaskbarWheelRate = 2\.5/, 'a notch is half the old five-point rate');
-like($sound, qr/#taskbar_sound_panel \[data-sound-volume\]/, 'a wheel over a panel slider is heard too');
+like($sound, qr/class="taskbar_sound_slider"/, 'a panel slider carries the delegated class');
+like($sound, qr/\.on\('wheel', '\.taskbar_sound_slider'/, 'a wheel over a panel slider is heard too');
+like($sound, qr/\.on\('input', '\.taskbar_sound_slider'/, 'and its input');
+like($sound, qr/\.on\('change', '\.taskbar_sound_slider'/, 'and its change');
+unlike($sound, qr/#taskbar_sound_panel \[data-sound-volume\]', function/,
+	'not through an attribute selector on every event');
 like($sound, qr/\{ kind: kind, id: id, volume: volume \}/, 'the panel writes a device volume by id');
 like($sound, qr{/manager/sound/default}, 'and can make a device the default');
 like($sound, qr/jawnosT\('Open Sound'\)/, 'its footer opens Sound');

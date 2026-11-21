@@ -120,7 +120,20 @@ like($dock, qr/function jawnosDockWindowFaces\(\)/, 'the open windows are read a
 like($dock, qr/jawnosTaskbarWindowKey/, 'a face carries the taskbar window key');
 like($dock, qr/function jawnosDockWindowPress\(icon\)/, 'a press answers for its window');
 like($dock, qr/jawnosDockWindowTile\(key\)/, 'through the taskbar tile when it exists');
-like($dock, qr/function jawnosDockWindowsState\(\)/, 'the faces wear the window state');
+like($dock, qr/function jawnosDockWindowsState\(screen\)/, 'the faces wear the window state');
+like($dock, qr/if \(!screen\) \{ screen = jawnosWindowsOnScreen\(\); \}/,
+	'taking one screen pass, or building it when the renderer calls directly');
+like($dock, qr/screen\.onScreen\.has\(win\)/, 'each face answers from that collection');
+unlike($dock, qr/if \(!win\.is\(':visible'\)\)/, 'not from a :visible query per face');
+unlike($dock, qr/\$\(this\)\.attr\('app'\) === icon\.attr\('dock_app'\)/,
+	'and not from a window scan per face');
+my $edit = read_file("$root/public/js/manager/taskbar_edit.js");
+like($edit, qr/function jawnosWindowFocusApply\(screen\)/, 'the title-bar pass takes the shared screen pass');
+like($edit, qr/jawnosDockWindowsState\(screen\);/, 'and hands the same pass to the dock');
+like($edit, qr/var screen = jawnosWindowsOnScreen\(\);/, 'the bar reads one screen pass for its tiles');
+like($edit, qr/topWindow\(null, screen\)/, 'the front window comes from that same pass');
+like($edit, qr/screen\.onScreen\.has\(win\[0\]\)/, 'and answers each tile from that pass');
+unlike($edit, qr/\$\('\.wind'\)\.filter\(':visible'\)/, 'so it no longer filters :visible');
 like($dock, qr/if \(\$\(this\)\.hasClass\('dock_window'\)\)/, 'the press handler knows a window face');
 like($dock, qr/jawnosDockWindowsRender\(\)/, 'the window faces can be rebuilt');
 like($dock, qr/!t\.terminal && !t\.window && !t\.dialog && t\.app && jawnosDockAppHas\(t\.app\)/,

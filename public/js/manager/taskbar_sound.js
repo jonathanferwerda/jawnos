@@ -166,7 +166,7 @@ function jawnosSoundTaskbarVolumeSection(kind, heading, device) {
 	var row = $('<div class="taskbar_panel_row"></div>');
 	var pct = jawnosSoundTaskbarPercent(device.volume);
 	var muted = device.muted ? 1 : 0;
-	var slider = $('<input type="range" min="0" max="100" step="1">')
+	var slider = $('<input type="range" class="taskbar_sound_slider" min="0" max="100" step="1">')
 		.attr('data-sound-volume', kind)
 		.attr('aria-label', heading)
 		.val(pct);
@@ -372,18 +372,18 @@ $(document).on('click', '.taskbar_widget[widget="sound"]', function() {
 	}
 });
 
-$(document).on('wheel', '#taskbar_sound_panel [data-sound-volume]', function(e) {
+$(document).on('wheel', '.taskbar_sound_slider', function(e) {
 	return jawnosSoundTaskbarWheelEvent(e, $(this).attr('data-sound-volume'));
 });
 
-$(document).on('input', '#taskbar_sound_panel [data-sound-volume]', function() {
+$(document).on('input', '.taskbar_sound_slider', function() {
 	var kind = $(this).attr('data-sound-volume');
 	var volume = jawnosSoundTaskbarPercent($(this).val());
 	$('#taskbar_sound_panel [data-sound-value="' + kind + '"]').text(volume + '%');
 	jawnosSoundTaskbarOptimistic(kind, volume);
 });
 
-$(document).on('change', '#taskbar_sound_panel [data-sound-volume]', function() {
+$(document).on('change', '.taskbar_sound_slider', function() {
 	var kind = $(this).attr('data-sound-volume');
 	var device = jawnosSoundTaskbarSelected(kind);
 	if (!device) { return; }

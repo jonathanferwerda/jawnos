@@ -362,25 +362,7 @@ function jawnosDockWindowsSet(state) {
 	jawnosDockWindowsRender();
 	jawnosDockReveal();
 }
-// The window a face stands for, by the same key the taskbar tile uses.
-function jawnosDockWindowByKey(key) {
-	if (!key) { return $(); }
-	var id;
-	if (key.indexOf('dialog:') === 0) {
-		id = key.slice('dialog:'.length);
-		return $('.dialog_box').filter(function() { return $(this).attr('data-dialog-id') === id; }).first();
-	}
-	if (key.indexOf('terminal:') === 0) {
-		id = key.slice('terminal:'.length);
-		return $('.wind').filter(function() { return $(this).attr('data-terminal-id') === id; }).first();
-	}
-	if (key.indexOf('window:') === 0) {
-		id = key.slice('window:'.length);
-		return $('.wind').filter(function() { return $(this).attr('data-window-id') === id; }).first();
-	}
-	id = key.indexOf('app:') === 0 ? key.slice('app:'.length) : key;
-	return $('.wind').filter(function() { return $(this).attr('app') === id; }).first();
-}
+
 // Answering through the bar's own tile keeps one answer for a window: the tile
 // already knows about Terminal and Folders ids, dialogs and the loading beat.
 function jawnosDockWindowTile(key) {
@@ -554,23 +536,32 @@ function jawnosDockWindowsSettle(animate) {
 	// the icon riding it, exactly as a pointer-driven tuck would.
 	if (hide && typeof pseudonymHomeHider == 'function') { pseudonymHomeHider(hide); }
 }
-function jawnosDockWindowsState() {
+// The screen object is the one jawnosWindowsOnScreen builds; jawnosWindowFocusApply
+// passes its own so a bar pass asks for visibility once and both the title bars and
+// the dock read that one answer.
+function jawnosDockWindowsState(screen) {
 	var bar = $('#pseudonym_bar');
 	if (!bar.length) { return; }
-	var top = null, topz = -1;
-	$('.wind:visible, .dialog_box:visible').each(function() {
-		var z = parseInt($(this).css('z-index'), 10) || 0;
-		if (z >= topz) { topz = z; top = this; }
-	});
+	if (!screen) { screen = jawnosWindowsOnScreen(); }
 	bar.children('.dock_window_face, .dock_taskbar_face').each(function() {
 		var icon = $(this).children('.pseudonym').first();
 		if (!icon.length) { return; }
-		var win = icon.hasClass('dock_window')
-			? jawnosDockWindowByKey(icon.attr('dock_window_key'))
-			: $('.wind').filter(function() { return $(this).attr('app') === icon.attr('dock_app'); }).first();
-		if (!win || !win.length) { icon.removeAttr('state'); return; }
-		if (!win.is(':visible')) { icon.attr('state', 'minimized'); return; }
-		icon.attr('state', win[0] === top ? 'active' : 'open');
+		var win;
+		if (icon.hasClass('dock_window')) {
+			var key = icon.attr('dock_window_key') || '';
+			var id;
+			if (key.indexOf('dialog:') === 0) { id = key.slice('dialog:'.length); win = screen.byKey.get('dialog:' + id); }
+			else if (key.indexOf('terminal:') === 0) { id = key.slice('terminal:'.length); win = screen.byKey.get('terminal:' + id); }
+			else if (key.indexOf('window:') === 0) { id = key.slice('window:'.length); win = screen.byKey.get('window:' + id); }
+			else {
+				id = key.indexOf('app:') === 0 ? key.slice('app:'.length) : key;
+				win = screen.byApp.get(id);
+			}
+		}
+		else { win = screen.byApp.get(icon.attr('dock_app')); }
+		if (!win) { icon.removeAttr('state'); return; }
+		if (!screen.onScreen.has(win)) { icon.attr('state', 'minimized'); return; }
+		icon.attr('state', win === screen.top ? 'active' : 'open');
 	});
 }
 

@@ -358,9 +358,11 @@ function soundBind() {
 	window_box.on('change', '#sound_input_volume', function() {
 		soundSetVolume('input', $(this).val());
 	});
-	// IO's two sliders and every Apps row sit in .sound_control, so one wheel
-	// handler serves them all and row rebuilds keep it.
-	window_box.on('wheel', '.sound_control input[type=range]', function(e) {
+	// IO's two sliders and every Apps row carry .sound_slider (the builder adds it),
+	// so one wheel handler serves them all and row rebuilds keep it. A plain class
+	// keeps the delegated match out of Sizzle's attribute-selector path on every
+	// wheel notch.
+	window_box.on('wheel', '.sound_slider', function(e) {
 		soundWheelEvent(e, $(this));
 	});
 	window_box.on('click', '#sound_output_mute', function() {

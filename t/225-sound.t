@@ -561,6 +561,8 @@ write_file($log, '');
 	like($template, qr/id="sound_output_list"/, 'it has an output list');
 	like($template, qr/id="sound_input_list"/, 'it has an input list');
 	like($template, qr/id="sound_output_volume"/, 'it has an output volume slider');
+	like($template, qr/class="sound_slider" id="sound_output_volume"/, 'the output slider carries the wheel class');
+	like($template, qr/class="sound_slider" id="sound_input_volume"/, 'and so does the microphone slider');
 	like($template, qr/id="sound_output_mute"/, 'it has an output mute');
 	like($template, qr/Drag or scroll to set the default speaker volume/, 'the speaker slider says it answers to a scroll too');
 	like($template, qr/Drag or scroll to set the default microphone volume/, 'and so does the microphone slider');
@@ -600,6 +602,7 @@ write_file($log, '');
 	like(read_file("$root/public/js/manager/sound.js"), qr/soundSectionRestore\(\);/, 'opening Sound restores it');
 	like(read_file("$root/public/js/manager/sound.js"), qr/'\.sound_section_pill', function\(\)/, 'a pill press switches the section');
 	my $apps_js = read_file("$root/public/js/manager/sound/03_apps.js");
+	like($apps_js, qr/class="sound_slider sound_apps_slider"/, 'a built Apps slider carries the delegated classes');
 	like($apps_js, qr/function soundAppsRender\(/, 'the Apps section has a renderer');
 	like($apps_js, qr{url: '/manager/sound/apps'}, 'it reads the Apps route');
 	like($apps_js, qr{url: '/manager/sound/app'}, 'it writes the Apps route');
@@ -612,8 +615,14 @@ write_file($log, '');
 	# This harness has no browser to dispatch a wheel event, so these pin the
 	# wiring and the step maths the way the rest of this file pins the JS.
 	my $sound_js = read_file("$root/public/js/manager/sound.js");
-	like($sound_js, qr/window_box\.on\('wheel', '\.sound_control input\[type=range\]'/,
+	like($sound_js, qr/window_box\.on\('wheel', '\.sound_slider'/,
 		'a wheel over any volume slider in the window is heard - IO and every Apps row');
+	unlike($sound_js, qr/window_box\.on\('wheel', '\.sound_control input\[type=range\]'/,
+		'and the wheel is matched on a plain class, not an attribute selector');
+	like($apps_js, qr/\$\(document\)\.on\('input', '\.sound_apps_slider'/,
+		'an Apps slider input is matched on a plain class');
+	like($apps_js, qr/\$\(document\)\.on\('change', '\.sound_apps_slider'/,
+		'and so is its change');
 	like($sound_js, qr/function soundWheelEvent\(/, 'in one handler');
 	like($sound_js, qr/input\.is\(':disabled'\)/, 'a disabled control keeps the event, so its page still scrolls');
 	like($sound_js, qr/\be\.preventDefault\(\)/, 'an accepted gesture does not scroll the section under it');

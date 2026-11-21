@@ -281,20 +281,16 @@ function jawnosTaskbarWindowDragInit() {
 // is greyed, so before a key is pressed it is plain where the press will land.
 // The comparison is by element, not app: a Terminal or a Folders window can
 // have siblings of its own, and only the one in front has the focus.
-function jawnosWindowFocusApply() {
-	var top = null;
-	var topz = -1;
-	$('.wind').filter(':visible').each(function () {
-		var z = parseInt($(this).css('z-index'), 10) || 0;
-		if (z >= topz) { topz = z; top = this; }
-	});
+function jawnosWindowFocusApply(screen) {
+	if (!screen) { screen = jawnosWindowsOnScreen(); }
+	var top = screen.topWindow;
 	$('.wind').each(function () {
 		var bar = $(this).find('.top_navbar').first();
 		if (!bar.length) { return; }
 		bar.attr('data-focus', (this === top) ? 'on' : 'off');
 	});
-	// the dock's window faces and app pins wear the same state
-	if (typeof jawnosDockWindowsState == 'function') { jawnosDockWindowsState(); }
+	// the dock's window faces and app pins wear the same state, from the same pass
+	if (typeof jawnosDockWindowsState == 'function') { jawnosDockWindowsState(screen); }
 }
 
 // Read the bar back into an order and keep it. Called when a drag settles.
@@ -607,17 +603,20 @@ function jawnosTaskbarPinsRefresh() {
 			pin.children('.taskbar_app_pin_icon').show();
 		}
 	});
-	var top = (typeof topWindow == 'function') ? topWindow() : null;
+	// One screen pass answers the front window, every tile and the focus cue; a
+	// :visible query per tile re-ran Sizzle on every poll.
+	var screen = jawnosWindowsOnScreen();
+	var top = (typeof topWindow == 'function') ? topWindow(null, screen) : null;
 	bar.find('.window_toggle').each(function () {
 		var el = $(this);
 		var app = el.attr('app');
 		var win = $('.wind[app="' + app + '"]');
-		var visible = win.length > 0 && win.is(':visible');
+		var visible = win.length > 0 && screen.onScreen.has(win[0]);
 		el.removeAttr('state');
 		if (visible) { el.attr('state', (app == top) ? 'active' : 'open'); }
 	});
 	// the window in front keeps a bright title bar; the rest are greyed
-	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(); }
+	if (typeof jawnosWindowFocusApply == 'function') { jawnosWindowFocusApply(screen); }
 	// the Desktop widget wears the state of the desk: pressed while no window is up
 	if (typeof jawnosDesktopTaskbarSync == 'function') { jawnosDesktopTaskbarSync(); }
 }

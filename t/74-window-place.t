@@ -1093,8 +1093,17 @@ like($windows, qr/data-taskbar-cheap/, 'kept on the bar itself');
 like($windows, qr/attr\('data-taskbar-cheap'\) === cheap/, 'so an unchanged desk skips the rebuild');
 unlike($windows, qr/var z = numeral\(\$\(v\)\.css\('z-index'\)\)/, 'the tile build reads no computed z-index');
 like($stack, qr/function windowBackgroundPlace\(/, 'a background layer is written only when it moves');
-like($stack, qr/\$\('\.wind\[view="left"\]'\)\.filter\(':visible'\)/, 'the edge test filters only the windows that take an edge');
+like($stack, qr/function jawnosWindowOnScreen\(el\)/, 'the poll reads visibility directly, not through Sizzle');
+like($stack, qr/\$\('\.wind\[view="left"\], \.wind\[view="right"\]'\)\.each\(function\(\) \{/,
+	'the edge test asks the two edge selections once');
+like($stack, qr/if \(!jawnosWindowOnScreen\(this\)\) \{ return; \}/,
+	'and skips an edge window that paints no box');
+unlike($stack, qr/\$\('\.wind\[view="left"\]'\)\.filter\(':visible'\)/,
+	'the old per-window :visible filter is gone');
 unlike($stack, qr/\.wind\[view="left"\]:visible/, 'not every window on the desk');
+unlike($stack, qr/\$\(v\)\.is\(':visible'\)/, 'the front-window reader asks the predicate directly');
+like($stack, qr/if \(this !== win\[0\] && jawnosWindowOnScreen\(this\)/,
+	'and so does the window-is-front check on a wheel');
 
 # --- a snapped window leaves the desk its free half ------------------------
 # Every other printer canvas is reset to the whole desk, while the layers that
