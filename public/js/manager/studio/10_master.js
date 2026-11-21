@@ -87,24 +87,97 @@ function studioMasterSet(name, control, value) {
 	var ins = studioMasterFind(name);
 	if (!ins) { return; }
 	ins.set(control, value);
-	// A master knob is its own address: `master_comp.thresh`, not a track.
-	studioEngineMasterParam(name, control, value);
 	studioMasterRender();
 	studioSaver();
+	// The engine transport owns the clip mix: a knob is a value-only plan
+	// update, never the take's param path. Both paths stay separate.
+	if (mixer['time'] && mixer['time']['engine_transport']) {
+		studioEngineMasterValuesChanged();
+		return;
+	}
+	// A master knob is its own address: `master_comp.thresh`, not a track.
+	studioEngineMasterParam(name, control, value);
 }
 
 function studioMasterToggle(name, on) {
 	var ins = studioMasterFind(name);
 	if (!ins) { return; }
 	if (ins.setBypass) { ins.setBypass(!on); }
+	studioMasterRender();
+	studioSaver();
+	// A mastering insert on or off changes the rack the clip mix runs through.
+	// The engine transport learns it from the replacement plan (which carries
+	// the knob values too); the take's own bypass path is left alone so the two
+	// never race.
+	if (typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); return; }
 	// The engine keeps the insert in the rack and flips its bypass between
 	// blocks; an effect that was off when the take began has no slot yet.
 	studioEngineMasterBypass(name, !on);
-	studioMasterRender();
-	studioSaver();
-	// A mastering insert on or off changes the rack the clip mix runs through,
-	// so a running engine needs the replacement plan; the browser is unchanged.
-	if (typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
+}
+
+// The engine's implementation name for a master prefix: `master_comp` is the
+// `compressor` the shared units table names, so studioEffectNatural reads the
+// canonical spelling.
+function studioEngineMasterKind(name) {
+	var kind = studioEffectKind(name);
+	if (kind.indexOf('master_') === 0) { kind = kind.slice(7); }
+	return kind;
+}
+
+// The enabled master rack as engine control values. The browser holds the
+// contract's 0..100 sliders; studioEffectNatural turns each into the unit the
+// engine's mixer takes. A value-only transport update carries this whole list,
+// so a dropped update cannot leave one knob stale.
+function studioEngineMasterValues() {
+	var records = (typeof studioMasterSave === 'function') ? studioMasterSave() : [];
+	if (!records.length && mixer['admin'] && mixer['admin']['master']) {
+		records = mixer['admin']['master'];
+	}
+	var values = [];
+	records.forEach(function (record) {
+		if (!record || !record['on']) { return; }
+		var kind = studioEngineMasterKind(record['name']);
+		// The Stereo Widener is browser only, exactly as the take plan leaves it.
+		if (kind === 'stereowidener') { return; }
+		$.each(record['controls'] || {}, function (control, value) {
+			if (studioEffectNumber(value) === null) { return; }
+			values.push({
+				name: record['name'],
+				control: control,
+				value: studioEffectNatural(kind, control, value)
+			});
+		});
+	});
+	return values;
+}
+
+// The pending master-values post. A drag on a knob produces several moves; one
+// short debounce collapses them into a single value-only plan update.
+var studioEngineMasterTimer = 0;
+
+function studioEngineMasterValuesChanged() {
+	if (!mixer['time'] || !mixer['time']['engine_transport']) { return; }
+	// The first plan is still staging and its own `start` carries the current
+	// values, so a knob moved now needs no extra post.
+	if (studioEngineTransportStarting) { return; }
+	if (studioEngineMasterTimer) { clearTimeout(studioEngineMasterTimer); }
+	studioEngineMasterTimer = setTimeout(function () {
+		studioEngineMasterTimer = 0;
+		studioEngineMasterValuesPost();
+	}, 120);
+}
+
+function studioEngineMasterValuesPost() {
+	if (!mixer['time'] || !mixer['time']['engine_transport']) { return; }
+	var values = studioEngineMasterValues();
+	if (!values.length) { return; }
+	studioEngineTransportPost('update', { master_values_json: JSON.stringify(values) }, function (data) {
+		if (!data || data.ok !== true) {
+			// A refusal leaves the engine's rack as it was; the browser graph keeps
+			// its own value and the next knob move tries again.
+			console.log('studio: engine master value update refused, keeping the current rack', (data && data.error) || '');
+		}
+	});
 }
 
 // The song's admin carries the master rack: one record per effect, in chain

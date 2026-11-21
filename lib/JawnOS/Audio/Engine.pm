@@ -309,19 +309,22 @@ sub audio_engine_status {
 
 # The engine's transport: `{"cmd":"transport","action":"start",
 # "position":0,"bpm":120,"beats_per_bar":4,"gain":0.5,
-# "loop_start":0,"loop_end":0,"clips":[...],"master":[...]}`. Positions are
-# seconds on the song timeline. Only the fields the engine promised are
+# "loop_start":0,"loop_end":0,"clips":[...],"master":[...],
+# "master_values":[{"name":"master_comp.thresh","value":-18}]}`. Positions
+# are seconds on the song timeline. Only the fields the engine promised are
 # forwarded, so a caller cannot smuggle another key through this helper;
 # `action` is one of `start`, `stop`, `seek`, `update` or `status`, and the
 # engine validates every value before a thread or a device exists. `clips` is
 # the optional plan of recorded takes (absolute WAV path, timeline start, source
 # offset, gain, pan and the rest); `master` is the enabled mastering inserts
-# the clip mix runs through. An absent plan is the click-only clock. `update`
-# replaces the clip and master plan of a running transport in place: the device
-# stays open, so a take moved, trimmed, split, deleted or added is heard at the
-# next block.
+# the clip mix runs through; `master_values` is those inserts' live knob
+# positions. An absent plan is the click-only clock. `update` replaces the clip
+# and master plan of a running transport in place, or moves only the master
+# values when `clips` is absent: the device stays open, so a take moved,
+# trimmed, split, deleted or added is heard at the next block, and a knob turn
+# never re-reads a take.
 our @audio_engine_transport_fields = qw(
-	position bpm beats_per_bar gain loop_start loop_end clips master
+	position bpm beats_per_bar gain loop_start loop_end clips master master_values
 );
 
 sub audio_engine_transport {

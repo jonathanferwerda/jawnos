@@ -414,6 +414,29 @@ fn click_tone(length: usize, rate: u32, hz: f32, level: f32) -> Vec<f32> {
     samples
 }
 
+/// Decode a take WAV into the one mono timeline a transport clip renders.
+///
+/// A take is a source, not a strip output, so a stereo file is averaged rather
+/// than summed. The whole decode is returned behind an [`Arc`], so the control
+/// thread's cache can hand the same samples to every plan that names this file.
+/// This is the only place that reads a take for the transport.
+pub fn decode_take(path: &str) -> Result<(u32, Arc<[f32]>), String> {
+    let audio = read_wav(path).map_err(|error| error.to_string())?;
+    let samples: Vec<f32> = match audio.channels {
+        1 => audio
+            .samples
+            .iter()
+            .map(|sample| f32::from(*sample) / 32_768.0)
+            .collect(),
+        _ => audio
+            .samples
+            .chunks_exact(2)
+            .map(|pair| (f32::from(pair[0]) + f32::from(pair[1])) / 2.0 / 32_768.0)
+            .collect(),
+    };
+    Ok((audio.rate, Arc::from(samples)))
+}
+
 /// One recorded take placed on the transport timeline.
 ///
 /// A browser take is a file on disk and a span on the song's timeline. The
@@ -434,7 +457,10 @@ pub struct TransportClip {
     pub rate: u32,
     /// One mono sample per frame, averaged from the file. A take is a source,
     /// not a strip output, so a stereo file is averaged rather than summed.
-    pub samples: Vec<f32>,
+    ///
+    /// The samples are shared, not copied: a placement-only plan update moves
+    /// the same megabytes rather than re-reading and re-decoding the file.
+    pub samples: Arc<[f32]>,
     /// Timeline frame where the clip begins (may be negative).
     pub start: i64,
     /// Source frame the clip begins at when the timeline reaches `start`.
@@ -472,21 +498,31 @@ impl TransportClip {
         inserts: Vec<InsertKind>,
     ) -> Result<Self, String> {
         let path = path.into();
-        let audio = read_wav(&path).map_err(|error| error.to_string())?;
-        let samples: Vec<f32> = match audio.channels {
-            1 => audio
-                .samples
-                .iter()
-                .map(|sample| f32::from(*sample) / 32_768.0)
-                .collect(),
-            _ => audio
-                .samples
-                .chunks_exact(2)
-                .map(|pair| {
-                    (f32::from(pair[0]) + f32::from(pair[1])) / 2.0 / 32_768.0
-                })
-                .collect(),
-        };
+        let (rate, samples) = decode_take(&path)?;
+        Self::from_samples(
+            path, rate, samples, start, offset, duration, gain, pan, looped, fade_in, fade_out,
+            inserts,
+        )
+    }
+
+    /// The same, from samples the caller already decoded (the control thread's
+    /// take cache). `duration` of zero means the rest of the file.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_samples(
+        path: impl Into<String>,
+        rate: u32,
+        samples: Arc<[f32]>,
+        start: i64,
+        offset: u64,
+        duration: u64,
+        gain: f32,
+        pan: f32,
+        looped: bool,
+        fade_in: u64,
+        fade_out: u64,
+        inserts: Vec<InsertKind>,
+    ) -> Result<Self, String> {
+        let path = path.into();
         let available = (samples.len() as u64).saturating_sub(offset);
         let duration = if duration == 0 {
             available
@@ -500,7 +536,7 @@ impl TransportClip {
         }
         Ok(TransportClip {
             path,
-            rate: audio.rate,
+            rate,
             samples,
             start,
             offset,
@@ -715,11 +751,19 @@ impl TransportControl {
 ///
 /// The control thread parses a plan (a full set of takes, already decoded) and
 /// sends it over a channel; the render thread swaps it in at the next block.
-/// `master` is `Some` only when the caller sent a mastering rack: `None` leaves
-/// the armed rack exactly as it was.
+/// Each field is optional and `None` leaves that part of the transport alone:
+/// `clips` is the placement, `master` the armed rack, and `master_values` the
+/// rack's knobs (a value-only update carries no takes).
 pub struct TransportPlan {
-    pub clips: Vec<TransportClip>,
+    /// A replacement placement, or `None` for a values-only update (a master
+    /// knob moved while the takes did not).
+    pub clips: Option<Vec<TransportClip>>,
+    /// A replacement rack, or `None` to leave the armed one alone.
     pub master: Option<Vec<InsertKind>>,
+    /// Live master knob positions as `("master_comp.thresh", -18.0)`. They ride
+    /// the same block edge as a placement and never rebuild the rack, so a knob
+    /// turn does not reset a reverb or a limiter's gain.
+    pub master_values: Option<Vec<(String, f32)>>,
 }
 
 /// The transport's render source: the same click buffers as a take's
@@ -736,6 +780,9 @@ pub struct TransportSource {
     /// The master rack armed on the clip mix, so the transport hears the same
     /// mastering chain a take does (the browser's `studioAudio.master`).
     master: Vec<InsertKind>,
+    /// The last master knob positions the control thread sent. Kept so a rack
+    /// rebuilt by a later plan starts where the page left it.
+    master_values: Vec<(String, f32)>,
     mixer: Mixer,
     /// One mono block per clip, reused by every block.
     voices: Vec<Vec<f32>>,
@@ -764,6 +811,7 @@ impl TransportSource {
             click: None,
             clips: Vec::new(),
             master: Vec::new(),
+            master_values: Vec::new(),
             mixer: Mixer::new(&[], &[]),
             voices: Vec::new(),
             plan_rx: None,
@@ -796,6 +844,13 @@ impl TransportSource {
         self
     }
 
+    /// The master rack's knob positions, applied once the rack is prepared.
+    /// They are stored, so a later rebuild restores them at the same edge.
+    pub fn with_master_values(mut self, values: Vec<(String, f32)>) -> Self {
+        self.master_values = values;
+        self
+    }
+
     /// Take placement plans from the control thread. The receiver lives on the
     /// render thread, so applying a plan never needs a lock the control thread
     /// holds; the socket keeps the matching sender.
@@ -820,14 +875,27 @@ impl TransportSource {
     /// tails, exactly as a seek does. `clip_position` is never reset, so the new
     /// placement is heard from where the transport already is.
     fn apply_plan(&mut self, plan: TransportPlan) {
-        let TransportPlan { clips, master } = plan;
+        let TransportPlan {
+            clips,
+            master,
+            master_values,
+        } = plan;
         if let Some(master) = master {
             if master != self.master {
                 self.master = master;
                 self.mixer
                     .set_master_chain(&self.master, self.rate, self.period);
+                // The rebuilt inserts start at their defaults; the page's last
+                // knob positions are restored at this same edge.
+                self.apply_master_values();
             }
         }
+        if let Some(values) = master_values {
+            self.master_values = values;
+            self.apply_master_values();
+        }
+        // A values-only plan carries no placement: the takes keep playing.
+        let Some(clips) = clips else { return };
         let placement_only = clips.len() == self.clips.len()
             && clips
                 .iter()
@@ -857,9 +925,30 @@ impl TransportSource {
         if self.period == 0 {
             return;
         }
-        let (mixer, voices) = build_clip_mixer(&self.clips, &self.master, self.rate, self.period);
+        let (mixer, voices) = build_clip_mixer(
+            &self.clips,
+            &self.master,
+            &self.master_values,
+            self.rate,
+            self.period,
+        );
         self.mixer = mixer;
         self.voices = voices;
+    }
+
+    /// Push the stored master knob positions into the current rack. A setup or
+    /// plan-edge call, never a steady-state one. A freshly built rack already
+    /// carries them (they go in before `prepare`); this is for a rack replaced
+    /// under a running transport.
+    fn apply_master_values(&mut self) {
+        let TransportSource {
+            mixer,
+            master_values,
+            ..
+        } = self;
+        for (name, value) in master_values.iter() {
+            mixer.set_master(name, *value);
+        }
     }
 }
 
@@ -869,6 +958,7 @@ impl TransportSource {
 fn build_clip_mixer(
     clips: &[TransportClip],
     master: &[InsertKind],
+    master_values: &[(String, f32)],
     rate: u32,
     period: usize,
 ) -> (Mixer, Vec<Vec<f32>>) {
@@ -885,6 +975,12 @@ fn build_clip_mixer(
     }
     for kind in master {
         mixer.push_master(*kind);
+    }
+    // The page's knob positions go in before `prepare`, so an insert that
+    // copies its target into its running state at prepare starts at the value
+    // the page shows rather than its default and a block of smoothing.
+    for (name, value) in master_values {
+        mixer.set_master(name, *value);
     }
     mixer.prepare(rate, period);
     let voices = vec![vec![0.0; period]; clips.len()];
@@ -914,7 +1010,13 @@ impl RenderSource for TransportSource {
         // Every clip runs through the same kind of strip a playback uses, so a
         // take's gain, pan and inserts read the same here as there. The strips
         // are built on the render thread: an insert need not be `Send`.
-        let (mixer, voices) = build_clip_mixer(&self.clips, &self.master, rate, period);
+        let (mixer, voices) = build_clip_mixer(
+            &self.clips,
+            &self.master,
+            &self.master_values,
+            rate,
+            period,
+        );
         self.mixer = mixer;
         self.voices = voices;
         self.rate = rate;
@@ -2063,7 +2165,7 @@ mod tests {
         TransportClip {
             path: "take.wav".to_string(),
             rate: 8_000,
-            samples,
+            samples: Arc::from(samples),
             start,
             offset: 0,
             duration,
@@ -2160,6 +2262,34 @@ mod tests {
         (plans, control, source)
     }
 
+    /// The same, with a master rack and its knob positions, for a test that
+    /// moves one knob through a value-only plan.
+    fn clip_transport_with_values(
+        clips: Vec<TransportClip>,
+        master: Vec<InsertKind>,
+        values: Vec<(String, f32)>,
+        period: usize,
+    ) -> (
+        std::sync::mpsc::Sender<TransportPlan>,
+        Arc<TransportControl>,
+        TransportSource,
+    ) {
+        let control = Arc::new(TransportControl::new(
+            click_spec(120.0, 4, 0.0),
+            0,
+            0,
+            0,
+        ));
+        let (plans, rx) = std::sync::mpsc::channel();
+        let mut source = TransportSource::new(Arc::clone(&control))
+            .with_clips(clips)
+            .with_master(master)
+            .with_master_values(values)
+            .with_plan_rx(rx);
+        source.prepared(8_000, period).expect("prepare");
+        (plans, control, source)
+    }
+
     #[test]
     fn a_transport_plan_update_moves_and_trims_a_clip_without_reopening() {
         // Eight frames on one timeline, four frames per block. The initial plan
@@ -2175,8 +2305,9 @@ mod tests {
         // strip and its voices are kept and the new start is heard at once.
         plans
             .send(TransportPlan {
-                clips: vec![clip(samples.clone(), 4, 8, false)],
+                clips: Some(vec![clip(samples.clone(), 4, 8, false)]),
                 master: None,
+                master_values: None,
             })
             .expect("send the moved plan");
         let mut second = vec![0.0f32; 8];
@@ -2191,8 +2322,9 @@ mod tests {
         // removed span stops sounding at the very next block.
         plans
             .send(TransportPlan {
-                clips: vec![clip(samples, 4, 4, false)],
+                clips: Some(vec![clip(samples, 4, 4, false)]),
                 master: None,
+                master_values: None,
             })
             .expect("send the trimmed plan");
         let mut third = vec![0.0f32; 8];
@@ -2221,8 +2353,9 @@ mod tests {
         // rebuilt once at this block edge and the take stops sounding.
         plans
             .send(TransportPlan {
-                clips: Vec::new(),
+                clips: Some(Vec::new()),
                 master: None,
+                master_values: None,
             })
             .expect("send the empty plan");
         let mut second = vec![0.0f32; 8];
@@ -2318,6 +2451,61 @@ mod tests {
                 "frame {frame}: {out:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_transport_master_knob_change_is_heard_at_the_next_block() {
+        // The limiter's ceiling starts wide open, so the first block is a clean
+        // full-scale take. A value-only plan at the next edge pulls it to
+        // -12 dBFS: the take keeps playing (the plan carries no clips) and the
+        // rack is not rebuilt, so its state moves rather than restarts.
+        let (plans, _, mut source) = clip_transport_with_values(
+            vec![clip(vec![1.0; 2_000], 0, 2_000, false)],
+            vec![InsertKind::Limiter],
+            vec![("master_limiter.ceiling".to_string(), 0.0)],
+            400,
+        );
+        let mut first = vec![0.0f32; 800];
+        source.block(&mut first).expect("block");
+        let first_left = left_channel(&first);
+        assert!(
+            first_left
+                .iter()
+                .all(|sample| (sample.abs() - 1.0).abs() < 1e-5),
+            "the open ceiling already limited the take: {first_left:?}"
+        );
+
+        plans
+            .send(TransportPlan {
+                clips: None,
+                master: None,
+                master_values: Some(vec![("master_limiter.ceiling".to_string(), -12.0)]),
+            })
+            .expect("send the knob plan");
+        let mut second = vec![0.0f32; 800];
+        source.block(&mut second).expect("block");
+        let second_left = left_channel(&second);
+        assert!(
+            second_left.iter().all(|sample| sample.abs() > 0.1),
+            "the value-only plan silenced the take: {second_left:?}"
+        );
+        assert!(
+            second_left.last().copied().unwrap_or(1.0) < 0.4,
+            "the knob change was not heard at the next block: {second_left:?}"
+        );
+
+        // The ceiling smooths toward its target over the following edge, and
+        // the take never stops sounding through it.
+        let mut third = vec![0.0f32; 800];
+        source.block(&mut third).expect("block");
+        let mut fourth = vec![0.0f32; 800];
+        source.block(&mut fourth).expect("block");
+        let settled = left_channel(&fourth);
+        let ceiling = 10f32.powf(-12.0 / 20.0);
+        assert!(
+            (settled.last().copied().unwrap_or(0.0) - ceiling).abs() < 1e-3,
+            "the master knob did not settle at -12 dBFS: {settled:?}"
+        );
     }
 
     #[test]

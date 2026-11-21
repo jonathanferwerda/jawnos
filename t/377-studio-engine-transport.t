@@ -3,10 +3,12 @@
 #            audio: a `transport` socket command (start/stop/seek/status), an
 #            absolute bar phase that starts on the song's own grid, a loop that
 #            wraps the position and the phase together, a `clips` plan that
-#            renders recorded takes on the same timeline, a route and staging
-#            route that carry the plan and its WAVs, and JS that stages takes,
-#            suppresses the browser copies while the engine runs and falls back
-#            to the browser clock and audio when the engine refuses.
+#            renders recorded takes on the same timeline (decoded once and
+#            cached by path), a master rack whose set and knob values ride the
+#            plan, a route and staging route that carry the plan and its WAVs,
+#            and JS that stages takes, suppresses the browser copies while the
+#            engine runs and falls back to the browser clock and audio when the
+#            engine refuses.
 
 use strict;
 use warnings;
@@ -139,7 +141,36 @@ like(
 	qr/pub struct TransportClip/,
 	'the transport carries recorded takes as clips'
 );
-like($playback, qr/pub struct TransportPlan/, 'a replacement plan is its own type');
+like(
+	$playback,
+	qr/pub struct TransportPlan/,
+	'a replacement plan is its own type'
+);
+like(
+	$playback,
+	qr/pub samples: Arc<\[f32\]>/,
+	'a decoded take is shared rather than copied between plans'
+);
+like(
+	$playback,
+	qr/pub fn from_samples/,
+	'a clip is placed from samples the control thread already decoded'
+);
+like(
+	$playback,
+	qr/pub fn decode_take/,
+	'one function decodes a take WAV for the transport and its cache'
+);
+like(
+	$playback,
+	qr/master_values: Option<Vec<\(String, f32\)>>/,
+	'a plan can carry master knob values without a clip plan'
+);
+like(
+	$playback,
+	qr/a_transport_master_knob_change_is_heard_at_the_next_block/,
+	'a master knob change is heard at the next block (unit test)'
+);
 like(
 	$playback,
 	qr/pub fn with_plan_rx/,
@@ -248,8 +279,13 @@ like(
 );
 like(
 	$socket,
-	qr/run_transport\(config, control, error, clips, master, plan_rx\)/,
+	qr/run_transport\([\s\S]{0,300}plan_rx,?\s*\)/,
 	'the master rack and the plan channel reach the transport worker'
+);
+like(
+	$socket,
+	qr/with_master_values\(master_values\)/,
+	'the render source takes the rack\'s knob values'
 );
 like(
 	$socket,
@@ -280,6 +316,42 @@ like(
 	$socket,
 	qr/\\"clips\\":\{\}/,
 	'the transport status carries how many takes it renders'
+);
+like($socket, qr/struct TakeCache/, 'the control thread caches decoded takes');
+like(
+	$socket,
+	qr/fn decode\(&mut self, path: &str\)/,
+	'a decode is looked up by the absolute path'
+);
+like(
+	$socket,
+	qr/fn retain\(&mut self, live/,
+	'a plan evicts the takes it no longer names'
+);
+like(
+	$socket,
+	qr/a_repeated_plan_reuses_the_decoded_take/,
+	'a repeated plan reuses the decode (socket test)'
+);
+like(
+	$socket,
+	qr/fn parse_master_values/,
+	'the engine parses live master knob values'
+);
+like(
+	$socket,
+	qr/a_master_values_update_reaches_a_running_transport/,
+	'a value-only update reaches a running transport (socket test)'
+);
+like(
+	$socket,
+	qr/a_master_values_update_refuses_unknown_names_and_shapes/,
+	'a bad master value is refused (socket test)'
+);
+like(
+	$socket,
+	qr/a_master_toggle_update_changes_the_armed_rack/,
+	'adding and removing a master insert reaches a running transport (socket test)'
 );
 
 # --- the Perl route and the client -------------------------------------------
@@ -320,8 +392,8 @@ like(
 );
 like(
 	$controller,
-	qr/update needs "clips": the replacement plan for the running transport/,
-	'an update must carry its clips, even when the plan is empty'
+	qr/update needs "clips", "master" or "master_values": the change for the running transport/,
+	'an update must carry a change, and a knob turn need not re-send the clips'
 );
 like($controller, qr/sub action_44034/, 'the clip staging action exists');
 like($controller, qr/sub studio_transport_clips/, 'the route validates a clip plan');
@@ -352,6 +424,16 @@ like(
 );
 like(
 	$controller,
+	qr/sub studio_master_values/,
+	'the route validates the master rack\'s knob values'
+);
+like(
+	$controller,
+	qr/\$fields\{'master_values'\} = \$values/,
+	'the validated master values ride the transport fields'
+);
+like(
+	$controller,
 	qr/\$fields\{'master'\} = \$master if \@\{\$master\}/,
 	'the validated master rack rides the transport fields'
 );
@@ -366,8 +448,8 @@ like($engine_pm, qr/sub audio_engine_transport/, 'the Perl client speaks the com
 like($engine_pm, qr/audio_engine_transport_fields/, 'the client has a field whitelist');
 like(
 	$engine_pm,
-	qr/qw\(\s*position bpm beats_per_bar gain loop_start loop_end clips master\s*\)/,
-	'only the promised fields, including the clip plan and master rack, are forwarded'
+	qr/qw\(\s*position bpm beats_per_bar gain loop_start loop_end clips master master_values\s*\)/,
+	'only the promised fields, including the clip plan, master rack and values, are forwarded'
 );
 
 # --- the browser follows the engine clock and never doubles the click --------
@@ -586,6 +668,54 @@ like(
 	$transport_js,
 	qr/studioEngineMasterList\(\)/,
 	'the transport uses the same master plan helper as an engine take'
+);
+like(
+	$transport_js,
+	qr/var values = studioEngineMasterValues\(\);\s*\n\s*if \(values\.length\) \{ fields\.master_values_json = JSON\.stringify\(values\); \}/,
+	'the rack\'s control values ride the start'
+);
+like(
+	$transport_js,
+	qr/fields\.master_values_json = JSON\.stringify\(values\)/,
+	'the rack\'s control values ride a plan update too'
+);
+
+my $master_js = read_file("$root/public/js/manager/studio/10_master.js");
+ok(length $master_js, 'the master rack JS is found');
+like(
+	$master_js,
+	qr/function studioEngineMasterValues/,
+	'the rack can be sent as the engine\'s live control values'
+);
+like(
+	$master_js,
+	qr/function studioEngineMasterValuesChanged/,
+	'a knob turn while the transport runs has one debounced entry point'
+);
+like(
+	$master_js,
+	qr/studioEngineMasterTimer = setTimeout\([\s\S]{0,120}\}, 120\)/,
+	'the value update debounces about a tenth of a second'
+);
+like(
+	$master_js,
+	qr/studioEngineTransportPost\('update', \{ master_values_json: JSON\.stringify\(values\) \}/,
+	'the knob update is a value-only plan post, not a clip plan'
+);
+like(
+	$master_js,
+	qr/function studioMasterSet[\s\S]{0,400}engine_transport'\]\) \{[\s\S]{0,160}studioEngineMasterValuesChanged\(\)/,
+	'a transport knob uses the value path, not the engine take\'s param path'
+);
+like(
+	$master_js,
+	qr/function studioMasterToggle[\s\S]{0,600}studioEnginePlanTouched\(\)[\s\S]{0,160}studioTakesChanged\(\)/,
+	'a toggle keeps the transport\'s rack set in sync through the plan'
+);
+unlike(
+	$master_js,
+	qr/function studioMasterSet[\s\S]{0,400}studioEngineMasterParam\(name, control, value\);\s*\n\s*studioEngineMasterValuesChanged/,
+	'the transport knob does not call the engine take param path as well'
 );
 like(
 	$transport_js,

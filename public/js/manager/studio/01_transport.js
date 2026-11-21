@@ -261,6 +261,10 @@ function studioTakesChanged() {
 
 function studioEngineClipsCancel() {
 	if (studioEngineClipsTimer) { clearTimeout(studioEngineClipsTimer); studioEngineClipsTimer = 0; }
+	if (typeof studioEngineMasterTimer !== 'undefined' && studioEngineMasterTimer) {
+		clearTimeout(studioEngineMasterTimer);
+		studioEngineMasterTimer = 0;
+	}
 	// Invalidate any staging that is already in flight, so an answer for the old
 	// transport can never post a plan to a new one.
 	studioEngineClipsSeq++;
@@ -304,6 +308,8 @@ function studioEngineClipsPost(seq) {
 		var fields = { clips_json: JSON.stringify(clips) };
 		var master = studioEngineMasterList();
 		fields.master_json = JSON.stringify(master);
+		var values = studioEngineMasterValues();
+		if (values.length) { fields.master_values_json = JSON.stringify(values); }
 		studioEngineTransportPost('update', fields, function (data) {
 			if (!data || data.ok !== true) {
 				// A refusal leaves the engine on its previous plan; the transport
@@ -619,9 +625,13 @@ function studioEngineTransportStart(pos, ready, exact) {
 		// the shape the route reads.
 		fields.clips_json = JSON.stringify(clips);
 		// The master rack is the same for every take. It rides this first `start`
-		// and every later plan update, where an unchanged rack is a no-op.
+		// and every later plan update, where an unchanged rack is a no-op. Its
+		// knob values ride beside it, so the engine starts with the mix the page
+		// shows rather than the inserts' defaults.
 		var master = studioEngineMasterList();
 		if (master.length) { fields.master_json = JSON.stringify(master); }
+		var values = studioEngineMasterValues();
+		if (values.length) { fields.master_values_json = JSON.stringify(values); }
 		studioEngineTransportPost('start', fields, studioEngineTransportAnswer);
 	}).catch(function (error) {
 		studioEngineTransportStarting = false;

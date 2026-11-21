@@ -1607,12 +1607,14 @@ sub studio_transport_decimal {
 	return $number;
 }
 
-# Validate the transport's six fields and return (error, hash). A `seek` needs
-# a position; a `start` defaults it to zero. Tempo, signature and gain default
-# to the page's 120 / 4 / 0.5 when omitted, and the engine has the same
-# defaults. The loop is off unless its end is past its start. An `update`
-# replaces a running transport's plan, so it must carry its clips even when the
-# plan is empty (a deleted take must actually leave the mix).
+# Validate the transport's fields and return (error, hash). A `seek` needs a
+# position; a `start` defaults it to zero. Tempo, signature and gain default to
+# the page's 120 / 4 / 0.5 when omitted, and the engine has the same defaults.
+# The loop is off unless its end is past its start. An `update` carries the
+# change for a running transport: an explicit `clips` array replaces the whole
+# plan (an empty one removes every take), `master` replaces the rack, and
+# `master_values` moves the knobs alone, so a fader drag never re-sends the
+# takes. An update must carry at least one of those.
 sub studio_transport_fields {
 	my ($c, $action) = @_;
 
@@ -1670,16 +1672,14 @@ sub studio_transport_fields {
 
 	my ($clips_error, $clips) = &studio_transport_clips($c);
 	return ($clips_error, undef) if defined $clips_error;
+	my $raw_clips = $c->param('clips_json');
+	$raw_clips = $c->param('clips') unless defined $raw_clips && length $raw_clips;
 	if (@{$clips}) {
 		$fields{'clips'} = $clips;
 	}
-	elsif ($action eq 'update') {
-		# An update is the whole plan: an absent one is a malformed request,
-		# while an empty array is a real request to remove every take.
-		my $raw_clips = $c->param('clips_json');
-		$raw_clips = $c->param('clips') unless defined $raw_clips && length $raw_clips;
-		return ('update needs "clips": the replacement plan for the running transport', undef)
-			unless defined $raw_clips && length $raw_clips;
+	elsif ($action eq 'update' && defined $raw_clips && length $raw_clips) {
+		# An update is the whole plan: an explicit empty array is a real request
+		# to remove every take. An absent `clips` is a values-only update below.
 		$fields{'clips'} = [];
 	}
 
@@ -1694,6 +1694,23 @@ sub studio_transport_fields {
 		# An update carries the rack it is playing through, so an empty array
 		# clears it; a start keeps omitting an empty rack as before.
 		$fields{'master'} = $master if @{$master} || $action eq 'update';
+	}
+
+	# The rack's live knob positions. A knob turn is a values-only update: it
+	# carries no clips, so a drag never re-reads the takes.
+	my $raw_values = $c->param('master_values_json');
+	$raw_values = $c->param('master_values') unless defined $raw_values && length $raw_values;
+	if (defined $raw_values && length $raw_values) {
+		my ($values_error, $values) = &studio_master_values($raw_values);
+		return ($values_error, undef) if defined $values_error;
+		$fields{'master_values'} = $values;
+	}
+
+	if ($action eq 'update'
+		&& !exists $fields{'clips'}
+		&& !exists $fields{'master'}
+		&& !exists $fields{'master_values'}) {
+		return ('update needs "clips", "master" or "master_values": the change for the running transport', undef);
 	}
 
 	return (undef, \%fields);
@@ -2027,6 +2044,39 @@ sub studio_master_plan {
 		push @names, $name;
 	}
 	return (undef, \@names);
+}
+
+# The master rack's live knob positions: a JSON array of
+# `{"name":"master_comp","control":"thresh","value":-18}`. The insert must be
+# one the engine's master rack can build, the control must have the contract's
+# name shape, and the value must be a finite number. The engine refuses the same
+# shapes, but this keeps the sentence a 400 rather than a socket line. The
+# result is the engine's `[{"name":"master_comp.thresh","value":-18},...]`.
+sub studio_master_values {
+	my ($raw) = @_;
+	return ('master_values_json must be a JSON array of master controls', undef)
+		unless defined $raw && length $raw;
+	my $decoded = eval { decode_json($raw) };
+	return ('master_values_json must be a JSON array of master controls', undef)
+		unless ref $decoded eq 'ARRAY';
+	return ('master_values_json may name at most 64 controls', undef) if @$decoded > 64;
+
+	my @values;
+	for my $entry (@$decoded) {
+		return ('each master value must be an object', undef) unless ref $entry eq 'HASH';
+		my $name = $entry->{'name'};
+		return ('a master value needs "name": a master insert name', undef)
+			unless defined $name && !ref $name;
+		return ("no such master insert: $name", undef) unless $studio_take_master_inserts{$name};
+		my $control = $entry->{'control'};
+		return ('a master value needs "control": a lowercase control name', undef)
+			unless defined $control && !ref $control && &studio_param_shape("master_x.$control");
+		my $value = &studio_transport_decimal($entry->{'value'});
+		return ("the master value for $name.$control must be a finite number", undef)
+			unless defined $value;
+		push @values, { name => "$name.$control", value => $value };
+	}
+	return (undef, \@values);
 }
 
 # Validate the request's optional plan fields and answer with the engine's

@@ -66,6 +66,7 @@
 //! still needs an output of its own, so it refuses while the transport plays.
 //! `status` leads with the take and reports the transport beside it.
 
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -1131,6 +1132,10 @@ struct Server {
     /// without a monitor can record beside it, because the two use different
     /// device streams.
     transport: Option<TransportSession>,
+    /// The decoded takes the control thread has already read, so a placement
+    /// update reuses megabytes instead of re-decoding them. It lives beside the
+    /// transport and is touched only from `transport start`/`update`.
+    take_cache: TakeCache,
     /// The signal flag the serve loop reads, and the wake pipe that makes a
     /// blocked `poll` look at it. Both are set up by `run_serve`; a signal
     /// stops the server exactly as a `quit` command does.
@@ -1197,6 +1202,7 @@ impl Server {
             listen: None,
             patch: None,
             transport: None,
+            take_cache: TakeCache::default(),
             stop,
             wake,
             gateway: Gateway::off(capable),
@@ -3118,8 +3124,10 @@ impl Server {
             );
         }
         // The takes to render are read before any device opens, so a missing or
-        // wrong-shaped file is this command's refusal, not a silent gap.
-        let clips = match transport_clips(object, self.config.rate) {
+        // wrong-shaped file is this command's refusal, not a silent gap. The
+        // decoded samples are cached by path, so a restart-led update re-reads
+        // only what changed.
+        let clips = match transport_clips(object, self.config.rate, &mut self.take_cache) {
             Ok(clips) => clips,
             Err(error) => return error_line(&error),
         };
@@ -3127,6 +3135,12 @@ impl Server {
         // clip mix's bus, so the transport sounds like the browser's master.
         let master = match parse_master(get(object, "master")) {
             Ok(master) => master,
+            Err(error) => return error_line(&error),
+        };
+        // The rack arrives with its knob positions, so the transport starts
+        // with the mix the page is showing rather than the insert defaults.
+        let master_values = match parse_master_values(get(object, "master_values")) {
+            Ok(values) => values.unwrap_or_default(),
             Err(error) => return error_line(&error),
         };
         let spec = match ClickSpec::new(bpm, beats_per_bar, gain) {
@@ -3224,7 +3238,17 @@ impl Server {
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-transport".to_string())
-                .spawn(move || run_transport(config, control, error, clips, master, plan_rx))
+                .spawn(move || {
+                    run_transport(
+                        config,
+                        control,
+                        error,
+                        clips,
+                        master,
+                        master_values,
+                        plan_rx,
+                    )
+                })
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -3244,14 +3268,16 @@ impl Server {
         self.transport_status()
     }
 
-    /// `{"cmd":"transport","action":"update","clips":[...],"master":[...]}`.
+    /// `{"cmd":"transport","action":"update","clips":[...],"master":[...],
+    /// "master_values":[{"name":"master_comp.thresh","value":-18.0}]}`.
     ///
-    /// Replace the placement of a running transport: the takes are read and
-    /// validated here on the control thread, then handed to the render thread,
-    /// which swaps them in at the next block with the device still open. A
-    /// transport that is not playing (never started, or stopped) is refused
-    /// rather than silently holding a plan no thread will apply. `master` is
-    /// optional; when absent the armed rack is left alone.
+    /// Replace the placement or the master rack of a running transport, or move
+    /// only the master knobs: the takes are read (and reused from the cache) on
+    /// this control thread, then handed to the render thread, which swaps them
+    /// in at the next block with the device still open. A transport that is not
+    /// playing (never started, or stopped) is refused rather than silently
+    /// holding a plan no thread will apply. Every field is optional, but an
+    /// update must carry at least one of them.
     fn transport_update(&mut self, object: &Object) -> String {
         let rate = self.config.rate;
         // Refuse before reading any file, so an update against a stopped
@@ -3266,7 +3292,7 @@ impl Server {
                 "the transport is not playing; start it before updating its clips",
             );
         }
-        let clips = match transport_clips(object, rate) {
+        let clips = match transport_clips_plan(object, rate, &mut self.take_cache) {
             Ok(clips) => clips,
             Err(error) => return error_line(&error),
         };
@@ -3277,9 +3303,22 @@ impl Server {
                 Err(error) => return error_line(&error),
             },
         };
-        let clip_count = clips.len();
+        let master_values = match parse_master_values(get(object, "master_values")) {
+            Ok(values) => values,
+            Err(error) => return error_line(&error),
+        };
+        if clips.is_none() && master.is_none() && master_values.is_none() {
+            return error_line(
+                "update needs \"clips\", \"master\" or \"master_values\": the change for the running transport",
+            );
+        }
+        let clip_count = clips.as_ref().map(|clips| clips.len());
         let master_count = master.as_ref().map(|master| master.len());
-        let plan = TransportPlan { clips, master };
+        let plan = TransportPlan {
+            clips,
+            master,
+            master_values,
+        };
         let session = match self.transport.as_mut() {
             Some(session) => session,
             None => {
@@ -3291,7 +3330,9 @@ impl Server {
         if session.plan_tx.send(plan).is_err() {
             return error_line("the transport's render thread is no longer accepting plans");
         }
-        session.clips = clip_count;
+        if let Some(count) = clip_count {
+            session.clips = count;
+        }
         if let Some(count) = master_count {
             session.master = count;
         }
@@ -3911,6 +3952,80 @@ fn clip_signed_frames(seconds: f64, rate: u32) -> Result<i64, String> {
     Ok(frames.round() as i64)
 }
 
+/// Identity of a WAV on disk: its length and modification time. A re-staged
+/// take at the same path changes at least one of them, so the cache decodes it
+/// again instead of serving the old audio.
+#[derive(Clone, PartialEq, Eq)]
+struct TakeStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+/// One decoded take, shared by every clip that names the same file.
+#[derive(Clone)]
+struct CachedTake {
+    rate: u32,
+    samples: Arc<[f32]>,
+}
+
+/// The control thread's decoded-take cache.
+///
+/// A transport plan re-reads every WAV it names unless the decode is kept. A
+/// fader drag posts the same files over and over, and an add or delete repeats
+/// the rest, so the cache is keyed by the absolute path the plan names and
+/// stamped with the file's size and modification time: a re-staged take at the
+/// same path is noticed. Entries the current plan no longer names are evicted
+/// after each successful plan, so a long session cannot grow without bound.
+/// The cache lives on the control thread; the render thread receives `Arc`
+/// clones and never touches it.
+#[derive(Default)]
+struct TakeCache {
+    entries: HashMap<String, (TakeStamp, CachedTake)>,
+    /// Real disk reads, so a test can prove a repeated plan reused the decode.
+    reads: u64,
+}
+
+impl TakeCache {
+    fn stamp(path: &Path) -> Result<TakeStamp, String> {
+        let metadata = fs::metadata(path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        Ok(TakeStamp {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        })
+    }
+
+    /// The decode for `path`, reading the file only when the path is new or the
+    /// file behind it has changed. The rate travels with the samples, so the
+    /// caller still validates it against the device rate.
+    fn decode(&mut self, path: &str) -> Result<CachedTake, String> {
+        let key = Path::new(path);
+        let stamp = Self::stamp(key)?;
+        if let Some((known, take)) = self.entries.get(path) {
+            if *known == stamp {
+                return Ok(take.clone());
+            }
+        }
+        let (rate, samples) = jawn_audio::playback::decode_take(path)?;
+        self.reads += 1;
+        let take = CachedTake { rate, samples };
+        self.entries.insert(path.to_string(), (stamp, take.clone()));
+        Ok(take)
+    }
+
+    /// Drop every decode the current plan does not name. `live` holds the
+    /// absolute paths of the clips that were just accepted; an empty plan
+    /// clears the cache.
+    fn retain(&mut self, live: &std::collections::HashSet<&str>) {
+        self.entries.retain(|path, _| live.contains(path.as_str()));
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 /// The `clips` field: the recorded takes placed on the transport timeline.
 ///
 /// Every entry is an object with an absolute WAV `file`, a timeline `start`,
@@ -3918,7 +4033,11 @@ fn clip_signed_frames(seconds: f64, rate: u32) -> Result<i64, String> {
 /// two crossfade lengths. The whole set is read and checked against the device
 /// rate before any thread or device exists, so a bad take is a refusal from
 /// `start` rather than a missing voice in a running transport.
-fn transport_clips(object: &Object, rate: u32) -> Result<Vec<TransportClip>, String> {
+fn transport_clips(
+    object: &Object,
+    rate: u32,
+    cache: &mut TakeCache,
+) -> Result<Vec<TransportClip>, String> {
     let values = match get(object, "clips") {
         None | Some(Value::Null) => return Ok(Vec::new()),
         Some(Value::Arr(values)) => values,
@@ -3926,14 +4045,31 @@ fn transport_clips(object: &Object, rate: u32) -> Result<Vec<TransportClip>, Str
     };
     let mut clips = Vec::with_capacity(values.len());
     for value in values {
-        clips.push(transport_clip(value, rate)?);
+        clips.push(transport_clip(value, rate, cache)?);
     }
+    // A plan is the whole set, so anything it no longer names is dead weight.
+    let live: std::collections::HashSet<&str> = clips.iter().map(|clip| clip.path.as_str()).collect();
+    cache.retain(&live);
     Ok(clips)
+}
+
+/// The `clips` field only when the request carried it: `None` is a values-only
+/// update (a master knob moved), which must never clear the placement.
+fn transport_clips_plan(
+    object: &Object,
+    rate: u32,
+    cache: &mut TakeCache,
+) -> Result<Option<Vec<TransportClip>>, String> {
+    match get(object, "clips") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Arr(_)) => transport_clips(object, rate, cache).map(Some),
+        _ => Err("transport \"clips\" must be an array of clip objects".to_string()),
+    }
 }
 
 /// One clip object. Missing knobs default to a wire, and a `duration` of zero
 /// means the rest of the file after `offset`.
-fn transport_clip(value: &Value, rate: u32) -> Result<TransportClip, String> {
+fn transport_clip(value: &Value, rate: u32, cache: &mut TakeCache) -> Result<TransportClip, String> {
     let fields = match value {
         Value::Obj(fields) => fields,
         _ => return Err("each transport clip must be an object".to_string()),
@@ -3989,16 +4125,27 @@ fn transport_clip(value: &Value, rate: u32) -> Result<TransportClip, String> {
             )
         }
     };
-    let clip = TransportClip::from_wav(
-        path, start, offset, duration, gain, pan, looped, fade_in, fade_out, inserts,
-    )?;
-    if clip.rate != rate {
+    let take = cache.decode(&path)?;
+    if take.rate != rate {
         return Err(format!(
             "{} is {} Hz and the transport runs at {} Hz; every clip must share the device rate",
-            clip.path, clip.rate, rate
+            path, take.rate, rate
         ));
     }
-    Ok(clip)
+    TransportClip::from_samples(
+        path,
+        take.rate,
+        take.samples,
+        start,
+        offset,
+        duration,
+        gain,
+        pan,
+        looped,
+        fade_in,
+        fade_out,
+        inserts,
+    )
 }
 
 /// The `click` object `record` echoes when it armed one, e.g.
@@ -4048,6 +4195,60 @@ fn parse_master(value: Option<&Value>) -> Result<Vec<InsertKind>, String> {
         .zip(wanted)
         .filter_map(|(kind, on)| if on { Some(*kind) } else { None })
         .collect())
+}
+
+/// The `master_values` field: the armed rack's live knob positions, as
+/// `[{"name":"master_comp.thresh","value":-18.0},...]`. Each name is a master
+/// insert prefix and one of that insert's controls; each value is finite. The
+/// rack itself is armed by `master`, so a value for an insert that is not in
+/// the rack moves nothing here rather than refusing the whole update: a page
+/// may race a toggle with a knob turn.
+fn parse_master_values(value: Option<&Value>) -> Result<Option<Vec<(String, f32)>>, String> {
+    let values = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Arr(values)) => values,
+        _ => {
+            return Err(
+                "\"master_values\" must be an array of master control objects".to_string()
+            )
+        }
+    };
+    let mut out = Vec::with_capacity(values.len());
+    for entry in values {
+        let fields = match entry {
+            Value::Obj(fields) => fields,
+            _ => {
+                return Err(
+                    "each master value must be an object with \"name\" and \"value\""
+                        .to_string(),
+                )
+            }
+        };
+        let name = match get(fields, "name") {
+            Some(Value::Str(name)) => name.as_str().to_string(),
+            _ => return Err("a master value needs \"name\": insert.control".to_string()),
+        };
+        let (prefix, control) = name.split_once('.').ok_or_else(|| {
+            format!("a master value names an insert and control: {name}")
+        })?;
+        let kind = InsertKind::parse(prefix)
+            .filter(|kind| kind.master_prefix().is_some())
+            .ok_or_else(|| format!("no such master insert: {prefix}"))?;
+        if kind.control_index(control).is_none() {
+            return Err(format!("no such master control: {name}"));
+        }
+        let value = match get(fields, "value") {
+            Some(Value::Num(value)) if value.is_finite() => *value as f32,
+            _ => {
+                return Err(format!("the master value for {name} must be a finite number"))
+            }
+        };
+        if !value.is_finite() {
+            return Err(format!("the master value for {name} is too large for this device"));
+        }
+        out.push((name, value));
+    }
+    Ok(Some(out))
 }
 
 /// The array form: one object per track. Every insert is parsed here, before
@@ -4565,11 +4766,13 @@ fn run_transport(
     error: Arc<Mutex<String>>,
     clips: Vec<TransportClip>,
     master: Vec<InsertKind>,
+    master_values: Vec<(String, f32)>,
     plans: std::sync::mpsc::Receiver<TransportPlan>,
 ) {
     let source = TransportSource::new(Arc::clone(&control))
         .with_clips(clips)
         .with_master(master)
+        .with_master_values(master_values)
         .with_plan_rx(plans);
     let outcome = match config.backend {
         BackendKind::Null => transport_null(&config, source, &control),
@@ -6798,6 +7001,15 @@ break"}"#).is_err());
             .into_owned()
     }
 
+    fn write_wav(path: &str, frames: usize) {
+        use jawn_audio::WavWriter;
+        let mut writer = WavWriter::create(path, 48_000, 1, 4096).expect("a WAV writer");
+        writer
+            .write_f32(&vec![0.25f32; frames])
+            .expect("write samples");
+        writer.finish().expect("finish the WAV");
+    }
+
     fn temp_socket(name: &str) -> PathBuf {
         use std::sync::atomic::AtomicUsize;
         static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -7710,6 +7922,129 @@ break"}"#).is_err());
 
         let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
         let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_repeated_plan_reuses_the_decoded_take() {
+        let out = temp_take("cache");
+        write_wav(&out, 4_800);
+        let mut cache = TakeCache::default();
+        let request = parse_object(&format!(
+            r#"{{"clips":[{{"file":"{out}","start":0,"gain":1,"pan":0}}]}}"#
+        ))
+        .expect("parse");
+
+        let first = transport_clips(&request, 48_000, &mut cache).expect("first plan");
+        assert_eq!(cache.reads, 1, "the first plan did not read the take");
+        let second = transport_clips(&request, 48_000, &mut cache).expect("second plan");
+        assert_eq!(cache.reads, 1, "the second plan re-read an unchanged take");
+        assert!(
+            Arc::ptr_eq(&first[0].samples, &second[0].samples),
+            "the plan copied the samples instead of sharing them"
+        );
+
+        // A cached entry is still checked against the device rate: reusing the
+        // decode never skips the shape check.
+        assert!(
+            transport_clips(&request, 44_100, &mut cache).is_err(),
+            "a cached take skipped its device-rate validation"
+        );
+
+        // A re-staged take at the same path has a new size, so the stamp
+        // changes and the cache decodes it again.
+        write_wav(&out, 9_600);
+        let third = transport_clips(&request, 48_000, &mut cache).expect("restaged plan");
+        assert_eq!(cache.reads, 2, "a re-staged take was served from the cache");
+        assert_eq!(third[0].samples.len(), 9_600);
+
+        // The plan is the whole set: an empty one evicts what it no longer
+        // names, so a long session's cache cannot grow without bound.
+        let empty = parse_object(r#"{"clips":[]}"#).expect("parse");
+        let _ = transport_clips(&empty, 48_000, &mut cache).expect("empty plan");
+        assert_eq!(cache.len(), 0, "the emptied plan kept the decoded take");
+
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn a_master_values_update_reaches_a_running_transport() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","master_values":[{"name":"master_comp.thresh","value":-18.0},{"name":"master_limiter.ceiling","value":-1.0}]}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+        // A value-only update moves the rack and leaves the takes alone.
+        assert!(line.contains("\"clips\":0"), "{line}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_master_values_update_refuses_unknown_names_and_shapes() {
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+
+        for (line, needle) in [
+            (
+                r#"{"cmd":"transport","action":"update","master_values":"master_comp.thresh"}"#,
+                "array of master control objects",
+            ),
+            (
+                r#"{"cmd":"transport","action":"update","master_values":[1]}"#,
+                "object with",
+            ),
+            (
+                r#"{"cmd":"transport","action":"update","master_values":[{"name":"flanger.drive","value":1}]}"#,
+                "no such master insert",
+            ),
+            (
+                r#"{"cmd":"transport","action":"update","master_values":[{"name":"master_comp.nope","value":1}]}"#,
+                "no such master control",
+            ),
+            (
+                r#"{"cmd":"transport","action":"update","master_values":[{"name":"master_comp.thresh","value":"loud"}]}"#,
+                "finite number",
+            ),
+            (
+                r#"{"cmd":"transport","action":"update"}"#,
+                "needs",
+            ),
+        ] {
+            let answer = reply(server.handle(line));
+            assert!(answer.contains("\"ok\":false"), "{line}: {answer}");
+            assert!(answer.contains(needle), "{line}: {answer}");
+        }
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+    }
+
+    #[test]
+    fn a_master_toggle_update_changes_the_armed_rack() {
+        // Toggling a master insert is the rack set: the update carries the new
+        // list and the engine swaps it at a block edge. Adding then removing a
+        // slot is visible in the session's own count.
+        let mut server = socket_server();
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"master\":0"), "{started}");
+
+        let added = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","clips":[],"master":["master_limiter"],"master_values":[{"name":"master_limiter.ceiling","value":-1.0}]}"#,
+        ));
+        assert!(added.contains("\"ok\":true"), "{added}");
+        assert!(added.contains("\"master\":1"), "{added}");
+
+        let removed = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","clips":[],"master":[]}"#,
+        ));
+        assert!(removed.contains("\"ok\":true"), "{removed}");
+        assert!(removed.contains("\"master\":0"), "{removed}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
     }
 
     #[test]
