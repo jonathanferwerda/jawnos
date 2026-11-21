@@ -334,7 +334,7 @@ sub action_19033 {
 
 		$value = encode_json $measures;
 	}
-	if (grep { $setting eq $_ } qw/ollama_key cloudflare_token openai_key anthropic_key xai_key google_key mistral_key cohere_key groq_key openrouter_key deepseek_key/ ) {
+	if (grep { $setting eq $_ } qw/ollama_key cloudflare_token openai_key anthropic_key xai_key google_key mistral_key cohere_key groq_key openrouter_key deepseek_key opencode_key/ ) {
 		# Never log the key: these two lines used to write the plaintext and then
 		# its ciphertext into ~/manager.log on every save.
 		$value = &subs::note_encrypter(&subs::suds_grabber(), $value);

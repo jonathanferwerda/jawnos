@@ -749,6 +749,7 @@ sub _choice_context {
 			groq       => 'groq_key',
 			openrouter => 'openrouter_key',
 			deepseek   => 'deepseek_key',
+			opencode   => 'opencode_key',
 		},
 		bucket_ok => sub {
 			my ($bucket) = @_;
@@ -770,7 +771,7 @@ sub model_family {
 	my $name = $model;
 	$name =~ s/^\@cf\///;
 	$name =~ s/^\@[^\/]+\///;
-	if ($name =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek/) {
+	if ($name =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek opencode/) {
 		$name =~ s/^[a-z]+://;
 	}
 	$name =~ s/:.*$//;

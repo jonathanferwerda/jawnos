@@ -789,6 +789,12 @@ sub ai_providers {
 			models => [ qw/llama-3.3-70b-versatile llama-3.1-8b-instant mixtral-8x7b-32768 whisper-large-v3-turbo playai-tts/ ] },
 		{ id => 'openrouter', label => 'OpenRouter',            keys => [ [ 'openrouter_key', 'API key' ] ],
 			models => [ qw{openai/gpt-4o anthropic/claude-3.5-sonnet meta-llama/llama-3.3-70b-instruct google/gemini-2.0-flash-001} ] },
+		{ id => 'opencode',   label => 'OpenCode (Go / Console)', keys => [ [ 'opencode_key', 'API key' ] ],
+			# OpenCode's Console gateway is OpenAI-compatible. Models are reached as
+			# opencode:<id>. The free ids are left out because ai_model_paid treats
+			# every model of a paid provider as paid, so a bucket out of credit would
+			# hide them as well.
+			models => [ qw/claude-sonnet-5-5 claude-opus-5-5 claude-haiku-4-5 gemini-3.8-flash gemini-3.5-flash gpt-6.2-sol gpt-6.1-sol gpt-6-luna grok-4.7 qwen3.8-max qwen3.8-flash deepseek-v4.1-flash deepseek-v4-pro minimax-m3 glm-5.3 glm-5.3-flash kimi-k3 kimi-k2.7-code mistral-large-4/ ] },
 	];
 }
 
@@ -903,7 +909,7 @@ sub ai_model_provider {
 	# a peer's own Ollama: @<device>/<model>, so a model can be picked by the
 	# machine that runs it
 	return 'ollama_remote' if $model =~ /^\@[^\/]+\/.+$/;
-	return $1 if $model =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek/;
+	return $1 if $model =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek opencode/;
 	return 'ollama';
 }
 

@@ -144,9 +144,11 @@ sub ai_house_report {
 
 # The money left on each provider account, where the provider will say. There is
 # no common balance API: OpenRouter publishes its credits and DeepSeek its account
-# balance, and the rest (OpenAI, Anthropic, Google, xAI, Mistral, Groq,
-# Cloudflare) have none, so they read "—". Only providers with an account on file
-# are listed at all. The read itself is done off the page
+# balance; OpenCode has no key-readable money balance, but it does publish its Go
+# allowance windows (five-hour, weekly, monthly), so its row reads how much of
+# each is left and when it resets - the time available. The rest (OpenAI,
+# Anthropic, Google, xAI, Mistral, Cloudflare) have none, so they read "—". Only
+# providers with an account on file are listed at all. The read itself is done off the page
 # by President.pl's ai balance loop; this only ever reads the cached result, so a
 # page load never waits on a provider.
 sub ai_balance_report {
@@ -196,6 +198,36 @@ sub ai_balance_refresh {
 			else { $row = { available => undef, currency => 'USD', note => 'could not read balance' }; }
 		}
 		$money{'deepseek'} = $row;
+	}
+	# OpenCode: its Go allowance windows, not a money balance - the Console does
+	# not expose credits to an API key. The five-hour, weekly and monthly meters
+	# each say what is left and when they reset, which is the time available.
+	{
+		my $key = $secret->($settings->{'opencode_key'});
+		my $row = { available => undef, note => 'no key' };
+		if (length $key) {
+			my $doc;
+			# the inference spelling is current; zen still answers on older keys.
+			# Only a 404 means the path moved - a 401 or 403 is the key or plan, so
+			# the second URL would only repeat the same answer.
+			foreach my $url ( 'https://opencode.ai/inference/go/v1/usage', 'https://opencode.ai/zen/go/v1/usage' ) {
+				my $tx = eval { $ua->get($url => { 'Authorization' => "Bearer $key" }) };
+				next unless $tx && !$tx->error;
+				my $res = $tx->res;
+				if ($res->is_success) {
+					my $d = eval { decode_json($res->body) };
+					if (ref $d eq 'HASH') { $doc = $d; }
+					last;
+				}
+				last if !$res->is_error || $res->code != 404;
+			}
+			if (ref $doc eq 'HASH') {
+				my $note = &ai_balance_opencode_note($doc);
+				$row = { available => undef, note => (length $note ? $note : 'no Go allowance reported') };
+			}
+			else { $row = { available => undef, note => 'could not read usage' }; }
+		}
+		$money{'opencode'} = $row;
 	}
 	# every registered provider, in the panel's own order, with a balance where
 	# there is one; a provider with no account on file is not a row at all
@@ -258,6 +290,71 @@ sub ai_balance_refresh {
 	my $report = { at => $now, rows => \@rows, history => $history };
 	&subs::cache_set({ app => '__president', context => 'ai_balance', warranty => '-40d' }, $report);
 	return $report;
+}
+
+# The OpenCode Go allowance, read from its usage document: what is left of the
+# five-hour (rolling), weekly and monthly meters and when each resets. The Console
+# does not expose a money balance to an API key, so this is the only key-readable
+# account state, and it is the time available rather than a sum. A window may
+# state a percent used, or used/limit; either is enough. Returns a display note,
+# or '' when the document names no meter. Pure, so a test pins the shape.
+sub ai_balance_opencode_note {
+	my ($doc, $now) = @_;
+	return '' unless ref $doc eq 'HASH';
+	$now = &subs::rightNow() unless defined $now;
+	# Accept the usage object at the top, under data, or under usage, and the
+	# local server's shape where the meters sit under go.
+	my $usage = $doc;
+	foreach my $path ( [ qw/data usage/ ], [ qw/usage/ ], [ qw/data go/ ], [ qw/go/ ] ) {
+		my $cur = $doc;
+		my $ok = 1;
+		foreach my $k ( @{$path} ) {
+			if (ref $cur eq 'HASH' && ref $cur->{$k} eq 'HASH') { $cur = $cur->{$k}; }
+			else { $ok = 0; last; }
+		}
+		next unless $ok;
+		next unless grep { ref $cur->{$_} eq 'HASH' } qw/rolling weekly monthly/;
+		$usage = $cur;
+		last;
+	}
+	# compact, so "resets in 2h 13m" reads the same at any window length
+	my $span = sub {
+		my ($ms) = @_;
+		my $mins = int($ms / 60000 + 0.5);
+		return 'under a minute' if $mins < 1;
+		my $days = int($mins / 1440);
+		my $hours = int(($mins % 1440) / 60);
+		my $left = $mins % 60;
+		return $days . 'd ' . $hours . 'h' if $days;
+		return $hours . 'h ' . $left . 'm' if $hours;
+		return $left . 'm';
+	};
+	my @parts;
+	foreach my $meter ( [ rolling => '5h' ], [ weekly => 'week' ], [ monthly => 'month' ] ) {
+		my ($key, $label) = @{$meter};
+		my $w = $usage->{$key};
+		next unless ref $w eq 'HASH';
+		my $percent = $w->{'percent'};
+		$percent = ($w->{'used'} / $w->{'limit'}) * 100
+			if !defined $percent && defined $w->{'used'} && defined $w->{'limit'} && $w->{'limit'} > 0;
+		next unless defined $percent && $percent =~ /^-?\d+(?:\.\d+)?$/;
+		my $left = 100 - $percent;
+		$left = 0 if $left < 0 || ($w->{'status'} || '') eq 'limited';
+		$left = 100 if $left > 100;
+		my $part = sprintf('%s %d%% left', $label, int($left + 0.5));
+		# resetsAt is an ISO clock in the hosted API, milliseconds in the local one
+		my $reset = $w->{'resetsAt'};
+		my $reset_ms;
+		if (defined $reset && !ref $reset && $reset =~ /^\d+$/) { $reset_ms = $reset + 0; }
+		elsif (defined $reset && !ref $reset && length $reset) {
+			my $secs = eval { str2time($reset) };
+			$reset_ms = $secs * 1000 if defined $secs;
+		}
+		$part .= ' (resets in ' . $span->($reset_ms - $now) . ')'
+			if defined $reset_ms && $reset_ms > $now;
+		push @parts, $part;
+	}
+	return join(' · ', @parts);
 }
 
 # One point of the balance history, at a known time. Pure so a test can pin

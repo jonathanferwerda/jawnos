@@ -270,7 +270,7 @@ sub ai_wire_message {
 		return { role => ($m->{'role'} eq 'assistant' ? 'model' : 'user'), parts => &ai_parts_google($m) };
 	}
 	else {
-		# openai-compatible: openai, xai, mistral, groq, openrouter, deepseek, cloudflare
+		# openai-compatible: openai, xai, mistral, groq, openrouter, deepseek, opencode, cloudflare
 		return { role => $m->{'role'}, content => &ai_content_openai($m) };
 	}
 }
@@ -500,7 +500,7 @@ sub ai_stream_frame {
 		else { $add->('text', $obj->{'response'}); }
 		return @out;
 	}
-	# openai, xai, mistral, cohere, groq, openrouter, deepseek
+	# openai, xai, mistral, cohere, groq, openrouter, deepseek, opencode
 	my $delta = $obj->{'choices'}->[0]->{'delta'};
 	return () unless ref $delta eq 'HASH';
 	$add->('text', $delta->{'content'});
@@ -561,7 +561,7 @@ sub ai_chat_raw {
 	if ($model =~ /^\@cf/) { ($provider, $real) = ('cloudflare', $model); }
 	elsif ($model =~ /^\@([^\/]+)\/(.+)$/) { ($provider, $real) = ('ollama_remote', $2); }
 	elsif ($model =~ /^([a-z]+):(.+)$/) {
-		if (grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek/) { ($provider, $real) = ($1, $2); }
+		if (grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek opencode/) { ($provider, $real) = ($1, $2); }
 	}
 
 	my $system = '';
@@ -634,7 +634,7 @@ sub ai_chat_raw {
 		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @wire ], stream => \0, options => { num_thread => $nproc - 2, num_ctx => 32768 } };
 	}
 	else {
-		# the OpenAI-compatible crowd: openai, xai, mistral, groq, openrouter, deepseek
+		# the OpenAI-compatible crowd: openai, xai, mistral, groq, openrouter, deepseek, opencode
 		my %ep = (
 			openai => 'https://api.openai.com/v1/chat/completions',
 			xai => 'https://api.x.ai/v1/chat/completions',
@@ -643,8 +643,9 @@ sub ai_chat_raw {
 			groq => 'https://api.groq.com/openai/v1/chat/completions',
 			openrouter => 'https://openrouter.ai/api/v1/chat/completions',
 			deepseek => 'https://api.deepseek.com/chat/completions',
+			opencode => 'https://opencode.ai/inference/openai/v1/chat/completions',
 		);
-		my %key = ( openai => 'openai_key', xai => 'xai_key', mistral => 'mistral_key', cohere => 'cohere_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
+		my %key = ( openai => 'openai_key', xai => 'xai_key', mistral => 'mistral_key', cohere => 'cohere_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key', opencode => 'opencode_key' );
 		$url = $ep{$provider};
 		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{ $key{$provider} }), 'Content-Type' => 'application/json' };
 		my $system_role = ($provider eq 'cohere') ? 'developer' : 'system';
@@ -1287,7 +1288,7 @@ sub evaluation_model_available {
 		return 0;
 	}
 	if ($provider ne 'ollama') {
-		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', cohere => 'cohere_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
+		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', cohere => 'cohere_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key', opencode => 'opencode_key' );
 		my $setting = $key{$provider};
 		return 0 unless $setting;
 		my $settings = &subs::settings_grabber({ app => 'mail', settings => [ $setting ] });
