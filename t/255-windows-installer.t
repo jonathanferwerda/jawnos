@@ -284,6 +284,8 @@ like($iss, qr/\{app\}\\start\.vbs/, 'the uninstaller removes the service launche
 like($iss, qr/IconFilename:\s*"\{app\}\\jawnos\.ico"/, 'the Inno shortcuts use the JawnOS icon');
 like($iss, qr/UninstallDisplayIcon=\{app\}\\jawnos\.ico/, 'Apps & features shows the JawnOS icon');
 like($iss, qr/PrepareToInstall/, 'an upgrade stops the running house before replacing files');
+like($iss, qr/PrepareToInstall[\s\S]{0,1200}taskkill\.exe[\s\S]{0,120}JawnOSShell\.exe/,
+	'and stops the WebView2 shell itself, even one an older uninstaller did not know');
 like($uninstall, qr/Get-CimInstance Win32_Process/,
 	'the uninstaller looks for a running desktop shell');
 like($uninstall, qr/Name='pythonw\.exe' OR Name='python\.exe'/,

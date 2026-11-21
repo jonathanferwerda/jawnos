@@ -164,4 +164,11 @@ begin
       '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -InstallDir "' +
       ExpandConstant('{app}') + '" -KeepFolder -SkipShortcuts -SkipFirewall',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  { The desktop shell is this Setup's own process, and an older install's
+    uninstall.ps1 may not know it exists (the WebView2 shell arrived after
+    0.1.3488). If it is still running, Inno cannot replace webview\JawnOSShell.exe
+    and the upgrade aborts on an access-denied retry. Stop it here, whatever
+    installed it; a fresh install starts it again from its own [Run]. }
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM JawnOSShell.exe',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
