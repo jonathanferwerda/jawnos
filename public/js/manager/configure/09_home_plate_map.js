@@ -325,11 +325,26 @@ function homePlateInit($editor) {
 	if (st.map && typeof st.map.destroy === 'function') { try { st.map.destroy(); } catch (e) {} }
 	var anchor = homePlateAnchor(homePlateSelectedPlate(st));
 	var start = anchor || homePlateHere() || { lat: 43.0, lon: -81.94 };
-	st.map = window.jawnosMap.create(canvas.id, {
+	// Travel draws its ground with the house's own vector basemap, and the engine
+	// only paints that layer when create() is handed the loader. Without it the
+	// `house` provider has no ground and the canvas stays blank, so pass the same
+	// vector block Travel passes. A page without the loader falls back to a tile
+	// provider instead of an empty map (see homePlateLoadGround).
+	var mapOpts = {
 		lat: start.lat, lon: start.lon, z: 16,
 		width: function() { return $editor.find('.home_plate_map_wrap').width() || 640; },
 		height: function() { return 360; }
-	});
+	};
+	if (typeof window.travelBasemapLoad === 'function' && typeof window.travelBasemapStyle === 'function') {
+		mapOpts.vector = {
+			load: function(done) { window.travelBasemapLoad(done); },
+			register: function() { if (typeof window.travelBasemapRegister === 'function') { window.travelBasemapRegister(); } },
+			maxZoom: function(url, done) { if (typeof window.travelBasemapMaxZoom === 'function') { window.travelBasemapMaxZoom(url, done); } },
+			style: function(maxzoom) { return window.travelBasemapStyle(maxzoom); },
+			url: '/manager/travel/basemap'
+		};
+	}
+	st.map = window.jawnosMap.create(canvas.id, mapOpts);
 	st.map.onDraw(function() { homePlateDraw(st); });
 	st.map.onMapClick(function(lat, lon) { homePlateMapClick(st, lat, lon); });
 	st.map.onMapDoubleClick(function(lat, lon) { homePlateMapDouble(st, lat, lon); });
@@ -357,6 +372,7 @@ function homePlateLoadGround(st) {
 		st.ground = g || {};
 		var provider = (g && g.provider) || 'osm';
 		if (provider === 'none' || provider === 'custom' || provider === 'lambton') { provider = 'osm'; }
+		if (provider === 'house' && typeof window.travelBasemapLoad !== 'function') { provider = 'osm'; }
 		st.map.setProvider(provider, (g && g.custom_url) || '', (g && g.keys) || {});
 		st.map.setMaps((g && g.maps) || []);
 		homePlateBuildProvider(st);
@@ -386,6 +402,7 @@ function homePlateBuildProvider(st) {
 	});
 	var current = (st.ground && st.ground.provider) || 'osm';
 	if (!providers[current] || current === 'custom' || current === 'lambton') { current = 'osm'; }
+	if (current === 'house' && typeof window.travelBasemapLoad !== 'function') { current = 'osm'; }
 	sel.val(current);
 }
 

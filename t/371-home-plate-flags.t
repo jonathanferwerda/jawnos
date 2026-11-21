@@ -68,6 +68,7 @@ like( $editor, qr#/manager/travel/branches#, 'a pattern asks the branch lookup' 
 like( $editor, qr/window\.homePlateTraceWater/, 'the trace is handed to the water reader' );
 like( $editor, qr#/manager/configure/home_plate/shape#, 'the save posts the whole flag' );
 like( $editor, qr/function homePlateDropFlag/, 'the card delete updates the map too' );
+like( $editor, qr/mapOpts\.vector/, 'the map hands the engine the house vector basemap loader' );
 
 # ----------------------------------------------------------- the card handlers
 unlike( $records, qr/\$\(document\)\.on\('change', '\.manual_home_plate'/, 'the manual lat/long handler is gone' );
