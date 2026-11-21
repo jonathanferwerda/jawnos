@@ -27,7 +27,12 @@
 #            pipewire/default when a sound server answers, alsa/hw:1,0 when
 #            none does, and the choice is logged once. The plan defaults to
 #            the durable audio state dir, not the wiped ~/.president, and the
-#            system-mix state follows the plan beside it.
+#            system-mix state follows the plan beside it. The block the engine
+#            is spawned with follows the saved plan's mode: 64/256 while a
+#            duplex plan is armed, 256/1024 for playback only, and an operator
+#            period or buffer still wins. A plan that flips mode while an engine
+#            runs asks it to restart on the new block, except while a take is
+#            recording, so an armed WAV is never cut.
 
 use strict;
 use warnings;
@@ -217,6 +222,50 @@ sub reap_child {
 	my ($pid) = @_;
 	return 0 unless defined $pid;
 	return waitpid($pid, POSIX::WNOHANG()) == $pid ? 1 : 0;
+}
+
+# The block one saved plan is spawned with, and what the status reports, from a
+# child that only logs its argv. Flags pin the backend so the fallback probe
+# never runs and the answer does not depend on whether this box has a sound
+# server.
+sub block_for_plan {
+	my ($plan_json, %opt) = @_;
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	delete local $ENV{JAWNOS_AUDIO_PERIOD};
+	delete local $ENV{JAWNOS_AUDIO_BUFFER};
+	$ENV{JAWNOS_AUDIO_PERIOD} = $opt{'period'} if defined $opt{'period'};
+	$ENV{JAWNOS_AUDIO_BUFFER} = $opt{'buffer'} if defined $opt{'buffer'};
+	my $plan = "$dir/audio-plan.json";
+	if (defined $plan_json) {
+		open(my $pfh, '>', $plan) or die "plan: $!";
+		print {$pfh} $plan_json;
+		close $pfh;
+	}
+	# Point at the path either way: an absent file is the "no saved plan" case.
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+	my $args_log = "$dir/args.log";
+	local $ENV{AUDIO_TEST_ARGS} = $args_log;
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/block-engine", <<'ENGINE');
+open(my $log, '>>', $ENV{'AUDIO_TEST_ARGS'}) or exit 1;
+print {$log} join(' ', @ARGV), "\n";
+close $log;
+sleep 600;
+ENGINE
+	my $sup = start_supervisor(
+		args => [ '--socket', "$dir/audio.sock", '--backend', 'null', '--device', 'hw:9,9' ],
+		log  => "$dir/supervisor.log",
+	);
+	my $args = wait_for( sub { -s $args_log ? read_text($args_log) : 0 }, 10 );
+	my $status = wait_for(sub {
+		my $got = read_status("$home/.president/audio.json");
+		return 0 unless $got;
+		return $got->{'pid'} ? $got : 0;
+	}, 10);
+	stop_supervisor($sup);
+	return ( $args // '', $status );
 }
 
 # --- a crashing engine is restarted on a growing backoff ----------------------
@@ -2642,6 +2691,105 @@ ENGINE
 
 	my $code = stop_supervisor($sup);
 	is($code, 0, 'the refusing supervisor stops cleanly');
+}
+
+# --- the engine's block follows the plan's mode -------------------------------
+# A duplex plan is capturing a routed input, which is the armed state a
+# monitored take needs the studio block for; a playback plan cannot hear 5 ms,
+# so it runs the relaxed one and wakes a quarter as often.
+{
+	my $playback = '{"manage":0,"plan":{"sources":[],"buses":[],"sinks":[],"routes":[]}}';
+	my $duplex = '{"manage":0,"plan":{"sources":[{"id":"gtr","kind":"input","channel":0}],'
+		. '"buses":[{"id":"house"}],"sinks":[],"routes":[{"from":"gtr","to":"house"}]}}';
+
+	my ( $args, $status ) = block_for_plan($playback);
+	like($args, qr/--period 256 --buffer 1024/,
+		'a playback-only plan runs the relaxed block')
+		or diag("args: $args");
+	is($status->{'period'}, 256, 'and the status reports the relaxed period') if $status;
+	is($status->{'buffer'}, 1024, 'with the relaxed buffer') if $status;
+
+	my ($duplex_args) = block_for_plan($duplex);
+	like($duplex_args, qr/--period 64 --buffer 256/,
+		'a duplex plan keeps the studio block') or diag("args: $duplex_args");
+
+	my ($pinned_args) = block_for_plan( $playback, period => 128, buffer => 512 );
+	like($pinned_args, qr/--period 128 --buffer 512/,
+		'JAWNOS_AUDIO_PERIOD and JAWNOS_AUDIO_BUFFER beat the plan')
+		or diag("args: $pinned_args");
+
+	my ($one_knob_args) = block_for_plan( $playback, buffer => 512 );
+	like($one_knob_args, qr/--period 64 --buffer 512/,
+		'one pinned knob keeps the studio period, so the pair stays valid')
+		or diag("args: $one_knob_args");
+
+	my ($bare_args) = block_for_plan(undef);
+	like($bare_args, qr/--period 64 --buffer 256/,
+		'with no saved plan at all the studio pair stays')
+		or diag("args: $bare_args");
+}
+
+# --- a plan that flips mode asks the engine to restart on the new block ------
+# The pair is chosen at spawn, so without this check a plan that turned duplex
+# kept the relaxed block until something else happened to restart the engine.
+{
+	my $dir  = tempdir(CLEANUP => 1);
+	my $home = "$dir/home";
+	make_path("$home/.president");
+	local $ENV{HOME} = $home;
+	my $plan = "$dir/audio-plan.json";
+	open(my $pfh, '>', $plan) or die "plan: $!";
+	print {$pfh} '{"manage":0,"plan":{"sources":[{"id":"gtr","kind":"input","channel":0}],'
+		. '"buses":[{"id":"house"}],"sinks":[],"routes":[{"from":"gtr","to":"house"}]}}';
+	close $pfh;
+	local $ENV{JAWNOS_AUDIO_PLAN} = $plan;
+	local $ENV{AUDIO_TEST_QUIT}   = "$dir/quit.log";
+	# An engine that reports the relaxed block the old plan would have chosen:
+	# the supervisor must notice the duplex plan asks for the studio one.
+	local $ENV{JAWNOS_AUDIO_BINARY} = write_script("$dir/relaxed-engine", <<'ENGINE');
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
+use JSON::PP ();
+my %arg;
+for (my $i = 0; $i < @ARGV; $i++) { $arg{$ARGV[$i]} = $ARGV[$i + 1] if $ARGV[$i] =~ /^--/; }
+my $listener = IO::Socket::UNIX->new(
+	Local => $arg{'--socket'}, Type => SOCK_STREAM, Listen => 5,
+) or exit 1;
+while (my $client = $listener->accept) {
+	$client->autoflush(1);
+	my $line = <$client>;
+	my $obj = eval { JSON::PP->new->decode($line) };
+	my $cmd = ref $obj eq 'HASH' ? ($obj->{'cmd'} // '') : '';
+	if ($cmd eq 'quit') {
+		print {$client} "{\"ok\":true}\n";
+		open(my $q, '>>', $ENV{AUDIO_TEST_QUIT}) or exit 1;
+		print {$q} join(' ', @ARGV), "\n";
+		close $q;
+		close $client;
+		last;
+	}
+	print {$client} "{\"ok\":true,\"take\":0,\"state\":\"idle\",\"backend\":\"null\","
+		. "\"device\":\"hw:9,9\",\"period\":256,\"buffer\":1024}\n";
+	close $client;
+}
+close $listener;
+unlink $arg{'--socket'};
+ENGINE
+
+	my $sup = start_supervisor(
+		args => ['--backend', 'null', '--device', 'hw:9,9', '--socket', "$dir/audio.sock"],
+		log  => "$dir/supervisor.log",
+	);
+	my $asked = wait_for(sub { -s "$ENV{AUDIO_TEST_QUIT}" }, 15);
+	ok($asked, 'the engine on the relaxed block is asked to restart when the plan turns duplex')
+		or diag('supervisor: ' . (-s "$dir/supervisor.log" ? read_text("$dir/supervisor.log") : '(none)'));
+	# The supervisor's stdout is block-buffered when it is redirected, so the note
+	# is only guaranteed on disk once it has stopped and flushed.
+	my $code = stop_supervisor($sup);
+	is($code, 0, 'the flipping supervisor stops cleanly');
+	like(read_text("$dir/supervisor.log"),
+		qr/the engine runs 256\/1024; the saved plan asks for 64\/256/,
+		'and the log names the pair the plan asks for');
 }
 
 # --- the staged binary is a build artifact ------------------------------------

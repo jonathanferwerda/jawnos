@@ -29,7 +29,8 @@
 //! The manager is the only caller, and two controllers would arm and stop the
 //! same take. A second connection is answered with one error line and closed.
 //! Seeing it takes a non-blocking accept while the first client is connected,
-//! so the loop here is a small poll rather than a plain `accept`/read pair.
+//! so the loop waits in `poll(2)` for either descriptor rather than sleeping
+//! between looks: an idle engine must not wake for nothing.
 //!
 //! # Recording
 //!
@@ -60,7 +61,9 @@ use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::ffi::OsStrExt;
+use std::os::raw::{c_int, c_short, c_ulong};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
@@ -117,9 +120,29 @@ const GATEWAY_RETRY_FOR: Duration = Duration::from_secs(5);
 /// value on every architecture the engine builds for.
 const O_NONBLOCK: i32 = 0o4000;
 
-/// The serve loop's poll interval. A command that arrives waits at most this
-/// long to be read; the socket is idle almost all the time.
-const POLL: Duration = Duration::from_millis(2);
+/// `poll(2)`'s one request flag, and the descriptor set it fills. Declared here
+/// for the same reason as `O_NONBLOCK`: the engine builds for Linux only, where
+/// `nfds_t` is `unsigned long` and these field types are fixed, and a wait that
+/// blocks is worth three constants — but not a crate dependency, which is the
+/// standing bargain at the top of this file. `poll` returns for POLLHUP and
+/// POLLERR too, and the loop below treats every wake as "look at both", so only
+/// POLLIN ever needs a name.
+const POLLIN: c_short = 0x001;
+
+#[repr(C)]
+struct PollFd {
+    fd: c_int,
+    events: c_short,
+    revents: c_short,
+}
+
+extern "C" {
+    fn poll(fds: *mut PollFd, nfds: c_ulong, timeout: c_int) -> c_int;
+}
+
+/// How long `send` waits between attempts at a client that has stopped reading.
+/// Only a wedged peer reaches this; the serve loop itself never sleeps.
+const SEND_BACKOFF: Duration = Duration::from_millis(2);
 
 /// How long a status probe waits for the peer to answer. A live engine answers
 /// in microseconds; this only bounds a wedged one.
@@ -446,6 +469,19 @@ impl Gateway {
         if self.try_capture(&sink, &paths) {
             self.retry = None;
         }
+    }
+
+    /// When the serve loop must next come back to [`Gateway::tick`], if ever.
+    /// `None` is "nothing pending": the loop may wait on its descriptors with
+    /// no deadline, which is what keeps an idle engine out of the wakeup it
+    /// used to spend on the retry clock.
+    fn next_tick(&self) -> Option<Instant> {
+        if self.capture.is_some() {
+            return None;
+        }
+        self.retry
+            .as_ref()
+            .map(|retry| retry.next.min(retry.deadline))
     }
 
     /// Stop the capture and the prompt, then remove the per-call directory,
@@ -862,6 +898,45 @@ fn drain_gateway(
     }
 }
 
+/// The `poll` timeout that lets a loop look at the retry clock at `next` and
+/// otherwise wait for a descriptor. `-1` is poll's own "block until ready"; a
+/// millisecond is never rounded away, so a deadline a fraction of a millisecond
+/// ahead does not become `poll(0)` and spin the loop.
+fn wait_millis(next: Option<Instant>, now: Instant) -> c_int {
+    let Some(next) = next else { return -1 };
+    let left = next.saturating_duration_since(now);
+    let ms = (left.as_micros() + 999) / 1_000;
+    ms.min(c_int::MAX as u128) as c_int
+}
+
+/// Block until one of `fds` is readable or the retry clock at `next` is due.
+/// A timeout is success: the caller's next act is to look at the clock either
+/// way, and [`Gateway::tick`] is what decides whether anything is left to do.
+fn wait_readable(fds: &[i32], next: Option<Instant>) -> Result<(), String> {
+    let mut watched: Vec<PollFd> = fds
+        .iter()
+        .map(|fd| PollFd {
+            fd: *fd,
+            events: POLLIN,
+            revents: 0,
+        })
+        .collect();
+    loop {
+        // Recomputed each pass: a signal that interrupts the wait must not
+        // push the retry clock back by another full interval.
+        let timeout = wait_millis(next, Instant::now());
+        let ready = unsafe { poll(watched.as_mut_ptr(), watched.len() as c_ulong, timeout) };
+        if ready >= 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(format!("poll: {error}"));
+    }
+}
+
 pub(crate) fn serve(config: Config) -> Result<ExitCode, String> {
     let path = config.socket.clone();
     let listener = bind(&path)?;
@@ -1247,17 +1322,23 @@ impl Server {
     }
 
     fn run(&mut self, listener: UnixListener) -> Result<(), String> {
-        // Non-blocking accept so the silent bind's retry clock is looked at even
-        // while no client is connected (a call holds the FIFOs, not the socket).
+        // Non-blocking accept, because the loop waits in `poll` and then takes
+        // everything that is ready: the wait is the watcher, not a sleep.
         listener
             .set_nonblocking(true)
             .map_err(|error| format!("cannot set the socket non-blocking: {error}"))?;
+        let listener_fd = listener.as_raw_fd();
         loop {
             self.gateway.tick();
+            // No client and no silent bind: wait on the listener alone, with no
+            // deadline. The old 2 ms sleep woke 500 times a second forever and
+            // kept the CPU out of its deeper idle states; a command now costs
+            // the same wait it always did, and an idle engine costs none.
+            wait_readable(&[listener_fd], self.gateway.next_tick())?;
             let (stream, _) = match listener.accept() {
                 Ok(accepted) => accepted,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    thread::sleep(POLL);
+                    // A readiness that accept did not consume: poll again.
                     continue;
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -1284,12 +1365,16 @@ impl Server {
     /// Serve one client until it disconnects. Returns true when it asked to
     /// quit, which ends the process.
     fn serve_one(&mut self, listener: &UnixListener, mut client: Client) -> Result<bool, String> {
-        listener
-            .set_nonblocking(true)
-            .map_err(|error| format!("cannot set the socket non-blocking: {error}"))?;
+        let listener_fd = listener.as_raw_fd();
+        let client_fd = client.stream.as_raw_fd();
         let mut scratch = [0u8; 8192];
         loop {
             self.gateway.tick();
+            // Both descriptors: this client's next line, and the second
+            // connection that must be told the socket is taken. A pending
+            // silent-bind retry bounds the wait, so a client that says nothing
+            // cannot postpone the retry clock.
+            wait_readable(&[listener_fd, client_fd], self.gateway.next_tick())?;
             // One client at a time: a second connection is told why, in the
             // same line protocol, and closed without reading anything from it.
             match listener.accept() {
@@ -1311,7 +1396,8 @@ impl Server {
                 Ok(0) => return Ok(false),
                 Ok(count) => client.pending.extend_from_slice(&scratch[..count]),
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    thread::sleep(POLL);
+                    // Poll said the client was readable; a partial line may
+                    // still be all there is. Look again.
                     continue;
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -3045,7 +3131,7 @@ fn send(stream: &mut UnixStream, line: &str) -> bool {
                 if stalls > SEND_RETRIES {
                     return false;
                 }
-                thread::sleep(POLL);
+                thread::sleep(SEND_BACKOFF);
             }
             Err(_) => return false,
         }
@@ -6496,6 +6582,77 @@ break"}"#).is_err());
         assert!(
             volume("{\"volume\":\"loud\"}").is_err(),
             "a non-number is a refusal, not a silent 100%"
+        );
+    }
+
+    #[test]
+    fn a_retry_clock_becomes_poll_milliseconds_and_nothing_is_a_block() {
+        let now = Instant::now();
+        assert_eq!(wait_millis(None, now), -1, "nothing pending blocks in poll");
+        assert_eq!(wait_millis(Some(now), now), 0, "a due retry polls at once");
+        assert_eq!(
+            wait_millis(Some(now + Duration::from_millis(500)), now),
+            500,
+            "the interval reaches poll unchanged"
+        );
+        assert_eq!(
+            wait_millis(Some(now + Duration::from_micros(1_500)), now),
+            2,
+            "a fraction of a millisecond rounds up instead of spinning"
+        );
+    }
+
+    #[test]
+    fn a_silent_bind_asks_the_serve_loop_to_look_again() {
+        let mut gateway = Gateway::off(false);
+        assert_eq!(gateway.next_tick(), None, "an idle gateway has no deadline");
+        let next = Instant::now() + GATEWAY_RETRY;
+        gateway.retry = Some(BindRetry {
+            sink: "jawn_call_in".to_string(),
+            next,
+            deadline: next + GATEWAY_RETRY_FOR,
+        });
+        assert_eq!(gateway.next_tick(), Some(next), "the retry is the next look");
+    }
+
+    #[test]
+    fn a_wait_with_no_retry_blocks_until_the_client_speaks() {
+        let (reader, mut writer) = UnixStream::pair().expect("a socket pair");
+        reader.set_nonblocking(true).expect("non-blocking reader");
+        let fd = reader.as_raw_fd();
+        let talker = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            let _ = writer.write_all(b"{\"cmd\":\"status\"}\n");
+        });
+        let started = Instant::now();
+        wait_readable(&[fd], None).expect("wait");
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(20),
+            "the wait returned before a line was written: {waited:?}"
+        );
+        let mut buffer = [0u8; 64];
+        let got = (&reader).read(&mut buffer).expect("read");
+        assert_eq!(&buffer[..got], b"{\"cmd\":\"status\"}\n");
+        talker.join().expect("talker");
+    }
+
+    #[test]
+    fn a_pending_retry_bounds_the_wait_when_the_client_says_nothing() {
+        let (reader, _writer) = UnixStream::pair().expect("a socket pair");
+        reader.set_nonblocking(true).expect("non-blocking reader");
+        let fd = reader.as_raw_fd();
+        let started = Instant::now();
+        wait_readable(&[fd], Some(Instant::now() + Duration::from_millis(30)))
+            .expect("wait");
+        let waited = started.elapsed();
+        assert!(
+            waited >= Duration::from_millis(15),
+            "the wait did not reach the retry clock: {waited:?}"
+        );
+        assert!(
+            waited < Duration::from_secs(10),
+            "the retry clock did not bound the wait: {waited:?}"
         );
     }
 }

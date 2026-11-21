@@ -170,8 +170,11 @@ adopted engine to quit, so no engine is left behind.
 Options:
   --backend NAME   audio backend: null, alsa, pipewire or jack (default alsa)
   --device NAME    ALSA PCM name (default hw:1,0)
-  --period N       period/block size in frames (default 64)
-  --buffer N       buffer size in frames (default 256)
+  --period N       period/block size in frames (default 64 for a duplex plan,
+                   256 when the saved plan only plays back)
+  --buffer N       buffer size in frames (default 256 for a duplex plan, 1024
+                   when the saved plan only plays back; naming either one keeps
+                   the 64/256 pair for the one you did not name)
   --socket PATH    control socket (default ~/.president/audio.sock)
   --binary PATH    engine binary (default perl/audio/jawn-audio under this tree)
   --plan PATH      the saved-plan wrapper the engine restores from at startup
@@ -294,8 +297,6 @@ my $socket  = pick($given{'socket'},  'JAWNOS_AUDIO_SOCKET',  "$state_dir/audio.
 my $binary  = pick($given{'binary'},  'JAWNOS_AUDIO_BINARY',  "$root/perl/audio/jawn-audio");
 my $backend = pick($given{'backend'}, 'JAWNOS_AUDIO_BACKEND', 'alsa');
 my $device  = pick($given{'device'},  'JAWNOS_AUDIO_DEVICE',  'hw:1,0');
-my $period  = pick($given{'period'},  'JAWNOS_AUDIO_PERIOD',  '64');
-my $buffer  = pick($given{'buffer'},  'JAWNOS_AUDIO_BUFFER',  '256');
 # The plan, the picker's pair and the system-mix state are durable: they
 # live under the XDG state dir, outside ~/.president, which ./jawn wipes at
 # boot. The socket, the status file and the lock stay in the run dir.
@@ -306,6 +307,37 @@ my $audio_dir = dirname($plan);
 my $machine = pick($given{'machine'}, 'JAWNOS_AUDIO_MACHINE', host_name());
 my $system_device = pick($given{'system-device'}, 'JAWNOS_AUDIO_SYSTEM_DEVICE', '');
 my $handset_device = pick($given{'handset-device'}, 'JAWNOS_AUDIO_HANDSET_DEVICE', '');
+
+# The block is a latency choice, and only a take's monitor hears it. A studio
+# round-trip needs 64/256 (1.33 ms at 48 kHz, 750 callbacks a second); a plan
+# that only plays out is inaudible at 256/1024 and wakes a quarter as often.
+# The plan's own mode says which it is: a duplex plan is capturing a routed
+# input, which is the armed state a recorded or monitored take needs, and a
+# playback plan is not.
+my @STUDIO_BLOCK  = ( 64,  256 );
+my @RELAXED_BLOCK = ( 256, 1024 );
+
+sub plan_block {
+	my $chosen = plan_config();
+	# No plan at all is the studio default: without one the engine still
+	# patches nothing, but a take can be armed over the socket at any moment.
+	return @STUDIO_BLOCK unless load_system_mix() && $chosen;
+	my $mode = JawnOS::Audio::SystemMix::plan_mode( $chosen->{'plan'}, $machine );
+	return $mode eq 'duplex' ? @STUDIO_BLOCK : @RELAXED_BLOCK;
+}
+
+# A pinned period or buffer is the operator's and wins. The other knob then
+# keeps the studio default it had before this choice existed, rather than
+# following the plan: a buffer pinned below 256 must not meet a relaxed
+# period above it, because the engine refuses a pair with buffer < period
+# and the machine would be silent. The plan's pair is this supervisor's to
+# choose only when neither was named.
+my $pinned_period = pick( $given{'period'}, 'JAWNOS_AUDIO_PERIOD', undef );
+my $pinned_buffer = pick( $given{'buffer'}, 'JAWNOS_AUDIO_BUFFER', undef );
+my $pinned = defined $pinned_period || defined $pinned_buffer;
+my ($plan_period, $plan_buffer) = $pinned ? @STUDIO_BLOCK : plan_block();
+my $period = defined $pinned_period ? $pinned_period : $plan_period;
+my $buffer = defined $pinned_buffer ? $pinned_buffer : $plan_buffer;
 
 fatal('--socket wants a path') unless length $socket;
 fatal('--binary wants a path') unless length $binary;
@@ -1189,6 +1221,12 @@ sub spawn_engine {
 		return undef;
 	}
 	$spawn_refused = undef;
+	# A plan that moved between playback and duplex since the last spawn needs
+	# the other block; this is the moment to read it. A knob the operator
+	# pinned keeps the studio pair and its own value.
+	my ($plan_period, $plan_buffer) = $pinned ? @STUDIO_BLOCK : plan_block();
+	$period = defined $pinned_period ? $pinned_period : $plan_period;
+	$buffer = defined $pinned_buffer ? $pinned_buffer : $plan_buffer;
 	my $chosen  = plan_config();
 	my $manage  = $chosen ? $chosen->{'manage'} : 0;
 	my $choice  = spawn_choice();
@@ -1296,6 +1334,28 @@ sub follow_plan {
 		&& !device_same($engine->{'device'}, $want->{'device'})) {
 		$note = "the engine plays $engine->{'device'};"
 			. " the saved plan says $want->{'device'}";
+	}
+	else {
+		# The block follows the plan's mode too, and the mode can move while
+		# the engine runs: a plan that turns duplex needs the studio period
+		# back, and one that falls back to playback should stop waking 750
+		# times a second. Without this the pair chosen at spawn outlived the
+		# plan that asked for it. A take is never cut for it - an armed WAV
+		# waits for the next spawn rather than losing its block mid-record.
+		my $state = $engine->{'state'} // '';
+		if ($state ne 'recording'
+			&& defined $engine->{'period'} && defined $engine->{'buffer'}) {
+			# `$period`/`$buffer` already carry any pinned knob; only the
+			# plan's own choice is re-read, so an operator's 128 never looks
+			# like a mismatch every second.
+			my ($want_period, $want_buffer) = $pinned
+				? ( $period, $buffer )
+				: plan_block();
+			if ($engine->{'period'} != $want_period || $engine->{'buffer'} != $want_buffer) {
+				$note = "the engine runs $engine->{'period'}/$engine->{'buffer'};"
+					. " the saved plan asks for ${want_period}/${want_buffer}";
+			}
+		}
 	}
 	return unless defined $note;
 	print "audio supervisor: $note; asking it to restart on the saved choice\n";
