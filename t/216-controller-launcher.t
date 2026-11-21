@@ -77,11 +77,13 @@ like($desk, qr/if !\$c->param\('open'\) && !\$c->param\('desk'\) && &subs::devic
 # imports: encode_json without this line is a 500 at render time, and a
 # clicked-through page is the only place it used to show.
 my $page = read_file("$root/templates/apps/controller.html.ep");
-like($page, qr{/manager/controller/panel}, 'the launcher blanks the panel on idle');
-like($page, qr{screen_timeout}, 'following the configured screen timeout');
-like($page, qr{sleep_timeout}, 'and the suspend timeout');
-like($page, qr{sleep_now}, 'which asks the power route to sleep the machine');
-like($page, qr/passive: true/, 'and wakes on the first press without swallowing it');
+my $standalone = read_file("$root/templates/controller/standalone.html.ep");
+like($standalone, qr{/manager/controller/panel}, 'a launcher page blanks the panel on idle');
+like($standalone, qr{screen_timeout}, 'following the configured screen timeout');
+like($standalone, qr{sleep_timeout}, 'and the suspend timeout');
+like($standalone, qr{sleep_now}, 'which asks the power route to sleep the machine');
+like($standalone, qr/passive: true/, 'and wakes on the first press without swallowing it');
+like($standalone, qr{/manager/games}, 'the games shelf is left out of the idle timer');
 if ($page =~ /encode_json/) {
 	like($page, qr/<%\s*use Mojo::JSON[^%]*encode_json/, 'the page imports encode_json it uses');
 }
@@ -195,12 +197,12 @@ like($page, qr/controller_tile_leave" tabindex="0"/, 'the Leave tile can take th
 # These pages are window fragments, not the desk, so they carry the theme's
 # cursor and Home rule themselves.
 like($page, qr/include 'controller\/standalone'/, 'the launcher includes the standalone theme and Home rule');
-my $standalone = read_file("$root/templates/controller/standalone.html.ep");
 like($standalone, qr/cursor_css/, 'the standalone page gets the cursor-set stylesheet');
 like($standalone, qr/data-cursor-set/, 'and marks the body with the theme cursor');
 like($standalone, qr/jawnosStandaloneHome/, 'and sends Home back one launcher page');
 like($standalone, qr/\/manager\/games\/mapping'\) \{ back = '\/manager\/games\?view=emulated'/, 'the controls page returns to the shelf');
 like($standalone, qr/\/manager\/controller\/config'\) \{ back = '\/manager\/controller'/, 'Configuration returns to the launcher');
+like($standalone, qr/\/manager\/controller\/power'\)\s*\{\s*back = '\/manager\/controller\/config'/, 'Power returns to Configuration');
 
 my %tile_icon = (
 	Music => 'headphones', Gallery => 'gallery', Notifications => 'bell', Games => 'tetris',

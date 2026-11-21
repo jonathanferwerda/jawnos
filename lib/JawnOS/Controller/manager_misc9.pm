@@ -1278,11 +1278,16 @@ sub action_44020 {
 #
 # The desk's Power page, rendered inside a controller window. The CPU plan and
 # the two timeouts are the same controls, reading and writing the same rows.
+# The controller wrapper is what hides the desk's title bar (whose app glyph
+# is drawn at its natural size on a page without the desk's stylesheet) and
+# carries the way back; without it the page arrived as a giant power logo over
+# a control set with nothing to drive it.
 sub action_44021 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
 	my $status = eval { &subs::power_status() } || {};
-	my $contents = $c->render_to_string(template => 'apps/power', status => $status);
+	my $power = $c->render_to_string(template => 'apps/power', status => $status);
+	my $contents = $c->render_to_string(template => 'controller/power', contents => $power);
 	my $website = &Manager::window_maker({
 		user_agent => $c->param('user_agent'), app => 'power', contents => $contents,
 	}, $timestamp);

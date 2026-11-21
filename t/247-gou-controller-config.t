@@ -1,4 +1,4 @@
-# tests-for: templates/controller/config.html.ep templates/controller/time.html.ep templates/controller/retroarch.html.ep lib/JawnOS/Domain/Retroarch.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm perl/help/topics_people.pl templates/apps/controller.html.ep
+# tests-for: templates/controller/config.html.ep templates/controller/power.html.ep templates/controller/time.html.ep templates/controller/retroarch.html.ep lib/JawnOS/Domain/Retroarch.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm perl/help/topics_people.pl templates/apps/controller.html.ep
 # covers:    The handheld's Configuration sublauncher: its five tiles and routes,
 #            the time-zone setting the launcher clock reads, and the RetroArch
 #            writer that edits the emulator's INI files without losing comments.
@@ -39,6 +39,7 @@ for my $n (sort keys %route) {
 like($controller, qr/template => 'controller\/config'/, 'the config action renders the sublauncher');
 like($controller, qr/template => 'controller\/time'/, 'the time action renders the time page');
 like($controller, qr/template => 'controller\/retroarch'/, 'the RetroArch action renders the tuning page');
+like($controller, qr/template => 'controller\/power'/, 'the power action renders the controller wrapper, not the bare desk fragment');
 like($controller, qr/clock_timezone/, 'the time page reads the house clock zone');
 like($controller, qr/setting_setter\(\{ app => 'misc', setting => 'clock_timezone'/, 'the time page saves the zone as a house setting');
 
@@ -64,6 +65,12 @@ for my $pair (
 	like($config, qr/<%= &subs::ui\('\Q$pair->[1]\E'\) %>/, "$pair->[1] is named in the on-screen words");
 }
 like($config, qr|href="/manager/controller"|, 'the sublauncher has a way back to the Launcher');
+# The timeout is on Configuration itself, not only two pages deep in Power, so a
+# person can set it without opening the power page at all.
+like($config, qr/id="controller_config_screen_timeout"/, 'Configuration carries the screen-off timeout');
+like($config, qr|fetch\('/manager/power/sleep'|, 'and saves it through the power route');
+like($config, qr/config\.sleep/, 'reading the same block the launcher watcher reads');
+like($config, qr/<% use Mojo::JSON qw\(encode_json\); %>/, 'the page imports encode_json it uses');
 
 # Power used to ask the desk for ?open=power, and a controller has no desk to
 # open it in: the press landed on the Manager. It is a controller page now.
@@ -72,6 +79,10 @@ like($routes, qr{44020, 'post',\s+'/manager/controller/panel'}, 'and a route for
 my $power_page = read_file("$root/templates/controller/power.html.ep");
 like($power_page, qr/include 'controller\/standalone'/, 'the power page stands alone on the panel');
 like($power_page, qr/\$contents/, 'drawing the desk\'s own power template');
+like($power_page, qr|id="controller_power_back"|, 'with a way back to Configuration');
+like($power_page, qr|src="/js/jquery\.js"|, 'loads the jQuery the desk chunk expects');
+like($power_page, qr|src="/js/manager/power\.js|, 'loads the Power chunk that fills and binds the form');
+like($power_page, qr/top_navbar\s*\{\s*display\s*:\s*none/, 'and hides the window bar the giant glyph came from');
 
 # --- the time page ------------------------------------------------------------
 my $time = read_file("$root/templates/controller/time.html.ep");
@@ -92,7 +103,7 @@ like($ra, qr/Audio and video/, 'the audio and video section is named');
 # A template has none of the controller's imports. `encode_json` without this
 # line is a 500 at render time, which is exactly how the page reached the panel
 # as "this page cannot be displayed".
-for my $page (qw(time retroarch)) {
+for my $page (qw(time retroarch config)) {
 	my $text = read_file("$root/templates/controller/$page.html.ep");
 	like($text, qr/<%\s*use Mojo::JSON[^%]*\bencode_json\b/, "$page imports encode_json it uses");
 }
@@ -107,7 +118,10 @@ for my $page (qw(time retroarch)) {
 	*subs::icon_path = sub { $_[1] };
 	# the real renderer supplies include; this harness compiles one file
 	*Mojo::Template::Sandbox::include = sub { '' };
-	my $mt = Mojo::Template->new({ vars => 1 });
+	# auto_escape matches the app's renderer: <%= escapes and <%== is raw. Without
+	# it this harness inverted the two and a page could pass while drawing
+	# escaped markup into a script or a raw contents slot.
+	my $mt = Mojo::Template->new({ vars => 1, auto_escape => 1 });
 	my $ra_out = eval {
 		$mt->render_file("$root/templates/controller/retroarch.html.ep", {
 			settings => {
@@ -126,6 +140,11 @@ for my $page (qw(time retroarch)) {
 	ok(defined $time_out && $time_out =~ /controller_time_zone/, 'the Time page renders');
 	my $config_out = eval { $mt->render_file("$root/templates/controller/config.html.ep", {}) };
 	ok(defined $config_out && $config_out =~ /controller_config_grid/, 'the config sublauncher renders');
+	my $power_out = eval {
+		$mt->render_file("$root/templates/controller/power.html.ep", { contents => '<div id="power"></div>' });
+	};
+	ok(defined $power_out && $power_out =~ /controller_power_back/, 'the Power wrapper renders with its way back');
+	ok(defined $power_out && $power_out =~ /id="power"/, 'and keeps the desk template it was given');
 }
 
 # --- the writer itself --------------------------------------------------------
@@ -198,5 +217,7 @@ ok(ref $settings->{'presets'} eq 'ARRAY' && scalar @{ $settings->{'presets'} } =
 my $help = read_file("$root/perl/help/topics_people.pl");
 like($help, qr/Configuration opens the handheld\\'s own sublauncher/, 'the Guide describes the sublauncher');
 like($help, qr/templates\/controller\/retroarch\.html\.ep/, 'the Guide names the RetroArch page');
+like($help, qr/Configuration also carries the screen-off timeout/, 'the Guide names the timeout on Configuration');
+like($help, qr/opens in Deepjawn/, 'and the handheld\'s default theme');
 
 done_testing();

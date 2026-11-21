@@ -29,10 +29,60 @@
 			back = view === 'emulated' ? '/manager/games' : '/manager/controller';
 		}
 		else if (path === '/manager/games/mapping') { back = '/manager/games?view=emulated'; }
-		else if (path === '/manager/controller/time' || path === '/manager/controller/retroarch') { back = '/manager/controller/config'; }
+		else if (path === '/manager/controller/time' || path === '/manager/controller/retroarch'
+			|| path === '/manager/controller/power') { back = '/manager/controller/config'; }
 		else if (path === '/manager/controller/config') { back = '/manager/controller'; }
 		if (back === path + location.search) { back = '/manager/controller'; }
 		location.href = back;
 	});
+})();
+</script>
+<script>
+/* The screen and suspend timeouts, run from the pages that stay on the glass:
+   the launcher and its own Configuration pages. The games shelf is left out - a
+   game is the panel for as long as it runs. The backlight is blanked without
+   stopping X or the kiosk, so the page keeps receiving the press that brings
+   the light back - an `off` that stopped them could never be woken by the
+   touch it waited for. Re-read every five minutes so a change in Configuration
+   lands without a reload. */
+(function () {
+	if (location.pathname.indexOf('/manager/games') === 0) { return; }
+	var blanked = false, slept = false, sleep = null, last = Date.now(), busy = false;
+	function touched() { last = Date.now(); if (blanked && !busy) { setBlank(false); } }
+	['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (name) {
+		document.addEventListener(name, touched, { passive: true });
+	});
+	function setBlank(on) {
+		busy = true; blanked = on;
+		fetch('/manager/controller/panel', {
+			method: 'POST', credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: 'action=' + (on ? 'blank' : 'unblank')
+		}).finally(function () { busy = false; });
+	}
+	function load() {
+		fetch('/manager/power_status', { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (s) { sleep = (s && s.config && s.config.sleep) || null; })
+			.catch(function () {});
+	}
+	function tick() {
+		if (sleep) {
+			var idle = (Date.now() - last) / 1000;
+			var screen = (sleep.screen_timeout || 0) * 60;
+			var nap = (sleep.sleep_timeout || 0) * 60;
+			if (screen > 0 && idle >= screen && !blanked && !busy) { setBlank(true); }
+			if (nap > 0 && idle >= nap && !slept) {
+				slept = true;
+				fetch('/manager/power/sleep_now', {
+					method: 'POST', credentials: 'same-origin',
+					headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+					body: 'type=' + encodeURIComponent(sleep.sleep_type || 'suspend')
+				}).catch(function () {});
+			}
+		}
+		setTimeout(tick, 5000);
+	}
+	load(); setInterval(load, 300000); tick();
 })();
 </script>

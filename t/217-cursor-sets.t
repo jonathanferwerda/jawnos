@@ -49,6 +49,26 @@ is($phosphor->{'cursor_set'}, 'contrast', 'the Phosphor preset wears High Contra
 my $unknown = &subs::theme_bundle('not-a-theme');
 is_deeply($unknown, {}, 'an unknown theme resolves to no bundle, so no cursor');
 
+# --- the handheld opens in a theme of its own -------------------------------
+# Appearance is a per-device choice made on the computer that set the house up,
+# so a controller reads no theme row of its own. Without a default the launcher
+# would wear the bare Misc surfaces; Deepjawn is the handheld's default.
+{
+	no warnings 'redefine';
+	local *subs::device_setter = sub { 'controller' };
+	local *subs::misc_setting = sub { '' };
+	local *subs::running_appointment_theme = sub { undef };
+	is(&subs::active_theme_name(), 'deepjawn', 'a controller with no theme row opens in Deepjawn');
+	is(&subs::active_theme_bundle()->{'cursor_set'}, 'bold', 'and wears the preset\'s cursor');
+}
+{
+	no warnings 'redefine';
+	local *subs::device_setter = sub { 'computer' };
+	local *subs::misc_setting = sub { '' };
+	local *subs::running_appointment_theme = sub { undef };
+	is(&subs::active_theme_name(), '', 'a computer with no theme still wears the Misc surfaces');
+}
+
 # Each set is a silhouette, not only a paint.
 my $read_svg = sub { read_file("$root/public/cursors/sets/$_[0]/$_[1].svg") };
 like($read_svg->('white', 'default'), qr/M6 3 L6 26/,

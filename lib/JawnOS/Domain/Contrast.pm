@@ -299,6 +299,11 @@ sub theme_bundle {
 	};
 }
 
+# A controller joins a house whose Appearance choice was made on a computer, so
+# it reads no per-device theme row of its own; Deepjawn (the preset the older
+# `deepin` name was renamed to) is its default until a controller row names
+# another theme.
+
 # The theme in charge: a running start/record appointment first, then the
 # Misc Appearance choice. Blank means the Misc surfaces are in charge.
 sub active_theme_name {
@@ -306,6 +311,7 @@ sub active_theme_name {
 	return &theme_canonical($theme) if defined $theme && length $theme;
 	my $picked = &misc_setting('appearance_theme');
 	return &theme_canonical($picked) if defined $picked && length $picked && &theme_known($picked);
+	return 'deepjawn' if (&device_setter() // '') eq 'controller';
 	return '';
 }
 
@@ -317,6 +323,7 @@ sub active_theme_bundle {
 	my $running = &running_appointment_theme();
 	my $picked = &misc_setting('appearance_theme');
 	$picked = '' unless defined $picked && length $picked && &theme_known($picked);
+	$picked = 'deepjawn' if !length $picked && (&device_setter() // '') eq 'controller';
 	my $system = length $picked ? &theme_bundle($picked) : {};
 	if (defined $running && length $running) {
 		my $over = &theme_bundle($running);

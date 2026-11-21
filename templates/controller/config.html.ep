@@ -2,6 +2,7 @@
     of settings, so this page collects the four machine surfaces and the
     emulator's own knobs into one row of large tiles. Everything here is one
     press from the Controller and one press back. %>
+<% use Mojo::JSON qw(encode_json); %>
 <%= include 'controller/standalone' %>
 <style>
 	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
@@ -24,6 +25,12 @@
 	.controller_config_icon { flex:1 1 auto; width:80%; min-height:0; object-fit:contain; }
 	.controller_config_label { font-size:15px; font-weight:600; line-height:1.1; }
 	.controller_config_note { font-size:10px; line-height:1.2; opacity:.8; }
+	/* The screen-off timeout belongs beside the tiles, not two pages deep: it is
+	   the one power setting a person changes while the handheld is on the glass. */
+	#controller_config_idle { flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:0 8px 8px; font-size:12px; }
+	#controller_config_idle select { font:inherit; font-size:12px; padding:4px 6px; border:1px solid #4a4a4a;
+		border-radius:8px; background:#3a3a3a; color:#fff; }
+	#controller_config_idle_note { opacity:.8; }
 </style>
 <div id="controller_config_shell">
 	<div id="controller_config_bar">
@@ -58,4 +65,65 @@
 			<span class="controller_config_note"><%= &subs::ui('Audio, video and the PlayStation and Nintendo 64 cores') %></span>
 		</a>
 	</div>
+	<div id="controller_config_idle">
+		<label for="controller_config_screen_timeout"><%= &subs::ui('Screen off after') %></label>
+		<select id="controller_config_screen_timeout">
+			<option value="0"><%= &subs::ui('Never') %></option>
+			<option value="1">1 <%= &subs::ui('minute') %></option>
+			<option value="2">2 <%= &subs::ui('minutes') %></option>
+			<option value="5">5 <%= &subs::ui('minutes') %></option>
+			<option value="10">10 <%= &subs::ui('minutes') %></option>
+			<option value="15">15 <%= &subs::ui('minutes') %></option>
+			<option value="30">30 <%= &subs::ui('minutes') %></option>
+		</select>
+		<span id="controller_config_idle_note" aria-live="polite"></span>
+	</div>
 </div>
+
+<script>
+/* The launcher's own idle watcher reads this block and blanks the panel; the
+   Power page reads and writes the same row. Saving here means the timeout is
+   set without opening the desk's power window at all. */
+(function () {
+	var select = document.getElementById('controller_config_screen_timeout');
+	var note = document.getElementById('controller_config_idle_note');
+	if (!select) { return; }
+	var saved = <%== encode_json(&subs::ui('Saved')) %>;
+	var failed = <%== encode_json(&subs::ui('The setting could not be saved.')) %>;
+	function paint(value) {
+		select.value = String(value === undefined || value === null ? 0 : value);
+	}
+	function load() {
+		fetch('/manager/power_status', { credentials: 'same-origin' })
+			.then(function (r) { return r.json(); })
+			.then(function (s) { paint(s && s.config && s.config.sleep ? s.config.sleep.screen_timeout : 0); })
+			.catch(function () { paint(0); });
+	}
+	select.addEventListener('change', function () {
+		if (note) { note.textContent = ''; }
+		select.disabled = true;
+		var wanted = select.value;
+		fetch('/manager/power/sleep', {
+			method: 'POST', credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({ screen_timeout: wanted })
+		}).then(function (r) { return r.json(); }).then(function (result) {
+			select.disabled = false;
+			var block = result && result.config && result.config.sleep;
+			// The row is saved before the helper writes the desk's own timer, so a
+			// machine where logind or gsettings refuses still holds the timeout the
+			// launcher watcher reads. Report the save when the stored value is ours.
+			if (!(result && result.ok) && (!block || String(block.screen_timeout) !== wanted)) {
+				if (note) { note.textContent = (result && result.error) ? result.error : failed; }
+				return;
+			}
+			if (block) { paint(block.screen_timeout); }
+			if (note) { note.textContent = saved; }
+		}).catch(function () {
+			select.disabled = false;
+			if (note) { note.textContent = failed; }
+		});
+	});
+	load();
+})();
+</script>

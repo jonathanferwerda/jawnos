@@ -3,18 +3,44 @@
     - so this renders the same template inside a controller window that fills
     the panel. Before this, the Configuration tile asked the desk for
     ?open=power, and a controller has no desk to open it in: the press landed on
-    the Manager instead of on a power page. %>
+    the Manager instead of on a power page.
+
+    The desk's stylesheet and bundle are not in scope on a fragment page, so the
+    window bar would draw its app glyph at the image's natural size (a giant
+    power logo over the controls) and power.js - the chunk that fills and binds
+    the form - would never load. This hides the bar, supplies the few surface
+    variables the template reads, loads jQuery and the chunk, and keeps the way
+    back to Configuration at the top. %>
 <%= include 'controller/standalone' %>
 <style>
 	.wind[app="power"] .top_navbar { display:none !important; }
 	/* The panel is the window: a handheld has nothing to lay windows on. */
 	.wind { left:0 !important; top:0 !important; width:100vw !important; height:100vh !important; }
-	.window_contents { width:100% !important; height:100% !important; padding-top:0 !important; overflow:auto; }
+	/* The few surface variables the desk template reads, so its cards keep the
+	   house's lines and panels without the desk's stylesheet. */
+	.wind[app="power"] { --line:#4a4a4a; --panel:#2e2e2e; --panel-2:#3a3a3a;
+		--ink:#f4f4f4; --accent:#4a90d9; }
+	.window_contents { display:flex !important; flex-direction:column; width:100% !important;
+		height:100% !important; padding-top:0 !important; overflow:auto; }
 	html, body, .wind, .window_contents { background:#2e2e2e !important; color:#f4f4f4 !important; }
 	/* The way back out, in the same place the other controller pages keep it. */
-	#controller_power_back { display:flex; justify-content:flex-end; padding:6px 8px 0; }
+	#controller_power_back { flex:0 0 auto; display:flex; justify-content:flex-end; padding:6px 8px 0; }
 	#controller_power_back a { font-size:13px; padding:5px 12px; border:1px solid #4a4a4a;
 		border-radius:8px; background:#3a3a3a; color:#fff; text-decoration:none; }
 </style>
 <div id="controller_power_back"><a href="/manager/controller/config"><%= &subs::ui('Configuration') %></a></div>
 <%== $contents %>
+
+<%# power.js is the desk's lazy Power chunk. It expects jQuery and jawnosT, which
+    the desk's bundle supplies; this page is its own document, so it supplies
+    them too. A page that drew the controls without the chunk showed them empty
+    and inert. %>
+<script src="/js/jquery.js"></script>
+<script>window.jawnosT = window.jawnosT || function (text) { return text; };</script>
+<script src="/js/manager/power.js?string=<%= &subs::jawn_version() %>"></script>
+<script>
+(function () {
+	if (typeof powerBind === 'function') { powerBind(); }
+	if (typeof powerLoad === 'function') { powerLoad(); }
+})();
+</script>
