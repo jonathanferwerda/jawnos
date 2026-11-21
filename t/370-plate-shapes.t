@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Plates.pm lib/JawnOS/Domain/Accounting.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: lib/JawnOS/Domain/Plates.pm lib/JawnOS/Domain/Accounting.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Key.pm
 # covers:    a plate is a union of areas - circle, box, path with a width, and
 #            polygon - plus cached pattern branches; a legacy point/radius row
 #            becomes a circle, and the anchor/radius stay mirrored for old readers
@@ -129,5 +129,41 @@ like( read_file("$root/lib/JawnOS/Domain/Accounting.pm"), qr/&subs::plate_normal
 	'and it runs the same normalizer' );
 like( read_file("$root/lib/JawnOS/Domain/Loader.pm"), qr/'JawnOS::Domain::Plates' for qw\([^)]*plate_contains/,
 	'the domain loader knows the plate helpers' );
+
+# ------------------------------------------------- the backfill writes one row
+# A settings row has no usable id (all are null); the uuid is the key. The old
+# backfill updated by id, a null matched every row, and one boot wrote a home
+# plate over all 43k settings. This pins the write to the row it read.
+{
+	package PlateFakeRows;
+	sub hashes { return $_[0]->{'rows'} }
+}
+{
+	my @updates;
+	no warnings 'redefine';
+	local *subs::db_select = sub {
+		my ($table, $columns, $where) = @_;
+		my $setting = ref $where eq 'HASH' ? ($where->{'setting'} // '') : '';
+		my @rows = $setting eq 'home_plate'
+			? ( { uuid => 'u-plate', app => 'me', setting => 'home_plate', id => undef,
+				value => '{"latitude":43,"longitude":-81,"distance":"0.200"}' } )
+			: ();
+		return bless { rows => \@rows }, 'PlateFakeRows';
+	};
+	local *subs::db_update = sub { push @updates, [ @_ ]; return 1 };
+	local *subs::rightNow = sub { return 1795296000000 };
+	local *subs::say_it = sub { };
+	my $registry = &subs::backfills();
+	my $status = $registry->{'home_plate_shapes_v1'}->();
+	is( $status, 1, 'the backfill reports that it ran' );
+	is( scalar @updates, 1, 'it writes only the row it selected' );
+	is( $updates[0]->[2]->{'uuid'}, 'u-plate', 'by the settings row uuid' );
+	ok( !exists $updates[0]->[2]->{'id'}, 'never by the nullable id column' );
+	is( $updates[0]->[1]->{'server_time'}, 1795296000000, 'and stamps the row for sync' );
+	like( $updates[0]->[1]->{'value'}, qr/"areas"/, 'the value is the normalized plate' );
+}
+
+like( read_file("$root/lib/JawnOS/Domain/Key.pm"), qr/\$contexts = \[\] unless ref \$contexts eq 'ARRAY'/,
+	'the gate survives a context row that is not an array' );
 
 done_testing();

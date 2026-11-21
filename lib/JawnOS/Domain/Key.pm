@@ -489,6 +489,9 @@ sub padlock_seed_default {
 		&subs::setting_setter({ app => '__president', setting => 'pl_time', value => $now + $window });
 	}
 	my $contexts = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	# A row written by an older shape (or a damaged one) must not take the
+	# tree down on boot; an unreadable context list simply seeds the default.
+	$contexts = [] unless ref $contexts eq 'ARRAY';
 	unless (scalar @{$contexts}) {
 		&subs::setting_setter({ app => '__president', setting => 'padlock_contexts', value => '["general"]' });
 	}

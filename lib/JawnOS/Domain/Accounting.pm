@@ -503,17 +503,22 @@ sub guide_message_warranty {
 			foreach my $row ( @{$rows} ) {
 				my $plate = eval { return decode_json($row->{'value'} // '') } || {};
 				next unless ref $plate eq 'HASH';
+				# The settings table has no populated id column; its uuid is the
+				# row key. Never update by a nullable column: a null id once
+				# matched every row and wrote the plate over the whole table.
+				next unless defined $row->{'uuid'} && length $row->{'uuid'};
 				my $before = JSON::PP->new->canonical->encode($plate);
 				&subs::plate_normalize($plate);
 				my $after = JSON::PP->new->canonical->encode($plate);
 				next if $before eq $after;
-				&subs::db_update('settings', { value => $after }, { id => $row->{'id'} });
+				&subs::db_update('settings', { value => $after, server_time => &subs::rightNow() }, { uuid => $row->{'uuid'} });
 				$changed++;
 			}
 			my $drows = &subs::db_select('settings', undef, { setting => 'home_plate_duties' })->hashes || [];
 			foreach my $row ( @{$drows} ) {
 				my $duties = eval { return decode_json($row->{'value'} // '') } || [];
 				next unless ref $duties eq 'ARRAY';
+				next unless defined $row->{'uuid'} && length $row->{'uuid'};
 				my $before = JSON::PP->new->canonical->encode($duties);
 				my @out;
 				foreach my $duty ( @{$duties} ) {
@@ -523,7 +528,7 @@ sub guide_message_warranty {
 				}
 				my $after = JSON::PP->new->canonical->encode(\@out);
 				next if $before eq $after;
-				&subs::db_update('settings', { value => $after }, { id => $row->{'id'} });
+				&subs::db_update('settings', { value => $after, server_time => &subs::rightNow() }, { uuid => $row->{'uuid'} });
 				$changed++;
 			}
 			&subs::say_it("backfill home_plate_shapes_v1: shaped $changed plate row(s)");
