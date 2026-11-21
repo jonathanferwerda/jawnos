@@ -1735,7 +1735,7 @@ fn listen_reports_status_takes_params_and_stops() {
     let mut client = server.connect();
 
     let reply = client.ask(
-        "{\"cmd\":\"listen\",\"channel\":1,\"gain\":0.8,\"pan\":0,\"inserts\":[\"tone\"]}",
+        "{\"cmd\":\"listen\",\"channel\":1,\"gain\":0.8,\"pan\":0,\"inserts\":[\"tone\"],\"system\":false}",
     );
     assert_eq!(reply, "{\"ok\":true,\"state\":\"listening\",\"channel\":1}");
 

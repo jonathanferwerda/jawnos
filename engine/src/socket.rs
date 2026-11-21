@@ -2099,6 +2099,15 @@ impl Server {
             }
             _ => return error_line("\"inserts\" must be an array of insert names"),
         };
+        // A monitor that folds the machine's system mix into its output can hear
+        // the page that is monitoring it, which is a feedback loop on one card.
+        // `system` lets Studio's input monitor carry only its own capture; the
+        // standalone Listen keeps the mix by default.
+        let system = match get(object, "system") {
+            None | Some(Value::Null) => true,
+            Some(Value::Bool(value)) => *value,
+            _ => return error_line("\"system\" must be a boolean"),
+        };
         if let Err(error) = crate::listen_support(self.config.backend) {
             return error_line(&error);
         }
@@ -2134,7 +2143,10 @@ impl Server {
             let status = Arc::clone(&status);
             let stop = Arc::clone(&stop);
             let params = Arc::clone(&params);
-            let config = self.config.clone();
+            let mut config = self.config.clone();
+            if !system {
+                config.system_device = None;
+            }
             thread::Builder::new()
                 .name("jawn-audio-listen".to_string())
                 .spawn(move || run_listen_worker(config, plan, status, stop, params))

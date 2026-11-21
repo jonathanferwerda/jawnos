@@ -284,7 +284,7 @@ function studioApplyPedals() {
 	// every insert of that kind, however it was named when it was added (the
 	// shelf says reverb2, the palette says reverb). Both of a channel's chains
 	// hear it: In prints into the take, Out is heard on playback.
-	$('.knob_control, .studio_pedal_model').each(function (i, v) {
+	$('.knob_control, .studio_pedal_model').not('#studio_pedalboard_tiles *').each(function (i, v) {
 		var channel = $(v).attr('channel');
 		var control = $(v).attr('control');
 		if (!channel || !control || /^[0-9]+$/.test(channel)) { return; }
@@ -534,13 +534,20 @@ function studioApplyMonitor(from_user, force_tap_device) {
 		// The tap is the monitor for an app input and for every browser-only
 		// path; a device the engine is actually listening to keeps it muted. A
 		// restored Monitor (not from the person) stays on the tap until the
-		// engine's Listen is running, so reloading a song is never silent.
-		var listening = engine && (studioListenActive || from_user);
+		// engine's Listen is running, so reloading a song is never silent. A
+		// confirmed Listen keeps the tap off even if a later status poll fails:
+		// the same input must never be played twice at two latencies.
+		var engine_path = !!(device && nativeish && listen_channel <= 1);
+		var listening = (engine && (studioListenActive || from_user))
+			|| (engine_path && studioEngineListening);
 		var tap = on && !!input && (app || !listening);
 		c.monGain.gain.value = tap ? 1 : 0;
 	});
 	if (from_user && !studioEngineRecording && typeof studioListenStart === 'function') {
 		if (engine) {
+			// Stop the browser capture before the engine opens the input, so the
+			// two never overlap even for one buffer.
+			if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
 			if (!studioListenActive) { studioListenStart(false, listen_channel, active, true); }
 			else if (typeof studioListenChannel !== 'undefined' && studioListenChannel !== null
 				&& Number(studioListenChannel) !== listen_channel) {
@@ -1026,6 +1033,8 @@ function studioEngineStatus() {
 			if (typeof studioAudioBackendReset === 'function') { studioAudioBackendReset(); }
 			if (data.ok !== true) {
 				studioEnginePollStop();
+				// The socket is gone, so a confirmed Listen cannot still be playing.
+				studioEngineListening = false;
 				// The frames we last drew belong to a take we can no longer read.
 				jQuery('#studio_engine_strips').empty();
 				jQuery('#studio_engine_monitor').text('');

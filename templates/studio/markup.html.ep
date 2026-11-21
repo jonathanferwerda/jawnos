@@ -10,11 +10,18 @@
 	   list scroll) lives in studio/style so channelSelect() can clamp the same
 	   edges it enforces. %>
 	<div id="studio_plug_select_container"></div>
+	<%# The artwork the chain tiles borrow. The tiles themselves are cloned from
+	   the hidden library below, so a track's board looks like the pedals it holds. %>
+	<% my %shelf_kind = (
+		CompressionX => 'compressor', Distorjawn => 'distortion',
+		Delayed => 'delay', reverb2 => 'reverb', JawnSynth => 'synth',
+	); %>
+	<% my %shelf_has = map { ($shelf_kind{ $_->{'name'} } || $_->{'name'}) => 1 } @{$gb::studio->{'pedals'}}; %>
 	<%# The pedalboard is a bottom sheet over the foot of the window: it floats
 	   above the console instead of taking a grid row, and its own bar carries
-	   Close plus the Add list. A channel starts with an empty chain; the list
+	   Close plus the Add list. A channel starts with an empty board; the list
 	   offers every effect, and Add puts the chosen one in the chain the In/Out
-	   switch shows. %>
+	   switch shows. The board draws those effects as the stompbox tiles below. %>
 	<div id="pedalboard" style="display:none;">
 		<div class="studio_pedalboard_bar">
 			<button id="studio_pedalboard_close" class="hover" hint="<%= &subs::ui('Close the pedalboard') %>"><%= &subs::ui('Close') %></button>
@@ -30,25 +37,90 @@
 				<button id="studio_palette_add" class="hover" hint="<%= &subs::ui('Add the chosen effect to this chain') %>"><%= &subs::ui('Add') %></button>
 			</span>
 		</div>
-		<%# The selected track's chain, never in the track panel: choosing a pedal
-		   changes this list, not the panel's height. studioRackRender() fills it and
-		   stamps it with the track it shows. %>
+		<%# The In/Out switch and the selected track's board. studioRackRender()
+		   fills both; the board holds only the inserts, in signal order. %>
+		<div id="studio_pedalboard_chain" class="studio_pedalboard_chain"></div>
 		<div id="studio_pedalboard_rack" class="studio_channel_rack" hint="<%= &subs::ui('The effects in this track\'s chain, in order') %>"></div>
 	</div>
-	<%# One row of a track's rack. The rack clones this, so every action keeps a
-	   fixed on-screen label: the footswitch bypasses in place, the arrows
-	   reorder for touch, and X removes the insert. %>
-	<div id="studio_rack_template" class="studio_rack_template" aria-hidden="true">
-		<div class="studio_rack_row">
-			<span class="studio_rack_handle" hint="<%= &subs::ui('Drag to reorder this effect') %>">=</span>
-			<span class="studio_rack_led studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
-			<span class="studio_rack_name"></span>
-			<button class="studio_rack_bypass hover" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
-			<button class="studio_rack_up hover" hint="<%= &subs::ui('Move this effect earlier in the chain') %>"><%= &subs::ui('Up') %></button>
-			<button class="studio_rack_down hover" hint="<%= &subs::ui('Move this effect later in the chain') %>"><%= &subs::ui('Down') %></button>
-			<button class="studio_rack_remove hover" hint="<%= &subs::ui('Remove this effect from the chain') %>"><%= &subs::ui('X') %></button>
-			<span class="studio_rack_controls"></span>
-		</div>
+	<%# The tile library. It is never shown: studioRackRender() clones one tile per
+	   insert into the board, so every pedal keeps its artwork, knobs and stomp. %>
+	<div id="studio_pedalboard_tiles" style="display:none;" aria-hidden="true">
+	<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
+		<span id="pedal_<%= $p->{'name'} %>" class="pedal" data-effect="<%= $p->{'name'} %>"<% if ($p->{'tuner'}) { %> data-tuner="yes"<% } %> hint="<%= $p->{'tuner'} ? &subs::ui('Start or stop the tuner') : &subs::ui('Drag to reorder this effect') %>">
+			<% my $ch = $p->{'name'}; %>
+			<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
+			<img class="pedal_background" hint="<%= $p->{'name'} %>" src="<%= &subs::icon_for('/images/studio/' . $p->{'image'} . '.png') %>">
+			<% if ($p->{'tuner'}) { %>
+				<span class="studio_tuner" aria-live="polite">
+					<span class="studio_tuner_arrow studio_tuner_up" aria-hidden="true">▲</span>
+					<span class="studio_tuner_note"><b class="studio_tuner_letter"><%= &subs::ui('TUNE') %></b><span class="studio_tuner_octave"></span></span>
+					<span class="studio_tuner_arrow studio_tuner_down" aria-hidden="true">▼</span>
+					<span class="studio_tuner_cents"><%= &subs::ui('press to tune') %></span>
+				</span>
+			<% } %>
+			<% foreach my $k ( @{$p->{'knobs'}} ) { %>
+				<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
+				<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
+			<% } %>
+			<% foreach my $b ( @{$p->{'buttons'}} ) { %>
+				<img class="button_control" style="position:absolute;height:<%= $b->{'height'} || $b->{'width'} || '60px' %>;width:<%= $b->{'width'} || '60px'; %>;left:<%= $b->{'left'} %>;top:<%= $b->{'top'} %>;" flip="<%= $b->{'flip'} %>" state="<%= $b->{'status'} || "depressed" %>" channel="<%= $ch %>" control="<%= $b->{'control'} %>" colour="<%= $b->{'colour'} %>" hint="<%= &subs::ui($b->{'hint'} || &subs::format_name($b->{'control'})) %>" src="<%= $button_icon->('depressed', $b->{'colour'}) %>">
+			<% } %>
+			<% if ($p->{'name'} eq 'reverb2') { %>
+				<select class="studio_pedal_model pedal_model" channel="<%= $ch %>" control="model" hint="<%= &subs::ui('Choose the reverb model') %>">
+					<% my $mi = 0; %>
+					<% foreach my $model ( @{$gb::studio->{'reverb_models'}} ) { %>
+						<option value="<%= $mi %>"<%= $mi == 2 ? ' selected' : '' %>><%= &subs::ui($model) %></option>
+						<% $mi++; %>
+					<% } %>
+				</select>
+			<% } %>
+			<button class="studio_pedal_foot hover" effect="<%= $p->{'name'} %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
+		</span>
+	<% } %>
+		<% foreach my $name ( @{$gb::studio->{'palette'}} ) { next if $shelf_has{$name}; %>
+			<% my $effect = $gb::studio->{'effects'}->{$name} || {}; %>
+			<% my $art = $gb::studio->{'palette_art'}->{$name} || []; %>
+			<% my $fallback = $gb::studio->{'palette_knob_colours'} || [ 'grey_plain' ]; %>
+			<span id="pedal_<%= $name %>" class="pedal pedal_graphic" data-effect="<%= $name %>" hint="<%= &subs::ui('Drag to reorder this effect') %>">
+				<span class="studio_pedal_led" role="button" aria-pressed="false" title="<%= &subs::ui('Off for this track') %>" hint="<%= &subs::ui('Turn this pedal on or off for this track') %>"></span>
+				<span class="pedal_body" aria-hidden="true"></span>
+				<b class="pedal_title"><%= &subs::ui($effect->{'label'} || $name) %></b>
+				<span class="pedal_controls">
+					<span class="pedal_knobs">
+					<% my $ki = 0; %>
+					<% foreach my $k ( @{$effect->{'controls'} || []} ) { next if $k->{'options'}; %>
+						<% my $colour = $art->[$ki] || $fallback->[ $ki % scalar(@$fallback) ]; %>
+						<label class="pedal_knob">
+							<input type="range" channel="<%= $name %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control" style="display:none;">
+							<img class="knob" channel="<%= $name %>" control="<%= $k->{'control'} %>" flip="180" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $colour . '.png') %>">
+							<span class="pedal_knob_label"><%= &subs::ui($k->{'label'} || $k->{'control'}) %></span>
+						</label>
+						<% $ki++; %>
+					<% } %>
+					</span>
+					<% foreach my $k ( @{$effect->{'controls'} || []} ) { next unless $k->{'options'}; %>
+						<label class="pedal_select_row">
+							<span class="pedal_knob_label"><%= &subs::ui($k->{'label'} || $k->{'control'}) %></span>
+							<select class="studio_pedal_model pedal_select" channel="<%= $name %>" control="<%= $k->{'control'} %>" hint="<%= &subs::ui($k->{'hint'} || 'Choose the option') %>">
+								<% my $oi = 0; %>
+								<% foreach my $option ( @{$k->{'options'}} ) { %>
+									<option value="<%= $oi %>"><%= &subs::ui($option) %></option>
+									<% $oi++; %>
+								<% } %>
+							</select>
+						</label>
+					<% } %>
+				</span>
+				<button class="studio_pedal_foot hover" effect="<%= $name %>" aria-pressed="false" hint="<%= &subs::ui('Bypass this effect without removing it') %>"><%= &subs::ui('On') %></button>
+			</span>
+		<% } %>
+	</div>
+	<%# The small tools cloned onto every board tile. The labels stay literal so the
+	   help registry can see them. %>
+	<div id="studio_board_tool_template" class="studio_board_tools" style="display:none;" aria-hidden="true">
+		<button class="studio_rack_up hover" hint="<%= &subs::ui('Move this effect earlier in the chain') %>">‹</button>
+		<button class="studio_rack_down hover" hint="<%= &subs::ui('Move this effect later in the chain') %>">›</button>
+		<button class="studio_rack_remove hover" hint="<%= &subs::ui('Remove this effect from the chain') %>">X</button>
 	</div>
 	<div id="studio_layout_bar" class="studio_layout_bar">
 		<span id="studio_track_count" class="studio_track_count"></span>

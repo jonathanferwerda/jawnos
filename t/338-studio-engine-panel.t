@@ -299,6 +299,14 @@ my @names = qw(
 	is($request->{'gain'}, 0.8, 'the gain is numeric');
 	is($request->{'pan'}, 0, 'pan defaults to zero');
 	is_deeply($request->{'inserts'}, ['tone'], 'the insert chain is the take whitelist');
+	ok($request->{'system'}, 'the standalone Listen keeps the house mix');
+
+	my $monitor = run_take(action => 'listen_start', channel => '1', gain => '0.8', system => '0');
+	is($monitor->{'status'}, 200, 'a Monitor listen is 200');
+	ok(!(logged_requests($log))[-1]{'system'}, 'and asks the engine for its input alone');
+	my $bad_system = run_take(action => 'listen_start', channel => '0', system => 'maybe');
+	is($bad_system->{'status'}, 400, 'an unknown system flag is a 400');
+	like($bad_system->{'json'}{'error'}, qr/system must be 0 or 1/, 'and names the flag');
 
 	my $mic = run_take(action => 'listen_start', channel => '0', gain => '0.5');
 	is($mic->{'status'}, 200, 'channel zero is the microphone');
@@ -364,6 +372,9 @@ my @names = qw(
 	is($direct_request->{'gain'}, 0.4, 'and the gain');
 	is($direct_request->{'pan'}, -0.2, 'and the pan');
 	is_deeply($direct_request->{'inserts'}, [qw(tone delay)], 'and the chain');
+	my $direct_off = JawnOS::Audio::Engine::audio_engine_listen(1, 0.4, 0, [], 0);
+	is($direct_off->{'ok'}, 1, 'the wrapper can ask for the input alone');
+	ok(!(logged_requests($log))[-1]{'system'}, 'and sends system false');
 }
 
 # --- no engine is an answer too, and validation happens first ----------------
@@ -509,8 +520,10 @@ like($controls_js, qr/function studioListenStart\(quiet, channel, ch, fallback\)
 like($controls_js, qr/function studioListenNotRunning/, 'and knows the not-running sentence');
 like($studio_js, qr/var engine = !!\(device && nativeish && listen_channel <= 1 && !studioMonitorEngineFailed/,
 	'a real device on a native backend is the engine Listen while its socket is live');
-like($studio_js, qr/var listening = engine && \(studioListenActive \|\| from_user\);/,
+like($studio_js, qr/var listening = \(engine && \(studioListenActive \|\| from_user\)\)/,
 	'a restored Monitor stays on the tap until the engine Listen runs');
+like($studio_js, qr/engine_path && studioEngineListening/,
+	'a confirmed engine Listen keeps the browser tap off');
 like($studio_js, qr/var tap = on && !!input && \(app \|\| !listening\)/,
 	'no input is silent, an app is the browser tap, and only a running engine Listen mutes it');
 like($studio_js, qr/studioListenStart\(false, listen_channel, active, true\)/,

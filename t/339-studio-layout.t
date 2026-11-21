@@ -125,7 +125,7 @@ like($layout, qr/studioPedalboardOpen\(true\)/,
 like($layout, qr/click', '\.studio_track_fx'[\s\S]*?studioRackRender\(ch\);[\s\S]*?studioPedalboardOpen\(true\);/, 
 	'FX selects the track, draws its chain and opens the pedalboard');
 unlike($layout, qr/studio_fx_open/, 'FX no longer opens a rack inside the track row');
-like($edit, qr/studioPedalboardOpen\(true\);[\s\S]*studio_rack_row\[insert=/, 'a channel badge opens the sheet on its chain row');
+like($edit, qr/studioPedalboardOpen\(true\);[\s\S]*studio_rack_tile\[insert=/, 'a channel badge opens the sheet on its chain tile');
 like($markup, qr/id="studio_layout_bar"[\s\S]*id="studio_pedals"[^>]*hint="[^"]*Open or close the pedalboard/,
 	'the Pedals button sits in the layout bar');
 like($markup, qr/id="studio_pedals"[^>]*aria-pressed="false"/, 'the Pedals button starts closed');
@@ -155,8 +155,8 @@ like($style, qr/\.pedal\s*\{[^}]*left:\s*auto/s, 'the fixed left offset is gone'
 like($style, qr/\.pedal\s*\{[^}]*height:\s*190px/s, 'every tile is 190px tall');
 like($style, qr/#pedalboard\s*\{[^}]*max-height:\s*344px/s, 'the dock fits a shorter window');
 like($style, qr/#pedalboard\s*\{[^}]*flex-direction:\s*column/s, 'the chain and the tiles stack in the sheet');
-like($style, qr/#studio_pedalboard_rack\s*\{[^}]*max-height:\s*110px/s, 'the chain keeps a compact bound in the sheet');
-like($style, qr/#studio_pedalboard_rack\s*\{[^}]*overflow-y:\s*auto/s, 'a long chain scrolls in place');
+like($style, qr/#studio_pedalboard_rack\s*\{[^}]*max-height:\s*240px/s, 'the board keeps a bounded height in the sheet');
+like($style, qr/#studio_pedalboard_rack\s*\{[^}]*overflow-x:\s*auto/s, 'a long board scrolls sideways');
 like($style, qr/\.pedal_background\s*\{[^}]*object-fit:\s*contain/s, 'the artwork fits inside the tile');
 unlike($markup, qr/count\s*\*\s*175/, 'no tile is placed by counted pixels');
 
@@ -477,8 +477,8 @@ like($markup, qr/class="studio_track_fx hover" channel="<%=\s*\$ch\s*%>" hint="<
 	'the FX hint names what the press does');
 like($pedals, qr/var holder = \$\('#studio_pedalboard_rack'\);/, 'the rack renders into the pedalboard');
 like($pedals, qr/holder\.attr\('channel', ch\);/, 'the container is stamped with the track it shows');
-like($pedals, qr/\$\('#studio_pedalboard_rack \.studio_rack_row'\)/,
-	'reorder and move read the pedalboard rows');
+like($pedals, qr/\$\('#studio_pedalboard_rack \.studio_rack_tile'\)/,
+	'reorder and move read the pedalboard tiles');
 like($pedals, qr/studioRackRender\(studioPaletteChannel\(\)\)/,
 	'the chain follows the selected track');
 for my $action (qw(studio_rack_led studio_rack_bypass studio_rack_up studio_rack_down studio_rack_remove)) {

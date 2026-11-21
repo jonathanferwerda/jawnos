@@ -754,6 +754,10 @@ var studioEngineInstalled = false;
 // Whether the engine's socket is live right now. The browser monitor reads it: a
 // device with no engine falls back to the browser capture rather than silence.
 var studioEngineAvailable = false;
+// A Listen that was confirmed started and not confirmed stopped. The browser tap
+// stays muted while this is true even if a status poll fails, so the same input
+// is never played twice with a short delay between the copies.
+var studioEngineListening = false;
 
 function studioAudioBackend() {
 	if (studioAudioBackendMemo !== undefined) { return studioAudioBackendMemo; }
@@ -796,6 +800,7 @@ function studioNativeStatus() {
 	var bridge = studioNativeAudio();
 	if (!bridge) {
 		studioNativeListening = false;
+		studioEngineListening = false;
 		studioListenPollStop();
 		studioListenSetActive(false);
 		return;
@@ -804,6 +809,7 @@ function studioNativeStatus() {
 	try { data = JSON.parse(bridge.stats()); } catch (e) { data = {}; }
 	if (!data || data.ok !== 1) {
 		studioNativeListening = false;
+		studioEngineListening = false;
 		studioListenPollStop();
 		studioListenSetActive(false);
 		studioListenShowError((data && data.error) || studioListenText('the native audio bridge did not answer'));
@@ -816,6 +822,7 @@ function studioNativeStatus() {
 	}
 	if (!on) {
 		studioNativeListening = false;
+		studioEngineListening = false;
 		studioListenPollStop();
 		if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
 		if (data.error) { studioListenShowError(data.error); }
@@ -852,6 +859,7 @@ function studioNativeStart(quiet) {
 		return;
 	}
 	studioNativeListening = true;
+	studioEngineListening = true;
 	studioListenSetActive(true);
 	if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
 	studioListenRender({ state: answer.state, channel: 0, frames: answer.frames, native: answer });
@@ -1001,15 +1009,18 @@ function studioListenStart(quiet, channel, ch, fallback) {
 	if (studioNativeAudio()) { studioNativeStart(quiet); return; }
 	var listen_channel = (channel === undefined || channel === null)
 		? $('#studio_listen_input').val() : String(channel);
+	var request = {
+		action: 'listen_start',
+		channel: listen_channel,
+		gain: $('#studio_listen_gain').val(),
+		inserts: studioListenInserts(ch)
+	};
+	// Monitor wants its input alone; the standalone Listen keeps the house mix.
+	if (fallback) { request.system = 0; }
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',
-		data: {
-			action: 'listen_start',
-			channel: listen_channel,
-			gain: $('#studio_listen_gain').val(),
-			inserts: studioListenInserts(ch)
-		},
+		data: request,
 		dataType: 'json',
 		success: function (data) {
 			data = studioEngineAnswer(data);
@@ -1022,6 +1033,7 @@ function studioListenStart(quiet, channel, ch, fallback) {
 				studioListenRender(data);
 				return;
 			}
+			studioEngineListening = true;
 			studioListenSetActive(true);
 			studioListenChannel = (typeof data.channel === 'number') ? data.channel : Number(listen_channel);
 			if (typeof studioInputReleaseForMonitor === 'function') { studioInputReleaseForMonitor(); }
@@ -1041,6 +1053,7 @@ function studioListenStop(next_channel, ch) {
 	if (studioNativeListening) {
 		var bridge = studioNativeAudio();
 		studioNativeListening = false;
+		studioEngineListening = false;
 		studioListenPollStop();
 		studioListenSetActive(false);
 		if (typeof studioInputResumeAfterMonitor === 'function') { studioInputResumeAfterMonitor(); }
@@ -1062,6 +1075,7 @@ function studioListenStop(next_channel, ch) {
 				studioListenShowError(data.error || studioListenText('the audio engine did not answer'));
 				return;
 			}
+			studioEngineListening = false;
 			studioListenRender(data);
 			if (next_channel !== undefined) { studioListenStart(false, next_channel, ch, true); }
 		},

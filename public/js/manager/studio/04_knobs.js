@@ -382,7 +382,7 @@ function studioSaver() {
 	var name = $('#studio').attr('name');
 	var uuid = $('#studio').attr('uuid');
 
-	$('.knob_control, .channel_volume, .studio_pedal_model').each(function(i,v) {
+	$('.knob_control, .channel_volume, .studio_pedal_model').not('#studio_pedalboard_tiles *').each(function(i,v) {
 		var channel = $(v).attr('channel');
 		var control = $(v).attr('control');
 		var value = $(v).val();

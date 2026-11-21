@@ -21,7 +21,7 @@ use warnings;
 # Windows has no IO::Socket::UNIX, so it is required only when dialling, the
 # same rule lib/JawnOS/Sco/Client.pm follows (t/228 guards it).
 use Socket qw(SOCK_STREAM);
-use Mojo::JSON qw(decode_json encode_json true);
+use Mojo::JSON qw(decode_json encode_json true false);
 use Cwd ();
 use File::Basename ();
 use File::Spec ();
@@ -251,12 +251,13 @@ sub audio_engine_param {
 # already narrowed to 0 (microphone) or 1 (instrument); no device name is
 # carried. The engine answers `state:"listening"`, and `stop` ends it.
 sub audio_engine_listen {
-	my ($channel, $gain, $pan, $inserts) = @_;
+	my ($channel, $gain, $pan, $inserts, $system) = @_;
 	my $request = { cmd => 'listen' };
 	$request->{'channel'} = $channel if defined $channel;
 	$request->{'gain'} = $gain if defined $gain;
 	$request->{'pan'} = $pan if defined $pan;
 	$request->{'inserts'} = $inserts if ref $inserts eq 'ARRAY';
+	$request->{'system'} = $system ? true : false if defined $system;
 	return audio_engine_command($request);
 }
 

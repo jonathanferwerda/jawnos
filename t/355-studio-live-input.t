@@ -442,8 +442,10 @@ like($studio_js, qr/&& \(typeof studioEngineAvailable === 'undefined' \|\| studi
 	'only while the engine is known to be available');
 like($studio_js, qr/function studioMonitorEngineFallback\(\)/,
 	'and a refused Listen has a browser fallback');
-like($studio_js, qr/var listening = engine && \(studioListenActive \|\| from_user\);/,
+like($studio_js, qr/var listening = \(engine && \(studioListenActive \|\| from_user\)\)/,
 	'a restored Monitor stays on the tap until the engine Listen runs');
+like($studio_js, qr/engine_path && studioEngineListening/,
+	'a confirmed engine Listen keeps the browser tap off');
 like($studio_js, qr/var tap = on && !!input && \(app \|\| !listening\)/,
 	'no input is silent, an app is the browser tap, and only a running engine Listen mutes it');
 like($studio_js, qr/if \(engine\) \{[\s\S]*?studioListenStart\(false, listen_channel, active, true\)/,
@@ -466,6 +468,8 @@ like($controls_js, qr/function studioListenStart\(quiet, channel, ch, fallback\)
 like($controls_js, qr/channel: listen_channel/, 'and sends that input to the engine');
 like($controls_js, qr/inserts: studioListenInserts\(ch\)/,
 	'through the monitored track\'s pedals');
+like($controls_js, qr/if \(fallback\) \{ request\.system = 0; \}/,
+	'Monitor asks for its input alone, without the house mix');
 
 # --- the engine is only the monitor while its socket is live ------------------
 # The status reply names `available`; studioEngineStatus stores it, and the

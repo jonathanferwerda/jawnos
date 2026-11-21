@@ -1,20 +1,21 @@
 // ===========================================================================
-// The per-track rack
+// The per-track board
 // ===========================================================================
 // Every channel owns an ordered list of inserts in studioAudio.channels[ch],
 // and this part is the UI over that list. The pedalboard is the one FX surface:
-// its Add list puts the chosen effect into the chain, and the chain container
-// in the sheet shows the selected track's chain in order, where drag or the
-// arrows reorder it, the footswitch bypasses an insert in place, and X removes
-// it. A track's panel never lists effects, so choosing one can never cramp its
-// FX/Monitor/Auto/Delete row. The song keeps the order and the on/off state in
-// the channel's `fx` records (see studioSaver / studioRetriever).
+// its Add list puts the chosen effect into the chain, and the sheet draws the
+// selected track's chain as the stompbox tiles it holds, in signal order. Drag
+// a tile to reorder it, press its lamp or stomp to bypass it, and use the small
+// tools on the tile for Up, Down and X. A track's panel never lists effects, so
+// choosing one can never cramp its FX/Monitor/Auto/Delete row. The song keeps
+// the order and the on/off state in the channel's `fx` records (see
+// studioSaver / studioRetriever).
 //
 // A channel has two chains: In is before the recording (the take is wet) and
-// Out is after it (the take stays clean). The rack shows one at a time; every
-// action below works on the chain the rack shows.
+// Out is after it (the take stays clean). The board shows one at a time; every
+// action below works on the chain the board shows.
 
-// The chain a row is being dragged from, held only for the duration of a drop.
+// The chain a tile is being dragged from, held only for the duration of a drop.
 var studioRackDragChain = null;
 
 function studioRackFind(ch, name, chain) {
@@ -25,88 +26,89 @@ function studioRackFind(ch, name, chain) {
 	return map[name] || null;
 }
 
-// The row template's labels are static markup so the help topic can name them;
-// only the effect's own name and controls are built here.
-function studioRackRow(ch, ins, chain) {
-	var row = $('#studio_rack_template .studio_rack_row').first().clone();
+// A tile with no library entry (an old song's name, or a future effect) is
+// drawn from the contract instead, so it still has knobs and a stomp.
+function studioRackFallbackTile(ins) {
 	var spec = studioEffectSpec(ins.name);
-	// the row remembers the chain it was drawn from, so a drag to another
-	// track lands in that same chain
-	row.attr('channel', ch).attr('insert', ins.name).attr('chain', chain || 'in');
-	row.find('.studio_rack_name').text(studioLayoutText(spec && spec['label'] ? spec['label'] : ins.name));
-	if (ins.bypassed) {
-		row.addClass('studio_rack_off');
-		row.find('.studio_rack_bypass').text(studioLayoutText('Off')).attr('aria-pressed', 'true');
-	}
-	else {
-		row.find('.studio_rack_bypass').text(studioLayoutText('On')).attr('aria-pressed', 'false');
-	}
-	var on = !ins.bypassed;
-	row.find('.studio_rack_led').attr({
-		'aria-pressed': on ? 'true' : 'false',
-		title: studioPedalLampLabel(on),
-		hint: studioPedalLampLabel(on)
+	var tile = $('<span class="pedal pedal_graphic studio_rack_tile"></span>');
+	$('<span class="studio_pedal_led" role="button" aria-pressed="false"></span>')
+		.attr('hint', studioLayoutText('Turn this pedal on or off for this track')).appendTo(tile);
+	$('<span class="pedal_body" aria-hidden="true"></span>').appendTo(tile);
+	$('<b class="pedal_title"></b>')
+		.text(studioLayoutText(spec && spec['label'] ? spec['label'] : ins.name)).appendTo(tile);
+	var controls = $('<span class="pedal_controls"></span>');
+	$.each((spec && spec['controls']) || [], function (i, control) {
+		var label = $('<label class="pedal_select_row"></label>');
+		$('<span class="pedal_knob_label"></span>')
+			.text(studioLayoutText(control['label'] || control['control'])).appendTo(label);
+		var input;
+		if (control['options']) {
+			input = $('<select class="studio_pedal_model pedal_select"></select>');
+			$.each(control['options'], function (index, option) {
+				$('<option></option>').attr('value', index).text(studioLayoutText(option)).appendTo(input);
+			});
+		}
+		else {
+			input = $('<input type="range" min="0" max="100" class="knob_control" style="display:none;">');
+		}
+		input.attr('control', control['control']).attr('channel', ins.name).appendTo(label);
+		label.appendTo(controls);
 	});
+	controls.appendTo(tile);
+	$('<button class="studio_pedal_foot hover" aria-pressed="false"></button>')
+		.attr('hint', studioLayoutText('Bypass this effect without removing it')).text(studioLayoutText('On')).appendTo(tile);
+	return tile;
+}
 
-	var controls = row.find('.studio_rack_controls');
-	if (spec && spec['controls']) {
-		spec['controls'].forEach(function (control) {
-			var wrap = $('<span class="studio_rack_control"></span>');
-			var label = $('<label></label>').text(studioLayoutText(control['label'] || control['control']));
-			var value = ins.values[control['control']];
-			if (value === undefined) { value = 50; }
-			var input;
-			if (control['options']) {
-				input = $('<select class="studio_insert_control studio_insert_select"></select>');
-				control['options'].forEach(function (option, index) {
-					$('<option></option>').attr('value', index).text(studioLayoutText(option)).appendTo(input);
-				});
-				// the dropdowns hold a whole number (a model, a cabinet, a key)
-				input.val(String(Math.round(studioEffectClamp(value, 0, control['options'].length - 1))));
-			}
-			else {
-				input = $('<input type="range" min="0" max="100" class="studio_insert_control">');
-				input.val(value);
-			}
-			input.attr('control', control['control']);
-			label.append(input);
-			wrap.append(label);
-			controls.append(wrap);
-		});
-	}
-	// Jtune is a listen-only insert, not an effect: its rack row carries the
-	// tuner's own display, which 12_tuner draws. Marking the row lets the tuner
-	// find it and keeps the generic lamp paint out of its way.
-	if (ins.name === 'Jtune' || studioEffectKind(ins.name) === 'Jtune') {
-		row.attr('data-tuner', 'yes');
-		var tuner = $('<span class="studio_tuner" aria-live="polite"></span>');
-		$('<span class="studio_tuner_arrow studio_tuner_up" aria-hidden="true"></span>')
-			.text('▲').appendTo(tuner);
-		var note = $('<span class="studio_tuner_note"></span>');
-		$('<b class="studio_tuner_letter"></b>').text(studioLayoutText('TUNE')).appendTo(note);
-		$('<span class="studio_tuner_octave"></span>').appendTo(note);
-		note.appendTo(tuner);
-		$('<span class="studio_tuner_arrow studio_tuner_down" aria-hidden="true"></span>')
-			.text('▼').appendTo(tuner);
-		$('<span class="studio_tuner_cents"></span>').text(studioLayoutText('press to tune')).appendTo(tuner);
-		controls.append(tuner);
-	}
-	return row;
+// One insert as the stompbox the chain holds. The library above supplies the
+// artwork, knobs, button and tuner display; the clone carries this insert's
+// name so its controls and its X act on the effect in this chain.
+function studioRackTile(ch, ins, chain) {
+	var kind = studioEffectKind(ins.name);
+	var source = $('#studio_pedalboard_tiles .pedal').filter(function () {
+		return studioEffectKind($(this).attr('data-effect')) === kind;
+	}).first();
+	var tile = source.length ? source.clone() : studioRackFallbackTile(ins);
+	tile.removeAttr('id').find('[id]').removeAttr('id');
+	tile.addClass('studio_rack_tile')
+		.attr('channel', ch).attr('insert', ins.name).attr('chain', chain || 'in')
+		.attr('data-effect', ins.name);
+	// The controls belong to this insert, not to the library's macro name.
+	tile.find('[channel]').attr('channel', ins.name);
+	tile.find('[effect]').attr('effect', ins.name);
+	// The insert's own values are the ones the knobs and dropdowns show. A fresh
+	// insert takes the tile's defaults, exactly as the old shelf did on entry.
+	tile.find('.knob_control, .studio_pedal_model').each(function () {
+		var control = $(this).attr('control');
+		var value = (ins.values && ins.values[control] !== undefined) ? ins.values[control] : $(this).val();
+		$(this).val(value);
+		if ((!ins.values || ins.values[control] === undefined) && value !== undefined) {
+			ins.set(control, value);
+		}
+	});
+	if (ins.bypassed) { tile.addClass('studio_rack_off'); }
+	// Small tools on the frame: touch order and removal without leaving the board.
+	var tools = $('#studio_board_tool_template').first().clone();
+	tools.removeAttr('id').removeAttr('style').removeAttr('aria-hidden');
+	if (tools.length) { tools.appendTo(tile); }
+	return tile;
 }
 
 function studioRackRender(ch) {
 	var holder = $('#studio_pedalboard_rack');
+	var header = $('#studio_pedalboard_chain');
 	var c = studioAudio.channels[ch];
 	if (!holder.length || !c) { return; }
 	// One sheet, one chain: a render for a track that is not selected would put
 	// the wrong inserts under the Add bar, so it is skipped.
 	if (String(ch) !== String(studioPaletteChannel())) { return; }
 	var chain = studioChannelChain(ch);
-	// every rack action reads this attribute to find its channel
+	// every board action reads this attribute to find its channel
 	holder.attr('channel', ch);
+	header.attr('channel', ch).empty();
 	holder.empty();
 	// In is before the recording, so its pedals print into the take; Out is
-	// after it, so the take stays clean. One switch chooses what the rack shows
+	// after it, so the take stays clean. One switch chooses what the board shows
 	// and what the palette adds to.
 	var toggle = $('<span class="studio_chain_toggle"></span>');
 	$.each([['in', 'In', 'Before the recording'], ['out', 'Out', 'After the recording']], function (i, choice) {
@@ -117,26 +119,30 @@ function studioRackRender(ch) {
 			.text(studioLayoutText(choice[1]))
 			.appendTo(toggle);
 	});
-	holder.append(toggle);
+	header.append(toggle);
 	var list = (chain === 'out') ? c.outInserts : c.inserts;
-	list.forEach(function (ins) { holder.append(studioRackRow(ch, ins, chain)); });
-	if (holder.children('.studio_rack_row').length && typeof holder.sortable === 'function' && !holder.hasClass('ui-sortable')) {
+	list.forEach(function (ins) { holder.append(studioRackTile(ch, ins, chain)); });
+	if (!list.length) {
+		holder.append($('<span class="studio_board_empty"></span>')
+			.text(studioLayoutText('Add an effect to this chain')));
+	}
+	if (holder.children('.studio_rack_tile').length && typeof holder.sortable === 'function' && !holder.hasClass('ui-sortable')) {
 		// jQuery UI sortable is the house drag helper (the taskbar uses it too).
-		// Its default cancel list keeps the sliders and buttons usable. A finished
-		// drag settles on `update`; `stop` is the fallback for a drop that changed
-		// nothing. Either way the row's place is written to the chain and the rows
-		// are drawn again from that model, never trusted as the drag left them.
+		// Its default cancel list keeps the knobs, dropdowns and stomp usable. A
+		// finished drag settles on `update`; `stop` is the fallback for a drop that
+		// changed nothing. Either way the tile's place is written to the chain and
+		// the board is drawn again from that model.
 		var dropped = false;
 		var settle = function (event, ui) {
 			var holder = ui.item.closest('.studio_channel_rack');
-			// the channel and chain come from the row itself, not this render's
-			// closure: the row knows where the drop put it
+			// the channel and chain come from the tile itself, not this render's
+			// closure: the tile knows where the drop put it
 			var to = String(holder.attr('channel') || ui.item.attr('channel') || '');
 			var from = String(ui.item.attr('channel') || to);
 			var name = ui.item.attr('insert');
 			var chain = String(ui.item.attr('chain') || '');
 			if (!name || !to) { return; }
-			// Let sortable finish its own stop before the list is rebuilt; the drop
+			// Let sortable finish its own stop before the board is rebuilt; the drop
 			// position is already known, so the work is deferred, not lost.
 			setTimeout(function () {
 				studioRackDragChain = chain || studioChannelChain(from);
@@ -145,13 +151,11 @@ function studioRackRender(ch) {
 			}, 0);
 		};
 		holder.sortable({
-			items: '> .studio_rack_row',
-			axis: 'y',
+			items: '> .studio_rack_tile',
+			axis: 'x',
 			tolerance: 'pointer',
-			// Every rack row now lives in the pedalboard's one chain container, so a
-			// drop lands in the same chain: the option is kept so the sortable's
-			// own row-to-row dragging keeps working, and the settle handler below
-			// tolerates a row whose channel attribute says it came from elsewhere.
+			// Every tile lives on the one board, so a drop lands in the same chain;
+			// the settle handler still tolerates a tile that says it came from elsewhere.
 			connectWith: '.studio_channel_rack',
 			placeholder: 'studio_rack_placeholder',
 			forcePlaceholderSize: true,
@@ -159,6 +163,9 @@ function studioRackRender(ch) {
 			helper: 'clone',
 			appendTo: 'body',
 			zIndex: 90000,
+			// Knobs, dropdowns, the lamp and the stomp stay clickable; the artwork is
+			// the handle, as it was on the shelf.
+			cancel: '.knob, .knob_control, .pedal_knob, .pedal_select_row, .studio_pedal_foot, .studio_pedal_led, .studio_board_tools, select, option, input, button',
 			cursor: 'var(--jawnos-cursor-grabbing, grabbing)',
 			update: function (event, ui) {
 				dropped = true;
@@ -200,7 +207,7 @@ function studioRackMoveInsert(from, to, name) {
 	else { dst.inserts.push(ins); }
 	dstMap[name] = ins;
 	var order = [];
-	$('#studio_pedalboard_rack .studio_rack_row').each(function () {
+	$('#studio_pedalboard_rack .studio_rack_tile').each(function () {
 		order.push($(this).attr('insert'));
 	});
 	var next = [];
@@ -231,7 +238,7 @@ function studioRackReorder(ch) {
 	var map = out ? c.outInsertByName : c.insertByName;
 	var list = out ? c.outInserts : c.inserts;
 	var order = [];
-	$('#studio_pedalboard_rack .studio_rack_row').each(function () {
+	$('#studio_pedalboard_rack .studio_rack_tile').each(function () {
 		order.push($(this).attr('insert'));
 	});
 	var next = [];
@@ -320,19 +327,29 @@ function studioPedalLampLabel(on) {
 }
 
 function studioUpdatePedalLamps() {
-	// every track's rack row, whether or not it is the selected track
-	$('.studio_rack_row').each(function () {
-		var row = $(this);
-		var ins = studioRackFind(row.attr('channel'), row.attr('insert'), row.attr('chain'));
+	// every tile on the board, painted from the insert it stands for
+	$('#studio_pedalboard_rack .studio_rack_tile').each(function () {
+		var tile = $(this);
+		var ins = studioRackFind(studioPaletteChannel(), tile.attr('insert'), tile.attr('chain'));
 		var on = !!(ins && !ins.bypassed);
 		var label = studioPedalLampLabel(on);
-		row.find('.studio_rack_led').attr({
-			'aria-pressed': on ? 'true' : 'false',
-			title: label,
-			hint: label
-		});
+		tile.toggleClass('studio_rack_off', !on);
+		if (tile.attr('data-tuner') === 'yes') {
+			// Jtune's lamp is the tuner's light (grey off, amber listening, green in tune)
+			if (typeof studioTunerPaintLamp === 'function') { studioTunerPaintLamp(tile); }
+		}
+		else {
+			tile.find('.studio_pedal_led').attr({
+				'aria-pressed': on ? 'true' : 'false',
+				title: label,
+				hint: label
+			});
+		}
+		tile.find('.studio_pedal_foot')
+			.attr('aria-pressed', on ? 'true' : 'false')
+			.text(studioLayoutText(on ? 'On' : 'Off'));
 	});
-	// the tuner listens only while its insert is on, wherever the rack puts it
+	// the tuner listens only while its insert is on, wherever the board puts it
 	if (typeof studioTunerSync === 'function') { studioTunerSync(); }
 }
 
@@ -410,7 +427,7 @@ $(document).on('click', '.channel, .studio_track_panel', function () {
 // The In/Out switch at the top of a rack: choose the chain the rack shows, so
 // every action below (and the palette's Add) works on that chain.
 $(document).on('click', '.studio_chain_choice', function () {
-	var holder = $(this).closest('.studio_channel_rack');
+	var holder = $('#studio_pedalboard_rack');
 	var ch = holder.attr('channel');
 	if (!ch) { return; }
 	studioSetChannelChain(ch, $(this).attr('chain'));
@@ -421,7 +438,7 @@ $(document).on('click', '.studio_chain_choice', function () {
 });
 
 $(document).on('click', '.studio_rack_bypass', function () {
-	var row = $(this).closest('.studio_rack_row');
+	var row = $(this).closest('.studio_rack_tile');
 	var ins = studioRackFind(row.attr('channel'), row.attr('insert'), row.attr('chain'));
 	if (!ins) { return; }
 	studioSetInsertBypass(row.attr('channel'), row.attr('insert'), !ins.bypassed);
@@ -434,7 +451,7 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 	e.preventDefault();
 	e.stopPropagation();
 	var target = $(this);
-	var row = target.closest('.studio_rack_row');
+	var row = target.closest('.studio_rack_tile');
 	if (row.length) {
 		var ins = studioRackFind(row.attr('channel'), row.attr('insert'), row.attr('chain'));
 		if (!ins) { return; }
@@ -449,17 +466,17 @@ $(document).on('click', '.studio_rack_led, #pedalboard .studio_pedal_led, #pedal
 });
 
 $(document).on('click', '.studio_rack_up', function () {
-	var row = $(this).closest('.studio_rack_row');
+	var row = $(this).closest('.studio_rack_tile');
 	studioRackMove(row.attr('channel'), row.attr('insert'), -1);
 });
 
 $(document).on('click', '.studio_rack_down', function () {
-	var row = $(this).closest('.studio_rack_row');
+	var row = $(this).closest('.studio_rack_tile');
 	studioRackMove(row.attr('channel'), row.attr('insert'), 1);
 });
 
 $(document).on('click', '.studio_rack_remove', function () {
-	var row = $(this).closest('.studio_rack_row');
+	var row = $(this).closest('.studio_rack_tile');
 	var ch = row.attr('channel'), name = row.attr('insert');
 	if (row.attr('chain') === 'out') { studioSetInsert(ch, name, false, 'out'); }
 	else { studioSetInsert(ch, name, false); }
@@ -468,7 +485,7 @@ $(document).on('click', '.studio_rack_remove', function () {
 
 $(document).on('input change', '.studio_insert_control', function () {
 	var input = $(this);
-	var row = input.closest('.studio_rack_row');
+	var row = input.closest('.studio_rack_tile');
 	studioInsertControl(row.attr('channel'), row.attr('insert'), input.attr('control'), input.val());
 });
 

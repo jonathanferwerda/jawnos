@@ -609,9 +609,9 @@ function studioRevealPedal(name) {
 		studioSetChannelChain(ch, chain);
 	}
 	studioPedalboardOpen(true);
-	var row = $('#studio_pedalboard_rack .studio_rack_row[insert="' + name + '"]');
+	var row = $('#studio_pedalboard_rack .studio_rack_tile[insert="' + name + '"]');
 	if (!row.length) {
-		row = $('#studio_pedalboard_rack .studio_rack_row').filter(function () {
+		row = $('#studio_pedalboard_rack .studio_rack_tile').filter(function () {
 			return studioEffectKind($(this).attr('insert')) === studioEffectKind(name);
 		}).first();
 	}

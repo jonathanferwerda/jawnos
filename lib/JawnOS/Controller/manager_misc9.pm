@@ -1414,6 +1414,7 @@ sub action_44023 {
 			$c->param('gain'),
 			$c->param('pan'),
 			$c->param('inserts'),
+			$c->param('system'),
 		);
 		$c->render(json => $answer, status => $status);
 		return;
@@ -1588,7 +1589,7 @@ sub studio_listen_clamp {
 # gain takes the page's own default; a non-number is refused here so nothing bad
 # reaches the socket. Extra gain is clamped rather than refused.
 sub studio_listen_start {
-	my ($channel, $gain, $pan, $inserts) = @_;
+	my ($channel, $gain, $pan, $inserts, $system) = @_;
 
 	$channel = '' unless defined $channel;
 	return (400, { ok => 0, error => 'channel must be 0 (microphone) or 1 (instrument)' })
@@ -1622,9 +1623,20 @@ sub studio_listen_start {
 		}
 	}
 
+	# Studio's Monitor asks for its own capture only (system 0): folding the
+	# machine's mix into that output makes the page's own monitor audible again,
+	# which is a feedback loop on a single interface. An absent value keeps the
+	# house mix for the standalone Listen.
+	my $system_value = 1;
+	if (defined $system && length $system) {
+		return (400, { ok => 0, error => 'system must be 0 or 1' })
+			unless $system =~ /\A\s*(?:0|1|true|false)\s*\z/i;
+		$system_value = ($system =~ /\A\s*(?:0|false)\s*\z/i) ? 0 : 1;
+	}
+
 	require JawnOS::Audio::Engine;
 	my $answer = &JawnOS::Audio::Engine::audio_engine_listen(
-		$channel, $gain_value, $pan_value, \@list,
+		$channel, $gain_value, $pan_value, \@list, $system_value,
 	);
 	$answer = { ok => 0, error => 'the audio engine did not answer' }
 		unless ref $answer eq 'HASH';

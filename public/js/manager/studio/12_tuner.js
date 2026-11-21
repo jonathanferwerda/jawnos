@@ -97,7 +97,7 @@ function studioTunerPitch(samples, rate) {
 function studioTunerTile() {
 	// Jtune lives in the selected track's chain now, not on a shelf tile: the
 	// rack row carries the display, its lamp is the insert's state.
-	return $('#studio_pedalboard_rack .studio_rack_row[insert="Jtune"]');
+	return $('#studio_pedalboard_rack .studio_rack_tile[insert="Jtune"]');
 }
 
 // The tuner is a listen-only pedal in the selected track's rack, so its on/off

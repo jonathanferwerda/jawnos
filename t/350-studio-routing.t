@@ -119,13 +119,13 @@ like($render, qr/\['in', 'In', 'Before the recording'\], \['out', 'Out', 'After 
 	'In is before the take and Out after it');
 like($render, qr/var chain = studioChannelChain\(ch\);/, 'the render reads the channel’s selected chain');
 like($render, qr/var list = \(chain === 'out'\) \? c\.outInserts : c\.inserts;/, 'and renders that chain');
-like($render, qr/studioRackRow\(ch, ins, chain\)/, 'each row carries its chain');
-like($rack, qr/row\.attr\('channel', ch\)\.attr\('insert', ins\.name\)\.attr\('chain', chain \|\| 'in'\);/,
-	'the row’s chain travels with it');
+like($render, qr/studioRackTile\(ch, ins, chain\)/, 'each tile carries its chain');
+like($rack, qr/\.attr\('channel', ch\)\.attr\('insert', ins\.name\)\.attr\('chain', chain \|\| 'in'\)/,
+	'the tile’s chain travels with it');
 like($render, qr/studioRackDragChain = chain \|\| studioChannelChain\(from\);/,
-	'a drop reads the dragged row’s chain');
+	'a drop reads the dragged tile’s chain');
 like($rack, qr/var chain = \(studioRackDragChain === 'out'\) \? 'out' : 'in';/,
-	'moving a row between tracks keeps it in the same chain');
+	'moving a tile between tracks keeps it in the same chain');
 like($render, qr/if \(from !== to\) \{ studioRackMoveInsert\(from, to, name\); \} else \{ studioRackReorder\(to\); \}/,
 	'a same-rack drop reorders, another track moves');
 
