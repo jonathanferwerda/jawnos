@@ -17,6 +17,7 @@
 //! number of frames in every one of them.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use crate::effect::{Channel, InsertKind};
@@ -710,10 +711,23 @@ impl TransportControl {
     }
 }
 
+/// A whole replacement placement plan for a running transport.
+///
+/// The control thread parses a plan (a full set of takes, already decoded) and
+/// sends it over a channel; the render thread swaps it in at the next block.
+/// `master` is `Some` only when the caller sent a mastering rack: `None` leaves
+/// the armed rack exactly as it was.
+pub struct TransportPlan {
+    pub clips: Vec<TransportClip>,
+    pub master: Option<Vec<InsertKind>>,
+}
+
 /// The transport's render source: the same click buffers as a take's
 /// metronome, read from the absolute song grid and blended with the mutable
 /// controls at the top of every block, plus the recorded takes placed on the
-/// same timeline. It allocates nothing after `prepared`.
+/// same timeline. It allocates nothing in the steady-state block loop; a plan
+/// update that changes the clip count or insert set may rebuild the strips once
+/// at a block edge (a placement-only update swaps in place).
 pub struct TransportSource {
     control: Arc<TransportControl>,
     click: Option<ClickState>,
@@ -725,6 +739,14 @@ pub struct TransportSource {
     mixer: Mixer,
     /// One mono block per clip, reused by every block.
     voices: Vec<Vec<f32>>,
+    /// New placement plans from the control thread. `try_recv` never blocks, so
+    /// a plan that is not ready waits for a later block instead of stalling the
+    /// device.
+    plan_rx: Option<Receiver<TransportPlan>>,
+    /// The device rate and prepared period, kept so a plan that changes the
+    /// clip count or insert set can rebuild the strips on the render thread.
+    rate: u32,
+    period: usize,
     /// The clip timeline's absolute frame, advanced in step with the click.
     clip_position: u64,
     clip_loop: (u64, u64),
@@ -744,6 +766,9 @@ impl TransportSource {
             master: Vec::new(),
             mixer: Mixer::new(&[], &[]),
             voices: Vec::new(),
+            plan_rx: None,
+            rate: 0,
+            period: 0,
             clip_position: 0,
             clip_loop: (0, 0),
             seek_seq: 0,
@@ -763,10 +788,19 @@ impl TransportSource {
     }
 
     /// The mastering rack the clip mix runs through, in the order the socket
-    /// already put it (the contract's order). Like the clips, it is armed before
-    /// the device opens and fixed for the life of the transport.
+    /// already put it (the contract's order). It is armed before the device
+    /// opens; a later [`TransportPlan`] may replace it at a block edge without
+    /// reopening the device.
     pub fn with_master(mut self, master: Vec<InsertKind>) -> Self {
         self.master = master;
+        self
+    }
+
+    /// Take placement plans from the control thread. The receiver lives on the
+    /// render thread, so applying a plan never needs a lock the control thread
+    /// holds; the socket keeps the matching sender.
+    pub fn with_plan_rx(mut self, plans: Receiver<TransportPlan>) -> Self {
+        self.plan_rx = Some(plans);
         self
     }
 
@@ -774,6 +808,87 @@ impl TransportSource {
     pub fn clip_count(&self) -> usize {
         self.clips.len()
     }
+
+    /// Apply a replacement plan at a block edge.
+    ///
+    /// A placement-only change (same takes, same files, same insert chains)
+    /// moves the start, in-point, length, fades, loop, gain and pan in place: the
+    /// strips keep their insert tails, so a move or a trim does not reset a
+    /// reverb or delay mid-phrase. A different number of takes, a different file
+    /// or a different insert set rebuilds the strips and voices once, here on the
+    /// render thread (an insert need not be `Send`); that rebuild does reset the
+    /// tails, exactly as a seek does. `clip_position` is never reset, so the new
+    /// placement is heard from where the transport already is.
+    fn apply_plan(&mut self, plan: TransportPlan) {
+        let TransportPlan { clips, master } = plan;
+        if let Some(master) = master {
+            if master != self.master {
+                self.master = master;
+                self.mixer
+                    .set_master_chain(&self.master, self.rate, self.period);
+            }
+        }
+        let placement_only = clips.len() == self.clips.len()
+            && clips
+                .iter()
+                .zip(self.clips.iter())
+                .all(|(new, old)| new.path == old.path && new.inserts == old.inserts);
+        if placement_only {
+            for (index, clip) in clips.into_iter().enumerate() {
+                if let Some(track) = self.mixer.tracks_mut().get_mut(index) {
+                    // `Channel::set` writes a smoothed target, so a fader or pan
+                    // move is a ramp rather than a click and the inserts are
+                    // never rebuilt.
+                    track.channel.set("gain", clip.gain);
+                    track.channel.set("pan", clip.pan);
+                }
+                self.clips[index] = clip;
+            }
+        } else {
+            self.clips = clips;
+            self.rebuild_strips();
+        }
+    }
+
+    /// Rebuild the clip strips and voices for the current plan. Called from
+    /// `prepared` and from a plan update that changes the clip count or insert
+    /// set; the short buffer is reused when only the master rack changed.
+    fn rebuild_strips(&mut self) {
+        if self.period == 0 {
+            return;
+        }
+        let (mixer, voices) = build_clip_mixer(&self.clips, &self.master, self.rate, self.period);
+        self.mixer = mixer;
+        self.voices = voices;
+    }
+}
+
+/// Build the strips and voice buffers for a clip plan. Everything here
+/// allocates, so it runs in `prepared` or at a plan update, never in the steady
+/// state block loop.
+fn build_clip_mixer(
+    clips: &[TransportClip],
+    master: &[InsertKind],
+    rate: u32,
+    period: usize,
+) -> (Mixer, Vec<Vec<f32>>) {
+    let inputs: Vec<usize> = (0..clips.len()).collect();
+    let labels: Vec<String> = (1..=clips.len()).map(|n| format!("c{n}")).collect();
+    let label_refs: Vec<&str> = labels.iter().map(|label| label.as_str()).collect();
+    let mut mixer = Mixer::new(&inputs, &label_refs);
+    for (index, clip) in clips.iter().enumerate() {
+        let mut channel = Channel::new(clip.gain, clip.pan.clamp(-1.0, 1.0));
+        for kind in &clip.inserts {
+            channel.push(kind.build());
+        }
+        mixer.tracks_mut()[index].channel = channel;
+    }
+    for kind in master {
+        mixer.push_master(*kind);
+    }
+    mixer.prepare(rate, period);
+    let voices = vec![vec![0.0; period]; clips.len()];
+    (mixer, voices)
 }
 
 impl RenderSource for TransportSource {
@@ -799,25 +914,11 @@ impl RenderSource for TransportSource {
         // Every clip runs through the same kind of strip a playback uses, so a
         // take's gain, pan and inserts read the same here as there. The strips
         // are built on the render thread: an insert need not be `Send`.
-        let inputs: Vec<usize> = (0..self.clips.len()).collect();
-        let labels: Vec<String> = (1..=self.clips.len()).map(|n| format!("c{n}")).collect();
-        let label_refs: Vec<&str> = labels.iter().map(|label| label.as_str()).collect();
-        let mut mixer = Mixer::new(&inputs, &label_refs);
-        for (index, clip) in self.clips.iter().enumerate() {
-            let mut channel = Channel::new(clip.gain, clip.pan.clamp(-1.0, 1.0));
-            for kind in &clip.inserts {
-                channel.push(kind.build());
-            }
-            mixer.tracks_mut()[index].channel = channel;
-        }
-        // The master rack is armed before the first block, exactly as a take's
-        // is, so the transport's clip mix is mastered like the browser's was.
-        for kind in &self.master {
-            mixer.push_master(*kind);
-        }
-        mixer.prepare(rate, period);
+        let (mixer, voices) = build_clip_mixer(&self.clips, &self.master, rate, period);
         self.mixer = mixer;
-        self.voices = vec![vec![0.0; period]; self.clips.len()];
+        self.voices = voices;
+        self.rate = rate;
+        self.period = period;
         self.clip_position = self.control.seek_frames();
         self.clip_loop = self.loop_bounds;
         Ok(())
@@ -831,10 +932,29 @@ impl RenderSource for TransportSource {
         // block silent rather than trusting what the previous block left.
         out.fill(0.0);
         let frames = out.len() / 2;
-        let click = self
-            .click
-            .as_mut()
-            .ok_or_else(|| "the transport was not prepared".to_string())?;
+        if self.click.is_none() {
+            return Err("the transport was not prepared".to_string());
+        }
+
+        // A plan from the control thread (a take moved, trimmed, split, deleted
+        // or added) replaces the placement at this block edge. The plan carries
+        // decoded takes, so the render thread reads nothing from disk; only the
+        // newest queued plan is applied, because each one is the whole set.
+        let pending = match self.plan_rx.as_ref() {
+            Some(plans) => {
+                let mut latest = None;
+                while let Ok(plan) = plans.try_recv() {
+                    latest = Some(plan);
+                }
+                latest
+            }
+            None => None,
+        };
+        if let Some(plan) = pending {
+            self.apply_plan(plan);
+        }
+
+        let click = self.click.as_mut().expect("the transport was prepared above");
 
         // A seek is applied before tempo or loop changes so a `start` that
         // carries all three lands on the new position with the new grid.
@@ -2014,6 +2134,105 @@ mod tests {
                 assert!(sample.abs() < 1e-9, "frame {frame} should be silent: {left:?}");
             }
         }
+    }
+
+    /// A source with a plan channel attached before `prepared`, which is the
+    /// shape `transport start` builds for a running device.
+    fn clip_transport_with_plan(
+        clips: Vec<TransportClip>,
+        period: usize,
+    ) -> (
+        std::sync::mpsc::Sender<TransportPlan>,
+        Arc<TransportControl>,
+        TransportSource,
+    ) {
+        let control = Arc::new(TransportControl::new(
+            click_spec(120.0, 4, 0.0),
+            0,
+            0,
+            0,
+        ));
+        let (plans, rx) = std::sync::mpsc::channel();
+        let mut source = TransportSource::new(Arc::clone(&control))
+            .with_clips(clips)
+            .with_plan_rx(rx);
+        source.prepared(8_000, period).expect("prepare");
+        (plans, control, source)
+    }
+
+    #[test]
+    fn a_transport_plan_update_moves_and_trims_a_clip_without_reopening() {
+        // Eight frames on one timeline, four frames per block. The initial plan
+        // starts at zero, so block one hears frames 1..4 and block two 5..8.
+        let samples = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let (plans, _, mut source) =
+            clip_transport_with_plan(vec![clip(samples.clone(), 0, 8, false)], 4);
+        let mut first = vec![0.0f32; 8];
+        source.block(&mut first).expect("block");
+        assert_eq!(left_channel(&first), vec![1.0, 2.0, 3.0, 4.0]);
+
+        // Move the same take four frames later: a placement-only change, so the
+        // strip and its voices are kept and the new start is heard at once.
+        plans
+            .send(TransportPlan {
+                clips: vec![clip(samples.clone(), 4, 8, false)],
+                master: None,
+            })
+            .expect("send the moved plan");
+        let mut second = vec![0.0f32; 8];
+        source.block(&mut second).expect("block");
+        assert_eq!(
+            left_channel(&second),
+            vec![1.0, 2.0, 3.0, 4.0],
+            "the moved clip did not play from its new start"
+        );
+
+        // Trim its end to the half already heard: block three is past it, so a
+        // removed span stops sounding at the very next block.
+        plans
+            .send(TransportPlan {
+                clips: vec![clip(samples, 4, 4, false)],
+                master: None,
+            })
+            .expect("send the trimmed plan");
+        let mut third = vec![0.0f32; 8];
+        source.block(&mut third).expect("block");
+        assert!(
+            third.iter().all(|sample| sample.abs() < 1e-9),
+            "the trimmed take still sounded: {:?}",
+            left_channel(&third)
+        );
+        // The same source and unbroken timeline prove the device was not
+        // stopped and reopened: its position advanced by three blocks.
+        assert_eq!(source.clip_count(), 1);
+    }
+
+    #[test]
+    fn a_transport_plan_update_that_removes_a_clip_silences_it_next_block() {
+        let (plans, _, mut source) = clip_transport_with_plan(
+            vec![clip(vec![1.0; 4], 0, 4, false)],
+            4,
+        );
+        let mut first = vec![0.0f32; 8];
+        source.block(&mut first).expect("block");
+        assert_eq!(left_channel(&first), vec![1.0; 4]);
+
+        // The plan is now empty. That changes the clip count, so the strips are
+        // rebuilt once at this block edge and the take stops sounding.
+        plans
+            .send(TransportPlan {
+                clips: Vec::new(),
+                master: None,
+            })
+            .expect("send the empty plan");
+        let mut second = vec![0.0f32; 8];
+        source.block(&mut second).expect("block");
+        assert!(
+            second.iter().all(|sample| sample.abs() < 1e-9),
+            "a deleted take kept sounding: {:?}",
+            left_channel(&second)
+        );
+        assert_eq!(source.clip_count(), 0);
     }
 
     #[test]

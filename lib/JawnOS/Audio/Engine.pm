@@ -312,13 +312,14 @@ sub audio_engine_status {
 # "loop_start":0,"loop_end":0,"clips":[...],"master":[...]}`. Positions are
 # seconds on the song timeline. Only the fields the engine promised are
 # forwarded, so a caller cannot smuggle another key through this helper;
-# `action` is one of `start`, `stop`, `seek` or `status`, and the engine
-# validates every value before a thread or a device exists. `clips` is the
-# optional plan of recorded takes (absolute WAV path, timeline start, source
+# `action` is one of `start`, `stop`, `seek`, `update` or `status`, and the
+# engine validates every value before a thread or a device exists. `clips` is
+# the optional plan of recorded takes (absolute WAV path, timeline start, source
 # offset, gain, pan and the rest); `master` is the enabled mastering inserts
-# the clip mix runs through. An absent plan is the click-only clock. This is the
-# browser transport, not an engine take: a take and the transport own the output
-# in turns, never together.
+# the clip mix runs through. An absent plan is the click-only clock. `update`
+# replaces the clip and master plan of a running transport in place: the device
+# stays open, so a take moved, trimmed, split, deleted or added is heard at the
+# next block.
 our @audio_engine_transport_fields = qw(
 	position bpm beats_per_bar gain loop_start loop_end clips master
 );

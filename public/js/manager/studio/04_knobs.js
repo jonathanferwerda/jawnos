@@ -250,6 +250,9 @@ $(document).on('change mousemove touchmove','.knob_control',function() {
 	knob.css({ 'transform': 'rotate(' + transform_value + 'deg)' });
 	if (/^[0-9]+$/.test(channel)) { studioApplyChannel(channel); }
 	else { studioApplyPedals(); }
+	// Pan is part of the engine clip plan; other knobs are not, so only a pan
+	// change on a running engine posts a replacement plan.
+	if (control == 'pan' && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 	studioUpdateKnobHints();
 	studioSaver();
 });
@@ -298,6 +301,9 @@ function studioChannelVolumeSet(ch, value) {
 	// the fader is one factor of the mix, not the whole of it: a muted or
 	// solo-silenced channel stays silent while its fader moves
 	studioApplyPlaybackMix();
+	// The engine folds the fader into each clip's strip, so a running engine
+	// needs the new plan; the browser path is unchanged when it is not.
+	if (typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 	studioSaver();
 }
 

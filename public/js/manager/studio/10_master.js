@@ -102,6 +102,9 @@ function studioMasterToggle(name, on) {
 	studioEngineMasterBypass(name, !on);
 	studioMasterRender();
 	studioSaver();
+	// A mastering insert on or off changes the rack the clip mix runs through,
+	// so a running engine needs the replacement plan; the browser is unchanged.
+	if (typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
 // The song's admin carries the master rack: one record per effect, in chain

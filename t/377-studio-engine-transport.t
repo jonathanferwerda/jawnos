@@ -1,4 +1,4 @@
-# tests-for: engine/src/socket.rs engine/src/playback.rs engine/src/lib.rs lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/studio/01_transport.js public/js/manager/studio/06_controls.js public/js/manager/studio.js templates/studio/markup.html.ep perl/help/topics_apps.pl
+# tests-for: engine/src/socket.rs engine/src/playback.rs engine/src/lib.rs lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/studio/01_transport.js public/js/manager/studio/04_knobs.js public/js/manager/studio/06_controls.js public/js/manager/studio/09_pedals.js public/js/manager/studio/10_master.js public/js/manager/studio.js templates/studio/markup.html.ep perl/help/topics_apps.pl
 # covers:    The engine owns the browser transport's clock, metronome and take
 #            audio: a `transport` socket command (start/stop/seek/status), an
 #            absolute bar phase that starts on the song's own grid, a loop that
@@ -31,8 +31,30 @@ like(
 like($socket, qr/fn transport_command/, 'the transport has one command function');
 like($socket, qr/fn transport_start/, 'start is handled');
 like($socket, qr/fn transport_seek/, 'seek is handled');
+like($socket, qr/fn transport_update/, 'update replaces a running transport plan');
 like($socket, qr/fn transport_stop/, 'stop is handled');
 like($socket, qr/fn transport_status/, 'status has a dedicated line');
+like(
+	$socket,
+	qr/"update"\s*=>\s*self\.transport_update\(object\)/,
+	'update is dispatched from the transport command'
+);
+like(
+	$socket,
+	qr/the transport is not playing; start it before updating its clips/,
+	'an update with no running transport is refused clearly'
+);
+like(
+	$socket,
+	qr/plan_tx\.send\(plan\)/,
+	'an update hands the plan to the render thread instead of rebuilding it here'
+);
+like(
+	$socket,
+	qr/with_plan_rx\(plans\)/,
+	'the render source receives plans without a lock'
+);
+like($socket, qr/fn run_transport/, 'the transport worker is one function');
 like($socket, qr/\\"transport\\":\{/, 'the status line nests a transport object');
 like(
 	$socket,
@@ -117,6 +139,42 @@ like(
 	qr/pub struct TransportClip/,
 	'the transport carries recorded takes as clips'
 );
+like($playback, qr/pub struct TransportPlan/, 'a replacement plan is its own type');
+like(
+	$playback,
+	qr/pub fn with_plan_rx/,
+	'the render source takes a plan channel from the control thread'
+);
+like(
+	$playback,
+	qr/fn apply_plan/,
+	'a plan is applied at a block edge'
+);
+like(
+	$playback,
+	qr/placement_only/,
+	'a placement-only change swaps without rebuilding voices'
+);
+like(
+	$playback,
+	qr/track\.channel\.set\("gain", clip\.gain\)/,
+	'a fader change moves the strip without a rebuild'
+);
+like(
+	$playback,
+	qr/plans\.try_recv\(\)/,
+	'the render thread never blocks waiting for a plan'
+);
+like(
+	$playback,
+	qr/a_transport_plan_update_moves_and_trims_a_clip_without_reopening/,
+	'moving and trimming a clip is heard without reopening (unit test)'
+);
+like(
+	$playback,
+	qr/a_transport_plan_update_that_removes_a_clip_silences_it_next_block/,
+	'a removed clip stops at the next block (unit test)'
+);
 like(
 	$playback,
 	qr/fn source_at/,
@@ -139,7 +197,7 @@ like(
 );
 like(
 	$playback,
-	qr/for kind in &self\.master \{\s*mixer\.push_master\(\*kind\);\s*\}/,
+	qr/for kind in master \{\s*mixer\.push_master\(\*kind\);\s*\}/,
 	'the master rack is armed on the clip mix before prepare'
 );
 like(
@@ -190,8 +248,8 @@ like(
 );
 like(
 	$socket,
-	qr/run_transport\(config, control, error, clips, master\)/,
-	'the master rack reaches the transport worker'
+	qr/run_transport\(config, control, error, clips, master, plan_rx\)/,
+	'the master rack and the plan channel reach the transport worker'
 );
 like(
 	$socket,
@@ -206,7 +264,17 @@ like(
 like(
 	$socket,
 	qr/the transport is playing; stop it before changing its clips/,
-	'a clip change needs a stop, because strips belong to the render thread'
+	'a clip change on `start` still needs a stop; `update` is the live path'
+);
+like(
+	$socket,
+	qr/a_transport_update_is_refused_when_nothing_is_playing/,
+	'an update with no transport has a socket test'
+);
+like(
+	$socket,
+	qr/a_transport_update_reaches_a_running_transport/,
+	'an update reaches a running transport (socket test)'
 );
 like(
 	$socket,
@@ -242,8 +310,18 @@ like(
 );
 like(
 	$controller,
-	qr/choose a transport action: start, stop, seek or status/,
+	qr/choose a transport action: start, stop, seek, update or status/,
 	'an unknown action is a refusal'
+);
+like(
+	$controller,
+	qr/\$action eq 'update'/,
+	'the route accepts the live plan action'
+);
+like(
+	$controller,
+	qr/update needs "clips": the replacement plan for the running transport/,
+	'an update must carry its clips, even when the plan is empty'
 );
 like($controller, qr/sub action_44034/, 'the clip staging action exists');
 like($controller, qr/sub studio_transport_clips/, 'the route validates a clip plan');
@@ -304,6 +382,11 @@ unlike(
 	'an engine take no longer blocks the transport'
 );
 like($transport_js, qr/function studioEngineTransportStart/, 'the browser can start the engine transport');
+like(
+	$transport_js,
+	qr/function studioEngineTransportStart[\s\S]{0,700}!studioEngineTransportReady\(\)[\s\S]{0,500}engine_transport'\]\)[\s\S]{0,300}studioEngineTransportStop\(\)/,
+	'a browser recording stops a running engine transport instead of leaving it playing'
+);
 like($transport_js, qr/function studioEngineTransportSeek|studioEngineTransportPost\('seek'/, 'the browser can seek it');
 like($transport_js, qr/function studioEngineTransportStop/, 'the browser can stop it');
 like($transport_js, qr/function studioEngineTransportPoll/, 'the browser polls its position');
@@ -388,6 +471,56 @@ like(
 	$transport_js,
 	qr{function studioEngineClipPlan},
 	'the page builds the engine clip plan from its takes'
+);
+like(
+	$transport_js,
+	qr/function studioTakesChanged\(\).*?engine_transport'\]\) \{ studioEngineClipsChanged\(\); return; \}/s,
+	'a take edit on a running engine posts a replacement plan instead of re-anchoring'
+);
+like(
+	$transport_js,
+	qr/function studioEngineClipsChanged/,
+	'the live plan update has one debounced entry point'
+);
+like(
+	$transport_js,
+	qr/studioEngineClipsTimer = setTimeout\([\s\S]{0,120}\}, 120\)/,
+	'the plan update debounces about a tenth of a second'
+);
+like(
+	$transport_js,
+	qr/function studioEngineClipsPost/,
+	'the debounced edit stages and posts a plan'
+);
+like(
+	$transport_js,
+	qr/studioEngineClipStageAll\(plan\)/,
+	'the update re-stages only through the existing per-take cache'
+);
+like(
+	$transport_js,
+	qr/studioEngineTransportPost\('update'/,
+	'the plan reaches the engine through the update action'
+);
+like(
+	$transport_js,
+	qr/studio: engine clip staging failed, keeping the current plan/,
+	'a staging failure keeps the running plan instead of falling back'
+);
+like(
+	$transport_js,
+	qr/studio: engine clip update refused, keeping the current plan/,
+	'a refused update leaves the engine playing'
+);
+like(
+	$transport_js,
+	qr/function studioEnginePlanTouched/,
+	'fader, pan and Out insert handlers can ask whether the engine owns the plan'
+);
+like(
+	$transport_js,
+	qr/studioEngineClipsCancel/,
+	'stop and fallback cancel a queued plan before the flag comes down'
 );
 like(
 	$transport_js,
@@ -530,6 +663,16 @@ like(
 	$help,
 	qr/Count-in, beside Tracks/,
 	'the help topic describes the count-in in the on-screen words'
+);
+like(
+	$help,
+	qr/moving, trimming, splitting, deleting or adding a take while it plays is heard at the next block/,
+	'the help topic says a take edit is heard without stopping the engine'
+);
+like(
+	$help,
+	qr/because the engine swaps the plan without closing the output/,
+	'the help topic says the output stays open'
 );
 
  done_testing();

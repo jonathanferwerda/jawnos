@@ -232,8 +232,12 @@ function studioCanSeek() {
 // A take was added, moved, trimmed or removed while the transport runs: drop
 // what was queued for the rest of this pass and re-anchor scheduling at the
 // playhead, so the edit is heard on the next tick instead of at the next wrap.
+// While the engine owns the transport the browser schedules no take audio, so
+// the edit is heard by sending the engine a replacement plan instead; the
+// browser clock and its segment are left alone.
 function studioTakesChanged() {
 	if (mixer['time']['status'] != 'play' && mixer['time']['status'] != 'record') { return; }
+	if (mixer['time']['engine_transport']) { studioEngineClipsChanged(); return; }
 	var ctx = studioAudio.ctx;
 	var seg = studioAudio.playSeg;
 	if (!ctx || !seg) { return; }
@@ -245,6 +249,71 @@ function studioTakesChanged() {
 	studioAudio.clickSeg = studioSegmentCopy(seg);
 	studioAudio.clickKey = studioClickKey();
 	studioScheduleTick();
+}
+
+// ---- engine plan updates ----------------------------------------------------
+//
+// The engine renders every take while it owns the transport, so an edit cannot
+// be heard by re-anchoring the browser: it schedules nothing under the engine.
+// Instead the whole plan is rebuilt and posted after a short debounce, which
+// collapses a drag or a fader move into one update. A staging failure keeps the
+// engine on the plan it already has; it never falls back to the browser mid-song.
+
+function studioEngineClipsCancel() {
+	if (studioEngineClipsTimer) { clearTimeout(studioEngineClipsTimer); studioEngineClipsTimer = 0; }
+	// Invalidate any staging that is already in flight, so an answer for the old
+	// transport can never post a plan to a new one.
+	studioEngineClipsSeq++;
+	studioEngineClipsPending = false;
+}
+
+// True while the engine owns the takes. A channel fader, pan or Out insert
+// change is part of the clip plan then, so the control handlers ask this before
+// touching the plan; with the browser playing, they keep their old behaviour.
+function studioEnginePlanTouched() {
+	return !!(mixer['time'] && mixer['time']['engine_transport']
+		&& typeof studioTakesChanged === 'function');
+}
+
+function studioEngineClipsChanged() {
+	if (!mixer['time'] || !mixer['time']['engine_transport']) { return; }
+	// The first plan is still staging, and its own `start` will carry the plan.
+	// Remember the edit and send it after the start answers instead of racing it.
+	if (studioEngineTransportStarting) { studioEngineClipsPending = true; return; }
+	if (studioEngineClipsTimer) { clearTimeout(studioEngineClipsTimer); }
+	var seq = ++studioEngineClipsSeq;
+	studioEngineClipsTimer = setTimeout(function () {
+		studioEngineClipsTimer = 0;
+		studioEngineClipsPost(seq);
+	}, 120);
+}
+
+function studioEngineClipsPost(seq) {
+	if (!mixer['time'] || !mixer['time']['engine_transport']) { return; }
+	if (studioEngineTransportStarting) { studioEngineClipsPending = true; return; }
+	var plan = studioEngineClipPlan();
+	if (plan.blocked > 0) {
+		// A take the engine cannot render makes the whole plan unsafe. Keep the
+		// engine on the plan it has rather than play a partial mix.
+		console.log('studio: engine clip update blocked by a take it cannot render, keeping the current plan');
+		return;
+	}
+	studioEngineClipStageAll(plan).then(function (clips) {
+		if (seq != studioEngineClipsSeq) { return; }
+		if (!mixer['time'] || !mixer['time']['engine_transport']) { return; }
+		var fields = { clips_json: JSON.stringify(clips) };
+		var master = studioEngineMasterList();
+		fields.master_json = JSON.stringify(master);
+		studioEngineTransportPost('update', fields, function (data) {
+			if (!data || data.ok !== true) {
+				// A refusal leaves the engine on its previous plan; the transport
+				// keeps playing rather than dropping to the browser mid-song.
+				console.log('studio: engine clip update refused, keeping the current plan', (data && data.error) || '');
+			}
+		});
+	}).catch(function (error) {
+		console.log('studio: engine clip staging failed, keeping the current plan', error);
+	});
 }
 
 // Park a scheduled source so it can be flushed on a stop, seek or wrap. A
@@ -277,6 +346,12 @@ var studioEngineTransportDrift = 0.05;
 // True while the takes are being staged for a first start. A second Play while
 // that upload runs must not start a second staging or a second transport.
 var studioEngineTransportStarting = false;
+// The pending replacement-plan post. A drag or a fader move produces several
+// edits; the timer collapses them into one update. `seq` makes an in-flight
+// staging answer stale when a newer edit has already been queued.
+var studioEngineClipsTimer = 0;
+var studioEngineClipsSeq = 0;
+var studioEngineClipsPending = false;
 
 function studioEngineTransportReady() {
 	if (typeof studioEngineAvailable === 'undefined' || !studioEngineAvailable) { return false; }
@@ -501,15 +576,19 @@ function studioEngineTransportPost(action, fields, done) {
 // clears the flag and re-anchors the browser click immediately.
 function studioEngineTransportStart(pos, ready, exact) {
 	if (!studioEngineTransportReady()) {
-		mixer['time']['engine_transport'] = false;
+		// A browser recording takes the clock back. If the engine was already
+		// playing, it must let go: clearing the flag alone would leave it
+		// rendering the takes while the browser starts its own copy and click.
+		if (mixer['time']['engine_transport']) { studioEngineTransportStop(); }
+		else { mixer['time']['engine_transport'] = false; }
 		return;
 	}
 	if (mixer['time'] && mixer['time']['engine_count_in']) { return; }
 	if (studioEngineTransportStarting) { return; }
 	var fields = studioEngineTransportFields(pos);
 	// A running engine only needs the new position; tempo and loop ride a
-	// retune `start` from studioEngineTransportSync. Its clips are fixed for
-	// the life of the transport, so the page never re-sends them.
+	// retune `start` from studioEngineTransportSync. A take edit reaches it
+	// through `update`, so this path never re-sends the clips.
 	if (mixer['time']['engine_transport']) {
 		studioEngineTransportPost('seek', { position: fields.position }, studioEngineTransportAnswer);
 		return;
@@ -539,8 +618,8 @@ function studioEngineTransportStart(pos, ready, exact) {
 		// The plan rides as one JSON string: jQuery's own array encoding is not
 		// the shape the route reads.
 		fields.clips_json = JSON.stringify(clips);
-		// The master rack is the same for every take and fixed for the life of
-		// the transport, so it rides this first `start` only.
+		// The master rack is the same for every take. It rides this first `start`
+		// and every later plan update, where an unchanged rack is a no-op.
 		var master = studioEngineMasterList();
 		if (master.length) { fields.master_json = JSON.stringify(master); }
 		studioEngineTransportPost('start', fields, studioEngineTransportAnswer);
@@ -562,6 +641,12 @@ function studioEngineTransportAnswer(data) {
 	studioFlushSources();
 	studioEngineTransportPollStart();
 	if (data.transport) { studioEngineTransportApply(data.transport); }
+	// An edit that arrived while the first plan was still staging could not be
+	// sent then; send it now that the engine is playing.
+	if (studioEngineClipsPending) {
+		studioEngineClipsPending = false;
+		studioEngineClipsChanged();
+	}
 }
 
 // The engine path refused or went away: hand the clock and click back to the
@@ -570,6 +655,7 @@ function studioEngineTransportAnswer(data) {
 // read from playing a second click beside the browser's.
 function studioEngineTransportDrop() {
 	studioEngineTransportStarting = false;
+	studioEngineClipsCancel();
 	mixer['time']['engine_transport'] = false;
 	studioEngineTransportPollStop();
 	// Hand both clocks and the take audio back: re-anchor the scheduler at the
@@ -600,6 +686,7 @@ function studioEngineTransportSync() {
 
 function studioEngineTransportStop() {
 	studioEngineTransportPollStop();
+	studioEngineClipsCancel();
 	var was = !!mixer['time']['engine_transport'];
 	mixer['time']['engine_transport'] = false;
 	if (!was) { return; }

@@ -77,6 +77,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -85,7 +86,8 @@ use jawn_audio::{
     listen::{self, ListenPlan, ListenStrip},
     monitor_start, to_i16, BackendKind, Channel, ClickSpec, Consumer, Device, DiskWriter,
     InsertKind, Mixer, MonitorBus, MonitorSpec, NullDevice, ParamName, ParamQueue, PlayTrack,
-    Playback, Producer, TransportClip, TransportControl, TransportSource, MASTER_ORDER,
+    Playback, Producer, TransportClip, TransportControl, TransportPlan, TransportSource,
+    MASTER_ORDER,
 };
 
 use crate::patchbay::{PatchSummary, Patchbay};
@@ -3063,13 +3065,15 @@ impl Server {
     /// Positions are seconds on the song timeline; the render thread converts
     /// them to absolute device frames. Every field is validated before a thread
     /// or a device exists. A `start` while the transport already plays retunes
-    /// and seeks in place: no device is closed, so there is no gap.
+    /// and seeks in place: no device is closed, so there is no gap. Clips ride
+    /// `update`, which replaces the placement of the running transport without
+    /// stopping it.
     fn transport_command(&mut self, object: &Object) -> String {
         let action = match get(object, "action") {
             Some(Value::Str(action)) => action.as_str(),
             _ => {
                 return error_line(
-                    "transport needs \"action\": \"start\", \"stop\", \"seek\" or \"status\"",
+                    "transport needs \"action\": \"start\", \"stop\", \"seek\", \"update\" or \"status\"",
                 )
             }
         };
@@ -3077,6 +3081,7 @@ impl Server {
             "start" => self.transport_start(object),
             "stop" => self.transport_stop(),
             "seek" => self.transport_seek(object),
+            "update" => self.transport_update(object),
             "status" => self.transport_status(),
             other => error_line(&format!("no such transport action: {other}")),
         }
@@ -3209,13 +3214,17 @@ impl Server {
         let control = Arc::new(TransportControl::new(spec, position, loop_start, loop_end));
         control.set_playing(true);
         let error = Arc::new(Mutex::new(String::new()));
+        // The control thread sends replacement plans; the render thread receives
+        // them at a block edge. Nothing is shared under a lock, so a plan never
+        // stalls the device.
+        let (plan_tx, plan_rx) = std::sync::mpsc::channel();
         let spawned = {
             let control = Arc::clone(&control);
             let error = Arc::clone(&error);
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-transport".to_string())
-                .spawn(move || run_transport(config, control, error, clips, master))
+                .spawn(move || run_transport(config, control, error, clips, master, plan_rx))
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -3230,7 +3239,62 @@ impl Server {
             error,
             clips: clip_count,
             master: master_count,
+            plan_tx,
         });
+        self.transport_status()
+    }
+
+    /// `{"cmd":"transport","action":"update","clips":[...],"master":[...]}`.
+    ///
+    /// Replace the placement of a running transport: the takes are read and
+    /// validated here on the control thread, then handed to the render thread,
+    /// which swaps them in at the next block with the device still open. A
+    /// transport that is not playing (never started, or stopped) is refused
+    /// rather than silently holding a plan no thread will apply. `master` is
+    /// optional; when absent the armed rack is left alone.
+    fn transport_update(&mut self, object: &Object) -> String {
+        let rate = self.config.rate;
+        // Refuse before reading any file, so an update against a stopped
+        // transport is one clear sentence and no disk work.
+        let playing = self
+            .transport
+            .as_ref()
+            .map(TransportSession::is_playing)
+            .unwrap_or(false);
+        if !playing {
+            return error_line(
+                "the transport is not playing; start it before updating its clips",
+            );
+        }
+        let clips = match transport_clips(object, rate) {
+            Ok(clips) => clips,
+            Err(error) => return error_line(&error),
+        };
+        let master = match get(object, "master") {
+            None | Some(Value::Null) => None,
+            Some(value) => match parse_master(Some(value)) {
+                Ok(master) => Some(master),
+                Err(error) => return error_line(&error),
+            },
+        };
+        let clip_count = clips.len();
+        let master_count = master.as_ref().map(|master| master.len());
+        let plan = TransportPlan { clips, master };
+        let session = match self.transport.as_mut() {
+            Some(session) => session,
+            None => {
+                return error_line(
+                    "the transport is not playing; start it before updating its clips",
+                )
+            }
+        };
+        if session.plan_tx.send(plan).is_err() {
+            return error_line("the transport's render thread is no longer accepting plans");
+        }
+        session.clips = clip_count;
+        if let Some(count) = master_count {
+            session.master = count;
+        }
         self.transport_status()
     }
 
@@ -4408,6 +4472,9 @@ struct TransportSession {
     clips: usize,
     /// How many mastering inserts are armed on the clip mix. Zero is a dry sum.
     master: usize,
+    /// Replacement plans to the render thread. A send never waits for the audio
+    /// thread; the receiver's `try_recv` at a block edge is the only consumer.
+    plan_tx: Sender<TransportPlan>,
 }
 
 impl TransportSession {
@@ -4498,10 +4565,12 @@ fn run_transport(
     error: Arc<Mutex<String>>,
     clips: Vec<TransportClip>,
     master: Vec<InsertKind>,
+    plans: std::sync::mpsc::Receiver<TransportPlan>,
 ) {
     let source = TransportSource::new(Arc::clone(&control))
         .with_clips(clips)
-        .with_master(master);
+        .with_master(master)
+        .with_plan_rx(plans);
     let outcome = match config.backend {
         BackendKind::Null => transport_null(&config, source, &control),
         BackendKind::Alsa | BackendKind::PipeWire => {
@@ -7528,12 +7597,14 @@ break"}"#).is_err());
             0,
         ));
         control.set_playing(true);
+        let (plan_tx, _plan_rx) = std::sync::mpsc::channel();
         TransportSession {
             control,
             handle: None,
             error: Arc::new(Mutex::new(String::new())),
             clips: 0,
             master: 0,
+            plan_tx,
         }
     }
 
@@ -7584,6 +7655,61 @@ break"}"#).is_err());
             stopped.contains("\"transport\":{\"state\":\"stopped\""),
             "{stopped}"
         );
+    }
+
+    #[test]
+    fn a_transport_update_is_refused_when_nothing_is_playing() {
+        let mut server = socket_server();
+        // Never started: the plan is refused before any file is read.
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","clips":[]}"#,
+        ));
+        assert!(line.contains("\"ok\":false"), "{line}");
+        assert!(line.contains("not playing"), "{line}");
+
+        // Stopped: the session still exists, but no render thread is running.
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","clips":[]}"#,
+        ));
+        assert!(line.contains("\"ok\":false"), "{line}");
+        assert!(line.contains("not playing"), "{line}");
+    }
+
+    #[test]
+    fn a_transport_update_reaches_a_running_transport() {
+        use jawn_audio::WavWriter;
+
+        let mut server = socket_server();
+        let out = temp_take("plan");
+        {
+            let mut writer = WavWriter::create(&out, 48_000, 1, 4096).expect("a WAV writer");
+            writer.write_f32(&[0.25f32; 4_800]).expect("write samples");
+            writer.finish().expect("finish the WAV");
+        }
+
+        let started = reply(server.handle(r#"{"cmd":"transport","action":"start","position":0}"#));
+        assert!(started.contains("\"state\":\"playing\""), "{started}");
+        assert!(started.contains("\"clips\":0"), "{started}");
+
+        let line = reply(server.handle(&format!(
+            r#"{{"cmd":"transport","action":"update","clips":[{{"file":"{out}","start":0,"gain":1,"pan":0}}]}}"#
+        )));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+        assert!(line.contains("\"clips\":1"), "the update did not change the clip count: {line}");
+
+        // A second update clears the plan; the transport keeps playing.
+        let line = reply(server.handle(
+            r#"{"cmd":"transport","action":"update","clips":[]}"#,
+        ));
+        assert!(line.contains("\"ok\":true"), "{line}");
+        assert!(line.contains("\"clips\":0"), "{line}");
+
+        let _ = server.handle(r#"{"cmd":"transport","action":"stop"}"#);
+        let _ = std::fs::remove_file(&out);
     }
 
     #[test]

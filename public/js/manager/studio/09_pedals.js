@@ -228,6 +228,7 @@ function studioRackMoveInsert(from, to, name) {
 	studioRackRender(to);
 	studioUpdateFxBadges();
 	studioSaver();
+	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
 function studioRackReorder(ch) {
@@ -256,6 +257,7 @@ function studioRackReorder(ch) {
 	studioRackRender(ch);
 	studioUpdatePedalLamps();
 	studioSaver();
+	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
 function studioRackMove(ch, name, delta) {
@@ -275,6 +277,7 @@ function studioRackMove(ch, name, delta) {
 	if (out) { studioRebuildOutputs(ch); } else { studioRebuildInserts(ch); }
 	studioRackRender(ch);
 	studioSaver();
+	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
 // The footswitch: bypass in place, never remove (contract rule 5).
@@ -294,6 +297,7 @@ function studioSetInsertBypass(ch, name, on) {
 	studioRackRender(ch);
 	studioUpdatePedalLamps();
 	studioSaver();
+	if (chain === 'out' && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
 // ---- the lamps -------------------------------------------------------------

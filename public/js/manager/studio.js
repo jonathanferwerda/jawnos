@@ -336,6 +336,9 @@ function studioSetInsert(ch, name, on, chain) {
 	// keep every rack view and every pedal lamp in step with the engine
 	if (typeof studioRackRender === 'function') { studioRackRender(ch); }
 	if (typeof studioUpdatePedalLamps === 'function') { studioUpdatePedalLamps(); }
+	// Only the Out chain travels in an engine clip plan; an input-chain insert
+	// is baked into the take, so it needs no plan update.
+	if (out && typeof studioEnginePlanTouched === 'function' && studioEnginePlanTouched()) { studioTakesChanged(); }
 }
 
 function studioApplyChannel(ch) {

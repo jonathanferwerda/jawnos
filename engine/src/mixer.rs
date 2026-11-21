@@ -465,6 +465,21 @@ impl Mixer {
         self.master.push(MasterSlot::new(kind));
     }
 
+    /// Replace the master chain in place, building and sizing the new inserts
+    /// for `period`. The caller is on the thread that runs the strips (an
+    /// insert need not be `Send`), so this is a plan-update or setup call, never
+    /// a steady-state one. The track strips are left alone, so a master edit
+    /// does not reset a take's tails.
+    pub fn set_master_chain(&mut self, kinds: &[InsertKind], rate: u32, period: usize) {
+        self.master.clear();
+        for kind in kinds {
+            self.master.push(MasterSlot::new(*kind));
+        }
+        for slot in &mut self.master {
+            slot.prepare(rate, period);
+        }
+    }
+
     /// The master chain's implementation names, for a report: `limiter,eq`.
     /// Bypassed inserts are still in the rack, so they are still named.
     pub fn master_insert_names(&self) -> String {

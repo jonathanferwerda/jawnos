@@ -1447,11 +1447,11 @@ sub action_44023 {
 # POST /manager/studio/transport
 #
 # The engine's transport, which owns the browser transport's clock and
-# metronome: start, stop, seek or status, with positions in seconds on the song
-# timeline. The route validates every field before the engine is dialled, so a
-# malformed request is this route's 400 rather than a socket line the engine has
-# to refuse; the engine is still the authority and its answer is relayed
-# unchanged. It never names a path, a device or a process.
+# metronome: start, stop, seek, update or status, with positions in seconds on
+# the song timeline. The route validates every field before the engine is
+# dialled, so a malformed request is this route's 400 rather than a socket line
+# the engine has to refuse; the engine is still the authority and its answer is
+# relayed unchanged. It never names a path, a device or a process.
 sub action_44033 {
 	my $c = shift;
 	require JawnOS::Audio::Engine;
@@ -1467,8 +1467,8 @@ sub action_44033 {
 		$c->render(json => &JawnOS::Audio::Engine::audio_engine_transport('stop'));
 		return;
 	}
-	unless ($action eq 'start' || $action eq 'seek') {
-		$c->render(json => { ok => 0, error => 'choose a transport action: start, stop, seek or status' }, status => 400);
+	unless ($action eq 'start' || $action eq 'seek' || $action eq 'update') {
+		$c->render(json => { ok => 0, error => 'choose a transport action: start, stop, seek, update or status' }, status => 400);
 		return;
 	}
 
@@ -1610,7 +1610,9 @@ sub studio_transport_decimal {
 # Validate the transport's six fields and return (error, hash). A `seek` needs
 # a position; a `start` defaults it to zero. Tempo, signature and gain default
 # to the page's 120 / 4 / 0.5 when omitted, and the engine has the same
-# defaults. The loop is off unless its end is past its start.
+# defaults. The loop is off unless its end is past its start. An `update`
+# replaces a running transport's plan, so it must carry its clips even when the
+# plan is empty (a deleted take must actually leave the mix).
 sub studio_transport_fields {
 	my ($c, $action) = @_;
 
@@ -1668,7 +1670,18 @@ sub studio_transport_fields {
 
 	my ($clips_error, $clips) = &studio_transport_clips($c);
 	return ($clips_error, undef) if defined $clips_error;
-	$fields{'clips'} = $clips if @{$clips};
+	if (@{$clips}) {
+		$fields{'clips'} = $clips;
+	}
+	elsif ($action eq 'update') {
+		# An update is the whole plan: an absent one is a malformed request,
+		# while an empty array is a real request to remove every take.
+		my $raw_clips = $c->param('clips_json');
+		$raw_clips = $c->param('clips') unless defined $raw_clips && length $raw_clips;
+		return ('update needs "clips": the replacement plan for the running transport', undef)
+			unless defined $raw_clips && length $raw_clips;
+		$fields{'clips'} = [];
+	}
 
 	# The clip mix runs through the same master rack a browser take does. It
 	# shares the take plan's validation, so a name the engine cannot build is a
@@ -1678,7 +1691,9 @@ sub studio_transport_fields {
 	if (defined $raw_master && length $raw_master) {
 		my ($master_error, $master) = &studio_master_plan($raw_master);
 		return ($master_error, undef) if defined $master_error;
-		$fields{'master'} = $master if @{$master};
+		# An update carries the rack it is playing through, so an empty array
+		# clears it; a start keeps omitting an empty rack as before.
+		$fields{'master'} = $master if @{$master} || $action eq 'update';
 	}
 
 	return (undef, \%fields);
