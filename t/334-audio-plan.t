@@ -363,4 +363,23 @@ sub route {
 	is( latency($chain, 'zone'), 19, 'a send chain adds each declared delay once' );
 }
 
+# --- which machine a node belongs to -----------------------------------------
+# A blank `machine` is this machine's older spelling; a named one is local only
+# when it is this host, compared without regard to case. The input picker, the
+# write path and SystemMix's mode check all ask this one question.
+{
+	is(JawnOS::Audio::Plan::audio_plan_on_this_machine('', 'table'), 1,
+		'a blank machine is this machine');
+	is(JawnOS::Audio::Plan::audio_plan_on_this_machine('table', 'table'), 1,
+		'the hostname names this machine');
+	is(JawnOS::Audio::Plan::audio_plan_on_this_machine('TABLE', 'table'), 1,
+		'and the comparison folds case');
+	is(JawnOS::Audio::Plan::audio_plan_on_this_machine('elsewhere', 'table'), 0,
+		'another machine is not this one');
+	is(JawnOS::Audio::Plan::audio_plan_on_this_machine(undef, 'table'), 1,
+		'a missing field is a blank one');
+	is(JawnOS::Audio::Plan::audio_plan_on_this_machine('table', ''), 0,
+		'without a host, only a blank machine is local');
+}
+
 done_testing();

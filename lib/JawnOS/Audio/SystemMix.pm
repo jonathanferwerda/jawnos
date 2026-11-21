@@ -384,11 +384,14 @@ sub plan_mode {
 	return 'playback';
 }
 
+# One rule for "is this plan node this machine's": a blank machine is this
+# machine's older spelling, and a named one is local only when it is this host,
+# case-insensitively. It lives in Plan beside the field, so the picker, the
+# write path and this mode check cannot drift apart.
 sub _plan_on_this_machine {
 	my ($node_machine, $host) = @_;
-	$node_machine = '' unless defined $node_machine;
-	return 1 if $node_machine eq '';
-	return lc($node_machine) eq lc($host) ? 1 : 0;
+	require JawnOS::Audio::Plan;
+	return JawnOS::Audio::Plan::audio_plan_on_this_machine($node_machine, $host);
 }
 
 # The engine's reported mode and the plan's mode can disagree for one patch

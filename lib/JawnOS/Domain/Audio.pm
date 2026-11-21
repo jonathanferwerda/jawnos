@@ -256,7 +256,7 @@ sub audio_plan_source_node_write {
 	my $plan = &audio_plan_read();
 	my ($source) = grep {
 		($_->{kind} || '') eq 'input'
-			&& !($_->{machine} || '')
+			&& JawnOS::Audio::Plan::audio_plan_on_this_machine($_->{machine})
 			&& ($_->{channel} || 0) == $channel
 	} @{ $plan->{sources} };
 	return {

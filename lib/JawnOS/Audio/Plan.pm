@@ -126,6 +126,26 @@ sub audio_plan_node_valid {
 	return $node =~ $audio_plan_node_pattern ? 1 : 0;
 }
 
+# Does this node belong to the machine that is asking? A plan's `machine` names
+# the machine that owns a source or sink. A blank one is the older spelling of
+# "this machine", and Sound's source form and the engine both write the
+# hostname into the field, so an explicit name that is this host means the same
+# thing. A name that is another machine is not this machine's node: the picker
+# does not list it and the write path refuses it. The comparison folds case,
+# and a caller that already read the host (SystemMix) passes it in.
+sub audio_plan_on_this_machine {
+	my ($machine, $host) = @_;
+	$machine = '' unless defined $machine && !ref $machine;
+	return 1 if $machine eq '';
+	unless (@_ > 1) {
+		require Sys::Hostname;
+		$host = eval { Sys::Hostname::hostname() } || '';
+	}
+	$host = '' unless defined $host && !ref $host;
+	return 0 unless length $host;
+	return lc($machine) eq lc($host) ? 1 : 0;
+}
+
 # One source or sink entry, with the optional facts filled in. The identity
 # (`id` and `kind`) is the entry; a missing rate or channel count is an older
 # declaration, so it takes the default rather than removing the node.

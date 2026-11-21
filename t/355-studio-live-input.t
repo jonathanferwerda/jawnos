@@ -6,6 +6,8 @@
 #            claims both device channels so an overlap names the two tracks,
 #            the start route validates and clamps the monitor switch and its
 #            gain, and the fourth `param` target forwards one `gain` knob.
+#            The input picker opens on the plan's saved node, including a source
+#            that names this machine explicitly.
 
 use strict;
 use warnings;
@@ -159,6 +161,17 @@ sub render {
 		$self->{$name} = $value;
 	}
 	return;
+}
+sub render_to_string {
+	my ($self, @args) = @_;
+	my %args;
+	while (@args) {
+		my $name  = shift @args;
+		my $value = shift @args;
+		$args{$name} = $value;
+	}
+	$self->{'rendered'} = \%args;
+	return '';
 }
 package main;
 
@@ -460,5 +473,38 @@ unlike($app_attach // '', qr/getUserMedia/, 'the app attach path never opens a d
 
 unlike($studio_js, qr/c\.monGain\.gain\.value = \(on && !nativeish\) \? 1 : 0/,
 	'the tap is not muted for every native backend');
+
+# --- the input picker opens on the saved source ------------------------------
+# A plan may name this machine explicitly: Sound's source form writes it and
+# the engine writes the hostname, so a `machine` equal to this host is still
+# this machine's source, and its node is the one the picker opens on.
+{
+	require Sys::Hostname;
+	no warnings 'redefine';
+	local *Sys::Hostname::hostname = sub { 'table' };
+	my $node = 'alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo';
+	local *subs::audio_plan_read = sub {
+		return { sources => [
+			{ id => 'um2-in0', kind => 'input', machine => 'table', channel => 0, node => $node },
+		] };
+	};
+	local *subs::audio_capture_sources = sub { return [] };
+
+	my $fake = FakeStudioTakeController->new({
+		channel     => 'plug-1',
+		direction   => 'input',
+		information => encode_json({ input => 0 }),
+		constraints => encode_json({}),
+		apps        => encode_json([]),
+	});
+	Manager::action_28457($fake);
+	is($fake->{'rendered'}{input_node}, $node,
+		'a source tagged with this machine hands the picker its saved node');
+
+	local *Sys::Hostname::hostname = sub { 'elsewhere' };
+	Manager::action_28457($fake);
+	is($fake->{'rendered'}{input_node}, '',
+		'and a source on another machine is not offered');
+}
 
 done_testing();

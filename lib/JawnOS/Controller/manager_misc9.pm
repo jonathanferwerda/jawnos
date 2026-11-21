@@ -600,9 +600,12 @@ sub action_28457 {
 	if (defined $direction && $direction eq 'input') {
 		$sources = eval { &subs::audio_capture_sources() } || [];
 		my $plan = eval { &subs::audio_plan_read() } || { sources => [] };
+		# A source is this machine's when it names no machine, or names this
+		# one: Sound's form and the engine both write the hostname.
+		require JawnOS::Audio::Plan;
 		my ($source) = grep {
 			($_->{'kind'} || '') eq 'input'
-				&& !($_->{'machine'} || '')
+				&& JawnOS::Audio::Plan::audio_plan_on_this_machine($_->{'machine'})
 				&& ($_->{'channel'} || 0) == $input
 		} @{ $plan->{'sources'} || [] };
 		$input_node = $source ? ($source->{'node'} || '') : '';

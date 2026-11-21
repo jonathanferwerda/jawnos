@@ -3,6 +3,8 @@
 #            empty lists, a valid plan saves on the house row, a dangling route is refused, the
 #            master switch is the only thing that applies an engine patch, a sink's declared
 #            latency adds up from its source, and the engine client spells "patch" and "stop".
+#            An input source tagged with this machine's hostname is still local, while one
+#            tagged with another machine stays refused.
 
 use strict;
 use warnings;
@@ -196,6 +198,45 @@ require JawnOS::Domain::Audio;
 	like($missing->{error}, qr/no input source on channel 7/, 'and says why');
 	is(subs::audio_plan_read()->{sources}[0]{node}, '',
 		'a refused choice changes nothing');
+}
+
+# --- a source may name this machine explicitly --------------------------------
+# Sound's source form writes the machine name into the field, and the engine
+# writes the hostname, so a plan that says `machine: table` is still this
+# machine's plan. A blank machine is the older spelling of the same thing. A
+# source tagged with another machine is not this machine's, and stays refused.
+{
+	%STORE = ();
+	require Sys::Hostname;
+	no warnings 'redefine';
+	local *Sys::Hostname::hostname = sub { 'table' };
+	my $um2 = 'alsa_input.usb-BEHRINGER_UMC202HD-00.analog-stereo';
+	my $plan = {
+		sources => [
+			{ id => 'um2-in0', kind => 'input', label => 'Mic (UM2 in 0)', machine => 'table', channel => 0, node => '' },
+			{ id => 'um2-in1', kind => 'input', label => 'Mic (UM2 in 1)', machine => 'TABLE', channel => 1, node => '' },
+			{ id => 'far',     kind => 'input', label => 'Far mic',         machine => 'elsewhere', channel => 2, node => '' },
+		],
+		buses  => [],
+		sinks  => [],
+		routes => [],
+	};
+	is(subs::audio_plan_write($plan)->{ok}, 1, 'a plan may name this machine on its sources');
+	is(subs::audio_plan_read()->{sources}[0]{machine}, 'table', 'and the saved plan keeps the machine');
+
+	my $here = subs::audio_plan_source_node_write(0, $um2);
+	is($here->{ok}, 1, 'a source tagged with this machine is a local input');
+	is($here->{source}{node}, $um2, 'the choice is written to it');
+	is(subs::audio_plan_read()->{sources}[0]{node}, $um2,
+		'and the plan reads the node back, so the picker opens on it');
+
+	my $folded = subs::audio_plan_source_node_write(1, $um2);
+	is($folded->{ok}, 1, 'the machine name compares without regard to case');
+
+	my $far = subs::audio_plan_source_node_write(2, $um2);
+	is($far->{ok}, 0, 'a source tagged with another machine is still refused');
+	like($far->{error}, qr/no input source on channel 2/, 'and says which channel it looked at');
+	is(subs::audio_plan_read()->{sources}[2]{node}, '', 'while its node is left alone');
 }
 
 # --- the machine's capture sources, as the picker lists them ------------------
