@@ -13,7 +13,11 @@
 #            own level (the loudness the person hears today) - after a failed
 #            unload and after a crash too. The level is written to the output
 #            before the default moves, and the sink is unloaded last, so a
-#            stream that follows the handover never lands on unity. An output
+#            stream that follows the handover never lands on unity. The start
+#            has the same order in reverse: the mix's level is written before
+#            it becomes the default, and the output is raised to unity only
+#            after the switch, so a restart never plays an app stream at full
+#            scale. An output
 #            whose level cannot be read leaves both sinks alone and says why.
 #            A mix whose state file was wiped is still taken down: the module is
 #            found by the sink name it was loaded with, the default leaves
@@ -469,6 +473,32 @@ is($twice->{skipped}, 1, 'and changes nothing');
 	ok($switch >= 0, 'and the default moves');
 	ok($level < $switch, 'the level lands before the default moves');
 	ok($switch < $unload, 'and the sink is unloaded last');
+	write_levels('');
+}
+
+# The start is the same handover in reverse, and a restart is heard through
+# it: the person's audio is playing on the hardware output when the new
+# supervisor raises the sink. If that raise happens before the default moves,
+# the stream is at full scale for however long the switch takes. The mix's
+# level first, the default second, the output raised last.
+{
+	reset_mix();
+	write_levels("alsa_output.real 35 no\n");
+	my $out = tempdir(CLEANUP => 1);
+	write_file("$dir/pactl.log", '');
+	my $on = JawnOS::Audio::SystemMix::ensure($out, 'default');
+	is($on->{ok}, 1, 'the mix comes up for the start-order test');
+
+	my $log    = read_file("$dir/pactl.log");
+	my $mix    = index($log, 'set-sink-volume jawn_system 35%');
+	my $switch = index($log, 'set-default-sink jawn_system');
+	my $unity  = index($log, 'set-sink-volume alsa_output.real 100%');
+	ok($mix >= 0, "the mix takes the person's level");
+	ok($switch >= 0, 'and the default moves onto it');
+	ok($unity >= 0, 'and the output is raised for the engine');
+	ok($mix < $switch, 'the mix level is written before a stream can land on it');
+	ok($switch < $unity, 'the output is raised only after the default left it');
+	is((level_of('alsa_output.real'))[0], 100, 'the engine plays through unity');
 	write_levels('');
 }
 

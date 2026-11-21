@@ -38,6 +38,15 @@ package JawnOS::Audio::SystemMix;
 # the same level applied it twice - the engine read the mix at V and played it
 # out a sink still at V, so the room heard V squared.
 #
+# `ensure` is the same handover in the other direction, so it has the same
+# order: the mix's level is written first, the default moves second, and only
+# then is the hardware output raised to unity. Raising it before the switch
+# lands a live app stream on full scale for however long `set-default-sink`
+# takes, which a restart is heard as a burst of 100%. Each step is honest if it
+# is cut short: a mix level with the default still on the output changes
+# nothing anyone hears, and a default on the mix with the output still at the
+# person's level is quiet twice over, never loud.
+#
 # `remove` is the handover, and its order is the whole point. Moving the
 # default or unloading the sink lands a live app stream on the hardware output
 # at once; if that output is still at the unity the engine held it at, the
@@ -810,15 +819,20 @@ sub _hold_output_unity {
 	return 1;
 }
 
-# Give the mix the person's level and leave the replaced output at unity.
-sub _apply_output_level {
-	my ($previous, $level, $sinks) = @_;
+# Give the mix the person's level. It is written before the switch: a null sink
+# is born at the server's 100%, and a stream that lands on it the moment the
+# default moves must find the person's loudness already there. The hardware
+# output is deliberately not touched here - it is raised only after the default
+# has left it (see `ensure`).
+sub _apply_mix_level {
+	my ($level) = @_;
 	return 0 unless ref $level eq 'HASH';
-	JawnOS::Platform::Audio::set_volume('output', $system_sink, $level->{'volume'})
-		if defined $level->{'volume'};
-	JawnOS::Platform::Audio::set_mute('output', $system_sink, $level->{'mute'})
-		if defined $level->{'mute'};
-	return _hold_output_unity($previous, $sinks);
+	my $did = 0;
+	$did = 1 if defined $level->{'volume'}
+		&& JawnOS::Platform::Audio::set_volume('output', $system_sink, $level->{'volume'});
+	$did = 1 if defined $level->{'mute'}
+		&& JawnOS::Platform::Audio::set_mute('output', $system_sink, $level->{'mute'});
+	return $did;
 }
 
 # Put the output's own level back, whether `remove` is undoing a live mix or one
@@ -977,16 +991,11 @@ sub ensure {
 	my $wrote = _write_state($state_dir, $doc);
 	return $wrote unless $wrote->{ok};
 
-	# The mix carries the person's level and the output the engine plays
-	# through sits at unity, so the level is applied once rather than twice.
-	# A repeat ensure must not re-apply the level, but it still holds the
-	# hardware sink at unity in case something moved it.
+	# The person's level goes onto the mix, and nowhere else yet. A repeat
+	# ensure must not re-apply it, so only an adopted level is written; the
+	# hardware output is raised to unity after the switch below, never before.
 	if ($read) {
-		_apply_output_level($previous, $read, $sinks);
-	}
-	elsif (!$created && $had_state
-		&& ref $state->{'previous_level'} eq 'HASH') {
-		_hold_output_unity($previous, $sinks);
+		_apply_mix_level($read);
 	}
 
 	# What the person's tray now shows, and why it could not be adopted.
@@ -1021,10 +1030,8 @@ sub ensure {
 		# A sink this call created has no owner once we give up on it. An
 		# earlier state still records a loaded sink and its module id, so it is
 		# kept for `remove` to clean later rather than forgetting the id.
-		# Either way the output this call raised must get its level back.
-		if ( $read && ( $created || !$had_state ) ) {
-			_restore_output_level($previous, $saved_level, $sinks);
-		}
+		# The hardware output was never raised - that happens only after a
+		# verified switch - so there is no level to put back here.
 		if ($created) {
 			_unload($module_id);
 			my $path = state_path($state_dir);
@@ -1051,7 +1058,6 @@ sub ensure {
 			# no freed card. State from an earlier run keeps its module id for a
 			# later `remove` instead.
 			if ($created) {
-				_restore_output_level($previous, $saved_level, $sinks) if $read;
 				if (length $previous && $previous ne $system_sink) {
 					JawnOS::Platform::Audio::set_default('output', $previous);
 				}
@@ -1061,6 +1067,16 @@ sub ensure {
 			}
 			return { ok => 0, error => $card_rule->{error} };
 		}
+	}
+
+	# Only now, with the default off the hardware output, is that output raised.
+	# Every stream that was playing there landed on the mix at the person's
+	# level when the default moved, so unity now scales the engine's own signal
+	# alone. This is the mirror of `remove`: the mix's level first, the default
+	# second, the output raised (or unloaded) last.
+	if ( $read || ( !$created && $had_state
+		&& ref $state->{'previous_level'} eq 'HASH' ) ) {
+		_hold_output_unity($previous, $sinks);
 	}
 
 	return {
