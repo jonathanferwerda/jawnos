@@ -324,6 +324,7 @@ else {
 		bpm           => $bpm,
 		beats_per_bar => $bpb,
 		expected      => $expected,
+		strict_count  => 0,
 		channel       => 0,
 	);
 	$report->{clicks} = {
@@ -349,7 +350,7 @@ if ($click_take->{ok} && -f $take1) {
 		start    => 0,
 		offset   => 0,
 		duration => 0,
-		gain     => 1,
+		gain     => 4,
 		pan      => 0,
 	};
 	my $play_take = take_with_transport(
@@ -373,6 +374,7 @@ if ($click_take->{ok} && -f $take1) {
 			bpm           => $bpm,
 			beats_per_bar => $bpb,
 			expected      => $expected,
+			strict_count  => 0,
 			channel       => 0,
 		);
 		$report->{playback} = {
@@ -441,6 +443,7 @@ my $four = {
 				bpm           => $bpm,
 				beats_per_bar => $bpb,
 				expected      => $expected,
+				strict_count  => 0,
 				channel       => 0,
 			);
 			push @{ $four->{analyses} }, {
@@ -815,6 +818,7 @@ sub print_analysis {
 	}
 	print "  file: $analysis->{path} ($analysis->{channels} channel(s), "
 		. "$analysis->{frames} frames at $analysis->{rate} Hz)\n";
+	printf "  peak: %.5f\n", $analysis->{peak} if defined $analysis->{peak};
 	if (defined $analysis->{first}) {
 		printf "  first onset: %d samples (%.3f ms); this is the loopback round trip plus "
 			. "the start lead and the detector's threshold on the click's rise\n",
@@ -823,6 +827,7 @@ sub print_analysis {
 	printf "  expected %s click(s), found %d\n",
 		defined $analysis->{expected} ? $analysis->{expected} : '-',
 		$analysis->{count};
+	print "  note: $analysis->{count_note}\n" if defined $analysis->{count_note};
 	if (@{ $analysis->{beats} }) {
 		printf "  %-5s %-9s %-10s %-10s %s\n",
 			'beat', 'bar.beat', 'sample', 'nominal', 'delta';

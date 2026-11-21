@@ -105,6 +105,10 @@ my $short = gate_analyse($missing, bpm => 120, expected => 3);
 ok(!$short->{passed}, 'a missing click fails');
 like($short->{reason}, qr/expected 3 click\(s\), found 2/, 'and names the count');
 
+my $lenient = gate_analyse($missing, bpm => 120, expected => 3, strict_count => 0);
+ok($lenient->{passed}, 'a short count is a note when the grid is still exact');
+like($lenient->{count_note}, qr/expected 3 click\(s\), found 2/, 'and the note names the count');
+
 my $stereo_pass = gate_analyse($stereo, channel => 1, bpm => 120, expected => 3);
 ok($stereo_pass->{passed}, 'a stereo take passes on its second channel');
 

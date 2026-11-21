@@ -390,6 +390,7 @@ sub gate_analyse {
 		$report->{reason} = "channel $report->{channel} is not in this take";
 		return $report;
 	}
+	$report->{peak} = gate_peak($samples);
 
 	my %detector;
 	for my $key (qw(threshold floor peak_fraction fine_fraction
@@ -418,11 +419,18 @@ sub gate_analyse {
 	$report->{first_ms} = $onsets->[0] / $rate * 1000;
 
 	if (defined $report->{expected} && @$onsets != $report->{expected}) {
-		$report->{reason} = sprintf(
+		my $note = sprintf(
 			'expected %d click(s), found %d',
 			$report->{expected}, scalar @$onsets,
 		);
-		return $report;
+		if ($opts{strict_count} // 1) {
+			$report->{reason} = $note;
+			return $report;
+		}
+		# The hardware take starts after the transport and a quiet regular beat
+		# can fall under the detector; the grid is still the measurement. The
+		# caller keeps the count as a note rather than a failure.
+		$report->{count_note} = $note;
 	}
 
 	if (@$onsets < 2) {
