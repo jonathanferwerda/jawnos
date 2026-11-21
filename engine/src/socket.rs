@@ -59,6 +59,12 @@
 //! both before joining either, and `status` reports the take's state with
 //! `playing`, `monitor_frames`, the alignment and the monitor strips beside it.
 //! Two takes at once, or two playbacks at once, are still refused.
+//!
+//! The transport follows the same shape: it owns one output thread, so a take
+//! that asks for no monitor may record beside it and the transport plays its
+//! clips. A take that does ask for a monitor (files, live input or a click)
+//! still needs an output of its own, so it refuses while the transport plays.
+//! `status` leads with the take and reports the transport beside it.
 
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
@@ -1119,7 +1125,9 @@ struct Server {
     patch: Option<PatchSession>,
     /// The most recent transport, kept after it stops so `transport status`
     /// and `seek` can describe a resting position. A transport owns an output
-    /// like a playback, so it cannot start beside one.
+    /// like a playback, so it cannot start beside one; a take that captures
+    /// without a monitor can record beside it, because the two use different
+    /// device streams.
     transport: Option<TransportSession>,
     /// The signal flag the serve loop reads, and the wake pipe that makes a
     /// blocked `poll` look at it. Both are set up by `run_serve`; a signal
@@ -2337,16 +2345,6 @@ impl Server {
     }
 
     fn record(&mut self, object: &Object) -> String {
-        // The transport owns the output while it runs. A take's monitor (or a
-        // click-only take) would need the same device, so the two do not share
-        // it yet even when the take itself only captures.
-        if let Some(session) = &self.transport {
-            if session.is_playing() {
-                return error_line(
-                    "the transport is playing; stop it before recording. Sharing the transport's output with a take is the next stage",
-                );
-            }
-        }
         // One capture stream, one owner: a take cannot also feed the monitor
         // yet. Sharing one capture between listen and record is the next step.
         if let Some(session) = &self.listen {
@@ -2390,7 +2388,17 @@ impl Server {
         // One playback at a time: a take over the monitor it names is the
         // point, but a second monitor cannot join a playback already running.
         // A click-only monitor is still output, so it follows the same rule.
+        // The transport owns an output of its own, so a take may capture beside
+        // it only when the take asks for no monitor; files, live input and a
+        // click each open the device the transport already holds.
         if !monitor.is_empty() || monitor_input || click.is_some() {
+            if let Some(session) = &self.transport {
+                if session.is_playing() {
+                    return error_line(
+                        "the transport is playing; a take cannot also open a monitor. Stop the transport, or record without monitoring",
+                    );
+                }
+            }
             if let Some(session) = &self.playback {
                 if session.is_playing() {
                     return error_line("a playback is already running");
@@ -3140,18 +3148,22 @@ impl Server {
             }
         }
 
-        if let Some(running) = &self.current {
-            if running.is_recording() {
-                return error_line(
-                    "a take is recording; stop it before starting the transport. Sharing the transport's output with a take is the next stage",
-                );
-            }
-        }
+        // A take may be recording beside the transport: it owns only the
+        // capture stream, and the transport owns the output. A take's monitor,
+        // however, lives in the playback slot, so the check below still refuses
+        // it by the name of the output it is using.
         if let Some(session) = &self.playback {
             if session.is_playing() {
-                return error_line(
-                    "a playback is running; stop it before starting the transport. Sharing the transport's output with a playback is the next stage",
-                );
+                let recording = self
+                    .current
+                    .as_ref()
+                    .map(Running::is_recording)
+                    .unwrap_or(false);
+                return error_line(if recording {
+                    "the take's monitor is using the output; stop the take before starting the transport. Sharing the transport's output with a monitor is the next stage"
+                } else {
+                    "a playback is running; stop it before starting the transport. Sharing the transport's output with a playback is the next stage"
+                });
             }
         }
         if let Some(session) = &self.listen {
@@ -3266,14 +3278,20 @@ impl Server {
 
     fn status_line(&self) -> String {
         // A take that is recording is the transport, so its line leads and the
-        // monitor reports beside it. A finished take stays a status line and an
-        // independent playback keeps its historical shape.
+        // monitor reports beside it. An engine transport may be playing beside
+        // it, so its object rides the same line. A finished take stays a status
+        // line and an independent playback keeps its historical shape.
+        let live_transport = self
+            .transport
+            .as_ref()
+            .filter(|session| session.is_playing())
+            .map(|session| (session, self.config.rate));
         let line = if let Some(running) = self
             .current
             .as_ref()
             .filter(|running| running.is_recording())
         {
-            running.line_with_play(self.playback.as_ref())
+            running.line_with_roles(self.playback.as_ref(), live_transport)
         } else if let Some(session) = self
             .patch
             .as_ref()
@@ -3397,7 +3415,16 @@ impl Server {
         }
         if was_recording {
             if let Some(running) = &self.current {
-                return running.line_with_play(self.playback.as_ref());
+                // The stop reply describes the take and, when one was playing,
+                // the transport whose thread was joined beside it.
+                let transport = if was_transport {
+                    self.transport
+                        .as_ref()
+                        .map(|session| (session, self.config.rate))
+                } else {
+                    None
+                };
+                return running.line_with_roles(self.playback.as_ref(), transport);
             }
         }
         if was_transport {
@@ -4220,14 +4247,19 @@ impl Running {
     }
 
     fn line(&self) -> String {
-        self.line_with_play(None)
+        self.line_with_roles(None, None)
     }
 
     /// The take's line with the monitoring role beside it. `playing` is how many
     /// files the monitor holds (not whether it is still running) and
     /// `monitor_frames` is what it rendered, so a finished monitor is still
-    /// visible while its take remains the state being reported.
-    fn line_with_play(&self, play: Option<&PlaySession>) -> String {
+    /// visible while its take remains the state being reported. A transport
+    /// that is running beside the take rides the same line as its own object.
+    fn line_with_roles(
+        &self,
+        play: Option<&PlaySession>,
+        transport: Option<(&TransportSession, u32)>,
+    ) -> String {
         let status = self.snapshot();
         // Track 1's strip fills the top-level fields, as `path` and `frames`
         // already do; every track's own values are in `tracks`.
@@ -4244,12 +4276,18 @@ impl Running {
             }
             None => String::new(),
         };
+        let transport = match transport {
+            Some((session, rate)) => {
+                format!(",\"transport\":{}", session.fragment(rate))
+            }
+            None => String::new(),
+        };
         let alignment = alignment_json(Alignment {
             samples: status.align_samples,
             from: status.align_from,
         });
         format!(
-            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"monitor_input\":{},\"monitor_gain\":{},\"monitor_dropped\":{},\"error\":\"{}\"}}",
+            "{{\"ok\":true,\"take\":{},\"state\":\"{}\",\"path\":\"{}\",\"frames\":{},\"dropped\":{},\"channels\":{},\"start_sample\":{},\"xruns\":{}{}{}{}{},\"gain\":{},\"pan\":{},\"inserts\":\"{}\",\"monitor_input\":{},\"monitor_gain\":{},\"monitor_dropped\":{},\"error\":\"{}\"}}",
             status.take,
             status.state.name(),
             jawn_audio::loopback::json_escape(&status.path),
@@ -4261,6 +4299,7 @@ impl Running {
             tracks_json(&status.tracks),
             monitor,
             alignment,
+            transport,
             first.map(|track| track.gain).unwrap_or(1.0),
             first.map(|track| track.pan).unwrap_or(0.0),
             jawn_audio::loopback::json_escape(first.map(|track| track.inserts.as_str()).unwrap_or("")),
@@ -4397,6 +4436,12 @@ impl TransportSession {
     }
 
     fn line(&self, rate: u32) -> String {
+        format!("{{\"ok\":true,\"transport\":{}}}", self.fragment(rate))
+    }
+
+    /// The transport's own object, without the `ok` wrapper. `status` uses it
+    /// beside a recording take so one line can carry both roles.
+    fn fragment(&self, rate: u32) -> String {
         let control = &self.control;
         let rate = rate.max(1) as f64;
         let state = if control.is_playing() {
@@ -4418,7 +4463,7 @@ impl TransportSession {
             )
         };
         format!(
-            "{{\"ok\":true,\"transport\":{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{}{}}}}}",
+            "{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{}{}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
@@ -4441,9 +4486,12 @@ fn default_transport_line() -> String {
 }
 
 /// The transport's worker. It owns the output for as long as it runs; the
-/// socket never opens a second device for a take, playback or listen while it
-/// does. The device loop never returns on its own: `stop` makes the source's
-/// next block fail, which is the same clean path a stopped playback takes.
+/// socket never opens a second output for a playback, listen or patch while it
+/// does. A take may still capture beside it, because a take's capture stream
+/// and its monitor are separate: the take refuses only when it asks for a
+/// monitor of its own. The device loop never returns on its own: `stop` makes
+/// the source's next block fail, which is the same clean path a stopped
+/// playback takes.
 fn run_transport(
     config: Config,
     control: Arc<TransportControl>,
@@ -7577,19 +7625,32 @@ break"}"#).is_err());
     }
 
     #[test]
-    fn a_transport_and_a_take_refuse_each_other() {
+    fn a_transport_starts_beside_a_recording_take_and_keeps_its_output() {
+        // The take owns only the capture stream, so the transport starts beside
+        // it. One stop joins both.
         let mut server = socket_server();
         server.current = Some(running(take_status("tone"), Arc::new(ParamQueue::new())));
         let line = reply(server.handle(
             r#"{"cmd":"transport","action":"start","position":0}"#,
         ));
-        assert!(line.contains("take is recording"), "{line}");
-        assert!(server.transport.is_none());
+        assert!(line.contains("\"state\":\"playing\""), "{line}");
+        assert!(server.transport.is_some());
+        let stopped = reply(server.handle(r#"{"cmd":"stop"}"#));
+        assert!(
+            stopped.contains("\"transport\":{\"state\":\"stopped\""),
+            "{stopped}"
+        );
 
+        // A record that asks for a monitor needs an output of its own, so it
+        // is still refused while the transport plays. The other output users
+        // keep their refusals too.
         let mut server = socket_server();
         server.transport = Some(playing_transport(0));
+        let answer = reply(server.handle(
+            r#"{"cmd":"record","out":"/tmp/transport-take.wav","monitor_input":true}"#,
+        ));
+        assert!(answer.contains("cannot also open a monitor"), "{answer}");
         for (command, needle) in [
-            (r#"{"cmd":"record","out":"/tmp/transport-take.wav"}"#, "before recording"),
             (r#"{"cmd":"play","files":["/tmp/a.wav"]}"#, "before starting a playback"),
             (r#"{"cmd":"listen"}"#, "before listening"),
             (r#"{"cmd":"patch"}"#, "before patching"),

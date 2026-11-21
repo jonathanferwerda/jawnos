@@ -1913,6 +1913,30 @@ mod tests {
         assert_eq!(control.position(), 8_000);
     }
 
+    #[test]
+    fn a_transport_gain_change_silences_the_next_block() {
+        // The render thread reads the click trim at the top of every block, so
+        // the browser's metronome knob can move mid-song without reopening the
+        // device. A zero trim is the metronome-off state, and it must silence
+        // the very next beat, not the one after it.
+        let (control, mut source) = transport(120.0, 0, 0, 0);
+        source.prepared(8_000, 4_000).expect("prepare");
+        let mut first = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut first).expect("block");
+        assert!(peak(&first[..320]) > 0.3, "the first downbeat did not sound");
+
+        // Same tempo and signature, gain to zero. Position 8000 is beat 2, so
+        // this block would click on its first frame if the trim were stale.
+        control.set_tempo(120.0, 4, 0.0);
+        let mut second = vec![0.0f32; TRANSPORT_BLOCK];
+        source.block(&mut second).expect("block");
+        assert!(
+            second.iter().all(|sample| sample.abs() < 1e-9),
+            "the gain change did not silence the next block"
+        );
+        assert_eq!(control.position(), 8_000);
+    }
+
     // --- transport clips: recorded takes on the same timeline ----------------
 
     fn clip(samples: Vec<f32>, start: i64, duration: u64, looped: bool) -> TransportClip {

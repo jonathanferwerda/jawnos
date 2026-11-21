@@ -64,9 +64,13 @@ for my $field (qw(bpm sig metronome loop status punch_in)) {
 }
 unlike($key, qr/volume/, 'the volume knob does not retime the clicks');
 
-like($tick, qr/var key = studioClickKey\(\);/, 'the tick compares the click key');
-like($tick, qr/if \(studioAudio\.clickKey !== key\) \{[\s\S]*?studioClickReanchor\(\);/,
-	'a changed key re-anchors the clicks');
+like($tick, qr/var retimed = \(studioAudio\.clickKey !== key\);/, 'the tick compares the click key');
+like($tick, qr/if \(retimed\) \{\s*studioAudio\.clickKey = key;\s*studioClickReanchor\(\);/, 'a changed key re-anchors the clicks');
+like(
+	$tick,
+	qr/studioAudio\.engineGainKey !== engineGain[\s\S]{0,200}studioEngineTransportSync\(\)/,
+	'a volume or on/off change retunes the engine without retiming the browser beats'
+);
 unlike($tick, qr/studioFlushSources\(\)/, 'a click retime never flushes the take sources');
 
 my $reanchor = body($transport, 'studioClickReanchor');

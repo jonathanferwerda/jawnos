@@ -500,6 +500,7 @@
 							<button id="studio_engine_stop" hint="<%= &subs::ui('End the engine take and close its file') %>"><%= &subs::ui('Stop take') %></button>
 							<label><%= &subs::ui('Seconds') %> <input id="studio_engine_seconds" value="10" size="4"></label>
 							<label><%= &subs::ui('Tracks') %> <select id="studio_engine_tracks" hint="<%= &subs::ui('How many tracks the engine take records') %>"><% for my $n (1 .. 8) { %><option value="<%= $n %>"><%= $n %></option><% } %></select></label>
+							<label><input type="checkbox" id="studio_engine_count_in" checked hint="<%= &subs::ui('Count in before an engine take starts') %>"> <%= &subs::ui('Count-in') %></label>
 							<div id="studio_engine_inputs_rows"></div>
 							<input type="hidden" id="studio_engine_inputs">
 							<label><%= &subs::ui('Listen inserts') %> <input id="studio_engine_inserts" size="12" placeholder="tone,delay"></label>

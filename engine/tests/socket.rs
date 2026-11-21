@@ -2288,3 +2288,76 @@ fn the_transport_carries_a_clip_plan_and_reports_it() {
     );
     assert!(!socket_left, "a clean quit must unlink the socket");
 }
+
+#[test]
+fn a_monitorless_take_records_beside_the_playing_transport() {
+    // The transport owns the output and the take owns only the capture stream,
+    // so the two can run at once. This is the same split `record` and `play`
+    // already use: a take thread beside one output thread.
+    let clip = TempFile::new("transport-share-clip");
+    write_silent_wav(&clip.path, 4_800);
+
+    let server = Server::start("transport-share");
+    let mut client = server.connect();
+
+    let start = client.ask(&format!(
+        "{{\"cmd\":\"transport\",\"action\":\"start\",\"position\":0,\"bpm\":120,\"beats_per_bar\":4,\"gain\":0,\"clips\":[{{\"file\":\"{}\",\"start\":0}}]}}",
+        clip.text()
+    ));
+    assert!(start.contains("\"ok\":true"), "start: {start}");
+    assert!(start.contains("\"state\":\"playing\""), "start: {start}");
+
+    // A monitor (files, live input or a click) needs an output of its own, so
+    // that take still refuses while the transport plays.
+    let monitored = TempFile::new("transport-share-monitored");
+    let refused = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":1,\"monitor_input\":true}}",
+        monitored.text()
+    ));
+    assert!(refused.contains("\"ok\":false"), "monitor: {refused}");
+    assert!(
+        refused.contains("cannot also open a monitor"),
+        "monitor: {refused}"
+    );
+
+    // A take with no monitor only captures, so it records beside the transport.
+    let take = TempFile::new("transport-share-take");
+    let reply = client.ask(&format!(
+        "{{\"cmd\":\"record\",\"out\":\"{}\",\"seconds\":300,\"start_at\":48000}}",
+        take.text()
+    ));
+    assert!(reply.contains("\"ok\":true"), "record: {reply}");
+    assert!(reply.contains("\"state\":\"recording\""), "record: {reply}");
+    assert!(reply.contains("\"start_sample\":48000"), "record: {reply}");
+
+    // One status leads with the take and reports the transport beside it.
+    let status = client.wait_for_frames();
+    assert!(status.contains("\"state\":\"recording\""), "status: {status}");
+    assert!(
+        status.contains("\"transport\":{\"state\":\"playing\""),
+        "status: {status}"
+    );
+
+    // One stop joins both and answers with each role's final state.
+    let stopped = client.ask("{\"cmd\":\"stop\"}");
+    assert!(stopped.contains("\"state\":\"done\""), "stop: {stopped}");
+    assert!(
+        stopped.contains("\"transport\":{\"state\":\"stopped\""),
+        "stop: {stopped}"
+    );
+    let transport = client.ask("{\"cmd\":\"transport\",\"action\":\"status\"}");
+    assert!(
+        transport.contains("\"state\":\"stopped\""),
+        "transport: {transport}"
+    );
+
+    let reply = client.ask("{\"cmd\":\"quit\"}");
+    assert_eq!(reply, "{\"ok\":true}");
+    let (output, socket_left) = server.finish();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!socket_left, "a clean quit must unlink the socket");
+}

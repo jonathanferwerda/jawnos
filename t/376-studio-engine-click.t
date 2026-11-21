@@ -270,9 +270,10 @@ like($click, qr/\.knob_control\[channel="metronome"\]\[control="volume"\]/,
 like($click, qr/volume \/ 100/, 'the knob 0..100 becomes the engine 0..1');
 like($click, qr/Math\.max\(0, Math\.min\(1,/, 'the trim is clamped to the engine range');
 
-my $start = body($studio, 'studioEngineStart');
+my $start = body($studio, 'studioEngineStartNow');
 ok(length $start, 'the engine take start is one function');
-like($start, qr/var click = studioEngineClick\(\);/, 'the start builds the click');
+like($start, qr/var click = transportRunning \? null : studioEngineClick\(\);/,
+	'the start builds the click unless the transport already owns it');
 like($start, qr/click_json: click \? JSON\.stringify\(click\) : ''/,
 	'and sends it only when the builder returned one');
 like($start, qr/mixer\['time'\]\['engine_take'\] = true/,

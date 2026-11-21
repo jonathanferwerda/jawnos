@@ -280,11 +280,11 @@ var studioEngineTransportStarting = false;
 
 function studioEngineTransportReady() {
 	if (typeof studioEngineAvailable === 'undefined' || !studioEngineAvailable) { return false; }
-	if (typeof studioEngineRecording !== 'undefined' && studioEngineRecording) { return false; }
-	if (mixer['time'] && mixer['time']['engine_take']) { return false; }
 	// A browser recording keeps the browser clock and its count-in click: the
 	// engine is not in that capture path, and its transport cannot represent a
-	// negative count-in position. An engine take brings its own engine click.
+	// negative count-in position. An engine take records only the capture stream,
+	// so the transport may play its existing takes beside it; the take is told
+	// not to bring a click of its own (see studioEngineStartNow).
 	if (mixer['time'] && mixer['time']['status'] == 'record') { return false; }
 	return true;
 }
@@ -499,11 +499,12 @@ function studioEngineTransportPost(action, fields, done) {
 // Start the engine clock at a position, or seek the one already running.
 // Suppressing the browser click starts before the request answers; a refusal
 // clears the flag and re-anchors the browser click immediately.
-function studioEngineTransportStart(pos) {
+function studioEngineTransportStart(pos, ready, exact) {
 	if (!studioEngineTransportReady()) {
 		mixer['time']['engine_transport'] = false;
 		return;
 	}
+	if (mixer['time'] && mixer['time']['engine_count_in']) { return; }
 	if (studioEngineTransportStarting) { return; }
 	var fields = studioEngineTransportFields(pos);
 	// A running engine only needs the new position; tempo and loop ride a
@@ -513,8 +514,8 @@ function studioEngineTransportStart(pos) {
 		studioEngineTransportPost('seek', { position: fields.position }, studioEngineTransportAnswer);
 		return;
 	}
-	var plan = studioEngineClipPlan();
-	if (plan.blocked > 0) {
+	var plan = ready ? null : studioEngineClipPlan();
+	if (plan && plan.blocked > 0) {
 		// A video take (or one with no length yet) cannot be rendered by the
 		// engine. Keep the whole mix in the browser rather than muting it.
 		mixer['time']['engine_transport'] = false;
@@ -525,14 +526,15 @@ function studioEngineTransportStart(pos) {
 	// staging refusal drops it again for a clean fallback.
 	studioEngineTransportStarting = true;
 	mixer['time']['engine_transport'] = true;
-	studioEngineClipStageAll(plan).then(function (clips) {
+	(ready || studioEngineClipStageAll(plan)).then(function (clips) {
 		studioEngineTransportStarting = false;
 		if (!mixer['time']['engine_transport']) { return; }
 		// The upload took time, so start from where the playhead is now rather
-		// than where it was when Play was pressed.
+		// than where it was when Play was pressed. A count-in fixes the start on
+		// the punch-in beat, so `exact` keeps that position instead.
 		var ctx = studioAudio.ctx;
 		var seg = studioAudio.playSeg;
-		var now = (ctx && seg) ? (seg.pos0 + (ctx.currentTime - seg.ctx0)) : (mixer['time']['position'] || 0);
+		var now = exact ? pos : ((ctx && seg) ? (seg.pos0 + (ctx.currentTime - seg.ctx0)) : (mixer['time']['position'] || 0));
 		var fields = studioEngineTransportFields(now);
 		// The plan rides as one JSON string: jQuery's own array encoding is not
 		// the shape the route reads.
@@ -711,6 +713,16 @@ function studioClickKey() {
 	].join('|');
 }
 
+// What the engine transport's click gain depends on. The browser's click timing
+// key leaves volume out on purpose, but the engine reads a new trim at the top
+// of the next block, so an on/off or volume change must reach it without
+// retiming the browser's beats. Separate key, same retune call.
+function studioEngineTransportGainKey() {
+	var volume = studioKnobNumber($('.knob_control[channel="metronome"][control="volume"]').val(), 50);
+	if (!isFinite(volume)) { volume = 50; }
+	return [ (mixer['time']['metronome'] == 'yes') ? 'on' : 'off', volume ].join('|');
+}
+
 // Retime the clicks from the playhead and leave every take source alone. The
 // grid stays absolute (k * beat mapped through the segment's p0/ctx0), so a
 // beat already behind the clock is skipped by studioScheduleClicks and the
@@ -733,10 +745,17 @@ function studioScheduleTick() {
 	// from the playhead. Only the click sources are dropped; the takes keep
 	// playing, and the burst below can stay long enough to survive a stall.
 	var key = studioClickKey();
-	if (studioAudio.clickKey !== key) {
+	var engineGain = studioEngineTransportGainKey();
+	var retimed = (studioAudio.clickKey !== key);
+	if (retimed) {
 		studioAudio.clickKey = key;
 		studioClickReanchor();
-		// A tempo, signature or loop change retimes the engine too, in place.
+	}
+	// A tempo, signature or loop change retimes the engine too, in place. So
+	// does a metronome on/off or volume change, even when the browser click's
+	// own timing key did not move.
+	if (retimed || studioAudio.engineGainKey !== engineGain) {
+		studioAudio.engineGainKey = engineGain;
 		if (typeof studioEngineTransportSync === 'function') { studioEngineTransportSync(); }
 	}
 	var horizon = ctx.currentTime + (studioAudio.lookahead || 2.0);
@@ -834,8 +853,11 @@ function studioTakeGain(winStart, fadeIn, winEnd, fadeOut, pos) {
 function studioScheduleTakes(p0, p1, ctx0) {
 	if (!(p1 > p0)) { return; }
 	// The engine renders the takes while it owns the transport, so the browser
-	// must not schedule a second copy under the same clock and click.
+	// must not schedule a second copy under the same clock and click. A count-in
+	// before the engine starts is the one click-only stretch: it must not reach
+	// into the browser's take audio either.
 	if (mixer['time'] && mixer['time']['engine_transport']) { return; }
+	if (mixer['time'] && mixer['time']['engine_count_in']) { return; }
 	studioApplyPlaybackMix();
 	$.each(mixer, function (ch, m) {
 		if (!/^[0-9]+$/.test(ch) || !m.media || !m.media.out) { return; }
@@ -942,7 +964,11 @@ function studioScheduleClicks(p0, p1, ctx0) {
 	var on = mixer['time']['metronome'] == 'yes';
 	var punch = mixer['time']['punch_in'];
 	var counting = mixer['time']['status'] == 'record' && punch !== undefined && punch !== null;
-	if (!on && !counting) { return; }
+	// An engine take's count-in is browser-clicked before the engine starts,
+	// and it clicks even with the metronome off. It stops at the punch-in beat,
+	// where the engine transport takes the clock over.
+	var engineCountIn = (mixer['time'] && mixer['time']['engine_count_in']) || null;
+	if (!on && !counting && !engineCountIn) { return; }
 	var beatsPerBar = studioKnobNumber(String(mixer['time']['sig'] || '4/4').split('/')[0], 4) || 4;
 	var volume = studioKnobNumber($('.knob_control[channel="metronome"][control="volume"]').val(), 50) / 100;
 	var k0 = Math.ceil((p0 / beat) - 1e-6);
@@ -951,6 +977,7 @@ function studioScheduleClicks(p0, p1, ctx0) {
 	for (var k = k0; k <= k1 && guard++ < 1024; k++) {
 		var pos = k * beat;
 		// a count-in clicks even with the metronome off, but only up to the punch
+		if (engineCountIn && pos >= engineCountIn.punch) { continue; }
 		if (counting && !on && pos >= punch) { continue; }
 		var when = studioTimeAt(pos, p0, ctx0);
 		// A stalled timer can leave this beat behind the clock. Skip that beat

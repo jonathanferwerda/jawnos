@@ -825,6 +825,9 @@ var studioEngineRecording = false;
 // pickers offer that many channels; two until the engine answers, which is the
 // contract's fallback. Never invent a second key for it.
 var studioEngineDeviceChannels = 2;
+// The engine's sample rate, from the last status reply. A count-in's punch-in
+// position is stamped on the take in the engine's frames, not the browser's.
+var studioEngineDeviceRate = 48000;
 // The plan the running take armed, so a strip can say which input and width it
 // recorded even when the engine's status does not echo them back.
 var studioEnginePlanArmed = null;
@@ -1064,6 +1067,9 @@ function studioEngineStatus() {
 			if (typeof data.device_channels === 'number' && data.device_channels >= 1) {
 				studioEngineDeviceChannels = Math.floor(data.device_channels);
 			}
+			if (typeof data.rate === 'number' && data.rate >= 1) {
+				studioEngineDeviceRate = Math.floor(data.rate);
+			}
 			// The engine's capture width is known only once it answers; build
 			// the Input pickers from it, keeping any choice already made.
 			studioEngineInputRows();
@@ -1173,37 +1179,104 @@ function studioEngineClick() {
 	};
 }
 
+// Start an engine take. With the Count-in box ticked and the engine transport
+// stopped, the browser clicks the count-in (even with the metronome off) and
+// the take and the transport start together on the punch-in beat. With the
+// transport already playing there is no room for a browser count-in: the take
+// starts at the playhead, because the engine already owns the clock and click.
 function studioEngineStart() {
 	studioEngineShowError('');
+	var counting = $('#studio_engine_count_in').is(':checked')
+		&& !(mixer['time'] && mixer['time']['engine_transport'])
+		&& (typeof studioEngineTransportReady === 'function' ? studioEngineTransportReady() : true);
+	var count_in = counting ? (studioCountInBeats() * studioBeatSeconds()) : 0;
+	if (count_in > 0) {
+		var punch = mixer['time']['position'] || 0;
+		var unit = studioSnapUnit();
+		if (unit > 0) { punch = Math.floor(punch / unit) * unit; }
+		studioEngineCountInStart(punch, count_in);
+		return;
+	}
+	studioEngineStartNow();
+}
+
+// The browser count-in for an engine take. The take and transport are not
+// started yet: the clock runs from the pre-roll to `punch`, a click on every
+// beat regardless of the metronome, and studioEngineCountInDue starts both at
+// the punch-in position. The clip plan is staged during the count-in so the
+// first start does not open a silent gap at the song's beat 1.
+function studioEngineCountInStart(punch, count_in) {
+	if (!mixer['time']) { return; }
+	var plan = studioEngineClipPlan();
+	var staged = (plan.blocked > 0) ? null : studioEngineClipStageAll(plan);
+	mixer['time']['engine_count_in'] = { punch: punch, staged: staged };
+	// A play status drives the browser clock and the click scheduler without
+	// entering the browser's own recording state (which would keep the engine
+	// transport off).
+	mixer['time']['status'] = 'play';
+	mixer['time']['position'] = punch - count_in;
+	mixer['time']['punch_in'] = null;
+	mixer['time']['pending_takes'] = null;
+	if (typeof studioFlushClicks === 'function') { studioFlushClicks(); }
+	studioTime('start', true);
+}
+
+// Called from the transport tick. At the punch-in beat the browser count-in is
+// over: start the engine transport and the take from the same position, with
+// the take's start_at stamped in the engine's own frames.
+function studioEngineCountInDue() {
+	var pending = (mixer['time'] && mixer['time']['engine_count_in']) || null;
+	if (!pending || mixer['time']['position'] < pending.punch) { return; }
+	mixer['time']['engine_count_in'] = null;
+	// The transport owns the output and its click from here, so the browser's
+	// take audio and click stop; the take records without a click of its own.
+	mixer['time']['status'] = 'play';
+	studioEngineTransportStart(pending.punch, pending.staged, true);
+	studioEngineStartNow(pending.punch);
+	studioClockStart(pending.punch, true);
+}
+
+function studioEngineStartNow(punch) {
 	var plan = studioEngineTrackPlan();
 	var master = studioEngineMasterList();
-	var click = studioEngineClick();
 	// A refused start must not hand the click back to the browser while an
 	// earlier take is still recording.
 	var wasRecording = studioEngineRecording;
+	// While the transport runs it owns the output: the take must not bring a
+	// click or a live monitor of its own, or the device would be opened twice.
+	// The transport's click is the metronome, so the take records silently.
+	var transportRunning = !!(mixer['time'] && mixer['time']['engine_transport']);
+	var click = transportRunning ? null : studioEngineClick();
 	// A monitored track (or the config panel's Monitor setting) also sends the
-	// live input to the take's monitor.
-	var monitor = (typeof studioMonitoredChannel === 'function' && studioMonitoredChannel() !== null)
-		|| (mixer['time'] && mixer['time']['monitor'] == 'yes');
+	// live input to the take's monitor. The transport's output takes that place.
+	var monitor = !transportRunning && ((typeof studioMonitoredChannel === 'function' && studioMonitoredChannel() !== null)
+		|| (mixer['time'] && mixer['time']['monitor'] == 'yes'));
+	var request = {
+		action: 'start',
+		seconds: $('#studio_engine_seconds').val(),
+		// The scalar fields stay for an older route; a route that knows
+		// tracks_json ignores them and uses each track's own chain.
+		tracks: $('#studio_engine_tracks').val(),
+		inputs: $('#studio_engine_inputs').val(),
+		inserts: $('#studio_engine_inserts').val(),
+		tracks_json: JSON.stringify(plan),
+		master_json: JSON.stringify(master),
+		// The engine generates the click on its own sample clock, so the take
+		// and the click share a device clock. Empty when the metronome is off
+		// or the transport already owns the click.
+		click_json: click ? JSON.stringify(click) : '',
+		monitor_input: monitor ? 'true' : 'false',
+		monitor_gain: '1'
+	};
+	// The punch-in stamp is a whole, non-negative sample count on the engine's
+	// own timeline, so a count-in take lands at the bar line it counted into.
+	if (typeof punch === 'number' && punch > 0) {
+		request.start_at = Math.round(punch * studioEngineDeviceRate);
+	}
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',
-		data: {
-			action: 'start',
-			seconds: $('#studio_engine_seconds').val(),
-			// The scalar fields stay for an older route; a route that knows
-			// tracks_json ignores them and uses each track's own chain.
-			tracks: $('#studio_engine_tracks').val(),
-			inputs: $('#studio_engine_inputs').val(),
-			inserts: $('#studio_engine_inserts').val(),
-			tracks_json: JSON.stringify(plan),
-			master_json: JSON.stringify(master),
-			// The engine generates the click on its own sample clock, so the take
-			// and the click share a device clock. Empty when the metronome is off.
-			click_json: click ? JSON.stringify(click) : '',
-			monitor_input: monitor ? 'true' : 'false',
-			monitor_gain: '1'
-		},
+		data: request,
 		dataType: 'json',
 		success: function (data) {
 			data = studioEngineAnswer(data);
@@ -1217,6 +1290,9 @@ function studioEngineStart() {
 			}
 			if (typeof data.device_channels === 'number' && data.device_channels >= 1) {
 				studioEngineDeviceChannels = Math.floor(data.device_channels);
+			}
+			if (typeof data.rate === 'number' && data.rate >= 1) {
+				studioEngineDeviceRate = Math.floor(data.rate);
 			}
 			// Remember what this take armed so its strips can name the input
 			// and width even when the status line does not echo them.
@@ -1237,6 +1313,13 @@ function studioEngineStart() {
 }
 
 function studioEngineStop() {
+	// Stop during a count-in cancels the take that never started; nothing is
+	// recording yet, so there is no engine take to stop.
+	if (mixer['time'] && mixer['time']['engine_count_in']) {
+		mixer['time']['engine_count_in'] = null;
+		if (typeof studioStop === 'function') { studioStop(); }
+		return;
+	}
 	$.ajax({
 		url: '/manager/studio/take',
 		type: 'POST',

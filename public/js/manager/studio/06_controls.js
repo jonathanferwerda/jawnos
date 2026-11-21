@@ -31,6 +31,7 @@ async function studioStop() {
 	// a stop during the count-in cancels the take that never started
 	mixer['time']['punch_in'] = null;
 	mixer['time']['pending_takes'] = null;
+	mixer['time']['engine_count_in'] = null;
 	studioFlushSources();
 	studioAudio.playSeg = null;
 	studioAudio.schedSeg = null;
@@ -53,7 +54,7 @@ async function studioStop() {
 	mixer['time']['status'] = 'stop';
 }
 
-function studioTime(command) {
+function studioTime(command, fromEngine) {
 	var svm = document.getElementById('studio_video_monitor');
 	if (svm) { $(svm).show(); }
 
@@ -61,8 +62,10 @@ function studioTime(command) {
 		mixer['time']['lastMetronome'] = null;
 		mixer['time']['startTime'] = Date.now() - (mixer['time']['position'] * 1000);
 		// the transport runs on the AudioContext clock; takes and clicks are
-		// placed a little ahead of now so timer jitter never reaches the ear
-		studioClockStart(mixer['time']['position']);
+		// placed a little ahead of now so timer jitter never reaches the ear.
+		// A count-in asks for the browser segment only; the engine transport
+		// starts at the punch-in beat, not at the top of the pre-roll.
+		studioClockStart(mixer['time']['position'], fromEngine);
 		clearInterval(mixer['time']['interval']);
 		mixer['time']['interval'] = setInterval(studioTransportTick, 25);
 		studioTransportTick();
@@ -138,7 +141,7 @@ function studioTeardown() {
 	studioReleaseTimers();
 	if (typeof studioEngineTransportStop === 'function') { studioEngineTransportStop(); }
 	if (typeof studioFlushSources === 'function') { studioFlushSources(); }
-	if (mixer && mixer['time']) { mixer['time']['punch_in'] = null; mixer['time']['pending_takes'] = null; mixer['time']['engine_take'] = false; mixer['time']['engine_transport'] = false; }
+	if (mixer && mixer['time']) { mixer['time']['punch_in'] = null; mixer['time']['pending_takes'] = null; mixer['time']['engine_count_in'] = null; mixer['time']['engine_take'] = false; mixer['time']['engine_transport'] = false; }
 	studioAudio.playSeg = null;
 	studioAudio.schedSeg = null;
 	studioAudio.clickSeg = null;
@@ -178,6 +181,9 @@ function studioLoopPunchOut() {
 }
 
 function studioTransportTick() {
+	// A count-in for an engine take ends on the punch-in beat: start the engine
+	// transport and the take there, then keep ticking as a play from that point.
+	if (typeof studioEngineCountInDue === 'function') { studioEngineCountInDue(); }
 	var status = mixer['time']['status'];
 
 	if (status == 'play' || status == 'record') {

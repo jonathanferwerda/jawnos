@@ -1,4 +1,4 @@
-# tests-for: engine/src/socket.rs engine/src/playback.rs engine/src/lib.rs lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/studio/01_transport.js public/js/manager/studio/06_controls.js
+# tests-for: engine/src/socket.rs engine/src/playback.rs engine/src/lib.rs lib/JawnOS/Audio/Engine.pm lib/JawnOS/Controller/manager_misc9.pm lib/JawnOS/Routes/manager_misc9.pm public/js/manager/studio/01_transport.js public/js/manager/studio/06_controls.js public/js/manager/studio.js templates/studio/markup.html.ep perl/help/topics_apps.pl
 # covers:    The engine owns the browser transport's clock, metronome and take
 #            audio: a `transport` socket command (start/stop/seek/status), an
 #            absolute bar phase that starts on the song's own grid, a loop that
@@ -41,13 +41,23 @@ like(
 );
 like(
 	$socket,
-	qr/the transport is playing; stop it before recording/,
-	'a take refuses while the transport owns the output'
+	qr/the transport is playing; a take cannot also open a monitor/,
+	'a take without a monitor records beside the transport'
 );
 like(
 	$socket,
+	qr/the take's monitor is using the output; stop the take before starting the transport/,
+	'a take with a monitor still owns the output'
+);
+unlike(
+	$socket,
 	qr/a take is recording; stop it before starting the transport/,
-	'the transport refuses while a take records'
+	'the transport starts beside a recording take'
+);
+like(
+	$socket,
+	qr/line_with_roles/,
+	'the take line can carry a transport role'
 );
 like(
 	$socket,
@@ -67,6 +77,11 @@ like(
 
 my $playback = read_file("$root/engine/src/playback.rs");
 ok(length $playback, 'the click/playback source is found');
+like(
+	$playback,
+	qr/a_transport_gain_change_silences_the_next_block/,
+	'a gain change silences the next transport block (unit test)'
+);
 like($playback, qr/fn build_absolute/, 'the click has an absolute-grid constructor');
 like($playback, qr/fn render_absolute_into/, 'the absolute grid renders a whole block');
 like(
@@ -283,6 +298,11 @@ ok(length $transport_js, 'the transport JS is found');
 like($transport_js, qr/function studioEngineTransportReady/, 'the engine path is availability-gated');
 like($transport_js, qr/\['status'\] == 'record'\) \{ return false; \}/,
 	'a browser recording keeps its own clock and count-in click');
+unlike(
+	$transport_js,
+	qr/engine_take'\]\) \{ return false; \}/,
+	'an engine take no longer blocks the transport'
+);
 like($transport_js, qr/function studioEngineTransportStart/, 'the browser can start the engine transport');
 like($transport_js, qr/function studioEngineTransportSeek|studioEngineTransportPost\('seek'/, 'the browser can seek it');
 like($transport_js, qr/function studioEngineTransportStop/, 'the browser can stop it');
@@ -337,6 +357,31 @@ like(
 	$transport_js,
 	qr{'/manager/studio/transport'},
 	'the page calls the transport route, not the take route'
+);
+like(
+	$transport_js,
+	qr/function studioEngineTransportGainKey[\s\S]{0,400}volume/,
+	'the engine gain key reads the metronome volume'
+);
+like(
+	$transport_js,
+	qr/function studioScheduleTick[\s\S]{0,900}studioEngineTransportGainKey[\s\S]{0,900}studioEngineTransportSync/,
+	'a volume or metronome on/off change retunes the running transport'
+);
+like(
+	$transport_js,
+	qr/engine_count_in/,
+	'the browser tracks an engine take\'s count-in'
+);
+like(
+	$transport_js,
+	qr/pos >= engineCountIn\.punch/,
+	'the count-in click stops at the punch-in beat'
+);
+like(
+	$transport_js,
+	qr/function studioScheduleTakes[\s\S]{0,600}\['engine_count_in'\]\) \{ return; \}/,
+	'the count-in places no browser take audio'
 );
 
 like(
@@ -426,5 +471,65 @@ like(
 	qr/studioTeardown[\s\S]{0,300}studioEngineTransportStop\(\)/,
 	'closing the window stops it as well'
 );
+like(
+	$controls,
+	qr/function studioTime\(command, fromEngine\)/,
+	'the transport start can be told to leave the engine clock alone'
+);
+like(
+	$controls,
+	qr/studioEngineCountInDue\(\)/,
+	'the tick starts the take at the punch-in beat'
+);
 
-done_testing();
+# --- the engine take start path and its count-in -----------------------------
+my $studio_js = read_file("$root/public/js/manager/studio.js");
+like($studio_js, qr/function studioEngineStartNow/, 'the take start is its own function');
+like(
+	$studio_js,
+	qr/var transportRunning[\s\S]{0,300}var click = transportRunning \? null : studioEngineClick\(\)/,
+	'the transport owns the click, so an engine take adds none while it runs'
+);
+like(
+	$studio_js,
+	qr/var monitor = !transportRunning/,
+	'the transport owns the output, so an engine take adds no monitor while it runs'
+);
+like($studio_js, qr/function studioEngineCountInStart/, 'the take starts a browser count-in');
+like($studio_js, qr/function studioEngineCountInDue/, 'the punch-in starts the take');
+like(
+	$studio_js,
+	qr/studioTime\('start', true\)/,
+	'the count-in runs the browser clock without starting the engine early'
+);
+like(
+	$studio_js,
+	qr/start_at = Math\.round\(punch \* studioEngineDeviceRate\)/,
+	'the punch-in position is the take\'s sample start stamp'
+);
+like(
+	$studio_js,
+	qr/studioEngineTransportStart\(pending\.punch, pending\.staged, true\)/,
+	'the transport starts on the same punch-in beat as the take'
+);
+
+my $markup = read_file("$root/templates/studio/markup.html.ep");
+like(
+	$markup,
+	qr/id="studio_engine_count_in"/,
+	'the engine take panel has a count-in control'
+);
+
+my $help = read_file("$root/perl/help/topics_apps.pl");
+like(
+	$help,
+	qr/Count in before an engine take starts/,
+	'the help topic lists the count-in control'
+);
+like(
+	$help,
+	qr/Count-in, beside Tracks/,
+	'the help topic describes the count-in in the on-screen words'
+);
+
+ done_testing();
