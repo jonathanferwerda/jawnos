@@ -1670,6 +1670,17 @@ sub studio_transport_fields {
 	return ($clips_error, undef) if defined $clips_error;
 	$fields{'clips'} = $clips if @{$clips};
 
+	# The clip mix runs through the same master rack a browser take does. It
+	# shares the take plan's validation, so a name the engine cannot build is a
+	# 400 here rather than a socket line.
+	my $raw_master = $c->param('master_json');
+	$raw_master = $c->param('master') unless defined $raw_master && length $raw_master;
+	if (defined $raw_master && length $raw_master) {
+		my ($master_error, $master) = &studio_master_plan($raw_master);
+		return ($master_error, undef) if defined $master_error;
+		$fields{'master'} = $master if @{$master};
+	}
+
 	return (undef, \%fields);
 }
 

@@ -324,9 +324,11 @@ function studioEngineTransportLoop() {
 
 // Build the engine's clip plan from the armed takes. Each clip carries the
 // same timeline start, in-point, length and crossfade the browser scheduler
-// would use, plus the channel fader and pan folded into its strip. A take the
-// engine cannot take (a video, or one with no length) is counted as `blocked`:
-// the caller then keeps the whole mix in the browser rather than losing it.
+// would use, plus the channel fader and pan folded into its strip, and the
+// channel's enabled Out pedals so the engine hears the same playback chain the
+// browser would. A take the engine cannot take (a video, or one with no length)
+// is counted as `blocked`: the caller then keeps the whole mix in the browser
+// rather than losing it.
 function studioEngineClipPlan() {
 	var clips = [];
 	var blocked = 0;
@@ -339,6 +341,19 @@ function studioEngineClipPlan() {
 		var silent = m.mute || (anySolo && !m.solo);
 		var gain = studioVolumeFraction($('.channel_volume[channel="' + ch + '"]').val()) * (silent ? 0 : 1);
 		var pan = (studioKnobNumber($('.knob_control[channel="' + ch + '"][control="pan"]').val(), 50) - 50) / 50;
+		// Takes play through the channel's Out chain, so the engine arms the
+		// pedals the browser would hear on playback. Only enabled inserts travel;
+		// the Stereo Widener is browser-only, so it is left out rather than
+		// refusing the whole transport.
+		var inserts = [];
+		var strip = studioAudio.channels[ch];
+		if (strip && strip.outInserts) {
+			strip.outInserts.forEach(function (ins) {
+				if (!ins || ins.bypassed || !ins.name) { return; }
+				if (studioEffectKind(ins.name) === 'stereowidener') { return; }
+				inserts.push(studioEffectKind(ins.name));
+			});
+		}
 		ordered.forEach(function (take, i) {
 			if (!take || take.status == 'recording') { return; }
 			if (take.encoding && take.encoding.indexOf('video') !== -1) { blocked++; return; }
@@ -365,7 +380,8 @@ function studioEngineClipPlan() {
 				pan: pan,
 				loop: !!take.loop,
 				fade_in: fIn,
-				fade_out: fOut
+				fade_out: fOut,
+				inserts: inserts
 			});
 		});
 	});
@@ -456,7 +472,8 @@ function studioEngineClipStageAll(plan) {
 				pan: clip.pan,
 				loop: clip.loop,
 				fade_in: clip.fade_in,
-				fade_out: clip.fade_out
+				fade_out: clip.fade_out,
+				inserts: clip.inserts
 			};
 		});
 	});
@@ -520,6 +537,10 @@ function studioEngineTransportStart(pos) {
 		// The plan rides as one JSON string: jQuery's own array encoding is not
 		// the shape the route reads.
 		fields.clips_json = JSON.stringify(clips);
+		// The master rack is the same for every take and fixed for the life of
+		// the transport, so it rides this first `start` only.
+		var master = studioEngineMasterList();
+		if (master.length) { fields.master_json = JSON.stringify(master); }
 		studioEngineTransportPost('start', fields, studioEngineTransportAnswer);
 	}).catch(function (error) {
 		studioEngineTransportStarting = false;

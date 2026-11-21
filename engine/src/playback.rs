@@ -719,6 +719,9 @@ pub struct TransportSource {
     click: Option<ClickState>,
     /// The takes this transport renders, each through its own strip.
     clips: Vec<TransportClip>,
+    /// The master rack armed on the clip mix, so the transport hears the same
+    /// mastering chain a take does (the browser's `studioAudio.master`).
+    master: Vec<InsertKind>,
     mixer: Mixer,
     /// One mono block per clip, reused by every block.
     voices: Vec<Vec<f32>>,
@@ -738,6 +741,7 @@ impl TransportSource {
             control,
             click: None,
             clips: Vec::new(),
+            master: Vec::new(),
             mixer: Mixer::new(&[], &[]),
             voices: Vec::new(),
             clip_position: 0,
@@ -755,6 +759,14 @@ impl TransportSource {
     /// `transport start`, never a silent gap in the audio.
     pub fn with_clips(mut self, clips: Vec<TransportClip>) -> Self {
         self.clips = clips;
+        self
+    }
+
+    /// The mastering rack the clip mix runs through, in the order the socket
+    /// already put it (the contract's order). Like the clips, it is armed before
+    /// the device opens and fixed for the life of the transport.
+    pub fn with_master(mut self, master: Vec<InsertKind>) -> Self {
+        self.master = master;
         self
     }
 
@@ -797,6 +809,11 @@ impl RenderSource for TransportSource {
                 channel.push(kind.build());
             }
             mixer.tracks_mut()[index].channel = channel;
+        }
+        // The master rack is armed before the first block, exactly as a take's
+        // is, so the transport's clip mix is mastered like the browser's was.
+        for kind in &self.master {
+            mixer.push_master(*kind);
         }
         mixer.prepare(rate, period);
         self.mixer = mixer;
@@ -1924,14 +1941,26 @@ mod tests {
         loop_end: u64,
         period: usize,
     ) -> (Arc<TransportControl>, TransportSource) {
+        clip_transport_with(clips, Vec::new(), position, loop_start, loop_end, period)
+    }
+
+    fn clip_transport_with(
+        clips: Vec<TransportClip>,
+        master: Vec<InsertKind>,
+        position: u64,
+        loop_start: u64,
+        loop_end: u64,
+        period: usize,
+    ) -> (Arc<TransportControl>, TransportSource) {
         let control = Arc::new(TransportControl::new(
             click_spec(120.0, 4, 0.0),
             position,
             loop_start,
             loop_end,
         ));
-        let source = TransportSource::new(Arc::clone(&control)).with_clips(clips);
-        let mut source = source;
+        let mut source = TransportSource::new(Arc::clone(&control))
+            .with_clips(clips)
+            .with_master(master);
         source.prepared(8_000, period).expect("prepare");
         (control, source)
     }
@@ -2001,6 +2030,49 @@ mod tests {
             assert!(
                 (sample - expected[frame]).abs() < 1e-6,
                 "frame {frame}: {left:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transport_clip_runs_through_its_output_insert() {
+        // A dry clip keeps a full-scale sample. The default limiter holds it at
+        // its -3 dBFS ceiling, so the smaller peak proves the clip's Out chain
+        // was built on the engine strip, not just recorded.
+        let mut take = clip(vec![1.0; 4], 0, 4, false);
+        take.inserts = vec![InsertKind::Limiter];
+        let (_, mut source) = clip_transport(vec![take], 0, 0, 0, 4);
+        let mut out = vec![0.0f32; 8];
+        source.block(&mut out).expect("block");
+        let ceiling = 10f32.powf(-3.0 / 20.0);
+        for (frame, sample) in left_channel(&out).iter().enumerate() {
+            assert!(
+                (sample - ceiling).abs() < 1e-5,
+                "frame {frame}: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transport_master_insert_masters_the_clip_mix() {
+        // The clip has no insert of its own, so only the master rack can lower
+        // it. The default maximizer drives a full-scale sample into its
+        // -0.8 dBFS ceiling, which is what the browser's master bus would do.
+        let (_, mut source) = clip_transport_with(
+            vec![clip(vec![1.0; 4], 0, 4, false)],
+            vec![InsertKind::Maximizer],
+            0,
+            0,
+            0,
+            4,
+        );
+        let mut out = vec![0.0f32; 8];
+        source.block(&mut out).expect("block");
+        let ceiling = 10f32.powf(-0.8 / 20.0);
+        for (frame, sample) in left_channel(&out).iter().enumerate() {
+            assert!(
+                (sample - ceiling).abs() < 1e-5,
+                "frame {frame}: {out:?}"
             );
         }
     }

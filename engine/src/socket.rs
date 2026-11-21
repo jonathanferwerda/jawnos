@@ -3110,6 +3110,12 @@ impl Server {
             Ok(clips) => clips,
             Err(error) => return error_line(&error),
         };
+        // The mastering rack is the same shape a take arms. It is built on the
+        // clip mix's bus, so the transport sounds like the browser's master.
+        let master = match parse_master(get(object, "master")) {
+            Ok(master) => master,
+            Err(error) => return error_line(&error),
+        };
         let spec = match ClickSpec::new(bpm, beats_per_bar, gain) {
             Ok(spec) => spec,
             Err(error) => return error_line(&error),
@@ -3187,6 +3193,7 @@ impl Server {
             previous.finish();
         }
         let clip_count = clips.len();
+        let master_count = master.len();
         let control = Arc::new(TransportControl::new(spec, position, loop_start, loop_end));
         control.set_playing(true);
         let error = Arc::new(Mutex::new(String::new()));
@@ -3196,7 +3203,7 @@ impl Server {
             let config = self.config.clone();
             thread::Builder::new()
                 .name("jawn-audio-transport".to_string())
-                .spawn(move || run_transport(config, control, error, clips))
+                .spawn(move || run_transport(config, control, error, clips, master))
         };
         let handle = match spawned {
             Ok(handle) => handle,
@@ -3210,6 +3217,7 @@ impl Server {
             handle: Some(handle),
             error,
             clips: clip_count,
+            master: master_count,
         });
         self.transport_status()
     }
@@ -4359,6 +4367,8 @@ struct TransportSession {
     /// How many recorded takes this transport renders. Zero is the click-only
     /// clock the page used before its takes moved into the engine.
     clips: usize,
+    /// How many mastering inserts are armed on the clip mix. Zero is a dry sum.
+    master: usize,
 }
 
 impl TransportSession {
@@ -4408,7 +4418,7 @@ impl TransportSession {
             )
         };
         format!(
-            "{{\"ok\":true,\"transport\":{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{}{}}}}}",
+            "{{\"ok\":true,\"transport\":{{\"state\":\"{}\",\"position\":{:.6},\"bpm\":{},\"beats_per_bar\":{},\"loop_start\":{:.6},\"loop_end\":{:.6},\"clips\":{},\"master\":{}{}}}}}",
             state,
             control.position() as f64 / rate,
             control.bpm(),
@@ -4416,6 +4426,7 @@ impl TransportSession {
             control.loop_start() as f64 / rate,
             control.loop_end() as f64 / rate,
             self.clips,
+            self.master,
             error
         )
     }
@@ -4425,7 +4436,7 @@ impl TransportSession {
 /// default tempo and signature, with no loop. The route always has a shape to
 /// answer with, exactly as an idle `status` does.
 fn default_transport_line() -> String {
-    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0}}"
+    "{\"ok\":true,\"transport\":{\"state\":\"stopped\",\"position\":0.000000,\"bpm\":120,\"beats_per_bar\":4,\"loop_start\":0.000000,\"loop_end\":0.000000,\"clips\":0,\"master\":0}}"
         .to_string()
 }
 
@@ -4438,8 +4449,11 @@ fn run_transport(
     control: Arc<TransportControl>,
     error: Arc<Mutex<String>>,
     clips: Vec<TransportClip>,
+    master: Vec<InsertKind>,
 ) {
-    let source = TransportSource::new(Arc::clone(&control)).with_clips(clips);
+    let source = TransportSource::new(Arc::clone(&control))
+        .with_clips(clips)
+        .with_master(master);
     let outcome = match config.backend {
         BackendKind::Null => transport_null(&config, source, &control),
         BackendKind::Alsa | BackendKind::PipeWire => {
@@ -7471,6 +7485,7 @@ break"}"#).is_err());
             handle: None,
             error: Arc::new(Mutex::new(String::new())),
             clips: 0,
+            master: 0,
         }
     }
 

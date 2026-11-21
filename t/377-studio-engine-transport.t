@@ -119,6 +119,26 @@ like(
 );
 like(
 	$playback,
+	qr/pub fn with_master/,
+	'the render source takes the master rack'
+);
+like(
+	$playback,
+	qr/for kind in &self\.master \{\s*mixer\.push_master\(\*kind\);\s*\}/,
+	'the master rack is armed on the clip mix before prepare'
+);
+like(
+	$playback,
+	qr/a_transport_clip_runs_through_its_output_insert/,
+	'a clip plays through its own Out insert (unit test)'
+);
+like(
+	$playback,
+	qr/a_transport_master_insert_masters_the_clip_mix/,
+	'the master rack masters the clip mix (unit test)'
+);
+like(
+	$playback,
 	qr/a_transport_clip_plays_at_its_timeline_start/,
 	'clip placement has a unit test'
 );
@@ -147,6 +167,26 @@ like(
 	$socket,
 	qr/fn transport_clip/,
 	'one clip object is validated'
+);
+like(
+	$socket,
+	qr/fn transport_start[\s\S]{0,5000}parse_master\(get\(object, "master"\)\)/,
+	'start reads the optional master rack'
+);
+like(
+	$socket,
+	qr/run_transport\(config, control, error, clips, master\)/,
+	'the master rack reaches the transport worker'
+);
+like(
+	$socket,
+	qr/with_master\(master\)/,
+	'the render source arms the master rack'
+);
+like(
+	$socket,
+	qr/\\"master\\":\{\}/,
+	'the transport status reports the armed master count'
 );
 like(
 	$socket,
@@ -209,6 +249,21 @@ like(
 );
 like(
 	$controller,
+	qr/master_json/,
+	'the transport route reads a master rack'
+);
+like(
+	$controller,
+	qr/&studio_master_plan\(\$raw_master\)/,
+	'the transport master rack reuses the take plan validator'
+);
+like(
+	$controller,
+	qr/\$fields\{'master'\} = \$master if \@\{\$master\}/,
+	'the validated master rack rides the transport fields'
+);
+like(
+	$controller,
 	qr/never encrypted/,
 	'a staged take stays readable by the engine'
 );
@@ -218,8 +273,8 @@ like($engine_pm, qr/sub audio_engine_transport/, 'the Perl client speaks the com
 like($engine_pm, qr/audio_engine_transport_fields/, 'the client has a field whitelist');
 like(
 	$engine_pm,
-	qr/qw\(\s*position bpm beats_per_bar gain loop_start loop_end clips\s*\)/,
-	'only the promised fields, including the clip plan, are forwarded'
+	qr/qw\(\s*position bpm beats_per_bar gain loop_start loop_end clips master\s*\)/,
+	'only the promised fields, including the clip plan and master rack, are forwarded'
 );
 
 # --- the browser follows the engine clock and never doubles the click --------
@@ -313,6 +368,46 @@ like(
 	$transport_js,
 	qr/fade_in: fIn/,
 	'the clip plan carries the browser crossfade edges'
+);
+like(
+	$transport_js,
+	qr/var strip = studioAudio\.channels\[ch\]/,
+	'a clip reads the channel it is drawn from'
+);
+like(
+	$transport_js,
+	qr/strip\.outInserts\.forEach/,
+	'a clip takes its inserts from the channel Out chain'
+);
+like(
+	$transport_js,
+	qr/if \(!ins \|\| ins\.bypassed \|\| !ins\.name\) \{ return; \}/,
+	'only enabled Out inserts travel'
+);
+like(
+	$transport_js,
+	qr/studioEffectKind\(ins\.name\) === 'stereowidener'/,
+	'the browser-only Stereo Widener is left out'
+);
+like(
+	$transport_js,
+	qr/inserts: inserts/,
+	'the clip object carries its insert names'
+);
+like(
+	$transport_js,
+	qr/inserts: clip\.inserts/,
+	'the staged plan keeps the clip inserts'
+);
+like(
+	$transport_js,
+	qr/fields\.master_json = JSON\.stringify\(master\)/,
+	'the enabled master rack rides the transport start'
+);
+like(
+	$transport_js,
+	qr/studioEngineMasterList\(\)/,
+	'the transport uses the same master plan helper as an engine take'
 );
 like(
 	$transport_js,
